@@ -52,6 +52,17 @@ class FakeEntityRepository implements EntityRepository {
     );
   }
 
+  public async countByIdsAndWorkIdAndUserId(
+    entityIds: string[],
+    workId: string,
+    userId: string,
+  ): Promise<number> {
+    return [...this.entities.values()].filter(
+      (entity) =>
+        entityIds.includes(entity.id) && entity.workId === workId && entity.userId === userId,
+    ).length;
+  }
+
   public async update(id: string, userId: string, input: UpdateEntityInput): Promise<Entity | null> {
     const currentEntity = await this.findByIdAndUserId(id, userId);
     if (currentEntity === null) {

@@ -62,11 +62,12 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
 function resolveDependencies(dependencies: AppDependencies): Required<Omit<AppDependencies, 'jwtSecret'>> {
   const creditService =
     dependencies.creditService ?? new CreditService(new PostgresCreditRepository(db, db));
+  const entityRepository = new PostgresEntityRepository(db);
   const entityService =
     dependencies.entityService ??
-    new EntityService(new PostgresEntityRepository(db), new PostgresWorkRepository(db));
+    new EntityService(entityRepository, new PostgresWorkRepository(db));
   const storyService =
-    dependencies.storyService ?? new StoryService(new PostgresStoryRepository(db));
+    dependencies.storyService ?? new StoryService(new PostgresStoryRepository(db), entityRepository);
   const userProvisioningService =
     dependencies.userProvisioningService ??
     new UserProvisioningService(new PostgresUserRepository(db), creditService);

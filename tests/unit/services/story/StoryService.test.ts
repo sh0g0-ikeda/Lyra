@@ -13,6 +13,7 @@ import type {
   Work,
 } from '../../../../src/repositories/StoryRepository.js';
 import { StoryService } from '../../../../src/services/story/StoryService.js';
+import type { EntityReferenceReader } from '../../../../src/repositories/EntityRepository.js';
 
 const now = new Date('2026-04-22T00:00:00.000Z');
 
@@ -216,9 +217,22 @@ class FakeStoryRepository implements StoryRepository {
   }
 }
 
+class FakeEntityReferenceReader implements EntityReferenceReader {
+  public ownedEntityIds = new Set<string>();
+
+  public async countByIdsAndWorkIdAndUserId(
+    entityIds: string[],
+    workId: string,
+    userId: string,
+  ): Promise<number> {
+    return entityIds.filter((entityId) => this.ownedEntityIds.has(`${userId}:${workId}:${entityId}`))
+      .length;
+  }
+}
+
 describe('StoryService', () => {
   it('作品を作成できる', async () => {
-    const service = new StoryService(new FakeStoryRepository());
+    const service = createService();
 
     const work = await service.createWork('user-1', {
       title: '黒月の騎士',
@@ -237,7 +251,7 @@ describe('StoryService', () => {
   });
 
   it('作品更新の場合にversionが増える', async () => {
-    const service = new StoryService(new FakeStoryRepository());
+    const service = createService();
     const work = await service.createWork('user-1', {
       title: '黒月の騎士',
       genre: null,
@@ -258,7 +272,7 @@ describe('StoryService', () => {
   });
 
   it('所有していない作品への章追加の場合にNOT_FOUNDになる', async () => {
-    const service = new StoryService(new FakeStoryRepository());
+    const service = createService();
 
     await expect(
       service.createChapter('user-2', 'work-1', {
@@ -275,7 +289,7 @@ describe('StoryService', () => {
   });
 
   it('所有している章へ話を追加できる', async () => {
-    const service = new StoryService(new FakeStoryRepository());
+    const service = createService();
     const work = await service.createWork('user-1', {
       title: '黒月の騎士',
       genre: null,
@@ -314,7 +328,7 @@ describe('StoryService', () => {
   });
 
   it('別ユーザーの話更新の場合にNOT_FOUNDになる', async () => {
-    const service = new StoryService(new FakeStoryRepository());
+    const service = createService();
     const work = await service.createWork('user-1', {
       title: '黒月の騎士',
       genre: null,
@@ -353,4 +367,95 @@ describe('StoryService', () => {
       }),
     ).rejects.toMatchObject({ code: 'NOT_FOUND' } satisfies Partial<AppError>);
   });
+
+  it('作品作成でmainEntityIdsが指定された場合にVALIDATION_ERRORになる', async () => {
+    const service = createService();
+
+    await expect(
+      service.createWork('user-1', {
+        title: '黒月の騎士',
+        genre: null,
+        worldSetting: null,
+        theme: null,
+        mainEntityIds: ['11111111-1111-4111-8111-111111111111'],
+        startingPoint: null,
+        endingPoint: null,
+        overallFlow: null,
+      }),
+    ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' } satisfies Partial<AppError>);
+  });
+
+  it('作品外のエンティティを章に紐づける場合にVALIDATION_ERRORになる', async () => {
+    const service = createService();
+    const work = await service.createWork('user-1', {
+      title: '黒月の騎士',
+      genre: null,
+      worldSetting: null,
+      theme: null,
+      mainEntityIds: [],
+      startingPoint: null,
+      endingPoint: null,
+      overallFlow: null,
+    });
+
+    await expect(
+      service.createChapter('user-1', work.id, {
+        order: 1,
+        title: '第一章',
+        purpose: null,
+        startingState: null,
+        endingState: null,
+        emotionCurve: null,
+        entitiesInvolved: ['11111111-1111-4111-8111-111111111111'],
+        keyBeats: [],
+      }),
+    ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' } satisfies Partial<AppError>);
+  });
+
+  it('作品内のエンティティを話に紐づけられる', async () => {
+    const entityReferenceReader = new FakeEntityReferenceReader();
+    const service = createService(entityReferenceReader);
+    const work = await service.createWork('user-1', {
+      title: '黒月の騎士',
+      genre: null,
+      worldSetting: null,
+      theme: null,
+      mainEntityIds: [],
+      startingPoint: null,
+      endingPoint: null,
+      overallFlow: null,
+    });
+    const entityId = '11111111-1111-4111-8111-111111111111';
+    entityReferenceReader.ownedEntityIds.add(`user-1:${work.id}:${entityId}`);
+    const chapter = await service.createChapter('user-1', work.id, {
+      order: 1,
+      title: null,
+      purpose: null,
+      startingState: null,
+      endingState: null,
+      emotionCurve: null,
+      entitiesInvolved: [],
+      keyBeats: [],
+    });
+
+    const episode = await service.createEpisode('user-1', chapter.id, {
+      order: 1,
+      title: null,
+      purpose: null,
+      introduction: null,
+      middle: null,
+      climax: null,
+      endingHook: null,
+      estimatedPages: 16,
+      entitiesInvolved: [entityId],
+    });
+
+    expect(episode.entitiesInvolved).toEqual([entityId]);
+  });
 });
+
+function createService(
+  entityReferenceReader: EntityReferenceReader = new FakeEntityReferenceReader(),
+): StoryService {
+  return new StoryService(new FakeStoryRepository(), entityReferenceReader);
+}

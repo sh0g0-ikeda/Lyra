@@ -11,7 +11,9 @@ import type {
   UpdateWorkInput,
   Work,
 } from '../domain/types/story.js';
+import { ValidationError } from '../domain/errors/index.js';
 import type { DatabaseClient } from '../lib/db.js';
+import { isUniqueViolation } from '../lib/dbErrors.js';
 
 export type {
   Chapter,
@@ -160,6 +162,31 @@ export class PostgresStoryRepository implements StoryRepository {
           ending_point = CASE WHEN $14::boolean THEN $15 ELSE ending_point END,
           overall_flow = CASE WHEN $16::boolean THEN $17 ELSE overall_flow END,
           status = COALESCE($18, status),
+          edit_history = (
+            SELECT COALESCE(jsonb_agg(history_entry.value ORDER BY history_entry.ordinality), '[]'::jsonb)
+            FROM (
+              SELECT history_entry.value, history_entry.ordinality
+              FROM jsonb_array_elements(
+                jsonb_build_array(
+                  jsonb_build_object(
+                    'version', version,
+                    'title', title,
+                    'genre', genre,
+                    'world_setting', world_setting,
+                    'theme', theme,
+                    'main_entity_ids', main_entity_ids,
+                    'starting_point', starting_point,
+                    'ending_point', ending_point,
+                    'overall_flow', overall_flow,
+                    'status', status,
+                    'updated_at', updated_at
+                  )
+                ) || edit_history
+              ) WITH ORDINALITY AS history_entry(value, ordinality)
+              ORDER BY history_entry.ordinality
+              LIMIT 5
+            ) history_entry
+          ),
           version = version + 1,
           updated_at = NOW()
       WHERE id = $1
@@ -192,36 +219,40 @@ export class PostgresStoryRepository implements StoryRepository {
   }
 
   public async createChapter(workId: string, input: CreateChapterInput): Promise<Chapter> {
-    const result = await this.client.query<ChapterRow>(
-      `
-      INSERT INTO chapters (
-        work_id,
-        "order",
-        title,
-        purpose,
-        starting_state,
-        ending_state,
-        emotion_curve,
-        entities_involved,
-        key_beats
-      )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-      RETURNING *
-      `,
-      [
-        workId,
-        input.order,
-        input.title,
-        input.purpose,
-        input.startingState,
-        input.endingState,
-        input.emotionCurve,
-        input.entitiesInvolved,
-        input.keyBeats,
-      ],
-    );
+    try {
+      const result = await this.client.query<ChapterRow>(
+        `
+        INSERT INTO chapters (
+          work_id,
+          "order",
+          title,
+          purpose,
+          starting_state,
+          ending_state,
+          emotion_curve,
+          entities_involved,
+          key_beats
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        RETURNING *
+        `,
+        [
+          workId,
+          input.order,
+          input.title,
+          input.purpose,
+          input.startingState,
+          input.endingState,
+          input.emotionCurve,
+          input.entitiesInvolved,
+          input.keyBeats,
+        ],
+      );
 
-    return mapChapterRow(result.rows[0]);
+      return mapChapterRow(result.rows[0]);
+    } catch (error) {
+      throw mapOrderConflict(error, 'Chapter order must be unique within the work');
+    }
   }
 
   public async findChaptersByWorkIdAndUserId(workId: string, userId: string): Promise<Chapter[]> {
@@ -256,49 +287,78 @@ export class PostgresStoryRepository implements StoryRepository {
   }
 
   public async updateChapter(id: string, userId: string, input: UpdateChapterInput): Promise<Chapter | null> {
-    const result = await this.client.query<ChapterRow>(
-      `
-      UPDATE chapters
-      SET "order" = COALESCE($3, "order"),
-          title = CASE WHEN $4::boolean THEN $5 ELSE title END,
-          purpose = CASE WHEN $6::boolean THEN $7 ELSE purpose END,
-          starting_state = CASE WHEN $8::boolean THEN $9 ELSE starting_state END,
-          ending_state = CASE WHEN $10::boolean THEN $11 ELSE ending_state END,
-          emotion_curve = CASE WHEN $12::boolean THEN $13 ELSE emotion_curve END,
-          entities_involved = CASE WHEN $14::boolean THEN $15 ELSE entities_involved END,
-          key_beats = CASE WHEN $16::boolean THEN $17 ELSE key_beats END,
-          status = COALESCE($18, status),
-          version = version + 1,
-          updated_at = NOW()
-      FROM works
-      WHERE chapters.id = $1
-        AND chapters.work_id = works.id
-        AND works.user_id = $2
-      RETURNING chapters.*
-      `,
-      [
-        id,
-        userId,
-        input.order ?? null,
-        input.title !== undefined,
-        input.title ?? null,
-        input.purpose !== undefined,
-        input.purpose ?? null,
-        input.startingState !== undefined,
-        input.startingState ?? null,
-        input.endingState !== undefined,
-        input.endingState ?? null,
-        input.emotionCurve !== undefined,
-        input.emotionCurve ?? null,
-        input.entitiesInvolved !== undefined,
-        input.entitiesInvolved ?? [],
-        input.keyBeats !== undefined,
-        input.keyBeats ?? [],
-        input.status ?? null,
-      ],
-    );
+    try {
+      const result = await this.client.query<ChapterRow>(
+        `
+        UPDATE chapters
+        SET "order" = COALESCE($3, chapters."order"),
+            title = CASE WHEN $4::boolean THEN $5 ELSE chapters.title END,
+            purpose = CASE WHEN $6::boolean THEN $7 ELSE chapters.purpose END,
+            starting_state = CASE WHEN $8::boolean THEN $9 ELSE chapters.starting_state END,
+            ending_state = CASE WHEN $10::boolean THEN $11 ELSE chapters.ending_state END,
+            emotion_curve = CASE WHEN $12::boolean THEN $13 ELSE chapters.emotion_curve END,
+            entities_involved = CASE WHEN $14::boolean THEN $15 ELSE chapters.entities_involved END,
+            key_beats = CASE WHEN $16::boolean THEN $17 ELSE chapters.key_beats END,
+            status = COALESCE($18, chapters.status),
+            edit_history = (
+              SELECT COALESCE(jsonb_agg(history_entry.value ORDER BY history_entry.ordinality), '[]'::jsonb)
+              FROM (
+                SELECT history_entry.value, history_entry.ordinality
+                FROM jsonb_array_elements(
+                  jsonb_build_array(
+                    jsonb_build_object(
+                      'version', chapters.version,
+                      'order', chapters."order",
+                      'title', chapters.title,
+                      'purpose', chapters.purpose,
+                      'starting_state', chapters.starting_state,
+                      'ending_state', chapters.ending_state,
+                      'emotion_curve', chapters.emotion_curve,
+                      'entities_involved', chapters.entities_involved,
+                      'key_beats', chapters.key_beats,
+                      'status', chapters.status,
+                      'updated_at', chapters.updated_at
+                    )
+                  ) || chapters.edit_history
+                ) WITH ORDINALITY AS history_entry(value, ordinality)
+                ORDER BY history_entry.ordinality
+                LIMIT 5
+              ) history_entry
+            ),
+            version = chapters.version + 1,
+            updated_at = NOW()
+        FROM works
+        WHERE chapters.id = $1
+          AND chapters.work_id = works.id
+          AND works.user_id = $2
+        RETURNING chapters.*
+        `,
+        [
+          id,
+          userId,
+          input.order ?? null,
+          input.title !== undefined,
+          input.title ?? null,
+          input.purpose !== undefined,
+          input.purpose ?? null,
+          input.startingState !== undefined,
+          input.startingState ?? null,
+          input.endingState !== undefined,
+          input.endingState ?? null,
+          input.emotionCurve !== undefined,
+          input.emotionCurve ?? null,
+          input.entitiesInvolved !== undefined,
+          input.entitiesInvolved ?? [],
+          input.keyBeats !== undefined,
+          input.keyBeats ?? [],
+          input.status ?? null,
+        ],
+      );
 
-    return result.rows[0] === undefined ? null : mapChapterRow(result.rows[0]);
+      return result.rows[0] === undefined ? null : mapChapterRow(result.rows[0]);
+    } catch (error) {
+      throw mapOrderConflict(error, 'Chapter order must be unique within the work');
+    }
   }
 
   public async deleteChapter(id: string, userId: string): Promise<boolean> {
@@ -317,38 +377,42 @@ export class PostgresStoryRepository implements StoryRepository {
   }
 
   public async createEpisode(chapterId: string, input: CreateEpisodeInput): Promise<Episode> {
-    const result = await this.client.query<EpisodeRow>(
-      `
-      INSERT INTO episodes (
-        chapter_id,
-        "order",
-        title,
-        purpose,
-        introduction,
-        middle,
-        climax,
-        ending_hook,
-        estimated_pages,
-        entities_involved
-      )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-      RETURNING *
-      `,
-      [
-        chapterId,
-        input.order,
-        input.title,
-        input.purpose,
-        input.introduction,
-        input.middle,
-        input.climax,
-        input.endingHook,
-        input.estimatedPages,
-        input.entitiesInvolved,
-      ],
-    );
+    try {
+      const result = await this.client.query<EpisodeRow>(
+        `
+        INSERT INTO episodes (
+          chapter_id,
+          "order",
+          title,
+          purpose,
+          introduction,
+          middle,
+          climax,
+          ending_hook,
+          estimated_pages,
+          entities_involved
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        RETURNING *
+        `,
+        [
+          chapterId,
+          input.order,
+          input.title,
+          input.purpose,
+          input.introduction,
+          input.middle,
+          input.climax,
+          input.endingHook,
+          input.estimatedPages,
+          input.entitiesInvolved,
+        ],
+      );
 
-    return mapEpisodeRow(result.rows[0]);
+      return mapEpisodeRow(result.rows[0]);
+    } catch (error) {
+      throw mapOrderConflict(error, 'Episode order must be unique within the chapter');
+    }
   }
 
   public async findEpisodesByChapterIdAndUserId(chapterId: string, userId: string): Promise<Episode[]> {
@@ -385,52 +449,82 @@ export class PostgresStoryRepository implements StoryRepository {
   }
 
   public async updateEpisode(id: string, userId: string, input: UpdateEpisodeInput): Promise<Episode | null> {
-    const result = await this.client.query<EpisodeRow>(
-      `
-      UPDATE episodes
-      SET "order" = COALESCE($3, "order"),
-          title = CASE WHEN $4::boolean THEN $5 ELSE title END,
-          purpose = CASE WHEN $6::boolean THEN $7 ELSE purpose END,
-          introduction = CASE WHEN $8::boolean THEN $9 ELSE introduction END,
-          middle = CASE WHEN $10::boolean THEN $11 ELSE middle END,
-          climax = CASE WHEN $12::boolean THEN $13 ELSE climax END,
-          ending_hook = CASE WHEN $14::boolean THEN $15 ELSE ending_hook END,
-          estimated_pages = COALESCE($16, estimated_pages),
-          entities_involved = CASE WHEN $17::boolean THEN $18 ELSE entities_involved END,
-          status = COALESCE($19, status),
-          version = version + 1,
-          updated_at = NOW()
-      FROM chapters
-      INNER JOIN works ON works.id = chapters.work_id
-      WHERE episodes.id = $1
-        AND episodes.chapter_id = chapters.id
-        AND works.user_id = $2
-      RETURNING episodes.*
-      `,
-      [
-        id,
-        userId,
-        input.order ?? null,
-        input.title !== undefined,
-        input.title ?? null,
-        input.purpose !== undefined,
-        input.purpose ?? null,
-        input.introduction !== undefined,
-        input.introduction ?? null,
-        input.middle !== undefined,
-        input.middle ?? null,
-        input.climax !== undefined,
-        input.climax ?? null,
-        input.endingHook !== undefined,
-        input.endingHook ?? null,
-        input.estimatedPages ?? null,
-        input.entitiesInvolved !== undefined,
-        input.entitiesInvolved ?? [],
-        input.status ?? null,
-      ],
-    );
+    try {
+      const result = await this.client.query<EpisodeRow>(
+        `
+        UPDATE episodes
+        SET "order" = COALESCE($3, episodes."order"),
+            title = CASE WHEN $4::boolean THEN $5 ELSE episodes.title END,
+            purpose = CASE WHEN $6::boolean THEN $7 ELSE episodes.purpose END,
+            introduction = CASE WHEN $8::boolean THEN $9 ELSE episodes.introduction END,
+            middle = CASE WHEN $10::boolean THEN $11 ELSE episodes.middle END,
+            climax = CASE WHEN $12::boolean THEN $13 ELSE episodes.climax END,
+            ending_hook = CASE WHEN $14::boolean THEN $15 ELSE episodes.ending_hook END,
+            estimated_pages = COALESCE($16, episodes.estimated_pages),
+            entities_involved = CASE WHEN $17::boolean THEN $18 ELSE episodes.entities_involved END,
+            status = COALESCE($19, episodes.status),
+            edit_history = (
+              SELECT COALESCE(jsonb_agg(history_entry.value ORDER BY history_entry.ordinality), '[]'::jsonb)
+              FROM (
+                SELECT history_entry.value, history_entry.ordinality
+                FROM jsonb_array_elements(
+                  jsonb_build_array(
+                    jsonb_build_object(
+                      'version', episodes.version,
+                      'order', episodes."order",
+                      'title', episodes.title,
+                      'purpose', episodes.purpose,
+                      'introduction', episodes.introduction,
+                      'middle', episodes.middle,
+                      'climax', episodes.climax,
+                      'ending_hook', episodes.ending_hook,
+                      'estimated_pages', episodes.estimated_pages,
+                      'entities_involved', episodes.entities_involved,
+                      'status', episodes.status,
+                      'updated_at', episodes.updated_at
+                    )
+                  ) || episodes.edit_history
+                ) WITH ORDINALITY AS history_entry(value, ordinality)
+                ORDER BY history_entry.ordinality
+                LIMIT 5
+              ) history_entry
+            ),
+            version = episodes.version + 1,
+            updated_at = NOW()
+        FROM chapters
+        INNER JOIN works ON works.id = chapters.work_id
+        WHERE episodes.id = $1
+          AND episodes.chapter_id = chapters.id
+          AND works.user_id = $2
+        RETURNING episodes.*
+        `,
+        [
+          id,
+          userId,
+          input.order ?? null,
+          input.title !== undefined,
+          input.title ?? null,
+          input.purpose !== undefined,
+          input.purpose ?? null,
+          input.introduction !== undefined,
+          input.introduction ?? null,
+          input.middle !== undefined,
+          input.middle ?? null,
+          input.climax !== undefined,
+          input.climax ?? null,
+          input.endingHook !== undefined,
+          input.endingHook ?? null,
+          input.estimatedPages ?? null,
+          input.entitiesInvolved !== undefined,
+          input.entitiesInvolved ?? [],
+          input.status ?? null,
+        ],
+      );
 
-    return result.rows[0] === undefined ? null : mapEpisodeRow(result.rows[0]);
+      return result.rows[0] === undefined ? null : mapEpisodeRow(result.rows[0]);
+    } catch (error) {
+      throw mapOrderConflict(error, 'Episode order must be unique within the chapter');
+    }
   }
 
   public async deleteEpisode(id: string, userId: string): Promise<boolean> {
@@ -522,4 +616,16 @@ function toObjectArray(value: unknown): Record<string, unknown>[] {
 
 function isJsonObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function mapOrderConflict(error: unknown, message: string): Error {
+  if (isUniqueViolation(error)) {
+    return new ValidationError(message);
+  }
+
+  if (error instanceof Error) {
+    return error;
+  }
+
+  return new Error('Unexpected database error');
 }
