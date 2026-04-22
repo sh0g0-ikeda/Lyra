@@ -23,6 +23,12 @@ export class ValidationError extends AppError {
   }
 }
 
+export class NotFoundError extends AppError {
+  public constructor(message = 'Not found') {
+    super('NOT_FOUND', message, 404);
+  }
+}
+
 export class InsufficientCreditsError extends AppError {
   public constructor() {
     super('INSUFFICIENT_CREDITS', 'Credit balance is insufficient', 402);
