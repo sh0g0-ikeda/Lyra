@@ -1,0 +1,178 @@
+import { Hono, type Context, type MiddlewareHandler } from 'hono';
+import { ValidationError } from '../domain/errors/index.js';
+import type { EntityState, Scene } from '../domain/types/scene.js';
+import {
+  createEntityStateBodySchema,
+  createSceneBodySchema,
+  sceneUuidParamSchema,
+  updateEntityStateBodySchema,
+  updateSceneBodySchema,
+} from '../lib/validators/scene.schema.js';
+import type { SceneServicePort } from '../services/scene/SceneService.js';
+import type { AppEnv } from '../types/app.js';
+
+export interface SceneRouteDependencies {
+  authMiddleware: MiddlewareHandler<AppEnv>;
+  sceneService: SceneServicePort;
+}
+
+export function createSceneRoutes(dependencies: SceneRouteDependencies): Hono<AppEnv> {
+  const app = new Hono<AppEnv>();
+
+  app.use('*', dependencies.authMiddleware);
+
+  app.post('/episodes/:id/scenes', async (c) => {
+    const user = c.get('user');
+    const episodeId = parseUuidParam(c, 'id');
+    const body = createSceneBodySchema.safeParse(await readJsonBody(c));
+
+    if (!body.success) {
+      throw new ValidationError(body.error.message);
+    }
+
+    const scene = await dependencies.sceneService.createScene(user.id, episodeId, {
+      order: body.data.order,
+      location: body.data.location ?? null,
+      time: body.data.time ?? null,
+      atmosphere: body.data.atmosphere ?? null,
+      involvedEntityIds: body.data.involved_entity_ids ?? [],
+    });
+
+    return c.json(toSceneResponse(scene), 201);
+  });
+
+  app.get('/episodes/:id/scenes', async (c) => {
+    const user = c.get('user');
+    const episodeId = parseUuidParam(c, 'id');
+    const scenes = await dependencies.sceneService.listScenes(user.id, episodeId);
+
+    return c.json({ scenes: scenes.map(toSceneResponse) });
+  });
+
+  app.put('/scenes/:id', async (c) => {
+    const user = c.get('user');
+    const sceneId = parseUuidParam(c, 'id');
+    const body = updateSceneBodySchema.safeParse(await readJsonBody(c));
+
+    if (!body.success) {
+      throw new ValidationError(body.error.message);
+    }
+
+    const scene = await dependencies.sceneService.updateScene(user.id, sceneId, {
+      order: body.data.order,
+      location: body.data.location,
+      time: body.data.time,
+      atmosphere: body.data.atmosphere,
+      involvedEntityIds: body.data.involved_entity_ids,
+      status: body.data.status,
+    });
+
+    return c.json(toSceneResponse(scene));
+  });
+
+  app.delete('/scenes/:id', async (c) => {
+    const user = c.get('user');
+    const sceneId = parseUuidParam(c, 'id');
+    await dependencies.sceneService.deleteScene(user.id, sceneId);
+
+    return c.body(null, 204);
+  });
+
+  app.post('/entities/:id/states', async (c) => {
+    const user = c.get('user');
+    const entityId = parseUuidParam(c, 'id');
+    const body = createEntityStateBodySchema.safeParse(await readJsonBody(c));
+
+    if (!body.success) {
+      throw new ValidationError(body.error.message);
+    }
+
+    const entityState = await dependencies.sceneService.createEntityState(user.id, entityId, {
+      sceneId: body.data.scene_id ?? null,
+      costumeNote: body.data.costume_note ?? null,
+      costumeRefId: body.data.costume_ref_id ?? null,
+      conditionNote: body.data.condition_note ?? null,
+      hairNote: body.data.hair_note ?? null,
+      expressionDefault: body.data.expression_default,
+      extraNote: body.data.extra_note ?? null,
+    });
+
+    return c.json(toEntityStateResponse(entityState), 201);
+  });
+
+  app.put('/entities/:id/states/:state_id', async (c) => {
+    const user = c.get('user');
+    const entityId = parseUuidParam(c, 'id');
+    const stateId = parseUuidParam(c, 'state_id');
+    const body = updateEntityStateBodySchema.safeParse(await readJsonBody(c));
+
+    if (!body.success) {
+      throw new ValidationError(body.error.message);
+    }
+
+    const entityState = await dependencies.sceneService.updateEntityState(user.id, entityId, stateId, {
+      sceneId: body.data.scene_id,
+      costumeNote: body.data.costume_note,
+      costumeRefId: body.data.costume_ref_id,
+      conditionNote: body.data.condition_note,
+      hairNote: body.data.hair_note,
+      expressionDefault: body.data.expression_default,
+      extraNote: body.data.extra_note,
+    });
+
+    return c.json(toEntityStateResponse(entityState));
+  });
+
+  return app;
+}
+
+async function readJsonBody(c: Context<AppEnv>): Promise<unknown> {
+  try {
+    return await c.req.json();
+  } catch {
+    throw new ValidationError('Request body must be valid JSON');
+  }
+}
+
+function parseUuidParam(c: Context<AppEnv>, name: string): string {
+  const result = sceneUuidParamSchema.safeParse(c.req.param(name));
+  if (!result.success) {
+    throw new ValidationError(`${name} must be a valid UUID`);
+  }
+
+  return result.data;
+}
+
+function toSceneResponse(scene: Scene): Record<string, unknown> {
+  return {
+    id: scene.id,
+    episode_id: scene.episodeId,
+    order: scene.order,
+    location: scene.location,
+    time: scene.time,
+    atmosphere: scene.atmosphere,
+    involved_entity_ids: scene.involvedEntityIds,
+    entity_states: scene.entityStates.map((entityState) => ({
+      entity_id: entityState.entityId,
+      state_id: entityState.stateId,
+    })),
+    status: scene.status,
+    created_at: scene.createdAt.toISOString(),
+    updated_at: scene.updatedAt.toISOString(),
+  };
+}
+
+function toEntityStateResponse(entityState: EntityState): Record<string, unknown> {
+  return {
+    id: entityState.id,
+    entity_id: entityState.entityId,
+    scene_id: entityState.sceneId,
+    costume_note: entityState.costumeNote,
+    costume_ref_id: entityState.costumeRefId,
+    condition_note: entityState.conditionNote,
+    hair_note: entityState.hairNote,
+    expression_default: entityState.expressionDefault,
+    extra_note: entityState.extraNote,
+    created_at: entityState.createdAt.toISOString(),
+  };
+}
