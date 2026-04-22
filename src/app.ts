@@ -4,19 +4,23 @@ import { createAuthMiddleware } from './middleware/auth.js';
 import { errorHandler } from './middleware/errorHandler.js';
 import { PostgresCreditRepository } from './repositories/CreditRepository.js';
 import { PostgresEntityRepository } from './repositories/EntityRepository.js';
+import { PostgresStoryRepository } from './repositories/StoryRepository.js';
 import { PostgresUserRepository } from './repositories/UserRepository.js';
 import { PostgresWorkRepository } from './repositories/WorkRepository.js';
 import { createBillingRoutes } from './routes/billing.js';
 import { createEntityRoutes } from './routes/entities.js';
 import { createHealthRoutes } from './routes/health.js';
+import { createStoryRoutes } from './routes/story.js';
 import { UserProvisioningService, type UserProvisioningPort } from './services/auth/UserProvisioningService.js';
 import { CreditService, type CreditServicePort } from './services/credit/CreditService.js';
 import { EntityService, type EntityServicePort } from './services/entity/EntityService.js';
+import { StoryService, type StoryServicePort } from './services/story/StoryService.js';
 import type { AppEnv } from './types/app.js';
 
 export interface AppDependencies {
   creditService?: CreditServicePort;
   entityService?: EntityServicePort;
+  storyService?: StoryServicePort;
   userProvisioningService?: UserProvisioningPort;
   jwtSecret?: string;
 }
@@ -44,6 +48,13 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
       entityService: resolvedDependencies.entityService,
     }),
   );
+  app.route(
+    '/api',
+    createStoryRoutes({
+      authMiddleware,
+      storyService: resolvedDependencies.storyService,
+    }),
+  );
 
   return app;
 }
@@ -54,6 +65,8 @@ function resolveDependencies(dependencies: AppDependencies): Required<Omit<AppDe
   const entityService =
     dependencies.entityService ??
     new EntityService(new PostgresEntityRepository(db), new PostgresWorkRepository(db));
+  const storyService =
+    dependencies.storyService ?? new StoryService(new PostgresStoryRepository(db));
   const userProvisioningService =
     dependencies.userProvisioningService ??
     new UserProvisioningService(new PostgresUserRepository(db), creditService);
@@ -61,6 +74,7 @@ function resolveDependencies(dependencies: AppDependencies): Required<Omit<AppDe
   return {
     creditService,
     entityService,
+    storyService,
     userProvisioningService,
   };
 }
