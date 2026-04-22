@@ -51,7 +51,7 @@ export class EntityService implements EntityServicePort {
       name: input.name,
       freeDescription: input.freeDescription,
       structuredFields: parseStructuredFields(input.entityType, input.structuredFields),
-      speechProfile: input.speechProfile,
+      speechProfile: normalizeSpeechProfile(input.entityType, input.speechProfile),
     };
 
     return this.entityRepository.create(createInput);
@@ -78,12 +78,22 @@ export class EntityService implements EntityServicePort {
   ): Promise<Entity> {
     const currentEntity = await this.getEntity(userId, entityId);
     const nextEntityType = input.entityType ?? currentEntity.entityType;
+    const entityTypeChanged =
+      input.entityType !== undefined && input.entityType !== currentEntity.entityType;
     const updateInput: UpdateEntityInput = {
       ...input,
       structuredFields:
         input.structuredFields === undefined
-          ? undefined
+          ? entityTypeChanged
+            ? parseStructuredFields(nextEntityType, {})
+            : undefined
           : parseStructuredFields(nextEntityType, input.structuredFields),
+      speechProfile:
+        input.speechProfile === undefined
+          ? entityTypeChanged
+            ? normalizeSpeechProfile(nextEntityType, {})
+            : undefined
+          : normalizeSpeechProfile(nextEntityType, input.speechProfile),
     };
 
     const entity = await this.entityRepository.update(entityId, userId, updateInput);
@@ -107,4 +117,15 @@ export class EntityService implements EntityServicePort {
       throw new NotFoundError('Work not found');
     }
   }
+}
+
+function normalizeSpeechProfile(
+  entityType: EntityType,
+  speechProfile: Record<string, unknown>,
+): Record<string, unknown> {
+  if (entityType === 'object') {
+    return {};
+  }
+
+  return speechProfile;
 }
