@@ -1,4 +1,4 @@
-import { NotFoundError } from '../../domain/errors/index.js';
+import { NotFoundError, ValidationError } from '../../domain/errors/index.js';
 import type {
   Chapter,
   CreateChapterInput,
@@ -11,6 +11,7 @@ import type {
   Work,
 } from '../../domain/types/story.js';
 import type { StoryRepository } from '../../repositories/StoryRepository.js';
+import type { EntityReferenceReader } from '../../repositories/EntityRepository.js';
 
 export type {
   Chapter,
@@ -39,9 +40,16 @@ export interface StoryServicePort {
 }
 
 export class StoryService implements StoryServicePort {
-  public constructor(private readonly storyRepository: StoryRepository) {}
+  public constructor(
+    private readonly storyRepository: StoryRepository,
+    private readonly entityReferenceReader: EntityReferenceReader,
+  ) {}
 
   public async createWork(userId: string, input: CreateWorkInput): Promise<Work> {
+    if (input.mainEntityIds.length > 0) {
+      throw new ValidationError('mainEntityIds cannot be set while creating a work');
+    }
+
     return this.storyRepository.createWork(userId, input);
   }
 
@@ -55,6 +63,12 @@ export class StoryService implements StoryServicePort {
   }
 
   public async updateWork(userId: string, workId: string, input: UpdateWorkInput): Promise<Work> {
+    await this.ensureWorkOwnedByUser(userId, workId);
+
+    if (input.mainEntityIds !== undefined) {
+      await this.ensureEntitiesBelongToWork(userId, workId, input.mainEntityIds);
+    }
+
     const work = await this.storyRepository.updateWork(workId, userId, input);
     if (work === null) {
       throw new NotFoundError('Work not found');
@@ -65,6 +79,7 @@ export class StoryService implements StoryServicePort {
 
   public async createChapter(userId: string, workId: string, input: CreateChapterInput): Promise<Chapter> {
     await this.ensureWorkOwnedByUser(userId, workId);
+    await this.ensureEntitiesBelongToWork(userId, workId, input.entitiesInvolved);
     return this.storyRepository.createChapter(workId, input);
   }
 
@@ -78,6 +93,14 @@ export class StoryService implements StoryServicePort {
     chapterId: string,
     input: UpdateChapterInput,
   ): Promise<Chapter> {
+    const currentChapter = await this.storyRepository.findChapterByIdAndUserId(chapterId, userId);
+    if (currentChapter === null) {
+      throw new NotFoundError('Chapter not found');
+    }
+    if (input.entitiesInvolved !== undefined) {
+      await this.ensureEntitiesBelongToWork(userId, currentChapter.workId, input.entitiesInvolved);
+    }
+
     const chapter = await this.storyRepository.updateChapter(chapterId, userId, input);
     if (chapter === null) {
       throw new NotFoundError('Chapter not found');
@@ -98,7 +121,8 @@ export class StoryService implements StoryServicePort {
     chapterId: string,
     input: CreateEpisodeInput,
   ): Promise<Episode> {
-    await this.ensureChapterOwnedByUser(userId, chapterId);
+    const chapter = await this.ensureChapterOwnedByUser(userId, chapterId);
+    await this.ensureEntitiesBelongToWork(userId, chapter.workId, input.entitiesInvolved);
     return this.storyRepository.createEpisode(chapterId, input);
   }
 
@@ -112,6 +136,15 @@ export class StoryService implements StoryServicePort {
     episodeId: string,
     input: UpdateEpisodeInput,
   ): Promise<Episode> {
+    const currentEpisode = await this.storyRepository.findEpisodeByIdAndUserId(episodeId, userId);
+    if (currentEpisode === null) {
+      throw new NotFoundError('Episode not found');
+    }
+    if (input.entitiesInvolved !== undefined) {
+      const chapter = await this.ensureChapterOwnedByUser(userId, currentEpisode.chapterId);
+      await this.ensureEntitiesBelongToWork(userId, chapter.workId, input.entitiesInvolved);
+    }
+
     const episode = await this.storyRepository.updateEpisode(episodeId, userId, input);
     if (episode === null) {
       throw new NotFoundError('Episode not found');
@@ -131,10 +164,32 @@ export class StoryService implements StoryServicePort {
     await this.getWork(userId, workId);
   }
 
-  private async ensureChapterOwnedByUser(userId: string, chapterId: string): Promise<void> {
+  private async ensureChapterOwnedByUser(userId: string, chapterId: string): Promise<Chapter> {
     const chapter = await this.storyRepository.findChapterByIdAndUserId(chapterId, userId);
     if (chapter === null) {
       throw new NotFoundError('Chapter not found');
+    }
+
+    return chapter;
+  }
+
+  private async ensureEntitiesBelongToWork(
+    userId: string,
+    workId: string,
+    entityIds: string[],
+  ): Promise<void> {
+    const uniqueEntityIds = [...new Set(entityIds)];
+    if (uniqueEntityIds.length === 0) {
+      return;
+    }
+
+    const matchedEntityCount = await this.entityReferenceReader.countByIdsAndWorkIdAndUserId(
+      uniqueEntityIds,
+      workId,
+      userId,
+    );
+    if (matchedEntityCount !== uniqueEntityIds.length) {
+      throw new ValidationError('All referenced entities must belong to the work');
     }
   }
 }

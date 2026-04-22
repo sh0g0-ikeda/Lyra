@@ -14,8 +14,13 @@ export interface EntityRepository {
   create(input: CreateEntityInput): Promise<Entity>;
   findByIdAndUserId(id: string, userId: string): Promise<Entity | null>;
   findByWorkIdAndUserId(workId: string, userId: string): Promise<Entity[]>;
+  countByIdsAndWorkIdAndUserId(entityIds: string[], workId: string, userId: string): Promise<number>;
   update(id: string, userId: string, input: UpdateEntityInput): Promise<Entity | null>;
   delete(id: string, userId: string): Promise<boolean>;
+}
+
+export interface EntityReferenceReader {
+  countByIdsAndWorkIdAndUserId(entityIds: string[], workId: string, userId: string): Promise<number>;
 }
 
 interface EntityRow extends QueryResultRow {
@@ -102,6 +107,29 @@ export class PostgresEntityRepository implements EntityRepository {
     );
 
     return result.rows.map(mapEntityRow);
+  }
+
+  public async countByIdsAndWorkIdAndUserId(
+    entityIds: string[],
+    workId: string,
+    userId: string,
+  ): Promise<number> {
+    if (entityIds.length === 0) {
+      return 0;
+    }
+
+    const result = await this.client.query<{ count: number }>(
+      `
+      SELECT COUNT(DISTINCT id)::int AS count
+      FROM entities
+      WHERE id = ANY($1::uuid[])
+        AND work_id = $2
+        AND user_id = $3
+      `,
+      [entityIds, workId, userId],
+    );
+
+    return result.rows[0]?.count ?? 0;
   }
 
   public async update(id: string, userId: string, input: UpdateEntityInput): Promise<Entity | null> {
