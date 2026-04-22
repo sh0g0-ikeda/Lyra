@@ -101,6 +101,22 @@ describe('EntityService', () => {
     expect(result.workId).toBe('work-1');
   });
 
+  it('object作成の場合にspeech_profileが空に正規化される', async () => {
+    const workReader = new FakeWorkReader();
+    workReader.ownedWorkIds.add('user-1:work-1');
+    const service = new EntityService(new FakeEntityRepository(), workReader);
+
+    const result = await service.createEntity('user-1', 'work-1', {
+      entityType: 'object',
+      name: '魔法剣',
+      freeDescription: null,
+      structuredFields: { category: 'weapon' },
+      speechProfile: { tone: 'silent' },
+    });
+
+    expect(result.speechProfile).toEqual({});
+  });
+
   it('所有していない作品の場合にNOT_FOUNDになる', async () => {
     const service = new EntityService(new FakeEntityRepository(), new FakeWorkReader());
 
@@ -132,5 +148,51 @@ describe('EntityService', () => {
     await expect(service.getEntity('user-2', entity.id)).rejects.toMatchObject({
       code: 'NOT_FOUND',
     } satisfies Partial<AppError>);
+  });
+
+  it('entity_typeだけをobjectに変更した場合にstructured_fieldsとspeech_profileが空に正規化される', async () => {
+    const workReader = new FakeWorkReader();
+    workReader.ownedWorkIds.add('user-1:work-1');
+    const repository = new FakeEntityRepository();
+    const service = new EntityService(repository, workReader);
+    const entity = await service.createEntity('user-1', 'work-1', {
+      entityType: 'character',
+      name: '月華',
+      freeDescription: null,
+      structuredFields: {
+        hair: { color: 'black' },
+        art_style: 'anime',
+      },
+      speechProfile: { tone: 'calm' },
+    });
+
+    const updatedEntity = await service.updateEntity('user-1', entity.id, {
+      entityType: 'object',
+    });
+
+    expect(updatedEntity.entityType).toBe('object');
+    expect(updatedEntity.structuredFields).toEqual({});
+    expect(updatedEntity.speechProfile).toEqual({});
+  });
+
+  it('entity_typeを変えずに更新する場合に既存structured_fieldsを保持する', async () => {
+    const workReader = new FakeWorkReader();
+    workReader.ownedWorkIds.add('user-1:work-1');
+    const repository = new FakeEntityRepository();
+    const service = new EntityService(repository, workReader);
+    const entity = await service.createEntity('user-1', 'work-1', {
+      entityType: 'character',
+      name: '月華',
+      freeDescription: null,
+      structuredFields: { art_style: 'anime' },
+      speechProfile: { tone: 'calm' },
+    });
+
+    const updatedEntity = await service.updateEntity('user-1', entity.id, {
+      name: '月華 改',
+    });
+
+    expect(updatedEntity.structuredFields).toEqual({ art_style: 'anime' });
+    expect(updatedEntity.speechProfile).toEqual({ tone: 'calm' });
   });
 });
