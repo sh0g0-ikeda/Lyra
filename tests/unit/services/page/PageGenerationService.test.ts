@@ -146,6 +146,8 @@ describe('PageGenerationService', () => {
       generation_mode: 'standard',
       quality: 'medium',
       requires_planner: false,
+      previous_page_status: 'designing',
+      previous_generation_mode: null,
     });
     expect(pageRepository.updates[0]).toEqual({
       status: 'generating',
@@ -158,6 +160,8 @@ describe('PageGenerationService', () => {
       quality: 'medium',
       creditCost: 10,
       requiresPlanner: false,
+      previousPageStatus: 'designing',
+      previousGenerationMode: null,
     });
   });
 
@@ -396,6 +400,8 @@ function buildJob(overrides: Partial<GenerationJob> = {}): GenerationJob {
       generation_mode: 'standard',
       quality: 'medium',
       requires_planner: false,
+      previous_page_status: 'designing',
+      previous_generation_mode: null,
     },
     result: null,
     sqsMessageId: null,
