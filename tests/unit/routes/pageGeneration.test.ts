@@ -114,14 +114,18 @@ describe('page generation routes', () => {
     });
 
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toMatchObject({
+    const payload = await response.json();
+
+    expect(payload).toMatchObject({
       id: '22222222-2222-4222-8222-222222222222',
-      user_id: user.id,
       job_type: 'page_generate',
       params: {
         requires_planner: false,
       },
     });
+    expect(payload).not.toHaveProperty('user_id');
+    expect(payload).not.toHaveProperty('sqs_message_id');
+    expect(payload).not.toHaveProperty('openai_request_id');
   });
 
   it('不正なUUIDは422になる', async () => {

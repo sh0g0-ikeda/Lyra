@@ -27,6 +27,7 @@ const pageId = '11111111-1111-4111-8111-111111111111';
 class FakePageRepository implements PageRepository {
   public context: PageGenerationContext | null = buildPageContext();
   public updates: PageGenerationStateUpdate[] = [];
+  public shouldRejectUpdate = false;
 
   public async findGenerationContextByIdAndUserId(
     requestedPageId: string,
@@ -41,7 +42,7 @@ class FakePageRepository implements PageRepository {
     input: PageGenerationStateUpdate,
   ): Promise<boolean> {
     this.updates.push(input);
-    return true;
+    return !this.shouldRejectUpdate;
   }
 }
 
@@ -50,6 +51,7 @@ class FakeGenerationJobRepository implements GenerationJobRepository {
   public attachedMessageId: string | null = null;
   public failedJobId: string | null = null;
   public failedMessage: string | null = null;
+  public shouldFailAttach = false;
 
   public async create(input: CreateGenerationJobInput): Promise<GenerationJob> {
     this.created = input;
@@ -65,6 +67,10 @@ class FakeGenerationJobRepository implements GenerationJobRepository {
   }
 
   public async attachQueueMessageId(_jobId: string, messageId: string): Promise<boolean> {
+    if (this.shouldFailAttach) {
+      throw new Error('failed to store queue message id');
+    }
+
     this.attachedMessageId = messageId;
     return true;
   }
@@ -297,6 +303,51 @@ describe('PageGenerationService', () => {
       description: 'Refund for failed page generation enqueue',
       jobId: '44444444-4444-4444-8444-444444444444',
     });
+  });
+  it('page state updateに失敗した場合はjob failedとrefundで補償する', async () => {
+    const pageRepository = new FakePageRepository();
+    pageRepository.shouldRejectUpdate = true;
+    const jobRepository = new FakeGenerationJobRepository();
+    const creditService = new FakeCreditService();
+    const service = new PageGenerationService(
+      pageRepository,
+      jobRepository,
+      creditService,
+      new FakeQueue(),
+      new ModeSelector(),
+    );
+
+    await expect(service.enqueuePageGeneration(userId, pageId)).rejects.toMatchObject({
+      code: 'CONFIGURATION_ERROR',
+      message: 'Failed to update page generation state',
+    });
+
+    expect(jobRepository.failedJobId).toBe('44444444-4444-4444-8444-444444444444');
+    expect(creditService.refunded[0]).toMatchObject({
+      amount: 10,
+      jobId: '44444444-4444-4444-8444-444444444444',
+    });
+  });
+
+  it('queue message idの保存失敗ではenqueue済みジョブを失敗扱いしない', async () => {
+    const pageRepository = new FakePageRepository();
+    const jobRepository = new FakeGenerationJobRepository();
+    jobRepository.shouldFailAttach = true;
+    const creditService = new FakeCreditService();
+    const service = new PageGenerationService(
+      pageRepository,
+      jobRepository,
+      creditService,
+      new FakeQueue(),
+      new ModeSelector(),
+    );
+
+    const result = await service.enqueuePageGeneration(userId, pageId);
+
+    expect(result).toEqual({ jobId: '44444444-4444-4444-8444-444444444444' });
+    expect(jobRepository.failedJobId).toBeNull();
+    expect(creditService.refunded).toEqual([]);
+    expect(pageRepository.updates).toEqual([{ status: 'generating', generationMode: 'standard' }]);
   });
 });
 

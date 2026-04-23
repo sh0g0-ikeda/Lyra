@@ -74,10 +74,13 @@ export class PageGenerationService implements PageGenerationServicePort {
       });
       jobId = job.id;
 
-      await this.pageRepository.updateGenerationState(page.pageId, userId, {
+      const pageUpdated = await this.pageRepository.updateGenerationState(page.pageId, userId, {
         status: 'generating',
         generationMode: selection.mode,
       });
+      if (!pageUpdated) {
+        throw new ConfigurationError('Failed to update page generation state');
+      }
       pageStateUpdated = true;
 
       const enqueueResult = await this.pageGenerationQueue.enqueue({
@@ -92,7 +95,7 @@ export class PageGenerationService implements PageGenerationServicePort {
       });
 
       if (enqueueResult.messageId !== null) {
-        await this.generationJobRepository.attachQueueMessageId(job.id, enqueueResult.messageId);
+        await this.persistQueueMessageId(job.id, enqueueResult.messageId);
       }
 
       return { jobId: job.id };
@@ -140,6 +143,15 @@ export class PageGenerationService implements PageGenerationServicePort {
 
     if (page.status === 'confirmed') {
       throw new ConflictError('Confirmed pages must be reopened before regeneration');
+    }
+  }
+
+  private async persistQueueMessageId(jobId: string, messageId: string): Promise<void> {
+    try {
+      await this.generationJobRepository.attachQueueMessageId(jobId, messageId);
+    } catch {
+      // The queue already accepted the job. Missing metadata should not refund
+      // credits or roll back page state because the worker may still run.
     }
   }
 }
