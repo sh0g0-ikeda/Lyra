@@ -36,9 +36,10 @@ export function createPanelEntityAssignmentRoutes(
         entityId: assignment.entity_id,
         role: assignment.role,
         expression: assignment.expression,
-        customExpression: assignment.custom_expression,
+        customExpression:
+          assignment.expression === 'custom' ? assignment.custom_expression : null,
         action: assignment.action,
-        customAction: assignment.custom_action,
+        customAction: assignment.action === 'custom' ? assignment.custom_action : null,
         position: assignment.position,
         stateId: assignment.state_id,
       })),

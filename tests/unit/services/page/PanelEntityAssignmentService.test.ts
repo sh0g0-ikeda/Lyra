@@ -15,6 +15,7 @@ const panelId = '11111111-1111-4111-8111-111111111111';
 const pageId = '22222222-2222-4222-8222-222222222222';
 const workId = '33333333-3333-4333-8333-333333333333';
 const entityId = '44444444-4444-4444-8444-444444444444';
+const anotherEntityId = '66666666-6666-4666-8666-666666666666';
 const stateId = '55555555-5555-4555-8555-555555555555';
 
 class FakePanelEntityAssignmentRepository implements PanelEntityAssignmentRepository {
@@ -31,19 +32,19 @@ class FakePanelEntityAssignmentRepository implements PanelEntityAssignmentReposi
   }
 
   public async countEntitiesByIdsAndWorkIdAndUserId(
-    _entityIds: string[],
+    entityIds: string[],
     _workId: string,
     _userId: string,
   ): Promise<number> {
-    return this.matchedEntityCount;
+    return entityIds.length === 0 ? 0 : this.matchedEntityCount;
   }
 
   public async countEntityStatePairsByWorkIdAndUserId(
-    _pairs: PanelEntityStateReference[],
+    pairs: PanelEntityStateReference[],
     _workId: string,
     _userId: string,
   ): Promise<number> {
-    return this.matchedStatePairCount;
+    return pairs.length === 0 ? 0 : this.matchedStatePairCount;
   }
 
   public async updatePanelEntityAssignments(
@@ -57,7 +58,7 @@ class FakePanelEntityAssignmentRepository implements PanelEntityAssignmentReposi
 }
 
 describe('PanelEntityAssignmentService', () => {
-  it('Panel所有者の場合にエンティティ割り当てを保存できる', async () => {
+  it('Panelが存在する場合にエンティティ割当を保存できる', async () => {
     const repository = new FakePanelEntityAssignmentRepository();
     const service = new PanelEntityAssignmentService(repository);
 
@@ -79,7 +80,7 @@ describe('PanelEntityAssignmentService', () => {
     ).rejects.toBeInstanceOf(NotFoundError);
   });
 
-  it('Entityが同じworkに属さない場合にVALIDATION_ERRORになる', async () => {
+  it('Entityが別workに属する場合にVALIDATION_ERRORになる', async () => {
     const repository = new FakePanelEntityAssignmentRepository();
     repository.matchedEntityCount = 0;
     const service = new PanelEntityAssignmentService(repository);
@@ -97,6 +98,78 @@ describe('PanelEntityAssignmentService', () => {
     await expect(
       service.replacePanelEntityAssignments(userId, panelId, [buildAssignment()]),
     ).rejects.toBeInstanceOf(ValidationError);
+  });
+
+  it('同じentityIdを重複割当するとVALIDATION_ERRORになる', async () => {
+    const repository = new FakePanelEntityAssignmentRepository();
+    repository.matchedEntityCount = 2;
+    const service = new PanelEntityAssignmentService(repository);
+
+    await expect(
+      service.replacePanelEntityAssignments(userId, panelId, [
+        buildAssignment(),
+        buildAssignment({
+          role: 'secondary',
+          entityId,
+          expression: 'calm',
+          action: 'running',
+          position: 'right',
+          stateId: null,
+        }),
+      ]),
+    ).rejects.toBeInstanceOf(ValidationError);
+
+    expect(repository.savedAssignments).toBeNull();
+  });
+
+  it('custom以外の表情と動作ではcustom値を保存しない', async () => {
+    const repository = new FakePanelEntityAssignmentRepository();
+    const service = new PanelEntityAssignmentService(repository);
+
+    const assignments = await service.replacePanelEntityAssignments(userId, panelId, [
+      buildAssignment({
+        expression: 'calm',
+        customExpression: 'stale custom expression',
+        action: 'running',
+        customAction: 'stale custom action',
+      }),
+    ]);
+
+    expect(repository.savedAssignments?.[0]).toMatchObject({
+      entityId,
+      expression: 'calm',
+      customExpression: null,
+      action: 'running',
+      customAction: null,
+    });
+    expect(assignments[0]).toMatchObject({
+      entityId,
+      expression: 'calm',
+      customExpression: null,
+      action: 'running',
+      customAction: null,
+    });
+  });
+
+  it('複数entityを保存する場合は件数分の所属確認を通す', async () => {
+    const repository = new FakePanelEntityAssignmentRepository();
+    repository.matchedEntityCount = 2;
+    const service = new PanelEntityAssignmentService(repository);
+
+    const assignments = await service.replacePanelEntityAssignments(userId, panelId, [
+      buildAssignment(),
+      buildAssignment({
+        entityId: anotherEntityId,
+        role: 'secondary',
+        expression: 'sad',
+        action: 'defending',
+        position: 'left',
+        stateId: null,
+      }),
+    ]);
+
+    expect(assignments).toHaveLength(2);
+    expect(repository.savedAssignments).toHaveLength(2);
   });
 });
 
