@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { db } from './lib/db.js';
 import { createAuthMiddleware } from './middleware/auth.js';
 import { errorHandler } from './middleware/errorHandler.js';
+import { PostgresCompositionGalleryRepository } from './repositories/CompositionGalleryRepository.js';
 import { PostgresCreditRepository } from './repositories/CreditRepository.js';
 import { PostgresEntityRepository } from './repositories/EntityRepository.js';
 import { PostgresSceneRepository } from './repositories/SceneRepository.js';
@@ -9,11 +10,16 @@ import { PostgresStoryRepository } from './repositories/StoryRepository.js';
 import { PostgresUserRepository } from './repositories/UserRepository.js';
 import { PostgresWorkRepository } from './repositories/WorkRepository.js';
 import { createBillingRoutes } from './routes/billing.js';
+import { createCompositionRoutes } from './routes/compositions.js';
 import { createEntityRoutes } from './routes/entities.js';
 import { createHealthRoutes } from './routes/health.js';
 import { createSceneRoutes } from './routes/scenes.js';
 import { createStoryRoutes } from './routes/story.js';
 import { UserProvisioningService, type UserProvisioningPort } from './services/auth/UserProvisioningService.js';
+import {
+  CompositionGalleryService,
+  type CompositionGalleryServicePort,
+} from './services/composition/CompositionGalleryService.js';
 import { CreditService, type CreditServicePort } from './services/credit/CreditService.js';
 import { EntityService, type EntityServicePort } from './services/entity/EntityService.js';
 import { SceneService, type SceneServicePort } from './services/scene/SceneService.js';
@@ -21,6 +27,7 @@ import { StoryService, type StoryServicePort } from './services/story/StoryServi
 import type { AppEnv } from './types/app.js';
 
 export interface AppDependencies {
+  compositionGalleryService?: CompositionGalleryServicePort;
   creditService?: CreditServicePort;
   entityService?: EntityServicePort;
   sceneService?: SceneServicePort;
@@ -43,6 +50,13 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
     createBillingRoutes({
       authMiddleware,
       creditService: resolvedDependencies.creditService,
+    }),
+  );
+  app.route(
+    '/api',
+    createCompositionRoutes({
+      authMiddleware,
+      compositionGalleryService: resolvedDependencies.compositionGalleryService,
     }),
   );
   app.route(
@@ -73,6 +87,9 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
 function resolveDependencies(dependencies: AppDependencies): Required<Omit<AppDependencies, 'jwtSecret'>> {
   const creditService =
     dependencies.creditService ?? new CreditService(new PostgresCreditRepository(db, db));
+  const compositionGalleryService =
+    dependencies.compositionGalleryService ??
+    new CompositionGalleryService(new PostgresCompositionGalleryRepository(db));
   const entityRepository = new PostgresEntityRepository(db);
   const entityService =
     dependencies.entityService ??
@@ -86,6 +103,7 @@ function resolveDependencies(dependencies: AppDependencies): Required<Omit<AppDe
     new UserProvisioningService(new PostgresUserRepository(db), creditService);
 
   return {
+    compositionGalleryService,
     creditService,
     entityService,
     sceneService,
