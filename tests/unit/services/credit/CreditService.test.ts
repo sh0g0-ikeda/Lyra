@@ -135,4 +135,33 @@ describe('CreditService', () => {
       }),
     ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' } satisfies Partial<AppError>);
   });
+  it('返金時はpurchased creditsに加算してrefund台帳を残す', async () => {
+    const repository = new InMemoryCreditRepository();
+    repository.setBalance({
+      userId: 'user-1',
+      monthlyCredits: 5,
+      purchasedCredits: 7,
+      monthlyExpiresAt: null,
+    });
+    const service = new CreditService(repository);
+
+    const result = await service.refundCredits({
+      userId: 'user-1',
+      amount: 10,
+      description: 'enqueue failure refund',
+      jobId: 'job-1',
+    });
+
+    expect(result).toEqual({
+      monthlyCredits: 5,
+      purchasedCredits: 17,
+      totalCredits: 22,
+      monthlyExpiresAt: null,
+    });
+    expect(repository.ledger[0]).toMatchObject({
+      type: 'refund',
+      amount: 10,
+      jobId: 'job-1',
+    });
+  });
 });

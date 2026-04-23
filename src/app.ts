@@ -5,9 +5,11 @@ import { errorHandler } from './middleware/errorHandler.js';
 import { PostgresCompositionGalleryRepository } from './repositories/CompositionGalleryRepository.js';
 import { PostgresCreditRepository } from './repositories/CreditRepository.js';
 import { PostgresEntityRepository } from './repositories/EntityRepository.js';
+import { PostgresGenerationJobRepository } from './repositories/GenerationJobRepository.js';
 import { PostgresPanelEntityAssignmentRepository } from './repositories/PanelEntityAssignmentRepository.js';
 import { PostgresPanelFrameRepository } from './repositories/PanelFrameRepository.js';
 import { PostgresPanelRepository } from './repositories/PanelRepository.js';
+import { PostgresPageRepository } from './repositories/PageRepository.js';
 import { PostgresSceneRepository } from './repositories/SceneRepository.js';
 import { PostgresStoryRepository } from './repositories/StoryRepository.js';
 import { PostgresUserRepository } from './repositories/UserRepository.js';
@@ -16,9 +18,11 @@ import { createBillingRoutes } from './routes/billing.js';
 import { createCompositionRoutes } from './routes/compositions.js';
 import { createEntityRoutes } from './routes/entities.js';
 import { createHealthRoutes } from './routes/health.js';
+import { createJobRoutes } from './routes/jobs.js';
 import { createPanelRoutes } from './routes/panels.js';
 import { createPanelEntityAssignmentRoutes } from './routes/panelEntityAssignments.js';
 import { createPanelFrameRoutes } from './routes/panelFrames.js';
+import { createPageRoutes } from './routes/pages.js';
 import { createSceneRoutes } from './routes/scenes.js';
 import { createStoryRoutes } from './routes/story.js';
 import { UserProvisioningService, type UserProvisioningPort } from './services/auth/UserProvisioningService.js';
@@ -28,6 +32,13 @@ import {
 } from './services/composition/CompositionGalleryService.js';
 import { CreditService, type CreditServicePort } from './services/credit/CreditService.js';
 import { EntityService, type EntityServicePort } from './services/entity/EntityService.js';
+import { JobService, type JobServicePort } from './services/job/JobService.js';
+import { NoopPageGenerationQueue, type PageGenerationQueuePort } from './services/page/PageGenerationQueue.js';
+import {
+  PageGenerationService,
+  type PageGenerationServicePort,
+} from './services/page/PageGenerationService.js';
+import { ModeSelector } from './services/page/ModeSelector.js';
 import {
   PanelService,
   type PanelServicePort,
@@ -45,6 +56,9 @@ export interface AppDependencies {
   compositionGalleryService?: CompositionGalleryServicePort;
   creditService?: CreditServicePort;
   entityService?: EntityServicePort;
+  jobService?: JobServicePort;
+  pageGenerationQueue?: PageGenerationQueuePort;
+  pageGenerationService?: PageGenerationServicePort;
   panelService?: PanelServicePort;
   panelEntityAssignmentService?: PanelEntityAssignmentServicePort;
   panelFrameService?: PanelFrameServicePort;
@@ -82,6 +96,20 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
     createEntityRoutes({
       authMiddleware,
       entityService: resolvedDependencies.entityService,
+    }),
+  );
+  app.route(
+    '/api',
+    createJobRoutes({
+      authMiddleware,
+      jobService: resolvedDependencies.jobService,
+    }),
+  );
+  app.route(
+    '/api',
+    createPageRoutes({
+      authMiddleware,
+      pageGenerationService: resolvedDependencies.pageGenerationService,
     }),
   );
   app.route(
@@ -130,9 +158,22 @@ function resolveDependencies(dependencies: AppDependencies): Required<Omit<AppDe
     dependencies.compositionGalleryService ??
     new CompositionGalleryService(new PostgresCompositionGalleryRepository(db));
   const entityRepository = new PostgresEntityRepository(db);
+  const pageRepository = new PostgresPageRepository(db);
+  const generationJobRepository = new PostgresGenerationJobRepository(db);
+  const pageGenerationQueue = dependencies.pageGenerationQueue ?? new NoopPageGenerationQueue();
   const entityService =
     dependencies.entityService ??
     new EntityService(entityRepository, new PostgresWorkRepository(db));
+  const pageGenerationService =
+    dependencies.pageGenerationService ??
+    new PageGenerationService(
+      pageRepository,
+      generationJobRepository,
+      creditService,
+      pageGenerationQueue,
+      new ModeSelector(),
+    );
+  const jobService = dependencies.jobService ?? new JobService(generationJobRepository);
   const storyService =
     dependencies.storyService ?? new StoryService(new PostgresStoryRepository(db), entityRepository);
   const panelService =
@@ -152,6 +193,9 @@ function resolveDependencies(dependencies: AppDependencies): Required<Omit<AppDe
     compositionGalleryService,
     creditService,
     entityService,
+    jobService,
+    pageGenerationQueue,
+    pageGenerationService,
     panelService,
     panelEntityAssignmentService,
     panelFrameService,

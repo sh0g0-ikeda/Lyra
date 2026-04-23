@@ -10,10 +10,18 @@ export interface ConsumeCreditsParams {
   jobId?: string;
 }
 
+export interface RefundCreditsParams {
+  userId: string;
+  amount: number;
+  description: string;
+  jobId?: string;
+}
+
 export interface CreditServicePort {
   getBalance(userId: string): Promise<CreditBalanceSnapshot>;
   grantSignupBonus(userId: string): Promise<CreditBalanceSnapshot>;
   consumeCredits(params: ConsumeCreditsParams): Promise<CreditBalanceSnapshot>;
+  refundCredits(params: RefundCreditsParams): Promise<CreditBalanceSnapshot>;
 }
 
 export class CreditService implements CreditServicePort {
@@ -62,6 +70,44 @@ export class CreditService implements CreditServicePort {
           userId: params.userId,
           type: 'consume',
           amount: -params.cost,
+          monthlyAfter: savedBalance.monthlyCredits,
+          purchasedAfter: savedBalance.purchasedCredits,
+          description: params.description,
+          jobId: params.jobId,
+        },
+        client,
+      );
+
+      return toSnapshot(savedBalance);
+    });
+  }
+
+  public async refundCredits(params: RefundCreditsParams): Promise<CreditBalanceSnapshot> {
+    if (params.amount <= 0) {
+      throw new ValidationError('Credit refund amount must be greater than zero');
+    }
+
+    return this.creditRepository.transaction(async (client) => {
+      const currentBalance =
+        (await this.creditRepository.getBalanceForUpdate(params.userId, client)) ?? emptyBalance(params.userId);
+
+      const nextBalance: CreditBalance = {
+        ...currentBalance,
+        purchasedCredits: currentBalance.purchasedCredits + params.amount,
+      };
+
+      const savedBalance =
+        currentBalance.monthlyCredits === 0 &&
+        currentBalance.purchasedCredits === 0 &&
+        (await this.creditRepository.getBalance(params.userId, client)) === null
+          ? await this.creditRepository.createBalance(nextBalance, client)
+          : await this.creditRepository.updateBalance(nextBalance, client);
+
+      await this.creditRepository.insertLedger(
+        {
+          userId: params.userId,
+          type: 'refund',
+          amount: params.amount,
           monthlyAfter: savedBalance.monthlyCredits,
           purchasedAfter: savedBalance.purchasedCredits,
           description: params.description,
