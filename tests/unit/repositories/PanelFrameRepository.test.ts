@@ -6,6 +6,7 @@ import { PostgresPanelFrameRepository } from '../../../src/repositories/PanelFra
 class QueryCapturingClient implements DatabaseClient, TransactionRunner {
   public queries: string[] = [];
   public values: readonly unknown[] | undefined;
+  public valuesList: Array<readonly unknown[] | undefined> = [];
 
   public async query<T extends QueryResultRow = QueryResultRow>(
     text: string,
@@ -13,6 +14,7 @@ class QueryCapturingClient implements DatabaseClient, TransactionRunner {
   ): Promise<QueryResult<T>> {
     this.queries.push(text);
     this.values = values;
+    this.valuesList.push(values);
 
     return {
       command: 'SELECT',
@@ -87,6 +89,78 @@ describe('PostgresPanelFrameRepository', () => {
       2,
       1,
       'user-1',
+    ]);
+  });
+
+  it('テンプレート適用時にlayout_configを更新する', async () => {
+    const client = new QueryCapturingClient();
+    const repository = new PostgresPanelFrameRepository(client);
+
+    await repository.replaceFramesByPageIdAndUserId(
+      'page-1',
+      'user-1',
+      [
+        {
+          panelId: null,
+          vertices: [
+            { x: 0, y: 0 },
+            { x: 1, y: 0 },
+            { x: 1, y: 1 },
+            { x: 0, y: 1 },
+          ],
+          borderStyle: 'solid',
+          borderWidth: 3,
+          borderColor: '#000000',
+          zIndex: 1,
+          readingOrder: 1,
+        },
+      ],
+      {
+        type: 'template',
+        templateId: 'splash_1',
+        panelCount: 1,
+        frameDefinitions: [
+          {
+            panelId: null,
+            vertices: [
+              { x: 0, y: 0 },
+              { x: 1, y: 0 },
+              { x: 1, y: 1 },
+              { x: 0, y: 1 },
+            ],
+            borderStyle: 'solid',
+            borderWidth: 3,
+            borderColor: '#000000',
+            zIndex: 1,
+            readingOrder: 1,
+          },
+        ],
+      },
+    );
+
+    expect(client.queries[2]).toContain('UPDATE pages');
+    expect(client.queries[2]).toContain('layout_config');
+    expect(client.queries[2]).toContain('works.user_id = $2');
+    expect(client.valuesList[2]).toEqual([
+      'page-1',
+      'user-1',
+      'splash_1',
+      1,
+      JSON.stringify([
+        {
+          vertices: [
+            { x: 0, y: 0 },
+            { x: 1, y: 0 },
+            { x: 1, y: 1 },
+            { x: 0, y: 1 },
+          ],
+          border_style: 'solid',
+          border_width: 3,
+          border_color: '#000000',
+          z_index: 1,
+          reading_order: 1,
+        },
+      ]),
     ]);
   });
 });

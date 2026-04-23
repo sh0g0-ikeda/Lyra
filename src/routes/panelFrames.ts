@@ -1,7 +1,8 @@
 import { Hono, type Context, type MiddlewareHandler } from 'hono';
 import { ValidationError } from '../domain/errors/index.js';
-import type { PanelFrame } from '../domain/types/panelFrame.js';
+import type { PanelFrame, PanelFrameTemplateApplication } from '../domain/types/panelFrame.js';
 import {
+  applyPanelFrameTemplateBodySchema,
   panelFrameUuidParamSchema,
   replacePanelFramesBodySchema,
 } from '../lib/validators/panelFrame.schema.js';
@@ -24,6 +25,24 @@ export function createPanelFrameRoutes(dependencies: PanelFrameRouteDependencies
     const frames = await dependencies.panelFrameService.listPageFrames(user.id, pageId);
 
     return c.json({ frames: frames.map(toPanelFrameResponse) });
+  });
+
+  app.post('/pages/:id/frames/apply-template', async (c) => {
+    const user = c.get('user');
+    const pageId = parseUuidParam(c, 'id');
+    const body = applyPanelFrameTemplateBodySchema.safeParse(await readJsonBody(c));
+
+    if (!body.success) {
+      throw new ValidationError(body.error.message);
+    }
+
+    const application = await dependencies.panelFrameService.applyTemplate(
+      user.id,
+      pageId,
+      body.data.template_id,
+    );
+
+    return c.json(toPanelFrameTemplateApplicationResponse(application));
   });
 
   app.put('/pages/:id/frames', async (c) => {
@@ -84,5 +103,15 @@ function toPanelFrameResponse(frame: PanelFrame): Record<string, unknown> {
     border_color: frame.borderColor,
     z_index: frame.zIndex,
     reading_order: frame.readingOrder,
+  };
+}
+
+function toPanelFrameTemplateApplicationResponse(
+  application: PanelFrameTemplateApplication,
+): Record<string, unknown> {
+  return {
+    template_id: application.templateId,
+    panel_count: application.panelCount,
+    frames: application.frames.map(toPanelFrameResponse),
   };
 }

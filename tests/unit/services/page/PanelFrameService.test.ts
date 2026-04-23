@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { NotFoundError, ValidationError } from '../../../../src/domain/errors/index.js';
-import type { PanelFrame, UpsertPanelFrameInput } from '../../../../src/domain/types/panelFrame.js';
+import type {
+  PageLayoutTemplateUpdate,
+  PanelFrame,
+  UpsertPanelFrameInput,
+} from '../../../../src/domain/types/panelFrame.js';
 import type {
   PageFrameContext,
   PanelFrameRepository,
@@ -17,6 +21,7 @@ class FakePanelFrameRepository implements PanelFrameRepository {
   public pageContext: PageFrameContext | null = { pageId, workId };
   public ownedPanelIds = [panelId];
   public savedFrames: UpsertPanelFrameInput[] | null = null;
+  public savedLayoutUpdate: PageLayoutTemplateUpdate | null = null;
 
   public async findPageContextByIdAndUserId(
     requestedPageId: string,
@@ -44,8 +49,10 @@ class FakePanelFrameRepository implements PanelFrameRepository {
     requestedPageId: string,
     _userId: string,
     frames: UpsertPanelFrameInput[],
+    layoutUpdate?: PageLayoutTemplateUpdate,
   ): Promise<PanelFrame[]> {
     this.savedFrames = frames;
+    this.savedLayoutUpdate = layoutUpdate ?? null;
     return frames.map((input) => buildPanelFrame({ pageId: requestedPageId, panelId: input.panelId }));
   }
 }
@@ -77,6 +84,29 @@ describe('PanelFrameService', () => {
     await expect(service.replacePageFrames(userId, pageId, [frame])).rejects.toBeInstanceOf(
       ValidationError,
     );
+  });
+
+  it('テンプレートを適用してlayout_config更新情報を保存できる', async () => {
+    const repository = new FakePanelFrameRepository();
+    const service = new PanelFrameService(repository);
+
+    const result = await service.applyTemplate(userId, pageId, 'standard_4');
+
+    expect(result).toMatchObject({
+      templateId: 'standard_4',
+      panelCount: 4,
+    });
+    expect(repository.savedFrames).toHaveLength(4);
+    expect(repository.savedFrames?.[0]).toMatchObject({
+      panelId: null,
+      readingOrder: 1,
+    });
+    expect(repository.savedLayoutUpdate).toMatchObject({
+      type: 'template',
+      templateId: 'standard_4',
+      panelCount: 4,
+    });
+    expect(repository.savedLayoutUpdate?.frameDefinitions).toHaveLength(4);
   });
 });
 

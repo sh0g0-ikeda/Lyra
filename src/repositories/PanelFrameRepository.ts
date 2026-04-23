@@ -1,5 +1,6 @@
 import type { QueryResultRow } from 'pg';
 import type {
+  PageLayoutTemplateUpdate,
   PanelFrame,
   PanelFrameBorderStyle,
   PanelFrameVertex,
@@ -27,6 +28,7 @@ export interface PanelFrameRepository {
     pageId: string,
     userId: string,
     frames: UpsertPanelFrameInput[],
+    layoutUpdate?: PageLayoutTemplateUpdate,
   ): Promise<PanelFrame[]>;
 }
 
@@ -134,6 +136,7 @@ export class PostgresPanelFrameRepository implements PanelFrameRepository {
     pageId: string,
     userId: string,
     frames: UpsertPanelFrameInput[],
+    layoutUpdate?: PageLayoutTemplateUpdate,
   ): Promise<PanelFrame[]> {
     return this.client.transaction(async (transactionClient) => {
       await transactionClient.query(
@@ -214,9 +217,47 @@ export class PostgresPanelFrameRepository implements PanelFrameRepository {
         savedFrames.push(mapPanelFrameRow(savedFrame));
       }
 
+      if (layoutUpdate !== undefined) {
+        await updatePageTemplateLayoutConfig(transactionClient, pageId, userId, layoutUpdate);
+      }
+
       return savedFrames.sort((left, right) => left.readingOrder - right.readingOrder);
     });
   }
+}
+
+async function updatePageTemplateLayoutConfig(
+  client: DatabaseClient,
+  pageId: string,
+  userId: string,
+  layoutUpdate: PageLayoutTemplateUpdate,
+): Promise<void> {
+  await client.query(
+    `
+    UPDATE pages
+    SET layout_config = COALESCE(pages.layout_config, '{}'::jsonb)
+        || jsonb_build_object(
+          'type', 'template',
+          'template_id', $3,
+          'panel_count', $4,
+          'frame_definitions', $5::jsonb
+        ),
+        updated_at = NOW()
+    FROM episodes
+    INNER JOIN chapters ON chapters.id = episodes.chapter_id
+    INNER JOIN works ON works.id = chapters.work_id
+    WHERE pages.id = $1
+      AND pages.episode_id = episodes.id
+      AND works.user_id = $2
+    `,
+    [
+      pageId,
+      userId,
+      layoutUpdate.templateId,
+      layoutUpdate.panelCount,
+      JSON.stringify(toLayoutFrameDefinitions(layoutUpdate.frameDefinitions)),
+    ],
+  );
 }
 
 function mapPanelFrameRow(row: PanelFrameRow): PanelFrame {
@@ -231,6 +272,25 @@ function mapPanelFrameRow(row: PanelFrameRow): PanelFrame {
     zIndex: row.z_index,
     readingOrder: row.reading_order,
   };
+}
+
+function toLayoutFrameDefinitions(frames: UpsertPanelFrameInput[]): Array<Record<string, unknown>> {
+  return frames.map((frame) => {
+    const definition: Record<string, unknown> = {
+      vertices: frame.vertices,
+      border_style: frame.borderStyle,
+      border_width: frame.borderWidth,
+      border_color: frame.borderColor,
+      z_index: frame.zIndex,
+      reading_order: frame.readingOrder,
+    };
+
+    if (frame.panelId !== null) {
+      definition.panel_id = frame.panelId;
+    }
+
+    return definition;
+  });
 }
 
 function toVertices(value: unknown): PanelFrameVertex[] {
