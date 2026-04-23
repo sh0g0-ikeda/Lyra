@@ -38,4 +38,22 @@ export const replacePanelEntityAssignmentsBodySchema = z
   .object({
     entities: z.array(panelEntityAssignmentSchema).max(20),
   })
-  .strict();
+  .strict()
+  .superRefine((body, context) => {
+    // A panel should contain at most one assignment for each entity.
+    const entityIndexes = new Map<string, number>();
+
+    body.entities.forEach((assignment, index) => {
+      const firstIndex = entityIndexes.get(assignment.entity_id);
+      if (firstIndex !== undefined) {
+        context.addIssue({
+          code: 'custom',
+          message: 'entity_id must be unique within entities',
+          path: ['entities', index, 'entity_id'],
+        });
+        return;
+      }
+
+      entityIndexes.set(assignment.entity_id, index);
+    });
+  });
