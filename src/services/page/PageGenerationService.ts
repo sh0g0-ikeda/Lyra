@@ -70,6 +70,8 @@ export class PageGenerationService implements PageGenerationServicePort {
           generation_mode: selection.mode,
           quality: selection.quality,
           requires_planner: selection.requiresPlanner,
+          previous_page_status: page.status,
+          previous_generation_mode: page.generationMode,
         },
       });
       jobId = job.id;
@@ -92,6 +94,8 @@ export class PageGenerationService implements PageGenerationServicePort {
         quality: selection.quality,
         creditCost: selection.creditCost,
         requiresPlanner: selection.requiresPlanner,
+        previousPageStatus: page.status,
+        previousGenerationMode: page.generationMode,
       });
 
       if (enqueueResult.messageId !== null) {

@@ -1,3 +1,5 @@
+import type { PageStatus } from './page.js';
+
 export type PageGenerationMode = 'standard' | 'thinking';
 export type PageGenerationRequestKind = 'initial' | 'regenerate';
 export type PageGenerationQuality = 'medium' | 'high';
@@ -24,4 +26,16 @@ export interface PageGenerationQueuePayload {
   quality: PageGenerationQuality;
   creditCost: number;
   requiresPlanner: boolean;
+  previousPageStatus: PageStatus;
+  previousGenerationMode: PageGenerationMode | null;
+}
+
+export interface PersistedPageGenerationJobParams {
+  page_id: string;
+  request_kind: PageGenerationRequestKind;
+  generation_mode: PageGenerationMode;
+  quality: PageGenerationQuality;
+  requires_planner: boolean;
+  previous_page_status: PageStatus;
+  previous_generation_mode: PageGenerationMode | null;
 }
