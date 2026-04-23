@@ -7,6 +7,7 @@ import { PostgresCreditRepository } from './repositories/CreditRepository.js';
 import { PostgresEntityRepository } from './repositories/EntityRepository.js';
 import { PostgresPanelEntityAssignmentRepository } from './repositories/PanelEntityAssignmentRepository.js';
 import { PostgresPanelFrameRepository } from './repositories/PanelFrameRepository.js';
+import { PostgresPanelRepository } from './repositories/PanelRepository.js';
 import { PostgresSceneRepository } from './repositories/SceneRepository.js';
 import { PostgresStoryRepository } from './repositories/StoryRepository.js';
 import { PostgresUserRepository } from './repositories/UserRepository.js';
@@ -15,6 +16,7 @@ import { createBillingRoutes } from './routes/billing.js';
 import { createCompositionRoutes } from './routes/compositions.js';
 import { createEntityRoutes } from './routes/entities.js';
 import { createHealthRoutes } from './routes/health.js';
+import { createPanelRoutes } from './routes/panels.js';
 import { createPanelEntityAssignmentRoutes } from './routes/panelEntityAssignments.js';
 import { createPanelFrameRoutes } from './routes/panelFrames.js';
 import { createSceneRoutes } from './routes/scenes.js';
@@ -26,6 +28,10 @@ import {
 } from './services/composition/CompositionGalleryService.js';
 import { CreditService, type CreditServicePort } from './services/credit/CreditService.js';
 import { EntityService, type EntityServicePort } from './services/entity/EntityService.js';
+import {
+  PanelService,
+  type PanelServicePort,
+} from './services/page/PanelService.js';
 import {
   PanelEntityAssignmentService,
   type PanelEntityAssignmentServicePort,
@@ -39,6 +45,7 @@ export interface AppDependencies {
   compositionGalleryService?: CompositionGalleryServicePort;
   creditService?: CreditServicePort;
   entityService?: EntityServicePort;
+  panelService?: PanelServicePort;
   panelEntityAssignmentService?: PanelEntityAssignmentServicePort;
   panelFrameService?: PanelFrameServicePort;
   sceneService?: SceneServicePort;
@@ -86,6 +93,13 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
   );
   app.route(
     '/api',
+    createPanelRoutes({
+      authMiddleware,
+      panelService: resolvedDependencies.panelService,
+    }),
+  );
+  app.route(
+    '/api',
     createPanelEntityAssignmentRoutes({
       authMiddleware,
       panelEntityAssignmentService: resolvedDependencies.panelEntityAssignmentService,
@@ -121,6 +135,8 @@ function resolveDependencies(dependencies: AppDependencies): Required<Omit<AppDe
     new EntityService(entityRepository, new PostgresWorkRepository(db));
   const storyService =
     dependencies.storyService ?? new StoryService(new PostgresStoryRepository(db), entityRepository);
+  const panelService =
+    dependencies.panelService ?? new PanelService(new PostgresPanelRepository(db), entityRepository);
   const panelEntityAssignmentService =
     dependencies.panelEntityAssignmentService ??
     new PanelEntityAssignmentService(new PostgresPanelEntityAssignmentRepository(db));
@@ -136,6 +152,7 @@ function resolveDependencies(dependencies: AppDependencies): Required<Omit<AppDe
     compositionGalleryService,
     creditService,
     entityService,
+    panelService,
     panelEntityAssignmentService,
     panelFrameService,
     sceneService,
