@@ -29,6 +29,12 @@ export class NotFoundError extends AppError {
   }
 }
 
+export class ConflictError extends AppError {
+  public constructor(message = 'Conflict') {
+    super('CONFLICT', message, 409);
+  }
+}
+
 export class InsufficientCreditsError extends AppError {
   public constructor() {
     super('INSUFFICIENT_CREDITS', 'Credit balance is insufficient', 402);

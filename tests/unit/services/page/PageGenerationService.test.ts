@@ -1,0 +1,360 @@
+import { describe, expect, it } from 'vitest';
+import { ConflictError, NotFoundError, ValidationError } from '../../../../src/domain/errors/index.js';
+import type { CreditBalanceSnapshot } from '../../../../src/domain/types/credit.js';
+import type { GenerationJob } from '../../../../src/domain/types/job.js';
+import type { PageGenerationContext, PageGenerationStateUpdate } from '../../../../src/domain/types/page.js';
+import type { PageGenerationQueuePayload } from '../../../../src/domain/types/pageGeneration.js';
+import type {
+  CreateGenerationJobInput,
+  GenerationJobRepository,
+} from '../../../../src/repositories/GenerationJobRepository.js';
+import type { PageRepository } from '../../../../src/repositories/PageRepository.js';
+import type {
+  ConsumeCreditsParams,
+  CreditServicePort,
+  RefundCreditsParams,
+} from '../../../../src/services/credit/CreditService.js';
+import type {
+  EnqueuePageGenerationResult,
+  PageGenerationQueuePort,
+} from '../../../../src/services/page/PageGenerationQueue.js';
+import { ModeSelector } from '../../../../src/services/page/ModeSelector.js';
+import { PageGenerationService } from '../../../../src/services/page/PageGenerationService.js';
+
+const userId = 'user-1';
+const pageId = '11111111-1111-4111-8111-111111111111';
+
+class FakePageRepository implements PageRepository {
+  public context: PageGenerationContext | null = buildPageContext();
+  public updates: PageGenerationStateUpdate[] = [];
+
+  public async findGenerationContextByIdAndUserId(
+    requestedPageId: string,
+    _userId: string,
+  ): Promise<PageGenerationContext | null> {
+    return this.context === null ? null : { ...this.context, pageId: requestedPageId };
+  }
+
+  public async updateGenerationState(
+    _pageId: string,
+    _userId: string,
+    input: PageGenerationStateUpdate,
+  ): Promise<boolean> {
+    this.updates.push(input);
+    return true;
+  }
+}
+
+class FakeGenerationJobRepository implements GenerationJobRepository {
+  public created: CreateGenerationJobInput | null = null;
+  public attachedMessageId: string | null = null;
+  public failedJobId: string | null = null;
+  public failedMessage: string | null = null;
+
+  public async create(input: CreateGenerationJobInput): Promise<GenerationJob> {
+    this.created = input;
+    return buildJob({
+      generationMode: input.generationMode,
+      creditCost: input.creditCost,
+      params: input.params,
+    });
+  }
+
+  public async findByIdAndUserId(): Promise<GenerationJob | null> {
+    return buildJob();
+  }
+
+  public async attachQueueMessageId(_jobId: string, messageId: string): Promise<boolean> {
+    this.attachedMessageId = messageId;
+    return true;
+  }
+
+  public async markFailed(jobId: string, errorMessage: string): Promise<boolean> {
+    this.failedJobId = jobId;
+    this.failedMessage = errorMessage;
+    return true;
+  }
+}
+
+class FakeCreditService implements CreditServicePort {
+  public consumed: ConsumeCreditsParams[] = [];
+  public refunded: RefundCreditsParams[] = [];
+
+  public async getBalance(): Promise<CreditBalanceSnapshot> {
+    return { monthlyCredits: 0, purchasedCredits: 0, totalCredits: 0, monthlyExpiresAt: null };
+  }
+
+  public async grantSignupBonus(): Promise<CreditBalanceSnapshot> {
+    return this.getBalance();
+  }
+
+  public async consumeCredits(params: ConsumeCreditsParams): Promise<CreditBalanceSnapshot> {
+    this.consumed.push(params);
+    return this.getBalance();
+  }
+
+  public async refundCredits(params: RefundCreditsParams): Promise<CreditBalanceSnapshot> {
+    this.refunded.push(params);
+    return this.getBalance();
+  }
+}
+
+class FakeQueue implements PageGenerationQueuePort {
+  public shouldFail = false;
+  public lastPayload: PageGenerationQueuePayload | null = null;
+
+  public async enqueue(payload: PageGenerationQueuePayload): Promise<EnqueuePageGenerationResult> {
+    this.lastPayload = payload;
+    if (this.shouldFail) {
+      throw new Error('queue down');
+    }
+
+    return { messageId: 'message-1' };
+  }
+}
+
+describe('PageGenerationService', () => {
+  it('initial standard は10crでenqueueする', async () => {
+    const pageRepository = new FakePageRepository();
+    const jobRepository = new FakeGenerationJobRepository();
+    const creditService = new FakeCreditService();
+    const queue = new FakeQueue();
+    const service = new PageGenerationService(
+      pageRepository,
+      jobRepository,
+      creditService,
+      queue,
+      new ModeSelector(),
+    );
+
+    const result = await service.enqueuePageGeneration(userId, pageId);
+
+    expect(result).toEqual({ jobId: '44444444-4444-4444-8444-444444444444' });
+    expect(creditService.consumed[0]).toMatchObject({
+      cost: 10,
+      description: 'Page generation (standard)',
+    });
+    expect(jobRepository.created?.params).toMatchObject({
+      page_id: pageId,
+      request_kind: 'initial',
+      generation_mode: 'standard',
+      quality: 'medium',
+      requires_planner: false,
+    });
+    expect(pageRepository.updates[0]).toEqual({
+      status: 'generating',
+      generationMode: 'standard',
+    });
+    expect(queue.lastPayload).toMatchObject({
+      pageId,
+      requestKind: 'initial',
+      generationMode: 'standard',
+      quality: 'medium',
+      creditCost: 10,
+      requiresPlanner: false,
+    });
+  });
+
+  it('initial thinking は14crになる', async () => {
+    const pageRepository = new FakePageRepository();
+    pageRepository.context = buildPageContext({
+      panels: [
+        buildPanelContext('entity-1'),
+        buildPanelContext('entity-2'),
+        buildPanelContext('entity-3'),
+        buildPanelContext('entity-4'),
+        buildPanelContext('entity-5'),
+      ],
+    });
+    const creditService = new FakeCreditService();
+    const queue = new FakeQueue();
+    const service = new PageGenerationService(
+      pageRepository,
+      new FakeGenerationJobRepository(),
+      creditService,
+      queue,
+      new ModeSelector(),
+    );
+
+    await service.enqueuePageGeneration(userId, pageId);
+
+    expect(creditService.consumed[0]?.cost).toBe(14);
+    expect(queue.lastPayload?.generationMode).toBe('thinking');
+  });
+
+  it('generated_image があるページは22crのregenerateになる', async () => {
+    const pageRepository = new FakePageRepository();
+    pageRepository.context = buildPageContext({
+      generatedImage: {
+        s3Key: 'session/user/page.png',
+        cdnUrl: 'https://img.lyra.app/page.png',
+        generationMode: 'standard',
+        generatedAt: '2026-04-24T00:00:00.000Z',
+      },
+      status: 'generated',
+    });
+    const creditService = new FakeCreditService();
+    const queue = new FakeQueue();
+    const service = new PageGenerationService(
+      pageRepository,
+      new FakeGenerationJobRepository(),
+      creditService,
+      queue,
+      new ModeSelector(),
+    );
+
+    await service.enqueuePageGeneration(userId, pageId);
+
+    expect(creditService.consumed[0]?.cost).toBe(22);
+    expect(queue.lastPayload).toMatchObject({
+      requestKind: 'regenerate',
+      quality: 'high',
+      requiresPlanner: true,
+    });
+  });
+
+  it('panelが無い場合はVALIDATION_ERRORになる', async () => {
+    const pageRepository = new FakePageRepository();
+    pageRepository.context = buildPageContext({ panels: [] });
+    const service = new PageGenerationService(
+      pageRepository,
+      new FakeGenerationJobRepository(),
+      new FakeCreditService(),
+      new FakeQueue(),
+      new ModeSelector(),
+    );
+
+    await expect(service.enqueuePageGeneration(userId, pageId)).rejects.toBeInstanceOf(ValidationError);
+  });
+
+  it('confirmed pageはCONFLICTになる', async () => {
+    const pageRepository = new FakePageRepository();
+    pageRepository.context = buildPageContext({ status: 'confirmed' });
+    const service = new PageGenerationService(
+      pageRepository,
+      new FakeGenerationJobRepository(),
+      new FakeCreditService(),
+      new FakeQueue(),
+      new ModeSelector(),
+    );
+
+    await expect(service.enqueuePageGeneration(userId, pageId)).rejects.toBeInstanceOf(ConflictError);
+  });
+
+  it('generating pageはCONFLICTになる', async () => {
+    const pageRepository = new FakePageRepository();
+    pageRepository.context = buildPageContext({ status: 'generating' });
+    const service = new PageGenerationService(
+      pageRepository,
+      new FakeGenerationJobRepository(),
+      new FakeCreditService(),
+      new FakeQueue(),
+      new ModeSelector(),
+    );
+
+    await expect(service.enqueuePageGeneration(userId, pageId)).rejects.toBeInstanceOf(ConflictError);
+  });
+
+  it('pageが存在しない場合はNOT_FOUNDになる', async () => {
+    const pageRepository = new FakePageRepository();
+    pageRepository.context = null;
+    const service = new PageGenerationService(
+      pageRepository,
+      new FakeGenerationJobRepository(),
+      new FakeCreditService(),
+      new FakeQueue(),
+      new ModeSelector(),
+    );
+
+    await expect(service.enqueuePageGeneration(userId, pageId)).rejects.toBeInstanceOf(NotFoundError);
+  });
+
+  it('queue失敗時はrefundと状態復元を行う', async () => {
+    const pageRepository = new FakePageRepository();
+    const jobRepository = new FakeGenerationJobRepository();
+    const creditService = new FakeCreditService();
+    const queue = new FakeQueue();
+    queue.shouldFail = true;
+    const service = new PageGenerationService(
+      pageRepository,
+      jobRepository,
+      creditService,
+      queue,
+      new ModeSelector(),
+    );
+
+    await expect(service.enqueuePageGeneration(userId, pageId)).rejects.toMatchObject({
+      code: 'CONFIGURATION_ERROR',
+    });
+
+    expect(jobRepository.failedJobId).toBe('44444444-4444-4444-8444-444444444444');
+    expect(pageRepository.updates).toEqual([
+      { status: 'generating', generationMode: 'standard' },
+      { status: 'designing', generationMode: null },
+    ]);
+    expect(creditService.refunded[0]).toMatchObject({
+      amount: 10,
+      description: 'Refund for failed page generation enqueue',
+      jobId: '44444444-4444-4444-8444-444444444444',
+    });
+  });
+});
+
+function buildPageContext(overrides: Partial<PageGenerationContext> = {}): PageGenerationContext {
+  return {
+    pageId,
+    workId: 'work-1',
+    layoutConfig: {},
+    generatedImage: null,
+    generationMode: null,
+    status: 'designing',
+    panels: [buildPanelContext('entity-1')],
+    ...overrides,
+  };
+}
+
+function buildPanelContext(entityId: string): PageGenerationContext['panels'][number] {
+  return {
+    panelId: `panel-${entityId}`,
+    entities: [
+      {
+        entityId,
+        role: 'primary',
+        expression: 'calm',
+        customExpression: null,
+        action: 'standing_firm',
+        customAction: null,
+        position: 'center',
+        stateId: null,
+      },
+    ],
+  };
+}
+
+function buildJob(overrides: Partial<GenerationJob> = {}): GenerationJob {
+  return {
+    id: '44444444-4444-4444-8444-444444444444',
+    userId,
+    jobType: 'page_generate',
+    status: 'queued',
+    generationMode: 'standard',
+    creditCost: 10,
+    params: {
+      page_id: pageId,
+      request_kind: 'initial',
+      generation_mode: 'standard',
+      quality: 'medium',
+      requires_planner: false,
+    },
+    result: null,
+    sqsMessageId: null,
+    openaiRequestId: null,
+    errorMessage: null,
+    retryCount: 0,
+    createdAt: new Date('2026-04-24T00:00:00.000Z'),
+    startedAt: null,
+    completedAt: null,
+    expiresAt: new Date('2026-05-01T00:00:00.000Z'),
+    ...overrides,
+  };
+}

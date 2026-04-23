@@ -4,7 +4,11 @@ import { createApp } from '../../../src/app.js';
 import type { CreditBalanceSnapshot } from '../../../src/domain/types/credit.js';
 import type { Panel } from '../../../src/domain/types/panel.js';
 import type { AuthenticatedUser, SupabaseJwtClaims } from '../../../src/domain/types/user.js';
-import type { ConsumeCreditsParams, CreditServicePort } from '../../../src/services/credit/CreditService.js';
+import type {
+  ConsumeCreditsParams,
+  CreditServicePort,
+  RefundCreditsParams,
+} from '../../../src/services/credit/CreditService.js';
 import type {
   CreatePanelRequest,
   PanelServicePort,
@@ -50,6 +54,10 @@ class FakeCreditService implements CreditServicePort {
   }
 
   public async consumeCredits(_params: ConsumeCreditsParams): Promise<CreditBalanceSnapshot> {
+    return this.getBalance(_params.userId);
+  }
+
+  public async refundCredits(_params: RefundCreditsParams): Promise<CreditBalanceSnapshot> {
     return this.getBalance(_params.userId);
   }
 }

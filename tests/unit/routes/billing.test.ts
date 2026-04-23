@@ -7,7 +7,11 @@ import type {
   ProvisionedUser,
   UserProvisioningPort,
 } from '../../../src/services/auth/UserProvisioningService.js';
-import type { ConsumeCreditsParams, CreditServicePort } from '../../../src/services/credit/CreditService.js';
+import type {
+  ConsumeCreditsParams,
+  CreditServicePort,
+  RefundCreditsParams,
+} from '../../../src/services/credit/CreditService.js';
 
 const jwtSecret = 'unit-test-secret';
 const testUser: AuthenticatedUser = {
@@ -46,6 +50,10 @@ class FakeCreditService implements CreditServicePort {
   }
 
   public async consumeCredits(_params: ConsumeCreditsParams): Promise<CreditBalanceSnapshot> {
+    return this.getBalance(_params.userId);
+  }
+
+  public async refundCredits(_params: RefundCreditsParams): Promise<CreditBalanceSnapshot> {
     return this.getBalance(_params.userId);
   }
 }
