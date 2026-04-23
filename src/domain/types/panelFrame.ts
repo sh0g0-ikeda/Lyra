@@ -45,6 +45,14 @@ export interface PageLayoutTemplateUpdate {
   frameDefinitions: UpsertPanelFrameInput[];
 }
 
+export interface PageLayoutCustomUpdate {
+  type: 'custom';
+  panelCount: number;
+  frameDefinitions: UpsertPanelFrameInput[];
+}
+
+export type PageLayoutFrameUpdate = PageLayoutTemplateUpdate | PageLayoutCustomUpdate;
+
 export interface PanelFrameTemplateApplication {
   templateId: PanelFrameTemplateId;
   panelCount: number;

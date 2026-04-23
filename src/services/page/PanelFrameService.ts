@@ -52,7 +52,11 @@ export class PanelFrameService implements PanelFrameServicePort {
     await this.ensurePageOwnedByUser(userId, pageId);
     await this.ensurePanelsBelongToPage(userId, pageId, frames);
 
-    return this.panelFrameRepository.replaceFramesByPageIdAndUserId(pageId, userId, frames);
+    return this.panelFrameRepository.replaceFramesByPageIdAndUserId(pageId, userId, frames, {
+      type: 'custom',
+      panelCount: frames.length,
+      frameDefinitions: frames,
+    });
   }
 
   public async applyTemplate(

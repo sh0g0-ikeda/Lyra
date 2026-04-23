@@ -139,12 +139,13 @@ describe('PostgresPanelFrameRepository', () => {
     );
 
     expect(client.queries[2]).toContain('UPDATE pages');
+    expect(client.queries[2]).toContain("COALESCE(pages.layout_config, '{}'::jsonb) - 'template_id'");
     expect(client.queries[2]).toContain('layout_config');
     expect(client.queries[2]).toContain('works.user_id = $2');
     expect(client.valuesList[2]).toEqual([
       'page-1',
       'user-1',
-      'splash_1',
+      'template',
       1,
       JSON.stringify([
         {
@@ -161,6 +162,73 @@ describe('PostgresPanelFrameRepository', () => {
           reading_order: 1,
         },
       ]),
+      'splash_1',
+    ]);
+  });
+
+  it('手動保存時にcustomレイアウトとしてtemplate_idを残さない', async () => {
+    const client = new QueryCapturingClient();
+    const repository = new PostgresPanelFrameRepository(client);
+
+    await repository.replaceFramesByPageIdAndUserId(
+      'page-1',
+      'user-1',
+      [
+        {
+          panelId: 'panel-1',
+          vertices: [
+            { x: 0, y: 0 },
+            { x: 1, y: 0 },
+            { x: 1, y: 1 },
+            { x: 0, y: 1 },
+          ],
+          borderStyle: 'solid',
+          borderWidth: 3,
+          borderColor: '#000000',
+          zIndex: 1,
+          readingOrder: 1,
+        },
+      ],
+      {
+        type: 'custom',
+        panelCount: 1,
+        frameDefinitions: [
+          {
+            panelId: 'panel-1',
+            vertices: [
+              { x: 0, y: 0 },
+              { x: 1, y: 0 },
+              { x: 1, y: 1 },
+              { x: 0, y: 1 },
+            ],
+            borderStyle: 'solid',
+            borderWidth: 3,
+            borderColor: '#000000',
+            zIndex: 1,
+            readingOrder: 1,
+          },
+        ],
+      },
+    );
+
+    expect(client.queries[2]).toContain("COALESCE(pages.layout_config, '{}'::jsonb) - 'template_id'");
+    expect(client.valuesList[2]?.slice(0, 4)).toEqual(['page-1', 'user-1', 'custom', 1]);
+    expect(client.valuesList[2]?.[5]).toBeNull();
+    expect(JSON.parse(String(client.valuesList[2]?.[4]))).toEqual([
+      {
+        vertices: [
+          { x: 0, y: 0 },
+          { x: 1, y: 0 },
+          { x: 1, y: 1 },
+          { x: 0, y: 1 },
+        ],
+        border_style: 'solid',
+        border_width: 3,
+        border_color: '#000000',
+        z_index: 1,
+        reading_order: 1,
+        panel_id: 'panel-1',
+      },
     ]);
   });
 });
