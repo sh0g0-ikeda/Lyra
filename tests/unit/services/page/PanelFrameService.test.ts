@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { NotFoundError, ValidationError } from '../../../../src/domain/errors/index.js';
 import type {
-  PageLayoutTemplateUpdate,
+  PageLayoutFrameUpdate,
   PanelFrame,
   UpsertPanelFrameInput,
 } from '../../../../src/domain/types/panelFrame.js';
@@ -21,7 +21,7 @@ class FakePanelFrameRepository implements PanelFrameRepository {
   public pageContext: PageFrameContext | null = { pageId, workId };
   public ownedPanelIds = [panelId];
   public savedFrames: UpsertPanelFrameInput[] | null = null;
-  public savedLayoutUpdate: PageLayoutTemplateUpdate | null = null;
+  public savedLayoutUpdate: PageLayoutFrameUpdate | null = null;
 
   public async findPageContextByIdAndUserId(
     requestedPageId: string,
@@ -49,7 +49,7 @@ class FakePanelFrameRepository implements PanelFrameRepository {
     requestedPageId: string,
     _userId: string,
     frames: UpsertPanelFrameInput[],
-    layoutUpdate?: PageLayoutTemplateUpdate,
+    layoutUpdate?: PageLayoutFrameUpdate,
   ): Promise<PanelFrame[]> {
     this.savedFrames = frames;
     this.savedLayoutUpdate = layoutUpdate ?? null;
@@ -65,6 +65,11 @@ describe('PanelFrameService', () => {
     const frames = await service.replacePageFrames(userId, pageId, [frame]);
 
     expect(repository.savedFrames?.[0]).toMatchObject({ panelId });
+    expect(repository.savedLayoutUpdate).toMatchObject({
+      type: 'custom',
+      panelCount: 1,
+      frameDefinitions: [expect.objectContaining({ panelId })],
+    });
     expect(frames[0]?.pageId).toBe(pageId);
   });
 

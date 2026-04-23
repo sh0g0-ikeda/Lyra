@@ -1,6 +1,6 @@
 import type { QueryResultRow } from 'pg';
 import type {
-  PageLayoutTemplateUpdate,
+  PageLayoutFrameUpdate,
   PanelFrame,
   PanelFrameBorderStyle,
   PanelFrameVertex,
@@ -28,7 +28,7 @@ export interface PanelFrameRepository {
     pageId: string,
     userId: string,
     frames: UpsertPanelFrameInput[],
-    layoutUpdate?: PageLayoutTemplateUpdate,
+    layoutUpdate?: PageLayoutFrameUpdate,
   ): Promise<PanelFrame[]>;
 }
 
@@ -136,7 +136,7 @@ export class PostgresPanelFrameRepository implements PanelFrameRepository {
     pageId: string,
     userId: string,
     frames: UpsertPanelFrameInput[],
-    layoutUpdate?: PageLayoutTemplateUpdate,
+    layoutUpdate?: PageLayoutFrameUpdate,
   ): Promise<PanelFrame[]> {
     return this.client.transaction(async (transactionClient) => {
       await transactionClient.query(
@@ -218,7 +218,7 @@ export class PostgresPanelFrameRepository implements PanelFrameRepository {
       }
 
       if (layoutUpdate !== undefined) {
-        await updatePageTemplateLayoutConfig(transactionClient, pageId, userId, layoutUpdate);
+        await updatePageFrameLayoutConfig(transactionClient, pageId, userId, layoutUpdate);
       }
 
       return savedFrames.sort((left, right) => left.readingOrder - right.readingOrder);
@@ -226,22 +226,25 @@ export class PostgresPanelFrameRepository implements PanelFrameRepository {
   }
 }
 
-async function updatePageTemplateLayoutConfig(
+async function updatePageFrameLayoutConfig(
   client: DatabaseClient,
   pageId: string,
   userId: string,
-  layoutUpdate: PageLayoutTemplateUpdate,
+  layoutUpdate: PageLayoutFrameUpdate,
 ): Promise<void> {
   await client.query(
     `
     UPDATE pages
-    SET layout_config = COALESCE(pages.layout_config, '{}'::jsonb)
+    SET layout_config = (COALESCE(pages.layout_config, '{}'::jsonb) - 'template_id')
         || jsonb_build_object(
-          'type', 'template',
-          'template_id', $3,
+          'type', $3,
           'panel_count', $4,
           'frame_definitions', $5::jsonb
-        ),
+        )
+        || CASE
+          WHEN $6::text IS NULL THEN '{}'::jsonb
+          ELSE jsonb_build_object('template_id', $6)
+        END,
         updated_at = NOW()
     FROM episodes
     INNER JOIN chapters ON chapters.id = episodes.chapter_id
@@ -253,9 +256,10 @@ async function updatePageTemplateLayoutConfig(
     [
       pageId,
       userId,
-      layoutUpdate.templateId,
+      layoutUpdate.type,
       layoutUpdate.panelCount,
       JSON.stringify(toLayoutFrameDefinitions(layoutUpdate.frameDefinitions)),
+      layoutUpdate.type === 'template' ? layoutUpdate.templateId : null,
     ],
   );
 }
