@@ -5,6 +5,7 @@ import { errorHandler } from './middleware/errorHandler.js';
 import { PostgresCompositionGalleryRepository } from './repositories/CompositionGalleryRepository.js';
 import { PostgresCreditRepository } from './repositories/CreditRepository.js';
 import { PostgresEntityRepository } from './repositories/EntityRepository.js';
+import { PostgresPanelFrameRepository } from './repositories/PanelFrameRepository.js';
 import { PostgresSceneRepository } from './repositories/SceneRepository.js';
 import { PostgresStoryRepository } from './repositories/StoryRepository.js';
 import { PostgresUserRepository } from './repositories/UserRepository.js';
@@ -13,6 +14,7 @@ import { createBillingRoutes } from './routes/billing.js';
 import { createCompositionRoutes } from './routes/compositions.js';
 import { createEntityRoutes } from './routes/entities.js';
 import { createHealthRoutes } from './routes/health.js';
+import { createPanelFrameRoutes } from './routes/panelFrames.js';
 import { createSceneRoutes } from './routes/scenes.js';
 import { createStoryRoutes } from './routes/story.js';
 import { UserProvisioningService, type UserProvisioningPort } from './services/auth/UserProvisioningService.js';
@@ -22,6 +24,7 @@ import {
 } from './services/composition/CompositionGalleryService.js';
 import { CreditService, type CreditServicePort } from './services/credit/CreditService.js';
 import { EntityService, type EntityServicePort } from './services/entity/EntityService.js';
+import { PanelFrameService, type PanelFrameServicePort } from './services/page/PanelFrameService.js';
 import { SceneService, type SceneServicePort } from './services/scene/SceneService.js';
 import { StoryService, type StoryServicePort } from './services/story/StoryService.js';
 import type { AppEnv } from './types/app.js';
@@ -30,6 +33,7 @@ export interface AppDependencies {
   compositionGalleryService?: CompositionGalleryServicePort;
   creditService?: CreditServicePort;
   entityService?: EntityServicePort;
+  panelFrameService?: PanelFrameServicePort;
   sceneService?: SceneServicePort;
   storyService?: StoryServicePort;
   userProvisioningService?: UserProvisioningPort;
@@ -75,6 +79,13 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
   );
   app.route(
     '/api',
+    createPanelFrameRoutes({
+      authMiddleware,
+      panelFrameService: resolvedDependencies.panelFrameService,
+    }),
+  );
+  app.route(
+    '/api',
     createSceneRoutes({
       authMiddleware,
       sceneService: resolvedDependencies.sceneService,
@@ -96,6 +107,8 @@ function resolveDependencies(dependencies: AppDependencies): Required<Omit<AppDe
     new EntityService(entityRepository, new PostgresWorkRepository(db));
   const storyService =
     dependencies.storyService ?? new StoryService(new PostgresStoryRepository(db), entityRepository);
+  const panelFrameService =
+    dependencies.panelFrameService ?? new PanelFrameService(new PostgresPanelFrameRepository(db));
   const sceneService =
     dependencies.sceneService ?? new SceneService(new PostgresSceneRepository(db), entityRepository);
   const userProvisioningService =
@@ -106,6 +119,7 @@ function resolveDependencies(dependencies: AppDependencies): Required<Omit<AppDe
     compositionGalleryService,
     creditService,
     entityService,
+    panelFrameService,
     sceneService,
     storyService,
     userProvisioningService,
