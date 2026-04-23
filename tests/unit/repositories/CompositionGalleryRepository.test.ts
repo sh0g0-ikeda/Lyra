@@ -7,6 +7,8 @@ class QueryCapturingClient implements DatabaseClient {
   public queries: string[] = [];
   public values: readonly unknown[] | undefined;
 
+  public constructor(private readonly row: Record<string, unknown> = compositionRow()) {}
+
   public async query<T extends QueryResultRow = QueryResultRow>(
     text: string,
     values?: readonly unknown[],
@@ -19,7 +21,7 @@ class QueryCapturingClient implements DatabaseClient {
       rowCount: 1,
       oid: 0,
       fields: [],
-      rows: [compositionRow()] as T[],
+      rows: [this.row] as T[],
     };
   }
 }
@@ -44,6 +46,20 @@ describe('PostgresCompositionGalleryRepository', () => {
       entityCount: 1,
       tags: ['battle', 'action'],
     });
+  });
+
+  it('tagsがNULLの場合に空配列へ正規化する', async () => {
+    const client = new QueryCapturingClient({ ...compositionRow(), tags: null });
+    const repository = new PostgresCompositionGalleryRepository(client);
+
+    const compositions = await repository.findMany({
+      category: null,
+      entityCount: null,
+      tag: null,
+      limit: 50,
+    });
+
+    expect(compositions[0]?.tags).toEqual([]);
   });
 });
 

@@ -69,7 +69,15 @@ function mapCompositionGalleryRow(row: CompositionGalleryRow): CompositionGaller
     compositionPrompt: row.composition_prompt,
     shotType: row.shot_type,
     angle: row.angle,
-    tags: row.tags,
+    tags: toStringArray(row.tags),
     createdAt: row.created_at,
   };
+}
+
+function toStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.filter((item): item is string => typeof item === 'string');
 }
