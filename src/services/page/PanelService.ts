@@ -39,11 +39,9 @@ export class PanelService implements PanelServicePort {
     }
 
     const normalizedInput = normalizeCreateInput(input);
-    await this.ensureDialogueEntitiesBelongToWork(
-      userId,
-      pageContext.workId,
-      normalizedInput.dialogue ?? [],
-    );
+    const dialogue = normalizedInput.dialogue ?? [];
+    ensureDialogueShape(dialogue);
+    await this.ensureDialogueEntitiesBelongToWork(userId, pageContext.workId, dialogue);
 
     const panel = await this.panelRepository.createPanel(pageId, userId, normalizedInput);
     if (panel === null) {
@@ -70,6 +68,7 @@ export class PanelService implements PanelServicePort {
 
     const normalizedInput = normalizeUpdateInput(input);
     if (normalizedInput.dialogue !== undefined) {
+      ensureDialogueShape(normalizedInput.dialogue);
       await this.ensureDialogueEntitiesBelongToWork(
         userId,
         panelContext.workId,
@@ -143,7 +142,7 @@ function normalizeUpdateInput(input: UpdatePanelInput): UpdatePanelInput {
 }
 
 function normalizeComposition(composition: PanelComposition | undefined): PanelComposition {
-  return composition ?? {
+  const normalizedComposition = composition ?? {
     source: 'custom',
     galleryItemId: null,
     compositionPrompt: null,
@@ -151,4 +150,26 @@ function normalizeComposition(composition: PanelComposition | undefined): PanelC
     angle: null,
     customNote: null,
   };
+
+  if (normalizedComposition.source === 'gallery' && normalizedComposition.galleryItemId === null) {
+    throw new ValidationError('galleryItemId is required when composition source is gallery');
+  }
+
+  return {
+    ...normalizedComposition,
+    galleryItemId:
+      normalizedComposition.source === 'gallery' ? normalizedComposition.galleryItemId : null,
+  };
+}
+
+function ensureDialogueShape(dialogue: PanelDialogueLine[]): void {
+  for (const line of dialogue) {
+    if (requiresSpeaker(line.type) && line.entityId === null) {
+      throw new ValidationError('entityId is required for speaker dialogue types');
+    }
+  }
+}
+
+function requiresSpeaker(type: PanelDialogueLine['type']): boolean {
+  return type === 'speech' || type === 'thought' || type === 'shout' || type === 'whisper';
 }

@@ -24,7 +24,6 @@ class FakePanelRepository implements PanelRepository {
   public panelContext: PanelContext | null = { panelId, pageId, workId };
   public savedCreateInput: CreatePanelInput | null = null;
   public savedUpdateInput: UpdatePanelInput | null = null;
-  public deletedPanelId: string | null = null;
 
   public async findPageContextByIdAndUserId(
     requestedPageId: string,
@@ -62,8 +61,7 @@ class FakePanelRepository implements PanelRepository {
     return buildPanel({ id: requestedPanelId, ...input });
   }
 
-  public async deletePanel(requestedPanelId: string, _userId: string): Promise<boolean> {
-    this.deletedPanelId = requestedPanelId;
+  public async deletePanel(_requestedPanelId: string, _userId: string): Promise<boolean> {
     return true;
   }
 }
@@ -117,6 +115,25 @@ describe('PanelService', () => {
     );
   });
 
+  it('speaker必須のdialogueでentityIdがnullの場合にVALIDATION_ERRORになる', async () => {
+    const repository = new FakePanelRepository();
+    const service = new PanelService(repository, new FakeEntityReader());
+
+    await expect(
+      service.createPanel(userId, pageId, {
+        ...buildCreateInput(),
+        dialogue: [
+          {
+            entityId: null,
+            text: 'Take this!',
+            type: 'speech',
+            position: 'top',
+          },
+        ],
+      }),
+    ).rejects.toBeInstanceOf(ValidationError);
+  });
+
   it('Panelが存在しない場合にNOT_FOUNDになる', async () => {
     const repository = new FakePanelRepository();
     repository.panelContext = null;
@@ -150,6 +167,51 @@ describe('PanelService', () => {
       type: 'sfx',
     });
     expect(panel.dialogue[0]?.entityId).toBeNull();
+  });
+
+  it('gallery以外のcompositionではgalleryItemIdを保存しない', async () => {
+    const repository = new FakePanelRepository();
+    const service = new PanelService(repository, new FakeEntityReader());
+
+    const panel = await service.createPanel(userId, pageId, {
+      ...buildCreateInput(),
+      composition: {
+        source: 'custom',
+        galleryItemId: 'stale-gallery-id',
+        compositionPrompt: 'full body',
+        shotType: 'full_body',
+        angle: 'front',
+        customNote: null,
+      },
+    });
+
+    expect(repository.savedCreateInput?.composition).toMatchObject({
+      source: 'custom',
+      galleryItemId: null,
+      compositionPrompt: 'full body',
+      shotType: 'full_body',
+      angle: 'front',
+    });
+    expect(panel.composition.galleryItemId).toBeNull();
+  });
+
+  it('gallery compositionでgalleryItemIdがない場合にVALIDATION_ERRORになる', async () => {
+    const repository = new FakePanelRepository();
+    const service = new PanelService(repository, new FakeEntityReader());
+
+    await expect(
+      service.createPanel(userId, pageId, {
+        ...buildCreateInput(),
+        composition: {
+          source: 'gallery',
+          galleryItemId: null,
+          compositionPrompt: null,
+          shotType: null,
+          angle: null,
+          customNote: null,
+        },
+      }),
+    ).rejects.toBeInstanceOf(ValidationError);
   });
 
   it('Panelが存在しない場合に削除でNOT_FOUNDになる', async () => {

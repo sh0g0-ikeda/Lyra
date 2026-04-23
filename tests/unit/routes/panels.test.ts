@@ -230,6 +230,25 @@ describe('panel routes', () => {
     expect(response.status).toBe(422);
   });
 
+  it('未知のトップレベル項目を含む場合にVALIDATION_ERRORになる', async () => {
+    const app = createTestApp(new FakePanelService());
+    const token = await createToken();
+
+    const response = await app.request(`/api/pages/${pageId}/panels`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        order: 1,
+        unknown_field: 'unexpected',
+      }),
+    });
+
+    expect(response.status).toBe(422);
+  });
+
   it('JWTが正しい場合にPanelを削除できる', async () => {
     const panelService = new FakePanelService();
     const app = createTestApp(panelService);

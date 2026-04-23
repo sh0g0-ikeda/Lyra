@@ -52,28 +52,33 @@ const panelDialogueLineSchema = z
 
 export const panelUuidParamSchema = z.string().uuid();
 
-export const createPanelBodySchema = z.object({
-  order: z.number().int().min(1).max(1000),
-  panel_role: z
-    .enum(['establish', 'action', 'reaction', 'emphasis', 'transition', 'pause', 'impact'])
-    .optional()
-    .default('action'),
-  panel_size: z.enum(['standard', 'large', 'wide', 'narrow', 'splash']).optional().default('standard'),
-  situation_text: nullableText2000.optional(),
-  composition: panelCompositionSchema.optional().default({
-    source: 'custom',
-    gallery_item_id: null,
-    composition_prompt: null,
-    shot_type: null,
-    angle: null,
-    custom_note: null,
-  }),
-  dialogue_in_panel: z.boolean().optional().default(true),
-  dialogue: z.array(panelDialogueLineSchema).max(20).optional().default([]),
-  sfx_text: nullableText200.optional(),
-  background_note: nullableText2000.optional(),
-  panel_notes: nullableText2000.optional(),
-});
+export const createPanelBodySchema = z
+  .object({
+    order: z.number().int().min(1).max(1000),
+    panel_role: z
+      .enum(['establish', 'action', 'reaction', 'emphasis', 'transition', 'pause', 'impact'])
+      .optional()
+      .default('action'),
+    panel_size: z
+      .enum(['standard', 'large', 'wide', 'narrow', 'splash'])
+      .optional()
+      .default('standard'),
+    situation_text: nullableText2000.optional(),
+    composition: panelCompositionSchema.optional().default({
+      source: 'custom',
+      gallery_item_id: null,
+      composition_prompt: null,
+      shot_type: null,
+      angle: null,
+      custom_note: null,
+    }),
+    dialogue_in_panel: z.boolean().optional().default(true),
+    dialogue: z.array(panelDialogueLineSchema).max(20).optional().default([]),
+    sfx_text: nullableText200.optional(),
+    background_note: nullableText2000.optional(),
+    panel_notes: nullableText2000.optional(),
+  })
+  .strict();
 
 export const updatePanelBodySchema = z
   .object({
@@ -90,6 +95,7 @@ export const updatePanelBodySchema = z
     background_note: nullableText2000.optional(),
     panel_notes: nullableText2000.optional(),
   })
+  .strict()
   .refine((body) => Object.keys(body).length > 0, {
     message: 'At least one field is required',
   });
