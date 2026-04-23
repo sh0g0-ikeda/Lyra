@@ -27,6 +27,8 @@ export class PanelEntityAssignmentService implements PanelEntityAssignmentServic
     panelId: string,
     assignments: PanelEntityAssignment[],
   ): Promise<PanelEntityAssignment[]> {
+    const normalizedAssignments = normalizeAssignments(assignments);
+
     const panelContext = await this.panelEntityAssignmentRepository.findPanelContextByIdAndUserId(
       panelId,
       userId,
@@ -35,19 +37,20 @@ export class PanelEntityAssignmentService implements PanelEntityAssignmentServic
       throw new NotFoundError('Panel not found');
     }
 
-    await this.ensureEntitiesBelongToWork(userId, panelContext.workId, assignments);
-    await this.ensureEntityStatesMatchAssignments(userId, panelContext.workId, assignments);
+    ensureUniqueEntityAssignments(normalizedAssignments);
+    await this.ensureEntitiesBelongToWork(userId, panelContext.workId, normalizedAssignments);
+    await this.ensureEntityStatesMatchAssignments(userId, panelContext.workId, normalizedAssignments);
 
     const savedAssignments = await this.panelEntityAssignmentRepository.updatePanelEntityAssignments(
       panelId,
       userId,
-      assignments,
+      normalizedAssignments,
     );
     if (savedAssignments === null) {
       throw new NotFoundError('Panel not found');
     }
 
-    return savedAssignments;
+    return normalizeAssignments(savedAssignments);
   }
 
   private async ensureEntitiesBelongToWork(
@@ -112,4 +115,28 @@ function uniqueStateReferences(assignments: PanelEntityAssignment[]): PanelEntit
   }
 
   return pairs;
+}
+
+function ensureUniqueEntityAssignments(assignments: PanelEntityAssignment[]): void {
+  const seen = new Set<string>();
+
+  for (const assignment of assignments) {
+    if (seen.has(assignment.entityId)) {
+      throw new ValidationError('Each entity can only be assigned once per panel');
+    }
+
+    seen.add(assignment.entityId);
+  }
+}
+
+function normalizeAssignments(assignments: PanelEntityAssignment[]): PanelEntityAssignment[] {
+  return assignments.map((assignment) => normalizeAssignment(assignment));
+}
+
+function normalizeAssignment(assignment: PanelEntityAssignment): PanelEntityAssignment {
+  return {
+    ...assignment,
+    customExpression: assignment.expression === 'custom' ? assignment.customExpression : null,
+    customAction: assignment.action === 'custom' ? assignment.customAction : null,
+  };
 }
