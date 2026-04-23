@@ -2,7 +2,11 @@ import { SignJWT } from 'jose';
 import { describe, expect, it } from 'vitest';
 import { createApp } from '../../../src/app.js';
 import type { CreditBalanceSnapshot } from '../../../src/domain/types/credit.js';
-import type { PanelFrame } from '../../../src/domain/types/panelFrame.js';
+import type {
+  PanelFrame,
+  PanelFrameTemplateApplication,
+  PanelFrameTemplateId,
+} from '../../../src/domain/types/panelFrame.js';
 import type { AuthenticatedUser, SupabaseJwtClaims } from '../../../src/domain/types/user.js';
 import type { ConsumeCreditsParams, CreditServicePort } from '../../../src/services/credit/CreditService.js';
 import type {
@@ -55,6 +59,7 @@ class FakeCreditService implements CreditServicePort {
 
 class FakePanelFrameService implements PanelFrameServicePort {
   public lastSaveRequest: UpsertPanelFrameRequest[] | null = null;
+  public lastTemplateId: PanelFrameTemplateId | null = null;
 
   public async listPageFrames(_userId: string, requestedPageId: string): Promise<PanelFrame[]> {
     return [buildFrame({ pageId: requestedPageId })];
@@ -79,6 +84,26 @@ class FakePanelFrameService implements PanelFrameServicePort {
         readingOrder: frame.readingOrder ?? index + 1,
       }),
     );
+  }
+
+  public async applyTemplate(
+    _userId: string,
+    requestedPageId: string,
+    templateId: PanelFrameTemplateId,
+  ): Promise<PanelFrameTemplateApplication> {
+    this.lastTemplateId = templateId;
+    const frames = [
+      buildFrame({ pageId: requestedPageId, panelId: null, readingOrder: 1 }),
+      buildFrame({ pageId: requestedPageId, panelId: null, readingOrder: 2 }),
+      buildFrame({ pageId: requestedPageId, panelId: null, readingOrder: 3 }),
+      buildFrame({ pageId: requestedPageId, panelId: null, readingOrder: 4 }),
+    ];
+
+    return {
+      templateId,
+      panelCount: frames.length,
+      frames,
+    };
   }
 }
 
@@ -169,6 +194,59 @@ describe('panel frame routes', () => {
             reading_order: 1,
           },
         ],
+      }),
+    });
+
+    expect(response.status).toBe(422);
+  });
+
+  it('JWTが正しい場合にテンプレートをページへ適用できる', async () => {
+    const panelFrameService = new FakePanelFrameService();
+    const app = createTestApp(panelFrameService);
+    const token = await createToken();
+
+    const response = await app.request(`/api/pages/${pageId}/frames/apply-template`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        template_id: 'standard_4',
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(panelFrameService.lastTemplateId).toBe('standard_4');
+    const body = (await response.json()) as {
+      template_id: string;
+      panel_count: number;
+      frames: Array<Record<string, unknown>>;
+    };
+    expect(body).toMatchObject({
+      template_id: 'standard_4',
+      panel_count: 4,
+    });
+    expect(body.frames).toHaveLength(4);
+    expect(body.frames[0]).toMatchObject({
+      page_id: pageId,
+      panel_id: null,
+      reading_order: 1,
+    });
+  });
+
+  it('未定義テンプレートの場合にVALIDATION_ERRORになる', async () => {
+    const app = createTestApp(new FakePanelFrameService());
+    const token = await createToken();
+
+    const response = await app.request(`/api/pages/${pageId}/frames/apply-template`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        template_id: 'unknown_template',
       }),
     });
 

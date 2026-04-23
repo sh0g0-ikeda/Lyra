@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { PANEL_FRAME_TEMPLATE_IDS } from '../../domain/constants/panelFrameTemplates.js';
 
 const borderColorSchema = z.string().regex(/^#[0-9A-Fa-f]{6}$/);
 const borderStyleSchema = z.enum(['solid', 'dashed', 'none']);
@@ -57,3 +58,9 @@ export const replacePanelFramesBodySchema = z
       frameIds.add(frame.id);
     });
   });
+
+export const applyPanelFrameTemplateBodySchema = z
+  .object({
+    template_id: z.enum(PANEL_FRAME_TEMPLATE_IDS),
+  })
+  .strict();

@@ -1,9 +1,20 @@
+import {
+  buildPanelFrameTemplateInputs,
+  getPanelFrameTemplate,
+} from '../../domain/constants/panelFrameTemplates.js';
 import { NotFoundError, ValidationError } from '../../domain/errors/index.js';
-import type { PanelFrame, UpsertPanelFrameInput } from '../../domain/types/panelFrame.js';
+import type {
+  PanelFrame,
+  PanelFrameTemplateApplication,
+  PanelFrameTemplateId,
+  UpsertPanelFrameInput,
+} from '../../domain/types/panelFrame.js';
 import type { PanelFrameRepository } from '../../repositories/PanelFrameRepository.js';
 
 export type {
   PanelFrame,
+  PanelFrameTemplateApplication,
+  PanelFrameTemplateId,
   UpsertPanelFrameInput as UpsertPanelFrameRequest,
 };
 
@@ -14,6 +25,11 @@ export interface PanelFrameServicePort {
     pageId: string,
     frames: UpsertPanelFrameInput[],
   ): Promise<PanelFrame[]>;
+  applyTemplate(
+    userId: string,
+    pageId: string,
+    templateId: PanelFrameTemplateId,
+  ): Promise<PanelFrameTemplateApplication>;
 }
 
 /**
@@ -37,6 +53,34 @@ export class PanelFrameService implements PanelFrameServicePort {
     await this.ensurePanelsBelongToPage(userId, pageId, frames);
 
     return this.panelFrameRepository.replaceFramesByPageIdAndUserId(pageId, userId, frames);
+  }
+
+  public async applyTemplate(
+    userId: string,
+    pageId: string,
+    templateId: PanelFrameTemplateId,
+  ): Promise<PanelFrameTemplateApplication> {
+    await this.ensurePageOwnedByUser(userId, pageId);
+
+    const template = getPanelFrameTemplate(templateId);
+    const frames = buildPanelFrameTemplateInputs(templateId);
+    const savedFrames = await this.panelFrameRepository.replaceFramesByPageIdAndUserId(
+      pageId,
+      userId,
+      frames,
+      {
+        type: 'template',
+        templateId,
+        panelCount: template.panelCount,
+        frameDefinitions: frames,
+      },
+    );
+
+    return {
+      templateId,
+      panelCount: template.panelCount,
+      frames: savedFrames,
+    };
   }
 
   private async ensurePageOwnedByUser(userId: string, pageId: string): Promise<void> {
