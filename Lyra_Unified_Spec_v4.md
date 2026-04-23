@@ -35,7 +35,7 @@ AI漫画制作WebアプリケーションLyraの統合仕様書。本書のみ�
 - Part IV: キャラクター・エンティティシステム
 - Part V: ストーリーシステム（人間×AI協働）
 - Part VI: ページ・コマ設計システム
-- Part VII: 画像生成パイプライン（gpt-image-2）
+- Part VII: 画像生成パイプライン（gpt-image-2 + GPT-5.4 mini planner）
 - Part VIII: ページエディタ（Balloonレイヤー）
 - Part IX: 課金システム
 - Part X: API設計
@@ -84,7 +84,8 @@ AI漫画制作WebアプリケーションLyraの統合仕様書。本書のみ�
 | モデル | 担当 |
 |---|---|
 | **Claude Sonnet（最新）** | ストーリー生成・提案・編集・チャット・Review Engine |
-| **GPT-4o** | キャラspec抽出（Vision）・ページ生成prompt変換・Consistency確認 |
+| **GPT-4o** | キャラspec抽出（Vision）・prompt_supplement生成・Consistency確認 |
+| **GPT-5.4 mini** | Thinkingモード時のページ構図整理・生成前プランニング |
 | **GPT-4.1-mini** | 軽量スキーマ検証・分類タスク |
 | **gpt-image-2** | 全画像生成（キャラ・ページ・物体）|
 
@@ -529,7 +530,7 @@ Body: { image_base64, entity_type }
 POST /api/entities/{id}/generate-reference
 
 → EC2 API:
-  ① クレジットチェック（キャラ1回: $0.15相当）
+  ① クレジットチェック（キャラプレビュー1回: 8cr / $0.08相当）
   ② prompt構築:
      - entity_type別のシステム指示
      - structured_fields → テキスト変換
@@ -541,7 +542,7 @@ POST /api/entities/{id}/generate-reference
   → { job_id } 即時返却
 
 → Lambda Worker:
-  ① gpt-image-2呼び出し（standard mode、n=3）
+  ① gpt-image-2呼び出し（quality: low, size: 1024x1536, n=3）
   ② 生成画像をS3 tmp/にアップロード
   ③ ジョブ結果をRDSに書き込み
   ④ Upstash Redis PUBLISH 完了通知
@@ -945,7 +946,7 @@ Claude Sonnetが生成したレイアウト案をpromptとして活用
 
 ---
 
-# Part VII: 画像生成パイプライン（gpt-image-2）
+# Part VII: 画像生成パイプライン（gpt-image-2 + GPT-5.4 mini planner）
 
 ---
 
@@ -957,16 +958,18 @@ function determineGenerationMode(page: Page): 'standard' | 'thinking' {
   const panelCount = page.panels.length;
 
   if (entityCount > 4 || panelCount > 8) {
-    return 'thinking';  // $0.40
+    return 'thinking';  // 14cr / $0.14
   }
-  return 'standard';    // $0.25
+  return 'standard';    // 10cr / $0.10
 }
 ```
 
 | 条件 | モード | ユーザー課金 | 推定実費 |
 |---|---|---|---|
-| エンティティ≤4人 かつ コマ≤8 | Standard | $0.25 | ~$0.165 |
-| エンティティ>4人 または コマ>8 | Thinking | $0.40 | ~$0.25〜$0.35 |
+| エンティティ≤4人 かつ コマ≤8 | Standard | 10cr / $0.10 | ~$0.06〜$0.07 |
+| エンティティ>4人 または コマ>8 | Thinking | 14cr / $0.14 | ~$0.08〜$0.10 |
+
+※ ユーザー起点の再生成は生成モードに関係なく 22cr / $0.22 の高品質プロファイルで扱う。
 
 ## 25. ページ生成パイプライン（完全フロー）
 
@@ -977,17 +980,23 @@ function determineGenerationMode(page: Page): 'standard' | 'thinking' {
 [EC2 API - POST /api/pages/{page_id}/generate]
 2. JWT検証 → user取得
 3. ページデータ・パネル全件取得
-4. 生成モード判定（standard / thinking）
-5. クレジットチェック（standard: 25cr / thinking: 40cr）
-6. 各エンティティの reference画像 + prompt_supplement を取得
-7. layout_config に基づきレイアウト情報を準備
+4. 操作種別判定（initial / regenerate）
+   - generated_image が未作成 → initial
+   - 既存結果あり + ユーザー再実行 → regenerate
+5. initial の場合のみ生成モード判定（standard / thinking）
+6. クレジットチェック
+   - initial + standard: 10cr
+   - initial + thinking: 14cr
+   - regenerate: 22cr
+7. 各エンティティの reference画像 + prompt_supplement を取得
+8. layout_config に基づきレイアウト情報を準備
    - template → template名をpromptに変換
    - custom → PanelFrame画像をS3から取得（input_imageとして使う）
    - ai_auto → Episode骨格のlayout情報をpromptに変換
-8. ページ生成prompt構築（後述）
-9. クレジット消費（DBトランザクション内）
-10. generation_jobs レコード作成（status="queued"）
-11. SQSメッセージ送信
+9. ページ生成prompt構築（後述）
+10. クレジット消費（DBトランザクション内）
+11. generation_jobs レコード作成（status="queued"）
+12. SQSメッセージ送信
     {
       "job_id": "job_xxx",
       "job_type": "page_generate",
@@ -995,6 +1004,7 @@ function determineGenerationMode(page: Page): 'standard' | 'thinking' {
       "payload": {
         "page_id": "page_001",
         "generation_mode": "standard",
+        "request_kind": "initial",
         "prompt": "...",
         "input_images": [
           { "role": "entity_reference", "entity_id": "ent_001", "s3_key": "..." },
@@ -1005,13 +1015,19 @@ function determineGenerationMode(page: Page): 'standard' | 'thinking' {
         "style_lock": "anime illustration style, manga panel layout, clean lineart, ..."
       }
     }
-12. レスポンス: { job_id } 即時返却
+13. レスポンス: { job_id } 即時返却
 
 [Lambda Worker - SQS デキュー]
-13. メッセージ受信
-14. generation_jobs を "processing" に更新
-15. S3からinput画像をダウンロード（一時領域）
-16. gpt-image-2 API呼び出し
+14. メッセージ受信
+15. generation_jobs を "processing" に更新
+16. S3からinput画像をダウンロード（一時領域）
+17. generation_mode === "thinking" または request_kind === "regenerate" の場合、
+    GPT-5.4 mini で internal_generation_plan を作成
+    - コマごとの主役
+    - 視線とカメラ優先順位
+    - 吹き出し余白
+    - 背景/アクションの優先度
+18. gpt-image-2 API呼び出し
     {
       model: "gpt-image-2",
       input: [
@@ -1019,28 +1035,28 @@ function determineGenerationMode(page: Page): 'standard' | 'thinking' {
         { type: "input_image", image_url: entity_ref_2_base64 },
         // layout_reference（customの場合）
         { type: "input_image", image_url: layout_ref_base64 },
-        { type: "text", text: prompt }
+        { type: "text", text: prompt + "\n\n" + internal_generation_plan }
       ],
-      thinking: generation_mode === 'thinking' ? { type: "enabled" } : { type: "disabled" },
+      quality: request_kind === 'regenerate' ? "high" : "medium",
       size: "1024x1536",  // 漫画ページ（ポートレート）
       n: 1
     }
-17. 生成画像をbase64デコード
-18. S3 session/{user_id}/pages/{page_id}/ にアップロード
-19. generation_jobs を "completed" に更新
-    result: { s3_key, cdn_url, generation_mode, cost_usd }
-20. RDS pages テーブルを更新（generated_image フィールド）
-21. Upstash Redis PUBLISH "job:{job_id}" {result}
-22. 一時ファイル削除
+19. 生成画像をbase64デコード
+20. S3 session/{user_id}/pages/{page_id}/ にアップロード
+21. generation_jobs を "completed" に更新
+    result: { s3_key, cdn_url, generation_mode, request_kind, cost_usd }
+22. RDS pages テーブルを更新（generated_image フィールド）
+23. Upstash Redis PUBLISH "job:{job_id}" {result}
+24. 一時ファイル削除
 
 [EC2 API - WebSocket転送]
-23. Redis SUBSCRIBE受信
-24. 該当WebSocket clientに転送
+25. Redis SUBSCRIBE受信
+26. 該当WebSocket clientに転送
 
 [クライアント]
-25. ページ画像を表示
-26. 気に入らない場合 → コマ設計を修正 → 再生成
-27. 気に入った場合 → 「確定」→ session/ → saved/ にコピー
+27. ページ画像を表示
+28. 気に入らない場合 → コマ設計を修正 → 再生成
+29. 気に入った場合 → 「確定」→ session/ → saved/ にコピー
 ```
 
 ## 26. ページ生成prompt構築
@@ -1119,8 +1135,15 @@ prompt中に追記:
 2. コマ編集パネルでsituation_text / 表情 / 構図 等を修正
 3. 「ページを再生成する」ボタン
 → ページ全体が再生成される（コマ単位の部分差し替えはしない）
+→ ユーザー起点の再生成は 22cr の高品質プロファイルで実行される
 
-生成回数に上限なし（クレジットを消費するごとに再生成可）
+生成回数に上限なし。ただし課金ルールは次の通り:
+- 初回生成: Standard 10cr / Thinking 14cr
+- ユーザー起点の再生成: 22cr
+- システム都合の再試行: 0cr
+  - generation_jobs failed
+  - S3保存失敗
+  - 明らかな生成破綻（コマ欠落・人物欠落・判読不能な崩れ）
 ```
 
 ---
@@ -1210,16 +1233,18 @@ POST /api/pages/{page_id}/confirm
 
 | 操作 | USD換算 | 説明 |
 |---|---|---|
-| キャラ・エンティティ生成（3候補）| **$0.15** | reference画像の初回生成。固定収益源 |
-| ページ生成（Standard） | **$0.25** | エンティティ≤4 かつ コマ≤8 |
-| ページ生成（Thinking） | **$0.40** | エンティティ>4 または コマ>8 |
+| キャラ・エンティティ生成（3候補）| **$0.08** | reference候補プレビューの初回生成。固定収益源 |
+| ページ生成（Standard） | **$0.10** | エンティティ≤4 かつ コマ≤8 |
+| ページ生成（Thinking） | **$0.14** | エンティティ>4 または コマ>8 |
+| ページ再生成 | **$0.22** | ユーザー起点の高品質プロファイル再生成 |
 | テキスト・設定変更・保存 | **$0** | 無課金 |
 | ストーリー生成・チャット | **$0** | Claude Sonnetのコストはプラン料金に含む |
 | Balloon編集・ページ確定 | **$0** | 無課金 |
 
 **収益モデルの考え方**
-- キャラ生成: 一作品あたり数回〜十数回の固定収益（$0.15 × 登録キャラ数）
-- ページ生成: 試行錯誤で繰り返し発生するが1回$0.25〜$0.40に抑え使いやすく
+- キャラ生成: 一作品あたり数回〜十数回の固定収益（$0.08 × 登録キャラ数）
+- ページ初回生成: 試行錯誤しやすいよう $0.10〜$0.14 に抑える
+- ページ再生成: こっち都合の品質改善コストを含むため、$0.22 でも薄利で運用する
 
 ### 33-2. クレジット換算
 
@@ -1227,9 +1252,10 @@ POST /api/pages/{page_id}/confirm
 
 | 操作 | 消費クレジット |
 |---|---|
-| キャラ生成 | 15cr |
-| ページ生成（Standard）| 25cr |
-| ページ生成（Thinking）| 40cr |
+| キャラ生成 | 8cr |
+| ページ生成（Standard）| 10cr |
+| ページ生成（Thinking）| 14cr |
+| ページ再生成 | 22cr |
 
 ### 33-3. プラン
 
@@ -1242,9 +1268,9 @@ POST /api/pages/{page_id}/confirm
 追加パック: 200cr ¥500 / 1,000cr ¥2,000 / 3,000cr ¥5,000
 
 **Freeプランで体験できること**
-- キャラ13体生成（15cr × 13 = 195cr）
-- またはページ8枚生成（25cr × 8 = 200cr）
-- またはキャラ5体 + ページ4枚
+- キャラ25体生成（8cr × 25 = 200cr）
+- またはページ20枚生成（10cr × 20 = 200cr）
+- またはキャラ10体 + ページ12枚
 
 ### 33-4. Stripe統合フロー
 
@@ -1894,9 +1920,9 @@ S3 Lifecycle Rules:
 
 30. ページ生成prompt構築ロジック
 31. Standard / Thinking モード自動判定
-32. Lambda Worker → gpt-image-2 ページ生成
+32. Lambda Worker → GPT-5.4 mini planner + gpt-image-2 ページ生成
 33. セリフON/OFFモード（page_dialogue_toggle + コマ別設定）
-34. ページ再生成フロー
+34. ページ再生成フロー（22cr・高品質プロファイル）
 
 ## Phase 7: Balloonエディタ（〜2週間）
 
