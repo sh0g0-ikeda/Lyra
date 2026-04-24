@@ -68,9 +68,11 @@ function buildPromptText(
   compositionMap: Map<string, CompositionGalleryItem>,
   input: BuildPagePromptInput,
 ): string {
+  const referenceInstructions = buildReferenceInstructions(panels, entityMap);
   const sections = [
     buildPageHeader(page, input),
     buildLayoutInstruction(page),
+    referenceInstructions,
     ...panels.map((panel) => buildPanelInstruction(panel, entityMap, compositionMap)),
     buildDialogueInstruction(page.dialogueMode, page.pageDialogueToggle, panels, entityMap),
     STYLE_LOCK_TEXT,
@@ -100,6 +102,19 @@ function buildLayoutInstruction(page: PagePromptContext): string {
   }
 
   if (layoutType === 'custom') {
+    const frameDefinitions = toFrameDefinitions(page.layoutConfig.frame_definitions);
+    if (frameDefinitions.length > 0) {
+      return [
+        'Follow the custom panel layout defined for this page exactly.',
+        ...frameDefinitions.map(
+          (frame) =>
+            `Frame ${frame.readingOrder}: vertices ${frame.vertices
+              .map((vertex) => `(${vertex.x.toFixed(2)}, ${vertex.y.toFixed(2)})`)
+              .join(' -> ')}.`,
+        ),
+      ].join('\n');
+    }
+
     return 'Follow the custom panel layout defined for this page exactly.';
   }
 
@@ -132,6 +147,28 @@ function buildPanelInstruction(
   return lines.join('\n');
 }
 
+function buildReferenceInstructions(
+  panels: Panel[],
+  entityMap: Map<string, Entity>,
+): string {
+  const orderedAssignments = new Map<string, PanelEntityAssignment>();
+  panels.forEach((panel) => {
+    panel.entities.forEach((assignment) => {
+      if (!orderedAssignments.has(assignment.entityId)) {
+        orderedAssignments.set(assignment.entityId, assignment);
+      }
+    });
+  });
+
+  return Array.from(orderedAssignments.values())
+    .map((assignment, index) => {
+      const entity = entityMap.get(assignment.entityId);
+      const entityName = entity?.name ?? `Unknown entity ${assignment.entityId}`;
+      return `Image ${index + 1} is the appearance reference for ${entityName}. Keep this character's face, hair, and costume exactly consistent throughout all panels they appear in.`;
+    })
+    .join('\n');
+}
+
 function buildEntityInstruction(
   assignments: PanelEntityAssignment[],
   entityMap: Map<string, Entity>,
@@ -141,17 +178,14 @@ function buildEntityInstruction(
   }
 
   return assignments
-    .map((assignment, index) => {
+    .map((assignment) => {
       const entity = entityMap.get(assignment.entityId);
       const entityName = entity?.name ?? `Unknown entity ${assignment.entityId}`;
       const supplement = entity?.promptSupplement ?? entity?.freeDescription ?? 'No prompt supplement.';
       const expression = assignment.expression === 'custom' ? assignment.customExpression : assignment.expression;
       const action = assignment.action === 'custom' ? assignment.customAction : assignment.action;
 
-      return [
-        `Image ${index + 1} is the appearance reference for ${entityName}. Keep face, hair, and costume consistent throughout the page.`,
-        `${entityName}: role=${assignment.role}, position=${assignment.position}, expression=${expression ?? 'unspecified'}, action=${action ?? 'unspecified'}. ${supplement}`,
-      ].join(' ');
+      return `${entityName}: role=${assignment.role}, position=${assignment.position}, expression=${expression ?? 'unspecified'}, action=${action ?? 'unspecified'}. ${supplement}`;
     })
     .join(' ');
 }
@@ -247,6 +281,46 @@ function isKnownTemplateId(value: string): value is Parameters<typeof getPanelFr
     value === 'action_5' ||
     value === 'battle_7'
   );
+}
+
+interface LayoutFrameVertex {
+  x: number;
+  y: number;
+}
+
+interface LayoutFrameDefinition {
+  readingOrder: number;
+  vertices: LayoutFrameVertex[];
+}
+
+function toFrameDefinitions(value: unknown): LayoutFrameDefinition[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.flatMap((entry) => {
+    if (!isRecord(entry) || typeof entry.reading_order !== 'number' || !Array.isArray(entry.vertices)) {
+      return [];
+    }
+
+    const vertices = entry.vertices.flatMap((vertex) => {
+      if (!isRecord(vertex) || typeof vertex.x !== 'number' || typeof vertex.y !== 'number') {
+        return [];
+      }
+
+      return [{ x: vertex.x, y: vertex.y }];
+    });
+
+    if (vertices.length === 0) {
+      return [];
+    }
+
+    return [{ readingOrder: entry.reading_order, vertices }];
+  });
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 const STYLE_LOCK_TEXT =

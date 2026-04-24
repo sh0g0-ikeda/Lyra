@@ -128,6 +128,7 @@ describe('PromptBuilder', () => {
     expect(result.prompt).toContain('Use a standard_4 layout with 4 panels.');
     expect(result.prompt).toContain('Panel 1 (action, standard): Hero lunges forward.');
     expect(result.prompt).toContain('Image 1 is the appearance reference for Aki.');
+    expect(countOccurrences(result.prompt, 'Image 1 is the appearance reference for Aki.')).toBe(1);
     expect(result.prompt).toContain('navy military uniform');
     expect(result.prompt).toContain("Panel 1 dialogue by Aki: 'I will finish this now.' as speech at top.");
     expect(result.prompt).toContain('anime manga illustration');
@@ -153,6 +154,70 @@ describe('PromptBuilder', () => {
     });
 
     expect(result.prompt).not.toContain('Panel 1 dialogue');
+  });
+
+  it('custom layout では frame_definitions を prompt に含める', async () => {
+    const pageRepository = new FakePageRepository();
+    pageRepository.promptContext = buildPagePromptContext({
+      layoutConfig: {
+        type: 'custom',
+        frame_definitions: [
+          {
+            reading_order: 1,
+            vertices: [
+              { x: 0, y: 0 },
+              { x: 1, y: 0 },
+              { x: 1, y: 0.5 },
+              { x: 0, y: 0.5 },
+            ],
+          },
+        ],
+      },
+    });
+    const builder = new PromptBuilder(
+      pageRepository,
+      new FakePanelRepository(),
+      new FakeEntityRepository(),
+      new FakeCompositionGalleryRepository(),
+    );
+
+    const result = await builder.buildPagePrompt({
+      userId: 'user-1',
+      pageId: 'page-1',
+      requestKind: 'initial',
+      generationMode: 'standard',
+    });
+
+    expect(result.prompt).toContain('Follow the custom panel layout defined for this page exactly.');
+    expect(result.prompt).toContain('Frame 1: vertices (0.00, 0.00) -> (1.00, 0.00) -> (1.00, 0.50) -> (0.00, 0.50).');
+  });
+
+  it('同一エンティティが複数panelに出ても reference 番号は1回だけ出す', async () => {
+    const panelRepository = new FakePanelRepository();
+    panelRepository.panels = [
+      buildPanel(),
+      {
+        ...buildPanel(),
+        id: 'panel-2',
+        order: 2,
+        situationText: 'Aki braces for impact.',
+      },
+    ];
+    const builder = new PromptBuilder(
+      new FakePageRepository(),
+      panelRepository,
+      new FakeEntityRepository(),
+      new FakeCompositionGalleryRepository(),
+    );
+
+    const result = await builder.buildPagePrompt({
+      userId: 'user-1',
+      pageId: 'page-1',
+      requestKind: 'initial',
+      generationMode: 'thinking',
+    });
+
+    expect(countOccurrences(result.prompt, 'Image 1 is the appearance reference for Aki.')).toBe(1);
   });
 });
 
@@ -248,4 +313,8 @@ function buildCompositionGalleryItem(): CompositionGalleryItem {
     tags: ['combat'],
     createdAt: new Date('2026-04-24T00:00:00.000Z'),
   };
+}
+
+function countOccurrences(text: string, pattern: string): number {
+  return text.split(pattern).length - 1;
 }
