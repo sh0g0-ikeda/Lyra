@@ -138,7 +138,11 @@ export class PostgresPageGenerationExecutionRepository implements PageGeneration
         ],
       );
 
-      return (jobUpdate.rowCount ?? 0) > 0;
+      if ((jobUpdate.rowCount ?? 0) === 0) {
+        throw new Error('Failed to update generation job completion state');
+      }
+
+      return true;
     });
   }
 
@@ -167,7 +171,7 @@ export class PostgresPageGenerationExecutionRepository implements PageGeneration
         input.previousStatus !== undefined &&
         input.previousGenerationMode !== undefined
       ) {
-        const pageUpdate = await transactionClient.query<PageUpdateRow>(
+        await transactionClient.query<PageUpdateRow>(
           `
           UPDATE pages
           SET status = $3,
@@ -183,8 +187,6 @@ export class PostgresPageGenerationExecutionRepository implements PageGeneration
           `,
           [input.pageId, input.userId, input.previousStatus, input.previousGenerationMode],
         );
-
-        return (pageUpdate.rowCount ?? 0) > 0;
       }
 
       return true;

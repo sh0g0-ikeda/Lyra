@@ -74,8 +74,9 @@ export class PageGenerationWorkerService {
     }
 
     const params = parsePersistedParams(job.params);
+    const failureCompensation = extractFailureCompensation(job.params);
     if (params === null) {
-      await this.failJob(job, null, 'Page generation job params are invalid');
+      await this.failJob(job, failureCompensation, 'Page generation job params are invalid');
       return { status: 'processed', jobStatus: 'failed' };
     }
 
@@ -117,23 +118,23 @@ export class PageGenerationWorkerService {
 
       return { status: 'processed', jobStatus: 'completed' };
     } catch (error) {
-      await this.failJob(job, params, toErrorMessage(error));
+      await this.failJob(job, toFailureCompensation(params), toErrorMessage(error));
       return { status: 'processed', jobStatus: 'failed' };
     }
   }
 
   private async failJob(
     job: GenerationJob,
-    params: PersistedPageGenerationJobParams | null,
+    compensation: FailureCompensation | null,
     errorMessage: string,
   ): Promise<void> {
     const failed = await this.executionRepository.failPageGeneration({
       jobId: job.id,
       userId: job.userId,
       errorMessage,
-      pageId: params?.page_id,
-      previousStatus: params?.previous_page_status,
-      previousGenerationMode: params?.previous_generation_mode,
+      pageId: compensation?.pageId,
+      previousStatus: compensation?.previousStatus,
+      previousGenerationMode: compensation?.previousGenerationMode,
     });
 
     if (!failed) {
@@ -147,6 +148,12 @@ export class PageGenerationWorkerService {
       jobId: job.id,
     });
   }
+}
+
+interface FailureCompensation {
+  pageId: string;
+  previousStatus: PageStatus;
+  previousGenerationMode: PersistedPageGenerationJobParams['previous_generation_mode'];
 }
 
 function buildCompletionInput(
@@ -198,6 +205,34 @@ function parsePersistedParams(value: Record<string, unknown>): PersistedPageGene
     requires_planner: requiresPlanner,
     previous_page_status: previousPageStatus,
     previous_generation_mode: previousGenerationMode,
+  };
+}
+
+function extractFailureCompensation(value: Record<string, unknown>): FailureCompensation | null {
+  const pageId = value.page_id;
+  const previousPageStatus = value.previous_page_status;
+  const previousGenerationMode = value.previous_generation_mode;
+
+  if (
+    typeof pageId !== 'string' ||
+    !isPageStatus(previousPageStatus) ||
+    !(previousGenerationMode === null || previousGenerationMode === 'standard' || previousGenerationMode === 'thinking')
+  ) {
+    return null;
+  }
+
+  return {
+    pageId,
+    previousStatus: previousPageStatus,
+    previousGenerationMode,
+  };
+}
+
+function toFailureCompensation(params: PersistedPageGenerationJobParams): FailureCompensation {
+  return {
+    pageId: params.page_id,
+    previousStatus: params.previous_page_status,
+    previousGenerationMode: params.previous_generation_mode,
   };
 }
 
