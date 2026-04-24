@@ -20,6 +20,10 @@ import { PostgresPanelRepository } from '../src/repositories/PanelRepository.js'
 import { PostgresEntityRepository } from '../src/repositories/EntityRepository.js';
 import { PostgresCompositionGalleryRepository } from '../src/repositories/CompositionGalleryRepository.js';
 import { ConfigurationError } from '../src/domain/errors/index.js';
+import { OpenAIClient } from '../src/infrastructure/openai/OpenAIClient.js';
+import { OpenAIPageGenerationPlanner } from '../src/infrastructure/openai/OpenAIPageGenerationPlanner.js';
+import { OpenAIPageImageRenderer } from '../src/infrastructure/openai/OpenAIPageImageRenderer.js';
+import { env } from '../src/lib/env.js';
 
 export interface PageGenerationWorkerPort {
   processJob(jobId: string): Promise<ProcessPageGenerationJobResult>;
@@ -58,9 +62,9 @@ export function resolveWorkerDependencies(
       new PostgresCompositionGalleryRepository(db),
     );
   const pageGenerationPlanner =
-    overrides.pageGenerationPlanner ?? new UnconfiguredPageGenerationPlanner();
+    overrides.pageGenerationPlanner ?? resolvePageGenerationPlanner();
   const pageImageRenderer =
-    overrides.pageImageRenderer ?? new UnconfiguredPageImageRenderer();
+    overrides.pageImageRenderer ?? resolvePageImageRenderer();
   const pageImageStorage =
     overrides.pageImageStorage ?? new UnconfiguredPageImageStorage();
   const pageGenerationExecutionRepository = new PostgresPageGenerationExecutionRepository(db);
@@ -75,6 +79,36 @@ export function resolveWorkerDependencies(
       creditService,
     ),
   };
+}
+
+function resolvePageGenerationPlanner(): PageGenerationPlannerPort {
+  const client = buildOpenAIClient();
+  if (client === null) {
+    return new UnconfiguredPageGenerationPlanner();
+  }
+
+  return new OpenAIPageGenerationPlanner(client);
+}
+
+function resolvePageImageRenderer(): PageImageRendererPort {
+  const client = buildOpenAIClient();
+  if (client === null) {
+    return new UnconfiguredPageImageRenderer();
+  }
+
+  return new OpenAIPageImageRenderer(client);
+}
+
+function buildOpenAIClient(): OpenAIClient | null {
+  if (env.OPENAI_API_KEY === undefined) {
+    return null;
+  }
+
+  return new OpenAIClient({
+    apiKey: env.OPENAI_API_KEY,
+    baseUrl: env.OPENAI_BASE_URL,
+    timeoutMs: env.OPENAI_TIMEOUT_MS,
+  });
 }
 
 class UnconfiguredPageGenerationPlanner implements PageGenerationPlannerPort {
