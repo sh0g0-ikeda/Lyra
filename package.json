@@ -10,7 +10,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "migrate": "tsx scripts/migrate.ts"
+    "migrate": "tsx scripts/migrate.ts",
+    "worker:page": "tsx scripts/runPageWorker.ts"
   },
   "dependencies": {
     "@hono/node-server": "^1.19.8",
