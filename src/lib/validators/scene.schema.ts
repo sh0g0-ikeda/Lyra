@@ -13,7 +13,7 @@ export const createSceneBodySchema = z.object({
   time: nullableText200.optional(),
   atmosphere: nullableText200.optional(),
   involved_entity_ids: uuidArray.optional(),
-});
+}).strict();
 
 export const updateSceneBodySchema = z
   .object({
@@ -24,6 +24,7 @@ export const updateSceneBodySchema = z
     involved_entity_ids: uuidArray.optional(),
     status: statusSchema.optional(),
   })
+  .strict()
   .refine((body) => Object.keys(body).length > 0, {
     message: 'At least one field is required',
   });
@@ -36,7 +37,7 @@ export const createEntityStateBodySchema = z.object({
   hair_note: nullableText2000.optional(),
   expression_default: z.string().trim().min(1).max(100).default('neutral'),
   extra_note: nullableText2000.optional(),
-});
+}).strict();
 
 export const updateEntityStateBodySchema = z
   .object({
@@ -48,6 +49,7 @@ export const updateEntityStateBodySchema = z
     expression_default: z.string().trim().min(1).max(100).optional(),
     extra_note: nullableText2000.optional(),
   })
+  .strict()
   .refine((body) => Object.keys(body).length > 0, {
     message: 'At least one field is required',
   });

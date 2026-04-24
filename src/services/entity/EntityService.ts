@@ -15,6 +15,7 @@ export interface CreateEntityRequest {
   entityType: EntityType;
   name: string;
   freeDescription: string | null;
+  promptSupplement?: string | null;
   structuredFields: Record<string, unknown>;
   speechProfile: Record<string, unknown>;
 }
@@ -23,6 +24,7 @@ export interface UpdateEntityRequest {
   entityType?: EntityType;
   name?: string;
   freeDescription?: string | null;
+  promptSupplement?: string | null;
   structuredFields?: Record<string, unknown>;
   speechProfile?: Record<string, unknown>;
 }
@@ -50,6 +52,7 @@ export class EntityService implements EntityServicePort {
       entityType: input.entityType,
       name: input.name,
       freeDescription: input.freeDescription,
+      promptSupplement: input.promptSupplement ?? null,
       structuredFields: parseStructuredFields(input.entityType, input.structuredFields),
       speechProfile: normalizeSpeechProfile(input.entityType, input.speechProfile),
     };

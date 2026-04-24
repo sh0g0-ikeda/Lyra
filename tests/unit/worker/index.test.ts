@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import type { ProcessEntityGenerationJobResult } from '../../../src/services/entity/EntityGenerationWorkerService.js';
 import type { ProcessPageGenerationJobResult } from '../../../src/services/page/PageGenerationWorkerService.js';
 import {
   handleGenerationQueue,
@@ -24,18 +25,34 @@ class FakePageGenerationWorkerService {
   }
 }
 
+class FakeEntityGenerationWorkerService {
+  public calls: string[] = [];
+  public nextResult: ProcessEntityGenerationJobResult = {
+    status: 'processed',
+    jobStatus: 'completed',
+  };
+
+  public async processJob(jobId: string): Promise<ProcessEntityGenerationJobResult> {
+    this.calls.push(jobId);
+    return this.nextResult;
+  }
+}
+
 describe('worker queue handler', () => {
-  it('page_generate メッセージならworker serviceを呼ぶ', async () => {
-    const workerService = new FakePageGenerationWorkerService();
+  it('page_generate の場合に page worker service を呼ぶ', async () => {
+    const pageWorkerService = new FakePageGenerationWorkerService();
+    const entityWorkerService = new FakeEntityGenerationWorkerService();
+
     const result = await handleGenerationQueue(
       buildEvent({
         job_id: '11111111-1111-4111-8111-111111111111',
         job_type: 'page_generate',
       }),
-      { pageGenerationWorkerService: workerService } satisfies WorkerDependencies,
+      buildDependencies(pageWorkerService, entityWorkerService),
     );
 
-    expect(workerService.calls).toEqual(['11111111-1111-4111-8111-111111111111']);
+    expect(pageWorkerService.calls).toEqual(['11111111-1111-4111-8111-111111111111']);
+    expect(entityWorkerService.calls).toEqual([]);
     expect(result).toMatchObject({
       processedCount: 1,
       skippedCount: 0,
@@ -47,17 +64,41 @@ describe('worker queue handler', () => {
     });
   });
 
-  it('unsupported job_type はskipする', async () => {
-    const workerService = new FakePageGenerationWorkerService();
+  it('entity_generate の場合に entity worker service を呼ぶ', async () => {
+    const pageWorkerService = new FakePageGenerationWorkerService();
+    const entityWorkerService = new FakeEntityGenerationWorkerService();
+
     const result = await handleGenerationQueue(
       buildEvent({
         job_id: '11111111-1111-4111-8111-111111111111',
         job_type: 'entity_generate',
       }),
-      { pageGenerationWorkerService: workerService } satisfies WorkerDependencies,
+      buildDependencies(pageWorkerService, entityWorkerService),
     );
 
-    expect(workerService.calls).toEqual([]);
+    expect(pageWorkerService.calls).toEqual([]);
+    expect(entityWorkerService.calls).toEqual(['11111111-1111-4111-8111-111111111111']);
+    expect(result).toMatchObject({
+      processedCount: 1,
+      skippedCount: 0,
+      failedCount: 0,
+    });
+  });
+
+  it('unsupported job_type は skip する', async () => {
+    const pageWorkerService = new FakePageGenerationWorkerService();
+    const entityWorkerService = new FakeEntityGenerationWorkerService();
+
+    const result = await handleGenerationQueue(
+      buildEvent({
+        job_id: '11111111-1111-4111-8111-111111111111',
+        job_type: 'unknown_generate',
+      }),
+      buildDependencies(pageWorkerService, entityWorkerService),
+    );
+
+    expect(pageWorkerService.calls).toEqual([]);
+    expect(entityWorkerService.calls).toEqual([]);
     expect(result).toMatchObject({
       processedCount: 0,
       skippedCount: 1,
@@ -66,8 +107,9 @@ describe('worker queue handler', () => {
     expect(result.results[0]?.reason).toContain('Unsupported job_type');
   });
 
-  it('不正なbodyはfailedとして続行する', async () => {
-    const workerService = new FakePageGenerationWorkerService();
+  it('不正な body は failed として後続を継続する', async () => {
+    const pageWorkerService = new FakePageGenerationWorkerService();
+    const entityWorkerService = new FakeEntityGenerationWorkerService();
     const event: WorkerQueueEvent = {
       Records: [
         { messageId: 'message-1', body: 'not-json' },
@@ -81,11 +123,12 @@ describe('worker queue handler', () => {
       ],
     };
 
-    const result = await handleGenerationQueue(event, {
-      pageGenerationWorkerService: workerService,
-    } satisfies WorkerDependencies);
+    const result = await handleGenerationQueue(
+      event,
+      buildDependencies(pageWorkerService, entityWorkerService),
+    );
 
-    expect(workerService.calls).toEqual(['11111111-1111-4111-8111-111111111111']);
+    expect(pageWorkerService.calls).toEqual(['11111111-1111-4111-8111-111111111111']);
     expect(result).toMatchObject({
       processedCount: 1,
       skippedCount: 0,
@@ -98,16 +141,17 @@ describe('worker queue handler', () => {
     });
   });
 
-  it('worker service 例外はfailedとして記録する', async () => {
-    const workerService = new FakePageGenerationWorkerService();
-    workerService.shouldThrow = true;
+  it('worker service 失敗は failed として記録する', async () => {
+    const pageWorkerService = new FakePageGenerationWorkerService();
+    const entityWorkerService = new FakeEntityGenerationWorkerService();
+    pageWorkerService.shouldThrow = true;
 
     const result = await handleGenerationQueue(
       buildEvent({
         job_id: '11111111-1111-4111-8111-111111111111',
         job_type: 'page_generate',
       }),
-      { pageGenerationWorkerService: workerService } satisfies WorkerDependencies,
+      buildDependencies(pageWorkerService, entityWorkerService),
     );
 
     expect(result).toMatchObject({
@@ -121,6 +165,16 @@ describe('worker queue handler', () => {
     });
   });
 });
+
+function buildDependencies(
+  pageGenerationWorkerService: FakePageGenerationWorkerService,
+  entityGenerationWorkerService: FakeEntityGenerationWorkerService,
+): WorkerDependencies {
+  return {
+    pageGenerationWorkerService,
+    entityGenerationWorkerService,
+  };
+}
 
 function buildEvent(body: Record<string, unknown>): WorkerQueueEvent {
   return {

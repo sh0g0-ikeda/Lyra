@@ -1,7 +1,16 @@
 import { db } from '../src/lib/db.js';
 import { PostgresCreditRepository } from '../src/repositories/CreditRepository.js';
+import { PostgresEntityGenerationExecutionRepository } from '../src/repositories/EntityGenerationExecutionRepository.js';
 import { PostgresPageGenerationExecutionRepository } from '../src/repositories/PageGenerationExecutionRepository.js';
 import { CreditService, type CreditServicePort } from '../src/services/credit/CreditService.js';
+import {
+  EntityGenerationWorkerService,
+  type ProcessEntityGenerationJobResult,
+} from '../src/services/entity/EntityGenerationWorkerService.js';
+import {
+  EntityReferencePromptBuilder,
+  type EntityReferencePromptBuilderPort,
+} from '../src/services/entity/EntityReferencePromptBuilder.js';
 import {
   PageGenerationWorkerService,
   type PageGenerationPlannerPort,
@@ -21,12 +30,17 @@ import { PostgresEntityRepository } from '../src/repositories/EntityRepository.j
 import { PostgresCompositionGalleryRepository } from '../src/repositories/CompositionGalleryRepository.js';
 import { ConfigurationError } from '../src/domain/errors/index.js';
 import { OpenAIClient } from '../src/infrastructure/openai/OpenAIClient.js';
+import {
+  OpenAIEntityReferenceGenerator,
+  type EntityReferenceGeneratorPort,
+} from '../src/infrastructure/openai/OpenAIEntityReferenceGenerator.js';
 import { OpenAIPageGenerationPlanner } from '../src/infrastructure/openai/OpenAIPageGenerationPlanner.js';
 import { OpenAIPageImageRenderer } from '../src/infrastructure/openai/OpenAIPageImageRenderer.js';
 import {
   createPageImageStorageClient,
   S3PageImageStorage,
 } from '../src/infrastructure/aws/S3PageImageStorage.js';
+import { S3EntityImageStorage, type EntityImageStoragePort } from '../src/infrastructure/aws/S3EntityImageStorage.js';
 import { S3StoredImageLoader } from '../src/infrastructure/aws/S3StoredImageLoader.js';
 import { env } from '../src/lib/env.js';
 import {
@@ -39,8 +53,13 @@ export interface PageGenerationWorkerPort {
   processJob(jobId: string): Promise<ProcessPageGenerationJobResult>;
 }
 
+export interface EntityGenerationWorkerPort {
+  processJob(jobId: string): Promise<ProcessEntityGenerationJobResult>;
+}
+
 export interface WorkerDependencies {
   pageGenerationWorkerService: PageGenerationWorkerPort;
+  entityGenerationWorkerService: EntityGenerationWorkerPort;
 }
 
 export interface WorkerDependencyOverrides {
@@ -50,7 +69,11 @@ export interface WorkerDependencyOverrides {
   pageGenerationPlanner?: PageGenerationPlannerPort;
   pageImageRenderer?: PageImageRendererPort;
   pageImageStorage?: PageImageStoragePort;
+  entityReferencePromptBuilder?: EntityReferencePromptBuilderPort;
+  entityReferenceGenerator?: EntityReferenceGeneratorPort;
+  entityImageStorage?: EntityImageStoragePort;
   pageGenerationWorkerService?: PageGenerationWorkerPort;
+  entityGenerationWorkerService?: EntityGenerationWorkerPort;
 }
 
 export function resolveWorkerDependencies(
@@ -59,6 +82,16 @@ export function resolveWorkerDependencies(
   if (overrides.pageGenerationWorkerService !== undefined) {
     return {
       pageGenerationWorkerService: overrides.pageGenerationWorkerService,
+      entityGenerationWorkerService:
+        overrides.entityGenerationWorkerService ?? new UnconfiguredEntityGenerationWorker(),
+    };
+  }
+
+  if (overrides.entityGenerationWorkerService !== undefined) {
+    return {
+      pageGenerationWorkerService:
+        overrides.pageGenerationWorkerService ?? new UnconfiguredPageGenerationWorker(),
+      entityGenerationWorkerService: overrides.entityGenerationWorkerService,
     };
   }
 
@@ -81,6 +114,13 @@ export function resolveWorkerDependencies(
   const pageImageStorage =
     overrides.pageImageStorage ?? resolvePageImageStorage();
   const pageGenerationExecutionRepository = new PostgresPageGenerationExecutionRepository(db);
+  const entityGenerationExecutionRepository = new PostgresEntityGenerationExecutionRepository(db);
+  const entityReferencePromptBuilder =
+    overrides.entityReferencePromptBuilder ?? new EntityReferencePromptBuilder();
+  const entityReferenceGenerator =
+    overrides.entityReferenceGenerator ?? resolveEntityReferenceGenerator();
+  const entityImageStorage =
+    overrides.entityImageStorage ?? resolveEntityImageStorage();
 
   return {
     pageGenerationWorkerService: new PageGenerationWorkerService(
@@ -90,6 +130,14 @@ export function resolveWorkerDependencies(
       pageGenerationPlanner,
       pageImageRenderer,
       pageImageStorage,
+      creditService,
+    ),
+    entityGenerationWorkerService: new EntityGenerationWorkerService(
+      entityGenerationExecutionRepository,
+      new PostgresEntityRepository(db),
+      entityReferencePromptBuilder,
+      entityReferenceGenerator,
+      entityImageStorage,
       creditService,
     ),
   };
@@ -149,6 +197,26 @@ function resolvePageImageStorage(): PageImageStoragePort {
   });
 }
 
+function resolveEntityReferenceGenerator(): EntityReferenceGeneratorPort {
+  const client = buildOpenAIClient();
+  if (client === null) {
+    return new UnconfiguredEntityReferenceGenerator();
+  }
+
+  return new OpenAIEntityReferenceGenerator(client);
+}
+
+function resolveEntityImageStorage(): EntityImageStoragePort {
+  if (env.S3_BUCKET_IMAGES === undefined || env.IMAGES_CDN_BASE_URL === undefined) {
+    return new UnconfiguredEntityImageStorage();
+  }
+
+  return new S3EntityImageStorage(createPageImageStorageClient(env.AWS_REGION), {
+    bucketName: env.S3_BUCKET_IMAGES,
+    cdnBaseUrl: env.IMAGES_CDN_BASE_URL,
+  });
+}
+
 class UnconfiguredPageGenerationInputImageBuilder implements PageGenerationInputImageBuilderPort {
   public async buildInputImages(): Promise<[]> {
     return [];
@@ -170,5 +238,37 @@ class UnconfiguredPageImageRenderer implements PageImageRendererPort {
 class UnconfiguredPageImageStorage implements PageImageStoragePort {
   public async store(_input: StorePageImageInput): Promise<StoredPageImage> {
     throw new ConfigurationError('Page image storage is not configured');
+  }
+}
+
+class UnconfiguredPageGenerationWorker implements PageGenerationWorkerPort {
+  public async processJob(): Promise<never> {
+    throw new ConfigurationError('Page generation worker is not configured');
+  }
+}
+
+class UnconfiguredEntityGenerationWorker implements EntityGenerationWorkerPort {
+  public async processJob(): Promise<never> {
+    throw new ConfigurationError('Entity generation worker is not configured');
+  }
+}
+
+class UnconfiguredEntityReferenceGenerator implements EntityReferenceGeneratorPort {
+  public async generateCandidates(): Promise<never> {
+    throw new ConfigurationError('Entity reference generator is not configured');
+  }
+}
+
+class UnconfiguredEntityImageStorage implements EntityImageStoragePort {
+  public async storeImportedImage(): Promise<never> {
+    throw new ConfigurationError('Entity image storage is not configured');
+  }
+
+  public async storeGeneratedCandidate(): Promise<never> {
+    throw new ConfigurationError('Entity image storage is not configured');
+  }
+
+  public async finalizeReferenceImage(): Promise<never> {
+    throw new ConfigurationError('Entity image storage is not configured');
   }
 }

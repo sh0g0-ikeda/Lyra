@@ -4,7 +4,7 @@ import type {
   PageGenerationRequestKind,
 } from './pageGeneration.js';
 
-export type GenerationJobType = 'page_generate';
+export type GenerationJobType = 'page_generate' | 'entity_generate';
 export type GenerationJobStatus = 'queued' | 'processing' | 'completed' | 'failed';
 
 export interface PageGenerationJobParams {
