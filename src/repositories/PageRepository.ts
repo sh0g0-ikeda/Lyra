@@ -6,6 +6,7 @@ import type {
   PageGenerationStateUpdate,
   PagePromptContext,
   PageDialogueMode,
+  PageSummary,
   PageStatus,
 } from '../domain/types/page.js';
 import type { PageGenerationMode } from '../domain/types/pageGeneration.js';
@@ -15,6 +16,7 @@ import type { PanelEntityAssignment } from '../domain/types/panelEntityAssignmen
 export type { PageGenerationContext, PageGenerationStateUpdate };
 
 export interface PageRepository {
+  findPagesByEpisodeIdAndUserId(episodeId: string, userId: string): Promise<PageSummary[]>;
   findGenerationContextByIdAndUserId(pageId: string, userId: string): Promise<PageGenerationContext | null>;
   findPromptContextByIdAndUserId(pageId: string, userId: string): Promise<PagePromptContext | null>;
   updateGenerationState(
@@ -53,12 +55,66 @@ interface PromptContextRow extends QueryResultRow {
   page_dialogue_toggle: boolean;
 }
 
+interface PageSummaryRow extends QueryResultRow {
+  id: string;
+  episode_id: string;
+  page_number: number;
+  layout_config: unknown;
+  dialogue_mode: string;
+  generation_mode: string | null;
+  generated_image: unknown;
+  status: PageStatus;
+  created_at: Date;
+  updated_at: Date;
+}
+
 interface UpdateRow extends QueryResultRow {
   id: string;
 }
 
 export class PostgresPageRepository implements PageRepository {
   public constructor(private readonly client: DatabaseClient) {}
+
+  public async findPagesByEpisodeIdAndUserId(
+    episodeId: string,
+    userId: string,
+  ): Promise<PageSummary[]> {
+    const result = await this.client.query<PageSummaryRow>(
+      `
+      SELECT pages.id,
+             pages.episode_id,
+             pages.page_number,
+             pages.layout_config,
+             pages.dialogue_mode,
+             pages.generation_mode,
+             pages.generated_image,
+             pages.status,
+             pages.created_at,
+             pages.updated_at
+      FROM pages
+      INNER JOIN episodes ON episodes.id = pages.episode_id
+      INNER JOIN chapters ON chapters.id = episodes.chapter_id
+      INNER JOIN works ON works.id = chapters.work_id
+      WHERE pages.episode_id = $1
+        AND works.user_id = $2
+      ORDER BY pages.page_number ASC
+      `,
+      [episodeId, userId],
+    );
+
+    return result.rows.map((row) => ({
+      id: row.id,
+      episodeId: row.episode_id,
+      pageNumber: row.page_number,
+      layoutConfig: toJsonObject(row.layout_config),
+      dialogueMode: toPageDialogueMode(row.dialogue_mode),
+      generationMode: toPageGenerationMode(row.generation_mode),
+      generatedImage: toGeneratedPageImage(row.generated_image),
+      status: row.status,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    }));
+  }
 
   public async findGenerationContextByIdAndUserId(
     pageId: string,

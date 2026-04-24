@@ -100,6 +100,7 @@ import {
   SharpPageBalloonComposer,
   type PageBalloonComposerPort,
 } from './services/page/PageBalloonComposer.js';
+import { PageQueryService, type PageQueryServicePort } from './services/page/PageQueryService.js';
 import { ModeSelector } from './services/page/ModeSelector.js';
 import {
   PanelService,
@@ -133,6 +134,7 @@ export interface AppDependencies {
   entityGenerationQueue?: EntityGenerationQueuePort;
   jobService?: JobServicePort;
   pageFinalizeService?: PageFinalizeServicePort;
+  pageQueryService?: PageQueryServicePort;
   pageSkeletonService?: PageSkeletonServicePort;
   pageGenerationQueue?: PageGenerationQueuePort;
   pageGenerationService?: PageGenerationServicePort;
@@ -214,6 +216,7 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
       authMiddleware,
       rateLimitMiddleware,
       pageFinalizeService: resolvedDependencies.pageFinalizeService,
+      pageQueryService: resolvedDependencies.pageQueryService,
       pageGenerationService: resolvedDependencies.pageGenerationService,
     }),
   );
@@ -331,6 +334,8 @@ function resolveDependencies(dependencies: AppDependencies): Required<Omit<AppDe
       resolvePageBalloonComposer(),
       resolveFinalPageImageStorage(),
     );
+  const pageQueryService =
+    dependencies.pageQueryService ?? new PageQueryService(pageRepository, new PostgresStoryRepository(db));
   const jobService = dependencies.jobService ?? new JobService(generationJobRepository);
   const storyCollaborationService =
     dependencies.storyCollaborationService ??
@@ -365,6 +370,7 @@ function resolveDependencies(dependencies: AppDependencies): Required<Omit<AppDe
     entityGenerationQueue,
     jobService,
     pageFinalizeService,
+    pageQueryService,
     pageSkeletonService,
     pageGenerationQueue,
     pageGenerationService,

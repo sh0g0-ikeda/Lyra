@@ -25,6 +25,10 @@ class FakePageRepository implements PageRepository {
     | { status: string; generationMode: PageGenerationMode | null; generatedImage: GeneratedPageImage }
     | null = null;
 
+  public async findPagesByEpisodeIdAndUserId(): Promise<[]> {
+    return [];
+  }
+
   public async findGenerationContextByIdAndUserId(): Promise<PageGenerationContext | null> {
     return this.context;
   }

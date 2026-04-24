@@ -63,6 +63,10 @@ class FakeStoryRepository implements StoryRepository {
 
   public createdPages: PageSkeletonPageDraft[] = [];
 
+  public async findWorksByUserId(): Promise<Work[]> {
+    return [];
+  }
+
   public async createWork(_userId: string, _input: CreateWorkInput): Promise<Work> {
     throw new Error('not implemented');
   }

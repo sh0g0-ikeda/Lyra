@@ -236,6 +236,13 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
     return c.body(null, 204);
   });
 
+  app.get('/works', async (c) => {
+    const user = c.get('user');
+    const works = await dependencies.storyService.listWorks(user.id);
+
+    return c.json({ works: works.map(toWorkResponse) });
+  });
+
   app.post('/episodes/:id/generate-page-skeleton', async (c) => {
     const user = c.get('user');
     const parsedEpisodeId = generatePageSkeletonParamSchema.safeParse(c.req.param('id'));

@@ -18,6 +18,10 @@ import { PromptBuilder } from '../../../../src/services/page/PromptBuilder.js';
 class FakePageRepository implements PageRepository {
   public promptContext: PagePromptContext | null = buildPagePromptContext();
 
+  public async findPagesByEpisodeIdAndUserId(): Promise<[]> {
+    return [];
+  }
+
   public async findGenerationContextByIdAndUserId(): Promise<PageGenerationContext | null> {
     throw new Error('not used');
   }

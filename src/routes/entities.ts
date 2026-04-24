@@ -66,6 +66,14 @@ export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<
     return c.json(toEntityResponse(entity));
   });
 
+  app.get('/entities/:id/reference-set', async (c) => {
+    const user = c.get('user');
+    const entityId = parseUuidParam(c, 'id');
+    const referenceSet = await dependencies.entityReferenceService.getReferenceSet(user.id, entityId);
+
+    return c.json(toReferenceSetResponse(referenceSet));
+  });
+
   app.put('/entities/:id', async (c) => {
     const user = c.get('user');
     const entityId = parseUuidParam(c, 'id');
