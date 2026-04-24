@@ -56,6 +56,14 @@ export function createBalloonRoutes(dependencies: BalloonRouteDependencies): Hon
     return c.json({ balloons: balloons.map(toBalloonResponse) });
   });
 
+  app.post('/pages/:id/auto-balloons', async (c) => {
+    const user = c.get('user');
+    const pageId = parseUuidParam(c, 'id');
+    const balloons = await dependencies.balloonService.autoGenerateBalloons(user.id, pageId);
+
+    return c.json({ balloons: balloons.map(toBalloonResponse) });
+  });
+
   app.put('/balloons/:id', async (c) => {
     const user = c.get('user');
     const balloonId = parseUuidParam(c, 'id');

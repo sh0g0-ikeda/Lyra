@@ -1,8 +1,8 @@
 import { SignJWT } from 'jose';
 import { describe, expect, it } from 'vitest';
 import { createApp } from '../../../src/app.js';
-import type { CreditBalanceSnapshot } from '../../../src/domain/types/credit.js';
 import type { Balloon } from '../../../src/domain/types/balloon.js';
+import type { CreditBalanceSnapshot } from '../../../src/domain/types/credit.js';
 import type { AuthenticatedUser, SupabaseJwtClaims } from '../../../src/domain/types/user.js';
 import type {
   ProvisionedUser,
@@ -56,6 +56,16 @@ class FakeCreditService implements CreditServicePort {
 }
 
 class FakeBalloonService implements BalloonServicePort {
+  public async autoGenerateBalloons(_userId: string, pageId: string): Promise<Balloon[]> {
+    return [
+      buildBalloon({
+        id: 'auto-1',
+        pageId,
+        text: 'auto',
+      }),
+    ];
+  }
+
   public async createBalloon(_userId: string, pageId: string): Promise<Balloon> {
     return buildBalloon({ id: 'balloon-1', pageId });
   }
@@ -65,7 +75,7 @@ class FakeBalloonService implements BalloonServicePort {
   }
 
   public async updateBalloon(_userId: string, balloonId: string): Promise<Balloon> {
-    return buildBalloon({ id: balloonId, text: '更新後' });
+    return buildBalloon({ id: balloonId, text: 'updated' });
   }
 
   public async deleteBalloon(_userId: string, _balloonId: string): Promise<void> {}
@@ -84,7 +94,7 @@ describe('balloon routes', () => {
       },
       body: JSON.stringify({
         balloon_type: 'speech',
-        text: 'こんにちは',
+        text: 'hello',
         position: {
           x: 0.1,
           y: 0.2,
@@ -134,6 +144,28 @@ describe('balloon routes', () => {
     });
   });
 
+  it('auto-balloons は候補一覧を返す', async () => {
+    const app = createTestApp();
+    const token = await createToken();
+
+    const response = await app.request('/api/pages/33333333-3333-4333-8333-333333333333/auto-balloons', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      balloons: [
+        {
+          id: 'auto-1',
+          text: 'auto',
+        },
+      ],
+    });
+  });
+
   it('不正な UUID は 422 になる', async () => {
     const app = createTestApp();
     const token = await createToken();
@@ -145,7 +177,7 @@ describe('balloon routes', () => {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        text: '更新後',
+        text: 'updated',
       }),
     });
 
@@ -191,7 +223,7 @@ function buildBalloon(overrides: Partial<Balloon> = {}): Balloon {
     speakerEntityId: null,
     balloonType: 'speech',
     writingMode: 'vertical',
-    text: 'こんにちは',
+    text: 'hello',
     position: {
       x: 0.1,
       y: 0.2,

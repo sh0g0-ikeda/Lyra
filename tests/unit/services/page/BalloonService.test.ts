@@ -2,13 +2,15 @@ import { describe, expect, it } from 'vitest';
 import type { AppError } from '../../../../src/domain/errors/index.js';
 import type { Balloon, CreateBalloonInput, UpdateBalloonInput } from '../../../../src/domain/types/balloon.js';
 import type { Entity } from '../../../../src/domain/types/entity.js';
+import type { Panel } from '../../../../src/domain/types/panel.js';
+import type { PanelFrame } from '../../../../src/domain/types/panelFrame.js';
 import type {
   BalloonContext,
   BalloonRepository,
   PageBalloonContext,
 } from '../../../../src/repositories/BalloonRepository.js';
 import type { EntityReferenceReader } from '../../../../src/repositories/EntityRepository.js';
-import { BalloonService } from '../../../../src/services/page/BalloonService.js';
+import { BalloonService, type BalloonFrameReader, type BalloonPanelReader } from '../../../../src/services/page/BalloonService.js';
 
 const basePageContext: PageBalloonContext = {
   pageId: 'page-1',
@@ -23,6 +25,7 @@ class FakeBalloonRepository implements BalloonRepository {
   private readonly pageContexts = new Map<string, PageBalloonContext>();
   private readonly balloonContexts = new Map<string, BalloonContext>();
   private readonly balloons = new Map<string, Balloon>();
+  public replacedInputs: CreateBalloonInput[] | null = null;
 
   public addPageContext(userId: string, context: PageBalloonContext): void {
     this.pageContexts.set(`${userId}:${context.pageId}`, context);
@@ -64,6 +67,24 @@ class FakeBalloonRepository implements BalloonRepository {
     }
 
     return [...this.balloons.values()].filter((balloon) => balloon.pageId === context.pageId);
+  }
+
+  public async replaceBalloonsByPageIdAndUserId(
+    pageId: string,
+    _userId: string,
+    inputs: CreateBalloonInput[],
+  ): Promise<Balloon[]> {
+    this.replacedInputs = inputs;
+    this.balloons.clear();
+    return inputs.map((input, index) => {
+      const balloon = buildBalloon({
+        id: `auto-${index + 1}`,
+        pageId,
+        ...input,
+      });
+      this.balloons.set(balloon.id, balloon);
+      return balloon;
+    });
   }
 
   public async updateBalloon(
@@ -115,6 +136,22 @@ class FakeEntityReader implements EntityReferenceReader {
       const entity = this.entities.get(`${userId}:${entityId}`);
       return entity?.workId === workId;
     }).length;
+  }
+}
+
+class FakePanelReader implements BalloonPanelReader {
+  public panels: Panel[] = [];
+
+  public async findPanelsByPageIdAndUserId(_pageId: string, _userId: string): Promise<Panel[]> {
+    return this.panels;
+  }
+}
+
+class FakeFrameReader implements BalloonFrameReader {
+  public frames: PanelFrame[] = [];
+
+  public async findFramesByPageIdAndUserId(_pageId: string, _userId: string): Promise<PanelFrame[]> {
+    return this.frames;
   }
 }
 
@@ -188,6 +225,171 @@ describe('BalloonService', () => {
     } satisfies Partial<AppError>);
   });
 
+  it('auto-balloons は mixed ページで dialogue_in_panel=false の台詞だけ配置する', async () => {
+    const { service, repository, panelReader, frameReader, entityReader } = createService();
+    repository.addPageContext('user-1', basePageContext);
+    entityReader.addEntity(buildEntity());
+    panelReader.panels = [
+      buildPanel({
+        id: 'panel-1',
+        order: 1,
+        dialogueInPanel: false,
+        dialogue: [
+          {
+            entityId: 'entity-1',
+            text: 'first',
+            type: 'speech',
+            position: 'top',
+          },
+        ],
+      }),
+      buildPanel({
+        id: 'panel-2',
+        order: 2,
+        dialogueInPanel: true,
+        dialogue: [
+          {
+            entityId: 'entity-1',
+            text: 'baked',
+            type: 'speech',
+            position: 'bottom',
+          },
+        ],
+      }),
+    ];
+    frameReader.frames = [
+      buildFrame({ id: 'frame-1', panelId: 'panel-1', readingOrder: 1 }),
+      buildFrame({ id: 'frame-2', panelId: 'panel-2', readingOrder: 2 }),
+    ];
+
+    const balloons = await service.autoGenerateBalloons('user-1', 'page-1');
+
+    expect(balloons).toHaveLength(1);
+    expect(repository.replacedInputs).toHaveLength(1);
+    expect(repository.replacedInputs?.[0]).toMatchObject({
+      text: 'first',
+      panelOrderReference: 1,
+      balloonType: 'speech',
+    });
+  });
+
+  it('auto-balloons は balloon_only ページで全ての台詞を対象にする', async () => {
+    const { service, repository, panelReader, frameReader, entityReader } = createService();
+    repository.addPageContext('user-1', {
+      ...basePageContext,
+      dialogueMode: 'balloon_only',
+    });
+    entityReader.addEntity(buildEntity());
+    panelReader.panels = [
+      buildPanel({
+        id: 'panel-1',
+        order: 1,
+        dialogueInPanel: true,
+        dialogue: [
+          {
+            entityId: 'entity-1',
+            text: 'speech',
+            type: 'speech',
+            position: 'top',
+          },
+          {
+            entityId: null,
+            text: 'boom',
+            type: 'sfx',
+            position: 'center',
+          },
+        ],
+      }),
+    ];
+    frameReader.frames = [buildFrame({ id: 'frame-1', panelId: 'panel-1', readingOrder: 1 })];
+
+    const balloons = await service.autoGenerateBalloons('user-1', 'page-1');
+
+    expect(balloons).toHaveLength(2);
+    expect(repository.replacedInputs?.[1]).toMatchObject({
+      text: 'boom',
+      balloonType: 'sfx',
+      writingMode: 'horizontal',
+    });
+  });
+
+  it('auto-balloons は対象台詞がなければ VALIDATION_ERROR になる', async () => {
+    const { service, repository } = createService();
+    repository.addPageContext('user-1', basePageContext);
+
+    await expect(service.autoGenerateBalloons('user-1', 'page-1')).rejects.toMatchObject({
+      code: 'VALIDATION_ERROR',
+    } satisfies Partial<AppError>);
+  });
+
+  it('auto-balloons は frame が足りないと VALIDATION_ERROR になる', async () => {
+    const { service, repository, panelReader } = createService();
+    repository.addPageContext('user-1', basePageContext);
+    panelReader.panels = [
+      buildPanel({
+        id: 'panel-1',
+        order: 1,
+        dialogueInPanel: false,
+        dialogue: [
+          {
+            entityId: 'entity-1',
+            text: 'first',
+            type: 'speech',
+            position: 'top',
+          },
+        ],
+      }),
+    ];
+
+    await expect(service.autoGenerateBalloons('user-1', 'page-1')).rejects.toMatchObject({
+      code: 'VALIDATION_ERROR',
+    } satisfies Partial<AppError>);
+  });
+
+  it('auto-balloons は小さい frame でも panel 内に収める', async () => {
+    const { service, repository, panelReader, frameReader, entityReader } = createService();
+    repository.addPageContext('user-1', basePageContext);
+    entityReader.addEntity(buildEntity());
+    panelReader.panels = [
+      buildPanel({
+        id: 'panel-1',
+        order: 1,
+        dialogueInPanel: false,
+        dialogue: [
+          {
+            entityId: 'entity-1',
+            text: 'tight',
+            type: 'speech',
+            position: 'top',
+          },
+        ],
+      }),
+    ];
+    frameReader.frames = [
+      buildFrame({
+        id: 'frame-1',
+        panelId: 'panel-1',
+        vertices: [
+          { x: 0.05, y: 0.05 },
+          { x: 0.14, y: 0.05 },
+          { x: 0.14, y: 0.18 },
+          { x: 0.05, y: 0.18 },
+        ],
+      }),
+    ];
+
+    await service.autoGenerateBalloons('user-1', 'page-1');
+
+    expect(repository.replacedInputs?.[0]?.position).toMatchObject({
+      x: expect.any(Number),
+      y: expect.any(Number),
+      width: expect.any(Number),
+      height: expect.any(Number),
+    });
+    expect((repository.replacedInputs?.[0]?.position.width ?? 1) <= 0.09 * 0.88 + 1e-6).toBe(true);
+    expect((repository.replacedInputs?.[0]?.position.height ?? 1) <= 0.13 * 0.88 + 1e-6).toBe(true);
+  });
+
   it('更新時も speaker entity の作品整合性を検証する', async () => {
     const { service, repository, entityReader } = createService();
     repository.addBalloonContext('user-1', {
@@ -242,14 +444,20 @@ function createService(): {
   service: BalloonService;
   repository: FakeBalloonRepository;
   entityReader: FakeEntityReader;
+  panelReader: FakePanelReader;
+  frameReader: FakeFrameReader;
 } {
   const repository = new FakeBalloonRepository();
   const entityReader = new FakeEntityReader();
+  const panelReader = new FakePanelReader();
+  const frameReader = new FakeFrameReader();
 
   return {
-    service: new BalloonService(repository, entityReader),
+    service: new BalloonService(repository, entityReader, panelReader, frameReader),
     repository,
     entityReader,
+    panelReader,
+    frameReader,
   };
 }
 
@@ -285,6 +493,56 @@ function buildBalloon(overrides: Partial<Balloon> & Pick<Balloon, 'id'>): Balloo
     fontFamily: 'manga_gothic',
     panelOrderReference: 1,
     zIndex: 10,
+    ...rest,
+  };
+}
+
+function buildPanel(overrides: Partial<Panel> = {}): Panel {
+  return {
+    id: 'panel-1',
+    pageId: 'page-1',
+    order: 1,
+    panelRole: 'action',
+    panelSize: 'standard',
+    situationText: null,
+    entities: [],
+    composition: {
+      source: 'custom',
+      galleryItemId: null,
+      compositionPrompt: null,
+      shotType: null,
+      angle: null,
+      customNote: null,
+    },
+    dialogueInPanel: false,
+    dialogue: [],
+    sfxText: null,
+    backgroundNote: null,
+    panelNotes: null,
+    createdAt: new Date('2026-04-24T00:00:00.000Z'),
+    updatedAt: new Date('2026-04-24T00:00:00.000Z'),
+    ...overrides,
+  };
+}
+
+function buildFrame(overrides: Partial<PanelFrame> & Pick<PanelFrame, 'id'>): PanelFrame {
+  const { id, ...rest } = overrides;
+
+  return {
+    id,
+    pageId: 'page-1',
+    panelId: 'panel-1',
+    vertices: [
+      { x: 0.05, y: 0.05 },
+      { x: 0.45, y: 0.05 },
+      { x: 0.45, y: 0.45 },
+      { x: 0.05, y: 0.45 },
+    ],
+    borderStyle: 'solid',
+    borderWidth: 3,
+    borderColor: '#000000',
+    zIndex: 1,
+    readingOrder: 1,
     ...rest,
   };
 }
