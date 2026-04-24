@@ -2,6 +2,11 @@ import { Hono } from 'hono';
 import { ConfigurationError } from './domain/errors/index.js';
 import { createPageImageStorageClient } from './infrastructure/aws/S3PageImageStorage.js';
 import { S3FinalPageImageStorage, type FinalPageImageStoragePort } from './infrastructure/aws/S3FinalPageImageStorage.js';
+import { AnthropicClient } from './infrastructure/anthropic/AnthropicClient.js';
+import {
+  AnthropicStoryAiClient,
+  type StoryAiClientPort,
+} from './infrastructure/anthropic/AnthropicStoryAiClient.js';
 import {
   StripeBillingClient,
   type StripeBillingClientPort,
@@ -81,6 +86,14 @@ import {
 } from './services/page/PanelEntityAssignmentService.js';
 import { PanelFrameService, type PanelFrameServicePort } from './services/page/PanelFrameService.js';
 import { SceneService, type SceneServicePort } from './services/scene/SceneService.js';
+import {
+  PageSkeletonService,
+  type PageSkeletonServicePort,
+} from './services/story/PageSkeletonService.js';
+import {
+  StoryCollaborationService,
+  type StoryCollaborationServicePort,
+} from './services/story/StoryCollaborationService.js';
 import { StoryService, type StoryServicePort } from './services/story/StoryService.js';
 import type { AppEnv } from './types/app.js';
 
@@ -93,12 +106,15 @@ export interface AppDependencies {
   entityService?: EntityServicePort;
   jobService?: JobServicePort;
   pageFinalizeService?: PageFinalizeServicePort;
+  pageSkeletonService?: PageSkeletonServicePort;
   pageGenerationQueue?: PageGenerationQueuePort;
   pageGenerationService?: PageGenerationServicePort;
   panelService?: PanelServicePort;
   panelEntityAssignmentService?: PanelEntityAssignmentServicePort;
   panelFrameService?: PanelFrameServicePort;
   sceneService?: SceneServicePort;
+  storyAiClient?: StoryAiClientPort;
+  storyCollaborationService?: StoryCollaborationServicePort;
   stripeWebhookService?: StripeWebhookServicePort;
   storyService?: StoryServicePort;
   userProvisioningService?: UserProvisioningPort;
@@ -178,6 +194,8 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
     createStoryRoutes({
       authMiddleware,
       rateLimitMiddleware,
+      pageSkeletonService: resolvedDependencies.pageSkeletonService,
+      storyCollaborationService: resolvedDependencies.storyCollaborationService,
       storyService: resolvedDependencies.storyService,
     }),
   );
@@ -237,6 +255,7 @@ function resolveDependencies(dependencies: AppDependencies): Required<Omit<AppDe
   const stripeWebhookService =
     dependencies.stripeWebhookService ??
     resolveStripeWebhookService(billingRepository, billingCreditGrantService, stripeBillingClient);
+  const storyAiClient = dependencies.storyAiClient ?? resolveStoryAiClient();
   const entityService =
     dependencies.entityService ??
     new EntityService(entityRepository, new PostgresWorkRepository(db));
@@ -258,6 +277,12 @@ function resolveDependencies(dependencies: AppDependencies): Required<Omit<AppDe
     dependencies.pageFinalizeService ??
     new PageFinalizeService(pageRepository, resolveFinalPageImageStorage());
   const jobService = dependencies.jobService ?? new JobService(generationJobRepository);
+  const storyCollaborationService =
+    dependencies.storyCollaborationService ??
+    new StoryCollaborationService(new PostgresStoryRepository(db), storyAiClient);
+  const pageSkeletonService =
+    dependencies.pageSkeletonService ??
+    new PageSkeletonService(new PostgresStoryRepository(db, db), storyAiClient);
   const storyService =
     dependencies.storyService ?? new StoryService(new PostgresStoryRepository(db), entityRepository);
   const panelService =
@@ -283,12 +308,15 @@ function resolveDependencies(dependencies: AppDependencies): Required<Omit<AppDe
     entityService,
     jobService,
     pageFinalizeService,
+    pageSkeletonService,
     pageGenerationQueue,
     pageGenerationService,
     panelService,
     panelEntityAssignmentService,
     panelFrameService,
     sceneService,
+    storyAiClient,
+    storyCollaborationService,
     stripeWebhookService,
     storyService,
     userProvisioningService,
@@ -317,6 +345,21 @@ function resolveStripeBillingClient(): StripeBillingClientPort {
   }
 
   return new StripeBillingClient(env.STRIPE_SECRET_KEY, env.STRIPE_WEBHOOK_SECRET);
+}
+
+function resolveStoryAiClient(): StoryAiClientPort {
+  if (env.ANTHROPIC_API_KEY === undefined) {
+    return new StoryAiClientStub();
+  }
+
+  return new AnthropicStoryAiClient(
+    new AnthropicClient({
+      apiKey: env.ANTHROPIC_API_KEY,
+      baseUrl: env.ANTHROPIC_BASE_URL,
+      apiVersion: env.ANTHROPIC_API_VERSION,
+      timeoutMs: env.ANTHROPIC_TIMEOUT_MS,
+    }),
+  );
 }
 
 class StripeBillingClientStub {
@@ -418,5 +461,15 @@ class BillingServiceStub {
 class StripeWebhookServiceStub {
   public async handleWebhook(): Promise<never> {
     throw new ConfigurationError('Stripe billing is not configured');
+  }
+}
+
+class StoryAiClientStub {
+  public async *streamCollaboration(): AsyncGenerator<string, void, void> {
+    throw new ConfigurationError('Anthropic story AI is not configured');
+  }
+
+  public async generatePageSkeleton(): Promise<never> {
+    throw new ConfigurationError('Anthropic story AI is not configured');
   }
 }

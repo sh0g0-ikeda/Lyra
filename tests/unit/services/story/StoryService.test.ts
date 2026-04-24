@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import type { AppError } from '../../../../src/domain/errors/index.js';
 import type {
+  EpisodePageSkeletonContext,
+  PageSkeletonPageDraft,
+  PageSkeletonPersistResult,
+  StoryCollaborationLayer,
+  StoryCollaborationTarget,
+} from '../../../../src/domain/types/storyAi.js';
+import type {
   Chapter,
   CreateChapterInput,
   CreateEpisodeInput,
@@ -214,6 +221,29 @@ class FakeStoryRepository implements StoryRepository {
   public async deleteEpisode(id: string, userId: string): Promise<boolean> {
     const episode = await this.findEpisodeByIdAndUserId(id, userId);
     return episode === null ? false : this.episodes.delete(id);
+  }
+
+  public async findCollaborationTargetByIdAndUserId(
+    _layer: StoryCollaborationLayer,
+    _targetId: string,
+    _userId: string,
+  ): Promise<StoryCollaborationTarget | null> {
+    return null;
+  }
+
+  public async findEpisodePageSkeletonContextByIdAndUserId(
+    _episodeId: string,
+    _userId: string,
+  ): Promise<EpisodePageSkeletonContext | null> {
+    return null;
+  }
+
+  public async createPageSkeleton(
+    _episodeId: string,
+    _userId: string,
+    _pages: PageSkeletonPageDraft[],
+  ): Promise<PageSkeletonPersistResult | null> {
+    return null;
   }
 }
 

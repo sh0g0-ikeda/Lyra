@@ -16,4 +16,4 @@ export const RATE_LIMIT_RULES = {
 export type RateLimitBucket = keyof typeof RATE_LIMIT_RULES;
 
 export const PAGE_GENERATION_ROUTE_PATTERN = /^\/api\/pages\/[^/]+\/generate$/;
-export const STORY_ROUTE_PREFIXES = ['/api/works', '/api/chapters', '/api/episodes'] as const;
+export const STORY_ROUTE_PREFIXES = ['/api/story', '/api/works', '/api/chapters', '/api/episodes'] as const;
