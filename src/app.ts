@@ -10,6 +10,8 @@ import { db } from './lib/db.js';
 import { env } from './lib/env.js';
 import { createAuthMiddleware } from './middleware/auth.js';
 import { errorHandler } from './middleware/errorHandler.js';
+import { createRateLimitMiddleware, InMemoryRateLimitStore, type RateLimitStore } from './middleware/rateLimit.js';
+import { createRequestContextMiddleware } from './middleware/requestContext.js';
 import { PostgresBillingRepository } from './repositories/BillingRepository.js';
 import { PostgresCompositionGalleryRepository } from './repositories/CompositionGalleryRepository.js';
 import { PostgresCreditRepository } from './repositories/CreditRepository.js';
@@ -100,6 +102,7 @@ export interface AppDependencies {
   stripeWebhookService?: StripeWebhookServicePort;
   storyService?: StoryServicePort;
   userProvisioningService?: UserProvisioningPort;
+  rateLimitStore?: RateLimitStore;
   jwtSecret?: string;
 }
 
@@ -109,13 +112,16 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
   const authMiddleware = createAuthMiddleware(resolvedDependencies.userProvisioningService, {
     jwtSecret: dependencies.jwtSecret,
   });
+  const rateLimitMiddleware = createRateLimitMiddleware(resolvedDependencies.rateLimitStore);
 
   app.onError(errorHandler);
+  app.use('*', createRequestContextMiddleware());
   app.route('/', createHealthRoutes());
   app.route(
     '/api/billing',
     createBillingRoutes({
       authMiddleware,
+      rateLimitMiddleware,
       billingService: resolvedDependencies.billingService,
       creditService: resolvedDependencies.creditService,
     }),
@@ -130,6 +136,7 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
     '/api',
     createBalloonRoutes({
       authMiddleware,
+      rateLimitMiddleware,
       balloonService: resolvedDependencies.balloonService,
     }),
   );
@@ -137,6 +144,7 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
     '/api',
     createCompositionRoutes({
       authMiddleware,
+      rateLimitMiddleware,
       compositionGalleryService: resolvedDependencies.compositionGalleryService,
     }),
   );
@@ -144,6 +152,7 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
     '/api',
     createEntityRoutes({
       authMiddleware,
+      rateLimitMiddleware,
       entityService: resolvedDependencies.entityService,
     }),
   );
@@ -151,6 +160,7 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
     '/api',
     createJobRoutes({
       authMiddleware,
+      rateLimitMiddleware,
       jobService: resolvedDependencies.jobService,
     }),
   );
@@ -158,6 +168,7 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
     '/api',
     createPageRoutes({
       authMiddleware,
+      rateLimitMiddleware,
       pageFinalizeService: resolvedDependencies.pageFinalizeService,
       pageGenerationService: resolvedDependencies.pageGenerationService,
     }),
@@ -166,6 +177,7 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
     '/api',
     createStoryRoutes({
       authMiddleware,
+      rateLimitMiddleware,
       storyService: resolvedDependencies.storyService,
     }),
   );
@@ -173,6 +185,7 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
     '/api',
     createPanelRoutes({
       authMiddleware,
+      rateLimitMiddleware,
       panelService: resolvedDependencies.panelService,
     }),
   );
@@ -180,6 +193,7 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
     '/api',
     createPanelEntityAssignmentRoutes({
       authMiddleware,
+      rateLimitMiddleware,
       panelEntityAssignmentService: resolvedDependencies.panelEntityAssignmentService,
     }),
   );
@@ -187,6 +201,7 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
     '/api',
     createPanelFrameRoutes({
       authMiddleware,
+      rateLimitMiddleware,
       panelFrameService: resolvedDependencies.panelFrameService,
     }),
   );
@@ -194,6 +209,7 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
     '/api',
     createSceneRoutes({
       authMiddleware,
+      rateLimitMiddleware,
       sceneService: resolvedDependencies.sceneService,
     }),
   );
@@ -256,6 +272,7 @@ function resolveDependencies(dependencies: AppDependencies): Required<Omit<AppDe
   const userProvisioningService =
     dependencies.userProvisioningService ??
     new UserProvisioningService(new PostgresUserRepository(db), creditService);
+  const rateLimitStore = dependencies.rateLimitStore ?? new InMemoryRateLimitStore();
 
   return {
     balloonService,
@@ -275,6 +292,7 @@ function resolveDependencies(dependencies: AppDependencies): Required<Omit<AppDe
     stripeWebhookService,
     storyService,
     userProvisioningService,
+    rateLimitStore,
   };
 }
 

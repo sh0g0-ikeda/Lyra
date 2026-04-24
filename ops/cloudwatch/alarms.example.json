@@ -1,0 +1,50 @@
+{
+  "alarms": [
+    {
+      "name": "lyra-api-5xx-rate",
+      "namespace": "AWS/EC2",
+      "metric_name": "StatusCheckFailed",
+      "threshold": 1,
+      "period_seconds": 60,
+      "evaluation_periods": 1,
+      "comparison_operator": "GreaterThanOrEqualToThreshold",
+      "alarm_actions": ["arn:aws:sns:ap-northeast-1:123456789012:lyra-alerts"]
+    },
+    {
+      "name": "lyra-ec2-cpu-high",
+      "namespace": "AWS/EC2",
+      "metric_name": "CPUUtilization",
+      "threshold": 80,
+      "period_seconds": 300,
+      "evaluation_periods": 3,
+      "comparison_operator": "GreaterThanThreshold",
+      "alarm_actions": ["arn:aws:sns:ap-northeast-1:123456789012:lyra-alerts"]
+    },
+    {
+      "name": "lyra-worker-lambda-errors",
+      "namespace": "AWS/Lambda",
+      "metric_name": "Errors",
+      "threshold": 1,
+      "period_seconds": 300,
+      "evaluation_periods": 1,
+      "comparison_operator": "GreaterThanThreshold",
+      "dimensions": {
+        "FunctionName": "lyra-page-generation-worker"
+      },
+      "alarm_actions": ["arn:aws:sns:ap-northeast-1:123456789012:lyra-alerts"]
+    },
+    {
+      "name": "lyra-worker-dlq-visible-messages",
+      "namespace": "AWS/SQS",
+      "metric_name": "ApproximateNumberOfMessagesVisible",
+      "threshold": 0,
+      "period_seconds": 60,
+      "evaluation_periods": 1,
+      "comparison_operator": "GreaterThanThreshold",
+      "dimensions": {
+        "QueueName": "lyra-page-generation-dlq"
+      },
+      "alarm_actions": ["arn:aws:sns:ap-northeast-1:123456789012:lyra-alerts"]
+    }
+  ]
+}

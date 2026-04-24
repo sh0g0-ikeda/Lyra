@@ -10,6 +10,7 @@ import type { AppEnv } from '../types/app.js';
 
 export interface PanelEntityAssignmentRouteDependencies {
   authMiddleware: MiddlewareHandler<AppEnv>;
+  rateLimitMiddleware: MiddlewareHandler<AppEnv>;
   panelEntityAssignmentService: PanelEntityAssignmentServicePort;
 }
 
@@ -19,6 +20,7 @@ export function createPanelEntityAssignmentRoutes(
   const app = new Hono<AppEnv>();
 
   app.use('*', dependencies.authMiddleware);
+  app.use('*', dependencies.rateLimitMiddleware);
 
   app.put('/panels/:id/entities', async (c) => {
     const user = c.get('user');

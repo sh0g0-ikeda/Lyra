@@ -70,6 +70,18 @@ describe('PostgresGenerationJobRepository', () => {
     expect(client.values).toEqual(['job-1', 'user-1']);
     expect(job?.userId).toBe('user-1');
   });
+
+  it('failed job を retry 用に queued へ戻す', async () => {
+    const client = new QueryCapturingClient();
+    const repository = new PostgresGenerationJobRepository(client);
+
+    const prepared = await repository.prepareRetry('job-1', 3);
+
+    expect(prepared).toBe(true);
+    expect(client.queries[0]).toContain("SET status = 'queued'");
+    expect(client.queries[0]).toContain('retry_count = retry_count + 1');
+    expect(client.values).toEqual(['job-1', 3]);
+  });
 });
 
 function jobRow(): Record<string, unknown> {

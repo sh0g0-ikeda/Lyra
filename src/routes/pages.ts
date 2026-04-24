@@ -9,6 +9,7 @@ const uuidParamSchema = z.string().uuid();
 
 export interface PageRouteDependencies {
   authMiddleware: MiddlewareHandler<AppEnv>;
+  rateLimitMiddleware: MiddlewareHandler<AppEnv>;
   pageFinalizeService: PageFinalizeServicePort;
   pageGenerationService: PageGenerationServicePort;
 }
@@ -17,6 +18,7 @@ export function createPageRoutes(dependencies: PageRouteDependencies): Hono<AppE
   const app = new Hono<AppEnv>();
 
   app.use('*', dependencies.authMiddleware);
+  app.use('*', dependencies.rateLimitMiddleware);
 
   app.post('/pages/:id/generate', async (c) => {
     const user = c.get('user');

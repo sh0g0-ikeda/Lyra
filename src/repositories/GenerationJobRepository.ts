@@ -15,9 +15,11 @@ export interface CreateGenerationJobInput {
 
 export interface GenerationJobRepository {
   create(input: CreateGenerationJobInput): Promise<GenerationJob>;
+  findById(jobId: string): Promise<GenerationJob | null>;
   findByIdAndUserId(jobId: string, userId: string): Promise<GenerationJob | null>;
   attachQueueMessageId(jobId: string, messageId: string): Promise<boolean>;
   markFailed(jobId: string, errorMessage: string): Promise<boolean>;
+  prepareRetry(jobId: string, maxRetryCount: number): Promise<boolean>;
 }
 
 interface GenerationJobRow extends QueryResultRow {
@@ -68,6 +70,19 @@ export class PostgresGenerationJobRepository implements GenerationJobRepository 
     return mapGenerationJobRow(result.rows[0]);
   }
 
+  public async findById(jobId: string): Promise<GenerationJob | null> {
+    const result = await this.client.query<GenerationJobRow>(
+      `
+      SELECT *
+      FROM generation_jobs
+      WHERE id = $1
+      `,
+      [jobId],
+    );
+
+    return result.rows[0] === undefined ? null : mapGenerationJobRow(result.rows[0]);
+  }
+
   public async findByIdAndUserId(jobId: string, userId: string): Promise<GenerationJob | null> {
     const result = await this.client.query<GenerationJobRow>(
       `
@@ -107,6 +122,28 @@ export class PostgresGenerationJobRepository implements GenerationJobRepository 
       RETURNING *
       `,
       [jobId, errorMessage],
+    );
+
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  public async prepareRetry(jobId: string, maxRetryCount: number): Promise<boolean> {
+    const result = await this.client.query<GenerationJobRow>(
+      `
+      UPDATE generation_jobs
+      SET status = 'queued',
+          retry_count = retry_count + 1,
+          started_at = NULL,
+          completed_at = NULL,
+          error_message = NULL,
+          openai_request_id = NULL,
+          sqs_message_id = NULL
+      WHERE id = $1
+        AND status = 'failed'
+        AND retry_count < $2
+      RETURNING *
+      `,
+      [jobId, maxRetryCount],
     );
 
     return (result.rowCount ?? 0) > 0;

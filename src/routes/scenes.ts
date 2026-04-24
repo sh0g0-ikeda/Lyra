@@ -13,6 +13,7 @@ import type { AppEnv } from '../types/app.js';
 
 export interface SceneRouteDependencies {
   authMiddleware: MiddlewareHandler<AppEnv>;
+  rateLimitMiddleware: MiddlewareHandler<AppEnv>;
   sceneService: SceneServicePort;
 }
 
@@ -20,6 +21,7 @@ export function createSceneRoutes(dependencies: SceneRouteDependencies): Hono<Ap
   const app = new Hono<AppEnv>();
 
   app.use('*', dependencies.authMiddleware);
+  app.use('*', dependencies.rateLimitMiddleware);
 
   app.post('/episodes/:id/scenes', async (c) => {
     const user = c.get('user');

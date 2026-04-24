@@ -23,6 +23,12 @@ export class ValidationError extends AppError {
   }
 }
 
+export class RateLimitError extends AppError {
+  public constructor(bucket: string, retryAfterSeconds: number) {
+    super('RATE_LIMITED', `Rate limit exceeded for ${bucket}. Retry after ${retryAfterSeconds} seconds`, 429);
+  }
+}
+
 export class NotFoundError extends AppError {
   public constructor(message = 'Not found') {
     super('NOT_FOUND', message, 404);

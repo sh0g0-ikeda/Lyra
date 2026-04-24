@@ -11,7 +11,8 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "migrate": "tsx scripts/migrate.ts",
-    "worker:page": "tsx scripts/runPageWorker.ts"
+    "worker:page": "tsx scripts/runPageWorker.ts",
+    "worker:retry": "tsx scripts/retryPageGenerationJob.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1036.0",
