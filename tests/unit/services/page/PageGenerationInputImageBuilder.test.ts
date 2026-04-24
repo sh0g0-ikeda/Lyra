@@ -94,6 +94,9 @@ class FakeEntityRepository implements EntityRepository {
       cdnUrl: 'https://img.lyra.app/ref-2.png',
     },
   ];
+  public lastArgs:
+    | { entityIds: string[]; workId: string; userId: string }
+    | null = null;
 
   public async create(_input: CreateEntityInput): Promise<Entity> { throw new Error('not used'); }
   public async findByIdAndUserId(_id: string, _userId: string): Promise<Entity | null> { throw new Error('not used'); }
@@ -105,7 +108,12 @@ class FakeEntityRepository implements EntityRepository {
   ): Promise<number> { throw new Error('not used'); }
   public async update(_id: string, _userId: string, _input: UpdateEntityInput): Promise<Entity | null> { throw new Error('not used'); }
   public async delete(_id: string, _userId: string): Promise<boolean> { throw new Error('not used'); }
-  public async findPrimaryReferenceImagesByEntityIdsAndUserId(): Promise<EntityPrimaryReferenceImage[]> {
+  public async findPrimaryReferenceImagesByEntityIdsAndUserId(
+    entityIds: string[],
+    workId: string,
+    userId: string,
+  ): Promise<EntityPrimaryReferenceImage[]> {
+    this.lastArgs = { entityIds, workId, userId };
     return this.references;
   }
 }
@@ -125,9 +133,10 @@ class FakeStoredImageLoader implements StoredImageLoaderPort {
 describe('PageGenerationInputImageBuilder', () => {
   it('panel順の一意entityに対してreference画像をdataUrl化する', async () => {
     const loader = new FakeStoredImageLoader();
+    const entityRepository = new FakeEntityRepository();
     const builder = new PageGenerationInputImageBuilder(
       new FakePageRepository(),
-      new FakeEntityRepository(),
+      entityRepository,
       loader,
     );
 
@@ -140,6 +149,11 @@ describe('PageGenerationInputImageBuilder', () => {
       'saved/user-1/entities/entity-1/ref-1.png',
       'saved/user-1/entities/entity-2/ref-2.png',
     ]);
+    expect(entityRepository.lastArgs).toEqual({
+      entityIds: ['entity-1', 'entity-2'],
+      workId: 'work-1',
+      userId: 'user-1',
+    });
     expect(result).toHaveLength(2);
     expect(result[0]).toMatchObject({
       role: 'entity_reference',

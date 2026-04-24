@@ -24,6 +24,7 @@ export interface EntityRepository {
   countByIdsAndWorkIdAndUserId(entityIds: string[], workId: string, userId: string): Promise<number>;
   findPrimaryReferenceImagesByEntityIdsAndUserId(
     entityIds: string[],
+    workId: string,
     userId: string,
   ): Promise<EntityPrimaryReferenceImage[]>;
   update(id: string, userId: string, input: UpdateEntityInput): Promise<Entity | null>;
@@ -151,6 +152,7 @@ export class PostgresEntityRepository implements EntityRepository {
 
   public async findPrimaryReferenceImagesByEntityIdsAndUserId(
     entityIds: string[],
+    workId: string,
     userId: string,
   ): Promise<EntityPrimaryReferenceImage[]> {
     if (entityIds.length === 0) {
@@ -165,9 +167,10 @@ export class PostgresEntityRepository implements EntityRepository {
       FROM entities
       INNER JOIN reference_sets ON reference_sets.entity_id = entities.id
       WHERE entities.id = ANY($1::uuid[])
-        AND entities.user_id = $2
+        AND entities.work_id = $2
+        AND entities.user_id = $3
       `,
-      [entityIds, userId],
+      [entityIds, workId, userId],
     );
 
     return result.rows.flatMap((row) => {

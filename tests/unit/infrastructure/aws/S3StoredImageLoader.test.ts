@@ -54,4 +54,14 @@ describe('S3StoredImageLoader', () => {
       loader.loadByS3Key('saved/user-1/entities/entity-1/ref_1.png'),
     ).rejects.toEqual(new ConfigurationError('Stored image content type is missing'));
   });
+
+  it('未対応のcontentTypeはConfigurationErrorを投げる', async () => {
+    const client = new FakeS3Client();
+    client.contentType = 'image/gif';
+    const loader = new S3StoredImageLoader(client, 'lyra-images');
+
+    await expect(
+      loader.loadByS3Key('saved/user-1/entities/entity-1/ref_1.png'),
+    ).rejects.toEqual(new ConfigurationError('Unsupported stored image content type: image/gif'));
+  });
 });
