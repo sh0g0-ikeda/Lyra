@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { EntityGenerationQueuePayload } from '../../domain/types/entityReference.js';
+import type { SqsGenerationQueue } from '../../infrastructure/aws/SqsGenerationQueue.js';
 
 export interface EnqueueEntityGenerationResult {
   messageId: string | null;
@@ -14,5 +15,16 @@ export class NoopEntityGenerationQueue implements EntityGenerationQueuePort {
     return {
       messageId: `noop-${randomUUID()}`,
     };
+  }
+}
+
+export class SqsEntityGenerationQueueAdapter implements EntityGenerationQueuePort {
+  public constructor(private readonly queue: SqsGenerationQueue) {}
+
+  public async enqueue(payload: EntityGenerationQueuePayload): Promise<EnqueueEntityGenerationResult> {
+    return this.queue.enqueueJob({
+      jobId: payload.jobId,
+      jobType: 'entity_generate',
+    });
   }
 }

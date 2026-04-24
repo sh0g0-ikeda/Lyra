@@ -3,6 +3,7 @@ import { ConfigurationError } from './domain/errors/index.js';
 import { createPageImageStorageClient } from './infrastructure/aws/S3PageImageStorage.js';
 import { S3FinalPageImageStorage, type FinalPageImageStoragePort } from './infrastructure/aws/S3FinalPageImageStorage.js';
 import { S3EntityImageStorage, type EntityImageStoragePort } from './infrastructure/aws/S3EntityImageStorage.js';
+import { createGenerationQueueClient, SqsGenerationQueue } from './infrastructure/aws/SqsGenerationQueue.js';
 import { S3StoredImageLoader, type StoredImageLoaderPort } from './infrastructure/aws/S3StoredImageLoader.js';
 import { AnthropicClient } from './infrastructure/anthropic/AnthropicClient.js';
 import {
@@ -77,10 +78,15 @@ import {
 } from './services/entity/EntityReferenceService.js';
 import {
   NoopEntityGenerationQueue,
+  SqsEntityGenerationQueueAdapter,
   type EntityGenerationQueuePort,
 } from './services/entity/EntityGenerationQueue.js';
 import { JobService, type JobServicePort } from './services/job/JobService.js';
-import { NoopPageGenerationQueue, type PageGenerationQueuePort } from './services/page/PageGenerationQueue.js';
+import {
+  NoopPageGenerationQueue,
+  SqsPageGenerationQueueAdapter,
+  type PageGenerationQueuePort,
+} from './services/page/PageGenerationQueue.js';
 import { BalloonService, type BalloonServicePort } from './services/page/BalloonService.js';
 import {
   PageGenerationService,
@@ -260,6 +266,7 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
 function resolveDependencies(dependencies: AppDependencies): Required<Omit<AppDependencies, 'jwtSecret'>> {
   const creditRepository = new PostgresCreditRepository(db, db);
   const creditService = dependencies.creditService ?? new CreditService(creditRepository);
+  const generationQueue = resolveGenerationQueue();
   const billingCreditGrantService =
     dependencies.billingCreditGrantService ?? new BillingCreditGrantService(creditRepository);
   const compositionGalleryService =
@@ -267,11 +274,18 @@ function resolveDependencies(dependencies: AppDependencies): Required<Omit<AppDe
     new CompositionGalleryService(new PostgresCompositionGalleryRepository(db));
   const entityRepository = new PostgresEntityRepository(db);
   const entityGenerationQueue =
-    dependencies.entityGenerationQueue ?? new NoopEntityGenerationQueue();
+    dependencies.entityGenerationQueue ??
+    (generationQueue === null
+      ? new NoopEntityGenerationQueue()
+      : new SqsEntityGenerationQueueAdapter(generationQueue));
   const billingRepository = new PostgresBillingRepository(db, db);
   const pageRepository = new PostgresPageRepository(db);
   const generationJobRepository = new PostgresGenerationJobRepository(db);
-  const pageGenerationQueue = dependencies.pageGenerationQueue ?? new NoopPageGenerationQueue();
+  const pageGenerationQueue =
+    dependencies.pageGenerationQueue ??
+    (generationQueue === null
+      ? new NoopPageGenerationQueue()
+      : new SqsPageGenerationQueueAdapter(generationQueue));
   const stripeBillingClient = resolveStripeBillingClient();
   const billingService =
     dependencies.billingService ??
@@ -403,6 +417,17 @@ function resolveStoredPageImageLoader(): StoredImageLoaderPort {
 
 function resolvePageBalloonComposer(): PageBalloonComposerPort {
   return new SharpPageBalloonComposer();
+}
+
+function resolveGenerationQueue(): SqsGenerationQueue | null {
+  if (env.SQS_QUEUE_URL_GENERATION === undefined) {
+    return null;
+  }
+
+  return new SqsGenerationQueue(
+    createGenerationQueueClient(env.AWS_REGION),
+    env.SQS_QUEUE_URL_GENERATION,
+  );
 }
 
 function resolveEntityImageStorage(): EntityImageStoragePort {
