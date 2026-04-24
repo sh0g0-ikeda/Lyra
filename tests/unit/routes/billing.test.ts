@@ -1,12 +1,20 @@
 import { SignJWT } from 'jose';
 import { describe, expect, it } from 'vitest';
 import { createApp } from '../../../src/app.js';
+import type { CreditPackageCode, PaidPlanCode } from '../../../src/domain/constants/billing.js';
 import type { CreditBalanceSnapshot } from '../../../src/domain/types/credit.js';
 import type { AuthenticatedUser, SupabaseJwtClaims } from '../../../src/domain/types/user.js';
+import type {
+  CreditCheckoutResult,
+  CustomerPortalResult,
+  SubscriptionCheckoutResult,
+} from '../../../src/domain/types/billing.js';
 import type {
   ProvisionedUser,
   UserProvisioningPort,
 } from '../../../src/services/auth/UserProvisioningService.js';
+import type { BillingServicePort } from '../../../src/services/billing/BillingService.js';
+import type { StripeWebhookServicePort } from '../../../src/services/billing/StripeWebhookService.js';
 import type {
   ConsumeCreditsParams,
   CreditServicePort,
@@ -45,26 +53,68 @@ class FakeCreditService implements CreditServicePort {
     };
   }
 
-  public async grantSignupBonus(_userId: string): Promise<CreditBalanceSnapshot> {
-    return this.getBalance(_userId);
+  public async grantSignupBonus(userId: string): Promise<CreditBalanceSnapshot> {
+    return this.getBalance(userId);
   }
 
-  public async consumeCredits(_params: ConsumeCreditsParams): Promise<CreditBalanceSnapshot> {
-    return this.getBalance(_params.userId);
+  public async consumeCredits(params: ConsumeCreditsParams): Promise<CreditBalanceSnapshot> {
+    return this.getBalance(params.userId);
   }
 
-  public async refundCredits(_params: RefundCreditsParams): Promise<CreditBalanceSnapshot> {
-    return this.getBalance(_params.userId);
+  public async refundCredits(params: RefundCreditsParams): Promise<CreditBalanceSnapshot> {
+    return this.getBalance(params.userId);
+  }
+}
+
+class FakeBillingService implements BillingServicePort {
+  public subscriptionPlanCode: PaidPlanCode | null = null;
+  public creditPackageCode: CreditPackageCode | null = null;
+  public portalUserId: string | null = null;
+
+  public async createSubscriptionCheckoutSession(
+    _user: AuthenticatedUser,
+    planCode: PaidPlanCode,
+  ): Promise<SubscriptionCheckoutResult> {
+    this.subscriptionPlanCode = planCode;
+    return {
+      sessionId: 'cs_sub_123',
+      url: 'https://checkout.stripe.test/subscription',
+    };
+  }
+
+  public async createCreditCheckoutSession(
+    _user: AuthenticatedUser,
+    packageCode: CreditPackageCode,
+  ): Promise<CreditCheckoutResult> {
+    this.creditPackageCode = packageCode;
+    return {
+      sessionId: 'cs_pay_123',
+      packageCode,
+      url: 'https://checkout.stripe.test/credits',
+    };
+  }
+
+  public async createCustomerPortalSession(userId: string): Promise<CustomerPortalResult> {
+    this.portalUserId = userId;
+    return {
+      url: 'https://billing.stripe.test/portal',
+    };
+  }
+}
+
+class FakeStripeWebhookService implements StripeWebhookServicePort {
+  public signature: string | null = null;
+  public payload: string | null = null;
+
+  public async handleWebhook(rawBody: Buffer, signature: string): Promise<void> {
+    this.signature = signature;
+    this.payload = rawBody.toString('utf8');
   }
 }
 
 describe('billing routes', () => {
   it('Authorizationヘッダーがない場合に401になる', async () => {
-    const app = createApp({
-      creditService: new FakeCreditService(),
-      userProvisioningService: new FakeUserProvisioningService(),
-      jwtSecret,
-    });
+    const app = createTestApp(new FakeBillingService(), new FakeStripeWebhookService());
 
     const response = await app.request('/api/billing/balance');
 
@@ -78,11 +128,7 @@ describe('billing routes', () => {
   });
 
   it('JWTが正しい場合にクレジット残高を返す', async () => {
-    const app = createApp({
-      creditService: new FakeCreditService(),
-      userProvisioningService: new FakeUserProvisioningService(),
-      jwtSecret,
-    });
+    const app = createTestApp(new FakeBillingService(), new FakeStripeWebhookService());
     const token = await createToken();
 
     const response = await app.request('/api/billing/balance', {
@@ -99,7 +145,121 @@ describe('billing routes', () => {
       monthly_expires_at: null,
     });
   });
+
+  it('サブスク Checkout Session を作成する', async () => {
+    const billingService = new FakeBillingService();
+    const app = createTestApp(billingService, new FakeStripeWebhookService());
+    const token = await createToken();
+
+    const response = await app.request('/api/billing/checkout/subscription', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        plan_code: 'standard',
+      }),
+    });
+
+    expect(response.status).toBe(201);
+    await expect(response.json()).resolves.toEqual({
+      session_id: 'cs_sub_123',
+      url: 'https://checkout.stripe.test/subscription',
+    });
+    expect(billingService.subscriptionPlanCode).toBe('standard');
+  });
+
+  it('クレジット購入 Checkout Session を作成する', async () => {
+    const billingService = new FakeBillingService();
+    const app = createTestApp(billingService, new FakeStripeWebhookService());
+    const token = await createToken();
+
+    const response = await app.request('/api/billing/checkout/credits', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        package_code: 'credits_1000',
+      }),
+    });
+
+    expect(response.status).toBe(201);
+    await expect(response.json()).resolves.toEqual({
+      session_id: 'cs_pay_123',
+      package_code: 'credits_1000',
+      url: 'https://checkout.stripe.test/credits',
+    });
+    expect(billingService.creditPackageCode).toBe('credits_1000');
+  });
+
+  it('customer portal URL を返す', async () => {
+    const billingService = new FakeBillingService();
+    const app = createTestApp(billingService, new FakeStripeWebhookService());
+    const token = await createToken();
+
+    const response = await app.request('/api/billing/customer-portal', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      url: 'https://billing.stripe.test/portal',
+    });
+    expect(billingService.portalUserId).toBe(testUser.id);
+  });
+
+  it('webhook は認証なしで受け取る', async () => {
+    const webhookService = new FakeStripeWebhookService();
+    const app = createTestApp(new FakeBillingService(), webhookService);
+
+    const response = await app.request('/api/webhooks/stripe', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Stripe-Signature': 't=1,v1=test',
+      },
+      body: '{"id":"evt_123"}',
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ received: true });
+    expect(webhookService.signature).toBe('t=1,v1=test');
+    expect(webhookService.payload).toBe('{"id":"evt_123"}');
+  });
+
+  it('webhook の署名ヘッダーがない場合は422になる', async () => {
+    const app = createTestApp(new FakeBillingService(), new FakeStripeWebhookService());
+
+    const response = await app.request('/api/webhooks/stripe', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: '{}',
+    });
+
+    expect(response.status).toBe(422);
+  });
 });
+
+function createTestApp(
+  billingService: BillingServicePort,
+  stripeWebhookService: StripeWebhookServicePort,
+): ReturnType<typeof createApp> {
+  return createApp({
+    billingService,
+    creditService: new FakeCreditService(),
+    stripeWebhookService,
+    userProvisioningService: new FakeUserProvisioningService(),
+    jwtSecret,
+  });
+}
 
 async function createToken(): Promise<string> {
   return new SignJWT({ email: testUser.email })
