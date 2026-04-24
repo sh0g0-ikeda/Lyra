@@ -3,6 +3,7 @@ import type { PageGenerationInputImage } from '../../domain/types/pageGeneration
 import type { EntityRepository } from '../../repositories/EntityRepository.js';
 import type { PageRepository } from '../../repositories/PageRepository.js';
 import type { StoredImageLoaderPort } from '../../infrastructure/aws/S3StoredImageLoader.js';
+import type { LayoutGuideImageRendererPort } from './LayoutGuideImageRenderer.js';
 
 export interface BuildPageGenerationInputImagesInput {
   userId: string;
@@ -18,6 +19,7 @@ export class PageGenerationInputImageBuilder implements PageGenerationInputImage
     private readonly pageRepository: PageRepository,
     private readonly entityRepository: EntityRepository,
     private readonly storedImageLoader: StoredImageLoaderPort,
+    private readonly layoutGuideImageRenderer: LayoutGuideImageRendererPort,
   ) {}
 
   public async buildInputImages(
@@ -50,8 +52,27 @@ export class PageGenerationInputImageBuilder implements PageGenerationInputImage
       });
     }
 
+    const layoutGuideImage = buildLayoutGuideImage(page.layoutConfig, this.layoutGuideImageRenderer);
+    if (layoutGuideImage !== null) {
+      inputImages.push({
+        role: 'layout_reference',
+        dataUrl: toDataUrl(layoutGuideImage.mimeType, layoutGuideImage.imageData),
+      });
+    }
+
     return inputImages;
   }
+}
+
+function buildLayoutGuideImage(
+  layoutConfig: Record<string, unknown>,
+  layoutGuideImageRenderer: LayoutGuideImageRendererPort,
+): { imageData: Buffer; mimeType: 'image/png' } | null {
+  if (layoutConfig.type !== 'custom') {
+    return null;
+  }
+
+  return layoutGuideImageRenderer.render(layoutConfig.frame_definitions);
 }
 
 function collectEntityIds(
