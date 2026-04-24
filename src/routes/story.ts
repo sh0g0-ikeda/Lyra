@@ -1,6 +1,7 @@
 import { Hono, type Context, type MiddlewareHandler } from 'hono';
 import { ValidationError } from '../domain/errors/index.js';
 import type { Chapter, Episode, Work } from '../domain/types/story.js';
+import { collaborateStoryBodySchema, generatePageSkeletonParamSchema } from '../lib/validators/storyAi.schema.js';
 import {
   createChapterBodySchema,
   createEpisodeBodySchema,
@@ -11,11 +12,15 @@ import {
   updateWorkBodySchema,
 } from '../lib/validators/story.schema.js';
 import type { StoryServicePort } from '../services/story/StoryService.js';
+import type { StoryCollaborationServicePort } from '../services/story/StoryCollaborationService.js';
+import type { PageSkeletonServicePort } from '../services/story/PageSkeletonService.js';
 import type { AppEnv } from '../types/app.js';
 
 export interface StoryRouteDependencies {
   authMiddleware: MiddlewareHandler<AppEnv>;
   rateLimitMiddleware: MiddlewareHandler<AppEnv>;
+  pageSkeletonService: PageSkeletonServicePort;
+  storyCollaborationService: StoryCollaborationServicePort;
   storyService: StoryServicePort;
 }
 
@@ -24,6 +29,30 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
 
   app.use('*', dependencies.authMiddleware);
   app.use('*', dependencies.rateLimitMiddleware);
+
+  app.post('/story/collaborate', async (c) => {
+    const user = c.get('user');
+    const body = collaborateStoryBodySchema.safeParse(await readJsonBody(c));
+
+    if (!body.success) {
+      throw new ValidationError(body.error.message);
+    }
+
+    const stream = await dependencies.storyCollaborationService.collaborate(user.id, {
+      layer: body.data.layer,
+      targetId: body.data.target_id,
+      instruction: body.data.instruction,
+      context: {
+        currentDraft: body.data.context.current_draft,
+        selectedText: body.data.context.selected_text,
+        userNotes: body.data.context.user_notes,
+        focusPoints: body.data.context.focus_points,
+        constraints: body.data.context.constraints,
+      },
+    });
+
+    return createSseResponse(stream);
+  });
 
   app.post('/works', async (c) => {
     const user = c.get('user');
@@ -207,6 +236,24 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
     return c.body(null, 204);
   });
 
+  app.post('/episodes/:id/generate-page-skeleton', async (c) => {
+    const user = c.get('user');
+    const parsedEpisodeId = generatePageSkeletonParamSchema.safeParse(c.req.param('id'));
+    if (!parsedEpisodeId.success) {
+      throw new ValidationError('id must be a valid UUID');
+    }
+
+    const result = await dependencies.pageSkeletonService.generateForEpisode(user.id, parsedEpisodeId.data);
+
+    return c.json(
+      {
+        pages_created: result.pagesCreated,
+        panels_created: result.panelsCreated,
+      },
+      201,
+    );
+  });
+
   return app;
 }
 
@@ -287,4 +334,39 @@ function toEpisodeResponse(episode: Episode): Record<string, unknown> {
     created_at: episode.createdAt.toISOString(),
     updated_at: episode.updatedAt.toISOString(),
   };
+}
+
+function createSseResponse(stream: AsyncIterable<string>): Response {
+  const encoder = new TextEncoder();
+
+  return new Response(
+    new ReadableStream<Uint8Array>({
+      async start(controller) {
+        try {
+          for await (const chunk of stream) {
+            controller.enqueue(
+              encoder.encode(`event: chunk\ndata: ${JSON.stringify({ text: chunk })}\n\n`),
+            );
+          }
+          controller.enqueue(encoder.encode('event: done\ndata: {}\n\n'));
+        } catch {
+          controller.enqueue(
+            encoder.encode(
+              `event: error\ndata: ${JSON.stringify({ message: 'Story collaboration stream failed' })}\n\n`,
+            ),
+          );
+        } finally {
+          controller.close();
+        }
+      },
+    }),
+    {
+      headers: {
+        'content-type': 'text/event-stream; charset=utf-8',
+        'cache-control': 'no-cache, no-transform',
+        connection: 'keep-alive',
+        'x-accel-buffering': 'no',
+      },
+    },
+  );
 }
