@@ -9,6 +9,7 @@ export type { CompositionGalleryItem, CompositionGalleryQuery };
 
 export interface CompositionGalleryRepository {
   findMany(query: CompositionGalleryQuery): Promise<CompositionGalleryItem[]>;
+  findByIds(ids: string[]): Promise<CompositionGalleryItem[]>;
 }
 
 interface CompositionGalleryRow extends QueryResultRow {
@@ -52,6 +53,34 @@ export class PostgresCompositionGalleryRepository implements CompositionGalleryR
       LIMIT $4
       `,
       [query.category, query.entityCount, query.tag, query.limit],
+    );
+
+    return result.rows.map(mapCompositionGalleryRow);
+  }
+
+  public async findByIds(ids: string[]): Promise<CompositionGalleryItem[]> {
+    if (ids.length === 0) {
+      return [];
+    }
+
+    const result = await this.client.query<CompositionGalleryRow>(
+      `
+      SELECT id,
+             name,
+             category,
+             entity_count,
+             preview_s3_key,
+             preview_cdn_url,
+             composition_prompt,
+             shot_type,
+             angle,
+             tags,
+             created_at
+      FROM composition_gallery
+      WHERE id = ANY($1::text[])
+      ORDER BY id ASC
+      `,
+      [ids],
     );
 
     return result.rows.map(mapCompositionGalleryRow);

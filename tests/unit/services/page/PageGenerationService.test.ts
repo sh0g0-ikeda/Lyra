@@ -44,6 +44,10 @@ class FakePageRepository implements PageRepository {
     this.updates.push(input);
     return !this.shouldRejectUpdate;
   }
+
+  public async findPromptContextByIdAndUserId(): Promise<null> {
+    return null;
+  }
 }
 
 class FakeGenerationJobRepository implements GenerationJobRepository {

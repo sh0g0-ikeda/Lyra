@@ -14,6 +14,11 @@ import {
   type StorePageImageInput,
   type StoredPageImage,
 } from '../src/services/page/PageGenerationWorkerService.js';
+import { PromptBuilder, type PromptBuilderPort } from '../src/services/page/PromptBuilder.js';
+import { PostgresPageRepository } from '../src/repositories/PageRepository.js';
+import { PostgresPanelRepository } from '../src/repositories/PanelRepository.js';
+import { PostgresEntityRepository } from '../src/repositories/EntityRepository.js';
+import { PostgresCompositionGalleryRepository } from '../src/repositories/CompositionGalleryRepository.js';
 import { ConfigurationError } from '../src/domain/errors/index.js';
 
 export interface PageGenerationWorkerPort {
@@ -26,6 +31,7 @@ export interface WorkerDependencies {
 
 export interface WorkerDependencyOverrides {
   creditService?: CreditServicePort;
+  promptBuilder?: PromptBuilderPort;
   pageGenerationPlanner?: PageGenerationPlannerPort;
   pageImageRenderer?: PageImageRendererPort;
   pageImageStorage?: PageImageStoragePort;
@@ -43,6 +49,14 @@ export function resolveWorkerDependencies(
 
   const creditService =
     overrides.creditService ?? new CreditService(new PostgresCreditRepository(db, db));
+  const promptBuilder =
+    overrides.promptBuilder ??
+    new PromptBuilder(
+      new PostgresPageRepository(db),
+      new PostgresPanelRepository(db),
+      new PostgresEntityRepository(db),
+      new PostgresCompositionGalleryRepository(db),
+    );
   const pageGenerationPlanner =
     overrides.pageGenerationPlanner ?? new UnconfiguredPageGenerationPlanner();
   const pageImageRenderer =
@@ -54,6 +68,7 @@ export function resolveWorkerDependencies(
   return {
     pageGenerationWorkerService: new PageGenerationWorkerService(
       pageGenerationExecutionRepository,
+      promptBuilder,
       pageGenerationPlanner,
       pageImageRenderer,
       pageImageStorage,
