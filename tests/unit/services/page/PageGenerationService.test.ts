@@ -70,6 +70,10 @@ class FakeGenerationJobRepository implements GenerationJobRepository {
     });
   }
 
+  public async findById(): Promise<GenerationJob | null> {
+    return buildJob();
+  }
+
   public async findByIdAndUserId(): Promise<GenerationJob | null> {
     return buildJob();
   }
@@ -86,6 +90,10 @@ class FakeGenerationJobRepository implements GenerationJobRepository {
   public async markFailed(jobId: string, errorMessage: string): Promise<boolean> {
     this.failedJobId = jobId;
     this.failedMessage = errorMessage;
+    return true;
+  }
+
+  public async prepareRetry(): Promise<boolean> {
     return true;
   }
 }

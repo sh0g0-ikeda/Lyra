@@ -9,6 +9,7 @@ const uuidParamSchema = z.string().uuid();
 
 export interface JobRouteDependencies {
   authMiddleware: MiddlewareHandler<AppEnv>;
+  rateLimitMiddleware: MiddlewareHandler<AppEnv>;
   jobService: JobServicePort;
 }
 
@@ -16,6 +17,7 @@ export function createJobRoutes(dependencies: JobRouteDependencies): Hono<AppEnv
   const app = new Hono<AppEnv>();
 
   app.use('*', dependencies.authMiddleware);
+  app.use('*', dependencies.rateLimitMiddleware);
 
   app.get('/jobs/:id', async (c) => {
     const user = c.get('user');

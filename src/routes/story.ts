@@ -15,6 +15,7 @@ import type { AppEnv } from '../types/app.js';
 
 export interface StoryRouteDependencies {
   authMiddleware: MiddlewareHandler<AppEnv>;
+  rateLimitMiddleware: MiddlewareHandler<AppEnv>;
   storyService: StoryServicePort;
 }
 
@@ -22,6 +23,7 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
   const app = new Hono<AppEnv>();
 
   app.use('*', dependencies.authMiddleware);
+  app.use('*', dependencies.rateLimitMiddleware);
 
   app.post('/works', async (c) => {
     const user = c.get('user');

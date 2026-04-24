@@ -7,6 +7,7 @@ import type { AppEnv } from '../types/app.js';
 
 export interface CompositionRouteDependencies {
   authMiddleware: MiddlewareHandler<AppEnv>;
+  rateLimitMiddleware: MiddlewareHandler<AppEnv>;
   compositionGalleryService: CompositionGalleryServicePort;
 }
 
@@ -14,6 +15,7 @@ export function createCompositionRoutes(dependencies: CompositionRouteDependenci
   const app = new Hono<AppEnv>();
 
   app.use('*', dependencies.authMiddleware);
+  app.use('*', dependencies.rateLimitMiddleware);
 
   app.get('/compositions', async (c) => {
     const query = compositionGalleryQuerySchema.safeParse(c.req.query());

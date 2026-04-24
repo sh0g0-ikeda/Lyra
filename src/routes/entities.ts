@@ -11,6 +11,7 @@ import type { AppEnv } from '../types/app.js';
 
 export interface EntityRouteDependencies {
   authMiddleware: MiddlewareHandler<AppEnv>;
+  rateLimitMiddleware: MiddlewareHandler<AppEnv>;
   entityService: EntityServicePort;
 }
 
@@ -18,6 +19,7 @@ export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<
   const app = new Hono<AppEnv>();
 
   app.use('*', dependencies.authMiddleware);
+  app.use('*', dependencies.rateLimitMiddleware);
 
   app.post('/works/:work_id/entities', async (c) => {
     const user = c.get('user');

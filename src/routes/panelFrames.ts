@@ -11,6 +11,7 @@ import type { AppEnv } from '../types/app.js';
 
 export interface PanelFrameRouteDependencies {
   authMiddleware: MiddlewareHandler<AppEnv>;
+  rateLimitMiddleware: MiddlewareHandler<AppEnv>;
   panelFrameService: PanelFrameServicePort;
 }
 
@@ -18,6 +19,7 @@ export function createPanelFrameRoutes(dependencies: PanelFrameRouteDependencies
   const app = new Hono<AppEnv>();
 
   app.use('*', dependencies.authMiddleware);
+  app.use('*', dependencies.rateLimitMiddleware);
 
   app.get('/pages/:id/frames', async (c) => {
     const user = c.get('user');

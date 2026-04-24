@@ -11,6 +11,7 @@ import type { AppEnv } from '../types/app.js';
 
 export interface BalloonRouteDependencies {
   authMiddleware: MiddlewareHandler<AppEnv>;
+  rateLimitMiddleware: MiddlewareHandler<AppEnv>;
   balloonService: BalloonServicePort;
 }
 
@@ -18,6 +19,7 @@ export function createBalloonRoutes(dependencies: BalloonRouteDependencies): Hon
   const app = new Hono<AppEnv>();
 
   app.use('*', dependencies.authMiddleware);
+  app.use('*', dependencies.rateLimitMiddleware);
 
   app.post('/pages/:id/balloons', async (c) => {
     const user = c.get('user');

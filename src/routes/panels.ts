@@ -7,6 +7,7 @@ import type { AppEnv } from '../types/app.js';
 
 export interface PanelRouteDependencies {
   authMiddleware: MiddlewareHandler<AppEnv>;
+  rateLimitMiddleware: MiddlewareHandler<AppEnv>;
   panelService: PanelServicePort;
 }
 
@@ -14,6 +15,7 @@ export function createPanelRoutes(dependencies: PanelRouteDependencies): Hono<Ap
   const app = new Hono<AppEnv>();
 
   app.use('*', dependencies.authMiddleware);
+  app.use('*', dependencies.rateLimitMiddleware);
 
   app.post('/pages/:id/panels', async (c) => {
     const user = c.get('user');

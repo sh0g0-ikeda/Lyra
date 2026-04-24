@@ -1,0 +1,68 @@
+{
+  "Name": "lyra-api-web-acl",
+  "Scope": "CLOUDFRONT",
+  "DefaultAction": {
+    "Allow": {}
+  },
+  "VisibilityConfig": {
+    "CloudWatchMetricsEnabled": true,
+    "MetricName": "lyraApiWebAcl",
+    "SampledRequestsEnabled": true
+  },
+  "Rules": [
+    {
+      "Name": "AWSManagedCommonRuleSet",
+      "Priority": 0,
+      "OverrideAction": {
+        "None": {}
+      },
+      "Statement": {
+        "ManagedRuleGroupStatement": {
+          "VendorName": "AWS",
+          "Name": "AWSManagedRulesCommonRuleSet"
+        }
+      },
+      "VisibilityConfig": {
+        "CloudWatchMetricsEnabled": true,
+        "MetricName": "awsManagedCommon",
+        "SampledRequestsEnabled": true
+      }
+    },
+    {
+      "Name": "AWSManagedKnownBadInputs",
+      "Priority": 1,
+      "OverrideAction": {
+        "None": {}
+      },
+      "Statement": {
+        "ManagedRuleGroupStatement": {
+          "VendorName": "AWS",
+          "Name": "AWSManagedRulesKnownBadInputsRuleSet"
+        }
+      },
+      "VisibilityConfig": {
+        "CloudWatchMetricsEnabled": true,
+        "MetricName": "awsManagedKnownBadInputs",
+        "SampledRequestsEnabled": true
+      }
+    },
+    {
+      "Name": "AWSManagedIpReputation",
+      "Priority": 2,
+      "OverrideAction": {
+        "None": {}
+      },
+      "Statement": {
+        "ManagedRuleGroupStatement": {
+          "VendorName": "AWS",
+          "Name": "AWSManagedRulesAmazonIpReputationList"
+        }
+      },
+      "VisibilityConfig": {
+        "CloudWatchMetricsEnabled": true,
+        "MetricName": "awsManagedIpReputation",
+        "SampledRequestsEnabled": true
+      }
+    }
+  ]
+}

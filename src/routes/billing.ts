@@ -10,6 +10,7 @@ import type { AppEnv } from '../types/app.js';
 
 export interface BillingRouteDependencies {
   authMiddleware: MiddlewareHandler<AppEnv>;
+  rateLimitMiddleware: MiddlewareHandler<AppEnv>;
   billingService: BillingServicePort;
   creditService: CreditServicePort;
 }
@@ -18,6 +19,7 @@ export function createBillingRoutes(dependencies: BillingRouteDependencies): Hon
   const app = new Hono<AppEnv>();
 
   app.use('*', dependencies.authMiddleware);
+  app.use('*', dependencies.rateLimitMiddleware);
 
   app.get('/balance', async (c) => {
     const user = c.get('user');
