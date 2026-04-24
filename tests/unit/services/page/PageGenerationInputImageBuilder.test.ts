@@ -8,6 +8,7 @@ import type {
   PagePromptContext,
 } from '../../../../src/domain/types/page.js';
 import type { LoadedStoredImage, StoredImageLoaderPort } from '../../../../src/infrastructure/aws/S3StoredImageLoader.js';
+import type { LayoutGuideImageRendererPort } from '../../../../src/services/page/LayoutGuideImageRenderer.js';
 import { PageGenerationInputImageBuilder } from '../../../../src/services/page/PageGenerationInputImageBuilder.js';
 
 class FakePageRepository implements PageRepository {
@@ -130,14 +131,30 @@ class FakeStoredImageLoader implements StoredImageLoaderPort {
   }
 }
 
+class FakeLayoutGuideImageRenderer implements LayoutGuideImageRendererPort {
+  public calls: unknown[] = [];
+  public nextResult: { imageData: Buffer; mimeType: 'image/png' } | null = {
+    imageData: Buffer.from('layout-guide'),
+    mimeType: 'image/png',
+  };
+
+  public render(frameDefinitions: unknown) {
+    this.calls.push(frameDefinitions);
+    return this.nextResult;
+  }
+}
+
 describe('PageGenerationInputImageBuilder', () => {
   it('panel順の一意entityに対してreference画像をdataUrl化する', async () => {
     const loader = new FakeStoredImageLoader();
     const entityRepository = new FakeEntityRepository();
+    const layoutGuideImageRenderer = new FakeLayoutGuideImageRenderer();
+    layoutGuideImageRenderer.nextResult = null;
     const builder = new PageGenerationInputImageBuilder(
       new FakePageRepository(),
       entityRepository,
       loader,
+      layoutGuideImageRenderer,
     );
 
     const result = await builder.buildInputImages({
@@ -159,5 +176,43 @@ describe('PageGenerationInputImageBuilder', () => {
       role: 'entity_reference',
     });
     expect(result[0]?.dataUrl.startsWith('data:image/png;base64,')).toBe(true);
+  });
+
+  it('custom layout では最後に layout_reference を追加する', async () => {
+    const pageRepository = new FakePageRepository();
+    pageRepository.generationContext = {
+      ...pageRepository.generationContext!,
+      layoutConfig: {
+        type: 'custom',
+        frame_definitions: [
+          {
+            reading_order: 1,
+            vertices: [
+              { x: 0, y: 0 },
+              { x: 1, y: 0 },
+              { x: 1, y: 1 },
+              { x: 0, y: 1 },
+            ],
+          },
+        ],
+      },
+    };
+    const layoutGuideImageRenderer = new FakeLayoutGuideImageRenderer();
+    const builder = new PageGenerationInputImageBuilder(
+      pageRepository,
+      new FakeEntityRepository(),
+      new FakeStoredImageLoader(),
+      layoutGuideImageRenderer,
+    );
+
+    const result = await builder.buildInputImages({
+      userId: 'user-1',
+      pageId: 'page-1',
+    });
+
+    expect(layoutGuideImageRenderer.calls).toHaveLength(1);
+    expect(result.at(-1)).toMatchObject({
+      role: 'layout_reference',
+    });
   });
 });

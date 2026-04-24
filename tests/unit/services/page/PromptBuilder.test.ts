@@ -195,7 +195,8 @@ describe('PromptBuilder', () => {
       generationMode: 'standard',
     });
 
-    expect(result.prompt).toContain('Follow the custom panel layout defined for this page exactly.');
+    expect(result.prompt).toContain('The last input image is the panel layout reference.');
+    expect(result.prompt).toContain('Only use it as a layout guide.');
     expect(result.prompt).toContain('Frame 1: vertices (0.00, 0.00) -> (1.00, 0.00) -> (1.00, 0.50) -> (0.00, 0.50).');
   });
 

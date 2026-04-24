@@ -103,9 +103,14 @@ function buildLayoutInstruction(page: PagePromptContext): string {
 
   if (layoutType === 'custom') {
     const frameDefinitions = toFrameDefinitions(page.layoutConfig.frame_definitions);
+    const instructionLines = [
+      'The last input image is the panel layout reference. Follow this layout exactly for dividing the page into panels.',
+      'Only use it as a layout guide. Do not copy any art style or scene content from it.',
+    ];
+
     if (frameDefinitions.length > 0) {
       return [
-        'Follow the custom panel layout defined for this page exactly.',
+        ...instructionLines,
         ...frameDefinitions.map(
           (frame) =>
             `Frame ${frame.readingOrder}: vertices ${frame.vertices
@@ -115,7 +120,7 @@ function buildLayoutInstruction(page: PagePromptContext): string {
       ].join('\n');
     }
 
-    return 'Follow the custom panel layout defined for this page exactly.';
+    return instructionLines.join('\n');
   }
 
   if (layoutType === 'ai_generated' || layoutType === 'ai_auto') {

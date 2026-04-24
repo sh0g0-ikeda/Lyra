@@ -33,6 +33,7 @@ import {
   PageGenerationInputImageBuilder,
   type PageGenerationInputImageBuilderPort,
 } from '../src/services/page/PageGenerationInputImageBuilder.js';
+import { LayoutGuideImageRenderer } from '../src/services/page/LayoutGuideImageRenderer.js';
 
 export interface PageGenerationWorkerPort {
   processJob(jobId: string): Promise<ProcessPageGenerationJobResult>;
@@ -103,6 +104,7 @@ function resolvePageGenerationInputImageBuilder(): PageGenerationInputImageBuild
     new PostgresPageRepository(db),
     new PostgresEntityRepository(db),
     new S3StoredImageLoader(createPageImageStorageClient(env.AWS_REGION), env.S3_BUCKET_IMAGES),
+    new LayoutGuideImageRenderer(),
   );
 }
 
