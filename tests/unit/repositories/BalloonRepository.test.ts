@@ -1,11 +1,12 @@
 import type { QueryResult, QueryResultRow } from 'pg';
 import { describe, expect, it } from 'vitest';
-import type { DatabaseClient } from '../../../src/lib/db.js';
+import type { DatabaseClient, TransactionRunner } from '../../../src/lib/db.js';
 import { PostgresBalloonRepository } from '../../../src/repositories/BalloonRepository.js';
 
-class QueryCapturingClient implements DatabaseClient {
+class QueryCapturingClient implements DatabaseClient, TransactionRunner {
   public queries: string[] = [];
   public values: readonly unknown[] | undefined;
+  public valuesList: Array<readonly unknown[] | undefined> = [];
 
   public async query<T extends QueryResultRow = QueryResultRow>(
     text: string,
@@ -13,6 +14,17 @@ class QueryCapturingClient implements DatabaseClient {
   ): Promise<QueryResult<T>> {
     this.queries.push(text);
     this.values = values;
+    this.valuesList.push(values);
+
+    if (text.includes('DELETE FROM balloons')) {
+      return {
+        command: 'DELETE',
+        rowCount: 1,
+        oid: 0,
+        fields: [],
+        rows: [] as unknown as T[],
+      };
+    }
 
     return {
       command: 'SELECT',
@@ -21,6 +33,10 @@ class QueryCapturingClient implements DatabaseClient {
       fields: [],
       rows: [row()] as unknown as T[],
     };
+  }
+
+  public async transaction<T>(work: (client: DatabaseClient) => Promise<T>): Promise<T> {
+    return work(this);
   }
 }
 
@@ -83,6 +99,54 @@ describe('PostgresBalloonRepository', () => {
       tipX: 0.4,
       tipY: 0.5,
     });
+  });
+
+  it('auto-balloons 置換は delete 後に insert を積む', async () => {
+    const client = new QueryCapturingClient();
+    const repository = new PostgresBalloonRepository(client);
+
+    const balloons = await repository.replaceBalloonsByPageIdAndUserId('page-1', 'user-1', [
+      {
+        speakerEntityId: 'entity-1',
+        balloonType: 'speech',
+        writingMode: 'vertical',
+        text: 'hello',
+        position: { x: 0.1, y: 0.2, width: 0.3, height: 0.2 },
+        tail: { baseX: 0.2, baseY: 0.3, tipX: 0.4, tipY: 0.5 },
+        fontSize: 18,
+        fontFamily: 'manga_gothic',
+        panelOrderReference: 1,
+        zIndex: 10,
+      },
+    ]);
+
+    expect(client.queries[0]).toContain('DELETE FROM balloons');
+    expect(client.queries[1]).toContain('INSERT INTO balloons');
+    expect(client.valuesList[1]).toEqual([
+      'page-1',
+      'user-1',
+      'entity-1',
+      'speech',
+      'vertical',
+      'hello',
+      JSON.stringify({
+        x: 0.1,
+        y: 0.2,
+        width: 0.3,
+        height: 0.2,
+      }),
+      JSON.stringify({
+        base_x: 0.2,
+        base_y: 0.3,
+        tip_x: 0.4,
+        tip_y: 0.5,
+      }),
+      18,
+      'manga_gothic',
+      1,
+      10,
+    ]);
+    expect(balloons).toHaveLength(1);
   });
 });
 

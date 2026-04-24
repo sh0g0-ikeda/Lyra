@@ -1,13 +1,25 @@
 import { ConflictError, NotFoundError, ValidationError } from '../../domain/errors/index.js';
 import type { Balloon, CreateBalloonInput, UpdateBalloonInput } from '../../domain/types/balloon.js';
+import type { Panel } from '../../domain/types/panel.js';
+import type { PanelFrame } from '../../domain/types/panelFrame.js';
 import type { EntityReferenceReader } from '../../repositories/EntityRepository.js';
 import type {
   BalloonContext,
   BalloonRepository,
   PageBalloonContext,
 } from '../../repositories/BalloonRepository.js';
+import { buildAutoBalloonInputs } from './AutoBalloonLayout.js';
+
+export interface BalloonPanelReader {
+  findPanelsByPageIdAndUserId(pageId: string, userId: string): Promise<Panel[]>;
+}
+
+export interface BalloonFrameReader {
+  findFramesByPageIdAndUserId(pageId: string, userId: string): Promise<PanelFrame[]>;
+}
 
 export interface BalloonServicePort {
+  autoGenerateBalloons(userId: string, pageId: string): Promise<Balloon[]>;
   createBalloon(userId: string, pageId: string, input: CreateBalloonInput): Promise<Balloon>;
   listBalloons(userId: string, pageId: string): Promise<Balloon[]>;
   updateBalloon(userId: string, balloonId: string, input: UpdateBalloonInput): Promise<Balloon>;
@@ -18,7 +30,42 @@ export class BalloonService implements BalloonServicePort {
   public constructor(
     private readonly balloonRepository: BalloonRepository,
     private readonly entityReader: EntityReferenceReader,
+    private readonly panelReader: BalloonPanelReader,
+    private readonly frameReader: BalloonFrameReader,
   ) {}
+
+  public async autoGenerateBalloons(userId: string, pageId: string): Promise<Balloon[]> {
+    const pageContext = await this.balloonRepository.findPageContextByIdAndUserId(pageId, userId);
+    if (pageContext === null) {
+      throw new NotFoundError('Page not found');
+    }
+
+    this.ensureBalloonEditingEnabled(pageContext);
+
+    const panels = await this.panelReader.findPanelsByPageIdAndUserId(pageId, userId);
+    const frames = await this.frameReader.findFramesByPageIdAndUserId(pageId, userId);
+    const inputs = buildAutoBalloonInputs(pageContext.dialogueMode, panels, frames);
+
+    const entityIds = [
+      ...new Set(
+        inputs
+          .map((input) => input.speakerEntityId)
+          .filter((entityId): entityId is string => entityId !== null),
+      ),
+    ];
+    if (entityIds.length > 0) {
+      const count = await this.entityReader.countByIdsAndWorkIdAndUserId(
+        entityIds,
+        pageContext.workId,
+        userId,
+      );
+      if (count !== entityIds.length) {
+        throw new ValidationError('All auto balloon speaker entities must belong to the page work');
+      }
+    }
+
+    return this.balloonRepository.replaceBalloonsByPageIdAndUserId(pageId, userId, inputs);
+  }
 
   public async createBalloon(userId: string, pageId: string, input: CreateBalloonInput): Promise<Balloon> {
     const pageContext = await this.balloonRepository.findPageContextByIdAndUserId(pageId, userId);

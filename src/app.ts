@@ -185,8 +185,11 @@ function resolveDependencies(dependencies: AppDependencies): Required<Omit<AppDe
   const entityService =
     dependencies.entityService ??
     new EntityService(entityRepository, new PostgresWorkRepository(db));
+  const panelRepository = new PostgresPanelRepository(db);
+  const panelFrameRepository = new PostgresPanelFrameRepository(db);
   const balloonService =
-    dependencies.balloonService ?? new BalloonService(new PostgresBalloonRepository(db), entityRepository);
+    dependencies.balloonService ??
+    new BalloonService(new PostgresBalloonRepository(db), entityRepository, panelRepository, panelFrameRepository);
   const pageGenerationService =
     dependencies.pageGenerationService ??
     new PageGenerationService(
@@ -203,12 +206,12 @@ function resolveDependencies(dependencies: AppDependencies): Required<Omit<AppDe
   const storyService =
     dependencies.storyService ?? new StoryService(new PostgresStoryRepository(db), entityRepository);
   const panelService =
-    dependencies.panelService ?? new PanelService(new PostgresPanelRepository(db), entityRepository);
+    dependencies.panelService ?? new PanelService(panelRepository, entityRepository);
   const panelEntityAssignmentService =
     dependencies.panelEntityAssignmentService ??
     new PanelEntityAssignmentService(new PostgresPanelEntityAssignmentRepository(db));
   const panelFrameService =
-    dependencies.panelFrameService ?? new PanelFrameService(new PostgresPanelFrameRepository(db));
+    dependencies.panelFrameService ?? new PanelFrameService(panelFrameRepository);
   const sceneService =
     dependencies.sceneService ?? new SceneService(new PostgresSceneRepository(db), entityRepository);
   const userProvisioningService =

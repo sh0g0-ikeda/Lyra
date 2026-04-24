@@ -10,7 +10,7 @@ import type {
   UpdateBalloonInput,
 } from '../domain/types/balloon.js';
 import type { PageDialogueMode, PageStatus } from '../domain/types/page.js';
-import type { DatabaseClient } from '../lib/db.js';
+import type { DatabaseClient, TransactionRunner } from '../lib/db.js';
 
 export interface PageBalloonContext {
   pageId: string;
@@ -36,6 +36,11 @@ export interface BalloonRepository {
   findBalloonContextByIdAndUserId(balloonId: string, userId: string): Promise<BalloonContext | null>;
   createBalloon(pageId: string, input: CreateBalloonInput): Promise<Balloon>;
   findBalloonsByPageIdAndUserId(pageId: string, userId: string): Promise<Balloon[]>;
+  replaceBalloonsByPageIdAndUserId(
+    pageId: string,
+    userId: string,
+    inputs: CreateBalloonInput[],
+  ): Promise<Balloon[]>;
   updateBalloon(balloonId: string, userId: string, input: UpdateBalloonInput): Promise<Balloon | null>;
   deleteBalloon(balloonId: string, userId: string): Promise<boolean>;
 }
@@ -75,7 +80,7 @@ interface BalloonRow extends QueryResultRow {
 }
 
 export class PostgresBalloonRepository implements BalloonRepository {
-  public constructor(private readonly client: DatabaseClient) {}
+  public constructor(private readonly client: DatabaseClient & TransactionRunner) {}
 
   public async findPageContextByIdAndUserId(pageId: string, userId: string): Promise<PageBalloonContext | null> {
     const result = await this.client.query<PageContextRow>(
@@ -202,6 +207,89 @@ export class PostgresBalloonRepository implements BalloonRepository {
     );
 
     return result.rows.map(mapBalloonRow);
+  }
+
+  public async replaceBalloonsByPageIdAndUserId(
+    pageId: string,
+    userId: string,
+    inputs: CreateBalloonInput[],
+  ): Promise<Balloon[]> {
+    return this.client.transaction(async (transactionClient) => {
+      await transactionClient.query(
+        `
+        DELETE FROM balloons
+        USING pages, episodes, chapters, works
+        WHERE balloons.page_id = $1
+          AND balloons.page_id = pages.id
+          AND pages.episode_id = episodes.id
+          AND episodes.chapter_id = chapters.id
+          AND chapters.work_id = works.id
+          AND works.user_id = $2
+        `,
+        [pageId, userId],
+      );
+
+      const saved: Balloon[] = [];
+      for (const input of inputs) {
+        const result = await transactionClient.query<BalloonRow>(
+          `
+          INSERT INTO balloons (
+            page_id,
+            speaker_entity_id,
+            balloon_type,
+            writing_mode,
+            text,
+            position,
+            tail,
+            font_size,
+            font_family,
+            panel_order_reference,
+            z_index
+          )
+          SELECT
+            pages.id,
+            $3,
+            $4,
+            $5,
+            $6,
+            $7::jsonb,
+            $8::jsonb,
+            $9,
+            $10,
+            $11,
+            $12
+          FROM pages
+          INNER JOIN episodes ON episodes.id = pages.episode_id
+          INNER JOIN chapters ON chapters.id = episodes.chapter_id
+          INNER JOIN works ON works.id = chapters.work_id
+          WHERE pages.id = $1
+            AND works.user_id = $2
+          RETURNING *
+          `,
+          [
+            pageId,
+            userId,
+            input.speakerEntityId,
+            input.balloonType,
+            input.writingMode,
+            input.text,
+            JSON.stringify(toDbPosition(input.position)),
+            JSON.stringify(toDbTail(input.tail)),
+            input.fontSize,
+            input.fontFamily,
+            input.panelOrderReference,
+            input.zIndex,
+          ],
+        );
+
+        const row = result.rows[0];
+        if (row !== undefined) {
+          saved.push(mapBalloonRow(row));
+        }
+      }
+
+      return saved;
+    });
   }
 
   public async updateBalloon(balloonId: string, userId: string, input: UpdateBalloonInput): Promise<Balloon | null> {
