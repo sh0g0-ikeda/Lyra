@@ -45,6 +45,10 @@ class FakePageRepository implements PageRepository {
     return !this.shouldRejectUpdate;
   }
 
+  public async updateGeneratedImageAndState(): Promise<boolean> {
+    throw new Error('not used');
+  }
+
   public async findPromptContextByIdAndUserId(): Promise<null> {
     return null;
   }

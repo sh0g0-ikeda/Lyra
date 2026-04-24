@@ -6,6 +6,7 @@ import { PostgresCompositionGalleryRepository } from './repositories/Composition
 import { PostgresCreditRepository } from './repositories/CreditRepository.js';
 import { PostgresEntityRepository } from './repositories/EntityRepository.js';
 import { PostgresGenerationJobRepository } from './repositories/GenerationJobRepository.js';
+import { PostgresBalloonRepository } from './repositories/BalloonRepository.js';
 import { PostgresPanelEntityAssignmentRepository } from './repositories/PanelEntityAssignmentRepository.js';
 import { PostgresPanelFrameRepository } from './repositories/PanelFrameRepository.js';
 import { PostgresPanelRepository } from './repositories/PanelRepository.js';
@@ -15,6 +16,7 @@ import { PostgresStoryRepository } from './repositories/StoryRepository.js';
 import { PostgresUserRepository } from './repositories/UserRepository.js';
 import { PostgresWorkRepository } from './repositories/WorkRepository.js';
 import { createBillingRoutes } from './routes/billing.js';
+import { createBalloonRoutes } from './routes/balloons.js';
 import { createCompositionRoutes } from './routes/compositions.js';
 import { createEntityRoutes } from './routes/entities.js';
 import { createHealthRoutes } from './routes/health.js';
@@ -34,10 +36,15 @@ import { CreditService, type CreditServicePort } from './services/credit/CreditS
 import { EntityService, type EntityServicePort } from './services/entity/EntityService.js';
 import { JobService, type JobServicePort } from './services/job/JobService.js';
 import { NoopPageGenerationQueue, type PageGenerationQueuePort } from './services/page/PageGenerationQueue.js';
+import { BalloonService, type BalloonServicePort } from './services/page/BalloonService.js';
 import {
   PageGenerationService,
   type PageGenerationServicePort,
 } from './services/page/PageGenerationService.js';
+import {
+  PageFinalizeService,
+  type PageFinalizeServicePort,
+} from './services/page/PageFinalizeService.js';
 import { ModeSelector } from './services/page/ModeSelector.js';
 import {
   PanelService,
@@ -51,12 +58,18 @@ import { PanelFrameService, type PanelFrameServicePort } from './services/page/P
 import { SceneService, type SceneServicePort } from './services/scene/SceneService.js';
 import { StoryService, type StoryServicePort } from './services/story/StoryService.js';
 import type { AppEnv } from './types/app.js';
+import { env } from './lib/env.js';
+import { createPageImageStorageClient } from './infrastructure/aws/S3PageImageStorage.js';
+import { S3FinalPageImageStorage, type FinalPageImageStoragePort } from './infrastructure/aws/S3FinalPageImageStorage.js';
+import { ConfigurationError } from './domain/errors/index.js';
 
 export interface AppDependencies {
+  balloonService?: BalloonServicePort;
   compositionGalleryService?: CompositionGalleryServicePort;
   creditService?: CreditServicePort;
   entityService?: EntityServicePort;
   jobService?: JobServicePort;
+  pageFinalizeService?: PageFinalizeServicePort;
   pageGenerationQueue?: PageGenerationQueuePort;
   pageGenerationService?: PageGenerationServicePort;
   panelService?: PanelServicePort;
@@ -86,6 +99,13 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
   );
   app.route(
     '/api',
+    createBalloonRoutes({
+      authMiddleware,
+      balloonService: resolvedDependencies.balloonService,
+    }),
+  );
+  app.route(
+    '/api',
     createCompositionRoutes({
       authMiddleware,
       compositionGalleryService: resolvedDependencies.compositionGalleryService,
@@ -109,6 +129,7 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
     '/api',
     createPageRoutes({
       authMiddleware,
+      pageFinalizeService: resolvedDependencies.pageFinalizeService,
       pageGenerationService: resolvedDependencies.pageGenerationService,
     }),
   );
@@ -164,6 +185,8 @@ function resolveDependencies(dependencies: AppDependencies): Required<Omit<AppDe
   const entityService =
     dependencies.entityService ??
     new EntityService(entityRepository, new PostgresWorkRepository(db));
+  const balloonService =
+    dependencies.balloonService ?? new BalloonService(new PostgresBalloonRepository(db), entityRepository);
   const pageGenerationService =
     dependencies.pageGenerationService ??
     new PageGenerationService(
@@ -173,6 +196,9 @@ function resolveDependencies(dependencies: AppDependencies): Required<Omit<AppDe
       pageGenerationQueue,
       new ModeSelector(),
     );
+  const pageFinalizeService =
+    dependencies.pageFinalizeService ??
+    new PageFinalizeService(pageRepository, resolveFinalPageImageStorage());
   const jobService = dependencies.jobService ?? new JobService(generationJobRepository);
   const storyService =
     dependencies.storyService ?? new StoryService(new PostgresStoryRepository(db), entityRepository);
@@ -190,10 +216,12 @@ function resolveDependencies(dependencies: AppDependencies): Required<Omit<AppDe
     new UserProvisioningService(new PostgresUserRepository(db), creditService);
 
   return {
+    balloonService,
     compositionGalleryService,
     creditService,
     entityService,
     jobService,
+    pageFinalizeService,
     pageGenerationQueue,
     pageGenerationService,
     panelService,
@@ -203,4 +231,19 @@ function resolveDependencies(dependencies: AppDependencies): Required<Omit<AppDe
     storyService,
     userProvisioningService,
   };
+}
+
+function resolveFinalPageImageStorage(): FinalPageImageStoragePort {
+  if (env.S3_BUCKET_IMAGES === undefined || env.IMAGES_CDN_BASE_URL === undefined) {
+    return {
+      async finalizePageImage(): Promise<never> {
+        throw new ConfigurationError('Final page image storage is not configured');
+      },
+    };
+  }
+
+  return new S3FinalPageImageStorage(createPageImageStorageClient(env.AWS_REGION), {
+    bucketName: env.S3_BUCKET_IMAGES,
+    cdnBaseUrl: env.IMAGES_CDN_BASE_URL,
+  });
 }

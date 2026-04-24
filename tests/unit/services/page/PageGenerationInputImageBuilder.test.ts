@@ -78,6 +78,10 @@ class FakePageRepository implements PageRepository {
   ): Promise<boolean> {
     throw new Error('not used');
   }
+
+  public async updateGeneratedImageAndState(): Promise<boolean> {
+    throw new Error('not used');
+  }
 }
 
 class FakeEntityRepository implements EntityRepository {

@@ -96,7 +96,7 @@ describe('PostgresPageRepository', () => {
     expect(client.values).toEqual(['page-1', 'user-1', 'generating', 'thinking']);
   });
 
-  it('prompt用のページ文脈を取得する', async () => {
+  it('prompt用のページ情報を取得する', async () => {
     const client = new QueryCapturingClient();
     const repository = new PostgresPageRepository(client);
 
@@ -110,5 +110,34 @@ describe('PostgresPageRepository', () => {
       dialogueMode: 'mixed',
       pageDialogueToggle: true,
     });
+  });
+
+  it('generated_image と status をまとめて更新する', async () => {
+    const client = new QueryCapturingClient();
+    const repository = new PostgresPageRepository(client);
+
+    const updated = await repository.updateGeneratedImageAndState('page-1', 'user-1', {
+      status: 'confirmed',
+      generationMode: 'standard',
+      generatedImage: {
+        s3Key: 'saved/user-1/pages/page-1_final.png',
+        cdnUrl: 'https://img.lyra.app/saved/user-1/pages/page-1_final.png',
+        generationMode: 'standard',
+        generatedAt: '2026-04-24T00:00:00.000Z',
+      },
+    });
+
+    expect(updated).toBe(true);
+    expect(client.queries[0]).toContain('generated_image = jsonb_build_object');
+    expect(client.values).toEqual([
+      'page-1',
+      'user-1',
+      'confirmed',
+      'standard',
+      'saved/user-1/pages/page-1_final.png',
+      'https://img.lyra.app/saved/user-1/pages/page-1_final.png',
+      'standard',
+      '2026-04-24T00:00:00.000Z',
+    ]);
   });
 });
