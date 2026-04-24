@@ -11,6 +11,7 @@ import type {
   RefundCreditsParams,
 } from '../../../src/services/credit/CreditService.js';
 import type { JobServicePort } from '../../../src/services/job/JobService.js';
+import type { PageFinalizeServicePort } from '../../../src/services/page/PageFinalizeService.js';
 import type {
   EnqueuePageGenerationResult,
   PageGenerationServicePort,
@@ -71,6 +72,19 @@ class FakePageGenerationService implements PageGenerationServicePort {
   }
 }
 
+class FakePageFinalizeService implements PageFinalizeServicePort {
+  public confirmedPageId: string | null = null;
+  public reopenedPageId: string | null = null;
+
+  public async confirmPage(_userId: string, pageId: string): Promise<void> {
+    this.confirmedPageId = pageId;
+  }
+
+  public async reopenPage(_userId: string, pageId: string): Promise<void> {
+    this.reopenedPageId = pageId;
+  }
+}
+
 class FakeJobService implements JobServicePort {
   public job: GenerationJob | null = buildJob();
 
@@ -84,9 +98,9 @@ class FakeJobService implements JobServicePort {
 }
 
 describe('page generation routes', () => {
-  it('認証済みならページ生成enqueueで202とjob_idを返す', async () => {
+  it('認証済みならページ生成 enqueue で202とjob_idを返す', async () => {
     const pageGenerationService = new FakePageGenerationService();
-    const app = createTestApp(pageGenerationService, new FakeJobService());
+    const app = createTestApp(pageGenerationService, new FakePageFinalizeService(), new FakeJobService());
     const token = await createToken();
 
     const response = await app.request('/api/pages/33333333-3333-4333-8333-333333333333/generate', {
@@ -103,8 +117,8 @@ describe('page generation routes', () => {
     expect(pageGenerationService.lastPageId).toBe('33333333-3333-4333-8333-333333333333');
   });
 
-  it('認証済みならjob取得で所有jobを返す', async () => {
-    const app = createTestApp(new FakePageGenerationService(), new FakeJobService());
+  it('認証済みならjob取得で対象jobを返す', async () => {
+    const app = createTestApp(new FakePageGenerationService(), new FakePageFinalizeService(), new FakeJobService());
     const token = await createToken();
 
     const response = await app.request('/api/jobs/22222222-2222-4222-8222-222222222222', {
@@ -129,7 +143,7 @@ describe('page generation routes', () => {
   });
 
   it('不正なUUIDは422になる', async () => {
-    const app = createTestApp(new FakePageGenerationService(), new FakeJobService());
+    const app = createTestApp(new FakePageGenerationService(), new FakePageFinalizeService(), new FakeJobService());
     const token = await createToken();
 
     const response = await app.request('/api/jobs/not-a-uuid', {
@@ -142,7 +156,7 @@ describe('page generation routes', () => {
   });
 
   it('認証が無ければ401になる', async () => {
-    const app = createTestApp(new FakePageGenerationService(), new FakeJobService());
+    const app = createTestApp(new FakePageGenerationService(), new FakePageFinalizeService(), new FakeJobService());
 
     const generateResponse = await app.request('/api/pages/33333333-3333-4333-8333-333333333333/generate', {
       method: 'POST',
@@ -152,15 +166,49 @@ describe('page generation routes', () => {
     expect(generateResponse.status).toBe(401);
     expect(jobResponse.status).toBe(401);
   });
+
+  it('confirm は 204 を返す', async () => {
+    const pageFinalizeService = new FakePageFinalizeService();
+    const app = createTestApp(new FakePageGenerationService(), pageFinalizeService, new FakeJobService());
+    const token = await createToken();
+
+    const response = await app.request('/api/pages/33333333-3333-4333-8333-333333333333/confirm', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    expect(response.status).toBe(204);
+    expect(pageFinalizeService.confirmedPageId).toBe('33333333-3333-4333-8333-333333333333');
+  });
+
+  it('reopen は 204 を返す', async () => {
+    const pageFinalizeService = new FakePageFinalizeService();
+    const app = createTestApp(new FakePageGenerationService(), pageFinalizeService, new FakeJobService());
+    const token = await createToken();
+
+    const response = await app.request('/api/pages/33333333-3333-4333-8333-333333333333/reopen', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    expect(response.status).toBe(204);
+    expect(pageFinalizeService.reopenedPageId).toBe('33333333-3333-4333-8333-333333333333');
+  });
 });
 
 function createTestApp(
   pageGenerationService: PageGenerationServicePort,
+  pageFinalizeService: PageFinalizeServicePort,
   jobService: JobServicePort,
 ): ReturnType<typeof createApp> {
   return createApp({
     creditService: new FakeCreditService(),
     jobService,
+    pageFinalizeService,
     pageGenerationService,
     userProvisioningService: new FakeUserProvisioningService(),
     jwtSecret,

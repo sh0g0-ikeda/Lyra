@@ -38,6 +38,10 @@ import {
   PageGenerationService,
   type PageGenerationServicePort,
 } from './services/page/PageGenerationService.js';
+import {
+  PageFinalizeService,
+  type PageFinalizeServicePort,
+} from './services/page/PageFinalizeService.js';
 import { ModeSelector } from './services/page/ModeSelector.js';
 import {
   PanelService,
@@ -51,12 +55,17 @@ import { PanelFrameService, type PanelFrameServicePort } from './services/page/P
 import { SceneService, type SceneServicePort } from './services/scene/SceneService.js';
 import { StoryService, type StoryServicePort } from './services/story/StoryService.js';
 import type { AppEnv } from './types/app.js';
+import { env } from './lib/env.js';
+import { createPageImageStorageClient } from './infrastructure/aws/S3PageImageStorage.js';
+import { S3FinalPageImageStorage, type FinalPageImageStoragePort } from './infrastructure/aws/S3FinalPageImageStorage.js';
+import { ConfigurationError } from './domain/errors/index.js';
 
 export interface AppDependencies {
   compositionGalleryService?: CompositionGalleryServicePort;
   creditService?: CreditServicePort;
   entityService?: EntityServicePort;
   jobService?: JobServicePort;
+  pageFinalizeService?: PageFinalizeServicePort;
   pageGenerationQueue?: PageGenerationQueuePort;
   pageGenerationService?: PageGenerationServicePort;
   panelService?: PanelServicePort;
@@ -109,6 +118,7 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
     '/api',
     createPageRoutes({
       authMiddleware,
+      pageFinalizeService: resolvedDependencies.pageFinalizeService,
       pageGenerationService: resolvedDependencies.pageGenerationService,
     }),
   );
@@ -173,6 +183,9 @@ function resolveDependencies(dependencies: AppDependencies): Required<Omit<AppDe
       pageGenerationQueue,
       new ModeSelector(),
     );
+  const pageFinalizeService =
+    dependencies.pageFinalizeService ??
+    new PageFinalizeService(pageRepository, resolveFinalPageImageStorage());
   const jobService = dependencies.jobService ?? new JobService(generationJobRepository);
   const storyService =
     dependencies.storyService ?? new StoryService(new PostgresStoryRepository(db), entityRepository);
@@ -194,6 +207,7 @@ function resolveDependencies(dependencies: AppDependencies): Required<Omit<AppDe
     creditService,
     entityService,
     jobService,
+    pageFinalizeService,
     pageGenerationQueue,
     pageGenerationService,
     panelService,
@@ -203,4 +217,19 @@ function resolveDependencies(dependencies: AppDependencies): Required<Omit<AppDe
     storyService,
     userProvisioningService,
   };
+}
+
+function resolveFinalPageImageStorage(): FinalPageImageStoragePort {
+  if (env.S3_BUCKET_IMAGES === undefined || env.IMAGES_CDN_BASE_URL === undefined) {
+    return {
+      async finalizePageImage(): Promise<never> {
+        throw new ConfigurationError('Final page image storage is not configured');
+      },
+    };
+  }
+
+  return new S3FinalPageImageStorage(createPageImageStorageClient(env.AWS_REGION), {
+    bucketName: env.S3_BUCKET_IMAGES,
+    cdnBaseUrl: env.IMAGES_CDN_BASE_URL,
+  });
 }

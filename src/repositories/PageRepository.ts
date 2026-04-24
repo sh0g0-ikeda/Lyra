@@ -22,6 +22,15 @@ export interface PageRepository {
     userId: string,
     input: PageGenerationStateUpdate,
   ): Promise<boolean>;
+  updateGeneratedImageAndState(
+    pageId: string,
+    userId: string,
+    input: {
+      status: PageStatus;
+      generationMode: PageGenerationMode | null;
+      generatedImage: GeneratedPageImage;
+    },
+  ): Promise<boolean>;
 }
 
 interface GenerationContextRow extends QueryResultRow {
@@ -156,6 +165,50 @@ export class PostgresPageRepository implements PageRepository {
       RETURNING pages.id
       `,
       [pageId, userId, input.status, input.generationMode],
+    );
+
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  public async updateGeneratedImageAndState(
+    pageId: string,
+    userId: string,
+    input: {
+      status: PageStatus;
+      generationMode: PageGenerationMode | null;
+      generatedImage: GeneratedPageImage;
+    },
+  ): Promise<boolean> {
+    const result = await this.client.query<UpdateRow>(
+      `
+      UPDATE pages
+      SET status = $3,
+          generation_mode = $4,
+          generated_image = jsonb_build_object(
+            's3_key', $5,
+            'cdn_url', $6,
+            'generation_mode', $7,
+            'generated_at', $8
+          ),
+          updated_at = NOW()
+      FROM episodes
+      INNER JOIN chapters ON chapters.id = episodes.chapter_id
+      INNER JOIN works ON works.id = chapters.work_id
+      WHERE pages.id = $1
+        AND pages.episode_id = episodes.id
+        AND works.user_id = $2
+      RETURNING pages.id
+      `,
+      [
+        pageId,
+        userId,
+        input.status,
+        input.generationMode,
+        input.generatedImage.s3Key,
+        input.generatedImage.cdnUrl,
+        input.generatedImage.generationMode,
+        input.generatedImage.generatedAt,
+      ],
     );
 
     return (result.rowCount ?? 0) > 0;
