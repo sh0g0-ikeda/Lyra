@@ -3,6 +3,7 @@ import { ConfigurationError } from './domain/errors/index.js';
 import { createPageImageStorageClient } from './infrastructure/aws/S3PageImageStorage.js';
 import { S3FinalPageImageStorage, type FinalPageImageStoragePort } from './infrastructure/aws/S3FinalPageImageStorage.js';
 import { S3EntityImageStorage, type EntityImageStoragePort } from './infrastructure/aws/S3EntityImageStorage.js';
+import { S3StoredImageLoader, type StoredImageLoaderPort } from './infrastructure/aws/S3StoredImageLoader.js';
 import { AnthropicClient } from './infrastructure/anthropic/AnthropicClient.js';
 import {
   AnthropicStoryAiClient,
@@ -89,6 +90,10 @@ import {
   PageFinalizeService,
   type PageFinalizeServicePort,
 } from './services/page/PageFinalizeService.js';
+import {
+  SharpPageBalloonComposer,
+  type PageBalloonComposerPort,
+} from './services/page/PageBalloonComposer.js';
 import { ModeSelector } from './services/page/ModeSelector.js';
 import {
   PanelService,
@@ -290,9 +295,10 @@ function resolveDependencies(dependencies: AppDependencies): Required<Omit<AppDe
     );
   const panelRepository = new PostgresPanelRepository(db);
   const panelFrameRepository = new PostgresPanelFrameRepository(db);
+  const balloonRepository = new PostgresBalloonRepository(db);
   const balloonService =
     dependencies.balloonService ??
-    new BalloonService(new PostgresBalloonRepository(db), entityRepository, panelRepository, panelFrameRepository);
+    new BalloonService(balloonRepository, entityRepository, panelRepository, panelFrameRepository);
   const pageGenerationService =
     dependencies.pageGenerationService ??
     new PageGenerationService(
@@ -304,7 +310,13 @@ function resolveDependencies(dependencies: AppDependencies): Required<Omit<AppDe
     );
   const pageFinalizeService =
     dependencies.pageFinalizeService ??
-    new PageFinalizeService(pageRepository, resolveFinalPageImageStorage());
+    new PageFinalizeService(
+      pageRepository,
+      balloonRepository,
+      resolveStoredPageImageLoader(),
+      resolvePageBalloonComposer(),
+      resolveFinalPageImageStorage(),
+    );
   const jobService = dependencies.jobService ?? new JobService(generationJobRepository);
   const storyCollaborationService =
     dependencies.storyCollaborationService ??
@@ -361,6 +373,9 @@ function resolveFinalPageImageStorage(): FinalPageImageStoragePort {
       async finalizePageImage(): Promise<never> {
         throw new ConfigurationError('Final page image storage is not configured');
       },
+      async storeFinalPageImage(): Promise<never> {
+        throw new ConfigurationError('Final page image storage is not configured');
+      },
     };
   }
 
@@ -376,6 +391,18 @@ function resolveStripeBillingClient(): StripeBillingClientPort {
   }
 
   return new StripeBillingClient(env.STRIPE_SECRET_KEY, env.STRIPE_WEBHOOK_SECRET);
+}
+
+function resolveStoredPageImageLoader(): StoredImageLoaderPort {
+  if (env.S3_BUCKET_IMAGES === undefined) {
+    return new StoredPageImageLoaderStub();
+  }
+
+  return new S3StoredImageLoader(createPageImageStorageClient(env.AWS_REGION), env.S3_BUCKET_IMAGES);
+}
+
+function resolvePageBalloonComposer(): PageBalloonComposerPort {
+  return new SharpPageBalloonComposer();
 }
 
 function resolveEntityImageStorage(): EntityImageStoragePort {
@@ -554,5 +581,11 @@ class EntityImageStorageStub {
 class EntityImportAnalyzerStub {
   public async analyze(): Promise<never> {
     throw new ConfigurationError('Entity import analyzer is not configured');
+  }
+}
+
+class StoredPageImageLoaderStub {
+  public async loadByS3Key(): Promise<never> {
+    throw new ConfigurationError('Stored page image loader is not configured');
   }
 }
