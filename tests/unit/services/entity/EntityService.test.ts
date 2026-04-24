@@ -3,6 +3,7 @@ import type { AppError } from '../../../../src/domain/errors/index.js';
 import type {
   CreateEntityInput,
   Entity,
+  EntityPrimaryReferenceImage,
   EntityRepository,
   UpdateEntityInput,
 } from '../../../../src/repositories/EntityRepository.js';
@@ -61,6 +62,10 @@ class FakeEntityRepository implements EntityRepository {
       (entity) =>
         entityIds.includes(entity.id) && entity.workId === workId && entity.userId === userId,
     ).length;
+  }
+
+  public async findPrimaryReferenceImagesByEntityIdsAndUserId(): Promise<EntityPrimaryReferenceImage[]> {
+    return [];
   }
 
   public async update(id: string, userId: string, input: UpdateEntityInput): Promise<Entity | null> {

@@ -1,6 +1,9 @@
 import { ConfigurationError } from '../../domain/errors/index.js';
 import type { GenerationJob } from '../../domain/types/job.js';
-import type { PersistedPageGenerationJobParams } from '../../domain/types/pageGeneration.js';
+import type {
+  PageGenerationInputImage,
+  PersistedPageGenerationJobParams,
+} from '../../domain/types/pageGeneration.js';
 import type { PageStatus } from '../../domain/types/page.js';
 import type { CreditServicePort } from '../credit/CreditService.js';
 import type { PromptBuilderPort } from './PromptBuilder.js';
@@ -25,6 +28,7 @@ export interface PageGenerationPlannerPort {
 export interface RenderPageImageInput extends PageGenerationPlanInput {
   quality: PersistedPageGenerationJobParams['quality'];
   internalPlan: string | null;
+  inputImages: PageGenerationInputImage[];
 }
 
 export interface RenderPageImageResult {
@@ -60,10 +64,20 @@ export interface ProcessPageGenerationJobResult {
   jobStatus?: 'completed' | 'failed';
 }
 
+export interface BuildPageGenerationInputImagesInput {
+  userId: string;
+  pageId: string;
+}
+
+export interface PageGenerationInputImageBuilderPort {
+  buildInputImages(input: BuildPageGenerationInputImagesInput): Promise<PageGenerationInputImage[]>;
+}
+
 export class PageGenerationWorkerService {
   public constructor(
     private readonly executionRepository: PageGenerationExecutionRepository,
     private readonly promptBuilder: PromptBuilderPort,
+    private readonly inputImageBuilder: PageGenerationInputImageBuilderPort,
     private readonly planner: PageGenerationPlannerPort,
     private readonly renderer: PageImageRendererPort,
     private readonly storage: PageImageStoragePort,
@@ -90,6 +104,10 @@ export class PageGenerationWorkerService {
         requestKind: params.request_kind,
         generationMode: params.generation_mode,
       });
+      const inputImages = await this.inputImageBuilder.buildInputImages({
+        userId: job.userId,
+        pageId: params.page_id,
+      });
 
       const internalPlan = params.requires_planner
         ? await this.planner.buildPlan({
@@ -111,6 +129,7 @@ export class PageGenerationWorkerService {
         prompt: builtPrompt.prompt,
         quality: params.quality,
         internalPlan,
+        inputImages,
       });
 
       const storedImage = await this.storage.store({

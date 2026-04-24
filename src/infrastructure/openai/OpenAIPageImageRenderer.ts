@@ -7,8 +7,9 @@ import { ConfigurationError } from '../../domain/errors/index.js';
 import { OpenAIClient } from './OpenAIClient.js';
 
 interface OpenAIImageGenerationResponse {
-  data?: Array<{
-    b64_json?: unknown;
+  output?: Array<{
+    type?: unknown;
+    result?: unknown;
   }>;
 }
 
@@ -23,16 +24,35 @@ export class OpenAIPageImageRenderer implements PageImageRendererPort {
       ? input.prompt
       : `${input.prompt}\n\nInternal generation plan:\n${input.internalPlan}`;
 
-    const response = await this.client.postJson<OpenAIImageGenerationResponse>('/images/generations', {
+    const response = await this.client.postJson<OpenAIImageGenerationResponse>('/responses', {
       model: this.model,
-      prompt,
-      quality: input.quality,
-      size: '1024x1536',
-      n: 1,
-      response_format: 'b64_json',
+      input: [
+        {
+          role: 'user',
+          content: [
+            ...input.inputImages.map((image) => ({
+              type: 'input_image',
+              image_url: image.dataUrl,
+            })),
+            {
+              type: 'input_text',
+              text: prompt,
+            },
+          ],
+        },
+      ],
+      tools: [
+        {
+          type: 'image_generation',
+          quality: input.quality,
+          size: '1024x1536',
+        },
+      ],
     });
 
-    const base64Image = response.body.data?.[0]?.b64_json;
+    const base64Image = response.body.output?.find(
+      (entry) => entry.type === 'image_generation_call',
+    )?.result;
     if (typeof base64Image !== 'string' || base64Image.length === 0) {
       throw new ConfigurationError('OpenAI image renderer returned no image data');
     }

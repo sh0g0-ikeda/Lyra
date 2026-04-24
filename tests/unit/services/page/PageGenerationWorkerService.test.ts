@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { CreditBalanceSnapshot } from '../../../../src/domain/types/credit.js';
 import type { GenerationJob } from '../../../../src/domain/types/job.js';
+import type { PageGenerationInputImage } from '../../../../src/domain/types/pageGeneration.js';
 import type {
   CompletePageGenerationInput,
   FailPageGenerationInput,
@@ -12,6 +13,7 @@ import type {
   RefundCreditsParams,
 } from '../../../../src/services/credit/CreditService.js';
 import type {
+  PageGenerationInputImageBuilderPort,
   PageGenerationPlannerPort,
   PageGenerationPlanInput,
   PageImageRendererPort,
@@ -61,6 +63,15 @@ class FakePromptBuilder implements PromptBuilderPort {
     return {
       prompt: 'page-prompt',
     };
+  }
+}
+
+class FakeInputImageBuilder implements PageGenerationInputImageBuilderPort {
+  public calls = 0;
+
+  public async buildInputImages(): Promise<PageGenerationInputImage[]> {
+    this.calls += 1;
+    return [{ role: 'entity_reference', dataUrl: 'data:image/png;base64,cmVm' }];
   }
 }
 
@@ -121,12 +132,14 @@ describe('PageGenerationWorkerService', () => {
     const executionRepository = new FakeExecutionRepository();
     const planner = new FakePlanner();
     const promptBuilder = new FakePromptBuilder();
+    const inputImageBuilder = new FakeInputImageBuilder();
     const renderer = new FakeRenderer();
     const storage = new FakeStorage();
     const creditService = new FakeCreditService();
     const service = new PageGenerationWorkerService(
       executionRepository,
       promptBuilder,
+      inputImageBuilder,
       planner,
       renderer,
       storage,
@@ -137,6 +150,7 @@ describe('PageGenerationWorkerService', () => {
 
     expect(result).toEqual({ status: 'processed', jobStatus: 'completed' });
     expect(planner.calls).toBe(0);
+    expect(inputImageBuilder.calls).toBe(1);
     expect(promptBuilder.calls[0]).toMatchObject({
       userId: 'user-1',
       pageId: 'page-1',
@@ -148,6 +162,7 @@ describe('PageGenerationWorkerService', () => {
       prompt: 'page-prompt',
       quality: 'medium',
       internalPlan: null,
+      inputImages: [{ role: 'entity_reference', dataUrl: 'data:image/png;base64,cmVm' }],
     });
     expect(storage.calls[0]?.pageId).toBe('page-1');
     expect(executionRepository.completionInput).toMatchObject({
@@ -175,6 +190,7 @@ describe('PageGenerationWorkerService', () => {
     const service = new PageGenerationWorkerService(
       executionRepository,
       new FakePromptBuilder(),
+      new FakeInputImageBuilder(),
       planner,
       renderer,
       new FakeStorage(),
@@ -193,6 +209,7 @@ describe('PageGenerationWorkerService', () => {
     const service = new PageGenerationWorkerService(
       executionRepository,
       new FakePromptBuilder(),
+      new FakeInputImageBuilder(),
       new FakePlanner(),
       new FakeRenderer(),
       new FakeStorage(),
@@ -221,6 +238,7 @@ describe('PageGenerationWorkerService', () => {
     const service = new PageGenerationWorkerService(
       executionRepository,
       new FakePromptBuilder(),
+      new FakeInputImageBuilder(),
       new FakePlanner(),
       new FakeRenderer(),
       new FakeStorage(),
@@ -247,6 +265,7 @@ describe('PageGenerationWorkerService', () => {
     const service = new PageGenerationWorkerService(
       executionRepository,
       new FakePromptBuilder(),
+      new FakeInputImageBuilder(),
       new FakePlanner(),
       renderer,
       new FakeStorage(),
@@ -279,6 +298,7 @@ describe('PageGenerationWorkerService', () => {
     const service = new PageGenerationWorkerService(
       executionRepository,
       new FakePromptBuilder(),
+      new FakeInputImageBuilder(),
       new FakePlanner(),
       new FakeRenderer(),
       new FakeStorage(),
