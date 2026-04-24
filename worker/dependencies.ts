@@ -23,6 +23,10 @@ import { ConfigurationError } from '../src/domain/errors/index.js';
 import { OpenAIClient } from '../src/infrastructure/openai/OpenAIClient.js';
 import { OpenAIPageGenerationPlanner } from '../src/infrastructure/openai/OpenAIPageGenerationPlanner.js';
 import { OpenAIPageImageRenderer } from '../src/infrastructure/openai/OpenAIPageImageRenderer.js';
+import {
+  createPageImageStorageClient,
+  S3PageImageStorage,
+} from '../src/infrastructure/aws/S3PageImageStorage.js';
 import { env } from '../src/lib/env.js';
 
 export interface PageGenerationWorkerPort {
@@ -66,7 +70,7 @@ export function resolveWorkerDependencies(
   const pageImageRenderer =
     overrides.pageImageRenderer ?? resolvePageImageRenderer();
   const pageImageStorage =
-    overrides.pageImageStorage ?? new UnconfiguredPageImageStorage();
+    overrides.pageImageStorage ?? resolvePageImageStorage();
   const pageGenerationExecutionRepository = new PostgresPageGenerationExecutionRepository(db);
 
   return {
@@ -108,6 +112,17 @@ function buildOpenAIClient(): OpenAIClient | null {
     apiKey: env.OPENAI_API_KEY,
     baseUrl: env.OPENAI_BASE_URL,
     timeoutMs: env.OPENAI_TIMEOUT_MS,
+  });
+}
+
+function resolvePageImageStorage(): PageImageStoragePort {
+  if (env.S3_BUCKET_IMAGES === undefined || env.IMAGES_CDN_BASE_URL === undefined) {
+    return new UnconfiguredPageImageStorage();
+  }
+
+  return new S3PageImageStorage(createPageImageStorageClient(env.AWS_REGION), {
+    bucketName: env.S3_BUCKET_IMAGES,
+    cdnBaseUrl: env.IMAGES_CDN_BASE_URL,
   });
 }
 
