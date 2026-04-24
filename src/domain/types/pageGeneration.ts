@@ -3,6 +3,12 @@ import type { PageStatus } from './page.js';
 export type PageGenerationMode = 'standard' | 'thinking';
 export type PageGenerationRequestKind = 'initial' | 'regenerate';
 export type PageGenerationQuality = 'medium' | 'high';
+export type PageGenerationInputImageRole = 'entity_reference' | 'layout_reference';
+
+export interface PageGenerationInputImage {
+  role: PageGenerationInputImageRole;
+  dataUrl: string;
+}
 
 export interface ModeSelectionInput {
   entityCount: number;

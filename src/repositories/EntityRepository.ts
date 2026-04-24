@@ -10,11 +10,22 @@ import type { DatabaseClient } from '../lib/db.js';
 
 export type { CreateEntityInput, Entity, UpdateEntityInput };
 
+export interface EntityPrimaryReferenceImage {
+  entityId: string;
+  refId: string;
+  s3Key: string;
+  cdnUrl: string;
+}
+
 export interface EntityRepository {
   create(input: CreateEntityInput): Promise<Entity>;
   findByIdAndUserId(id: string, userId: string): Promise<Entity | null>;
   findByWorkIdAndUserId(workId: string, userId: string): Promise<Entity[]>;
   countByIdsAndWorkIdAndUserId(entityIds: string[], workId: string, userId: string): Promise<number>;
+  findPrimaryReferenceImagesByEntityIdsAndUserId(
+    entityIds: string[],
+    userId: string,
+  ): Promise<EntityPrimaryReferenceImage[]>;
   update(id: string, userId: string, input: UpdateEntityInput): Promise<Entity | null>;
   delete(id: string, userId: string): Promise<boolean>;
 }
@@ -36,6 +47,12 @@ interface EntityRow extends QueryResultRow {
   status: EntityStatus;
   created_at: Date;
   updated_at: Date;
+}
+
+interface EntityReferenceSetRow extends QueryResultRow {
+  entity_id: string;
+  reference_images: unknown;
+  primary_ref_id: string | null;
 }
 
 export class PostgresEntityRepository implements EntityRepository {
@@ -132,6 +149,48 @@ export class PostgresEntityRepository implements EntityRepository {
     return result.rows[0]?.count ?? 0;
   }
 
+  public async findPrimaryReferenceImagesByEntityIdsAndUserId(
+    entityIds: string[],
+    userId: string,
+  ): Promise<EntityPrimaryReferenceImage[]> {
+    if (entityIds.length === 0) {
+      return [];
+    }
+
+    const result = await this.client.query<EntityReferenceSetRow>(
+      `
+      SELECT entities.id AS entity_id,
+             reference_sets.reference_images,
+             reference_sets.primary_ref_id
+      FROM entities
+      INNER JOIN reference_sets ON reference_sets.entity_id = entities.id
+      WHERE entities.id = ANY($1::uuid[])
+        AND entities.user_id = $2
+      `,
+      [entityIds, userId],
+    );
+
+    return result.rows.flatMap((row) => {
+      if (row.primary_ref_id === null) {
+        return [];
+      }
+
+      const primaryReference = findReferenceImage(row.reference_images, row.primary_ref_id);
+      if (primaryReference === null) {
+        return [];
+      }
+
+      return [
+        {
+          entityId: row.entity_id,
+          refId: row.primary_ref_id,
+          s3Key: primaryReference.s3_key,
+          cdnUrl: primaryReference.cdn_url,
+        },
+      ];
+    });
+  }
+
   public async update(id: string, userId: string, input: UpdateEntityInput): Promise<Entity | null> {
     const result = await this.client.query<EntityRow>(
       `
@@ -200,4 +259,28 @@ function toJsonObject(value: unknown): Record<string, unknown> {
   }
 
   return value as Record<string, unknown>;
+}
+
+function findReferenceImage(
+  value: unknown,
+  refId: string,
+): { s3_key: string; cdn_url: string } | null {
+  if (!Array.isArray(value)) {
+    return null;
+  }
+
+  for (const entry of value) {
+    if (
+      typeof entry === 'object' &&
+      entry !== null &&
+      !Array.isArray(entry) &&
+      entry.ref_id === refId &&
+      typeof entry.s3_key === 'string' &&
+      typeof entry.cdn_url === 'string'
+    ) {
+      return { s3_key: entry.s3_key, cdn_url: entry.cdn_url };
+    }
+  }
+
+  return null;
 }
