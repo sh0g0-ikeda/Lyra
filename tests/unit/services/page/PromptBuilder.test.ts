@@ -4,7 +4,10 @@ import type { Entity } from '../../../../src/domain/types/entity.js';
 import type { Panel } from '../../../../src/domain/types/panel.js';
 import type { PageGenerationContext, PagePromptContext } from '../../../../src/domain/types/page.js';
 import type { CompositionGalleryRepository } from '../../../../src/repositories/CompositionGalleryRepository.js';
-import type { EntityRepository } from '../../../../src/repositories/EntityRepository.js';
+import type {
+  EntityPrimaryReferenceImage,
+  EntityRepository,
+} from '../../../../src/repositories/EntityRepository.js';
 import type { PageRepository } from '../../../../src/repositories/PageRepository.js';
 import type { CreatePanelInput, UpdatePanelInput } from '../../../../src/domain/types/panel.js';
 import type { CreateEntityInput, UpdateEntityInput } from '../../../../src/domain/types/entity.js';
@@ -85,6 +88,10 @@ class FakeEntityRepository implements EntityRepository {
 
   public async countByIdsAndWorkIdAndUserId(): Promise<number> {
     return 1;
+  }
+
+  public async findPrimaryReferenceImagesByEntityIdsAndUserId(): Promise<EntityPrimaryReferenceImage[]> {
+    return [];
   }
 
   public async update(_id: string, _userId: string, _input: UpdateEntityInput): Promise<Entity | null> {

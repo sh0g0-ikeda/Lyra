@@ -5,17 +5,19 @@ import { OpenAIPageImageRenderer } from '../../../../src/infrastructure/openai/O
 
 describe('OpenAIPageImageRenderer', () => {
   it('base64画像をBufferに変換して返す', async () => {
+    const postJson = vi.fn().mockResolvedValue({
+      body: {
+        output: [
+          {
+            type: 'image_generation_call',
+            result: Buffer.from('png-bytes').toString('base64'),
+          },
+        ],
+      },
+      requestId: 'req-1',
+    });
     const client = {
-      postJson: vi.fn().mockResolvedValue({
-        body: {
-          data: [
-            {
-              b64_json: Buffer.from('png-bytes').toString('base64'),
-            },
-          ],
-        },
-        requestId: 'req-1',
-      }),
+      postJson,
     } as unknown as OpenAIClient;
     const renderer = new OpenAIPageImageRenderer(client);
 
@@ -24,11 +26,12 @@ describe('OpenAIPageImageRenderer', () => {
       userId: 'user-1',
       pageId: 'page-1',
       requestKind: 'initial',
-      generationMode: 'standard',
-      prompt: 'page prompt',
-      quality: 'medium',
-      internalPlan: 'keep panel 1 wide',
-    });
+        generationMode: 'standard',
+        prompt: 'page prompt',
+        quality: 'medium',
+        internalPlan: 'keep panel 1 wide',
+        inputImages: [{ role: 'entity_reference', dataUrl: 'data:image/png;base64,cmVm' }],
+      });
 
     expect(result).toEqual({
       imageData: Buffer.from('png-bytes'),
@@ -36,12 +39,15 @@ describe('OpenAIPageImageRenderer', () => {
       openaiRequestId: 'req-1',
       costUsd: null,
     });
+    expect(postJson).toHaveBeenCalledWith('/responses', expect.objectContaining({
+      model: 'gpt-image-2',
+    }));
   });
 
   it('画像が無い場合はConfigurationErrorを投げる', async () => {
     const client = {
       postJson: vi.fn().mockResolvedValue({
-        body: { data: [] },
+        body: { output: [] },
         requestId: 'req-1',
       }),
     } as unknown as OpenAIClient;
@@ -57,6 +63,7 @@ describe('OpenAIPageImageRenderer', () => {
         prompt: 'page prompt',
         quality: 'medium',
         internalPlan: null,
+        inputImages: [],
       }),
     ).rejects.toEqual(new ConfigurationError('OpenAI image renderer returned no image data'));
   });

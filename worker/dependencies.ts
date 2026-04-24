@@ -27,7 +27,12 @@ import {
   createPageImageStorageClient,
   S3PageImageStorage,
 } from '../src/infrastructure/aws/S3PageImageStorage.js';
+import { S3StoredImageLoader } from '../src/infrastructure/aws/S3StoredImageLoader.js';
 import { env } from '../src/lib/env.js';
+import {
+  PageGenerationInputImageBuilder,
+  type PageGenerationInputImageBuilderPort,
+} from '../src/services/page/PageGenerationInputImageBuilder.js';
 
 export interface PageGenerationWorkerPort {
   processJob(jobId: string): Promise<ProcessPageGenerationJobResult>;
@@ -40,6 +45,7 @@ export interface WorkerDependencies {
 export interface WorkerDependencyOverrides {
   creditService?: CreditServicePort;
   promptBuilder?: PromptBuilderPort;
+  pageGenerationInputImageBuilder?: PageGenerationInputImageBuilderPort;
   pageGenerationPlanner?: PageGenerationPlannerPort;
   pageImageRenderer?: PageImageRendererPort;
   pageImageStorage?: PageImageStoragePort;
@@ -65,6 +71,8 @@ export function resolveWorkerDependencies(
       new PostgresEntityRepository(db),
       new PostgresCompositionGalleryRepository(db),
     );
+  const pageGenerationInputImageBuilder =
+    overrides.pageGenerationInputImageBuilder ?? resolvePageGenerationInputImageBuilder();
   const pageGenerationPlanner =
     overrides.pageGenerationPlanner ?? resolvePageGenerationPlanner();
   const pageImageRenderer =
@@ -77,12 +85,25 @@ export function resolveWorkerDependencies(
     pageGenerationWorkerService: new PageGenerationWorkerService(
       pageGenerationExecutionRepository,
       promptBuilder,
+      pageGenerationInputImageBuilder,
       pageGenerationPlanner,
       pageImageRenderer,
       pageImageStorage,
       creditService,
     ),
   };
+}
+
+function resolvePageGenerationInputImageBuilder(): PageGenerationInputImageBuilderPort {
+  if (env.S3_BUCKET_IMAGES === undefined) {
+    return new UnconfiguredPageGenerationInputImageBuilder();
+  }
+
+  return new PageGenerationInputImageBuilder(
+    new PostgresPageRepository(db),
+    new PostgresEntityRepository(db),
+    new S3StoredImageLoader(createPageImageStorageClient(env.AWS_REGION), env.S3_BUCKET_IMAGES),
+  );
 }
 
 function resolvePageGenerationPlanner(): PageGenerationPlannerPort {
@@ -124,6 +145,12 @@ function resolvePageImageStorage(): PageImageStoragePort {
     bucketName: env.S3_BUCKET_IMAGES,
     cdnBaseUrl: env.IMAGES_CDN_BASE_URL,
   });
+}
+
+class UnconfiguredPageGenerationInputImageBuilder implements PageGenerationInputImageBuilderPort {
+  public async buildInputImages(): Promise<[]> {
+    return [];
+  }
 }
 
 class UnconfiguredPageGenerationPlanner implements PageGenerationPlannerPort {
