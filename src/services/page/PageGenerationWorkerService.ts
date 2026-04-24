@@ -3,6 +3,7 @@ import type { GenerationJob } from '../../domain/types/job.js';
 import type { PersistedPageGenerationJobParams } from '../../domain/types/pageGeneration.js';
 import type { PageStatus } from '../../domain/types/page.js';
 import type { CreditServicePort } from '../credit/CreditService.js';
+import type { PromptBuilderPort } from './PromptBuilder.js';
 import type {
   CompletePageGenerationInput,
   PageGenerationExecutionRepository,
@@ -14,6 +15,7 @@ export interface PageGenerationPlanInput {
   pageId: string;
   requestKind: PersistedPageGenerationJobParams['request_kind'];
   generationMode: PersistedPageGenerationJobParams['generation_mode'];
+  prompt: string;
 }
 
 export interface PageGenerationPlannerPort {
@@ -61,6 +63,7 @@ export interface ProcessPageGenerationJobResult {
 export class PageGenerationWorkerService {
   public constructor(
     private readonly executionRepository: PageGenerationExecutionRepository,
+    private readonly promptBuilder: PromptBuilderPort,
     private readonly planner: PageGenerationPlannerPort,
     private readonly renderer: PageImageRendererPort,
     private readonly storage: PageImageStoragePort,
@@ -81,6 +84,13 @@ export class PageGenerationWorkerService {
     }
 
     try {
+      const builtPrompt = await this.promptBuilder.buildPagePrompt({
+        userId: job.userId,
+        pageId: params.page_id,
+        requestKind: params.request_kind,
+        generationMode: params.generation_mode,
+      });
+
       const internalPlan = params.requires_planner
         ? await this.planner.buildPlan({
             jobId: job.id,
@@ -88,6 +98,7 @@ export class PageGenerationWorkerService {
             pageId: params.page_id,
             requestKind: params.request_kind,
             generationMode: params.generation_mode,
+            prompt: builtPrompt.prompt,
           })
         : null;
 
@@ -97,6 +108,7 @@ export class PageGenerationWorkerService {
         pageId: params.page_id,
         requestKind: params.request_kind,
         generationMode: params.generation_mode,
+        prompt: builtPrompt.prompt,
         quality: params.quality,
         internalPlan,
       });

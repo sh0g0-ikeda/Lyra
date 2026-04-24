@@ -4,6 +4,8 @@ import type {
   PageGenerationContext,
   PageGenerationPanelContext,
   PageGenerationStateUpdate,
+  PagePromptContext,
+  PageDialogueMode,
   PageStatus,
 } from '../domain/types/page.js';
 import type { PageGenerationMode } from '../domain/types/pageGeneration.js';
@@ -14,6 +16,7 @@ export type { PageGenerationContext, PageGenerationStateUpdate };
 
 export interface PageRepository {
   findGenerationContextByIdAndUserId(pageId: string, userId: string): Promise<PageGenerationContext | null>;
+  findPromptContextByIdAndUserId(pageId: string, userId: string): Promise<PagePromptContext | null>;
   updateGenerationState(
     pageId: string,
     userId: string,
@@ -29,6 +32,16 @@ interface GenerationContextRow extends QueryResultRow {
   generation_mode: string | null;
   status: PageStatus;
   panel_entities: unknown;
+}
+
+interface PromptContextRow extends QueryResultRow {
+  page_id: string;
+  work_id: string;
+  page_number: number;
+  episode_purpose: string | null;
+  layout_config: unknown;
+  dialogue_mode: string;
+  page_dialogue_toggle: boolean;
 }
 
 interface UpdateRow extends QueryResultRow {
@@ -83,6 +96,43 @@ export class PostgresPageRepository implements PageRepository {
           generationMode: toPageGenerationMode(row.generation_mode),
           status: row.status,
           panels: toPageGenerationPanels(row.panel_entities),
+        };
+  }
+
+  public async findPromptContextByIdAndUserId(
+    pageId: string,
+    userId: string,
+  ): Promise<PagePromptContext | null> {
+    const result = await this.client.query<PromptContextRow>(
+      `
+      SELECT pages.id AS page_id,
+             chapters.work_id,
+             pages.page_number,
+             episodes.purpose AS episode_purpose,
+             pages.layout_config,
+             pages.dialogue_mode,
+             pages.page_dialogue_toggle
+      FROM pages
+      INNER JOIN episodes ON episodes.id = pages.episode_id
+      INNER JOIN chapters ON chapters.id = episodes.chapter_id
+      INNER JOIN works ON works.id = chapters.work_id
+      WHERE pages.id = $1
+        AND works.user_id = $2
+      `,
+      [pageId, userId],
+    );
+
+    const row = result.rows[0];
+    return row === undefined
+      ? null
+      : {
+          pageId: row.page_id,
+          workId: row.work_id,
+          pageNumber: row.page_number,
+          episodePurpose: row.episode_purpose,
+          layoutConfig: toJsonObject(row.layout_config),
+          dialogueMode: toPageDialogueMode(row.dialogue_mode),
+          pageDialogueToggle: row.page_dialogue_toggle,
         };
   }
 
@@ -202,6 +252,10 @@ function toJsonObject(value: unknown): Record<string, unknown> {
 
 function toPageGenerationMode(value: string | null): PageGenerationMode | null {
   return value === 'standard' || value === 'thinking' ? value : null;
+}
+
+function toPageDialogueMode(value: string): PageDialogueMode {
+  return value === 'balloon_only' || value === 'mixed' ? value : 'image_baked';
 }
 
 function isPanelEntityRole(value: unknown): value is PanelEntityAssignment['role'] {

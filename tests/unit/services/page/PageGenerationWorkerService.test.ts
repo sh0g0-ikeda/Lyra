@@ -21,6 +21,7 @@ import type {
   StorePageImageInput,
 } from '../../../../src/services/page/PageGenerationWorkerService.js';
 import { PageGenerationWorkerService } from '../../../../src/services/page/PageGenerationWorkerService.js';
+import type { BuiltPagePrompt, BuildPagePromptInput, PromptBuilderPort } from '../../../../src/services/page/PromptBuilder.js';
 
 class FakeExecutionRepository implements PageGenerationExecutionRepository {
   public claimedJob: GenerationJob | null = buildJob();
@@ -49,6 +50,17 @@ class FakePlanner implements PageGenerationPlannerPort {
   public async buildPlan(_input: PageGenerationPlanInput): Promise<string> {
     this.calls += 1;
     return 'planner-output';
+  }
+}
+
+class FakePromptBuilder implements PromptBuilderPort {
+  public calls: BuildPagePromptInput[] = [];
+
+  public async buildPagePrompt(input: BuildPagePromptInput): Promise<BuiltPagePrompt> {
+    this.calls.push(input);
+    return {
+      prompt: 'page-prompt',
+    };
   }
 }
 
@@ -108,11 +120,13 @@ describe('PageGenerationWorkerService', () => {
   it('queued jobをprocessingからcompletedまで進めてgenerated_imageを保存する', async () => {
     const executionRepository = new FakeExecutionRepository();
     const planner = new FakePlanner();
+    const promptBuilder = new FakePromptBuilder();
     const renderer = new FakeRenderer();
     const storage = new FakeStorage();
     const creditService = new FakeCreditService();
     const service = new PageGenerationWorkerService(
       executionRepository,
+      promptBuilder,
       planner,
       renderer,
       storage,
@@ -123,10 +137,15 @@ describe('PageGenerationWorkerService', () => {
 
     expect(result).toEqual({ status: 'processed', jobStatus: 'completed' });
     expect(planner.calls).toBe(0);
+    expect(promptBuilder.calls[0]).toMatchObject({
+      userId: 'user-1',
+      pageId: 'page-1',
+    });
     expect(renderer.calls[0]).toMatchObject({
       pageId: 'page-1',
       requestKind: 'initial',
       generationMode: 'standard',
+      prompt: 'page-prompt',
       quality: 'medium',
       internalPlan: null,
     });
@@ -155,6 +174,7 @@ describe('PageGenerationWorkerService', () => {
     const renderer = new FakeRenderer();
     const service = new PageGenerationWorkerService(
       executionRepository,
+      new FakePromptBuilder(),
       planner,
       renderer,
       new FakeStorage(),
@@ -172,6 +192,7 @@ describe('PageGenerationWorkerService', () => {
     executionRepository.claimedJob = null;
     const service = new PageGenerationWorkerService(
       executionRepository,
+      new FakePromptBuilder(),
       new FakePlanner(),
       new FakeRenderer(),
       new FakeStorage(),
@@ -199,6 +220,7 @@ describe('PageGenerationWorkerService', () => {
     const creditService = new FakeCreditService();
     const service = new PageGenerationWorkerService(
       executionRepository,
+      new FakePromptBuilder(),
       new FakePlanner(),
       new FakeRenderer(),
       new FakeStorage(),
@@ -224,6 +246,7 @@ describe('PageGenerationWorkerService', () => {
     const creditService = new FakeCreditService();
     const service = new PageGenerationWorkerService(
       executionRepository,
+      new FakePromptBuilder(),
       new FakePlanner(),
       renderer,
       new FakeStorage(),
@@ -255,6 +278,7 @@ describe('PageGenerationWorkerService', () => {
     const creditService = new FakeCreditService();
     const service = new PageGenerationWorkerService(
       executionRepository,
+      new FakePromptBuilder(),
       new FakePlanner(),
       new FakeRenderer(),
       new FakeStorage(),

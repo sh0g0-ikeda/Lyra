@@ -33,7 +33,11 @@ class QueryCapturingClient implements DatabaseClient {
         {
           page_id: 'page-1',
           work_id: 'work-1',
+          page_number: 3,
+          episode_purpose: 'The hero confronts the rival.',
           layout_config: { type: 'template', template_id: 'standard_4' },
+          dialogue_mode: 'mixed',
+          page_dialogue_toggle: true,
           generated_image: null,
           generation_mode: null,
           status: 'designing',
@@ -90,5 +94,21 @@ describe('PostgresPageRepository', () => {
     expect(client.queries[0]).toContain('UPDATE pages');
     expect(client.queries[0]).toContain('works.user_id = $2');
     expect(client.values).toEqual(['page-1', 'user-1', 'generating', 'thinking']);
+  });
+
+  it('prompt用のページ文脈を取得する', async () => {
+    const client = new QueryCapturingClient();
+    const repository = new PostgresPageRepository(client);
+
+    const page = await repository.findPromptContextByIdAndUserId('page-1', 'user-1');
+
+    expect(page).toMatchObject({
+      pageId: 'page-1',
+      workId: 'work-1',
+      pageNumber: 3,
+      episodePurpose: 'The hero confronts the rival.',
+      dialogueMode: 'mixed',
+      pageDialogueToggle: true,
+    });
   });
 });
