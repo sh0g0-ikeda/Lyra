@@ -9,22 +9,26 @@ import type {
   CreateBalloonInput,
   UpdateBalloonInput,
 } from '../domain/types/balloon.js';
-import type { PageDialogueMode } from '../domain/types/page.js';
+import type { PageDialogueMode, PageStatus } from '../domain/types/page.js';
 import type { DatabaseClient } from '../lib/db.js';
 
 export interface PageBalloonContext {
   pageId: string;
   workId: string;
+  status: PageStatus;
   dialogueMode: PageDialogueMode;
   hasGeneratedImage: boolean;
+  panelCount: number;
 }
 
 export interface BalloonContext {
   balloonId: string;
   pageId: string;
   workId: string;
+  status: PageStatus;
   dialogueMode: PageDialogueMode;
   hasGeneratedImage: boolean;
+  panelCount: number;
 }
 
 export interface BalloonRepository {
@@ -39,16 +43,20 @@ export interface BalloonRepository {
 interface PageContextRow extends QueryResultRow {
   page_id: string;
   work_id: string;
+  status: PageStatus;
   dialogue_mode: string;
   generated_image: unknown;
+  panel_count: number;
 }
 
 interface BalloonContextRow extends QueryResultRow {
   balloon_id: string;
   page_id: string;
   work_id: string;
+  status: PageStatus;
   dialogue_mode: string;
   generated_image: unknown;
+  panel_count: number;
 }
 
 interface BalloonRow extends QueryResultRow {
@@ -74,14 +82,18 @@ export class PostgresBalloonRepository implements BalloonRepository {
       `
       SELECT pages.id AS page_id,
              chapters.work_id,
+             pages.status,
              pages.dialogue_mode,
-             pages.generated_image
+             pages.generated_image,
+             COUNT(panels.id)::int AS panel_count
       FROM pages
       INNER JOIN episodes ON episodes.id = pages.episode_id
       INNER JOIN chapters ON chapters.id = episodes.chapter_id
       INNER JOIN works ON works.id = chapters.work_id
+      LEFT JOIN panels ON panels.page_id = pages.id
       WHERE pages.id = $1
         AND works.user_id = $2
+      GROUP BY pages.id, chapters.work_id, pages.status, pages.dialogue_mode, pages.generated_image
       `,
       [pageId, userId],
     );
@@ -92,8 +104,10 @@ export class PostgresBalloonRepository implements BalloonRepository {
       : {
           pageId: row.page_id,
           workId: row.work_id,
+          status: row.status,
           dialogueMode: toDialogueMode(row.dialogue_mode),
           hasGeneratedImage: isJsonObject(row.generated_image),
+          panelCount: row.panel_count,
         };
   }
 
@@ -103,15 +117,19 @@ export class PostgresBalloonRepository implements BalloonRepository {
       SELECT balloons.id AS balloon_id,
              pages.id AS page_id,
              chapters.work_id,
+             pages.status,
              pages.dialogue_mode,
-             pages.generated_image
+             pages.generated_image,
+             COUNT(panels.id)::int AS panel_count
       FROM balloons
       INNER JOIN pages ON pages.id = balloons.page_id
       INNER JOIN episodes ON episodes.id = pages.episode_id
       INNER JOIN chapters ON chapters.id = episodes.chapter_id
       INNER JOIN works ON works.id = chapters.work_id
+      LEFT JOIN panels ON panels.page_id = pages.id
       WHERE balloons.id = $1
         AND works.user_id = $2
+      GROUP BY balloons.id, pages.id, chapters.work_id, pages.status, pages.dialogue_mode, pages.generated_image
       `,
       [balloonId, userId],
     );
@@ -123,8 +141,10 @@ export class PostgresBalloonRepository implements BalloonRepository {
           balloonId: row.balloon_id,
           pageId: row.page_id,
           workId: row.work_id,
+          status: row.status,
           dialogueMode: toDialogueMode(row.dialogue_mode),
           hasGeneratedImage: isJsonObject(row.generated_image),
+          panelCount: row.panel_count,
         };
   }
 
@@ -333,14 +353,12 @@ function toDialogueMode(value: string): PageDialogueMode {
 }
 
 function toBalloonType(value: string): BalloonType {
-  return (
-    value === 'thought' ||
+  return value === 'thought' ||
     value === 'narration' ||
     value === 'shout' ||
     value === 'whisper' ||
     value === 'sfx' ||
     value === 'caption'
-  )
     ? value
     : 'speech';
 }
@@ -350,13 +368,7 @@ function toWritingMode(value: string): BalloonWritingMode {
 }
 
 function toFontFamily(value: string): BalloonFontFamily {
-  return (
-    value === 'mincho' ||
-    value === 'rounded' ||
-    value === 'bold'
-  )
-    ? value
-    : 'manga_gothic';
+  return value === 'mincho' || value === 'rounded' || value === 'bold' ? value : 'manga_gothic';
 }
 
 function isJsonObject(value: unknown): value is Record<string, unknown> {

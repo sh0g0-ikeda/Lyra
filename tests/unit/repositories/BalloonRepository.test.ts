@@ -19,7 +19,7 @@ class QueryCapturingClient implements DatabaseClient {
       rowCount: 1,
       oid: 0,
       fields: [],
-      rows: [balloonRow()] as unknown as T[],
+      rows: [row()] as unknown as T[],
     };
   }
 }
@@ -33,6 +33,18 @@ describe('PostgresBalloonRepository', () => {
 
     expect(client.queries[0]).toContain('works.user_id = $2');
     expect(client.values).toEqual(['page-1', 'user-1']);
+  });
+
+  it('page context に status と panel_count を含める', async () => {
+    const client = new QueryCapturingClient();
+    const repository = new PostgresBalloonRepository(client);
+
+    const context = await repository.findPageContextByIdAndUserId('page-1', 'user-1');
+
+    expect(context).toMatchObject({
+      status: 'editing',
+      panelCount: 3,
+    });
   });
 
   it('balloon 更新は tail を snake_case で保存する', async () => {
@@ -49,12 +61,14 @@ describe('PostgresBalloonRepository', () => {
     });
 
     expect(client.queries[0]).toContain('UPDATE balloons');
-    expect(client.values?.[10]).toBe(JSON.stringify({
-      base_x: 0.2,
-      base_y: 0.3,
-      tip_x: 0.4,
-      tip_y: 0.5,
-    }));
+    expect(client.values?.[10]).toBe(
+      JSON.stringify({
+        base_x: 0.2,
+        base_y: 0.3,
+        tip_x: 0.4,
+        tip_y: 0.5,
+      }),
+    );
   });
 
   it('tail は snake_case の既存データも読み戻せる', async () => {
@@ -72,14 +86,25 @@ describe('PostgresBalloonRepository', () => {
   });
 });
 
-function balloonRow(): Record<string, unknown> {
+function row(): Record<string, unknown> {
   return {
+    balloon_id: 'balloon-1',
     id: 'balloon-1',
     page_id: 'page-1',
+    work_id: 'work-1',
+    status: 'editing',
+    dialogue_mode: 'mixed',
+    generated_image: {
+      s3_key: 'session/user-1/pages/page-1/image.png',
+      cdn_url: 'https://cdn.lyra.test/page-1.png',
+      generation_mode: 'standard',
+      generated_at: '2026-04-24T00:00:00.000Z',
+    },
+    panel_count: 3,
     speaker_entity_id: null,
     balloon_type: 'speech',
     writing_mode: 'vertical',
-    text: 'こんにちは',
+    text: 'hello',
     position: {
       x: 0.1,
       y: 0.2,

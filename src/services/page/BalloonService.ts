@@ -1,7 +1,11 @@
 import { ConflictError, NotFoundError, ValidationError } from '../../domain/errors/index.js';
-import type { EntityReferenceReader } from '../../repositories/EntityRepository.js';
-import type { BalloonRepository } from '../../repositories/BalloonRepository.js';
 import type { Balloon, CreateBalloonInput, UpdateBalloonInput } from '../../domain/types/balloon.js';
+import type { EntityReferenceReader } from '../../repositories/EntityRepository.js';
+import type {
+  BalloonContext,
+  BalloonRepository,
+  PageBalloonContext,
+} from '../../repositories/BalloonRepository.js';
 
 export interface BalloonServicePort {
   createBalloon(userId: string, pageId: string, input: CreateBalloonInput): Promise<Balloon>;
@@ -22,7 +26,8 @@ export class BalloonService implements BalloonServicePort {
       throw new NotFoundError('Page not found');
     }
 
-    this.ensureBalloonEditingEnabled(pageContext.dialogueMode, pageContext.hasGeneratedImage);
+    this.ensureBalloonEditingEnabled(pageContext);
+    this.ensurePanelOrderReferenceWithinBounds(input.panelOrderReference, pageContext.panelCount);
     await this.ensureSpeakerBelongsToWork(input.speakerEntityId, pageContext.workId, userId);
 
     return this.balloonRepository.createBalloon(pageId, input);
@@ -34,7 +39,7 @@ export class BalloonService implements BalloonServicePort {
       throw new NotFoundError('Page not found');
     }
 
-    this.ensureBalloonEditingEnabled(pageContext.dialogueMode, pageContext.hasGeneratedImage);
+    this.ensureBalloonEditingEnabled(pageContext);
     return this.balloonRepository.findBalloonsByPageIdAndUserId(pageId, userId);
   }
 
@@ -44,7 +49,8 @@ export class BalloonService implements BalloonServicePort {
       throw new NotFoundError('Balloon not found');
     }
 
-    this.ensureBalloonEditingEnabled(balloonContext.dialogueMode, balloonContext.hasGeneratedImage);
+    this.ensureBalloonEditingEnabled(balloonContext);
+    this.ensurePanelOrderReferenceWithinBounds(input.panelOrderReference, balloonContext.panelCount);
     await this.ensureSpeakerBelongsToWork(input.speakerEntityId, balloonContext.workId, userId);
 
     const balloon = await this.balloonRepository.updateBalloon(balloonId, userId, input);
@@ -61,7 +67,7 @@ export class BalloonService implements BalloonServicePort {
       throw new NotFoundError('Balloon not found');
     }
 
-    this.ensureBalloonEditingEnabled(balloonContext.dialogueMode, balloonContext.hasGeneratedImage);
+    this.ensureBalloonEditingEnabled(balloonContext);
 
     const deleted = await this.balloonRepository.deleteBalloon(balloonId, userId);
     if (!deleted) {
@@ -69,13 +75,32 @@ export class BalloonService implements BalloonServicePort {
     }
   }
 
-  private ensureBalloonEditingEnabled(dialogueMode: 'image_baked' | 'balloon_only' | 'mixed', hasGeneratedImage: boolean): void {
-    if (dialogueMode === 'image_baked') {
+  private ensureBalloonEditingEnabled(
+    context: Pick<PageBalloonContext | BalloonContext, 'status' | 'dialogueMode' | 'hasGeneratedImage'>,
+  ): void {
+    if (context.status === 'confirmed') {
+      throw new ConflictError('Confirmed pages must be reopened before editing balloons');
+    }
+
+    if (context.dialogueMode === 'image_baked') {
       throw new ConflictError('Balloon editing is disabled for image_baked pages');
     }
 
-    if (!hasGeneratedImage) {
+    if (!context.hasGeneratedImage) {
       throw new ConflictError('Page must have a generated image before editing balloons');
+    }
+  }
+
+  private ensurePanelOrderReferenceWithinBounds(
+    panelOrderReference: number | null | undefined,
+    panelCount: number,
+  ): void {
+    if (panelOrderReference === undefined || panelOrderReference === null) {
+      return;
+    }
+
+    if (panelOrderReference > panelCount) {
+      throw new ValidationError('panel_order_reference must refer to an existing panel');
     }
   }
 

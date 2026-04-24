@@ -1,20 +1,22 @@
 import { describe, expect, it } from 'vitest';
 import type { AppError } from '../../../../src/domain/errors/index.js';
-import type { Entity } from '../../../../src/domain/types/entity.js';
 import type { Balloon, CreateBalloonInput, UpdateBalloonInput } from '../../../../src/domain/types/balloon.js';
+import type { Entity } from '../../../../src/domain/types/entity.js';
 import type {
   BalloonContext,
   BalloonRepository,
   PageBalloonContext,
 } from '../../../../src/repositories/BalloonRepository.js';
-import { BalloonService } from '../../../../src/services/page/BalloonService.js';
 import type { EntityReferenceReader } from '../../../../src/repositories/EntityRepository.js';
+import { BalloonService } from '../../../../src/services/page/BalloonService.js';
 
-const nowPageContext: PageBalloonContext = {
+const basePageContext: PageBalloonContext = {
   pageId: 'page-1',
   workId: 'work-1',
+  status: 'editing',
   dialogueMode: 'mixed',
   hasGeneratedImage: true,
+  panelCount: 3,
 };
 
 class FakeBalloonRepository implements BalloonRepository {
@@ -117,20 +119,20 @@ class FakeEntityReader implements EntityReferenceReader {
 }
 
 describe('BalloonService', () => {
-  it('生成済みかつ mixed のページなら Balloon を作成できる', async () => {
+  it('生成済みの mixed ページなら Balloon を作成できる', async () => {
     const { service, repository } = createService();
-    repository.addPageContext('user-1', nowPageContext);
+    repository.addPageContext('user-1', basePageContext);
 
     const balloon = await service.createBalloon('user-1', 'page-1', buildCreateInput());
 
     expect(balloon.pageId).toBe('page-1');
-    expect(balloon.text).toBe('こんにちは');
+    expect(balloon.text).toBe('hello');
   });
 
   it('image_baked ページでは作成できない', async () => {
     const { service, repository } = createService();
     repository.addPageContext('user-1', {
-      ...nowPageContext,
+      ...basePageContext,
       dialogueMode: 'image_baked',
     });
 
@@ -142,7 +144,7 @@ describe('BalloonService', () => {
   it('生成前ページでは一覧取得できない', async () => {
     const { service, repository } = createService();
     repository.addPageContext('user-1', {
-      ...nowPageContext,
+      ...basePageContext,
       hasGeneratedImage: false,
     });
 
@@ -153,11 +155,34 @@ describe('BalloonService', () => {
 
   it('別作品の speaker entity は設定できない', async () => {
     const { service, repository, entityReader } = createService();
-    repository.addPageContext('user-1', nowPageContext);
+    repository.addPageContext('user-1', basePageContext);
     entityReader.addEntity(buildEntity({ id: 'entity-2', workId: 'work-2' }));
 
     await expect(
       service.createBalloon('user-1', 'page-1', buildCreateInput({ speakerEntityId: 'entity-2' })),
+    ).rejects.toMatchObject({
+      code: 'VALIDATION_ERROR',
+    } satisfies Partial<AppError>);
+  });
+
+  it('confirmed ページでは reopen 前に編集できない', async () => {
+    const { service, repository } = createService();
+    repository.addPageContext('user-1', {
+      ...basePageContext,
+      status: 'confirmed',
+    });
+
+    await expect(service.createBalloon('user-1', 'page-1', buildCreateInput())).rejects.toMatchObject({
+      code: 'CONFLICT',
+    } satisfies Partial<AppError>);
+  });
+
+  it('存在しない panel_order_reference は作成できない', async () => {
+    const { service, repository } = createService();
+    repository.addPageContext('user-1', basePageContext);
+
+    await expect(
+      service.createBalloon('user-1', 'page-1', buildCreateInput({ panelOrderReference: 4 })),
     ).rejects.toMatchObject({
       code: 'VALIDATION_ERROR',
     } satisfies Partial<AppError>);
@@ -169,14 +194,36 @@ describe('BalloonService', () => {
       balloonId: 'balloon-1',
       pageId: 'page-1',
       workId: 'work-1',
+      status: 'editing',
       dialogueMode: 'mixed',
       hasGeneratedImage: true,
+      panelCount: 3,
     });
     repository.seedBalloon(buildBalloon({ id: 'balloon-1' }));
     entityReader.addEntity(buildEntity({ id: 'entity-9', workId: 'work-2' }));
 
     await expect(
       service.updateBalloon('user-1', 'balloon-1', { speakerEntityId: 'entity-9' }),
+    ).rejects.toMatchObject({
+      code: 'VALIDATION_ERROR',
+    } satisfies Partial<AppError>);
+  });
+
+  it('更新時も存在しない panel_order_reference を弾く', async () => {
+    const { service, repository } = createService();
+    repository.addBalloonContext('user-1', {
+      balloonId: 'balloon-1',
+      pageId: 'page-1',
+      workId: 'work-1',
+      status: 'editing',
+      dialogueMode: 'mixed',
+      hasGeneratedImage: true,
+      panelCount: 2,
+    });
+    repository.seedBalloon(buildBalloon({ id: 'balloon-1' }));
+
+    await expect(
+      service.updateBalloon('user-1', 'balloon-1', { panelOrderReference: 3 }),
     ).rejects.toMatchObject({
       code: 'VALIDATION_ERROR',
     } satisfies Partial<AppError>);
@@ -211,7 +258,7 @@ function buildCreateInput(overrides: Partial<CreateBalloonInput> = {}): CreateBa
     speakerEntityId: null,
     balloonType: 'speech',
     writingMode: 'vertical',
-    text: 'こんにちは',
+    text: 'hello',
     position: { x: 0.1, y: 0.1, width: 0.3, height: 0.2 },
     tail: { baseX: 0.2, baseY: 0.3, tipX: 0.4, tipY: 0.5 },
     fontSize: 18,
@@ -222,9 +269,7 @@ function buildCreateInput(overrides: Partial<CreateBalloonInput> = {}): CreateBa
   };
 }
 
-function buildBalloon(
-  overrides: Partial<Balloon> & Pick<Balloon, 'id'>,
-): Balloon {
+function buildBalloon(overrides: Partial<Balloon> & Pick<Balloon, 'id'>): Balloon {
   const { id, ...rest } = overrides;
 
   return {
@@ -233,7 +278,7 @@ function buildBalloon(
     speakerEntityId: null,
     balloonType: 'speech',
     writingMode: 'vertical',
-    text: 'こんにちは',
+    text: 'hello',
     position: { x: 0.1, y: 0.1, width: 0.3, height: 0.2 },
     tail: { baseX: 0.2, baseY: 0.3, tipX: 0.4, tipY: 0.5 },
     fontSize: 18,
@@ -250,7 +295,7 @@ function buildEntity(overrides: Partial<Entity> = {}): Entity {
     workId: 'work-1',
     userId: 'user-1',
     entityType: 'character',
-    name: '主人公',
+    name: 'hero',
     freeDescription: null,
     structuredFields: {},
     promptSupplement: null,
