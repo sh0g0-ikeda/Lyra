@@ -1,18 +1,24 @@
 import { Hono, type Context, type MiddlewareHandler } from 'hono';
 import { ValidationError } from '../domain/errors/index.js';
 import type { Entity } from '../domain/types/entity.js';
+import type { EntityReferenceSet } from '../domain/types/entityReference.js';
 import {
+  confirmEntityReferenceBodySchema,
   createEntityBodySchema,
+  importEntityImageBodySchema,
+  referenceIdParamSchema,
   updateEntityBodySchema,
   uuidParamSchema,
 } from '../lib/validators/entity.schema.js';
 import type { EntityServicePort } from '../services/entity/EntityService.js';
+import type { EntityReferenceServicePort } from '../services/entity/EntityReferenceService.js';
 import type { AppEnv } from '../types/app.js';
 
 export interface EntityRouteDependencies {
   authMiddleware: MiddlewareHandler<AppEnv>;
   rateLimitMiddleware: MiddlewareHandler<AppEnv>;
   entityService: EntityServicePort;
+  entityReferenceService: EntityReferenceServicePort;
 }
 
 export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<AppEnv> {
@@ -34,6 +40,7 @@ export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<
       entityType: body.data.entity_type,
       name: body.data.name,
       freeDescription: body.data.free_description ?? null,
+      promptSupplement: body.data.prompt_supplement ?? null,
       structuredFields: body.data.structured_fields ?? {},
       speechProfile: body.data.speech_profile ?? {},
     });
@@ -72,6 +79,7 @@ export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<
       entityType: body.data.entity_type,
       name: body.data.name,
       freeDescription: body.data.free_description,
+      promptSupplement: body.data.prompt_supplement,
       structuredFields: body.data.structured_fields,
       speechProfile: body.data.speech_profile,
     });
@@ -85,6 +93,71 @@ export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<
     await dependencies.entityService.deleteEntity(user.id, entityId);
 
     return c.body(null, 204);
+  });
+
+  app.post('/entities/import-image', async (c) => {
+    const user = c.get('user');
+    const body = importEntityImageBodySchema.safeParse(await readJsonBody(c));
+
+    if (!body.success) {
+      throw new ValidationError(body.error.message);
+    }
+
+    const result = await dependencies.entityReferenceService.importImage(user.id, {
+      entityType: body.data.entity_type,
+      imageBase64: body.data.image_base64,
+    });
+
+    return c.json({
+      suggested_fields: result.suggestedFields,
+      prompt_supplement: result.promptSupplement,
+      tmp_image_s3_key: result.tmpImageS3Key,
+    });
+  });
+
+  app.post('/entities/:id/generate-reference', async (c) => {
+    const user = c.get('user');
+    const entityId = parseUuidParam(c, 'id');
+
+    const result = await dependencies.entityReferenceService.enqueueReferenceGeneration(user.id, entityId);
+
+    return c.json({ job_id: result.jobId }, 202);
+  });
+
+  app.post('/entities/:id/reference/confirm', async (c) => {
+    const user = c.get('user');
+    const entityId = parseUuidParam(c, 'id');
+    const body = confirmEntityReferenceBodySchema.safeParse(await readJsonBody(c));
+
+    if (!body.success) {
+      throw new ValidationError(body.error.message);
+    }
+
+    const referenceSet = await dependencies.entityReferenceService.confirmReferences(user.id, entityId, {
+      selectedS3Keys: body.data.selected_s3_keys,
+      primaryS3Key: body.data.primary_s3_key,
+      promptSupplement: body.data.prompt_supplement,
+    });
+
+    return c.json(toReferenceSetResponse(referenceSet));
+  });
+
+  app.delete('/entities/:id/reference/:ref_id', async (c) => {
+    const user = c.get('user');
+    const entityId = parseUuidParam(c, 'id');
+    const refIdResult = referenceIdParamSchema.safeParse(c.req.param('ref_id'));
+
+    if (!refIdResult.success) {
+      throw new ValidationError(refIdResult.error.message);
+    }
+
+    const referenceSet = await dependencies.entityReferenceService.deleteReference(
+      user.id,
+      entityId,
+      refIdResult.data,
+    );
+
+    return c.json(toReferenceSetResponse(referenceSet));
   });
 
   return app;
@@ -121,5 +194,21 @@ function toEntityResponse(entity: Entity): Record<string, unknown> {
     status: entity.status,
     created_at: entity.createdAt.toISOString(),
     updated_at: entity.updatedAt.toISOString(),
+  };
+}
+
+function toReferenceSetResponse(referenceSet: EntityReferenceSet): Record<string, unknown> {
+  return {
+    entity_id: referenceSet.entityId,
+    primary_ref_id: referenceSet.primaryRefId,
+    status: referenceSet.status,
+    updated_at: referenceSet.updatedAt.toISOString(),
+    reference_images: referenceSet.images.map((image) => ({
+      ref_id: image.refId,
+      s3_key: image.s3Key,
+      cdn_url: image.cdnUrl,
+      source: image.source,
+      created_at: image.createdAt,
+    })),
   };
 }

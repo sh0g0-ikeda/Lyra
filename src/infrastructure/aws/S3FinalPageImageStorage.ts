@@ -1,4 +1,4 @@
-import { CopyObjectCommand } from '@aws-sdk/client-s3';
+import { CopyObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import { ConfigurationError } from '../../domain/errors/index.js';
 import type { GeneratedPageImage } from '../../domain/types/page.js';
 
@@ -11,10 +11,17 @@ export interface FinalizePageImageInput {
 
 export interface FinalPageImageStoragePort {
   finalizePageImage(input: FinalizePageImageInput): Promise<GeneratedPageImage>;
+  storeFinalPageImage(input: {
+    userId: string;
+    pageId: string;
+    imageData: Buffer;
+    mimeType: 'image/png' | 'image/jpeg' | 'image/webp';
+    generatedImage: GeneratedPageImage;
+  }): Promise<GeneratedPageImage>;
 }
 
-interface S3CopyObjectClient {
-  send(command: CopyObjectCommand): Promise<unknown>;
+interface S3FinalPageImageStorageClient {
+  send(command: CopyObjectCommand | PutObjectCommand): Promise<unknown>;
 }
 
 export interface S3FinalPageImageStorageOptions {
@@ -24,7 +31,7 @@ export interface S3FinalPageImageStorageOptions {
 
 export class S3FinalPageImageStorage implements FinalPageImageStoragePort {
   public constructor(
-    private readonly client: S3CopyObjectClient,
+    private readonly client: S3FinalPageImageStorageClient,
     private readonly options: S3FinalPageImageStorageOptions,
   ) {}
 
@@ -46,6 +53,40 @@ export class S3FinalPageImageStorage implements FinalPageImageStoragePort {
       );
     } catch (error) {
       throw new ConfigurationError(error instanceof Error ? error.message : 'Failed to finalize page image');
+    }
+
+    return {
+      ...input.generatedImage,
+      s3Key: destinationKey,
+      cdnUrl: buildCdnUrl(this.options.cdnBaseUrl, destinationKey),
+    };
+  }
+
+  public async storeFinalPageImage(input: {
+    userId: string;
+    pageId: string;
+    imageData: Buffer;
+    mimeType: 'image/png' | 'image/jpeg' | 'image/webp';
+    generatedImage: GeneratedPageImage;
+  }): Promise<GeneratedPageImage> {
+    const extension = mimeTypeToExtension(input.mimeType);
+    const destinationKey = `saved/${input.userId}/pages/${input.pageId}_final.${extension}`;
+
+    try {
+      await this.client.send(
+        new PutObjectCommand({
+          Bucket: this.options.bucketName,
+          Key: destinationKey,
+          Body: input.imageData,
+          ContentType: input.mimeType,
+          CacheControl: 'public, max-age=31536000, immutable',
+          ServerSideEncryption: 'AES256',
+        }),
+      );
+    } catch (error) {
+      throw new ConfigurationError(
+        error instanceof Error ? error.message : 'Failed to store final page image',
+      );
     }
 
     return {
@@ -82,4 +123,16 @@ function guessContentType(extension: 'png' | 'jpeg' | 'webp'): 'image/png' | 'im
   }
 
   return 'image/png';
+}
+
+function mimeTypeToExtension(mimeType: 'image/png' | 'image/jpeg' | 'image/webp'): 'png' | 'jpeg' | 'webp' {
+  if (mimeType === 'image/jpeg') {
+    return 'jpeg';
+  }
+
+  if (mimeType === 'image/webp') {
+    return 'webp';
+  }
+
+  return 'png';
 }

@@ -1,4 +1,8 @@
 import { z } from 'zod';
+import {
+  ENTITY_IMPORT_MAX_FILE_SIZE_BYTES,
+  ENTITY_REFERENCE_LIMITS,
+} from '../../domain/constants/entityReference.js';
 import type { EntityType } from '../../domain/types/entity.js';
 import { ValidationError } from '../../domain/errors/index.js';
 
@@ -78,21 +82,75 @@ export const createEntityBodySchema = z.object({
   entity_type: entityTypeSchema,
   name: z.string().trim().min(1).max(100),
   free_description: z.string().max(2000).nullable().optional(),
+  prompt_supplement: z.string().max(ENTITY_REFERENCE_LIMITS.MAX_PROMPT_SUPPLEMENT_LENGTH).nullable().optional(),
   structured_fields: jsonObjectSchema.optional(),
   speech_profile: jsonObjectSchema.optional(),
-});
+}).strict();
 
 export const updateEntityBodySchema = z
   .object({
     entity_type: entityTypeSchema.optional(),
     name: z.string().trim().min(1).max(100).optional(),
     free_description: z.string().max(2000).nullable().optional(),
+    prompt_supplement: z
+      .string()
+      .max(ENTITY_REFERENCE_LIMITS.MAX_PROMPT_SUPPLEMENT_LENGTH)
+      .nullable()
+      .optional(),
     structured_fields: jsonObjectSchema.optional(),
     speech_profile: jsonObjectSchema.optional(),
   })
+  .strict()
   .refine((body) => Object.keys(body).length > 0, {
     message: 'At least one field is required',
   });
+
+export const importEntityImageBodySchema = z
+  .object({
+    image_base64: z.string().min(1).max(Math.ceil((ENTITY_IMPORT_MAX_FILE_SIZE_BYTES * 4) / 3) + 1024),
+    entity_type: entityTypeSchema,
+  })
+  .strict();
+
+export const generateEntityReferenceBodySchema = z.object({}).strict();
+
+export const confirmEntityReferenceBodySchema = z
+  .object({
+    selected_s3_keys: z
+      .array(z.string().min(1).max(512))
+      .min(ENTITY_REFERENCE_LIMITS.MIN_CONFIRM_COUNT)
+      .max(ENTITY_REFERENCE_LIMITS.MAX_CONFIRM_COUNT),
+    primary_s3_key: z.string().min(1).max(512).optional(),
+    prompt_supplement: z
+      .string()
+      .max(ENTITY_REFERENCE_LIMITS.MAX_PROMPT_SUPPLEMENT_LENGTH)
+      .nullable()
+      .optional(),
+  })
+  .strict()
+  .superRefine((body, ctx) => {
+    const uniqueKeyCount = new Set(body.selected_s3_keys).size;
+    if (uniqueKeyCount !== body.selected_s3_keys.length) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'selected_s3_keys must not contain duplicates',
+        path: ['selected_s3_keys'],
+      });
+    }
+
+    if (
+      body.primary_s3_key !== undefined &&
+      !body.selected_s3_keys.includes(body.primary_s3_key)
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'primary_s3_key must be included in selected_s3_keys',
+        path: ['primary_s3_key'],
+      });
+    }
+  });
+
+export const referenceIdParamSchema = z.string().trim().min(1).max(ENTITY_REFERENCE_LIMITS.MAX_REFERENCE_ID_LENGTH);
 
 export function parseStructuredFields(
   entityType: EntityType,

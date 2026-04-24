@@ -23,6 +23,7 @@ export interface CreateEntityInput {
   entityType: EntityType;
   name: string;
   freeDescription: string | null;
+  promptSupplement: string | null;
   structuredFields: Record<string, unknown>;
   speechProfile: Record<string, unknown>;
 }
@@ -31,6 +32,7 @@ export interface UpdateEntityInput {
   entityType?: EntityType;
   name?: string;
   freeDescription?: string | null;
+  promptSupplement?: string | null;
   structuredFields?: Record<string, unknown>;
   speechProfile?: Record<string, unknown>;
 }

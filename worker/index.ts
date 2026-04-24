@@ -48,7 +48,7 @@ export async function handleGenerationQueue(
       continue;
     }
 
-    if (parsedMessage.job_type !== 'page_generate') {
+    if (parsedMessage.job_type !== 'page_generate' && parsedMessage.job_type !== 'entity_generate') {
       results.push({
         messageId: record.messageId ?? null,
         jobId: parsedMessage.job_id,
@@ -59,7 +59,9 @@ export async function handleGenerationQueue(
     }
 
     try {
-      const result = await dependencies.pageGenerationWorkerService.processJob(parsedMessage.job_id);
+      const result = parsedMessage.job_type === 'page_generate'
+        ? await dependencies.pageGenerationWorkerService.processJob(parsedMessage.job_id)
+        : await dependencies.entityGenerationWorkerService.processJob(parsedMessage.job_id);
       results.push({
         messageId: record.messageId ?? null,
         jobId: parsedMessage.job_id,

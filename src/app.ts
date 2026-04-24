@@ -2,11 +2,19 @@ import { Hono } from 'hono';
 import { ConfigurationError } from './domain/errors/index.js';
 import { createPageImageStorageClient } from './infrastructure/aws/S3PageImageStorage.js';
 import { S3FinalPageImageStorage, type FinalPageImageStoragePort } from './infrastructure/aws/S3FinalPageImageStorage.js';
+import { S3EntityImageStorage, type EntityImageStoragePort } from './infrastructure/aws/S3EntityImageStorage.js';
+import { createGenerationQueueClient, SqsGenerationQueue } from './infrastructure/aws/SqsGenerationQueue.js';
+import { S3StoredImageLoader, type StoredImageLoaderPort } from './infrastructure/aws/S3StoredImageLoader.js';
 import { AnthropicClient } from './infrastructure/anthropic/AnthropicClient.js';
 import {
   AnthropicStoryAiClient,
   type StoryAiClientPort,
 } from './infrastructure/anthropic/AnthropicStoryAiClient.js';
+import {
+  OpenAIEntityImportAnalyzer,
+  type EntityImportAnalyzerPort,
+} from './infrastructure/openai/OpenAIEntityImportAnalyzer.js';
+import { OpenAIClient } from './infrastructure/openai/OpenAIClient.js';
 import {
   StripeBillingClient,
   type StripeBillingClientPort,
@@ -64,8 +72,21 @@ import {
 } from './services/credit/BillingCreditGrantService.js';
 import { CreditService, type CreditServicePort } from './services/credit/CreditService.js';
 import { EntityService, type EntityServicePort } from './services/entity/EntityService.js';
+import {
+  EntityReferenceService,
+  type EntityReferenceServicePort,
+} from './services/entity/EntityReferenceService.js';
+import {
+  NoopEntityGenerationQueue,
+  SqsEntityGenerationQueueAdapter,
+  type EntityGenerationQueuePort,
+} from './services/entity/EntityGenerationQueue.js';
 import { JobService, type JobServicePort } from './services/job/JobService.js';
-import { NoopPageGenerationQueue, type PageGenerationQueuePort } from './services/page/PageGenerationQueue.js';
+import {
+  NoopPageGenerationQueue,
+  SqsPageGenerationQueueAdapter,
+  type PageGenerationQueuePort,
+} from './services/page/PageGenerationQueue.js';
 import { BalloonService, type BalloonServicePort } from './services/page/BalloonService.js';
 import {
   PageGenerationService,
@@ -75,6 +96,10 @@ import {
   PageFinalizeService,
   type PageFinalizeServicePort,
 } from './services/page/PageFinalizeService.js';
+import {
+  SharpPageBalloonComposer,
+  type PageBalloonComposerPort,
+} from './services/page/PageBalloonComposer.js';
 import { ModeSelector } from './services/page/ModeSelector.js';
 import {
   PanelService,
@@ -104,6 +129,8 @@ export interface AppDependencies {
   compositionGalleryService?: CompositionGalleryServicePort;
   creditService?: CreditServicePort;
   entityService?: EntityServicePort;
+  entityReferenceService?: EntityReferenceServicePort;
+  entityGenerationQueue?: EntityGenerationQueuePort;
   jobService?: JobServicePort;
   pageFinalizeService?: PageFinalizeServicePort;
   pageSkeletonService?: PageSkeletonServicePort;
@@ -170,6 +197,7 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
       authMiddleware,
       rateLimitMiddleware,
       entityService: resolvedDependencies.entityService,
+      entityReferenceService: resolvedDependencies.entityReferenceService,
     }),
   );
   app.route(
@@ -238,16 +266,26 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
 function resolveDependencies(dependencies: AppDependencies): Required<Omit<AppDependencies, 'jwtSecret'>> {
   const creditRepository = new PostgresCreditRepository(db, db);
   const creditService = dependencies.creditService ?? new CreditService(creditRepository);
+  const generationQueue = resolveGenerationQueue();
   const billingCreditGrantService =
     dependencies.billingCreditGrantService ?? new BillingCreditGrantService(creditRepository);
   const compositionGalleryService =
     dependencies.compositionGalleryService ??
     new CompositionGalleryService(new PostgresCompositionGalleryRepository(db));
   const entityRepository = new PostgresEntityRepository(db);
+  const entityGenerationQueue =
+    dependencies.entityGenerationQueue ??
+    (generationQueue === null
+      ? new NoopEntityGenerationQueue()
+      : new SqsEntityGenerationQueueAdapter(generationQueue));
   const billingRepository = new PostgresBillingRepository(db, db);
   const pageRepository = new PostgresPageRepository(db);
   const generationJobRepository = new PostgresGenerationJobRepository(db);
-  const pageGenerationQueue = dependencies.pageGenerationQueue ?? new NoopPageGenerationQueue();
+  const pageGenerationQueue =
+    dependencies.pageGenerationQueue ??
+    (generationQueue === null
+      ? new NoopPageGenerationQueue()
+      : new SqsPageGenerationQueueAdapter(generationQueue));
   const stripeBillingClient = resolveStripeBillingClient();
   const billingService =
     dependencies.billingService ??
@@ -259,11 +297,22 @@ function resolveDependencies(dependencies: AppDependencies): Required<Omit<AppDe
   const entityService =
     dependencies.entityService ??
     new EntityService(entityRepository, new PostgresWorkRepository(db));
+  const entityReferenceService =
+    dependencies.entityReferenceService ??
+    new EntityReferenceService(
+      entityRepository,
+      generationJobRepository,
+      creditService,
+      resolveEntityImportAnalyzer(),
+      resolveEntityImageStorage(),
+      entityGenerationQueue,
+    );
   const panelRepository = new PostgresPanelRepository(db);
   const panelFrameRepository = new PostgresPanelFrameRepository(db);
+  const balloonRepository = new PostgresBalloonRepository(db);
   const balloonService =
     dependencies.balloonService ??
-    new BalloonService(new PostgresBalloonRepository(db), entityRepository, panelRepository, panelFrameRepository);
+    new BalloonService(balloonRepository, entityRepository, panelRepository, panelFrameRepository);
   const pageGenerationService =
     dependencies.pageGenerationService ??
     new PageGenerationService(
@@ -275,7 +324,13 @@ function resolveDependencies(dependencies: AppDependencies): Required<Omit<AppDe
     );
   const pageFinalizeService =
     dependencies.pageFinalizeService ??
-    new PageFinalizeService(pageRepository, resolveFinalPageImageStorage());
+    new PageFinalizeService(
+      pageRepository,
+      balloonRepository,
+      resolveStoredPageImageLoader(),
+      resolvePageBalloonComposer(),
+      resolveFinalPageImageStorage(),
+    );
   const jobService = dependencies.jobService ?? new JobService(generationJobRepository);
   const storyCollaborationService =
     dependencies.storyCollaborationService ??
@@ -306,6 +361,8 @@ function resolveDependencies(dependencies: AppDependencies): Required<Omit<AppDe
     compositionGalleryService,
     creditService,
     entityService,
+    entityReferenceService,
+    entityGenerationQueue,
     jobService,
     pageFinalizeService,
     pageSkeletonService,
@@ -330,6 +387,9 @@ function resolveFinalPageImageStorage(): FinalPageImageStoragePort {
       async finalizePageImage(): Promise<never> {
         throw new ConfigurationError('Final page image storage is not configured');
       },
+      async storeFinalPageImage(): Promise<never> {
+        throw new ConfigurationError('Final page image storage is not configured');
+      },
     };
   }
 
@@ -345,6 +405,61 @@ function resolveStripeBillingClient(): StripeBillingClientPort {
   }
 
   return new StripeBillingClient(env.STRIPE_SECRET_KEY, env.STRIPE_WEBHOOK_SECRET);
+}
+
+function resolveStoredPageImageLoader(): StoredImageLoaderPort {
+  if (env.S3_BUCKET_IMAGES === undefined) {
+    return new StoredPageImageLoaderStub();
+  }
+
+  return new S3StoredImageLoader(createPageImageStorageClient(env.AWS_REGION), env.S3_BUCKET_IMAGES);
+}
+
+function resolvePageBalloonComposer(): PageBalloonComposerPort {
+  return new SharpPageBalloonComposer();
+}
+
+function resolveGenerationQueue(): SqsGenerationQueue | null {
+  if (env.SQS_QUEUE_URL_GENERATION === undefined) {
+    return null;
+  }
+
+  return new SqsGenerationQueue(
+    createGenerationQueueClient(env.AWS_REGION),
+    env.SQS_QUEUE_URL_GENERATION,
+  );
+}
+
+function resolveEntityImageStorage(): EntityImageStoragePort {
+  if (env.S3_BUCKET_IMAGES === undefined || env.IMAGES_CDN_BASE_URL === undefined) {
+    return new EntityImageStorageStub();
+  }
+
+  return new S3EntityImageStorage(createPageImageStorageClient(env.AWS_REGION), {
+    bucketName: env.S3_BUCKET_IMAGES,
+    cdnBaseUrl: env.IMAGES_CDN_BASE_URL,
+  });
+}
+
+function resolveEntityImportAnalyzer(): EntityImportAnalyzerPort {
+  const client = buildOpenAIClient();
+  if (client === null) {
+    return new EntityImportAnalyzerStub();
+  }
+
+  return new OpenAIEntityImportAnalyzer(client);
+}
+
+function buildOpenAIClient(): OpenAIClient | null {
+  if (env.OPENAI_API_KEY === undefined) {
+    return null;
+  }
+
+  return new OpenAIClient({
+    apiKey: env.OPENAI_API_KEY,
+    baseUrl: env.OPENAI_BASE_URL,
+    timeoutMs: env.OPENAI_TIMEOUT_MS,
+  });
 }
 
 function resolveStoryAiClient(): StoryAiClientPort {
@@ -471,5 +586,31 @@ class StoryAiClientStub {
 
   public async generatePageSkeleton(): Promise<never> {
     throw new ConfigurationError('Anthropic story AI is not configured');
+  }
+}
+
+class EntityImageStorageStub {
+  public async storeImportedImage(): Promise<never> {
+    throw new ConfigurationError('Entity image storage is not configured');
+  }
+
+  public async storeGeneratedCandidate(): Promise<never> {
+    throw new ConfigurationError('Entity image storage is not configured');
+  }
+
+  public async finalizeReferenceImage(): Promise<never> {
+    throw new ConfigurationError('Entity image storage is not configured');
+  }
+}
+
+class EntityImportAnalyzerStub {
+  public async analyze(): Promise<never> {
+    throw new ConfigurationError('Entity import analyzer is not configured');
+  }
+}
+
+class StoredPageImageLoaderStub {
+  public async loadByS3Key(): Promise<never> {
+    throw new ConfigurationError('Stored page image loader is not configured');
   }
 }

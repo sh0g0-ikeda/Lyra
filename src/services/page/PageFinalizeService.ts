@@ -1,7 +1,10 @@
 import { ConflictError, ConfigurationError, NotFoundError, ValidationError } from '../../domain/errors/index.js';
 import type { GeneratedPageImage, PageGenerationContext } from '../../domain/types/page.js';
+import type { BalloonRepository } from '../../repositories/BalloonRepository.js';
 import type { PageRepository } from '../../repositories/PageRepository.js';
 import type { FinalPageImageStoragePort } from '../../infrastructure/aws/S3FinalPageImageStorage.js';
+import type { StoredImageLoaderPort } from '../../infrastructure/aws/S3StoredImageLoader.js';
+import type { PageBalloonComposerPort } from './PageBalloonComposer.js';
 
 export interface PageFinalizeServicePort {
   confirmPage(userId: string, pageId: string): Promise<void>;
@@ -11,6 +14,9 @@ export interface PageFinalizeServicePort {
 export class PageFinalizeService implements PageFinalizeServicePort {
   public constructor(
     private readonly pageRepository: PageRepository,
+    private readonly balloonRepository: BalloonRepository,
+    private readonly storedImageLoader: StoredImageLoaderPort,
+    private readonly pageBalloonComposer: PageBalloonComposerPort,
     private readonly finalPageImageStorage: FinalPageImageStoragePort,
   ) {}
 
@@ -23,12 +29,15 @@ export class PageFinalizeService implements PageFinalizeServicePort {
     this.ensurePageCanConfirm(page);
 
     const generatedImage = requireGeneratedImage(page);
-    const finalizedImage = await this.finalPageImageStorage.finalizePageImage({
-      userId,
-      pageId,
-      sourceS3Key: generatedImage.s3Key,
-      generatedImage,
-    });
+    const balloons = await this.balloonRepository.findBalloonsByPageIdAndUserId(pageId, userId);
+    const finalizedImage = balloons.length === 0
+      ? await this.finalPageImageStorage.finalizePageImage({
+          userId,
+          pageId,
+          sourceS3Key: generatedImage.s3Key,
+          generatedImage,
+        })
+      : await this.composeAndStoreFinalImage(userId, pageId, generatedImage, balloons);
 
     const updated = await this.pageRepository.updateGeneratedImageAndState(pageId, userId, {
       status: 'confirmed',
@@ -38,6 +47,27 @@ export class PageFinalizeService implements PageFinalizeServicePort {
     if (!updated) {
       throw new ConfigurationError('Failed to confirm page');
     }
+  }
+
+  private async composeAndStoreFinalImage(
+    userId: string,
+    pageId: string,
+    generatedImage: GeneratedPageImage & { s3Key: string },
+    balloons: Awaited<ReturnType<BalloonRepository['findBalloonsByPageIdAndUserId']>>,
+  ): Promise<GeneratedPageImage> {
+    const sourceImage = await this.storedImageLoader.loadByS3Key(generatedImage.s3Key);
+    const composedImage = await this.pageBalloonComposer.compose({
+      pageImage: sourceImage.imageData,
+      balloons,
+    });
+
+    return this.finalPageImageStorage.storeFinalPageImage({
+      userId,
+      pageId,
+      imageData: composedImage.imageData,
+      mimeType: composedImage.mimeType,
+      generatedImage,
+    });
   }
 
   public async reopenPage(userId: string, pageId: string): Promise<void> {
