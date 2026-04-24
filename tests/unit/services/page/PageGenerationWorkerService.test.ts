@@ -183,6 +183,40 @@ describe('PageGenerationWorkerService', () => {
     expect(result).toEqual({ status: 'skipped' });
   });
 
+  it('paramsが壊れていても補償情報があればpage state restoreしてrefundする', async () => {
+    const executionRepository = new FakeExecutionRepository();
+    executionRepository.claimedJob = buildJob({
+      params: {
+        page_id: 'page-1',
+        request_kind: 'broken',
+        generation_mode: 'standard',
+        quality: 'medium',
+        requires_planner: false,
+        previous_page_status: 'editing',
+        previous_generation_mode: null,
+      },
+    });
+    const creditService = new FakeCreditService();
+    const service = new PageGenerationWorkerService(
+      executionRepository,
+      new FakePlanner(),
+      new FakeRenderer(),
+      new FakeStorage(),
+      creditService,
+    );
+
+    const result = await service.processJob('job-1');
+
+    expect(result).toEqual({ status: 'processed', jobStatus: 'failed' });
+    expect(executionRepository.failureInput).toMatchObject({
+      pageId: 'page-1',
+      previousStatus: 'editing',
+      previousGenerationMode: null,
+      errorMessage: 'Page generation job params are invalid',
+    });
+    expect(creditService.refunds).toHaveLength(1);
+  });
+
   it('render失敗時はjob failedとpage state restoreにしてrefundする', async () => {
     const executionRepository = new FakeExecutionRepository();
     const renderer = new FakeRenderer();
