@@ -31,6 +31,7 @@ export class PageGenerationInputImageBuilder implements PageGenerationInputImage
     const entityIds = collectEntityIds(page.panels);
     const references = await this.entityRepository.findPrimaryReferenceImagesByEntityIdsAndUserId(
       entityIds,
+      page.workId,
       input.userId,
     );
     const referenceByEntityId = new Map(references.map((reference) => [reference.entityId, reference]));
