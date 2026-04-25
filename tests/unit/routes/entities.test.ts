@@ -148,6 +148,10 @@ class FakeEntityReferenceService implements EntityReferenceServicePort {
   public lastImportRequest: Record<string, unknown> | null = null;
   public lastConfirmRequest: ConfirmEntityReferencesRequest | null = null;
 
+  public async getReferenceSet(): Promise<EntityReferenceSet> {
+    return buildReferenceSet();
+  }
+
   public async importImage(
     userId: string,
     input: { entityType: 'character' | 'nonhuman' | 'object'; imageBase64: string },

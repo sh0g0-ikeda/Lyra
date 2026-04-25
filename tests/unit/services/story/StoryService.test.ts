@@ -29,6 +29,10 @@ class FakeStoryRepository implements StoryRepository {
   private readonly chapters = new Map<string, Chapter>();
   private readonly episodes = new Map<string, Episode>();
 
+  public async findWorksByUserId(userId: string): Promise<Work[]> {
+    return [...this.works.values()].filter((work) => work.userId === userId);
+  }
+
   public async createWork(userId: string, input: CreateWorkInput): Promise<Work> {
     const work: Work = {
       id: `work-${this.works.size + 1}`,

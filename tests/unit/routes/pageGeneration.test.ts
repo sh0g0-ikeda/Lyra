@@ -12,6 +12,7 @@ import type {
 } from '../../../src/services/credit/CreditService.js';
 import type { JobServicePort } from '../../../src/services/job/JobService.js';
 import type { PageFinalizeServicePort } from '../../../src/services/page/PageFinalizeService.js';
+import type { PageQueryServicePort } from '../../../src/services/page/PageQueryService.js';
 import type {
   EnqueuePageGenerationResult,
   PageGenerationServicePort,
@@ -85,6 +86,25 @@ class FakePageFinalizeService implements PageFinalizeServicePort {
   }
 }
 
+class FakePageQueryService implements PageQueryServicePort {
+  public async listEpisodePages(): Promise<never> {
+    return [
+      {
+        id: '33333333-3333-4333-8333-333333333333',
+        episodeId: '44444444-4444-4444-8444-444444444444',
+        pageNumber: 1,
+        layoutConfig: { type: 'template', template_id: 'standard_4' },
+        dialogueMode: 'mixed',
+        generationMode: null,
+        generatedImage: null,
+        status: 'designing',
+        createdAt: new Date('2026-04-24T00:00:00.000Z'),
+        updatedAt: new Date('2026-04-24T00:00:00.000Z'),
+      },
+    ] as never;
+  }
+}
+
 class FakeJobService implements JobServicePort {
   public job: GenerationJob | null = buildJob();
 
@@ -98,6 +118,32 @@ class FakeJobService implements JobServicePort {
 }
 
 describe('page generation routes', () => {
+  it('episode 配下の pages 一覧を返す', async () => {
+    const app = createTestApp(
+      new FakePageGenerationService(),
+      new FakePageFinalizeService(),
+      new FakeJobService(),
+      new FakePageQueryService(),
+    );
+    const token = await createToken();
+
+    const response = await app.request('/api/episodes/44444444-4444-4444-8444-444444444444/pages', {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      pages: [
+        expect.objectContaining({
+          id: '33333333-3333-4333-8333-333333333333',
+          page_number: 1,
+        }),
+      ],
+    });
+  });
+
   it('認証済みならページ生成 enqueue で202とjob_idを返す', async () => {
     const pageGenerationService = new FakePageGenerationService();
     const app = createTestApp(pageGenerationService, new FakePageFinalizeService(), new FakeJobService());
@@ -204,11 +250,13 @@ function createTestApp(
   pageGenerationService: PageGenerationServicePort,
   pageFinalizeService: PageFinalizeServicePort,
   jobService: JobServicePort,
+  pageQueryService: PageQueryServicePort = new FakePageQueryService(),
 ): ReturnType<typeof createApp> {
   return createApp({
     creditService: new FakeCreditService(),
     jobService,
     pageFinalizeService,
+    pageQueryService,
     pageGenerationService,
     userProvisioningService: new FakeUserProvisioningService(),
     jwtSecret,

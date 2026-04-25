@@ -31,6 +31,7 @@ export interface ConfirmEntityReferencesRequest {
 }
 
 export interface EntityReferenceServicePort {
+  getReferenceSet(userId: string, entityId: string): Promise<EntityReferenceSet>;
   importImage(
     userId: string,
     input: {
@@ -60,6 +61,15 @@ export class EntityReferenceService implements EntityReferenceServicePort {
     private readonly imageStorage: EntityImageStoragePort,
     private readonly generationQueue: EntityGenerationQueuePort,
   ) {}
+
+  public async getReferenceSet(userId: string, entityId: string): Promise<EntityReferenceSet> {
+    const entity = await this.entityRepository.findReferenceContextByIdAndUserId(entityId, userId);
+    if (entity === null) {
+      throw new NotFoundError('Entity not found');
+    }
+
+    return entity.referenceSet;
+  }
 
   public async importImage(
     userId: string,

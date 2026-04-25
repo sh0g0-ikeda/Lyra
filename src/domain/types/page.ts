@@ -36,6 +36,19 @@ export interface PagePromptContext {
   pageDialogueToggle: boolean;
 }
 
+export interface PageSummary {
+  id: string;
+  episodeId: string;
+  pageNumber: number;
+  layoutConfig: Record<string, unknown>;
+  dialogueMode: PageDialogueMode;
+  generationMode: PageGenerationMode | null;
+  generatedImage: GeneratedPageImage | null;
+  status: PageStatus;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 export interface PageGenerationStateUpdate {
   status: PageStatus;
   generationMode: PageGenerationMode | null;

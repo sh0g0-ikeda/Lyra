@@ -36,6 +36,7 @@ export type {
 };
 
 export interface StoryRepository {
+  findWorksByUserId(userId: string): Promise<Work[]>;
   createWork(userId: string, input: CreateWorkInput): Promise<Work>;
   findWorkByIdAndUserId(id: string, userId: string): Promise<Work | null>;
   updateWork(id: string, userId: string, input: UpdateWorkInput): Promise<Work | null>;
@@ -168,6 +169,20 @@ export class PostgresStoryRepository implements StoryRepository {
     private readonly client: DatabaseClient,
     private readonly transactionRunner?: TransactionRunner,
   ) {}
+
+  public async findWorksByUserId(userId: string): Promise<Work[]> {
+    const result = await this.client.query<WorkRow>(
+      `
+      SELECT *
+      FROM works
+      WHERE user_id = $1
+      ORDER BY updated_at DESC, created_at DESC
+      `,
+      [userId],
+    );
+
+    return result.rows.map(mapWorkRow);
+  }
 
   public async createWork(userId: string, input: CreateWorkInput): Promise<Work> {
     const result = await this.client.query<WorkRow>(

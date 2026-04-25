@@ -26,6 +26,7 @@ export type {
 };
 
 export interface StoryServicePort {
+  listWorks(userId: string): Promise<Work[]>;
   createWork(userId: string, input: CreateWorkInput): Promise<Work>;
   getWork(userId: string, workId: string): Promise<Work>;
   updateWork(userId: string, workId: string, input: UpdateWorkInput): Promise<Work>;
@@ -51,6 +52,10 @@ export class StoryService implements StoryServicePort {
     }
 
     return this.storyRepository.createWork(userId, input);
+  }
+
+  public async listWorks(userId: string): Promise<Work[]> {
+    return this.storyRepository.findWorksByUserId(userId);
   }
 
   public async getWork(userId: string, workId: string): Promise<Work> {

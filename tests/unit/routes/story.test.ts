@@ -72,6 +72,10 @@ class FakeCreditService implements CreditServicePort {
 }
 
 class FakeStoryService implements StoryServicePort {
+  public async listWorks(userId: string): Promise<Work[]> {
+    return [buildWork({ userId })];
+  }
+
   public async createWork(userId: string, input: CreateWorkRequest): Promise<Work> {
     return buildWork({ userId, title: input.title });
   }
@@ -177,6 +181,27 @@ class FakePageSkeletonService implements PageSkeletonServicePort {
 }
 
 describe('story routes', () => {
+  it('works 一覧を返す', async () => {
+    const app = createTestApp();
+    const token = await createToken();
+
+    const response = await app.request('/api/works', {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      works: [
+        expect.objectContaining({
+          id: workId,
+          user_id: user.id,
+        }),
+      ],
+    });
+  });
+
   it('JWT が正しい場合に作品を作成できる', async () => {
     const app = createTestApp();
     const token = await createToken();

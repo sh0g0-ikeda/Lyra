@@ -29,6 +29,10 @@ class FakePageRepository implements PageRepository {
   public updates: PageGenerationStateUpdate[] = [];
   public shouldRejectUpdate = false;
 
+  public async findPagesByEpisodeIdAndUserId(): Promise<[]> {
+    return [];
+  }
+
   public async findGenerationContextByIdAndUserId(
     requestedPageId: string,
     _userId: string,
