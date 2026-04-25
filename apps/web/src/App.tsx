@@ -517,8 +517,14 @@ function StudioShell(props: {
         void queryClient.invalidateQueries({ queryKey: ['billing-balance'] });
 
         if (job.job_type === 'page_generate') {
-          void queryClient.invalidateQueries({ queryKey: ['pages', selectedEpisode?.id ?? ''] });
-          void queryClient.invalidateQueries({ queryKey: ['balloons', selectedPage?.id ?? ''] });
+          const pageId = typeof job.params.page_id === 'string' ? job.params.page_id : null;
+          if (pageId !== null) {
+            void queryClient.invalidateQueries({ queryKey: ['panels', pageId] });
+            void queryClient.invalidateQueries({ queryKey: ['frames', pageId] });
+            void queryClient.invalidateQueries({ queryKey: ['balloons', pageId] });
+          }
+
+          void queryClient.invalidateQueries({ queryKey: ['pages'] });
         }
         if (job.job_type === 'entity_generate') {
           const entityId = typeof job.params.entity_id === 'string' ? job.params.entity_id : null;
@@ -528,7 +534,7 @@ function StudioShell(props: {
         }
       }
     }
-  }, [jobs, queryClient, selectedEpisode?.id, selectedPage?.id]);
+  }, [jobs, queryClient]);
 
   const latestReferenceCandidates = useMemo(() => {
     if (selectedEntity === null) {
@@ -567,11 +573,15 @@ function StudioShell(props: {
   }, [jobs, selectedEntity]);
 
   useEffect(() => {
-    if (latestReferenceCandidates.length > 0) {
+    const hasSelectionForCurrentCandidates = latestReferenceCandidates.some((candidate) =>
+      referenceSelection.includes(candidate.s3_key),
+    );
+
+    if (latestReferenceCandidates.length > 0 && !hasSelectionForCurrentCandidates) {
       setReferenceSelection(latestReferenceCandidates.map((candidate) => candidate.s3_key));
       setReferencePrimaryKey(latestReferenceCandidates[0]?.s3_key ?? '');
     }
-  }, [latestReferenceCandidates]);
+  }, [latestReferenceCandidates, referenceSelection]);
 
   const runAction = async (label: string, action: () => Promise<void>): Promise<void> => {
     try {
@@ -2292,7 +2302,7 @@ function useStoredString(
 
 function redirectToExternalUrl(value: string): void {
   const url = new URL(value, window.location.origin);
-  if (url.protocol !== 'https:' && url.protocol !== 'http:') {
+  if (url.protocol !== 'https:') {
     throw new Error('Redirect URL is invalid');
   }
 
