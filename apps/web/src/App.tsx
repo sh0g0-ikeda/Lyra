@@ -328,7 +328,7 @@ function StudioShell(props: {
     queryFn: () => api.getChapters(selectedWorkId),
     enabled: selectedWorkId.length > 0,
   });
-  const chapters = chaptersQuery.data?.chapters ?? [];
+  const chapters = useMemo(() => chaptersQuery.data?.chapters ?? [], [chaptersQuery.data?.chapters]);
   const selectedChapter = chapters.find((chapter) => chapter.id === selectedChapterId) ?? chapters[0] ?? null;
 
   const episodesQuery = useQuery({
@@ -336,7 +336,7 @@ function StudioShell(props: {
     queryFn: () => api.getEpisodes(selectedChapter?.id ?? ''),
     enabled: selectedChapter !== null,
   });
-  const episodes = episodesQuery.data?.episodes ?? [];
+  const episodes = useMemo(() => episodesQuery.data?.episodes ?? [], [episodesQuery.data?.episodes]);
   const selectedEpisode = episodes.find((episode) => episode.id === selectedEpisodeId) ?? episodes[0] ?? null;
 
   const entitiesQuery = useQuery({
@@ -344,7 +344,7 @@ function StudioShell(props: {
     queryFn: () => api.getEntities(selectedWorkId),
     enabled: selectedWorkId.length > 0,
   });
-  const entities = entitiesQuery.data?.entities ?? [];
+  const entities = useMemo(() => entitiesQuery.data?.entities ?? [], [entitiesQuery.data?.entities]);
   const selectedEntity = entities.find((entity) => entity.id === selectedEntityId) ?? entities[0] ?? null;
 
   const entityReferenceSetQuery = useQuery({
@@ -358,7 +358,7 @@ function StudioShell(props: {
     queryFn: () => api.getScenes(selectedEpisode?.id ?? ''),
     enabled: selectedEpisode !== null,
   });
-  const scenes = scenesQuery.data?.scenes ?? [];
+  const scenes = useMemo(() => scenesQuery.data?.scenes ?? [], [scenesQuery.data?.scenes]);
   const selectedScene = scenes.find((scene) => scene.id === selectedSceneId) ?? scenes[0] ?? null;
 
   const pagesQuery = useQuery({
@@ -366,21 +366,24 @@ function StudioShell(props: {
     queryFn: () => api.getPages(selectedEpisode?.id ?? ''),
     enabled: selectedEpisode !== null,
   });
-  const pages = pagesQuery.data?.pages ?? [];
+  const pages = useMemo(() => pagesQuery.data?.pages ?? [], [pagesQuery.data?.pages]);
   const selectedPage = pages.find((page) => page.id === selectedPageId) ?? pages[0] ?? null;
 
   const compositionsQuery = useQuery({
     queryKey: ['compositions'],
     queryFn: () => api.getCompositions(),
   });
-  const compositions = compositionsQuery.data?.compositions ?? [];
+  const compositions = useMemo(
+    () => compositionsQuery.data?.compositions ?? [],
+    [compositionsQuery.data?.compositions],
+  );
 
   const panelsQuery = useQuery({
     queryKey: ['panels', selectedPage?.id ?? ''],
     queryFn: () => api.getPanels(selectedPage?.id ?? ''),
     enabled: selectedPage !== null,
   });
-  const panels = panelsQuery.data?.panels ?? [];
+  const panels = useMemo(() => panelsQuery.data?.panels ?? [], [panelsQuery.data?.panels]);
   const selectedPanel = panels.find((panel) => panel.id === selectedPanelId) ?? panels[0] ?? null;
 
   const framesQuery = useQuery({
@@ -388,14 +391,14 @@ function StudioShell(props: {
     queryFn: () => api.getFrames(selectedPage?.id ?? ''),
     enabled: selectedPage !== null,
   });
-  const frames = framesQuery.data?.frames ?? [];
+  const frames = useMemo(() => framesQuery.data?.frames ?? [], [framesQuery.data?.frames]);
 
   const balloonsQuery = useQuery({
     queryKey: ['balloons', selectedPage?.id ?? ''],
     queryFn: () => api.getBalloons(selectedPage?.id ?? ''),
     enabled: selectedPage !== null,
   });
-  const balloons = balloonsQuery.data?.balloons ?? [];
+  const balloons = useMemo(() => balloonsQuery.data?.balloons ?? [], [balloonsQuery.data?.balloons]);
   const selectedBalloon = balloons.find((balloon) => balloon.id === selectedBalloonId) ?? balloons[0] ?? null;
 
   const jobQueries = useQueries({
