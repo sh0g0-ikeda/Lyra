@@ -1,4 +1,4 @@
-export type StoryStatus = 'draft' | 'ready';
+export type StoryStatus = 'draft' | 'reviewing' | 'ready';
 
 export interface Work {
   id: string;

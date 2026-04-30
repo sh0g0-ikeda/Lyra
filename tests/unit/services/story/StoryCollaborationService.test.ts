@@ -26,21 +26,22 @@ class FakeStoryRepository implements StoryRepository {
     layer: 'episode',
     targetId: '33333333-3333-4333-8333-333333333333',
     workId: 'work-1',
-    workTitle: '作品',
-    chapterTitle: '第一章',
-    episodeTitle: '第一話',
+    workTitle: 'Lyra',
+    chapterTitle: 'Chapter 1',
+    episodeTitle: 'Episode 1',
     payload: {
-      purpose: '導入',
+      purpose: 'Introduce the rivalry',
       estimated_pages: 16,
     },
     entities: [
       {
         id: '11111111-1111-4111-8111-111111111111',
-        name: '主人公',
+        name: 'Aki',
         entityType: 'character',
-        freeDescription: '冷静',
+        freeDescription: 'Black-haired swordswoman',
       },
     ],
+    sceneSummaries: ['Scene 1: Rooftop / night / tense'],
   };
 
   public async findWorksByUserId(): Promise<Work[]> {
@@ -110,7 +111,7 @@ class FakeStoryRepository implements StoryRepository {
 
 class FakeStoryAiClient implements StoryAiClientPort {
   public lastRequest: StoryAiModelRequest | null = null;
-  public collaborationChunks = ['前半', '後半'];
+  public collaborationChunks = ['chunk-one', 'chunk-two'];
 
   public streamCollaboration(request: StoryAiModelRequest): AsyncIterable<string> {
     this.lastRequest = request;
@@ -129,7 +130,7 @@ class FakeStoryAiClient implements StoryAiClientPort {
 }
 
 describe('StoryCollaborationService', () => {
-  it('対象が存在する場合は Claude へのストリームを返す', async () => {
+  it('builds a collaboration prompt with scenes and entity context', async () => {
     const repository = new FakeStoryRepository();
     const client = new FakeStoryAiClient();
     const service = new StoryCollaborationService(repository, client);
@@ -137,13 +138,13 @@ describe('StoryCollaborationService', () => {
     const stream = await service.collaborate('user-1', {
       layer: 'episode',
       targetId: '33333333-3333-4333-8333-333333333333',
-      instruction: '導入を少し静かに整えて',
+      instruction: 'Tighten the confrontation.',
       context: {
-        currentDraft: '主人公が廊下を歩いている。',
+        currentDraft: 'Aki reaches the rooftop.',
         selectedText: null,
-        userNotes: '温度感は低め',
-        focusPoints: ['静かな導入'],
-        constraints: ['設定は変えない'],
+        userNotes: 'Keep the emotional temperature high.',
+        focusPoints: ['rival reveal'],
+        constraints: ['preserve continuity'],
       },
     });
 
@@ -152,13 +153,14 @@ describe('StoryCollaborationService', () => {
       chunks.push(chunk);
     }
 
-    expect(chunks).toEqual(['前半', '後半']);
+    expect(chunks).toEqual(['chunk-one', 'chunk-two']);
     expect(client.lastRequest?.systemPrompt).toContain('Target layer: episode');
-    expect(client.lastRequest?.userPrompt).toContain('主人公');
-    expect(client.lastRequest?.userPrompt).toContain('静かな導入');
+    expect(client.lastRequest?.userPrompt).toContain('Aki');
+    expect(client.lastRequest?.userPrompt).toContain('Scene 1: Rooftop / night / tense');
+    expect(client.lastRequest?.userPrompt).toContain('rival reveal');
   });
 
-  it('対象が存在しない場合は NOT_FOUND になる', async () => {
+  it('throws NOT_FOUND when the target does not exist', async () => {
     const repository = new FakeStoryRepository();
     repository.collaborationTarget = null;
     const service = new StoryCollaborationService(repository, new FakeStoryAiClient());
@@ -167,7 +169,7 @@ describe('StoryCollaborationService', () => {
       service.collaborate('user-1', {
         layer: 'episode',
         targetId: '33333333-3333-4333-8333-333333333333',
-        instruction: '整えて',
+        instruction: 'Revise this.',
         context: {
           currentDraft: null,
           selectedText: null,
@@ -179,14 +181,14 @@ describe('StoryCollaborationService', () => {
     ).rejects.toMatchObject({ code: 'NOT_FOUND' });
   });
 
-  it('過大な文脈は VALIDATION_ERROR になる', async () => {
+  it('rejects oversized input context', async () => {
     const service = new StoryCollaborationService(new FakeStoryRepository(), new FakeStoryAiClient());
 
     await expect(
       service.collaborate('user-1', {
         layer: 'episode',
         targetId: '33333333-3333-4333-8333-333333333333',
-        instruction: '整えて',
+        instruction: 'Revise this.',
         context: {
           currentDraft: 'a'.repeat(28000),
           selectedText: null,
@@ -198,7 +200,7 @@ describe('StoryCollaborationService', () => {
     ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
   });
 
-  it('過大なストリーム出力は VALIDATION_ERROR になる', async () => {
+  it('rejects oversized streamed output', async () => {
     const client = new FakeStoryAiClient();
     client.collaborationChunks = ['a'.repeat(25000)];
     const service = new StoryCollaborationService(new FakeStoryRepository(), client);
@@ -206,7 +208,7 @@ describe('StoryCollaborationService', () => {
     const stream = await service.collaborate('user-1', {
       layer: 'episode',
       targetId: '33333333-3333-4333-8333-333333333333',
-      instruction: '整えて',
+      instruction: 'Revise this.',
       context: {
         currentDraft: null,
         selectedText: null,
@@ -216,10 +218,12 @@ describe('StoryCollaborationService', () => {
       },
     });
 
-    await expect((async () => {
-      for await (const _chunk of stream) {
-        // no-op
-      }
-    })()).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+    await expect(
+      (async () => {
+        for await (const _chunk of stream) {
+          // no-op
+        }
+      })(),
+    ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
   });
 });

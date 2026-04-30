@@ -3,7 +3,7 @@ import { z } from 'zod';
 const nullableText200 = z.string().trim().min(1).max(200).nullable();
 const nullableText2000 = z.string().trim().min(1).max(2000).nullable();
 const uuidArray = z.array(z.string().uuid()).max(100);
-const statusSchema = z.enum(['draft', 'ready']);
+const statusSchema = z.enum(['draft', 'reviewing', 'ready']);
 
 export const sceneUuidParamSchema = z.string().uuid();
 

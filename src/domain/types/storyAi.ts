@@ -34,6 +34,7 @@ export interface StoryCollaborationTarget {
   episodeTitle: string | null;
   payload: Record<string, string | number | boolean | string[] | null>;
   entities: StoryEntitySummary[];
+  sceneSummaries: string[];
 }
 
 export interface PageSkeletonPanelDraft {
@@ -74,6 +75,7 @@ export interface EpisodePageSkeletonContext {
   pageSkeletonGenerated: boolean;
   existingPageCount: number;
   entities: StoryEntitySummary[];
+  sceneSummaries: string[];
 }
 
 export interface PageSkeletonPersistResult {

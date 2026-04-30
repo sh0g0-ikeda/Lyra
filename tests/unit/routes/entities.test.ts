@@ -159,6 +159,7 @@ class FakeEntityReferenceService implements EntityReferenceServicePort {
     suggestedFields: Record<string, unknown>;
     promptSupplement: string;
     tmpImageS3Key: string;
+    tmpImageCdnUrl: string;
   }> {
     this.lastImportRequest = { userId, ...input };
 
@@ -166,6 +167,7 @@ class FakeEntityReferenceService implements EntityReferenceServicePort {
       suggestedFields: { art_style: 'anime' },
       promptSupplement: 'anime heroine, full body, military uniform',
       tmpImageS3Key: 'tmp/user-1/entities/imports/source.png',
+      tmpImageCdnUrl: 'https://cdn.lyra.test/tmp/user-1/entities/imports/source.png',
     };
   }
 
@@ -271,6 +273,7 @@ describe('entity routes', () => {
       suggested_fields: { art_style: 'anime' },
       prompt_supplement: 'anime heroine, full body, military uniform',
       tmp_image_s3_key: 'tmp/user-1/entities/imports/source.png',
+      tmp_image_cdn_url: 'https://cdn.lyra.test/tmp/user-1/entities/imports/source.png',
     });
     expect(referenceService.lastImportRequest).toMatchObject({
       userId: user.id,

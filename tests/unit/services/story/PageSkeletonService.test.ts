@@ -26,18 +26,18 @@ class FakeStoryRepository implements StoryRepository {
     episodeId: '33333333-3333-4333-8333-333333333333',
     chapterId: 'chapter-1',
     workId: 'work-1',
-    workTitle: '作品',
+    workTitle: 'Lyra',
     workGenre: 'fantasy',
-    worldSetting: '都市',
-    theme: '希望',
-    chapterTitle: '第一章',
-    chapterPurpose: '導入',
-    episodeTitle: '第一話',
-    episodePurpose: '主人公の登場',
-    introduction: '朝の駅前',
-    middle: '異変の気配',
-    climax: '敵の出現',
-    endingHook: '次回へ続く',
+    worldSetting: 'A military academy above the clouds.',
+    theme: 'rivalry',
+    chapterTitle: 'Chapter 1',
+    chapterPurpose: 'Set the stakes',
+    episodeTitle: 'Episode 1',
+    episodePurpose: 'The hero confronts the rival.',
+    introduction: 'Aki reaches the rooftop.',
+    middle: 'The rival blocks the path.',
+    climax: 'Both draw their blades.',
+    endingHook: 'A flash splits the sky.',
     estimatedPages: 2,
     entitiesInvolved: [
       '11111111-1111-4111-8111-111111111111',
@@ -48,17 +48,18 @@ class FakeStoryRepository implements StoryRepository {
     entities: [
       {
         id: '11111111-1111-4111-8111-111111111111',
-        name: '主人公',
+        name: 'Aki',
         entityType: 'character',
-        freeDescription: '冷静',
+        freeDescription: 'Black-haired swordswoman',
       },
       {
         id: '22222222-2222-4222-8222-222222222222',
-        name: '相棒',
+        name: 'Rin',
         entityType: 'character',
-        freeDescription: '快活',
+        freeDescription: 'Calm silver-haired rival',
       },
     ],
+    sceneSummaries: ['Scene 1: Rooftop / night / tense'],
   };
 
   public createdPages: PageSkeletonPageDraft[] = [];
@@ -136,7 +137,7 @@ class FakeStoryAiClient implements StoryAiClientPort {
   public generatedPages: PageSkeletonPageDraft[] = [
     {
       pageNumber: 1,
-      purpose: '導入',
+      purpose: 'Set the confrontation',
       suggestedPanelCount: 4,
       suggestedLayout: 'standard_4',
       panels: [
@@ -144,7 +145,7 @@ class FakeStoryAiClient implements StoryAiClientPort {
           order: 1,
           panelRole: 'establish',
           suggestedSize: 'large',
-          situationHint: '駅前の全景',
+          situationHint: 'Wide rooftop at night.',
           suggestedEntities: ['11111111-1111-4111-8111-111111111111'],
           suggestedDialogueHint: null,
         },
@@ -152,7 +153,7 @@ class FakeStoryAiClient implements StoryAiClientPort {
           order: 2,
           panelRole: 'action',
           suggestedSize: 'standard',
-          situationHint: '主人公が歩く',
+          situationHint: 'Aki advances.',
           suggestedEntities: ['11111111-1111-4111-8111-111111111111'],
           suggestedDialogueHint: null,
         },
@@ -160,15 +161,15 @@ class FakeStoryAiClient implements StoryAiClientPort {
           order: 3,
           panelRole: 'reaction',
           suggestedSize: 'standard',
-          situationHint: '相棒が追いつく',
+          situationHint: 'Rin answers.',
           suggestedEntities: ['22222222-2222-4222-8222-222222222222'],
-          suggestedDialogueHint: '急いで',
+          suggestedDialogueHint: '...you are late.',
         },
         {
           order: 4,
           panelRole: 'transition',
           suggestedSize: 'standard',
-          situationHint: '空気が変わる',
+          situationHint: 'Wind gathers.',
           suggestedEntities: [],
           suggestedDialogueHint: null,
         },
@@ -176,15 +177,15 @@ class FakeStoryAiClient implements StoryAiClientPort {
     },
     {
       pageNumber: 2,
-      purpose: '異変の発生',
+      purpose: 'Build toward impact',
       suggestedPanelCount: 3,
       suggestedLayout: 'top_wide_3',
       panels: [
         {
           order: 1,
           panelRole: 'action',
-          suggestedSize: 'wide',
-          situationHint: '影が現れる',
+          suggestedSize: 'large',
+          situationHint: 'Both charge.',
           suggestedEntities: ['11111111-1111-4111-8111-111111111111'],
           suggestedDialogueHint: null,
         },
@@ -192,15 +193,15 @@ class FakeStoryAiClient implements StoryAiClientPort {
           order: 2,
           panelRole: 'reaction',
           suggestedSize: 'standard',
-          situationHint: '相棒が驚く',
+          situationHint: 'Rin holds ground.',
           suggestedEntities: ['22222222-2222-4222-8222-222222222222'],
-          suggestedDialogueHint: 'なにあれ',
+          suggestedDialogueHint: 'Not enough.',
         },
         {
           order: 3,
           panelRole: 'impact',
           suggestedSize: 'standard',
-          situationHint: '敵のシルエット',
+          situationHint: 'Blades collide.',
           suggestedEntities: [],
           suggestedDialogueHint: null,
         },
@@ -225,7 +226,7 @@ class FakeStoryAiClient implements StoryAiClientPort {
 }
 
 describe('PageSkeletonService', () => {
-  it('検証済みの page skeleton を保存できる', async () => {
+  it('persists a generated page skeleton and includes scene context in the prompt', async () => {
     const repository = new FakeStoryRepository();
     const client = new FakeStoryAiClient();
     const service = new PageSkeletonService(repository, client);
@@ -241,9 +242,10 @@ describe('PageSkeletonService', () => {
     });
     expect(repository.createdPages).toHaveLength(2);
     expect(client.lastRequest?.systemPrompt).toContain('Return exactly 2 pages');
+    expect(client.lastRequest?.userPrompt).toContain('Scene 1: Rooftop / night / tense');
   });
 
-  it('既に page skeleton 済みなら CONFLICT になる', async () => {
+  it('rejects when a skeleton already exists', async () => {
     const repository = new FakeStoryRepository();
     if (repository.skeletonContext !== null) {
       repository.skeletonContext.pageSkeletonGenerated = true;
@@ -255,7 +257,7 @@ describe('PageSkeletonService', () => {
     ).rejects.toMatchObject({ code: 'CONFLICT' });
   });
 
-  it('既存ページがあるなら CONFLICT になる', async () => {
+  it('rejects when pages already exist', async () => {
     const repository = new FakeStoryRepository();
     if (repository.skeletonContext !== null) {
       repository.skeletonContext.existingPageCount = 1;
@@ -267,7 +269,7 @@ describe('PageSkeletonService', () => {
     ).rejects.toMatchObject({ code: 'CONFLICT' });
   });
 
-  it('話外の entity を参照した skeleton は VALIDATION_ERROR になる', async () => {
+  it('rejects a skeleton that references an entity outside the episode', async () => {
     const client = new FakeStoryAiClient();
     client.generatedPages[0].panels[0].suggestedEntities = ['99999999-9999-4999-8999-999999999999'];
     const service = new PageSkeletonService(new FakeStoryRepository(), client);
@@ -277,7 +279,7 @@ describe('PageSkeletonService', () => {
     ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
   });
 
-  it('AI が壊れた payload を返した場合は VALIDATION_ERROR になる', async () => {
+  it('converts invalid model payload failures into VALIDATION_ERROR', async () => {
     const client = new FakeStoryAiClient();
     client.errorToThrow = new SyntaxError('Unexpected token');
     const service = new PageSkeletonService(new FakeStoryRepository(), client);

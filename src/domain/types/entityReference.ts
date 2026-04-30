@@ -36,6 +36,7 @@ export interface EntityImportAnalysis {
   suggestedFields: Record<string, unknown>;
   promptSupplement: string;
   tmpImageS3Key: string;
+  tmpImageCdnUrl: string;
 }
 
 export interface EntityGenerationQueuePayload {

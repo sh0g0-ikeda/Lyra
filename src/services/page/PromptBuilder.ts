@@ -71,6 +71,7 @@ function buildPromptText(
   const referenceInstructions = buildReferenceInstructions(panels, entityMap);
   const sections = [
     buildPageHeader(page, input),
+    buildSceneContinuityInstruction(page),
     buildLayoutInstruction(page),
     referenceInstructions,
     ...panels.map((panel) => buildPanelInstruction(panel, entityMap, compositionMap)),
@@ -89,6 +90,14 @@ function buildPageHeader(page: PagePromptContext, input: BuildPagePromptInput): 
   ];
 
   return headerLines.join('\n');
+}
+
+function buildSceneContinuityInstruction(page: PagePromptContext): string {
+  if (page.sceneSummaries.length === 0) {
+    return '';
+  }
+
+  return `Scene continuity:\n${page.sceneSummaries.map((scene) => `- ${scene}`).join('\n')}`;
 }
 
 function buildLayoutInstruction(page: PagePromptContext): string {

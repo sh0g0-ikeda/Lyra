@@ -31,6 +31,7 @@ export interface PagePromptContext {
   workId: string;
   pageNumber: number;
   episodePurpose: string | null;
+  sceneSummaries: string[];
   layoutConfig: Record<string, unknown>;
   dialogueMode: PageDialogueMode;
   pageDialogueToggle: boolean;
