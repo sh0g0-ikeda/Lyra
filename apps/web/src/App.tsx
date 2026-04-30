@@ -121,6 +121,12 @@ interface BalloonDraft {
   z_index: string;
 }
 
+interface ReferenceCandidate {
+  s3_key: string;
+  cdn_url: string;
+  source: 'upload' | 'generated';
+}
+
 const manualTokenStorageKey = 'lyra:web:manual-token';
 const trackedJobsStorageKey = 'lyra:web:tracked-jobs';
 const selectedWorkStorageKey = 'lyra:web:selected-work';
@@ -306,6 +312,7 @@ function StudioShell(props: {
   const [frameTemplateId, setFrameTemplateId] = useState('3-panel-standard');
   const [framesJson, setFramesJson] = useState('[]');
   const [importingImage, setImportingImage] = useState(false);
+  const [uploadedReferenceCandidatesByEntityId, setUploadedReferenceCandidatesByEntityId] = useState<Record<string, ReferenceCandidate[]>>({});
   const [referenceSelection, setReferenceSelection] = useState<string[]>([]);
   const [referencePrimaryKey, setReferencePrimaryKey] = useState('');
   const handledJobsRef = useRef<Set<string>>(new Set());
@@ -539,7 +546,7 @@ function StudioShell(props: {
     }
   }, [jobs, queryClient]);
 
-  const latestReferenceCandidates = useMemo(() => {
+  const generatedReferenceCandidates = useMemo(() => {
     if (selectedEntity === null) {
       return [];
     }
@@ -566,6 +573,7 @@ function StudioShell(props: {
             {
               s3_key: (candidate as { s3_key: string }).s3_key,
               cdn_url: (candidate as { cdn_url: string }).cdn_url,
+              source: 'generated' as const,
             },
           ];
         });
@@ -575,16 +583,48 @@ function StudioShell(props: {
     return [];
   }, [jobs, selectedEntity]);
 
+  const referenceCandidates = useMemo(() => {
+    if (selectedEntity === null) {
+      return [];
+    }
+
+    const uploadedCandidates = uploadedReferenceCandidatesByEntityId[selectedEntity.id] ?? [];
+    return dedupeReferenceCandidates([...uploadedCandidates, ...generatedReferenceCandidates]);
+  }, [generatedReferenceCandidates, selectedEntity, uploadedReferenceCandidatesByEntityId]);
+
   useEffect(() => {
-    const hasSelectionForCurrentCandidates = latestReferenceCandidates.some((candidate) =>
+    if (referenceCandidates.length === 0) {
+      setReferenceSelection([]);
+      setReferencePrimaryKey('');
+      return;
+    }
+
+    const hasSelectionForCurrentCandidates = referenceCandidates.some((candidate) =>
       referenceSelection.includes(candidate.s3_key),
     );
 
-    if (latestReferenceCandidates.length > 0 && !hasSelectionForCurrentCandidates) {
-      setReferenceSelection(latestReferenceCandidates.map((candidate) => candidate.s3_key));
-      setReferencePrimaryKey(latestReferenceCandidates[0]?.s3_key ?? '');
+    if (referenceCandidates.length > 0 && !hasSelectionForCurrentCandidates) {
+      setReferenceSelection(referenceCandidates.map((candidate) => candidate.s3_key));
+      setReferencePrimaryKey(referenceCandidates[0]?.s3_key ?? '');
     }
-  }, [latestReferenceCandidates, referenceSelection]);
+  }, [referenceCandidates, referenceSelection]);
+
+  const saveCurrentEpisodeContext = async (): Promise<void> => {
+    if (selectedEpisode !== null) {
+      await api.updateEpisode(selectedEpisode.id, toEpisodePayload(episodeDraft));
+    }
+
+    if (selectedScene !== null) {
+      await api.updateScene(selectedScene.id, toScenePayload(sceneDraft));
+    }
+
+    if (selectedChapter !== null) {
+      await queryClient.invalidateQueries({ queryKey: ['episodes', selectedChapter.id] });
+    }
+    if (selectedEpisode !== null) {
+      await queryClient.invalidateQueries({ queryKey: ['scenes', selectedEpisode.id] });
+    }
+  };
 
   const runAction = async (label: string, action: () => Promise<void>): Promise<void> => {
     try {
@@ -640,7 +680,7 @@ function StudioShell(props: {
             onSubmit={(event) => {
               event.preventDefault();
               void runAction('Create work', async () => {
-                await api.createWork(toWorkPayload(newWorkDraft));
+                await api.createWork(toCreateWorkPayload(newWorkDraft));
                 setNewWorkDraft(createEmptyWorkDraft());
                 await queryClient.invalidateQueries({ queryKey: ['works'] });
               });
@@ -785,7 +825,10 @@ function StudioShell(props: {
                         return;
                       }
                       void runAction('Generate page skeleton', async () => {
+                        await saveCurrentEpisodeContext();
                         await api.generatePageSkeleton(selectedEpisode.id);
+                        await queryClient.invalidateQueries({ queryKey: ['episodes', selectedChapter?.id ?? ''] });
+                        await queryClient.invalidateQueries({ queryKey: ['scenes', selectedEpisode.id] });
                         await queryClient.invalidateQueries({ queryKey: ['pages', selectedEpisode.id] });
                       });
                     }}
@@ -825,7 +868,7 @@ function StudioShell(props: {
                       onSubmit={(event) => {
                         event.preventDefault();
                         void runAction('Create chapter', async () => {
-                          await api.createChapter(selectedWork.id, toChapterPayload(newChapterDraft));
+                          await api.createChapter(selectedWork.id, toCreateChapterPayload(newChapterDraft));
                           setNewChapterDraft(createEmptyChapterDraft());
                           await queryClient.invalidateQueries({ queryKey: ['chapters', selectedWork.id] });
                         });
@@ -913,9 +956,9 @@ function StudioShell(props: {
                       <form
                         className="stack"
                         onSubmit={(event) => {
-                          event.preventDefault();
-                          void runAction('Create episode', async () => {
-                            await api.createEpisode(selectedChapter.id, toEpisodePayload(newEpisodeDraft));
+                        event.preventDefault();
+                        void runAction('Create episode', async () => {
+                            await api.createEpisode(selectedChapter.id, toCreateEpisodePayload(newEpisodeDraft));
                             setNewEpisodeDraft(createEmptyEpisodeDraft());
                             await queryClient.invalidateQueries({ queryKey: ['episodes', selectedChapter.id] });
                           });
@@ -1012,17 +1055,18 @@ function StudioShell(props: {
                             try {
                               setStoryBusy(true);
                               setStoryStream('');
+                              await saveCurrentEpisodeContext();
                               await api.streamStoryCollaboration(
                                 {
                                   layer: 'episode',
                                   target_id: selectedEpisode.id,
                                   instruction: storyInstruction,
                                   context: {
-                                    current_draft: [selectedEpisode.introduction, selectedEpisode.middle, selectedEpisode.climax]
+                                    current_draft: [episodeDraft.introduction, episodeDraft.middle, episodeDraft.climax]
                                       .filter((part) => part !== null && part.length > 0)
                                       .join('\n\n'),
-                                    user_notes: selectedEpisode.purpose,
-                                    focus_points: selectedEpisode.entities_involved,
+                                    user_notes: nullableString(episodeDraft.purpose),
+                                    focus_points: splitCsv(episodeDraft.entities_involved),
                                   },
                                 },
                                 {
@@ -1079,7 +1123,7 @@ function StudioShell(props: {
                         className="secondary-button"
                         onClick={() =>
                           void runAction('Create scene', async () => {
-                            await api.createScene(selectedEpisode.id, toScenePayload(sceneDraft));
+                            await api.createScene(selectedEpisode.id, toCreateScenePayload(sceneDraft));
                             setSceneDraft(createEmptySceneDraft());
                             await queryClient.invalidateQueries({ queryKey: ['scenes', selectedEpisode.id] });
                           })
@@ -1237,7 +1281,16 @@ function StudioShell(props: {
                       <input
                         accept="image/png,image/jpeg,image/webp"
                         onChange={(event) =>
-                          void handleEntityImport(event, entityDraft.entity_type, api, setImportingImage, setNotice, setEntityDraft)
+                          void handleEntityImport(
+                            event,
+                            entityDraft.entity_type,
+                            selectedEntity?.id ?? null,
+                            api,
+                            setImportingImage,
+                            setNotice,
+                            setEntityDraft,
+                            setUploadedReferenceCandidatesByEntityId,
+                          )
                         }
                         type="file"
                       />
@@ -1260,9 +1313,9 @@ function StudioShell(props: {
                         </button>
                       </div>
                     ) : null}
-                    {latestReferenceCandidates.length > 0 ? (
+                    {referenceCandidates.length > 0 ? (
                       <div className="reference-grid">
-                        {latestReferenceCandidates.map((candidate) => (
+                        {referenceCandidates.map((candidate) => (
                           <label key={candidate.s3_key} className={`reference-card ${referenceSelection.includes(candidate.s3_key) ? 'active' : ''}`}>
                             <img alt="" src={candidate.cdn_url} />
                             <input
@@ -1297,6 +1350,11 @@ function StudioShell(props: {
                                 selected_s3_keys: referenceSelection,
                                 primary_s3_key: referencePrimaryKey,
                                 prompt_supplement: entityDraft.prompt_supplement || null,
+                              });
+                              setUploadedReferenceCandidatesByEntityId((current) => {
+                                const nextValue = { ...current };
+                                delete nextValue[selectedEntity.id];
+                                return nextValue;
                               });
                               await queryClient.invalidateQueries({ queryKey: ['entity-reference-set', selectedEntity.id] });
                             })
@@ -1526,7 +1584,15 @@ function StudioShell(props: {
                             className="secondary-button"
                             onClick={() =>
                               void runAction('Create panel', async () => {
-                                await api.createPanel(selectedPage.id, toPanelPayload(panelDraft));
+                                const assignmentsPayload = toPanelAssignmentsPayload(panelDraft);
+                                const createdPanel = await api.createPanel(selectedPage.id, toPanelPayload(panelDraft));
+                                try {
+                                  await api.replacePanelAssignments(createdPanel.id, assignmentsPayload);
+                                } catch (error) {
+                                  await api.deletePanel(createdPanel.id).catch(() => undefined);
+                                  throw error;
+                                }
+                                setSelectedPanelId(createdPanel.id);
                                 await queryClient.invalidateQueries({ queryKey: ['panels', selectedPage.id] });
                               })
                             }
@@ -1541,10 +1607,9 @@ function StudioShell(props: {
                                 className="ghost-button"
                                 onClick={() =>
                                   void runAction('Save panel', async () => {
+                                    const assignmentsPayload = toPanelAssignmentsPayload(panelDraft);
                                     await api.updatePanel(selectedPanel.id, toPanelPayload(panelDraft));
-                                    await api.replacePanelAssignments(selectedPanel.id, {
-                                      entities: parseJson<unknown[]>(panelDraft.assignments_json),
-                                    });
+                                    await api.replacePanelAssignments(selectedPanel.id, assignmentsPayload);
                                     await queryClient.invalidateQueries({ queryKey: ['panels', selectedPage.id] });
                                   })
                                 }
@@ -1879,10 +1944,16 @@ function Metric(props: { label: string; value: string }) {
 async function handleEntityImport(
   event: ChangeEvent<HTMLInputElement>,
   entityType: EntityDraft['entity_type'],
+  selectedEntityId: string | null,
   api: LyraApiClient,
   setImportingImage: (nextValue: boolean) => void,
   setNotice: (nextValue: NoticeState) => void,
   setEntityDraft: (nextValue: EntityDraft | ((current: EntityDraft) => EntityDraft)) => void,
+  setUploadedReferenceCandidatesByEntityId: (
+    nextValue:
+      | Record<string, ReferenceCandidate[]>
+      | ((current: Record<string, ReferenceCandidate[]>) => Record<string, ReferenceCandidate[]>),
+  ) => void,
 ): Promise<void> {
   const file = event.target.files?.[0];
   if (file === undefined) {
@@ -1914,6 +1985,19 @@ async function handleEntityImport(
       structured_fields: JSON.stringify(result.suggested_fields, null, 2),
       prompt_supplement: result.prompt_supplement,
     }));
+    if (selectedEntityId !== null) {
+      setUploadedReferenceCandidatesByEntityId((current) => ({
+        ...current,
+        [selectedEntityId]: dedupeReferenceCandidates([
+          {
+            s3_key: result.tmp_image_s3_key,
+            cdn_url: result.tmp_image_cdn_url,
+            source: 'upload',
+          },
+          ...(current[selectedEntityId] ?? []),
+        ]).slice(0, 3),
+      }));
+    }
     setNotice({ type: 'success', message: 'Image analyzed.' });
   } catch (error) {
     setNotice({ type: 'error', message: toMessage(error) });
@@ -2033,6 +2117,19 @@ function toWorkPayload(draft: WorkDraft): Record<string, unknown> {
   };
 }
 
+function toCreateWorkPayload(draft: WorkDraft): Record<string, unknown> {
+  return {
+    title: draft.title,
+    genre: nullableString(draft.genre),
+    world_setting: nullableString(draft.world_setting),
+    theme: nullableString(draft.theme),
+    main_entity_ids: splitCsv(draft.main_entity_ids),
+    starting_point: nullableString(draft.starting_point),
+    ending_point: nullableString(draft.ending_point),
+    overall_flow: nullableString(draft.overall_flow),
+  };
+}
+
 function toChapterPayload(draft: ChapterDraft): Record<string, unknown> {
   return {
     order: parseNumberInput(draft.order, 'chapter order'),
@@ -2044,6 +2141,19 @@ function toChapterPayload(draft: ChapterDraft): Record<string, unknown> {
     entities_involved: splitCsv(draft.entities_involved),
     key_beats: splitLines(draft.key_beats),
     status: draft.status,
+  };
+}
+
+function toCreateChapterPayload(draft: ChapterDraft): Record<string, unknown> {
+  return {
+    order: parseNumberInput(draft.order, 'chapter order'),
+    title: nullableString(draft.title),
+    purpose: nullableString(draft.purpose),
+    starting_state: nullableString(draft.starting_state),
+    ending_state: nullableString(draft.ending_state),
+    emotion_curve: nullableString(draft.emotion_curve),
+    entities_involved: splitCsv(draft.entities_involved),
+    key_beats: splitLines(draft.key_beats),
   };
 }
 
@@ -2059,6 +2169,20 @@ function toEpisodePayload(draft: EpisodeDraft): Record<string, unknown> {
     estimated_pages: parseNumberInput(draft.estimated_pages, 'estimated pages'),
     entities_involved: splitCsv(draft.entities_involved),
     status: draft.status,
+  };
+}
+
+function toCreateEpisodePayload(draft: EpisodeDraft): Record<string, unknown> {
+  return {
+    order: parseNumberInput(draft.order, 'episode order'),
+    title: nullableString(draft.title),
+    purpose: nullableString(draft.purpose),
+    introduction: nullableString(draft.introduction),
+    middle: nullableString(draft.middle),
+    climax: nullableString(draft.climax),
+    ending_hook: nullableString(draft.ending_hook),
+    estimated_pages: parseNumberInput(draft.estimated_pages, 'estimated pages'),
+    entities_involved: splitCsv(draft.entities_involved),
   };
 }
 
@@ -2084,6 +2208,16 @@ function toScenePayload(draft: SceneDraft): Record<string, unknown> {
   };
 }
 
+function toCreateScenePayload(draft: SceneDraft): Record<string, unknown> {
+  return {
+    order: parseNumberInput(draft.order, 'scene order'),
+    location: nullableString(draft.location),
+    time: nullableString(draft.time),
+    atmosphere: nullableString(draft.atmosphere),
+    involved_entity_ids: splitCsv(draft.involved_entity_ids),
+  };
+}
+
 function toPanelPayload(draft: PanelDraft): Record<string, unknown> {
   return {
     order: parseNumberInput(draft.order, 'panel order'),
@@ -2096,6 +2230,12 @@ function toPanelPayload(draft: PanelDraft): Record<string, unknown> {
     sfx_text: nullableString(draft.sfx_text),
     background_note: nullableString(draft.background_note),
     panel_notes: nullableString(draft.panel_notes),
+  };
+}
+
+function toPanelAssignmentsPayload(draft: PanelDraft): Record<string, unknown> {
+  return {
+    entities: parseJson<unknown[]>(draft.assignments_json),
   };
 }
 
@@ -2264,6 +2404,19 @@ function splitCsv(value: string): string[] {
     .split(',')
     .map((entry) => entry.trim())
     .filter((entry) => entry.length > 0);
+}
+
+function dedupeReferenceCandidates(candidates: ReferenceCandidate[]): ReferenceCandidate[] {
+  const seenKeys = new Set<string>();
+
+  return candidates.filter((candidate) => {
+    if (seenKeys.has(candidate.s3_key)) {
+      return false;
+    }
+
+    seenKeys.add(candidate.s3_key);
+    return true;
+  });
 }
 
 function splitLines(value: string): string[] {

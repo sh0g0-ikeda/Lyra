@@ -127,6 +127,7 @@ export class LyraApiClient {
     suggested_fields: Record<string, unknown>;
     prompt_supplement: string;
     tmp_image_s3_key: string;
+    tmp_image_cdn_url: string;
   }> {
     return this.request('/api/entities/import-image', { method: 'POST', body });
   }

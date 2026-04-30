@@ -84,6 +84,7 @@ function buildPageSkeletonUserPrompt(context: {
   climax: string | null;
   endingHook: string | null;
   estimatedPages: number;
+  sceneSummaries: string[];
   entities: Array<{
     id: string;
     name: string;
@@ -105,6 +106,7 @@ function buildPageSkeletonUserPrompt(context: {
     `Climax: ${context.climax ?? '(none)'}`,
     `Ending hook: ${context.endingHook ?? '(none)'}`,
     `Estimated pages: ${context.estimatedPages}`,
+    `Scenes: ${context.sceneSummaries.join(' / ') || '(none)'}`,
     `Available entities: ${context.entities
       .map((entity) => `${entity.id}: ${entity.name} (${entity.entityType}${entity.freeDescription === null ? '' : `, ${entity.freeDescription}`})`)
       .join(' / ') || '(none)'}`,

@@ -124,7 +124,7 @@ class FakeCompositionGalleryRepository implements CompositionGalleryRepository {
 }
 
 describe('PromptBuilder', () => {
-  it('template layout と panel/entity/dialogue を prompt に組み立てる', async () => {
+  it('includes scene continuity, layout, references, and dialogue', async () => {
     const builder = new PromptBuilder(
       new FakePageRepository(),
       new FakePanelRepository(),
@@ -140,6 +140,8 @@ describe('PromptBuilder', () => {
     });
 
     expect(result.prompt).toContain('This is page 3 of the episode: The hero confronts the rival.');
+    expect(result.prompt).toContain('Scene continuity:');
+    expect(result.prompt).toContain('- Scene 1: Rooftop / night / tense');
     expect(result.prompt).toContain('Use a standard_4 layout with 4 panels.');
     expect(result.prompt).toContain('Panel 1 (action, standard): Hero lunges forward.');
     expect(result.prompt).toContain('Image 1 is the appearance reference for Aki.');
@@ -149,7 +151,7 @@ describe('PromptBuilder', () => {
     expect(result.prompt).toContain('anime manga illustration');
   });
 
-  it('balloon_only では dialogue を prompt に入れない', async () => {
+  it('omits dialogue instructions for balloon_only pages', async () => {
     const pageRepository = new FakePageRepository();
     pageRepository.promptContext = buildPagePromptContext({
       dialogueMode: 'balloon_only',
@@ -171,7 +173,7 @@ describe('PromptBuilder', () => {
     expect(result.prompt).not.toContain('Panel 1 dialogue');
   });
 
-  it('custom layout では frame_definitions を prompt に含める', async () => {
+  it('includes frame definitions for custom layout pages', async () => {
     const pageRepository = new FakePageRepository();
     pageRepository.promptContext = buildPagePromptContext({
       layoutConfig: {
@@ -208,7 +210,7 @@ describe('PromptBuilder', () => {
     expect(result.prompt).toContain('Frame 1: vertices (0.00, 0.00) -> (1.00, 0.00) -> (1.00, 0.50) -> (0.00, 0.50).');
   });
 
-  it('同一エンティティが複数panelに出ても reference 番号は1回だけ出す', async () => {
+  it('mentions each entity reference once even across multiple panels', async () => {
     const panelRepository = new FakePanelRepository();
     panelRepository.panels = [
       buildPanel(),
@@ -243,6 +245,7 @@ function buildPagePromptContext(overrides: Partial<PagePromptContext> = {}): Pag
     workId: 'work-1',
     pageNumber: 3,
     episodePurpose: 'The hero confronts the rival.',
+    sceneSummaries: ['Scene 1: Rooftop / night / tense'],
     layoutConfig: {
       type: 'template',
       template_id: 'standard_4',

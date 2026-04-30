@@ -98,6 +98,10 @@ function formatTargetSummary(target: StoryCollaborationTarget): string {
     );
   }
 
+  if (target.sceneSummaries.length > 0) {
+    lines.push(`Scenes: ${target.sceneSummaries.join(' / ')}`);
+  }
+
   return lines.join('\n');
 }
 

@@ -50,6 +50,7 @@ interface PromptContextRow extends QueryResultRow {
   work_id: string;
   page_number: number;
   episode_purpose: string | null;
+  scene_summaries: unknown;
   layout_config: unknown;
   dialogue_mode: string;
   page_dialogue_toggle: boolean;
@@ -174,6 +175,33 @@ export class PostgresPageRepository implements PageRepository {
              chapters.work_id,
              pages.page_number,
              episodes.purpose AS episode_purpose,
+             (
+               SELECT COALESCE(
+                 jsonb_agg(
+                   trim(
+                     both ' '
+                     FROM concat(
+                       'Scene ',
+                       scenes."order",
+                       ': ',
+                       COALESCE(scenes.location, 'unknown location'),
+                       CASE
+                         WHEN scenes."time" IS NULL THEN ''
+                         ELSE concat(' / ', scenes."time")
+                       END,
+                       CASE
+                         WHEN scenes.atmosphere IS NULL THEN ''
+                         ELSE concat(' / ', scenes.atmosphere)
+                       END
+                     )
+                   )
+                   ORDER BY scenes."order" ASC
+                 ),
+                 '[]'::jsonb
+               )
+               FROM scenes
+               WHERE scenes.episode_id = episodes.id
+             ) AS scene_summaries,
              pages.layout_config,
              pages.dialogue_mode,
              pages.page_dialogue_toggle
@@ -195,6 +223,7 @@ export class PostgresPageRepository implements PageRepository {
           workId: row.work_id,
           pageNumber: row.page_number,
           episodePurpose: row.episode_purpose,
+          sceneSummaries: toStringArray(row.scene_summaries),
           layoutConfig: toJsonObject(row.layout_config),
           dialogueMode: toPageDialogueMode(row.dialogue_mode),
           pageDialogueToggle: row.page_dialogue_toggle,
@@ -365,6 +394,14 @@ function toPageGenerationMode(value: string | null): PageGenerationMode | null {
 
 function toPageDialogueMode(value: string): PageDialogueMode {
   return value === 'balloon_only' || value === 'mixed' ? value : 'image_baked';
+}
+
+function toStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.filter((entry): entry is string => typeof entry === 'string' && entry.length > 0);
 }
 
 function isPanelEntityRole(value: unknown): value is PanelEntityAssignment['role'] {

@@ -129,6 +129,7 @@ interface CollaborationRow extends QueryResultRow {
   episode_title: string | null;
   payload: unknown;
   entities: unknown;
+  scene_summaries: unknown;
 }
 
 interface EpisodeSkeletonContextRow extends QueryResultRow {
@@ -152,6 +153,7 @@ interface EpisodeSkeletonContextRow extends QueryResultRow {
   page_skeleton_generated: boolean;
   existing_page_count: number;
   entities: unknown;
+  scene_summaries: unknown;
 }
 
 interface IdRow extends QueryResultRow {
@@ -664,7 +666,8 @@ export class PostgresStoryRepository implements StoryRepository {
                      FROM entities
                      WHERE entities.work_id = works.id
                        AND entities.user_id = works.user_id
-                   ) AS entities
+                   ) AS entities,
+                   '[]'::jsonb AS scene_summaries
             FROM works
             WHERE works.id = $1
               AND works.user_id = $2
@@ -707,7 +710,8 @@ export class PostgresStoryRepository implements StoryRepository {
                        WHERE entities.id = ANY(chapters.entities_involved)
                          AND entities.work_id = works.id
                          AND entities.user_id = works.user_id
-                     ) AS entities
+                     ) AS entities,
+                     '[]'::jsonb AS scene_summaries
               FROM chapters
               INNER JOIN works ON works.id = chapters.work_id
               WHERE chapters.id = $1
@@ -751,7 +755,34 @@ export class PostgresStoryRepository implements StoryRepository {
                        WHERE entities.id = ANY(episodes.entities_involved)
                          AND entities.work_id = works.id
                          AND entities.user_id = works.user_id
-                     ) AS entities
+                     ) AS entities,
+                     (
+                       SELECT COALESCE(
+                         jsonb_agg(
+                           trim(
+                             both ' '
+                             FROM concat(
+                               'Scene ',
+                               scenes."order",
+                               ': ',
+                               COALESCE(scenes.location, 'unknown location'),
+                               CASE
+                                 WHEN scenes."time" IS NULL THEN ''
+                                 ELSE concat(' / ', scenes."time")
+                               END,
+                               CASE
+                                 WHEN scenes.atmosphere IS NULL THEN ''
+                                 ELSE concat(' / ', scenes.atmosphere)
+                               END
+                             )
+                           )
+                           ORDER BY scenes."order" ASC
+                         ),
+                         '[]'::jsonb
+                       )
+                       FROM scenes
+                       WHERE scenes.episode_id = episodes.id
+                     ) AS scene_summaries
               FROM episodes
               INNER JOIN chapters ON chapters.id = episodes.chapter_id
               INNER JOIN works ON works.id = chapters.work_id
@@ -773,6 +804,7 @@ export class PostgresStoryRepository implements StoryRepository {
           episodeTitle: row.episode_title,
           payload: toCollaborationPayload(row.payload),
           entities: toStoryEntitySummaries(row.entities),
+          sceneSummaries: toStringArray(row.scene_summaries),
         };
   }
 
@@ -822,7 +854,34 @@ export class PostgresStoryRepository implements StoryRepository {
                WHERE entities.id = ANY(episodes.entities_involved)
                  AND entities.work_id = works.id
                  AND entities.user_id = works.user_id
-             ) AS entities
+             ) AS entities,
+             (
+               SELECT COALESCE(
+                 jsonb_agg(
+                   trim(
+                     both ' '
+                     FROM concat(
+                       'Scene ',
+                       scenes."order",
+                       ': ',
+                       COALESCE(scenes.location, 'unknown location'),
+                       CASE
+                         WHEN scenes."time" IS NULL THEN ''
+                         ELSE concat(' / ', scenes."time")
+                       END,
+                       CASE
+                         WHEN scenes.atmosphere IS NULL THEN ''
+                         ELSE concat(' / ', scenes.atmosphere)
+                       END
+                     )
+                   )
+                   ORDER BY scenes."order" ASC
+                 ),
+                 '[]'::jsonb
+               )
+               FROM scenes
+               WHERE scenes.episode_id = episodes.id
+             ) AS scene_summaries
       FROM episodes
       INNER JOIN chapters ON chapters.id = episodes.chapter_id
       INNER JOIN works ON works.id = chapters.work_id
@@ -856,6 +915,7 @@ export class PostgresStoryRepository implements StoryRepository {
           pageSkeletonGenerated: row.page_skeleton_generated,
           existingPageCount: row.existing_page_count,
           entities: toStoryEntitySummaries(row.entities),
+          sceneSummaries: toStringArray(row.scene_summaries),
         };
   }
 
@@ -1110,6 +1170,14 @@ function toStoryEntitySummaries(value: unknown): StoryEntitySummary[] {
       },
     ];
   });
+}
+
+function toStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.filter((entry): entry is string => typeof entry === 'string' && entry.length > 0);
 }
 
 function toCollaborationPayload(

@@ -78,12 +78,12 @@ class ExistingSkeletonClient implements DatabaseClient, TransactionRunner {
 }
 
 describe('PostgresStoryRepository', () => {
-  it('作品更新時に edit_history を積む SQL を使う', async () => {
+  it('writes edit_history into update SQL', async () => {
     const client = new QueryCapturingClient();
     const repository = new PostgresStoryRepository(client);
 
     await repository.updateWork('11111111-1111-4111-8111-111111111111', 'user-1', {
-      title: '作品 改',
+      title: 'Lyra Revised',
     });
 
     expect(client.queries[0]).toContain('edit_history');
@@ -91,13 +91,13 @@ describe('PostgresStoryRepository', () => {
     expect(client.queries[0]).toContain('LIMIT 5');
   });
 
-  it('章 order 重複時は VALIDATION_ERROR になる', async () => {
+  it('maps duplicate chapter order to VALIDATION_ERROR', async () => {
     const repository = new PostgresStoryRepository(new UniqueViolationClient());
 
     await expect(
       repository.createChapter('11111111-1111-4111-8111-111111111111', {
         order: 1,
-        title: '第一章',
+        title: 'Chapter 1',
         purpose: null,
         startingState: null,
         endingState: null,
@@ -108,7 +108,7 @@ describe('PostgresStoryRepository', () => {
     ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
   });
 
-  it('story collaborate 対象取得 SQL は user_id で所有権を絞る', async () => {
+  it('uses user ownership checks and scene summaries in episode collaboration SQL', async () => {
     const client = new QueryCapturingClient();
     const repository = new PostgresStoryRepository(client);
 
@@ -120,9 +120,23 @@ describe('PostgresStoryRepository', () => {
 
     expect(client.queries[0]).toContain('works.user_id = $2');
     expect(client.queries[0]).toContain('FROM episodes');
+    expect(client.queries[0]).toContain('FROM scenes');
   });
 
-  it('page skeleton 保存は transaction 内で page と panel と episode flag を更新する', async () => {
+  it('includes scene summaries in page skeleton context SQL', async () => {
+    const client = new QueryCapturingClient();
+    const repository = new PostgresStoryRepository(client);
+
+    await repository.findEpisodePageSkeletonContextByIdAndUserId(
+      '33333333-3333-4333-8333-333333333333',
+      'user-1',
+    );
+
+    expect(client.queries[0]).toContain('scene_summaries');
+    expect(client.queries[0]).toContain('FROM scenes');
+  });
+
+  it('creates pages, panels, and the episode flag inside one transaction', async () => {
     const client = new QueryCapturingClient();
     const repository = new PostgresStoryRepository(client, client);
 
@@ -132,7 +146,7 @@ describe('PostgresStoryRepository', () => {
       [
         {
           pageNumber: 1,
-          purpose: '導入',
+          purpose: 'Set the confrontation',
           suggestedPanelCount: 4,
           suggestedLayout: 'standard_4',
           panels: [
@@ -140,7 +154,7 @@ describe('PostgresStoryRepository', () => {
               order: 1,
               panelRole: 'establish',
               suggestedSize: 'large',
-              situationHint: '駅前の全景',
+              situationHint: 'Wide rooftop at night.',
               suggestedEntities: ['11111111-1111-4111-8111-111111111111'],
               suggestedDialogueHint: null,
             },
@@ -155,7 +169,7 @@ describe('PostgresStoryRepository', () => {
     expect(client.queries.some((query) => query.includes('page_skeleton_generated = TRUE'))).toBe(true);
   });
 
-  it('transaction 内の再確認で既存 skeleton を弾く', async () => {
+  it('rechecks existing skeletons inside the transaction', async () => {
     const repository = new PostgresStoryRepository(new ExistingSkeletonClient(), new ExistingSkeletonClient());
 
     await expect(
@@ -172,7 +186,7 @@ function workRow(): Record<string, unknown> {
   return {
     id: '11111111-1111-4111-8111-111111111111',
     user_id: 'user-1',
-    title: '作品',
+    title: 'Lyra',
     genre: null,
     world_setting: null,
     theme: null,

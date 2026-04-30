@@ -236,6 +236,7 @@ describe('EntityReferenceService', () => {
       suggestedFields: { art_style: 'anime' },
       promptSupplement: 'anime heroine, full body, neutral background',
       tmpImageS3Key: 'tmp/user-1/entities/imports/source.png',
+      tmpImageCdnUrl: 'https://cdn.lyra.test/tmp/user-1/entities/imports/source.png',
     });
   });
 

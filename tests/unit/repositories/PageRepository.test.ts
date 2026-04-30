@@ -35,6 +35,7 @@ class QueryCapturingClient implements DatabaseClient {
           work_id: 'work-1',
           page_number: 3,
           episode_purpose: 'The hero confronts the rival.',
+          scene_summaries: ['Scene 1: Rooftop / night / tense'],
           layout_config: { type: 'template', template_id: 'standard_4' },
           dialogue_mode: 'mixed',
           page_dialogue_toggle: true,
@@ -107,6 +108,7 @@ describe('PostgresPageRepository', () => {
       workId: 'work-1',
       pageNumber: 3,
       episodePurpose: 'The hero confronts the rival.',
+      sceneSummaries: ['Scene 1: Rooftop / night / tense'],
       dialogueMode: 'mixed',
       pageDialogueToggle: true,
     });

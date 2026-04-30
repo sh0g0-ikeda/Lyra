@@ -1,4 +1,4 @@
-export type SceneStatus = 'draft' | 'ready';
+export type SceneStatus = 'draft' | 'reviewing' | 'ready';
 
 export interface SceneEntityStateReference {
   entityId: string;

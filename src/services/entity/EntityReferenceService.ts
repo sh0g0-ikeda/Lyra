@@ -97,6 +97,7 @@ export class EntityReferenceService implements EntityReferenceServicePort {
       suggestedFields: parseStructuredFields(input.entityType, analysis.suggestedFields),
       promptSupplement: analysis.promptSupplement.slice(0, ENTITY_REFERENCE_LIMITS.MAX_PROMPT_SUPPLEMENT_LENGTH),
       tmpImageS3Key: storedImage.s3Key,
+      tmpImageCdnUrl: storedImage.cdnUrl,
     };
   }
 
