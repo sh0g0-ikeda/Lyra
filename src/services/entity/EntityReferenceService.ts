@@ -39,7 +39,13 @@ export interface EntityReferenceServicePort {
       imageBase64: string;
     },
   ): Promise<EntityImportAnalysis>;
-  enqueueReferenceGeneration(userId: string, entityId: string): Promise<{ jobId: string }>;
+  enqueueReferenceGeneration(
+    userId: string,
+    entityId: string,
+    input?: {
+      sourceS3Key?: string | null;
+    },
+  ): Promise<{ jobId: string }>;
   confirmReferences(
     userId: string,
     entityId: string,
@@ -101,10 +107,21 @@ export class EntityReferenceService implements EntityReferenceServicePort {
     };
   }
 
-  public async enqueueReferenceGeneration(userId: string, entityId: string): Promise<{ jobId: string }> {
+  public async enqueueReferenceGeneration(
+    userId: string,
+    entityId: string,
+    input?: {
+      sourceS3Key?: string | null;
+    },
+  ): Promise<{ jobId: string }> {
     const entity = await this.entityRepository.findReferenceContextByIdAndUserId(entityId, userId);
     if (entity === null) {
       throw new NotFoundError('Entity not found');
+    }
+
+    const sourceS3Key = input?.sourceS3Key ?? null;
+    if (sourceS3Key !== null) {
+      ensureAllowedReferenceSourceKey(sourceS3Key, userId, entityId);
     }
 
     let creditsConsumed = false;
@@ -127,6 +144,7 @@ export class EntityReferenceService implements EntityReferenceServicePort {
           entity_id: entity.entityId,
           entity_type: entity.entityType,
           previous_entity_status: entity.status,
+          ...(sourceS3Key === null ? {} : { source_s3_key: sourceS3Key }),
         },
       });
       jobId = job.id;

@@ -10,6 +10,7 @@ import type {
 import type {
   EntityImageStoragePort,
 } from '../../infrastructure/aws/S3EntityImageStorage.js';
+import type { StoredImageLoaderPort } from '../../infrastructure/aws/S3StoredImageLoader.js';
 import type { EntityReferencePromptBuilderPort } from './EntityReferencePromptBuilder.js';
 
 export interface ProcessEntityGenerationJobResult {
@@ -25,6 +26,7 @@ export class EntityGenerationWorkerService {
     private readonly generator: EntityReferenceGeneratorPort,
     private readonly imageStorage: EntityImageStoragePort,
     private readonly creditService: CreditServicePort,
+    private readonly storedImageLoader: StoredImageLoaderPort,
   ) {}
 
   public async processJob(jobId: string): Promise<ProcessEntityGenerationJobResult> {
@@ -49,7 +51,8 @@ export class EntityGenerationWorkerService {
       }
 
       const prompt = this.promptBuilder.buildGenerationPrompt(entity);
-      const generated = await this.generator.generateCandidates({ prompt });
+      const inputImages = await buildGeneratorInputImages(params, this.storedImageLoader);
+      const generated = await this.generator.generateCandidates({ prompt, inputImages });
       const storedCandidates = [];
 
       for (let index = 0; index < generated.candidates.length; index += 1) {
@@ -124,11 +127,13 @@ function parsePersistedParams(value: Record<string, unknown>): PersistedEntityGe
   const entityId = value.entity_id;
   const entityType = value.entity_type;
   const previousEntityStatus = value.previous_entity_status;
+  const sourceS3Key = value.source_s3_key;
 
   if (
     typeof entityId !== 'string' ||
     (entityType !== 'character' && entityType !== 'nonhuman' && entityType !== 'object') ||
-    (previousEntityStatus !== 'draft' && previousEntityStatus !== 'ready')
+    (previousEntityStatus !== 'draft' && previousEntityStatus !== 'ready') ||
+    (sourceS3Key !== undefined && typeof sourceS3Key !== 'string')
   ) {
     return null;
   }
@@ -137,5 +142,22 @@ function parsePersistedParams(value: Record<string, unknown>): PersistedEntityGe
     entity_id: entityId,
     entity_type: entityType,
     previous_entity_status: previousEntityStatus,
+    ...(sourceS3Key === undefined ? {} : { source_s3_key: sourceS3Key }),
   };
+}
+
+async function buildGeneratorInputImages(
+  params: PersistedEntityGenerationJobParams,
+  storedImageLoader: StoredImageLoaderPort,
+): Promise<Array<{ dataUrl: string }>> {
+  if (params.source_s3_key === undefined) {
+    return [];
+  }
+
+  const loadedImage = await storedImageLoader.loadByS3Key(params.source_s3_key);
+  return [
+    {
+      dataUrl: `data:${loadedImage.mimeType};base64,${loadedImage.imageData.toString('base64')}`,
+    },
+  ];
 }

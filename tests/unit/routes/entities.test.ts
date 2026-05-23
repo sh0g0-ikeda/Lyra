@@ -147,6 +147,7 @@ class FakeEntityService implements EntityServicePort {
 class FakeEntityReferenceService implements EntityReferenceServicePort {
   public lastImportRequest: Record<string, unknown> | null = null;
   public lastConfirmRequest: ConfirmEntityReferencesRequest | null = null;
+  public lastGenerateReferenceRequest: { userId: string; entityId: string; sourceS3Key?: string | null } | null = null;
 
   public async getReferenceSet(): Promise<EntityReferenceSet> {
     return buildReferenceSet();
@@ -172,9 +173,16 @@ class FakeEntityReferenceService implements EntityReferenceServicePort {
   }
 
   public async enqueueReferenceGeneration(
-    _userId: string,
-    _entityId: string,
+    userId: string,
+    entityId: string,
+    input?: { sourceS3Key?: string | null },
   ): Promise<{ jobId: string }> {
+    this.lastGenerateReferenceRequest = {
+      userId,
+      entityId,
+      sourceS3Key: input?.sourceS3Key,
+    };
+
     return {
       jobId: '33333333-3333-4333-8333-333333333333',
     };
@@ -215,7 +223,25 @@ describe('entity routes', () => {
         name: 'Mizuki',
         prompt_supplement: 'anime heroine',
         structured_fields: {
+          gender_expression: 'female',
+          face_shape: 'oval',
+          eyebrow_shape: 'soft_arch',
+          nose_shape: 'small',
+          mouth_shape: 'soft',
           art_style: 'anime',
+          hair: {
+            color: 'black',
+            length: 'long',
+            style: 'straight',
+            arrangement: 'down',
+          },
+          eyes: {
+            color: 'blue',
+            shape: 'gentle',
+          },
+          clothing: {
+            description: 'navy military jacket with gold trim',
+          },
         },
       }),
     });
@@ -295,6 +321,30 @@ describe('entity routes', () => {
     expect(response.status).toBe(202);
     await expect(response.json()).resolves.toEqual({
       job_id: '33333333-3333-4333-8333-333333333333',
+    });
+  });
+
+  it('generate-reference は source_s3_key を受けて full-body 候補化に渡す', async () => {
+    const referenceService = new FakeEntityReferenceService();
+    const app = createTestApp(referenceService);
+    const token = await createToken();
+
+    const response = await app.request(`/api/entities/${entityId}/generate-reference`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        source_s3_key: 'tmp/user-1/entities/imports/source.png',
+      }),
+    });
+
+    expect(response.status).toBe(202);
+    expect(referenceService.lastGenerateReferenceRequest).toEqual({
+      userId: user.id,
+      entityId,
+      sourceS3Key: 'tmp/user-1/entities/imports/source.png',
     });
   });
 
@@ -381,6 +431,7 @@ function createTestApp(
     creditService: new FakeCreditService(),
     entityReferenceService,
     entityService: new FakeEntityService(),
+    enableDevAuthBypass: false,
     userProvisioningService: new FakeUserProvisioningService(),
     jwtSecret,
   });

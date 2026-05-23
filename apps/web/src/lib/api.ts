@@ -132,8 +132,11 @@ export class LyraApiClient {
     return this.request('/api/entities/import-image', { method: 'POST', body });
   }
 
-  public generateEntityReference(entityId: string): Promise<{ job_id: string }> {
-    return this.request(`/api/entities/${entityId}/generate-reference`, { method: 'POST' });
+  public generateEntityReference(entityId: string, body?: Record<string, unknown>): Promise<{ job_id: string }> {
+    return this.request(`/api/entities/${entityId}/generate-reference`, {
+      method: 'POST',
+      ...(body === undefined ? {} : { body }),
+    });
   }
 
   public getEntityReferenceSet(entityId: string): Promise<EntityReferenceSetRecord> {

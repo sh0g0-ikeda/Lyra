@@ -6,6 +6,9 @@ import { OpenAIClient } from './OpenAIClient.js';
 
 export interface GenerateEntityReferenceCandidatesInput {
   prompt: string;
+  inputImages: Array<{
+    dataUrl: string;
+  }>;
 }
 
 export interface GeneratedEntityReferenceCandidate {
@@ -49,6 +52,10 @@ export class OpenAIEntityReferenceGenerator implements EntityReferenceGeneratorP
           {
             role: 'user',
             content: [
+              ...input.inputImages.map((image) => ({
+                type: 'input_image',
+                image_url: image.dataUrl,
+              })),
               {
                 type: 'input_text',
                 text: `${input.prompt}\n\nVariant ${index + 1} of ${ENTITY_REFERENCE_GENERATION.CANDIDATE_COUNT}.`,

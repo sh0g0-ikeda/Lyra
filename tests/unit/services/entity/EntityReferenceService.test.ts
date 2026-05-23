@@ -287,6 +287,22 @@ describe('EntityReferenceService', () => {
     expect(jobs.attachedMessageId).toBe('message-1');
   });
 
+  it('generate-reference は import 画像の source_s3_key を job params に積む', async () => {
+    const jobs = new FakeGenerationJobRepository();
+    const service = buildService({
+      generationJobRepository: jobs,
+    });
+
+    await service.enqueueReferenceGeneration('user-1', 'entity-1', {
+      sourceS3Key: 'tmp/user-1/entities/imports/source.png',
+    });
+
+    expect(jobs.createdInput?.params).toMatchObject({
+      entity_id: 'entity-1',
+      source_s3_key: 'tmp/user-1/entities/imports/source.png',
+    });
+  });
+
   it('confirm は許可された tmp/session key だけ finalize する', async () => {
     const repository = new FakeEntityReferenceRepository();
     const storage = new FakeEntityImageStorage();

@@ -16,6 +16,18 @@ const characterStructuredFieldsSchema = z
     age_range: z
       .enum(['child', 'early_teens', 'late_teens', 'twenties', 'thirties', 'forties_plus', 'ageless'])
       .optional(),
+    face_shape: z
+      .enum(['round', 'oval', 'heart', 'square', 'diamond', 'long', 'soft_triangle', 'custom'])
+      .optional(),
+    eyebrow_shape: z
+      .enum(['straight', 'soft_arch', 'high_arch', 'thick', 'thin', 'sharp', 'custom'])
+      .optional(),
+    nose_shape: z
+      .enum(['small', 'straight', 'button', 'sharp', 'rounded', 'broad', 'custom'])
+      .optional(),
+    mouth_shape: z
+      .enum(['soft', 'full', 'thin', 'wide', 'smirk', 'serious', 'custom'])
+      .optional(),
     height: z.enum(['short', 'average', 'tall']).optional(),
     build: z.enum(['petite', 'slender', 'average', 'athletic', 'muscular', 'curvy']).optional(),
     hair: z
@@ -47,6 +59,7 @@ const characterStructuredFieldsSchema = z
           .enum(['black', 'white', 'navy', 'gray', 'brown', 'red', 'blue', 'green', 'custom'])
           .optional(),
         impression: z.enum(['formal', 'practical', 'elegant', 'rough', 'cute', 'custom']).optional(),
+        description: z.string().max(500).optional(),
       })
       .optional(),
     distinguishing_features: z.string().max(500).optional(),
@@ -112,7 +125,11 @@ export const importEntityImageBodySchema = z
   })
   .strict();
 
-export const generateEntityReferenceBodySchema = z.object({}).strict();
+export const generateEntityReferenceBodySchema = z
+  .object({
+    source_s3_key: z.string().min(1).max(512).optional(),
+  })
+  .strict();
 
 export const confirmEntityReferenceBodySchema = z
   .object({

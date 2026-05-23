@@ -28,7 +28,9 @@ export class EntityReferencePromptBuilder implements EntityReferencePromptBuilde
       lines.push(`Prompt supplement: ${context.promptSupplement}.`);
     }
 
-    lines.push('Single subject, centered, full figure visible, neutral background, no text, no watermark.');
+    lines.push(
+      'Single subject, centered, full figure visible from head to toe, neutral background, no text, no watermark.',
+    );
 
     return lines.join(' ');
   }

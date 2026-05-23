@@ -85,12 +85,18 @@ export class OpenAIEntityImportAnalyzer implements EntityImportAnalyzerPort {
 }
 
 function buildAnalysisPrompt(entityType: EntityType): string {
+  const characterFieldHint = entityType === 'character'
+    ? 'For characters, prefer gender_expression, face_shape, eyebrow_shape, nose_shape, mouth_shape, build, hair, eyes, clothing.description, distinguishing_features, and art_style when visible.'
+    : '';
+
   return [
     `Analyze this ${entityType} design image.`,
     'Return JSON only.',
     'Shape: {"suggested_fields": {...}, "prompt_supplement": "..." }',
     'Use only enum-compatible values when obvious. Omit uncertain fields instead of inventing them.',
-    'prompt_supplement must be one concise English visual description usable for later image generation.',
+    characterFieldHint,
+    'prompt_supplement must be one concise English visual description usable for later full-body image generation.',
+    'When the source image is cropped or partial, infer only stable full-body details that are visually supported by the image.',
   ].join(' ');
 }
 

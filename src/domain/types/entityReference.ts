@@ -49,4 +49,5 @@ export interface PersistedEntityGenerationJobParams {
   entity_id: string;
   entity_type: EntityType;
   previous_entity_status: EntityStatus;
+  source_s3_key?: string;
 }

@@ -85,6 +85,25 @@ interface EntityDraft {
   speech_profile: string;
 }
 
+interface CharacterStructuredFieldsDraft {
+  gender_expression: string;
+  face_shape: string;
+  eyebrow_shape: string;
+  nose_shape: string;
+  mouth_shape: string;
+  height: string;
+  build: string;
+  hair_color: string;
+  hair_length: string;
+  hair_style: string;
+  hair_arrangement: string;
+  eye_color: string;
+  eye_shape: string;
+  clothing_description: string;
+  distinguishing_features: string;
+  art_style: string;
+}
+
 interface SceneDraft {
   order: string;
   location: string;
@@ -328,6 +347,7 @@ function StudioShell(props: {
   const [framesJson, setFramesJson] = useState('[]');
   const [importingImage, setImportingImage] = useState(false);
   const [uploadedReferenceCandidatesByEntityId, setUploadedReferenceCandidatesByEntityId] = useState<Record<string, ReferenceCandidate[]>>({});
+  const [uploadedReferenceSourceByEntityId, setUploadedReferenceSourceByEntityId] = useState<Record<string, string>>({});
   const [referenceSelection, setReferenceSelection] = useState<string[]>([]);
   const [referencePrimaryKey, setReferencePrimaryKey] = useState('');
   const handledJobsRef = useRef<Set<string>>(new Set());
@@ -606,6 +626,11 @@ function StudioShell(props: {
     const uploadedCandidates = uploadedReferenceCandidatesByEntityId[selectedEntity.id] ?? [];
     return dedupeReferenceCandidates([...uploadedCandidates, ...generatedReferenceCandidates]);
   }, [generatedReferenceCandidates, selectedEntity, uploadedReferenceCandidatesByEntityId]);
+
+  const characterStructuredFields = useMemo(
+    () => parseCharacterStructuredFieldsDraft(entityDraft.structured_fields),
+    [entityDraft.structured_fields],
+  );
 
   useEffect(() => {
     if (referenceCandidates.length === 0) {
@@ -1230,20 +1255,30 @@ function StudioShell(props: {
                       value={entityDraft.prompt_supplement}
                       onChange={(value) => setEntityDraft({ ...entityDraft, prompt_supplement: value })}
                     />
-                    <div className="form-grid two">
+                    {entityDraft.entity_type === 'character' ? (
+                      <CharacterStructuredFieldsEditor
+                        value={characterStructuredFields}
+                        onChange={(nextValue) =>
+                          setEntityDraft((current) => ({
+                            ...current,
+                            structured_fields: serializeCharacterStructuredFieldsDraft(nextValue),
+                          }))
+                        }
+                      />
+                    ) : (
                       <TextAreaField
                         label="Structured fields JSON"
                         rows={6}
                         value={entityDraft.structured_fields}
                         onChange={(value) => setEntityDraft({ ...entityDraft, structured_fields: value })}
                       />
-                      <TextAreaField
-                        label="Speech profile JSON"
-                        rows={6}
-                        value={entityDraft.speech_profile}
-                        onChange={(value) => setEntityDraft({ ...entityDraft, speech_profile: value })}
-                      />
-                    </div>
+                    )}
+                    <TextAreaField
+                      label="Speech profile JSON"
+                      rows={6}
+                      value={entityDraft.speech_profile}
+                      onChange={(value) => setEntityDraft({ ...entityDraft, speech_profile: value })}
+                    />
                     <div className="toolbar">
                       <button
                         className="secondary-button"
@@ -1305,6 +1340,7 @@ function StudioShell(props: {
                             setNotice,
                             setEntityDraft,
                             setUploadedReferenceCandidatesByEntityId,
+                            setUploadedReferenceSourceByEntityId,
                           )
                         }
                         type="file"
@@ -1317,14 +1353,18 @@ function StudioShell(props: {
                           className="secondary-button"
                           onClick={() =>
                             void runAction('Generate reference', async () => {
-                              const result = await api.generateEntityReference(selectedEntity.id);
+                              const sourceS3Key = uploadedReferenceSourceByEntityId[selectedEntity.id];
+                              const result = await api.generateEntityReference(
+                                selectedEntity.id,
+                                sourceS3Key === undefined ? undefined : { source_s3_key: sourceS3Key },
+                              );
                               trackJob(result.job_id);
                             })
                           }
                           type="button"
                         >
                           <Sparkles size={16} />
-                          Generate candidates
+                          Generate full-body candidates
                         </button>
                       </div>
                     ) : null}
@@ -1947,6 +1987,49 @@ function TextAreaField(props: {
   );
 }
 
+function CharacterStructuredFieldsEditor(props: {
+  value: CharacterStructuredFieldsDraft;
+  onChange: (nextValue: CharacterStructuredFieldsDraft) => void;
+}) {
+  const update = (patch: Partial<CharacterStructuredFieldsDraft>): void => {
+    props.onChange({
+      ...props.value,
+      ...patch,
+    });
+  };
+
+  return (
+    <>
+      <div className="form-grid three">
+        <SelectField label="Gender" value={props.value.gender_expression} onChange={(value) => update({ gender_expression: value })} options={CHARACTER_GENDER_OPTIONS} />
+        <SelectField label="Body type" value={props.value.build} onChange={(value) => update({ build: value })} options={CHARACTER_BUILD_OPTIONS} />
+        <SelectField label="Height" value={props.value.height} onChange={(value) => update({ height: value })} options={CHARACTER_HEIGHT_OPTIONS} />
+      </div>
+      <div className="form-grid four">
+        <SelectField label="Face shape" value={props.value.face_shape} onChange={(value) => update({ face_shape: value })} options={CHARACTER_FACE_SHAPE_OPTIONS} />
+        <SelectField label="Eyebrow shape" value={props.value.eyebrow_shape} onChange={(value) => update({ eyebrow_shape: value })} options={CHARACTER_EYEBROW_SHAPE_OPTIONS} />
+        <SelectField label="Nose shape" value={props.value.nose_shape} onChange={(value) => update({ nose_shape: value })} options={CHARACTER_NOSE_SHAPE_OPTIONS} />
+        <SelectField label="Mouth shape" value={props.value.mouth_shape} onChange={(value) => update({ mouth_shape: value })} options={CHARACTER_MOUTH_SHAPE_OPTIONS} />
+      </div>
+      <div className="form-grid four">
+        <SelectField label="Hair color" value={props.value.hair_color} onChange={(value) => update({ hair_color: value })} options={CHARACTER_HAIR_COLOR_OPTIONS} />
+        <SelectField label="Hair length" value={props.value.hair_length} onChange={(value) => update({ hair_length: value })} options={CHARACTER_HAIR_LENGTH_OPTIONS} />
+        <SelectField label="Hair style" value={props.value.hair_style} onChange={(value) => update({ hair_style: value })} options={CHARACTER_HAIR_STYLE_OPTIONS} />
+        <SelectField label="Hair arrangement" value={props.value.hair_arrangement} onChange={(value) => update({ hair_arrangement: value })} options={CHARACTER_HAIR_ARRANGEMENT_OPTIONS} />
+      </div>
+      <div className="form-grid three">
+        <SelectField label="Eye color" value={props.value.eye_color} onChange={(value) => update({ eye_color: value })} options={CHARACTER_EYE_COLOR_OPTIONS} />
+        <SelectField label="Eye shape" value={props.value.eye_shape} onChange={(value) => update({ eye_shape: value })} options={CHARACTER_EYE_SHAPE_OPTIONS} />
+        <SelectField label="Art style" value={props.value.art_style} onChange={(value) => update({ art_style: value })} options={CHARACTER_ART_STYLE_OPTIONS} />
+      </div>
+      <div className="form-grid two">
+        <TextAreaField label="Clothing details" rows={3} value={props.value.clothing_description} onChange={(value) => update({ clothing_description: value })} />
+        <TextAreaField label="Distinguishing features" rows={3} value={props.value.distinguishing_features} onChange={(value) => update({ distinguishing_features: value })} />
+      </div>
+    </>
+  );
+}
+
 function Metric(props: { label: string; value: string }) {
   return (
     <div className="metric">
@@ -1968,6 +2051,11 @@ async function handleEntityImport(
     nextValue:
       | Record<string, ReferenceCandidate[]>
       | ((current: Record<string, ReferenceCandidate[]>) => Record<string, ReferenceCandidate[]>),
+  ) => void,
+  setUploadedReferenceSourceByEntityId: (
+    nextValue:
+      | Record<string, string>
+      | ((current: Record<string, string>) => Record<string, string>),
   ) => void,
 ): Promise<void> {
   const file = event.target.files?.[0];
@@ -2012,8 +2100,12 @@ async function handleEntityImport(
           ...(current[selectedEntityId] ?? []),
         ]).slice(0, 3),
       }));
+      setUploadedReferenceSourceByEntityId((current) => ({
+        ...current,
+        [selectedEntityId]: result.tmp_image_s3_key,
+      }));
     }
-    setNotice({ type: 'success', message: 'Image analyzed.' });
+    setNotice({ type: 'success', message: 'Image analyzed. Generate full-body candidates next.' });
   } catch (error) {
     setNotice({ type: 'error', message: toMessage(error) });
   } finally {
@@ -2207,7 +2299,10 @@ function toEntityPayload(draft: EntityDraft): Record<string, unknown> {
     name: draft.name,
     free_description: nullableString(draft.free_description),
     prompt_supplement: nullableString(draft.prompt_supplement),
-    structured_fields: parseJson<Record<string, unknown>>(draft.structured_fields),
+    structured_fields:
+      draft.entity_type === 'character'
+        ? parseJson<Record<string, unknown>>(serializeCharacterStructuredFieldsDraft(parseCharacterStructuredFieldsDraft(draft.structured_fields)))
+        : parseJson<Record<string, unknown>>(draft.structured_fields),
     speech_profile: parseJson<Record<string, unknown>>(draft.speech_profile),
   };
 }
@@ -2315,6 +2410,70 @@ function createEmptyEpisodeDraft(): EpisodeDraft {
   };
 }
 
+function parseCharacterStructuredFieldsDraft(value: string): CharacterStructuredFieldsDraft {
+  const parsed = parseJson<Record<string, unknown>>(value);
+  const hair = toRecord(parsed.hair);
+  const eyes = toRecord(parsed.eyes);
+  const clothing = toRecord(parsed.clothing);
+
+  return {
+    gender_expression: readString(parsed.gender_expression),
+    face_shape: readString(parsed.face_shape),
+    eyebrow_shape: readString(parsed.eyebrow_shape),
+    nose_shape: readString(parsed.nose_shape),
+    mouth_shape: readString(parsed.mouth_shape),
+    height: readString(parsed.height),
+    build: readString(parsed.build),
+    hair_color: readString(hair.color),
+    hair_length: readString(hair.length),
+    hair_style: readString(hair.style),
+    hair_arrangement: readString(hair.arrangement),
+    eye_color: readString(eyes.color),
+    eye_shape: readString(eyes.shape),
+    clothing_description: readString(clothing.description),
+    distinguishing_features: readString(parsed.distinguishing_features),
+    art_style: readString(parsed.art_style),
+  };
+}
+
+function serializeCharacterStructuredFieldsDraft(value: CharacterStructuredFieldsDraft): string {
+  const structuredFields: Record<string, unknown> = {};
+
+  assignIfNotBlank(structuredFields, 'gender_expression', value.gender_expression);
+  assignIfNotBlank(structuredFields, 'face_shape', value.face_shape);
+  assignIfNotBlank(structuredFields, 'eyebrow_shape', value.eyebrow_shape);
+  assignIfNotBlank(structuredFields, 'nose_shape', value.nose_shape);
+  assignIfNotBlank(structuredFields, 'mouth_shape', value.mouth_shape);
+  assignIfNotBlank(structuredFields, 'height', value.height);
+  assignIfNotBlank(structuredFields, 'build', value.build);
+  assignIfNotBlank(structuredFields, 'distinguishing_features', value.distinguishing_features);
+  assignIfNotBlank(structuredFields, 'art_style', value.art_style);
+
+  const hair: Record<string, unknown> = {};
+  assignIfNotBlank(hair, 'color', value.hair_color);
+  assignIfNotBlank(hair, 'length', value.hair_length);
+  assignIfNotBlank(hair, 'style', value.hair_style);
+  assignIfNotBlank(hair, 'arrangement', value.hair_arrangement);
+  if (Object.keys(hair).length > 0) {
+    structuredFields.hair = hair;
+  }
+
+  const eyes: Record<string, unknown> = {};
+  assignIfNotBlank(eyes, 'color', value.eye_color);
+  assignIfNotBlank(eyes, 'shape', value.eye_shape);
+  if (Object.keys(eyes).length > 0) {
+    structuredFields.eyes = eyes;
+  }
+
+  const clothing: Record<string, unknown> = {};
+  assignIfNotBlank(clothing, 'description', value.clothing_description);
+  if (Object.keys(clothing).length > 0) {
+    structuredFields.clothing = clothing;
+  }
+
+  return JSON.stringify(structuredFields, null, 2);
+}
+
 function createEmptyEntityDraft(): EntityDraft {
   return {
     entity_type: 'character',
@@ -2325,6 +2484,152 @@ function createEmptyEntityDraft(): EntityDraft {
     speech_profile: '{}',
   };
 }
+
+function readString(value: unknown): string {
+  return typeof value === 'string' ? value : '';
+}
+
+function toRecord(value: unknown): Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function assignIfNotBlank(target: Record<string, unknown>, key: string, value: string): void {
+  const trimmed = value.trim();
+  if (trimmed.length > 0) {
+    target[key] = trimmed;
+  }
+}
+
+const EMPTY_OPTION: [string, string] = ['', '-'];
+const CHARACTER_GENDER_OPTIONS: Array<[string, string]> = [
+  EMPTY_OPTION,
+  ['female', 'Female'],
+  ['male', 'Male'],
+  ['androgynous', 'Androgynous'],
+  ['unspecified', 'Unspecified'],
+];
+const CHARACTER_BUILD_OPTIONS: Array<[string, string]> = [
+  EMPTY_OPTION,
+  ['petite', 'Petite'],
+  ['slender', 'Slender'],
+  ['average', 'Average'],
+  ['athletic', 'Athletic'],
+  ['muscular', 'Muscular'],
+  ['curvy', 'Curvy'],
+];
+const CHARACTER_HEIGHT_OPTIONS: Array<[string, string]> = [
+  EMPTY_OPTION,
+  ['short', 'Short'],
+  ['average', 'Average'],
+  ['tall', 'Tall'],
+];
+const CHARACTER_FACE_SHAPE_OPTIONS: Array<[string, string]> = [
+  EMPTY_OPTION,
+  ['round', 'Round'],
+  ['oval', 'Oval'],
+  ['heart', 'Heart'],
+  ['square', 'Square'],
+  ['diamond', 'Diamond'],
+  ['long', 'Long'],
+  ['soft_triangle', 'Soft triangle'],
+  ['custom', 'Custom'],
+];
+const CHARACTER_EYEBROW_SHAPE_OPTIONS: Array<[string, string]> = [
+  EMPTY_OPTION,
+  ['straight', 'Straight'],
+  ['soft_arch', 'Soft arch'],
+  ['high_arch', 'High arch'],
+  ['thick', 'Thick'],
+  ['thin', 'Thin'],
+  ['sharp', 'Sharp'],
+  ['custom', 'Custom'],
+];
+const CHARACTER_NOSE_SHAPE_OPTIONS: Array<[string, string]> = [
+  EMPTY_OPTION,
+  ['small', 'Small'],
+  ['straight', 'Straight'],
+  ['button', 'Button'],
+  ['sharp', 'Sharp'],
+  ['rounded', 'Rounded'],
+  ['broad', 'Broad'],
+  ['custom', 'Custom'],
+];
+const CHARACTER_MOUTH_SHAPE_OPTIONS: Array<[string, string]> = [
+  EMPTY_OPTION,
+  ['soft', 'Soft'],
+  ['full', 'Full'],
+  ['thin', 'Thin'],
+  ['wide', 'Wide'],
+  ['smirk', 'Smirk'],
+  ['serious', 'Serious'],
+  ['custom', 'Custom'],
+];
+const CHARACTER_HAIR_COLOR_OPTIONS: Array<[string, string]> = [
+  EMPTY_OPTION,
+  ['black', 'Black'],
+  ['brown', 'Brown'],
+  ['blonde', 'Blonde'],
+  ['silver', 'Silver'],
+  ['white', 'White'],
+  ['blue', 'Blue'],
+  ['red', 'Red'],
+  ['pink', 'Pink'],
+  ['purple', 'Purple'],
+  ['custom', 'Custom'],
+];
+const CHARACTER_HAIR_LENGTH_OPTIONS: Array<[string, string]> = [
+  EMPTY_OPTION,
+  ['very_short', 'Very short'],
+  ['short', 'Short'],
+  ['medium', 'Medium'],
+  ['long', 'Long'],
+  ['very_long', 'Very long'],
+];
+const CHARACTER_HAIR_STYLE_OPTIONS: Array<[string, string]> = [
+  EMPTY_OPTION,
+  ['straight', 'Straight'],
+  ['wavy', 'Wavy'],
+  ['curly', 'Curly'],
+  ['wild', 'Wild'],
+];
+const CHARACTER_HAIR_ARRANGEMENT_OPTIONS: Array<[string, string]> = [
+  EMPTY_OPTION,
+  ['down', 'Down'],
+  ['ponytail', 'Ponytail'],
+  ['twin_tails', 'Twin tails'],
+  ['bun', 'Bun'],
+  ['braid', 'Braid'],
+  ['half_up', 'Half up'],
+  ['custom', 'Custom'],
+];
+const CHARACTER_EYE_COLOR_OPTIONS: Array<[string, string]> = [
+  EMPTY_OPTION,
+  ['black', 'Black'],
+  ['brown', 'Brown'],
+  ['blue', 'Blue'],
+  ['green', 'Green'],
+  ['red', 'Red'],
+  ['gold', 'Gold'],
+  ['silver', 'Silver'],
+  ['purple', 'Purple'],
+  ['custom', 'Custom'],
+];
+const CHARACTER_EYE_SHAPE_OPTIONS: Array<[string, string]> = [
+  EMPTY_OPTION,
+  ['gentle', 'Gentle'],
+  ['sharp', 'Sharp'],
+  ['round', 'Round'],
+  ['narrow', 'Narrow'],
+];
+const CHARACTER_ART_STYLE_OPTIONS: Array<[string, string]> = [
+  EMPTY_OPTION,
+  ['anime', 'Anime'],
+  ['semi_realistic', 'Semi-realistic'],
+  ['manga', 'Manga'],
+  ['painterly', 'Painterly'],
+];
 
 function createEmptySceneDraft(): SceneDraft {
   return {

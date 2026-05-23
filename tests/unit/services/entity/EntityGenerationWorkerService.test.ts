@@ -2,23 +2,24 @@ import { describe, expect, it } from 'vitest';
 import type { CreditBalanceSnapshot } from '../../../../src/domain/types/credit.js';
 import type { EntityReferenceContext } from '../../../../src/domain/types/entityReference.js';
 import type { GenerationJob } from '../../../../src/domain/types/job.js';
+import type { StoredImageLoaderPort } from '../../../../src/infrastructure/aws/S3StoredImageLoader.js';
 import type { EntityReferenceRepository } from '../../../../src/repositories/EntityRepository.js';
 import type {
   CompleteEntityGenerationInput,
   EntityGenerationExecutionRepository,
 } from '../../../../src/repositories/EntityGenerationExecutionRepository.js';
-import {
-  EntityGenerationWorkerService,
-} from '../../../../src/services/entity/EntityGenerationWorkerService.js';
-import type { EntityReferencePromptBuilderPort } from '../../../../src/services/entity/EntityReferencePromptBuilder.js';
-import type {
-  GenerateEntityReferenceCandidatesInput,
-  EntityReferenceGeneratorPort,
-} from '../../../../src/infrastructure/openai/OpenAIEntityReferenceGenerator.js';
 import type {
   EntityImageStoragePort,
   StoredEntityImage,
 } from '../../../../src/infrastructure/aws/S3EntityImageStorage.js';
+import type {
+  EntityReferenceGeneratorPort,
+  GenerateEntityReferenceCandidatesInput,
+} from '../../../../src/infrastructure/openai/OpenAIEntityReferenceGenerator.js';
+import type { EntityReferencePromptBuilderPort } from '../../../../src/services/entity/EntityReferencePromptBuilder.js';
+import {
+  EntityGenerationWorkerService,
+} from '../../../../src/services/entity/EntityGenerationWorkerService.js';
 import type {
   ConsumeCreditsParams,
   CreditServicePort,
@@ -119,6 +120,19 @@ class FakeReferenceGenerator implements EntityReferenceGeneratorPort {
   }
 }
 
+class FakeStoredImageLoader implements StoredImageLoaderPort {
+  public loadedS3Keys: string[] = [];
+
+  public async loadByS3Key(s3Key: string): Promise<{ imageData: Buffer; mimeType: 'image/png' }> {
+    this.loadedS3Keys.push(s3Key);
+
+    return {
+      imageData: Buffer.from('uploaded-source'),
+      mimeType: 'image/png',
+    };
+  }
+}
+
 class FakeEntityImageStorage implements EntityImageStoragePort {
   public async storeImportedImage(): Promise<never> {
     throw new Error('not used');
@@ -176,9 +190,37 @@ describe('EntityGenerationWorkerService', () => {
     const result = await service.processJob('job-1');
 
     expect(result).toEqual({ status: 'processed', jobStatus: 'completed' });
-    expect(referenceGenerator.input).toEqual({ prompt: 'entity prompt' });
+    expect(referenceGenerator.input).toEqual({ prompt: 'entity prompt', inputImages: [] });
     expect(executionRepository.completed?.candidates).toHaveLength(3);
     expect(executionRepository.completed?.openaiRequestId).toBe('req-1');
+  });
+
+  it('source_s3_key がある場合は upload 画像を input image に変換して使う', async () => {
+    const executionRepository = new FakeExecutionRepository();
+    executionRepository.job = buildJob({
+      params: {
+        entity_id: 'entity-1',
+        entity_type: 'character',
+        previous_entity_status: 'draft',
+        source_s3_key: 'tmp/user-1/entities/imports/source.png',
+      },
+    });
+    const referenceGenerator = new FakeReferenceGenerator();
+    const storedImageLoader = new FakeStoredImageLoader();
+    const service = buildService({
+      executionRepository,
+      referenceGenerator,
+      storedImageLoader,
+    });
+
+    const result = await service.processJob('job-1');
+
+    expect(result).toEqual({ status: 'processed', jobStatus: 'completed' });
+    expect(storedImageLoader.loadedS3Keys).toEqual(['tmp/user-1/entities/imports/source.png']);
+    expect(referenceGenerator.input).toEqual({
+      prompt: 'entity prompt',
+      inputImages: [{ dataUrl: 'data:image/png;base64,dXBsb2FkZWQtc291cmNl' }],
+    });
   });
 
   it('生成失敗時は failed と refund に落ちる', async () => {
@@ -215,6 +257,7 @@ function buildService(overrides: {
   referenceGenerator?: FakeReferenceGenerator;
   imageStorage?: FakeEntityImageStorage;
   creditService?: FakeCreditService;
+  storedImageLoader?: FakeStoredImageLoader;
 } = {}): EntityGenerationWorkerService {
   return new EntityGenerationWorkerService(
     overrides.executionRepository ?? new FakeExecutionRepository(),
@@ -223,6 +266,7 @@ function buildService(overrides: {
     overrides.referenceGenerator ?? new FakeReferenceGenerator(),
     overrides.imageStorage ?? new FakeEntityImageStorage(),
     overrides.creditService ?? new FakeCreditService(),
+    overrides.storedImageLoader ?? new FakeStoredImageLoader(),
   );
 }
 

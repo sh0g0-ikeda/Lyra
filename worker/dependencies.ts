@@ -41,7 +41,7 @@ import {
   S3PageImageStorage,
 } from '../src/infrastructure/aws/S3PageImageStorage.js';
 import { S3EntityImageStorage, type EntityImageStoragePort } from '../src/infrastructure/aws/S3EntityImageStorage.js';
-import { S3StoredImageLoader } from '../src/infrastructure/aws/S3StoredImageLoader.js';
+import { S3StoredImageLoader, type StoredImageLoaderPort } from '../src/infrastructure/aws/S3StoredImageLoader.js';
 import { env } from '../src/lib/env.js';
 import {
   PageGenerationInputImageBuilder,
@@ -121,6 +121,7 @@ export function resolveWorkerDependencies(
     overrides.entityReferenceGenerator ?? resolveEntityReferenceGenerator();
   const entityImageStorage =
     overrides.entityImageStorage ?? resolveEntityImageStorage();
+  const storedImageLoader = resolveStoredImageLoader();
 
   return {
     pageGenerationWorkerService: new PageGenerationWorkerService(
@@ -139,6 +140,7 @@ export function resolveWorkerDependencies(
       entityReferenceGenerator,
       entityImageStorage,
       creditService,
+      storedImageLoader,
     ),
   };
 }
@@ -217,6 +219,14 @@ function resolveEntityImageStorage(): EntityImageStoragePort {
   });
 }
 
+function resolveStoredImageLoader(): StoredImageLoaderPort {
+  if (env.S3_BUCKET_IMAGES === undefined) {
+    return new UnconfiguredStoredImageLoader();
+  }
+
+  return new S3StoredImageLoader(createPageImageStorageClient(env.AWS_REGION), env.S3_BUCKET_IMAGES);
+}
+
 class UnconfiguredPageGenerationInputImageBuilder implements PageGenerationInputImageBuilderPort {
   public async buildInputImages(): Promise<[]> {
     return [];
@@ -270,5 +280,11 @@ class UnconfiguredEntityImageStorage implements EntityImageStoragePort {
 
   public async finalizeReferenceImage(): Promise<never> {
     throw new ConfigurationError('Entity image storage is not configured');
+  }
+}
+
+class UnconfiguredStoredImageLoader implements StoredImageLoaderPort {
+  public async loadByS3Key(): Promise<never> {
+    throw new ConfigurationError('Stored image loader is not configured');
   }
 }

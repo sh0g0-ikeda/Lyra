@@ -5,6 +5,7 @@ import type { EntityReferenceSet } from '../domain/types/entityReference.js';
 import {
   confirmEntityReferenceBodySchema,
   createEntityBodySchema,
+  generateEntityReferenceBodySchema,
   importEntityImageBodySchema,
   referenceIdParamSchema,
   updateEntityBodySchema,
@@ -127,8 +128,15 @@ export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<
   app.post('/entities/:id/generate-reference', async (c) => {
     const user = c.get('user');
     const entityId = parseUuidParam(c, 'id');
+    const body = generateEntityReferenceBodySchema.safeParse(await readOptionalJsonBody(c));
 
-    const result = await dependencies.entityReferenceService.enqueueReferenceGeneration(user.id, entityId);
+    if (!body.success) {
+      throw new ValidationError(body.error.message);
+    }
+
+    const result = await dependencies.entityReferenceService.enqueueReferenceGeneration(user.id, entityId, {
+      sourceS3Key: body.data.source_s3_key,
+    });
 
     return c.json({ job_id: result.jobId }, 202);
   });
@@ -175,6 +183,19 @@ export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<
 async function readJsonBody(c: Context<AppEnv>): Promise<unknown> {
   try {
     return await c.req.json();
+  } catch {
+    throw new ValidationError('Request body must be valid JSON');
+  }
+}
+
+async function readOptionalJsonBody(c: Context<AppEnv>): Promise<unknown> {
+  const rawBody = await c.req.text();
+  if (rawBody.trim().length === 0) {
+    return {};
+  }
+
+  try {
+    return JSON.parse(rawBody) as unknown;
   } catch {
     throw new ValidationError('Request body must be valid JSON');
   }
