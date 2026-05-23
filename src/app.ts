@@ -5,6 +5,10 @@ import { S3FinalPageImageStorage, type FinalPageImageStoragePort } from './infra
 import { S3EntityImageStorage, type EntityImageStoragePort } from './infrastructure/aws/S3EntityImageStorage.js';
 import { createGenerationQueueClient, SqsGenerationQueue } from './infrastructure/aws/SqsGenerationQueue.js';
 import { S3StoredImageLoader, type StoredImageLoaderPort } from './infrastructure/aws/S3StoredImageLoader.js';
+import { LocalFileFinalPageImageStorage } from './infrastructure/local/LocalFileFinalPageImageStorage.js';
+import { LocalFileEntityImageStorage } from './infrastructure/local/LocalFileEntityImageStorage.js';
+import { LocalFileStoredImageLoader } from './infrastructure/local/LocalFileStoredImageLoader.js';
+import { resolveLocalAssetConfig, type LocalAssetConfig } from './infrastructure/local/LocalAssetFiles.js';
 import { AnthropicClient } from './infrastructure/anthropic/AnthropicClient.js';
 import {
   AnthropicStoryAiClient,
@@ -45,6 +49,7 @@ import { createCompositionRoutes } from './routes/compositions.js';
 import { createEntityRoutes } from './routes/entities.js';
 import { createHealthRoutes } from './routes/health.js';
 import { createJobRoutes } from './routes/jobs.js';
+import { createLocalAssetRoutes } from './routes/localAssets.js';
 import { createPanelRoutes } from './routes/panels.js';
 import { createPanelEntityAssignmentRoutes } from './routes/panelEntityAssignments.js';
 import { createPanelFrameRoutes } from './routes/panelFrames.js';
@@ -78,12 +83,14 @@ import {
 } from './services/entity/EntityReferenceService.js';
 import {
   NoopEntityGenerationQueue,
+  InlineEntityGenerationQueueAdapter,
   SqsEntityGenerationQueueAdapter,
   type EntityGenerationQueuePort,
 } from './services/entity/EntityGenerationQueue.js';
 import { JobService, type JobServicePort } from './services/job/JobService.js';
 import {
   NoopPageGenerationQueue,
+  InlinePageGenerationQueueAdapter,
   SqsPageGenerationQueueAdapter,
   type PageGenerationQueuePort,
 } from './services/page/PageGenerationQueue.js';
@@ -123,6 +130,7 @@ import {
 import { StoryService, type StoryServicePort } from './services/story/StoryService.js';
 import type { AppEnv } from './types/app.js';
 import type { SupabaseJwtClaims } from './domain/types/user.js';
+import { resolveWorkerDependencies } from '../worker/dependencies.js';
 
 export interface AppDependencies {
   balloonService?: BalloonServicePort;
@@ -157,6 +165,7 @@ export interface AppDependencies {
 export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
   const resolvedDependencies = resolveDependencies(dependencies);
   const app = new Hono<AppEnv>();
+  const localAssetConfig = resolveConfiguredLocalAssetConfig();
   const authMiddleware = createAuthMiddleware(resolvedDependencies.userProvisioningService, {
     jwtSecret: dependencies.jwtSecret,
     enableDevBypass:
@@ -168,6 +177,9 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
   app.onError(errorHandler);
   app.use('*', createRequestContextMiddleware());
   app.route('/', createHealthRoutes());
+  if (localAssetConfig !== null) {
+    app.route('/', createLocalAssetRoutes(localAssetConfig.rootDir));
+  }
   app.route(
     '/api/billing',
     createBillingRoutes({
@@ -277,7 +289,10 @@ function resolveDependencies(
 ): Required<Omit<AppDependencies, 'jwtSecret' | 'enableDevAuthBypass' | 'devAuthBypassClaims'>> {
   const creditRepository = new PostgresCreditRepository(db, db);
   const creditService = dependencies.creditService ?? new CreditService(creditRepository);
+  const localAssetConfig = resolveConfiguredLocalAssetConfig();
   const generationQueue = resolveGenerationQueue();
+  const inlineWorkerDependencies =
+    localAssetConfig !== null ? resolveWorkerDependencies() : null;
   const billingCreditGrantService =
     dependencies.billingCreditGrantService ?? new BillingCreditGrantService(creditRepository);
   const compositionGalleryService =
@@ -286,17 +301,21 @@ function resolveDependencies(
   const entityRepository = new PostgresEntityRepository(db);
   const entityGenerationQueue =
     dependencies.entityGenerationQueue ??
-    (generationQueue === null
-      ? new NoopEntityGenerationQueue()
-      : new SqsEntityGenerationQueueAdapter(generationQueue));
+    (inlineWorkerDependencies !== null
+      ? new InlineEntityGenerationQueueAdapter(inlineWorkerDependencies.entityGenerationWorkerService)
+      : generationQueue !== null
+        ? new SqsEntityGenerationQueueAdapter(generationQueue)
+        : new NoopEntityGenerationQueue());
   const billingRepository = new PostgresBillingRepository(db, db);
   const pageRepository = new PostgresPageRepository(db);
   const generationJobRepository = new PostgresGenerationJobRepository(db);
   const pageGenerationQueue =
     dependencies.pageGenerationQueue ??
-    (generationQueue === null
-      ? new NoopPageGenerationQueue()
-      : new SqsPageGenerationQueueAdapter(generationQueue));
+    (inlineWorkerDependencies !== null
+      ? new InlinePageGenerationQueueAdapter(inlineWorkerDependencies.pageGenerationWorkerService)
+      : generationQueue !== null
+        ? new SqsPageGenerationQueueAdapter(generationQueue)
+        : new NoopPageGenerationQueue());
   const stripeBillingClient = resolveStripeBillingClient();
   const billingService =
     dependencies.billingService ??
@@ -396,6 +415,11 @@ function resolveDependencies(
 }
 
 function resolveFinalPageImageStorage(): FinalPageImageStoragePort {
+  const localAssetConfig = resolveConfiguredLocalAssetConfig();
+  if (localAssetConfig !== null) {
+    return new LocalFileFinalPageImageStorage(localAssetConfig);
+  }
+
   if (env.S3_BUCKET_IMAGES === undefined || env.IMAGES_CDN_BASE_URL === undefined) {
     return {
       async finalizePageImage(): Promise<never> {
@@ -422,6 +446,11 @@ function resolveStripeBillingClient(): StripeBillingClientPort {
 }
 
 function resolveStoredPageImageLoader(): StoredImageLoaderPort {
+  const localAssetConfig = resolveConfiguredLocalAssetConfig();
+  if (localAssetConfig !== null) {
+    return new LocalFileStoredImageLoader(localAssetConfig);
+  }
+
   if (env.S3_BUCKET_IMAGES === undefined) {
     return new StoredPageImageLoaderStub();
   }
@@ -445,6 +474,11 @@ function resolveGenerationQueue(): SqsGenerationQueue | null {
 }
 
 function resolveEntityImageStorage(): EntityImageStoragePort {
+  const localAssetConfig = resolveConfiguredLocalAssetConfig();
+  if (localAssetConfig !== null) {
+    return new LocalFileEntityImageStorage(localAssetConfig);
+  }
+
   if (env.S3_BUCKET_IMAGES === undefined || env.IMAGES_CDN_BASE_URL === undefined) {
     return new EntityImageStorageStub();
   }
@@ -462,6 +496,10 @@ function resolveEntityImportAnalyzer(): EntityImportAnalyzerPort {
   }
 
   return new OpenAIEntityImportAnalyzer(client);
+}
+
+function resolveConfiguredLocalAssetConfig(): LocalAssetConfig | null {
+  return resolveLocalAssetConfig(env.LOCAL_FILE_STORAGE_DIR, env.LOCAL_ASSET_BASE_URL, env.PORT);
 }
 
 function buildOpenAIClient(): OpenAIClient | null {

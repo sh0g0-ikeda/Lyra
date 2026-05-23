@@ -42,6 +42,10 @@ import {
 } from '../src/infrastructure/aws/S3PageImageStorage.js';
 import { S3EntityImageStorage, type EntityImageStoragePort } from '../src/infrastructure/aws/S3EntityImageStorage.js';
 import { S3StoredImageLoader, type StoredImageLoaderPort } from '../src/infrastructure/aws/S3StoredImageLoader.js';
+import { LocalFilePageImageStorage } from '../src/infrastructure/local/LocalFilePageImageStorage.js';
+import { LocalFileEntityImageStorage } from '../src/infrastructure/local/LocalFileEntityImageStorage.js';
+import { LocalFileStoredImageLoader } from '../src/infrastructure/local/LocalFileStoredImageLoader.js';
+import { resolveLocalAssetConfig } from '../src/infrastructure/local/LocalAssetFiles.js';
 import { env } from '../src/lib/env.js';
 import {
   PageGenerationInputImageBuilder,
@@ -146,6 +150,16 @@ export function resolveWorkerDependencies(
 }
 
 function resolvePageGenerationInputImageBuilder(): PageGenerationInputImageBuilderPort {
+  const localAssetConfig = resolveConfiguredLocalAssetConfig();
+  if (localAssetConfig !== null) {
+    return new PageGenerationInputImageBuilder(
+      new PostgresPageRepository(db),
+      new PostgresEntityRepository(db),
+      new LocalFileStoredImageLoader(localAssetConfig),
+      new LayoutGuideImageRenderer(),
+    );
+  }
+
   if (env.S3_BUCKET_IMAGES === undefined) {
     return new UnconfiguredPageGenerationInputImageBuilder();
   }
@@ -189,6 +203,11 @@ function buildOpenAIClient(): OpenAIClient | null {
 }
 
 function resolvePageImageStorage(): PageImageStoragePort {
+  const localAssetConfig = resolveConfiguredLocalAssetConfig();
+  if (localAssetConfig !== null) {
+    return new LocalFilePageImageStorage(localAssetConfig);
+  }
+
   if (env.S3_BUCKET_IMAGES === undefined || env.IMAGES_CDN_BASE_URL === undefined) {
     return new UnconfiguredPageImageStorage();
   }
@@ -209,6 +228,11 @@ function resolveEntityReferenceGenerator(): EntityReferenceGeneratorPort {
 }
 
 function resolveEntityImageStorage(): EntityImageStoragePort {
+  const localAssetConfig = resolveConfiguredLocalAssetConfig();
+  if (localAssetConfig !== null) {
+    return new LocalFileEntityImageStorage(localAssetConfig);
+  }
+
   if (env.S3_BUCKET_IMAGES === undefined || env.IMAGES_CDN_BASE_URL === undefined) {
     return new UnconfiguredEntityImageStorage();
   }
@@ -220,11 +244,20 @@ function resolveEntityImageStorage(): EntityImageStoragePort {
 }
 
 function resolveStoredImageLoader(): StoredImageLoaderPort {
+  const localAssetConfig = resolveConfiguredLocalAssetConfig();
+  if (localAssetConfig !== null) {
+    return new LocalFileStoredImageLoader(localAssetConfig);
+  }
+
   if (env.S3_BUCKET_IMAGES === undefined) {
     return new UnconfiguredStoredImageLoader();
   }
 
   return new S3StoredImageLoader(createPageImageStorageClient(env.AWS_REGION), env.S3_BUCKET_IMAGES);
+}
+
+function resolveConfiguredLocalAssetConfig() {
+  return resolveLocalAssetConfig(env.LOCAL_FILE_STORAGE_DIR, env.LOCAL_ASSET_BASE_URL, env.PORT);
 }
 
 class UnconfiguredPageGenerationInputImageBuilder implements PageGenerationInputImageBuilderPort {

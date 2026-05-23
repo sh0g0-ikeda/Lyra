@@ -10,11 +10,28 @@ export interface EntityGenerationQueuePort {
   enqueue(payload: EntityGenerationQueuePayload): Promise<EnqueueEntityGenerationResult>;
 }
 
+export interface EntityGenerationJobProcessor {
+  processJob(jobId: string): Promise<unknown>;
+}
+
 export class NoopEntityGenerationQueue implements EntityGenerationQueuePort {
   public async enqueue(_payload: EntityGenerationQueuePayload): Promise<EnqueueEntityGenerationResult> {
     return {
       messageId: `noop-${randomUUID()}`,
     };
+  }
+}
+
+export class InlineEntityGenerationQueueAdapter implements EntityGenerationQueuePort {
+  public constructor(private readonly processor: EntityGenerationJobProcessor) {}
+
+  public async enqueue(payload: EntityGenerationQueuePayload): Promise<EnqueueEntityGenerationResult> {
+    const messageId = `inline-${randomUUID()}`;
+    setTimeout(() => {
+      void this.processor.processJob(payload.jobId).catch(() => undefined);
+    }, 0);
+
+    return { messageId };
   }
 }
 

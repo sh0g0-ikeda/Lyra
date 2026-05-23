@@ -8,6 +8,8 @@ const envSchema = z.object({
   SQS_QUEUE_URL_GENERATION: z.string().url().optional(),
   S3_BUCKET_IMAGES: z.string().min(1).optional(),
   IMAGES_CDN_BASE_URL: z.string().url().optional(),
+  LOCAL_FILE_STORAGE_DIR: z.string().min(1).optional(),
+  LOCAL_ASSET_BASE_URL: z.string().url().optional(),
   OPENAI_API_KEY: z.string().min(1).optional(),
   OPENAI_BASE_URL: z.string().url().default('https://api.openai.com/v1'),
   OPENAI_TIMEOUT_MS: z.coerce.number().int().min(1000).max(600000).default(300000),

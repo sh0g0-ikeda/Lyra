@@ -10,11 +10,28 @@ export interface PageGenerationQueuePort {
   enqueue(payload: PageGenerationQueuePayload): Promise<EnqueuePageGenerationResult>;
 }
 
+export interface PageGenerationJobProcessor {
+  processJob(jobId: string): Promise<unknown>;
+}
+
 export class NoopPageGenerationQueue implements PageGenerationQueuePort {
   public async enqueue(_payload: PageGenerationQueuePayload): Promise<EnqueuePageGenerationResult> {
     return {
       messageId: `noop-${randomUUID()}`,
     };
+  }
+}
+
+export class InlinePageGenerationQueueAdapter implements PageGenerationQueuePort {
+  public constructor(private readonly processor: PageGenerationJobProcessor) {}
+
+  public async enqueue(payload: PageGenerationQueuePayload): Promise<EnqueuePageGenerationResult> {
+    const messageId = `inline-${randomUUID()}`;
+    setTimeout(() => {
+      void this.processor.processJob(payload.jobId).catch(() => undefined);
+    }, 0);
+
+    return { messageId };
   }
 }
 
