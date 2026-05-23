@@ -364,6 +364,8 @@ function toPanelEntityAssignments(value: unknown): PanelEntityAssignment[] {
       !isPanelEntityAction(entry.action) ||
       !isNullableString(entry.custom_action) ||
       !isPanelEntityPosition(entry.position) ||
+      !isNullablePanelEntityFacingDirection(entry.facing_direction) ||
+      !isNullableString(entry.effect_note) ||
       !isNullableString(entry.state_id)
     ) {
       return [];
@@ -378,6 +380,8 @@ function toPanelEntityAssignments(value: unknown): PanelEntityAssignment[] {
         action: entry.action,
         customAction: entry.custom_action,
         position: entry.position,
+        facingDirection: entry.facing_direction,
+        effectNote: entry.effect_note,
         stateId: entry.state_id,
       },
     ];
@@ -431,6 +435,20 @@ function isPanelEntityAction(value: unknown): value is PanelEntityAssignment['ac
 
 function isPanelEntityPosition(value: unknown): value is PanelEntityAssignment['position'] {
   return value === 'left' || value === 'center' || value === 'right' || value === 'background';
+}
+
+function isNullablePanelEntityFacingDirection(
+  value: unknown,
+): value is PanelEntityAssignment['facingDirection'] {
+  return (
+    value === null ||
+    value === 'front' ||
+    value === 'left' ||
+    value === 'right' ||
+    value === 'away' ||
+    value === 'three_quarter_left' ||
+    value === 'three_quarter_right'
+  );
 }
 
 function isNullableString(value: unknown): value is string | null {

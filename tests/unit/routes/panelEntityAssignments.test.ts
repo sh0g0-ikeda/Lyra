@@ -94,6 +94,8 @@ describe('panel entity assignment routes', () => {
             custom_expression: 'thin smile',
             action: 'attacking',
             position: 'center',
+            facing_direction: 'left',
+            effect_note: 'speed lines',
             state_id: stateId,
           },
         ],
@@ -110,6 +112,8 @@ describe('panel entity assignment routes', () => {
       action: 'attacking',
       customAction: null,
       position: 'center',
+      facingDirection: 'left',
+      effectNote: 'speed lines',
       stateId,
     });
     await expect(response.json()).resolves.toMatchObject({
@@ -122,6 +126,8 @@ describe('panel entity assignment routes', () => {
           action: 'attacking',
           custom_action: null,
           position: 'center',
+          facing_direction: 'left',
+          effect_note: 'speed lines',
           state_id: stateId,
         },
       ],
@@ -257,6 +263,7 @@ function createTestApp(
     panelEntityAssignmentService,
     userProvisioningService: new FakeUserProvisioningService(),
     jwtSecret,
+    enableDevAuthBypass: false,
   });
 }
 

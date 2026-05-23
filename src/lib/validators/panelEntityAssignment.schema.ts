@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 const nullableText100 = z.string().trim().min(1).max(100).nullable();
+const nullableText200 = z.string().trim().min(1).max(200).nullable();
 
 const panelEntityAssignmentSchema = z
   .object({
@@ -11,6 +12,12 @@ const panelEntityAssignmentSchema = z
     action: z.enum(['standing_firm', 'attacking', 'defending', 'running', 'custom']),
     custom_action: nullableText100.optional().default(null),
     position: z.enum(['left', 'center', 'right', 'background']),
+    facing_direction: z
+      .enum(['front', 'left', 'right', 'away', 'three_quarter_left', 'three_quarter_right'])
+      .nullable()
+      .optional()
+      .default(null),
+    effect_note: nullableText200.optional().default(null),
     state_id: z.string().uuid().nullable().optional().default(null),
   })
   .strict()

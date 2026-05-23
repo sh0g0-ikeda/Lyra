@@ -141,6 +141,7 @@ describe('PanelEntityAssignmentService', () => {
       customExpression: null,
       action: 'running',
       customAction: null,
+      effectNote: null,
     });
     expect(assignments[0]).toMatchObject({
       entityId,
@@ -148,6 +149,30 @@ describe('PanelEntityAssignmentService', () => {
       customExpression: null,
       action: 'running',
       customAction: null,
+      effectNote: null,
+    });
+  });
+
+  it('向きとエフェクトメモを保存できる', async () => {
+    const repository = new FakePanelEntityAssignmentRepository();
+    const service = new PanelEntityAssignmentService(repository);
+
+    const assignments = await service.replacePanelEntityAssignments(userId, panelId, [
+      buildAssignment({
+        facingDirection: 'three_quarter_left',
+        effectNote: 'speed lines around the shoulders',
+      }),
+    ]);
+
+    expect(repository.savedAssignments?.[0]).toMatchObject({
+      entityId,
+      facingDirection: 'three_quarter_left',
+      effectNote: 'speed lines around the shoulders',
+    });
+    expect(assignments[0]).toMatchObject({
+      entityId,
+      facingDirection: 'three_quarter_left',
+      effectNote: 'speed lines around the shoulders',
     });
   });
 
@@ -182,6 +207,8 @@ function buildAssignment(overrides: Partial<PanelEntityAssignment> = {}): PanelE
     action: 'attacking',
     customAction: null,
     position: 'center',
+    facingDirection: null,
+    effectNote: null,
     stateId,
     ...overrides,
   };

@@ -2,6 +2,13 @@ export type PanelEntityRole = 'primary' | 'secondary' | 'background';
 export type PanelEntityExpression = 'determined' | 'calm' | 'angry' | 'sad' | 'surprised' | 'custom';
 export type PanelEntityAction = 'standing_firm' | 'attacking' | 'defending' | 'running' | 'custom';
 export type PanelEntityPosition = 'left' | 'center' | 'right' | 'background';
+export type PanelEntityFacingDirection =
+  | 'front'
+  | 'left'
+  | 'right'
+  | 'away'
+  | 'three_quarter_left'
+  | 'three_quarter_right';
 
 export interface PanelEntityAssignment {
   entityId: string;
@@ -11,6 +18,8 @@ export interface PanelEntityAssignment {
   action: PanelEntityAction;
   customAction: string | null;
   position: PanelEntityPosition;
+  facingDirection: PanelEntityFacingDirection | null;
+  effectNote: string | null;
   stateId: string | null;
 }
 

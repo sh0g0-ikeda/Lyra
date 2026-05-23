@@ -198,8 +198,11 @@ function buildEntityInstruction(
       const supplement = entity?.promptSupplement ?? entity?.freeDescription ?? 'No prompt supplement.';
       const expression = assignment.expression === 'custom' ? assignment.customExpression : assignment.expression;
       const action = assignment.action === 'custom' ? assignment.customAction : assignment.action;
+      const facingDirection =
+        assignment.facingDirection === null ? 'unspecified' : assignment.facingDirection;
+      const effectNote = assignment.effectNote ?? 'none';
 
-      return `${entityName}: role=${assignment.role}, position=${assignment.position}, expression=${expression ?? 'unspecified'}, action=${action ?? 'unspecified'}. ${supplement}`;
+      return `${entityName}: role=${assignment.role}, position=${assignment.position}, facing=${facingDirection}, expression=${expression ?? 'unspecified'}, pose=${action ?? 'unspecified'}, effect=${effectNote}. ${supplement}`;
     })
     .join(' ');
 }

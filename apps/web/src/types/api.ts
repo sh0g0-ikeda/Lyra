@@ -136,6 +136,15 @@ export interface PanelEntityAssignmentRecord {
   action: 'standing_firm' | 'attacking' | 'defending' | 'running' | 'custom';
   custom_action: string | null;
   position: 'left' | 'center' | 'right' | 'background';
+  facing_direction:
+    | 'front'
+    | 'left'
+    | 'right'
+    | 'away'
+    | 'three_quarter_left'
+    | 'three_quarter_right'
+    | null;
+  effect_note: string | null;
   state_id: string | null;
 }
 
@@ -143,8 +152,8 @@ export interface PanelRecord {
   id: string;
   page_id: string;
   order: number;
-  panel_role: 'setup' | 'build' | 'payoff';
-  panel_size: 'small' | 'medium' | 'large';
+  panel_role: 'establish' | 'action' | 'reaction' | 'emphasis' | 'transition' | 'pause' | 'impact';
+  panel_size: 'standard' | 'large' | 'wide' | 'narrow' | 'splash';
   situation_text: string | null;
   entities: PanelEntityAssignmentRecord[];
   composition: {
@@ -159,8 +168,8 @@ export interface PanelRecord {
   dialogue: Array<{
     entity_id: string | null;
     text: string;
-    type: 'speech' | 'thought' | 'narration' | 'shout' | 'whisper';
-    position: 'top' | 'center' | 'bottom';
+    type: 'speech' | 'thought' | 'narration' | 'shout' | 'whisper' | 'sfx';
+    position: 'top' | 'bottom' | 'left' | 'right' | 'center';
   }>;
   sfx_text: string | null;
   background_note: string | null;

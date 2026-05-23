@@ -3,6 +3,7 @@ import type {
   PanelEntityAssignment,
   PanelEntityAction,
   PanelEntityExpression,
+  PanelEntityFacingDirection,
   PanelEntityPosition,
   PanelEntityRole,
   PanelEntityStateReference,
@@ -175,6 +176,8 @@ function toPanelEntityAssignmentJson(assignment: PanelEntityAssignment): Record<
     action: assignment.action,
     custom_action: assignment.customAction,
     position: assignment.position,
+    facing_direction: assignment.facingDirection,
+    effect_note: assignment.effectNote,
     state_id: assignment.stateId,
   };
 }
@@ -196,6 +199,8 @@ function toPanelEntityAssignments(value: unknown): PanelEntityAssignment[] {
     const action = entry.action;
     const customAction = entry.custom_action;
     const position = entry.position;
+    const facingDirection = entry.facing_direction;
+    const effectNote = entry.effect_note;
     const stateId = entry.state_id;
 
     if (
@@ -206,6 +211,8 @@ function toPanelEntityAssignments(value: unknown): PanelEntityAssignment[] {
       !isPanelEntityAction(action) ||
       !isNullableString(customAction) ||
       !isPanelEntityPosition(position) ||
+      !isNullablePanelEntityFacingDirection(facingDirection) ||
+      !isNullableString(effectNote) ||
       !isNullableString(stateId)
     ) {
       return [];
@@ -220,6 +227,8 @@ function toPanelEntityAssignments(value: unknown): PanelEntityAssignment[] {
         action,
         customAction,
         position,
+        facingDirection,
+        effectNote,
         stateId,
       },
     ];
@@ -253,6 +262,20 @@ function isPanelEntityAction(value: unknown): value is PanelEntityAction {
 
 function isPanelEntityPosition(value: unknown): value is PanelEntityPosition {
   return value === 'left' || value === 'center' || value === 'right' || value === 'background';
+}
+
+function isNullablePanelEntityFacingDirection(
+  value: unknown,
+): value is PanelEntityFacingDirection | null {
+  return (
+    value === null ||
+    value === 'front' ||
+    value === 'left' ||
+    value === 'right' ||
+    value === 'away' ||
+    value === 'three_quarter_left' ||
+    value === 'three_quarter_right'
+  );
 }
 
 function isNullableString(value: unknown): value is string | null {

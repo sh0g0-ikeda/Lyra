@@ -204,6 +204,8 @@ function panelRow(): Record<string, unknown> {
         action: 'attacking',
         custom_action: null,
         position: 'center',
+        facing_direction: null,
+        effect_note: null,
         state_id: null,
       },
     ],

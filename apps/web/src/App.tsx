@@ -113,18 +113,43 @@ interface SceneDraft {
   status: 'draft' | 'reviewing' | 'ready';
 }
 
+interface PanelAssignmentDraft {
+  entity_id: string;
+  role: PanelRecord['entities'][number]['role'];
+  position: PanelRecord['entities'][number]['position'];
+  facing_direction: NonNullable<PanelRecord['entities'][number]['facing_direction']> | '';
+  expression: PanelRecord['entities'][number]['expression'];
+  custom_expression: string;
+  action: PanelRecord['entities'][number]['action'];
+  custom_action: string;
+  effect_note: string;
+  state_id: string;
+}
+
+interface PanelDialogueDraft {
+  entity_id: string;
+  text: string;
+  type: Exclude<PanelRecord['dialogue'][number]['type'], 'sfx'>;
+  position: PanelRecord['dialogue'][number]['position'];
+}
+
 interface PanelDraft {
   order: string;
-  panel_role: 'setup' | 'build' | 'payoff';
-  panel_size: 'small' | 'medium' | 'large';
+  panel_role: PanelRecord['panel_role'];
+  panel_size: PanelRecord['panel_size'];
   situation_text: string;
-  composition_json: string;
-  dialogue_json: string;
+  composition_source: PanelRecord['composition']['source'];
+  composition_gallery_item_id: string;
+  composition_prompt: string;
+  shot_type: NonNullable<PanelRecord['composition']['shot_type']> | '';
+  angle: NonNullable<PanelRecord['composition']['angle']> | '';
+  custom_note: string;
   dialogue_in_panel: boolean;
+  dialogues: PanelDialogueDraft[];
   sfx_text: string;
   background_note: string;
   panel_notes: string;
-  assignments_json: string;
+  assignments: PanelAssignmentDraft[];
 }
 
 interface BalloonDraft {
@@ -341,9 +366,10 @@ function StudioShell(props: {
   const [selectedSceneId, setSelectedSceneId] = useState('');
   const [panelDraft, setPanelDraft] = useState<PanelDraft>(createEmptyPanelDraft());
   const [selectedPanelId, setSelectedPanelId] = useState('');
+  const [panelEntityToAddId, setPanelEntityToAddId] = useState('');
   const [balloonDraft, setBalloonDraft] = useState<BalloonDraft>(createEmptyBalloonDraft());
   const [selectedBalloonId, setSelectedBalloonId] = useState('');
-  const [frameTemplateId, setFrameTemplateId] = useState('3-panel-standard');
+  const [frameTemplateId, setFrameTemplateId] = useState('standard_4');
   const [framesJson, setFramesJson] = useState('[]');
   const [importingImage, setImportingImage] = useState(false);
   const [uploadedReferenceCandidatesByEntityId, setUploadedReferenceCandidatesByEntityId] = useState<Record<string, ReferenceCandidate[]>>({});
@@ -427,6 +453,13 @@ function StudioShell(props: {
   });
   const panels = useMemo(() => panelsQuery.data?.panels ?? [], [panelsQuery.data?.panels]);
   const selectedPanel = panels.find((panel) => panel.id === selectedPanelId) ?? panels[0] ?? null;
+  const availablePanelEntities = useMemo(
+    () =>
+      entities.filter(
+        (entity) => !panelDraft.assignments.some((assignment) => assignment.entity_id === entity.id),
+      ),
+    [entities, panelDraft.assignments],
+  );
 
   const framesQuery = useQuery({
     queryKey: ['frames', selectedPage?.id ?? ''],
@@ -540,6 +573,17 @@ function StudioShell(props: {
       setPanelDraft(toPanelDraft(selectedPanel));
     }
   }, [selectedPanel]);
+
+  useEffect(() => {
+    if (availablePanelEntities.length === 0) {
+      setPanelEntityToAddId('');
+      return;
+    }
+
+    if (!availablePanelEntities.some((entity) => entity.id === panelEntityToAddId)) {
+      setPanelEntityToAddId(availablePanelEntities[0]?.id ?? '');
+    }
+  }, [availablePanelEntities, panelEntityToAddId]);
 
   useEffect(() => {
     if (selectedBalloon !== null) {
@@ -1544,7 +1588,16 @@ function StudioShell(props: {
                         title="Frames"
                         actions={
                           <div className="toolbar">
-                            <input value={frameTemplateId} onChange={(event) => setFrameTemplateId(event.target.value)} />
+                            <label className="field" style={{ minWidth: '14rem' }}>
+                              <span>Template</span>
+                              <select value={frameTemplateId} onChange={(event) => setFrameTemplateId(event.target.value)}>
+                                {FRAME_TEMPLATE_OPTIONS.map(([value, label]) => (
+                                  <option key={value} value={value}>
+                                    {label}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
                             <button
                               className="ghost-button"
                               onClick={() =>
@@ -1598,34 +1651,49 @@ function StudioShell(props: {
                             label="Role"
                             value={panelDraft.panel_role}
                             onChange={(value) => setPanelDraft({ ...panelDraft, panel_role: value as PanelDraft['panel_role'] })}
-                            options={[
-                              ['setup', 'Setup'],
-                              ['build', 'Build'],
-                              ['payoff', 'Payoff'],
-                            ]}
+                            options={PANEL_ROLE_OPTIONS}
                           />
                           <SelectField
                             label="Size"
                             value={panelDraft.panel_size}
                             onChange={(value) => setPanelDraft({ ...panelDraft, panel_size: value as PanelDraft['panel_size'] })}
-                            options={[
-                              ['small', 'Small'],
-                              ['medium', 'Medium'],
-                              ['large', 'Large'],
-                            ]}
+                            options={PANEL_SIZE_OPTIONS}
                           />
                         </div>
                         <TextAreaField label="Situation" rows={3} value={panelDraft.situation_text} onChange={(value) => setPanelDraft({ ...panelDraft, situation_text: value })} />
-                        <div className="form-grid two">
-                          <TextAreaField label="Composition JSON" rows={8} value={panelDraft.composition_json} onChange={(value) => setPanelDraft({ ...panelDraft, composition_json: value })} />
-                          <TextAreaField label="Dialogue JSON" rows={8} value={panelDraft.dialogue_json} onChange={(value) => setPanelDraft({ ...panelDraft, dialogue_json: value })} />
-                        </div>
-                        <TextAreaField label="Entity assignments JSON" rows={8} value={panelDraft.assignments_json} onChange={(value) => setPanelDraft({ ...panelDraft, assignments_json: value })} />
                         <div className="form-grid three">
-                          <InputField label="SFX" value={panelDraft.sfx_text} onChange={(value) => setPanelDraft({ ...panelDraft, sfx_text: value })} />
-                          <InputField label="Background" value={panelDraft.background_note} onChange={(value) => setPanelDraft({ ...panelDraft, background_note: value })} />
-                          <InputField label="Notes" value={panelDraft.panel_notes} onChange={(value) => setPanelDraft({ ...panelDraft, panel_notes: value })} />
+                          <SelectField
+                            label="Composition source"
+                            value={panelDraft.composition_source}
+                            onChange={(value) =>
+                              setPanelDraft({
+                                ...panelDraft,
+                                composition_source: value as PanelDraft['composition_source'],
+                                composition_gallery_item_id: value === 'gallery' ? panelDraft.composition_gallery_item_id : '',
+                              })
+                            }
+                            options={PANEL_COMPOSITION_SOURCE_OPTIONS}
+                          />
+                          <SelectField
+                            label="Shot"
+                            value={panelDraft.shot_type}
+                            onChange={(value) => setPanelDraft({ ...panelDraft, shot_type: value as PanelDraft['shot_type'] })}
+                            options={PANEL_SHOT_TYPE_OPTIONS}
+                          />
+                          <SelectField
+                            label="Angle"
+                            value={panelDraft.angle}
+                            onChange={(value) => setPanelDraft({ ...panelDraft, angle: value as PanelDraft['angle'] })}
+                            options={PANEL_ANGLE_OPTIONS}
+                          />
                         </div>
+                        <div className="form-grid two">
+                          <InputField label="Background" value={panelDraft.background_note} onChange={(value) => setPanelDraft({ ...panelDraft, background_note: value })} />
+                          <InputField label="SFX" value={panelDraft.sfx_text} onChange={(value) => setPanelDraft({ ...panelDraft, sfx_text: value })} />
+                        </div>
+                        <TextAreaField label="Overall composition note" rows={3} value={panelDraft.composition_prompt} onChange={(value) => setPanelDraft({ ...panelDraft, composition_prompt: value })} />
+                        <TextAreaField label="Extra camera / staging note" rows={3} value={panelDraft.custom_note} onChange={(value) => setPanelDraft({ ...panelDraft, custom_note: value })} />
+                        <InputField label="Notes" value={panelDraft.panel_notes} onChange={(value) => setPanelDraft({ ...panelDraft, panel_notes: value })} />
                         <label className="checkbox-row">
                           <input
                             checked={panelDraft.dialogue_in_panel}
@@ -1634,6 +1702,26 @@ function StudioShell(props: {
                           />
                           Dialogue in panel
                         </label>
+                        <PanelAssignmentEditor
+                          assignments={panelDraft.assignments}
+                          availableEntities={availablePanelEntities}
+                          allEntities={entities}
+                          onAddEntity={(entityId) =>
+                            setPanelDraft((current) => ({
+                              ...current,
+                              assignments: [...current.assignments, createEmptyPanelAssignmentDraft(entityId)],
+                            }))
+                          }
+                          onChange={(assignments) => setPanelDraft({ ...panelDraft, assignments })}
+                          pendingEntityId={panelEntityToAddId}
+                          onPendingEntityIdChange={setPanelEntityToAddId}
+                        />
+                        <PanelDialogueEditor
+                          dialogueInPanel={panelDraft.dialogue_in_panel}
+                          dialogues={panelDraft.dialogues}
+                          entities={entities}
+                          onChange={(dialogues) => setPanelDraft({ ...panelDraft, dialogues })}
+                        />
                         <div className="toolbar">
                           <button
                             className="secondary-button"
@@ -1696,18 +1784,11 @@ function StudioShell(props: {
                               onClick={() =>
                                 setPanelDraft((current) => ({
                                   ...current,
-                                  composition_json: JSON.stringify(
-                                    {
-                                      source: 'gallery',
-                                      gallery_item_id: composition.id,
-                                      composition_prompt: composition.composition_prompt,
-                                      shot_type: composition.shot_type,
-                                      angle: composition.angle,
-                                      custom_note: null,
-                                    },
-                                    null,
-                                    2,
-                                  ),
+                                  composition_source: 'gallery',
+                                  composition_gallery_item_id: composition.id,
+                                  composition_prompt: composition.composition_prompt,
+                                  shot_type: composition.shot_type ?? '',
+                                  angle: composition.angle ?? '',
                                 }))
                               }
                               type="button"
@@ -2030,6 +2111,281 @@ function CharacterStructuredFieldsEditor(props: {
   );
 }
 
+function PanelAssignmentEditor(props: {
+  assignments: PanelAssignmentDraft[];
+  availableEntities: EntityRecord[];
+  allEntities: EntityRecord[];
+  pendingEntityId: string;
+  onPendingEntityIdChange: (value: string) => void;
+  onAddEntity: (entityId: string) => void;
+  onChange: (nextValue: PanelAssignmentDraft[]) => void;
+}) {
+  const updateAssignment = (
+    entityId: string,
+    patch: Partial<PanelAssignmentDraft>,
+  ): void => {
+    props.onChange(
+      props.assignments.map((assignment) =>
+        assignment.entity_id === entityId ? { ...assignment, ...patch } : assignment,
+      ),
+    );
+  };
+
+  const removeAssignment = (entityId: string): void => {
+    props.onChange(props.assignments.filter((assignment) => assignment.entity_id !== entityId));
+  };
+
+  return (
+    <div className="stack">
+      <div className="section-header">
+        <div>
+          <h3>Characters in panel</h3>
+          <div className="muted">Pick who appears first, then refine pose, facing, and effects per character.</div>
+        </div>
+      </div>
+      <div className="toolbar">
+        <label className="field" style={{ minWidth: '16rem' }}>
+          <span>Add character</span>
+          <select
+            value={props.pendingEntityId}
+            onChange={(event) => props.onPendingEntityIdChange(event.target.value)}
+          >
+            {props.availableEntities.length === 0 ? (
+              <option value="">No more entities</option>
+            ) : (
+              props.availableEntities.map((entity) => (
+                <option key={entity.id} value={entity.id}>
+                  {entity.name}
+                </option>
+              ))
+            )}
+          </select>
+        </label>
+        <button
+          className="secondary-button"
+          disabled={props.pendingEntityId.length === 0}
+          onClick={() => props.onAddEntity(props.pendingEntityId)}
+          type="button"
+        >
+          <Save size={16} />
+          Add to panel
+        </button>
+      </div>
+      {props.assignments.length === 0 ? (
+        <div className="muted">No characters assigned yet.</div>
+      ) : (
+        props.assignments.map((assignment) => {
+          const entity = props.allEntities.find((entry) => entry.id === assignment.entity_id);
+
+          return (
+            <div key={assignment.entity_id} className="panel-section compact">
+              <div className="section-header">
+                <div>
+                  <h3>{entity?.name ?? assignment.entity_id}</h3>
+                  <div className="muted">Placement first, then expression, pose, and effect.</div>
+                </div>
+                <button
+                  className="ghost-button danger"
+                  onClick={() => removeAssignment(assignment.entity_id)}
+                  type="button"
+                >
+                  <Trash2 size={16} />
+                </button>
+              </div>
+              <div className="form-grid four">
+                <SelectField
+                  label="Role"
+                  value={assignment.role}
+                  onChange={(value) => updateAssignment(assignment.entity_id, { role: value as PanelAssignmentDraft['role'] })}
+                  options={PANEL_ENTITY_ROLE_OPTIONS}
+                />
+                <SelectField
+                  label="Placement"
+                  value={assignment.position}
+                  onChange={(value) =>
+                    updateAssignment(assignment.entity_id, { position: value as PanelAssignmentDraft['position'] })
+                  }
+                  options={PANEL_ENTITY_POSITION_OPTIONS}
+                />
+                <SelectField
+                  label="Facing"
+                  value={assignment.facing_direction}
+                  onChange={(value) =>
+                    updateAssignment(assignment.entity_id, {
+                      facing_direction: value as PanelAssignmentDraft['facing_direction'],
+                    })
+                  }
+                  options={PANEL_ENTITY_FACING_OPTIONS}
+                />
+                <InputField
+                  label="State override ID"
+                  value={assignment.state_id}
+                  onChange={(value) => updateAssignment(assignment.entity_id, { state_id: value })}
+                />
+              </div>
+              <div className="form-grid three">
+                <SelectField
+                  label="Expression"
+                  value={assignment.expression}
+                  onChange={(value) =>
+                    updateAssignment(assignment.entity_id, {
+                      expression: value as PanelAssignmentDraft['expression'],
+                      custom_expression: value === 'custom' ? assignment.custom_expression : '',
+                    })
+                  }
+                  options={PANEL_ENTITY_EXPRESSION_OPTIONS}
+                />
+                <SelectField
+                  label="Pose"
+                  value={assignment.action}
+                  onChange={(value) =>
+                    updateAssignment(assignment.entity_id, {
+                      action: value as PanelAssignmentDraft['action'],
+                      custom_action: value === 'custom' ? assignment.custom_action : '',
+                    })
+                  }
+                  options={PANEL_ENTITY_POSE_OPTIONS}
+                />
+                <InputField
+                  label="Effect"
+                  value={assignment.effect_note}
+                  onChange={(value) => updateAssignment(assignment.entity_id, { effect_note: value })}
+                />
+              </div>
+              {assignment.expression === 'custom' || assignment.action === 'custom' ? (
+                <div className="form-grid two">
+                  {assignment.expression === 'custom' ? (
+                    <InputField
+                      label="Custom expression"
+                      value={assignment.custom_expression}
+                      onChange={(value) =>
+                        updateAssignment(assignment.entity_id, { custom_expression: value })
+                      }
+                    />
+                  ) : (
+                    <div />
+                  )}
+                  {assignment.action === 'custom' ? (
+                    <InputField
+                      label="Custom pose"
+                      value={assignment.custom_action}
+                      onChange={(value) => updateAssignment(assignment.entity_id, { custom_action: value })}
+                    />
+                  ) : (
+                    <div />
+                  )}
+                </div>
+              ) : null}
+            </div>
+          );
+        })
+      )}
+    </div>
+  );
+}
+
+function PanelDialogueEditor(props: {
+  dialogueInPanel: boolean;
+  dialogues: PanelDialogueDraft[];
+  entities: EntityRecord[];
+  onChange: (nextValue: PanelDialogueDraft[]) => void;
+}) {
+  const updateDialogue = (index: number, patch: Partial<PanelDialogueDraft>): void => {
+    props.onChange(
+      props.dialogues.map((dialogue, currentIndex) =>
+        currentIndex === index ? { ...dialogue, ...patch } : dialogue,
+      ),
+    );
+  };
+
+  const removeDialogue = (index: number): void => {
+    props.onChange(props.dialogues.filter((_, currentIndex) => currentIndex !== index));
+  };
+
+  const addDialogue = (): void => {
+    props.onChange([
+      ...props.dialogues,
+      {
+        entity_id: '',
+        text: '',
+        type: 'speech',
+        position: 'top',
+      },
+    ]);
+  };
+
+  return (
+    <div className="stack">
+      <div className="section-header">
+        <div>
+          <h3>Dialogue</h3>
+          <div className="muted">
+            {props.dialogueInPanel
+              ? 'These lines will be considered inside the generated panel art.'
+              : 'These lines stay outside the generated panel art.'}
+          </div>
+        </div>
+        <button className="ghost-button" onClick={addDialogue} type="button">
+          <Save size={16} />
+          Add line
+        </button>
+      </div>
+      {props.dialogues.length === 0 ? (
+        <div className="muted">No dialogue lines yet.</div>
+      ) : (
+        props.dialogues.map((dialogue, index) => (
+          <div key={`${dialogue.entity_id}-${index}`} className="panel-section compact">
+            <div className="section-header">
+              <div>
+                <h3>Line {index + 1}</h3>
+              </div>
+              <button className="ghost-button danger" onClick={() => removeDialogue(index)} type="button">
+                <Trash2 size={16} />
+              </button>
+            </div>
+            <div className="form-grid three">
+              <label className="field">
+                <span>Speaker</span>
+                <select
+                  value={dialogue.entity_id}
+                  onChange={(event) => updateDialogue(index, { entity_id: event.target.value })}
+                >
+                  <option value="">Narration / none</option>
+                  {props.entities.map((entity) => (
+                    <option key={entity.id} value={entity.id}>
+                      {entity.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <SelectField
+                label="Type"
+                value={dialogue.type}
+                onChange={(value) => updateDialogue(index, { type: value as PanelDialogueDraft['type'] })}
+                options={PANEL_DIALOGUE_TYPE_OPTIONS}
+              />
+              <SelectField
+                label="Placement"
+                value={dialogue.position}
+                onChange={(value) =>
+                  updateDialogue(index, { position: value as PanelDialogueDraft['position'] })
+                }
+                options={PANEL_DIALOGUE_POSITION_OPTIONS}
+              />
+            </div>
+            <TextAreaField
+              label="Line"
+              rows={2}
+              value={dialogue.text}
+              onChange={(value) => updateDialogue(index, { text: value })}
+            />
+          </div>
+        ))
+      )}
+    </div>
+  );
+}
+
 function Metric(props: { label: string; value: string }) {
   return (
     <div className="metric">
@@ -2185,13 +2541,40 @@ function toPanelDraft(panel: PanelRecord): PanelDraft {
     panel_role: panel.panel_role,
     panel_size: panel.panel_size,
     situation_text: panel.situation_text ?? '',
-    composition_json: JSON.stringify(panel.composition, null, 2),
-    dialogue_json: JSON.stringify(panel.dialogue, null, 2),
+    composition_source: panel.composition.source,
+    composition_gallery_item_id: panel.composition.gallery_item_id ?? '',
+    composition_prompt: panel.composition.composition_prompt ?? '',
+    shot_type: panel.composition.shot_type ?? '',
+    angle: panel.composition.angle ?? '',
+    custom_note: panel.composition.custom_note ?? '',
     dialogue_in_panel: panel.dialogue_in_panel,
+    dialogues: panel.dialogue.flatMap((line) =>
+      line.type === 'sfx'
+        ? []
+        : [
+            {
+              entity_id: line.entity_id ?? '',
+              text: line.text,
+              type: line.type,
+              position: line.position,
+            },
+          ],
+    ),
     sfx_text: panel.sfx_text ?? '',
     background_note: panel.background_note ?? '',
     panel_notes: panel.panel_notes ?? '',
-    assignments_json: JSON.stringify(panel.entities, null, 2),
+    assignments: panel.entities.map((assignment) => ({
+      entity_id: assignment.entity_id,
+      role: assignment.role,
+      position: assignment.position,
+      facing_direction: assignment.facing_direction ?? '',
+      expression: assignment.expression,
+      custom_expression: assignment.custom_expression ?? '',
+      action: assignment.action,
+      custom_action: assignment.custom_action ?? '',
+      effect_note: assignment.effect_note ?? '',
+      state_id: assignment.state_id ?? '',
+    })),
   };
 }
 
@@ -2334,8 +2717,21 @@ function toPanelPayload(draft: PanelDraft): Record<string, unknown> {
     panel_role: draft.panel_role,
     panel_size: draft.panel_size,
     situation_text: nullableString(draft.situation_text),
-    composition: parseJson<Record<string, unknown>>(draft.composition_json),
-    dialogue: parseJson<unknown[]>(draft.dialogue_json),
+    composition: {
+      source: draft.composition_source,
+      gallery_item_id:
+        draft.composition_source === 'gallery' ? requiredString(draft.composition_gallery_item_id, 'gallery composition') : null,
+      composition_prompt: nullableString(draft.composition_prompt),
+      shot_type: emptyStringToNull(draft.shot_type),
+      angle: emptyStringToNull(draft.angle),
+      custom_note: nullableString(draft.custom_note),
+    },
+    dialogue: draft.dialogues.map((dialogue) => ({
+      entity_id: dialogue.entity_id.trim().length === 0 ? null : dialogue.entity_id.trim(),
+      text: requiredString(dialogue.text, 'dialogue text'),
+      type: dialogue.type,
+      position: dialogue.position,
+    })),
     dialogue_in_panel: draft.dialogue_in_panel,
     sfx_text: nullableString(draft.sfx_text),
     background_note: nullableString(draft.background_note),
@@ -2345,7 +2741,22 @@ function toPanelPayload(draft: PanelDraft): Record<string, unknown> {
 
 function toPanelAssignmentsPayload(draft: PanelDraft): Record<string, unknown> {
   return {
-    entities: parseJson<unknown[]>(draft.assignments_json),
+    entities: draft.assignments.map((assignment) => ({
+      entity_id: assignment.entity_id,
+      role: assignment.role,
+      expression: assignment.expression,
+      custom_expression:
+        assignment.expression === 'custom'
+          ? requiredString(assignment.custom_expression, 'custom expression')
+          : null,
+      action: assignment.action,
+      custom_action:
+        assignment.action === 'custom' ? requiredString(assignment.custom_action, 'custom pose') : null,
+      position: assignment.position,
+      facing_direction: emptyStringToNull(assignment.facing_direction),
+      effect_note: nullableString(assignment.effect_note),
+      state_id: nullableUuidString(assignment.state_id, 'state override id'),
+    })),
   };
 }
 
@@ -2630,6 +3041,103 @@ const CHARACTER_ART_STYLE_OPTIONS: Array<[string, string]> = [
   ['manga', 'Manga'],
   ['painterly', 'Painterly'],
 ];
+const PANEL_ROLE_OPTIONS: Array<[PanelDraft['panel_role'], string]> = [
+  ['establish', 'Establish'],
+  ['action', 'Action'],
+  ['reaction', 'Reaction'],
+  ['emphasis', 'Emphasis'],
+  ['transition', 'Transition'],
+  ['pause', 'Pause'],
+  ['impact', 'Impact'],
+];
+const PANEL_SIZE_OPTIONS: Array<[PanelDraft['panel_size'], string]> = [
+  ['standard', 'Standard'],
+  ['large', 'Large'],
+  ['wide', 'Wide'],
+  ['narrow', 'Narrow'],
+  ['splash', 'Splash'],
+];
+const PANEL_COMPOSITION_SOURCE_OPTIONS: Array<[PanelDraft['composition_source'], string]> = [
+  ['ai_auto', 'AI auto'],
+  ['gallery', 'Gallery'],
+  ['custom', 'Custom'],
+];
+const PANEL_SHOT_TYPE_OPTIONS: Array<[PanelDraft['shot_type'], string]> = [
+  ['', '-'],
+  ['full_body', 'Full body'],
+  ['half_body', 'Half body'],
+  ['close_up', 'Close up'],
+  ['wide', 'Wide'],
+  ['extreme_close_up', 'Extreme close up'],
+];
+const PANEL_ANGLE_OPTIONS: Array<[PanelDraft['angle'], string]> = [
+  ['', '-'],
+  ['front', 'Front'],
+  ['side', 'Side'],
+  ['three_quarter', 'Three quarter'],
+  ['bird_eye', 'Bird eye'],
+  ['worm_eye', 'Worm eye'],
+  ['dutch_angle', 'Dutch angle'],
+];
+const PANEL_ENTITY_ROLE_OPTIONS: Array<[PanelAssignmentDraft['role'], string]> = [
+  ['primary', 'Primary'],
+  ['secondary', 'Secondary'],
+  ['background', 'Background'],
+];
+const PANEL_ENTITY_POSITION_OPTIONS: Array<[PanelAssignmentDraft['position'], string]> = [
+  ['left', 'Left'],
+  ['center', 'Center'],
+  ['right', 'Right'],
+  ['background', 'Background'],
+];
+const PANEL_ENTITY_FACING_OPTIONS: Array<[PanelAssignmentDraft['facing_direction'], string]> = [
+  ['', '-'],
+  ['front', 'Front'],
+  ['left', 'Left'],
+  ['right', 'Right'],
+  ['away', 'Away'],
+  ['three_quarter_left', '3/4 left'],
+  ['three_quarter_right', '3/4 right'],
+];
+const PANEL_ENTITY_EXPRESSION_OPTIONS: Array<[PanelAssignmentDraft['expression'], string]> = [
+  ['determined', 'Determined'],
+  ['calm', 'Calm'],
+  ['angry', 'Angry'],
+  ['sad', 'Sad'],
+  ['surprised', 'Surprised'],
+  ['custom', 'Custom'],
+];
+const PANEL_ENTITY_POSE_OPTIONS: Array<[PanelAssignmentDraft['action'], string]> = [
+  ['standing_firm', 'Standing firm'],
+  ['attacking', 'Attacking'],
+  ['defending', 'Defending'],
+  ['running', 'Running'],
+  ['custom', 'Custom'],
+];
+const PANEL_DIALOGUE_TYPE_OPTIONS: Array<[PanelDialogueDraft['type'], string]> = [
+  ['speech', 'Speech'],
+  ['thought', 'Thought'],
+  ['narration', 'Narration'],
+  ['shout', 'Shout'],
+  ['whisper', 'Whisper'],
+];
+const PANEL_DIALOGUE_POSITION_OPTIONS: Array<[PanelDialogueDraft['position'], string]> = [
+  ['top', 'Top'],
+  ['bottom', 'Bottom'],
+  ['left', 'Left'],
+  ['right', 'Right'],
+  ['center', 'Center'],
+];
+const FRAME_TEMPLATE_OPTIONS: Array<[string, string]> = [
+  ['standard_4', 'Standard 4'],
+  ['top_wide_3', 'Top wide 3'],
+  ['standard_6', 'Standard 6'],
+  ['dense_8', 'Dense 8'],
+  ['climax_2', 'Climax 2'],
+  ['splash_1', 'Splash 1'],
+  ['action_5', 'Action 5'],
+  ['battle_7', 'Battle 7'],
+];
 
 function createEmptySceneDraft(): SceneDraft {
   return {
@@ -2645,27 +3153,36 @@ function createEmptySceneDraft(): SceneDraft {
 function createEmptyPanelDraft(): PanelDraft {
   return {
     order: '1',
-    panel_role: 'setup',
-    panel_size: 'medium',
+    panel_role: 'action',
+    panel_size: 'standard',
     situation_text: '',
-    composition_json: JSON.stringify(
-      {
-        source: 'ai_auto',
-        gallery_item_id: null,
-        composition_prompt: null,
-        shot_type: null,
-        angle: null,
-        custom_note: null,
-      },
-      null,
-      2,
-    ),
-    dialogue_json: '[]',
+    composition_source: 'ai_auto',
+    composition_gallery_item_id: '',
+    composition_prompt: '',
+    shot_type: '',
+    angle: '',
+    custom_note: '',
     dialogue_in_panel: true,
+    dialogues: [],
     sfx_text: '',
     background_note: '',
     panel_notes: '',
-    assignments_json: '[]',
+    assignments: [],
+  };
+}
+
+function createEmptyPanelAssignmentDraft(entityId: string): PanelAssignmentDraft {
+  return {
+    entity_id: entityId,
+    role: 'primary',
+    position: 'center',
+    facing_direction: '',
+    expression: 'determined',
+    custom_expression: '',
+    action: 'standing_firm',
+    custom_action: '',
+    effect_note: '',
+    state_id: '',
   };
 }
 
@@ -2748,6 +3265,32 @@ function splitLines(value: string): string[] {
 
 function nullableString(value: string): string | null {
   return value.trim().length === 0 ? null : value.trim();
+}
+
+function emptyStringToNull(value: string): string | null {
+  return value.trim().length === 0 ? null : value;
+}
+
+function requiredString(value: string, label: string): string {
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    throw new Error(`${label} is required`);
+  }
+
+  return trimmed;
+}
+
+function nullableUuidString(value: string, label: string): string | null {
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    return null;
+  }
+
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(trimmed)) {
+    throw new Error(`${label} is invalid`);
+  }
+
+  return trimmed;
 }
 
 function toMessage(error: unknown): string {

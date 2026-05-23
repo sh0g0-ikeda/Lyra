@@ -147,6 +147,9 @@ describe('PromptBuilder', () => {
     expect(result.prompt).toContain('Image 1 is the appearance reference for Aki.');
     expect(countOccurrences(result.prompt, 'Image 1 is the appearance reference for Aki.')).toBe(1);
     expect(result.prompt).toContain('navy military uniform');
+    expect(result.prompt).toContain('facing=three_quarter_left');
+    expect(result.prompt).toContain('pose=attacking');
+    expect(result.prompt).toContain('effect=speed lines around the blade');
     expect(result.prompt).toContain("Panel 1 dialogue by Aki: 'I will finish this now.' as speech at top.");
     expect(result.prompt).toContain('anime manga illustration');
   });
@@ -273,6 +276,8 @@ function buildPanel(): Panel {
         action: 'attacking',
         customAction: null,
         position: 'center',
+        facingDirection: 'three_quarter_left',
+        effectNote: 'speed lines around the blade',
         stateId: null,
       },
     ],

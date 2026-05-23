@@ -145,6 +145,8 @@ function toPanelResponse(panel: Panel): Record<string, unknown> {
       action: assignment.action,
       custom_action: assignment.customAction,
       position: assignment.position,
+      facing_direction: assignment.facingDirection,
+      effect_note: assignment.effectNote,
       state_id: assignment.stateId,
     })),
     composition: {

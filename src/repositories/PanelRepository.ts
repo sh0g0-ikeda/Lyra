@@ -18,6 +18,7 @@ import type {
   PanelEntityAction,
   PanelEntityAssignment,
   PanelEntityExpression,
+  PanelEntityFacingDirection,
   PanelEntityPosition,
   PanelEntityRole,
 } from '../domain/types/panelEntityAssignment.js';
@@ -437,6 +438,8 @@ function toPanelEntityAssignments(value: unknown): PanelEntityAssignment[] {
     const action = entry.action;
     const customAction = entry.custom_action;
     const position = entry.position;
+    const facingDirection = entry.facing_direction;
+    const effectNote = entry.effect_note;
     const stateId = entry.state_id;
 
     if (
@@ -447,6 +450,8 @@ function toPanelEntityAssignments(value: unknown): PanelEntityAssignment[] {
       !isPanelEntityAction(action) ||
       (customAction !== null && typeof customAction !== 'string') ||
       !isPanelEntityPosition(position) ||
+      !isNullablePanelEntityFacingDirection(facingDirection) ||
+      (effectNote !== null && typeof effectNote !== 'string') ||
       (stateId !== null && typeof stateId !== 'string')
     ) {
       throw new ValidationError('Stored panel entities payload is invalid');
@@ -460,6 +465,8 @@ function toPanelEntityAssignments(value: unknown): PanelEntityAssignment[] {
       action,
       customAction: customAction ?? null,
       position,
+      facingDirection: facingDirection ?? null,
+      effectNote: effectNote ?? null,
       stateId: stateId ?? null,
     };
   });
@@ -536,4 +543,18 @@ function isPanelEntityAction(value: unknown): value is PanelEntityAction {
 
 function isPanelEntityPosition(value: unknown): value is PanelEntityPosition {
   return value === 'left' || value === 'center' || value === 'right' || value === 'background';
+}
+
+function isNullablePanelEntityFacingDirection(
+  value: unknown,
+): value is PanelEntityFacingDirection | null {
+  return (
+    value === null ||
+    value === 'front' ||
+    value === 'left' ||
+    value === 'right' ||
+    value === 'away' ||
+    value === 'three_quarter_left' ||
+    value === 'three_quarter_right'
+  );
 }

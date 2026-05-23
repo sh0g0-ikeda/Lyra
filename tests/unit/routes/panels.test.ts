@@ -288,6 +288,7 @@ function createTestApp(panelService: PanelServicePort): ReturnType<typeof create
     panelService,
     userProvisioningService: new FakeUserProvisioningService(),
     jwtSecret,
+    enableDevAuthBypass: false,
   });
 }
 
@@ -308,6 +309,8 @@ function buildPanel(overrides: Partial<Panel> = {}): Panel {
         action: 'attacking',
         customAction: null,
         position: 'center',
+        facingDirection: null,
+        effectNote: null,
         stateId: null,
       },
     ],

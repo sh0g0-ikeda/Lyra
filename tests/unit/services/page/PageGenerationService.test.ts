@@ -400,6 +400,8 @@ function buildPanelContext(entityId: string): PageGenerationContext['panels'][nu
         action: 'standing_firm',
         customAction: null,
         position: 'center',
+        facingDirection: null,
+        effectNote: null,
         stateId: null,
       },
     ],

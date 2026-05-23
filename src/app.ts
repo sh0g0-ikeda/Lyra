@@ -159,7 +159,8 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
   const app = new Hono<AppEnv>();
   const authMiddleware = createAuthMiddleware(resolvedDependencies.userProvisioningService, {
     jwtSecret: dependencies.jwtSecret,
-    enableDevBypass: dependencies.enableDevAuthBypass,
+    enableDevBypass:
+      dependencies.enableDevAuthBypass ?? (process.env.NODE_ENV === 'test' ? false : undefined),
     devBypassClaims: dependencies.devAuthBypassClaims,
   });
   const rateLimitMiddleware = createRateLimitMiddleware(resolvedDependencies.rateLimitStore);

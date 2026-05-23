@@ -43,6 +43,8 @@ export function createPanelEntityAssignmentRoutes(
         action: assignment.action,
         customAction: assignment.action === 'custom' ? assignment.custom_action : null,
         position: assignment.position,
+        facingDirection: assignment.facing_direction,
+        effectNote: assignment.effect_note,
         stateId: assignment.state_id,
       })),
     );
@@ -79,6 +81,8 @@ function toPanelEntityAssignmentResponse(assignment: PanelEntityAssignment): Rec
     action: assignment.action,
     custom_action: assignment.customAction,
     position: assignment.position,
+    facing_direction: assignment.facingDirection,
+    effect_note: assignment.effectNote,
     state_id: assignment.stateId,
   };
 }

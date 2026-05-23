@@ -138,5 +138,6 @@ function normalizeAssignment(assignment: PanelEntityAssignment): PanelEntityAssi
     ...assignment,
     customExpression: assignment.expression === 'custom' ? assignment.customExpression : null,
     customAction: assignment.action === 'custom' ? assignment.customAction : null,
+    effectNote: assignment.effectNote?.trim() ?? null,
   };
 }
