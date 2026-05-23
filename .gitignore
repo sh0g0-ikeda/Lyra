@@ -8,3 +8,4 @@ npm-debug.log*
 *.local
 dev-server.*.log
 web-dev.*.log
+api-dev.*.log

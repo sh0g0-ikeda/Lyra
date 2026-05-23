@@ -26,6 +26,9 @@ const envSchema = z.object({
   STRIPE_CHECKOUT_CANCEL_URL: z.string().url().optional(),
   STRIPE_PORTAL_RETURN_URL: z.string().url().optional(),
   SUPABASE_JWT_SECRET: z.string().min(1).optional(),
+  DEV_AUTH_BYPASS: z.string().optional().transform((value) => value === 'true'),
+  DEV_AUTH_BYPASS_SUPABASE_ID: z.string().min(1).optional(),
+  DEV_AUTH_BYPASS_EMAIL: z.string().email().optional(),
 });
 
 export const env = envSchema.parse(process.env);

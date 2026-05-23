@@ -122,6 +122,7 @@ import {
 } from './services/story/StoryCollaborationService.js';
 import { StoryService, type StoryServicePort } from './services/story/StoryService.js';
 import type { AppEnv } from './types/app.js';
+import type { SupabaseJwtClaims } from './domain/types/user.js';
 
 export interface AppDependencies {
   balloonService?: BalloonServicePort;
@@ -149,6 +150,8 @@ export interface AppDependencies {
   userProvisioningService?: UserProvisioningPort;
   rateLimitStore?: RateLimitStore;
   jwtSecret?: string;
+  enableDevAuthBypass?: boolean;
+  devAuthBypassClaims?: SupabaseJwtClaims;
 }
 
 export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
@@ -156,6 +159,8 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
   const app = new Hono<AppEnv>();
   const authMiddleware = createAuthMiddleware(resolvedDependencies.userProvisioningService, {
     jwtSecret: dependencies.jwtSecret,
+    enableDevBypass: dependencies.enableDevAuthBypass,
+    devBypassClaims: dependencies.devAuthBypassClaims,
   });
   const rateLimitMiddleware = createRateLimitMiddleware(resolvedDependencies.rateLimitStore);
 
@@ -266,7 +271,9 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
   return app;
 }
 
-function resolveDependencies(dependencies: AppDependencies): Required<Omit<AppDependencies, 'jwtSecret'>> {
+function resolveDependencies(
+  dependencies: AppDependencies,
+): Required<Omit<AppDependencies, 'jwtSecret' | 'enableDevAuthBypass' | 'devAuthBypassClaims'>> {
   const creditRepository = new PostgresCreditRepository(db, db);
   const creditService = dependencies.creditService ?? new CreditService(creditRepository);
   const generationQueue = resolveGenerationQueue();

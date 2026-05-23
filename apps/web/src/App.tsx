@@ -134,6 +134,13 @@ const selectedChapterStorageKey = 'lyra:web:selected-chapter';
 const selectedEpisodeStorageKey = 'lyra:web:selected-episode';
 const selectedPageStorageKey = 'lyra:web:selected-page';
 const supabase = createSupabaseBrowserClient();
+const devAuthBypassEnabled = import.meta.env.VITE_DEV_AUTH_BYPASS === 'true';
+const devAuthBypassEmail =
+  typeof import.meta.env.VITE_DEV_AUTH_BYPASS_EMAIL === 'string' &&
+  import.meta.env.VITE_DEV_AUTH_BYPASS_EMAIL.length > 0
+    ? import.meta.env.VITE_DEV_AUTH_BYPASS_EMAIL
+    : 'dev@local.lyra';
+const devAuthBypassToken = 'dev-auth-bypass';
 
 export default function App() {
   const [manualToken, setManualToken] = useStoredString(window.sessionStorage, manualTokenStorageKey, '');
@@ -141,6 +148,11 @@ export default function App() {
   const [pendingAuth, setPendingAuth] = useState(true);
 
   useEffect(() => {
+    if (devAuthBypassEnabled) {
+      setPendingAuth(false);
+      return;
+    }
+
     if (supabase === null) {
       setPendingAuth(false);
       return;
@@ -175,16 +187,19 @@ export default function App() {
     );
   }
 
-  const accessToken = supabaseSession?.access_token ?? (manualToken.length > 0 ? manualToken : null);
+  const accessToken = devAuthBypassEnabled
+    ? devAuthBypassToken
+    : supabaseSession?.access_token ?? (manualToken.length > 0 ? manualToken : null);
   if (accessToken === null) {
     return <AuthScreen manualToken={manualToken} onManualTokenChange={setManualToken} supabaseClient={supabase} />;
   }
 
-  const payload = decodeJwtPayload(accessToken);
-  const email =
-    (typeof payload?.email === 'string' ? payload.email : null) ??
-    supabaseSession?.user.email ??
-    'session';
+  const payload = devAuthBypassEnabled ? null : decodeJwtPayload(accessToken);
+  const email = devAuthBypassEnabled
+    ? devAuthBypassEmail
+    : (typeof payload?.email === 'string' ? payload.email : null) ??
+      supabaseSession?.user.email ??
+      'session';
 
   return (
     <StudioShell

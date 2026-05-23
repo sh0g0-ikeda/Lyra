@@ -79,7 +79,7 @@ class FixedRateLimitStore implements RateLimitStore {
 }
 
 describe('operational guards', () => {
-  it('healthz は x-request-id header を返す', async () => {
+  it('returns x-request-id on healthz', async () => {
     const app = createApp();
 
     const response = await app.request('/healthz');
@@ -88,7 +88,7 @@ describe('operational guards', () => {
     expect(response.headers.get('x-request-id')).toBeTruthy();
   });
 
-  it('rate limit 超過時に429と retry-after を返す', async () => {
+  it('returns 429 with retry-after once the rate limit is exceeded', async () => {
     const app = createApp({
       creditService: new FakeCreditService(),
       userProvisioningService: new FakeUserProvisioningService(),
@@ -117,6 +117,22 @@ describe('operational guards', () => {
         message: 'Rate limit exceeded for default. Retry after 60 seconds',
       },
     });
+  });
+
+  it('allows protected routes without Authorization when dev auth bypass is enabled', async () => {
+    const app = createApp({
+      creditService: new FakeCreditService(),
+      userProvisioningService: new FakeUserProvisioningService(),
+      enableDevAuthBypass: true,
+      devAuthBypassClaims: {
+        sub: user.supabaseId,
+        email: user.email,
+      },
+    });
+
+    const response = await app.request('/api/billing/balance');
+
+    expect(response.status).toBe(200);
   });
 });
 
