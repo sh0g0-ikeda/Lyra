@@ -1,4 +1,4 @@
-import { Hono } from 'hono';
+import { Hono, type MiddlewareHandler } from 'hono';
 import { ConfigurationError } from './domain/errors/index.js';
 import { createPageImageStorageClient } from './infrastructure/aws/S3PageImageStorage.js';
 import { S3FinalPageImageStorage, type FinalPageImageStoragePort } from './infrastructure/aws/S3FinalPageImageStorage.js';
@@ -18,7 +18,11 @@ import {
   OpenAIEntityImportAnalyzer,
   type EntityImportAnalyzerPort,
 } from './infrastructure/openai/OpenAIEntityImportAnalyzer.js';
+import { OpenAIPageAutofillCompiler } from './infrastructure/openai/OpenAIPageAutofillCompiler.js';
+import { OpenAIPageEpisodePlanCompiler } from './infrastructure/openai/OpenAIPageEpisodePlanCompiler.js';
 import { OpenAIClient } from './infrastructure/openai/OpenAIClient.js';
+import { OpenAIStyleReferenceCompiler } from './infrastructure/openai/OpenAIStyleReferenceCompiler.js';
+import { OpenAIStoryEpisodeImprovementPlanner } from './infrastructure/openai/OpenAIStoryEpisodeImprovementPlanner.js';
 import {
   StripeBillingClient,
   type StripeBillingClientPort,
@@ -104,6 +108,14 @@ import {
   type PageFinalizeServicePort,
 } from './services/page/PageFinalizeService.js';
 import {
+  PageExportService,
+  type PageExportServicePort,
+} from './services/page/PageExportService.js';
+import { PageService, type PageServicePort } from './services/page/PageService.js';
+import type { PageAutofillCompilerPort } from './services/page/PageAutofillCompiler.js';
+import type { EpisodePagePlanCompilerPort } from './services/page/EpisodePagePlanCompiler.js';
+import type { StyleReferenceCompilerPort } from './services/style/StyleReferenceCompiler.js';
+import {
   SharpPageBalloonComposer,
   type PageBalloonComposerPort,
 } from './services/page/PageBalloonComposer.js';
@@ -127,6 +139,7 @@ import {
   StoryCollaborationService,
   type StoryCollaborationServicePort,
 } from './services/story/StoryCollaborationService.js';
+import type { StoryEpisodeImprovementPlannerPort } from './services/story/StoryEpisodeImprovementPlanner.js';
 import { StoryService, type StoryServicePort } from './services/story/StoryService.js';
 import type { AppEnv } from './types/app.js';
 import type { SupabaseJwtClaims } from './domain/types/user.js';
@@ -142,7 +155,9 @@ export interface AppDependencies {
   entityReferenceService?: EntityReferenceServicePort;
   entityGenerationQueue?: EntityGenerationQueuePort;
   jobService?: JobServicePort;
+  pageExportService?: PageExportServicePort;
   pageFinalizeService?: PageFinalizeServicePort;
+  pageService?: PageServicePort;
   pageQueryService?: PageQueryServicePort;
   pageSkeletonService?: PageSkeletonServicePort;
   pageGenerationQueue?: PageGenerationQueuePort;
@@ -152,6 +167,7 @@ export interface AppDependencies {
   panelFrameService?: PanelFrameServicePort;
   sceneService?: SceneServicePort;
   storyAiClient?: StoryAiClientPort;
+  storyEpisodeImprovementPlanner?: StoryEpisodeImprovementPlannerPort;
   storyCollaborationService?: StoryCollaborationServicePort;
   stripeWebhookService?: StripeWebhookServicePort;
   storyService?: StoryServicePort;
@@ -166,13 +182,18 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
   const resolvedDependencies = resolveDependencies(dependencies);
   const app = new Hono<AppEnv>();
   const localAssetConfig = resolveConfiguredLocalAssetConfig();
+  const enableDevAuthBypass =
+    dependencies.enableDevAuthBypass ?? (process.env.NODE_ENV === 'test' ? false : env.DEV_AUTH_BYPASS);
   const authMiddleware = createAuthMiddleware(resolvedDependencies.userProvisioningService, {
     jwtSecret: dependencies.jwtSecret,
-    enableDevBypass:
-      dependencies.enableDevAuthBypass ?? (process.env.NODE_ENV === 'test' ? false : undefined),
+    enableDevBypass: enableDevAuthBypass,
     devBypassClaims: dependencies.devAuthBypassClaims,
   });
-  const rateLimitMiddleware = createRateLimitMiddleware(resolvedDependencies.rateLimitStore);
+  const rateLimitMiddleware: MiddlewareHandler<AppEnv> = enableDevAuthBypass
+    ? (async (_c, next) => {
+        await next();
+      })
+    : createRateLimitMiddleware(resolvedDependencies.rateLimitStore);
 
   app.onError(errorHandler);
   app.use('*', createRequestContextMiddleware());
@@ -233,7 +254,9 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
     createPageRoutes({
       authMiddleware,
       rateLimitMiddleware,
+      pageExportService: resolvedDependencies.pageExportService,
       pageFinalizeService: resolvedDependencies.pageFinalizeService,
+      pageService: resolvedDependencies.pageService,
       pageQueryService: resolvedDependencies.pageQueryService,
       pageGenerationService: resolvedDependencies.pageGenerationService,
     }),
@@ -244,6 +267,7 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
       authMiddleware,
       rateLimitMiddleware,
       pageSkeletonService: resolvedDependencies.pageSkeletonService,
+      pageService: resolvedDependencies.pageService,
       storyCollaborationService: resolvedDependencies.storyCollaborationService,
       storyService: resolvedDependencies.storyService,
     }),
@@ -286,7 +310,12 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
 
 function resolveDependencies(
   dependencies: AppDependencies,
-): Required<Omit<AppDependencies, 'jwtSecret' | 'enableDevAuthBypass' | 'devAuthBypassClaims'>> {
+): Omit<
+  Required<Omit<AppDependencies, 'jwtSecret' | 'enableDevAuthBypass' | 'devAuthBypassClaims'>>,
+  'storyEpisodeImprovementPlanner'
+> & {
+  storyEpisodeImprovementPlanner?: StoryEpisodeImprovementPlannerPort;
+} {
   const creditRepository = new PostgresCreditRepository(db, db);
   const creditService = dependencies.creditService ?? new CreditService(creditRepository);
   const localAssetConfig = resolveConfiguredLocalAssetConfig();
@@ -326,7 +355,7 @@ function resolveDependencies(
   const storyAiClient = dependencies.storyAiClient ?? resolveStoryAiClient();
   const entityService =
     dependencies.entityService ??
-    new EntityService(entityRepository, new PostgresWorkRepository(db));
+    new EntityService(entityRepository, new PostgresWorkRepository(db), resolveStyleReferenceCompiler());
   const entityReferenceService =
     dependencies.entityReferenceService ??
     new EntityReferenceService(
@@ -347,6 +376,7 @@ function resolveDependencies(
     dependencies.pageGenerationService ??
     new PageGenerationService(
       pageRepository,
+      entityRepository,
       generationJobRepository,
       creditService,
       pageGenerationQueue,
@@ -361,12 +391,34 @@ function resolveDependencies(
       resolvePageBalloonComposer(),
       resolveFinalPageImageStorage(),
     );
+  const pageExportService =
+    dependencies.pageExportService ??
+    new PageExportService(pageRepository, resolveStoredPageImageLoader());
   const pageQueryService =
     dependencies.pageQueryService ?? new PageQueryService(pageRepository, new PostgresStoryRepository(db));
+  const panelEntityAssignmentService =
+    dependencies.panelEntityAssignmentService ??
+    new PanelEntityAssignmentService(new PostgresPanelEntityAssignmentRepository(db));
+  const storyEpisodeImprovementPlanner =
+    dependencies.storyEpisodeImprovementPlanner ?? resolveStoryEpisodeImprovementPlanner();
+  const pageService =
+    dependencies.pageService ??
+    new PageService(
+      pageRepository,
+      panelRepository,
+      panelEntityAssignmentService,
+      resolvePageAutofillCompiler(),
+      resolveEpisodePagePlanCompiler(),
+      resolveStyleReferenceCompiler(),
+    );
   const jobService = dependencies.jobService ?? new JobService(generationJobRepository);
   const storyCollaborationService =
     dependencies.storyCollaborationService ??
-    new StoryCollaborationService(new PostgresStoryRepository(db), storyAiClient);
+    new StoryCollaborationService(
+      new PostgresStoryRepository(db),
+      storyAiClient,
+      storyEpisodeImprovementPlanner,
+    );
   const pageSkeletonService =
     dependencies.pageSkeletonService ??
     new PageSkeletonService(new PostgresStoryRepository(db, db), storyAiClient);
@@ -374,9 +426,6 @@ function resolveDependencies(
     dependencies.storyService ?? new StoryService(new PostgresStoryRepository(db), entityRepository);
   const panelService =
     dependencies.panelService ?? new PanelService(panelRepository, entityRepository);
-  const panelEntityAssignmentService =
-    dependencies.panelEntityAssignmentService ??
-    new PanelEntityAssignmentService(new PostgresPanelEntityAssignmentRepository(db));
   const panelFrameService =
     dependencies.panelFrameService ?? new PanelFrameService(panelFrameRepository);
   const sceneService =
@@ -396,7 +445,9 @@ function resolveDependencies(
     entityReferenceService,
     entityGenerationQueue,
     jobService,
+    pageExportService,
     pageFinalizeService,
+    pageService,
     pageQueryService,
     pageSkeletonService,
     pageGenerationQueue,
@@ -406,6 +457,7 @@ function resolveDependencies(
     panelFrameService,
     sceneService,
     storyAiClient,
+    storyEpisodeImprovementPlanner,
     storyCollaborationService,
     stripeWebhookService,
     storyService,
@@ -498,6 +550,45 @@ function resolveEntityImportAnalyzer(): EntityImportAnalyzerPort {
   return new OpenAIEntityImportAnalyzer(client);
 }
 
+function resolvePageAutofillCompiler(): PageAutofillCompilerPort {
+  const client = buildOpenAIClient();
+  if (client === null) {
+    return {
+      async compileSuggestions(): Promise<never> {
+        throw new ConfigurationError('OpenAI page autofill compiler is not configured');
+      },
+    };
+  }
+
+  return new OpenAIPageAutofillCompiler(client);
+}
+
+function resolveEpisodePagePlanCompiler(): EpisodePagePlanCompilerPort {
+  const client = buildOpenAIClient();
+  if (client === null) {
+    return {
+      async compilePlan(): Promise<never> {
+        throw new ConfigurationError('OpenAI episode page plan compiler is not configured');
+      },
+    };
+  }
+
+  return new OpenAIPageEpisodePlanCompiler(client);
+}
+
+function resolveStyleReferenceCompiler(): StyleReferenceCompilerPort | undefined {
+  if (!env.ENTERPRISE_STYLE_REFERENCES_ENABLED) {
+    return undefined;
+  }
+
+  const client = buildOpenAIClient();
+  if (client === null) {
+    return undefined;
+  }
+
+  return new OpenAIStyleReferenceCompiler(client);
+}
+
 function resolveConfiguredLocalAssetConfig(): LocalAssetConfig | null {
   return resolveLocalAssetConfig(env.LOCAL_FILE_STORAGE_DIR, env.LOCAL_ASSET_BASE_URL, env.PORT);
 }
@@ -527,6 +618,15 @@ function resolveStoryAiClient(): StoryAiClientPort {
       timeoutMs: env.ANTHROPIC_TIMEOUT_MS,
     }),
   );
+}
+
+function resolveStoryEpisodeImprovementPlanner(): StoryEpisodeImprovementPlannerPort | undefined {
+  const client = buildOpenAIClient();
+  if (client === null) {
+    return undefined;
+  }
+
+  return new OpenAIStoryEpisodeImprovementPlanner(client);
 }
 
 class StripeBillingClientStub {
@@ -637,6 +737,10 @@ class StoryAiClientStub {
   }
 
   public async generatePageSkeleton(): Promise<never> {
+    throw new ConfigurationError('Anthropic story AI is not configured');
+  }
+
+  public async improveEpisodeDraft(): Promise<never> {
     throw new ConfigurationError('Anthropic story AI is not configured');
   }
 }

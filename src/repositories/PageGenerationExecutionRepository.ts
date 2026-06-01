@@ -3,6 +3,7 @@ import type { PageStatus } from '../domain/types/page.js';
 import type { GenerationJob } from '../domain/types/job.js';
 import type { PageGenerationMode } from '../domain/types/pageGeneration.js';
 import type { DatabaseClient, TransactionRunner } from '../lib/db.js';
+import type { PagePromptCompilationMetadata } from '../services/page/PageGenerationWorkerService.js';
 
 export interface CompletePageGenerationInput {
   jobId: string;
@@ -15,6 +16,7 @@ export interface CompletePageGenerationInput {
   generatedAt: string;
   costUsd: number | null;
   openaiRequestId: string | null;
+  promptMetadata: PagePromptCompilationMetadata;
 }
 
 export interface FailPageGenerationInput {
@@ -82,12 +84,12 @@ export class PostgresPageGenerationExecutionRepository implements PageGeneration
         `
         UPDATE pages
         SET generated_image = jsonb_build_object(
-              's3_key', $3,
-              'cdn_url', $4,
-              'generation_mode', $5,
-              'generated_at', $6
+              's3_key', $3::text,
+              'cdn_url', $4::text,
+              'generation_mode', $5::text,
+              'generated_at', $6::text
             ),
-            generation_mode = $5,
+            generation_mode = $5::text,
             status = 'generated',
             updated_at = NOW()
         FROM episodes
@@ -117,7 +119,7 @@ export class PostgresPageGenerationExecutionRepository implements PageGeneration
         UPDATE generation_jobs
         SET status = 'completed',
             result = $3::jsonb,
-            openai_request_id = $4,
+            openai_request_id = $4::text,
             completed_at = NOW()
         WHERE id = $1
           AND user_id = $2
@@ -133,6 +135,14 @@ export class PostgresPageGenerationExecutionRepository implements PageGeneration
             generation_mode: input.generationMode,
             request_kind: input.requestKind,
             cost_usd: input.costUsd,
+            draft_prompt: input.promptMetadata.draftPrompt,
+            compiled_brief: input.promptMetadata.compilerBrief,
+            compiled_prompt: input.promptMetadata.compiledPrompt,
+            compiled_prompt_used: input.promptMetadata.compiledPromptUsed,
+            prompt_compiler_provider: input.promptMetadata.promptCompilerProvider,
+            compiler_model: input.promptMetadata.compilerModel,
+            compiler_prompt_version: input.promptMetadata.compilerPromptVersion,
+            compiler_error: input.promptMetadata.compilerError,
           }),
           input.openaiRequestId,
         ],
@@ -174,8 +184,8 @@ export class PostgresPageGenerationExecutionRepository implements PageGeneration
         await transactionClient.query<PageUpdateRow>(
           `
           UPDATE pages
-          SET status = $3,
-              generation_mode = $4,
+          SET status = $3::text,
+              generation_mode = $4::text,
               updated_at = NOW()
           FROM episodes
           INNER JOIN chapters ON chapters.id = episodes.chapter_id

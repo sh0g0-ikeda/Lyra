@@ -25,16 +25,15 @@ export interface EntityReferenceGeneratorPort {
 }
 
 interface OpenAIImageGenerationResponse {
-  output?: Array<{
-    type?: unknown;
-    result?: unknown;
+  data?: Array<{
+    b64_json?: unknown;
   }>;
 }
 
 export class OpenAIEntityReferenceGenerator implements EntityReferenceGeneratorPort {
   public constructor(
     private readonly client: OpenAIClient,
-    private readonly model = ENTITY_REFERENCE_GENERATION.MODEL,
+    private readonly model: string = ENTITY_REFERENCE_GENERATION.MODEL,
   ) {}
 
   public async generateCandidates(input: GenerateEntityReferenceCandidatesInput): Promise<{
@@ -44,41 +43,34 @@ export class OpenAIEntityReferenceGenerator implements EntityReferenceGeneratorP
   }> {
     const candidates: GeneratedEntityReferenceCandidate[] = [];
     let firstRequestId: string | null = null;
+    const prompt = `${input.prompt}\n\nReturn a single PNG character reference image.`;
 
     for (let index = 0; index < ENTITY_REFERENCE_GENERATION.CANDIDATE_COUNT; index += 1) {
-      const response = await this.client.postJson<OpenAIImageGenerationResponse>('/responses', {
-        model: this.model,
-        input: [
-          {
-            role: 'user',
-            content: [
-              ...input.inputImages.map((image) => ({
-                type: 'input_image',
-                image_url: image.dataUrl,
-              })),
-              {
-                type: 'input_text',
-                text: `${input.prompt}\n\nVariant ${index + 1} of ${ENTITY_REFERENCE_GENERATION.CANDIDATE_COUNT}.`,
-              },
-            ],
-          },
-        ],
-        tools: [
-          {
-            type: 'image_generation',
-            quality: ENTITY_REFERENCE_GENERATION.QUALITY,
+      const variantPrompt = ENTITY_REFERENCE_GENERATION.CANDIDATE_COUNT === 1
+        ? prompt
+        : `${prompt}\n\nVariant ${index + 1} of ${ENTITY_REFERENCE_GENERATION.CANDIDATE_COUNT}.`;
+      const response = input.inputImages.length === 0
+        ? await this.client.postJson<OpenAIImageGenerationResponse>('/images/generations', {
+            model: this.model,
+            prompt: variantPrompt,
             size: ENTITY_REFERENCE_GENERATION.SIZE,
-          },
-        ],
-      });
+            quality: ENTITY_REFERENCE_GENERATION.QUALITY,
+          })
+        : await this.client.postFormData<OpenAIImageGenerationResponse>('/images/edits', () =>
+            buildImageEditFormData({
+              model: this.model,
+              prompt: variantPrompt,
+              size: ENTITY_REFERENCE_GENERATION.SIZE,
+              quality: ENTITY_REFERENCE_GENERATION.QUALITY,
+              inputImages: input.inputImages,
+            }),
+          );
 
       if (firstRequestId === null) {
         firstRequestId = response.requestId;
       }
 
-      const base64Image = response.body.output?.find(
-        (entry) => entry.type === 'image_generation_call',
-      )?.result;
+      const base64Image = response.body.data?.[0]?.b64_json;
       if (typeof base64Image !== 'string' || base64Image.length === 0) {
         throw new ConfigurationError('Entity reference generator returned no image data');
       }
@@ -95,4 +87,35 @@ export class OpenAIEntityReferenceGenerator implements EntityReferenceGeneratorP
       costUsd: null,
     };
   }
+}
+
+function buildImageEditFormData(input: {
+  model: string;
+  prompt: string;
+  size: string;
+  quality: string;
+  inputImages: GenerateEntityReferenceCandidatesInput['inputImages'];
+}): FormData {
+  const formData = new FormData();
+  formData.append('model', input.model);
+  formData.append('prompt', input.prompt);
+  formData.append('size', input.size);
+  formData.append('quality', input.quality);
+
+  for (const image of input.inputImages) {
+    formData.append('image[]', dataUrlToBlob(image.dataUrl), 'reference.png');
+  }
+
+  return formData;
+}
+
+function dataUrlToBlob(dataUrl: string): Blob {
+  const match = /^data:(?<mimeType>[-\w.+/]+);base64,(?<base64>[A-Za-z0-9+/=]+)$/u.exec(dataUrl);
+  if (match?.groups?.mimeType === undefined || match.groups.base64 === undefined) {
+    throw new ConfigurationError('Entity reference generator received an invalid image input');
+  }
+
+  return new Blob([Buffer.from(match.groups.base64, 'base64')], {
+    type: match.groups.mimeType,
+  });
 }

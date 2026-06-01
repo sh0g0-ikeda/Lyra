@@ -1,4 +1,5 @@
 import type { QueryResultRow } from 'pg';
+import { buildPanelFrameTemplateInputs } from '../domain/constants/panelFrameTemplates.js';
 import type {
   Chapter,
   CreateChapterInput,
@@ -15,6 +16,7 @@ import type {
   EpisodePageSkeletonContext,
   PageSkeletonPageDraft,
   PageSkeletonPersistResult,
+  StoryEpisodeImprovementContext,
   StoryCollaborationLayer,
   StoryCollaborationTarget,
   StoryEntitySummary,
@@ -22,6 +24,7 @@ import type {
 import { ConflictError, ValidationError } from '../domain/errors/index.js';
 import type { DatabaseClient, TransactionRunner } from '../lib/db.js';
 import { isUniqueViolation } from '../lib/dbErrors.js';
+import { normalizeNullableText, normalizePossiblyMojibake } from '../lib/textEncoding.js';
 
 export type {
   Chapter,
@@ -59,10 +62,15 @@ export interface StoryRepository {
     episodeId: string,
     userId: string,
   ): Promise<EpisodePageSkeletonContext | null>;
+  findEpisodeImprovementContextByIdAndUserId(
+    episodeId: string,
+    userId: string,
+  ): Promise<StoryEpisodeImprovementContext | null>;
   createPageSkeleton(
     episodeId: string,
     userId: string,
     pages: PageSkeletonPageDraft[],
+    options?: { overwriteExisting?: boolean },
   ): Promise<PageSkeletonPersistResult | null>;
 }
 
@@ -156,6 +164,33 @@ interface EpisodeSkeletonContextRow extends QueryResultRow {
   scene_summaries: unknown;
 }
 
+interface EpisodeImprovementContextRow extends QueryResultRow {
+  episode_id: string;
+  chapter_id: string;
+  work_id: string;
+  work_title: string;
+  work_genre: string | null;
+  world_setting: string | null;
+  theme: string | null;
+  overall_flow: string | null;
+  chapter_title: string | null;
+  chapter_purpose: string | null;
+  chapter_starting_state: string | null;
+  chapter_ending_state: string | null;
+  chapter_emotion_curve: string | null;
+  episode_title: string | null;
+  episode_purpose: string | null;
+  introduction: string | null;
+  middle: string | null;
+  climax: string | null;
+  ending_hook: string | null;
+  estimated_pages: number;
+  entities: unknown;
+  scene_summaries: unknown;
+  chapter_summaries: unknown;
+  sibling_episode_summaries: unknown;
+}
+
 interface IdRow extends QueryResultRow {
   id: string;
 }
@@ -164,6 +199,7 @@ interface SkeletonLockRow extends QueryResultRow {
   id: string;
   page_skeleton_generated: boolean;
   existing_page_count: number;
+  protected_page_count: number;
 }
 
 export class PostgresStoryRepository implements StoryRepository {
@@ -205,14 +241,14 @@ export class PostgresStoryRepository implements StoryRepository {
       `,
       [
         userId,
-        input.title,
-        input.genre,
-        input.worldSetting,
-        input.theme,
+        normalizePossiblyMojibake(input.title),
+        normalizeNullableText(input.genre),
+        normalizeNullableText(input.worldSetting),
+        normalizeNullableText(input.theme),
         input.mainEntityIds,
-        input.startingPoint,
-        input.endingPoint,
-        input.overallFlow,
+        normalizeNullableText(input.startingPoint),
+        normalizeNullableText(input.endingPoint),
+        normalizeNullableText(input.overallFlow),
       ],
     );
 
@@ -280,21 +316,21 @@ export class PostgresStoryRepository implements StoryRepository {
       [
         id,
         userId,
-        input.title ?? null,
+        normalizeNullableText(input.title ?? null),
         input.genre !== undefined,
-        input.genre ?? null,
+        normalizeNullableText(input.genre ?? null),
         input.worldSetting !== undefined,
-        input.worldSetting ?? null,
+        normalizeNullableText(input.worldSetting ?? null),
         input.theme !== undefined,
-        input.theme ?? null,
+        normalizeNullableText(input.theme ?? null),
         input.mainEntityIds !== undefined,
         input.mainEntityIds ?? [],
         input.startingPoint !== undefined,
-        input.startingPoint ?? null,
+        normalizeNullableText(input.startingPoint ?? null),
         input.endingPoint !== undefined,
-        input.endingPoint ?? null,
+        normalizeNullableText(input.endingPoint ?? null),
         input.overallFlow !== undefined,
-        input.overallFlow ?? null,
+        normalizeNullableText(input.overallFlow ?? null),
         input.status ?? null,
       ],
     );
@@ -323,11 +359,11 @@ export class PostgresStoryRepository implements StoryRepository {
         [
           workId,
           input.order,
-          input.title,
-          input.purpose,
-          input.startingState,
-          input.endingState,
-          input.emotionCurve,
+          normalizeNullableText(input.title),
+          normalizeNullableText(input.purpose),
+          normalizeNullableText(input.startingState),
+          normalizeNullableText(input.endingState),
+          normalizeNullableText(input.emotionCurve),
           input.entitiesInvolved,
           input.keyBeats,
         ],
@@ -422,15 +458,15 @@ export class PostgresStoryRepository implements StoryRepository {
           userId,
           input.order ?? null,
           input.title !== undefined,
-          input.title ?? null,
+          normalizeNullableText(input.title ?? null),
           input.purpose !== undefined,
-          input.purpose ?? null,
+          normalizeNullableText(input.purpose ?? null),
           input.startingState !== undefined,
-          input.startingState ?? null,
+          normalizeNullableText(input.startingState ?? null),
           input.endingState !== undefined,
-          input.endingState ?? null,
+          normalizeNullableText(input.endingState ?? null),
           input.emotionCurve !== undefined,
-          input.emotionCurve ?? null,
+          normalizeNullableText(input.emotionCurve ?? null),
           input.entitiesInvolved !== undefined,
           input.entitiesInvolved ?? [],
           input.keyBeats !== undefined,
@@ -482,12 +518,12 @@ export class PostgresStoryRepository implements StoryRepository {
         [
           chapterId,
           input.order,
-          input.title,
-          input.purpose,
-          input.introduction,
-          input.middle,
-          input.climax,
-          input.endingHook,
+          normalizeNullableText(input.title),
+          normalizeNullableText(input.purpose),
+          normalizeNullableText(input.introduction),
+          normalizeNullableText(input.middle),
+          normalizeNullableText(input.climax),
+          normalizeNullableText(input.endingHook),
           input.estimatedPages,
           input.entitiesInvolved,
         ],
@@ -587,17 +623,17 @@ export class PostgresStoryRepository implements StoryRepository {
           userId,
           input.order ?? null,
           input.title !== undefined,
-          input.title ?? null,
+          normalizeNullableText(input.title ?? null),
           input.purpose !== undefined,
-          input.purpose ?? null,
+          normalizeNullableText(input.purpose ?? null),
           input.introduction !== undefined,
-          input.introduction ?? null,
+          normalizeNullableText(input.introduction ?? null),
           input.middle !== undefined,
-          input.middle ?? null,
+          normalizeNullableText(input.middle ?? null),
           input.climax !== undefined,
-          input.climax ?? null,
+          normalizeNullableText(input.climax ?? null),
           input.endingHook !== undefined,
-          input.endingHook ?? null,
+          normalizeNullableText(input.endingHook ?? null),
           input.estimatedPages ?? null,
           input.entitiesInvolved !== undefined,
           input.entitiesInvolved ?? [],
@@ -799,9 +835,9 @@ export class PostgresStoryRepository implements StoryRepository {
           layer,
           targetId,
           workId: row.work_id,
-          workTitle: row.work_title,
-          chapterTitle: row.chapter_title,
-          episodeTitle: row.episode_title,
+          workTitle: normalizePossiblyMojibake(row.work_title),
+          chapterTitle: normalizeNullableText(row.chapter_title),
+          episodeTitle: normalizeNullableText(row.episode_title),
           payload: toCollaborationPayload(row.payload),
           entities: toStoryEntitySummaries(row.entities),
           sceneSummaries: toStringArray(row.scene_summaries),
@@ -898,18 +934,18 @@ export class PostgresStoryRepository implements StoryRepository {
           episodeId: row.episode_id,
           chapterId: row.chapter_id,
           workId: row.work_id,
-          workTitle: row.work_title,
-          workGenre: row.work_genre,
-          worldSetting: row.world_setting,
-          theme: row.theme,
-          chapterTitle: row.chapter_title,
-          chapterPurpose: row.chapter_purpose,
-          episodeTitle: row.episode_title,
-          episodePurpose: row.episode_purpose,
-          introduction: row.introduction,
-          middle: row.middle,
-          climax: row.climax,
-          endingHook: row.ending_hook,
+          workTitle: normalizePossiblyMojibake(row.work_title),
+          workGenre: normalizeNullableText(row.work_genre),
+          worldSetting: normalizeNullableText(row.world_setting),
+          theme: normalizeNullableText(row.theme),
+          chapterTitle: normalizeNullableText(row.chapter_title),
+          chapterPurpose: normalizeNullableText(row.chapter_purpose),
+          episodeTitle: normalizeNullableText(row.episode_title),
+          episodePurpose: normalizeNullableText(row.episode_purpose),
+          introduction: normalizeNullableText(row.introduction),
+          middle: normalizeNullableText(row.middle),
+          climax: normalizeNullableText(row.climax),
+          endingHook: normalizeNullableText(row.ending_hook),
           estimatedPages: row.estimated_pages,
           entitiesInvolved: row.entities_involved,
           pageSkeletonGenerated: row.page_skeleton_generated,
@@ -919,11 +955,180 @@ export class PostgresStoryRepository implements StoryRepository {
         };
   }
 
+  public async findEpisodeImprovementContextByIdAndUserId(
+    episodeId: string,
+    userId: string,
+  ): Promise<StoryEpisodeImprovementContext | null> {
+    const result = await this.client.query<EpisodeImprovementContextRow>(
+      `
+      SELECT episodes.id AS episode_id,
+             episodes.chapter_id,
+             works.id AS work_id,
+             works.title AS work_title,
+             works.genre AS work_genre,
+             works.world_setting,
+             works.theme,
+             works.overall_flow,
+             chapters.title AS chapter_title,
+             chapters.purpose AS chapter_purpose,
+             chapters.starting_state AS chapter_starting_state,
+             chapters.ending_state AS chapter_ending_state,
+             chapters.emotion_curve AS chapter_emotion_curve,
+             episodes.title AS episode_title,
+             episodes.purpose AS episode_purpose,
+             episodes.introduction,
+             episodes.middle,
+             episodes.climax,
+             episodes.ending_hook,
+             episodes.estimated_pages,
+             (
+               SELECT COALESCE(
+                 jsonb_agg(
+                   jsonb_build_object(
+                     'id', entities.id,
+                     'name', entities.name,
+                     'entity_type', entities.entity_type,
+                     'free_description', entities.free_description
+                   )
+                   ORDER BY entities.name ASC
+                 ),
+                 '[]'::jsonb
+               )
+               FROM entities
+               WHERE entities.id = ANY(episodes.entities_involved)
+                 AND entities.work_id = works.id
+                 AND entities.user_id = works.user_id
+             ) AS entities,
+             (
+               SELECT COALESCE(
+                 jsonb_agg(
+                   trim(
+                     both ' '
+                     FROM concat(
+                       'Scene ',
+                       scenes."order",
+                       ': ',
+                       COALESCE(scenes.location, 'unknown location'),
+                       CASE
+                         WHEN scenes."time" IS NULL THEN ''
+                         ELSE concat(' / ', scenes."time")
+                       END,
+                       CASE
+                         WHEN scenes.atmosphere IS NULL THEN ''
+                         ELSE concat(' / ', scenes.atmosphere)
+                       END
+                     )
+                   )
+                   ORDER BY scenes."order" ASC
+                 ),
+                 '[]'::jsonb
+               )
+               FROM scenes
+               WHERE scenes.episode_id = episodes.id
+             ) AS scene_summaries,
+             (
+               SELECT COALESCE(
+                 jsonb_agg(summary_row.summary ORDER BY summary_row.sort_order),
+                 '[]'::jsonb
+               )
+               FROM (
+                 SELECT concat(
+                          'Chapter ',
+                          sibling_chapters."order",
+                          ': ',
+                          COALESCE(sibling_chapters.title, 'untitled'),
+                          CASE
+                            WHEN sibling_chapters.purpose IS NULL THEN ''
+                            ELSE concat(' / ', sibling_chapters.purpose)
+                          END
+                        ) AS summary,
+                        sibling_chapters."order" AS sort_order
+                 FROM chapters AS sibling_chapters
+                 WHERE sibling_chapters.work_id = works.id
+                   AND sibling_chapters.id <> chapters.id
+                 ORDER BY sibling_chapters."order" ASC
+                 LIMIT 12
+               ) AS summary_row
+             ) AS chapter_summaries,
+             (
+               SELECT COALESCE(
+                 jsonb_agg(summary_row.summary ORDER BY summary_row.chapter_order, summary_row.episode_order),
+                 '[]'::jsonb
+               )
+               FROM (
+                 SELECT concat(
+                          'Chapter ',
+                          sibling_chapters."order",
+                          ' Episode ',
+                          sibling_episodes."order",
+                          ': ',
+                          COALESCE(sibling_episodes.title, 'untitled'),
+                          CASE
+                            WHEN sibling_episodes.purpose IS NULL THEN ''
+                            ELSE concat(' / ', sibling_episodes.purpose)
+                          END,
+                          CASE
+                            WHEN sibling_episodes.ending_hook IS NULL THEN ''
+                            ELSE concat(' / hook: ', sibling_episodes.ending_hook)
+                          END
+                        ) AS summary,
+                        sibling_chapters."order" AS chapter_order,
+                        sibling_episodes."order" AS episode_order
+                 FROM episodes AS sibling_episodes
+                 INNER JOIN chapters AS sibling_chapters ON sibling_chapters.id = sibling_episodes.chapter_id
+                 WHERE sibling_chapters.work_id = works.id
+                   AND sibling_episodes.id <> episodes.id
+                 ORDER BY sibling_chapters."order" ASC, sibling_episodes."order" ASC
+                 LIMIT 16
+               ) AS summary_row
+             ) AS sibling_episode_summaries
+      FROM episodes
+      INNER JOIN chapters ON chapters.id = episodes.chapter_id
+      INNER JOIN works ON works.id = chapters.work_id
+      WHERE episodes.id = $1
+        AND works.user_id = $2
+      `,
+      [episodeId, userId],
+    );
+
+    const row = result.rows[0];
+    return row === undefined
+      ? null
+      : {
+          episodeId: row.episode_id,
+          chapterId: row.chapter_id,
+          workId: row.work_id,
+          workTitle: normalizePossiblyMojibake(row.work_title),
+          workGenre: normalizeNullableText(row.work_genre),
+          worldSetting: normalizeNullableText(row.world_setting),
+          theme: normalizeNullableText(row.theme),
+          overallFlow: normalizeNullableText(row.overall_flow),
+          chapterTitle: normalizeNullableText(row.chapter_title),
+          chapterPurpose: normalizeNullableText(row.chapter_purpose),
+          chapterStartingState: normalizeNullableText(row.chapter_starting_state),
+          chapterEndingState: normalizeNullableText(row.chapter_ending_state),
+          chapterEmotionCurve: normalizeNullableText(row.chapter_emotion_curve),
+          episodeTitle: normalizeNullableText(row.episode_title),
+          episodePurpose: normalizeNullableText(row.episode_purpose),
+          introduction: normalizeNullableText(row.introduction),
+          middle: normalizeNullableText(row.middle),
+          climax: normalizeNullableText(row.climax),
+          endingHook: normalizeNullableText(row.ending_hook),
+          estimatedPages: row.estimated_pages,
+          entities: toStoryEntitySummaries(row.entities),
+          sceneSummaries: toStringArray(row.scene_summaries),
+          chapterSummaries: toStringArray(row.chapter_summaries),
+          siblingEpisodeSummaries: toStringArray(row.sibling_episode_summaries),
+        };
+  }
+
   public async createPageSkeleton(
     episodeId: string,
     userId: string,
     pages: PageSkeletonPageDraft[],
+    options?: { overwriteExisting?: boolean },
   ): Promise<PageSkeletonPersistResult | null> {
+    const overwriteExisting = options?.overwriteExisting === true;
     return runInTransaction(this.client, this.transactionRunner, async (transactionClient) => {
       const ownershipResult = await transactionClient.query<SkeletonLockRow>(
         `
@@ -933,7 +1138,13 @@ export class PostgresStoryRepository implements StoryRepository {
                  SELECT COUNT(*)::int
                  FROM pages
                  WHERE pages.episode_id = episodes.id
-               ) AS existing_page_count
+               ) AS existing_page_count,
+               (
+                 SELECT COUNT(*)::int
+                 FROM pages
+                 WHERE pages.episode_id = episodes.id
+                   AND pages.status <> 'designing'
+               ) AS protected_page_count
         FROM episodes
         INNER JOIN chapters ON chapters.id = episodes.chapter_id
         INNER JOIN works ON works.id = chapters.work_id
@@ -948,16 +1159,32 @@ export class PostgresStoryRepository implements StoryRepository {
         return null;
       }
 
-      if (ownershipResult.rows[0].page_skeleton_generated) {
+      if (!overwriteExisting && ownershipResult.rows[0].page_skeleton_generated) {
         throw new ConflictError('Page skeleton has already been generated for this episode');
       }
-      if (ownershipResult.rows[0].existing_page_count > 0) {
+      if (!overwriteExisting && ownershipResult.rows[0].existing_page_count > 0) {
         throw new ConflictError('Episode already has pages');
+      }
+      if (overwriteExisting && ownershipResult.rows[0].protected_page_count > 0) {
+        throw new ConflictError('Only designing pages can be replaced by skeleton regeneration');
+      }
+
+      const replacedExisting = overwriteExisting && ownershipResult.rows[0].existing_page_count > 0;
+
+      if (replacedExisting) {
+        await transactionClient.query(
+          `
+          DELETE FROM pages
+          WHERE episode_id = $1
+          `,
+          [episodeId],
+        );
       }
 
       let panelsCreated = 0;
 
       for (const page of pages) {
+        const frameDefinitions = buildPanelFrameTemplateInputs(page.suggestedLayout);
         const pageResult = await transactionClient.query<IdRow>(
           `
           INSERT INTO pages (
@@ -981,6 +1208,7 @@ export class PostgresStoryRepository implements StoryRepository {
               type: 'template',
               template_id: page.suggestedLayout,
               panel_count: page.suggestedPanelCount,
+              frame_definitions: frameDefinitions,
             }),
           ],
         );
@@ -990,8 +1218,9 @@ export class PostgresStoryRepository implements StoryRepository {
           throw new ValidationError('Failed to create page skeleton page');
         }
 
+        const panelIdsByOrder = new Map<number, string>();
         for (const panel of page.panels) {
-          await transactionClient.query(
+          const panelResult = await transactionClient.query<IdRow>(
             `
             INSERT INTO panels (
               page_id,
@@ -1017,6 +1246,7 @@ export class PostgresStoryRepository implements StoryRepository {
               '[]'::jsonb,
               $8
             )
+            RETURNING id
             `,
             [
               pageId,
@@ -1036,7 +1266,55 @@ export class PostgresStoryRepository implements StoryRepository {
               panel.suggestedDialogueHint,
             ],
           );
+          const panelId = panelResult.rows[0]?.id;
+          if (panelId === undefined) {
+            throw new ValidationError('Failed to create page skeleton panel');
+          }
+          panelIdsByOrder.set(panel.order, panelId);
           panelsCreated += 1;
+        }
+
+        for (const frame of frameDefinitions) {
+          const panelId = panelIdsByOrder.get(frame.readingOrder) ?? null;
+          const frameResult = await transactionClient.query<IdRow>(
+            `
+            INSERT INTO panel_frames (
+              page_id,
+              panel_id,
+              vertices,
+              border_style,
+              border_width,
+              border_color,
+              z_index,
+              reading_order
+            )
+            VALUES (
+              $1,
+              $2,
+              $3::jsonb,
+              $4,
+              $5,
+              $6,
+              $7,
+              $8
+            )
+            RETURNING id
+            `,
+            [
+              pageId,
+              panelId,
+              JSON.stringify(frame.vertices),
+              frame.borderStyle,
+              frame.borderWidth,
+              frame.borderColor,
+              frame.zIndex,
+              frame.readingOrder,
+            ],
+          );
+
+          if (frameResult.rows[0] === undefined) {
+            throw new ValidationError('Failed to create page skeleton frame');
+          }
         }
       }
 
@@ -1075,6 +1353,7 @@ export class PostgresStoryRepository implements StoryRepository {
       return {
         pagesCreated: pages.length,
         panelsCreated,
+        replacedExisting,
       };
     });
   }
@@ -1084,14 +1363,14 @@ function mapWorkRow(row: WorkRow): Work {
   return {
     id: row.id,
     userId: row.user_id,
-    title: row.title,
-    genre: row.genre,
-    worldSetting: row.world_setting,
-    theme: row.theme,
+    title: normalizePossiblyMojibake(row.title),
+    genre: normalizeNullableText(row.genre),
+    worldSetting: normalizeNullableText(row.world_setting),
+    theme: normalizeNullableText(row.theme),
     mainEntityIds: row.main_entity_ids,
-    startingPoint: row.starting_point,
-    endingPoint: row.ending_point,
-    overallFlow: row.overall_flow,
+    startingPoint: normalizeNullableText(row.starting_point),
+    endingPoint: normalizeNullableText(row.ending_point),
+    overallFlow: normalizeNullableText(row.overall_flow),
     version: row.version,
     editHistory: toObjectArray(row.edit_history),
     status: row.status,
@@ -1105,11 +1384,11 @@ function mapChapterRow(row: ChapterRow): Chapter {
     id: row.id,
     workId: row.work_id,
     order: row.order,
-    title: row.title,
-    purpose: row.purpose,
-    startingState: row.starting_state,
-    endingState: row.ending_state,
-    emotionCurve: row.emotion_curve,
+    title: normalizeNullableText(row.title),
+    purpose: normalizeNullableText(row.purpose),
+    startingState: normalizeNullableText(row.starting_state),
+    endingState: normalizeNullableText(row.ending_state),
+    emotionCurve: normalizeNullableText(row.emotion_curve),
     entitiesInvolved: row.entities_involved,
     keyBeats: row.key_beats,
     version: row.version,
@@ -1125,12 +1404,12 @@ function mapEpisodeRow(row: EpisodeRow): Episode {
     id: row.id,
     chapterId: row.chapter_id,
     order: row.order,
-    title: row.title,
-    purpose: row.purpose,
-    introduction: row.introduction,
-    middle: row.middle,
-    climax: row.climax,
-    endingHook: row.ending_hook,
+    title: normalizeNullableText(row.title),
+    purpose: normalizeNullableText(row.purpose),
+    introduction: normalizeNullableText(row.introduction),
+    middle: normalizeNullableText(row.middle),
+    climax: normalizeNullableText(row.climax),
+    endingHook: normalizeNullableText(row.ending_hook),
     estimatedPages: row.estimated_pages,
     entitiesInvolved: row.entities_involved,
     pageSkeletonGenerated: row.page_skeleton_generated,
@@ -1164,9 +1443,9 @@ function toStoryEntitySummaries(value: unknown): StoryEntitySummary[] {
     return [
       {
         id: entry.id,
-        name: entry.name,
+        name: normalizePossiblyMojibake(entry.name),
         entityType: entry.entity_type,
-        freeDescription: entry.free_description,
+        freeDescription: normalizeNullableText(entry.free_description),
       },
     ];
   });
@@ -1177,7 +1456,13 @@ function toStringArray(value: unknown): string[] {
     return [];
   }
 
-  return value.filter((entry): entry is string => typeof entry === 'string' && entry.length > 0);
+  return value.flatMap((entry) => {
+    if (typeof entry !== 'string' || entry.length === 0) {
+      return [];
+    }
+
+    return [normalizePossiblyMojibake(entry)];
+  });
 }
 
 function toCollaborationPayload(
@@ -1197,7 +1482,12 @@ function toCollaborationPayload(
       entry === null ||
       (Array.isArray(entry) && entry.every((item) => typeof item === 'string'))
     ) {
-      payload[key] = entry;
+      payload[key] =
+        typeof entry === 'string'
+          ? normalizePossiblyMojibake(entry)
+          : Array.isArray(entry)
+            ? entry.map((item) => normalizePossiblyMojibake(item))
+            : entry;
     }
   }
 
@@ -1213,6 +1503,8 @@ function buildSuggestedPanelEntities(entityIds: string[]): Array<Record<string, 
     action: 'standing_firm',
     custom_action: null,
     position: toSuggestedPosition(index),
+    facing_direction: null,
+    effect_note: null,
     state_id: null,
   }));
 }

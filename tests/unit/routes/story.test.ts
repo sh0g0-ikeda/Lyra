@@ -1,4 +1,4 @@
-import { SignJWT } from 'jose';
+﻿import { SignJWT } from 'jose';
 import { describe, expect, it } from 'vitest';
 import { createApp } from '../../../src/app.js';
 import type { CreditBalanceSnapshot } from '../../../src/domain/types/credit.js';
@@ -14,6 +14,7 @@ import type {
 } from '../../../src/services/credit/CreditService.js';
 import type { PageSkeletonServicePort } from '../../../src/services/story/PageSkeletonService.js';
 import type { StoryCollaborationServicePort } from '../../../src/services/story/StoryCollaborationService.js';
+import type { PageServicePort } from '../../../src/services/page/PageService.js';
 import type {
   Chapter,
   CreateChapterRequest,
@@ -139,6 +140,7 @@ class FakeStoryService implements StoryServicePort {
 
 class FakeStoryCollaborationService implements StoryCollaborationServicePort {
   public lastInput: Record<string, unknown> | null = null;
+  public lastImproveInput: Record<string, unknown> | null = null;
 
   public async collaborate(
     userId: string,
@@ -146,6 +148,7 @@ class FakeStoryCollaborationService implements StoryCollaborationServicePort {
       layer: 'work' | 'chapter' | 'episode';
       targetId: string;
       instruction: string;
+      language: 'ja' | 'en';
       context: {
         currentDraft: string | null;
         selectedText: string | null;
@@ -158,30 +161,117 @@ class FakeStoryCollaborationService implements StoryCollaborationServicePort {
     this.lastInput = { userId, ...input };
 
     return (async function* streamChunks(): AsyncGenerator<string, void, void> {
-      yield '前半';
-      yield '後半';
+      yield 'first';
+      yield 'second';
     })();
   }
-}
 
+  public async improveEpisodeDraft(
+    userId: string,
+    input: {
+      episodeId: string;
+      instruction: string;
+      language: 'ja' | 'en';
+      baseDraft: {
+        title: string | null;
+        purpose: string | null;
+        introduction: string | null;
+        middle: string | null;
+        climax: string | null;
+        endingHook: string | null;
+      };
+    },
+  ): Promise<{
+    draft: {
+      title: string | null;
+      purpose: string | null;
+      introduction: string | null;
+      middle: string | null;
+      climax: string | null;
+      endingHook: string | null;
+    };
+    compilerProvider: 'anthropic' | 'hybrid' | 'fallback';
+    compilerModel: string | null;
+    compilerPromptVersion: string | null;
+    compilerError: string | null;
+  }> {
+    this.lastImproveInput = { userId, ...input };
+    return {
+      draft: {
+        title: '改善済みタイトル',
+        purpose: '改善済みの目的',
+        introduction: '改善済み導入',
+        middle: '改善済み中盤',
+        climax: '改善済みクライマックス',
+        endingHook: '改善済み引き',
+      },
+      compilerProvider: 'anthropic',
+      compilerModel: 'claude-sonnet-4-20250514',
+      compilerPromptVersion: 'story_episode_improve_v1',
+      compilerError: null,
+    };
+  }
+}
 class FakePageSkeletonService implements PageSkeletonServicePort {
   public requestedEpisodeId: string | null = null;
+  public overwriteExisting = false;
 
-  public async generateForEpisode(_userId: string, requestedEpisodeId: string): Promise<{
+  public async generateForEpisode(
+    _userId: string,
+    requestedEpisodeId: string,
+    options?: { overwriteExisting?: boolean },
+  ): Promise<{
     pagesCreated: number;
     panelsCreated: number;
+    replacedExisting: boolean;
   }> {
     this.requestedEpisodeId = requestedEpisodeId;
+    this.overwriteExisting = options?.overwriteExisting === true;
 
     return {
       pagesCreated: 16,
       panelsCreated: 80,
+      replacedExisting: this.overwriteExisting,
+    };
+  }
+}
+
+class FakePageService implements PageServicePort {
+  public async updatePageSettings(): Promise<never> {
+    throw new Error('not implemented');
+  }
+
+  public async autofillFromScenes(): Promise<never> {
+    throw new Error('not implemented');
+  }
+
+  public async autofillEpisodeFromStory(): Promise<{
+    updatedPageCount: number;
+    updatedPanelCount: number;
+    updatedAssignmentCount: number;
+    filledFieldCount: number;
+    compilerUsed: boolean;
+    compilerProvider: 'openai' | 'fallback';
+    compilerModel: string | null;
+    compilerPromptVersion: string | null;
+    compilerError: string | null;
+  }> {
+    return {
+      updatedPageCount: 16,
+      updatedPanelCount: 80,
+      updatedAssignmentCount: 80,
+      filledFieldCount: 240,
+      compilerUsed: true,
+      compilerProvider: 'openai',
+      compilerModel: 'gpt-5.4-mini',
+      compilerPromptVersion: 'episode_page_plan_v1',
+      compilerError: null,
     };
   }
 }
 
 describe('story routes', () => {
-  it('works 一覧を返す', async () => {
+  it('lists works', async () => {
     const app = createTestApp();
     const token = await createToken();
 
@@ -202,7 +292,7 @@ describe('story routes', () => {
     });
   });
 
-  it('JWT が正しい場合に作品を作成できる', async () => {
+  it('creates a work when JWT is valid', async () => {
     const app = createTestApp();
     const token = await createToken();
 
@@ -227,7 +317,7 @@ describe('story routes', () => {
     });
   });
 
-  it('作品作成で不正な入力は 422 になる', async () => {
+  it('returns 422 for invalid work creation input', async () => {
     const app = createTestApp();
     const token = await createToken();
 
@@ -245,7 +335,7 @@ describe('story routes', () => {
     expect(response.status).toBe(422);
   });
 
-  it('章を作成できる', async () => {
+  it('creates a chapter', async () => {
     const app = createTestApp();
     const token = await createToken();
 
@@ -269,7 +359,7 @@ describe('story routes', () => {
     });
   });
 
-  it('話を作成できる', async () => {
+  it('creates an episode', async () => {
     const app = createTestApp();
     const token = await createToken();
 
@@ -294,7 +384,7 @@ describe('story routes', () => {
     });
   });
 
-  it('認証なしでは 401 になる', async () => {
+  it('returns 401 when authentication is missing', async () => {
     const app = createTestApp();
 
     const response = await app.request(`/api/chapters/${chapterId}/episodes`);
@@ -302,7 +392,7 @@ describe('story routes', () => {
     expect(response.status).toBe(401);
   });
 
-  it('story collaborate は event stream を返す', async () => {
+  it('streams story collaboration events', async () => {
     const collaborationService = new FakeStoryCollaborationService();
     const app = createTestApp(collaborationService, new FakePageSkeletonService());
     const token = await createToken();
@@ -316,17 +406,18 @@ describe('story routes', () => {
       body: JSON.stringify({
         layer: 'episode',
         target_id: episodeId,
-        instruction: '導入を少し静かに整えて',
+        instruction: '描写を少し具体化して',
+        language: 'ja',
         context: {
-          current_draft: '主人公が廊下を歩いている。',
-          focus_points: ['静かな導入'],
+          current_draft: '主人公が屋上へ向かう。',
+          focus_points: ['静かな動き'],
         },
       }),
     });
 
     expect(response.status).toBe(200);
     expect(response.headers.get('content-type')).toContain('text/event-stream');
-    await expect(response.text()).resolves.toContain('"text":"前半"');
+    await expect(response.text()).resolves.toContain('"text":"first"');
     expect(collaborationService.lastInput).toMatchObject({
       userId: user.id,
       layer: 'episode',
@@ -334,7 +425,7 @@ describe('story routes', () => {
     });
   });
 
-  it('story collaborate で未知のキーは 422 になる', async () => {
+  it('story collaborate returns 422 for unknown keys', async () => {
     const app = createTestApp(new FakeStoryCollaborationService(), new FakePageSkeletonService());
     const token = await createToken();
 
@@ -348,6 +439,7 @@ describe('story routes', () => {
         layer: 'work',
         target_id: workId,
         instruction: '整えて',
+        language: 'ja',
         injected: true,
       }),
     });
@@ -355,7 +447,55 @@ describe('story routes', () => {
     expect(response.status).toBe(422);
   });
 
-  it('page skeleton 生成は 201 と件数を返す', async () => {
+  it('story improve episode draft returns structured fields', async () => {
+    const collaborationService = new FakeStoryCollaborationService();
+    const app = createTestApp(collaborationService, new FakePageSkeletonService());
+    const token = await createToken();
+
+    const response = await app.request('/api/story/improve-episode-draft', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        episode_id: episodeId,
+        instruction: '矛盾なく導入を改善して',
+        language: 'ja',
+        base_draft: {
+          title: '元タイトル',
+          purpose: '元目的',
+          introduction: '元導入',
+          middle: '元中盤',
+          climax: '元クライマックス',
+          ending_hook: '元引き',
+        },
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      draft: {
+        title: '改善済みタイトル',
+        purpose: '改善済みの目的',
+        introduction: '改善済み導入',
+        middle: '改善済み中盤',
+        climax: '改善済みクライマックス',
+        ending_hook: '改善済み引き',
+      },
+      compiler_provider: 'anthropic',
+      compiler_model: 'claude-sonnet-4-20250514',
+      compiler_prompt_version: 'story_episode_improve_v1',
+      compiler_error: null,
+    });
+    expect(collaborationService.lastImproveInput).toMatchObject({
+      userId: user.id,
+      episodeId,
+      instruction: '矛盾なく導入を改善して',
+    });
+  });
+
+  it('creates a page skeleton and applies the story plan', async () => {
     const pageSkeletonService = new FakePageSkeletonService();
     const app = createTestApp(new FakeStoryCollaborationService(), pageSkeletonService);
     const token = await createToken();
@@ -371,11 +511,59 @@ describe('story routes', () => {
     await expect(response.json()).resolves.toEqual({
       pages_created: 16,
       panels_created: 80,
+      replaced_existing: false,
+      story_plan_applied: true,
+      story_plan_result: {
+        updated_page_count: 16,
+        updated_panel_count: 80,
+        updated_assignment_count: 80,
+        filled_field_count: 240,
+        compiler_used: true,
+        compiler_provider: 'openai',
+        compiler_model: 'gpt-5.4-mini',
+        compiler_prompt_version: 'episode_page_plan_v1',
+        compiler_error: null,
+      },
     });
     expect(pageSkeletonService.requestedEpisodeId).toBe(episodeId);
   });
 
-  it('story CRUD でも未知のキーは 422 になる', async () => {
+  it('page skeleton forwards overwrite_existing to the service', async () => {
+    const pageSkeletonService = new FakePageSkeletonService();
+    const app = createTestApp(new FakeStoryCollaborationService(), pageSkeletonService);
+    const token = await createToken();
+
+    const response = await app.request(`/api/episodes/${episodeId}/generate-page-skeleton`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ overwrite_existing: true }),
+    });
+
+    expect(response.status).toBe(201);
+    await expect(response.json()).resolves.toEqual({
+      pages_created: 16,
+      panels_created: 80,
+      replaced_existing: true,
+      story_plan_applied: true,
+      story_plan_result: {
+        updated_page_count: 16,
+        updated_panel_count: 80,
+        updated_assignment_count: 80,
+        filled_field_count: 240,
+        compiler_used: true,
+        compiler_provider: 'openai',
+        compiler_model: 'gpt-5.4-mini',
+        compiler_prompt_version: 'episode_page_plan_v1',
+        compiler_error: null,
+      },
+    });
+    expect(pageSkeletonService.overwriteExisting).toBe(true);
+  });
+
+  it('returns 422 for unknown keys in story CRUD', async () => {
     const app = createTestApp();
     const token = await createToken();
 
@@ -398,9 +586,11 @@ describe('story routes', () => {
 function createTestApp(
   storyCollaborationService: StoryCollaborationServicePort = new FakeStoryCollaborationService(),
   pageSkeletonService: PageSkeletonServicePort = new FakePageSkeletonService(),
+  pageService: PageServicePort = new FakePageService(),
 ): ReturnType<typeof createApp> {
   return createApp({
     creditService: new FakeCreditService(),
+    pageService,
     pageSkeletonService,
     storyCollaborationService,
     storyService: new FakeStoryService(),
@@ -482,3 +672,4 @@ async function createToken(): Promise<string> {
     .setExpirationTime('1h')
     .sign(new TextEncoder().encode(jwtSecret));
 }
+

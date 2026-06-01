@@ -166,7 +166,7 @@ describe('StripeWebhookService', () => {
     expect(repository.updatedPlans[0]).toEqual({ userId: 'user-1', planCode: 'standard' });
     expect(creditGrantService.monthlyGrants[0]).toMatchObject({
       userId: 'user-1',
-      amount: 1000,
+      amount: 50,
       stripeEventId: 'evt_checkout_sub',
     });
     expect(repository.paymentRecords[0]).toMatchObject({
@@ -187,12 +187,12 @@ describe('StripeWebhookService', () => {
 
     expect(creditGrantService.purchasedGrants[0]).toMatchObject({
       userId: 'user-1',
-      amount: 1000,
+      amount: 50,
       stripeEventId: 'evt_checkout_credit',
     });
     expect(repository.paymentRecords[0]).toMatchObject({
       kind: 'credit_purchase',
-      amountJpy: 2000,
+      amountJpy: 2250,
       status: 'paid',
     });
   });
@@ -351,7 +351,7 @@ function buildCheckoutCreditPurchaseEvent(): Stripe.Event {
           package_code: 'credits_1000',
         },
         payment_status: 'paid',
-        amount_total: 2000,
+        amount_total: 2250,
       },
     },
     livemode: false,

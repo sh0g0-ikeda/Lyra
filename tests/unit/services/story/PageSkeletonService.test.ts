@@ -6,6 +6,7 @@ import type {
   EpisodePageSkeletonContext,
   PageSkeletonPageDraft,
   PageSkeletonPersistResult,
+  StoryEpisodeImprovementContext,
   StoryCollaborationLayer,
   StoryCollaborationTarget,
 } from '../../../../src/domain/types/storyAi.js';
@@ -63,6 +64,7 @@ class FakeStoryRepository implements StoryRepository {
   };
 
   public createdPages: PageSkeletonPageDraft[] = [];
+  public lastCreateOptions: { overwriteExisting?: boolean } | undefined;
 
   public async findWorksByUserId(): Promise<Work[]> {
     return [];
@@ -120,15 +122,21 @@ class FakeStoryRepository implements StoryRepository {
   ): Promise<EpisodePageSkeletonContext | null> {
     return this.skeletonContext;
   }
+  public async findEpisodeImprovementContextByIdAndUserId(): Promise<StoryEpisodeImprovementContext | null> {
+    throw new Error('not implemented');
+  }
   public async createPageSkeleton(
     _episodeId: string,
     _userId: string,
     pages: PageSkeletonPageDraft[],
+    options?: { overwriteExisting?: boolean },
   ): Promise<PageSkeletonPersistResult | null> {
     this.createdPages = pages;
+    this.lastCreateOptions = options;
     return {
       pagesCreated: pages.length,
       panelsCreated: pages.reduce((sum, page) => sum + page.panels.length, 0),
+      replacedExisting: options?.overwriteExisting === true,
     };
   }
 }
@@ -216,6 +224,10 @@ class FakeStoryAiClient implements StoryAiClientPort {
     throw new Error('not implemented');
   }
 
+  public async improveEpisodeDraft(): Promise<never> {
+    throw new Error('not implemented');
+  }
+
   public async generatePageSkeleton(request: StoryAiModelRequest): Promise<PageSkeletonPageDraft[]> {
     this.lastRequest = request;
     if (this.errorToThrow !== null) {
@@ -239,10 +251,16 @@ describe('PageSkeletonService', () => {
     expect(result).toEqual({
       pagesCreated: 2,
       panelsCreated: 7,
+      replacedExisting: false,
     });
     expect(repository.createdPages).toHaveLength(2);
+    expect(client.lastRequest?.systemPrompt).toContain(
+      'Treat the episode draft and scene list as the primary source of truth for page content.',
+    );
     expect(client.lastRequest?.systemPrompt).toContain('Return exactly 2 pages');
     expect(client.lastRequest?.userPrompt).toContain('Scene 1: Rooftop / night / tense');
+    expect(client.lastRequest?.userPrompt).toContain('Chapter consistency note: Chapter 1 / Set the stakes');
+    expect(client.lastRequest?.userPrompt).not.toContain('Chapter purpose:');
   });
 
   it('rejects when a skeleton already exists', async () => {
@@ -279,13 +297,46 @@ describe('PageSkeletonService', () => {
     ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
   });
 
-  it('converts invalid model payload failures into VALIDATION_ERROR', async () => {
+  it('falls back to a deterministic skeleton when the model payload is invalid', async () => {
     const client = new FakeStoryAiClient();
     client.errorToThrow = new SyntaxError('Unexpected token');
-    const service = new PageSkeletonService(new FakeStoryRepository(), client);
+    const repository = new FakeStoryRepository();
+    const service = new PageSkeletonService(repository, client);
 
-    await expect(
-      service.generateForEpisode('user-1', '33333333-3333-4333-8333-333333333333'),
-    ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+    const result = await service.generateForEpisode(
+      'user-1',
+      '33333333-3333-4333-8333-333333333333',
+    );
+
+    expect(result).toEqual({
+      pagesCreated: 2,
+      panelsCreated: 7,
+      replacedExisting: false,
+    });
+    expect(repository.createdPages[0]?.suggestedLayout).toBe('standard_4');
+    expect(repository.createdPages[1]?.suggestedLayout).toBe('top_wide_3');
+  });
+
+  it('allows overwrite mode when a skeleton already exists', async () => {
+    const repository = new FakeStoryRepository();
+    if (repository.skeletonContext !== null) {
+      repository.skeletonContext.pageSkeletonGenerated = true;
+      repository.skeletonContext.existingPageCount = 2;
+    }
+    const client = new FakeStoryAiClient();
+    const service = new PageSkeletonService(repository, client);
+
+    const result = await service.generateForEpisode(
+      'user-1',
+      '33333333-3333-4333-8333-333333333333',
+      { overwriteExisting: true },
+    );
+
+    expect(result).toEqual({
+      pagesCreated: 2,
+      panelsCreated: 7,
+      replacedExisting: true,
+    });
+    expect(repository.lastCreateOptions).toEqual({ overwriteExisting: true });
   });
 });

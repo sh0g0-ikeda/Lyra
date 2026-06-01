@@ -58,6 +58,16 @@ describe('PostgresPageGenerationExecutionRepository', () => {
       generatedAt: '2026-04-24T00:00:00.000Z',
       costUsd: 0.08,
       openaiRequestId: 'openai-1',
+      promptMetadata: {
+        draftPrompt: 'draft prompt',
+        compilerBrief: '[TASK]\nbrief',
+        compiledPrompt: 'compiled prompt',
+        compiledPromptUsed: true,
+        promptCompilerProvider: 'openai',
+        compilerModel: 'gpt-5.4-mini',
+        compilerPromptVersion: 'page_prompt_v2',
+        compilerError: null,
+      },
     });
 
     expect(completed).toBe(true);
@@ -80,6 +90,14 @@ describe('PostgresPageGenerationExecutionRepository', () => {
         generation_mode: 'thinking',
         request_kind: 'regenerate',
         cost_usd: 0.08,
+        draft_prompt: 'draft prompt',
+        compiled_brief: '[TASK]\nbrief',
+        compiled_prompt: 'compiled prompt',
+        compiled_prompt_used: true,
+        prompt_compiler_provider: 'openai',
+        compiler_model: 'gpt-5.4-mini',
+        compiler_prompt_version: 'page_prompt_v2',
+        compiler_error: null,
       }),
       'openai-1',
     ]);
@@ -121,6 +139,16 @@ describe('PostgresPageGenerationExecutionRepository', () => {
         generatedAt: '2026-04-24T00:00:00.000Z',
         costUsd: 0.05,
         openaiRequestId: 'openai-1',
+        promptMetadata: {
+          draftPrompt: 'draft prompt',
+          compilerBrief: '[TASK]\nbrief',
+          compiledPrompt: 'compiled prompt',
+          compiledPromptUsed: true,
+          promptCompilerProvider: 'openai',
+          compilerModel: 'gpt-5.4-mini',
+          compilerPromptVersion: 'page_prompt_v2',
+          compilerError: null,
+        },
       }),
     ).rejects.toThrow('Failed to update generation job completion state');
   });

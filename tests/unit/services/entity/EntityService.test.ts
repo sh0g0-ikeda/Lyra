@@ -9,6 +9,10 @@ import type {
 } from '../../../../src/repositories/EntityRepository.js';
 import type { WorkReader } from '../../../../src/repositories/WorkRepository.js';
 import { EntityService } from '../../../../src/services/entity/EntityService.js';
+import type {
+  CompiledStyleReference,
+  StyleReferenceCompilerPort,
+} from '../../../../src/services/style/StyleReferenceCompiler.js';
 
 const now = new Date('2026-04-22T00:00:00.000Z');
 
@@ -95,6 +99,35 @@ class FakeEntityRepository implements EntityRepository {
     }
 
     return this.entities.delete(id);
+  }
+}
+
+class FakeStyleReferenceCompiler implements StyleReferenceCompilerPort {
+  public async compileStyleReference(): Promise<CompiledStyleReference> {
+    return {
+      title: 'スタジオジブリ',
+      notes: '柔らかい背景',
+      compiledBrief:
+        'Keep the title "スタジオジブリ" explicit as a style constraint, with soft rounded shape language, airy background treatment, gentle line simplification, restrained facial rendering, and calm atmospheric color staging.',
+      anchors: {
+        lineQuality: 'gentle line simplification with soft confidence',
+        shapeLanguage: 'soft rounded shape language',
+        faceRendering: 'restrained facial rendering with simplified anatomy',
+        eyeRendering: null,
+        hairRendering: null,
+        clothingRendering: null,
+        backgroundRendering: 'airy background treatment with light environmental density',
+        shadingRendering: 'soft tonal separation with restrained contrast',
+        textureFinish: null,
+        motionTreatment: null,
+        dialogueBalloonTreatment: null,
+        atmosphere: 'calm atmospheric color staging',
+      },
+      compilerProvider: 'openai',
+      compilerModel: 'gpt-5.4-mini',
+      compilerPromptVersion: 'style_ref_v3',
+      compiledAt: '2026-05-28T00:00:00.000Z',
+    };
   }
 }
 
@@ -210,5 +243,41 @@ describe('EntityService', () => {
 
     expect(updatedEntity.structuredFields).toEqual({ art_style: 'anime' });
     expect(updatedEntity.speechProfile).toEqual({ tone: 'calm' });
+  });
+
+  it('character の style reference を保存時にコンパイルする', async () => {
+    const workReader = new FakeWorkReader();
+    workReader.ownedWorkIds.add('user-1:work-1');
+    const service = new EntityService(
+      new FakeEntityRepository(),
+      workReader,
+      new FakeStyleReferenceCompiler(),
+    );
+
+    const entity = await service.createEntity('user-1', 'work-1', {
+      entityType: 'character',
+      name: 'ミネルバ',
+      freeDescription: null,
+      structuredFields: {
+        art_style: 'manga',
+        style_reference: {
+          title: 'スタジオジブリ',
+          notes: '柔らかい背景',
+        },
+      },
+      speechProfile: {},
+    });
+
+    expect(entity.structuredFields).toMatchObject({
+      art_style: 'manga',
+      style_reference: {
+        title: 'スタジオジブリ',
+        notes: '柔らかい背景',
+        compiled_brief: expect.stringContaining('スタジオジブリ'),
+        anchors: expect.any(Object),
+        compiler_provider: 'openai',
+        compiler_prompt_version: 'style_ref_v3',
+      },
+    });
   });
 });

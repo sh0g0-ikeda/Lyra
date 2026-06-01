@@ -77,21 +77,21 @@ describe('BillingCreditGrantService', () => {
 
     const result = await service.grantMonthlyCredits({
       userId: 'user-1',
-      amount: 1000,
+      amount: 50,
       expiresAt: new Date('2026-06-01T00:00:00.000Z'),
       description: 'Monthly renewal',
       stripeEventId: 'evt_1',
     });
 
     expect(result).toEqual({
-      monthlyCredits: 1000,
+      monthlyCredits: 50,
       purchasedCredits: 35,
-      totalCredits: 1035,
+      totalCredits: 85,
       monthlyExpiresAt: new Date('2026-06-01T00:00:00.000Z'),
     });
     expect(repository.ledger[0]).toMatchObject({
       type: 'monthly_grant',
-      amount: 1000,
+      amount: 50,
       stripeEventId: 'evt_1',
     });
   });
@@ -108,20 +108,20 @@ describe('BillingCreditGrantService', () => {
 
     const result = await service.grantPurchasedCredits({
       userId: 'user-1',
-      amount: 200,
+      amount: 10,
       description: 'Credit pack purchase',
       stripeEventId: 'evt_2',
     });
 
     expect(result).toEqual({
       monthlyCredits: 0,
-      purchasedCredits: 300,
-      totalCredits: 300,
+      purchasedCredits: 110,
+      totalCredits: 110,
       monthlyExpiresAt: null,
     });
     expect(repository.ledger[0]).toMatchObject({
       type: 'purchase',
-      amount: 200,
+      amount: 10,
       stripeEventId: 'evt_2',
     });
   });

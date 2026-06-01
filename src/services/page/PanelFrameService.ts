@@ -2,13 +2,14 @@ import {
   buildPanelFrameTemplateInputs,
   getPanelFrameTemplate,
 } from '../../domain/constants/panelFrameTemplates.js';
-import { NotFoundError, ValidationError } from '../../domain/errors/index.js';
+import { ConflictError, NotFoundError, ValidationError } from '../../domain/errors/index.js';
 import type {
   PanelFrame,
   PanelFrameTemplateApplication,
   PanelFrameTemplateId,
   UpsertPanelFrameInput,
 } from '../../domain/types/panelFrame.js';
+import type { PageStatus } from '../../domain/types/page.js';
 import type { PanelFrameRepository } from '../../repositories/PanelFrameRepository.js';
 
 export type {
@@ -92,6 +93,8 @@ export class PanelFrameService implements PanelFrameServicePort {
     if (pageContext === null) {
       throw new NotFoundError('Page not found');
     }
+
+    ensurePageLayoutEditable(pageContext.pageStatus);
   }
 
   private async ensurePanelsBelongToPage(
@@ -117,5 +120,15 @@ export class PanelFrameService implements PanelFrameServicePort {
     if (hasMissingPanel) {
       throw new ValidationError('All panel_id values must belong to the page');
     }
+  }
+}
+
+function ensurePageLayoutEditable(pageStatus: PageStatus): void {
+  if (pageStatus === 'confirmed') {
+    throw new ConflictError('Confirmed pages must be reopened before editing frames');
+  }
+
+  if (pageStatus === 'generating') {
+    throw new ConflictError('Pages cannot edit frames while generation is in progress');
   }
 }

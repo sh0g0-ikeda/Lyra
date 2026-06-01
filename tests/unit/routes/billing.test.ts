@@ -47,8 +47,8 @@ class FakeCreditService implements CreditServicePort {
   public async getBalance(_userId: string): Promise<CreditBalanceSnapshot> {
     return {
       monthlyCredits: 25,
-      purchasedCredits: 175,
-      totalCredits: 200,
+      purchasedCredits: 15,
+      totalCredits: 40,
       monthlyExpiresAt: null,
     };
   }
@@ -140,8 +140,8 @@ describe('billing routes', () => {
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({
       monthly_credits: 25,
-      purchased_credits: 175,
-      total_credits: 200,
+      purchased_credits: 15,
+      total_credits: 40,
       monthly_expires_at: null,
     });
   });

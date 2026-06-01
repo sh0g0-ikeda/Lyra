@@ -1,16 +1,16 @@
 import { getPanelFrameTemplate } from '../../domain/constants/panelFrameTemplates.js';
 import { NotFoundError, ValidationError } from '../../domain/errors/index.js';
-import type { Entity } from '../../domain/types/entity.js';
-import type { Panel } from '../../domain/types/panel.js';
 import type { CompositionGalleryItem } from '../../domain/types/composition.js';
+import type { Entity } from '../../domain/types/entity.js';
+import type { Panel, PanelDialogueLine } from '../../domain/types/panel.js';
 import type { PageDialogueMode, PagePromptContext } from '../../domain/types/page.js';
 import type { PageGenerationMode, PageGenerationRequestKind } from '../../domain/types/pageGeneration.js';
+import type { PanelEntityAssignment } from '../../domain/types/panelEntityAssignment.js';
+import { buildRenderingStyleAnchorLines } from '../../domain/types/styleReference.js';
 import type { CompositionGalleryRepository } from '../../repositories/CompositionGalleryRepository.js';
 import type { EntityRepository } from '../../repositories/EntityRepository.js';
 import type { PageRepository } from '../../repositories/PageRepository.js';
 import type { PanelRepository } from '../../repositories/PanelRepository.js';
-import type { PanelDialogueLine } from '../../domain/types/panel.js';
-import type { PanelEntityAssignment } from '../../domain/types/panelEntityAssignment.js';
 
 export interface BuildPagePromptInput {
   userId: string;
@@ -20,11 +20,42 @@ export interface BuildPagePromptInput {
 }
 
 export interface BuiltPagePrompt {
-  prompt: string;
+  draftPrompt: string;
+  compilerBrief: string;
 }
 
 export interface PromptBuilderPort {
   buildPagePrompt(input: BuildPagePromptInput): Promise<BuiltPagePrompt>;
+}
+
+interface NormalizedReferenceRole {
+  imageLabel: string;
+  role: 'character_reference' | 'layout_reference';
+  subject: string;
+  instruction: string;
+}
+
+interface NormalizedPanelInstruction {
+  order: number;
+  role: string;
+  size: string;
+  situation: string;
+  characterBeat: string;
+  compositionBeat: string;
+  dialogueBeats: string[];
+  dialogueLock: string | null;
+}
+
+interface NormalizedPagePrompt {
+  pageSummary: string;
+  pageSetting: string;
+  referenceRoles: NormalizedReferenceRole[];
+  layoutInstruction: string;
+  panelInstructions: NormalizedPanelInstruction[];
+  qualityConstraints: string[];
+  negativeConstraints: string[];
+  styleLock: string;
+  dialogueMode: PageDialogueMode;
 }
 
 export class PromptBuilder implements PromptBuilderPort {
@@ -48,6 +79,17 @@ export class PromptBuilder implements PromptBuilderPort {
 
     const entities = await this.entityRepository.findByWorkIdAndUserId(page.workId, input.userId);
     const entityMap = new Map(entities.map((entity) => [entity.id, entity]));
+    // Fetch the exact reference set used by the renderer so "Image 1 / Image 2 ..."
+    // in the compiled prompt always matches the actual uploaded image order.
+    const referencedEntityIds = new Set(
+      (
+        await this.entityRepository.findPrimaryReferenceImagesByEntityIdsAndUserId(
+          collectOrderedEntityIds(panels),
+          page.workId,
+          input.userId,
+        )
+      ).map((reference) => reference.entityId),
+    );
     const compositionGalleryItems = await this.compositionGalleryRepository.findByIds(
       panels
         .map((panel) => panel.composition.galleryItemId)
@@ -55,218 +97,451 @@ export class PromptBuilder implements PromptBuilderPort {
     );
     const compositionMap = new Map(compositionGalleryItems.map((item) => [item.id, item]));
 
+    const normalized = normalizePagePrompt(
+      page,
+      panels,
+      entityMap,
+      compositionMap,
+      referencedEntityIds,
+      input,
+    );
+
     return {
-      prompt: buildPromptText(page, panels, entityMap, compositionMap, input),
+      draftPrompt: buildDraftPrompt(normalized),
+      compilerBrief: buildCompilerBrief(normalized),
     };
   }
 }
 
-function buildPromptText(
+// The deterministic layer keeps panel order, dialogue, reference roles, and layout fidelity explicit
+// so the LLM compiler only has to rewrite the brief into model-friendly prose instead of inferring structure.
+function normalizePagePrompt(
   page: PagePromptContext,
   panels: Panel[],
   entityMap: Map<string, Entity>,
   compositionMap: Map<string, CompositionGalleryItem>,
+  referencedEntityIds: Set<string>,
   input: BuildPagePromptInput,
+): NormalizedPagePrompt {
+  const orderedPanels = [...panels].sort((left, right) => left.order - right.order);
+  assertContiguousPanelOrder(orderedPanels);
+  const referenceRoles = buildReferenceRoles(page, orderedPanels, entityMap, referencedEntityIds);
+
+  return {
+    pageSummary: buildPageSummary(page, input, orderedPanels.length),
+    pageSetting: buildPageSetting(page),
+    referenceRoles,
+    layoutInstruction: buildLayoutInstruction(page, orderedPanels.length),
+    panelInstructions: orderedPanels.map((panel, index) =>
+      buildNormalizedPanelInstruction(
+        panel,
+        orderedPanels[index - 1] ?? null,
+        entityMap,
+        compositionMap,
+        shouldBakeDialogueForPanel(page, panel),
+      ),
+    ),
+    qualityConstraints: buildQualityConstraints(page, orderedPanels.length, referenceRoles),
+    negativeConstraints: buildNegativeConstraints(page),
+    styleLock: buildStyleLock(page),
+    dialogueMode: page.dialogueMode,
+  };
+}
+
+function assertContiguousPanelOrder(panels: Panel[]): void {
+  if (panels.length === 0) {
+    return;
+  }
+
+  if (panels[0]?.order !== 1) {
+    throw new ValidationError('Panels must start at order 1 before generation');
+  }
+
+  for (let index = 1; index < panels.length; index += 1) {
+    const previousOrder = panels[index - 1]?.order;
+    const currentOrder = panels[index]?.order;
+    if (previousOrder === undefined || currentOrder === undefined) {
+      continue;
+    }
+
+    if (currentOrder === previousOrder) {
+      throw new ValidationError(`Duplicate panel order ${currentOrder} is not allowed before generation`);
+    }
+
+    if (currentOrder !== previousOrder + 1) {
+      throw new ValidationError('Panels must use contiguous order values before generation');
+    }
+  }
+}
+
+function buildPageSummary(
+  page: PagePromptContext,
+  input: BuildPagePromptInput,
+  panelCount: number,
 ): string {
-  const referenceInstructions = buildReferenceInstructions(panels, entityMap);
-  const sections = [
-    buildPageHeader(page, input),
-    buildSceneContinuityInstruction(page),
-    buildLayoutInstruction(page),
-    referenceInstructions,
-    ...panels.map((panel) => buildPanelInstruction(panel, entityMap, compositionMap)),
-    buildDialogueInstruction(page.dialogueMode, page.pageDialogueToggle, panels, entityMap),
-    STYLE_LOCK_TEXT,
-  ];
-
-  return sections.filter((section) => section.length > 0).join('\n\n');
+  const purpose = page.episodePurpose === null ? 'the current episode beat' : page.episodePurpose;
+  return `Create page ${page.pageNumber} of the episode, covering ${purpose}. This is a ${panelCount}-panel manga page for a ${input.requestKind} ${input.generationMode} generation request. Render one finished manga page image, not separated panel assets, and preserve the authored panel order from panel ${1} through panel ${panelCount}.`;
 }
 
-function buildPageHeader(page: PagePromptContext, input: BuildPagePromptInput): string {
-  const headerLines = [
-    `This is page ${page.pageNumber} of the episode${page.episodePurpose === null ? '.' : `: ${page.episodePurpose}`}`,
-    `Request kind: ${input.requestKind}.`,
-    `Generation mode: ${input.generationMode}.`,
-  ];
+function buildPageSetting(page: PagePromptContext): string {
+  const parts: string[] = [];
 
-  return headerLines.join('\n');
-}
-
-function buildSceneContinuityInstruction(page: PagePromptContext): string {
   if (page.sceneSummaries.length === 0) {
-    return '';
+    parts.push(
+      'No explicit scene summary is stored, so infer the immediate setting and atmosphere from the panel instructions alone.',
+    );
+  } else {
+    parts.push(`Page setting continuity: ${page.sceneSummaries.map((scene) => normalizeSentence(scene)).join(' ')}`);
   }
 
-  return `Scene continuity:\n${page.sceneSummaries.map((scene) => `- ${scene}`).join('\n')}`;
+  if (page.storyPagePurpose !== null) {
+    parts.push(`Page purpose: ${normalizeSentence(page.storyPagePurpose)}`);
+  }
+
+  if (page.storyContinuityNote !== null) {
+    parts.push(`Continuity note: ${normalizeSentence(page.storyContinuityNote)}`);
+  }
+
+  return parts.join(' ');
 }
 
-function buildLayoutInstruction(page: PagePromptContext): string {
-  const layoutType = readString(page.layoutConfig.type);
-  if (layoutType === 'template') {
-    const templateId = readString(page.layoutConfig.template_id);
-    if (templateId !== null && isKnownTemplateId(templateId)) {
-      const template = getPanelFrameTemplate(templateId);
-      return `Use a ${template.id} layout with ${template.panelCount} panels.`;
-    }
-  }
-
-  if (layoutType === 'custom') {
-    const frameDefinitions = toFrameDefinitions(page.layoutConfig.frame_definitions);
-    const instructionLines = [
-      'The last input image is the panel layout reference. Follow this layout exactly for dividing the page into panels.',
-      'Only use it as a layout guide. Do not copy any art style or scene content from it.',
-    ];
-
-    if (frameDefinitions.length > 0) {
-      return [
-        ...instructionLines,
-        ...frameDefinitions.map(
-          (frame) =>
-            `Frame ${frame.readingOrder}: vertices ${frame.vertices
-              .map((vertex) => `(${vertex.x.toFixed(2)}, ${vertex.y.toFixed(2)})`)
-              .join(' -> ')}.`,
-        ),
-      ].join('\n');
-    }
-
-    return instructionLines.join('\n');
-  }
-
-  if (layoutType === 'ai_generated' || layoutType === 'ai_auto') {
-    return 'Use the AI-suggested panel arrangement stored for this page.';
-  }
-
-  return 'Preserve the intended manga page reading flow and panel separation.';
-}
-
-function buildPanelInstruction(
-  panel: Panel,
-  entityMap: Map<string, Entity>,
-  compositionMap: Map<string, CompositionGalleryItem>,
-): string {
-  const lines = [
-    `Panel ${panel.order} (${panel.panelRole}, ${panel.panelSize}): ${panel.situationText ?? 'No explicit situation text.'}`,
-    `Characters: ${buildEntityInstruction(panel.entities, entityMap)}`,
-    `Composition: ${buildCompositionInstruction(panel, compositionMap)}`,
-  ];
-
-  if (panel.backgroundNote !== null) {
-    lines.push(`Background: ${panel.backgroundNote}`);
-  }
-
-  if (panel.panelNotes !== null) {
-    lines.push(`Panel notes: ${panel.panelNotes}`);
-  }
-
-  return lines.join('\n');
-}
-
-function buildReferenceInstructions(
+function buildReferenceRoles(
+  page: PagePromptContext,
   panels: Panel[],
   entityMap: Map<string, Entity>,
-): string {
+  referencedEntityIds: Set<string>,
+): NormalizedReferenceRole[] {
   const orderedAssignments = new Map<string, PanelEntityAssignment>();
-  panels.forEach((panel) => {
-    panel.entities.forEach((assignment) => {
+  for (const panel of panels) {
+    for (const assignment of panel.entities) {
       if (!orderedAssignments.has(assignment.entityId)) {
         orderedAssignments.set(assignment.entityId, assignment);
       }
-    });
-  });
+    }
+  }
 
-  return Array.from(orderedAssignments.values())
-    .map((assignment, index) => {
-      const entity = entityMap.get(assignment.entityId);
-      const entityName = entity?.name ?? `Unknown entity ${assignment.entityId}`;
-      return `Image ${index + 1} is the appearance reference for ${entityName}. Keep this character's face, hair, and costume exactly consistent throughout all panels they appear in.`;
-    })
-    .join('\n');
+  const roles: NormalizedReferenceRole[] = Array.from(orderedAssignments.keys())
+    .filter((entityId) => referencedEntityIds.has(entityId))
+    .map((entityId, index) => {
+      const entity = entityMap.get(entityId);
+      const entityName = entity?.name ?? `Unknown entity ${entityId}`;
+      const anchor = summarizeEntityAnchor(entity);
+      return {
+        imageLabel: `Image ${index + 1} (${entityName})`,
+        role: 'character_reference' as const,
+        subject: entityName,
+        instruction: `${entityName} character reference. Use this image to keep ${entityName}'s face, hair shape, clothing silhouette, and color blocking stable in every panel. ${anchor}`.trim(),
+      };
+    });
+
+  if (page.layoutConfig.type === 'custom') {
+    roles.push({
+      imageLabel: `Image ${roles.length + 1} (layout)`,
+      role: 'layout_reference',
+      subject: 'page layout',
+      instruction:
+        'Layout reference. Follow the panel borders, gutter rhythm, page balance, and reading order exactly. Use it only for layout, not for art style or scene content.',
+    });
+  }
+
+  return roles;
 }
 
-function buildEntityInstruction(
+function buildNormalizedPanelInstruction(
+  panel: Panel,
+  _previousPanel: Panel | null,
+  entityMap: Map<string, Entity>,
+  compositionMap: Map<string, CompositionGalleryItem>,
+  includeDialogue: boolean,
+): NormalizedPanelInstruction {
+  return {
+    order: panel.order,
+    role: panel.panelRole,
+    size: panel.panelSize,
+    situation: normalizeSentence(panel.situationText ?? 'No explicit situation text.'),
+    characterBeat: buildCharacterBeat(panel.entities, entityMap),
+    compositionBeat: buildCompositionBeat(panel, compositionMap),
+    dialogueBeats: includeDialogue ? buildDialogueBeats(panel, entityMap) : [],
+    dialogueLock: includeDialogue ? buildDialogueLock(panel, entityMap) : null,
+  };
+}
+
+function buildCharacterBeat(
   assignments: PanelEntityAssignment[],
   entityMap: Map<string, Entity>,
 ): string {
   if (assignments.length === 0) {
-    return 'No assigned entities.';
+    return 'No character is explicitly assigned to this panel.';
   }
 
   return assignments
     .map((assignment) => {
       const entity = entityMap.get(assignment.entityId);
       const entityName = entity?.name ?? `Unknown entity ${assignment.entityId}`;
-      const supplement = entity?.promptSupplement ?? entity?.freeDescription ?? 'No prompt supplement.';
       const expression = assignment.expression === 'custom' ? assignment.customExpression : assignment.expression;
       const action = assignment.action === 'custom' ? assignment.customAction : assignment.action;
-      const facingDirection =
-        assignment.facingDirection === null ? 'unspecified' : assignment.facingDirection;
-      const effectNote = assignment.effectNote ?? 'none';
+      const parts = [
+        `${entityName} is ${assignment.role} in the ${assignment.position} zone`,
+        assignment.facingDirection === null ? null : `facing ${humanizeToken(assignment.facingDirection)}`,
+        expression === null ? null : `showing ${humanizeToken(expression)}`,
+        action === null ? null : `with ${humanizeToken(action)} body language`,
+        assignment.effectNote === null ? null : `accented by ${normalizeSentence(assignment.effectNote, false)}`,
+      ].filter((value): value is string => value !== null);
 
-      return `${entityName}: role=${assignment.role}, position=${assignment.position}, facing=${facingDirection}, expression=${expression ?? 'unspecified'}, pose=${action ?? 'unspecified'}, effect=${effectNote}. ${supplement}`;
+      return `${parts.join(', ')}.`;
     })
     .join(' ');
 }
 
-function buildCompositionInstruction(
+function buildCompositionBeat(
   panel: Panel,
   compositionMap: Map<string, CompositionGalleryItem>,
 ): string {
   const parts: string[] = [];
+
   if (panel.composition.source === 'gallery' && panel.composition.galleryItemId !== null) {
     const galleryItem = compositionMap.get(panel.composition.galleryItemId);
     if (galleryItem !== undefined) {
-      parts.push(galleryItem.compositionPrompt);
-      parts.push(`Shot type: ${galleryItem.shotType}.`);
-      parts.push(`Angle: ${galleryItem.angle}.`);
+      parts.push(normalizeSentence(galleryItem.compositionPrompt));
+      parts.push(`Use a ${humanizeToken(galleryItem.shotType)} shot from a ${humanizeToken(galleryItem.angle)} angle.`);
     }
   }
 
   if (panel.composition.compositionPrompt !== null) {
-    parts.push(panel.composition.compositionPrompt);
+    parts.push(normalizeSentence(panel.composition.compositionPrompt));
   }
 
   if (panel.composition.shotType !== null) {
-    parts.push(`Shot type: ${panel.composition.shotType}.`);
+    parts.push(`Shot scale should read as ${humanizeToken(panel.composition.shotType)}.`);
   }
 
   if (panel.composition.angle !== null) {
-    parts.push(`Angle: ${panel.composition.angle}.`);
+    parts.push(`Camera angle should read as ${humanizeToken(panel.composition.angle)}.`);
   }
 
   if (panel.composition.customNote !== null) {
-    parts.push(`Custom note: ${panel.composition.customNote}.`);
+    parts.push(normalizeSentence(panel.composition.customNote));
+  }
+
+  if (panel.backgroundNote !== null) {
+    parts.push(`Background: ${normalizeSentence(panel.backgroundNote, false)}.`);
+  }
+
+  if (panel.panelNotes !== null && panel.composition.customNote === null) {
+    parts.push(`Panel-specific note: ${normalizeSentence(panel.panelNotes, false)}`);
   }
 
   if (panel.sfxText !== null) {
-    parts.push(`SFX: ${panel.sfxText}.`);
+    parts.push(`Sound effect text in the artwork: "${panel.sfxText}".`);
   }
 
-  return parts.length === 0 ? 'No special composition notes.' : parts.join(' ');
+  return parts.length === 0 ? 'No additional composition note is provided.' : parts.join(' ');
 }
 
-function buildDialogueInstruction(
-  dialogueMode: PageDialogueMode,
-  pageDialogueToggle: boolean,
-  panels: Panel[],
-  entityMap: Map<string, Entity>,
-): string {
-  if (!pageDialogueToggle || dialogueMode === 'balloon_only') {
-    return '';
+function buildDialogueBeats(panel: Panel, entityMap: Map<string, Entity>): string[] {
+  return panel.dialogue.map((dialogue) => formatDialogueLine(panel.order, dialogue, entityMap));
+}
+
+function buildDialogueLock(panel: Panel, entityMap: Map<string, Entity>): string | null {
+  if (panel.dialogue.length === 0) {
+    return null;
   }
 
-  const dialogueLines = panels.flatMap((panel) => {
-    if (dialogueMode === 'mixed' && !panel.dialogueInPanel) {
-      return [];
+  const lines = panel.dialogue.map((dialogue, index) => {
+    const ordinal = index + 1;
+    if (dialogue.entityId === null) {
+      return `line ${ordinal} is narration text and must remain narration, not character speech: "${dialogue.text}"`;
     }
 
-    const panelDialogueLines = panel.dialogue.map((dialogue) => formatDialogueLine(panel.order, dialogue, entityMap));
-    if (panel.sfxText !== null) {
-      panelDialogueLines.push(`SFX in panel ${panel.order}: '${panel.sfxText}' in manga-style lettering.`);
-    }
-    return panelDialogueLines;
+    const speaker = entityMap.get(dialogue.entityId)?.name ?? 'Unknown speaker';
+    return `line ${ordinal} must stay assigned to ${speaker} exactly as written: "${dialogue.text}"`;
   });
 
-  return dialogueLines.length === 0 ? '' : dialogueLines.join('\n');
+  return `Dialogue lock for panel ${panel.order}: ${lines.join('; ')}. Do not omit, paraphrase, merge, split, or reassign these lines.`;
+}
+
+function shouldBakeDialogueForPanel(page: PagePromptContext, panel: Panel): boolean {
+  if (!page.pageDialogueToggle || page.dialogueMode === 'balloon_only') {
+    return false;
+  }
+
+  if (page.dialogueMode === 'mixed') {
+    return panel.dialogueInPanel;
+  }
+
+  return true;
+}
+
+function buildLayoutInstruction(page: PagePromptContext, panelCount: number): string {
+  const layoutType = readString(page.layoutConfig.type);
+  if (layoutType === 'template') {
+    const templateId = readString(page.layoutConfig.template_id);
+    if (templateId !== null && isKnownTemplateId(templateId)) {
+      const template = getPanelFrameTemplate(templateId);
+      return `Use the ${template.id} template with ${template.panelCount} panels. Preserve its panel proportions, reading rhythm, and clear gutters for this ${panelCount}-panel page. Do not add, merge, or omit panels.`;
+    }
+  }
+
+  if (layoutType === 'custom') {
+    const frameDefinitions = toFrameDefinitions(page.layoutConfig.frame_definitions);
+    const instructionLines = [
+      'Follow the uploaded layout reference image exactly for panel borders, gutter spacing, and reading order.',
+    ];
+
+    if (frameDefinitions.length > 0) {
+      instructionLines.push(
+        `Frame map: ${frameDefinitions
+          .map(
+            (frame) =>
+              `panel ${frame.readingOrder} uses vertices ${frame.vertices
+                .map((vertex) => `(${vertex.x.toFixed(2)}, ${vertex.y.toFixed(2)})`)
+                .join(' -> ')}`,
+          )
+          .join('; ')}.`,
+      );
+    }
+
+    instructionLines.push(`Do not add, merge, or omit panels. The finished page must retain exactly ${panelCount} panels.`);
+    return instructionLines.join(' ');
+  }
+
+  if (layoutType === 'ai_generated' || layoutType === 'ai_auto') {
+    return `Use the stored AI-generated panel arrangement for this page and preserve the intended manga reading order. Do not add, merge, or omit panels. Keep exactly ${panelCount} panels.`;
+  }
+
+  return `Preserve the intended manga page reading flow and clear panel separation. Do not add, merge, or omit panels. Keep exactly ${panelCount} panels with clear gutters and borders.`;
+}
+
+function buildQualityConstraints(
+  page: PagePromptContext,
+  panelCount: number,
+  referenceRoles: NormalizedReferenceRole[],
+): string[] {
+  const constraints = [
+    `Maintain exactly ${panelCount} readable panels in right-to-left manga reading order.`,
+    'Keep panel borders and gutters clean and unambiguous.',
+    'Preserve the authored action progression from one panel to the next without skipping intermediate beats.',
+    'Do not let any foreground character drift off-model relative to their reference image.',
+  ];
+
+  if (referenceRoles.some((role) => role.role === 'layout_reference')) {
+    constraints.push('Respect the layout reference image as the border template for the whole page.');
+  }
+
+  if (page.pageDialogueToggle && page.dialogueMode !== 'balloon_only') {
+    constraints.push('Keep required dialogue and SFX legible in the artwork without changing the authored wording.');
+    constraints.push('Preserve each baked dialogue line exactly with its authored speaker or narration role. Do not swap speakers, paraphrase lines, or move narration into character speech.');
+  }
+
+  return constraints;
+}
+
+function buildNegativeConstraints(page: PagePromptContext): string[] {
+  const constraints = [
+    'No extra panels.',
+    'No missing panels.',
+    'No extra characters beyond the authored cast for each panel.',
+    'No photorealistic rendering.',
+    'No western comic page styling.',
+    'No watermark.',
+  ];
+
+  if (!page.pageDialogueToggle || page.dialogueMode === 'balloon_only') {
+    constraints.push('Do not add baked-in dialogue text unless the panel instructions explicitly require it.');
+  }
+
+  return constraints;
+}
+
+function buildDraftPrompt(normalized: NormalizedPagePrompt): string {
+  const parts = [
+    normalized.pageSummary,
+    normalized.styleLock,
+    normalized.pageSetting,
+    normalized.layoutInstruction,
+    `Reference image roles: ${buildReferenceRoleParagraph(normalized.referenceRoles)}`,
+    buildPanelInstructionParagraph(normalized.panelInstructions),
+    buildQualityConstraintParagraph(normalized.qualityConstraints, normalized.negativeConstraints),
+  ];
+
+  return parts.filter((part) => part.length > 0).join('\n\n');
+}
+
+function buildCompilerBrief(normalized: NormalizedPagePrompt): string {
+  const sections: Array<[string, string[]]> = [
+    ['[TASK]', [normalized.pageSummary]],
+    ['[GLOBAL STYLE]', [normalized.styleLock]],
+    [
+      '[REFERENCE IMAGE ROLES]',
+      normalized.referenceRoles.length === 0
+        ? ['No image reference is attached to this page. Rely on the authored panel instructions only.']
+        : normalized.referenceRoles.map((role) => `${role.imageLabel}: ${role.instruction}`),
+    ],
+    ['[SETTING]', [normalized.pageSetting]],
+    ['[LAYOUT]', [normalized.layoutInstruction]],
+    [
+      '[PANEL INSTRUCTIONS]',
+      normalized.panelInstructions.flatMap((panel) => {
+        const lines = [
+          `Panel ${panel.order} (${panel.role}, ${panel.size})`,
+          `- Situation: ${panel.situation}`,
+          `- Character beat: ${panel.characterBeat}`,
+          `- Composition beat: ${panel.compositionBeat}`,
+        ];
+
+        if (panel.dialogueBeats.length > 0) {
+          lines.push(...panel.dialogueBeats.map((dialogue) => `- Dialogue/SFX: ${dialogue}`));
+        }
+
+        if (panel.dialogueLock !== null) {
+          lines.push(`- Dialogue lock: ${panel.dialogueLock}`);
+        }
+
+        return lines;
+      }),
+    ],
+    ['[QUALITY CONSTRAINTS]', normalized.qualityConstraints],
+    ['[NEGATIVE CONSTRAINTS]', normalized.negativeConstraints],
+  ];
+
+  return sections
+    .map(([title, lines]) => `${title}\n${lines.join('\n')}`)
+    .join('\n\n');
+}
+
+function buildReferenceRoleParagraph(referenceRoles: NormalizedReferenceRole[]): string {
+  if (referenceRoles.length === 0) {
+    return 'No reference images are attached.';
+  }
+
+  return referenceRoles.map((role) => `${role.imageLabel}: ${role.instruction}`).join(' ');
+}
+
+function buildPanelInstructionParagraph(panelInstructions: NormalizedPanelInstruction[]): string {
+  return panelInstructions
+    .map((panel) => {
+      const parts = [
+        `Panel ${panel.order}: This is a ${panel.role} ${panel.size} beat.`,
+        `Panel ${panel.order} situation: ${panel.situation}`,
+        `Panel ${panel.order} character direction: ${panel.characterBeat}`,
+        `Panel ${panel.order} composition and action: ${panel.compositionBeat}`,
+        panel.dialogueBeats.length === 0 ? null : `Panel ${panel.order} dialogue and SFX: ${panel.dialogueBeats.join(' ')}`,
+        panel.dialogueLock,
+      ].filter((value): value is string => value !== null);
+
+      return parts.join(' ');
+    })
+    .join('\n');
+}
+
+function buildQualityConstraintParagraph(
+  qualityConstraints: string[],
+  negativeConstraints: string[],
+): string {
+  return [
+    `Quality constraints: ${qualityConstraints.join(' ')}`,
+    `Negative constraints: ${negativeConstraints.join(' ')}`,
+  ].join('\n');
 }
 
 function formatDialogueLine(
@@ -280,7 +555,46 @@ function formatDialogueLine(
       ? `Panel ${panelOrder} dialogue`
       : `Panel ${panelOrder} dialogue by ${speaker}`;
 
-  return `${prefix}: '${dialogue.text}' as ${dialogue.type} at ${dialogue.position}.`;
+  return `${prefix}: "${dialogue.text}" as ${humanizeToken(dialogue.type)} at ${humanizeToken(dialogue.position)}.`;
+}
+
+function summarizeEntityAnchor(entity: Entity | undefined): string {
+  const source = entity?.promptSupplement ?? entity?.freeDescription ?? '';
+  const normalized = normalizeWhitespace(source);
+  if (normalized.length === 0) {
+    return '';
+  }
+
+  const trimmed = normalized.length > 160 ? `${normalized.slice(0, 157).trimEnd()}...` : normalized;
+  return `Keep these anchor traits stable: ${trimmed}`;
+}
+
+function collectOrderedEntityIds(panels: Panel[]): string[] {
+  const orderedEntityIds = new Set<string>();
+  for (const panel of panels) {
+    for (const assignment of panel.entities) {
+      orderedEntityIds.add(assignment.entityId);
+    }
+  }
+
+  return Array.from(orderedEntityIds);
+}
+
+function normalizeSentence(value: string, includeTrailingPeriod = true): string {
+  const trimmed = normalizeWhitespace(value).replace(/[.。]+$/u, '');
+  if (trimmed.length === 0) {
+    return '';
+  }
+
+  return includeTrailingPeriod ? `${trimmed}.` : trimmed;
+}
+
+function normalizeWhitespace(value: string): string {
+  return value.replace(/\s+/gu, ' ').trim();
+}
+
+function humanizeToken(value: string): string {
+  return value.replace(/_/gu, ' ');
 }
 
 function readString(value: unknown): string | null {
@@ -341,4 +655,31 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 const STYLE_LOCK_TEXT =
-  'Style: anime manga illustration, clean black line art, flat colors with manga-style shading, panel borders with gutters, reading order right-to-left, no photorealistic rendering, no western comic style.';
+  'Style lock: anime manga illustration, clean black line art, flat colors with manga-style shading, crisp panel borders with visible gutters, right-to-left reading flow, no photorealism, no western comic styling.';
+
+function buildStyleLock(page: PagePromptContext): string {
+  if (page.styleReference === null) {
+    return STYLE_LOCK_TEXT;
+  }
+
+  const anchorLines = buildRenderingStyleAnchorLines(page.styleReference.anchors);
+  const anchorConstraint =
+    anchorLines.length === 0
+      ? null
+      : `Apply these style anchors to line treatment, shading, finish, background treatment, motion accents, and page atmosphere: ${anchorLines.join('; ')}.`;
+  const notes =
+    page.styleReference.notes === null || page.styleReference.notes.trim().length === 0
+      ? null
+      : `User notes: ${page.styleReference.notes.trim()}.`;
+
+  return [
+    STYLE_LOCK_TEXT,
+    `Named style reference constraint: "${page.styleReference.title}". Treat it as a hard page-wide rendering constraint.`,
+    `Generalized style interpretation: ${page.styleReference.compiledBrief}`,
+    'Keep each character face, eye shape, hair silhouette, body proportions, and outfit silhouette anchored to the character reference images. Apply the style reference to rendering treatment, not to character identity.',
+    anchorConstraint,
+    notes,
+  ]
+    .filter((value): value is string => value !== null)
+    .join(' ');
+}

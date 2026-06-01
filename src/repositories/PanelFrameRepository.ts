@@ -8,12 +8,14 @@ import type {
 } from '../domain/types/panelFrame.js';
 import { ValidationError } from '../domain/errors/index.js';
 import type { DatabaseClient, TransactionRunner } from '../lib/db.js';
+import type { PageStatus } from '../domain/types/page.js';
 
 export type { PanelFrame, UpsertPanelFrameInput };
 
 export interface PageFrameContext {
   pageId: string;
   workId: string;
+  pageStatus: PageStatus;
 }
 
 export interface PanelFrameRepository {
@@ -35,6 +37,7 @@ export interface PanelFrameRepository {
 interface PageFrameContextRow extends QueryResultRow {
   page_id: string;
   work_id: string;
+  page_status: PageStatus;
 }
 
 interface PanelIdRow extends QueryResultRow {
@@ -63,7 +66,8 @@ export class PostgresPanelFrameRepository implements PanelFrameRepository {
     const result = await this.client.query<PageFrameContextRow>(
       `
       SELECT pages.id AS page_id,
-             chapters.work_id
+             chapters.work_id,
+             pages.status AS page_status
       FROM pages
       INNER JOIN episodes ON episodes.id = pages.episode_id
       INNER JOIN chapters ON chapters.id = episodes.chapter_id
@@ -75,7 +79,9 @@ export class PostgresPanelFrameRepository implements PanelFrameRepository {
     );
 
     const row = result.rows[0];
-    return row === undefined ? null : { pageId: row.page_id, workId: row.work_id };
+    return row === undefined
+      ? null
+      : { pageId: row.page_id, workId: row.work_id, pageStatus: row.page_status };
   }
 
   public async findPanelIdsByPageIdAndUserId(

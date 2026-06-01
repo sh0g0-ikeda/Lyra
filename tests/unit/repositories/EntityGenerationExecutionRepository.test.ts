@@ -44,6 +44,9 @@ describe('PostgresEntityGenerationExecutionRepository', () => {
     const completed = await repository.completeEntityGeneration({
       jobId: 'job-1',
       userId: 'user-1',
+      structuredFields: {
+        first_impression: 'quiet_neat',
+      },
       candidates: [
         {
           refId: 'ref-1',
@@ -51,14 +54,30 @@ describe('PostgresEntityGenerationExecutionRepository', () => {
           cdnUrl: 'https://cdn.lyra.test/session/user-1/entities/entity-1/job-1-1.png',
         },
       ],
+      compiledBrief: 'Character visual anchor: compact bob',
+      compiledPrompt: 'A clean full-body manga character reference with a compact bob.',
       openaiRequestId: 'req-1',
       costUsd: null,
+      compiledPromptUsed: true,
+      promptCompilerProvider: 'openai',
+      compilerModel: 'gpt-5.4-mini',
+      compilerPromptVersion: 'entity_ref_v2',
+      compilerError: null,
+      imageModel: 'gpt-image-2',
+      imageParams: {
+        quality: 'medium',
+        size: '1024x1536',
+      },
+      createdAt: '2026-05-26T00:00:00.000Z',
     });
 
     expect(completed).toBe(true);
     expect(client.queries[0]).toContain("status = 'completed'");
     expect(client.values?.[2]).toBe(
       JSON.stringify({
+        structured_fields: {
+          first_impression: 'quiet_neat',
+        },
         candidates: [
           {
             ref_id: 'ref-1',
@@ -66,7 +85,20 @@ describe('PostgresEntityGenerationExecutionRepository', () => {
             cdn_url: 'https://cdn.lyra.test/session/user-1/entities/entity-1/job-1-1.png',
           },
         ],
+        compiled_brief: 'Character visual anchor: compact bob',
+        compiled_prompt: 'A clean full-body manga character reference with a compact bob.',
         cost_usd: null,
+        compiled_prompt_used: true,
+        prompt_compiler_provider: 'openai',
+        compiler_model: 'gpt-5.4-mini',
+        compiler_prompt_version: 'entity_ref_v2',
+        compiler_error: null,
+        image_model: 'gpt-image-2',
+        image_params: {
+          quality: 'medium',
+          size: '1024x1536',
+        },
+        created_at: '2026-05-26T00:00:00.000Z',
       }),
     );
   });

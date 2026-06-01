@@ -1,7 +1,12 @@
 import { Hono, type Context, type MiddlewareHandler } from 'hono';
 import { ValidationError } from '../domain/errors/index.js';
 import type { Chapter, Episode, Work } from '../domain/types/story.js';
-import { collaborateStoryBodySchema, generatePageSkeletonParamSchema } from '../lib/validators/storyAi.schema.js';
+import {
+  collaborateStoryBodySchema,
+  generatePageSkeletonBodySchema,
+  generatePageSkeletonParamSchema,
+  improveEpisodeDraftBodySchema,
+} from '../lib/validators/storyAi.schema.js';
 import {
   createChapterBodySchema,
   createEpisodeBodySchema,
@@ -14,12 +19,14 @@ import {
 import type { StoryServicePort } from '../services/story/StoryService.js';
 import type { StoryCollaborationServicePort } from '../services/story/StoryCollaborationService.js';
 import type { PageSkeletonServicePort } from '../services/story/PageSkeletonService.js';
+import type { PageServicePort } from '../services/page/PageService.js';
 import type { AppEnv } from '../types/app.js';
 
 export interface StoryRouteDependencies {
   authMiddleware: MiddlewareHandler<AppEnv>;
   rateLimitMiddleware: MiddlewareHandler<AppEnv>;
   pageSkeletonService: PageSkeletonServicePort;
+  pageService?: PageServicePort;
   storyCollaborationService: StoryCollaborationServicePort;
   storyService: StoryServicePort;
 }
@@ -42,6 +49,7 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
       layer: body.data.layer,
       targetId: body.data.target_id,
       instruction: body.data.instruction,
+      language: body.data.language,
       context: {
         currentDraft: body.data.context.current_draft,
         selectedText: body.data.context.selected_text,
@@ -52,6 +60,44 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
     });
 
     return createSseResponse(stream);
+  });
+
+  app.post('/story/improve-episode-draft', async (c) => {
+    const user = c.get('user');
+    const body = improveEpisodeDraftBodySchema.safeParse(await readJsonBody(c));
+
+    if (!body.success) {
+      throw new ValidationError(body.error.message);
+    }
+
+    const result = await dependencies.storyCollaborationService.improveEpisodeDraft(user.id, {
+      episodeId: body.data.episode_id,
+      instruction: body.data.instruction,
+      language: body.data.language,
+      baseDraft: {
+        title: body.data.base_draft.title,
+        purpose: body.data.base_draft.purpose,
+        introduction: body.data.base_draft.introduction,
+        middle: body.data.base_draft.middle,
+        climax: body.data.base_draft.climax,
+        endingHook: body.data.base_draft.ending_hook,
+      },
+    });
+
+    return c.json({
+      draft: {
+        title: result.draft.title,
+        purpose: result.draft.purpose,
+        introduction: result.draft.introduction,
+        middle: result.draft.middle,
+        climax: result.draft.climax,
+        ending_hook: result.draft.endingHook,
+      },
+      compiler_provider: result.compilerProvider,
+      compiler_model: result.compilerModel,
+      compiler_prompt_version: result.compilerPromptVersion,
+      compiler_error: result.compilerError,
+    });
   });
 
   app.post('/works', async (c) => {
@@ -250,12 +296,63 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
       throw new ValidationError('id must be a valid UUID');
     }
 
-    const result = await dependencies.pageSkeletonService.generateForEpisode(user.id, parsedEpisodeId.data);
+    const hasBody = (c.req.header('content-type') ?? '').includes('application/json');
+    const body = generatePageSkeletonBodySchema.safeParse(
+      hasBody ? await readJsonBody(c) : {},
+    );
+    if (!body.success) {
+      throw new ValidationError(body.error.message);
+    }
+
+    const result = await dependencies.pageSkeletonService.generateForEpisode(user.id, parsedEpisodeId.data, {
+      overwriteExisting: body.data.overwrite_existing,
+      language: body.data.language,
+    });
+
+    let storyPlanResult:
+      | {
+          updated_page_count: number;
+          updated_panel_count: number;
+          updated_assignment_count: number;
+          filled_field_count: number;
+          compiler_used: boolean;
+          compiler_provider: 'openai' | 'fallback';
+          compiler_model: string | null;
+          compiler_prompt_version: string | null;
+          compiler_error: string | null;
+        }
+      | null = null;
+
+    if (body.data.apply_story_plan) {
+      if (dependencies.pageService === undefined) {
+        throw new ValidationError('Page service is not configured for story plan autofill');
+      }
+
+      const applied = await dependencies.pageService.autofillEpisodeFromStory(
+        user.id,
+        parsedEpisodeId.data,
+        body.data.language,
+      );
+      storyPlanResult = {
+        updated_page_count: applied.updatedPageCount,
+        updated_panel_count: applied.updatedPanelCount,
+        updated_assignment_count: applied.updatedAssignmentCount,
+        filled_field_count: applied.filledFieldCount,
+        compiler_used: applied.compilerUsed,
+        compiler_provider: applied.compilerProvider,
+        compiler_model: applied.compilerModel,
+        compiler_prompt_version: applied.compilerPromptVersion,
+        compiler_error: applied.compilerError,
+      };
+    }
 
     return c.json(
       {
         pages_created: result.pagesCreated,
         panels_created: result.panelsCreated,
+        replaced_existing: result.replacedExisting,
+        story_plan_applied: body.data.apply_story_plan,
+        story_plan_result: storyPlanResult,
       },
       201,
     );

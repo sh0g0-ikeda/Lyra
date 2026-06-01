@@ -1,5 +1,6 @@
 import type { PanelRole, PanelSize } from './panel.js';
 import type { PanelFrameTemplateId } from './panelFrame.js';
+import type { AppLanguage } from './language.js';
 
 export type StoryCollaborationLayer = 'work' | 'chapter' | 'episode';
 
@@ -15,7 +16,92 @@ export interface StoryCollaborationInput {
   layer: StoryCollaborationLayer;
   targetId: string;
   instruction: string;
+  language: AppLanguage;
   context: StoryCollaborationContextInput;
+}
+
+export interface StoryEpisodeDraftFields {
+  title: string | null;
+  purpose: string | null;
+  introduction: string | null;
+  middle: string | null;
+  climax: string | null;
+  endingHook: string | null;
+}
+
+export interface StoryEpisodeImprovementInput {
+  episodeId: string;
+  instruction: string;
+  language: AppLanguage;
+  baseDraft: StoryEpisodeDraftFields;
+}
+
+export interface StoryEpisodeImprovementContext {
+  episodeId: string;
+  chapterId: string;
+  workId: string;
+  workTitle: string;
+  workGenre: string | null;
+  worldSetting: string | null;
+  theme: string | null;
+  overallFlow: string | null;
+  chapterTitle: string | null;
+  chapterPurpose: string | null;
+  chapterStartingState: string | null;
+  chapterEndingState: string | null;
+  chapterEmotionCurve: string | null;
+  episodeTitle: string | null;
+  episodePurpose: string | null;
+  introduction: string | null;
+  middle: string | null;
+  climax: string | null;
+  endingHook: string | null;
+  estimatedPages: number;
+  entities: StoryEntitySummary[];
+  sceneSummaries: string[];
+  chapterSummaries: string[];
+  siblingEpisodeSummaries: string[];
+}
+
+export interface StoryEpisodeImprovementResult {
+  draft: StoryEpisodeDraftFields;
+  compilerProvider: 'anthropic' | 'hybrid' | 'fallback';
+  compilerModel: string | null;
+  compilerPromptVersion: string | null;
+  compilerError: string | null;
+}
+
+export interface StoryEpisodeImprovementSectionPlan {
+  objective: string | null;
+  mustInclude: string[];
+  visualBeats: string[];
+  narrationHints: string[];
+  continuityGuards: string[];
+  avoid: string[];
+}
+
+export interface StoryEpisodeImprovementPlan {
+  storyObjective: string | null;
+  mustPreserve: string[];
+  continuityGuards: string[];
+  pageAdaptationNotes: string[];
+  title: StoryEpisodeImprovementSectionPlan;
+  purpose: StoryEpisodeImprovementSectionPlan;
+  introduction: StoryEpisodeImprovementSectionPlan;
+  middle: StoryEpisodeImprovementSectionPlan;
+  climax: StoryEpisodeImprovementSectionPlan;
+  endingHook: StoryEpisodeImprovementSectionPlan;
+}
+
+export interface StoryEpisodeImprovementAudit {
+  verdict: 'pass' | 'revise';
+  globalIssues: string[];
+  title: string[];
+  purpose: string[];
+  introduction: string[];
+  middle: string[];
+  climax: string[];
+  endingHook: string[];
 }
 
 export interface StoryEntitySummary {
@@ -81,4 +167,5 @@ export interface EpisodePageSkeletonContext {
 export interface PageSkeletonPersistResult {
   pagesCreated: number;
   panelsCreated: number;
+  replacedExisting: boolean;
 }

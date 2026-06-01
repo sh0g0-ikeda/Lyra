@@ -3,7 +3,7 @@ import { OpenAIClient } from '../../../../src/infrastructure/openai/OpenAIClient
 import { OpenAIEntityReferenceGenerator } from '../../../../src/infrastructure/openai/OpenAIEntityReferenceGenerator.js';
 
 describe('OpenAIEntityReferenceGenerator', () => {
-  it('3 candidates を生成する', async () => {
+  it('source image がない場合は /images/generations で 3 candidates を生成する', async () => {
     let callCount = 0;
     const requestBodies: string[] = [];
     const client = new OpenAIClient({
@@ -16,10 +16,9 @@ describe('OpenAIEntityReferenceGenerator', () => {
 
         return new Response(
           JSON.stringify({
-            output: [
+            data: [
               {
-                type: 'image_generation_call',
-                result: Buffer.from(`image-${callCount}`).toString('base64'),
+                b64_json: Buffer.from(`image-${callCount}`).toString('base64'),
               },
             ],
           }),
@@ -35,28 +34,27 @@ describe('OpenAIEntityReferenceGenerator', () => {
 
     const result = await generator.generateCandidates({ prompt: 'entity prompt', inputImages: [] });
 
-    expect(callCount).toBe(3);
+    expect(callCount).toBe(1);
     expect(result.openaiRequestId).toBe('req-1');
-    expect(result.candidates).toHaveLength(3);
+    expect(result.candidates).toHaveLength(1);
     expect(result.candidates[0]?.mimeType).toBe('image/png');
     expect(requestBodies[0]).toContain('"size":"1024x1536"');
   });
 
-  it('inputImages がある場合は image input を OpenAI に渡す', async () => {
-    let capturedBody = '';
+  it('source image がある場合は /images/edits に multipart で送る', async () => {
+    let capturedBody: RequestInit['body'] | undefined;
     const client = new OpenAIClient({
       apiKey: 'test',
       baseUrl: 'https://api.openai.test/v1',
       timeoutMs: 1000,
       fetchFn: async (_input, init) => {
-        capturedBody = typeof init?.body === 'string' ? init.body : '';
+        capturedBody = init?.body;
 
         return new Response(
           JSON.stringify({
-            output: [
+            data: [
               {
-                type: 'image_generation_call',
-                result: Buffer.from('image-1').toString('base64'),
+                b64_json: Buffer.from('image-1').toString('base64'),
               },
             ],
           }),
@@ -75,7 +73,10 @@ describe('OpenAIEntityReferenceGenerator', () => {
       inputImages: [{ dataUrl: 'data:image/png;base64,cmVm' }],
     });
 
-    expect(capturedBody).toContain('"type":"input_image"');
-    expect(capturedBody).toContain('"image_url":"data:image/png;base64,cmVm"');
+    expect(capturedBody).toBeInstanceOf(FormData);
+    const formData = capturedBody as FormData;
+    expect(formData.get('model')).toBe('gpt-image-2');
+    expect(formData.get('prompt')).toBeTypeOf('string');
+    expect(formData.getAll('image[]')).toHaveLength(1);
   });
 });

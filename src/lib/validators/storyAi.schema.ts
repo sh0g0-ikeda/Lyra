@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { PANEL_FRAME_TEMPLATE_IDS } from '../../domain/constants/panelFrameTemplates.js';
 import { STORY_AI_LIMITS } from '../../domain/constants/storyAi.js';
+import { APP_LANGUAGES } from '../../domain/types/language.js';
 
 const nullableText = (maxLength: number): z.ZodNullable<z.ZodString> =>
   z.string().trim().min(1).max(maxLength).nullable();
@@ -24,6 +25,7 @@ export const collaborateStoryBodySchema = z
     layer: z.enum(['work', 'chapter', 'episode']),
     target_id: z.string().uuid(),
     instruction: z.string().trim().min(1).max(STORY_AI_LIMITS.instructionMaxLength),
+    language: z.enum(APP_LANGUAGES).optional().default('ja'),
     context: collaborationContextSchema.optional().default({
       current_draft: null,
       selected_text: null,
@@ -35,6 +37,34 @@ export const collaborateStoryBodySchema = z
   .strict();
 
 export const generatePageSkeletonParamSchema = z.string().uuid();
+
+export const generatePageSkeletonBodySchema = z
+  .object({
+    overwrite_existing: z.boolean().optional().default(false),
+    apply_story_plan: z.boolean().optional().default(true),
+    language: z.enum(APP_LANGUAGES).optional().default('ja'),
+  })
+  .strict();
+
+const episodeDraftFieldsSchema = z
+  .object({
+    title: nullableText(200).optional().default(null),
+    purpose: nullableText(2000).optional().default(null),
+    introduction: nullableText(2000).optional().default(null),
+    middle: nullableText(2000).optional().default(null),
+    climax: nullableText(2000).optional().default(null),
+    ending_hook: nullableText(2000).optional().default(null),
+  })
+  .strict();
+
+export const improveEpisodeDraftBodySchema = z
+  .object({
+    episode_id: z.string().uuid(),
+    instruction: z.string().trim().min(1).max(STORY_AI_LIMITS.instructionMaxLength),
+    language: z.enum(APP_LANGUAGES).optional().default('ja'),
+    base_draft: episodeDraftFieldsSchema,
+  })
+  .strict();
 
 const pageSkeletonPanelSchema = z
   .object({
@@ -60,5 +90,60 @@ const pageSkeletonPageSchema = z
 export const pageSkeletonResponseSchema = z
   .object({
     pages: z.array(pageSkeletonPageSchema).min(1).max(STORY_AI_LIMITS.maxSkeletonPages),
+  })
+  .strict();
+
+export const improveEpisodeDraftResponseSchema = z
+  .object({
+    title: nullableText(200),
+    purpose: nullableText(2000),
+    introduction: nullableText(2000),
+    middle: nullableText(2000),
+    climax: nullableText(2000),
+    ending_hook: nullableText(2000),
+  })
+  .strict();
+
+const boundedPlannerText = z.string().trim().min(1).max(600);
+const boundedPlannerList = z.array(boundedPlannerText).max(10);
+
+const episodeImprovementSectionPlanSchema = z
+  .object({
+    objective: boundedPlannerText.nullable(),
+    must_include: boundedPlannerList,
+    visual_beats: boundedPlannerList,
+    narration_hints: boundedPlannerList,
+    continuity_guards: boundedPlannerList,
+    avoid: boundedPlannerList,
+  })
+  .strict();
+
+export const episodeImprovementPlanResponseSchema = z
+  .object({
+    story_objective: boundedPlannerText.nullable(),
+    must_preserve: boundedPlannerList,
+    continuity_guards: boundedPlannerList,
+    page_adaptation_notes: boundedPlannerList,
+    title: episodeImprovementSectionPlanSchema,
+    purpose: episodeImprovementSectionPlanSchema,
+    introduction: episodeImprovementSectionPlanSchema,
+    middle: episodeImprovementSectionPlanSchema,
+    climax: episodeImprovementSectionPlanSchema,
+    ending_hook: episodeImprovementSectionPlanSchema,
+  })
+  .strict();
+
+const auditNoteListSchema = z.array(z.string().trim().min(1).max(400)).max(8);
+
+export const episodeImprovementAuditResponseSchema = z
+  .object({
+    verdict: z.enum(['pass', 'revise']),
+    global_issues: auditNoteListSchema,
+    title: auditNoteListSchema,
+    purpose: auditNoteListSchema,
+    introduction: auditNoteListSchema,
+    middle: auditNoteListSchema,
+    climax: auditNoteListSchema,
+    ending_hook: auditNoteListSchema,
   })
   .strict();

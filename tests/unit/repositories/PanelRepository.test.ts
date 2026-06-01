@@ -185,6 +185,51 @@ describe('PostgresPanelRepository', () => {
     expect(client.queries[1]).toContain('DELETE FROM panels');
     expect(client.queries[1]).toContain('works.user_id = $2');
   });
+
+  it('legacy skeleton entity payload without new optional keys is still readable', async () => {
+    const client = new QueryCapturingClient();
+    client.query = async function <T extends QueryResultRow = QueryResultRow>(
+      text: string,
+      values?: readonly unknown[],
+    ): Promise<QueryResult<T>> {
+      this.queries.push(text);
+      this.values = values;
+      this.valuesList.push(values);
+
+      return {
+        command: 'SELECT',
+        rowCount: 1,
+        oid: 0,
+        fields: [],
+        rows: [
+          {
+            ...panelRow(),
+            entities: [
+              {
+                entity_id: 'entity-1',
+                role: 'primary',
+                expression: 'calm',
+                action: 'standing_firm',
+                position: 'center',
+              },
+            ],
+          },
+        ] as unknown as T[],
+      };
+    };
+
+    const repository = new PostgresPanelRepository(client);
+    const panels = await repository.findPanelsByPageIdAndUserId('page-1', 'user-1');
+
+    expect(panels[0]?.entities[0]).toMatchObject({
+      entityId: 'entity-1',
+      customExpression: null,
+      customAction: null,
+      facingDirection: null,
+      effectNote: null,
+      stateId: null,
+    });
+  });
 });
 
 function panelRow(): Record<string, unknown> {

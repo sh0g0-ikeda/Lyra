@@ -1,9 +1,10 @@
-import { SignJWT } from 'jose';
+﻿import { SignJWT } from 'jose';
 import { describe, expect, it } from 'vitest';
 import { createApp } from '../../../src/app.js';
 import { NotFoundError } from '../../../src/domain/errors/index.js';
 import type { CreditBalanceSnapshot } from '../../../src/domain/types/credit.js';
 import type { GenerationJob } from '../../../src/domain/types/job.js';
+import type { PageSummary } from '../../../src/domain/types/page.js';
 import type { AuthenticatedUser, SupabaseJwtClaims } from '../../../src/domain/types/user.js';
 import type {
   ConsumeCreditsParams,
@@ -11,12 +12,14 @@ import type {
   RefundCreditsParams,
 } from '../../../src/services/credit/CreditService.js';
 import type { JobServicePort } from '../../../src/services/job/JobService.js';
+import type { PageExportServicePort } from '../../../src/services/page/PageExportService.js';
 import type { PageFinalizeServicePort } from '../../../src/services/page/PageFinalizeService.js';
-import type { PageQueryServicePort } from '../../../src/services/page/PageQueryService.js';
 import type {
   EnqueuePageGenerationResult,
   PageGenerationServicePort,
 } from '../../../src/services/page/PageGenerationService.js';
+import type { PageQueryServicePort } from '../../../src/services/page/PageQueryService.js';
+import type { PageServicePort } from '../../../src/services/page/PageService.js';
 import type {
   ProvisionedUser,
   UserProvisioningPort,
@@ -49,27 +52,28 @@ class FakeCreditService implements CreditServicePort {
     return { monthlyCredits: 0, purchasedCredits: 0, totalCredits: 0, monthlyExpiresAt: null };
   }
 
-  public async grantSignupBonus(_userId: string): Promise<CreditBalanceSnapshot> {
-    return this.getBalance(_userId);
+  public async grantSignupBonus(userId: string): Promise<CreditBalanceSnapshot> {
+    return this.getBalance(userId);
   }
 
-  public async consumeCredits(_params: ConsumeCreditsParams): Promise<CreditBalanceSnapshot> {
-    return this.getBalance(_params.userId);
+  public async consumeCredits(params: ConsumeCreditsParams): Promise<CreditBalanceSnapshot> {
+    return this.getBalance(params.userId);
   }
 
-  public async refundCredits(_params: RefundCreditsParams): Promise<CreditBalanceSnapshot> {
-    return this.getBalance(_params.userId);
+  public async refundCredits(params: RefundCreditsParams): Promise<CreditBalanceSnapshot> {
+    return this.getBalance(params.userId);
   }
 }
 
 class FakePageGenerationService implements PageGenerationServicePort {
   public lastPageId: string | null = null;
 
-  public async enqueuePageGeneration(_userId: string, requestedPageId: string): Promise<EnqueuePageGenerationResult> {
+  public async enqueuePageGeneration(
+    _userId: string,
+    requestedPageId: string,
+  ): Promise<EnqueuePageGenerationResult> {
     this.lastPageId = requestedPageId;
-    return {
-      jobId: '11111111-1111-4111-8111-111111111111',
-    };
+    return { jobId: '11111111-1111-4111-8111-111111111111' };
   }
 }
 
@@ -86,22 +90,60 @@ class FakePageFinalizeService implements PageFinalizeServicePort {
   }
 }
 
+class FakePageExportService implements PageExportServicePort {
+  public exportedPageId: string | null = null;
+
+  public async exportGeneratedImage(_userId: string, pageId: string) {
+    this.exportedPageId = pageId;
+    return {
+      imageData: Buffer.from('fake-image'),
+      mimeType: 'image/png' as const,
+    };
+  }
+}
+
+class FakePageService implements PageServicePort {
+  public updatedPageId: string | null = null;
+  public autofilledPageId: string | null = null;
+  public autofilledEpisodeId: string | null = null;
+
+  public async updatePageSettings(_userId: string, pageId: string): Promise<PageSummary> {
+    this.updatedPageId = pageId;
+    return buildPageSummary(pageId);
+  }
+
+  public async autofillFromScenes(_userId: string, pageId: string) {
+    this.autofilledPageId = pageId;
+    return {
+      updatedPanelCount: 2,
+      filledFieldCount: 9,
+      compilerUsed: true,
+      compilerProvider: 'openai' as const,
+      compilerModel: 'gpt-5.4-mini',
+      compilerPromptVersion: 'page_autofill_v2',
+      compilerError: null,
+    };
+  }
+
+  public async autofillEpisodeFromStory(_userId: string, episodeId: string) {
+    this.autofilledEpisodeId = episodeId;
+    return {
+      updatedPageCount: 2,
+      updatedPanelCount: 8,
+      updatedAssignmentCount: 6,
+      filledFieldCount: 24,
+      compilerUsed: true,
+      compilerProvider: 'openai' as const,
+      compilerModel: 'gpt-5.4-mini',
+      compilerPromptVersion: 'page_autofill_v2',
+      compilerError: null,
+    };
+  }
+}
+
 class FakePageQueryService implements PageQueryServicePort {
-  public async listEpisodePages(): Promise<never> {
-    return [
-      {
-        id: '33333333-3333-4333-8333-333333333333',
-        episodeId: '44444444-4444-4444-8444-444444444444',
-        pageNumber: 1,
-        layoutConfig: { type: 'template', template_id: 'standard_4' },
-        dialogueMode: 'mixed',
-        generationMode: null,
-        generatedImage: null,
-        status: 'designing',
-        createdAt: new Date('2026-04-24T00:00:00.000Z'),
-        updatedAt: new Date('2026-04-24T00:00:00.000Z'),
-      },
-    ] as never;
+  public async listEpisodePages(): Promise<PageSummary[]> {
+    return [buildPageSummary('33333333-3333-4333-8333-333333333333')];
   }
 }
 
@@ -118,7 +160,7 @@ class FakeJobService implements JobServicePort {
 }
 
 describe('page generation routes', () => {
-  it('episode 配下の pages 一覧を返す', async () => {
+  it('episode pages 一覧を返す', async () => {
     const app = createTestApp(
       new FakePageGenerationService(),
       new FakePageFinalizeService(),
@@ -128,9 +170,7 @@ describe('page generation routes', () => {
     const token = await createToken();
 
     const response = await app.request('/api/episodes/44444444-4444-4444-8444-444444444444/pages', {
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
+      headers: { Authorization: `Bearer ${token}` },
     });
 
     expect(response.status).toBe(200);
@@ -139,21 +179,116 @@ describe('page generation routes', () => {
         expect.objectContaining({
           id: '33333333-3333-4333-8333-333333333333',
           page_number: 1,
+          panel_count: 4,
+          story_source_scene_ids: ['scene-1'],
+          story_page_purpose: 'This page escalates the rooftop confrontation.',
+          story_continuity_note: 'Keep the mood restrained for the next page.',
         }),
       ],
     });
   });
 
-  it('認証済みならページ生成 enqueue で202とjob_idを返す', async () => {
+  it('page settings を更新する', async () => {
+    const pageService = new FakePageService();
+    const app = createTestApp(
+      new FakePageGenerationService(),
+      new FakePageFinalizeService(),
+      new FakeJobService(),
+      new FakePageQueryService(),
+      pageService,
+    );
+    const token = await createToken();
+
+    const response = await app.request('/api/pages/33333333-3333-4333-8333-333333333333', {
+      method: 'PUT',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        dialogue_mode: 'mixed',
+        page_dialogue_toggle: true,
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual(
+      expect.objectContaining({
+        id: '33333333-3333-4333-8333-333333333333',
+        page_dialogue_toggle: true,
+      }),
+    );
+    expect(pageService.updatedPageId).toBe('33333333-3333-4333-8333-333333333333');
+  });
+
+  it('scene から page autofill を実行する', async () => {
+    const pageService = new FakePageService();
+    const app = createTestApp(
+      new FakePageGenerationService(),
+      new FakePageFinalizeService(),
+      new FakeJobService(),
+      new FakePageQueryService(),
+      pageService,
+    );
+    const token = await createToken();
+
+    const response = await app.request('/api/pages/33333333-3333-4333-8333-333333333333/autofill-from-scenes', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      updated_panel_count: 2,
+      filled_field_count: 9,
+      compiler_used: true,
+      compiler_provider: 'openai',
+      compiler_model: 'gpt-5.4-mini',
+      compiler_prompt_version: 'page_autofill_v2',
+      compiler_error: null,
+    });
+    expect(pageService.autofilledPageId).toBe('33333333-3333-4333-8333-333333333333');
+  });
+
+  it('episode 全体の story plan autofill を実行する', async () => {
+    const pageService = new FakePageService();
+    const app = createTestApp(
+      new FakePageGenerationService(),
+      new FakePageFinalizeService(),
+      new FakeJobService(),
+      new FakePageQueryService(),
+      pageService,
+    );
+    const token = await createToken();
+
+    const response = await app.request('/api/episodes/33333333-3333-4333-8333-333333333333/autofill-pages-from-story', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      updated_page_count: 2,
+      updated_panel_count: 8,
+      updated_assignment_count: 6,
+      filled_field_count: 24,
+      compiler_used: true,
+      compiler_provider: 'openai',
+      compiler_model: 'gpt-5.4-mini',
+      compiler_prompt_version: 'page_autofill_v2',
+      compiler_error: null,
+    });
+    expect(pageService.autofilledEpisodeId).toBe('33333333-3333-4333-8333-333333333333');
+  });
+
+  it('ページ生成 enqueue は 202 と job_id を返す', async () => {
     const pageGenerationService = new FakePageGenerationService();
     const app = createTestApp(pageGenerationService, new FakePageFinalizeService(), new FakeJobService());
     const token = await createToken();
 
     const response = await app.request('/api/pages/33333333-3333-4333-8333-333333333333/generate', {
       method: 'POST',
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
+      headers: { Authorization: `Bearer ${token}` },
     });
 
     expect(response.status).toBe(202);
@@ -163,14 +298,34 @@ describe('page generation routes', () => {
     expect(pageGenerationService.lastPageId).toBe('33333333-3333-4333-8333-333333333333');
   });
 
-  it('認証済みならjob取得で対象jobを返す', async () => {
+  it('ページ画像エクスポートは画像 bytes を返す', async () => {
+    const pageExportService = new FakePageExportService();
+    const app = createTestApp(
+      new FakePageGenerationService(),
+      new FakePageFinalizeService(),
+      new FakeJobService(),
+      new FakePageQueryService(),
+      new FakePageService(),
+      pageExportService,
+    );
+    const token = await createToken();
+
+    const response = await app.request('/api/pages/33333333-3333-4333-8333-333333333333/export-image', {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get('Content-Type')).toBe('image/png');
+    expect(pageExportService.exportedPageId).toBe('33333333-3333-4333-8333-333333333333');
+    await expect(response.arrayBuffer()).resolves.toBeInstanceOf(ArrayBuffer);
+  });
+
+  it('jobs endpoint で対象 job を返す', async () => {
     const app = createTestApp(new FakePageGenerationService(), new FakePageFinalizeService(), new FakeJobService());
     const token = await createToken();
 
     const response = await app.request('/api/jobs/22222222-2222-4222-8222-222222222222', {
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
+      headers: { Authorization: `Bearer ${token}` },
     });
 
     expect(response.status).toBe(200);
@@ -188,20 +343,18 @@ describe('page generation routes', () => {
     expect(payload).not.toHaveProperty('openai_request_id');
   });
 
-  it('不正なUUIDは422になる', async () => {
+  it('不正な UUID は 422 になる', async () => {
     const app = createTestApp(new FakePageGenerationService(), new FakePageFinalizeService(), new FakeJobService());
     const token = await createToken();
 
     const response = await app.request('/api/jobs/not-a-uuid', {
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
+      headers: { Authorization: `Bearer ${token}` },
     });
 
     expect(response.status).toBe(422);
   });
 
-  it('認証が無ければ401になる', async () => {
+  it('認証が無ければ 401 になる', async () => {
     const app = createTestApp(new FakePageGenerationService(), new FakePageFinalizeService(), new FakeJobService());
 
     const generateResponse = await app.request('/api/pages/33333333-3333-4333-8333-333333333333/generate', {
@@ -220,9 +373,7 @@ describe('page generation routes', () => {
 
     const response = await app.request('/api/pages/33333333-3333-4333-8333-333333333333/confirm', {
       method: 'POST',
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
+      headers: { Authorization: `Bearer ${token}` },
     });
 
     expect(response.status).toBe(204);
@@ -236,9 +387,7 @@ describe('page generation routes', () => {
 
     const response = await app.request('/api/pages/33333333-3333-4333-8333-333333333333/reopen', {
       method: 'POST',
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
+      headers: { Authorization: `Bearer ${token}` },
     });
 
     expect(response.status).toBe(204);
@@ -251,16 +400,42 @@ function createTestApp(
   pageFinalizeService: PageFinalizeServicePort,
   jobService: JobServicePort,
   pageQueryService: PageQueryServicePort = new FakePageQueryService(),
+  pageService: PageServicePort = new FakePageService(),
+  pageExportService: PageExportServicePort = new FakePageExportService(),
 ): ReturnType<typeof createApp> {
   return createApp({
     creditService: new FakeCreditService(),
     jobService,
-    pageFinalizeService,
-    pageQueryService,
-    pageGenerationService,
-    userProvisioningService: new FakeUserProvisioningService(),
     jwtSecret,
+    pageExportService,
+    pageFinalizeService,
+    pageGenerationService,
+    pageQueryService,
+    pageService,
+    userProvisioningService: new FakeUserProvisioningService(),
   });
+}
+
+function buildPageSummary(pageId: string): PageSummary {
+  return {
+    id: pageId,
+    episodeId: '44444444-4444-4444-8444-444444444444',
+    pageNumber: 1,
+    layoutConfig: { type: 'template', template_id: 'standard_4' },
+    storySourceSceneIds: ['scene-1'],
+    storyPagePurpose: 'This page escalates the rooftop confrontation.',
+    storyContinuityNote: 'Keep the mood restrained for the next page.',
+    dialogueMode: 'mixed',
+    pageDialogueToggle: true,
+    generationMode: null,
+    generatedImage: null,
+    status: 'editing',
+    panelCount: 4,
+    frameCount: 4,
+    balloonCount: 0,
+    createdAt: new Date('2026-05-01T00:00:00.000Z'),
+    updatedAt: new Date('2026-05-01T00:00:00.000Z'),
+  };
 }
 
 function buildJob(): GenerationJob {
@@ -268,9 +443,9 @@ function buildJob(): GenerationJob {
     id: '22222222-2222-4222-8222-222222222222',
     userId: user.id,
     jobType: 'page_generate',
-    status: 'queued',
-    generationMode: 'standard',
+    status: 'completed',
     creditCost: 10,
+    generationMode: 'standard',
     params: {
       page_id: '33333333-3333-4333-8333-333333333333',
       request_kind: 'initial',
@@ -278,15 +453,19 @@ function buildJob(): GenerationJob {
       quality: 'medium',
       requires_planner: false,
     },
-    result: null,
-    sqsMessageId: 'message-1',
+    result: {
+      generated_image: {
+        cdn_url: 'https://cdn.example.com/page.png',
+      },
+    },
+    sqsMessageId: null,
     openaiRequestId: null,
     errorMessage: null,
     retryCount: 0,
-    createdAt: new Date('2026-04-24T00:00:00.000Z'),
-    startedAt: null,
-    completedAt: null,
-    expiresAt: new Date('2026-05-01T00:00:00.000Z'),
+    createdAt: new Date('2026-05-01T00:00:00.000Z'),
+    startedAt: new Date('2026-05-01T00:00:01.000Z'),
+    completedAt: new Date('2026-05-01T00:00:02.000Z'),
+    expiresAt: null,
   };
 }
 

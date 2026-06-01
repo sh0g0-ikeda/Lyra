@@ -1,4 +1,4 @@
-import { NotFoundError, ValidationError } from '../../domain/errors/index.js';
+import { ConflictError, NotFoundError, ValidationError } from '../../domain/errors/index.js';
 import type {
   CreatePanelInput,
   Panel,
@@ -6,6 +6,7 @@ import type {
   PanelDialogueLine,
   UpdatePanelInput,
 } from '../../domain/types/panel.js';
+import type { PageStatus } from '../../domain/types/page.js';
 import type { EntityReferenceReader } from '../../repositories/EntityRepository.js';
 import type { PanelRepository } from '../../repositories/PanelRepository.js';
 
@@ -37,6 +38,7 @@ export class PanelService implements PanelServicePort {
     if (pageContext === null) {
       throw new NotFoundError('Page not found');
     }
+    ensurePageEditable(pageContext.pageStatus, 'panels');
 
     const normalizedInput = normalizeCreateInput(input);
     const dialogue = normalizedInput.dialogue ?? [];
@@ -65,6 +67,7 @@ export class PanelService implements PanelServicePort {
     if (panelContext === null) {
       throw new NotFoundError('Panel not found');
     }
+    ensurePageEditable(panelContext.pageStatus, 'panels');
 
     const normalizedInput = normalizeUpdateInput(input);
     if (normalizedInput.dialogue !== undefined) {
@@ -85,6 +88,13 @@ export class PanelService implements PanelServicePort {
   }
 
   public async deletePanel(userId: string, panelId: string): Promise<void> {
+    const panelContext = await this.panelRepository.findPanelContextByIdAndUserId(panelId, userId);
+    if (panelContext === null) {
+      throw new NotFoundError('Panel not found');
+    }
+
+    ensurePageEditable(panelContext.pageStatus, 'panels');
+
     const deleted = await this.panelRepository.deletePanel(panelId, userId);
     if (!deleted) {
       throw new NotFoundError('Panel not found');
@@ -172,4 +182,14 @@ function ensureDialogueShape(dialogue: PanelDialogueLine[]): void {
 
 function requiresSpeaker(type: PanelDialogueLine['type']): boolean {
   return type === 'speech' || type === 'thought' || type === 'shout' || type === 'whisper';
+}
+
+function ensurePageEditable(pageStatus: PageStatus, scope: string): void {
+  if (pageStatus === 'confirmed') {
+    throw new ConflictError(`Confirmed pages must be reopened before editing ${scope}`);
+  }
+
+  if (pageStatus === 'generating') {
+    throw new ConflictError(`Pages cannot edit ${scope} while generation is in progress`);
+  }
 }

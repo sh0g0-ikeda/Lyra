@@ -11,6 +11,7 @@ const envSchema = z.object({
   LOCAL_FILE_STORAGE_DIR: z.string().min(1).optional(),
   LOCAL_ASSET_BASE_URL: z.string().url().optional(),
   OPENAI_API_KEY: z.string().min(1).optional(),
+  OPENAI_IMAGE_MODEL: z.string().min(1).default('gpt-image-2'),
   OPENAI_BASE_URL: z.string().url().default('https://api.openai.com/v1'),
   OPENAI_TIMEOUT_MS: z.coerce.number().int().min(1000).max(600000).default(300000),
   ANTHROPIC_API_KEY: z.string().min(1).optional(),
@@ -28,6 +29,10 @@ const envSchema = z.object({
   STRIPE_CHECKOUT_CANCEL_URL: z.string().url().optional(),
   STRIPE_PORTAL_RETURN_URL: z.string().url().optional(),
   SUPABASE_JWT_SECRET: z.string().min(1).optional(),
+  ENTERPRISE_STYLE_REFERENCES_ENABLED: z
+    .string()
+    .optional()
+    .transform((value) => (value === undefined ? true : value === 'true')),
   DEV_AUTH_BYPASS: z.string().optional().transform((value) => value === 'true'),
   DEV_AUTH_BYPASS_SUPABASE_ID: z.string().min(1).optional(),
   DEV_AUTH_BYPASS_EMAIL: z.string().email().optional(),

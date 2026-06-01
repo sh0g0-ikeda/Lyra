@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { ConfigurationError } from '../../../../src/domain/errors/index.js';
 import type { CreditBalanceSnapshot } from '../../../../src/domain/types/credit.js';
 import type { EntityReferenceContext } from '../../../../src/domain/types/entityReference.js';
 import type { GenerationJob } from '../../../../src/domain/types/job.js';
@@ -17,9 +18,8 @@ import type {
   GenerateEntityReferenceCandidatesInput,
 } from '../../../../src/infrastructure/openai/OpenAIEntityReferenceGenerator.js';
 import type { EntityReferencePromptBuilderPort } from '../../../../src/services/entity/EntityReferencePromptBuilder.js';
-import {
-  EntityGenerationWorkerService,
-} from '../../../../src/services/entity/EntityGenerationWorkerService.js';
+import type { EntityReferencePromptCompilerPort } from '../../../../src/services/entity/EntityReferencePromptCompiler.js';
+import { EntityGenerationWorkerService } from '../../../../src/services/entity/EntityGenerationWorkerService.js';
 import type {
   ConsumeCreditsParams,
   CreditServicePort,
@@ -91,6 +91,42 @@ class FakePromptBuilder implements EntityReferencePromptBuilderPort {
   public buildGenerationPrompt(): string {
     return 'entity prompt';
   }
+
+  public buildCompilerBrief(): string {
+    return 'Target image: manga full-body character reference';
+  }
+}
+
+class FakePromptCompiler implements EntityReferencePromptCompilerPort {
+  public shouldThrow = false;
+  public failWithConfigurationError = false;
+  public draftPrompt: string | null = null;
+  public compilerBrief: string | null = null;
+
+  public async compilePrompt(input: { draftPrompt: string; compilerBrief: string }): Promise<{
+    prompt: string;
+    compilerProvider: 'openai';
+    compilerModel: string;
+    compilerPromptVersion: string;
+  }> {
+    this.draftPrompt = input.draftPrompt;
+    this.compilerBrief = input.compilerBrief;
+
+    if (this.shouldThrow) {
+      if (this.failWithConfigurationError) {
+        throw new ConfigurationError('compiler failed');
+      }
+
+      throw new Error('compiler failed');
+    }
+
+    return {
+      prompt: `${input.draftPrompt} compiled`,
+      compilerProvider: 'openai',
+      compilerModel: 'gpt-5.4-mini',
+      compilerPromptVersion: 'entity_ref_v2',
+    };
+  }
 }
 
 class FakeReferenceGenerator implements EntityReferenceGeneratorPort {
@@ -111,8 +147,6 @@ class FakeReferenceGenerator implements EntityReferenceGeneratorPort {
     return {
       candidates: [
         { imageData: Buffer.from('a'), mimeType: 'image/png' },
-        { imageData: Buffer.from('b'), mimeType: 'image/png' },
-        { imageData: Buffer.from('c'), mimeType: 'image/png' },
       ],
       openaiRequestId: 'req-1',
       costUsd: null,
@@ -182,8 +216,44 @@ describe('EntityGenerationWorkerService', () => {
   it('entity_generate job を処理して candidates を保存する', async () => {
     const executionRepository = new FakeExecutionRepository();
     const referenceGenerator = new FakeReferenceGenerator();
+    const promptCompiler = new FakePromptCompiler();
     const service = buildService({
       executionRepository,
+      promptCompiler,
+      referenceGenerator,
+    });
+
+    const result = await service.processJob('job-1');
+
+    expect(result).toEqual({ status: 'processed', jobStatus: 'completed' });
+    expect(promptCompiler.draftPrompt).toBe('entity prompt');
+    expect(promptCompiler.compilerBrief).toContain('Target image: manga full-body character reference');
+    expect(referenceGenerator.input).toEqual({ prompt: 'entity prompt compiled', inputImages: [] });
+    expect(executionRepository.completed?.candidates).toHaveLength(1);
+    expect(executionRepository.completed?.openaiRequestId).toBe('req-1');
+    expect(executionRepository.completed?.compiledBrief).toContain('Target image: manga full-body character reference');
+    expect(executionRepository.completed?.compiledPrompt).toBe('entity prompt compiled');
+    expect(executionRepository.completed?.compiledPromptUsed).toBe(true);
+    expect(executionRepository.completed?.promptCompilerProvider).toBe('openai');
+    expect(executionRepository.completed?.compilerModel).toBe('gpt-5.4-mini');
+    expect(executionRepository.completed?.compilerPromptVersion).toBe('entity_ref_v2');
+    expect(executionRepository.completed?.compilerError).toBeNull();
+    expect(executionRepository.completed?.imageModel).toBe('gpt-image-2');
+    expect(executionRepository.completed?.imageParams).toEqual({
+      quality: 'medium',
+      size: '1024x1536',
+    });
+  });
+
+  it('prompt compiler が失敗しても draft prompt で生成を継続する', async () => {
+    const executionRepository = new FakeExecutionRepository();
+    const referenceGenerator = new FakeReferenceGenerator();
+    const promptCompiler = new FakePromptCompiler();
+    promptCompiler.shouldThrow = true;
+    promptCompiler.failWithConfigurationError = true;
+    const service = buildService({
+      executionRepository,
+      promptCompiler,
       referenceGenerator,
     });
 
@@ -191,11 +261,33 @@ describe('EntityGenerationWorkerService', () => {
 
     expect(result).toEqual({ status: 'processed', jobStatus: 'completed' });
     expect(referenceGenerator.input).toEqual({ prompt: 'entity prompt', inputImages: [] });
-    expect(executionRepository.completed?.candidates).toHaveLength(3);
-    expect(executionRepository.completed?.openaiRequestId).toBe('req-1');
+    expect(executionRepository.completed?.compiledPromptUsed).toBe(false);
+    expect(executionRepository.completed?.promptCompilerProvider).toBe('none');
+    expect(executionRepository.completed?.compilerModel).toBeNull();
+    expect(executionRepository.completed?.compilerPromptVersion).toBeNull();
+    expect(executionRepository.completed?.compilerError).toBe('Entity prompt compiler fallback used');
   });
 
-  it('source_s3_key がある場合は upload 画像を input image に変換して使う', async () => {
+  it('prompt compiler の実装エラーは fallback せず failed にする', async () => {
+    const executionRepository = new FakeExecutionRepository();
+    const referenceGenerator = new FakeReferenceGenerator();
+    const promptCompiler = new FakePromptCompiler();
+    promptCompiler.shouldThrow = true;
+    const service = buildService({
+      executionRepository,
+      promptCompiler,
+      referenceGenerator,
+    });
+
+    const result = await service.processJob('job-1');
+
+    expect(result).toEqual({ status: 'processed', jobStatus: 'failed' });
+    expect(executionRepository.failed?.errorMessage).toBe('compiler failed');
+    expect(executionRepository.completed).toBeNull();
+    expect(referenceGenerator.input).toBeNull();
+  });
+
+  it('source_s3_key がある場合は upload 画像を input image として使う', async () => {
     const executionRepository = new FakeExecutionRepository();
     executionRepository.job = buildJob({
       params: {
@@ -218,7 +310,7 @@ describe('EntityGenerationWorkerService', () => {
     expect(result).toEqual({ status: 'processed', jobStatus: 'completed' });
     expect(storedImageLoader.loadedS3Keys).toEqual(['tmp/user-1/entities/imports/source.png']);
     expect(referenceGenerator.input).toEqual({
-      prompt: 'entity prompt',
+      prompt: 'entity prompt compiled',
       inputImages: [{ dataUrl: 'data:image/png;base64,dXBsb2FkZWQtc291cmNl' }],
     });
   });
@@ -254,6 +346,7 @@ function buildService(overrides: {
   executionRepository?: FakeExecutionRepository;
   entityRepository?: FakeEntityReferenceRepository;
   promptBuilder?: FakePromptBuilder;
+  promptCompiler?: FakePromptCompiler;
   referenceGenerator?: FakeReferenceGenerator;
   imageStorage?: FakeEntityImageStorage;
   creditService?: FakeCreditService;
@@ -263,6 +356,7 @@ function buildService(overrides: {
     overrides.executionRepository ?? new FakeExecutionRepository(),
     overrides.entityRepository ?? new FakeEntityReferenceRepository(),
     overrides.promptBuilder ?? new FakePromptBuilder(),
+    overrides.promptCompiler ?? new FakePromptCompiler(),
     overrides.referenceGenerator ?? new FakeReferenceGenerator(),
     overrides.imageStorage ?? new FakeEntityImageStorage(),
     overrides.creditService ?? new FakeCreditService(),

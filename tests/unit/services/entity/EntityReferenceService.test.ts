@@ -267,12 +267,12 @@ describe('EntityReferenceService', () => {
     expect(result).toEqual({ jobId: 'job-1' });
     expect(creditService.consumed).toMatchObject({
       userId: 'user-1',
-      cost: 8,
+      cost: 1,
     });
     expect(jobs.createdInput).toMatchObject({
       userId: 'user-1',
       jobType: 'entity_generate',
-      creditCost: 8,
+      creditCost: 1,
       params: {
         entity_id: 'entity-1',
         entity_type: 'character',
@@ -415,7 +415,7 @@ function buildJob(overrides: Partial<GenerationJob>): GenerationJob {
     jobType: 'entity_generate',
     status: 'queued',
     generationMode: null,
-    creditCost: 8,
+    creditCost: 1,
     params: {},
     result: null,
     sqsMessageId: null,

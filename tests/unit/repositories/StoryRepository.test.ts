@@ -5,12 +5,28 @@ import { PostgresStoryRepository } from '../../../src/repositories/StoryReposito
 
 class QueryCapturingClient implements DatabaseClient, TransactionRunner {
   public queries: string[] = [];
+  public lockRow: Record<string, unknown> = {
+    id: '33333333-3333-4333-8333-333333333333',
+    page_skeleton_generated: false,
+    existing_page_count: 0,
+    protected_page_count: 0,
+  };
 
   public async query<T extends QueryResultRow = QueryResultRow>(
     text: string,
     _values?: readonly unknown[],
   ): Promise<QueryResult<T>> {
     this.queries.push(text);
+
+    if (text.includes('FOR UPDATE')) {
+      return {
+        command: 'SELECT',
+        rowCount: 1,
+        oid: 0,
+        fields: [],
+        rows: [this.lockRow] as unknown as T[],
+      };
+    }
 
     if (text.includes('RETURNING id')) {
       return {
@@ -58,6 +74,7 @@ class ExistingSkeletonClient implements DatabaseClient, TransactionRunner {
             id: '33333333-3333-4333-8333-333333333333',
             page_skeleton_generated: true,
             existing_page_count: 0,
+            protected_page_count: 0,
           },
         ] as unknown as T[],
       };
@@ -166,7 +183,33 @@ describe('PostgresStoryRepository', () => {
     expect(client.queries[0]).toContain('FOR UPDATE');
     expect(client.queries.some((query) => query.includes('INSERT INTO pages'))).toBe(true);
     expect(client.queries.some((query) => query.includes('INSERT INTO panels'))).toBe(true);
+    expect(client.queries.some((query) => query.includes('INSERT INTO panel_frames'))).toBe(true);
     expect(client.queries.some((query) => query.includes('page_skeleton_generated = TRUE'))).toBe(true);
+  });
+
+  it('deletes existing pages first when overwriteExisting is enabled', async () => {
+    const client = new QueryCapturingClient();
+    client.lockRow = {
+      id: '33333333-3333-4333-8333-333333333333',
+      page_skeleton_generated: true,
+      existing_page_count: 2,
+      protected_page_count: 0,
+    };
+    const repository = new PostgresStoryRepository(client, client);
+
+    const result = await repository.createPageSkeleton(
+      '33333333-3333-4333-8333-333333333333',
+      'user-1',
+      [],
+      { overwriteExisting: true },
+    );
+
+    expect(client.queries.some((query) => query.includes('DELETE FROM pages'))).toBe(true);
+    expect(result).toEqual({
+      pagesCreated: 0,
+      panelsCreated: 0,
+      replacedExisting: true,
+    });
   });
 
   it('rechecks existing skeletons inside the transaction', async () => {

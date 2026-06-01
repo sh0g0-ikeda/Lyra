@@ -31,6 +31,8 @@ export class PageGenerationInputImageBuilder implements PageGenerationInputImage
     }
 
     const entityIds = collectEntityIds(page.panels);
+    const entities = await this.entityRepository.findByWorkIdAndUserId(page.workId, input.userId);
+    const entityNameById = new Map(entities.map((entity) => [entity.id, entity.name]));
     const references = await this.entityRepository.findPrimaryReferenceImagesByEntityIdsAndUserId(
       entityIds,
       page.workId,
@@ -48,6 +50,7 @@ export class PageGenerationInputImageBuilder implements PageGenerationInputImage
       const loadedImage = await this.storedImageLoader.loadByS3Key(reference.s3Key);
       inputImages.push({
         role: 'entity_reference',
+        label: entityNameById.get(entityId) ?? `entity-${entityId}`,
         dataUrl: toDataUrl(loadedImage.mimeType, loadedImage.imageData),
       });
     }
@@ -56,6 +59,7 @@ export class PageGenerationInputImageBuilder implements PageGenerationInputImage
     if (layoutGuideImage !== null) {
       inputImages.push({
         role: 'layout_reference',
+        label: 'page-layout-reference',
         dataUrl: toDataUrl(layoutGuideImage.mimeType, layoutGuideImage.imageData),
       });
     }

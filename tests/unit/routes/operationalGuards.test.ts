@@ -134,6 +134,25 @@ describe('operational guards', () => {
 
     expect(response.status).toBe(200);
   });
+
+  it('does not apply rate limiting when dev auth bypass is enabled', async () => {
+    const app = createApp({
+      creditService: new FakeCreditService(),
+      userProvisioningService: new FakeUserProvisioningService(),
+      rateLimitStore: new FixedRateLimitStore(),
+      enableDevAuthBypass: true,
+      devAuthBypassClaims: {
+        sub: user.supabaseId,
+        email: user.email,
+      },
+    });
+
+    const firstResponse = await app.request('/api/billing/balance');
+    const secondResponse = await app.request('/api/billing/balance');
+
+    expect(firstResponse.status).toBe(200);
+    expect(secondResponse.status).toBe(200);
+  });
 });
 
 async function createToken(): Promise<string> {

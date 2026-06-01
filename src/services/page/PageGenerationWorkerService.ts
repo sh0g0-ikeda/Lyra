@@ -6,6 +6,10 @@ import type {
 } from '../../domain/types/pageGeneration.js';
 import type { PageStatus } from '../../domain/types/page.js';
 import type { CreditServicePort } from '../credit/CreditService.js';
+import type {
+  CompiledPagePrompt,
+  PagePromptCompilerPort,
+} from './PagePromptCompiler.js';
 import type { PromptBuilderPort } from './PromptBuilder.js';
 import type {
   CompletePageGenerationInput,
@@ -19,6 +23,22 @@ export interface PageGenerationPlanInput {
   requestKind: PersistedPageGenerationJobParams['request_kind'];
   generationMode: PersistedPageGenerationJobParams['generation_mode'];
   prompt: string;
+}
+
+export interface PagePromptCompilationMetadata {
+  draftPrompt: string;
+  compilerBrief: string;
+  compiledPrompt: string;
+  compiledPromptUsed: boolean;
+  promptCompilerProvider: CompiledPagePrompt['compilerProvider'];
+  compilerModel: string | null;
+  compilerPromptVersion: string | null;
+  compilerError: string | null;
+}
+
+interface CompiledPagePromptResult {
+  compiledPrompt: CompiledPagePrompt;
+  compilerError: string | null;
 }
 
 export interface PageGenerationPlannerPort {
@@ -77,6 +97,7 @@ export class PageGenerationWorkerService {
   public constructor(
     private readonly executionRepository: PageGenerationExecutionRepository,
     private readonly promptBuilder: PromptBuilderPort,
+    private readonly promptCompiler: PagePromptCompilerPort,
     private readonly inputImageBuilder: PageGenerationInputImageBuilderPort,
     private readonly planner: PageGenerationPlannerPort,
     private readonly renderer: PageImageRendererPort,
@@ -104,6 +125,8 @@ export class PageGenerationWorkerService {
         requestKind: params.request_kind,
         generationMode: params.generation_mode,
       });
+      const compiledPromptResult = await compilePromptSafely(this.promptCompiler, builtPrompt);
+      const compiledPrompt = compiledPromptResult.compiledPrompt;
       const inputImages = await this.inputImageBuilder.buildInputImages({
         userId: job.userId,
         pageId: params.page_id,
@@ -116,7 +139,7 @@ export class PageGenerationWorkerService {
             pageId: params.page_id,
             requestKind: params.request_kind,
             generationMode: params.generation_mode,
-            prompt: builtPrompt.prompt,
+            prompt: compiledPrompt.prompt,
           })
         : null;
 
@@ -126,7 +149,7 @@ export class PageGenerationWorkerService {
         pageId: params.page_id,
         requestKind: params.request_kind,
         generationMode: params.generation_mode,
-        prompt: builtPrompt.prompt,
+        prompt: compiledPrompt.prompt,
         quality: params.quality,
         internalPlan,
         inputImages,
@@ -141,7 +164,16 @@ export class PageGenerationWorkerService {
       });
 
       const completed = await this.executionRepository.completePageGeneration(
-        buildCompletionInput(job, params, storedImage, renderResult),
+        buildCompletionInput(job, params, storedImage, renderResult, {
+          draftPrompt: builtPrompt.draftPrompt,
+          compilerBrief: builtPrompt.compilerBrief,
+          compiledPrompt: compiledPrompt.prompt,
+          compiledPromptUsed: compiledPrompt.compilerProvider !== 'none',
+          promptCompilerProvider: compiledPrompt.compilerProvider,
+          compilerModel: compiledPrompt.compilerModel,
+          compilerPromptVersion: compiledPrompt.compilerPromptVersion,
+          compilerError: compiledPromptResult.compilerError,
+        }),
       );
       if (!completed) {
         throw new ConfigurationError('Failed to persist generated page image');
@@ -192,6 +224,7 @@ function buildCompletionInput(
   params: PersistedPageGenerationJobParams,
   storedImage: StoredPageImage,
   renderResult: RenderPageImageResult,
+  promptMetadata: PagePromptCompilationMetadata,
 ): CompletePageGenerationInput {
   return {
     jobId: job.id,
@@ -204,7 +237,106 @@ function buildCompletionInput(
     generatedAt: new Date().toISOString(),
     costUsd: renderResult.costUsd,
     openaiRequestId: renderResult.openaiRequestId,
+    promptMetadata,
   };
+}
+
+async function compilePromptSafely(
+  compiler: PagePromptCompilerPort,
+  builtPrompt: Awaited<ReturnType<PromptBuilderPort['buildPagePrompt']>>,
+): Promise<CompiledPagePromptResult> {
+  try {
+    const compiledPrompt = await compiler.compilePrompt({
+      draftPrompt: builtPrompt.draftPrompt,
+      compilerBrief: builtPrompt.compilerBrief,
+    });
+    const missingDialogueLocks = findMissingDialogueLocks(builtPrompt.compilerBrief, compiledPrompt.prompt);
+    if (missingDialogueLocks.length > 0) {
+      return {
+        compiledPrompt: {
+          prompt: builtPrompt.draftPrompt,
+          compilerProvider: 'none',
+          compilerModel: null,
+          compilerPromptVersion: null,
+        },
+        compilerError: `compiled prompt dropped required dialogue lines: ${missingDialogueLocks.join(' / ')}`,
+      };
+    }
+
+    return {
+      compiledPrompt,
+      compilerError: null,
+    };
+  } catch (error) {
+    if (!(error instanceof ConfigurationError)) {
+      throw error;
+    }
+
+    return {
+      compiledPrompt: {
+        prompt: builtPrompt.draftPrompt,
+        compilerProvider: 'none',
+        compilerModel: null,
+        compilerPromptVersion: null,
+      },
+      compilerError: error.message,
+    };
+  }
+}
+
+function findMissingDialogueLocks(compilerBrief: string, compiledPrompt: string): string[] {
+  const locks = extractRequiredDialogueLocks(compilerBrief);
+  if (locks.length === 0) {
+    return [];
+  }
+
+  return locks.flatMap((lock) => {
+    const missingText = !compiledPrompt.includes(lock.text);
+    const missingSpeaker = lock.speaker !== null && !compiledPrompt.includes(lock.speaker);
+    if (!missingText && !missingSpeaker) {
+      return [];
+    }
+
+    return [lock.speaker === null ? lock.text : `${lock.speaker}:${lock.text}`];
+  });
+}
+
+interface RequiredDialogueLock {
+  speaker: string | null;
+  text: string;
+}
+
+function extractRequiredDialogueLocks(compilerBrief: string): RequiredDialogueLock[] {
+  const locks: RequiredDialogueLock[] = [];
+  const lines = compilerBrief.split('\n');
+
+  for (const line of lines) {
+    if (!line.includes('Dialogue lock:')) {
+      continue;
+    }
+
+    const speakerMatches = Array.from(
+      line.matchAll(/must stay assigned to (.+?) exactly as written: "(.+?)"/gu),
+    );
+    for (const match of speakerMatches) {
+      locks.push({
+        speaker: match[1] ?? null,
+        text: match[2] ?? '',
+      });
+    }
+
+    const narrationMatches = Array.from(
+      line.matchAll(/must remain narration, not character speech: "(.+?)"/gu),
+    );
+    for (const match of narrationMatches) {
+      locks.push({
+        speaker: null,
+        text: match[1] ?? '',
+      });
+    }
+  }
+
+  return locks.filter((lock) => lock.text.length > 0);
 }
 
 function parsePersistedParams(value: Record<string, unknown>): PersistedPageGenerationJobParams | null {

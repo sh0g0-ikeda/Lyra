@@ -41,7 +41,7 @@ describe('ModeSelector', () => {
         requestKind: 'initial',
         mode: 'standard',
         quality: 'medium',
-        creditCost: 10,
+        creditCost: 1,
         requiresPlanner: false,
       });
     });
@@ -57,7 +57,7 @@ describe('ModeSelector', () => {
         requestKind: 'initial',
         mode: 'thinking',
         quality: 'medium',
-        creditCost: 14,
+        creditCost: 1,
         requiresPlanner: true,
       });
     });
@@ -73,7 +73,7 @@ describe('ModeSelector', () => {
         requestKind: 'regenerate',
         mode: 'standard',
         quality: 'high',
-        creditCost: 22,
+        creditCost: 1,
         requiresPlanner: true,
       });
     });

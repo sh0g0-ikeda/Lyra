@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { NotFoundError, ValidationError } from '../../../../src/domain/errors/index.js';
+import { ConflictError, NotFoundError, ValidationError } from '../../../../src/domain/errors/index.js';
 import type {
   CreatePanelInput,
   Panel,
   UpdatePanelInput,
 } from '../../../../src/domain/types/panel.js';
+import type { PageStatus } from '../../../../src/domain/types/page.js';
 import type { EntityReferenceReader } from '../../../../src/repositories/EntityRepository.js';
 import type {
   PagePanelContext,
@@ -20,8 +21,8 @@ const workId = '33333333-3333-4333-8333-333333333333';
 const entityId = '44444444-4444-4444-8444-444444444444';
 
 class FakePanelRepository implements PanelRepository {
-  public pageContext: PagePanelContext | null = { pageId, workId };
-  public panelContext: PanelContext | null = { panelId, pageId, workId };
+  public pageContext: PagePanelContext | null = { pageId, workId, pageStatus: 'editing' };
+  public panelContext: PanelContext | null = { panelId, pageId, workId, pageStatus: 'editing' };
   public savedCreateInput: CreatePanelInput | null = null;
   public savedUpdateInput: UpdatePanelInput | null = null;
 
@@ -221,6 +222,42 @@ describe('PanelService', () => {
 
     await expect(service.deletePanel(userId, panelId)).rejects.toBeInstanceOf(NotFoundError);
   });
+  it.each(['confirmed', 'generating'] satisfies PageStatus[])(
+    '%s page cannot create panels',
+    async (pageStatus) => {
+      const repository = new FakePanelRepository();
+      repository.pageContext = { pageId, workId, pageStatus };
+      const service = new PanelService(repository, new FakeEntityReader());
+
+      await expect(service.createPanel(userId, pageId, buildCreateInput())).rejects.toBeInstanceOf(
+        ConflictError,
+      );
+    },
+  );
+
+  it.each(['confirmed', 'generating'] satisfies PageStatus[])(
+    '%s page cannot update panels',
+    async (pageStatus) => {
+      const repository = new FakePanelRepository();
+      repository.panelContext = { panelId, pageId, workId, pageStatus };
+      const service = new PanelService(repository, new FakeEntityReader());
+
+      await expect(
+        service.updatePanel(userId, panelId, { panelNotes: 'updated' }),
+      ).rejects.toBeInstanceOf(ConflictError);
+    },
+  );
+
+  it.each(['confirmed', 'generating'] satisfies PageStatus[])(
+    '%s page cannot delete panels',
+    async (pageStatus) => {
+      const repository = new FakePanelRepository();
+      repository.panelContext = { panelId, pageId, workId, pageStatus };
+      const service = new PanelService(repository, new FakeEntityReader());
+
+      await expect(service.deletePanel(userId, panelId)).rejects.toBeInstanceOf(ConflictError);
+    },
+  );
 });
 
 function buildCreateInput(overrides: Partial<CreatePanelInput> = {}): CreatePanelInput {

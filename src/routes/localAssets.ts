@@ -15,6 +15,9 @@ export function createLocalAssetRoutes(rootDir: string): Hono<AppEnv> {
       return c.body(new Uint8Array(imageData), 200, {
         'Content-Type': inferImageMimeTypeFromKey(assetKey),
         'Cache-Control': 'public, max-age=604800, immutable',
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+        'Cross-Origin-Resource-Policy': 'cross-origin',
       });
     } catch {
       return c.notFound();

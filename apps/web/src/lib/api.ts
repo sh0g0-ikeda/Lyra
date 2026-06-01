@@ -11,6 +11,7 @@ import type {
   PanelFrameRecord,
   PanelRecord,
   SceneRecord,
+  StoryEpisodeImprovementRecord,
   StoryCollaborationInput,
   WorkRecord,
 } from '../types/api';
@@ -43,6 +44,11 @@ interface JsonErrorBody {
 interface SseHandlers {
   onChunk: (text: string) => void;
   onDone?: () => void;
+}
+
+export interface BlobResponse {
+  blob: Blob;
+  contentType: string | null;
 }
 
 export class LyraApiClient {
@@ -99,12 +105,50 @@ export class LyraApiClient {
     return this.requestVoid(`/api/episodes/${episodeId}`, { method: 'DELETE' });
   }
 
-  public generatePageSkeleton(episodeId: string): Promise<{ pages_created: number; panels_created: number }> {
-    return this.request(`/api/episodes/${episodeId}/generate-page-skeleton`, { method: 'POST' });
+  public generatePageSkeleton(
+    episodeId: string,
+    body?: { overwrite_existing?: boolean; apply_story_plan?: boolean; language?: 'ja' | 'en' },
+  ): Promise<{
+    pages_created: number;
+    panels_created: number;
+    replaced_existing: boolean;
+    story_plan_applied: boolean;
+    story_plan_result: {
+      updated_page_count: number;
+      updated_panel_count: number;
+      updated_assignment_count: number;
+      filled_field_count: number;
+      compiler_used: boolean;
+      compiler_provider: 'openai' | 'fallback';
+      compiler_model: string | null;
+      compiler_prompt_version: string | null;
+      compiler_error: string | null;
+    } | null;
+  }> {
+    return this.request(`/api/episodes/${episodeId}/generate-page-skeleton`, {
+      method: 'POST',
+      ...(body === undefined ? {} : { body }),
+    });
   }
 
   public streamStoryCollaboration(input: StoryCollaborationInput, handlers: SseHandlers): Promise<void> {
     return this.stream('/api/story/collaborate', input, handlers);
+  }
+
+  public improveEpisodeDraft(body: {
+    episode_id: string;
+    instruction: string;
+    language: 'ja' | 'en';
+    base_draft: {
+      title: string | null;
+      purpose: string | null;
+      introduction: string | null;
+      middle: string | null;
+      climax: string | null;
+      ending_hook: string | null;
+    };
+  }): Promise<StoryEpisodeImprovementRecord> {
+    return this.request('/api/story/improve-episode-draft', { method: 'POST', body });
   }
 
   public getEntities(workId: string): Promise<{ entities: EntityRecord[] }> {
@@ -168,6 +212,39 @@ export class LyraApiClient {
 
   public getPages(episodeId: string): Promise<{ pages: PageRecord[] }> {
     return this.request(`/api/episodes/${episodeId}/pages`);
+  }
+
+  public updatePage(pageId: string, body: Record<string, unknown>): Promise<PageRecord> {
+    return this.request(`/api/pages/${pageId}`, { method: 'PUT', body });
+  }
+
+  public autofillPageFromScenes(pageId: string, language: 'ja' | 'en'): Promise<{
+    updated_panel_count: number;
+    filled_field_count: number;
+    compiler_used: boolean;
+    compiler_provider: 'openai' | 'fallback';
+    compiler_model: string | null;
+    compiler_prompt_version: string | null;
+    compiler_error: string | null;
+  }> {
+    return this.request(`/api/pages/${pageId}/autofill-from-scenes`, { method: 'POST', body: { language } });
+  }
+
+  public autofillEpisodePagesFromStory(episodeId: string, language: 'ja' | 'en'): Promise<{
+    updated_page_count: number;
+    updated_panel_count: number;
+    updated_assignment_count: number;
+    filled_field_count: number;
+    compiler_used: boolean;
+    compiler_provider: 'openai' | 'fallback';
+    compiler_model: string | null;
+    compiler_prompt_version: string | null;
+    compiler_error: string | null;
+  }> {
+    return this.request(`/api/episodes/${episodeId}/autofill-pages-from-story`, {
+      method: 'POST',
+      body: { language },
+    });
   }
 
   public generatePage(pageId: string): Promise<{ job_id: string }> {
@@ -274,6 +351,18 @@ export class LyraApiClient {
 
   public createCustomerPortal(): Promise<{ url: string }> {
     return this.request('/api/billing/customer-portal', { method: 'POST' });
+  }
+
+  public async exportPageImage(pageId: string): Promise<BlobResponse> {
+    const response = await fetch(this.toUrl(`/api/pages/${pageId}/export-image`), this.buildRequest({ method: 'GET' }));
+    if (!response.ok) {
+      throw await this.toApiError(response);
+    }
+
+    return {
+      blob: await response.blob(),
+      contentType: response.headers.get('Content-Type'),
+    };
   }
 
   private async request<T>(path: string, init: JsonRequestInit = {}): Promise<T> {

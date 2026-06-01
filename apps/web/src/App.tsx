@@ -1,8 +1,10 @@
-import { useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent, type ReactNode } from 'react';
+﻿import { createContext, useContext, useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent, type ReactNode } from 'react';
+import { jsPDF } from 'jspdf';
 import {
   BookOpen,
   Bot,
   Check,
+  ChevronDown,
   CreditCard,
   Image,
   KeyRound,
@@ -27,12 +29,15 @@ import type {
   EntityRecord,
   EpisodeRecord,
   GenerationJobRecord,
+  PageRecord,
   PanelRecord,
   SceneRecord,
+  StoryEpisodeImprovementRecord,
   WorkRecord,
 } from './types/api';
 
 type WorkspaceTab = 'story' | 'entities' | 'pages';
+type UiLanguage = 'ja' | 'en';
 
 interface NoticeState {
   type: 'error' | 'success';
@@ -87,6 +92,11 @@ interface EntityDraft {
 
 interface CharacterStructuredFieldsDraft {
   gender_expression: string;
+  age_range: string;
+  skin_tone: string;
+  first_impression: string;
+  standing_style: string;
+  default_expression: string;
   face_shape: string;
   eyebrow_shape: string;
   nose_shape: string;
@@ -97,8 +107,33 @@ interface CharacterStructuredFieldsDraft {
   hair_length: string;
   hair_style: string;
   hair_arrangement: string;
+  hair_bangs: string;
   eye_color: string;
   eye_shape: string;
+  eyelid_type: string;
+  visual_anchor: string;
+  signature_feature: string;
+  silhouette_keywords: string;
+  head_to_body_ratio: string;
+  shoulder_width: string;
+  leg_length: string;
+  posture_axis: string;
+  eye_size: string;
+  eye_angle: string;
+  pupil_style: string;
+  under_eye_detail: string;
+  mouth_default: string;
+  hair_front_shape: string;
+  hair_side_hair: string;
+  hair_back_shape: string;
+  clothing_category: string;
+  clothing_main_color: string;
+  clothing_impression: string;
+  collar_shape: string;
+  sleeve_length: string;
+  skirt_or_pants_shape: string;
+  shoes: string;
+  socks_or_legwear: string;
   clothing_description: string;
   distinguishing_features: string;
   art_style: string;
@@ -152,6 +187,16 @@ interface PanelDraft {
   assignments: PanelAssignmentDraft[];
 }
 
+interface PageSettingsDraft {
+  dialogue_mode: PageRecord['dialogue_mode'];
+  page_dialogue_toggle: boolean;
+  style_reference_title: string;
+  style_reference_notes: string;
+  story_source_scene_ids: string[];
+  story_page_purpose: string;
+  story_continuity_note: string;
+}
+
 interface BalloonDraft {
   speaker_entity_id: string;
   balloon_type: 'speech' | 'thought' | 'narration' | 'shout' | 'whisper';
@@ -171,8 +216,196 @@ interface ReferenceCandidate {
   source: 'upload' | 'generated';
 }
 
+type ExportFormat = 'pdf' | 'image';
+
 const manualTokenStorageKey = 'lyra:web:manual-token';
 const trackedJobsStorageKey = 'lyra:web:tracked-jobs';
+const uiLanguageStorageKey = 'lyra:web:ui-language';
+const UiLanguageContext = createContext<UiLanguage>('ja');
+const UI_JA_DICTIONARY: Record<string, string> = {
+  Story: 'ストーリー',
+  Entities: 'キャラクター',
+  Pages: 'ページ',
+  Work: '作品',
+  Chapter: '章',
+  Episode: '話',
+  Chapters: '章',
+  Episodes: '話',
+  Title: 'タイトル',
+  Genre: 'ジャンル',
+  Theme: 'テーマ',
+  Status: '状態',
+  'World setting': '世界観',
+  'Overall flow': '全体の流れ',
+  'Starting point': '開始地点',
+  'Ending point': '終着点',
+  'Main characters': '主な登場人物',
+  'Chapter title': '章タイトル',
+  'Episode draft': '話の下書き',
+  'Estimated pages': '想定ページ数',
+  Purpose: '目的',
+  Introduction: '序盤',
+  Middle: '中盤',
+  Climax: 'クライマックス',
+  'Ending hook': '終盤 / 引き',
+  'Entity IDs': '登場人物ID',
+  Scenes: 'シーン',
+  'Scene breakdown': 'シーン分解',
+  Order: '順番',
+  Location: '場所',
+  Time: '時間',
+  Atmosphere: '雰囲気',
+  'Story AI': 'ストーリーAI',
+  Instruction: '指示',
+  'Improved title': '改善タイトル',
+  'Improved purpose': '改善された目的',
+  'Improved introduction': '改善された序盤',
+  'Improved middle': '改善された中盤',
+  'Improved climax': '改善されたクライマックス',
+  'Improved ending hook': '改善された終盤 / 引き',
+  Frames: 'コマ割り',
+  Panels: 'コマ',
+  Balloons: '吹き出し',
+  'Page settings': 'ページ設定',
+  'Dialogue mode': 'セリフの扱い',
+  'Dialogue toggle': 'ページ全体でセリフを画像に含める',
+  'Style reference title': '画風制約の作品名',
+  'Style reference notes': '画風制約メモ',
+  'Story sources': '話の材料',
+  'Source scenes': '元シーン',
+  'Page purpose': 'ページの目的',
+  'Continuity note': '連続性メモ',
+  Format: '形式',
+  Filename: 'ファイル名',
+  'Export selected': '選択ページを保存',
+  'Export all': 'すべて保存',
+  'Image baked': '画像にセリフを焼き込む',
+  'Balloon only': '吹き出しのみ',
+  Mixed: '混在',
+  'Page autofill': 'ページ補完',
+  Page: 'ページ',
+  'Generated preview': '生成プレビュー',
+  'Confirmed references': '確定済みリファレンス',
+  'Character list': 'キャラ一覧',
+  'Character editor': 'キャラ編集',
+  'Story context': 'ストーリー文脈',
+  'Target episode': '対象の話',
+  Generate: '生成',
+  Confirm: '確定',
+  Reopen: '再編集',
+  Template: 'テンプレート',
+  Apply: '適用',
+  'Frames JSON': 'コマ割りJSON',
+  'Save frames': 'コマ割りを保存',
+  'Advanced frame geometry': 'コマ形状の詳細調整',
+  'Advanced balloon geometry': '吹き出し位置の詳細調整',
+  'Position JSON': '位置JSON',
+  'Tail JSON / null': 'しっぽJSON / null',
+  'Panel order ref': '対応コマ順',
+  'Z-index': '重なり順',
+  Role: '役割',
+  Size: 'サイズ',
+  Situation: '状況',
+  'Composition source': '構図メモ',
+  Shot: 'ショット',
+  Angle: 'アングル',
+  Background: '背景',
+  SFX: '効果音',
+  'Overall composition note': '全体構図メモ',
+  'Extra camera / staging note': 'カメラ・演出メモ',
+  Notes: '補足',
+  'Dialogue in panel': 'コマ内にセリフを含める',
+  Dialogue: 'セリフ',
+  Speaker: '話者',
+  Type: '種別',
+  Placement: '配置',
+  Line: '行',
+  'Add character': 'キャラを追加',
+  'Add to panel': 'コマに追加',
+  'No more entities': '追加できるキャラがありません。',
+  'No characters assigned yet.': 'まだキャラが割り当てられていません。',
+  Facing: '向き',
+  'State override ID': '状態上書きID',
+  Expression: '表情',
+  Pose: 'ポーズ',
+  Effect: 'エフェクト',
+  'Custom expression': '自由入力の表情',
+  'Custom pose': '自由入力のポーズ',
+  'Add line': '行を追加',
+  'No dialogue lines yet.': 'まだセリフ行がありません。',
+  'Narration / none': 'ナレーション / なし',
+  Draft: '下書き',
+  Reviewing: '確認中',
+  Ready: '準備完了',
+  Save: '保存',
+  'Save chapter': '章を保存',
+  'Add chapter': '章を追加',
+  'Add episode': '話を追加',
+  'Generate page plan': 'ページ骨格生成',
+  'Apply story plan': '話全体を反映',
+  'Improve draft': '改善する',
+  'Apply all': 'すべて反映',
+  'Apply to title': 'タイトルへ反映',
+  'Apply purpose': '目的へ反映',
+  'Apply introduction': '序盤へ反映',
+  'Apply middle': '中盤へ反映',
+  'Apply climax': 'クライマックスへ反映',
+  'Apply ending hook': '終盤へ反映',
+  'Reset draft': '下書きを戻す',
+  'Use token': 'トークンを使う',
+  Create: '作成',
+  'Save selected': '選択中を保存',
+  'Signed in': 'ログイン中',
+  'No work selected': '作品が選択されていません',
+  'Choose the current work, chapter, and episode while editing characters.': 'キャラ編集中の作品・章・話を選択します。',
+  'New character': '新規キャラ',
+  'Importing image...': '画像を取り込み中...',
+  'Drop or choose image': '画像をドロップまたは選択',
+  'Select one or more candidates and choose a primary image.': '候補を選び、メイン画像を決めます。',
+  'No preview candidates yet.': 'まだプレビュー候補がありません。',
+  'Delete with the button only. Clicking the image will not delete it.': '削除はボタンのみです。画像クリックでは削除しません。',
+  'No confirmed references yet.': 'まだ確定済みリファレンスがありません。',
+  'Switch story context for page editing.': 'ページ編集対象の作品・章・話を選択します。',
+  'Double-click image to enlarge': '画像はダブルクリックで拡大',
+  'Fill selected page': '選択中ページを補完',
+  'Use this after the story plan when a single page still needs refinement.': '話全体の反映後も1ページだけ補正したいときに使います。',
+  Primary: 'メイン',
+  Delete: '削除',
+  'Generate full-body candidates': '全身候補を生成',
+};
+
+function normalizeUiLanguage(value: string): UiLanguage {
+  return value === 'en' ? 'en' : 'ja';
+}
+
+function translateUiString(language: UiLanguage, value: string): string {
+  if (language === 'en') {
+    return value;
+  }
+
+  const exact = UI_JA_DICTIONARY[value];
+  if (exact !== undefined) {
+    return exact;
+  }
+
+  if (/^Page \d+$/.test(value)) {
+    return value.replace(/^Page (\d+)$/, '$1ページ目');
+  }
+
+  if (/^Line \d+$/.test(value)) {
+    return value.replace(/^Line (\d+)$/, '$1行目');
+  }
+
+  if (/^(\d+) records$/.test(value)) {
+    return value.replace(/^(\d+) records$/, '$1件');
+  }
+
+  return value;
+}
+
+function pickUiText(language: UiLanguage, english: string, japanese: string): string {
+  return language === 'en' ? english : japanese;
+}
 const selectedWorkStorageKey = 'lyra:web:selected-work';
 const selectedChapterStorageKey = 'lyra:web:selected-chapter';
 const selectedEpisodeStorageKey = 'lyra:web:selected-episode';
@@ -343,6 +576,8 @@ function StudioShell(props: {
 }) {
   const queryClient = useQueryClient();
   const api = useMemo(() => new LyraApiClient(() => props.token), [props.token]);
+  const [uiLanguageStored, setUiLanguageStored] = useStoredString(window.localStorage, uiLanguageStorageKey, 'ja');
+  const uiLanguage = normalizeUiLanguage(uiLanguageStored);
   const [notice, setNotice] = useState<NoticeState | null>(null);
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [trackedJobIds, setTrackedJobIds] = useStoredString(window.localStorage, trackedJobsStorageKey, '[]');
@@ -358,12 +593,19 @@ function StudioShell(props: {
   const [episodeDraft, setEpisodeDraft] = useState<EpisodeDraft>(createEmptyEpisodeDraft());
   const [newEpisodeDraft, setNewEpisodeDraft] = useState<EpisodeDraft>(createEmptyEpisodeDraft());
   const [storyInstruction, setStoryInstruction] = useState('');
-  const [storyStream, setStoryStream] = useState('');
   const [storyBusy, setStoryBusy] = useState(false);
+  const [storyImprovementDraft, setStoryImprovementDraft] = useState<StoryEpisodeImprovementRecord['draft'] | null>(null);
+  const [storyImprovementMeta, setStoryImprovementMeta] = useState<{
+    compiler_provider: StoryEpisodeImprovementRecord['compiler_provider'];
+    compiler_model: string | null;
+    compiler_prompt_version: string | null;
+    compiler_error: string | null;
+  } | null>(null);
   const [entityDraft, setEntityDraft] = useState<EntityDraft>(createEmptyEntityDraft());
   const [selectedEntityId, setSelectedEntityId] = useState('');
   const [sceneDraft, setSceneDraft] = useState<SceneDraft>(createEmptySceneDraft());
   const [selectedSceneId, setSelectedSceneId] = useState('');
+  const [pageSettingsDraft, setPageSettingsDraft] = useState<PageSettingsDraft>(createEmptyPageSettingsDraft());
   const [panelDraft, setPanelDraft] = useState<PanelDraft>(createEmptyPanelDraft());
   const [selectedPanelId, setSelectedPanelId] = useState('');
   const [panelEntityToAddId, setPanelEntityToAddId] = useState('');
@@ -376,6 +618,11 @@ function StudioShell(props: {
   const [uploadedReferenceSourceByEntityId, setUploadedReferenceSourceByEntityId] = useState<Record<string, string>>({});
   const [referenceSelection, setReferenceSelection] = useState<string[]>([]);
   const [referencePrimaryKey, setReferencePrimaryKey] = useState('');
+  const [exportFormat, setExportFormat] = useState<ExportFormat>('pdf');
+  const [exportSelectedPageIds, setExportSelectedPageIds] = useState<string[]>([]);
+  const [exportFilename, setExportFilename] = useState('lyra-pages');
+  const [lightboxImageUrl, setLightboxImageUrl] = useState<string | null>(null);
+  const [lightboxTitle, setLightboxTitle] = useState('');
   const handledJobsRef = useRef<Set<string>>(new Set());
 
   const trackedJobList = useMemo(() => parseTrackedJobIds(trackedJobIds), [trackedJobIds]);
@@ -384,12 +631,13 @@ function StudioShell(props: {
     queryKey: ['works'],
     queryFn: () => api.getWorks(),
   });
+  const works = useMemo(() => worksQuery.data?.works ?? [], [worksQuery.data?.works]);
   const balanceQuery = useQuery({
     queryKey: ['billing-balance'],
     queryFn: () => api.getBalance(),
   });
 
-  const selectedWork = worksQuery.data?.works.find((work) => work.id === selectedWorkId) ?? null;
+  const selectedWork = works.find((work) => work.id === selectedWorkId) ?? null;
 
   const chaptersQuery = useQuery({
     queryKey: ['chapters', selectedWorkId],
@@ -475,6 +723,11 @@ function StudioShell(props: {
   });
   const balloons = useMemo(() => balloonsQuery.data?.balloons ?? [], [balloonsQuery.data?.balloons]);
   const selectedBalloon = balloons.find((balloon) => balloon.id === selectedBalloonId) ?? balloons[0] ?? null;
+  const generatedPages = useMemo(
+    () => pages.filter((page) => page.generated_image?.cdn_url !== null && page.generated_image?.cdn_url !== undefined),
+    [pages],
+  );
+  const exportablePages = useMemo(() => generatedPages.map((page) => page.id), [generatedPages]);
 
   const jobQueries = useQueries({
     queries: trackedJobList.map((jobId) => ({
@@ -484,7 +737,7 @@ function StudioShell(props: {
         query.state.data?.status === 'queued' || query.state.data?.status === 'processing' ? 4000 : false,
     })),
   });
-  const jobs = jobQueries.map((query) => query.data).filter(isDefined);
+  const jobs = jobQueries.map((query) => query.data).filter(isDefined).slice(0, 5);
 
   useEffect(() => {
     if (worksQuery.data?.works === undefined) {
@@ -537,6 +790,45 @@ function StudioShell(props: {
       setSelectedBalloonId(balloons[0]?.id ?? '');
     }
   }, [balloons, selectedBalloonId]);
+
+  useEffect(() => {
+    if (selectedPage !== null) {
+      const nextDraft = toPageSettingsDraft(selectedPage);
+      setPageSettingsDraft((current) =>
+        current.dialogue_mode === nextDraft.dialogue_mode &&
+        current.page_dialogue_toggle === nextDraft.page_dialogue_toggle &&
+        current.style_reference_title === nextDraft.style_reference_title &&
+        current.style_reference_notes === nextDraft.style_reference_notes &&
+        current.story_page_purpose === nextDraft.story_page_purpose &&
+        current.story_continuity_note === nextDraft.story_continuity_note &&
+        sameStringArray(current.story_source_scene_ids, nextDraft.story_source_scene_ids)
+          ? current
+          : nextDraft,
+      );
+    }
+  }, [selectedPage]);
+
+  useEffect(() => {
+    setExportSelectedPageIds((current) => {
+      const filtered = current.filter((pageId) => exportablePages.includes(pageId));
+      const fallback = exportablePages.slice(0, 1);
+
+      const isSame = (left: string[], right: string[]): boolean =>
+        left.length === right.length && left.every((value, index) => value === right[index]);
+
+      if (filtered.length > 0) {
+        return isSame(filtered, current) ? current : filtered;
+      }
+
+      return isSame(fallback, current) ? current : fallback;
+    });
+  }, [exportablePages]);
+
+  useEffect(() => {
+    if (selectedEpisode !== null) {
+      setExportFilename(sanitizeFilename(selectedEpisode.title ?? `episode-${selectedEpisode.order}`));
+    }
+  }, [selectedEpisode]);
 
   useEffect(() => {
     if (selectedWork !== null) {
@@ -726,8 +1018,72 @@ function StudioShell(props: {
     setTrackedJobIds(JSON.stringify(Array.from(new Set([jobId, ...trackedJobList])).slice(0, 24)));
   };
 
+  const toggleExportPageSelection = (pageId: string): void => {
+    setExportSelectedPageIds((current) =>
+      current.includes(pageId) ? current.filter((id) => id !== pageId) : [...current, pageId],
+    );
+  };
+
+  const openImageLightbox = (url: string, title: string): void => {
+    setLightboxImageUrl(url);
+    setLightboxTitle(title);
+  };
+
+  const closeImageLightbox = (): void => {
+    setLightboxImageUrl(null);
+    setLightboxTitle('');
+  };
+
+  const handleExport = async (mode: 'selected' | 'all'): Promise<void> => {
+    const targetPageIds = mode === 'all' ? exportablePages : exportSelectedPageIds;
+    if (targetPageIds.length === 0) {
+      throw new Error('No generated pages are selected for export');
+    }
+
+    const targetPages = pages.filter((page) => targetPageIds.includes(page.id));
+    if (targetPages.length === 0) {
+      throw new Error('No generated pages are available for export');
+    }
+
+    const baseName = sanitizeFilename(exportFilename.trim().length > 0 ? exportFilename : 'lyra-pages');
+
+    if (exportFormat === 'pdf') {
+      const assets = await Promise.all(
+        targetPages.map(async (page) => {
+          const response = await api.exportPageImage(page.id);
+          return {
+            page,
+            dataUrl: await blobToDataUrl(response.blob),
+          };
+        }),
+      );
+      const pdf = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' });
+      assets.forEach((asset, index) => {
+        if (index > 0) {
+          pdf.addPage();
+        }
+        const pageWidth = pdf.internal.pageSize.getWidth();
+        const pageHeight = pdf.internal.pageSize.getHeight();
+        pdf.addImage(asset.dataUrl, 'PNG', 0, 0, pageWidth, pageHeight, undefined, 'FAST');
+      });
+      pdf.save(`${baseName}.pdf`);
+      return;
+    }
+
+    const multiple = targetPages.length > 1;
+    await Promise.all(
+      targetPages.map(async (page) => {
+        const response = await api.exportPageImage(page.id);
+        const extension = inferImageExtension(response.contentType);
+        const filename = multiple ? `${baseName}-page-${String(page.page_number).padStart(2, '0')}.${extension}` : `${baseName}.${extension}`;
+        triggerBlobDownload(response.blob, filename);
+      }),
+    );
+  };
+
   return (
-    <div className="app-shell">
+    <UiLanguageContext.Provider value={uiLanguage}>
+      <div className="app-shell">
       <aside className="sidebar">
         <div className="brand">
           <div className="brand-mark">L</div>
@@ -796,22 +1152,26 @@ function StudioShell(props: {
       <main className="workspace">
         <header className="topbar">
           <div>
-            <div className="eyebrow">Signed in</div>
+            <div className="eyebrow">{translateUiString(uiLanguage, 'Signed in')}</div>
             <strong>{props.email}</strong>
           </div>
           <div className="toolbar">
             <button className={`tab-button ${activeTab === 'story' ? 'active' : ''}`} onClick={() => setActiveTab('story')} type="button">
               <Bot size={16} />
-              Story
+              {translateUiString(uiLanguage, 'Story')}
             </button>
             <button className={`tab-button ${activeTab === 'entities' ? 'active' : ''}`} onClick={() => setActiveTab('entities')} type="button">
               <Image size={16} />
-              Entities
+              {translateUiString(uiLanguage, 'Entities')}
             </button>
             <button className={`tab-button ${activeTab === 'pages' ? 'active' : ''}`} onClick={() => setActiveTab('pages')} type="button">
               <PanelsTopLeft size={16} />
-              Pages
+              {translateUiString(uiLanguage, 'Pages')}
             </button>
+            <select className="toolbar-select" value={uiLanguage} onChange={(event) => setUiLanguageStored(event.target.value)}>
+              <option value="ja">日本語</option>
+              <option value="en">English</option>
+            </select>
             <button className="ghost-button" onClick={() => void props.onLogout()} type="button">
               <LogOut size={16} />
             </button>
@@ -823,250 +1183,271 @@ function StudioShell(props: {
         {selectedWork === null ? (
           <section className="empty-state">
             <LayoutGrid size={28} />
-            <h2>No work selected</h2>
+            <h2>{translateUiString(uiLanguage, 'No work selected')}</h2>
           </section>
         ) : (
           <div className="workspace-grid">
             <section className="main-column">
-              <PanelSection
-                title={selectedWork.title}
-                subtitle={`status ${selectedWork.status}`}
-                actions={
-                  <button
-                    className="secondary-button"
-                    disabled={busyAction === 'Save work'}
-                    onClick={() =>
-                      void runAction('Save work', async () => {
-                        await api.updateWork(selectedWork.id, toWorkPayload(workDraft));
-                        await queryClient.invalidateQueries({ queryKey: ['works'] });
-                      })
+              {activeTab === 'story' ? (
+                <>
+                  <PanelSection
+                    title={selectedWork.title}
+                    subtitle={`status ${selectedWork.status}`}
+                    actions={
+                      <button
+                        className="secondary-button"
+                        disabled={busyAction === 'Save work'}
+                        onClick={() =>
+                          void runAction('Save work', async () => {
+                            await api.updateWork(selectedWork.id, toWorkPayload(workDraft));
+                            await queryClient.invalidateQueries({ queryKey: ['works'] });
+                          })
+                        }
+                        type="button"
+                      >
+                        {busyAction === 'Save work' ? <LoaderCircle className="spin" size={16} /> : <Save size={16} />}
+                        Save
+                      </button>
                     }
-                    type="button"
                   >
-                    {busyAction === 'Save work' ? <LoaderCircle className="spin" size={16} /> : <Save size={16} />}
-                    Save
-                  </button>
-                }
-              >
-                <div className="form-grid two">
-                  <InputField label="Title" value={workDraft.title} onChange={(value) => setWorkDraft({ ...workDraft, title: value })} />
-                  <InputField label="Genre" value={workDraft.genre} onChange={(value) => setWorkDraft({ ...workDraft, genre: value })} />
-                  <InputField label="Theme" value={workDraft.theme} onChange={(value) => setWorkDraft({ ...workDraft, theme: value })} />
-                  <SelectField
-                    label="Status"
-                    value={workDraft.status}
-                    onChange={(value) => setWorkDraft({ ...workDraft, status: value as WorkDraft['status'] })}
-                    options={[
-                      ['draft', 'Draft'],
-                      ['reviewing', 'Reviewing'],
-                      ['ready', 'Ready'],
-                    ]}
-                  />
-                </div>
-                <div className="form-grid two">
-                  <TextAreaField
-                    label="World"
-                    rows={3}
-                    value={workDraft.world_setting}
-                    onChange={(value) => setWorkDraft({ ...workDraft, world_setting: value })}
-                  />
-                  <TextAreaField
-                    label="Overall flow"
-                    rows={3}
-                    value={workDraft.overall_flow}
-                    onChange={(value) => setWorkDraft({ ...workDraft, overall_flow: value })}
-                  />
-                </div>
-                <div className="form-grid two">
-                  <TextAreaField
-                    label="Starting point"
-                    rows={2}
-                    value={workDraft.starting_point}
-                    onChange={(value) => setWorkDraft({ ...workDraft, starting_point: value })}
-                  />
-                  <TextAreaField
-                    label="Ending point"
-                    rows={2}
-                    value={workDraft.ending_point}
-                    onChange={(value) => setWorkDraft({ ...workDraft, ending_point: value })}
-                  />
-                </div>
-                <InputField
-                  label="Main entity IDs"
-                  value={workDraft.main_entity_ids}
-                  onChange={(value) => setWorkDraft({ ...workDraft, main_entity_ids: value })}
-                />
-              </PanelSection>
+                    <div className="form-grid two">
+                      <InputField label="Title" value={workDraft.title} onChange={(value) => setWorkDraft({ ...workDraft, title: value })} />
+                      <InputField label="Genre" value={workDraft.genre} onChange={(value) => setWorkDraft({ ...workDraft, genre: value })} />
+                      <InputField label="Theme" value={workDraft.theme} onChange={(value) => setWorkDraft({ ...workDraft, theme: value })} />
+                      <SelectField
+                        label="Status"
+                        value={workDraft.status}
+                        onChange={(value) => setWorkDraft({ ...workDraft, status: value as WorkDraft['status'] })}
+                        options={[
+                          ['draft', 'Draft'],
+                          ['reviewing', 'Reviewing'],
+                          ['ready', 'Ready'],
+                        ]}
+                      />
+                    </div>
+                    <div className="form-grid two">
+                      <TextAreaField
+                        label="World"
+                        rows={3}
+                        value={workDraft.world_setting}
+                        onChange={(value) => setWorkDraft({ ...workDraft, world_setting: value })}
+                      />
+                      <TextAreaField
+                        label="Overall flow"
+                        rows={3}
+                        value={workDraft.overall_flow}
+                        onChange={(value) => setWorkDraft({ ...workDraft, overall_flow: value })}
+                      />
+                    </div>
+                    <div className="form-grid two">
+                      <TextAreaField
+                        label="Starting point"
+                        rows={2}
+                        value={workDraft.starting_point}
+                        onChange={(value) => setWorkDraft({ ...workDraft, starting_point: value })}
+                      />
+                      <TextAreaField
+                        label="Ending point"
+                        rows={2}
+                        value={workDraft.ending_point}
+                        onChange={(value) => setWorkDraft({ ...workDraft, ending_point: value })}
+                      />
+                    </div>
+                    <InputField
+                      label="Main entity IDs"
+                      value={workDraft.main_entity_ids}
+                      onChange={(value) => setWorkDraft({ ...workDraft, main_entity_ids: value })}
+                    />
+                  </PanelSection>
 
-              <PanelSection
-                title="Chapter / Episode"
-                actions={
-                  <button
-                    className="secondary-button"
-                    disabled={selectedEpisode === null || busyAction === 'Generate page skeleton'}
-                    onClick={() => {
-                      if (selectedEpisode === null) {
-                        return;
-                      }
-                      void runAction('Generate page skeleton', async () => {
-                        await saveCurrentEpisodeContext();
-                        await api.generatePageSkeleton(selectedEpisode.id);
-                        await queryClient.invalidateQueries({ queryKey: ['episodes', selectedChapter?.id ?? ''] });
-                        await queryClient.invalidateQueries({ queryKey: ['scenes', selectedEpisode.id] });
-                        await queryClient.invalidateQueries({ queryKey: ['pages', selectedEpisode.id] });
-                      });
-                    }}
-                    type="button"
-                  >
-                    {busyAction === 'Generate page skeleton' ? (
-                      <LoaderCircle className="spin" size={16} />
-                    ) : (
-                      <Sparkles size={16} />
-                    )}
-                    Generate skeleton
-                  </button>
-                }
-              >
-                <div className="story-tree">
-                  <div className="tree-column">
-                    <h3>Chapters</h3>
-                    <div className="stack gap-xs">
-                      {chapters.map((chapter) => (
+                  <PanelSection
+                    title="Chapter / Episode"
+                    actions={
+                      <div className="toolbar">
                         <button
-                          key={chapter.id}
-                          className={`tree-item ${selectedChapter?.id === chapter.id ? 'active' : ''}`}
+                          className="secondary-button"
+                          disabled={selectedEpisode === null || busyAction === 'Generate page skeleton'}
                           onClick={() => {
-                            setSelectedChapterId(chapter.id);
-                            setSelectedEpisodeId('');
-                            setSelectedWorkId(selectedWork.id);
+                            if (selectedEpisode === null) {
+                              return;
+                            }
+                            void runAction('Generate page skeleton', async () => {
+                              await saveCurrentEpisodeContext();
+                              await api.generatePageSkeleton(selectedEpisode.id, { language: uiLanguage });
+                              await queryClient.invalidateQueries({ queryKey: ['episodes', selectedChapter?.id ?? ''] });
+                              await queryClient.invalidateQueries({ queryKey: ['scenes', selectedEpisode.id] });
+                              await queryClient.invalidateQueries({ queryKey: ['pages', selectedEpisode.id] });
+                            });
                           }}
                           type="button"
                         >
-                          <span>{chapter.order}</span>
-                          <strong>{chapter.title ?? 'Untitled chapter'}</strong>
+                          {busyAction === 'Generate page skeleton' ? <LoaderCircle className="spin" size={16} /> : <Sparkles size={16} />}
+                          {translateUiString(uiLanguage, 'Generate page plan')}
                         </button>
-                      ))}
-                    </div>
-                    <form
-                      className="stack"
-                      onSubmit={(event) => {
-                        event.preventDefault();
-                        void runAction('Create chapter', async () => {
-                          await api.createChapter(selectedWork.id, toCreateChapterPayload(newChapterDraft));
-                          setNewChapterDraft(createEmptyChapterDraft());
-                          await queryClient.invalidateQueries({ queryKey: ['chapters', selectedWork.id] });
-                        });
-                      }}
-                    >
-                      <InputField
-                        label="New chapter title"
-                        value={newChapterDraft.title}
-                        onChange={(value) => setNewChapterDraft({ ...newChapterDraft, title: value })}
-                      />
-                      <InputField
-                        label="Order"
-                        value={newChapterDraft.order}
-                        onChange={(value) => setNewChapterDraft({ ...newChapterDraft, order: value })}
-                      />
-                      <button className="ghost-button" type="submit">
-                        <Save size={16} />
-                        Add chapter
-                      </button>
-                    </form>
-                  </div>
-
-                  <div className="tree-column">
-                    {selectedChapter !== null ? (
-                      <div className="stack">
-                        <InputField label="Chapter title" value={chapterDraft.title} onChange={(value) => setChapterDraft({ ...chapterDraft, title: value })} />
-                        <div className="form-grid two">
-                          <InputField label="Order" value={chapterDraft.order} onChange={(value) => setChapterDraft({ ...chapterDraft, order: value })} />
-                          <SelectField
-                            label="Status"
-                            value={chapterDraft.status}
-                            onChange={(value) => setChapterDraft({ ...chapterDraft, status: value as ChapterDraft['status'] })}
-                            options={[
-                              ['draft', 'Draft'],
-                              ['reviewing', 'Reviewing'],
-                              ['ready', 'Ready'],
-                            ]}
-                          />
-                        </div>
-                        <TextAreaField label="Purpose" rows={2} value={chapterDraft.purpose} onChange={(value) => setChapterDraft({ ...chapterDraft, purpose: value })} />
-                        <div className="toolbar">
-                          <button
-                            className="ghost-button"
-                            onClick={() =>
-                              void runAction('Save chapter', async () => {
-                                await api.updateChapter(selectedChapter.id, toChapterPayload(chapterDraft));
-                                await queryClient.invalidateQueries({ queryKey: ['chapters', selectedWork.id] });
-                              })
-                            }
-                            type="button"
-                          >
-                            <Save size={16} />
-                            Save chapter
-                          </button>
-                          <button
-                            className="ghost-button danger"
-                            onClick={() =>
-                              void runAction('Delete chapter', async () => {
-                                await api.deleteChapter(selectedChapter.id);
-                                await queryClient.invalidateQueries({ queryKey: ['chapters', selectedWork.id] });
-                              })
-                            }
-                            type="button"
-                          >
-                            <Trash2 size={16} />
-                          </button>
-                        </div>
-                      </div>
-                    ) : null}
-                    <h3>Episodes</h3>
-                    <div className="stack gap-xs">
-                      {episodes.map((episode) => (
                         <button
-                          key={episode.id}
-                          className={`tree-item ${selectedEpisodeId === episode.id ? 'active' : ''}`}
-                          onClick={() => setSelectedEpisodeId(episode.id)}
+                          className="ghost-button"
+                          disabled={selectedEpisode === null || busyAction === 'Apply story plan'}
+                          onClick={() => {
+                            if (selectedEpisode === null) {
+                              return;
+                            }
+                            void runAction('Apply story plan', async () => {
+                              await saveCurrentEpisodeContext();
+                              await api.autofillEpisodePagesFromStory(selectedEpisode.id, uiLanguage);
+                              await queryClient.invalidateQueries({ queryKey: ['pages', selectedEpisode.id] });
+                              setActiveTab('pages');
+                            });
+                          }}
                           type="button"
                         >
-                          <span>{episode.order}</span>
-                          <strong>{episode.title ?? 'Untitled episode'}</strong>
+                          <Wand2 size={16} />
+                          {translateUiString(uiLanguage, 'Apply story plan')}
                         </button>
-                      ))}
+                      </div>
+                    }
+                  >
+                    <div className="story-tree">
+                      <div className="tree-column">
+                        <h3>Chapters</h3>
+                        <div className="stack gap-xs">
+                          {chapters.map((chapter) => (
+                            <button
+                              key={chapter.id}
+                              className={`tree-item ${selectedChapter?.id === chapter.id ? 'active' : ''}`}
+                              onClick={() => {
+                                setSelectedChapterId(chapter.id);
+                                setSelectedEpisodeId('');
+                                setSelectedWorkId(selectedWork.id);
+                              }}
+                              type="button"
+                            >
+                              <span>{chapter.order}</span>
+                              <strong>{chapter.title ?? 'Untitled chapter'}</strong>
+                            </button>
+                          ))}
+                        </div>
+                        <form
+                          className="stack"
+                          onSubmit={(event) => {
+                            event.preventDefault();
+                            void runAction('Create chapter', async () => {
+                              await api.createChapter(selectedWork.id, toCreateChapterPayload(newChapterDraft));
+                              setNewChapterDraft(createEmptyChapterDraft());
+                              await queryClient.invalidateQueries({ queryKey: ['chapters', selectedWork.id] });
+                            });
+                          }}
+                        >
+                          <InputField
+                            label="New chapter title"
+                            value={newChapterDraft.title}
+                            onChange={(value) => setNewChapterDraft({ ...newChapterDraft, title: value })}
+                          />
+                          <InputField
+                            label="Order"
+                            value={newChapterDraft.order}
+                            onChange={(value) => setNewChapterDraft({ ...newChapterDraft, order: value })}
+                          />
+                          <button className="ghost-button" type="submit">
+                            <Save size={16} />
+                            Add chapter
+                          </button>
+                        </form>
+                      </div>
+
+                      <div className="tree-column">
+                        {selectedChapter !== null ? (
+                          <div className="stack">
+                            <InputField label="Chapter title" value={chapterDraft.title} onChange={(value) => setChapterDraft({ ...chapterDraft, title: value })} />
+                            <div className="form-grid two">
+                              <InputField label="Order" value={chapterDraft.order} onChange={(value) => setChapterDraft({ ...chapterDraft, order: value })} />
+                              <SelectField
+                                label="Status"
+                                value={chapterDraft.status}
+                                onChange={(value) => setChapterDraft({ ...chapterDraft, status: value as ChapterDraft['status'] })}
+                                options={[
+                                  ['draft', 'Draft'],
+                                  ['reviewing', 'Reviewing'],
+                                  ['ready', 'Ready'],
+                                ]}
+                              />
+                            </div>
+                            <TextAreaField label="Purpose" rows={2} value={chapterDraft.purpose} onChange={(value) => setChapterDraft({ ...chapterDraft, purpose: value })} />
+                            <div className="toolbar">
+                              <button
+                                className="ghost-button"
+                                onClick={() =>
+                                  void runAction('Save chapter', async () => {
+                                    await api.updateChapter(selectedChapter.id, toChapterPayload(chapterDraft));
+                                    await queryClient.invalidateQueries({ queryKey: ['chapters', selectedWork.id] });
+                                  })
+                                }
+                                type="button"
+                              >
+                                <Save size={16} />
+                                Save chapter
+                              </button>
+                              <button
+                                className="ghost-button danger"
+                                onClick={() =>
+                                  void runAction('Delete chapter', async () => {
+                                    await api.deleteChapter(selectedChapter.id);
+                                    await queryClient.invalidateQueries({ queryKey: ['chapters', selectedWork.id] });
+                                  })
+                                }
+                                type="button"
+                              >
+                                <Trash2 size={16} />
+                              </button>
+                            </div>
+                          </div>
+                        ) : null}
+                        <h3>Episodes</h3>
+                        <div className="stack gap-xs">
+                          {episodes.map((episode) => (
+                            <button
+                              key={episode.id}
+                              className={`tree-item ${selectedEpisodeId === episode.id ? 'active' : ''}`}
+                              onClick={() => setSelectedEpisodeId(episode.id)}
+                              type="button"
+                            >
+                              <span>{episode.order}</span>
+                              <strong>{episode.title ?? 'Untitled episode'}</strong>
+                            </button>
+                          ))}
+                        </div>
+                        {selectedChapter !== null ? (
+                          <form
+                            className="stack"
+                            onSubmit={(event) => {
+                              event.preventDefault();
+                              void runAction('Create episode', async () => {
+                                await api.createEpisode(selectedChapter.id, toCreateEpisodePayload(newEpisodeDraft));
+                                setNewEpisodeDraft(createEmptyEpisodeDraft());
+                                await queryClient.invalidateQueries({ queryKey: ['episodes', selectedChapter.id] });
+                              });
+                            }}
+                          >
+                            <InputField
+                              label="New episode title"
+                              value={newEpisodeDraft.title}
+                              onChange={(value) => setNewEpisodeDraft({ ...newEpisodeDraft, title: value })}
+                            />
+                            <InputField
+                              label="Order"
+                              value={newEpisodeDraft.order}
+                              onChange={(value) => setNewEpisodeDraft({ ...newEpisodeDraft, order: value })}
+                            />
+                            <button className="ghost-button" type="submit">
+                              <Save size={16} />
+                              Add episode
+                            </button>
+                          </form>
+                        ) : null}
+                      </div>
                     </div>
-                    {selectedChapter !== null ? (
-                      <form
-                        className="stack"
-                        onSubmit={(event) => {
-                        event.preventDefault();
-                        void runAction('Create episode', async () => {
-                            await api.createEpisode(selectedChapter.id, toCreateEpisodePayload(newEpisodeDraft));
-                            setNewEpisodeDraft(createEmptyEpisodeDraft());
-                            await queryClient.invalidateQueries({ queryKey: ['episodes', selectedChapter.id] });
-                          });
-                        }}
-                      >
-                        <InputField
-                          label="New episode title"
-                          value={newEpisodeDraft.title}
-                          onChange={(value) => setNewEpisodeDraft({ ...newEpisodeDraft, title: value })}
-                        />
-                        <InputField
-                          label="Order"
-                          value={newEpisodeDraft.order}
-                          onChange={(value) => setNewEpisodeDraft({ ...newEpisodeDraft, order: value })}
-                        />
-                        <button className="ghost-button" type="submit">
-                          <Save size={16} />
-                          Add episode
-                        </button>
-                      </form>
-                    ) : null}
-                  </div>
-                </div>
-              </PanelSection>
+                  </PanelSection>
+                </>
+              ) : null}
 
               {activeTab === 'story' && selectedEpisode !== null ? (
                 <>
@@ -1129,50 +1510,164 @@ function StudioShell(props: {
 
                   <PanelSection
                     title="Story AI"
-                    subtitle="Claude Sonnet stream"
+                    subtitle={pickUiText(
+                      uiLanguage,
+                      'Improve the current episode draft while keeping continuity with the rest of the work.',
+                      '作品全体との整合を保ちながら、現在の話の下書きを改善します。',
+                    )}
                     actions={
-                      <button
-                        className="primary-button"
-                        disabled={storyBusy || storyInstruction.trim().length === 0}
-                        onClick={() => {
-                          void (async () => {
-                            try {
-                              setStoryBusy(true);
-                              setStoryStream('');
-                              await saveCurrentEpisodeContext();
-                              await api.streamStoryCollaboration(
-                                {
-                                  layer: 'episode',
-                                  target_id: selectedEpisode.id,
+                      <div className="toolbar">
+                        <button
+                          className="primary-button"
+                          disabled={storyBusy || storyInstruction.trim().length === 0}
+                          onClick={() => {
+                            void (async () => {
+                              try {
+                                setStoryBusy(true);
+                                await saveCurrentEpisodeContext();
+                                const result = await api.improveEpisodeDraft({
+                                  episode_id: selectedEpisode.id,
                                   instruction: storyInstruction,
-                                  context: {
-                                    current_draft: [episodeDraft.introduction, episodeDraft.middle, episodeDraft.climax]
-                                      .filter((part) => part !== null && part.length > 0)
-                                      .join('\n\n'),
-                                    user_notes: nullableString(episodeDraft.purpose),
-                                    focus_points: splitCsv(episodeDraft.entities_involved),
+                                  language: uiLanguage,
+                                  base_draft: {
+                                    title: nullableString(episodeDraft.title),
+                                    purpose: nullableString(episodeDraft.purpose),
+                                    introduction: nullableString(episodeDraft.introduction),
+                                    middle: nullableString(episodeDraft.middle),
+                                    climax: nullableString(episodeDraft.climax),
+                                    ending_hook: nullableString(episodeDraft.ending_hook),
                                   },
-                                },
-                                {
-                                  onChunk: (text) => setStoryStream((current) => current + text),
-                                },
-                              );
-                            } catch (error) {
-                              setNotice({ type: 'error', message: toMessage(error) });
-                            } finally {
-                              setStoryBusy(false);
-                            }
-                          })();
-                        }}
-                        type="button"
-                      >
-                        {storyBusy ? <LoaderCircle className="spin" size={16} /> : <Wand2 size={16} />}
-                        Collaborate
-                      </button>
+                                });
+                                setStoryImprovementDraft(result.draft);
+                                setStoryImprovementMeta({
+                                  compiler_provider: result.compiler_provider,
+                                  compiler_model: result.compiler_model,
+                                  compiler_prompt_version: result.compiler_prompt_version,
+                                  compiler_error: result.compiler_error,
+                                });
+                              } catch (error) {
+                                setNotice({ type: 'error', message: toMessage(error) });
+                              } finally {
+                                setStoryBusy(false);
+                              }
+                            })();
+                          }}
+                          type="button"
+                        >
+                          {storyBusy ? <LoaderCircle className="spin" size={16} /> : <Wand2 size={16} />}
+                          {translateUiString(uiLanguage, 'Improve draft')}
+                        </button>
+                        <button
+                          className="ghost-button"
+                          disabled={storyImprovementDraft === null}
+                          onClick={() =>
+                            setEpisodeDraft((current) => ({
+                              ...current,
+                              title: storyImprovementDraft?.title ?? current.title,
+                              purpose: storyImprovementDraft?.purpose ?? current.purpose,
+                              introduction: storyImprovementDraft?.introduction ?? current.introduction,
+                              middle: storyImprovementDraft?.middle ?? current.middle,
+                              climax: storyImprovementDraft?.climax ?? current.climax,
+                              ending_hook: storyImprovementDraft?.ending_hook ?? current.ending_hook,
+                            }))
+                          }
+                          type="button"
+                        >
+                          <Save size={16} />
+                          {translateUiString(uiLanguage, 'Apply all')}
+                        </button>
+                      </div>
                     }
                   >
                     <TextAreaField label="Instruction" rows={4} value={storyInstruction} onChange={setStoryInstruction} />
-                    <TextAreaField label="Stream" rows={10} value={storyStream} onChange={setStoryStream} />
+                    {storyImprovementMeta !== null && storyImprovementMeta.compiler_provider !== 'fallback' ? (
+                      <div className="muted small">{`AI improved / ${storyImprovementMeta.compiler_model ?? 'Story AI'}`}</div>
+                    ) : null}
+                    <div className="stack">
+                      <TextAreaField
+                        label="Improved title"
+                        rows={2}
+                        value={storyImprovementDraft?.title ?? ''}
+                        onChange={(value) =>
+                          setStoryImprovementDraft((current) => ({
+                            title: value,
+                            purpose: current?.purpose ?? '',
+                            introduction: current?.introduction ?? '',
+                            middle: current?.middle ?? '',
+                            climax: current?.climax ?? '',
+                            ending_hook: current?.ending_hook ?? '',
+                          }))
+                        }
+                      />
+                      <button className="secondary-button" onClick={() => setEpisodeDraft((current) => ({ ...current, title: storyImprovementDraft?.title ?? current.title }))} type="button">
+                        <Save size={16} />
+                        {translateUiString(uiLanguage, 'Apply to title')}
+                      </button>
+                    </div>
+                    <div className="form-grid two">
+                      <div className="stack">
+                        <TextAreaField
+                          label="Improved purpose"
+                          rows={4}
+                          value={storyImprovementDraft?.purpose ?? ''}
+                          onChange={(value) => setStoryImprovementDraft((current) => ({ ...(current ?? { title: '', purpose: '', introduction: '', middle: '', climax: '', ending_hook: '' }), purpose: value }))}
+                        />
+                        <button className="secondary-button" onClick={() => setEpisodeDraft((current) => ({ ...current, purpose: storyImprovementDraft?.purpose ?? current.purpose }))} type="button">
+                          <Save size={16} />
+                          {translateUiString(uiLanguage, 'Apply purpose')}
+                        </button>
+                      </div>
+                      <div className="stack">
+                        <TextAreaField
+                          label="Improved introduction"
+                          rows={6}
+                          value={storyImprovementDraft?.introduction ?? ''}
+                          onChange={(value) => setStoryImprovementDraft((current) => ({ ...(current ?? { title: '', purpose: '', introduction: '', middle: '', climax: '', ending_hook: '' }), introduction: value }))}
+                        />
+                        <button className="secondary-button" onClick={() => setEpisodeDraft((current) => ({ ...current, introduction: storyImprovementDraft?.introduction ?? current.introduction }))} type="button">
+                          <Save size={16} />
+                          {translateUiString(uiLanguage, 'Apply introduction')}
+                        </button>
+                      </div>
+                    </div>
+                    <div className="form-grid two">
+                      <div className="stack">
+                        <TextAreaField
+                          label="Improved middle"
+                          rows={6}
+                          value={storyImprovementDraft?.middle ?? ''}
+                          onChange={(value) => setStoryImprovementDraft((current) => ({ ...(current ?? { title: '', purpose: '', introduction: '', middle: '', climax: '', ending_hook: '' }), middle: value }))}
+                        />
+                        <button className="secondary-button" onClick={() => setEpisodeDraft((current) => ({ ...current, middle: storyImprovementDraft?.middle ?? current.middle }))} type="button">
+                          <Save size={16} />
+                          {translateUiString(uiLanguage, 'Apply middle')}
+                        </button>
+                      </div>
+                      <div className="stack">
+                        <TextAreaField
+                          label="Improved climax"
+                          rows={6}
+                          value={storyImprovementDraft?.climax ?? ''}
+                          onChange={(value) => setStoryImprovementDraft((current) => ({ ...(current ?? { title: '', purpose: '', introduction: '', middle: '', climax: '', ending_hook: '' }), climax: value }))}
+                        />
+                        <button className="secondary-button" onClick={() => setEpisodeDraft((current) => ({ ...current, climax: storyImprovementDraft?.climax ?? current.climax }))} type="button">
+                          <Save size={16} />
+                          {translateUiString(uiLanguage, 'Apply climax')}
+                        </button>
+                      </div>
+                    </div>
+                    <div className="stack">
+                      <TextAreaField
+                        label="Improved ending hook"
+                        rows={6}
+                        value={storyImprovementDraft?.ending_hook ?? ''}
+                        onChange={(value) => setStoryImprovementDraft((current) => ({ ...(current ?? { title: '', purpose: '', introduction: '', middle: '', climax: '', ending_hook: '' }), ending_hook: value }))}
+                      />
+                      <button className="secondary-button" onClick={() => setEpisodeDraft((current) => ({ ...current, ending_hook: storyImprovementDraft?.ending_hook ?? current.ending_hook }))} type="button">
+                        <Save size={16} />
+                        {translateUiString(uiLanguage, 'Apply ending hook')}
+                      </button>
+                    </div>
                   </PanelSection>
 
                   <PanelSection title="Scenes">
@@ -1239,9 +1734,37 @@ function StudioShell(props: {
 
               {activeTab === 'entities' && selectedWork !== null ? (
                 <>
+                  <div className="compact-context-card">
+                    <div className="compact-context-header">
+                      <strong>{translateUiString(uiLanguage, 'Story context')}</strong>
+                      <span className="muted small">{translateUiString(uiLanguage, 'Choose the current work, chapter, and episode while editing characters.')}</span>
+                    </div>
+                    <div className="compact-context-grid">
+                      <SelectField
+                        label="Work"
+                        value={selectedWorkId}
+                        onChange={setSelectedWorkId}
+                        options={works.map((work) => [work.id, work.title])}
+                      />
+                      <SelectField
+                        label="Chapter"
+                        value={selectedChapter?.id ?? ''}
+                        onChange={setSelectedChapterId}
+                        options={chapters.map((chapter) => [chapter.id, chapter.title ?? `Chapter ${chapter.order}`])}
+                      />
+                      <SelectField
+                        label="Episode"
+                        value={selectedEpisode?.id ?? ''}
+                        onChange={setSelectedEpisodeId}
+                        options={episodes.map((episode) => [episode.id, episode.title ?? `Episode ${episode.order}`])}
+                      />
+                    </div>
+                  </div>
+
                   <PanelSection
-                    title="Entities"
+                    title="Character list"
                     subtitle={`${entities.length} records`}
+                    collapsible
                     actions={
                       <button
                         className="secondary-button"
@@ -1252,7 +1775,7 @@ function StudioShell(props: {
                         type="button"
                       >
                         <RefreshCw size={16} />
-                        Reset draft
+                        {translateUiString(uiLanguage, 'New character')}
                       </button>
                     }
                   >
@@ -1269,6 +1792,42 @@ function StudioShell(props: {
                         </button>
                       ))}
                     </div>
+                  </PanelSection>
+
+                  <PanelSection
+                    title="Character editor"
+                    className="character-editor-section"
+                    collapsible
+                    actions={
+                      <div className="toolbar">
+                        <button
+                          className="ghost-button"
+                          onClick={() => {
+                            setSelectedEntityId('');
+                            setEntityDraft(createEmptyEntityDraft());
+                          }}
+                          type="button"
+                        >
+                          <RefreshCw size={16} />
+                          {translateUiString(uiLanguage, 'Reset draft')}
+                        </button>
+                        {selectedEntity !== null ? (
+                          <button
+                            className="ghost-button danger"
+                            onClick={() =>
+                              void runAction('Delete entity', async () => {
+                                await api.deleteEntity(selectedEntity.id);
+                                await queryClient.invalidateQueries({ queryKey: ['entities', selectedWork.id] });
+                              })
+                            }
+                            type="button"
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        ) : null}
+                      </div>
+                    }
+                  >
                     <div className="form-grid two">
                       <SelectField
                         label="Type"
@@ -1317,12 +1876,6 @@ function StudioShell(props: {
                         onChange={(value) => setEntityDraft({ ...entityDraft, structured_fields: value })}
                       />
                     )}
-                    <TextAreaField
-                      label="Speech profile JSON"
-                      rows={6}
-                      value={entityDraft.speech_profile}
-                      onChange={(value) => setEntityDraft({ ...entityDraft, speech_profile: value })}
-                    />
                     <div className="toolbar">
                       <button
                         className="secondary-button"
@@ -1336,41 +1889,27 @@ function StudioShell(props: {
                         type="button"
                       >
                         <Save size={16} />
-                        Create
+                        {translateUiString(uiLanguage, 'Create')}
                       </button>
                       {selectedEntity !== null ? (
-                        <>
-                          <button
-                            className="ghost-button"
-                            onClick={() =>
-                              void runAction('Save entity', async () => {
-                                await api.updateEntity(selectedEntity.id, toEntityPayload(entityDraft));
-                                await queryClient.invalidateQueries({ queryKey: ['entities', selectedWork.id] });
-                              })
-                            }
-                            type="button"
-                          >
-                            <Save size={16} />
-                            Save selected
-                          </button>
-                          <button
-                            className="ghost-button danger"
-                            onClick={() =>
-                              void runAction('Delete entity', async () => {
-                                await api.deleteEntity(selectedEntity.id);
-                                await queryClient.invalidateQueries({ queryKey: ['entities', selectedWork.id] });
-                              })
-                            }
-                            type="button"
-                          >
-                            <Trash2 size={16} />
-                          </button>
-                        </>
+                        <button
+                          className="ghost-button"
+                          onClick={() =>
+                            void runAction('Save entity', async () => {
+                              await api.updateEntity(selectedEntity.id, toEntityPayload(entityDraft));
+                              await queryClient.invalidateQueries({ queryKey: ['entities', selectedWork.id] });
+                            })
+                          }
+                          type="button"
+                        >
+                          <Save size={16} />
+                          {translateUiString(uiLanguage, 'Save selected')}
+                        </button>
                       ) : null}
                     </div>
                   </PanelSection>
 
-                  <PanelSection title="Import / References">
+                  <PanelSection title="Import / References" collapsible>
                     <label className="file-drop">
                       <input
                         accept="image/png,image/jpeg,image/webp"
@@ -1389,7 +1928,7 @@ function StudioShell(props: {
                         }
                         type="file"
                       />
-                      <span>{importingImage ? 'Importing image…' : 'Drop or choose image'}</span>
+                      <span>{importingImage ? translateUiString(uiLanguage, 'Importing image...') : translateUiString(uiLanguage, 'Drop or choose image')}</span>
                     </label>
                     {selectedEntity !== null ? (
                       <div className="toolbar">
@@ -1408,38 +1947,8 @@ function StudioShell(props: {
                           type="button"
                         >
                           <Sparkles size={16} />
-                          Generate full-body candidates
+                          {translateUiString(uiLanguage, 'Generate full-body candidates')}
                         </button>
-                      </div>
-                    ) : null}
-                    {referenceCandidates.length > 0 ? (
-                      <div className="reference-grid">
-                        {referenceCandidates.map((candidate) => (
-                          <label key={candidate.s3_key} className={`reference-card ${referenceSelection.includes(candidate.s3_key) ? 'active' : ''}`}>
-                            <img alt="" src={candidate.cdn_url} />
-                            <input
-                              checked={referenceSelection.includes(candidate.s3_key)}
-                              onChange={(event) =>
-                                setReferenceSelection((current) =>
-                                  event.target.checked
-                                    ? [...current, candidate.s3_key]
-                                    : current.filter((item) => item !== candidate.s3_key),
-                                )
-                              }
-                              type="checkbox"
-                            />
-                            <input
-                              checked={referencePrimaryKey === candidate.s3_key}
-                              name="reference-primary"
-                              onChange={() => setReferencePrimaryKey(candidate.s3_key)}
-                              type="radio"
-                            />
-                          </label>
-                        ))}
-                      </div>
-                    ) : null}
-                    <div className="toolbar">
-                      {selectedEntity !== null ? (
                         <button
                           className="primary-button"
                           disabled={referenceSelection.length === 0}
@@ -1461,46 +1970,141 @@ function StudioShell(props: {
                           type="button"
                         >
                           <Check size={16} />
-                          Confirm
+                          {translateUiString(uiLanguage, 'Confirm')}
                         </button>
-                      ) : null}
-                    </div>
-                    {entityReferenceSetQuery.data !== undefined ? (
-                      <div className="reference-grid compact">
-                        {entityReferenceSetQuery.data.reference_images.map((image) => (
-                          <button
-                            key={image.ref_id}
-                            className="reference-card compact"
-                            onClick={() => {
-                              if (selectedEntity === null) {
-                                return;
-                              }
-                              void runAction('Delete reference', async () => {
-                                await api.deleteEntityReference(selectedEntity.id, image.ref_id);
-                                await queryClient.invalidateQueries({ queryKey: ['entity-reference-set', selectedEntity.id] });
-                              });
-                            }}
-                            type="button"
-                          >
-                            <img alt="" src={image.cdn_url} />
-                            <span>{image.ref_id === entityReferenceSetQuery.data.primary_ref_id ? 'Primary' : image.source}</span>
-                          </button>
-                        ))}
                       </div>
                     ) : null}
+                    <div className="reference-management-grid">
+                      <div className="stack">
+                        <div className="section-header">
+                          <div>
+                            <h3>{translateUiString(uiLanguage, 'Generated preview')}</h3>
+                            <div className="muted small">{translateUiString(uiLanguage, 'Select one or more candidates and choose a primary image.')}</div>
+                          </div>
+                        </div>
+                        {referenceCandidates.length > 0 ? (
+                          <div className="reference-grid reference-grid-portrait">
+                            {referenceCandidates.map((candidate) => (
+                              <label key={candidate.s3_key} className={`reference-card reference-card-portrait ${referenceSelection.includes(candidate.s3_key) ? 'active' : ''}`}>
+                                <div className="reference-card-media">
+                                  <img alt="" src={candidate.cdn_url} />
+                                </div>
+                                <div className="reference-card-body">
+                                  <span>{candidate.source}</span>
+                                </div>
+                                <input
+                                  checked={referenceSelection.includes(candidate.s3_key)}
+                                  onChange={(event) =>
+                                    setReferenceSelection((current) =>
+                                      event.target.checked
+                                        ? [...current, candidate.s3_key]
+                                        : current.filter((item) => item !== candidate.s3_key),
+                                    )
+                                  }
+                                  type="checkbox"
+                                />
+                                <input
+                                  checked={referencePrimaryKey === candidate.s3_key}
+                                  name="reference-primary"
+                                  onChange={() => setReferencePrimaryKey(candidate.s3_key)}
+                                  type="radio"
+                                />
+                              </label>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="selection-empty">{translateUiString(uiLanguage, 'No preview candidates yet.')}</div>
+                        )}
+                      </div>
+                      <div className="stack">
+                        <div className="section-header">
+                          <div>
+                            <h3>{translateUiString(uiLanguage, 'Confirmed references')}</h3>
+                            <div className="muted small">{translateUiString(uiLanguage, 'Delete with the button only. Clicking the image will not delete it.')}</div>
+                          </div>
+                        </div>
+                        {entityReferenceSetQuery.data !== undefined && entityReferenceSetQuery.data.reference_images.length > 0 ? (
+                          <div className="reference-grid reference-grid-portrait">
+                            {entityReferenceSetQuery.data.reference_images.map((image) => (
+                              <div key={image.ref_id} className="reference-card reference-card-portrait">
+                                <div className="reference-card-media">
+                                  <img alt="" src={image.cdn_url} />
+                                </div>
+                                <div className="reference-card-body">
+                                  <strong>{image.ref_id === entityReferenceSetQuery.data.primary_ref_id ? translateUiString(uiLanguage, 'Primary') : image.source}</strong>
+                                </div>
+                                <div className="reference-card-actions">
+                                  <button
+                                    className="ghost-button danger"
+                                    onClick={() => {
+                                      if (selectedEntity === null) {
+                                        return;
+                                      }
+                                      void runAction('Delete reference', async () => {
+                                        await api.deleteEntityReference(selectedEntity.id, image.ref_id);
+                                        await queryClient.invalidateQueries({ queryKey: ['entity-reference-set', selectedEntity.id] });
+                                      });
+                                    }}
+                                    type="button"
+                                  >
+                                    <Trash2 size={16} />
+                                    {translateUiString(uiLanguage, 'Delete')}
+                                  </button>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="selection-empty">{translateUiString(uiLanguage, 'No confirmed references yet.')}</div>
+                        )}
+                      </div>
+                    </div>
                   </PanelSection>
                 </>
               ) : null}
 
               {activeTab === 'pages' && selectedEpisode !== null ? (
                 <>
-                  <PanelSection title="Pages">
+                  <div className="compact-context-card">
+                    <div className="compact-context-header">
+                      <strong>{translateUiString(uiLanguage, 'Target episode')}</strong>
+                      <span className="muted small">{translateUiString(uiLanguage, 'Switch story context for page editing.')}</span>
+                    </div>
+                    <div className="compact-context-grid">
+                      <SelectField
+                        label="Work"
+                        value={selectedWorkId}
+                        onChange={setSelectedWorkId}
+                        options={works.map((work) => [work.id, work.title])}
+                      />
+                      <SelectField
+                        label="Chapter"
+                        value={selectedChapter?.id ?? ''}
+                        onChange={setSelectedChapterId}
+                        options={chapters.map((chapter) => [chapter.id, chapter.title ?? `Chapter ${chapter.order}`])}
+                      />
+                      <SelectField
+                        label="Episode"
+                        value={selectedEpisode?.id ?? ''}
+                        onChange={setSelectedEpisodeId}
+                        options={episodes.map((episode) => [episode.id, episode.title ?? `Episode ${episode.order}`])}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="page-sections-stack">
+                  <PanelSection title="Pages" collapsible>
                     <div className="page-grid">
                       {pages.map((page) => (
                         <button
                           key={page.id}
                           className={`page-card ${selectedPage?.id === page.id ? 'active' : ''}`}
                           onClick={() => setSelectedPageId(page.id)}
+                          onDoubleClick={() => {
+                            if (page.generated_image?.cdn_url !== null && page.generated_image?.cdn_url !== undefined) {
+                              openImageLightbox(page.generated_image.cdn_url, `${translateUiString(uiLanguage, 'Page')} ${page.page_number}`);
+                            }
+                          }}
                           type="button"
                         >
                           <div className="page-card-header">
@@ -1514,6 +2118,10 @@ function StudioShell(props: {
                               <LayoutGrid size={18} />
                             </div>
                           )}
+                          <div className="page-meta-list">
+                            <span>{`frames ${page.frame_count} / panels ${page.panel_count} / balloons ${page.balloon_count}`}</span>
+                            <span>{translateUiString(uiLanguage, 'Double-click image to enlarge')}</span>
+                          </div>
                         </button>
                       ))}
                     </div>
@@ -1521,9 +2129,116 @@ function StudioShell(props: {
 
                   {selectedPage !== null ? (
                     <>
+                      <PanelSection title="Page settings" className="page-section-settings" collapsible actions={
+                        <button
+                          className="secondary-button"
+                          onClick={() =>
+                            void runAction('Save page settings', async () => {
+                              await api.updatePage(selectedPage.id, toPageSettingsPayload(pageSettingsDraft));
+                              await queryClient.invalidateQueries({ queryKey: ['pages', selectedEpisode.id] });
+                            })
+                          }
+                          type="button"
+                        >
+                          <Save size={16} />
+                          {translateUiString(uiLanguage, 'Save')}
+                        </button>
+                      }>
+                        <div className="form-grid three">
+                          <SelectField
+                            label="Dialogue mode"
+                            value={pageSettingsDraft.dialogue_mode}
+                            onChange={(value) => setPageSettingsDraft((current) => ({ ...current, dialogue_mode: value as PageSettingsDraft['dialogue_mode'] }))}
+                            options={[
+                              ['image_baked', 'Image baked'],
+                              ['balloon_only', 'Balloon only'],
+                              ['mixed', 'Mixed'],
+                            ]}
+                          />
+                          <label className="checkbox-row">
+                            <input
+                              checked={pageSettingsDraft.page_dialogue_toggle}
+                              onChange={(event) => setPageSettingsDraft((current) => ({ ...current, page_dialogue_toggle: event.target.checked }))}
+                              type="checkbox"
+                            />
+                            {translateUiString(uiLanguage, 'Dialogue toggle')}
+                          </label>
+                        </div>
+                        <div className="form-grid two">
+                          <InputField
+                            label="Style reference title"
+                            value={pageSettingsDraft.style_reference_title}
+                            onChange={(value) => setPageSettingsDraft((current) => ({ ...current, style_reference_title: value }))}
+                          />
+                          <InputField
+                            label="Style reference notes"
+                            value={pageSettingsDraft.style_reference_notes}
+                            onChange={(value) => setPageSettingsDraft((current) => ({ ...current, style_reference_notes: value }))}
+                          />
+                        </div>
+                      </PanelSection>
+
+                      <PanelSection
+                        title="Story sources"
+                        className="page-section-story-sources"
+                        collapsible
+                        actions={
+                          <button
+                            className="secondary-button"
+                            onClick={() =>
+                              void runAction('Save story sources', async () => {
+                                await api.updatePage(selectedPage.id, toPageSettingsPayload(pageSettingsDraft));
+                                await queryClient.invalidateQueries({ queryKey: ['pages', selectedEpisode.id] });
+                              })
+                            }
+                            type="button"
+                          >
+                            <Save size={16} />
+                            {translateUiString(uiLanguage, 'Save')}
+                          </button>
+                        }
+                      >
+                        <div className="field-group">
+                          <label className="field-label">{translateUiString(uiLanguage, 'Source scenes')}</label>
+                          <div className="breadcrumb-row">
+                            {resolveStorySourceScenes(pageSettingsDraft.story_source_scene_ids, scenes).length > 0 ? (
+                              resolveStorySourceScenes(pageSettingsDraft.story_source_scene_ids, scenes).map((scene) => (
+                                <span key={scene.id} className="context-chip">
+                                  {formatStorySourceSceneLabel(scene, uiLanguage)}
+                                </span>
+                              ))
+                            ) : (
+                              <span className="muted-text">
+                                {uiLanguage === 'ja' ? 'まだ関連シーンが設定されていません' : 'No linked scenes yet'}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        <div className="form-grid two">
+                          <TextAreaField
+                            label="Page purpose"
+                            rows={2}
+                            value={pageSettingsDraft.story_page_purpose}
+                            onChange={(value) =>
+                              setPageSettingsDraft((current) => ({ ...current, story_page_purpose: value }))
+                            }
+                          />
+                          <TextAreaField
+                            label="Continuity note"
+                            rows={2}
+                            value={pageSettingsDraft.story_continuity_note}
+                            onChange={(value) =>
+                              setPageSettingsDraft((current) => ({ ...current, story_continuity_note: value }))
+                            }
+                          />
+                        </div>
+                      </PanelSection>
+
                       <PanelSection
                         title={`Page ${selectedPage.page_number}`}
                         subtitle={`dialogue ${selectedPage.dialogue_mode}`}
+                        className="page-section-generate"
+                        collapsible
                         actions={
                           <div className="toolbar">
                             <button
@@ -1570,7 +2285,12 @@ function StudioShell(props: {
                       >
                         {selectedPage.generated_image?.cdn_url !== null && selectedPage.generated_image?.cdn_url !== undefined ? (
                           <div className="generated-image-wrap">
-                            <img alt="" className="generated-image" src={selectedPage.generated_image.cdn_url} />
+                            <img
+                              alt=""
+                              className="generated-image"
+                              onDoubleClick={() => openImageLightbox(selectedPage.generated_image?.cdn_url ?? '', `${translateUiString(uiLanguage, 'Page')} ${selectedPage.page_number}`)}
+                              src={selectedPage.generated_image.cdn_url}
+                            />
                             {balloons.map((balloon) => (
                               <div
                                 key={balloon.id}
@@ -1584,8 +2304,10 @@ function StudioShell(props: {
                         ) : null}
                       </PanelSection>
 
+                      <div className="page-editing-cluster page-section-frames-panels">
                       <PanelSection
                         title="Frames"
+                        collapsible
                         actions={
                           <div className="toolbar">
                             <label className="field" style={{ minWidth: '14rem' }}>
@@ -1614,24 +2336,32 @@ function StudioShell(props: {
                           </div>
                         }
                       >
-                        <TextAreaField label="Frames JSON" rows={10} value={framesJson} onChange={setFramesJson} />
-                        <button
-                          className="secondary-button"
-                          onClick={() =>
-                            void runAction('Save frames', async () => {
-                              const parsed = parseJson<Array<Record<string, unknown>>>(framesJson);
-                              await api.replaceFrames(selectedPage.id, { frames: parsed });
-                              await queryClient.invalidateQueries({ queryKey: ['frames', selectedPage.id] });
-                            })
-                          }
-                          type="button"
-                        >
-                          <Save size={16} />
-                          Save frames
-                        </button>
+                        <div className="muted small">
+                          {uiLanguage === 'ja'
+                            ? '通常の編集はテンプレートで行い、細かなコマ形状の編集が必要なときだけ詳細設定を開いてください。'
+                            : 'Use templates for normal layout editing. Open advanced settings only when you need manual frame geometry.'}
+                        </div>
+                        <details className="advanced-disclosure">
+                          <summary>{translateUiString(uiLanguage, 'Advanced frame geometry')}</summary>
+                          <TextAreaField label="Frames JSON" rows={10} value={framesJson} onChange={setFramesJson} />
+                          <button
+                            className="secondary-button"
+                            onClick={() =>
+                              void runAction('Save frames', async () => {
+                                const parsed = parseJson<Array<Record<string, unknown>>>(framesJson);
+                                await api.replaceFrames(selectedPage.id, { frames: parsed });
+                                await queryClient.invalidateQueries({ queryKey: ['frames', selectedPage.id] });
+                              })
+                            }
+                            type="button"
+                          >
+                            <Save size={16} />
+                            Save frames
+                          </button>
+                        </details>
                       </PanelSection>
 
-                      <PanelSection title="Panels">
+                      <PanelSection title="Panels" collapsible>
                         <div className="list-grid">
                           {panels.map((panel) => (
                             <button
@@ -1799,9 +2529,83 @@ function StudioShell(props: {
                           ))}
                         </div>
                       </PanelSection>
+                      </div>
+
+                      <PanelSection title="Export / 保存" className="page-section-export" collapsible>
+                        <div className="form-grid three">
+                          <SelectField
+                            label="Format"
+                            value={exportFormat}
+                            onChange={(value) => setExportFormat(value as ExportFormat)}
+                            options={[
+                              ['pdf', 'PDF'],
+                              ['image', 'Image'],
+                            ]}
+                          />
+                          <InputField
+                            label="Filename"
+                            value={exportFilename}
+                            onChange={setExportFilename}
+                          />
+                        </div>
+                        <div className="entity-choice-grid">
+                          {generatedPages.map((page) => (
+                            <label key={page.id} className={`entity-choice ${exportSelectedPageIds.includes(page.id) ? 'active' : ''}`}>
+                              <input
+                                checked={exportSelectedPageIds.includes(page.id)}
+                                onChange={() => toggleExportPageSelection(page.id)}
+                                type="checkbox"
+                              />
+                              <div className="entity-choice-body">
+                                <strong>{`${translateUiString(uiLanguage, 'Page')} ${page.page_number}`}</strong>
+                                <span className="muted small">{page.generated_image?.generation_mode ?? 'generated'}</span>
+                              </div>
+                            </label>
+                          ))}
+                        </div>
+                        <div className="toolbar">
+                          <button
+                            className="secondary-button"
+                            onClick={() => void runAction('Export selected', async () => { await handleExport('selected'); })}
+                            type="button"
+                          >
+                            <Save size={16} />
+                            {translateUiString(uiLanguage, 'Export selected')}
+                          </button>
+                          <button
+                            className="ghost-button"
+                            onClick={() => void runAction('Export all', async () => { await handleExport('all'); })}
+                            type="button"
+                          >
+                            <Save size={16} />
+                            {translateUiString(uiLanguage, 'Export all')}
+                          </button>
+                        </div>
+                      </PanelSection>
+
+                      <PanelSection title="Page autofill" className="page-section-autofill" compact collapsible defaultCollapsed actions={
+                        <button
+                          className="ghost-button"
+                          onClick={() =>
+                            void runAction('Fill selected page', async () => {
+                              await api.autofillPageFromScenes(selectedPage.id, uiLanguage);
+                              await queryClient.invalidateQueries({ queryKey: ['panels', selectedPage.id] });
+                            })
+                          }
+                          type="button"
+                        >
+                          <Wand2 size={16} />
+                          {translateUiString(uiLanguage, 'Fill selected page')}
+                        </button>
+                      }>
+                        <div className="muted small">{translateUiString(uiLanguage, 'Use this after the story plan when a single page still needs refinement.')}</div>
+                      </PanelSection>
 
                       <PanelSection
                         title="Balloons"
+                        className="page-section-balloons"
+                        collapsible
+                        defaultCollapsed
                         actions={
                           <button
                             className="ghost-button"
@@ -1857,15 +2661,20 @@ function StudioShell(props: {
                         </div>
                         <TextAreaField label="Text" rows={3} value={balloonDraft.text} onChange={(value) => setBalloonDraft({ ...balloonDraft, text: value })} />
                         <div className="form-grid two">
-                          <TextAreaField label="Position JSON" rows={4} value={balloonDraft.position_json} onChange={(value) => setBalloonDraft({ ...balloonDraft, position_json: value })} />
-                          <TextAreaField label="Tail JSON / null" rows={4} value={balloonDraft.tail_json} onChange={(value) => setBalloonDraft({ ...balloonDraft, tail_json: value })} />
-                        </div>
-                        <div className="form-grid three">
                           <InputField label="Font size" value={balloonDraft.font_size} onChange={(value) => setBalloonDraft({ ...balloonDraft, font_size: value })} />
                           <InputField label="Font family" value={balloonDraft.font_family} onChange={(value) => setBalloonDraft({ ...balloonDraft, font_family: value })} />
-                          <InputField label="Panel order ref" value={balloonDraft.panel_order_reference} onChange={(value) => setBalloonDraft({ ...balloonDraft, panel_order_reference: value })} />
                         </div>
-                        <InputField label="Z-index" value={balloonDraft.z_index} onChange={(value) => setBalloonDraft({ ...balloonDraft, z_index: value })} />
+                        <details className="advanced-disclosure">
+                          <summary>{translateUiString(uiLanguage, 'Advanced balloon geometry')}</summary>
+                          <div className="form-grid two">
+                            <TextAreaField label="Position JSON" rows={4} value={balloonDraft.position_json} onChange={(value) => setBalloonDraft({ ...balloonDraft, position_json: value })} />
+                            <TextAreaField label="Tail JSON / null" rows={4} value={balloonDraft.tail_json} onChange={(value) => setBalloonDraft({ ...balloonDraft, tail_json: value })} />
+                          </div>
+                          <div className="form-grid two">
+                            <InputField label="Panel order ref" value={balloonDraft.panel_order_reference} onChange={(value) => setBalloonDraft({ ...balloonDraft, panel_order_reference: value })} />
+                            <InputField label="Z-index" value={balloonDraft.z_index} onChange={(value) => setBalloonDraft({ ...balloonDraft, z_index: value })} />
+                          </div>
+                        </details>
                         <div className="toolbar">
                           <button
                             className="secondary-button"
@@ -1913,6 +2722,7 @@ function StudioShell(props: {
                       </PanelSection>
                     </>
                   ) : null}
+                  </div>
                 </>
               ) : null}
             </section>
@@ -1988,7 +2798,23 @@ function StudioShell(props: {
           </div>
         )}
       </main>
-    </div>
+      {lightboxImageUrl !== null ? (
+        <div className="image-lightbox" onClick={closeImageLightbox} role="presentation">
+          <div className="image-lightbox-dialog" onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true">
+            <div className="image-lightbox-header">
+              <strong>{lightboxTitle}</strong>
+              <button className="ghost-button image-lightbox-close" onClick={closeImageLightbox} type="button">
+                ×
+              </button>
+            </div>
+            <div className="image-lightbox-body">
+              <img alt="" src={lightboxImageUrl} />
+            </div>
+          </div>
+        </div>
+      ) : null}
+      </div>
+    </UiLanguageContext.Provider>
   );
 }
 
@@ -1997,18 +2823,38 @@ function PanelSection(props: {
   subtitle?: string;
   actions?: ReactNode;
   compact?: boolean;
+  className?: string;
   children: ReactNode;
+  collapsible?: boolean;
+  defaultCollapsed?: boolean;
 }) {
+  const language = useContext(UiLanguageContext);
+  const [collapsed, setCollapsed] = useState(props.defaultCollapsed ?? false);
   return (
-    <section className={`panel-section ${props.compact ? 'compact' : ''}`}>
-      <div className="section-header">
-        <div>
-          <h2>{props.title}</h2>
-          {props.subtitle !== undefined ? <div className="muted">{props.subtitle}</div> : null}
+    <section className={`panel-section ${props.compact ? 'compact' : ''} ${collapsed ? 'collapsed' : ''} ${props.className ?? ''}`.trim()}>
+      {props.collapsible ? (
+        <div className="section-header">
+          <button className="section-toggle" onClick={() => setCollapsed((current) => !current)} type="button">
+            <div className="section-toggle-copy">
+              <h2>{translateUiString(language, props.title)}</h2>
+              {props.subtitle !== undefined ? <div className="muted">{translateUiString(language, props.subtitle)}</div> : null}
+            </div>
+            <ChevronDown className={`section-toggle-icon ${collapsed ? '' : 'open'}`.trim()} size={16} />
+          </button>
+          <div className="section-toggle-actions">
+            {props.actions}
+          </div>
         </div>
-        {props.actions}
-      </div>
-      {props.children}
+      ) : (
+        <div className="section-header">
+          <div>
+            <h2>{translateUiString(language, props.title)}</h2>
+            {props.subtitle !== undefined ? <div className="muted">{translateUiString(language, props.subtitle)}</div> : null}
+          </div>
+          {props.actions}
+        </div>
+      )}
+      {!collapsed ? props.children : null}
     </section>
   );
 }
@@ -2018,7 +2864,8 @@ function NoticeBanner(props: { notice: NoticeState }) {
 }
 
 function StatusBadge(props: { value: string }) {
-  return <span className={`status-badge status-${props.value}`}>{props.value}</span>;
+  const language = useContext(UiLanguageContext);
+  return <span className={`status-badge status-${props.value}`}>{translateUiString(language, props.value)}</span>;
 }
 
 function InputField(props: {
@@ -2026,9 +2873,10 @@ function InputField(props: {
   value: string;
   onChange: (value: string) => void;
 }) {
+  const language = useContext(UiLanguageContext);
   return (
     <label className="field">
-      <span>{props.label}</span>
+      <span>{translateUiString(language, props.label)}</span>
       <input value={props.value} onChange={(event) => props.onChange(event.target.value)} />
     </label>
   );
@@ -2040,13 +2888,14 @@ function SelectField(props: {
   onChange: (value: string) => void;
   options: Array<[string, string]>;
 }) {
+  const language = useContext(UiLanguageContext);
   return (
     <label className="field">
-      <span>{props.label}</span>
+      <span>{translateUiString(language, props.label)}</span>
       <select value={props.value} onChange={(event) => props.onChange(event.target.value)}>
         {props.options.map(([value, label]) => (
           <option key={value} value={value}>
-            {label}
+            {translateUiString(language, label)}
           </option>
         ))}
       </select>
@@ -2060,9 +2909,10 @@ function TextAreaField(props: {
   onChange: (value: string) => void;
   rows: number;
 }) {
+  const language = useContext(UiLanguageContext);
   return (
     <label className="field">
-      <span>{props.label}</span>
+      <span>{translateUiString(language, props.label)}</span>
       <textarea rows={props.rows} value={props.value} onChange={(event) => props.onChange(event.target.value)} spellCheck={false} />
     </label>
   );
@@ -2080,34 +2930,89 @@ function CharacterStructuredFieldsEditor(props: {
   };
 
   return (
-    <>
-      <div className="form-grid three">
-        <SelectField label="Gender" value={props.value.gender_expression} onChange={(value) => update({ gender_expression: value })} options={CHARACTER_GENDER_OPTIONS} />
-        <SelectField label="Body type" value={props.value.build} onChange={(value) => update({ build: value })} options={CHARACTER_BUILD_OPTIONS} />
-        <SelectField label="Height" value={props.value.height} onChange={(value) => update({ height: value })} options={CHARACTER_HEIGHT_OPTIONS} />
+    <div className="character-fields-stack">
+      <div className="character-fields-group">
+        <div className="character-fields-group-title">Identity</div>
+        <div className="form-grid three compact-grid">
+          <SelectField label="Gender" value={props.value.gender_expression} onChange={(value) => update({ gender_expression: value })} options={CHARACTER_GENDER_OPTIONS} />
+          <SelectField label="Age range" value={props.value.age_range} onChange={(value) => update({ age_range: value })} options={CHARACTER_AGE_RANGE_OPTIONS} />
+          <SelectField label="Skin tone" value={props.value.skin_tone} onChange={(value) => update({ skin_tone: value })} options={CHARACTER_SKIN_TONE_OPTIONS} />
+          <SelectField label="First impression" value={props.value.first_impression} onChange={(value) => update({ first_impression: value })} options={CHARACTER_FIRST_IMPRESSION_OPTIONS} />
+          <SelectField label="Standing style" value={props.value.standing_style} onChange={(value) => update({ standing_style: value })} options={CHARACTER_STANDING_STYLE_OPTIONS} />
+          <SelectField label="Default expression" value={props.value.default_expression} onChange={(value) => update({ default_expression: value })} options={CHARACTER_DEFAULT_EXPRESSION_OPTIONS} />
+          <SelectField label="Height" value={props.value.height} onChange={(value) => update({ height: value })} options={CHARACTER_HEIGHT_OPTIONS} />
+          <SelectField label="Body type" value={props.value.build} onChange={(value) => update({ build: value })} options={CHARACTER_BUILD_OPTIONS} />
+          <SelectField label="Art style" value={props.value.art_style} onChange={(value) => update({ art_style: value })} options={CHARACTER_ART_STYLE_OPTIONS} />
+        </div>
       </div>
-      <div className="form-grid four">
-        <SelectField label="Face shape" value={props.value.face_shape} onChange={(value) => update({ face_shape: value })} options={CHARACTER_FACE_SHAPE_OPTIONS} />
-        <SelectField label="Eyebrow shape" value={props.value.eyebrow_shape} onChange={(value) => update({ eyebrow_shape: value })} options={CHARACTER_EYEBROW_SHAPE_OPTIONS} />
-        <SelectField label="Nose shape" value={props.value.nose_shape} onChange={(value) => update({ nose_shape: value })} options={CHARACTER_NOSE_SHAPE_OPTIONS} />
-        <SelectField label="Mouth shape" value={props.value.mouth_shape} onChange={(value) => update({ mouth_shape: value })} options={CHARACTER_MOUTH_SHAPE_OPTIONS} />
+
+      <div className="character-fields-group">
+        <div className="character-fields-group-title">Anchors</div>
+        <div className="form-grid two compact-grid">
+          <InputField label="Visual anchor" value={props.value.visual_anchor} onChange={(value) => update({ visual_anchor: value })} />
+          <InputField label="Signature feature" value={props.value.signature_feature} onChange={(value) => update({ signature_feature: value })} />
+        </div>
+        <div className="form-grid two compact-grid">
+          <InputField label="Silhouette keywords" value={props.value.silhouette_keywords} onChange={(value) => update({ silhouette_keywords: value })} />
+          <InputField label="Distinguishing features" value={props.value.distinguishing_features} onChange={(value) => update({ distinguishing_features: value })} />
+        </div>
+        <div className="form-grid four compact-grid">
+          <InputField label="Head/body ratio" value={props.value.head_to_body_ratio} onChange={(value) => update({ head_to_body_ratio: value })} />
+          <InputField label="Shoulder width" value={props.value.shoulder_width} onChange={(value) => update({ shoulder_width: value })} />
+          <InputField label="Leg length" value={props.value.leg_length} onChange={(value) => update({ leg_length: value })} />
+          <InputField label="Posture axis" value={props.value.posture_axis} onChange={(value) => update({ posture_axis: value })} />
+        </div>
       </div>
-      <div className="form-grid four">
-        <SelectField label="Hair color" value={props.value.hair_color} onChange={(value) => update({ hair_color: value })} options={CHARACTER_HAIR_COLOR_OPTIONS} />
-        <SelectField label="Hair length" value={props.value.hair_length} onChange={(value) => update({ hair_length: value })} options={CHARACTER_HAIR_LENGTH_OPTIONS} />
-        <SelectField label="Hair style" value={props.value.hair_style} onChange={(value) => update({ hair_style: value })} options={CHARACTER_HAIR_STYLE_OPTIONS} />
-        <SelectField label="Hair arrangement" value={props.value.hair_arrangement} onChange={(value) => update({ hair_arrangement: value })} options={CHARACTER_HAIR_ARRANGEMENT_OPTIONS} />
+
+      <div className="character-fields-group">
+        <div className="character-fields-group-title">Face</div>
+        <div className="form-grid four compact-grid">
+          <SelectField label="Face shape" value={props.value.face_shape} onChange={(value) => update({ face_shape: value })} options={CHARACTER_FACE_SHAPE_OPTIONS} />
+          <SelectField label="Eyebrow shape" value={props.value.eyebrow_shape} onChange={(value) => update({ eyebrow_shape: value })} options={CHARACTER_EYEBROW_SHAPE_OPTIONS} />
+          <SelectField label="Nose shape" value={props.value.nose_shape} onChange={(value) => update({ nose_shape: value })} options={CHARACTER_NOSE_SHAPE_OPTIONS} />
+          <SelectField label="Mouth shape" value={props.value.mouth_shape} onChange={(value) => update({ mouth_shape: value })} options={CHARACTER_MOUTH_SHAPE_OPTIONS} />
+          <SelectField label="Eye color" value={props.value.eye_color} onChange={(value) => update({ eye_color: value })} options={CHARACTER_EYE_COLOR_OPTIONS} />
+          <SelectField label="Eye shape" value={props.value.eye_shape} onChange={(value) => update({ eye_shape: value })} options={CHARACTER_EYE_SHAPE_OPTIONS} />
+          <SelectField label="Eyelid type" value={props.value.eyelid_type} onChange={(value) => update({ eyelid_type: value })} options={CHARACTER_EYELID_TYPE_OPTIONS} />
+          <InputField label="Eye size" value={props.value.eye_size} onChange={(value) => update({ eye_size: value })} />
+          <InputField label="Eye angle" value={props.value.eye_angle} onChange={(value) => update({ eye_angle: value })} />
+          <InputField label="Pupil style" value={props.value.pupil_style} onChange={(value) => update({ pupil_style: value })} />
+          <InputField label="Under-eye detail" value={props.value.under_eye_detail} onChange={(value) => update({ under_eye_detail: value })} />
+          <InputField label="Mouth default" value={props.value.mouth_default} onChange={(value) => update({ mouth_default: value })} />
+        </div>
       </div>
-      <div className="form-grid three">
-        <SelectField label="Eye color" value={props.value.eye_color} onChange={(value) => update({ eye_color: value })} options={CHARACTER_EYE_COLOR_OPTIONS} />
-        <SelectField label="Eye shape" value={props.value.eye_shape} onChange={(value) => update({ eye_shape: value })} options={CHARACTER_EYE_SHAPE_OPTIONS} />
-        <SelectField label="Art style" value={props.value.art_style} onChange={(value) => update({ art_style: value })} options={CHARACTER_ART_STYLE_OPTIONS} />
+
+      <div className="character-fields-group">
+        <div className="character-fields-group-title">Hair</div>
+        <div className="form-grid five compact-grid">
+          <SelectField label="Hair color" value={props.value.hair_color} onChange={(value) => update({ hair_color: value })} options={CHARACTER_HAIR_COLOR_OPTIONS} />
+          <SelectField label="Hair length" value={props.value.hair_length} onChange={(value) => update({ hair_length: value })} options={CHARACTER_HAIR_LENGTH_OPTIONS} />
+          <SelectField label="Hair style" value={props.value.hair_style} onChange={(value) => update({ hair_style: value })} options={CHARACTER_HAIR_STYLE_OPTIONS} />
+          <SelectField label="Hair arrangement" value={props.value.hair_arrangement} onChange={(value) => update({ hair_arrangement: value })} options={CHARACTER_HAIR_ARRANGEMENT_OPTIONS} />
+          <SelectField label="Bangs" value={props.value.hair_bangs} onChange={(value) => update({ hair_bangs: value })} options={CHARACTER_HAIR_BANGS_OPTIONS} />
+        </div>
+        <div className="form-grid three compact-grid">
+          <InputField label="Front shape" value={props.value.hair_front_shape} onChange={(value) => update({ hair_front_shape: value })} />
+          <InputField label="Side hair" value={props.value.hair_side_hair} onChange={(value) => update({ hair_side_hair: value })} />
+          <InputField label="Back shape" value={props.value.hair_back_shape} onChange={(value) => update({ hair_back_shape: value })} />
+        </div>
       </div>
-      <div className="form-grid two">
-        <TextAreaField label="Clothing details" rows={3} value={props.value.clothing_description} onChange={(value) => update({ clothing_description: value })} />
-        <TextAreaField label="Distinguishing features" rows={3} value={props.value.distinguishing_features} onChange={(value) => update({ distinguishing_features: value })} />
+
+      <div className="character-fields-group">
+        <div className="character-fields-group-title">Outfit</div>
+        <div className="form-grid three compact-grid">
+          <SelectField label="Category" value={props.value.clothing_category} onChange={(value) => update({ clothing_category: value })} options={CHARACTER_CLOTHING_CATEGORY_OPTIONS} />
+          <SelectField label="Main color" value={props.value.clothing_main_color} onChange={(value) => update({ clothing_main_color: value })} options={CHARACTER_CLOTHING_COLOR_OPTIONS} />
+          <SelectField label="Impression" value={props.value.clothing_impression} onChange={(value) => update({ clothing_impression: value })} options={CHARACTER_CLOTHING_IMPRESSION_OPTIONS} />
+          <InputField label="Collar shape" value={props.value.collar_shape} onChange={(value) => update({ collar_shape: value })} />
+          <InputField label="Sleeve length" value={props.value.sleeve_length} onChange={(value) => update({ sleeve_length: value })} />
+          <InputField label="Skirt or pants" value={props.value.skirt_or_pants_shape} onChange={(value) => update({ skirt_or_pants_shape: value })} />
+          <InputField label="Shoes" value={props.value.shoes} onChange={(value) => update({ shoes: value })} />
+          <InputField label="Legwear" value={props.value.socks_or_legwear} onChange={(value) => update({ socks_or_legwear: value })} />
+        </div>
+        <TextAreaField label="Clothing details" rows={2} value={props.value.clothing_description} onChange={(value) => update({ clothing_description: value })} />
       </div>
-    </>
+    </div>
   );
 }
 
@@ -2821,14 +3726,131 @@ function createEmptyEpisodeDraft(): EpisodeDraft {
   };
 }
 
+function createEmptyPageSettingsDraft(): PageSettingsDraft {
+  return {
+    dialogue_mode: 'mixed',
+    page_dialogue_toggle: true,
+    style_reference_title: '',
+    style_reference_notes: '',
+    story_source_scene_ids: [],
+    story_page_purpose: '',
+    story_continuity_note: '',
+  };
+}
+
+function toPageSettingsDraft(page: PageRecord): PageSettingsDraft {
+  const layoutConfig = toRecord(page.layout_config);
+  const styleReference = toRecord(layoutConfig.style_reference);
+  return {
+    dialogue_mode: page.dialogue_mode,
+    page_dialogue_toggle: page.page_dialogue_toggle,
+    style_reference_title: readString(styleReference.title),
+    style_reference_notes: readString(styleReference.notes),
+    story_source_scene_ids: Array.isArray(page.story_source_scene_ids) ? page.story_source_scene_ids : [],
+    story_page_purpose: page.story_page_purpose ?? '',
+    story_continuity_note: page.story_continuity_note ?? '',
+  };
+}
+
+function toPageSettingsPayload(draft: PageSettingsDraft): Record<string, unknown> {
+  const payload: Record<string, unknown> = {
+    dialogue_mode: draft.dialogue_mode,
+    page_dialogue_toggle: draft.page_dialogue_toggle,
+    story_source_scene_ids: draft.story_source_scene_ids,
+    story_page_purpose: nullableString(draft.story_page_purpose),
+    story_continuity_note: nullableString(draft.story_continuity_note),
+  };
+  if (draft.style_reference_title.trim().length > 0) {
+    payload.style_reference = {
+      title: draft.style_reference_title.trim(),
+      notes: nullableString(draft.style_reference_notes),
+    };
+  }
+  return payload;
+}
+
+function sameStringArray(left: string[], right: string[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+function resolveStorySourceScenes(sceneIds: string[], scenes: SceneRecord[]): SceneRecord[] {
+  return sceneIds
+    .map((sceneId) => scenes.find((scene) => scene.id === sceneId) ?? null)
+    .filter((scene): scene is SceneRecord => scene !== null);
+}
+
+function formatStorySourceSceneLabel(scene: SceneRecord, uiLanguage: UiLanguage): string {
+  const location = scene.location ?? (uiLanguage === 'ja' ? '場所未設定' : 'Unknown location');
+  const parts = [`${uiLanguage === 'ja' ? 'シーン' : 'Scene'} ${scene.order}`, location];
+  if (scene.time !== null) {
+    parts.push(scene.time);
+  }
+  return parts.join(' / ');
+}
+
+function sanitizeFilename(value: string): string {
+  const sanitized = Array.from(value)
+    .map((character) => {
+      const code = character.charCodeAt(0);
+      if (code <= 31 || '<>:"/\\|?*'.includes(character)) {
+        return '-';
+      }
+      return character;
+    })
+    .join('')
+    .trim();
+  return sanitized.length > 0 ? sanitized : 'lyra-pages';
+}
+
+function inferImageExtension(contentType: string | null): string {
+  if (contentType === 'image/webp') {
+    return 'webp';
+  }
+  if (contentType === 'image/jpeg') {
+    return 'jpg';
+  }
+  return 'png';
+}
+
+async function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(reader.error ?? new Error('Failed to read blob'));
+    reader.readAsDataURL(blob);
+  });
+}
+
+function triggerBlobDownload(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
 function parseCharacterStructuredFieldsDraft(value: string): CharacterStructuredFieldsDraft {
   const parsed = parseJson<Record<string, unknown>>(value);
   const hair = toRecord(parsed.hair);
   const eyes = toRecord(parsed.eyes);
   const clothing = toRecord(parsed.clothing);
+  const characterIdentity = toRecord(parsed.character_identity);
+  const proportions = toRecord(parsed.proportions);
+  const faceDetail = toRecord(parsed.face_detail);
+  const hairDetail = toRecord(parsed.hair_detail);
+  const outfitDetail = toRecord(parsed.outfit_detail);
+  const silhouetteKeywords = Array.isArray(characterIdentity.silhouette_keywords)
+    ? characterIdentity.silhouette_keywords.filter((entry): entry is string => typeof entry === 'string').join(', ')
+    : '';
 
   return {
     gender_expression: readString(parsed.gender_expression),
+    age_range: readString(parsed.age_range),
+    skin_tone: readString(parsed.skin_tone),
+    first_impression: readString(parsed.first_impression),
+    standing_style: readString(parsed.standing_style),
+    default_expression: readString(parsed.default_expression),
     face_shape: readString(parsed.face_shape),
     eyebrow_shape: readString(parsed.eyebrow_shape),
     nose_shape: readString(parsed.nose_shape),
@@ -2839,8 +3861,33 @@ function parseCharacterStructuredFieldsDraft(value: string): CharacterStructured
     hair_length: readString(hair.length),
     hair_style: readString(hair.style),
     hair_arrangement: readString(hair.arrangement),
+    hair_bangs: readString(hair.bangs),
     eye_color: readString(eyes.color),
     eye_shape: readString(eyes.shape),
+    eyelid_type: readString(eyes.eyelid_type),
+    visual_anchor: readString(characterIdentity.visual_anchor),
+    signature_feature: readString(characterIdentity.signature_feature),
+    silhouette_keywords: silhouetteKeywords,
+    head_to_body_ratio: readString(proportions.head_to_body_ratio),
+    shoulder_width: readString(proportions.shoulder_width),
+    leg_length: readString(proportions.leg_length),
+    posture_axis: readString(proportions.posture_axis),
+    eye_size: readString(faceDetail.eye_size),
+    eye_angle: readString(faceDetail.eye_angle),
+    pupil_style: readString(faceDetail.pupil_style),
+    under_eye_detail: readString(faceDetail.under_eye_detail),
+    mouth_default: readString(faceDetail.mouth_default),
+    hair_front_shape: readString(hairDetail.front_shape),
+    hair_side_hair: readString(hairDetail.side_hair),
+    hair_back_shape: readString(hairDetail.back_shape),
+    clothing_category: readString(clothing.category),
+    clothing_main_color: readString(clothing.main_color),
+    clothing_impression: readString(clothing.impression),
+    collar_shape: readString(outfitDetail.collar_shape),
+    sleeve_length: readString(outfitDetail.sleeve_length),
+    skirt_or_pants_shape: readString(outfitDetail.skirt_or_pants_shape),
+    shoes: readString(outfitDetail.shoes),
+    socks_or_legwear: readString(outfitDetail.socks_or_legwear),
     clothing_description: readString(clothing.description),
     distinguishing_features: readString(parsed.distinguishing_features),
     art_style: readString(parsed.art_style),
@@ -2851,6 +3898,11 @@ function serializeCharacterStructuredFieldsDraft(value: CharacterStructuredField
   const structuredFields: Record<string, unknown> = {};
 
   assignIfNotBlank(structuredFields, 'gender_expression', value.gender_expression);
+  assignIfNotBlank(structuredFields, 'age_range', value.age_range);
+  assignIfNotBlank(structuredFields, 'skin_tone', value.skin_tone);
+  assignIfNotBlank(structuredFields, 'first_impression', value.first_impression);
+  assignIfNotBlank(structuredFields, 'standing_style', value.standing_style);
+  assignIfNotBlank(structuredFields, 'default_expression', value.default_expression);
   assignIfNotBlank(structuredFields, 'face_shape', value.face_shape);
   assignIfNotBlank(structuredFields, 'eyebrow_shape', value.eyebrow_shape);
   assignIfNotBlank(structuredFields, 'nose_shape', value.nose_shape);
@@ -2865,6 +3917,7 @@ function serializeCharacterStructuredFieldsDraft(value: CharacterStructuredField
   assignIfNotBlank(hair, 'length', value.hair_length);
   assignIfNotBlank(hair, 'style', value.hair_style);
   assignIfNotBlank(hair, 'arrangement', value.hair_arrangement);
+  assignIfNotBlank(hair, 'bangs', value.hair_bangs);
   if (Object.keys(hair).length > 0) {
     structuredFields.hair = hair;
   }
@@ -2872,14 +3925,66 @@ function serializeCharacterStructuredFieldsDraft(value: CharacterStructuredField
   const eyes: Record<string, unknown> = {};
   assignIfNotBlank(eyes, 'color', value.eye_color);
   assignIfNotBlank(eyes, 'shape', value.eye_shape);
+  assignIfNotBlank(eyes, 'eyelid_type', value.eyelid_type);
   if (Object.keys(eyes).length > 0) {
     structuredFields.eyes = eyes;
   }
 
   const clothing: Record<string, unknown> = {};
+  assignIfNotBlank(clothing, 'category', value.clothing_category);
+  assignIfNotBlank(clothing, 'main_color', value.clothing_main_color);
+  assignIfNotBlank(clothing, 'impression', value.clothing_impression);
   assignIfNotBlank(clothing, 'description', value.clothing_description);
   if (Object.keys(clothing).length > 0) {
     structuredFields.clothing = clothing;
+  }
+
+  const characterIdentity: Record<string, unknown> = {};
+  assignIfNotBlank(characterIdentity, 'visual_anchor', value.visual_anchor);
+  assignIfNotBlank(characterIdentity, 'signature_feature', value.signature_feature);
+  const silhouetteKeywords = splitCsv(value.silhouette_keywords);
+  if (silhouetteKeywords.length > 0) {
+    characterIdentity.silhouette_keywords = silhouetteKeywords;
+  }
+  if (Object.keys(characterIdentity).length > 0) {
+    structuredFields.character_identity = characterIdentity;
+  }
+
+  const proportions: Record<string, unknown> = {};
+  assignIfNotBlank(proportions, 'head_to_body_ratio', value.head_to_body_ratio);
+  assignIfNotBlank(proportions, 'shoulder_width', value.shoulder_width);
+  assignIfNotBlank(proportions, 'leg_length', value.leg_length);
+  assignIfNotBlank(proportions, 'posture_axis', value.posture_axis);
+  if (Object.keys(proportions).length > 0) {
+    structuredFields.proportions = proportions;
+  }
+
+  const faceDetail: Record<string, unknown> = {};
+  assignIfNotBlank(faceDetail, 'eye_size', value.eye_size);
+  assignIfNotBlank(faceDetail, 'eye_angle', value.eye_angle);
+  assignIfNotBlank(faceDetail, 'pupil_style', value.pupil_style);
+  assignIfNotBlank(faceDetail, 'under_eye_detail', value.under_eye_detail);
+  assignIfNotBlank(faceDetail, 'mouth_default', value.mouth_default);
+  if (Object.keys(faceDetail).length > 0) {
+    structuredFields.face_detail = faceDetail;
+  }
+
+  const hairDetail: Record<string, unknown> = {};
+  assignIfNotBlank(hairDetail, 'front_shape', value.hair_front_shape);
+  assignIfNotBlank(hairDetail, 'side_hair', value.hair_side_hair);
+  assignIfNotBlank(hairDetail, 'back_shape', value.hair_back_shape);
+  if (Object.keys(hairDetail).length > 0) {
+    structuredFields.hair_detail = hairDetail;
+  }
+
+  const outfitDetail: Record<string, unknown> = {};
+  assignIfNotBlank(outfitDetail, 'collar_shape', value.collar_shape);
+  assignIfNotBlank(outfitDetail, 'sleeve_length', value.sleeve_length);
+  assignIfNotBlank(outfitDetail, 'skirt_or_pants_shape', value.skirt_or_pants_shape);
+  assignIfNotBlank(outfitDetail, 'shoes', value.shoes);
+  assignIfNotBlank(outfitDetail, 'socks_or_legwear', value.socks_or_legwear);
+  if (Object.keys(outfitDetail).length > 0) {
+    structuredFields.outfit_detail = outfitDetail;
   }
 
   return JSON.stringify(structuredFields, null, 2);
@@ -2920,6 +4025,52 @@ const CHARACTER_GENDER_OPTIONS: Array<[string, string]> = [
   ['male', 'Male'],
   ['androgynous', 'Androgynous'],
   ['unspecified', 'Unspecified'],
+];
+const CHARACTER_AGE_RANGE_OPTIONS: Array<[string, string]> = [
+  EMPTY_OPTION,
+  ['child', 'Child'],
+  ['early_teens', 'Early teens'],
+  ['late_teens', 'Late teens'],
+  ['twenties', 'Twenties'],
+  ['thirties', 'Thirties'],
+  ['forties_plus', 'Forties+'],
+  ['ageless', 'Ageless'],
+];
+const CHARACTER_SKIN_TONE_OPTIONS: Array<[string, string]> = [
+  EMPTY_OPTION,
+  ['fair', 'Fair'],
+  ['light', 'Light'],
+  ['medium', 'Medium'],
+  ['tan', 'Tan'],
+  ['deep', 'Deep'],
+  ['custom', 'Custom'],
+];
+const CHARACTER_FIRST_IMPRESSION_OPTIONS: Array<[string, string]> = [
+  EMPTY_OPTION,
+  ['bright_friendly', 'Bright friendly'],
+  ['quiet_neat', 'Quiet neat'],
+  ['cool_distant', 'Cool distant'],
+  ['gentle_soft', 'Gentle soft'],
+  ['serious_reliable', 'Serious reliable'],
+  ['mysterious_fragile', 'Mysterious fragile'],
+  ['energetic_bold', 'Energetic bold'],
+];
+const CHARACTER_STANDING_STYLE_OPTIONS: Array<[string, string]> = [
+  EMPTY_OPTION,
+  ['upright_neat', 'Upright neat'],
+  ['natural_relaxed', 'Natural relaxed'],
+  ['shy_reserved', 'Shy reserved'],
+  ['confident_open', 'Confident open'],
+  ['still_quiet', 'Still quiet'],
+];
+const CHARACTER_DEFAULT_EXPRESSION_OPTIONS: Array<[string, string]> = [
+  EMPTY_OPTION,
+  ['soft_smile', 'Soft smile'],
+  ['calm_neutral', 'Calm neutral'],
+  ['serious_focus', 'Serious focus'],
+  ['cheerful_smile', 'Cheerful smile'],
+  ['shy_reserved', 'Shy reserved'],
+  ['cool_unfazed', 'Cool unfazed'],
 ];
 const CHARACTER_BUILD_OPTIONS: Array<[string, string]> = [
   EMPTY_OPTION,
@@ -3033,6 +4184,60 @@ const CHARACTER_EYE_SHAPE_OPTIONS: Array<[string, string]> = [
   ['sharp', 'Sharp'],
   ['round', 'Round'],
   ['narrow', 'Narrow'],
+];
+const CHARACTER_EYELID_TYPE_OPTIONS: Array<[string, string]> = [
+  EMPTY_OPTION,
+  ['single', 'Single'],
+  ['double', 'Double'],
+];
+const CHARACTER_HAIR_BANGS_OPTIONS: Array<[string, string]> = [
+  EMPTY_OPTION,
+  ['none', 'None'],
+  ['light', 'Light'],
+  ['standard', 'Standard'],
+  ['heavy', 'Heavy'],
+  ['side_swept', 'Side swept'],
+  ['blunt', 'Blunt'],
+];
+const CHARACTER_CLOTHING_CATEGORY_OPTIONS: Array<[string, string]> = [
+  EMPTY_OPTION,
+  ['military', 'Military'],
+  ['school', 'School'],
+  ['casual', 'Casual'],
+  ['suit', 'Suit'],
+  ['fantasy', 'Fantasy'],
+  ['japanese', 'Japanese'],
+  ['streetwear', 'Streetwear'],
+  ['hoodie', 'Hoodie'],
+  ['sports', 'Sports'],
+  ['winter_coat', 'Winter coat'],
+  ['workwear', 'Workwear'],
+  ['armor', 'Armor'],
+  ['gothic', 'Gothic'],
+  ['formal_dress', 'Formal dress'],
+  ['idol_stage', 'Idol stage'],
+  ['custom', 'Custom'],
+];
+const CHARACTER_CLOTHING_COLOR_OPTIONS: Array<[string, string]> = [
+  EMPTY_OPTION,
+  ['black', 'Black'],
+  ['white', 'White'],
+  ['navy', 'Navy'],
+  ['gray', 'Gray'],
+  ['brown', 'Brown'],
+  ['red', 'Red'],
+  ['blue', 'Blue'],
+  ['green', 'Green'],
+  ['custom', 'Custom'],
+];
+const CHARACTER_CLOTHING_IMPRESSION_OPTIONS: Array<[string, string]> = [
+  EMPTY_OPTION,
+  ['formal', 'Formal'],
+  ['practical', 'Practical'],
+  ['elegant', 'Elegant'],
+  ['rough', 'Rough'],
+  ['cute', 'Cute'],
+  ['custom', 'Custom'],
 ];
 const CHARACTER_ART_STYLE_OPTIONS: Array<[string, string]> = [
   EMPTY_OPTION,
@@ -3347,3 +4552,7 @@ function toDataUrl(file: File): Promise<string> {
 function isDefined<T>(value: T | undefined): value is T {
   return value !== undefined;
 }
+
+
+
+

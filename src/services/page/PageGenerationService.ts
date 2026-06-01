@@ -3,6 +3,7 @@ import type { PageGenerationContext } from '../../domain/types/page.js';
 import type { PageGenerationRequestKind } from '../../domain/types/pageGeneration.js';
 import type { CreditServicePort } from '../credit/CreditService.js';
 import type { GenerationJobRepository } from '../../repositories/GenerationJobRepository.js';
+import type { EntityRepository } from '../../repositories/EntityRepository.js';
 import type { PageRepository } from '../../repositories/PageRepository.js';
 import { ModeSelector } from './ModeSelector.js';
 import type { PageGenerationQueuePort } from './PageGenerationQueue.js';
@@ -22,6 +23,7 @@ export interface PageGenerationServicePort {
 export class PageGenerationService implements PageGenerationServicePort {
   public constructor(
     private readonly pageRepository: PageRepository,
+    private readonly entityRepository: EntityRepository,
     private readonly generationJobRepository: GenerationJobRepository,
     private readonly creditService: CreditServicePort,
     private readonly pageGenerationQueue: PageGenerationQueuePort,
@@ -38,6 +40,7 @@ export class PageGenerationService implements PageGenerationServicePort {
     }
 
     this.ensurePageCanGenerate(page);
+    await this.ensureAssignedCharacterReferences(userId, page);
 
     const requestKind: PageGenerationRequestKind =
       page.generatedImage === null ? 'initial' : 'regenerate';
@@ -137,8 +140,16 @@ export class PageGenerationService implements PageGenerationServicePort {
   }
 
   private ensurePageCanGenerate(page: PageGenerationContext): void {
+    if (page.frameCount === 0) {
+      throw new ValidationError('Page must have at least one frame before generation');
+    }
+
     if (page.panels.length === 0) {
       throw new ValidationError('Page must have at least one panel before generation');
+    }
+
+    if (page.frameCount !== page.panels.length) {
+      throw new ValidationError('Page frame count must match panel count before generation');
     }
 
     if (page.status === 'generating') {
@@ -157,6 +168,42 @@ export class PageGenerationService implements PageGenerationServicePort {
       // The queue already accepted the job. Missing metadata should not refund
       // credits or roll back page state because the worker may still run.
     }
+  }
+
+  private async ensureAssignedCharacterReferences(
+    userId: string,
+    page: PageGenerationContext,
+  ): Promise<void> {
+    const assignedEntityIds = Array.from(
+      new Set(page.panels.flatMap((panel) => panel.entities.map((assignment) => assignment.entityId))),
+    );
+    if (assignedEntityIds.length === 0) {
+      return;
+    }
+
+    const entities = await this.entityRepository.findByWorkIdAndUserId(page.workId, userId);
+    const assignedCharacters = entities.filter(
+      (entity) => entity.entityType === 'character' && assignedEntityIds.includes(entity.id),
+    );
+    if (assignedCharacters.length === 0) {
+      return;
+    }
+
+    const references = await this.entityRepository.findPrimaryReferenceImagesByEntityIdsAndUserId(
+      assignedCharacters.map((entity) => entity.id),
+      page.workId,
+      userId,
+    );
+    const referencedCharacterIds = new Set(references.map((reference) => reference.entityId));
+    const missingCharacters = assignedCharacters.filter((entity) => !referencedCharacterIds.has(entity.id));
+    if (missingCharacters.length === 0) {
+      return;
+    }
+
+    const missingNames = missingCharacters.map((entity) => entity.name).join(', ');
+    throw new ValidationError(
+      `Generate / 生成 の前に、次の character reference を確定してください: ${missingNames}`,
+    );
   }
 }
 

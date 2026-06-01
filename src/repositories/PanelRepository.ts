@@ -24,18 +24,21 @@ import type {
 } from '../domain/types/panelEntityAssignment.js';
 import type { DatabaseClient, TransactionRunner } from '../lib/db.js';
 import { isUniqueViolation } from '../lib/dbErrors.js';
+import type { PageStatus } from '../domain/types/page.js';
 
 export type { CreatePanelInput, Panel, UpdatePanelInput };
 
 export interface PagePanelContext {
   pageId: string;
   workId: string;
+  pageStatus: PageStatus;
 }
 
 export interface PanelContext {
   panelId: string;
   pageId: string;
   workId: string;
+  pageStatus: PageStatus;
 }
 
 export interface PanelRepository {
@@ -50,12 +53,14 @@ export interface PanelRepository {
 interface PagePanelContextRow extends QueryResultRow {
   page_id: string;
   work_id: string;
+  page_status: PageStatus;
 }
 
 interface PanelContextRow extends QueryResultRow {
   panel_id: string;
   page_id: string;
   work_id: string;
+  page_status: PageStatus;
 }
 
 interface PanelRow extends QueryResultRow {
@@ -86,7 +91,8 @@ export class PostgresPanelRepository implements PanelRepository {
     const result = await this.client.query<PagePanelContextRow>(
       `
       SELECT pages.id AS page_id,
-             chapters.work_id
+             chapters.work_id,
+             pages.status AS page_status
       FROM pages
       INNER JOIN episodes ON episodes.id = pages.episode_id
       INNER JOIN chapters ON chapters.id = episodes.chapter_id
@@ -98,7 +104,9 @@ export class PostgresPanelRepository implements PanelRepository {
     );
 
     const row = result.rows[0];
-    return row === undefined ? null : { pageId: row.page_id, workId: row.work_id };
+    return row === undefined
+      ? null
+      : { pageId: row.page_id, workId: row.work_id, pageStatus: row.page_status };
   }
 
   public async findPanelContextByIdAndUserId(
@@ -109,7 +117,8 @@ export class PostgresPanelRepository implements PanelRepository {
       `
       SELECT panels.id AS panel_id,
              pages.id AS page_id,
-             chapters.work_id
+             chapters.work_id,
+             pages.status AS page_status
       FROM panels
       INNER JOIN pages ON pages.id = panels.page_id
       INNER JOIN episodes ON episodes.id = pages.episode_id
@@ -128,6 +137,7 @@ export class PostgresPanelRepository implements PanelRepository {
           panelId: row.panel_id,
           pageId: row.page_id,
           workId: row.work_id,
+          pageStatus: row.page_status,
         };
   }
 
@@ -446,13 +456,13 @@ function toPanelEntityAssignments(value: unknown): PanelEntityAssignment[] {
       typeof entityId !== 'string' ||
       !isPanelEntityRole(role) ||
       !isPanelEntityExpression(expression) ||
-      (customExpression !== null && typeof customExpression !== 'string') ||
+      (customExpression !== undefined && customExpression !== null && typeof customExpression !== 'string') ||
       !isPanelEntityAction(action) ||
-      (customAction !== null && typeof customAction !== 'string') ||
+      (customAction !== undefined && customAction !== null && typeof customAction !== 'string') ||
       !isPanelEntityPosition(position) ||
-      !isNullablePanelEntityFacingDirection(facingDirection) ||
-      (effectNote !== null && typeof effectNote !== 'string') ||
-      (stateId !== null && typeof stateId !== 'string')
+      (facingDirection !== undefined && !isNullablePanelEntityFacingDirection(facingDirection)) ||
+      (effectNote !== undefined && effectNote !== null && typeof effectNote !== 'string') ||
+      (stateId !== undefined && stateId !== null && typeof stateId !== 'string')
     ) {
       throw new ValidationError('Stored panel entities payload is invalid');
     }

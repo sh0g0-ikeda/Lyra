@@ -120,10 +120,17 @@ export interface PageRecord {
   episode_id: string;
   page_number: number;
   layout_config: Record<string, unknown>;
+  story_source_scene_ids: string[];
+  story_page_purpose: string | null;
+  story_continuity_note: string | null;
   dialogue_mode: PageDialogueMode;
+  page_dialogue_toggle: boolean;
   generation_mode: 'standard' | 'thinking' | null;
   generated_image: GeneratedImageRecord | null;
   status: PageStatus;
+  panel_count: number;
+  frame_count: number;
+  balloon_count: number;
   created_at: string;
   updated_at: string;
 }
@@ -258,4 +265,19 @@ export interface StoryCollaborationInput {
     focus_points?: string[];
     constraints?: string[];
   };
+}
+
+export interface StoryEpisodeImprovementRecord {
+  draft: {
+    title: string | null;
+    purpose: string | null;
+    introduction: string | null;
+    middle: string | null;
+    climax: string | null;
+    ending_hook: string | null;
+  };
+  compiler_provider: 'anthropic' | 'hybrid' | 'fallback';
+  compiler_model: string | null;
+  compiler_prompt_version: string | null;
+  compiler_error: string | null;
 }

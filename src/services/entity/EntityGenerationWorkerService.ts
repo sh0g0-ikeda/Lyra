@@ -1,6 +1,10 @@
 import { CREDIT_COSTS } from '../../domain/constants/credits.js';
+import { ENTITY_REFERENCE_GENERATION } from '../../domain/constants/entityReference.js';
 import { ConfigurationError } from '../../domain/errors/index.js';
-import type { PersistedEntityGenerationJobParams } from '../../domain/types/entityReference.js';
+import type {
+  EntityReferenceContext,
+  PersistedEntityGenerationJobParams,
+} from '../../domain/types/entityReference.js';
 import type { CreditServicePort } from '../credit/CreditService.js';
 import type { EntityReferenceRepository } from '../../repositories/EntityRepository.js';
 import type { EntityGenerationExecutionRepository } from '../../repositories/EntityGenerationExecutionRepository.js';
@@ -12,6 +16,10 @@ import type {
 } from '../../infrastructure/aws/S3EntityImageStorage.js';
 import type { StoredImageLoaderPort } from '../../infrastructure/aws/S3StoredImageLoader.js';
 import type { EntityReferencePromptBuilderPort } from './EntityReferencePromptBuilder.js';
+import type {
+  CompiledEntityReferencePrompt,
+  EntityReferencePromptCompilerPort,
+} from './EntityReferencePromptCompiler.js';
 
 export interface ProcessEntityGenerationJobResult {
   status: 'processed' | 'skipped';
@@ -23,6 +31,7 @@ export class EntityGenerationWorkerService {
     private readonly executionRepository: EntityGenerationExecutionRepository,
     private readonly entityRepository: EntityReferenceRepository,
     private readonly promptBuilder: EntityReferencePromptBuilderPort,
+    private readonly promptCompiler: EntityReferencePromptCompilerPort,
     private readonly generator: EntityReferenceGeneratorPort,
     private readonly imageStorage: EntityImageStoragePort,
     private readonly creditService: CreditServicePort,
@@ -50,9 +59,11 @@ export class EntityGenerationWorkerService {
         throw new ConfigurationError('Entity not found for generation job');
       }
 
-      const prompt = this.promptBuilder.buildGenerationPrompt(entity);
+      const draftPrompt = this.promptBuilder.buildGenerationPrompt(entity);
+      const compilerBrief = this.promptBuilder.buildCompilerBrief(entity);
+      const compiled = await compilePromptSafely(this.promptCompiler, entity, draftPrompt, compilerBrief);
       const inputImages = await buildGeneratorInputImages(params, this.storedImageLoader);
-      const generated = await this.generator.generateCandidates({ prompt, inputImages });
+      const generated = await this.generator.generateCandidates({ prompt: compiled.prompt, inputImages });
       const storedCandidates = [];
 
       for (let index = 0; index < generated.candidates.length; index += 1) {
@@ -76,9 +87,23 @@ export class EntityGenerationWorkerService {
       const completed = await this.executionRepository.completeEntityGeneration({
         jobId: job.id,
         userId: job.userId,
+        structuredFields: entity.structuredFields,
         candidates: storedCandidates,
+        compiledBrief: compilerBrief,
+        compiledPrompt: compiled.prompt,
         openaiRequestId: generated.openaiRequestId,
         costUsd: generated.costUsd,
+        compiledPromptUsed: compiled.compilerProvider !== 'none',
+        promptCompilerProvider: compiled.compilerProvider,
+        compilerModel: compiled.compilerModel,
+        compilerPromptVersion: compiled.compilerPromptVersion,
+        compilerError: compiled.compilerProvider === 'none' ? 'Entity prompt compiler fallback used' : null,
+        imageModel: ENTITY_REFERENCE_GENERATION.MODEL,
+        imageParams: {
+          quality: ENTITY_REFERENCE_GENERATION.QUALITY,
+          size: ENTITY_REFERENCE_GENERATION.SIZE,
+        },
+        createdAt: new Date().toISOString(),
       });
 
       if (!completed) {
@@ -144,6 +169,28 @@ function parsePersistedParams(value: Record<string, unknown>): PersistedEntityGe
     previous_entity_status: previousEntityStatus,
     ...(sourceS3Key === undefined ? {} : { source_s3_key: sourceS3Key }),
   };
+}
+
+async function compilePromptSafely(
+  compiler: EntityReferencePromptCompilerPort,
+  context: EntityReferenceContext,
+  draftPrompt: string,
+  compilerBrief: string,
+): Promise<CompiledEntityReferencePrompt> {
+  try {
+    return await compiler.compilePrompt({ context, draftPrompt, compilerBrief });
+  } catch (error) {
+    if (!(error instanceof ConfigurationError)) {
+      throw error;
+    }
+
+    return {
+      prompt: draftPrompt,
+      compilerProvider: 'none',
+      compilerModel: null,
+      compilerPromptVersion: null,
+    };
+  }
 }
 
 async function buildGeneratorInputImages(

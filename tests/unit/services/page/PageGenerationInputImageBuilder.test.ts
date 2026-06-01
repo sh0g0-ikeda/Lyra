@@ -5,6 +5,7 @@ import type { PageRepository } from '../../../../src/repositories/PageRepository
 import type {
   PageGenerationContext,
   PageGenerationStateUpdate,
+  PageSummary,
   PagePromptContext,
 } from '../../../../src/domain/types/page.js';
 import type { LoadedStoredImage, StoredImageLoaderPort } from '../../../../src/infrastructure/aws/S3StoredImageLoader.js';
@@ -19,6 +20,7 @@ class FakePageRepository implements PageRepository {
     generatedImage: null,
     generationMode: null,
     status: 'designing',
+    frameCount: 2,
     panels: [
       {
         panelId: 'panel-1',
@@ -73,11 +75,27 @@ class FakePageRepository implements PageRepository {
     return [];
   }
 
+  public async findPageByIdAndUserId(): Promise<PageSummary | null> {
+    return null;
+  }
+
+  public async findAutofillContextByIdAndUserId(): Promise<never> {
+    throw new Error('not used');
+  }
+
+  public async findEpisodePlanningContextByIdAndUserId(): Promise<never> {
+    throw new Error('not used');
+  }
+
   public async findGenerationContextByIdAndUserId(): Promise<PageGenerationContext | null> {
     return this.generationContext;
   }
 
   public async findPromptContextByIdAndUserId(): Promise<PagePromptContext | null> {
+    throw new Error('not used');
+  }
+
+  public async updatePageSettings(): Promise<PageSummary | null> {
     throw new Error('not used');
   }
 
@@ -95,6 +113,36 @@ class FakePageRepository implements PageRepository {
 }
 
 class FakeEntityRepository implements EntityRepository {
+  public entities: Entity[] = [
+    {
+      id: 'entity-1',
+      workId: 'work-1',
+      userId: 'user-1',
+      entityType: 'character',
+      name: 'Aoi',
+      freeDescription: null,
+      promptSupplement: null,
+      structuredFields: {},
+      speechProfile: {},
+      status: 'draft',
+      createdAt: new Date('2026-01-01T00:00:00.000Z'),
+      updatedAt: new Date('2026-01-01T00:00:00.000Z'),
+    },
+    {
+      id: 'entity-2',
+      workId: 'work-1',
+      userId: 'user-1',
+      entityType: 'character',
+      name: 'Leo',
+      freeDescription: null,
+      promptSupplement: null,
+      structuredFields: {},
+      speechProfile: {},
+      status: 'draft',
+      createdAt: new Date('2026-01-01T00:00:00.000Z'),
+      updatedAt: new Date('2026-01-01T00:00:00.000Z'),
+    },
+  ];
   public references: EntityPrimaryReferenceImage[] = [
     {
       entityId: 'entity-1',
@@ -115,7 +163,7 @@ class FakeEntityRepository implements EntityRepository {
 
   public async create(_input: CreateEntityInput): Promise<Entity> { throw new Error('not used'); }
   public async findByIdAndUserId(_id: string, _userId: string): Promise<Entity | null> { throw new Error('not used'); }
-  public async findByWorkIdAndUserId(_workId: string, _userId: string): Promise<Entity[]> { throw new Error('not used'); }
+  public async findByWorkIdAndUserId(_workId: string, _userId: string): Promise<Entity[]> { return this.entities; }
   public async countByIdsAndWorkIdAndUserId(
     _entityIds: string[],
     _workId: string,
@@ -188,6 +236,7 @@ describe('PageGenerationInputImageBuilder', () => {
     expect(result).toHaveLength(2);
     expect(result[0]).toMatchObject({
       role: 'entity_reference',
+      label: 'Aoi',
     });
     expect(result[0]?.dataUrl.startsWith('data:image/png;base64,')).toBe(true);
   });
@@ -227,6 +276,7 @@ describe('PageGenerationInputImageBuilder', () => {
     expect(layoutGuideImageRenderer.calls).toHaveLength(1);
     expect(result.at(-1)).toMatchObject({
       role: 'layout_reference',
+      label: 'page-layout-reference',
     });
   });
 });

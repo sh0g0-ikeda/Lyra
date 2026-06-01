@@ -26,18 +26,44 @@ export class OpenAIClient {
     path: string,
     body: Record<string, unknown>,
   ): Promise<OpenAIResponse<TBody>> {
+    return this.request<TBody>(path, () => ({
+      headers: {
+        Authorization: `Bearer ${this.options.apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    }));
+  }
+
+  public async postFormData<TBody>(
+    path: string,
+    buildFormData: () => FormData,
+  ): Promise<OpenAIResponse<TBody>> {
+    return this.request<TBody>(path, () => ({
+      headers: {
+        Authorization: `Bearer ${this.options.apiKey}`,
+      },
+      body: buildFormData(),
+    }));
+  }
+
+  private async request<TBody>(
+    path: string,
+    buildRequest: () => {
+      headers: NonNullable<RequestInit['headers']>;
+      body: NonNullable<RequestInit['body']>;
+    },
+  ): Promise<OpenAIResponse<TBody>> {
     for (let attempt = 1; attempt <= this.maxRetries; attempt += 1) {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), this.options.timeoutMs);
 
       try {
+        const request = buildRequest();
         const response = await this.fetchFn(buildUrl(this.options.baseUrl, path), {
           method: 'POST',
-          headers: {
-            Authorization: `Bearer ${this.options.apiKey}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(body),
+          headers: request.headers,
+          body: request.body,
           signal: controller.signal,
         });
 

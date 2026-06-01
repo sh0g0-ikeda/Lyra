@@ -7,6 +7,7 @@ export type PageGenerationInputImageRole = 'entity_reference' | 'layout_referenc
 
 export interface PageGenerationInputImage {
   role: PageGenerationInputImageRole;
+  label: string;
   dataUrl: string;
 }
 

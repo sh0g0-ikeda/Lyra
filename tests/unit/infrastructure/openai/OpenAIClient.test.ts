@@ -7,7 +7,7 @@ describe('OpenAIClient', () => {
     vi.restoreAllMocks();
   });
 
-  it('5xx後の再試行で成功した場合はレスポンスを返す', async () => {
+  it('5xx の後に成功した場合はリトライする', async () => {
     const fetchFn = vi
       .fn<typeof fetch>()
       .mockResolvedValueOnce(
@@ -37,7 +37,7 @@ describe('OpenAIClient', () => {
     });
   });
 
-  it('4xxは再試行せずConfigurationErrorを投げる', async () => {
+  it('4xx は ConfigurationError を返す', async () => {
     const fetchFn = vi.fn<typeof fetch>().mockResolvedValue(
       new Response(JSON.stringify({ error: { message: 'bad request' } }), { status: 400 }),
     );
@@ -54,5 +54,36 @@ describe('OpenAIClient', () => {
       }),
     ).rejects.toEqual(new ConfigurationError('bad request'));
     expect(fetchFn).toHaveBeenCalledTimes(1);
+  });
+
+  it('multipart request を送信できる', async () => {
+    let capturedBody: RequestInit['body'] | undefined;
+    const fetchFn = vi.fn<typeof fetch>().mockImplementation(async (_input, init) => {
+      capturedBody = init?.body;
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { 'x-request-id': 'req-form' },
+      });
+    });
+    const client = new OpenAIClient({
+      apiKey: 'test-key',
+      baseUrl: 'https://api.openai.test/v1',
+      timeoutMs: 1000,
+      fetchFn,
+    });
+
+    const response = await client.postFormData<{ ok: boolean }>('/images/edits', () => {
+      const formData = new FormData();
+      formData.append('model', 'gpt-image-1-mini');
+      formData.append('prompt', 'draw');
+      return formData;
+    });
+
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+    expect(capturedBody).toBeInstanceOf(FormData);
+    expect(response).toEqual({
+      body: { ok: true },
+      requestId: 'req-form',
+    });
   });
 });

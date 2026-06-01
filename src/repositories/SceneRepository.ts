@@ -12,6 +12,7 @@ import type {
 import { ValidationError } from '../domain/errors/index.js';
 import type { DatabaseClient } from '../lib/db.js';
 import { isUniqueViolation } from '../lib/dbErrors.js';
+import { normalizeNullableText } from '../lib/textEncoding.js';
 
 export type {
   CreateEntityStateInput,
@@ -185,9 +186,9 @@ export class PostgresSceneRepository implements SceneRepository {
         [
           episodeId,
           input.order,
-          input.location,
-          input.time,
-          input.atmosphere,
+          normalizeNullableText(input.location),
+          normalizeNullableText(input.time),
+          normalizeNullableText(input.atmosphere),
           input.involvedEntityIds,
         ],
       );
@@ -248,11 +249,11 @@ export class PostgresSceneRepository implements SceneRepository {
           userId,
           input.order ?? null,
           input.location !== undefined,
-          input.location ?? null,
+          normalizeNullableText(input.location ?? null),
           input.time !== undefined,
-          input.time ?? null,
+          normalizeNullableText(input.time ?? null),
           input.atmosphere !== undefined,
-          input.atmosphere ?? null,
+          normalizeNullableText(input.atmosphere ?? null),
           input.involvedEntityIds !== undefined,
           input.involvedEntityIds ?? [],
           input.status ?? null,
@@ -386,9 +387,9 @@ function mapSceneRow(row: SceneRow): Scene {
     id: row.id,
     episodeId: row.episode_id,
     order: row.order,
-    location: row.location,
-    time: row.time,
-    atmosphere: row.atmosphere,
+    location: normalizeNullableText(row.location),
+    time: normalizeNullableText(row.time),
+    atmosphere: normalizeNullableText(row.atmosphere),
     involvedEntityIds: row.involved_entity_ids,
     entityStates: toSceneStateReferences(row.entity_states),
     status: row.status,

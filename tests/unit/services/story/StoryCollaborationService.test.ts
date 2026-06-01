@@ -6,9 +6,17 @@ import type {
   EpisodePageSkeletonContext,
   PageSkeletonPageDraft,
   PageSkeletonPersistResult,
+  StoryEpisodeImprovementContext,
   StoryCollaborationLayer,
   StoryCollaborationTarget,
 } from '../../../../src/domain/types/storyAi.js';
+import type {
+  AuditStoryEpisodeImprovementInput,
+  CompiledStoryEpisodeImprovementAudit,
+  CompiledStoryEpisodeImprovementPlan,
+  PlanStoryEpisodeImprovementInput,
+  StoryEpisodeImprovementPlannerPort,
+} from '../../../../src/services/story/StoryEpisodeImprovementPlanner.js';
 import type {
   Chapter,
   CreateChapterInput,
@@ -100,10 +108,46 @@ class FakeStoryRepository implements StoryRepository {
   ): Promise<EpisodePageSkeletonContext | null> {
     throw new Error('not implemented');
   }
+  public async findEpisodeImprovementContextByIdAndUserId(): Promise<StoryEpisodeImprovementContext | null> {
+    return {
+      episodeId: '33333333-3333-4333-8333-333333333333',
+      chapterId: 'chapter-1',
+      workId: 'work-1',
+      workTitle: 'Lyra',
+      workGenre: 'dark fantasy',
+      worldSetting: 'Time fractures spread from the sacred tree.',
+      theme: 'Responsibility and delay',
+      overallFlow: 'A reluctant girl joins a time-repair organization.',
+      chapterTitle: 'Chapter 1',
+      chapterPurpose: 'Pull Mio into 燦.',
+      chapterStartingState: 'Mio is alone.',
+      chapterEndingState: 'Mio sees the organization.',
+      chapterEmotionCurve: 'fear -> disorientation -> resolve',
+      episodeTitle: 'Episode 1',
+      episodePurpose: 'Introduce the rivalry',
+      introduction: 'Current intro',
+      middle: 'Current middle',
+      climax: 'Current climax',
+      endingHook: 'Current hook',
+      estimatedPages: 16,
+      entities: [
+        {
+          id: '11111111-1111-4111-8111-111111111111',
+          name: 'Aki',
+          entityType: 'character',
+          freeDescription: 'Black-haired swordswoman',
+        },
+      ],
+      sceneSummaries: ['Scene 1: Rooftop / night / tense'],
+      chapterSummaries: ['Chapter 2: Aftermath / new responsibilities'],
+      siblingEpisodeSummaries: ['Chapter 1 Episode 2: Arrival / Mio sees the headquarters'],
+    };
+  }
   public async createPageSkeleton(
     _episodeId: string,
     _userId: string,
     _pages: PageSkeletonPageDraft[],
+    _options?: { overwriteExisting?: boolean },
   ): Promise<PageSkeletonPersistResult | null> {
     throw new Error('not implemented');
   }
@@ -127,6 +171,79 @@ class FakeStoryAiClient implements StoryAiClientPort {
   public async generatePageSkeleton(_request: StoryAiModelRequest): Promise<PageSkeletonPageDraft[]> {
     throw new Error('not implemented');
   }
+
+  public async improveEpisodeDraft(request: StoryAiModelRequest) {
+    this.lastRequest = request;
+    return {
+      title: 'Improved title',
+      purpose: 'Improved purpose',
+      introduction: 'Improved introduction',
+      middle: 'Improved middle',
+      climax: 'Improved climax',
+      endingHook: 'Improved hook',
+    };
+  }
+}
+
+class FakeStoryEpisodeImprovementPlanner implements StoryEpisodeImprovementPlannerPort {
+  public lastPlanInput: PlanStoryEpisodeImprovementInput | null = null;
+  public lastAuditInput: AuditStoryEpisodeImprovementInput | null = null;
+  public auditVerdict: CompiledStoryEpisodeImprovementAudit['audit']['verdict'] = 'pass';
+
+  public async planEpisodeImprovement(
+    input: PlanStoryEpisodeImprovementInput,
+  ): Promise<CompiledStoryEpisodeImprovementPlan> {
+    this.lastPlanInput = input;
+    return {
+      plan: {
+        storyObjective: 'Mio understands the organization and starts choosing her relation to it.',
+        mustPreserve: ['Mio wakes in the facility', 'Emile guides her through headquarters'],
+        continuityGuards: ['Do not contradict Chapter 2 setup'],
+        pageAdaptationNotes: ['Keep each section adaptable into concrete scene beats'],
+        title: buildSectionPlan('Title anchor'),
+        purpose: buildSectionPlan('Purpose anchor'),
+        introduction: buildSectionPlan('Introduction anchor'),
+        middle: buildSectionPlan('Middle anchor'),
+        climax: buildSectionPlan('Climax anchor'),
+        endingHook: buildSectionPlan('Ending hook anchor'),
+      },
+      compilerProvider: 'openai',
+      compilerModel: 'gpt-5.4-mini',
+      compilerPromptVersion: 'story_episode_improve_plan_v1',
+    };
+  }
+
+  public async auditEpisodeImprovement(
+    input: AuditStoryEpisodeImprovementInput,
+  ): Promise<CompiledStoryEpisodeImprovementAudit> {
+    this.lastAuditInput = input;
+    return {
+      audit: {
+        verdict: this.auditVerdict,
+        globalIssues: this.auditVerdict === 'revise' ? ['Clarify the handoff into the headquarters reveal.'] : [],
+        title: [],
+        purpose: [],
+        introduction: [],
+        middle: [],
+        climax: [],
+        endingHook: [],
+      },
+      compilerProvider: 'openai',
+      compilerModel: 'gpt-5.4-mini',
+      compilerPromptVersion: 'story_episode_improve_audit_v1',
+    };
+  }
+}
+
+function buildSectionPlan(objective: string) {
+  return {
+    objective,
+    mustInclude: ['Named subject and clear causal beat'],
+    visualBeats: ['Character acts', 'Environment reacts'],
+    narrationHints: ['Use short framing narration when image alone is not enough'],
+    continuityGuards: ['Stay within existing chapter facts'],
+    avoid: ['Do not introduce a new location'],
+  };
 }
 
 describe('StoryCollaborationService', () => {
@@ -139,6 +256,7 @@ describe('StoryCollaborationService', () => {
       layer: 'episode',
       targetId: '33333333-3333-4333-8333-333333333333',
       instruction: 'Tighten the confrontation.',
+      language: 'ja',
       context: {
         currentDraft: 'Aki reaches the rooftop.',
         selectedText: null,
@@ -170,6 +288,7 @@ describe('StoryCollaborationService', () => {
         layer: 'episode',
         targetId: '33333333-3333-4333-8333-333333333333',
         instruction: 'Revise this.',
+        language: 'ja',
         context: {
           currentDraft: null,
           selectedText: null,
@@ -189,6 +308,7 @@ describe('StoryCollaborationService', () => {
         layer: 'episode',
         targetId: '33333333-3333-4333-8333-333333333333',
         instruction: 'Revise this.',
+        language: 'ja',
         context: {
           currentDraft: 'a'.repeat(28000),
           selectedText: null,
@@ -209,6 +329,7 @@ describe('StoryCollaborationService', () => {
       layer: 'episode',
       targetId: '33333333-3333-4333-8333-333333333333',
       instruction: 'Revise this.',
+      language: 'ja',
       context: {
         currentDraft: null,
         selectedText: null,
@@ -225,5 +346,60 @@ describe('StoryCollaborationService', () => {
         }
       })(),
     ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+  });
+
+  it('improves the episode draft with continuity context and returns structured fields', async () => {
+    const repository = new FakeStoryRepository();
+    const client = new FakeStoryAiClient();
+    const planner = new FakeStoryEpisodeImprovementPlanner();
+    const service = new StoryCollaborationService(repository, client, planner);
+
+    const result = await service.improveEpisodeDraft('user-1', {
+      episodeId: '33333333-3333-4333-8333-333333333333',
+      instruction: 'Make the introduction clearer and more visual.',
+      language: 'ja',
+      baseDraft: {
+        title: 'Old title',
+        purpose: 'Old purpose',
+        introduction: 'Old intro',
+        middle: 'Old middle',
+        climax: 'Old climax',
+        endingHook: 'Old hook',
+      },
+    });
+
+    expect(result.compilerProvider).toBe('hybrid');
+    expect(result.draft.introduction).toBe('Improved introduction');
+    expect(planner.lastPlanInput?.context.siblingEpisodeSummaries).toContain(
+      'Chapter 1 Episode 2: Arrival / Mio sees the headquarters',
+    );
+    expect(client.lastRequest?.userPrompt).toContain('Structured rewrite plan:');
+    expect(planner.lastAuditInput?.draft.introduction).toBe('Improved introduction');
+  });
+
+  it('retries the final writer once when the audit requests revision', async () => {
+    const repository = new FakeStoryRepository();
+    const client = new FakeStoryAiClient();
+    const planner = new FakeStoryEpisodeImprovementPlanner();
+    planner.auditVerdict = 'revise';
+    const service = new StoryCollaborationService(repository, client, planner);
+
+    const result = await service.improveEpisodeDraft('user-1', {
+      episodeId: '33333333-3333-4333-8333-333333333333',
+      instruction: 'Strengthen the transition into the middle.',
+      language: 'ja',
+      baseDraft: {
+        title: 'Old title',
+        purpose: 'Old purpose',
+        introduction: 'Old intro',
+        middle: 'Old middle',
+        climax: 'Old climax',
+        endingHook: 'Old hook',
+      },
+    });
+
+    expect(result.compilerProvider).toBe('hybrid');
+    expect(result.compilerError).toContain('Clarify the handoff');
+    expect(client.lastRequest?.userPrompt).toContain('Audit notes to resolve:');
   });
 });

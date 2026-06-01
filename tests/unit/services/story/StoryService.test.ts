@@ -4,6 +4,7 @@ import type {
   EpisodePageSkeletonContext,
   PageSkeletonPageDraft,
   PageSkeletonPersistResult,
+  StoryEpisodeImprovementContext,
   StoryCollaborationLayer,
   StoryCollaborationTarget,
 } from '../../../../src/domain/types/storyAi.js';
@@ -242,10 +243,18 @@ class FakeStoryRepository implements StoryRepository {
     return null;
   }
 
+  public async findEpisodeImprovementContextByIdAndUserId(
+    _episodeId: string,
+    _userId: string,
+  ): Promise<StoryEpisodeImprovementContext | null> {
+    return null;
+  }
+
   public async createPageSkeleton(
     _episodeId: string,
     _userId: string,
     _pages: PageSkeletonPageDraft[],
+    _options?: { overwriteExisting?: boolean },
   ): Promise<PageSkeletonPersistResult | null> {
     return null;
   }

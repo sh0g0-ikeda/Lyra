@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { ConfigurationError } from '../../../../src/domain/errors/index.js';
 import type { CreditBalanceSnapshot } from '../../../../src/domain/types/credit.js';
 import type { GenerationJob } from '../../../../src/domain/types/job.js';
 import type { PageGenerationInputImage } from '../../../../src/domain/types/pageGeneration.js';
@@ -24,6 +25,7 @@ import type {
 } from '../../../../src/services/page/PageGenerationWorkerService.js';
 import { PageGenerationWorkerService } from '../../../../src/services/page/PageGenerationWorkerService.js';
 import type { BuiltPagePrompt, BuildPagePromptInput, PromptBuilderPort } from '../../../../src/services/page/PromptBuilder.js';
+import type { PagePromptCompilerPort } from '../../../../src/services/page/PagePromptCompiler.js';
 
 class FakeExecutionRepository implements PageGenerationExecutionRepository {
   public claimedJob: GenerationJob | null = buildJob();
@@ -57,11 +59,37 @@ class FakePlanner implements PageGenerationPlannerPort {
 
 class FakePromptBuilder implements PromptBuilderPort {
   public calls: BuildPagePromptInput[] = [];
+  public builtPrompt: BuiltPagePrompt = {
+    draftPrompt: 'page-prompt-draft',
+    compilerBrief: '[TASK]\npage compiler brief',
+  };
 
   public async buildPagePrompt(input: BuildPagePromptInput): Promise<BuiltPagePrompt> {
     this.calls.push(input);
+    return this.builtPrompt;
+  }
+}
+
+class FakePromptCompiler implements PagePromptCompilerPort {
+  public calls = 0;
+  public shouldFail = false;
+  public failWithConfigurationError = false;
+
+  public async compilePrompt() {
+    this.calls += 1;
+    if (this.shouldFail) {
+      if (this.failWithConfigurationError) {
+        throw new ConfigurationError('compiler unavailable');
+      }
+
+      throw new Error('compiler unavailable');
+    }
+
     return {
-      prompt: 'page-prompt',
+      prompt: 'page-prompt-compiled',
+      compilerProvider: 'openai' as const,
+      compilerModel: 'gpt-5.4-mini',
+      compilerPromptVersion: 'page_prompt_v2',
     };
   }
 }
@@ -71,7 +99,7 @@ class FakeInputImageBuilder implements PageGenerationInputImageBuilderPort {
 
   public async buildInputImages(): Promise<PageGenerationInputImage[]> {
     this.calls += 1;
-    return [{ role: 'entity_reference', dataUrl: 'data:image/png;base64,cmVm' }];
+    return [{ role: 'entity_reference', label: 'Aoi', dataUrl: 'data:image/png;base64,cmVm' }];
   }
 }
 
@@ -132,6 +160,7 @@ describe('PageGenerationWorkerService', () => {
     const executionRepository = new FakeExecutionRepository();
     const planner = new FakePlanner();
     const promptBuilder = new FakePromptBuilder();
+    const promptCompiler = new FakePromptCompiler();
     const inputImageBuilder = new FakeInputImageBuilder();
     const renderer = new FakeRenderer();
     const storage = new FakeStorage();
@@ -139,6 +168,7 @@ describe('PageGenerationWorkerService', () => {
     const service = new PageGenerationWorkerService(
       executionRepository,
       promptBuilder,
+      promptCompiler,
       inputImageBuilder,
       planner,
       renderer,
@@ -155,14 +185,15 @@ describe('PageGenerationWorkerService', () => {
       userId: 'user-1',
       pageId: 'page-1',
     });
+    expect(promptCompiler.calls).toBe(1);
     expect(renderer.calls[0]).toMatchObject({
       pageId: 'page-1',
       requestKind: 'initial',
       generationMode: 'standard',
-      prompt: 'page-prompt',
+      prompt: 'page-prompt-compiled',
       quality: 'medium',
       internalPlan: null,
-      inputImages: [{ role: 'entity_reference', dataUrl: 'data:image/png;base64,cmVm' }],
+      inputImages: [{ role: 'entity_reference', label: 'Aoi', dataUrl: 'data:image/png;base64,cmVm' }],
     });
     expect(storage.calls[0]?.pageId).toBe('page-1');
     expect(executionRepository.completionInput).toMatchObject({
@@ -171,6 +202,16 @@ describe('PageGenerationWorkerService', () => {
       pageId: 'page-1',
       generationMode: 'standard',
       requestKind: 'initial',
+      promptMetadata: {
+        draftPrompt: 'page-prompt-draft',
+        compilerBrief: '[TASK]\npage compiler brief',
+        compiledPrompt: 'page-prompt-compiled',
+        compiledPromptUsed: true,
+        promptCompilerProvider: 'openai',
+        compilerModel: 'gpt-5.4-mini',
+        compilerPromptVersion: 'page_prompt_v2',
+        compilerError: null,
+      },
     });
     expect(creditService.refunds).toEqual([]);
   });
@@ -187,9 +228,11 @@ describe('PageGenerationWorkerService', () => {
     });
     const planner = new FakePlanner();
     const renderer = new FakeRenderer();
+    const promptCompiler = new FakePromptCompiler();
     const service = new PageGenerationWorkerService(
       executionRepository,
       new FakePromptBuilder(),
+      promptCompiler,
       new FakeInputImageBuilder(),
       planner,
       renderer,
@@ -201,6 +244,7 @@ describe('PageGenerationWorkerService', () => {
 
     expect(planner.calls).toBe(1);
     expect(renderer.calls[0]?.internalPlan).toBe('planner-output');
+    expect(renderer.calls[0]?.prompt).toBe('page-prompt-compiled');
   });
 
   it('claimできないjobはskipする', async () => {
@@ -209,6 +253,7 @@ describe('PageGenerationWorkerService', () => {
     const service = new PageGenerationWorkerService(
       executionRepository,
       new FakePromptBuilder(),
+      new FakePromptCompiler(),
       new FakeInputImageBuilder(),
       new FakePlanner(),
       new FakeRenderer(),
@@ -238,6 +283,7 @@ describe('PageGenerationWorkerService', () => {
     const service = new PageGenerationWorkerService(
       executionRepository,
       new FakePromptBuilder(),
+      new FakePromptCompiler(),
       new FakeInputImageBuilder(),
       new FakePlanner(),
       new FakeRenderer(),
@@ -265,6 +311,7 @@ describe('PageGenerationWorkerService', () => {
     const service = new PageGenerationWorkerService(
       executionRepository,
       new FakePromptBuilder(),
+      new FakePromptCompiler(),
       new FakeInputImageBuilder(),
       new FakePlanner(),
       renderer,
@@ -298,6 +345,7 @@ describe('PageGenerationWorkerService', () => {
     const service = new PageGenerationWorkerService(
       executionRepository,
       new FakePromptBuilder(),
+      new FakePromptCompiler(),
       new FakeInputImageBuilder(),
       new FakePlanner(),
       new FakeRenderer(),
@@ -311,6 +359,98 @@ describe('PageGenerationWorkerService', () => {
     expect(executionRepository.failureInput?.errorMessage).toBe('Failed to persist generated page image');
     expect(creditService.refunds).toHaveLength(1);
   });
+
+  it('compiler失敗時はdraft promptへfallbackする', async () => {
+    const executionRepository = new FakeExecutionRepository();
+    const promptCompiler = new FakePromptCompiler();
+    promptCompiler.shouldFail = true;
+    promptCompiler.failWithConfigurationError = true;
+    const renderer = new FakeRenderer();
+    const service = new PageGenerationWorkerService(
+      executionRepository,
+      new FakePromptBuilder(),
+      promptCompiler,
+      new FakeInputImageBuilder(),
+      new FakePlanner(),
+      renderer,
+      new FakeStorage(),
+      new FakeCreditService(),
+    );
+
+    await service.processJob('job-1');
+
+    expect(renderer.calls[0]?.prompt).toBe('page-prompt-draft');
+    expect(executionRepository.completionInput?.promptMetadata).toMatchObject({
+      compiledPrompt: 'page-prompt-draft',
+      compiledPromptUsed: false,
+      promptCompilerProvider: 'none',
+      compilerModel: null,
+      compilerPromptVersion: null,
+      compilerError: 'compiler unavailable',
+    });
+  });
+
+  it('compiler実装エラーはfallbackせずjob failedにする', async () => {
+    const executionRepository = new FakeExecutionRepository();
+    const promptCompiler = new FakePromptCompiler();
+    promptCompiler.shouldFail = true;
+    const service = new PageGenerationWorkerService(
+      executionRepository,
+      new FakePromptBuilder(),
+      promptCompiler,
+      new FakeInputImageBuilder(),
+      new FakePlanner(),
+      new FakeRenderer(),
+      new FakeStorage(),
+      new FakeCreditService(),
+    );
+
+    const result = await service.processJob('job-1');
+
+    expect(result).toEqual({ status: 'processed', jobStatus: 'failed' });
+    expect(executionRepository.failureInput?.errorMessage).toBe('compiler unavailable');
+    expect(executionRepository.completionInput).toBeNull();
+  });
+});
+
+it('compiled prompt が required dialogue を落とした場合は draft prompt に fallback する', async () => {
+  const executionRepository = new FakeExecutionRepository();
+  const promptBuilder = new FakePromptBuilder();
+  promptBuilder.builtPrompt = {
+    draftPrompt: 'page-prompt-draft with エミール「外に出よう。」',
+    compilerBrief: [
+      '[TASK]',
+      'page compiler brief',
+      '[PANEL INSTRUCTIONS]',
+      '- Dialogue lock: Dialogue lock for panel 4: line 1 must stay assigned to エミール exactly as written: "外に出よう。". Do not omit, paraphrase, merge, split, or reassign these lines.',
+    ].join('\n'),
+  };
+  const promptCompiler = new FakePromptCompiler();
+  const renderer = new FakeRenderer();
+  const service = new PageGenerationWorkerService(
+    executionRepository,
+    promptBuilder,
+    promptCompiler,
+    new FakeInputImageBuilder(),
+    new FakePlanner(),
+    renderer,
+    new FakeStorage(),
+    new FakeCreditService(),
+  );
+
+  await service.processJob('job-1');
+
+  expect(renderer.calls[0]?.prompt).toBe('page-prompt-draft with エミール「外に出よう。」');
+  expect(executionRepository.completionInput?.promptMetadata).toMatchObject({
+    compiledPrompt: 'page-prompt-draft with エミール「外に出よう。」',
+    compiledPromptUsed: false,
+    promptCompilerProvider: 'none',
+    compilerModel: null,
+    compilerPromptVersion: null,
+  });
+  expect(executionRepository.completionInput?.promptMetadata.compilerError).toContain(
+    'compiled prompt dropped required dialogue lines: エミール:外に出よう。',
+  );
 });
 
 function buildJob(overrides: Partial<GenerationJob> = {}): GenerationJob {

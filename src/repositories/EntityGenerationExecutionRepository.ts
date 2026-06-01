@@ -5,13 +5,27 @@ import type { DatabaseClient } from '../lib/db.js';
 export interface CompleteEntityGenerationInput {
   jobId: string;
   userId: string;
+  structuredFields: Record<string, unknown>;
   candidates: Array<{
     refId: string;
     s3Key: string;
     cdnUrl: string;
   }>;
+  compiledBrief: string;
+  compiledPrompt: string;
   openaiRequestId: string | null;
   costUsd: number | null;
+  compiledPromptUsed: boolean;
+  promptCompilerProvider: 'openai' | 'anthropic' | 'none';
+  compilerModel: string | null;
+  compilerPromptVersion: string | null;
+  compilerError: string | null;
+  imageModel: string;
+  imageParams: {
+    quality: string;
+    size: string;
+  };
+  createdAt: string;
 }
 
 export interface EntityGenerationExecutionRepository {
@@ -77,12 +91,23 @@ export class PostgresEntityGenerationExecutionRepository implements EntityGenera
         input.jobId,
         input.userId,
         JSON.stringify({
+          structured_fields: input.structuredFields,
           candidates: input.candidates.map((candidate) => ({
             ref_id: candidate.refId,
             s3_key: candidate.s3Key,
             cdn_url: candidate.cdnUrl,
           })),
+          compiled_brief: input.compiledBrief,
+          compiled_prompt: input.compiledPrompt,
           cost_usd: input.costUsd,
+          compiled_prompt_used: input.compiledPromptUsed,
+          prompt_compiler_provider: input.promptCompilerProvider,
+          compiler_model: input.compilerModel,
+          compiler_prompt_version: input.compilerPromptVersion,
+          compiler_error: input.compilerError,
+          image_model: input.imageModel,
+          image_params: input.imageParams,
+          created_at: input.createdAt,
         }),
         input.openaiRequestId,
       ],

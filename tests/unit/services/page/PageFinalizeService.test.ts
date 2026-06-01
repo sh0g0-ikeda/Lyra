@@ -5,6 +5,7 @@ import type {
   GeneratedPageImage,
   PageGenerationContext,
   PageGenerationStateUpdate,
+  PageSummary,
   PagePromptContext,
 } from '../../../../src/domain/types/page.js';
 import type { PageGenerationMode } from '../../../../src/domain/types/pageGeneration.js';
@@ -29,11 +30,27 @@ class FakePageRepository implements PageRepository {
     return [];
   }
 
+  public async findPageByIdAndUserId(): Promise<PageSummary | null> {
+    return null;
+  }
+
   public async findGenerationContextByIdAndUserId(): Promise<PageGenerationContext | null> {
     return this.context;
   }
 
   public async findPromptContextByIdAndUserId(): Promise<PagePromptContext | null> {
+    throw new Error('not used');
+  }
+
+  public async findAutofillContextByIdAndUserId(): Promise<never> {
+    throw new Error('not used');
+  }
+
+  public async findEpisodePlanningContextByIdAndUserId(): Promise<never> {
+    throw new Error('not used');
+  }
+
+  public async updatePageSettings(): Promise<PageSummary | null> {
     throw new Error('not used');
   }
 
@@ -295,6 +312,7 @@ function buildPageContext(overrides: Partial<PageGenerationContext> = {}): PageG
     },
     generationMode: 'standard',
     status: 'generated',
+    frameCount: 1,
     panels: [],
     ...overrides,
   };

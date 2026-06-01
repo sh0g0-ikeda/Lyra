@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { NotFoundError, ValidationError } from '../../../../src/domain/errors/index.js';
+import { ConflictError, NotFoundError, ValidationError } from '../../../../src/domain/errors/index.js';
 import type {
   PageLayoutFrameUpdate,
   PanelFrame,
   UpsertPanelFrameInput,
 } from '../../../../src/domain/types/panelFrame.js';
+import type { PageStatus } from '../../../../src/domain/types/page.js';
 import type {
   PageFrameContext,
   PanelFrameRepository,
@@ -18,7 +19,7 @@ const panelId = '33333333-3333-4333-8333-333333333333';
 const frame = buildFrameInput();
 
 class FakePanelFrameRepository implements PanelFrameRepository {
-  public pageContext: PageFrameContext | null = { pageId, workId };
+  public pageContext: PageFrameContext | null = { pageId, workId, pageStatus: 'editing' };
   public ownedPanelIds = [panelId];
   public savedFrames: UpsertPanelFrameInput[] | null = null;
   public savedLayoutUpdate: PageLayoutFrameUpdate | null = null;
@@ -113,6 +114,31 @@ describe('PanelFrameService', () => {
     });
     expect(repository.savedLayoutUpdate?.frameDefinitions).toHaveLength(4);
   });
+  it.each(['confirmed', 'generating'] satisfies PageStatus[])(
+    '%s page cannot replace frames',
+    async (pageStatus) => {
+      const repository = new FakePanelFrameRepository();
+      repository.pageContext = { pageId, workId, pageStatus };
+      const service = new PanelFrameService(repository);
+
+      await expect(service.replacePageFrames(userId, pageId, [frame])).rejects.toBeInstanceOf(
+        ConflictError,
+      );
+    },
+  );
+
+  it.each(['confirmed', 'generating'] satisfies PageStatus[])(
+    '%s page cannot apply templates',
+    async (pageStatus) => {
+      const repository = new FakePanelFrameRepository();
+      repository.pageContext = { pageId, workId, pageStatus };
+      const service = new PanelFrameService(repository);
+
+      await expect(service.applyTemplate(userId, pageId, 'standard_4')).rejects.toBeInstanceOf(
+        ConflictError,
+      );
+    },
+  );
 });
 
 function buildFrameInput(overrides: Partial<UpsertPanelFrameInput> = {}): UpsertPanelFrameInput {

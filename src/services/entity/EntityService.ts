@@ -8,6 +8,8 @@ import type {
 import { parseStructuredFields } from '../../lib/validators/entity.schema.js';
 import type { EntityRepository } from '../../repositories/EntityRepository.js';
 import type { WorkReader } from '../../repositories/WorkRepository.js';
+import type { StyleReferenceCompilerPort } from '../style/StyleReferenceCompiler.js';
+import { resolveStyleReferenceForPersistence } from '../style/styleReferencePersistence.js';
 
 export type { Entity };
 
@@ -41,10 +43,12 @@ export class EntityService implements EntityServicePort {
   public constructor(
     private readonly entityRepository: EntityRepository,
     private readonly workReader: WorkReader,
+    private readonly styleReferenceCompiler?: StyleReferenceCompilerPort,
   ) {}
 
   public async createEntity(userId: string, workId: string, input: CreateEntityRequest): Promise<Entity> {
     await this.ensureWorkOwnedByUser(workId, userId);
+    const parsedStructuredFields = parseStructuredFields(input.entityType, input.structuredFields);
 
     const createInput: CreateEntityInput = {
       workId,
@@ -53,7 +57,11 @@ export class EntityService implements EntityServicePort {
       name: input.name,
       freeDescription: input.freeDescription,
       promptSupplement: input.promptSupplement ?? null,
-      structuredFields: parseStructuredFields(input.entityType, input.structuredFields),
+      structuredFields: await this.prepareStructuredFieldsForPersistence(
+        input.entityType,
+        parsedStructuredFields,
+        undefined,
+      ),
       speechProfile: normalizeSpeechProfile(input.entityType, input.speechProfile),
     };
 
@@ -83,14 +91,22 @@ export class EntityService implements EntityServicePort {
     const nextEntityType = input.entityType ?? currentEntity.entityType;
     const entityTypeChanged =
       input.entityType !== undefined && input.entityType !== currentEntity.entityType;
+    const parsedStructuredFields =
+      input.structuredFields === undefined
+        ? undefined
+        : parseStructuredFields(nextEntityType, input.structuredFields);
     const updateInput: UpdateEntityInput = {
       ...input,
       structuredFields:
-        input.structuredFields === undefined
+        parsedStructuredFields === undefined
           ? entityTypeChanged
-            ? parseStructuredFields(nextEntityType, {})
+            ? await this.prepareStructuredFieldsForPersistence(nextEntityType, {}, undefined)
             : undefined
-          : parseStructuredFields(nextEntityType, input.structuredFields),
+          : await this.prepareStructuredFieldsForPersistence(
+              nextEntityType,
+              parsedStructuredFields,
+              currentEntity.structuredFields,
+            ),
       speechProfile:
         input.speechProfile === undefined
           ? entityTypeChanged
@@ -120,6 +136,35 @@ export class EntityService implements EntityServicePort {
       throw new NotFoundError('Work not found');
     }
   }
+
+  private async prepareStructuredFieldsForPersistence(
+    entityType: EntityType,
+    structuredFields: Record<string, unknown>,
+    currentStructuredFields?: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
+    if (entityType !== 'character') {
+      return structuredFields;
+    }
+
+    const nextStyleReference = toRecord(structuredFields.style_reference);
+    const currentStyleReference = currentStructuredFields?.style_reference;
+    const resolvedStyleReference = await resolveStyleReferenceForPersistence({
+      nextStyleReference,
+      currentStyleReference,
+      target: 'character_reference',
+      compiler: this.styleReferenceCompiler,
+    });
+
+    if (resolvedStyleReference === null) {
+      const { style_reference: _omitted, ...rest } = structuredFields;
+      return rest;
+    }
+
+    return {
+      ...structuredFields,
+      style_reference: resolvedStyleReference,
+    };
+  }
 }
 
 function normalizeSpeechProfile(
@@ -131,4 +176,10 @@ function normalizeSpeechProfile(
   }
 
   return speechProfile;
+}
+
+function toRecord(value: unknown): Record<string, unknown> | null {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
 }

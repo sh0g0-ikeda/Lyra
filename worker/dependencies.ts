@@ -1,4 +1,5 @@
 import { db } from '../src/lib/db.js';
+import { AnthropicClient } from '../src/infrastructure/anthropic/AnthropicClient.js';
 import { PostgresCreditRepository } from '../src/repositories/CreditRepository.js';
 import { PostgresEntityGenerationExecutionRepository } from '../src/repositories/EntityGenerationExecutionRepository.js';
 import { PostgresPageGenerationExecutionRepository } from '../src/repositories/PageGenerationExecutionRepository.js';
@@ -12,6 +13,10 @@ import {
   type EntityReferencePromptBuilderPort,
 } from '../src/services/entity/EntityReferencePromptBuilder.js';
 import {
+  PassthroughEntityReferencePromptCompiler,
+  type EntityReferencePromptCompilerPort,
+} from '../src/services/entity/EntityReferencePromptCompiler.js';
+import {
   PageGenerationWorkerService,
   type PageGenerationPlannerPort,
   type PageGenerationPlanInput,
@@ -24,6 +29,10 @@ import {
   type StoredPageImage,
 } from '../src/services/page/PageGenerationWorkerService.js';
 import { PromptBuilder, type PromptBuilderPort } from '../src/services/page/PromptBuilder.js';
+import {
+  PassthroughPagePromptCompiler,
+  type PagePromptCompilerPort,
+} from '../src/services/page/PagePromptCompiler.js';
 import { PostgresPageRepository } from '../src/repositories/PageRepository.js';
 import { PostgresPanelRepository } from '../src/repositories/PanelRepository.js';
 import { PostgresEntityRepository } from '../src/repositories/EntityRepository.js';
@@ -32,10 +41,14 @@ import { ConfigurationError } from '../src/domain/errors/index.js';
 import { OpenAIClient } from '../src/infrastructure/openai/OpenAIClient.js';
 import {
   OpenAIEntityReferenceGenerator,
+  type GenerateEntityReferenceCandidatesInput,
+  type GeneratedEntityReferenceCandidate,
   type EntityReferenceGeneratorPort,
 } from '../src/infrastructure/openai/OpenAIEntityReferenceGenerator.js';
 import { OpenAIPageGenerationPlanner } from '../src/infrastructure/openai/OpenAIPageGenerationPlanner.js';
 import { OpenAIPageImageRenderer } from '../src/infrastructure/openai/OpenAIPageImageRenderer.js';
+import { OpenAIPagePromptCompiler } from '../src/infrastructure/openai/OpenAIPagePromptCompiler.js';
+import { OpenAIEntityReferencePromptCompiler } from '../src/infrastructure/openai/OpenAIEntityReferencePromptCompiler.js';
 import {
   createPageImageStorageClient,
   S3PageImageStorage,
@@ -45,8 +58,11 @@ import { S3StoredImageLoader, type StoredImageLoaderPort } from '../src/infrastr
 import { LocalFilePageImageStorage } from '../src/infrastructure/local/LocalFilePageImageStorage.js';
 import { LocalFileEntityImageStorage } from '../src/infrastructure/local/LocalFileEntityImageStorage.js';
 import { LocalFileStoredImageLoader } from '../src/infrastructure/local/LocalFileStoredImageLoader.js';
+import { LocalPreviewPageImageRenderer } from '../src/infrastructure/local/LocalPreviewPageImageRenderer.js';
+import { LocalPreviewEntityReferenceGenerator } from '../src/infrastructure/local/LocalPreviewEntityReferenceGenerator.js';
 import { resolveLocalAssetConfig } from '../src/infrastructure/local/LocalAssetFiles.js';
 import { env } from '../src/lib/env.js';
+import { AnthropicEntityReferencePromptCompiler } from '../src/infrastructure/anthropic/AnthropicEntityReferencePromptCompiler.js';
 import {
   PageGenerationInputImageBuilder,
   type PageGenerationInputImageBuilderPort,
@@ -69,11 +85,13 @@ export interface WorkerDependencies {
 export interface WorkerDependencyOverrides {
   creditService?: CreditServicePort;
   promptBuilder?: PromptBuilderPort;
+  pagePromptCompiler?: PagePromptCompilerPort;
   pageGenerationInputImageBuilder?: PageGenerationInputImageBuilderPort;
   pageGenerationPlanner?: PageGenerationPlannerPort;
   pageImageRenderer?: PageImageRendererPort;
   pageImageStorage?: PageImageStoragePort;
   entityReferencePromptBuilder?: EntityReferencePromptBuilderPort;
+  entityReferencePromptCompiler?: EntityReferencePromptCompilerPort;
   entityReferenceGenerator?: EntityReferenceGeneratorPort;
   entityImageStorage?: EntityImageStoragePort;
   pageGenerationWorkerService?: PageGenerationWorkerPort;
@@ -109,6 +127,8 @@ export function resolveWorkerDependencies(
       new PostgresEntityRepository(db),
       new PostgresCompositionGalleryRepository(db),
     );
+  const pagePromptCompiler =
+    overrides.pagePromptCompiler ?? resolvePagePromptCompiler();
   const pageGenerationInputImageBuilder =
     overrides.pageGenerationInputImageBuilder ?? resolvePageGenerationInputImageBuilder();
   const pageGenerationPlanner =
@@ -121,6 +141,8 @@ export function resolveWorkerDependencies(
   const entityGenerationExecutionRepository = new PostgresEntityGenerationExecutionRepository(db);
   const entityReferencePromptBuilder =
     overrides.entityReferencePromptBuilder ?? new EntityReferencePromptBuilder();
+  const entityReferencePromptCompiler =
+    overrides.entityReferencePromptCompiler ?? resolveEntityReferencePromptCompiler();
   const entityReferenceGenerator =
     overrides.entityReferenceGenerator ?? resolveEntityReferenceGenerator();
   const entityImageStorage =
@@ -131,6 +153,7 @@ export function resolveWorkerDependencies(
     pageGenerationWorkerService: new PageGenerationWorkerService(
       pageGenerationExecutionRepository,
       promptBuilder,
+      pagePromptCompiler,
       pageGenerationInputImageBuilder,
       pageGenerationPlanner,
       pageImageRenderer,
@@ -141,12 +164,22 @@ export function resolveWorkerDependencies(
       entityGenerationExecutionRepository,
       new PostgresEntityRepository(db),
       entityReferencePromptBuilder,
+      entityReferencePromptCompiler,
       entityReferenceGenerator,
       entityImageStorage,
       creditService,
       storedImageLoader,
     ),
   };
+}
+
+function resolvePagePromptCompiler(): PagePromptCompilerPort {
+  const client = buildOpenAIClient();
+  if (client === null) {
+    return new PassthroughPagePromptCompiler();
+  }
+
+  return new OpenAIPagePromptCompiler(client);
 }
 
 function resolvePageGenerationInputImageBuilder(): PageGenerationInputImageBuilderPort {
@@ -183,11 +216,19 @@ function resolvePageGenerationPlanner(): PageGenerationPlannerPort {
 
 function resolvePageImageRenderer(): PageImageRendererPort {
   const client = buildOpenAIClient();
+  const localAssetConfig = resolveConfiguredLocalAssetConfig();
   if (client === null) {
-    return new UnconfiguredPageImageRenderer();
+    return localAssetConfig !== null
+      ? new LocalPreviewPageImageRenderer()
+      : new UnconfiguredPageImageRenderer();
   }
 
-  return new OpenAIPageImageRenderer(client);
+  const primaryRenderer = new OpenAIPageImageRenderer(client, env.OPENAI_IMAGE_MODEL);
+  if (localAssetConfig !== null) {
+    return new LocalResilientPageImageRenderer(primaryRenderer, new LocalPreviewPageImageRenderer());
+  }
+
+  return primaryRenderer;
 }
 
 function buildOpenAIClient(): OpenAIClient | null {
@@ -220,11 +261,42 @@ function resolvePageImageStorage(): PageImageStoragePort {
 
 function resolveEntityReferenceGenerator(): EntityReferenceGeneratorPort {
   const client = buildOpenAIClient();
+  const localAssetConfig = resolveConfiguredLocalAssetConfig();
   if (client === null) {
-    return new UnconfiguredEntityReferenceGenerator();
+    return localAssetConfig !== null
+      ? new LocalPreviewEntityReferenceGenerator()
+      : new UnconfiguredEntityReferenceGenerator();
   }
 
-  return new OpenAIEntityReferenceGenerator(client);
+  const primaryGenerator = new OpenAIEntityReferenceGenerator(client, env.OPENAI_IMAGE_MODEL);
+  if (localAssetConfig !== null) {
+    return new LocalResilientEntityReferenceGenerator(
+      primaryGenerator,
+      new LocalPreviewEntityReferenceGenerator(),
+    );
+  }
+
+  return primaryGenerator;
+}
+
+function resolveEntityReferencePromptCompiler(): EntityReferencePromptCompilerPort {
+  const openAiClient = buildOpenAIClient();
+  if (openAiClient !== null) {
+    return new OpenAIEntityReferencePromptCompiler(openAiClient);
+  }
+
+  if (env.ANTHROPIC_API_KEY === undefined) {
+    return new PassthroughEntityReferencePromptCompiler();
+  }
+
+  return new AnthropicEntityReferencePromptCompiler(
+    new AnthropicClient({
+      apiKey: env.ANTHROPIC_API_KEY,
+      baseUrl: env.ANTHROPIC_BASE_URL,
+      apiVersion: env.ANTHROPIC_API_VERSION,
+      timeoutMs: env.ANTHROPIC_TIMEOUT_MS,
+    }),
+  );
 }
 
 function resolveEntityImageStorage(): EntityImageStoragePort {
@@ -299,6 +371,46 @@ class UnconfiguredEntityGenerationWorker implements EntityGenerationWorkerPort {
 class UnconfiguredEntityReferenceGenerator implements EntityReferenceGeneratorPort {
   public async generateCandidates(): Promise<never> {
     throw new ConfigurationError('Entity reference generator is not configured');
+  }
+}
+
+class LocalResilientPageImageRenderer implements PageImageRendererPort {
+  public constructor(
+    private readonly primary: PageImageRendererPort,
+    private readonly fallback: PageImageRendererPort,
+  ) {}
+
+  public async render(input: RenderPageImageInput): Promise<RenderPageImageResult> {
+    try {
+      return await this.primary.render(input);
+    } catch (error) {
+      if (error instanceof ConfigurationError) {
+        return this.fallback.render(input);
+      }
+      throw error;
+    }
+  }
+}
+
+class LocalResilientEntityReferenceGenerator implements EntityReferenceGeneratorPort {
+  public constructor(
+    private readonly primary: EntityReferenceGeneratorPort,
+    private readonly fallback: EntityReferenceGeneratorPort,
+  ) {}
+
+  public async generateCandidates(input: GenerateEntityReferenceCandidatesInput): Promise<{
+    candidates: GeneratedEntityReferenceCandidate[];
+    openaiRequestId: string | null;
+    costUsd: number | null;
+  }> {
+    try {
+      return await this.primary.generateCandidates(input);
+    } catch (error) {
+      if (error instanceof ConfigurationError) {
+        return this.fallback.generateCandidates(input);
+      }
+      throw error;
+    }
   }
 }
 

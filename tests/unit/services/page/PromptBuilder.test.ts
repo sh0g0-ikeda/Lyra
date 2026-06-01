@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
+import { ValidationError } from '../../../../src/domain/errors/index.js';
 import type { CompositionGalleryItem } from '../../../../src/domain/types/composition.js';
 import type { Entity } from '../../../../src/domain/types/entity.js';
 import type { Panel } from '../../../../src/domain/types/panel.js';
-import type { PageGenerationContext, PagePromptContext } from '../../../../src/domain/types/page.js';
+import type { PageGenerationContext, PagePromptContext, PageSummary } from '../../../../src/domain/types/page.js';
 import type { CompositionGalleryRepository } from '../../../../src/repositories/CompositionGalleryRepository.js';
 import type {
   EntityPrimaryReferenceImage,
@@ -22,12 +23,28 @@ class FakePageRepository implements PageRepository {
     return [];
   }
 
+  public async findPageByIdAndUserId(): Promise<PageSummary | null> {
+    return null;
+  }
+
   public async findGenerationContextByIdAndUserId(): Promise<PageGenerationContext | null> {
     throw new Error('not used');
   }
 
   public async findPromptContextByIdAndUserId(): Promise<PagePromptContext | null> {
     return this.promptContext;
+  }
+
+  public async findAutofillContextByIdAndUserId(): Promise<never> {
+    throw new Error('not used');
+  }
+
+  public async findEpisodePlanningContextByIdAndUserId(): Promise<never> {
+    throw new Error('not used');
+  }
+
+  public async updatePageSettings(): Promise<PageSummary | null> {
+    throw new Error('not used');
   }
 
   public async updateGenerationState(
@@ -99,7 +116,14 @@ class FakeEntityRepository implements EntityRepository {
   }
 
   public async findPrimaryReferenceImagesByEntityIdsAndUserId(): Promise<EntityPrimaryReferenceImage[]> {
-    return [];
+    return [
+      {
+        entityId: 'entity-1',
+        refId: 'ref-1',
+        s3Key: 'saved/user-1/entities/entity-1/ref-1.png',
+        cdnUrl: 'https://img.lyra.app/ref-1.png',
+      },
+    ];
   }
 
   public async update(_id: string, _userId: string, _input: UpdateEntityInput): Promise<Entity | null> {
@@ -124,7 +148,7 @@ class FakeCompositionGalleryRepository implements CompositionGalleryRepository {
 }
 
 describe('PromptBuilder', () => {
-  it('includes scene continuity, layout, references, and dialogue', async () => {
+  it('includes layout, references, setting, and dialogue without redundant sections', async () => {
     const builder = new PromptBuilder(
       new FakePageRepository(),
       new FakePanelRepository(),
@@ -139,19 +163,35 @@ describe('PromptBuilder', () => {
       generationMode: 'thinking',
     });
 
-    expect(result.prompt).toContain('This is page 3 of the episode: The hero confronts the rival.');
-    expect(result.prompt).toContain('Scene continuity:');
-    expect(result.prompt).toContain('- Scene 1: Rooftop / night / tense');
-    expect(result.prompt).toContain('Use a standard_4 layout with 4 panels.');
-    expect(result.prompt).toContain('Panel 1 (action, standard): Hero lunges forward.');
-    expect(result.prompt).toContain('Image 1 is the appearance reference for Aki.');
-    expect(countOccurrences(result.prompt, 'Image 1 is the appearance reference for Aki.')).toBe(1);
-    expect(result.prompt).toContain('navy military uniform');
-    expect(result.prompt).toContain('facing=three_quarter_left');
-    expect(result.prompt).toContain('pose=attacking');
-    expect(result.prompt).toContain('effect=speed lines around the blade');
-    expect(result.prompt).toContain("Panel 1 dialogue by Aki: 'I will finish this now.' as speech at top.");
-    expect(result.prompt).toContain('anime manga illustration');
+    expect(result.draftPrompt).toContain('Create page 3 of the episode, covering The hero confronts the rival.');
+    expect(result.draftPrompt).toContain('Use the standard_4 template with 4 panels.');
+    expect(result.draftPrompt).toContain('Image 1 (Aki): Aki character reference.');
+    expect(result.draftPrompt).toContain('Aki is primary in the center zone, facing three quarter left');
+    expect(result.draftPrompt).toContain('Sound effect text in the artwork: "WHOOSH".');
+    expect(result.draftPrompt).toContain('Panel 1 dialogue by Aki: "I will finish this now." as speech at top.');
+    expect(result.draftPrompt).toContain('Dialogue lock for panel 1: line 1 must stay assigned to Aki exactly as written: "I will finish this now."');
+    expect(result.draftPrompt).toContain('Reference image roles:');
+    expect(result.draftPrompt).toContain('Style lock: anime manga illustration');
+    expect(result.draftPrompt).toContain('Page setting continuity: Scene 1: Rooftop / night / tense.');
+    expect(result.draftPrompt).toContain(
+      'Page purpose: This page escalates the rooftop confrontation without breaking the uneasy calm.',
+    );
+    expect(result.draftPrompt).toContain(
+      'Continuity note: Carry the moonlit tension forward into the next page.',
+    );
+    expect(result.compilerBrief).toContain('[REFERENCE IMAGE ROLES]');
+    expect(result.compilerBrief).toContain('[PANEL INSTRUCTIONS]');
+    expect(result.compilerBrief).toContain('[SETTING]');
+    expect(result.compilerBrief).toContain(
+      'Page purpose: This page escalates the rooftop confrontation without breaking the uneasy calm.',
+    );
+    expect(result.compilerBrief).toContain(
+      'Continuity note: Carry the moonlit tension forward into the next page.',
+    );
+    expect(result.compilerBrief).toContain('- Dialogue lock: Dialogue lock for panel 1: line 1 must stay assigned to Aki exactly as written: "I will finish this now."');
+    expect(result.compilerBrief).not.toContain('[CHARACTER CONSISTENCY]');
+    expect(result.compilerBrief).not.toContain('Scene continuity:');
+    expect(countOccurrences(result.compilerBrief, 'Image 1 (Aki): Aki character reference.')).toBe(1);
   });
 
   it('omits dialogue instructions for balloon_only pages', async () => {
@@ -173,7 +213,8 @@ describe('PromptBuilder', () => {
       generationMode: 'standard',
     });
 
-    expect(result.prompt).not.toContain('Panel 1 dialogue');
+    expect(result.draftPrompt).not.toContain('Panel 1 dialogue by Aki');
+    expect(result.compilerBrief).not.toContain('Panel 1 dialogue by Aki');
   });
 
   it('includes frame definitions for custom layout pages', async () => {
@@ -208,9 +249,9 @@ describe('PromptBuilder', () => {
       generationMode: 'standard',
     });
 
-    expect(result.prompt).toContain('The last input image is the panel layout reference.');
-    expect(result.prompt).toContain('Only use it as a layout guide.');
-    expect(result.prompt).toContain('Frame 1: vertices (0.00, 0.00) -> (1.00, 0.00) -> (1.00, 0.50) -> (0.00, 0.50).');
+    expect(result.draftPrompt).toContain('Follow the uploaded layout reference image exactly for panel borders, gutter spacing, and reading order.');
+    expect(result.draftPrompt).toContain('panel 1 uses vertices (0.00, 0.00) -> (1.00, 0.00) -> (1.00, 0.50) -> (0.00, 0.50)');
+    expect(result.compilerBrief).toContain('Image 2 (layout): Layout reference.');
   });
 
   it('mentions each entity reference once even across multiple panels', async () => {
@@ -238,7 +279,111 @@ describe('PromptBuilder', () => {
       generationMode: 'thinking',
     });
 
-    expect(countOccurrences(result.prompt, 'Image 1 is the appearance reference for Aki.')).toBe(1);
+    expect(countOccurrences(result.compilerBrief, 'Image 1 (Aki): Aki character reference.')).toBe(1);
+  });
+
+  it('includes named style reference title and compiled brief in page prompts', async () => {
+    const pageRepository = new FakePageRepository();
+    pageRepository.promptContext = buildPagePromptContext({
+      styleReference: {
+        title: 'AKIRA',
+        notes: '硬質な都市背景',
+        compiledBrief:
+          'Keep the title "AKIRA" explicit as a style constraint, with precise mechanical linework, dense urban perspective, hard-edged shadow shapes, and disciplined environment rendering.',
+        anchors: {
+          lineQuality: 'precise mechanical linework with confident contour control',
+          shapeLanguage: 'hard-edged industrial forms with disciplined perspective',
+          faceRendering: null,
+          eyeRendering: null,
+          hairRendering: null,
+          clothingRendering: 'functional clothing folds with restrained stylization',
+          backgroundRendering: 'dense urban structures with explicit depth and infrastructure detail',
+          shadingRendering: 'hard-edged shadow blocks with restrained gradients',
+          textureFinish: 'clean ink finish with selective grit in environments',
+          motionTreatment: 'controlled action accents without abstract streak overload',
+          dialogueBalloonTreatment: 'page remains readable even when dialogue density rises',
+          atmosphere: 'tense, heavy urban pressure',
+        },
+        compilerProvider: 'openai',
+        compilerModel: 'gpt-5.4-mini',
+        compilerPromptVersion: 'style_ref_v3',
+        compiledAt: '2026-05-28T00:00:00.000Z',
+      },
+    });
+    const builder = new PromptBuilder(
+      pageRepository,
+      new FakePanelRepository(),
+      new FakeEntityRepository(),
+      new FakeCompositionGalleryRepository(),
+    );
+
+    const result = await builder.buildPagePrompt({
+      userId: 'user-1',
+      pageId: 'page-1',
+      requestKind: 'initial',
+      generationMode: 'thinking',
+    });
+
+    expect(result.draftPrompt).toContain('Named style reference constraint: "AKIRA".');
+    expect(result.draftPrompt).toContain('Generalized style interpretation: Keep the title "AKIRA" explicit as a style constraint');
+    expect(result.draftPrompt).toContain('Apply these style anchors to line treatment, shading, finish, background treatment, motion accents, and page atmosphere');
+    expect(result.draftPrompt).toContain('line quality: precise mechanical linework with confident contour control');
+    expect(result.compilerBrief).toContain('Named style reference constraint: "AKIRA".');
+    expect(result.compilerBrief).toContain('[GLOBAL STYLE]');
+  });
+
+  it('fails when panel orders are not contiguous', async () => {
+    const panelRepository = new FakePanelRepository();
+    panelRepository.panels = [
+      buildPanel(),
+      {
+        ...buildPanel(),
+        id: 'panel-3',
+        order: 3,
+      },
+    ];
+    const builder = new PromptBuilder(
+      new FakePageRepository(),
+      panelRepository,
+      new FakeEntityRepository(),
+      new FakeCompositionGalleryRepository(),
+    );
+
+    await expect(
+      builder.buildPagePrompt({
+        userId: 'user-1',
+        pageId: 'page-1',
+        requestKind: 'initial',
+        generationMode: 'standard',
+      }),
+    ).rejects.toBeInstanceOf(ValidationError);
+  });
+
+  it('fails when panel orders are duplicated', async () => {
+    const panelRepository = new FakePanelRepository();
+    panelRepository.panels = [
+      buildPanel(),
+      {
+        ...buildPanel(),
+        id: 'panel-1b',
+        order: 1,
+      },
+    ];
+    const builder = new PromptBuilder(
+      new FakePageRepository(),
+      panelRepository,
+      new FakeEntityRepository(),
+      new FakeCompositionGalleryRepository(),
+    );
+
+    await expect(
+      builder.buildPagePrompt({
+        userId: 'user-1',
+        pageId: 'page-1',
+        requestKind: 'initial',
+        generationMode: 'standard',
+      }),
+    ).rejects.toBeInstanceOf(ValidationError);
   });
 });
 
@@ -249,10 +394,13 @@ function buildPagePromptContext(overrides: Partial<PagePromptContext> = {}): Pag
     pageNumber: 3,
     episodePurpose: 'The hero confronts the rival.',
     sceneSummaries: ['Scene 1: Rooftop / night / tense'],
+    storyPagePurpose: 'This page escalates the rooftop confrontation without breaking the uneasy calm.',
+    storyContinuityNote: 'Carry the moonlit tension forward into the next page.',
     layoutConfig: {
       type: 'template',
       template_id: 'standard_4',
     },
+    styleReference: null,
     dialogueMode: 'image_baked',
     pageDialogueToggle: true,
     ...overrides,

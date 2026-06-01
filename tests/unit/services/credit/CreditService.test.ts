@@ -74,8 +74,8 @@ describe('CreditService', () => {
 
     expect(result).toEqual({
       monthlyCredits: 0,
-      purchasedCredits: 200,
-      totalCredits: 200,
+      purchasedCredits: 12,
+      totalCredits: 12,
       monthlyExpiresAt: null,
     });
     expect(repository.ledger).toHaveLength(1);
