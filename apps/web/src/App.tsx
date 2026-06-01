@@ -229,10 +229,14 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   Work: '作品',
   Chapter: '章',
   Episode: '話',
+  Works: '作品一覧',
+  'New work': '新しい作品',
+  'Create work': '作品を作成',
   Chapters: '章',
   Episodes: '話',
   Title: 'タイトル',
   Genre: 'ジャンル',
+  World: '世界観',
   Theme: 'テーマ',
   Status: '状態',
   'World setting': '世界観',
@@ -275,6 +279,10 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   'Source scenes': '元シーン',
   'Page purpose': 'ページの目的',
   'Continuity note': '連続性メモ',
+  Name: '名前',
+  'Free description': '自由記述',
+  'Prompt supplement': '補足プロンプト',
+  'Structured fields JSON': '構造化フィールドJSON',
   Format: '形式',
   Filename: 'ファイル名',
   'Export selected': '選択ページを保存',
@@ -284,12 +292,18 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   Mixed: '混在',
   'Page autofill': 'ページ補完',
   Page: 'ページ',
+  Export: '保存',
   'Generated preview': '生成プレビュー',
   'Confirmed references': '確定済みリファレンス',
   'Character list': 'キャラ一覧',
   'Character editor': 'キャラ編集',
   'Story context': 'ストーリー文脈',
   'Target episode': '対象の話',
+  'Chapter / Episode': '章と話',
+  'Import / References': '取り込み / リファレンス',
+  Credits: 'クレジット',
+  Jobs: 'ジョブ',
+  'production console': '制作コンソール',
   Generate: '生成',
   Confirm: '確定',
   Reopen: '再編集',
@@ -372,6 +386,263 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   Primary: 'メイン',
   Delete: '削除',
   'Generate full-body candidates': '全身候補を生成',
+  Auto: '自動配置',
+  'Speaker ID': '話者ID',
+  Balloon: '吹き出し種別',
+  Writing: '文字方向',
+  Text: '本文',
+  'Font size': '文字サイズ',
+  'Font family': 'フォント',
+  Total: '合計',
+  Monthly: '月次',
+  Purchased: '購入分',
+  Identity: '基本情報',
+  Anchors: '再現アンカー',
+  Face: '顔',
+  Hair: '髪',
+  Outfit: '服装',
+  Gender: '性別表現',
+  'Age range': '年齢帯',
+  'Skin tone': '肌の色',
+  'First impression': '第一印象',
+  'Standing style': '立ち姿',
+  'Default expression': '既定表情',
+  Height: '身長感',
+  'Body type': '体格',
+  'Art style': '絵柄',
+  'Visual anchor': '視覚アンカー',
+  'Signature feature': '特徴',
+  'Silhouette keywords': 'シルエットの要点',
+  'Distinguishing features': '見分けポイント',
+  'Head/body ratio': '頭身',
+  'Shoulder width': '肩幅',
+  'Leg length': '脚の長さ',
+  'Posture axis': '姿勢の軸',
+  'Face shape': '輪郭',
+  'Eyebrow shape': '眉の形',
+  'Nose shape': '鼻の形',
+  'Mouth shape': '口の形',
+  'Eye color': '目の色',
+  'Eye shape': '目の形',
+  'Eyelid type': 'まぶた',
+  'Eye size': '目の大きさ',
+  'Eye angle': '目の角度',
+  'Pupil style': '瞳の描き方',
+  'Under-eye detail': '目元の特徴',
+  'Mouth default': '口元の既定形',
+  'Hair color': '髪色',
+  'Hair length': '髪の長さ',
+  'Hair style': '髪質',
+  'Hair arrangement': '髪のまとめ方',
+  Bangs: '前髪',
+  'Front shape': '前髪の形',
+  'Side hair': '横髪',
+  'Back shape': '後ろ髪',
+  Category: '服カテゴリ',
+  'Main color': '主色',
+  Impression: '印象',
+  'Collar shape': '襟の形',
+  'Sleeve length': '袖丈',
+  'Skirt or pants': '下半身の形',
+  Shoes: '靴',
+  Legwear: 'レッグウェア',
+  'Clothing details': '服装の詳細',
+  Female: '女性',
+  Male: '男性',
+  Androgynous: '中性的',
+  Unspecified: '未指定',
+  Child: '子ども',
+  'Early teens': '10代前半',
+  'Late teens': '10代後半',
+  Twenties: '20代',
+  Thirties: '30代',
+  'Forties+': '40代以上',
+  Ageless: '年齢不詳',
+  Fair: '色白',
+  Light: '明るめ',
+  Medium: '中間',
+  Tan: '日焼け',
+  Deep: '濃いめ',
+  Custom: '自由入力',
+  'Bright friendly': '明るく親しみやすい',
+  'Quiet neat': '静かで整っている',
+  'Cool distant': 'クールで距離がある',
+  'Gentle soft': '柔らかく穏やか',
+  'Serious reliable': '真面目で頼れる',
+  'Mysterious fragile': '不思議で儚い',
+  'Energetic bold': '元気で大胆',
+  'Upright neat': '背筋が伸びて整っている',
+  'Natural relaxed': '自然で力が抜けている',
+  'Shy reserved': '控えめでおとなしい',
+  'Confident open': '自信があり開いている',
+  'Still quiet': '静かで動きが少ない',
+  'Soft smile': 'やわらかな微笑み',
+  'Calm neutral': '落ち着いた無表情',
+  'Serious focus': '真剣で集中',
+  'Cheerful smile': '明るい笑顔',
+  'Cool unfazed': '冷静で動じない',
+  Petite: '小柄',
+  Slender: '細身',
+  Average: '標準',
+  Athletic: '引き締まっている',
+  Muscular: '筋肉質',
+  Curvy: '丸みがある',
+  Short: '低め',
+  Tall: '高め',
+  Round: '丸型',
+  Oval: '卵型',
+  Heart: 'ハート型',
+  Square: '四角型',
+  Diamond: 'ひし形',
+  Long: '長め',
+  'Soft triangle': 'やわらかな三角形',
+  Straight: '直線的',
+  'Soft arch': 'ゆるいアーチ',
+  'High arch': '高いアーチ',
+  Thick: '太め',
+  Thin: '細め',
+  Sharp: '鋭い',
+  Small: '小さめ',
+  Button: 'ボタン鼻',
+  Rounded: '丸い',
+  Broad: '広め',
+  Soft: 'やわらかい',
+  Full: 'ふっくら',
+  Wide: '広い',
+  Smirk: '片笑い',
+  Serious: '真面目',
+  Black: '黒',
+  Brown: '茶',
+  Blonde: '金',
+  Silver: '銀',
+  White: '白',
+  Blue: '青',
+  Red: '赤',
+  Pink: 'ピンク',
+  Purple: '紫',
+  'Very short': 'かなり短い',
+  'Very long': 'かなり長い',
+  Wavy: 'ゆるいウェーブ',
+  Curly: 'カール',
+  Wild: 'ラフ',
+  Down: '下ろす',
+  Ponytail: 'ポニーテール',
+  'Twin tails': 'ツインテール',
+  Bun: 'お団子',
+  Braid: '編み込み',
+  'Half up': 'ハーフアップ',
+  Green: '緑',
+  Gold: '金',
+  Gentle: '穏やか',
+  Narrow: '細い',
+  Single: '一重',
+  Double: '二重',
+  None: 'なし',
+  standard: '標準',
+  Heavy: '重め',
+  'Side swept': '流し前髪',
+  Blunt: 'ぱっつん',
+  Military: '軍服',
+  School: '制服',
+  Casual: '私服',
+  Suit: 'スーツ',
+  Fantasy: 'ファンタジー',
+  Japanese: '和装',
+  Streetwear: 'ストリート',
+  Hoodie: 'パーカー',
+  Sports: 'スポーツ',
+  'Winter coat': '冬コート',
+  Workwear: '作業着',
+  Armor: '鎧',
+  Gothic: 'ゴシック',
+  'Formal dress': 'フォーマル',
+  'Idol stage': 'ステージ衣装',
+  Navy: 'ネイビー',
+  Gray: 'グレー',
+  Formal: 'フォーマル',
+  Practical: '実用的',
+  Elegant: '上品',
+  Rough: 'ラフ',
+  Cute: 'かわいい',
+  Anime: 'アニメ',
+  'Semi-realistic': 'セミリアル',
+  Manga: '漫画',
+  Painterly: '絵画調',
+  Establish: '導入',
+  Action: '動き',
+  Reaction: '反応',
+  Emphasis: '強調',
+  Transition: 'つなぎ',
+  Pause: '間',
+  Impact: 'インパクト',
+  Standard: '標準',
+  Large: '大',
+  Splash: 'スプラッシュ',
+  'AI auto': 'AI自動',
+  Gallery: 'ギャラリー',
+  'Full body': '全身',
+  'Half body': '半身',
+  'Close up': '寄り',
+  'Extreme close up': '極寄り',
+  Front: '正面',
+  Side: '横',
+  'Three quarter': '斜め',
+  'Bird eye': '俯瞰',
+  'Worm eye': '煽り',
+  'Dutch angle': 'ダッチアングル',
+  Secondary: '補助',
+  Left: '左',
+  Center: '中央',
+  Away: '背面',
+  '3/4 left': '左斜め',
+  '3/4 right': '右斜め',
+  Determined: '決意',
+  Calm: '落ち着き',
+  Angry: '怒り',
+  Sad: '悲しみ',
+  Surprised: '驚き',
+  'Standing firm': '立つ',
+  Attacking: '攻撃',
+  Defending: '防御',
+  Running: '走る',
+  Speech: '会話',
+  Thought: '心の声',
+  Narration: 'ナレーション',
+  Shout: '叫び',
+  Whisper: 'ささやき',
+  Top: '上',
+  Bottom: '下',
+  'Standard 4': '標準4コマ',
+  'Top wide 3': '上段ワイド3コマ',
+  'Standard 6': '標準6コマ',
+  'Dense 8': '密集8コマ',
+  'Climax 2': 'クライマックス2コマ',
+  'Splash 1': '1枚絵',
+  'Action 5': 'アクション5コマ',
+  'Battle 7': 'バトル7コマ',
+  'Main entity IDs': '主要キャラID',
+  'New chapter title': '新しい章タイトル',
+  'Untitled chapter': '無題の章',
+  'New episode title': '新しい話タイトル',
+  'Untitled episode': '無題の話',
+  'No location': '場所未設定',
+  Add: '追加',
+  English: '英語',
+  'AI improved': 'AI改善済み',
+  Horizontal: '横書き',
+  Vertical: '縦書き',
+  'Characters in panel': 'コマ内キャラ',
+  'Pick who appears first, then refine pose, facing, and effects per character.': 'まず登場キャラを決め、その後に向き・ポーズ・エフェクトを詰めます。',
+  'Placement first, then expression, pose, and effect.': 'まず配置を決め、その後に表情・ポーズ・エフェクトを詰めます。',
+  'These lines will be considered inside the generated panel art.': 'これらの行は生成画像のコマ内テキストとして扱われます。',
+  'These lines stay outside the generated panel art.': 'これらの行は生成画像の外側のテキストとして扱われます。',
+  Email: 'メールアドレス',
+  'Send magic link': 'マジックリンクを送信',
+  'Manual bearer token': '手動ベアラートークン',
+  'Magic link sent.': 'マジックリンクを送信しました。',
+  'Supabase client is not configured.': 'Supabase クライアントが設定されていません。',
+  'Production Console': '制作コンソール',
+  'Story, entity, page, balloon, billing.': 'ストーリー、キャラ、ページ、吹き出し、課金を管理します。',
 };
 
 function normalizeUiLanguage(value: string): UiLanguage {
@@ -498,6 +769,9 @@ function AuthScreen(props: {
   onManualTokenChange: (nextValue: string) => void;
   supabaseClient: SupabaseClient | null;
 }) {
+  const language = normalizeUiLanguage(
+    typeof window !== 'undefined' && window.localStorage.getItem(uiLanguageStorageKey) === 'en' ? 'en' : 'ja',
+  );
   const [email, setEmail] = useState('');
   const [notice, setNotice] = useState<NoticeState | null>(null);
   const [busy, setBusy] = useState(false);
@@ -506,7 +780,7 @@ function AuthScreen(props: {
   const submitMagicLink = async (event: FormEvent<HTMLFormElement>): Promise<void> => {
     event.preventDefault();
     if (props.supabaseClient === null) {
-      setNotice({ type: 'error', message: 'Supabase client is not configured.' });
+      setNotice({ type: 'error', message: translateUiString(language, 'Supabase client is not configured.') });
       return;
     }
 
@@ -516,7 +790,7 @@ function AuthScreen(props: {
       if (error !== null) {
         throw error;
       }
-      setNotice({ type: 'success', message: 'Magic link sent.' });
+      setNotice({ type: 'success', message: translateUiString(language, 'Magic link sent.') });
     } catch (error) {
       setNotice({ type: 'error', message: toMessage(error) });
     } finally {
@@ -528,25 +802,25 @@ function AuthScreen(props: {
     <div className="auth-shell">
       <div className="auth-card">
         <div className="eyebrow">Lyra</div>
-        <h1>Production Console</h1>
-        <p className="muted">Story, entity, page, balloon, billing.</p>
+        <h1>{translateUiString(language, 'Production Console')}</h1>
+        <p className="muted">{translateUiString(language, 'Story, entity, page, balloon, billing.')}</p>
         {notice !== null ? <NoticeBanner notice={notice} /> : null}
         {props.supabaseClient !== null ? (
           <form className="stack" onSubmit={submitMagicLink}>
             <label className="field">
-              <span>Email</span>
+              <span>{translateUiString(language, 'Email')}</span>
               <input value={email} onChange={(event) => setEmail(event.target.value)} type="email" required />
             </label>
             <button className="primary-button" disabled={busy} type="submit">
               {busy ? <LoaderCircle className="spin" size={16} /> : <KeyRound size={16} />}
-              Send magic link
+              {translateUiString(language, 'Send magic link')}
             </button>
           </form>
         ) : null}
         <div className="divider" />
         <div className="stack">
           <label className="field">
-            <span>Manual bearer token</span>
+            <span>{translateUiString(language, 'Manual bearer token')}</span>
             <textarea
               rows={6}
               value={draftToken}
@@ -560,7 +834,7 @@ function AuthScreen(props: {
             type="button"
           >
             <KeyRound size={16} />
-            Use token
+            {translateUiString(language, 'Use token')}
           </button>
         </div>
       </div>
@@ -1089,12 +1363,12 @@ function StudioShell(props: {
           <div className="brand-mark">L</div>
           <div>
             <div className="brand-title">Lyra</div>
-            <div className="brand-subtitle">production console</div>
+            <div className="brand-subtitle">{translateUiString(uiLanguage, 'production console')}</div>
           </div>
         </div>
         <section className="sidebar-section">
           <div className="section-header">
-            <h2>Works</h2>
+            <h2>{translateUiString(uiLanguage, 'Works')}</h2>
             <span className="badge">{worksQuery.data?.works.length ?? 0}</span>
           </div>
           <div className="stack gap-xs">
@@ -1113,7 +1387,7 @@ function StudioShell(props: {
         </section>
         <section className="sidebar-section">
           <div className="section-header">
-            <h2>New work</h2>
+            <h2>{translateUiString(uiLanguage, 'New work')}</h2>
           </div>
           <form
             className="stack"
@@ -1127,7 +1401,7 @@ function StudioShell(props: {
             }}
           >
             <label className="field">
-              <span>Title</span>
+              <span>{translateUiString(uiLanguage, 'Title')}</span>
               <input
                 required
                 value={newWorkDraft.title}
@@ -1135,7 +1409,7 @@ function StudioShell(props: {
               />
             </label>
             <label className="field">
-              <span>Genre</span>
+              <span>{translateUiString(uiLanguage, 'Genre')}</span>
               <input
                 value={newWorkDraft.genre}
                 onChange={(event) => setNewWorkDraft({ ...newWorkDraft, genre: event.target.value })}
@@ -1143,7 +1417,7 @@ function StudioShell(props: {
             </label>
             <button className="primary-button" disabled={busyAction === 'Create work'} type="submit">
               {busyAction === 'Create work' ? <LoaderCircle className="spin" size={16} /> : <Save size={16} />}
-              Create
+              {translateUiString(uiLanguage, 'Create')}
             </button>
           </form>
         </section>
@@ -1170,7 +1444,7 @@ function StudioShell(props: {
             </button>
             <select className="toolbar-select" value={uiLanguage} onChange={(event) => setUiLanguageStored(event.target.value)}>
               <option value="ja">日本語</option>
-              <option value="en">English</option>
+              <option value="en">{translateUiString(uiLanguage, 'English')}</option>
             </select>
             <button className="ghost-button" onClick={() => void props.onLogout()} type="button">
               <LogOut size={16} />
@@ -1192,7 +1466,7 @@ function StudioShell(props: {
                 <>
                   <PanelSection
                     title={selectedWork.title}
-                    subtitle={`status ${selectedWork.status}`}
+                    subtitle={uiLanguage === 'ja' ? `状態 ${translateUiString(uiLanguage, selectedWork.status)}` : `status ${selectedWork.status}`}
                     actions={
                       <button
                         className="secondary-button"
@@ -1308,7 +1582,7 @@ function StudioShell(props: {
                   >
                     <div className="story-tree">
                       <div className="tree-column">
-                        <h3>Chapters</h3>
+                        <h3>{translateUiString(uiLanguage, 'Chapters')}</h3>
                         <div className="stack gap-xs">
                           {chapters.map((chapter) => (
                             <button
@@ -1322,7 +1596,7 @@ function StudioShell(props: {
                               type="button"
                             >
                               <span>{chapter.order}</span>
-                              <strong>{chapter.title ?? 'Untitled chapter'}</strong>
+                              <strong>{chapter.title ?? translateUiString(uiLanguage, 'Untitled chapter')}</strong>
                             </button>
                           ))}
                         </div>
@@ -1349,7 +1623,7 @@ function StudioShell(props: {
                           />
                           <button className="ghost-button" type="submit">
                             <Save size={16} />
-                            Add chapter
+                            {translateUiString(uiLanguage, 'Add chapter')}
                           </button>
                         </form>
                       </div>
@@ -1401,7 +1675,7 @@ function StudioShell(props: {
                             </div>
                           </div>
                         ) : null}
-                        <h3>Episodes</h3>
+                        <h3>{translateUiString(uiLanguage, 'Episodes')}</h3>
                         <div className="stack gap-xs">
                           {episodes.map((episode) => (
                             <button
@@ -1411,7 +1685,7 @@ function StudioShell(props: {
                               type="button"
                             >
                               <span>{episode.order}</span>
-                              <strong>{episode.title ?? 'Untitled episode'}</strong>
+                              <strong>{episode.title ?? translateUiString(uiLanguage, 'Untitled episode')}</strong>
                             </button>
                           ))}
                         </div>
@@ -1439,7 +1713,7 @@ function StudioShell(props: {
                             />
                             <button className="ghost-button" type="submit">
                               <Save size={16} />
-                              Add episode
+                            {translateUiString(uiLanguage, 'Add episode')}
                             </button>
                           </form>
                         ) : null}
@@ -1581,7 +1855,7 @@ function StudioShell(props: {
                   >
                     <TextAreaField label="Instruction" rows={4} value={storyInstruction} onChange={setStoryInstruction} />
                     {storyImprovementMeta !== null && storyImprovementMeta.compiler_provider !== 'fallback' ? (
-                      <div className="muted small">{`AI improved / ${storyImprovementMeta.compiler_model ?? 'Story AI'}`}</div>
+                          <div className="muted small">{`${translateUiString(uiLanguage, 'AI improved')} / ${storyImprovementMeta.compiler_model ?? translateUiString(uiLanguage, 'Story AI')}`}</div>
                     ) : null}
                     <div className="stack">
                       <TextAreaField
@@ -1680,7 +1954,7 @@ function StudioShell(props: {
                           type="button"
                         >
                           <strong>{scene.order}</strong>
-                          <span>{scene.location ?? 'No location'}</span>
+                          <span>{scene.location ?? translateUiString(uiLanguage, 'No location')}</span>
                         </button>
                       ))}
                     </div>
@@ -1710,7 +1984,7 @@ function StudioShell(props: {
                         type="button"
                       >
                         <Save size={16} />
-                        Add
+                            {translateUiString(uiLanguage, 'Add')}
                       </button>
                       {selectedScene !== null ? (
                         <button
@@ -2236,7 +2510,11 @@ function StudioShell(props: {
 
                       <PanelSection
                         title={`Page ${selectedPage.page_number}`}
-                        subtitle={`dialogue ${selectedPage.dialogue_mode}`}
+                        subtitle={
+                          uiLanguage === 'ja'
+                            ? `セリフ ${translateUiString(uiLanguage, selectedPage.dialogue_mode === 'image_baked' ? 'Image baked' : selectedPage.dialogue_mode === 'balloon_only' ? 'Balloon only' : 'Mixed')}`
+                            : `dialogue ${selectedPage.dialogue_mode}`
+                        }
                         className="page-section-generate"
                         collapsible
                         actions={
@@ -2311,7 +2589,7 @@ function StudioShell(props: {
                         actions={
                           <div className="toolbar">
                             <label className="field" style={{ minWidth: '14rem' }}>
-                              <span>Template</span>
+                              <span>{translateUiString(uiLanguage, 'Template')}</span>
                               <select value={frameTemplateId} onChange={(event) => setFrameTemplateId(event.target.value)}>
                                 {FRAME_TEMPLATE_OPTIONS.map(([value, label]) => (
                                   <option key={value} value={value}>
@@ -2531,7 +2809,7 @@ function StudioShell(props: {
                       </PanelSection>
                       </div>
 
-                      <PanelSection title="Export / 保存" className="page-section-export" collapsible>
+                      <PanelSection title="Export" className="page-section-export" collapsible>
                         <div className="form-grid three">
                           <SelectField
                             label="Format"
@@ -2618,7 +2896,7 @@ function StudioShell(props: {
                             type="button"
                           >
                             <Sparkles size={16} />
-                            Auto
+                            {translateUiString(uiLanguage, 'Auto')}
                           </button>
                         }
                       >
@@ -2687,7 +2965,7 @@ function StudioShell(props: {
                             type="button"
                           >
                             <Save size={16} />
-                            Create
+                            {translateUiString(uiLanguage, 'Create')}
                           </button>
                           {selectedBalloon !== null ? (
                             <>
@@ -2922,6 +3200,7 @@ function CharacterStructuredFieldsEditor(props: {
   value: CharacterStructuredFieldsDraft;
   onChange: (nextValue: CharacterStructuredFieldsDraft) => void;
 }) {
+  const language = useContext(UiLanguageContext);
   const update = (patch: Partial<CharacterStructuredFieldsDraft>): void => {
     props.onChange({
       ...props.value,
@@ -2932,7 +3211,7 @@ function CharacterStructuredFieldsEditor(props: {
   return (
     <div className="character-fields-stack">
       <div className="character-fields-group">
-        <div className="character-fields-group-title">Identity</div>
+        <div className="character-fields-group-title">{translateUiString(language, 'Identity')}</div>
         <div className="form-grid three compact-grid">
           <SelectField label="Gender" value={props.value.gender_expression} onChange={(value) => update({ gender_expression: value })} options={CHARACTER_GENDER_OPTIONS} />
           <SelectField label="Age range" value={props.value.age_range} onChange={(value) => update({ age_range: value })} options={CHARACTER_AGE_RANGE_OPTIONS} />
@@ -2947,7 +3226,7 @@ function CharacterStructuredFieldsEditor(props: {
       </div>
 
       <div className="character-fields-group">
-        <div className="character-fields-group-title">Anchors</div>
+        <div className="character-fields-group-title">{translateUiString(language, 'Anchors')}</div>
         <div className="form-grid two compact-grid">
           <InputField label="Visual anchor" value={props.value.visual_anchor} onChange={(value) => update({ visual_anchor: value })} />
           <InputField label="Signature feature" value={props.value.signature_feature} onChange={(value) => update({ signature_feature: value })} />
@@ -2965,7 +3244,7 @@ function CharacterStructuredFieldsEditor(props: {
       </div>
 
       <div className="character-fields-group">
-        <div className="character-fields-group-title">Face</div>
+        <div className="character-fields-group-title">{translateUiString(language, 'Face')}</div>
         <div className="form-grid four compact-grid">
           <SelectField label="Face shape" value={props.value.face_shape} onChange={(value) => update({ face_shape: value })} options={CHARACTER_FACE_SHAPE_OPTIONS} />
           <SelectField label="Eyebrow shape" value={props.value.eyebrow_shape} onChange={(value) => update({ eyebrow_shape: value })} options={CHARACTER_EYEBROW_SHAPE_OPTIONS} />
@@ -2983,7 +3262,7 @@ function CharacterStructuredFieldsEditor(props: {
       </div>
 
       <div className="character-fields-group">
-        <div className="character-fields-group-title">Hair</div>
+        <div className="character-fields-group-title">{translateUiString(language, 'Hair')}</div>
         <div className="form-grid five compact-grid">
           <SelectField label="Hair color" value={props.value.hair_color} onChange={(value) => update({ hair_color: value })} options={CHARACTER_HAIR_COLOR_OPTIONS} />
           <SelectField label="Hair length" value={props.value.hair_length} onChange={(value) => update({ hair_length: value })} options={CHARACTER_HAIR_LENGTH_OPTIONS} />
@@ -2999,7 +3278,7 @@ function CharacterStructuredFieldsEditor(props: {
       </div>
 
       <div className="character-fields-group">
-        <div className="character-fields-group-title">Outfit</div>
+        <div className="character-fields-group-title">{translateUiString(language, 'Outfit')}</div>
         <div className="form-grid three compact-grid">
           <SelectField label="Category" value={props.value.clothing_category} onChange={(value) => update({ clothing_category: value })} options={CHARACTER_CLOTHING_CATEGORY_OPTIONS} />
           <SelectField label="Main color" value={props.value.clothing_main_color} onChange={(value) => update({ clothing_main_color: value })} options={CHARACTER_CLOTHING_COLOR_OPTIONS} />
@@ -3025,6 +3304,7 @@ function PanelAssignmentEditor(props: {
   onAddEntity: (entityId: string) => void;
   onChange: (nextValue: PanelAssignmentDraft[]) => void;
 }) {
+  const language = useContext(UiLanguageContext);
   const updateAssignment = (
     entityId: string,
     patch: Partial<PanelAssignmentDraft>,
@@ -3044,19 +3324,19 @@ function PanelAssignmentEditor(props: {
     <div className="stack">
       <div className="section-header">
         <div>
-          <h3>Characters in panel</h3>
-          <div className="muted">Pick who appears first, then refine pose, facing, and effects per character.</div>
+          <h3>{translateUiString(language, 'Characters in panel')}</h3>
+          <div className="muted">{translateUiString(language, 'Pick who appears first, then refine pose, facing, and effects per character.')}</div>
         </div>
       </div>
       <div className="toolbar">
         <label className="field" style={{ minWidth: '16rem' }}>
-          <span>Add character</span>
+          <span>{translateUiString(language, 'Add character')}</span>
           <select
             value={props.pendingEntityId}
             onChange={(event) => props.onPendingEntityIdChange(event.target.value)}
           >
             {props.availableEntities.length === 0 ? (
-              <option value="">No more entities</option>
+              <option value="">{translateUiString(language, 'No more entities')}</option>
             ) : (
               props.availableEntities.map((entity) => (
                 <option key={entity.id} value={entity.id}>
@@ -3073,11 +3353,11 @@ function PanelAssignmentEditor(props: {
           type="button"
         >
           <Save size={16} />
-          Add to panel
+          {translateUiString(language, 'Add to panel')}
         </button>
       </div>
       {props.assignments.length === 0 ? (
-        <div className="muted">No characters assigned yet.</div>
+        <div className="muted">{translateUiString(language, 'No characters assigned yet.')}</div>
       ) : (
         props.assignments.map((assignment) => {
           const entity = props.allEntities.find((entry) => entry.id === assignment.entity_id);
@@ -3087,7 +3367,7 @@ function PanelAssignmentEditor(props: {
               <div className="section-header">
                 <div>
                   <h3>{entity?.name ?? assignment.entity_id}</h3>
-                  <div className="muted">Placement first, then expression, pose, and effect.</div>
+                  <div className="muted">{translateUiString(language, 'Placement first, then expression, pose, and effect.')}</div>
                 </div>
                 <button
                   className="ghost-button danger"
@@ -3195,6 +3475,7 @@ function PanelDialogueEditor(props: {
   entities: EntityRecord[];
   onChange: (nextValue: PanelDialogueDraft[]) => void;
 }) {
+  const language = useContext(UiLanguageContext);
   const updateDialogue = (index: number, patch: Partial<PanelDialogueDraft>): void => {
     props.onChange(
       props.dialogues.map((dialogue, currentIndex) =>
@@ -3223,20 +3504,20 @@ function PanelDialogueEditor(props: {
     <div className="stack">
       <div className="section-header">
         <div>
-          <h3>Dialogue</h3>
+          <h3>{translateUiString(language, 'Dialogue')}</h3>
           <div className="muted">
             {props.dialogueInPanel
-              ? 'These lines will be considered inside the generated panel art.'
-              : 'These lines stay outside the generated panel art.'}
+              ? translateUiString(language, 'These lines will be considered inside the generated panel art.')
+              : translateUiString(language, 'These lines stay outside the generated panel art.')}
           </div>
         </div>
         <button className="ghost-button" onClick={addDialogue} type="button">
           <Save size={16} />
-          Add line
+          {translateUiString(language, 'Add line')}
         </button>
       </div>
       {props.dialogues.length === 0 ? (
-        <div className="muted">No dialogue lines yet.</div>
+        <div className="muted">{translateUiString(language, 'No dialogue lines yet.')}</div>
       ) : (
         props.dialogues.map((dialogue, index) => (
           <div key={`${dialogue.entity_id}-${index}`} className="panel-section compact">
@@ -3250,12 +3531,12 @@ function PanelDialogueEditor(props: {
             </div>
             <div className="form-grid three">
               <label className="field">
-                <span>Speaker</span>
+                  <span>{translateUiString(language, 'Speaker')}</span>
                 <select
                   value={dialogue.entity_id}
                   onChange={(event) => updateDialogue(index, { entity_id: event.target.value })}
                 >
-                  <option value="">Narration / none</option>
+                  <option value="">{translateUiString(language, 'Narration / none')}</option>
                   {props.entities.map((entity) => (
                     <option key={entity.id} value={entity.id}>
                       {entity.name}
@@ -3292,9 +3573,10 @@ function PanelDialogueEditor(props: {
 }
 
 function Metric(props: { label: string; value: string }) {
+  const language = useContext(UiLanguageContext);
   return (
     <div className="metric">
-      <span className="muted small">{props.label}</span>
+      <span className="muted small">{translateUiString(language, props.label)}</span>
       <strong>{props.value}</strong>
     </div>
   );
