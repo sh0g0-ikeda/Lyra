@@ -62,7 +62,7 @@ describe('ModeSelector', () => {
       });
     });
 
-    it('regenerate は high 品質と22crになりplannerを使う', () => {
+    it('regenerate standard は medium 品質で planner を強制しない', () => {
       const result = selector.selectProfile({
         entityCount: 1,
         panelCount: 3,
@@ -72,7 +72,23 @@ describe('ModeSelector', () => {
       expect(result).toEqual({
         requestKind: 'regenerate',
         mode: 'standard',
-        quality: 'high',
+        quality: 'medium',
+        creditCost: 1,
+        requiresPlanner: false,
+      });
+    });
+
+    it('regenerate thinking は complexity に応じて planner を使う', () => {
+      const result = selector.selectProfile({
+        entityCount: 5,
+        panelCount: 3,
+        requestKind: 'regenerate',
+      });
+
+      expect(result).toEqual({
+        requestKind: 'regenerate',
+        mode: 'thinking',
+        quality: 'medium',
         creditCost: 1,
         requiresPlanner: true,
       });

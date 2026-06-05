@@ -260,6 +260,31 @@ a {
   gap: 10px;
 }
 
+.chip-list-toolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 4px 10px;
+  border: 1px solid rgba(229, 199, 107, 0.12);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.03);
+  color: #d9d9d9;
+}
+
 .advanced-disclosure summary {
   cursor: pointer;
   list-style: none;
@@ -442,6 +467,10 @@ a {
 
 .small {
   font-size: 0.78rem;
+}
+
+.error-text {
+  color: #ff8f8f;
 }
 
 .eyebrow {
@@ -742,18 +771,50 @@ a {
 .story-tree {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 16px;
+  gap: 14px;
 }
 
 .tree-column {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
 }
 
 .tree-column h3 {
   margin: 0;
   font-size: 0.86rem;
+}
+
+.story-create-form,
+.story-editor-compact {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.story-inline-grid {
+  display: grid;
+  gap: 8px;
+  align-items: end;
+}
+
+.story-inline-grid-create {
+  grid-template-columns: minmax(0, 1fr) 120px;
+}
+
+.story-inline-grid-chapter {
+  grid-template-columns: minmax(0, 1.5fr) 120px 160px;
+}
+
+.story-inline-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.story-create-form .ghost-button,
+.story-inline-actions .ghost-button {
+  min-height: 42px;
 }
 
 .tree-item-row {
@@ -1321,6 +1382,25 @@ a {
   color: #88d989;
 }
 
+.processing-hint {
+  margin-top: 10px;
+  border-radius: 8px;
+  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.84rem;
+  border: 1px solid rgba(0, 188, 212, 0.18);
+  background: rgba(0, 188, 212, 0.08);
+  color: #9de9f3;
+}
+
+.processing-hint.queued {
+  border-color: rgba(255, 193, 7, 0.18);
+  background: rgba(255, 193, 7, 0.08);
+  color: #ffd56a;
+}
+
 .checkbox-row {
   display: inline-flex;
   align-items: center;
@@ -1485,6 +1565,8 @@ details.stack summary {
   }
 
   .story-tree,
+  .story-inline-grid-create,
+  .story-inline-grid-chapter,
   .form-grid.two,
   .form-grid.three,
   .metric-grid,

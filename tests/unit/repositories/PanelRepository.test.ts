@@ -186,6 +186,17 @@ describe('PostgresPanelRepository', () => {
     expect(client.queries[1]).toContain('works.user_id = $2');
   });
 
+  it('compacts later panel orders after a panel is deleted', async () => {
+    const client = new QueryCapturingClient();
+    const repository = new PostgresPanelRepository(client);
+
+    await repository.compactPanelOrdersAfterDelete('page-1', 'user-1', 2);
+
+    expect(client.queries[0]).toContain('UPDATE panels');
+    expect(client.queries[0]).toContain('panels."order" > $3');
+    expect(client.values).toEqual(['page-1', 'user-1', 2]);
+  });
+
   it('legacy skeleton entity payload without new optional keys is still readable', async () => {
     const client = new QueryCapturingClient();
     client.query = async function <T extends QueryResultRow = QueryResultRow>(

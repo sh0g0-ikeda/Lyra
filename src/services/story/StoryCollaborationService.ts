@@ -1,5 +1,13 @@
 import { STORY_AI_LIMITS } from '../../domain/constants/storyAi.js';
+import { canonicalizeEntityMentionsInText } from '../../domain/entityAliases.js';
+import {
+  buildFullStoryDraftFromStructuredSections,
+  normalizeEpisodeStoryInput,
+} from '../../domain/episodeStoryInput.js';
 import { NotFoundError, ValidationError } from '../../domain/errors/index.js';
+import {
+  STORY_EPISODE_IMPROVEMENT_WRITER_MODEL,
+} from '../../domain/constants/storyAi.js';
 import { describeAppLanguage } from '../../domain/types/language.js';
 import type {
   StoryCollaborationInput,
@@ -12,8 +20,8 @@ import type {
   StoryEpisodeImprovementResult,
 } from '../../domain/types/storyAi.js';
 import type { StoryRepository } from '../../repositories/StoryRepository.js';
-import type { StoryAiClientPort } from '../../infrastructure/anthropic/AnthropicStoryAiClient.js';
 import type { StoryEpisodeImprovementPlannerPort } from './StoryEpisodeImprovementPlanner.js';
+import type { StoryAiClientPort } from './StoryAiClientPort.js';
 
 export interface StoryCollaborationServicePort {
   collaborate(userId: string, input: StoryCollaborationInput): Promise<AsyncIterable<string>>;
@@ -58,6 +66,7 @@ export class StoryCollaborationService implements StoryCollaborationServicePort 
     input: StoryEpisodeImprovementInput,
   ): Promise<StoryEpisodeImprovementResult> {
     ensureEpisodeImprovementFitsLimits(input);
+    const normalizedBaseDraft = normalizeEpisodeDraftFields(input.baseDraft);
 
     const context = await this.storyRepository.findEpisodeImprovementContextByIdAndUserId(
       input.episodeId,
@@ -73,13 +82,18 @@ export class StoryCollaborationService implements StoryCollaborationServicePort 
       if (this.storyEpisodeImprovementPlanner === undefined) {
         const directDraft = await this.storyAiClient.improveEpisodeDraft({
           systemPrompt: buildEpisodeImprovementWriterSystemPrompt(input.language),
-          userPrompt: buildEpisodeImprovementWriterUserPrompt(context, input, null, null),
+          userPrompt: buildEpisodeImprovementWriterUserPrompt(
+            context,
+            { ...input, baseDraft: normalizedBaseDraft },
+            null,
+            null,
+          ),
         });
 
         return {
-          draft: normalizeEpisodeDraftFields(directDraft),
-          compilerProvider: 'anthropic',
-          compilerModel: 'claude-sonnet-4-20250514',
+          draft: projectEpisodeDraftToMode(input.baseDraft.storyInputMode, directDraft),
+          compilerProvider: 'openai',
+          compilerModel: STORY_EPISODE_IMPROVEMENT_WRITER_MODEL,
           compilerPromptVersion: directFallbackPromptVersion,
           compilerError: null,
         };
@@ -88,21 +102,26 @@ export class StoryCollaborationService implements StoryCollaborationServicePort 
       const plan = await this.storyEpisodeImprovementPlanner.planEpisodeImprovement({
         instruction: input.instruction,
         language: input.language,
-        baseDraft: input.baseDraft,
+        baseDraft: normalizedBaseDraft,
         context,
       });
 
-      const firstPass = normalizeEpisodeDraftFields(
+      const firstPass = normalizeStructuredWriterOutput(
         await this.storyAiClient.improveEpisodeDraft({
           systemPrompt: buildEpisodeImprovementWriterSystemPrompt(input.language),
-          userPrompt: buildEpisodeImprovementWriterUserPrompt(context, input, plan.plan, null),
+          userPrompt: buildEpisodeImprovementWriterUserPrompt(
+            context,
+            { ...input, baseDraft: normalizedBaseDraft },
+            plan.plan,
+            null,
+          ),
         }),
       );
 
       const audit = await this.storyEpisodeImprovementPlanner.auditEpisodeImprovement({
         instruction: input.instruction,
         language: input.language,
-        baseDraft: input.baseDraft,
+        baseDraft: normalizedBaseDraft,
         context,
         plan: plan.plan,
         draft: firstPass,
@@ -110,12 +129,12 @@ export class StoryCollaborationService implements StoryCollaborationServicePort 
 
       const finalDraft =
         audit.audit.verdict === 'revise' && hasActionableAuditNotes(audit.audit)
-          ? normalizeEpisodeDraftFields(
+          ? normalizeStructuredWriterOutput(
               await this.storyAiClient.improveEpisodeDraft({
                 systemPrompt: buildEpisodeImprovementWriterSystemPrompt(input.language),
                 userPrompt: buildEpisodeImprovementWriterUserPrompt(
                   context,
-                  input,
+                  { ...input, baseDraft: normalizedBaseDraft },
                   plan.plan,
                   audit.audit,
                 ),
@@ -124,9 +143,9 @@ export class StoryCollaborationService implements StoryCollaborationServicePort 
           : firstPass;
 
       return {
-        draft: finalDraft,
-        compilerProvider: 'hybrid',
-        compilerModel: `claude-sonnet-4-20250514 + ${plan.compilerModel}`,
+        draft: projectEpisodeDraftToMode(input.baseDraft.storyInputMode, finalDraft),
+        compilerProvider: 'openai',
+        compilerModel: `${STORY_EPISODE_IMPROVEMENT_WRITER_MODEL} + ${plan.compilerModel}`,
         compilerPromptVersion: 'story_episode_improve_v2',
         compilerError:
           audit.audit.verdict === 'revise' && hasActionableAuditNotes(audit.audit)
@@ -137,19 +156,24 @@ export class StoryCollaborationService implements StoryCollaborationServicePort 
       try {
         const directDraft = await this.storyAiClient.improveEpisodeDraft({
           systemPrompt: buildEpisodeImprovementWriterSystemPrompt(input.language),
-          userPrompt: buildEpisodeImprovementWriterUserPrompt(context, input, null, null),
+          userPrompt: buildEpisodeImprovementWriterUserPrompt(
+            context,
+            { ...input, baseDraft: normalizedBaseDraft },
+            null,
+            null,
+          ),
         });
 
         return {
-          draft: normalizeEpisodeDraftFields(directDraft),
-          compilerProvider: 'anthropic',
-          compilerModel: 'claude-sonnet-4-20250514',
+          draft: projectEpisodeDraftToMode(input.baseDraft.storyInputMode, directDraft),
+          compilerProvider: 'openai',
+          compilerModel: STORY_EPISODE_IMPROVEMENT_WRITER_MODEL,
           compilerPromptVersion: directFallbackPromptVersion,
           compilerError: error instanceof Error ? error.message : 'Story planning failed',
         };
       } catch (writerError) {
         return {
-          draft: normalizeEpisodeDraftFields(input.baseDraft),
+          draft: projectEpisodeDraftToMode(input.baseDraft.storyInputMode, normalizedBaseDraft),
           compilerProvider: 'fallback',
           compilerModel: null,
           compilerPromptVersion: directFallbackPromptVersion,
@@ -219,19 +243,14 @@ function buildEpisodeImprovementWriterUserPrompt(
   plan: StoryEpisodeImprovementPlan | null,
   audit: StoryEpisodeImprovementAudit | null,
 ): string {
+  const storedEpisodeDraft = buildStoredEpisodeDraftFields(context);
+
   return [
     `Instruction:\n${input.instruction}`,
     '',
     `Current editable draft:\n${formatEpisodeDraftFields(input.baseDraft)}`,
     '',
-    `Current stored episode:\n${formatEpisodeDraftFields({
-      title: context.episodeTitle,
-      purpose: context.episodePurpose,
-      introduction: context.introduction,
-      middle: context.middle,
-      climax: context.climax,
-      endingHook: context.endingHook,
-    })}`,
+    buildStoredEpisodePromptSection(input.baseDraft, storedEpisodeDraft),
     '',
     `Work context:\n${formatEpisodeImprovementContext(context)}`,
     '',
@@ -245,7 +264,36 @@ function buildEpisodeImprovementWriterUserPrompt(
     .join('\n');
 }
 
+function buildStoredEpisodeDraftFields(context: StoryEpisodeImprovementContext): StoryEpisodeDraftFields {
+  const canonicalize = (value: string | null): string | null =>
+    canonicalizeEntityMentionsInText(value, context.entities);
+
+  return {
+    title: canonicalize(context.episodeTitle),
+    purpose: canonicalize(context.episodePurpose),
+    storyInputMode: 'structured',
+    storyFullDraft: null,
+    introduction: canonicalize(context.introduction),
+    middle: canonicalize(context.middle),
+    climax: canonicalize(context.climax),
+    endingHook: canonicalize(context.endingHook),
+  };
+}
+
+function buildStoredEpisodePromptSection(
+  baseDraft: StoryEpisodeDraftFields,
+  storedDraft: StoryEpisodeDraftFields,
+): string {
+  if (episodeDraftsHaveSameEditableContent(baseDraft, storedDraft)) {
+    return 'Current stored episode: same as current editable draft.';
+  }
+
+  return `Current stored episode:\n${formatEpisodeDraftFields(storedDraft)}`;
+}
+
 function formatTargetSummary(target: StoryCollaborationTarget): string {
+  const canonicalize = (value: string | null): string | null =>
+    canonicalizeEntityMentionsInText(value, target.entities);
   const lines: string[] = [
     `Work: ${target.workTitle}`,
   ];
@@ -267,20 +315,24 @@ function formatTargetSummary(target: StoryCollaborationTarget): string {
       continue;
     }
 
-    lines.push(`${key}: ${renderedValue}`);
+    lines.push(`${key}: ${canonicalize(renderedValue) ?? renderedValue}`);
   }
 
   if (target.entities.length > 0) {
     const visibleEntities = target.entities.slice(0, 20);
     lines.push(
       `Entities: ${visibleEntities
-        .map((entity) => `${entity.name} (${entity.entityType}${entity.freeDescription === null ? '' : `, ${entity.freeDescription}`})`)
+        .map((entity) => `${entity.name} (${entity.entityType}${entity.freeDescription === null ? '' : `, ${entity.freeDescription}`}${entity.aliases.length === 0 ? '' : `, aliases: ${entity.aliases.join(', ')}`})`)
         .join(' / ')}`,
     );
   }
 
   if (target.sceneSummaries.length > 0) {
-    lines.push(`Scenes: ${target.sceneSummaries.join(' / ')}`);
+    lines.push(
+      `Scenes: ${target.sceneSummaries
+        .map((scene) => canonicalizeEntityMentionsInText(scene, target.entities) ?? scene)
+        .join(' / ')}`,
+    );
   }
 
   return lines.join('\n');
@@ -290,6 +342,8 @@ function formatEpisodeDraftFields(draft: StoryEpisodeDraftFields): string {
   return [
     `Title: ${draft.title ?? '(none)'}`,
     `Purpose: ${draft.purpose ?? '(none)'}`,
+    `Story input mode: ${draft.storyInputMode}`,
+    `Full story draft: ${draft.storyFullDraft ?? '(none)'}`,
     `Introduction: ${draft.introduction ?? '(none)'}`,
     `Middle: ${draft.middle ?? '(none)'}`,
     `Climax: ${draft.climax ?? '(none)'}`,
@@ -297,22 +351,42 @@ function formatEpisodeDraftFields(draft: StoryEpisodeDraftFields): string {
   ].join('\n');
 }
 
+function episodeDraftsHaveSameEditableContent(
+  left: StoryEpisodeDraftFields,
+  right: StoryEpisodeDraftFields,
+): boolean {
+  return (
+    normalizeComparableDraftField(left.title) === normalizeComparableDraftField(right.title) &&
+    normalizeComparableDraftField(left.purpose) === normalizeComparableDraftField(right.purpose) &&
+    normalizeComparableDraftField(left.introduction) === normalizeComparableDraftField(right.introduction) &&
+    normalizeComparableDraftField(left.middle) === normalizeComparableDraftField(right.middle) &&
+    normalizeComparableDraftField(left.climax) === normalizeComparableDraftField(right.climax) &&
+    normalizeComparableDraftField(left.endingHook) === normalizeComparableDraftField(right.endingHook)
+  );
+}
+
+function normalizeComparableDraftField(value: string | null): string {
+  return value?.replace(/\s+/gu, ' ').trim() ?? '';
+}
+
 function formatEpisodeImprovementContext(context: StoryEpisodeImprovementContext): string {
+  const canonicalize = (value: string | null): string | null =>
+    canonicalizeEntityMentionsInText(value, context.entities);
   return [
     `Work: ${context.workTitle}`,
     `Genre: ${context.workGenre ?? '(none)'}`,
-    `World setting: ${context.worldSetting ?? '(none)'}`,
-    `Theme: ${context.theme ?? '(none)'}`,
-    `Overall flow: ${context.overallFlow ?? '(none)'}`,
-    `Chapter: ${[context.chapterTitle, context.chapterPurpose].filter((value) => value !== null && value.length > 0).join(' / ') || '(none)'}`,
-    `Chapter arc: ${[context.chapterStartingState, context.chapterEndingState, context.chapterEmotionCurve].filter((value) => value !== null && value.length > 0).join(' / ') || '(none)'}`,
+    `World setting: ${canonicalize(context.worldSetting) ?? '(none)'}`,
+    `Theme: ${canonicalize(context.theme) ?? '(none)'}`,
+    `Overall flow: ${canonicalize(context.overallFlow) ?? '(none)'}`,
+    `Chapter: ${[canonicalize(context.chapterTitle), canonicalize(context.chapterPurpose)].filter((value) => value !== null && value.length > 0).join(' / ') || '(none)'}`,
+    `Chapter arc: ${[canonicalize(context.chapterStartingState), canonicalize(context.chapterEndingState), canonicalize(context.chapterEmotionCurve)].filter((value) => value !== null && value.length > 0).join(' / ') || '(none)'}`,
     `Estimated pages: ${context.estimatedPages}`,
     `Entities: ${
-      context.entities.map((entity) => `${entity.name} (${entity.entityType}${entity.freeDescription === null ? '' : `, ${entity.freeDescription}`})`).join(' / ') || '(none)'
+      context.entities.map((entity) => `${entity.name} (${entity.entityType}${entity.freeDescription === null ? '' : `, ${entity.freeDescription}`}${entity.aliases.length === 0 ? '' : `, aliases: ${entity.aliases.join(', ')}`})`).join(' / ') || '(none)'
     }`,
-    `Scenes: ${context.sceneSummaries.join(' / ') || '(none)'}`,
-    `Other chapters: ${context.chapterSummaries.join(' / ') || '(none)'}`,
-    `Other episodes: ${context.siblingEpisodeSummaries.join(' / ') || '(none)'}`,
+    `Scenes: ${context.sceneSummaries.map((scene) => canonicalizeEntityMentionsInText(scene, context.entities) ?? scene).join(' / ') || '(none)'}`,
+    `Other chapters: ${context.chapterSummaries.map((summary) => canonicalize(summary) ?? summary).join(' / ') || '(none)'}`,
+    `Other episodes: ${context.siblingEpisodeSummaries.map((summary) => canonicalize(summary) ?? summary).join(' / ') || '(none)'}`,
   ].join('\n');
 }
 
@@ -408,6 +482,7 @@ function ensureEpisodeImprovementFitsLimits(input: StoryEpisodeImprovementInput)
   const baseDraftLength =
     (input.baseDraft.title?.length ?? 0) +
     (input.baseDraft.purpose?.length ?? 0) +
+    (input.baseDraft.storyFullDraft?.length ?? 0) +
     (input.baseDraft.introduction?.length ?? 0) +
     (input.baseDraft.middle?.length ?? 0) +
     (input.baseDraft.climax?.length ?? 0) +
@@ -422,13 +497,76 @@ function ensureEpisodeImprovementFitsLimits(input: StoryEpisodeImprovementInput)
 }
 
 function normalizeEpisodeDraftFields(draft: StoryEpisodeDraftFields): StoryEpisodeDraftFields {
+  const normalizedStoryInput = normalizeEpisodeStoryInput({
+    storyInputMode: draft.storyInputMode,
+    purpose: draft.purpose,
+    introduction: draft.introduction,
+    middle: draft.middle,
+    climax: draft.climax,
+    endingHook: draft.endingHook,
+    storyFullDraft: draft.storyFullDraft,
+  });
+
   return {
     title: normalizeNullableField(draft.title, 200),
-    purpose: normalizeNullableField(draft.purpose, 2000),
-    introduction: normalizeNullableField(draft.introduction, 2000),
-    middle: normalizeNullableField(draft.middle, 2000),
-    climax: normalizeNullableField(draft.climax, 2000),
-    endingHook: normalizeNullableField(draft.endingHook, 2000),
+    purpose: normalizeNullableField(normalizedStoryInput.purpose, 2000),
+    storyInputMode: normalizedStoryInput.storyInputMode,
+    storyFullDraft: normalizeNullableField(normalizedStoryInput.storyFullDraft, 8000),
+    introduction: normalizeNullableField(normalizedStoryInput.normalizedIntroduction, 2000),
+    middle: normalizeNullableField(normalizedStoryInput.normalizedMiddle, 2000),
+    climax: normalizeNullableField(normalizedStoryInput.normalizedClimax, 2000),
+    endingHook: normalizeNullableField(normalizedStoryInput.normalizedEndingHook, 2000),
+  };
+}
+
+function normalizeStructuredWriterOutput(
+  draft: Pick<
+    StoryEpisodeDraftFields,
+    'title' | 'purpose' | 'introduction' | 'middle' | 'climax' | 'endingHook'
+  >,
+): StoryEpisodeDraftFields {
+  return normalizeEpisodeDraftFields({
+    ...draft,
+    storyInputMode: 'structured',
+    storyFullDraft: null,
+  });
+}
+
+function projectEpisodeDraftToMode(
+  storyInputMode: StoryEpisodeDraftFields['storyInputMode'],
+  draft: Pick<
+    StoryEpisodeDraftFields,
+    'title' | 'purpose' | 'introduction' | 'middle' | 'climax' | 'endingHook'
+  >,
+): StoryEpisodeDraftFields {
+  const normalizedStructuredDraft = normalizeEpisodeDraftFields({
+    ...draft,
+    storyInputMode: 'structured',
+    storyFullDraft: null,
+  });
+
+  if (storyInputMode === 'full') {
+    return {
+      title: normalizedStructuredDraft.title,
+      purpose: normalizedStructuredDraft.purpose,
+      storyInputMode: 'full',
+      storyFullDraft: buildFullStoryDraftFromStructuredSections({
+        introduction: normalizedStructuredDraft.introduction,
+        middle: normalizedStructuredDraft.middle,
+        climax: normalizedStructuredDraft.climax,
+        endingHook: normalizedStructuredDraft.endingHook,
+      }),
+      introduction: null,
+      middle: null,
+      climax: null,
+      endingHook: null,
+    };
+  }
+
+  return {
+    ...normalizedStructuredDraft,
+    storyInputMode: 'structured',
+    storyFullDraft: null,
   };
 }
 

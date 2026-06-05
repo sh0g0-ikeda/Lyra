@@ -243,8 +243,8 @@ async function updatePageFrameLayoutConfig(
     UPDATE pages
     SET layout_config = (COALESCE(pages.layout_config, '{}'::jsonb) - 'template_id')
         || jsonb_build_object(
-          'type', $3,
-          'panel_count', $4,
+          'type', $3::text,
+          'panel_count', $4::int,
           'frame_definitions', $5::jsonb
         )
         || CASE

@@ -7,6 +7,10 @@ import type { EntityRepository } from '../../repositories/EntityRepository.js';
 import type { PageRepository } from '../../repositories/PageRepository.js';
 import { ModeSelector } from './ModeSelector.js';
 import type { PageGenerationQueuePort } from './PageGenerationQueue.js';
+import {
+  NoopPageGenerationRecoveryService,
+  type PageGenerationRecoveryServicePort,
+} from './PageGenerationRecoveryService.js';
 
 export interface EnqueuePageGenerationResult {
   jobId: string;
@@ -28,12 +32,15 @@ export class PageGenerationService implements PageGenerationServicePort {
     private readonly creditService: CreditServicePort,
     private readonly pageGenerationQueue: PageGenerationQueuePort,
     private readonly modeSelector: ModeSelector,
+    private readonly recoveryService: PageGenerationRecoveryServicePort = new NoopPageGenerationRecoveryService(),
   ) {}
 
   public async enqueuePageGeneration(
     userId: string,
     pageId: string,
   ): Promise<EnqueuePageGenerationResult> {
+    await this.recoveryService.recoverStaleJobsForPage(userId, pageId);
+
     const page = await this.pageRepository.findGenerationContextByIdAndUserId(pageId, userId);
     if (page === null) {
       throw new NotFoundError('Page not found');
@@ -82,9 +89,10 @@ export class PageGenerationService implements PageGenerationServicePort {
       const pageUpdated = await this.pageRepository.updateGenerationState(page.pageId, userId, {
         status: 'generating',
         generationMode: selection.mode,
+        expectedStatus: page.status,
       });
       if (!pageUpdated) {
-        throw new ConfigurationError('Failed to update page generation state');
+        throw new ConflictError('Page generation state changed before enqueue');
       }
       pageStateUpdated = true;
 
@@ -202,7 +210,7 @@ export class PageGenerationService implements PageGenerationServicePort {
 
     const missingNames = missingCharacters.map((entity) => entity.name).join(', ');
     throw new ValidationError(
-      `Generate / 生成 の前に、次の character reference を確定してください: ${missingNames}`,
+      `Generate requires confirmed character references for: ${missingNames}`,
     );
   }
 }

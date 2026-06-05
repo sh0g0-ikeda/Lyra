@@ -142,6 +142,8 @@ export class LyraApiClient {
     base_draft: {
       title: string | null;
       purpose: string | null;
+      story_input_mode: 'structured' | 'full';
+      story_full_draft: string | null;
       introduction: string | null;
       middle: string | null;
       climax: string | null;

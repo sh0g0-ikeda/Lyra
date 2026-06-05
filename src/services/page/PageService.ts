@@ -4,6 +4,12 @@
   NotFoundError,
   ValidationError,
 } from '../../domain/errors/index.js';
+import { distributeStoryBeats } from '../../domain/storyBeatDistribution.js';
+import {
+  canonicalizeEntityMentionsInText,
+  extractEntityAliases,
+  inferEntityIdsFromTexts,
+} from '../../domain/entityAliases.js';
 import type { AppLanguage } from '../../domain/types/language.js';
 import type {
   EpisodePagePlanApplyResult,
@@ -17,7 +23,7 @@ import type {
   PageSummary,
   UpdatePageSettingsInput,
 } from '../../domain/types/page.js';
-import type { PanelComposition, UpdatePanelInput } from '../../domain/types/panel.js';
+import type { PanelComposition, PanelDialogueLine, UpdatePanelInput } from '../../domain/types/panel.js';
 import type { PanelEntityAssignment } from '../../domain/types/panelEntityAssignment.js';
 import type { PageRepository } from '../../repositories/PageRepository.js';
 import type { PanelRepository } from '../../repositories/PanelRepository.js';
@@ -149,6 +155,9 @@ export class PageService implements PageServicePort {
     }
 
     const compiled = await this.compileAutofillSafely(context, language);
+    const fallbackSuggestion = compiled.compilerUsed
+      ? buildFallbackAutofillSuggestion(context, language)
+      : { panels: [] };
 
     let updatedPanelCount = 0;
     let filledFieldCount = 0;
@@ -166,21 +175,64 @@ export class PageService implements PageServicePort {
     const suggestionsByOrder = new Map(
       compiled.suggestion.panels.map((suggestion) => [suggestion.order, suggestion] as const),
     );
+    const fallbackSuggestionsByOrder = new Map(
+      fallbackSuggestion.panels.map((suggestion) => [suggestion.order, suggestion] as const),
+    );
     const entityLookup = new Map(context.entities.map((entity) => [entity.id, entity] as const));
+    const storyLeadEntityId =
+      inferFallbackEntityIds(
+        context.entities,
+        Array.from(new Set(context.scenes.flatMap((scene) => scene.involvedEntityIds))),
+        [
+          context.episodePurpose,
+          context.introduction,
+          context.middle,
+          context.climax,
+          context.endingHook,
+          ...context.scenes.flatMap((scene) => [scene.location, scene.time, scene.atmosphere]),
+        ],
+        4,
+      )[0] ?? null;
+    const pageLeadEntityId = inferPageLeadEntityIdFromPanelSuggestions(
+      compiled.suggestion.panels,
+      inferFallbackEntityIds(
+        context.entities,
+        Array.from(new Set(context.scenes.flatMap((scene) => scene.involvedEntityIds))),
+        [
+          context.episodePurpose,
+          context.introduction,
+          context.middle,
+          context.climax,
+          context.endingHook,
+          ...context.scenes.flatMap((scene) => [scene.location, scene.time, scene.atmosphere]),
+        ],
+        4,
+      ),
+    );
 
     for (const panel of context.panels) {
       const rawSuggestion = suggestionsByOrder.get(panel.order);
+      const fallbackPanelSuggestion = fallbackSuggestionsByOrder.get(panel.order);
       const sourceScene = resolvePageAutofillSceneForPanel(context, panel.order);
       const suggestion =
-        rawSuggestion === undefined
+        rawSuggestion === undefined && fallbackPanelSuggestion === undefined
           ? undefined
-          : enrichPanelSuggestionForGeneration(panel, rawSuggestion, {
-              scene: sourceScene,
-              entityLookup,
-              pagePurpose: context.episodePurpose ?? context.middle ?? context.introduction,
-              continuityNote: context.endingHook,
-              language,
-            });
+          : enrichPanelSuggestionForGeneration(
+              panel,
+              completePanelSuggestionWithFallback(rawSuggestion, fallbackPanelSuggestion, {
+                includeFallbackCreativeFields: false,
+              }),
+              {
+                scene: sourceScene,
+                entityLookup,
+                pagePurpose: context.episodePurpose ?? context.middle ?? context.introduction,
+                continuityNote: context.endingHook,
+                storyLeadEntityId,
+                pageLeadEntityId,
+                language,
+                fillMissingCreativeFields: false,
+              },
+            );
       if (suggestion === undefined) {
         continue;
       }
@@ -248,17 +300,14 @@ export class PageService implements PageServicePort {
     }
 
     if (this.episodePagePlanCompiler === undefined) {
-      return this.applyEpisodePlanSuggestion(context, userId, {
-        suggestion: buildFallbackEpisodePlanSuggestion(context, language),
-        compilerUsed: false,
-        compilerProvider: 'fallback',
-        compilerModel: null,
-        compilerPromptVersion: null,
-        compilerError: 'Episode page plan compiler is not configured',
-      }, language);
+      return buildSkippedEpisodePlanApplyResult('Episode page plan compiler is not configured');
     }
 
     const compiled = await this.compileEpisodePlanSafely(context, language);
+    if (!compiled.compilerUsed) {
+      return buildSkippedEpisodePlanApplyResult(compiled.compilerError);
+    }
+
     return this.applyEpisodePlanSuggestion(context, userId, compiled, language);
   }
 
@@ -267,11 +316,17 @@ export class PageService implements PageServicePort {
     language: AppLanguage,
   ): Promise<AutofillExecutionResult> {
     const compilerBrief = buildAutofillCompilerBrief(context, language);
+    const fallbackSuggestion = buildFallbackAutofillSuggestion(context, language);
 
     try {
       const compiled = await this.pageAutofillCompiler!.compileSuggestions({ compilerBrief, language });
       return {
-        suggestion: compiled.suggestion,
+        suggestion: repairAutofillSuggestionAgainstContext(
+          context,
+          compiled.suggestion,
+          fallbackSuggestion,
+          language,
+        ),
         compilerUsed: true,
         compilerProvider: compiled.compilerProvider,
         compilerModel: compiled.compilerModel,
@@ -283,8 +338,14 @@ export class PageService implements PageServicePort {
         throw error;
       }
 
+      console.warn('page_autofill_compiler_fallback', {
+        pageId: context.pageId,
+        episodeId: context.episodeId,
+        reason: error.message,
+      });
+
       return {
-        suggestion: buildFallbackAutofillSuggestion(context, language),
+        suggestion: { panels: [] },
         compilerUsed: false,
         compilerProvider: 'fallback',
         compilerModel: null,
@@ -299,11 +360,17 @@ export class PageService implements PageServicePort {
     language: AppLanguage,
   ): Promise<EpisodePlanExecutionResult> {
     const compilerBrief = buildEpisodePlanCompilerBrief(context, language);
+    const fallbackSuggestion = buildFallbackEpisodePlanSuggestion(context, language);
 
     try {
       const compiled = await this.episodePagePlanCompiler!.compilePlan({ compilerBrief, language });
       return {
-        suggestion: compiled.suggestion,
+        suggestion: repairEpisodePlanSuggestionAgainstContext(
+          context,
+          compiled.suggestion,
+          fallbackSuggestion,
+          language,
+        ),
         compilerUsed: true,
         compilerProvider: compiled.compilerProvider,
         compilerModel: compiled.compilerModel,
@@ -315,8 +382,13 @@ export class PageService implements PageServicePort {
         throw error;
       }
 
+      console.warn('episode_page_plan_compiler_fallback', {
+        episodeId: context.episodeId,
+        reason: error.message,
+      });
+
       return {
-        suggestion: buildFallbackEpisodePlanSuggestion(context, language),
+        suggestion: { pages: [] },
         compilerUsed: false,
         compilerProvider: 'fallback',
         compilerModel: null,
@@ -337,6 +409,20 @@ export class PageService implements PageServicePort {
 
     const pagesById = new Map(context.pages.map((page) => [page.pageId, page] as const));
     const entityLookup = new Map(context.entities.map((entity) => [entity.id, entity] as const));
+    const storyLeadEntityId =
+      inferFallbackEntityIds(
+        context.entities,
+        Array.from(new Set(context.scenes.flatMap((scene) => scene.involvedEntityIds))),
+        [
+          context.episode.purpose,
+          context.episode.introduction,
+          context.episode.middle,
+          context.episode.climax,
+          context.episode.endingHook,
+          ...context.scenes.flatMap((scene) => [scene.location, scene.time, scene.atmosphere]),
+        ],
+        4,
+      )[0] ?? null;
     let updatedPageCount = 0;
     let updatedPanelCount = 0;
     let updatedAssignmentCount = 0;
@@ -363,6 +449,19 @@ export class PageService implements PageServicePort {
 
       const panelsByOrder = new Map(page.panels.map((panel) => [panel.order, panel] as const));
       const pageScenes = resolveEpisodePlanScenesForPage(context, pageSuggestion, pageIndex);
+      const pageLeadEntityId = inferPageLeadEntityIdFromPanelSuggestions(
+        pageSuggestion.panels,
+        inferFallbackEntityIds(
+          context.entities,
+          Array.from(new Set(pageScenes.flatMap((scene) => scene.involvedEntityIds))),
+          [
+            pageSuggestion.pagePurpose,
+            pageSuggestion.continuityNote,
+            ...pageScenes.flatMap((scene) => [scene.location, scene.time, scene.atmosphere]),
+          ],
+          4,
+        ),
+      );
       for (const panelSuggestion of pageSuggestion.panels) {
         const panel = panelsByOrder.get(panelSuggestion.order);
         if (panel === undefined) {
@@ -377,7 +476,10 @@ export class PageService implements PageServicePort {
             entityLookup,
             pagePurpose: pageSuggestion.pagePurpose,
             continuityNote: pageSuggestion.continuityNote,
+            storyLeadEntityId,
+            pageLeadEntityId,
             language,
+            fillMissingCreativeFields: false,
           },
         );
         const merge = mergePanelSuggestion(panel, normalizedSuggestion, {
@@ -429,6 +531,22 @@ function ensurePageEditable(status: PageSummary['status'], actionLabel: string):
   if (status === 'generating') {
     throw new ConflictError(`Pages cannot ${actionLabel} while generation is in progress`);
   }
+}
+
+function buildSkippedEpisodePlanApplyResult(
+  compilerError: string | null,
+): EpisodePagePlanApplyResult {
+  return {
+    updatedPageCount: 0,
+    updatedPanelCount: 0,
+    updatedAssignmentCount: 0,
+    filledFieldCount: 0,
+    compilerUsed: false,
+    compilerProvider: 'fallback',
+    compilerModel: null,
+    compilerPromptVersion: null,
+    compilerError,
+  };
 }
 
 function toRecord(value: unknown): Record<string, unknown> | null {
@@ -518,6 +636,47 @@ function buildPageScopedAutofillContext(
   };
 }
 
+function inferPageLeadEntityIdFromPanelSuggestions(
+  panelSuggestions: PageAutofillPanelSuggestion[],
+  fallbackEntityIds: string[],
+): string | null {
+  const scores = new Map<string, number>();
+  const firstSeen = new Map<string, number>();
+
+  const touch = (entityId: string, weight: number, order: number): void => {
+    scores.set(entityId, (scores.get(entityId) ?? 0) + weight);
+    if (!firstSeen.has(entityId)) {
+      firstSeen.set(entityId, order);
+    }
+  };
+
+  panelSuggestions.forEach((panel, panelIndex) => {
+    panel.entities?.forEach((assignment) => {
+      const weight =
+        assignment.role === 'primary' ? 3 : assignment.role === 'secondary' ? 2 : 1;
+      touch(assignment.entityId, weight, panelIndex);
+    });
+    panel.dialogue?.forEach((line) => {
+      if (line.entityId !== null) {
+        touch(line.entityId, 1, panelIndex);
+      }
+    });
+  });
+
+  fallbackEntityIds.forEach((entityId, index) => {
+    touch(entityId, Math.max(1, fallbackEntityIds.length - index), Number.MAX_SAFE_INTEGER - index);
+  });
+
+  const ranked = Array.from(scores.entries()).sort((left, right) => {
+    if (right[1] !== left[1]) {
+      return right[1] - left[1];
+    }
+    return (firstSeen.get(left[0]) ?? Number.MAX_SAFE_INTEGER) - (firstSeen.get(right[0]) ?? Number.MAX_SAFE_INTEGER);
+  });
+
+  return ranked[0]?.[0] ?? null;
+}
+
 function normalizeEpisodePlanToContext(
   context: EpisodePagePlanContext,
   suggestion: EpisodePagePlanSuggestion,
@@ -534,13 +693,13 @@ function normalizeEpisodePlanToContext(
           (candidate.pageId === existingPage.pageId || candidate.pageNumber === existingPage.pageNumber),
       );
       const sourcePage =
-        matchingPageIndex === -1 ? fallback.pages[pageIndex] : suggestion.pages[matchingPageIndex];
+        matchingPageIndex === -1 ? undefined : suggestion.pages[matchingPageIndex];
       if (matchingPageIndex !== -1) {
         usedPageIndexes.add(matchingPageIndex);
       }
 
       const fallbackPage = fallback.pages[pageIndex];
-      const panelsByOrder = new Map(sourcePage.panels.map((panel) => [panel.order, panel] as const));
+      const panelsByOrder = new Map((sourcePage?.panels ?? []).map((panel) => [panel.order, panel] as const));
       const fallbackPanelsByOrder = new Map(
         fallbackPage.panels.map((panel) => [panel.order, panel] as const),
       );
@@ -548,20 +707,21 @@ function normalizeEpisodePlanToContext(
       return {
         pageId: existingPage.pageId,
         pageNumber: existingPage.pageNumber,
-        sourceSceneIds: sourcePage.sourceSceneIds,
-        pagePurpose: sourcePage.pagePurpose,
-        continuityNote: sourcePage.continuityNote,
-        page: sourcePage.page,
+        sourceSceneIds: coalesceStringArray(sourcePage?.sourceSceneIds, fallbackPage.sourceSceneIds),
+        pagePurpose: sourcePage?.pagePurpose,
+        continuityNote: sourcePage?.continuityNote,
+        page: completePageSettingsSuggestion(sourcePage?.page, fallbackPage.page),
         panels: existingPage.panels.map((existingPanel) => {
-          const panel =
-            panelsByOrder.get(existingPanel.order) ??
-            fallbackPanelsByOrder.get(existingPanel.order);
-          if (panel === undefined) {
+          const sourcePanel = panelsByOrder.get(existingPanel.order);
+          const fallbackPanel = fallbackPanelsByOrder.get(existingPanel.order);
+          if (sourcePanel === undefined && fallbackPanel === undefined) {
             throw new ValidationError('Episode page plan could not be normalized to existing panels');
           }
 
           return {
-            ...panel,
+            ...completePanelSuggestionWithFallback(sourcePanel, fallbackPanel, {
+              includeFallbackCreativeFields: false,
+            }),
             order: existingPanel.order,
           };
         }),
@@ -649,27 +809,294 @@ function validateEpisodePlanAgainstContext(
 }
 
 function withPageLevelPanelNotes(
-  panel: PageAutofillPanelContext,
+  _panel: PageAutofillPanelContext,
   suggestion: PageAutofillPanelSuggestion,
-  pageSuggestion: EpisodePagePlanSuggestion['pages'][number],
+  _pageSuggestion: EpisodePagePlanSuggestion['pages'][number],
 ): PageAutofillPanelSuggestion {
-  if (suggestion.panelNotes !== undefined) {
-    return suggestion;
-  }
+  return suggestion;
+}
 
-  if (panel.order !== 1) {
-    return suggestion;
-  }
-
-  const notes = [pageSuggestion.pagePurpose, pageSuggestion.continuityNote].filter(isMeaningfulText);
-  if (notes.length === 0) {
-    return suggestion;
+function completePageSettingsSuggestion(
+  source: PageAutofillSuggestion['page'] | EpisodePagePlanSuggestion['pages'][number]['page'] | undefined,
+  fallback: PageAutofillSuggestion['page'] | EpisodePagePlanSuggestion['pages'][number]['page'] | undefined,
+): PageAutofillSuggestion['page'] | EpisodePagePlanSuggestion['pages'][number]['page'] | undefined {
+  if (source === undefined && fallback === undefined) {
+    return undefined;
   }
 
   return {
-    ...suggestion,
-    panelNotes: notes.join(' '),
+    dialogueMode: source?.dialogueMode ?? fallback?.dialogueMode,
+    pageDialogueToggle: source?.pageDialogueToggle ?? fallback?.pageDialogueToggle,
   };
+}
+
+function completePanelSuggestionWithFallback(
+  source: PageAutofillPanelSuggestion | undefined,
+  fallback: PageAutofillPanelSuggestion | undefined,
+  options?: { includeFallbackCreativeFields?: boolean },
+): PageAutofillPanelSuggestion {
+  if (source === undefined && fallback === undefined) {
+    throw new ValidationError('Panel suggestion fallback could not be resolved');
+  }
+
+  const sourceComposition = source?.composition;
+  const fallbackComposition = fallback?.composition;
+  const includeFallbackCreativeFields = options?.includeFallbackCreativeFields !== false;
+  const fallbackCreative = includeFallbackCreativeFields ? fallback : undefined;
+  const fallbackCreativeComposition = includeFallbackCreativeFields ? fallbackComposition : undefined;
+
+  return {
+    order: source?.order ?? fallback?.order ?? 1,
+    panelRole: source?.panelRole ?? fallback?.panelRole,
+    panelSize: source?.panelSize ?? fallback?.panelSize,
+    situationText: coalesceText(source?.situationText, fallbackCreative?.situationText),
+    composition:
+      sourceComposition === undefined && fallbackComposition === undefined
+        ? undefined
+        : {
+            source: sourceComposition?.source ?? fallbackComposition?.source,
+            galleryItemId: sourceComposition?.galleryItemId ?? fallbackComposition?.galleryItemId ?? null,
+            compositionPrompt: coalesceText(
+              sourceComposition?.compositionPrompt,
+              fallbackCreativeComposition?.compositionPrompt,
+            ),
+            shotType: sourceComposition?.shotType ?? fallbackComposition?.shotType ?? null,
+            angle: sourceComposition?.angle ?? fallbackComposition?.angle ?? null,
+            customNote: coalesceText(sourceComposition?.customNote, fallbackCreativeComposition?.customNote),
+          },
+    dialogueInPanel: source?.dialogueInPanel ?? fallback?.dialogueInPanel,
+    dialogue: coalesceDialogue(source?.dialogue, fallbackCreative?.dialogue),
+    sfxText: coalesceText(source?.sfxText, fallbackCreative?.sfxText),
+    backgroundNote: coalesceText(source?.backgroundNote, fallbackCreative?.backgroundNote),
+    panelNotes: coalesceText(source?.panelNotes, fallbackCreative?.panelNotes),
+    entities: coalesceAssignments(source?.entities, fallbackCreative?.entities),
+  };
+}
+
+function repairAutofillSuggestionAgainstContext(
+  context: PageAutofillContext,
+  suggestion: PageAutofillSuggestion,
+  fallback: PageAutofillSuggestion,
+  language: AppLanguage,
+): PageAutofillSuggestion {
+  const fallbackSuggestionsByOrder = new Map(
+    fallback.panels.map((panel) => [panel.order, panel] as const),
+  );
+
+  return {
+    page: completePageSettingsSuggestion(suggestion.page, fallback.page),
+    panels: context.panels.map((panel) => {
+      const sourcePanel = suggestion.panels.find((candidate) => candidate.order === panel.order);
+      const fallbackPanel = fallbackSuggestionsByOrder.get(panel.order);
+      return repairPanelSuggestionAgainstFallback(
+        context.entities,
+        context.scenes,
+        context.episodePurpose,
+        context.introduction,
+        context.middle,
+        context.climax,
+        context.endingHook,
+        panel,
+        sourcePanel,
+        fallbackPanel,
+        resolvePageAutofillSceneForPanel(context, panel.order),
+        language,
+      );
+    }),
+  };
+}
+
+function repairEpisodePlanSuggestionAgainstContext(
+  context: EpisodePagePlanContext,
+  suggestion: EpisodePagePlanSuggestion,
+  fallback: EpisodePagePlanSuggestion,
+  language: AppLanguage,
+): EpisodePagePlanSuggestion {
+  return {
+    pages: context.pages.map((page, pageIndex) => {
+      const sourcePage = suggestion.pages.find(
+        (candidate) => candidate.pageId === page.pageId || candidate.pageNumber === page.pageNumber,
+      );
+      const fallbackPage = fallback.pages[pageIndex];
+      const sourceScenes = sourcePage === undefined ? [] : resolveEpisodePlanScenesForPage(context, sourcePage, pageIndex);
+      const fallbackScenes = resolveEpisodePlanScenesForPage(context, fallbackPage, pageIndex);
+
+      return {
+        pageId: page.pageId,
+        pageNumber: page.pageNumber,
+        sourceSceneIds:
+          Array.isArray(sourcePage?.sourceSceneIds) && sourcePage.sourceSceneIds.length > 0
+            ? sourcePage.sourceSceneIds
+            : fallbackPage.sourceSceneIds,
+        pagePurpose: shouldRepairGenericCompilerText(sourcePage?.pagePurpose)
+          ? undefined
+          : sourcePage?.pagePurpose,
+        continuityNote: shouldRepairGenericCompilerText(sourcePage?.continuityNote)
+          ? undefined
+          : sourcePage?.continuityNote,
+        page: completePageSettingsSuggestion(sourcePage?.page, fallbackPage.page),
+        panels: page.panels.map((existingPanel, panelIndex) => {
+          const sourcePanel = sourcePage?.panels.find((candidate) => candidate.order === existingPanel.order);
+          const fallbackPanel = fallbackPage.panels.find((candidate) => candidate.order === existingPanel.order);
+          const pageScene =
+            sourceScenes[Math.min(sourceScenes.length - 1, Math.floor((panelIndex * Math.max(sourceScenes.length, 1)) / Math.max(page.panels.length, 1)))] ??
+            fallbackScenes[Math.min(fallbackScenes.length - 1, Math.floor((panelIndex * Math.max(fallbackScenes.length, 1)) / Math.max(page.panels.length, 1)))];
+
+          return repairPanelSuggestionAgainstFallback(
+            context.entities,
+            context.scenes,
+            context.episode.purpose,
+            context.episode.introduction,
+            context.episode.middle,
+            context.episode.climax,
+            context.episode.endingHook,
+            existingPanel,
+            sourcePanel,
+            fallbackPanel,
+            pageScene,
+            language,
+          );
+        }),
+      };
+    }),
+  };
+}
+
+function repairPanelSuggestionAgainstFallback(
+  _entities: PageAutofillContext['entities'],
+  _scenes: PageAutofillContext['scenes'] | EpisodePagePlanContext['scenes'],
+  _episodePurpose: string | null | undefined,
+  _introduction: string | null | undefined,
+  _middle: string | null | undefined,
+  _climax: string | null | undefined,
+  _endingHook: string | null | undefined,
+  _panel: PageAutofillPanelContext,
+  source: PageAutofillPanelSuggestion | undefined,
+  fallback: PageAutofillPanelSuggestion | undefined,
+  _panelScene: PageAutofillContext['scenes'][number] | EpisodePagePlanContext['scenes'][number] | undefined,
+  _language: AppLanguage,
+): PageAutofillPanelSuggestion {
+  const completed = completePanelSuggestionWithFallback(source, fallback, {
+    includeFallbackCreativeFields: false,
+  });
+  const repairedEntities =
+    completed.entities === undefined || completed.entities.length === 0
+      ? completed.entities
+      : completed.entities;
+  const fallbackComposition = fallback?.composition;
+  const repairedSituation = shouldRepairGenericCompilerText(completed.situationText)
+    ? undefined
+    : completed.situationText;
+  const repairedBackground = shouldRepairRedundantFieldText(completed.backgroundNote, [
+    repairedSituation,
+    completed.composition?.compositionPrompt,
+  ]) || shouldRepairGenericCompilerText(completed.backgroundNote)
+    ? undefined
+    : completed.backgroundNote;
+  const repairedCompositionPrompt = shouldRepairGenericCompilerText(completed.composition?.compositionPrompt) ||
+    shouldRepairRedundantFieldText(
+    completed.composition?.compositionPrompt,
+    [repairedSituation, repairedBackground],
+  )
+    ? undefined
+    : completed.composition?.compositionPrompt ?? null;
+  const repairedCustomNote = shouldRepairGenericCompilerText(completed.composition?.customNote) ||
+    shouldRepairRedundantFieldText(completed.composition?.customNote, [
+      repairedSituation,
+      repairedCompositionPrompt,
+      repairedBackground,
+    ])
+    ? undefined
+    : completed.composition?.customNote ?? null;
+  const repairedPanelNotes = shouldRepairGenericCompilerText(completed.panelNotes) ||
+    shouldRepairRedundantFieldText(completed.panelNotes, [
+      repairedSituation,
+      repairedCompositionPrompt,
+      repairedCustomNote,
+      repairedBackground,
+    ])
+    ? undefined
+    : completed.panelNotes;
+
+  return {
+    ...completed,
+    situationText: repairedSituation,
+    composition:
+      completed.composition === undefined && fallbackComposition === undefined
+        ? undefined
+        : {
+            source: completed.composition?.source ?? fallbackComposition?.source,
+            galleryItemId: completed.composition?.galleryItemId ?? fallbackComposition?.galleryItemId ?? null,
+            shotType: completed.composition?.shotType ?? fallbackComposition?.shotType ?? null,
+            angle: completed.composition?.angle ?? fallbackComposition?.angle ?? null,
+            compositionPrompt: repairedCompositionPrompt,
+            customNote: repairedCustomNote,
+          },
+    backgroundNote: repairedBackground,
+    panelNotes: repairedPanelNotes,
+    entities: repairedEntities,
+  };
+}
+
+function coalesceText(
+  source: string | null | undefined,
+  fallback: string | null | undefined,
+): string | null | undefined {
+  if (isMeaningfulText(source)) {
+    return source;
+  }
+  if (isMeaningfulText(fallback)) {
+    return fallback;
+  }
+  if (source === null || fallback === null) {
+    return null;
+  }
+  return undefined;
+}
+
+function coalesceStringArray(source: string[] | undefined, fallback: string[] | undefined): string[] | undefined {
+  if (Array.isArray(source) && source.length > 0) {
+    return source;
+  }
+  if (Array.isArray(fallback) && fallback.length > 0) {
+    return fallback;
+  }
+  if (Array.isArray(source)) {
+    return source;
+  }
+  return fallback;
+}
+
+function coalesceDialogue(
+  source: PageAutofillPanelSuggestion['dialogue'],
+  fallback: PageAutofillPanelSuggestion['dialogue'],
+): PageAutofillPanelSuggestion['dialogue'] {
+  if (Array.isArray(source) && source.length > 0) {
+    return source;
+  }
+  if (Array.isArray(fallback) && fallback.length > 0) {
+    return fallback;
+  }
+  if (Array.isArray(source)) {
+    return source;
+  }
+  return fallback;
+}
+
+function coalesceAssignments(
+  source: PageAutofillPanelSuggestion['entities'],
+  fallback: PageAutofillPanelSuggestion['entities'],
+): PageAutofillPanelSuggestion['entities'] {
+  if (Array.isArray(source) && source.length > 0) {
+    return source;
+  }
+  if (Array.isArray(fallback) && fallback.length > 0) {
+    return fallback;
+  }
+  if (Array.isArray(source)) {
+    return source;
+  }
+  return fallback;
 }
 
 function mergePageSettings(
@@ -755,7 +1182,19 @@ function mergePanelSuggestion(
     filledFieldCount += 1;
   }
 
-  if ((overwriteExisting || isBlank(panel.situationText)) && isMeaningfulText(suggestion.situationText)) {
+  if (
+    canReplaceStoredText(
+      panel.situationText,
+      overwriteExisting,
+      [
+        panel.composition.compositionPrompt,
+        panel.composition.customNote,
+        panel.backgroundNote,
+        panel.panelNotes,
+      ],
+    ) &&
+    isMeaningfulText(suggestion.situationText)
+  ) {
     update.situationText = suggestion.situationText;
     filledFieldCount += 1;
   }
@@ -778,24 +1217,41 @@ function mergePanelSuggestion(
   if (
     Array.isArray(suggestion.dialogue) &&
     suggestion.dialogue.length > 0 &&
-    (overwriteExisting || panel.dialogue.length === 0)
+    (overwriteExisting || panel.dialogue.length === 0 || dialogueLooksLowQuality(panel.dialogue))
   ) {
     update.dialogue = suggestion.dialogue;
     filledFieldCount += 1;
   }
 
-  if ((overwriteExisting || isBlank(panel.sfxText)) && isMeaningfulText(suggestion.sfxText)) {
+  if (canReplaceStoredText(panel.sfxText, overwriteExisting) && isMeaningfulText(suggestion.sfxText)) {
     update.sfxText = suggestion.sfxText;
     filledFieldCount += 1;
   }
 
-  if ((overwriteExisting || isBlank(panel.backgroundNote)) && isMeaningfulText(suggestion.backgroundNote)) {
+  if (
+    canReplaceStoredText(
+      panel.backgroundNote,
+      overwriteExisting,
+      [panel.situationText, panel.composition.compositionPrompt, panel.composition.customNote, panel.panelNotes],
+    ) &&
+    isMeaningfulText(suggestion.backgroundNote)
+  ) {
     update.backgroundNote = suggestion.backgroundNote;
     filledFieldCount += 1;
   }
 
-  if ((overwriteExisting || isBlank(panel.panelNotes)) && isMeaningfulText(suggestion.panelNotes)) {
+  if (
+    canReplaceStoredText(
+      panel.panelNotes,
+      overwriteExisting,
+      [panel.situationText, panel.composition.compositionPrompt, panel.composition.customNote, panel.backgroundNote],
+    ) &&
+    isMeaningfulText(suggestion.panelNotes)
+  ) {
     update.panelNotes = suggestion.panelNotes;
+    filledFieldCount += 1;
+  } else if (overwriteExisting && suggestion.panelNotes === null && !isBlank(panel.panelNotes)) {
+    update.panelNotes = null;
     filledFieldCount += 1;
   }
 
@@ -839,7 +1295,11 @@ function mergeComposition(
         ? suggestion.composition.galleryItemId
         : current.galleryItemId,
     compositionPrompt:
-      (overwriteExisting || isBlank(current.compositionPrompt)) &&
+      canReplaceStoredText(
+        current.compositionPrompt,
+        overwriteExisting,
+        [panel.situationText, current.customNote, panel.backgroundNote, panel.panelNotes],
+      ) &&
       isMeaningfulText(suggestion.composition.compositionPrompt)
         ? suggestion.composition.compositionPrompt
         : current.compositionPrompt,
@@ -854,7 +1314,11 @@ function mergeComposition(
         ? suggestion.composition.angle
         : current.angle,
     customNote:
-      (overwriteExisting || isBlank(current.customNote)) &&
+      canReplaceStoredText(
+        current.customNote,
+        overwriteExisting,
+        [panel.situationText, current.compositionPrompt, panel.backgroundNote, panel.panelNotes],
+      ) &&
       isMeaningfulText(suggestion.composition.customNote)
         ? suggestion.composition.customNote
         : current.customNote,
@@ -897,6 +1361,41 @@ function mergedCompositionFieldCount(
   return count;
 }
 
+function canReplaceStoredText(
+  current: string | null | undefined,
+  overwriteExisting: boolean,
+  peerFields: Array<string | null | undefined> = [],
+): boolean {
+  return (
+    overwriteExisting ||
+    isBlank(current) ||
+    shouldRepairGenericCompilerText(current) ||
+    shouldRepairRedundantFieldText(current, peerFields)
+  );
+}
+
+function dialogueLooksLowQuality(lines: PanelDialogueLine[]): boolean {
+  if (lines.length === 0) {
+    return true;
+  }
+
+  return lines.every((line) => isLowQualityDialogueText(line.text));
+}
+
+function isLowQualityDialogueText(value: string): boolean {
+  const compact = value.replace(/\s+/gu, '');
+  if (compact.length === 0) {
+    return true;
+  }
+  if (compact.length <= 3 && !/[。！？…!?、,]/u.test(compact)) {
+    return true;
+  }
+  if (/^[\p{Script=Han}\p{Script=Katakana}A-Za-z0-9]{1,4}$/u.test(compact) && !/[ぁ-ん]/u.test(compact)) {
+    return true;
+  }
+  return false;
+}
+
 function enrichPanelSuggestionForGeneration(
   panel: PageAutofillPanelContext,
   suggestion: PageAutofillPanelSuggestion,
@@ -905,9 +1404,13 @@ function enrichPanelSuggestionForGeneration(
     entityLookup: Map<string, PageAutofillContext['entities'][number]>;
     pagePurpose: string | null | undefined;
     continuityNote: string | null | undefined;
+    storyLeadEntityId?: string | null;
+    pageLeadEntityId?: string | null;
     language: AppLanguage;
+    fillMissingCreativeFields?: boolean;
   },
 ): PageAutofillPanelSuggestion {
+  const fillMissingCreativeFields = context.fillMissingCreativeFields !== false;
   const entityAssignments = suggestion.entities ?? panel.entities;
   const leadEntityNames = entityAssignments
     .slice()
@@ -918,42 +1421,62 @@ function enrichPanelSuggestionForGeneration(
   const angle = suggestion.composition?.angle ?? panel.composition.angle;
   const role = suggestion.panelRole ?? panel.panelRole;
   const sceneSummary = buildSceneSummaryText(context.scene);
-  const situationText = normalizeSituationText(
-    suggestion.situationText,
-    leadEntityNames,
-    sceneSummary,
-    role,
-    context.pagePurpose,
-    context.language,
-  );
-  const compositionPrompt = normalizeCompositionPrompt(
-    suggestion.composition?.compositionPrompt,
-    leadEntityNames,
-    shotType,
-    angle,
-    situationText,
-    role,
-    context.language,
-  );
-  const customNote = normalizeCameraDirectionNote(
-    suggestion.composition?.customNote,
-    leadEntityNames,
-    shotType,
-    angle,
-    role,
-    entityAssignments,
-    context.language,
-  );
-  const backgroundNote = normalizeBackgroundNote(
-    suggestion.backgroundNote,
-    context.scene,
-    context.language,
-  );
+  const situationText = fillMissingCreativeFields
+    ? normalizeSituationText(
+        suggestion.situationText,
+        leadEntityNames,
+        sceneSummary,
+        role,
+        context.pagePurpose,
+        context.language,
+      )
+    : normalizeProvidedSituationText(suggestion.situationText, leadEntityNames, context.language);
+  const compositionPrompt = fillMissingCreativeFields
+    ? normalizeCompositionPrompt(
+        suggestion.composition?.compositionPrompt,
+        leadEntityNames,
+        shotType,
+        angle,
+        situationText ?? null,
+        role,
+        context.language,
+      )
+    : normalizeProvidedCompositionPrompt(
+        suggestion.composition?.compositionPrompt,
+        leadEntityNames,
+        shotType,
+        angle,
+        context.language,
+      );
+  const customNote = fillMissingCreativeFields
+    ? normalizeCameraDirectionNote(
+        suggestion.composition?.customNote,
+        leadEntityNames,
+        shotType,
+        angle,
+        role,
+        entityAssignments,
+        context.language,
+      )
+    : normalizeProvidedText(suggestion.composition?.customNote, 180);
+  const backgroundNote = fillMissingCreativeFields
+    ? normalizeBackgroundNote(
+        suggestion.backgroundNote,
+        context.scene,
+        context.language,
+      )
+    : normalizeProvidedText(suggestion.backgroundNote, 140);
   const panelNotes = normalizePanelNotes(
     suggestion.panelNotes,
     context.pagePurpose,
     context.continuityNote,
     context.language,
+  );
+  const dialogue = repairDialogueLinesForPanel(
+    normalizeDialogueLines(suggestion.dialogue),
+    entityAssignments,
+    context.storyLeadEntityId ?? null,
+    context.pageLeadEntityId ?? null,
   );
 
   return {
@@ -967,6 +1490,7 @@ function enrichPanelSuggestionForGeneration(
       compositionPrompt,
       customNote,
     },
+    dialogue,
     backgroundNote,
     panelNotes,
   };
@@ -1003,7 +1527,7 @@ function normalizeSituationText(
   language: AppLanguage,
 ): string | null {
   const fallback = buildFallbackSituationSentence(entityNames, sceneSummary, role, pagePurpose, language);
-  const base = summarizeCompilerText(value, 220) ?? fallback;
+  const base = summarizeCompilerText(value, 140) ?? fallback;
   if (base === null) {
     return null;
   }
@@ -1016,13 +1540,27 @@ function normalizeSituationText(
         : `${formatEntitySubject(entityNames, language)}が${stripTerminalPunctuation(result)}`,
     );
   }
-  if (sceneSummary !== null && !includesLooseFragment(result, sceneSummary)) {
-    result =
-      language === 'en'
-        ? `${result} The setting and atmosphere are ${sceneSummary}.`
-        : `${result} 場所と空気感は${sceneSummary}。`;
+  return result;
+}
+
+function normalizeProvidedSituationText(
+  value: string | null | undefined,
+  entityNames: string[],
+  language: AppLanguage,
+): string | null | undefined {
+  const base = summarizeCompilerText(value, 140);
+  if (base === null) {
+    return value === null ? null : undefined;
   }
 
+  let result = ensureSentence(base);
+  if (entityNames.length > 0 && !mentionsAnyEntity(result, entityNames)) {
+    result = ensureSentence(
+      language === 'en'
+        ? `${formatEntitySubject(entityNames, language)} ${stripTerminalPunctuation(result)}`
+        : `${formatEntitySubject(entityNames, language)}が${stripTerminalPunctuation(result)}`,
+    );
+  }
   return result;
 }
 
@@ -1060,6 +1598,36 @@ function normalizeCompositionPrompt(
   return result;
 }
 
+function normalizeProvidedCompositionPrompt(
+  value: string | null | undefined,
+  entityNames: string[],
+  shotType: PageAutofillPanelContext['composition']['shotType'] | undefined | null,
+  angle: PageAutofillPanelContext['composition']['angle'] | undefined | null,
+  language: AppLanguage,
+): string | null | undefined {
+  const base = summarizeCompilerText(value, 220);
+  if (base === null) {
+    return value === null ? null : undefined;
+  }
+
+  let result = ensureSentence(base);
+  if (entityNames.length > 0 && !mentionsAnyEntity(result, entityNames)) {
+    const subject = formatEntitySubject(entityNames, language);
+    const framing =
+      shotType === null || shotType === undefined
+        ? fallbackLabel(language, 'a readable composition', '読みやすい構図')
+        : language === 'en'
+          ? `a ${humanizeToken(shotType)}-leaning composition`
+          : `${humanizeToken(shotType)}寄りの構図`;
+    result =
+      language === 'en'
+        ? `Make ${subject} the visual lead in ${framing}, seen from a ${humanizeToken(angle ?? 'three_quarter')}-leaning view. ${result}`
+        : `${subject}を主役に、${framing}で、${humanizeToken(angle ?? 'three_quarter')}気味の視点として見せる。${result}`;
+  }
+
+  return result;
+}
+
 function normalizeCameraDirectionNote(
   value: string | null | undefined,
   entityNames: string[],
@@ -1075,6 +1643,14 @@ function normalizeCameraDirectionNote(
   return base === null ? null : ensureSentence(base);
 }
 
+function normalizeProvidedText(value: string | null | undefined, maxLength: number): string | null | undefined {
+  const base = summarizeCompilerText(value, maxLength);
+  if (base === null) {
+    return value === null ? null : undefined;
+  }
+  return ensureSentence(base);
+}
+
 function normalizeBackgroundNote(
   value: string | null | undefined,
   scene: PageAutofillContext['scenes'][number] | EpisodePagePlanContext['scenes'][number] | undefined,
@@ -1082,25 +1658,91 @@ function normalizeBackgroundNote(
 ): string | null {
   const base =
     summarizeCompilerText(value, 140) ??
-    buildFallbackBackground(scene, language);
+    buildFallbackBackground(scene, { role: 'establish', size: 'wide', focus: 'setting' }, language);
   return base === null ? null : ensureSentence(base);
 }
 
 function normalizePanelNotes(
   value: string | null | undefined,
-  pagePurpose: string | null | undefined,
-  continuityNote: string | null | undefined,
+  _pagePurpose: string | null | undefined,
+  _continuityNote: string | null | undefined,
   _language: AppLanguage,
 ): string | null {
   const base = summarizeCompilerText(value, 180);
-  if (base !== null) {
-    return ensureSentence(base);
+  return base === null ? null : ensureSentence(base);
+}
+
+function normalizeDialogueLines(
+  lines: PageAutofillPanelSuggestion['dialogue'],
+): PageAutofillPanelSuggestion['dialogue'] {
+  if (!Array.isArray(lines)) {
+    return lines;
   }
 
-  const parts = [summarizeCompilerText(pagePurpose, 100), summarizeCompilerText(continuityNote, 100)].filter(
-    isMeaningfulText,
-  );
-  return parts.length === 0 ? null : ensureSentence(parts.join(' '));
+  const normalized = lines
+    .map((line) => {
+      const text = normalizeDialogueText(line.text);
+      if (!isMeaningfulText(text)) {
+        return null;
+      }
+
+      return {
+        ...line,
+        text,
+      };
+    })
+    .filter((line): line is NonNullable<typeof line> => line !== null);
+
+  return normalized;
+}
+
+function repairDialogueLinesForPanel(
+  lines: PageAutofillPanelSuggestion['dialogue'],
+  assignments: PanelEntityAssignment[],
+  storyLeadEntityId: string | null,
+  pageLeadEntityId: string | null,
+): PageAutofillPanelSuggestion['dialogue'] {
+  if (!Array.isArray(lines) || lines.length === 0) {
+    return lines;
+  }
+
+  const assignmentIds = new Set(assignments.map((assignment) => assignment.entityId));
+  const primaryEntityId =
+    assignments.find((assignment) => assignment.role === 'primary')?.entityId ??
+    assignments[0]?.entityId ??
+    null;
+
+  return lines.map((line) => {
+    if (line.type === 'narration') {
+      return {
+        ...line,
+        entityId: null,
+      };
+    }
+
+    if (line.type === 'thought' && !assignmentIds.has(line.entityId ?? '')) {
+      const repairedEntityId = storyLeadEntityId ?? pageLeadEntityId ?? primaryEntityId;
+      if (repairedEntityId === null) {
+        return {
+          ...line,
+          type: 'narration',
+          entityId: null,
+        };
+      }
+      return {
+        ...line,
+        entityId: repairedEntityId,
+      };
+    }
+
+    return line;
+  });
+}
+
+function normalizeDialogueText(value: string): string {
+  const trimmed = value.trim();
+  const unwrapped = trimmed.replace(/^[「『"“](.+)[」』"”]$/u, '$1').trim();
+  return unwrapped;
 }
 
 function buildFallbackSituationSentence(
@@ -1241,15 +1883,6 @@ function mentionsAnyEntity(value: string, entityNames: string[]): boolean {
   return entityNames.some((name) => lower.includes(name.toLowerCase()));
 }
 
-function includesLooseFragment(target: string, fragment: string): boolean {
-  const normalizedTarget = target.toLowerCase();
-  return fragment
-    .split('/')
-    .map((part) => part.trim().toLowerCase())
-    .filter((part) => part.length >= 3)
-    .some((part) => normalizedTarget.includes(part));
-}
-
 function ensureSentence(value: string): string {
   const normalized = value.replace(/\s+/gu, ' ').trim();
   if (normalized.length === 0) {
@@ -1321,6 +1954,7 @@ function buildAutofillCompilerBrief(
   language: AppLanguage,
 ): string {
   const outputLanguage = language === 'en' ? 'English' : 'Japanese';
+  const canonicalEntities = buildCanonicalCompilerEntityRefs(context.entities);
   const entityLookup = new Map(context.entities.map((entity) => [entity.id, entity]));
   const sceneLines = context.scenes
     .map((scene) => {
@@ -1331,9 +1965,9 @@ function buildAutofillCompilerBrief(
 
       return [
         `Scene ${scene.order}`,
-        `location=${scene.location ?? '(none)'}`,
-        `time=${scene.time ?? '(none)'}`,
-        `atmosphere=${scene.atmosphere ?? '(none)'}`,
+        `location=${canonicalizeCompilerBriefText(scene.location, canonicalEntities) ?? '(none)'}`,
+        `time=${canonicalizeCompilerBriefText(scene.time, canonicalEntities) ?? '(none)'}`,
+        `atmosphere=${canonicalizeCompilerBriefText(scene.atmosphere, canonicalEntities) ?? '(none)'}`,
         `people=${people}`,
       ].join(' | ');
     })
@@ -1353,10 +1987,10 @@ function buildAutofillCompilerBrief(
         `Panel ${panel.order}`,
         `role=${panel.panelRole}`,
         `size=${panel.panelSize}`,
-        `situation=${summarizeCompilerText(panel.situationText) ?? '(blank)'}`,
+        `situation=${summarizeCompilerText(canonicalizeCompilerBriefText(panel.situationText, canonicalEntities)) ?? '(blank)'}`,
         `shot=${panel.composition.shotType ?? '(blank)'}`,
         `angle=${panel.composition.angle ?? '(blank)'}`,
-        `background=${summarizeCompilerText(panel.backgroundNote) ?? '(blank)'}`,
+        `background=${summarizeCompilerText(canonicalizeCompilerBriefText(panel.backgroundNote, canonicalEntities)) ?? '(blank)'}`,
         `dialogue_count=${panel.dialogue.length}`,
         `assignments=${assignments}`,
       ].join(' | ');
@@ -1366,9 +2000,9 @@ function buildAutofillCompilerBrief(
   const entityLines = context.entities
     .map((entity) =>
       [
-        `${entity.id}: ${entity.name} (${entity.entityType})`,
-        summarizeCompilerText(entity.freeDescription, 120) ?? '',
-        summarizeCompilerText(entity.promptSupplement, 120) ?? '',
+        `${entity.id}: ${entity.name} (${entity.entityType}${extractEntityAliases(entity.structuredFields).length === 0 ? '' : `, aliases: ${extractEntityAliases(entity.structuredFields).join(', ')}`})`,
+        summarizeCompilerText(canonicalizeCompilerBriefText(entity.freeDescription, canonicalEntities), 120) ?? '',
+        summarizeCompilerText(canonicalizeCompilerBriefText(entity.promptSupplement, canonicalEntities), 120) ?? '',
       ]
         .filter((part) => part.trim().length > 0)
         .join(' | '),
@@ -1379,24 +2013,25 @@ function buildAutofillCompilerBrief(
     '[TASK]',
     `Fill editable page and panel draft fields for page ${context.pageNumber} of ${context.totalPagesInEpisode}.`,
     `Return suggestions for exactly ${context.frameCount} panels with orders 1 through ${context.frameCount}.`,
+    'Work in this order: decide the page beat, split it into panel beats in reading order, choose the visible subject or subjects for each panel, then fill the editable fields.',
     'Decide what each panel should show so the page faithfully expresses the supplied episode and scene information without inventing a new episode event.',
     'Only provide fields that are useful as editable defaults.',
     `Write every free-text field in natural ${outputLanguage} suitable for direct editing in the Lyra UI.`,
     '',
     '[CHAPTER CONSISTENCY]',
-    `Chapter title: ${context.chapterTitle ?? '(none)'}`,
-    `Chapter purpose: ${context.chapterPurpose ?? '(none)'}`,
-    `Chapter starting state: ${context.chapterStartingState ?? '(none)'}`,
-    `Chapter ending state: ${context.chapterEndingState ?? '(none)'}`,
-    `Chapter emotion curve: ${context.chapterEmotionCurve ?? '(none)'}`,
-    `Chapter key beats: ${context.chapterKeyBeats.join(' / ') || '(none)'}`,
+    `Chapter title: ${canonicalizeCompilerBriefText(context.chapterTitle, canonicalEntities) ?? '(none)'}`,
+    `Chapter purpose: ${canonicalizeCompilerBriefText(context.chapterPurpose, canonicalEntities) ?? '(none)'}`,
+    `Chapter starting state: ${canonicalizeCompilerBriefText(context.chapterStartingState, canonicalEntities) ?? '(none)'}`,
+    `Chapter ending state: ${canonicalizeCompilerBriefText(context.chapterEndingState, canonicalEntities) ?? '(none)'}`,
+    `Chapter emotion curve: ${canonicalizeCompilerBriefText(context.chapterEmotionCurve, canonicalEntities) ?? '(none)'}`,
+    `Chapter key beats: ${context.chapterKeyBeats.map((beat) => canonicalizeCompilerBriefText(beat, canonicalEntities) ?? beat).join(' / ') || '(none)'}`,
     '',
     '[PAGE]',
-    `Episode purpose: ${context.episodePurpose ?? '(none)'}`,
-    `Introduction: ${context.introduction ?? '(none)'}`,
-    `Middle: ${context.middle ?? '(none)'}`,
-    `Climax: ${context.climax ?? '(none)'}`,
-    `Ending hook: ${context.endingHook ?? '(none)'}`,
+    `Episode purpose: ${canonicalizeCompilerBriefText(context.episodePurpose, canonicalEntities) ?? '(none)'}`,
+    `Introduction: ${canonicalizeCompilerBriefText(context.introduction, canonicalEntities) ?? '(none)'}`,
+    `Middle: ${canonicalizeCompilerBriefText(context.middle, canonicalEntities) ?? '(none)'}`,
+    `Climax: ${canonicalizeCompilerBriefText(context.climax, canonicalEntities) ?? '(none)'}`,
+    `Ending hook: ${canonicalizeCompilerBriefText(context.endingHook, canonicalEntities) ?? '(none)'}`,
     `Current dialogue mode: ${context.dialogueMode}`,
     `Current page dialogue toggle: ${context.pageDialogueToggle ? 'on' : 'off'}`,
     '',
@@ -1415,6 +2050,8 @@ function buildAutofillCompilerBrief(
     'composition.custom_note: one short camera or direction memo that clarifies subject priority, eyeline, spacing, silhouette, or staging intent.',
     'background_note: visible environment only, short and concrete.',
     'panel_notes: optional production note or continuity reminder; do not repeat situation_text verbatim.',
+    'Do not reuse the same sentence across situation_text, composition.composition_prompt, composition.custom_note, and background_note.',
+    'Do not copy the same subject list into every panel unless the same characters are genuinely visible in every panel.',
     '',
     '[DIALOGUE GUIDANCE]',
     'Dialogue and narration should be sufficient for story clarity without becoming chatty or repetitive.',
@@ -1422,43 +2059,10 @@ function buildAutofillCompilerBrief(
     'Prefer character speech or thought for interpersonal beats. Use narration sparingly for setup, transition, or inner realization that cannot be shown clearly through staging alone.',
     'Do not repeat the same narration across multiple panels and do not overload every panel with text.',
     '',
-    '[ALLOWED ENUMS]',
-    'panel_role: establish | action | reaction | emphasis | transition | pause | impact',
-    'panel_size: standard | large | wide | narrow | splash',
-    'composition.shot_type: full_body | half_body | close_up | wide | extreme_close_up',
-    'composition.angle: front | side | three_quarter | bird_eye | worm_eye | dutch_angle',
-    'entity.role: primary | secondary | background',
-    'entity.expression: determined | calm | angry | sad | surprised | custom',
-    'entity.action: standing_firm | attacking | defending | running | custom',
-    'entity.position: left | center | right | background',
-    'entity.facing_direction: front | left | right | away | three_quarter_left | three_quarter_right',
-    '',
-    '[OUTPUT JSON SHAPE]',
-    '{',
-    '  "page": { "dialogue_mode"?: "image_baked"|"balloon_only"|"mixed", "page_dialogue_toggle"?: boolean },',
-    '  "panels": [',
-    '    {',
-    '      "order": number,',
-    '      "panel_role"?: string,',
-    '      "panel_size"?: string,',
-    '      "situation_text"?: string | null,',
-    '      "composition"?: {',
-    '        "source"?: "custom"|"ai_auto"|"gallery",',
-    '        "gallery_item_id"?: string | null,',
-    '        "composition_prompt"?: string | null,',
-    '        "shot_type"?: string | null,',
-    '        "angle"?: string | null,',
-    '        "custom_note"?: string | null',
-    '      },',
-    '      "dialogue_in_panel"?: boolean,',
-    '      "dialogue"?: [{ "entity_id": uuid | null, "text": string, "type": "speech"|"thought"|"narration"|"shout"|"whisper", "position": "top"|"bottom"|"left"|"right"|"center" }],',
-    '      "sfx_text"?: string | null,',
-    '      "background_note"?: string | null,',
-    '      "panel_notes"?: string | null,',
-    '      "entities"?: [{ "entity_id": uuid, "role": string, "expression": string, "custom_expression"?: string | null, "action": string, "custom_action"?: string | null, "position": string, "facing_direction"?: string | null, "effect_note"?: string | null, "state_id"?: uuid | null }]',
-    '    }',
-    '  ]',
-    '}',
+    '[OUTPUT CONTRACT]',
+    'Return one JSON object matching the supplied page_autofill schema.',
+    'Use only existing panel orders from [CURRENT PANELS], and use only enum values allowed by the schema.',
+    'Prefer null or omission over invented IDs, enum values, characters, or unsupported details.',
     '',
     '[RULES]',
     'Use only provided entity IDs.',
@@ -1475,6 +2079,7 @@ function buildEpisodePlanCompilerBrief(
   language: AppLanguage,
 ): string {
   const outputLanguage = language === 'en' ? 'English' : 'Japanese';
+  const canonicalEntities = buildCanonicalCompilerEntityRefs(context.entities);
   const entityLookup = new Map(context.entities.map((entity) => [entity.id, entity]));
 
   const sceneLines = context.scenes
@@ -1506,11 +2111,11 @@ function buildEpisodePlanCompilerBrief(
 
       return [
         `Scene ${scene.order} (${scene.id})`,
-        `location=${summarizeCompilerText(scene.location, 80) ?? '(none)'}`,
-        `time=${summarizeCompilerText(scene.time, 40) ?? '(none)'}`,
-        `atmosphere=${summarizeCompilerText(scene.atmosphere, 80) ?? '(none)'}`,
+        `location=${summarizeCompilerText(canonicalizeCompilerBriefText(scene.location, canonicalEntities), 80) ?? '(none)'}`,
+        `time=${summarizeCompilerText(canonicalizeCompilerBriefText(scene.time, canonicalEntities), 40) ?? '(none)'}`,
+        `atmosphere=${summarizeCompilerText(canonicalizeCompilerBriefText(scene.atmosphere, canonicalEntities), 80) ?? '(none)'}`,
         `people=${people}`,
-        `state_notes=${summarizeCompilerText(stateNotes, 180) ?? 'none'}`,
+        `state_notes=${summarizeCompilerText(canonicalizeCompilerBriefText(stateNotes, canonicalEntities), 180) ?? 'none'}`,
       ].join(' | ');
     })
     .join('\n');
@@ -1518,9 +2123,9 @@ function buildEpisodePlanCompilerBrief(
   const entityLines = context.entities
     .map((entity) =>
       [
-        `${entity.id}: ${entity.name} (${entity.entityType})`,
-        summarizeCompilerText(entity.freeDescription, 120) ?? '',
-        summarizeCompilerText(entity.promptSupplement, 120) ?? '',
+        `${entity.id}: ${entity.name} (${entity.entityType}${extractEntityAliases(entity.structuredFields).length === 0 ? '' : `, aliases: ${extractEntityAliases(entity.structuredFields).join(', ')}`})`,
+        summarizeCompilerText(canonicalizeCompilerBriefText(entity.freeDescription, canonicalEntities), 120) ?? '',
+        summarizeCompilerText(canonicalizeCompilerBriefText(entity.promptSupplement, canonicalEntities), 120) ?? '',
       ]
         .filter((part) => part.trim().length > 0)
         .join(' | '),
@@ -1554,25 +2159,26 @@ function buildEpisodePlanCompilerBrief(
     '[TASK]',
     'Plan editable page and panel draft fields for the entire episode.',
     `Return suggestions for exactly ${context.pages.length} existing pages, preserving each page_id, page_number, frame_count, and panel order.`,
+    'Work in this order: distribute the episode story across the existing pages, assign contiguous scenes to each page, split each page into panel beats, choose the visible subject or subjects for each panel, then fill the editable fields.',
     'Assign the existing scenes across the existing pages in a grounded, contiguous order.',
     'You may add natural connective reaction or transition shots when they help readability, but do not invent new episode events, hidden subplots, props, or twists.',
     `Write every free-text field in natural ${outputLanguage} suitable for direct editing in the Lyra UI.`,
     '',
     '[CHAPTER ARC]',
-    `Title: ${context.chapter.title ?? '(none)'}`,
-    `Purpose: ${context.chapter.purpose ?? '(none)'}`,
-    `Starting state: ${context.chapter.startingState ?? '(none)'}`,
-    `Ending state: ${context.chapter.endingState ?? '(none)'}`,
-    `Emotion curve: ${context.chapter.emotionCurve ?? '(none)'}`,
-    `Key beats: ${context.chapter.keyBeats.join(' / ') || '(none)'}`,
+    `Title: ${canonicalizeCompilerBriefText(context.chapter.title, canonicalEntities) ?? '(none)'}`,
+    `Purpose: ${canonicalizeCompilerBriefText(context.chapter.purpose, canonicalEntities) ?? '(none)'}`,
+    `Starting state: ${canonicalizeCompilerBriefText(context.chapter.startingState, canonicalEntities) ?? '(none)'}`,
+    `Ending state: ${canonicalizeCompilerBriefText(context.chapter.endingState, canonicalEntities) ?? '(none)'}`,
+    `Emotion curve: ${canonicalizeCompilerBriefText(context.chapter.emotionCurve, canonicalEntities) ?? '(none)'}`,
+    `Key beats: ${context.chapter.keyBeats.map((beat) => canonicalizeCompilerBriefText(beat, canonicalEntities) ?? beat).join(' / ') || '(none)'}`,
     '',
     '[EPISODE ARC]',
-    `Title: ${context.episode.title ?? '(none)'}`,
-    `Purpose: ${context.episode.purpose ?? '(none)'}`,
-    `Introduction: ${context.episode.introduction ?? '(none)'}`,
-    `Middle: ${context.episode.middle ?? '(none)'}`,
-    `Climax: ${context.episode.climax ?? '(none)'}`,
-    `Ending hook: ${context.episode.endingHook ?? '(none)'}`,
+    `Title: ${canonicalizeCompilerBriefText(context.episode.title, canonicalEntities) ?? '(none)'}`,
+    `Purpose: ${canonicalizeCompilerBriefText(context.episode.purpose, canonicalEntities) ?? '(none)'}`,
+    `Introduction: ${canonicalizeCompilerBriefText(context.episode.introduction, canonicalEntities) ?? '(none)'}`,
+    `Middle: ${canonicalizeCompilerBriefText(context.episode.middle, canonicalEntities) ?? '(none)'}`,
+    `Climax: ${canonicalizeCompilerBriefText(context.episode.climax, canonicalEntities) ?? '(none)'}`,
+    `Ending hook: ${canonicalizeCompilerBriefText(context.episode.endingHook, canonicalEntities) ?? '(none)'}`,
     `Estimated pages: ${context.episode.estimatedPages}`,
     '',
     '[SCENES]',
@@ -1590,6 +2196,8 @@ function buildEpisodePlanCompilerBrief(
     'composition.custom_note: one short camera or direction memo that clarifies subject priority, eyeline, spacing, silhouette, or staging intent.',
     'background_note: visible environment only, short and concrete.',
     'panel_notes: optional production note or continuity reminder; do not repeat situation_text verbatim.',
+    'Do not reuse the same sentence across situation_text, composition.composition_prompt, composition.custom_note, and background_note.',
+    'Do not copy the same subject list into every panel unless the same characters are genuinely visible in every panel.',
     '',
     '[DIALOGUE GUIDANCE]',
     'Dialogue and narration should be sufficient for story clarity without becoming chatty or repetitive.',
@@ -1597,41 +2205,10 @@ function buildEpisodePlanCompilerBrief(
     'Prefer character speech or thought for interpersonal beats. Use narration sparingly for setup, transition, or inner realization that cannot be shown clearly through staging alone.',
     'Do not repeat the same narration across multiple panels and do not overload every panel with text.',
     '',
-    '[OUTPUT JSON SHAPE]',
-    '{',
-    '  "pages": [',
-    '    {',
-    '      "page_id": uuid,',
-    '      "page_number": number,',
-    '      "source_scene_ids"?: [uuid],',
-    '      "page_purpose"?: string | null,',
-    '      "continuity_note"?: string | null,',
-    '      "page"?: { "dialogue_mode"?: "image_baked"|"balloon_only"|"mixed", "page_dialogue_toggle"?: boolean },',
-    '      "panels": [',
-    '        {',
-    '          "order": number,',
-    '          "panel_role"?: "establish"|"action"|"reaction"|"emphasis"|"transition"|"pause"|"impact",',
-    '          "panel_size"?: "standard"|"large"|"wide"|"narrow"|"splash",',
-    '          "situation_text"?: string | null,',
-    '          "composition"?: {',
-    '            "source"?: "custom"|"ai_auto"|"gallery",',
-    '            "gallery_item_id"?: string | null,',
-    '            "composition_prompt"?: string | null,',
-    '            "shot_type"?: "full_body"|"half_body"|"close_up"|"wide"|"extreme_close_up" | null,',
-    '            "angle"?: "front"|"side"|"three_quarter"|"bird_eye"|"worm_eye"|"dutch_angle" | null,',
-    '            "custom_note"?: string | null',
-    '          },',
-    '          "dialogue_in_panel"?: boolean,',
-    '          "dialogue"?: [{ "entity_id": uuid | null, "text": string, "type": "speech"|"thought"|"narration"|"shout"|"whisper", "position": "top"|"bottom"|"left"|"right"|"center" }],',
-    '          "sfx_text"?: string | null,',
-    '          "background_note"?: string | null,',
-    '          "panel_notes"?: string | null,',
-    '          "entities"?: [{ "entity_id": uuid, "role": "primary"|"secondary"|"background", "expression": "determined"|"calm"|"angry"|"sad"|"surprised"|"custom", "custom_expression"?: string | null, "action": "standing_firm"|"attacking"|"defending"|"running"|"custom", "custom_action"?: string | null, "position": "left"|"center"|"right"|"background", "facing_direction"?: "front"|"left"|"right"|"away"|"three_quarter_left"|"three_quarter_right" | null, "effect_note"?: string | null, "state_id"?: uuid | null }]',
-    '        }',
-    '      ]',
-    '    }',
-    '  ]',
-    '}',
+    '[OUTPUT CONTRACT]',
+    'Return one JSON object matching the supplied episode_page_plan schema.',
+    'Use only existing page_id, page_number, panel order, scene ID, and entity ID values from this brief.',
+    'Use only enum values allowed by the schema, and prefer null or omission over invented values or unsupported details.',
     '',
     '[RULES]',
     'Do not contradict the chapter arc, episode arc, or scene order.',
@@ -1647,74 +2224,196 @@ function buildFallbackEpisodePlanSuggestion(
   context: EpisodePagePlanContext,
   language: AppLanguage,
 ): EpisodePagePlanSuggestion {
-  const roleSequence: Array<PageAutofillPanelSuggestion['panelRole']> = [
-    'establish',
-    'action',
-    'reaction',
-    'transition',
-    'action',
-    'reaction',
-    'impact',
-    'pause',
-  ];
-  const sizeSequence: Array<PageAutofillPanelSuggestion['panelSize']> = [
-    'large',
-    'standard',
-    'standard',
-    'wide',
-    'standard',
-    'standard',
-    'large',
-    'narrow',
-  ];
+  const distributedPageBeats = buildDistributedEpisodeBeats(
+    [
+      context.episode.introduction,
+      context.episode.middle,
+      context.episode.climax,
+      context.episode.endingHook,
+      context.episode.purpose,
+    ],
+    context.pages.length,
+    language,
+  );
 
   return {
     pages: context.pages.map((page, pageIndex) => {
       const sourceScenes = pickScenesForPage(context.scenes, context.pages.length, pageIndex);
       const leadScene = sourceScenes[0];
       const sceneIds = sourceScenes.map((scene) => scene.id);
+      const pageBeat = distributedPageBeats[pageIndex] ?? distributedPageBeats[distributedPageBeats.length - 1];
+      const pagePurpose = buildFallbackPagePurpose(context, sourceScenes, page.pageNumber, language, pageBeat);
+      const continuityNote = buildFallbackContinuityNote(context, sourceScenes, page.pageNumber, language, pageBeat);
+      const sceneEntityIds = Array.from(
+        new Set(sourceScenes.flatMap((scene) => scene.involvedEntityIds)),
+      );
+      const pageEntityIds = inferFallbackEntityIds(
+        context.entities,
+        sceneEntityIds,
+        [
+          pagePurpose,
+          continuityNote,
+          pageBeat,
+          context.episode.introduction,
+          context.episode.middle,
+          context.episode.climax,
+          context.episode.endingHook,
+          ...sourceScenes.flatMap((scene) => [scene.location, scene.time, scene.atmosphere]),
+        ],
+        4,
+      );
+      const panelPlans = buildFallbackPanelPlans(page.panels.length);
+      const panelBeats = buildDistributedPanelBeats([pageBeat], panelPlans, language);
 
       return {
         pageId: page.pageId,
         pageNumber: page.pageNumber,
         sourceSceneIds: sceneIds,
-        pagePurpose: buildFallbackPagePurpose(context, sourceScenes, page.pageNumber, language),
-        continuityNote: buildFallbackContinuityNote(context, sourceScenes, page.pageNumber, language),
+        pagePurpose,
+        continuityNote,
         page: {
           dialogueMode: page.dialogueMode,
           pageDialogueToggle: page.pageDialogueToggle,
         },
         panels: page.panels.map((panel, panelIndex) => {
-          const role = roleSequence[Math.min(panelIndex, roleSequence.length - 1)];
-          const size = sizeSequence[Math.min(panelIndex, sizeSequence.length - 1)];
+          const panelPlan = panelPlans[Math.min(panelIndex, panelPlans.length - 1)];
           const scene =
-            sourceScenes[Math.min(sourceScenes.length - 1, Math.floor((panelIndex * sourceScenes.length) / Math.max(sourceScenes.length, 1)))] ??
+            resolveSceneForPanelOrder(sourceScenes, panel.order, page.panels.length) ??
             leadScene;
+          const panelBeat =
+            panelBeats[panelIndex] ??
+            buildFallbackPanelBeat(pagePurpose, continuityNote, panel.order, page.panels.length, language);
+          const sceneScopedEntityIds = inferFallbackEntityIds(
+            context.entities,
+            Array.from(new Set([...(scene?.involvedEntityIds ?? []), ...pageEntityIds])),
+            [
+              pageBeat,
+              panelBeat,
+              pagePurpose,
+              continuityNote,
+              scene?.location,
+              scene?.time,
+              scene?.atmosphere,
+              context.episode.introduction,
+              context.episode.middle,
+              context.episode.climax,
+              context.episode.endingHook,
+            ],
+            4,
+          );
+          const panelCandidateEntityIds = inferFallbackEntityIds(
+            context.entities,
+            sceneScopedEntityIds.length > 0 ? sceneScopedEntityIds : pageEntityIds,
+            [
+              panelBeat,
+              pageBeat,
+              pagePurpose,
+              continuityNote,
+              scene?.location,
+              scene?.time,
+              scene?.atmosphere,
+            ],
+            4,
+          );
+          const panelMentionedEntityIds = inferFallbackEntityIds(
+            context.entities,
+            [],
+            [panelBeat],
+            4,
+          );
+          const pageMentionedEntityIds = inferFallbackEntityIds(
+            context.entities,
+            [],
+            [pageBeat, pagePurpose, continuityNote],
+            4,
+          );
+          const entitySelectionBasis =
+            panelMentionedEntityIds.length > 0
+              ? panelMentionedEntityIds
+              : pageMentionedEntityIds.length > 0
+                ? pageMentionedEntityIds
+                : panelCandidateEntityIds.length > 0
+                  ? panelCandidateEntityIds
+                  : sceneScopedEntityIds.length > 0
+                    ? sceneScopedEntityIds
+                    : pageEntityIds;
+          const panelEntityIds = selectFallbackPanelEntityIds(
+            entitySelectionBasis,
+            panelPlan.focus,
+            {
+              explicitEntityCount:
+                panelMentionedEntityIds.length > 0
+                  ? panelMentionedEntityIds.length
+                  : pageMentionedEntityIds.length,
+            },
+          );
+          const entityNames = panelEntityIds
+            .map((entityId) => context.entities.find((entity) => entity.id === entityId)?.name ?? entityId)
+            .filter((value, index, array) => array.indexOf(value) === index);
+          const shotType = fallbackShotTypeForRole(panelPlan.role ?? 'action');
+          const angle = fallbackAngleForRole(panelPlan.role ?? 'action');
+          const dialogue = buildFallbackDialogueLines(
+            [
+              panelBeat,
+              pageBeat,
+              pagePurpose,
+              continuityNote,
+              scene?.location,
+              scene?.time,
+              scene?.atmosphere,
+            ],
+            context.entities,
+            panelEntityIds,
+            panelPlan,
+            panel.order,
+            language,
+          );
 
           return {
             order: panel.order,
-            panelRole: role,
-            panelSize: size,
-            situationText: buildFallbackEpisodeSituationText(context, scene, panel.order, language),
+            panelRole: panelPlan.role,
+            panelSize: panelPlan.size,
+            situationText: buildFallbackEpisodeSituationText(
+              scene,
+              panelBeat,
+              panel.order,
+              panelPlan,
+              entityNames,
+              pagePurpose,
+              language,
+            ),
             composition: {
               source: 'custom',
-              shotType: fallbackShotTypeForRole(role ?? 'action'),
-              angle: fallbackAngleForRole(role ?? 'action'),
-              compositionPrompt: buildFallbackCompositionPrompt(scene, language),
-              customNote: buildFallbackCustomNote(scene, language),
+              shotType,
+              angle,
+              compositionPrompt: buildFallbackCompositionPrompt(
+                scene,
+                panelBeat,
+                panelPlan,
+                entityNames,
+                shotType,
+                angle,
+                language,
+              ),
+              customNote: buildFallbackCustomNote(
+                scene,
+                continuityNote,
+                panelPlan,
+                entityNames,
+                language,
+              ),
             },
-            dialogueInPanel: page.dialogueMode !== 'balloon_only',
-            backgroundNote: buildFallbackBackground(scene, language),
+            dialogueInPanel:
+              page.dialogueMode !== 'balloon_only' && panelPlan.focus !== 'setting',
+            dialogue,
+            backgroundNote: buildFallbackBackground(scene, panelPlan, language),
             panelNotes:
-              panelIndex === 0
-                ? [
-                    buildFallbackPagePurpose(context, sourceScenes, page.pageNumber, language),
-                    buildFallbackContinuityNote(context, sourceScenes, page.pageNumber, language),
-                  ]
-                    .filter((value): value is string => isMeaningfulText(value))
-                    .join(' ')
-                : null,
-            entities: buildFallbackAssignments(scene?.involvedEntityIds ?? []),
+              panelPlan.focus === 'setting'
+                ? fallbackLabel(language, 'Establish the place before detail.', '描き込みより先に場所を読ませる。')
+                : panelPlan.focus === 'impact'
+                  ? fallbackLabel(language, 'Land the page turn or turning point cleanly.', '転換点を明確に着地させる。')
+                  : null,
+            entities: buildFallbackAssignments(panelEntityIds, panelPlan),
           };
         }),
       };
@@ -1723,31 +2422,53 @@ function buildFallbackEpisodePlanSuggestion(
 }
 
 function buildFallbackEpisodeSituationText(
-  context: EpisodePagePlanContext,
   scene: EpisodePagePlanContext['scenes'][number] | undefined,
-  panelOrder: number,
+  panelBeat: string,
+  _panelOrder: number,
+  panelPlan: FallbackPanelPlan,
+  entityNames: string[],
+  _pagePurpose: string,
   language: AppLanguage,
 ): string {
-  const parts = [scene?.location, scene?.time, scene?.atmosphere].filter(
-    (value): value is string => isMeaningfulText(value),
-  );
-  const arcSegments = [
-    context.episode.introduction,
-    context.episode.middle,
-    context.episode.climax,
-    context.episode.endingHook,
-    context.episode.purpose,
-  ].filter((value): value is string => isMeaningfulText(value));
-  const segment =
-    arcSegments[Math.min(panelOrder - 1, arcSegments.length - 1)] ??
-    (language === 'en' ? 'Advance the current page beat clearly.' : 'このページの主な流れを明確に進める。');
+  const sceneSetting =
+    [scene?.location, scene?.time, scene?.atmosphere]
+      .filter((value): value is string => isMeaningfulText(value))
+      .join(' / ') || fallbackLabel(language, 'current scene', '現在の場面');
+  const subject = formatEntitySubject(entityNames, language);
+  const beatHint = summarizeCompilerText(panelBeat, 72);
+  const directBeat = buildFallbackSituationClause(beatHint, entityNames, language);
 
-  return [
-    parts.length > 0 ? parts.join(' / ') : fallbackLabel(language, 'Episode beat', '話の進行'),
-    summarizeCompilerText(segment, 120) ??
-      fallbackLabel(language, 'Advance the current page beat clearly.', 'このページの主な流れを明確に進める。'),
-    fallbackPanelBeatDirective(panelOrder, language),
-  ].join('. ');
+  switch (panelPlan.focus) {
+    case 'setting':
+      return language === 'en'
+        ? `${sceneSetting}. ${directBeat ?? `${subject} takes in the place before the page narrows to detail.`}`
+        : `${sceneSetting}。${directBeat ?? `${subject}が場の情報を受け取り、空気の違いをつかむ。`}`;
+    case 'exchange':
+      return language === 'en'
+        ? `${sceneSetting}. ${directBeat ?? `${subject} turns the beat into a direct exchange.`}`
+        : `${sceneSetting}。${directBeat ?? `${subject}が向き合い、この流れを具体的なやり取りへ移す。`}`;
+    case 'reaction':
+      return language === 'en'
+        ? `${sceneSetting}. ${directBeat ?? `${subject} lets the emotional aftershock of the beat show on their face.`}`
+        : `${sceneSetting}。${directBeat ?? `${subject}が直前の流れを受け、反応を表情に出す。`}`;
+    case 'impact':
+      return language === 'en'
+        ? `${sceneSetting}. ${directBeat ?? `${subject} lands the decisive shift of the page in a single clear beat.`}`
+        : `${sceneSetting}。${directBeat ?? `${subject}がこのページの決定的な変化を受け止め、その重みが画面に出る。`}`;
+    case 'transition':
+      return language === 'en'
+        ? `${sceneSetting}. ${directBeat ?? `${subject} turns the beat toward the next development without breaking the scene flow.`}`
+        : `${sceneSetting}。${directBeat ?? `${subject}が今の流れを次の展開へ渡していく。`}`;
+    case 'pause':
+      return language === 'en'
+        ? `${sceneSetting}. ${directBeat ?? `${subject} holds a short pause so the page tension can breathe before the next move.`}`
+        : `${sceneSetting}。${directBeat ?? `${subject}が短く立ち止まり、次の動きの前に余韻をつくる。`}`;
+    case 'lead':
+    default:
+      return language === 'en'
+        ? `${sceneSetting}. ${directBeat ?? `${subject} takes the lead and pushes the page into its next visible beat.`}`
+        : `${sceneSetting}。${directBeat ?? `${subject}が動きを先導し、このページの次の一歩を作る。`}`;
+  }
 }
 
 function pickScenesForPage<T extends { id: string }>(
@@ -1768,182 +2489,406 @@ function pickScenesForPage<T extends { id: string }>(
 function buildFallbackPagePurpose(
   context: EpisodePagePlanContext,
   sourceScenes: EpisodePagePlanContext['scenes'],
-  pageNumber: number,
+  _pageNumber: number,
   language: AppLanguage,
+  pageBeat?: string,
 ): string {
+  const beat =
+    summarizeCompilerText(pageBeat, 70) ??
+    summarizeCompilerText(context.episode.purpose ?? context.chapter.purpose, 70) ??
+    fallbackLabel(language, 'Advance the story clearly.', '物語を明確に前へ進める。');
   const sceneSummary =
     sourceScenes
-      .map((scene) => [scene.location, scene.time, scene.atmosphere].filter(Boolean).join(' / '))
+      .map((scene) => [scene.location, scene.time].filter(isMeaningfulText).join(' / '))
       .filter((value) => value.length > 0)
-      .join(' | ') ||
-    fallbackLabel(language, 'episode progression', '話の流れ');
+      .join(' | ') || null;
 
-  if (language === 'en') {
-    return `${summarizeCompilerText(context.episode.purpose ?? context.chapter.purpose, 120) ?? 'Advance the story clearly.'} Focus this page on ${summarizeCompilerText(sceneSummary, 120) ?? 'the current scene'}. (Page ${pageNumber})`;
+  if (sceneSummary === null) {
+    return beat;
   }
 
-  return `${summarizeCompilerText(context.episode.purpose ?? context.chapter.purpose, 120) ?? '物語を明確に前へ進める。'} このページでは${summarizeCompilerText(sceneSummary, 120) ?? '現在の場面'}に焦点を当てる。（${pageNumber}ページ目）`;
+  return language === 'en'
+    ? `${beat} Keep the page grounded in ${sceneSummary}.`
+    : `${beat} 舞台は${sceneSummary}に置く。`;
 }
 
 function buildFallbackContinuityNote(
-  context: EpisodePagePlanContext,
+  _context: EpisodePagePlanContext,
   sourceScenes: EpisodePagePlanContext['scenes'],
   pageNumber: number,
   language: AppLanguage,
+  _pageBeat?: string,
 ): string {
-  const mood = sourceScenes.map((scene) => scene.atmosphere).filter((value): value is string => isMeaningfulText(value)).join(' / ');
-  const curve = context.chapter.emotionCurve;
-  const parts = [
-    curve !== null
-      ? language === 'en'
-        ? `Keep the chapter emotion curve visible: ${curve}.`
-        : `章全体の感情曲線として ${curve} を見失わない。`
-      : null,
-    mood.length > 0
-      ? language === 'en'
-        ? `Maintain the scene mood: ${mood}.`
-        : `場面の空気感として ${mood} を保つ。`
-      : null,
-    language === 'en'
-      ? `Page ${pageNumber} should read naturally into the next page without adding a new event.`
-      : `${pageNumber}ページ目から次ページへ、新しい出来事を足さず自然につなぐ。`,
-  ].filter((value): value is string => value !== null);
+  const mood = sourceScenes
+    .map((scene) => scene.atmosphere)
+    .filter((value): value is string => isMeaningfulText(value))
+    .join(' / ');
+  const setting = sourceScenes
+    .map((scene) => [scene.location, scene.time].filter(isMeaningfulText).join(' / '))
+    .filter((value) => value.length > 0)
+    .join(' | ');
 
-  return parts.join(' ');
+  if (language === 'en') {
+    return [
+      mood.length > 0 ? `Keep the mood ${mood}.` : null,
+      setting.length > 0 ? `Keep the page grounded in ${setting}.` : null,
+      `Carry page ${pageNumber} into the next page without inventing a new event or replaying the exact same beat.`,
+    ]
+      .filter((value): value is string => value !== null)
+      .join(' ');
+  }
+
+  return [
+    mood.length > 0 ? `空気感は${mood}のまま保つ。` : null,
+    setting.length > 0 ? `舞台は${setting}から逸らさない。` : null,
+    `${pageNumber}ページ目から次ページへ、新しい出来事を足さず、同じ見せ場をそのまま繰り返さずにつなぐ。`,
+  ]
+    .filter((value): value is string => value !== null)
+    .join(' ');
 }
 
 function buildFallbackAutofillSuggestion(
   context: PageAutofillContext,
   language: AppLanguage,
 ): PageAutofillSuggestion {
-  const roleSequence: Array<PageAutofillPanelSuggestion['panelRole']> = [
-    'establish',
-    'action',
-    'reaction',
-    'transition',
-    'action',
-    'reaction',
-    'impact',
-    'pause',
-  ];
-  const sizeSequence: Array<PageAutofillPanelSuggestion['panelSize']> = [
-    'large',
-    'standard',
-    'standard',
-    'wide',
-    'standard',
-    'standard',
-    'large',
-    'narrow',
-  ];
+  const pageBeat = buildFallbackAutofillPageBeat(context, language);
+  const pageEntityIds = inferFallbackEntityIds(
+    context.entities,
+    Array.from(new Set(context.scenes.flatMap((scene) => scene.involvedEntityIds))),
+    [
+      pageBeat,
+      context.episodePurpose,
+      context.introduction,
+      context.middle,
+      context.climax,
+      context.endingHook,
+      ...context.scenes.flatMap((scene) => [scene.location, scene.time, scene.atmosphere]),
+    ],
+    4,
+  );
+  const panelPlans = buildFallbackPanelPlans(context.panels.length);
+  const panelBeats = buildDistributedPanelBeats([pageBeat], panelPlans, language);
 
   return {
     panels: context.panels.map((panel, index) => {
-      const scene = context.scenes[Math.min(context.scenes.length - 1, Math.floor((index * context.scenes.length) / context.panels.length))];
-      const involvedEntityIds = scene?.involvedEntityIds ?? [];
+      const panelPlan = panelPlans[Math.min(index, panelPlans.length - 1)];
+      const scene = resolveSceneForPanelOrder(context.scenes, panel.order, context.panels.length);
+      const panelBeat =
+        panelBeats[index] ??
+        buildFallbackPanelBeat(
+          context.episodePurpose ?? context.middle ?? context.introduction ?? context.endingHook ?? fallbackLabel(language, 'Advance the current page beat.', 'このページの主な流れを進める。'),
+          context.endingHook,
+          panel.order,
+          context.panels.length,
+          language,
+        );
+      const sceneScopedEntityIds = inferFallbackEntityIds(
+        context.entities,
+        Array.from(new Set([...(scene?.involvedEntityIds ?? []), ...pageEntityIds])),
+        [
+          panelBeat,
+          pageBeat,
+          context.episodePurpose,
+          context.introduction,
+          context.middle,
+          context.climax,
+          context.endingHook,
+          scene?.location,
+          scene?.time,
+          scene?.atmosphere,
+        ],
+        4,
+      );
+      const panelCandidateEntityIds = inferFallbackEntityIds(
+        context.entities,
+        sceneScopedEntityIds.length > 0 ? sceneScopedEntityIds : pageEntityIds,
+        [
+          panelBeat,
+          pageBeat,
+          scene?.location,
+          scene?.time,
+          scene?.atmosphere,
+        ],
+        4,
+      );
+      const panelMentionedEntityIds = inferFallbackEntityIds(
+        context.entities,
+        [],
+        [panelBeat],
+        4,
+      );
+      const pageMentionedEntityIds = inferFallbackEntityIds(
+        context.entities,
+        [],
+        [
+          pageBeat,
+          context.episodePurpose,
+          context.introduction,
+          context.middle,
+          context.climax,
+          context.endingHook,
+        ],
+        4,
+      );
+      const entitySelectionBasis =
+        panelMentionedEntityIds.length > 0
+          ? panelMentionedEntityIds
+          : pageMentionedEntityIds.length > 0
+            ? pageMentionedEntityIds
+            : panelCandidateEntityIds.length > 0
+              ? panelCandidateEntityIds
+              : sceneScopedEntityIds.length > 0
+                ? sceneScopedEntityIds
+                : pageEntityIds;
+      const panelEntityIds = selectFallbackPanelEntityIds(
+        entitySelectionBasis,
+        panelPlan.focus,
+        {
+          explicitEntityCount:
+            panelMentionedEntityIds.length > 0
+              ? panelMentionedEntityIds.length
+              : pageMentionedEntityIds.length,
+        },
+      );
+      const entityNames = panelEntityIds
+        .map((entityId) => context.entities.find((entity) => entity.id === entityId)?.name ?? entityId)
+        .filter((value, entityIndex, array) => array.indexOf(value) === entityIndex);
+      const shotType = fallbackShotTypeForRole(panelPlan.role ?? 'action');
+      const angle = fallbackAngleForRole(panelPlan.role ?? 'action');
+      const dialogue = buildFallbackDialogueLines(
+        [
+          panelBeat,
+          pageBeat,
+          context.episodePurpose,
+          context.introduction,
+          context.middle,
+          context.climax,
+          context.endingHook,
+          scene?.location,
+          scene?.time,
+          scene?.atmosphere,
+        ],
+        context.entities,
+        panelEntityIds,
+        panelPlan,
+        panel.order,
+        language,
+      );
 
       return {
         order: panel.order,
-        panelRole: roleSequence[Math.min(index, roleSequence.length - 1)],
-        panelSize: sizeSequence[Math.min(index, sizeSequence.length - 1)],
-        situationText: buildFallbackSituationText(context, scene, panel.order, language),
+        panelRole: panelPlan.role,
+        panelSize: panelPlan.size,
+        situationText: buildFallbackSituationText(
+          scene,
+          panelBeat,
+          panel.order,
+          panelPlan,
+          entityNames,
+          language,
+        ),
         composition: {
           source: 'custom',
-          shotType: fallbackShotTypeForRole(roleSequence[Math.min(index, roleSequence.length - 1)] ?? 'action'),
-          angle: fallbackAngleForRole(roleSequence[Math.min(index, roleSequence.length - 1)] ?? 'action'),
-          compositionPrompt: buildFallbackCompositionPrompt(scene, language),
-          customNote: buildFallbackCustomNote(scene, language),
+          shotType,
+          angle,
+          compositionPrompt: buildFallbackCompositionPrompt(
+            scene,
+            panelBeat,
+            panelPlan,
+            entityNames,
+            shotType,
+            angle,
+            language,
+          ),
+          customNote: buildFallbackCustomNote(
+            scene,
+            context.endingHook,
+            panelPlan,
+            entityNames,
+            language,
+          ),
         },
-        dialogueInPanel: context.dialogueMode !== 'balloon_only',
-        backgroundNote: buildFallbackBackground(scene, language),
-        entities: buildFallbackAssignments(involvedEntityIds),
+        dialogueInPanel:
+          context.dialogueMode !== 'balloon_only' && panelPlan.focus !== 'setting',
+        dialogue,
+        backgroundNote: buildFallbackBackground(scene, panelPlan, language),
+        entities: buildFallbackAssignments(panelEntityIds, panelPlan),
       };
     }),
   };
 }
 
 function buildFallbackSituationText(
-  context: PageAutofillContext,
   scene: PageAutofillContext['scenes'][number] | undefined,
+  panelBeat: string,
   panelOrder: number,
+  panelPlan: FallbackPanelPlan,
+  entityNames: string[],
   language: AppLanguage,
 ): string {
-  const parts = [
-    scene?.location,
-    scene?.time,
-    scene?.atmosphere,
-  ].filter((value): value is string => isMeaningfulText(value));
+  const sceneSetting =
+    [scene?.location, scene?.time, scene?.atmosphere]
+      .filter((value): value is string => isMeaningfulText(value))
+      .join(' / ') || fallbackLabel(language, 'current scene', '現在の場面');
+  const subject = formatEntitySubject(entityNames, language);
+  const beatHint = summarizeCompilerText(panelBeat, 72);
+  const directBeat = buildFallbackSituationClause(beatHint, entityNames, language);
 
-  return [
-    parts.length > 0 ? parts.join(' / ') : fallbackLabel(language, 'Episode beat', '話の進行'),
-    context.episodePurpose ??
-      context.middle ??
-      context.introduction ??
-      fallbackLabel(language, 'Advance the current page beat.', 'このページの主な流れを進める。'),
-    language === 'en'
-      ? `Panel ${panelOrder} should carry this beat clearly.`
-      : `${panelOrder}コマ目でこの流れを明確に見せる。`,
-  ].join('. ');
+  switch (panelPlan.focus) {
+    case 'setting':
+      return language === 'en'
+        ? `${sceneSetting}. ${directBeat ?? `${subject} is introduced so the setting and page tension read at once.`}`
+        : `${sceneSetting}。${directBeat ?? `${subject}を導入し、場の状況とページの緊張感が一度で伝わるようにする。`}`;
+    case 'exchange':
+      return language === 'en'
+        ? `${sceneSetting}. ${directBeat ?? `${subject} turns the current beat into direct interaction.`}`
+        : `${sceneSetting}。${directBeat ?? `${subject}が向き合い、この流れを具体的なやり取りへ進める。`}`;
+    case 'reaction':
+      return language === 'en'
+        ? `${sceneSetting}. ${directBeat ?? `${subject} shows the emotional reaction to the preceding beat while the place remains readable.`}`
+        : `${sceneSetting}。${directBeat ?? `${subject}が直前の出来事への反応を見せ、場所の情報も読み取れる状態を保つ。`}`;
+    case 'impact':
+      return language === 'en'
+        ? `${sceneSetting}. ${directBeat ?? `${subject} lands the clearest change of the page so the turning point is easy to read.`}`
+        : `${sceneSetting}。${directBeat ?? `${subject}がこのページで最も大きい変化を受け持ち、転換点がすぐ分かるようにする。`}`;
+    case 'transition':
+      return language === 'en'
+        ? `${sceneSetting}. ${directBeat ?? `${subject} turns the current beat toward the next development without breaking the scene flow.`}`
+        : `${sceneSetting}。${directBeat ?? `${subject}が今の流れを次の展開へつなぎ、場面の流れを途切れさせない。`}`;
+    case 'pause':
+      return language === 'en'
+        ? `${sceneSetting}. ${directBeat ?? `${subject} creates a short pause so the page can breathe before the next move.`}`
+        : `${sceneSetting}。${directBeat ?? `${subject}が短い間をつくり、このページに呼吸を与える。`}`;
+    case 'lead':
+    default:
+      return language === 'en'
+        ? `${sceneSetting}. ${directBeat ?? `${subject} drives panel ${panelOrder} and advances the active beat.`}`
+        : `${sceneSetting}。${directBeat ?? `${subject}が${panelOrder}コマ目を動かし、主な流れを前へ進める。`}`;
+  }
 }
 
 function buildFallbackCompositionPrompt(
-  scene: PageAutofillContext['scenes'][number] | undefined,
+  scene: PageAutofillContext['scenes'][number] | EpisodePagePlanContext['scenes'][number] | undefined,
+  panelBeat: string,
+  panelPlan: FallbackPanelPlan,
+  entityNames: string[],
+  shotType: NonNullable<NonNullable<PageAutofillPanelSuggestion['composition']>['shotType']>,
+  angle: NonNullable<NonNullable<PageAutofillPanelSuggestion['composition']>['angle']>,
   language: AppLanguage,
 ): string | null {
-  if (scene === undefined) {
-    return null;
+  const subject = formatEntitySubject(entityNames, language);
+  const environment =
+    [scene?.location, scene?.time].filter((value): value is string => isMeaningfulText(value)).join(' / ') ||
+    fallbackLabel(language, 'the current environment', '現在の環境');
+  const shot = humanizeToken(shotType);
+  const cameraAngle = humanizeToken(angle);
+  const beatHint = summarizeCompilerText(stripFallbackRoleCueText(panelBeat, language), 90);
+  const hasPair = entityNames.length >= 2;
+
+  switch (panelPlan.focus) {
+    case 'setting':
+      return language === 'en'
+        ? `Frame ${subject} in a ${shot} ${cameraAngle} view so ${environment} and ${beatHint ?? 'the scene layout'} read at once.`
+        : `${subject}を${shot}寄り・${cameraAngle}気味で捉え、${environment}と${beatHint ?? '場の配置'}が一度で読める構図にする。`;
+    case 'exchange':
+      return language === 'en'
+        ? hasPair
+          ? `Keep ${subject} in the same frame with readable spacing and eyelines, using a ${shot} ${cameraAngle} composition that supports ${beatHint ?? 'the exchange'}.`
+          : `Stage ${subject}'s posture and eyeline in a ${shot} ${cameraAngle} composition that supports ${beatHint ?? 'the internal beat'}.`
+        : hasPair
+          ? `${subject}を同じ画面の中に置き、${beatHint ?? 'やり取り'}が読めるように距離と視線を${shot}寄り・${cameraAngle}気味で整理する。`
+          : `${subject}の立ち位置と視線を、${beatHint ?? '内面の変化'}が読めるように${shot}寄り・${cameraAngle}気味で整理する。`;
+    case 'reaction':
+      return language === 'en'
+        ? `Use a ${shot} ${cameraAngle} framing that favors ${subject}'s expression while keeping a trace of ${environment} and ${beatHint ?? 'the emotional reaction'}.`
+        : `${subject}の表情を優先しつつ${environment}と${beatHint ?? '感情の揺れ'}の気配も残るように、${shot}寄り・${cameraAngle}気味で寄せる。`;
+    case 'impact':
+      return language === 'en'
+        ? `Use a ${shot} ${cameraAngle} composition that places ${beatHint ?? subject} at the visual center of the panel.`
+        : `${beatHint ?? subject}が画面の中心に見えるように、${shot}寄り・${cameraAngle}気味で重心を作る。`;
+    case 'transition':
+      return language === 'en'
+        ? `Stage ${subject} in a ${shot} ${cameraAngle} composition that visibly points ${beatHint ?? 'the page'} toward the next beat.`
+        : `${subject}が${beatHint ?? '次の流れ'}を指し示すように、${shot}寄り・${cameraAngle}気味で方向性を持たせる。`;
+    case 'pause':
+      return language === 'en'
+        ? `Give ${subject} a cleaner ${shot} ${cameraAngle} frame with more breathing room than the surrounding panels so ${beatHint ?? 'the pause'} can land.`
+        : `${subject}に前後のコマより少し余白のある${shot}寄り・${cameraAngle}気味の構図を与え、${beatHint ?? '間'}が着地するようにする。`;
+    case 'lead':
+    default:
+      return language === 'en'
+        ? `Make ${subject} read first in a ${shot} ${cameraAngle} composition so ${beatHint ?? 'the next visible beat'} starts cleanly.`
+        : `${subject}が最初に読めるように、${shot}寄り・${cameraAngle}気味で${beatHint ?? '次の動き'}が自然に始まる構図にする。`;
   }
-
-  const parts = [
-    scene.location !== null
-      ? language === 'en'
-        ? `Stage the main subject clearly within ${scene.location}`
-        : `${scene.location}の中で主役が分かるように見せる`
-      : null,
-    scene.time !== null
-      ? language === 'en'
-        ? `Let the sense of ${scene.time} read immediately`
-        : `${scene.time}の時間感が伝わるようにする`
-      : null,
-    scene.atmosphere !== null
-      ? language === 'en'
-        ? `Let the atmosphere of ${scene.atmosphere} read from the image`
-        : `${scene.atmosphere}の空気が画面から伝わるようにする`
-      : null,
-  ].filter((value): value is string => value !== null);
-
-  return parts.length === 0 ? null : parts.join('. ');
 }
 
 function buildFallbackCustomNote(
-  scene: PageAutofillContext['scenes'][number] | undefined,
+  scene: PageAutofillContext['scenes'][number] | EpisodePagePlanContext['scenes'][number] | undefined,
+  _continuityNote: string | null | undefined,
+  panelPlan: FallbackPanelPlan,
+  entityNames: string[],
   language: AppLanguage,
 ): string | null {
-  if (scene === undefined) {
-    return null;
-  }
+  const subject = formatEntitySubject(entityNames, language);
+  const atmosphere = summarizeCompilerText(scene?.atmosphere, 40);
 
-  if (scene.atmosphere !== null) {
-    return language === 'en'
-      ? `Do not overcrowd the frame; let ${scene.atmosphere} land first.`
-      : `画面を詰め込みすぎず、${scene.atmosphere}の空気が最初に伝わる見せ方にする。`;
+  switch (panelPlan.focus) {
+    case 'setting':
+      return language === 'en'
+        ? `Keep the frame readable before detail; let ${atmosphere ?? 'the scene mood'} land first around ${subject}.`
+        : `描き込みより先に読みやすさを優先し、${subject}の周囲に${atmosphere ?? '場の空気'}という空気を先に伝える。`;
+    case 'exchange':
+      return language === 'en'
+        ? entityNames.length > 1
+          ? `Clarify who is pressing and who is receiving by staging ${subject} with readable eyelines and distance.`
+          : `Use ${subject}'s posture and eyeline to make the internal shift readable.`
+        : entityNames.length > 1
+          ? `${subject}の視線と距離で、押している側と受けている側が分かるようにする。`
+          : `${subject}の立ち位置と視線で、内面の揺れが分かるようにする。`;
+    case 'reaction':
+      return language === 'en'
+        ? `Hold on the face and upper body long enough for ${subject}'s reaction to register before the page moves on.`
+        : `${subject}の反応が読み取れるように、顔から上半身の情報を先に受け取れる見せ方にする。`;
+    case 'impact':
+      return language === 'en'
+        ? `Make the visual weight and the reader's eyeline readable in a single glance.`
+        : `画面の重心と視線の流れが一目で読めるようにする。`;
+    case 'transition':
+      return language === 'en'
+        ? `Stage the subject so the reader can feel the next move starting without introducing a new event.`
+        : `新しい出来事は足さず、次の動きが始まりかけていることだけを感じさせる。`;
+    case 'pause':
+      return language === 'en'
+        ? `Reduce clutter and let the pause breathe before the next beat.`
+        : `情報を詰め込みすぎず、次の流れの前にしっかり間を取る。`;
+    case 'lead':
+    default:
+      return language === 'en'
+        ? `Keep ${subject} readable first, then let the surrounding space support the beat without stealing focus.`
+        : `${subject}を先に読ませ、その後で周囲の空間が流れを支えるようにして主役を食わない。`;
   }
-
-  return null;
 }
 
 function buildFallbackBackground(
-  scene: PageAutofillContext['scenes'][number] | undefined,
-  _language: AppLanguage,
+  scene: PageAutofillContext['scenes'][number] | EpisodePagePlanContext['scenes'][number] | undefined,
+  panelPlan: FallbackPanelPlan,
+  language: AppLanguage,
 ): string | null {
   if (scene === undefined) {
-    return null;
+    return fallbackLabel(language, 'Current setting', '現在の場面');
   }
 
-  return [scene.location, scene.time].filter((value): value is string => isMeaningfulText(value)).join(' / ') || null;
+  const parts =
+    panelPlan.focus === 'reaction' || panelPlan.focus === 'pause'
+      ? [scene.location]
+      : [scene.location, scene.time];
+  return parts.filter((value): value is string => isMeaningfulText(value)).join(' / ') || null;
 }
 
-function buildFallbackAssignments(entityIds: string[]): PanelEntityAssignment[] | undefined {
+function buildFallbackAssignments(
+  entityIds: string[],
+  panelPlan: FallbackPanelPlan,
+): PanelEntityAssignment[] | undefined {
   if (entityIds.length === 0) {
     return undefined;
   }
@@ -1951,15 +2896,477 @@ function buildFallbackAssignments(entityIds: string[]): PanelEntityAssignment[] 
   return entityIds.slice(0, 3).map((entityId, index) => ({
     entityId,
     role: index === 0 ? 'primary' : index === 1 ? 'secondary' : 'background',
-    expression: index === 0 ? 'calm' : 'determined',
+    expression:
+      panelPlan.focus === 'reaction'
+        ? index === 0
+          ? 'surprised'
+          : 'calm'
+        : panelPlan.focus === 'impact'
+          ? 'determined'
+          : index === 0
+            ? 'calm'
+            : 'determined',
     customExpression: null,
-    action: index === 0 ? 'standing_firm' : 'running',
+    action:
+      panelPlan.focus === 'transition'
+        ? 'running'
+        : 'standing_firm',
     customAction: null,
-    position: index === 0 ? 'center' : index === 1 ? 'left' : 'background',
-    facingDirection: index === 0 ? 'front' : 'three_quarter_right',
+    position:
+      index === 0
+        ? panelPlan.focus === 'setting'
+          ? 'center'
+          : 'center'
+        : index === 1
+          ? 'left'
+          : 'background',
+    facingDirection:
+      panelPlan.focus === 'exchange'
+        ? index === 0
+          ? 'right'
+          : 'left'
+        : panelPlan.focus === 'reaction'
+          ? 'three_quarter_right'
+          : index === 0
+            ? 'front'
+            : 'three_quarter_right',
     effectNote: null,
     stateId: null,
   }));
+}
+
+function buildFallbackDialogueLines(
+  sourceTexts: Array<string | null | undefined>,
+  entities: Array<{ id: string; name: string; structuredFields?: Record<string, unknown> }>,
+  panelEntityIds: string[],
+  panelPlan: FallbackPanelPlan,
+  panelOrder: number,
+  language: AppLanguage,
+): PanelDialogueLine[] | undefined {
+  const quoteCandidates = extractQuotedDialogueCandidates(sourceTexts, entities);
+  const quoted = quoteCandidates.length === 0
+    ? null
+    : quoteCandidates[(Math.max(panelOrder, 1) - 1) % quoteCandidates.length];
+  if (quoted !== null) {
+    const visibleSpeakerId =
+      quoted.entityId !== null && panelEntityIds.includes(quoted.entityId)
+        ? quoted.entityId
+        : panelEntityIds[0] ?? quoted.entityId;
+    return [
+      {
+        entityId: visibleSpeakerId ?? null,
+        text: quoted.text,
+        type: visibleSpeakerId === null ? 'narration' : 'speech',
+        position: 'top',
+      },
+    ];
+  }
+
+  const beatDrivenLine = buildBeatDrivenFallbackDialogueLine(
+    sourceTexts[0] ?? null,
+    panelPlan,
+    language,
+    panelEntityIds[0] ?? null,
+  );
+  return beatDrivenLine === null ? undefined : [beatDrivenLine];
+}
+
+type FallbackPanelPlan = {
+  role: PageAutofillPanelSuggestion['panelRole'];
+  size: PageAutofillPanelSuggestion['panelSize'];
+  focus: 'setting' | 'lead' | 'exchange' | 'reaction' | 'transition' | 'impact' | 'pause';
+};
+
+function buildFallbackPanelPlans(panelCount: number): FallbackPanelPlan[] {
+  const templates: Record<number, FallbackPanelPlan[]> = {
+    1: [{ role: 'emphasis', size: 'large', focus: 'lead' }],
+    2: [
+      { role: 'establish', size: 'wide', focus: 'setting' },
+      { role: 'impact', size: 'large', focus: 'impact' },
+    ],
+    3: [
+      { role: 'establish', size: 'large', focus: 'setting' },
+      { role: 'action', size: 'standard', focus: 'exchange' },
+      { role: 'impact', size: 'standard', focus: 'reaction' },
+    ],
+    4: [
+      { role: 'establish', size: 'large', focus: 'setting' },
+      { role: 'action', size: 'standard', focus: 'lead' },
+      { role: 'reaction', size: 'standard', focus: 'reaction' },
+      { role: 'impact', size: 'wide', focus: 'impact' },
+    ],
+    5: [
+      { role: 'establish', size: 'wide', focus: 'setting' },
+      { role: 'action', size: 'standard', focus: 'lead' },
+      { role: 'action', size: 'standard', focus: 'exchange' },
+      { role: 'reaction', size: 'standard', focus: 'reaction' },
+      { role: 'impact', size: 'large', focus: 'impact' },
+    ],
+  };
+
+  const exact = templates[panelCount];
+  if (exact !== undefined) {
+    return exact;
+  }
+
+  return Array.from({ length: panelCount }, (_value, index) => {
+    if (index === 0) {
+      return { role: 'establish', size: 'wide', focus: 'setting' } satisfies FallbackPanelPlan;
+    }
+    if (index === panelCount - 1) {
+      return { role: 'impact', size: 'large', focus: 'impact' } satisfies FallbackPanelPlan;
+    }
+    if (index === panelCount - 2) {
+      return { role: 'reaction', size: 'standard', focus: 'reaction' } satisfies FallbackPanelPlan;
+    }
+    return { role: 'action', size: 'standard', focus: index % 2 === 0 ? 'exchange' : 'lead' } satisfies FallbackPanelPlan;
+  });
+}
+
+function extractQuotedDialogueCandidates(
+  texts: Array<string | null | undefined>,
+  entities: Array<{ id: string; name: string; structuredFields?: Record<string, unknown> }>,
+): Array<{ text: string; entityId: string | null }> {
+  const canonicalEntities = entities.map((entity) => ({
+    id: entity.id,
+    name: entity.name,
+    aliases: extractEntityAliases(entity.structuredFields ?? {}),
+  }));
+  const candidates: Array<{ text: string; entityId: string | null }> = [];
+  const seen = new Set<string>();
+  const quotePattern = /[「『"]([^」』"\n]{1,80})[」』"]/gu;
+
+  for (const text of texts) {
+    const canonicalText = canonicalizeEntityMentionsInText(text, canonicalEntities);
+    if (!isMeaningfulText(canonicalText)) {
+      continue;
+    }
+
+    for (const match of canonicalText.matchAll(quotePattern)) {
+      const raw = match[1]?.trim();
+      if (!isMeaningfulText(raw) || seen.has(raw) || !looksLikeQuotedDialogue(raw, canonicalEntities)) {
+        continue;
+      }
+      seen.add(raw);
+
+      const matchIndex = match.index ?? 0;
+      const before = canonicalText.slice(Math.max(0, matchIndex - 48), matchIndex);
+      const speaker =
+        canonicalEntities
+          .map((entity) => ({ entityId: entity.id, name: entity.name, index: before.lastIndexOf(entity.name) }))
+          .filter((entry) => entry.index >= 0)
+          .sort((left, right) => right.index - left.index)[0] ?? null;
+
+      candidates.push({
+        text: raw,
+        entityId: speaker?.entityId ?? null,
+      });
+    }
+  }
+
+  return candidates;
+}
+
+function looksLikeQuotedDialogue(
+  value: string,
+  entities: Array<{ id: string; name: string; aliases: string[] }>,
+): boolean {
+  const compact = value.replace(/\s+/gu, '');
+  if (compact.length === 0) {
+    return false;
+  }
+  if (entities.some((entity) => entity.name === compact || entity.aliases.includes(compact))) {
+    return false;
+  }
+  if (!/[。！？…!?、,]/u.test(compact) && compact.length < 10) {
+    return false;
+  }
+  if (compact.length <= 3 && !/[。！？…!?、,]/u.test(compact)) {
+    return false;
+  }
+  if (/^[\p{Script=Han}\p{Script=Katakana}A-Za-z0-9]{1,4}$/u.test(compact) && !/[ぁ-ん]/u.test(compact)) {
+    return false;
+  }
+  return true;
+}
+
+function selectFallbackPanelEntityIds(
+  pageEntityIds: string[],
+  focus: FallbackPanelPlan['focus'],
+  options?: { explicitEntityCount?: number },
+): string[] {
+  if (pageEntityIds.length === 0) {
+    return [];
+  }
+
+  const canUsePair = (options?.explicitEntityCount ?? 0) >= 2;
+
+  switch (focus) {
+    case 'setting':
+    case 'exchange':
+    case 'impact':
+      return pageEntityIds.slice(0, canUsePair ? Math.min(pageEntityIds.length, 2) : 1);
+    case 'transition':
+    case 'pause':
+    case 'reaction':
+    case 'lead':
+    default:
+      return pageEntityIds.slice(0, 1);
+  }
+}
+
+function buildDistributedEpisodeBeats(
+  segments: Array<string | null | undefined>,
+  totalPages: number,
+  language: AppLanguage,
+): string[] {
+  const distributed = distributeStoryBeats(segments, totalPages, 140);
+
+  if (distributed.length === 0) {
+    return Array.from({ length: totalPages }, (_value, pageIndex) =>
+      fallbackLabel(language, `Page ${pageIndex + 1} progression`, `${pageIndex + 1}ページ目の進行`),
+    );
+  }
+
+  return distributed;
+}
+
+function buildDistributedPanelBeats(
+  sourceTexts: Array<string | null | undefined>,
+  panelPlans: FallbackPanelPlan[],
+  language: AppLanguage,
+): string[] {
+  const distributed = distributeStoryBeats(sourceTexts, panelPlans.length, 56);
+  if (distributed.length === 0) {
+    return panelPlans.map((panelPlan) => fallbackRoleBeatCue(panelPlan.focus, language));
+  }
+
+  return panelPlans.map((panelPlan, index) => {
+    const beat = distributed[index] ?? distributed[distributed.length - 1] ?? null;
+    if (!isMeaningfulText(beat)) {
+      return fallbackRoleBeatCue(panelPlan.focus, language);
+    }
+
+    const previous = index > 0 ? distributed[index - 1] ?? null : null;
+    if (previous !== null && beat === previous) {
+      return `${beat} ${fallbackRoleBeatCue(panelPlan.focus, language)}`.trim();
+    }
+
+    return beat;
+  });
+}
+
+function buildCanonicalCompilerEntityRefs(
+  entities: Array<{ id: string; name: string; structuredFields?: Record<string, unknown> }>,
+): Array<{ id: string; name: string; aliases: string[] }> {
+  return entities.map((entity) => ({
+    id: entity.id,
+    name: entity.name,
+    aliases: extractEntityAliases(entity.structuredFields ?? {}),
+  }));
+}
+
+function canonicalizeCompilerBriefText(
+  value: string | null | undefined,
+  entities: Array<{ id: string; name: string; aliases: string[] }>,
+): string | null | undefined {
+  if (!isMeaningfulText(value)) {
+    return value;
+  }
+
+  return canonicalizeEntityMentionsInText(value, entities);
+}
+
+function buildFallbackPanelBeat(
+  pagePurpose: string | null | undefined,
+  continuityNote: string | null | undefined,
+  panelOrder: number,
+  panelCount: number,
+  language: AppLanguage,
+): string {
+  const cue =
+    panelOrder === 1
+      ? fallbackLabel(language, 'Open the page beat clearly', 'ページの主題を立ち上げる')
+      : panelOrder === panelCount
+        ? fallbackLabel(language, 'Land the page beat cleanly', 'ページの主題を印象づけて締める')
+        : fallbackLabel(language, `Develop beat ${panelOrder}`, `${panelOrder}コマ目で流れを具体化する`);
+
+  return [summarizeCompilerText(pagePurpose, 100), summarizeCompilerText(continuityNote, 80), cue]
+    .filter((value): value is string => value !== null)
+    .join('. ');
+}
+
+function buildFallbackAutofillPageBeat(
+  context: PageAutofillContext,
+  language: AppLanguage,
+): string {
+  const distributed = buildDistributedEpisodeBeats(
+    [
+      context.introduction,
+      context.middle,
+      context.climax,
+      context.endingHook,
+      context.episodePurpose,
+    ],
+    context.totalPagesInEpisode,
+    language,
+  );
+
+  return (
+    distributed[Math.max(0, Math.min(context.pageNumber - 1, distributed.length - 1))] ??
+    fallbackLabel(language, 'Advance the current page beat.', 'このページの主な流れを進める。')
+  );
+}
+
+function fallbackRoleBeatCue(
+  focus: FallbackPanelPlan['focus'],
+  language: AppLanguage,
+): string {
+  switch (focus) {
+    case 'setting':
+      return fallbackLabel(language, 'Set the place clearly.', '場所を先に読ませる。');
+    case 'exchange':
+      return fallbackLabel(language, 'Turn the beat into direct exchange.', '流れを直接のやり取りに変える。');
+    case 'reaction':
+      return fallbackLabel(language, 'Hold on the reaction.', '反応をはっきり見せる。');
+    case 'impact':
+      return fallbackLabel(language, 'Land the turning point.', '転換点を着地させる。');
+    case 'transition':
+      return fallbackLabel(language, 'Point toward the next move.', '次の動きを指し示す。');
+    case 'pause':
+      return fallbackLabel(language, 'Leave a short pause.', '短い間を置く。');
+    case 'lead':
+    default:
+      return fallbackLabel(language, 'Push the beat forward.', '流れを前へ進める。');
+  }
+}
+
+function buildFallbackSituationClause(
+  beat: string | null,
+  entityNames: string[],
+  language: AppLanguage,
+): string | null {
+  const cleanedBeat = stripFallbackRoleCueText(beat, language);
+  if (!isMeaningfulText(cleanedBeat)) {
+    return null;
+  }
+
+  const normalized = ensureSentenceLikeText(cleanedBeat, language);
+  if (!isMeaningfulText(normalized)) {
+    return null;
+  }
+
+  if (entityNames.some((entityName) => normalized.includes(entityName))) {
+    return normalized;
+  }
+
+  const subject = formatEntitySubject(entityNames, language);
+  return language === 'en'
+    ? `Center ${subject}. ${normalized}`
+    : `${subject}を中心に、${normalized}`;
+}
+
+function buildBeatDrivenFallbackDialogueLine(
+  panelBeat: string | null,
+  panelPlan: FallbackPanelPlan,
+  language: AppLanguage,
+  speakerEntityId: string | null,
+): PanelDialogueLine | null {
+  const cleanedBeat = stripFallbackRoleCueText(panelBeat, language);
+  if (!isMeaningfulText(cleanedBeat)) {
+    return null;
+  }
+
+  const text = ensureSentenceLikeText(
+    summarizeCompilerText(cleanedBeat, language === 'en' ? 80 : 42),
+    language,
+  );
+  if (!isMeaningfulText(text)) {
+    return null;
+  }
+
+  const shouldAttachToVisibleSubject =
+    speakerEntityId !== null &&
+    panelPlan.focus !== 'setting' &&
+    panelPlan.focus !== 'pause';
+
+  return {
+    entityId: shouldAttachToVisibleSubject ? speakerEntityId : null,
+    text,
+    type: shouldAttachToVisibleSubject ? 'thought' : 'narration',
+    position: panelPlan.focus === 'transition' ? 'center' : 'top',
+  };
+}
+
+function stripFallbackRoleCueText(
+  value: string | null | undefined,
+  language: AppLanguage,
+): string | null {
+  if (!isMeaningfulText(value)) {
+    return null;
+  }
+
+  const cueTexts: string[] =
+    language === 'en'
+      ? [
+          'Set the place clearly.',
+          'Turn the beat into direct exchange.',
+          'Hold on the reaction.',
+          'Land the turning point.',
+          'Point toward the next move.',
+          'Leave a short pause.',
+          'Push the beat forward.',
+        ]
+      : [
+          '場所を先に読ませる。',
+          '流れを直接のやり取りに変える。',
+          '反応をはっきり見せる。',
+          '転換点を着地させる。',
+          '次の動きを指し示す。',
+          '短い間を置く。',
+          '流れを前へ進める。',
+        ];
+
+  let cleaned = value.replace(/\s+/gu, ' ').trim();
+  for (const cueText of cueTexts) {
+    cleaned = cleaned.split(cueText).join(' ').replace(/\s+/gu, ' ').trim();
+  }
+
+  return cleaned.length === 0 ? null : cleaned;
+}
+
+function ensureSentenceLikeText(
+  value: string | null | undefined,
+  language: AppLanguage,
+): string | null {
+  if (!isMeaningfulText(value)) {
+    return null;
+  }
+
+  const normalized = value.trim();
+  if (language === 'en') {
+    return /[.!?]$/u.test(normalized) ? normalized : `${normalized}.`;
+  }
+
+  return /[。！？…]$/u.test(normalized) ? normalized : `${normalized}。`;
+}
+
+function inferFallbackEntityIds(
+  entities: Array<{ id: string; name: string; structuredFields?: Record<string, unknown> }>,
+  preferredEntityIds: string[],
+  texts: Array<string | null | undefined>,
+  limit: number,
+): string[] {
+  return inferEntityIdsFromTexts(
+    entities.map((entity) => ({
+      id: entity.id,
+      name: entity.name,
+      aliases: extractEntityAliases(entity.structuredFields ?? {}),
+    })),
+    texts,
+    limit,
+    preferredEntityIds,
+  );
 }
 
 function fallbackShotTypeForRole(
@@ -2008,6 +3415,78 @@ function summarizeCompilerText(value: string | null | undefined, maxLength = 160
   return `${normalized.slice(0, Math.max(1, maxLength - 3)).trimEnd()}...`;
 }
 
+const GENERIC_COMPILER_TEXT_FRAGMENTS = [
+  'no explicit situation text',
+  'no additional composition note',
+  'no character is explicitly assigned',
+  'the current action or situation',
+  'readable composition',
+  'current setting',
+  'current scene',
+  'establish the location and tension clearly',
+  'show the first concrete change or realization',
+  'emphasize the emotional reaction or danger',
+  'set up the transition into the next beat',
+  'show the active subject clearly within',
+  'let the time read as',
+  'keep the visible mood',
+  'develop beat',
+  'carry beat',
+  'page progression',
+  'このコマ',
+  '現在の場面',
+  '現在の設定',
+  '読みやすい構図',
+  '今の動きや状況',
+  'コマ目の要点',
+  'ページ目の進行',
+];
+
+function shouldRepairGenericCompilerText(value: string | null | undefined): boolean {
+  if (!isMeaningfulText(value)) {
+    return true;
+  }
+
+  const normalized = value.replace(/\s+/gu, ' ').trim().toLowerCase();
+  return GENERIC_COMPILER_TEXT_FRAGMENTS.some((fragment) => normalized.includes(fragment));
+}
+
+function shouldRepairRedundantFieldText(
+  value: string | null | undefined,
+  comparisons: Array<string | null | undefined>,
+): boolean {
+  if (!isMeaningfulText(value)) {
+    return true;
+  }
+
+  return comparisons.some((comparison) => textsLookEquivalent(value, comparison));
+}
+
+function textsLookEquivalent(left: string | null | undefined, right: string | null | undefined): boolean {
+  if (!isMeaningfulText(left) || !isMeaningfulText(right)) {
+    return false;
+  }
+
+  const normalize = (value: string): string =>
+    value
+      .toLowerCase()
+      .replace(/[.!?。！？、,／/・:;()[\]{}"'`]/gu, ' ')
+      .replace(/\s+/gu, ' ')
+      .trim();
+
+  const normalizedLeft = normalize(left);
+  const normalizedRight = normalize(right);
+  if (normalizedLeft.length < 12 || normalizedRight.length < 12) {
+    return normalizedLeft === normalizedRight;
+  }
+
+  return (
+    normalizedLeft === normalizedRight ||
+    normalizedLeft.includes(normalizedRight) ||
+    normalizedRight.includes(normalizedLeft)
+  );
+}
+
 function describePanelDraftState(panel: PageAutofillPanelContext): string {
   const states: string[] = [];
 
@@ -2028,36 +3507,6 @@ function describePanelDraftState(panel: PageAutofillPanelContext): string {
   }
 
   return states.length === 0 ? 'blank' : states.join(',');
-}
-
-function fallbackPanelBeatDirective(panelOrder: number, language: AppLanguage): string {
-  if (language === 'ja') {
-    switch (panelOrder) {
-      case 1:
-        return '場所と緊張感が一目で分かるようにする';
-      case 2:
-        return '最初の具体的な変化や気づきを見せる';
-      case 3:
-        return '感情の反応や危うさを強めて見せる';
-      case 4:
-        return '次の流れへ移る準備をつくる';
-      default:
-        return `${panelOrder}コマ目の要点を読み取りやすく見せる`;
-    }
-  }
-
-  switch (panelOrder) {
-    case 1:
-      return 'Establish the location and tension clearly';
-    case 2:
-      return 'Show the first concrete change or realization';
-    case 3:
-      return 'Emphasize the emotional reaction or danger';
-    case 4:
-      return 'Set up the transition into the next beat';
-    default:
-      return `Carry beat ${panelOrder} in a clear, readable way`;
-  }
 }
 
 function fallbackLabel(language: AppLanguage, english: string, japanese: string): string {

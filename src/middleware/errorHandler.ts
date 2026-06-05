@@ -19,8 +19,13 @@ export const errorHandler: ErrorHandler<AppEnv> = (error, c) => {
       }),
     );
 
+    const hideServerErrorDetails = process.env.NODE_ENV === 'production' && error.statusCode >= 500;
+    const responseBody = hideServerErrorDetails
+      ? { error: { code: 'INTERNAL_ERROR', message: 'An unexpected error occurred' } }
+      : { error: { code: error.code, message: error.message } };
+
     c.res.headers.set('x-request-id', requestId);
-    return c.json({ error: { code: error.code, message: error.message } }, error.statusCode);
+    return c.json(responseBody, error.statusCode);
   }
 
   console.error(

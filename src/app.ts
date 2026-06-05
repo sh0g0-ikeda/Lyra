@@ -8,12 +8,8 @@ import { S3StoredImageLoader, type StoredImageLoaderPort } from './infrastructur
 import { LocalFileFinalPageImageStorage } from './infrastructure/local/LocalFileFinalPageImageStorage.js';
 import { LocalFileEntityImageStorage } from './infrastructure/local/LocalFileEntityImageStorage.js';
 import { LocalFileStoredImageLoader } from './infrastructure/local/LocalFileStoredImageLoader.js';
+import { DetachedWorkerProcessLauncher } from './infrastructure/local/DetachedWorkerProcessLauncher.js';
 import { resolveLocalAssetConfig, type LocalAssetConfig } from './infrastructure/local/LocalAssetFiles.js';
-import { AnthropicClient } from './infrastructure/anthropic/AnthropicClient.js';
-import {
-  AnthropicStoryAiClient,
-  type StoryAiClientPort,
-} from './infrastructure/anthropic/AnthropicStoryAiClient.js';
 import {
   OpenAIEntityImportAnalyzer,
   type EntityImportAnalyzerPort,
@@ -21,6 +17,7 @@ import {
 import { OpenAIPageAutofillCompiler } from './infrastructure/openai/OpenAIPageAutofillCompiler.js';
 import { OpenAIPageEpisodePlanCompiler } from './infrastructure/openai/OpenAIPageEpisodePlanCompiler.js';
 import { OpenAIClient } from './infrastructure/openai/OpenAIClient.js';
+import { OpenAIStoryAiClient } from './infrastructure/openai/OpenAIStoryAiClient.js';
 import { OpenAIStyleReferenceCompiler } from './infrastructure/openai/OpenAIStyleReferenceCompiler.js';
 import { OpenAIStoryEpisodeImprovementPlanner } from './infrastructure/openai/OpenAIStoryEpisodeImprovementPlanner.js';
 import {
@@ -29,6 +26,7 @@ import {
 } from './infrastructure/stripe/StripeBillingClient.js';
 import { db } from './lib/db.js';
 import { env } from './lib/env.js';
+import { assertProductionRuntimeConfig } from './lib/runtimeGuards.js';
 import { createAuthMiddleware } from './middleware/auth.js';
 import { errorHandler } from './middleware/errorHandler.js';
 import { createRateLimitMiddleware, InMemoryRateLimitStore, type RateLimitStore } from './middleware/rateLimit.js';
@@ -42,6 +40,8 @@ import { PostgresBalloonRepository } from './repositories/BalloonRepository.js';
 import { PostgresPanelEntityAssignmentRepository } from './repositories/PanelEntityAssignmentRepository.js';
 import { PostgresPanelFrameRepository } from './repositories/PanelFrameRepository.js';
 import { PostgresPanelRepository } from './repositories/PanelRepository.js';
+import { PostgresPageGenerationExecutionRepository } from './repositories/PageGenerationExecutionRepository.js';
+import { PostgresPageGenerationRecoveryRepository } from './repositories/PageGenerationRecoveryRepository.js';
 import { PostgresPageRepository } from './repositories/PageRepository.js';
 import { PostgresSceneRepository } from './repositories/SceneRepository.js';
 import { PostgresStoryRepository } from './repositories/StoryRepository.js';
@@ -94,7 +94,7 @@ import {
 import { JobService, type JobServicePort } from './services/job/JobService.js';
 import {
   NoopPageGenerationQueue,
-  InlinePageGenerationQueueAdapter,
+  DetachedProcessPageGenerationQueueAdapter,
   SqsPageGenerationQueueAdapter,
   type PageGenerationQueuePort,
 } from './services/page/PageGenerationQueue.js';
@@ -103,6 +103,10 @@ import {
   PageGenerationService,
   type PageGenerationServicePort,
 } from './services/page/PageGenerationService.js';
+import {
+  PageGenerationRecoveryService,
+  type PageGenerationRecoveryServicePort,
+} from './services/page/PageGenerationRecoveryService.js';
 import {
   PageFinalizeService,
   type PageFinalizeServicePort,
@@ -139,6 +143,7 @@ import {
   StoryCollaborationService,
   type StoryCollaborationServicePort,
 } from './services/story/StoryCollaborationService.js';
+import type { StoryAiClientPort } from './services/story/StoryAiClientPort.js';
 import type { StoryEpisodeImprovementPlannerPort } from './services/story/StoryEpisodeImprovementPlanner.js';
 import { StoryService, type StoryServicePort } from './services/story/StoryService.js';
 import type { AppEnv } from './types/app.js';
@@ -162,6 +167,7 @@ export interface AppDependencies {
   pageSkeletonService?: PageSkeletonServicePort;
   pageGenerationQueue?: PageGenerationQueuePort;
   pageGenerationService?: PageGenerationServicePort;
+  pageGenerationRecoveryService?: PageGenerationRecoveryServicePort;
   panelService?: PanelServicePort;
   panelEntityAssignmentService?: PanelEntityAssignmentServicePort;
   panelFrameService?: PanelFrameServicePort;
@@ -179,6 +185,8 @@ export interface AppDependencies {
 }
 
 export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
+  assertProductionRuntimeConfig(env);
+
   const resolvedDependencies = resolveDependencies(dependencies);
   const app = new Hono<AppEnv>();
   const localAssetConfig = resolveConfiguredLocalAssetConfig();
@@ -338,10 +346,20 @@ function resolveDependencies(
   const billingRepository = new PostgresBillingRepository(db, db);
   const pageRepository = new PostgresPageRepository(db);
   const generationJobRepository = new PostgresGenerationJobRepository(db);
+  const pageGenerationExecutionRepository = new PostgresPageGenerationExecutionRepository(db);
+  const pageGenerationRecoveryService =
+    dependencies.pageGenerationRecoveryService ??
+    new PageGenerationRecoveryService(
+      new PostgresPageGenerationRecoveryRepository(db),
+      pageGenerationExecutionRepository,
+      creditService,
+    );
   const pageGenerationQueue =
     dependencies.pageGenerationQueue ??
     (inlineWorkerDependencies !== null
-      ? new InlinePageGenerationQueueAdapter(inlineWorkerDependencies.pageGenerationWorkerService)
+      ? new DetachedProcessPageGenerationQueueAdapter(
+          new DetachedWorkerProcessLauncher('scripts/runPageWorker.ts'),
+        )
       : generationQueue !== null
         ? new SqsPageGenerationQueueAdapter(generationQueue)
         : new NoopPageGenerationQueue());
@@ -381,6 +399,7 @@ function resolveDependencies(
       creditService,
       pageGenerationQueue,
       new ModeSelector(),
+      pageGenerationRecoveryService,
     );
   const pageFinalizeService =
     dependencies.pageFinalizeService ??
@@ -425,7 +444,7 @@ function resolveDependencies(
   const storyService =
     dependencies.storyService ?? new StoryService(new PostgresStoryRepository(db), entityRepository);
   const panelService =
-    dependencies.panelService ?? new PanelService(panelRepository, entityRepository);
+    dependencies.panelService ?? new PanelService(panelRepository, entityRepository, panelFrameRepository);
   const panelFrameService =
     dependencies.panelFrameService ?? new PanelFrameService(panelFrameRepository);
   const sceneService =
@@ -451,6 +470,7 @@ function resolveDependencies(
     pageQueryService,
     pageSkeletonService,
     pageGenerationQueue,
+    pageGenerationRecoveryService,
     pageGenerationService,
     panelService,
     panelEntityAssignmentService,
@@ -606,18 +626,12 @@ function buildOpenAIClient(): OpenAIClient | null {
 }
 
 function resolveStoryAiClient(): StoryAiClientPort {
-  if (env.ANTHROPIC_API_KEY === undefined) {
+  const client = buildOpenAIClient();
+  if (client === null) {
     return new StoryAiClientStub();
   }
 
-  return new AnthropicStoryAiClient(
-    new AnthropicClient({
-      apiKey: env.ANTHROPIC_API_KEY,
-      baseUrl: env.ANTHROPIC_BASE_URL,
-      apiVersion: env.ANTHROPIC_API_VERSION,
-      timeoutMs: env.ANTHROPIC_TIMEOUT_MS,
-    }),
-  );
+  return new OpenAIStoryAiClient(client);
 }
 
 function resolveStoryEpisodeImprovementPlanner(): StoryEpisodeImprovementPlannerPort | undefined {
@@ -733,15 +747,15 @@ class StripeWebhookServiceStub {
 
 class StoryAiClientStub {
   public async *streamCollaboration(): AsyncGenerator<string, void, void> {
-    throw new ConfigurationError('Anthropic story AI is not configured');
+    throw new ConfigurationError('OpenAI story AI is not configured');
   }
 
   public async generatePageSkeleton(): Promise<never> {
-    throw new ConfigurationError('Anthropic story AI is not configured');
+    throw new ConfigurationError('OpenAI story AI is not configured');
   }
 
   public async improveEpisodeDraft(): Promise<never> {
-    throw new ConfigurationError('Anthropic story AI is not configured');
+    throw new ConfigurationError('OpenAI story AI is not configured');
   }
 }
 

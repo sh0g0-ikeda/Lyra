@@ -40,7 +40,7 @@ describe('OpenAIPagePromptCompiler', () => {
 
     expect(systemPrompt).toContain('exact panel count and reading order');
     expect(systemPrompt).toContain('reference image mapping explicit');
-    expect(systemPrompt).toContain('Output the final prompt in Japanese');
+    expect(systemPrompt).toContain('Output the final prompt in the same language that the brief uses');
     expect(systemPrompt).toContain('Preserve the exact wording, the exact speaker assignment');
     expect(userPrompt).toContain('[TASK]');
     expect(userPrompt).not.toContain('Deterministic draft prompt:');

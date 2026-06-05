@@ -136,20 +136,21 @@ function getBalloonSize(
   const isHorizontal = writingMode === 'horizontal';
   const widthFactor = isHorizontal ? 0.42 : 0.26;
   const heightFactor = isHorizontal ? 0.18 : 0.34;
-  const minWidth = isHorizontal ? 0.08 : 0.06;
-  const minHeight = isHorizontal ? 0.05 : 0.08;
-  const maxWidth = Math.max(bounds.width * 0.88, minWidth);
-  const maxHeight = Math.max(bounds.height * 0.88, minHeight);
+  const effectiveMaxWidth = bounds.width * 0.88;
+  const effectiveMaxHeight = bounds.height * 0.88;
+  const widthUpperBound = Math.min(effectiveMaxWidth, bounds.width * 0.6);
+  const heightUpperBound = Math.min(effectiveMaxHeight, bounds.height * 0.6);
 
-  const width = clamp(bounds.width * widthFactor, minWidth, Math.min(maxWidth, Math.max(minWidth, bounds.width * 0.6)));
-  const height = clamp(
-    bounds.height * heightFactor,
-    minHeight,
-    Math.min(maxHeight, Math.max(minHeight, bounds.height * 0.6)),
-  );
+  const width = clamp(bounds.width * widthFactor, 0.001, widthUpperBound);
+  const height = clamp(bounds.height * heightFactor, 0.001, heightUpperBound);
 
   if (type === 'shout') {
-    return { x: 0, y: 0, width: clamp(width * 1.1, minWidth, Math.min(maxWidth, bounds.width * 0.7)), height };
+    return {
+      x: 0,
+      y: 0,
+      width: clamp(width * 1.1, 0.001, Math.min(effectiveMaxWidth, bounds.width * 0.7)),
+      height,
+    };
   }
 
   if (type === 'whisper') {
@@ -157,7 +158,7 @@ function getBalloonSize(
       x: 0,
       y: 0,
       width,
-      height: clamp(height * 0.9, minHeight, Math.min(maxHeight, bounds.height * 0.5)),
+      height: clamp(height * 0.9, 0.001, Math.min(effectiveMaxHeight, bounds.height * 0.5)),
     };
   }
 

@@ -22,9 +22,11 @@ import type {
   StoryEntitySummary,
 } from '../domain/types/storyAi.js';
 import { ConflictError, ValidationError } from '../domain/errors/index.js';
+import { normalizeEpisodeStoryInput } from '../domain/episodeStoryInput.js';
 import type { DatabaseClient, TransactionRunner } from '../lib/db.js';
 import { isUniqueViolation } from '../lib/dbErrors.js';
 import { normalizeNullableText, normalizePossiblyMojibake } from '../lib/textEncoding.js';
+import { extractEntityAliases } from '../domain/entityAliases.js';
 
 export type {
   Chapter,
@@ -116,6 +118,8 @@ interface EpisodeRow extends QueryResultRow {
   order: number;
   title: string | null;
   purpose: string | null;
+  story_input_mode: 'structured' | 'full';
+  story_full_draft: string | null;
   introduction: string | null;
   middle: string | null;
   climax: string | null;
@@ -158,6 +162,7 @@ interface EpisodeSkeletonContextRow extends QueryResultRow {
   ending_hook: string | null;
   estimated_pages: number;
   entities_involved: string[];
+  scene_involved_entity_ids: string[];
   page_skeleton_generated: boolean;
   existing_page_count: number;
   entities: unknown;
@@ -497,6 +502,16 @@ export class PostgresStoryRepository implements StoryRepository {
   }
 
   public async createEpisode(chapterId: string, input: CreateEpisodeInput): Promise<Episode> {
+    const normalizedStoryInput = normalizeEpisodeStoryInput({
+      storyInputMode: input.storyInputMode,
+      purpose: input.purpose,
+      introduction: input.introduction,
+      middle: input.middle,
+      climax: input.climax,
+      endingHook: input.endingHook,
+      storyFullDraft: input.storyFullDraft,
+    });
+
     try {
       const result = await this.client.query<EpisodeRow>(
         `
@@ -505,6 +520,8 @@ export class PostgresStoryRepository implements StoryRepository {
           "order",
           title,
           purpose,
+          story_input_mode,
+          story_full_draft,
           introduction,
           middle,
           climax,
@@ -512,18 +529,20 @@ export class PostgresStoryRepository implements StoryRepository {
           estimated_pages,
           entities_involved
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
         RETURNING *
         `,
         [
           chapterId,
           input.order,
           normalizeNullableText(input.title),
-          normalizeNullableText(input.purpose),
-          normalizeNullableText(input.introduction),
-          normalizeNullableText(input.middle),
-          normalizeNullableText(input.climax),
-          normalizeNullableText(input.endingHook),
+          normalizedStoryInput.purpose,
+          normalizedStoryInput.storyInputMode,
+          normalizedStoryInput.storyFullDraft,
+          normalizedStoryInput.normalizedIntroduction,
+          normalizedStoryInput.normalizedMiddle,
+          normalizedStoryInput.normalizedClimax,
+          normalizedStoryInput.normalizedEndingHook,
           input.estimatedPages,
           input.entitiesInvolved,
         ],
@@ -569,6 +588,21 @@ export class PostgresStoryRepository implements StoryRepository {
   }
 
   public async updateEpisode(id: string, userId: string, input: UpdateEpisodeInput): Promise<Episode | null> {
+    const currentEpisode = await this.findEpisodeByIdAndUserId(id, userId);
+    if (currentEpisode === null) {
+      return null;
+    }
+
+    const normalizedStoryInput = normalizeEpisodeStoryInput({
+      storyInputMode: input.storyInputMode ?? currentEpisode.storyInputMode,
+      purpose: input.purpose ?? currentEpisode.purpose,
+      introduction: input.introduction ?? currentEpisode.introduction,
+      middle: input.middle ?? currentEpisode.middle,
+      climax: input.climax ?? currentEpisode.climax,
+      endingHook: input.endingHook ?? currentEpisode.endingHook,
+      storyFullDraft: input.storyFullDraft ?? currentEpisode.storyFullDraft,
+    });
+
     try {
       const result = await this.client.query<EpisodeRow>(
         `
@@ -576,13 +610,15 @@ export class PostgresStoryRepository implements StoryRepository {
         SET "order" = COALESCE($3, episodes."order"),
             title = CASE WHEN $4::boolean THEN $5 ELSE episodes.title END,
             purpose = CASE WHEN $6::boolean THEN $7 ELSE episodes.purpose END,
-            introduction = CASE WHEN $8::boolean THEN $9 ELSE episodes.introduction END,
-            middle = CASE WHEN $10::boolean THEN $11 ELSE episodes.middle END,
-            climax = CASE WHEN $12::boolean THEN $13 ELSE episodes.climax END,
-            ending_hook = CASE WHEN $14::boolean THEN $15 ELSE episodes.ending_hook END,
-            estimated_pages = COALESCE($16, episodes.estimated_pages),
-            entities_involved = CASE WHEN $17::boolean THEN $18 ELSE episodes.entities_involved END,
-            status = COALESCE($19, episodes.status),
+            story_input_mode = CASE WHEN $8::boolean THEN $9 ELSE episodes.story_input_mode END,
+            story_full_draft = CASE WHEN $10::boolean THEN $11 ELSE episodes.story_full_draft END,
+            introduction = CASE WHEN $12::boolean THEN $13 ELSE episodes.introduction END,
+            middle = CASE WHEN $14::boolean THEN $15 ELSE episodes.middle END,
+            climax = CASE WHEN $16::boolean THEN $17 ELSE episodes.climax END,
+            ending_hook = CASE WHEN $18::boolean THEN $19 ELSE episodes.ending_hook END,
+            estimated_pages = COALESCE($20, episodes.estimated_pages),
+            entities_involved = CASE WHEN $21::boolean THEN $22 ELSE episodes.entities_involved END,
+            status = COALESCE($23, episodes.status),
             edit_history = (
               SELECT COALESCE(jsonb_agg(history_entry.value ORDER BY history_entry.ordinality), '[]'::jsonb)
               FROM (
@@ -594,6 +630,8 @@ export class PostgresStoryRepository implements StoryRepository {
                       'order', episodes."order",
                       'title', episodes.title,
                       'purpose', episodes.purpose,
+                      'story_input_mode', episodes.story_input_mode,
+                      'story_full_draft', episodes.story_full_draft,
                       'introduction', episodes.introduction,
                       'middle', episodes.middle,
                       'climax', episodes.climax,
@@ -624,16 +662,20 @@ export class PostgresStoryRepository implements StoryRepository {
           input.order ?? null,
           input.title !== undefined,
           normalizeNullableText(input.title ?? null),
-          input.purpose !== undefined,
-          normalizeNullableText(input.purpose ?? null),
-          input.introduction !== undefined,
-          normalizeNullableText(input.introduction ?? null),
-          input.middle !== undefined,
-          normalizeNullableText(input.middle ?? null),
-          input.climax !== undefined,
-          normalizeNullableText(input.climax ?? null),
-          input.endingHook !== undefined,
-          normalizeNullableText(input.endingHook ?? null),
+          input.purpose !== undefined || input.storyInputMode !== undefined || input.storyFullDraft !== undefined,
+          normalizedStoryInput.purpose,
+          input.storyInputMode !== undefined || input.storyFullDraft !== undefined,
+          normalizedStoryInput.storyInputMode,
+          input.storyInputMode !== undefined || input.storyFullDraft !== undefined,
+          normalizedStoryInput.storyFullDraft,
+          input.introduction !== undefined || input.storyInputMode !== undefined || input.storyFullDraft !== undefined,
+          normalizedStoryInput.normalizedIntroduction,
+          input.middle !== undefined || input.storyInputMode !== undefined || input.storyFullDraft !== undefined,
+          normalizedStoryInput.normalizedMiddle,
+          input.climax !== undefined || input.storyInputMode !== undefined || input.storyFullDraft !== undefined,
+          normalizedStoryInput.normalizedClimax,
+          input.endingHook !== undefined || input.storyInputMode !== undefined || input.storyFullDraft !== undefined,
+          normalizedStoryInput.normalizedEndingHook,
           input.estimatedPages ?? null,
           input.entitiesInvolved !== undefined,
           input.entitiesInvolved ?? [],
@@ -693,7 +735,8 @@ export class PostgresStoryRepository implements StoryRepository {
                            'id', entities.id,
                            'name', entities.name,
                            'entity_type', entities.entity_type,
-                           'free_description', entities.free_description
+                           'free_description', entities.free_description,
+                           'structured_fields', entities.structured_fields
                          )
                          ORDER BY entities.name ASC
                        ),
@@ -736,7 +779,8 @@ export class PostgresStoryRepository implements StoryRepository {
                              'id', entities.id,
                              'name', entities.name,
                              'entity_type', entities.entity_type,
-                             'free_description', entities.free_description
+                             'free_description', entities.free_description,
+                             'structured_fields', entities.structured_fields
                            )
                            ORDER BY entities.name ASC
                          ),
@@ -781,7 +825,8 @@ export class PostgresStoryRepository implements StoryRepository {
                              'id', entities.id,
                              'name', entities.name,
                              'entity_type', entities.entity_type,
-                             'free_description', entities.free_description
+                             'free_description', entities.free_description,
+                             'structured_fields', entities.structured_fields
                            )
                            ORDER BY entities.name ASC
                          ),
@@ -867,6 +912,17 @@ export class PostgresStoryRepository implements StoryRepository {
              episodes.ending_hook,
              episodes.estimated_pages,
              episodes.entities_involved,
+             (
+               SELECT COALESCE(
+                 array_agg(DISTINCT scene_entity_id) FILTER (WHERE scene_entity_id IS NOT NULL),
+                 ARRAY[]::uuid[]
+               )
+               FROM (
+                 SELECT unnest(COALESCE(scenes.involved_entity_ids, ARRAY[]::uuid[])) AS scene_entity_id
+                 FROM scenes
+                 WHERE scenes.episode_id = episodes.id
+               ) scene_entity_ids
+             ) AS scene_involved_entity_ids,
              episodes.page_skeleton_generated,
              (
                SELECT COUNT(*)::int
@@ -880,15 +936,15 @@ export class PostgresStoryRepository implements StoryRepository {
                      'id', entities.id,
                      'name', entities.name,
                      'entity_type', entities.entity_type,
-                     'free_description', entities.free_description
+                     'free_description', entities.free_description,
+                     'structured_fields', entities.structured_fields
                    )
-                   ORDER BY array_position(episodes.entities_involved, entities.id)
+                   ORDER BY entities.created_at ASC
                  ),
                  '[]'::jsonb
                )
                FROM entities
-               WHERE entities.id = ANY(episodes.entities_involved)
-                 AND entities.work_id = works.id
+               WHERE entities.work_id = works.id
                  AND entities.user_id = works.user_id
              ) AS entities,
              (
@@ -928,31 +984,40 @@ export class PostgresStoryRepository implements StoryRepository {
     );
 
     const row = result.rows[0];
-    return row === undefined
-      ? null
-      : {
-          episodeId: row.episode_id,
-          chapterId: row.chapter_id,
-          workId: row.work_id,
-          workTitle: normalizePossiblyMojibake(row.work_title),
-          workGenre: normalizeNullableText(row.work_genre),
-          worldSetting: normalizeNullableText(row.world_setting),
-          theme: normalizeNullableText(row.theme),
-          chapterTitle: normalizeNullableText(row.chapter_title),
-          chapterPurpose: normalizeNullableText(row.chapter_purpose),
-          episodeTitle: normalizeNullableText(row.episode_title),
-          episodePurpose: normalizeNullableText(row.episode_purpose),
-          introduction: normalizeNullableText(row.introduction),
-          middle: normalizeNullableText(row.middle),
-          climax: normalizeNullableText(row.climax),
-          endingHook: normalizeNullableText(row.ending_hook),
-          estimatedPages: row.estimated_pages,
-          entitiesInvolved: row.entities_involved,
-          pageSkeletonGenerated: row.page_skeleton_generated,
-          existingPageCount: row.existing_page_count,
-          entities: toStoryEntitySummaries(row.entities),
-          sceneSummaries: toStringArray(row.scene_summaries),
-        };
+    if (row === undefined) {
+      return null;
+    }
+
+    const entities = toStoryEntitySummaries(row.entities);
+    const candidateEntityIds = buildSkeletonCandidateEntityIds(
+      row.entities_involved,
+      row.scene_involved_entity_ids,
+      entities.map((entity) => entity.id),
+    );
+
+    return {
+      episodeId: row.episode_id,
+      chapterId: row.chapter_id,
+      workId: row.work_id,
+      workTitle: normalizePossiblyMojibake(row.work_title),
+      workGenre: normalizeNullableText(row.work_genre),
+      worldSetting: normalizeNullableText(row.world_setting),
+      theme: normalizeNullableText(row.theme),
+      chapterTitle: normalizeNullableText(row.chapter_title),
+      chapterPurpose: normalizeNullableText(row.chapter_purpose),
+      episodeTitle: normalizeNullableText(row.episode_title),
+      episodePurpose: normalizeNullableText(row.episode_purpose),
+      introduction: normalizeNullableText(row.introduction),
+      middle: normalizeNullableText(row.middle),
+      climax: normalizeNullableText(row.climax),
+      endingHook: normalizeNullableText(row.ending_hook),
+      estimatedPages: row.estimated_pages,
+      entitiesInvolved: candidateEntityIds,
+      pageSkeletonGenerated: row.page_skeleton_generated,
+      existingPageCount: row.existing_page_count,
+      entities,
+      sceneSummaries: toStringArray(row.scene_summaries),
+    };
   }
 
   public async findEpisodeImprovementContextByIdAndUserId(
@@ -988,7 +1053,8 @@ export class PostgresStoryRepository implements StoryRepository {
                      'id', entities.id,
                      'name', entities.name,
                      'entity_type', entities.entity_type,
-                     'free_description', entities.free_description
+                     'free_description', entities.free_description,
+                     'structured_fields', entities.structured_fields
                    )
                    ORDER BY entities.name ASC
                  ),
@@ -1406,6 +1472,8 @@ function mapEpisodeRow(row: EpisodeRow): Episode {
     order: row.order,
     title: normalizeNullableText(row.title),
     purpose: normalizeNullableText(row.purpose),
+    storyInputMode: row.story_input_mode,
+    storyFullDraft: normalizeNullableText(row.story_full_draft),
     introduction: normalizeNullableText(row.introduction),
     middle: normalizeNullableText(row.middle),
     climax: normalizeNullableText(row.climax),
@@ -1444,6 +1512,7 @@ function toStoryEntitySummaries(value: unknown): StoryEntitySummary[] {
       {
         id: entry.id,
         name: normalizePossiblyMojibake(entry.name),
+        aliases: extractEntityAliases(isJsonObject(entry.structured_fields) ? entry.structured_fields : {}),
         entityType: entry.entity_type,
         freeDescription: normalizeNullableText(entry.free_description),
       },
@@ -1533,6 +1602,38 @@ function toObjectArray(value: unknown): Record<string, unknown>[] {
 
 function isJsonObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function buildSkeletonCandidateEntityIds(
+  episodeEntityIds: string[] | null | undefined,
+  sceneEntityIds: string[] | null | undefined,
+  workEntityIds: string[] | null | undefined,
+): string[] {
+  const ordered = [
+    ...normalizeEntityIdArray(episodeEntityIds),
+    ...normalizeEntityIdArray(sceneEntityIds),
+    ...normalizeEntityIdArray(workEntityIds),
+  ];
+  const seen = new Set<string>();
+  const result: string[] = [];
+
+  for (const entityId of ordered) {
+    if (typeof entityId !== 'string' || entityId.length === 0 || seen.has(entityId)) {
+      continue;
+    }
+    seen.add(entityId);
+    result.push(entityId);
+  }
+
+  return result;
+}
+
+function normalizeEntityIdArray(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.filter((item): item is string => typeof item === 'string' && item.length > 0);
 }
 
 async function runInTransaction<T>(

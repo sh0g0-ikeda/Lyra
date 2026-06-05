@@ -15,8 +15,8 @@ import type {
 } from '../../../../src/services/credit/CreditService.js';
 import type {
   PageGenerationInputImageBuilderPort,
-  PageGenerationPlannerPort,
   PageGenerationPlanInput,
+  PageGenerationPlannerPort,
   PageImageRendererPort,
   PageImageStoragePort,
   RenderPageImageInput,
@@ -50,10 +50,11 @@ class FakeExecutionRepository implements PageGenerationExecutionRepository {
 
 class FakePlanner implements PageGenerationPlannerPort {
   public calls = 0;
+  public output = 'planner-output';
 
   public async buildPlan(_input: PageGenerationPlanInput): Promise<string> {
     this.calls += 1;
-    return 'planner-output';
+    return this.output;
   }
 }
 
@@ -74,8 +75,11 @@ class FakePromptCompiler implements PagePromptCompilerPort {
   public calls = 0;
   public shouldFail = false;
   public failWithConfigurationError = false;
+  public compiledPromptText = 'page-prompt-compiled';
 
-  public async compilePrompt() {
+  public async compilePrompt(
+    _input: { draftPrompt: string; compilerBrief: string },
+  ) {
     this.calls += 1;
     if (this.shouldFail) {
       if (this.failWithConfigurationError) {
@@ -86,7 +90,7 @@ class FakePromptCompiler implements PagePromptCompilerPort {
     }
 
     return {
-      prompt: 'page-prompt-compiled',
+      prompt: this.compiledPromptText,
       compilerProvider: 'openai' as const,
       compilerModel: 'gpt-5.4-mini',
       compilerPromptVersion: 'page_prompt_v2',
@@ -97,7 +101,7 @@ class FakePromptCompiler implements PagePromptCompilerPort {
 class FakeInputImageBuilder implements PageGenerationInputImageBuilderPort {
   public calls = 0;
 
-  public async buildInputImages(): Promise<PageGenerationInputImage[]> {
+  public async buildInputImages(_input: { userId: string; pageId: string }): Promise<PageGenerationInputImage[]> {
     this.calls += 1;
     return [{ role: 'entity_reference', label: 'Aoi', dataUrl: 'data:image/png;base64,cmVm' }];
   }
@@ -156,7 +160,7 @@ class FakeCreditService implements CreditServicePort {
 }
 
 describe('PageGenerationWorkerService', () => {
-  it('queued jobをprocessingからcompletedまで進めてgenerated_imageを保存する', async () => {
+  it('queued job を processing から completed まで進めて generated_image を保存する', async () => {
     const executionRepository = new FakeExecutionRepository();
     const planner = new FakePlanner();
     const promptBuilder = new FakePromptBuilder();
@@ -216,7 +220,7 @@ describe('PageGenerationWorkerService', () => {
     expect(creditService.refunds).toEqual([]);
   });
 
-  it('thinking jobではplanner出力をrenderに渡す', async () => {
+  it('thinking job では planner 出力を render に渡す', async () => {
     const executionRepository = new FakeExecutionRepository();
     executionRepository.claimedJob = buildJob({
       generationMode: 'thinking',
@@ -247,7 +251,7 @@ describe('PageGenerationWorkerService', () => {
     expect(renderer.calls[0]?.prompt).toBe('page-prompt-compiled');
   });
 
-  it('claimできないjobはskipする', async () => {
+  it('claim できない job は skip する', async () => {
     const executionRepository = new FakeExecutionRepository();
     executionRepository.claimedJob = null;
     const service = new PageGenerationWorkerService(
@@ -266,7 +270,7 @@ describe('PageGenerationWorkerService', () => {
     expect(result).toEqual({ status: 'skipped' });
   });
 
-  it('paramsが壊れていても補償情報があればpage state restoreしてrefundする', async () => {
+  it('params が壊れている時は復旧情報付きで failed にして refund する', async () => {
     const executionRepository = new FakeExecutionRepository();
     executionRepository.claimedJob = buildJob({
       params: {
@@ -277,7 +281,7 @@ describe('PageGenerationWorkerService', () => {
         requires_planner: false,
         previous_page_status: 'editing',
         previous_generation_mode: null,
-      },
+      } as GenerationJob['params'],
     });
     const creditService = new FakeCreditService();
     const service = new PageGenerationWorkerService(
@@ -303,7 +307,7 @@ describe('PageGenerationWorkerService', () => {
     expect(creditService.refunds).toHaveLength(1);
   });
 
-  it('render失敗時はjob failedとpage state restoreにしてrefundする', async () => {
+  it('render 失敗時は job failed と page state restore にして refund する', async () => {
     const executionRepository = new FakeExecutionRepository();
     const renderer = new FakeRenderer();
     renderer.shouldFail = true;
@@ -338,7 +342,7 @@ describe('PageGenerationWorkerService', () => {
     });
   });
 
-  it('completion保存失敗時もfailedに落としてrefundする', async () => {
+  it('completion 保存失敗時も failed に戻して refund する', async () => {
     const executionRepository = new FakeExecutionRepository();
     executionRepository.shouldFailCompletion = true;
     const creditService = new FakeCreditService();
@@ -360,7 +364,7 @@ describe('PageGenerationWorkerService', () => {
     expect(creditService.refunds).toHaveLength(1);
   });
 
-  it('compiler失敗時はdraft promptへfallbackする', async () => {
+  it('compiler の設定系失敗時は draft prompt に fallback する', async () => {
     const executionRepository = new FakeExecutionRepository();
     const promptCompiler = new FakePromptCompiler();
     promptCompiler.shouldFail = true;
@@ -390,7 +394,7 @@ describe('PageGenerationWorkerService', () => {
     });
   });
 
-  it('compiler実装エラーはfallbackせずjob failedにする', async () => {
+  it('compiler の予期しない失敗は fallback せず job failed にする', async () => {
     const executionRepository = new FakeExecutionRepository();
     const promptCompiler = new FakePromptCompiler();
     promptCompiler.shouldFail = true;
@@ -411,46 +415,88 @@ describe('PageGenerationWorkerService', () => {
     expect(executionRepository.failureInput?.errorMessage).toBe('compiler unavailable');
     expect(executionRepository.completionInput).toBeNull();
   });
-});
 
-it('compiled prompt が required dialogue を落とした場合は draft prompt に fallback する', async () => {
-  const executionRepository = new FakeExecutionRepository();
-  const promptBuilder = new FakePromptBuilder();
-  promptBuilder.builtPrompt = {
-    draftPrompt: 'page-prompt-draft with エミール「外に出よう。」',
-    compilerBrief: [
-      '[TASK]',
-      'page compiler brief',
-      '[PANEL INSTRUCTIONS]',
-      '- Dialogue lock: Dialogue lock for panel 4: line 1 must stay assigned to エミール exactly as written: "外に出よう。". Do not omit, paraphrase, merge, split, or reassign these lines.',
-    ].join('\n'),
-  };
-  const promptCompiler = new FakePromptCompiler();
-  const renderer = new FakeRenderer();
-  const service = new PageGenerationWorkerService(
-    executionRepository,
-    promptBuilder,
-    promptCompiler,
-    new FakeInputImageBuilder(),
-    new FakePlanner(),
-    renderer,
-    new FakeStorage(),
-    new FakeCreditService(),
-  );
+  it('compiled prompt が required dialogue を落とした場合は draft prompt に fallback する', async () => {
+    const executionRepository = new FakeExecutionRepository();
+    const promptBuilder = new FakePromptBuilder();
+    promptBuilder.builtPrompt = {
+      draftPrompt: 'page-prompt-draft with Emil: "外に出よう。"',
+      compilerBrief: [
+        '[TASK]',
+        'page compiler brief',
+        '[PANEL INSTRUCTIONS]',
+        '- Dialogue lock: Dialogue lock for panel 4: line 1 must stay assigned to Emil exactly as written: "外に出よう。". Do not omit, paraphrase, merge, split, or reassign these lines.',
+      ].join('\n'),
+    };
+    const promptCompiler = new FakePromptCompiler();
+    promptCompiler.compiledPromptText = 'page-prompt-compiled without the authored line';
+    const renderer = new FakeRenderer();
+    const service = new PageGenerationWorkerService(
+      executionRepository,
+      promptBuilder,
+      promptCompiler,
+      new FakeInputImageBuilder(),
+      new FakePlanner(),
+      renderer,
+      new FakeStorage(),
+      new FakeCreditService(),
+    );
 
-  await service.processJob('job-1');
+    await service.processJob('job-1');
 
-  expect(renderer.calls[0]?.prompt).toBe('page-prompt-draft with エミール「外に出よう。」');
-  expect(executionRepository.completionInput?.promptMetadata).toMatchObject({
-    compiledPrompt: 'page-prompt-draft with エミール「外に出よう。」',
-    compiledPromptUsed: false,
-    promptCompilerProvider: 'none',
-    compilerModel: null,
-    compilerPromptVersion: null,
+    expect(renderer.calls[0]?.prompt).toBe('page-prompt-draft with Emil: "外に出よう。"');
+    expect(executionRepository.completionInput?.promptMetadata).toMatchObject({
+      compiledPrompt: 'page-prompt-draft with Emil: "外に出よう。"',
+      compiledPromptUsed: false,
+      promptCompilerProvider: 'none',
+      compilerModel: null,
+      compilerPromptVersion: null,
+    });
+    expect(executionRepository.completionInput?.promptMetadata.compilerError).toContain(
+      'compiled prompt dropped required dialogue lines: Emil:外に出よう。',
+    );
   });
-  expect(executionRepository.completionInput?.promptMetadata.compilerError).toContain(
-    'compiled prompt dropped required dialogue lines: エミール:外に出よう。',
-  );
+
+  it('compiled prompt が required visual lock を落とした場合は draft prompt に fallback する', async () => {
+    const executionRepository = new FakeExecutionRepository();
+    const promptBuilder = new FakePromptBuilder();
+    promptBuilder.builtPrompt = {
+      draftPrompt: 'page-prompt-draft with Aki and Rin on the rooftop in a wide front shot',
+      compilerBrief: [
+        '[TASK]',
+        'page compiler brief',
+        '[PANEL INSTRUCTIONS]',
+        '- Visual lock: Visual lock for panel 1: subjects=Aki|Rin; shot=wide; angle=front; background cue="school rooftop at night".',
+      ].join('\n'),
+    };
+    const promptCompiler = new FakePromptCompiler();
+    promptCompiler.compiledPromptText = 'page-prompt-compiled focusing on Aki only in close-up';
+    const renderer = new FakeRenderer();
+    const service = new PageGenerationWorkerService(
+      executionRepository,
+      promptBuilder,
+      promptCompiler,
+      new FakeInputImageBuilder(),
+      new FakePlanner(),
+      renderer,
+      new FakeStorage(),
+      new FakeCreditService(),
+    );
+
+    await service.processJob('job-1');
+
+    expect(renderer.calls[0]?.prompt).toBe('page-prompt-draft with Aki and Rin on the rooftop in a wide front shot');
+    expect(executionRepository.completionInput?.promptMetadata).toMatchObject({
+      compiledPrompt: 'page-prompt-draft with Aki and Rin on the rooftop in a wide front shot',
+      compiledPromptUsed: false,
+      promptCompilerProvider: 'none',
+      compilerModel: null,
+      compilerPromptVersion: null,
+    });
+    expect(executionRepository.completionInput?.promptMetadata.compilerError).toContain(
+      'compiled prompt dropped required visual locks: panel 1',
+    );
+  });
 });
 
 function buildJob(overrides: Partial<GenerationJob> = {}): GenerationJob {

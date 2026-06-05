@@ -63,7 +63,12 @@ export class EntityGenerationWorkerService {
       const compilerBrief = this.promptBuilder.buildCompilerBrief(entity);
       const compiled = await compilePromptSafely(this.promptCompiler, entity, draftPrompt, compilerBrief);
       const inputImages = await buildGeneratorInputImages(params, this.storedImageLoader);
-      const generated = await this.generator.generateCandidates({ prompt: compiled.prompt, inputImages });
+      const generationPrompt = buildPreviewVariationPrompt(
+        compiled.prompt,
+        job.id,
+        params.source_s3_key !== undefined,
+      );
+      const generated = await this.generator.generateCandidates({ prompt: generationPrompt, inputImages });
       const storedCandidates = [];
 
       for (let index = 0; index < generated.candidates.length; index += 1) {
@@ -90,7 +95,7 @@ export class EntityGenerationWorkerService {
         structuredFields: entity.structuredFields,
         candidates: storedCandidates,
         compiledBrief: compilerBrief,
-        compiledPrompt: compiled.prompt,
+        compiledPrompt: generationPrompt,
         openaiRequestId: generated.openaiRequestId,
         costUsd: generated.costUsd,
         compiledPromptUsed: compiled.compilerProvider !== 'none',
@@ -170,6 +175,59 @@ function parsePersistedParams(value: Record<string, unknown>): PersistedEntityGe
     ...(sourceS3Key === undefined ? {} : { source_s3_key: sourceS3Key }),
   };
 }
+
+function buildPreviewVariationPrompt(
+  prompt: string,
+  jobId: string,
+  isImageConditioned: boolean,
+): string {
+  const profile = PREVIEW_VARIATION_PROFILES[selectPreviewVariationProfileIndex(jobId)];
+  const sourceImageInstruction = isImageConditioned
+    ? 'Respect the uploaded source image as the core identity anchor, but do not simply recreate the exact same pose, crop, or fold pattern from earlier previews.'
+    : 'Do not simply recreate the exact same pose, crop, or fold pattern from earlier previews.';
+
+  return [
+    prompt.trim(),
+    '',
+    'Treat this output as a fresh preview variation of the same character reference.',
+    sourceImageInstruction,
+    'Keep the same identity, face shape, hair silhouette, body proportions, and outfit silhouette, but vary only neutral presentation details such as stance weight distribution, arm spacing, head tilt, hair strand grouping, and fabric fold rhythm.',
+    `Variation profile ${profile.code}: ${profile.instruction}`,
+  ].join(' ');
+}
+
+function selectPreviewVariationProfileIndex(jobId: string): number {
+  let hash = 0;
+
+  for (let index = 0; index < jobId.length; index += 1) {
+    hash = (hash * 31 + jobId.charCodeAt(index)) >>> 0;
+  }
+
+  return hash % PREVIEW_VARIATION_PROFILES.length;
+}
+
+const PREVIEW_VARIATION_PROFILES = [
+  {
+    code: 'A',
+    instruction:
+      'Slightly shift the body weight onto one leg, keep the shoulders relaxed and uneven by a small amount, let the front hair separate into clearer clumps, and keep the outfit folds broad and clean.',
+  },
+  {
+    code: 'B',
+    instruction:
+      'Use a balanced upright stance, increase the spacing between the arms and torso a little, keep the bangs tidier, and make the collar and sleeve folds sharper and more structured.',
+  },
+  {
+    code: 'C',
+    instruction:
+      'Use a reserved inward stance, give the head a subtle tilt, keep the hair mass compact with softer side locks, and make the fabric folds lighter and more delicate.',
+  },
+  {
+    code: 'D',
+    instruction:
+      'Use a more open neutral stance, raise the chin slightly, let the ponytail or back hair arc a little wider, and make the skirt or lower-garment folds read in larger simple shapes.',
+  },
+] as const;
 
 async function compilePromptSafely(
   compiler: EntityReferencePromptCompilerPort,

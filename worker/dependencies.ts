@@ -62,6 +62,7 @@ import { LocalPreviewPageImageRenderer } from '../src/infrastructure/local/Local
 import { LocalPreviewEntityReferenceGenerator } from '../src/infrastructure/local/LocalPreviewEntityReferenceGenerator.js';
 import { resolveLocalAssetConfig } from '../src/infrastructure/local/LocalAssetFiles.js';
 import { env } from '../src/lib/env.js';
+import { assertProductionRuntimeConfig } from '../src/lib/runtimeGuards.js';
 import { AnthropicEntityReferencePromptCompiler } from '../src/infrastructure/anthropic/AnthropicEntityReferencePromptCompiler.js';
 import {
   PageGenerationInputImageBuilder,
@@ -101,6 +102,8 @@ export interface WorkerDependencyOverrides {
 export function resolveWorkerDependencies(
   overrides: WorkerDependencyOverrides = {},
 ): WorkerDependencies {
+  assertProductionRuntimeConfig(env);
+
   if (overrides.pageGenerationWorkerService !== undefined) {
     return {
       pageGenerationWorkerService: overrides.pageGenerationWorkerService,
@@ -174,6 +177,10 @@ export function resolveWorkerDependencies(
 }
 
 function resolvePagePromptCompiler(): PagePromptCompilerPort {
+  if (!env.LLM_PAGE_PROMPT_COMPILER_ENABLED) {
+    return new PassthroughPagePromptCompiler();
+  }
+
   const client = buildOpenAIClient();
   if (client === null) {
     return new PassthroughPagePromptCompiler();
@@ -206,9 +213,13 @@ function resolvePageGenerationInputImageBuilder(): PageGenerationInputImageBuild
 }
 
 function resolvePageGenerationPlanner(): PageGenerationPlannerPort {
+  if (!env.LLM_PAGE_GENERATION_PLANNER_ENABLED) {
+    return new NoopPageGenerationPlanner();
+  }
+
   const client = buildOpenAIClient();
   if (client === null) {
-    return new UnconfiguredPageGenerationPlanner();
+    return new NoopPageGenerationPlanner();
   }
 
   return new OpenAIPageGenerationPlanner(client);
@@ -280,6 +291,10 @@ function resolveEntityReferenceGenerator(): EntityReferenceGeneratorPort {
 }
 
 function resolveEntityReferencePromptCompiler(): EntityReferencePromptCompilerPort {
+  if (!env.LLM_ENTITY_REFERENCE_PROMPT_COMPILER_ENABLED) {
+    return new PassthroughEntityReferencePromptCompiler();
+  }
+
   const openAiClient = buildOpenAIClient();
   if (openAiClient !== null) {
     return new OpenAIEntityReferencePromptCompiler(openAiClient);
@@ -338,9 +353,9 @@ class UnconfiguredPageGenerationInputImageBuilder implements PageGenerationInput
   }
 }
 
-class UnconfiguredPageGenerationPlanner implements PageGenerationPlannerPort {
+class NoopPageGenerationPlanner implements PageGenerationPlannerPort {
   public async buildPlan(_input: PageGenerationPlanInput): Promise<string> {
-    throw new ConfigurationError('Page generation planner is not configured');
+    return '';
   }
 }
 

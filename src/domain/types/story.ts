@@ -1,4 +1,5 @@
 export type StoryStatus = 'draft' | 'reviewing' | 'ready';
+export type EpisodeStoryInputMode = 'structured' | 'full';
 
 export interface Work {
   id: string;
@@ -42,6 +43,8 @@ export interface Episode {
   order: number;
   title: string | null;
   purpose: string | null;
+  storyInputMode: EpisodeStoryInputMode;
+  storyFullDraft: string | null;
   introduction: string | null;
   middle: string | null;
   climax: string | null;
@@ -106,6 +109,8 @@ export interface CreateEpisodeInput {
   order: number;
   title: string | null;
   purpose: string | null;
+  storyInputMode: EpisodeStoryInputMode;
+  storyFullDraft: string | null;
   introduction: string | null;
   middle: string | null;
   climax: string | null;
@@ -118,6 +123,8 @@ export interface UpdateEpisodeInput {
   order?: number;
   title?: string | null;
   purpose?: string | null;
+  storyInputMode?: EpisodeStoryInputMode;
+  storyFullDraft?: string | null;
   introduction?: string | null;
   middle?: string | null;
   climax?: string | null;

@@ -72,6 +72,8 @@ interface EpisodeDraft {
   order: string;
   title: string;
   purpose: string;
+  story_input_mode: 'structured' | 'full';
+  story_full_draft: string;
   introduction: string;
   middle: string;
   climax: string;
@@ -91,6 +93,7 @@ interface EntityDraft {
 }
 
 interface CharacterStructuredFieldsDraft {
+  aliases: string;
   gender_expression: string;
   age_range: string;
   skin_tone: string;
@@ -246,6 +249,12 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   'Main characters': '主な登場人物',
   'Chapter title': '章タイトル',
   'Episode draft': '話の下書き',
+  'Story input mode': 'ストーリー入力方式',
+  'Split sections': '分割入力',
+  'Whole draft': '全体入力',
+  'Whole story draft': '全体ストーリー',
+  'Improved full story': '改善された全体ストーリー',
+  'Apply full story': '全体ストーリーへ反映',
   'Estimated pages': '想定ページ数',
   Purpose: '目的',
   Introduction: '序盤',
@@ -347,6 +356,8 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   'Custom pose': '自由入力のポーズ',
   'Add line': '行を追加',
   'No dialogue lines yet.': 'まだセリフ行がありません。',
+  'Speaker is required for speech, thought, shout, and whisper lines.':
+    'セリフ・思考・叫び・ささやきには話者が必要です。',
   'Narration / none': 'ナレーション / なし',
   Draft: '下書き',
   Reviewing: '確認中',
@@ -356,9 +367,12 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   'Add chapter': '章を追加',
   'Add episode': '話を追加',
   'Generate page plan': 'ページ骨格生成',
+  'Regenerate page plan': 'ページ骨格を上書き再生成',
   'Apply story plan': '話全体を反映',
   'Improve draft': '改善する',
   'Apply all': 'すべて反映',
+  'Split story fields and the whole story draft both have content. Please keep only one before saving or generating.':
+    '分割入力と全体入力の両方に内容があります。保存や生成の前にどちらか一方にしてください。',
   'Apply to title': 'タイトルへ反映',
   'Apply purpose': '目的へ反映',
   'Apply introduction': '序盤へ反映',
@@ -383,6 +397,14 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   'Double-click image to enlarge': '画像はダブルクリックで拡大',
   'Fill selected page': '選択中ページを補完',
   'Use this after the story plan when a single page still needs refinement.': '話全体の反映後も1ページだけ補正したいときに使います。',
+  'The current page plan can be regenerated because every page is still designing.':
+    'この話の既存ページはすべて designing のため、ページ骨格を上書き再生成できます。',
+  'Only episodes with designing pages can regenerate the page plan.':
+    'ページ骨格の再生成は、既存ページがすべて designing の話でのみ行えます。',
+  'Checking current pages before allowing skeleton regeneration.':
+    'ページ骨格の再生成可否を確認するため、現在のページ状態を読み込んでいます。',
+  'Regenerating the page plan will replace the current designing pages for this episode.':
+    'ページ骨格を上書き再生成すると、この話の designing 状態の既存ページを置き換えます。',
   Primary: 'メイン',
   Delete: '削除',
   'Generate full-body candidates': '全身候補を生成',
@@ -406,6 +428,10 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   'Skin tone': '肌の色',
   'First impression': '第一印象',
   'Standing style': '立ち姿',
+  Aliases: '別名・通称',
+  'Add alias': '別名を追加',
+  'No aliases yet.': 'まだ別名はありません。',
+  'Alias placeholder': '別名を入力',
   'Default expression': '既定表情',
   Height: '身長感',
   'Body type': '体格',
@@ -447,6 +473,118 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   Shoes: '靴',
   Legwear: 'レッグウェア',
   'Clothing details': '服装の詳細',
+  'Custom value': '自由入力値',
+  'Face + hair balance': '顔と髪のまとまり',
+  'Eye line': '目元の印象',
+  'Silhouette outline': '外形シルエット',
+  'Posture read': '姿勢の読み取り',
+  'Outfit shape': '服の形',
+  'Color blocking': '配色ブロック',
+  'Accessory / prop': '装飾・小物',
+  'Hair shape': '髪型',
+  'Eye color contrast': '瞳の色対比',
+  'Expression gap': '表情のギャップ',
+  'Silhouette edge': '輪郭のクセ',
+  Accessory: 'アクセサリー',
+  'Scar / mark': '傷・印',
+  Stance: '立ち方',
+  'Compact silhouette': 'コンパクトなシルエット',
+  'Tall and slender': '高身長で細身',
+  'Broad-shouldered': '肩幅が広い',
+  'Long coat outline': 'ロングコート輪郭',
+  'Skirt line': 'スカートの線',
+  'Military block': '軍服的な塊感',
+  'Soft rounded outline': '柔らかく丸い輪郭',
+  'Beauty mark': 'ほくろ',
+  Scar: '傷',
+  'Eye bags': '隈',
+  Fang: '八重歯',
+  Ahoge: 'アホ毛',
+  'Hair streak': '髪のメッシュ',
+  Glasses: '眼鏡',
+  'about six heads tall': '六頭身くらい',
+  'about six and a half heads tall': '六・五頭身くらい',
+  'about seven heads tall': '七頭身くらい',
+  'about seven and a half heads tall': '七・五頭身くらい',
+  'about eight heads tall': '八頭身くらい',
+  'narrow shoulders': '肩幅が狭い',
+  'balanced shoulders': '肩幅は標準',
+  'broad shoulders': '肩幅が広い',
+  'short legs': '脚が短め',
+  'balanced leg length': '脚の長さは標準',
+  'long legs': '脚が長い',
+  'centered and straight': '軸が中央でまっすぐ',
+  'slightly forward-leaning': '少し前傾',
+  'slightly backward-leaning': '少し後傾',
+  'soft inward posture': '少し内向き',
+  'open outward posture': '外向きに開く',
+  'small eyes': '小さめの目',
+  'balanced eyes': '標準的な目',
+  'large eyes': '大きめの目',
+  'very large eyes': 'かなり大きい目',
+  'level eye line': '水平な目元',
+  'slightly upturned eyes': '少しつり目',
+  'strongly upturned eyes': '強いつり目',
+  'slightly downturned eyes': '少したれ目',
+  'drooping eyes': 'たれ目',
+  'small pupils': '小さめの瞳',
+  'large pupils': '大きめの瞳',
+  'sharp pupils': '鋭い瞳',
+  'soft round pupils': '丸く柔らかい瞳',
+  'bright reflective pupils': '反射の強い瞳',
+  'none visible': '目立たない',
+  'soft shadows': '薄い影',
+  'defined lower lash line': '下まつげの線がある',
+  'slight eye bags': '軽い隈',
+  'heavy eye bags': '強い隈',
+  'closed neutral mouth': '閉じた無表情',
+  'slight smile': 'わずかな笑み',
+  'firm straight mouth': '固い一直線の口元',
+  'soft parted lips': '少し開いた柔らかい口元',
+  'straight front line': '前髪の直線ライン',
+  'center-parted front': 'センター分け',
+  'rounded front curve': '丸い前髪ライン',
+  'side-swept front': '流した前髪',
+  'blunt front': 'ぱっつん前髪',
+  'short side locks': '短い横髪',
+  'soft cheek framing': '頬を囲う横髪',
+  'long side locks': '長い横髪',
+  'tucked behind ears': '耳にかけた横髪',
+  'clean bob back': 'ボブの後ろ髪',
+  'layered back': 'レイヤー後ろ髪',
+  'straight long back': 'まっすぐ長い後ろ髪',
+  'ponytail fall': 'ポニーテールの落ち感',
+  'braided back': '編み込み後ろ髪',
+  'round collar': '丸襟',
+  'sharp collar': '尖った襟',
+  'standing collar': '立ち襟',
+  'sailor collar': 'セーラー襟',
+  'hooded neckline': 'フード付き首元',
+  Sleeveless: 'ノースリーブ',
+  'Short sleeves': '半袖',
+  'Three-quarter sleeves': '七分袖',
+  'Long sleeves': '長袖',
+  'Wide sleeves': '幅広袖',
+  'Short skirt': '短いスカート',
+  'Long skirt': '長いスカート',
+  'Straight pants': '細いパンツ',
+  'Wide pants': 'ワイドパンツ',
+  Shorts: '短パン',
+  Loafers: 'ローファー',
+  Sneakers: 'スニーカー',
+  Boots: 'ブーツ',
+  Heels: 'ヒール',
+  'School shoes': '上履き・制服靴',
+  'Bare legs': '素足',
+  'Ankle socks': '短い靴下',
+  'Knee socks': '膝下ソックス',
+  'Thigh-high socks': 'ニーハイ',
+  Tights: 'タイツ',
+  'Simple uniform detailing': 'シンプルな制服ディテール',
+  'Layered practical details': '実用的な重ね着ディテール',
+  'Ornamental trim': '装飾的な縁取り',
+  'Combat utility details': '実戦向けの装備ディテール',
+  'Minimal clean design': 'ミニマルで整理されたデザイン',
   Female: '女性',
   Male: '男性',
   Androgynous: '中性的',
@@ -643,6 +781,13 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   'Supabase client is not configured.': 'Supabase クライアントが設定されていません。',
   'Production Console': '制作コンソール',
   'Story, entity, page, balloon, billing.': 'ストーリー、キャラ、ページ、吹き出し、課金を管理します。',
+  'Processing. This task can take a while.': '処理中です。この処理には時間がかかる場合があります。',
+  'Queued. This task will start soon and can take a while.': '待機中です。まもなく開始され、この処理には時間がかかる場合があります。',
+  'Page skeleton generation can take a while, especially for long episodes.': 'ページ骨格生成は、話数やページ数が多いと時間がかかる場合があります。',
+  'Story plan autofill can take a while while pages and panels are being distributed.': '話全体の反映は、ページ配分とコマ分割を行うため時間がかかる場合があります。',
+  'Character preview generation can take a while. The preview updates when the job finishes.': 'キャラのプレビュー生成は時間がかかる場合があります。完了するとプレビューが更新されます。',
+  'Page image generation can take a while. The page image updates when the job finishes.': 'ページ画像生成は時間がかかる場合があります。完了するとページ画像が更新されます。',
+  'Selected page autofill can take a while for dense scenes.': '選択ページの追加補完は、情報量の多いシーンだと時間がかかる場合があります。',
 };
 
 function normalizeUiLanguage(value: string): UiLanguage {
@@ -997,11 +1142,34 @@ function StudioShell(props: {
   });
   const balloons = useMemo(() => balloonsQuery.data?.balloons ?? [], [balloonsQuery.data?.balloons]);
   const selectedBalloon = balloons.find((balloon) => balloon.id === selectedBalloonId) ?? balloons[0] ?? null;
+  const episodeStoryInputConflict = useMemo(
+    () => hasEpisodeStoryInputConflict(episodeDraft),
+    [episodeDraft],
+  );
   const generatedPages = useMemo(
     () => pages.filter((page) => page.generated_image?.cdn_url !== null && page.generated_image?.cdn_url !== undefined),
     [pages],
   );
   const exportablePages = useMemo(() => generatedPages.map((page) => page.id), [generatedPages]);
+  const episodeHasExistingPagePlan = selectedEpisode !== null && (selectedEpisode.page_skeleton_generated || pages.length > 0);
+  const skeletonContextLoading = selectedEpisode !== null && episodeHasExistingPagePlan && pagesQuery.isLoading;
+  const canOverwritePagePlan =
+    episodeHasExistingPagePlan && !skeletonContextLoading && pages.every((page) => page.status === 'designing');
+  const skeletonActionLabel = episodeHasExistingPagePlan ? 'Regenerate page plan' : 'Generate page plan';
+  const skeletonActionDisabled =
+    selectedEpisode === null ||
+    episodeStoryInputConflict ||
+    busyAction === 'Generate page skeleton' ||
+    (episodeHasExistingPagePlan && !canOverwritePagePlan);
+  const skeletonActionMessage = skeletonContextLoading
+    ? 'Checking current pages before allowing skeleton regeneration.'
+    : episodeStoryInputConflict
+      ? 'Split story fields and the whole story draft both have content. Please keep only one before saving or generating.'
+    : episodeHasExistingPagePlan
+      ? canOverwritePagePlan
+        ? 'The current page plan can be regenerated because every page is still designing.'
+        : 'Only episodes with designing pages can regenerate the page plan.'
+      : null;
 
   const jobQueries = useQueries({
     queries: trackedJobList.map((jobId) => ({
@@ -1012,6 +1180,58 @@ function StudioShell(props: {
     })),
   });
   const jobs = jobQueries.map((query) => query.data).filter(isDefined).slice(0, 5);
+  const activeJobs = useMemo(
+    () => jobs.filter((job) => job.status === 'queued' || job.status === 'processing'),
+    [jobs],
+  );
+  const selectedEntityGenerationJob = useMemo(() => {
+    if (selectedEntity === null) {
+      return null;
+    }
+
+    return (
+      [...activeJobs]
+        .reverse()
+        .find((job) => job.job_type === 'entity_generate' && job.params.entity_id === selectedEntity.id) ?? null
+    );
+  }, [activeJobs, selectedEntity]);
+  const selectedPageGenerationJob = useMemo(() => {
+    if (selectedPage === null) {
+      return null;
+    }
+
+    return (
+      [...activeJobs]
+        .reverse()
+        .find((job) => job.job_type === 'page_generate' && job.params.page_id === selectedPage.id) ?? null
+    );
+  }, [activeJobs, selectedPage]);
+  const skeletonGenerationMessage =
+    busyAction === 'Generate page skeleton'
+      ? 'Page skeleton generation can take a while, especially for long episodes.'
+      : null;
+  const storyPlanProcessingMessage =
+    busyAction === 'Apply story plan'
+      ? 'Story plan autofill can take a while while pages and panels are being distributed.'
+      : null;
+  const selectedPageAutofillMessage =
+    busyAction === 'Fill selected page' ? 'Selected page autofill can take a while for dense scenes.' : null;
+  const entityPreviewGenerationMessage =
+    selectedEntityGenerationJob !== null
+      ? selectedEntityGenerationJob.status === 'queued'
+        ? 'Queued. This task will start soon and can take a while.'
+        : 'Character preview generation can take a while. The preview updates when the job finishes.'
+      : busyAction === 'Generate reference'
+        ? 'Character preview generation can take a while. The preview updates when the job finishes.'
+        : null;
+  const pageImageGenerationMessage =
+    selectedPageGenerationJob !== null
+      ? selectedPageGenerationJob.status === 'queued'
+        ? 'Queued. This task will start soon and can take a while.'
+        : 'Page image generation can take a while. The page image updates when the job finishes.'
+      : busyAction === 'Generate page'
+        ? 'Page image generation can take a while. The page image updates when the job finishes.'
+        : null;
 
   useEffect(() => {
     if (worksQuery.data?.works === undefined) {
@@ -1260,6 +1480,15 @@ function StudioShell(props: {
   }, [referenceCandidates, referenceSelection]);
 
   const saveCurrentEpisodeContext = async (): Promise<void> => {
+    if (episodeStoryInputConflict) {
+      throw new Error(
+        translateUiString(
+          uiLanguage,
+          'Split story fields and the whole story draft both have content. Please keep only one before saving or generating.',
+        ),
+      );
+    }
+
     if (selectedEpisode !== null) {
       await api.updateEpisode(selectedEpisode.id, toEpisodePayload(episodeDraft));
     }
@@ -1274,6 +1503,31 @@ function StudioShell(props: {
     if (selectedEpisode !== null) {
       await queryClient.invalidateQueries({ queryKey: ['scenes', selectedEpisode.id] });
     }
+  };
+
+  const setEpisodeStoryInputMode = (nextMode: EpisodeDraft['story_input_mode']): void => {
+    setEpisodeDraft((current) => convertEpisodeDraftStoryInputMode(current, nextMode));
+  };
+
+  const saveCurrentPageGenerationContext = async (): Promise<void> => {
+    if (selectedPage !== null) {
+      await api.updatePage(selectedPage.id, toPageSettingsPayload(pageSettingsDraft));
+    }
+
+    if (selectedPage !== null && selectedPanel !== null) {
+      const assignmentsPayload = toPanelAssignmentsPayload(panelDraft);
+      await api.updatePanel(selectedPanel.id, toPanelPayload(panelDraft));
+      await api.replacePanelAssignments(selectedPanel.id, assignmentsPayload);
+    }
+  };
+
+  const saveCurrentEntityGenerationContext = async (): Promise<void> => {
+    if (selectedEntity === null || selectedWork === null) {
+      return;
+    }
+
+    await api.updateEntity(selectedEntity.id, toEntityPayload(entityDraft));
+    await queryClient.invalidateQueries({ queryKey: ['entities', selectedWork.id] });
   };
 
   const runAction = async (label: string, action: () => Promise<void>): Promise<void> => {
@@ -1540,27 +1794,46 @@ function StudioShell(props: {
                       <div className="toolbar">
                         <button
                           className="secondary-button"
-                          disabled={selectedEpisode === null || busyAction === 'Generate page skeleton'}
+                          disabled={skeletonActionDisabled}
                           onClick={() => {
                             if (selectedEpisode === null) {
                               return;
                             }
+                            const overwriteExisting = episodeHasExistingPagePlan;
+                            if (
+                              overwriteExisting &&
+                              !window.confirm(
+                                translateUiString(
+                                  uiLanguage,
+                                  'Regenerating the page plan will replace the current designing pages for this episode.',
+                                ),
+                              )
+                            ) {
+                              return;
+                            }
                             void runAction('Generate page skeleton', async () => {
                               await saveCurrentEpisodeContext();
-                              await api.generatePageSkeleton(selectedEpisode.id, { language: uiLanguage });
+                              setSelectedPageId('');
+                              setSelectedPanelId('');
+                              setSelectedBalloonId('');
+                              await api.generatePageSkeleton(selectedEpisode.id, {
+                                overwrite_existing: overwriteExisting,
+                                language: uiLanguage,
+                              });
                               await queryClient.invalidateQueries({ queryKey: ['episodes', selectedChapter?.id ?? ''] });
                               await queryClient.invalidateQueries({ queryKey: ['scenes', selectedEpisode.id] });
                               await queryClient.invalidateQueries({ queryKey: ['pages', selectedEpisode.id] });
+                              setActiveTab('pages');
                             });
                           }}
                           type="button"
                         >
                           {busyAction === 'Generate page skeleton' ? <LoaderCircle className="spin" size={16} /> : <Sparkles size={16} />}
-                          {translateUiString(uiLanguage, 'Generate page plan')}
+                          {translateUiString(uiLanguage, skeletonActionLabel)}
                         </button>
                         <button
                           className="ghost-button"
-                          disabled={selectedEpisode === null || busyAction === 'Apply story plan'}
+                          disabled={selectedEpisode === null || episodeStoryInputConflict || busyAction === 'Apply story plan'}
                           onClick={() => {
                             if (selectedEpisode === null) {
                               return;
@@ -1580,6 +1853,15 @@ function StudioShell(props: {
                       </div>
                     }
                   >
+                    {skeletonActionMessage !== null ? (
+                      <div className="muted small">{translateUiString(uiLanguage, skeletonActionMessage)}</div>
+                    ) : null}
+                    {skeletonGenerationMessage !== null ? (
+                      <ProcessingHint message={translateUiString(uiLanguage, skeletonGenerationMessage)} />
+                    ) : null}
+                    {storyPlanProcessingMessage !== null ? (
+                      <ProcessingHint message={translateUiString(uiLanguage, storyPlanProcessingMessage)} />
+                    ) : null}
                     <div className="story-tree">
                       <div className="tree-column">
                         <h3>{translateUiString(uiLanguage, 'Chapters')}</h3>
@@ -1601,7 +1883,7 @@ function StudioShell(props: {
                           ))}
                         </div>
                         <form
-                          className="stack"
+                          className="story-create-form"
                           onSubmit={(event) => {
                             event.preventDefault();
                             void runAction('Create chapter', async () => {
@@ -1611,16 +1893,18 @@ function StudioShell(props: {
                             });
                           }}
                         >
-                          <InputField
-                            label="New chapter title"
-                            value={newChapterDraft.title}
-                            onChange={(value) => setNewChapterDraft({ ...newChapterDraft, title: value })}
-                          />
-                          <InputField
-                            label="Order"
-                            value={newChapterDraft.order}
-                            onChange={(value) => setNewChapterDraft({ ...newChapterDraft, order: value })}
-                          />
+                          <div className="story-inline-grid story-inline-grid-create">
+                            <InputField
+                              label="New chapter title"
+                              value={newChapterDraft.title}
+                              onChange={(value) => setNewChapterDraft({ ...newChapterDraft, title: value })}
+                            />
+                            <InputField
+                              label="Order"
+                              value={newChapterDraft.order}
+                              onChange={(value) => setNewChapterDraft({ ...newChapterDraft, order: value })}
+                            />
+                          </div>
                           <button className="ghost-button" type="submit">
                             <Save size={16} />
                             {translateUiString(uiLanguage, 'Add chapter')}
@@ -1630,9 +1914,9 @@ function StudioShell(props: {
 
                       <div className="tree-column">
                         {selectedChapter !== null ? (
-                          <div className="stack">
-                            <InputField label="Chapter title" value={chapterDraft.title} onChange={(value) => setChapterDraft({ ...chapterDraft, title: value })} />
-                            <div className="form-grid two">
+                          <div className="story-editor-compact">
+                            <div className="story-inline-grid story-inline-grid-chapter">
+                              <InputField label="Chapter title" value={chapterDraft.title} onChange={(value) => setChapterDraft({ ...chapterDraft, title: value })} />
                               <InputField label="Order" value={chapterDraft.order} onChange={(value) => setChapterDraft({ ...chapterDraft, order: value })} />
                               <SelectField
                                 label="Status"
@@ -1645,8 +1929,7 @@ function StudioShell(props: {
                                 ]}
                               />
                             </div>
-                            <TextAreaField label="Purpose" rows={2} value={chapterDraft.purpose} onChange={(value) => setChapterDraft({ ...chapterDraft, purpose: value })} />
-                            <div className="toolbar">
+                            <div className="story-inline-actions">
                               <button
                                 className="ghost-button"
                                 onClick={() =>
@@ -1691,7 +1974,7 @@ function StudioShell(props: {
                         </div>
                         {selectedChapter !== null ? (
                           <form
-                            className="stack"
+                            className="story-create-form"
                             onSubmit={(event) => {
                               event.preventDefault();
                               void runAction('Create episode', async () => {
@@ -1701,19 +1984,21 @@ function StudioShell(props: {
                               });
                             }}
                           >
-                            <InputField
-                              label="New episode title"
-                              value={newEpisodeDraft.title}
-                              onChange={(value) => setNewEpisodeDraft({ ...newEpisodeDraft, title: value })}
-                            />
-                            <InputField
-                              label="Order"
-                              value={newEpisodeDraft.order}
-                              onChange={(value) => setNewEpisodeDraft({ ...newEpisodeDraft, order: value })}
-                            />
+                            <div className="story-inline-grid story-inline-grid-create">
+                              <InputField
+                                label="New episode title"
+                                value={newEpisodeDraft.title}
+                                onChange={(value) => setNewEpisodeDraft({ ...newEpisodeDraft, title: value })}
+                              />
+                              <InputField
+                                label="Order"
+                                value={newEpisodeDraft.order}
+                                onChange={(value) => setNewEpisodeDraft({ ...newEpisodeDraft, order: value })}
+                              />
+                            </div>
                             <button className="ghost-button" type="submit">
                               <Save size={16} />
-                            {translateUiString(uiLanguage, 'Add episode')}
+                              {translateUiString(uiLanguage, 'Add episode')}
                             </button>
                           </form>
                         ) : null}
@@ -1731,7 +2016,7 @@ function StudioShell(props: {
                       <div className="toolbar">
                         <button
                           className="secondary-button"
-                          disabled={busyAction === 'Save episode'}
+                          disabled={busyAction === 'Save episode' || episodeStoryInputConflict}
                           onClick={() =>
                             void runAction('Save episode', async () => {
                               await api.updateEpisode(selectedEpisode.id, toEpisodePayload(episodeDraft));
@@ -1767,14 +2052,42 @@ function StudioShell(props: {
                       />
                     </div>
                     <TextAreaField label="Purpose" rows={2} value={episodeDraft.purpose} onChange={(value) => setEpisodeDraft({ ...episodeDraft, purpose: value })} />
-                    <div className="form-grid two">
-                      <TextAreaField label="Introduction" rows={3} value={episodeDraft.introduction} onChange={(value) => setEpisodeDraft({ ...episodeDraft, introduction: value })} />
-                      <TextAreaField label="Middle" rows={3} value={episodeDraft.middle} onChange={(value) => setEpisodeDraft({ ...episodeDraft, middle: value })} />
-                    </div>
-                    <div className="form-grid two">
-                      <TextAreaField label="Climax" rows={3} value={episodeDraft.climax} onChange={(value) => setEpisodeDraft({ ...episodeDraft, climax: value })} />
-                      <TextAreaField label="Ending hook" rows={3} value={episodeDraft.ending_hook} onChange={(value) => setEpisodeDraft({ ...episodeDraft, ending_hook: value })} />
-                    </div>
+                    <SelectField
+                      label="Story input mode"
+                      value={episodeDraft.story_input_mode}
+                      onChange={(value) => setEpisodeStoryInputMode(value as EpisodeDraft['story_input_mode'])}
+                      options={[
+                        ['structured', 'Split sections'],
+                        ['full', 'Whole draft'],
+                      ]}
+                    />
+                    {episodeStoryInputConflict ? (
+                      <div className="error-text small">
+                        {translateUiString(
+                          uiLanguage,
+                          'Split story fields and the whole story draft both have content. Please keep only one before saving or generating.',
+                        )}
+                      </div>
+                    ) : null}
+                    {episodeDraft.story_input_mode === 'full' ? (
+                      <TextAreaField
+                        label="Whole story draft"
+                        rows={10}
+                        value={episodeDraft.story_full_draft}
+                        onChange={(value) => setEpisodeDraft({ ...episodeDraft, story_full_draft: value })}
+                      />
+                    ) : (
+                      <>
+                        <div className="form-grid two">
+                          <TextAreaField label="Introduction" rows={3} value={episodeDraft.introduction} onChange={(value) => setEpisodeDraft({ ...episodeDraft, introduction: value })} />
+                          <TextAreaField label="Middle" rows={3} value={episodeDraft.middle} onChange={(value) => setEpisodeDraft({ ...episodeDraft, middle: value })} />
+                        </div>
+                        <div className="form-grid two">
+                          <TextAreaField label="Climax" rows={3} value={episodeDraft.climax} onChange={(value) => setEpisodeDraft({ ...episodeDraft, climax: value })} />
+                          <TextAreaField label="Ending hook" rows={3} value={episodeDraft.ending_hook} onChange={(value) => setEpisodeDraft({ ...episodeDraft, ending_hook: value })} />
+                        </div>
+                      </>
+                    )}
                     <InputField
                       label="Entity IDs"
                       value={episodeDraft.entities_involved}
@@ -1793,7 +2106,7 @@ function StudioShell(props: {
                       <div className="toolbar">
                         <button
                           className="primary-button"
-                          disabled={storyBusy || storyInstruction.trim().length === 0}
+                          disabled={storyBusy || episodeStoryInputConflict || storyInstruction.trim().length === 0}
                           onClick={() => {
                             void (async () => {
                               try {
@@ -1806,6 +2119,8 @@ function StudioShell(props: {
                                   base_draft: {
                                     title: nullableString(episodeDraft.title),
                                     purpose: nullableString(episodeDraft.purpose),
+                                    story_input_mode: episodeDraft.story_input_mode,
+                                    story_full_draft: nullableString(episodeDraft.story_full_draft),
                                     introduction: nullableString(episodeDraft.introduction),
                                     middle: nullableString(episodeDraft.middle),
                                     climax: nullableString(episodeDraft.climax),
@@ -1835,15 +2150,11 @@ function StudioShell(props: {
                           className="ghost-button"
                           disabled={storyImprovementDraft === null}
                           onClick={() =>
-                            setEpisodeDraft((current) => ({
-                              ...current,
-                              title: storyImprovementDraft?.title ?? current.title,
-                              purpose: storyImprovementDraft?.purpose ?? current.purpose,
-                              introduction: storyImprovementDraft?.introduction ?? current.introduction,
-                              middle: storyImprovementDraft?.middle ?? current.middle,
-                              climax: storyImprovementDraft?.climax ?? current.climax,
-                              ending_hook: storyImprovementDraft?.ending_hook ?? current.ending_hook,
-                            }))
+                            setEpisodeDraft((current) =>
+                              storyImprovementDraft === null
+                                ? current
+                                : applyStoryImprovementDraftToEpisodeDraft(current, storyImprovementDraft),
+                            )
                           }
                           type="button"
                         >
@@ -1854,6 +2165,14 @@ function StudioShell(props: {
                     }
                   >
                     <TextAreaField label="Instruction" rows={4} value={storyInstruction} onChange={setStoryInstruction} />
+                    {episodeStoryInputConflict ? (
+                      <div className="error-text small">
+                        {translateUiString(
+                          uiLanguage,
+                          'Split story fields and the whole story draft both have content. Please keep only one before saving or generating.',
+                        )}
+                      </div>
+                    ) : null}
                     {storyImprovementMeta !== null && storyImprovementMeta.compiler_provider !== 'fallback' ? (
                           <div className="muted small">{`${translateUiString(uiLanguage, 'AI improved')} / ${storyImprovementMeta.compiler_model ?? translateUiString(uiLanguage, 'Story AI')}`}</div>
                     ) : null}
@@ -1864,12 +2183,8 @@ function StudioShell(props: {
                         value={storyImprovementDraft?.title ?? ''}
                         onChange={(value) =>
                           setStoryImprovementDraft((current) => ({
+                            ...(current ?? createEmptyStoryImprovementDraft(episodeDraft.story_input_mode)),
                             title: value,
-                            purpose: current?.purpose ?? '',
-                            introduction: current?.introduction ?? '',
-                            middle: current?.middle ?? '',
-                            climax: current?.climax ?? '',
-                            ending_hook: current?.ending_hook ?? '',
                           }))
                         }
                       />
@@ -1878,70 +2193,155 @@ function StudioShell(props: {
                         {translateUiString(uiLanguage, 'Apply to title')}
                       </button>
                     </div>
-                    <div className="form-grid two">
-                      <div className="stack">
-                        <TextAreaField
-                          label="Improved purpose"
-                          rows={4}
-                          value={storyImprovementDraft?.purpose ?? ''}
-                          onChange={(value) => setStoryImprovementDraft((current) => ({ ...(current ?? { title: '', purpose: '', introduction: '', middle: '', climax: '', ending_hook: '' }), purpose: value }))}
-                        />
-                        <button className="secondary-button" onClick={() => setEpisodeDraft((current) => ({ ...current, purpose: storyImprovementDraft?.purpose ?? current.purpose }))} type="button">
-                          <Save size={16} />
-                          {translateUiString(uiLanguage, 'Apply purpose')}
-                        </button>
-                      </div>
-                      <div className="stack">
-                        <TextAreaField
-                          label="Improved introduction"
-                          rows={6}
-                          value={storyImprovementDraft?.introduction ?? ''}
-                          onChange={(value) => setStoryImprovementDraft((current) => ({ ...(current ?? { title: '', purpose: '', introduction: '', middle: '', climax: '', ending_hook: '' }), introduction: value }))}
-                        />
-                        <button className="secondary-button" onClick={() => setEpisodeDraft((current) => ({ ...current, introduction: storyImprovementDraft?.introduction ?? current.introduction }))} type="button">
-                          <Save size={16} />
-                          {translateUiString(uiLanguage, 'Apply introduction')}
-                        </button>
-                      </div>
-                    </div>
-                    <div className="form-grid two">
-                      <div className="stack">
-                        <TextAreaField
-                          label="Improved middle"
-                          rows={6}
-                          value={storyImprovementDraft?.middle ?? ''}
-                          onChange={(value) => setStoryImprovementDraft((current) => ({ ...(current ?? { title: '', purpose: '', introduction: '', middle: '', climax: '', ending_hook: '' }), middle: value }))}
-                        />
-                        <button className="secondary-button" onClick={() => setEpisodeDraft((current) => ({ ...current, middle: storyImprovementDraft?.middle ?? current.middle }))} type="button">
-                          <Save size={16} />
-                          {translateUiString(uiLanguage, 'Apply middle')}
-                        </button>
-                      </div>
-                      <div className="stack">
-                        <TextAreaField
-                          label="Improved climax"
-                          rows={6}
-                          value={storyImprovementDraft?.climax ?? ''}
-                          onChange={(value) => setStoryImprovementDraft((current) => ({ ...(current ?? { title: '', purpose: '', introduction: '', middle: '', climax: '', ending_hook: '' }), climax: value }))}
-                        />
-                        <button className="secondary-button" onClick={() => setEpisodeDraft((current) => ({ ...current, climax: storyImprovementDraft?.climax ?? current.climax }))} type="button">
-                          <Save size={16} />
-                          {translateUiString(uiLanguage, 'Apply climax')}
-                        </button>
-                      </div>
-                    </div>
-                    <div className="stack">
-                      <TextAreaField
-                        label="Improved ending hook"
-                        rows={6}
-                        value={storyImprovementDraft?.ending_hook ?? ''}
-                        onChange={(value) => setStoryImprovementDraft((current) => ({ ...(current ?? { title: '', purpose: '', introduction: '', middle: '', climax: '', ending_hook: '' }), ending_hook: value }))}
-                      />
-                      <button className="secondary-button" onClick={() => setEpisodeDraft((current) => ({ ...current, ending_hook: storyImprovementDraft?.ending_hook ?? current.ending_hook }))} type="button">
-                        <Save size={16} />
-                        {translateUiString(uiLanguage, 'Apply ending hook')}
-                      </button>
-                    </div>
+                    {episodeDraft.story_input_mode === 'full' ? (
+                      <>
+                        <div className="stack">
+                          <TextAreaField
+                            label="Improved purpose"
+                            rows={4}
+                            value={storyImprovementDraft?.purpose ?? ''}
+                            onChange={(value) =>
+                              setStoryImprovementDraft((current) => ({
+                                ...(current ?? createEmptyStoryImprovementDraft('full')),
+                                purpose: value,
+                              }))
+                            }
+                          />
+                          <button className="secondary-button" onClick={() => setEpisodeDraft((current) => ({ ...current, purpose: storyImprovementDraft?.purpose ?? current.purpose }))} type="button">
+                            <Save size={16} />
+                            {translateUiString(uiLanguage, 'Apply purpose')}
+                          </button>
+                        </div>
+                        <div className="stack">
+                          <TextAreaField
+                            label="Improved full story"
+                            rows={12}
+                            value={storyImprovementDraft?.story_full_draft ?? ''}
+                            onChange={(value) =>
+                              setStoryImprovementDraft((current) => ({
+                                ...(current ?? createEmptyStoryImprovementDraft('full')),
+                                story_input_mode: 'full',
+                                story_full_draft: value,
+                                introduction: null,
+                                middle: null,
+                                climax: null,
+                                ending_hook: null,
+                              }))
+                            }
+                          />
+                          <button
+                            className="secondary-button"
+                            onClick={() =>
+                              setEpisodeDraft((current) => ({
+                                ...current,
+                                story_input_mode: 'full',
+                                story_full_draft: storyImprovementDraft?.story_full_draft ?? current.story_full_draft,
+                                introduction: '',
+                                middle: '',
+                                climax: '',
+                                ending_hook: '',
+                              }))
+                            }
+                            type="button"
+                          >
+                            <Save size={16} />
+                            {translateUiString(uiLanguage, 'Apply full story')}
+                          </button>
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <div className="form-grid two">
+                          <div className="stack">
+                            <TextAreaField
+                              label="Improved purpose"
+                              rows={4}
+                              value={storyImprovementDraft?.purpose ?? ''}
+                              onChange={(value) =>
+                                setStoryImprovementDraft((current) => ({
+                                  ...(current ?? createEmptyStoryImprovementDraft('structured')),
+                                  purpose: value,
+                                }))
+                              }
+                            />
+                            <button className="secondary-button" onClick={() => setEpisodeDraft((current) => ({ ...current, purpose: storyImprovementDraft?.purpose ?? current.purpose }))} type="button">
+                              <Save size={16} />
+                              {translateUiString(uiLanguage, 'Apply purpose')}
+                            </button>
+                          </div>
+                          <div className="stack">
+                            <TextAreaField
+                              label="Improved introduction"
+                              rows={6}
+                              value={storyImprovementDraft?.introduction ?? ''}
+                              onChange={(value) =>
+                                setStoryImprovementDraft((current) => ({
+                                  ...(current ?? createEmptyStoryImprovementDraft('structured')),
+                                  introduction: value,
+                                }))
+                              }
+                            />
+                            <button className="secondary-button" onClick={() => setEpisodeDraft((current) => ({ ...current, introduction: storyImprovementDraft?.introduction ?? current.introduction }))} type="button">
+                              <Save size={16} />
+                              {translateUiString(uiLanguage, 'Apply introduction')}
+                            </button>
+                          </div>
+                        </div>
+                        <div className="form-grid two">
+                          <div className="stack">
+                            <TextAreaField
+                              label="Improved middle"
+                              rows={6}
+                              value={storyImprovementDraft?.middle ?? ''}
+                              onChange={(value) =>
+                                setStoryImprovementDraft((current) => ({
+                                  ...(current ?? createEmptyStoryImprovementDraft('structured')),
+                                  middle: value,
+                                }))
+                              }
+                            />
+                            <button className="secondary-button" onClick={() => setEpisodeDraft((current) => ({ ...current, middle: storyImprovementDraft?.middle ?? current.middle }))} type="button">
+                              <Save size={16} />
+                              {translateUiString(uiLanguage, 'Apply middle')}
+                            </button>
+                          </div>
+                          <div className="stack">
+                            <TextAreaField
+                              label="Improved climax"
+                              rows={6}
+                              value={storyImprovementDraft?.climax ?? ''}
+                              onChange={(value) =>
+                                setStoryImprovementDraft((current) => ({
+                                  ...(current ?? createEmptyStoryImprovementDraft('structured')),
+                                  climax: value,
+                                }))
+                              }
+                            />
+                            <button className="secondary-button" onClick={() => setEpisodeDraft((current) => ({ ...current, climax: storyImprovementDraft?.climax ?? current.climax }))} type="button">
+                              <Save size={16} />
+                              {translateUiString(uiLanguage, 'Apply climax')}
+                            </button>
+                          </div>
+                        </div>
+                        <div className="stack">
+                          <TextAreaField
+                            label="Improved ending hook"
+                            rows={6}
+                            value={storyImprovementDraft?.ending_hook ?? ''}
+                            onChange={(value) =>
+                              setStoryImprovementDraft((current) => ({
+                                ...(current ?? createEmptyStoryImprovementDraft('structured')),
+                                ending_hook: value,
+                              }))
+                            }
+                          />
+                          <button className="secondary-button" onClick={() => setEpisodeDraft((current) => ({ ...current, ending_hook: storyImprovementDraft?.ending_hook ?? current.ending_hook }))} type="button">
+                            <Save size={16} />
+                            {translateUiString(uiLanguage, 'Apply ending hook')}
+                          </button>
+                        </div>
+                      </>
+                    )}
                   </PanelSection>
 
                   <PanelSection title="Scenes">
@@ -2210,6 +2610,7 @@ function StudioShell(props: {
                           className="secondary-button"
                           onClick={() =>
                             void runAction('Generate reference', async () => {
+                              await saveCurrentEntityGenerationContext();
                               const sourceS3Key = uploadedReferenceSourceByEntityId[selectedEntity.id];
                               const result = await api.generateEntityReference(
                                 selectedEntity.id,
@@ -2247,6 +2648,12 @@ function StudioShell(props: {
                           {translateUiString(uiLanguage, 'Confirm')}
                         </button>
                       </div>
+                    ) : null}
+                    {entityPreviewGenerationMessage !== null ? (
+                      <ProcessingHint
+                        message={translateUiString(uiLanguage, entityPreviewGenerationMessage)}
+                        queued={selectedEntityGenerationJob?.status === 'queued'}
+                      />
                     ) : null}
                     <div className="reference-management-grid">
                       <div className="stack">
@@ -2523,6 +2930,7 @@ function StudioShell(props: {
                               className="secondary-button"
                               onClick={() =>
                                 void runAction('Generate page', async () => {
+                                  await saveCurrentPageGenerationContext();
                                   const result = await api.generatePage(selectedPage.id);
                                   trackJob(result.job_id);
                                 })
@@ -2561,6 +2969,12 @@ function StudioShell(props: {
                           </div>
                         }
                       >
+                        {pageImageGenerationMessage !== null ? (
+                          <ProcessingHint
+                            message={translateUiString(uiLanguage, pageImageGenerationMessage)}
+                            queued={selectedPageGenerationJob?.status === 'queued'}
+                          />
+                        ) : null}
                         {selectedPage.generated_image?.cdn_url !== null && selectedPage.generated_image?.cdn_url !== undefined ? (
                           <div className="generated-image-wrap">
                             <img
@@ -2774,7 +3188,12 @@ function StudioShell(props: {
                                 onClick={() =>
                                   void runAction('Delete panel', async () => {
                                     await api.deletePanel(selectedPanel.id);
+                                    setSelectedPanelId('');
                                     await queryClient.invalidateQueries({ queryKey: ['panels', selectedPage.id] });
+                                    await queryClient.invalidateQueries({ queryKey: ['frames', selectedPage.id] });
+                                    if (selectedEpisode !== null) {
+                                      await queryClient.invalidateQueries({ queryKey: ['pages', selectedEpisode.id] });
+                                    }
                                   })
                                 }
                                 type="button"
@@ -2877,6 +3296,9 @@ function StudioShell(props: {
                         </button>
                       }>
                         <div className="muted small">{translateUiString(uiLanguage, 'Use this after the story plan when a single page still needs refinement.')}</div>
+                        {selectedPageAutofillMessage !== null ? (
+                          <ProcessingHint message={translateUiString(uiLanguage, selectedPageAutofillMessage)} />
+                        ) : null}
                       </PanelSection>
 
                       <PanelSection
@@ -3141,6 +3563,15 @@ function NoticeBanner(props: { notice: NoticeState }) {
   return <div className={`notice ${props.notice.type}`}>{props.notice.message}</div>;
 }
 
+function ProcessingHint(props: { message: string; queued?: boolean }) {
+  return (
+    <div className={`processing-hint ${props.queued ? 'queued' : 'processing'}`}>
+      <LoaderCircle className="spin" size={14} />
+      <span>{props.message}</span>
+    </div>
+  );
+}
+
 function StatusBadge(props: { value: string }) {
   const language = useContext(UiLanguageContext);
   return <span className={`status-badge status-${props.value}`}>{translateUiString(language, props.value)}</span>;
@@ -3181,6 +3612,59 @@ function SelectField(props: {
   );
 }
 
+function SelectOrCustomField(props: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  options: Array<[string, string]>;
+}) {
+  const language = useContext(UiLanguageContext);
+  const renderOptions = props.options.some(([value]) => value === 'custom')
+    ? props.options
+    : [...props.options, ['custom', 'Custom'] as [string, string]];
+  const concreteOptionValues = new Set(
+    renderOptions.map(([value]) => value).filter((value) => value !== '' && value !== 'custom'),
+  );
+  const selectValue =
+    props.value === ''
+      ? ''
+      : concreteOptionValues.has(props.value)
+        ? props.value
+        : 'custom';
+
+  return (
+    <label className="field">
+      <span>{translateUiString(language, props.label)}</span>
+      <select
+        value={selectValue}
+        onChange={(event) => {
+          const nextValue = event.target.value;
+          if (nextValue === 'custom') {
+            if (selectValue !== 'custom') {
+              props.onChange('');
+            }
+            return;
+          }
+          props.onChange(nextValue);
+        }}
+      >
+        {renderOptions.map(([value, label]) => (
+          <option key={value} value={value}>
+            {translateUiString(language, label)}
+          </option>
+        ))}
+      </select>
+      {selectValue === 'custom' ? (
+        <input
+          value={props.value}
+          onChange={(event) => props.onChange(event.target.value)}
+          placeholder={translateUiString(language, 'Custom value')}
+        />
+      ) : null}
+    </label>
+  );
+}
+
 function TextAreaField(props: {
   label: string;
   value: string;
@@ -3193,6 +3677,69 @@ function TextAreaField(props: {
       <span>{translateUiString(language, props.label)}</span>
       <textarea rows={props.rows} value={props.value} onChange={(event) => props.onChange(event.target.value)} spellCheck={false} />
     </label>
+  );
+}
+
+function StringChipListField(props: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  placeholderLabel: string;
+  addLabel: string;
+  emptyLabel: string;
+}) {
+  const language = useContext(UiLanguageContext);
+  const [draftValue, setDraftValue] = useState('');
+  const entries = useMemo(() => splitCsv(props.value), [props.value]);
+
+  const commit = (): void => {
+    const nextValue = draftValue.trim();
+    if (nextValue.length === 0) {
+      return;
+    }
+
+    const nextEntries = Array.from(new Set([...entries, nextValue]));
+    props.onChange(nextEntries.join(', '));
+    setDraftValue('');
+  };
+
+  const remove = (target: string): void => {
+    props.onChange(entries.filter((entry) => entry !== target).join(', '));
+  };
+
+  return (
+    <div className="field">
+      <span>{translateUiString(language, props.label)}</span>
+      <div className="chip-list-toolbar">
+        <input
+          value={draftValue}
+          onChange={(event) => setDraftValue(event.target.value)}
+          placeholder={translateUiString(language, props.placeholderLabel)}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') {
+              event.preventDefault();
+              commit();
+            }
+          }}
+        />
+        <button className="ghost-button" type="button" onClick={commit}>
+          <Save size={16} />
+          {translateUiString(language, props.addLabel)}
+        </button>
+      </div>
+      {entries.length === 0 ? (
+        <div className="muted">{translateUiString(language, props.emptyLabel)}</div>
+      ) : (
+        <div className="chip-list">
+          {entries.map((entry) => (
+            <button key={entry} className="chip" type="button" onClick={() => remove(entry)}>
+              <span>{entry}</span>
+              <Trash2 size={14} />
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -3213,83 +3760,91 @@ function CharacterStructuredFieldsEditor(props: {
       <div className="character-fields-group">
         <div className="character-fields-group-title">{translateUiString(language, 'Identity')}</div>
         <div className="form-grid three compact-grid">
-          <SelectField label="Gender" value={props.value.gender_expression} onChange={(value) => update({ gender_expression: value })} options={CHARACTER_GENDER_OPTIONS} />
-          <SelectField label="Age range" value={props.value.age_range} onChange={(value) => update({ age_range: value })} options={CHARACTER_AGE_RANGE_OPTIONS} />
-          <SelectField label="Skin tone" value={props.value.skin_tone} onChange={(value) => update({ skin_tone: value })} options={CHARACTER_SKIN_TONE_OPTIONS} />
-          <SelectField label="First impression" value={props.value.first_impression} onChange={(value) => update({ first_impression: value })} options={CHARACTER_FIRST_IMPRESSION_OPTIONS} />
-          <SelectField label="Standing style" value={props.value.standing_style} onChange={(value) => update({ standing_style: value })} options={CHARACTER_STANDING_STYLE_OPTIONS} />
-          <SelectField label="Default expression" value={props.value.default_expression} onChange={(value) => update({ default_expression: value })} options={CHARACTER_DEFAULT_EXPRESSION_OPTIONS} />
-          <SelectField label="Height" value={props.value.height} onChange={(value) => update({ height: value })} options={CHARACTER_HEIGHT_OPTIONS} />
-          <SelectField label="Body type" value={props.value.build} onChange={(value) => update({ build: value })} options={CHARACTER_BUILD_OPTIONS} />
-          <SelectField label="Art style" value={props.value.art_style} onChange={(value) => update({ art_style: value })} options={CHARACTER_ART_STYLE_OPTIONS} />
+          <SelectOrCustomField label="Gender" value={props.value.gender_expression} onChange={(value) => update({ gender_expression: value })} options={CHARACTER_GENDER_OPTIONS} />
+          <SelectOrCustomField label="Age range" value={props.value.age_range} onChange={(value) => update({ age_range: value })} options={CHARACTER_AGE_RANGE_OPTIONS} />
+          <SelectOrCustomField label="Skin tone" value={props.value.skin_tone} onChange={(value) => update({ skin_tone: value })} options={CHARACTER_SKIN_TONE_OPTIONS} />
+          <SelectOrCustomField label="First impression" value={props.value.first_impression} onChange={(value) => update({ first_impression: value })} options={CHARACTER_FIRST_IMPRESSION_OPTIONS} />
+          <SelectOrCustomField label="Standing style" value={props.value.standing_style} onChange={(value) => update({ standing_style: value })} options={CHARACTER_STANDING_STYLE_OPTIONS} />
+          <SelectOrCustomField label="Default expression" value={props.value.default_expression} onChange={(value) => update({ default_expression: value })} options={CHARACTER_DEFAULT_EXPRESSION_OPTIONS} />
+          <SelectOrCustomField label="Height" value={props.value.height} onChange={(value) => update({ height: value })} options={CHARACTER_HEIGHT_OPTIONS} />
+          <SelectOrCustomField label="Body type" value={props.value.build} onChange={(value) => update({ build: value })} options={CHARACTER_BUILD_OPTIONS} />
+          <SelectOrCustomField label="Art style" value={props.value.art_style} onChange={(value) => update({ art_style: value })} options={CHARACTER_ART_STYLE_OPTIONS} />
         </div>
       </div>
 
       <div className="character-fields-group">
         <div className="character-fields-group-title">{translateUiString(language, 'Anchors')}</div>
+        <StringChipListField
+          label="Aliases"
+          value={props.value.aliases}
+          onChange={(value) => update({ aliases: value })}
+          placeholderLabel="Alias placeholder"
+          addLabel="Add alias"
+          emptyLabel="No aliases yet."
+        />
         <div className="form-grid two compact-grid">
-          <InputField label="Visual anchor" value={props.value.visual_anchor} onChange={(value) => update({ visual_anchor: value })} />
-          <InputField label="Signature feature" value={props.value.signature_feature} onChange={(value) => update({ signature_feature: value })} />
+          <SelectOrCustomField label="Visual anchor" value={props.value.visual_anchor} onChange={(value) => update({ visual_anchor: value })} options={CHARACTER_VISUAL_ANCHOR_OPTIONS} />
+          <SelectOrCustomField label="Signature feature" value={props.value.signature_feature} onChange={(value) => update({ signature_feature: value })} options={CHARACTER_SIGNATURE_FEATURE_OPTIONS} />
         </div>
         <div className="form-grid two compact-grid">
-          <InputField label="Silhouette keywords" value={props.value.silhouette_keywords} onChange={(value) => update({ silhouette_keywords: value })} />
-          <InputField label="Distinguishing features" value={props.value.distinguishing_features} onChange={(value) => update({ distinguishing_features: value })} />
+          <SelectOrCustomField label="Silhouette keywords" value={props.value.silhouette_keywords} onChange={(value) => update({ silhouette_keywords: value })} options={CHARACTER_SILHOUETTE_KEYWORD_OPTIONS} />
+          <SelectOrCustomField label="Distinguishing features" value={props.value.distinguishing_features} onChange={(value) => update({ distinguishing_features: value })} options={CHARACTER_DISTINGUISHING_FEATURE_OPTIONS} />
         </div>
         <div className="form-grid four compact-grid">
-          <InputField label="Head/body ratio" value={props.value.head_to_body_ratio} onChange={(value) => update({ head_to_body_ratio: value })} />
-          <InputField label="Shoulder width" value={props.value.shoulder_width} onChange={(value) => update({ shoulder_width: value })} />
-          <InputField label="Leg length" value={props.value.leg_length} onChange={(value) => update({ leg_length: value })} />
-          <InputField label="Posture axis" value={props.value.posture_axis} onChange={(value) => update({ posture_axis: value })} />
+          <SelectOrCustomField label="Head/body ratio" value={props.value.head_to_body_ratio} onChange={(value) => update({ head_to_body_ratio: value })} options={CHARACTER_HEAD_RATIO_OPTIONS} />
+          <SelectOrCustomField label="Shoulder width" value={props.value.shoulder_width} onChange={(value) => update({ shoulder_width: value })} options={CHARACTER_SHOULDER_WIDTH_OPTIONS} />
+          <SelectOrCustomField label="Leg length" value={props.value.leg_length} onChange={(value) => update({ leg_length: value })} options={CHARACTER_LEG_LENGTH_OPTIONS} />
+          <SelectOrCustomField label="Posture axis" value={props.value.posture_axis} onChange={(value) => update({ posture_axis: value })} options={CHARACTER_POSTURE_AXIS_OPTIONS} />
         </div>
       </div>
 
       <div className="character-fields-group">
         <div className="character-fields-group-title">{translateUiString(language, 'Face')}</div>
         <div className="form-grid four compact-grid">
-          <SelectField label="Face shape" value={props.value.face_shape} onChange={(value) => update({ face_shape: value })} options={CHARACTER_FACE_SHAPE_OPTIONS} />
-          <SelectField label="Eyebrow shape" value={props.value.eyebrow_shape} onChange={(value) => update({ eyebrow_shape: value })} options={CHARACTER_EYEBROW_SHAPE_OPTIONS} />
-          <SelectField label="Nose shape" value={props.value.nose_shape} onChange={(value) => update({ nose_shape: value })} options={CHARACTER_NOSE_SHAPE_OPTIONS} />
-          <SelectField label="Mouth shape" value={props.value.mouth_shape} onChange={(value) => update({ mouth_shape: value })} options={CHARACTER_MOUTH_SHAPE_OPTIONS} />
-          <SelectField label="Eye color" value={props.value.eye_color} onChange={(value) => update({ eye_color: value })} options={CHARACTER_EYE_COLOR_OPTIONS} />
-          <SelectField label="Eye shape" value={props.value.eye_shape} onChange={(value) => update({ eye_shape: value })} options={CHARACTER_EYE_SHAPE_OPTIONS} />
-          <SelectField label="Eyelid type" value={props.value.eyelid_type} onChange={(value) => update({ eyelid_type: value })} options={CHARACTER_EYELID_TYPE_OPTIONS} />
-          <InputField label="Eye size" value={props.value.eye_size} onChange={(value) => update({ eye_size: value })} />
-          <InputField label="Eye angle" value={props.value.eye_angle} onChange={(value) => update({ eye_angle: value })} />
-          <InputField label="Pupil style" value={props.value.pupil_style} onChange={(value) => update({ pupil_style: value })} />
-          <InputField label="Under-eye detail" value={props.value.under_eye_detail} onChange={(value) => update({ under_eye_detail: value })} />
-          <InputField label="Mouth default" value={props.value.mouth_default} onChange={(value) => update({ mouth_default: value })} />
+          <SelectOrCustomField label="Face shape" value={props.value.face_shape} onChange={(value) => update({ face_shape: value })} options={CHARACTER_FACE_SHAPE_OPTIONS} />
+          <SelectOrCustomField label="Eyebrow shape" value={props.value.eyebrow_shape} onChange={(value) => update({ eyebrow_shape: value })} options={CHARACTER_EYEBROW_SHAPE_OPTIONS} />
+          <SelectOrCustomField label="Nose shape" value={props.value.nose_shape} onChange={(value) => update({ nose_shape: value })} options={CHARACTER_NOSE_SHAPE_OPTIONS} />
+          <SelectOrCustomField label="Mouth shape" value={props.value.mouth_shape} onChange={(value) => update({ mouth_shape: value })} options={CHARACTER_MOUTH_SHAPE_OPTIONS} />
+          <SelectOrCustomField label="Eye color" value={props.value.eye_color} onChange={(value) => update({ eye_color: value })} options={CHARACTER_EYE_COLOR_OPTIONS} />
+          <SelectOrCustomField label="Eye shape" value={props.value.eye_shape} onChange={(value) => update({ eye_shape: value })} options={CHARACTER_EYE_SHAPE_OPTIONS} />
+          <SelectOrCustomField label="Eyelid type" value={props.value.eyelid_type} onChange={(value) => update({ eyelid_type: value })} options={CHARACTER_EYELID_TYPE_OPTIONS} />
+          <SelectOrCustomField label="Eye size" value={props.value.eye_size} onChange={(value) => update({ eye_size: value })} options={CHARACTER_EYE_SIZE_OPTIONS} />
+          <SelectOrCustomField label="Eye angle" value={props.value.eye_angle} onChange={(value) => update({ eye_angle: value })} options={CHARACTER_EYE_ANGLE_OPTIONS} />
+          <SelectOrCustomField label="Pupil style" value={props.value.pupil_style} onChange={(value) => update({ pupil_style: value })} options={CHARACTER_PUPIL_STYLE_OPTIONS} />
+          <SelectOrCustomField label="Under-eye detail" value={props.value.under_eye_detail} onChange={(value) => update({ under_eye_detail: value })} options={CHARACTER_UNDER_EYE_DETAIL_OPTIONS} />
+          <SelectOrCustomField label="Mouth default" value={props.value.mouth_default} onChange={(value) => update({ mouth_default: value })} options={CHARACTER_MOUTH_DEFAULT_OPTIONS} />
         </div>
       </div>
 
       <div className="character-fields-group">
         <div className="character-fields-group-title">{translateUiString(language, 'Hair')}</div>
         <div className="form-grid five compact-grid">
-          <SelectField label="Hair color" value={props.value.hair_color} onChange={(value) => update({ hair_color: value })} options={CHARACTER_HAIR_COLOR_OPTIONS} />
-          <SelectField label="Hair length" value={props.value.hair_length} onChange={(value) => update({ hair_length: value })} options={CHARACTER_HAIR_LENGTH_OPTIONS} />
-          <SelectField label="Hair style" value={props.value.hair_style} onChange={(value) => update({ hair_style: value })} options={CHARACTER_HAIR_STYLE_OPTIONS} />
-          <SelectField label="Hair arrangement" value={props.value.hair_arrangement} onChange={(value) => update({ hair_arrangement: value })} options={CHARACTER_HAIR_ARRANGEMENT_OPTIONS} />
-          <SelectField label="Bangs" value={props.value.hair_bangs} onChange={(value) => update({ hair_bangs: value })} options={CHARACTER_HAIR_BANGS_OPTIONS} />
+          <SelectOrCustomField label="Hair color" value={props.value.hair_color} onChange={(value) => update({ hair_color: value })} options={CHARACTER_HAIR_COLOR_OPTIONS} />
+          <SelectOrCustomField label="Hair length" value={props.value.hair_length} onChange={(value) => update({ hair_length: value })} options={CHARACTER_HAIR_LENGTH_OPTIONS} />
+          <SelectOrCustomField label="Hair style" value={props.value.hair_style} onChange={(value) => update({ hair_style: value })} options={CHARACTER_HAIR_STYLE_OPTIONS} />
+          <SelectOrCustomField label="Hair arrangement" value={props.value.hair_arrangement} onChange={(value) => update({ hair_arrangement: value })} options={CHARACTER_HAIR_ARRANGEMENT_OPTIONS} />
+          <SelectOrCustomField label="Bangs" value={props.value.hair_bangs} onChange={(value) => update({ hair_bangs: value })} options={CHARACTER_HAIR_BANGS_OPTIONS} />
         </div>
         <div className="form-grid three compact-grid">
-          <InputField label="Front shape" value={props.value.hair_front_shape} onChange={(value) => update({ hair_front_shape: value })} />
-          <InputField label="Side hair" value={props.value.hair_side_hair} onChange={(value) => update({ hair_side_hair: value })} />
-          <InputField label="Back shape" value={props.value.hair_back_shape} onChange={(value) => update({ hair_back_shape: value })} />
+          <SelectOrCustomField label="Front shape" value={props.value.hair_front_shape} onChange={(value) => update({ hair_front_shape: value })} options={CHARACTER_HAIR_FRONT_SHAPE_OPTIONS} />
+          <SelectOrCustomField label="Side hair" value={props.value.hair_side_hair} onChange={(value) => update({ hair_side_hair: value })} options={CHARACTER_HAIR_SIDE_OPTIONS} />
+          <SelectOrCustomField label="Back shape" value={props.value.hair_back_shape} onChange={(value) => update({ hair_back_shape: value })} options={CHARACTER_HAIR_BACK_SHAPE_OPTIONS} />
         </div>
       </div>
 
       <div className="character-fields-group">
         <div className="character-fields-group-title">{translateUiString(language, 'Outfit')}</div>
         <div className="form-grid three compact-grid">
-          <SelectField label="Category" value={props.value.clothing_category} onChange={(value) => update({ clothing_category: value })} options={CHARACTER_CLOTHING_CATEGORY_OPTIONS} />
-          <SelectField label="Main color" value={props.value.clothing_main_color} onChange={(value) => update({ clothing_main_color: value })} options={CHARACTER_CLOTHING_COLOR_OPTIONS} />
-          <SelectField label="Impression" value={props.value.clothing_impression} onChange={(value) => update({ clothing_impression: value })} options={CHARACTER_CLOTHING_IMPRESSION_OPTIONS} />
-          <InputField label="Collar shape" value={props.value.collar_shape} onChange={(value) => update({ collar_shape: value })} />
-          <InputField label="Sleeve length" value={props.value.sleeve_length} onChange={(value) => update({ sleeve_length: value })} />
-          <InputField label="Skirt or pants" value={props.value.skirt_or_pants_shape} onChange={(value) => update({ skirt_or_pants_shape: value })} />
-          <InputField label="Shoes" value={props.value.shoes} onChange={(value) => update({ shoes: value })} />
-          <InputField label="Legwear" value={props.value.socks_or_legwear} onChange={(value) => update({ socks_or_legwear: value })} />
+          <SelectOrCustomField label="Category" value={props.value.clothing_category} onChange={(value) => update({ clothing_category: value })} options={CHARACTER_CLOTHING_CATEGORY_OPTIONS} />
+          <SelectOrCustomField label="Main color" value={props.value.clothing_main_color} onChange={(value) => update({ clothing_main_color: value })} options={CHARACTER_CLOTHING_COLOR_OPTIONS} />
+          <SelectOrCustomField label="Impression" value={props.value.clothing_impression} onChange={(value) => update({ clothing_impression: value })} options={CHARACTER_CLOTHING_IMPRESSION_OPTIONS} />
+          <SelectOrCustomField label="Collar shape" value={props.value.collar_shape} onChange={(value) => update({ collar_shape: value })} options={CHARACTER_COLLAR_SHAPE_OPTIONS} />
+          <SelectOrCustomField label="Sleeve length" value={props.value.sleeve_length} onChange={(value) => update({ sleeve_length: value })} options={CHARACTER_SLEEVE_LENGTH_OPTIONS} />
+          <SelectOrCustomField label="Skirt or pants" value={props.value.skirt_or_pants_shape} onChange={(value) => update({ skirt_or_pants_shape: value })} options={CHARACTER_LOWER_GARMENT_OPTIONS} />
+          <SelectOrCustomField label="Shoes" value={props.value.shoes} onChange={(value) => update({ shoes: value })} options={CHARACTER_SHOES_OPTIONS} />
+          <SelectOrCustomField label="Legwear" value={props.value.socks_or_legwear} onChange={(value) => update({ socks_or_legwear: value })} options={CHARACTER_LEGWEAR_OPTIONS} />
         </div>
-        <TextAreaField label="Clothing details" rows={2} value={props.value.clothing_description} onChange={(value) => update({ clothing_description: value })} />
+        <SelectOrCustomField label="Clothing details" value={props.value.clothing_description} onChange={(value) => update({ clothing_description: value })} options={CHARACTER_CLOTHING_DETAIL_OPTIONS} />
       </div>
     </div>
   );
@@ -3489,12 +4044,13 @@ function PanelDialogueEditor(props: {
   };
 
   const addDialogue = (): void => {
+    const firstSpeakerId = props.entities[0]?.id ?? '';
     props.onChange([
       ...props.dialogues,
       {
-        entity_id: '',
+        entity_id: firstSpeakerId,
         text: '',
-        type: 'speech',
+        type: firstSpeakerId.length > 0 ? 'speech' : 'narration',
         position: 'top',
       },
     ]);
@@ -3519,7 +4075,11 @@ function PanelDialogueEditor(props: {
       {props.dialogues.length === 0 ? (
         <div className="muted">{translateUiString(language, 'No dialogue lines yet.')}</div>
       ) : (
-        props.dialogues.map((dialogue, index) => (
+        props.dialogues.map((dialogue, index) => {
+          const speakerRequired = requiresPanelDialogueSpeaker(dialogue.type);
+          const speakerMissing = speakerRequired && dialogue.entity_id.trim().length === 0;
+
+          return (
           <div key={`${dialogue.entity_id}-${index}`} className="panel-section compact">
             <div className="section-header">
               <div>
@@ -3536,7 +4096,9 @@ function PanelDialogueEditor(props: {
                   value={dialogue.entity_id}
                   onChange={(event) => updateDialogue(index, { entity_id: event.target.value })}
                 >
-                  <option value="">{translateUiString(language, 'Narration / none')}</option>
+                  <option value="" disabled={speakerRequired}>
+                    {translateUiString(language, 'Narration / none')}
+                  </option>
                   {props.entities.map((entity) => (
                     <option key={entity.id} value={entity.id}>
                       {entity.name}
@@ -3547,7 +4109,17 @@ function PanelDialogueEditor(props: {
               <SelectField
                 label="Type"
                 value={dialogue.type}
-                onChange={(value) => updateDialogue(index, { type: value as PanelDialogueDraft['type'] })}
+                onChange={(value) => {
+                  const nextType = value as PanelDialogueDraft['type'];
+                  const firstSpeakerId = props.entities[0]?.id ?? '';
+                  updateDialogue(index, {
+                    type: nextType,
+                    entity_id:
+                      requiresPanelDialogueSpeaker(nextType) && dialogue.entity_id.trim().length === 0
+                        ? firstSpeakerId
+                        : dialogue.entity_id,
+                  });
+                }}
                 options={PANEL_DIALOGUE_TYPE_OPTIONS}
               />
               <SelectField
@@ -3565,8 +4137,14 @@ function PanelDialogueEditor(props: {
               value={dialogue.text}
               onChange={(value) => updateDialogue(index, { text: value })}
             />
+            {speakerMissing ? (
+              <div className="error-text">
+                {translateUiString(language, 'Speaker is required for speech, thought, shout, and whisper lines.')}
+              </div>
+            ) : null}
           </div>
-        ))
+        );
+        })
       )}
     </div>
   );
@@ -3686,14 +4264,17 @@ function toChapterDraft(chapter: ChapterRecord): ChapterDraft {
 }
 
 function toEpisodeDraft(episode: EpisodeRecord): EpisodeDraft {
+  const storyInputMode = episode.story_input_mode;
   return {
     order: String(episode.order),
     title: episode.title ?? '',
     purpose: episode.purpose ?? '',
-    introduction: episode.introduction ?? '',
-    middle: episode.middle ?? '',
-    climax: episode.climax ?? '',
-    ending_hook: episode.ending_hook ?? '',
+    story_input_mode: storyInputMode,
+    story_full_draft: storyInputMode === 'full' ? episode.story_full_draft ?? '' : '',
+    introduction: storyInputMode === 'structured' ? episode.introduction ?? '' : '',
+    middle: storyInputMode === 'structured' ? episode.middle ?? '' : '',
+    climax: storyInputMode === 'structured' ? episode.climax ?? '' : '',
+    ending_hook: storyInputMode === 'structured' ? episode.ending_hook ?? '' : '',
     estimated_pages: String(episode.estimated_pages),
     entities_involved: episode.entities_involved.join(', '),
     status: episode.status,
@@ -3839,6 +4420,8 @@ function toEpisodePayload(draft: EpisodeDraft): Record<string, unknown> {
     order: parseNumberInput(draft.order, 'episode order'),
     title: nullableString(draft.title),
     purpose: nullableString(draft.purpose),
+    story_input_mode: draft.story_input_mode,
+    story_full_draft: nullableString(draft.story_full_draft),
     introduction: nullableString(draft.introduction),
     middle: nullableString(draft.middle),
     climax: nullableString(draft.climax),
@@ -3854,6 +4437,8 @@ function toCreateEpisodePayload(draft: EpisodeDraft): Record<string, unknown> {
     order: parseNumberInput(draft.order, 'episode order'),
     title: nullableString(draft.title),
     purpose: nullableString(draft.purpose),
+    story_input_mode: draft.story_input_mode,
+    story_full_draft: nullableString(draft.story_full_draft),
     introduction: nullableString(draft.introduction),
     middle: nullableString(draft.middle),
     climax: nullableString(draft.climax),
@@ -3861,6 +4446,208 @@ function toCreateEpisodePayload(draft: EpisodeDraft): Record<string, unknown> {
     estimated_pages: parseNumberInput(draft.estimated_pages, 'estimated pages'),
     entities_involved: splitCsv(draft.entities_involved),
   };
+}
+
+function hasEpisodeStoryInputConflict(draft: EpisodeDraft): boolean {
+  return (
+    normalizeTextInput(draft.story_full_draft) !== null &&
+    [
+      draft.introduction,
+      draft.middle,
+      draft.climax,
+      draft.ending_hook,
+    ].some((value) => normalizeTextInput(value) !== null)
+  );
+}
+
+function convertEpisodeDraftStoryInputMode(
+  draft: EpisodeDraft,
+  nextMode: EpisodeDraft['story_input_mode'],
+): EpisodeDraft {
+  if (draft.story_input_mode === nextMode) {
+    return draft;
+  }
+
+  if (nextMode === 'full') {
+    return {
+      ...draft,
+      story_input_mode: 'full',
+      story_full_draft:
+        normalizeTextInput(draft.story_full_draft) ??
+        buildFullStoryDraftFromEpisodeDraftSections(draft) ??
+        '',
+      introduction: '',
+      middle: '',
+      climax: '',
+      ending_hook: '',
+    };
+  }
+
+  const derivedSections = deriveEpisodeDraftSectionsFromFullStory(draft.story_full_draft);
+  return {
+    ...draft,
+    story_input_mode: 'structured',
+    story_full_draft: '',
+    introduction: draft.introduction || derivedSections.introduction,
+    middle: draft.middle || derivedSections.middle,
+    climax: draft.climax || derivedSections.climax,
+    ending_hook: draft.ending_hook || derivedSections.ending_hook,
+  };
+}
+
+function applyStoryImprovementDraftToEpisodeDraft(
+  draft: EpisodeDraft,
+  improvement: StoryEpisodeImprovementRecord['draft'],
+): EpisodeDraft {
+  if (improvement.story_input_mode === 'full') {
+    return {
+      ...draft,
+      title: improvement.title ?? draft.title,
+      purpose: improvement.purpose ?? draft.purpose,
+      story_input_mode: 'full',
+      story_full_draft: improvement.story_full_draft ?? draft.story_full_draft,
+      introduction: '',
+      middle: '',
+      climax: '',
+      ending_hook: '',
+    };
+  }
+
+  return {
+    ...draft,
+    title: improvement.title ?? draft.title,
+    purpose: improvement.purpose ?? draft.purpose,
+    story_input_mode: 'structured',
+    story_full_draft: '',
+    introduction: improvement.introduction ?? draft.introduction,
+    middle: improvement.middle ?? draft.middle,
+    climax: improvement.climax ?? draft.climax,
+    ending_hook: improvement.ending_hook ?? draft.ending_hook,
+  };
+}
+
+function createEmptyStoryImprovementDraft(
+  storyInputMode: EpisodeDraft['story_input_mode'],
+): StoryEpisodeImprovementRecord['draft'] {
+  return {
+    title: null,
+    purpose: null,
+    story_input_mode: storyInputMode,
+    story_full_draft: null,
+    introduction: null,
+    middle: null,
+    climax: null,
+    ending_hook: null,
+  };
+}
+
+function buildFullStoryDraftFromEpisodeDraftSections(draft: Pick<EpisodeDraft, 'introduction' | 'middle' | 'climax' | 'ending_hook'>): string | null {
+  const parts = [draft.introduction, draft.middle, draft.climax, draft.ending_hook]
+    .map((value) => normalizeTextInput(value))
+    .filter((value): value is string => value !== null);
+
+  if (parts.length === 0) {
+    return null;
+  }
+
+  return parts.join('\n\n');
+}
+
+function deriveEpisodeDraftSectionsFromFullStory(fullStoryDraft: string): {
+  introduction: string;
+  middle: string;
+  climax: string;
+  ending_hook: string;
+} {
+  const normalizedFullStory = normalizeTextInput(fullStoryDraft);
+  if (normalizedFullStory === null) {
+    return {
+      introduction: '',
+      middle: '',
+      climax: '',
+      ending_hook: '',
+    };
+  }
+
+  const segments = splitEpisodeStorySegments(normalizedFullStory);
+  if (segments.length === 0) {
+    return {
+      introduction: '',
+      middle: '',
+      climax: '',
+      ending_hook: '',
+    };
+  }
+
+  const bucketCount = Math.min(4, segments.length);
+  const buckets = Array.from({ length: bucketCount }, () => [] as string[]);
+
+  for (let index = 0; index < segments.length; index += 1) {
+    const bucketIndex = Math.min(bucketCount - 1, Math.floor((index * bucketCount) / segments.length));
+    buckets[bucketIndex]?.push(segments[index] ?? '');
+  }
+
+  return {
+    introduction: buckets[0]?.join('\n\n') ?? '',
+    middle: buckets[1]?.join('\n\n') ?? '',
+    climax: buckets[2]?.join('\n\n') ?? '',
+    ending_hook: buckets[3]?.join('\n\n') ?? '',
+  };
+}
+
+function splitEpisodeStorySegments(fullStoryDraft: string): string[] {
+  const paragraphs = fullStoryDraft
+    .replace(/\r\n/g, '\n')
+    .split(/\n{2,}/u)
+    .map((segment) => segment.trim())
+    .filter((segment) => segment.length > 0);
+
+  if (paragraphs.length >= 2) {
+    return paragraphs;
+  }
+
+  const sentences = splitEpisodeStoryIntoSentences(fullStoryDraft);
+  if (sentences.length > 0) {
+    return sentences;
+  }
+
+  return [fullStoryDraft];
+}
+
+function splitEpisodeStoryIntoSentences(fullStoryDraft: string): string[] {
+  const sentences: string[] = [];
+  let current = '';
+
+  for (let index = 0; index < fullStoryDraft.length; index += 1) {
+    const character = fullStoryDraft[index] ?? '';
+    current += character;
+    if (isEpisodeStorySentenceBoundary(character, fullStoryDraft[index + 1] ?? '')) {
+      const normalized = current.trim();
+      if (normalized.length > 0) {
+        sentences.push(normalized);
+      }
+      current = '';
+    }
+  }
+
+  const trailing = current.trim();
+  if (trailing.length > 0) {
+    sentences.push(trailing);
+  }
+
+  return sentences;
+}
+
+function isEpisodeStorySentenceBoundary(current: string, next: string): boolean {
+  if (current === '。' || current === '！' || current === '？' || current === '!' || current === '?') {
+    return true;
+  }
+
+  if (current !== '.') {
+    return false;
+  }
+
+  return next === '' || next === ' ' || next === '\n';
 }
 
 function toEntityPayload(draft: EntityDraft): Record<string, unknown> {
@@ -3913,12 +4700,19 @@ function toPanelPayload(draft: PanelDraft): Record<string, unknown> {
       angle: emptyStringToNull(draft.angle),
       custom_note: nullableString(draft.custom_note),
     },
-    dialogue: draft.dialogues.map((dialogue) => ({
-      entity_id: dialogue.entity_id.trim().length === 0 ? null : dialogue.entity_id.trim(),
-      text: requiredString(dialogue.text, 'dialogue text'),
-      type: dialogue.type,
-      position: dialogue.position,
-    })),
+    dialogue: draft.dialogues.map((dialogue, index) => {
+      const entityId = dialogue.entity_id.trim();
+      if (requiresPanelDialogueSpeaker(dialogue.type) && entityId.length === 0) {
+        throw new Error(`Line ${index + 1}: speaker is required for ${dialogue.type}`);
+      }
+
+      return {
+        entity_id: entityId.length === 0 ? null : entityId,
+        text: requiredString(dialogue.text, 'dialogue text'),
+        type: dialogue.type,
+        position: dialogue.position,
+      };
+    }),
     dialogue_in_panel: draft.dialogue_in_panel,
     sfx_text: nullableString(draft.sfx_text),
     background_note: nullableString(draft.background_note),
@@ -3998,6 +4792,8 @@ function createEmptyEpisodeDraft(): EpisodeDraft {
     order: '1',
     title: '',
     purpose: '',
+    story_input_mode: 'structured',
+    story_full_draft: '',
     introduction: '',
     middle: '',
     climax: '',
@@ -4018,6 +4814,10 @@ function createEmptyPageSettingsDraft(): PageSettingsDraft {
     story_page_purpose: '',
     story_continuity_note: '',
   };
+}
+
+function requiresPanelDialogueSpeaker(type: PanelDialogueDraft['type']): boolean {
+  return type === 'speech' || type === 'thought' || type === 'shout' || type === 'whisper';
 }
 
 function toPageSettingsDraft(page: PageRecord): PageSettingsDraft {
@@ -4125,8 +4925,12 @@ function parseCharacterStructuredFieldsDraft(value: string): CharacterStructured
   const silhouetteKeywords = Array.isArray(characterIdentity.silhouette_keywords)
     ? characterIdentity.silhouette_keywords.filter((entry): entry is string => typeof entry === 'string').join(', ')
     : '';
+  const aliases = Array.isArray(characterIdentity.aliases)
+    ? characterIdentity.aliases.filter((entry): entry is string => typeof entry === 'string').join(', ')
+    : '';
 
   return {
+    aliases,
     gender_expression: readString(parsed.gender_expression),
     age_range: readString(parsed.age_range),
     skin_tone: readString(parsed.skin_tone),
@@ -4222,6 +5026,10 @@ function serializeCharacterStructuredFieldsDraft(value: CharacterStructuredField
   }
 
   const characterIdentity: Record<string, unknown> = {};
+  const aliases = splitCsv(value.aliases);
+  if (aliases.length > 0) {
+    characterIdentity.aliases = aliases;
+  }
   assignIfNotBlank(characterIdentity, 'visual_anchor', value.visual_anchor);
   assignIfNotBlank(characterIdentity, 'signature_feature', value.signature_feature);
   const silhouetteKeywords = splitCsv(value.silhouette_keywords);
@@ -4472,6 +5280,44 @@ const CHARACTER_EYELID_TYPE_OPTIONS: Array<[string, string]> = [
   ['single', 'Single'],
   ['double', 'Double'],
 ];
+const CHARACTER_EYE_SIZE_OPTIONS: Array<[string, string]> = [
+  EMPTY_OPTION,
+  ['small eyes', 'small eyes'],
+  ['balanced eyes', 'balanced eyes'],
+  ['large eyes', 'large eyes'],
+  ['very large eyes', 'very large eyes'],
+];
+const CHARACTER_EYE_ANGLE_OPTIONS: Array<[string, string]> = [
+  EMPTY_OPTION,
+  ['level eye line', 'level eye line'],
+  ['slightly upturned eyes', 'slightly upturned eyes'],
+  ['strongly upturned eyes', 'strongly upturned eyes'],
+  ['slightly downturned eyes', 'slightly downturned eyes'],
+  ['drooping eyes', 'drooping eyes'],
+];
+const CHARACTER_PUPIL_STYLE_OPTIONS: Array<[string, string]> = [
+  EMPTY_OPTION,
+  ['small pupils', 'small pupils'],
+  ['large pupils', 'large pupils'],
+  ['sharp pupils', 'sharp pupils'],
+  ['soft round pupils', 'soft round pupils'],
+  ['bright reflective pupils', 'bright reflective pupils'],
+];
+const CHARACTER_UNDER_EYE_DETAIL_OPTIONS: Array<[string, string]> = [
+  EMPTY_OPTION,
+  ['none visible', 'none visible'],
+  ['soft shadows', 'soft shadows'],
+  ['defined lower lash line', 'defined lower lash line'],
+  ['slight eye bags', 'slight eye bags'],
+  ['heavy eye bags', 'heavy eye bags'],
+];
+const CHARACTER_MOUTH_DEFAULT_OPTIONS: Array<[string, string]> = [
+  EMPTY_OPTION,
+  ['closed neutral mouth', 'closed neutral mouth'],
+  ['slight smile', 'slight smile'],
+  ['firm straight mouth', 'firm straight mouth'],
+  ['soft parted lips', 'soft parted lips'],
+];
 const CHARACTER_HAIR_BANGS_OPTIONS: Array<[string, string]> = [
   EMPTY_OPTION,
   ['none', 'None'],
@@ -4480,6 +5326,29 @@ const CHARACTER_HAIR_BANGS_OPTIONS: Array<[string, string]> = [
   ['heavy', 'Heavy'],
   ['side_swept', 'Side swept'],
   ['blunt', 'Blunt'],
+];
+const CHARACTER_HAIR_FRONT_SHAPE_OPTIONS: Array<[string, string]> = [
+  EMPTY_OPTION,
+  ['straight front line', 'straight front line'],
+  ['center-parted front', 'center-parted front'],
+  ['rounded front curve', 'rounded front curve'],
+  ['side-swept front', 'side-swept front'],
+  ['blunt front', 'blunt front'],
+];
+const CHARACTER_HAIR_SIDE_OPTIONS: Array<[string, string]> = [
+  EMPTY_OPTION,
+  ['short side locks', 'short side locks'],
+  ['soft cheek framing', 'soft cheek framing'],
+  ['long side locks', 'long side locks'],
+  ['tucked behind ears', 'tucked behind ears'],
+];
+const CHARACTER_HAIR_BACK_SHAPE_OPTIONS: Array<[string, string]> = [
+  EMPTY_OPTION,
+  ['clean bob back', 'clean bob back'],
+  ['layered back', 'layered back'],
+  ['straight long back', 'straight long back'],
+  ['ponytail fall', 'ponytail fall'],
+  ['braided back', 'braided back'],
 ];
 const CHARACTER_CLOTHING_CATEGORY_OPTIONS: Array<[string, string]> = [
   EMPTY_OPTION,
@@ -4521,12 +5390,136 @@ const CHARACTER_CLOTHING_IMPRESSION_OPTIONS: Array<[string, string]> = [
   ['cute', 'Cute'],
   ['custom', 'Custom'],
 ];
+const CHARACTER_COLLAR_SHAPE_OPTIONS: Array<[string, string]> = [
+  EMPTY_OPTION,
+  ['round collar', 'round collar'],
+  ['sharp collar', 'sharp collar'],
+  ['standing collar', 'standing collar'],
+  ['sailor collar', 'sailor collar'],
+  ['hooded neckline', 'hooded neckline'],
+];
+const CHARACTER_SLEEVE_LENGTH_OPTIONS: Array<[string, string]> = [
+  EMPTY_OPTION,
+  ['sleeveless', 'Sleeveless'],
+  ['short sleeves', 'Short sleeves'],
+  ['three-quarter sleeves', 'Three-quarter sleeves'],
+  ['long sleeves', 'Long sleeves'],
+  ['wide sleeves', 'Wide sleeves'],
+];
+const CHARACTER_LOWER_GARMENT_OPTIONS: Array<[string, string]> = [
+  EMPTY_OPTION,
+  ['short skirt', 'Short skirt'],
+  ['long skirt', 'Long skirt'],
+  ['straight pants', 'Straight pants'],
+  ['wide pants', 'Wide pants'],
+  ['shorts', 'Shorts'],
+];
+const CHARACTER_SHOES_OPTIONS: Array<[string, string]> = [
+  EMPTY_OPTION,
+  ['loafers', 'Loafers'],
+  ['sneakers', 'Sneakers'],
+  ['boots', 'Boots'],
+  ['heels', 'Heels'],
+  ['school shoes', 'School shoes'],
+];
+const CHARACTER_LEGWEAR_OPTIONS: Array<[string, string]> = [
+  EMPTY_OPTION,
+  ['bare legs', 'Bare legs'],
+  ['ankle socks', 'Ankle socks'],
+  ['knee socks', 'Knee socks'],
+  ['thigh-high socks', 'Thigh-high socks'],
+  ['tights', 'Tights'],
+];
+const CHARACTER_CLOTHING_DETAIL_OPTIONS: Array<[string, string]> = [
+  EMPTY_OPTION,
+  ['simple uniform detailing', 'Simple uniform detailing'],
+  ['layered practical details', 'Layered practical details'],
+  ['ornamental trim', 'Ornamental trim'],
+  ['combat utility details', 'Combat utility details'],
+  ['minimal clean design', 'Minimal clean design'],
+];
 const CHARACTER_ART_STYLE_OPTIONS: Array<[string, string]> = [
   EMPTY_OPTION,
   ['anime', 'Anime'],
   ['semi_realistic', 'Semi-realistic'],
   ['manga', 'Manga'],
   ['painterly', 'Painterly'],
+];
+const CHARACTER_VISUAL_ANCHOR_OPTIONS: Array<[string, string]> = [
+  EMPTY_OPTION,
+  ['Face + hair balance', 'Face + hair balance'],
+  ['Eye line', 'Eye line'],
+  ['Silhouette outline', 'Silhouette outline'],
+  ['Posture read', 'Posture read'],
+  ['Outfit shape', 'Outfit shape'],
+  ['Color blocking', 'Color blocking'],
+  ['Accessory / prop', 'Accessory / prop'],
+  ['custom', 'Custom'],
+];
+const CHARACTER_SIGNATURE_FEATURE_OPTIONS: Array<[string, string]> = [
+  EMPTY_OPTION,
+  ['Hair shape', 'Hair shape'],
+  ['Eye color contrast', 'Eye color contrast'],
+  ['Expression gap', 'Expression gap'],
+  ['Silhouette edge', 'Silhouette edge'],
+  ['Accessory', 'Accessory'],
+  ['Scar / mark', 'Scar / mark'],
+  ['Stance', 'Stance'],
+  ['custom', 'Custom'],
+];
+const CHARACTER_SILHOUETTE_KEYWORD_OPTIONS: Array<[string, string]> = [
+  EMPTY_OPTION,
+  ['Compact silhouette', 'Compact silhouette'],
+  ['Tall and slender', 'Tall and slender'],
+  ['Broad-shouldered', 'Broad-shouldered'],
+  ['Long coat outline', 'Long coat outline'],
+  ['Skirt line', 'Skirt line'],
+  ['Military block', 'Military block'],
+  ['Soft rounded outline', 'Soft rounded outline'],
+  ['custom', 'Custom'],
+];
+const CHARACTER_DISTINGUISHING_FEATURE_OPTIONS: Array<[string, string]> = [
+  EMPTY_OPTION,
+  ['Beauty mark', 'Beauty mark'],
+  ['Scar', 'Scar'],
+  ['Eye bags', 'Eye bags'],
+  ['Fang', 'Fang'],
+  ['Ahoge', 'Ahoge'],
+  ['Hair streak', 'Hair streak'],
+  ['Glasses', 'Glasses'],
+  ['custom', 'Custom'],
+];
+const CHARACTER_HEAD_RATIO_OPTIONS: Array<[string, string]> = [
+  EMPTY_OPTION,
+  ['about six heads tall', 'about six heads tall'],
+  ['about six and a half heads tall', 'about six and a half heads tall'],
+  ['about seven heads tall', 'about seven heads tall'],
+  ['about seven and a half heads tall', 'about seven and a half heads tall'],
+  ['about eight heads tall', 'about eight heads tall'],
+  ['custom', 'Custom'],
+];
+const CHARACTER_SHOULDER_WIDTH_OPTIONS: Array<[string, string]> = [
+  EMPTY_OPTION,
+  ['narrow shoulders', 'narrow shoulders'],
+  ['balanced shoulders', 'balanced shoulders'],
+  ['broad shoulders', 'broad shoulders'],
+  ['custom', 'Custom'],
+];
+const CHARACTER_LEG_LENGTH_OPTIONS: Array<[string, string]> = [
+  EMPTY_OPTION,
+  ['short legs', 'short legs'],
+  ['balanced leg length', 'balanced leg length'],
+  ['long legs', 'long legs'],
+  ['custom', 'Custom'],
+];
+const CHARACTER_POSTURE_AXIS_OPTIONS: Array<[string, string]> = [
+  EMPTY_OPTION,
+  ['centered and straight', 'centered and straight'],
+  ['slightly forward-leaning', 'slightly forward-leaning'],
+  ['slightly backward-leaning', 'slightly backward-leaning'],
+  ['soft inward posture', 'soft inward posture'],
+  ['open outward posture', 'open outward posture'],
+  ['custom', 'Custom'],
 ];
 const PANEL_ROLE_OPTIONS: Array<[PanelDraft['panel_role'], string]> = [
   ['establish', 'Establish'],
@@ -4752,6 +5745,10 @@ function splitLines(value: string): string[] {
 
 function nullableString(value: string): string | null {
   return value.trim().length === 0 ? null : value.trim();
+}
+
+function normalizeTextInput(value: string): string | null {
+  return nullableString(value);
 }
 
 function emptyStringToNull(value: string): string | null {

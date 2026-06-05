@@ -44,6 +44,7 @@ interface NormalizedPanelInstruction {
   compositionBeat: string;
   dialogueBeats: string[];
   dialogueLock: string | null;
+  visualLock: string | null;
 }
 
 interface NormalizedPagePrompt {
@@ -180,7 +181,7 @@ function buildPageSummary(
   panelCount: number,
 ): string {
   const purpose = page.episodePurpose === null ? 'the current episode beat' : page.episodePurpose;
-  return `Create page ${page.pageNumber} of the episode, covering ${purpose}. This is a ${panelCount}-panel manga page for a ${input.requestKind} ${input.generationMode} generation request. Render one finished manga page image, not separated panel assets, and preserve the authored panel order from panel ${1} through panel ${panelCount}.`;
+  return `Create page ${page.pageNumber} of the episode, covering ${purpose}. This is a ${panelCount}-panel manga page for a fresh ${input.generationMode} generation request based only on the current saved page inputs. Render one new finished manga page image, not separated panel assets, and preserve the authored panel order from panel ${1} through panel ${panelCount}. Do not treat this as an edit, continuation, or restoration of any previously generated page image.`;
 }
 
 function buildPageSetting(page: PagePromptContext): string {
@@ -258,11 +259,12 @@ function buildNormalizedPanelInstruction(
     order: panel.order,
     role: panel.panelRole,
     size: panel.panelSize,
-    situation: normalizeSentence(panel.situationText ?? 'No explicit situation text.'),
+    situation: normalizePanelSituation(panel.situationText),
     characterBeat: buildCharacterBeat(panel.entities, entityMap),
     compositionBeat: buildCompositionBeat(panel, compositionMap),
     dialogueBeats: includeDialogue ? buildDialogueBeats(panel, entityMap) : [],
     dialogueLock: includeDialogue ? buildDialogueLock(panel, entityMap) : null,
+    visualLock: buildVisualLock(panel, entityMap, compositionMap),
   };
 }
 
@@ -308,7 +310,7 @@ function buildCompositionBeat(
   }
 
   if (panel.composition.compositionPrompt !== null) {
-    parts.push(normalizeSentence(panel.composition.compositionPrompt));
+    parts.push(normalizePromptField(panel.composition.compositionPrompt, 180));
   }
 
   if (panel.composition.shotType !== null) {
@@ -320,15 +322,26 @@ function buildCompositionBeat(
   }
 
   if (panel.composition.customNote !== null) {
-    parts.push(normalizeSentence(panel.composition.customNote));
+    parts.push(normalizePromptField(panel.composition.customNote, 140));
   }
 
   if (panel.backgroundNote !== null) {
-    parts.push(`Background: ${normalizeSentence(panel.backgroundNote, false)}.`);
+    const background = sanitizePromptField(panel.backgroundNote, 100);
+    if (background !== null) {
+      parts.push(`Background: ${normalizeSentence(background, false)}.`);
+    }
   }
 
   if (panel.panelNotes !== null && panel.composition.customNote === null) {
-    parts.push(`Panel-specific note: ${normalizeSentence(panel.panelNotes, false)}`);
+    const panelSpecificNote = sanitizePanelSpecificNote(
+      panel.panelNotes,
+      panel.situationText,
+      panel.composition.compositionPrompt,
+      panel.backgroundNote,
+    );
+    if (panelSpecificNote !== null) {
+      parts.push(`Panel-specific note: ${normalizeSentence(panelSpecificNote, false)}`);
+    }
   }
 
   if (panel.sfxText !== null) {
@@ -358,6 +371,46 @@ function buildDialogueLock(panel: Panel, entityMap: Map<string, Entity>): string
   });
 
   return `Dialogue lock for panel ${panel.order}: ${lines.join('; ')}. Do not omit, paraphrase, merge, split, or reassign these lines.`;
+}
+
+function buildVisualLock(
+  panel: Panel,
+  entityMap: Map<string, Entity>,
+  compositionMap: Map<string, CompositionGalleryItem>,
+): string | null {
+  const subjectNames = panel.entities
+    .slice()
+    .sort((left, right) => assignmentRoleWeight(left.role) - assignmentRoleWeight(right.role))
+    .map((assignment) => entityMap.get(assignment.entityId)?.name ?? assignment.entityId)
+    .filter((value, index, values) => values.indexOf(value) === index);
+  const backgroundCue = sanitizePromptField(panel.backgroundNote, 80) ?? '';
+  const galleryItem =
+    panel.composition.source === 'gallery' && panel.composition.galleryItemId !== null
+      ? compositionMap.get(panel.composition.galleryItemId) ?? null
+      : null;
+  const shotType = panel.composition.shotType ?? galleryItem?.shotType ?? 'unspecified';
+  const angle = panel.composition.angle ?? galleryItem?.angle ?? 'unspecified';
+
+  return [
+    `Visual lock for panel ${panel.order}:`,
+    `subjects=${subjectNames.length === 0 ? '(none)' : subjectNames.join('|')};`,
+    `shot=${shotType};`,
+    `angle=${angle};`,
+    `background cue="${backgroundCue.length === 0 ? '(none)' : backgroundCue}".`,
+  ].join(' ');
+}
+
+function assignmentRoleWeight(role: PanelEntityAssignment['role']): number {
+  switch (role) {
+    case 'primary':
+      return 0;
+    case 'secondary':
+      return 1;
+    case 'background':
+      return 2;
+    default:
+      return 3;
+  }
 }
 
 function shouldBakeDialogueForPanel(page: PagePromptContext, panel: Panel): boolean {
@@ -418,11 +471,16 @@ function buildQualityConstraints(
   referenceRoles: NormalizedReferenceRole[],
 ): string[] {
   const constraints = [
+    'Create a fresh page from the current saved page inputs only; do not preserve, restore, or edit any previous generated page image.',
     `Maintain exactly ${panelCount} readable panels in right-to-left manga reading order.`,
     'Keep panel borders and gutters clean and unambiguous.',
     'Preserve the authored action progression from one panel to the next without skipping intermediate beats.',
     'Do not let any foreground character drift off-model relative to their reference image.',
   ];
+
+  if (referenceRoles.length > 0) {
+    constraints.push('Treat uploaded images only as character or layout references, never as a previous page image or an edit target.');
+  }
 
   if (referenceRoles.some((role) => role.role === 'layout_reference')) {
     constraints.push('Respect the layout reference image as the border template for the whole page.');
@@ -497,6 +555,10 @@ function buildCompilerBrief(normalized: NormalizedPagePrompt): string {
           lines.push(`- Dialogue lock: ${panel.dialogueLock}`);
         }
 
+        if (panel.visualLock !== null) {
+          lines.push(`- Visual lock: ${panel.visualLock}`);
+        }
+
         return lines;
       }),
     ],
@@ -527,6 +589,7 @@ function buildPanelInstructionParagraph(panelInstructions: NormalizedPanelInstru
         `Panel ${panel.order} composition and action: ${panel.compositionBeat}`,
         panel.dialogueBeats.length === 0 ? null : `Panel ${panel.order} dialogue and SFX: ${panel.dialogueBeats.join(' ')}`,
         panel.dialogueLock,
+        panel.visualLock,
       ].filter((value): value is string => value !== null);
 
       return parts.join(' ');
@@ -556,6 +619,86 @@ function formatDialogueLine(
       : `Panel ${panelOrder} dialogue by ${speaker}`;
 
   return `${prefix}: "${dialogue.text}" as ${humanizeToken(dialogue.type)} at ${humanizeToken(dialogue.position)}.`;
+}
+
+function normalizePanelSituation(value: string | null): string {
+  return normalizePromptField(value ?? 'No explicit situation text.', 140);
+}
+
+function normalizePromptField(value: string, maxLength: number): string {
+  return normalizeSentence(sanitizePromptField(value, maxLength) ?? value);
+}
+
+function sanitizePanelSpecificNote(
+  note: string,
+  situation: string | null,
+  compositionPrompt: string | null,
+  backgroundNote: string | null,
+): string | null {
+  const sanitized = sanitizePromptField(note, 120);
+  if (sanitized === null) {
+    return null;
+  }
+
+  const comparisons = [situation, compositionPrompt, backgroundNote]
+    .map((value) => sanitizePromptField(value, 120))
+    .filter((value): value is string => value !== null);
+  if (comparisons.some((comparison) => promptFieldsLookEquivalent(sanitized, comparison))) {
+    return null;
+  }
+
+  return sanitized;
+}
+
+function sanitizePromptField(value: string | null | undefined, maxLength: number): string | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+
+  const normalized = normalizeWhitespace(value);
+  if (normalized.length === 0) {
+    return null;
+  }
+
+  const lowered = normalized.toLowerCase();
+  if (
+    lowered.includes('focus this page on') ||
+    lowered.includes('maintain the scene mood') ||
+    lowered.includes('should read naturally into the next page') ||
+    lowered.includes('establish the location and tension clearly') ||
+    lowered.includes('show the first concrete change or realization') ||
+    lowered.includes('emphasize the emotional reaction or danger') ||
+    lowered.includes('set up the transition into the next beat')
+  ) {
+    return null;
+  }
+
+  const firstSentence = normalized.split(/(?<=[。.!?])\s+/u)[0] ?? normalized;
+  const trimmed = firstSentence.length > maxLength
+    ? `${firstSentence.slice(0, Math.max(1, maxLength - 3)).trimEnd()}...`
+    : firstSentence;
+  return trimmed.trim();
+}
+
+function promptFieldsLookEquivalent(left: string, right: string): boolean {
+  const normalize = (value: string): string =>
+    value
+      .toLowerCase()
+      .replace(/[.!?。！？、,／/・:;()[\]{}"'`]/gu, ' ')
+      .replace(/\s+/gu, ' ')
+      .trim();
+
+  const normalizedLeft = normalize(left);
+  const normalizedRight = normalize(right);
+  if (normalizedLeft.length < 12 || normalizedRight.length < 12) {
+    return normalizedLeft === normalizedRight;
+  }
+
+  return (
+    normalizedLeft === normalizedRight ||
+    normalizedLeft.includes(normalizedRight) ||
+    normalizedRight.includes(normalizedLeft)
+  );
 }
 
 function summarizeEntityAnchor(entity: Entity | undefined): string {

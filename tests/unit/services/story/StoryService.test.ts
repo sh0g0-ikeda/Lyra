@@ -162,6 +162,8 @@ class FakeStoryRepository implements StoryRepository {
       order: input.order,
       title: input.title,
       purpose: input.purpose,
+      storyInputMode: input.storyInputMode,
+      storyFullDraft: input.storyFullDraft,
       introduction: input.introduction,
       middle: input.middle,
       climax: input.climax,
@@ -209,6 +211,10 @@ class FakeStoryRepository implements StoryRepository {
       order: input.order ?? episode.order,
       title: input.title === undefined ? episode.title : input.title,
       purpose: input.purpose === undefined ? episode.purpose : input.purpose,
+      storyInputMode:
+        input.storyInputMode === undefined ? episode.storyInputMode : input.storyInputMode,
+      storyFullDraft:
+        input.storyFullDraft === undefined ? episode.storyFullDraft : input.storyFullDraft,
       introduction: input.introduction === undefined ? episode.introduction : input.introduction,
       middle: input.middle === undefined ? episode.middle : input.middle,
       climax: input.climax === undefined ? episode.climax : input.climax,
@@ -274,7 +280,7 @@ class FakeEntityReferenceReader implements EntityReferenceReader {
 }
 
 describe('StoryService', () => {
-  it('作品を作成できる', async () => {
+  it('creates a work', async () => {
     const service = createService();
 
     const work = await service.createWork('user-1', {
@@ -293,7 +299,7 @@ describe('StoryService', () => {
     expect(work.status).toBe('draft');
   });
 
-  it('作品更新の場合にversionが増える', async () => {
+  it('increments version when updating a work', async () => {
     const service = createService();
     const work = await service.createWork('user-1', {
       title: '黒月の騎士',
@@ -314,7 +320,7 @@ describe('StoryService', () => {
     expect(updatedWork.version).toBe(2);
   });
 
-  it('所有していない作品への章追加の場合にNOT_FOUNDになる', async () => {
+  it('returns not found when creating a chapter under another user work', async () => {
     const service = createService();
 
     await expect(
@@ -331,7 +337,7 @@ describe('StoryService', () => {
     ).rejects.toMatchObject({ code: 'NOT_FOUND' } satisfies Partial<AppError>);
   });
 
-  it('所有している章へ話を追加できる', async () => {
+  it('creates an episode under an owned chapter', async () => {
     const service = createService();
     const work = await service.createWork('user-1', {
       title: '黒月の騎士',
@@ -358,6 +364,8 @@ describe('StoryService', () => {
       order: 1,
       title: '出会い',
       purpose: null,
+      storyInputMode: 'structured',
+      storyFullDraft: null,
       introduction: null,
       middle: null,
       climax: null,
@@ -370,7 +378,7 @@ describe('StoryService', () => {
     expect(episode.pageSkeletonGenerated).toBe(false);
   });
 
-  it('別ユーザーの話更新の場合にNOT_FOUNDになる', async () => {
+  it('returns not found when updating another user episode', async () => {
     const service = createService();
     const work = await service.createWork('user-1', {
       title: '黒月の騎士',
@@ -396,6 +404,8 @@ describe('StoryService', () => {
       order: 1,
       title: null,
       purpose: null,
+      storyInputMode: 'structured',
+      storyFullDraft: null,
       introduction: null,
       middle: null,
       climax: null,
@@ -406,12 +416,12 @@ describe('StoryService', () => {
 
     await expect(
       service.updateEpisode('user-2', episode.id, {
-        title: '盗み見',
+        title: 'updated',
       }),
     ).rejects.toMatchObject({ code: 'NOT_FOUND' } satisfies Partial<AppError>);
   });
 
-  it('作品作成でmainEntityIdsが指定された場合にVALIDATION_ERRORになる', async () => {
+  it('returns validation error when work references unknown main entities', async () => {
     const service = createService();
 
     await expect(
@@ -428,7 +438,7 @@ describe('StoryService', () => {
     ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' } satisfies Partial<AppError>);
   });
 
-  it('作品外のエンティティを章に紐づける場合にVALIDATION_ERRORになる', async () => {
+  it('returns validation error when chapter references unknown entities', async () => {
     const service = createService();
     const work = await service.createWork('user-1', {
       title: '黒月の騎士',
@@ -455,7 +465,7 @@ describe('StoryService', () => {
     ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' } satisfies Partial<AppError>);
   });
 
-  it('作品内のエンティティを話に紐づけられる', async () => {
+  it('creates an episode when referenced entities belong to the work', async () => {
     const entityReferenceReader = new FakeEntityReferenceReader();
     const service = createService(entityReferenceReader);
     const work = await service.createWork('user-1', {
@@ -485,6 +495,8 @@ describe('StoryService', () => {
       order: 1,
       title: null,
       purpose: null,
+      storyInputMode: 'structured',
+      storyFullDraft: null,
       introduction: null,
       middle: null,
       climax: null,

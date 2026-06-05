@@ -1,6 +1,7 @@
 import type { PanelRole, PanelSize } from './panel.js';
 import type { PanelFrameTemplateId } from './panelFrame.js';
 import type { AppLanguage } from './language.js';
+import type { EpisodeStoryInputMode } from './story.js';
 
 export type StoryCollaborationLayer = 'work' | 'chapter' | 'episode';
 
@@ -23,6 +24,8 @@ export interface StoryCollaborationInput {
 export interface StoryEpisodeDraftFields {
   title: string | null;
   purpose: string | null;
+  storyInputMode: EpisodeStoryInputMode;
+  storyFullDraft: string | null;
   introduction: string | null;
   middle: string | null;
   climax: string | null;
@@ -65,7 +68,7 @@ export interface StoryEpisodeImprovementContext {
 
 export interface StoryEpisodeImprovementResult {
   draft: StoryEpisodeDraftFields;
-  compilerProvider: 'anthropic' | 'hybrid' | 'fallback';
+  compilerProvider: 'openai' | 'fallback';
   compilerModel: string | null;
   compilerPromptVersion: string | null;
   compilerError: string | null;
@@ -107,6 +110,7 @@ export interface StoryEpisodeImprovementAudit {
 export interface StoryEntitySummary {
   id: string;
   name: string;
+  aliases: string[];
   entityType: string;
   freeDescription: string | null;
 }

@@ -195,7 +195,7 @@ describe('PostgresPageRepository', () => {
     expect(updated).toBe(true);
     expect(client.queries[0]).toContain('UPDATE pages');
     expect(client.queries[0]).toContain('works.user_id = $2');
-    expect(client.values).toEqual(['page-1', 'user-1', 'generating', 'thinking']);
+    expect(client.values).toEqual(['page-1', 'user-1', 'generating', 'thinking', null]);
   });
 
   it('prompt 用の page 文脈を返す', async () => {

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { StoryRepository } from '../../../../src/repositories/StoryRepository.js';
 import { StoryCollaborationService } from '../../../../src/services/story/StoryCollaborationService.js';
-import type { StoryAiClientPort, StoryAiModelRequest } from '../../../../src/infrastructure/anthropic/AnthropicStoryAiClient.js';
+import type { StoryAiClientPort, StoryAiModelRequest } from '../../../../src/services/story/StoryAiClientPort.js';
 import type {
   EpisodePageSkeletonContext,
   PageSkeletonPageDraft,
@@ -45,6 +45,7 @@ class FakeStoryRepository implements StoryRepository {
       {
         id: '11111111-1111-4111-8111-111111111111',
         name: 'Aki',
+        aliases: [],
         entityType: 'character',
         freeDescription: 'Black-haired swordswoman',
       },
@@ -134,6 +135,7 @@ class FakeStoryRepository implements StoryRepository {
         {
           id: '11111111-1111-4111-8111-111111111111',
           name: 'Aki',
+          aliases: [],
           entityType: 'character',
           freeDescription: 'Black-haired swordswoman',
         },
@@ -361,6 +363,8 @@ describe('StoryCollaborationService', () => {
       baseDraft: {
         title: 'Old title',
         purpose: 'Old purpose',
+        storyInputMode: 'structured',
+        storyFullDraft: null,
         introduction: 'Old intro',
         middle: 'Old middle',
         climax: 'Old climax',
@@ -368,13 +372,38 @@ describe('StoryCollaborationService', () => {
       },
     });
 
-    expect(result.compilerProvider).toBe('hybrid');
+    expect(result.compilerProvider).toBe('openai');
     expect(result.draft.introduction).toBe('Improved introduction');
     expect(planner.lastPlanInput?.context.siblingEpisodeSummaries).toContain(
       'Chapter 1 Episode 2: Arrival / Mio sees the headquarters',
     );
     expect(client.lastRequest?.userPrompt).toContain('Structured rewrite plan:');
     expect(planner.lastAuditInput?.draft.introduction).toBe('Improved introduction');
+  });
+
+  it('omits duplicated stored episode body when it matches the editable draft', async () => {
+    const repository = new FakeStoryRepository();
+    const client = new FakeStoryAiClient();
+    const service = new StoryCollaborationService(repository, client);
+
+    await service.improveEpisodeDraft('user-1', {
+      episodeId: '33333333-3333-4333-8333-333333333333',
+      instruction: 'Tighten the current draft.',
+      language: 'ja',
+      baseDraft: {
+        title: 'Episode 1',
+        purpose: 'Introduce the rivalry',
+        storyInputMode: 'structured',
+        storyFullDraft: null,
+        introduction: 'Current intro',
+        middle: 'Current middle',
+        climax: 'Current climax',
+        endingHook: 'Current hook',
+      },
+    });
+
+    expect(client.lastRequest?.userPrompt).toContain('Current stored episode: same as current editable draft.');
+    expect(client.lastRequest?.userPrompt).not.toContain('Current stored episode:\nTitle: Episode 1');
   });
 
   it('retries the final writer once when the audit requests revision', async () => {
@@ -391,6 +420,8 @@ describe('StoryCollaborationService', () => {
       baseDraft: {
         title: 'Old title',
         purpose: 'Old purpose',
+        storyInputMode: 'structured',
+        storyFullDraft: null,
         introduction: 'Old intro',
         middle: 'Old middle',
         climax: 'Old climax',
@@ -398,7 +429,7 @@ describe('StoryCollaborationService', () => {
       },
     });
 
-    expect(result.compilerProvider).toBe('hybrid');
+    expect(result.compilerProvider).toBe('openai');
     expect(result.compilerError).toContain('Clarify the handoff');
     expect(client.lastRequest?.userPrompt).toContain('Audit notes to resolve:');
   });

@@ -23,6 +23,7 @@ import type {
   PageGenerationQueuePort,
 } from '../../../../src/services/page/PageGenerationQueue.js';
 import { ModeSelector } from '../../../../src/services/page/ModeSelector.js';
+import type { PageGenerationRecoveryServicePort } from '../../../../src/services/page/PageGenerationRecoveryService.js';
 import { PageGenerationService } from '../../../../src/services/page/PageGenerationService.js';
 
 const userId = 'user-1';
@@ -211,7 +212,37 @@ class FakeQueue implements PageGenerationQueuePort {
   }
 }
 
+class FakeRecoveryService implements PageGenerationRecoveryServicePort {
+  public pageIds: string[] = [];
+
+  public async recoverAllStaleJobs(): Promise<number> {
+    return 0;
+  }
+
+  public async recoverStaleJobsForPage(_userId: string, pageId: string): Promise<number> {
+    this.pageIds.push(pageId);
+    return 0;
+  }
+}
+
 describe('PageGenerationService', () => {
+  it('generate前に対象pageのstale processing jobを回収する', async () => {
+    const recoveryService = new FakeRecoveryService();
+    const service = new PageGenerationService(
+      new FakePageRepository(),
+      new FakeEntityRepository(),
+      new FakeGenerationJobRepository(),
+      new FakeCreditService(),
+      new FakeQueue(),
+      new ModeSelector(),
+      recoveryService,
+    );
+
+    await service.enqueuePageGeneration(userId, pageId);
+
+    expect(recoveryService.pageIds).toEqual([pageId]);
+  });
+
   it('initial standard は10crでenqueueする', async () => {
     const pageRepository = new FakePageRepository();
     const jobRepository = new FakeGenerationJobRepository();
@@ -245,6 +276,7 @@ describe('PageGenerationService', () => {
     expect(pageRepository.updates[0]).toEqual({
       status: 'generating',
       generationMode: 'standard',
+      expectedStatus: 'designing',
     });
     expect(queue.lastPayload).toMatchObject({
       pageId,
@@ -314,8 +346,8 @@ describe('PageGenerationService', () => {
     expect(creditService.consumed[0]?.cost).toBe(1);
     expect(queue.lastPayload).toMatchObject({
       requestKind: 'regenerate',
-      quality: 'high',
-      requiresPlanner: true,
+      quality: 'medium',
+      requiresPlanner: false,
     });
   });
 
@@ -400,7 +432,7 @@ describe('PageGenerationService', () => {
 
     expect(jobRepository.failedJobId).toBe('44444444-4444-4444-8444-444444444444');
     expect(pageRepository.updates).toEqual([
-      { status: 'generating', generationMode: 'standard' },
+      { status: 'generating', generationMode: 'standard', expectedStatus: 'designing' },
       { status: 'designing', generationMode: null },
     ]);
     expect(creditService.refunded[0]).toMatchObject({
@@ -424,8 +456,8 @@ describe('PageGenerationService', () => {
     );
 
     await expect(service.enqueuePageGeneration(userId, pageId)).rejects.toMatchObject({
-      code: 'CONFIGURATION_ERROR',
-      message: 'Failed to update page generation state',
+      code: 'CONFLICT',
+      message: 'Page generation state changed before enqueue',
     });
 
     expect(jobRepository.failedJobId).toBe('44444444-4444-4444-8444-444444444444');
@@ -454,7 +486,9 @@ describe('PageGenerationService', () => {
     expect(result).toEqual({ jobId: '44444444-4444-4444-8444-444444444444' });
     expect(jobRepository.failedJobId).toBeNull();
     expect(creditService.refunded).toEqual([]);
-    expect(pageRepository.updates).toEqual([{ status: 'generating', generationMode: 'standard' }]);
+    expect(pageRepository.updates).toEqual([
+      { status: 'generating', generationMode: 'standard', expectedStatus: 'designing' },
+    ]);
   });
 });
 

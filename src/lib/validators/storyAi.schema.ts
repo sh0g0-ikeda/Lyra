@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { PANEL_FRAME_TEMPLATE_IDS } from '../../domain/constants/panelFrameTemplates.js';
 import { STORY_AI_LIMITS } from '../../domain/constants/storyAi.js';
+import { hasConflictingEpisodeStoryInput } from '../../domain/episodeStoryInput.js';
 import { APP_LANGUAGES } from '../../domain/types/language.js';
 
 const nullableText = (maxLength: number): z.ZodNullable<z.ZodString> =>
@@ -46,16 +47,39 @@ export const generatePageSkeletonBodySchema = z
   })
   .strict();
 
+const episodeStoryInputModeSchema = z.enum(['structured', 'full']);
+
 const episodeDraftFieldsSchema = z
   .object({
     title: nullableText(200).optional().default(null),
     purpose: nullableText(2000).optional().default(null),
+    story_input_mode: episodeStoryInputModeSchema.optional().default('structured'),
+    story_full_draft: nullableText(8000).optional().default(null),
     introduction: nullableText(2000).optional().default(null),
     middle: nullableText(2000).optional().default(null),
     climax: nullableText(2000).optional().default(null),
     ending_hook: nullableText(2000).optional().default(null),
   })
-  .strict();
+  .strict()
+  .superRefine((body, context) => {
+    if (
+      hasConflictingEpisodeStoryInput({
+        storyInputMode: body.story_input_mode,
+        purpose: body.purpose,
+        introduction: body.introduction,
+        middle: body.middle,
+        climax: body.climax,
+        endingHook: body.ending_hook,
+        storyFullDraft: body.story_full_draft,
+      })
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Choose either split story fields or the whole story draft, not both',
+        path: ['story_full_draft'],
+      });
+    }
+  });
 
 export const improveEpisodeDraftBodySchema = z
   .object({

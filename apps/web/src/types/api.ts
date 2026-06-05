@@ -46,6 +46,8 @@ export interface EpisodeRecord {
   order: number;
   title: string | null;
   purpose: string | null;
+  story_input_mode: 'structured' | 'full';
+  story_full_draft: string | null;
   introduction: string | null;
   middle: string | null;
   climax: string | null;
@@ -271,12 +273,14 @@ export interface StoryEpisodeImprovementRecord {
   draft: {
     title: string | null;
     purpose: string | null;
+    story_input_mode: 'structured' | 'full';
+    story_full_draft: string | null;
     introduction: string | null;
     middle: string | null;
     climax: string | null;
     ending_hook: string | null;
   };
-  compiler_provider: 'anthropic' | 'hybrid' | 'fallback';
+  compiler_provider: 'openai' | 'fallback';
   compiler_model: string | null;
   compiler_prompt_version: string | null;
   compiler_error: string | null;

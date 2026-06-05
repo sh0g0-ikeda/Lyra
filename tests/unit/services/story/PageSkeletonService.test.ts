@@ -1,14 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import type { StoryRepository } from '../../../../src/repositories/StoryRepository.js';
 import { PageSkeletonService } from '../../../../src/services/story/PageSkeletonService.js';
-import type { StoryAiClientPort, StoryAiModelRequest } from '../../../../src/infrastructure/anthropic/AnthropicStoryAiClient.js';
+import type { StoryAiClientPort, StoryAiModelRequest } from '../../../../src/services/story/StoryAiClientPort.js';
 import type {
   EpisodePageSkeletonContext,
   PageSkeletonPageDraft,
   PageSkeletonPersistResult,
-  StoryEpisodeImprovementContext,
   StoryCollaborationLayer,
   StoryCollaborationTarget,
+  StoryEpisodeImprovementContext,
 } from '../../../../src/domain/types/storyAi.js';
 import type {
   Chapter,
@@ -50,12 +50,14 @@ class FakeStoryRepository implements StoryRepository {
       {
         id: '11111111-1111-4111-8111-111111111111',
         name: 'Aki',
+        aliases: [],
         entityType: 'character',
         freeDescription: 'Black-haired swordswoman',
       },
       {
         id: '22222222-2222-4222-8222-222222222222',
         name: 'Rin',
+        aliases: [],
         entityType: 'character',
         freeDescription: 'Calm silver-haired rival',
       },
@@ -263,6 +265,41 @@ describe('PageSkeletonService', () => {
     expect(client.lastRequest?.userPrompt).not.toContain('Chapter purpose:');
   });
 
+  it('fallback skeleton は同じ導入を複数ページにそのまま貼らずページごとの beat に分ける', async () => {
+    const repository = new FakeStoryRepository();
+    repository.skeletonContext = {
+      ...repository.skeletonContext!,
+      estimatedPages: 4,
+      introduction: [
+        '澪は宿舎の窓から中庭を見る。',
+        '',
+        '訓練する隊員たちの動きが目に入る。',
+        '',
+        '工房と医療班も朝から動いている。',
+        '',
+        'エロイーズが澪を迎えに来る。',
+      ].join('\n'),
+      middle: null,
+      climax: null,
+      endingHook: null,
+      episodePurpose: '神木の朝の異質な日常を澪の視点でつかませる。',
+    };
+    const client = new FakeStoryAiClient();
+    client.errorToThrow = new Error('forced fallback');
+    const service = new PageSkeletonService(repository, client);
+
+    await service.generateForEpisode('user-1', '33333333-3333-4333-8333-333333333333');
+
+    expect(repository.createdPages).toHaveLength(4);
+    expect(repository.createdPages.map((page) => page.purpose)).toEqual([
+      expect.stringContaining('宿舎'),
+      expect.stringContaining('訓練'),
+      expect.stringContaining('工房'),
+      expect.stringContaining('エロイーズ'),
+    ]);
+    expect(new Set(repository.createdPages.map((page) => page.purpose)).size).toBe(4);
+  });
+
   it('rejects when a skeleton already exists', async () => {
     const repository = new FakeStoryRepository();
     if (repository.skeletonContext !== null) {
@@ -297,6 +334,23 @@ describe('PageSkeletonService', () => {
     ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
   });
 
+  it('repairs suggested panel count and layout from the actual panel array length when uniquely resolvable', async () => {
+    const repository = new FakeStoryRepository();
+    const client = new FakeStoryAiClient();
+    client.generatedPages[0] = {
+      ...client.generatedPages[0],
+      suggestedPanelCount: 3,
+      suggestedLayout: 'top_wide_3',
+    };
+    const service = new PageSkeletonService(repository, client);
+
+    await service.generateForEpisode('user-1', '33333333-3333-4333-8333-333333333333');
+
+    expect(repository.createdPages[0]?.suggestedPanelCount).toBe(4);
+    expect(repository.createdPages[0]?.suggestedLayout).toBe('standard_4');
+    expect(repository.createdPages[0]?.panels).toHaveLength(4);
+  });
+
   it('falls back to a deterministic skeleton when the model payload is invalid', async () => {
     const client = new FakeStoryAiClient();
     client.errorToThrow = new SyntaxError('Unexpected token');
@@ -315,6 +369,100 @@ describe('PageSkeletonService', () => {
     });
     expect(repository.createdPages[0]?.suggestedLayout).toBe('standard_4');
     expect(repository.createdPages[1]?.suggestedLayout).toBe('top_wide_3');
+    expect(repository.createdPages[0]?.panels.map((panel) => panel.panelRole)).toEqual([
+      'establish',
+      'action',
+      'reaction',
+      'impact',
+    ]);
+    expect(repository.createdPages[0]?.panels.some((panel) => panel.suggestedDialogueHint !== null)).toBe(true);
+  });
+
+  it('fallback skeleton infers relevant entities from story text even when structured involved ids are empty', async () => {
+    const client = new FakeStoryAiClient();
+    client.errorToThrow = new SyntaxError('Unexpected token');
+    const repository = new FakeStoryRepository();
+    if (repository.skeletonContext !== null) {
+      repository.skeletonContext.entities = [
+        {
+          id: '11111111-1111-4111-8111-111111111111',
+          name: '澪',
+          aliases: [],
+          entityType: 'character',
+          freeDescription: 'A wary girl pulled into the organization.',
+        },
+        {
+          id: '22222222-2222-4222-8222-222222222222',
+          name: 'エミール',
+          aliases: [],
+          entityType: 'character',
+          freeDescription: 'A calm guide from another era.',
+        },
+      ];
+      repository.skeletonContext.entitiesInvolved = repository.skeletonContext.entities.map((entity) => entity.id);
+      repository.skeletonContext.introduction = '澪が白い部屋で目を覚まし、エミールに導かれる。';
+      repository.skeletonContext.middle = 'エミールが組織の仕組みを説明し、澪は違和感を覚える。';
+      repository.skeletonContext.climax = '澪はここに来た理由を知り、エミールは適性の話をする。';
+      repository.skeletonContext.endingHook =
+        '澪はまだ帰れるか分からないまま、本部の実像を見せつけられていく。';
+      repository.skeletonContext.sceneSummaries = [
+        'Scene 1: 医務室 / 朝 / 静かだが緊張がある',
+        'Scene 2: 本部回廊 / 朝 / 違和感がある',
+      ];
+    }
+    const service = new PageSkeletonService(repository, client);
+
+    await service.generateForEpisode('user-1', '33333333-3333-4333-8333-333333333333');
+
+    expect(repository.createdPages).toHaveLength(2);
+    expect(repository.createdPages.some((page) => page.purpose.includes('澪'))).toBe(true);
+    expect(
+      repository.createdPages.some((page) =>
+        page.panels.some((panel) =>
+          panel.suggestedEntities.includes('11111111-1111-4111-8111-111111111111'),
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      repository.createdPages.some((page) =>
+        page.panels.some((panel) =>
+          panel.suggestedEntities.includes('22222222-2222-4222-8222-222222222222'),
+        ),
+      ),
+    ).toBe(true);
+  });
+
+  it('resolves canonical entities from aliases when the story text uses only the alias', async () => {
+    const client = new FakeStoryAiClient();
+    client.errorToThrow = new SyntaxError('Unexpected token');
+    const repository = new FakeStoryRepository();
+    if (repository.skeletonContext !== null) {
+      repository.skeletonContext.entities = [
+        {
+          id: '11111111-1111-4111-8111-111111111111',
+          name: '深見澪',
+          aliases: ['澪'],
+          entityType: 'character',
+          freeDescription: 'A high school girl dragged into a temporal organization.',
+        },
+      ];
+      repository.skeletonContext.entitiesInvolved = [];
+      repository.skeletonContext.introduction = '澪が見知らぬ医務室で目を覚ます。';
+      repository.skeletonContext.middle = '澪は自分が別の世界に来たのではないかと疑う。';
+      repository.skeletonContext.climax = '澪はここで生きるか戻るかの選択を意識し始める。';
+      repository.skeletonContext.endingHook = '澪の選択はまだ保留されたまま先延ばしになる。';
+    }
+    const service = new PageSkeletonService(repository, client);
+
+    await service.generateForEpisode('user-1', '33333333-3333-4333-8333-333333333333');
+
+    expect(
+      repository.createdPages.some((page) =>
+        page.panels.some((panel) =>
+          panel.suggestedEntities.includes('11111111-1111-4111-8111-111111111111'),
+        ),
+      ),
+    ).toBe(true);
   });
 
   it('allows overwrite mode when a skeleton already exists', async () => {

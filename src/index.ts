@@ -1,21 +1,46 @@
 import { serve } from '@hono/node-server';
 import { createApp } from './app.js';
+import { PostgresCreditRepository } from './repositories/CreditRepository.js';
+import { PostgresPageGenerationExecutionRepository } from './repositories/PageGenerationExecutionRepository.js';
+import { PostgresPageGenerationRecoveryRepository } from './repositories/PageGenerationRecoveryRepository.js';
+import { CreditService } from './services/credit/CreditService.js';
+import { PageGenerationRecoveryService } from './services/page/PageGenerationRecoveryService.js';
+import { db } from './lib/db.js';
 import { env } from './lib/env.js';
+import { runPendingMigrations } from './lib/migrations.js';
+import { assertProductionRuntimeConfig } from './lib/runtimeGuards.js';
 
-if (env.DEV_AUTH_BYPASS && process.env.NODE_ENV === 'production') {
-  throw new Error('DEV_AUTH_BYPASS must not be enabled in production');
+async function main(): Promise<void> {
+  assertProductionRuntimeConfig(env);
+
+  const appliedMigrations = await runPendingMigrations(db);
+  if (appliedMigrations.length > 0) {
+    console.warn(`[migrations] applied ${appliedMigrations.join(', ')}`);
+  }
+
+  try {
+    const recoveredCount = await new PageGenerationRecoveryService(
+      new PostgresPageGenerationRecoveryRepository(db),
+      new PostgresPageGenerationExecutionRepository(db),
+      new CreditService(new PostgresCreditRepository(db, db)),
+    ).recoverAllStaleJobs();
+
+    if (recoveredCount > 0) {
+      console.warn(`[page-generation-recovery] recovered ${recoveredCount} stale page generation job(s) on startup`);
+    }
+  } catch (error) {
+    console.error('[page-generation-recovery] failed to recover stale jobs on startup', error);
+  }
+
+  serve(
+    {
+      fetch: createApp().fetch,
+      port: env.PORT,
+    },
+    (info) => {
+      console.log(`Lyra API listening on http://localhost:${info.port}`);
+    },
+  );
 }
 
-if (!env.DEV_AUTH_BYPASS && env.SUPABASE_JWT_SECRET === undefined) {
-  throw new Error('SUPABASE_JWT_SECRET is not set');
-}
-
-serve(
-  {
-    fetch: createApp().fetch,
-    port: env.PORT,
-  },
-  (info) => {
-    console.log(`Lyra API listening on http://localhost:${info.port}`);
-  },
-);
+void main();

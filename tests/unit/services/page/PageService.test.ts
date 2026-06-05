@@ -18,10 +18,12 @@ import type { PageRepository } from '../../../../src/repositories/PageRepository
 import type { PanelRepository } from '../../../../src/repositories/PanelRepository.js';
 import type {
   CompiledEpisodePagePlan,
+  CompileEpisodePagePlanInput,
   EpisodePagePlanCompilerPort,
 } from '../../../../src/services/page/EpisodePagePlanCompiler.js';
 import type {
   CompiledPageAutofillSuggestion,
+  CompilePageAutofillInput,
   PageAutofillCompilerPort,
 } from '../../../../src/services/page/PageAutofillCompiler.js';
 import type { PanelEntityAssignmentServicePort } from '../../../../src/services/page/PanelEntityAssignmentService.js';
@@ -118,6 +120,10 @@ class FakePanelRepository implements PanelRepository {
   public async deletePanel(): Promise<never> {
     throw new Error('not implemented');
   }
+
+  public async compactPanelOrdersAfterDelete(): Promise<never> {
+    throw new Error('not implemented');
+  }
 }
 
 class FakePanelEntityAssignmentService implements PanelEntityAssignmentServicePort {
@@ -135,8 +141,10 @@ class FakePanelEntityAssignmentService implements PanelEntityAssignmentServicePo
 
 class FakePageAutofillCompiler implements PageAutofillCompilerPort {
   public error: Error | null = null;
+  public lastInput: CompilePageAutofillInput | null = null;
 
-  public async compileSuggestions(): Promise<CompiledPageAutofillSuggestion> {
+  public async compileSuggestions(input: CompilePageAutofillInput): Promise<CompiledPageAutofillSuggestion> {
+    this.lastInput = input;
     if (this.error !== null) {
       throw this.error;
     }
@@ -184,8 +192,10 @@ class FakePageAutofillCompiler implements PageAutofillCompilerPort {
 
 class FakeEpisodePagePlanCompiler implements EpisodePagePlanCompilerPort {
   public error: Error | null = null;
+  public lastInput: CompileEpisodePagePlanInput | null = null;
 
-  public async compilePlan(): Promise<CompiledEpisodePagePlan> {
+  public async compilePlan(input: CompileEpisodePagePlanInput): Promise<CompiledEpisodePagePlan> {
+    this.lastInput = input;
     if (this.error !== null) {
       throw this.error;
     }
@@ -351,12 +361,8 @@ describe('PageService', () => {
         compiler_prompt_version: 'style_ref_v3',
       },
     });
-    expect(page.layoutConfig).toMatchObject({
-      style_reference: {
-        title: 'AKIRA',
-        compiled_brief: expect.stringContaining('AKIRA'),
-      },
-    });
+    const styleReference = (page.layoutConfig as { style_reference?: Record<string, unknown> }).style_reference;
+    expect(styleReference?.title).toBe('AKIRA');
   });
 
   it('page provenance を保存する', async () => {
@@ -398,24 +404,27 @@ describe('PageService', () => {
       compilerPromptVersion: 'page_autofill_v2',
       compilerError: null,
     });
-    expect(panelRepository.updatedPanels).toEqual([
-      {
-        panelId: 'panel-1',
-        input: expect.objectContaining({
-          panelRole: 'establish',
-          panelSize: 'large',
-          situationText: expect.stringContaining('Minerva'),
-          dialogueInPanel: false,
-          backgroundNote: 'School rooftop at night.',
-          composition: expect.objectContaining({
-            source: 'custom',
-            shotType: 'wide',
-            angle: 'front',
-          }),
-          panelNotes: expect.stringContaining('Two rivals meet in secret.'),
-        }),
-      },
-    ]);
+    expect(compiler.lastInput?.compilerBrief).toContain('[OUTPUT CONTRACT]');
+    expect(compiler.lastInput?.compilerBrief).toContain('matching the supplied page_autofill schema');
+    expect(compiler.lastInput?.compilerBrief).toContain('[CURRENT PANELS]');
+    expect(compiler.lastInput?.compilerBrief).not.toContain('[OUTPUT JSON SHAPE]');
+    expect(compiler.lastInput?.compilerBrief).not.toContain('[ALLOWED ENUMS]');
+    const updatedPanel = panelRepository.updatedPanels[0];
+    expect(updatedPanel?.panelId).toBe('panel-1');
+    expect(updatedPanel?.input.panelRole).toBeTruthy();
+    expect(updatedPanel?.input.panelSize).toBeTruthy();
+    expect(updatedPanel?.input.situationText).toContain('Minerva');
+    expect(updatedPanel?.input.dialogueInPanel).toBe(false);
+    expect(updatedPanel?.input.backgroundNote).toContain('School rooftop');
+    expect(updatedPanel?.input.composition).toEqual(
+      expect.objectContaining({
+        source: 'custom',
+        shotType: expect.any(String),
+        angle: expect.any(String),
+      }),
+    );
+    expect(updatedPanel?.input.panelNotes ?? null).toBeNull();
+    expect(updatedPanel?.input.dialogue).toBeUndefined();
     expect(assignmentService.updates).toEqual([
       {
         panelId: 'panel-1',
@@ -429,7 +438,7 @@ describe('PageService', () => {
     ]);
   });
 
-  it('scene autofill は不足している situation と composition memo を補完する', async () => {
+  it('scene autofill は compiler が出していない creative 欄を補完保存しない', async () => {
     const pageRepository = new FakePageRepository();
     const panelRepository = new FakePanelRepository();
     const assignmentService = new FakePanelEntityAssignmentService();
@@ -478,11 +487,9 @@ describe('PageService', () => {
       {
         panelId: 'panel-1',
         input: expect.objectContaining({
-          situationText: expect.stringContaining('Minerva'),
-          backgroundNote: expect.stringContaining('School rooftop'),
           composition: expect.objectContaining({
-            compositionPrompt: expect.stringContaining('Minerva'),
-            customNote: expect.stringContaining('Minerva'),
+            compositionPrompt: null,
+            customNote: null,
             shotType: 'half_body',
             angle: 'side',
           }),
@@ -491,16 +498,172 @@ describe('PageService', () => {
     ]);
   });
 
+  it('scene autofill は引用符付き dialogue を正規化する', async () => {
+    const pageRepository = new FakePageRepository();
+    const panelRepository = new FakePanelRepository();
+    const assignmentService = new FakePanelEntityAssignmentService();
+    const compiler: PageAutofillCompilerPort = {
+      async compileSuggestions(): Promise<CompiledPageAutofillSuggestion> {
+        return {
+          suggestion: {
+            panels: [
+              {
+                order: 1,
+                situationText: 'Minerva turns toward the voice behind her.',
+                dialogue: [
+                  {
+                    entityId: null,
+                    text: '「新人？」',
+                    type: 'speech',
+                    position: 'top',
+                  },
+                ],
+              },
+            ],
+          },
+          compilerProvider: 'openai',
+          compilerModel: 'gpt-5.4-mini',
+          compilerPromptVersion: 'page_autofill_v2',
+        };
+      },
+    };
+    const service = new PageService(pageRepository, panelRepository, assignmentService, compiler);
+
+    await service.autofillFromScenes('user-1', 'page-1', 'ja');
+
+    expect(panelRepository.updatedPanels[0]?.input.dialogue).toEqual([
+      expect.objectContaining({
+        text: '新人？',
+      }),
+    ]);
+  });
+
+  it('scene autofill は sparse compiler suggestion に fallback creative text を混ぜない', async () => {
+    const pageRepository = new FakePageRepository();
+    const panelRepository = new FakePanelRepository();
+    const assignmentService = new FakePanelEntityAssignmentService();
+    const compiler: PageAutofillCompilerPort = {
+      async compileSuggestions(): Promise<CompiledPageAutofillSuggestion> {
+        return {
+          suggestion: {
+            panels: [
+              {
+                order: 1,
+                situationText: 'The rooftop meeting begins in silence.',
+              },
+            ],
+          },
+          compilerProvider: 'openai',
+          compilerModel: 'gpt-5.4-mini',
+          compilerPromptVersion: 'page_autofill_v2',
+        };
+      },
+    };
+    const service = new PageService(pageRepository, panelRepository, assignmentService, compiler);
+
+    await service.autofillFromScenes('user-1', 'page-1', 'ja');
+
+    const updatedPanel = panelRepository.updatedPanels[0];
+    expect(updatedPanel?.panelId).toBe('panel-1');
+    expect(updatedPanel?.input.situationText).toBe('The rooftop meeting begins in silence.');
+    expect(updatedPanel?.input.backgroundNote).toBeUndefined();
+    expect(updatedPanel?.input.composition).toEqual(
+      expect.objectContaining({
+        source: 'custom',
+        shotType: expect.any(String),
+        angle: expect.any(String),
+      }),
+    );
+    expect(updatedPanel?.input.composition?.compositionPrompt).toBeNull();
+    expect(updatedPanel?.input.composition?.customNote).toBeNull();
+    expect(assignmentService.updates).toHaveLength(0);
+  });
+
+  it('scene autofill は compiler 成功でも generic な構図文と空 assignment を fallback 保存しない', async () => {
+    const pageRepository = new FakePageRepository();
+    pageRepository.autofillContext = {
+      ...buildAutofillContext(),
+      episodePurpose: 'Mio and Emil cross the corridor while Mio questions what she has seen.',
+      introduction: 'Mio wakes up and Emil offers water.',
+      middle: 'Emil explains the organization while Mio keeps probing.',
+      entities: [
+        {
+          id: '11111111-1111-4111-8111-111111111111',
+          name: '深見澪',
+          entityType: 'character',
+          freeDescription: 'A wary new arrival.',
+          promptSupplement: null,
+          structuredFields: { character_identity: { aliases: ['Mio', '澪'] } },
+        },
+        {
+          id: '22222222-2222-4222-8222-222222222222',
+          name: 'エミール',
+          entityType: 'character',
+          freeDescription: 'A calm guide from another era.',
+          promptSupplement: null,
+          structuredFields: { character_identity: { aliases: ['Emil'] } },
+        },
+      ],
+    };
+    const panelRepository = new FakePanelRepository();
+    const assignmentService = new FakePanelEntityAssignmentService();
+    const compiler: PageAutofillCompilerPort = {
+      async compileSuggestions(): Promise<CompiledPageAutofillSuggestion> {
+        return {
+          suggestion: {
+            panels: [
+              {
+                order: 1,
+                situationText: 'Mio pauses in the corridor as Emil keeps speaking.',
+                composition: {
+                  source: 'custom',
+                  compositionPrompt: 'Readable composition.',
+                  shotType: 'wide',
+                  angle: 'front',
+                  customNote: 'Current setting.',
+                },
+                backgroundNote: 'Current setting.',
+                entities: [],
+              },
+            ],
+          },
+          compilerProvider: 'openai',
+          compilerModel: 'gpt-5.4-mini',
+          compilerPromptVersion: 'page_autofill_v2',
+        };
+      },
+    };
+    const service = new PageService(pageRepository, panelRepository, assignmentService, compiler);
+
+    await service.autofillFromScenes('user-1', 'page-1', 'en');
+
+    const updatedPanel = panelRepository.updatedPanels[0];
+    expect(updatedPanel?.panelId).toBe('panel-1');
+    expect(updatedPanel?.input.situationText).toBe('Mio pauses in the corridor as Emil keeps speaking.');
+    expect(updatedPanel?.input.composition).toEqual(
+      expect.objectContaining({
+        source: 'custom',
+        shotType: expect.any(String),
+        angle: expect.any(String),
+      }),
+    );
+    expect(updatedPanel?.input.composition?.compositionPrompt).toBeNull();
+    expect(updatedPanel?.input.composition?.customNote).toBeNull();
+    expect(updatedPanel?.input.backgroundNote).toBeUndefined();
+    expect(assignmentService.updates).toHaveLength(0);
+  });
+
   it('episode story plan は pages と panels に一括適用する', async () => {
     const pageRepository = new FakePageRepository();
     const panelRepository = new FakePanelRepository();
     const assignmentService = new FakePanelEntityAssignmentService();
+    const episodeCompiler = new FakeEpisodePagePlanCompiler();
     const service = new PageService(
       pageRepository,
       panelRepository,
       assignmentService,
       new FakePageAutofillCompiler(),
-      new FakeEpisodePagePlanCompiler(),
+      episodeCompiler,
     );
 
     const result: EpisodePagePlanApplyResult = await service.autofillEpisodeFromStory('user-1', 'episode-1', 'ja');
@@ -515,25 +678,29 @@ describe('PageService', () => {
       compilerPromptVersion: 'page_autofill_v2',
       compilerError: null,
     });
-    expect(panelRepository.updatedPanels).toEqual([
-      {
-        panelId: 'panel-1',
-        input: expect.objectContaining({
-          panelRole: 'establish',
-          panelSize: 'large',
-          situationText: expect.stringContaining('Minerva'),
-          backgroundNote: 'School rooftop at night.',
-          dialogueInPanel: false,
-          panelNotes: expect.stringContaining('This page quietly escalates'),
-          composition: expect.objectContaining({
-            source: 'custom',
-            shotType: 'wide',
-            angle: 'front',
-            compositionPrompt: expect.stringContaining('Minerva'),
-          }),
+    expect(episodeCompiler.lastInput?.compilerBrief).toContain('[OUTPUT CONTRACT]');
+    expect(episodeCompiler.lastInput?.compilerBrief).toContain('matching the supplied episode_page_plan schema');
+    expect(episodeCompiler.lastInput?.compilerBrief).toContain('[CURRENT PAGES]');
+    expect(episodeCompiler.lastInput?.compilerBrief).not.toContain('[OUTPUT JSON SHAPE]');
+    expect(panelRepository.updatedPanels).toHaveLength(1);
+    expect(panelRepository.updatedPanels[0]).toMatchObject({
+      panelId: 'panel-1',
+      input: {
+        panelRole: expect.any(String),
+        panelSize: expect.any(String),
+        situationText: expect.any(String),
+        backgroundNote: 'School rooftop at night.',
+        dialogueInPanel: false,
+        composition: expect.objectContaining({
+          source: 'custom',
+          shotType: 'wide',
+          angle: 'front',
+          compositionPrompt: expect.any(String),
+          customNote: 'Keep the tension restrained.',
         }),
       },
-    ]);
+    });
+    expect(panelRepository.updatedPanels[0]?.input.panelNotes ?? null).toBeNull();
     expect(assignmentService.updates).toEqual([
       {
         panelId: 'panel-1',
@@ -551,7 +718,296 @@ describe('PageService', () => {
     });
   });
 
-  it('compiler が ConfigurationError の時だけ fallback で補完する', async () => {
+  it('episode story plan は sparse compiler suggestion に fallback creative text を混ぜない', async () => {
+    const pageRepository = new FakePageRepository();
+    const panelRepository = new FakePanelRepository();
+    const assignmentService = new FakePanelEntityAssignmentService();
+    const compiler: EpisodePagePlanCompilerPort = {
+      async compilePlan(): Promise<CompiledEpisodePagePlan> {
+        return {
+          suggestion: {
+            pages: [
+              {
+                pageId: 'page-1',
+                pageNumber: 1,
+                panels: [
+                  {
+                    order: 1,
+                    situationText: 'A quiet rooftop beat before the conflict sharpens.',
+                  },
+                ],
+              },
+            ],
+          },
+          compilerProvider: 'openai',
+          compilerModel: 'gpt-5.4-mini',
+          compilerPromptVersion: 'page_autofill_v2',
+        };
+      },
+    };
+    const service = new PageService(
+      pageRepository,
+      panelRepository,
+      assignmentService,
+      new FakePageAutofillCompiler(),
+      compiler,
+    );
+
+    const result = await service.autofillEpisodeFromStory('user-1', 'episode-1', 'ja');
+
+    expect(result).toMatchObject({
+      updatedPageCount: 1,
+      updatedPanelCount: 1,
+      updatedAssignmentCount: 0,
+    });
+    expect(pageRepository.updatedInput).toMatchObject({
+      storySourceSceneIds: ['scene-1'],
+    });
+    expect(pageRepository.updatedInput?.storyPagePurpose).toBeUndefined();
+    expect(pageRepository.updatedInput?.storyContinuityNote).toBeUndefined();
+    const updatedPanel = panelRepository.updatedPanels[0];
+    expect(updatedPanel?.panelId).toBe('panel-1');
+    expect(updatedPanel?.input.situationText).toBe('A quiet rooftop beat before the conflict sharpens.');
+    expect(updatedPanel?.input.backgroundNote).toBeUndefined();
+    expect(updatedPanel?.input.composition).toEqual(
+      expect.objectContaining({
+        source: 'custom',
+        shotType: expect.any(String),
+        angle: expect.any(String),
+      }),
+    );
+    expect(updatedPanel?.input.composition?.compositionPrompt).toBeNull();
+    expect(updatedPanel?.input.composition?.customNote).toBeNull();
+    expect(assignmentService.updates).toHaveLength(0);
+  });
+
+  it('episode story plan は thought の話者が visible primary と食い違う時に補正する', async () => {
+    const pageRepository = new FakePageRepository();
+    pageRepository.episodePlanningContext = {
+      ...buildEpisodePlanningContext(),
+      entities: [
+        ...buildEpisodePlanningContext().entities,
+        {
+          id: '22222222-2222-4222-8222-222222222222',
+          name: 'Emile',
+          entityType: 'character',
+          freeDescription: 'Quiet white-haired boy.',
+          promptSupplement: 'Soft face, careful eyes.',
+          structuredFields: { character_identity: { aliases: [] } },
+        },
+        {
+          id: '33333333-3333-4333-8333-333333333333',
+          name: 'Eloise',
+          entityType: 'character',
+          freeDescription: 'Calm team lead.',
+          promptSupplement: 'Measured posture and composed eyes.',
+          structuredFields: { character_identity: { aliases: [] } },
+        },
+      ],
+    };
+    const panelRepository = new FakePanelRepository();
+    const assignmentService = new FakePanelEntityAssignmentService();
+    const compiler: EpisodePagePlanCompilerPort = {
+      async compilePlan(): Promise<CompiledEpisodePagePlan> {
+        return {
+          suggestion: {
+            pages: [
+              {
+                pageId: 'page-1',
+                pageNumber: 1,
+                sourceSceneIds: ['scene-1'],
+                pagePurpose: 'Hold on Minerva as she absorbs the answer.',
+                continuityNote: 'Keep the page quiet.',
+                panels: [
+                  {
+                    order: 1,
+                    situationText: 'Minerva lowers her eyes and tries to sort out what she just heard.',
+                    entities: [
+                      {
+                        entityId: '11111111-1111-4111-8111-111111111111',
+                        role: 'primary',
+                        action: 'standing_firm',
+                        position: 'center',
+                        facingDirection: 'front',
+                        expression: 'calm',
+                        customAction: null,
+                        customExpression: null,
+                        effectNote: null,
+                        stateId: null,
+                      },
+                    ],
+                    dialogue: [
+                      {
+                        entityId: '22222222-2222-4222-8222-222222222222',
+                        text: '……まだ整理しきれない。',
+                        type: 'thought',
+                        position: 'top',
+                      },
+                    ],
+                  },
+                ],
+              },
+            ],
+          },
+          compilerProvider: 'openai',
+          compilerModel: 'gpt-5',
+          compilerPromptVersion: 'episode_page_plan_v2',
+        };
+      },
+    };
+    const service = new PageService(
+      pageRepository,
+      panelRepository,
+      assignmentService,
+      new FakePageAutofillCompiler(),
+      compiler,
+    );
+
+    await service.autofillEpisodeFromStory('user-1', 'episode-1', 'ja');
+
+    expect(panelRepository.updatedPanels[0]?.input.dialogue).toEqual([
+      expect.objectContaining({
+        type: 'thought',
+        entityId: '11111111-1111-4111-8111-111111111111',
+        text: '……まだ整理しきれない。',
+      }),
+    ]);
+  });
+
+  it('episode story plan は page 主役が別にいる時 thought を visible primary ではなく page lead へ寄せる', async () => {
+    const pageRepository = new FakePageRepository();
+    pageRepository.episodePlanningContext = {
+      ...buildEpisodePlanningContext(),
+      entities: [
+        ...buildEpisodePlanningContext().entities,
+        {
+          id: '22222222-2222-4222-8222-222222222222',
+          name: 'Emile',
+          entityType: 'character',
+          freeDescription: 'Quiet white-haired boy.',
+          promptSupplement: 'Soft face, careful eyes.',
+          structuredFields: { character_identity: { aliases: [] } },
+        },
+        {
+          id: '33333333-3333-4333-8333-333333333333',
+          name: 'Eloise',
+          entityType: 'character',
+          freeDescription: 'Calm team lead.',
+          promptSupplement: 'Measured posture and composed eyes.',
+          structuredFields: { character_identity: { aliases: [] } },
+        },
+      ],
+      pages: [
+        {
+          ...buildEpisodePlanningContext().pages[0],
+          frameCount: 2,
+          panels: [
+            { ...buildAutofillPanelContext(), id: 'panel-1', order: 1 },
+            { ...buildAutofillPanelContext(), id: 'panel-2', order: 2 },
+          ],
+        },
+      ],
+    };
+    const panelRepository = new FakePanelRepository();
+    const assignmentService = new FakePanelEntityAssignmentService();
+    const compiler: EpisodePagePlanCompilerPort = {
+      async compilePlan(): Promise<CompiledEpisodePagePlan> {
+        return {
+          suggestion: {
+            pages: [
+              {
+                pageId: 'page-1',
+                pageNumber: 1,
+                sourceSceneIds: ['scene-1'],
+                pagePurpose: 'Keep Minerva as the point-of-view anchor.',
+                continuityNote: 'Stay inside her reaction.',
+                panels: [
+                  {
+                    order: 1,
+                    situationText: 'Minerva listens in silence.',
+                    entities: [
+                      {
+                        entityId: '11111111-1111-4111-8111-111111111111',
+                        role: 'primary',
+                        action: 'standing_firm',
+                        position: 'center',
+                        facingDirection: 'front',
+                        expression: 'calm',
+                        customAction: null,
+                        customExpression: null,
+                        effectNote: null,
+                        stateId: null,
+                      },
+                    ],
+                  },
+                  {
+                    order: 2,
+                    situationText: 'Emile speaks while Minerva keeps absorbing the answer.',
+                    entities: [
+                      {
+                        entityId: '22222222-2222-4222-8222-222222222222',
+                        role: 'primary',
+                        action: 'standing_firm',
+                        position: 'left',
+                        facingDirection: 'right',
+                        expression: 'calm',
+                        customAction: null,
+                        customExpression: null,
+                        effectNote: null,
+                        stateId: null,
+                      },
+                      {
+                        entityId: '11111111-1111-4111-8111-111111111111',
+                        role: 'secondary',
+                        action: 'standing_firm',
+                        position: 'right',
+                        facingDirection: 'left',
+                        expression: 'calm',
+                        customAction: null,
+                        customExpression: null,
+                        effectNote: null,
+                        stateId: null,
+                      },
+                    ],
+                    dialogue: [
+                      {
+                        entityId: '33333333-3333-4333-8333-333333333333',
+                        text: '……まだ整理しきれない。',
+                        type: 'thought',
+                        position: 'top',
+                      },
+                    ],
+                  },
+                ],
+              },
+            ],
+          },
+          compilerProvider: 'openai',
+          compilerModel: 'gpt-5',
+          compilerPromptVersion: 'episode_page_plan_v2',
+        };
+      },
+    };
+    const service = new PageService(
+      pageRepository,
+      panelRepository,
+      assignmentService,
+      new FakePageAutofillCompiler(),
+      compiler,
+    );
+
+    await service.autofillEpisodeFromStory('user-1', 'episode-1', 'ja');
+
+    expect(panelRepository.updatedPanels[1]?.input.dialogue).toEqual([
+      expect.objectContaining({
+        type: 'thought',
+        entityId: '11111111-1111-4111-8111-111111111111',
+        text: '……まだ整理しきれない。',
+      }),
+    ]);
+  });
+
+  it('scene autofill は compiler failure 時に fallback 内容を保存しない', async () => {
     const pageRepository = new FakePageRepository();
     const panelRepository = new FakePanelRepository();
     const assignmentService = new FakePanelEntityAssignmentService();
@@ -564,7 +1020,476 @@ describe('PageService', () => {
     expect(result.compilerUsed).toBe(false);
     expect(result.compilerProvider).toBe('fallback');
     expect(result.compilerError).toBe('compiler unavailable');
-    expect(panelRepository.updatedPanels).toHaveLength(1);
+    expect(result.updatedPanelCount).toBe(0);
+    expect(result.filledFieldCount).toBe(0);
+    expect(panelRepository.updatedPanels).toHaveLength(0);
+    expect(assignmentService.updates).toHaveLength(0);
+  });
+
+  it('scene autofill は scene entity ids が空でも compiler failure 時に fallback 推定を保存しない', async () => {
+    const pageRepository = new FakePageRepository();
+    pageRepository.autofillContext = {
+      ...buildAutofillContext(),
+      episodePurpose: '澪 and エミール walk through headquarters while she questions what she has seen.',
+      introduction: '澪 wakes up and エミール offers water.',
+      middle: 'エミール explains the organization and 澪 keeps probing.',
+      climax: '澪 asks why she was brought here, and エミール answers plainly.',
+      endingHook: '澪 is still unsettled by what エミール implies.',
+      scenes: [
+        {
+          id: 'scene-1',
+          order: 1,
+          location: 'Headquarters corridor',
+          time: 'Morning',
+          atmosphere: 'Tense and restrained',
+          involvedEntityIds: [],
+          entityStates: [],
+        },
+      ],
+      entities: [
+        {
+          id: '11111111-1111-4111-8111-111111111111',
+          name: '澪',
+          entityType: 'character',
+          freeDescription: 'A wary new arrival.',
+          promptSupplement: null,
+          structuredFields: {},
+        },
+        {
+          id: '22222222-2222-4222-8222-222222222222',
+          name: 'エミール',
+          entityType: 'character',
+          freeDescription: 'A calm guide from another era.',
+          promptSupplement: null,
+          structuredFields: {},
+        },
+      ],
+    };
+    const panelRepository = new FakePanelRepository();
+    const assignmentService = new FakePanelEntityAssignmentService();
+    const compiler = new FakePageAutofillCompiler();
+    compiler.error = new ConfigurationError('compiler unavailable');
+    const service = new PageService(pageRepository, panelRepository, assignmentService, compiler);
+
+    const result = await service.autofillFromScenes('user-1', 'page-1', 'ja');
+
+    expect(result.compilerUsed).toBe(false);
+    expect(result.updatedPanelCount).toBe(0);
+    expect(panelRepository.updatedPanels).toHaveLength(0);
+    expect(assignmentService.updates).toHaveLength(0);
+  });
+
+  it('episode story plan は compiler failure 時に fallback 内容を保存しない', async () => {
+    const pageRepository = new FakePageRepository();
+    pageRepository.episodePlanningContext = {
+      ...buildEpisodePlanningContext(),
+      episode: {
+        title: '時の教条',
+        purpose: '澪 is led through headquarters by エミール while she slowly grasps what 燦 is.',
+        introduction: '澪 wakes up in a white room and エミール offers water.',
+        middle: 'エミール guides 澪 through headquarters and explains the organization.',
+        climax: '澪 challenges the idea of protecting history, and エミール answers without flinching.',
+        endingHook: '澪 remains unsettled as エロイーズ finally steps in.',
+        estimatedPages: 2,
+      },
+      scenes: [
+        {
+          id: 'scene-1',
+          order: 1,
+          location: 'Medical room',
+          time: 'Morning',
+          atmosphere: 'Quiet and uneasy',
+          involvedEntityIds: [],
+          entityStates: [],
+        },
+        {
+          id: 'scene-2',
+          order: 2,
+          location: 'Headquarters corridor',
+          time: 'Morning',
+          atmosphere: 'Busy and tense',
+          involvedEntityIds: [],
+          entityStates: [],
+        },
+      ],
+      entities: [
+        {
+          id: '11111111-1111-4111-8111-111111111111',
+          name: '澪',
+          entityType: 'character',
+          freeDescription: 'A wary new arrival.',
+          promptSupplement: null,
+          structuredFields: {},
+        },
+        {
+          id: '22222222-2222-4222-8222-222222222222',
+          name: 'エミール',
+          entityType: 'character',
+          freeDescription: 'A calm guide from another era.',
+          promptSupplement: null,
+          structuredFields: {},
+        },
+        {
+          id: '33333333-3333-4333-8333-333333333333',
+          name: 'エロイーズ',
+          entityType: 'character',
+          freeDescription: 'A composed squad leader.',
+          promptSupplement: null,
+          structuredFields: {},
+        },
+      ],
+      pages: [
+        {
+          pageId: 'page-1',
+          pageNumber: 1,
+          frameCount: 1,
+          status: 'editing',
+          dialogueMode: 'mixed',
+          pageDialogueToggle: true,
+          panels: [buildAutofillPanelContext()],
+        },
+        {
+          pageId: 'page-2',
+          pageNumber: 2,
+          frameCount: 1,
+          status: 'editing',
+          dialogueMode: 'mixed',
+          pageDialogueToggle: true,
+          panels: [buildAutofillPanelContext()],
+        },
+      ],
+    };
+    const panelRepository = new FakePanelRepository();
+    const assignmentService = new FakePanelEntityAssignmentService();
+    const compiler: EpisodePagePlanCompilerPort = {
+      async compilePlan(): Promise<CompiledEpisodePagePlan> {
+        throw new ConfigurationError('episode planner unavailable');
+      },
+    };
+    const service = new PageService(
+      pageRepository,
+      panelRepository,
+      assignmentService,
+      new FakePageAutofillCompiler(),
+      compiler,
+    );
+
+    const result = await service.autofillEpisodeFromStory('user-1', 'episode-1', 'ja');
+
+    expect(result.compilerUsed).toBe(false);
+    expect(result.compilerError).toBe('episode planner unavailable');
+    expect(result.updatedPageCount).toBe(0);
+    expect(result.updatedPanelCount).toBe(0);
+    expect(result.updatedAssignmentCount).toBe(0);
+    expect(result.filledFieldCount).toBe(0);
+    expect(pageRepository.updatedInput).toBeNull();
+    expect(panelRepository.updatedPanels).toHaveLength(0);
+    expect(assignmentService.updates).toHaveLength(0);
+  });
+
+  it('episode story plan は compiler failure 時に既存 panel notes を上書きしない', async () => {
+    const pageRepository = new FakePageRepository();
+    pageRepository.episodePlanningContext = {
+      ...buildEpisodePlanningContext(),
+      pages: [
+        {
+          pageId: 'page-1',
+          pageNumber: 1,
+          frameCount: 1,
+          status: 'editing',
+          dialogueMode: 'mixed',
+          pageDialogueToggle: true,
+          panels: [
+            {
+              ...buildAutofillPanelContext(),
+              panelNotes:
+                'Focus this page on the current scene. Maintain the scene mood. Page 1 should read naturally into the next page.',
+            },
+          ],
+        },
+      ],
+    };
+    const panelRepository = new FakePanelRepository();
+    const assignmentService = new FakePanelEntityAssignmentService();
+    const compiler: EpisodePagePlanCompilerPort = {
+      async compilePlan(): Promise<CompiledEpisodePagePlan> {
+        throw new ConfigurationError('episode planner unavailable');
+      },
+    };
+    const service = new PageService(
+      pageRepository,
+      panelRepository,
+      assignmentService,
+      new FakePageAutofillCompiler(),
+      compiler,
+    );
+
+    const result = await service.autofillEpisodeFromStory('user-1', 'episode-1', 'ja');
+
+    expect(result.compilerUsed).toBe(false);
+    expect(result.updatedPanelCount).toBe(0);
+    expect(panelRepository.updatedPanels).toHaveLength(0);
+  });
+
+  it('episode story plan は compiler failure 時に story beat fallback を保存しない', async () => {
+    const pageRepository = new FakePageRepository();
+    pageRepository.episodePlanningContext = {
+      ...buildEpisodePlanningContext(),
+      episode: {
+        title: '神木の朝',
+        purpose: '澪が神木の朝を見て、この場所の日常の異質さを理解し始める。',
+        introduction:
+          '澪は宿舎の窓から中庭を見下ろす。 訓練する隊員たちや朝から動く工房が見える。 学校とは違う日常に息をのむ。 エロイーズが迎えに来る。',
+        middle: null,
+        climax: null,
+        endingHook: null,
+        estimatedPages: 1,
+      },
+      entities: [
+        {
+          id: '11111111-1111-4111-8111-111111111111',
+          name: '澪',
+          entityType: 'character',
+          freeDescription: 'A wary new arrival.',
+          promptSupplement: null,
+          structuredFields: {},
+        },
+        {
+          id: '22222222-2222-4222-8222-222222222222',
+          name: 'エロイーズ',
+          entityType: 'character',
+          freeDescription: 'A composed squad leader.',
+          promptSupplement: null,
+          structuredFields: {},
+        },
+      ],
+      pages: [
+        {
+          pageId: 'page-1',
+          pageNumber: 1,
+          frameCount: 4,
+          status: 'editing',
+          dialogueMode: 'mixed',
+          pageDialogueToggle: true,
+          panels: [
+            { ...buildAutofillPanelContext(), id: 'panel-1', order: 1 },
+            { ...buildAutofillPanelContext(), id: 'panel-2', order: 2 },
+            { ...buildAutofillPanelContext(), id: 'panel-3', order: 3 },
+            { ...buildAutofillPanelContext(), id: 'panel-4', order: 4 },
+          ],
+        },
+      ],
+    };
+    const panelRepository = new FakePanelRepository();
+    const assignmentService = new FakePanelEntityAssignmentService();
+    const compiler: EpisodePagePlanCompilerPort = {
+      async compilePlan(): Promise<CompiledEpisodePagePlan> {
+        throw new ConfigurationError('episode planner unavailable');
+      },
+    };
+    const service = new PageService(
+      pageRepository,
+      panelRepository,
+      assignmentService,
+      new FakePageAutofillCompiler(),
+      compiler,
+    );
+
+    const result = await service.autofillEpisodeFromStory('user-1', 'episode-1', 'ja');
+
+    expect(result.compilerUsed).toBe(false);
+    expect(result.updatedPanelCount).toBe(0);
+    expect(panelRepository.updatedPanels).toHaveLength(0);
+    expect(assignmentService.updates).toHaveLength(0);
+  });
+
+  it('episode story plan は compiler failure 時に暗黙の二人目 assignment を保存しない', async () => {
+    const pageRepository = new FakePageRepository();
+    pageRepository.episodePlanningContext = {
+      ...buildEpisodePlanningContext(),
+      episode: {
+        title: '神木の朝',
+        purpose: '澪が神木の日常を見て、自分の立ち位置を理解し始める。',
+        introduction:
+          '澪は宿舎の窓から中庭を見下ろす。 訓練する隊員たちや朝から動く工房が見える。 学校とは違う日常に息をのむ。 澪はまだ何も分からないまま、神木の一日が始まるのを見ている。',
+        middle: null,
+        climax: null,
+        endingHook: null,
+        estimatedPages: 1,
+      },
+      entities: [
+        {
+          id: '11111111-1111-4111-8111-111111111111',
+          name: '澪',
+          entityType: 'character',
+          freeDescription: 'A wary new arrival.',
+          promptSupplement: null,
+          structuredFields: {},
+        },
+        {
+          id: '22222222-2222-4222-8222-222222222222',
+          name: 'エミール',
+          entityType: 'character',
+          freeDescription: 'A calm guide from another era.',
+          promptSupplement: null,
+          structuredFields: {},
+        },
+      ],
+      pages: [
+        {
+          pageId: 'page-1',
+          pageNumber: 1,
+          frameCount: 4,
+          status: 'editing',
+          dialogueMode: 'mixed',
+          pageDialogueToggle: true,
+          panels: [
+            { ...buildAutofillPanelContext(), id: 'panel-1', order: 1 },
+            { ...buildAutofillPanelContext(), id: 'panel-2', order: 2 },
+            { ...buildAutofillPanelContext(), id: 'panel-3', order: 3 },
+            { ...buildAutofillPanelContext(), id: 'panel-4', order: 4 },
+          ],
+        },
+      ],
+    };
+    const panelRepository = new FakePanelRepository();
+    const assignmentService = new FakePanelEntityAssignmentService();
+    const compiler: EpisodePagePlanCompilerPort = {
+      async compilePlan(): Promise<CompiledEpisodePagePlan> {
+        throw new ConfigurationError('episode planner unavailable');
+      },
+    };
+    const service = new PageService(
+      pageRepository,
+      panelRepository,
+      assignmentService,
+      new FakePageAutofillCompiler(),
+      compiler,
+    );
+
+    const result = await service.autofillEpisodeFromStory('user-1', 'episode-1', 'ja');
+
+    expect(result.compilerUsed).toBe(false);
+    expect(assignmentService.updates).toHaveLength(0);
+    expect(panelRepository.updatedPanels).toHaveLength(0);
+  });
+
+  it('episode story plan は compiler failure 時に quoted noun 由来 dialogue を保存しない', async () => {
+    const pageRepository = new FakePageRepository();
+    pageRepository.episodePlanningContext = {
+      ...buildEpisodePlanningContext(),
+      episode: {
+        ...buildEpisodePlanningContext().episode,
+        purpose: '「燦」と「影」という言葉だけが頭に残る。',
+        introduction: '澪は「燦」という名を聞く。',
+        middle: 'エミールは「影」に触れる。',
+        climax: 'まだ全貌は見えない。',
+        endingHook: '澪は無言のまま立ち尽くす。',
+      },
+    };
+    const panelRepository = new FakePanelRepository();
+    const assignmentService = new FakePanelEntityAssignmentService();
+    const compiler: EpisodePagePlanCompilerPort = {
+      async compilePlan(): Promise<CompiledEpisodePagePlan> {
+        throw new ConfigurationError('episode planner unavailable');
+      },
+    };
+    const service = new PageService(
+      pageRepository,
+      panelRepository,
+      assignmentService,
+      new FakePageAutofillCompiler(),
+      compiler,
+    );
+
+    const result = await service.autofillEpisodeFromStory('user-1', 'episode-1', 'ja');
+
+    expect(result.compilerUsed).toBe(false);
+    expect(panelRepository.updatedPanels).toHaveLength(0);
+    expect(assignmentService.updates).toHaveLength(0);
+  });
+
+  it('episode story plan は compiler failure 時に一般名詞の 影 assignment を保存しない', async () => {
+    const pageRepository = new FakePageRepository();
+    pageRepository.episodePlanningContext = {
+      ...buildEpisodePlanningContext(),
+      episode: {
+        ...buildEpisodePlanningContext().episode,
+        purpose: '澪が影を見る能力を持つことをエミールが説明する。',
+        introduction: '澪は自分だけが影を見ていることに戸惑う。',
+        middle: '影は人に取り憑くが、ここではまだ正体を断定しない。',
+        climax: 'エミールは影に関わる危険性を話す。',
+        endingHook: '澪はまだ理解しきれないまま話を聞く。',
+      },
+      scenes: [
+        {
+          id: 'scene-1',
+          order: 1,
+          location: 'Corridor',
+          time: 'Morning',
+          atmosphere: 'Tense',
+          involvedEntityIds: [],
+          entityStates: [],
+        },
+      ],
+      entities: [
+        {
+          id: '11111111-1111-4111-8111-111111111111',
+          name: '澪',
+          entityType: 'character',
+          freeDescription: 'A wary new arrival.',
+          promptSupplement: null,
+          structuredFields: {},
+        },
+        {
+          id: '22222222-2222-4222-8222-222222222222',
+          name: 'エミール',
+          entityType: 'character',
+          freeDescription: 'A calm guide from another era.',
+          promptSupplement: null,
+          structuredFields: {},
+        },
+        {
+          id: 'shadow-entity',
+          name: '影',
+          entityType: 'character',
+          freeDescription: 'A generic label that should not be inferred from prose alone.',
+          promptSupplement: null,
+          structuredFields: {},
+        },
+      ],
+      pages: [
+        {
+          pageId: 'page-1',
+          pageNumber: 1,
+          frameCount: 1,
+          status: 'editing',
+          dialogueMode: 'mixed',
+          pageDialogueToggle: true,
+          panels: [buildAutofillPanelContext()],
+        },
+      ],
+    };
+    const panelRepository = new FakePanelRepository();
+    const assignmentService = new FakePanelEntityAssignmentService();
+    const compiler: EpisodePagePlanCompilerPort = {
+      async compilePlan(): Promise<CompiledEpisodePagePlan> {
+        throw new ConfigurationError('episode planner unavailable');
+      },
+    };
+    const service = new PageService(
+      pageRepository,
+      panelRepository,
+      assignmentService,
+      new FakePageAutofillCompiler(),
+      compiler,
+    );
+
+    const result = await service.autofillEpisodeFromStory('user-1', 'episode-1', 'ja');
+
+    expect(result.compilerUsed).toBe(false);
+    expect(assignmentService.updates).toHaveLength(0);
+    expect(panelRepository.updatedPanels).toHaveLength(0);
   });
 
   it('compiler の一般例外は握りつぶさず失敗させる', async () => {
@@ -668,7 +1593,7 @@ function buildAutofillContext(): PageAutofillContext {
         entityType: 'character',
         freeDescription: 'Tall, stern school idol with silver hair.',
         promptSupplement: 'Sharp green eyes and a black coat.',
-        structuredFields: {},
+        structuredFields: { character_identity: { aliases: [] } },
       },
     ],
     panels: [buildAutofillPanelContext()],
@@ -726,7 +1651,7 @@ function buildEpisodePlanningContext(): EpisodePagePlanContext {
         entityType: 'character',
         freeDescription: 'Tall, stern school idol with silver hair.',
         promptSupplement: 'Sharp green eyes and a black coat.',
-        structuredFields: {},
+        structuredFields: { character_identity: { aliases: [] } },
       },
     ],
     pages: [

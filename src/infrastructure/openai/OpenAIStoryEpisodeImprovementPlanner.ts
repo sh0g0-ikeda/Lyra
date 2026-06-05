@@ -1,4 +1,3 @@
-import { ConfigurationError } from '../../domain/errors/index.js';
 import {
   STORY_EPISODE_IMPROVEMENT_AUDITOR_MAX_TOKENS,
   STORY_EPISODE_IMPROVEMENT_AUDITOR_OPENAI_MODEL,
@@ -23,11 +22,7 @@ import type {
   PlanStoryEpisodeImprovementInput,
   StoryEpisodeImprovementPlannerPort,
 } from '../../services/story/StoryEpisodeImprovementPlanner.js';
-
-interface OpenAICompilerResponse {
-  output_text?: unknown;
-  output?: unknown;
-}
+import { requestStructuredOpenAIResponse } from './StructuredOpenAIResponse.js';
 
 export class OpenAIStoryEpisodeImprovementPlanner implements StoryEpisodeImprovementPlannerPort {
   public constructor(
@@ -39,9 +34,14 @@ export class OpenAIStoryEpisodeImprovementPlanner implements StoryEpisodeImprove
   public async planEpisodeImprovement(
     input: PlanStoryEpisodeImprovementInput,
   ): Promise<CompiledStoryEpisodeImprovementPlan> {
-    const response = await this.client.postJson<OpenAICompilerResponse>('/responses', {
+    const validated = await requestStructuredOpenAIResponse({
+      client: this.client,
       model: this.plannerModel,
-      max_output_tokens: STORY_EPISODE_IMPROVEMENT_PLANNER_MAX_TOKENS,
+      maxOutputTokens: STORY_EPISODE_IMPROVEMENT_PLANNER_MAX_TOKENS,
+      schemaName: 'story_episode_improvement_plan',
+      jsonSchema: episodeImprovementPlanJsonSchema,
+      responseSchema: episodeImprovementPlanResponseSchema,
+      errorLabel: 'OpenAI story improvement planner',
       input: [
         {
           role: 'system',
@@ -49,35 +49,13 @@ export class OpenAIStoryEpisodeImprovementPlanner implements StoryEpisodeImprove
         },
         {
           role: 'user',
-          content: [{ type: 'input_text', text: buildPlannerUserPrompt(input) }],
+            content: [{ type: 'input_text', text: buildPlannerUserPrompt(input) }],
         },
       ],
     });
 
-    const outputText = extractOutputText(response.body);
-    if (outputText === null) {
-      throw new ConfigurationError('OpenAI story improvement planner returned no text output');
-    }
-
-    const normalized = normalizeCompiledJson(outputText);
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(normalized);
-    } catch {
-      throw new ConfigurationError(
-        `OpenAI story improvement planner returned invalid JSON: ${normalized.slice(0, 400)}`,
-      );
-    }
-
-    const validated = episodeImprovementPlanResponseSchema.safeParse(parsed);
-    if (!validated.success) {
-      throw new ConfigurationError(
-        `OpenAI story improvement planner returned an invalid payload: ${validated.error.message}`,
-      );
-    }
-
     return {
-      plan: mapPlanPayload(validated.data),
+      plan: mapPlanPayload(validated),
       compilerProvider: 'openai',
       compilerModel: this.plannerModel,
       compilerPromptVersion: 'story_episode_improve_plan_v1',
@@ -87,9 +65,14 @@ export class OpenAIStoryEpisodeImprovementPlanner implements StoryEpisodeImprove
   public async auditEpisodeImprovement(
     input: AuditStoryEpisodeImprovementInput,
   ): Promise<CompiledStoryEpisodeImprovementAudit> {
-    const response = await this.client.postJson<OpenAICompilerResponse>('/responses', {
+    const validated = await requestStructuredOpenAIResponse({
+      client: this.client,
       model: this.auditorModel,
-      max_output_tokens: STORY_EPISODE_IMPROVEMENT_AUDITOR_MAX_TOKENS,
+      maxOutputTokens: STORY_EPISODE_IMPROVEMENT_AUDITOR_MAX_TOKENS,
+      schemaName: 'story_episode_improvement_audit',
+      jsonSchema: episodeImprovementAuditJsonSchema,
+      responseSchema: episodeImprovementAuditResponseSchema,
+      errorLabel: 'OpenAI story improvement audit',
       input: [
         {
           role: 'system',
@@ -97,43 +80,21 @@ export class OpenAIStoryEpisodeImprovementPlanner implements StoryEpisodeImprove
         },
         {
           role: 'user',
-          content: [{ type: 'input_text', text: buildAuditUserPrompt(input) }],
+            content: [{ type: 'input_text', text: buildAuditUserPrompt(input) }],
         },
       ],
     });
 
-    const outputText = extractOutputText(response.body);
-    if (outputText === null) {
-      throw new ConfigurationError('OpenAI story improvement audit returned no text output');
-    }
-
-    const normalized = normalizeCompiledJson(outputText);
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(normalized);
-    } catch {
-      throw new ConfigurationError(
-        `OpenAI story improvement audit returned invalid JSON: ${normalized.slice(0, 400)}`,
-      );
-    }
-
-    const validated = episodeImprovementAuditResponseSchema.safeParse(parsed);
-    if (!validated.success) {
-      throw new ConfigurationError(
-        `OpenAI story improvement audit returned an invalid payload: ${validated.error.message}`,
-      );
-    }
-
     return {
       audit: {
-        verdict: validated.data.verdict,
-        globalIssues: validated.data.global_issues,
-        title: validated.data.title,
-        purpose: validated.data.purpose,
-        introduction: validated.data.introduction,
-        middle: validated.data.middle,
-        climax: validated.data.climax,
-        endingHook: validated.data.ending_hook,
+        verdict: validated.verdict,
+        globalIssues: validated.global_issues,
+        title: validated.title,
+        purpose: validated.purpose,
+        introduction: validated.introduction,
+        middle: validated.middle,
+        climax: validated.climax,
+        endingHook: validated.ending_hook,
       },
       compilerProvider: 'openai',
       compilerModel: this.auditorModel,
@@ -159,19 +120,14 @@ function buildPlannerSystemPrompt(language: PlanStoryEpisodeImprovementInput['la
 }
 
 function buildPlannerUserPrompt(input: PlanStoryEpisodeImprovementInput): string {
+  const storedEpisodeDraft = buildStoredEpisodeDraftFields(input.context);
+
   return [
     `Instruction:\n${input.instruction}`,
     '',
     `Current editable draft:\n${formatEpisodeDraftFields(input.baseDraft)}`,
     '',
-    `Current stored episode:\n${formatEpisodeDraftFields({
-      title: input.context.episodeTitle,
-      purpose: input.context.episodePurpose,
-      introduction: input.context.introduction,
-      middle: input.context.middle,
-      climax: input.context.climax,
-      endingHook: input.context.endingHook,
-    })}`,
+    buildStoredEpisodePromptSection(input.baseDraft, storedEpisodeDraft),
     '',
     `Context:\n${formatEpisodeImprovementContext(input.context)}`,
     '',
@@ -179,6 +135,32 @@ function buildPlannerUserPrompt(input: PlanStoryEpisodeImprovementInput): string
     'Each section object must contain: objective, must_include, visual_beats, narration_hints, continuity_guards, avoid.',
     'Keep arrays compact and useful for later page and panel planning.',
   ].join('\n');
+}
+
+function buildStoredEpisodeDraftFields(
+  context: PlanStoryEpisodeImprovementInput['context'],
+): StoryEpisodeDraftFields {
+  return {
+    title: context.episodeTitle,
+    purpose: context.episodePurpose,
+    storyInputMode: 'structured',
+    storyFullDraft: null,
+    introduction: context.introduction,
+    middle: context.middle,
+    climax: context.climax,
+    endingHook: context.endingHook,
+  };
+}
+
+function buildStoredEpisodePromptSection(
+  baseDraft: StoryEpisodeDraftFields,
+  storedDraft: StoryEpisodeDraftFields,
+): string {
+  if (episodeDraftsHaveSameEditableContent(baseDraft, storedDraft)) {
+    return 'Current stored episode: same as current editable draft.';
+  }
+
+  return `Current stored episode:\n${formatEpisodeDraftFields(storedDraft)}`;
 }
 
 function buildAuditSystemPrompt(language: AuditStoryEpisodeImprovementInput['language']): string {
@@ -213,11 +195,31 @@ function formatEpisodeDraftFields(draft: StoryEpisodeDraftFields): string {
   return [
     `Title: ${draft.title ?? '(none)'}`,
     `Purpose: ${draft.purpose ?? '(none)'}`,
+    `Story input mode: ${draft.storyInputMode}`,
+    `Full story draft: ${draft.storyFullDraft ?? '(none)'}`,
     `Introduction: ${draft.introduction ?? '(none)'}`,
     `Middle: ${draft.middle ?? '(none)'}`,
     `Climax: ${draft.climax ?? '(none)'}`,
     `Ending hook: ${draft.endingHook ?? '(none)'}`,
   ].join('\n');
+}
+
+function episodeDraftsHaveSameEditableContent(
+  left: StoryEpisodeDraftFields,
+  right: StoryEpisodeDraftFields,
+): boolean {
+  return (
+    normalizeComparableDraftField(left.title) === normalizeComparableDraftField(right.title) &&
+    normalizeComparableDraftField(left.purpose) === normalizeComparableDraftField(right.purpose) &&
+    normalizeComparableDraftField(left.introduction) === normalizeComparableDraftField(right.introduction) &&
+    normalizeComparableDraftField(left.middle) === normalizeComparableDraftField(right.middle) &&
+    normalizeComparableDraftField(left.climax) === normalizeComparableDraftField(right.climax) &&
+    normalizeComparableDraftField(left.endingHook) === normalizeComparableDraftField(right.endingHook)
+  );
+}
+
+function normalizeComparableDraftField(value: string | null): string {
+  return value?.replace(/\s+/gu, ' ').trim() ?? '';
 }
 
 function formatEpisodeImprovementContext(
@@ -299,94 +301,86 @@ function mapSectionForPrompt(
   };
 }
 
-function extractOutputText(response: OpenAICompilerResponse): string | null {
-  if (typeof response.output_text === 'string' && response.output_text.trim().length > 0) {
-    return response.output_text.trim();
-  }
+const nullableStringJsonSchema = {
+  anyOf: [{ type: 'string' }, { type: 'null' }],
+} as const;
 
-  if (!Array.isArray(response.output)) {
-    return null;
-  }
+const boundedStringListJsonSchema = {
+  type: 'array',
+  items: { type: 'string' },
+} as const;
 
-  for (const item of response.output) {
-    if (!isRecord(item) || !Array.isArray(item.content)) {
-      continue;
-    }
+const episodeImprovementSectionPlanJsonSchema = {
+  type: 'object',
+  additionalProperties: false,
+  required: [
+    'objective',
+    'must_include',
+    'visual_beats',
+    'narration_hints',
+    'continuity_guards',
+    'avoid',
+  ],
+  properties: {
+    objective: nullableStringJsonSchema,
+    must_include: boundedStringListJsonSchema,
+    visual_beats: boundedStringListJsonSchema,
+    narration_hints: boundedStringListJsonSchema,
+    continuity_guards: boundedStringListJsonSchema,
+    avoid: boundedStringListJsonSchema,
+  },
+} as const;
 
-    for (const content of item.content) {
-      if (!isRecord(content)) {
-        continue;
-      }
+const episodeImprovementPlanJsonSchema = {
+  type: 'object',
+  additionalProperties: false,
+  required: [
+    'story_objective',
+    'must_preserve',
+    'continuity_guards',
+    'page_adaptation_notes',
+    'title',
+    'purpose',
+    'introduction',
+    'middle',
+    'climax',
+    'ending_hook',
+  ],
+  properties: {
+    story_objective: nullableStringJsonSchema,
+    must_preserve: boundedStringListJsonSchema,
+    continuity_guards: boundedStringListJsonSchema,
+    page_adaptation_notes: boundedStringListJsonSchema,
+    title: episodeImprovementSectionPlanJsonSchema,
+    purpose: episodeImprovementSectionPlanJsonSchema,
+    introduction: episodeImprovementSectionPlanJsonSchema,
+    middle: episodeImprovementSectionPlanJsonSchema,
+    climax: episodeImprovementSectionPlanJsonSchema,
+    ending_hook: episodeImprovementSectionPlanJsonSchema,
+  },
+} as const;
 
-      const text = content.text;
-      if (typeof text === 'string' && text.trim().length > 0) {
-        return text.trim();
-      }
-    }
-  }
-
-  return null;
-}
-
-function normalizeCompiledJson(value: string): string {
-  const trimmed = value.trim().replace(/^```(?:json)?\s*/u, '').replace(/\s*```$/u, '').trim();
-  const extracted = extractFirstJsonObject(trimmed);
-  return extracted ?? trimmed;
-}
-
-function extractFirstJsonObject(value: string): string | null {
-  const start = value.indexOf('{');
-  if (start < 0) {
-    return null;
-  }
-
-  let depth = 0;
-  let inString = false;
-  let escaped = false;
-  for (let index = start; index < value.length; index += 1) {
-    const char = value[index];
-    if (char === undefined) {
-      continue;
-    }
-
-    if (inString) {
-      if (escaped) {
-        escaped = false;
-        continue;
-      }
-
-      if (char === '\\') {
-        escaped = true;
-        continue;
-      }
-
-      if (char === '"') {
-        inString = false;
-      }
-      continue;
-    }
-
-    if (char === '"') {
-      inString = true;
-      continue;
-    }
-
-    if (char === '{') {
-      depth += 1;
-      continue;
-    }
-
-    if (char === '}') {
-      depth -= 1;
-      if (depth === 0) {
-        return value.slice(start, index + 1);
-      }
-    }
-  }
-
-  return null;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
-}
+const episodeImprovementAuditJsonSchema = {
+  type: 'object',
+  additionalProperties: false,
+  required: [
+    'verdict',
+    'global_issues',
+    'title',
+    'purpose',
+    'introduction',
+    'middle',
+    'climax',
+    'ending_hook',
+  ],
+  properties: {
+    verdict: { type: 'string', enum: ['pass', 'revise'] },
+    global_issues: boundedStringListJsonSchema,
+    title: boundedStringListJsonSchema,
+    purpose: boundedStringListJsonSchema,
+    introduction: boundedStringListJsonSchema,
+    middle: boundedStringListJsonSchema,
+    climax: boundedStringListJsonSchema,
+    ending_hook: boundedStringListJsonSchema,
+  },
+} as const;

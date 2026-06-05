@@ -50,7 +50,7 @@ function buildPagePreviewSvg(input: RenderPageImageInput): string {
     <rect x="72" y="1308" width="${PAGE_WIDTH - 144}" height="156" rx="14" fill="#111111"/>
     <text x="100" y="1368" font-family="Inter, Arial, sans-serif" font-size="28" font-weight="700" fill="#f7f4eb">Local render metadata</text>
     <text x="100" y="1414" font-family="Inter, Arial, sans-serif" font-size="24" fill="#d7d7d7">${escapeXml(imageNote)}</text>
-    <text x="100" y="1452" font-family="Inter, Arial, sans-serif" font-size="22" fill="#d7d7d7">Quality: ${escapeXml(input.quality)} / Request: ${escapeXml(input.requestKind)}</text>
+    <text x="100" y="1452" font-family="Inter, Arial, sans-serif" font-size="22" fill="#d7d7d7">Quality: ${escapeXml(input.quality)} / Render: fresh from current inputs</text>
   </svg>
   `.trim();
 }

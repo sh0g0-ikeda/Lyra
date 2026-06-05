@@ -153,6 +153,7 @@ const characterStructuredFieldsSchema = z
       .optional(),
     character_identity: z
       .object({
+        aliases: z.array(z.string().trim().min(1).max(100)).max(12).optional(),
         visual_anchor: z.string().max(300).optional(),
         signature_feature: z.string().max(300).optional(),
         silhouette_keywords: z.array(z.string().trim().min(1).max(100)).max(6).optional(),

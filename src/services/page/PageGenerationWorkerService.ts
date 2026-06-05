@@ -133,14 +133,16 @@ export class PageGenerationWorkerService {
       });
 
       const internalPlan = params.requires_planner
-        ? await this.planner.buildPlan({
-            jobId: job.id,
-            userId: job.userId,
-            pageId: params.page_id,
-            requestKind: params.request_kind,
-            generationMode: params.generation_mode,
-            prompt: compiledPrompt.prompt,
-          })
+        ? normalizeOptionalInternalPlan(
+            await this.planner.buildPlan({
+              jobId: job.id,
+              userId: job.userId,
+              pageId: params.page_id,
+              requestKind: params.request_kind,
+              generationMode: params.generation_mode,
+              prompt: compiledPrompt.prompt,
+            }),
+          )
         : null;
 
       const renderResult = await this.renderer.render({
@@ -251,7 +253,16 @@ async function compilePromptSafely(
       compilerBrief: builtPrompt.compilerBrief,
     });
     const missingDialogueLocks = findMissingDialogueLocks(builtPrompt.compilerBrief, compiledPrompt.prompt);
-    if (missingDialogueLocks.length > 0) {
+    const missingVisualLocks = findMissingVisualLocks(builtPrompt.compilerBrief, compiledPrompt.prompt);
+    if (missingDialogueLocks.length > 0 || missingVisualLocks.length > 0) {
+      const issues = [
+        missingDialogueLocks.length === 0
+          ? null
+          : `compiled prompt dropped required dialogue lines: ${missingDialogueLocks.join(' / ')}`,
+        missingVisualLocks.length === 0
+          ? null
+          : `compiled prompt dropped required visual locks: ${missingVisualLocks.join(' / ')}`,
+      ].filter((value): value is string => value !== null);
       return {
         compiledPrompt: {
           prompt: builtPrompt.draftPrompt,
@@ -259,7 +270,7 @@ async function compilePromptSafely(
           compilerModel: null,
           compilerPromptVersion: null,
         },
-        compilerError: `compiled prompt dropped required dialogue lines: ${missingDialogueLocks.join(' / ')}`,
+        compilerError: issues.join(' | '),
       };
     }
 
@@ -339,6 +350,91 @@ function extractRequiredDialogueLocks(compilerBrief: string): RequiredDialogueLo
   return locks.filter((lock) => lock.text.length > 0);
 }
 
+interface RequiredVisualLock {
+  panelOrder: number;
+  subjects: string[];
+  shot: string | null;
+  angle: string | null;
+  backgroundCue: string | null;
+}
+
+function findMissingVisualLocks(compilerBrief: string, compiledPrompt: string): string[] {
+  const locks = extractRequiredVisualLocks(compilerBrief);
+  if (locks.length === 0) {
+    return [];
+  }
+
+  const normalizedPrompt = compiledPrompt.toLowerCase();
+  return locks.flatMap((lock) => {
+    const missingSubjects = lock.subjects.filter((subject) => !normalizedPrompt.includes(subject.toLowerCase()));
+    const missingShot =
+      lock.shot !== null && !normalizedPrompt.includes(humanizeToken(lock.shot).toLowerCase()) ? lock.shot : null;
+    const missingAngle =
+      lock.angle !== null && !normalizedPrompt.includes(humanizeToken(lock.angle).toLowerCase()) ? lock.angle : null;
+    const missingBackground =
+      lock.backgroundCue !== null && !normalizedPrompt.includes(lock.backgroundCue.toLowerCase())
+        ? lock.backgroundCue
+        : null;
+
+    if (missingSubjects.length === 0 && missingShot === null && missingAngle === null && missingBackground === null) {
+      return [];
+    }
+
+    const fragments = [
+      missingSubjects.length === 0 ? null : `subjects=${missingSubjects.join('|')}`,
+      missingShot === null ? null : `shot=${humanizeToken(missingShot)}`,
+      missingAngle === null ? null : `angle=${humanizeToken(missingAngle)}`,
+      missingBackground === null ? null : `background=${missingBackground}`,
+    ].filter((value): value is string => value !== null);
+
+    return [`panel ${lock.panelOrder} (${fragments.join(', ')})`];
+  });
+}
+
+function extractRequiredVisualLocks(compilerBrief: string): RequiredVisualLock[] {
+  const locks: RequiredVisualLock[] = [];
+  const lines = compilerBrief.split('\n');
+
+  for (const line of lines) {
+    if (!line.includes('Visual lock:')) {
+      continue;
+    }
+
+    const match = line.match(
+      /Visual lock for panel (\d+): subjects=(.*?); shot=(.*?); angle=(.*?); background cue="(.*?)"\./u,
+    );
+    if (match === null) {
+      continue;
+    }
+
+    const panelOrder = Number(match[1]);
+    const subjects =
+      match[2] === '(none)'
+        ? []
+        : match[2]
+            .split('|')
+            .map((value) => value.trim())
+            .filter((value) => value.length > 0);
+    const shot = match[3] === 'unspecified' ? null : match[3];
+    const angle = match[4] === 'unspecified' ? null : match[4];
+    const backgroundCue = match[5] === '(none)' ? null : match[5];
+
+    locks.push({
+      panelOrder,
+      subjects,
+      shot,
+      angle,
+      backgroundCue,
+    });
+  }
+
+  return locks;
+}
+
+function humanizeToken(value: string): string {
+  return value.replace(/_/gu, ' ');
+}
+
 function parsePersistedParams(value: Record<string, unknown>): PersistedPageGenerationJobParams | null {
   const pageId = value.page_id;
   const requestKind = value.request_kind;
@@ -369,6 +465,11 @@ function parsePersistedParams(value: Record<string, unknown>): PersistedPageGene
     previous_page_status: previousPageStatus,
     previous_generation_mode: previousGenerationMode,
   };
+}
+
+function normalizeOptionalInternalPlan(value: string): string | null {
+  const trimmed = value.trim();
+  return trimmed.length === 0 ? null : trimmed;
 }
 
 function extractFailureCompensation(value: Record<string, unknown>): FailureCompensation | null {

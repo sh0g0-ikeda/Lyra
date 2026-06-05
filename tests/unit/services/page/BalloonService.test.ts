@@ -380,14 +380,16 @@ describe('BalloonService', () => {
 
     await service.autoGenerateBalloons('user-1', 'page-1');
 
-    expect(repository.replacedInputs?.[0]?.position).toMatchObject({
+    const position = repository.replacedInputs?.[0]?.position;
+
+    expect((position?.width ?? 1) <= 0.09 * 0.88 + 1e-6).toBe(true);
+    expect((position?.height ?? 1) <= 0.13 * 0.88 + 1e-6).toBe(true);
+    expect(position === undefined ? undefined : { ...position }).toMatchObject({
       x: expect.any(Number),
       y: expect.any(Number),
       width: expect.any(Number),
       height: expect.any(Number),
     });
-    expect((repository.replacedInputs?.[0]?.position.width ?? 1) <= 0.09 * 0.88 + 1e-6).toBe(true);
-    expect((repository.replacedInputs?.[0]?.position.height ?? 1) <= 0.13 * 0.88 + 1e-6).toBe(true);
   });
 
   it('更新時も speaker entity の作品整合性を検証する', async () => {

@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { PageGenerationQueuePayload } from '../../domain/types/pageGeneration.js';
 import type { SqsGenerationQueue } from '../../infrastructure/aws/SqsGenerationQueue.js';
+import type { WorkerProcessLauncher } from '../../infrastructure/local/DetachedWorkerProcessLauncher.js';
 
 export interface EnqueuePageGenerationResult {
   messageId: string | null;
@@ -31,6 +32,16 @@ export class InlinePageGenerationQueueAdapter implements PageGenerationQueuePort
       void this.processor.processJob(payload.jobId).catch(() => undefined);
     }, 0);
 
+    return { messageId };
+  }
+}
+
+export class DetachedProcessPageGenerationQueueAdapter implements PageGenerationQueuePort {
+  public constructor(private readonly workerLauncher: WorkerProcessLauncher) {}
+
+  public async enqueue(payload: PageGenerationQueuePayload): Promise<EnqueuePageGenerationResult> {
+    const messageId = `local-worker-${randomUUID()}`;
+    this.workerLauncher.launch(payload.jobId);
     return { messageId };
   }
 }

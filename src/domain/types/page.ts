@@ -188,6 +188,7 @@ export interface PageSummary {
 export interface PageGenerationStateUpdate {
   status: PageStatus;
   generationMode: PageGenerationMode | null;
+  expectedStatus?: PageStatus;
 }
 
 export interface UpdatePageSettingsInput {

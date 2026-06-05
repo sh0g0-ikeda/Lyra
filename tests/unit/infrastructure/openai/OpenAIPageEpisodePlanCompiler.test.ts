@@ -93,13 +93,15 @@ describe('OpenAIPageEpisodePlanCompiler', () => {
         ],
       },
       compilerProvider: 'openai',
-      compilerModel: 'gpt-5.2',
+      compilerModel: 'gpt-5',
       compilerPromptVersion: 'episode_page_plan_v2',
     });
 
     const request = requests[0];
     const input = request.input as Array<{ content: Array<{ text: string }> }>;
-    const text = request.text as Record<string, unknown>;
+    const text = request.text as {
+      format: { type: string; name: string; strict: boolean; schema: Record<string, unknown> };
+    };
     const systemPrompt = input[0].content[0].text;
     const userPrompt = input[1].content[0].text;
 
@@ -112,18 +114,33 @@ describe('OpenAIPageEpisodePlanCompiler', () => {
     expect(systemPrompt).toContain('infer what information the whole page must communicate');
     expect(systemPrompt).toContain('make it sound like natural Japanese');
     expect(systemPrompt).toContain('feel like a real response to the earlier line');
-    expect(text).toMatchObject({
-      format: {
-        type: 'json_schema',
-        name: 'episode_page_plan',
-        strict: false,
-      },
+    expect(text.format).toMatchObject({
+      type: 'json_schema',
+      name: 'episode_page_plan',
+      strict: true,
     });
+    const schema = text.format.schema as {
+      properties: {
+        pages: {
+          items: {
+            properties: {
+              page: {
+                anyOf: Array<{ required?: string[] }>;
+              };
+            };
+          };
+        };
+      };
+    };
+    expect(schema.properties.pages.items.properties.page.anyOf[0]?.required).toEqual([
+      'dialogue_mode',
+      'page_dialogue_toggle',
+    ]);
     expect(userPrompt).toContain('[CHAPTER ARC]');
     expect(userPrompt).toContain('[CURRENT PAGES]');
   });
 
-  it('JSON の前後に余計な文字があっても最初の JSON object を抽出して読める', async () => {
+  it('JSON の前後に余計な文章があっても最初の JSON object を読める', async () => {
     const client = {
       postJson: async () => ({
         body: {

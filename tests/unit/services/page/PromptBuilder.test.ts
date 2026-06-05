@@ -94,6 +94,10 @@ class FakePanelRepository implements PanelRepository {
   public async deletePanel(_panelId: string, _userId: string): Promise<boolean> {
     throw new Error('not used');
   }
+
+  public async compactPanelOrdersAfterDelete(): Promise<void> {
+    throw new Error('not used');
+  }
 }
 
 class FakeEntityRepository implements EntityRepository {
@@ -170,6 +174,9 @@ describe('PromptBuilder', () => {
     expect(result.draftPrompt).toContain('Sound effect text in the artwork: "WHOOSH".');
     expect(result.draftPrompt).toContain('Panel 1 dialogue by Aki: "I will finish this now." as speech at top.');
     expect(result.draftPrompt).toContain('Dialogue lock for panel 1: line 1 must stay assigned to Aki exactly as written: "I will finish this now."');
+    expect(result.draftPrompt).toContain(
+      'Visual lock for panel 1: subjects=Aki; shot=full_body; angle=three_quarter; background cue="Collapsed alley at dusk.".',
+    );
     expect(result.draftPrompt).toContain('Reference image roles:');
     expect(result.draftPrompt).toContain('Style lock: anime manga illustration');
     expect(result.draftPrompt).toContain('Page setting continuity: Scene 1: Rooftop / night / tense.');
@@ -189,9 +196,42 @@ describe('PromptBuilder', () => {
       'Continuity note: Carry the moonlit tension forward into the next page.',
     );
     expect(result.compilerBrief).toContain('- Dialogue lock: Dialogue lock for panel 1: line 1 must stay assigned to Aki exactly as written: "I will finish this now."');
+    expect(result.compilerBrief).toContain(
+      '- Visual lock: Visual lock for panel 1: subjects=Aki; shot=full_body; angle=three_quarter; background cue="Collapsed alley at dusk.".',
+    );
     expect(result.compilerBrief).not.toContain('[CHARACTER CONSISTENCY]');
     expect(result.compilerBrief).not.toContain('Scene continuity:');
     expect(countOccurrences(result.compilerBrief, 'Image 1 (Aki): Aki character reference.')).toBe(1);
+  });
+
+  it('treats regeneration prompts as fresh renders from current inputs', async () => {
+    const builder = new PromptBuilder(
+      new FakePageRepository(),
+      new FakePanelRepository(),
+      new FakeEntityRepository(),
+      new FakeCompositionGalleryRepository(),
+    );
+
+    const result = await builder.buildPagePrompt({
+      userId: 'user-1',
+      pageId: 'page-1',
+      requestKind: 'regenerate',
+      generationMode: 'standard',
+    });
+
+    expect(result.draftPrompt).toContain(
+      'fresh standard generation request based only on the current saved page inputs',
+    );
+    expect(result.draftPrompt).toContain(
+      'Do not treat this as an edit, continuation, or restoration of any previously generated page image.',
+    );
+    expect(result.draftPrompt).toContain(
+      'Treat uploaded images only as character or layout references, never as a previous page image or an edit target.',
+    );
+    expect(result.compilerBrief).toContain(
+      'fresh standard generation request based only on the current saved page inputs',
+    );
+    expect(result.compilerBrief).not.toContain('regenerate');
   });
 
   it('omits dialogue instructions for balloon_only pages', async () => {
@@ -280,6 +320,33 @@ describe('PromptBuilder', () => {
     });
 
     expect(countOccurrences(result.compilerBrief, 'Image 1 (Aki): Aki character reference.')).toBe(1);
+  });
+
+  it('drops redundant long panel notes from the prompt brief', async () => {
+    const panelRepository = new FakePanelRepository();
+    panelRepository.panels = [
+      {
+        ...buildPanel(),
+        panelNotes:
+          'Focus this page on Rooftop / night / tense. Maintain the scene mood: tense. Page 3 should read naturally into the next page without adding a new event.',
+      },
+    ];
+    const builder = new PromptBuilder(
+      new FakePageRepository(),
+      panelRepository,
+      new FakeEntityRepository(),
+      new FakeCompositionGalleryRepository(),
+    );
+
+    const result = await builder.buildPagePrompt({
+      userId: 'user-1',
+      pageId: 'page-1',
+      requestKind: 'initial',
+      generationMode: 'thinking',
+    });
+
+    expect(result.draftPrompt).not.toContain('Panel-specific note: Focus this page on Rooftop');
+    expect(result.compilerBrief).not.toContain('Panel-specific note: Focus this page on Rooftop');
   });
 
   it('includes named style reference title and compiled brief in page prompts', async () => {

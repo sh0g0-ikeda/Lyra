@@ -1,0 +1,250 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="3840" height="2160" viewBox="0 0 3840 2160">
+  <defs>
+    <style>
+      .bg { fill: #f7f9fc; }
+      .title { font: 700 58px "Segoe UI", "Noto Sans JP", sans-serif; fill: #132033; }
+      .subtitle { font: 500 25px "Segoe UI", "Noto Sans JP", sans-serif; fill: #526173; }
+      .section-title { font: 700 30px "Segoe UI", "Noto Sans JP", sans-serif; fill: #233044; }
+      .label { font: 700 24px "Segoe UI", "Noto Sans JP", sans-serif; fill: #172033; }
+      .small { font: 500 19px "Segoe UI", "Noto Sans JP", sans-serif; fill: #425066; }
+      .tiny { font: 500 16px "Segoe UI", "Noto Sans JP", sans-serif; fill: #526173; }
+      .note { font: 700 18px "Segoe UI", "Noto Sans JP", sans-serif; fill: #0f5132; }
+      .box { fill: #ffffff; stroke: #c8d2df; stroke-width: 2; rx: 18; }
+      .box-blue { fill: #eef6ff; stroke: #74a7e8; stroke-width: 2; rx: 18; }
+      .box-green { fill: #eefaf4; stroke: #6abf8a; stroke-width: 2; rx: 18; }
+      .box-yellow { fill: #fff8e7; stroke: #e0b94d; stroke-width: 2; rx: 18; }
+      .box-red { fill: #fff0f0; stroke: #e48a8a; stroke-width: 2; rx: 18; }
+      .box-purple { fill: #f5f0ff; stroke: #a58be8; stroke-width: 2; rx: 18; }
+      .boundary { fill: rgba(255,255,255,0.55); stroke: #aebacc; stroke-width: 3; rx: 26; stroke-dasharray: 14 10; }
+      .vpc { fill: #edf5ff; stroke: #7da6d9; stroke-width: 4; rx: 30; }
+      .az { fill: rgba(255,255,255,0.72); stroke: #b9c7d8; stroke-width: 2; rx: 24; stroke-dasharray: 9 9; }
+      .arrow { stroke: #40506a; stroke-width: 4; fill: none; marker-end: url(#arrow); }
+      .arrow-blue { stroke: #2475c7; stroke-width: 5; fill: none; marker-end: url(#arrow-blue); }
+      .arrow-green { stroke: #198754; stroke-width: 5; fill: none; marker-end: url(#arrow-green); }
+      .arrow-dashed { stroke: #6a7487; stroke-width: 4; fill: none; marker-end: url(#arrow); stroke-dasharray: 14 10; }
+      .divider { stroke: #d6dee9; stroke-width: 2; }
+      .pill { fill: #e8f3ff; stroke: #7da6d9; stroke-width: 2; rx: 22; }
+      .warn { fill: #fff4d9; stroke: #d39e00; stroke-width: 2; rx: 18; }
+      .icon { fill: #334155; }
+    </style>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#40506a"/>
+    </marker>
+    <marker id="arrow-blue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#2475c7"/>
+    </marker>
+    <marker id="arrow-green" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#198754"/>
+    </marker>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="3840" height="2160"/>
+
+  <text class="title" x="90" y="92">Lyra 本番クラウド構成（課金あり運用）</text>
+  <text class="subtitle" x="92" y="135">CloudFront を唯一の入口にし、API は非同期 job を作るだけ。画像生成は SQS + ECS Worker で水平スケール。</text>
+
+  <rect class="boundary" x="70" y="180" width="3700" height="1860"/>
+  <text class="section-title" x="105" y="225">Production Account / ap-northeast-1</text>
+
+  <!-- Users and auth -->
+  <rect class="box" x="115" y="305" width="330" height="250"/>
+  <text class="label" x="150" y="355">Users</text>
+  <text class="small" x="150" y="400">Web Browser</text>
+  <text class="small" x="150" y="436">Future Mobile App</text>
+  <text class="tiny" x="150" y="487">HTTPS only</text>
+
+  <rect class="box-purple" x="115" y="620" width="330" height="235"/>
+  <text class="label" x="150" y="670">Amazon Cognito</text>
+  <text class="small" x="150" y="713">Managed Login / Hosted UI</text>
+  <text class="small" x="150" y="749">Authorization Code + PKCE</text>
+  <text class="small" x="150" y="785">JWT: issuer / audience / scope</text>
+
+  <path class="arrow-blue" d="M445 405 C505 405 515 405 575 405"/>
+  <path class="arrow" d="M280 620 L280 560"/>
+
+  <!-- Edge -->
+  <rect class="box-blue" x="575" y="280" width="455" height="330"/>
+  <text class="label" x="615" y="335">CloudFront</text>
+  <text class="small" x="615" y="380">唯一の public entry point</text>
+  <text class="small" x="615" y="416">ACM TLS</text>
+  <text class="small" x="615" y="452">AWS WAF</text>
+  <text class="small" x="615" y="488">Rate-based rules</text>
+  <text class="small" x="615" y="524">Signed URL / Cookie</text>
+  <rect class="warn" x="610" y="548" width="380" height="42"/>
+  <text class="note" x="635" y="576">CloudFront が唯一の入口</text>
+
+  <rect class="box-blue" x="575" y="690" width="455" height="245"/>
+  <text class="label" x="615" y="743">S3 Static Frontend</text>
+  <text class="small" x="615" y="787">SPA assets</text>
+  <text class="small" x="615" y="823">CloudFront OAC</text>
+  <text class="small" x="615" y="859">No secrets in JS</text>
+
+  <rect class="box-green" x="575" y="1015" width="455" height="320"/>
+  <text class="label" x="615" y="1068">S3 Private Image Bucket</text>
+  <text class="small" x="615" y="1112">OAC + signed delivery</text>
+  <text class="small" x="615" y="1148">original private</text>
+  <text class="small" x="615" y="1184">display.webp / thumb.webp</text>
+  <text class="small" x="615" y="1220">current / confirmed</text>
+  <text class="small" x="615" y="1256">superseded → Deep Archive</text>
+  <text class="small" x="615" y="1292">tmp/session cleanup</text>
+
+  <path class="arrow" d="M805 610 L805 690"/>
+  <path class="arrow" d="M805 610 C805 755 805 875 805 1015"/>
+
+  <!-- VPC -->
+  <rect class="vpc" x="1110" y="250" width="1850" height="1215"/>
+  <text class="section-title" x="1150" y="305">VPC private subnets / 2 AZ</text>
+
+  <rect class="az" x="1160" y="350" width="820" height="1025"/>
+  <text class="label" x="1200" y="398">AZ-a</text>
+  <rect class="az" x="2045" y="350" width="860" height="1025"/>
+  <text class="label" x="2085" y="398">AZ-c</text>
+
+  <rect class="box-blue" x="1400" y="410" width="690" height="145"/>
+  <text class="label" x="1440" y="465">Internal ALB</text>
+  <text class="small" x="1440" y="506">CloudFront VPC Origin only / no public ALB</text>
+
+  <path class="arrow-blue" d="M1030 445 C1135 445 1260 445 1400 475"/>
+
+  <rect class="box" x="1240" y="650" width="600" height="235"/>
+  <text class="label" x="1280" y="704">ECS Fargate API</text>
+  <text class="small" x="1280" y="748">JWT validation / ownership check</text>
+  <text class="small" x="1280" y="784">Credit reservation / ledger</text>
+  <text class="small" x="1280" y="820">Active job lock / idempotency</text>
+  <text class="small" x="1280" y="856">SQS enqueue only</text>
+
+  <rect class="box" x="2170" y="650" width="580" height="235"/>
+  <text class="label" x="2210" y="704">ECS Fargate API</text>
+  <text class="small" x="2210" y="748">Horizontal scale</text>
+  <text class="small" x="2210" y="784">No synchronous image generation</text>
+  <text class="small" x="2210" y="820">Runtime kill switch check</text>
+
+  <path class="arrow" d="M1670 555 L1535 650"/>
+  <path class="arrow" d="M1885 555 L2390 650"/>
+
+  <rect class="box-yellow" x="1265" y="990" width="540" height="225"/>
+  <text class="label" x="1305" y="1043">SQS Generation Queue</text>
+  <text class="small" x="1305" y="1088">standard queue</text>
+  <text class="small" x="1305" y="1124">visibility timeout &gt; worker timeout</text>
+  <text class="small" x="1305" y="1160">queue depth autoscale</text>
+
+  <rect class="box-red" x="1870" y="1015" width="330" height="170"/>
+  <text class="label" x="1915" y="1072">DLQ</text>
+  <text class="small" x="1915" y="1118">manual retry</text>
+  <text class="small" x="1915" y="1154">refund rule</text>
+
+  <path class="arrow-green" d="M1535 885 L1535 990"/>
+  <path class="arrow" d="M1805 1100 L1870 1100"/>
+
+  <rect class="box-green" x="1235" y="1260" width="520" height="165"/>
+  <text class="label" x="1275" y="1310">Page Generation Worker</text>
+  <text class="small" x="1275" y="1351">On-Demand / OpenAI image</text>
+  <text class="small" x="1275" y="1387">queued → processing claim</text>
+
+  <rect class="box-green" x="1805" y="1260" width="540" height="165"/>
+  <text class="label" x="1845" y="1310">Character Generation Worker</text>
+  <text class="small" x="1845" y="1351">On-Demand / reference image</text>
+  <text class="small" x="1845" y="1387">per-user concurrency limit</text>
+
+  <rect class="box-yellow" x="2395" y="1260" width="455" height="165"/>
+  <text class="label" x="2435" y="1310">Postprocess / Archive</text>
+  <text class="small" x="2435" y="1351">Spot eligible</text>
+  <text class="small" x="2435" y="1387">WebP / thumb / Deep Archive</text>
+
+  <path class="arrow-green" d="M1535 1215 L1495 1260"/>
+  <path class="arrow-green" d="M1685 1215 C1750 1235 1890 1240 2020 1260"/>
+  <path class="arrow-green" d="M1775 1215 C1980 1240 2275 1240 2475 1260"/>
+
+  <!-- Database -->
+  <rect class="box-purple" x="3045" y="650" width="620" height="360"/>
+  <text class="label" x="3088" y="705">RDS PostgreSQL Multi-AZ</text>
+  <text class="small" x="3088" y="750">Credit Ledger / Billing Ledger</text>
+  <text class="small" x="3088" y="786">Works / Story / Pages / Entities</text>
+  <text class="small" x="3088" y="822">Generation Jobs state machine</text>
+  <text class="small" x="3088" y="858">DB active job lock</text>
+  <text class="small" x="3088" y="894">PITR / encrypted backup</text>
+  <text class="small" x="3088" y="930">restore test required</text>
+
+  <path class="arrow" d="M1840 760 C2250 760 2680 760 3045 790"/>
+  <path class="arrow" d="M2750 760 C2870 760 2940 760 3045 790"/>
+  <path class="arrow" d="M2075 1260 C2520 1210 2850 1050 3045 905"/>
+
+  <!-- External services -->
+  <rect class="box" x="3045" y="270" width="620" height="260"/>
+  <text class="label" x="3088" y="325">External Services</text>
+  <text class="small" x="3088" y="370">OpenAI API: workers only</text>
+  <text class="small" x="3088" y="406">Stripe Checkout / Portal</text>
+  <text class="small" x="3088" y="442">Stripe Webhook → API</text>
+  <text class="small" x="3088" y="478">Future: Apple IAP / Google Play</text>
+
+  <path class="arrow-dashed" d="M2345 1285 C2605 1075 2865 620 3045 395"/>
+  <path class="arrow-dashed" d="M445 465 C1350 200 2350 175 3045 380"/>
+  <path class="arrow-dashed" d="M3045 455 C2500 390 1700 475 1030 500"/>
+
+  <!-- Secrets and endpoints -->
+  <rect class="box-purple" x="3045" y="1090" width="620" height="335"/>
+  <text class="label" x="3088" y="1145">Secrets / Private Connectivity</text>
+  <text class="small" x="3088" y="1190">AWS Secrets Manager</text>
+  <text class="small" x="3088" y="1226">S3 Gateway Endpoint</text>
+  <text class="small" x="3088" y="1262">SQS Interface Endpoint</text>
+  <text class="small" x="3088" y="1298">Secrets Manager Endpoint</text>
+  <text class="small" x="3088" y="1334">NAT / Egress Proxy only:</text>
+  <text class="small" x="3116" y="1370">api.openai.com / stripe.com</text>
+
+  <path class="arrow" d="M2740 870 C2875 975 2920 1100 3045 1200"/>
+  <path class="arrow" d="M1805 1100 C2380 1125 2725 1170 3045 1220"/>
+
+  <!-- Billing and future mobile -->
+  <rect class="box-yellow" x="115" y="965" width="330" height="270"/>
+  <text class="label" x="150" y="1015">Billing</text>
+  <text class="small" x="150" y="1060">Stripe Checkout</text>
+  <text class="small" x="150" y="1096">Customer Portal</text>
+  <text class="small" x="150" y="1132">Webhook idempotency</text>
+  <text class="small" x="150" y="1168">Credit reservation / refund</text>
+  <text class="tiny" x="150" y="1208">Future IAP → Credit Ledger</text>
+  <path class="arrow-dashed" d="M445 1100 C980 980 2400 800 3045 760"/>
+
+  <!-- Observability -->
+  <rect class="box-red" x="115" y="1385" width="915" height="395"/>
+  <text class="label" x="155" y="1442">Observability / Security / Cost Control</text>
+  <text class="small" x="155" y="1490">CloudWatch Logs / Metrics / Alarms</text>
+  <text class="small" x="155" y="1526">CloudTrail / GuardDuty / Security Hub</text>
+  <text class="small" x="155" y="1562">IAM Access Analyzer / AWS Config</text>
+  <text class="small" x="155" y="1598">AWS Budgets / Cost Anomaly Detection</text>
+  <text class="small" x="155" y="1634">Generation Kill Switch</text>
+  <text class="small" x="155" y="1670">No full prompts / JWT / signed URL in logs</text>
+  <rect class="warn" x="140" y="1708" width="845" height="52"/>
+  <text class="note" x="175" y="1742">OpenAI cost cap + worker concurrency cap</text>
+
+  <path class="arrow-dashed" d="M1030 1580 C1550 1550 2400 1510 3045 1360"/>
+  <path class="arrow-dashed" d="M1030 1580 C1480 1440 1620 930 1535 885"/>
+
+  <!-- Callouts -->
+  <rect class="pill" x="1115" y="1535" width="650" height="75"/>
+  <text class="note" x="1150" y="1582">APIは画像生成を同期実行しない</text>
+  <rect class="pill" x="1815" y="1535" width="650" height="75"/>
+  <text class="note" x="1850" y="1582">DB active job lock + idempotency</text>
+  <rect class="pill" x="2515" y="1535" width="650" height="75"/>
+  <text class="note" x="2550" y="1582">Credit reservation / refund</text>
+  <rect class="pill" x="1115" y="1640" width="650" height="75"/>
+  <text class="note" x="1150" y="1687">S3 private + signed delivery</text>
+  <rect class="pill" x="1815" y="1640" width="650" height="75"/>
+  <text class="note" x="1850" y="1687">CloudFront + WAF only public entry</text>
+  <rect class="pill" x="2515" y="1640" width="650" height="75"/>
+  <text class="note" x="2550" y="1687">Deep Archive for superseded assets</text>
+
+  <!-- Legend -->
+  <line class="divider" x1="105" y1="1850" x2="3655" y2="1850"/>
+  <text class="section-title" x="115" y="1910">Legend</text>
+  <rect class="box-blue" x="265" y="1878" width="260" height="70"/>
+  <text class="small" x="295" y="1923">Edge / API入口</text>
+  <rect class="box-green" x="565" y="1878" width="260" height="70"/>
+  <text class="small" x="595" y="1923">Worker / Storage</text>
+  <rect class="box-yellow" x="865" y="1878" width="260" height="70"/>
+  <text class="small" x="895" y="1923">Queue / Billing</text>
+  <rect class="box-purple" x="1165" y="1878" width="260" height="70"/>
+  <text class="small" x="1195" y="1923">DB / Secrets / Auth</text>
+  <rect class="box-red" x="1465" y="1878" width="260" height="70"/>
+  <text class="small" x="1495" y="1923">Security / Cost</text>
+  <text class="tiny" x="105" y="2010">Updated: 2026-06-05 / Source: docs/cloud-production-roadmap.md</text>
+</svg>

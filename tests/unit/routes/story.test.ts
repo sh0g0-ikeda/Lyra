@@ -175,6 +175,8 @@ class FakeStoryCollaborationService implements StoryCollaborationServicePort {
       baseDraft: {
         title: string | null;
         purpose: string | null;
+        storyInputMode: 'structured' | 'full';
+        storyFullDraft: string | null;
         introduction: string | null;
         middle: string | null;
         climax: string | null;
@@ -185,12 +187,14 @@ class FakeStoryCollaborationService implements StoryCollaborationServicePort {
     draft: {
       title: string | null;
       purpose: string | null;
+      storyInputMode: 'structured' | 'full';
+      storyFullDraft: string | null;
       introduction: string | null;
       middle: string | null;
       climax: string | null;
       endingHook: string | null;
     };
-    compilerProvider: 'anthropic' | 'hybrid' | 'fallback';
+    compilerProvider: 'openai' | 'fallback';
     compilerModel: string | null;
     compilerPromptVersion: string | null;
     compilerError: string | null;
@@ -200,13 +204,15 @@ class FakeStoryCollaborationService implements StoryCollaborationServicePort {
       draft: {
         title: '改善済みタイトル',
         purpose: '改善済みの目的',
+        storyInputMode: 'structured',
+        storyFullDraft: null,
         introduction: '改善済み導入',
         middle: '改善済み中盤',
         climax: '改善済みクライマックス',
         endingHook: '改善済み引き',
       },
-      compilerProvider: 'anthropic',
-      compilerModel: 'claude-sonnet-4-20250514',
+      compilerProvider: 'openai',
+      compilerModel: 'gpt-5.4-mini',
       compilerPromptVersion: 'story_episode_improve_v1',
       compilerError: null,
     };
@@ -263,7 +269,7 @@ class FakePageService implements PageServicePort {
       filledFieldCount: 240,
       compilerUsed: true,
       compilerProvider: 'openai',
-      compilerModel: 'gpt-5.4-mini',
+      compilerModel: 'gpt-5',
       compilerPromptVersion: 'episode_page_plan_v1',
       compilerError: null,
     };
@@ -465,6 +471,8 @@ describe('story routes', () => {
         base_draft: {
           title: '元タイトル',
           purpose: '元目的',
+          story_input_mode: 'structured',
+          story_full_draft: null,
           introduction: '元導入',
           middle: '元中盤',
           climax: '元クライマックス',
@@ -478,13 +486,15 @@ describe('story routes', () => {
       draft: {
         title: '改善済みタイトル',
         purpose: '改善済みの目的',
+        story_input_mode: 'structured',
+        story_full_draft: null,
         introduction: '改善済み導入',
         middle: '改善済み中盤',
         climax: '改善済みクライマックス',
         ending_hook: '改善済み引き',
       },
-      compiler_provider: 'anthropic',
-      compiler_model: 'claude-sonnet-4-20250514',
+      compiler_provider: 'openai',
+      compiler_model: 'gpt-5.4-mini',
       compiler_prompt_version: 'story_episode_improve_v1',
       compiler_error: null,
     });
@@ -520,7 +530,7 @@ describe('story routes', () => {
         filled_field_count: 240,
         compiler_used: true,
         compiler_provider: 'openai',
-        compiler_model: 'gpt-5.4-mini',
+        compiler_model: 'gpt-5',
         compiler_prompt_version: 'episode_page_plan_v1',
         compiler_error: null,
       },
@@ -555,7 +565,7 @@ describe('story routes', () => {
         filled_field_count: 240,
         compiler_used: true,
         compiler_provider: 'openai',
-        compiler_model: 'gpt-5.4-mini',
+        compiler_model: 'gpt-5',
         compiler_prompt_version: 'episode_page_plan_v1',
         compiler_error: null,
       },
@@ -648,6 +658,8 @@ function buildEpisode(overrides: Partial<Episode> = {}): Episode {
     order: 1,
     title: '第一話',
     purpose: null,
+    storyInputMode: 'structured',
+    storyFullDraft: null,
     introduction: null,
     middle: null,
     climax: null,

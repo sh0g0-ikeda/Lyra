@@ -762,9 +762,10 @@ export class PostgresPageRepository implements PageRepository {
       WHERE pages.id = $1
         AND pages.episode_id = episodes.id
         AND works.user_id = $2
+        AND ($5::text IS NULL OR pages.status = $5::text)
       RETURNING pages.id
       `,
-      [pageId, userId, input.status, input.generationMode],
+      [pageId, userId, input.status, input.generationMode, input.expectedStatus ?? null],
     );
 
     return (result.rowCount ?? 0) > 0;

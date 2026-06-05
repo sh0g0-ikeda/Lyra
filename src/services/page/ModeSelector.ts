@@ -40,7 +40,9 @@ export class ModeSelector {
         mode,
         quality: PAGE_GENERATION_QUALITY.REGENERATE,
         creditCost: PAGE_GENERATION_CREDIT_COSTS.regenerate,
-        requiresPlanner: true,
+        // Regeneration is billed and stored separately, but rendering remains a fresh
+        // creation from current inputs. Planner usage depends on page complexity only.
+        requiresPlanner: mode === 'thinking',
       };
     }
 

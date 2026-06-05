@@ -1,11 +1,14 @@
 import { z } from 'zod';
+import { hasConflictingEpisodeStoryInput } from '../../domain/episodeStoryInput.js';
 
 const text200 = z.string().trim().min(1).max(200);
 const nullableText200 = z.string().trim().min(1).max(200).nullable();
 const nullableText2000 = z.string().trim().min(1).max(2000).nullable();
+const nullableText8000 = z.string().trim().min(1).max(8000).nullable();
 const uuidArray = z.array(z.string().uuid()).max(100);
 const keyBeatsArray = z.array(z.string().trim().min(1).max(500)).max(50);
 const statusSchema = z.enum(['draft', 'reviewing', 'ready']);
+const episodeStoryInputModeSchema = z.enum(['structured', 'full']);
 
 export const storyUuidParamSchema = z.string().uuid();
 
@@ -74,6 +77,8 @@ export const createEpisodeBodySchema = z
     order: z.number().int().min(1).max(1000),
     title: nullableText200.optional(),
     purpose: nullableText2000.optional(),
+    story_input_mode: episodeStoryInputModeSchema.optional().default('structured'),
+    story_full_draft: nullableText8000.optional(),
     introduction: nullableText2000.optional(),
     middle: nullableText2000.optional(),
     climax: nullableText2000.optional(),
@@ -81,13 +86,34 @@ export const createEpisodeBodySchema = z
     estimated_pages: z.number().int().min(1).max(200).default(16),
     entities_involved: uuidArray.optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((body, context) => {
+    if (
+      hasConflictingEpisodeStoryInput({
+        storyInputMode: body.story_input_mode,
+        purpose: body.purpose ?? null,
+        introduction: body.introduction ?? null,
+        middle: body.middle ?? null,
+        climax: body.climax ?? null,
+        endingHook: body.ending_hook ?? null,
+        storyFullDraft: body.story_full_draft ?? null,
+      })
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Choose either split story fields or the whole story draft, not both',
+        path: ['story_full_draft'],
+      });
+    }
+  });
 
 export const updateEpisodeBodySchema = z
   .object({
     order: z.number().int().min(1).max(1000).optional(),
     title: nullableText200.optional(),
     purpose: nullableText2000.optional(),
+    story_input_mode: episodeStoryInputModeSchema.optional(),
+    story_full_draft: nullableText8000.optional(),
     introduction: nullableText2000.optional(),
     middle: nullableText2000.optional(),
     climax: nullableText2000.optional(),
@@ -97,6 +123,25 @@ export const updateEpisodeBodySchema = z
     status: statusSchema.optional(),
   })
   .strict()
+  .superRefine((body, context) => {
+    if (
+      hasConflictingEpisodeStoryInput({
+        storyInputMode: body.story_input_mode ?? 'structured',
+        purpose: body.purpose ?? null,
+        introduction: body.introduction ?? null,
+        middle: body.middle ?? null,
+        climax: body.climax ?? null,
+        endingHook: body.ending_hook ?? null,
+        storyFullDraft: body.story_full_draft ?? null,
+      })
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Choose either split story fields or the whole story draft, not both',
+        path: ['story_full_draft'],
+      });
+    }
+  })
   .refine((body) => Object.keys(body).length > 0, {
     message: 'At least one field is required',
   });

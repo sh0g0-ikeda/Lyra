@@ -1,0 +1,81 @@
+import { ConfigurationError } from '../domain/errors/index.js';
+
+interface RuntimeGuardConfig {
+  DEV_AUTH_BYPASS: boolean;
+  SUPABASE_JWT_SECRET?: string;
+  LOCAL_FILE_STORAGE_DIR?: string;
+  LOCAL_ASSET_BASE_URL?: string;
+  OPENAI_API_KEY?: string;
+  SQS_QUEUE_URL_GENERATION?: string;
+  S3_BUCKET_IMAGES?: string;
+  IMAGES_CDN_BASE_URL?: string;
+  STRIPE_SECRET_KEY?: string;
+  STRIPE_WEBHOOK_SECRET?: string;
+  STRIPE_PRICE_STANDARD_MONTHLY?: string;
+  STRIPE_PRICE_PREMIUM_MONTHLY?: string;
+  STRIPE_PRICE_CREDITS_200?: string;
+  STRIPE_PRICE_CREDITS_1000?: string;
+  STRIPE_PRICE_CREDITS_3000?: string;
+  STRIPE_CHECKOUT_SUCCESS_URL?: string;
+  STRIPE_CHECKOUT_CANCEL_URL?: string;
+  STRIPE_PORTAL_RETURN_URL?: string;
+}
+
+const REQUIRED_PRODUCTION_GENERATION_KEYS = [
+  'OPENAI_API_KEY',
+  'SQS_QUEUE_URL_GENERATION',
+  'S3_BUCKET_IMAGES',
+  'IMAGES_CDN_BASE_URL',
+] as const;
+
+const STRIPE_KEYS = [
+  'STRIPE_SECRET_KEY',
+  'STRIPE_WEBHOOK_SECRET',
+  'STRIPE_PRICE_STANDARD_MONTHLY',
+  'STRIPE_PRICE_PREMIUM_MONTHLY',
+  'STRIPE_PRICE_CREDITS_200',
+  'STRIPE_PRICE_CREDITS_1000',
+  'STRIPE_PRICE_CREDITS_3000',
+  'STRIPE_CHECKOUT_SUCCESS_URL',
+  'STRIPE_CHECKOUT_CANCEL_URL',
+  'STRIPE_PORTAL_RETURN_URL',
+] as const;
+
+export function assertProductionRuntimeConfig(
+  config: RuntimeGuardConfig,
+  nodeEnv = process.env.NODE_ENV,
+): void {
+  if (nodeEnv !== 'production') {
+    return;
+  }
+
+  const violations: string[] = [];
+
+  if (config.DEV_AUTH_BYPASS) {
+    violations.push('DEV_AUTH_BYPASS must be disabled');
+  }
+
+  if (config.SUPABASE_JWT_SECRET === undefined) {
+    violations.push('SUPABASE_JWT_SECRET is required');
+  }
+
+  if (config.LOCAL_FILE_STORAGE_DIR !== undefined || config.LOCAL_ASSET_BASE_URL !== undefined) {
+    violations.push('local asset storage must not be enabled');
+  }
+
+  for (const key of REQUIRED_PRODUCTION_GENERATION_KEYS) {
+    if (config[key] === undefined) {
+      violations.push(`${key} is required`);
+    }
+  }
+
+  const configuredStripeKeys = STRIPE_KEYS.filter((key) => config[key] !== undefined);
+  if (configuredStripeKeys.length > 0 && configuredStripeKeys.length < STRIPE_KEYS.length) {
+    const missingStripeKeys = STRIPE_KEYS.filter((key) => config[key] === undefined);
+    violations.push(`Stripe config is incomplete: ${missingStripeKeys.join(', ')}`);
+  }
+
+  if (violations.length > 0) {
+    throw new ConfigurationError(`Production runtime config is unsafe: ${violations.join('; ')}`);
+  }
+}

@@ -61,7 +61,15 @@ class FakeEntityReferenceRepository implements EntityReferenceRepository {
       entityType: 'character',
       name: 'Mizuki',
       freeDescription: 'Black long hair swordswoman',
-      structuredFields: { art_style: 'anime' },
+      structuredFields: {
+        art_style: 'anime',
+        hair: {
+          arrangement: 'ponytail',
+        },
+        hair_detail: {
+          back_shape: 'ponytail fall',
+        },
+      },
       promptSupplement: 'anime heroine',
       status: 'draft',
       referenceSet: {
@@ -145,9 +153,7 @@ class FakeReferenceGenerator implements EntityReferenceGeneratorPort {
     }
 
     return {
-      candidates: [
-        { imageData: Buffer.from('a'), mimeType: 'image/png' },
-      ],
+      candidates: [{ imageData: Buffer.from('a'), mimeType: 'image/png' }],
       openaiRequestId: 'req-1',
       costUsd: null,
     };
@@ -228,11 +234,15 @@ describe('EntityGenerationWorkerService', () => {
     expect(result).toEqual({ status: 'processed', jobStatus: 'completed' });
     expect(promptCompiler.draftPrompt).toBe('entity prompt');
     expect(promptCompiler.compilerBrief).toContain('Target image: manga full-body character reference');
-    expect(referenceGenerator.input).toEqual({ prompt: 'entity prompt compiled', inputImages: [] });
+    expect(referenceGenerator.input?.inputImages).toEqual([]);
+    expect(referenceGenerator.input?.prompt).toContain('entity prompt compiled');
+    expect(referenceGenerator.input?.prompt).toContain('Treat this output as a fresh preview variation');
+    expect(referenceGenerator.input?.prompt).toContain('Variation profile');
     expect(executionRepository.completed?.candidates).toHaveLength(1);
     expect(executionRepository.completed?.openaiRequestId).toBe('req-1');
     expect(executionRepository.completed?.compiledBrief).toContain('Target image: manga full-body character reference');
-    expect(executionRepository.completed?.compiledPrompt).toBe('entity prompt compiled');
+    expect(executionRepository.completed?.compiledPrompt).toContain('entity prompt compiled');
+    expect(executionRepository.completed?.compiledPrompt).toContain('Variation profile');
     expect(executionRepository.completed?.compiledPromptUsed).toBe(true);
     expect(executionRepository.completed?.promptCompilerProvider).toBe('openai');
     expect(executionRepository.completed?.compilerModel).toBe('gpt-5.4-mini');
@@ -245,7 +255,7 @@ describe('EntityGenerationWorkerService', () => {
     });
   });
 
-  it('prompt compiler が失敗しても draft prompt で生成を継続する', async () => {
+  it('prompt compiler が設定系エラーなら draft prompt で続行する', async () => {
     const executionRepository = new FakeExecutionRepository();
     const referenceGenerator = new FakeReferenceGenerator();
     const promptCompiler = new FakePromptCompiler();
@@ -260,7 +270,9 @@ describe('EntityGenerationWorkerService', () => {
     const result = await service.processJob('job-1');
 
     expect(result).toEqual({ status: 'processed', jobStatus: 'completed' });
-    expect(referenceGenerator.input).toEqual({ prompt: 'entity prompt', inputImages: [] });
+    expect(referenceGenerator.input?.inputImages).toEqual([]);
+    expect(referenceGenerator.input?.prompt).toContain('entity prompt');
+    expect(referenceGenerator.input?.prompt).toContain('Treat this output as a fresh preview variation');
     expect(executionRepository.completed?.compiledPromptUsed).toBe(false);
     expect(executionRepository.completed?.promptCompilerProvider).toBe('none');
     expect(executionRepository.completed?.compilerModel).toBeNull();
@@ -268,7 +280,7 @@ describe('EntityGenerationWorkerService', () => {
     expect(executionRepository.completed?.compilerError).toBe('Entity prompt compiler fallback used');
   });
 
-  it('prompt compiler の実装エラーは fallback せず failed にする', async () => {
+  it('prompt compiler の通常エラーは fallback せず failed にする', async () => {
     const executionRepository = new FakeExecutionRepository();
     const referenceGenerator = new FakeReferenceGenerator();
     const promptCompiler = new FakePromptCompiler();
@@ -309,10 +321,13 @@ describe('EntityGenerationWorkerService', () => {
 
     expect(result).toEqual({ status: 'processed', jobStatus: 'completed' });
     expect(storedImageLoader.loadedS3Keys).toEqual(['tmp/user-1/entities/imports/source.png']);
-    expect(referenceGenerator.input).toEqual({
-      prompt: 'entity prompt compiled',
-      inputImages: [{ dataUrl: 'data:image/png;base64,dXBsb2FkZWQtc291cmNl' }],
-    });
+    expect(referenceGenerator.input?.inputImages).toEqual([
+      { dataUrl: 'data:image/png;base64,dXBsb2FkZWQtc291cmNl' },
+    ]);
+    expect(referenceGenerator.input?.prompt).toContain('entity prompt compiled');
+    expect(referenceGenerator.input?.prompt).toContain(
+      'Respect the uploaded source image as the core identity anchor',
+    );
   });
 
   it('生成失敗時は failed と refund に落ちる', async () => {
@@ -340,6 +355,30 @@ describe('EntityGenerationWorkerService', () => {
       jobId: 'job-1',
     });
   });
+
+  it('job ごとに variation profile が変わる', async () => {
+    const executionRepositoryA = new FakeExecutionRepository();
+    executionRepositoryA.job = buildJob({ id: '1' });
+    const generatorA = new FakeReferenceGenerator();
+    const serviceA = buildService({
+      executionRepository: executionRepositoryA,
+      referenceGenerator: generatorA,
+    });
+
+    const executionRepositoryB = new FakeExecutionRepository();
+    executionRepositoryB.job = buildJob({ id: '4' });
+    const generatorB = new FakeReferenceGenerator();
+    const serviceB = buildService({
+      executionRepository: executionRepositoryB,
+      referenceGenerator: generatorB,
+    });
+
+    await serviceA.processJob('1');
+    await serviceB.processJob('4');
+
+    expect(generatorA.input?.prompt).not.toBe(generatorB.input?.prompt);
+  });
+
 });
 
 function buildService(overrides: {

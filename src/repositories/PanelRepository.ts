@@ -37,6 +37,7 @@ export interface PagePanelContext {
 export interface PanelContext {
   panelId: string;
   pageId: string;
+  panelOrder: number;
   workId: string;
   pageStatus: PageStatus;
 }
@@ -48,6 +49,7 @@ export interface PanelRepository {
   findPanelsByPageIdAndUserId(pageId: string, userId: string): Promise<Panel[]>;
   updatePanel(panelId: string, userId: string, input: UpdatePanelInput): Promise<Panel | null>;
   deletePanel(panelId: string, userId: string): Promise<boolean>;
+  compactPanelOrdersAfterDelete(pageId: string, userId: string, deletedOrder: number): Promise<void>;
 }
 
 interface PagePanelContextRow extends QueryResultRow {
@@ -59,6 +61,7 @@ interface PagePanelContextRow extends QueryResultRow {
 interface PanelContextRow extends QueryResultRow {
   panel_id: string;
   page_id: string;
+  panel_order: number;
   work_id: string;
   page_status: PageStatus;
 }
@@ -117,6 +120,7 @@ export class PostgresPanelRepository implements PanelRepository {
       `
       SELECT panels.id AS panel_id,
              pages.id AS page_id,
+             panels."order" AS panel_order,
              chapters.work_id,
              pages.status AS page_status
       FROM panels
@@ -136,6 +140,7 @@ export class PostgresPanelRepository implements PanelRepository {
       : {
           panelId: row.panel_id,
           pageId: row.page_id,
+          panelOrder: row.panel_order,
           workId: row.work_id,
           pageStatus: row.page_status,
         };
@@ -314,6 +319,29 @@ export class PostgresPanelRepository implements PanelRepository {
 
       return result.rows[0] !== undefined;
     });
+  }
+
+  public async compactPanelOrdersAfterDelete(
+    pageId: string,
+    userId: string,
+    deletedOrder: number,
+  ): Promise<void> {
+    await this.client.query(
+      `
+      UPDATE panels
+      SET "order" = panels."order" - 1,
+          updated_at = NOW()
+      FROM pages
+      INNER JOIN episodes ON episodes.id = pages.episode_id
+      INNER JOIN chapters ON chapters.id = episodes.chapter_id
+      INNER JOIN works ON works.id = chapters.work_id
+      WHERE panels.page_id = pages.id
+        AND pages.id = $1
+        AND works.user_id = $2
+        AND panels."order" > $3
+      `,
+      [pageId, userId, deletedOrder],
+    );
   }
 }
 

@@ -82,7 +82,7 @@ describe('OpenAIPageAutofillCompiler', () => {
         ],
       },
       compilerProvider: 'openai',
-      compilerModel: 'gpt-5.2',
+      compilerModel: 'gpt-4o-2024-08-06',
       compilerPromptVersion: 'page_autofill_v2',
     });
 
@@ -91,6 +91,7 @@ describe('OpenAIPageAutofillCompiler', () => {
       format: expect.objectContaining({
         type: 'json_schema',
         name: 'page_autofill',
+        strict: true,
       }),
     });
     const input = request.input as Array<{ content: Array<{ text: string }> }>;
