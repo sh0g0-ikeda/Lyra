@@ -1,4 +1,5 @@
 import { ConfigurationError } from '../../domain/errors/index.js';
+import { sanitizePersistedErrorMessage } from '../../lib/errorSanitizer.js';
 import type { GenerationJob } from '../../domain/types/job.js';
 import type {
   PageGenerationInputImage,
@@ -511,5 +512,5 @@ function isPageStatus(value: unknown): value is PageStatus {
 }
 
 function toErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : 'Page generation failed';
+  return sanitizePersistedErrorMessage(error, 'Page generation failed');
 }

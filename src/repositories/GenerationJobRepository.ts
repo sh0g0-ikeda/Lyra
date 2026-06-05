@@ -17,6 +17,10 @@ export interface GenerationJobRepository {
   create(input: CreateGenerationJobInput): Promise<GenerationJob>;
   findById(jobId: string): Promise<GenerationJob | null>;
   findByIdAndUserId(jobId: string, userId: string): Promise<GenerationJob | null>;
+  findActivePageGenerationJob(userId: string, pageId: string): Promise<GenerationJob | null>;
+  findActiveEntityGenerationJob(userId: string, entityId: string): Promise<GenerationJob | null>;
+  countActiveGenerationJobsByUser(userId: string): Promise<number>;
+  countActiveGenerationJobs(): Promise<number>;
   attachQueueMessageId(jobId: string, messageId: string): Promise<boolean>;
   markFailed(jobId: string, errorMessage: string): Promise<boolean>;
   prepareRetry(jobId: string, maxRetryCount: number): Promise<boolean>;
@@ -97,6 +101,48 @@ export class PostgresGenerationJobRepository implements GenerationJobRepository 
     return result.rows[0] === undefined ? null : mapGenerationJobRow(result.rows[0]);
   }
 
+  public async findActivePageGenerationJob(
+    userId: string,
+    pageId: string,
+  ): Promise<GenerationJob | null> {
+    return this.findActiveResourceJob(userId, 'page_generate', 'page_id', pageId);
+  }
+
+  public async findActiveEntityGenerationJob(
+    userId: string,
+    entityId: string,
+  ): Promise<GenerationJob | null> {
+    return this.findActiveResourceJob(userId, 'entity_generate', 'entity_id', entityId);
+  }
+
+  public async countActiveGenerationJobsByUser(userId: string): Promise<number> {
+    const result = await this.client.query<{ count: string }>(
+      `
+      SELECT COUNT(*)::text AS count
+      FROM generation_jobs
+      WHERE user_id = $1
+        AND job_type IN ('page_generate', 'entity_generate')
+        AND status IN ('queued', 'processing')
+      `,
+      [userId],
+    );
+
+    return Number(result.rows[0]?.count ?? '0');
+  }
+
+  public async countActiveGenerationJobs(): Promise<number> {
+    const result = await this.client.query<{ count: string }>(
+      `
+      SELECT COUNT(*)::text AS count
+      FROM generation_jobs
+      WHERE job_type IN ('page_generate', 'entity_generate')
+        AND status IN ('queued', 'processing')
+      `,
+    );
+
+    return Number(result.rows[0]?.count ?? '0');
+  }
+
   public async attachQueueMessageId(jobId: string, messageId: string): Promise<boolean> {
     const result = await this.client.query<GenerationJobRow>(
       `
@@ -148,6 +194,38 @@ export class PostgresGenerationJobRepository implements GenerationJobRepository 
 
     return (result.rowCount ?? 0) > 0;
   }
+
+  private async findActiveResourceJob(
+    userId: string,
+    jobType: GenerationJobType,
+    resourceParamKey: 'page_id' | 'entity_id',
+    resourceId: string,
+  ): Promise<GenerationJob | null> {
+    const result = await this.client.query<GenerationJobRow>(
+      `
+      SELECT *
+      FROM generation_jobs
+      WHERE user_id = $1
+        AND job_type = $2
+        AND status IN ('queued', 'processing')
+        AND params->>$3 = $4
+      ORDER BY created_at DESC
+      LIMIT 1
+      `,
+      [userId, jobType, resourceParamKey, resourceId],
+    );
+
+    return result.rows[0] === undefined ? null : mapGenerationJobRow(result.rows[0]);
+  }
+}
+
+export function isUniqueViolation(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    (error as { code: unknown }).code === '23505'
+  );
 }
 
 function mapGenerationJobRow(row: GenerationJobRow): GenerationJob {

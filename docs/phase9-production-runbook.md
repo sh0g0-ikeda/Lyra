@@ -61,7 +61,7 @@ Required env:
 Manual retry:
 
 ```bash
-npm run worker:retry -- <job-id>
+npm run worker:retry -- <job-id> <user-id>
 ```
 
 Behavior:

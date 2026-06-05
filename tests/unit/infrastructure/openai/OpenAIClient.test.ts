@@ -56,6 +56,32 @@ describe('OpenAIClient', () => {
     expect(fetchFn).toHaveBeenCalledTimes(1);
   });
 
+  it('4xx の provider error に含まれる秘匿値を伏せる', async () => {
+    const fakeApiKey = ['sk', 'test-secret'].join('-');
+    const fetchFn = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          error: {
+            message: `bad request Authorization: Bearer ${fakeApiKey} X-Amz-Signature=abc123`,
+          },
+        }),
+        { status: 400 },
+      ),
+    );
+    const client = new OpenAIClient({
+      apiKey: 'test-key',
+      baseUrl: 'https://api.openai.test/v1',
+      timeoutMs: 1000,
+      fetchFn,
+    });
+
+    await expect(client.postJson('/responses', { model: 'gpt-5.4-mini' })).rejects.toEqual(
+      new ConfigurationError(
+        'bad request Authorization: Bearer [redacted] X-Amz-Signature=[redacted]',
+      ),
+    );
+  });
+
   it('multipart request を送信できる', async () => {
     let capturedBody: RequestInit['body'] | undefined;
     const fetchFn = vi.fn<typeof fetch>().mockImplementation(async (_input, init) => {

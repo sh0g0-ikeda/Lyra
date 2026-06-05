@@ -1,4 +1,5 @@
 import { ConfigurationError } from '../../domain/errors/index.js';
+import { sanitizeExternalErrorMessage } from '../../lib/errorSanitizer.js';
 
 export interface AnthropicClientOptions {
   apiKey: string;
@@ -112,7 +113,7 @@ export class AnthropicClient {
           }
 
           if (payload.type === 'error' && isErrorPayload(payload.error)) {
-            throw new ConfigurationError(payload.error.message);
+            throw new ConfigurationError(sanitizeExternalErrorMessage(payload.error.message));
           }
 
           if (
@@ -254,13 +255,13 @@ async function buildErrorMessage(response: Response): Promise<string> {
       };
     };
     if (typeof payload.error?.message === 'string' && payload.error.message.length > 0) {
-      return payload.error.message;
+      return sanitizeExternalErrorMessage(payload.error.message);
     }
   } catch {
     return fallbackMessage;
   }
 
-  return fallbackMessage;
+  return sanitizeExternalErrorMessage(fallbackMessage);
 }
 
 function isRetryableStatus(status: number): boolean {
@@ -280,7 +281,9 @@ function normalizeError(error: unknown): ConfigurationError {
     return new ConfigurationError('Anthropic request timed out');
   }
 
-  return new ConfigurationError(error instanceof Error ? error.message : 'Anthropic request failed');
+  return new ConfigurationError(
+    sanitizeExternalErrorMessage(error instanceof Error ? error.message : 'Anthropic request failed'),
+  );
 }
 
 function isTextDelta(value: unknown): value is { type: 'text_delta'; text: string } {

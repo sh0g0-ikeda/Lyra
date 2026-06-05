@@ -39,6 +39,8 @@ import type {
 type WorkspaceTab = 'story' | 'entities' | 'pages';
 type UiLanguage = 'ja' | 'en';
 
+const MAX_EPISODE_PAGES = 32;
+
 interface NoticeState {
   type: 'error' | 'success';
   message: string;
@@ -2049,6 +2051,9 @@ function StudioShell(props: {
                         label="Estimated pages"
                         value={episodeDraft.estimated_pages}
                         onChange={(value) => setEpisodeDraft({ ...episodeDraft, estimated_pages: value })}
+                        type="number"
+                        min={1}
+                        max={MAX_EPISODE_PAGES}
                       />
                     </div>
                     <TextAreaField label="Purpose" rows={2} value={episodeDraft.purpose} onChange={(value) => setEpisodeDraft({ ...episodeDraft, purpose: value })} />
@@ -3581,12 +3586,21 @@ function InputField(props: {
   label: string;
   value: string;
   onChange: (value: string) => void;
+  type?: React.HTMLInputTypeAttribute;
+  min?: number;
+  max?: number;
 }) {
   const language = useContext(UiLanguageContext);
   return (
     <label className="field">
       <span>{translateUiString(language, props.label)}</span>
-      <input value={props.value} onChange={(event) => props.onChange(event.target.value)} />
+      <input
+        value={props.value}
+        onChange={(event) => props.onChange(event.target.value)}
+        type={props.type}
+        min={props.min}
+        max={props.max}
+      />
     </label>
   );
 }

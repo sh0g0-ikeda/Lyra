@@ -2,11 +2,19 @@ import { AppError, ConfigurationError, ConflictError, NotFoundError, ValidationE
 import type { PageGenerationContext } from '../../domain/types/page.js';
 import type { PageGenerationRequestKind } from '../../domain/types/pageGeneration.js';
 import type { CreditServicePort } from '../credit/CreditService.js';
-import type { GenerationJobRepository } from '../../repositories/GenerationJobRepository.js';
+import {
+  isUniqueViolation,
+  type GenerationJobRepository,
+} from '../../repositories/GenerationJobRepository.js';
 import type { EntityRepository } from '../../repositories/EntityRepository.js';
 import type { PageRepository } from '../../repositories/PageRepository.js';
 import { ModeSelector } from './ModeSelector.js';
 import type { PageGenerationQueuePort } from './PageGenerationQueue.js';
+import {
+  assertGenerationCapacity,
+  DEFAULT_GENERATION_CAPACITY_LIMITS,
+  type GenerationCapacityLimits,
+} from '../generation/GenerationCapacityGuard.js';
 import {
   NoopPageGenerationRecoveryService,
   type PageGenerationRecoveryServicePort,
@@ -33,6 +41,8 @@ export class PageGenerationService implements PageGenerationServicePort {
     private readonly pageGenerationQueue: PageGenerationQueuePort,
     private readonly modeSelector: ModeSelector,
     private readonly recoveryService: PageGenerationRecoveryServicePort = new NoopPageGenerationRecoveryService(),
+    private readonly capacityLimits: GenerationCapacityLimits = DEFAULT_GENERATION_CAPACITY_LIMITS,
+    private readonly generationEnabled = true,
   ) {}
 
   public async enqueuePageGeneration(
@@ -40,6 +50,9 @@ export class PageGenerationService implements PageGenerationServicePort {
     pageId: string,
   ): Promise<EnqueuePageGenerationResult> {
     await this.recoveryService.recoverStaleJobsForPage(userId, pageId);
+    if (!this.generationEnabled) {
+      throw new ConflictError('Generation is temporarily disabled');
+    }
 
     const page = await this.pageRepository.findGenerationContextByIdAndUserId(pageId, userId);
     if (page === null) {
@@ -48,6 +61,8 @@ export class PageGenerationService implements PageGenerationServicePort {
 
     this.ensurePageCanGenerate(page);
     await this.ensureAssignedCharacterReferences(userId, page);
+    await assertGenerationCapacity(this.generationJobRepository, userId, this.capacityLimits);
+    await this.ensureNoActiveGenerationJob(userId, page.pageId);
 
     const requestKind: PageGenerationRequestKind =
       page.generatedImage === null ? 'initial' : 'regenerate';
@@ -143,6 +158,10 @@ export class PageGenerationService implements PageGenerationServicePort {
         throw error;
       }
 
+      if (isUniqueViolation(error)) {
+        throw new ConflictError('Page generation is already queued or processing');
+      }
+
       throw new ConfigurationError('Failed to enqueue page generation job');
     }
   }
@@ -175,6 +194,13 @@ export class PageGenerationService implements PageGenerationServicePort {
     } catch {
       // The queue already accepted the job. Missing metadata should not refund
       // credits or roll back page state because the worker may still run.
+    }
+  }
+
+  private async ensureNoActiveGenerationJob(userId: string, pageId: string): Promise<void> {
+    const activeJob = await this.generationJobRepository.findActivePageGenerationJob(userId, pageId);
+    if (activeJob !== null) {
+      throw new ConflictError('Page generation is already queued or processing');
     }
   }
 

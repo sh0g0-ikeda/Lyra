@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { hasConflictingEpisodeStoryInput } from '../../domain/episodeStoryInput.js';
+import { STORY_AI_LIMITS } from '../../domain/constants/storyAi.js';
 
 const text200 = z.string().trim().min(1).max(200);
 const nullableText200 = z.string().trim().min(1).max(200).nullable();
@@ -83,7 +84,7 @@ export const createEpisodeBodySchema = z
     middle: nullableText2000.optional(),
     climax: nullableText2000.optional(),
     ending_hook: nullableText2000.optional(),
-    estimated_pages: z.number().int().min(1).max(200).default(16),
+    estimated_pages: z.number().int().min(1).max(STORY_AI_LIMITS.maxSkeletonPages).default(16),
     entities_involved: uuidArray.optional(),
   })
   .strict()
@@ -118,7 +119,7 @@ export const updateEpisodeBodySchema = z
     middle: nullableText2000.optional(),
     climax: nullableText2000.optional(),
     ending_hook: nullableText2000.optional(),
-    estimated_pages: z.number().int().min(1).max(200).optional(),
+    estimated_pages: z.number().int().min(1).max(STORY_AI_LIMITS.maxSkeletonPages).optional(),
     entities_involved: uuidArray.optional(),
     status: statusSchema.optional(),
   })

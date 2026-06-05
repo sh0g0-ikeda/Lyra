@@ -4,6 +4,7 @@ import { assertProductionRuntimeConfig } from '../../../src/lib/runtimeGuards.js
 
 const safeProductionConfig = {
   DEV_AUTH_BYPASS: false,
+  AUTH_PROVIDER: 'supabase' as const,
   SUPABASE_JWT_SECRET: 'supabase-secret',
   OPENAI_API_KEY: 'openai-key',
   SQS_QUEUE_URL_GENERATION: 'https://sqs.ap-northeast-1.amazonaws.com/123/lyra-generation',
@@ -26,6 +27,23 @@ describe('assertProductionRuntimeConfig', () => {
   it('安全な production 設定は許容する', () => {
     expect(() => {
       assertProductionRuntimeConfig(safeProductionConfig, 'production');
+    }).not.toThrow();
+  });
+
+  it('Cognito production 設定は issuer/client/scope が揃っていれば許容する', () => {
+    expect(() => {
+      assertProductionRuntimeConfig(
+        {
+          ...safeProductionConfig,
+          AUTH_PROVIDER: 'cognito',
+          SUPABASE_JWT_SECRET: undefined,
+          AWS_REGION: 'ap-northeast-1',
+          COGNITO_USER_POOL_ID: 'ap-northeast-1_pool',
+          COGNITO_CLIENT_ID: 'client-123',
+          COGNITO_REQUIRED_SCOPES: 'lyra/api',
+        },
+        'production',
+      );
     }).not.toThrow();
   });
 
@@ -53,6 +71,21 @@ describe('assertProductionRuntimeConfig', () => {
         'production',
       );
     }).toThrow(/OPENAI_API_KEY is required/);
+  });
+
+  it('Cognito production 設定で client と scope が欠けている場合は拒否する', () => {
+    expect(() => {
+      assertProductionRuntimeConfig(
+        {
+          ...safeProductionConfig,
+          AUTH_PROVIDER: 'cognito',
+          SUPABASE_JWT_SECRET: undefined,
+          AWS_REGION: 'ap-northeast-1',
+          COGNITO_USER_POOL_ID: 'ap-northeast-1_pool',
+        },
+        'production',
+      );
+    }).toThrow(/COGNITO_CLIENT_ID is required/);
   });
 
   it('Stripe 設定が一部だけ入っている場合は拒否する', () => {

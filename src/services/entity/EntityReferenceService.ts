@@ -18,11 +18,17 @@ import type {
 } from '../../domain/types/entityReference.js';
 import { parseStructuredFields } from '../../lib/validators/entity.schema.js';
 import type { GenerationJobRepository } from '../../repositories/GenerationJobRepository.js';
+import { isUniqueViolation } from '../../repositories/GenerationJobRepository.js';
 import type { EntityReferenceRepository } from '../../repositories/EntityRepository.js';
 import type { CreditServicePort } from '../credit/CreditService.js';
 import type { EntityGenerationQueuePort } from './EntityGenerationQueue.js';
 import type { EntityImportAnalyzerPort } from '../../infrastructure/openai/OpenAIEntityImportAnalyzer.js';
 import type { EntityImageStoragePort } from '../../infrastructure/aws/S3EntityImageStorage.js';
+import {
+  assertGenerationCapacity,
+  DEFAULT_GENERATION_CAPACITY_LIMITS,
+  type GenerationCapacityLimits,
+} from '../generation/GenerationCapacityGuard.js';
 
 export interface ConfirmEntityReferencesRequest {
   selectedS3Keys: string[];
@@ -66,6 +72,8 @@ export class EntityReferenceService implements EntityReferenceServicePort {
     private readonly imageAnalyzer: EntityImportAnalyzerPort,
     private readonly imageStorage: EntityImageStoragePort,
     private readonly generationQueue: EntityGenerationQueuePort,
+    private readonly capacityLimits: GenerationCapacityLimits = DEFAULT_GENERATION_CAPACITY_LIMITS,
+    private readonly generationEnabled = true,
   ) {}
 
   public async getReferenceSet(userId: string, entityId: string): Promise<EntityReferenceSet> {
@@ -114,6 +122,10 @@ export class EntityReferenceService implements EntityReferenceServicePort {
       sourceS3Key?: string | null;
     },
   ): Promise<{ jobId: string }> {
+    if (!this.generationEnabled) {
+      throw new ConflictError('Generation is temporarily disabled');
+    }
+
     const entity = await this.entityRepository.findReferenceContextByIdAndUserId(entityId, userId);
     if (entity === null) {
       throw new NotFoundError('Entity not found');
@@ -123,6 +135,8 @@ export class EntityReferenceService implements EntityReferenceServicePort {
     if (sourceS3Key !== null) {
       ensureAllowedReferenceSourceKey(sourceS3Key, userId, entityId);
     }
+    await assertGenerationCapacity(this.generationJobRepository, userId, this.capacityLimits);
+    await this.ensureNoActiveGenerationJob(userId, entity.entityId);
 
     let creditsConsumed = false;
     let jobId: string | null = null;
@@ -175,6 +189,10 @@ export class EntityReferenceService implements EntityReferenceServicePort {
       }
 
       if (error instanceof Error) {
+        if (isUniqueViolation(error)) {
+          throw new ConflictError('Entity reference generation is already queued or processing');
+        }
+
         throw error;
       }
 
@@ -281,6 +299,13 @@ export class EntityReferenceService implements EntityReferenceServicePort {
     } catch {
       // The queue accepted the job already. Missing metadata should not refund
       // or mark the entity generation as failed.
+    }
+  }
+
+  private async ensureNoActiveGenerationJob(userId: string, entityId: string): Promise<void> {
+    const activeJob = await this.generationJobRepository.findActiveEntityGenerationJob(userId, entityId);
+    if (activeJob !== null) {
+      throw new ConflictError('Entity reference generation is already queued or processing');
     }
   }
 }

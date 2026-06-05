@@ -88,6 +88,9 @@ class FakeGenerationJobRepository implements GenerationJobRepository {
   public createdInput: CreateGenerationJobInput | null = null;
   public attachedMessageId: string | null = null;
   public failedJobId: string | null = null;
+  public activeEntityJob: GenerationJob | null = null;
+  public activeForUser = 0;
+  public activeGlobally = 0;
 
   public async create(input: CreateGenerationJobInput): Promise<GenerationJob> {
     this.createdInput = input;
@@ -108,6 +111,22 @@ class FakeGenerationJobRepository implements GenerationJobRepository {
 
   public async findByIdAndUserId(): Promise<GenerationJob | null> {
     return null;
+  }
+
+  public async findActivePageGenerationJob(): Promise<GenerationJob | null> {
+    return null;
+  }
+
+  public async findActiveEntityGenerationJob(): Promise<GenerationJob | null> {
+    return this.activeEntityJob;
+  }
+
+  public async countActiveGenerationJobsByUser(): Promise<number> {
+    return this.activeForUser;
+  }
+
+  public async countActiveGenerationJobs(): Promise<number> {
+    return this.activeGlobally;
   }
 
   public async attachQueueMessageId(_jobId: string, messageId: string): Promise<boolean> {
@@ -303,6 +322,54 @@ describe('EntityReferenceService', () => {
     });
   });
 
+  it('active entity generation job が残っている場合はクレジット消費前にCONFLICTになる', async () => {
+    const jobs = new FakeGenerationJobRepository();
+    jobs.activeEntityJob = buildJob({ status: 'queued' });
+    const creditService = new FakeCreditService();
+    const service = buildService({
+      generationJobRepository: jobs,
+      creditService,
+    });
+
+    await expect(service.enqueueReferenceGeneration('user-1', 'entity-1')).rejects.toMatchObject({
+      code: 'CONFLICT',
+      message: 'Entity reference generation is already queued or processing',
+    });
+    expect(creditService.consumed).toBeNull();
+  });
+
+  it('user active generation limit に達している場合はクレジット消費前にCONFLICTになる', async () => {
+    const jobs = new FakeGenerationJobRepository();
+    jobs.activeForUser = 2;
+    const creditService = new FakeCreditService();
+    const service = buildService({
+      generationJobRepository: jobs,
+      creditService,
+      capacityLimits: { perUser: 2, global: 100 },
+    });
+
+    await expect(service.enqueueReferenceGeneration('user-1', 'entity-1')).rejects.toMatchObject({
+      code: 'CONFLICT',
+      message: 'User has too many active generation jobs',
+    });
+    expect(creditService.consumed).toBeNull();
+  });
+
+  it('generation disabled の場合はクレジット消費前にCONFLICTになる', async () => {
+    const creditService = new FakeCreditService();
+    const service = buildService({
+      creditService,
+      capacityLimits: { perUser: 2, global: 100 },
+      generationEnabled: false,
+    });
+
+    await expect(service.enqueueReferenceGeneration('user-1', 'entity-1')).rejects.toMatchObject({
+      code: 'CONFLICT',
+      message: 'Generation is temporarily disabled',
+    });
+    expect(creditService.consumed).toBeNull();
+  });
+
   it('confirm は許可された tmp/session key だけ finalize する', async () => {
     const repository = new FakeEntityReferenceRepository();
     const storage = new FakeEntityImageStorage();
@@ -365,6 +432,8 @@ function buildService(overrides: {
   analyzer?: FakeEntityImportAnalyzer;
   storage?: FakeEntityImageStorage;
   queue?: FakeEntityGenerationQueue;
+  capacityLimits?: { perUser: number; global: number };
+  generationEnabled?: boolean;
 } = {}): EntityReferenceService {
   return new EntityReferenceService(
     overrides.repository ?? new FakeEntityReferenceRepository(),
@@ -373,6 +442,8 @@ function buildService(overrides: {
     overrides.analyzer ?? new FakeEntityImportAnalyzer(),
     overrides.storage ?? new FakeEntityImageStorage(),
     overrides.queue ?? new FakeEntityGenerationQueue(),
+    overrides.capacityLimits,
+    overrides.generationEnabled,
   );
 }
 

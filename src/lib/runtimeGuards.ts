@@ -2,7 +2,13 @@ import { ConfigurationError } from '../domain/errors/index.js';
 
 interface RuntimeGuardConfig {
   DEV_AUTH_BYPASS: boolean;
+  AUTH_PROVIDER?: 'supabase' | 'cognito';
   SUPABASE_JWT_SECRET?: string;
+  AWS_REGION?: string;
+  COGNITO_USER_POOL_ID?: string;
+  COGNITO_CLIENT_ID?: string;
+  COGNITO_ISSUER?: string;
+  COGNITO_REQUIRED_SCOPES?: string;
   LOCAL_FILE_STORAGE_DIR?: string;
   LOCAL_ASSET_BASE_URL?: string;
   OPENAI_API_KEY?: string;
@@ -55,8 +61,26 @@ export function assertProductionRuntimeConfig(
     violations.push('DEV_AUTH_BYPASS must be disabled');
   }
 
-  if (config.SUPABASE_JWT_SECRET === undefined) {
-    violations.push('SUPABASE_JWT_SECRET is required');
+  const authProvider = config.AUTH_PROVIDER ?? 'supabase';
+  if (authProvider === 'supabase') {
+    if (config.SUPABASE_JWT_SECRET === undefined) {
+      violations.push('SUPABASE_JWT_SECRET is required');
+    }
+  } else {
+    if (config.COGNITO_CLIENT_ID === undefined) {
+      violations.push('COGNITO_CLIENT_ID is required');
+    }
+
+    if (config.COGNITO_REQUIRED_SCOPES === undefined) {
+      violations.push('COGNITO_REQUIRED_SCOPES is required');
+    }
+
+    if (
+      config.COGNITO_ISSUER === undefined &&
+      (config.AWS_REGION === undefined || config.COGNITO_USER_POOL_ID === undefined)
+    ) {
+      violations.push('COGNITO_ISSUER or AWS_REGION + COGNITO_USER_POOL_ID is required');
+    }
   }
 
   if (config.LOCAL_FILE_STORAGE_DIR !== undefined || config.LOCAL_ASSET_BASE_URL !== undefined) {

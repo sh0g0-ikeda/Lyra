@@ -10,3 +10,5 @@ export interface SupabaseJwtClaims {
   sub: string;
   email: string;
 }
+
+export type AuthIdentityClaims = SupabaseJwtClaims;

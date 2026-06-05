@@ -86,6 +86,9 @@ describe('operational guards', () => {
 
     expect(response.status).toBe(200);
     expect(response.headers.get('x-request-id')).toBeTruthy();
+    expect(response.headers.get('x-content-type-options')).toBe('nosniff');
+    expect(response.headers.get('x-frame-options')).toBe('DENY');
+    expect(response.headers.get('referrer-policy')).toBe('no-referrer');
   });
 
   it('returns 429 with retry-after once the rate limit is exceeded', async () => {

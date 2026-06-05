@@ -33,13 +33,25 @@ export async function runPendingMigrations(
     }
 
     const sql = await readFile(join(migrationsDir, filename), 'utf8');
-    await db.transaction(async (client) => {
-      await client.query(sql);
-      await client.query('INSERT INTO schema_migrations (filename) VALUES ($1)', [filename]);
-    });
+    if (shouldRunWithoutTransaction(sql)) {
+      await db.query(sql);
+      await db.query('INSERT INTO schema_migrations (filename) VALUES ($1)', [filename]);
+    } else {
+      await db.transaction(async (client) => {
+        await client.query(sql);
+        await client.query('INSERT INTO schema_migrations (filename) VALUES ($1)', [filename]);
+      });
+    }
 
     appliedNow.push(filename);
   }
 
   return appliedNow;
+}
+
+function shouldRunWithoutTransaction(sql: string): boolean {
+  return sql
+    .split('\n')
+    .slice(0, 5)
+    .some((line) => line.trim() === '-- lyra:migration no-transaction');
 }

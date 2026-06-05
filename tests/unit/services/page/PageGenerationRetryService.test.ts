@@ -17,11 +17,31 @@ class InMemoryGenerationJobRepository implements GenerationJobRepository {
   }
 
   public async findById(): Promise<GenerationJob | null> {
+    throw new Error('unused');
+  }
+
+  public async findByIdAndUserId(_jobId: string, userId: string): Promise<GenerationJob | null> {
+    if (this.job === null || this.job.userId !== userId) {
+      return null;
+    }
+
     return this.job;
   }
 
-  public async findByIdAndUserId(): Promise<GenerationJob | null> {
-    return this.job;
+  public async findActivePageGenerationJob(): Promise<GenerationJob | null> {
+    return null;
+  }
+
+  public async findActiveEntityGenerationJob(): Promise<GenerationJob | null> {
+    return null;
+  }
+
+  public async countActiveGenerationJobsByUser(): Promise<number> {
+    return 0;
+  }
+
+  public async countActiveGenerationJobs(): Promise<number> {
+    return 0;
   }
 
   public async attachQueueMessageId(): Promise<boolean> {
@@ -48,23 +68,30 @@ class FakePageGenerationWorkerService {
 }
 
 describe('PageGenerationRetryService', () => {
-  it('failed page_generate job を retry できる', async () => {
+  it('所有者の failed page_generate job を retry できる', async () => {
     const repository = new InMemoryGenerationJobRepository();
     const workerService = new FakePageGenerationWorkerService();
     const service = new PageGenerationRetryService(repository, workerService);
 
-    await service.retryFailedJob('job-1');
+    await service.retryFailedJob('user-1', 'job-1');
 
     expect(repository.preparedRetryWith).toBe(MAX_PAGE_GENERATION_RETRIES);
     expect(workerService.processedJobId).toBe('job-1');
   });
 
-  it('job が存在しない場合は not found になる', async () => {
+  it('他ユーザーの job は not found にする', async () => {
+    const repository = new InMemoryGenerationJobRepository();
+    const service = new PageGenerationRetryService(repository, new FakePageGenerationWorkerService());
+
+    await expect(service.retryFailedJob('other-user', 'job-1')).rejects.toBeInstanceOf(NotFoundError);
+  });
+
+  it('job が存在しない場合は not found にする', async () => {
     const repository = new InMemoryGenerationJobRepository();
     repository.job = null;
     const service = new PageGenerationRetryService(repository, new FakePageGenerationWorkerService());
 
-    await expect(service.retryFailedJob('job-1')).rejects.toBeInstanceOf(NotFoundError);
+    await expect(service.retryFailedJob('user-1', 'job-1')).rejects.toBeInstanceOf(NotFoundError);
   });
 
   it('failed 以外の job は retry できない', async () => {
@@ -72,7 +99,7 @@ describe('PageGenerationRetryService', () => {
     repository.job = buildJob({ status: 'completed' });
     const service = new PageGenerationRetryService(repository, new FakePageGenerationWorkerService());
 
-    await expect(service.retryFailedJob('job-1')).rejects.toBeInstanceOf(ConflictError);
+    await expect(service.retryFailedJob('user-1', 'job-1')).rejects.toBeInstanceOf(ConflictError);
   });
 });
 

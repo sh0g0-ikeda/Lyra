@@ -1,6 +1,7 @@
 import { CREDIT_COSTS } from '../../domain/constants/credits.js';
 import { ENTITY_REFERENCE_GENERATION } from '../../domain/constants/entityReference.js';
 import { ConfigurationError } from '../../domain/errors/index.js';
+import { sanitizePersistedErrorMessage } from '../../lib/errorSanitizer.js';
 import type {
   EntityReferenceContext,
   PersistedEntityGenerationJobParams,
@@ -121,7 +122,7 @@ export class EntityGenerationWorkerService {
         job.id,
         job.userId,
         job.creditCost,
-        error instanceof Error ? error.message : 'Entity generation failed',
+        sanitizePersistedErrorMessage(error, 'Entity generation failed'),
       );
       return { status: 'processed', jobStatus: 'failed' };
     }

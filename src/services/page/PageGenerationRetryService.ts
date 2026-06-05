@@ -9,7 +9,7 @@ export interface PageGenerationRetryWorkerPort {
 }
 
 export interface PageGenerationRetryServicePort {
-  retryFailedJob(jobId: string): Promise<void>;
+  retryFailedJob(userId: string, jobId: string): Promise<void>;
 }
 
 export class PageGenerationRetryService implements PageGenerationRetryServicePort {
@@ -18,8 +18,8 @@ export class PageGenerationRetryService implements PageGenerationRetryServicePor
     private readonly pageGenerationWorkerService: PageGenerationRetryWorkerPort,
   ) {}
 
-  public async retryFailedJob(jobId: string): Promise<void> {
-    const job = await this.generationJobRepository.findById(jobId);
+  public async retryFailedJob(userId: string, jobId: string): Promise<void> {
+    const job = await this.generationJobRepository.findByIdAndUserId(jobId, userId);
     if (job === null) {
       throw new NotFoundError('Generation job not found');
     }

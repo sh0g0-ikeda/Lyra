@@ -5,8 +5,9 @@ import { resolveWorkerDependencies } from '../worker/dependencies.js';
 
 async function main(): Promise<void> {
   const jobId = process.argv[2];
-  if (jobId === undefined) {
-    throw new Error('Usage: npm run worker:retry -- <job-id>');
+  const userId = process.argv[3];
+  if (jobId === undefined || userId === undefined) {
+    throw new Error('Usage: npm run worker:retry -- <job-id> <user-id>');
   }
 
   const retryService = new PageGenerationRetryService(
@@ -14,8 +15,8 @@ async function main(): Promise<void> {
     resolveWorkerDependencies().pageGenerationWorkerService,
   );
 
-  await retryService.retryFailedJob(jobId);
-  console.info(`Retried page generation job ${jobId}`);
+  await retryService.retryFailedJob(userId, jobId);
+  console.info(`Retried page generation job ${jobId} for user ${userId}`);
 }
 
 void main().catch((error) => {

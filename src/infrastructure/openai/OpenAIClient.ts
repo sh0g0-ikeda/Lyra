@@ -1,4 +1,5 @@
 import { ConfigurationError } from '../../domain/errors/index.js';
+import { sanitizeExternalErrorMessage } from '../../lib/errorSanitizer.js';
 
 export interface OpenAIClientOptions {
   apiKey: string;
@@ -97,7 +98,7 @@ export class OpenAIClient {
         }
 
         throw new ConfigurationError(
-          error instanceof Error ? error.message : 'OpenAI request failed',
+          sanitizeExternalErrorMessage(error instanceof Error ? error.message : 'OpenAI request failed'),
         );
       } finally {
         clearTimeout(timeout);
@@ -124,13 +125,13 @@ async function buildErrorMessage(response: Response): Promise<string> {
     const payload = (await response.json()) as { error?: { message?: unknown } };
     const message = payload.error?.message;
     if (typeof message === 'string' && message.length > 0) {
-      return message;
+      return sanitizeExternalErrorMessage(message);
     }
   } catch {
     return fallbackMessage;
   }
 
-  return fallbackMessage;
+  return sanitizeExternalErrorMessage(fallbackMessage);
 }
 
 function isRetryableStatus(status: number): boolean {

@@ -37,10 +37,30 @@ SUPABASE_JWT_SECRET=replace-me
 LLM_PAGE_PROMPT_COMPILER_ENABLED=false
 LLM_ENTITY_REFERENCE_PROMPT_COMPILER_ENABLED=false
 LLM_PAGE_GENERATION_PLANNER_ENABLED=false
+GENERATION_USER_ACTIVE_JOB_LIMIT=2
+GENERATION_GLOBAL_ACTIVE_JOB_LIMIT=100
+GENERATION_ENABLED=true
 ```
 
 `SUPABASE_JWT_SECRET` is still required for non-bypass local flows and dev token generation.
 The three `LLM_*_ENABLED` flags default to `false`; keep them disabled for lower-cost generation that uses deterministic prompts, and enable them only when you explicitly want extra LLM prompt rewriting or planning.
+`GENERATION_USER_ACTIVE_JOB_LIMIT` and `GENERATION_GLOBAL_ACTIVE_JOB_LIMIT` cap active page/entity generation jobs before queueing provider work.
+Set `GENERATION_ENABLED=false` as a kill switch when provider quota, billing, or abuse-control incidents require stopping new generation jobs.
+
+### Production auth
+
+Local defaults use Supabase-compatible HS256 dev tokens. AWS production should use Cognito:
+
+```env
+AUTH_PROVIDER=cognito
+AWS_REGION=ap-northeast-1
+COGNITO_USER_POOL_ID=ap-northeast-1_replace_me
+COGNITO_CLIENT_ID=replace-me
+COGNITO_TOKEN_USE=access
+COGNITO_REQUIRED_SCOPES=lyra/api
+```
+
+When `AUTH_PROVIDER=cognito`, the API verifies the Cognito JWKS signature, issuer, `client_id`, `token_use`, expiration, required scopes, and configured groups before provisioning the user.
 
 ### 4. Minimal frontend `apps/web/.env`
 

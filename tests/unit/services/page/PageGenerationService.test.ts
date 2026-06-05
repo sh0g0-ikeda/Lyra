@@ -85,6 +85,9 @@ class FakeGenerationJobRepository implements GenerationJobRepository {
   public failedJobId: string | null = null;
   public failedMessage: string | null = null;
   public shouldFailAttach = false;
+  public activePageJob: GenerationJob | null = null;
+  public activeForUser = 0;
+  public activeGlobally = 0;
 
   public async create(input: CreateGenerationJobInput): Promise<GenerationJob> {
     this.created = input;
@@ -101,6 +104,22 @@ class FakeGenerationJobRepository implements GenerationJobRepository {
 
   public async findByIdAndUserId(): Promise<GenerationJob | null> {
     return buildJob();
+  }
+
+  public async findActivePageGenerationJob(): Promise<GenerationJob | null> {
+    return this.activePageJob;
+  }
+
+  public async findActiveEntityGenerationJob(): Promise<GenerationJob | null> {
+    return null;
+  }
+
+  public async countActiveGenerationJobsByUser(): Promise<number> {
+    return this.activeForUser;
+  }
+
+  public async countActiveGenerationJobs(): Promise<number> {
+    return this.activeGlobally;
   }
 
   public async attachQueueMessageId(_jobId: string, messageId: string): Promise<boolean> {
@@ -394,6 +413,91 @@ describe('PageGenerationService', () => {
     );
 
     await expect(service.enqueuePageGeneration(userId, pageId)).rejects.toBeInstanceOf(ConflictError);
+  });
+
+  it('active page generation job が残っている場合はクレジット消費前にCONFLICTになる', async () => {
+    const jobRepository = new FakeGenerationJobRepository();
+    jobRepository.activePageJob = buildJob({ status: 'processing' });
+    const creditService = new FakeCreditService();
+    const service = new PageGenerationService(
+      new FakePageRepository(),
+      new FakeEntityRepository(),
+      jobRepository,
+      creditService,
+      new FakeQueue(),
+      new ModeSelector(),
+    );
+
+    await expect(service.enqueuePageGeneration(userId, pageId)).rejects.toMatchObject({
+      code: 'CONFLICT',
+      message: 'Page generation is already queued or processing',
+    });
+    expect(creditService.consumed).toEqual([]);
+  });
+
+  it('user active generation limit に達している場合はクレジット消費前にCONFLICTになる', async () => {
+    const jobRepository = new FakeGenerationJobRepository();
+    jobRepository.activeForUser = 2;
+    const creditService = new FakeCreditService();
+    const service = new PageGenerationService(
+      new FakePageRepository(),
+      new FakeEntityRepository(),
+      jobRepository,
+      creditService,
+      new FakeQueue(),
+      new ModeSelector(),
+      undefined,
+      { perUser: 2, global: 100 },
+    );
+
+    await expect(service.enqueuePageGeneration(userId, pageId)).rejects.toMatchObject({
+      code: 'CONFLICT',
+      message: 'User has too many active generation jobs',
+    });
+    expect(creditService.consumed).toEqual([]);
+  });
+
+  it('generation disabled の場合はクレジット消費前にCONFLICTになる', async () => {
+    const creditService = new FakeCreditService();
+    const service = new PageGenerationService(
+      new FakePageRepository(),
+      new FakeEntityRepository(),
+      new FakeGenerationJobRepository(),
+      creditService,
+      new FakeQueue(),
+      new ModeSelector(),
+      undefined,
+      { perUser: 2, global: 100 },
+      false,
+    );
+
+    await expect(service.enqueuePageGeneration(userId, pageId)).rejects.toMatchObject({
+      code: 'CONFLICT',
+      message: 'Generation is temporarily disabled',
+    });
+    expect(creditService.consumed).toEqual([]);
+  });
+
+  it('global active generation limit に達している場合はクレジット消費前にCONFLICTになる', async () => {
+    const jobRepository = new FakeGenerationJobRepository();
+    jobRepository.activeGlobally = 100;
+    const creditService = new FakeCreditService();
+    const service = new PageGenerationService(
+      new FakePageRepository(),
+      new FakeEntityRepository(),
+      jobRepository,
+      creditService,
+      new FakeQueue(),
+      new ModeSelector(),
+      undefined,
+      { perUser: 2, global: 100 },
+    );
+
+    await expect(service.enqueuePageGeneration(userId, pageId)).rejects.toMatchObject({
+      code: 'CONFLICT',
+      message: 'Generation queue is temporarily full',
+    });
+    expect(creditService.consumed).toEqual([]);
   });
 
   it('pageが存在しない場合はNOT_FOUNDになる', async () => {

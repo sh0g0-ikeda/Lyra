@@ -8,6 +8,7 @@ import { runPendingMigrations } from '../../../src/lib/migrations.js';
 class FakeMigrationDb {
   public readonly executedSql: string[] = [];
   public readonly insertedFilenames: string[] = [];
+  public transactionCalls = 0;
   private readonly appliedFilenames = new Set<string>();
 
   public constructor(initialApplied: string[] = []) {
@@ -55,6 +56,7 @@ class FakeMigrationDb {
       ): Promise<QueryResult<R>>;
     }) => Promise<T>,
   ): Promise<T> {
+    this.transactionCalls += 1;
     return work({
       query: async <R extends QueryResultRow = QueryResultRow>(
         text: string,
@@ -100,6 +102,7 @@ describe('runPendingMigrations', () => {
 
     expect(applied).toEqual(['001_first.sql', '002_second.sql']);
     expect(db.insertedFilenames).toEqual(['001_first.sql', '002_second.sql']);
+    expect(db.transactionCalls).toBe(2);
   });
 
   it('skips already applied migration files', async () => {
@@ -113,5 +116,27 @@ describe('runPendingMigrations', () => {
 
     expect(applied).toEqual(['002_second.sql']);
     expect(db.insertedFilenames).toEqual(['002_second.sql']);
+  });
+
+  it('no-transaction 指定の migration は transaction 外で実行する', async () => {
+    const migrationsDir = await createTempMigrations({
+      '001_concurrent_index.sql': [
+        '-- lyra:migration no-transaction',
+        'CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS idx_example ON example(id);',
+      ].join('\n'),
+    });
+    const db = new FakeMigrationDb();
+
+    const applied = await runPendingMigrations(db, { migrationsDir });
+
+    expect(applied).toEqual(['001_concurrent_index.sql']);
+    expect(db.transactionCalls).toBe(0);
+    expect(db.executedSql).toContain(
+      [
+        '-- lyra:migration no-transaction',
+        'CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS idx_example ON example(id);',
+      ].join('\n'),
+    );
+    expect(db.insertedFilenames).toEqual(['001_concurrent_index.sql']);
   });
 });

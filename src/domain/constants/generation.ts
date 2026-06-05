@@ -18,6 +18,11 @@ export const PAGE_GENERATION_CREDIT_COSTS = {
 
 export const PAGE_GENERATION_STALE_AFTER_MS = 20 * 60 * 1000;
 
+export const DEFAULT_GENERATION_ACTIVE_JOB_LIMITS = {
+  PER_USER: 2,
+  GLOBAL: 100,
+} as const;
+
 export const PAGE_PROMPT_COMPILER_OPENAI_MODEL = 'gpt-5.4-mini';
 export const PAGE_PROMPT_COMPILER_MAX_TOKENS = 900;
 export const PAGE_PROMPT_COMPILER_VERSION = 'page_prompt_v2';

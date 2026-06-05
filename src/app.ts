@@ -28,9 +28,11 @@ import { db } from './lib/db.js';
 import { env } from './lib/env.js';
 import { assertProductionRuntimeConfig } from './lib/runtimeGuards.js';
 import { createAuthMiddleware } from './middleware/auth.js';
+import type { AuthProvider, CognitoVerifierConfig } from './middleware/auth.js';
 import { errorHandler } from './middleware/errorHandler.js';
 import { createRateLimitMiddleware, InMemoryRateLimitStore, type RateLimitStore } from './middleware/rateLimit.js';
 import { createRequestContextMiddleware } from './middleware/requestContext.js';
+import { createSecurityHeadersMiddleware } from './middleware/securityHeaders.js';
 import { PostgresBillingRepository } from './repositories/BillingRepository.js';
 import { PostgresCompositionGalleryRepository } from './repositories/CompositionGalleryRepository.js';
 import { PostgresCreditRepository } from './repositories/CreditRepository.js';
@@ -148,6 +150,7 @@ import type { StoryEpisodeImprovementPlannerPort } from './services/story/StoryE
 import { StoryService, type StoryServicePort } from './services/story/StoryService.js';
 import type { AppEnv } from './types/app.js';
 import type { SupabaseJwtClaims } from './domain/types/user.js';
+import type { JWTVerifyGetKey } from 'jose';
 import { resolveWorkerDependencies } from '../worker/dependencies.js';
 
 export interface AppDependencies {
@@ -179,7 +182,10 @@ export interface AppDependencies {
   storyService?: StoryServicePort;
   userProvisioningService?: UserProvisioningPort;
   rateLimitStore?: RateLimitStore;
+  authProvider?: AuthProvider;
   jwtSecret?: string;
+  cognito?: CognitoVerifierConfig;
+  cognitoJwks?: JWTVerifyGetKey;
   enableDevAuthBypass?: boolean;
   devAuthBypassClaims?: SupabaseJwtClaims;
 }
@@ -193,7 +199,10 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
   const enableDevAuthBypass =
     dependencies.enableDevAuthBypass ?? (process.env.NODE_ENV === 'test' ? false : env.DEV_AUTH_BYPASS);
   const authMiddleware = createAuthMiddleware(resolvedDependencies.userProvisioningService, {
+    authProvider: dependencies.authProvider,
     jwtSecret: dependencies.jwtSecret,
+    cognito: dependencies.cognito,
+    cognitoJwks: dependencies.cognitoJwks,
     enableDevBypass: enableDevAuthBypass,
     devBypassClaims: dependencies.devAuthBypassClaims,
   });
@@ -204,6 +213,7 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
     : createRateLimitMiddleware(resolvedDependencies.rateLimitStore);
 
   app.onError(errorHandler);
+  app.use('*', createSecurityHeadersMiddleware());
   app.use('*', createRequestContextMiddleware());
   app.route('/', createHealthRoutes());
   if (localAssetConfig !== null) {
@@ -319,7 +329,12 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
 function resolveDependencies(
   dependencies: AppDependencies,
 ): Omit<
-  Required<Omit<AppDependencies, 'jwtSecret' | 'enableDevAuthBypass' | 'devAuthBypassClaims'>>,
+  Required<
+    Omit<
+      AppDependencies,
+      'authProvider' | 'jwtSecret' | 'cognito' | 'cognitoJwks' | 'enableDevAuthBypass' | 'devAuthBypassClaims'
+    >
+  >,
   'storyEpisodeImprovementPlanner'
 > & {
   storyEpisodeImprovementPlanner?: StoryEpisodeImprovementPlannerPort;
@@ -383,6 +398,11 @@ function resolveDependencies(
       resolveEntityImportAnalyzer(),
       resolveEntityImageStorage(),
       entityGenerationQueue,
+      {
+        perUser: env.GENERATION_USER_ACTIVE_JOB_LIMIT,
+        global: env.GENERATION_GLOBAL_ACTIVE_JOB_LIMIT,
+      },
+      env.GENERATION_ENABLED,
     );
   const panelRepository = new PostgresPanelRepository(db);
   const panelFrameRepository = new PostgresPanelFrameRepository(db);
@@ -400,6 +420,11 @@ function resolveDependencies(
       pageGenerationQueue,
       new ModeSelector(),
       pageGenerationRecoveryService,
+      {
+        perUser: env.GENERATION_USER_ACTIVE_JOB_LIMIT,
+        global: env.GENERATION_GLOBAL_ACTIVE_JOB_LIMIT,
+      },
+      env.GENERATION_ENABLED,
     );
   const pageFinalizeService =
     dependencies.pageFinalizeService ??
