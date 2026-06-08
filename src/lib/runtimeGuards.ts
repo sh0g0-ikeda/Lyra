@@ -64,27 +64,27 @@ export function assertProductionRuntimeConfig(
 
   const authProvider = config.AUTH_PROVIDER ?? 'supabase';
   if (authProvider === 'supabase') {
-    if (config.SUPABASE_JWT_SECRET === undefined) {
+    if (isMissingConfigValue(config.SUPABASE_JWT_SECRET)) {
       violations.push('SUPABASE_JWT_SECRET is required');
     }
   } else {
-    if (config.COGNITO_CLIENT_ID === undefined) {
+    if (isMissingConfigValue(config.COGNITO_CLIENT_ID)) {
       violations.push('COGNITO_CLIENT_ID is required');
     }
 
-    if (config.COGNITO_REQUIRED_SCOPES === undefined) {
+    if (isMissingConfigValue(config.COGNITO_REQUIRED_SCOPES)) {
       violations.push('COGNITO_REQUIRED_SCOPES is required');
     }
 
     if (
-      config.COGNITO_ISSUER === undefined &&
-      (config.AWS_REGION === undefined || config.COGNITO_USER_POOL_ID === undefined)
+      isMissingConfigValue(config.COGNITO_ISSUER) &&
+      (isMissingConfigValue(config.AWS_REGION) || isMissingConfigValue(config.COGNITO_USER_POOL_ID))
     ) {
       violations.push('COGNITO_ISSUER or AWS_REGION + COGNITO_USER_POOL_ID is required');
     }
   }
 
-  if (config.LOCAL_FILE_STORAGE_DIR !== undefined || config.LOCAL_ASSET_BASE_URL !== undefined) {
+  if (hasConfigValue(config.LOCAL_FILE_STORAGE_DIR) || hasConfigValue(config.LOCAL_ASSET_BASE_URL)) {
     violations.push('local asset storage must not be enabled');
   }
 
@@ -93,12 +93,12 @@ export function assertProductionRuntimeConfig(
   }
 
   for (const key of REQUIRED_PRODUCTION_GENERATION_KEYS) {
-    if (config[key] === undefined) {
+    if (isMissingConfigValue(config[key])) {
       violations.push(`${key} is required`);
     }
   }
 
-  const missingStripeKeys = STRIPE_KEYS.filter((key) => config[key] === undefined);
+  const missingStripeKeys = STRIPE_KEYS.filter((key) => isMissingConfigValue(config[key]));
   if (missingStripeKeys.length > 0) {
     violations.push(`Stripe config is incomplete: ${missingStripeKeys.join(', ')}`);
   }
@@ -106,4 +106,12 @@ export function assertProductionRuntimeConfig(
   if (violations.length > 0) {
     throw new ConfigurationError(`Production runtime config is unsafe: ${violations.join('; ')}`);
   }
+}
+
+function isMissingConfigValue(value: string | undefined): boolean {
+  return value === undefined || value.trim().length === 0;
+}
+
+function hasConfigValue(value: string | undefined): boolean {
+  return value !== undefined && value.trim().length > 0;
 }

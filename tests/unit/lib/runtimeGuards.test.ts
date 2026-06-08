@@ -143,4 +143,18 @@ describe('assertProductionRuntimeConfig', () => {
       );
     }).toThrow(/Stripe config is incomplete/);
   });
+
+  it('production rejects blank required config values', () => {
+    expect(() => {
+      assertProductionRuntimeConfig(
+        {
+          ...safeProductionConfig,
+          SUPABASE_JWT_SECRET: '  ',
+          OPENAI_API_KEY: '',
+          STRIPE_WEBHOOK_SECRET: ' ',
+        },
+        'production',
+      );
+    }).toThrow(/SUPABASE_JWT_SECRET is required.*OPENAI_API_KEY is required.*STRIPE_WEBHOOK_SECRET/);
+  });
 });
