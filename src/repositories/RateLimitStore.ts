@@ -26,7 +26,7 @@ export class PostgresRateLimitStore implements RateLimitStore {
       ON CONFLICT (bucket_key) DO UPDATE
       SET count = CASE
             WHEN rate_limit_buckets.reset_at <= NOW() THEN 1
-            ELSE rate_limit_buckets.count + 1
+            ELSE LEAST(rate_limit_buckets.count + 1, $3::int + 1)
           END,
           reset_at = CASE
             WHEN rate_limit_buckets.reset_at <= NOW() THEN NOW() + ($2::int * INTERVAL '1 second')
@@ -35,7 +35,7 @@ export class PostgresRateLimitStore implements RateLimitStore {
           updated_at = NOW()
       RETURNING count, reset_at
       `,
-      [key, windowSeconds],
+      [key, windowSeconds, maxRequests],
     );
 
     const row = result.rows[0];

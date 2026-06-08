@@ -37,10 +37,10 @@ describe('PostgresRateLimitStore', () => {
     expect(result.allowed).toBe(true);
     expect(result.remaining).toBe(1);
     expect(result.resetAt).toEqual(resetAt);
-    expect(client.values).toEqual(['default:user-1', 60]);
+    expect(client.values).toEqual(['default:user-1', 60, 3]);
     expect(client.queries[0]).toContain('INSERT INTO rate_limit_buckets');
     expect(client.queries[0]).toContain('ON CONFLICT (bucket_key) DO UPDATE');
-    expect(client.queries[0]).toContain('rate_limit_buckets.count + 1');
+    expect(client.queries[0]).toContain('LEAST(rate_limit_buckets.count + 1, $3::int + 1)');
   });
 
   it('count が上限を超えたら拒否結果を返す', async () => {
