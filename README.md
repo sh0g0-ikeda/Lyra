@@ -77,6 +77,8 @@ When Cognito is configured in a production web build, `VITE_COGNITO_SCOPES` is r
 sync with `COGNITO_REQUIRED_SCOPES` so Hosted UI login receives a token the API will accept.
 For paid production, configure only one hosted auth provider in the web build. Cognito and Supabase
 at the same time is rejected to avoid presenting a login path whose token the API rejects.
+When `VITE_REQUIRE_HOSTED_AUTH=true` in a production web build, the manual bearer token form is
+hidden and stored manual tokens are not used for API authentication.
 
 `VITE_DEV_AUTH_BYPASS=true` is for local development only. Production web builds force file-based
 dev bypass off, and explicit production bypass is rejected.

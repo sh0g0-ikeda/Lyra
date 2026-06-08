@@ -22,6 +22,7 @@ import {
 import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { Session, SupabaseClient } from '@supabase/supabase-js';
 import { ApiError, decodeJwtPayload, LyraApiClient } from './lib/api';
+import { shouldAllowManualTokenAuth } from './lib/authMode';
 import {
   beginCognitoLogin,
   buildCognitoLogoutUrl,
@@ -987,6 +988,11 @@ const devAuthBypass =
         token: 'dev-auth-bypass',
       }
     : null;
+const manualTokenAuthAllowed = shouldAllowManualTokenAuth({
+  MODE: import.meta.env.MODE,
+  PROD: import.meta.env.PROD,
+  VITE_REQUIRE_HOSTED_AUTH: import.meta.env.VITE_REQUIRE_HOSTED_AUTH,
+});
 
 export default function App() {
   const [manualToken, setManualToken] = useStoredString(window.sessionStorage, manualTokenStorageKey, '');
@@ -1111,12 +1117,15 @@ export default function App() {
 
   const accessToken = devAuthBypass !== null
     ? devAuthBypass.token
-    : cognitoSession?.accessToken ?? supabaseSession?.access_token ?? (manualToken.length > 0 ? manualToken : null);
+    : cognitoSession?.accessToken ??
+      supabaseSession?.access_token ??
+      (manualTokenAuthAllowed && manualToken.length > 0 ? manualToken : null);
   if (accessToken === null) {
     return (
       <AuthScreen
         cognitoAuthConfig={cognitoAuthConfig}
         cognitoAuthError={cognitoAuthError}
+        manualTokenAuthAllowed={manualTokenAuthAllowed}
         manualToken={manualToken}
         onCognitoLogin={async () => {
           if (cognitoAuthConfig !== null) {
@@ -1166,6 +1175,7 @@ function getCognitoRefreshDelay(expiresAt: number, now: number): number {
 function AuthScreen(props: {
   cognitoAuthConfig: CognitoAuthConfig | null;
   cognitoAuthError: string | null;
+  manualTokenAuthAllowed: boolean;
   manualToken: string;
   onCognitoLogin: () => Promise<void>;
   onManualTokenChange: (nextValue: string) => void;
@@ -1230,26 +1240,30 @@ function AuthScreen(props: {
             </button>
           </form>
         ) : null}
-        <div className="divider" />
-        <div className="stack">
-          <label className="field">
-            <span>{translateUiString(language, 'Manual bearer token')}</span>
-            <textarea
-              rows={6}
-              value={draftToken}
-              onChange={(event) => setDraftToken(event.target.value)}
-              spellCheck={false}
-            />
-          </label>
-          <button
-            className="secondary-button"
-            onClick={() => props.onManualTokenChange(draftToken.trim())}
-            type="button"
-          >
-            <KeyRound size={16} />
-            {translateUiString(language, 'Use token')}
-          </button>
-        </div>
+        {props.manualTokenAuthAllowed ? (
+          <>
+            <div className="divider" />
+            <div className="stack">
+              <label className="field">
+                <span>{translateUiString(language, 'Manual bearer token')}</span>
+                <textarea
+                  rows={6}
+                  value={draftToken}
+                  onChange={(event) => setDraftToken(event.target.value)}
+                  spellCheck={false}
+                />
+              </label>
+              <button
+                className="secondary-button"
+                onClick={() => props.onManualTokenChange(draftToken.trim())}
+                type="button"
+              >
+                <KeyRound size={16} />
+                {translateUiString(language, 'Use token')}
+              </button>
+            </div>
+          </>
+        ) : null}
       </div>
     </div>
   );
