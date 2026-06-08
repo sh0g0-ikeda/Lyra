@@ -284,4 +284,33 @@ describe('assertProductionRuntimeConfig', () => {
       );
     }).toThrow(/DATABASE_URL is required/);
   });
+
+  it('production では public URL に HTTPS の非local hostを要求する', () => {
+    expect(() => {
+      assertProductionRuntimeConfig(
+        {
+          ...safeProductionConfig,
+          IMAGES_CDN_BASE_URL: 'http://127.0.0.1:3000/local-assets',
+          STRIPE_CHECKOUT_SUCCESS_URL: 'http://localhost:5173/billing/success',
+          STRIPE_CHECKOUT_CANCEL_URL: 'http://localhost:5173/billing/cancel',
+          STRIPE_PORTAL_RETURN_URL: 'http://localhost:5173/billing',
+        },
+        'production',
+      );
+    }).toThrow(
+      /IMAGES_CDN_BASE_URL must use https.*STRIPE_CHECKOUT_SUCCESS_URL must use https.*STRIPE_CHECKOUT_CANCEL_URL must use https.*STRIPE_PORTAL_RETURN_URL must use https/,
+    );
+  });
+
+  it('production では CORS origin に HTTPS の非local hostを要求する', () => {
+    expect(() => {
+      assertProductionRuntimeConfig(
+        {
+          ...safeProductionConfig,
+          CORS_ALLOWED_ORIGINS: 'https://app.lyra.test,http://localhost:5173,not-a-url',
+        },
+        'production',
+      );
+    }).toThrow(/CORS_ALLOWED_ORIGINS contains unsafe production origins/);
+  });
 });

@@ -56,6 +56,13 @@ const STRIPE_KEYS = [
   'STRIPE_PORTAL_RETURN_URL',
 ] as const;
 
+const PRODUCTION_PUBLIC_URL_KEYS = [
+  'IMAGES_CDN_BASE_URL',
+  'STRIPE_CHECKOUT_SUCCESS_URL',
+  'STRIPE_CHECKOUT_CANCEL_URL',
+  'STRIPE_PORTAL_RETURN_URL',
+] as const;
+
 export function assertProductionRuntimeConfig(
   config: RuntimeGuardConfig,
   nodeEnv = process.env.NODE_ENV,
@@ -76,6 +83,10 @@ export function assertProductionRuntimeConfig(
 
   if (productionCorsAllowsWildcard(config.CORS_ALLOWED_ORIGINS)) {
     violations.push('CORS_ALLOWED_ORIGINS must not include * in production');
+  }
+  const unsafeCorsOrigins = findUnsafeProductionCorsOrigins(config.CORS_ALLOWED_ORIGINS);
+  if (unsafeCorsOrigins.length > 0) {
+    violations.push(`CORS_ALLOWED_ORIGINS contains unsafe production origins: ${unsafeCorsOrigins.join(', ')}`);
   }
 
   if (isMissingConfigValue(config.DATABASE_URL)) {
@@ -144,6 +155,13 @@ export function assertProductionRuntimeConfig(
     violations.push(`Stripe config is incomplete: ${missingStripeKeys.join(', ')}`);
   }
 
+  for (const key of PRODUCTION_PUBLIC_URL_KEYS) {
+    const value = config[key];
+    if (value !== undefined && !isSafeProductionHttpsUrl(value)) {
+      violations.push(`${key} must use https and a non-local host in production`);
+    }
+  }
+
   if (violations.length > 0) {
     throw new ConfigurationError(`Production runtime config is unsafe: ${violations.join('; ')}`);
   }
@@ -168,11 +186,21 @@ function productionCorsAllowsWildcard(value: string | undefined): boolean {
     .some((origin) => origin === '*');
 }
 
+function findUnsafeProductionCorsOrigins(value: string | undefined): string[] {
+  if (value === undefined) {
+    return [];
+  }
+
+  return value
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter((origin) => origin.length > 0 && origin !== '*' && !isSafeProductionHttpsUrl(origin));
+}
+
 function isLocalDatabaseUrl(value: string): boolean {
   try {
     const url = new URL(value);
-    const normalizedHostname = url.hostname.replace(/^\[|\]$/gu, '').toLowerCase();
-    return normalizedHostname === 'localhost' || normalizedHostname === '127.0.0.1' || normalizedHostname === '::1';
+    return isLocalHostname(url.hostname);
   } catch {
     const normalizedValue = value.toLowerCase();
     return (
@@ -184,4 +212,18 @@ function isLocalDatabaseUrl(value: string): boolean {
       normalizedValue.includes('host=::1')
     );
   }
+}
+
+function isSafeProductionHttpsUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' && !isLocalHostname(url.hostname);
+  } catch {
+    return false;
+  }
+}
+
+function isLocalHostname(hostname: string): boolean {
+  const normalizedHostname = hostname.replace(/^\[|\]$/gu, '').toLowerCase();
+  return normalizedHostname === 'localhost' || normalizedHostname === '127.0.0.1' || normalizedHostname === '::1';
 }
