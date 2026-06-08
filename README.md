@@ -58,6 +58,17 @@ LOCAL_ASSET_BASE_URL=http://127.0.0.1:3000/local-assets
 
 Without either local asset storage or `SQS_QUEUE_URL_GENERATION`, generation requests fail immediately instead of creating jobs that stay queued forever.
 
+### Production database
+
+AWS production must provide an explicit non-local PostgreSQL URL:
+
+```env
+DATABASE_URL=postgres://lyra:replace-me@lyra-db.example.ap-northeast-1.rds.amazonaws.com:5432/lyra
+```
+
+`NODE_ENV=production` rejects missing database URLs and local hosts such as `localhost`,
+`127.0.0.1`, and `::1`.
+
 ### Production auth
 
 Local defaults use Supabase-compatible HS256 dev tokens. AWS production requires Cognito:

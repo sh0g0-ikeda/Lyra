@@ -3,6 +3,7 @@ import { MAX_PRODUCTION_GENERATION_ACTIVE_JOB_LIMITS } from '../domain/constants
 
 interface RuntimeGuardConfig {
   DEV_AUTH_BYPASS: boolean;
+  DATABASE_URL?: string;
   CORS_ALLOWED_ORIGINS?: string;
   AUTO_RUN_MIGRATIONS?: boolean;
   AUTH_PROVIDER?: 'supabase' | 'cognito';
@@ -75,6 +76,15 @@ export function assertProductionRuntimeConfig(
 
   if (productionCorsAllowsWildcard(config.CORS_ALLOWED_ORIGINS)) {
     violations.push('CORS_ALLOWED_ORIGINS must not include * in production');
+  }
+
+  if (isMissingConfigValue(config.DATABASE_URL)) {
+    violations.push('DATABASE_URL is required');
+  } else {
+    const databaseUrl = config.DATABASE_URL;
+    if (databaseUrl !== undefined && isLocalDatabaseUrl(databaseUrl)) {
+      violations.push('DATABASE_URL must not point to a local database in production');
+    }
   }
 
   if (config.AUTH_PROVIDER !== 'cognito') {
@@ -156,4 +166,22 @@ function productionCorsAllowsWildcard(value: string | undefined): boolean {
     .split(',')
     .map((origin) => origin.trim())
     .some((origin) => origin === '*');
+}
+
+function isLocalDatabaseUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    const normalizedHostname = url.hostname.replace(/^\[|\]$/gu, '').toLowerCase();
+    return normalizedHostname === 'localhost' || normalizedHostname === '127.0.0.1' || normalizedHostname === '::1';
+  } catch {
+    const normalizedValue = value.toLowerCase();
+    return (
+      normalizedValue.includes('@localhost') ||
+      normalizedValue.includes('@127.0.0.1') ||
+      normalizedValue.includes('@[::1]') ||
+      normalizedValue.includes('host=localhost') ||
+      normalizedValue.includes('host=127.0.0.1') ||
+      normalizedValue.includes('host=::1')
+    );
+  }
 }

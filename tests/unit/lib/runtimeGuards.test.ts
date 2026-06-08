@@ -4,6 +4,7 @@ import { assertProductionRuntimeConfig } from '../../../src/lib/runtimeGuards.js
 
 const safeProductionConfig = {
   DEV_AUTH_BYPASS: false,
+  DATABASE_URL: 'postgres://lyra:secret@lyra-db.abc123.ap-northeast-1.rds.amazonaws.com:5432/lyra',
   AUTH_PROVIDER: 'cognito' as const,
   AWS_REGION: 'ap-northeast-1',
   COGNITO_USER_POOL_ID: 'ap-northeast-1_pool',
@@ -123,6 +124,7 @@ describe('assertProductionRuntimeConfig', () => {
       assertProductionRuntimeConfig(
         {
           DEV_AUTH_BYPASS: false,
+          DATABASE_URL: safeProductionConfig.DATABASE_URL,
           AUTH_PROVIDER: 'cognito',
           AWS_REGION: 'ap-northeast-1',
           COGNITO_USER_POOL_ID: 'ap-northeast-1_pool',
@@ -167,6 +169,7 @@ describe('assertProductionRuntimeConfig', () => {
       assertProductionRuntimeConfig(
         {
           DEV_AUTH_BYPASS: false,
+          DATABASE_URL: safeProductionConfig.DATABASE_URL,
           AUTH_PROVIDER: 'cognito',
           AWS_REGION: 'ap-northeast-1',
           COGNITO_USER_POOL_ID: 'ap-northeast-1_pool',
@@ -217,6 +220,7 @@ describe('assertProductionRuntimeConfig', () => {
       assertProductionRuntimeConfig(
         {
           DEV_AUTH_BYPASS: false,
+          DATABASE_URL: safeProductionConfig.DATABASE_URL,
           AUTH_PROVIDER: 'cognito',
           AWS_REGION: 'ap-northeast-1',
           COGNITO_USER_POOL_ID: 'ap-northeast-1_pool',
@@ -245,5 +249,39 @@ describe('assertProductionRuntimeConfig', () => {
         'production',
       );
     }).toThrow(/COGNITO_CLIENT_ID is required.*OPENAI_API_KEY is required.*STRIPE_WEBHOOK_SECRET/);
+  });
+
+  it('production では local database URL を拒否する', () => {
+    expect(() => {
+      assertProductionRuntimeConfig(
+        {
+          ...safeProductionConfig,
+          DATABASE_URL: 'postgres://postgres:postgres@localhost:5432/lyra',
+        },
+        'production',
+      );
+    }).toThrow(/DATABASE_URL must not point to a local database/);
+
+    expect(() => {
+      assertProductionRuntimeConfig(
+        {
+          ...safeProductionConfig,
+          DATABASE_URL: 'postgres://postgres:postgres@127.0.0.1:5432/lyra',
+        },
+        'production',
+      );
+    }).toThrow(/DATABASE_URL must not point to a local database/);
+  });
+
+  it('production では database URL が必須になる', () => {
+    expect(() => {
+      assertProductionRuntimeConfig(
+        {
+          ...safeProductionConfig,
+          DATABASE_URL: undefined,
+        },
+        'production',
+      );
+    }).toThrow(/DATABASE_URL is required/);
   });
 });
