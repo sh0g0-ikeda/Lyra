@@ -1,6 +1,7 @@
 import { SendMessageCommand, SQSClient } from '@aws-sdk/client-sqs';
 import { ConfigurationError } from '../../domain/errors/index.js';
 import type { GenerationJobType } from '../../domain/types/job.js';
+import { toSanitizedAwsErrorMessage } from './AwsErrorMessage.js';
 
 export interface EnqueueGenerationJobInput {
   jobId: string;
@@ -36,7 +37,7 @@ export class SqsGenerationQueue {
       };
     } catch (error) {
       throw new ConfigurationError(
-        error instanceof Error ? error.message : 'Failed to enqueue generation job',
+        toSanitizedAwsErrorMessage(error, 'Failed to enqueue generation job'),
       );
     }
   }

@@ -6,6 +6,7 @@ import { S3StoredImageLoader } from '../../../../src/infrastructure/aws/S3Stored
 class FakeS3Client {
   public calls: GetObjectCommand[] = [];
   public shouldThrow = false;
+  public errorMessage = 's3 unavailable';
   public contentType: string | undefined = 'image/png';
   public body = {
     async transformToByteArray(): Promise<Uint8Array> {
@@ -17,7 +18,7 @@ class FakeS3Client {
     this.calls.push(command);
 
     if (this.shouldThrow) {
-      throw new Error('s3 unavailable');
+      throw new Error(this.errorMessage);
     }
 
     return {
@@ -63,5 +64,25 @@ describe('S3StoredImageLoader', () => {
     await expect(
       loader.loadByS3Key('saved/user-1/entities/entity-1/ref_1.png'),
     ).rejects.toEqual(new ConfigurationError('Unsupported stored image content type: image/gif'));
+  });
+
+  it('S3 読込失敗時の外部エラー文は機密値を伏せる', async () => {
+    const client = new FakeS3Client();
+    client.shouldThrow = true;
+    client.errorMessage = `s3 failed Authorization: Bearer sk-test-secret ${'x'.repeat(600)}`;
+    const loader = new S3StoredImageLoader(client, 'lyra-images');
+
+    await expect(
+      loader.loadByS3Key('saved/user-1/entities/entity-1/ref_1.png'),
+    ).rejects.toMatchObject({
+      code: 'CONFIGURATION_ERROR',
+      message: expect.stringContaining('Bearer [redacted]'),
+    });
+
+    await expect(
+      loader.loadByS3Key('saved/user-1/entities/entity-1/ref_2.png'),
+    ).rejects.not.toMatchObject({
+      message: expect.stringContaining('sk-test-secret'),
+    });
   });
 });

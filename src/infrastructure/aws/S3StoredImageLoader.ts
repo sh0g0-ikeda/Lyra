@@ -1,5 +1,6 @@
 import { GetObjectCommand } from '@aws-sdk/client-s3';
 import { ConfigurationError } from '../../domain/errors/index.js';
+import { toSanitizedAwsErrorMessage } from './AwsErrorMessage.js';
 
 export interface LoadedStoredImage {
   imageData: Buffer;
@@ -60,7 +61,7 @@ export class S3StoredImageLoader implements StoredImageLoaderPort {
         throw error;
       }
 
-      throw new ConfigurationError(error instanceof Error ? error.message : 'Failed to load stored image');
+      throw new ConfigurationError(toSanitizedAwsErrorMessage(error, 'Failed to load stored image'));
     }
   }
 }

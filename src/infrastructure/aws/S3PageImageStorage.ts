@@ -5,6 +5,7 @@ import type {
   StorePageImageInput,
   StoredPageImage,
 } from '../../services/page/PageGenerationWorkerService.js';
+import { toSanitizedAwsErrorMessage } from './AwsErrorMessage.js';
 
 export interface S3PageImageStorageOptions {
   bucketName: string;
@@ -41,7 +42,7 @@ export class S3PageImageStorage implements PageImageStoragePort {
         }),
       );
     } catch (error) {
-      throw new ConfigurationError(error instanceof Error ? error.message : 'Failed to store page image');
+      throw new ConfigurationError(toSanitizedAwsErrorMessage(error, 'Failed to store page image'));
     }
 
     return {

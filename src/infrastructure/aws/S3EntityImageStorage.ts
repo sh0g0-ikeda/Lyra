@@ -1,6 +1,7 @@
 import { CopyObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import { randomUUID } from 'node:crypto';
 import { ConfigurationError } from '../../domain/errors/index.js';
+import { toSanitizedAwsErrorMessage } from './AwsErrorMessage.js';
 
 export interface StoredEntityImage {
   s3Key: string;
@@ -86,7 +87,7 @@ export class S3EntityImageStorage implements EntityImageStoragePort {
       );
     } catch (error) {
       throw new ConfigurationError(
-        error instanceof Error ? error.message : 'Failed to finalize entity reference image',
+        toSanitizedAwsErrorMessage(error, 'Failed to finalize entity reference image'),
       );
     }
 
@@ -114,7 +115,7 @@ export class S3EntityImageStorage implements EntityImageStoragePort {
       );
     } catch (error) {
       throw new ConfigurationError(
-        error instanceof Error ? error.message : 'Failed to store entity image',
+        toSanitizedAwsErrorMessage(error, 'Failed to store entity image'),
       );
     }
 

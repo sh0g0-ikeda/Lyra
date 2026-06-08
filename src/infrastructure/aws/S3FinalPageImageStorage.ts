@@ -1,6 +1,7 @@
 import { CopyObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import { ConfigurationError } from '../../domain/errors/index.js';
 import type { GeneratedPageImage } from '../../domain/types/page.js';
+import { toSanitizedAwsErrorMessage } from './AwsErrorMessage.js';
 
 export interface FinalizePageImageInput {
   userId: string;
@@ -56,7 +57,7 @@ export class S3FinalPageImageStorage implements FinalPageImageStoragePort {
         }),
       );
     } catch (error) {
-      throw new ConfigurationError(error instanceof Error ? error.message : 'Failed to finalize page image');
+      throw new ConfigurationError(toSanitizedAwsErrorMessage(error, 'Failed to finalize page image'));
     }
 
     return {
@@ -89,7 +90,7 @@ export class S3FinalPageImageStorage implements FinalPageImageStoragePort {
       );
     } catch (error) {
       throw new ConfigurationError(
-        error instanceof Error ? error.message : 'Failed to store final page image',
+        toSanitizedAwsErrorMessage(error, 'Failed to store final page image'),
       );
     }
 

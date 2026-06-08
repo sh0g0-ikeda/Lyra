@@ -8,6 +8,7 @@ import type {
   ImageStorageMaintenancePort,
   StoredImageObject,
 } from '../../services/storage/ImageStoragePruningService.js';
+import { toSanitizedAwsErrorMessage } from './AwsErrorMessage.js';
 
 type S3MaintenanceCommand = ListObjectsV2Command | DeleteObjectCommand;
 
@@ -53,7 +54,7 @@ export class S3ImageStorageMaintenance implements ImageStorageMaintenancePort {
           }),
         ) as ListObjectsResponse;
       } catch (error) {
-        throw new ConfigurationError(error instanceof Error ? error.message : 'Failed to list image objects');
+        throw new ConfigurationError(toSanitizedAwsErrorMessage(error, 'Failed to list image objects'));
       }
 
       for (const item of response.Contents ?? []) {
@@ -90,7 +91,7 @@ export class S3ImageStorageMaintenance implements ImageStorageMaintenancePort {
         }),
       );
     } catch (error) {
-      throw new ConfigurationError(error instanceof Error ? error.message : 'Failed to delete image object');
+      throw new ConfigurationError(toSanitizedAwsErrorMessage(error, 'Failed to delete image object'));
     }
   }
 }

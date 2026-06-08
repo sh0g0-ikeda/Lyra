@@ -1,12 +1,18 @@
 import { CopyObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import { describe, expect, it } from 'vitest';
+import { ConfigurationError } from '../../../../src/domain/errors/index.js';
 import { S3EntityImageStorage } from '../../../../src/infrastructure/aws/S3EntityImageStorage.js';
 
 class FakeS3Client {
   public commands: Array<PutObjectCommand | CopyObjectCommand> = [];
+  public error: Error | null = null;
 
   public async send(command: PutObjectCommand | CopyObjectCommand): Promise<unknown> {
     this.commands.push(command);
+    if (this.error !== null) {
+      throw this.error;
+    }
+
     return {};
   }
 }
@@ -85,5 +91,41 @@ describe('S3EntityImageStorage', () => {
     ).rejects.toMatchObject({ code: 'CONFIGURATION_ERROR' });
 
     expect(client.commands).toHaveLength(0);
+  });
+
+  it('S3 保存失敗時の外部エラー文は機密値を伏せる', async () => {
+    const client = new FakeS3Client();
+    client.error = new Error(`s3 failed Authorization: Bearer sk-test-secret ${'x'.repeat(600)}`);
+    const storage = new S3EntityImageStorage(client, {
+      bucketName: 'bucket',
+      cdnBaseUrl: 'https://cdn.lyra.test',
+    });
+
+    await expect(
+      storage.storeGeneratedCandidate({
+        userId: 'user-1',
+        entityId: 'entity-1',
+        jobId: 'job-1',
+        candidateIndex: 0,
+        imageData: Buffer.from('abc'),
+        mimeType: 'image/png',
+      }),
+    ).rejects.toMatchObject({
+      code: 'CONFIGURATION_ERROR',
+      message: expect.stringContaining('Bearer [redacted]'),
+    });
+
+    await expect(
+      storage.storeGeneratedCandidate({
+        userId: 'user-1',
+        entityId: 'entity-1',
+        jobId: 'job-2',
+        candidateIndex: 0,
+        imageData: Buffer.from('abc'),
+        mimeType: 'image/png',
+      }),
+    ).rejects.not.toEqual(
+      new ConfigurationError(`s3 failed Authorization: Bearer sk-test-secret ${'x'.repeat(600)}`),
+    );
   });
 });
