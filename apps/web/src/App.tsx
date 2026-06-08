@@ -1,5 +1,4 @@
 ﻿import { createContext, useContext, useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent, type ReactNode } from 'react';
-import { jsPDF } from 'jspdf';
 import {
   BookOpen,
   Bot,
@@ -35,7 +34,6 @@ import {
   type CognitoAuthConfig,
   type CognitoSession,
 } from './lib/cognitoAuth';
-import { createSupabaseBrowserClient } from './lib/supabase';
 import type {
   BalloonRecord,
   ChapterRecord,
@@ -966,7 +964,7 @@ const selectedEpisodeStorageKey = 'lyra:web:selected-episode';
 const selectedPageStorageKey = 'lyra:web:selected-page';
 const cognitoRefreshSkewMs = 120_000;
 const maxBrowserTimeoutMs = 2_147_483_647;
-const supabase = createSupabaseBrowserClient();
+const supabaseAuthConfigured = hasSupabaseAuthConfig();
 const cognitoAuthConfig = getCognitoAuthConfig(
   {
     VITE_COGNITO_CLIENT_ID: import.meta.env.VITE_COGNITO_CLIENT_ID,
@@ -999,6 +997,7 @@ export default function App() {
     cognitoAuthConfig === null ? null : readStoredCognitoSession(window.sessionStorage),
   );
   const [cognitoAuthError, setCognitoAuthError] = useState<string | null>(null);
+  const [supabaseClient, setSupabaseClient] = useState<SupabaseClient | null>(null);
   const [supabaseSession, setSupabaseSession] = useState<Session | null>(null);
   const [pendingAuth, setPendingAuth] = useState(true);
 
@@ -1031,16 +1030,37 @@ export default function App() {
         }
       }
 
-      if (supabase === null) {
+      if (!supabaseAuthConfigured) {
         setPendingAuth(false);
         return;
       }
 
-      const { data } = await supabase.auth.getSession();
-      if (active) {
-        setSupabaseSession(data.session);
-        setPendingAuth(false);
+      const { createSupabaseBrowserClient } = await import('./lib/supabase');
+      const loadedSupabaseClient = createSupabaseBrowserClient();
+      if (!active) {
+        return;
       }
+
+      setSupabaseClient(loadedSupabaseClient);
+      if (loadedSupabaseClient === null) {
+        setPendingAuth(false);
+        return;
+      }
+
+      const { data } = await loadedSupabaseClient.auth.getSession();
+      if (!active) {
+        return;
+      }
+      setSupabaseSession(data.session);
+      setPendingAuth(false);
+
+      const {
+        data: { subscription },
+      } = loadedSupabaseClient.auth.onAuthStateChange((_event, session) => {
+        setSupabaseSession(session);
+        setPendingAuth(false);
+      });
+      unsubscribe = () => subscription.unsubscribe();
     };
 
     void initializeAuth().catch((error: unknown) => {
@@ -1049,16 +1069,6 @@ export default function App() {
         setPendingAuth(false);
       }
     });
-
-    if (supabase !== null) {
-      const {
-        data: { subscription },
-      } = supabase.auth.onAuthStateChange((_event, session) => {
-        setSupabaseSession(session);
-        setPendingAuth(false);
-      });
-      unsubscribe = () => subscription.unsubscribe();
-    }
 
     return () => {
       active = false;
@@ -1132,7 +1142,7 @@ export default function App() {
           }
         }}
         onManualTokenChange={setManualToken}
-        supabaseClient={supabase}
+        supabaseClient={supabaseClient}
       />
     );
   }
@@ -1149,13 +1159,13 @@ export default function App() {
     <StudioShell
       email={email}
       token={accessToken}
-      supabaseClient={supabase}
+      supabaseClient={supabaseClient}
       onLogout={async () => {
         const hadCognitoSession = cognitoSession !== null;
         clearCognitoSession(window.sessionStorage);
         setCognitoSession(null);
-        if (supabase !== null) {
-          await supabase.auth.signOut();
+        if (supabaseClient !== null) {
+          await supabaseClient.auth.signOut();
         }
         setManualToken('');
         if (hadCognitoSession && cognitoAuthConfig !== null) {
@@ -1169,6 +1179,15 @@ export default function App() {
 function getCognitoRefreshDelay(expiresAt: number, now: number): number {
   const delayMs = expiresAt - now - cognitoRefreshSkewMs;
   return Math.min(Math.max(delayMs, 0), maxBrowserTimeoutMs);
+}
+
+function hasSupabaseAuthConfig(): boolean {
+  return (
+    typeof import.meta.env.VITE_SUPABASE_URL === 'string' &&
+    import.meta.env.VITE_SUPABASE_URL.length > 0 &&
+    typeof import.meta.env.VITE_SUPABASE_ANON_KEY === 'string' &&
+    import.meta.env.VITE_SUPABASE_ANON_KEY.length > 0
+  );
 }
 
 function AuthScreen(props: {
@@ -1903,6 +1922,7 @@ function StudioShell(props: {
     const baseName = sanitizeFilename(exportFilename.trim().length > 0 ? exportFilename : 'lyra-pages');
 
     if (exportFormat === 'pdf') {
+      const { jsPDF } = await import('jspdf');
       const assets = await Promise.all(
         targetPages.map(async (page) => {
           const response = await api.exportPageImage(page.id);
