@@ -245,6 +245,7 @@ describe('PostgresGenerationJobRepository', () => {
     expect(persistedMessage).toContain('Bearer [redacted]');
     expect(persistedMessage).not.toContain(fakeApiKey);
     expect(persistedMessage.length).toBeLessThanOrEqual(300);
+    expect(client.queries[0]).toContain("status IN ('queued', 'processing')");
   });
 
   it('dry-runでは期限切れの完了済みジョブを削除せず候補として返す', async () => {

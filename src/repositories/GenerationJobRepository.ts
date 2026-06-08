@@ -244,6 +244,7 @@ export class PostgresGenerationJobRepository implements GenerationJobRepository 
           error_message = $2,
           completed_at = NOW()
       WHERE id = $1
+        AND status IN ('queued', 'processing')
       RETURNING *
       `,
       [jobId, persistedErrorMessage],
