@@ -47,6 +47,7 @@ import { PostgresPanelRepository } from './repositories/PanelRepository.js';
 import { PostgresPageGenerationExecutionRepository } from './repositories/PageGenerationExecutionRepository.js';
 import { PostgresPageGenerationRecoveryRepository } from './repositories/PageGenerationRecoveryRepository.js';
 import { PostgresPageRepository } from './repositories/PageRepository.js';
+import { PostgresRateLimitStore } from './repositories/RateLimitStore.js';
 import { PostgresSceneRepository } from './repositories/SceneRepository.js';
 import { PostgresStoryRepository } from './repositories/StoryRepository.js';
 import { PostgresUserRepository } from './repositories/UserRepository.js';
@@ -499,7 +500,7 @@ function resolveDependencies(
   const userProvisioningService =
     dependencies.userProvisioningService ??
     new UserProvisioningService(new PostgresUserRepository(db), creditService);
-  const rateLimitStore = dependencies.rateLimitStore ?? new InMemoryRateLimitStore();
+  const rateLimitStore = dependencies.rateLimitStore ?? resolveRateLimitStore();
 
   return {
     balloonService,
@@ -532,6 +533,14 @@ function resolveDependencies(
     userProvisioningService,
     rateLimitStore,
   };
+}
+
+function resolveRateLimitStore(): RateLimitStore {
+  if (process.env.NODE_ENV === 'test') {
+    return new InMemoryRateLimitStore();
+  }
+
+  return new PostgresRateLimitStore(db);
 }
 
 function resolveFinalPageImageStorage(): FinalPageImageStoragePort {
