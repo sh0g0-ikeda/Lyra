@@ -23,6 +23,7 @@ describe('createCorsMiddleware', () => {
     expect(response.status).toBe(204);
     expect(response.headers.get('Access-Control-Allow-Origin')).toBe('https://app.lyra.test');
     expect(response.headers.get('Access-Control-Allow-Headers')).toContain('authorization');
+    expect(response.headers.get('Access-Control-Expose-Headers')).toContain('x-request-id');
     expect(response.headers.get('Vary')).toBe('Origin');
   });
 

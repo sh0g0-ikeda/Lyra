@@ -3,6 +3,7 @@ import type { AppEnv } from '../types/app.js';
 
 const API_CORS_METHODS = 'GET, POST, PUT, PATCH, DELETE, OPTIONS';
 const DEFAULT_API_CORS_HEADERS = 'authorization, content-type';
+const API_CORS_EXPOSE_HEADERS = 'x-request-id, x-ratelimit-limit, x-ratelimit-remaining, x-ratelimit-reset, retry-after';
 const API_CORS_MAX_AGE_SECONDS = '600';
 
 /**
@@ -60,6 +61,7 @@ function applyCorsHeaders(headers: Headers, origin: string, requestedHeaders: st
   headers.set('Access-Control-Allow-Origin', origin);
   headers.set('Access-Control-Allow-Methods', API_CORS_METHODS);
   headers.set('Access-Control-Allow-Headers', requestedHeaders ?? DEFAULT_API_CORS_HEADERS);
+  headers.set('Access-Control-Expose-Headers', API_CORS_EXPOSE_HEADERS);
   headers.set('Access-Control-Max-Age', API_CORS_MAX_AGE_SECONDS);
   headers.set('Vary', appendVary(headers.get('Vary'), 'Origin'));
 }
