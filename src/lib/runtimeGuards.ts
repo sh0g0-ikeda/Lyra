@@ -1,4 +1,5 @@
 import { ConfigurationError } from '../domain/errors/index.js';
+import { MAX_PRODUCTION_GENERATION_ACTIVE_JOB_LIMITS } from '../domain/constants/generation.js';
 
 interface RuntimeGuardConfig {
   DEV_AUTH_BYPASS: boolean;
@@ -16,6 +17,8 @@ interface RuntimeGuardConfig {
   SQS_QUEUE_URL_GENERATION?: string;
   S3_BUCKET_IMAGES?: string;
   IMAGES_CDN_BASE_URL?: string;
+  GENERATION_USER_ACTIVE_JOB_LIMIT?: number;
+  GENERATION_GLOBAL_ACTIVE_JOB_LIMIT?: number;
   STRIPE_SECRET_KEY?: string;
   STRIPE_WEBHOOK_SECRET?: string;
   STRIPE_PRICE_STANDARD_MONTHLY?: string;
@@ -93,6 +96,24 @@ export function assertProductionRuntimeConfig(
     if (isMissingConfigValue(config[key])) {
       violations.push(`${key} is required`);
     }
+  }
+
+  if (
+    config.GENERATION_USER_ACTIVE_JOB_LIMIT !== undefined &&
+    config.GENERATION_USER_ACTIVE_JOB_LIMIT > MAX_PRODUCTION_GENERATION_ACTIVE_JOB_LIMITS.PER_USER
+  ) {
+    violations.push(
+      `GENERATION_USER_ACTIVE_JOB_LIMIT must be <= ${MAX_PRODUCTION_GENERATION_ACTIVE_JOB_LIMITS.PER_USER}`,
+    );
+  }
+
+  if (
+    config.GENERATION_GLOBAL_ACTIVE_JOB_LIMIT !== undefined &&
+    config.GENERATION_GLOBAL_ACTIVE_JOB_LIMIT > MAX_PRODUCTION_GENERATION_ACTIVE_JOB_LIMITS.GLOBAL
+  ) {
+    violations.push(
+      `GENERATION_GLOBAL_ACTIVE_JOB_LIMIT must be <= ${MAX_PRODUCTION_GENERATION_ACTIVE_JOB_LIMITS.GLOBAL}`,
+    );
   }
 
   const missingStripeKeys = STRIPE_KEYS.filter((key) => isMissingConfigValue(config[key]));

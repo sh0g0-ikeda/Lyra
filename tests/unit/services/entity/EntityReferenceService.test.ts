@@ -321,7 +321,7 @@ describe('EntityReferenceService', () => {
       userId: 'user-1',
       jobType: 'entity_generate',
       creditCost: 1,
-      capacityLimits: { perUser: 2, global: 100 },
+      capacityLimits: { perUser: 2, global: 10 },
       params: {
         entity_id: 'entity-1',
         entity_type: 'character',
@@ -375,7 +375,7 @@ describe('EntityReferenceService', () => {
     const service = buildService({
       generationJobRepository: jobs,
       creditService,
-      capacityLimits: { perUser: 2, global: 100 },
+      capacityLimits: { perUser: 2, global: 10 },
     });
 
     await expect(service.enqueueReferenceGeneration('user-1', 'entity-1')).rejects.toMatchObject({
@@ -389,7 +389,7 @@ describe('EntityReferenceService', () => {
     const creditService = new FakeCreditService();
     const service = buildService({
       creditService,
-      capacityLimits: { perUser: 2, global: 100 },
+      capacityLimits: { perUser: 2, global: 10 },
       generationEnabled: false,
     });
 

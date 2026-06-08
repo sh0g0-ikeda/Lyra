@@ -109,6 +109,21 @@ describe('assertProductionRuntimeConfig', () => {
     }).toThrow(/OPENAI_API_KEY is required/);
   });
 
+  it('production では過大な生成同時実行上限を拒否する', () => {
+    expect(() => {
+      assertProductionRuntimeConfig(
+        {
+          ...safeProductionConfig,
+          GENERATION_USER_ACTIVE_JOB_LIMIT: 6,
+          GENERATION_GLOBAL_ACTIVE_JOB_LIMIT: 51,
+        },
+        'production',
+      );
+    }).toThrow(
+      /GENERATION_USER_ACTIVE_JOB_LIMIT must be <= 5.*GENERATION_GLOBAL_ACTIVE_JOB_LIMIT must be <= 50/,
+    );
+  });
+
   it('production では Stripe 設定一式が必須になる', () => {
     expect(() => {
       assertProductionRuntimeConfig(

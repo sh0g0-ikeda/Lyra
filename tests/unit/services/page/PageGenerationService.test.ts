@@ -286,7 +286,7 @@ describe('PageGenerationService', () => {
       jobId: result.jobId,
     });
     expect(jobRepository.created?.id).toEqual(expect.any(String));
-    expect(jobRepository.created?.capacityLimits).toEqual({ perUser: 2, global: 100 });
+    expect(jobRepository.created?.capacityLimits).toEqual({ perUser: 2, global: 10 });
     expect(jobRepository.created?.params).toMatchObject({
       page_id: pageId,
       request_kind: 'initial',
@@ -452,7 +452,7 @@ describe('PageGenerationService', () => {
       new FakeQueue(),
       new ModeSelector(),
       undefined,
-      { perUser: 2, global: 100 },
+      { perUser: 2, global: 10 },
     );
 
     await expect(service.enqueuePageGeneration(userId, pageId)).rejects.toMatchObject({
@@ -472,7 +472,7 @@ describe('PageGenerationService', () => {
       new FakeQueue(),
       new ModeSelector(),
       undefined,
-      { perUser: 2, global: 100 },
+      { perUser: 2, global: 10 },
       false,
     );
 
@@ -485,7 +485,7 @@ describe('PageGenerationService', () => {
 
   it('global active generation limit に達している場合はクレジット消費前にCONFLICTになる', async () => {
     const jobRepository = new FakeGenerationJobRepository();
-    jobRepository.activeGlobally = 100;
+    jobRepository.activeGlobally = 10;
     const creditService = new FakeCreditService();
     const service = new PageGenerationService(
       new FakePageRepository(),
@@ -495,7 +495,7 @@ describe('PageGenerationService', () => {
       new FakeQueue(),
       new ModeSelector(),
       undefined,
-      { perUser: 2, global: 100 },
+      { perUser: 2, global: 10 },
     );
 
     await expect(service.enqueuePageGeneration(userId, pageId)).rejects.toMatchObject({

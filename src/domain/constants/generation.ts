@@ -22,7 +22,12 @@ export const IMAGE_GENERATION_OPENAI_MAX_RETRIES = 1;
 
 export const DEFAULT_GENERATION_ACTIVE_JOB_LIMITS = {
   PER_USER: 2,
-  GLOBAL: 100,
+  GLOBAL: 10,
+} as const;
+
+export const MAX_PRODUCTION_GENERATION_ACTIVE_JOB_LIMITS = {
+  PER_USER: 5,
+  GLOBAL: 50,
 } as const;
 
 export const PAGE_PROMPT_COMPILER_OPENAI_MODEL = 'gpt-5.4-mini';
