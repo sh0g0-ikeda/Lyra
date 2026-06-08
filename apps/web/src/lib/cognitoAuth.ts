@@ -221,6 +221,34 @@ export async function completeCognitoRedirectIfPresent(
   }
 }
 
+export async function refreshCognitoSession(
+  config: CognitoAuthConfig,
+  session: CognitoSession,
+  fetcher: TokenFetcher = getGlobalFetch(),
+  now = Date.now(),
+): Promise<CognitoSession | null> {
+  if (session.refreshToken === null || session.refreshToken.length === 0) {
+    return null;
+  }
+
+  const body = new URLSearchParams({
+    grant_type: 'refresh_token',
+    client_id: config.clientId,
+    refresh_token: session.refreshToken,
+  });
+  const response = await fetcher(`${config.domain}/oauth2/token`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: body.toString(),
+  });
+  if (!response.ok) {
+    throw new Error(`Cognito token refresh failed (${response.status})`);
+  }
+
+  const payload = (await response.json()) as CognitoTokenPayload;
+  return parseTokenPayload(payload, now, session.refreshToken);
+}
+
 export function buildCognitoAuthorizeUrl(
   config: CognitoAuthConfig,
   state: string,
@@ -268,6 +296,14 @@ async function exchangeCodeForTokens(
   }
 
   const payload = (await response.json()) as CognitoTokenPayload;
+  return parseTokenPayload(payload, now, null);
+}
+
+function parseTokenPayload(
+  payload: CognitoTokenPayload,
+  now: number,
+  existingRefreshToken: string | null,
+): CognitoSession {
   if (typeof payload.access_token !== 'string') {
     throw new Error('Cognito token response did not include an access token');
   }
@@ -278,7 +314,7 @@ async function exchangeCodeForTokens(
   return {
     accessToken: payload.access_token,
     idToken: typeof payload.id_token === 'string' ? payload.id_token : null,
-    refreshToken: typeof payload.refresh_token === 'string' ? payload.refresh_token : null,
+    refreshToken: typeof payload.refresh_token === 'string' ? payload.refresh_token : existingRefreshToken,
     expiresAt: now + expiresIn * 1000,
   };
 }

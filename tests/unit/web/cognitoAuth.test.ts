@@ -5,6 +5,7 @@ import {
   completeCognitoRedirectIfPresent,
   getCognitoAuthConfig,
   readStoredCognitoSession,
+  refreshCognitoSession,
 } from '../../../apps/web/src/lib/cognitoAuth.js';
 
 class FakeStorage {
@@ -171,5 +172,49 @@ describe('cognitoAuth', () => {
     expect(storage.getItem('lyra:web:cognito-session')).toContain('access-token');
     expect(storage.getItem('lyra:web:cognito-pkce')).toBeNull();
     expect(replacedUrls).toEqual(['/']);
+  });
+
+  it('refresh token で access token を更新し既存 refresh token を保持する', async () => {
+    const config = {
+      domain: 'https://example.auth.ap-northeast-1.amazoncognito.com',
+      clientId: 'client-1',
+      redirectUri: 'https://app.example.com',
+      logoutUri: 'https://app.example.com',
+      scopes: ['openid'],
+    };
+
+    const refreshed = await refreshCognitoSession(
+      config,
+      {
+        accessToken: 'old-access-token',
+        idToken: 'old-id-token',
+        refreshToken: 'refresh-token',
+        expiresAt: 100_000,
+      },
+      async (_url, init) => {
+        expect(init.body).toContain('grant_type=refresh_token');
+        expect(init.body).toContain('refresh_token=refresh-token');
+        expect(init.body).toContain('client_id=client-1');
+        return {
+          ok: true,
+          status: 200,
+          async json() {
+            return {
+              access_token: 'new-access-token',
+              id_token: 'new-id-token',
+              expires_in: 1800,
+            };
+          },
+        };
+      },
+      10_000,
+    );
+
+    expect(refreshed).toEqual({
+      accessToken: 'new-access-token',
+      idToken: 'new-id-token',
+      refreshToken: 'refresh-token',
+      expiresAt: 1_810_000,
+    });
   });
 });

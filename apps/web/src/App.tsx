@@ -29,6 +29,8 @@ import {
   completeCognitoRedirectIfPresent,
   getCognitoAuthConfig,
   readStoredCognitoSession,
+  refreshCognitoSession,
+  storeCognitoSession,
   type CognitoAuthConfig,
   type CognitoSession,
 } from './lib/cognitoAuth';
@@ -961,6 +963,8 @@ const selectedWorkStorageKey = 'lyra:web:selected-work';
 const selectedChapterStorageKey = 'lyra:web:selected-chapter';
 const selectedEpisodeStorageKey = 'lyra:web:selected-episode';
 const selectedPageStorageKey = 'lyra:web:selected-page';
+const cognitoRefreshSkewMs = 120_000;
+const maxBrowserTimeoutMs = 2_147_483_647;
 const supabase = createSupabaseBrowserClient();
 const cognitoAuthConfig = getCognitoAuthConfig(
   {
@@ -1057,6 +1061,46 @@ export default function App() {
     };
   }, []);
 
+  useEffect(() => {
+    if (devAuthBypass !== null || cognitoAuthConfig === null || cognitoSession === null) {
+      return;
+    }
+
+    let active = true;
+    const refreshDelayMs = getCognitoRefreshDelay(cognitoSession.expiresAt, Date.now());
+    const timeoutId = window.setTimeout(() => {
+      void refreshCognitoSession(cognitoAuthConfig, cognitoSession)
+        .then((nextSession) => {
+          if (!active) {
+            return;
+          }
+          if (nextSession === null) {
+            clearCognitoSession(window.sessionStorage);
+            setCognitoSession(null);
+            setCognitoAuthError('Cognito session expired. Please sign in again.');
+            return;
+          }
+
+          storeCognitoSession(window.sessionStorage, nextSession);
+          setCognitoSession(nextSession);
+          setCognitoAuthError(null);
+        })
+        .catch((error: unknown) => {
+          if (!active) {
+            return;
+          }
+          clearCognitoSession(window.sessionStorage);
+          setCognitoSession(null);
+          setCognitoAuthError(toMessage(error));
+        });
+    }, refreshDelayMs);
+
+    return () => {
+      active = false;
+      window.clearTimeout(timeoutId);
+    };
+  }, [cognitoSession]);
+
   if (pendingAuth) {
     return (
       <div className="screen-center">
@@ -1112,6 +1156,11 @@ export default function App() {
       }}
     />
   );
+}
+
+function getCognitoRefreshDelay(expiresAt: number, now: number): number {
+  const delayMs = expiresAt - now - cognitoRefreshSkewMs;
+  return Math.min(Math.max(delayMs, 0), maxBrowserTimeoutMs);
 }
 
 function AuthScreen(props: {
