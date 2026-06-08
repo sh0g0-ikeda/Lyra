@@ -1,5 +1,11 @@
 import type { MiddlewareHandler } from 'hono';
-import { RATE_LIMIT_RULES, PAGE_GENERATION_ROUTE_PATTERN, STORY_ROUTE_PREFIXES, type RateLimitBucket } from '../domain/constants/rateLimit.js';
+import {
+  ENTITY_GENERATION_ROUTE_PATTERN,
+  PAGE_GENERATION_ROUTE_PATTERN,
+  RATE_LIMIT_RULES,
+  STORY_ROUTE_PREFIXES,
+  type RateLimitBucket,
+} from '../domain/constants/rateLimit.js';
 import { RateLimitError } from '../domain/errors/index.js';
 import type { AppEnv } from '../types/app.js';
 
@@ -82,7 +88,7 @@ export function createRateLimitMiddleware(store: RateLimitStore): MiddlewareHand
 }
 
 function classifyRateLimitBucket(path: string): RateLimitBucket {
-  if (PAGE_GENERATION_ROUTE_PATTERN.test(path)) {
+  if (PAGE_GENERATION_ROUTE_PATTERN.test(path) || ENTITY_GENERATION_ROUTE_PATTERN.test(path)) {
     return 'generation';
   }
 
