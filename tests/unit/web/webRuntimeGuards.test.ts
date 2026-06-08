@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { assertSafeWebRuntimeConfig } from '../../../apps/web/src/lib/webRuntimeGuards.js';
+import {
+  assertSafeWebRuntimeConfig,
+  shouldRequireStrictWebProductionConfig,
+} from '../../../apps/web/src/lib/webRuntimeGuards.js';
 
 describe('assertSafeWebRuntimeConfig', () => {
   it('development では dev auth bypass を許可する', () => {
@@ -87,5 +90,36 @@ describe('assertSafeWebRuntimeConfig', () => {
         VITE_COGNITO_API_TOKEN_USE: 'refresh',
       });
     }).toThrow(/VITE_COGNITO_API_TOKEN_USE must be access or id/);
+  });
+
+  it('production build check では Hosted UI 設定の必須化だけを外せる', () => {
+    expect(() => {
+      assertSafeWebRuntimeConfig(
+        {
+          MODE: 'production',
+          VITE_SUPABASE_URL: 'https://example.supabase.co',
+          VITE_SUPABASE_ANON_KEY: 'anon-key',
+        },
+        { requireProductionHostedAuth: false },
+      );
+    }).not.toThrow();
+  });
+
+  it('production build check でも dev auth bypass は拒否する', () => {
+    expect(() => {
+      assertSafeWebRuntimeConfig(
+        {
+          MODE: 'production',
+          VITE_DEV_AUTH_BYPASS: 'true',
+        },
+        { requireProductionHostedAuth: false },
+      );
+    }).toThrow(/VITE_DEV_AUTH_BYPASS must be disabled/);
+  });
+
+  it('strict production config は explicit flag があるときだけ強制する', () => {
+    expect(shouldRequireStrictWebProductionConfig({ LYRA_STRICT_WEB_PRODUCTION_CONFIG: 'true' })).toBe(true);
+    expect(shouldRequireStrictWebProductionConfig({ LYRA_STRICT_WEB_PRODUCTION_CONFIG: 'false' })).toBe(false);
+    expect(shouldRequireStrictWebProductionConfig({})).toBe(false);
   });
 });

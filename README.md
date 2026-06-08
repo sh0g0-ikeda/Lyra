@@ -83,7 +83,7 @@ VITE_COGNITO_SCOPES=openid email profile
 VITE_COGNITO_API_TOKEN_USE=id
 ```
 
-In production web builds, Hosted UI configuration is required and manual bearer token authentication is
+In the production browser runtime, Hosted UI configuration is required and manual bearer token authentication is
 disabled. When Cognito is configured, `VITE_COGNITO_SCOPES` is required. Keep
 `VITE_COGNITO_API_TOKEN_USE` in sync with backend `COGNITO_TOKEN_USE`; the default and recommended
 setting is `id`. If you switch both sides to `access`, include the API scope in
@@ -93,6 +93,17 @@ rejected in production because the API production guard requires Cognito tokens.
 
 `VITE_DEV_AUTH_BYPASS=true` is for local development only. Production web builds force file-based
 dev bypass off, and explicit production bypass is rejected.
+
+`bun run web:build` is a compile check and can run on a developer machine that still has local auth
+settings in `apps/web/.env`. Deployment jobs should use the stricter release gate with production
+Cognito environment variables:
+
+```powershell
+bun run web:build:deploy
+```
+
+That command sets `LYRA_STRICT_WEB_PRODUCTION_CONFIG=true` and fails the build if Cognito Hosted UI
+is missing or Supabase hosted auth settings are present.
 
 ### Production billing
 
@@ -179,6 +190,8 @@ bun run web:build
 ```
 
 `apps/web/e2e` is intentionally separate because it needs a running app and browser runtime.
+Deployment jobs that publish the web app should additionally run `bun run web:build:deploy` with the
+production Cognito environment present.
 
 ### Admin credit refund
 

@@ -9,6 +9,7 @@
     "start": "node dist/index.js",
     "web:dev": "bun run --cwd apps/web dev",
     "web:build": "bun run --cwd apps/web build",
+    "web:build:deploy": "tsx scripts/buildWebForDeploy.ts",
     "web:lint": "bun run --cwd apps/web lint",
     "web:e2e": "bun run --cwd apps/web e2e",
     "db:up": "docker compose up -d postgres",

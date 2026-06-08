@@ -1,6 +1,7 @@
 export interface WebRuntimeEnv {
   MODE?: string;
   PROD?: boolean;
+  LYRA_STRICT_WEB_PRODUCTION_CONFIG?: string;
   VITE_DEV_AUTH_BYPASS?: string;
   VITE_COGNITO_DOMAIN?: string;
   VITE_COGNITO_CLIENT_ID?: string;
@@ -10,12 +11,24 @@ export interface WebRuntimeEnv {
   VITE_SUPABASE_ANON_KEY?: string;
 }
 
-export function assertSafeWebRuntimeConfig(env: WebRuntimeEnv): void {
+export interface WebRuntimeGuardOptions {
+  requireProductionHostedAuth?: boolean;
+}
+
+export function shouldRequireStrictWebProductionConfig(env: WebRuntimeEnv): boolean {
+  return env.LYRA_STRICT_WEB_PRODUCTION_CONFIG === 'true';
+}
+
+export function assertSafeWebRuntimeConfig(
+  env: WebRuntimeEnv,
+  options: WebRuntimeGuardOptions = {},
+): void {
   const isProduction = env.PROD === true || env.MODE === 'production';
   if (!isProduction) {
     return;
   }
 
+  const requireProductionHostedAuth = options.requireProductionHostedAuth ?? true;
   const violations: string[] = [];
   if (env.VITE_DEV_AUTH_BYPASS === 'true') {
     violations.push('VITE_DEV_AUTH_BYPASS must be disabled');
@@ -24,11 +37,13 @@ export function assertSafeWebRuntimeConfig(env: WebRuntimeEnv): void {
   const hasCognito = hasValue(env.VITE_COGNITO_DOMAIN) && hasValue(env.VITE_COGNITO_CLIENT_ID);
   const hasSupabase = hasValue(env.VITE_SUPABASE_URL) && hasValue(env.VITE_SUPABASE_ANON_KEY);
 
-  if (!hasCognito) {
-    violations.push('production web auth requires Cognito Hosted UI configuration');
-  }
-  if (hasSupabase) {
-    violations.push('production web auth must not configure Supabase');
+  if (requireProductionHostedAuth) {
+    if (!hasCognito) {
+      violations.push('production web auth requires Cognito Hosted UI configuration');
+    }
+    if (hasSupabase) {
+      violations.push('production web auth must not configure Supabase');
+    }
   }
 
   if (
