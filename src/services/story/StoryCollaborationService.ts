@@ -4,6 +4,14 @@ import {
   buildFullStoryDraftFromStructuredSections,
   normalizeEpisodeStoryInput,
 } from '../../domain/episodeStoryInput.js';
+import {
+  compactCanonicalStoryPromptText,
+  compactStoryPromptText,
+  formatStoryPromptEntityList,
+  formatStoryPromptParts,
+  formatStoryPromptSummaryList,
+  STORY_PROMPT_CONTEXT_LIMITS,
+} from '../../domain/storyPromptCompaction.js';
 import { NotFoundError, ValidationError } from '../../domain/errors/index.js';
 import {
   STORY_EPISODE_IMPROVEMENT_WRITER_MODEL,
@@ -310,8 +318,13 @@ function formatTargetSummary(target: StoryCollaborationTarget): string {
       continue;
     }
 
-    const renderedValue = Array.isArray(value) ? value.join(', ') : String(value);
-    if (renderedValue.length === 0) {
+    const renderedValue = Array.isArray(value)
+      ? value
+          .map((item) => compactStoryPromptText(item, STORY_PROMPT_CONTEXT_LIMITS.payloadFieldChars))
+          .filter((item): item is string => item !== null)
+          .join(', ')
+      : compactStoryPromptText(value, STORY_PROMPT_CONTEXT_LIMITS.payloadFieldChars);
+    if (renderedValue === null || renderedValue.length === 0) {
       continue;
     }
 
@@ -319,19 +332,14 @@ function formatTargetSummary(target: StoryCollaborationTarget): string {
   }
 
   if (target.entities.length > 0) {
-    const visibleEntities = target.entities.slice(0, 20);
-    lines.push(
-      `Entities: ${visibleEntities
-        .map((entity) => `${entity.name} (${entity.entityType}${entity.freeDescription === null ? '' : `, ${entity.freeDescription}`}${entity.aliases.length === 0 ? '' : `, aliases: ${entity.aliases.join(', ')}`})`)
-        .join(' / ')}`,
-    );
+    lines.push(`Entities: ${formatStoryPromptEntityList(target.entities)}`);
   }
 
   if (target.sceneSummaries.length > 0) {
     lines.push(
-      `Scenes: ${target.sceneSummaries
-        .map((scene) => canonicalizeEntityMentionsInText(scene, target.entities) ?? scene)
-        .join(' / ')}`,
+      `Scenes: ${formatStoryPromptSummaryList(target.sceneSummaries, target.entities, {
+        maxItems: STORY_PROMPT_CONTEXT_LIMITS.maxSceneSummaries,
+      })}`,
     );
   }
 
@@ -371,22 +379,29 @@ function normalizeComparableDraftField(value: string | null): string {
 
 function formatEpisodeImprovementContext(context: StoryEpisodeImprovementContext): string {
   const canonicalize = (value: string | null): string | null =>
-    canonicalizeEntityMentionsInText(value, context.entities);
+    compactCanonicalStoryPromptText(value, context.entities);
   return [
-    `Work: ${context.workTitle}`,
-    `Genre: ${context.workGenre ?? '(none)'}`,
+    `Work: ${compactStoryPromptText(context.workTitle) ?? '(none)'}`,
+    `Genre: ${compactStoryPromptText(context.workGenre) ?? '(none)'}`,
     `World setting: ${canonicalize(context.worldSetting) ?? '(none)'}`,
     `Theme: ${canonicalize(context.theme) ?? '(none)'}`,
     `Overall flow: ${canonicalize(context.overallFlow) ?? '(none)'}`,
-    `Chapter: ${[canonicalize(context.chapterTitle), canonicalize(context.chapterPurpose)].filter((value) => value !== null && value.length > 0).join(' / ') || '(none)'}`,
-    `Chapter arc: ${[canonicalize(context.chapterStartingState), canonicalize(context.chapterEndingState), canonicalize(context.chapterEmotionCurve)].filter((value) => value !== null && value.length > 0).join(' / ') || '(none)'}`,
+    `Chapter: ${formatStoryPromptParts([context.chapterTitle, context.chapterPurpose], context.entities)}`,
+    `Chapter arc: ${formatStoryPromptParts(
+      [context.chapterStartingState, context.chapterEndingState, context.chapterEmotionCurve],
+      context.entities,
+    )}`,
     `Estimated pages: ${context.estimatedPages}`,
-    `Entities: ${
-      context.entities.map((entity) => `${entity.name} (${entity.entityType}${entity.freeDescription === null ? '' : `, ${entity.freeDescription}`}${entity.aliases.length === 0 ? '' : `, aliases: ${entity.aliases.join(', ')}`})`).join(' / ') || '(none)'
-    }`,
-    `Scenes: ${context.sceneSummaries.map((scene) => canonicalizeEntityMentionsInText(scene, context.entities) ?? scene).join(' / ') || '(none)'}`,
-    `Other chapters: ${context.chapterSummaries.map((summary) => canonicalize(summary) ?? summary).join(' / ') || '(none)'}`,
-    `Other episodes: ${context.siblingEpisodeSummaries.map((summary) => canonicalize(summary) ?? summary).join(' / ') || '(none)'}`,
+    `Entities: ${formatStoryPromptEntityList(context.entities)}`,
+    `Scenes: ${formatStoryPromptSummaryList(context.sceneSummaries, context.entities, {
+      maxItems: STORY_PROMPT_CONTEXT_LIMITS.maxSceneSummaries,
+    })}`,
+    `Other chapters: ${formatStoryPromptSummaryList(context.chapterSummaries, context.entities, {
+      maxItems: STORY_PROMPT_CONTEXT_LIMITS.maxChapterSummaries,
+    })}`,
+    `Other episodes: ${formatStoryPromptSummaryList(context.siblingEpisodeSummaries, context.entities, {
+      maxItems: STORY_PROMPT_CONTEXT_LIMITS.maxSiblingEpisodeSummaries,
+    })}`,
   ].join('\n');
 }
 
