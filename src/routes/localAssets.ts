@@ -6,9 +6,10 @@ export function createLocalAssetRoutes(rootDir: string): Hono<AppEnv> {
   const app = new Hono<AppEnv>();
 
   app.get('/local-assets/*', async (c) => {
-    const assetKey = decodeURIComponent(c.req.path.replace(/^\/local-assets\//u, ''));
+    const rawAssetKey = c.req.path.replace(/^\/local-assets\//u, '');
 
     try {
+      const assetKey = decodeURIComponent(rawAssetKey);
       // Resolve once here to reject traversal attempts before reading.
       resolveLocalAssetPath(rootDir, assetKey);
       const imageData = await readLocalAsset(rootDir, assetKey);

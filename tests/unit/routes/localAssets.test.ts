@@ -31,4 +31,14 @@ describe('local asset routes', () => {
     expect(response.headers.get('Access-Control-Allow-Methods')).toContain('GET');
     expect(response.headers.get('Cross-Origin-Resource-Policy')).toBe('cross-origin');
   });
+
+  it('壊れたURLエンコードのasset keyは404にする', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'lyra-local-assets-'));
+    tempDirs.push(rootDir);
+
+    const app = createLocalAssetRoutes(rootDir);
+    const response = await app.request('/local-assets/%E0%A4%A');
+
+    expect(response.status).toBe(404);
+  });
 });
