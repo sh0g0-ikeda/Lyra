@@ -75,8 +75,13 @@ export class OpenAIEntityReferenceGenerator implements EntityReferenceGeneratorP
         throw new ConfigurationError('Entity reference generator returned no image data');
       }
 
+      const imageData = Buffer.from(base64Image, 'base64');
+      if (imageData.length === 0) {
+        throw new ConfigurationError('Entity reference generator returned invalid image data');
+      }
+
       candidates.push({
-        imageData: Buffer.from(base64Image, 'base64'),
+        imageData,
         mimeType: 'image/png',
       });
     }

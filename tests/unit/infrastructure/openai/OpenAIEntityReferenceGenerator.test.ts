@@ -122,4 +122,35 @@ describe('OpenAIEntityReferenceGenerator', () => {
       }),
     ).rejects.toEqual(new ConfigurationError('Entity reference generator received an empty image input'));
   });
+
+  it('画像データが base64 として空にしか decode できない場合は ConfigurationError を投げる', async () => {
+    const client = new OpenAIClient({
+      apiKey: 'test',
+      baseUrl: 'https://api.openai.test/v1',
+      timeoutMs: 1000,
+      fetchFn: async () =>
+        new Response(
+          JSON.stringify({
+            data: [
+              {
+                b64_json: '====',
+              },
+            ],
+          }),
+          {
+            status: 200,
+            headers: { 'x-request-id': 'req-1', 'Content-Type': 'application/json' },
+          },
+        ),
+      maxRetries: 1,
+    });
+    const generator = new OpenAIEntityReferenceGenerator(client);
+
+    await expect(
+      generator.generateCandidates({
+        prompt: 'entity prompt',
+        inputImages: [],
+      }),
+    ).rejects.toEqual(new ConfigurationError('Entity reference generator returned invalid image data'));
+  });
 });

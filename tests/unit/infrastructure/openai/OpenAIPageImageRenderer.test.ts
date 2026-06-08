@@ -173,4 +173,29 @@ describe('OpenAIPageImageRenderer', () => {
       }),
     ).rejects.toEqual(new ConfigurationError('OpenAI image renderer returned no image data'));
   });
+
+  it('画像データが base64 として空にしか decode できない場合は ConfigurationError を投げる', async () => {
+    const client = {
+      postJson: vi.fn().mockResolvedValue({
+        body: { data: [{ b64_json: '====' }] },
+        requestId: 'req-1',
+      }),
+      postFormData: vi.fn(),
+    } as unknown as OpenAIClient;
+    const renderer = new OpenAIPageImageRenderer(client);
+
+    await expect(
+      renderer.render({
+        jobId: 'job-1',
+        userId: 'user-1',
+        pageId: 'page-1',
+        requestKind: 'initial',
+        generationMode: 'standard',
+        prompt: 'page prompt',
+        quality: 'medium',
+        internalPlan: null,
+        inputImages: [],
+      }),
+    ).rejects.toEqual(new ConfigurationError('OpenAI image renderer returned invalid image data'));
+  });
 });

@@ -45,8 +45,13 @@ export class OpenAIPageImageRenderer implements PageImageRendererPort {
       throw new ConfigurationError('OpenAI image renderer returned no image data');
     }
 
+    const imageData = Buffer.from(base64Image, 'base64');
+    if (imageData.length === 0) {
+      throw new ConfigurationError('OpenAI image renderer returned invalid image data');
+    }
+
     return {
-      imageData: Buffer.from(base64Image, 'base64'),
+      imageData,
       mimeType: 'image/png',
       openaiRequestId: response.requestId,
       costUsd: null,
