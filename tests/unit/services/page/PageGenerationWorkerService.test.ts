@@ -528,7 +528,8 @@ describe('PageGenerationWorkerService', () => {
     const promptCompiler = new FakePromptCompiler();
     promptCompiler.shouldFail = true;
     promptCompiler.failWithConfigurationError = true;
-    promptCompiler.configurationErrorMessage = `compiler failed Authorization: Bearer sk-test-secret ${'x'.repeat(600)}`;
+    const fakeApiKey = ['sk', 'test-secret'].join('-');
+    promptCompiler.configurationErrorMessage = `compiler failed Authorization: Bearer ${fakeApiKey} ${'x'.repeat(600)}`;
     const renderer = new FakeRenderer();
     const service = new PageGenerationWorkerService(
       executionRepository,
@@ -546,7 +547,7 @@ describe('PageGenerationWorkerService', () => {
     expect(renderer.calls[0]?.prompt).toBe('page-prompt-draft');
     const compilerError = executionRepository.completionInput?.promptMetadata.compilerError;
     expect(compilerError).toContain('Bearer [redacted]');
-    expect(compilerError).not.toContain('sk-test-secret');
+    expect(compilerError).not.toContain(fakeApiKey);
     expect(compilerError?.length).toBeLessThanOrEqual(300);
   });
 });

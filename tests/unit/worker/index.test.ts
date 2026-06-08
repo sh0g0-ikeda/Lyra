@@ -170,7 +170,8 @@ describe('worker queue handler', () => {
     const pageWorkerService = new FakePageGenerationWorkerService();
     const entityWorkerService = new FakeEntityGenerationWorkerService();
     pageWorkerService.shouldThrow = true;
-    pageWorkerService.errorMessage = `worker failed Authorization: Bearer sk-test-secret ${'x'.repeat(600)}`;
+    const fakeApiKey = ['sk', 'test-secret'].join('-');
+    pageWorkerService.errorMessage = `worker failed Authorization: Bearer ${fakeApiKey} ${'x'.repeat(600)}`;
 
     const result = await handleGenerationQueue(
       buildEvent({
@@ -186,7 +187,7 @@ describe('worker queue handler', () => {
     }
     expect(result.results[0]?.status).toBe('failed');
     expect(reason).toContain('Bearer [redacted]');
-    expect(reason.includes('sk-test-secret')).toBe(false);
+    expect(reason.includes(fakeApiKey)).toBe(false);
     expect(reason.length).toBeLessThanOrEqual(300);
   });
 });

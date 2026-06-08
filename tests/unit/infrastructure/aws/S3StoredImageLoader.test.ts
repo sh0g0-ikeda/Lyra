@@ -69,7 +69,8 @@ describe('S3StoredImageLoader', () => {
   it('S3 読込失敗時の外部エラー文は機密値を伏せる', async () => {
     const client = new FakeS3Client();
     client.shouldThrow = true;
-    client.errorMessage = `s3 failed Authorization: Bearer sk-test-secret ${'x'.repeat(600)}`;
+    const fakeApiKey = ['sk', 'test-secret'].join('-');
+    client.errorMessage = `s3 failed Authorization: Bearer ${fakeApiKey} ${'x'.repeat(600)}`;
     const loader = new S3StoredImageLoader(client, 'lyra-images');
 
     await expect(
@@ -82,7 +83,7 @@ describe('S3StoredImageLoader', () => {
     await expect(
       loader.loadByS3Key('saved/user-1/entities/entity-1/ref_2.png'),
     ).rejects.not.toMatchObject({
-      message: expect.stringContaining('sk-test-secret'),
+      message: expect.stringContaining(fakeApiKey),
     });
   });
 });

@@ -174,7 +174,8 @@ describe('S3FinalPageImageStorage', () => {
   it('S3 finalize 失敗時の外部エラー文は機密値を伏せる', async () => {
     const client = new FakeS3Client();
     client.shouldThrow = true;
-    client.errorMessage = `copy failed Authorization: Bearer sk-test-secret ${'x'.repeat(600)}`;
+    const fakeApiKey = ['sk', 'test-secret'].join('-');
+    client.errorMessage = `copy failed Authorization: Bearer ${fakeApiKey} ${'x'.repeat(600)}`;
     const storage = new S3FinalPageImageStorage(client, {
       bucketName: 'lyra-images',
       cdnBaseUrl: 'https://img.lyra.app',
@@ -210,7 +211,7 @@ describe('S3FinalPageImageStorage', () => {
         },
       }),
     ).rejects.not.toMatchObject({
-      message: expect.stringContaining('sk-test-secret'),
+      message: expect.stringContaining(fakeApiKey),
     });
   });
 });

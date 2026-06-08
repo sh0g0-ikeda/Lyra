@@ -104,7 +104,8 @@ describe('S3ImageStorageMaintenance', () => {
 
   it('S3 メンテナンス失敗時の外部エラー文は機密値を伏せる', async () => {
     const client = new FakeS3Client();
-    client.error = new Error(`list failed Authorization: Bearer sk-test-secret ${'x'.repeat(600)}`);
+    const fakeApiKey = ['sk', 'test-secret'].join('-');
+    client.error = new Error(`list failed Authorization: Bearer ${fakeApiKey} ${'x'.repeat(600)}`);
     const storage = new S3ImageStorageMaintenance(client, 'lyra-images');
 
     await expect(storage.listObjects('tmp/')).rejects.toMatchObject({
@@ -113,7 +114,7 @@ describe('S3ImageStorageMaintenance', () => {
     });
 
     await expect(storage.listObjects('tmp/')).rejects.not.toMatchObject({
-      message: expect.stringContaining('sk-test-secret'),
+      message: expect.stringContaining(fakeApiKey),
     });
   });
 

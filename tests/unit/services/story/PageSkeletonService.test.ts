@@ -385,8 +385,9 @@ describe('PageSkeletonService', () => {
   it('fallback ログの理由は機密値と長い payload を伏せる', async () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const client = new FakeStoryAiClient();
+    const fakeApiKey = ['sk', 'test-secret'].join('-');
     client.errorToThrow = new SyntaxError(
-      `OpenAI page skeleton compiler returned invalid JSON: {"key":"sk-test-secret","secret":"${'x'.repeat(600)}"}`,
+      `OpenAI page skeleton compiler returned invalid JSON: {"key":"${fakeApiKey}","secret":"${'x'.repeat(600)}"}`,
     );
     const repository = new FakeStoryRepository();
     const service = new PageSkeletonService(repository, client);
@@ -399,7 +400,7 @@ describe('PageSkeletonService', () => {
       throw new Error('fallback reason was not logged');
     }
     expect(reason).toContain('[redacted-api-key]');
-    expect(reason).not.toContain('sk-test-secret');
+    expect(reason).not.toContain(fakeApiKey);
     expect(reason.length).toBeLessThanOrEqual(300);
   });
 

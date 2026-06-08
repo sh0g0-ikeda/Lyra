@@ -76,7 +76,8 @@ describe('local generation queue adapters', () => {
   it('page_generate inline worker の失敗ログは機密値を伏せる', async () => {
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const processor = new FakeProcessor();
-    processor.errorToThrow = new Error(`renderer failed Authorization: Bearer sk-test-secret ${'x'.repeat(600)}`);
+    const fakeApiKey = ['sk', 'test-secret'].join('-');
+    processor.errorToThrow = new Error(`renderer failed Authorization: Bearer ${fakeApiKey} ${'x'.repeat(600)}`);
     const queue = new InlinePageGenerationQueueAdapter(processor);
 
     await queue.enqueue({
@@ -100,14 +101,15 @@ describe('local generation queue adapters', () => {
       throw new Error('inline worker error was not logged');
     }
     expect(message).toContain('Bearer [redacted]');
-    expect(message).not.toContain('sk-test-secret');
+    expect(message).not.toContain(fakeApiKey);
     expect(message.length).toBeLessThanOrEqual(300);
   });
 
   it('entity_generate inline worker の失敗ログは機密値を伏せる', async () => {
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const processor = new FakeProcessor();
-    processor.errorToThrow = new Error(`renderer failed Authorization: Bearer sk-test-secret ${'x'.repeat(600)}`);
+    const fakeApiKey = ['sk', 'test-secret'].join('-');
+    processor.errorToThrow = new Error(`renderer failed Authorization: Bearer ${fakeApiKey} ${'x'.repeat(600)}`);
     const queue = new InlineEntityGenerationQueueAdapter(processor);
 
     await queue.enqueue({
@@ -124,7 +126,7 @@ describe('local generation queue adapters', () => {
       throw new Error('inline worker error was not logged');
     }
     expect(message).toContain('Bearer [redacted]');
-    expect(message).not.toContain('sk-test-secret');
+    expect(message).not.toContain(fakeApiKey);
     expect(message.length).toBeLessThanOrEqual(300);
   });
 

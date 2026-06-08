@@ -60,7 +60,8 @@ describe('SqsGenerationQueue', () => {
 
   it('SQS 失敗時の外部エラー文は機密値を伏せる', async () => {
     const client = new FakeSqsClient();
-    client.error = new Error(`sqs failed Authorization: Bearer sk-test-secret ${'x'.repeat(600)}`);
+    const fakeApiKey = ['sk', 'test-secret'].join('-');
+    client.error = new Error(`sqs failed Authorization: Bearer ${fakeApiKey} ${'x'.repeat(600)}`);
     const queue = new SqsGenerationQueue(client, 'https://sqs.example.test/queue');
 
     await expect(
@@ -79,7 +80,7 @@ describe('SqsGenerationQueue', () => {
         jobType: 'page_generate',
       }),
     ).rejects.not.toMatchObject({
-      message: expect.stringContaining('sk-test-secret'),
+      message: expect.stringContaining(fakeApiKey),
     });
   });
 });

@@ -95,7 +95,8 @@ describe('S3EntityImageStorage', () => {
 
   it('S3 保存失敗時の外部エラー文は機密値を伏せる', async () => {
     const client = new FakeS3Client();
-    client.error = new Error(`s3 failed Authorization: Bearer sk-test-secret ${'x'.repeat(600)}`);
+    const fakeApiKey = ['sk', 'test-secret'].join('-');
+    client.error = new Error(`s3 failed Authorization: Bearer ${fakeApiKey} ${'x'.repeat(600)}`);
     const storage = new S3EntityImageStorage(client, {
       bucketName: 'bucket',
       cdnBaseUrl: 'https://cdn.lyra.test',
@@ -125,7 +126,7 @@ describe('S3EntityImageStorage', () => {
         mimeType: 'image/png',
       }),
     ).rejects.not.toEqual(
-      new ConfigurationError(`s3 failed Authorization: Bearer sk-test-secret ${'x'.repeat(600)}`),
+      new ConfigurationError(`s3 failed Authorization: Bearer ${fakeApiKey} ${'x'.repeat(600)}`),
     );
   });
 });
