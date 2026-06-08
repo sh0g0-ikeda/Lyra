@@ -6,6 +6,7 @@ import type {
 import {
   buildLocalAssetUrl,
   copyLocalAsset,
+  inferImageExtensionFromKey,
   type LocalAssetConfig,
   writeLocalAsset,
 } from './LocalAssetFiles.js';
@@ -14,7 +15,7 @@ export class LocalFileFinalPageImageStorage implements FinalPageImageStoragePort
   public constructor(private readonly config: LocalAssetConfig) {}
 
   public async finalizePageImage(input: FinalizePageImageInput): Promise<GeneratedPageImage> {
-    const extension = readExtension(input.sourceS3Key);
+    const extension = inferImageExtensionFromKey(input.sourceS3Key);
     const destinationKey = `saved/${input.userId}/pages/${input.pageId}_final.${extension}`;
     await copyLocalAsset(this.config.rootDir, input.sourceS3Key, destinationKey);
 
@@ -42,18 +43,6 @@ export class LocalFileFinalPageImageStorage implements FinalPageImageStoragePort
       cdnUrl: buildLocalAssetUrl(this.config, destinationKey),
     };
   }
-}
-
-function readExtension(assetKey: string): 'png' | 'jpeg' | 'webp' {
-  if (assetKey.endsWith('.jpeg') || assetKey.endsWith('.jpg')) {
-    return 'jpeg';
-  }
-
-  if (assetKey.endsWith('.webp')) {
-    return 'webp';
-  }
-
-  return 'png';
 }
 
 function mimeTypeToExtension(mimeType: 'image/png' | 'image/jpeg' | 'image/webp'): 'png' | 'jpeg' | 'webp' {

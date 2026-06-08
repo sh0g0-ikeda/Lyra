@@ -72,14 +72,31 @@ export function resolveLocalAssetPath(rootDir: string, assetKey: string): string
 }
 
 export function inferImageMimeTypeFromKey(assetKey: string): SupportedImageMimeType {
-  if (assetKey.endsWith('.jpeg') || assetKey.endsWith('.jpg')) {
+  const extension = inferImageExtensionFromKey(assetKey);
+  if (extension === 'jpeg') {
     return 'image/jpeg';
   }
 
-  if (assetKey.endsWith('.webp')) {
+  if (extension === 'webp') {
     return 'image/webp';
   }
 
   return 'image/png';
+}
+
+export function inferImageExtensionFromKey(assetKey: string): 'png' | 'jpeg' | 'webp' {
+  if (assetKey.endsWith('.png')) {
+    return 'png';
+  }
+
+  if (assetKey.endsWith('.jpeg') || assetKey.endsWith('.jpg')) {
+    return 'jpeg';
+  }
+
+  if (assetKey.endsWith('.webp')) {
+    return 'webp';
+  }
+
+  throw new ConfigurationError(`Unsupported local image asset extension: ${assetKey}`);
 }
 

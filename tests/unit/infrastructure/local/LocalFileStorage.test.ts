@@ -6,7 +6,10 @@ import { LocalFileEntityImageStorage } from '../../../../src/infrastructure/loca
 import { LocalFileFinalPageImageStorage } from '../../../../src/infrastructure/local/LocalFileFinalPageImageStorage.js';
 import { LocalFilePageImageStorage } from '../../../../src/infrastructure/local/LocalFilePageImageStorage.js';
 import { LocalFileStoredImageLoader } from '../../../../src/infrastructure/local/LocalFileStoredImageLoader.js';
-import type { LocalAssetConfig } from '../../../../src/infrastructure/local/LocalAssetFiles.js';
+import {
+  writeLocalAsset,
+  type LocalAssetConfig,
+} from '../../../../src/infrastructure/local/LocalAssetFiles.js';
 
 const createdDirs: string[] = [];
 
@@ -79,6 +82,51 @@ describe('Local file storage adapters', () => {
 
     expect(result.s3Key).toBe('saved/user-1/pages/page-1_final.webp');
     expect(result.cdnUrl).toBe('http://127.0.0.1:3000/local-assets/saved/user-1/pages/page-1_final.webp');
+  });
+
+  it('local loader は未対応拡張子を画像として読み込まない', async () => {
+    const config = await createConfig();
+    const loader = new LocalFileStoredImageLoader(config);
+    await writeLocalAsset(config.rootDir, 'saved/user-1/pages/page-1.txt', Buffer.from('not-image'));
+
+    await expect(loader.loadByS3Key('saved/user-1/pages/page-1.txt')).rejects.toMatchObject({
+      code: 'CONFIGURATION_ERROR',
+    });
+  });
+
+  it('entity finalize は未対応拡張子をコピー前に拒否する', async () => {
+    const config = await createConfig();
+    const storage = new LocalFileEntityImageStorage(config);
+    await writeLocalAsset(config.rootDir, 'tmp/user-1/entities/imports/source.txt', Buffer.from('not-image'));
+
+    await expect(
+      storage.finalizeReferenceImage({
+        userId: 'user-1',
+        entityId: 'entity-1',
+        refId: 'ref-1',
+        sourceS3Key: 'tmp/user-1/entities/imports/source.txt',
+      }),
+    ).rejects.toMatchObject({ code: 'CONFIGURATION_ERROR' });
+  });
+
+  it('final page finalize は未対応拡張子をコピー前に拒否する', async () => {
+    const config = await createConfig();
+    const storage = new LocalFileFinalPageImageStorage(config);
+    await writeLocalAsset(config.rootDir, 'session/user-1/pages/page-1/job-1.txt', Buffer.from('not-image'));
+
+    await expect(
+      storage.finalizePageImage({
+        userId: 'user-1',
+        pageId: 'page-1',
+        sourceS3Key: 'session/user-1/pages/page-1/job-1.txt',
+        generatedImage: {
+          s3Key: 'session/user-1/pages/page-1/job-1.txt',
+          cdnUrl: 'http://127.0.0.1:3000/local-assets/session/user-1/pages/page-1/job-1.txt',
+          generationMode: 'standard',
+          generatedAt: '2026-05-24T00:00:00.000Z',
+        },
+      }),
+    ).rejects.toMatchObject({ code: 'CONFIGURATION_ERROR' });
   });
 });
 

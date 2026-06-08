@@ -10,6 +10,7 @@ import type {
 import {
   buildLocalAssetUrl,
   copyLocalAsset,
+  inferImageExtensionFromKey,
   type LocalAssetConfig,
   writeLocalAsset,
 } from './LocalAssetFiles.js';
@@ -50,7 +51,7 @@ export class LocalFileEntityImageStorage implements EntityImageStoragePort {
   public async finalizeReferenceImage(
     input: FinalizeEntityReferenceImageInput,
   ): Promise<StoredEntityImage> {
-    const extension = readExtension(input.sourceS3Key);
+    const extension = inferImageExtensionFromKey(input.sourceS3Key);
     const destinationKey = `saved/${input.userId}/entities/${input.entityId}/${input.refId}.${extension}`;
     await copyLocalAsset(this.config.rootDir, input.sourceS3Key, destinationKey);
     return {
@@ -74,17 +75,5 @@ function mimeTypeToExtension(mimeType: string): 'png' | 'jpeg' | 'webp' | null {
   }
 
   return null;
-}
-
-function readExtension(assetKey: string): 'png' | 'jpeg' | 'webp' {
-  if (assetKey.endsWith('.jpeg') || assetKey.endsWith('.jpg')) {
-    return 'jpeg';
-  }
-
-  if (assetKey.endsWith('.webp')) {
-    return 'webp';
-  }
-
-  return 'png';
 }
 
