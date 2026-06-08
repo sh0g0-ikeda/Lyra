@@ -42,6 +42,17 @@ export class PostgresCreditRepository implements CreditRepository {
   }
 
   public async getBalanceForUpdate(userId: string, client: DatabaseClient): Promise<CreditBalance | null> {
+    // First-time grants/refunds need a concrete balance row to lock; otherwise
+    // concurrent requests can both observe "no row" and race on INSERT.
+    await client.query(
+      `
+      INSERT INTO credit_balances (user_id, monthly_credits, purchased_credits)
+      VALUES ($1, 0, 0)
+      ON CONFLICT (user_id) DO NOTHING
+      `,
+      [userId],
+    );
+
     const result = await client.query<CreditBalanceRow>(
       `
       SELECT user_id, monthly_credits, purchased_credits, monthly_expires_at
