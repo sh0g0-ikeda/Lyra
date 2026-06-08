@@ -336,6 +336,10 @@ describe('page generation routes', () => {
       id: '22222222-2222-4222-8222-222222222222',
       job_type: 'page_generate',
       params: {
+        page_id: '33333333-3333-4333-8333-333333333333',
+        request_kind: 'initial',
+        generation_mode: 'standard',
+        quality: 'medium',
         requires_planner: false,
       },
       result: {
@@ -349,8 +353,38 @@ describe('page generation routes', () => {
     expect(result).not.toHaveProperty('draft_prompt');
     expect(result).not.toHaveProperty('compiled_brief');
     expect(result).not.toHaveProperty('compiled_prompt');
+    const params = payload.params as Record<string, unknown>;
+    expect(params).not.toHaveProperty('previous_page_status');
+    expect(params).not.toHaveProperty('previous_generation_mode');
+    expect(params).not.toHaveProperty('draft_prompt');
     expect(payload).not.toHaveProperty('user_id');
     expect(payload).not.toHaveProperty('sqs_message_id');
+  });
+
+  it('jobs endpoint は entity job の内部 source key を返さない', async () => {
+    const jobService = new FakeJobService();
+    jobService.job = buildEntityJob();
+    const app = createTestApp(new FakePageGenerationService(), new FakePageFinalizeService(), jobService);
+    const token = await createToken();
+
+    const response = await app.request('/api/jobs/22222222-2222-4222-8222-222222222222', {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    expect(response.status).toBe(200);
+    const payload = (await response.json()) as Record<string, unknown>;
+
+    expect(payload).toMatchObject({
+      job_type: 'entity_generate',
+      params: {
+        entity_id: '55555555-5555-4555-8555-555555555555',
+        entity_type: 'character',
+      },
+    });
+    const params = payload.params as Record<string, unknown>;
+    expect(params).not.toHaveProperty('source_s3_key');
+    expect(params).not.toHaveProperty('previous_entity_status');
+    expect(params).not.toHaveProperty('draft_prompt');
   });
 
   it('不正な UUID は 422 になる', async () => {
@@ -462,6 +496,9 @@ function buildJob(): GenerationJob {
       generation_mode: 'standard',
       quality: 'medium',
       requires_planner: false,
+      previous_page_status: 'editing',
+      previous_generation_mode: null,
+      draft_prompt: 'internal draft prompt should not be returned',
     },
     result: {
       generated_image: {
@@ -471,6 +508,41 @@ function buildJob(): GenerationJob {
       compiled_brief: 'very long compiler brief should not be returned',
       compiled_prompt: 'very long compiled prompt should not be returned',
       compiled_prompt_used: true,
+    },
+    sqsMessageId: null,
+    openaiRequestId: null,
+    errorMessage: null,
+    retryCount: 0,
+    createdAt: new Date('2026-05-01T00:00:00.000Z'),
+    startedAt: new Date('2026-05-01T00:00:01.000Z'),
+    completedAt: new Date('2026-05-01T00:00:02.000Z'),
+    expiresAt: null,
+  };
+}
+
+function buildEntityJob(): GenerationJob {
+  return {
+    id: '22222222-2222-4222-8222-222222222222',
+    userId: user.id,
+    jobType: 'entity_generate',
+    status: 'completed',
+    creditCost: 10,
+    generationMode: null,
+    params: {
+      entity_id: '55555555-5555-4555-8555-555555555555',
+      entity_type: 'character',
+      previous_entity_status: 'draft',
+      source_s3_key: 'tmp/user-1/entities/imports/source.png',
+      draft_prompt: 'internal entity prompt should not be returned',
+    },
+    result: {
+      candidates: [
+        {
+          s3_key: 'session/user-1/entities/entity/job-1.png',
+          cdn_url: 'https://cdn.example.com/entity.png',
+        },
+      ],
+      cost_usd: 0.02,
     },
     sqsMessageId: null,
     openaiRequestId: null,

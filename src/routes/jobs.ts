@@ -46,7 +46,7 @@ function toJobResponse(job: GenerationJob): Record<string, unknown> {
     status: job.status,
     generation_mode: job.generationMode,
     credit_cost: job.creditCost,
-    params: job.params,
+    params: toJobParamsResponse(job),
     result: toJobResultResponse(job),
     openai_request_id: job.openaiRequestId,
     error_message: job.errorMessage,
@@ -56,6 +56,18 @@ function toJobResponse(job: GenerationJob): Record<string, unknown> {
     completed_at: job.completedAt?.toISOString() ?? null,
     expires_at: job.expiresAt?.toISOString() ?? null,
   };
+}
+
+function toJobParamsResponse(job: GenerationJob): Record<string, unknown> {
+  return job.jobType === 'entity_generate'
+    ? pickKnownFields(job.params, ['entity_id', 'entity_type'])
+    : pickKnownFields(job.params, [
+        'page_id',
+        'request_kind',
+        'generation_mode',
+        'quality',
+        'requires_planner',
+      ]);
 }
 
 function toJobResultResponse(job: GenerationJob): Record<string, unknown> | null {
