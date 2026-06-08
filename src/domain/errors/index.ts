@@ -23,6 +23,12 @@ export class ValidationError extends AppError {
   }
 }
 
+export class PayloadTooLargeError extends AppError {
+  public constructor(message = 'Payload too large') {
+    super('PAYLOAD_TOO_LARGE', message, 413);
+  }
+}
+
 export class RateLimitError extends AppError {
   public constructor(bucket: string, retryAfterSeconds: number) {
     super('RATE_LIMITED', `Rate limit exceeded for ${bucket}. Retry after ${retryAfterSeconds} seconds`, 429);

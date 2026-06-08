@@ -246,6 +246,25 @@ describe('billing routes', () => {
 
     expect(response.status).toBe(422);
   });
+
+  it('webhook rejects oversized payloads before calling the Stripe service', async () => {
+    const webhookService = new FakeStripeWebhookService();
+    const app = createTestApp(new FakeBillingService(), webhookService);
+    const body = 'x'.repeat(256 * 1024 + 1);
+
+    const response = await app.request('/api/webhooks/stripe', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': String(body.length),
+        'Stripe-Signature': 't=1,v1=test',
+      },
+      body,
+    });
+
+    expect(response.status).toBe(413);
+    expect(webhookService.payload).toBeNull();
+  });
 });
 
 function createTestApp(
