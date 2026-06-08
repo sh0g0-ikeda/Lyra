@@ -68,13 +68,26 @@ export class PageSkeletonService implements PageSkeletonServicePort {
       pages = buildFallbackPageSkeleton({ ...context, language });
     }
 
-    pages = repairGeneratedPageSkeleton(pages);
+    const allowedEntityIds = context.entities.map((entity) => entity.id);
+    pages = repairGeneratedPageSkeleton(pages, allowedEntityIds);
 
-    validatePageSkeleton(
-      context.estimatedPages,
-      context.entities.map((entity) => entity.id),
-      pages,
-    );
+    try {
+      validatePageSkeleton(context.estimatedPages, allowedEntityIds, pages);
+    } catch (error) {
+      if (!(error instanceof ValidationError)) {
+        throw error;
+      }
+
+      console.warn('page_skeleton_post_validation_fallback', {
+        episodeId,
+        reason: sanitizePersistedErrorMessage(error, 'Page skeleton validation failed'),
+      });
+      pages = repairGeneratedPageSkeleton(
+        buildFallbackPageSkeleton({ ...context, language }),
+        allowedEntityIds,
+      );
+      validatePageSkeleton(context.estimatedPages, allowedEntityIds, pages);
+    }
 
     const result = await this.storyRepository.createPageSkeleton(episodeId, userId, pages, {
       overwriteExisting,
@@ -505,19 +518,34 @@ function fallbackText(language: AppLanguage, english: string, japanese: string):
   return language === 'en' ? english : japanese;
 }
 
-function repairGeneratedPageSkeleton(pages: PageSkeletonPageDraft[]): PageSkeletonPageDraft[] {
-  return pages.map((page) => {
-    const actualPanelCount = page.panels.length;
+function repairGeneratedPageSkeleton(
+  pages: PageSkeletonPageDraft[],
+  allowedEntityIds: string[],
+): PageSkeletonPageDraft[] {
+  const allowedEntityIdSet = new Set(allowedEntityIds);
+
+  return pages.map((page, pageIndex) => {
+    const repairedPanels = page.panels.map((panel, panelIndex) => ({
+      ...panel,
+      order: panelIndex + 1,
+      suggestedEntities: panel.suggestedEntities.filter(
+        (entityId, index, values) =>
+          values.indexOf(entityId) === index && allowedEntityIdSet.has(entityId),
+      ),
+    }));
+    const actualPanelCount = repairedPanels.length;
     const matchingTemplates = Object.values(PANEL_FRAME_TEMPLATES).filter(
       (template) => template.panelCount === actualPanelCount,
     );
     const repairedLayout =
-      matchingTemplates.length === 1 ? matchingTemplates[0].id : page.suggestedLayout;
+      matchingTemplates.length >= 1 ? matchingTemplates[0]!.id : page.suggestedLayout;
 
     return {
       ...page,
+      pageNumber: pageIndex + 1,
       suggestedPanelCount: actualPanelCount,
       suggestedLayout: repairedLayout,
+      panels: repairedPanels,
     };
   });
 }

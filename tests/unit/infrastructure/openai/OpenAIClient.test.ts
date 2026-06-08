@@ -56,7 +56,7 @@ describe('OpenAIClient', () => {
     expect(fetchFn).toHaveBeenCalledTimes(1);
   });
 
-  it('4xx の provider error に含まれる秘匿値を伏せる', async () => {
+  it('4xx の provider error に含まれる機密値を伏せる', async () => {
     const fakeApiKey = ['sk', 'test-secret'].join('-');
     const fetchFn = vi.fn<typeof fetch>().mockResolvedValue(
       new Response(
@@ -159,6 +159,7 @@ describe('OpenAIClient', () => {
     ).rejects.toEqual(new ConfigurationError('OpenAI request timed out'));
     expect(fetchFn).toHaveBeenCalledTimes(1);
   });
+
   it('timeout は通常設定でも自動リトライしない', async () => {
     const fetchFn = vi.fn<typeof fetch>().mockImplementation(
       (_input, init) =>
@@ -183,5 +184,65 @@ describe('OpenAIClient', () => {
       }),
     ).rejects.toEqual(new ConfigurationError('OpenAI request timed out'));
     expect(fetchFn).toHaveBeenCalledTimes(1);
+  });
+
+  it('insufficient quota の 429 は自動リトライしない', async () => {
+    const fetchFn = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          error: {
+            code: 'insufficient_quota',
+            message: 'You exceeded your current quota, please check your plan and billing details.',
+          },
+        }),
+        { status: 429 },
+      ),
+    );
+    const client = new OpenAIClient({
+      apiKey: 'test-key',
+      baseUrl: 'https://api.openai.test/v1',
+      timeoutMs: 1000,
+      fetchFn,
+    });
+
+    await expect(client.postJson('/responses', { model: 'gpt-4o-2024-08-06' })).rejects.toEqual(
+      new ConfigurationError('You exceeded your current quota, please check your plan and billing details.'),
+    );
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+  });
+
+  it('rate limit の 429 は成功するまでリトライする', async () => {
+    const fetchFn = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            error: {
+              code: 'rate_limit_exceeded',
+              message: 'Rate limit reached for requests.',
+            },
+          }),
+          { status: 429 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ id: 'response-2' }), {
+          status: 200,
+          headers: { 'x-request-id': 'req-2' },
+        }),
+      );
+    const client = new OpenAIClient({
+      apiKey: 'test-key',
+      baseUrl: 'https://api.openai.test/v1',
+      timeoutMs: 1000,
+      fetchFn,
+    });
+
+    const response = await client.postJson<{ id: string }>('/responses', {
+      model: 'gpt-4o-2024-08-06',
+    });
+
+    expect(fetchFn).toHaveBeenCalledTimes(2);
+    expect(response.body.id).toBe('response-2');
   });
 });

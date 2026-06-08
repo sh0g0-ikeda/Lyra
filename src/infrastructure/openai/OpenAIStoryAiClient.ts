@@ -119,7 +119,7 @@ function shouldRetryPageSkeletonCompilation(error: unknown): boolean {
     return false;
   }
 
-  return error.message.startsWith('OpenAI page skeleton compiler returned ');
+  return error.message === 'OpenAI page skeleton compiler returned invalid JSON';
 }
 
 function buildInput(request: StoryAiModelRequest) {

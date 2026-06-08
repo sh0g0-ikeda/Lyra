@@ -328,14 +328,15 @@ describe('PageSkeletonService', () => {
     ).rejects.toMatchObject({ code: 'CONFLICT' });
   });
 
-  it('rejects a skeleton that references an entity outside the episode', async () => {
+  it('removes entity ids outside the episode before saving', async () => {
     const client = new FakeStoryAiClient();
     client.generatedPages[0].panels[0].suggestedEntities = ['99999999-9999-4999-8999-999999999999'];
-    const service = new PageSkeletonService(new FakeStoryRepository(), client);
+    const repository = new FakeStoryRepository();
+    const service = new PageSkeletonService(repository, client);
 
-    await expect(
-      service.generateForEpisode('user-1', '33333333-3333-4333-8333-333333333333'),
-    ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+    await service.generateForEpisode('user-1', '33333333-3333-4333-8333-333333333333');
+
+    expect(repository.createdPages[0]?.panels[0]?.suggestedEntities).toEqual([]);
   });
 
   it('repairs suggested panel count and layout from the actual panel array length when uniquely resolvable', async () => {
@@ -353,6 +354,112 @@ describe('PageSkeletonService', () => {
     expect(repository.createdPages[0]?.suggestedPanelCount).toBe(4);
     expect(repository.createdPages[0]?.suggestedLayout).toBe('standard_4');
     expect(repository.createdPages[0]?.panels).toHaveLength(4);
+  });
+
+  it('repairs page numbers, panel orders, and invalid entity ids before saving', async () => {
+    const repository = new FakeStoryRepository();
+    const client = new FakeStoryAiClient();
+    client.generatedPages = [
+      {
+        pageNumber: 2,
+        purpose: 'Set the confrontation',
+        suggestedPanelCount: 4,
+        suggestedLayout: 'standard_4',
+        panels: [
+          {
+            order: 10,
+            panelRole: 'establish',
+            suggestedSize: 'large',
+            situationHint: 'Wide rooftop at night.',
+            suggestedEntities: [
+              '11111111-1111-4111-8111-111111111111',
+              '11111111-1111-4111-8111-111111111111',
+              '99999999-9999-4999-8999-999999999999',
+            ],
+            suggestedDialogueHint: null,
+          },
+          {
+            order: 10,
+            panelRole: 'action',
+            suggestedSize: 'standard',
+            situationHint: 'Aki advances.',
+            suggestedEntities: ['22222222-2222-4222-8222-222222222222'],
+            suggestedDialogueHint: null,
+          },
+          {
+            order: 3,
+            panelRole: 'reaction',
+            suggestedSize: 'standard',
+            situationHint: 'Rin answers.',
+            suggestedEntities: [],
+            suggestedDialogueHint: '...you are late.',
+          },
+          {
+            order: 4,
+            panelRole: 'impact',
+            suggestedSize: 'wide',
+            situationHint: 'Wind gathers.',
+            suggestedEntities: [],
+            suggestedDialogueHint: null,
+          },
+        ],
+      },
+      {
+        pageNumber: 2,
+        purpose: 'Build toward impact',
+        suggestedPanelCount: 3,
+        suggestedLayout: 'top_wide_3',
+        panels: [
+          {
+            order: 8,
+            panelRole: 'action',
+            suggestedSize: 'large',
+            situationHint: 'Both charge.',
+            suggestedEntities: ['11111111-1111-4111-8111-111111111111'],
+            suggestedDialogueHint: null,
+          },
+          {
+            order: 4,
+            panelRole: 'reaction',
+            suggestedSize: 'standard',
+            situationHint: 'Rin holds ground.',
+            suggestedEntities: ['22222222-2222-4222-8222-222222222222'],
+            suggestedDialogueHint: 'Not enough.',
+          },
+          {
+            order: 4,
+            panelRole: 'impact',
+            suggestedSize: 'standard',
+            situationHint: 'Blades collide.',
+            suggestedEntities: [],
+            suggestedDialogueHint: null,
+          },
+        ],
+      },
+    ];
+    const service = new PageSkeletonService(repository, client);
+
+    await service.generateForEpisode('user-1', '33333333-3333-4333-8333-333333333333');
+
+    expect(repository.createdPages.map((page) => page.pageNumber)).toEqual([1, 2]);
+    expect(repository.createdPages[0]?.panels.map((panel) => panel.order)).toEqual([1, 2, 3, 4]);
+    expect(repository.createdPages[1]?.panels.map((panel) => panel.order)).toEqual([1, 2, 3]);
+    expect(repository.createdPages[0]?.panels[0]?.suggestedEntities).toEqual([
+      '11111111-1111-4111-8111-111111111111',
+    ]);
+  });
+
+  it('falls back when generated page count still cannot be repaired', async () => {
+    const repository = new FakeStoryRepository();
+    const client = new FakeStoryAiClient();
+    client.generatedPages = [client.generatedPages[0]!];
+    const service = new PageSkeletonService(repository, client);
+
+    await service.generateForEpisode('user-1', '33333333-3333-4333-8333-333333333333');
+
+    expect(repository.createdPages).toHaveLength(2);
+    expect(repository.createdPages[0]?.suggestedLayout).toBe('standard_4');
+    expect(repository.createdPages[1]?.suggestedLayout).toBe('top_wide_3');
   });
 
   it('falls back to a deterministic skeleton when the model payload is invalid', async () => {
