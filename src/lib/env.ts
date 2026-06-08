@@ -14,6 +14,7 @@ const envSchema = z.object({
     .transform((value) => (value === undefined ? process.env.NODE_ENV !== 'production' : value === 'true')),
   AWS_REGION: z.string().min(1).optional(),
   SQS_QUEUE_URL_GENERATION: z.string().url().optional(),
+  SQS_GENERATION_VISIBILITY_TIMEOUT_SECONDS: z.coerce.number().int().min(1).max(43_200).optional(),
   S3_BUCKET_IMAGES: z.string().min(1).optional(),
   IMAGES_CDN_BASE_URL: z.string().url().optional(),
   LOCAL_FILE_STORAGE_DIR: z.string().min(1).optional(),

@@ -14,7 +14,9 @@ const safeProductionConfig = {
   COGNITO_TOKEN_USE: 'access' as const,
   COGNITO_REQUIRED_SCOPES: 'lyra/api',
   OPENAI_API_KEY: 'openai-key',
+  OPENAI_TIMEOUT_MS: 300_000,
   SQS_QUEUE_URL_GENERATION: 'https://sqs.ap-northeast-1.amazonaws.com/123/lyra-generation',
+  SQS_GENERATION_VISIBILITY_TIMEOUT_SECONDS: 420,
   S3_BUCKET_IMAGES: 'lyra-images',
   IMAGES_CDN_BASE_URL: 'https://images.lyra.test',
   STRIPE_SECRET_KEY: 'sk_live_secret123',
@@ -408,5 +410,30 @@ describe('assertProductionRuntimeConfig', () => {
         'production',
       );
     }).toThrow(/DATABASE_POOL_MAX must be <= 10 in production/);
+  });
+
+  it('requires explicit SQS visibility timeout settings in production', () => {
+    expect(() => {
+      assertProductionRuntimeConfig(
+        {
+          ...safeProductionConfig,
+          SQS_GENERATION_VISIBILITY_TIMEOUT_SECONDS: undefined,
+        },
+        'production',
+      );
+    }).toThrow(/SQS_GENERATION_VISIBILITY_TIMEOUT_SECONDS is required/);
+  });
+
+  it('rejects SQS visibility timeout shorter than OpenAI timeout plus buffer in production', () => {
+    expect(() => {
+      assertProductionRuntimeConfig(
+        {
+          ...safeProductionConfig,
+          OPENAI_TIMEOUT_MS: 300_000,
+          SQS_GENERATION_VISIBILITY_TIMEOUT_SECONDS: 359,
+        },
+        'production',
+      );
+    }).toThrow(/SQS_GENERATION_VISIBILITY_TIMEOUT_SECONDS must be >= 420/);
   });
 });

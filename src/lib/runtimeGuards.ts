@@ -22,7 +22,9 @@ interface RuntimeGuardConfig {
   LOCAL_IMAGE_FALLBACK_ENABLED?: boolean;
   OPENAI_API_KEY?: string;
   OPENAI_BASE_URL?: string;
+  OPENAI_TIMEOUT_MS?: number;
   SQS_QUEUE_URL_GENERATION?: string;
+  SQS_GENERATION_VISIBILITY_TIMEOUT_SECONDS?: number;
   S3_BUCKET_IMAGES?: string;
   IMAGES_CDN_BASE_URL?: string;
   GENERATION_USER_ACTIVE_JOB_LIMIT?: number;
@@ -40,6 +42,7 @@ interface RuntimeGuardConfig {
 }
 
 const MAX_PRODUCTION_DATABASE_POOL_MAX = 10;
+const SQS_VISIBILITY_TIMEOUT_BUFFER_SECONDS = 120;
 
 const REQUIRED_PRODUCTION_GENERATION_KEYS = [
   'AWS_REGION',
@@ -178,6 +181,19 @@ export function assertProductionRuntimeConfig(
   for (const key of REQUIRED_PRODUCTION_GENERATION_KEYS) {
     if (isMissingConfigValue(config[key])) {
       violations.push(`${key} is required`);
+    }
+  }
+
+  if (hasConfigValue(config.SQS_QUEUE_URL_GENERATION)) {
+    if (config.SQS_GENERATION_VISIBILITY_TIMEOUT_SECONDS === undefined) {
+      violations.push('SQS_GENERATION_VISIBILITY_TIMEOUT_SECONDS is required when SQS generation is enabled');
+    } else {
+      const openAiTimeoutMs = config.OPENAI_TIMEOUT_MS ?? 300_000;
+      const minimumVisibilityTimeoutSeconds =
+        Math.ceil(openAiTimeoutMs / 1000) + SQS_VISIBILITY_TIMEOUT_BUFFER_SECONDS;
+      if (config.SQS_GENERATION_VISIBILITY_TIMEOUT_SECONDS < minimumVisibilityTimeoutSeconds) {
+        violations.push(`SQS_GENERATION_VISIBILITY_TIMEOUT_SECONDS must be >= ${minimumVisibilityTimeoutSeconds}`);
+      }
     }
   }
 

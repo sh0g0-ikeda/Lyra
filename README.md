@@ -47,6 +47,7 @@ GENERATION_ENABLED=false
 `SUPABASE_JWT_SECRET` is still required for non-bypass local flows and dev token generation.
 The three `LLM_*_ENABLED` flags default to `false`; keep them disabled for lower-cost generation that uses deterministic prompts, and enable them only when you explicitly want extra LLM prompt rewriting or planning.
 `GENERATION_USER_ACTIVE_JOB_LIMIT` and `GENERATION_GLOBAL_ACTIVE_JOB_LIMIT` cap active page/entity generation jobs before queueing provider work.
+`SQS_GENERATION_VISIBILITY_TIMEOUT_SECONDS` must match the deployed generation queue visibility timeout; keep it at least `OPENAI_TIMEOUT_MS / 1000 + 120` so long image calls are not retried or deleted while still running.
 Set `GENERATION_ENABLED=false` as a kill switch when provider quota, billing, or abuse-control incidents require stopping new generation jobs.
 
 To run image generation locally, enable generation only after configuring a runnable worker path:
