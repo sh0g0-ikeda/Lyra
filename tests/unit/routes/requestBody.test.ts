@@ -52,4 +52,21 @@ describe('request body helpers', () => {
       statusCode: 422,
     });
   });
+
+  it('Content-Length の指数表記は validation error にする', async () => {
+    const request = new Request('https://lyra.test/api', {
+      method: 'POST',
+      body: '{}',
+    });
+
+    await expect(
+      readLimitedRawBody(request, '1e3', {
+        maxBytes: 3,
+        description: 'Test request',
+      }),
+    ).rejects.toMatchObject({
+      code: 'VALIDATION_ERROR',
+      statusCode: 422,
+    });
+  });
 });

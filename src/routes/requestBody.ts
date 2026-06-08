@@ -108,6 +108,10 @@ function parseContentLength(value: string | undefined): number | null {
     return null;
   }
 
+  if (!/^[0-9]+$/u.test(value)) {
+    throw new ValidationError('Content-Length must be a non-negative integer');
+  }
+
   const parsed = Number(value);
   if (!Number.isSafeInteger(parsed) || parsed < 0) {
     throw new ValidationError('Content-Length must be a non-negative integer');
