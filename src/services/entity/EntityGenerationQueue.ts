@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { ConfigurationError } from '../../domain/errors/index.js';
 import type { EntityGenerationQueuePayload } from '../../domain/types/entityReference.js';
 import type { SqsGenerationQueue } from '../../infrastructure/aws/SqsGenerationQueue.js';
+import { sanitizePersistedErrorMessage } from '../../lib/errorSanitizer.js';
 
 export interface EnqueueEntityGenerationResult {
   messageId: string | null;
@@ -32,7 +33,7 @@ export class InlineEntityGenerationQueueAdapter implements EntityGenerationQueue
       void this.processor.processJob(payload.jobId).catch((error: unknown) => {
         console.error('[entity-generation-inline-worker] failed to process job', {
           jobId: payload.jobId,
-          error: error instanceof Error ? error.message : String(error),
+          error: sanitizePersistedErrorMessage(error, 'Entity generation inline worker failed'),
         });
       });
     }, 0);

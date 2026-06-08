@@ -3,6 +3,7 @@ import { ConfigurationError } from '../../domain/errors/index.js';
 import type { PageGenerationQueuePayload } from '../../domain/types/pageGeneration.js';
 import type { SqsGenerationQueue } from '../../infrastructure/aws/SqsGenerationQueue.js';
 import type { WorkerProcessLauncher } from '../../infrastructure/local/DetachedWorkerProcessLauncher.js';
+import { sanitizePersistedErrorMessage } from '../../lib/errorSanitizer.js';
 
 export interface EnqueuePageGenerationResult {
   messageId: string | null;
@@ -33,7 +34,7 @@ export class InlinePageGenerationQueueAdapter implements PageGenerationQueuePort
       void this.processor.processJob(payload.jobId).catch((error: unknown) => {
         console.error('[page-generation-inline-worker] failed to process job', {
           jobId: payload.jobId,
-          error: error instanceof Error ? error.message : String(error),
+          error: sanitizePersistedErrorMessage(error, 'Page generation inline worker failed'),
         });
       });
     }, 0);
