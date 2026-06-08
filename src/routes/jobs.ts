@@ -81,10 +81,8 @@ function toJobResultResponse(job: GenerationJob): Record<string, unknown> | null
 }
 
 function toPageGenerationResultResponse(result: Record<string, unknown>): Record<string, unknown> {
-  return pickKnownFields(result, [
-    's3_key',
+  const response = pickKnownFields(result, [
     'cdn_url',
-    'generated_image',
     'generation_mode',
     'request_kind',
     'cost_usd',
@@ -94,6 +92,13 @@ function toPageGenerationResultResponse(result: Record<string, unknown>): Record
     'compiler_prompt_version',
     'compiler_error',
   ]);
+
+  const generatedImage = toGeneratedImageResponse(result.generated_image);
+  if (generatedImage !== null) {
+    response.generated_image = generatedImage;
+  }
+
+  return response;
 }
 
 function toEntityGenerationResultResponse(result: Record<string, unknown>): Record<string, unknown> {
@@ -123,4 +128,16 @@ function pickKnownFields(
   }
 
   return response;
+}
+
+function toGeneratedImageResponse(value: unknown): Record<string, unknown> | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  return pickKnownFields(value, ['cdn_url', 'generation_mode', 'generated_at']);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

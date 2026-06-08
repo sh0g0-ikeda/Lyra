@@ -165,7 +165,6 @@ function toPageSummaryResponse(page: PageSummary): Record<string, unknown> {
       page.generatedImage === null
         ? null
         : {
-            s3_key: page.generatedImage.s3Key,
             cdn_url: page.generatedImage.cdnUrl,
             generation_mode: page.generatedImage.generationMode,
             generated_at: page.generatedImage.generatedAt,

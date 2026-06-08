@@ -4,8 +4,13 @@ const SENSITIVE_PATTERNS: Array<[RegExp, string]> = [
   [/\b(Authorization)\s*[:=]\s*Bearer\s+[A-Za-z0-9._~+/=-]+/giu, '$1: Bearer [redacted]'],
   [/\bBearer\s+[A-Za-z0-9._~+/=-]+/giu, 'Bearer [redacted]'],
   [/\bsk-[A-Za-z0-9_-]{8,}\b/gu, '[redacted-api-key]'],
+  [/\bsk_(live|test)_[A-Za-z0-9_-]{8,}\b/gu, '[redacted-stripe-secret-key]'],
+  [/\bwhsec_[A-Za-z0-9_-]{8,}\b/gu, '[redacted-stripe-webhook-secret]'],
   [/\bAKIA[0-9A-Z]{16}\b/gu, '[redacted-aws-access-key]'],
-  [/(api[_-]?key|x-api-key|client_secret|webhook_secret)\s*[:=]\s*["']?[^"',\s}]+/giu, '$1=[redacted]'],
+  [
+    /(api[_-]?key|x-api-key|client_secret|webhook_secret|stripe_secret_key|stripe_webhook_secret)\s*[:=]\s*["']?[^"',\s}]+/giu,
+    '$1=[redacted]',
+  ],
   [/(X-Amz-Signature|Signature|sig)=([^&\s]+)/giu, '$1=[redacted]'],
   [/data:image\/[a-z0-9.+-]+;base64,[A-Za-z0-9+/=]+/giu, 'data:image/[redacted]'],
 ];

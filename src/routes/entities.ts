@@ -225,7 +225,6 @@ function toReferenceSetResponse(referenceSet: EntityReferenceSet): Record<string
     updated_at: referenceSet.updatedAt.toISOString(),
     reference_images: referenceSet.images.map((image) => ({
       ref_id: image.refId,
-      s3_key: image.s3Key,
       cdn_url: image.cdnUrl,
       source: image.source,
       created_at: image.createdAt,

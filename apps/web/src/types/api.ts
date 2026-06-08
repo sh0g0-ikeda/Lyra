@@ -79,7 +79,6 @@ export interface EntityRecord {
 
 export interface EntityReferenceImageRecord {
   ref_id: string;
-  s3_key: string;
   cdn_url: string;
   source: 'upload' | 'generated';
   created_at: string;
@@ -111,7 +110,6 @@ export interface SceneRecord {
 }
 
 export interface GeneratedImageRecord {
-  s3_key: string | null;
   cdn_url: string | null;
   generation_mode: 'standard' | 'thinking' | null;
   generated_at: string | null;
@@ -241,7 +239,6 @@ export interface CompositionRecord {
   name: string;
   category: string;
   entity_count: number;
-  preview_s3_key: string | null;
   preview_cdn_url: string | null;
   composition_prompt: string;
   shot_type: string | null;

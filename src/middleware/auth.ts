@@ -239,8 +239,13 @@ function extractBearerToken(authorizationHeader: string | undefined): string {
     throw new UnauthorizedError();
   }
 
-  const [scheme, token] = authorizationHeader.split(' ');
-  if (scheme !== 'Bearer' || token === undefined || token.length === 0) {
+  const parts = authorizationHeader.split(' ');
+  if (parts.length !== 2) {
+    throw new UnauthorizedError();
+  }
+
+  const [scheme, token] = parts;
+  if (scheme !== 'Bearer' || token.length === 0) {
     throw new UnauthorizedError();
   }
 

@@ -88,8 +88,8 @@ disabled. When Cognito is configured, `VITE_COGNITO_SCOPES` is required. Keep
 `VITE_COGNITO_API_TOKEN_USE` in sync with backend `COGNITO_TOKEN_USE`; the default and recommended
 setting is `id`. If you switch both sides to `access`, include the API scope in
 `VITE_COGNITO_SCOPES` and set `COGNITO_REQUIRED_SCOPES` on the backend.
-For paid production, configure only one hosted auth provider in the web build. Cognito and Supabase
-at the same time is rejected to avoid presenting a login path whose token the API rejects.
+For paid production, configure Cognito Hosted UI in the web build. Supabase hosted auth settings are
+rejected in production because the API production guard requires Cognito tokens.
 
 `VITE_DEV_AUTH_BYPASS=true` is for local development only. Production web builds force file-based
 dev bypass off, and explicit production bypass is rejected.

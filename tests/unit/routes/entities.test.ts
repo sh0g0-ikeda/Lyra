@@ -405,11 +405,18 @@ describe('entity routes', () => {
     });
 
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toMatchObject({
+    const payload = (await response.json()) as Record<string, unknown>;
+    expect(payload).toMatchObject({
       entity_id: entityId,
       primary_ref_id: 'ref-1',
       status: 'partial',
     });
+    const referenceImages = payload.reference_images as Array<Record<string, unknown>>;
+    expect(referenceImages[0]).toMatchObject({
+      ref_id: 'ref-1',
+      cdn_url: 'https://cdn.lyra.test/saved/user-1/entities/entity-1/ref-1.png',
+    });
+    expect(referenceImages[0]).not.toHaveProperty('s3_key');
     expect(referenceService.lastConfirmRequest).toEqual({
       selectedS3Keys: ['tmp/user-1/entities/imports/source.png'],
       primaryS3Key: undefined,

@@ -23,13 +23,13 @@ describe('assertSafeWebRuntimeConfig', () => {
     }).toThrow(/VITE_DEV_AUTH_BYPASS must be disabled/);
   });
 
-  it('production では hosted auth 設定を常に要求する', () => {
+  it('production では Cognito Hosted UI 設定を常に要求する', () => {
     expect(() => {
       assertSafeWebRuntimeConfig({
         MODE: 'production',
         VITE_DEV_AUTH_BYPASS: 'false',
       });
-    }).toThrow(/production web auth requires/);
+    }).toThrow(/production web auth requires Cognito Hosted UI/);
   });
 
   it('production の Cognito 設定では scopes を要求する', () => {
@@ -42,7 +42,7 @@ describe('assertSafeWebRuntimeConfig', () => {
     }).toThrow(/VITE_COGNITO_SCOPES is required/);
   });
 
-  it('production では Cognito と Supabase の同時 hosted auth 設定を拒否する', () => {
+  it('production では Supabase hosted auth 設定を拒否する', () => {
     expect(() => {
       assertSafeWebRuntimeConfig({
         MODE: 'production',
@@ -52,7 +52,17 @@ describe('assertSafeWebRuntimeConfig', () => {
         VITE_SUPABASE_URL: 'https://example.supabase.co',
         VITE_SUPABASE_ANON_KEY: 'anon-key',
       });
-    }).toThrow(/only one hosted auth provider/);
+    }).toThrow(/production web auth must not configure Supabase/);
+  });
+
+  it('production では Supabase-only hosted auth 設定を拒否する', () => {
+    expect(() => {
+      assertSafeWebRuntimeConfig({
+        MODE: 'production',
+        VITE_SUPABASE_URL: 'https://example.supabase.co',
+        VITE_SUPABASE_ANON_KEY: 'anon-key',
+      });
+    }).toThrow(/production web auth requires Cognito Hosted UI/);
   });
 
   it('production の Cognito 設定を許可する', () => {

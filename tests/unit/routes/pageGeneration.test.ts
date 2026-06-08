@@ -180,6 +180,11 @@ describe('page generation routes', () => {
           id: '33333333-3333-4333-8333-333333333333',
           page_number: 1,
           panel_count: 4,
+          generated_image: {
+            cdn_url: 'https://cdn.example.com/page.png',
+            generation_mode: 'standard',
+            generated_at: '2026-05-01T00:00:00.000Z',
+          },
           story_source_scene_ids: ['scene-1'],
           story_page_purpose: 'This page escalates the rooftop confrontation.',
           story_continuity_note: 'Keep the mood restrained for the next page.',
@@ -353,6 +358,9 @@ describe('page generation routes', () => {
     expect(result).not.toHaveProperty('draft_prompt');
     expect(result).not.toHaveProperty('compiled_brief');
     expect(result).not.toHaveProperty('compiled_prompt');
+    expect(result).not.toHaveProperty('s3_key');
+    const generatedImage = result.generated_image as Record<string, unknown>;
+    expect(generatedImage).not.toHaveProperty('s3_key');
     const params = payload.params as Record<string, unknown>;
     expect(params).not.toHaveProperty('previous_page_status');
     expect(params).not.toHaveProperty('previous_generation_mode');
@@ -472,7 +480,12 @@ function buildPageSummary(pageId: string): PageSummary {
     dialogueMode: 'mixed',
     pageDialogueToggle: true,
     generationMode: null,
-    generatedImage: null,
+    generatedImage: {
+      s3Key: 'session/user-1/pages/page-1/result.png',
+      cdnUrl: 'https://cdn.example.com/page.png',
+      generationMode: 'standard',
+      generatedAt: '2026-05-01T00:00:00.000Z',
+    },
     status: 'editing',
     panelCount: 4,
     frameCount: 4,
@@ -501,7 +514,10 @@ function buildJob(): GenerationJob {
       draft_prompt: 'internal draft prompt should not be returned',
     },
     result: {
+      s3_key: 'session/user-1/pages/page-1/result.png',
+      cdn_url: 'https://cdn.example.com/page.png',
       generated_image: {
+        s3_key: 'session/user-1/pages/page-1/result.png',
         cdn_url: 'https://cdn.example.com/page.png',
       },
       draft_prompt: 'very long draft prompt should not be returned',

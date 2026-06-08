@@ -43,7 +43,6 @@ function toCompositionResponse(composition: CompositionGalleryItem): Record<stri
     name: composition.name,
     category: composition.category,
     entity_count: composition.entityCount,
-    preview_s3_key: composition.previewS3Key,
     preview_cdn_url: composition.previewCdnUrl,
     composition_prompt: composition.compositionPrompt,
     shot_type: composition.shotType,

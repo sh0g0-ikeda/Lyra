@@ -96,6 +96,18 @@ describe('createAuthMiddleware Cognito mode', () => {
     expect(response.status).toBe(401);
   });
 
+  it('Authorization header に余計な要素がある場合は拒否する', async () => {
+    const fixture = await createCognitoFixture();
+    const app = createProtectedApp(new FakeUserProvisioningService(), fixture.jwks);
+    const malformedToken = await fixture.signToken();
+
+    const response = await app.request('/protected', {
+      headers: { Authorization: `Bearer ${malformedToken} trailing` },
+    });
+
+    expect(response.status).toBe(401);
+  });
+
   it('id token 運用では audience と email を検証し scope は要求しない', async () => {
     const fixture = await createCognitoFixture();
     const provisioningService = new FakeUserProvisioningService();
