@@ -8,19 +8,32 @@ export interface PruneImageStorageCliOptions {
   apply: boolean;
 }
 
+const POSITIVE_INTEGER_PATTERN = /^[1-9][0-9]*$/u;
+const PRUNE_FLAG_OPTIONS = new Set(['--apply', '--dry-run']);
+const PRUNE_VALUE_OPTIONS = new Set([
+  '--prefix',
+  '--older-than-hours',
+  '--protect-recent-candidate-hours',
+  '--max-deletes',
+]);
+
 export function parsePruneImageStorageArgs(argv: readonly string[]): PruneImageStorageCliOptions {
   const prefixes: string[] = [];
   const values = new Map<string, string | boolean>();
 
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
-    if (arg === '--apply' || arg === '--dry-run') {
+    if (PRUNE_FLAG_OPTIONS.has(arg)) {
       values.set(arg, true);
       continue;
     }
 
     if (!arg.startsWith('--')) {
       throw new Error(`Unexpected argument: ${arg}`);
+    }
+
+    if (!PRUNE_VALUE_OPTIONS.has(arg)) {
+      throw new Error(`Unknown option: ${arg}`);
     }
 
     const value = argv[index + 1];
@@ -31,6 +44,9 @@ export function parsePruneImageStorageArgs(argv: readonly string[]): PruneImageS
     if (arg === '--prefix') {
       prefixes.push(value);
     } else {
+      if (values.has(arg)) {
+        throw new Error(`Duplicate option: ${arg}`);
+      }
       values.set(arg, value);
     }
     index += 1;
@@ -103,8 +119,13 @@ function readPositiveInteger(values: Map<string, string | boolean>, key: string,
     throw new Error(`${key} must be a positive integer`);
   }
 
-  const value = Number(rawValue);
-  if (!Number.isInteger(value) || value <= 0) {
+  const trimmedValue = rawValue.trim();
+  if (!POSITIVE_INTEGER_PATTERN.test(trimmedValue)) {
+    throw new Error(`${key} must be a positive integer`);
+  }
+
+  const value = Number(trimmedValue);
+  if (!Number.isSafeInteger(value) || value <= 0) {
     throw new Error(`${key} must be a positive integer`);
   }
 

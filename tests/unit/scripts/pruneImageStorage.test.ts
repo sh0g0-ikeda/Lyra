@@ -45,4 +45,36 @@ describe('parsePruneImageStorageArgs', () => {
       /--older-than-hours must be a positive integer/,
     );
   });
+
+  it('rejects unknown options', () => {
+    expect(() => parsePruneImageStorageArgs(['--older-than-hour', '24'])).toThrow(
+      /Unknown option: --older-than-hour/,
+    );
+  });
+
+  it('rejects duplicate scalar options', () => {
+    expect(() => parsePruneImageStorageArgs([
+      '--older-than-hours',
+      '24',
+      '--older-than-hours',
+      '48',
+    ])).toThrow(/Duplicate option: --older-than-hours/);
+  });
+
+  it('rejects unsafe integer values', () => {
+    expect(() => parsePruneImageStorageArgs([
+      '--max-deletes',
+      '9007199254740992',
+    ])).toThrow(/--max-deletes must be a positive integer/);
+  });
+
+  it('rejects non decimal integer values', () => {
+    expect(() => parsePruneImageStorageArgs(['--older-than-hours', '1e3'])).toThrow(
+      /--older-than-hours must be a positive integer/,
+    );
+  });
+
+  it('keeps dry-run mode when both dry-run and apply are present', () => {
+    expect(parsePruneImageStorageArgs(['--apply', '--dry-run']).apply).toBe(false);
+  });
 });

@@ -5,7 +5,7 @@ const userId = '11111111-1111-4111-8111-111111111111';
 const jobId = '22222222-2222-4222-8222-222222222222';
 
 describe('parseAdminRefundCreditsArgs', () => {
-  it('デフォルトは dry-run として解析する', () => {
+  it('parses dry-run mode by default', () => {
     const result = parseAdminRefundCreditsArgs(['--user-id', userId, '--amount', '3']);
 
     expect(result).toEqual({
@@ -16,7 +16,7 @@ describe('parseAdminRefundCreditsArgs', () => {
     });
   });
 
-  it('apply と job_id と reason を解析する', () => {
+  it('parses apply mode with job id and reason', () => {
     const result = parseAdminRefundCreditsArgs([
       '--user-id',
       userId,
@@ -38,9 +38,62 @@ describe('parseAdminRefundCreditsArgs', () => {
     });
   });
 
-  it('UUID ではない user_id を拒否する', () => {
+  it('rejects non UUID user ids', () => {
     expect(() => parseAdminRefundCreditsArgs(['--user-id', 'bad', '--amount', '1'])).toThrow(
       /--user-id must be a UUID/,
     );
+  });
+
+  it('rejects unknown options', () => {
+    expect(() => parseAdminRefundCreditsArgs([
+      '--user-id',
+      userId,
+      '--amount',
+      '1',
+      '--amunt',
+      '2',
+    ])).toThrow(/Unknown option: --amunt/);
+  });
+
+  it('rejects duplicate scalar options', () => {
+    expect(() => parseAdminRefundCreditsArgs([
+      '--user-id',
+      userId,
+      '--amount',
+      '1',
+      '--amount',
+      '2',
+    ])).toThrow(/Duplicate option: --amount/);
+  });
+
+  it('rejects unsafe integer amounts', () => {
+    expect(() => parseAdminRefundCreditsArgs([
+      '--user-id',
+      userId,
+      '--amount',
+      '9007199254740992',
+    ])).toThrow(/--amount must be a positive integer/);
+  });
+
+  it('rejects non decimal integer amounts', () => {
+    expect(() => parseAdminRefundCreditsArgs([
+      '--user-id',
+      userId,
+      '--amount',
+      '1e3',
+    ])).toThrow(/--amount must be a positive integer/);
+  });
+
+  it('keeps dry-run mode when both dry-run and apply are present', () => {
+    const result = parseAdminRefundCreditsArgs([
+      '--user-id',
+      userId,
+      '--amount',
+      '1',
+      '--apply',
+      '--dry-run',
+    ]);
+
+    expect(result.apply).toBe(false);
   });
 });

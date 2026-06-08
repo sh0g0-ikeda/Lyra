@@ -10,6 +10,9 @@ export interface AdminRefundCreditsOptions {
 }
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
+const POSITIVE_INTEGER_PATTERN = /^[1-9][0-9]*$/u;
+const ADMIN_REFUND_FLAG_OPTIONS = new Set(['--apply', '--dry-run']);
+const ADMIN_REFUND_VALUE_OPTIONS = new Set(['--user-id', '--amount', '--reason', '--job-id']);
 const DEFAULT_REASON = 'Manual admin credit refund';
 
 export function parseAdminRefundCreditsArgs(argv: readonly string[]): AdminRefundCreditsOptions {
@@ -17,7 +20,7 @@ export function parseAdminRefundCreditsArgs(argv: readonly string[]): AdminRefun
 
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
-    if (arg === '--apply' || arg === '--dry-run') {
+    if (ADMIN_REFUND_FLAG_OPTIONS.has(arg)) {
       args.set(arg, true);
       continue;
     }
@@ -26,9 +29,17 @@ export function parseAdminRefundCreditsArgs(argv: readonly string[]): AdminRefun
       throw new Error(`Unexpected argument: ${arg}`);
     }
 
+    if (!ADMIN_REFUND_VALUE_OPTIONS.has(arg)) {
+      throw new Error(`Unknown option: ${arg}`);
+    }
+
     const value = argv[index + 1];
     if (value === undefined || value.startsWith('--')) {
       throw new Error(`Missing value for ${arg}`);
+    }
+
+    if (args.has(arg)) {
+      throw new Error(`Duplicate option: ${arg}`);
     }
 
     args.set(arg, value);
@@ -149,9 +160,13 @@ function readOptionalString(args: Map<string, string | boolean>, key: string): s
 
 function readPositiveInteger(args: Map<string, string | boolean>, key: string): number {
   const rawValue = readRequiredString(args, key);
+  if (!POSITIVE_INTEGER_PATTERN.test(rawValue)) {
+    throw new Error(`${key} must be a positive integer`);
+  }
+
   const value = Number(rawValue);
 
-  if (!Number.isInteger(value) || value <= 0) {
+  if (!Number.isSafeInteger(value) || value <= 0) {
     throw new Error(`${key} must be a positive integer`);
   }
 
