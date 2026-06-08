@@ -67,6 +67,10 @@ class InMemoryBillingRepository implements BillingRepository {
     return true;
   }
 
+  public async hasStripeEventProcessed(stripeEventId: string): Promise<boolean> {
+    return this.processedEvents.has(stripeEventId);
+  }
+
   public async markStripeEventProcessed(stripeEventId: string): Promise<boolean> {
     if (this.processedEvents.has(stripeEventId)) {
       return false;
@@ -137,6 +141,7 @@ class FakeBillingCreditGrantService implements BillingCreditGrantServicePort {
 class FakeStripeBillingClient implements StripeBillingClientPort {
   public event: Stripe.Event = buildCheckoutSubscriptionEvent();
   public subscription: Stripe.Subscription = buildSubscription();
+  public retrieveSubscriptionCalls = 0;
 
   public async createCustomer(): Promise<never> {
     throw new Error('unused');
@@ -155,6 +160,7 @@ class FakeStripeBillingClient implements StripeBillingClientPort {
   }
 
   public async retrieveSubscription(): Promise<Stripe.Subscription> {
+    this.retrieveSubscriptionCalls += 1;
     return this.subscription;
   }
 }
@@ -431,6 +437,20 @@ describe('StripeWebhookService', () => {
     expect(repository.processedEvents.has('evt_invoice_paid_second')).toBe(true);
     expect(repository.paymentRecords).toHaveLength(1);
     expect(creditGrantService.monthlyGrants).toHaveLength(1);
+  });
+  it('processed subscription checkout event returns before retrieving Stripe subscription', async () => {
+    const repository = seedRepository();
+    repository.processedEvents.add('evt_checkout_sub');
+    const creditGrantService = new FakeBillingCreditGrantService();
+    const stripeClient = new FakeStripeBillingClient();
+    stripeClient.event = buildCheckoutSubscriptionEvent();
+    const service = buildService(repository, creditGrantService, stripeClient);
+
+    await service.handleWebhook(Buffer.from('{}'), 'sig');
+
+    expect(stripeClient.retrieveSubscriptionCalls).toBe(0);
+    expect(creditGrantService.monthlyGrants).toHaveLength(0);
+    expect(repository.subscriptions).toHaveLength(0);
   });
 });
 

@@ -31,6 +31,10 @@ export class StripeWebhookService implements StripeWebhookServicePort {
   public async handleWebhook(rawBody: Buffer, signature: string): Promise<void> {
     const event = this.stripeClient.constructWebhookEvent(rawBody, signature);
 
+    if (await this.billingRepository.hasStripeEventProcessed(event.id)) {
+      return;
+    }
+
     switch (event.type) {
       case 'checkout.session.completed':
       case 'checkout.session.async_payment_succeeded':

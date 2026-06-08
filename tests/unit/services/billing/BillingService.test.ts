@@ -62,6 +62,10 @@ class InMemoryBillingRepository implements BillingRepository {
     return true;
   }
 
+  public async hasStripeEventProcessed(): Promise<boolean> {
+    return false;
+  }
+
   public async markStripeEventProcessed(): Promise<boolean> {
     return true;
   }

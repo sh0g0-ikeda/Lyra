@@ -22,6 +22,7 @@ export interface BillingRepository {
   ): Promise<BillingUserProfile | null>;
   setStripeCustomerId(userId: string, stripeCustomerId: string, client?: DatabaseClient): Promise<string | null>;
   updateUserPlanCode(userId: string, planCode: string, client: DatabaseClient): Promise<boolean>;
+  hasStripeEventProcessed(stripeEventId: string, client?: DatabaseClient): Promise<boolean>;
   markStripeEventProcessed(stripeEventId: string, eventType: string, client: DatabaseClient): Promise<boolean>;
   upsertSubscription(record: SubscriptionRecord, client: DatabaseClient): Promise<void>;
   markSubscriptionDeleted(stripeSubscriptionId: string, client: DatabaseClient): Promise<void>;
@@ -101,6 +102,23 @@ export class PostgresBillingRepository implements BillingRepository {
     );
 
     return result.rowCount === 1;
+  }
+
+  public async hasStripeEventProcessed(
+    stripeEventId: string,
+    client: DatabaseClient = this.client,
+  ): Promise<boolean> {
+    const result = await client.query(
+      `
+      SELECT 1
+      FROM processed_stripe_events
+      WHERE stripe_event_id = $1
+      LIMIT 1
+      `,
+      [stripeEventId],
+    );
+
+    return (result.rowCount ?? 0) > 0;
   }
 
   public async markStripeEventProcessed(

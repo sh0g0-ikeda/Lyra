@@ -138,4 +138,16 @@ describe('PostgresBillingRepository', () => {
 
     expect(inserted).toBe(false);
   });
+
+  it('processed event を読み取り確認する', async () => {
+    const client = new QueryCapturingClient();
+    const repository = new PostgresBillingRepository(client, client);
+
+    const result = await repository.hasStripeEventProcessed('evt_1', client);
+
+    expect(result).toBe(true);
+    expect(client.queries[0]).toContain('FROM processed_stripe_events');
+    expect(client.queries[0]).toContain('stripe_event_id = $1');
+    expect(client.values[0]).toEqual(['evt_1']);
+  });
 });
