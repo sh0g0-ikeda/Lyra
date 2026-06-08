@@ -67,11 +67,10 @@ AUTH_PROVIDER=cognito
 AWS_REGION=ap-northeast-1
 COGNITO_USER_POOL_ID=ap-northeast-1_replace_me
 COGNITO_CLIENT_ID=replace-me
-COGNITO_TOKEN_USE=access
-COGNITO_REQUIRED_SCOPES=lyra/api
+COGNITO_TOKEN_USE=id
 ```
 
-When `AUTH_PROVIDER=cognito`, the API verifies the Cognito JWKS signature, issuer, `client_id`, `token_use`, expiration, required scopes, and configured groups before provisioning the user.
+When `AUTH_PROVIDER=cognito`, the API verifies the Cognito JWKS signature, issuer, `token_use`, expiration, and configured groups before provisioning the user. With the recommended `COGNITO_TOKEN_USE=id`, the API also verifies the ID token audience against `COGNITO_CLIENT_ID` and reads the user email from the ID token. If you intentionally use `COGNITO_TOKEN_USE=access`, set `COGNITO_REQUIRED_SCOPES=lyra/api`; access-token mode verifies `client_id` and required scopes, but your token must provide an email claim or provisioning will fail.
 
 The web app can use Cognito Hosted UI with Authorization Code + PKCE. Configure the frontend with:
 
@@ -80,12 +79,15 @@ VITE_COGNITO_DOMAIN=https://your-domain.auth.ap-northeast-1.amazoncognito.com
 VITE_COGNITO_CLIENT_ID=replace-me
 VITE_COGNITO_REDIRECT_URI=https://app.example.com
 VITE_COGNITO_LOGOUT_URI=https://app.example.com
-VITE_COGNITO_SCOPES=openid email profile lyra/api
+VITE_COGNITO_SCOPES=openid email profile
+VITE_COGNITO_API_TOKEN_USE=id
 ```
 
 In production web builds, Hosted UI configuration is required and manual bearer token authentication is
-disabled. When Cognito is configured, `VITE_COGNITO_SCOPES` is required. Keep it in
-sync with `COGNITO_REQUIRED_SCOPES` so Hosted UI login receives a token the API will accept.
+disabled. When Cognito is configured, `VITE_COGNITO_SCOPES` is required. Keep
+`VITE_COGNITO_API_TOKEN_USE` in sync with backend `COGNITO_TOKEN_USE`; the default and recommended
+setting is `id`. If you switch both sides to `access`, include the API scope in
+`VITE_COGNITO_SCOPES` and set `COGNITO_REQUIRED_SCOPES` on the backend.
 For paid production, configure only one hosted auth provider in the web build. Cognito and Supabase
 at the same time is rejected to avoid presenting a login path whose token the API rejects.
 

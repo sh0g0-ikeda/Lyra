@@ -8,6 +8,7 @@ const safeProductionConfig = {
   AWS_REGION: 'ap-northeast-1',
   COGNITO_USER_POOL_ID: 'ap-northeast-1_pool',
   COGNITO_CLIENT_ID: 'client-123',
+  COGNITO_TOKEN_USE: 'access' as const,
   COGNITO_REQUIRED_SCOPES: 'lyra/api',
   OPENAI_API_KEY: 'openai-key',
   SQS_QUEUE_URL_GENERATION: 'https://sqs.ap-northeast-1.amazonaws.com/123/lyra-generation',
@@ -187,6 +188,7 @@ describe('assertProductionRuntimeConfig', () => {
         {
           ...safeProductionConfig,
           AUTH_PROVIDER: 'cognito',
+          COGNITO_TOKEN_USE: 'access',
           AWS_REGION: 'ap-northeast-1',
           COGNITO_USER_POOL_ID: 'ap-northeast-1_pool',
           COGNITO_CLIENT_ID: undefined,
@@ -195,6 +197,19 @@ describe('assertProductionRuntimeConfig', () => {
         'production',
       );
     }).toThrow(/COGNITO_CLIENT_ID is required/);
+  });
+
+  it('Cognito id token 運用では production でも required scopes を必須にしない', () => {
+    expect(() => {
+      assertProductionRuntimeConfig(
+        {
+          ...safeProductionConfig,
+          COGNITO_TOKEN_USE: 'id',
+          COGNITO_REQUIRED_SCOPES: undefined,
+        },
+        'production',
+      );
+    }).not.toThrow();
   });
 
   it('Stripe 設定が一部だけ入っている場合は拒否する', () => {

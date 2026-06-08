@@ -5,6 +5,7 @@ export interface WebRuntimeEnv {
   VITE_COGNITO_DOMAIN?: string;
   VITE_COGNITO_CLIENT_ID?: string;
   VITE_COGNITO_SCOPES?: string;
+  VITE_COGNITO_API_TOKEN_USE?: string;
   VITE_SUPABASE_URL?: string;
   VITE_SUPABASE_ANON_KEY?: string;
 }
@@ -38,6 +39,10 @@ export function assertSafeWebRuntimeConfig(env: WebRuntimeEnv): void {
     violations.push('VITE_COGNITO_SCOPES is required when Cognito Hosted UI is configured');
   }
 
+  if (hasValue(env.VITE_COGNITO_API_TOKEN_USE) && !isValidCognitoApiTokenUse(env.VITE_COGNITO_API_TOKEN_USE)) {
+    violations.push('VITE_COGNITO_API_TOKEN_USE must be access or id');
+  }
+
   if (violations.length > 0) {
     throw new Error(`Unsafe production web config: ${violations.join('; ')}`);
   }
@@ -45,4 +50,9 @@ export function assertSafeWebRuntimeConfig(env: WebRuntimeEnv): void {
 
 function hasValue(value: string | undefined): boolean {
   return value !== undefined && value.trim().length > 0;
+}
+
+function isValidCognitoApiTokenUse(value: string | undefined): boolean {
+  const normalized = value?.trim();
+  return normalized === 'access' || normalized === 'id';
 }

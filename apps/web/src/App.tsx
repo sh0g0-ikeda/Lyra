@@ -27,6 +27,7 @@ import {
   buildCognitoLogoutUrl,
   clearCognitoSession,
   completeCognitoRedirectIfPresent,
+  getCognitoApiToken,
   getCognitoAuthConfig,
   readStoredCognitoSession,
   refreshCognitoSession,
@@ -972,6 +973,7 @@ const cognitoAuthConfig = getCognitoAuthConfig(
     VITE_COGNITO_LOGOUT_URI: import.meta.env.VITE_COGNITO_LOGOUT_URI,
     VITE_COGNITO_REDIRECT_URI: import.meta.env.VITE_COGNITO_REDIRECT_URI,
     VITE_COGNITO_SCOPES: import.meta.env.VITE_COGNITO_SCOPES,
+    VITE_COGNITO_API_TOKEN_USE: import.meta.env.VITE_COGNITO_API_TOKEN_USE,
   },
   typeof window === 'undefined' ? undefined : window.location.origin,
 );
@@ -1124,9 +1126,13 @@ export default function App() {
     );
   }
 
+  const cognitoApiToken =
+    cognitoAuthConfig !== null && cognitoSession !== null
+      ? getCognitoApiToken(cognitoAuthConfig, cognitoSession)
+      : null;
   const accessToken = devAuthBypass !== null
     ? devAuthBypass.token
-    : cognitoSession?.accessToken ??
+    : cognitoApiToken ??
       supabaseSession?.access_token ??
       (manualTokenAuthAllowed && manualToken.length > 0 ? manualToken : null);
   if (accessToken === null) {

@@ -11,6 +11,7 @@ interface RuntimeGuardConfig {
   COGNITO_USER_POOL_ID?: string;
   COGNITO_CLIENT_ID?: string;
   COGNITO_ISSUER?: string;
+  COGNITO_TOKEN_USE?: 'access' | 'id';
   COGNITO_REQUIRED_SCOPES?: string;
   LOCAL_FILE_STORAGE_DIR?: string;
   LOCAL_ASSET_BASE_URL?: string;
@@ -79,11 +80,12 @@ export function assertProductionRuntimeConfig(
   if (config.AUTH_PROVIDER !== 'cognito') {
     violations.push('AUTH_PROVIDER must be cognito in production');
   } else {
+    const cognitoTokenUse = config.COGNITO_TOKEN_USE ?? 'id';
     if (isMissingConfigValue(config.COGNITO_CLIENT_ID)) {
       violations.push('COGNITO_CLIENT_ID is required');
     }
 
-    if (isMissingConfigValue(config.COGNITO_REQUIRED_SCOPES)) {
+    if (cognitoTokenUse === 'access' && isMissingConfigValue(config.COGNITO_REQUIRED_SCOPES)) {
       violations.push('COGNITO_REQUIRED_SCOPES is required');
     }
 

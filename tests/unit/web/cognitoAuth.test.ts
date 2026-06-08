@@ -64,6 +64,7 @@ const cognitoConfig = {
   redirectUri: 'https://app.example.com',
   logoutUri: 'https://app.example.com',
   scopes: ['openid'],
+  apiTokenUse: 'id' as const,
 };
 
 describe('cognitoAuth', () => {
@@ -75,6 +76,7 @@ describe('cognitoAuth', () => {
         VITE_COGNITO_REDIRECT_URI: 'https://app.example.com/callback',
         VITE_COGNITO_LOGOUT_URI: 'https://app.example.com/logout',
         VITE_COGNITO_SCOPES: 'openid email lyra/api lyra/api',
+        VITE_COGNITO_API_TOKEN_USE: 'access',
       },
       'https://app.example.com',
     );
@@ -85,6 +87,7 @@ describe('cognitoAuth', () => {
       redirectUri: 'https://app.example.com/callback',
       logoutUri: 'https://app.example.com/logout',
       scopes: ['openid', 'email', 'lyra/api'],
+      apiTokenUse: 'access',
     });
   });
 
@@ -100,6 +103,7 @@ describe('cognitoAuth', () => {
       redirectUri: 'https://app.example.com',
       logoutUri: 'https://app.example.com/logout',
       scopes: ['openid', 'email'],
+      apiTokenUse: 'id' as const,
     };
 
     const authorizeUrl = new URL(buildCognitoAuthorizeUrl(config, 'state-1', 'challenge-1'));
@@ -257,5 +261,17 @@ describe('cognitoAuth', () => {
       refreshToken: 'refresh-token',
       expiresAt: 1_810_000,
     });
+  });
+
+  it('Cognito API token 種別は未指定なら id token になる', () => {
+    const config = getCognitoAuthConfig(
+      {
+        VITE_COGNITO_DOMAIN: 'https://example.auth.ap-northeast-1.amazoncognito.com',
+        VITE_COGNITO_CLIENT_ID: 'client-1',
+      },
+      'https://app.example.com',
+    );
+
+    expect(config?.apiTokenUse).toBe('id');
   });
 });

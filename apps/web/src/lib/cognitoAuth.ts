@@ -4,6 +4,7 @@ export interface CognitoAuthConfig {
   redirectUri: string;
   logoutUri: string;
   scopes: string[];
+  apiTokenUse: CognitoApiTokenUse;
 }
 
 export interface CognitoAuthEnv {
@@ -12,6 +13,7 @@ export interface CognitoAuthEnv {
   VITE_COGNITO_REDIRECT_URI?: string;
   VITE_COGNITO_LOGOUT_URI?: string;
   VITE_COGNITO_SCOPES?: string;
+  VITE_COGNITO_API_TOKEN_USE?: string;
 }
 
 export interface CognitoSession {
@@ -26,6 +28,8 @@ export interface CognitoRedirectResult {
   session: CognitoSession | null;
   error: string | null;
 }
+
+export type CognitoApiTokenUse = 'access' | 'id';
 
 interface CognitoTokenPayload {
   access_token?: unknown;
@@ -107,7 +111,16 @@ export function getCognitoAuthConfig(
     redirectUri,
     logoutUri: env.VITE_COGNITO_LOGOUT_URI?.trim() || redirectUri,
     scopes: parseScopes(env.VITE_COGNITO_SCOPES),
+    apiTokenUse: parseApiTokenUse(env.VITE_COGNITO_API_TOKEN_USE),
   };
+}
+
+export function getCognitoApiToken(config: CognitoAuthConfig, session: CognitoSession): string | null {
+  if (config.apiTokenUse === 'id') {
+    return session.idToken;
+  }
+
+  return session.accessToken;
 }
 
 export function readStoredCognitoSession(
@@ -396,6 +409,10 @@ function parseScopes(value: string | undefined): string[] {
     .filter((scope) => scope.length > 0);
 
   return scopes.length === 0 ? DEFAULT_COGNITO_SCOPES : Array.from(new Set(scopes));
+}
+
+function parseApiTokenUse(value: string | undefined): CognitoApiTokenUse {
+  return value?.trim() === 'access' ? 'access' : 'id';
 }
 
 function trimTrailingSlash(value: string | undefined): string | null {

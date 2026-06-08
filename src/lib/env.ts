@@ -58,7 +58,7 @@ const envSchema = z.object({
   COGNITO_CLIENT_ID: z.string().min(1).optional(),
   COGNITO_ISSUER: z.string().url().optional(),
   COGNITO_JWKS_URI: z.string().url().optional(),
-  COGNITO_TOKEN_USE: z.enum(['access', 'id']).default('access'),
+  COGNITO_TOKEN_USE: z.enum(['access', 'id']).default('id'),
   COGNITO_REQUIRED_SCOPES: z.string().min(1).optional(),
   COGNITO_REQUIRED_GROUPS: z.string().min(1).optional(),
   ENTERPRISE_STYLE_REFERENCES_ENABLED: z

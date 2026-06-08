@@ -17,6 +17,7 @@ Available variables:
 - `VITE_COGNITO_REDIRECT_URI`
 - `VITE_COGNITO_LOGOUT_URI`
 - `VITE_COGNITO_SCOPES`
+- `VITE_COGNITO_API_TOKEN_USE`
 - `VITE_REQUIRE_HOSTED_AUTH`
 
 If `VITE_API_BASE_URL` points to a different origin than the web app, set the
@@ -42,9 +43,12 @@ You can authenticate with:
 3. Manual bearer token pasted into the login screen
 
 For paid production, prefer Cognito Hosted UI and set `VITE_REQUIRE_HOSTED_AUTH=true` during the
-deploy build. If Cognito is configured, `VITE_COGNITO_SCOPES` must be explicit and include the API
-scope required by `COGNITO_REQUIRED_SCOPES` on the backend. `VITE_DEV_AUTH_BYPASS=true` is
-local-only and is not allowed in production builds.
+deploy build. If Cognito is configured, `VITE_COGNITO_SCOPES` must be explicit. The recommended
+API token mode is `VITE_COGNITO_API_TOKEN_USE=id`, matching backend `COGNITO_TOKEN_USE=id`, because
+the API can verify the ID token audience and read the user email without an extra userinfo call. If
+you switch both sides to `access`, include the API scope in `VITE_COGNITO_SCOPES` and set
+`COGNITO_REQUIRED_SCOPES` on the backend. `VITE_DEV_AUTH_BYPASS=true` is local-only and is not
+allowed in production builds.
 
 Do not configure Cognito and Supabase Hosted Auth together in a paid production build. The build
 guard rejects that combination because it can show a login option whose token the API will not

@@ -95,11 +95,38 @@ describe('createAuthMiddleware Cognito mode', () => {
 
     expect(response.status).toBe(401);
   });
+
+  it('id token 運用では audience と email を検証し scope は要求しない', async () => {
+    const fixture = await createCognitoFixture();
+    const provisioningService = new FakeUserProvisioningService();
+    const app = createProtectedApp(provisioningService, fixture.jwks, {
+      ...cognitoConfig,
+      tokenUse: 'id',
+      requiredScopes: ['admin-only'],
+      requiredGroups: [],
+    });
+    const token = await fixture.signToken({
+      aud: cognitoConfig.clientId,
+      token_use: 'id',
+      scope: undefined,
+    });
+
+    const response = await app.request('/protected', {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    expect(response.status).toBe(200);
+    expect(provisioningService.claims).toEqual({
+      sub: 'cognito-user-1',
+      email: 'user@example.com',
+    });
+  });
 });
 
 function createProtectedApp(
   provisioningService: UserProvisioningPort,
   cognitoJwks: ReturnType<typeof createLocalJWKSet>,
+  config: CognitoVerifierConfig = cognitoConfig,
 ): Hono<AppEnv> {
   const app = new Hono<AppEnv>();
   app.onError((error, c) => {
@@ -113,7 +140,7 @@ function createProtectedApp(
     '/protected',
     createAuthMiddleware(provisioningService, {
       authProvider: 'cognito',
-      cognito: cognitoConfig,
+      cognito: config,
       cognitoJwks,
       enableDevBypass: false,
     }),
@@ -134,7 +161,7 @@ async function createCognitoFixture(): Promise<{
   return {
     jwks,
     async signToken(overrides: Record<string, unknown> = {}): Promise<string> {
-      return new SignJWT({
+      const payload = removeUndefinedValues({
         sub: 'cognito-user-1',
         email: 'user@example.com',
         iss: cognitoConfig.issuer,
@@ -143,7 +170,9 @@ async function createCognitoFixture(): Promise<{
         scope: 'openid profile lyra/api',
         'cognito:groups': ['customers'],
         ...overrides,
-      })
+      });
+
+      return new SignJWT(payload)
         .setProtectedHeader({ alg: 'RS256', kid: keyId })
         .setIssuer(cognitoConfig.issuer)
         .setSubject('cognito-user-1')
@@ -152,4 +181,8 @@ async function createCognitoFixture(): Promise<{
         .sign(privateKey);
     },
   };
+}
+
+function removeUndefinedValues(input: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined));
 }

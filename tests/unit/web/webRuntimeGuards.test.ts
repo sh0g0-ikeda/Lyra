@@ -62,7 +62,20 @@ describe('assertSafeWebRuntimeConfig', () => {
         VITE_COGNITO_DOMAIN: 'https://example.auth.ap-northeast-1.amazoncognito.com',
         VITE_COGNITO_CLIENT_ID: 'client-1',
         VITE_COGNITO_SCOPES: 'openid email profile lyra/api',
+        VITE_COGNITO_API_TOKEN_USE: 'id',
       });
     }).not.toThrow();
+  });
+
+  it('production の Cognito API token 種別が不正なら拒否する', () => {
+    expect(() => {
+      assertSafeWebRuntimeConfig({
+        MODE: 'production',
+        VITE_COGNITO_DOMAIN: 'https://example.auth.ap-northeast-1.amazoncognito.com',
+        VITE_COGNITO_CLIENT_ID: 'client-1',
+        VITE_COGNITO_SCOPES: 'openid email profile',
+        VITE_COGNITO_API_TOKEN_USE: 'refresh',
+      });
+    }).toThrow(/VITE_COGNITO_API_TOKEN_USE must be access or id/);
   });
 });

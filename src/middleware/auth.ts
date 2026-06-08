@@ -152,7 +152,9 @@ function parseCognitoClaims(
     throw new UnauthorizedError('Cognito JWT has invalid user claims');
   }
 
-  assertRequiredScopes(payload.scope, config.requiredScopes);
+  if (config.tokenUse === 'access') {
+    assertRequiredScopes(payload.scope, config.requiredScopes);
+  }
   assertRequiredGroups(payload['cognito:groups'], config.requiredGroups);
 
   return parsed.data;
