@@ -42,6 +42,10 @@ class InMemoryCreditRepository implements CreditRepository {
     return this.cloneBalance(balance);
   }
 
+  public async hasLedgerEntry(userId: string, type: CreditLedgerEntry['type']): Promise<boolean> {
+    return this.ledger.some((entry) => entry.userId === userId && entry.type === type);
+  }
+
   public async insertLedger(entry: CreditLedgerEntry): Promise<void> {
     this.ledger.push({ ...entry });
   }
@@ -80,6 +84,22 @@ describe('CreditService', () => {
     });
     expect(repository.ledger).toHaveLength(1);
     expect(repository.ledger[0]?.type).toBe('signup_bonus');
+  });
+
+  it('初回ボーナスは複数回呼んでも一度だけ付与する', async () => {
+    const repository = new InMemoryCreditRepository();
+    const service = new CreditService(repository);
+
+    await service.grantSignupBonus('user-1');
+    const result = await service.grantSignupBonus('user-1');
+
+    expect(result).toEqual({
+      monthlyCredits: 0,
+      purchasedCredits: 12,
+      totalCredits: 12,
+      monthlyExpiresAt: null,
+    });
+    expect(repository.ledger.filter((entry) => entry.type === 'signup_bonus')).toHaveLength(1);
   });
 
   it('月次残高がある場合に月次から先に消費される', async () => {

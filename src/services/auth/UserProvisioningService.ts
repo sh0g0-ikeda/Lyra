@@ -30,6 +30,7 @@ export class UserProvisioningService implements UserProvisioningPort {
           ? existingUser
           : await this.userRepository.updateEmail(claims.sub, claims.email);
 
+      await this.creditService.grantSignupBonus(user.id);
       return { user, isNewUser: false };
     }
 
@@ -43,6 +44,7 @@ export class UserProvisioningService implements UserProvisioningPort {
       }
 
       const user = await this.userRepository.updateEmail(claims.sub, claims.email);
+      await this.creditService.grantSignupBonus(user.id);
       return { user, isNewUser: false };
     }
   }

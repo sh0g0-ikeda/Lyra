@@ -66,4 +66,17 @@ describe('PostgresCreditRepository', () => {
       monthlyExpiresAt: null,
     });
   });
+
+  it('指定ユーザーと種別で台帳の存在を確認する', async () => {
+    const client = new QueryCapturingClient();
+    const repository = new PostgresCreditRepository(client, new PassthroughTransactionRunner());
+
+    const exists = await repository.hasLedgerEntry('user-1', 'signup_bonus', client);
+
+    expect(exists).toBe(true);
+    expect(client.queries[0]).toContain('FROM credit_ledger');
+    expect(client.queries[0]).toContain('user_id = $1');
+    expect(client.queries[0]).toContain('type = $2');
+    expect(client.valuesList[0]).toEqual(['user-1', 'signup_bonus']);
+  });
 });

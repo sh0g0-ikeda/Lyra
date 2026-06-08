@@ -1,4 +1,5 @@
 import type { QueryResultRow } from 'pg';
+import type { CreditLedgerType } from '../domain/constants/credits.js';
 import type { CreditBalance, CreditLedgerEntry } from '../domain/types/credit.js';
 import type { DatabaseClient, TransactionRunner } from '../lib/db.js';
 
@@ -15,6 +16,7 @@ export interface CreditRepository {
   getBalanceForUpdate(userId: string, client: DatabaseClient): Promise<CreditBalance | null>;
   createBalance(balance: CreditBalance, client: DatabaseClient): Promise<CreditBalance>;
   updateBalance(balance: CreditBalance, client: DatabaseClient): Promise<CreditBalance>;
+  hasLedgerEntry(userId: string, type: CreditLedgerType, client: DatabaseClient): Promise<boolean>;
   insertLedger(entry: CreditLedgerEntry, client: DatabaseClient): Promise<void>;
 }
 
@@ -94,6 +96,25 @@ export class PostgresCreditRepository implements CreditRepository {
     );
 
     return mapCreditBalanceRow(result.rows[0]);
+  }
+
+  public async hasLedgerEntry(
+    userId: string,
+    type: CreditLedgerType,
+    client: DatabaseClient,
+  ): Promise<boolean> {
+    const result = await client.query(
+      `
+      SELECT 1
+      FROM credit_ledger
+      WHERE user_id = $1
+        AND type = $2
+      LIMIT 1
+      `,
+      [userId, type],
+    );
+
+    return (result.rowCount ?? 0) > 0;
   }
 
   public async insertLedger(entry: CreditLedgerEntry, client: DatabaseClient): Promise<void> {

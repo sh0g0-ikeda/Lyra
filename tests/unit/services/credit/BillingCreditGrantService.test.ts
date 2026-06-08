@@ -41,6 +41,10 @@ class InMemoryCreditRepository implements CreditRepository {
     return this.clone(balance);
   }
 
+  public async hasLedgerEntry(userId: string, type: CreditLedgerEntry['type']): Promise<boolean> {
+    return this.ledger.some((entry) => entry.userId === userId && entry.type === type);
+  }
+
   public async insertLedger(entry: CreditLedgerEntry): Promise<void> {
     this.ledger.push({ ...entry });
   }
