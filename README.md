@@ -5,7 +5,7 @@
 ### 1. Start Postgres
 
 ```powershell
-npm run db:up
+bun run db:up
 ```
 
 Default local DB:
@@ -19,11 +19,11 @@ Default local DB:
 ### 2. Run migrations
 
 ```powershell
-npm run migrate
+bun run migrate
 ```
 
 - The API also applies pending SQL migrations on startup.
-- Running `npm run migrate` manually is still useful before first boot or when verifying DB state.
+- Running `bun run migrate` manually is still useful before first boot or when verifying DB state.
 
 ### 3. Minimal backend `.env`
 
@@ -94,8 +94,8 @@ VITE_API_PROXY_TARGET=http://localhost:3000
 ### 5. Start API and frontend
 
 ```powershell
-npm run dev
-npm run web:dev
+bun run dev
+bun run web:dev
 ```
 
 Frontend:
@@ -141,7 +141,7 @@ GitHub Actions runs the same checks expected before deployment:
 ```powershell
 bun run test
 bun test
-npm run build
+bun run build
 bun run web:lint
 bun run web:build
 ```
@@ -154,7 +154,7 @@ Manual support refunds should go through the credit service so `credit_balances`
 `credit_ledger` stay consistent.
 
 ```powershell
-npm run admin:refund-credits -- --user-id <uuid> --amount 3 --reason "support refund"
+bun run admin:refund-credits -- --user-id <uuid> --amount 3 --reason "support refund"
 ```
 
 - Default mode is dry-run and changes nothing.
@@ -166,7 +166,7 @@ npm run admin:refund-credits -- --user-id <uuid> --amount 3 --reason "support re
 Temporary and unconfirmed generated images should be pruned from S3 regularly:
 
 ```powershell
-npm run admin:prune-images -- --older-than-hours 24 --protect-recent-candidate-hours 48
+bun run admin:prune-images -- --older-than-hours 24 --protect-recent-candidate-hours 48
 ```
 
 - Default mode is dry-run and lists delete candidates only.
