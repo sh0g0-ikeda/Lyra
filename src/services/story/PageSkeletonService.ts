@@ -1,8 +1,15 @@
 ﻿import { PANEL_FRAME_TEMPLATES } from '../../domain/constants/panelFrameTemplates.js';
 import { STORY_AI_LIMITS } from '../../domain/constants/storyAi.js';
-import { canonicalizeEntityMentionsInText, inferEntityIdsFromTexts } from '../../domain/entityAliases.js';
+import { inferEntityIdsFromTexts } from '../../domain/entityAliases.js';
 import { AppError, ConflictError, NotFoundError, ValidationError } from '../../domain/errors/index.js';
 import { distributeStoryBeats } from '../../domain/storyBeatDistribution.js';
+import {
+  compactCanonicalStoryPromptText,
+  compactStoryPromptText,
+  formatStoryPromptParts,
+  formatStoryPromptSummaryList,
+  STORY_PROMPT_CONTEXT_LIMITS,
+} from '../../domain/storyPromptCompaction.js';
 import { describeAppLanguage, type AppLanguage } from '../../domain/types/language.js';
 import type {
   PageSkeletonPageDraft,
@@ -147,26 +154,60 @@ function buildPageSkeletonUserPrompt(context: {
   }>;
 }): string {
   const canonicalize = (value: string | null): string =>
-    canonicalizeEntityMentionsInText(value, context.entities) ?? '(none)';
+    compactCanonicalStoryPromptText(value, context.entities) ?? '(none)';
 
   return [
-    `Work title: ${context.workTitle}`,
-    `Genre: ${context.workGenre ?? '(none)'}`,
-    `World setting: ${context.worldSetting ?? '(none)'}`,
-    `Theme: ${context.theme ?? '(none)'}`,
-    `Episode title: ${context.episodeTitle ?? '(none)'}`,
+    `Work title: ${compactStoryPromptText(context.workTitle) ?? '(none)'}`,
+    `Genre: ${compactStoryPromptText(context.workGenre) ?? '(none)'}`,
+    `World setting: ${canonicalize(context.worldSetting)}`,
+    `Theme: ${canonicalize(context.theme)}`,
+    `Episode title: ${canonicalize(context.episodeTitle)}`,
     `Episode purpose: ${canonicalize(context.episodePurpose)}`,
     `Introduction: ${canonicalize(context.introduction)}`,
     `Middle: ${canonicalize(context.middle)}`,
     `Climax: ${canonicalize(context.climax)}`,
     `Ending hook: ${canonicalize(context.endingHook)}`,
-    `Chapter consistency note: ${[context.chapterTitle, context.chapterPurpose].filter((value) => value !== null && value.trim().length > 0).join(' / ') || '(none)'}`,
+    `Chapter consistency note: ${formatStoryPromptParts([context.chapterTitle, context.chapterPurpose], context.entities)}`,
     `Estimated pages: ${context.estimatedPages}`,
-    `Scenes: ${context.sceneSummaries.map((scene) => canonicalizeEntityMentionsInText(scene, context.entities) ?? scene).join(' / ') || '(none)'}`,
-    `Available entities: ${context.entities
-      .map((entity) => `${entity.id}: ${entity.name} (${entity.entityType}${entity.freeDescription === null ? '' : `, ${entity.freeDescription}`}${entity.aliases.length === 0 ? '' : `, aliases: ${entity.aliases.join(', ')}`})`)
-      .join(' / ') || '(none)'}`,
+    `Scenes: ${formatStoryPromptSummaryList(context.sceneSummaries, context.entities, {
+      maxItems: STORY_PROMPT_CONTEXT_LIMITS.maxSceneSummaries,
+    })}`,
+    `Available entities: ${formatPageSkeletonEntityList(context.entities)}`,
   ].join('\n');
+}
+
+function formatPageSkeletonEntityList(
+  entities: Array<{
+    id: string;
+    name: string;
+    aliases: string[];
+    entityType: string;
+    freeDescription: string | null;
+  }>,
+): string {
+  const visibleEntities = entities.slice(0, STORY_PROMPT_CONTEXT_LIMITS.maxEntities).map((entity) => {
+    const description = compactStoryPromptText(
+      entity.freeDescription,
+      STORY_PROMPT_CONTEXT_LIMITS.entityDescriptionChars,
+    );
+    const aliases = entity.aliases
+      .slice(0, STORY_PROMPT_CONTEXT_LIMITS.maxAliasesPerEntity)
+      .map((alias) => compactStoryPromptText(alias, STORY_PROMPT_CONTEXT_LIMITS.aliasChars))
+      .filter((alias): alias is string => alias !== null);
+    const details = [
+      entity.entityType,
+      description,
+      aliases.length === 0 ? null : `aliases: ${aliases.join(', ')}`,
+    ].filter((value): value is string => value !== null);
+
+    return `${entity.id}: ${entity.name} (${details.join(', ')})`;
+  });
+
+  if (entities.length > STORY_PROMPT_CONTEXT_LIMITS.maxEntities) {
+    visibleEntities.push(`... (${entities.length - STORY_PROMPT_CONTEXT_LIMITS.maxEntities} more)`);
+  }
+
+  return visibleEntities.length === 0 ? '(none)' : visibleEntities.join(' / ');
 }
 
 function buildFallbackPageSkeleton(context: {

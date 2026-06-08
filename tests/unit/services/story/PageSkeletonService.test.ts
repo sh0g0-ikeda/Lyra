@@ -620,4 +620,36 @@ describe('PageSkeletonService', () => {
     });
     expect(repository.lastCreateOptions).toEqual({ overwriteExisting: true });
   });
+
+  it('compacts long page skeleton context before sending it to the model', async () => {
+    const repository = new FakeStoryRepository();
+    const longDescription = 'skeleton-overflow-entity-detail '.repeat(80).trim();
+    const longIntroduction = 'skeleton-overflow-introduction '.repeat(80).trim();
+    repository.skeletonContext = {
+      ...repository.skeletonContext!,
+      introduction: longIntroduction,
+      sceneSummaries: Array.from({ length: 60 }, (_unused, index) => `Scene ${index + 1}: skeleton scene ${index + 1}`),
+      entities: [
+        {
+          id: '11111111-1111-4111-8111-111111111111',
+          name: 'Aki',
+          aliases: ['Long Alias '.repeat(20)],
+          entityType: 'character',
+          freeDescription: longDescription,
+        },
+      ],
+      entitiesInvolved: ['11111111-1111-4111-8111-111111111111'],
+    };
+    const client = new FakeStoryAiClient();
+    const service = new PageSkeletonService(repository, client);
+
+    await service.generateForEpisode('user-1', '33333333-3333-4333-8333-333333333333');
+
+    const userPrompt = client.lastRequest?.userPrompt ?? '';
+    expect(userPrompt).toContain('skeleton-overflow-introduction');
+    expect(userPrompt).not.toContain(longIntroduction);
+    expect(userPrompt).toContain('skeleton-overflow-entity-detail');
+    expect(userPrompt).not.toContain(longDescription);
+    expect(userPrompt).not.toContain('Scene 60: skeleton scene 60');
+  });
 });
