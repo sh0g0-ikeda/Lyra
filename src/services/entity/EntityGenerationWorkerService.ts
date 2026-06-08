@@ -21,6 +21,7 @@ import type {
   CompiledEntityReferencePrompt,
   EntityReferencePromptCompilerPort,
 } from './EntityReferencePromptCompiler.js';
+import { ensureAllowedReferenceSourceKey } from './EntityReferenceSourceKeyPolicy.js';
 
 export interface ProcessEntityGenerationJobResult {
   status: 'processed' | 'skipped';
@@ -63,7 +64,7 @@ export class EntityGenerationWorkerService {
       const draftPrompt = this.promptBuilder.buildGenerationPrompt(entity);
       const compilerBrief = this.promptBuilder.buildCompilerBrief(entity);
       const compiled = await compilePromptSafely(this.promptCompiler, entity, draftPrompt, compilerBrief);
-      const inputImages = await buildGeneratorInputImages(params, this.storedImageLoader);
+      const inputImages = await buildGeneratorInputImages(params, job.userId, this.storedImageLoader);
       const generationPrompt = buildPreviewVariationPrompt(
         compiled.prompt,
         job.id,
@@ -256,12 +257,14 @@ async function compilePromptSafely(
 
 async function buildGeneratorInputImages(
   params: PersistedEntityGenerationJobParams,
+  userId: string,
   storedImageLoader: StoredImageLoaderPort,
 ): Promise<Array<{ dataUrl: string }>> {
   if (params.source_s3_key === undefined) {
     return [];
   }
 
+  ensureAllowedReferenceSourceKey(params.source_s3_key, userId, params.entity_id, 'source_s3_key');
   const loadedImage = await storedImageLoader.loadByS3Key(params.source_s3_key);
   return [
     {

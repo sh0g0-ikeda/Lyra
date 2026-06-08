@@ -333,6 +333,39 @@ describe('EntityGenerationWorkerService', () => {
     expect(referenceGenerator.input?.prompt).toContain('obey the current saved text');
   });
 
+  it('source_s3_key が別ユーザー範囲なら読み込まず failed と refund にする', async () => {
+    const executionRepository = new FakeExecutionRepository();
+    executionRepository.job = buildJob({
+      params: {
+        entity_id: 'entity-1',
+        entity_type: 'character',
+        previous_entity_status: 'draft',
+        source_s3_key: 'tmp/user-2/entities/imports/source.png',
+      },
+    });
+    const referenceGenerator = new FakeReferenceGenerator();
+    const storedImageLoader = new FakeStoredImageLoader();
+    const creditService = new FakeCreditService();
+    const service = buildService({
+      executionRepository,
+      referenceGenerator,
+      storedImageLoader,
+      creditService,
+    });
+
+    const result = await service.processJob('job-1');
+
+    expect(result).toEqual({ status: 'processed', jobStatus: 'failed' });
+    expect(storedImageLoader.loadedS3Keys).toEqual([]);
+    expect(referenceGenerator.input).toBeNull();
+    expect(executionRepository.failed?.errorMessage).toContain('source_s3_key');
+    expect(creditService.refunded).toMatchObject({
+      userId: 'user-1',
+      amount: 8,
+      jobId: 'job-1',
+    });
+  });
+
   it('生成失敗時は failed と refund に落ちる', async () => {
     const executionRepository = new FakeExecutionRepository();
     const referenceGenerator = new FakeReferenceGenerator();
