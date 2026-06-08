@@ -20,6 +20,19 @@ export interface CreateGenerationJobInput {
   };
 }
 
+export interface PruneExpiredGenerationJobsInput {
+  maxDeletes: number;
+  dryRun: boolean;
+}
+
+export interface PruneExpiredGenerationJobsResult {
+  dryRun: boolean;
+  candidateCount: number;
+  deletedCount: number;
+  candidateIds: string[];
+  truncated: boolean;
+}
+
 export interface GenerationJobRepository {
   create(input: CreateGenerationJobInput): Promise<GenerationJob>;
   findById(jobId: string): Promise<GenerationJob | null>;
@@ -259,6 +272,62 @@ export class PostgresGenerationJobRepository implements GenerationJobRepository 
     );
 
     return (result.rowCount ?? 0) > 0;
+  }
+
+  public async pruneExpiredTerminalJobs(
+    input: PruneExpiredGenerationJobsInput,
+  ): Promise<PruneExpiredGenerationJobsResult> {
+    if (!Number.isSafeInteger(input.maxDeletes) || input.maxDeletes <= 0) {
+      throw new Error('maxDeletes must be a positive safe integer');
+    }
+
+    const candidateIds = await this.findExpiredTerminalJobIds(input.maxDeletes + 1);
+    const truncated = candidateIds.length > input.maxDeletes;
+    const idsToDelete = candidateIds.slice(0, input.maxDeletes);
+
+    if (input.dryRun || idsToDelete.length === 0) {
+      return {
+        dryRun: input.dryRun,
+        candidateCount: idsToDelete.length,
+        deletedCount: 0,
+        candidateIds: idsToDelete,
+        truncated,
+      };
+    }
+
+    const deletedResult = await this.client.query<{ id: string }>(
+      `
+      DELETE FROM generation_jobs
+      WHERE id = ANY($1::uuid[])
+      RETURNING id
+      `,
+      [idsToDelete],
+    );
+
+    return {
+      dryRun: false,
+      candidateCount: idsToDelete.length,
+      deletedCount: deletedResult.rows.length,
+      candidateIds: deletedResult.rows.map((row) => row.id),
+      truncated,
+    };
+  }
+
+  private async findExpiredTerminalJobIds(limit: number): Promise<string[]> {
+    const result = await this.client.query<{ id: string }>(
+      `
+      SELECT id
+      FROM generation_jobs
+      WHERE expires_at IS NOT NULL
+        AND expires_at < NOW()
+        AND status IN ('completed', 'failed')
+      ORDER BY expires_at ASC, created_at ASC
+      LIMIT $1
+      `,
+      [limit],
+    );
+
+    return result.rows.map((row) => row.id);
   }
 
   private async findActiveResourceJob(

@@ -217,3 +217,18 @@ For AWS cost control, pair this with S3 lifecycle rules:
   window you decide to keep.
 - `saved/`: keep durable, encrypted, and private behind CloudFront; use lifecycle transitions only
   after confirming product requirements.
+
+### Generation job retention
+
+Generation jobs keep prompt metadata and provider results for support debugging. Completed and
+failed jobs receive an `expires_at` timestamp when they are created and should be pruned regularly:
+
+```powershell
+bun run admin:prune-jobs -- --max-deletes 500
+```
+
+- Default mode is dry-run and lists expired terminal jobs only.
+- Add `--apply` to delete candidates.
+- The script deletes only `completed` and `failed` jobs whose `expires_at` is in the past.
+- `queued` and `processing` jobs are intentionally not deleted here; stale active jobs are handled by
+  the generation recovery flow.

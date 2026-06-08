@@ -247,6 +247,59 @@ describe('PostgresGenerationJobRepository', () => {
     expect(persistedMessage.length).toBeLessThanOrEqual(300);
   });
 
+  it('dry-runでは期限切れの完了済みジョブを削除せず候補として返す', async () => {
+    const client = new QueryCapturingClient();
+    const repository = new PostgresGenerationJobRepository(client);
+
+    const result = await repository.pruneExpiredTerminalJobs({
+      maxDeletes: 10,
+      dryRun: true,
+    });
+
+    expect(result).toEqual({
+      dryRun: true,
+      candidateCount: 1,
+      deletedCount: 0,
+      candidateIds: ['job-1'],
+      truncated: false,
+    });
+    expect(client.queries[0]).toContain('expires_at < NOW()');
+    expect(client.queries[0]).toContain("status IN ('completed', 'failed')");
+    expect(client.queries[0]).toContain('LIMIT $1');
+    expect(client.values).toEqual([11]);
+    expect(client.queries.some((query) => query.includes('DELETE FROM generation_jobs'))).toBe(false);
+  });
+
+  it('apply時だけ期限切れの完了済みジョブを削除する', async () => {
+    const client = new QueryCapturingClient();
+    const repository = new PostgresGenerationJobRepository(client);
+
+    const result = await repository.pruneExpiredTerminalJobs({
+      maxDeletes: 10,
+      dryRun: false,
+    });
+
+    expect(result.deletedCount).toBe(1);
+    expect(result.candidateIds).toEqual(['job-1']);
+    expect(client.queries[1]).toContain('DELETE FROM generation_jobs');
+    expect(client.queries[1]).toContain('id = ANY($1::uuid[])');
+    expect(client.values).toEqual([['job-1']]);
+  });
+
+  it('期限切れジョブ削除の上限値が不正な場合は拒否する', async () => {
+    const client = new QueryCapturingClient();
+    const repository = new PostgresGenerationJobRepository(client);
+
+    await expect(
+      repository.pruneExpiredTerminalJobs({
+        maxDeletes: 0,
+        dryRun: true,
+      }),
+    ).rejects.toThrow(/maxDeletes must be a positive safe integer/);
+
+    expect(client.queries).toEqual([]);
+  });
+
   it('Postgres unique violation を識別する', () => {
     expect(isUniqueViolation({ code: '23505' })).toBe(true);
     expect(isUniqueViolation({ code: '23503' })).toBe(false);
