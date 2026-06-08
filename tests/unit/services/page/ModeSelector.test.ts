@@ -30,7 +30,7 @@ describe('ModeSelector', () => {
   });
 
   describe('selectProfile', () => {
-    it('initial standard は medium 品質と10crになる', () => {
+    it('initial standard は medium 品質と1crになる', () => {
       const result = selector.selectProfile({
         entityCount: 4,
         panelCount: 8,
@@ -46,7 +46,7 @@ describe('ModeSelector', () => {
       });
     });
 
-    it('initial thinking は medium 品質と14crになる', () => {
+    it('initial thinking は medium 品質と1crになる', () => {
       const result = selector.selectProfile({
         entityCount: 5,
         panelCount: 8,

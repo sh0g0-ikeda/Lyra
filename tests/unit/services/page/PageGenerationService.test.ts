@@ -263,7 +263,7 @@ describe('PageGenerationService', () => {
     expect(recoveryService.pageIds).toEqual([pageId]);
   });
 
-  it('initial standard は10crでenqueueする', async () => {
+  it('initial standard は1crでenqueueする', async () => {
     const pageRepository = new FakePageRepository();
     const jobRepository = new FakeGenerationJobRepository();
     const creditService = new FakeCreditService();
@@ -313,7 +313,7 @@ describe('PageGenerationService', () => {
     });
   });
 
-  it('initial thinking は14crになる', async () => {
+  it('initial thinking は1crになる', async () => {
     const pageRepository = new FakePageRepository();
     pageRepository.context = buildPageContext({
       frameCount: 5,
@@ -342,7 +342,7 @@ describe('PageGenerationService', () => {
     expect(queue.lastPayload?.generationMode).toBe('thinking');
   });
 
-  it('generated_image があるページは22crのregenerateになる', async () => {
+  it('generated_image があるページは1crのregenerateになる', async () => {
     const pageRepository = new FakePageRepository();
     pageRepository.context = buildPageContext({
       generatedImage: {
