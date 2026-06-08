@@ -197,6 +197,91 @@ describe('StripeWebhookService', () => {
     });
   });
 
+  it('does not grant credits for unpaid checkout.session.completed events', async () => {
+    const repository = seedRepository();
+    const creditGrantService = new FakeBillingCreditGrantService();
+    const stripeClient = new FakeStripeBillingClient();
+    stripeClient.event = buildCheckoutCreditPurchaseEvent({
+      id: 'evt_checkout_credit_unpaid',
+      paymentStatus: 'unpaid',
+    });
+    const service = buildService(repository, creditGrantService, stripeClient);
+
+    await service.handleWebhook(Buffer.from('{}'), 'sig');
+
+    expect(repository.processedEvents.has('evt_checkout_credit_unpaid')).toBe(true);
+    expect(creditGrantService.purchasedGrants).toHaveLength(0);
+    expect(repository.paymentRecords).toHaveLength(0);
+    expect(repository.updatedPlans).toHaveLength(0);
+  });
+
+  it('does not activate subscriptions for unpaid checkout.session.completed events', async () => {
+    const repository = seedRepository();
+    const creditGrantService = new FakeBillingCreditGrantService();
+    const stripeClient = new FakeStripeBillingClient();
+    stripeClient.event = buildCheckoutSubscriptionEvent({
+      id: 'evt_checkout_sub_unpaid',
+      paymentStatus: 'unpaid',
+    });
+    const service = buildService(repository, creditGrantService, stripeClient);
+
+    await service.handleWebhook(Buffer.from('{}'), 'sig');
+
+    expect(repository.processedEvents.has('evt_checkout_sub_unpaid')).toBe(true);
+    expect(creditGrantService.monthlyGrants).toHaveLength(0);
+    expect(repository.subscriptions).toHaveLength(0);
+    expect(repository.updatedPlans).toHaveLength(0);
+    expect(repository.paymentRecords).toHaveLength(0);
+  });
+
+  it('processes async checkout payment success through the paid checkout path', async () => {
+    const repository = seedRepository();
+    const creditGrantService = new FakeBillingCreditGrantService();
+    const stripeClient = new FakeStripeBillingClient();
+    stripeClient.event = buildCheckoutCreditPurchaseEvent({
+      id: 'evt_checkout_credit_async_success',
+      type: 'checkout.session.async_payment_succeeded',
+      paymentStatus: 'paid',
+    });
+    const service = buildService(repository, creditGrantService, stripeClient);
+
+    await service.handleWebhook(Buffer.from('{}'), 'sig');
+
+    expect(creditGrantService.purchasedGrants[0]).toMatchObject({
+      userId: 'user-1',
+      amount: 50,
+      stripeEventId: 'evt_checkout_credit_async_success',
+    });
+    expect(repository.paymentRecords[0]).toMatchObject({
+      kind: 'credit_purchase',
+      amountJpy: 2250,
+      status: 'paid',
+    });
+  });
+
+  it('records async checkout payment failures without granting credits', async () => {
+    const repository = seedRepository();
+    const creditGrantService = new FakeBillingCreditGrantService();
+    const stripeClient = new FakeStripeBillingClient();
+    stripeClient.event = buildCheckoutCreditPurchaseEvent({
+      id: 'evt_checkout_credit_async_failed',
+      type: 'checkout.session.async_payment_failed',
+      paymentStatus: 'unpaid',
+    });
+    const service = buildService(repository, creditGrantService, stripeClient);
+
+    await service.handleWebhook(Buffer.from('{}'), 'sig');
+
+    expect(repository.processedEvents.has('evt_checkout_credit_async_failed')).toBe(true);
+    expect(creditGrantService.purchasedGrants).toHaveLength(0);
+    expect(repository.paymentRecords[0]).toMatchObject({
+      stripeCheckoutSessionId: 'cs_pay_123',
+      kind: 'credit_purchase',
+      amountJpy: 2250,
+      status: 'failed',
+    });
+  });
+
   it('invoice.paid の subscription_cycle で月次 grant を行う', async () => {
     const repository = seedRepository();
     const creditGrantService = new FakeBillingCreditGrantService();
@@ -303,9 +388,13 @@ function buildService(
   });
 }
 
-function buildCheckoutSubscriptionEvent(): Stripe.Event {
+function buildCheckoutSubscriptionEvent(options: {
+  id?: string;
+  paymentStatus?: 'paid' | 'unpaid' | 'no_payment_required';
+  type?: string;
+} = {}): Stripe.Event {
   return {
-    id: 'evt_checkout_sub',
+    id: options.id ?? 'evt_checkout_sub',
     object: 'event',
     api_version: '2025-03-31',
     created: 1,
@@ -321,20 +410,24 @@ function buildCheckoutSubscriptionEvent(): Stripe.Event {
           user_id: 'user-1',
           plan_code: 'standard',
         },
-        payment_status: 'paid',
+        payment_status: options.paymentStatus ?? 'paid',
         amount_total: 1980,
       },
     },
     livemode: false,
     pending_webhooks: 1,
     request: { id: null, idempotency_key: null },
-    type: 'checkout.session.completed',
+    type: options.type ?? 'checkout.session.completed',
   } as unknown as Stripe.Event;
 }
 
-function buildCheckoutCreditPurchaseEvent(): Stripe.Event {
+function buildCheckoutCreditPurchaseEvent(options: {
+  id?: string;
+  paymentStatus?: 'paid' | 'unpaid' | 'no_payment_required';
+  type?: string;
+} = {}): Stripe.Event {
   return {
-    id: 'evt_checkout_credit',
+    id: options.id ?? 'evt_checkout_credit',
     object: 'event',
     api_version: '2025-03-31',
     created: 1,
@@ -350,14 +443,14 @@ function buildCheckoutCreditPurchaseEvent(): Stripe.Event {
           user_id: 'user-1',
           package_code: 'credits_1000',
         },
-        payment_status: 'paid',
+        payment_status: options.paymentStatus ?? 'paid',
         amount_total: 2250,
       },
     },
     livemode: false,
     pending_webhooks: 1,
     request: { id: null, idempotency_key: null },
-    type: 'checkout.session.completed',
+    type: options.type ?? 'checkout.session.completed',
   } as unknown as Stripe.Event;
 }
 

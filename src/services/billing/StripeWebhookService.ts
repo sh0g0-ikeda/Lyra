@@ -33,7 +33,11 @@ export class StripeWebhookService implements StripeWebhookServicePort {
 
     switch (event.type) {
       case 'checkout.session.completed':
+      case 'checkout.session.async_payment_succeeded':
         await this.handleCheckoutSessionCompleted(event);
+        return;
+      case 'checkout.session.async_payment_failed':
+        await this.handleCheckoutSessionAsyncPaymentFailed(event);
         return;
       case 'invoice.paid':
         await this.handleInvoicePaid(event);
@@ -62,6 +66,11 @@ export class StripeWebhookService implements StripeWebhookServicePort {
 
     if (userId === null || stripeCustomerId === null) {
       throw new ValidationError('Checkout session is missing user_id or customer');
+    }
+
+    if (session.payment_status !== 'paid') {
+      await this.markEventProcessedOnly(event);
+      return;
     }
 
     if (kind === 'subscription') {
@@ -153,6 +162,49 @@ export class StripeWebhookService implements StripeWebhookServicePort {
       return;
     }
 
+    await this.billingRepository.transaction(async (client) => {
+      await this.billingRepository.markStripeEventProcessed(event.id, event.type, client);
+    });
+  }
+
+  private async handleCheckoutSessionAsyncPaymentFailed(event: Stripe.Event): Promise<void> {
+    const session = event.data.object as Stripe.Checkout.Session;
+    const userId = requireMetadataValue(session.metadata, 'user_id') ?? session.client_reference_id;
+    const kind = requireMetadataValue(session.metadata, 'kind');
+    const stripeCustomerId = typeof session.customer === 'string' ? session.customer : null;
+
+    if (userId === null || stripeCustomerId === null) {
+      await this.markEventProcessedOnly(event);
+      return;
+    }
+
+    const paymentRecordKind = checkoutPaymentRecordKind(kind);
+    await this.billingRepository.transaction(async (client) => {
+      if (!(await this.billingRepository.markStripeEventProcessed(event.id, event.type, client))) {
+        return;
+      }
+
+      await this.billingRepository.setStripeCustomerId(userId, stripeCustomerId, client);
+
+      if (paymentRecordKind === null) {
+        return;
+      }
+
+      await this.billingRepository.insertPaymentRecord(
+        {
+          userId,
+          stripeCheckoutSessionId: session.id,
+          stripeInvoiceId: null,
+          kind: paymentRecordKind,
+          amountJpy: session.amount_total ?? 0,
+          status: 'failed',
+        },
+        client,
+      );
+    });
+  }
+
+  private async markEventProcessedOnly(event: Stripe.Event): Promise<void> {
     await this.billingRepository.transaction(async (client) => {
       await this.billingRepository.markStripeEventProcessed(event.id, event.type, client);
     });
@@ -414,4 +466,12 @@ function requireCreditPackageCode(value: string | null): CreditPackageCode {
   }
 
   throw new ValidationError('Stripe metadata package_code is invalid');
+}
+
+function checkoutPaymentRecordKind(value: string | null): 'subscription' | 'credit_purchase' | null {
+  if (value === 'subscription' || value === 'credit_purchase') {
+    return value;
+  }
+
+  return null;
 }
