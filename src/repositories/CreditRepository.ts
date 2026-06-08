@@ -17,6 +17,12 @@ export interface CreditRepository {
   createBalance(balance: CreditBalance, client: DatabaseClient): Promise<CreditBalance>;
   updateBalance(balance: CreditBalance, client: DatabaseClient): Promise<CreditBalance>;
   hasLedgerEntry(userId: string, type: CreditLedgerType, client: DatabaseClient): Promise<boolean>;
+  countJobLedgerEntries(
+    userId: string,
+    type: CreditLedgerType,
+    jobId: string,
+    client: DatabaseClient,
+  ): Promise<number>;
   insertLedger(entry: CreditLedgerEntry, client: DatabaseClient): Promise<void>;
 }
 
@@ -115,6 +121,26 @@ export class PostgresCreditRepository implements CreditRepository {
     );
 
     return (result.rowCount ?? 0) > 0;
+  }
+
+  public async countJobLedgerEntries(
+    userId: string,
+    type: CreditLedgerType,
+    jobId: string,
+    client: DatabaseClient,
+  ): Promise<number> {
+    const result = await client.query<{ count: string }>(
+      `
+      SELECT COUNT(*)::text AS count
+      FROM credit_ledger
+      WHERE user_id = $1
+        AND type = $2
+        AND job_id = $3
+      `,
+      [userId, type, jobId],
+    );
+
+    return Number(result.rows[0]?.count ?? '0');
   }
 
   public async insertLedger(entry: CreditLedgerEntry, client: DatabaseClient): Promise<void> {

@@ -52,6 +52,7 @@ class FakeExecutionRepository implements PageGenerationExecutionRepository {
 
 class FakeCreditService implements CreditServicePort {
   public refunds: RefundCreditsParams[] = [];
+  public shouldFailRefund = false;
 
   public async getBalance(): Promise<CreditBalanceSnapshot> {
     return { monthlyCredits: 0, purchasedCredits: 0, totalCredits: 0, monthlyExpiresAt: null };
@@ -67,6 +68,10 @@ class FakeCreditService implements CreditServicePort {
 
   public async refundCredits(params: RefundCreditsParams): Promise<CreditBalanceSnapshot> {
     this.refunds.push(params);
+    if (this.shouldFailRefund) {
+      throw new Error('refund unavailable');
+    }
+
     return this.getBalance();
   }
 }
@@ -171,5 +176,38 @@ describe('PageGenerationRecoveryService', () => {
     expect(recoveredCount).toBe(1);
     expect(executionRepository.failedJobIds).toEqual(['job-1']);
     expect(creditService.refunds).toEqual([]);
+  });
+
+  it('返金が失敗したstale page jobはfailedへ進めない', async () => {
+    const repository = new FakeRecoveryRepository();
+    repository.jobs = [
+      {
+        jobId: 'job-1',
+        userId: 'user-1',
+        creditCost: 1,
+        pageId: 'page-1',
+        previousStatus: 'designing',
+        previousGenerationMode: null,
+        staleAt: new Date('2026-06-03T00:00:00.000Z'),
+      },
+    ];
+    const executionRepository = new FakeExecutionRepository();
+    const creditService = new FakeCreditService();
+    creditService.shouldFailRefund = true;
+    const service = new PageGenerationRecoveryService(
+      repository,
+      executionRepository,
+      creditService,
+      1,
+    );
+
+    await expect(service.recoverAllStaleJobs()).rejects.toThrow('refund unavailable');
+
+    expect(creditService.refunds[0]).toMatchObject({
+      userId: 'user-1',
+      amount: 1,
+      jobId: 'job-1',
+    });
+    expect(executionRepository.failedJobIds).toEqual([]);
   });
 });

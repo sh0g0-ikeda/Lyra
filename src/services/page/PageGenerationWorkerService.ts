@@ -194,6 +194,15 @@ export class PageGenerationWorkerService {
     compensation: FailureCompensation | null,
     errorMessage: string,
   ): Promise<void> {
+    if (job.creditCost > 0) {
+      await this.creditService.refundCredits({
+        userId: job.userId,
+        amount: job.creditCost,
+        description: 'Refund for failed page generation job',
+        jobId: job.id,
+      });
+    }
+
     const failed = await this.executionRepository.failPageGeneration({
       jobId: job.id,
       userId: job.userId,
@@ -205,15 +214,6 @@ export class PageGenerationWorkerService {
 
     if (!failed) {
       throw new ConfigurationError('Failed to mark page generation job as failed');
-    }
-
-    if (job.creditCost > 0) {
-      await this.creditService.refundCredits({
-        userId: job.userId,
-        amount: job.creditCost,
-        description: 'Refund for failed page generation job',
-        jobId: job.id,
-      });
     }
   }
 }

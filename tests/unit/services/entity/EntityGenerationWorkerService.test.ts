@@ -199,6 +199,7 @@ class FakeEntityImageStorage implements EntityImageStoragePort {
 
 class FakeCreditService implements CreditServicePort {
   public refunded: RefundCreditsParams | null = null;
+  public shouldFailRefund = false;
 
   public async getBalance(): Promise<CreditBalanceSnapshot> {
     return { monthlyCredits: 0, purchasedCredits: 0, totalCredits: 0, monthlyExpiresAt: null };
@@ -214,6 +215,10 @@ class FakeCreditService implements CreditServicePort {
 
   public async refundCredits(params: RefundCreditsParams): Promise<CreditBalanceSnapshot> {
     this.refunded = params;
+    if (this.shouldFailRefund) {
+      throw new Error('refund unavailable');
+    }
+
     return this.getBalance();
   }
 }
@@ -453,6 +458,28 @@ describe('EntityGenerationWorkerService', () => {
     await serviceB.processJob('4');
 
     expect(generatorA.input?.prompt).not.toBe(generatorB.input?.prompt);
+  });
+
+  it('返金が失敗した場合はentity generation jobをfailedへ進めない', async () => {
+    const executionRepository = new FakeExecutionRepository();
+    const referenceGenerator = new FakeReferenceGenerator();
+    referenceGenerator.shouldThrow = true;
+    const creditService = new FakeCreditService();
+    creditService.shouldFailRefund = true;
+    const service = buildService({
+      executionRepository,
+      referenceGenerator,
+      creditService,
+    });
+
+    await expect(service.processJob('job-1')).rejects.toThrow('refund unavailable');
+
+    expect(creditService.refunded).toMatchObject({
+      userId: 'user-1',
+      amount: 8,
+      jobId: 'job-1',
+    });
+    expect(executionRepository.failed).toBeNull();
   });
 
 });

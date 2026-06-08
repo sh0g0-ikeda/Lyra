@@ -134,15 +134,6 @@ export class EntityGenerationWorkerService {
     creditCost: number,
     errorMessage: string,
   ): Promise<void> {
-    const failed = await this.executionRepository.failEntityGeneration({
-      jobId,
-      userId,
-      errorMessage,
-    });
-    if (!failed) {
-      throw new ConfigurationError('Failed to mark entity generation job as failed');
-    }
-
     if (creditCost > 0) {
       await this.creditService.refundCredits({
         userId,
@@ -150,6 +141,15 @@ export class EntityGenerationWorkerService {
         description: 'Refund for failed entity generation job',
         jobId,
       });
+    }
+
+    const failed = await this.executionRepository.failEntityGeneration({
+      jobId,
+      userId,
+      errorMessage,
+    });
+    if (!failed) {
+      throw new ConfigurationError('Failed to mark entity generation job as failed');
     }
   }
 }

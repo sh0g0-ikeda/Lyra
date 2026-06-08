@@ -79,4 +79,18 @@ describe('PostgresCreditRepository', () => {
     expect(client.queries[0]).toContain('type = $2');
     expect(client.valuesList[0]).toEqual(['user-1', 'signup_bonus']);
   });
+
+  it('指定ユーザー・種別・jobIdで台帳件数を確認する', async () => {
+    const client = new QueryCapturingClient();
+    const repository = new PostgresCreditRepository(client, new PassthroughTransactionRunner());
+
+    const count = await repository.countJobLedgerEntries('user-1', 'refund', 'job-1', client);
+
+    expect(count).toBe(0);
+    expect(client.queries[0]).toContain('FROM credit_ledger');
+    expect(client.queries[0]).toContain('user_id = $1');
+    expect(client.queries[0]).toContain('type = $2');
+    expect(client.queries[0]).toContain('job_id = $3');
+    expect(client.valuesList[0]).toEqual(['user-1', 'refund', 'job-1']);
+  });
 });

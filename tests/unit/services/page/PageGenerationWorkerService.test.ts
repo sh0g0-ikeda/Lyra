@@ -141,6 +141,7 @@ class FakeStorage implements PageImageStoragePort {
 
 class FakeCreditService implements CreditServicePort {
   public refunds: RefundCreditsParams[] = [];
+  public shouldFailRefund = false;
 
   public async getBalance(_userId: string): Promise<CreditBalanceSnapshot> {
     return { monthlyCredits: 0, purchasedCredits: 0, totalCredits: 0, monthlyExpiresAt: null };
@@ -156,6 +157,10 @@ class FakeCreditService implements CreditServicePort {
 
   public async refundCredits(params: RefundCreditsParams): Promise<CreditBalanceSnapshot> {
     this.refunds.push(params);
+    if (this.shouldFailRefund) {
+      throw new Error('refund unavailable');
+    }
+
     return this.getBalance(params.userId);
   }
 }
@@ -549,6 +554,33 @@ describe('PageGenerationWorkerService', () => {
     expect(compilerError).toContain('Bearer [redacted]');
     expect(compilerError).not.toContain(fakeApiKey);
     expect(compilerError?.length).toBeLessThanOrEqual(300);
+  });
+
+  it('返金が失敗した場合はpage generation jobをfailedへ進めない', async () => {
+    const executionRepository = new FakeExecutionRepository();
+    const renderer = new FakeRenderer();
+    renderer.shouldFail = true;
+    const creditService = new FakeCreditService();
+    creditService.shouldFailRefund = true;
+    const service = new PageGenerationWorkerService(
+      executionRepository,
+      new FakePromptBuilder(),
+      new FakePromptCompiler(),
+      new FakeInputImageBuilder(),
+      new FakePlanner(),
+      renderer,
+      new FakeStorage(),
+      creditService,
+    );
+
+    await expect(service.processJob('job-1')).rejects.toThrow('refund unavailable');
+
+    expect(creditService.refunds[0]).toMatchObject({
+      userId: 'user-1',
+      amount: 10,
+      jobId: 'job-1',
+    });
+    expect(executionRepository.failureInput).toBeNull();
   });
 });
 

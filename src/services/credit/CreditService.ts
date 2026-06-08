@@ -124,6 +124,24 @@ export class CreditService implements CreditServicePort {
       const currentBalance =
         (await this.creditRepository.getBalanceForUpdate(params.userId, client)) ?? emptyBalance(params.userId);
 
+      if (params.jobId !== undefined) {
+        const consumeCount = await this.creditRepository.countJobLedgerEntries(
+          params.userId,
+          'consume',
+          params.jobId,
+          client,
+        );
+        const refundCount = await this.creditRepository.countJobLedgerEntries(
+          params.userId,
+          'refund',
+          params.jobId,
+          client,
+        );
+        if (refundCount > 0 && refundCount >= consumeCount) {
+          return toSnapshot(currentBalance);
+        }
+      }
+
       const nextBalance: CreditBalance = {
         ...currentBalance,
         purchasedCredits: currentBalance.purchasedCredits + params.amount,

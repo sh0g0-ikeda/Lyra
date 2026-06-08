@@ -46,6 +46,16 @@ class InMemoryCreditRepository implements CreditRepository {
     return this.ledger.some((entry) => entry.userId === userId && entry.type === type);
   }
 
+  public async countJobLedgerEntries(
+    userId: string,
+    type: CreditLedgerEntry['type'],
+    jobId: string,
+  ): Promise<number> {
+    return this.ledger.filter(
+      (entry) => entry.userId === userId && entry.type === type && entry.jobId === jobId,
+    ).length;
+  }
+
   public async insertLedger(entry: CreditLedgerEntry): Promise<void> {
     this.ledger.push({ ...entry });
   }
@@ -185,5 +195,89 @@ describe('CreditService', () => {
       amount: 10,
       jobId: 'job-1',
     });
+  });
+
+  it('同じjobIdのrefundは二重に加算しない', async () => {
+    const repository = new InMemoryCreditRepository();
+    repository.setBalance({
+      userId: 'user-1',
+      monthlyCredits: 0,
+      purchasedCredits: 13,
+      monthlyExpiresAt: null,
+    });
+    const service = new CreditService(repository);
+
+    await service.consumeCredits({
+      userId: 'user-1',
+      cost: 10,
+      description: 'page generation',
+      jobId: 'job-1',
+    });
+    await service.refundCredits({
+      userId: 'user-1',
+      amount: 10,
+      description: 'first refund',
+      jobId: 'job-1',
+    });
+    const result = await service.refundCredits({
+      userId: 'user-1',
+      amount: 10,
+      description: 'duplicate refund',
+      jobId: 'job-1',
+    });
+
+    expect(result).toEqual({
+      monthlyCredits: 0,
+      purchasedCredits: 13,
+      totalCredits: 13,
+      monthlyExpiresAt: null,
+    });
+    expect(repository.ledger.filter((entry) => entry.type === 'consume')).toHaveLength(1);
+    expect(repository.ledger.filter((entry) => entry.type === 'refund')).toHaveLength(1);
+  });
+
+  it('同じjobIdでも再課金後のrefundは許可する', async () => {
+    const repository = new InMemoryCreditRepository();
+    repository.setBalance({
+      userId: 'user-1',
+      monthlyCredits: 0,
+      purchasedCredits: 13,
+      monthlyExpiresAt: null,
+    });
+    const service = new CreditService(repository);
+
+    await service.consumeCredits({
+      userId: 'user-1',
+      cost: 10,
+      description: 'page generation',
+      jobId: 'job-1',
+    });
+    await service.refundCredits({
+      userId: 'user-1',
+      amount: 10,
+      description: 'first refund',
+      jobId: 'job-1',
+    });
+    await service.consumeCredits({
+      userId: 'user-1',
+      cost: 10,
+      description: 'page generation retry',
+      jobId: 'job-1',
+    });
+    const result = await service.refundCredits({
+      userId: 'user-1',
+      amount: 10,
+      description: 'retry refund',
+      jobId: 'job-1',
+    });
+
+    expect(result).toEqual({
+      monthlyCredits: 0,
+      purchasedCredits: 13,
+      totalCredits: 13,
+      monthlyExpiresAt: null,
+    });
+    expect(repository.ledger.filter((entry) => entry.type === 'consume')).toHaveLength(2);
+    expect(repository.ledger.filter((entry) => entry.type === 'refund')).toHaveLength(2);
   });
 });
