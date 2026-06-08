@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { ConflictError, NotFoundError } from '../../../../src/domain/errors/index.js';
+import { ConfigurationError, ConflictError, NotFoundError } from '../../../../src/domain/errors/index.js';
 import type { BillingUserProfile } from '../../../../src/domain/types/billing.js';
 import type { AuthenticatedUser } from '../../../../src/domain/types/user.js';
 import type { StripeBillingClientPort } from '../../../../src/infrastructure/stripe/StripeBillingClient.js';
 import type { DatabaseClient } from '../../../../src/lib/db.js';
 import type { BillingRepository } from '../../../../src/repositories/BillingRepository.js';
-import { BillingService } from '../../../../src/services/billing/BillingService.js';
+import { BillingService, assertBillingConfig } from '../../../../src/services/billing/BillingService.js';
 import type { QueryResult, QueryResultRow } from 'pg';
 
 const freeUser: AuthenticatedUser = {
@@ -77,6 +77,7 @@ class FakeStripeBillingClient implements StripeBillingClientPort {
   public createdCustomerUserId: string | null = null;
   public checkoutMode: 'payment' | 'subscription' | null = null;
   public checkoutPriceId: string | null = null;
+  public checkoutCustomerId: string | null = null;
   public portalCustomerId: string | null = null;
 
   public async createCustomer(input: { userId: string }): Promise<{ id: string }> {
@@ -85,9 +86,11 @@ class FakeStripeBillingClient implements StripeBillingClientPort {
   }
 
   public async createCheckoutSession(input: {
+    customerId: string;
     mode: 'payment' | 'subscription';
     priceId: string;
   }): Promise<{ id: string; url: string }> {
+    this.checkoutCustomerId = input.customerId;
     this.checkoutMode = input.mode;
     this.checkoutPriceId = input.priceId;
     return {
@@ -132,6 +135,10 @@ describe('BillingService', () => {
 
   it('有料プラン中のユーザーは subscription checkout を作れず portal へ誘導する', async () => {
     const repository = new InMemoryBillingRepository();
+    repository.billingUser = {
+      ...repository.billingUser!,
+      planCode: 'standard',
+    };
     const stripeClient = new FakeStripeBillingClient();
     const service = buildService(repository, stripeClient);
 
@@ -144,6 +151,22 @@ describe('BillingService', () => {
         'premium',
       ),
     ).rejects.toBeInstanceOf(ConflictError);
+  });
+
+  it('subscription checkout uses the database plan as the source of truth', async () => {
+    const repository = new InMemoryBillingRepository();
+    repository.billingUser = {
+      ...repository.billingUser!,
+      stripeCustomerId: 'cus_existing',
+      planCode: 'standard',
+    };
+    const stripeClient = new FakeStripeBillingClient();
+    const service = buildService(repository, stripeClient);
+
+    await expect(service.createSubscriptionCheckoutSession(freeUser, 'premium')).rejects.toBeInstanceOf(ConflictError);
+
+    expect(stripeClient.createdCustomerUserId).toBeNull();
+    expect(stripeClient.checkoutMode).toBeNull();
   });
 
   it('credit checkout は既存 customer を再利用する', async () => {
@@ -159,6 +182,7 @@ describe('BillingService', () => {
 
     expect(result.packageCode).toBe('credits_3000');
     expect(stripeClient.createdCustomerUserId).toBeNull();
+    expect(stripeClient.checkoutCustomerId).toBe('cus_existing');
     expect(stripeClient.checkoutMode).toBe('payment');
     expect(stripeClient.checkoutPriceId).toBe('price_credits_3000');
   });
@@ -178,6 +202,27 @@ describe('BillingService', () => {
     const service = buildService(repository, stripeClient);
 
     await expect(service.createCreditCheckoutSession(freeUser, 'credits_200')).rejects.toBeInstanceOf(NotFoundError);
+  });
+});
+
+describe('assertBillingConfig', () => {
+  it('rejects blank billing config values', () => {
+    expect(() => {
+      assertBillingConfig({
+        successUrl: 'https://app.lyra.test/billing/success',
+        cancelUrl: ' ',
+        portalReturnUrl: 'https://app.lyra.test/settings/billing',
+        subscriptionPriceIds: {
+          standard: 'price_standard',
+          premium: 'price_premium',
+        },
+        creditPackagePriceIds: {
+          credits_200: 'price_credits_200',
+          credits_1000: '',
+          credits_3000: 'price_credits_3000',
+        },
+      });
+    }).toThrow(ConfigurationError);
   });
 });
 
