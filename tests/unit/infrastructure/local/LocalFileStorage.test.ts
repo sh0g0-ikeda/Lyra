@@ -40,7 +40,7 @@ describe('Local file storage adapters', () => {
     });
   });
 
-  it('entity import と finalize が tmp から saved へコピーする', async () => {
+  it('entity import と finalize は tmp から saved へコピーする', async () => {
     const config = await createConfig();
     const storage = new LocalFileEntityImageStorage(config);
     const loader = new LocalFileStoredImageLoader(config);
@@ -109,7 +109,7 @@ describe('Local file storage adapters', () => {
     ).rejects.toMatchObject({ code: 'CONFIGURATION_ERROR' });
   });
 
-  it('entity finalize は別ユーザーのsource keyを拒否する', async () => {
+  it('entity finalize は別ユーザーの source key を拒否する', async () => {
     const config = await createConfig();
     const storage = new LocalFileEntityImageStorage(config);
     await writeLocalAsset(config.rootDir, 'tmp/user-2/entities/imports/source.png', Buffer.from('foreign'));
@@ -144,7 +144,7 @@ describe('Local file storage adapters', () => {
     ).rejects.toMatchObject({ code: 'CONFIGURATION_ERROR' });
   });
 
-  it('final page finalize は保存済みfinal画像なら自己コピーしない', async () => {
+  it('final page finalize は保存済み final 画像なら自己コピーしない', async () => {
     const config = await createConfig();
     const storage = new LocalFileFinalPageImageStorage(config);
     const loader = new LocalFileStoredImageLoader(config);
@@ -167,7 +167,7 @@ describe('Local file storage adapters', () => {
     expect(loaded.imageData).toEqual(Buffer.from('final'));
   });
 
-  it('final page finalize は別ユーザーのsource keyを拒否する', async () => {
+  it('final page finalize は別ユーザーの source key を拒否する', async () => {
     const config = await createConfig();
     const storage = new LocalFileFinalPageImageStorage(config);
     await writeLocalAsset(config.rootDir, 'session/user-2/pages/page-1/job-1.png', Buffer.from('foreign'));
@@ -197,4 +197,3 @@ async function createConfig(): Promise<LocalAssetConfig> {
     baseUrl: 'http://127.0.0.1:3000/local-assets',
   };
 }
-
