@@ -24,10 +24,15 @@ export interface WorkerRecordResult {
   reason?: string;
 }
 
+export interface WorkerBatchItemFailure {
+  itemIdentifier: string;
+}
+
 export interface WorkerBatchResult {
   processedCount: number;
   skippedCount: number;
   failedCount: number;
+  batchItemFailures: WorkerBatchItemFailure[];
   results: WorkerRecordResult[];
 }
 
@@ -36,6 +41,7 @@ export async function handleGenerationQueue(
   dependencies: WorkerDependencies = resolveWorkerDependencies(),
 ): Promise<WorkerBatchResult> {
   const results: WorkerRecordResult[] = [];
+  const batchItemFailures: WorkerBatchItemFailure[] = [];
 
   for (const record of event.Records) {
     const parsedMessage = parseQueueMessage(record.body);
@@ -69,6 +75,9 @@ export async function handleGenerationQueue(
         status: result.status === 'skipped' ? 'skipped' : result.jobStatus ?? 'completed',
       });
     } catch (error) {
+      if (record.messageId !== undefined && record.messageId.length > 0) {
+        batchItemFailures.push({ itemIdentifier: record.messageId });
+      }
       results.push({
         messageId: record.messageId ?? null,
         jobId: parsedMessage.job_id,
@@ -82,6 +91,7 @@ export async function handleGenerationQueue(
     processedCount: results.filter((result) => result.status === 'completed').length,
     skippedCount: results.filter((result) => result.status === 'skipped').length,
     failedCount: results.filter((result) => result.status === 'failed').length,
+    batchItemFailures,
     results,
   };
 }

@@ -164,6 +164,7 @@ describe('worker queue handler', () => {
       status: 'failed',
       reason: 'worker unavailable',
     });
+    expect(result.batchItemFailures).toEqual([{ itemIdentifier: 'message-1' }]);
   });
 
   it('worker service 失敗理由は機密値を伏せる', async () => {
@@ -189,6 +190,33 @@ describe('worker queue handler', () => {
     expect(reason).toContain('Bearer [redacted]');
     expect(reason.includes(fakeApiKey)).toBe(false);
     expect(reason.length).toBeLessThanOrEqual(300);
+    expect(result.batchItemFailures).toEqual([{ itemIdentifier: 'message-1' }]);
+  });
+
+  it('invalid body と unsupported job_type は batch failure に含めない', async () => {
+    const pageWorkerService = new FakePageGenerationWorkerService();
+    const entityWorkerService = new FakeEntityGenerationWorkerService();
+    const event: WorkerQueueEvent = {
+      Records: [
+        { messageId: 'message-1', body: 'not-json' },
+        {
+          messageId: 'message-2',
+          body: JSON.stringify({
+            job_id: '11111111-1111-4111-8111-111111111111',
+            job_type: 'unsupported_generate',
+          }),
+        },
+      ],
+    };
+
+    const result = await handleGenerationQueue(
+      event,
+      buildDependencies(pageWorkerService, entityWorkerService),
+    );
+
+    expect(result.failedCount).toBe(1);
+    expect(result.skippedCount).toBe(1);
+    expect(result.batchItemFailures).toEqual([]);
   });
 });
 
