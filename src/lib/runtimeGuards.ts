@@ -62,11 +62,8 @@ export function assertProductionRuntimeConfig(
     violations.push('DEV_AUTH_BYPASS must be disabled');
   }
 
-  const authProvider = config.AUTH_PROVIDER ?? 'supabase';
-  if (authProvider === 'supabase') {
-    if (isMissingConfigValue(config.SUPABASE_JWT_SECRET)) {
-      violations.push('SUPABASE_JWT_SECRET is required');
-    }
+  if (config.AUTH_PROVIDER !== 'cognito') {
+    violations.push('AUTH_PROVIDER must be cognito in production');
   } else {
     if (isMissingConfigValue(config.COGNITO_CLIENT_ID)) {
       violations.push('COGNITO_CLIENT_ID is required');

@@ -4,8 +4,11 @@ import { assertProductionRuntimeConfig } from '../../../src/lib/runtimeGuards.js
 
 const safeProductionConfig = {
   DEV_AUTH_BYPASS: false,
-  AUTH_PROVIDER: 'supabase' as const,
-  SUPABASE_JWT_SECRET: 'supabase-secret',
+  AUTH_PROVIDER: 'cognito' as const,
+  AWS_REGION: 'ap-northeast-1',
+  COGNITO_USER_POOL_ID: 'ap-northeast-1_pool',
+  COGNITO_CLIENT_ID: 'client-123',
+  COGNITO_REQUIRED_SCOPES: 'lyra/api',
   OPENAI_API_KEY: 'openai-key',
   SQS_QUEUE_URL_GENERATION: 'https://sqs.ap-northeast-1.amazonaws.com/123/lyra-generation',
   S3_BUCKET_IMAGES: 'lyra-images',
@@ -45,16 +48,23 @@ describe('assertProductionRuntimeConfig', () => {
       assertProductionRuntimeConfig(
         {
           ...safeProductionConfig,
-          AUTH_PROVIDER: 'cognito',
-          SUPABASE_JWT_SECRET: undefined,
-          AWS_REGION: 'ap-northeast-1',
-          COGNITO_USER_POOL_ID: 'ap-northeast-1_pool',
-          COGNITO_CLIENT_ID: 'client-123',
-          COGNITO_REQUIRED_SCOPES: 'lyra/api',
         },
         'production',
       );
     }).not.toThrow();
+  });
+
+  it('production では Supabase auth provider を拒否する', () => {
+    expect(() => {
+      assertProductionRuntimeConfig(
+        {
+          ...safeProductionConfig,
+          AUTH_PROVIDER: 'supabase',
+          SUPABASE_JWT_SECRET: 'supabase-secret',
+        },
+        'production',
+      );
+    }).toThrow(/AUTH_PROVIDER must be cognito/);
   });
 
   it('production の dev auth bypass と local asset storage を拒否する', () => {
@@ -88,7 +98,11 @@ describe('assertProductionRuntimeConfig', () => {
       assertProductionRuntimeConfig(
         {
           DEV_AUTH_BYPASS: false,
-          SUPABASE_JWT_SECRET: 'supabase-secret',
+          AUTH_PROVIDER: 'cognito',
+          AWS_REGION: 'ap-northeast-1',
+          COGNITO_USER_POOL_ID: 'ap-northeast-1_pool',
+          COGNITO_CLIENT_ID: 'client-123',
+          COGNITO_REQUIRED_SCOPES: 'lyra/api',
         },
         'production',
       );
@@ -100,7 +114,11 @@ describe('assertProductionRuntimeConfig', () => {
       assertProductionRuntimeConfig(
         {
           DEV_AUTH_BYPASS: false,
-          SUPABASE_JWT_SECRET: 'supabase-secret',
+          AUTH_PROVIDER: 'cognito',
+          AWS_REGION: 'ap-northeast-1',
+          COGNITO_USER_POOL_ID: 'ap-northeast-1_pool',
+          COGNITO_CLIENT_ID: 'client-123',
+          COGNITO_REQUIRED_SCOPES: 'lyra/api',
           OPENAI_API_KEY: 'openai-key',
           SQS_QUEUE_URL_GENERATION: 'https://sqs.ap-northeast-1.amazonaws.com/123/lyra-generation',
           S3_BUCKET_IMAGES: 'lyra-images',
@@ -117,9 +135,10 @@ describe('assertProductionRuntimeConfig', () => {
         {
           ...safeProductionConfig,
           AUTH_PROVIDER: 'cognito',
-          SUPABASE_JWT_SECRET: undefined,
           AWS_REGION: 'ap-northeast-1',
           COGNITO_USER_POOL_ID: 'ap-northeast-1_pool',
+          COGNITO_CLIENT_ID: undefined,
+          COGNITO_REQUIRED_SCOPES: undefined,
         },
         'production',
       );
@@ -131,8 +150,11 @@ describe('assertProductionRuntimeConfig', () => {
       assertProductionRuntimeConfig(
         {
           DEV_AUTH_BYPASS: false,
-          AUTH_PROVIDER: 'supabase',
-          SUPABASE_JWT_SECRET: 'supabase-secret',
+          AUTH_PROVIDER: 'cognito',
+          AWS_REGION: 'ap-northeast-1',
+          COGNITO_USER_POOL_ID: 'ap-northeast-1_pool',
+          COGNITO_CLIENT_ID: 'client-123',
+          COGNITO_REQUIRED_SCOPES: 'lyra/api',
           OPENAI_API_KEY: 'openai-key',
           SQS_QUEUE_URL_GENERATION: 'https://sqs.ap-northeast-1.amazonaws.com/123/lyra-generation',
           S3_BUCKET_IMAGES: 'lyra-images',
@@ -149,12 +171,12 @@ describe('assertProductionRuntimeConfig', () => {
       assertProductionRuntimeConfig(
         {
           ...safeProductionConfig,
-          SUPABASE_JWT_SECRET: '  ',
+          COGNITO_CLIENT_ID: '  ',
           OPENAI_API_KEY: '',
           STRIPE_WEBHOOK_SECRET: ' ',
         },
         'production',
       );
-    }).toThrow(/SUPABASE_JWT_SECRET is required.*OPENAI_API_KEY is required.*STRIPE_WEBHOOK_SECRET/);
+    }).toThrow(/COGNITO_CLIENT_ID is required.*OPENAI_API_KEY is required.*STRIPE_WEBHOOK_SECRET/);
   });
 });

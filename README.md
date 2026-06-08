@@ -60,7 +60,7 @@ Without either local asset storage or `SQS_QUEUE_URL_GENERATION`, generation req
 
 ### Production auth
 
-Local defaults use Supabase-compatible HS256 dev tokens. AWS production should use Cognito:
+Local defaults use Supabase-compatible HS256 dev tokens. AWS production requires Cognito:
 
 ```env
 AUTH_PROVIDER=cognito
@@ -81,15 +81,13 @@ VITE_COGNITO_CLIENT_ID=replace-me
 VITE_COGNITO_REDIRECT_URI=https://app.example.com
 VITE_COGNITO_LOGOUT_URI=https://app.example.com
 VITE_COGNITO_SCOPES=openid email profile lyra/api
-VITE_REQUIRE_HOSTED_AUTH=true
 ```
 
-When Cognito is configured in a production web build, `VITE_COGNITO_SCOPES` is required. Keep it in
+In production web builds, Hosted UI configuration is required and manual bearer token authentication is
+disabled. When Cognito is configured, `VITE_COGNITO_SCOPES` is required. Keep it in
 sync with `COGNITO_REQUIRED_SCOPES` so Hosted UI login receives a token the API will accept.
 For paid production, configure only one hosted auth provider in the web build. Cognito and Supabase
 at the same time is rejected to avoid presenting a login path whose token the API rejects.
-When `VITE_REQUIRE_HOSTED_AUTH=true` in a production web build, the manual bearer token form is
-hidden and stored manual tokens are not used for API authentication.
 
 `VITE_DEV_AUTH_BYPASS=true` is for local development only. Production web builds force file-based
 dev bypass off, and explicit production bypass is rejected.
