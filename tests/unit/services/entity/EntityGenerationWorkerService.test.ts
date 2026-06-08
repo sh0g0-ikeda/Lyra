@@ -366,6 +366,46 @@ describe('EntityGenerationWorkerService', () => {
     });
   });
 
+  it('保存済みcreditCostが正なら定価未満でもrefundする', async () => {
+    const executionRepository = new FakeExecutionRepository();
+    executionRepository.job = buildJob({ creditCost: 1 });
+    const referenceGenerator = new FakeReferenceGenerator();
+    const creditService = new FakeCreditService();
+    referenceGenerator.shouldThrow = true;
+    const service = buildService({
+      executionRepository,
+      referenceGenerator,
+      creditService,
+    });
+
+    const result = await service.processJob('job-1');
+
+    expect(result).toEqual({ status: 'processed', jobStatus: 'failed' });
+    expect(creditService.refunded).toMatchObject({
+      userId: 'user-1',
+      amount: 1,
+      jobId: 'job-1',
+    });
+  });
+
+  it('保存済みcreditCostが0ならrefundしない', async () => {
+    const executionRepository = new FakeExecutionRepository();
+    executionRepository.job = buildJob({ creditCost: 0 });
+    const referenceGenerator = new FakeReferenceGenerator();
+    const creditService = new FakeCreditService();
+    referenceGenerator.shouldThrow = true;
+    const service = buildService({
+      executionRepository,
+      referenceGenerator,
+      creditService,
+    });
+
+    const result = await service.processJob('job-1');
+
+    expect(result).toEqual({ status: 'processed', jobStatus: 'failed' });
+    expect(creditService.refunded).toBeNull();
+  });
+
   it('生成失敗時は failed と refund に落ちる', async () => {
     const executionRepository = new FakeExecutionRepository();
     const referenceGenerator = new FakeReferenceGenerator();

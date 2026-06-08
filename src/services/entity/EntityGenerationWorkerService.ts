@@ -1,4 +1,3 @@
-import { CREDIT_COSTS } from '../../domain/constants/credits.js';
 import { ENTITY_REFERENCE_GENERATION } from '../../domain/constants/entityReference.js';
 import { ConfigurationError } from '../../domain/errors/index.js';
 import { sanitizePersistedErrorMessage } from '../../lib/errorSanitizer.js';
@@ -144,7 +143,7 @@ export class EntityGenerationWorkerService {
       throw new ConfigurationError('Failed to mark entity generation job as failed');
     }
 
-    if (creditCost >= CREDIT_COSTS.ENTITY_GENERATION) {
+    if (creditCost > 0) {
       await this.creditService.refundCredits({
         userId,
         amount: creditCost,
