@@ -91,9 +91,9 @@ import {
   type EntityReferenceServicePort,
 } from './services/entity/EntityReferenceService.js';
 import {
-  NoopEntityGenerationQueue,
   InlineEntityGenerationQueueAdapter,
   SqsEntityGenerationQueueAdapter,
+  UnconfiguredEntityGenerationQueue,
   type EntityGenerationQueuePort,
 } from './services/entity/EntityGenerationQueue.js';
 import {
@@ -102,9 +102,9 @@ import {
 } from './services/entity/EntityGenerationRecoveryService.js';
 import { JobService, type JobServicePort } from './services/job/JobService.js';
 import {
-  NoopPageGenerationQueue,
   DetachedProcessPageGenerationQueueAdapter,
   SqsPageGenerationQueueAdapter,
+  UnconfiguredPageGenerationQueue,
   type PageGenerationQueuePort,
 } from './services/page/PageGenerationQueue.js';
 import { BalloonService, type BalloonServicePort } from './services/page/BalloonService.js';
@@ -365,7 +365,7 @@ function resolveDependencies(
       ? new InlineEntityGenerationQueueAdapter(inlineWorkerDependencies.entityGenerationWorkerService)
       : generationQueue !== null
         ? new SqsEntityGenerationQueueAdapter(generationQueue)
-        : new NoopEntityGenerationQueue());
+        : new UnconfiguredEntityGenerationQueue());
   const billingRepository = new PostgresBillingRepository(db, db);
   const pageRepository = new PostgresPageRepository(db);
   const generationJobRepository = new PostgresGenerationJobRepository(db);
@@ -393,7 +393,7 @@ function resolveDependencies(
         )
       : generationQueue !== null
         ? new SqsPageGenerationQueueAdapter(generationQueue)
-        : new NoopPageGenerationQueue());
+        : new UnconfiguredPageGenerationQueue());
   const stripeBillingClient = resolveStripeBillingClient();
   const billingService =
     dependencies.billingService ??

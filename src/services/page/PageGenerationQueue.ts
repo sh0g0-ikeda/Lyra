@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { ConfigurationError } from '../../domain/errors/index.js';
 import type { PageGenerationQueuePayload } from '../../domain/types/pageGeneration.js';
 import type { SqsGenerationQueue } from '../../infrastructure/aws/SqsGenerationQueue.js';
 import type { WorkerProcessLauncher } from '../../infrastructure/local/DetachedWorkerProcessLauncher.js';
@@ -15,11 +16,11 @@ export interface PageGenerationJobProcessor {
   processJob(jobId: string): Promise<unknown>;
 }
 
-export class NoopPageGenerationQueue implements PageGenerationQueuePort {
-  public async enqueue(_payload: PageGenerationQueuePayload): Promise<EnqueuePageGenerationResult> {
-    return {
-      messageId: `noop-${randomUUID()}`,
-    };
+export class UnconfiguredPageGenerationQueue implements PageGenerationQueuePort {
+  public async enqueue(_payload: PageGenerationQueuePayload): Promise<never> {
+    throw new ConfigurationError(
+      'Page generation queue is not configured. Set SQS_QUEUE_URL_GENERATION for queued workers or LOCAL_FILE_STORAGE_DIR for local worker execution.',
+    );
   }
 }
 

@@ -39,13 +39,24 @@ LLM_ENTITY_REFERENCE_PROMPT_COMPILER_ENABLED=false
 LLM_PAGE_GENERATION_PLANNER_ENABLED=false
 GENERATION_USER_ACTIVE_JOB_LIMIT=2
 GENERATION_GLOBAL_ACTIVE_JOB_LIMIT=100
-GENERATION_ENABLED=true
+GENERATION_ENABLED=false
 ```
 
 `SUPABASE_JWT_SECRET` is still required for non-bypass local flows and dev token generation.
 The three `LLM_*_ENABLED` flags default to `false`; keep them disabled for lower-cost generation that uses deterministic prompts, and enable them only when you explicitly want extra LLM prompt rewriting or planning.
 `GENERATION_USER_ACTIVE_JOB_LIMIT` and `GENERATION_GLOBAL_ACTIVE_JOB_LIMIT` cap active page/entity generation jobs before queueing provider work.
 Set `GENERATION_ENABLED=false` as a kill switch when provider quota, billing, or abuse-control incidents require stopping new generation jobs.
+
+To run image generation locally, enable generation only after configuring a runnable worker path:
+
+```env
+GENERATION_ENABLED=true
+OPENAI_API_KEY=replace-me
+LOCAL_FILE_STORAGE_DIR=.localdata/assets
+LOCAL_ASSET_BASE_URL=http://127.0.0.1:3000/local-assets
+```
+
+Without either local asset storage or `SQS_QUEUE_URL_GENERATION`, generation requests fail immediately instead of creating jobs that stay queued forever.
 
 ### Production auth
 

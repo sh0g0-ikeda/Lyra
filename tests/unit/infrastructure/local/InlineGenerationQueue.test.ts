@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { InlineEntityGenerationQueueAdapter } from '../../../../src/services/entity/EntityGenerationQueue.js';
+import {
+  InlineEntityGenerationQueueAdapter,
+  UnconfiguredEntityGenerationQueue,
+} from '../../../../src/services/entity/EntityGenerationQueue.js';
 import {
   DetachedProcessPageGenerationQueueAdapter,
   InlinePageGenerationQueueAdapter,
+  UnconfiguredPageGenerationQueue,
 } from '../../../../src/services/page/PageGenerationQueue.js';
 
 class FakeProcessor {
@@ -61,7 +65,7 @@ describe('local generation queue adapters', () => {
     expect(processor.jobIds).toEqual(['job-2']);
   });
 
-  it('local page_generate を detached worker process へ委譲する', async () => {
+  it('local page_generate を detached worker process へ起動する', async () => {
     const launcher = new FakeWorkerLauncher();
     const queue = new DetachedProcessPageGenerationQueueAdapter(launcher);
 
@@ -80,6 +84,43 @@ describe('local generation queue adapters', () => {
 
     expect(result.messageId?.startsWith('local-worker-')).toBe(true);
     expect(launcher.jobIds).toEqual(['job-3']);
+  });
+
+  it('page queue 未設定時は成功扱いにせず設定エラーにする', async () => {
+    const queue = new UnconfiguredPageGenerationQueue();
+
+    await expect(
+      queue.enqueue({
+        jobId: 'job-4',
+        userId: 'user-1',
+        pageId: 'page-1',
+        requestKind: 'initial',
+        generationMode: 'standard',
+        quality: 'medium',
+        creditCost: 1,
+        requiresPlanner: false,
+        previousPageStatus: 'designing',
+        previousGenerationMode: null,
+      }),
+    ).rejects.toMatchObject({
+      code: 'CONFIGURATION_ERROR',
+      message: expect.stringContaining('Page generation queue is not configured'),
+    });
+  });
+
+  it('entity queue 未設定時は成功扱いにせず設定エラーにする', async () => {
+    const queue = new UnconfiguredEntityGenerationQueue();
+
+    await expect(
+      queue.enqueue({
+        jobId: 'job-5',
+        userId: 'user-1',
+        entityId: 'entity-1',
+      }),
+    ).rejects.toMatchObject({
+      code: 'CONFIGURATION_ERROR',
+      message: expect.stringContaining('Entity generation queue is not configured'),
+    });
   });
 });
 
