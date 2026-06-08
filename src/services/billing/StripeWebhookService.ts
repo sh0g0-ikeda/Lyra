@@ -88,7 +88,7 @@ export class StripeWebhookService implements StripeWebhookServicePort {
           return;
         }
 
-        await this.billingRepository.setStripeCustomerId(userId, stripeCustomerId, client);
+        await this.requireStripeCustomerBinding(userId, stripeCustomerId, client);
         await this.billingRepository.upsertSubscription(
           {
             userId,
@@ -136,7 +136,7 @@ export class StripeWebhookService implements StripeWebhookServicePort {
           return;
         }
 
-        await this.billingRepository.setStripeCustomerId(userId, stripeCustomerId, client);
+        await this.requireStripeCustomerBinding(userId, stripeCustomerId, client);
         await this.billingCreditGrantService.grantPurchasedCredits(
           {
             userId,
@@ -184,7 +184,7 @@ export class StripeWebhookService implements StripeWebhookServicePort {
         return;
       }
 
-      await this.billingRepository.setStripeCustomerId(userId, stripeCustomerId, client);
+      await this.requireStripeCustomerBinding(userId, stripeCustomerId, client);
 
       if (paymentRecordKind === null) {
         return;
@@ -407,6 +407,25 @@ export class StripeWebhookService implements StripeWebhookServicePort {
     const updated = await this.billingRepository.updateUserPlanCode(userId, planCode, client);
     if (!updated) {
       throw new NotFoundError('User not found while updating billing plan');
+    }
+  }
+
+  private async requireStripeCustomerBinding(
+    userId: string,
+    stripeCustomerId: string,
+    client: DatabaseClient,
+  ): Promise<void> {
+    const persistedStripeCustomerId = await this.billingRepository.setStripeCustomerId(
+      userId,
+      stripeCustomerId,
+      client,
+    );
+    if (persistedStripeCustomerId === null) {
+      throw new NotFoundError('User not found while binding Stripe customer');
+    }
+
+    if (persistedStripeCustomerId !== stripeCustomerId) {
+      throw new ValidationError('Stripe customer does not match billing user');
     }
   }
 }

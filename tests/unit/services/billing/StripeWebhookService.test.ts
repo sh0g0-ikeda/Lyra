@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { PaidPlanCode, SubscriptionPlanCode } from '../../../../src/domain/constants/billing.js';
 import type { BillingUserProfile, PaymentRecordInput, SubscriptionRecord } from '../../../../src/domain/types/billing.js';
 import type { CreditBalanceSnapshot } from '../../../../src/domain/types/credit.js';
+import { ValidationError } from '../../../../src/domain/errors/index.js';
 import type { StripeBillingClientPort } from '../../../../src/infrastructure/stripe/StripeBillingClient.js';
 import type { DatabaseClient } from '../../../../src/lib/db.js';
 import type { BillingRepository } from '../../../../src/repositories/BillingRepository.js';
@@ -39,13 +40,15 @@ class InMemoryBillingRepository implements BillingRepository {
     this.insertedCustomerIds.push({ userId, stripeCustomerId });
     const current = this.userById.get(userId);
     if (current !== undefined) {
-      const next = { ...current, stripeCustomerId };
+      const next = { ...current, stripeCustomerId: current.stripeCustomerId ?? stripeCustomerId };
       this.userById.set(userId, next);
-      this.userByCustomerId.set(stripeCustomerId, next);
+      if (next.stripeCustomerId !== null) {
+        this.userByCustomerId.set(next.stripeCustomerId, next);
+      }
       return next.stripeCustomerId;
     }
 
-    return stripeCustomerId;
+    return null;
   }
 
   public async updateUserPlanCode(userId: string, planCode: string): Promise<boolean> {
@@ -195,6 +198,23 @@ describe('StripeWebhookService', () => {
       amountJpy: 2250,
       status: 'paid',
     });
+  });
+
+  it('rejects paid checkout events whose customer differs from the billing user', async () => {
+    const repository = seedRepository();
+    const creditGrantService = new FakeBillingCreditGrantService();
+    const stripeClient = new FakeStripeBillingClient();
+    stripeClient.event = buildCheckoutCreditPurchaseEvent({
+      id: 'evt_checkout_credit_customer_mismatch',
+      customerId: 'cus_other',
+    });
+    const service = buildService(repository, creditGrantService, stripeClient);
+
+    await expect(service.handleWebhook(Buffer.from('{}'), 'sig')).rejects.toBeInstanceOf(ValidationError);
+
+    expect(creditGrantService.purchasedGrants).toHaveLength(0);
+    expect(repository.paymentRecords).toHaveLength(0);
+    expect(repository.updatedPlans).toHaveLength(0);
   });
 
   it('does not grant credits for unpaid checkout.session.completed events', async () => {
@@ -392,6 +412,7 @@ function buildCheckoutSubscriptionEvent(options: {
   id?: string;
   paymentStatus?: 'paid' | 'unpaid' | 'no_payment_required';
   type?: string;
+  customerId?: string;
 } = {}): Stripe.Event {
   return {
     id: options.id ?? 'evt_checkout_sub',
@@ -402,7 +423,7 @@ function buildCheckoutSubscriptionEvent(options: {
       object: {
         id: 'cs_sub_123',
         object: 'checkout.session',
-        customer: 'cus_123',
+        customer: options.customerId ?? 'cus_123',
         subscription: 'sub_123',
         client_reference_id: 'user-1',
         metadata: {
@@ -425,6 +446,7 @@ function buildCheckoutCreditPurchaseEvent(options: {
   id?: string;
   paymentStatus?: 'paid' | 'unpaid' | 'no_payment_required';
   type?: string;
+  customerId?: string;
 } = {}): Stripe.Event {
   return {
     id: options.id ?? 'evt_checkout_credit',
@@ -435,7 +457,7 @@ function buildCheckoutCreditPurchaseEvent(options: {
       object: {
         id: 'cs_pay_123',
         object: 'checkout.session',
-        customer: 'cus_123',
+        customer: options.customerId ?? 'cus_123',
         subscription: null,
         client_reference_id: 'user-1',
         metadata: {
