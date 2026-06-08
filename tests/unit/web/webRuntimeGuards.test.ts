@@ -18,6 +18,7 @@ describe('assertSafeWebRuntimeConfig', () => {
         VITE_DEV_AUTH_BYPASS: 'true',
         VITE_COGNITO_DOMAIN: 'https://example.auth.ap-northeast-1.amazoncognito.com',
         VITE_COGNITO_CLIENT_ID: 'client-1',
+        VITE_COGNITO_SCOPES: 'openid email profile lyra/api',
       });
     }).toThrow(/VITE_DEV_AUTH_BYPASS must be disabled/);
   });
@@ -32,12 +33,23 @@ describe('assertSafeWebRuntimeConfig', () => {
     }).toThrow(/production web auth requires/);
   });
 
+  it('production の Cognito 設定では scopes を要求する', () => {
+    expect(() => {
+      assertSafeWebRuntimeConfig({
+        MODE: 'production',
+        VITE_COGNITO_DOMAIN: 'https://example.auth.ap-northeast-1.amazoncognito.com',
+        VITE_COGNITO_CLIENT_ID: 'client-1',
+      });
+    }).toThrow(/VITE_COGNITO_SCOPES is required/);
+  });
+
   it('production の Cognito 設定を許可する', () => {
     expect(() => {
       assertSafeWebRuntimeConfig({
         MODE: 'production',
         VITE_COGNITO_DOMAIN: 'https://example.auth.ap-northeast-1.amazoncognito.com',
         VITE_COGNITO_CLIENT_ID: 'client-1',
+        VITE_COGNITO_SCOPES: 'openid email profile lyra/api',
       });
     }).not.toThrow();
   });

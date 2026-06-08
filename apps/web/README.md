@@ -38,7 +38,9 @@ You can authenticate with:
 3. Manual bearer token pasted into the login screen
 
 For paid production, prefer Cognito Hosted UI and set `VITE_REQUIRE_HOSTED_AUTH=true` during the
-deploy build. `VITE_DEV_AUTH_BYPASS=true` is local-only and is not allowed in production builds.
+deploy build. If Cognito is configured, `VITE_COGNITO_SCOPES` must be explicit and include the API
+scope required by `COGNITO_REQUIRED_SCOPES` on the backend. `VITE_DEV_AUTH_BYPASS=true` is
+local-only and is not allowed in production builds.
 
 ## Verification
 

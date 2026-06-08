@@ -4,6 +4,7 @@ export interface WebRuntimeEnv {
   VITE_DEV_AUTH_BYPASS?: string;
   VITE_COGNITO_DOMAIN?: string;
   VITE_COGNITO_CLIENT_ID?: string;
+  VITE_COGNITO_SCOPES?: string;
   VITE_SUPABASE_URL?: string;
   VITE_SUPABASE_ANON_KEY?: string;
   VITE_REQUIRE_HOSTED_AUTH?: string;
@@ -26,6 +27,14 @@ export function assertSafeWebRuntimeConfig(env: WebRuntimeEnv): void {
     if (!hasCognito && !hasSupabase) {
       violations.push('production web auth requires Cognito Hosted UI or Supabase configuration');
     }
+  }
+
+  if (
+    hasValue(env.VITE_COGNITO_DOMAIN) &&
+    hasValue(env.VITE_COGNITO_CLIENT_ID) &&
+    !hasValue(env.VITE_COGNITO_SCOPES)
+  ) {
+    violations.push('VITE_COGNITO_SCOPES is required when Cognito Hosted UI is configured');
   }
 
   if (violations.length > 0) {

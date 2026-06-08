@@ -73,6 +73,9 @@ VITE_COGNITO_SCOPES=openid email profile lyra/api
 VITE_REQUIRE_HOSTED_AUTH=true
 ```
 
+When Cognito is configured in a production web build, `VITE_COGNITO_SCOPES` is required. Keep it in
+sync with `COGNITO_REQUIRED_SCOPES` so Hosted UI login receives a token the API will accept.
+
 `VITE_DEV_AUTH_BYPASS=true` is for local development only. Production web builds force file-based
 dev bypass off, and explicit production bypass is rejected.
 
