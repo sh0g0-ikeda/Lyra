@@ -330,4 +330,21 @@ describe('assertProductionRuntimeConfig', () => {
       /COGNITO_CLIENT_ID must not use a placeholder value.*OPENAI_API_KEY must not use a placeholder value.*Stripe config contains placeholder values: STRIPE_SECRET_KEY, STRIPE_PRICE_CREDITS_200/,
     );
   });
+
+  it('production では外部サービスURLにHTTPSの非local hostを要求する', () => {
+    expect(() => {
+      assertProductionRuntimeConfig(
+        {
+          ...safeProductionConfig,
+          OPENAI_BASE_URL: 'http://localhost:11434/v1',
+          SQS_QUEUE_URL_GENERATION: 'http://127.0.0.1:4566/000000000000/lyra-generation',
+          COGNITO_ISSUER: 'http://localhost:9229/user-pool',
+          COGNITO_JWKS_URI: 'http://localhost:9229/.well-known/jwks.json',
+        },
+        'production',
+      );
+    }).toThrow(
+      /OPENAI_BASE_URL must use https.*SQS_QUEUE_URL_GENERATION must use https.*COGNITO_ISSUER must use https.*COGNITO_JWKS_URI must use https/,
+    );
+  });
 });

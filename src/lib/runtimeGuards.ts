@@ -12,12 +12,14 @@ interface RuntimeGuardConfig {
   COGNITO_USER_POOL_ID?: string;
   COGNITO_CLIENT_ID?: string;
   COGNITO_ISSUER?: string;
+  COGNITO_JWKS_URI?: string;
   COGNITO_TOKEN_USE?: 'access' | 'id';
   COGNITO_REQUIRED_SCOPES?: string;
   LOCAL_FILE_STORAGE_DIR?: string;
   LOCAL_ASSET_BASE_URL?: string;
   LOCAL_IMAGE_FALLBACK_ENABLED?: boolean;
   OPENAI_API_KEY?: string;
+  OPENAI_BASE_URL?: string;
   SQS_QUEUE_URL_GENERATION?: string;
   S3_BUCKET_IMAGES?: string;
   IMAGES_CDN_BASE_URL?: string;
@@ -63,13 +65,22 @@ const PRODUCTION_PUBLIC_URL_KEYS = [
   'STRIPE_PORTAL_RETURN_URL',
 ] as const;
 
+const PRODUCTION_EXTERNAL_URL_KEYS = [
+  'OPENAI_BASE_URL',
+  'SQS_QUEUE_URL_GENERATION',
+  'COGNITO_ISSUER',
+  'COGNITO_JWKS_URI',
+] as const;
+
 const PRODUCTION_NON_PLACEHOLDER_KEYS = [
   'DATABASE_URL',
   'AWS_REGION',
   'COGNITO_USER_POOL_ID',
   'COGNITO_CLIENT_ID',
   'COGNITO_ISSUER',
+  'COGNITO_JWKS_URI',
   'OPENAI_API_KEY',
+  'OPENAI_BASE_URL',
   'SQS_QUEUE_URL_GENERATION',
   'S3_BUCKET_IMAGES',
   'IMAGES_CDN_BASE_URL',
@@ -178,6 +189,13 @@ export function assertProductionRuntimeConfig(
   }
 
   for (const key of PRODUCTION_PUBLIC_URL_KEYS) {
+    const value = config[key];
+    if (value !== undefined && !isSafeProductionHttpsUrl(value)) {
+      violations.push(`${key} must use https and a non-local host in production`);
+    }
+  }
+
+  for (const key of PRODUCTION_EXTERNAL_URL_KEYS) {
     const value = config[key];
     if (value !== undefined && !isSafeProductionHttpsUrl(value)) {
       violations.push(`${key} must use https and a non-local host in production`);
