@@ -56,9 +56,10 @@ describe('errorHandler', () => {
 
   it('hides unexpected error details in all responses', async () => {
     process.env.NODE_ENV = 'development';
-    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const fakeApiKey = ['sk', 'testsecret123'].join('-');
     const app = buildApp(() => {
-      throw new Error('database password leaked');
+      throw new Error(`provider failed Authorization: Bearer ${fakeApiKey}`);
     });
 
     const response = await app.request('/boom');
@@ -70,6 +71,9 @@ describe('errorHandler', () => {
         message: 'An unexpected error occurred',
       },
     });
+    const logged = JSON.parse(String(errorSpy.mock.calls[0]?.[0])) as { message: string };
+    expect(logged.message).toContain('Bearer [redacted]');
+    expect(logged.message).not.toContain(fakeApiKey);
   });
 });
 

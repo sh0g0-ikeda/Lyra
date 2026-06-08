@@ -3,6 +3,7 @@ import type { GenerationJob, GenerationJobType } from '../domain/types/job.js';
 import type { PageGenerationMode } from '../domain/types/pageGeneration.js';
 import { ConflictError } from '../domain/errors/index.js';
 import type { DatabaseClient, TransactionRunner } from '../lib/db.js';
+import { sanitizePersistedErrorMessage } from '../lib/errorSanitizer.js';
 
 export type { GenerationJob };
 
@@ -222,6 +223,7 @@ export class PostgresGenerationJobRepository implements GenerationJobRepository 
   }
 
   public async markFailed(jobId: string, errorMessage: string): Promise<boolean> {
+    const persistedErrorMessage = sanitizePersistedErrorMessage(errorMessage, 'Generation job failed');
     const result = await this.client.query<GenerationJobRow>(
       `
       UPDATE generation_jobs
@@ -231,7 +233,7 @@ export class PostgresGenerationJobRepository implements GenerationJobRepository 
       WHERE id = $1
       RETURNING *
       `,
-      [jobId, errorMessage],
+      [jobId, persistedErrorMessage],
     );
 
     return (result.rowCount ?? 0) > 0;

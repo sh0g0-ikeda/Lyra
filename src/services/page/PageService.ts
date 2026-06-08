@@ -27,6 +27,7 @@ import type { PanelComposition, PanelDialogueLine, UpdatePanelInput } from '../.
 import type { PanelEntityAssignment } from '../../domain/types/panelEntityAssignment.js';
 import type { PageRepository } from '../../repositories/PageRepository.js';
 import type { PanelRepository } from '../../repositories/PanelRepository.js';
+import { sanitizePersistedErrorMessage } from '../../lib/errorSanitizer.js';
 import type { StyleReferenceCompilerPort } from '../style/StyleReferenceCompiler.js';
 import { resolveStyleReferenceForPersistence } from '../style/styleReferencePersistence.js';
 import type { PanelEntityAssignmentServicePort } from './PanelEntityAssignmentService.js';
@@ -338,10 +339,11 @@ export class PageService implements PageServicePort {
         throw error;
       }
 
+      const compilerError = sanitizePersistedErrorMessage(error, 'Page autofill compiler failed');
       console.warn('page_autofill_compiler_fallback', {
         pageId: context.pageId,
         episodeId: context.episodeId,
-        reason: error.message,
+        reason: compilerError,
       });
 
       return {
@@ -350,7 +352,7 @@ export class PageService implements PageServicePort {
         compilerProvider: 'fallback',
         compilerModel: null,
         compilerPromptVersion: null,
-        compilerError: error.message,
+        compilerError,
       };
     }
   }
@@ -382,9 +384,10 @@ export class PageService implements PageServicePort {
         throw error;
       }
 
+      const compilerError = sanitizePersistedErrorMessage(error, 'Episode page plan compiler failed');
       console.warn('episode_page_plan_compiler_fallback', {
         episodeId: context.episodeId,
-        reason: error.message,
+        reason: compilerError,
       });
 
       return {
@@ -393,7 +396,7 @@ export class PageService implements PageServicePort {
         compilerProvider: 'fallback',
         compilerModel: null,
         compilerPromptVersion: null,
-        compilerError: error.message,
+        compilerError,
       };
     }
   }

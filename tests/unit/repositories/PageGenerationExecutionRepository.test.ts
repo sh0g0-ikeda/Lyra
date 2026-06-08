@@ -106,11 +106,12 @@ describe('PostgresPageGenerationExecutionRepository', () => {
   it('failed 更新でjobとpage stateを元に戻す', async () => {
     const client = new QueryCapturingClient();
     const repository = new PostgresPageGenerationExecutionRepository(client);
+    const fakeApiKey = ['sk', 'testsecret123'].join('-');
 
     const failed = await repository.failPageGeneration({
       jobId: 'job-1',
       userId: 'user-1',
-      errorMessage: 'renderer unavailable',
+      errorMessage: `renderer unavailable Authorization: Bearer ${fakeApiKey} ${'x'.repeat(500)}`,
       pageId: 'page-1',
       previousStatus: 'editing',
       previousGenerationMode: 'standard',
@@ -120,7 +121,10 @@ describe('PostgresPageGenerationExecutionRepository', () => {
     expect(client.queries[0]).toContain("SET status = 'failed'");
     expect(client.queries[0]).toContain("status IN ('queued', 'processing')");
     expect(client.queries[1]).toContain('UPDATE pages');
-    expect(client.values[0]).toEqual(['job-1', 'user-1', 'renderer unavailable']);
+    const persistedMessage = String(client.values[0]?.[2]);
+    expect(persistedMessage).toContain('Bearer [redacted]');
+    expect(persistedMessage).not.toContain(fakeApiKey);
+    expect(persistedMessage.length).toBeLessThanOrEqual(300);
     expect(client.values[1]).toEqual(['page-1', 'user-1', 'editing', 'standard']);
   });
   it('job completion更新に失敗した場合はtransactionを失敗させる', async () => {

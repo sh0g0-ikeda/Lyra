@@ -9,6 +9,7 @@ import {
   STORY_EPISODE_IMPROVEMENT_WRITER_MODEL,
 } from '../../domain/constants/storyAi.js';
 import { describeAppLanguage } from '../../domain/types/language.js';
+import { sanitizePersistedErrorMessage } from '../../lib/errorSanitizer.js';
 import type {
   StoryCollaborationInput,
   StoryCollaborationTarget,
@@ -169,7 +170,7 @@ export class StoryCollaborationService implements StoryCollaborationServicePort 
           compilerProvider: 'openai',
           compilerModel: STORY_EPISODE_IMPROVEMENT_WRITER_MODEL,
           compilerPromptVersion: directFallbackPromptVersion,
-          compilerError: error instanceof Error ? error.message : 'Story planning failed',
+          compilerError: sanitizePersistedErrorMessage(error, 'Story planning failed'),
         };
       } catch (writerError) {
         return {
@@ -177,8 +178,7 @@ export class StoryCollaborationService implements StoryCollaborationServicePort 
           compilerProvider: 'fallback',
           compilerModel: null,
           compilerPromptVersion: directFallbackPromptVersion,
-          compilerError:
-            writerError instanceof Error ? writerError.message : 'Story improvement failed',
+          compilerError: sanitizePersistedErrorMessage(writerError, 'Story improvement failed'),
         };
       }
     }

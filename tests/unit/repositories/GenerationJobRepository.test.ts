@@ -230,6 +230,23 @@ describe('PostgresGenerationJobRepository', () => {
     expect(client.values).toEqual(['job-1', 3]);
   });
 
+  it('markFailed は保存する error_message からシークレットを伏せて短くする', async () => {
+    const client = new QueryCapturingClient();
+    const repository = new PostgresGenerationJobRepository(client);
+    const fakeApiKey = ['sk', 'testsecret123'].join('-');
+
+    const marked = await repository.markFailed(
+      'job-1',
+      `OpenAI failed Authorization: Bearer ${fakeApiKey} ${'x'.repeat(500)}`,
+    );
+
+    expect(marked).toBe(true);
+    const persistedMessage = String(client.values?.[1]);
+    expect(persistedMessage).toContain('Bearer [redacted]');
+    expect(persistedMessage).not.toContain(fakeApiKey);
+    expect(persistedMessage.length).toBeLessThanOrEqual(300);
+  });
+
   it('Postgres unique violation を識別する', () => {
     expect(isUniqueViolation({ code: '23505' })).toBe(true);
     expect(isUniqueViolation({ code: '23503' })).toBe(false);

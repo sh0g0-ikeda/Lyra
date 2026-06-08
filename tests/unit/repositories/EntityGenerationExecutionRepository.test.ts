@@ -105,17 +105,21 @@ describe('PostgresEntityGenerationExecutionRepository', () => {
   it('failEntityGeneration は queued と processing の job を failed にできる', async () => {
     const client = new QueryCapturingClient();
     const repository = new PostgresEntityGenerationExecutionRepository(client);
+    const fakeApiKey = ['sk', 'testsecret123'].join('-');
 
     const failed = await repository.failEntityGeneration({
       jobId: 'job-1',
       userId: 'user-1',
-      errorMessage: 'worker stopped',
+      errorMessage: `worker stopped Authorization: Bearer ${fakeApiKey} ${'x'.repeat(500)}`,
     });
 
     expect(failed).toBe(true);
     expect(client.queries[0]).toContain("SET status = 'failed'");
     expect(client.queries[0]).toContain("status IN ('queued', 'processing')");
-    expect(client.values).toEqual(['job-1', 'user-1', 'worker stopped']);
+    const persistedMessage = String(client.values?.[2]);
+    expect(persistedMessage).toContain('Bearer [redacted]');
+    expect(persistedMessage).not.toContain(fakeApiKey);
+    expect(persistedMessage.length).toBeLessThanOrEqual(300);
   });
 });
 

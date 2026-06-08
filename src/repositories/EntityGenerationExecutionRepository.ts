@@ -1,6 +1,7 @@
 import type { QueryResultRow } from 'pg';
 import type { GenerationJob } from '../domain/types/job.js';
 import type { DatabaseClient } from '../lib/db.js';
+import { sanitizePersistedErrorMessage } from '../lib/errorSanitizer.js';
 
 export interface CompleteEntityGenerationInput {
   jobId: string;
@@ -121,6 +122,7 @@ export class PostgresEntityGenerationExecutionRepository implements EntityGenera
     userId: string;
     errorMessage: string;
   }): Promise<boolean> {
+    const persistedErrorMessage = sanitizePersistedErrorMessage(input.errorMessage, 'Entity generation failed');
     const result = await this.client.query<GenerationJobRow>(
       `
       UPDATE generation_jobs
@@ -132,7 +134,7 @@ export class PostgresEntityGenerationExecutionRepository implements EntityGenera
         AND status IN ('queued', 'processing')
       RETURNING *
       `,
-      [input.jobId, input.userId, input.errorMessage],
+      [input.jobId, input.userId, persistedErrorMessage],
     );
 
     return (result.rowCount ?? 0) > 0;

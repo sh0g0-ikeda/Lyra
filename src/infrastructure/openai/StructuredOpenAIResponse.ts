@@ -49,9 +49,7 @@ export async function requestStructuredOpenAIResponse<T>(
   try {
     parsed = JSON.parse(normalized);
   } catch {
-    throw new ConfigurationError(
-      `${options.errorLabel} returned invalid JSON: ${normalized.slice(0, 400)}`,
-    );
+    throw new ConfigurationError(`${options.errorLabel} returned invalid JSON`);
   }
 
   const sanitized = options.sanitize === undefined ? parsed : options.sanitize(parsed);

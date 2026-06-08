@@ -3,6 +3,7 @@ import type { PageStatus } from '../domain/types/page.js';
 import type { GenerationJob } from '../domain/types/job.js';
 import type { PageGenerationMode } from '../domain/types/pageGeneration.js';
 import type { DatabaseClient, TransactionRunner } from '../lib/db.js';
+import { sanitizePersistedErrorMessage } from '../lib/errorSanitizer.js';
 import type { PagePromptCompilationMetadata } from '../services/page/PageGenerationWorkerService.js';
 
 export interface CompletePageGenerationInput {
@@ -157,6 +158,7 @@ export class PostgresPageGenerationExecutionRepository implements PageGeneration
   }
 
   public async failPageGeneration(input: FailPageGenerationInput): Promise<boolean> {
+    const persistedErrorMessage = sanitizePersistedErrorMessage(input.errorMessage, 'Page generation failed');
     return this.client.transaction(async (transactionClient) => {
       const jobUpdate = await transactionClient.query<GenerationJobRow>(
         `
@@ -169,7 +171,7 @@ export class PostgresPageGenerationExecutionRepository implements PageGeneration
           AND status IN ('queued', 'processing')
         RETURNING *
         `,
-        [input.jobId, input.userId, input.errorMessage],
+        [input.jobId, input.userId, persistedErrorMessage],
       );
 
       if ((jobUpdate.rowCount ?? 0) === 0) {
