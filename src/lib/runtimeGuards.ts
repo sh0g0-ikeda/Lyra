@@ -58,6 +58,14 @@ const STRIPE_KEYS = [
   'STRIPE_PORTAL_RETURN_URL',
 ] as const;
 
+const STRIPE_PRICE_KEYS = [
+  'STRIPE_PRICE_STANDARD_MONTHLY',
+  'STRIPE_PRICE_PREMIUM_MONTHLY',
+  'STRIPE_PRICE_CREDITS_200',
+  'STRIPE_PRICE_CREDITS_1000',
+  'STRIPE_PRICE_CREDITS_3000',
+] as const;
+
 const PRODUCTION_PUBLIC_URL_KEYS = [
   'IMAGES_CDN_BASE_URL',
   'STRIPE_CHECKOUT_SUCCESS_URL',
@@ -198,6 +206,13 @@ export function assertProductionRuntimeConfig(
     !stripeWebhookSecret.trim().startsWith('whsec_')
   ) {
     violations.push('STRIPE_WEBHOOK_SECRET must start with whsec_');
+  }
+  const invalidStripePriceKeys = STRIPE_PRICE_KEYS.filter((key) => {
+    const value = config[key];
+    return value !== undefined && hasConfigValue(value) && !value.trim().startsWith('price_');
+  });
+  if (invalidStripePriceKeys.length > 0) {
+    violations.push(`Stripe price ids must start with price_: ${invalidStripePriceKeys.join(', ')}`);
   }
 
   for (const key of PRODUCTION_PUBLIC_URL_KEYS) {

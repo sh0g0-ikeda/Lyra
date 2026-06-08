@@ -360,4 +360,17 @@ describe('assertProductionRuntimeConfig', () => {
       );
     }).toThrow(/STRIPE_SECRET_KEY must use a live secret key.*STRIPE_WEBHOOK_SECRET must start with whsec_/);
   });
+
+  it('production では Stripe price id 形式を要求する', () => {
+    expect(() => {
+      assertProductionRuntimeConfig(
+        {
+          ...safeProductionConfig,
+          STRIPE_PRICE_STANDARD_MONTHLY: 'standard',
+          STRIPE_PRICE_CREDITS_3000: 'prod_credit_pack',
+        },
+        'production',
+      );
+    }).toThrow(/Stripe price ids must start with price_: STRIPE_PRICE_STANDARD_MONTHLY, STRIPE_PRICE_CREDITS_3000/);
+  });
 });

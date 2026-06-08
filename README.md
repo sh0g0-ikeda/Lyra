@@ -78,6 +78,7 @@ Required production settings also reject obvious placeholder values such as
 `replace-me`, `replace_me`, `placeholder`, and `changeme`.
 Paid production also requires a Stripe live secret key (`sk_live_...`) and a
 webhook signing secret (`whsec_...`); test keys are rejected at API startup.
+Stripe price settings must be actual `price_...` IDs, not product IDs or plan labels.
 
 ### Production auth
 
