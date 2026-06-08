@@ -321,6 +321,7 @@ describe('EntityReferenceService', () => {
       userId: 'user-1',
       jobType: 'entity_generate',
       creditCost: 1,
+      capacityLimits: { perUser: 2, global: 100 },
       params: {
         entity_id: 'entity-1',
         entity_type: 'character',

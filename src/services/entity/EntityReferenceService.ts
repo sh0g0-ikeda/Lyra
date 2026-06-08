@@ -165,6 +165,7 @@ export class EntityReferenceService implements EntityReferenceServicePort {
         jobType: 'entity_generate',
         generationMode: null,
         creditCost: CREDIT_COSTS.ENTITY_GENERATION,
+        capacityLimits: this.capacityLimits,
         params: {
           entity_id: entity.entityId,
           entity_type: entity.entityType,

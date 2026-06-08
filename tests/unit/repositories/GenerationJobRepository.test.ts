@@ -92,6 +92,77 @@ describe('PostgresGenerationJobRepository', () => {
     ]);
   });
 
+  it('capacityLimits 指定時は advisory lock 下で上限確認してから job を作成する', async () => {
+    const client = new CapacityTransactionRunner();
+    const repository = new PostgresGenerationJobRepository(client);
+
+    await repository.create({
+      id: '55555555-5555-4555-8555-555555555555',
+      userId: 'user-1',
+      jobType: 'page_generate',
+      generationMode: 'standard',
+      creditCost: 1,
+      capacityLimits: { perUser: 3, global: 5 },
+      params: {
+        page_id: 'page-1',
+      },
+    });
+
+    expect(client.transactionCalls).toBe(1);
+    expect(client.queries.filter((query) => query.includes('pg_advisory_xact_lock'))).toHaveLength(2);
+    expect(client.queries.some((query) => query.includes('INSERT INTO generation_jobs'))).toBe(true);
+    expect(client.valuesList[0]).toEqual([81527, 'generation_jobs:global']);
+    expect(client.valuesList[1]).toEqual([81527, 'generation_jobs:user:user-1']);
+  });
+
+  it('capacityLimits 指定時に user 上限へ達していれば job を作成しない', async () => {
+    const client = new CapacityTransactionRunner({ activeForUser: '3', activeGlobally: '3' });
+    const repository = new PostgresGenerationJobRepository(client);
+
+    await expect(
+      repository.create({
+        id: '55555555-5555-4555-8555-555555555555',
+        userId: 'user-1',
+        jobType: 'page_generate',
+        generationMode: 'standard',
+        creditCost: 1,
+        capacityLimits: { perUser: 3, global: 5 },
+        params: {
+          page_id: 'page-1',
+        },
+      }),
+    ).rejects.toMatchObject({
+      code: 'CONFLICT',
+      message: 'User has too many active generation jobs',
+    });
+
+    expect(client.queries.some((query) => query.includes('INSERT INTO generation_jobs'))).toBe(false);
+  });
+
+  it('capacityLimits 指定時に global 上限へ達していれば job を作成しない', async () => {
+    const client = new CapacityTransactionRunner({ activeForUser: '1', activeGlobally: '5' });
+    const repository = new PostgresGenerationJobRepository(client);
+
+    await expect(
+      repository.create({
+        id: '55555555-5555-4555-8555-555555555555',
+        userId: 'user-1',
+        jobType: 'entity_generate',
+        generationMode: null,
+        creditCost: 1,
+        capacityLimits: { perUser: 3, global: 5 },
+        params: {
+          entity_id: 'entity-1',
+        },
+      }),
+    ).rejects.toMatchObject({
+      code: 'CONFLICT',
+      message: 'Generation queue is temporarily full',
+    });
+
+    expect(client.queries.some((query) => query.includes('INSERT INTO generation_jobs'))).toBe(false);
+  });
+
   it('user_idで所有権を絞ってjobを取得する', async () => {
     const client = new QueryCapturingClient();
     const repository = new PostgresGenerationJobRepository(client);
@@ -210,5 +281,72 @@ class CountCapturingClient implements DatabaseClient {
       fields: [],
       rows: [{ count: '2' }] as unknown as T[],
     };
+  }
+}
+
+class CapacityTransactionClient implements DatabaseClient {
+  public queries: string[] = [];
+  public valuesList: Array<readonly unknown[] | undefined> = [];
+
+  public constructor(
+    private readonly counts: {
+      activeForUser: string;
+      activeGlobally: string;
+    } = { activeForUser: '1', activeGlobally: '2' },
+  ) {}
+
+  public async query<T extends QueryResultRow = QueryResultRow>(
+    text: string,
+    values?: readonly unknown[],
+  ): Promise<QueryResult<T>> {
+    this.queries.push(text);
+    this.valuesList.push(values);
+
+    if (text.includes('COUNT(*)::text AS count') && text.includes('user_id = $1')) {
+      return {
+        command: 'SELECT',
+        rowCount: 1,
+        oid: 0,
+        fields: [],
+        rows: [{ count: this.counts.activeForUser }] as unknown as T[],
+      };
+    }
+
+    if (text.includes('COUNT(*)::text AS count')) {
+      return {
+        command: 'SELECT',
+        rowCount: 1,
+        oid: 0,
+        fields: [],
+        rows: [{ count: this.counts.activeGlobally }] as unknown as T[],
+      };
+    }
+
+    if (text.includes('INSERT INTO generation_jobs')) {
+      return {
+        command: 'INSERT',
+        rowCount: 1,
+        oid: 0,
+        fields: [],
+        rows: [jobRow()] as unknown as T[],
+      };
+    }
+
+    return {
+      command: 'SELECT',
+      rowCount: 0,
+      oid: 0,
+      fields: [],
+      rows: [],
+    };
+  }
+}
+
+class CapacityTransactionRunner extends CapacityTransactionClient {
+  public transactionCalls = 0;
+
+  public async transaction<T>(work: (client: DatabaseClient) => Promise<T>): Promise<T> {
+    this.transactionCalls += 1;
+    return work(this);
   }
 }

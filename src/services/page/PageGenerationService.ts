@@ -93,6 +93,7 @@ export class PageGenerationService implements PageGenerationServicePort {
         jobType: 'page_generate',
         generationMode: selection.mode,
         creditCost: selection.creditCost,
+        capacityLimits: this.capacityLimits,
         params: {
           page_id: page.pageId,
           request_kind: selection.requestKind,

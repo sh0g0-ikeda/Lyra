@@ -1,7 +1,8 @@
 import type { QueryResultRow } from 'pg';
 import type { GenerationJob, GenerationJobType } from '../domain/types/job.js';
 import type { PageGenerationMode } from '../domain/types/pageGeneration.js';
-import type { DatabaseClient } from '../lib/db.js';
+import { ConflictError } from '../domain/errors/index.js';
+import type { DatabaseClient, TransactionRunner } from '../lib/db.js';
 
 export type { GenerationJob };
 
@@ -12,6 +13,10 @@ export interface CreateGenerationJobInput {
   generationMode: PageGenerationMode | null;
   creditCost: number;
   params: Record<string, unknown>;
+  capacityLimits?: {
+    perUser: number;
+    global: number;
+  };
 }
 
 export interface GenerationJobRepository {
@@ -47,10 +52,28 @@ interface GenerationJobRow extends QueryResultRow {
 }
 
 export class PostgresGenerationJobRepository implements GenerationJobRepository {
-  public constructor(private readonly client: DatabaseClient) {}
+  private static readonly advisoryLockNamespace = 81_527;
+
+  public constructor(private readonly client: DatabaseClient & Partial<TransactionRunner>) {}
 
   public async create(input: CreateGenerationJobInput): Promise<GenerationJob> {
-    const result = await this.client.query<GenerationJobRow>(
+    const capacityLimits = input.capacityLimits;
+    if (capacityLimits !== undefined && isTransactionRunner(this.client)) {
+      return this.client.transaction(async (transactionClient) => {
+        await this.lockGenerationCapacity(transactionClient, input.userId);
+        await this.assertCapacityWithinTransaction(transactionClient, input.userId, capacityLimits);
+        return this.insertJob(transactionClient, input);
+      });
+    }
+
+    return this.insertJob(this.client, input);
+  }
+
+  private async insertJob(
+    client: DatabaseClient,
+    input: CreateGenerationJobInput,
+  ): Promise<GenerationJob> {
+    const result = await client.query<GenerationJobRow>(
       `
       INSERT INTO generation_jobs (
         id,
@@ -75,6 +98,33 @@ export class PostgresGenerationJobRepository implements GenerationJobRepository 
     );
 
     return mapGenerationJobRow(result.rows[0]);
+  }
+
+  private async lockGenerationCapacity(client: DatabaseClient, userId: string): Promise<void> {
+    await client.query(
+      'SELECT pg_advisory_xact_lock($1::int, hashtext($2)::int)',
+      [PostgresGenerationJobRepository.advisoryLockNamespace, 'generation_jobs:global'],
+    );
+    await client.query(
+      'SELECT pg_advisory_xact_lock($1::int, hashtext($2)::int)',
+      [PostgresGenerationJobRepository.advisoryLockNamespace, `generation_jobs:user:${userId}`],
+    );
+  }
+
+  private async assertCapacityWithinTransaction(
+    client: DatabaseClient,
+    userId: string,
+    limits: NonNullable<CreateGenerationJobInput['capacityLimits']>,
+  ): Promise<void> {
+    const activeForUser = await this.countActiveGenerationJobsByUserWithClient(client, userId);
+    if (activeForUser >= limits.perUser) {
+      throw new ConflictError('User has too many active generation jobs');
+    }
+
+    const activeGlobally = await this.countActiveGenerationJobsWithClient(client);
+    if (activeGlobally >= limits.global) {
+      throw new ConflictError('Generation queue is temporarily full');
+    }
   }
 
   public async findById(jobId: string): Promise<GenerationJob | null> {
@@ -119,7 +169,14 @@ export class PostgresGenerationJobRepository implements GenerationJobRepository 
   }
 
   public async countActiveGenerationJobsByUser(userId: string): Promise<number> {
-    const result = await this.client.query<{ count: string }>(
+    return this.countActiveGenerationJobsByUserWithClient(this.client, userId);
+  }
+
+  private async countActiveGenerationJobsByUserWithClient(
+    client: DatabaseClient,
+    userId: string,
+  ): Promise<number> {
+    const result = await client.query<{ count: string }>(
       `
       SELECT COUNT(*)::text AS count
       FROM generation_jobs
@@ -134,7 +191,11 @@ export class PostgresGenerationJobRepository implements GenerationJobRepository 
   }
 
   public async countActiveGenerationJobs(): Promise<number> {
-    const result = await this.client.query<{ count: string }>(
+    return this.countActiveGenerationJobsWithClient(this.client);
+  }
+
+  private async countActiveGenerationJobsWithClient(client: DatabaseClient): Promise<number> {
+    const result = await client.query<{ count: string }>(
       `
       SELECT COUNT(*)::text AS count
       FROM generation_jobs
@@ -220,6 +281,10 @@ export class PostgresGenerationJobRepository implements GenerationJobRepository 
 
     return result.rows[0] === undefined ? null : mapGenerationJobRow(result.rows[0]);
   }
+}
+
+function isTransactionRunner(client: DatabaseClient & Partial<TransactionRunner>): client is DatabaseClient & TransactionRunner {
+  return typeof client.transaction === 'function';
 }
 
 export function isUniqueViolation(error: unknown): boolean {

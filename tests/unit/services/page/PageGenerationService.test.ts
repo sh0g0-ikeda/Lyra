@@ -286,6 +286,7 @@ describe('PageGenerationService', () => {
       jobId: result.jobId,
     });
     expect(jobRepository.created?.id).toEqual(expect.any(String));
+    expect(jobRepository.created?.capacityLimits).toEqual({ perUser: 2, global: 100 });
     expect(jobRepository.created?.params).toMatchObject({
       page_id: pageId,
       request_kind: 'initial',
