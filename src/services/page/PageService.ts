@@ -12,6 +12,7 @@ import {
 } from '../../domain/entityAliases.js';
 import type { AppLanguage } from '../../domain/types/language.js';
 import { STORY_PROMPT_CONTEXT_LIMITS } from '../../domain/storyPromptCompaction.js';
+import { STORY_AI_LIMITS } from '../../domain/constants/storyAi.js';
 import type {
   EpisodePagePlanApplyResult,
   EpisodePagePlanContext,
@@ -286,6 +287,11 @@ export class PageService implements PageServicePort {
     }
     if (context.pages.length === 0) {
       throw new ValidationError('Episode must have pages before story autofill can run');
+    }
+    if (context.pages.length > STORY_AI_LIMITS.maxSkeletonPages) {
+      throw new ValidationError(
+        `Episode story autofill supports at most ${STORY_AI_LIMITS.maxSkeletonPages} pages`,
+      );
     }
     if (context.scenes.length === 0) {
       throw new ValidationError('Episode must have at least one scene before story autofill can run');

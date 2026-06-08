@@ -1929,15 +1929,14 @@ function StudioShell(props: {
 
     if (exportFormat === 'pdf') {
       const { jsPDF } = await import('jspdf');
-      const assets = await Promise.all(
-        targetPages.map(async (page) => {
-          const response = await api.exportPageImage(page.id);
-          return {
-            page,
-            dataUrl: await blobToDataUrl(response.blob),
-          };
-        }),
-      );
+      const assets: Array<{ page: PageRecord; dataUrl: string }> = [];
+      for (const page of targetPages) {
+        const response = await api.exportPageImage(page.id);
+        assets.push({
+          page,
+          dataUrl: await blobToDataUrl(response.blob),
+        });
+      }
       const pdf = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' });
       assets.forEach((asset, index) => {
         if (index > 0) {
@@ -1952,14 +1951,12 @@ function StudioShell(props: {
     }
 
     const multiple = targetPages.length > 1;
-    await Promise.all(
-      targetPages.map(async (page) => {
-        const response = await api.exportPageImage(page.id);
-        const extension = inferImageExtension(response.contentType);
-        const filename = multiple ? `${baseName}-page-${String(page.page_number).padStart(2, '0')}.${extension}` : `${baseName}.${extension}`;
-        triggerBlobDownload(response.blob, filename);
-      }),
-    );
+    for (const page of targetPages) {
+      const response = await api.exportPageImage(page.id);
+      const extension = inferImageExtension(response.contentType);
+      const filename = multiple ? `${baseName}-page-${String(page.page_number).padStart(2, '0')}.${extension}` : `${baseName}.${extension}`;
+      triggerBlobDownload(response.blob, filename);
+    }
   };
 
   return (

@@ -1,6 +1,7 @@
 import {
   PAGE_SKELETON_MAX_TOKENS,
   PAGE_SKELETON_MODEL,
+  STORY_AI_LIMITS,
   STORY_COLLABORATION_MAX_TOKENS,
   STORY_COLLABORATION_MODEL,
   STORY_EPISODE_IMPROVEMENT_WRITER_MAX_TOKENS,
@@ -165,6 +166,7 @@ const pageSkeletonJsonSchema = {
     pages: {
       type: 'array',
       minItems: 1,
+      maxItems: STORY_AI_LIMITS.maxSkeletonPages,
       items: {
         type: 'object',
         additionalProperties: false,
@@ -176,13 +178,22 @@ const pageSkeletonJsonSchema = {
           'panels',
         ],
         properties: {
-          page_number: { type: 'integer' },
-          purpose: { type: 'string' },
-          suggested_panel_count: { type: 'integer' },
+          page_number: {
+            type: 'integer',
+            minimum: 1,
+            maximum: STORY_AI_LIMITS.maxSkeletonPages,
+          },
+          purpose: { type: 'string', maxLength: 500 },
+          suggested_panel_count: {
+            type: 'integer',
+            minimum: 1,
+            maximum: STORY_AI_LIMITS.maxPanelsPerPage,
+          },
           suggested_layout: { type: 'string', enum: [...PANEL_FRAME_TEMPLATE_IDS] },
           panels: {
             type: 'array',
             minItems: 1,
+            maxItems: STORY_AI_LIMITS.maxPanelsPerPage,
             items: {
               type: 'object',
               additionalProperties: false,
@@ -195,12 +206,17 @@ const pageSkeletonJsonSchema = {
                 'suggested_dialogue_hint',
               ],
               properties: {
-                order: { type: 'integer' },
+                order: {
+                  type: 'integer',
+                  minimum: 1,
+                  maximum: STORY_AI_LIMITS.maxPanelsPerPage,
+                },
                 panel_role: { type: 'string', enum: [...PAGE_SKELETON_PANEL_ROLES] },
                 suggested_size: { type: 'string', enum: [...PAGE_SKELETON_PANEL_SIZES] },
-                situation_hint: { type: 'string' },
+                situation_hint: { type: 'string', maxLength: 2000 },
                 suggested_entities: {
                   type: 'array',
+                  maxItems: STORY_AI_LIMITS.maxEntitiesPerPanel,
                   items: { type: 'string' },
                 },
                 suggested_dialogue_hint: nullableStringSchema,

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { STORY_AI_LIMITS } from '../../../../src/domain/constants/storyAi.js';
 import { OpenAIClient } from '../../../../src/infrastructure/openai/OpenAIClient.js';
 import { OpenAIPageEpisodePlanCompiler } from '../../../../src/infrastructure/openai/OpenAIPageEpisodePlanCompiler.js';
 
@@ -122,20 +123,36 @@ describe('OpenAIPageEpisodePlanCompiler', () => {
     const schema = text.format.schema as {
       properties: {
         pages: {
+          maxItems: number;
           items: {
             properties: {
+              source_scene_ids: { maxItems: number };
               page: {
                 anyOf: Array<{ required?: string[] }>;
+              };
+              panels: {
+                maxItems: number;
+                items: {
+                  properties: {
+                    dialogue: { anyOf: Array<{ maxItems?: number }> };
+                    entities: { anyOf: Array<{ maxItems?: number }> };
+                  };
+                };
               };
             };
           };
         };
       };
     };
+    expect(schema.properties.pages.maxItems).toBe(STORY_AI_LIMITS.maxSkeletonPages);
+    expect(schema.properties.pages.items.properties.source_scene_ids.maxItems).toBe(100);
     expect(schema.properties.pages.items.properties.page.anyOf[0]?.required).toEqual([
       'dialogue_mode',
       'page_dialogue_toggle',
     ]);
+    expect(schema.properties.pages.items.properties.panels.maxItems).toBe(20);
+    expect(schema.properties.pages.items.properties.panels.items.properties.dialogue.anyOf[0]?.maxItems).toBe(20);
+    expect(schema.properties.pages.items.properties.panels.items.properties.entities.anyOf[0]?.maxItems).toBe(20);
     expect(userPrompt).toContain('[CHAPTER ARC]');
     expect(userPrompt).toContain('[CURRENT PAGES]');
   });

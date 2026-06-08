@@ -593,14 +593,15 @@ export class PostgresStoryRepository implements StoryRepository {
       return null;
     }
 
+    // Partial updates use undefined as "leave unchanged"; null is an explicit editor clear.
     const normalizedStoryInput = normalizeEpisodeStoryInput({
       storyInputMode: input.storyInputMode ?? currentEpisode.storyInputMode,
-      purpose: input.purpose ?? currentEpisode.purpose,
-      introduction: input.introduction ?? currentEpisode.introduction,
-      middle: input.middle ?? currentEpisode.middle,
-      climax: input.climax ?? currentEpisode.climax,
-      endingHook: input.endingHook ?? currentEpisode.endingHook,
-      storyFullDraft: input.storyFullDraft ?? currentEpisode.storyFullDraft,
+      purpose: pickEpisodeUpdateValue(input.purpose, currentEpisode.purpose),
+      introduction: pickEpisodeUpdateValue(input.introduction, currentEpisode.introduction),
+      middle: pickEpisodeUpdateValue(input.middle, currentEpisode.middle),
+      climax: pickEpisodeUpdateValue(input.climax, currentEpisode.climax),
+      endingHook: pickEpisodeUpdateValue(input.endingHook, currentEpisode.endingHook),
+      storyFullDraft: pickEpisodeUpdateValue(input.storyFullDraft, currentEpisode.storyFullDraft),
     });
 
     try {
@@ -1487,6 +1488,10 @@ function mapEpisodeRow(row: EpisodeRow): Episode {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+}
+
+function pickEpisodeUpdateValue<T>(nextValue: T | undefined, currentValue: T): T {
+  return nextValue === undefined ? currentValue : nextValue;
 }
 
 function toStoryEntitySummaries(value: unknown): StoryEntitySummary[] {

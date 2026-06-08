@@ -5,6 +5,7 @@ import {
   NotFoundError,
   ValidationError,
 } from '../../../../src/domain/errors/index.js';
+import { STORY_AI_LIMITS } from '../../../../src/domain/constants/storyAi.js';
 import type {
   EpisodePagePlanApplyResult,
   EpisodePagePlanContext,
@@ -950,6 +951,32 @@ describe('PageService', () => {
         text: '……まだ整理しきれない。',
       }),
     ]);
+  });
+
+  it('episode story plan は skeleton 上限を超えるページ数を compiler に渡さない', async () => {
+    const pageRepository = new FakePageRepository();
+    const compiler = new FakeEpisodePagePlanCompiler();
+    const baseContext = buildEpisodePlanningContext();
+    pageRepository.episodePlanningContext = {
+      ...baseContext,
+      pages: Array.from({ length: STORY_AI_LIMITS.maxSkeletonPages + 1 }, (_value, index) => ({
+        ...baseContext.pages[0]!,
+        pageId: `page-${index + 1}`,
+        pageNumber: index + 1,
+      })),
+    };
+    const service = new PageService(
+      pageRepository,
+      new FakePanelRepository(),
+      new FakePanelEntityAssignmentService(),
+      new FakePageAutofillCompiler(),
+      compiler,
+    );
+
+    await expect(service.autofillEpisodeFromStory('user-1', 'episode-1', 'ja')).rejects.toMatchObject({
+      code: 'VALIDATION_ERROR',
+    });
+    expect(compiler.lastInput).toBeNull();
   });
 
   it('episode story plan は page 主役が別にいる時 thought を visible primary ではなく page lead へ寄せる', async () => {

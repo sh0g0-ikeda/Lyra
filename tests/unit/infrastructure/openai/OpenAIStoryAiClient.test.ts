@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { STORY_AI_LIMITS } from '../../../../src/domain/constants/storyAi.js';
 import { OpenAIStoryAiClient } from '../../../../src/infrastructure/openai/OpenAIStoryAiClient.js';
 import { OpenAIClient } from '../../../../src/infrastructure/openai/OpenAIClient.js';
 
@@ -53,19 +54,33 @@ describe('OpenAIStoryAiClient', () => {
         schema: {
           properties: {
             pages: {
+              maxItems: STORY_AI_LIMITS.maxSkeletonPages,
               items: {
                 properties: {
+                  page_number: {
+                    maximum: STORY_AI_LIMITS.maxSkeletonPages,
+                  },
+                  suggested_panel_count: {
+                    maximum: STORY_AI_LIMITS.maxPanelsPerPage,
+                  },
                   suggested_layout: {
                     enum: expect.arrayContaining(['top_wide_3', 'standard_4']),
                   },
                   panels: {
+                    maxItems: STORY_AI_LIMITS.maxPanelsPerPage,
                     items: {
                       properties: {
+                        order: {
+                          maximum: STORY_AI_LIMITS.maxPanelsPerPage,
+                        },
                         panel_role: {
                           enum: expect.arrayContaining(['establish', 'impact']),
                         },
                         suggested_size: {
                           enum: expect.arrayContaining(['standard', 'splash']),
+                        },
+                        suggested_entities: {
+                          maxItems: STORY_AI_LIMITS.maxEntitiesPerPanel,
                         },
                       },
                     },

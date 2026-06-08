@@ -3,6 +3,7 @@ import {
   EPISODE_PAGE_PLAN_COMPILER_OPENAI_MODEL,
   EPISODE_PAGE_PLAN_COMPILER_VERSION,
 } from '../../domain/constants/generation.js';
+import { STORY_AI_LIMITS } from '../../domain/constants/storyAi.js';
 import { describeAppLanguage } from '../../domain/types/language.js';
 import { episodePagePlanSuggestionSchema } from '../../lib/validators/episodePagePlan.schema.js';
 import type {
@@ -495,6 +496,7 @@ const nullableDialogueArraySchema = {
   anyOf: [
     {
       type: 'array',
+      maxItems: 20,
       items: {
         type: 'object',
         additionalProperties: false,
@@ -521,6 +523,7 @@ const nullableEntityAssignmentsSchema = {
   anyOf: [
     {
       type: 'array',
+      maxItems: 20,
       items: {
         type: 'object',
         additionalProperties: false,
@@ -586,7 +589,7 @@ const episodePagePlanJsonSchema = {
     pages: {
       type: 'array',
       minItems: 1,
-      maxItems: 200,
+      maxItems: STORY_AI_LIMITS.maxSkeletonPages,
       items: {
         type: 'object',
         additionalProperties: false,
@@ -604,6 +607,7 @@ const episodePagePlanJsonSchema = {
           page_number: { type: 'integer', minimum: 1, maximum: 10000 },
           source_scene_ids: {
             type: 'array',
+            maxItems: 100,
             items: { type: 'string' },
           },
           page_purpose: nullableStringSchema,
