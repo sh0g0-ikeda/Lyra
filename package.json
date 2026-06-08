@@ -22,7 +22,9 @@
     "auth:dev-token:json": "tsx scripts/createDevAuthToken.ts",
     "worker:page": "tsx scripts/runPageWorker.ts",
     "worker:entity": "tsx scripts/runEntityWorker.ts",
-    "worker:retry": "tsx scripts/retryPageGenerationJob.ts"
+    "worker:retry": "tsx scripts/retryPageGenerationJob.ts",
+    "admin:refund-credits": "tsx scripts/adminRefundCredits.ts",
+    "admin:prune-images": "tsx scripts/pruneImageStorage.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1036.0",

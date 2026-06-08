@@ -17,6 +17,10 @@ const pool = new Pool({
   max: 10,
 });
 
+export async function closeDatabasePool(): Promise<void> {
+  await pool.end();
+}
+
 export const db: DatabaseClient & TransactionRunner = {
   async query<T extends QueryResultRow = QueryResultRow>(
     text: string,

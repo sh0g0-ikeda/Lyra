@@ -17,7 +17,7 @@ class FakeS3Client {
 }
 
 describe('S3PageImageStorage', () => {
-  it('session配下に生成画像を保存してcdn_urlを返す', async () => {
+  it('session 配下に生成画像を保存して cdn_url を返す', async () => {
     const client = new FakeS3Client();
     const storage = new S3PageImageStorage(client, {
       bucketName: 'lyra-images',
@@ -48,7 +48,7 @@ describe('S3PageImageStorage', () => {
     });
   });
 
-  it('未対応のmimeTypeはValidationErrorとして弾く', async () => {
+  it('未対応の mimeType は ConfigurationError として扱う', async () => {
     const storage = new S3PageImageStorage(new FakeS3Client(), {
       bucketName: 'lyra-images',
       cdnBaseUrl: 'https://img.lyra.app',
@@ -65,7 +65,7 @@ describe('S3PageImageStorage', () => {
     ).rejects.toEqual(new ConfigurationError('Unsupported page image mime type: application/json'));
   });
 
-  it('S3保存失敗時はConfigurationErrorに変換する', async () => {
+  it('S3 保存失敗時は ConfigurationError に変換する', async () => {
     const client = new FakeS3Client();
     client.shouldThrow = true;
     const storage = new S3PageImageStorage(client, {

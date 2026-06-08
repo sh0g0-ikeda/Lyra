@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            apps/web/package-lock.json
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install backend dependencies
+        run: npm ci
+
+      - name: Install frontend dependencies
+        run: npm --prefix apps/web ci
+
+      - name: Run Vitest suite
+        run: bun run test
+
+      - name: Run Bun test entrypoint
+        run: bun test
+
+      - name: Build backend
+        run: npm run build
+
+      - name: Lint frontend
+        run: npm --prefix apps/web run lint
+
+      - name: Build frontend
+        run: npm --prefix apps/web run build

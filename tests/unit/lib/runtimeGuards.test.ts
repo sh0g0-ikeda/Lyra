@@ -13,7 +13,7 @@ const safeProductionConfig = {
 };
 
 describe('assertProductionRuntimeConfig', () => {
-  it('production 以外では未設定の外部サービスを許容する', () => {
+  it('production 以外では未設定の外部サービスを許可する', () => {
     expect(() => {
       assertProductionRuntimeConfig(
         {
@@ -24,13 +24,13 @@ describe('assertProductionRuntimeConfig', () => {
     }).not.toThrow();
   });
 
-  it('安全な production 設定は許容する', () => {
+  it('安全な production 設定を許可する', () => {
     expect(() => {
       assertProductionRuntimeConfig(safeProductionConfig, 'production');
     }).not.toThrow();
   });
 
-  it('Cognito production 設定は issuer/client/scope が揃っていれば許容する', () => {
+  it('Cognito production 設定は issuer/client/scope が揃っていれば許可する', () => {
     expect(() => {
       assertProductionRuntimeConfig(
         {

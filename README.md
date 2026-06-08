@@ -110,3 +110,55 @@ bun run web:e2e
 ```
 
 - Runs Playwright tests from `apps/web/e2e`.
+
+## Production Operations
+
+### CI gates
+
+GitHub Actions runs the same checks expected before deployment:
+
+```powershell
+bun run test
+bun test
+npm run build
+npm --prefix apps/web run lint
+npm --prefix apps/web run build
+```
+
+`apps/web/e2e` is intentionally separate because it needs a running app and browser runtime.
+
+### Admin credit refund
+
+Manual support refunds should go through the credit service so `credit_balances` and
+`credit_ledger` stay consistent.
+
+```powershell
+npm run admin:refund-credits -- --user-id <uuid> --amount 3 --reason "support refund"
+```
+
+- Default mode is dry-run and changes nothing.
+- Add `--apply` only after confirming the printed target user and amount.
+- Optional `--job-id <uuid>` links the refund to a generation job.
+
+### Image storage pruning
+
+Temporary and unconfirmed generated images should be pruned from S3 regularly:
+
+```powershell
+npm run admin:prune-images -- --older-than-hours 24 --protect-recent-candidate-hours 48
+```
+
+- Default mode is dry-run and lists delete candidates only.
+- Add `--apply` to delete candidates.
+- The script only accepts `tmp/` and `session/` prefixes. It refuses `saved/` so confirmed
+  references and final page assets are not deleted by this tool.
+- Current page images, confirmed entity references, recent entity preview candidates, and recent
+  uploaded source images are protected from deletion.
+
+For AWS cost control, pair this with S3 lifecycle rules:
+
+- `tmp/`: expire after 1 day.
+- `session/`: transition to cheaper storage after a short window, then expire after the support
+  window you decide to keep.
+- `saved/`: keep durable, encrypted, and private behind CloudFront; use lifecycle transitions only
+  after confirming product requirements.
