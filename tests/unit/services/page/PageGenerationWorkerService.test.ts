@@ -75,6 +75,7 @@ class FakePromptCompiler implements PagePromptCompilerPort {
   public calls = 0;
   public shouldFail = false;
   public failWithConfigurationError = false;
+  public configurationErrorMessage = 'compiler unavailable';
   public compiledPromptText = 'page-prompt-compiled';
 
   public async compilePrompt(
@@ -83,7 +84,7 @@ class FakePromptCompiler implements PagePromptCompilerPort {
     this.calls += 1;
     if (this.shouldFail) {
       if (this.failWithConfigurationError) {
-        throw new ConfigurationError('compiler unavailable');
+        throw new ConfigurationError(this.configurationErrorMessage);
       }
 
       throw new Error('compiler unavailable');
@@ -520,6 +521,33 @@ describe('PageGenerationWorkerService', () => {
     expect(executionRepository.completionInput?.promptMetadata.compilerError).toContain(
       'compiled prompt dropped required visual locks: panel 1',
     );
+  });
+
+  it('prompt compiler の設定エラーを保存するときは機密値を伏せる', async () => {
+    const executionRepository = new FakeExecutionRepository();
+    const promptCompiler = new FakePromptCompiler();
+    promptCompiler.shouldFail = true;
+    promptCompiler.failWithConfigurationError = true;
+    promptCompiler.configurationErrorMessage = `compiler failed Authorization: Bearer sk-test-secret ${'x'.repeat(600)}`;
+    const renderer = new FakeRenderer();
+    const service = new PageGenerationWorkerService(
+      executionRepository,
+      new FakePromptBuilder(),
+      promptCompiler,
+      new FakeInputImageBuilder(),
+      new FakePlanner(),
+      renderer,
+      new FakeStorage(),
+      new FakeCreditService(),
+    );
+
+    await service.processJob('job-1');
+
+    expect(renderer.calls[0]?.prompt).toBe('page-prompt-draft');
+    const compilerError = executionRepository.completionInput?.promptMetadata.compilerError;
+    expect(compilerError).toContain('Bearer [redacted]');
+    expect(compilerError).not.toContain('sk-test-secret');
+    expect(compilerError?.length).toBeLessThanOrEqual(300);
   });
 });
 

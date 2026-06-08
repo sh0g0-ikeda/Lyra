@@ -293,7 +293,7 @@ async function compilePromptSafely(
         compilerModel: null,
         compilerPromptVersion: null,
       },
-      compilerError: error.message,
+      compilerError: sanitizePersistedErrorMessage(error, 'Page prompt compiler failed'),
     };
   }
 }
