@@ -1,5 +1,4 @@
 import { db } from '../src/lib/db.js';
-import { AnthropicClient } from '../src/infrastructure/anthropic/AnthropicClient.js';
 import { PostgresCreditRepository } from '../src/repositories/CreditRepository.js';
 import { PostgresEntityGenerationExecutionRepository } from '../src/repositories/EntityGenerationExecutionRepository.js';
 import { PostgresPageGenerationExecutionRepository } from '../src/repositories/PageGenerationExecutionRepository.js';
@@ -65,7 +64,6 @@ import { LocalPreviewEntityReferenceGenerator } from '../src/infrastructure/loca
 import { resolveLocalAssetConfig } from '../src/infrastructure/local/LocalAssetFiles.js';
 import { env } from '../src/lib/env.js';
 import { assertProductionRuntimeConfig } from '../src/lib/runtimeGuards.js';
-import { AnthropicEntityReferencePromptCompiler } from '../src/infrastructure/anthropic/AnthropicEntityReferencePromptCompiler.js';
 import {
   PageGenerationInputImageBuilder,
   type PageGenerationInputImageBuilderPort,
@@ -313,18 +311,7 @@ function resolveEntityReferencePromptCompiler(): EntityReferencePromptCompilerPo
     return new OpenAIEntityReferencePromptCompiler(openAiClient);
   }
 
-  if (env.ANTHROPIC_API_KEY === undefined) {
-    return new PassthroughEntityReferencePromptCompiler();
-  }
-
-  return new AnthropicEntityReferencePromptCompiler(
-    new AnthropicClient({
-      apiKey: env.ANTHROPIC_API_KEY,
-      baseUrl: env.ANTHROPIC_BASE_URL,
-      apiVersion: env.ANTHROPIC_API_VERSION,
-      timeoutMs: env.ANTHROPIC_TIMEOUT_MS,
-    }),
-  );
+  return new PassthroughEntityReferencePromptCompiler();
 }
 
 function resolveEntityImageStorage(): EntityImageStoragePort {

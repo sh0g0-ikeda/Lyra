@@ -13,6 +13,12 @@ describe('environment examples', () => {
     expect(webEnvExample).toContain('VITE_COGNITO_SCOPES=openid email profile');
     expect(webEnvExample).not.toMatch(/^VITE_COGNITO_SCOPES=.*lyra\/api/mu);
   });
+
+  it('root env example does not advertise Anthropic keys for runtime LLM paths', () => {
+    const rootEnvExample = readText('.env.example');
+
+    expect(rootEnvExample).not.toMatch(/^ANTHROPIC_/mu);
+  });
 });
 
 function readText(relativePath: string): string {
