@@ -43,6 +43,20 @@ describe('assertSafeWebRuntimeConfig', () => {
     }).toThrow(/VITE_COGNITO_SCOPES is required/);
   });
 
+  it('production では Cognito と Supabase の同時 hosted auth 設定を拒否する', () => {
+    expect(() => {
+      assertSafeWebRuntimeConfig({
+        MODE: 'production',
+        VITE_REQUIRE_HOSTED_AUTH: 'true',
+        VITE_COGNITO_DOMAIN: 'https://example.auth.ap-northeast-1.amazoncognito.com',
+        VITE_COGNITO_CLIENT_ID: 'client-1',
+        VITE_COGNITO_SCOPES: 'openid email profile lyra/api',
+        VITE_SUPABASE_URL: 'https://example.supabase.co',
+        VITE_SUPABASE_ANON_KEY: 'anon-key',
+      });
+    }).toThrow(/only one hosted auth provider/);
+  });
+
   it('production の Cognito 設定を許可する', () => {
     expect(() => {
       assertSafeWebRuntimeConfig({

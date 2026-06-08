@@ -42,6 +42,10 @@ deploy build. If Cognito is configured, `VITE_COGNITO_SCOPES` must be explicit a
 scope required by `COGNITO_REQUIRED_SCOPES` on the backend. `VITE_DEV_AUTH_BYPASS=true` is
 local-only and is not allowed in production builds.
 
+Do not configure Cognito and Supabase Hosted Auth together in a paid production build. The build
+guard rejects that combination because it can show a login option whose token the API will not
+accept.
+
 ## Verification
 
 ```bash

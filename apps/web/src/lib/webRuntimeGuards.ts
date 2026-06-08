@@ -27,6 +27,9 @@ export function assertSafeWebRuntimeConfig(env: WebRuntimeEnv): void {
     if (!hasCognito && !hasSupabase) {
       violations.push('production web auth requires Cognito Hosted UI or Supabase configuration');
     }
+    if (hasCognito && hasSupabase) {
+      violations.push('production web auth must configure only one hosted auth provider');
+    }
   }
 
   if (

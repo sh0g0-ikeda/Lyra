@@ -10,7 +10,7 @@ export default defineConfig(({ mode }) => {
     process.env.VITE_DEV_AUTH_BYPASS = 'false';
     loadedEnv.VITE_DEV_AUTH_BYPASS = 'false';
   }
-  const env = { ...process.env, ...loadedEnv, MODE: mode, PROD: mode === 'production' } as NodeJS.ProcessEnv & {
+  const env = { ...loadedEnv, ...process.env, MODE: mode, PROD: mode === 'production' } as NodeJS.ProcessEnv & {
     MODE: string;
     PROD: boolean;
     VITE_API_PROXY_TARGET?: string;
