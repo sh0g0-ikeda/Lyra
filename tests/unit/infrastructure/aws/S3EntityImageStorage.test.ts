@@ -48,4 +48,23 @@ describe('S3EntityImageStorage', () => {
     expect(command.input.Key).toBe('saved/user-1/entities/entity-1/ref-1.png');
     expect(result.cdnUrl).toBe('https://cdn.lyra.test/saved/user-1/entities/entity-1/ref-1.png');
   });
+
+  it('rejects unsupported source image extensions before copying', async () => {
+    const client = new FakeS3Client();
+    const storage = new S3EntityImageStorage(client, {
+      bucketName: 'bucket',
+      cdnBaseUrl: 'https://cdn.lyra.test',
+    });
+
+    await expect(
+      storage.finalizeReferenceImage({
+        userId: 'user-1',
+        entityId: 'entity-1',
+        refId: 'ref-1',
+        sourceS3Key: 'tmp/user-1/entities/imports/source.txt',
+      }),
+    ).rejects.toMatchObject({ code: 'CONFIGURATION_ERROR' });
+
+    expect(client.commands).toHaveLength(0);
+  });
 });

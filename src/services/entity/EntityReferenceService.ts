@@ -357,4 +357,12 @@ function ensureAllowedReferenceSourceKey(
   if (!allowedPrefixes.some((prefix) => sourceS3Key.startsWith(prefix))) {
     throw new ValidationError('selected_s3_keys contains an invalid image source');
   }
+
+  if (!hasAllowedImageExtension(sourceS3Key)) {
+    throw new ValidationError('selected_s3_keys contains an unsupported image source');
+  }
+}
+
+function hasAllowedImageExtension(s3Key: string): boolean {
+  return /\.(?:png|jpe?g|webp)$/iu.test(s3Key);
 }

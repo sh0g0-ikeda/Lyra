@@ -428,6 +428,26 @@ describe('EntityReferenceService', () => {
     ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
   });
 
+  it('confirm rejects allowed-prefix source keys with unsupported image extensions', async () => {
+    const service = buildService();
+
+    await expect(
+      service.confirmReferences('user-1', 'entity-1', {
+        selectedS3Keys: ['tmp/user-1/entities/imports/source.txt'],
+      }),
+    ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+  });
+
+  it('generate-reference rejects source keys with unsupported image extensions', async () => {
+    const service = buildService();
+
+    await expect(
+      service.enqueueReferenceGeneration('user-1', 'entity-1', {
+        sourceS3Key: 'session/user-1/entities/entity-1/source.txt',
+      }),
+    ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+  });
+
   it('confirm は 4 枚以上を拒否する', async () => {
     const service = buildService();
 

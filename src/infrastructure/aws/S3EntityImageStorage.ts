@@ -145,6 +145,10 @@ function mimeTypeToExtension(mimeType: string): 'png' | 'jpeg' | 'webp' | null {
 }
 
 function readExtension(s3Key: string): 'png' | 'jpeg' | 'webp' {
+  if (s3Key.endsWith('.png')) {
+    return 'png';
+  }
+
   if (s3Key.endsWith('.jpeg') || s3Key.endsWith('.jpg')) {
     return 'jpeg';
   }
@@ -153,7 +157,7 @@ function readExtension(s3Key: string): 'png' | 'jpeg' | 'webp' {
     return 'webp';
   }
 
-  return 'png';
+  throw new ConfigurationError(`Unsupported entity reference source image extension: ${s3Key}`);
 }
 
 function extensionToMimeType(extension: 'png' | 'jpeg' | 'webp'): string {
