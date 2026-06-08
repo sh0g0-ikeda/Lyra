@@ -3,6 +3,8 @@ import { MAX_PRODUCTION_GENERATION_ACTIVE_JOB_LIMITS } from '../domain/constants
 
 interface RuntimeGuardConfig {
   DEV_AUTH_BYPASS: boolean;
+  CORS_ALLOWED_ORIGINS?: string;
+  AUTO_RUN_MIGRATIONS?: boolean;
   AUTH_PROVIDER?: 'supabase' | 'cognito';
   SUPABASE_JWT_SECRET?: string;
   AWS_REGION?: string;
@@ -63,6 +65,14 @@ export function assertProductionRuntimeConfig(
 
   if (config.DEV_AUTH_BYPASS) {
     violations.push('DEV_AUTH_BYPASS must be disabled');
+  }
+
+  if (config.AUTO_RUN_MIGRATIONS === true) {
+    violations.push('AUTO_RUN_MIGRATIONS must be disabled in production');
+  }
+
+  if (productionCorsAllowsWildcard(config.CORS_ALLOWED_ORIGINS)) {
+    violations.push('CORS_ALLOWED_ORIGINS must not include * in production');
   }
 
   if (config.AUTH_PROVIDER !== 'cognito') {
@@ -132,4 +142,15 @@ function isMissingConfigValue(value: string | undefined): boolean {
 
 function hasConfigValue(value: string | undefined): boolean {
   return value !== undefined && value.trim().length > 0;
+}
+
+function productionCorsAllowsWildcard(value: string | undefined): boolean {
+  if (value === undefined) {
+    return false;
+  }
+
+  return value
+    .split(',')
+    .map((origin) => origin.trim())
+    .some((origin) => origin === '*');
 }

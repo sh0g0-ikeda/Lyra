@@ -17,9 +17,13 @@ import { sanitizePersistedErrorMessage } from './lib/errorSanitizer.js';
 async function main(): Promise<void> {
   assertProductionRuntimeConfig(env);
 
-  const appliedMigrations = await runPendingMigrations(db);
-  if (appliedMigrations.length > 0) {
-    console.warn(`[migrations] applied ${appliedMigrations.join(', ')}`);
+  if (env.AUTO_RUN_MIGRATIONS) {
+    const appliedMigrations = await runPendingMigrations(db);
+    if (appliedMigrations.length > 0) {
+      console.warn(`[migrations] applied ${appliedMigrations.join(', ')}`);
+    }
+  } else {
+    console.warn('[migrations] startup migration auto-run is disabled');
   }
 
   try {

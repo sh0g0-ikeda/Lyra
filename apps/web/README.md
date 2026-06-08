@@ -19,6 +19,10 @@ Available variables:
 - `VITE_COGNITO_SCOPES`
 - `VITE_REQUIRE_HOSTED_AUTH`
 
+If `VITE_API_BASE_URL` points to a different origin than the web app, set the
+backend `CORS_ALLOWED_ORIGINS` to the web origin. Production must use explicit
+origins; wildcard CORS is rejected by the API runtime guard.
+
 ## Local development
 
 Run the backend API on `http://localhost:3000`.

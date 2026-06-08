@@ -43,7 +43,7 @@ describe('assertProductionRuntimeConfig', () => {
     }).not.toThrow();
   });
 
-  it('Cognito production 設定は issuer/client/scope が揃っていれば許可する', () => {
+  it('Cognito production 設定の issuer/client/scope が揃っていれば許可する', () => {
     expect(() => {
       assertProductionRuntimeConfig(
         {
@@ -93,7 +93,31 @@ describe('assertProductionRuntimeConfig', () => {
     }).toThrow(/LOCAL_IMAGE_FALLBACK_ENABLED must be disabled/);
   });
 
-  it('production で生成系必須設定が欠けている場合は拒否する', () => {
+  it('production では CORS のワイルドカード許可を拒否する', () => {
+    expect(() => {
+      assertProductionRuntimeConfig(
+        {
+          ...safeProductionConfig,
+          CORS_ALLOWED_ORIGINS: 'https://app.lyra.test,*',
+        },
+        'production',
+      );
+    }).toThrow(/CORS_ALLOWED_ORIGINS must not include \*/);
+  });
+
+  it('production では起動時の自動 migration を拒否する', () => {
+    expect(() => {
+      assertProductionRuntimeConfig(
+        {
+          ...safeProductionConfig,
+          AUTO_RUN_MIGRATIONS: true,
+        },
+        'production',
+      );
+    }).toThrow(/AUTO_RUN_MIGRATIONS must be disabled/);
+  });
+
+  it('production で生成系の必須設定が欠けている場合は拒否する', () => {
     expect(() => {
       assertProductionRuntimeConfig(
         {
@@ -181,7 +205,7 @@ describe('assertProductionRuntimeConfig', () => {
     }).toThrow(/Stripe config is incomplete/);
   });
 
-  it('production rejects blank required config values', () => {
+  it('production では空白の必須設定を拒否する', () => {
     expect(() => {
       assertProductionRuntimeConfig(
         {

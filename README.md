@@ -22,8 +22,8 @@ Default local DB:
 bun run migrate
 ```
 
-- The API also applies pending SQL migrations on startup.
-- Running `bun run migrate` manually is still useful before first boot or when verifying DB state.
+- Local API startup applies pending SQL migrations by default.
+- Production should set `AUTO_RUN_MIGRATIONS=false` and run `bun run migrate` as a one-off deploy task before starting API tasks.
 
 ### 3. Minimal backend `.env`
 

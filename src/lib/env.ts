@@ -5,6 +5,11 @@ import { DEFAULT_GENERATION_ACTIVE_JOB_LIMITS } from '../domain/constants/genera
 const envSchema = z.object({
   PORT: z.coerce.number().int().min(1).max(65535).default(3000),
   DATABASE_URL: z.string().min(1).default('postgres://postgres:postgres@localhost:5432/lyra'),
+  CORS_ALLOWED_ORIGINS: z.string().min(1).optional(),
+  AUTO_RUN_MIGRATIONS: z
+    .string()
+    .optional()
+    .transform((value) => (value === undefined ? process.env.NODE_ENV !== 'production' : value === 'true')),
   AWS_REGION: z.string().min(1).optional(),
   SQS_QUEUE_URL_GENERATION: z.string().url().optional(),
   S3_BUCKET_IMAGES: z.string().min(1).optional(),

@@ -7,6 +7,11 @@
 - request ID and rate limiting
 - failed page-generation retry flow
 
+## Migrations
+- Run `bun run migrate` as a one-off deploy task before rolling API tasks.
+- Set `AUTO_RUN_MIGRATIONS=false` for production API tasks.
+- Keep startup auto-migrations only for local development and short-lived test environments.
+
 ## Request tracing
 - Every HTTP response returns `X-Request-Id`
 - API request completion is logged as JSON with:
@@ -32,10 +37,11 @@ Headers:
 Use `ops/cloudwatch/alarms.example.json` as the seed definition.
 
 Minimum alarms:
-- EC2 CPU `> 80%` for 3 periods
-- worker Lambda `Errors > 0`
-- page generation DLQ visible messages `> 0`
-- API 5xx / host health
+- ALB target 5xx count
+- API ECS CPU and memory
+- generation worker ECS CPU
+- generation queue oldest message age
+- generation DLQ visible messages `> 0`
 
 ## Security baseline
 Use:
@@ -44,7 +50,8 @@ Use:
 
 Minimum posture:
 - AWS managed WAF rule groups
-- CloudFront-only read for `saved/*`
+- CloudFront-only read for `saved/*`, `session/*`, and `tmp/*`
+- CloudFront viewer access for image paths should be protected with signed cookies/URLs or an equivalent authenticated edge policy before paid production
 - deny insecure transport on S3
 
 ## Load tests

@@ -1,48 +1,89 @@
 {
   "alarms": [
     {
-      "name": "lyra-api-5xx-rate",
-      "namespace": "AWS/EC2",
-      "metric_name": "StatusCheckFailed",
-      "threshold": 1,
+      "name": "lyra-alb-5xx-high",
+      "namespace": "AWS/ApplicationELB",
+      "metric_name": "HTTPCode_Target_5XX_Count",
+      "statistic": "Sum",
+      "threshold": 5,
       "period_seconds": 60,
-      "evaluation_periods": 1,
-      "comparison_operator": "GreaterThanOrEqualToThreshold",
-      "alarm_actions": ["arn:aws:sns:ap-northeast-1:123456789012:lyra-alerts"]
-    },
-    {
-      "name": "lyra-ec2-cpu-high",
-      "namespace": "AWS/EC2",
-      "metric_name": "CPUUtilization",
-      "threshold": 80,
-      "period_seconds": 300,
       "evaluation_periods": 3,
       "comparison_operator": "GreaterThanThreshold",
-      "alarm_actions": ["arn:aws:sns:ap-northeast-1:123456789012:lyra-alerts"]
-    },
-    {
-      "name": "lyra-worker-lambda-errors",
-      "namespace": "AWS/Lambda",
-      "metric_name": "Errors",
-      "threshold": 1,
-      "period_seconds": 300,
-      "evaluation_periods": 1,
-      "comparison_operator": "GreaterThanThreshold",
       "dimensions": {
-        "FunctionName": "lyra-page-generation-worker"
+        "LoadBalancer": "app/lyra-api/replace-me"
       },
       "alarm_actions": ["arn:aws:sns:ap-northeast-1:123456789012:lyra-alerts"]
     },
     {
-      "name": "lyra-worker-dlq-visible-messages",
+      "name": "lyra-api-ecs-cpu-high",
+      "namespace": "AWS/ECS",
+      "metric_name": "CPUUtilization",
+      "statistic": "Average",
+      "threshold": 80,
+      "period_seconds": 300,
+      "evaluation_periods": 3,
+      "comparison_operator": "GreaterThanThreshold",
+      "dimensions": {
+        "ClusterName": "lyra-production",
+        "ServiceName": "lyra-api"
+      },
+      "alarm_actions": ["arn:aws:sns:ap-northeast-1:123456789012:lyra-alerts"]
+    },
+    {
+      "name": "lyra-api-ecs-memory-high",
+      "namespace": "AWS/ECS",
+      "metric_name": "MemoryUtilization",
+      "statistic": "Average",
+      "threshold": 85,
+      "period_seconds": 300,
+      "evaluation_periods": 3,
+      "comparison_operator": "GreaterThanThreshold",
+      "dimensions": {
+        "ClusterName": "lyra-production",
+        "ServiceName": "lyra-api"
+      },
+      "alarm_actions": ["arn:aws:sns:ap-northeast-1:123456789012:lyra-alerts"]
+    },
+    {
+      "name": "lyra-worker-ecs-cpu-high",
+      "namespace": "AWS/ECS",
+      "metric_name": "CPUUtilization",
+      "statistic": "Average",
+      "threshold": 80,
+      "period_seconds": 300,
+      "evaluation_periods": 3,
+      "comparison_operator": "GreaterThanThreshold",
+      "dimensions": {
+        "ClusterName": "lyra-production",
+        "ServiceName": "lyra-generation-worker"
+      },
+      "alarm_actions": ["arn:aws:sns:ap-northeast-1:123456789012:lyra-alerts"]
+    },
+    {
+      "name": "lyra-generation-queue-oldest-message-high",
+      "namespace": "AWS/SQS",
+      "metric_name": "ApproximateAgeOfOldestMessage",
+      "statistic": "Maximum",
+      "threshold": 600,
+      "period_seconds": 60,
+      "evaluation_periods": 5,
+      "comparison_operator": "GreaterThanThreshold",
+      "dimensions": {
+        "QueueName": "lyra-generation"
+      },
+      "alarm_actions": ["arn:aws:sns:ap-northeast-1:123456789012:lyra-alerts"]
+    },
+    {
+      "name": "lyra-generation-dlq-visible-messages",
       "namespace": "AWS/SQS",
       "metric_name": "ApproximateNumberOfMessagesVisible",
+      "statistic": "Maximum",
       "threshold": 0,
       "period_seconds": 60,
       "evaluation_periods": 1,
       "comparison_operator": "GreaterThanThreshold",
       "dimensions": {
-        "QueueName": "lyra-page-generation-dlq"
+        "QueueName": "lyra-generation-dlq"
       },
       "alarm_actions": ["arn:aws:sns:ap-northeast-1:123456789012:lyra-alerts"]
     }

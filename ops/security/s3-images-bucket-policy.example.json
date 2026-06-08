@@ -2,13 +2,17 @@
   "Version": "2012-10-17",
   "Statement": [
     {
-      "Sid": "AllowCloudFrontReadSavedAssets",
+      "Sid": "AllowCloudFrontReadImageAssets",
       "Effect": "Allow",
       "Principal": {
         "Service": "cloudfront.amazonaws.com"
       },
       "Action": "s3:GetObject",
-      "Resource": "arn:aws:s3:::lyra-images/saved/*",
+      "Resource": [
+        "arn:aws:s3:::lyra-images/saved/*",
+        "arn:aws:s3:::lyra-images/session/*",
+        "arn:aws:s3:::lyra-images/tmp/*"
+      ],
       "Condition": {
         "StringEquals": {
           "AWS:SourceArn": "arn:aws:cloudfront::123456789012:distribution/EXAMPLEDIST"

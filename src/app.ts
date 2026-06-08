@@ -29,6 +29,7 @@ import { env } from './lib/env.js';
 import { assertProductionRuntimeConfig } from './lib/runtimeGuards.js';
 import { createAuthMiddleware } from './middleware/auth.js';
 import type { AuthProvider, CognitoVerifierConfig } from './middleware/auth.js';
+import { createCorsMiddleware, parseCorsAllowedOrigins } from './middleware/cors.js';
 import { errorHandler } from './middleware/errorHandler.js';
 import { createRateLimitMiddleware, InMemoryRateLimitStore, type RateLimitStore } from './middleware/rateLimit.js';
 import { createRequestContextMiddleware } from './middleware/requestContext.js';
@@ -221,6 +222,7 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
     : createRateLimitMiddleware(resolvedDependencies.rateLimitStore);
 
   app.onError(errorHandler);
+  app.use('*', createCorsMiddleware(parseCorsAllowedOrigins(env.CORS_ALLOWED_ORIGINS)));
   app.use('*', createSecurityHeadersMiddleware());
   app.use('*', createRequestContextMiddleware());
   app.route('/', createHealthRoutes());

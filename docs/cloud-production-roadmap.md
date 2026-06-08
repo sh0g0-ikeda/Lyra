@@ -818,3 +818,14 @@ Runtime:
 - production RDS が Multi-AZ。
 - RDS restore test 済み。
 - request ID、job ID、provider request ID で問い合わせ追跡できる。
+
+## Image Delivery Implementation Note
+
+The current app displays generated previews and candidates from `session/*` and
+imported sources from `tmp/*` before the user confirms them. The image bucket
+policy therefore has to allow CloudFront origin access to `saved/*`,
+`session/*`, and `tmp/*`.
+
+Before paid production, viewer access to image paths must be protected at
+CloudFront with signed cookies/URLs or an equivalent authenticated edge policy.
+S3 itself must remain private, with CloudFront as the only read principal.
