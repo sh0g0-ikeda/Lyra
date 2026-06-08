@@ -1,6 +1,7 @@
 import { SignJWT } from 'jose';
 import { describe, expect, it } from 'vitest';
 import { createApp } from '../../../src/app.js';
+import { REQUEST_BODY_LIMITS } from '../../../src/routes/requestBody.js';
 import type { CreditBalanceSnapshot } from '../../../src/domain/types/credit.js';
 import type { EntityReferenceSet } from '../../../src/domain/types/entityReference.js';
 import type { AuthenticatedUser, SupabaseJwtClaims } from '../../../src/domain/types/user.js';
@@ -307,6 +308,25 @@ describe('entity routes', () => {
     });
   });
 
+  it('import-image は巨大な JSON body を service 呼び出し前に 413 にする', async () => {
+    const referenceService = new FakeEntityReferenceService();
+    const app = createTestApp(referenceService);
+    const token = await createToken();
+
+    const response = await app.request('/api/entities/import-image', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+        'Content-Length': String(REQUEST_BODY_LIMITS.ENTITY_IMPORT_JSON_BYTES + 1),
+      },
+      body: '{}',
+    });
+
+    expect(response.status).toBe(413);
+    expect(referenceService.lastImportRequest).toBeNull();
+  });
+
   it('generate-reference は 202 と job_id を返す', async () => {
     const app = createTestApp();
     const token = await createToken();
@@ -346,6 +366,25 @@ describe('entity routes', () => {
       entityId,
       sourceS3Key: 'tmp/user-1/entities/imports/source.png',
     });
+  });
+
+  it('generate-reference は巨大な optional JSON body を 413 にする', async () => {
+    const referenceService = new FakeEntityReferenceService();
+    const app = createTestApp(referenceService);
+    const token = await createToken();
+
+    const response = await app.request(`/api/entities/${entityId}/generate-reference`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+        'Content-Length': String(REQUEST_BODY_LIMITS.SMALL_JSON_BYTES + 1),
+      },
+      body: '{}',
+    });
+
+    expect(response.status).toBe(413);
+    expect(referenceService.lastGenerateReferenceRequest).toBeNull();
   });
 
   it('confirm は reference_set を返す', async () => {

@@ -8,6 +8,7 @@ import {
 } from '../lib/validators/balloon.schema.js';
 import type { BalloonServicePort } from '../services/page/BalloonService.js';
 import type { AppEnv } from '../types/app.js';
+import { readJsonBody } from './requestBody.js';
 
 export interface BalloonRouteDependencies {
   authMiddleware: MiddlewareHandler<AppEnv>;
@@ -104,14 +105,6 @@ export function createBalloonRoutes(dependencies: BalloonRouteDependencies): Hon
   });
 
   return app;
-}
-
-async function readJsonBody(c: Context<AppEnv>): Promise<unknown> {
-  try {
-    return await c.req.json();
-  } catch {
-    throw new ValidationError('Request body must be valid JSON');
-  }
 }
 
 function parseUuidParam(c: Context<AppEnv>, name: string): string {

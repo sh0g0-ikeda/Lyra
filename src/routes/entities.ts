@@ -14,6 +14,7 @@ import {
 import type { EntityServicePort } from '../services/entity/EntityService.js';
 import type { EntityReferenceServicePort } from '../services/entity/EntityReferenceService.js';
 import type { AppEnv } from '../types/app.js';
+import { readJsonBody, readOptionalJsonBody, REQUEST_BODY_LIMITS } from './requestBody.js';
 
 export interface EntityRouteDependencies {
   authMiddleware: MiddlewareHandler<AppEnv>;
@@ -106,7 +107,12 @@ export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<
 
   app.post('/entities/import-image', async (c) => {
     const user = c.get('user');
-    const body = importEntityImageBodySchema.safeParse(await readJsonBody(c));
+    const body = importEntityImageBodySchema.safeParse(
+      await readJsonBody(c, {
+        maxBytes: REQUEST_BODY_LIMITS.ENTITY_IMPORT_JSON_BYTES,
+        description: 'Entity image import',
+      }),
+    );
 
     if (!body.success) {
       throw new ValidationError(body.error.message);
@@ -128,7 +134,12 @@ export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<
   app.post('/entities/:id/generate-reference', async (c) => {
     const user = c.get('user');
     const entityId = parseUuidParam(c, 'id');
-    const body = generateEntityReferenceBodySchema.safeParse(await readOptionalJsonBody(c));
+    const body = generateEntityReferenceBodySchema.safeParse(
+      await readOptionalJsonBody(c, {
+        maxBytes: REQUEST_BODY_LIMITS.SMALL_JSON_BYTES,
+        description: 'Entity reference generation',
+      }),
+    );
 
     if (!body.success) {
       throw new ValidationError(body.error.message);
@@ -178,27 +189,6 @@ export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<
   });
 
   return app;
-}
-
-async function readJsonBody(c: Context<AppEnv>): Promise<unknown> {
-  try {
-    return await c.req.json();
-  } catch {
-    throw new ValidationError('Request body must be valid JSON');
-  }
-}
-
-async function readOptionalJsonBody(c: Context<AppEnv>): Promise<unknown> {
-  const rawBody = await c.req.text();
-  if (rawBody.trim().length === 0) {
-    return {};
-  }
-
-  try {
-    return JSON.parse(rawBody) as unknown;
-  } catch {
-    throw new ValidationError('Request body must be valid JSON');
-  }
 }
 
 function parseUuidParam(c: Context<AppEnv>, name: string): string {

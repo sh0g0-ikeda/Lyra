@@ -21,6 +21,7 @@ import type { StoryCollaborationServicePort } from '../services/story/StoryColla
 import type { PageSkeletonServicePort } from '../services/story/PageSkeletonService.js';
 import type { PageServicePort } from '../services/page/PageService.js';
 import type { AppEnv } from '../types/app.js';
+import { readJsonBody, REQUEST_BODY_LIMITS } from './requestBody.js';
 
 export interface StoryRouteDependencies {
   authMiddleware: MiddlewareHandler<AppEnv>;
@@ -39,7 +40,7 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
 
   app.post('/story/collaborate', async (c) => {
     const user = c.get('user');
-    const body = collaborateStoryBodySchema.safeParse(await readJsonBody(c));
+    const body = collaborateStoryBodySchema.safeParse(await readStoryJsonBody(c));
 
     if (!body.success) {
       throw new ValidationError(body.error.message);
@@ -64,7 +65,7 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
 
   app.post('/story/improve-episode-draft', async (c) => {
     const user = c.get('user');
-    const body = improveEpisodeDraftBodySchema.safeParse(await readJsonBody(c));
+    const body = improveEpisodeDraftBodySchema.safeParse(await readStoryJsonBody(c));
 
     if (!body.success) {
       throw new ValidationError(body.error.message);
@@ -106,7 +107,7 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
 
   app.post('/works', async (c) => {
     const user = c.get('user');
-    const body = createWorkBodySchema.safeParse(await readJsonBody(c));
+    const body = createWorkBodySchema.safeParse(await readStoryJsonBody(c));
 
     if (!body.success) {
       throw new ValidationError(body.error.message);
@@ -137,7 +138,7 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
   app.put('/works/:id', async (c) => {
     const user = c.get('user');
     const workId = parseUuidParam(c, 'id');
-    const body = updateWorkBodySchema.safeParse(await readJsonBody(c));
+    const body = updateWorkBodySchema.safeParse(await readStoryJsonBody(c));
 
     if (!body.success) {
       throw new ValidationError(body.error.message);
@@ -161,7 +162,7 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
   app.post('/works/:id/chapters', async (c) => {
     const user = c.get('user');
     const workId = parseUuidParam(c, 'id');
-    const body = createChapterBodySchema.safeParse(await readJsonBody(c));
+    const body = createChapterBodySchema.safeParse(await readStoryJsonBody(c));
 
     if (!body.success) {
       throw new ValidationError(body.error.message);
@@ -192,7 +193,7 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
   app.put('/chapters/:id', async (c) => {
     const user = c.get('user');
     const chapterId = parseUuidParam(c, 'id');
-    const body = updateChapterBodySchema.safeParse(await readJsonBody(c));
+    const body = updateChapterBodySchema.safeParse(await readStoryJsonBody(c));
 
     if (!body.success) {
       throw new ValidationError(body.error.message);
@@ -224,7 +225,7 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
   app.post('/chapters/:id/episodes', async (c) => {
     const user = c.get('user');
     const chapterId = parseUuidParam(c, 'id');
-    const body = createEpisodeBodySchema.safeParse(await readJsonBody(c));
+    const body = createEpisodeBodySchema.safeParse(await readStoryJsonBody(c));
 
     if (!body.success) {
       throw new ValidationError(body.error.message);
@@ -258,7 +259,7 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
   app.put('/episodes/:id', async (c) => {
     const user = c.get('user');
     const episodeId = parseUuidParam(c, 'id');
-    const body = updateEpisodeBodySchema.safeParse(await readJsonBody(c));
+    const body = updateEpisodeBodySchema.safeParse(await readStoryJsonBody(c));
 
     if (!body.success) {
       throw new ValidationError(body.error.message);
@@ -306,7 +307,7 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
 
     const hasBody = (c.req.header('content-type') ?? '').includes('application/json');
     const body = generatePageSkeletonBodySchema.safeParse(
-      hasBody ? await readJsonBody(c) : {},
+      hasBody ? await readStoryJsonBody(c) : {},
     );
     if (!body.success) {
       throw new ValidationError(body.error.message);
@@ -369,12 +370,11 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
   return app;
 }
 
-async function readJsonBody(c: Context<AppEnv>): Promise<unknown> {
-  try {
-    return await c.req.json();
-  } catch {
-    throw new ValidationError('Request body must be valid JSON');
-  }
+async function readStoryJsonBody(c: Context<AppEnv>): Promise<unknown> {
+  return readJsonBody(c, {
+    maxBytes: REQUEST_BODY_LIMITS.STORY_JSON_BYTES,
+    description: 'Story JSON request',
+  });
 }
 
 function parseUuidParam(c: Context<AppEnv>, name: string): string {

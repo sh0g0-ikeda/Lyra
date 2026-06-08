@@ -1,4 +1,4 @@
-import { Hono, type Context, type MiddlewareHandler } from 'hono';
+import { Hono, type MiddlewareHandler } from 'hono';
 import { ValidationError } from '../domain/errors/index.js';
 import {
   createCreditCheckoutBodySchema,
@@ -7,6 +7,7 @@ import {
 import type { BillingServicePort } from '../services/billing/BillingService.js';
 import type { CreditServicePort } from '../services/credit/CreditService.js';
 import type { AppEnv } from '../types/app.js';
+import { readJsonBody, REQUEST_BODY_LIMITS } from './requestBody.js';
 
 export interface BillingRouteDependencies {
   authMiddleware: MiddlewareHandler<AppEnv>;
@@ -35,7 +36,12 @@ export function createBillingRoutes(dependencies: BillingRouteDependencies): Hon
 
   app.post('/checkout/subscription', async (c) => {
     const user = c.get('user');
-    const body = createSubscriptionCheckoutBodySchema.safeParse(await readJsonBody(c));
+    const body = createSubscriptionCheckoutBodySchema.safeParse(
+      await readJsonBody(c, {
+        maxBytes: REQUEST_BODY_LIMITS.SMALL_JSON_BYTES,
+        description: 'Billing checkout',
+      }),
+    );
     if (!body.success) {
       throw new ValidationError(body.error.message);
     }
@@ -52,7 +58,12 @@ export function createBillingRoutes(dependencies: BillingRouteDependencies): Hon
 
   app.post('/checkout/credits', async (c) => {
     const user = c.get('user');
-    const body = createCreditCheckoutBodySchema.safeParse(await readJsonBody(c));
+    const body = createCreditCheckoutBodySchema.safeParse(
+      await readJsonBody(c, {
+        maxBytes: REQUEST_BODY_LIMITS.SMALL_JSON_BYTES,
+        description: 'Billing checkout',
+      }),
+    );
     if (!body.success) {
       throw new ValidationError(body.error.message);
     }
@@ -78,12 +89,4 @@ export function createBillingRoutes(dependencies: BillingRouteDependencies): Hon
   });
 
   return app;
-}
-
-async function readJsonBody(c: Context<AppEnv>): Promise<unknown> {
-  try {
-    return await c.req.json();
-  } catch {
-    throw new ValidationError('Request body must be valid JSON');
-  }
 }

@@ -4,6 +4,7 @@ import type { Panel, PanelDialogueLine } from '../domain/types/panel.js';
 import { createPanelBodySchema, panelUuidParamSchema, updatePanelBodySchema } from '../lib/validators/panel.schema.js';
 import type { PanelServicePort } from '../services/page/PanelService.js';
 import type { AppEnv } from '../types/app.js';
+import { readJsonBody } from './requestBody.js';
 
 export interface PanelRouteDependencies {
   authMiddleware: MiddlewareHandler<AppEnv>;
@@ -86,14 +87,6 @@ export function createPanelRoutes(dependencies: PanelRouteDependencies): Hono<Ap
   });
 
   return app;
-}
-
-async function readJsonBody(c: Context<AppEnv>): Promise<unknown> {
-  try {
-    return await c.req.json();
-  } catch {
-    throw new ValidationError('Request body must be valid JSON');
-  }
 }
 
 function parseUuidParam(c: Context<AppEnv>, name: string): string {

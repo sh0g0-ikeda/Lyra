@@ -8,6 +8,7 @@ import {
 } from '../lib/validators/panelFrame.schema.js';
 import type { PanelFrameServicePort } from '../services/page/PanelFrameService.js';
 import type { AppEnv } from '../types/app.js';
+import { readJsonBody } from './requestBody.js';
 
 export interface PanelFrameRouteDependencies {
   authMiddleware: MiddlewareHandler<AppEnv>;
@@ -75,14 +76,6 @@ export function createPanelFrameRoutes(dependencies: PanelFrameRouteDependencies
   });
 
   return app;
-}
-
-async function readJsonBody(c: Context<AppEnv>): Promise<unknown> {
-  try {
-    return await c.req.json();
-  } catch {
-    throw new ValidationError('Request body must be valid JSON');
-  }
 }
 
 function parseUuidParam(c: Context<AppEnv>, name: string): string {

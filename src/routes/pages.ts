@@ -10,6 +10,7 @@ import type { PageGenerationServicePort } from '../services/page/PageGenerationS
 import type { PageExportServicePort } from '../services/page/PageExportService.js';
 import type { PageServicePort } from '../services/page/PageService.js';
 import type { AppEnv } from '../types/app.js';
+import { readJsonBody } from './requestBody.js';
 
 const uuidParamSchema = z.string().uuid();
 const languageBodySchema = z
@@ -176,14 +177,6 @@ function toPageSummaryResponse(page: PageSummary): Record<string, unknown> {
     created_at: page.createdAt.toISOString(),
     updated_at: page.updatedAt.toISOString(),
   };
-}
-
-async function readJsonBody(c: Context<AppEnv>): Promise<unknown> {
-  try {
-    return await c.req.json();
-  } catch {
-    throw new ValidationError('Request body must be valid JSON');
-  }
 }
 
 function parseUuidParam(c: Context<AppEnv>, name: string): string {
