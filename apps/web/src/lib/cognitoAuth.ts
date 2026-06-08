@@ -84,6 +84,7 @@ type TokenFetcher = (
 export const COGNITO_SESSION_STORAGE_KEY = 'lyra:web:cognito-session';
 const COGNITO_PKCE_STORAGE_KEY = 'lyra:web:cognito-pkce';
 const DEFAULT_COGNITO_SCOPES = ['openid', 'email', 'profile'];
+const COGNITO_PKCE_STATE_TTL_MS = 10 * 60 * 1000;
 
 export function getCognitoAuthConfig(
   env: CognitoAuthEnv,
@@ -203,7 +204,7 @@ export async function completeCognitoRedirectIfPresent(
     return { handled: true, session: null, error: 'Cognito callback is incomplete' };
   }
 
-  const storedState = readStoredPkceState(storage);
+  const storedState = readStoredPkceState(storage, now);
   storage.removeItem(COGNITO_PKCE_STORAGE_KEY);
   if (storedState === null || storedState.state !== state) {
     clearCognitoCallbackUrl(location, history);
@@ -323,7 +324,7 @@ function clearCognitoCallbackUrl(location: WebLocationLike, history: WebHistoryL
   history.replaceState(null, '', `${location.pathname}${location.hash}`);
 }
 
-function readStoredPkceState(storage: WebStorageLike): StoredPkceState | null {
+function readStoredPkceState(storage: WebStorageLike, now: number): StoredPkceState | null {
   const rawValue = storage.getItem(COGNITO_PKCE_STORAGE_KEY);
   if (rawValue === null) {
     return null;
@@ -334,8 +335,14 @@ function readStoredPkceState(storage: WebStorageLike): StoredPkceState | null {
     if (
       typeof parsed.state !== 'string' ||
       typeof parsed.verifier !== 'string' ||
-      typeof parsed.createdAt !== 'number'
+      typeof parsed.createdAt !== 'number' ||
+      parsed.state.length === 0 ||
+      parsed.verifier.length === 0 ||
+      !Number.isFinite(parsed.createdAt) ||
+      parsed.createdAt > now ||
+      now - parsed.createdAt > COGNITO_PKCE_STATE_TTL_MS
     ) {
+      storage.removeItem(COGNITO_PKCE_STORAGE_KEY);
       return null;
     }
 
@@ -345,6 +352,7 @@ function readStoredPkceState(storage: WebStorageLike): StoredPkceState | null {
       createdAt: parsed.createdAt,
     };
   } catch {
+    storage.removeItem(COGNITO_PKCE_STORAGE_KEY);
     return null;
   }
 }

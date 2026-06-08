@@ -30,6 +30,42 @@ class FakeStorage {
   }
 }
 
+function createCallbackLocation(): {
+  href: string;
+  origin: string;
+  pathname: string;
+  search: string;
+  hash: string;
+  assign: () => undefined;
+} {
+  return {
+    href: 'https://app.example.com/?code=code-1&state=state-1',
+    origin: 'https://app.example.com',
+    pathname: '/',
+    search: '?code=code-1&state=state-1',
+    hash: '',
+    assign: () => undefined,
+  };
+}
+
+function createHistory(replacedUrls: string[]): {
+  replaceState: (_data: unknown, _title: string, url?: string) => void;
+} {
+  return {
+    replaceState: (_data: unknown, _title: string, url?: string) => {
+      replacedUrls.push(url ?? '');
+    },
+  };
+}
+
+const cognitoConfig = {
+  domain: 'https://example.auth.ap-northeast-1.amazoncognito.com',
+  clientId: 'client-1',
+  redirectUri: 'https://app.example.com',
+  logoutUri: 'https://app.example.com',
+  scopes: ['openid'],
+};
+
 describe('cognitoAuth', () => {
   it('Cognito Hosted UI 設定を env から作る', () => {
     const config = getCognitoAuthConfig(
@@ -114,32 +150,12 @@ describe('cognitoAuth', () => {
       }),
     });
     const replacedUrls: string[] = [];
-    const location = {
-      href: 'https://app.example.com/?code=code-1&state=state-1',
-      origin: 'https://app.example.com',
-      pathname: '/',
-      search: '?code=code-1&state=state-1',
-      hash: '',
-      assign: () => undefined,
-    };
-    const history = {
-      replaceState: (_data: unknown, _title: string, url?: string) => {
-        replacedUrls.push(url ?? '');
-      },
-    };
-    const config = {
-      domain: 'https://example.auth.ap-northeast-1.amazoncognito.com',
-      clientId: 'client-1',
-      redirectUri: 'https://app.example.com',
-      logoutUri: 'https://app.example.com',
-      scopes: ['openid'],
-    };
 
     const result = await completeCognitoRedirectIfPresent(
-      config,
+      cognitoConfig,
       storage,
-      location,
-      history,
+      createCallbackLocation(),
+      createHistory(replacedUrls),
       async (_url, init) => {
         expect(init.body).toContain('code=code-1');
         expect(init.body).toContain('code_verifier=verifier-1');
@@ -174,17 +190,42 @@ describe('cognitoAuth', () => {
     expect(replacedUrls).toEqual(['/']);
   });
 
-  it('refresh token で access token を更新し既存 refresh token を保持する', async () => {
-    const config = {
-      domain: 'https://example.auth.ap-northeast-1.amazoncognito.com',
-      clientId: 'client-1',
-      redirectUri: 'https://app.example.com',
-      logoutUri: 'https://app.example.com',
-      scopes: ['openid'],
-    };
+  it('期限切れの PKCE state では token 交換しない', async () => {
+    const storage = new FakeStorage({
+      'lyra:web:cognito-pkce': JSON.stringify({
+        state: 'state-1',
+        verifier: 'verifier-1',
+        createdAt: 1,
+      }),
+    });
+    const replacedUrls: string[] = [];
+    let tokenExchangeCalled = false;
 
+    const result = await completeCognitoRedirectIfPresent(
+      cognitoConfig,
+      storage,
+      createCallbackLocation(),
+      createHistory(replacedUrls),
+      async () => {
+        tokenExchangeCalled = true;
+        throw new Error('token exchange must not be called');
+      },
+      700_000,
+    );
+
+    expect(result).toEqual({
+      handled: true,
+      session: null,
+      error: 'Cognito callback state did not match',
+    });
+    expect(tokenExchangeCalled).toBe(false);
+    expect(storage.getItem('lyra:web:cognito-pkce')).toBeNull();
+    expect(replacedUrls).toEqual(['/']);
+  });
+
+  it('refresh token で access token を更新し既存 refresh token を保持する', async () => {
     const refreshed = await refreshCognitoSession(
-      config,
+      cognitoConfig,
       {
         accessToken: 'old-access-token',
         idToken: 'old-id-token',
