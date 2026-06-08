@@ -1,7 +1,7 @@
 import type { QueryResultRow } from 'pg';
 import type { GenerationJob, GenerationJobType } from '../domain/types/job.js';
 import type { PageGenerationMode } from '../domain/types/pageGeneration.js';
-import { ConflictError } from '../domain/errors/index.js';
+import { ConfigurationError, ConflictError } from '../domain/errors/index.js';
 import type { DatabaseClient, TransactionRunner } from '../lib/db.js';
 import { sanitizePersistedErrorMessage } from '../lib/errorSanitizer.js';
 
@@ -15,6 +15,14 @@ export interface CreateGenerationJobInput {
   creditCost: number;
   params: Record<string, unknown>;
   capacityLimits?: {
+    perUser: number;
+    global: number;
+  };
+}
+
+export interface PrepareGenerationJobRetryOptions {
+  userId: string;
+  capacityLimits: {
     perUser: number;
     global: number;
   };
@@ -43,7 +51,11 @@ export interface GenerationJobRepository {
   countActiveGenerationJobs(): Promise<number>;
   attachQueueMessageId(jobId: string, messageId: string): Promise<boolean>;
   markFailed(jobId: string, errorMessage: string): Promise<boolean>;
-  prepareRetry(jobId: string, maxRetryCount: number): Promise<boolean>;
+  prepareRetry(
+    jobId: string,
+    maxRetryCount: number,
+    options?: PrepareGenerationJobRetryOptions,
+  ): Promise<boolean>;
 }
 
 interface GenerationJobRow extends QueryResultRow {
@@ -72,8 +84,9 @@ export class PostgresGenerationJobRepository implements GenerationJobRepository 
 
   public async create(input: CreateGenerationJobInput): Promise<GenerationJob> {
     const capacityLimits = input.capacityLimits;
-    if (capacityLimits !== undefined && isTransactionRunner(this.client)) {
-      return this.client.transaction(async (transactionClient) => {
+    if (capacityLimits !== undefined) {
+      const transactionRunner = this.requireTransactionRunnerForCapacity();
+      return transactionRunner.transaction(async (transactionClient) => {
         await this.lockGenerationCapacity(transactionClient, input.userId);
         await this.assertCapacityWithinTransaction(transactionClient, input.userId, capacityLimits);
         return this.insertJob(transactionClient, input);
@@ -253,8 +266,43 @@ export class PostgresGenerationJobRepository implements GenerationJobRepository 
     return (result.rowCount ?? 0) > 0;
   }
 
-  public async prepareRetry(jobId: string, maxRetryCount: number): Promise<boolean> {
-    const result = await this.client.query<GenerationJobRow>(
+  public async prepareRetry(
+    jobId: string,
+    maxRetryCount: number,
+    options?: PrepareGenerationJobRetryOptions,
+  ): Promise<boolean> {
+    if (options !== undefined) {
+      const transactionRunner = this.requireTransactionRunnerForCapacity();
+      return transactionRunner.transaction(async (transactionClient) => {
+        await this.lockGenerationCapacity(transactionClient, options.userId);
+        await this.assertCapacityWithinTransaction(
+          transactionClient,
+          options.userId,
+          options.capacityLimits,
+        );
+        return this.prepareRetryWithClient(transactionClient, jobId, maxRetryCount);
+      });
+    }
+
+    return this.prepareRetryWithClient(this.client, jobId, maxRetryCount);
+  }
+
+  private requireTransactionRunnerForCapacity(): DatabaseClient & TransactionRunner {
+    if (!isTransactionRunner(this.client)) {
+      throw new ConfigurationError(
+        'Generation job capacity limits require a transaction-capable database client',
+      );
+    }
+
+    return this.client;
+  }
+
+  private async prepareRetryWithClient(
+    client: DatabaseClient,
+    jobId: string,
+    maxRetryCount: number,
+  ): Promise<boolean> {
+    const result = await client.query<GenerationJobRow>(
       `
       UPDATE generation_jobs
       SET status = 'queued',

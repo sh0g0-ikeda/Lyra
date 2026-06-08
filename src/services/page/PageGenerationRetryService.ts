@@ -2,6 +2,10 @@ import { ConflictError, NotFoundError } from '../../domain/errors/index.js';
 import type { GenerationJobRepository } from '../../repositories/GenerationJobRepository.js';
 import type { CreditServicePort } from '../credit/CreditService.js';
 import type { ProcessPageGenerationJobResult } from './PageGenerationWorkerService.js';
+import {
+  DEFAULT_GENERATION_CAPACITY_LIMITS,
+  type GenerationCapacityLimits,
+} from '../generation/GenerationCapacityGuard.js';
 
 export const MAX_PAGE_GENERATION_RETRIES = 3;
 
@@ -18,6 +22,7 @@ export class PageGenerationRetryService implements PageGenerationRetryServicePor
     private readonly generationJobRepository: GenerationJobRepository,
     private readonly pageGenerationWorkerService: PageGenerationRetryWorkerPort,
     private readonly creditService: CreditServicePort,
+    private readonly capacityLimits: GenerationCapacityLimits = DEFAULT_GENERATION_CAPACITY_LIMITS,
   ) {}
 
   public async retryFailedJob(userId: string, jobId: string): Promise<void> {
@@ -44,7 +49,14 @@ export class PageGenerationRetryService implements PageGenerationRetryServicePor
       });
       creditsConsumed = true;
 
-      const prepared = await this.generationJobRepository.prepareRetry(jobId, MAX_PAGE_GENERATION_RETRIES);
+      const prepared = await this.generationJobRepository.prepareRetry(
+        jobId,
+        MAX_PAGE_GENERATION_RETRIES,
+        {
+          userId,
+          capacityLimits: this.capacityLimits,
+        },
+      );
       if (!prepared) {
         throw new ConflictError('Generation job exceeded retry limit');
       }
