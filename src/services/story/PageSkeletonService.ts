@@ -10,6 +10,7 @@ import type {
   PageSkeletonPersistResult,
 } from '../../domain/types/storyAi.js';
 import type { StoryRepository } from '../../repositories/StoryRepository.js';
+import { sanitizePersistedErrorMessage } from '../../lib/errorSanitizer.js';
 import type { StoryAiClientPort } from './StoryAiClientPort.js';
 
 export interface PageSkeletonServicePort {
@@ -59,9 +60,10 @@ export class PageSkeletonService implements PageSkeletonServicePort {
       if (error instanceof AppError) {
         throw error;
       }
+      const fallbackReason = sanitizePersistedErrorMessage(error, 'Page skeleton compiler failed');
       console.warn('page_skeleton_fallback', {
         episodeId,
-        reason: error instanceof Error ? error.message : String(error),
+        reason: fallbackReason,
       });
       pages = buildFallbackPageSkeleton({ ...context, language });
     }

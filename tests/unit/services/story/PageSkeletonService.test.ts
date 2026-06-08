@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { StoryRepository } from '../../../../src/repositories/StoryRepository.js';
 import { PageSkeletonService } from '../../../../src/services/story/PageSkeletonService.js';
 import type { StoryAiClientPort, StoryAiModelRequest } from '../../../../src/services/story/StoryAiClientPort.js';
@@ -240,6 +240,10 @@ class FakeStoryAiClient implements StoryAiClientPort {
 }
 
 describe('PageSkeletonService', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it('persists a generated page skeleton and includes scene context in the prompt', async () => {
     const repository = new FakeStoryRepository();
     const client = new FakeStoryAiClient();
@@ -376,6 +380,27 @@ describe('PageSkeletonService', () => {
       'impact',
     ]);
     expect(repository.createdPages[0]?.panels.some((panel) => panel.suggestedDialogueHint !== null)).toBe(true);
+  });
+
+  it('fallback ログの理由は機密値と長い payload を伏せる', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const client = new FakeStoryAiClient();
+    client.errorToThrow = new SyntaxError(
+      `OpenAI page skeleton compiler returned invalid JSON: {"key":"sk-test-secret","secret":"${'x'.repeat(600)}"}`,
+    );
+    const repository = new FakeStoryRepository();
+    const service = new PageSkeletonService(repository, client);
+
+    await service.generateForEpisode('user-1', '33333333-3333-4333-8333-333333333333');
+
+    const loggedPayload = warnSpy.mock.calls[0]?.[1] as { reason?: string } | undefined;
+    const reason = loggedPayload?.reason;
+    if (reason === undefined) {
+      throw new Error('fallback reason was not logged');
+    }
+    expect(reason).toContain('[redacted-api-key]');
+    expect(reason).not.toContain('sk-test-secret');
+    expect(reason.length).toBeLessThanOrEqual(300);
   });
 
   it('fallback skeleton infers relevant entities from story text even when structured involved ids are empty', async () => {
