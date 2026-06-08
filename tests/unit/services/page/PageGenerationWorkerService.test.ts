@@ -342,6 +342,30 @@ describe('PageGenerationWorkerService', () => {
     });
   });
 
+  it('creditCost が 0 の failed job は refund を呼ばない', async () => {
+    const executionRepository = new FakeExecutionRepository();
+    executionRepository.claimedJob = buildJob({ creditCost: 0 });
+    const renderer = new FakeRenderer();
+    renderer.shouldFail = true;
+    const creditService = new FakeCreditService();
+    const service = new PageGenerationWorkerService(
+      executionRepository,
+      new FakePromptBuilder(),
+      new FakePromptCompiler(),
+      new FakeInputImageBuilder(),
+      new FakePlanner(),
+      renderer,
+      new FakeStorage(),
+      creditService,
+    );
+
+    const result = await service.processJob('job-1');
+
+    expect(result).toEqual({ status: 'processed', jobStatus: 'failed' });
+    expect(executionRepository.failureInput?.errorMessage).toBe('renderer unavailable');
+    expect(creditService.refunds).toEqual([]);
+  });
+
   it('completion 保存失敗時も failed に戻して refund する', async () => {
     const executionRepository = new FakeExecutionRepository();
     executionRepository.shouldFailCompletion = true;

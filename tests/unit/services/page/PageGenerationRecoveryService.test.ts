@@ -143,4 +143,33 @@ describe('PageGenerationRecoveryService', () => {
     expect(recoveredCount).toBe(1);
     expect(executionRepository.failedJobIds).toEqual(['job-2']);
   });
+
+  it('creditCost が 0 の stale job は refund を呼ばずに回収する', async () => {
+    const repository = new FakeRecoveryRepository();
+    repository.jobs = [
+      {
+        jobId: 'job-1',
+        userId: 'user-1',
+        creditCost: 0,
+        pageId: 'page-1',
+        previousStatus: 'designing',
+        previousGenerationMode: null,
+        staleAt: new Date('2026-06-03T00:00:00.000Z'),
+      },
+    ];
+    const executionRepository = new FakeExecutionRepository();
+    const creditService = new FakeCreditService();
+    const service = new PageGenerationRecoveryService(
+      repository,
+      executionRepository,
+      creditService,
+      1,
+    );
+
+    const recoveredCount = await service.recoverAllStaleJobs();
+
+    expect(recoveredCount).toBe(1);
+    expect(executionRepository.failedJobIds).toEqual(['job-1']);
+    expect(creditService.refunds).toEqual([]);
+  });
 });

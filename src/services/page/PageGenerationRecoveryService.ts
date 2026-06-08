@@ -69,12 +69,14 @@ export class PageGenerationRecoveryService implements PageGenerationRecoveryServ
         continue;
       }
 
-      await this.creditService.refundCredits({
-        userId: job.userId,
-        amount: job.creditCost,
-        description: 'Refund for stale page generation job',
-        jobId: job.jobId,
-      });
+      if (job.creditCost > 0) {
+        await this.creditService.refundCredits({
+          userId: job.userId,
+          amount: job.creditCost,
+          description: 'Refund for stale page generation job',
+          jobId: job.jobId,
+        });
+      }
 
       recoveredCount += 1;
       console.warn(
