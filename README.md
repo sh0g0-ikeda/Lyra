@@ -184,9 +184,9 @@ GitHub Actions runs the same checks expected before deployment:
 ```powershell
 bun run test
 bun test
-bun run build
-bun run web:lint
-bun run web:build
+npm run build
+npm --prefix apps/web run lint
+npm --prefix apps/web run build
 ```
 
 `apps/web/e2e` is intentionally separate because it needs a running app and browser runtime.
