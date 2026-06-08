@@ -62,6 +62,20 @@ COGNITO_REQUIRED_SCOPES=lyra/api
 
 When `AUTH_PROVIDER=cognito`, the API verifies the Cognito JWKS signature, issuer, `client_id`, `token_use`, expiration, required scopes, and configured groups before provisioning the user.
 
+The web app can use Cognito Hosted UI with Authorization Code + PKCE. Configure the frontend with:
+
+```env
+VITE_COGNITO_DOMAIN=https://your-domain.auth.ap-northeast-1.amazoncognito.com
+VITE_COGNITO_CLIENT_ID=replace-me
+VITE_COGNITO_REDIRECT_URI=https://app.example.com
+VITE_COGNITO_LOGOUT_URI=https://app.example.com
+VITE_COGNITO_SCOPES=openid email profile lyra/api
+VITE_REQUIRE_HOSTED_AUTH=true
+```
+
+`VITE_DEV_AUTH_BYPASS=true` is for local development only. Production web builds force file-based
+dev bypass off, and explicit production bypass is rejected.
+
 ### Production billing
 
 Production startup requires the full Stripe billing configuration so a paid

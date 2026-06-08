@@ -22,6 +22,16 @@ import {
 import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { Session, SupabaseClient } from '@supabase/supabase-js';
 import { ApiError, decodeJwtPayload, LyraApiClient } from './lib/api';
+import {
+  beginCognitoLogin,
+  buildCognitoLogoutUrl,
+  clearCognitoSession,
+  completeCognitoRedirectIfPresent,
+  getCognitoAuthConfig,
+  readStoredCognitoSession,
+  type CognitoAuthConfig,
+  type CognitoSession,
+} from './lib/cognitoAuth';
 import { createSupabaseBrowserClient } from './lib/supabase';
 import type {
   BalloonRecord,
@@ -900,6 +910,7 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   'These lines stay outside the generated panel art.': 'これらの行は生成画像の外側のテキストとして扱われます。',
   Email: 'メールアドレス',
   'Send magic link': 'マジックリンクを送信',
+  'Continue with Cognito': 'Cognitoでログイン',
   'Manual bearer token': '手動ベアラートークン',
   'Magic link sent.': 'マジックリンクを送信しました。',
   'Supabase client is not configured.': 'Supabase クライアントが設定されていません。',
@@ -951,48 +962,98 @@ const selectedChapterStorageKey = 'lyra:web:selected-chapter';
 const selectedEpisodeStorageKey = 'lyra:web:selected-episode';
 const selectedPageStorageKey = 'lyra:web:selected-page';
 const supabase = createSupabaseBrowserClient();
-const devAuthBypassEnabled = import.meta.env.VITE_DEV_AUTH_BYPASS === 'true';
-const devAuthBypassEmail =
-  typeof import.meta.env.VITE_DEV_AUTH_BYPASS_EMAIL === 'string' &&
-  import.meta.env.VITE_DEV_AUTH_BYPASS_EMAIL.length > 0
-    ? import.meta.env.VITE_DEV_AUTH_BYPASS_EMAIL
-    : 'dev@local.lyra';
-const devAuthBypassToken = 'dev-auth-bypass';
+const cognitoAuthConfig = getCognitoAuthConfig(
+  {
+    VITE_COGNITO_CLIENT_ID: import.meta.env.VITE_COGNITO_CLIENT_ID,
+    VITE_COGNITO_DOMAIN: import.meta.env.VITE_COGNITO_DOMAIN,
+    VITE_COGNITO_LOGOUT_URI: import.meta.env.VITE_COGNITO_LOGOUT_URI,
+    VITE_COGNITO_REDIRECT_URI: import.meta.env.VITE_COGNITO_REDIRECT_URI,
+    VITE_COGNITO_SCOPES: import.meta.env.VITE_COGNITO_SCOPES,
+  },
+  typeof window === 'undefined' ? undefined : window.location.origin,
+);
+const devAuthBypass =
+  import.meta.env.DEV && import.meta.env.VITE_DEV_AUTH_BYPASS === 'true'
+    ? {
+        email:
+          typeof import.meta.env.VITE_DEV_AUTH_BYPASS_EMAIL === 'string' &&
+          import.meta.env.VITE_DEV_AUTH_BYPASS_EMAIL.length > 0
+            ? import.meta.env.VITE_DEV_AUTH_BYPASS_EMAIL
+            : 'dev@local.lyra',
+        token: 'dev-auth-bypass',
+      }
+    : null;
 
 export default function App() {
   const [manualToken, setManualToken] = useStoredString(window.sessionStorage, manualTokenStorageKey, '');
+  const [cognitoSession, setCognitoSession] = useState<CognitoSession | null>(() =>
+    cognitoAuthConfig === null ? null : readStoredCognitoSession(window.sessionStorage),
+  );
+  const [cognitoAuthError, setCognitoAuthError] = useState<string | null>(null);
   const [supabaseSession, setSupabaseSession] = useState<Session | null>(null);
   const [pendingAuth, setPendingAuth] = useState(true);
 
   useEffect(() => {
-    if (devAuthBypassEnabled) {
-      setPendingAuth(false);
-      return;
-    }
-
-    if (supabase === null) {
+    if (devAuthBypass !== null) {
       setPendingAuth(false);
       return;
     }
 
     let active = true;
-    void supabase.auth.getSession().then(({ data }) => {
+    let unsubscribe: (() => void) | null = null;
+
+    const initializeAuth = async (): Promise<void> => {
+      if (cognitoAuthConfig !== null) {
+        const result = await completeCognitoRedirectIfPresent(
+          cognitoAuthConfig,
+          window.sessionStorage,
+          window.location,
+          window.history,
+        );
+        if (!active) {
+          return;
+        }
+
+        if (result.session !== null) {
+          setCognitoSession(result.session);
+        }
+        if (result.error !== null) {
+          setCognitoAuthError(result.error);
+        }
+      }
+
+      if (supabase === null) {
+        setPendingAuth(false);
+        return;
+      }
+
+      const { data } = await supabase.auth.getSession();
       if (active) {
         setSupabaseSession(data.session);
         setPendingAuth(false);
       }
+    };
+
+    void initializeAuth().catch((error: unknown) => {
+      if (active) {
+        setCognitoAuthError(toMessage(error));
+        setPendingAuth(false);
+      }
     });
 
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSupabaseSession(session);
-      setPendingAuth(false);
-    });
+    if (supabase !== null) {
+      const {
+        data: { subscription },
+      } = supabase.auth.onAuthStateChange((_event, session) => {
+        setSupabaseSession(session);
+        setPendingAuth(false);
+      });
+      unsubscribe = () => subscription.unsubscribe();
+    }
 
     return () => {
       active = false;
-      subscription.unsubscribe();
+      unsubscribe?.();
     };
   }, []);
 
@@ -1004,17 +1065,31 @@ export default function App() {
     );
   }
 
-  const accessToken = devAuthBypassEnabled
-    ? devAuthBypassToken
-    : supabaseSession?.access_token ?? (manualToken.length > 0 ? manualToken : null);
+  const accessToken = devAuthBypass !== null
+    ? devAuthBypass.token
+    : cognitoSession?.accessToken ?? supabaseSession?.access_token ?? (manualToken.length > 0 ? manualToken : null);
   if (accessToken === null) {
-    return <AuthScreen manualToken={manualToken} onManualTokenChange={setManualToken} supabaseClient={supabase} />;
+    return (
+      <AuthScreen
+        cognitoAuthConfig={cognitoAuthConfig}
+        cognitoAuthError={cognitoAuthError}
+        manualToken={manualToken}
+        onCognitoLogin={async () => {
+          if (cognitoAuthConfig !== null) {
+            await beginCognitoLogin(cognitoAuthConfig, window.sessionStorage, window.location, window.crypto);
+          }
+        }}
+        onManualTokenChange={setManualToken}
+        supabaseClient={supabase}
+      />
+    );
   }
 
-  const payload = devAuthBypassEnabled ? null : decodeJwtPayload(accessToken);
-  const email = devAuthBypassEnabled
-    ? devAuthBypassEmail
+  const payload = devAuthBypass !== null ? null : decodeJwtPayload(cognitoSession?.idToken ?? accessToken);
+  const email = devAuthBypass !== null
+    ? devAuthBypass.email
     : (typeof payload?.email === 'string' ? payload.email : null) ??
+      (typeof payload?.username === 'string' ? payload.username : null) ??
       supabaseSession?.user.email ??
       'session';
 
@@ -1024,17 +1099,26 @@ export default function App() {
       token={accessToken}
       supabaseClient={supabase}
       onLogout={async () => {
+        const hadCognitoSession = cognitoSession !== null;
+        clearCognitoSession(window.sessionStorage);
+        setCognitoSession(null);
         if (supabase !== null) {
           await supabase.auth.signOut();
         }
         setManualToken('');
+        if (hadCognitoSession && cognitoAuthConfig !== null) {
+          window.location.assign(buildCognitoLogoutUrl(cognitoAuthConfig));
+        }
       }}
     />
   );
 }
 
 function AuthScreen(props: {
+  cognitoAuthConfig: CognitoAuthConfig | null;
+  cognitoAuthError: string | null;
   manualToken: string;
+  onCognitoLogin: () => Promise<void>;
   onManualTokenChange: (nextValue: string) => void;
   supabaseClient: SupabaseClient | null;
 }) {
@@ -1045,6 +1129,9 @@ function AuthScreen(props: {
   const [notice, setNotice] = useState<NoticeState | null>(null);
   const [busy, setBusy] = useState(false);
   const [draftToken, setDraftToken] = useState(props.manualToken);
+  const visibleNotice = notice ?? (
+    props.cognitoAuthError === null ? null : { type: 'error', message: props.cognitoAuthError } satisfies NoticeState
+  );
 
   const submitMagicLink = async (event: FormEvent<HTMLFormElement>): Promise<void> => {
     event.preventDefault();
@@ -1073,7 +1160,15 @@ function AuthScreen(props: {
         <div className="eyebrow">Lyra</div>
         <h1>{translateUiString(language, 'Production Console')}</h1>
         <p className="muted">{translateUiString(language, 'Story, entity, page, balloon, billing.')}</p>
-        {notice !== null ? <NoticeBanner notice={notice} /> : null}
+        {visibleNotice !== null ? <NoticeBanner notice={visibleNotice} /> : null}
+        {props.cognitoAuthConfig !== null ? (
+          <div className="stack">
+            <button className="primary-button" onClick={() => void props.onCognitoLogin()} type="button">
+              <KeyRound size={16} />
+              {translateUiString(language, 'Continue with Cognito')}
+            </button>
+          </div>
+        ) : null}
         {props.supabaseClient !== null ? (
           <form className="stack" onSubmit={submitMagicLink}>
             <label className="field">
