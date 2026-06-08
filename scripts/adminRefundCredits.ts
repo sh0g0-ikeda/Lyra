@@ -1,5 +1,6 @@
 import { pathToFileURL } from 'node:url';
 import type { DatabaseClient } from '../src/lib/db.js';
+import { sanitizePersistedErrorMessage } from '../src/lib/errorSanitizer.js';
 
 export interface AdminRefundCreditsOptions {
   userId: string;
@@ -188,7 +189,7 @@ function isDirectRun(moduleUrl: string, entryPath: string | undefined): boolean 
 
 if (isDirectRun(import.meta.url, process.argv[1])) {
   main().catch((error: unknown) => {
-    console.error(error instanceof Error ? error.message : 'Unknown admin credit refund error');
+    console.error(sanitizePersistedErrorMessage(error, 'Unknown admin credit refund error'));
     printUsage();
     process.exitCode = 1;
   });

@@ -2,6 +2,7 @@ import { db } from '../src/lib/db.js';
 import { PostgresCreditRepository } from '../src/repositories/CreditRepository.js';
 import { PostgresGenerationJobRepository } from '../src/repositories/GenerationJobRepository.js';
 import { CreditService } from '../src/services/credit/CreditService.js';
+import { sanitizePersistedErrorMessage } from '../src/lib/errorSanitizer.js';
 import { PageGenerationRetryService } from '../src/services/page/PageGenerationRetryService.js';
 import { resolveWorkerDependencies } from '../worker/dependencies.js';
 
@@ -23,6 +24,6 @@ async function main(): Promise<void> {
 }
 
 void main().catch((error) => {
-  console.error(error instanceof Error ? error.message : 'Unknown retry error');
+  console.error(sanitizePersistedErrorMessage(error, 'Unknown retry error'));
   process.exitCode = 1;
 });

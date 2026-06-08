@@ -1,4 +1,5 @@
 import { handleGenerationQueue } from '../worker/index.js';
+import { sanitizePersistedErrorMessage } from '../src/lib/errorSanitizer.js';
 
 async function main(): Promise<void> {
   const jobId = process.argv[2];
@@ -22,7 +23,7 @@ async function main(): Promise<void> {
 }
 
 main().catch((error: unknown) => {
-  const message = error instanceof Error ? error.message : 'Unknown worker error';
+  const message = sanitizePersistedErrorMessage(error, 'Unknown worker error');
   console.error(message);
   process.exitCode = 1;
 });

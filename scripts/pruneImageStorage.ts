@@ -1,4 +1,5 @@
 import { pathToFileURL } from 'node:url';
+import { sanitizePersistedErrorMessage } from '../src/lib/errorSanitizer.js';
 
 export interface PruneImageStorageCliOptions {
   prefixes: string[];
@@ -150,7 +151,7 @@ function isDirectRun(moduleUrl: string, entryPath: string | undefined): boolean 
 
 if (isDirectRun(import.meta.url, process.argv[1])) {
   main().catch((error: unknown) => {
-    console.error(error instanceof Error ? error.message : 'Unknown image pruning error');
+    console.error(sanitizePersistedErrorMessage(error, 'Unknown image pruning error'));
     printUsage();
     process.exitCode = 1;
   });
