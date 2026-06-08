@@ -28,20 +28,33 @@ export class S3ImageStorageMaintenance implements ImageStorageMaintenancePort {
   public constructor(
     private readonly client: S3ImageStorageMaintenanceClient,
     private readonly bucketName: string,
-  ) {}
+  ) {
+    if (bucketName.trim().length === 0) {
+      throw new ConfigurationError('S3 image bucket name is required');
+    }
+  }
 
   public async listObjects(prefix: string): Promise<StoredImageObject[]> {
+    if (prefix.trim().length === 0) {
+      throw new ConfigurationError('S3 image object prefix is required');
+    }
+
     const objects: StoredImageObject[] = [];
     let continuationToken: string | undefined;
 
     do {
-      const response = await this.client.send(
-        new ListObjectsV2Command({
-          Bucket: this.bucketName,
-          Prefix: prefix,
-          ContinuationToken: continuationToken,
-        }),
-      ) as ListObjectsResponse;
+      let response: ListObjectsResponse;
+      try {
+        response = await this.client.send(
+          new ListObjectsV2Command({
+            Bucket: this.bucketName,
+            Prefix: prefix,
+            ContinuationToken: continuationToken,
+          }),
+        ) as ListObjectsResponse;
+      } catch (error) {
+        throw new ConfigurationError(error instanceof Error ? error.message : 'Failed to list image objects');
+      }
 
       for (const item of response.Contents ?? []) {
         if (item.Key === undefined) {
@@ -54,6 +67,10 @@ export class S3ImageStorageMaintenance implements ImageStorageMaintenancePort {
         });
       }
 
+      if (response.IsTruncated === true && response.NextContinuationToken === undefined) {
+        throw new ConfigurationError('S3 image object listing was truncated without a continuation token');
+      }
+
       continuationToken = response.IsTruncated === true ? response.NextContinuationToken : undefined;
     } while (continuationToken !== undefined);
 
@@ -61,6 +78,10 @@ export class S3ImageStorageMaintenance implements ImageStorageMaintenancePort {
   }
 
   public async deleteObject(key: string): Promise<void> {
+    if (key.trim().length === 0) {
+      throw new ConfigurationError('S3 image object key is required');
+    }
+
     try {
       await this.client.send(
         new DeleteObjectCommand({
