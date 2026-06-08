@@ -9,9 +9,12 @@ class FakeMigrationDb {
   public readonly executedSql: string[] = [];
   public readonly insertedFilenames: string[] = [];
   public transactionCalls = 0;
+  public migrationLockAttempts = 0;
   private readonly appliedFilenames = new Set<string>();
+  private readonly migrationLockResponses: boolean[];
 
-  public constructor(initialApplied: string[] = []) {
+  public constructor(initialApplied: string[] = [], migrationLockResponses: boolean[] = [true]) {
+    this.migrationLockResponses = [...migrationLockResponses];
     for (const filename of initialApplied) {
       this.appliedFilenames.add(filename);
     }
@@ -30,6 +33,18 @@ class FakeMigrationDb {
         oid: 0,
         fields: [],
         rows: [...this.appliedFilenames].map((filename) => ({ filename })) as unknown as T[],
+      };
+    }
+
+    if (text.includes('SELECT EXISTS(SELECT 1 FROM inserted) AS acquired')) {
+      this.migrationLockAttempts += 1;
+      const acquired = this.migrationLockResponses.shift() ?? true;
+      return {
+        command: 'SELECT',
+        rowCount: 1,
+        oid: 0,
+        fields: [],
+        rows: [{ acquired }] as unknown as T[],
       };
     }
 
@@ -101,6 +116,9 @@ describe('runPendingMigrations', () => {
     const applied = await runPendingMigrations(db, { migrationsDir });
 
     expect(applied).toEqual(['001_first.sql', '002_second.sql']);
+    expect(db.executedSql.some((sql) => sql.includes('CREATE TABLE IF NOT EXISTS schema_migration_locks'))).toBe(true);
+    expect(db.migrationLockAttempts).toBe(1);
+    expect(db.executedSql.at(-1)).toContain('DELETE FROM schema_migration_locks');
     expect(db.insertedFilenames).toEqual(['001_first.sql', '002_second.sql']);
     expect(db.transactionCalls).toBe(2);
   });
@@ -116,6 +134,21 @@ describe('runPendingMigrations', () => {
 
     expect(applied).toEqual(['002_second.sql']);
     expect(db.insertedFilenames).toEqual(['002_second.sql']);
+  });
+
+  it('migration lock が先に取られている場合は再試行する', async () => {
+    const migrationsDir = await createTempMigrations({
+      '001_first.sql': 'SELECT 1;',
+    });
+    const db = new FakeMigrationDb([], [false, true]);
+
+    const applied = await runPendingMigrations(db, {
+      migrationsDir,
+      migrationLockPollMs: 0,
+    });
+
+    expect(applied).toEqual(['001_first.sql']);
+    expect(db.migrationLockAttempts).toBe(2);
   });
 
   it('no-transaction 指定の migration は transaction 外で実行する', async () => {

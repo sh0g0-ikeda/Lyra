@@ -1,13 +1,22 @@
 import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { ConfigurationError } from '../domain/errors/index.js';
 import type { DatabaseClient, TransactionRunner } from './db.js';
 
 export interface MigrationRunnerPort extends DatabaseClient, TransactionRunner {}
+
+const MIGRATION_LOCK_NAME = 'schema_migrations';
+const DEFAULT_MIGRATION_LOCK_STALE_SECONDS = 15 * 60;
+const DEFAULT_MIGRATION_LOCK_POLL_MS = 250;
+const DEFAULT_MIGRATION_LOCK_MAX_ATTEMPTS = 240;
 
 export async function runPendingMigrations(
   db: MigrationRunnerPort,
   options?: {
     migrationsDir?: string;
+    migrationLockPollMs?: number;
+    migrationLockMaxAttempts?: number;
+    migrationLockStaleSeconds?: number;
   },
 ): Promise<string[]> {
   const migrationsDir = options?.migrationsDir ?? join(process.cwd(), 'migrations');
@@ -18,7 +27,30 @@ export async function runPendingMigrations(
       applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `);
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS schema_migration_locks (
+      name TEXT PRIMARY KEY,
+      locked_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
 
+  await acquireMigrationLock(db, {
+    pollMs: options?.migrationLockPollMs ?? DEFAULT_MIGRATION_LOCK_POLL_MS,
+    maxAttempts: options?.migrationLockMaxAttempts ?? DEFAULT_MIGRATION_LOCK_MAX_ATTEMPTS,
+    staleSeconds: options?.migrationLockStaleSeconds ?? DEFAULT_MIGRATION_LOCK_STALE_SECONDS,
+  });
+
+  try {
+    return await runPendingMigrationsWithLock(db, migrationsDir);
+  } finally {
+    await releaseMigrationLock(db);
+  }
+}
+
+async function runPendingMigrationsWithLock(
+  db: MigrationRunnerPort,
+  migrationsDir: string,
+): Promise<string[]> {
   const appliedResult = await db.query<{ filename: string }>('SELECT filename FROM schema_migrations');
   const appliedFilenames = new Set(appliedResult.rows.map((row) => row.filename));
   const migrationFilenames = (await readdir(migrationsDir))
@@ -47,6 +79,57 @@ export async function runPendingMigrations(
   }
 
   return appliedNow;
+}
+
+async function acquireMigrationLock(
+  db: DatabaseClient,
+  options: {
+    pollMs: number;
+    maxAttempts: number;
+    staleSeconds: number;
+  },
+): Promise<void> {
+  for (let attempt = 1; attempt <= options.maxAttempts; attempt += 1) {
+    const result = await db.query<{ acquired: boolean | string }>(
+      `
+      WITH stale_lock AS (
+        DELETE FROM schema_migration_locks
+        WHERE name = $1
+          AND locked_at < NOW() - ($2::int * INTERVAL '1 second')
+        RETURNING name
+      ),
+      inserted AS (
+        INSERT INTO schema_migration_locks (name, locked_at)
+        VALUES ($1, NOW())
+        ON CONFLICT DO NOTHING
+        RETURNING name
+      )
+      SELECT EXISTS(SELECT 1 FROM inserted) AS acquired
+      `,
+      [MIGRATION_LOCK_NAME, options.staleSeconds],
+    );
+
+    const acquired = result.rows[0]?.acquired;
+    if (acquired === true || acquired === 'true') {
+      return;
+    }
+
+    await sleep(options.pollMs);
+  }
+
+  throw new ConfigurationError('Timed out waiting for schema migration lock');
+}
+
+async function releaseMigrationLock(db: DatabaseClient): Promise<void> {
+  await db.query('DELETE FROM schema_migration_locks WHERE name = $1', [MIGRATION_LOCK_NAME]);
+}
+
+async function sleep(delayMs: number): Promise<void> {
+  if (delayMs <= 0) {
+    return;
+  }
+
+  await new Promise((resolve) => setTimeout(resolve, delayMs));
 }
 
 function shouldRunWithoutTransaction(sql: string): boolean {
