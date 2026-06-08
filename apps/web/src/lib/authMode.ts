@@ -1,7 +1,6 @@
 export interface WebAuthModeEnv {
   MODE?: string;
   PROD?: boolean;
-  VITE_REQUIRE_HOSTED_AUTH?: string;
 }
 
 export function shouldAllowManualTokenAuth(env: WebAuthModeEnv): boolean {

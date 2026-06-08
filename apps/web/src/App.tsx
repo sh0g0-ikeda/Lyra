@@ -991,7 +991,6 @@ const devAuthBypass =
 const manualTokenAuthAllowed = shouldAllowManualTokenAuth({
   MODE: import.meta.env.MODE,
   PROD: import.meta.env.PROD,
-  VITE_REQUIRE_HOSTED_AUTH: import.meta.env.VITE_REQUIRE_HOSTED_AUTH,
 });
 
 export default function App() {

@@ -6,25 +6,14 @@ describe('shouldAllowManualTokenAuth', () => {
     expect(
       shouldAllowManualTokenAuth({
         MODE: 'development',
-        VITE_REQUIRE_HOSTED_AUTH: 'true',
       }),
     ).toBe(true);
   });
 
-  it('production では hosted auth 必須フラグがなくても手動 bearer token 認証を無効にする', () => {
+  it('production では手動 bearer token 認証を無効にする', () => {
     expect(
       shouldAllowManualTokenAuth({
         MODE: 'production',
-        VITE_REQUIRE_HOSTED_AUTH: 'false',
-      }),
-    ).toBe(false);
-  });
-
-  it('production で hosted auth 必須なら手動 bearer token 認証を無効にする', () => {
-    expect(
-      shouldAllowManualTokenAuth({
-        MODE: 'production',
-        VITE_REQUIRE_HOSTED_AUTH: 'true',
       }),
     ).toBe(false);
   });
@@ -33,7 +22,6 @@ describe('shouldAllowManualTokenAuth', () => {
     expect(
       shouldAllowManualTokenAuth({
         PROD: true,
-        VITE_REQUIRE_HOSTED_AUTH: 'true',
       }),
     ).toBe(false);
   });

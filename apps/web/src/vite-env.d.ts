@@ -10,7 +10,6 @@ interface ImportMetaEnv {
   readonly VITE_COGNITO_REDIRECT_URI?: string;
   readonly VITE_COGNITO_LOGOUT_URI?: string;
   readonly VITE_COGNITO_SCOPES?: string;
-  readonly VITE_REQUIRE_HOSTED_AUTH?: string;
   readonly VITE_DEV_AUTH_BYPASS?: string;
   readonly VITE_DEV_AUTH_BYPASS_EMAIL?: string;
 }

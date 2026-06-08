@@ -7,7 +7,6 @@ export interface WebRuntimeEnv {
   VITE_COGNITO_SCOPES?: string;
   VITE_SUPABASE_URL?: string;
   VITE_SUPABASE_ANON_KEY?: string;
-  VITE_REQUIRE_HOSTED_AUTH?: string;
 }
 
 export function assertSafeWebRuntimeConfig(env: WebRuntimeEnv): void {
