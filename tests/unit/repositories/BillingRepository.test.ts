@@ -101,7 +101,7 @@ describe('PostgresBillingRepository', () => {
     const client = new QueryCapturingClient();
     const repository = new PostgresBillingRepository(client, client);
 
-    await repository.insertPaymentRecord(
+    const inserted = await repository.insertPaymentRecord(
       {
         userId: 'user-1',
         stripeCheckoutSessionId: 'cs_123',
@@ -113,7 +113,29 @@ describe('PostgresBillingRepository', () => {
       client,
     );
 
+    expect(inserted).toBe(true);
     expect(client.queries[0]).toContain('INSERT INTO payment_records');
+    expect(client.queries[0]).toContain('ON CONFLICT DO NOTHING');
     expect(client.values[0]).toEqual(['user-1', 'cs_123', null, 'credit_purchase', 2000, 'paid']);
+  });
+
+  it('重複 payment record は false を返す', async () => {
+    const client = new QueryCapturingClient();
+    client.rowCount = 0;
+    const repository = new PostgresBillingRepository(client, client);
+
+    const inserted = await repository.insertPaymentRecord(
+      {
+        userId: 'user-1',
+        stripeCheckoutSessionId: 'cs_123',
+        stripeInvoiceId: null,
+        kind: 'credit_purchase',
+        amountJpy: 2000,
+        status: 'paid',
+      },
+      client,
+    );
+
+    expect(inserted).toBe(false);
   });
 });

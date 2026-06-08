@@ -70,7 +70,9 @@ class InMemoryBillingRepository implements BillingRepository {
 
   public async markSubscriptionDeleted(): Promise<void> {}
 
-  public async insertPaymentRecord(): Promise<void> {}
+  public async insertPaymentRecord(): Promise<boolean> {
+    return true;
+  }
 }
 
 class FakeStripeBillingClient implements StripeBillingClientPort {

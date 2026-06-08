@@ -84,8 +84,22 @@ class InMemoryBillingRepository implements BillingRepository {
     this.deletedSubscriptions.push(stripeSubscriptionId);
   }
 
-  public async insertPaymentRecord(record: PaymentRecordInput): Promise<void> {
+  public async insertPaymentRecord(record: PaymentRecordInput): Promise<boolean> {
+    const isDuplicate = this.paymentRecords.some((current) => {
+      const sameCheckoutSession =
+        record.stripeCheckoutSessionId !== null &&
+        current.stripeCheckoutSessionId === record.stripeCheckoutSessionId;
+      const sameInvoice =
+        record.stripeInvoiceId !== null &&
+        current.stripeInvoiceId === record.stripeInvoiceId;
+      return (sameCheckoutSession || sameInvoice) && current.kind === record.kind && current.status === record.status;
+    });
+    if (isDuplicate) {
+      return false;
+    }
+
     this.paymentRecords.push(record);
+    return true;
   }
 }
 
@@ -380,6 +394,44 @@ describe('StripeWebhookService', () => {
     expect(creditGrantService.purchasedGrants).toHaveLength(0);
     expect(repository.paymentRecords).toHaveLength(0);
   });
+
+  it('同じ checkout session の paid event が別event idで来ても購入クレジットを二重付与しない', async () => {
+    const repository = seedRepository();
+    const creditGrantService = new FakeBillingCreditGrantService();
+    const stripeClient = new FakeStripeBillingClient();
+    const service = buildService(repository, creditGrantService, stripeClient);
+
+    stripeClient.event = buildCheckoutCreditPurchaseEvent({ id: 'evt_checkout_credit_completed' });
+    await service.handleWebhook(Buffer.from('{}'), 'sig');
+    stripeClient.event = buildCheckoutCreditPurchaseEvent({
+      id: 'evt_checkout_credit_async_success',
+      type: 'checkout.session.async_payment_succeeded',
+      paymentStatus: 'paid',
+    });
+    await service.handleWebhook(Buffer.from('{}'), 'sig');
+
+    expect(repository.processedEvents.has('evt_checkout_credit_completed')).toBe(true);
+    expect(repository.processedEvents.has('evt_checkout_credit_async_success')).toBe(true);
+    expect(repository.paymentRecords).toHaveLength(1);
+    expect(creditGrantService.purchasedGrants).toHaveLength(1);
+  });
+
+  it('同じ invoice の paid event が別event idで来ても月次クレジットを二重付与しない', async () => {
+    const repository = seedRepository();
+    const creditGrantService = new FakeBillingCreditGrantService();
+    const stripeClient = new FakeStripeBillingClient();
+    const service = buildService(repository, creditGrantService, stripeClient);
+
+    stripeClient.event = buildInvoicePaidEvent('subscription_cycle', 'evt_invoice_paid_first');
+    await service.handleWebhook(Buffer.from('{}'), 'sig');
+    stripeClient.event = buildInvoicePaidEvent('subscription_cycle', 'evt_invoice_paid_second');
+    await service.handleWebhook(Buffer.from('{}'), 'sig');
+
+    expect(repository.processedEvents.has('evt_invoice_paid_first')).toBe(true);
+    expect(repository.processedEvents.has('evt_invoice_paid_second')).toBe(true);
+    expect(repository.paymentRecords).toHaveLength(1);
+    expect(creditGrantService.monthlyGrants).toHaveLength(1);
+  });
 });
 
 function seedRepository(): InMemoryBillingRepository {
@@ -476,9 +528,12 @@ function buildCheckoutCreditPurchaseEvent(options: {
   } as unknown as Stripe.Event;
 }
 
-function buildInvoicePaidEvent(billingReason: Stripe.Invoice.BillingReason): Stripe.Event {
+function buildInvoicePaidEvent(
+  billingReason: Stripe.Invoice.BillingReason,
+  id = 'evt_invoice_paid',
+): Stripe.Event {
   return {
-    id: 'evt_invoice_paid',
+    id,
     object: 'event',
     api_version: '2025-03-31',
     created: 1,

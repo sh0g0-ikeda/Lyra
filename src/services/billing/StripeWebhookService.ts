@@ -102,17 +102,7 @@ export class StripeWebhookService implements StripeWebhookServicePort {
           client,
         );
         await this.requirePlanUpdate(userId, resolvedPlanCode, client);
-        await this.billingCreditGrantService.grantMonthlyCredits(
-          {
-            userId,
-            amount: SUBSCRIPTION_PLAN_DEFINITIONS[resolvedPlanCode].monthlyCredits,
-            description: `Initial monthly subscription grant for ${resolvedPlanCode}`,
-            expiresAt: subscriptionCurrentPeriodEnd(subscription),
-            stripeEventId: event.id,
-          },
-          client,
-        );
-        await this.billingRepository.insertPaymentRecord(
+        const paymentInserted = await this.billingRepository.insertPaymentRecord(
           {
             userId,
             stripeCheckoutSessionId: session.id,
@@ -123,6 +113,18 @@ export class StripeWebhookService implements StripeWebhookServicePort {
           },
           client,
         );
+        if (paymentInserted) {
+          await this.billingCreditGrantService.grantMonthlyCredits(
+            {
+              userId,
+              amount: SUBSCRIPTION_PLAN_DEFINITIONS[resolvedPlanCode].monthlyCredits,
+              description: `Initial monthly subscription grant for ${resolvedPlanCode}`,
+              expiresAt: subscriptionCurrentPeriodEnd(subscription),
+              stripeEventId: event.id,
+            },
+            client,
+          );
+        }
       });
 
       return;
@@ -137,16 +139,7 @@ export class StripeWebhookService implements StripeWebhookServicePort {
         }
 
         await this.requireStripeCustomerBinding(userId, stripeCustomerId, client);
-        await this.billingCreditGrantService.grantPurchasedCredits(
-          {
-            userId,
-            amount: CREDIT_PACKAGE_DEFINITIONS[packageCode].purchasedCredits,
-            description: `Stripe credit purchase for ${packageCode}`,
-            stripeEventId: event.id,
-          },
-          client,
-        );
-        await this.billingRepository.insertPaymentRecord(
+        const paymentInserted = await this.billingRepository.insertPaymentRecord(
           {
             userId,
             stripeCheckoutSessionId: session.id,
@@ -157,6 +150,17 @@ export class StripeWebhookService implements StripeWebhookServicePort {
           },
           client,
         );
+        if (paymentInserted) {
+          await this.billingCreditGrantService.grantPurchasedCredits(
+            {
+              userId,
+              amount: CREDIT_PACKAGE_DEFINITIONS[packageCode].purchasedCredits,
+              description: `Stripe credit purchase for ${packageCode}`,
+              stripeEventId: event.id,
+            },
+            client,
+          );
+        }
       });
 
       return;
@@ -249,7 +253,19 @@ export class StripeWebhookService implements StripeWebhookServicePort {
       );
       await this.requirePlanUpdate(billingUser.userId, planCode, client);
 
-      if (invoice.billing_reason === 'subscription_cycle') {
+      const paymentInserted = await this.billingRepository.insertPaymentRecord(
+        {
+          userId: billingUser.userId,
+          stripeCheckoutSessionId: null,
+          stripeInvoiceId: invoice.id,
+          kind: 'subscription',
+          amountJpy: invoice.amount_paid,
+          status: 'paid',
+        },
+        client,
+      );
+
+      if (invoice.billing_reason === 'subscription_cycle' && paymentInserted) {
         await this.billingCreditGrantService.grantMonthlyCredits(
           {
             userId: billingUser.userId,
@@ -261,18 +277,6 @@ export class StripeWebhookService implements StripeWebhookServicePort {
           client,
         );
       }
-
-      await this.billingRepository.insertPaymentRecord(
-        {
-          userId: billingUser.userId,
-          stripeCheckoutSessionId: null,
-          stripeInvoiceId: invoice.id,
-          kind: 'subscription',
-          amountJpy: invoice.amount_paid,
-          status: 'paid',
-        },
-        client,
-      );
     });
   }
 

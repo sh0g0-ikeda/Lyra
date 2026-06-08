@@ -25,7 +25,7 @@ export interface BillingRepository {
   markStripeEventProcessed(stripeEventId: string, eventType: string, client: DatabaseClient): Promise<boolean>;
   upsertSubscription(record: SubscriptionRecord, client: DatabaseClient): Promise<void>;
   markSubscriptionDeleted(stripeSubscriptionId: string, client: DatabaseClient): Promise<void>;
-  insertPaymentRecord(record: PaymentRecordInput, client: DatabaseClient): Promise<void>;
+  insertPaymentRecord(record: PaymentRecordInput, client: DatabaseClient): Promise<boolean>;
 }
 
 export class PostgresBillingRepository implements BillingRepository {
@@ -168,8 +168,8 @@ export class PostgresBillingRepository implements BillingRepository {
     );
   }
 
-  public async insertPaymentRecord(record: PaymentRecordInput, client: DatabaseClient): Promise<void> {
-    await client.query(
+  public async insertPaymentRecord(record: PaymentRecordInput, client: DatabaseClient): Promise<boolean> {
+    const result = await client.query(
       `
       INSERT INTO payment_records (
         user_id,
@@ -180,6 +180,7 @@ export class PostgresBillingRepository implements BillingRepository {
         status
       )
       VALUES ($1, $2, $3, $4, $5, $6)
+      ON CONFLICT DO NOTHING
       `,
       [
         record.userId,
@@ -190,6 +191,8 @@ export class PostgresBillingRepository implements BillingRepository {
         record.status,
       ],
     );
+
+    return result.rowCount === 1;
   }
 }
 
