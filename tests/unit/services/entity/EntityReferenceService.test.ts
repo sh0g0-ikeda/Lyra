@@ -148,6 +148,7 @@ class FakeGenerationJobRepository implements GenerationJobRepository {
 class FakeCreditService implements CreditServicePort {
   public consumed: ConsumeCreditsParams | null = null;
   public refunded: RefundCreditsParams | null = null;
+  public shouldFailRefund = false;
 
   public async getBalance(): Promise<CreditBalanceSnapshot> {
     return { monthlyCredits: 0, purchasedCredits: 0, totalCredits: 0, monthlyExpiresAt: null };
@@ -164,6 +165,10 @@ class FakeCreditService implements CreditServicePort {
 
   public async refundCredits(params: RefundCreditsParams): Promise<CreditBalanceSnapshot> {
     this.refunded = params;
+    if (this.shouldFailRefund) {
+      throw new Error('refund unavailable');
+    }
+
     return this.getBalance();
   }
 }
@@ -224,11 +229,16 @@ class FakeEntityImageStorage implements EntityImageStoragePort {
 
 class FakeEntityGenerationQueue implements EntityGenerationQueuePort {
   public payload: Record<string, unknown> | null = null;
+  public shouldFail = false;
 
   public async enqueue(payload: { jobId: string; userId: string; entityId: string }): Promise<{
     messageId: string | null;
   }> {
     this.payload = payload;
+    if (this.shouldFail) {
+      throw new Error('queue down');
+    }
+
     return { messageId: 'message-1' };
   }
 }
@@ -472,6 +482,27 @@ describe('EntityReferenceService', () => {
     await expect(service.deleteReference('user-1', 'entity-1', 'ref-1')).rejects.toMatchObject({
       code: 'CONFLICT',
     });
+  });
+
+  it('enqueue補償の返金が失敗した場合はentity jobをfailedへ進めない', async () => {
+    const jobs = new FakeGenerationJobRepository();
+    const creditService = new FakeCreditService();
+    creditService.shouldFailRefund = true;
+    const queue = new FakeEntityGenerationQueue();
+    queue.shouldFail = true;
+    const service = buildService({
+      generationJobRepository: jobs,
+      creditService,
+      queue,
+    });
+
+    await expect(service.enqueueReferenceGeneration('user-1', 'entity-1')).rejects.toThrow('refund unavailable');
+
+    expect(creditService.refunded).toMatchObject({
+      amount: 1,
+      jobId: jobs.createdInput?.id,
+    });
+    expect(jobs.failedJobId).toBeNull();
   });
 });
 

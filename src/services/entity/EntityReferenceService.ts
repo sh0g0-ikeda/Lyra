@@ -187,10 +187,6 @@ export class EntityReferenceService implements EntityReferenceServicePort {
 
       return { jobId: job.id };
     } catch (error) {
-      if (createdJobId !== null) {
-        await this.generationJobRepository.markFailed(createdJobId, 'Failed to enqueue entity generation job');
-      }
-
       if (creditsConsumed) {
         await this.creditService.refundCredits({
           userId,
@@ -198,6 +194,10 @@ export class EntityReferenceService implements EntityReferenceServicePort {
           description: 'Refund for failed entity generation enqueue',
           jobId: createdJobId ?? reservedJobId,
         });
+      }
+
+      if (createdJobId !== null) {
+        await this.generationJobRepository.markFailed(createdJobId, 'Failed to enqueue entity generation job');
       }
 
       if (error instanceof Error) {

@@ -139,6 +139,15 @@ export class PageGenerationService implements PageGenerationServicePort {
         throw error;
       }
 
+      if (creditsConsumed) {
+        await this.creditService.refundCredits({
+          userId,
+          amount: selection.creditCost,
+          description: 'Refund for failed page generation enqueue',
+          jobId: createdJobId ?? reservedJobId,
+        });
+      }
+
       if (createdJobId !== null) {
         await this.generationJobRepository.markFailed(createdJobId, 'Failed to enqueue page generation job');
       }
@@ -147,15 +156,6 @@ export class PageGenerationService implements PageGenerationServicePort {
         await this.pageRepository.updateGenerationState(page.pageId, userId, {
           status: page.status,
           generationMode: page.generationMode,
-        });
-      }
-
-      if (creditsConsumed) {
-        await this.creditService.refundCredits({
-          userId,
-          amount: selection.creditCost,
-          description: 'Refund for failed page generation enqueue',
-          jobId: createdJobId ?? reservedJobId,
         });
       }
 
