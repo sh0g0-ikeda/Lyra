@@ -14,11 +14,12 @@ class FakePageGenerationWorkerService {
     jobStatus: 'completed',
   };
   public shouldThrow = false;
+  public errorMessage = 'worker unavailable';
 
   public async processJob(jobId: string): Promise<ProcessPageGenerationJobResult> {
     this.calls.push(jobId);
     if (this.shouldThrow) {
-      throw new Error('worker unavailable');
+      throw new Error(this.errorMessage);
     }
 
     return this.nextResult;
@@ -163,6 +164,30 @@ describe('worker queue handler', () => {
       status: 'failed',
       reason: 'worker unavailable',
     });
+  });
+
+  it('worker service 失敗理由は機密値を伏せる', async () => {
+    const pageWorkerService = new FakePageGenerationWorkerService();
+    const entityWorkerService = new FakeEntityGenerationWorkerService();
+    pageWorkerService.shouldThrow = true;
+    pageWorkerService.errorMessage = `worker failed Authorization: Bearer sk-test-secret ${'x'.repeat(600)}`;
+
+    const result = await handleGenerationQueue(
+      buildEvent({
+        job_id: '11111111-1111-4111-8111-111111111111',
+        job_type: 'page_generate',
+      }),
+      buildDependencies(pageWorkerService, entityWorkerService),
+    );
+
+    const reason = result.results[0]?.reason;
+    if (reason === undefined) {
+      throw new Error('worker failure reason was not returned');
+    }
+    expect(result.results[0]?.status).toBe('failed');
+    expect(reason).toContain('Bearer [redacted]');
+    expect(reason.includes('sk-test-secret')).toBe(false);
+    expect(reason.length).toBeLessThanOrEqual(300);
   });
 });
 

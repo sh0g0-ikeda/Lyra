@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { sanitizePersistedErrorMessage } from '../src/lib/errorSanitizer.js';
 import { resolveWorkerDependencies, type WorkerDependencies } from './dependencies.js';
 export type { WorkerDependencies } from './dependencies.js';
 
@@ -72,7 +73,7 @@ export async function handleGenerationQueue(
         messageId: record.messageId ?? null,
         jobId: parsedMessage.job_id,
         status: 'failed',
-        reason: error instanceof Error ? error.message : 'Worker processing failed',
+        reason: sanitizePersistedErrorMessage(error, 'Worker processing failed'),
       });
     }
   }

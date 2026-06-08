@@ -12,6 +12,7 @@ import { db } from './lib/db.js';
 import { env } from './lib/env.js';
 import { runPendingMigrations } from './lib/migrations.js';
 import { assertProductionRuntimeConfig } from './lib/runtimeGuards.js';
+import { sanitizePersistedErrorMessage } from './lib/errorSanitizer.js';
 
 async function main(): Promise<void> {
   assertProductionRuntimeConfig(env);
@@ -33,7 +34,10 @@ async function main(): Promise<void> {
       console.warn(`[page-generation-recovery] recovered ${recoveredCount} stale page generation job(s) on startup`);
     }
   } catch (error) {
-    console.error('[page-generation-recovery] failed to recover stale jobs on startup', error);
+    console.error(
+      '[page-generation-recovery] failed to recover stale jobs on startup',
+      sanitizePersistedErrorMessage(error, 'Page generation recovery failed'),
+    );
   }
 
   try {
@@ -47,7 +51,10 @@ async function main(): Promise<void> {
       console.warn(`[entity-generation-recovery] recovered ${recoveredCount} stale entity generation job(s) on startup`);
     }
   } catch (error) {
-    console.error('[entity-generation-recovery] failed to recover stale jobs on startup', error);
+    console.error(
+      '[entity-generation-recovery] failed to recover stale jobs on startup',
+      sanitizePersistedErrorMessage(error, 'Entity generation recovery failed'),
+    );
   }
 
   serve(
