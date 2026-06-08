@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { parsePruneImageStorageArgs } from '../../../scripts/pruneImageStorage.js';
 
 describe('parsePruneImageStorageArgs', () => {
-  it('デフォルトでは tmp と session を dry-run 対象にする', () => {
+  it('uses tmp and session prefixes in dry-run mode by default', () => {
     expect(parsePruneImageStorageArgs([])).toEqual({
       prefixes: ['tmp/', 'session/'],
       olderThanHours: 24,
@@ -12,7 +12,7 @@ describe('parsePruneImageStorageArgs', () => {
     });
   });
 
-  it('prefix と apply を解析する', () => {
+  it('parses prefix and apply flags', () => {
     expect(
       parsePruneImageStorageArgs([
         '--prefix',
@@ -34,7 +34,13 @@ describe('parsePruneImageStorageArgs', () => {
     });
   });
 
-  it('不正な数値を拒否する', () => {
+  it('deduplicates repeated prefixes', () => {
+    expect(parsePruneImageStorageArgs(['--prefix', 'session/', '--prefix', 'session/']).prefixes).toEqual([
+      'session/',
+    ]);
+  });
+
+  it('rejects invalid numeric values', () => {
     expect(() => parsePruneImageStorageArgs(['--older-than-hours', '0'])).toThrow(
       /--older-than-hours must be a positive integer/,
     );

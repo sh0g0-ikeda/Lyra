@@ -37,7 +37,7 @@ export function parsePruneImageStorageArgs(argv: readonly string[]): PruneImageS
   }
 
   return {
-    prefixes: prefixes.length === 0 ? ['tmp/', 'session/'] : prefixes,
+    prefixes: prefixes.length === 0 ? ['tmp/', 'session/'] : Array.from(new Set(prefixes)),
     olderThanHours: readPositiveInteger(values, '--older-than-hours', 24),
     protectRecentCandidateHours: readPositiveInteger(values, '--protect-recent-candidate-hours', 48),
     maxDeletes: readPositiveInteger(values, '--max-deletes', 500),

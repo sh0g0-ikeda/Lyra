@@ -9,10 +9,12 @@ import {
 
 class FakeStorage implements ImageStorageMaintenancePort {
   public deleted: string[] = [];
+  public listedPrefixes: string[] = [];
 
   public constructor(private readonly objectsByPrefix: Map<string, StoredImageObject[]>) {}
 
   public async listObjects(prefix: string): Promise<StoredImageObject[]> {
+    this.listedPrefixes.push(prefix);
     return this.objectsByPrefix.get(prefix) ?? [];
   }
 
@@ -30,7 +32,7 @@ class FakeReferenceRepository implements ImageStorageReferenceRepository {
 }
 
 describe('ImageStoragePruningService', () => {
-  it('dry-run では古い未参照 tmp/session だけを削除候補にする', async () => {
+  it('dry-run selects only old unprotected tmp and session objects', async () => {
     const storage = new FakeStorage(
       new Map([
         [
@@ -78,7 +80,7 @@ describe('ImageStoragePruningService', () => {
     expect(storage.deleted).toEqual([]);
   });
 
-  it('apply では maxDeletes まで削除し、超過は truncated にする', async () => {
+  it('apply deletes up to maxDeletes and marks truncated overflow', async () => {
     const storage = new FakeStorage(
       new Map([
         [
@@ -106,7 +108,54 @@ describe('ImageStoragePruningService', () => {
     expect(result.truncated).toBe(true);
   });
 
-  it('saved prefix は削除対象として拒否する', async () => {
+  it('deduplicates overlapping delete candidates', async () => {
+    const duplicateObject = { key: 'session/user/old.png', lastModified: new Date('2026-06-01T00:00:00.000Z') };
+    const storage = new FakeStorage(
+      new Map([
+        ['session/', [duplicateObject]],
+        ['session/user/', [duplicateObject]],
+      ]),
+    );
+    const service = new ImageStoragePruningService(storage, new FakeReferenceRepository(new Set()));
+
+    const result = await service.prune({
+      prefixes: ['session/', 'session/user/'],
+      olderThanHours: 24,
+      protectRecentCandidateHours: 48,
+      maxDeletes: 100,
+      dryRun: false,
+      now: new Date('2026-06-09T00:00:00.000Z'),
+    });
+
+    expect(result.deleteCandidates).toEqual(['session/user/old.png']);
+    expect(result.deleted).toEqual(['session/user/old.png']);
+  });
+
+  it('deduplicates repeated prefixes inside the service', async () => {
+    const storage = new FakeStorage(
+      new Map([
+        [
+          'session/',
+          [{ key: 'session/old.png', lastModified: new Date('2026-06-01T00:00:00.000Z') }],
+        ],
+      ]),
+    );
+    const service = new ImageStoragePruningService(storage, new FakeReferenceRepository(new Set()));
+
+    const result = await service.prune({
+      prefixes: ['session/', 'session/'],
+      olderThanHours: 24,
+      protectRecentCandidateHours: 48,
+      maxDeletes: 100,
+      dryRun: true,
+      now: new Date('2026-06-09T00:00:00.000Z'),
+    });
+
+    expect(storage.listedPrefixes).toEqual(['session/']);
+    expect(result.deleteCandidates).toEqual(['session/old.png']);
+  });
+
+  it('rejects saved prefix', async () => {
     const service = new ImageStoragePruningService(
       new FakeStorage(new Map()),
       new FakeReferenceRepository(new Set()),
@@ -115,6 +164,23 @@ describe('ImageStoragePruningService', () => {
     await expect(
       service.prune({
         prefixes: ['saved/'],
+        olderThanHours: 24,
+        protectRecentCandidateHours: 48,
+        maxDeletes: 100,
+        dryRun: true,
+      }),
+    ).rejects.toEqual(new ValidationError('Image pruning is limited to tmp/ and session/ prefixes'));
+  });
+
+  it('rejects traversal-like prefixes even under allowed roots', async () => {
+    const service = new ImageStoragePruningService(
+      new FakeStorage(new Map()),
+      new FakeReferenceRepository(new Set()),
+    );
+
+    await expect(
+      service.prune({
+        prefixes: ['tmp/../saved/'],
         olderThanHours: 24,
         protectRecentCandidateHours: 48,
         maxDeletes: 100,

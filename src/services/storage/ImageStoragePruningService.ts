@@ -51,12 +51,14 @@ export class ImageStoragePruningService {
     const protectedKeys = await this.referenceRepository.findProtectedImageS3Keys({
       protectRecentCandidateHours: input.protectRecentCandidateHours,
     });
+    const scannedPrefixes = Array.from(new Set(input.prefixes));
+    const deleteCandidateKeys = new Set<string>();
     const deleteCandidates: string[] = [];
     let scanned = 0;
     let protectedCount = 0;
     let skippedRecent = 0;
 
-    for (const prefix of input.prefixes) {
+    for (const prefix of scannedPrefixes) {
       const objects = await this.storage.listObjects(prefix);
       for (const object of objects) {
         scanned += 1;
@@ -71,7 +73,10 @@ export class ImageStoragePruningService {
           continue;
         }
 
-        deleteCandidates.push(object.key);
+        if (!deleteCandidateKeys.has(object.key)) {
+          deleteCandidateKeys.add(object.key);
+          deleteCandidates.push(object.key);
+        }
       }
     }
 
@@ -102,8 +107,8 @@ function validatePruneInput(input: PruneImageStorageInput): void {
     throw new ValidationError('At least one image prefix is required');
   }
 
-  for (const prefix of input.prefixes) {
-    if (!ALLOWED_PRUNE_PREFIXES.some((allowedPrefix) => prefix.startsWith(allowedPrefix))) {
+  for (const prefix of new Set(input.prefixes)) {
+    if (!isAllowedPrunePrefix(prefix)) {
       throw new ValidationError('Image pruning is limited to tmp/ and session/ prefixes');
     }
   }
@@ -119,4 +124,17 @@ function validatePruneInput(input: PruneImageStorageInput): void {
   if (!Number.isInteger(input.maxDeletes) || input.maxDeletes <= 0) {
     throw new ValidationError('maxDeletes must be a positive integer');
   }
+}
+
+function isAllowedPrunePrefix(prefix: string): boolean {
+  if (prefix.includes('..') || prefix.includes('//') || prefix.startsWith('/')) {
+    return false;
+  }
+
+  return ALLOWED_PRUNE_PREFIXES.some((allowedPrefix) => (
+    prefix === allowedPrefix || (
+      prefix.startsWith(allowedPrefix) &&
+      prefix.length > allowedPrefix.length
+    )
+  ));
 }
