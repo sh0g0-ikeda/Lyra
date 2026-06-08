@@ -133,6 +133,19 @@ describe('assertProductionRuntimeConfig', () => {
     }).toThrow(/OPENAI_API_KEY is required/);
   });
 
+  it('production では AWS_REGION が必須になる', () => {
+    expect(() => {
+      assertProductionRuntimeConfig(
+        {
+          ...safeProductionConfig,
+          AWS_REGION: undefined,
+          COGNITO_ISSUER: 'https://cognito-idp.ap-northeast-1.amazonaws.com/ap-northeast-1_pool',
+        },
+        'production',
+      );
+    }).toThrow(/AWS_REGION is required/);
+  });
+
   it('production では過大な生成同時実行上限を拒否する', () => {
     expect(() => {
       assertProductionRuntimeConfig(
