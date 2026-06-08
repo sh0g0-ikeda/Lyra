@@ -17,6 +17,10 @@ export class LocalFileFinalPageImageStorage implements FinalPageImageStoragePort
   public async finalizePageImage(input: FinalizePageImageInput): Promise<GeneratedPageImage> {
     const extension = inferImageExtensionFromKey(input.sourceS3Key);
     const destinationKey = `saved/${input.userId}/pages/${input.pageId}_final.${extension}`;
+    if (input.sourceS3Key === destinationKey) {
+      return input.generatedImage;
+    }
+
     await copyLocalAsset(this.config.rootDir, input.sourceS3Key, destinationKey);
 
     return {

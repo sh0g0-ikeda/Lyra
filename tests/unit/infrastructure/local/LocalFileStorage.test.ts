@@ -128,6 +128,29 @@ describe('Local file storage adapters', () => {
       }),
     ).rejects.toMatchObject({ code: 'CONFIGURATION_ERROR' });
   });
+
+  it('final page finalize は保存済みfinal画像なら自己コピーしない', async () => {
+    const config = await createConfig();
+    const storage = new LocalFileFinalPageImageStorage(config);
+    const loader = new LocalFileStoredImageLoader(config);
+    await writeLocalAsset(config.rootDir, 'saved/user-1/pages/page-1_final.png', Buffer.from('final'));
+
+    const result = await storage.finalizePageImage({
+      userId: 'user-1',
+      pageId: 'page-1',
+      sourceS3Key: 'saved/user-1/pages/page-1_final.png',
+      generatedImage: {
+        s3Key: 'saved/user-1/pages/page-1_final.png',
+        cdnUrl: 'http://127.0.0.1:3000/local-assets/saved/user-1/pages/page-1_final.png',
+        generationMode: 'standard',
+        generatedAt: '2026-05-24T00:00:00.000Z',
+      },
+    });
+
+    const loaded = await loader.loadByS3Key(result.s3Key ?? '');
+    expect(result.s3Key).toBe('saved/user-1/pages/page-1_final.png');
+    expect(loaded.imageData).toEqual(Buffer.from('final'));
+  });
 });
 
 async function createConfig(): Promise<LocalAssetConfig> {

@@ -122,4 +122,27 @@ describe('S3FinalPageImageStorage', () => {
 
     expect(client.calls).toHaveLength(0);
   });
+
+  it('does not copy when the source is already the final page key', async () => {
+    const client = new FakeS3Client();
+    const storage = new S3FinalPageImageStorage(client, {
+      bucketName: 'lyra-images',
+      cdnBaseUrl: 'https://img.lyra.app',
+    });
+
+    const result = await storage.finalizePageImage({
+      userId: 'user-1',
+      pageId: 'page-1',
+      sourceS3Key: 'saved/user-1/pages/page-1_final.png',
+      generatedImage: {
+        s3Key: 'saved/user-1/pages/page-1_final.png',
+        cdnUrl: 'https://img.lyra.app/saved/user-1/pages/page-1_final.png',
+        generationMode: 'standard',
+        generatedAt: '2026-04-24T00:00:00.000Z',
+      },
+    });
+
+    expect(result.s3Key).toBe('saved/user-1/pages/page-1_final.png');
+    expect(client.calls).toHaveLength(0);
+  });
 });

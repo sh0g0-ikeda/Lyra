@@ -38,6 +38,9 @@ export class S3FinalPageImageStorage implements FinalPageImageStoragePort {
   public async finalizePageImage(input: FinalizePageImageInput): Promise<GeneratedPageImage> {
     const extension = readExtension(input.sourceS3Key);
     const destinationKey = `saved/${input.userId}/pages/${input.pageId}_final.${extension}`;
+    if (input.sourceS3Key === destinationKey) {
+      return input.generatedImage;
+    }
 
     try {
       await this.client.send(
