@@ -95,6 +95,60 @@ describe('OpenAIPageImageRenderer', () => {
     expect((imageBlob as File).name).toBe('aoi.png');
   });
 
+  it('unsupported input image MIME は OpenAI 呼び出し前に拒否する', async () => {
+    const client = new OpenAIClient({
+      apiKey: 'test',
+      baseUrl: 'https://api.openai.test/v1',
+      timeoutMs: 1000,
+      fetchFn: async () => {
+        throw new Error('fetch should not be called');
+      },
+      maxRetries: 1,
+    });
+    const renderer = new OpenAIPageImageRenderer(client);
+
+    await expect(
+      renderer.render({
+        jobId: 'job-1',
+        userId: 'user-1',
+        pageId: 'page-1',
+        requestKind: 'initial',
+        generationMode: 'standard',
+        prompt: 'page prompt',
+        quality: 'medium',
+        internalPlan: null,
+        inputImages: [{ role: 'entity_reference', label: 'Aoi', dataUrl: 'data:text/plain;base64,cmVm' }],
+      }),
+    ).rejects.toEqual(new ConfigurationError('OpenAI image renderer received an unsupported image input type'));
+  });
+
+  it('empty input image は OpenAI 呼び出し前に拒否する', async () => {
+    const client = new OpenAIClient({
+      apiKey: 'test',
+      baseUrl: 'https://api.openai.test/v1',
+      timeoutMs: 1000,
+      fetchFn: async () => {
+        throw new Error('fetch should not be called');
+      },
+      maxRetries: 1,
+    });
+    const renderer = new OpenAIPageImageRenderer(client);
+
+    await expect(
+      renderer.render({
+        jobId: 'job-1',
+        userId: 'user-1',
+        pageId: 'page-1',
+        requestKind: 'initial',
+        generationMode: 'standard',
+        prompt: 'page prompt',
+        quality: 'medium',
+        internalPlan: null,
+        inputImages: [{ role: 'entity_reference', label: 'Aoi', dataUrl: 'data:image/png;base64,====' }],
+      }),
+    ).rejects.toEqual(new ConfigurationError('OpenAI image renderer received an empty image input'));
+  });
+
   it('画像データが返らない場合は ConfigurationError を投げる', async () => {
     const client = {
       postJson: vi.fn().mockResolvedValue({

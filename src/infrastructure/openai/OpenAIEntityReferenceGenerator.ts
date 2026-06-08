@@ -115,7 +115,20 @@ function dataUrlToBlob(dataUrl: string): Blob {
     throw new ConfigurationError('Entity reference generator received an invalid image input');
   }
 
-  return new Blob([Buffer.from(match.groups.base64, 'base64')], {
+  if (!isSupportedInputImageMimeType(match.groups.mimeType)) {
+    throw new ConfigurationError('Entity reference generator received an unsupported image input type');
+  }
+
+  const imageData = Buffer.from(match.groups.base64, 'base64');
+  if (imageData.length === 0) {
+    throw new ConfigurationError('Entity reference generator received an empty image input');
+  }
+
+  return new Blob([imageData], {
     type: match.groups.mimeType,
   });
+}
+
+function isSupportedInputImageMimeType(value: string): value is 'image/png' | 'image/jpeg' | 'image/webp' {
+  return value === 'image/png' || value === 'image/jpeg' || value === 'image/webp';
 }
