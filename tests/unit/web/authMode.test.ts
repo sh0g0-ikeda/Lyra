@@ -11,13 +11,13 @@ describe('shouldAllowManualTokenAuth', () => {
     ).toBe(true);
   });
 
-  it('production でも hosted auth 必須でなければ手動 bearer token 認証を許可する', () => {
+  it('production では hosted auth 必須フラグがなくても手動 bearer token 認証を無効にする', () => {
     expect(
       shouldAllowManualTokenAuth({
         MODE: 'production',
         VITE_REQUIRE_HOSTED_AUTH: 'false',
       }),
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it('production で hosted auth 必須なら手動 bearer token 認証を無効にする', () => {

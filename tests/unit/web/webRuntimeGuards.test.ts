@@ -23,12 +23,11 @@ describe('assertSafeWebRuntimeConfig', () => {
     }).toThrow(/VITE_DEV_AUTH_BYPASS must be disabled/);
   });
 
-  it('production では要求された場合に hosted auth 設定を要求する', () => {
+  it('production では hosted auth 設定を常に要求する', () => {
     expect(() => {
       assertSafeWebRuntimeConfig({
         MODE: 'production',
         VITE_DEV_AUTH_BYPASS: 'false',
-        VITE_REQUIRE_HOSTED_AUTH: 'true',
       });
     }).toThrow(/production web auth requires/);
   });
@@ -47,7 +46,6 @@ describe('assertSafeWebRuntimeConfig', () => {
     expect(() => {
       assertSafeWebRuntimeConfig({
         MODE: 'production',
-        VITE_REQUIRE_HOSTED_AUTH: 'true',
         VITE_COGNITO_DOMAIN: 'https://example.auth.ap-northeast-1.amazoncognito.com',
         VITE_COGNITO_CLIENT_ID: 'client-1',
         VITE_COGNITO_SCOPES: 'openid email profile lyra/api',

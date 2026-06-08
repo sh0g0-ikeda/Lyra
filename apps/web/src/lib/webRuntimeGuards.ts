@@ -21,15 +21,14 @@ export function assertSafeWebRuntimeConfig(env: WebRuntimeEnv): void {
     violations.push('VITE_DEV_AUTH_BYPASS must be disabled');
   }
 
-  if (env.VITE_REQUIRE_HOSTED_AUTH === 'true') {
-    const hasCognito = hasValue(env.VITE_COGNITO_DOMAIN) && hasValue(env.VITE_COGNITO_CLIENT_ID);
-    const hasSupabase = hasValue(env.VITE_SUPABASE_URL) && hasValue(env.VITE_SUPABASE_ANON_KEY);
-    if (!hasCognito && !hasSupabase) {
-      violations.push('production web auth requires Cognito Hosted UI or Supabase configuration');
-    }
-    if (hasCognito && hasSupabase) {
-      violations.push('production web auth must configure only one hosted auth provider');
-    }
+  const hasCognito = hasValue(env.VITE_COGNITO_DOMAIN) && hasValue(env.VITE_COGNITO_CLIENT_ID);
+  const hasSupabase = hasValue(env.VITE_SUPABASE_URL) && hasValue(env.VITE_SUPABASE_ANON_KEY);
+
+  if (!hasCognito && !hasSupabase) {
+    violations.push('production web auth requires Cognito Hosted UI or Supabase configuration');
+  }
+  if (hasCognito && hasSupabase) {
+    violations.push('production web auth must configure only one hosted auth provider');
   }
 
   if (

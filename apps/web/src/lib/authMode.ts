@@ -5,7 +5,7 @@ export interface WebAuthModeEnv {
 }
 
 export function shouldAllowManualTokenAuth(env: WebAuthModeEnv): boolean {
-  // In paid production, Hosted UI is the user-facing auth surface; manual tokens stay a development escape hatch.
+  // In paid production, Hosted UI is the only user-facing auth surface.
   const isProduction = env.PROD === true || env.MODE === 'production';
-  return !(isProduction && env.VITE_REQUIRE_HOSTED_AUTH === 'true');
+  return !isProduction;
 }
