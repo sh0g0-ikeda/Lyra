@@ -90,6 +90,20 @@ describe('cognitoAuth', () => {
     expect(storage.getItem('lyra:web:cognito-session')).toBeNull();
   });
 
+  it('壊れた保存済み session は破棄する', () => {
+    const storage = new FakeStorage({
+      'lyra:web:cognito-session': JSON.stringify({
+        accessToken: '',
+        idToken: null,
+        refreshToken: null,
+        expiresAt: Number.NaN,
+      }),
+    });
+
+    expect(readStoredCognitoSession(storage, 2_000)).toBeNull();
+    expect(storage.getItem('lyra:web:cognito-session')).toBeNull();
+  });
+
   it('callback code を token に交換して session を保存する', async () => {
     const storage = new FakeStorage({
       'lyra:web:cognito-pkce': JSON.stringify({

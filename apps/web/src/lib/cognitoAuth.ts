@@ -120,7 +120,13 @@ export function readStoredCognitoSession(
 
   try {
     const parsed = JSON.parse(rawValue) as Partial<CognitoSession>;
-    if (typeof parsed.accessToken !== 'string' || typeof parsed.expiresAt !== 'number') {
+    if (
+      typeof parsed.accessToken !== 'string' ||
+      parsed.accessToken.length === 0 ||
+      typeof parsed.expiresAt !== 'number' ||
+      !Number.isFinite(parsed.expiresAt)
+    ) {
+      storage.removeItem(COGNITO_SESSION_STORAGE_KEY);
       return null;
     }
 
