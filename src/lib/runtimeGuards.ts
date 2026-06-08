@@ -187,6 +187,18 @@ export function assertProductionRuntimeConfig(
   if (placeholderStripeKeys.length > 0) {
     violations.push(`Stripe config contains placeholder values: ${placeholderStripeKeys.join(', ')}`);
   }
+  const stripeSecretKey = config.STRIPE_SECRET_KEY;
+  if (stripeSecretKey !== undefined && hasConfigValue(stripeSecretKey) && !stripeSecretKey.trim().startsWith('sk_live_')) {
+    violations.push('STRIPE_SECRET_KEY must use a live secret key in production');
+  }
+  const stripeWebhookSecret = config.STRIPE_WEBHOOK_SECRET;
+  if (
+    stripeWebhookSecret !== undefined &&
+    hasConfigValue(stripeWebhookSecret) &&
+    !stripeWebhookSecret.trim().startsWith('whsec_')
+  ) {
+    violations.push('STRIPE_WEBHOOK_SECRET must start with whsec_');
+  }
 
   for (const key of PRODUCTION_PUBLIC_URL_KEYS) {
     const value = config[key];

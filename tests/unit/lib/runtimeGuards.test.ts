@@ -15,8 +15,8 @@ const safeProductionConfig = {
   SQS_QUEUE_URL_GENERATION: 'https://sqs.ap-northeast-1.amazonaws.com/123/lyra-generation',
   S3_BUCKET_IMAGES: 'lyra-images',
   IMAGES_CDN_BASE_URL: 'https://images.lyra.test',
-  STRIPE_SECRET_KEY: 'stripe-secret',
-  STRIPE_WEBHOOK_SECRET: 'stripe-webhook-secret',
+  STRIPE_SECRET_KEY: 'sk_live_secret123',
+  STRIPE_WEBHOOK_SECRET: 'whsec_secret123',
   STRIPE_PRICE_STANDARD_MONTHLY: 'price_standard',
   STRIPE_PRICE_PREMIUM_MONTHLY: 'price_premium',
   STRIPE_PRICE_CREDITS_200: 'price_credits_200',
@@ -346,5 +346,18 @@ describe('assertProductionRuntimeConfig', () => {
     }).toThrow(
       /OPENAI_BASE_URL must use https.*SQS_QUEUE_URL_GENERATION must use https.*COGNITO_ISSUER must use https.*COGNITO_JWKS_URI must use https/,
     );
+  });
+
+  it('production では Stripe live secret と webhook secret 形式を要求する', () => {
+    expect(() => {
+      assertProductionRuntimeConfig(
+        {
+          ...safeProductionConfig,
+          STRIPE_SECRET_KEY: 'sk_test_secret123',
+          STRIPE_WEBHOOK_SECRET: 'stripe-webhook-secret',
+        },
+        'production',
+      );
+    }).toThrow(/STRIPE_SECRET_KEY must use a live secret key.*STRIPE_WEBHOOK_SECRET must start with whsec_/);
   });
 });
