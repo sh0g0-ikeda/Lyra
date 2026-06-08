@@ -171,8 +171,10 @@ npm run admin:prune-images -- --older-than-hours 24 --protect-recent-candidate-h
 
 - Default mode is dry-run and lists delete candidates only.
 - Add `--apply` to delete candidates.
-- The script only accepts `tmp/` and `session/` prefixes. It refuses `saved/` so confirmed
-  references and final page assets are not deleted by this tool.
+- The script accepts `tmp/` and `session/` prefixes by default.
+- To prune unreferenced durable assets, pass both `--prefix saved/` and
+  `--include-saved-unreferenced`. Keep the first run as dry-run and review the candidates before
+  adding `--apply`.
 - Current page images, confirmed entity references, recent entity preview candidates, and recent
   uploaded source images are protected from deletion.
 

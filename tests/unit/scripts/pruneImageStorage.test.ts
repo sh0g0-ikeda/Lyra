@@ -9,6 +9,7 @@ describe('parsePruneImageStorageArgs', () => {
       protectRecentCandidateHours: 48,
       maxDeletes: 500,
       apply: false,
+      includeSavedUnreferenced: false,
     });
   });
 
@@ -23,6 +24,7 @@ describe('parsePruneImageStorageArgs', () => {
         '96',
         '--max-deletes',
         '10',
+        '--include-saved-unreferenced',
         '--apply',
       ]),
     ).toEqual({
@@ -31,6 +33,7 @@ describe('parsePruneImageStorageArgs', () => {
       protectRecentCandidateHours: 96,
       maxDeletes: 10,
       apply: true,
+      includeSavedUnreferenced: true,
     });
   });
 

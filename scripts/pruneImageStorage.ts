@@ -6,10 +6,11 @@ export interface PruneImageStorageCliOptions {
   protectRecentCandidateHours: number;
   maxDeletes: number;
   apply: boolean;
+  includeSavedUnreferenced: boolean;
 }
 
 const POSITIVE_INTEGER_PATTERN = /^[1-9][0-9]*$/u;
-const PRUNE_FLAG_OPTIONS = new Set(['--apply', '--dry-run']);
+const PRUNE_FLAG_OPTIONS = new Set(['--apply', '--dry-run', '--include-saved-unreferenced']);
 const PRUNE_VALUE_OPTIONS = new Set([
   '--prefix',
   '--older-than-hours',
@@ -58,6 +59,7 @@ export function parsePruneImageStorageArgs(argv: readonly string[]): PruneImageS
     protectRecentCandidateHours: readPositiveInteger(values, '--protect-recent-candidate-hours', 48),
     maxDeletes: readPositiveInteger(values, '--max-deletes', 500),
     apply: values.get('--apply') === true && values.get('--dry-run') !== true,
+    includeSavedUnreferenced: values.get('--include-saved-unreferenced') === true,
   };
 }
 
@@ -96,6 +98,7 @@ async function main(): Promise<void> {
       protectRecentCandidateHours: options.protectRecentCandidateHours,
       maxDeletes: options.maxDeletes,
       dryRun: !options.apply,
+      includeSavedUnreferenced: options.includeSavedUnreferenced,
     });
 
     console.log(JSON.stringify({
@@ -135,9 +138,9 @@ function readPositiveInteger(values: Map<string, string | boolean>, key: string,
 function printUsage(): void {
   console.error([
     'Usage:',
-    '  npm run admin:prune-images -- [--prefix tmp/] [--prefix session/] [--older-than-hours 24] [--protect-recent-candidate-hours 48] [--max-deletes 500] [--apply]',
+    '  npm run admin:prune-images -- [--prefix tmp/] [--prefix session/] [--prefix saved/] [--older-than-hours 24] [--protect-recent-candidate-hours 48] [--max-deletes 500] [--include-saved-unreferenced] [--apply]',
     '',
-    'Default mode is dry-run. The script only accepts tmp/ and session/ prefixes; saved/ is intentionally excluded.',
+    'Default mode is dry-run. saved/ prefixes are accepted only with --include-saved-unreferenced and live DB references remain protected.',
   ].join('\n'));
 }
 

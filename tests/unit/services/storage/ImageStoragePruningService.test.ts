@@ -155,7 +155,7 @@ describe('ImageStoragePruningService', () => {
     expect(result.deleteCandidates).toEqual(['session/old.png']);
   });
 
-  it('rejects saved prefix', async () => {
+  it('rejects saved prefix by default', async () => {
     const service = new ImageStoragePruningService(
       new FakeStorage(new Map()),
       new FakeReferenceRepository(new Set()),
@@ -169,7 +169,51 @@ describe('ImageStoragePruningService', () => {
         maxDeletes: 100,
         dryRun: true,
       }),
-    ).rejects.toEqual(new ValidationError('Image pruning is limited to tmp/ and session/ prefixes'));
+    ).rejects.toEqual(
+      new ValidationError('Image pruning is limited to tmp/ and session/ prefixes unless saved pruning is enabled'),
+    );
+  });
+
+  it('allows explicitly enabled saved pruning while protecting live references', async () => {
+    const storage = new FakeStorage(
+      new Map([
+        [
+          'saved/',
+          [
+            { key: 'saved/user/entities/entity/reference-live.png', lastModified: new Date('2026-06-01T00:00:00.000Z') },
+            { key: 'saved/user/entities/entity/reference-deleted.png', lastModified: new Date('2026-06-01T00:00:00.000Z') },
+            { key: 'saved/user/pages/page_final.png', lastModified: new Date('2026-06-01T00:00:00.000Z') },
+            { key: 'saved/user/entities/entity/reference-new.png', lastModified: new Date('2026-06-08T23:00:00.000Z') },
+          ],
+        ],
+      ]),
+    );
+    const service = new ImageStoragePruningService(
+      storage,
+      new FakeReferenceRepository(new Set([
+        'saved/user/entities/entity/reference-live.png',
+        'saved/user/pages/page_final.png',
+      ])),
+    );
+
+    const result = await service.prune({
+      prefixes: ['saved/'],
+      olderThanHours: 24,
+      protectRecentCandidateHours: 48,
+      maxDeletes: 100,
+      dryRun: false,
+      includeSavedUnreferenced: true,
+      now: new Date('2026-06-09T00:00:00.000Z'),
+    });
+
+    expect(result).toMatchObject({
+      scanned: 4,
+      protected: 2,
+      skippedRecent: 1,
+      deleteCandidates: ['saved/user/entities/entity/reference-deleted.png'],
+      deleted: ['saved/user/entities/entity/reference-deleted.png'],
+      truncated: false,
+    });
   });
 
   it('rejects traversal-like prefixes even under allowed roots', async () => {
@@ -186,6 +230,8 @@ describe('ImageStoragePruningService', () => {
         maxDeletes: 100,
         dryRun: true,
       }),
-    ).rejects.toEqual(new ValidationError('Image pruning is limited to tmp/ and session/ prefixes'));
+    ).rejects.toEqual(
+      new ValidationError('Image pruning is limited to tmp/ and session/ prefixes unless saved pruning is enabled'),
+    );
   });
 });

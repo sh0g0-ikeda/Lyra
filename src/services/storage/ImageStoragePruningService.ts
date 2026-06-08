@@ -17,6 +17,7 @@ export interface PruneImageStorageInput {
   protectRecentCandidateHours: number;
   maxDeletes: number;
   dryRun: boolean;
+  includeSavedUnreferenced?: boolean;
   now?: Date;
 }
 
@@ -30,12 +31,13 @@ export interface PruneImageStorageResult {
   truncated: boolean;
 }
 
-const ALLOWED_PRUNE_PREFIXES = ['tmp/', 'session/'] as const;
+const DISPOSABLE_PRUNE_PREFIXES = ['tmp/', 'session/'] as const;
+const SAVED_PRUNE_PREFIXES = ['saved/'] as const;
 const HOUR_MS = 60 * 60 * 1000;
 
 /**
- * Removes only disposable image objects. Saved references and final page
- * assets are intentionally outside the allowed prefixes.
+ * Removes only old image objects that are not currently referenced by the DB.
+ * Saved pruning is opt-in because those keys may represent durable user assets.
  */
 export class ImageStoragePruningService {
   public constructor(
@@ -108,8 +110,8 @@ function validatePruneInput(input: PruneImageStorageInput): void {
   }
 
   for (const prefix of new Set(input.prefixes)) {
-    if (!isAllowedPrunePrefix(prefix)) {
-      throw new ValidationError('Image pruning is limited to tmp/ and session/ prefixes');
+    if (!isAllowedPrunePrefix(prefix, input.includeSavedUnreferenced === true)) {
+      throw new ValidationError('Image pruning is limited to tmp/ and session/ prefixes unless saved pruning is enabled');
     }
   }
 
@@ -126,12 +128,20 @@ function validatePruneInput(input: PruneImageStorageInput): void {
   }
 }
 
-function isAllowedPrunePrefix(prefix: string): boolean {
+function isAllowedPrunePrefix(prefix: string, includeSavedUnreferenced: boolean): boolean {
   if (prefix.includes('..') || prefix.includes('//') || prefix.startsWith('/')) {
     return false;
   }
 
-  return ALLOWED_PRUNE_PREFIXES.some((allowedPrefix) => (
+  if (matchesAllowedPrefix(prefix, DISPOSABLE_PRUNE_PREFIXES)) {
+    return true;
+  }
+
+  return includeSavedUnreferenced && matchesAllowedPrefix(prefix, SAVED_PRUNE_PREFIXES);
+}
+
+function matchesAllowedPrefix(prefix: string, allowedPrefixes: readonly string[]): boolean {
+  return allowedPrefixes.some((allowedPrefix) => (
     prefix === allowedPrefix || (
       prefix.startsWith(allowedPrefix) &&
       prefix.length > allowedPrefix.length
