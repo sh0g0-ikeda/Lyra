@@ -329,7 +329,8 @@ describe('page generation routes', () => {
     });
 
     expect(response.status).toBe(200);
-    const payload = await response.json();
+    const payload = (await response.json()) as Record<string, unknown>;
+    const result = payload.result as Record<string, unknown>;
 
     expect(payload).toMatchObject({
       id: '22222222-2222-4222-8222-222222222222',
@@ -337,8 +338,17 @@ describe('page generation routes', () => {
       params: {
         requires_planner: false,
       },
+      result: {
+        generated_image: {
+          cdn_url: 'https://cdn.example.com/page.png',
+        },
+        compiled_prompt_used: true,
+      },
       openai_request_id: null,
     });
+    expect(result).not.toHaveProperty('draft_prompt');
+    expect(result).not.toHaveProperty('compiled_brief');
+    expect(result).not.toHaveProperty('compiled_prompt');
     expect(payload).not.toHaveProperty('user_id');
     expect(payload).not.toHaveProperty('sqs_message_id');
   });
@@ -457,6 +467,10 @@ function buildJob(): GenerationJob {
       generated_image: {
         cdn_url: 'https://cdn.example.com/page.png',
       },
+      draft_prompt: 'very long draft prompt should not be returned',
+      compiled_brief: 'very long compiler brief should not be returned',
+      compiled_prompt: 'very long compiled prompt should not be returned',
+      compiled_prompt_used: true,
     },
     sqsMessageId: null,
     openaiRequestId: null,
