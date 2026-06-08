@@ -72,6 +72,8 @@ DATABASE_URL=postgres://lyra:replace-me@lyra-db.example.ap-northeast-1.rds.amazo
 Production public URLs such as `IMAGES_CDN_BASE_URL`, Stripe return URLs, and
 `CORS_ALLOWED_ORIGINS` must use HTTPS and non-local hosts. Localhost and plain HTTP
 settings are rejected during API startup.
+Required production settings also reject obvious placeholder values such as
+`replace-me`, `replace_me`, `placeholder`, and `changeme`.
 
 ### Production auth
 

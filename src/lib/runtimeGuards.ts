@@ -63,6 +63,18 @@ const PRODUCTION_PUBLIC_URL_KEYS = [
   'STRIPE_PORTAL_RETURN_URL',
 ] as const;
 
+const PRODUCTION_NON_PLACEHOLDER_KEYS = [
+  'DATABASE_URL',
+  'AWS_REGION',
+  'COGNITO_USER_POOL_ID',
+  'COGNITO_CLIENT_ID',
+  'COGNITO_ISSUER',
+  'OPENAI_API_KEY',
+  'SQS_QUEUE_URL_GENERATION',
+  'S3_BUCKET_IMAGES',
+  'IMAGES_CDN_BASE_URL',
+] as const;
+
 export function assertProductionRuntimeConfig(
   config: RuntimeGuardConfig,
   nodeEnv = process.env.NODE_ENV,
@@ -132,6 +144,12 @@ export function assertProductionRuntimeConfig(
     }
   }
 
+  for (const key of PRODUCTION_NON_PLACEHOLDER_KEYS) {
+    if (hasPlaceholderConfigValue(config[key])) {
+      violations.push(`${key} must not use a placeholder value`);
+    }
+  }
+
   if (
     config.GENERATION_USER_ACTIVE_JOB_LIMIT !== undefined &&
     config.GENERATION_USER_ACTIVE_JOB_LIMIT > MAX_PRODUCTION_GENERATION_ACTIVE_JOB_LIMITS.PER_USER
@@ -154,6 +172,10 @@ export function assertProductionRuntimeConfig(
   if (missingStripeKeys.length > 0) {
     violations.push(`Stripe config is incomplete: ${missingStripeKeys.join(', ')}`);
   }
+  const placeholderStripeKeys = STRIPE_KEYS.filter((key) => hasPlaceholderConfigValue(config[key]));
+  if (placeholderStripeKeys.length > 0) {
+    violations.push(`Stripe config contains placeholder values: ${placeholderStripeKeys.join(', ')}`);
+  }
 
   for (const key of PRODUCTION_PUBLIC_URL_KEYS) {
     const value = config[key];
@@ -173,6 +195,26 @@ function isMissingConfigValue(value: string | undefined): boolean {
 
 function hasConfigValue(value: string | undefined): boolean {
   return value !== undefined && value.trim().length > 0;
+}
+
+function hasPlaceholderConfigValue(value: string | undefined): boolean {
+  if (value === undefined) {
+    return false;
+  }
+
+  const normalizedValue = value.trim().toLowerCase();
+  return (
+    normalizedValue.includes('replace-me') ||
+    normalizedValue.includes('replace_me') ||
+    normalizedValue.includes('replace me') ||
+    normalizedValue.includes('placeholder') ||
+    normalizedValue.includes('change-me') ||
+    normalizedValue.includes('change_me') ||
+    normalizedValue.includes('changeme') ||
+    normalizedValue === 'dummy' ||
+    normalizedValue.includes('-dummy') ||
+    normalizedValue.includes('_dummy')
+  );
 }
 
 function productionCorsAllowsWildcard(value: string | undefined): boolean {

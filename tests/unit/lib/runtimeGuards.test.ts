@@ -313,4 +313,21 @@ describe('assertProductionRuntimeConfig', () => {
       );
     }).toThrow(/CORS_ALLOWED_ORIGINS contains unsafe production origins/);
   });
+
+  it('production では placeholder のままの必須設定を拒否する', () => {
+    expect(() => {
+      assertProductionRuntimeConfig(
+        {
+          ...safeProductionConfig,
+          OPENAI_API_KEY: 'replace-me',
+          STRIPE_SECRET_KEY: 'changeme',
+          STRIPE_PRICE_CREDITS_200: 'price_placeholder',
+          COGNITO_CLIENT_ID: 'replace_me',
+        },
+        'production',
+      );
+    }).toThrow(
+      /COGNITO_CLIENT_ID must not use a placeholder value.*OPENAI_API_KEY must not use a placeholder value.*Stripe config contains placeholder values: STRIPE_SECRET_KEY, STRIPE_PRICE_CREDITS_200/,
+    );
+  });
 });
