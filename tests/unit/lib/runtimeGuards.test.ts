@@ -61,6 +61,18 @@ describe('assertProductionRuntimeConfig', () => {
     }).toThrow(ConfigurationError);
   });
 
+  it('production では local image fallback を拒否する', () => {
+    expect(() => {
+      assertProductionRuntimeConfig(
+        {
+          ...safeProductionConfig,
+          LOCAL_IMAGE_FALLBACK_ENABLED: true,
+        },
+        'production',
+      );
+    }).toThrow(/LOCAL_IMAGE_FALLBACK_ENABLED must be disabled/);
+  });
+
   it('production で生成系必須設定が欠けている場合は拒否する', () => {
     expect(() => {
       assertProductionRuntimeConfig(

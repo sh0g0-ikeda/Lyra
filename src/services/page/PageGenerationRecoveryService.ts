@@ -23,8 +23,8 @@ export class NoopPageGenerationRecoveryService implements PageGenerationRecovery
 
 /**
  * Restores page state and refunds credits for page generation jobs that were
- * claimed by a worker process but never completed, typically due to local
- * process termination or machine restarts.
+ * queued or claimed by a worker process but never completed, typically due to
+ * local process termination or machine restarts.
  */
 export class PageGenerationRecoveryService implements PageGenerationRecoveryServicePort {
   public constructor(
@@ -59,7 +59,7 @@ export class PageGenerationRecoveryService implements PageGenerationRecoveryServ
       const recovered = await this.executionRepository.failPageGeneration({
         jobId: job.jobId,
         userId: job.userId,
-        errorMessage: 'Page generation worker stopped before completion; recovered stale processing job',
+        errorMessage: 'Page generation worker stopped before completion; recovered stale queued or processing job',
         pageId: job.pageId,
         previousStatus: job.previousStatus,
         previousGenerationMode: job.previousGenerationMode,
@@ -78,7 +78,7 @@ export class PageGenerationRecoveryService implements PageGenerationRecoveryServ
 
       recoveredCount += 1;
       console.warn(
-        `[page-generation-recovery] recovered stale job ${job.jobId} for page ${job.pageId} started at ${job.startedAt.toISOString()}`,
+        `[page-generation-recovery] recovered stale job ${job.jobId} for page ${job.pageId} stale since ${job.staleAt.toISOString()}`,
       );
     }
 

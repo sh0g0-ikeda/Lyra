@@ -11,6 +11,7 @@ interface RuntimeGuardConfig {
   COGNITO_REQUIRED_SCOPES?: string;
   LOCAL_FILE_STORAGE_DIR?: string;
   LOCAL_ASSET_BASE_URL?: string;
+  LOCAL_IMAGE_FALLBACK_ENABLED?: boolean;
   OPENAI_API_KEY?: string;
   SQS_QUEUE_URL_GENERATION?: string;
   S3_BUCKET_IMAGES?: string;
@@ -85,6 +86,10 @@ export function assertProductionRuntimeConfig(
 
   if (config.LOCAL_FILE_STORAGE_DIR !== undefined || config.LOCAL_ASSET_BASE_URL !== undefined) {
     violations.push('local asset storage must not be enabled');
+  }
+
+  if (config.LOCAL_IMAGE_FALLBACK_ENABLED === true) {
+    violations.push('LOCAL_IMAGE_FALLBACK_ENABLED must be disabled');
   }
 
   for (const key of REQUIRED_PRODUCTION_GENERATION_KEYS) {

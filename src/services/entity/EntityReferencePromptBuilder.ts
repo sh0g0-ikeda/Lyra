@@ -93,10 +93,11 @@ export class EntityReferencePromptBuilder implements EntityReferencePromptBuilde
       return [
         `Target image: ${context.entityType === 'object' ? 'manga object reference' : 'manga creature reference'}`,
         `Subject name: ${context.name}`,
-        context.freeDescription === null ? null : `Core concept: ${normalizeSentence(context.freeDescription)}`,
+        context.freeDescription === null ? null : `Core concept: ${normalizeImagePromptSentence(context.freeDescription)}`,
         summarizeLooseStructuredFieldsLine(context.structuredFields),
-        context.promptSupplement === null ? null : `Must keep: ${normalizeSentence(context.promptSupplement)}`,
-        `Hard constraints: ${CHARACTER_HARD_CONSTRAINTS_TEXT}`,
+        context.promptSupplement === null ? null : `Must keep: ${normalizeImagePromptSentence(context.promptSupplement)}`,
+        buildImageSafetyInterpretationLine(context),
+        `Hard constraints: ${hardConstraintsTextForEntityType(context.entityType)}`,
       ]
         .filter(isNonEmpty)
         .join('\n');
@@ -107,7 +108,7 @@ export class EntityReferencePromptBuilder implements EntityReferencePromptBuilde
     const lines = [
       'Target image: manga full-body character reference',
       `Subject name: ${context.name}`,
-      context.freeDescription === null ? null : `Core concept: ${normalizeSentence(context.freeDescription)}`,
+      context.freeDescription === null ? null : `Core concept: ${normalizeImagePromptSentence(context.freeDescription)}`,
       labeledLine('First-glance impression', [details.firstImpression]),
       labeledLine('Character visual anchor', [details.visualAnchor]),
       labeledLine('Signature feature', [details.signatureFeature, details.distinguishingFeatures]),
@@ -136,7 +137,8 @@ export class EntityReferencePromptBuilder implements EntityReferencePromptBuilde
         : labeledLine('Style anchors', buildStyleAnchorLines(styleReference.anchors)),
       labeledLine('Render style', [details.artStyle]),
       labeledLine('Personality-to-visual cue', [buildPersonalityCue(details, context.freeDescription)]),
-      context.promptSupplement === null ? null : `Must keep: ${normalizeSentence(context.promptSupplement)}`,
+      context.promptSupplement === null ? null : `Must keep: ${normalizeImagePromptSentence(context.promptSupplement)}`,
+      buildImageSafetyInterpretationLine(context),
       `Hard constraints: ${CHARACTER_HARD_CONSTRAINTS_TEXT}`,
     ].filter(isNonEmpty);
 
@@ -148,6 +150,22 @@ const CHARACTER_HARD_CONSTRAINTS_TEXT =
   'exactly one subject, centered, full figure visible from head to toe, both hands visible, both feet visible, plain neutral background, no text, no watermark, no extra props unless explicitly requested, no extra characters.';
 const CHARACTER_HARD_CONSTRAINTS_SENTENCE =
   'Keep exactly one centered subject, show the full figure from head to toe with both hands and both feet visible, use a plain neutral background, and include no text, watermark, extra props, or extra characters.';
+const NONHUMAN_HARD_CONSTRAINTS_TEXT =
+  'exactly one subject, centered, full form visible, plain neutral background, no text, no watermark, no extra props unless explicitly requested, no extra characters.';
+const OBJECT_HARD_CONSTRAINTS_TEXT =
+  'exactly one object, centered, full object visible, plain neutral background, no text, no watermark, no extra props unless explicitly requested.';
+
+function hardConstraintsTextForEntityType(entityType: EntityReferenceContext['entityType']): string {
+  if (entityType === 'object') {
+    return OBJECT_HARD_CONSTRAINTS_TEXT;
+  }
+
+  if (entityType === 'nonhuman') {
+    return NONHUMAN_HARD_CONSTRAINTS_TEXT;
+  }
+
+  return CHARACTER_HARD_CONSTRAINTS_TEXT;
+}
 
 function buildCharacterOpening(
   context: EntityReferenceContext,
@@ -275,7 +293,7 @@ function buildSupplementSentence(promptSupplement: string | null): string | null
     return null;
   }
 
-  return `Additional direction: ${normalizeSentence(promptSupplement)}.`;
+  return `Additional direction: ${normalizeImagePromptSentence(promptSupplement)}.`;
 }
 
 function buildNonCharacterPrompt(context: EntityReferenceContext): string {
@@ -284,9 +302,10 @@ function buildNonCharacterPrompt(context: EntityReferenceContext): string {
     context.entityType === 'object'
       ? `Create a clean manga object reference of ${context.name}.`
       : `Create a clean manga creature reference of ${context.name}.`,
-    context.freeDescription === null ? null : `Core concept: ${normalizeSentence(context.freeDescription)}.`,
+    context.freeDescription === null ? null : `Core concept: ${normalizeImagePromptSentence(context.freeDescription)}.`,
     summary.length === 0 ? null : `Design details: ${summary}.`,
     buildSupplementSentence(context.promptSupplement),
+    buildImageSafetyInterpretationLine(context),
     context.entityType === 'object'
       ? 'Keep one centered subject on a plain neutral background with no text or watermark.'
       : 'Keep one centered subject fully visible on a plain neutral background with no text or watermark.',
@@ -521,7 +540,7 @@ function mapFreeText(value: unknown): string | null {
     return null;
   }
 
-  return normalizeSentence(value);
+  return normalizeImagePromptSentence(value);
 }
 
 function mapStringArray(value: unknown): string[] {
@@ -538,9 +557,55 @@ function normalizeSentence(value: string): string {
   return value.trim().replace(/\s+/gu, ' ').replace(/[.。]+$/u, '');
 }
 
+function normalizeImagePromptSentence(value: string): string {
+  return replaceUnsafeSafetyMetaTerms(replaceUnsafeNudityTerms(normalizeSentence(value)));
+}
+
+function buildImageSafetyInterpretationLine(context: EntityReferenceContext): string | null {
+  const sourceText = [
+    context.freeDescription,
+    context.promptSupplement,
+    summarizeLooseStructuredFields(context.structuredFields),
+  ]
+    .filter((value): value is string => typeof value === 'string')
+    .join(' ');
+
+  if (!containsUnsafeNudityTerms(sourceText)) {
+    return null;
+  }
+
+  if (context.entityType === 'nonhuman') {
+    return 'Safety interpretation: render the subject as a fully opaque non-human silhouette surface, like shadow material, and keep it as a neutral design reference.';
+  }
+
+  return 'Safety interpretation: render the subject with opaque coverage or costume-like surface treatment, and keep it as a neutral design reference.';
+}
+
+function replaceUnsafeNudityTerms(value: string): string {
+  return UNSAFE_NUDITY_PATTERNS.reduce(
+    (current, pattern) =>
+      current.replace(pattern, 'a continuous opaque non-human silhouette surface without anatomical detailing'),
+    value,
+  );
+}
+
+function containsUnsafeNudityTerms(value: string): boolean {
+  return UNSAFE_NUDITY_PATTERNS.some((pattern) => {
+    pattern.lastIndex = 0;
+    return pattern.test(value);
+  });
+}
+
+function replaceUnsafeSafetyMetaTerms(value: string): string {
+  return UNSAFE_SAFETY_META_PATTERNS.reduce(
+    (current, pattern) => current.replace(pattern, 'neutral design reference'),
+    value,
+  );
+}
+
 function normalizeScalar(value: unknown): string {
   if (typeof value === 'string') {
-    return normalizeSentence(value).replaceAll('_', ' ');
+    return normalizeImagePromptSentence(value).replaceAll('_', ' ');
   }
 
   if (typeof value === 'number' || typeof value === 'boolean') {
@@ -563,7 +628,7 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 }
 
 function summarizeClothingSilhouette(description: string): string {
-  return normalizeSentence(description);
+  return normalizeImagePromptSentence(description);
 }
 
 function articlelessPhrase(value: string): string {
@@ -845,3 +910,23 @@ const ART_STYLE_PHRASES: Record<string, string> = {
   manga: 'manga',
   painterly: 'painterly',
 };
+
+const UNSAFE_NUDITY_PATTERNS = [
+  /衣服[はを]?着ていない/gu,
+  /服[はを]?着ていない/gu,
+  /服なし/gu,
+  /衣服なし/gu,
+  /全裸/gu,
+  /裸(?:体|身)?/gu,
+  /\b(?:nude|naked|unclothed)\b/giu,
+  /\b(?:no clothes|without clothes|not wearing clothes)\b/giu,
+] as const;
+
+const UNSAFE_SAFETY_META_PATTERNS = [
+  /アダルト要素ではない/gu,
+  /アダルト要素はない/gu,
+  /成人向け(?:ではない|でない|要素ではない|要素はない)?/gu,
+  /性的(?:ではない|でない|な要素ではない|な要素はない|表現ではない)?/gu,
+  /エロ(?:ではない|くない|要素ではない|要素はない)?/gu,
+  /\b(?:sexual|erotic|pornographic|porn)\b/giu,
+] as const;

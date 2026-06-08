@@ -96,12 +96,14 @@ describe('CreditService', () => {
       userId: 'user-1',
       cost: 25,
       description: 'page generation',
+      jobId: 'job-1',
     });
 
     expect(result.monthlyCredits).toBe(0);
     expect(result.purchasedCredits).toBe(5);
     expect(result.totalCredits).toBe(5);
     expect(repository.ledger[0]?.amount).toBe(-25);
+    expect(repository.ledger[0]?.jobId).toBe('job-1');
   });
 
   it('残高不足の場合にINSUFFICIENT_CREDITSになる', async () => {

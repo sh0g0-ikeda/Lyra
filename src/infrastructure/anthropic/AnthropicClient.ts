@@ -269,7 +269,15 @@ function isRetryableStatus(status: number): boolean {
 }
 
 function isRetryableError(error: unknown): boolean {
-  return !(error instanceof ConfigurationError) && error instanceof Error;
+  if (error instanceof ConfigurationError) {
+    return false;
+  }
+
+  if (error instanceof Error && error.name === 'AbortError') {
+    return false;
+  }
+
+  return error instanceof Error;
 }
 
 function normalizeError(error: unknown): ConfigurationError {

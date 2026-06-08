@@ -112,4 +112,76 @@ describe('OpenAIClient', () => {
       requestId: 'req-form',
     });
   });
+
+  it('maxRetries が 1 の場合は 5xx を自動リトライしない', async () => {
+    const fetchFn = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(JSON.stringify({ error: { message: 'temporary failure' } }), { status: 500 }),
+    );
+    const client = new OpenAIClient({
+      apiKey: 'test-key',
+      baseUrl: 'https://api.openai.test/v1',
+      timeoutMs: 1000,
+      fetchFn,
+      maxRetries: 1,
+    });
+
+    await expect(
+      client.postJson('/images/generations', {
+        model: 'gpt-image-2',
+      }),
+    ).rejects.toEqual(new ConfigurationError('temporary failure'));
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+  });
+
+  it('maxRetries が 1 の場合は timeout を自動リトライしない', async () => {
+    const fetchFn = vi.fn<typeof fetch>().mockImplementation(
+      (_input, init) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => {
+            const error = new Error('aborted');
+            error.name = 'AbortError';
+            reject(error);
+          });
+        }),
+    );
+    const client = new OpenAIClient({
+      apiKey: 'test-key',
+      baseUrl: 'https://api.openai.test/v1',
+      timeoutMs: 1,
+      fetchFn,
+      maxRetries: 1,
+    });
+
+    await expect(
+      client.postJson('/images/generations', {
+        model: 'gpt-image-2',
+      }),
+    ).rejects.toEqual(new ConfigurationError('OpenAI request timed out'));
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+  });
+  it('timeout は通常設定でも自動リトライしない', async () => {
+    const fetchFn = vi.fn<typeof fetch>().mockImplementation(
+      (_input, init) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => {
+            const error = new Error('aborted');
+            error.name = 'AbortError';
+            reject(error);
+          });
+        }),
+    );
+    const client = new OpenAIClient({
+      apiKey: 'test-key',
+      baseUrl: 'https://api.openai.test/v1',
+      timeoutMs: 1,
+      fetchFn,
+    });
+
+    await expect(
+      client.postJson('/responses', {
+        model: 'gpt-4o-2024-08-06',
+      }),
+    ).rejects.toEqual(new ConfigurationError('OpenAI request timed out'));
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+  });
 });

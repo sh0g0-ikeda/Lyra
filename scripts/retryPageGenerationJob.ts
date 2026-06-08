@@ -1,5 +1,7 @@
 import { db } from '../src/lib/db.js';
+import { PostgresCreditRepository } from '../src/repositories/CreditRepository.js';
 import { PostgresGenerationJobRepository } from '../src/repositories/GenerationJobRepository.js';
+import { CreditService } from '../src/services/credit/CreditService.js';
 import { PageGenerationRetryService } from '../src/services/page/PageGenerationRetryService.js';
 import { resolveWorkerDependencies } from '../worker/dependencies.js';
 
@@ -13,6 +15,7 @@ async function main(): Promise<void> {
   const retryService = new PageGenerationRetryService(
     new PostgresGenerationJobRepository(db),
     resolveWorkerDependencies().pageGenerationWorkerService,
+    new CreditService(new PostgresCreditRepository(db, db)),
   );
 
   await retryService.retryFailedJob(userId, jobId);

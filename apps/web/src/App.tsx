@@ -387,6 +387,7 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   'Save selected': '選択中を保存',
   'Signed in': 'ログイン中',
   'No work selected': '作品が選択されていません',
+  'Create or select a work from the left panel to start editing.': '左側で作品を作成または選択すると編集を始められます。',
   'Choose the current work, chapter, and episode while editing characters.': 'キャラ編集中の作品・章・話を選択します。',
   'New character': '新規キャラ',
   'Importing image...': '画像を取り込み中...',
@@ -395,6 +396,36 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   'No preview candidates yet.': 'まだプレビュー候補がありません。',
   'Delete with the button only. Clicking the image will not delete it.': '削除はボタンのみです。画像クリックでは削除しません。',
   'No confirmed references yet.': 'まだ確定済みリファレンスがありません。',
+  'Creating a new character. Saving here will add a new record and will not overwrite existing characters.':
+    '新規キャラを作成中です。ここで保存すると既存キャラを上書きせず、新しいキャラとして追加します。',
+  'Editing the selected character.': '選択中のキャラを編集しています。',
+  'Delete this character? This cannot be undone.': 'このキャラを削除しますか？この操作は元に戻せません。',
+  'Delete this reference image? This cannot be undone.': 'このリファレンス画像を削除しますか？この操作は元に戻せません。',
+  'Delete this panel? This can break the frame/panel count until frames are adjusted.':
+    'このコマを削除しますか？コマ割りを調整するまでフレーム数とコマ数が一致しなくなる場合があります。',
+  'Delete this balloon? This cannot be undone.': 'この吹き出しを削除しますか？この操作は元に戻せません。',
+  'Use reference': '候補に含める',
+  'Primary reference': 'メインにする',
+  upload: 'アップロード',
+  generated: '生成',
+  'Frame count and panel count do not match. Adjust frames or panels before generating.':
+    'フレーム数とコマ数が一致していません。生成前にコマ割りまたはコマを調整してください。',
+  'Create character': 'キャラを作成',
+  'Save character': 'キャラを保存',
+  'Generate page': 'ページ生成',
+  'Confirm page': 'ページ確定',
+  'Reopen page': '再編集',
+  'Apply frame template': 'テンプレートを適用',
+  'Create panel': 'コマを作成',
+  'Save panel': 'コマを保存',
+  'Create balloon': '吹き出しを作成',
+  'Save balloon': '吹き出しを保存',
+  'Save scene': 'シーンを保存',
+  'Subscription plan': 'サブスクリプション',
+  'Add 1000 credits': '1000クレジットを追加',
+  'Billing portal': '請求管理',
+  page_generate: 'ページ生成',
+  entity_generate: 'キャラ生成',
   'Switch story context for page editing.': 'ページ編集対象の作品・章・話を選択します。',
   'Double-click image to enlarge': '画像はダブルクリックで拡大',
   'Fill selected page': '選択中ページを補完',
@@ -504,6 +535,12 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   Ahoge: 'アホ毛',
   'Hair streak': '髪のメッシュ',
   Glasses: '眼鏡',
+  Stubble: '無精ひげ',
+  Beard: 'ひげ',
+  Goatee: 'あごひげ',
+  Earrings: 'ピアス',
+  'Thick eyebrows': '太い眉',
+  'Sharp jawline': '鋭い顎のライン',
   'about six heads tall': '六頭身くらい',
   'about six and a half heads tall': '六・五頭身くらい',
   'about seven heads tall': '七頭身くらい',
@@ -548,15 +585,31 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   'rounded front curve': '丸い前髪ライン',
   'side-swept front': '流した前髪',
   'blunt front': 'ぱっつん前髪',
+  'short textured front': '短く毛束感のある前髪',
+  'comma front': 'コンマ型の前髪',
+  'curtain front': 'カーテン前髪',
+  'messy front': '無造作な前髪',
+  'swept-up front': '立ち上げた前髪',
   'short side locks': '短い横髪',
   'soft cheek framing': '頬を囲う横髪',
   'long side locks': '長い横髪',
   'tucked behind ears': '耳にかけた横髪',
+  'trimmed sides': '短く整えたサイド',
+  'faded sides': 'フェードしたサイド',
+  'shaved sides': '刈り上げたサイド',
+  sideburns: 'もみあげ',
+  'ear-length sides': '耳丈の横髪',
   'clean bob back': 'ボブの後ろ髪',
   'layered back': 'レイヤー後ろ髪',
   'straight long back': 'まっすぐ長い後ろ髪',
   'ponytail fall': 'ポニーテールの落ち感',
   'braided back': '編み込み後ろ髪',
+  'tapered nape': '襟足を短く整える',
+  'short clipped back': '短く刈った後ろ髪',
+  'undercut back': '後ろのアンダーカット',
+  'tied-back hair': '後ろで結んだ髪',
+  'long loose back': '長く下ろした後ろ髪',
+  'wolf nape': 'ウルフ風の襟足',
   'round collar': '丸襟',
   'sharp collar': '尖った襟',
   'standing collar': '立ち襟',
@@ -571,10 +624,15 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   'Long skirt': '長いスカート',
   'Straight pants': '細いパンツ',
   'Wide pants': 'ワイドパンツ',
+  Slacks: 'スラックス',
+  Jeans: 'ジーンズ',
+  'Cargo pants': 'カーゴパンツ',
   Shorts: '短パン',
   Loafers: 'ローファー',
   Sneakers: 'スニーカー',
   Boots: 'ブーツ',
+  'Dress shoes': '革靴',
+  'Combat boots': 'コンバットブーツ',
   Heels: 'ヒール',
   'School shoes': '上履き・制服靴',
   'Bare legs': '素足',
@@ -611,24 +669,45 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   'Serious reliable': '真面目で頼れる',
   'Mysterious fragile': '不思議で儚い',
   'Energetic bold': '元気で大胆',
+  'Stoic reserved': '寡黙で控えめ',
+  'Rugged calm': '無骨で落ち着いた',
+  'Sharp elite': '鋭く知的',
+  'Playful confident': '余裕があり茶目っ気がある',
+  'Mature composed': '大人びて落ち着いた',
   'Upright neat': '背筋が伸びて整っている',
   'Natural relaxed': '自然で力が抜けている',
   'Shy reserved': '控えめでおとなしい',
   'Confident open': '自信があり開いている',
   'Still quiet': '静かで動きが少ない',
+  'Arms crossed': '腕を組む',
+  'Hands in pockets': 'ポケットに手を入れる',
+  'Guarded stance': '警戒した立ち姿',
+  'Wide grounded stance': '足を広げて安定した立ち姿',
+  'Elegant upright': '上品に背筋を伸ばす',
   'Soft smile': 'やわらかな微笑み',
   'Calm neutral': '落ち着いた無表情',
   'Serious focus': '真剣で集中',
   'Cheerful smile': '明るい笑顔',
   'Cool unfazed': '冷静で動じない',
+  'Stern look': '厳しい目つき',
+  'Tired neutral': '疲れた無表情',
+  'Confident smirk': '自信のある片笑い',
+  'Bored gaze': '退屈そうな視線',
+  'Teasing smile': 'からかうような笑み',
   Petite: '小柄',
   Slender: '細身',
   Average: '標準',
   Athletic: '引き締まっている',
   Muscular: '筋肉質',
   Curvy: '丸みがある',
+  Lean: '引き締まった細身',
+  Stocky: 'がっしり',
+  'Broad build': '幅広い体格',
+  'Large build': '大柄',
+  'Very short height': 'かなり低め',
   Short: '低め',
   Tall: '高め',
+  'Very tall height': 'かなり高め',
   Round: '丸型',
   Oval: '卵型',
   Heart: 'ハート型',
@@ -653,24 +732,55 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   Serious: '真面目',
   Black: '黒',
   Brown: '茶',
+  'Dark brown': '濃い茶',
   Blonde: '金',
+  'Ash blonde': 'アッシュブロンド',
+  Auburn: '赤みの茶',
   Silver: '銀',
   White: '白',
   Blue: '青',
   Red: '赤',
   Pink: 'ピンク',
   Purple: '紫',
+  'Two tone': 'ツートーン',
   'Very short': 'かなり短い',
   'Very long': 'かなり長い',
   Wavy: 'ゆるいウェーブ',
   Curly: 'カール',
   Wild: 'ラフ',
+  Tousled: '無造作',
+  Spiky: 'ツンツン',
+  Fluffy: 'ふわっとした',
+  Slick: '撫で付けた',
+  Coarse: '硬め',
+  Shaved: '剃り込み',
   Down: '下ろす',
+  'Short cut': 'ショートカット',
+  'Buzz cut': '坊主',
+  'Crew cut': 'クルーカット',
+  'Two block': 'ツーブロック',
+  Undercut: 'アンダーカット',
+  'Fade cut': 'フェードカット',
+  'Side part': '七三分け',
+  'Center part': 'センター分け',
+  'Comma hair': 'コンマヘア',
+  'Slick back': 'オールバック',
+  'Messy short': '無造作ショート',
+  Pompadour: 'ポンパドール',
+  'Short bob': 'ショートボブ',
+  'Medium layered': 'ミディアムレイヤー',
+  'Wolf cut': 'ウルフカット',
+  'Long straight': 'ロングストレート',
   Ponytail: 'ポニーテール',
+  'Side ponytail': 'サイドポニーテール',
   'Twin tails': 'ツインテール',
   Bun: 'お団子',
+  'Man bun': 'マンバン',
+  Topknot: 'トップノット',
   Braid: '編み込み',
   'Half up': 'ハーフアップ',
+  'Tied back': '後ろで結ぶ',
+  'Shaved sides': 'サイドを刈り上げ',
   Green: '緑',
   Gold: '金',
   Gentle: '穏やか',
@@ -682,10 +792,22 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   Heavy: '重め',
   'Side swept': '流し前髪',
   Blunt: 'ぱっつん',
+  Parted: '分け前髪',
+  'Center parted': 'センター分け前髪',
+  Curtain: 'カーテンバング',
+  'Messy bangs': '無造作前髪',
+  'Short bangs': '短い前髪',
+  'Long bangs': '長い前髪',
   Military: '軍服',
   School: '制服',
   Casual: '私服',
   Suit: 'スーツ',
+  'Business casual': 'ビジネスカジュアル',
+  'Lab coat': '白衣',
+  'Trench coat': 'トレンチコート',
+  Tactical: 'タクティカル',
+  'Traditional formal': '礼装・正装',
+  'Street jacket': 'ストリートジャケット',
   Fantasy: 'ファンタジー',
   Japanese: '和装',
   Streetwear: 'ストリート',
@@ -1023,6 +1145,7 @@ function StudioShell(props: {
     compiler_error: string | null;
   } | null>(null);
   const [entityDraft, setEntityDraft] = useState<EntityDraft>(createEmptyEntityDraft());
+  const [entityEditorMode, setEntityEditorMode] = useState<'edit' | 'create'>('edit');
   const [selectedEntityId, setSelectedEntityId] = useState('');
   const [sceneDraft, setSceneDraft] = useState<SceneDraft>(createEmptySceneDraft());
   const [selectedSceneId, setSelectedSceneId] = useState('');
@@ -1036,6 +1159,7 @@ function StudioShell(props: {
   const [framesJson, setFramesJson] = useState('[]');
   const [importingImage, setImportingImage] = useState(false);
   const [uploadedReferenceCandidatesByEntityId, setUploadedReferenceCandidatesByEntityId] = useState<Record<string, ReferenceCandidate[]>>({});
+  const [generatedReferenceCandidatesByEntityId, setGeneratedReferenceCandidatesByEntityId] = useState<Record<string, ReferenceCandidate[]>>({});
   const [uploadedReferenceSourceByEntityId, setUploadedReferenceSourceByEntityId] = useState<Record<string, string>>({});
   const [referenceSelection, setReferenceSelection] = useState<string[]>([]);
   const [referencePrimaryKey, setReferencePrimaryKey] = useState('');
@@ -1082,7 +1206,10 @@ function StudioShell(props: {
     enabled: selectedWorkId.length > 0,
   });
   const entities = useMemo(() => entitiesQuery.data?.entities ?? [], [entitiesQuery.data?.entities]);
-  const selectedEntity = entities.find((entity) => entity.id === selectedEntityId) ?? entities[0] ?? null;
+  const selectedEntity =
+    entityEditorMode === 'create'
+      ? null
+      : entities.find((entity) => entity.id === selectedEntityId) ?? entities[0] ?? null;
 
   const entityReferenceSetQuery = useQuery({
     queryKey: ['entity-reference-set', selectedEntity?.id ?? ''],
@@ -1181,33 +1308,21 @@ function StudioShell(props: {
         query.state.data?.status === 'queued' || query.state.data?.status === 'processing' ? 4000 : false,
     })),
   });
-  const jobs = jobQueries.map((query) => query.data).filter(isDefined).slice(0, 5);
-  const activeJobs = useMemo(
-    () => jobs.filter((job) => job.status === 'queued' || job.status === 'processing'),
-    [jobs],
-  );
-  const selectedEntityGenerationJob = useMemo(() => {
-    if (selectedEntity === null) {
-      return null;
-    }
-
-    return (
-      [...activeJobs]
+  const trackedJobs = jobQueries.map((query) => query.data).filter(isDefined);
+  const jobs = trackedJobs.slice(0, 5);
+  const activeJobs = trackedJobs.filter((job) => job.status === 'queued' || job.status === 'processing');
+  const selectedEntityGenerationJob =
+    selectedEntity === null
+      ? null
+      : [...activeJobs]
         .reverse()
-        .find((job) => job.job_type === 'entity_generate' && job.params.entity_id === selectedEntity.id) ?? null
-    );
-  }, [activeJobs, selectedEntity]);
-  const selectedPageGenerationJob = useMemo(() => {
-    if (selectedPage === null) {
-      return null;
-    }
-
-    return (
-      [...activeJobs]
+        .find((job) => job.job_type === 'entity_generate' && job.params.entity_id === selectedEntity.id) ?? null;
+  const selectedPageGenerationJob =
+    selectedPage === null
+      ? null
+      : [...activeJobs]
         .reverse()
-        .find((job) => job.job_type === 'page_generate' && job.params.page_id === selectedPage.id) ?? null
-    );
-  }, [activeJobs, selectedPage]);
+        .find((job) => job.job_type === 'page_generate' && job.params.page_id === selectedPage.id) ?? null;
   const skeletonGenerationMessage =
     busyAction === 'Generate page skeleton'
       ? 'Page skeleton generation can take a while, especially for long episodes.'
@@ -1218,6 +1333,12 @@ function StudioShell(props: {
       : null;
   const selectedPageAutofillMessage =
     busyAction === 'Fill selected page' ? 'Selected page autofill can take a while for dense scenes.' : null;
+  const selectedPageFrameCount = framesQuery.data?.frames.length ?? selectedPage?.frame_count ?? 0;
+  const selectedPagePanelCount = panelsQuery.data?.panels.length ?? selectedPage?.panel_count ?? 0;
+  const selectedPageHasFramePanelMismatch =
+    selectedPage !== null && selectedPageFrameCount !== selectedPagePanelCount;
+  const generatePageDisabled =
+    busyAction === 'Generate page' || selectedPageHasFramePanelMismatch;
   const entityPreviewGenerationMessage =
     selectedEntityGenerationJob !== null
       ? selectedEntityGenerationJob.status === 'queued'
@@ -1264,10 +1385,14 @@ function StudioShell(props: {
   }, [pages, selectedPageId, setSelectedPageId]);
 
   useEffect(() => {
+    if (entityEditorMode === 'create') {
+      return;
+    }
+
     if (!entities.some((entity) => entity.id === selectedEntityId)) {
       setSelectedEntityId(entities[0]?.id ?? '');
     }
-  }, [entities, selectedEntityId]);
+  }, [entities, entityEditorMode, selectedEntityId]);
 
   useEffect(() => {
     if (!scenes.some((scene) => scene.id === selectedSceneId)) {
@@ -1345,10 +1470,10 @@ function StudioShell(props: {
   }, [selectedEpisode]);
 
   useEffect(() => {
-    if (selectedEntity !== null) {
+    if (entityEditorMode === 'edit' && selectedEntity !== null) {
       setEntityDraft(toEntityDraft(selectedEntity));
     }
-  }, [selectedEntity]);
+  }, [entityEditorMode, selectedEntity]);
 
   useEffect(() => {
     if (selectedScene !== null) {
@@ -1384,7 +1509,7 @@ function StudioShell(props: {
   }, [frames]);
 
   useEffect(() => {
-    for (const job of jobs) {
+    for (const job of [...trackedJobs].reverse()) {
       if (handledJobsRef.current.has(job.id)) {
         continue;
       }
@@ -1405,50 +1530,34 @@ function StudioShell(props: {
         }
         if (job.job_type === 'entity_generate') {
           const entityId = typeof job.params.entity_id === 'string' ? job.params.entity_id : null;
-          if (entityId !== null) {
-            void queryClient.invalidateQueries({ queryKey: ['entity-reference-set', entityId] });
+            if (entityId !== null) {
+              const nextCandidates = extractGeneratedReferenceCandidates(job);
+              if (nextCandidates.length > 0) {
+                setGeneratedReferenceCandidatesByEntityId((current) =>
+                  sameReferenceCandidates(current[entityId] ?? [], nextCandidates)
+                    ? current
+                    : {
+                        ...current,
+                        [entityId]: nextCandidates,
+                      },
+                );
+              } else {
+                setGeneratedReferenceCandidatesByEntityId((current) => {
+                  if (current[entityId] === undefined) {
+                    return current;
+                  }
+
+                  const remaining = { ...current };
+                  delete remaining[entityId];
+                  return remaining;
+                });
+              }
+              void queryClient.invalidateQueries({ queryKey: ['entity-reference-set', entityId] });
+            }
           }
-        }
       }
     }
-  }, [jobs, queryClient]);
-
-  const generatedReferenceCandidates = useMemo(() => {
-    if (selectedEntity === null) {
-      return [];
-    }
-
-    for (const job of [...jobs].reverse()) {
-      if (
-        job.job_type === 'entity_generate' &&
-        job.status === 'completed' &&
-        job.params.entity_id === selectedEntity.id &&
-        Array.isArray(job.result?.candidates)
-      ) {
-        return (job.result.candidates as unknown[]).flatMap((candidate) => {
-          if (
-            typeof candidate !== 'object' ||
-            candidate === null ||
-            Array.isArray(candidate) ||
-            typeof (candidate as { s3_key?: unknown }).s3_key !== 'string' ||
-            typeof (candidate as { cdn_url?: unknown }).cdn_url !== 'string'
-          ) {
-            return [];
-          }
-
-          return [
-            {
-              s3_key: (candidate as { s3_key: string }).s3_key,
-              cdn_url: (candidate as { cdn_url: string }).cdn_url,
-              source: 'generated' as const,
-            },
-          ];
-        });
-      }
-    }
-
-    return [];
-  }, [jobs, selectedEntity]);
+  }, [trackedJobs, queryClient]);
 
   const referenceCandidates = useMemo(() => {
     if (selectedEntity === null) {
@@ -1456,8 +1565,9 @@ function StudioShell(props: {
     }
 
     const uploadedCandidates = uploadedReferenceCandidatesByEntityId[selectedEntity.id] ?? [];
+    const generatedReferenceCandidates = generatedReferenceCandidatesByEntityId[selectedEntity.id] ?? [];
     return dedupeReferenceCandidates([...uploadedCandidates, ...generatedReferenceCandidates]);
-  }, [generatedReferenceCandidates, selectedEntity, uploadedReferenceCandidatesByEntityId]);
+  }, [generatedReferenceCandidatesByEntityId, selectedEntity, uploadedReferenceCandidatesByEntityId]);
 
   const characterStructuredFields = useMemo(
     () => parseCharacterStructuredFieldsDraft(entityDraft.structured_fields),
@@ -1466,20 +1576,32 @@ function StudioShell(props: {
 
   useEffect(() => {
     if (referenceCandidates.length === 0) {
-      setReferenceSelection([]);
-      setReferencePrimaryKey('');
+      if (referenceSelection.length > 0) {
+        setReferenceSelection([]);
+      }
+      if (referencePrimaryKey.length > 0) {
+        setReferencePrimaryKey('');
+      }
       return;
     }
 
     const hasSelectionForCurrentCandidates = referenceCandidates.some((candidate) =>
       referenceSelection.includes(candidate.s3_key),
     );
+    const firstSelectedCandidateKey = referenceSelection.find((selectedKey) =>
+      referenceCandidates.some((candidate) => candidate.s3_key === selectedKey),
+    );
 
-    if (referenceCandidates.length > 0 && !hasSelectionForCurrentCandidates) {
+    if (!hasSelectionForCurrentCandidates) {
       setReferenceSelection(referenceCandidates.map((candidate) => candidate.s3_key));
       setReferencePrimaryKey(referenceCandidates[0]?.s3_key ?? '');
+      return;
     }
-  }, [referenceCandidates, referenceSelection]);
+
+    if (!referenceCandidates.some((candidate) => candidate.s3_key === referencePrimaryKey)) {
+      setReferencePrimaryKey(firstSelectedCandidateKey ?? referenceCandidates[0]?.s3_key ?? '');
+    }
+  }, [referenceCandidates, referencePrimaryKey, referenceSelection]);
 
   const saveCurrentEpisodeContext = async (): Promise<void> => {
     if (episodeStoryInputConflict) {
@@ -1528,8 +1650,54 @@ function StudioShell(props: {
       return;
     }
 
-    await api.updateEntity(selectedEntity.id, toEntityPayload(entityDraft));
+    const savedEntity = await api.updateEntity(selectedEntity.id, toEntityPayload(entityDraft));
+    cacheEntityRecord(savedEntity);
+    setEntityDraft(toEntityDraft(savedEntity));
     await queryClient.invalidateQueries({ queryKey: ['entities', selectedWork.id] });
+  };
+
+  const beginNewEntityDraft = (): void => {
+    setEntityEditorMode('create');
+    setSelectedEntityId('');
+    setEntityDraft(createEmptyEntityDraft());
+    setReferenceSelection([]);
+    setReferencePrimaryKey('');
+  };
+
+  const selectEntityForEditing = (entityId: string): void => {
+    setEntityEditorMode('edit');
+    setSelectedEntityId(entityId);
+    setReferenceSelection([]);
+    setReferencePrimaryKey('');
+  };
+
+  const confirmUiAction = (message: string): boolean => window.confirm(translateUiString(uiLanguage, message));
+
+  const cacheEntityRecord = (entity: EntityRecord): void => {
+    queryClient.setQueryData<{ entities: EntityRecord[] }>(['entities', entity.work_id], (current) => {
+      if (current === undefined) {
+        return { entities: [entity] };
+      }
+
+      const entityExists = current.entities.some((item) => item.id === entity.id);
+      return {
+        ...current,
+        entities: entityExists
+          ? current.entities.map((item) => (item.id === entity.id ? entity : item))
+          : [entity, ...current.entities],
+      };
+    });
+  };
+
+  const removeEntityFromCache = (workId: string, entityId: string): void => {
+    queryClient.setQueryData<{ entities: EntityRecord[] }>(['entities', workId], (current) =>
+      current === undefined
+        ? current
+        : {
+            ...current,
+            entities: current.entities.filter((entity) => entity.id !== entityId),
+          },
+    );
   };
 
   const runAction = async (label: string, action: () => Promise<void>): Promise<void> => {
@@ -1714,6 +1882,7 @@ function StudioShell(props: {
           <section className="empty-state">
             <LayoutGrid size={28} />
             <h2>{translateUiString(uiLanguage, 'No work selected')}</h2>
+            <p>{translateUiString(uiLanguage, 'Create or select a work from the left panel to start editing.')}</p>
           </section>
         ) : (
           <div className="workspace-grid">
@@ -2403,7 +2572,7 @@ function StudioShell(props: {
                           type="button"
                         >
                           <Save size={16} />
-                          Save selected
+                          {translateUiString(uiLanguage, 'Save scene')}
                         </button>
                       ) : null}
                     </div>
@@ -2447,10 +2616,7 @@ function StudioShell(props: {
                     actions={
                       <button
                         className="secondary-button"
-                        onClick={() => {
-                          setSelectedEntityId('');
-                          setEntityDraft(createEmptyEntityDraft());
-                        }}
+                        onClick={beginNewEntityDraft}
                         type="button"
                       >
                         <RefreshCw size={16} />
@@ -2463,7 +2629,7 @@ function StudioShell(props: {
                         <button
                           key={entity.id}
                           className={`mini-card ${selectedEntity?.id === entity.id ? 'active' : ''}`}
-                          onClick={() => setSelectedEntityId(entity.id)}
+                          onClick={() => selectEntityForEditing(entity.id)}
                           type="button"
                         >
                           <strong>{entity.name}</strong>
@@ -2481,10 +2647,7 @@ function StudioShell(props: {
                       <div className="toolbar">
                         <button
                           className="ghost-button"
-                          onClick={() => {
-                            setSelectedEntityId('');
-                            setEntityDraft(createEmptyEntityDraft());
-                          }}
+                          onClick={beginNewEntityDraft}
                           type="button"
                         >
                           <RefreshCw size={16} />
@@ -2493,12 +2656,17 @@ function StudioShell(props: {
                         {selectedEntity !== null ? (
                           <button
                             className="ghost-button danger"
-                            onClick={() =>
+                            onClick={() => {
+                              if (!confirmUiAction('Delete this character? This cannot be undone.')) {
+                                return;
+                              }
+
                               void runAction('Delete entity', async () => {
                                 await api.deleteEntity(selectedEntity.id);
+                                removeEntityFromCache(selectedWork.id, selectedEntity.id);
                                 await queryClient.invalidateQueries({ queryKey: ['entities', selectedWork.id] });
-                              })
-                            }
+                              });
+                            }}
                             type="button"
                           >
                             <Trash2 size={16} />
@@ -2539,6 +2707,7 @@ function StudioShell(props: {
                     />
                     {entityDraft.entity_type === 'character' ? (
                       <CharacterStructuredFieldsEditor
+                        key={selectedEntity?.id ?? 'new-character'}
                         value={characterStructuredFields}
                         onChange={(nextValue) =>
                           setEntityDraft((current) => ({
@@ -2555,34 +2724,51 @@ function StudioShell(props: {
                         onChange={(value) => setEntityDraft({ ...entityDraft, structured_fields: value })}
                       />
                     )}
+                    <div className="state-pill-row">
+                      <span className={`state-pill ${entityEditorMode === 'create' ? 'state-pill-info' : 'state-pill-neutral'}`}>
+                        {translateUiString(
+                          uiLanguage,
+                          entityEditorMode === 'create'
+                            ? 'Creating a new character. Saving here will add a new record and will not overwrite existing characters.'
+                            : 'Editing the selected character.',
+                        )}
+                      </span>
+                    </div>
                     <div className="toolbar">
-                      <button
-                        className="secondary-button"
-                        onClick={() =>
-                          void runAction('Create entity', async () => {
-                            await api.createEntity(selectedWork.id, toEntityPayload(entityDraft));
-                            setEntityDraft(createEmptyEntityDraft());
-                            await queryClient.invalidateQueries({ queryKey: ['entities', selectedWork.id] });
-                          })
-                        }
-                        type="button"
-                      >
-                        <Save size={16} />
-                        {translateUiString(uiLanguage, 'Create')}
-                      </button>
-                      {selectedEntity !== null ? (
+                      {entityEditorMode === 'create' || selectedEntity === null ? (
                         <button
-                          className="ghost-button"
+                          className="secondary-button"
                           onClick={() =>
-                            void runAction('Save entity', async () => {
-                              await api.updateEntity(selectedEntity.id, toEntityPayload(entityDraft));
+                            void runAction('Create entity', async () => {
+                              const createdEntity = await api.createEntity(selectedWork.id, toEntityPayload(entityDraft));
+                              cacheEntityRecord(createdEntity);
+                              setEntityEditorMode('edit');
+                              setSelectedEntityId(createdEntity.id);
+                              setEntityDraft(toEntityDraft(createdEntity));
                               await queryClient.invalidateQueries({ queryKey: ['entities', selectedWork.id] });
                             })
                           }
                           type="button"
                         >
                           <Save size={16} />
-                          {translateUiString(uiLanguage, 'Save selected')}
+                          {translateUiString(uiLanguage, 'Create character')}
+                        </button>
+                      ) : null}
+                      {entityEditorMode === 'edit' && selectedEntity !== null ? (
+                        <button
+                          className="secondary-button"
+                          onClick={() =>
+                            void runAction('Save entity', async () => {
+                              const savedEntity = await api.updateEntity(selectedEntity.id, toEntityPayload(entityDraft));
+                              cacheEntityRecord(savedEntity);
+                              setEntityDraft(toEntityDraft(savedEntity));
+                              await queryClient.invalidateQueries({ queryKey: ['entities', selectedWork.id] });
+                            })
+                          }
+                          type="button"
+                        >
+                          <Save size={16} />
+                          {translateUiString(uiLanguage, 'Save character')}
                         </button>
                       ) : null}
                     </div>
@@ -2616,6 +2802,12 @@ function StudioShell(props: {
                           onClick={() =>
                             void runAction('Generate reference', async () => {
                               await saveCurrentEntityGenerationContext();
+                              setGeneratedReferenceCandidatesByEntityId((current) => ({
+                                ...current,
+                                [selectedEntity.id]: [],
+                              }));
+                              setReferenceSelection([]);
+                              setReferencePrimaryKey('');
                               const sourceS3Key = uploadedReferenceSourceByEntityId[selectedEntity.id];
                               const result = await api.generateEntityReference(
                                 selectedEntity.id,
@@ -2671,31 +2863,41 @@ function StudioShell(props: {
                         {referenceCandidates.length > 0 ? (
                           <div className="reference-grid reference-grid-portrait">
                             {referenceCandidates.map((candidate) => (
-                              <label key={candidate.s3_key} className={`reference-card reference-card-portrait ${referenceSelection.includes(candidate.s3_key) ? 'active' : ''}`}>
+                              <div key={candidate.s3_key} className={`reference-card reference-card-portrait ${referenceSelection.includes(candidate.s3_key) ? 'active' : ''}`}>
                                 <div className="reference-card-media">
                                   <img alt="" src={candidate.cdn_url} />
                                 </div>
                                 <div className="reference-card-body">
-                                  <span>{candidate.source}</span>
+                                  <span>{translateUiString(uiLanguage, candidate.source)}</span>
+                                  <div className="reference-card-choice-row">
+                                    <label>
+                                      <input
+                                        checked={referenceSelection.includes(candidate.s3_key)}
+                                        onChange={(event) =>
+                                          setReferenceSelection((current) =>
+                                            event.target.checked
+                                              ? current.includes(candidate.s3_key)
+                                                ? current
+                                                : [...current, candidate.s3_key]
+                                              : current.filter((item) => item !== candidate.s3_key),
+                                          )
+                                        }
+                                        type="checkbox"
+                                      />
+                                      {translateUiString(uiLanguage, 'Use reference')}
+                                    </label>
+                                    <label>
+                                      <input
+                                        checked={referencePrimaryKey === candidate.s3_key}
+                                        name="reference-primary"
+                                        onChange={() => setReferencePrimaryKey(candidate.s3_key)}
+                                        type="radio"
+                                      />
+                                      {translateUiString(uiLanguage, 'Primary reference')}
+                                    </label>
+                                  </div>
                                 </div>
-                                <input
-                                  checked={referenceSelection.includes(candidate.s3_key)}
-                                  onChange={(event) =>
-                                    setReferenceSelection((current) =>
-                                      event.target.checked
-                                        ? [...current, candidate.s3_key]
-                                        : current.filter((item) => item !== candidate.s3_key),
-                                    )
-                                  }
-                                  type="checkbox"
-                                />
-                                <input
-                                  checked={referencePrimaryKey === candidate.s3_key}
-                                  name="reference-primary"
-                                  onChange={() => setReferencePrimaryKey(candidate.s3_key)}
-                                  type="radio"
-                                />
-                              </label>
+                              </div>
                             ))}
                           </div>
                         ) : (
@@ -2717,13 +2919,16 @@ function StudioShell(props: {
                                   <img alt="" src={image.cdn_url} />
                                 </div>
                                 <div className="reference-card-body">
-                                  <strong>{image.ref_id === entityReferenceSetQuery.data.primary_ref_id ? translateUiString(uiLanguage, 'Primary') : image.source}</strong>
+                                  <strong>{image.ref_id === entityReferenceSetQuery.data.primary_ref_id ? translateUiString(uiLanguage, 'Primary') : translateUiString(uiLanguage, image.source)}</strong>
                                 </div>
                                 <div className="reference-card-actions">
                                   <button
                                     className="ghost-button danger"
                                     onClick={() => {
                                       if (selectedEntity === null) {
+                                        return;
+                                      }
+                                      if (!confirmUiAction('Delete this reference image? This cannot be undone.')) {
                                         return;
                                       }
                                       void runAction('Delete reference', async () => {
@@ -2805,7 +3010,11 @@ function StudioShell(props: {
                             </div>
                           )}
                           <div className="page-meta-list">
-                            <span>{`frames ${page.frame_count} / panels ${page.panel_count} / balloons ${page.balloon_count}`}</span>
+                            <span>
+                              {uiLanguage === 'ja'
+                                ? `フレーム ${page.frame_count} / コマ ${page.panel_count} / 吹き出し ${page.balloon_count}`
+                                : `frames ${page.frame_count} / panels ${page.panel_count} / balloons ${page.balloon_count}`}
+                            </span>
                             <span>{translateUiString(uiLanguage, 'Double-click image to enlarge')}</span>
                           </div>
                         </button>
@@ -2933,8 +3142,12 @@ function StudioShell(props: {
                           <div className="toolbar">
                             <button
                               className="secondary-button"
+                              disabled={generatePageDisabled}
                               onClick={() =>
                                 void runAction('Generate page', async () => {
+                                  if (selectedPageHasFramePanelMismatch) {
+                                    throw new Error(translateUiString(uiLanguage, 'Frame count and panel count do not match. Adjust frames or panels before generating.'));
+                                  }
                                   await saveCurrentPageGenerationContext();
                                   const result = await api.generatePage(selectedPage.id);
                                   trackJob(result.job_id);
@@ -2943,7 +3156,7 @@ function StudioShell(props: {
                               type="button"
                             >
                               <Play size={16} />
-                              Generate
+                              {translateUiString(uiLanguage, 'Generate page')}
                             </button>
                             <button
                               className="ghost-button"
@@ -2956,7 +3169,7 @@ function StudioShell(props: {
                               type="button"
                             >
                               <Check size={16} />
-                              Confirm
+                              {translateUiString(uiLanguage, 'Confirm page')}
                             </button>
                             <button
                               className="ghost-button"
@@ -2969,7 +3182,7 @@ function StudioShell(props: {
                               type="button"
                             >
                               <RefreshCw size={16} />
-                              Reopen
+                              {translateUiString(uiLanguage, 'Reopen page')}
                             </button>
                           </div>
                         }
@@ -2979,6 +3192,13 @@ function StudioShell(props: {
                             message={translateUiString(uiLanguage, pageImageGenerationMessage)}
                             queued={selectedPageGenerationJob?.status === 'queued'}
                           />
+                        ) : null}
+                        {selectedPageHasFramePanelMismatch ? (
+                          <div className="state-pill-row">
+                            <span className="state-pill state-pill-warn">
+                              {translateUiString(uiLanguage, 'Frame count and panel count do not match. Adjust frames or panels before generating.')}
+                            </span>
+                          </div>
                         ) : null}
                         {selectedPage.generated_image?.cdn_url !== null && selectedPage.generated_image?.cdn_url !== undefined ? (
                           <div className="generated-image-wrap">
@@ -3012,7 +3232,7 @@ function StudioShell(props: {
                               <select value={frameTemplateId} onChange={(event) => setFrameTemplateId(event.target.value)}>
                                 {FRAME_TEMPLATE_OPTIONS.map(([value, label]) => (
                                   <option key={value} value={value}>
-                                    {label}
+                                    {translateUiString(uiLanguage, label)}
                                   </option>
                                 ))}
                               </select>
@@ -3028,7 +3248,7 @@ function StudioShell(props: {
                               type="button"
                             >
                               <Wand2 size={16} />
-                              Apply
+                              {translateUiString(uiLanguage, 'Apply frame template')}
                             </button>
                           </div>
                         }
@@ -3053,7 +3273,7 @@ function StudioShell(props: {
                             type="button"
                           >
                             <Save size={16} />
-                            Save frames
+                            {translateUiString(uiLanguage, 'Save frames')}
                           </button>
                         </details>
                       </PanelSection>
@@ -3127,7 +3347,7 @@ function StudioShell(props: {
                             onChange={(event) => setPanelDraft({ ...panelDraft, dialogue_in_panel: event.target.checked })}
                             type="checkbox"
                           />
-                          Dialogue in panel
+                          {translateUiString(uiLanguage, 'Dialogue in panel')}
                         </label>
                         <PanelAssignmentEditor
                           assignments={panelDraft.assignments}
@@ -3169,7 +3389,7 @@ function StudioShell(props: {
                             type="button"
                           >
                             <Save size={16} />
-                            Create
+                            {translateUiString(uiLanguage, 'Create panel')}
                           </button>
                           {selectedPanel !== null ? (
                             <>
@@ -3186,11 +3406,15 @@ function StudioShell(props: {
                                 type="button"
                               >
                                 <Save size={16} />
-                                Save selected
+                                {translateUiString(uiLanguage, 'Save panel')}
                               </button>
                               <button
                                 className="ghost-button danger"
-                                onClick={() =>
+                                onClick={() => {
+                                  if (!confirmUiAction('Delete this panel? This can break the frame/panel count until frames are adjusted.')) {
+                                    return;
+                                  }
+
                                   void runAction('Delete panel', async () => {
                                     await api.deletePanel(selectedPanel.id);
                                     setSelectedPanelId('');
@@ -3199,8 +3423,8 @@ function StudioShell(props: {
                                     if (selectedEpisode !== null) {
                                       await queryClient.invalidateQueries({ queryKey: ['pages', selectedEpisode.id] });
                                     }
-                                  })
-                                }
+                                  });
+                                }}
                                 type="button"
                               >
                                 <Trash2 size={16} />
@@ -3407,16 +3631,20 @@ function StudioShell(props: {
                                 type="button"
                               >
                                 <Save size={16} />
-                                Save selected
+                                {translateUiString(uiLanguage, 'Save balloon')}
                               </button>
                               <button
                                 className="ghost-button danger"
-                                onClick={() =>
+                                onClick={() => {
+                                  if (!confirmUiAction('Delete this balloon? This cannot be undone.')) {
+                                    return;
+                                  }
+
                                   void runAction('Delete balloon', async () => {
                                     await api.deleteBalloon(selectedBalloon.id);
                                     await queryClient.invalidateQueries({ queryKey: ['balloons', selectedPage.id] });
-                                  })
-                                }
+                                  });
+                                }}
                                 type="button"
                               >
                                 <Trash2 size={16} />
@@ -3455,7 +3683,7 @@ function StudioShell(props: {
                     type="button"
                   >
                     <CreditCard size={16} />
-                    Standard
+                    {translateUiString(uiLanguage, 'Subscription plan')}
                   </button>
                   <button
                     className="ghost-button"
@@ -3468,7 +3696,7 @@ function StudioShell(props: {
                     type="button"
                   >
                     <CreditCard size={16} />
-                    Credits 1000
+                    {translateUiString(uiLanguage, 'Add 1000 credits')}
                   </button>
                   <button
                     className="ghost-button"
@@ -3481,7 +3709,7 @@ function StudioShell(props: {
                     type="button"
                   >
                     <CreditCard size={16} />
-                    Portal
+                    {translateUiString(uiLanguage, 'Billing portal')}
                   </button>
                 </div>
               </PanelSection>
@@ -3491,7 +3719,7 @@ function StudioShell(props: {
                   {jobs.map((job) => (
                     <div key={job.id} className="job-row">
                       <div>
-                        <strong>{job.job_type}</strong>
+                        <strong>{translateUiString(uiLanguage, job.job_type)}</strong>
                         <div className="muted small">{job.id}</div>
                       </div>
                       <StatusBadge value={job.status} />
@@ -3633,18 +3861,32 @@ function SelectOrCustomField(props: {
   options: Array<[string, string]>;
 }) {
   const language = useContext(UiLanguageContext);
-  const renderOptions = props.options.some(([value]) => value === 'custom')
-    ? props.options
-    : [...props.options, ['custom', 'Custom'] as [string, string]];
-  const concreteOptionValues = new Set(
-    renderOptions.map(([value]) => value).filter((value) => value !== '' && value !== 'custom'),
+  const customInputRef = useRef<HTMLInputElement | null>(null);
+  const renderOptions = useMemo(
+    () =>
+      props.options.some(([value]) => value === 'custom')
+        ? props.options
+        : [...props.options, ['custom', 'Custom'] as [string, string]],
+    [props.options],
   );
-  const selectValue =
+  const concreteOptionValues = useMemo(
+    () => new Set(renderOptions.map(([value]) => value).filter((value) => value !== '' && value !== 'custom')),
+    [renderOptions],
+  );
+  const inferredSelectValue =
     props.value === ''
       ? ''
       : concreteOptionValues.has(props.value)
         ? props.value
         : 'custom';
+  const [customMode, setCustomMode] = useState(inferredSelectValue === 'custom');
+  const selectValue = customMode ? 'custom' : inferredSelectValue;
+
+  useEffect(() => {
+    if (props.value !== '') {
+      setCustomMode(!concreteOptionValues.has(props.value));
+    }
+  }, [concreteOptionValues, props.value]);
 
   return (
     <label className="field">
@@ -3654,11 +3896,12 @@ function SelectOrCustomField(props: {
         onChange={(event) => {
           const nextValue = event.target.value;
           if (nextValue === 'custom') {
-            if (selectValue !== 'custom') {
-              props.onChange('');
-            }
+            setCustomMode(true);
+            props.onChange(concreteOptionValues.has(props.value) ? '' : props.value);
+            window.requestAnimationFrame(() => customInputRef.current?.focus());
             return;
           }
+          setCustomMode(false);
           props.onChange(nextValue);
         }}
       >
@@ -3668,8 +3911,9 @@ function SelectOrCustomField(props: {
           </option>
         ))}
       </select>
-      {selectValue === 'custom' ? (
+      {customMode ? (
         <input
+          ref={customInputRef}
           value={props.value}
           onChange={(event) => props.onChange(event.target.value)}
           placeholder={translateUiString(language, 'Custom value')}
@@ -5158,6 +5402,11 @@ const CHARACTER_FIRST_IMPRESSION_OPTIONS: Array<[string, string]> = [
   ['serious_reliable', 'Serious reliable'],
   ['mysterious_fragile', 'Mysterious fragile'],
   ['energetic_bold', 'Energetic bold'],
+  ['stoic_reserved', 'Stoic reserved'],
+  ['rugged_calm', 'Rugged calm'],
+  ['sharp_elite', 'Sharp elite'],
+  ['playful_confident', 'Playful confident'],
+  ['mature_composed', 'Mature composed'],
 ];
 const CHARACTER_STANDING_STYLE_OPTIONS: Array<[string, string]> = [
   EMPTY_OPTION,
@@ -5166,6 +5415,11 @@ const CHARACTER_STANDING_STYLE_OPTIONS: Array<[string, string]> = [
   ['shy_reserved', 'Shy reserved'],
   ['confident_open', 'Confident open'],
   ['still_quiet', 'Still quiet'],
+  ['arms_crossed', 'Arms crossed'],
+  ['hands_in_pockets', 'Hands in pockets'],
+  ['guarded_stance', 'Guarded stance'],
+  ['wide_grounded_stance', 'Wide grounded stance'],
+  ['elegant_upright', 'Elegant upright'],
 ];
 const CHARACTER_DEFAULT_EXPRESSION_OPTIONS: Array<[string, string]> = [
   EMPTY_OPTION,
@@ -5175,6 +5429,11 @@ const CHARACTER_DEFAULT_EXPRESSION_OPTIONS: Array<[string, string]> = [
   ['cheerful_smile', 'Cheerful smile'],
   ['shy_reserved', 'Shy reserved'],
   ['cool_unfazed', 'Cool unfazed'],
+  ['stern_look', 'Stern look'],
+  ['tired_neutral', 'Tired neutral'],
+  ['confident_smirk', 'Confident smirk'],
+  ['bored_gaze', 'Bored gaze'],
+  ['teasing_smile', 'Teasing smile'],
 ];
 const CHARACTER_BUILD_OPTIONS: Array<[string, string]> = [
   EMPTY_OPTION,
@@ -5184,12 +5443,18 @@ const CHARACTER_BUILD_OPTIONS: Array<[string, string]> = [
   ['athletic', 'Athletic'],
   ['muscular', 'Muscular'],
   ['curvy', 'Curvy'],
+  ['lean', 'Lean'],
+  ['stocky', 'Stocky'],
+  ['broad', 'Broad build'],
+  ['large', 'Large build'],
 ];
 const CHARACTER_HEIGHT_OPTIONS: Array<[string, string]> = [
   EMPTY_OPTION,
+  ['very_short_height', 'Very short height'],
   ['short', 'Short'],
   ['average', 'Average'],
   ['tall', 'Tall'],
+  ['very_tall_height', 'Very tall height'],
 ];
 const CHARACTER_FACE_SHAPE_OPTIONS: Array<[string, string]> = [
   EMPTY_OPTION,
@@ -5236,13 +5501,19 @@ const CHARACTER_HAIR_COLOR_OPTIONS: Array<[string, string]> = [
   EMPTY_OPTION,
   ['black', 'Black'],
   ['brown', 'Brown'],
+  ['dark_brown', 'Dark brown'],
   ['blonde', 'Blonde'],
+  ['ash_blonde', 'Ash blonde'],
+  ['auburn', 'Auburn'],
   ['silver', 'Silver'],
+  ['gray', 'Gray'],
   ['white', 'White'],
   ['blue', 'Blue'],
+  ['green', 'Green'],
   ['red', 'Red'],
   ['pink', 'Pink'],
   ['purple', 'Purple'],
+  ['two_tone', 'Two tone'],
   ['custom', 'Custom'],
 ];
 const CHARACTER_HAIR_LENGTH_OPTIONS: Array<[string, string]> = [
@@ -5259,15 +5530,42 @@ const CHARACTER_HAIR_STYLE_OPTIONS: Array<[string, string]> = [
   ['wavy', 'Wavy'],
   ['curly', 'Curly'],
   ['wild', 'Wild'],
+  ['tousled', 'Tousled'],
+  ['spiky', 'Spiky'],
+  ['fluffy', 'Fluffy'],
+  ['slick', 'Slick'],
+  ['coarse', 'Coarse'],
+  ['shaved', 'Shaved'],
 ];
 const CHARACTER_HAIR_ARRANGEMENT_OPTIONS: Array<[string, string]> = [
   EMPTY_OPTION,
   ['down', 'Down'],
+  ['short_cut', 'Short cut'],
+  ['buzz_cut', 'Buzz cut'],
+  ['crew_cut', 'Crew cut'],
+  ['two_block', 'Two block'],
+  ['undercut', 'Undercut'],
+  ['fade_cut', 'Fade cut'],
+  ['side_part', 'Side part'],
+  ['center_part', 'Center part'],
+  ['comma_hair', 'Comma hair'],
+  ['slick_back', 'Slick back'],
+  ['messy_short', 'Messy short'],
+  ['pompadour', 'Pompadour'],
+  ['short_bob', 'Short bob'],
+  ['medium_layered', 'Medium layered'],
+  ['wolf_cut', 'Wolf cut'],
+  ['long_straight', 'Long straight'],
   ['ponytail', 'Ponytail'],
+  ['side_ponytail', 'Side ponytail'],
   ['twin_tails', 'Twin tails'],
   ['bun', 'Bun'],
+  ['man_bun', 'Man bun'],
+  ['topknot', 'Topknot'],
   ['braid', 'Braid'],
   ['half_up', 'Half up'],
+  ['tied_back', 'Tied back'],
+  ['shaved_sides', 'Shaved sides'],
   ['custom', 'Custom'],
 ];
 const CHARACTER_EYE_COLOR_OPTIONS: Array<[string, string]> = [
@@ -5340,6 +5638,12 @@ const CHARACTER_HAIR_BANGS_OPTIONS: Array<[string, string]> = [
   ['heavy', 'Heavy'],
   ['side_swept', 'Side swept'],
   ['blunt', 'Blunt'],
+  ['parted', 'Parted'],
+  ['center_parted', 'Center parted'],
+  ['curtain', 'Curtain'],
+  ['messy_bangs', 'Messy bangs'],
+  ['short_bangs', 'Short bangs'],
+  ['long_bangs', 'Long bangs'],
 ];
 const CHARACTER_HAIR_FRONT_SHAPE_OPTIONS: Array<[string, string]> = [
   EMPTY_OPTION,
@@ -5348,6 +5652,11 @@ const CHARACTER_HAIR_FRONT_SHAPE_OPTIONS: Array<[string, string]> = [
   ['rounded front curve', 'rounded front curve'],
   ['side-swept front', 'side-swept front'],
   ['blunt front', 'blunt front'],
+  ['short textured front', 'short textured front'],
+  ['comma front', 'comma front'],
+  ['curtain front', 'curtain front'],
+  ['messy front', 'messy front'],
+  ['swept-up front', 'swept-up front'],
 ];
 const CHARACTER_HAIR_SIDE_OPTIONS: Array<[string, string]> = [
   EMPTY_OPTION,
@@ -5355,6 +5664,11 @@ const CHARACTER_HAIR_SIDE_OPTIONS: Array<[string, string]> = [
   ['soft cheek framing', 'soft cheek framing'],
   ['long side locks', 'long side locks'],
   ['tucked behind ears', 'tucked behind ears'],
+  ['trimmed sides', 'trimmed sides'],
+  ['faded sides', 'faded sides'],
+  ['shaved sides', 'shaved sides'],
+  ['sideburns', 'sideburns'],
+  ['ear-length sides', 'ear-length sides'],
 ];
 const CHARACTER_HAIR_BACK_SHAPE_OPTIONS: Array<[string, string]> = [
   EMPTY_OPTION,
@@ -5363,6 +5677,12 @@ const CHARACTER_HAIR_BACK_SHAPE_OPTIONS: Array<[string, string]> = [
   ['straight long back', 'straight long back'],
   ['ponytail fall', 'ponytail fall'],
   ['braided back', 'braided back'],
+  ['tapered nape', 'tapered nape'],
+  ['short clipped back', 'short clipped back'],
+  ['undercut back', 'undercut back'],
+  ['tied-back hair', 'tied-back hair'],
+  ['long loose back', 'long loose back'],
+  ['wolf nape', 'wolf nape'],
 ];
 const CHARACTER_CLOTHING_CATEGORY_OPTIONS: Array<[string, string]> = [
   EMPTY_OPTION,
@@ -5370,6 +5690,12 @@ const CHARACTER_CLOTHING_CATEGORY_OPTIONS: Array<[string, string]> = [
   ['school', 'School'],
   ['casual', 'Casual'],
   ['suit', 'Suit'],
+  ['business_casual', 'Business casual'],
+  ['lab_coat', 'Lab coat'],
+  ['trench_coat', 'Trench coat'],
+  ['tactical', 'Tactical'],
+  ['traditional_formal', 'Traditional formal'],
+  ['street_jacket', 'Street jacket'],
   ['fantasy', 'Fantasy'],
   ['japanese', 'Japanese'],
   ['streetwear', 'Streetwear'],
@@ -5426,6 +5752,9 @@ const CHARACTER_LOWER_GARMENT_OPTIONS: Array<[string, string]> = [
   ['long skirt', 'Long skirt'],
   ['straight pants', 'Straight pants'],
   ['wide pants', 'Wide pants'],
+  ['slacks', 'Slacks'],
+  ['jeans', 'Jeans'],
+  ['cargo pants', 'Cargo pants'],
   ['shorts', 'Shorts'],
 ];
 const CHARACTER_SHOES_OPTIONS: Array<[string, string]> = [
@@ -5433,6 +5762,8 @@ const CHARACTER_SHOES_OPTIONS: Array<[string, string]> = [
   ['loafers', 'Loafers'],
   ['sneakers', 'Sneakers'],
   ['boots', 'Boots'],
+  ['dress shoes', 'Dress shoes'],
+  ['combat boots', 'Combat boots'],
   ['heels', 'Heels'],
   ['school shoes', 'School shoes'],
 ];
@@ -5501,6 +5832,12 @@ const CHARACTER_DISTINGUISHING_FEATURE_OPTIONS: Array<[string, string]> = [
   ['Ahoge', 'Ahoge'],
   ['Hair streak', 'Hair streak'],
   ['Glasses', 'Glasses'],
+  ['Stubble', 'Stubble'],
+  ['Beard', 'Beard'],
+  ['Goatee', 'Goatee'],
+  ['Earrings', 'Earrings'],
+  ['Thick eyebrows', 'Thick eyebrows'],
+  ['Sharp jawline', 'Sharp jawline'],
   ['custom', 'Custom'],
 ];
 const CHARACTER_HEAD_RATIO_OPTIONS: Array<[string, string]> = [
@@ -5747,6 +6084,52 @@ function dedupeReferenceCandidates(candidates: ReferenceCandidate[]): ReferenceC
 
     seenKeys.add(candidate.s3_key);
     return true;
+  });
+}
+
+function sameReferenceCandidates(left: ReferenceCandidate[], right: ReferenceCandidate[]): boolean {
+  return (
+    left.length === right.length &&
+    left.every(
+      (candidate, index) =>
+        candidate.s3_key === right[index]?.s3_key &&
+        candidate.cdn_url === right[index]?.cdn_url &&
+        candidate.source === right[index]?.source,
+    )
+  );
+}
+
+function extractGeneratedReferenceCandidates(job: GenerationJobRecord): ReferenceCandidate[] {
+  if (
+    job.job_type !== 'entity_generate' ||
+    job.status !== 'completed' ||
+    !Array.isArray(job.result?.candidates)
+  ) {
+    return [];
+  }
+
+  if (job.openai_request_id === null && job.result.cost_usd === 0) {
+    return [];
+  }
+
+  return (job.result.candidates as unknown[]).flatMap((candidate) => {
+    if (
+      typeof candidate !== 'object' ||
+      candidate === null ||
+      Array.isArray(candidate) ||
+      typeof (candidate as { s3_key?: unknown }).s3_key !== 'string' ||
+      typeof (candidate as { cdn_url?: unknown }).cdn_url !== 'string'
+    ) {
+      return [];
+    }
+
+    return [
+      {
+        s3_key: (candidate as { s3_key: string }).s3_key,
+        cdn_url: (candidate as { cdn_url: string }).cdn_url,
+        source: 'generated' as const,
+      },
+    ];
   });
 }
 

@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { ConflictError, NotFoundError } from '../../../../src/domain/errors/index.js';
+import type { CreditBalanceSnapshot } from '../../../../src/domain/types/credit.js';
 import type { GenerationJob } from '../../../../src/domain/types/job.js';
 import type { GenerationJobRepository } from '../../../../src/repositories/GenerationJobRepository.js';
+import type {
+  ConsumeCreditsParams,
+  CreditServicePort,
+  RefundCreditsParams,
+} from '../../../../src/services/credit/CreditService.js';
 import type { ProcessPageGenerationJobResult } from '../../../../src/services/page/PageGenerationWorkerService.js';
 import {
   MAX_PAGE_GENERATION_RETRIES,
@@ -11,6 +17,7 @@ import {
 class InMemoryGenerationJobRepository implements GenerationJobRepository {
   public job: GenerationJob | null = buildJob();
   public preparedRetryWith: number | null = null;
+  public prepareRetryResult = true;
 
   public async create(): Promise<GenerationJob> {
     throw new Error('unused');
@@ -54,7 +61,7 @@ class InMemoryGenerationJobRepository implements GenerationJobRepository {
 
   public async prepareRetry(_jobId: string, maxRetryCount: number): Promise<boolean> {
     this.preparedRetryWith = maxRetryCount;
-    return true;
+    return this.prepareRetryResult;
   }
 }
 
@@ -67,21 +74,56 @@ class FakePageGenerationWorkerService {
   }
 }
 
+class FakeCreditService implements CreditServicePort {
+  public consumed: ConsumeCreditsParams[] = [];
+  public refunded: RefundCreditsParams[] = [];
+
+  public async getBalance(): Promise<CreditBalanceSnapshot> {
+    return { monthlyCredits: 0, purchasedCredits: 0, totalCredits: 0, monthlyExpiresAt: null };
+  }
+
+  public async grantSignupBonus(): Promise<CreditBalanceSnapshot> {
+    return this.getBalance();
+  }
+
+  public async consumeCredits(params: ConsumeCreditsParams): Promise<CreditBalanceSnapshot> {
+    this.consumed.push(params);
+    return this.getBalance();
+  }
+
+  public async refundCredits(params: RefundCreditsParams): Promise<CreditBalanceSnapshot> {
+    this.refunded.push(params);
+    return this.getBalance();
+  }
+}
+
 describe('PageGenerationRetryService', () => {
-  it('所有者の failed page_generate job を retry できる', async () => {
+  it('所有者の failed page_generate job を再課金して retry できる', async () => {
     const repository = new InMemoryGenerationJobRepository();
     const workerService = new FakePageGenerationWorkerService();
-    const service = new PageGenerationRetryService(repository, workerService);
+    const creditService = new FakeCreditService();
+    const service = new PageGenerationRetryService(repository, workerService, creditService);
 
     await service.retryFailedJob('user-1', 'job-1');
 
+    expect(creditService.consumed[0]).toMatchObject({
+      userId: 'user-1',
+      cost: 10,
+      description: 'Page generation retry',
+      jobId: 'job-1',
+    });
+    expect(creditService.refunded).toEqual([]);
     expect(repository.preparedRetryWith).toBe(MAX_PAGE_GENERATION_RETRIES);
     expect(workerService.processedJobId).toBe('job-1');
   });
 
   it('他ユーザーの job は not found にする', async () => {
     const repository = new InMemoryGenerationJobRepository();
-    const service = new PageGenerationRetryService(repository, new FakePageGenerationWorkerService());
+    const service = new PageGenerationRetryService(
+      repository,
+      new FakePageGenerationWorkerService(),
+      new FakeCreditService(),
+    );
 
     await expect(service.retryFailedJob('other-user', 'job-1')).rejects.toBeInstanceOf(NotFoundError);
   });
@@ -89,7 +131,11 @@ describe('PageGenerationRetryService', () => {
   it('job が存在しない場合は not found にする', async () => {
     const repository = new InMemoryGenerationJobRepository();
     repository.job = null;
-    const service = new PageGenerationRetryService(repository, new FakePageGenerationWorkerService());
+    const service = new PageGenerationRetryService(
+      repository,
+      new FakePageGenerationWorkerService(),
+      new FakeCreditService(),
+    );
 
     await expect(service.retryFailedJob('user-1', 'job-1')).rejects.toBeInstanceOf(NotFoundError);
   });
@@ -97,9 +143,32 @@ describe('PageGenerationRetryService', () => {
   it('failed 以外の job は retry できない', async () => {
     const repository = new InMemoryGenerationJobRepository();
     repository.job = buildJob({ status: 'completed' });
-    const service = new PageGenerationRetryService(repository, new FakePageGenerationWorkerService());
+    const service = new PageGenerationRetryService(
+      repository,
+      new FakePageGenerationWorkerService(),
+      new FakeCreditService(),
+    );
 
     await expect(service.retryFailedJob('user-1', 'job-1')).rejects.toBeInstanceOf(ConflictError);
+  });
+
+  it('retry 準備に失敗した場合は消費分を返金する', async () => {
+    const repository = new InMemoryGenerationJobRepository();
+    repository.prepareRetryResult = false;
+    const creditService = new FakeCreditService();
+    const workerService = new FakePageGenerationWorkerService();
+    const service = new PageGenerationRetryService(repository, workerService, creditService);
+
+    await expect(service.retryFailedJob('user-1', 'job-1')).rejects.toBeInstanceOf(ConflictError);
+
+    expect(workerService.processedJobId).toBeNull();
+    expect(creditService.consumed).toHaveLength(1);
+    expect(creditService.refunded[0]).toMatchObject({
+      userId: 'user-1',
+      amount: 10,
+      description: 'Refund for failed page generation retry setup',
+      jobId: 'job-1',
+    });
   });
 });
 

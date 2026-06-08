@@ -143,5 +143,9 @@ function isRetryableError(error: unknown): boolean {
     return false;
   }
 
+  if (error instanceof Error && error.name === 'AbortError') {
+    return false;
+  }
+
   return error instanceof Error;
 }

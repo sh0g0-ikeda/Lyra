@@ -21,6 +21,7 @@ import type {
 } from '../../../../src/infrastructure/openai/OpenAIEntityImportAnalyzer.js';
 import { EntityReferenceService } from '../../../../src/services/entity/EntityReferenceService.js';
 import type { EntityGenerationQueuePort } from '../../../../src/services/entity/EntityGenerationQueue.js';
+import type { EntityGenerationRecoveryServicePort } from '../../../../src/services/entity/EntityGenerationRecoveryService.js';
 import type {
   ConsumeCreditsParams,
   CreditServicePort,
@@ -96,7 +97,7 @@ class FakeGenerationJobRepository implements GenerationJobRepository {
     this.createdInput = input;
 
     return buildJob({
-      id: 'job-1',
+      id: input.id ?? 'job-1',
       userId: input.userId,
       jobType: input.jobType,
       generationMode: input.generationMode,
@@ -232,7 +233,33 @@ class FakeEntityGenerationQueue implements EntityGenerationQueuePort {
   }
 }
 
+class FakeEntityGenerationRecoveryService implements EntityGenerationRecoveryServicePort {
+  public recoveredEntities: Array<{ userId: string; entityId: string }> = [];
+
+  public async recoverAllStaleJobs(): Promise<number> {
+    return 0;
+  }
+
+  public async recoverStaleJobsForEntity(userId: string, entityId: string): Promise<number> {
+    this.recoveredEntities.push({ userId, entityId });
+    return 0;
+  }
+}
+
 describe('EntityReferenceService', () => {
+  it('generate-reference 前に対象 entity の stale processing job を回収する', async () => {
+    const recoveryService = new FakeEntityGenerationRecoveryService();
+    const service = buildService({
+      recoveryService,
+    });
+
+    await service.enqueueReferenceGeneration('user-1', 'entity-1');
+
+    expect(recoveryService.recoveredEntities).toEqual([
+      { userId: 'user-1', entityId: 'entity-1' },
+    ]);
+  });
+
   it('import-image は S3 保存後に AI 解析結果を返す', async () => {
     const analyzer = new FakeEntityImportAnalyzer();
     const storage = new FakeEntityImageStorage();
@@ -283,12 +310,14 @@ describe('EntityReferenceService', () => {
 
     const result = await service.enqueueReferenceGeneration('user-1', 'entity-1');
 
-    expect(result).toEqual({ jobId: 'job-1' });
+    expect(result.jobId).toBe(jobs.createdInput?.id);
     expect(creditService.consumed).toMatchObject({
       userId: 'user-1',
       cost: 1,
+      jobId: result.jobId,
     });
     expect(jobs.createdInput).toMatchObject({
+      id: result.jobId,
       userId: 'user-1',
       jobType: 'entity_generate',
       creditCost: 1,
@@ -299,7 +328,7 @@ describe('EntityReferenceService', () => {
       },
     });
     expect(queue.payload).toEqual({
-      jobId: 'job-1',
+      jobId: result.jobId,
       userId: 'user-1',
       entityId: 'entity-1',
     });
@@ -432,6 +461,7 @@ function buildService(overrides: {
   analyzer?: FakeEntityImportAnalyzer;
   storage?: FakeEntityImageStorage;
   queue?: FakeEntityGenerationQueue;
+  recoveryService?: FakeEntityGenerationRecoveryService;
   capacityLimits?: { perUser: number; global: number };
   generationEnabled?: boolean;
 } = {}): EntityReferenceService {
@@ -444,6 +474,7 @@ function buildService(overrides: {
     overrides.queue ?? new FakeEntityGenerationQueue(),
     overrides.capacityLimits,
     overrides.generationEnabled,
+    overrides.recoveryService,
   );
 }
 

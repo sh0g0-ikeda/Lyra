@@ -150,6 +150,55 @@ describe('EntityService', () => {
     expect(result.workId).toBe('work-1');
   });
 
+  it('character structured fields accept GUI custom text values', async () => {
+    const workReader = new FakeWorkReader();
+    workReader.ownedWorkIds.add('user-1:work-1');
+    const service = new EntityService(new FakeEntityRepository(), workReader);
+
+    const result = await service.createEntity('user-1', 'work-1', {
+      entityType: 'character',
+      name: 'Mizuki',
+      freeDescription: null,
+      structuredFields: {
+        age_range: '高校二年生くらい',
+        build: '華奢だが芯が強い立ち姿',
+        hair: {
+          color: '淡い青みの黒',
+          length: '肩甲骨に届く長さ',
+          style: '少し湿ったようにまとまる直毛',
+          arrangement: '低い位置でゆるく結ぶ',
+          bangs: '目元にかかる長めの前髪',
+        },
+        eyes: {
+          color: '夜明け前の灰青',
+          shape: '伏し目がちな切れ長',
+        },
+        clothing: {
+          category: '白い医療施設風の制服',
+          impression: '清潔だが不穏',
+        },
+        art_style: '細線の漫画調',
+      },
+      speechProfile: {},
+    });
+
+    expect(result.structuredFields).toMatchObject({
+      age_range: '高校二年生くらい',
+      build: '華奢だが芯が強い立ち姿',
+      hair: {
+        color: '淡い青みの黒',
+        style: '少し湿ったようにまとまる直毛',
+      },
+      eyes: {
+        color: '夜明け前の灰青',
+      },
+      clothing: {
+        category: '白い医療施設風の制服',
+      },
+      art_style: '細線の漫画調',
+    });
+  });
+
   it('object作成の場合にspeech_profileが空に正規化される', async () => {
     const workReader = new FakeWorkReader();
     workReader.ownedWorkIds.add('user-1:work-1');

@@ -48,6 +48,7 @@ function toJobResponse(job: GenerationJob): Record<string, unknown> {
     credit_cost: job.creditCost,
     params: job.params,
     result: job.result,
+    openai_request_id: job.openaiRequestId,
     error_message: job.errorMessage,
     retry_count: job.retryCount,
     created_at: job.createdAt.toISOString(),

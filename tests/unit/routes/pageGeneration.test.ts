@@ -337,10 +337,10 @@ describe('page generation routes', () => {
       params: {
         requires_planner: false,
       },
+      openai_request_id: null,
     });
     expect(payload).not.toHaveProperty('user_id');
     expect(payload).not.toHaveProperty('sqs_message_id');
-    expect(payload).not.toHaveProperty('openai_request_id');
   });
 
   it('不正な UUID は 422 になる', async () => {

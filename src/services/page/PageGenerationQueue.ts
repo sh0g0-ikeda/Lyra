@@ -29,7 +29,12 @@ export class InlinePageGenerationQueueAdapter implements PageGenerationQueuePort
   public async enqueue(payload: PageGenerationQueuePayload): Promise<EnqueuePageGenerationResult> {
     const messageId = `inline-${randomUUID()}`;
     setTimeout(() => {
-      void this.processor.processJob(payload.jobId).catch(() => undefined);
+      void this.processor.processJob(payload.jobId).catch((error: unknown) => {
+        console.error('[page-generation-inline-worker] failed to process job', {
+          jobId: payload.jobId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
     }, 0);
 
     return { messageId };

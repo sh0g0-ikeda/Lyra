@@ -22,6 +22,10 @@ import { isUniqueViolation } from '../../repositories/GenerationJobRepository.js
 import type { EntityReferenceRepository } from '../../repositories/EntityRepository.js';
 import type { CreditServicePort } from '../credit/CreditService.js';
 import type { EntityGenerationQueuePort } from './EntityGenerationQueue.js';
+import {
+  NoopEntityGenerationRecoveryService,
+  type EntityGenerationRecoveryServicePort,
+} from './EntityGenerationRecoveryService.js';
 import type { EntityImportAnalyzerPort } from '../../infrastructure/openai/OpenAIEntityImportAnalyzer.js';
 import type { EntityImageStoragePort } from '../../infrastructure/aws/S3EntityImageStorage.js';
 import {
@@ -74,6 +78,7 @@ export class EntityReferenceService implements EntityReferenceServicePort {
     private readonly generationQueue: EntityGenerationQueuePort,
     private readonly capacityLimits: GenerationCapacityLimits = DEFAULT_GENERATION_CAPACITY_LIMITS,
     private readonly generationEnabled = true,
+    private readonly recoveryService: EntityGenerationRecoveryServicePort = new NoopEntityGenerationRecoveryService(),
   ) {}
 
   public async getReferenceSet(userId: string, entityId: string): Promise<EntityReferenceSet> {
@@ -135,21 +140,26 @@ export class EntityReferenceService implements EntityReferenceServicePort {
     if (sourceS3Key !== null) {
       ensureAllowedReferenceSourceKey(sourceS3Key, userId, entityId);
     }
+
+    await this.recoveryService.recoverStaleJobsForEntity(userId, entity.entityId);
     await assertGenerationCapacity(this.generationJobRepository, userId, this.capacityLimits);
     await this.ensureNoActiveGenerationJob(userId, entity.entityId);
 
     let creditsConsumed = false;
-    let jobId: string | null = null;
+    const reservedJobId = randomUUID();
+    let createdJobId: string | null = null;
 
     try {
       await this.creditService.consumeCredits({
         userId,
         cost: CREDIT_COSTS.ENTITY_GENERATION,
         description: 'Entity reference generation',
+        jobId: reservedJobId,
       });
       creditsConsumed = true;
 
       const job = await this.generationJobRepository.create({
+        id: reservedJobId,
         userId,
         jobType: 'entity_generate',
         generationMode: null,
@@ -161,7 +171,7 @@ export class EntityReferenceService implements EntityReferenceServicePort {
           ...(sourceS3Key === null ? {} : { source_s3_key: sourceS3Key }),
         },
       });
-      jobId = job.id;
+      createdJobId = job.id;
 
       const enqueueResult = await this.generationQueue.enqueue({
         jobId: job.id,
@@ -175,8 +185,8 @@ export class EntityReferenceService implements EntityReferenceServicePort {
 
       return { jobId: job.id };
     } catch (error) {
-      if (jobId !== null) {
-        await this.generationJobRepository.markFailed(jobId, 'Failed to enqueue entity generation job');
+      if (createdJobId !== null) {
+        await this.generationJobRepository.markFailed(createdJobId, 'Failed to enqueue entity generation job');
       }
 
       if (creditsConsumed) {
@@ -184,7 +194,7 @@ export class EntityReferenceService implements EntityReferenceServicePort {
           userId,
           amount: CREDIT_COSTS.ENTITY_GENERATION,
           description: 'Refund for failed entity generation enqueue',
-          jobId: jobId ?? undefined,
+          jobId: createdJobId ?? reservedJobId,
         });
       }
 

@@ -46,6 +46,11 @@ button {
   cursor: pointer;
 }
 
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
 img {
   display: block;
   max-width: 100%;
@@ -1074,6 +1079,26 @@ a {
   gap: 4px;
 }
 
+.reference-card-choice-row {
+  display: grid;
+  gap: 6px;
+  font-size: 0.76rem;
+  color: #cfcfcf;
+}
+
+.reference-card-choice-row label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.reference-card .reference-card-choice-row input[type='checkbox'],
+.reference-card .reference-card-choice-row input[type='radio'] {
+  position: static;
+  width: auto;
+  margin: 0;
+}
+
 .reference-card-actions {
   display: flex;
   justify-content: flex-end;
@@ -1480,12 +1505,33 @@ details.stack summary {
 }
 
 .auth-shell,
-.screen-center,
-.empty-state {
+.screen-center {
   min-height: 100vh;
   display: grid;
   place-items: center;
   padding: 24px;
+}
+
+.empty-state {
+  min-height: calc(100vh - 72px);
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 10px;
+  padding: 24px;
+  text-align: center;
+}
+
+.empty-state h2,
+.empty-state p {
+  margin: 0;
+}
+
+.empty-state p {
+  max-width: 32rem;
+  color: #8a8a8a;
+  font-size: 0.86rem;
+  line-height: 1.55;
 }
 
 .auth-card {
@@ -1562,6 +1608,32 @@ details.stack summary {
   .sidebar {
     border-right: 0;
     border-bottom: 1px solid rgba(229, 199, 107, 0.08);
+  }
+
+  .topbar {
+    align-items: stretch;
+    flex-direction: column;
+    padding: 12px 16px;
+  }
+
+  .topbar > .toolbar {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    width: 100%;
+  }
+
+  .topbar .tab-button,
+  .topbar .toolbar-select {
+    width: 100%;
+  }
+
+  .topbar > .toolbar > .ghost-button {
+    width: 44px;
+  }
+
+  .empty-state {
+    min-height: 280px;
+    padding: 20px 16px;
   }
 
   .story-tree,

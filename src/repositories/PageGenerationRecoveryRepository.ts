@@ -10,7 +10,7 @@ export interface StalePageGenerationJob {
   pageId: string;
   previousStatus: PageStatus;
   previousGenerationMode: PageGenerationMode | null;
-  startedAt: Date;
+  staleAt: Date;
 }
 
 export interface PageGenerationRecoveryRepository {
@@ -29,7 +29,7 @@ interface StalePageGenerationJobRow extends QueryResultRow {
   page_id: string;
   previous_page_status: string | null;
   previous_generation_mode: string | null;
-  started_at: Date;
+  stale_at: Date;
 }
 
 export class PostgresPageGenerationRecoveryRepository
@@ -72,12 +72,20 @@ function buildBaseQuery(): string {
         generation_jobs.params->>'page_id' AS page_id,
         generation_jobs.params->>'previous_page_status' AS previous_page_status,
         generation_jobs.params->>'previous_generation_mode' AS previous_generation_mode,
-        generation_jobs.started_at
+        COALESCE(generation_jobs.started_at, generation_jobs.created_at) AS stale_at
       FROM generation_jobs
       WHERE generation_jobs.job_type = 'page_generate'
-        AND generation_jobs.status = 'processing'
-        AND generation_jobs.started_at IS NOT NULL
-        AND generation_jobs.started_at < $1
+        AND (
+          (
+            generation_jobs.status = 'processing'
+            AND generation_jobs.started_at IS NOT NULL
+            AND generation_jobs.started_at < $1
+          )
+          OR (
+            generation_jobs.status = 'queued'
+            AND generation_jobs.created_at < $1
+          )
+        )
     `;
 }
 
@@ -95,7 +103,7 @@ function mapStalePageGenerationJobRow(row: StalePageGenerationJobRow): StalePage
       pageId: row.page_id,
       previousStatus,
       previousGenerationMode: toPageGenerationMode(row.previous_generation_mode),
-      startedAt: row.started_at,
+      staleAt: row.stale_at,
     },
   ];
 }

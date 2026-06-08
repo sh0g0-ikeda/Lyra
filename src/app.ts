@@ -37,6 +37,8 @@ import { PostgresBillingRepository } from './repositories/BillingRepository.js';
 import { PostgresCompositionGalleryRepository } from './repositories/CompositionGalleryRepository.js';
 import { PostgresCreditRepository } from './repositories/CreditRepository.js';
 import { PostgresEntityRepository } from './repositories/EntityRepository.js';
+import { PostgresEntityGenerationExecutionRepository } from './repositories/EntityGenerationExecutionRepository.js';
+import { PostgresEntityGenerationRecoveryRepository } from './repositories/EntityGenerationRecoveryRepository.js';
 import { PostgresGenerationJobRepository } from './repositories/GenerationJobRepository.js';
 import { PostgresBalloonRepository } from './repositories/BalloonRepository.js';
 import { PostgresPanelEntityAssignmentRepository } from './repositories/PanelEntityAssignmentRepository.js';
@@ -93,6 +95,10 @@ import {
   SqsEntityGenerationQueueAdapter,
   type EntityGenerationQueuePort,
 } from './services/entity/EntityGenerationQueue.js';
+import {
+  EntityGenerationRecoveryService,
+  type EntityGenerationRecoveryServicePort,
+} from './services/entity/EntityGenerationRecoveryService.js';
 import { JobService, type JobServicePort } from './services/job/JobService.js';
 import {
   NoopPageGenerationQueue,
@@ -162,6 +168,7 @@ export interface AppDependencies {
   entityService?: EntityServicePort;
   entityReferenceService?: EntityReferenceServicePort;
   entityGenerationQueue?: EntityGenerationQueuePort;
+  entityGenerationRecoveryService?: EntityGenerationRecoveryServicePort;
   jobService?: JobServicePort;
   pageExportService?: PageExportServicePort;
   pageFinalizeService?: PageFinalizeServicePort;
@@ -361,6 +368,14 @@ function resolveDependencies(
   const billingRepository = new PostgresBillingRepository(db, db);
   const pageRepository = new PostgresPageRepository(db);
   const generationJobRepository = new PostgresGenerationJobRepository(db);
+  const entityGenerationExecutionRepository = new PostgresEntityGenerationExecutionRepository(db);
+  const entityGenerationRecoveryService =
+    dependencies.entityGenerationRecoveryService ??
+    new EntityGenerationRecoveryService(
+      new PostgresEntityGenerationRecoveryRepository(db),
+      entityGenerationExecutionRepository,
+      creditService,
+    );
   const pageGenerationExecutionRepository = new PostgresPageGenerationExecutionRepository(db);
   const pageGenerationRecoveryService =
     dependencies.pageGenerationRecoveryService ??
@@ -403,6 +418,7 @@ function resolveDependencies(
         global: env.GENERATION_GLOBAL_ACTIVE_JOB_LIMIT,
       },
       env.GENERATION_ENABLED,
+      entityGenerationRecoveryService,
     );
   const panelRepository = new PostgresPanelRepository(db);
   const panelFrameRepository = new PostgresPanelFrameRepository(db);
@@ -455,7 +471,13 @@ function resolveDependencies(
       resolveEpisodePagePlanCompiler(),
       resolveStyleReferenceCompiler(),
     );
-  const jobService = dependencies.jobService ?? new JobService(generationJobRepository);
+  const jobService =
+    dependencies.jobService ??
+    new JobService(
+      generationJobRepository,
+      pageGenerationRecoveryService,
+      entityGenerationRecoveryService,
+    );
   const storyCollaborationService =
     dependencies.storyCollaborationService ??
     new StoryCollaborationService(
@@ -488,6 +510,7 @@ function resolveDependencies(
     entityService,
     entityReferenceService,
     entityGenerationQueue,
+    entityGenerationRecoveryService,
     jobService,
     pageExportService,
     pageFinalizeService,

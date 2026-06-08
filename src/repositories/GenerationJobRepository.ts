@@ -6,6 +6,7 @@ import type { DatabaseClient } from '../lib/db.js';
 export type { GenerationJob };
 
 export interface CreateGenerationJobInput {
+  id?: string;
   userId: string;
   jobType: GenerationJobType;
   generationMode: PageGenerationMode | null;
@@ -52,6 +53,7 @@ export class PostgresGenerationJobRepository implements GenerationJobRepository 
     const result = await this.client.query<GenerationJobRow>(
       `
       INSERT INTO generation_jobs (
+        id,
         user_id,
         job_type,
         generation_mode,
@@ -59,10 +61,11 @@ export class PostgresGenerationJobRepository implements GenerationJobRepository 
         params,
         expires_at
       )
-      VALUES ($1, $2, $3, $4, $5::jsonb, NOW() + INTERVAL '7 days')
+      VALUES (COALESCE($1::uuid, gen_random_uuid()), $2, $3, $4, $5, $6::jsonb, NOW() + INTERVAL '7 days')
       RETURNING *
       `,
       [
+        input.id ?? null,
         input.userId,
         input.jobType,
         input.generationMode,

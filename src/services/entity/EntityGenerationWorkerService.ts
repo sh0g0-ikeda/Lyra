@@ -184,15 +184,17 @@ function buildPreviewVariationPrompt(
 ): string {
   const profile = PREVIEW_VARIATION_PROFILES[selectPreviewVariationProfileIndex(jobId)];
   const sourceImageInstruction = isImageConditioned
-    ? 'Respect the uploaded source image as the core identity anchor, but do not simply recreate the exact same pose, crop, or fold pattern from earlier previews.'
-    : 'Do not simply recreate the exact same pose, crop, or fold pattern from earlier previews.';
+    ? 'Use the uploaded source image only as a user-supplied visual anchor for this request; if it conflicts with the current saved text, obey the current saved text.'
+    : 'No source image is attached, so the current saved text prompt is the only visual source.';
 
   return [
     prompt.trim(),
     '',
-    'Treat this output as a fresh preview variation of the same character reference.',
+    'Create this as a new reference preview from the current saved entity inputs only.',
+    'Do not preserve, restore, imitate, or edit any previous generated preview or any previously confirmed reference image unless it is explicitly attached in this request.',
+    'If the current saved text differs from earlier previews, the current saved text must win.',
     sourceImageInstruction,
-    'Keep the same identity, face shape, hair silhouette, body proportions, and outfit silhouette, but vary only neutral presentation details such as stance weight distribution, arm spacing, head tilt, hair strand grouping, and fabric fold rhythm.',
+    'Use a clearly new neutral presentation while keeping the authored subject readable.',
     `Variation profile ${profile.code}: ${profile.instruction}`,
   ].join(' ');
 }

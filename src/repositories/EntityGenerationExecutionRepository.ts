@@ -129,7 +129,7 @@ export class PostgresEntityGenerationExecutionRepository implements EntityGenera
           completed_at = NOW()
       WHERE id = $1
         AND user_id = $2
-        AND status = 'processing'
+        AND status IN ('queued', 'processing')
       RETURNING *
       `,
       [input.jobId, input.userId, input.errorMessage],

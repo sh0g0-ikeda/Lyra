@@ -38,6 +38,8 @@ import { PostgresPanelRepository } from '../src/repositories/PanelRepository.js'
 import { PostgresEntityRepository } from '../src/repositories/EntityRepository.js';
 import { PostgresCompositionGalleryRepository } from '../src/repositories/CompositionGalleryRepository.js';
 import { ConfigurationError } from '../src/domain/errors/index.js';
+import { IMAGE_GENERATION_OPENAI_MAX_RETRIES } from '../src/domain/constants/generation.js';
+import { shouldUseLocalImageFallback } from '../src/domain/generation/LocalImageFallbackPolicy.js';
 import { OpenAIClient } from '../src/infrastructure/openai/OpenAIClient.js';
 import {
   OpenAIEntityReferenceGenerator,
@@ -226,23 +228,28 @@ function resolvePageGenerationPlanner(): PageGenerationPlannerPort {
 }
 
 function resolvePageImageRenderer(): PageImageRendererPort {
-  const client = buildOpenAIClient();
+  const client = buildOpenAIClient({ maxRetries: IMAGE_GENERATION_OPENAI_MAX_RETRIES });
   const localAssetConfig = resolveConfiguredLocalAssetConfig();
+  const localFallbackEnabled = shouldUseLocalImageFallback({
+    localAssetStorageConfigured: localAssetConfig !== null,
+    localImageFallbackEnabled: env.LOCAL_IMAGE_FALLBACK_ENABLED,
+  });
+
   if (client === null) {
-    return localAssetConfig !== null
+    return localFallbackEnabled
       ? new LocalPreviewPageImageRenderer()
       : new UnconfiguredPageImageRenderer();
   }
 
   const primaryRenderer = new OpenAIPageImageRenderer(client, env.OPENAI_IMAGE_MODEL);
-  if (localAssetConfig !== null) {
+  if (localFallbackEnabled) {
     return new LocalResilientPageImageRenderer(primaryRenderer, new LocalPreviewPageImageRenderer());
   }
 
   return primaryRenderer;
 }
 
-function buildOpenAIClient(): OpenAIClient | null {
+function buildOpenAIClient(options: { maxRetries?: number } = {}): OpenAIClient | null {
   if (env.OPENAI_API_KEY === undefined) {
     return null;
   }
@@ -251,6 +258,7 @@ function buildOpenAIClient(): OpenAIClient | null {
     apiKey: env.OPENAI_API_KEY,
     baseUrl: env.OPENAI_BASE_URL,
     timeoutMs: env.OPENAI_TIMEOUT_MS,
+    maxRetries: options.maxRetries,
   });
 }
 
@@ -271,16 +279,21 @@ function resolvePageImageStorage(): PageImageStoragePort {
 }
 
 function resolveEntityReferenceGenerator(): EntityReferenceGeneratorPort {
-  const client = buildOpenAIClient();
+  const client = buildOpenAIClient({ maxRetries: IMAGE_GENERATION_OPENAI_MAX_RETRIES });
   const localAssetConfig = resolveConfiguredLocalAssetConfig();
+  const localFallbackEnabled = shouldUseLocalImageFallback({
+    localAssetStorageConfigured: localAssetConfig !== null,
+    localImageFallbackEnabled: env.LOCAL_IMAGE_FALLBACK_ENABLED,
+  });
+
   if (client === null) {
-    return localAssetConfig !== null
+    return localFallbackEnabled
       ? new LocalPreviewEntityReferenceGenerator()
       : new UnconfiguredEntityReferenceGenerator();
   }
 
   const primaryGenerator = new OpenAIEntityReferenceGenerator(client, env.OPENAI_IMAGE_MODEL);
-  if (localAssetConfig !== null) {
+  if (localFallbackEnabled) {
     return new LocalResilientEntityReferenceGenerator(
       primaryGenerator,
       new LocalPreviewEntityReferenceGenerator(),

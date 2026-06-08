@@ -1,9 +1,12 @@
 import { serve } from '@hono/node-server';
 import { createApp } from './app.js';
 import { PostgresCreditRepository } from './repositories/CreditRepository.js';
+import { PostgresEntityGenerationExecutionRepository } from './repositories/EntityGenerationExecutionRepository.js';
+import { PostgresEntityGenerationRecoveryRepository } from './repositories/EntityGenerationRecoveryRepository.js';
 import { PostgresPageGenerationExecutionRepository } from './repositories/PageGenerationExecutionRepository.js';
 import { PostgresPageGenerationRecoveryRepository } from './repositories/PageGenerationRecoveryRepository.js';
 import { CreditService } from './services/credit/CreditService.js';
+import { EntityGenerationRecoveryService } from './services/entity/EntityGenerationRecoveryService.js';
 import { PageGenerationRecoveryService } from './services/page/PageGenerationRecoveryService.js';
 import { db } from './lib/db.js';
 import { env } from './lib/env.js';
@@ -19,10 +22,11 @@ async function main(): Promise<void> {
   }
 
   try {
+    const creditService = new CreditService(new PostgresCreditRepository(db, db));
     const recoveredCount = await new PageGenerationRecoveryService(
       new PostgresPageGenerationRecoveryRepository(db),
       new PostgresPageGenerationExecutionRepository(db),
-      new CreditService(new PostgresCreditRepository(db, db)),
+      creditService,
     ).recoverAllStaleJobs();
 
     if (recoveredCount > 0) {
@@ -30,6 +34,20 @@ async function main(): Promise<void> {
     }
   } catch (error) {
     console.error('[page-generation-recovery] failed to recover stale jobs on startup', error);
+  }
+
+  try {
+    const recoveredCount = await new EntityGenerationRecoveryService(
+      new PostgresEntityGenerationRecoveryRepository(db),
+      new PostgresEntityGenerationExecutionRepository(db),
+      new CreditService(new PostgresCreditRepository(db, db)),
+    ).recoverAllStaleJobs();
+
+    if (recoveredCount > 0) {
+      console.warn(`[entity-generation-recovery] recovered ${recoveredCount} stale entity generation job(s) on startup`);
+    }
+  } catch (error) {
+    console.error('[entity-generation-recovery] failed to recover stale jobs on startup', error);
   }
 
   serve(

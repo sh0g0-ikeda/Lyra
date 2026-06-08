@@ -102,6 +102,21 @@ describe('PostgresEntityGenerationExecutionRepository', () => {
       }),
     );
   });
+  it('failEntityGeneration は queued と processing の job を failed にできる', async () => {
+    const client = new QueryCapturingClient();
+    const repository = new PostgresEntityGenerationExecutionRepository(client);
+
+    const failed = await repository.failEntityGeneration({
+      jobId: 'job-1',
+      userId: 'user-1',
+      errorMessage: 'worker stopped',
+    });
+
+    expect(failed).toBe(true);
+    expect(client.queries[0]).toContain("SET status = 'failed'");
+    expect(client.queries[0]).toContain("status IN ('queued', 'processing')");
+    expect(client.values).toEqual(['job-1', 'user-1', 'worker stopped']);
+  });
 });
 
 function jobRow(): Record<string, unknown> {

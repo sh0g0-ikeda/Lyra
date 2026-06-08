@@ -38,116 +38,43 @@ const styleReferenceSchema = z
   })
   .strict();
 
+const characterFreeTextField = (maxLength: number): z.ZodString => z.string().trim().max(maxLength);
+
 const characterStructuredFieldsSchema = z
   .object({
-    gender_expression: z.enum(['female', 'male', 'androgynous', 'unspecified']).optional(),
-    age_range: z
-      .enum(['child', 'early_teens', 'late_teens', 'twenties', 'thirties', 'forties_plus', 'ageless'])
-      .optional(),
-    skin_tone: z.enum(['fair', 'light', 'medium', 'tan', 'deep', 'custom']).optional(),
-    first_impression: z
-      .enum([
-        'bright_friendly',
-        'quiet_neat',
-        'cool_distant',
-        'gentle_soft',
-        'serious_reliable',
-        'mysterious_fragile',
-        'energetic_bold',
-      ])
-      .optional(),
-    standing_style: z
-      .enum(['upright_neat', 'natural_relaxed', 'shy_reserved', 'confident_open', 'still_quiet'])
-      .optional(),
-    default_expression: z
-      .enum(['soft_smile', 'calm_neutral', 'serious_focus', 'cheerful_smile', 'shy_reserved', 'cool_unfazed'])
-      .optional(),
-    face_shape: z
-      .enum(['round', 'oval', 'heart', 'square', 'diamond', 'long', 'soft_triangle', 'custom'])
-      .optional(),
-    eyebrow_shape: z
-      .enum(['straight', 'soft_arch', 'high_arch', 'thick', 'thin', 'sharp', 'custom'])
-      .optional(),
-    nose_shape: z
-      .enum(['small', 'straight', 'button', 'sharp', 'rounded', 'broad', 'custom'])
-      .optional(),
-    mouth_shape: z
-      .enum(['soft', 'full', 'thin', 'wide', 'smirk', 'serious', 'custom'])
-      .optional(),
-    height: z.enum(['short', 'average', 'tall']).optional(),
-    build: z.enum(['petite', 'slender', 'average', 'athletic', 'muscular', 'curvy']).optional(),
+    gender_expression: characterFreeTextField(100).optional(),
+    age_range: characterFreeTextField(100).optional(),
+    skin_tone: characterFreeTextField(100).optional(),
+    first_impression: characterFreeTextField(150).optional(),
+    standing_style: characterFreeTextField(150).optional(),
+    default_expression: characterFreeTextField(150).optional(),
+    face_shape: characterFreeTextField(100).optional(),
+    eyebrow_shape: characterFreeTextField(100).optional(),
+    nose_shape: characterFreeTextField(100).optional(),
+    mouth_shape: characterFreeTextField(100).optional(),
+    height: characterFreeTextField(100).optional(),
+    build: characterFreeTextField(100).optional(),
     hair: z
       .object({
-        color: z
-          .enum(['black', 'brown', 'blonde', 'silver', 'white', 'blue', 'red', 'pink', 'purple', 'custom'])
-          .optional(),
-        length: z.enum(['very_short', 'short', 'medium', 'long', 'very_long']).optional(),
-        style: z.enum(['straight', 'wavy', 'curly', 'wild']).optional(),
-        arrangement: z
-          .enum([
-            'down',
-            'short_cut',
-            'buzz_cut',
-            'crew_cut',
-            'undercut',
-            'short_bob',
-            'center_part',
-            'side_part',
-            'slick_back',
-            'long_straight',
-            'medium_layered',
-            'wolf_cut',
-            'short_perm',
-            'ponytail',
-            'side_ponytail',
-            'twin_tails',
-            'bun',
-            'braid',
-            'half_up',
-            'hime_cut',
-            'custom',
-          ])
-          .optional(),
-        bangs: z
-          .enum(['none', 'light', 'standard', 'heavy', 'side_swept', 'blunt'])
-          .optional(),
+        color: characterFreeTextField(100).optional(),
+        length: characterFreeTextField(100).optional(),
+        style: characterFreeTextField(100).optional(),
+        arrangement: characterFreeTextField(150).optional(),
+        bangs: characterFreeTextField(100).optional(),
       })
       .optional(),
     eyes: z
       .object({
-        color: z
-          .enum(['black', 'brown', 'blue', 'green', 'red', 'gold', 'silver', 'purple', 'custom'])
-          .optional(),
-        shape: z.enum(['gentle', 'sharp', 'round', 'narrow']).optional(),
-        eyelid_type: z.enum(['single', 'double']).optional(),
+        color: characterFreeTextField(100).optional(),
+        shape: characterFreeTextField(100).optional(),
+        eyelid_type: characterFreeTextField(100).optional(),
       })
       .optional(),
     clothing: z
       .object({
-        category: z
-          .enum([
-            'military',
-            'school',
-            'casual',
-            'suit',
-            'fantasy',
-            'japanese',
-            'streetwear',
-            'hoodie',
-            'sports',
-            'winter_coat',
-            'workwear',
-            'armor',
-            'gothic',
-            'formal_dress',
-            'idol_stage',
-            'custom',
-          ])
-          .optional(),
-        main_color: z
-          .enum(['black', 'white', 'navy', 'gray', 'brown', 'red', 'blue', 'green', 'custom'])
-          .optional(),
-        impression: z.enum(['formal', 'practical', 'elegant', 'rough', 'cute', 'custom']).optional(),
+        category: characterFreeTextField(150).optional(),
+        main_color: characterFreeTextField(100).optional(),
+        impression: characterFreeTextField(150).optional(),
         description: z.string().max(500).optional(),
       })
       .optional(),
@@ -199,7 +126,7 @@ const characterStructuredFieldsSchema = z
       .optional(),
     style_reference: styleReferenceSchema.optional(),
     distinguishing_features: z.string().max(500).optional(),
-    art_style: z.enum(['anime', 'semi_realistic', 'manga', 'painterly']).optional(),
+    art_style: characterFreeTextField(100).optional(),
   })
   .strict();
 

@@ -48,6 +48,7 @@ describe('PostgresGenerationJobRepository', () => {
 
     expect(client.queries[0]).toContain('INSERT INTO generation_jobs');
     expect(client.values).toEqual([
+      null,
       'user-1',
       'page_generate',
       'standard',
@@ -61,6 +62,34 @@ describe('PostgresGenerationJobRepository', () => {
       }),
     ]);
     expect(job.id).toBe('job-1');
+  });
+
+  it('指定された job id で generation job を作成できる', async () => {
+    const client = new QueryCapturingClient();
+    const repository = new PostgresGenerationJobRepository(client);
+
+    await repository.create({
+      id: '55555555-5555-4555-8555-555555555555',
+      userId: 'user-1',
+      jobType: 'entity_generate',
+      generationMode: null,
+      creditCost: 1,
+      params: {
+        entity_id: 'entity-1',
+      },
+    });
+
+    expect(client.queries[0]).toContain('COALESCE($1::uuid, gen_random_uuid())');
+    expect(client.values).toEqual([
+      '55555555-5555-4555-8555-555555555555',
+      'user-1',
+      'entity_generate',
+      null,
+      1,
+      JSON.stringify({
+        entity_id: 'entity-1',
+      }),
+    ]);
   });
 
   it('user_idで所有権を絞ってjobを取得する', async () => {

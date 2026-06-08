@@ -190,4 +190,29 @@ describe('EntityReferencePromptBuilder', () => {
     expect(prompt).toContain('Use the named style reference "AKIRA" as a hard rendering constraint.');
     expect(prompt).toContain('Apply these rendering-style anchors through line treatment, shading, finish, and atmosphere only: line quality: precise mechanical linework with confident contour control');
   });
+
+  it('画像生成用 prompt では非人間の衣服なし指定を安全な影素材表現に寄せる', () => {
+    const builder = new EntityReferencePromptBuilder();
+    const context: EntityReferenceContext = {
+      ...baseContext,
+      entityType: 'nonhuman',
+      name: '神託の影（レーマ）',
+      freeDescription:
+        '白い髪、白い翼をもった真っ黒な人型の影。左の翼は大きめで右の翼は極端に小さい。顔はない。体系は女性より。左腕がない。右手には金色の剣をもっている。衣服は着ていない。全身真っ黒なためアダルト要素ではない。',
+      structuredFields: {},
+      promptSupplement: null,
+    };
+
+    const prompt = builder.buildGenerationPrompt(context);
+    const brief = builder.buildCompilerBrief(context);
+
+    expect(prompt).toContain('fully opaque non-human silhouette surface');
+    expect(prompt).toContain('shadow material');
+    expect(prompt).not.toContain('衣服は着ていない');
+    expect(prompt).not.toContain('アダルト');
+    expect(brief).toContain('fully opaque non-human silhouette surface');
+    expect(brief).not.toContain('衣服は着ていない');
+    expect(brief).not.toContain('アダルト');
+    expect(brief).not.toContain('both hands visible');
+  });
 });

@@ -92,6 +92,7 @@ class FakeGenerationJobRepository implements GenerationJobRepository {
   public async create(input: CreateGenerationJobInput): Promise<GenerationJob> {
     this.created = input;
     return buildJob({
+      id: input.id ?? '44444444-4444-4444-8444-444444444444',
       generationMode: input.generationMode,
       creditCost: input.creditCost,
       params: input.params,
@@ -278,11 +279,13 @@ describe('PageGenerationService', () => {
 
     const result = await service.enqueuePageGeneration(userId, pageId);
 
-    expect(result).toEqual({ jobId: '44444444-4444-4444-8444-444444444444' });
+    expect(result.jobId).toBe(jobRepository.created?.id);
     expect(creditService.consumed[0]).toMatchObject({
       cost: 1,
       description: 'Page generation (standard)',
+      jobId: result.jobId,
     });
+    expect(jobRepository.created?.id).toEqual(expect.any(String));
     expect(jobRepository.created?.params).toMatchObject({
       page_id: pageId,
       request_kind: 'initial',
@@ -298,6 +301,7 @@ describe('PageGenerationService', () => {
       expectedStatus: 'designing',
     });
     expect(queue.lastPayload).toMatchObject({
+      jobId: result.jobId,
       pageId,
       requestKind: 'initial',
       generationMode: 'standard',
@@ -534,7 +538,7 @@ describe('PageGenerationService', () => {
       code: 'CONFIGURATION_ERROR',
     });
 
-    expect(jobRepository.failedJobId).toBe('44444444-4444-4444-8444-444444444444');
+    expect(jobRepository.failedJobId).toBe(jobRepository.created?.id);
     expect(pageRepository.updates).toEqual([
       { status: 'generating', generationMode: 'standard', expectedStatus: 'designing' },
       { status: 'designing', generationMode: null },
@@ -542,7 +546,7 @@ describe('PageGenerationService', () => {
     expect(creditService.refunded[0]).toMatchObject({
       amount: 1,
       description: 'Refund for failed page generation enqueue',
-      jobId: '44444444-4444-4444-8444-444444444444',
+      jobId: jobRepository.created?.id,
     });
   });
   it('page state updateに失敗した場合はjob failedとrefundで補償する', async () => {
@@ -564,10 +568,10 @@ describe('PageGenerationService', () => {
       message: 'Page generation state changed before enqueue',
     });
 
-    expect(jobRepository.failedJobId).toBe('44444444-4444-4444-8444-444444444444');
+    expect(jobRepository.failedJobId).toBe(jobRepository.created?.id);
     expect(creditService.refunded[0]).toMatchObject({
       amount: 1,
-      jobId: '44444444-4444-4444-8444-444444444444',
+      jobId: jobRepository.created?.id,
     });
   });
 
@@ -587,7 +591,7 @@ describe('PageGenerationService', () => {
 
     const result = await service.enqueuePageGeneration(userId, pageId);
 
-    expect(result).toEqual({ jobId: '44444444-4444-4444-8444-444444444444' });
+    expect(result.jobId).toBe(jobRepository.created?.id);
     expect(jobRepository.failedJobId).toBeNull();
     expect(creditService.refunded).toEqual([]);
     expect(pageRepository.updates).toEqual([

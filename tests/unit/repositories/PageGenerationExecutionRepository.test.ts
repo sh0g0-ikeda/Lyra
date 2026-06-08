@@ -118,6 +118,7 @@ describe('PostgresPageGenerationExecutionRepository', () => {
 
     expect(failed).toBe(true);
     expect(client.queries[0]).toContain("SET status = 'failed'");
+    expect(client.queries[0]).toContain("status IN ('queued', 'processing')");
     expect(client.queries[1]).toContain('UPDATE pages');
     expect(client.values[0]).toEqual(['job-1', 'user-1', 'renderer unavailable']);
     expect(client.values[1]).toEqual(['page-1', 'user-1', 'editing', 'standard']);

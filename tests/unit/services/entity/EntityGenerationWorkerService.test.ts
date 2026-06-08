@@ -236,7 +236,8 @@ describe('EntityGenerationWorkerService', () => {
     expect(promptCompiler.compilerBrief).toContain('Target image: manga full-body character reference');
     expect(referenceGenerator.input?.inputImages).toEqual([]);
     expect(referenceGenerator.input?.prompt).toContain('entity prompt compiled');
-    expect(referenceGenerator.input?.prompt).toContain('Treat this output as a fresh preview variation');
+    expect(referenceGenerator.input?.prompt).toContain('current saved entity inputs only');
+    expect(referenceGenerator.input?.prompt).toContain('current saved text must win');
     expect(referenceGenerator.input?.prompt).toContain('Variation profile');
     expect(executionRepository.completed?.candidates).toHaveLength(1);
     expect(executionRepository.completed?.openaiRequestId).toBe('req-1');
@@ -272,7 +273,8 @@ describe('EntityGenerationWorkerService', () => {
     expect(result).toEqual({ status: 'processed', jobStatus: 'completed' });
     expect(referenceGenerator.input?.inputImages).toEqual([]);
     expect(referenceGenerator.input?.prompt).toContain('entity prompt');
-    expect(referenceGenerator.input?.prompt).toContain('Treat this output as a fresh preview variation');
+    expect(referenceGenerator.input?.prompt).toContain('current saved entity inputs only');
+    expect(referenceGenerator.input?.prompt).toContain('current saved text must win');
     expect(executionRepository.completed?.compiledPromptUsed).toBe(false);
     expect(executionRepository.completed?.promptCompilerProvider).toBe('none');
     expect(executionRepository.completed?.compilerModel).toBeNull();
@@ -326,8 +328,9 @@ describe('EntityGenerationWorkerService', () => {
     ]);
     expect(referenceGenerator.input?.prompt).toContain('entity prompt compiled');
     expect(referenceGenerator.input?.prompt).toContain(
-      'Respect the uploaded source image as the core identity anchor',
+      'Use the uploaded source image only as a user-supplied visual anchor',
     );
+    expect(referenceGenerator.input?.prompt).toContain('obey the current saved text');
   });
 
   it('生成失敗時は failed と refund に落ちる', async () => {

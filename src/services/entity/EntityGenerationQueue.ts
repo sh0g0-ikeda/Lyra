@@ -28,7 +28,12 @@ export class InlineEntityGenerationQueueAdapter implements EntityGenerationQueue
   public async enqueue(payload: EntityGenerationQueuePayload): Promise<EnqueueEntityGenerationResult> {
     const messageId = `inline-${randomUUID()}`;
     setTimeout(() => {
-      void this.processor.processJob(payload.jobId).catch(() => undefined);
+      void this.processor.processJob(payload.jobId).catch((error: unknown) => {
+        console.error('[entity-generation-inline-worker] failed to process job', {
+          jobId: payload.jobId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
     }, 0);
 
     return { messageId };
