@@ -102,6 +102,10 @@ function buildCdnUrl(baseUrl: string, key: string): string {
 }
 
 function readExtension(s3Key: string): 'png' | 'jpeg' | 'webp' {
+  if (s3Key.endsWith('.png')) {
+    return 'png';
+  }
+
   if (s3Key.endsWith('.jpeg') || s3Key.endsWith('.jpg')) {
     return 'jpeg';
   }
@@ -110,7 +114,7 @@ function readExtension(s3Key: string): 'png' | 'jpeg' | 'webp' {
     return 'webp';
   }
 
-  return 'png';
+  throw new ConfigurationError(`Unsupported final page source image extension: ${s3Key}`);
 }
 
 function guessContentType(extension: 'png' | 'jpeg' | 'webp'): 'image/png' | 'image/jpeg' | 'image/webp' {
