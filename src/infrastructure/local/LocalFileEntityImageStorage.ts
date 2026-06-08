@@ -53,6 +53,7 @@ export class LocalFileEntityImageStorage implements EntityImageStoragePort {
   ): Promise<StoredEntityImage> {
     const extension = inferImageExtensionFromKey(input.sourceS3Key);
     const destinationKey = `saved/${input.userId}/entities/${input.entityId}/${input.refId}.${extension}`;
+    ensureAllowedEntityReferenceSourceKey(input.sourceS3Key, input.userId, input.entityId);
     await copyLocalAsset(this.config.rootDir, input.sourceS3Key, destinationKey);
     return {
       s3Key: destinationKey,
@@ -75,5 +76,16 @@ function mimeTypeToExtension(mimeType: string): 'png' | 'jpeg' | 'webp' | null {
   }
 
   return null;
+}
+
+function ensureAllowedEntityReferenceSourceKey(sourceS3Key: string, userId: string, entityId: string): void {
+  const allowedPrefixes = [
+    `tmp/${userId}/entities/imports/`,
+    `session/${userId}/entities/${entityId}/`,
+  ];
+
+  if (!allowedPrefixes.some((prefix) => sourceS3Key.startsWith(prefix))) {
+    throw new ConfigurationError('Entity reference source image key is outside the entity owner scope');
+  }
 }
 

@@ -70,6 +70,7 @@ export class S3EntityImageStorage implements EntityImageStoragePort {
   public async finalizeReferenceImage(input: FinalizeEntityReferenceImageInput): Promise<StoredEntityImage> {
     const extension = readExtension(input.sourceS3Key);
     const destinationKey = `saved/${input.userId}/entities/${input.entityId}/${input.refId}.${extension}`;
+    ensureAllowedEntityReferenceSourceKey(input.sourceS3Key, input.userId, input.entityId);
 
     try {
       await this.client.send(
@@ -126,6 +127,17 @@ export class S3EntityImageStorage implements EntityImageStoragePort {
 
 function buildCdnUrl(baseUrl: string, key: string): string {
   return new URL(key, `${baseUrl.replace(/\/+$/u, '')}/`).toString();
+}
+
+function ensureAllowedEntityReferenceSourceKey(sourceS3Key: string, userId: string, entityId: string): void {
+  const allowedPrefixes = [
+    `tmp/${userId}/entities/imports/`,
+    `session/${userId}/entities/${entityId}/`,
+  ];
+
+  if (!allowedPrefixes.some((prefix) => sourceS3Key.startsWith(prefix))) {
+    throw new ConfigurationError('Entity reference source image key is outside the entity owner scope');
+  }
 }
 
 function mimeTypeToExtension(mimeType: string): 'png' | 'jpeg' | 'webp' | null {

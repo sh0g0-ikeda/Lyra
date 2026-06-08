@@ -109,6 +109,21 @@ describe('Local file storage adapters', () => {
     ).rejects.toMatchObject({ code: 'CONFIGURATION_ERROR' });
   });
 
+  it('entity finalize は別ユーザーのsource keyを拒否する', async () => {
+    const config = await createConfig();
+    const storage = new LocalFileEntityImageStorage(config);
+    await writeLocalAsset(config.rootDir, 'tmp/user-2/entities/imports/source.png', Buffer.from('foreign'));
+
+    await expect(
+      storage.finalizeReferenceImage({
+        userId: 'user-1',
+        entityId: 'entity-1',
+        refId: 'ref-1',
+        sourceS3Key: 'tmp/user-2/entities/imports/source.png',
+      }),
+    ).rejects.toMatchObject({ code: 'CONFIGURATION_ERROR' });
+  });
+
   it('final page finalize は未対応拡張子をコピー前に拒否する', async () => {
     const config = await createConfig();
     const storage = new LocalFileFinalPageImageStorage(config);

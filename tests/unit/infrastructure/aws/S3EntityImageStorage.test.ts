@@ -67,4 +67,23 @@ describe('S3EntityImageStorage', () => {
 
     expect(client.commands).toHaveLength(0);
   });
+
+  it('rejects source keys outside the entity owner scope before copying', async () => {
+    const client = new FakeS3Client();
+    const storage = new S3EntityImageStorage(client, {
+      bucketName: 'bucket',
+      cdnBaseUrl: 'https://cdn.lyra.test',
+    });
+
+    await expect(
+      storage.finalizeReferenceImage({
+        userId: 'user-1',
+        entityId: 'entity-1',
+        refId: 'ref-1',
+        sourceS3Key: 'tmp/user-2/entities/imports/source.png',
+      }),
+    ).rejects.toMatchObject({ code: 'CONFIGURATION_ERROR' });
+
+    expect(client.commands).toHaveLength(0);
+  });
 });
