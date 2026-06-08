@@ -38,6 +38,7 @@ export class S3FinalPageImageStorage implements FinalPageImageStoragePort {
   public async finalizePageImage(input: FinalizePageImageInput): Promise<GeneratedPageImage> {
     const extension = readExtension(input.sourceS3Key);
     const destinationKey = `saved/${input.userId}/pages/${input.pageId}_final.${extension}`;
+    ensureAllowedFinalPageSourceKey(input.sourceS3Key, input.userId, input.pageId, destinationKey);
     if (input.sourceS3Key === destinationKey) {
       return input.generatedImage;
     }
@@ -102,6 +103,22 @@ export class S3FinalPageImageStorage implements FinalPageImageStoragePort {
 
 function buildCdnUrl(baseUrl: string, key: string): string {
   return new URL(key, `${baseUrl.replace(/\/+$/u, '')}/`).toString();
+}
+
+function ensureAllowedFinalPageSourceKey(
+  sourceS3Key: string,
+  userId: string,
+  pageId: string,
+  destinationKey: string,
+): void {
+  if (sourceS3Key === destinationKey) {
+    return;
+  }
+
+  const sessionPrefix = `session/${userId}/pages/${pageId}/`;
+  if (!sourceS3Key.startsWith(sessionPrefix)) {
+    throw new ConfigurationError('Final page source image key is outside the page owner scope');
+  }
 }
 
 function readExtension(s3Key: string): 'png' | 'jpeg' | 'webp' {

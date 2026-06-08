@@ -145,4 +145,28 @@ describe('S3FinalPageImageStorage', () => {
     expect(result.s3Key).toBe('saved/user-1/pages/page-1_final.png');
     expect(client.calls).toHaveLength(0);
   });
+
+  it('rejects source keys outside the page owner scope before copying', async () => {
+    const client = new FakeS3Client();
+    const storage = new S3FinalPageImageStorage(client, {
+      bucketName: 'lyra-images',
+      cdnBaseUrl: 'https://img.lyra.app',
+    });
+
+    await expect(
+      storage.finalizePageImage({
+        userId: 'user-1',
+        pageId: 'page-1',
+        sourceS3Key: 'session/user-2/pages/page-1/job-1.png',
+        generatedImage: {
+          s3Key: 'session/user-2/pages/page-1/job-1.png',
+          cdnUrl: 'https://img.lyra.app/session/user-2/pages/page-1/job-1.png',
+          generationMode: 'standard',
+          generatedAt: '2026-04-24T00:00:00.000Z',
+        },
+      }),
+    ).rejects.toMatchObject({ code: 'CONFIGURATION_ERROR' });
+
+    expect(client.calls).toHaveLength(0);
+  });
 });
