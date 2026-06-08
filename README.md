@@ -196,12 +196,14 @@ bun run admin:refund-credits -- --user-id <uuid> --amount 3 --reason "support re
 Temporary and unconfirmed generated images should be pruned from S3 regularly:
 
 ```powershell
-bun run admin:prune-images -- --older-than-hours 24 --protect-recent-candidate-hours 48
+bun run admin:prune-images -- --older-than-hours 24 --protect-recent-candidate-hours 48 --max-scanned 5000
 ```
 
 - Default mode is dry-run and lists delete candidates only.
 - Add `--apply` to delete candidates.
 - The script accepts `tmp/` and `session/` prefixes by default.
+- `--max-scanned` caps S3 object listing work separately from `--max-deletes`; increase it only
+  when the dry-run result reports `scanTruncated: true` and you intentionally want to scan more.
 - To prune unreferenced durable assets, pass both `--prefix saved/` and
   `--include-saved-unreferenced`. Keep the first run as dry-run and review the candidates before
   adding `--apply`.

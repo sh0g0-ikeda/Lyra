@@ -6,6 +6,7 @@ export interface PruneImageStorageCliOptions {
   olderThanHours: number;
   protectRecentCandidateHours: number;
   maxDeletes: number;
+  maxScanned: number;
   apply: boolean;
   includeSavedUnreferenced: boolean;
 }
@@ -17,6 +18,7 @@ const PRUNE_VALUE_OPTIONS = new Set([
   '--older-than-hours',
   '--protect-recent-candidate-hours',
   '--max-deletes',
+  '--max-scanned',
 ]);
 
 export function parsePruneImageStorageArgs(argv: readonly string[]): PruneImageStorageCliOptions {
@@ -59,6 +61,7 @@ export function parsePruneImageStorageArgs(argv: readonly string[]): PruneImageS
     olderThanHours: readPositiveInteger(values, '--older-than-hours', 24),
     protectRecentCandidateHours: readPositiveInteger(values, '--protect-recent-candidate-hours', 48),
     maxDeletes: readPositiveInteger(values, '--max-deletes', 500),
+    maxScanned: readPositiveInteger(values, '--max-scanned', 5000),
     apply: values.get('--apply') === true && values.get('--dry-run') !== true,
     includeSavedUnreferenced: values.get('--include-saved-unreferenced') === true,
   };
@@ -98,6 +101,7 @@ async function main(): Promise<void> {
       olderThanHours: options.olderThanHours,
       protectRecentCandidateHours: options.protectRecentCandidateHours,
       maxDeletes: options.maxDeletes,
+      maxScanned: options.maxScanned,
       dryRun: !options.apply,
       includeSavedUnreferenced: options.includeSavedUnreferenced,
     });
@@ -139,7 +143,7 @@ function readPositiveInteger(values: Map<string, string | boolean>, key: string,
 function printUsage(): void {
   console.error([
     'Usage:',
-    '  npm run admin:prune-images -- [--prefix tmp/] [--prefix session/] [--prefix saved/] [--older-than-hours 24] [--protect-recent-candidate-hours 48] [--max-deletes 500] [--include-saved-unreferenced] [--apply]',
+    '  npm run admin:prune-images -- [--prefix tmp/] [--prefix session/] [--prefix saved/] [--older-than-hours 24] [--protect-recent-candidate-hours 48] [--max-deletes 500] [--max-scanned 5000] [--include-saved-unreferenced] [--apply]',
     '',
     'Default mode is dry-run. saved/ prefixes are accepted only with --include-saved-unreferenced and live DB references remain protected.',
   ].join('\n'));

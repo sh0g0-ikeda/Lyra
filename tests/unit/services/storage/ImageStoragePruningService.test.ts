@@ -13,9 +13,17 @@ class FakeStorage implements ImageStorageMaintenancePort {
 
   public constructor(private readonly objectsByPrefix: Map<string, StoredImageObject[]>) {}
 
-  public async listObjects(prefix: string): Promise<StoredImageObject[]> {
+  public async listObjects(
+    prefix: string,
+    options?: { maxObjects?: number },
+  ): Promise<{ objects: StoredImageObject[]; truncated: boolean }> {
     this.listedPrefixes.push(prefix);
-    return this.objectsByPrefix.get(prefix) ?? [];
+    const objects = this.objectsByPrefix.get(prefix) ?? [];
+    const limitedObjects = options?.maxObjects === undefined ? objects : objects.slice(0, options.maxObjects);
+    return {
+      objects: limitedObjects,
+      truncated: limitedObjects.length < objects.length,
+    };
   }
 
   public async deleteObject(key: string): Promise<void> {
@@ -70,6 +78,7 @@ describe('ImageStoragePruningService', () => {
       scanned: 4,
       protected: 1,
       skippedRecent: 1,
+      scanTruncated: false,
       deleteCandidates: [
         'session/user/pages/page/old.png',
         'tmp/user/entities/imports/source.png',
@@ -106,6 +115,41 @@ describe('ImageStoragePruningService', () => {
     expect(result.deleteCandidates).toEqual(['session/old-1.png', 'session/old-2.png']);
     expect(result.deleted).toEqual(['session/old-1.png']);
     expect(result.truncated).toBe(true);
+  });
+
+  it('stops scanning when maxScanned is reached', async () => {
+    const storage = new FakeStorage(
+      new Map([
+        [
+          'session/',
+          [
+            { key: 'session/old-1.png', lastModified: new Date('2026-06-01T00:00:00.000Z') },
+            { key: 'session/old-2.png', lastModified: new Date('2026-06-01T00:00:00.000Z') },
+            { key: 'session/old-3.png', lastModified: new Date('2026-06-01T00:00:00.000Z') },
+          ],
+        ],
+        [
+          'tmp/',
+          [{ key: 'tmp/old-1.png', lastModified: new Date('2026-06-01T00:00:00.000Z') }],
+        ],
+      ]),
+    );
+    const service = new ImageStoragePruningService(storage, new FakeReferenceRepository(new Set()));
+
+    const result = await service.prune({
+      prefixes: ['session/', 'tmp/'],
+      olderThanHours: 24,
+      protectRecentCandidateHours: 48,
+      maxDeletes: 100,
+      maxScanned: 2,
+      dryRun: true,
+      now: new Date('2026-06-09T00:00:00.000Z'),
+    });
+
+    expect(storage.listedPrefixes).toEqual(['session/']);
+    expect(result.scanned).toBe(2);
+    expect(result.scanTruncated).toBe(true);
+    expect(result.deleteCandidates).toEqual(['session/old-1.png', 'session/old-2.png']);
   });
 
   it('deduplicates overlapping delete candidates', async () => {

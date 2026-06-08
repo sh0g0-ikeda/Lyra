@@ -5,6 +5,8 @@ import {
 } from '@aws-sdk/client-s3';
 import { ConfigurationError } from '../../domain/errors/index.js';
 import type {
+  ListedStoredImageObjects,
+  ListStoredImageObjectsOptions,
   ImageStorageMaintenancePort,
   StoredImageObject,
 } from '../../services/storage/ImageStoragePruningService.js';
@@ -35,15 +37,27 @@ export class S3ImageStorageMaintenance implements ImageStorageMaintenancePort {
     }
   }
 
-  public async listObjects(prefix: string): Promise<StoredImageObject[]> {
+  public async listObjects(
+    prefix: string,
+    options: ListStoredImageObjectsOptions = {},
+  ): Promise<ListedStoredImageObjects> {
     if (prefix.trim().length === 0) {
       throw new ConfigurationError('S3 image object prefix is required');
     }
 
     const objects: StoredImageObject[] = [];
     let continuationToken: string | undefined;
+    let truncatedByLimit = false;
 
     do {
+      const remainingLimit =
+        options.maxObjects === undefined ? undefined : Math.max(0, options.maxObjects - objects.length);
+      if (remainingLimit !== undefined && remainingLimit <= 0) {
+        truncatedByLimit = true;
+        break;
+      }
+      const objectCountBeforePage = objects.length;
+
       let response: ListObjectsResponse;
       try {
         response = await this.client.send(
@@ -51,6 +65,7 @@ export class S3ImageStorageMaintenance implements ImageStorageMaintenancePort {
             Bucket: this.bucketName,
             Prefix: prefix,
             ContinuationToken: continuationToken,
+            MaxKeys: remainingLimit,
           }),
         ) as ListObjectsResponse;
       } catch (error) {
@@ -60,6 +75,14 @@ export class S3ImageStorageMaintenance implements ImageStorageMaintenancePort {
       for (const item of response.Contents ?? []) {
         if (item.Key === undefined) {
           continue;
+        }
+
+        if (
+          remainingLimit !== undefined &&
+          objects.length - objectCountBeforePage >= remainingLimit
+        ) {
+          truncatedByLimit = true;
+          break;
         }
 
         objects.push({
@@ -72,10 +95,18 @@ export class S3ImageStorageMaintenance implements ImageStorageMaintenancePort {
         throw new ConfigurationError('S3 image object listing was truncated without a continuation token');
       }
 
-      continuationToken = response.IsTruncated === true ? response.NextContinuationToken : undefined;
+      continuationToken =
+        !truncatedByLimit && response.IsTruncated === true ? response.NextContinuationToken : undefined;
+      if (truncatedByLimit || (options.maxObjects !== undefined && objects.length >= options.maxObjects)) {
+        truncatedByLimit = truncatedByLimit || response.IsTruncated === true || continuationToken !== undefined;
+        continuationToken = undefined;
+      }
     } while (continuationToken !== undefined);
 
-    return objects;
+    return {
+      objects,
+      truncated: truncatedByLimit,
+    };
   }
 
   public async deleteObject(key: string): Promise<void> {

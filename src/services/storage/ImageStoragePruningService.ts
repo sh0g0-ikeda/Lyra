@@ -6,8 +6,17 @@ export interface StoredImageObject {
   lastModified: Date | null;
 }
 
+export interface ListStoredImageObjectsOptions {
+  maxObjects?: number;
+}
+
+export interface ListedStoredImageObjects {
+  objects: StoredImageObject[];
+  truncated: boolean;
+}
+
 export interface ImageStorageMaintenancePort {
-  listObjects(prefix: string): Promise<StoredImageObject[]>;
+  listObjects(prefix: string, options?: ListStoredImageObjectsOptions): Promise<ListedStoredImageObjects>;
   deleteObject(key: string): Promise<void>;
 }
 
@@ -16,6 +25,7 @@ export interface PruneImageStorageInput {
   olderThanHours: number;
   protectRecentCandidateHours: number;
   maxDeletes: number;
+  maxScanned?: number;
   dryRun: boolean;
   includeSavedUnreferenced?: boolean;
   now?: Date;
@@ -26,6 +36,7 @@ export interface PruneImageStorageResult {
   scanned: number;
   protected: number;
   skippedRecent: number;
+  scanTruncated: boolean;
   deleteCandidates: string[];
   deleted: string[];
   truncated: boolean;
@@ -59,10 +70,22 @@ export class ImageStoragePruningService {
     let scanned = 0;
     let protectedCount = 0;
     let skippedRecent = 0;
+    let scanTruncated = false;
 
     for (const prefix of scannedPrefixes) {
-      const objects = await this.storage.listObjects(prefix);
-      for (const object of objects) {
+      const remainingScanBudget =
+        input.maxScanned === undefined ? undefined : Math.max(0, input.maxScanned - scanned);
+      if (remainingScanBudget !== undefined && remainingScanBudget <= 0) {
+        scanTruncated = true;
+        break;
+      }
+
+      const listed = await this.storage.listObjects(prefix, {
+        maxObjects: remainingScanBudget,
+      });
+      scanTruncated = scanTruncated || listed.truncated;
+
+      for (const object of listed.objects) {
         scanned += 1;
 
         if (protectedKeys.has(object.key)) {
@@ -79,6 +102,10 @@ export class ImageStoragePruningService {
           deleteCandidateKeys.add(object.key);
           deleteCandidates.push(object.key);
         }
+      }
+
+      if (scanTruncated) {
+        break;
       }
     }
 
@@ -97,6 +124,7 @@ export class ImageStoragePruningService {
       scanned,
       protected: protectedCount,
       skippedRecent,
+      scanTruncated,
       deleteCandidates,
       deleted,
       truncated: deleteCandidates.length > input.maxDeletes,
@@ -125,6 +153,13 @@ function validatePruneInput(input: PruneImageStorageInput): void {
 
   if (!Number.isInteger(input.maxDeletes) || input.maxDeletes <= 0) {
     throw new ValidationError('maxDeletes must be a positive integer');
+  }
+
+  if (
+    input.maxScanned !== undefined &&
+    (!Number.isInteger(input.maxScanned) || input.maxScanned <= 0)
+  ) {
+    throw new ValidationError('maxScanned must be a positive integer');
   }
 }
 

@@ -8,6 +8,7 @@ describe('parsePruneImageStorageArgs', () => {
       olderThanHours: 24,
       protectRecentCandidateHours: 48,
       maxDeletes: 500,
+      maxScanned: 5000,
       apply: false,
       includeSavedUnreferenced: false,
     });
@@ -24,6 +25,8 @@ describe('parsePruneImageStorageArgs', () => {
         '96',
         '--max-deletes',
         '10',
+        '--max-scanned',
+        '250',
         '--include-saved-unreferenced',
         '--apply',
       ]),
@@ -32,6 +35,7 @@ describe('parsePruneImageStorageArgs', () => {
       olderThanHours: 72,
       protectRecentCandidateHours: 96,
       maxDeletes: 10,
+      maxScanned: 250,
       apply: true,
       includeSavedUnreferenced: true,
     });

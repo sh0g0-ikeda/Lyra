@@ -42,10 +42,13 @@ describe('S3ImageStorageMaintenance', () => {
     ];
     const storage = new S3ImageStorageMaintenance(client, 'lyra-images');
 
-    await expect(storage.listObjects('tmp/')).resolves.toEqual([
-      { key: 'tmp/a.png', lastModified: new Date('2026-06-01T00:00:00.000Z') },
-      { key: 'tmp/b.png', lastModified: null },
-    ]);
+    await expect(storage.listObjects('tmp/')).resolves.toEqual({
+      objects: [
+        { key: 'tmp/a.png', lastModified: new Date('2026-06-01T00:00:00.000Z') },
+        { key: 'tmp/b.png', lastModified: null },
+      ],
+      truncated: false,
+    });
 
     expect(client.commands).toHaveLength(2);
     expect(client.commands[0]).toBeInstanceOf(ListObjectsV2Command);
@@ -55,6 +58,34 @@ describe('S3ImageStorageMaintenance', () => {
     });
     expect(client.commands[1]?.input).toMatchObject({
       ContinuationToken: 'next-page',
+    });
+  });
+
+  it('maxObjects に達したら追加ページを読まずに truncated を返す', async () => {
+    const client = new FakeS3Client();
+    client.responses = [
+      {
+        Contents: [
+          { Key: 'tmp/a.png', LastModified: new Date('2026-06-01T00:00:00.000Z') },
+        ],
+        IsTruncated: true,
+        NextContinuationToken: 'next-page',
+      },
+    ];
+    const storage = new S3ImageStorageMaintenance(client, 'lyra-images');
+
+    await expect(storage.listObjects('tmp/', { maxObjects: 1 })).resolves.toEqual({
+      objects: [
+        { key: 'tmp/a.png', lastModified: new Date('2026-06-01T00:00:00.000Z') },
+      ],
+      truncated: true,
+    });
+
+    expect(client.commands).toHaveLength(1);
+    expect(client.commands[0]?.input).toMatchObject({
+      Bucket: 'lyra-images',
+      Prefix: 'tmp/',
+      MaxKeys: 1,
     });
   });
 
