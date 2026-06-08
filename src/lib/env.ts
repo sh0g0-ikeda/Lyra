@@ -5,6 +5,8 @@ import { DEFAULT_GENERATION_ACTIVE_JOB_LIMITS } from '../domain/constants/genera
 const envSchema = z.object({
   PORT: z.coerce.number().int().min(1).max(65535).default(3000),
   DATABASE_URL: z.string().min(1).default('postgres://postgres:postgres@localhost:5432/lyra'),
+  DATABASE_POOL_MAX: z.coerce.number().int().min(1).max(50).default(10),
+  DATABASE_SSL_MODE: z.enum(['disable', 'require']).default(process.env.NODE_ENV === 'production' ? 'require' : 'disable'),
   CORS_ALLOWED_ORIGINS: z.string().min(1).optional(),
   AUTO_RUN_MIGRATIONS: z
     .string()

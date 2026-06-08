@@ -4,6 +4,8 @@ import { MAX_PRODUCTION_GENERATION_ACTIVE_JOB_LIMITS } from '../domain/constants
 interface RuntimeGuardConfig {
   DEV_AUTH_BYPASS: boolean;
   DATABASE_URL?: string;
+  DATABASE_POOL_MAX?: number;
+  DATABASE_SSL_MODE?: 'disable' | 'require';
   CORS_ALLOWED_ORIGINS?: string;
   AUTO_RUN_MIGRATIONS?: boolean;
   AUTH_PROVIDER?: 'supabase' | 'cognito';
@@ -36,6 +38,8 @@ interface RuntimeGuardConfig {
   STRIPE_CHECKOUT_CANCEL_URL?: string;
   STRIPE_PORTAL_RETURN_URL?: string;
 }
+
+const MAX_PRODUCTION_DATABASE_POOL_MAX = 10;
 
 const REQUIRED_PRODUCTION_GENERATION_KEYS = [
   'AWS_REGION',
@@ -127,6 +131,20 @@ export function assertProductionRuntimeConfig(
     if (databaseUrl !== undefined && isLocalDatabaseUrl(databaseUrl)) {
       violations.push('DATABASE_URL must not point to a local database in production');
     }
+    if (databaseUrl !== undefined && databaseUrlDisablesSsl(databaseUrl)) {
+      violations.push('DATABASE_URL must not disable SSL in production');
+    }
+  }
+
+  if (config.DATABASE_SSL_MODE !== undefined && config.DATABASE_SSL_MODE !== 'require') {
+    violations.push('DATABASE_SSL_MODE must be require in production');
+  }
+
+  if (
+    config.DATABASE_POOL_MAX !== undefined &&
+    (config.DATABASE_POOL_MAX < 1 || config.DATABASE_POOL_MAX > MAX_PRODUCTION_DATABASE_POOL_MAX)
+  ) {
+    violations.push(`DATABASE_POOL_MAX must be <= ${MAX_PRODUCTION_DATABASE_POOL_MAX} in production`);
   }
 
   if (config.AUTH_PROVIDER !== 'cognito') {
@@ -299,6 +317,35 @@ function isLocalDatabaseUrl(value: string): boolean {
       normalizedValue.includes('host=::1')
     );
   }
+}
+
+function databaseUrlDisablesSsl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return isDisabledSslValue(url.searchParams.get('sslmode')) || isDisabledSslValue(url.searchParams.get('ssl'));
+  } catch {
+    const normalizedValue = value.toLowerCase();
+    return (
+      normalizedValue.includes('sslmode=disable') ||
+      normalizedValue.includes('sslmode=disabled') ||
+      normalizedValue.includes('ssl=false') ||
+      normalizedValue.includes('ssl=0')
+    );
+  }
+}
+
+function isDisabledSslValue(value: string | null): boolean {
+  if (value === null) {
+    return false;
+  }
+
+  const normalizedValue = value.trim().toLowerCase();
+  return (
+    normalizedValue === 'disable' ||
+    normalizedValue === 'disabled' ||
+    normalizedValue === 'false' ||
+    normalizedValue === '0'
+  );
 }
 
 function isSafeProductionHttpsUrl(value: string): boolean {

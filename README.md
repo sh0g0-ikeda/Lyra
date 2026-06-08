@@ -31,6 +31,8 @@ Create `./.env`:
 
 ```env
 DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5432/lyra
+DATABASE_POOL_MAX=10
+DATABASE_SSL_MODE=disable
 DEV_AUTH_BYPASS=true
 DEV_AUTH_BYPASS_EMAIL=dev@local.lyra
 SUPABASE_JWT_SECRET=replace-me
@@ -64,10 +66,14 @@ AWS production must provide an explicit non-local PostgreSQL URL:
 
 ```env
 DATABASE_URL=postgres://lyra:replace-me@lyra-db.example.ap-northeast-1.rds.amazonaws.com:5432/lyra
+DATABASE_POOL_MAX=10
+DATABASE_SSL_MODE=require
 ```
 
 `NODE_ENV=production` rejects missing database URLs and local hosts such as `localhost`,
-`127.0.0.1`, and `::1`.
+`127.0.0.1`, and `::1`. Production database connections require
+`DATABASE_SSL_MODE=require`; `DATABASE_POOL_MAX` is capped at 10 per API/worker
+process to avoid exhausting RDS connections during scale-out.
 
 Production public URLs such as `IMAGES_CDN_BASE_URL`, Stripe return URLs, and
 `CORS_ALLOWED_ORIGINS` must use HTTPS and non-local hosts. Localhost and plain HTTP

@@ -5,6 +5,8 @@ import { assertProductionRuntimeConfig } from '../../../src/lib/runtimeGuards.js
 const safeProductionConfig = {
   DEV_AUTH_BYPASS: false,
   DATABASE_URL: 'postgres://lyra:secret@lyra-db.abc123.ap-northeast-1.rds.amazonaws.com:5432/lyra',
+  DATABASE_POOL_MAX: 10,
+  DATABASE_SSL_MODE: 'require' as const,
   AUTH_PROVIDER: 'cognito' as const,
   AWS_REGION: 'ap-northeast-1',
   COGNITO_USER_POOL_ID: 'ap-northeast-1_pool',
@@ -372,5 +374,39 @@ describe('assertProductionRuntimeConfig', () => {
         'production',
       );
     }).toThrow(/Stripe price ids must start with price_: STRIPE_PRICE_STANDARD_MONTHLY, STRIPE_PRICE_CREDITS_3000/);
+  });
+
+  it('rejects disabled database SSL in production', () => {
+    expect(() => {
+      assertProductionRuntimeConfig(
+        {
+          ...safeProductionConfig,
+          DATABASE_SSL_MODE: 'disable',
+        },
+        'production',
+      );
+    }).toThrow(/DATABASE_SSL_MODE must be require in production/);
+
+    expect(() => {
+      assertProductionRuntimeConfig(
+        {
+          ...safeProductionConfig,
+          DATABASE_URL: `${safeProductionConfig.DATABASE_URL}?sslmode=disable`,
+        },
+        'production',
+      );
+    }).toThrow(/DATABASE_URL must not disable SSL in production/);
+  });
+
+  it('rejects oversized database pool settings in production', () => {
+    expect(() => {
+      assertProductionRuntimeConfig(
+        {
+          ...safeProductionConfig,
+          DATABASE_POOL_MAX: 25,
+        },
+        'production',
+      );
+    }).toThrow(/DATABASE_POOL_MAX must be <= 10 in production/);
   });
 });
