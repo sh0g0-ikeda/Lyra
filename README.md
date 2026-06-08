@@ -62,6 +62,27 @@ COGNITO_REQUIRED_SCOPES=lyra/api
 
 When `AUTH_PROVIDER=cognito`, the API verifies the Cognito JWKS signature, issuer, `client_id`, `token_use`, expiration, required scopes, and configured groups before provisioning the user.
 
+### Production billing
+
+Production startup requires the full Stripe billing configuration so a paid
+deployment cannot silently run without checkout or webhook handling:
+
+```env
+STRIPE_SECRET_KEY=replace_with_stripe_secret_key
+STRIPE_WEBHOOK_SECRET=replace_with_stripe_webhook_secret
+STRIPE_PRICE_STANDARD_MONTHLY=price_replace_me
+STRIPE_PRICE_PREMIUM_MONTHLY=price_replace_me
+STRIPE_PRICE_CREDITS_200=price_replace_me
+STRIPE_PRICE_CREDITS_1000=price_replace_me
+STRIPE_PRICE_CREDITS_3000=price_replace_me
+STRIPE_CHECKOUT_SUCCESS_URL=https://app.example.com/billing/success
+STRIPE_CHECKOUT_CANCEL_URL=https://app.example.com/billing/cancel
+STRIPE_PORTAL_RETURN_URL=https://app.example.com/billing
+```
+
+If any of these are missing in `NODE_ENV=production`, the API fails fast before
+accepting traffic.
+
 ### 4. Minimal frontend `apps/web/.env`
 
 ```env

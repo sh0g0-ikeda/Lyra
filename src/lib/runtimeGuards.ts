@@ -98,9 +98,8 @@ export function assertProductionRuntimeConfig(
     }
   }
 
-  const configuredStripeKeys = STRIPE_KEYS.filter((key) => config[key] !== undefined);
-  if (configuredStripeKeys.length > 0 && configuredStripeKeys.length < STRIPE_KEYS.length) {
-    const missingStripeKeys = STRIPE_KEYS.filter((key) => config[key] === undefined);
+  const missingStripeKeys = STRIPE_KEYS.filter((key) => config[key] === undefined);
+  if (missingStripeKeys.length > 0) {
     violations.push(`Stripe config is incomplete: ${missingStripeKeys.join(', ')}`);
   }
 
