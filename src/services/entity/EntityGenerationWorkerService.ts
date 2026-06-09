@@ -143,14 +143,11 @@ export class EntityGenerationWorkerService {
       });
     }
 
-    const failed = await this.executionRepository.failEntityGeneration({
+    await this.executionRepository.failEntityGeneration({
       jobId,
       userId,
       errorMessage,
     });
-    if (!failed) {
-      throw new ConfigurationError('Failed to mark entity generation job as failed');
-    }
   }
 }
 

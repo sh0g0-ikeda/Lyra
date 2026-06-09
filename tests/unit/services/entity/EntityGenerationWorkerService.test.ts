@@ -32,6 +32,7 @@ class FakeExecutionRepository implements EntityGenerationExecutionRepository {
   public job: GenerationJob | null = buildJob();
   public completed: CompleteEntityGenerationInput | null = null;
   public failed: { jobId: string; userId: string; errorMessage: string } | null = null;
+  public failureResult = true;
 
   public async claimQueuedEntityGenerationJob(): Promise<GenerationJob | null> {
     return this.job;
@@ -48,7 +49,7 @@ class FakeExecutionRepository implements EntityGenerationExecutionRepository {
     errorMessage: string;
   }): Promise<boolean> {
     this.failed = input;
-    return true;
+    return this.failureResult;
   }
 }
 
@@ -480,6 +481,33 @@ describe('EntityGenerationWorkerService', () => {
       jobId: 'job-1',
     });
     expect(executionRepository.failed).toBeNull();
+  });
+
+  it('failed 更新が0件なら既にterminal化されたjobとしてSQS再試行を要求しない', async () => {
+    const executionRepository = new FakeExecutionRepository();
+    executionRepository.failureResult = false;
+    const referenceGenerator = new FakeReferenceGenerator();
+    referenceGenerator.shouldThrow = true;
+    const creditService = new FakeCreditService();
+    const service = buildService({
+      executionRepository,
+      referenceGenerator,
+      creditService,
+    });
+
+    const result = await service.processJob('job-1');
+
+    expect(result).toEqual({ status: 'processed', jobStatus: 'failed' });
+    expect(creditService.refunded).toMatchObject({
+      userId: 'user-1',
+      amount: 8,
+      jobId: 'job-1',
+    });
+    expect(executionRepository.failed).toMatchObject({
+      jobId: 'job-1',
+      userId: 'user-1',
+      errorMessage: 'generation failed',
+    });
   });
 
 });

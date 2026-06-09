@@ -203,7 +203,7 @@ export class PageGenerationWorkerService {
       });
     }
 
-    const failed = await this.executionRepository.failPageGeneration({
+    await this.executionRepository.failPageGeneration({
       jobId: job.id,
       userId: job.userId,
       errorMessage,
@@ -211,10 +211,6 @@ export class PageGenerationWorkerService {
       previousStatus: compensation?.previousStatus,
       previousGenerationMode: compensation?.previousGenerationMode,
     });
-
-    if (!failed) {
-      throw new ConfigurationError('Failed to mark page generation job as failed');
-    }
   }
 }
 

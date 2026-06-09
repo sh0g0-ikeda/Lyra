@@ -32,6 +32,7 @@ class FakeExecutionRepository implements PageGenerationExecutionRepository {
   public completionInput: CompletePageGenerationInput | null = null;
   public failureInput: FailPageGenerationInput | null = null;
   public shouldFailCompletion = false;
+  public failureResult = true;
 
   public async claimQueuedPageGenerationJob(_jobId: string): Promise<GenerationJob | null> {
     return this.claimedJob;
@@ -44,7 +45,7 @@ class FakeExecutionRepository implements PageGenerationExecutionRepository {
 
   public async failPageGeneration(input: FailPageGenerationInput): Promise<boolean> {
     this.failureInput = input;
-    return true;
+    return this.failureResult;
   }
 }
 
@@ -581,6 +582,34 @@ describe('PageGenerationWorkerService', () => {
       jobId: 'job-1',
     });
     expect(executionRepository.failureInput).toBeNull();
+  });
+
+  it('failed 更新が0件なら既にterminal化されたjobとしてSQS再試行を要求しない', async () => {
+    const executionRepository = new FakeExecutionRepository();
+    executionRepository.failureResult = false;
+    const renderer = new FakeRenderer();
+    renderer.shouldFail = true;
+    const creditService = new FakeCreditService();
+    const service = new PageGenerationWorkerService(
+      executionRepository,
+      new FakePromptBuilder(),
+      new FakePromptCompiler(),
+      new FakeInputImageBuilder(),
+      new FakePlanner(),
+      renderer,
+      new FakeStorage(),
+      creditService,
+    );
+
+    const result = await service.processJob('job-1');
+
+    expect(result).toEqual({ status: 'processed', jobStatus: 'failed' });
+    expect(creditService.refunds).toHaveLength(1);
+    expect(executionRepository.failureInput).toMatchObject({
+      jobId: 'job-1',
+      userId: 'user-1',
+      errorMessage: 'renderer unavailable',
+    });
   });
 });
 
