@@ -159,6 +159,10 @@ STRIPE_PORTAL_RETURN_URL=https://app.example.com/billing
 
 If any of these are missing in production mode, the API fails fast before
 accepting traffic.
+Stripe webhooks must be configured to send events to `POST /api/webhooks/stripe`.
+Credit grants are driven only from verified webhook events, not from the browser
+success URL. The webhook endpoint is public for Stripe delivery, but it still
+uses the shared rate-limit store with an IP bucket of `120 req/min/IP`.
 
 ### 4. Minimal frontend `apps/web/.env`
 

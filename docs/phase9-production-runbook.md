@@ -29,6 +29,7 @@
 - page generation: `10 req/min/user`
 - story routes: `20 req/min/user`
 - default authenticated API: `100 req/min/user`
+- Stripe webhook: `120 req/min/IP`
 
 Headers:
 - `X-RateLimit-Limit`
