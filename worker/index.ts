@@ -3,9 +3,11 @@ import { sanitizePersistedErrorMessage } from '../src/lib/errorSanitizer.js';
 import { resolveWorkerDependencies, type WorkerDependencies } from './dependencies.js';
 export type { WorkerDependencies } from './dependencies.js';
 
+const MAX_QUEUE_JOB_TYPE_LENGTH = 64;
+
 const queueMessageSchema = z.object({
   job_id: z.string().uuid(),
-  job_type: z.string().min(1),
+  job_type: z.string().min(1).max(MAX_QUEUE_JOB_TYPE_LENGTH),
 });
 
 export interface WorkerQueueRecord {

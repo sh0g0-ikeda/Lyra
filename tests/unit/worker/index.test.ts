@@ -221,6 +221,28 @@ describe('worker queue handler', () => {
     expect(result.skippedCount).toBe(0);
     expect(result.batchItemFailures).toEqual([]);
   });
+
+  it('過大な job_type は結果 reason に反映せず invalid queue message として扱う', async () => {
+    const pageWorkerService = new FakePageGenerationWorkerService();
+    const entityWorkerService = new FakeEntityGenerationWorkerService();
+
+    const result = await handleGenerationQueue(
+      buildEvent({
+        job_id: '11111111-1111-4111-8111-111111111111',
+        job_type: 'x'.repeat(10_000),
+      }),
+      buildDependencies(pageWorkerService, entityWorkerService),
+    );
+
+    expect(pageWorkerService.calls).toEqual([]);
+    expect(entityWorkerService.calls).toEqual([]);
+    expect(result.results[0]).toMatchObject({
+      status: 'failed',
+      reason: 'Invalid queue message',
+    });
+    expect(result.results[0]?.reason?.length).toBeLessThanOrEqual(64);
+    expect(result.batchItemFailures).toEqual([]);
+  });
 });
 
 function buildDependencies(
