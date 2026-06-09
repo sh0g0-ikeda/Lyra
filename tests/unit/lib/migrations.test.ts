@@ -228,6 +228,16 @@ describe('runPendingMigrations', () => {
     expect(sql).toContain('VALIDATE CONSTRAINT subscriptions_status_check');
   });
 
+  it('payment record はcheckout sessionかinvoiceの片方だけに紐づく', async () => {
+    const sql = await readFile(
+      join(process.cwd(), 'migrations', '014_add_payment_record_external_id_constraint.sql'),
+      'utf8',
+    );
+
+    expect(sql).toContain('(stripe_checkout_session_id IS NULL) <> (stripe_invoice_id IS NULL)');
+    expect(sql).toContain('VALIDATE CONSTRAINT payment_records_exactly_one_external_id_check');
+  });
+
   it('story/page/entity UIパイプラインの状態値はDB制約で型契約を守る', async () => {
     const sql = await readFile(
       join(process.cwd(), 'migrations', '011_add_core_app_state_constraints.sql'),

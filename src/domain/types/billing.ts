@@ -24,14 +24,22 @@ export interface SubscriptionRecord {
   cancelAtPeriodEnd: boolean;
 }
 
-export interface PaymentRecordInput {
+interface PaymentRecordBase {
   userId: string;
-  stripeCheckoutSessionId: string | null;
-  stripeInvoiceId: string | null;
   kind: PaymentRecordKind;
   amountJpy: number;
   status: PaymentRecordStatus;
 }
+
+export type PaymentRecordInput =
+  | (PaymentRecordBase & {
+      stripeCheckoutSessionId: string;
+      stripeInvoiceId: null;
+    })
+  | (PaymentRecordBase & {
+      stripeCheckoutSessionId: null;
+      stripeInvoiceId: string;
+    });
 
 export interface SubscriptionCheckoutResult {
   sessionId: string;

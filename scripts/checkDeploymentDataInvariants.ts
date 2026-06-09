@@ -133,6 +133,10 @@ const DEPLOYMENT_DATA_INVARIANT_QUERIES: InvariantQuery[] = [
     name: 'payment_records.amount_jpy',
     sql: 'SELECT id::text AS id FROM payment_records WHERE amount_jpy < 0 ORDER BY id LIMIT $1',
   },
+  {
+    name: 'payment_records.external_id_pair',
+    sql: 'SELECT id::text AS id FROM payment_records WHERE (stripe_checkout_session_id IS NULL) = (stripe_invoice_id IS NULL) ORDER BY id LIMIT $1',
+  },
 ];
 
 export async function checkDeploymentDataInvariants(

@@ -48,6 +48,11 @@ describe('checkDeploymentDataInvariants', () => {
     expect(database.queries.some((query) => query.includes('credit_ledger'))).toBe(true);
     expect(database.queries.some((query) => query.includes("type = 'consume' AND amount < 0"))).toBe(true);
     expect(database.queries.some((query) => query.includes('incomplete_expired'))).toBe(true);
+    expect(
+      database.queries.some((query) =>
+        query.includes('(stripe_checkout_session_id IS NULL) = (stripe_invoice_id IS NULL)'),
+      ),
+    ).toBe(true);
   });
 
   it('違反行があればチェック名とサンプル ID を返す', async () => {
