@@ -38,6 +38,14 @@ describe('environment examples', () => {
     expect(rootEnvExample).toContain('bun run migrate');
     expect(rootEnvExample).not.toContain('npm run migrate');
   });
+
+  it('web README points production deploys at the strict deploy build gate', () => {
+    const webReadme = readText('apps/web/README.md');
+
+    expect(webReadme).toContain('bun run web:build:deploy');
+    expect(webReadme).toContain('LYRA_STRICT_WEB_PRODUCTION_CONFIG=true');
+    expect(webReadme).not.toContain('VITE_REQUIRE_HOSTED_AUTH');
+  });
 });
 
 function readText(relativePath: string): string {
