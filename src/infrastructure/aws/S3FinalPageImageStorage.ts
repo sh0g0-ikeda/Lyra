@@ -2,7 +2,7 @@ import { CopyObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import { ConfigurationError } from '../../domain/errors/index.js';
 import type { GeneratedPageImage } from '../../domain/types/page.js';
 import { toSanitizedAwsErrorMessage } from './AwsErrorMessage.js';
-import { SAVED_IMAGE_CACHE_CONTROL } from './S3ImageCacheControl.js';
+import { FINAL_PAGE_IMAGE_CACHE_CONTROL } from './S3ImageCacheControl.js';
 
 export interface FinalizePageImageInput {
   userId: string;
@@ -51,7 +51,7 @@ export class S3FinalPageImageStorage implements FinalPageImageStoragePort {
           Bucket: this.options.bucketName,
           Key: destinationKey,
           CopySource: `${this.options.bucketName}/${input.sourceS3Key}`,
-          CacheControl: SAVED_IMAGE_CACHE_CONTROL,
+          CacheControl: FINAL_PAGE_IMAGE_CACHE_CONTROL,
           MetadataDirective: 'REPLACE',
           ContentType: guessContentType(extension),
           ServerSideEncryption: 'AES256',
@@ -85,7 +85,7 @@ export class S3FinalPageImageStorage implements FinalPageImageStoragePort {
           Key: destinationKey,
           Body: input.imageData,
           ContentType: input.mimeType,
-          CacheControl: SAVED_IMAGE_CACHE_CONTROL,
+          CacheControl: FINAL_PAGE_IMAGE_CACHE_CONTROL,
           ServerSideEncryption: 'AES256',
         }),
       );

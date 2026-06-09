@@ -40,7 +40,7 @@ describe('S3FinalPageImageStorage', () => {
       Bucket: 'lyra-images',
       Key: 'saved/user-1/pages/page-1_final.png',
       CopySource: 'lyra-images/session/user-1/pages/page-1/job-1.png',
-      CacheControl: 'private, max-age=31536000, immutable',
+      CacheControl: 'private, max-age=0, must-revalidate',
     });
     expect(result).toEqual({
       s3Key: 'saved/user-1/pages/page-1_final.png',
@@ -74,7 +74,7 @@ describe('S3FinalPageImageStorage', () => {
       Bucket: 'lyra-images',
       Key: 'saved/user-1/pages/page-1_final.png',
       ContentType: 'image/png',
-      CacheControl: 'private, max-age=31536000, immutable',
+      CacheControl: 'private, max-age=0, must-revalidate',
     });
     expect(result.s3Key).toBe('saved/user-1/pages/page-1_final.png');
   });
