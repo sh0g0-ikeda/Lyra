@@ -222,6 +222,11 @@ export function assertProductionRuntimeConfig(
     violations.push('OPENAI_IMAGE_MODEL must be an OpenAI image generation model');
   }
 
+  const openAiApiKey = config.OPENAI_API_KEY;
+  if (hasConfigValue(openAiApiKey) && !openAiApiKey.trim().startsWith('sk-')) {
+    violations.push('OPENAI_API_KEY must start with sk-');
+  }
+
   if (
     config.GENERATION_USER_ACTIVE_JOB_LIMIT !== undefined &&
     config.GENERATION_USER_ACTIVE_JOB_LIMIT > MAX_PRODUCTION_GENERATION_ACTIVE_JOB_LIMITS.PER_USER

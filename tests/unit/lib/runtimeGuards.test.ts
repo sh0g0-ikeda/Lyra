@@ -14,7 +14,7 @@ const safeProductionConfig = {
   COGNITO_CLIENT_ID: 'client-123',
   COGNITO_TOKEN_USE: 'access' as const,
   COGNITO_REQUIRED_SCOPES: 'lyra/api',
-  OPENAI_API_KEY: 'openai-key',
+  OPENAI_API_KEY: 'sk-proj-openai-key',
   OPENAI_IMAGE_MODEL: 'gpt-image-2',
   OPENAI_TIMEOUT_MS: 300_000,
   SQS_QUEUE_URL_GENERATION: 'https://sqs.ap-northeast-1.amazonaws.com/123/lyra-generation',
@@ -204,6 +204,18 @@ describe('assertProductionRuntimeConfig', () => {
         'production',
       );
     }).toThrow(/OPENAI_IMAGE_MODEL must be an OpenAI image generation model/);
+  });
+
+  it('production では OpenAI API key の形式を要求する', () => {
+    expect(() => {
+      assertProductionRuntimeConfig(
+        {
+          ...safeProductionConfig,
+          OPENAI_API_KEY: 'openai-key',
+        },
+        'production',
+      );
+    }).toThrow(/OPENAI_API_KEY must start with sk-/);
   });
 
   it('production では Stripe 設定一式が必須になる', () => {
