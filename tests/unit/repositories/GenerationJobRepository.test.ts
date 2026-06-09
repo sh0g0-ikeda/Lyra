@@ -287,6 +287,19 @@ describe('PostgresGenerationJobRepository', () => {
     expect(client.values).toEqual([['job-1']]);
   });
 
+  it('期限切れジョブ削除は候補取得後のretry競合に備えてDELETE時もterminal条件を再確認する', async () => {
+    const client = new QueryCapturingClient();
+    const repository = new PostgresGenerationJobRepository(client);
+
+    await repository.pruneExpiredTerminalJobs({
+      maxDeletes: 10,
+      dryRun: false,
+    });
+
+    expect(client.queries[1]).toContain('expires_at < NOW()');
+    expect(client.queries[1]).toContain("status IN ('completed', 'failed')");
+  });
+
   it('期限切れジョブ削除の上限値が不正な場合は拒否する', async () => {
     const client = new QueryCapturingClient();
     const repository = new PostgresGenerationJobRepository(client);

@@ -348,6 +348,9 @@ export class PostgresGenerationJobRepository implements GenerationJobRepository 
       `
       DELETE FROM generation_jobs
       WHERE id = ANY($1::uuid[])
+        AND expires_at IS NOT NULL
+        AND expires_at < NOW()
+        AND status IN ('completed', 'failed')
       RETURNING id
       `,
       [idsToDelete],
