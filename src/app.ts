@@ -31,7 +31,12 @@ import { createAuthMiddleware } from './middleware/auth.js';
 import type { AuthProvider, CognitoVerifierConfig } from './middleware/auth.js';
 import { createCorsMiddleware, parseCorsAllowedOrigins } from './middleware/cors.js';
 import { errorHandler } from './middleware/errorHandler.js';
-import { createRateLimitMiddleware, InMemoryRateLimitStore, type RateLimitStore } from './middleware/rateLimit.js';
+import {
+  createPublicIpRateLimitMiddleware,
+  createRateLimitMiddleware,
+  InMemoryRateLimitStore,
+  type RateLimitStore,
+} from './middleware/rateLimit.js';
 import { createRequestContextMiddleware } from './middleware/requestContext.js';
 import { createSecurityHeadersMiddleware } from './middleware/securityHeaders.js';
 import { PostgresBillingRepository } from './repositories/BillingRepository.js';
@@ -225,6 +230,11 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
         await next();
       })
     : createRateLimitMiddleware(resolvedDependencies.rateLimitStore);
+  const webhookRateLimitMiddleware: MiddlewareHandler<AppEnv> = enableDevAuthBypass
+    ? (async (_c, next) => {
+        await next();
+      })
+    : createPublicIpRateLimitMiddleware(resolvedDependencies.rateLimitStore, 'webhook');
 
   app.onError(errorHandler);
   app.use('*', createCorsMiddleware(parseCorsAllowedOrigins(env.CORS_ALLOWED_ORIGINS)));
@@ -246,6 +256,7 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
   app.route(
     '/api/webhooks',
     createWebhookRoutes({
+      rateLimitMiddleware: webhookRateLimitMiddleware,
       stripeWebhookService: resolvedDependencies.stripeWebhookService,
     }),
   );

@@ -20,6 +20,7 @@ import type {
   CreditServicePort,
   RefundCreditsParams,
 } from '../../../src/services/credit/CreditService.js';
+import type { RateLimitResult, RateLimitStore } from '../../../src/middleware/rateLimit.js';
 
 const jwtSecret = 'unit-test-secret';
 const testUser: AuthenticatedUser = {
@@ -109,6 +110,30 @@ class FakeStripeWebhookService implements StripeWebhookServicePort {
   public async handleWebhook(rawBody: Buffer, signature: string): Promise<void> {
     this.signature = signature;
     this.payload = rawBody.toString('utf8');
+  }
+}
+
+class BlockingRateLimitStore implements RateLimitStore {
+  private calls = 0;
+
+  public async consume(): Promise<RateLimitResult> {
+    this.calls += 1;
+
+    if (this.calls === 1) {
+      return {
+        allowed: true,
+        remaining: 0,
+        retryAfterSeconds: 60,
+        resetAt: new Date('2026-05-01T00:00:00.000Z'),
+      };
+    }
+
+    return {
+      allowed: false,
+      remaining: 0,
+      retryAfterSeconds: 60,
+      resetAt: new Date('2026-05-01T00:00:00.000Z'),
+    };
   }
 }
 
@@ -265,15 +290,44 @@ describe('billing routes', () => {
     expect(response.status).toBe(413);
     expect(webhookService.payload).toBeNull();
   });
+
+  it('webhook は公開IP rate limit の対象になる', async () => {
+    const webhookService = new FakeStripeWebhookService();
+    const app = createTestApp(new FakeBillingService(), webhookService, new BlockingRateLimitStore());
+    const request = {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Stripe-Signature': 't=1,v1=test',
+        'x-forwarded-for': '203.0.113.10',
+      },
+      body: '{"id":"evt_123"}',
+    } as const;
+
+    const firstResponse = await app.request('/api/webhooks/stripe', request);
+    const secondResponse = await app.request('/api/webhooks/stripe', request);
+
+    expect(firstResponse.status).toBe(200);
+    expect(secondResponse.status).toBe(429);
+    expect(secondResponse.headers.get('retry-after')).toBe('60');
+    await expect(secondResponse.json()).resolves.toEqual({
+      error: {
+        code: 'RATE_LIMITED',
+        message: 'Rate limit exceeded for webhook. Retry after 60 seconds',
+      },
+    });
+  });
 });
 
 function createTestApp(
   billingService: BillingServicePort,
   stripeWebhookService: StripeWebhookServicePort,
+  rateLimitStore?: RateLimitStore,
 ): ReturnType<typeof createApp> {
   return createApp({
     billingService,
     creditService: new FakeCreditService(),
+    rateLimitStore,
     stripeWebhookService,
     userProvisioningService: new FakeUserProvisioningService(),
     jwtSecret,

@@ -1,15 +1,18 @@
-import { Hono } from 'hono';
+import { Hono, type MiddlewareHandler } from 'hono';
 import { ValidationError } from '../domain/errors/index.js';
 import type { StripeWebhookServicePort } from '../services/billing/StripeWebhookService.js';
 import type { AppEnv } from '../types/app.js';
 import { readLimitedRawBody, REQUEST_BODY_LIMITS } from './requestBody.js';
 
 export interface WebhookRouteDependencies {
+  rateLimitMiddleware: MiddlewareHandler<AppEnv>;
   stripeWebhookService: StripeWebhookServicePort;
 }
 
 export function createWebhookRoutes(dependencies: WebhookRouteDependencies): Hono<AppEnv> {
   const app = new Hono<AppEnv>();
+
+  app.use('*', dependencies.rateLimitMiddleware);
 
   app.post('/stripe', async (c) => {
     const signature = c.req.header('Stripe-Signature');

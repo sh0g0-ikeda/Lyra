@@ -11,6 +11,10 @@ export const RATE_LIMIT_RULES = {
     maxRequests: 100,
     windowSeconds: 60,
   },
+  webhook: {
+    maxRequests: 120,
+    windowSeconds: 60,
+  },
 } as const;
 
 export type RateLimitBucket = keyof typeof RATE_LIMIT_RULES;

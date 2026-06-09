@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { RATE_LIMIT_RULES } from '../../../src/domain/constants/rateLimit.js';
 import type { AuthenticatedUser } from '../../../src/domain/types/user.js';
 import {
+  createPublicIpRateLimitMiddleware,
   createRateLimitMiddleware,
   type RateLimitResult,
   type RateLimitStore,
@@ -40,9 +41,9 @@ describe('createRateLimitMiddleware', () => {
     ['/api/episodes/episode-1/generate-page-skeleton'],
     ['/api/entities/import-image'],
     ['/api/entities/entity-1/generate-reference'],
-  ])('%s を generation bucket として制限する', async (path) => {
+  ])('%s は generation bucket で制限する', async (path) => {
     const store = new RecordingRateLimitStore();
-    const app = createTestApp(store);
+    const app = createAuthenticatedTestApp(store);
 
     const response = await app.request(path, { method: 'POST' });
 
@@ -56,9 +57,9 @@ describe('createRateLimitMiddleware', () => {
     ]);
   });
 
-  it('StoryAI route は story bucket として制限する', async () => {
+  it('StoryAI route は story bucket で制限する', async () => {
     const store = new RecordingRateLimitStore();
-    const app = createTestApp(store);
+    const app = createAuthenticatedTestApp(store);
 
     const response = await app.request('/api/story/collaborate', { method: 'POST' });
 
@@ -73,7 +74,49 @@ describe('createRateLimitMiddleware', () => {
   });
 });
 
-function createTestApp(store: RateLimitStore): Hono<AppEnv> {
+describe('createPublicIpRateLimitMiddleware', () => {
+  it('公開webhookをIP単位の webhook bucket で制限する', async () => {
+    const store = new RecordingRateLimitStore();
+    const app = new Hono<AppEnv>();
+    app.use('*', createPublicIpRateLimitMiddleware(store, 'webhook'));
+    app.all('*', (c) => c.json({ ok: true }));
+
+    const response = await app.request('/api/webhooks/stripe', {
+      method: 'POST',
+      headers: {
+        'x-forwarded-for': '203.0.113.10, 10.0.0.1',
+      },
+    });
+
+    expect(response.status).toBe(200);
+    expect(store.calls).toEqual([
+      {
+        key: 'webhook:public:203.0.113.10',
+        maxRequests: RATE_LIMIT_RULES.webhook.maxRequests,
+        windowSeconds: RATE_LIMIT_RULES.webhook.windowSeconds,
+      },
+    ]);
+  });
+
+  it('公開IPヘッダーが不正な場合は unknown に丸める', async () => {
+    const store = new RecordingRateLimitStore();
+    const app = new Hono<AppEnv>();
+    app.use('*', createPublicIpRateLimitMiddleware(store, 'webhook'));
+    app.all('*', (c) => c.json({ ok: true }));
+
+    const response = await app.request('/api/webhooks/stripe', {
+      method: 'POST',
+      headers: {
+        'x-forwarded-for': 'not an ip value with spaces',
+      },
+    });
+
+    expect(response.status).toBe(200);
+    expect(store.calls[0]?.key).toBe('webhook:public:unknown');
+  });
+});
+
+function createAuthenticatedTestApp(store: RateLimitStore): Hono<AppEnv> {
   const app = new Hono<AppEnv>();
   app.use('*', async (c, next) => {
     c.set('user', user);

@@ -13,6 +13,9 @@ import {
 import { RateLimitError } from '../domain/errors/index.js';
 import type { AppEnv } from '../types/app.js';
 
+const MAX_RATE_LIMIT_CLIENT_IP_LENGTH = 64;
+const RATE_LIMIT_CLIENT_IP_PATTERN = /^[0-9A-Fa-f:.%-]+$/u;
+
 export interface RateLimitResult {
   allowed: boolean;
   remaining: number;
@@ -91,6 +94,38 @@ export function createRateLimitMiddleware(store: RateLimitStore): MiddlewareHand
   };
 }
 
+export function createPublicIpRateLimitMiddleware(
+  store: RateLimitStore,
+  bucket: RateLimitBucket,
+): MiddlewareHandler<AppEnv> {
+  return async (c, next) => {
+    const rule = RATE_LIMIT_RULES[bucket];
+    const clientIp = resolveClientIp(c.req.header('cf-connecting-ip'))
+      ?? resolveClientIp(c.req.header('x-real-ip'))
+      ?? resolveClientIp(c.req.header('x-forwarded-for')?.split(',')[0])
+      ?? 'unknown';
+    const result = await store.consume(
+      `${bucket}:public:${clientIp}`,
+      rule.maxRequests,
+      rule.windowSeconds,
+    );
+
+    c.res.headers.set('x-ratelimit-limit', String(rule.maxRequests));
+    c.res.headers.set('x-ratelimit-remaining', String(result.remaining));
+    c.res.headers.set('x-ratelimit-reset', result.resetAt.toISOString());
+
+    if (!result.allowed) {
+      c.res.headers.set('retry-after', String(result.retryAfterSeconds));
+      throw new RateLimitError(bucket, result.retryAfterSeconds);
+    }
+
+    await next();
+    c.res.headers.set('x-ratelimit-limit', String(rule.maxRequests));
+    c.res.headers.set('x-ratelimit-remaining', String(result.remaining));
+    c.res.headers.set('x-ratelimit-reset', result.resetAt.toISOString());
+  };
+}
+
 function classifyRateLimitBucket(path: string): RateLimitBucket {
   if (
     PAGE_GENERATION_ROUTE_PATTERN.test(path) ||
@@ -108,4 +143,21 @@ function classifyRateLimitBucket(path: string): RateLimitBucket {
   }
 
   return 'default';
+}
+
+function resolveClientIp(value: string | undefined): string | null {
+  if (value === undefined) {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  if (
+    trimmed.length === 0 ||
+    trimmed.length > MAX_RATE_LIMIT_CLIENT_IP_LENGTH ||
+    !RATE_LIMIT_CLIENT_IP_PATTERN.test(trimmed)
+  ) {
+    return null;
+  }
+
+  return trimmed;
 }
