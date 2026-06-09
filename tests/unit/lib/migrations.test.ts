@@ -215,6 +215,19 @@ describe('runPendingMigrations', () => {
     expect(sql).toContain('VALIDATE CONSTRAINT credit_ledger_amount_sign_check');
   });
 
+  it('subscriptions の状態値はDB制約でStripe契約に揃える', async () => {
+    const sql = await readFile(
+      join(process.cwd(), 'migrations', '013_add_subscription_status_constraint.sql'),
+      'utf8',
+    );
+
+    expect(sql).toContain("'active'");
+    expect(sql).toContain("'incomplete_expired'");
+    expect(sql).toContain("'paused'");
+    expect(sql).toContain("'unpaid'");
+    expect(sql).toContain('VALIDATE CONSTRAINT subscriptions_status_check');
+  });
+
   it('story/page/entity UIパイプラインの状態値はDB制約で型契約を守る', async () => {
     const sql = await readFile(
       join(process.cwd(), 'migrations', '011_add_core_app_state_constraints.sql'),

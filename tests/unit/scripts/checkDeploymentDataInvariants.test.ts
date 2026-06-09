@@ -47,6 +47,7 @@ describe('checkDeploymentDataInvariants', () => {
     expect(database.queries.some((query) => query.includes('generation_jobs'))).toBe(true);
     expect(database.queries.some((query) => query.includes('credit_ledger'))).toBe(true);
     expect(database.queries.some((query) => query.includes("type = 'consume' AND amount < 0"))).toBe(true);
+    expect(database.queries.some((query) => query.includes('incomplete_expired'))).toBe(true);
   });
 
   it('違反行があればチェック名とサンプル ID を返す', async () => {

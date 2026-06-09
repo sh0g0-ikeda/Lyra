@@ -1,6 +1,10 @@
 import Stripe from 'stripe';
 import { describe, expect, it } from 'vitest';
-import type { PaidPlanCode, SubscriptionPlanCode } from '../../../../src/domain/constants/billing.js';
+import type {
+  PaidPlanCode,
+  SubscriptionPlanCode,
+  SubscriptionStatus,
+} from '../../../../src/domain/constants/billing.js';
 import type { BillingUserProfile, PaymentRecordInput, SubscriptionRecord } from '../../../../src/domain/types/billing.js';
 import type { CreditBalanceSnapshot } from '../../../../src/domain/types/credit.js';
 import { ValidationError } from '../../../../src/domain/errors/index.js';
@@ -374,6 +378,23 @@ describe('StripeWebhookService', () => {
     expect(repository.updatedPlans[0]).toEqual({ userId: 'user-1', planCode: 'premium' });
   });
 
+  it('customer.subscription.updated が非active状態なら plan を free に戻す', async () => {
+    const repository = seedRepository();
+    const creditGrantService = new FakeBillingCreditGrantService();
+    const stripeClient = new FakeStripeBillingClient();
+    stripeClient.event = buildCustomerSubscriptionUpdatedEvent('price_premium', 'paused');
+    const service = buildService(repository, creditGrantService, stripeClient);
+
+    await service.handleWebhook(Buffer.from('{}'), 'sig');
+
+    expect(repository.subscriptions[0]).toMatchObject({
+      stripeSubscriptionId: 'sub_123',
+      planCode: 'premium',
+      status: 'paused',
+    });
+    expect(repository.updatedPlans[0]).toEqual({ userId: 'user-1', planCode: 'free' });
+  });
+
   it('customer.subscription.deleted で subscription を終了して free に戻す', async () => {
     const repository = seedRepository();
     const creditGrantService = new FakeBillingCreditGrantService();
@@ -605,14 +626,17 @@ function buildInvoicePaymentFailedEvent(): Stripe.Event {
   } as unknown as Stripe.Event;
 }
 
-function buildCustomerSubscriptionUpdatedEvent(priceId: 'price_standard' | 'price_premium'): Stripe.Event {
+function buildCustomerSubscriptionUpdatedEvent(
+  priceId: 'price_standard' | 'price_premium',
+  status: SubscriptionStatus = 'active',
+): Stripe.Event {
   return {
     id: 'evt_sub_updated',
     object: 'event',
     api_version: '2025-03-31',
     created: 1,
     data: {
-      object: buildSubscription(priceId === 'price_standard' ? 'standard' : 'premium', priceId),
+      object: buildSubscription(priceId === 'price_standard' ? 'standard' : 'premium', priceId, status),
     },
     livemode: false,
     pending_webhooks: 1,
@@ -640,12 +664,13 @@ function buildCustomerSubscriptionDeletedEvent(): Stripe.Event {
 function buildSubscription(
   planCode: PaidPlanCode = 'standard',
   priceId: 'price_standard' | 'price_premium' = 'price_standard',
+  status: SubscriptionStatus = 'active',
 ): Stripe.Subscription {
   return {
     id: 'sub_123',
     object: 'subscription',
     customer: 'cus_123',
-    status: 'active',
+    status,
     cancel_at_period_end: false,
     metadata: {
       plan_code: planCode,

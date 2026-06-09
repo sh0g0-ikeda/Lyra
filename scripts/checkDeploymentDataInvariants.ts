@@ -106,6 +106,10 @@ const DEPLOYMENT_DATA_INVARIANT_QUERIES: InvariantQuery[] = [
     sql: "SELECT id::text AS id FROM subscriptions WHERE plan_code NOT IN ('free', 'standard', 'premium') ORDER BY id LIMIT $1",
   },
   {
+    name: 'subscriptions.status',
+    sql: "SELECT id::text AS id FROM subscriptions WHERE status NOT IN ('active', 'canceled', 'incomplete', 'incomplete_expired', 'past_due', 'paused', 'trialing', 'unpaid') ORDER BY id LIMIT $1",
+  },
+  {
     name: 'credit_ledger.type',
     sql: "SELECT id::text AS id FROM credit_ledger WHERE type NOT IN ('signup_bonus', 'monthly_grant', 'purchase', 'consume', 'refund') ORDER BY id LIMIT $1",
   },
