@@ -42,6 +42,7 @@ import type {
   EpisodeRecord,
   GenerationJobRecord,
   PageRecord,
+  PanelFrameRecord,
   PanelRecord,
   SceneRecord,
   StoryEpisodeImprovementRecord,
@@ -219,12 +220,35 @@ interface BalloonDraft {
   balloon_type: 'speech' | 'thought' | 'narration' | 'shout' | 'whisper';
   writing_mode: 'horizontal' | 'vertical';
   text: string;
-  position_json: string;
-  tail_json: string;
+  position_x: string;
+  position_y: string;
+  position_width: string;
+  position_height: string;
+  tail_enabled: boolean;
+  tail_base_x: string;
+  tail_base_y: string;
+  tail_tip_x: string;
+  tail_tip_y: string;
   font_size: string;
-  font_family: string;
+  font_family: BalloonRecord['font_family'];
   panel_order_reference: string;
   z_index: string;
+}
+
+interface PanelFrameDraft {
+  id: string;
+  panel_id: string;
+  reading_order: string;
+  border_style: PanelFrameRecord['border_style'];
+  border_width: string;
+  border_color: string;
+  z_index: string;
+  vertices: Array<{ x: string; y: string }>;
+}
+
+interface GenericStructuredFieldRow {
+  key: string;
+  value: string;
 }
 
 interface ReferenceCandidate {
@@ -304,7 +328,11 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   Name: '名前',
   'Free description': '自由記述',
   'Prompt supplement': '補足プロンプト',
-  'Structured fields JSON': '構造化フィールドJSON',
+  'Structured fields': '構造化項目',
+  Field: '項目',
+  Value: '値',
+  'Add field': '項目を追加',
+  'No structured fields yet.': '構造化項目はまだありません。',
   Format: '形式',
   Filename: 'ファイル名',
   'Export selected': '選択ページを保存',
@@ -331,12 +359,31 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   Reopen: '再編集',
   Template: 'テンプレート',
   Apply: '適用',
-  'Frames JSON': 'コマ割りJSON',
   'Save frames': 'コマ割りを保存',
   'Advanced frame geometry': 'コマ形状の詳細調整',
+  'Frame geometry': 'コマ形状',
+  'Linked panel': '対応コマ',
+  'No linked panel': '未紐づけ',
+  'Border style': '枠線',
+  'Solid': '実線',
+  'Dashed': '破線',
+  'Border width': '枠線幅',
+  'Border color': '枠線色',
+  Vertex: '頂点',
+  X: 'X',
+  Y: 'Y',
+  'Save frame geometry': 'コマ形状を保存',
   'Advanced balloon geometry': '吹き出し位置の詳細調整',
-  'Position JSON': '位置JSON',
-  'Tail JSON / null': 'しっぽJSON / null',
+  'Balloon X': '吹き出しX',
+  'Balloon Y': '吹き出しY',
+  'Balloon width': '吹き出し幅',
+  'Balloon height': '吹き出し高さ',
+  Tail: 'しっぽ',
+  'Use tail': 'しっぽを使う',
+  'Tail base X': 'しっぽ根元X',
+  'Tail base Y': 'しっぽ根元Y',
+  'Tail tip X': 'しっぽ先端X',
+  'Tail tip Y': 'しっぽ先端Y',
   'Panel order ref': '対応コマ順',
   'Z-index': '重なり順',
   Role: '役割',
@@ -904,6 +951,10 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   'AI improved': 'AI改善済み',
   Horizontal: '横書き',
   Vertical: '縦書き',
+  'Manga gothic': '漫画ゴシック',
+  'Mincho font': '明朝',
+  'Rounded font': '丸ゴシック',
+  'Bold font': '太字',
   'Characters in panel': 'コマ内キャラ',
   'Pick who appears first, then refine pose, facing, and effects per character.': 'まず登場キャラを決め、その後に向き・ポーズ・エフェクトを詰めます。',
   'Placement first, then expression, pose, and effect.': 'まず配置を決め、その後に表情・ポーズ・エフェクトを詰めます。',
@@ -1337,7 +1388,7 @@ function StudioShell(props: {
   const [balloonDraft, setBalloonDraft] = useState<BalloonDraft>(createEmptyBalloonDraft());
   const [selectedBalloonId, setSelectedBalloonId] = useState('');
   const [frameTemplateId, setFrameTemplateId] = useState('standard_4');
-  const [framesJson, setFramesJson] = useState('[]');
+  const [frameDrafts, setFrameDrafts] = useState<PanelFrameDraft[]>([]);
   const [importingImage, setImportingImage] = useState(false);
   const [uploadedReferenceCandidatesByEntityId, setUploadedReferenceCandidatesByEntityId] = useState<Record<string, ReferenceCandidate[]>>({});
   const [generatedReferenceCandidatesByEntityId, setGeneratedReferenceCandidatesByEntityId] = useState<Record<string, ReferenceCandidate[]>>({});
@@ -1686,7 +1737,7 @@ function StudioShell(props: {
   }, [selectedBalloon]);
 
   useEffect(() => {
-    setFramesJson(JSON.stringify(frames, null, 2));
+    setFrameDrafts(frames.map(toPanelFrameDraft));
   }, [frames]);
 
   useEffect(() => {
@@ -1956,6 +2007,34 @@ function StudioShell(props: {
       const filename = multiple ? `${baseName}-page-${String(page.page_number).padStart(2, '0')}.${extension}` : `${baseName}.${extension}`;
       triggerBlobDownload(response.blob, filename);
     }
+  };
+
+  const updateFrameDraft = (index: number, patch: Partial<PanelFrameDraft>): void => {
+    setFrameDrafts((current) =>
+      current.map((draft, draftIndex) => (draftIndex === index ? { ...draft, ...patch } : draft)),
+    );
+  };
+
+  const updateFrameVertexDraft = (
+    frameIndex: number,
+    vertexIndex: number,
+    axis: 'x' | 'y',
+    value: string,
+  ): void => {
+    setFrameDrafts((current) =>
+      current.map((draft, draftIndex) => {
+        if (draftIndex !== frameIndex) {
+          return draft;
+        }
+
+        return {
+          ...draft,
+          vertices: draft.vertices.map((vertex, currentVertexIndex) =>
+            currentVertexIndex === vertexIndex ? { ...vertex, [axis]: value } : vertex,
+          ),
+        };
+      }),
+    );
   };
 
   return (
@@ -2896,9 +2975,7 @@ function StudioShell(props: {
                         }
                       />
                     ) : (
-                      <TextAreaField
-                        label="Structured fields JSON"
-                        rows={6}
+                      <GenericStructuredFieldsEditor
                         value={entityDraft.structured_fields}
                         onChange={(value) => setEntityDraft({ ...entityDraft, structured_fields: value })}
                       />
@@ -3448,20 +3525,116 @@ function StudioShell(props: {
                         </div>
                         <details className="advanced-disclosure">
                           <summary>{translateUiString(uiLanguage, 'Advanced frame geometry')}</summary>
-                          <TextAreaField label="Frames JSON" rows={10} value={framesJson} onChange={setFramesJson} />
+                          <div className="frame-editor-list">
+                            {frameDrafts.map((frameDraft, frameIndex) => (
+                              <div className="frame-editor-card" key={frameDraft.id || `frame-${frameIndex}`}>
+                                <div className="frame-editor-header">
+                                  <strong>
+                                    {translateUiString(uiLanguage, 'Frame geometry')} {frameIndex + 1}
+                                  </strong>
+                                  <InputField
+                                    label="Order"
+                                    value={frameDraft.reading_order}
+                                    onChange={(value) => updateFrameDraft(frameIndex, { reading_order: value })}
+                                    type="number"
+                                    min={1}
+                                    max={1000}
+                                  />
+                                </div>
+                                <div className="form-grid three">
+                                  <label className="field">
+                                    <span>{translateUiString(uiLanguage, 'Linked panel')}</span>
+                                    <select
+                                      value={frameDraft.panel_id}
+                                      onChange={(event) => updateFrameDraft(frameIndex, { panel_id: event.target.value })}
+                                    >
+                                      <option value="">{translateUiString(uiLanguage, 'No linked panel')}</option>
+                                      {panels.map((panel) => (
+                                        <option key={panel.id} value={panel.id}>
+                                          {translateUiString(uiLanguage, 'Panel')} {panel.order}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </label>
+                                  <SelectField
+                                    label="Border style"
+                                    value={frameDraft.border_style}
+                                    onChange={(value) =>
+                                      updateFrameDraft(frameIndex, {
+                                        border_style: value as PanelFrameRecord['border_style'],
+                                      })
+                                    }
+                                    options={FRAME_BORDER_STYLE_OPTIONS}
+                                  />
+                                  <InputField
+                                    label="Z-index"
+                                    value={frameDraft.z_index}
+                                    onChange={(value) => updateFrameDraft(frameIndex, { z_index: value })}
+                                    type="number"
+                                    min={0}
+                                    max={1000}
+                                  />
+                                </div>
+                                <div className="form-grid two">
+                                  <InputField
+                                    label="Border width"
+                                    value={frameDraft.border_width}
+                                    onChange={(value) => updateFrameDraft(frameIndex, { border_width: value })}
+                                    type="number"
+                                    min={0}
+                                    max={20}
+                                  />
+                                  <label className="field">
+                                    <span>{translateUiString(uiLanguage, 'Border color')}</span>
+                                    <input
+                                      value={frameDraft.border_color}
+                                      onChange={(event) => updateFrameDraft(frameIndex, { border_color: event.target.value })}
+                                      type="color"
+                                    />
+                                  </label>
+                                </div>
+                                <div className="frame-vertex-grid">
+                                  {frameDraft.vertices.map((vertex, vertexIndex) => (
+                                    <div className="frame-vertex-row" key={`${frameDraft.id || frameIndex}-vertex-${vertexIndex}`}>
+                                      <span>
+                                        {translateUiString(uiLanguage, 'Vertex')} {vertexIndex + 1}
+                                      </span>
+                                      <InputField
+                                        label="X"
+                                        value={vertex.x}
+                                        onChange={(value) => updateFrameVertexDraft(frameIndex, vertexIndex, 'x', value)}
+                                        type="number"
+                                        min={0}
+                                        max={1}
+                                        step={0.01}
+                                      />
+                                      <InputField
+                                        label="Y"
+                                        value={vertex.y}
+                                        onChange={(value) => updateFrameVertexDraft(frameIndex, vertexIndex, 'y', value)}
+                                        type="number"
+                                        min={0}
+                                        max={1}
+                                        step={0.01}
+                                      />
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
                           <button
                             className="secondary-button"
                             onClick={() =>
-                              void runAction('Save frames', async () => {
-                                const parsed = parseJson<Array<Record<string, unknown>>>(framesJson);
-                                await api.replaceFrames(selectedPage.id, { frames: parsed });
+                              void runAction('Save frame geometry', async () => {
+                                await api.replaceFrames(selectedPage.id, toPanelFramesPayload(frameDrafts));
                                 await queryClient.invalidateQueries({ queryKey: ['frames', selectedPage.id] });
                               })
                             }
                             type="button"
                           >
                             <Save size={16} />
-                            {translateUiString(uiLanguage, 'Save frames')}
+                            {translateUiString(uiLanguage, 'Save frame geometry')}
                           </button>
                         </details>
                       </PanelSection>
@@ -3778,18 +3951,131 @@ function StudioShell(props: {
                         </div>
                         <TextAreaField label="Text" rows={3} value={balloonDraft.text} onChange={(value) => setBalloonDraft({ ...balloonDraft, text: value })} />
                         <div className="form-grid two">
-                          <InputField label="Font size" value={balloonDraft.font_size} onChange={(value) => setBalloonDraft({ ...balloonDraft, font_size: value })} />
-                          <InputField label="Font family" value={balloonDraft.font_family} onChange={(value) => setBalloonDraft({ ...balloonDraft, font_family: value })} />
+                          <InputField
+                            label="Font size"
+                            value={balloonDraft.font_size}
+                            onChange={(value) => setBalloonDraft({ ...balloonDraft, font_size: value })}
+                            type="number"
+                            min={8}
+                            max={72}
+                          />
+                          <SelectField
+                            label="Font family"
+                            value={balloonDraft.font_family}
+                            onChange={(value) =>
+                              setBalloonDraft({
+                                ...balloonDraft,
+                                font_family: value as BalloonRecord['font_family'],
+                              })
+                            }
+                            options={BALLOON_FONT_FAMILY_OPTIONS}
+                          />
                         </div>
                         <details className="advanced-disclosure">
                           <summary>{translateUiString(uiLanguage, 'Advanced balloon geometry')}</summary>
-                          <div className="form-grid two">
-                            <TextAreaField label="Position JSON" rows={4} value={balloonDraft.position_json} onChange={(value) => setBalloonDraft({ ...balloonDraft, position_json: value })} />
-                            <TextAreaField label="Tail JSON / null" rows={4} value={balloonDraft.tail_json} onChange={(value) => setBalloonDraft({ ...balloonDraft, tail_json: value })} />
+                          <div className="form-grid four">
+                            <InputField
+                              label="Balloon X"
+                              value={balloonDraft.position_x}
+                              onChange={(value) => setBalloonDraft({ ...balloonDraft, position_x: value })}
+                              type="number"
+                              min={0}
+                              max={1}
+                              step={0.01}
+                            />
+                            <InputField
+                              label="Balloon Y"
+                              value={balloonDraft.position_y}
+                              onChange={(value) => setBalloonDraft({ ...balloonDraft, position_y: value })}
+                              type="number"
+                              min={0}
+                              max={1}
+                              step={0.01}
+                            />
+                            <InputField
+                              label="Balloon width"
+                              value={balloonDraft.position_width}
+                              onChange={(value) => setBalloonDraft({ ...balloonDraft, position_width: value })}
+                              type="number"
+                              min={0.01}
+                              max={1}
+                              step={0.01}
+                            />
+                            <InputField
+                              label="Balloon height"
+                              value={balloonDraft.position_height}
+                              onChange={(value) => setBalloonDraft({ ...balloonDraft, position_height: value })}
+                              type="number"
+                              min={0.01}
+                              max={1}
+                              step={0.01}
+                            />
                           </div>
+                          <label className="inline-toggle">
+                            <input
+                              checked={balloonDraft.tail_enabled}
+                              onChange={(event) => setBalloonDraft({ ...balloonDraft, tail_enabled: event.target.checked })}
+                              type="checkbox"
+                            />
+                            <span>{translateUiString(uiLanguage, 'Use tail')}</span>
+                          </label>
+                          {balloonDraft.tail_enabled ? (
+                            <div className="form-grid four">
+                              <InputField
+                                label="Tail base X"
+                                value={balloonDraft.tail_base_x}
+                                onChange={(value) => setBalloonDraft({ ...balloonDraft, tail_base_x: value })}
+                                type="number"
+                                min={0}
+                                max={1}
+                                step={0.01}
+                              />
+                              <InputField
+                                label="Tail base Y"
+                                value={balloonDraft.tail_base_y}
+                                onChange={(value) => setBalloonDraft({ ...balloonDraft, tail_base_y: value })}
+                                type="number"
+                                min={0}
+                                max={1}
+                                step={0.01}
+                              />
+                              <InputField
+                                label="Tail tip X"
+                                value={balloonDraft.tail_tip_x}
+                                onChange={(value) => setBalloonDraft({ ...balloonDraft, tail_tip_x: value })}
+                                type="number"
+                                min={0}
+                                max={1}
+                                step={0.01}
+                              />
+                              <InputField
+                                label="Tail tip Y"
+                                value={balloonDraft.tail_tip_y}
+                                onChange={(value) => setBalloonDraft({ ...balloonDraft, tail_tip_y: value })}
+                                type="number"
+                                min={0}
+                                max={1}
+                                step={0.01}
+                              />
+                            </div>
+                          ) : null}
                           <div className="form-grid two">
-                            <InputField label="Panel order ref" value={balloonDraft.panel_order_reference} onChange={(value) => setBalloonDraft({ ...balloonDraft, panel_order_reference: value })} />
-                            <InputField label="Z-index" value={balloonDraft.z_index} onChange={(value) => setBalloonDraft({ ...balloonDraft, z_index: value })} />
+                            <InputField
+                              label="Panel order ref"
+                              value={balloonDraft.panel_order_reference}
+                              onChange={(value) => setBalloonDraft({ ...balloonDraft, panel_order_reference: value })}
+                              type="number"
+                              min={1}
+                              max={99}
+                            />
+                            <InputField
+                              label="Z-index"
+                              value={balloonDraft.z_index}
+                              onChange={(value) => setBalloonDraft({ ...balloonDraft, z_index: value })}
+                              type="number"
+                              min={1}
+                              max={100}
+                            />
                           </div>
                         </details>
                         <div className="toolbar">
@@ -4057,6 +4343,7 @@ function InputField(props: {
   type?: React.HTMLInputTypeAttribute;
   min?: number;
   max?: number;
+  step?: number | string;
 }) {
   const language = useContext(UiLanguageContext);
   return (
@@ -4068,6 +4355,7 @@ function InputField(props: {
         type={props.type}
         min={props.min}
         max={props.max}
+        step={props.step}
       />
     </label>
   );
@@ -4237,6 +4525,63 @@ function StringChipListField(props: {
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+function GenericStructuredFieldsEditor(props: {
+  value: string;
+  onChange: (nextValue: string) => void;
+}) {
+  const language = useContext(UiLanguageContext);
+  const rows = useMemo(() => parseGenericStructuredFieldRows(props.value), [props.value]);
+
+  const commitRows = (nextRows: GenericStructuredFieldRow[]): void => {
+    props.onChange(serializeGenericStructuredFieldRows(nextRows));
+  };
+
+  const updateRow = (index: number, patch: Partial<GenericStructuredFieldRow>): void => {
+    commitRows(rows.map((row, rowIndex) => (rowIndex === index ? { ...row, ...patch } : row)));
+  };
+
+  const removeRow = (index: number): void => {
+    commitRows(rows.filter((_, rowIndex) => rowIndex !== index));
+  };
+
+  return (
+    <div className="field-group">
+      <span className="field-label">{translateUiString(language, 'Structured fields')}</span>
+      {rows.length === 0 ? (
+        <div className="muted small">{translateUiString(language, 'No structured fields yet.')}</div>
+      ) : null}
+      <div className="structured-field-list">
+        {rows.map((row, index) => (
+          <div className="structured-field-row" key={`${row.key}-${index}`}>
+            <InputField
+              label="Field"
+              value={row.key}
+              onChange={(value) => updateRow(index, { key: value })}
+            />
+            <TextAreaField
+              label="Value"
+              rows={2}
+              value={row.value}
+              onChange={(value) => updateRow(index, { value })}
+            />
+            <button className="ghost-button danger icon-only" onClick={() => removeRow(index)} type="button">
+              <Trash2 size={16} />
+            </button>
+          </div>
+        ))}
+      </div>
+      <button
+        className="ghost-button"
+        onClick={() => commitRows([...rows, { key: `field_${rows.length + 1}`, value: '' }])}
+        type="button"
+      >
+        <Check size={16} />
+        {translateUiString(language, 'Add field')}
+      </button>
     </div>
   );
 }
@@ -4844,17 +5189,47 @@ function toPanelDraft(panel: PanelRecord): PanelDraft {
 }
 
 function toBalloonDraft(balloon: BalloonRecord): BalloonDraft {
+  const tail = balloon.tail;
   return {
     speaker_entity_id: balloon.speaker_entity_id ?? '',
     balloon_type: balloon.balloon_type,
     writing_mode: balloon.writing_mode,
     text: balloon.text,
-    position_json: JSON.stringify(balloon.position, null, 2),
-    tail_json: balloon.tail === null ? 'null' : JSON.stringify(balloon.tail, null, 2),
+    position_x: formatUnitInput(balloon.position.x),
+    position_y: formatUnitInput(balloon.position.y),
+    position_width: formatUnitInput(balloon.position.width),
+    position_height: formatUnitInput(balloon.position.height),
+    tail_enabled: tail !== null,
+    tail_base_x: formatUnitInput(tail?.base_x ?? balloon.position.x + balloon.position.width / 2),
+    tail_base_y: formatUnitInput(tail?.base_y ?? balloon.position.y + balloon.position.height),
+    tail_tip_x: formatUnitInput(tail?.tip_x ?? balloon.position.x + balloon.position.width / 2),
+    tail_tip_y: formatUnitInput(tail?.tip_y ?? balloon.position.y + balloon.position.height + 0.08),
     font_size: String(balloon.font_size),
     font_family: balloon.font_family,
     panel_order_reference: balloon.panel_order_reference === null ? '' : String(balloon.panel_order_reference),
     z_index: String(balloon.z_index),
+  };
+}
+
+function toPanelFrameDraft(frame: PanelFrameRecord): PanelFrameDraft {
+  const vertices = frame.vertices.slice(0, 4).map((vertex) => ({
+    x: String(vertex.x),
+    y: String(vertex.y),
+  }));
+
+  while (vertices.length < 4) {
+    vertices.push({ x: '0', y: '0' });
+  }
+
+  return {
+    id: frame.id,
+    panel_id: frame.panel_id ?? '',
+    reading_order: String(frame.reading_order),
+    border_style: frame.border_style,
+    border_width: String(frame.border_width),
+    border_color: frame.border_color,
+    z_index: String(frame.z_index),
+    vertices,
   };
 }
 
@@ -5244,15 +5619,60 @@ function toBalloonPayload(draft: BalloonDraft): Record<string, unknown> {
     balloon_type: draft.balloon_type,
     writing_mode: draft.writing_mode,
     text: draft.text,
-    position: parseJson<Record<string, unknown>>(draft.position_json),
-    tail: draft.tail_json.trim() === 'null' ? null : parseJson<Record<string, unknown>>(draft.tail_json),
-    font_size: parseNumberInput(draft.font_size, 'font size'),
+    position: {
+      x: parseBoundedNumberInput(draft.position_x, 'position x', 0, 1),
+      y: parseBoundedNumberInput(draft.position_y, 'position y', 0, 1),
+      width: parsePositiveMaxNumberInput(draft.position_width, 'position width', 1),
+      height: parsePositiveMaxNumberInput(draft.position_height, 'position height', 1),
+    },
+    tail: draft.tail_enabled
+      ? {
+          base_x: parseBoundedNumberInput(draft.tail_base_x, 'tail base x', 0, 1),
+          base_y: parseBoundedNumberInput(draft.tail_base_y, 'tail base y', 0, 1),
+          tip_x: parseBoundedNumberInput(draft.tail_tip_x, 'tail tip x', 0, 1),
+          tip_y: parseBoundedNumberInput(draft.tail_tip_y, 'tail tip y', 0, 1),
+        }
+      : null,
+    font_size: parseIntegerInRangeInput(draft.font_size, 'font size', 8, 72),
     font_family: draft.font_family,
     panel_order_reference:
       draft.panel_order_reference.trim().length === 0
         ? null
-        : parseNumberInput(draft.panel_order_reference, 'panel order reference'),
-    z_index: parseNumberInput(draft.z_index, 'z-index'),
+        : parseIntegerInRangeInput(draft.panel_order_reference, 'panel order reference', 1, 99),
+    z_index: parseIntegerInRangeInput(draft.z_index, 'z-index', 1, 100),
+  };
+}
+
+function toPanelFramePayload(draft: PanelFrameDraft): Record<string, unknown> {
+  const borderColor = draft.border_color.trim();
+  if (!/^#[0-9A-Fa-f]{6}$/.test(borderColor)) {
+    throw new Error('border color must be a hex color');
+  }
+
+  const payload: Record<string, unknown> = {
+    panel_id: nullableUuidString(draft.panel_id, 'linked panel'),
+    vertices: draft.vertices.slice(0, 4).map((vertex, index) => ({
+      x: parseBoundedNumberInput(vertex.x, `vertex ${index + 1} x`, 0, 1),
+      y: parseBoundedNumberInput(vertex.y, `vertex ${index + 1} y`, 0, 1),
+    })),
+    border_style: draft.border_style,
+    border_width: parseIntegerInRangeInput(draft.border_width, 'border width', 0, 20),
+    border_color: borderColor,
+    z_index: parseIntegerInRangeInput(draft.z_index, 'z-index', 0, 1000),
+    reading_order: parseIntegerInRangeInput(draft.reading_order, 'reading order', 1, 1000),
+  };
+
+  const frameId = draft.id.trim();
+  if (frameId.length > 0) {
+    payload.id = frameId;
+  }
+
+  return payload;
+}
+
+function toPanelFramesPayload(drafts: PanelFrameDraft[]): Record<string, unknown> {
+  return {
+    frames: drafts.map(toPanelFramePayload),
   };
 }
 
@@ -5407,6 +5827,44 @@ function triggerBlobDownload(blob: Blob, filename: string): void {
   anchor.download = filename;
   anchor.click();
   URL.revokeObjectURL(url);
+}
+
+function parseGenericStructuredFieldRows(value: string): GenericStructuredFieldRow[] {
+  const parsed = parseJson<Record<string, unknown>>(value);
+  return Object.entries(parsed).map(([key, entry]) => ({
+    key,
+    value: stringifyGenericStructuredFieldValue(entry),
+  }));
+}
+
+function serializeGenericStructuredFieldRows(rows: GenericStructuredFieldRow[]): string {
+  const fields: Record<string, string> = {};
+  for (const row of rows) {
+    const key = row.key.trim();
+    if (key.length === 0) {
+      continue;
+    }
+    fields[key] = row.value.trim();
+  }
+
+  return JSON.stringify(fields, null, 2);
+}
+
+function stringifyGenericStructuredFieldValue(value: unknown): string {
+  if (typeof value === 'string') {
+    return value;
+  }
+  if (value === null || value === undefined) {
+    return '';
+  }
+  if (typeof value === 'number' || typeof value === 'boolean') {
+    return String(value);
+  }
+  if (Array.isArray(value) && value.every((entry) => typeof entry !== 'object' || entry === null)) {
+    return value.map((entry) => String(entry)).join(', ');
+  }
+
+  return JSON.stringify(value);
 }
 
 function parseCharacterStructuredFieldsDraft(value: string): CharacterStructuredFieldsDraft {
@@ -6208,6 +6666,17 @@ const FRAME_TEMPLATE_OPTIONS: Array<[string, string]> = [
   ['action_5', 'Action 5'],
   ['battle_7', 'Battle 7'],
 ];
+const FRAME_BORDER_STYLE_OPTIONS: Array<[PanelFrameRecord['border_style'], string]> = [
+  ['solid', 'Solid'],
+  ['dashed', 'Dashed'],
+  ['none', 'None'],
+];
+const BALLOON_FONT_FAMILY_OPTIONS: Array<[BalloonRecord['font_family'], string]> = [
+  ['manga_gothic', 'Manga gothic'],
+  ['mincho', 'Mincho font'],
+  ['rounded', 'Rounded font'],
+  ['bold', 'Bold font'],
+];
 
 function createEmptySceneDraft(): SceneDraft {
   return {
@@ -6262,21 +6731,28 @@ function createEmptyBalloonDraft(): BalloonDraft {
     balloon_type: 'speech',
     writing_mode: 'horizontal',
     text: '',
-    position_json: JSON.stringify({ x: 10, y: 10, width: 22, height: 18 }, null, 2),
-    tail_json: 'null',
+    position_x: '0.10',
+    position_y: '0.10',
+    position_width: '0.22',
+    position_height: '0.18',
+    tail_enabled: false,
+    tail_base_x: '0.21',
+    tail_base_y: '0.28',
+    tail_tip_x: '0.28',
+    tail_tip_y: '0.38',
     font_size: '18',
-    font_family: 'Noto Sans JP',
+    font_family: 'manga_gothic',
     panel_order_reference: '',
-    z_index: '1',
+    z_index: '10',
   };
 }
 
 function toBalloonStyle(balloon: BalloonRecord): Record<string, string> {
   return {
-    left: `${balloon.position.x}%`,
-    top: `${balloon.position.y}%`,
-    width: `${balloon.position.width}%`,
-    height: `${balloon.position.height}%`,
+    left: toBalloonCssPercent(balloon.position.x),
+    top: toBalloonCssPercent(balloon.position.y),
+    width: toBalloonCssPercent(balloon.position.width),
+    height: toBalloonCssPercent(balloon.position.height),
   };
 }
 
@@ -6304,6 +6780,42 @@ function parseNumberInput(value: string, label: string): number {
   }
 
   return parsed;
+}
+
+function parseBoundedNumberInput(value: string, label: string, min: number, max: number): number {
+  const parsed = parseNumberInput(value, label);
+  if (parsed < min || parsed > max) {
+    throw new Error(`${label} must be between ${min} and ${max}`);
+  }
+
+  return parsed;
+}
+
+function parseIntegerInRangeInput(value: string, label: string, min: number, max: number): number {
+  const parsed = parseBoundedNumberInput(value, label, min, max);
+  if (!Number.isInteger(parsed)) {
+    throw new Error(`${label} must be an integer`);
+  }
+
+  return parsed;
+}
+
+function parsePositiveMaxNumberInput(value: string, label: string, max: number): number {
+  const parsed = parseNumberInput(value, label);
+  if (parsed <= 0 || parsed > max) {
+    throw new Error(`${label} must be greater than 0 and at most ${max}`);
+  }
+
+  return parsed;
+}
+
+function formatUnitInput(value: number): string {
+  const normalized = value > 1 ? value / 100 : value;
+  return Number.isFinite(normalized) ? String(Number(normalized.toFixed(4))) : '0';
+}
+
+function toBalloonCssPercent(value: number): string {
+  return `${value > 1 ? value : value * 100}%`;
 }
 
 function splitCsv(value: string): string[] {

@@ -212,7 +212,7 @@ export interface BalloonRecord {
     tip_y: number;
   } | null;
   font_size: number;
-  font_family: string;
+  font_family: 'manga_gothic' | 'mincho' | 'rounded' | 'bold';
   panel_order_reference: number | null;
   z_index: number;
 }

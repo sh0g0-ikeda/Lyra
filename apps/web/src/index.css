@@ -290,6 +290,38 @@ a {
   color: #d9d9d9;
 }
 
+.inline-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #d8d8d8;
+  font-size: 0.82rem;
+}
+
+.inline-toggle input {
+  width: 16px;
+  height: 16px;
+}
+
+.icon-only {
+  width: 38px;
+  min-width: 38px;
+  padding-inline: 0;
+  justify-content: center;
+}
+
+.structured-field-list {
+  display: grid;
+  gap: 8px;
+}
+
+.structured-field-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.45fr) minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: end;
+}
+
 .advanced-disclosure summary {
   cursor: pointer;
   list-style: none;
@@ -304,6 +336,52 @@ a {
 
 .advanced-disclosure[open] {
   background: rgba(255, 255, 255, 0.03);
+}
+
+.frame-editor-list {
+  display: grid;
+  gap: 10px;
+}
+
+.frame-editor-card {
+  display: grid;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid rgba(229, 199, 107, 0.1);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.16);
+}
+
+.frame-editor-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(96px, 140px);
+  gap: 10px;
+  align-items: end;
+}
+
+.frame-editor-header strong {
+  color: #eeeeee;
+  font-size: 0.9rem;
+}
+
+.frame-vertex-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.frame-vertex-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) minmax(0, 1fr);
+  gap: 8px;
+  align-items: end;
+}
+
+.frame-vertex-row > span {
+  align-self: center;
+  color: #a8a8a8;
+  font-size: 0.74rem;
+  white-space: nowrap;
 }
 
 .workspace-heading {
