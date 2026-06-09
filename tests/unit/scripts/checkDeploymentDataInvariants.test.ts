@@ -93,6 +93,10 @@ class FakeDatabase implements DatabaseClient {
       );
     }
 
+    if (this.violatedCheckName === 'database.invalid_indexes') {
+      return text.includes('FROM pg_index') && text.includes('NOT pg_index.indisvalid');
+    }
+
     const [tableName, columnName] = this.violatedCheckName.split('.');
     return text.includes(`FROM ${tableName}`) && text.includes(columnName);
   }
@@ -179,6 +183,7 @@ describe('checkDeploymentDataInvariants', () => {
         query.includes('ABS(ledger.consumed_amount) > ledger.refunded_amount'),
       ),
     ).toBe(true);
+    expect(database.queries.some((query) => query.includes('FROM pg_index'))).toBe(true);
   });
 
   it('違反行があればチェック名とサンプル ID を返す', async () => {
@@ -221,6 +226,18 @@ describe('checkDeploymentDataInvariants', () => {
     expect(report.ok).toBe(false);
     expect(report.violations).toContainEqual({
       name: checkName,
+      sampleIds: ['bad-row-1', 'bad-row-2'],
+    });
+  });
+
+  it('CONCURRENTLY 失敗後の invalid index を検出する', async () => {
+    const database = new FakeDatabase('database.invalid_indexes');
+
+    const report = await checkDeploymentDataInvariants(database);
+
+    expect(report.ok).toBe(false);
+    expect(report.violations).toContainEqual({
+      name: 'database.invalid_indexes',
       sampleIds: ['bad-row-1', 'bad-row-2'],
     });
   });

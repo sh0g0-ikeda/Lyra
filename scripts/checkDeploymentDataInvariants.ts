@@ -26,6 +26,10 @@ const SAMPLE_LIMIT = 10;
 
 const DEPLOYMENT_DATA_INVARIANT_QUERIES: InvariantQuery[] = [
   {
+    name: 'database.invalid_indexes',
+    sql: "SELECT pg_class.relname::text AS id FROM pg_index JOIN pg_class ON pg_class.oid = pg_index.indexrelid JOIN pg_namespace ON pg_namespace.oid = pg_class.relnamespace WHERE NOT pg_index.indisvalid AND pg_namespace.nspname NOT IN ('pg_catalog', 'information_schema') ORDER BY pg_class.relname LIMIT $1",
+  },
+  {
     name: 'works.status',
     sql: "SELECT id::text AS id FROM works WHERE status NOT IN ('draft', 'reviewing', 'ready') ORDER BY id LIMIT $1",
   },
