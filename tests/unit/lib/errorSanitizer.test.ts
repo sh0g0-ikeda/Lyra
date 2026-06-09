@@ -66,4 +66,24 @@ describe('errorSanitizer', () => {
     expect(result).not.toContain(credential);
     expect(result).not.toContain(securityToken);
   });
+
+  it('OAuth token と JWT を伏せる', () => {
+    const jwt = [
+      'eyJhbGciOiJSUzI1NiIsImtpZCI6ImtleTEyMzQ1Njc4OTA',
+      'eyJzdWIiOiJ1c2VyLTEyMyIsImVtYWlsIjoidXNlckBleGFtcGxlLmNvbSJ9',
+      'c2lnbmF0dXJlMTIzNDU2Nzg5MA',
+    ].join('.');
+    const refreshToken = 'refresh-token-secret-value-1234567890';
+    const result = sanitizePersistedErrorMessage(
+      `Cognito failed access_token=${jwt} refresh_token=${refreshToken} code_verifier=pkce-secret`,
+      'fallback',
+    );
+
+    expect(result).toContain('access_token=[redacted]');
+    expect(result).toContain('refresh_token=[redacted]');
+    expect(result).toContain('code_verifier=[redacted]');
+    expect(result).not.toContain(jwt);
+    expect(result).not.toContain(refreshToken);
+    expect(result).not.toContain('pkce-secret');
+  });
 });
