@@ -311,9 +311,7 @@ export class StripeWebhookService implements StripeWebhookServicePort {
               stripeSubscriptionId,
               client,
             );
-      if (nextPlanCode !== null) {
-        await this.requirePlanUpdate(billingUser.userId, nextPlanCode, client);
-      }
+      await this.requirePlanUpdate(billingUser.userId, nextPlanCode, client);
       await this.billingRepository.insertPaymentRecord(
         {
           userId: billingUser.userId,
@@ -372,9 +370,6 @@ export class StripeWebhookService implements StripeWebhookServicePort {
               subscription.id,
               client,
             );
-      if (nextPlanCode === null) {
-        return;
-      }
       await this.requirePlanUpdate(billingUser.userId, nextPlanCode, client);
     });
   }
@@ -404,10 +399,6 @@ export class StripeWebhookService implements StripeWebhookServicePort {
         subscription.id,
         client,
       );
-      if (nextPlanCode === null) {
-        return;
-      }
-
       await this.requirePlanUpdate(billingUser.userId, nextPlanCode, client);
     });
   }
@@ -416,15 +407,15 @@ export class StripeWebhookService implements StripeWebhookServicePort {
     userId: string,
     stripeSubscriptionId: string,
     client: DatabaseClient,
-  ): Promise<'free' | null> {
-    const hasAnotherActiveSubscription =
-      await this.billingRepository.hasActiveSubscriptionForUserExcluding(
+  ): Promise<SubscriptionPlanCode> {
+    const activeSubscriptionPlan =
+      await this.billingRepository.findHighestActiveSubscriptionPlanForUserExcluding(
         userId,
         stripeSubscriptionId,
         client,
       );
 
-    return hasAnotherActiveSubscription ? null : 'free';
+    return activeSubscriptionPlan ?? 'free';
   }
 
   private resolvePlanCodeFromSubscription(

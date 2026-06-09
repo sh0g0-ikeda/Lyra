@@ -27,7 +27,7 @@ class InMemoryBillingRepository implements BillingRepository {
   public deletedSubscriptions: string[] = [];
   public paymentRecords: PaymentRecordInput[] = [];
   public insertedCustomerIds: Array<{ userId: string; stripeCustomerId: string }> = [];
-  public activeSubscriptionIdsByUser = new Map<string, Set<string>>();
+  public activeSubscriptionsByUser = new Map<string, Map<string, SubscriptionPlanCode>>();
 
   public async transaction<T>(work: (client: DatabaseClient) => Promise<T>): Promise<T> {
     return work({ query: async () => ({ command: '', rowCount: 0, oid: 0, fields: [], rows: [] }) });
@@ -72,6 +72,19 @@ class InMemoryBillingRepository implements BillingRepository {
     return true;
   }
 
+  public setUserPlan(userId: string, planCode: SubscriptionPlanCode): void {
+    const current = this.userById.get(userId);
+    if (current === undefined) {
+      return;
+    }
+
+    const next = { ...current, planCode };
+    this.userById.set(userId, next);
+    if (next.stripeCustomerId !== null) {
+      this.userByCustomerId.set(next.stripeCustomerId, next);
+    }
+  }
+
   public async hasStripeEventProcessed(stripeEventId: string): Promise<boolean> {
     return this.processedEvents.has(stripeEventId);
   }
@@ -91,29 +104,41 @@ class InMemoryBillingRepository implements BillingRepository {
 
   public async markSubscriptionDeleted(stripeSubscriptionId: string): Promise<void> {
     this.deletedSubscriptions.push(stripeSubscriptionId);
-    for (const subscriptionIds of this.activeSubscriptionIdsByUser.values()) {
-      subscriptionIds.delete(stripeSubscriptionId);
+    for (const subscriptions of this.activeSubscriptionsByUser.values()) {
+      subscriptions.delete(stripeSubscriptionId);
     }
   }
 
-  public addActiveSubscription(userId: string, stripeSubscriptionId: string): void {
-    const subscriptionIds = this.activeSubscriptionIdsByUser.get(userId) ?? new Set<string>();
-    subscriptionIds.add(stripeSubscriptionId);
-    this.activeSubscriptionIdsByUser.set(userId, subscriptionIds);
+  public addActiveSubscription(
+    userId: string,
+    stripeSubscriptionId: string,
+    planCode: SubscriptionPlanCode = 'standard',
+  ): void {
+    const subscriptions = this.activeSubscriptionsByUser.get(userId) ?? new Map<string, SubscriptionPlanCode>();
+    subscriptions.set(stripeSubscriptionId, planCode);
+    this.activeSubscriptionsByUser.set(userId, subscriptions);
   }
 
-  public async hasActiveSubscriptionForUserExcluding(
+  public async findHighestActiveSubscriptionPlanForUserExcluding(
     userId: string,
     excludedStripeSubscriptionId: string,
-  ): Promise<boolean> {
-    return this.subscriptions.some(
-      (subscription) =>
-        subscription.userId === userId &&
-        subscription.stripeSubscriptionId !== excludedStripeSubscriptionId &&
-        (subscription.status === 'active' || subscription.status === 'trialing'),
-    ) || Array.from(this.activeSubscriptionIdsByUser.get(userId) ?? []).some(
-      (subscriptionId) => subscriptionId !== excludedStripeSubscriptionId,
-    );
+  ): Promise<SubscriptionPlanCode | null> {
+    const plans = this.subscriptions
+      .filter(
+        (subscription) =>
+          subscription.userId === userId &&
+          subscription.stripeSubscriptionId !== excludedStripeSubscriptionId &&
+          (subscription.status === 'active' || subscription.status === 'trialing'),
+      )
+      .map((subscription) => subscription.planCode);
+
+    for (const [subscriptionId, planCode] of this.activeSubscriptionsByUser.get(userId) ?? []) {
+      if (subscriptionId !== excludedStripeSubscriptionId) {
+        plans.push(planCode);
+      }
+    }
+
+    return plans.sort(comparePlansDescending)[0] ?? null;
   }
 
   public async insertPaymentRecord(record: PaymentRecordInput): Promise<boolean> {
@@ -164,6 +189,22 @@ class FakeBillingCreditGrantService implements BillingCreditGrantServicePort {
       monthlyExpiresAt: null,
     };
   }
+}
+
+function comparePlansDescending(left: SubscriptionPlanCode, right: SubscriptionPlanCode): number {
+  return planRank(right) - planRank(left);
+}
+
+function planRank(planCode: SubscriptionPlanCode): number {
+  if (planCode === 'premium') {
+    return 2;
+  }
+
+  if (planCode === 'standard') {
+    return 1;
+  }
+
+  return 0;
 }
 
 class FakeStripeBillingClient implements StripeBillingClientPort {
@@ -395,7 +436,7 @@ describe('StripeWebhookService', () => {
 
     await service.handleWebhook(Buffer.from('{}'), 'sig');
 
-    expect(repository.updatedPlans).toHaveLength(0);
+    expect(repository.updatedPlans[0]).toEqual({ userId: 'user-1', planCode: 'standard' });
     expect(repository.paymentRecords[0]).toMatchObject({
       stripeInvoiceId: 'in_124',
       amountJpy: 1980,
@@ -461,7 +502,22 @@ describe('StripeWebhookService', () => {
     await service.handleWebhook(Buffer.from('{}'), 'sig');
 
     expect(repository.deletedSubscriptions).toEqual(['sub_123']);
-    expect(repository.updatedPlans).toHaveLength(0);
+    expect(repository.updatedPlans[0]).toEqual({ userId: 'user-1', planCode: 'standard' });
+  });
+
+  it('customer.subscription.deleted はpremium解約後に残るstandard subscriptionへplanを同期する', async () => {
+    const repository = seedRepository();
+    repository.setUserPlan('user-1', 'premium');
+    repository.addActiveSubscription('user-1', 'sub_standard', 'standard');
+    const creditGrantService = new FakeBillingCreditGrantService();
+    const stripeClient = new FakeStripeBillingClient();
+    stripeClient.event = buildCustomerSubscriptionDeletedEvent('premium', 'price_premium');
+    const service = buildService(repository, creditGrantService, stripeClient);
+
+    await service.handleWebhook(Buffer.from('{}'), 'sig');
+
+    expect(repository.deletedSubscriptions).toEqual(['sub_123']);
+    expect(repository.updatedPlans[0]).toEqual({ userId: 'user-1', planCode: 'standard' });
   });
 
   it('customer.subscription.updated は別の有効subscriptionがある場合に非activeイベントでplanをfreeへ落とさない', async () => {
@@ -478,7 +534,7 @@ describe('StripeWebhookService', () => {
       stripeSubscriptionId: 'sub_123',
       status: 'paused',
     });
-    expect(repository.updatedPlans).toHaveLength(0);
+    expect(repository.updatedPlans[0]).toEqual({ userId: 'user-1', planCode: 'standard' });
   });
 
   it('同じ event id は二重処理しない', async () => {
@@ -730,14 +786,17 @@ function buildCustomerSubscriptionUpdatedEvent(
   } as unknown as Stripe.Event;
 }
 
-function buildCustomerSubscriptionDeletedEvent(): Stripe.Event {
+function buildCustomerSubscriptionDeletedEvent(
+  planCode: PaidPlanCode = 'standard',
+  priceId: 'price_standard' | 'price_premium' = 'price_standard',
+): Stripe.Event {
   return {
     id: 'evt_sub_deleted',
     object: 'event',
     api_version: '2025-03-31',
     created: 1,
     data: {
-      object: buildSubscription(),
+      object: buildSubscription(planCode, priceId),
     },
     livemode: false,
     pending_webhooks: 1,

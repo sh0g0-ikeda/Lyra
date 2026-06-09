@@ -119,21 +119,24 @@ describe('PostgresBillingRepository', () => {
     expect(client.values[0]).toEqual(['user-1', 'cs_123', null, 'credit_purchase', 2000, 'paid']);
   });
 
-  it('指定subscription以外の有効subscriptionがあるか確認する', async () => {
+  it('指定subscription以外の最上位有効subscription planを取得する', async () => {
     const client = new QueryCapturingClient();
+    client.rows = [{ plan_code: 'premium' }];
     const repository = new PostgresBillingRepository(client, client);
 
-    const result = await repository.hasActiveSubscriptionForUserExcluding(
+    const result = await repository.findHighestActiveSubscriptionPlanForUserExcluding(
       'user-1',
       'sub_old',
       client,
     );
 
-    expect(result).toBe(true);
+    expect(result).toBe('premium');
     expect(client.queries[0]).toContain('FROM subscriptions');
     expect(client.queries[0]).toContain('user_id = $1');
     expect(client.queries[0]).toContain('stripe_subscription_id <> $2');
     expect(client.queries[0]).toContain("status IN ('active', 'trialing')");
+    expect(client.queries[0]).toContain("WHEN 'premium' THEN 2");
+    expect(client.queries[0]).toContain("WHEN 'standard' THEN 1");
     expect(client.values[0]).toEqual(['user-1', 'sub_old']);
   });
 

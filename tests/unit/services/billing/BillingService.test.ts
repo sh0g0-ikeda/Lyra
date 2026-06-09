@@ -62,7 +62,7 @@ class InMemoryBillingRepository implements BillingRepository {
     return true;
   }
 
-  public async hasActiveSubscriptionForUserExcluding(): Promise<boolean> {
+  public async findHighestActiveSubscriptionPlanForUserExcluding(): Promise<BillingUserProfile['planCode'] | null> {
     throw new Error('unused');
   }
 
