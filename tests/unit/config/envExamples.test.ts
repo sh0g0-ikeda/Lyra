@@ -25,6 +25,19 @@ describe('environment examples', () => {
 
     expect(rootEnvExample).toMatch(/^APP_ENV=development$/mu);
   });
+
+  it('root env example keeps generation disabled until provider settings are real', () => {
+    const rootEnvExample = readText('.env.example');
+
+    expect(rootEnvExample).toMatch(/^GENERATION_ENABLED=false$/mu);
+  });
+
+  it('root env example uses the repository standard migration command', () => {
+    const rootEnvExample = readText('.env.example');
+
+    expect(rootEnvExample).toContain('bun run migrate');
+    expect(rootEnvExample).not.toContain('npm run migrate');
+  });
 });
 
 function readText(relativePath: string): string {
