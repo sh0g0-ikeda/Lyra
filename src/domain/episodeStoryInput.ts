@@ -195,7 +195,13 @@ function splitIntoSentences(value: string): string[] {
 }
 
 function isSentenceBoundary(current: string, next: string): boolean {
-  if (current === '。' || current === '！' || current === '？' || current === '!' || current === '?') {
+  if (
+    current === '\u3002' ||
+    current === '\uff01' ||
+    current === '\uff1f' ||
+    current === '!' ||
+    current === '?'
+  ) {
     return true;
   }
 
