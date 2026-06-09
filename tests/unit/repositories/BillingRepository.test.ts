@@ -119,6 +119,24 @@ describe('PostgresBillingRepository', () => {
     expect(client.values[0]).toEqual(['user-1', 'cs_123', null, 'credit_purchase', 2000, 'paid']);
   });
 
+  it('指定subscription以外の有効subscriptionがあるか確認する', async () => {
+    const client = new QueryCapturingClient();
+    const repository = new PostgresBillingRepository(client, client);
+
+    const result = await repository.hasActiveSubscriptionForUserExcluding(
+      'user-1',
+      'sub_old',
+      client,
+    );
+
+    expect(result).toBe(true);
+    expect(client.queries[0]).toContain('FROM subscriptions');
+    expect(client.queries[0]).toContain('user_id = $1');
+    expect(client.queries[0]).toContain('stripe_subscription_id <> $2');
+    expect(client.queries[0]).toContain("status IN ('active', 'trialing')");
+    expect(client.values[0]).toEqual(['user-1', 'sub_old']);
+  });
+
   it('invoice 由来の payment record を保存する', async () => {
     const client = new QueryCapturingClient();
     const repository = new PostgresBillingRepository(client, client);

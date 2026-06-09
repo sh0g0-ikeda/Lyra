@@ -27,6 +27,7 @@ class InMemoryBillingRepository implements BillingRepository {
   public deletedSubscriptions: string[] = [];
   public paymentRecords: PaymentRecordInput[] = [];
   public insertedCustomerIds: Array<{ userId: string; stripeCustomerId: string }> = [];
+  public activeSubscriptionIdsByUser = new Map<string, Set<string>>();
 
   public async transaction<T>(work: (client: DatabaseClient) => Promise<T>): Promise<T> {
     return work({ query: async () => ({ command: '', rowCount: 0, oid: 0, fields: [], rows: [] }) });
@@ -90,6 +91,29 @@ class InMemoryBillingRepository implements BillingRepository {
 
   public async markSubscriptionDeleted(stripeSubscriptionId: string): Promise<void> {
     this.deletedSubscriptions.push(stripeSubscriptionId);
+    for (const subscriptionIds of this.activeSubscriptionIdsByUser.values()) {
+      subscriptionIds.delete(stripeSubscriptionId);
+    }
+  }
+
+  public addActiveSubscription(userId: string, stripeSubscriptionId: string): void {
+    const subscriptionIds = this.activeSubscriptionIdsByUser.get(userId) ?? new Set<string>();
+    subscriptionIds.add(stripeSubscriptionId);
+    this.activeSubscriptionIdsByUser.set(userId, subscriptionIds);
+  }
+
+  public async hasActiveSubscriptionForUserExcluding(
+    userId: string,
+    excludedStripeSubscriptionId: string,
+  ): Promise<boolean> {
+    return this.subscriptions.some(
+      (subscription) =>
+        subscription.userId === userId &&
+        subscription.stripeSubscriptionId !== excludedStripeSubscriptionId &&
+        (subscription.status === 'active' || subscription.status === 'trialing'),
+    ) || Array.from(this.activeSubscriptionIdsByUser.get(userId) ?? []).some(
+      (subscriptionId) => subscriptionId !== excludedStripeSubscriptionId,
+    );
   }
 
   public async insertPaymentRecord(record: PaymentRecordInput): Promise<boolean> {
@@ -361,6 +385,24 @@ describe('StripeWebhookService', () => {
     });
   });
 
+  it('invoice.payment_failed は別の有効subscriptionがある場合にplanをfreeへ落とさない', async () => {
+    const repository = seedRepository();
+    repository.addActiveSubscription('user-1', 'sub_new');
+    const creditGrantService = new FakeBillingCreditGrantService();
+    const stripeClient = new FakeStripeBillingClient();
+    stripeClient.event = buildInvoicePaymentFailedEvent();
+    const service = buildService(repository, creditGrantService, stripeClient);
+
+    await service.handleWebhook(Buffer.from('{}'), 'sig');
+
+    expect(repository.updatedPlans).toHaveLength(0);
+    expect(repository.paymentRecords[0]).toMatchObject({
+      stripeInvoiceId: 'in_124',
+      amountJpy: 1980,
+      status: 'failed',
+    });
+  });
+
   it('customer.subscription.updated で portal 変更後の plan を同期する', async () => {
     const repository = seedRepository();
     const creditGrantService = new FakeBillingCreditGrantService();
@@ -406,6 +448,37 @@ describe('StripeWebhookService', () => {
 
     expect(repository.deletedSubscriptions).toEqual(['sub_123']);
     expect(repository.updatedPlans[0]).toEqual({ userId: 'user-1', planCode: 'free' });
+  });
+
+  it('customer.subscription.deleted は別の有効subscriptionがある場合にplanをfreeへ落とさない', async () => {
+    const repository = seedRepository();
+    repository.addActiveSubscription('user-1', 'sub_new');
+    const creditGrantService = new FakeBillingCreditGrantService();
+    const stripeClient = new FakeStripeBillingClient();
+    stripeClient.event = buildCustomerSubscriptionDeletedEvent();
+    const service = buildService(repository, creditGrantService, stripeClient);
+
+    await service.handleWebhook(Buffer.from('{}'), 'sig');
+
+    expect(repository.deletedSubscriptions).toEqual(['sub_123']);
+    expect(repository.updatedPlans).toHaveLength(0);
+  });
+
+  it('customer.subscription.updated は別の有効subscriptionがある場合に非activeイベントでplanをfreeへ落とさない', async () => {
+    const repository = seedRepository();
+    repository.addActiveSubscription('user-1', 'sub_new');
+    const creditGrantService = new FakeBillingCreditGrantService();
+    const stripeClient = new FakeStripeBillingClient();
+    stripeClient.event = buildCustomerSubscriptionUpdatedEvent('price_standard', 'paused');
+    const service = buildService(repository, creditGrantService, stripeClient);
+
+    await service.handleWebhook(Buffer.from('{}'), 'sig');
+
+    expect(repository.subscriptions[0]).toMatchObject({
+      stripeSubscriptionId: 'sub_123',
+      status: 'paused',
+    });
+    expect(repository.updatedPlans).toHaveLength(0);
   });
 
   it('同じ event id は二重処理しない', async () => {
@@ -604,7 +677,7 @@ function buildInvoicePaidEvent(
   } as unknown as Stripe.Event;
 }
 
-function buildInvoicePaymentFailedEvent(): Stripe.Event {
+function buildInvoicePaymentFailedEvent(stripeSubscriptionId: string | null = 'sub_123'): Stripe.Event {
   return {
     id: 'evt_invoice_failed',
     object: 'event',
@@ -617,6 +690,18 @@ function buildInvoicePaymentFailedEvent(): Stripe.Event {
         customer: 'cus_123',
         amount_paid: 0,
         amount_due: 1980,
+        parent:
+          stripeSubscriptionId === null
+            ? null
+            : {
+                type: 'subscription_details',
+                subscription_details: {
+                  subscription: stripeSubscriptionId,
+                  metadata: {
+                    plan_code: 'standard',
+                  },
+                },
+              },
       },
     },
     livemode: false,

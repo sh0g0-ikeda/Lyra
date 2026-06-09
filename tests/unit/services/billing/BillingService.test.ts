@@ -62,6 +62,10 @@ class InMemoryBillingRepository implements BillingRepository {
     return true;
   }
 
+  public async hasActiveSubscriptionForUserExcluding(): Promise<boolean> {
+    throw new Error('unused');
+  }
+
   public async hasStripeEventProcessed(): Promise<boolean> {
     return false;
   }

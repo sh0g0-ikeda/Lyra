@@ -287,6 +287,7 @@ export class StripeWebhookService implements StripeWebhookServicePort {
   private async handleInvoicePaymentFailed(event: Stripe.Event): Promise<void> {
     const invoice = event.data.object as Stripe.Invoice;
     const stripeCustomerId = getStringIdentifier(invoice.customer);
+    const stripeSubscriptionId = invoiceSubscriptionId(invoice);
 
     await this.billingRepository.transaction(async (client) => {
       if (!(await this.billingRepository.markStripeEventProcessed(event.id, event.type, client))) {
@@ -302,7 +303,17 @@ export class StripeWebhookService implements StripeWebhookServicePort {
         return;
       }
 
-      await this.requirePlanUpdate(billingUser.userId, 'free', client);
+      const nextPlanCode =
+        stripeSubscriptionId === null
+          ? 'free'
+          : await this.resolveFallbackPlanAfterSubscriptionDeactivation(
+              billingUser.userId,
+              stripeSubscriptionId,
+              client,
+            );
+      if (nextPlanCode !== null) {
+        await this.requirePlanUpdate(billingUser.userId, nextPlanCode, client);
+      }
       await this.billingRepository.insertPaymentRecord(
         {
           userId: billingUser.userId,
@@ -353,8 +364,17 @@ export class StripeWebhookService implements StripeWebhookServicePort {
         client,
       );
 
-      const nextPlanCode: SubscriptionPlanCode =
-        subscription.status === 'active' || subscription.status === 'trialing' ? planCode : 'free';
+      const nextPlanCode =
+        subscription.status === 'active' || subscription.status === 'trialing'
+          ? planCode
+          : await this.resolveFallbackPlanAfterSubscriptionDeactivation(
+              billingUser.userId,
+              subscription.id,
+              client,
+            );
+      if (nextPlanCode === null) {
+        return;
+      }
       await this.requirePlanUpdate(billingUser.userId, nextPlanCode, client);
     });
   }
@@ -379,8 +399,32 @@ export class StripeWebhookService implements StripeWebhookServicePort {
         return;
       }
 
-      await this.requirePlanUpdate(billingUser.userId, 'free', client);
+      const nextPlanCode = await this.resolveFallbackPlanAfterSubscriptionDeactivation(
+        billingUser.userId,
+        subscription.id,
+        client,
+      );
+      if (nextPlanCode === null) {
+        return;
+      }
+
+      await this.requirePlanUpdate(billingUser.userId, nextPlanCode, client);
     });
+  }
+
+  private async resolveFallbackPlanAfterSubscriptionDeactivation(
+    userId: string,
+    stripeSubscriptionId: string,
+    client: DatabaseClient,
+  ): Promise<'free' | null> {
+    const hasAnotherActiveSubscription =
+      await this.billingRepository.hasActiveSubscriptionForUserExcluding(
+        userId,
+        stripeSubscriptionId,
+        client,
+      );
+
+    return hasAnotherActiveSubscription ? null : 'free';
   }
 
   private resolvePlanCodeFromSubscription(
