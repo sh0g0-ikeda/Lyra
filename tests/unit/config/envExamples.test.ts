@@ -19,6 +19,12 @@ describe('environment examples', () => {
 
     expect(rootEnvExample).not.toMatch(/^ANTHROPIC_/mu);
   });
+
+  it('root env example declares the application environment explicitly', () => {
+    const rootEnvExample = readText('.env.example');
+
+    expect(rootEnvExample).toMatch(/^APP_ENV=development$/mu);
+  });
 });
 
 function readText(relativePath: string): string {

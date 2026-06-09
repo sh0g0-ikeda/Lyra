@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { DEFAULT_GENERATION_ACTIVE_JOB_LIMITS } from '../domain/constants/generation.js';
 
 const envSchema = z.object({
+  APP_ENV: z.enum(['development', 'test', 'production']).optional(),
   PORT: z.coerce.number().int().min(1).max(65535).default(3000),
   DATABASE_URL: z.string().min(1).default('postgres://postgres:postgres@localhost:5432/lyra'),
   DATABASE_POOL_MAX: z.coerce.number().int().min(1).max(50).default(10),

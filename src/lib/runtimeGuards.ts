@@ -2,6 +2,7 @@ import { ConfigurationError } from '../domain/errors/index.js';
 import { MAX_PRODUCTION_GENERATION_ACTIVE_JOB_LIMITS } from '../domain/constants/generation.js';
 
 interface RuntimeGuardConfig {
+  APP_ENV?: 'development' | 'test' | 'production';
   DEV_AUTH_BYPASS: boolean;
   DATABASE_URL?: string;
   DATABASE_POOL_MAX?: number;
@@ -105,11 +106,21 @@ export function assertProductionRuntimeConfig(
   config: RuntimeGuardConfig,
   nodeEnv = process.env.NODE_ENV,
 ): void {
-  if (nodeEnv !== 'production') {
+  const appEnv = config.APP_ENV;
+  const isProductionRuntime = nodeEnv === 'production' || appEnv === 'production';
+  if (!isProductionRuntime) {
     return;
   }
 
   const violations: string[] = [];
+
+  if (appEnv === 'production' && nodeEnv !== 'production') {
+    violations.push('NODE_ENV must be production when APP_ENV is production');
+  }
+
+  if (nodeEnv === 'production' && appEnv !== undefined && appEnv !== 'production') {
+    violations.push('APP_ENV must be production when NODE_ENV is production');
+  }
 
   if (config.DEV_AUTH_BYPASS) {
     violations.push('DEV_AUTH_BYPASS must be disabled');

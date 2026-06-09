@@ -71,6 +71,9 @@ DATABASE_POOL_MAX=10
 DATABASE_SSL_MODE=require
 ```
 
+Set both `APP_ENV=production` and `NODE_ENV=production` for AWS deployments.
+Startup rejects `APP_ENV=production` unless `NODE_ENV=production` is also set,
+so production safety checks cannot be skipped by an incomplete task definition.
 `NODE_ENV=production` rejects missing database URLs and local hosts such as `localhost`,
 `127.0.0.1`, and `::1`. Production database connections require
 `DATABASE_SSL_MODE=require`; `DATABASE_POOL_MAX` is capped at 10 per API/worker
@@ -153,7 +156,7 @@ STRIPE_CHECKOUT_CANCEL_URL=https://app.example.com/billing/cancel
 STRIPE_PORTAL_RETURN_URL=https://app.example.com/billing
 ```
 
-If any of these are missing in `NODE_ENV=production`, the API fails fast before
+If any of these are missing in production mode, the API fails fast before
 accepting traffic.
 
 ### 4. Minimal frontend `apps/web/.env`

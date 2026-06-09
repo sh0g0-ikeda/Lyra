@@ -3,6 +3,7 @@ import { ConfigurationError } from '../../../src/domain/errors/index.js';
 import { assertProductionRuntimeConfig } from '../../../src/lib/runtimeGuards.js';
 
 const safeProductionConfig = {
+  APP_ENV: 'production' as const,
   DEV_AUTH_BYPASS: false,
   DATABASE_URL: 'postgres://lyra:secret@lyra-db.abc123.ap-northeast-1.rds.amazonaws.com:5432/lyra',
   DATABASE_POOL_MAX: 10,
@@ -36,6 +37,7 @@ describe('assertProductionRuntimeConfig', () => {
     expect(() => {
       assertProductionRuntimeConfig(
         {
+          APP_ENV: 'development',
           DEV_AUTH_BYPASS: true,
         },
         'development',
@@ -47,6 +49,29 @@ describe('assertProductionRuntimeConfig', () => {
     expect(() => {
       assertProductionRuntimeConfig(safeProductionConfig, 'production');
     }).not.toThrow();
+  });
+
+  it('requires NODE_ENV production when APP_ENV is production', () => {
+    expect(() => {
+      assertProductionRuntimeConfig(
+        {
+          ...safeProductionConfig,
+        },
+        'development',
+      );
+    }).toThrow(/NODE_ENV must be production when APP_ENV is production/);
+  });
+
+  it('rejects APP_ENV values that conflict with NODE_ENV production', () => {
+    expect(() => {
+      assertProductionRuntimeConfig(
+        {
+          ...safeProductionConfig,
+          APP_ENV: 'development',
+        },
+        'production',
+      );
+    }).toThrow(/APP_ENV must be production when NODE_ENV is production/);
   });
 
   it('Cognito production 設定の issuer/client/scope が揃っていれば許可する', () => {
