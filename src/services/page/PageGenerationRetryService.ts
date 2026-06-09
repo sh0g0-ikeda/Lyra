@@ -42,13 +42,15 @@ export class PageGenerationRetryService implements PageGenerationRetryServicePor
 
     let creditsConsumed = false;
     try {
-      await this.creditService.consumeCredits({
-        userId,
-        cost: job.creditCost,
-        description: 'Page generation retry',
-        jobId: job.id,
-      });
-      creditsConsumed = true;
+      if (job.creditCost > 0) {
+        await this.creditService.consumeCredits({
+          userId,
+          cost: job.creditCost,
+          description: 'Page generation retry',
+          jobId: job.id,
+        });
+        creditsConsumed = true;
+      }
 
       const prepared = await this.generationJobRepository.prepareRetry(
         jobId,

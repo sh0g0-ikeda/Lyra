@@ -118,6 +118,21 @@ describe('PageGenerationRetryService', () => {
     expect(workerService.processedJobId).toBe('job-1');
   });
 
+  it('古い0cr failed jobは再課金せずに retry できる', async () => {
+    const repository = new InMemoryGenerationJobRepository();
+    repository.job = buildJob({ creditCost: 0 });
+    const workerService = new FakePageGenerationWorkerService();
+    const creditService = new FakeCreditService();
+    const service = new PageGenerationRetryService(repository, workerService, creditService);
+
+    await service.retryFailedJob('user-1', 'job-1');
+
+    expect(creditService.consumed).toEqual([]);
+    expect(creditService.refunded).toEqual([]);
+    expect(repository.preparedRetryWith).toBe(MAX_PAGE_GENERATION_RETRIES);
+    expect(workerService.processedJobId).toBe('job-1');
+  });
+
   it('他ユーザーの job は not found にする', async () => {
     const repository = new InMemoryGenerationJobRepository();
     const service = new PageGenerationRetryService(
