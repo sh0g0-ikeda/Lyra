@@ -3,16 +3,24 @@ import { OpenAIClient } from '../../../../src/infrastructure/openai/OpenAIClient
 import { OpenAIEntityImportAnalyzer } from '../../../../src/infrastructure/openai/OpenAIEntityImportAnalyzer.js';
 
 describe('OpenAIEntityImportAnalyzer', () => {
-  it('responses の text JSON を解析する', async () => {
+  it('uses strict structured output with a token cap and converts field paths to suggested fields', async () => {
+    const requests: Array<Record<string, unknown>> = [];
     const client = new OpenAIClient({
       apiKey: 'test',
       baseUrl: 'https://api.openai.test/v1',
       timeoutMs: 1000,
-      fetchFn: async () =>
-        new Response(
+      fetchFn: async (_url, init) => {
+        requests.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+
+        return new Response(
           JSON.stringify({
             output_text: JSON.stringify({
-              suggested_fields: { art_style: 'anime' },
+              field_suggestions: [
+                { path: 'art_style', value: 'anime' },
+                { path: 'hair.color', value: 'black' },
+                { path: 'character_identity.aliases', value: ['Aki'] },
+                { path: 'base_form', value: 'dragon' },
+              ],
               prompt_supplement: 'anime heroine',
             }),
           }),
@@ -20,7 +28,8 @@ describe('OpenAIEntityImportAnalyzer', () => {
             status: 200,
             headers: { 'x-request-id': 'req-1', 'Content-Type': 'application/json' },
           },
-        ),
+        );
+      },
       maxRetries: 1,
     });
     const analyzer = new OpenAIEntityImportAnalyzer(client);
@@ -31,8 +40,22 @@ describe('OpenAIEntityImportAnalyzer', () => {
     });
 
     expect(result).toEqual({
-      suggestedFields: { art_style: 'anime' },
+      suggestedFields: {
+        art_style: 'anime',
+        hair: { color: 'black' },
+        character_identity: { aliases: ['Aki'] },
+      },
       promptSupplement: 'anime heroine',
+    });
+    expect(requests[0]).toMatchObject({
+      max_output_tokens: 700,
+      text: {
+        format: {
+          type: 'json_schema',
+          name: 'entity_import_analysis',
+          strict: true,
+        },
+      },
     });
   });
 });
