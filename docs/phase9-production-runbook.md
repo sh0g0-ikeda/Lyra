@@ -42,6 +42,11 @@ Headers:
 - `X-RateLimit-Reset`
 - `Retry-After` on `429`
 
+Retention:
+- Run `bun run admin:prune-rate-limits -- --older-than-hours 24 --max-deletes 1000`
+  regularly as dry-run first.
+- Add `--apply` after reviewing candidates. The script rechecks `reset_at` during deletion.
+
 ## CloudWatch alarms
 Use `ops/cloudwatch/alarms.example.json` as the seed definition.
 

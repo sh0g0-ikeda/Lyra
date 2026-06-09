@@ -287,3 +287,17 @@ bun run admin:prune-jobs -- --max-deletes 500
 - The script deletes only `completed` and `failed` jobs whose `expires_at` is in the past.
 - `queued` and `processing` jobs are intentionally not deleted here; stale active jobs are handled by
   the generation recovery flow.
+
+### Rate limit bucket retention
+
+Rate limit buckets are shared across API instances and should also be pruned regularly so public
+webhook/IP buckets do not accumulate forever:
+
+```powershell
+bun run admin:prune-rate-limits -- --older-than-hours 24 --max-deletes 1000
+```
+
+- Default mode is dry-run and lists expired buckets only.
+- Add `--apply` to delete candidates.
+- The script deletes only buckets whose `reset_at` is older than the retention window and rechecks
+  that condition during deletion.
