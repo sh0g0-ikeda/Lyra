@@ -92,6 +92,22 @@ describe('assertSafeWebRuntimeConfig', () => {
     }).toThrow(/VITE_COGNITO_API_TOKEN_USE must be access or id/);
   });
 
+  it('production では Cognito と API の公開 URL に HTTPS の非 local host を要求する', () => {
+    expect(() => {
+      assertSafeWebRuntimeConfig({
+        MODE: 'production',
+        VITE_COGNITO_DOMAIN: 'http://localhost:9229',
+        VITE_COGNITO_CLIENT_ID: 'client-1',
+        VITE_COGNITO_SCOPES: 'openid email profile',
+        VITE_COGNITO_REDIRECT_URI: 'http://localhost:5173/callback',
+        VITE_COGNITO_LOGOUT_URI: 'http://127.0.0.1:5173/logout',
+        VITE_API_BASE_URL: 'http://localhost:3000',
+      });
+    }).toThrow(
+      /VITE_COGNITO_DOMAIN must use https.*VITE_COGNITO_REDIRECT_URI must use https.*VITE_COGNITO_LOGOUT_URI must use https.*VITE_API_BASE_URL must use https/,
+    );
+  });
+
   it('production build check では Hosted UI 設定の必須化だけを外せる', () => {
     expect(() => {
       assertSafeWebRuntimeConfig(
