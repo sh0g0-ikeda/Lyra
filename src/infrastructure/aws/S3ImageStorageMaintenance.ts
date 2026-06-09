@@ -28,6 +28,7 @@ interface ListObjectsResponse {
 }
 
 const IMAGE_OBJECT_KEY_EXTENSION_PATTERN = /\.(?:jpe?g|png|webp)$/iu;
+const S3_LIST_OBJECTS_MAX_KEYS = 1_000;
 
 export class S3ImageStorageMaintenance implements ImageStorageMaintenancePort {
   public constructor(
@@ -56,6 +57,10 @@ export class S3ImageStorageMaintenance implements ImageStorageMaintenancePort {
         truncatedByLimit = true;
         break;
       }
+      const maxKeys =
+        remainingLimit === undefined
+          ? undefined
+          : Math.min(remainingLimit, S3_LIST_OBJECTS_MAX_KEYS);
       const objectCountBeforePage = objects.length;
 
       let response: ListObjectsResponse;
@@ -65,7 +70,7 @@ export class S3ImageStorageMaintenance implements ImageStorageMaintenancePort {
             Bucket: this.bucketName,
             Prefix: prefix,
             ContinuationToken: continuationToken,
-            MaxKeys: remainingLimit,
+            MaxKeys: maxKeys,
           }),
         ) as ListObjectsResponse;
       } catch (error) {

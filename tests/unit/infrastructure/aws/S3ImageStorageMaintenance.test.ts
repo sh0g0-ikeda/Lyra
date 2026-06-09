@@ -89,6 +89,43 @@ describe('S3ImageStorageMaintenance', () => {
     });
   });
 
+  it('caps each S3 list request to the S3 MaxKeys limit while preserving the scan budget', async () => {
+    const client = new FakeS3Client();
+    client.responses = [
+      {
+        Contents: [
+          { Key: 'tmp/a.png', LastModified: new Date('2026-06-01T00:00:00.000Z') },
+        ],
+        IsTruncated: true,
+        NextContinuationToken: 'next-page',
+      },
+      {
+        Contents: [
+          { Key: 'tmp/b.png', LastModified: new Date('2026-06-01T00:00:00.000Z') },
+        ],
+        IsTruncated: false,
+      },
+    ];
+    const storage = new S3ImageStorageMaintenance(client, 'lyra-images');
+
+    await expect(storage.listObjects('tmp/', { maxObjects: 5000 })).resolves.toEqual({
+      objects: [
+        { key: 'tmp/a.png', lastModified: new Date('2026-06-01T00:00:00.000Z') },
+        { key: 'tmp/b.png', lastModified: new Date('2026-06-01T00:00:00.000Z') },
+      ],
+      truncated: false,
+    });
+
+    expect(client.commands).toHaveLength(2);
+    expect(client.commands[0]?.input).toMatchObject({
+      MaxKeys: 1000,
+    });
+    expect(client.commands[1]?.input).toMatchObject({
+      ContinuationToken: 'next-page',
+      MaxKeys: 1000,
+    });
+  });
+
   it('wraps list failures as configuration errors', async () => {
     const client = new FakeS3Client();
     client.error = new Error('list failed');
