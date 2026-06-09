@@ -1,4 +1,5 @@
 import { ConfigurationError } from '../../domain/errors/index.js';
+import { PAGE_GENERATION_INTERNAL_PLAN_MAX_CHARS } from '../../domain/constants/generation.js';
 import { sanitizePersistedErrorMessage } from '../../lib/errorSanitizer.js';
 import type { GenerationJob } from '../../domain/types/job.js';
 import type {
@@ -485,7 +486,15 @@ function parsePersistedParams(value: Record<string, unknown>): PersistedPageGene
 
 function normalizeOptionalInternalPlan(value: string): string | null {
   const trimmed = value.trim();
-  return trimmed.length === 0 ? null : trimmed;
+  if (trimmed.length === 0) {
+    return null;
+  }
+
+  if (trimmed.length <= PAGE_GENERATION_INTERNAL_PLAN_MAX_CHARS) {
+    return trimmed;
+  }
+
+  return `${trimmed.slice(0, PAGE_GENERATION_INTERNAL_PLAN_MAX_CHARS - 3).trimEnd()}...`;
 }
 
 function extractFailureCompensation(value: Record<string, unknown>): FailureCompensation | null {

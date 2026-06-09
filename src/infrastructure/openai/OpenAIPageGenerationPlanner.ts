@@ -3,6 +3,7 @@ import type {
   PageGenerationPlanInput,
 } from '../../services/page/PageGenerationWorkerService.js';
 import { ConfigurationError } from '../../domain/errors/index.js';
+import { PAGE_GENERATION_PLANNER_MAX_TOKENS } from '../../domain/constants/generation.js';
 import { OpenAIClient } from './OpenAIClient.js';
 
 interface OpenAIPlannerResponse {
@@ -19,6 +20,7 @@ export class OpenAIPageGenerationPlanner implements PageGenerationPlannerPort {
   public async buildPlan(input: PageGenerationPlanInput): Promise<string> {
     const response = await this.client.postJson<OpenAIPlannerResponse>('/responses', {
       model: this.model,
+      max_output_tokens: PAGE_GENERATION_PLANNER_MAX_TOKENS,
       input: [
         {
           role: 'system',

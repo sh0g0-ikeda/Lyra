@@ -260,6 +260,36 @@ describe('PageGenerationWorkerService', () => {
     expect(renderer.calls[0]?.prompt).toBe('page-prompt-compiled');
   });
 
+  it('planner 出力が長すぎる場合は短くして render に渡す', async () => {
+    const executionRepository = new FakeExecutionRepository();
+    executionRepository.claimedJob = buildJob({
+      generationMode: 'thinking',
+      params: {
+        ...buildJob().params,
+        generation_mode: 'thinking',
+        requires_planner: true,
+      },
+    });
+    const planner = new FakePlanner();
+    planner.output = 'planner-overflow '.repeat(400).trim();
+    const renderer = new FakeRenderer();
+    const service = new PageGenerationWorkerService(
+      executionRepository,
+      new FakePromptBuilder(),
+      new FakePromptCompiler(),
+      new FakeInputImageBuilder(),
+      planner,
+      renderer,
+      new FakeStorage(),
+      new FakeCreditService(),
+    );
+
+    await service.processJob('job-1');
+
+    expect(renderer.calls[0]?.internalPlan?.length).toBeLessThanOrEqual(1200);
+    expect(renderer.calls[0]?.internalPlan).toContain('...');
+  });
+
   it('claim できない job は skip する', async () => {
     const executionRepository = new FakeExecutionRepository();
     executionRepository.claimedJob = null;
