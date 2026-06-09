@@ -503,7 +503,13 @@ function resolveDependencies(
   const storyService =
     dependencies.storyService ?? new StoryService(new PostgresStoryRepository(db), entityRepository);
   const panelService =
-    dependencies.panelService ?? new PanelService(panelRepository, entityRepository, panelFrameRepository);
+    dependencies.panelService ??
+    new PanelService(
+      panelRepository,
+      entityRepository,
+      panelFrameRepository,
+      new PostgresCompositionGalleryRepository(db),
+    );
   const panelFrameService =
     dependencies.panelFrameService ?? new PanelFrameService(panelFrameRepository);
   const sceneService =

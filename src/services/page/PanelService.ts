@@ -25,6 +25,10 @@ export interface PanelServicePort {
   deletePanel(userId: string, panelId: string): Promise<void>;
 }
 
+export interface CompositionGalleryReferenceReader {
+  findByIds(ids: string[]): Promise<Array<{ id: string }>>;
+}
+
 /**
  * Coordinates Panel writes so page ownership and related entity references are
  * validated before persistence.
@@ -34,6 +38,7 @@ export class PanelService implements PanelServicePort {
     private readonly panelRepository: PanelRepository,
     private readonly entityReader: EntityReferenceReader,
     private readonly panelFrameRepository: PanelFrameRepository,
+    private readonly compositionGalleryReader?: CompositionGalleryReferenceReader,
   ) {}
 
   public async createPanel(userId: string, pageId: string, input: CreatePanelInput): Promise<Panel> {
@@ -47,6 +52,7 @@ export class PanelService implements PanelServicePort {
     const dialogue = normalizedInput.dialogue ?? [];
     ensureDialogueShape(dialogue);
     await this.ensureDialogueEntitiesBelongToWork(userId, pageContext.workId, dialogue);
+    await this.ensureGalleryCompositionExists(normalizedInput.composition);
 
     const panel = await this.panelRepository.createPanel(pageId, userId, normalizedInput);
     if (panel === null) {
@@ -81,6 +87,7 @@ export class PanelService implements PanelServicePort {
         normalizedInput.dialogue,
       );
     }
+    await this.ensureGalleryCompositionExists(normalizedInput.composition);
 
     const panel = await this.panelRepository.updatePanel(panelId, userId, normalizedInput);
     if (panel === null) {
@@ -139,6 +146,22 @@ export class PanelService implements PanelServicePort {
     );
     if (matchedEntityCount !== entityIds.length) {
       throw new ValidationError('All dialogue entity_id values must belong to the panel work');
+    }
+  }
+
+  private async ensureGalleryCompositionExists(composition: PanelComposition | undefined): Promise<void> {
+    if (
+      composition === undefined ||
+      composition.source !== 'gallery' ||
+      composition.galleryItemId === null ||
+      this.compositionGalleryReader === undefined
+    ) {
+      return;
+    }
+
+    const matchedItems = await this.compositionGalleryReader.findByIds([composition.galleryItemId]);
+    if (!matchedItems.some((item) => item.id === composition.galleryItemId)) {
+      throw new ValidationError('galleryItemId must reference an existing composition gallery item');
     }
   }
 
