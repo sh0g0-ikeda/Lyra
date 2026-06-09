@@ -304,7 +304,7 @@ describe('EntityReferenceService', () => {
     ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
   });
 
-  it('generate-reference は 8cr を消費して entity_generate job を作る', async () => {
+  it('generate-reference は1crを消費して entity_generate job を作る', async () => {
     const jobs = new FakeGenerationJobRepository();
     const creditService = new FakeCreditService();
     const queue = new FakeEntityGenerationQueue();
