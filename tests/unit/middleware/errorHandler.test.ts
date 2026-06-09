@@ -54,6 +54,27 @@ describe('errorHandler', () => {
     });
   });
 
+  it('sanitizes public 4xx AppError response messages', async () => {
+    process.env.NODE_ENV = 'production';
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const fakeToken = [
+      'eyJhbGciOiJIUzI1NiJ9',
+      'eyJzdWIiOiJ1c2VyIn0xxxxxxxxxxxxxxxxxxxxxxxx',
+      'signaturexxxxxxxxxxxxxxxxxxxxxxxx',
+    ].join('.');
+    const app = buildApp(() => {
+      throw new ValidationError(`bad input Authorization: Bearer ${fakeToken} ${'x'.repeat(500)}`);
+    });
+
+    const response = await app.request('/boom');
+
+    expect(response.status).toBe(422);
+    const payload = (await response.json()) as { error: { message: string } };
+    expect(payload.error.message).toContain('Bearer [redacted]');
+    expect(payload.error.message).not.toContain(fakeToken);
+    expect(payload.error.message.length).toBeLessThanOrEqual(300);
+  });
+
   it('hides unexpected error details in all responses', async () => {
     process.env.NODE_ENV = 'development';
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
