@@ -5,6 +5,7 @@ import {
 } from '../../domain/constants/entityReference.js';
 import type { EntityType } from '../../domain/types/entity.js';
 import { ValidationError } from '../../domain/errors/index.js';
+import { formatZodValidationError } from '../validationErrorFormatter.js';
 
 export const entityTypeSchema = z.enum(['character', 'nonhuman', 'object']);
 
@@ -240,7 +241,7 @@ export function parseStructuredFields(
   const result = schema.safeParse(structuredFields);
 
   if (!result.success) {
-    throw new ValidationError(result.error.message);
+    throw new ValidationError(formatZodValidationError(result.error));
   }
 
   return result.data;

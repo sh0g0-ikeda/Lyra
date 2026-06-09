@@ -12,6 +12,7 @@ import {
   updateEntityBodySchema,
   uuidParamSchema,
 } from '../lib/validators/entity.schema.js';
+import { formatZodValidationError } from '../lib/validationErrorFormatter.js';
 import type { EntityServicePort } from '../services/entity/EntityService.js';
 import type { EntityReferenceServicePort } from '../services/entity/EntityReferenceService.js';
 import type { EntityReferenceImageExportServicePort } from '../services/entity/EntityReferenceImageExportService.js';
@@ -44,7 +45,7 @@ export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<
     const body = createEntityBodySchema.safeParse(await readJsonBody(c));
 
     if (!body.success) {
-      throw new ValidationError(body.error.message);
+      throw new ValidationError(formatZodValidationError(body.error));
     }
 
     const entity = await dependencies.entityService.createEntity(user.id, workId, {
@@ -91,7 +92,7 @@ export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<
     const refIdResult = referenceIdParamSchema.safeParse(c.req.param('ref_id'));
 
     if (!refIdResult.success) {
-      throw new ValidationError(refIdResult.error.message);
+      throw new ValidationError(formatZodValidationError(refIdResult.error));
     }
 
     const exportedImage = await dependencies.entityReferenceImageExportService.exportReferenceImage(
@@ -112,7 +113,7 @@ export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<
     const query = referenceCandidateImageQuerySchema.safeParse(c.req.query());
 
     if (!query.success) {
-      throw new ValidationError(query.error.message);
+      throw new ValidationError(formatZodValidationError(query.error));
     }
 
     const exportedImage = await dependencies.entityReferenceImageExportService.exportCandidateImage(
@@ -133,7 +134,7 @@ export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<
     const body = updateEntityBodySchema.safeParse(await readJsonBody(c));
 
     if (!body.success) {
-      throw new ValidationError(body.error.message);
+      throw new ValidationError(formatZodValidationError(body.error));
     }
 
     const entity = await dependencies.entityService.updateEntity(user.id, entityId, {
@@ -166,7 +167,7 @@ export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<
     );
 
     if (!body.success) {
-      throw new ValidationError(body.error.message);
+      throw new ValidationError(formatZodValidationError(body.error));
     }
 
     const result = await dependencies.entityReferenceService.importImage(user.id, {
@@ -192,7 +193,7 @@ export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<
     );
 
     if (!body.success) {
-      throw new ValidationError(body.error.message);
+      throw new ValidationError(formatZodValidationError(body.error));
     }
 
     const result = await dependencies.entityReferenceService.enqueueReferenceGeneration(user.id, entityId, {
@@ -208,7 +209,7 @@ export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<
     const body = confirmEntityReferenceBodySchema.safeParse(await readJsonBody(c));
 
     if (!body.success) {
-      throw new ValidationError(body.error.message);
+      throw new ValidationError(formatZodValidationError(body.error));
     }
 
     const referenceSet = await dependencies.entityReferenceService.confirmReferences(user.id, entityId, {
@@ -226,7 +227,7 @@ export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<
     const refIdResult = referenceIdParamSchema.safeParse(c.req.param('ref_id'));
 
     if (!refIdResult.success) {
-      throw new ValidationError(refIdResult.error.message);
+      throw new ValidationError(formatZodValidationError(refIdResult.error));
     }
 
     const referenceSet = await dependencies.entityReferenceService.deleteReference(

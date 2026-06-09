@@ -16,6 +16,7 @@ import {
   updateEpisodeBodySchema,
   updateWorkBodySchema,
 } from '../lib/validators/story.schema.js';
+import { formatZodValidationError } from '../lib/validationErrorFormatter.js';
 import type { StoryServicePort } from '../services/story/StoryService.js';
 import type { StoryCollaborationServicePort } from '../services/story/StoryCollaborationService.js';
 import type { PageSkeletonServicePort } from '../services/story/PageSkeletonService.js';
@@ -43,7 +44,7 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
     const body = collaborateStoryBodySchema.safeParse(await readStoryJsonBody(c));
 
     if (!body.success) {
-      throw new ValidationError(body.error.message);
+      throw new ValidationError(formatZodValidationError(body.error));
     }
 
     const stream = await dependencies.storyCollaborationService.collaborate(user.id, {
@@ -68,7 +69,7 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
     const body = improveEpisodeDraftBodySchema.safeParse(await readStoryJsonBody(c));
 
     if (!body.success) {
-      throw new ValidationError(body.error.message);
+      throw new ValidationError(formatZodValidationError(body.error));
     }
 
     const result = await dependencies.storyCollaborationService.improveEpisodeDraft(user.id, {
@@ -110,7 +111,7 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
     const body = createWorkBodySchema.safeParse(await readStoryJsonBody(c));
 
     if (!body.success) {
-      throw new ValidationError(body.error.message);
+      throw new ValidationError(formatZodValidationError(body.error));
     }
 
     const work = await dependencies.storyService.createWork(user.id, {
@@ -141,7 +142,7 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
     const body = updateWorkBodySchema.safeParse(await readStoryJsonBody(c));
 
     if (!body.success) {
-      throw new ValidationError(body.error.message);
+      throw new ValidationError(formatZodValidationError(body.error));
     }
 
     const work = await dependencies.storyService.updateWork(user.id, workId, {
@@ -165,7 +166,7 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
     const body = createChapterBodySchema.safeParse(await readStoryJsonBody(c));
 
     if (!body.success) {
-      throw new ValidationError(body.error.message);
+      throw new ValidationError(formatZodValidationError(body.error));
     }
 
     const chapter = await dependencies.storyService.createChapter(user.id, workId, {
@@ -196,7 +197,7 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
     const body = updateChapterBodySchema.safeParse(await readStoryJsonBody(c));
 
     if (!body.success) {
-      throw new ValidationError(body.error.message);
+      throw new ValidationError(formatZodValidationError(body.error));
     }
 
     const chapter = await dependencies.storyService.updateChapter(user.id, chapterId, {
@@ -228,7 +229,7 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
     const body = createEpisodeBodySchema.safeParse(await readStoryJsonBody(c));
 
     if (!body.success) {
-      throw new ValidationError(body.error.message);
+      throw new ValidationError(formatZodValidationError(body.error));
     }
 
     const episode = await dependencies.storyService.createEpisode(user.id, chapterId, {
@@ -262,7 +263,7 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
     const body = updateEpisodeBodySchema.safeParse(await readStoryJsonBody(c));
 
     if (!body.success) {
-      throw new ValidationError(body.error.message);
+      throw new ValidationError(formatZodValidationError(body.error));
     }
 
     const episode = await dependencies.storyService.updateEpisode(user.id, episodeId, {
@@ -315,7 +316,7 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
         : {},
     );
     if (!body.success) {
-      throw new ValidationError(body.error.message);
+      throw new ValidationError(formatZodValidationError(body.error));
     }
 
     const result = await dependencies.pageSkeletonService.generateForEpisode(user.id, parsedEpisodeId.data, {

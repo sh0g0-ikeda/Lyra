@@ -5,6 +5,7 @@ import {
   panelEntityAssignmentUuidParamSchema,
   replacePanelEntityAssignmentsBodySchema,
 } from '../lib/validators/panelEntityAssignment.schema.js';
+import { formatZodValidationError } from '../lib/validationErrorFormatter.js';
 import type { PanelEntityAssignmentServicePort } from '../services/page/PanelEntityAssignmentService.js';
 import type { AppEnv } from '../types/app.js';
 import { readJsonBody } from './requestBody.js';
@@ -29,7 +30,7 @@ export function createPanelEntityAssignmentRoutes(
     const body = replacePanelEntityAssignmentsBodySchema.safeParse(await readJsonBody(c));
 
     if (!body.success) {
-      throw new ValidationError(body.error.message);
+      throw new ValidationError(formatZodValidationError(body.error));
     }
 
     const assignments = await dependencies.panelEntityAssignmentService.replacePanelEntityAssignments(

@@ -4,6 +4,7 @@ import { ValidationError } from '../domain/errors/index.js';
 import { APP_LANGUAGES } from '../domain/types/language.js';
 import type { PageSummary } from '../domain/types/page.js';
 import { updatePageSettingsBodySchema } from '../lib/validators/page.schema.js';
+import { formatZodValidationError } from '../lib/validationErrorFormatter.js';
 import type { PageFinalizeServicePort } from '../services/page/PageFinalizeService.js';
 import type { PageQueryServicePort } from '../services/page/PageQueryService.js';
 import type { PageGenerationServicePort } from '../services/page/PageGenerationService.js';
@@ -56,7 +57,7 @@ export function createPageRoutes(dependencies: PageRouteDependencies): Hono<AppE
         : {},
     );
     if (!body.success) {
-      throw new ValidationError(body.error.message);
+      throw new ValidationError(formatZodValidationError(body.error));
     }
     const result = await dependencies.pageService.autofillEpisodeFromStory(
       user.id,
@@ -87,7 +88,7 @@ export function createPageRoutes(dependencies: PageRouteDependencies): Hono<AppE
       }),
     );
     if (!body.success) {
-      throw new ValidationError(body.error.message);
+      throw new ValidationError(formatZodValidationError(body.error));
     }
 
     const page = await dependencies.pageService.updatePageSettings(user.id, pageId, {
@@ -115,7 +116,7 @@ export function createPageRoutes(dependencies: PageRouteDependencies): Hono<AppE
         : {},
     );
     if (!body.success) {
-      throw new ValidationError(body.error.message);
+      throw new ValidationError(formatZodValidationError(body.error));
     }
     const result = await dependencies.pageService.autofillFromScenes(user.id, pageId, body.data.language);
 

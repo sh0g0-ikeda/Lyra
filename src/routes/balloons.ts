@@ -6,6 +6,7 @@ import {
   createBalloonBodySchema,
   updateBalloonBodySchema,
 } from '../lib/validators/balloon.schema.js';
+import { formatZodValidationError } from '../lib/validationErrorFormatter.js';
 import type { BalloonServicePort } from '../services/page/BalloonService.js';
 import type { AppEnv } from '../types/app.js';
 import { readJsonBody } from './requestBody.js';
@@ -27,7 +28,7 @@ export function createBalloonRoutes(dependencies: BalloonRouteDependencies): Hon
     const pageId = parseUuidParam(c, 'id');
     const body = createBalloonBodySchema.safeParse(await readJsonBody(c));
     if (!body.success) {
-      throw new ValidationError(body.error.message);
+      throw new ValidationError(formatZodValidationError(body.error));
     }
 
     const balloon = await dependencies.balloonService.createBalloon(user.id, pageId, {
@@ -72,7 +73,7 @@ export function createBalloonRoutes(dependencies: BalloonRouteDependencies): Hon
     const balloonId = parseUuidParam(c, 'id');
     const body = updateBalloonBodySchema.safeParse(await readJsonBody(c));
     if (!body.success) {
-      throw new ValidationError(body.error.message);
+      throw new ValidationError(formatZodValidationError(body.error));
     }
 
     const balloon = await dependencies.balloonService.updateBalloon(user.id, balloonId, {

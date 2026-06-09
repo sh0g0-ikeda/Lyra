@@ -2,6 +2,7 @@ import { Hono, type MiddlewareHandler } from 'hono';
 import { ValidationError } from '../domain/errors/index.js';
 import type { CompositionGalleryItem } from '../domain/types/composition.js';
 import { compositionGalleryQuerySchema } from '../lib/validators/composition.schema.js';
+import { formatZodValidationError } from '../lib/validationErrorFormatter.js';
 import type { CompositionGalleryServicePort } from '../services/composition/CompositionGalleryService.js';
 import type { AppEnv } from '../types/app.js';
 
@@ -21,7 +22,7 @@ export function createCompositionRoutes(dependencies: CompositionRouteDependenci
     const query = compositionGalleryQuerySchema.safeParse(c.req.query());
 
     if (!query.success) {
-      throw new ValidationError(query.error.message);
+      throw new ValidationError(formatZodValidationError(query.error));
     }
 
     const compositions = await dependencies.compositionGalleryService.listCompositions({

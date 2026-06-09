@@ -340,6 +340,10 @@ describe('story routes', () => {
     });
 
     expect(response.status).toBe(422);
+    const payload = (await response.json()) as { error: { message: string } };
+    expect(payload.error.message).toContain('Validation failed:');
+    expect(payload.error.message).not.toContain('"code"');
+    expect(payload.error.message.length).toBeLessThanOrEqual(500);
   });
 
   it('creates a chapter', async () => {

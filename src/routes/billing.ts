@@ -4,6 +4,7 @@ import {
   createCreditCheckoutBodySchema,
   createSubscriptionCheckoutBodySchema,
 } from '../lib/validators/billing.schema.js';
+import { formatZodValidationError } from '../lib/validationErrorFormatter.js';
 import type { BillingServicePort } from '../services/billing/BillingService.js';
 import type { CreditServicePort } from '../services/credit/CreditService.js';
 import type { AppEnv } from '../types/app.js';
@@ -43,7 +44,7 @@ export function createBillingRoutes(dependencies: BillingRouteDependencies): Hon
       }),
     );
     if (!body.success) {
-      throw new ValidationError(body.error.message);
+      throw new ValidationError(formatZodValidationError(body.error));
     }
 
     const result = await dependencies.billingService.createSubscriptionCheckoutSession(user, body.data.plan_code);
@@ -65,7 +66,7 @@ export function createBillingRoutes(dependencies: BillingRouteDependencies): Hon
       }),
     );
     if (!body.success) {
-      throw new ValidationError(body.error.message);
+      throw new ValidationError(formatZodValidationError(body.error));
     }
 
     const result = await dependencies.billingService.createCreditCheckoutSession(user, body.data.package_code);
