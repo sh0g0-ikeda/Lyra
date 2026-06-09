@@ -92,6 +92,10 @@ import {
   type EntityReferenceServicePort,
 } from './services/entity/EntityReferenceService.js';
 import {
+  EntityReferenceImageExportService,
+  type EntityReferenceImageExportServicePort,
+} from './services/entity/EntityReferenceImageExportService.js';
+import {
   InlineEntityGenerationQueueAdapter,
   SqsEntityGenerationQueueAdapter,
   UnconfiguredEntityGenerationQueue,
@@ -169,6 +173,7 @@ export interface AppDependencies {
   creditService?: CreditServicePort;
   entityService?: EntityServicePort;
   entityReferenceService?: EntityReferenceServicePort;
+  entityReferenceImageExportService?: EntityReferenceImageExportServicePort;
   entityGenerationQueue?: EntityGenerationQueuePort;
   entityGenerationRecoveryService?: EntityGenerationRecoveryServicePort;
   jobService?: JobServicePort;
@@ -267,6 +272,7 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
       rateLimitMiddleware,
       entityService: resolvedDependencies.entityService,
       entityReferenceService: resolvedDependencies.entityReferenceService,
+      entityReferenceImageExportService: resolvedDependencies.entityReferenceImageExportService,
     }),
   );
   app.route(
@@ -423,6 +429,9 @@ function resolveDependencies(
       env.GENERATION_ENABLED,
       entityGenerationRecoveryService,
     );
+  const entityReferenceImageExportService =
+    dependencies.entityReferenceImageExportService ??
+    new EntityReferenceImageExportService(entityRepository, resolveStoredPageImageLoader());
   const panelRepository = new PostgresPanelRepository(db);
   const panelFrameRepository = new PostgresPanelFrameRepository(db);
   const balloonRepository = new PostgresBalloonRepository(db);
@@ -512,6 +521,7 @@ function resolveDependencies(
     creditService,
     entityService,
     entityReferenceService,
+    entityReferenceImageExportService,
     entityGenerationQueue,
     entityGenerationRecoveryService,
     jobService,

@@ -11,6 +11,10 @@ import type {
   EntityReferenceServicePort,
 } from '../../../src/services/entity/EntityReferenceService.js';
 import type {
+  EntityReferenceImageExportServicePort,
+  ExportedEntityReferenceImage,
+} from '../../../src/services/entity/EntityReferenceImageExportService.js';
+import type {
   ProvisionedUser,
   UserProvisioningPort,
 } from '../../../src/services/auth/UserProvisioningService.js';
@@ -205,6 +209,23 @@ class FakeEntityReferenceService implements EntityReferenceServicePort {
     _refId: string,
   ): Promise<EntityReferenceSet> {
     return buildReferenceSet({ images: [], primaryRefId: null, status: 'empty' });
+  }
+}
+
+class FakeEntityReferenceImageExportService implements EntityReferenceImageExportServicePort {
+  public lastRequest: { userId: string; entityId: string; refId: string } | null = null;
+
+  public async exportReferenceImage(
+    userId: string,
+    requestedEntityId: string,
+    refId: string,
+  ): Promise<ExportedEntityReferenceImage> {
+    this.lastRequest = { userId, entityId: requestedEntityId, refId };
+
+    return {
+      imageData: Buffer.from('reference-image'),
+      mimeType: 'image/png',
+    };
   }
 }
 
@@ -468,14 +489,37 @@ describe('entity routes', () => {
 
     expect(response.status).toBe(401);
   });
+  it('reference image export は認証済み画像を返す', async () => {
+    const exportService = new FakeEntityReferenceImageExportService();
+    const app = createTestApp(new FakeEntityReferenceService(), exportService);
+    const token = await createToken();
+
+    const response = await app.request(`/api/entities/${entityId}/reference/ref-1/image`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get('Content-Type')).toBe('image/png');
+    expect(response.headers.get('Cache-Control')).toBe('private, no-store');
+    expect(await response.text()).toBe('reference-image');
+    expect(exportService.lastRequest).toEqual({
+      userId: user.id,
+      entityId,
+      refId: 'ref-1',
+    });
+  });
 });
 
 function createTestApp(
   entityReferenceService: EntityReferenceServicePort = new FakeEntityReferenceService(),
+  entityReferenceImageExportService: EntityReferenceImageExportServicePort = new FakeEntityReferenceImageExportService(),
 ): ReturnType<typeof createApp> {
   return createApp({
     creditService: new FakeCreditService(),
     entityReferenceService,
+    entityReferenceImageExportService,
     entityService: new FakeEntityService(),
     enableDevAuthBypass: false,
     userProvisioningService: new FakeUserProvisioningService(),

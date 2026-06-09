@@ -13,6 +13,7 @@ import {
 } from '../lib/validators/entity.schema.js';
 import type { EntityServicePort } from '../services/entity/EntityService.js';
 import type { EntityReferenceServicePort } from '../services/entity/EntityReferenceService.js';
+import type { EntityReferenceImageExportServicePort } from '../services/entity/EntityReferenceImageExportService.js';
 import type { AppEnv } from '../types/app.js';
 import { readJsonBody, readOptionalJsonBody, REQUEST_BODY_LIMITS } from './requestBody.js';
 
@@ -21,6 +22,7 @@ export interface EntityRouteDependencies {
   rateLimitMiddleware: MiddlewareHandler<AppEnv>;
   entityService: EntityServicePort;
   entityReferenceService: EntityReferenceServicePort;
+  entityReferenceImageExportService: EntityReferenceImageExportServicePort;
 }
 
 export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<AppEnv> {
@@ -74,6 +76,27 @@ export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<
     const referenceSet = await dependencies.entityReferenceService.getReferenceSet(user.id, entityId);
 
     return c.json(toReferenceSetResponse(referenceSet));
+  });
+
+  app.get('/entities/:id/reference/:ref_id/image', async (c) => {
+    const user = c.get('user');
+    const entityId = parseUuidParam(c, 'id');
+    const refIdResult = referenceIdParamSchema.safeParse(c.req.param('ref_id'));
+
+    if (!refIdResult.success) {
+      throw new ValidationError(refIdResult.error.message);
+    }
+
+    const exportedImage = await dependencies.entityReferenceImageExportService.exportReferenceImage(
+      user.id,
+      entityId,
+      refIdResult.data,
+    );
+
+    return c.body(new Uint8Array(exportedImage.imageData), 200, {
+      'Content-Type': exportedImage.mimeType,
+      'Cache-Control': 'private, no-store',
+    });
   });
 
   app.put('/entities/:id', async (c) => {

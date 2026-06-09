@@ -367,6 +367,21 @@ export class LyraApiClient {
     };
   }
 
+  public async exportEntityReferenceImage(entityId: string, refId: string): Promise<BlobResponse> {
+    const response = await fetch(
+      this.toUrl(`/api/entities/${entityId}/reference/${encodeURIComponent(refId)}/image`),
+      this.buildRequest({ method: 'GET' }),
+    );
+    if (!response.ok) {
+      throw await this.toApiError(response);
+    }
+
+    return {
+      blob: await response.blob(),
+      contentType: response.headers.get('Content-Type'),
+    };
+  }
+
   private async request<T>(path: string, init: JsonRequestInit = {}): Promise<T> {
     const response = await fetch(this.toUrl(path), this.buildRequest(init));
     if (!response.ok) {
