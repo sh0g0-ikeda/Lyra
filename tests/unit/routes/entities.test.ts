@@ -342,6 +342,26 @@ describe('entity routes', () => {
     });
   });
 
+  it('import-image uses the generation rate limit bucket', async () => {
+    const app = createTestApp();
+    const token = await createToken();
+
+    const response = await app.request('/api/entities/import-image', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        entity_type: 'character',
+        image_base64: 'data:image/png;base64,YWJj',
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get('x-ratelimit-limit')).toBe('10');
+  });
+
   it('import-image は巨大な JSON body を service 呼び出し前に 413 にする', async () => {
     const referenceService = new FakeEntityReferenceService();
     const app = createTestApp(referenceService);

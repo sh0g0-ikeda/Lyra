@@ -1,5 +1,6 @@
 import type { MiddlewareHandler } from 'hono';
 import {
+  ENTITY_IMPORT_ROUTE_PATTERN,
   ENTITY_GENERATION_ROUTE_PATTERN,
   PAGE_GENERATION_ROUTE_PATTERN,
   RATE_LIMIT_RULES,
@@ -88,7 +89,11 @@ export function createRateLimitMiddleware(store: RateLimitStore): MiddlewareHand
 }
 
 function classifyRateLimitBucket(path: string): RateLimitBucket {
-  if (PAGE_GENERATION_ROUTE_PATTERN.test(path) || ENTITY_GENERATION_ROUTE_PATTERN.test(path)) {
+  if (
+    PAGE_GENERATION_ROUTE_PATTERN.test(path) ||
+    ENTITY_IMPORT_ROUTE_PATTERN.test(path) ||
+    ENTITY_GENERATION_ROUTE_PATTERN.test(path)
+  ) {
     return 'generation';
   }
 
