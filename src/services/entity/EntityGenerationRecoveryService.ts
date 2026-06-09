@@ -1,4 +1,7 @@
-import { ENTITY_GENERATION_STALE_AFTER_MS } from '../../domain/constants/generation.js';
+import {
+  ENTITY_GENERATION_STALE_AFTER_MS,
+  GENERATION_RECOVERY_BATCH_LIMIT,
+} from '../../domain/constants/generation.js';
 import type { EntityGenerationExecutionRepository } from '../../repositories/EntityGenerationExecutionRepository.js';
 import type {
   EntityGenerationRecoveryRepository,
@@ -32,13 +35,14 @@ export class EntityGenerationRecoveryService implements EntityGenerationRecovery
     private readonly executionRepository: EntityGenerationExecutionRepository,
     private readonly creditService: CreditServicePort,
     private readonly staleAfterMs: number = ENTITY_GENERATION_STALE_AFTER_MS,
+    private readonly batchLimit: number = GENERATION_RECOVERY_BATCH_LIMIT,
   ) {}
 
   public async recoverAllStaleJobs(): Promise<number> {
-    const jobs = await this.recoveryRepository.listStaleProcessingJobs(this.buildCutoff());
+    const jobs = await this.recoveryRepository.listStaleProcessingJobs(this.buildCutoff(), this.batchLimit);
     const recoveredStaleCount = await this.recoverJobs(jobs);
     const refundedFailedCount = await this.refundFailedJobsMissingRefund(
-      await this.recoveryRepository.listFailedJobsMissingRefund(),
+      await this.recoveryRepository.listFailedJobsMissingRefund(this.batchLimit),
     );
     return recoveredStaleCount + refundedFailedCount;
   }
@@ -48,10 +52,11 @@ export class EntityGenerationRecoveryService implements EntityGenerationRecovery
       userId,
       entityId,
       this.buildCutoff(),
+      this.batchLimit,
     );
     const recoveredStaleCount = await this.recoverJobs(jobs);
     const refundedFailedCount = await this.refundFailedJobsMissingRefund(
-      await this.recoveryRepository.listFailedJobsMissingRefundForEntity(userId, entityId),
+      await this.recoveryRepository.listFailedJobsMissingRefundForEntity(userId, entityId, this.batchLimit),
     );
     return recoveredStaleCount + refundedFailedCount;
   }

@@ -22,16 +22,18 @@ export interface FailedPageGenerationJobMissingRefund {
 }
 
 export interface PageGenerationRecoveryRepository {
-  listStaleProcessingJobs(cutoff: Date): Promise<StalePageGenerationJob[]>;
+  listStaleProcessingJobs(cutoff: Date, limit: number): Promise<StalePageGenerationJob[]>;
   listStaleProcessingJobsForPage(
     userId: string,
     pageId: string,
     cutoff: Date,
+    limit: number,
   ): Promise<StalePageGenerationJob[]>;
-  listFailedJobsMissingRefund(): Promise<FailedPageGenerationJobMissingRefund[]>;
+  listFailedJobsMissingRefund(limit: number): Promise<FailedPageGenerationJobMissingRefund[]>;
   listFailedJobsMissingRefundForPage(
     userId: string,
     pageId: string,
+    limit: number,
   ): Promise<FailedPageGenerationJobMissingRefund[]>;
 }
 
@@ -58,10 +60,11 @@ export class PostgresPageGenerationRecoveryRepository
 {
   public constructor(private readonly client: DatabaseClient) {}
 
-  public async listStaleProcessingJobs(cutoff: Date): Promise<StalePageGenerationJob[]> {
+  public async listStaleProcessingJobs(cutoff: Date, limit: number): Promise<StalePageGenerationJob[]> {
+    validateRecoveryLimit(limit);
     const result = await this.client.query<StalePageGenerationJobRow>(
-      buildBaseQuery(),
-      [cutoff],
+      buildStaleJobsQuery('', '$2'),
+      [cutoff, limit],
     );
 
     return result.rows.flatMap(mapStalePageGenerationJobRow);
@@ -71,21 +74,28 @@ export class PostgresPageGenerationRecoveryRepository
     userId: string,
     pageId: string,
     cutoff: Date,
+    limit: number,
   ): Promise<StalePageGenerationJob[]> {
+    validateRecoveryLimit(limit);
     const result = await this.client.query<StalePageGenerationJobRow>(
-      `${buildBaseQuery()}
+      buildStaleJobsQuery(
+        `
          AND generation_jobs.user_id = $2
          AND generation_jobs.params->>'page_id' = $3
       `,
-      [cutoff, userId, pageId],
+        '$4',
+      ),
+      [cutoff, userId, pageId, limit],
     );
 
     return result.rows.flatMap(mapStalePageGenerationJobRow);
   }
 
-  public async listFailedJobsMissingRefund(): Promise<FailedPageGenerationJobMissingRefund[]> {
+  public async listFailedJobsMissingRefund(limit: number): Promise<FailedPageGenerationJobMissingRefund[]> {
+    validateRecoveryLimit(limit);
     const result = await this.client.query<FailedPageGenerationJobMissingRefundRow>(
-      buildFailedJobsMissingRefundQuery(),
+      buildFailedJobsMissingRefundQuery('', '$1'),
+      [limit],
     );
 
     return result.rows.flatMap(mapFailedPageGenerationJobMissingRefundRow);
@@ -94,20 +104,25 @@ export class PostgresPageGenerationRecoveryRepository
   public async listFailedJobsMissingRefundForPage(
     userId: string,
     pageId: string,
+    limit: number,
   ): Promise<FailedPageGenerationJobMissingRefund[]> {
+    validateRecoveryLimit(limit);
     const result = await this.client.query<FailedPageGenerationJobMissingRefundRow>(
-      `${buildFailedJobsMissingRefundQuery()}
+      buildFailedJobsMissingRefundQuery(
+        `
          AND generation_jobs.user_id = $1
          AND generation_jobs.params->>'page_id' = $2
       `,
-      [userId, pageId],
+        '$3',
+      ),
+      [userId, pageId, limit],
     );
 
     return result.rows.flatMap(mapFailedPageGenerationJobMissingRefundRow);
   }
 }
 
-function buildBaseQuery(): string {
+function buildStaleJobsQuery(extraConditions: string, limitPlaceholder: string): string {
   return `
       SELECT
         generation_jobs.id AS job_id,
@@ -130,10 +145,13 @@ function buildBaseQuery(): string {
             AND generation_jobs.created_at < $1
           )
         )
+        ${extraConditions}
+      ORDER BY stale_at ASC, generation_jobs.created_at ASC
+      LIMIT ${limitPlaceholder}
     `;
 }
 
-function buildFailedJobsMissingRefundQuery(): string {
+function buildFailedJobsMissingRefundQuery(extraConditions: string, limitPlaceholder: string): string {
   return `
       SELECT
         generation_jobs.id AS job_id,
@@ -153,7 +171,16 @@ function buildFailedJobsMissingRefundQuery(): string {
             AND credit_ledger.job_id = generation_jobs.id
             AND credit_ledger.type = 'refund'
         )
+        ${extraConditions}
+      ORDER BY generation_jobs.completed_at ASC NULLS FIRST, generation_jobs.created_at ASC
+      LIMIT ${limitPlaceholder}
     `;
+}
+
+function validateRecoveryLimit(limit: number): void {
+  if (!Number.isSafeInteger(limit) || limit <= 0) {
+    throw new Error('recovery limit must be a positive safe integer');
+  }
 }
 
 function mapStalePageGenerationJobRow(row: StalePageGenerationJobRow): StalePageGenerationJob[] {

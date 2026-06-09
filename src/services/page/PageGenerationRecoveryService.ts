@@ -1,4 +1,7 @@
-import { PAGE_GENERATION_STALE_AFTER_MS } from '../../domain/constants/generation.js';
+import {
+  GENERATION_RECOVERY_BATCH_LIMIT,
+  PAGE_GENERATION_STALE_AFTER_MS,
+} from '../../domain/constants/generation.js';
 import type { CreditServicePort } from '../credit/CreditService.js';
 import type { PageGenerationExecutionRepository } from '../../repositories/PageGenerationExecutionRepository.js';
 import type {
@@ -33,13 +36,14 @@ export class PageGenerationRecoveryService implements PageGenerationRecoveryServ
     private readonly executionRepository: PageGenerationExecutionRepository,
     private readonly creditService: CreditServicePort,
     private readonly staleAfterMs: number = PAGE_GENERATION_STALE_AFTER_MS,
+    private readonly batchLimit: number = GENERATION_RECOVERY_BATCH_LIMIT,
   ) {}
 
   public async recoverAllStaleJobs(): Promise<number> {
-    const jobs = await this.recoveryRepository.listStaleProcessingJobs(this.buildCutoff());
+    const jobs = await this.recoveryRepository.listStaleProcessingJobs(this.buildCutoff(), this.batchLimit);
     const recoveredStaleCount = await this.recoverJobs(jobs);
     const refundedFailedCount = await this.refundFailedJobsMissingRefund(
-      await this.recoveryRepository.listFailedJobsMissingRefund(),
+      await this.recoveryRepository.listFailedJobsMissingRefund(this.batchLimit),
     );
     return recoveredStaleCount + refundedFailedCount;
   }
@@ -49,10 +53,11 @@ export class PageGenerationRecoveryService implements PageGenerationRecoveryServ
       userId,
       pageId,
       this.buildCutoff(),
+      this.batchLimit,
     );
     const recoveredStaleCount = await this.recoverJobs(jobs);
     const refundedFailedCount = await this.refundFailedJobsMissingRefund(
-      await this.recoveryRepository.listFailedJobsMissingRefundForPage(userId, pageId),
+      await this.recoveryRepository.listFailedJobsMissingRefundForPage(userId, pageId, this.batchLimit),
     );
     return recoveredStaleCount + refundedFailedCount;
   }

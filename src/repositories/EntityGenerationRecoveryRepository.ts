@@ -18,16 +18,18 @@ export interface FailedEntityGenerationJobMissingRefund {
 }
 
 export interface EntityGenerationRecoveryRepository {
-  listStaleProcessingJobs(cutoff: Date): Promise<StaleEntityGenerationJob[]>;
+  listStaleProcessingJobs(cutoff: Date, limit: number): Promise<StaleEntityGenerationJob[]>;
   listStaleProcessingJobsForEntity(
     userId: string,
     entityId: string,
     cutoff: Date,
+    limit: number,
   ): Promise<StaleEntityGenerationJob[]>;
-  listFailedJobsMissingRefund(): Promise<FailedEntityGenerationJobMissingRefund[]>;
+  listFailedJobsMissingRefund(limit: number): Promise<FailedEntityGenerationJobMissingRefund[]>;
   listFailedJobsMissingRefundForEntity(
     userId: string,
     entityId: string,
+    limit: number,
   ): Promise<FailedEntityGenerationJobMissingRefund[]>;
 }
 
@@ -52,10 +54,11 @@ export class PostgresEntityGenerationRecoveryRepository
 {
   public constructor(private readonly client: DatabaseClient) {}
 
-  public async listStaleProcessingJobs(cutoff: Date): Promise<StaleEntityGenerationJob[]> {
+  public async listStaleProcessingJobs(cutoff: Date, limit: number): Promise<StaleEntityGenerationJob[]> {
+    validateRecoveryLimit(limit);
     const result = await this.client.query<StaleEntityGenerationJobRow>(
-      buildBaseQuery(),
-      [cutoff],
+      buildStaleJobsQuery('', '$2'),
+      [cutoff, limit],
     );
 
     return result.rows.flatMap(mapStaleEntityGenerationJobRow);
@@ -65,21 +68,28 @@ export class PostgresEntityGenerationRecoveryRepository
     userId: string,
     entityId: string,
     cutoff: Date,
+    limit: number,
   ): Promise<StaleEntityGenerationJob[]> {
+    validateRecoveryLimit(limit);
     const result = await this.client.query<StaleEntityGenerationJobRow>(
-      `${buildBaseQuery()}
+      buildStaleJobsQuery(
+        `
          AND generation_jobs.user_id = $2
          AND generation_jobs.params->>'entity_id' = $3
       `,
-      [cutoff, userId, entityId],
+        '$4',
+      ),
+      [cutoff, userId, entityId, limit],
     );
 
     return result.rows.flatMap(mapStaleEntityGenerationJobRow);
   }
 
-  public async listFailedJobsMissingRefund(): Promise<FailedEntityGenerationJobMissingRefund[]> {
+  public async listFailedJobsMissingRefund(limit: number): Promise<FailedEntityGenerationJobMissingRefund[]> {
+    validateRecoveryLimit(limit);
     const result = await this.client.query<FailedEntityGenerationJobMissingRefundRow>(
-      buildFailedJobsMissingRefundQuery(),
+      buildFailedJobsMissingRefundQuery('', '$1'),
+      [limit],
     );
 
     return result.rows.flatMap(mapFailedEntityGenerationJobMissingRefundRow);
@@ -88,20 +98,25 @@ export class PostgresEntityGenerationRecoveryRepository
   public async listFailedJobsMissingRefundForEntity(
     userId: string,
     entityId: string,
+    limit: number,
   ): Promise<FailedEntityGenerationJobMissingRefund[]> {
+    validateRecoveryLimit(limit);
     const result = await this.client.query<FailedEntityGenerationJobMissingRefundRow>(
-      `${buildFailedJobsMissingRefundQuery()}
+      buildFailedJobsMissingRefundQuery(
+        `
          AND generation_jobs.user_id = $1
          AND generation_jobs.params->>'entity_id' = $2
       `,
-      [userId, entityId],
+        '$3',
+      ),
+      [userId, entityId, limit],
     );
 
     return result.rows.flatMap(mapFailedEntityGenerationJobMissingRefundRow);
   }
 }
 
-function buildBaseQuery(): string {
+function buildStaleJobsQuery(extraConditions: string, limitPlaceholder: string): string {
   return `
       SELECT
         generation_jobs.id AS job_id,
@@ -122,10 +137,13 @@ function buildBaseQuery(): string {
             AND generation_jobs.created_at < $1
           )
         )
+        ${extraConditions}
+      ORDER BY stale_at ASC, generation_jobs.created_at ASC
+      LIMIT ${limitPlaceholder}
     `;
 }
 
-function buildFailedJobsMissingRefundQuery(): string {
+function buildFailedJobsMissingRefundQuery(extraConditions: string, limitPlaceholder: string): string {
   return `
       SELECT
         generation_jobs.id AS job_id,
@@ -145,7 +163,16 @@ function buildFailedJobsMissingRefundQuery(): string {
             AND credit_ledger.job_id = generation_jobs.id
             AND credit_ledger.type = 'refund'
         )
+        ${extraConditions}
+      ORDER BY generation_jobs.completed_at ASC NULLS FIRST, generation_jobs.created_at ASC
+      LIMIT ${limitPlaceholder}
     `;
+}
+
+function validateRecoveryLimit(limit: number): void {
+  if (!Number.isSafeInteger(limit) || limit <= 0) {
+    throw new Error('recovery limit must be a positive safe integer');
+  }
 }
 
 function mapStaleEntityGenerationJobRow(
