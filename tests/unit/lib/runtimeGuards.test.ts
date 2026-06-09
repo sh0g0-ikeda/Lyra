@@ -436,4 +436,26 @@ describe('assertProductionRuntimeConfig', () => {
       );
     }).toThrow(/SQS_GENERATION_VISIBILITY_TIMEOUT_SECONDS must be >= 420/);
   });
+
+  it('rejects direct S3 image URLs in production', () => {
+    expect(() => {
+      assertProductionRuntimeConfig(
+        {
+          ...safeProductionConfig,
+          IMAGES_CDN_BASE_URL: 'https://lyra-images.s3.ap-northeast-1.amazonaws.com',
+        },
+        'production',
+      );
+    }).toThrow(/IMAGES_CDN_BASE_URL must not point directly to S3/);
+
+    expect(() => {
+      assertProductionRuntimeConfig(
+        {
+          ...safeProductionConfig,
+          IMAGES_CDN_BASE_URL: 'https://s3.ap-northeast-1.amazonaws.com/lyra-images',
+        },
+        'production',
+      );
+    }).toThrow(/IMAGES_CDN_BASE_URL must not point directly to S3/);
+  });
 });

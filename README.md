@@ -78,7 +78,8 @@ process to avoid exhausting RDS connections during scale-out.
 
 Production public URLs such as `IMAGES_CDN_BASE_URL`, Stripe return URLs, and
 `CORS_ALLOWED_ORIGINS` must use HTTPS and non-local hosts. Localhost and plain HTTP
-settings are rejected during API startup.
+settings are rejected during API startup. `IMAGES_CDN_BASE_URL` must be a
+CloudFront/custom image domain and must not point directly at an S3 endpoint.
 External service URLs such as `OPENAI_BASE_URL`, `SQS_QUEUE_URL_GENERATION`,
 `COGNITO_ISSUER`, and `COGNITO_JWKS_URI` are checked the same way.
 Required production settings also reject obvious placeholder values such as

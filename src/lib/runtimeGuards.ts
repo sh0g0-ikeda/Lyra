@@ -256,6 +256,13 @@ export function assertProductionRuntimeConfig(
     }
   }
 
+  if (
+    config.IMAGES_CDN_BASE_URL !== undefined &&
+    isDirectS3Url(config.IMAGES_CDN_BASE_URL)
+  ) {
+    violations.push('IMAGES_CDN_BASE_URL must not point directly to S3 in production');
+  }
+
   for (const key of PRODUCTION_EXTERNAL_URL_KEYS) {
     const value = config[key];
     if (value !== undefined && !isSafeProductionHttpsUrl(value)) {
@@ -368,6 +375,23 @@ function isSafeProductionHttpsUrl(value: string): boolean {
   try {
     const url = new URL(value);
     return url.protocol === 'https:' && !isLocalHostname(url.hostname);
+  } catch {
+    return false;
+  }
+}
+
+function isDirectS3Url(value: string): boolean {
+  try {
+    const url = new URL(value);
+    const hostname = url.hostname.toLowerCase();
+    return (
+      hostname === 's3.amazonaws.com' ||
+      hostname.startsWith('s3.') ||
+      hostname.startsWith('s3-') ||
+      hostname.includes('.s3.') ||
+      hostname.includes('.s3-') ||
+      hostname.includes('.s3-website')
+    );
   } catch {
     return false;
   }
