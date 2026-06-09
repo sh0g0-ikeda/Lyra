@@ -9,4 +9,17 @@ describe('worker dependency policy', () => {
     expect(source).not.toContain("infrastructure/anthropic");
     expect(source).not.toContain('AnthropicEntityReferencePromptCompiler');
   });
+
+  it('uses the low-retry OpenAI client for long-running image generation calls', () => {
+    const source = readFileSync(join(process.cwd(), 'worker/dependencies.ts'), 'utf8');
+
+    expect(source).toContain(
+      'const client = buildOpenAIClient({ maxRetries: IMAGE_GENERATION_OPENAI_MAX_RETRIES });',
+    );
+    expect(countOccurrences(source, 'maxRetries: IMAGE_GENERATION_OPENAI_MAX_RETRIES')).toBe(2);
+  });
 });
+
+function countOccurrences(source: string, pattern: string): number {
+  return source.split(pattern).length - 1;
+}
