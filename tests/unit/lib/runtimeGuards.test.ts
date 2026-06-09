@@ -331,6 +331,23 @@ describe('assertProductionRuntimeConfig', () => {
     );
   });
 
+  it('production では public URL の private/reserved host を拒否する', () => {
+    expect(() => {
+      assertProductionRuntimeConfig(
+        {
+          ...safeProductionConfig,
+          IMAGES_CDN_BASE_URL: 'https://192.168.0.10/assets',
+          STRIPE_CHECKOUT_SUCCESS_URL: 'https://10.0.0.5/billing/success',
+          STRIPE_CHECKOUT_CANCEL_URL: 'https://172.16.0.5/billing/cancel',
+          STRIPE_PORTAL_RETURN_URL: 'https://billing.internal/portal',
+        },
+        'production',
+      );
+    }).toThrow(
+      /IMAGES_CDN_BASE_URL must use https.*STRIPE_CHECKOUT_SUCCESS_URL must use https.*STRIPE_CHECKOUT_CANCEL_URL must use https.*STRIPE_PORTAL_RETURN_URL must use https/,
+    );
+  });
+
   it('production では CORS origin に HTTPS の非local hostを要求する', () => {
     expect(() => {
       assertProductionRuntimeConfig(
@@ -369,6 +386,23 @@ describe('assertProductionRuntimeConfig', () => {
           SQS_QUEUE_URL_GENERATION: 'http://127.0.0.1:4566/000000000000/lyra-generation',
           COGNITO_ISSUER: 'http://localhost:9229/user-pool',
           COGNITO_JWKS_URI: 'http://localhost:9229/.well-known/jwks.json',
+        },
+        'production',
+      );
+    }).toThrow(
+      /OPENAI_BASE_URL must use https.*SQS_QUEUE_URL_GENERATION must use https.*COGNITO_ISSUER must use https.*COGNITO_JWKS_URI must use https/,
+    );
+  });
+
+  it('production では外部サービスURLの private/link-local host を拒否する', () => {
+    expect(() => {
+      assertProductionRuntimeConfig(
+        {
+          ...safeProductionConfig,
+          OPENAI_BASE_URL: 'https://10.0.0.5/v1',
+          SQS_QUEUE_URL_GENERATION: 'https://169.254.169.254/metadata',
+          COGNITO_ISSUER: 'https://auth.internal/user-pool',
+          COGNITO_JWKS_URI: 'https://[fd00::1]/.well-known/jwks.json',
         },
         'production',
       );
