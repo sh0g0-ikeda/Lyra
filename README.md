@@ -87,7 +87,8 @@ CloudFront/custom image domain and must not point directly at an S3 endpoint.
 External service URLs such as `OPENAI_BASE_URL`, `SQS_QUEUE_URL_GENERATION`,
 `COGNITO_ISSUER`, and `COGNITO_JWKS_URI` are checked the same way.
 Required production settings also reject obvious placeholder values such as
-`replace-me`, `replace_me`, `placeholder`, and `changeme`.
+`replace-me`, `replace_me`, `replace_with`, `placeholder`, `changeme`, and
+`your_*`.
 Paid production also requires a Stripe live secret key (`sk_live_...`) and a
 webhook signing secret (`whsec_...`); test keys are rejected at API startup.
 Stripe price settings must be actual `price_...` IDs, not product IDs or plan labels.
@@ -123,7 +124,8 @@ disabled. When Cognito is configured, `VITE_COGNITO_SCOPES` is required. Keep
 setting is `id`. If you switch both sides to `access`, include the API scope in
 `VITE_COGNITO_SCOPES` and set `COGNITO_REQUIRED_SCOPES` on the backend.
 For paid production, configure Cognito Hosted UI in the web build. Supabase hosted auth settings are
-rejected in production because the API production guard requires Cognito tokens.
+rejected in production because the API production guard requires Cognito tokens. Production web config
+also rejects placeholder values such as `replace_with_*` or `your-*` before deployment.
 
 `VITE_DEV_AUTH_BYPASS=true` is for local development only. Production web builds force file-based
 dev bypass off, and explicit production bypass is rejected.

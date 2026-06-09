@@ -311,11 +311,17 @@ function hasPlaceholderConfigValue(value: string | undefined): boolean {
   return (
     normalizedValue.includes('replace-me') ||
     normalizedValue.includes('replace_me') ||
+    normalizedValue.includes('replace-with') ||
+    normalizedValue.includes('replace_with') ||
     normalizedValue.includes('replace me') ||
+    normalizedValue.includes('replace with') ||
     normalizedValue.includes('placeholder') ||
     normalizedValue.includes('change-me') ||
     normalizedValue.includes('change_me') ||
     normalizedValue.includes('changeme') ||
+    normalizedValue.includes('your-') ||
+    normalizedValue.includes('your_') ||
+    normalizedValue.includes('your ') ||
     normalizedValue === 'dummy' ||
     normalizedValue.includes('-dummy') ||
     normalizedValue.includes('_dummy')

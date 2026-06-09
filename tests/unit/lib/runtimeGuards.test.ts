@@ -408,6 +408,21 @@ describe('assertProductionRuntimeConfig', () => {
     );
   });
 
+  it('production では replace_with 形式の placeholder 設定を拒否する', () => {
+    expect(() => {
+      assertProductionRuntimeConfig(
+        {
+          ...safeProductionConfig,
+          OPENAI_API_KEY: 'replace_with_openai_key',
+          COGNITO_CLIENT_ID: 'your_cognito_client_id',
+        },
+        'production',
+      );
+    }).toThrow(
+      /COGNITO_CLIENT_ID must not use a placeholder value.*OPENAI_API_KEY must not use a placeholder value/,
+    );
+  });
+
   it('production では外部サービスURLにHTTPSの非local hostを要求する', () => {
     expect(() => {
       assertProductionRuntimeConfig(

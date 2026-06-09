@@ -80,6 +80,18 @@ describe('assertSafeWebRuntimeConfig', () => {
     }).not.toThrow();
   });
 
+  it('production では Cognito と API の placeholder 設定を拒否する', () => {
+    expect(() => {
+      assertSafeWebRuntimeConfig({
+        MODE: 'production',
+        VITE_COGNITO_DOMAIN: 'https://example.auth.ap-northeast-1.amazoncognito.com',
+        VITE_COGNITO_CLIENT_ID: 'replace_with_cognito_client_id',
+        VITE_COGNITO_SCOPES: 'openid email profile lyra/api',
+        VITE_API_BASE_URL: 'https://your-api.example.com',
+      });
+    }).toThrow(/VITE_API_BASE_URL must not use a placeholder value.*VITE_COGNITO_CLIENT_ID must not use a placeholder value/);
+  });
+
   it('production の Cognito API token 種別が不正なら拒否する', () => {
     expect(() => {
       assertSafeWebRuntimeConfig({

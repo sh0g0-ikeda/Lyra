@@ -18,6 +18,15 @@ export interface WebRuntimeGuardOptions {
   requireProductionHostedAuth?: boolean;
 }
 
+const PRODUCTION_NON_PLACEHOLDER_KEYS = [
+  'VITE_API_BASE_URL',
+  'VITE_COGNITO_DOMAIN',
+  'VITE_COGNITO_CLIENT_ID',
+  'VITE_COGNITO_REDIRECT_URI',
+  'VITE_COGNITO_LOGOUT_URI',
+  'VITE_COGNITO_SCOPES',
+] as const;
+
 export function shouldRequireStrictWebProductionConfig(env: WebRuntimeEnv): boolean {
   return env.LYRA_STRICT_WEB_PRODUCTION_CONFIG === 'true';
 }
@@ -61,6 +70,12 @@ export function assertSafeWebRuntimeConfig(
     violations.push('VITE_COGNITO_API_TOKEN_USE must be access or id');
   }
 
+  for (const key of PRODUCTION_NON_PLACEHOLDER_KEYS) {
+    if (hasPlaceholderConfigValue(env[key])) {
+      violations.push(`${key} must not use a placeholder value`);
+    }
+  }
+
   for (const key of [
     'VITE_COGNITO_DOMAIN',
     'VITE_COGNITO_REDIRECT_URI',
@@ -80,6 +95,32 @@ export function assertSafeWebRuntimeConfig(
 
 function hasValue(value: string | undefined): value is string {
   return value !== undefined && value.trim().length > 0;
+}
+
+function hasPlaceholderConfigValue(value: string | undefined): boolean {
+  if (value === undefined) {
+    return false;
+  }
+
+  const normalizedValue = value.trim().toLowerCase();
+  return (
+    normalizedValue.includes('replace-me') ||
+    normalizedValue.includes('replace_me') ||
+    normalizedValue.includes('replace-with') ||
+    normalizedValue.includes('replace_with') ||
+    normalizedValue.includes('replace me') ||
+    normalizedValue.includes('replace with') ||
+    normalizedValue.includes('placeholder') ||
+    normalizedValue.includes('change-me') ||
+    normalizedValue.includes('change_me') ||
+    normalizedValue.includes('changeme') ||
+    normalizedValue.includes('your-') ||
+    normalizedValue.includes('your_') ||
+    normalizedValue.includes('your ') ||
+    normalizedValue === 'dummy' ||
+    normalizedValue.includes('-dummy') ||
+    normalizedValue.includes('_dummy')
+  );
 }
 
 function isValidCognitoApiTokenUse(value: string | undefined): boolean {
