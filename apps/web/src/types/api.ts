@@ -220,7 +220,6 @@ export interface GenerationJobRecord {
   credit_cost: number;
   params: Record<string, unknown>;
   result: Record<string, unknown> | null;
-  openai_request_id: string | null;
   error_message: string | null;
   retry_count: number;
   created_at: string;

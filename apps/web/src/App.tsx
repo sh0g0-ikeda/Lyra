@@ -6858,7 +6858,7 @@ function extractGeneratedReferenceCandidates(job: GenerationJobRecord): Referenc
     return [];
   }
 
-  if (job.openai_request_id === null && job.result.cost_usd === 0) {
+  if (job.result.provider_result === false) {
     return [];
   }
 

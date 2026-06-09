@@ -48,7 +48,6 @@ function toJobResponse(job: GenerationJob): Record<string, unknown> {
     credit_cost: job.creditCost,
     params: toJobParamsResponse(job),
     result: toJobResultResponse(job),
-    openai_request_id: job.openaiRequestId,
     error_message: job.errorMessage,
     retry_count: job.retryCount,
     created_at: job.createdAt.toISOString(),
@@ -76,7 +75,7 @@ function toJobResultResponse(job: GenerationJob): Record<string, unknown> | null
   }
 
   return job.jobType === 'entity_generate'
-    ? toEntityGenerationResultResponse(job.result)
+    ? toEntityGenerationResultResponse(job)
     : toPageGenerationResultResponse(job.result);
 }
 
@@ -100,7 +99,8 @@ function toPageGenerationResultResponse(result: Record<string, unknown>): Record
   return response;
 }
 
-function toEntityGenerationResultResponse(result: Record<string, unknown>): Record<string, unknown> {
+function toEntityGenerationResultResponse(job: GenerationJob): Record<string, unknown> {
+  const result = job.result ?? {};
   const response = pickKnownFields(result, [
     'cost_usd',
     'compiled_prompt_used',
@@ -112,6 +112,7 @@ function toEntityGenerationResultResponse(result: Record<string, unknown>): Reco
     'image_params',
     'created_at',
   ]);
+  response.provider_result = isProviderResult(job);
 
   const candidates = toEntityCandidateResponse(result.candidates);
   if (candidates.length > 0) {
@@ -119,6 +120,15 @@ function toEntityGenerationResultResponse(result: Record<string, unknown>): Reco
   }
 
   return response;
+}
+
+function isProviderResult(job: GenerationJob): boolean {
+  if (job.openaiRequestId !== null) {
+    return true;
+  }
+
+  const costUsd = job.result?.cost_usd;
+  return typeof costUsd === 'number' && Number.isFinite(costUsd) && costUsd > 0;
 }
 
 function pickKnownFields(

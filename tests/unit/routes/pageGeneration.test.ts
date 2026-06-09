@@ -426,8 +426,8 @@ describe('page generation routes', () => {
       result: {
         compiled_prompt_used: true,
       },
-      openai_request_id: null,
     });
+    expect(payload).not.toHaveProperty('openai_request_id');
     expect(result).not.toHaveProperty('draft_prompt');
     expect(result).not.toHaveProperty('compiled_brief');
     expect(result).not.toHaveProperty('compiled_prompt');
@@ -464,6 +464,7 @@ describe('page generation routes', () => {
     });
     const result = payload.result as Record<string, unknown>;
     const candidates = result.candidates as Array<Record<string, unknown>>;
+    expect(result.provider_result).toBe(true);
     expect(candidates[0]).toEqual({
       s3_key: 'session/user-1/entities/entity/job-1.png',
     });
@@ -472,6 +473,34 @@ describe('page generation routes', () => {
     expect(params).not.toHaveProperty('source_s3_key');
     expect(params).not.toHaveProperty('previous_entity_status');
     expect(params).not.toHaveProperty('draft_prompt');
+  });
+
+  it('jobs endpoint は provider request id を返さず local fallback 候補を明示する', async () => {
+    const jobService = new FakeJobService();
+    jobService.job = buildEntityJob({
+      openaiRequestId: null,
+      result: {
+        candidates: [
+          {
+            s3_key: 'session/user-1/entities/entity/job-1.png',
+          },
+        ],
+        cost_usd: 0,
+      },
+    });
+    const app = createTestApp(new FakePageGenerationService(), new FakePageFinalizeService(), jobService);
+    const token = await createToken();
+
+    const response = await app.request('/api/jobs/22222222-2222-4222-8222-222222222222', {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    expect(response.status).toBe(200);
+    const payload = (await response.json()) as Record<string, unknown>;
+    const result = payload.result as Record<string, unknown>;
+
+    expect(payload).not.toHaveProperty('openai_request_id');
+    expect(result.provider_result).toBe(false);
   });
 
   it('不正な UUID は 422 になる', async () => {
@@ -615,7 +644,7 @@ function buildJob(): GenerationJob {
   };
 }
 
-function buildEntityJob(): GenerationJob {
+function buildEntityJob(overrides: Partial<GenerationJob> = {}): GenerationJob {
   return {
     id: '22222222-2222-4222-8222-222222222222',
     userId: user.id,
@@ -647,6 +676,7 @@ function buildEntityJob(): GenerationJob {
     startedAt: new Date('2026-05-01T00:00:01.000Z'),
     completedAt: new Date('2026-05-01T00:00:02.000Z'),
     expiresAt: null,
+    ...overrides,
   };
 }
 
