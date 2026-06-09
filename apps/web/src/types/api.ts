@@ -16,7 +16,6 @@ export interface WorkRecord {
   ending_point: string | null;
   overall_flow: string | null;
   version: number;
-  edit_history: Record<string, unknown>[];
   status: StoryStatus;
   created_at: string;
   updated_at: string;
@@ -34,7 +33,6 @@ export interface ChapterRecord {
   entities_involved: string[];
   key_beats: string[];
   version: number;
-  edit_history: Record<string, unknown>[];
   status: StoryStatus;
   created_at: string;
   updated_at: string;
@@ -56,7 +54,6 @@ export interface EpisodeRecord {
   entities_involved: string[];
   page_skeleton_generated: boolean;
   version: number;
-  edit_history: Record<string, unknown>[];
   status: StoryStatus;
   created_at: string;
   updated_at: string;

@@ -395,6 +395,36 @@ describe('story routes', () => {
     });
   });
 
+  it('story list responses do not expose internal edit history', async () => {
+    const app = createTestApp();
+    const token = await createToken();
+    const authHeaders = {
+      Authorization: `Bearer ${token}`,
+    };
+
+    const worksResponse = await app.request('/api/works', {
+      headers: authHeaders,
+    });
+    const chaptersResponse = await app.request(`/api/works/${workId}/chapters`, {
+      headers: authHeaders,
+    });
+    const episodesResponse = await app.request(`/api/chapters/${chapterId}/episodes`, {
+      headers: authHeaders,
+    });
+
+    expect(worksResponse.status).toBe(200);
+    expect(chaptersResponse.status).toBe(200);
+    expect(episodesResponse.status).toBe(200);
+
+    const worksPayload = (await worksResponse.json()) as { works: Array<Record<string, unknown>> };
+    const chaptersPayload = (await chaptersResponse.json()) as { chapters: Array<Record<string, unknown>> };
+    const episodesPayload = (await episodesResponse.json()) as { episodes: Array<Record<string, unknown>> };
+
+    expect(worksPayload.works[0]).not.toHaveProperty('edit_history');
+    expect(chaptersPayload.chapters[0]).not.toHaveProperty('edit_history');
+    expect(episodesPayload.episodes[0]).not.toHaveProperty('edit_history');
+  });
+
   it('returns 401 when authentication is missing', async () => {
     const app = createTestApp();
 
