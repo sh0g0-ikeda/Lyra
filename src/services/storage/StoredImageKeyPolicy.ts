@@ -25,10 +25,19 @@ export function ensureOwnedPageImageKey(
   ensureSafeImageKey(s3Key, fieldName);
 
   const sessionPrefix = `session/${userId}/pages/${pageId}/`;
-  const savedFinalPrefix = `saved/${userId}/pages/${pageId}_final.`;
-  if (!s3Key.startsWith(sessionPrefix) && !s3Key.startsWith(savedFinalPrefix)) {
+  if (!s3Key.startsWith(sessionPrefix) && !isOwnedFinalPageImageKey(s3Key, userId, pageId)) {
     throw new ConfigurationError(`${fieldName} is outside the owner scope`);
   }
+}
+
+function isOwnedFinalPageImageKey(s3Key: string, userId: string, pageId: string): boolean {
+  const savedFinalPrefix = `saved/${userId}/pages/${pageId}_final.`;
+  if (!s3Key.startsWith(savedFinalPrefix)) {
+    return false;
+  }
+
+  const extension = s3Key.slice(savedFinalPrefix.length).toLowerCase();
+  return extension === 'png' || extension === 'jpg' || extension === 'jpeg' || extension === 'webp';
 }
 
 function ensureSafeImageKey(s3Key: string, fieldName: string): void {
