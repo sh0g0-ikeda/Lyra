@@ -61,6 +61,10 @@ export function parseAdminRefundCreditsArgs(argv: readonly string[]): AdminRefun
     throw new Error('--job-id must be a UUID');
   }
 
+  if (args.get('--apply') === true && args.get('--dry-run') !== true && jobId === undefined) {
+    throw new Error('--job-id is required when --apply is used');
+  }
+
   if (reason.length > 500) {
     throw new Error('--reason must be 500 characters or shorter');
   }
@@ -182,9 +186,10 @@ function readPositiveInteger(args: Map<string, string | boolean>, key: string): 
 function printUsage(): void {
   console.error([
     'Usage:',
-    '  npm run admin:refund-credits -- --user-id <uuid> --amount <credits> [--reason <text>] [--job-id <uuid>] [--apply]',
+    '  npm run admin:refund-credits -- --user-id <uuid> --amount <credits> [--reason <text>] --job-id <uuid> --apply',
+    '  npm run admin:refund-credits -- --user-id <uuid> --amount <credits> [--reason <text>] [--job-id <uuid>] [--dry-run]',
     '',
-    'Default mode is dry-run. Add --apply to update credit_balances and credit_ledger.',
+    'Default mode is dry-run. Apply mode requires --job-id so refunds stay capped and idempotent.',
   ].join('\n'));
 }
 

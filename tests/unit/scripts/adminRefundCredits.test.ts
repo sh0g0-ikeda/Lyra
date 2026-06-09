@@ -38,6 +38,18 @@ describe('parseAdminRefundCreditsArgs', () => {
     });
   });
 
+  it('requires job id for apply mode to keep refunds idempotent', () => {
+    expect(() =>
+      parseAdminRefundCreditsArgs([
+        '--user-id',
+        userId,
+        '--amount',
+        '5',
+        '--apply',
+      ]),
+    ).toThrow(/--job-id is required when --apply is used/);
+  });
+
   it('rejects non UUID user ids', () => {
     expect(() => parseAdminRefundCreditsArgs(['--user-id', 'bad', '--amount', '1'])).toThrow(
       /--user-id must be a UUID/,
