@@ -1438,6 +1438,11 @@ function StudioShell(props: {
     enabled: selectedWorkId.length > 0,
   });
   const entities = useMemo(() => entitiesQuery.data?.entities ?? [], [entitiesQuery.data?.entities]);
+  const selectedWorkEntityIds = useMemo(
+    () => new Set(entities.map((entity) => entity.id)),
+    [entities],
+  );
+  const loadedSelectedWorkEntityIds = entitiesQuery.isSuccess ? selectedWorkEntityIds : undefined;
   const selectedEntity =
     entityEditorMode === 'create'
       ? null
@@ -1846,11 +1851,11 @@ function StudioShell(props: {
     }
 
     if (selectedEpisode !== null) {
-      await api.updateEpisode(selectedEpisode.id, toEpisodePayload(episodeDraft));
+      await api.updateEpisode(selectedEpisode.id, toEpisodeAutosavePayload(episodeDraft));
     }
 
     if (selectedScene !== null) {
-      await api.updateScene(selectedScene.id, toScenePayload(sceneDraft));
+      await api.updateScene(selectedScene.id, toSceneAutosavePayload(sceneDraft));
     }
 
     if (selectedChapter !== null) {
@@ -2156,7 +2161,10 @@ function StudioShell(props: {
                         disabled={busyAction === 'Save work'}
                         onClick={() =>
                           void runAction('Save work', async () => {
-                            await api.updateWork(selectedWork.id, toWorkPayload(workDraft));
+                            await api.updateWork(
+                              selectedWork.id,
+                              toWorkPayload(workDraft, loadedSelectedWorkEntityIds),
+                            );
                             await queryClient.invalidateQueries({ queryKey: ['works'] });
                           })
                         }
@@ -2316,7 +2324,10 @@ function StudioShell(props: {
                           onSubmit={(event) => {
                             event.preventDefault();
                             void runAction('Create chapter', async () => {
-                              await api.createChapter(selectedWork.id, toCreateChapterPayload(newChapterDraft));
+                              await api.createChapter(
+                                selectedWork.id,
+                                toCreateChapterPayload(newChapterDraft, loadedSelectedWorkEntityIds),
+                              );
                               setNewChapterDraft(createEmptyChapterDraft());
                               await queryClient.invalidateQueries({ queryKey: ['chapters', selectedWork.id] });
                             });
@@ -2363,7 +2374,10 @@ function StudioShell(props: {
                                 className="ghost-button"
                                 onClick={() =>
                                   void runAction('Save chapter', async () => {
-                                    await api.updateChapter(selectedChapter.id, toChapterPayload(chapterDraft));
+                                    await api.updateChapter(
+                                      selectedChapter.id,
+                                      toChapterPayload(chapterDraft, loadedSelectedWorkEntityIds),
+                                    );
                                     await queryClient.invalidateQueries({ queryKey: ['chapters', selectedWork.id] });
                                   })
                                 }
@@ -2407,7 +2421,10 @@ function StudioShell(props: {
                             onSubmit={(event) => {
                               event.preventDefault();
                               void runAction('Create episode', async () => {
-                                await api.createEpisode(selectedChapter.id, toCreateEpisodePayload(newEpisodeDraft));
+                                await api.createEpisode(
+                                  selectedChapter.id,
+                                  toCreateEpisodePayload(newEpisodeDraft, loadedSelectedWorkEntityIds),
+                                );
                                 setNewEpisodeDraft(createEmptyEpisodeDraft());
                                 await queryClient.invalidateQueries({ queryKey: ['episodes', selectedChapter.id] });
                               });
@@ -2448,7 +2465,10 @@ function StudioShell(props: {
                           disabled={busyAction === 'Save episode' || episodeStoryInputConflict}
                           onClick={() =>
                             void runAction('Save episode', async () => {
-                              await api.updateEpisode(selectedEpisode.id, toEpisodePayload(episodeDraft));
+                              await api.updateEpisode(
+                                selectedEpisode.id,
+                                toEpisodePayload(episodeDraft, loadedSelectedWorkEntityIds),
+                              );
                               await queryClient.invalidateQueries({ queryKey: ['episodes', selectedChapter?.id ?? ''] });
                             })
                           }
@@ -2808,7 +2828,10 @@ function StudioShell(props: {
                         className="secondary-button"
                         onClick={() =>
                           void runAction('Create scene', async () => {
-                            await api.createScene(selectedEpisode.id, toCreateScenePayload(sceneDraft));
+                            await api.createScene(
+                              selectedEpisode.id,
+                              toCreateScenePayload(sceneDraft, loadedSelectedWorkEntityIds),
+                            );
                             setSceneDraft(createEmptySceneDraft());
                             await queryClient.invalidateQueries({ queryKey: ['scenes', selectedEpisode.id] });
                           })
@@ -2823,7 +2846,10 @@ function StudioShell(props: {
                           className="ghost-button"
                           onClick={() =>
                             void runAction('Save scene', async () => {
-                              await api.updateScene(selectedScene.id, toScenePayload(sceneDraft));
+                              await api.updateScene(
+                                selectedScene.id,
+                                toScenePayload(sceneDraft, loadedSelectedWorkEntityIds),
+                              );
                               await queryClient.invalidateQueries({ queryKey: ['scenes', selectedEpisode.id] });
                             })
                           }
@@ -5233,13 +5259,16 @@ function toPanelFrameDraft(frame: PanelFrameRecord): PanelFrameDraft {
   };
 }
 
-function toWorkPayload(draft: WorkDraft): Record<string, unknown> {
+function toWorkPayload(
+  draft: WorkDraft,
+  allowedEntityIds?: ReadonlySet<string>,
+): Record<string, unknown> {
   return {
     title: draft.title,
     genre: nullableString(draft.genre),
     world_setting: nullableString(draft.world_setting),
     theme: nullableString(draft.theme),
-    main_entity_ids: splitCsv(draft.main_entity_ids),
+    main_entity_ids: splitEntityIdCsv(draft.main_entity_ids, allowedEntityIds),
     starting_point: nullableString(draft.starting_point),
     ending_point: nullableString(draft.ending_point),
     overall_flow: nullableString(draft.overall_flow),
@@ -5260,7 +5289,10 @@ function toCreateWorkPayload(draft: WorkDraft): Record<string, unknown> {
   };
 }
 
-function toChapterPayload(draft: ChapterDraft): Record<string, unknown> {
+function toChapterPayload(
+  draft: ChapterDraft,
+  allowedEntityIds?: ReadonlySet<string>,
+): Record<string, unknown> {
   return {
     order: parseNumberInput(draft.order, 'chapter order'),
     title: nullableString(draft.title),
@@ -5268,13 +5300,16 @@ function toChapterPayload(draft: ChapterDraft): Record<string, unknown> {
     starting_state: nullableString(draft.starting_state),
     ending_state: nullableString(draft.ending_state),
     emotion_curve: nullableString(draft.emotion_curve),
-    entities_involved: splitCsv(draft.entities_involved),
+    entities_involved: splitEntityIdCsv(draft.entities_involved, allowedEntityIds),
     key_beats: splitLines(draft.key_beats),
     status: draft.status,
   };
 }
 
-function toCreateChapterPayload(draft: ChapterDraft): Record<string, unknown> {
+function toCreateChapterPayload(
+  draft: ChapterDraft,
+  allowedEntityIds?: ReadonlySet<string>,
+): Record<string, unknown> {
   return {
     order: parseNumberInput(draft.order, 'chapter order'),
     title: nullableString(draft.title),
@@ -5282,12 +5317,15 @@ function toCreateChapterPayload(draft: ChapterDraft): Record<string, unknown> {
     starting_state: nullableString(draft.starting_state),
     ending_state: nullableString(draft.ending_state),
     emotion_curve: nullableString(draft.emotion_curve),
-    entities_involved: splitCsv(draft.entities_involved),
+    entities_involved: splitEntityIdCsv(draft.entities_involved, allowedEntityIds),
     key_beats: splitLines(draft.key_beats),
   };
 }
 
-function toEpisodePayload(draft: EpisodeDraft): Record<string, unknown> {
+function toEpisodePayload(
+  draft: EpisodeDraft,
+  allowedEntityIds?: ReadonlySet<string>,
+): Record<string, unknown> {
   return {
     order: parseNumberInput(draft.order, 'episode order'),
     title: nullableString(draft.title),
@@ -5299,12 +5337,12 @@ function toEpisodePayload(draft: EpisodeDraft): Record<string, unknown> {
     climax: nullableString(draft.climax),
     ending_hook: nullableString(draft.ending_hook),
     estimated_pages: parseNumberInput(draft.estimated_pages, 'estimated pages'),
-    entities_involved: splitCsv(draft.entities_involved),
+    entities_involved: splitEntityIdCsv(draft.entities_involved, allowedEntityIds),
     status: draft.status,
   };
 }
 
-function toCreateEpisodePayload(draft: EpisodeDraft): Record<string, unknown> {
+function toEpisodeAutosavePayload(draft: EpisodeDraft): Record<string, unknown> {
   return {
     order: parseNumberInput(draft.order, 'episode order'),
     title: nullableString(draft.title),
@@ -5316,7 +5354,26 @@ function toCreateEpisodePayload(draft: EpisodeDraft): Record<string, unknown> {
     climax: nullableString(draft.climax),
     ending_hook: nullableString(draft.ending_hook),
     estimated_pages: parseNumberInput(draft.estimated_pages, 'estimated pages'),
-    entities_involved: splitCsv(draft.entities_involved),
+    status: draft.status,
+  };
+}
+
+function toCreateEpisodePayload(
+  draft: EpisodeDraft,
+  allowedEntityIds?: ReadonlySet<string>,
+): Record<string, unknown> {
+  return {
+    order: parseNumberInput(draft.order, 'episode order'),
+    title: nullableString(draft.title),
+    purpose: nullableString(draft.purpose),
+    story_input_mode: draft.story_input_mode,
+    story_full_draft: nullableString(draft.story_full_draft),
+    introduction: nullableString(draft.introduction),
+    middle: nullableString(draft.middle),
+    climax: nullableString(draft.climax),
+    ending_hook: nullableString(draft.ending_hook),
+    estimated_pages: parseNumberInput(draft.estimated_pages, 'estimated pages'),
+    entities_involved: splitEntityIdCsv(draft.entities_involved, allowedEntityIds),
   };
 }
 
@@ -5536,24 +5593,40 @@ function toEntityPayload(draft: EntityDraft): Record<string, unknown> {
   };
 }
 
-function toScenePayload(draft: SceneDraft): Record<string, unknown> {
+function toScenePayload(
+  draft: SceneDraft,
+  allowedEntityIds?: ReadonlySet<string>,
+): Record<string, unknown> {
   return {
     order: parseNumberInput(draft.order, 'scene order'),
     location: nullableString(draft.location),
     time: nullableString(draft.time),
     atmosphere: nullableString(draft.atmosphere),
-    involved_entity_ids: splitCsv(draft.involved_entity_ids),
+    involved_entity_ids: splitEntityIdCsv(draft.involved_entity_ids, allowedEntityIds),
     status: draft.status,
   };
 }
 
-function toCreateScenePayload(draft: SceneDraft): Record<string, unknown> {
+function toSceneAutosavePayload(draft: SceneDraft): Record<string, unknown> {
   return {
     order: parseNumberInput(draft.order, 'scene order'),
     location: nullableString(draft.location),
     time: nullableString(draft.time),
     atmosphere: nullableString(draft.atmosphere),
-    involved_entity_ids: splitCsv(draft.involved_entity_ids),
+    status: draft.status,
+  };
+}
+
+function toCreateScenePayload(
+  draft: SceneDraft,
+  allowedEntityIds?: ReadonlySet<string>,
+): Record<string, unknown> {
+  return {
+    order: parseNumberInput(draft.order, 'scene order'),
+    location: nullableString(draft.location),
+    time: nullableString(draft.time),
+    atmosphere: nullableString(draft.atmosphere),
+    involved_entity_ids: splitEntityIdCsv(draft.involved_entity_ids, allowedEntityIds),
   };
 }
 
@@ -6823,6 +6896,19 @@ function splitCsv(value: string): string[] {
     .split(',')
     .map((entry) => entry.trim())
     .filter((entry) => entry.length > 0);
+}
+
+function splitEntityIdCsv(
+  value: string,
+  allowedEntityIds?: ReadonlySet<string>,
+): string[] {
+  const ids = splitCsv(value);
+  const filteredIds =
+    allowedEntityIds === undefined
+      ? ids
+      : ids.filter((id) => allowedEntityIds.has(id));
+
+  return [...new Set(filteredIds)];
 }
 
 function dedupeReferenceCandidates(candidates: ReferenceCandidate[]): ReferenceCandidate[] {
