@@ -111,7 +111,7 @@ function readPositiveInteger(
 function printUsage(): void {
   console.error([
     'Usage:',
-    '  npm run admin:prune-jobs -- [--max-deletes 500] [--apply]',
+    '  bun run admin:prune-jobs -- [--max-deletes 500] [--apply]',
     '',
     'Default mode is dry-run. Only completed or failed generation jobs past expires_at are deleted.',
   ].join('\n'));

@@ -120,7 +120,7 @@ function readPositiveInteger(
 function printUsage(): void {
   console.error([
     'Usage:',
-    '  npm run admin:prune-rate-limits -- [--older-than-hours 24] [--max-deletes 1000] [--apply]',
+    '  bun run admin:prune-rate-limits -- [--older-than-hours 24] [--max-deletes 1000] [--apply]',
     '',
     'Default mode is dry-run. Only rate limit buckets expired before the retention window are deleted.',
   ].join('\n'));

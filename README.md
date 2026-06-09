@@ -231,7 +231,7 @@ GitHub Actions runs the same checks expected before deployment:
 ```powershell
 bun run test
 bun test
-npm run build
+bun run build
 npm --prefix apps/web run lint
 npm --prefix apps/web run build
 ```

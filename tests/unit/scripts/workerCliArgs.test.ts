@@ -14,13 +14,13 @@ describe('worker CLI argument parsing', () => {
 
   it('manual worker は job id 未指定を拒否する', () => {
     expect(() => parseManualWorkerArgs([], 'worker:page')).toThrow(
-      /Usage: npm run worker:page -- <job-id>/,
+      /Usage: bun run worker:page -- <job-id>/,
     );
   });
 
   it('manual worker は余分な引数を拒否する', () => {
     expect(() => parseManualWorkerArgs([jobId, userId], 'worker:page')).toThrow(
-      /Usage: npm run worker:page -- <job-id>/,
+      /Usage: bun run worker:page -- <job-id>/,
     );
   });
 
@@ -36,7 +36,7 @@ describe('worker CLI argument parsing', () => {
 
   it('retry worker は user id 未指定を拒否する', () => {
     expect(() => parseRetryPageGenerationArgs([jobId])).toThrow(
-      /Usage: npm run worker:retry -- <job-id> <user-id>/,
+      /Usage: bun run worker:retry -- <job-id> <user-id>/,
     );
   });
 

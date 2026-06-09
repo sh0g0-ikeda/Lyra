@@ -14,7 +14,7 @@ export function parseManualWorkerArgs(
   commandName: string,
 ): ManualWorkerCliOptions {
   if (argv.length !== 1) {
-    throw new Error(`Usage: npm run ${commandName} -- <job-id>`);
+    throw new Error(`Usage: bun run ${commandName} -- <job-id>`);
   }
 
   const jobId = argv[0];
@@ -29,7 +29,7 @@ export function parseRetryPageGenerationArgs(
   argv: readonly string[],
 ): RetryPageGenerationCliOptions {
   if (argv.length !== 2) {
-    throw new Error('Usage: npm run worker:retry -- <job-id> <user-id>');
+    throw new Error('Usage: bun run worker:retry -- <job-id> <user-id>');
   }
 
   const [jobId, userId] = argv;

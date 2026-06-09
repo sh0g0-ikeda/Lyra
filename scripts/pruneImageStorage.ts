@@ -168,7 +168,7 @@ function readPositiveInteger(
 function printUsage(): void {
   console.error([
     'Usage:',
-    '  npm run admin:prune-images -- [--prefix tmp/] [--prefix session/] [--prefix saved/] [--older-than-hours 24] [--protect-recent-candidate-hours 48] [--max-deletes 500] [--max-scanned 5000] [--include-saved-unreferenced] [--confirm-saved-pruning] [--apply]',
+    '  bun run admin:prune-images -- [--prefix tmp/] [--prefix session/] [--prefix saved/] [--older-than-hours 24] [--protect-recent-candidate-hours 48] [--max-deletes 500] [--max-scanned 5000] [--include-saved-unreferenced] [--confirm-saved-pruning] [--apply]',
     '',
     'Default mode is dry-run. saved/ prefixes are accepted only with --include-saved-unreferenced and apply mode also requires --confirm-saved-pruning. Live DB references remain protected.',
   ].join('\n'));

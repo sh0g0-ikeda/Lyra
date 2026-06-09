@@ -186,8 +186,8 @@ function readPositiveInteger(args: Map<string, string | boolean>, key: string): 
 function printUsage(): void {
   console.error([
     'Usage:',
-    '  npm run admin:refund-credits -- --user-id <uuid> --amount <credits> [--reason <text>] --job-id <uuid> --apply',
-    '  npm run admin:refund-credits -- --user-id <uuid> --amount <credits> [--reason <text>] [--job-id <uuid>] [--dry-run]',
+    '  bun run admin:refund-credits -- --user-id <uuid> --amount <credits> [--reason <text>] --job-id <uuid> --apply',
+    '  bun run admin:refund-credits -- --user-id <uuid> --amount <credits> [--reason <text>] [--job-id <uuid>] [--dry-run]',
     '',
     'Default mode is dry-run. Apply mode requires --job-id so refunds stay capped and idempotent.',
   ].join('\n'));
