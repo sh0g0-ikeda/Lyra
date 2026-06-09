@@ -178,7 +178,6 @@ export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<
       suggested_fields: result.suggestedFields,
       prompt_supplement: result.promptSupplement,
       tmp_image_s3_key: result.tmpImageS3Key,
-      tmp_image_cdn_url: result.tmpImageCdnUrl,
     });
   });
 
@@ -276,7 +275,6 @@ function toReferenceSetResponse(referenceSet: EntityReferenceSet): Record<string
     updated_at: referenceSet.updatedAt.toISOString(),
     reference_images: referenceSet.images.map((image) => ({
       ref_id: image.refId,
-      cdn_url: image.cdnUrl,
       source: image.source,
       created_at: image.createdAt,
     })),

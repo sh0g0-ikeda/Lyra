@@ -79,7 +79,7 @@ export interface EntityRecord {
 
 export interface EntityReferenceImageRecord {
   ref_id: string;
-  cdn_url: string;
+  cdn_url?: string | null;
   source: 'upload' | 'generated';
   created_at: string;
 }
@@ -110,7 +110,7 @@ export interface SceneRecord {
 }
 
 export interface GeneratedImageRecord {
-  cdn_url: string | null;
+  cdn_url?: string | null;
   generation_mode: 'standard' | 'thinking' | null;
   generated_at: string | null;
 }

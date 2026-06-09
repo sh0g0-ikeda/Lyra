@@ -165,7 +165,6 @@ function toPageSummaryResponse(page: PageSummary): Record<string, unknown> {
       page.generatedImage === null
         ? null
         : {
-            cdn_url: page.generatedImage.cdnUrl,
             generation_mode: page.generatedImage.generationMode,
             generated_at: page.generatedImage.generatedAt,
           },

@@ -181,7 +181,6 @@ describe('page generation routes', () => {
           page_number: 1,
           panel_count: 4,
           generated_image: {
-            cdn_url: 'https://cdn.example.com/page.png',
             generation_mode: 'standard',
             generated_at: '2026-05-01T00:00:00.000Z',
           },
@@ -349,9 +348,6 @@ describe('page generation routes', () => {
         requires_planner: false,
       },
       result: {
-        generated_image: {
-          cdn_url: 'https://cdn.example.com/page.png',
-        },
         compiled_prompt_used: true,
       },
       openai_request_id: null,
@@ -360,8 +356,8 @@ describe('page generation routes', () => {
     expect(result).not.toHaveProperty('compiled_brief');
     expect(result).not.toHaveProperty('compiled_prompt');
     expect(result).not.toHaveProperty('s3_key');
-    const generatedImage = result.generated_image as Record<string, unknown>;
-    expect(generatedImage).not.toHaveProperty('s3_key');
+    expect(result).not.toHaveProperty('cdn_url');
+    expect(result).not.toHaveProperty('generated_image');
     const params = payload.params as Record<string, unknown>;
     expect(params).not.toHaveProperty('previous_page_status');
     expect(params).not.toHaveProperty('previous_generation_mode');
@@ -390,6 +386,12 @@ describe('page generation routes', () => {
         entity_type: 'character',
       },
     });
+    const result = payload.result as Record<string, unknown>;
+    const candidates = result.candidates as Array<Record<string, unknown>>;
+    expect(candidates[0]).toEqual({
+      s3_key: 'session/user-1/entities/entity/job-1.png',
+    });
+    expect(candidates[0]).not.toHaveProperty('cdn_url');
     const params = payload.params as Record<string, unknown>;
     expect(params).not.toHaveProperty('source_s3_key');
     expect(params).not.toHaveProperty('previous_entity_status');

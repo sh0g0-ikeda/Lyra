@@ -229,7 +229,6 @@ interface BalloonDraft {
 
 interface ReferenceCandidate {
   s3_key: string;
-  cdn_url: string;
   source: 'upload' | 'generated';
 }
 
@@ -4714,7 +4713,6 @@ async function handleEntityImport(
         [selectedEntityId]: dedupeReferenceCandidates([
           {
             s3_key: result.tmp_image_s3_key,
-            cdn_url: result.tmp_image_cdn_url,
             source: 'upload',
           },
           ...(current[selectedEntityId] ?? []),
@@ -6334,7 +6332,6 @@ function sameReferenceCandidates(left: ReferenceCandidate[], right: ReferenceCan
     left.every(
       (candidate, index) =>
         candidate.s3_key === right[index]?.s3_key &&
-        candidate.cdn_url === right[index]?.cdn_url &&
         candidate.source === right[index]?.source,
     )
   );
@@ -6358,8 +6355,7 @@ function extractGeneratedReferenceCandidates(job: GenerationJobRecord): Referenc
       typeof candidate !== 'object' ||
       candidate === null ||
       Array.isArray(candidate) ||
-      typeof (candidate as { s3_key?: unknown }).s3_key !== 'string' ||
-      typeof (candidate as { cdn_url?: unknown }).cdn_url !== 'string'
+      typeof (candidate as { s3_key?: unknown }).s3_key !== 'string'
     ) {
       return [];
     }
@@ -6367,7 +6363,6 @@ function extractGeneratedReferenceCandidates(job: GenerationJobRecord): Referenc
     return [
       {
         s3_key: (candidate as { s3_key: string }).s3_key,
-        cdn_url: (candidate as { cdn_url: string }).cdn_url,
         source: 'generated' as const,
       },
     ];

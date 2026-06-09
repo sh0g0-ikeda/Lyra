@@ -335,7 +335,6 @@ describe('entity routes', () => {
       suggested_fields: { art_style: 'anime' },
       prompt_supplement: 'anime heroine, full body, military uniform',
       tmp_image_s3_key: 'tmp/user-1/entities/imports/source.png',
-      tmp_image_cdn_url: 'https://cdn.lyra.test/tmp/user-1/entities/imports/source.png',
     });
     expect(referenceService.lastImportRequest).toMatchObject({
       userId: user.id,
@@ -449,9 +448,10 @@ describe('entity routes', () => {
     const referenceImages = payload.reference_images as Array<Record<string, unknown>>;
     expect(referenceImages[0]).toMatchObject({
       ref_id: 'ref-1',
-      cdn_url: 'https://cdn.lyra.test/saved/user-1/entities/entity-1/ref-1.png',
+      source: 'upload',
     });
     expect(referenceImages[0]).not.toHaveProperty('s3_key');
+    expect(referenceImages[0]).not.toHaveProperty('cdn_url');
     expect(referenceService.lastConfirmRequest).toEqual({
       selectedS3Keys: ['tmp/user-1/entities/imports/source.png'],
       primaryS3Key: undefined,

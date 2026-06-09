@@ -82,7 +82,6 @@ function toJobResultResponse(job: GenerationJob): Record<string, unknown> | null
 
 function toPageGenerationResultResponse(result: Record<string, unknown>): Record<string, unknown> {
   const response = pickKnownFields(result, [
-    'cdn_url',
     'generation_mode',
     'request_kind',
     'cost_usd',
@@ -102,8 +101,7 @@ function toPageGenerationResultResponse(result: Record<string, unknown>): Record
 }
 
 function toEntityGenerationResultResponse(result: Record<string, unknown>): Record<string, unknown> {
-  return pickKnownFields(result, [
-    'candidates',
+  const response = pickKnownFields(result, [
     'cost_usd',
     'compiled_prompt_used',
     'prompt_compiler_provider',
@@ -114,6 +112,13 @@ function toEntityGenerationResultResponse(result: Record<string, unknown>): Reco
     'image_params',
     'created_at',
   ]);
+
+  const candidates = toEntityCandidateResponse(result.candidates);
+  if (candidates.length > 0) {
+    response.candidates = candidates;
+  }
+
+  return response;
 }
 
 function pickKnownFields(
@@ -135,9 +140,24 @@ function toGeneratedImageResponse(value: unknown): Record<string, unknown> | nul
     return null;
   }
 
-  return pickKnownFields(value, ['cdn_url', 'generation_mode', 'generated_at']);
+  const response = pickKnownFields(value, ['generation_mode', 'generated_at']);
+  return Object.keys(response).length === 0 ? null : response;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function toEntityCandidateResponse(value: unknown): Array<Record<string, unknown>> {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.flatMap((candidate) => {
+    if (!isRecord(candidate) || typeof candidate.s3_key !== 'string') {
+      return [];
+    }
+
+    return [{ s3_key: candidate.s3_key }];
+  });
 }
