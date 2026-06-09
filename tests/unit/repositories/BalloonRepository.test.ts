@@ -63,6 +63,46 @@ describe('PostgresBalloonRepository', () => {
     });
   });
 
+  it('balloon 作成は works.user_id で所有権を絞る', async () => {
+    const client = new QueryCapturingClient();
+    const repository = new PostgresBalloonRepository(client);
+
+    await repository.createBalloon('page-1', 'user-1', {
+      speakerEntityId: null,
+      balloonType: 'speech',
+      writingMode: 'vertical',
+      text: 'hello',
+      position: { x: 0.1, y: 0.2, width: 0.3, height: 0.2 },
+      tail: null,
+      fontSize: 18,
+      fontFamily: 'manga_gothic',
+      panelOrderReference: 1,
+      zIndex: 10,
+    });
+
+    expect(client.queries[0]).toContain('FROM pages');
+    expect(client.queries[0]).toContain('works.user_id = $2');
+    expect(client.values).toEqual([
+      'page-1',
+      'user-1',
+      null,
+      'speech',
+      'vertical',
+      'hello',
+      JSON.stringify({
+        x: 0.1,
+        y: 0.2,
+        width: 0.3,
+        height: 0.2,
+      }),
+      JSON.stringify(null),
+      18,
+      'manga_gothic',
+      1,
+      10,
+    ]);
+  });
+
   it('balloon 更新は tail を snake_case で保存する', async () => {
     const client = new QueryCapturingClient();
     const repository = new PostgresBalloonRepository(client);

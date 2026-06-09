@@ -18,7 +18,7 @@ export interface CompleteEntityGenerationInput {
   openaiRequestId: string | null;
   costUsd: number | null;
   compiledPromptUsed: boolean;
-  promptCompilerProvider: 'openai' | 'anthropic' | 'none';
+  promptCompilerProvider: 'openai' | 'none';
   compilerModel: string | null;
   compilerPromptVersion: string | null;
   compilerError: string | null;

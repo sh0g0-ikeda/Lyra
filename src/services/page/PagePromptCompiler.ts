@@ -5,7 +5,7 @@ export interface CompilePagePromptInput {
 
 export interface CompiledPagePrompt {
   prompt: string;
-  compilerProvider: 'openai' | 'anthropic' | 'none';
+  compilerProvider: 'openai' | 'none';
   compilerModel: string | null;
   compilerPromptVersion: string | null;
 }
