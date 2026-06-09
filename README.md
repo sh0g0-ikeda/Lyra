@@ -163,6 +163,8 @@ Stripe webhooks must be configured to send events to `POST /api/webhooks/stripe`
 Credit grants are driven only from verified webhook events, not from the browser
 success URL. The webhook endpoint is public for Stripe delivery, but it still
 uses the shared rate-limit store with an IP bucket of `120 req/min/IP`.
+When the API is behind CloudFront, forward `CloudFront-Viewer-Address`; otherwise
+the app falls back to the last valid `X-Forwarded-For` address.
 
 ### 4. Minimal frontend `apps/web/.env`
 

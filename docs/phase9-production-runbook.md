@@ -31,6 +31,11 @@
 - default authenticated API: `100 req/min/user`
 - Stripe webhook: `120 req/min/IP`
 
+For public webhook IP buckets, forward `CloudFront-Viewer-Address` when the API
+is behind CloudFront. If that header is absent, the API falls back to the last
+valid `X-Forwarded-For` address, which is the safest application-level fallback
+behind an ALB but should not replace WAF rate-based rules.
+
 Headers:
 - `X-RateLimit-Limit`
 - `X-RateLimit-Remaining`

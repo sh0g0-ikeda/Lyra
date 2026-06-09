@@ -100,9 +100,10 @@ export function createPublicIpRateLimitMiddleware(
 ): MiddlewareHandler<AppEnv> {
   return async (c, next) => {
     const rule = RATE_LIMIT_RULES[bucket];
-    const clientIp = resolveClientIp(c.req.header('cf-connecting-ip'))
+    const clientIp = resolveCloudFrontViewerAddress(c.req.header('cloudfront-viewer-address'))
+      ?? resolveClientIp(c.req.header('cf-connecting-ip'))
       ?? resolveClientIp(c.req.header('x-real-ip'))
-      ?? resolveClientIp(c.req.header('x-forwarded-for')?.split(',')[0])
+      ?? resolveForwardedForClientIp(c.req.header('x-forwarded-for'))
       ?? 'unknown';
     const result = await store.consume(
       `${bucket}:public:${clientIp}`,
@@ -143,6 +144,48 @@ function classifyRateLimitBucket(path: string): RateLimitBucket {
   }
 
   return 'default';
+}
+
+function resolveCloudFrontViewerAddress(value: string | undefined): string | null {
+  if (value === undefined) {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  if (trimmed.startsWith('[')) {
+    const closeBracketIndex = trimmed.indexOf(']');
+    return closeBracketIndex > 1
+      ? resolveClientIp(trimmed.slice(1, closeBracketIndex))
+      : null;
+  }
+
+  const firstColonIndex = trimmed.indexOf(':');
+  const lastColonIndex = trimmed.lastIndexOf(':');
+  if (
+    firstColonIndex > 0 &&
+    firstColonIndex === lastColonIndex &&
+    /^\d+$/u.test(trimmed.slice(lastColonIndex + 1))
+  ) {
+    return resolveClientIp(trimmed.slice(0, lastColonIndex));
+  }
+
+  return resolveClientIp(trimmed);
+}
+
+function resolveForwardedForClientIp(value: string | undefined): string | null {
+  if (value === undefined) {
+    return null;
+  }
+
+  const candidates = value.split(',').reverse();
+  for (const candidate of candidates) {
+    const clientIp = resolveClientIp(candidate);
+    if (clientIp !== null) {
+      return clientIp;
+    }
+  }
+
+  return null;
 }
 
 function resolveClientIp(value: string | undefined): string | null {

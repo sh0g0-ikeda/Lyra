@@ -75,7 +75,7 @@ describe('createRateLimitMiddleware', () => {
 });
 
 describe('createPublicIpRateLimitMiddleware', () => {
-  it('公開webhookをIP単位の webhook bucket で制限する', async () => {
+  it('公開webhookをX-Forwarded-For末尾のIP単位の webhook bucket で制限する', async () => {
     const store = new RecordingRateLimitStore();
     const app = new Hono<AppEnv>();
     app.use('*', createPublicIpRateLimitMiddleware(store, 'webhook'));
@@ -91,11 +91,29 @@ describe('createPublicIpRateLimitMiddleware', () => {
     expect(response.status).toBe(200);
     expect(store.calls).toEqual([
       {
-        key: 'webhook:public:203.0.113.10',
+        key: 'webhook:public:10.0.0.1',
         maxRequests: RATE_LIMIT_RULES.webhook.maxRequests,
         windowSeconds: RATE_LIMIT_RULES.webhook.windowSeconds,
       },
     ]);
+  });
+
+  it('CloudFront-Viewer-Address がある場合はportを落として優先する', async () => {
+    const store = new RecordingRateLimitStore();
+    const app = new Hono<AppEnv>();
+    app.use('*', createPublicIpRateLimitMiddleware(store, 'webhook'));
+    app.all('*', (c) => c.json({ ok: true }));
+
+    const response = await app.request('/api/webhooks/stripe', {
+      method: 'POST',
+      headers: {
+        'cloudfront-viewer-address': '198.51.100.7:443',
+        'x-forwarded-for': '203.0.113.10, 10.0.0.1',
+      },
+    });
+
+    expect(response.status).toBe(200);
+    expect(store.calls[0]?.key).toBe('webhook:public:198.51.100.7');
   });
 
   it('公開IPヘッダーが不正な場合は unknown に丸める', async () => {
