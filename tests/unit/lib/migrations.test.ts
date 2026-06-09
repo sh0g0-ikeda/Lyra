@@ -240,6 +240,25 @@ describe('runPendingMigrations', () => {
     expect(sql).toContain('VALIDATE CONSTRAINT credit_ledger_type_check');
   });
 
+  it('Stripe webhook と payment record はDB unique indexで冪等化する', async () => {
+    const sql = await readFile(
+      join(process.cwd(), 'migrations', '005_add_billing_idempotency_indexes.sql'),
+      'utf8',
+    );
+
+    expect(sql).toContain('CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS idx_credit_ledger_stripe_event_unique');
+    expect(sql).toContain('ON credit_ledger(stripe_event_id)');
+    expect(sql).toContain('WHERE stripe_event_id IS NOT NULL');
+    expect(sql).toContain(
+      'CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS idx_payment_records_checkout_session_kind_status_unique',
+    );
+    expect(sql).toContain('ON payment_records(stripe_checkout_session_id, kind, status)');
+    expect(sql).toContain(
+      'CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS idx_payment_records_invoice_kind_status_unique',
+    );
+    expect(sql).toContain('ON payment_records(stripe_invoice_id, kind, status)');
+  });
+
   it('credit ledger の金額符号はDB制約で型契約を守る', async () => {
     const sql = await readFile(
       join(process.cwd(), 'migrations', '012_add_credit_ledger_amount_sign_constraint.sql'),
