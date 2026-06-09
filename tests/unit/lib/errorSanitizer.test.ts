@@ -38,4 +38,32 @@ describe('errorSanitizer', () => {
     expect(result).not.toContain(stripeSecret);
     expect(result).not.toContain(webhookSecret);
   });
+
+  it('AWS secret と session token を伏せる', () => {
+    const secretAccessKey = 'wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY';
+    const sessionToken = 'IQoJb3JpZ2luX2VjEExampleSessionToken';
+    const result = sanitizePersistedErrorMessage(
+      `S3 failed AWS_SECRET_ACCESS_KEY=${secretAccessKey} AWS_SESSION_TOKEN=${sessionToken}`,
+      'fallback',
+    );
+
+    expect(result).toContain('AWS_SECRET_ACCESS_KEY=[redacted]');
+    expect(result).toContain('AWS_SESSION_TOKEN=[redacted]');
+    expect(result).not.toContain(secretAccessKey);
+    expect(result).not.toContain(sessionToken);
+  });
+
+  it('署名付きURLのAWS credential queryを伏せる', () => {
+    const credential = 'AKIA1234567890ABCDEF/20260609/us-east-1/s3/aws4_request';
+    const securityToken = 'IQoJb3JpZ2luX2VjEExampleSecurityToken';
+    const result = sanitizePersistedErrorMessage(
+      `GET failed https://example.test/a.png?X-Amz-Credential=${credential}&X-Amz-Security-Token=${securityToken}`,
+      'fallback',
+    );
+
+    expect(result).toContain('X-Amz-Credential=[redacted]');
+    expect(result).toContain('X-Amz-Security-Token=[redacted]');
+    expect(result).not.toContain(credential);
+    expect(result).not.toContain(securityToken);
+  });
 });
