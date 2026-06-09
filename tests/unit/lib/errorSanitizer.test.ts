@@ -86,4 +86,18 @@ describe('errorSanitizer', () => {
     expect(result).not.toContain(refreshToken);
     expect(result).not.toContain('pkce-secret');
   });
+
+  it('JSON 風の secret/token key も伏せる', () => {
+    const apiKey = 'sk-proj-jsonsecret1234567890';
+    const accessToken = 'access-token-json-secret-1234567890';
+    const result = sanitizePersistedErrorMessage(
+      `provider returned {"api_key":"${apiKey}","access_token":"${accessToken}"}`,
+      'fallback',
+    );
+
+    expect(result).toContain('api_key=[redacted]');
+    expect(result).toContain('access_token=[redacted]');
+    expect(result).not.toContain(apiKey);
+    expect(result).not.toContain(accessToken);
+  });
 });
