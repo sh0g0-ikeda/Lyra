@@ -91,6 +91,22 @@ describe('operational guards', () => {
     expect(response.headers.get('referrer-policy')).toBe('no-referrer');
   });
 
+  it('returns security headers on rejected API preflight', async () => {
+    const app = createApp();
+
+    const response = await app.request('/api/works', {
+      method: 'OPTIONS',
+      headers: {
+        Origin: 'https://unconfigured-origin.example',
+      },
+    });
+
+    expect(response.status).toBe(403);
+    expect(response.headers.get('x-content-type-options')).toBe('nosniff');
+    expect(response.headers.get('x-frame-options')).toBe('DENY');
+    expect(response.headers.get('referrer-policy')).toBe('no-referrer');
+  });
+
   it('returns 429 with retry-after once the rate limit is exceeded', async () => {
     const app = createApp({
       creditService: new FakeCreditService(),

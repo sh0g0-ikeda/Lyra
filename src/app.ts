@@ -237,8 +237,8 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
     : createPublicIpRateLimitMiddleware(resolvedDependencies.rateLimitStore, 'webhook');
 
   app.onError(errorHandler);
-  app.use('*', createCorsMiddleware(parseCorsAllowedOrigins(env.CORS_ALLOWED_ORIGINS)));
   app.use('*', createSecurityHeadersMiddleware());
+  app.use('*', createCorsMiddleware(parseCorsAllowedOrigins(env.CORS_ALLOWED_ORIGINS)));
   app.use('*', createRequestContextMiddleware());
   app.route('/', createHealthRoutes());
   if (localAssetConfig !== null) {
