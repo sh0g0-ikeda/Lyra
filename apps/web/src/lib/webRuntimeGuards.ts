@@ -69,7 +69,7 @@ export function assertSafeWebRuntimeConfig(
   ] as const) {
     const value = env[key];
     if (hasValue(value) && !isSafeProductionHttpsUrl(value)) {
-      violations.push(`${key} must use https and a non-local host in production`);
+      violations.push(`${key} must use https and a non-local, non-private host in production`);
     }
   }
 
@@ -90,7 +90,7 @@ function isValidCognitoApiTokenUse(value: string | undefined): boolean {
 function isSafeProductionHttpsUrl(value: string): boolean {
   try {
     const url = new URL(value);
-    return url.protocol === 'https:' && !isLocalHostname(url.hostname);
+    return url.protocol === 'https:' && !isUnsafeProductionHostname(url.hostname);
   } catch {
     return false;
   }
@@ -98,5 +98,81 @@ function isSafeProductionHttpsUrl(value: string): boolean {
 
 function isLocalHostname(hostname: string): boolean {
   const normalizedHostname = hostname.replace(/^\[|\]$/gu, '').toLowerCase();
-  return normalizedHostname === 'localhost' || normalizedHostname === '127.0.0.1' || normalizedHostname === '::1';
+  const ipv4Address = parseIpv4Address(normalizedHostname);
+
+  return (
+    normalizedHostname === 'localhost' ||
+    normalizedHostname.endsWith('.localhost') ||
+    normalizedHostname === '::1' ||
+    normalizedHostname === '::' ||
+    ipv4Address?.[0] === 127 ||
+    normalizedHostname === '0.0.0.0'
+  );
+}
+
+function isUnsafeProductionHostname(hostname: string): boolean {
+  const normalizedHostname = hostname.replace(/^\[|\]$/gu, '').toLowerCase();
+  if (
+    isLocalHostname(normalizedHostname) ||
+    normalizedHostname.endsWith('.local') ||
+    normalizedHostname.endsWith('.internal')
+  ) {
+    return true;
+  }
+
+  const ipv4Address = parseIpv4Address(normalizedHostname);
+  if (ipv4Address !== null) {
+    return isPrivateOrReservedIpv4Address(ipv4Address);
+  }
+
+  return isPrivateOrLinkLocalIpv6Hostname(normalizedHostname);
+}
+
+function parseIpv4Address(hostname: string): [number, number, number, number] | null {
+  const parts = hostname.split('.');
+  if (parts.length !== 4) {
+    return null;
+  }
+
+  const octets = parts.map((part) => {
+    if (!/^[0-9]+$/u.test(part)) {
+      return null;
+    }
+
+    const value = Number(part);
+    return Number.isInteger(value) && value >= 0 && value <= 255 ? value : null;
+  });
+
+  if (octets.some((octet) => octet === null)) {
+    return null;
+  }
+
+  return octets as [number, number, number, number];
+}
+
+function isPrivateOrReservedIpv4Address([first, second]: [number, number, number, number]): boolean {
+  return (
+    first === 0 ||
+    first === 10 ||
+    first === 127 ||
+    (first === 100 && second >= 64 && second <= 127) ||
+    (first === 169 && second === 254) ||
+    (first === 172 && second >= 16 && second <= 31) ||
+    (first === 192 && second === 168) ||
+    (first === 198 && (second === 18 || second === 19))
+  );
+}
+
+function isPrivateOrLinkLocalIpv6Hostname(hostname: string): boolean {
+  if (!hostname.includes(':')) {
+    return false;
+  }
+
+  return (
+    hostname === '::' ||
+    hostname === '::1' ||
+    hostname.startsWith('fe80:') ||
+    hostname.startsWith('fc') ||
+    hostname.startsWith('fd')
+  );
 }
