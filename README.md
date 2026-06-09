@@ -268,7 +268,7 @@ bun run admin:prune-images -- --older-than-hours 24 --protect-recent-candidate-h
   when the dry-run result reports `scanTruncated: true` and you intentionally want to scan more.
 - To prune unreferenced durable assets, pass both `--prefix saved/` and
   `--include-saved-unreferenced`. Keep the first run as dry-run and review the candidates before
-  adding `--apply`.
+  adding both `--apply` and `--confirm-saved-pruning`.
 - Current page images, confirmed entity references, recent entity preview candidates, and recent
   uploaded source images are protected from deletion.
 

@@ -9,10 +9,16 @@ export interface PruneImageStorageCliOptions {
   maxScanned: number;
   apply: boolean;
   includeSavedUnreferenced: boolean;
+  confirmSavedPruning: boolean;
 }
 
 const POSITIVE_INTEGER_PATTERN = /^[1-9][0-9]*$/u;
-const PRUNE_FLAG_OPTIONS = new Set(['--apply', '--dry-run', '--include-saved-unreferenced']);
+const PRUNE_FLAG_OPTIONS = new Set([
+  '--apply',
+  '--dry-run',
+  '--include-saved-unreferenced',
+  '--confirm-saved-pruning',
+]);
 const PRUNE_VALUE_OPTIONS = new Set([
   '--prefix',
   '--older-than-hours',
@@ -58,14 +64,23 @@ export function parsePruneImageStorageArgs(argv: readonly string[]): PruneImageS
     index += 1;
   }
 
+  const apply = values.get('--apply') === true && values.get('--dry-run') !== true;
+  const includeSavedUnreferenced = values.get('--include-saved-unreferenced') === true;
+  const confirmSavedPruning = values.get('--confirm-saved-pruning') === true;
+
+  if (apply && includeSavedUnreferenced && !confirmSavedPruning) {
+    throw new Error('--confirm-saved-pruning is required when applying saved image pruning');
+  }
+
   return {
     prefixes: prefixes.length === 0 ? ['tmp/', 'session/'] : Array.from(new Set(prefixes)),
     olderThanHours: readPositiveInteger(values, '--older-than-hours', 24),
     protectRecentCandidateHours: readPositiveInteger(values, '--protect-recent-candidate-hours', 48),
     maxDeletes: readPositiveInteger(values, '--max-deletes', 500, MAX_PRUNE_IMAGE_DELETES),
     maxScanned: readPositiveInteger(values, '--max-scanned', 5000, MAX_PRUNE_IMAGE_SCANNED),
-    apply: values.get('--apply') === true && values.get('--dry-run') !== true,
-    includeSavedUnreferenced: values.get('--include-saved-unreferenced') === true,
+    apply,
+    includeSavedUnreferenced,
+    confirmSavedPruning,
   };
 }
 
@@ -153,9 +168,9 @@ function readPositiveInteger(
 function printUsage(): void {
   console.error([
     'Usage:',
-    '  npm run admin:prune-images -- [--prefix tmp/] [--prefix session/] [--prefix saved/] [--older-than-hours 24] [--protect-recent-candidate-hours 48] [--max-deletes 500] [--max-scanned 5000] [--include-saved-unreferenced] [--apply]',
+    '  npm run admin:prune-images -- [--prefix tmp/] [--prefix session/] [--prefix saved/] [--older-than-hours 24] [--protect-recent-candidate-hours 48] [--max-deletes 500] [--max-scanned 5000] [--include-saved-unreferenced] [--confirm-saved-pruning] [--apply]',
     '',
-    'Default mode is dry-run. saved/ prefixes are accepted only with --include-saved-unreferenced and live DB references remain protected.',
+    'Default mode is dry-run. saved/ prefixes are accepted only with --include-saved-unreferenced and apply mode also requires --confirm-saved-pruning. Live DB references remain protected.',
   ].join('\n'));
 }
 

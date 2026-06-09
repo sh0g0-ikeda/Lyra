@@ -11,6 +11,7 @@ describe('parsePruneImageStorageArgs', () => {
       maxScanned: 5000,
       apply: false,
       includeSavedUnreferenced: false,
+      confirmSavedPruning: false,
     });
   });
 
@@ -28,6 +29,7 @@ describe('parsePruneImageStorageArgs', () => {
         '--max-scanned',
         '250',
         '--include-saved-unreferenced',
+        '--confirm-saved-pruning',
         '--apply',
       ]),
     ).toEqual({
@@ -38,6 +40,7 @@ describe('parsePruneImageStorageArgs', () => {
       maxScanned: 250,
       apply: true,
       includeSavedUnreferenced: true,
+      confirmSavedPruning: true,
     });
   });
 
@@ -94,5 +97,32 @@ describe('parsePruneImageStorageArgs', () => {
 
   it('keeps dry-run mode when both dry-run and apply are present', () => {
     expect(parsePruneImageStorageArgs(['--apply', '--dry-run']).apply).toBe(false);
+  });
+
+  it('allows saved pruning candidate review in dry-run mode without destructive confirmation', () => {
+    expect(
+      parsePruneImageStorageArgs([
+        '--prefix',
+        'saved/',
+        '--include-saved-unreferenced',
+        '--dry-run',
+      ]),
+    ).toMatchObject({
+      prefixes: ['saved/'],
+      apply: false,
+      includeSavedUnreferenced: true,
+      confirmSavedPruning: false,
+    });
+  });
+
+  it('requires destructive confirmation before applying saved pruning', () => {
+    expect(() =>
+      parsePruneImageStorageArgs([
+        '--prefix',
+        'saved/',
+        '--include-saved-unreferenced',
+        '--apply',
+      ]),
+    ).toThrow(/--confirm-saved-pruning is required/);
   });
 });
