@@ -106,6 +106,14 @@ const DEPLOYMENT_DATA_INVARIANT_QUERIES: InvariantQuery[] = [
     sql: "SELECT MIN(id)::text AS id FROM generation_jobs WHERE job_type = 'entity_generate' AND status IN ('queued', 'processing') AND params ? 'entity_id' GROUP BY params->>'entity_id' HAVING COUNT(*) > 1 ORDER BY MIN(id) LIMIT $1",
   },
   {
+    name: 'generation_jobs.failed_page_missing_refund',
+    sql: "SELECT generation_jobs.id::text AS id FROM generation_jobs WHERE generation_jobs.job_type = 'page_generate' AND generation_jobs.status = 'failed' AND generation_jobs.credit_cost > 0 AND NOT EXISTS (SELECT 1 FROM credit_ledger WHERE credit_ledger.user_id = generation_jobs.user_id AND credit_ledger.job_id = generation_jobs.id AND credit_ledger.type = 'refund') ORDER BY generation_jobs.id LIMIT $1",
+  },
+  {
+    name: 'generation_jobs.failed_entity_missing_refund',
+    sql: "SELECT generation_jobs.id::text AS id FROM generation_jobs WHERE generation_jobs.job_type = 'entity_generate' AND generation_jobs.status = 'failed' AND generation_jobs.credit_cost > 0 AND NOT EXISTS (SELECT 1 FROM credit_ledger WHERE credit_ledger.user_id = generation_jobs.user_id AND credit_ledger.job_id = generation_jobs.id AND credit_ledger.type = 'refund') ORDER BY generation_jobs.id LIMIT $1",
+  },
+  {
     name: 'users.plan_code',
     sql: "SELECT id::text AS id FROM users WHERE plan_code NOT IN ('free', 'standard', 'premium') ORDER BY id LIMIT $1",
   },

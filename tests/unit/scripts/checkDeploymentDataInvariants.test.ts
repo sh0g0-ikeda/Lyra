@@ -39,6 +39,28 @@ class FakeDatabase implements DatabaseClient {
       );
     }
 
+    if (this.violatedCheckName === 'generation_jobs.failed_page_missing_refund') {
+      return (
+        text.includes('FROM generation_jobs') &&
+        text.includes("generation_jobs.job_type = 'page_generate'") &&
+        text.includes("generation_jobs.status = 'failed'") &&
+        text.includes('generation_jobs.credit_cost > 0') &&
+        text.includes('FROM credit_ledger') &&
+        text.includes("credit_ledger.type = 'refund'")
+      );
+    }
+
+    if (this.violatedCheckName === 'generation_jobs.failed_entity_missing_refund') {
+      return (
+        text.includes('FROM generation_jobs') &&
+        text.includes("generation_jobs.job_type = 'entity_generate'") &&
+        text.includes("generation_jobs.status = 'failed'") &&
+        text.includes('generation_jobs.credit_cost > 0') &&
+        text.includes('FROM credit_ledger') &&
+        text.includes("credit_ledger.type = 'refund'")
+      );
+    }
+
     const [tableName, columnName] = this.violatedCheckName.split('.');
     return text.includes(`FROM ${tableName}`) && text.includes(columnName);
   }
@@ -80,6 +102,24 @@ describe('checkDeploymentDataInvariants', () => {
         query.includes('HAVING COUNT(*) > 1'),
       ),
     ).toBe(true);
+    expect(
+      database.queries.some((query) =>
+        query.includes("generation_jobs.job_type = 'page_generate'") &&
+        query.includes("generation_jobs.status = 'failed'") &&
+        query.includes('generation_jobs.credit_cost > 0') &&
+        query.includes('credit_ledger.job_id = generation_jobs.id') &&
+        query.includes("credit_ledger.type = 'refund'"),
+      ),
+    ).toBe(true);
+    expect(
+      database.queries.some((query) =>
+        query.includes("generation_jobs.job_type = 'entity_generate'") &&
+        query.includes("generation_jobs.status = 'failed'") &&
+        query.includes('generation_jobs.credit_cost > 0') &&
+        query.includes('credit_ledger.job_id = generation_jobs.id') &&
+        query.includes("credit_ledger.type = 'refund'"),
+      ),
+    ).toBe(true);
   });
 
   it('違反行があればチェック名とサンプル ID を返す', async () => {
@@ -104,6 +144,21 @@ describe('checkDeploymentDataInvariants', () => {
     expect(report.ok).toBe(false);
     expect(report.violations).toContainEqual({
       name: 'payment_records.checkout_session_kind_status_unique',
+      sampleIds: ['bad-row-1', 'bad-row-2'],
+    });
+  });
+
+  it.each([
+    'generation_jobs.failed_page_missing_refund',
+    'generation_jobs.failed_entity_missing_refund',
+  ])('%s を検出する', async (checkName) => {
+    const database = new FakeDatabase(checkName);
+
+    const report = await checkDeploymentDataInvariants(database);
+
+    expect(report.ok).toBe(false);
+    expect(report.violations).toContainEqual({
+      name: checkName,
       sampleIds: ['bad-row-1', 'bad-row-2'],
     });
   });
