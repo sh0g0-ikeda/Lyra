@@ -66,4 +66,17 @@ describe('local asset routes', () => {
 
     expect(response.status).toBe(404);
   });
+
+  it('URL encoded Windows traversal も root 外を読まず 404 にする', async () => {
+    const parentDir = await mkdtemp(join(tmpdir(), 'lyra-local-assets-parent-'));
+    const rootDir = join(parentDir, 'root');
+    tempDirs.push(parentDir);
+    await mkdir(rootDir, { recursive: true });
+    await writeFile(join(parentDir, 'secret.png'), Buffer.from('secret'));
+
+    const app = createLocalAssetRoutes(rootDir);
+    const response = await app.request('/local-assets/saved%5C..%5C..%5Csecret.png');
+
+    expect(response.status).toBe(404);
+  });
 });

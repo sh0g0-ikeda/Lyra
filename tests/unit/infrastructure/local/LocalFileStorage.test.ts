@@ -7,6 +7,7 @@ import { LocalFileFinalPageImageStorage } from '../../../../src/infrastructure/l
 import { LocalFilePageImageStorage } from '../../../../src/infrastructure/local/LocalFilePageImageStorage.js';
 import { LocalFileStoredImageLoader } from '../../../../src/infrastructure/local/LocalFileStoredImageLoader.js';
 import {
+  resolveLocalAssetPath,
   writeLocalAsset,
   type LocalAssetConfig,
 } from '../../../../src/infrastructure/local/LocalAssetFiles.js';
@@ -185,6 +186,14 @@ describe('Local file storage adapters', () => {
         },
       }),
     ).rejects.toMatchObject({ code: 'CONFIGURATION_ERROR' });
+  });
+
+  it('local asset key は Windows path separator を拒否する', async () => {
+    const config = await createConfig();
+
+    expect(() => resolveLocalAssetPath(config.rootDir, 'saved\\user-1\\pages\\page-1.png')).toThrow(
+      'Local asset key is invalid',
+    );
   });
 });
 

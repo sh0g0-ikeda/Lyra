@@ -62,9 +62,21 @@ function ensureAllowedFinalPageSourceKey(
   }
 
   const sessionPrefix = `session/${userId}/pages/${pageId}/`;
-  if (!sourceS3Key.startsWith(sessionPrefix)) {
+  if (hasUnsafeImageKeySyntax(sourceS3Key) || !sourceS3Key.startsWith(sessionPrefix)) {
     throw new ConfigurationError('Final page source image key is outside the page owner scope');
   }
+}
+
+function hasUnsafeImageKeySyntax(s3Key: string): boolean {
+  if (s3Key.includes('\\') || s3Key.includes('\0')) {
+    return true;
+  }
+
+  return s3Key.split('/').some((segment) => (
+    segment.length === 0 ||
+    segment === '.' ||
+    segment === '..'
+  ));
 }
 
 function mimeTypeToExtension(mimeType: 'image/png' | 'image/jpeg' | 'image/webp'): 'png' | 'jpeg' | 'webp' {

@@ -84,8 +84,22 @@ function ensureAllowedEntityReferenceSourceKey(sourceS3Key: string, userId: stri
     `session/${userId}/entities/${entityId}/`,
   ];
 
-  if (!allowedPrefixes.some((prefix) => sourceS3Key.startsWith(prefix))) {
+  if (
+    hasUnsafeImageKeySyntax(sourceS3Key) ||
+    !allowedPrefixes.some((prefix) => sourceS3Key.startsWith(prefix))
+  ) {
     throw new ConfigurationError('Entity reference source image key is outside the entity owner scope');
   }
 }
 
+function hasUnsafeImageKeySyntax(s3Key: string): boolean {
+  if (s3Key.includes('\\') || s3Key.includes('\0')) {
+    return true;
+  }
+
+  return s3Key.split('/').some((segment) => (
+    segment.length === 0 ||
+    segment === '.' ||
+    segment === '..'
+  ));
+}
