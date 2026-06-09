@@ -423,11 +423,15 @@ describe('page generation routes', () => {
         quality: 'medium',
         requires_planner: false,
       },
-      result: {
-        compiled_prompt_used: true,
-      },
+      result: {},
     });
     expect(payload).not.toHaveProperty('openai_request_id');
+    expect(result).not.toHaveProperty('cost_usd');
+    expect(result).not.toHaveProperty('compiled_prompt_used');
+    expect(result).not.toHaveProperty('prompt_compiler_provider');
+    expect(result).not.toHaveProperty('compiler_model');
+    expect(result).not.toHaveProperty('compiler_prompt_version');
+    expect(result).not.toHaveProperty('compiler_error');
     expect(result).not.toHaveProperty('draft_prompt');
     expect(result).not.toHaveProperty('compiled_brief');
     expect(result).not.toHaveProperty('compiled_prompt');
@@ -465,6 +469,14 @@ describe('page generation routes', () => {
     const result = payload.result as Record<string, unknown>;
     const candidates = result.candidates as Array<Record<string, unknown>>;
     expect(result.provider_result).toBe(true);
+    expect(result).not.toHaveProperty('cost_usd');
+    expect(result).not.toHaveProperty('compiled_prompt_used');
+    expect(result).not.toHaveProperty('prompt_compiler_provider');
+    expect(result).not.toHaveProperty('compiler_model');
+    expect(result).not.toHaveProperty('compiler_prompt_version');
+    expect(result).not.toHaveProperty('compiler_error');
+    expect(result).not.toHaveProperty('image_model');
+    expect(result).not.toHaveProperty('image_params');
     expect(candidates[0]).toEqual({
       s3_key: 'session/user-1/entities/entity/job-1.png',
     });

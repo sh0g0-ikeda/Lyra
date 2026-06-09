@@ -83,12 +83,6 @@ function toPageGenerationResultResponse(result: Record<string, unknown>): Record
   const response = pickKnownFields(result, [
     'generation_mode',
     'request_kind',
-    'cost_usd',
-    'compiled_prompt_used',
-    'prompt_compiler_provider',
-    'compiler_model',
-    'compiler_prompt_version',
-    'compiler_error',
   ]);
 
   const generatedImage = toGeneratedImageResponse(result.generated_image);
@@ -101,17 +95,7 @@ function toPageGenerationResultResponse(result: Record<string, unknown>): Record
 
 function toEntityGenerationResultResponse(job: GenerationJob): Record<string, unknown> {
   const result = job.result ?? {};
-  const response = pickKnownFields(result, [
-    'cost_usd',
-    'compiled_prompt_used',
-    'prompt_compiler_provider',
-    'compiler_model',
-    'compiler_prompt_version',
-    'compiler_error',
-    'image_model',
-    'image_params',
-    'created_at',
-  ]);
+  const response: Record<string, unknown> = {};
   response.provider_result = isProviderResult(job);
 
   const candidates = toEntityCandidateResponse(result.candidates);
