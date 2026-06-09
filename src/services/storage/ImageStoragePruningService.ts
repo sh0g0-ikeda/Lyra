@@ -45,6 +45,7 @@ export interface PruneImageStorageResult {
 const DISPOSABLE_PRUNE_PREFIXES = ['tmp/', 'session/'] as const;
 const SAVED_PRUNE_PREFIXES = ['saved/'] as const;
 const HOUR_MS = 60 * 60 * 1000;
+const IMAGE_OBJECT_KEY_EXTENSION_PATTERN = /\.(?:jpe?g|png|webp)$/iu;
 
 /**
  * Removes only old image objects that are not currently referenced by the DB.
@@ -90,6 +91,10 @@ export class ImageStoragePruningService {
 
         if (protectedKeys.has(object.key)) {
           protectedCount += 1;
+          continue;
+        }
+
+        if (!isAllowedPruneObjectKey(object.key, prefix, input.includeSavedUnreferenced === true)) {
           continue;
         }
 
@@ -164,7 +169,7 @@ function validatePruneInput(input: PruneImageStorageInput): void {
 }
 
 function isAllowedPrunePrefix(prefix: string, includeSavedUnreferenced: boolean): boolean {
-  if (prefix.includes('..') || prefix.includes('//') || prefix.startsWith('/')) {
+  if (!hasSafeStoragePathSyntax(prefix, { allowTrailingSlash: true }) || !prefix.endsWith('/')) {
     return false;
   }
 
@@ -173,6 +178,55 @@ function isAllowedPrunePrefix(prefix: string, includeSavedUnreferenced: boolean)
   }
 
   return includeSavedUnreferenced && matchesAllowedPrefix(prefix, SAVED_PRUNE_PREFIXES);
+}
+
+function isAllowedPruneObjectKey(
+  key: string,
+  scannedPrefix: string,
+  includeSavedUnreferenced: boolean,
+): boolean {
+  if (
+    !key.startsWith(scannedPrefix) ||
+    !hasSafeStoragePathSyntax(key, { allowTrailingSlash: false }) ||
+    !IMAGE_OBJECT_KEY_EXTENSION_PATTERN.test(key)
+  ) {
+    return false;
+  }
+
+  if (matchesAllowedPrefix(key, DISPOSABLE_PRUNE_PREFIXES)) {
+    return true;
+  }
+
+  return includeSavedUnreferenced && matchesAllowedPrefix(key, SAVED_PRUNE_PREFIXES);
+}
+
+function hasSafeStoragePathSyntax(
+  value: string,
+  options: { allowTrailingSlash: boolean },
+): boolean {
+  if (
+    value.length === 0 ||
+    value.startsWith('/') ||
+    value.includes('\\') ||
+    value.includes('//') ||
+    /[\u0000-\u001F\u007F]/u.test(value)
+  ) {
+    return false;
+  }
+
+  const segments = value.split('/');
+  const finalIndex = segments.length - 1;
+  return segments.every((segment, index) => {
+    if (segment === '.' || segment === '..') {
+      return false;
+    }
+
+    if (segment.length > 0) {
+      return true;
+    }
+
+    return options.allowTrailingSlash && index === finalIndex;
+  });
 }
 
 function matchesAllowedPrefix(prefix: string, allowedPrefixes: readonly string[]): boolean {

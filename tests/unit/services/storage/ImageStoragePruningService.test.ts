@@ -278,4 +278,55 @@ describe('ImageStoragePruningService', () => {
       new ValidationError('Image pruning is limited to tmp/ and session/ prefixes unless saved pruning is enabled'),
     );
   });
+
+  it('rejects ambiguous prefixes without a trailing slash', async () => {
+    const service = new ImageStoragePruningService(
+      new FakeStorage(new Map()),
+      new FakeReferenceRepository(new Set()),
+    );
+
+    await expect(
+      service.prune({
+        prefixes: ['session/user'],
+        olderThanHours: 24,
+        protectRecentCandidateHours: 48,
+        maxDeletes: 100,
+        dryRun: true,
+      }),
+    ).rejects.toEqual(
+      new ValidationError('Image pruning is limited to tmp/ and session/ prefixes unless saved pruning is enabled'),
+    );
+  });
+
+  it('skips listed objects with unsafe keys, wrong prefixes, or non-image extensions', async () => {
+    const storage = new FakeStorage(
+      new Map([
+        [
+          'session/',
+          [
+            { key: 'saved/user/pages/old.png', lastModified: new Date('2026-06-01T00:00:00.000Z') },
+            { key: 'session/user/../old.png', lastModified: new Date('2026-06-01T00:00:00.000Z') },
+            { key: 'session/user\\old.png', lastModified: new Date('2026-06-01T00:00:00.000Z') },
+            { key: 'session/user/old.json', lastModified: new Date('2026-06-01T00:00:00.000Z') },
+            { key: 'session/user/old.webp', lastModified: new Date('2026-06-01T00:00:00.000Z') },
+          ],
+        ],
+      ]),
+    );
+    const service = new ImageStoragePruningService(storage, new FakeReferenceRepository(new Set()));
+
+    const result = await service.prune({
+      prefixes: ['session/'],
+      olderThanHours: 24,
+      protectRecentCandidateHours: 48,
+      maxDeletes: 100,
+      dryRun: false,
+      now: new Date('2026-06-09T00:00:00.000Z'),
+    });
+
+    expect(result.scanned).toBe(5);
+    expect(result.deleteCandidates).toEqual(['session/user/old.webp']);
+    expect(result.deleted).toEqual(['session/user/old.webp']);
+    expect(storage.deleted).toEqual(['session/user/old.webp']);
+  });
 });
