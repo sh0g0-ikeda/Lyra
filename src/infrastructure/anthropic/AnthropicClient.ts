@@ -22,6 +22,11 @@ interface AnthropicMessageResponse {
   }>;
 }
 
+interface AnthropicErrorDetails {
+  message: string;
+  type: string | null;
+}
+
 interface SseEvent {
   event: string | null;
   data: string;
@@ -50,13 +55,13 @@ export class AnthropicClient {
         });
 
         if (!response.ok) {
-          const errorMessage = await buildErrorMessage(response);
-          if (attempt < this.maxRetries && isRetryableStatus(response.status)) {
+          const errorDetails = await buildErrorDetails(response);
+          if (attempt < this.maxRetries && isRetryableStatus(response.status, errorDetails)) {
             await sleep(attempt);
             continue;
           }
 
-          throw new ConfigurationError(errorMessage);
+          throw new ConfigurationError(errorDetails.message);
         }
 
         const payload = (await response.json()) as AnthropicMessageResponse;
@@ -93,13 +98,13 @@ export class AnthropicClient {
         });
 
         if (!response.ok) {
-          const errorMessage = await buildErrorMessage(response);
-          if (attempt < this.maxRetries && isRetryableStatus(response.status)) {
+          const errorDetails = await buildErrorDetails(response);
+          if (attempt < this.maxRetries && isRetryableStatus(response.status, errorDetails)) {
             await sleep(attempt);
             continue;
           }
 
-          throw new ConfigurationError(errorMessage);
+          throw new ConfigurationError(errorDetails.message);
         }
 
         if (response.body === null) {
@@ -245,27 +250,63 @@ function buildUrl(baseUrl: string, path: string): string {
   return new URL(path.replace(/^\//u, ''), `${baseUrl.replace(/\/+$/u, '')}/`).toString();
 }
 
-async function buildErrorMessage(response: Response): Promise<string> {
+async function buildErrorDetails(response: Response): Promise<AnthropicErrorDetails> {
   const fallbackMessage = `Anthropic request failed with status ${response.status}`;
 
   try {
     const payload = (await response.json()) as {
       error?: {
+        type?: unknown;
         message?: unknown;
       };
     };
+    const type = typeof payload.error?.type === 'string' ? payload.error.type : null;
     if (typeof payload.error?.message === 'string' && payload.error.message.length > 0) {
-      return sanitizeExternalErrorMessage(payload.error.message);
+      return {
+        message: sanitizeExternalErrorMessage(payload.error.message),
+        type,
+      };
     }
   } catch {
-    return fallbackMessage;
+    return {
+      message: fallbackMessage,
+      type: null,
+    };
   }
 
-  return sanitizeExternalErrorMessage(fallbackMessage);
+  return {
+    message: sanitizeExternalErrorMessage(fallbackMessage),
+    type: null,
+  };
 }
 
-function isRetryableStatus(status: number): boolean {
-  return status === 429 || status >= 500;
+function isRetryableStatus(status: number, errorDetails: AnthropicErrorDetails): boolean {
+  if (status >= 500) {
+    return true;
+  }
+
+  if (status !== 429) {
+    return false;
+  }
+
+  return !isQuotaOrBillingError(errorDetails);
+}
+
+function isQuotaOrBillingError(errorDetails: AnthropicErrorDetails): boolean {
+  const type = errorDetails.type?.toLowerCase() ?? '';
+  const message = errorDetails.message.toLowerCase();
+
+  return (
+    type.includes('billing') ||
+    type.includes('quota') ||
+    type.includes('credit') ||
+    message.includes('insufficient quota') ||
+    message.includes('current quota') ||
+    message.includes('credit balance') ||
+    message.includes('insufficient credit') ||
+    message.includes('billing') ||
+    message.includes('spend limit')
+  );
 }
 
 function isRetryableError(error: unknown): boolean {
