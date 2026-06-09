@@ -203,6 +203,18 @@ describe('runPendingMigrations', () => {
     expect(sql).toContain('VALIDATE CONSTRAINT credit_ledger_type_check');
   });
 
+  it('credit ledger の金額符号はDB制約で型契約を守る', async () => {
+    const sql = await readFile(
+      join(process.cwd(), 'migrations', '012_add_credit_ledger_amount_sign_constraint.sql'),
+      'utf8',
+    );
+
+    expect(sql).toContain("(type = 'consume' AND amount < 0)");
+    expect(sql).toContain("type IN ('signup_bonus', 'monthly_grant', 'purchase', 'refund')");
+    expect(sql).toContain('AND amount > 0');
+    expect(sql).toContain('VALIDATE CONSTRAINT credit_ledger_amount_sign_check');
+  });
+
   it('story/page/entity UIパイプラインの状態値はDB制約で型契約を守る', async () => {
     const sql = await readFile(
       join(process.cwd(), 'migrations', '011_add_core_app_state_constraints.sql'),
