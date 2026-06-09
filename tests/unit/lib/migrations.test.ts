@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -171,5 +171,19 @@ describe('runPendingMigrations', () => {
       ].join('\n'),
     );
     expect(db.insertedFilenames).toEqual(['001_concurrent_index.sql']);
+  });
+
+  it('generation_jobs の状態列はDB制約で型契約を守る', async () => {
+    const sql = await readFile(
+      join(process.cwd(), 'migrations', '009_add_generation_job_state_constraints.sql'),
+      'utf8',
+    );
+
+    expect(sql).toContain("CHECK (job_type IN ('page_generate', 'entity_generate'))");
+    expect(sql).toContain("CHECK (status IN ('queued', 'processing', 'completed', 'failed'))");
+    expect(sql).toContain(
+      "CHECK (generation_mode IS NULL OR generation_mode IN ('standard', 'thinking'))",
+    );
+    expect(sql).toContain('VALIDATE CONSTRAINT generation_jobs_job_type_check');
   });
 });
