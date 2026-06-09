@@ -32,10 +32,17 @@ class FakeStorage implements ImageStorageMaintenancePort {
 }
 
 class FakeReferenceRepository implements ImageStorageReferenceRepository {
-  public constructor(private readonly protectedKeys: Set<string>) {}
+  public calls = 0;
+
+  public constructor(private readonly protectedKeys: Set<string> | Set<string>[]) {}
 
   public async findProtectedImageS3Keys(): Promise<Set<string>> {
-    return this.protectedKeys;
+    const keys =
+      Array.isArray(this.protectedKeys)
+        ? this.protectedKeys[Math.min(this.calls, this.protectedKeys.length - 1)]
+        : this.protectedKeys;
+    this.calls += 1;
+    return keys;
   }
 }
 
@@ -115,6 +122,36 @@ describe('ImageStoragePruningService', () => {
     expect(result.deleteCandidates).toEqual(['session/old-1.png', 'session/old-2.png']);
     expect(result.deleted).toEqual(['session/old-1.png']);
     expect(result.truncated).toBe(true);
+  });
+
+  it('apply rechecks protected keys before deleting to avoid removing newly referenced images', async () => {
+    const storage = new FakeStorage(
+      new Map([
+        [
+          'session/',
+          [{ key: 'session/old.png', lastModified: new Date('2026-06-01T00:00:00.000Z') }],
+        ],
+      ]),
+    );
+    const references = new FakeReferenceRepository([
+      new Set(),
+      new Set(['session/old.png']),
+    ]);
+    const service = new ImageStoragePruningService(storage, references);
+
+    const result = await service.prune({
+      prefixes: ['session/'],
+      olderThanHours: 24,
+      protectRecentCandidateHours: 48,
+      maxDeletes: 100,
+      dryRun: false,
+      now: new Date('2026-06-09T00:00:00.000Z'),
+    });
+
+    expect(result.deleteCandidates).toEqual(['session/old.png']);
+    expect(result.deleted).toEqual([]);
+    expect(storage.deleted).toEqual([]);
+    expect(references.calls).toBe(2);
   });
 
   it('stops scanning when maxScanned is reached', async () => {

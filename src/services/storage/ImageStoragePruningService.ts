@@ -118,7 +118,13 @@ export class ImageStoragePruningService {
     const deleted: string[] = [];
 
     if (!input.dryRun) {
+      const refreshedProtectedKeys = await this.referenceRepository.findProtectedImageS3Keys({
+        protectRecentCandidateHours: input.protectRecentCandidateHours,
+      });
       for (const key of keysToDelete) {
+        if (refreshedProtectedKeys.has(key)) {
+          continue;
+        }
         await this.storage.deleteObject(key);
         deleted.push(key);
       }
