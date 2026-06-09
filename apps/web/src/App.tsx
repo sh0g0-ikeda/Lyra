@@ -36,7 +36,6 @@ import {
   type CognitoSession,
 } from './lib/cognitoAuth';
 import type {
-  BalloonRecord,
   ChapterRecord,
   EntityRecord,
   EpisodeRecord,
@@ -215,26 +214,6 @@ interface PageSettingsDraft {
   story_continuity_note: string;
 }
 
-interface BalloonDraft {
-  speaker_entity_id: string;
-  balloon_type: 'speech' | 'thought' | 'narration' | 'shout' | 'whisper';
-  writing_mode: 'horizontal' | 'vertical';
-  text: string;
-  position_x: string;
-  position_y: string;
-  position_width: string;
-  position_height: string;
-  tail_enabled: boolean;
-  tail_base_x: string;
-  tail_base_y: string;
-  tail_tip_x: string;
-  tail_tip_y: string;
-  font_size: string;
-  font_family: BalloonRecord['font_family'];
-  panel_order_reference: string;
-  z_index: string;
-}
-
 interface PanelFrameDraft {
   id: string;
   panel_id: string;
@@ -315,7 +294,6 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   'Improved ending hook': '改善された終盤 / 引き',
   Frames: 'コマ割り',
   Panels: 'コマ',
-  Balloons: '吹き出し',
   'Page settings': 'ページ設定',
   'Dialogue mode': 'セリフの扱い',
   'Dialogue toggle': 'ページ全体でセリフを画像に含める',
@@ -338,9 +316,7 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   'Export selected': '選択ページを保存',
   'Export all': 'すべて保存',
   'Image baked': '画像にセリフを焼き込む',
-  'Balloon only': '吹き出しのみ',
   Mixed: '混在',
-  'Page autofill': 'ページ補完',
   Page: 'ページ',
   Export: '保存',
   'Generated preview': '生成プレビュー',
@@ -373,19 +349,6 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   X: 'X',
   Y: 'Y',
   'Save frame geometry': 'コマ形状を保存',
-  'Advanced balloon geometry': '吹き出し位置の詳細調整',
-  'Balloon X': '吹き出しX',
-  'Balloon Y': '吹き出しY',
-  'Balloon width': '吹き出し幅',
-  'Balloon height': '吹き出し高さ',
-  Tail: 'しっぽ',
-  'Use tail': 'しっぽを使う',
-  'Tail base X': 'しっぽ根元X',
-  'Tail base Y': 'しっぽ根元Y',
-  'Tail tip X': 'しっぽ先端X',
-  'Tail tip Y': 'しっぽ先端Y',
-  'Panel order ref': '対応コマ順',
-  'Z-index': '重なり順',
   Role: '役割',
   Size: 'サイズ',
   Situation: '状況',
@@ -459,7 +422,6 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   'Delete this reference image? This cannot be undone.': 'このリファレンス画像を削除しますか？この操作は元に戻せません。',
   'Delete this panel? This can break the frame/panel count until frames are adjusted.':
     'このコマを削除しますか？コマ割りを調整するまでフレーム数とコマ数が一致しなくなる場合があります。',
-  'Delete this balloon? This cannot be undone.': 'この吹き出しを削除しますか？この操作は元に戻せません。',
   'Use reference': '候補に含める',
   'Primary reference': 'メインにする',
   upload: 'アップロード',
@@ -474,8 +436,6 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   'Apply frame template': 'テンプレートを適用',
   'Create panel': 'コマを作成',
   'Save panel': 'コマを保存',
-  'Create balloon': '吹き出しを作成',
-  'Save balloon': '吹き出しを保存',
   'Save scene': 'シーンを保存',
   'Subscription plan': 'サブスクリプション',
   'Add 50 credits': '50クレジットを追加',
@@ -484,8 +444,6 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   entity_generate: 'キャラ生成',
   'Switch story context for page editing.': 'ページ編集対象の作品・章・話を選択します。',
   'Double-click image to enlarge': '画像はダブルクリックで拡大',
-  'Fill selected page': '選択中ページを補完',
-  'Use this after the story plan when a single page still needs refinement.': '話全体の反映後も1ページだけ補正したいときに使います。',
   'Loading current page plan.':
     '現在のページ骨格を読み込んでいます。',
   'Regenerating will replace the current pages for this episode.':
@@ -495,13 +453,6 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   Primary: 'メイン',
   Delete: '削除',
   'Generate full-body candidates': '全身候補を生成',
-  Auto: '自動配置',
-  'Speaker ID': '話者ID',
-  Balloon: '吹き出し種別',
-  Writing: '文字方向',
-  Text: '本文',
-  'Font size': '文字サイズ',
-  'Font family': 'フォント',
   Total: '合計',
   Monthly: '月次',
   Purchased: '購入分',
@@ -963,14 +914,14 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   'Magic link sent.': 'マジックリンクを送信しました。',
   'Supabase client is not configured.': 'Supabase クライアントが設定されていません。',
   'Production Console': '制作コンソール',
-  'Story, entity, page, balloon, billing.': 'ストーリー、キャラ、ページ、吹き出し、課金を管理します。',
+  'Story, entity, page, billing.': 'ストーリー、キャラ、ページ、課金を管理します。',
   'Processing. This task can take a while.': '処理中です。この処理には時間がかかる場合があります。',
   'Queued. This task will start soon and can take a while.': '待機中です。まもなく開始され、この処理には時間がかかる場合があります。',
   'Page skeleton generation can take a while, especially for long episodes.': 'ページ骨格生成は、話数やページ数が多いと時間がかかる場合があります。',
   'Story plan autofill can take a while while pages and panels are being distributed.': '話全体の反映は、ページ配分とコマ分割を行うため時間がかかる場合があります。',
   'Character preview generation can take a while. The preview updates when the job finishes.': 'キャラのプレビュー生成は時間がかかる場合があります。完了するとプレビューが更新されます。',
   'Page image generation can take a while. The page image updates when the job finishes.': 'ページ画像生成は時間がかかる場合があります。完了するとページ画像が更新されます。',
-  'Selected page autofill can take a while for dense scenes.': '選択ページの追加補完は、情報量の多いシーンだと時間がかかる場合があります。',
+  'You do not need to fill every blank field.': 'すべての空欄を埋める必要はありません。',
 };
 
 function normalizeUiLanguage(value: string): UiLanguage {
@@ -1288,7 +1239,7 @@ function AuthScreen(props: {
       <div className="auth-card">
         <div className="eyebrow">Lyra</div>
         <h1>{translateUiString(language, 'Production Console')}</h1>
-        <p className="muted">{translateUiString(language, 'Story, entity, page, balloon, billing.')}</p>
+        <p className="muted">{translateUiString(language, 'Story, entity, page, billing.')}</p>
         {visibleNotice !== null ? <NoticeBanner notice={visibleNotice} /> : null}
         {props.cognitoAuthConfig !== null ? (
           <div className="stack">
@@ -1381,8 +1332,6 @@ function StudioShell(props: {
   const [panelDraft, setPanelDraft] = useState<PanelDraft>(createEmptyPanelDraft());
   const [selectedPanelId, setSelectedPanelId] = useState('');
   const [panelEntityToAddId, setPanelEntityToAddId] = useState('');
-  const [balloonDraft, setBalloonDraft] = useState<BalloonDraft>(createEmptyBalloonDraft());
-  const [selectedBalloonId, setSelectedBalloonId] = useState('');
   const [frameTemplateId, setFrameTemplateId] = useState('standard_4');
   const [frameDrafts, setFrameDrafts] = useState<PanelFrameDraft[]>([]);
   const [importingImage, setImportingImage] = useState(false);
@@ -1497,13 +1446,6 @@ function StudioShell(props: {
   });
   const frames = useMemo(() => framesQuery.data?.frames ?? [], [framesQuery.data?.frames]);
 
-  const balloonsQuery = useQuery({
-    queryKey: ['balloons', selectedPage?.id ?? ''],
-    queryFn: () => api.getBalloons(selectedPage?.id ?? ''),
-    enabled: selectedPage !== null,
-  });
-  const balloons = useMemo(() => balloonsQuery.data?.balloons ?? [], [balloonsQuery.data?.balloons]);
-  const selectedBalloon = balloons.find((balloon) => balloon.id === selectedBalloonId) ?? balloons[0] ?? null;
   const generatedPages = useMemo(
     () => pages.filter((page) => page.generated_image !== null),
     [pages],
@@ -1552,8 +1494,6 @@ function StudioShell(props: {
     busyAction === 'Apply story plan'
       ? 'Story plan autofill can take a while while pages and panels are being distributed.'
       : null;
-  const selectedPageAutofillMessage =
-    busyAction === 'Fill selected page' ? 'Selected page autofill can take a while for dense scenes.' : null;
   const selectedPageFrameCount = framesQuery.data?.frames.length ?? selectedPage?.frame_count ?? 0;
   const selectedPagePanelCount = panelsQuery.data?.panels.length ?? selectedPage?.panel_count ?? 0;
   const selectedPageHasFramePanelMismatch =
@@ -1626,12 +1566,6 @@ function StudioShell(props: {
       setSelectedPanelId(panels[0]?.id ?? '');
     }
   }, [panels, selectedPanelId]);
-
-  useEffect(() => {
-    if (!balloons.some((balloon) => balloon.id === selectedBalloonId)) {
-      setSelectedBalloonId(balloons[0]?.id ?? '');
-    }
-  }, [balloons, selectedBalloonId]);
 
   useEffect(() => {
     if (selectedPage !== null) {
@@ -1720,12 +1654,6 @@ function StudioShell(props: {
   }, [availablePanelEntities, panelEntityToAddId]);
 
   useEffect(() => {
-    if (selectedBalloon !== null) {
-      setBalloonDraft(toBalloonDraft(selectedBalloon));
-    }
-  }, [selectedBalloon]);
-
-  useEffect(() => {
     setFrameDrafts(frames.map(toPanelFrameDraft));
   }, [frames]);
 
@@ -1744,7 +1672,6 @@ function StudioShell(props: {
           if (pageId !== null) {
             void queryClient.invalidateQueries({ queryKey: ['panels', pageId] });
             void queryClient.invalidateQueries({ queryKey: ['frames', pageId] });
-            void queryClient.invalidateQueries({ queryKey: ['balloons', pageId] });
           }
 
           void queryClient.invalidateQueries({ queryKey: ['pages'] });
@@ -2227,7 +2154,6 @@ function StudioShell(props: {
                               await saveCurrentEpisodeContext();
                               setSelectedPageId('');
                               setSelectedPanelId('');
-                              setSelectedBalloonId('');
                               await api.generatePageSkeleton(selectedEpisode.id, {
                                 overwrite_existing: overwriteExisting,
                                 language: uiLanguage,
@@ -2911,6 +2837,7 @@ function StudioShell(props: {
                       </div>
                     }
                   >
+                    <div className="muted small">{translateUiString(uiLanguage, 'You do not need to fill every blank field.')}</div>
                     <div className="form-grid two">
                       <SelectField
                         label="Type"
@@ -3254,8 +3181,8 @@ function StudioShell(props: {
                           <div className="page-meta-list">
                             <span>
                               {uiLanguage === 'ja'
-                                ? `フレーム ${page.frame_count} / コマ ${page.panel_count} / 吹き出し ${page.balloon_count}`
-                                : `frames ${page.frame_count} / panels ${page.panel_count} / balloons ${page.balloon_count}`}
+                                ? `フレーム ${page.frame_count} / コマ ${page.panel_count}`
+                                : `frames ${page.frame_count} / panels ${page.panel_count}`}
                             </span>
                             <span>{translateUiString(uiLanguage, 'Double-click image to enlarge')}</span>
                           </div>
@@ -3288,7 +3215,6 @@ function StudioShell(props: {
                             onChange={(value) => setPageSettingsDraft((current) => ({ ...current, dialogue_mode: value as PageSettingsDraft['dialogue_mode'] }))}
                             options={[
                               ['image_baked', 'Image baked'],
-                              ['balloon_only', 'Balloon only'],
                               ['mixed', 'Mixed'],
                             ]}
                           />
@@ -3375,8 +3301,8 @@ function StudioShell(props: {
                         title={`Page ${selectedPage.page_number}`}
                         subtitle={
                           uiLanguage === 'ja'
-                            ? `セリフ ${translateUiString(uiLanguage, selectedPage.dialogue_mode === 'image_baked' ? 'Image baked' : selectedPage.dialogue_mode === 'balloon_only' ? 'Balloon only' : 'Mixed')}`
-                            : `dialogue ${selectedPage.dialogue_mode}`
+                            ? `セリフ ${translateUiString(uiLanguage, selectedPage.dialogue_mode === 'image_baked' ? 'Image baked' : 'Mixed')}`
+                            : `dialogue ${selectedPage.dialogue_mode === 'image_baked' ? 'image_baked' : 'mixed'}`
                         }
                         className="page-section-generate"
                         collapsible
@@ -3451,15 +3377,6 @@ function StudioShell(props: {
                               placeholderClassName="page-placeholder generated-image"
                               queryKey={['page-image', selectedPage.id, selectedPage.generated_image.generated_at]}
                             />
-                            {balloons.map((balloon) => (
-                              <div
-                                key={balloon.id}
-                                className={`balloon-overlay ${selectedBalloon?.id === balloon.id ? 'active' : ''}`}
-                                style={toBalloonStyle(balloon)}
-                              >
-                                <span>{balloon.text}</span>
-                              </div>
-                            ))}
                           </div>
                         ) : null}
                       </PanelSection>
@@ -3618,6 +3535,7 @@ function StudioShell(props: {
                       </PanelSection>
 
                       <PanelSection title="Panels" collapsible>
+                        <div className="muted small">{translateUiString(uiLanguage, 'You do not need to fill every blank field.')}</div>
                         <div className="list-grid">
                           {panels.map((panel) => (
                             <button
@@ -3848,263 +3766,6 @@ function StudioShell(props: {
                         </div>
                       </PanelSection>
 
-                      <PanelSection title="Page autofill" className="page-section-autofill" compact collapsible defaultCollapsed actions={
-                        <button
-                          className="ghost-button"
-                          onClick={() =>
-                            void runAction('Fill selected page', async () => {
-                              await api.autofillPageFromScenes(selectedPage.id, uiLanguage);
-                              await queryClient.invalidateQueries({ queryKey: ['panels', selectedPage.id] });
-                            })
-                          }
-                          type="button"
-                        >
-                          <Wand2 size={16} />
-                          {translateUiString(uiLanguage, 'Fill selected page')}
-                        </button>
-                      }>
-                        <div className="muted small">{translateUiString(uiLanguage, 'Use this after the story plan when a single page still needs refinement.')}</div>
-                        {selectedPageAutofillMessage !== null ? (
-                          <ProcessingHint message={translateUiString(uiLanguage, selectedPageAutofillMessage)} />
-                        ) : null}
-                      </PanelSection>
-
-                      <PanelSection
-                        title="Balloons"
-                        className="page-section-balloons"
-                        collapsible
-                        defaultCollapsed
-                        actions={
-                          <button
-                            className="ghost-button"
-                            onClick={() =>
-                              void runAction('Auto balloons', async () => {
-                                await api.autoBalloons(selectedPage.id);
-                                await queryClient.invalidateQueries({ queryKey: ['balloons', selectedPage.id] });
-                              })
-                            }
-                            type="button"
-                          >
-                            <Sparkles size={16} />
-                            {translateUiString(uiLanguage, 'Auto')}
-                          </button>
-                        }
-                      >
-                        <div className="list-grid">
-                          {balloons.map((balloon) => (
-                            <button
-                              key={balloon.id}
-                              className={`mini-card ${selectedBalloon?.id === balloon.id ? 'active' : ''}`}
-                              onClick={() => setSelectedBalloonId(balloon.id)}
-                              type="button"
-                            >
-                              <strong>{balloon.balloon_type}</strong>
-                              <span>{balloon.text.slice(0, 32)}</span>
-                            </button>
-                          ))}
-                        </div>
-                        <div className="form-grid three">
-                          <InputField label="Speaker ID" value={balloonDraft.speaker_entity_id} onChange={(value) => setBalloonDraft({ ...balloonDraft, speaker_entity_id: value })} />
-                          <SelectField
-                            label="Balloon"
-                            value={balloonDraft.balloon_type}
-                            onChange={(value) => setBalloonDraft({ ...balloonDraft, balloon_type: value as BalloonDraft['balloon_type'] })}
-                            options={[
-                              ['speech', 'Speech'],
-                              ['thought', 'Thought'],
-                              ['narration', 'Narration'],
-                              ['shout', 'Shout'],
-                              ['whisper', 'Whisper'],
-                            ]}
-                          />
-                          <SelectField
-                            label="Writing"
-                            value={balloonDraft.writing_mode}
-                            onChange={(value) => setBalloonDraft({ ...balloonDraft, writing_mode: value as BalloonDraft['writing_mode'] })}
-                            options={[
-                              ['horizontal', 'Horizontal'],
-                              ['vertical', 'Vertical'],
-                            ]}
-                          />
-                        </div>
-                        <TextAreaField label="Text" rows={3} value={balloonDraft.text} onChange={(value) => setBalloonDraft({ ...balloonDraft, text: value })} />
-                        <div className="form-grid two">
-                          <InputField
-                            label="Font size"
-                            value={balloonDraft.font_size}
-                            onChange={(value) => setBalloonDraft({ ...balloonDraft, font_size: value })}
-                            type="number"
-                            min={8}
-                            max={72}
-                          />
-                          <SelectField
-                            label="Font family"
-                            value={balloonDraft.font_family}
-                            onChange={(value) =>
-                              setBalloonDraft({
-                                ...balloonDraft,
-                                font_family: value as BalloonRecord['font_family'],
-                              })
-                            }
-                            options={BALLOON_FONT_FAMILY_OPTIONS}
-                          />
-                        </div>
-                        <details className="advanced-disclosure">
-                          <summary>{translateUiString(uiLanguage, 'Advanced balloon geometry')}</summary>
-                          <div className="form-grid four">
-                            <InputField
-                              label="Balloon X"
-                              value={balloonDraft.position_x}
-                              onChange={(value) => setBalloonDraft({ ...balloonDraft, position_x: value })}
-                              type="number"
-                              min={0}
-                              max={1}
-                              step={0.01}
-                            />
-                            <InputField
-                              label="Balloon Y"
-                              value={balloonDraft.position_y}
-                              onChange={(value) => setBalloonDraft({ ...balloonDraft, position_y: value })}
-                              type="number"
-                              min={0}
-                              max={1}
-                              step={0.01}
-                            />
-                            <InputField
-                              label="Balloon width"
-                              value={balloonDraft.position_width}
-                              onChange={(value) => setBalloonDraft({ ...balloonDraft, position_width: value })}
-                              type="number"
-                              min={0.01}
-                              max={1}
-                              step={0.01}
-                            />
-                            <InputField
-                              label="Balloon height"
-                              value={balloonDraft.position_height}
-                              onChange={(value) => setBalloonDraft({ ...balloonDraft, position_height: value })}
-                              type="number"
-                              min={0.01}
-                              max={1}
-                              step={0.01}
-                            />
-                          </div>
-                          <label className="inline-toggle">
-                            <input
-                              checked={balloonDraft.tail_enabled}
-                              onChange={(event) => setBalloonDraft({ ...balloonDraft, tail_enabled: event.target.checked })}
-                              type="checkbox"
-                            />
-                            <span>{translateUiString(uiLanguage, 'Use tail')}</span>
-                          </label>
-                          {balloonDraft.tail_enabled ? (
-                            <div className="form-grid four">
-                              <InputField
-                                label="Tail base X"
-                                value={balloonDraft.tail_base_x}
-                                onChange={(value) => setBalloonDraft({ ...balloonDraft, tail_base_x: value })}
-                                type="number"
-                                min={0}
-                                max={1}
-                                step={0.01}
-                              />
-                              <InputField
-                                label="Tail base Y"
-                                value={balloonDraft.tail_base_y}
-                                onChange={(value) => setBalloonDraft({ ...balloonDraft, tail_base_y: value })}
-                                type="number"
-                                min={0}
-                                max={1}
-                                step={0.01}
-                              />
-                              <InputField
-                                label="Tail tip X"
-                                value={balloonDraft.tail_tip_x}
-                                onChange={(value) => setBalloonDraft({ ...balloonDraft, tail_tip_x: value })}
-                                type="number"
-                                min={0}
-                                max={1}
-                                step={0.01}
-                              />
-                              <InputField
-                                label="Tail tip Y"
-                                value={balloonDraft.tail_tip_y}
-                                onChange={(value) => setBalloonDraft({ ...balloonDraft, tail_tip_y: value })}
-                                type="number"
-                                min={0}
-                                max={1}
-                                step={0.01}
-                              />
-                            </div>
-                          ) : null}
-                          <div className="form-grid two">
-                            <InputField
-                              label="Panel order ref"
-                              value={balloonDraft.panel_order_reference}
-                              onChange={(value) => setBalloonDraft({ ...balloonDraft, panel_order_reference: value })}
-                              type="number"
-                              min={1}
-                              max={99}
-                            />
-                            <InputField
-                              label="Z-index"
-                              value={balloonDraft.z_index}
-                              onChange={(value) => setBalloonDraft({ ...balloonDraft, z_index: value })}
-                              type="number"
-                              min={1}
-                              max={100}
-                            />
-                          </div>
-                        </details>
-                        <div className="toolbar">
-                          <button
-                            className="secondary-button"
-                            onClick={() =>
-                              void runAction('Create balloon', async () => {
-                                await api.createBalloon(selectedPage.id, toBalloonPayload(balloonDraft));
-                                await queryClient.invalidateQueries({ queryKey: ['balloons', selectedPage.id] });
-                              })
-                            }
-                            type="button"
-                          >
-                            <Save size={16} />
-                            {translateUiString(uiLanguage, 'Create')}
-                          </button>
-                          {selectedBalloon !== null ? (
-                            <>
-                              <button
-                                className="ghost-button"
-                                onClick={() =>
-                                  void runAction('Save balloon', async () => {
-                                    await api.updateBalloon(selectedBalloon.id, toBalloonPayload(balloonDraft));
-                                    await queryClient.invalidateQueries({ queryKey: ['balloons', selectedPage.id] });
-                                  })
-                                }
-                                type="button"
-                              >
-                                <Save size={16} />
-                                {translateUiString(uiLanguage, 'Save balloon')}
-                              </button>
-                              <button
-                                className="ghost-button danger"
-                                onClick={() => {
-                                  if (!confirmUiAction('Delete this balloon? This cannot be undone.')) {
-                                    return;
-                                  }
-
-                                  void runAction('Delete balloon', async () => {
-                                    await api.deleteBalloon(selectedBalloon.id);
-                                    await queryClient.invalidateQueries({ queryKey: ['balloons', selectedPage.id] });
-                                  });
-                                }}
-                                type="button"
-                              >
-                                <Trash2 size={16} />
-                              </button>
-                            </>
-                          ) : null}
-                        </div>
-                      </PanelSection>
                     </>
                   ) : null}
                   </div>
@@ -5166,29 +4827,6 @@ function toPanelDraft(panel: PanelRecord): PanelDraft {
   };
 }
 
-function toBalloonDraft(balloon: BalloonRecord): BalloonDraft {
-  const tail = balloon.tail;
-  return {
-    speaker_entity_id: balloon.speaker_entity_id ?? '',
-    balloon_type: balloon.balloon_type,
-    writing_mode: balloon.writing_mode,
-    text: balloon.text,
-    position_x: formatUnitInput(balloon.position.x),
-    position_y: formatUnitInput(balloon.position.y),
-    position_width: formatUnitInput(balloon.position.width),
-    position_height: formatUnitInput(balloon.position.height),
-    tail_enabled: tail !== null,
-    tail_base_x: formatUnitInput(tail?.base_x ?? balloon.position.x + balloon.position.width / 2),
-    tail_base_y: formatUnitInput(tail?.base_y ?? balloon.position.y + balloon.position.height),
-    tail_tip_x: formatUnitInput(tail?.tip_x ?? balloon.position.x + balloon.position.width / 2),
-    tail_tip_y: formatUnitInput(tail?.tip_y ?? balloon.position.y + balloon.position.height + 0.08),
-    font_size: String(balloon.font_size),
-    font_family: balloon.font_family,
-    panel_order_reference: balloon.panel_order_reference === null ? '' : String(balloon.panel_order_reference),
-    z_index: String(balloon.z_index),
-  };
-}
-
 function toPanelFrameDraft(frame: PanelFrameRecord): PanelFrameDraft {
   const vertices = frame.vertices.slice(0, 4).map((vertex) => ({
     x: String(vertex.x),
@@ -5633,36 +5271,6 @@ function toPanelAssignmentsPayload(draft: PanelDraft): Record<string, unknown> {
   };
 }
 
-function toBalloonPayload(draft: BalloonDraft): Record<string, unknown> {
-  return {
-    speaker_entity_id: nullableString(draft.speaker_entity_id),
-    balloon_type: draft.balloon_type,
-    writing_mode: draft.writing_mode,
-    text: draft.text,
-    position: {
-      x: parseBoundedNumberInput(draft.position_x, 'position x', 0, 1),
-      y: parseBoundedNumberInput(draft.position_y, 'position y', 0, 1),
-      width: parsePositiveMaxNumberInput(draft.position_width, 'position width', 1),
-      height: parsePositiveMaxNumberInput(draft.position_height, 'position height', 1),
-    },
-    tail: draft.tail_enabled
-      ? {
-          base_x: parseBoundedNumberInput(draft.tail_base_x, 'tail base x', 0, 1),
-          base_y: parseBoundedNumberInput(draft.tail_base_y, 'tail base y', 0, 1),
-          tip_x: parseBoundedNumberInput(draft.tail_tip_x, 'tail tip x', 0, 1),
-          tip_y: parseBoundedNumberInput(draft.tail_tip_y, 'tail tip y', 0, 1),
-        }
-      : null,
-    font_size: parseIntegerInRangeInput(draft.font_size, 'font size', 8, 72),
-    font_family: draft.font_family,
-    panel_order_reference:
-      draft.panel_order_reference.trim().length === 0
-        ? null
-        : parseIntegerInRangeInput(draft.panel_order_reference, 'panel order reference', 1, 99),
-    z_index: parseIntegerInRangeInput(draft.z_index, 'z-index', 1, 100),
-  };
-}
-
 function toPanelFramePayload(draft: PanelFrameDraft): Record<string, unknown> {
   const borderColor = draft.border_color.trim();
   if (!/^#[0-9A-Fa-f]{6}$/.test(borderColor)) {
@@ -5761,7 +5369,7 @@ function toPageSettingsDraft(page: PageRecord): PageSettingsDraft {
   const layoutConfig = toRecord(page.layout_config);
   const styleReference = toRecord(layoutConfig.style_reference);
   return {
-    dialogue_mode: page.dialogue_mode,
+    dialogue_mode: page.dialogue_mode === 'balloon_only' ? 'mixed' : page.dialogue_mode,
     page_dialogue_toggle: page.page_dialogue_toggle,
     style_reference_title: readString(styleReference.title),
     style_reference_notes: readString(styleReference.notes),
@@ -6691,13 +6299,6 @@ const FRAME_BORDER_STYLE_OPTIONS: Array<[PanelFrameRecord['border_style'], strin
   ['dashed', 'Dashed'],
   ['none', 'None'],
 ];
-const BALLOON_FONT_FAMILY_OPTIONS: Array<[BalloonRecord['font_family'], string]> = [
-  ['manga_gothic', 'Manga gothic'],
-  ['mincho', 'Mincho font'],
-  ['rounded', 'Rounded font'],
-  ['bold', 'Bold font'],
-];
-
 function createEmptySceneDraft(): SceneDraft {
   return {
     order: '1',
@@ -6745,37 +6346,6 @@ function createEmptyPanelAssignmentDraft(entityId: string): PanelAssignmentDraft
   };
 }
 
-function createEmptyBalloonDraft(): BalloonDraft {
-  return {
-    speaker_entity_id: '',
-    balloon_type: 'speech',
-    writing_mode: 'horizontal',
-    text: '',
-    position_x: '0.10',
-    position_y: '0.10',
-    position_width: '0.22',
-    position_height: '0.18',
-    tail_enabled: false,
-    tail_base_x: '0.21',
-    tail_base_y: '0.28',
-    tail_tip_x: '0.28',
-    tail_tip_y: '0.38',
-    font_size: '18',
-    font_family: 'manga_gothic',
-    panel_order_reference: '',
-    z_index: '10',
-  };
-}
-
-function toBalloonStyle(balloon: BalloonRecord): Record<string, string> {
-  return {
-    left: toBalloonCssPercent(balloon.position.x),
-    top: toBalloonCssPercent(balloon.position.y),
-    width: toBalloonCssPercent(balloon.position.width),
-    height: toBalloonCssPercent(balloon.position.height),
-  };
-}
-
 function parseTrackedJobIds(value: string): string[] {
   try {
     const parsed = JSON.parse(value) as unknown;
@@ -6818,24 +6388,6 @@ function parseIntegerInRangeInput(value: string, label: string, min: number, max
   }
 
   return parsed;
-}
-
-function parsePositiveMaxNumberInput(value: string, label: string, max: number): number {
-  const parsed = parseNumberInput(value, label);
-  if (parsed <= 0 || parsed > max) {
-    throw new Error(`${label} must be greater than 0 and at most ${max}`);
-  }
-
-  return parsed;
-}
-
-function formatUnitInput(value: number): string {
-  const normalized = value > 1 ? value / 100 : value;
-  return Number.isFinite(normalized) ? String(Number(normalized.toFixed(4))) : '0';
-}
-
-function toBalloonCssPercent(value: number): string {
-  return `${value > 1 ? value : value * 100}%`;
 }
 
 function splitCsv(value: string): string[] {
