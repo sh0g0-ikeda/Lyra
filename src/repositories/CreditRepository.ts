@@ -23,6 +23,12 @@ export interface CreditRepository {
     jobId: string,
     client: DatabaseClient,
   ): Promise<number>;
+  sumJobLedgerAmount(
+    userId: string,
+    type: CreditLedgerType,
+    jobId: string,
+    client: DatabaseClient,
+  ): Promise<number>;
   insertLedger(entry: CreditLedgerEntry, client: DatabaseClient): Promise<void>;
 }
 
@@ -141,6 +147,26 @@ export class PostgresCreditRepository implements CreditRepository {
     );
 
     return Number(result.rows[0]?.count ?? '0');
+  }
+
+  public async sumJobLedgerAmount(
+    userId: string,
+    type: CreditLedgerType,
+    jobId: string,
+    client: DatabaseClient,
+  ): Promise<number> {
+    const result = await client.query<{ amount: string }>(
+      `
+      SELECT COALESCE(SUM(amount), 0)::text AS amount
+      FROM credit_ledger
+      WHERE user_id = $1
+        AND type = $2
+        AND job_id = $3
+      `,
+      [userId, type, jobId],
+    );
+
+    return Number(result.rows[0]?.amount ?? '0');
   }
 
   public async insertLedger(entry: CreditLedgerEntry, client: DatabaseClient): Promise<void> {

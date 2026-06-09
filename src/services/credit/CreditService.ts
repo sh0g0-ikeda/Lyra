@@ -124,27 +124,32 @@ export class CreditService implements CreditServicePort {
       const currentBalance =
         (await this.creditRepository.getBalanceForUpdate(params.userId, client)) ?? emptyBalance(params.userId);
 
+      let refundAmount = params.amount;
       if (params.jobId !== undefined) {
-        const consumeCount = await this.creditRepository.countJobLedgerEntries(
+        // Job-scoped refunds must never exceed the credits actually consumed by that job.
+        const consumedLedgerAmount = await this.creditRepository.sumJobLedgerAmount(
           params.userId,
           'consume',
           params.jobId,
           client,
         );
-        const refundCount = await this.creditRepository.countJobLedgerEntries(
+        const consumedAmount = Math.abs(consumedLedgerAmount);
+        const refundedAmount = await this.creditRepository.sumJobLedgerAmount(
           params.userId,
           'refund',
           params.jobId,
           client,
         );
-        if (refundCount > 0 && refundCount >= consumeCount) {
+        const refundableAmount = consumedAmount - refundedAmount;
+        if (refundableAmount <= 0) {
           return toSnapshot(currentBalance);
         }
+        refundAmount = Math.min(params.amount, refundableAmount);
       }
 
       const nextBalance: CreditBalance = {
         ...currentBalance,
-        purchasedCredits: currentBalance.purchasedCredits + params.amount,
+        purchasedCredits: currentBalance.purchasedCredits + refundAmount,
       };
 
       const savedBalance =
@@ -158,7 +163,7 @@ export class CreditService implements CreditServicePort {
         {
           userId: params.userId,
           type: 'refund',
-          amount: params.amount,
+          amount: refundAmount,
           monthlyAfter: savedBalance.monthlyCredits,
           purchasedAfter: savedBalance.purchasedCredits,
           description: params.description,

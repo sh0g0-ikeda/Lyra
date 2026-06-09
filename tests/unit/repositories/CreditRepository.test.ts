@@ -31,6 +31,16 @@ class QueryCapturingClient implements DatabaseClient {
       };
     }
 
+    if (text.includes('COALESCE(SUM(amount), 0)')) {
+      return {
+        command: 'SELECT',
+        rowCount: 1,
+        oid: 0,
+        fields: [],
+        rows: [{ amount: '15' }] as unknown as T[],
+      };
+    }
+
     return {
       command: 'INSERT',
       rowCount: 1,
@@ -92,5 +102,20 @@ describe('PostgresCreditRepository', () => {
     expect(client.queries[0]).toContain('type = $2');
     expect(client.queries[0]).toContain('job_id = $3');
     expect(client.valuesList[0]).toEqual(['user-1', 'refund', 'job-1']);
+  });
+
+  it('指定ユーザー・種別・jobIdで台帳金額合計を確認する', async () => {
+    const client = new QueryCapturingClient();
+    const repository = new PostgresCreditRepository(client, new PassthroughTransactionRunner());
+
+    const amount = await repository.sumJobLedgerAmount('user-1', 'consume', 'job-1', client);
+
+    expect(amount).toBe(15);
+    expect(client.queries[0]).toContain('FROM credit_ledger');
+    expect(client.queries[0]).toContain('COALESCE(SUM(amount), 0)');
+    expect(client.queries[0]).toContain('user_id = $1');
+    expect(client.queries[0]).toContain('type = $2');
+    expect(client.queries[0]).toContain('job_id = $3');
+    expect(client.valuesList[0]).toEqual(['user-1', 'consume', 'job-1']);
   });
 });
