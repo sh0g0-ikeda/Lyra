@@ -296,7 +296,7 @@ function buildStoredEpisodePromptSection(
     return 'Current stored episode: same as current editable draft.';
   }
 
-  return `Current stored episode:\n${formatEpisodeDraftFields(storedDraft)}`;
+  return `Current stored episode:\n${formatEpisodeDraftFields(storedDraft, STORED_EPISODE_DRAFT_PROMPT_LIMITS)}`;
 }
 
 function formatTargetSummary(target: StoryCollaborationTarget): string {
@@ -346,17 +346,45 @@ function formatTargetSummary(target: StoryCollaborationTarget): string {
   return lines.join('\n');
 }
 
-function formatEpisodeDraftFields(draft: StoryEpisodeDraftFields): string {
+interface EpisodeDraftPromptLimits {
+  title: number;
+  purpose: number;
+  storyFullDraft: number;
+  body: number;
+}
+
+const EDITABLE_EPISODE_DRAFT_PROMPT_LIMITS: EpisodeDraftPromptLimits = {
+  title: 200,
+  purpose: 2000,
+  storyFullDraft: 8000,
+  body: 2000,
+} as const;
+
+const STORED_EPISODE_DRAFT_PROMPT_LIMITS: EpisodeDraftPromptLimits = {
+  title: 200,
+  purpose: STORY_PROMPT_CONTEXT_LIMITS.generalFieldChars,
+  storyFullDraft: STORY_PROMPT_CONTEXT_LIMITS.generalFieldChars * 2,
+  body: STORY_PROMPT_CONTEXT_LIMITS.generalFieldChars,
+} as const;
+
+function formatEpisodeDraftFields(
+  draft: StoryEpisodeDraftFields,
+  limits = EDITABLE_EPISODE_DRAFT_PROMPT_LIMITS,
+): string {
   return [
-    `Title: ${draft.title ?? '(none)'}`,
-    `Purpose: ${draft.purpose ?? '(none)'}`,
+    `Title: ${compactDraftField(draft.title, limits.title)}`,
+    `Purpose: ${compactDraftField(draft.purpose, limits.purpose)}`,
     `Story input mode: ${draft.storyInputMode}`,
-    `Full story draft: ${draft.storyFullDraft ?? '(none)'}`,
-    `Introduction: ${draft.introduction ?? '(none)'}`,
-    `Middle: ${draft.middle ?? '(none)'}`,
-    `Climax: ${draft.climax ?? '(none)'}`,
-    `Ending hook: ${draft.endingHook ?? '(none)'}`,
+    `Full story draft: ${compactDraftField(draft.storyFullDraft, limits.storyFullDraft)}`,
+    `Introduction: ${compactDraftField(draft.introduction, limits.body)}`,
+    `Middle: ${compactDraftField(draft.middle, limits.body)}`,
+    `Climax: ${compactDraftField(draft.climax, limits.body)}`,
+    `Ending hook: ${compactDraftField(draft.endingHook, limits.body)}`,
   ].join('\n');
+}
+
+function compactDraftField(value: string | null, maxLength: number): string {
+  return compactStoryPromptText(value, maxLength) ?? '(none)';
 }
 
 function episodeDraftsHaveSameEditableContent(

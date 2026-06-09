@@ -521,6 +521,40 @@ describe('StoryCollaborationService', () => {
     expect(client.lastRequest?.userPrompt).not.toContain('Current stored episode:\nTitle: Episode 1');
   });
 
+  it('compacts differing stored episode body before sending it to the writer', async () => {
+    const repository = new FakeStoryRepository();
+    const longStoredIntro = 'stored-introduction-detail '.repeat(200).trim();
+    repository.findEpisodeImprovementContextByIdAndUserId = async () => ({
+      ...repository.improvementContext,
+      introduction: longStoredIntro,
+      middle: 'Different stored middle',
+      climax: 'Different stored climax',
+      endingHook: 'Different stored hook',
+    });
+    const client = new FakeStoryAiClient();
+    const service = new StoryCollaborationService(repository, client);
+
+    await service.improveEpisodeDraft('user-1', {
+      episodeId: '33333333-3333-4333-8333-333333333333',
+      instruction: 'Tighten the current draft.',
+      language: 'ja',
+      baseDraft: {
+        title: 'Editable title',
+        purpose: 'Editable purpose',
+        storyInputMode: 'structured',
+        storyFullDraft: null,
+        introduction: 'Editable intro',
+        middle: 'Editable middle',
+        climax: 'Editable climax',
+        endingHook: 'Editable hook',
+      },
+    });
+
+    expect(client.lastRequest?.userPrompt).toContain('Current stored episode:');
+    expect(client.lastRequest?.userPrompt).toContain('stored-introduction-detail');
+    expect(client.lastRequest?.userPrompt).not.toContain(longStoredIntro);
+  });
+
   it('retries the final writer once when the audit requests revision', async () => {
     const repository = new FakeStoryRepository();
     const client = new FakeStoryAiClient();
