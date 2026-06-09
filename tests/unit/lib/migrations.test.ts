@@ -202,4 +202,26 @@ describe('runPendingMigrations', () => {
     expect(sql).toContain('CHECK (amount_jpy >= 0)');
     expect(sql).toContain('VALIDATE CONSTRAINT credit_ledger_type_check');
   });
+
+  it('story/page/entity UIパイプラインの状態値はDB制約で型契約を守る', async () => {
+    const sql = await readFile(
+      join(process.cwd(), 'migrations', '011_add_core_app_state_constraints.sql'),
+      'utf8',
+    );
+
+    expect(sql).toContain("CHECK (status IN ('draft', 'reviewing', 'ready'))");
+    expect(sql).toContain("CHECK (status IN ('draft', 'ready'))");
+    expect(sql).toContain("CHECK (status IN ('empty', 'partial', 'ready'))");
+    expect(sql).toContain(
+      "CHECK (status IN ('designing', 'generating', 'generated', 'editing', 'confirmed'))",
+    );
+    expect(sql).toContain("CHECK (dialogue_mode IN ('image_baked', 'balloon_only', 'mixed'))");
+    expect(sql).toContain(
+      "CHECK (panel_role IS NULL OR panel_role IN ('establish', 'action', 'reaction', 'emphasis', 'transition', 'pause', 'impact'))",
+    );
+    expect(sql).toContain(
+      "CHECK (balloon_type IN ('speech', 'thought', 'narration', 'shout', 'whisper', 'sfx', 'caption'))",
+    );
+    expect(sql).toContain('VALIDATE CONSTRAINT pages_status_check');
+  });
 });
