@@ -29,7 +29,7 @@ export class StripeWebhookService implements StripeWebhookServicePort {
   ) {}
 
   public async handleWebhook(rawBody: Buffer, signature: string): Promise<void> {
-    const event = this.stripeClient.constructWebhookEvent(rawBody, signature);
+    const event = this.constructVerifiedWebhookEvent(rawBody, signature);
 
     if (await this.billingRepository.hasStripeEventProcessed(event.id)) {
       return;
@@ -59,6 +59,14 @@ export class StripeWebhookService implements StripeWebhookServicePort {
         await this.billingRepository.transaction(async (client) => {
           await this.billingRepository.markStripeEventProcessed(event.id, event.type, client);
         });
+    }
+  }
+
+  private constructVerifiedWebhookEvent(rawBody: Buffer, signature: string): Stripe.Event {
+    try {
+      return this.stripeClient.constructWebhookEvent(rawBody, signature);
+    } catch {
+      throw new ValidationError('Stripe webhook signature verification failed');
     }
   }
 

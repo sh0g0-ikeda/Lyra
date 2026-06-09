@@ -210,6 +210,7 @@ function planRank(planCode: SubscriptionPlanCode): number {
 class FakeStripeBillingClient implements StripeBillingClientPort {
   public event: Stripe.Event = buildCheckoutSubscriptionEvent();
   public subscription: Stripe.Subscription = buildSubscription();
+  public constructError: Error | null = null;
   public retrieveSubscriptionCalls = 0;
 
   public async createCustomer(): Promise<never> {
@@ -225,6 +226,10 @@ class FakeStripeBillingClient implements StripeBillingClientPort {
   }
 
   public constructWebhookEvent(): Stripe.Event {
+    if (this.constructError !== null) {
+      throw this.constructError;
+    }
+
     return this.event;
   }
 
@@ -235,6 +240,22 @@ class FakeStripeBillingClient implements StripeBillingClientPort {
 }
 
 describe('StripeWebhookService', () => {
+  it('署名検証失敗はDB更新前にVALIDATION_ERRORで止める', async () => {
+    const repository = seedRepository();
+    const creditGrantService = new FakeBillingCreditGrantService();
+    const stripeClient = new FakeStripeBillingClient();
+    stripeClient.constructError = new Error('No signatures found matching the expected signature for payload');
+    const service = buildService(repository, creditGrantService, stripeClient);
+
+    await expect(service.handleWebhook(Buffer.from('{}'), 'bad-signature')).rejects.toBeInstanceOf(ValidationError);
+
+    expect(repository.processedEvents.size).toBe(0);
+    expect(repository.paymentRecords).toHaveLength(0);
+    expect(creditGrantService.monthlyGrants).toHaveLength(0);
+    expect(creditGrantService.purchasedGrants).toHaveLength(0);
+    expect(stripeClient.retrieveSubscriptionCalls).toBe(0);
+  });
+
   it('checkout.session.completed の subscription で plan/subscription/monthly grant を反映する', async () => {
     const repository = seedRepository();
     const creditGrantService = new FakeBillingCreditGrantService();
