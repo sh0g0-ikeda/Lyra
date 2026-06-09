@@ -20,6 +20,7 @@ import type {
 import type { EntityReferencePromptBuilderPort } from '../../../../src/services/entity/EntityReferencePromptBuilder.js';
 import type { EntityReferencePromptCompilerPort } from '../../../../src/services/entity/EntityReferencePromptCompiler.js';
 import { EntityGenerationWorkerService } from '../../../../src/services/entity/EntityGenerationWorkerService.js';
+import { OPENAI_INPUT_IMAGE_MAX_BYTES } from '../../../../src/domain/constants/imageInput.js';
 import type {
   ConsumeCreditsParams,
   CreditServicePort,
@@ -166,12 +167,13 @@ class FakeReferenceGenerator implements EntityReferenceGeneratorPort {
 
 class FakeStoredImageLoader implements StoredImageLoaderPort {
   public loadedS3Keys: string[] = [];
+  public imageData = Buffer.from('uploaded-source');
 
   public async loadByS3Key(s3Key: string): Promise<{ imageData: Buffer; mimeType: 'image/png' }> {
     this.loadedS3Keys.push(s3Key);
 
     return {
-      imageData: Buffer.from('uploaded-source'),
+      imageData: this.imageData,
       mimeType: 'image/png',
     };
   }
@@ -368,6 +370,40 @@ describe('EntityGenerationWorkerService', () => {
     expect(storedImageLoader.loadedS3Keys).toEqual([]);
     expect(referenceGenerator.input).toBeNull();
     expect(executionRepository.failed?.errorMessage).toContain('source_s3_key');
+    expect(creditService.refunded).toMatchObject({
+      userId: 'user-1',
+      amount: 8,
+      jobId: 'job-1',
+    });
+  });
+
+  it('source_s3_key の画像が入力上限を超える場合は生成せず failed と refund にする', async () => {
+    const executionRepository = new FakeExecutionRepository();
+    executionRepository.job = buildJob({
+      params: {
+        entity_id: 'entity-1',
+        entity_type: 'character',
+        previous_entity_status: 'draft',
+        source_s3_key: 'tmp/user-1/entities/imports/source.png',
+      },
+    });
+    const referenceGenerator = new FakeReferenceGenerator();
+    const storedImageLoader = new FakeStoredImageLoader();
+    storedImageLoader.imageData = Buffer.alloc(OPENAI_INPUT_IMAGE_MAX_BYTES + 1);
+    const creditService = new FakeCreditService();
+    const service = buildService({
+      executionRepository,
+      referenceGenerator,
+      storedImageLoader,
+      creditService,
+    });
+
+    const result = await service.processJob('job-1');
+
+    expect(result).toEqual({ status: 'processed', jobStatus: 'failed' });
+    expect(storedImageLoader.loadedS3Keys).toEqual(['tmp/user-1/entities/imports/source.png']);
+    expect(referenceGenerator.input).toBeNull();
+    expect(executionRepository.failed?.errorMessage).toContain('input image is too large');
     expect(creditService.refunded).toMatchObject({
       userId: 'user-1',
       amount: 8,

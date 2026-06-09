@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { ConfigurationError } from '../../../../src/domain/errors/index.js';
+import { OPENAI_INPUT_IMAGE_MAX_BYTES } from '../../../../src/domain/constants/imageInput.js';
 import { OpenAIClient } from '../../../../src/infrastructure/openai/OpenAIClient.js';
 import { OpenAIPageImageRenderer } from '../../../../src/infrastructure/openai/OpenAIPageImageRenderer.js';
 
@@ -147,6 +148,34 @@ describe('OpenAIPageImageRenderer', () => {
         inputImages: [{ role: 'entity_reference', label: 'Aoi', dataUrl: 'data:image/png;base64,====' }],
       }),
     ).rejects.toEqual(new ConfigurationError('OpenAI image renderer received an empty image input'));
+  });
+
+  it('too large input image は OpenAI 呼び出し前に拒否する', async () => {
+    const client = new OpenAIClient({
+      apiKey: 'test',
+      baseUrl: 'https://api.openai.test/v1',
+      timeoutMs: 1000,
+      fetchFn: async () => {
+        throw new Error('fetch should not be called');
+      },
+      maxRetries: 1,
+    });
+    const renderer = new OpenAIPageImageRenderer(client);
+    const dataUrl = `data:image/png;base64,${Buffer.alloc(OPENAI_INPUT_IMAGE_MAX_BYTES + 1).toString('base64')}`;
+
+    await expect(
+      renderer.render({
+        jobId: 'job-1',
+        userId: 'user-1',
+        pageId: 'page-1',
+        requestKind: 'initial',
+        generationMode: 'standard',
+        prompt: 'page prompt',
+        quality: 'medium',
+        internalPlan: null,
+        inputImages: [{ role: 'entity_reference', label: 'Aoi', dataUrl }],
+      }),
+    ).rejects.toEqual(new ConfigurationError('OpenAI image renderer received an input image that is too large'));
   });
 
   it('画像データが返らない場合は ConfigurationError を投げる', async () => {

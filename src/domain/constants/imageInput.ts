@@ -1,0 +1,1 @@
+export const OPENAI_INPUT_IMAGE_MAX_BYTES = 5 * 1024 * 1024;

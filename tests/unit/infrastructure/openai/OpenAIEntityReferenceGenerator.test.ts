@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ConfigurationError } from '../../../../src/domain/errors/index.js';
+import { OPENAI_INPUT_IMAGE_MAX_BYTES } from '../../../../src/domain/constants/imageInput.js';
 import { OpenAIClient } from '../../../../src/infrastructure/openai/OpenAIClient.js';
 import { OpenAIEntityReferenceGenerator } from '../../../../src/infrastructure/openai/OpenAIEntityReferenceGenerator.js';
 
@@ -121,6 +122,29 @@ describe('OpenAIEntityReferenceGenerator', () => {
         inputImages: [{ dataUrl: 'data:image/png;base64,====' }],
       }),
     ).rejects.toEqual(new ConfigurationError('Entity reference generator received an empty image input'));
+  });
+
+  it('too large input image は OpenAI 呼び出し前に拒否する', async () => {
+    const client = new OpenAIClient({
+      apiKey: 'test',
+      baseUrl: 'https://api.openai.test/v1',
+      timeoutMs: 1000,
+      fetchFn: async () => {
+        throw new Error('fetch should not be called');
+      },
+      maxRetries: 1,
+    });
+    const generator = new OpenAIEntityReferenceGenerator(client);
+    const dataUrl = `data:image/png;base64,${Buffer.alloc(OPENAI_INPUT_IMAGE_MAX_BYTES + 1).toString('base64')}`;
+
+    await expect(
+      generator.generateCandidates({
+        prompt: 'entity prompt',
+        inputImages: [{ dataUrl }],
+      }),
+    ).rejects.toEqual(
+      new ConfigurationError('Entity reference generator received an input image that is too large'),
+    );
   });
 
   it('画像データが base64 として空にしか decode できない場合は ConfigurationError を投げる', async () => {

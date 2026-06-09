@@ -3,6 +3,7 @@ import type {
   RenderPageImageInput,
   RenderPageImageResult,
 } from '../../services/page/PageGenerationWorkerService.js';
+import { OPENAI_INPUT_IMAGE_MAX_BYTES } from '../../domain/constants/imageInput.js';
 import { ConfigurationError } from '../../domain/errors/index.js';
 import { OpenAIClient } from './OpenAIClient.js';
 
@@ -105,6 +106,9 @@ function dataUrlToBlob(dataUrl: string): Blob {
   const imageData = Buffer.from(match.groups.base64, 'base64');
   if (imageData.length === 0) {
     throw new ConfigurationError('OpenAI image renderer received an empty image input');
+  }
+  if (imageData.length > OPENAI_INPUT_IMAGE_MAX_BYTES) {
+    throw new ConfigurationError('OpenAI image renderer received an input image that is too large');
   }
 
   return new Blob([imageData], {

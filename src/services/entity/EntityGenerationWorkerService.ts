@@ -1,4 +1,5 @@
 import { ENTITY_REFERENCE_GENERATION } from '../../domain/constants/entityReference.js';
+import { OPENAI_INPUT_IMAGE_MAX_BYTES } from '../../domain/constants/imageInput.js';
 import { ConfigurationError } from '../../domain/errors/index.js';
 import { sanitizePersistedErrorMessage } from '../../lib/errorSanitizer.js';
 import type {
@@ -287,9 +288,18 @@ async function buildGeneratorInputImages(
 
   ensureAllowedReferenceSourceKey(params.source_s3_key, userId, params.entity_id, 'source_s3_key');
   const loadedImage = await storedImageLoader.loadByS3Key(params.source_s3_key);
+  ensureInputImageWithinLimit(loadedImage.imageData);
   return [
     {
       dataUrl: `data:${loadedImage.mimeType};base64,${loadedImage.imageData.toString('base64')}`,
     },
   ];
+}
+
+function ensureInputImageWithinLimit(imageData: Buffer): void {
+  if (imageData.length > OPENAI_INPUT_IMAGE_MAX_BYTES) {
+    throw new ConfigurationError(
+      `Entity generation input image is too large. Maximum size is ${OPENAI_INPUT_IMAGE_MAX_BYTES} bytes.`,
+    );
+  }
 }

@@ -1,5 +1,6 @@
 import { NotFoundError, ValidationError } from '../../domain/errors/index.js';
 import { PAGE_GENERATION_INPUT_IMAGE_LIMITS } from '../../domain/constants/generation.js';
+import { OPENAI_INPUT_IMAGE_MAX_BYTES } from '../../domain/constants/imageInput.js';
 import type { PageGenerationInputImage } from '../../domain/types/pageGeneration.js';
 import type { EntityRepository } from '../../repositories/EntityRepository.js';
 import type { PageRepository } from '../../repositories/PageRepository.js';
@@ -58,6 +59,7 @@ export class PageGenerationInputImageBuilder implements PageGenerationInputImage
 
       ensureOwnedEntityReferenceImageKey(reference.s3Key, input.userId, entityId);
       const loadedImage = await this.storedImageLoader.loadByS3Key(reference.s3Key);
+      ensureInputImageWithinLimit(loadedImage.imageData);
       inputImages.push({
         role: 'entity_reference',
         label: entityNameById.get(entityId) ?? `entity-${entityId}`,
@@ -100,6 +102,14 @@ function collectEntityIds(
   }
 
   return Array.from(orderedEntityIds);
+}
+
+function ensureInputImageWithinLimit(imageData: Buffer): void {
+  if (imageData.length > OPENAI_INPUT_IMAGE_MAX_BYTES) {
+    throw new ValidationError(
+      `Page generation input image is too large. Maximum size is ${OPENAI_INPUT_IMAGE_MAX_BYTES} bytes.`,
+    );
+  }
 }
 
 function toDataUrl(mimeType: string, imageData: Buffer): string {

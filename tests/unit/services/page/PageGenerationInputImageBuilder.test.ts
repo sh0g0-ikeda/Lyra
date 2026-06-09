@@ -12,6 +12,7 @@ import type { LoadedStoredImage, StoredImageLoaderPort } from '../../../../src/i
 import type { LayoutGuideImageRendererPort } from '../../../../src/services/page/LayoutGuideImageRenderer.js';
 import { PageGenerationInputImageBuilder } from '../../../../src/services/page/PageGenerationInputImageBuilder.js';
 import { PAGE_GENERATION_INPUT_IMAGE_LIMITS } from '../../../../src/domain/constants/generation.js';
+import { OPENAI_INPUT_IMAGE_MAX_BYTES } from '../../../../src/domain/constants/imageInput.js';
 
 class FakePageRepository implements PageRepository {
   public generationContext: PageGenerationContext | null = {
@@ -184,11 +185,12 @@ class FakeEntityRepository implements EntityRepository {
 
 class FakeStoredImageLoader implements StoredImageLoaderPort {
   public calls: string[] = [];
+  public imageData = Buffer.from('image-bytes');
 
   public async loadByS3Key(s3Key: string): Promise<LoadedStoredImage> {
     this.calls.push(s3Key);
     return {
-      imageData: Buffer.from(s3Key),
+      imageData: this.imageData,
       mimeType: 'image/png',
     };
   }
@@ -376,5 +378,23 @@ describe('PageGenerationInputImageBuilder', () => {
       message: 'entity reference image key is outside the owner scope',
     });
     expect(loader.calls).toEqual([]);
+  });
+
+  it('reference画像が入力上限を超える場合はOpenAI入力を作らない', async () => {
+    const loader = new FakeStoredImageLoader();
+    loader.imageData = Buffer.alloc(OPENAI_INPUT_IMAGE_MAX_BYTES + 1);
+    const layoutGuideImageRenderer = new FakeLayoutGuideImageRenderer();
+    layoutGuideImageRenderer.nextResult = null;
+    const builder = new PageGenerationInputImageBuilder(
+      new FakePageRepository(),
+      new FakeEntityRepository(),
+      loader,
+      layoutGuideImageRenderer,
+    );
+
+    await expect(builder.buildInputImages({ userId: 'user-1', pageId: 'page-1' })).rejects.toMatchObject({
+      code: 'VALIDATION_ERROR',
+      message: expect.stringContaining('input image is too large'),
+    });
   });
 });
