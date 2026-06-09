@@ -46,6 +46,7 @@ export async function handleGenerationQueue(
   for (const record of event.Records) {
     const parsedMessage = parseQueueMessage(record.body);
     if (parsedMessage === null) {
+      addBatchItemFailure(batchItemFailures, record.messageId);
       results.push({
         messageId: record.messageId ?? null,
         jobId: null,
@@ -56,10 +57,11 @@ export async function handleGenerationQueue(
     }
 
     if (parsedMessage.job_type !== 'page_generate' && parsedMessage.job_type !== 'entity_generate') {
+      addBatchItemFailure(batchItemFailures, record.messageId);
       results.push({
         messageId: record.messageId ?? null,
         jobId: parsedMessage.job_id,
-        status: 'skipped',
+        status: 'failed',
         reason: `Unsupported job_type: ${parsedMessage.job_type}`,
       });
       continue;
@@ -75,9 +77,7 @@ export async function handleGenerationQueue(
         status: result.status === 'skipped' ? 'skipped' : result.jobStatus ?? 'completed',
       });
     } catch (error) {
-      if (record.messageId !== undefined && record.messageId.length > 0) {
-        batchItemFailures.push({ itemIdentifier: record.messageId });
-      }
+      addBatchItemFailure(batchItemFailures, record.messageId);
       results.push({
         messageId: record.messageId ?? null,
         jobId: parsedMessage.job_id,
@@ -94,6 +94,15 @@ export async function handleGenerationQueue(
     batchItemFailures,
     results,
   };
+}
+
+function addBatchItemFailure(
+  batchItemFailures: WorkerBatchItemFailure[],
+  messageId: string | undefined,
+): void {
+  if (messageId !== undefined && messageId.length > 0) {
+    batchItemFailures.push({ itemIdentifier: messageId });
+  }
 }
 
 function parseQueueMessage(body: string): z.infer<typeof queueMessageSchema> | null {
