@@ -112,6 +112,8 @@ class FakeInputImageBuilder implements PageGenerationInputImageBuilderPort {
 class FakeRenderer implements PageImageRendererPort {
   public calls: RenderPageImageInput[] = [];
   public shouldFail = false;
+  public imageData = Buffer.from('image-bytes');
+  public mimeType = 'image/png';
 
   public async render(input: RenderPageImageInput): Promise<RenderPageImageResult> {
     this.calls.push(input);
@@ -120,8 +122,8 @@ class FakeRenderer implements PageImageRendererPort {
     }
 
     return {
-      imageData: Buffer.from('image-bytes'),
-      mimeType: 'image/png',
+      imageData: this.imageData,
+      mimeType: this.mimeType,
       openaiRequestId: 'openai-1',
       costUsd: 0.07,
     };
@@ -613,6 +615,44 @@ describe('PageGenerationWorkerService', () => {
       jobId: 'job-1',
       userId: 'user-1',
       errorMessage: 'renderer unavailable',
+    });
+  });
+
+  it('renderer returns empty image data then job fails before storage and refunds', async () => {
+    const executionRepository = new FakeExecutionRepository();
+    const renderer = new FakeRenderer();
+    renderer.imageData = Buffer.alloc(0);
+    const storage = new FakeStorage();
+    const creditService = new FakeCreditService();
+    const service = new PageGenerationWorkerService(
+      executionRepository,
+      new FakePromptBuilder(),
+      new FakePromptCompiler(),
+      new FakeInputImageBuilder(),
+      new FakePlanner(),
+      renderer,
+      storage,
+      creditService,
+    );
+
+    const result = await service.processJob('job-1');
+
+    expect(result).toEqual({ status: 'processed', jobStatus: 'failed' });
+    expect(storage.calls).toEqual([]);
+    expect(executionRepository.completionInput).toBeNull();
+    expect(executionRepository.failureInput).toMatchObject({
+      jobId: 'job-1',
+      userId: 'user-1',
+      errorMessage: 'Page image renderer returned empty image data',
+      pageId: 'page-1',
+      previousStatus: 'designing',
+      previousGenerationMode: null,
+    });
+    expect(creditService.refunds[0]).toMatchObject({
+      userId: 'user-1',
+      amount: 10,
+      description: 'Refund for failed page generation job',
+      jobId: 'job-1',
     });
   });
 });

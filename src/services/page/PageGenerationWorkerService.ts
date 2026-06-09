@@ -157,6 +157,7 @@ export class PageGenerationWorkerService {
         internalPlan,
         inputImages,
       });
+      assertRenderedPageImage(renderResult);
 
       const storedImage = await this.storage.store({
         jobId: job.id,
@@ -214,6 +215,12 @@ export class PageGenerationWorkerService {
         jobId: job.id,
       });
     }
+  }
+}
+
+function assertRenderedPageImage(renderResult: RenderPageImageResult): void {
+  if (renderResult.imageData.length === 0) {
+    throw new ConfigurationError('Page image renderer returned empty image data');
   }
 }
 
