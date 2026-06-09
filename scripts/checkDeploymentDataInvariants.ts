@@ -98,6 +98,14 @@ const DEPLOYMENT_DATA_INVARIANT_QUERIES: InvariantQuery[] = [
     sql: "SELECT id::text AS id FROM generation_jobs WHERE generation_mode IS NOT NULL AND generation_mode NOT IN ('standard', 'thinking') ORDER BY id LIMIT $1",
   },
   {
+    name: 'generation_jobs.active_page_resource_unique',
+    sql: "SELECT MIN(id)::text AS id FROM generation_jobs WHERE job_type = 'page_generate' AND status IN ('queued', 'processing') AND params ? 'page_id' GROUP BY params->>'page_id' HAVING COUNT(*) > 1 ORDER BY MIN(id) LIMIT $1",
+  },
+  {
+    name: 'generation_jobs.active_entity_resource_unique',
+    sql: "SELECT MIN(id)::text AS id FROM generation_jobs WHERE job_type = 'entity_generate' AND status IN ('queued', 'processing') AND params ? 'entity_id' GROUP BY params->>'entity_id' HAVING COUNT(*) > 1 ORDER BY MIN(id) LIMIT $1",
+  },
+  {
     name: 'users.plan_code',
     sql: "SELECT id::text AS id FROM users WHERE plan_code NOT IN ('free', 'standard', 'premium') ORDER BY id LIMIT $1",
   },
@@ -122,6 +130,10 @@ const DEPLOYMENT_DATA_INVARIANT_QUERIES: InvariantQuery[] = [
     sql: 'SELECT id::text AS id FROM credit_ledger WHERE (monthly_delta IS NULL) <> (purchased_delta IS NULL) ORDER BY id LIMIT $1',
   },
   {
+    name: 'credit_ledger.stripe_event_id_unique',
+    sql: 'SELECT MIN(id)::text AS id FROM credit_ledger WHERE stripe_event_id IS NOT NULL GROUP BY stripe_event_id HAVING COUNT(*) > 1 ORDER BY MIN(id) LIMIT $1',
+  },
+  {
     name: 'payment_records.kind',
     sql: "SELECT id::text AS id FROM payment_records WHERE kind NOT IN ('subscription', 'credit_purchase') ORDER BY id LIMIT $1",
   },
@@ -136,6 +148,14 @@ const DEPLOYMENT_DATA_INVARIANT_QUERIES: InvariantQuery[] = [
   {
     name: 'payment_records.external_id_pair',
     sql: 'SELECT id::text AS id FROM payment_records WHERE (stripe_checkout_session_id IS NULL) = (stripe_invoice_id IS NULL) ORDER BY id LIMIT $1',
+  },
+  {
+    name: 'payment_records.checkout_session_kind_status_unique',
+    sql: 'SELECT MIN(id)::text AS id FROM payment_records WHERE stripe_checkout_session_id IS NOT NULL GROUP BY stripe_checkout_session_id, kind, status HAVING COUNT(*) > 1 ORDER BY MIN(id) LIMIT $1',
+  },
+  {
+    name: 'payment_records.invoice_kind_status_unique',
+    sql: 'SELECT MIN(id)::text AS id FROM payment_records WHERE stripe_invoice_id IS NOT NULL GROUP BY stripe_invoice_id, kind, status HAVING COUNT(*) > 1 ORDER BY MIN(id) LIMIT $1',
   },
 ];
 

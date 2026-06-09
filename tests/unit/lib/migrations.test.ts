@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, readdir, writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -171,6 +171,26 @@ describe('runPendingMigrations', () => {
       ].join('\n'),
     );
     expect(db.insertedFilenames).toEqual(['001_concurrent_index.sql']);
+  });
+
+  it('CONCURRENTLY を使う migration は no-transaction 指定を持つ', async () => {
+    const migrationDir = join(process.cwd(), 'migrations');
+    const filenames = (await readdir(migrationDir)).filter((filename) => filename.endsWith('.sql'));
+
+    for (const filename of filenames) {
+      const sql = await readFile(join(migrationDir, filename), 'utf8');
+      if (!sql.includes('CONCURRENTLY')) {
+        continue;
+      }
+
+      expect(
+        sql
+          .split('\n')
+          .slice(0, 5)
+          .some((line) => line.trim() === '-- lyra:migration no-transaction'),
+        `${filename} uses CONCURRENTLY and must opt out of transaction wrapping`,
+      ).toBe(true);
+    }
   });
 
   it('generation_jobs の状態列はDB制約で型契約を守る', async () => {

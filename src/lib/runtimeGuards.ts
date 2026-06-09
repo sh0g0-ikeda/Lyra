@@ -22,6 +22,7 @@ interface RuntimeGuardConfig {
   LOCAL_ASSET_BASE_URL?: string;
   LOCAL_IMAGE_FALLBACK_ENABLED?: boolean;
   OPENAI_API_KEY?: string;
+  OPENAI_IMAGE_MODEL?: string;
   OPENAI_BASE_URL?: string;
   OPENAI_TIMEOUT_MS?: number;
   SQS_QUEUE_URL_GENERATION?: string;
@@ -48,6 +49,7 @@ const SQS_VISIBILITY_TIMEOUT_BUFFER_SECONDS = 120;
 const REQUIRED_PRODUCTION_GENERATION_KEYS = [
   'AWS_REGION',
   'OPENAI_API_KEY',
+  'OPENAI_IMAGE_MODEL',
   'SQS_QUEUE_URL_GENERATION',
   'S3_BUCKET_IMAGES',
   'IMAGES_CDN_BASE_URL',
@@ -96,6 +98,7 @@ const PRODUCTION_NON_PLACEHOLDER_KEYS = [
   'COGNITO_ISSUER',
   'COGNITO_JWKS_URI',
   'OPENAI_API_KEY',
+  'OPENAI_IMAGE_MODEL',
   'OPENAI_BASE_URL',
   'SQS_QUEUE_URL_GENERATION',
   'S3_BUCKET_IMAGES',
@@ -214,6 +217,11 @@ export function assertProductionRuntimeConfig(
     }
   }
 
+  const openAiImageModel = config.OPENAI_IMAGE_MODEL;
+  if (hasConfigValue(openAiImageModel) && !isOpenAiImageModel(openAiImageModel)) {
+    violations.push('OPENAI_IMAGE_MODEL must be an OpenAI image generation model');
+  }
+
   if (
     config.GENERATION_USER_ACTIVE_JOB_LIMIT !== undefined &&
     config.GENERATION_USER_ACTIVE_JOB_LIMIT > MAX_PRODUCTION_GENERATION_ACTIVE_JOB_LIMITS.PER_USER
@@ -290,7 +298,7 @@ function isMissingConfigValue(value: string | undefined): boolean {
   return value === undefined || value.trim().length === 0;
 }
 
-function hasConfigValue(value: string | undefined): boolean {
+function hasConfigValue(value: string | undefined): value is string {
   return value !== undefined && value.trim().length > 0;
 }
 
@@ -312,6 +320,10 @@ function hasPlaceholderConfigValue(value: string | undefined): boolean {
     normalizedValue.includes('-dummy') ||
     normalizedValue.includes('_dummy')
   );
+}
+
+function isOpenAiImageModel(value: string): boolean {
+  return value.trim().toLowerCase().startsWith('gpt-image-');
 }
 
 function productionCorsAllowsWildcard(value: string | undefined): boolean {

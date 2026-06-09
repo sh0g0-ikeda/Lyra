@@ -15,6 +15,7 @@ const safeProductionConfig = {
   COGNITO_TOKEN_USE: 'access' as const,
   COGNITO_REQUIRED_SCOPES: 'lyra/api',
   OPENAI_API_KEY: 'openai-key',
+  OPENAI_IMAGE_MODEL: 'gpt-image-2',
   OPENAI_TIMEOUT_MS: 300_000,
   SQS_QUEUE_URL_GENERATION: 'https://sqs.ap-northeast-1.amazonaws.com/123/lyra-generation',
   SQS_GENERATION_VISIBILITY_TIMEOUT_SECONDS: 420,
@@ -191,6 +192,18 @@ describe('assertProductionRuntimeConfig', () => {
     }).toThrow(
       /GENERATION_USER_ACTIVE_JOB_LIMIT must be <= 5.*GENERATION_GLOBAL_ACTIVE_JOB_LIMIT must be <= 50/,
     );
+  });
+
+  it('production では画像生成モデル名に image model を要求する', () => {
+    expect(() => {
+      assertProductionRuntimeConfig(
+        {
+          ...safeProductionConfig,
+          OPENAI_IMAGE_MODEL: 'gpt-5.4-mini',
+        },
+        'production',
+      );
+    }).toThrow(/OPENAI_IMAGE_MODEL must be an OpenAI image generation model/);
   });
 
   it('production では Stripe 設定一式が必須になる', () => {
@@ -383,6 +396,7 @@ describe('assertProductionRuntimeConfig', () => {
         {
           ...safeProductionConfig,
           OPENAI_API_KEY: 'replace-me',
+          OPENAI_IMAGE_MODEL: 'placeholder',
           STRIPE_SECRET_KEY: 'changeme',
           STRIPE_PRICE_CREDITS_200: 'price_placeholder',
           COGNITO_CLIENT_ID: 'replace_me',
@@ -390,7 +404,7 @@ describe('assertProductionRuntimeConfig', () => {
         'production',
       );
     }).toThrow(
-      /COGNITO_CLIENT_ID must not use a placeholder value.*OPENAI_API_KEY must not use a placeholder value.*Stripe config contains placeholder values: STRIPE_SECRET_KEY, STRIPE_PRICE_CREDITS_200/,
+      /COGNITO_CLIENT_ID must not use a placeholder value.*OPENAI_API_KEY must not use a placeholder value.*OPENAI_IMAGE_MODEL must not use a placeholder value.*Stripe config contains placeholder values: STRIPE_SECRET_KEY, STRIPE_PRICE_CREDITS_200/,
     );
   });
 

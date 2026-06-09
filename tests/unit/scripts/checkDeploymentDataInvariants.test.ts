@@ -30,6 +30,15 @@ class FakeDatabase implements DatabaseClient {
       return false;
     }
 
+    if (this.violatedCheckName === 'payment_records.checkout_session_kind_status_unique') {
+      return (
+        text.includes('FROM payment_records') &&
+        text.includes('stripe_checkout_session_id') &&
+        text.includes('GROUP BY stripe_checkout_session_id, kind, status') &&
+        text.includes('HAVING COUNT(*) > 1')
+      );
+    }
+
     const [tableName, columnName] = this.violatedCheckName.split('.');
     return text.includes(`FROM ${tableName}`) && text.includes(columnName);
   }
@@ -53,6 +62,24 @@ describe('checkDeploymentDataInvariants', () => {
         query.includes('(stripe_checkout_session_id IS NULL) = (stripe_invoice_id IS NULL)'),
       ),
     ).toBe(true);
+    expect(
+      database.queries.some((query) =>
+        query.includes("job_type = 'page_generate'") &&
+        query.includes("status IN ('queued', 'processing')") &&
+        query.includes("GROUP BY params->>'page_id'"),
+      ),
+    ).toBe(true);
+    expect(
+      database.queries.some((query) =>
+        query.includes('GROUP BY stripe_event_id') && query.includes('HAVING COUNT(*) > 1'),
+      ),
+    ).toBe(true);
+    expect(
+      database.queries.some((query) =>
+        query.includes('GROUP BY stripe_checkout_session_id, kind, status') &&
+        query.includes('HAVING COUNT(*) > 1'),
+      ),
+    ).toBe(true);
   });
 
   it('違反行があればチェック名とサンプル ID を返す', async () => {
@@ -67,5 +94,17 @@ describe('checkDeploymentDataInvariants', () => {
         sampleIds: ['bad-row-1', 'bad-row-2'],
       },
     ]);
+  });
+
+  it('unique index を壊す重複行があれば migration 前に検出する', async () => {
+    const database = new FakeDatabase('payment_records.checkout_session_kind_status_unique');
+
+    const report = await checkDeploymentDataInvariants(database);
+
+    expect(report.ok).toBe(false);
+    expect(report.violations).toContainEqual({
+      name: 'payment_records.checkout_session_kind_status_unique',
+      sampleIds: ['bad-row-1', 'bad-row-2'],
+    });
   });
 });
