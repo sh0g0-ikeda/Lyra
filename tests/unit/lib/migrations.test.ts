@@ -207,6 +207,23 @@ describe('runPendingMigrations', () => {
     expect(sql).toContain('VALIDATE CONSTRAINT generation_jobs_job_type_check');
   });
 
+  it('generation_jobs の active resource lock は同一ページ・同一キャラの二重生成を防ぐ', async () => {
+    const sql = await readFile(
+      join(process.cwd(), 'migrations', '003_add_generation_active_resource_locks.sql'),
+      'utf8',
+    );
+
+    expect(sql).toContain('CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS idx_generation_jobs_active_page_resource');
+    expect(sql).toContain("ON generation_jobs ((params->>'page_id'))");
+    expect(sql).toContain("WHERE job_type = 'page_generate'");
+    expect(sql).toContain("AND status IN ('queued', 'processing')");
+    expect(sql).toContain("AND params ? 'page_id'");
+    expect(sql).toContain('CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS idx_generation_jobs_active_entity_resource');
+    expect(sql).toContain("ON generation_jobs ((params->>'entity_id'))");
+    expect(sql).toContain("WHERE job_type = 'entity_generate'");
+    expect(sql).toContain("AND params ? 'entity_id'");
+  });
+
   it('課金系の種類と状態はDB制約で型契約を守る', async () => {
     const sql = await readFile(
       join(process.cwd(), 'migrations', '010_add_billing_state_constraints.sql'),
