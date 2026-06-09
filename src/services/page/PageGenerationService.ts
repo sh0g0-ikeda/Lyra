@@ -62,7 +62,7 @@ export class PageGenerationService implements PageGenerationServicePort {
     }
 
     this.ensurePageCanGenerate(page);
-    await this.ensureAssignedCharacterReferences(userId, page);
+    const billableReferenceCount = await this.ensureAssignedReferencesAndCountBillableReferences(userId, page);
     await assertGenerationCapacity(this.generationJobRepository, userId, this.capacityLimits);
     await this.ensureNoActiveGenerationJob(userId, page.pageId);
 
@@ -72,6 +72,7 @@ export class PageGenerationService implements PageGenerationServicePort {
       entityCount: countUniqueAssignedEntities(page),
       panelCount: page.panels.length,
       requestKind,
+      billableReferenceCount,
     });
 
     let creditsConsumed = false;
@@ -228,15 +229,15 @@ export class PageGenerationService implements PageGenerationServicePort {
     }
   }
 
-  private async ensureAssignedCharacterReferences(
+  private async ensureAssignedReferencesAndCountBillableReferences(
     userId: string,
     page: PageGenerationContext,
-  ): Promise<void> {
+  ): Promise<number> {
     const assignedEntityIds = Array.from(
       new Set(page.panels.flatMap((panel) => panel.entities.map((assignment) => assignment.entityId))),
     );
     if (assignedEntityIds.length === 0) {
-      return;
+      return 0;
     }
 
     const entities = await this.entityRepository.findByWorkIdAndUserId(page.workId, userId);
@@ -258,13 +259,13 @@ export class PageGenerationService implements PageGenerationServicePort {
     }
 
     if (assignedCharacters.length === 0) {
-      return;
+      return referenceImageCount;
     }
 
     const referencedCharacterIds = new Set(references.map((reference) => reference.entityId));
     const missingCharacters = assignedCharacters.filter((entity) => !referencedCharacterIds.has(entity.id));
     if (missingCharacters.length === 0) {
-      return;
+      return referenceImageCount;
     }
 
     const missingNames = missingCharacters.map((entity) => entity.name).join(', ');

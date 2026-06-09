@@ -284,7 +284,7 @@ describe('StripeWebhookService', () => {
     });
     expect(repository.paymentRecords[0]).toMatchObject({
       kind: 'subscription',
-      amountJpy: 3000,
+      amountJpy: 1000,
       status: 'paid',
     });
   });
@@ -305,7 +305,7 @@ describe('StripeWebhookService', () => {
     });
     expect(repository.paymentRecords[0]).toMatchObject({
       kind: 'credit_purchase',
-      amountJpy: 3000,
+      amountJpy: 1000,
       status: 'paid',
     });
   });
@@ -384,7 +384,7 @@ describe('StripeWebhookService', () => {
     });
     expect(repository.paymentRecords[0]).toMatchObject({
       kind: 'credit_purchase',
-      amountJpy: 3000,
+      amountJpy: 1000,
       status: 'paid',
     });
   });
@@ -407,7 +407,7 @@ describe('StripeWebhookService', () => {
     expect(repository.paymentRecords[0]).toMatchObject({
       stripeCheckoutSessionId: 'cs_pay_123',
       kind: 'credit_purchase',
-      amountJpy: 3000,
+      amountJpy: 1000,
       status: 'failed',
     });
   });
@@ -442,7 +442,7 @@ describe('StripeWebhookService', () => {
     expect(repository.updatedPlans[0]).toEqual({ userId: 'user-1', planCode: 'free' });
     expect(repository.paymentRecords[0]).toMatchObject({
       stripeInvoiceId: 'in_124',
-      amountJpy: 3000,
+      amountJpy: 1000,
       status: 'failed',
     });
   });
@@ -460,7 +460,7 @@ describe('StripeWebhookService', () => {
     expect(repository.updatedPlans[0]).toEqual({ userId: 'user-1', planCode: 'standard' });
     expect(repository.paymentRecords[0]).toMatchObject({
       stripeInvoiceId: 'in_124',
-      amountJpy: 3000,
+      amountJpy: 1000,
       status: 'failed',
     });
   });
@@ -630,7 +630,7 @@ describe('StripeWebhookService', () => {
     const stripeClient = new FakeStripeBillingClient();
     stripeClient.event = buildCheckoutSubscriptionEvent({
       id: 'evt_checkout_sub_underpaid',
-      amountTotal: 2999,
+      amountTotal: 999,
     });
     stripeClient.subscription = buildSubscription();
     const service = buildService(repository, creditGrantService, stripeClient);
@@ -643,7 +643,7 @@ describe('StripeWebhookService', () => {
     expect(creditGrantService.monthlyGrants).toHaveLength(0);
     expect(repository.paymentRecords[0]).toMatchObject({
       kind: 'subscription',
-      amountJpy: 2999,
+      amountJpy: 999,
       status: 'failed',
     });
   });
@@ -654,7 +654,7 @@ describe('StripeWebhookService', () => {
     const stripeClient = new FakeStripeBillingClient();
     stripeClient.event = buildCheckoutCreditPurchaseEvent({
       id: 'evt_checkout_credit_underpaid',
-      amountTotal: 2999,
+      amountTotal: 999,
     });
     const service = buildService(repository, creditGrantService, stripeClient);
 
@@ -664,7 +664,7 @@ describe('StripeWebhookService', () => {
     expect(creditGrantService.purchasedGrants).toHaveLength(0);
     expect(repository.paymentRecords[0]).toMatchObject({
       kind: 'credit_purchase',
-      amountJpy: 2999,
+      amountJpy: 999,
       status: 'failed',
     });
   });
@@ -673,7 +673,7 @@ describe('StripeWebhookService', () => {
     const repository = seedRepository();
     const creditGrantService = new FakeBillingCreditGrantService();
     const stripeClient = new FakeStripeBillingClient();
-    stripeClient.event = buildInvoicePaidEvent('subscription_cycle', 'evt_invoice_underpaid', 2999);
+    stripeClient.event = buildInvoicePaidEvent('subscription_cycle', 'evt_invoice_underpaid', 999);
     stripeClient.subscription = buildSubscription();
     const service = buildService(repository, creditGrantService, stripeClient);
 
@@ -683,7 +683,7 @@ describe('StripeWebhookService', () => {
     expect(creditGrantService.monthlyGrants).toHaveLength(0);
     expect(repository.paymentRecords[0]).toMatchObject({
       stripeInvoiceId: 'in_123',
-      amountJpy: 2999,
+      amountJpy: 999,
       status: 'failed',
     });
   });
@@ -740,7 +740,7 @@ function buildCheckoutSubscriptionEvent(options: {
           plan_code: 'standard',
         },
         payment_status: options.paymentStatus ?? 'paid',
-        amount_total: options.amountTotal ?? 3000,
+        amount_total: options.amountTotal ?? 1000,
       },
     },
     livemode: false,
@@ -775,7 +775,7 @@ function buildCheckoutCreditPurchaseEvent(options: {
           package_code: 'credits_1000',
         },
         payment_status: options.paymentStatus ?? 'paid',
-        amount_total: options.amountTotal ?? 3000,
+        amount_total: options.amountTotal ?? 1000,
       },
     },
     livemode: false,
@@ -788,7 +788,7 @@ function buildCheckoutCreditPurchaseEvent(options: {
 function buildInvoicePaidEvent(
   billingReason: Stripe.Invoice.BillingReason,
   id = 'evt_invoice_paid',
-  amountPaid = 3000,
+  amountPaid = 1000,
 ): Stripe.Event {
   return {
     id,
@@ -833,7 +833,7 @@ function buildInvoicePaymentFailedEvent(stripeSubscriptionId: string | null = 's
         object: 'invoice',
         customer: 'cus_123',
         amount_paid: 0,
-        amount_due: 3000,
+        amount_due: 1000,
         parent:
           stripeSubscriptionId === null
             ? null

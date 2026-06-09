@@ -1,4 +1,4 @@
-export const MINIMUM_JPY_PER_CREDIT = 60;
+export const MINIMUM_JPY_PER_CREDIT = 20;
 
 export const SUBSCRIPTION_PLAN_DEFINITIONS = {
   free: {

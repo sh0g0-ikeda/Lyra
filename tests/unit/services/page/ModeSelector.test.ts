@@ -30,34 +30,50 @@ describe('ModeSelector', () => {
   });
 
   describe('selectProfile', () => {
-    it('initial standard は medium 品質と1crになる', () => {
+    it('initial standard は medium 品質と3crになる', () => {
       const result = selector.selectProfile({
         entityCount: 4,
         panelCount: 8,
         requestKind: 'initial',
+        billableReferenceCount: 3,
       });
 
       expect(result).toEqual({
         requestKind: 'initial',
         mode: 'standard',
         quality: 'medium',
-        creditCost: 1,
+        creditCost: 3,
+        billableReferenceCount: 3,
         requiresPlanner: false,
       });
     });
 
-    it('initial thinking は medium 品質と1crになる', () => {
+    it('4枚目以降の参照画像は1枚ごとに1crを追加する', () => {
+      const result = selector.selectProfile({
+        entityCount: 4,
+        panelCount: 8,
+        requestKind: 'initial',
+        billableReferenceCount: 4,
+      });
+
+      expect(result.creditCost).toBe(4);
+      expect(result.billableReferenceCount).toBe(4);
+    });
+
+    it('initial thinking は medium 品質で参照数に応じたcrになる', () => {
       const result = selector.selectProfile({
         entityCount: 5,
         panelCount: 8,
         requestKind: 'initial',
+        billableReferenceCount: 5,
       });
 
       expect(result).toEqual({
         requestKind: 'initial',
         mode: 'thinking',
         quality: 'medium',
-        creditCost: 1,
+        creditCost: 5,
+        billableReferenceCount: 5,
         requiresPlanner: true,
       });
     });
@@ -67,13 +83,15 @@ describe('ModeSelector', () => {
         entityCount: 1,
         panelCount: 3,
         requestKind: 'regenerate',
+        billableReferenceCount: 1,
       });
 
       expect(result).toEqual({
         requestKind: 'regenerate',
         mode: 'standard',
         quality: 'medium',
-        creditCost: 1,
+        creditCost: 3,
+        billableReferenceCount: 1,
         requiresPlanner: false,
       });
     });
@@ -83,15 +101,28 @@ describe('ModeSelector', () => {
         entityCount: 5,
         panelCount: 3,
         requestKind: 'regenerate',
+        billableReferenceCount: 5,
       });
 
       expect(result).toEqual({
         requestKind: 'regenerate',
         mode: 'thinking',
         quality: 'medium',
-        creditCost: 1,
+        creditCost: 5,
+        billableReferenceCount: 5,
         requiresPlanner: true,
       });
+    });
+
+    it('負の参照画像数はVALIDATION_ERRORになる', () => {
+      expect(() =>
+        selector.selectProfile({
+          entityCount: 1,
+          panelCount: 3,
+          requestKind: 'initial',
+          billableReferenceCount: -1,
+        }),
+      ).toThrow(ValidationError);
     });
   });
 });

@@ -21,6 +21,7 @@ export interface PageGenerationSelection {
   mode: PageGenerationMode;
   quality: PageGenerationQuality;
   creditCost: number;
+  billableReferenceCount: number;
   requiresPlanner: boolean;
 }
 

@@ -265,7 +265,7 @@ describe('PageGenerationService', () => {
     expect(recoveryService.pageIds).toEqual([pageId]);
   });
 
-  it('initial standard は1crでenqueueする', async () => {
+  it('initial standard は3crでenqueueする', async () => {
     const pageRepository = new FakePageRepository();
     const jobRepository = new FakeGenerationJobRepository();
     const creditService = new FakeCreditService();
@@ -283,10 +283,11 @@ describe('PageGenerationService', () => {
 
     expect(result.jobId).toBe(jobRepository.created?.id);
     expect(creditService.consumed[0]).toMatchObject({
-      cost: 1,
+      cost: 3,
       description: 'Page generation (standard)',
       jobId: result.jobId,
     });
+    expect(jobRepository.created?.creditCost).toBe(3);
     expect(jobRepository.created?.id).toEqual(expect.any(String));
     expect(jobRepository.created?.capacityLimits).toEqual({ perUser: 2, global: 10 });
     expect(jobRepository.created?.params).toMatchObject({
@@ -309,30 +310,31 @@ describe('PageGenerationService', () => {
       requestKind: 'initial',
       generationMode: 'standard',
       quality: 'medium',
-      creditCost: 1,
+      creditCost: 3,
       requiresPlanner: false,
       previousPageStatus: 'designing',
       previousGenerationMode: null,
     });
   });
 
-  it('initial thinking は1crになる', async () => {
+  it('4体目以降の参照画像を加算してenqueueする', async () => {
     const pageRepository = new FakePageRepository();
+    const entityRepository = new FakeEntityRepository();
+    entityRepository.entities = Array.from({ length: 5 }, (_, index) =>
+      buildEntity(`entity-${index + 1}`, `Character ${index + 1}`, 'character'),
+    );
+    entityRepository.references = entityRepository.entities.map((entity, index) =>
+      buildReference(entity.id, index + 1),
+    );
     pageRepository.context = buildPageContext({
       frameCount: 5,
-      panels: [
-        buildPanelContext('entity-1'),
-        buildPanelContext('entity-2'),
-        buildPanelContext('entity-3'),
-        buildPanelContext('entity-4'),
-        buildPanelContext('entity-5'),
-      ],
+      panels: entityRepository.entities.map((entity) => buildPanelContext(entity.id)),
     });
     const creditService = new FakeCreditService();
     const queue = new FakeQueue();
     const service = new PageGenerationService(
       pageRepository,
-      new FakeEntityRepository(),
+      entityRepository,
       new FakeGenerationJobRepository(),
       creditService,
       queue,
@@ -341,11 +343,12 @@ describe('PageGenerationService', () => {
 
     await service.enqueuePageGeneration(userId, pageId);
 
-    expect(creditService.consumed[0]?.cost).toBe(1);
+    expect(creditService.consumed[0]?.cost).toBe(5);
+    expect(queue.lastPayload?.creditCost).toBe(5);
     expect(queue.lastPayload?.generationMode).toBe('thinking');
   });
 
-  it('generated_image があるページは1crのregenerateになる', async () => {
+  it('generated_image があるページは3crのregenerateになる', async () => {
     const pageRepository = new FakePageRepository();
     pageRepository.context = buildPageContext({
       generatedImage: {
@@ -369,9 +372,10 @@ describe('PageGenerationService', () => {
 
     await service.enqueuePageGeneration(userId, pageId);
 
-    expect(creditService.consumed[0]?.cost).toBe(1);
+    expect(creditService.consumed[0]?.cost).toBe(3);
     expect(queue.lastPayload).toMatchObject({
       requestKind: 'regenerate',
+      creditCost: 3,
       quality: 'medium',
       requiresPlanner: false,
     });
@@ -547,7 +551,7 @@ describe('PageGenerationService', () => {
       { status: 'designing', generationMode: null },
     ]);
     expect(creditService.refunded[0]).toMatchObject({
-      amount: 1,
+      amount: 3,
       description: 'Refund for failed page generation enqueue',
       jobId: jobRepository.created?.id,
     });
@@ -573,7 +577,7 @@ describe('PageGenerationService', () => {
 
     expect(jobRepository.failedJobId).toBe(jobRepository.created?.id);
     expect(creditService.refunded[0]).toMatchObject({
-      amount: 1,
+      amount: 3,
       jobId: jobRepository.created?.id,
     });
   });
@@ -621,7 +625,7 @@ describe('PageGenerationService', () => {
     await expect(service.enqueuePageGeneration(userId, pageId)).rejects.toThrow('refund unavailable');
 
     expect(creditService.refunded[0]).toMatchObject({
-      amount: 1,
+      amount: 3,
       jobId: jobRepository.created?.id,
     });
     expect(jobRepository.failedJobId).toBe(jobRepository.created?.id);
@@ -796,6 +800,15 @@ function buildPanelContext(entityId: string): PageGenerationContext['panels'][nu
         stateId: null,
       },
     ],
+  };
+}
+
+function buildReference(entityId: string, index: number): EntityPrimaryReferenceImage {
+  return {
+    entityId,
+    refId: `ref-${index}`,
+    s3Key: `saved/user-1/entities/${entityId}/ref-${index}.png`,
+    cdnUrl: `https://img.lyra.test/${entityId}.png`,
   };
 }
 

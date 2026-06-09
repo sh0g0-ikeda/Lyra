@@ -16,6 +16,23 @@ export const PAGE_GENERATION_CREDIT_COSTS = {
   regenerate: CREDIT_COSTS.PAGE_REGENERATION,
 } as const;
 
+// Pricing is based on the page image request, with extra margin protection for
+// reference-heavy pages because each attached entity reference adds image input cost.
+export const PAGE_GENERATION_REFERENCE_BILLING = {
+  INCLUDED_REFERENCE_COUNT: 3,
+  EXTRA_CREDIT_PER_REFERENCE: 1,
+} as const;
+
+export function calculatePageGenerationCreditCost(referenceCount: number): number {
+  const extraReferenceCount = Math.max(
+    0,
+    referenceCount - PAGE_GENERATION_REFERENCE_BILLING.INCLUDED_REFERENCE_COUNT,
+  );
+
+  return PAGE_GENERATION_CREDIT_COSTS.standard +
+    extraReferenceCount * PAGE_GENERATION_REFERENCE_BILLING.EXTRA_CREDIT_PER_REFERENCE;
+}
+
 export const PAGE_GENERATION_STALE_AFTER_MS = 20 * 60 * 1000;
 export const ENTITY_GENERATION_STALE_AFTER_MS = 20 * 60 * 1000;
 export const GENERATION_RECOVERY_BATCH_LIMIT = 100;
