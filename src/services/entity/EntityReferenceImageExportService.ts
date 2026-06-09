@@ -1,6 +1,7 @@
 import { NotFoundError } from '../../domain/errors/index.js';
 import type { StoredImageLoaderPort } from '../../infrastructure/aws/S3StoredImageLoader.js';
 import type { EntityReferenceRepository } from '../../repositories/EntityRepository.js';
+import { ensureOwnedEntityReferenceImageKey } from '../storage/StoredImageKeyPolicy.js';
 import { ensureAllowedReferenceSourceKey } from './EntityReferenceSourceKeyPolicy.js';
 
 export interface ExportedEntityReferenceImage {
@@ -42,6 +43,7 @@ export class EntityReferenceImageExportService implements EntityReferenceImageEx
       throw new NotFoundError('Reference image not found');
     }
 
+    ensureOwnedEntityReferenceImageKey(referenceImage.s3Key, userId, entity.entityId);
     return this.storedImageLoader.loadByS3Key(referenceImage.s3Key);
   }
 

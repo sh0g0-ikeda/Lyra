@@ -5,6 +5,7 @@ import type { EntityRepository } from '../../repositories/EntityRepository.js';
 import type { PageRepository } from '../../repositories/PageRepository.js';
 import type { StoredImageLoaderPort } from '../../infrastructure/aws/S3StoredImageLoader.js';
 import type { LayoutGuideImageRendererPort } from './LayoutGuideImageRenderer.js';
+import { ensureOwnedEntityReferenceImageKey } from '../storage/StoredImageKeyPolicy.js';
 
 export interface BuildPageGenerationInputImagesInput {
   userId: string;
@@ -55,6 +56,7 @@ export class PageGenerationInputImageBuilder implements PageGenerationInputImage
         continue;
       }
 
+      ensureOwnedEntityReferenceImageKey(reference.s3Key, input.userId, entityId);
       const loadedImage = await this.storedImageLoader.loadByS3Key(reference.s3Key);
       inputImages.push({
         role: 'entity_reference',

@@ -59,6 +59,22 @@ describe('EntityReferenceImageExportService', () => {
     });
   });
 
+  it('rejects a confirmed reference image outside the owner scope before loading', async () => {
+    const repository = new FakeEntityReferenceRepository();
+    repository.context!.referenceSet.images[0]!.s3Key = 'saved/user-2/entities/entity-1/ref-1.png';
+    const loader = new FakeStoredImageLoader();
+    const service = new EntityReferenceImageExportService(
+      repository,
+      loader,
+    );
+
+    await expect(service.exportReferenceImage('user-1', 'entity-1', 'ref-1')).rejects.toMatchObject({
+      code: 'CONFIGURATION_ERROR',
+      message: 'entity reference image key is outside the owner scope',
+    });
+    expect(loader.lastS3Key).toBeNull();
+  });
+
   it('returns NOT_FOUND when the entity is missing', async () => {
     const repository = new FakeEntityReferenceRepository();
     repository.context = null;

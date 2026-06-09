@@ -352,4 +352,29 @@ describe('PageGenerationInputImageBuilder', () => {
     });
     expect(loader.calls).toEqual([]);
   });
+
+  it('stored reference image key が所有者スコープ外なら loader に渡さない', async () => {
+    const loader = new FakeStoredImageLoader();
+    const entityRepository = new FakeEntityRepository();
+    entityRepository.references = [
+      {
+        entityId: 'entity-1',
+        refId: 'ref-1',
+        s3Key: 'saved/user-2/entities/entity-1/ref-1.png',
+        cdnUrl: 'https://img.lyra.app/ref-1.png',
+      },
+    ];
+    const builder = new PageGenerationInputImageBuilder(
+      new FakePageRepository(),
+      entityRepository,
+      loader,
+      new FakeLayoutGuideImageRenderer(),
+    );
+
+    await expect(builder.buildInputImages({ userId: 'user-1', pageId: 'page-1' })).rejects.toMatchObject({
+      code: 'CONFIGURATION_ERROR',
+      message: 'entity reference image key is outside the owner scope',
+    });
+    expect(loader.calls).toEqual([]);
+  });
 });
