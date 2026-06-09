@@ -2132,7 +2132,7 @@ function StudioShell(props: {
                     actions={
                       <div className="toolbar">
                         <button
-                          className="secondary-button"
+                          className="primary-button"
                           disabled={skeletonActionDisabled}
                           onClick={() => {
                             if (selectedEpisode === null) {
