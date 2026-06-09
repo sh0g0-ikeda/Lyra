@@ -9,7 +9,6 @@ class QueryCapturingClient implements DatabaseClient, TransactionRunner {
     id: '33333333-3333-4333-8333-333333333333',
     page_skeleton_generated: false,
     existing_page_count: 0,
-    protected_page_count: 0,
   };
 
   public async query<T extends QueryResultRow = QueryResultRow>(
@@ -74,7 +73,6 @@ class ExistingSkeletonClient implements DatabaseClient, TransactionRunner {
             id: '33333333-3333-4333-8333-333333333333',
             page_skeleton_generated: true,
             existing_page_count: 0,
-            protected_page_count: 0,
           },
         ] as unknown as T[],
       };
@@ -244,7 +242,6 @@ describe('PostgresStoryRepository', () => {
       id: '33333333-3333-4333-8333-333333333333',
       page_skeleton_generated: true,
       existing_page_count: 2,
-      protected_page_count: 0,
     };
     const repository = new PostgresStoryRepository(client, client);
 

@@ -431,8 +431,6 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   'Apply story plan': '話全体を反映',
   'Improve draft': '改善する',
   'Apply all': 'すべて反映',
-  'Split story fields and the whole story draft both have content. Please keep only one before saving or generating.':
-    '分割入力と全体入力の両方に内容があります。保存や生成の前にどちらか一方にしてください。',
   'Apply to title': 'タイトルへ反映',
   'Apply purpose': '目的へ反映',
   'Apply introduction': '序盤へ反映',
@@ -488,14 +486,12 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   'Double-click image to enlarge': '画像はダブルクリックで拡大',
   'Fill selected page': '選択中ページを補完',
   'Use this after the story plan when a single page still needs refinement.': '話全体の反映後も1ページだけ補正したいときに使います。',
-  'The current page plan can be regenerated because every page is still designing.':
-    'この話の既存ページはすべて designing のため、ページ骨格を上書き再生成できます。',
-  'Only episodes with designing pages can regenerate the page plan.':
-    'ページ骨格の再生成は、既存ページがすべて designing の話でのみ行えます。',
-  'Checking current pages before allowing skeleton regeneration.':
-    'ページ骨格の再生成可否を確認するため、現在のページ状態を読み込んでいます。',
-  'Regenerating the page plan will replace the current designing pages for this episode.':
-    'ページ骨格を上書き再生成すると、この話の designing 状態の既存ページを置き換えます。',
+  'Loading current page plan.':
+    '現在のページ骨格を読み込んでいます。',
+  'Regenerating will replace the current pages for this episode.':
+    '再生成すると、この話の現在のページが置き換わります。',
+  'Regenerating the page plan will replace the current pages for this episode.':
+    'ページ骨格を上書き再生成すると、この話の現在のページを置き換えます。',
   Primary: 'メイン',
   Delete: '削除',
   'Generate full-body candidates': '全身候補を生成',
@@ -1508,10 +1504,6 @@ function StudioShell(props: {
   });
   const balloons = useMemo(() => balloonsQuery.data?.balloons ?? [], [balloonsQuery.data?.balloons]);
   const selectedBalloon = balloons.find((balloon) => balloon.id === selectedBalloonId) ?? balloons[0] ?? null;
-  const episodeStoryInputConflict = useMemo(
-    () => hasEpisodeStoryInputConflict(episodeDraft),
-    [episodeDraft],
-  );
   const generatedPages = useMemo(
     () => pages.filter((page) => page.generated_image !== null),
     [pages],
@@ -1519,22 +1511,14 @@ function StudioShell(props: {
   const exportablePages = useMemo(() => generatedPages.map((page) => page.id), [generatedPages]);
   const episodeHasExistingPagePlan = selectedEpisode !== null && (selectedEpisode.page_skeleton_generated || pages.length > 0);
   const skeletonContextLoading = selectedEpisode !== null && episodeHasExistingPagePlan && pagesQuery.isLoading;
-  const canOverwritePagePlan =
-    episodeHasExistingPagePlan && !skeletonContextLoading && pages.every((page) => page.status === 'designing');
   const skeletonActionLabel = episodeHasExistingPagePlan ? 'Regenerate page plan' : 'Generate page plan';
   const skeletonActionDisabled =
     selectedEpisode === null ||
-    episodeStoryInputConflict ||
-    busyAction === 'Generate page skeleton' ||
-    (episodeHasExistingPagePlan && !canOverwritePagePlan);
+    busyAction === 'Generate page skeleton';
   const skeletonActionMessage = skeletonContextLoading
-    ? 'Checking current pages before allowing skeleton regeneration.'
-    : episodeStoryInputConflict
-      ? 'Split story fields and the whole story draft both have content. Please keep only one before saving or generating.'
+    ? 'Loading current page plan.'
     : episodeHasExistingPagePlan
-      ? canOverwritePagePlan
-        ? 'The current page plan can be regenerated because every page is still designing.'
-        : 'Only episodes with designing pages can regenerate the page plan.'
+      ? 'Regenerating will replace the current pages for this episode.'
       : null;
 
   const jobQueries = useQueries({
@@ -1841,15 +1825,6 @@ function StudioShell(props: {
   }, [referenceCandidates, referencePrimaryKey, referenceSelection]);
 
   const saveCurrentEpisodeContext = async (): Promise<void> => {
-    if (episodeStoryInputConflict) {
-      throw new Error(
-        translateUiString(
-          uiLanguage,
-          'Split story fields and the whole story draft both have content. Please keep only one before saving or generating.',
-        ),
-      );
-    }
-
     if (selectedEpisode !== null) {
       await api.updateEpisode(selectedEpisode.id, toEpisodeAutosavePayload(episodeDraft));
     }
@@ -2242,7 +2217,7 @@ function StudioShell(props: {
                               !window.confirm(
                                 translateUiString(
                                   uiLanguage,
-                                  'Regenerating the page plan will replace the current designing pages for this episode.',
+                                  'Regenerating the page plan will replace the current pages for this episode.',
                                 ),
                               )
                             ) {
@@ -2270,7 +2245,7 @@ function StudioShell(props: {
                         </button>
                         <button
                           className="ghost-button"
-                          disabled={selectedEpisode === null || episodeStoryInputConflict || busyAction === 'Apply story plan'}
+                          disabled={selectedEpisode === null || busyAction === 'Apply story plan'}
                           onClick={() => {
                             if (selectedEpisode === null) {
                               return;
@@ -2462,7 +2437,7 @@ function StudioShell(props: {
                       <div className="toolbar">
                         <button
                           className="secondary-button"
-                          disabled={busyAction === 'Save episode' || episodeStoryInputConflict}
+                          disabled={busyAction === 'Save episode'}
                           onClick={() =>
                             void runAction('Save episode', async () => {
                               await api.updateEpisode(
@@ -2513,14 +2488,6 @@ function StudioShell(props: {
                         ['full', 'Whole draft'],
                       ]}
                     />
-                    {episodeStoryInputConflict ? (
-                      <div className="error-text small">
-                        {translateUiString(
-                          uiLanguage,
-                          'Split story fields and the whole story draft both have content. Please keep only one before saving or generating.',
-                        )}
-                      </div>
-                    ) : null}
                     {episodeDraft.story_input_mode === 'full' ? (
                       <TextAreaField
                         label="Whole story draft"
@@ -2558,7 +2525,7 @@ function StudioShell(props: {
                       <div className="toolbar">
                         <button
                           className="primary-button"
-                          disabled={storyBusy || episodeStoryInputConflict || storyInstruction.trim().length === 0}
+                          disabled={storyBusy || storyInstruction.trim().length === 0}
                           onClick={() => {
                             void (async () => {
                               try {
@@ -2569,14 +2536,7 @@ function StudioShell(props: {
                                   instruction: storyInstruction,
                                   language: uiLanguage,
                                   base_draft: {
-                                    title: nullableString(episodeDraft.title),
-                                    purpose: nullableString(episodeDraft.purpose),
-                                    story_input_mode: episodeDraft.story_input_mode,
-                                    story_full_draft: nullableString(episodeDraft.story_full_draft),
-                                    introduction: nullableString(episodeDraft.introduction),
-                                    middle: nullableString(episodeDraft.middle),
-                                    climax: nullableString(episodeDraft.climax),
-                                    ending_hook: nullableString(episodeDraft.ending_hook),
+                                    ...toEpisodeBaseDraftPayload(episodeDraft),
                                   },
                                 });
                                 setStoryImprovementDraft(result.draft);
@@ -2617,14 +2577,6 @@ function StudioShell(props: {
                     }
                   >
                     <TextAreaField label="Instruction" rows={4} value={storyInstruction} onChange={setStoryInstruction} />
-                    {episodeStoryInputConflict ? (
-                      <div className="error-text small">
-                        {translateUiString(
-                          uiLanguage,
-                          'Split story fields and the whole story draft both have content. Please keep only one before saving or generating.',
-                        )}
-                      </div>
-                    ) : null}
                     {storyImprovementMeta !== null && storyImprovementMeta.compiler_provider !== 'fallback' ? (
                           <div className="muted small">{`${translateUiString(uiLanguage, 'AI improved')} / ${storyImprovementMeta.compiler_model ?? translateUiString(uiLanguage, 'Story AI')}`}</div>
                     ) : null}
@@ -5331,11 +5283,11 @@ function toEpisodePayload(
     title: nullableString(draft.title),
     purpose: nullableString(draft.purpose),
     story_input_mode: draft.story_input_mode,
-    story_full_draft: nullableString(draft.story_full_draft),
-    introduction: nullableString(draft.introduction),
-    middle: nullableString(draft.middle),
-    climax: nullableString(draft.climax),
-    ending_hook: nullableString(draft.ending_hook),
+    story_full_draft: draft.story_input_mode === 'full' ? nullableString(draft.story_full_draft) : null,
+    introduction: draft.story_input_mode === 'structured' ? nullableString(draft.introduction) : null,
+    middle: draft.story_input_mode === 'structured' ? nullableString(draft.middle) : null,
+    climax: draft.story_input_mode === 'structured' ? nullableString(draft.climax) : null,
+    ending_hook: draft.story_input_mode === 'structured' ? nullableString(draft.ending_hook) : null,
     estimated_pages: parseNumberInput(draft.estimated_pages, 'estimated pages'),
     entities_involved: splitEntityIdCsv(draft.entities_involved, allowedEntityIds),
     status: draft.status,
@@ -5348,11 +5300,11 @@ function toEpisodeAutosavePayload(draft: EpisodeDraft): Record<string, unknown> 
     title: nullableString(draft.title),
     purpose: nullableString(draft.purpose),
     story_input_mode: draft.story_input_mode,
-    story_full_draft: nullableString(draft.story_full_draft),
-    introduction: nullableString(draft.introduction),
-    middle: nullableString(draft.middle),
-    climax: nullableString(draft.climax),
-    ending_hook: nullableString(draft.ending_hook),
+    story_full_draft: draft.story_input_mode === 'full' ? nullableString(draft.story_full_draft) : null,
+    introduction: draft.story_input_mode === 'structured' ? nullableString(draft.introduction) : null,
+    middle: draft.story_input_mode === 'structured' ? nullableString(draft.middle) : null,
+    climax: draft.story_input_mode === 'structured' ? nullableString(draft.climax) : null,
+    ending_hook: draft.story_input_mode === 'structured' ? nullableString(draft.ending_hook) : null,
     estimated_pages: parseNumberInput(draft.estimated_pages, 'estimated pages'),
     status: draft.status,
   };
@@ -5367,26 +5319,36 @@ function toCreateEpisodePayload(
     title: nullableString(draft.title),
     purpose: nullableString(draft.purpose),
     story_input_mode: draft.story_input_mode,
-    story_full_draft: nullableString(draft.story_full_draft),
-    introduction: nullableString(draft.introduction),
-    middle: nullableString(draft.middle),
-    climax: nullableString(draft.climax),
-    ending_hook: nullableString(draft.ending_hook),
+    story_full_draft: draft.story_input_mode === 'full' ? nullableString(draft.story_full_draft) : null,
+    introduction: draft.story_input_mode === 'structured' ? nullableString(draft.introduction) : null,
+    middle: draft.story_input_mode === 'structured' ? nullableString(draft.middle) : null,
+    climax: draft.story_input_mode === 'structured' ? nullableString(draft.climax) : null,
+    ending_hook: draft.story_input_mode === 'structured' ? nullableString(draft.ending_hook) : null,
     estimated_pages: parseNumberInput(draft.estimated_pages, 'estimated pages'),
     entities_involved: splitEntityIdCsv(draft.entities_involved, allowedEntityIds),
   };
 }
 
-function hasEpisodeStoryInputConflict(draft: EpisodeDraft): boolean {
-  return (
-    normalizeTextInput(draft.story_full_draft) !== null &&
-    [
-      draft.introduction,
-      draft.middle,
-      draft.climax,
-      draft.ending_hook,
-    ].some((value) => normalizeTextInput(value) !== null)
-  );
+function toEpisodeBaseDraftPayload(draft: EpisodeDraft): {
+  title: string | null;
+  purpose: string | null;
+  story_input_mode: EpisodeDraft['story_input_mode'];
+  story_full_draft: string | null;
+  introduction: string | null;
+  middle: string | null;
+  climax: string | null;
+  ending_hook: string | null;
+} {
+  return {
+    title: nullableString(draft.title),
+    purpose: nullableString(draft.purpose),
+    story_input_mode: draft.story_input_mode,
+    story_full_draft: draft.story_input_mode === 'full' ? nullableString(draft.story_full_draft) : null,
+    introduction: draft.story_input_mode === 'structured' ? nullableString(draft.introduction) : null,
+    middle: draft.story_input_mode === 'structured' ? nullableString(draft.middle) : null,
+    climax: draft.story_input_mode === 'structured' ? nullableString(draft.climax) : null,
+    ending_hook: draft.story_input_mode === 'structured' ? nullableString(draft.ending_hook) : null,
+  };
 }
 
 function convertEpisodeDraftStoryInputMode(
@@ -5401,10 +5363,7 @@ function convertEpisodeDraftStoryInputMode(
     return {
       ...draft,
       story_input_mode: 'full',
-      story_full_draft:
-        normalizeTextInput(draft.story_full_draft) ??
-        buildFullStoryDraftFromEpisodeDraftSections(draft) ??
-        '',
+      story_full_draft: draft.story_full_draft,
       introduction: '',
       middle: '',
       climax: '',
@@ -5468,18 +5427,6 @@ function createEmptyStoryImprovementDraft(
     climax: null,
     ending_hook: null,
   };
-}
-
-function buildFullStoryDraftFromEpisodeDraftSections(draft: Pick<EpisodeDraft, 'introduction' | 'middle' | 'climax' | 'ending_hook'>): string | null {
-  const parts = [draft.introduction, draft.middle, draft.climax, draft.ending_hook]
-    .map((value) => normalizeTextInput(value))
-    .filter((value): value is string => value !== null);
-
-  if (parts.length === 0) {
-    return null;
-  }
-
-  return parts.join('\n\n');
 }
 
 function deriveEpisodeDraftSectionsFromFullStory(fullStoryDraft: string): {
