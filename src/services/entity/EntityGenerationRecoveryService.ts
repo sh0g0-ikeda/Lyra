@@ -2,6 +2,7 @@ import { ENTITY_GENERATION_STALE_AFTER_MS } from '../../domain/constants/generat
 import type { EntityGenerationExecutionRepository } from '../../repositories/EntityGenerationExecutionRepository.js';
 import type {
   EntityGenerationRecoveryRepository,
+  FailedEntityGenerationJobMissingRefund,
   StaleEntityGenerationJob,
 } from '../../repositories/EntityGenerationRecoveryRepository.js';
 import type { CreditServicePort } from '../credit/CreditService.js';
@@ -35,7 +36,11 @@ export class EntityGenerationRecoveryService implements EntityGenerationRecovery
 
   public async recoverAllStaleJobs(): Promise<number> {
     const jobs = await this.recoveryRepository.listStaleProcessingJobs(this.buildCutoff());
-    return this.recoverJobs(jobs);
+    const recoveredStaleCount = await this.recoverJobs(jobs);
+    const refundedFailedCount = await this.refundFailedJobsMissingRefund(
+      await this.recoveryRepository.listFailedJobsMissingRefund(),
+    );
+    return recoveredStaleCount + refundedFailedCount;
   }
 
   public async recoverStaleJobsForEntity(userId: string, entityId: string): Promise<number> {
@@ -44,7 +49,11 @@ export class EntityGenerationRecoveryService implements EntityGenerationRecovery
       entityId,
       this.buildCutoff(),
     );
-    return this.recoverJobs(jobs);
+    const recoveredStaleCount = await this.recoverJobs(jobs);
+    const refundedFailedCount = await this.refundFailedJobsMissingRefund(
+      await this.recoveryRepository.listFailedJobsMissingRefundForEntity(userId, entityId),
+    );
+    return recoveredStaleCount + refundedFailedCount;
   }
 
   private buildCutoff(): Date {
@@ -81,5 +90,31 @@ export class EntityGenerationRecoveryService implements EntityGenerationRecovery
     }
 
     return recoveredCount;
+  }
+
+  private async refundFailedJobsMissingRefund(
+    jobs: FailedEntityGenerationJobMissingRefund[],
+  ): Promise<number> {
+    let refundedCount = 0;
+
+    for (const job of jobs) {
+      if (job.creditCost <= 0) {
+        continue;
+      }
+
+      await this.creditService.refundCredits({
+        userId: job.userId,
+        amount: job.creditCost,
+        description: 'Refund for failed entity generation job missing refund ledger',
+        jobId: job.jobId,
+      });
+
+      refundedCount += 1;
+      console.warn(
+        `[entity-generation-recovery] refunded failed job ${job.jobId} for entity ${job.entityId} completed at ${job.completedAt?.toISOString() ?? 'unknown'}`,
+      );
+    }
+
+    return refundedCount;
   }
 }

@@ -4,6 +4,7 @@ import type { GenerationJob } from '../../../../src/domain/types/job.js';
 import type { EntityGenerationExecutionRepository } from '../../../../src/repositories/EntityGenerationExecutionRepository.js';
 import type {
   EntityGenerationRecoveryRepository,
+  FailedEntityGenerationJobMissingRefund,
   StaleEntityGenerationJob,
 } from '../../../../src/repositories/EntityGenerationRecoveryRepository.js';
 import type {
@@ -15,6 +16,7 @@ import { EntityGenerationRecoveryService } from '../../../../src/services/entity
 
 class FakeRecoveryRepository implements EntityGenerationRecoveryRepository {
   public jobs: StaleEntityGenerationJob[] = [];
+  public failedJobsMissingRefund: FailedEntityGenerationJobMissingRefund[] = [];
 
   public async listStaleProcessingJobs(): Promise<StaleEntityGenerationJob[]> {
     return [...this.jobs];
@@ -25,6 +27,17 @@ class FakeRecoveryRepository implements EntityGenerationRecoveryRepository {
     entityId: string,
   ): Promise<StaleEntityGenerationJob[]> {
     return this.jobs.filter((job) => job.userId === userId && job.entityId === entityId);
+  }
+
+  public async listFailedJobsMissingRefund(): Promise<FailedEntityGenerationJobMissingRefund[]> {
+    return [...this.failedJobsMissingRefund];
+  }
+
+  public async listFailedJobsMissingRefundForEntity(
+    userId: string,
+    entityId: string,
+  ): Promise<FailedEntityGenerationJobMissingRefund[]> {
+    return this.failedJobsMissingRefund.filter((job) => job.userId === userId && job.entityId === entityId);
   }
 }
 
@@ -145,6 +158,75 @@ describe('EntityGenerationRecoveryService', () => {
 
     expect(recoveredCount).toBe(1);
     expect(executionRepository.failedJobIds).toEqual(['job-2']);
+  });
+
+  it('failed 化済みで refund 台帳がない entity job を再返金する', async () => {
+    const repository = new FakeRecoveryRepository();
+    repository.failedJobsMissingRefund = [
+      {
+        jobId: 'job-1',
+        userId: 'user-1',
+        creditCost: 1,
+        entityId: 'entity-1',
+        completedAt: new Date('2026-06-03T00:00:00.000Z'),
+      },
+    ];
+    const executionRepository = new FakeExecutionRepository();
+    const creditService = new FakeCreditService();
+    const service = new EntityGenerationRecoveryService(
+      repository,
+      executionRepository,
+      creditService,
+      1,
+    );
+
+    const recoveredCount = await service.recoverAllStaleJobs();
+
+    expect(recoveredCount).toBe(1);
+    expect(executionRepository.failedJobIds).toEqual([]);
+    expect(creditService.refunds[0]).toMatchObject({
+      userId: 'user-1',
+      amount: 1,
+      description: 'Refund for failed entity generation job missing refund ledger',
+      jobId: 'job-1',
+    });
+  });
+
+  it('entity 指定回収では該当 entity の未返金 failed job だけ再返金する', async () => {
+    const repository = new FakeRecoveryRepository();
+    repository.failedJobsMissingRefund = [
+      {
+        jobId: 'job-1',
+        userId: 'user-1',
+        creditCost: 1,
+        entityId: 'entity-1',
+        completedAt: null,
+      },
+      {
+        jobId: 'job-2',
+        userId: 'user-1',
+        creditCost: 1,
+        entityId: 'entity-2',
+        completedAt: null,
+      },
+    ];
+    const executionRepository = new FakeExecutionRepository();
+    const creditService = new FakeCreditService();
+    const service = new EntityGenerationRecoveryService(
+      repository,
+      executionRepository,
+      creditService,
+      1,
+    );
+
+    const recoveredCount = await service.recoverStaleJobsForEntity('user-1', 'entity-2');
+
+    expect(recoveredCount).toBe(1);
+    expect(creditService.refunds).toEqual([
+      expect.objectContaining({
+        jobId: 'job-2',
+      }),
+    ]);
   });
 
   it('creditCost が 0 の stale entity job は refund を呼ばずに回収する', async () => {

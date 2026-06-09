@@ -9,6 +9,14 @@ export interface StaleEntityGenerationJob {
   staleAt: Date;
 }
 
+export interface FailedEntityGenerationJobMissingRefund {
+  jobId: string;
+  userId: string;
+  creditCost: number;
+  entityId: string;
+  completedAt: Date | null;
+}
+
 export interface EntityGenerationRecoveryRepository {
   listStaleProcessingJobs(cutoff: Date): Promise<StaleEntityGenerationJob[]>;
   listStaleProcessingJobsForEntity(
@@ -16,6 +24,11 @@ export interface EntityGenerationRecoveryRepository {
     entityId: string,
     cutoff: Date,
   ): Promise<StaleEntityGenerationJob[]>;
+  listFailedJobsMissingRefund(): Promise<FailedEntityGenerationJobMissingRefund[]>;
+  listFailedJobsMissingRefundForEntity(
+    userId: string,
+    entityId: string,
+  ): Promise<FailedEntityGenerationJobMissingRefund[]>;
 }
 
 interface StaleEntityGenerationJobRow extends QueryResultRow {
@@ -24,6 +37,14 @@ interface StaleEntityGenerationJobRow extends QueryResultRow {
   credit_cost: number;
   entity_id: string | null;
   stale_at: Date;
+}
+
+interface FailedEntityGenerationJobMissingRefundRow extends QueryResultRow {
+  job_id: string;
+  user_id: string;
+  credit_cost: number;
+  entity_id: string | null;
+  completed_at: Date | null;
 }
 
 export class PostgresEntityGenerationRecoveryRepository
@@ -55,6 +76,29 @@ export class PostgresEntityGenerationRecoveryRepository
 
     return result.rows.flatMap(mapStaleEntityGenerationJobRow);
   }
+
+  public async listFailedJobsMissingRefund(): Promise<FailedEntityGenerationJobMissingRefund[]> {
+    const result = await this.client.query<FailedEntityGenerationJobMissingRefundRow>(
+      buildFailedJobsMissingRefundQuery(),
+    );
+
+    return result.rows.flatMap(mapFailedEntityGenerationJobMissingRefundRow);
+  }
+
+  public async listFailedJobsMissingRefundForEntity(
+    userId: string,
+    entityId: string,
+  ): Promise<FailedEntityGenerationJobMissingRefund[]> {
+    const result = await this.client.query<FailedEntityGenerationJobMissingRefundRow>(
+      `${buildFailedJobsMissingRefundQuery()}
+         AND generation_jobs.user_id = $1
+         AND generation_jobs.params->>'entity_id' = $2
+      `,
+      [userId, entityId],
+    );
+
+    return result.rows.flatMap(mapFailedEntityGenerationJobMissingRefundRow);
+  }
 }
 
 function buildBaseQuery(): string {
@@ -81,6 +125,29 @@ function buildBaseQuery(): string {
     `;
 }
 
+function buildFailedJobsMissingRefundQuery(): string {
+  return `
+      SELECT
+        generation_jobs.id AS job_id,
+        generation_jobs.user_id,
+        generation_jobs.credit_cost,
+        generation_jobs.params->>'entity_id' AS entity_id,
+        generation_jobs.completed_at
+      FROM generation_jobs
+      WHERE generation_jobs.job_type = 'entity_generate'
+        AND generation_jobs.status = 'failed'
+        AND generation_jobs.credit_cost > 0
+        AND generation_jobs.params ? 'entity_id'
+        AND NOT EXISTS (
+          SELECT 1
+          FROM credit_ledger
+          WHERE credit_ledger.user_id = generation_jobs.user_id
+            AND credit_ledger.job_id = generation_jobs.id
+            AND credit_ledger.type = 'refund'
+        )
+    `;
+}
+
 function mapStaleEntityGenerationJobRow(
   row: StaleEntityGenerationJobRow,
 ): StaleEntityGenerationJob[] {
@@ -95,6 +162,24 @@ function mapStaleEntityGenerationJobRow(
       creditCost: row.credit_cost,
       entityId: row.entity_id,
       staleAt: row.stale_at,
+    },
+  ];
+}
+
+function mapFailedEntityGenerationJobMissingRefundRow(
+  row: FailedEntityGenerationJobMissingRefundRow,
+): FailedEntityGenerationJobMissingRefund[] {
+  if (row.entity_id === null || row.entity_id.length === 0) {
+    return [];
+  }
+
+  return [
+    {
+      jobId: row.job_id,
+      userId: row.user_id,
+      creditCost: row.credit_cost,
+      entityId: row.entity_id,
+      completedAt: row.completed_at,
     },
   ];
 }

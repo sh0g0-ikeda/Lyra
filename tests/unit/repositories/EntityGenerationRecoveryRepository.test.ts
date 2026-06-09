@@ -55,6 +55,30 @@ describe('PostgresEntityGenerationRecoveryRepository', () => {
     expect(client.queryText).toContain("generation_jobs.params->>'entity_id' = $3");
     expect(client.values).toEqual([cutoff, 'user-1', 'entity-1']);
   });
+
+  it('failed だが refund 台帳がない entity generation job を再返金対象にする', async () => {
+    const client = new QueryCapturingClient();
+    const repository = new PostgresEntityGenerationRecoveryRepository(client);
+
+    await repository.listFailedJobsMissingRefund();
+
+    expect(client.queryText).toContain("generation_jobs.status = 'failed'");
+    expect(client.queryText).toContain('generation_jobs.credit_cost > 0');
+    expect(client.queryText).toContain('NOT EXISTS');
+    expect(client.queryText).toContain('FROM credit_ledger');
+    expect(client.queryText).toContain("credit_ledger.type = 'refund'");
+  });
+
+  it('entity 指定の未返金 failed job 回収では user_id と entity_id を条件に追加する', async () => {
+    const client = new QueryCapturingClient();
+    const repository = new PostgresEntityGenerationRecoveryRepository(client);
+
+    await repository.listFailedJobsMissingRefundForEntity('user-1', 'entity-1');
+
+    expect(client.queryText).toContain('generation_jobs.user_id = $1');
+    expect(client.queryText).toContain("generation_jobs.params->>'entity_id' = $2");
+    expect(client.values).toEqual(['user-1', 'entity-1']);
+  });
 });
 
 function staleEntityJobRow(): Record<string, unknown> {

@@ -3,6 +3,7 @@ import type { CreditBalanceSnapshot } from '../../../../src/domain/types/credit.
 import type { GenerationJob } from '../../../../src/repositories/GenerationJobRepository.js';
 import type { PageGenerationExecutionRepository } from '../../../../src/repositories/PageGenerationExecutionRepository.js';
 import type {
+  FailedPageGenerationJobMissingRefund,
   PageGenerationRecoveryRepository,
   StalePageGenerationJob,
 } from '../../../../src/repositories/PageGenerationRecoveryRepository.js';
@@ -15,6 +16,7 @@ import { PageGenerationRecoveryService } from '../../../../src/services/page/Pag
 
 class FakeRecoveryRepository implements PageGenerationRecoveryRepository {
   public jobs: StalePageGenerationJob[] = [];
+  public failedJobsMissingRefund: FailedPageGenerationJobMissingRefund[] = [];
 
   public async listStaleProcessingJobs(): Promise<StalePageGenerationJob[]> {
     return [...this.jobs];
@@ -25,6 +27,17 @@ class FakeRecoveryRepository implements PageGenerationRecoveryRepository {
     pageId: string,
   ): Promise<StalePageGenerationJob[]> {
     return this.jobs.filter((job) => job.userId === userId && job.pageId === pageId);
+  }
+
+  public async listFailedJobsMissingRefund(): Promise<FailedPageGenerationJobMissingRefund[]> {
+    return [...this.failedJobsMissingRefund];
+  }
+
+  public async listFailedJobsMissingRefundForPage(
+    userId: string,
+    pageId: string,
+  ): Promise<FailedPageGenerationJobMissingRefund[]> {
+    return this.failedJobsMissingRefund.filter((job) => job.userId === userId && job.pageId === pageId);
   }
 }
 
@@ -152,6 +165,75 @@ describe('PageGenerationRecoveryService', () => {
 
     expect(recoveredCount).toBe(1);
     expect(executionRepository.failedJobIds).toEqual(['job-2']);
+  });
+
+  it('failed 化済みで refund 台帳がない page job を再返金する', async () => {
+    const repository = new FakeRecoveryRepository();
+    repository.failedJobsMissingRefund = [
+      {
+        jobId: 'job-1',
+        userId: 'user-1',
+        creditCost: 1,
+        pageId: 'page-1',
+        completedAt: new Date('2026-06-03T00:00:00.000Z'),
+      },
+    ];
+    const executionRepository = new FakeExecutionRepository();
+    const creditService = new FakeCreditService();
+    const service = new PageGenerationRecoveryService(
+      repository,
+      executionRepository,
+      creditService,
+      1,
+    );
+
+    const recoveredCount = await service.recoverAllStaleJobs();
+
+    expect(recoveredCount).toBe(1);
+    expect(executionRepository.failedJobIds).toEqual([]);
+    expect(creditService.refunds[0]).toMatchObject({
+      userId: 'user-1',
+      amount: 1,
+      description: 'Refund for failed page generation job missing refund ledger',
+      jobId: 'job-1',
+    });
+  });
+
+  it('page 指定回収では該当 page の未返金 failed job だけ再返金する', async () => {
+    const repository = new FakeRecoveryRepository();
+    repository.failedJobsMissingRefund = [
+      {
+        jobId: 'job-1',
+        userId: 'user-1',
+        creditCost: 1,
+        pageId: 'page-1',
+        completedAt: null,
+      },
+      {
+        jobId: 'job-2',
+        userId: 'user-1',
+        creditCost: 1,
+        pageId: 'page-2',
+        completedAt: null,
+      },
+    ];
+    const executionRepository = new FakeExecutionRepository();
+    const creditService = new FakeCreditService();
+    const service = new PageGenerationRecoveryService(
+      repository,
+      executionRepository,
+      creditService,
+      1,
+    );
+
+    const recoveredCount = await service.recoverStaleJobsForPage('user-1', 'page-2');
+
+    expect(recoveredCount).toBe(1);
+    expect(creditService.refunds).toEqual([
+      expect.objectContaining({
+        jobId: 'job-2',
+      }),
+    ]);
   });
 
   it('creditCost が 0 の stale job は refund を呼ばずに回収する', async () => {

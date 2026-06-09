@@ -559,7 +559,7 @@ describe('PageGenerationWorkerService', () => {
     expect(compilerError?.length).toBeLessThanOrEqual(300);
   });
 
-  it('返金が失敗した場合でもpage generation jobはfailedへ進める', async () => {
+  it('返金が失敗した場合でもpage generation jobはfailedへ進めてSQS再試行にしない', async () => {
     const executionRepository = new FakeExecutionRepository();
     const renderer = new FakeRenderer();
     renderer.shouldFail = true;
@@ -576,8 +576,9 @@ describe('PageGenerationWorkerService', () => {
       creditService,
     );
 
-    await expect(service.processJob('job-1')).rejects.toThrow('refund unavailable');
+    const result = await service.processJob('job-1');
 
+    expect(result).toEqual({ status: 'processed', jobStatus: 'failed' });
     expect(creditService.refunds[0]).toMatchObject({
       userId: 'user-1',
       amount: 10,

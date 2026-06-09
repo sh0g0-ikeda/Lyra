@@ -477,7 +477,7 @@ describe('EntityGenerationWorkerService', () => {
     expect(generatorA.input?.prompt).not.toBe(generatorB.input?.prompt);
   });
 
-  it('返金が失敗した場合でもentity generation jobはfailedへ進める', async () => {
+  it('返金が失敗した場合でもentity generation jobはfailedへ進めてSQS再試行にしない', async () => {
     const executionRepository = new FakeExecutionRepository();
     const referenceGenerator = new FakeReferenceGenerator();
     referenceGenerator.shouldThrow = true;
@@ -489,8 +489,9 @@ describe('EntityGenerationWorkerService', () => {
       creditService,
     });
 
-    await expect(service.processJob('job-1')).rejects.toThrow('refund unavailable');
+    const result = await service.processJob('job-1');
 
+    expect(result).toEqual({ status: 'processed', jobStatus: 'failed' });
     expect(creditService.refunded).toMatchObject({
       userId: 'user-1',
       amount: 8,

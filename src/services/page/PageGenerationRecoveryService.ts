@@ -2,6 +2,7 @@ import { PAGE_GENERATION_STALE_AFTER_MS } from '../../domain/constants/generatio
 import type { CreditServicePort } from '../credit/CreditService.js';
 import type { PageGenerationExecutionRepository } from '../../repositories/PageGenerationExecutionRepository.js';
 import type {
+  FailedPageGenerationJobMissingRefund,
   PageGenerationRecoveryRepository,
   StalePageGenerationJob,
 } from '../../repositories/PageGenerationRecoveryRepository.js';
@@ -36,7 +37,11 @@ export class PageGenerationRecoveryService implements PageGenerationRecoveryServ
 
   public async recoverAllStaleJobs(): Promise<number> {
     const jobs = await this.recoveryRepository.listStaleProcessingJobs(this.buildCutoff());
-    return this.recoverJobs(jobs);
+    const recoveredStaleCount = await this.recoverJobs(jobs);
+    const refundedFailedCount = await this.refundFailedJobsMissingRefund(
+      await this.recoveryRepository.listFailedJobsMissingRefund(),
+    );
+    return recoveredStaleCount + refundedFailedCount;
   }
 
   public async recoverStaleJobsForPage(userId: string, pageId: string): Promise<number> {
@@ -45,7 +50,11 @@ export class PageGenerationRecoveryService implements PageGenerationRecoveryServ
       pageId,
       this.buildCutoff(),
     );
-    return this.recoverJobs(jobs);
+    const recoveredStaleCount = await this.recoverJobs(jobs);
+    const refundedFailedCount = await this.refundFailedJobsMissingRefund(
+      await this.recoveryRepository.listFailedJobsMissingRefundForPage(userId, pageId),
+    );
+    return recoveredStaleCount + refundedFailedCount;
   }
 
   private buildCutoff(): Date {
@@ -85,5 +94,31 @@ export class PageGenerationRecoveryService implements PageGenerationRecoveryServ
     }
 
     return recoveredCount;
+  }
+
+  private async refundFailedJobsMissingRefund(
+    jobs: FailedPageGenerationJobMissingRefund[],
+  ): Promise<number> {
+    let refundedCount = 0;
+
+    for (const job of jobs) {
+      if (job.creditCost <= 0) {
+        continue;
+      }
+
+      await this.creditService.refundCredits({
+        userId: job.userId,
+        amount: job.creditCost,
+        description: 'Refund for failed page generation job missing refund ledger',
+        jobId: job.jobId,
+      });
+
+      refundedCount += 1;
+      console.warn(
+        `[page-generation-recovery] refunded failed job ${job.jobId} for page ${job.pageId} completed at ${job.completedAt?.toISOString() ?? 'unknown'}`,
+      );
+    }
+
+    return refundedCount;
   }
 }

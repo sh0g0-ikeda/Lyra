@@ -147,12 +147,19 @@ export class EntityGenerationWorkerService {
     }
 
     if (creditCost > 0) {
-      await this.creditService.refundCredits({
-        userId,
-        amount: creditCost,
-        description: 'Refund for failed entity generation job',
-        jobId,
-      });
+      try {
+        await this.creditService.refundCredits({
+          userId,
+          amount: creditCost,
+          description: 'Refund for failed entity generation job',
+          jobId,
+        });
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        console.warn(
+          `[entity-generation-worker] failed to refund failed job ${jobId}; recovery will retry missing refund ledger: ${reason}`,
+        );
+      }
     }
   }
 }

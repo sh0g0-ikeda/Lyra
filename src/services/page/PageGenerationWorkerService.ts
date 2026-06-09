@@ -208,12 +208,19 @@ export class PageGenerationWorkerService {
     }
 
     if (job.creditCost > 0) {
-      await this.creditService.refundCredits({
-        userId: job.userId,
-        amount: job.creditCost,
-        description: 'Refund for failed page generation job',
-        jobId: job.id,
-      });
+      try {
+        await this.creditService.refundCredits({
+          userId: job.userId,
+          amount: job.creditCost,
+          description: 'Refund for failed page generation job',
+          jobId: job.id,
+        });
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        console.warn(
+          `[page-generation-worker] failed to refund failed job ${job.id}; recovery will retry missing refund ledger: ${reason}`,
+        );
+      }
     }
   }
 }
