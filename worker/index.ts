@@ -46,7 +46,7 @@ export async function handleGenerationQueue(
   for (const record of event.Records) {
     const parsedMessage = parseQueueMessage(record.body);
     if (parsedMessage === null) {
-      addBatchItemFailure(batchItemFailures, record.messageId);
+      // Malformed queue messages are permanent input errors; retrying only blocks later work.
       results.push({
         messageId: record.messageId ?? null,
         jobId: null,
@@ -57,7 +57,7 @@ export async function handleGenerationQueue(
     }
 
     if (parsedMessage.job_type !== 'page_generate' && parsedMessage.job_type !== 'entity_generate') {
-      addBatchItemFailure(batchItemFailures, record.messageId);
+      // Unknown job types cannot become valid through SQS retry, so acknowledge and report them.
       results.push({
         messageId: record.messageId ?? null,
         jobId: parsedMessage.job_id,

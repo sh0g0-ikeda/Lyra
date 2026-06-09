@@ -86,7 +86,7 @@ describe('worker queue handler', () => {
     });
   });
 
-  it('unsupported job_type は batch failure にしてDLQへ残せる', async () => {
+  it('unsupported job_type は恒久失敗として再試行しない', async () => {
     const pageWorkerService = new FakePageGenerationWorkerService();
     const entityWorkerService = new FakeEntityGenerationWorkerService();
 
@@ -105,7 +105,7 @@ describe('worker queue handler', () => {
       skippedCount: 0,
       failedCount: 1,
     });
-    expect(result.batchItemFailures).toEqual([{ itemIdentifier: 'message-1' }]);
+    expect(result.batchItemFailures).toEqual([]);
     expect(result.results[0]?.status).toBe('failed');
     expect(result.results[0]?.reason).toContain('Unsupported job_type');
   });
@@ -142,6 +142,7 @@ describe('worker queue handler', () => {
       status: 'failed',
       reason: 'Invalid queue message',
     });
+    expect(result.batchItemFailures).toEqual([]);
   });
 
   it('worker service 失敗は failed として記録する', async () => {
@@ -195,7 +196,7 @@ describe('worker queue handler', () => {
     expect(result.batchItemFailures).toEqual([{ itemIdentifier: 'message-1' }]);
   });
 
-  it('invalid body と unsupported job_type は batch failure に含める', async () => {
+  it('invalid body と unsupported job_type は batch failure に含めない', async () => {
     const pageWorkerService = new FakePageGenerationWorkerService();
     const entityWorkerService = new FakeEntityGenerationWorkerService();
     const event: WorkerQueueEvent = {
@@ -218,10 +219,7 @@ describe('worker queue handler', () => {
 
     expect(result.failedCount).toBe(2);
     expect(result.skippedCount).toBe(0);
-    expect(result.batchItemFailures).toEqual([
-      { itemIdentifier: 'message-1' },
-      { itemIdentifier: 'message-2' },
-    ]);
+    expect(result.batchItemFailures).toEqual([]);
   });
 });
 
