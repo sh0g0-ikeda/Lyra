@@ -606,7 +606,7 @@ describe('PageGenerationService', () => {
     ]);
   });
 
-  it('enqueue補償の返金が失敗した場合はpage jobをfailedへ進めない', async () => {
+  it('enqueue補償の返金が失敗してもpage job failed化と状態復元は行う', async () => {
     const pageRepository = new FakePageRepository();
     const jobRepository = new FakeGenerationJobRepository();
     const creditService = new FakeCreditService();
@@ -628,7 +628,11 @@ describe('PageGenerationService', () => {
       amount: 1,
       jobId: jobRepository.created?.id,
     });
-    expect(jobRepository.failedJobId).toBeNull();
+    expect(jobRepository.failedJobId).toBe(jobRepository.created?.id);
+    expect(pageRepository.updates).toEqual([
+      { status: 'generating', generationMode: 'standard', expectedStatus: 'designing' },
+      { status: 'designing', generationMode: null },
+    ]);
   });
 });
 

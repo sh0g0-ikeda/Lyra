@@ -134,6 +134,15 @@ export class EntityGenerationWorkerService {
     creditCost: number,
     errorMessage: string,
   ): Promise<void> {
+    const failed = await this.executionRepository.failEntityGeneration({
+      jobId,
+      userId,
+      errorMessage,
+    });
+    if (!failed) {
+      return;
+    }
+
     if (creditCost > 0) {
       await this.creditService.refundCredits({
         userId,
@@ -142,12 +151,6 @@ export class EntityGenerationWorkerService {
         jobId,
       });
     }
-
-    await this.executionRepository.failEntityGeneration({
-      jobId,
-      userId,
-      errorMessage,
-    });
   }
 }
 

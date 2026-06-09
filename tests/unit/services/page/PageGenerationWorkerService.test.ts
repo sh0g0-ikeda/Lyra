@@ -557,7 +557,7 @@ describe('PageGenerationWorkerService', () => {
     expect(compilerError?.length).toBeLessThanOrEqual(300);
   });
 
-  it('返金が失敗した場合はpage generation jobをfailedへ進めない', async () => {
+  it('返金が失敗した場合でもpage generation jobはfailedへ進める', async () => {
     const executionRepository = new FakeExecutionRepository();
     const renderer = new FakeRenderer();
     renderer.shouldFail = true;
@@ -581,10 +581,14 @@ describe('PageGenerationWorkerService', () => {
       amount: 10,
       jobId: 'job-1',
     });
-    expect(executionRepository.failureInput).toBeNull();
+    expect(executionRepository.failureInput).toMatchObject({
+      jobId: 'job-1',
+      userId: 'user-1',
+      errorMessage: 'renderer unavailable',
+    });
   });
 
-  it('failed 更新が0件なら既にterminal化されたjobとしてSQS再試行を要求しない', async () => {
+  it('failed 更新が0件なら既にterminal化されたjobとしてrefundせずSQS再試行を要求しない', async () => {
     const executionRepository = new FakeExecutionRepository();
     executionRepository.failureResult = false;
     const renderer = new FakeRenderer();
@@ -604,7 +608,7 @@ describe('PageGenerationWorkerService', () => {
     const result = await service.processJob('job-1');
 
     expect(result).toEqual({ status: 'processed', jobStatus: 'failed' });
-    expect(creditService.refunds).toHaveLength(1);
+    expect(creditService.refunds).toEqual([]);
     expect(executionRepository.failureInput).toMatchObject({
       jobId: 'job-1',
       userId: 'user-1',

@@ -461,7 +461,7 @@ describe('EntityGenerationWorkerService', () => {
     expect(generatorA.input?.prompt).not.toBe(generatorB.input?.prompt);
   });
 
-  it('返金が失敗した場合はentity generation jobをfailedへ進めない', async () => {
+  it('返金が失敗した場合でもentity generation jobはfailedへ進める', async () => {
     const executionRepository = new FakeExecutionRepository();
     const referenceGenerator = new FakeReferenceGenerator();
     referenceGenerator.shouldThrow = true;
@@ -480,10 +480,14 @@ describe('EntityGenerationWorkerService', () => {
       amount: 8,
       jobId: 'job-1',
     });
-    expect(executionRepository.failed).toBeNull();
+    expect(executionRepository.failed).toMatchObject({
+      jobId: 'job-1',
+      userId: 'user-1',
+      errorMessage: 'generation failed',
+    });
   });
 
-  it('failed 更新が0件なら既にterminal化されたjobとしてSQS再試行を要求しない', async () => {
+  it('failed 更新が0件なら既にterminal化されたjobとしてrefundせずSQS再試行を要求しない', async () => {
     const executionRepository = new FakeExecutionRepository();
     executionRepository.failureResult = false;
     const referenceGenerator = new FakeReferenceGenerator();
@@ -498,11 +502,7 @@ describe('EntityGenerationWorkerService', () => {
     const result = await service.processJob('job-1');
 
     expect(result).toEqual({ status: 'processed', jobStatus: 'failed' });
-    expect(creditService.refunded).toMatchObject({
-      userId: 'user-1',
-      amount: 8,
-      jobId: 'job-1',
-    });
+    expect(creditService.refunded).toBeNull();
     expect(executionRepository.failed).toMatchObject({
       jobId: 'job-1',
       userId: 'user-1',

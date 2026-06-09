@@ -140,24 +140,42 @@ export class PageGenerationService implements PageGenerationServicePort {
         throw error;
       }
 
-      if (creditsConsumed) {
-        await this.creditService.refundCredits({
-          userId,
-          amount: selection.creditCost,
-          description: 'Refund for failed page generation enqueue',
-          jobId: createdJobId ?? reservedJobId,
-        });
-      }
+      let compensationError: unknown = null;
 
       if (createdJobId !== null) {
-        await this.generationJobRepository.markFailed(createdJobId, 'Failed to enqueue page generation job');
+        try {
+          await this.generationJobRepository.markFailed(createdJobId, 'Failed to enqueue page generation job');
+        } catch (markError) {
+          compensationError ??= markError;
+        }
       }
 
       if (pageStateUpdated) {
-        await this.pageRepository.updateGenerationState(page.pageId, userId, {
-          status: page.status,
-          generationMode: page.generationMode,
-        });
+        try {
+          await this.pageRepository.updateGenerationState(page.pageId, userId, {
+            status: page.status,
+            generationMode: page.generationMode,
+          });
+        } catch (restoreError) {
+          compensationError ??= restoreError;
+        }
+      }
+
+      if (creditsConsumed) {
+        try {
+          await this.creditService.refundCredits({
+            userId,
+            amount: selection.creditCost,
+            description: 'Refund for failed page generation enqueue',
+            jobId: createdJobId ?? reservedJobId,
+          });
+        } catch (refundError) {
+          compensationError ??= refundError;
+        }
+      }
+
+      if (compensationError !== null) {
+        throw compensationError;
       }
 
       if (error instanceof AppError) {

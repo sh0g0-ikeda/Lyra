@@ -484,7 +484,7 @@ describe('EntityReferenceService', () => {
     });
   });
 
-  it('enqueue補償の返金が失敗した場合はentity jobをfailedへ進めない', async () => {
+  it('enqueue補償の返金が失敗してもentity job failed化は行う', async () => {
     const jobs = new FakeGenerationJobRepository();
     const creditService = new FakeCreditService();
     creditService.shouldFailRefund = true;
@@ -502,7 +502,7 @@ describe('EntityReferenceService', () => {
       amount: 1,
       jobId: jobs.createdInput?.id,
     });
-    expect(jobs.failedJobId).toBeNull();
+    expect(jobs.failedJobId).toBe(jobs.createdInput?.id);
   });
 });
 

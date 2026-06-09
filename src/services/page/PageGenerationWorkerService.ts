@@ -194,6 +194,18 @@ export class PageGenerationWorkerService {
     compensation: FailureCompensation | null,
     errorMessage: string,
   ): Promise<void> {
+    const failed = await this.executionRepository.failPageGeneration({
+      jobId: job.id,
+      userId: job.userId,
+      errorMessage,
+      pageId: compensation?.pageId,
+      previousStatus: compensation?.previousStatus,
+      previousGenerationMode: compensation?.previousGenerationMode,
+    });
+    if (!failed) {
+      return;
+    }
+
     if (job.creditCost > 0) {
       await this.creditService.refundCredits({
         userId: job.userId,
@@ -202,15 +214,6 @@ export class PageGenerationWorkerService {
         jobId: job.id,
       });
     }
-
-    await this.executionRepository.failPageGeneration({
-      jobId: job.id,
-      userId: job.userId,
-      errorMessage,
-      pageId: compensation?.pageId,
-      previousStatus: compensation?.previousStatus,
-      previousGenerationMode: compensation?.previousGenerationMode,
-    });
   }
 }
 
