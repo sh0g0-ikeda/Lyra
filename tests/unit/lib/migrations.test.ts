@@ -156,6 +156,7 @@ describe('runPendingMigrations', () => {
       '001_concurrent_index.sql': [
         '-- lyra:migration no-transaction',
         'CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS idx_example ON example(id);',
+        "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_example_name ON example(name) WHERE name <> 'a;b';",
       ].join('\n'),
     });
     const db = new FakeMigrationDb();
@@ -167,9 +168,15 @@ describe('runPendingMigrations', () => {
     expect(db.executedSql).toContain(
       [
         '-- lyra:migration no-transaction',
-        'CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS idx_example ON example(id);',
+        'CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS idx_example ON example(id)',
       ].join('\n'),
     );
+    expect(db.executedSql).toContain(
+      "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_example_name ON example(name) WHERE name <> 'a;b'",
+    );
+    expect(
+      db.executedSql.filter((sql) => sql.includes('CONCURRENTLY')).every((sql) => !sql.trim().endsWith(';')),
+    ).toBe(true);
     expect(db.insertedFilenames).toEqual(['001_concurrent_index.sql']);
   });
 

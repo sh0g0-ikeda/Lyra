@@ -66,7 +66,11 @@ async function runPendingMigrationsWithLock(
 
     const sql = await readFile(join(migrationsDir, filename), 'utf8');
     if (shouldRunWithoutTransaction(sql)) {
-      await db.query(sql);
+      // PostgreSQL rejects CREATE INDEX CONCURRENTLY when several commands are
+      // sent as one query string, even outside our explicit transaction helper.
+      for (const statement of splitSqlStatements(sql)) {
+        await db.query(statement);
+      }
       await db.query('INSERT INTO schema_migrations (filename) VALUES ($1)', [filename]);
     } else {
       await db.transaction(async (client) => {
@@ -137,4 +141,132 @@ function shouldRunWithoutTransaction(sql: string): boolean {
     .split('\n')
     .slice(0, 5)
     .some((line) => line.trim() === '-- lyra:migration no-transaction');
+}
+
+function splitSqlStatements(sql: string): string[] {
+  const statements: string[] = [];
+  let statementStart = 0;
+  let index = 0;
+  let inSingleQuote = false;
+  let inDoubleQuote = false;
+  let inLineComment = false;
+  let inBlockComment = false;
+  let dollarQuoteTag: string | null = null;
+
+  while (index < sql.length) {
+    const char = sql[index];
+    const nextChar = sql[index + 1];
+
+    if (inLineComment) {
+      if (char === '\n' || char === '\r') {
+        inLineComment = false;
+      }
+      index += 1;
+      continue;
+    }
+
+    if (inBlockComment) {
+      if (char === '*' && nextChar === '/') {
+        inBlockComment = false;
+        index += 2;
+        continue;
+      }
+      index += 1;
+      continue;
+    }
+
+    if (dollarQuoteTag !== null) {
+      if (sql.startsWith(dollarQuoteTag, index)) {
+        index += dollarQuoteTag.length;
+        dollarQuoteTag = null;
+        continue;
+      }
+      index += 1;
+      continue;
+    }
+
+    if (inSingleQuote) {
+      if (char === "'" && nextChar === "'") {
+        index += 2;
+        continue;
+      }
+      if (char === "'") {
+        inSingleQuote = false;
+      }
+      index += 1;
+      continue;
+    }
+
+    if (inDoubleQuote) {
+      if (char === '"') {
+        inDoubleQuote = false;
+      }
+      index += 1;
+      continue;
+    }
+
+    if (char === '-' && nextChar === '-') {
+      inLineComment = true;
+      index += 2;
+      continue;
+    }
+
+    if (char === '/' && nextChar === '*') {
+      inBlockComment = true;
+      index += 2;
+      continue;
+    }
+
+    if (char === "'") {
+      inSingleQuote = true;
+      index += 1;
+      continue;
+    }
+
+    if (char === '"') {
+      inDoubleQuote = true;
+      index += 1;
+      continue;
+    }
+
+    if (char === '$') {
+      const tag = readDollarQuoteTag(sql, index);
+      if (tag !== null) {
+        dollarQuoteTag = tag;
+        index += tag.length;
+        continue;
+      }
+    }
+
+    if (char === ';') {
+      const statement = sql.slice(statementStart, index).trim();
+      if (statement.length > 0) {
+        statements.push(statement);
+      }
+      statementStart = index + 1;
+    }
+
+    index += 1;
+  }
+
+  const finalStatement = sql.slice(statementStart).trim();
+  if (finalStatement.length > 0) {
+    statements.push(finalStatement);
+  }
+
+  return statements;
+}
+
+function readDollarQuoteTag(sql: string, startIndex: number): string | null {
+  let index = startIndex + 1;
+
+  while (index < sql.length && /[A-Za-z0-9_]/u.test(sql[index] ?? '')) {
+    index += 1;
+  }
+
+  if (sql[index] !== '$') {
+    return null;
+  }
+
+  return sql.slice(startIndex, index + 1);
 }
