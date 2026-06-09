@@ -186,4 +186,20 @@ describe('runPendingMigrations', () => {
     );
     expect(sql).toContain('VALIDATE CONSTRAINT generation_jobs_job_type_check');
   });
+
+  it('課金系の種類と状態はDB制約で型契約を守る', async () => {
+    const sql = await readFile(
+      join(process.cwd(), 'migrations', '010_add_billing_state_constraints.sql'),
+      'utf8',
+    );
+
+    expect(sql).toContain("CHECK (plan_code IN ('free', 'standard', 'premium'))");
+    expect(sql).toContain(
+      "CHECK (type IN ('signup_bonus', 'monthly_grant', 'purchase', 'consume', 'refund'))",
+    );
+    expect(sql).toContain("CHECK (kind IN ('subscription', 'credit_purchase'))");
+    expect(sql).toContain("CHECK (status IN ('paid', 'failed'))");
+    expect(sql).toContain('CHECK (amount_jpy >= 0)');
+    expect(sql).toContain('VALIDATE CONSTRAINT credit_ledger_type_check');
+  });
 });
