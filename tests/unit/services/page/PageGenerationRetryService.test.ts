@@ -23,10 +23,6 @@ class InMemoryGenerationJobRepository implements GenerationJobRepository {
     throw new Error('unused');
   }
 
-  public async findById(): Promise<GenerationJob | null> {
-    throw new Error('unused');
-  }
-
   public async findByIdAndUserId(_jobId: string, userId: string): Promise<GenerationJob | null> {
     if (this.job === null || this.job.userId !== userId) {
       return null;

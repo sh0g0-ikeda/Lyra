@@ -18,10 +18,6 @@ class FakeGenerationJobRepository implements GenerationJobRepository {
     throw new Error('not used');
   }
 
-  public async findById(): Promise<GenerationJob | null> {
-    throw new Error('not used');
-  }
-
   public async findByIdAndUserId(): Promise<GenerationJob | null> {
     this.reads += 1;
     return this.job;

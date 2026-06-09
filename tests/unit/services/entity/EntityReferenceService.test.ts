@@ -106,10 +106,6 @@ class FakeGenerationJobRepository implements GenerationJobRepository {
     });
   }
 
-  public async findById(): Promise<GenerationJob | null> {
-    return null;
-  }
-
   public async findByIdAndUserId(): Promise<GenerationJob | null> {
     return null;
   }

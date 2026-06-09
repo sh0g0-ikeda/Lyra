@@ -43,7 +43,6 @@ export interface PruneExpiredGenerationJobsResult {
 
 export interface GenerationJobRepository {
   create(input: CreateGenerationJobInput): Promise<GenerationJob>;
-  findById(jobId: string): Promise<GenerationJob | null>;
   findByIdAndUserId(jobId: string, userId: string): Promise<GenerationJob | null>;
   findActivePageGenerationJob(userId: string, pageId: string): Promise<GenerationJob | null>;
   findActiveEntityGenerationJob(userId: string, entityId: string): Promise<GenerationJob | null>;
@@ -152,19 +151,6 @@ export class PostgresGenerationJobRepository implements GenerationJobRepository 
     if (activeGlobally >= limits.global) {
       throw new ConflictError('Generation queue is temporarily full');
     }
-  }
-
-  public async findById(jobId: string): Promise<GenerationJob | null> {
-    const result = await this.client.query<GenerationJobRow>(
-      `
-      SELECT *
-      FROM generation_jobs
-      WHERE id = $1
-      `,
-      [jobId],
-    );
-
-    return result.rows[0] === undefined ? null : mapGenerationJobRow(result.rows[0]);
   }
 
   public async findByIdAndUserId(jobId: string, userId: string): Promise<GenerationJob | null> {
