@@ -41,7 +41,7 @@ const envSchema = z.object({
   GENERATION_ENABLED: z
     .string()
     .optional()
-    .transform((value) => (value === undefined ? true : value === 'true')),
+    .transform((value) => (value === undefined ? process.env.NODE_ENV !== 'production' : value === 'true')),
   STRIPE_SECRET_KEY: z.string().min(1).optional(),
   STRIPE_WEBHOOK_SECRET: z.string().min(1).optional(),
   STRIPE_PRICE_STANDARD_MONTHLY: z.string().min(1).optional(),
@@ -70,4 +70,10 @@ const envSchema = z.object({
   DEV_AUTH_BYPASS_EMAIL: z.string().email().optional(),
 });
 
-export const env = envSchema.parse(process.env);
+export type Env = z.infer<typeof envSchema>;
+
+export function parseEnv(source: NodeJS.ProcessEnv = process.env): Env {
+  return envSchema.parse(source);
+}
+
+export const env = parseEnv(process.env);
