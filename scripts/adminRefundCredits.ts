@@ -15,6 +15,7 @@ const POSITIVE_INTEGER_PATTERN = /^[1-9][0-9]*$/u;
 const ADMIN_REFUND_FLAG_OPTIONS = new Set(['--apply', '--dry-run']);
 const ADMIN_REFUND_VALUE_OPTIONS = new Set(['--user-id', '--amount', '--reason', '--job-id']);
 const DEFAULT_REASON = 'Manual admin credit refund';
+const MAX_ADMIN_REFUND_CREDITS = 10_000;
 
 export function parseAdminRefundCreditsArgs(argv: readonly string[]): AdminRefundCreditsOptions {
   const args = new Map<string, string | boolean>();
@@ -169,6 +170,10 @@ function readPositiveInteger(args: Map<string, string | boolean>, key: string): 
 
   if (!Number.isSafeInteger(value) || value <= 0) {
     throw new Error(`${key} must be a positive integer`);
+  }
+
+  if (key === '--amount' && value > MAX_ADMIN_REFUND_CREDITS) {
+    throw new Error(`${key} must be ${MAX_ADMIN_REFUND_CREDITS} or less`);
   }
 
   return value;

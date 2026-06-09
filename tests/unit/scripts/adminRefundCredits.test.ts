@@ -75,6 +75,15 @@ describe('parseAdminRefundCreditsArgs', () => {
     ])).toThrow(/--amount must be a positive integer/);
   });
 
+  it('rejects unusually large manual refund amounts', () => {
+    expect(() => parseAdminRefundCreditsArgs([
+      '--user-id',
+      userId,
+      '--amount',
+      '10001',
+    ])).toThrow(/--amount must be 10000 or less/);
+  });
+
   it('rejects non decimal integer amounts', () => {
     expect(() => parseAdminRefundCreditsArgs([
       '--user-id',
