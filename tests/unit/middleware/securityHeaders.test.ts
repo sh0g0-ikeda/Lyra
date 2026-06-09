@@ -13,6 +13,9 @@ describe('createSecurityHeadersMiddleware', () => {
 
     expect(response.headers.get('X-Content-Type-Options')).toBe('nosniff');
     expect(response.headers.get('X-Frame-Options')).toBe('DENY');
+    expect(response.headers.get('Content-Security-Policy')).toBe(
+      "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
+    );
     expect(response.headers.get('Referrer-Policy')).toBe('no-referrer');
     expect(response.headers.get('Permissions-Policy')).toContain('camera=()');
     expect(response.headers.get('Strict-Transport-Security')).toBeNull();
@@ -35,11 +38,13 @@ describe('createSecurityHeadersMiddleware', () => {
     app.use('*', createSecurityHeadersMiddleware('production'));
     app.get('/asset', (c) => {
       c.header('Cross-Origin-Resource-Policy', 'cross-origin');
+      c.header('Content-Security-Policy', "default-src 'self'");
       return c.text('ok');
     });
 
     const response = await app.request('/asset');
 
     expect(response.headers.get('Cross-Origin-Resource-Policy')).toBe('cross-origin');
+    expect(response.headers.get('Content-Security-Policy')).toBe("default-src 'self'");
   });
 });
