@@ -320,6 +320,87 @@ describe('CreditService', () => {
       }),
     ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' } satisfies Partial<AppError>);
   });
+
+  it('fractional consume cost is rejected before ledger write', async () => {
+    const repository = new InMemoryCreditRepository();
+    repository.setBalance({
+      userId: 'user-1',
+      monthlyCredits: 10,
+      purchasedCredits: 10,
+      monthlyExpiresAt: null,
+    });
+    const service = new CreditService(repository);
+
+    await expect(
+      service.consumeCredits({
+        userId: 'user-1',
+        cost: 1.5,
+        description: 'invalid fractional cost',
+      }),
+    ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' } satisfies Partial<AppError>);
+    expect(repository.ledger).toHaveLength(0);
+  });
+
+  it('unsafe consume cost is rejected before ledger write', async () => {
+    const repository = new InMemoryCreditRepository();
+    repository.setBalance({
+      userId: 'user-1',
+      monthlyCredits: Number.MAX_SAFE_INTEGER,
+      purchasedCredits: Number.MAX_SAFE_INTEGER,
+      monthlyExpiresAt: null,
+    });
+    const service = new CreditService(repository);
+
+    await expect(
+      service.consumeCredits({
+        userId: 'user-1',
+        cost: Number.MAX_SAFE_INTEGER + 1,
+        description: 'invalid unsafe cost',
+      }),
+    ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' } satisfies Partial<AppError>);
+    expect(repository.ledger).toHaveLength(0);
+  });
+
+  it('fractional refund amount is rejected before ledger write', async () => {
+    const repository = new InMemoryCreditRepository();
+    repository.setBalance({
+      userId: 'user-1',
+      monthlyCredits: 5,
+      purchasedCredits: 7,
+      monthlyExpiresAt: null,
+    });
+    const service = new CreditService(repository);
+
+    await expect(
+      service.refundCredits({
+        userId: 'user-1',
+        amount: 1.5,
+        description: 'invalid fractional refund',
+      }),
+    ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' } satisfies Partial<AppError>);
+    expect(repository.ledger).toHaveLength(0);
+  });
+
+  it('unsafe refund amount is rejected before ledger write', async () => {
+    const repository = new InMemoryCreditRepository();
+    repository.setBalance({
+      userId: 'user-1',
+      monthlyCredits: 5,
+      purchasedCredits: 7,
+      monthlyExpiresAt: null,
+    });
+    const service = new CreditService(repository);
+
+    await expect(
+      service.refundCredits({
+        userId: 'user-1',
+        amount: Number.MAX_SAFE_INTEGER + 1,
+        description: 'invalid unsafe refund',
+      }),
+    ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' } satisfies Partial<AppError>);
+    expect(repository.ledger).toHaveLength(0);
+  });
+
   it('返金時はpurchased creditsに加算してrefund台帳を残す', async () => {
     const repository = new InMemoryCreditRepository();
     repository.setBalance({

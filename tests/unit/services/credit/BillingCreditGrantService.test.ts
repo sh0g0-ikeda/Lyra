@@ -203,4 +203,66 @@ describe('BillingCreditGrantService', () => {
       stripeEventId: 'evt_2',
     });
   });
+
+  it('fractional monthly grant amount is rejected before ledger write', async () => {
+    const repository = new InMemoryCreditRepository();
+    const service = new BillingCreditGrantService(repository);
+
+    await expect(
+      service.grantMonthlyCredits({
+        userId: 'user-1',
+        amount: 1.5,
+        expiresAt: new Date('2026-06-01T00:00:00.000Z'),
+        description: 'Invalid monthly grant',
+        stripeEventId: 'evt_fractional_monthly',
+      }),
+    ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+    expect(repository.ledger).toHaveLength(0);
+  });
+
+  it('unsafe monthly grant amount is rejected before ledger write', async () => {
+    const repository = new InMemoryCreditRepository();
+    const service = new BillingCreditGrantService(repository);
+
+    await expect(
+      service.grantMonthlyCredits({
+        userId: 'user-1',
+        amount: Number.MAX_SAFE_INTEGER + 1,
+        expiresAt: new Date('2026-06-01T00:00:00.000Z'),
+        description: 'Invalid monthly grant',
+        stripeEventId: 'evt_unsafe_monthly',
+      }),
+    ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+    expect(repository.ledger).toHaveLength(0);
+  });
+
+  it('fractional purchased grant amount is rejected before ledger write', async () => {
+    const repository = new InMemoryCreditRepository();
+    const service = new BillingCreditGrantService(repository);
+
+    await expect(
+      service.grantPurchasedCredits({
+        userId: 'user-1',
+        amount: 1.5,
+        description: 'Invalid purchased grant',
+        stripeEventId: 'evt_fractional_purchase',
+      }),
+    ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+    expect(repository.ledger).toHaveLength(0);
+  });
+
+  it('unsafe purchased grant amount is rejected before ledger write', async () => {
+    const repository = new InMemoryCreditRepository();
+    const service = new BillingCreditGrantService(repository);
+
+    await expect(
+      service.grantPurchasedCredits({
+        userId: 'user-1',
+        amount: Number.MAX_SAFE_INTEGER + 1,
+        description: 'Invalid purchased grant',
+        stripeEventId: 'evt_unsafe_purchase',
+      }),
+    ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+    expect(repository.ledger).toHaveLength(0);
+  });
 });

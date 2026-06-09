@@ -1,4 +1,3 @@
-import { ValidationError } from '../../domain/errors/index.js';
 import type { CreditBalance, CreditBalanceSnapshot, CreditLedgerEntry } from '../../domain/types/credit.js';
 import type { DatabaseClient } from '../../lib/db.js';
 import type { CreditRepository } from '../../repositories/CreditRepository.js';
@@ -7,6 +6,7 @@ import {
   systemClock,
   type Clock,
 } from './CreditBalanceExpiration.js';
+import { assertPositiveSafeCreditAmount } from './CreditAmountValidation.js';
 
 export interface GrantMonthlyCreditsParams {
   userId: string;
@@ -44,9 +44,7 @@ export class BillingCreditGrantService implements BillingCreditGrantServicePort 
     params: GrantMonthlyCreditsParams,
     client?: DatabaseClient,
   ): Promise<CreditBalanceSnapshot> {
-    if (params.amount <= 0) {
-      throw new ValidationError('Monthly credit grant amount must be greater than zero');
-    }
+    assertPositiveSafeCreditAmount(params.amount, 'Monthly credit grant amount');
 
     return this.withTransaction(client, async (transactionClient) => {
       const currentBalance = this.normalizeBalance(
@@ -83,9 +81,7 @@ export class BillingCreditGrantService implements BillingCreditGrantServicePort 
     params: GrantPurchasedCreditsParams,
     client?: DatabaseClient,
   ): Promise<CreditBalanceSnapshot> {
-    if (params.amount <= 0) {
-      throw new ValidationError('Purchased credit grant amount must be greater than zero');
-    }
+    assertPositiveSafeCreditAmount(params.amount, 'Purchased credit grant amount');
 
     return this.withTransaction(client, async (transactionClient) => {
       const currentBalance = this.normalizeBalance(

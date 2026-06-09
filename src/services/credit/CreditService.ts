@@ -1,5 +1,5 @@
 import { SIGNUP_BONUS_CREDITS } from '../../domain/constants/credits.js';
-import { InsufficientCreditsError, ValidationError } from '../../domain/errors/index.js';
+import { InsufficientCreditsError } from '../../domain/errors/index.js';
 import type { CreditBalance, CreditBalanceSnapshot } from '../../domain/types/credit.js';
 import type {
   CreditLedgerBucketDeltaSummary,
@@ -12,6 +12,7 @@ import {
   systemClock,
   type Clock,
 } from './CreditBalanceExpiration.js';
+import { assertPositiveSafeCreditAmount } from './CreditAmountValidation.js';
 
 export interface ConsumeCreditsParams {
   userId: string;
@@ -92,9 +93,7 @@ export class CreditService implements CreditServicePort {
   }
 
   public async consumeCredits(params: ConsumeCreditsParams): Promise<CreditBalanceSnapshot> {
-    if (params.cost <= 0) {
-      throw new ValidationError('Credit cost must be greater than zero');
-    }
+    assertPositiveSafeCreditAmount(params.cost, 'Credit cost');
 
     return this.creditRepository.transaction(async (client) => {
       const currentBalance = this.normalizeBalance(
@@ -141,9 +140,7 @@ export class CreditService implements CreditServicePort {
   }
 
   public async refundCredits(params: RefundCreditsParams): Promise<CreditBalanceSnapshot> {
-    if (params.amount <= 0) {
-      throw new ValidationError('Credit refund amount must be greater than zero');
-    }
+    assertPositiveSafeCreditAmount(params.amount, 'Credit refund amount');
 
     return this.creditRepository.transaction(async (client) => {
       const lockedBalance =
