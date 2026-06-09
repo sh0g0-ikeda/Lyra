@@ -109,6 +109,130 @@ class InMemoryCreditRepository implements CreditRepository {
 }
 
 describe('CreditService', () => {
+  it('期限切れ月次クレジットは残高表示で0扱いになる', async () => {
+    const repository = new InMemoryCreditRepository();
+    repository.setBalance({
+      userId: 'user-1',
+      monthlyCredits: 20,
+      purchasedCredits: 7,
+      monthlyExpiresAt: new Date('2026-05-01T00:00:00.000Z'),
+    });
+    const service = new CreditService(
+      repository,
+      () => new Date('2026-06-01T00:00:00.000Z'),
+    );
+
+    const result = await service.getBalance('user-1');
+
+    expect(result).toEqual({
+      monthlyCredits: 0,
+      purchasedCredits: 7,
+      totalCredits: 7,
+      monthlyExpiresAt: null,
+    });
+  });
+
+  it('期限切れ月次クレジットは消費時に使わず購入クレジットだけを使う', async () => {
+    const repository = new InMemoryCreditRepository();
+    repository.setBalance({
+      userId: 'user-1',
+      monthlyCredits: 20,
+      purchasedCredits: 7,
+      monthlyExpiresAt: new Date('2026-05-01T00:00:00.000Z'),
+    });
+    const service = new CreditService(
+      repository,
+      () => new Date('2026-06-01T00:00:00.000Z'),
+    );
+
+    const result = await service.consumeCredits({
+      userId: 'user-1',
+      cost: 5,
+      description: 'page generation',
+      jobId: 'job-1',
+    });
+
+    expect(result).toEqual({
+      monthlyCredits: 0,
+      purchasedCredits: 2,
+      totalCredits: 2,
+      monthlyExpiresAt: null,
+    });
+    expect(repository.ledger[0]).toMatchObject({
+      type: 'consume',
+      amount: -5,
+      monthlyDelta: 0,
+      purchasedDelta: -5,
+      monthlyAfter: 0,
+      purchasedAfter: 2,
+    });
+  });
+
+  it('期限切れ月次クレジットだけでは消費できない', async () => {
+    const repository = new InMemoryCreditRepository();
+    repository.setBalance({
+      userId: 'user-1',
+      monthlyCredits: 20,
+      purchasedCredits: 0,
+      monthlyExpiresAt: new Date('2026-05-01T00:00:00.000Z'),
+    });
+    const service = new CreditService(
+      repository,
+      () => new Date('2026-06-01T00:00:00.000Z'),
+    );
+
+    await expect(
+      service.consumeCredits({
+        userId: 'user-1',
+        cost: 1,
+        description: 'page generation',
+      }),
+    ).rejects.toMatchObject({ code: 'INSUFFICIENT_CREDITS' } satisfies Partial<AppError>);
+  });
+
+  it('期限切れ後のjob返金は月次枠を復活させず購入クレジットへ戻す', async () => {
+    const repository = new InMemoryCreditRepository();
+    repository.setBalance({
+      userId: 'user-1',
+      monthlyCredits: 0,
+      purchasedCredits: 0,
+      monthlyExpiresAt: new Date('2026-05-01T00:00:00.000Z'),
+    });
+    repository.ledger.push({
+      userId: 'user-1',
+      type: 'consume',
+      amount: -10,
+      monthlyDelta: -10,
+      purchasedDelta: 0,
+      monthlyAfter: 0,
+      purchasedAfter: 0,
+      description: 'page generation',
+      jobId: 'job-1',
+    });
+    const service = new CreditService(
+      repository,
+      () => new Date('2026-06-01T00:00:00.000Z'),
+    );
+
+    const result = await service.refundCredits({
+      userId: 'user-1',
+      amount: 10,
+      description: 'failed page generation',
+      jobId: 'job-1',
+    });
+
+    expect(result).toEqual({
+      monthlyCredits: 0,
+      purchasedCredits: 10,
+      totalCredits: 10,
+      monthlyExpiresAt: null,
+    });
+    expect(repository.ledger.find((entry) => entry.type === 'refund')).toMatchObject({
+      amount: 10,
+      monthlyDelta: 0,
+      purchasedDelta: 10,
+    });
+  });
   it('初回ボーナスの場合に購入クレジットへ12cr付与される', async () => {
     const repository = new InMemoryCreditRepository();
     const service = new CreditService(repository);

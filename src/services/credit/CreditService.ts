@@ -6,6 +6,12 @@ import type {
   CreditRepository,
 } from '../../repositories/CreditRepository.js';
 import type { DatabaseClient } from '../../lib/db.js';
+import {
+  isMonthlyCreditExpired,
+  normalizeExpiredMonthlyCredits,
+  systemClock,
+  type Clock,
+} from './CreditBalanceExpiration.js';
 
 export interface ConsumeCreditsParams {
   userId: string;
@@ -35,17 +41,21 @@ interface CreditRefundDeltas {
 }
 
 export class CreditService implements CreditServicePort {
-  public constructor(private readonly creditRepository: CreditRepository) {}
+  public constructor(
+    private readonly creditRepository: CreditRepository,
+    private readonly clock: Clock = systemClock,
+  ) {}
 
   public async getBalance(userId: string): Promise<CreditBalanceSnapshot> {
     const balance = await this.creditRepository.getBalance(userId);
-    return toSnapshot(balance ?? emptyBalance(userId));
+    return toSnapshot(this.normalizeBalance(balance ?? emptyBalance(userId)));
   }
 
   public async grantSignupBonus(userId: string): Promise<CreditBalanceSnapshot> {
     return this.creditRepository.transaction(async (client) => {
-      const currentBalance =
-        (await this.creditRepository.getBalanceForUpdate(userId, client)) ?? emptyBalance(userId);
+      const currentBalance = this.normalizeBalance(
+        (await this.creditRepository.getBalanceForUpdate(userId, client)) ?? emptyBalance(userId),
+      );
 
       if (await this.creditRepository.hasLedgerEntry(userId, 'signup_bonus', client)) {
         return toSnapshot(currentBalance);
@@ -87,8 +97,9 @@ export class CreditService implements CreditServicePort {
     }
 
     return this.creditRepository.transaction(async (client) => {
-      const currentBalance =
-        (await this.creditRepository.getBalanceForUpdate(params.userId, client)) ?? emptyBalance(params.userId);
+      const currentBalance = this.normalizeBalance(
+        (await this.creditRepository.getBalanceForUpdate(params.userId, client)) ?? emptyBalance(params.userId),
+      );
 
       const totalCredits = currentBalance.monthlyCredits + currentBalance.purchasedCredits;
       if (totalCredits < params.cost) {
@@ -115,8 +126,8 @@ export class CreditService implements CreditServicePort {
           userId: params.userId,
           type: 'consume',
           amount: -params.cost,
-          monthlyDelta: -monthlyDeduct,
-          purchasedDelta: -purchasedDeduct,
+          monthlyDelta: monthlyDeduct === 0 ? 0 : -monthlyDeduct,
+          purchasedDelta: purchasedDeduct === 0 ? 0 : -purchasedDeduct,
           monthlyAfter: savedBalance.monthlyCredits,
           purchasedAfter: savedBalance.purchasedCredits,
           description: params.description,
@@ -135,8 +146,11 @@ export class CreditService implements CreditServicePort {
     }
 
     return this.creditRepository.transaction(async (client) => {
-      const currentBalance =
+      const lockedBalance =
         (await this.creditRepository.getBalanceForUpdate(params.userId, client)) ?? emptyBalance(params.userId);
+      const now = this.clock();
+      const monthlyExpired = isMonthlyCreditExpired(lockedBalance, now);
+      const currentBalance = normalizeExpiredMonthlyCredits(lockedBalance, now);
 
       let refundAmount = params.amount;
       let refundMonthlyDelta = 0;
@@ -154,6 +168,10 @@ export class CreditService implements CreditServicePort {
         refundAmount = refundDeltas.amount;
         refundMonthlyDelta = refundDeltas.monthlyDelta;
         refundPurchasedDelta = refundDeltas.purchasedDelta;
+        if (monthlyExpired && refundMonthlyDelta > 0) {
+          refundPurchasedDelta += refundMonthlyDelta;
+          refundMonthlyDelta = 0;
+        }
       }
 
       const nextBalance: CreditBalance = {
@@ -245,6 +263,10 @@ export class CreditService implements CreditServicePort {
       monthlyDelta: 0,
       purchasedDelta: amount,
     };
+  }
+
+  private normalizeBalance(balance: CreditBalance): CreditBalance {
+    return normalizeExpiredMonthlyCredits(balance, this.clock());
   }
 }
 

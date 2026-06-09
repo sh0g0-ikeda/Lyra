@@ -2,6 +2,11 @@ import { ValidationError } from '../../domain/errors/index.js';
 import type { CreditBalance, CreditBalanceSnapshot, CreditLedgerEntry } from '../../domain/types/credit.js';
 import type { DatabaseClient } from '../../lib/db.js';
 import type { CreditRepository } from '../../repositories/CreditRepository.js';
+import {
+  normalizeExpiredMonthlyCredits,
+  systemClock,
+  type Clock,
+} from './CreditBalanceExpiration.js';
 
 export interface GrantMonthlyCreditsParams {
   userId: string;
@@ -30,7 +35,10 @@ export interface BillingCreditGrantServicePort {
 }
 
 export class BillingCreditGrantService implements BillingCreditGrantServicePort {
-  public constructor(private readonly creditRepository: CreditRepository) {}
+  public constructor(
+    private readonly creditRepository: CreditRepository,
+    private readonly clock: Clock = systemClock,
+  ) {}
 
   public async grantMonthlyCredits(
     params: GrantMonthlyCreditsParams,
@@ -41,9 +49,10 @@ export class BillingCreditGrantService implements BillingCreditGrantServicePort 
     }
 
     return this.withTransaction(client, async (transactionClient) => {
-      const currentBalance =
+      const currentBalance = this.normalizeBalance(
         (await this.creditRepository.getBalanceForUpdate(params.userId, transactionClient)) ??
-        emptyBalance(params.userId);
+          emptyBalance(params.userId),
+      );
 
       const nextBalance: CreditBalance = {
         ...currentBalance,
@@ -79,9 +88,10 @@ export class BillingCreditGrantService implements BillingCreditGrantServicePort 
     }
 
     return this.withTransaction(client, async (transactionClient) => {
-      const currentBalance =
+      const currentBalance = this.normalizeBalance(
         (await this.creditRepository.getBalanceForUpdate(params.userId, transactionClient)) ??
-        emptyBalance(params.userId);
+          emptyBalance(params.userId),
+      );
 
       const nextBalance: CreditBalance = {
         ...currentBalance,
@@ -116,6 +126,10 @@ export class BillingCreditGrantService implements BillingCreditGrantServicePort 
     }
 
     return this.creditRepository.transaction(work);
+  }
+
+  private normalizeBalance(balance: CreditBalance): CreditBalance {
+    return normalizeExpiredMonthlyCredits(balance, this.clock());
   }
 }
 

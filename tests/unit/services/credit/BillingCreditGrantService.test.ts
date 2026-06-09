@@ -108,6 +108,41 @@ class InMemoryCreditRepository implements CreditRepository {
 }
 
 describe('BillingCreditGrantService', () => {
+  it('期限切れ月次残高がある場合は新しい月次付与の差分に混ぜない', async () => {
+    const repository = new InMemoryCreditRepository();
+    repository.setBalance({
+      userId: 'user-1',
+      monthlyCredits: 120,
+      purchasedCredits: 35,
+      monthlyExpiresAt: new Date('2026-05-01T00:00:00.000Z'),
+    });
+    const service = new BillingCreditGrantService(
+      repository,
+      () => new Date('2026-06-01T00:00:00.000Z'),
+    );
+
+    const result = await service.grantMonthlyCredits({
+      userId: 'user-1',
+      amount: 50,
+      expiresAt: new Date('2026-07-01T00:00:00.000Z'),
+      description: 'Monthly renewal',
+      stripeEventId: 'evt_1',
+    });
+
+    expect(result).toEqual({
+      monthlyCredits: 50,
+      purchasedCredits: 35,
+      totalCredits: 85,
+      monthlyExpiresAt: new Date('2026-07-01T00:00:00.000Z'),
+    });
+    expect(repository.ledger[0]).toMatchObject({
+      type: 'monthly_grant',
+      amount: 50,
+      monthlyDelta: 50,
+      purchasedDelta: 0,
+    });
+  });
+
   it('月次クレジット付与時は monthly を上書きして expiry を更新する', async () => {
     const repository = new InMemoryCreditRepository();
     repository.setBalance({
