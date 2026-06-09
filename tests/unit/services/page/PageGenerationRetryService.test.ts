@@ -18,6 +18,7 @@ class InMemoryGenerationJobRepository implements GenerationJobRepository {
   public job: GenerationJob | null = buildJob();
   public preparedRetryWith: number | null = null;
   public prepareRetryResult = true;
+  public prepareRetryError: unknown = null;
 
   public async create(): Promise<GenerationJob> {
     throw new Error('unused');
@@ -57,6 +58,10 @@ class InMemoryGenerationJobRepository implements GenerationJobRepository {
 
   public async prepareRetry(_jobId: string, maxRetryCount: number): Promise<boolean> {
     this.preparedRetryWith = maxRetryCount;
+    if (this.prepareRetryError !== null) {
+      throw this.prepareRetryError;
+    }
+
     return this.prepareRetryResult;
   }
 }
@@ -156,6 +161,28 @@ describe('PageGenerationRetryService', () => {
     const service = new PageGenerationRetryService(repository, workerService, creditService);
 
     await expect(service.retryFailedJob('user-1', 'job-1')).rejects.toBeInstanceOf(ConflictError);
+
+    expect(workerService.processedJobId).toBeNull();
+    expect(creditService.consumed).toHaveLength(1);
+    expect(creditService.refunded[0]).toMatchObject({
+      userId: 'user-1',
+      amount: 10,
+      description: 'Refund for failed page generation retry setup',
+      jobId: 'job-1',
+    });
+  });
+
+  it('同じページの active job と競合した場合は返金して conflict にする', async () => {
+    const repository = new InMemoryGenerationJobRepository();
+    repository.prepareRetryError = { code: '23505' };
+    const creditService = new FakeCreditService();
+    const workerService = new FakePageGenerationWorkerService();
+    const service = new PageGenerationRetryService(repository, workerService, creditService);
+
+    await expect(service.retryFailedJob('user-1', 'job-1')).rejects.toMatchObject({
+      code: 'CONFLICT',
+      message: 'Page generation is already queued or processing',
+    });
 
     expect(workerService.processedJobId).toBeNull();
     expect(creditService.consumed).toHaveLength(1);

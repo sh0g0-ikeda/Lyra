@@ -1,5 +1,6 @@
 import { ConflictError, NotFoundError } from '../../domain/errors/index.js';
 import type { GenerationJobRepository } from '../../repositories/GenerationJobRepository.js';
+import { isUniqueViolation } from '../../repositories/GenerationJobRepository.js';
 import type { CreditServicePort } from '../credit/CreditService.js';
 import type { ProcessPageGenerationJobResult } from './PageGenerationWorkerService.js';
 import {
@@ -68,6 +69,10 @@ export class PageGenerationRetryService implements PageGenerationRetryServicePor
           description: 'Refund for failed page generation retry setup',
           jobId: job.id,
         });
+      }
+
+      if (isUniqueViolation(error)) {
+        throw new ConflictError('Page generation is already queued or processing');
       }
 
       throw error;
