@@ -21,7 +21,7 @@ import type { StoryCollaborationServicePort } from '../services/story/StoryColla
 import type { PageSkeletonServicePort } from '../services/story/PageSkeletonService.js';
 import type { PageServicePort } from '../services/page/PageService.js';
 import type { AppEnv } from '../types/app.js';
-import { readJsonBody, REQUEST_BODY_LIMITS } from './requestBody.js';
+import { readJsonBody, readOptionalJsonBody, REQUEST_BODY_LIMITS } from './requestBody.js';
 
 export interface StoryRouteDependencies {
   authMiddleware: MiddlewareHandler<AppEnv>;
@@ -307,7 +307,12 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
 
     const hasBody = (c.req.header('content-type') ?? '').includes('application/json');
     const body = generatePageSkeletonBodySchema.safeParse(
-      hasBody ? await readStoryJsonBody(c) : {},
+      hasBody
+        ? await readOptionalJsonBody(c, {
+            maxBytes: REQUEST_BODY_LIMITS.SMALL_JSON_BYTES,
+            description: 'Page skeleton options',
+          })
+        : {},
     );
     if (!body.success) {
       throw new ValidationError(body.error.message);

@@ -6,6 +6,7 @@ import type { CreditBalanceSnapshot } from '../../../src/domain/types/credit.js'
 import type { GenerationJob } from '../../../src/domain/types/job.js';
 import type { PageSummary } from '../../../src/domain/types/page.js';
 import type { AuthenticatedUser, SupabaseJwtClaims } from '../../../src/domain/types/user.js';
+import { REQUEST_BODY_LIMITS } from '../../../src/routes/requestBody.js';
 import type {
   ConsumeCreditsParams,
   CreditServicePort,
@@ -225,6 +226,31 @@ describe('page generation routes', () => {
     expect(pageService.updatedPageId).toBe('33333333-3333-4333-8333-333333333333');
   });
 
+  it('page settings は巨大な JSON body を service 呼び出し前に 413 にする', async () => {
+    const pageService = new FakePageService();
+    const app = createTestApp(
+      new FakePageGenerationService(),
+      new FakePageFinalizeService(),
+      new FakeJobService(),
+      new FakePageQueryService(),
+      pageService,
+    );
+    const token = await createToken();
+
+    const response = await app.request('/api/pages/33333333-3333-4333-8333-333333333333', {
+      method: 'PUT',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+        'Content-Length': String(REQUEST_BODY_LIMITS.SMALL_JSON_BYTES + 1),
+      },
+      body: '{}',
+    });
+
+    expect(response.status).toBe(413);
+    expect(pageService.updatedPageId).toBeNull();
+  });
+
   it('scene から page autofill を実行する', async () => {
     const pageService = new FakePageService();
     const app = createTestApp(
@@ -252,6 +278,31 @@ describe('page generation routes', () => {
       compiler_error: null,
     });
     expect(pageService.autofilledPageId).toBe('33333333-3333-4333-8333-333333333333');
+  });
+
+  it('scene から page autofill は巨大な options body を service 呼び出し前に 413 にする', async () => {
+    const pageService = new FakePageService();
+    const app = createTestApp(
+      new FakePageGenerationService(),
+      new FakePageFinalizeService(),
+      new FakeJobService(),
+      new FakePageQueryService(),
+      pageService,
+    );
+    const token = await createToken();
+
+    const response = await app.request('/api/pages/33333333-3333-4333-8333-333333333333/autofill-from-scenes', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+        'Content-Length': String(REQUEST_BODY_LIMITS.SMALL_JSON_BYTES + 1),
+      },
+      body: '{}',
+    });
+
+    expect(response.status).toBe(413);
+    expect(pageService.autofilledPageId).toBeNull();
   });
 
   it('episode 全体の story plan autofill を実行する', async () => {
@@ -283,6 +334,31 @@ describe('page generation routes', () => {
       compiler_error: null,
     });
     expect(pageService.autofilledEpisodeId).toBe('33333333-3333-4333-8333-333333333333');
+  });
+
+  it('episode 全体の story plan autofill は巨大な options body を service 呼び出し前に 413 にする', async () => {
+    const pageService = new FakePageService();
+    const app = createTestApp(
+      new FakePageGenerationService(),
+      new FakePageFinalizeService(),
+      new FakeJobService(),
+      new FakePageQueryService(),
+      pageService,
+    );
+    const token = await createToken();
+
+    const response = await app.request('/api/episodes/33333333-3333-4333-8333-333333333333/autofill-pages-from-story', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+        'Content-Length': String(REQUEST_BODY_LIMITS.SMALL_JSON_BYTES + 1),
+      },
+      body: '{}',
+    });
+
+    expect(response.status).toBe(413);
+    expect(pageService.autofilledEpisodeId).toBeNull();
   });
 
   it('ページ生成 enqueue は 202 と job_id を返す', async () => {

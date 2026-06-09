@@ -10,7 +10,7 @@ import type { PageGenerationServicePort } from '../services/page/PageGenerationS
 import type { PageExportServicePort } from '../services/page/PageExportService.js';
 import type { PageServicePort } from '../services/page/PageService.js';
 import type { AppEnv } from '../types/app.js';
-import { readJsonBody } from './requestBody.js';
+import { readJsonBody, readOptionalJsonBody, REQUEST_BODY_LIMITS } from './requestBody.js';
 
 const uuidParamSchema = z.string().uuid();
 const languageBodySchema = z
@@ -47,7 +47,14 @@ export function createPageRoutes(dependencies: PageRouteDependencies): Hono<AppE
     const user = c.get('user');
     const episodeId = parseUuidParam(c, 'id');
     const hasBody = (c.req.header('content-type') ?? '').includes('application/json');
-    const body = languageBodySchema.safeParse(hasBody ? await readJsonBody(c) : {});
+    const body = languageBodySchema.safeParse(
+      hasBody
+        ? await readOptionalJsonBody(c, {
+            maxBytes: REQUEST_BODY_LIMITS.SMALL_JSON_BYTES,
+            description: 'Episode autofill options',
+          })
+        : {},
+    );
     if (!body.success) {
       throw new ValidationError(body.error.message);
     }
@@ -73,7 +80,12 @@ export function createPageRoutes(dependencies: PageRouteDependencies): Hono<AppE
   app.put('/pages/:id', async (c) => {
     const user = c.get('user');
     const pageId = parseUuidParam(c, 'id');
-    const body = updatePageSettingsBodySchema.safeParse(await readJsonBody(c));
+    const body = updatePageSettingsBodySchema.safeParse(
+      await readJsonBody(c, {
+        maxBytes: REQUEST_BODY_LIMITS.SMALL_JSON_BYTES,
+        description: 'Page settings',
+      }),
+    );
     if (!body.success) {
       throw new ValidationError(body.error.message);
     }
@@ -94,7 +106,14 @@ export function createPageRoutes(dependencies: PageRouteDependencies): Hono<AppE
     const user = c.get('user');
     const pageId = parseUuidParam(c, 'id');
     const hasBody = (c.req.header('content-type') ?? '').includes('application/json');
-    const body = languageBodySchema.safeParse(hasBody ? await readJsonBody(c) : {});
+    const body = languageBodySchema.safeParse(
+      hasBody
+        ? await readOptionalJsonBody(c, {
+            maxBytes: REQUEST_BODY_LIMITS.SMALL_JSON_BYTES,
+            description: 'Page autofill options',
+          })
+        : {},
+    );
     if (!body.success) {
       throw new ValidationError(body.error.message);
     }

@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { createApp } from '../../../src/app.js';
 import type { CreditBalanceSnapshot } from '../../../src/domain/types/credit.js';
 import type { AuthenticatedUser, SupabaseJwtClaims } from '../../../src/domain/types/user.js';
+import { REQUEST_BODY_LIMITS } from '../../../src/routes/requestBody.js';
 import type {
   ProvisionedUser,
   UserProvisioningPort,
@@ -571,6 +572,25 @@ describe('story routes', () => {
       },
     });
     expect(pageSkeletonService.overwriteExisting).toBe(true);
+  });
+
+  it('page skeleton 生成は巨大な options body を service 呼び出し前に 413 にする', async () => {
+    const pageSkeletonService = new FakePageSkeletonService();
+    const app = createTestApp(new FakeStoryCollaborationService(), pageSkeletonService);
+    const token = await createToken();
+
+    const response = await app.request(`/api/episodes/${episodeId}/generate-page-skeleton`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+        'Content-Length': String(REQUEST_BODY_LIMITS.SMALL_JSON_BYTES + 1),
+      },
+      body: '{}',
+    });
+
+    expect(response.status).toBe(413);
+    expect(pageSkeletonService.requestedEpisodeId).toBeNull();
   });
 
   it('returns 422 for unknown keys in story CRUD', async () => {
