@@ -255,7 +255,6 @@ function toEntityResponse(entity: Entity): Record<string, unknown> {
   return {
     id: entity.id,
     work_id: entity.workId,
-    user_id: entity.userId,
     entity_type: entity.entityType,
     name: entity.name,
     free_description: entity.freeDescription,

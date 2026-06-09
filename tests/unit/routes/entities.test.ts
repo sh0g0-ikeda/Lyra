@@ -283,7 +283,8 @@ describe('entity routes', () => {
     });
 
     expect(response.status).toBe(201);
-    await expect(response.json()).resolves.toMatchObject({
+    const payload = (await response.json()) as Record<string, unknown>;
+    expect(payload).toMatchObject({
       id: entityId,
       work_id: workId,
       entity_type: 'character',
@@ -291,6 +292,31 @@ describe('entity routes', () => {
       prompt_supplement: 'anime heroine',
       status: 'draft',
     });
+    expect(payload).not.toHaveProperty('user_id');
+  });
+
+  it('entity read responses do not expose internal user ids', async () => {
+    const app = createTestApp();
+    const token = await createToken();
+    const authHeaders = {
+      Authorization: `Bearer ${token}`,
+    };
+
+    const listResponse = await app.request(`/api/works/${workId}/entities`, {
+      headers: authHeaders,
+    });
+    const getResponse = await app.request(`/api/entities/${entityId}`, {
+      headers: authHeaders,
+    });
+
+    expect(listResponse.status).toBe(200);
+    expect(getResponse.status).toBe(200);
+
+    const listPayload = (await listResponse.json()) as { entities: Array<Record<string, unknown>> };
+    const getPayload = (await getResponse.json()) as Record<string, unknown>;
+
+    expect(listPayload.entities[0]).not.toHaveProperty('user_id');
+    expect(getPayload).not.toHaveProperty('user_id');
   });
 
   it('未知キー付きの create body は 422 になる', async () => {

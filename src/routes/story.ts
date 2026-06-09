@@ -395,7 +395,6 @@ function parseUuidParam(c: Context<AppEnv>, name: string): string {
 function toWorkResponse(work: Work): Record<string, unknown> {
   return {
     id: work.id,
-    user_id: work.userId,
     title: work.title,
     genre: work.genre,
     world_setting: work.worldSetting,

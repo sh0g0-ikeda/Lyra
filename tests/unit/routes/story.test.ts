@@ -289,14 +289,15 @@ describe('story routes', () => {
     });
 
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({
+    const payload = (await response.json()) as { works: Array<Record<string, unknown>> };
+    expect(payload).toEqual({
       works: [
         expect.objectContaining({
           id: workId,
-          user_id: user.id,
         }),
       ],
     });
+    expect(payload.works[0]).not.toHaveProperty('user_id');
   });
 
   it('creates a work when JWT is valid', async () => {
@@ -316,12 +317,13 @@ describe('story routes', () => {
     });
 
     expect(response.status).toBe(201);
-    await expect(response.json()).resolves.toMatchObject({
+    const payload = (await response.json()) as Record<string, unknown>;
+    expect(payload).toMatchObject({
       id: workId,
-      user_id: user.id,
       title: '作品',
       version: 1,
     });
+    expect(payload).not.toHaveProperty('user_id');
   });
 
   it('returns 422 for invalid work creation input', async () => {

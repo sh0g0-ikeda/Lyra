@@ -6,7 +6,6 @@ export type GenerationJobType = 'page_generate' | 'entity_generate';
 
 export interface WorkRecord {
   id: string;
-  user_id: string;
   title: string;
   genre: string | null;
   world_setting: string | null;
@@ -62,7 +61,6 @@ export interface EpisodeRecord {
 export interface EntityRecord {
   id: string;
   work_id: string;
-  user_id: string;
   entity_type: 'character' | 'nonhuman' | 'object';
   name: string;
   free_description: string | null;
