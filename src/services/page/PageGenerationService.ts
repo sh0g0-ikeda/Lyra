@@ -20,6 +20,7 @@ import {
   NoopPageGenerationRecoveryService,
   type PageGenerationRecoveryServicePort,
 } from './PageGenerationRecoveryService.js';
+import { PAGE_GENERATION_INPUT_IMAGE_LIMITS } from '../../domain/constants/generation.js';
 
 export interface EnqueuePageGenerationResult {
   jobId: string;
@@ -224,15 +225,24 @@ export class PageGenerationService implements PageGenerationServicePort {
     const assignedCharacters = entities.filter(
       (entity) => entity.entityType === 'character' && assignedEntityIds.includes(entity.id),
     );
+
+    const references = await this.entityRepository.findPrimaryReferenceImagesByEntityIdsAndUserId(
+      assignedEntityIds,
+      page.workId,
+      userId,
+    );
+
+    const referenceImageCount = new Set(references.map((reference) => reference.entityId)).size;
+    if (referenceImageCount > PAGE_GENERATION_INPUT_IMAGE_LIMITS.MAX_ENTITY_REFERENCE_IMAGES) {
+      throw new ValidationError(
+        `Page generation supports up to ${PAGE_GENERATION_INPUT_IMAGE_LIMITS.MAX_ENTITY_REFERENCE_IMAGES} reference images per page. Reduce assigned characters or split the scene.`,
+      );
+    }
+
     if (assignedCharacters.length === 0) {
       return;
     }
 
-    const references = await this.entityRepository.findPrimaryReferenceImagesByEntityIdsAndUserId(
-      assignedCharacters.map((entity) => entity.id),
-      page.workId,
-      userId,
-    );
     const referencedCharacterIds = new Set(references.map((reference) => reference.entityId));
     const missingCharacters = assignedCharacters.filter((entity) => !referencedCharacterIds.has(entity.id));
     if (missingCharacters.length === 0) {

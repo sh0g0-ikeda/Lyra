@@ -11,6 +11,7 @@ import type {
 import type { LoadedStoredImage, StoredImageLoaderPort } from '../../../../src/infrastructure/aws/S3StoredImageLoader.js';
 import type { LayoutGuideImageRendererPort } from '../../../../src/services/page/LayoutGuideImageRenderer.js';
 import { PageGenerationInputImageBuilder } from '../../../../src/services/page/PageGenerationInputImageBuilder.js';
+import { PAGE_GENERATION_INPUT_IMAGE_LIMITS } from '../../../../src/domain/constants/generation.js';
 
 class FakePageRepository implements PageRepository {
   public generationContext: PageGenerationContext | null = {
@@ -206,6 +207,43 @@ class FakeLayoutGuideImageRenderer implements LayoutGuideImageRendererPort {
   }
 }
 
+function buildTestEntity(id: string, name: string): Entity {
+  return {
+    id,
+    workId: 'work-1',
+    userId: 'user-1',
+    entityType: 'character',
+    name,
+    freeDescription: null,
+    promptSupplement: null,
+    structuredFields: {},
+    speechProfile: {},
+    status: 'draft',
+    createdAt: new Date('2026-01-01T00:00:00.000Z'),
+    updatedAt: new Date('2026-01-01T00:00:00.000Z'),
+  };
+}
+
+function buildTestPanel(entityId: string): PageGenerationContext['panels'][number] {
+  return {
+    panelId: `panel-${entityId}`,
+    entities: [
+      {
+        entityId,
+        role: 'primary',
+        expression: 'determined',
+        customExpression: null,
+        action: 'attacking',
+        customAction: null,
+        position: 'center',
+        facingDirection: null,
+        effectNote: null,
+        stateId: null,
+      },
+    ],
+  };
+}
+
 describe('PageGenerationInputImageBuilder', () => {
   it('panel順の一意entityに対してreference画像をdataUrl化する', async () => {
     const loader = new FakeStoredImageLoader();
@@ -278,5 +316,40 @@ describe('PageGenerationInputImageBuilder', () => {
       role: 'layout_reference',
       label: 'page-layout-reference',
     });
+  });
+
+  it('reference image count が上限を超える場合はOpenAI入力画像を作らない', async () => {
+    const entityCount = PAGE_GENERATION_INPUT_IMAGE_LIMITS.MAX_ENTITY_REFERENCE_IMAGES + 1;
+    const entityRepository = new FakeEntityRepository();
+    const pageRepository = new FakePageRepository();
+    const loader = new FakeStoredImageLoader();
+
+    entityRepository.entities = Array.from({ length: entityCount }, (_, index) =>
+      buildTestEntity(`entity-${index + 1}`, `Character ${index + 1}`),
+    );
+    entityRepository.references = entityRepository.entities.map((entity, index) => ({
+      entityId: entity.id,
+      refId: `ref-${index + 1}`,
+      s3Key: `saved/user-1/entities/${entity.id}/ref-${index + 1}.png`,
+      cdnUrl: `https://img.lyra.app/${entity.id}.png`,
+    }));
+    pageRepository.generationContext = {
+      ...pageRepository.generationContext!,
+      frameCount: entityCount,
+      panels: entityRepository.entities.map((entity) => buildTestPanel(entity.id)),
+    };
+
+    const builder = new PageGenerationInputImageBuilder(
+      pageRepository,
+      entityRepository,
+      loader,
+      new FakeLayoutGuideImageRenderer(),
+    );
+
+    await expect(builder.buildInputImages({ userId: 'user-1', pageId: 'page-1' })).rejects.toMatchObject({
+      code: 'VALIDATION_ERROR',
+      message: expect.stringContaining('reference images'),
+    });
+    expect(loader.calls).toEqual([]);
   });
 });

@@ -25,6 +25,7 @@ import type {
 import { ModeSelector } from '../../../../src/services/page/ModeSelector.js';
 import type { PageGenerationRecoveryServicePort } from '../../../../src/services/page/PageGenerationRecoveryService.js';
 import { PageGenerationService } from '../../../../src/services/page/PageGenerationService.js';
+import { PAGE_GENERATION_INPUT_IMAGE_LIMITS } from '../../../../src/domain/constants/generation.js';
 
 const userId = 'user-1';
 const pageId = '11111111-1111-4111-8111-111111111111';
@@ -690,6 +691,78 @@ it('assigned character reference が未確定なら VALIDATION_ERROR になる',
     code: 'VALIDATION_ERROR',
     message: expect.stringContaining('Leo'),
   });
+});
+
+it('page generation reference image count が上限を超えるとクレジット消費前に VALIDATION_ERROR になる', async () => {
+  const entityCount = PAGE_GENERATION_INPUT_IMAGE_LIMITS.MAX_ENTITY_REFERENCE_IMAGES + 1;
+  const pageRepository = new FakePageRepository();
+  const entityRepository = new FakeEntityRepository();
+  const creditService = new FakeCreditService();
+
+  entityRepository.entities = Array.from({ length: entityCount }, (_, index) =>
+    buildEntity(`entity-${index + 1}`, `Character ${index + 1}`, 'character'),
+  );
+  entityRepository.references = entityRepository.entities.map((entity, index) => ({
+    entityId: entity.id,
+    refId: `ref-${index + 1}`,
+    s3Key: `saved/user-1/entities/${entity.id}/ref-${index + 1}.png`,
+    cdnUrl: `https://img.lyra.test/${entity.id}.png`,
+  }));
+  pageRepository.context = buildPageContext({
+    frameCount: entityCount,
+    panels: entityRepository.entities.map((entity) => buildPanelContext(entity.id)),
+  });
+
+  const service = new PageGenerationService(
+    pageRepository,
+    entityRepository,
+    new FakeGenerationJobRepository(),
+    creditService,
+    new FakeQueue(),
+    new ModeSelector(),
+  );
+
+  await expect(service.enqueuePageGeneration(userId, pageId)).rejects.toMatchObject({
+    code: 'VALIDATION_ERROR',
+    message: expect.stringContaining('reference images'),
+  });
+  expect(creditService.consumed).toEqual([]);
+});
+
+it('object reference image count が上限を超える場合もクレジット消費前に VALIDATION_ERROR になる', async () => {
+  const entityCount = PAGE_GENERATION_INPUT_IMAGE_LIMITS.MAX_ENTITY_REFERENCE_IMAGES + 1;
+  const pageRepository = new FakePageRepository();
+  const entityRepository = new FakeEntityRepository();
+  const creditService = new FakeCreditService();
+
+  entityRepository.entities = Array.from({ length: entityCount }, (_, index) =>
+    buildEntity(`entity-${index + 1}`, `Object ${index + 1}`, 'object'),
+  );
+  entityRepository.references = entityRepository.entities.map((entity, index) => ({
+    entityId: entity.id,
+    refId: `ref-${index + 1}`,
+    s3Key: `saved/user-1/entities/${entity.id}/ref-${index + 1}.png`,
+    cdnUrl: `https://img.lyra.test/${entity.id}.png`,
+  }));
+  pageRepository.context = buildPageContext({
+    frameCount: entityCount,
+    panels: entityRepository.entities.map((entity) => buildPanelContext(entity.id)),
+  });
+
+  const service = new PageGenerationService(
+    pageRepository,
+    entityRepository,
+    new FakeGenerationJobRepository(),
+    creditService,
+    new FakeQueue(),
+    new ModeSelector(),
+  );
+
+  await expect(service.enqueuePageGeneration(userId, pageId)).rejects.toMatchObject({
+    code: 'VALIDATION_ERROR',
+    message: expect.stringContaining('reference images'),
+  });
+  expect(creditService.consumed).toEqual([]);
 });
 
 function buildPageContext(overrides: Partial<PageGenerationContext> = {}): PageGenerationContext {

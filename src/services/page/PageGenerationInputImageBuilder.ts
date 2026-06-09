@@ -1,4 +1,5 @@
-import { NotFoundError } from '../../domain/errors/index.js';
+import { NotFoundError, ValidationError } from '../../domain/errors/index.js';
+import { PAGE_GENERATION_INPUT_IMAGE_LIMITS } from '../../domain/constants/generation.js';
 import type { PageGenerationInputImage } from '../../domain/types/pageGeneration.js';
 import type { EntityRepository } from '../../repositories/EntityRepository.js';
 import type { PageRepository } from '../../repositories/PageRepository.js';
@@ -38,6 +39,13 @@ export class PageGenerationInputImageBuilder implements PageGenerationInputImage
       page.workId,
       input.userId,
     );
+    const referenceImageCount = new Set(references.map((reference) => reference.entityId)).size;
+    if (referenceImageCount > PAGE_GENERATION_INPUT_IMAGE_LIMITS.MAX_ENTITY_REFERENCE_IMAGES) {
+      throw new ValidationError(
+        `Page generation supports up to ${PAGE_GENERATION_INPUT_IMAGE_LIMITS.MAX_ENTITY_REFERENCE_IMAGES} reference images per page. Reduce assigned characters or split the scene.`,
+      );
+    }
+
     const referenceByEntityId = new Map(references.map((reference) => [reference.entityId, reference]));
 
     const inputImages: PageGenerationInputImage[] = [];
