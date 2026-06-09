@@ -8,6 +8,9 @@
 - failed page-generation retry flow
 
 ## Migrations
+- Run `bun run db:check-invariants` before production migrations.
+  - It is read-only.
+  - If it reports violations, fix the listed rows before running schema migrations.
 - Run `bun run migrate` as a one-off deploy task before rolling API tasks.
 - Set `AUTO_RUN_MIGRATIONS=false` for production API tasks.
 - Keep startup auto-migrations only for local development and short-lived test environments.

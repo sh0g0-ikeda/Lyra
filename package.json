@@ -18,6 +18,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
+    "db:check-invariants": "tsx scripts/checkDeploymentDataInvariants.ts",
     "migrate": "tsx scripts/migrate.ts",
     "auth:dev-token": "tsx scripts/createDevAuthToken.ts --raw",
     "auth:dev-token:json": "tsx scripts/createDevAuthToken.ts",
