@@ -37,6 +37,7 @@ export class EntityGenerationWorkerService {
     private readonly imageStorage: EntityImageStoragePort,
     private readonly creditService: CreditServicePort,
     private readonly storedImageLoader: StoredImageLoaderPort,
+    private readonly imageModel: string = ENTITY_REFERENCE_GENERATION.MODEL,
   ) {}
 
   public async processJob(jobId: string): Promise<ProcessEntityGenerationJobResult> {
@@ -104,7 +105,7 @@ export class EntityGenerationWorkerService {
         compilerModel: compiled.compilerModel,
         compilerPromptVersion: compiled.compilerPromptVersion,
         compilerError: compiled.compilerProvider === 'none' ? 'Entity prompt compiler fallback used' : null,
-        imageModel: ENTITY_REFERENCE_GENERATION.MODEL,
+        imageModel: this.imageModel,
         imageParams: {
           quality: ENTITY_REFERENCE_GENERATION.QUALITY,
           size: ENTITY_REFERENCE_GENERATION.SIZE,

@@ -438,6 +438,19 @@ describe('EntityGenerationWorkerService', () => {
     });
   });
 
+  it('configured image model を完了メタデータに記録する', async () => {
+    const executionRepository = new FakeExecutionRepository();
+    const service = buildService({
+      executionRepository,
+      imageModel: 'gpt-image-2-mini',
+    });
+
+    const result = await service.processJob('job-1');
+
+    expect(result).toEqual({ status: 'processed', jobStatus: 'completed' });
+    expect(executionRepository.completed?.imageModel).toBe('gpt-image-2-mini');
+  });
+
   it('job ごとに variation profile が変わる', async () => {
     const executionRepositoryA = new FakeExecutionRepository();
     executionRepositoryA.job = buildJob({ id: '1' });
@@ -521,6 +534,7 @@ function buildService(overrides: {
   imageStorage?: FakeEntityImageStorage;
   creditService?: FakeCreditService;
   storedImageLoader?: FakeStoredImageLoader;
+  imageModel?: string;
 } = {}): EntityGenerationWorkerService {
   return new EntityGenerationWorkerService(
     overrides.executionRepository ?? new FakeExecutionRepository(),
@@ -531,6 +545,7 @@ function buildService(overrides: {
     overrides.imageStorage ?? new FakeEntityImageStorage(),
     overrides.creditService ?? new FakeCreditService(),
     overrides.storedImageLoader ?? new FakeStoredImageLoader(),
+    overrides.imageModel,
   );
 }
 

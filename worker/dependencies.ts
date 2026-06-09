@@ -172,6 +172,7 @@ export function resolveWorkerDependencies(
       entityImageStorage,
       creditService,
       storedImageLoader,
+      env.OPENAI_IMAGE_MODEL,
     ),
   };
 }
