@@ -30,6 +30,7 @@ class FakeRecoveryRepository implements EntityGenerationRecoveryRepository {
 
 class FakeExecutionRepository implements EntityGenerationExecutionRepository {
   public failedJobIds: string[] = [];
+  public shouldRecover = true;
 
   public async claimQueuedEntityGenerationJob(): Promise<GenerationJob | null> {
     throw new Error('not used');
@@ -44,6 +45,10 @@ class FakeExecutionRepository implements EntityGenerationExecutionRepository {
     userId: string;
     errorMessage: string;
   }): Promise<boolean> {
+    if (!this.shouldRecover) {
+      return false;
+    }
+
     this.failedJobIds.push(input.jobId);
     return true;
   }
@@ -142,7 +147,7 @@ describe('EntityGenerationRecoveryService', () => {
     expect(executionRepository.failedJobIds).toEqual(['job-2']);
   });
 
-  it('返金が失敗したstale entity jobはfailedへ進めない', async () => {
+  it('返金が失敗したstale entity jobはfailed化後に失敗を表面化する', async () => {
     const repository = new FakeRecoveryRepository();
     repository.jobs = [
       {
@@ -170,6 +175,34 @@ describe('EntityGenerationRecoveryService', () => {
       amount: 1,
       jobId: 'job-1',
     });
+    expect(executionRepository.failedJobIds).toEqual(['job-1']);
+  });
+
+  it('stale entity job の failed 化が競合で失敗した場合は refund しない', async () => {
+    const repository = new FakeRecoveryRepository();
+    repository.jobs = [
+      {
+        jobId: 'job-1',
+        userId: 'user-1',
+        creditCost: 1,
+        entityId: 'entity-1',
+        staleAt: new Date('2026-06-03T00:00:00.000Z'),
+      },
+    ];
+    const executionRepository = new FakeExecutionRepository();
+    executionRepository.shouldRecover = false;
+    const creditService = new FakeCreditService();
+    const service = new EntityGenerationRecoveryService(
+      repository,
+      executionRepository,
+      creditService,
+      1,
+    );
+
+    const recoveredCount = await service.recoverAllStaleJobs();
+
+    expect(recoveredCount).toBe(0);
     expect(executionRepository.failedJobIds).toEqual([]);
+    expect(creditService.refunds).toEqual([]);
   });
 });

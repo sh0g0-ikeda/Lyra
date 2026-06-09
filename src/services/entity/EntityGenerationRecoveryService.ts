@@ -55,15 +55,6 @@ export class EntityGenerationRecoveryService implements EntityGenerationRecovery
     let recoveredCount = 0;
 
     for (const job of jobs) {
-      if (job.creditCost > 0) {
-        await this.creditService.refundCredits({
-          userId: job.userId,
-          amount: job.creditCost,
-          description: 'Refund for stale entity generation job',
-          jobId: job.jobId,
-        });
-      }
-
       const recovered = await this.executionRepository.failEntityGeneration({
         jobId: job.jobId,
         userId: job.userId,
@@ -72,6 +63,15 @@ export class EntityGenerationRecoveryService implements EntityGenerationRecovery
 
       if (!recovered) {
         continue;
+      }
+
+      if (job.creditCost > 0) {
+        await this.creditService.refundCredits({
+          userId: job.userId,
+          amount: job.creditCost,
+          description: 'Refund for stale entity generation job',
+          jobId: job.jobId,
+        });
       }
 
       recoveredCount += 1;
