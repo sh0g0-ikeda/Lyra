@@ -305,7 +305,7 @@ describe('StripeWebhookService', () => {
     });
     expect(repository.paymentRecords[0]).toMatchObject({
       kind: 'credit_purchase',
-      amountJpy: 1000,
+      amountJpy: 1100,
       status: 'paid',
     });
   });
@@ -384,7 +384,7 @@ describe('StripeWebhookService', () => {
     });
     expect(repository.paymentRecords[0]).toMatchObject({
       kind: 'credit_purchase',
-      amountJpy: 1000,
+      amountJpy: 1100,
       status: 'paid',
     });
   });
@@ -407,7 +407,7 @@ describe('StripeWebhookService', () => {
     expect(repository.paymentRecords[0]).toMatchObject({
       stripeCheckoutSessionId: 'cs_pay_123',
       kind: 'credit_purchase',
-      amountJpy: 1000,
+      amountJpy: 1100,
       status: 'failed',
     });
   });
@@ -654,7 +654,7 @@ describe('StripeWebhookService', () => {
     const stripeClient = new FakeStripeBillingClient();
     stripeClient.event = buildCheckoutCreditPurchaseEvent({
       id: 'evt_checkout_credit_underpaid',
-      amountTotal: 999,
+      amountTotal: 1099,
     });
     const service = buildService(repository, creditGrantService, stripeClient);
 
@@ -664,7 +664,7 @@ describe('StripeWebhookService', () => {
     expect(creditGrantService.purchasedGrants).toHaveLength(0);
     expect(repository.paymentRecords[0]).toMatchObject({
       kind: 'credit_purchase',
-      amountJpy: 999,
+      amountJpy: 1099,
       status: 'failed',
     });
   });
@@ -775,7 +775,7 @@ function buildCheckoutCreditPurchaseEvent(options: {
           package_code: 'credits_1000',
         },
         payment_status: options.paymentStatus ?? 'paid',
-        amount_total: options.amountTotal ?? 1000,
+        amount_total: options.amountTotal ?? 1100,
       },
     },
     livemode: false,

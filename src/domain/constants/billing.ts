@@ -1,4 +1,5 @@
 export const MINIMUM_JPY_PER_CREDIT = 20;
+export const ONE_TIME_CREDIT_PACKAGE_JPY_PER_CREDIT = 22;
 
 export const SUBSCRIPTION_PLAN_DEFINITIONS = {
   free: {
@@ -18,15 +19,15 @@ export const SUBSCRIPTION_PLAN_DEFINITIONS = {
 export const CREDIT_PACKAGE_DEFINITIONS = {
   credits_200: {
     purchasedCredits: 10,
-    amountJpy: 10 * MINIMUM_JPY_PER_CREDIT,
+    amountJpy: 10 * ONE_TIME_CREDIT_PACKAGE_JPY_PER_CREDIT,
   },
   credits_1000: {
     purchasedCredits: 50,
-    amountJpy: 50 * MINIMUM_JPY_PER_CREDIT,
+    amountJpy: 50 * ONE_TIME_CREDIT_PACKAGE_JPY_PER_CREDIT,
   },
   credits_3000: {
     purchasedCredits: 150,
-    amountJpy: 150 * MINIMUM_JPY_PER_CREDIT,
+    amountJpy: 150 * ONE_TIME_CREDIT_PACKAGE_JPY_PER_CREDIT,
   },
 } as const;
 
