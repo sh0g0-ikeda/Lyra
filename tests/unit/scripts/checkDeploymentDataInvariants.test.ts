@@ -61,6 +61,38 @@ class FakeDatabase implements DatabaseClient {
       );
     }
 
+    if (this.violatedCheckName === 'generation_jobs.failed_page_under_refunded') {
+      return (
+        text.includes('FROM generation_jobs') &&
+        text.includes("generation_jobs.job_type = 'page_generate'") &&
+        text.includes("generation_jobs.status = 'failed'") &&
+        text.includes("FILTER (WHERE credit_ledger.type = 'consume')") &&
+        text.includes("FILTER (WHERE credit_ledger.type = 'refund'") &&
+        text.includes('ABS(ledger.consumed_amount) > ledger.refunded_amount')
+      );
+    }
+
+    if (this.violatedCheckName === 'generation_jobs.failed_entity_under_refunded') {
+      return (
+        text.includes('FROM generation_jobs') &&
+        text.includes("generation_jobs.job_type = 'entity_generate'") &&
+        text.includes("generation_jobs.status = 'failed'") &&
+        text.includes("FILTER (WHERE credit_ledger.type = 'consume')") &&
+        text.includes("FILTER (WHERE credit_ledger.type = 'refund'") &&
+        text.includes('ABS(ledger.consumed_amount) > ledger.refunded_amount')
+      );
+    }
+
+    if (this.violatedCheckName === 'credit_ledger.job_refund_over_consumed') {
+      return (
+        text.includes('FROM credit_ledger') &&
+        text.includes('job_id IS NOT NULL') &&
+        text.includes("FILTER (WHERE type = 'refund')") &&
+        text.includes("FILTER (WHERE type = 'consume')") &&
+        text.includes('refunded_amount > consumed_amount')
+      );
+    }
+
     const [tableName, columnName] = this.violatedCheckName.split('.');
     return text.includes(`FROM ${tableName}`) && text.includes(columnName);
   }
@@ -98,6 +130,15 @@ describe('checkDeploymentDataInvariants', () => {
     ).toBe(true);
     expect(
       database.queries.some((query) =>
+        query.includes('FROM credit_ledger') &&
+        query.includes('job_id IS NOT NULL') &&
+        query.includes("FILTER (WHERE type = 'refund')") &&
+        query.includes("FILTER (WHERE type = 'consume')") &&
+        query.includes('refunded_amount > consumed_amount'),
+      ),
+    ).toBe(true);
+    expect(
+      database.queries.some((query) =>
         query.includes('GROUP BY stripe_checkout_session_id, kind, status') &&
         query.includes('HAVING COUNT(*) > 1'),
       ),
@@ -118,6 +159,24 @@ describe('checkDeploymentDataInvariants', () => {
         query.includes('generation_jobs.credit_cost > 0') &&
         query.includes('credit_ledger.job_id = generation_jobs.id') &&
         query.includes("credit_ledger.type = 'refund'"),
+      ),
+    ).toBe(true);
+    expect(
+      database.queries.some((query) =>
+        query.includes("generation_jobs.job_type = 'page_generate'") &&
+        query.includes("generation_jobs.status = 'failed'") &&
+        query.includes("FILTER (WHERE credit_ledger.type = 'consume')") &&
+        query.includes("FILTER (WHERE credit_ledger.type = 'refund'") &&
+        query.includes('ABS(ledger.consumed_amount) > ledger.refunded_amount'),
+      ),
+    ).toBe(true);
+    expect(
+      database.queries.some((query) =>
+        query.includes("generation_jobs.job_type = 'entity_generate'") &&
+        query.includes("generation_jobs.status = 'failed'") &&
+        query.includes("FILTER (WHERE credit_ledger.type = 'consume')") &&
+        query.includes("FILTER (WHERE credit_ledger.type = 'refund'") &&
+        query.includes('ABS(ledger.consumed_amount) > ledger.refunded_amount'),
       ),
     ).toBe(true);
   });
@@ -151,6 +210,9 @@ describe('checkDeploymentDataInvariants', () => {
   it.each([
     'generation_jobs.failed_page_missing_refund',
     'generation_jobs.failed_entity_missing_refund',
+    'generation_jobs.failed_page_under_refunded',
+    'generation_jobs.failed_entity_under_refunded',
+    'credit_ledger.job_refund_over_consumed',
   ])('%s を検出する', async (checkName) => {
     const database = new FakeDatabase(checkName);
 

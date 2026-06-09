@@ -114,6 +114,14 @@ const DEPLOYMENT_DATA_INVARIANT_QUERIES: InvariantQuery[] = [
     sql: "SELECT generation_jobs.id::text AS id FROM generation_jobs WHERE generation_jobs.job_type = 'entity_generate' AND generation_jobs.status = 'failed' AND generation_jobs.credit_cost > 0 AND NOT EXISTS (SELECT 1 FROM credit_ledger WHERE credit_ledger.user_id = generation_jobs.user_id AND credit_ledger.job_id = generation_jobs.id AND credit_ledger.type = 'refund') ORDER BY generation_jobs.id LIMIT $1",
   },
   {
+    name: 'generation_jobs.failed_page_under_refunded',
+    sql: "SELECT generation_jobs.id::text AS id FROM generation_jobs JOIN LATERAL (SELECT COALESCE(SUM(credit_ledger.amount) FILTER (WHERE credit_ledger.type = 'consume'), 0) AS consumed_amount, COALESCE(SUM(credit_ledger.amount) FILTER (WHERE credit_ledger.type = 'refund'), 0) AS refunded_amount FROM credit_ledger WHERE credit_ledger.user_id = generation_jobs.user_id AND credit_ledger.job_id = generation_jobs.id) ledger ON TRUE WHERE generation_jobs.job_type = 'page_generate' AND generation_jobs.status = 'failed' AND generation_jobs.credit_cost > 0 AND ABS(ledger.consumed_amount) > ledger.refunded_amount ORDER BY generation_jobs.id LIMIT $1",
+  },
+  {
+    name: 'generation_jobs.failed_entity_under_refunded',
+    sql: "SELECT generation_jobs.id::text AS id FROM generation_jobs JOIN LATERAL (SELECT COALESCE(SUM(credit_ledger.amount) FILTER (WHERE credit_ledger.type = 'consume'), 0) AS consumed_amount, COALESCE(SUM(credit_ledger.amount) FILTER (WHERE credit_ledger.type = 'refund'), 0) AS refunded_amount FROM credit_ledger WHERE credit_ledger.user_id = generation_jobs.user_id AND credit_ledger.job_id = generation_jobs.id) ledger ON TRUE WHERE generation_jobs.job_type = 'entity_generate' AND generation_jobs.status = 'failed' AND generation_jobs.credit_cost > 0 AND ABS(ledger.consumed_amount) > ledger.refunded_amount ORDER BY generation_jobs.id LIMIT $1",
+  },
+  {
     name: 'users.plan_code',
     sql: "SELECT id::text AS id FROM users WHERE plan_code NOT IN ('free', 'standard', 'premium') ORDER BY id LIMIT $1",
   },
@@ -140,6 +148,10 @@ const DEPLOYMENT_DATA_INVARIANT_QUERIES: InvariantQuery[] = [
   {
     name: 'credit_ledger.stripe_event_id_unique',
     sql: 'SELECT MIN(id)::text AS id FROM credit_ledger WHERE stripe_event_id IS NOT NULL GROUP BY stripe_event_id HAVING COUNT(*) > 1 ORDER BY MIN(id) LIMIT $1',
+  },
+  {
+    name: 'credit_ledger.job_refund_over_consumed',
+    sql: "SELECT job_id::text AS id FROM (SELECT user_id, job_id, ABS(COALESCE(SUM(amount) FILTER (WHERE type = 'consume'), 0)) AS consumed_amount, COALESCE(SUM(amount) FILTER (WHERE type = 'refund'), 0) AS refunded_amount FROM credit_ledger WHERE job_id IS NOT NULL GROUP BY user_id, job_id) ledger WHERE refunded_amount > consumed_amount ORDER BY job_id LIMIT $1",
   },
   {
     name: 'payment_records.kind',
