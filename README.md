@@ -139,7 +139,9 @@ bun run web:build:deploy
 ```
 
 That command sets `LYRA_STRICT_WEB_PRODUCTION_CONFIG=true` and fails the build if Cognito Hosted UI
-is missing or Supabase hosted auth settings are present.
+is missing or Supabase hosted auth settings are present. It clears local Supabase web defaults unless
+`VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` are explicitly provided by the deployment environment;
+explicit Supabase values still fail the production guard.
 
 ### Production billing
 
