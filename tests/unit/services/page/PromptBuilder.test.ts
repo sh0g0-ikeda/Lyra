@@ -399,6 +399,56 @@ describe('PromptBuilder', () => {
     expect(result.compilerBrief).toContain('[GLOBAL STYLE]');
   });
 
+  it('compacts long page style reference text before building image prompts', async () => {
+    const pageRepository = new FakePageRepository();
+    const longCompiledBrief = 'precise page rendering with dense controlled background structure '.repeat(120);
+    const longAnchor = 'hard edged line treatment with controlled black shape rhythm '.repeat(30);
+    pageRepository.promptContext = buildPagePromptContext({
+      styleReference: {
+        title: 'Long Page Style',
+        notes: 'keep the page readable and avoid noisy over-rendering '.repeat(80),
+        compiledBrief: longCompiledBrief,
+        anchors: {
+          lineQuality: longAnchor,
+          shapeLanguage: null,
+          faceRendering: null,
+          eyeRendering: null,
+          hairRendering: null,
+          clothingRendering: null,
+          backgroundRendering: longAnchor,
+          shadingRendering: longAnchor,
+          textureFinish: null,
+          motionTreatment: longAnchor,
+          dialogueBalloonTreatment: null,
+          atmosphere: longAnchor,
+        },
+        compilerProvider: 'openai',
+        compilerModel: 'gpt-5.4-mini',
+        compilerPromptVersion: 'style_ref_v3',
+        compiledAt: '2026-05-28T00:00:00.000Z',
+      },
+    });
+    const builder = new PromptBuilder(
+      pageRepository,
+      new FakePanelRepository(),
+      new FakeEntityRepository(),
+      new FakeCompositionGalleryRepository(),
+    );
+
+    const result = await builder.buildPagePrompt({
+      userId: 'user-1',
+      pageId: 'page-1',
+      requestKind: 'initial',
+      generationMode: 'thinking',
+    });
+
+    expect(result.draftPrompt).toContain('Generalized style interpretation: precise page rendering');
+    expect(result.draftPrompt).toContain('...');
+    expect(result.draftPrompt).not.toContain(longCompiledBrief.slice(0, 1200));
+    expect(result.compilerBrief).not.toContain(longCompiledBrief.slice(0, 1200));
+    expect(result.compilerBrief.length).toBeLessThan(7_000);
+  });
+
   it('fails when panel orders are not contiguous', async () => {
     const panelRepository = new FakePanelRepository();
     panelRepository.panels = [

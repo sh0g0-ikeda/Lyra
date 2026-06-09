@@ -93,9 +93,19 @@ export class EntityReferencePromptBuilder implements EntityReferencePromptBuilde
       return [
         `Target image: ${context.entityType === 'object' ? 'manga object reference' : 'manga creature reference'}`,
         `Subject name: ${context.name}`,
-        context.freeDescription === null ? null : `Core concept: ${normalizeImagePromptSentence(context.freeDescription)}`,
+        context.freeDescription === null
+          ? null
+          : `Core concept: ${compactImagePromptSentence(
+              context.freeDescription,
+              ENTITY_PROMPT_TEXT_LIMITS.freeDescription,
+            )}`,
         summarizeLooseStructuredFieldsLine(context.structuredFields),
-        context.promptSupplement === null ? null : `Must keep: ${normalizeImagePromptSentence(context.promptSupplement)}`,
+        context.promptSupplement === null
+          ? null
+          : `Must keep: ${compactImagePromptSentence(
+              context.promptSupplement,
+              ENTITY_PROMPT_TEXT_LIMITS.promptSupplement,
+            )}`,
         buildImageSafetyInterpretationLine(context),
         `Hard constraints: ${hardConstraintsTextForEntityType(context.entityType)}`,
       ]
@@ -108,7 +118,12 @@ export class EntityReferencePromptBuilder implements EntityReferencePromptBuilde
     const lines = [
       'Target image: manga full-body character reference',
       `Subject name: ${context.name}`,
-      context.freeDescription === null ? null : `Core concept: ${normalizeImagePromptSentence(context.freeDescription)}`,
+      context.freeDescription === null
+        ? null
+        : `Core concept: ${compactImagePromptSentence(
+            context.freeDescription,
+            ENTITY_PROMPT_TEXT_LIMITS.freeDescription,
+          )}`,
       labeledLine('First-glance impression', [details.firstImpression]),
       labeledLine('Character visual anchor', [details.visualAnchor]),
       labeledLine('Signature feature', [details.signatureFeature, details.distinguishingFeatures]),
@@ -131,13 +146,28 @@ export class EntityReferencePromptBuilder implements EntityReferencePromptBuilde
       labeledLine('Hair construction', buildHairValues(details)),
       labeledLine('Outfit construction', buildOutfitValues(details)),
       styleReference === null ? null : `Style reference title: ${styleReference.title}`,
-      styleReference === null ? null : `Style reference interpretation: ${styleReference.compiledBrief}`,
       styleReference === null
         ? null
-        : labeledLine('Style anchors', buildStyleAnchorLines(styleReference.anchors)),
+        : `Style reference interpretation: ${compactImagePromptSentence(
+            styleReference.compiledBrief,
+            ENTITY_PROMPT_TEXT_LIMITS.styleCompiledBrief,
+          )}`,
+      styleReference === null
+        ? null
+        : labeledLine(
+            'Style anchors',
+            buildStyleAnchorLines(styleReference.anchors).map((line) =>
+              compactImagePromptSentence(line, ENTITY_PROMPT_TEXT_LIMITS.styleAnchorLine),
+            ),
+          ),
       labeledLine('Render style', [details.artStyle]),
       labeledLine('Personality-to-visual cue', [buildPersonalityCue(details, context.freeDescription)]),
-      context.promptSupplement === null ? null : `Must keep: ${normalizeImagePromptSentence(context.promptSupplement)}`,
+      context.promptSupplement === null
+        ? null
+        : `Must keep: ${compactImagePromptSentence(
+            context.promptSupplement,
+            ENTITY_PROMPT_TEXT_LIMITS.promptSupplement,
+          )}`,
       buildImageSafetyInterpretationLine(context),
       `Hard constraints: ${CHARACTER_HARD_CONSTRAINTS_TEXT}`,
     ].filter(isNonEmpty);
@@ -154,6 +184,13 @@ const NONHUMAN_HARD_CONSTRAINTS_TEXT =
   'exactly one subject, centered, full form visible, plain neutral background, no text, no watermark, no extra props unless explicitly requested, no extra characters.';
 const OBJECT_HARD_CONSTRAINTS_TEXT =
   'exactly one object, centered, full object visible, plain neutral background, no text, no watermark, no extra props unless explicitly requested.';
+const ENTITY_PROMPT_TEXT_LIMITS = {
+  freeDescription: 600,
+  promptSupplement: 600,
+  styleCompiledBrief: 900,
+  styleAnchorLine: 180,
+  styleNotes: 300,
+} as const;
 
 function hardConstraintsTextForEntityType(entityType: EntityReferenceContext['entityType']): string {
   if (entityType === 'object') {
@@ -262,12 +299,21 @@ function buildStyleReferenceConstraint(
   const anchors =
     anchorLines.length === 0
       ? null
-      : `Apply these rendering-style anchors through line treatment, shading, finish, and atmosphere only: ${anchorLines.join('; ')}.`;
+      : `Apply these rendering-style anchors through line treatment, shading, finish, and atmosphere only: ${anchorLines
+          .map((line) => compactImagePromptSentence(line, ENTITY_PROMPT_TEXT_LIMITS.styleAnchorLine))
+          .join('; ')}.`;
   const notes =
-    styleReference.notes === null ? null : `User notes: ${normalizeSentence(styleReference.notes)}.`;
+    styleReference.notes === null
+      ? null
+      : `User notes: ${ensureTerminalPunctuation(
+          compactImagePromptSentence(styleReference.notes, ENTITY_PROMPT_TEXT_LIMITS.styleNotes),
+        )}`;
   return [
     `Use the named style reference "${styleReference.title}" as a hard rendering constraint.`,
-    `Style interpretation: ${styleReference.compiledBrief}`,
+    `Style interpretation: ${compactImagePromptSentence(
+      styleReference.compiledBrief,
+      ENTITY_PROMPT_TEXT_LIMITS.styleCompiledBrief,
+    )}`,
     'Do not let the style reference change the character identity defined by the authored face shape, eye shape, hair silhouette, body proportions, or outfit silhouette.',
     anchors,
     notes,
@@ -293,7 +339,9 @@ function buildSupplementSentence(promptSupplement: string | null): string | null
     return null;
   }
 
-  return `Additional direction: ${normalizeImagePromptSentence(promptSupplement)}.`;
+  return `Additional direction: ${ensureTerminalPunctuation(
+    compactImagePromptSentence(promptSupplement, ENTITY_PROMPT_TEXT_LIMITS.promptSupplement),
+  )}`;
 }
 
 function buildNonCharacterPrompt(context: EntityReferenceContext): string {
@@ -302,7 +350,11 @@ function buildNonCharacterPrompt(context: EntityReferenceContext): string {
     context.entityType === 'object'
       ? `Create a clean manga object reference of ${context.name}.`
       : `Create a clean manga creature reference of ${context.name}.`,
-    context.freeDescription === null ? null : `Core concept: ${normalizeImagePromptSentence(context.freeDescription)}.`,
+    context.freeDescription === null
+      ? null
+      : `Core concept: ${ensureTerminalPunctuation(
+          compactImagePromptSentence(context.freeDescription, ENTITY_PROMPT_TEXT_LIMITS.freeDescription),
+        )}`,
     summary.length === 0 ? null : `Design details: ${summary}.`,
     buildSupplementSentence(context.promptSupplement),
     buildImageSafetyInterpretationLine(context),
@@ -559,6 +611,19 @@ function normalizeSentence(value: string): string {
 
 function normalizeImagePromptSentence(value: string): string {
   return replaceUnsafeSafetyMetaTerms(replaceUnsafeNudityTerms(normalizeSentence(value)));
+}
+
+function compactImagePromptSentence(value: string, maxLength: number): string {
+  const normalized = normalizeImagePromptSentence(value);
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+
+  return `${normalized.slice(0, Math.max(1, maxLength - 3)).trimEnd()}...`;
+}
+
+function ensureTerminalPunctuation(value: string): string {
+  return /[.!?。！？…]$/u.test(value) ? value : `${value}.`;
 }
 
 function buildImageSafetyInterpretationLine(context: EntityReferenceContext): string | null {
