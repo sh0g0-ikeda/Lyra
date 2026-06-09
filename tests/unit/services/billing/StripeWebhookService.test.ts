@@ -284,7 +284,7 @@ describe('StripeWebhookService', () => {
     });
     expect(repository.paymentRecords[0]).toMatchObject({
       kind: 'subscription',
-      amountJpy: 1980,
+      amountJpy: 3000,
       status: 'paid',
     });
   });
@@ -305,7 +305,7 @@ describe('StripeWebhookService', () => {
     });
     expect(repository.paymentRecords[0]).toMatchObject({
       kind: 'credit_purchase',
-      amountJpy: 2250,
+      amountJpy: 3000,
       status: 'paid',
     });
   });
@@ -384,7 +384,7 @@ describe('StripeWebhookService', () => {
     });
     expect(repository.paymentRecords[0]).toMatchObject({
       kind: 'credit_purchase',
-      amountJpy: 2250,
+      amountJpy: 3000,
       status: 'paid',
     });
   });
@@ -407,7 +407,7 @@ describe('StripeWebhookService', () => {
     expect(repository.paymentRecords[0]).toMatchObject({
       stripeCheckoutSessionId: 'cs_pay_123',
       kind: 'credit_purchase',
-      amountJpy: 2250,
+      amountJpy: 3000,
       status: 'failed',
     });
   });
@@ -442,7 +442,7 @@ describe('StripeWebhookService', () => {
     expect(repository.updatedPlans[0]).toEqual({ userId: 'user-1', planCode: 'free' });
     expect(repository.paymentRecords[0]).toMatchObject({
       stripeInvoiceId: 'in_124',
-      amountJpy: 1980,
+      amountJpy: 3000,
       status: 'failed',
     });
   });
@@ -460,7 +460,7 @@ describe('StripeWebhookService', () => {
     expect(repository.updatedPlans[0]).toEqual({ userId: 'user-1', planCode: 'standard' });
     expect(repository.paymentRecords[0]).toMatchObject({
       stripeInvoiceId: 'in_124',
-      amountJpy: 1980,
+      amountJpy: 3000,
       status: 'failed',
     });
   });
@@ -623,6 +623,70 @@ describe('StripeWebhookService', () => {
     expect(creditGrantService.monthlyGrants).toHaveLength(0);
     expect(repository.subscriptions).toHaveLength(0);
   });
+
+  it('does not grant monthly credits when subscription checkout is below the minimum price', async () => {
+    const repository = seedRepository();
+    const creditGrantService = new FakeBillingCreditGrantService();
+    const stripeClient = new FakeStripeBillingClient();
+    stripeClient.event = buildCheckoutSubscriptionEvent({
+      id: 'evt_checkout_sub_underpaid',
+      amountTotal: 2999,
+    });
+    stripeClient.subscription = buildSubscription();
+    const service = buildService(repository, creditGrantService, stripeClient);
+
+    await service.handleWebhook(Buffer.from('{}'), 'sig');
+
+    expect(repository.processedEvents.has('evt_checkout_sub_underpaid')).toBe(true);
+    expect(repository.subscriptions).toHaveLength(0);
+    expect(repository.updatedPlans).toHaveLength(0);
+    expect(creditGrantService.monthlyGrants).toHaveLength(0);
+    expect(repository.paymentRecords[0]).toMatchObject({
+      kind: 'subscription',
+      amountJpy: 2999,
+      status: 'failed',
+    });
+  });
+
+  it('does not grant purchased credits when credit checkout is below the minimum price', async () => {
+    const repository = seedRepository();
+    const creditGrantService = new FakeBillingCreditGrantService();
+    const stripeClient = new FakeStripeBillingClient();
+    stripeClient.event = buildCheckoutCreditPurchaseEvent({
+      id: 'evt_checkout_credit_underpaid',
+      amountTotal: 2999,
+    });
+    const service = buildService(repository, creditGrantService, stripeClient);
+
+    await service.handleWebhook(Buffer.from('{}'), 'sig');
+
+    expect(repository.processedEvents.has('evt_checkout_credit_underpaid')).toBe(true);
+    expect(creditGrantService.purchasedGrants).toHaveLength(0);
+    expect(repository.paymentRecords[0]).toMatchObject({
+      kind: 'credit_purchase',
+      amountJpy: 2999,
+      status: 'failed',
+    });
+  });
+
+  it('does not grant monthly credits when subscription invoice is below the minimum price', async () => {
+    const repository = seedRepository();
+    const creditGrantService = new FakeBillingCreditGrantService();
+    const stripeClient = new FakeStripeBillingClient();
+    stripeClient.event = buildInvoicePaidEvent('subscription_cycle', 'evt_invoice_underpaid', 2999);
+    stripeClient.subscription = buildSubscription();
+    const service = buildService(repository, creditGrantService, stripeClient);
+
+    await service.handleWebhook(Buffer.from('{}'), 'sig');
+
+    expect(repository.processedEvents.has('evt_invoice_underpaid')).toBe(true);
+    expect(creditGrantService.monthlyGrants).toHaveLength(0);
+    expect(repository.paymentRecords[0]).toMatchObject({
+      stripeInvoiceId: 'in_123',
+      amountJpy: 2999,
+      status: 'failed',
+    });
+  });
 });
 
 function seedRepository(): InMemoryBillingRepository {
@@ -656,6 +720,7 @@ function buildCheckoutSubscriptionEvent(options: {
   paymentStatus?: 'paid' | 'unpaid' | 'no_payment_required';
   type?: string;
   customerId?: string;
+  amountTotal?: number;
 } = {}): Stripe.Event {
   return {
     id: options.id ?? 'evt_checkout_sub',
@@ -675,7 +740,7 @@ function buildCheckoutSubscriptionEvent(options: {
           plan_code: 'standard',
         },
         payment_status: options.paymentStatus ?? 'paid',
-        amount_total: 1980,
+        amount_total: options.amountTotal ?? 3000,
       },
     },
     livemode: false,
@@ -690,6 +755,7 @@ function buildCheckoutCreditPurchaseEvent(options: {
   paymentStatus?: 'paid' | 'unpaid' | 'no_payment_required';
   type?: string;
   customerId?: string;
+  amountTotal?: number;
 } = {}): Stripe.Event {
   return {
     id: options.id ?? 'evt_checkout_credit',
@@ -709,7 +775,7 @@ function buildCheckoutCreditPurchaseEvent(options: {
           package_code: 'credits_1000',
         },
         payment_status: options.paymentStatus ?? 'paid',
-        amount_total: 2250,
+        amount_total: options.amountTotal ?? 3000,
       },
     },
     livemode: false,
@@ -722,6 +788,7 @@ function buildCheckoutCreditPurchaseEvent(options: {
 function buildInvoicePaidEvent(
   billingReason: Stripe.Invoice.BillingReason,
   id = 'evt_invoice_paid',
+  amountPaid = 3000,
 ): Stripe.Event {
   return {
     id,
@@ -733,8 +800,8 @@ function buildInvoicePaidEvent(
         id: 'in_123',
         object: 'invoice',
         customer: 'cus_123',
-        amount_paid: 1980,
-        amount_due: 1980,
+        amount_paid: amountPaid,
+        amount_due: amountPaid,
         billing_reason: billingReason,
         parent: {
           type: 'subscription_details',
@@ -766,7 +833,7 @@ function buildInvoicePaymentFailedEvent(stripeSubscriptionId: string | null = 's
         object: 'invoice',
         customer: 'cus_123',
         amount_paid: 0,
-        amount_due: 1980,
+        amount_due: 3000,
         parent:
           stripeSubscriptionId === null
             ? null

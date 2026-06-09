@@ -94,6 +94,18 @@ export class StripeWebhookService implements StripeWebhookServicePort {
 
       const subscription = await this.stripeClient.retrieveSubscription(stripeSubscriptionId);
       const resolvedPlanCode = this.resolvePlanCodeFromSubscription(subscription, planCode);
+      const paidAmountJpy = session.amount_total ?? 0;
+      const minimumAmountJpy = SUBSCRIPTION_PLAN_DEFINITIONS[resolvedPlanCode].amountJpy;
+      if (paidAmountJpy < minimumAmountJpy) {
+        await this.recordUnderpaidCheckoutSession(event, {
+          userId,
+          stripeCustomerId,
+          sessionId: session.id,
+          kind: 'subscription',
+          amountJpy: paidAmountJpy,
+        });
+        return;
+      }
 
       await this.billingRepository.transaction(async (client) => {
         if (!(await this.billingRepository.markStripeEventProcessed(event.id, event.type, client))) {
@@ -144,6 +156,18 @@ export class StripeWebhookService implements StripeWebhookServicePort {
 
     if (kind === 'credit_purchase') {
       const packageCode = requireCreditPackageCode(requireMetadataValue(session.metadata, 'package_code'));
+      const paidAmountJpy = session.amount_total ?? 0;
+      const minimumAmountJpy = CREDIT_PACKAGE_DEFINITIONS[packageCode].amountJpy;
+      if (paidAmountJpy < minimumAmountJpy) {
+        await this.recordUnderpaidCheckoutSession(event, {
+          userId,
+          stripeCustomerId,
+          sessionId: session.id,
+          kind: 'credit_purchase',
+          amountJpy: paidAmountJpy,
+        });
+        return;
+      }
 
       await this.billingRepository.transaction(async (client) => {
         if (!(await this.billingRepository.markStripeEventProcessed(event.id, event.type, client))) {
@@ -220,6 +244,63 @@ export class StripeWebhookService implements StripeWebhookServicePort {
     });
   }
 
+  private async recordUnderpaidCheckoutSession(
+    event: Stripe.Event,
+    input: {
+      userId: string;
+      stripeCustomerId: string;
+      sessionId: string;
+      kind: 'subscription' | 'credit_purchase';
+      amountJpy: number;
+    },
+  ): Promise<void> {
+    await this.billingRepository.transaction(async (client) => {
+      if (!(await this.billingRepository.markStripeEventProcessed(event.id, event.type, client))) {
+        return;
+      }
+
+      await this.requireStripeCustomerBinding(input.userId, input.stripeCustomerId, client);
+      await this.billingRepository.insertPaymentRecord(
+        {
+          userId: input.userId,
+          stripeCheckoutSessionId: input.sessionId,
+          stripeInvoiceId: null,
+          kind: input.kind,
+          amountJpy: input.amountJpy,
+          status: 'failed',
+        },
+        client,
+      );
+    });
+  }
+
+  private async recordUnderpaidSubscriptionInvoice(
+    event: Stripe.Event,
+    input: {
+      userId: string;
+      invoiceId: string;
+      amountJpy: number;
+    },
+  ): Promise<void> {
+    await this.billingRepository.transaction(async (client) => {
+      if (!(await this.billingRepository.markStripeEventProcessed(event.id, event.type, client))) {
+        return;
+      }
+
+      await this.billingRepository.insertPaymentRecord(
+        {
+          userId: input.userId,
+          stripeCheckoutSessionId: null,
+          stripeInvoiceId: input.invoiceId,
+          kind: 'subscription',
+          amountJpy: input.amountJpy,
+          status: 'failed',
+        },
+        client,
+      );
+    });
+  }
+
   private async markEventProcessedOnly(event: Stripe.Event): Promise<void> {
     await this.billingRepository.transaction(async (client) => {
       await this.billingRepository.markStripeEventProcessed(event.id, event.type, client);
@@ -244,6 +325,17 @@ export class StripeWebhookService implements StripeWebhookServicePort {
 
     if (billingUser === null) {
       throw new NotFoundError('Billing user not found for Stripe customer');
+    }
+
+    const paidAmountJpy = invoice.amount_paid;
+    const minimumAmountJpy = SUBSCRIPTION_PLAN_DEFINITIONS[planCode].amountJpy;
+    if (paidAmountJpy < minimumAmountJpy) {
+      await this.recordUnderpaidSubscriptionInvoice(event, {
+        userId: billingUser.userId,
+        invoiceId: invoice.id,
+        amountJpy: paidAmountJpy,
+      });
+      return;
     }
 
     await this.billingRepository.transaction(async (client) => {
