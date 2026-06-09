@@ -27,6 +27,8 @@ interface ListObjectsResponse {
   NextContinuationToken?: string;
 }
 
+const IMAGE_OBJECT_KEY_EXTENSION_PATTERN = /\.(?:jpe?g|png|webp)$/iu;
+
 export class S3ImageStorageMaintenance implements ImageStorageMaintenancePort {
   public constructor(
     private readonly client: S3ImageStorageMaintenanceClient,
@@ -41,9 +43,7 @@ export class S3ImageStorageMaintenance implements ImageStorageMaintenancePort {
     prefix: string,
     options: ListStoredImageObjectsOptions = {},
   ): Promise<ListedStoredImageObjects> {
-    if (prefix.trim().length === 0) {
-      throw new ConfigurationError('S3 image object prefix is required');
-    }
+    validateS3ImageObjectPrefix(prefix);
 
     const objects: StoredImageObject[] = [];
     let continuationToken: string | undefined;
@@ -110,9 +110,7 @@ export class S3ImageStorageMaintenance implements ImageStorageMaintenancePort {
   }
 
   public async deleteObject(key: string): Promise<void> {
-    if (key.trim().length === 0) {
-      throw new ConfigurationError('S3 image object key is required');
-    }
+    validateS3ImageObjectKey(key);
 
     try {
       await this.client.send(
@@ -129,4 +127,57 @@ export class S3ImageStorageMaintenance implements ImageStorageMaintenancePort {
 
 export function createImageStorageMaintenanceClient(region?: string): S3Client {
   return new S3Client(region === undefined ? {} : { region });
+}
+
+function validateS3ImageObjectPrefix(prefix: string): void {
+  if (prefix.trim().length === 0) {
+    throw new ConfigurationError('S3 image object prefix is required');
+  }
+
+  if (!prefix.endsWith('/') || !hasSafeStoragePathSyntax(prefix, { allowTrailingSlash: true })) {
+    throw new ConfigurationError('S3 image object prefix is invalid');
+  }
+}
+
+function validateS3ImageObjectKey(key: string): void {
+  if (key.trim().length === 0) {
+    throw new ConfigurationError('S3 image object key is required');
+  }
+
+  if (!hasSafeStoragePathSyntax(key, { allowTrailingSlash: false })) {
+    throw new ConfigurationError('S3 image object key is invalid');
+  }
+
+  if (!IMAGE_OBJECT_KEY_EXTENSION_PATTERN.test(key)) {
+    throw new ConfigurationError(`Unsupported S3 image object key extension: ${key}`);
+  }
+}
+
+function hasSafeStoragePathSyntax(
+  value: string,
+  options: { allowTrailingSlash: boolean },
+): boolean {
+  if (
+    value.length === 0 ||
+    value.startsWith('/') ||
+    value.includes('\\') ||
+    value.includes('//') ||
+    /[\u0000-\u001F\u007F]/u.test(value)
+  ) {
+    return false;
+  }
+
+  const segments = value.split('/');
+  const finalIndex = segments.length - 1;
+  return segments.every((segment, index) => {
+    if (segment === '.' || segment === '..') {
+      return false;
+    }
+
+    if (segment.length > 0) {
+      return true;
+    }
+
+    return options.allowTrailingSlash && index === finalIndex;
+  });
 }

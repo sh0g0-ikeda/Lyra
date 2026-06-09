@@ -54,6 +54,10 @@ export class S3StoredImageLoader implements StoredImageLoaderPort {
       }
 
       const bytes = await response.Body.transformToByteArray();
+      if (bytes.length === 0) {
+        throw new ConfigurationError('Stored image body is empty');
+      }
+
       return {
         imageData: Buffer.from(bytes),
         mimeType: response.ContentType,

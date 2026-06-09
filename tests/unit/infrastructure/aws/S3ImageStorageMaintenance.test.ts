@@ -165,4 +165,23 @@ describe('S3ImageStorageMaintenance', () => {
     );
     expect(client.commands).toHaveLength(0);
   });
+
+  it('rejects unsafe prefixes and delete keys before calling S3', async () => {
+    const client = new FakeS3Client();
+    const storage = new S3ImageStorageMaintenance(client, 'lyra-images');
+
+    await expect(storage.listObjects('tmp/../saved/')).rejects.toEqual(
+      new ConfigurationError('S3 image object prefix is invalid'),
+    );
+    await expect(storage.listObjects('tmp')).rejects.toEqual(
+      new ConfigurationError('S3 image object prefix is invalid'),
+    );
+    await expect(storage.deleteObject('tmp/../saved/a.png')).rejects.toEqual(
+      new ConfigurationError('S3 image object key is invalid'),
+    );
+    await expect(storage.deleteObject('tmp/a.json')).rejects.toEqual(
+      new ConfigurationError('Unsupported S3 image object key extension: tmp/a.json'),
+    );
+    expect(client.commands).toHaveLength(0);
+  });
 });

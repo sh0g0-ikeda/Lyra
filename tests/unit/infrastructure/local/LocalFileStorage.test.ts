@@ -195,6 +195,17 @@ describe('Local file storage adapters', () => {
       'Local asset key is invalid',
     );
   });
+
+  it('local loader rejects empty image files', async () => {
+    const config = await createConfig();
+    const loader = new LocalFileStoredImageLoader(config);
+    await writeLocalAsset(config.rootDir, 'saved/user-1/pages/page-1.png', Buffer.alloc(0));
+
+    await expect(loader.loadByS3Key('saved/user-1/pages/page-1.png')).rejects.toMatchObject({
+      code: 'CONFIGURATION_ERROR',
+      message: 'Stored image body is empty',
+    });
+  });
 });
 
 async function createConfig(): Promise<LocalAssetConfig> {
