@@ -31,6 +31,8 @@ export class S3StoredImageLoader implements StoredImageLoaderPort {
   ) {}
 
   public async loadByS3Key(s3Key: string): Promise<LoadedStoredImage> {
+    validateStoredImageKey(s3Key);
+
     try {
       const response = await this.client.send(
         new GetObjectCommand({
@@ -68,4 +70,26 @@ export class S3StoredImageLoader implements StoredImageLoaderPort {
 
 function isSupportedImageMimeType(value: string): value is SupportedImageMimeType {
   return value === 'image/png' || value === 'image/jpeg' || value === 'image/webp';
+}
+
+function validateStoredImageKey(s3Key: string): void {
+  if (s3Key.length === 0 || hasUnsafeStoredImageKeySyntax(s3Key)) {
+    throw new ConfigurationError('Stored image key is invalid');
+  }
+
+  if (!/\.(?:png|jpe?g|webp)$/iu.test(s3Key)) {
+    throw new ConfigurationError(`Unsupported stored image key extension: ${s3Key}`);
+  }
+}
+
+function hasUnsafeStoredImageKeySyntax(s3Key: string): boolean {
+  if (s3Key.startsWith('/') || s3Key.includes('\\') || s3Key.includes('\0')) {
+    return true;
+  }
+
+  return s3Key.split('/').some((segment) => (
+    segment.length === 0 ||
+    segment === '.' ||
+    segment === '..'
+  ));
 }

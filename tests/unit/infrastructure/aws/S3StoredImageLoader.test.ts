@@ -66,6 +66,23 @@ describe('S3StoredImageLoader', () => {
     ).rejects.toEqual(new ConfigurationError('Unsupported stored image content type: image/gif'));
   });
 
+  it('危険なs3_keyはS3へ送らずに拒否する', async () => {
+    const client = new FakeS3Client();
+    const loader = new S3StoredImageLoader(client, 'lyra-images');
+
+    await expect(
+      loader.loadByS3Key('saved/user-1/entities/../ref_1.png'),
+    ).rejects.toEqual(new ConfigurationError('Stored image key is invalid'));
+    await expect(
+      loader.loadByS3Key('saved\\user-1\\entities\\ref_1.png'),
+    ).rejects.toEqual(new ConfigurationError('Stored image key is invalid'));
+    await expect(
+      loader.loadByS3Key('saved/user-1/entities/ref_1.txt'),
+    ).rejects.toEqual(new ConfigurationError('Unsupported stored image key extension: saved/user-1/entities/ref_1.txt'));
+
+    expect(client.calls).toEqual([]);
+  });
+
   it('S3 読込失敗時の外部エラー文は機密値を伏せる', async () => {
     const client = new FakeS3Client();
     client.shouldThrow = true;
