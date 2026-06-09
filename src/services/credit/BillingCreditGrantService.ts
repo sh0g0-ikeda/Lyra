@@ -57,6 +57,8 @@ export class BillingCreditGrantService implements BillingCreditGrantServicePort 
           userId: params.userId,
           type: 'monthly_grant',
           amount: params.amount,
+          monthlyDelta: nextBalance.monthlyCredits - currentBalance.monthlyCredits,
+          purchasedDelta: 0,
           balance: savedBalance,
           description: params.description,
           stripeEventId: params.stripeEventId,
@@ -92,6 +94,8 @@ export class BillingCreditGrantService implements BillingCreditGrantServicePort 
           userId: params.userId,
           type: 'purchase',
           amount: params.amount,
+          monthlyDelta: 0,
+          purchasedDelta: params.amount,
           balance: savedBalance,
           description: params.description,
           stripeEventId: params.stripeEventId,
@@ -143,6 +147,8 @@ function createLedgerEntry(input: {
   userId: string;
   type: CreditLedgerEntry['type'];
   amount: number;
+  monthlyDelta: number;
+  purchasedDelta: number;
   balance: CreditBalance;
   description: string;
   stripeEventId?: string;
@@ -151,6 +157,8 @@ function createLedgerEntry(input: {
     userId: input.userId,
     type: input.type,
     amount: input.amount,
+    monthlyDelta: input.monthlyDelta,
+    purchasedDelta: input.purchasedDelta,
     monthlyAfter: input.balance.monthlyCredits,
     purchasedAfter: input.balance.purchasedCredits,
     description: input.description,

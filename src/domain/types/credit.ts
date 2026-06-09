@@ -18,6 +18,8 @@ export interface CreditLedgerEntry {
   userId: string;
   type: CreditLedgerType;
   amount: number;
+  monthlyDelta?: number;
+  purchasedDelta?: number;
   monthlyAfter: number;
   purchasedAfter: number;
   description: string;

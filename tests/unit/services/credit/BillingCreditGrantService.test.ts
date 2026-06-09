@@ -65,6 +65,25 @@ class InMemoryCreditRepository implements CreditRepository {
       .reduce((total, entry) => total + entry.amount, 0);
   }
 
+  public async sumJobLedgerBucketDeltas(
+    userId: string,
+    type: CreditLedgerEntry['type'],
+    jobId: string,
+  ): Promise<{ monthlyDelta: number; purchasedDelta: number; entryCount: number; completeEntryCount: number }> {
+    const entries = this.ledger.filter(
+      (entry) => entry.userId === userId && entry.type === type && entry.jobId === jobId,
+    );
+
+    return {
+      monthlyDelta: entries.reduce((total, entry) => total + (entry.monthlyDelta ?? 0), 0),
+      purchasedDelta: entries.reduce((total, entry) => total + (entry.purchasedDelta ?? 0), 0),
+      entryCount: entries.length,
+      completeEntryCount: entries.filter(
+        (entry) => entry.monthlyDelta !== undefined && entry.purchasedDelta !== undefined,
+      ).length,
+    };
+  }
+
   public async insertLedger(entry: CreditLedgerEntry): Promise<void> {
     this.ledger.push({ ...entry });
   }

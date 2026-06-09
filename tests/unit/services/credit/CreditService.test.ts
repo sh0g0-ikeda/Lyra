@@ -66,6 +66,25 @@ class InMemoryCreditRepository implements CreditRepository {
       .reduce((total, entry) => total + entry.amount, 0);
   }
 
+  public async sumJobLedgerBucketDeltas(
+    userId: string,
+    type: CreditLedgerEntry['type'],
+    jobId: string,
+  ): Promise<{ monthlyDelta: number; purchasedDelta: number; entryCount: number; completeEntryCount: number }> {
+    const entries = this.ledger.filter(
+      (entry) => entry.userId === userId && entry.type === type && entry.jobId === jobId,
+    );
+
+    return {
+      monthlyDelta: entries.reduce((total, entry) => total + (entry.monthlyDelta ?? 0), 0),
+      purchasedDelta: entries.reduce((total, entry) => total + (entry.purchasedDelta ?? 0), 0),
+      entryCount: entries.length,
+      completeEntryCount: entries.filter(
+        (entry) => entry.monthlyDelta !== undefined && entry.purchasedDelta !== undefined,
+      ).length,
+    };
+  }
+
   public async insertLedger(entry: CreditLedgerEntry): Promise<void> {
     this.ledger.push({ ...entry });
   }
@@ -346,5 +365,80 @@ describe('CreditService', () => {
     });
     expect(repository.ledger.filter((entry) => entry.type === 'refund')).toHaveLength(1);
     expect(repository.ledger.find((entry) => entry.type === 'refund')?.amount).toBe(10);
+  });
+
+  it('jobId 付き refund は monthly から消費した分を monthly に戻す', async () => {
+    const repository = new InMemoryCreditRepository();
+    repository.setBalance({
+      userId: 'user-1',
+      monthlyCredits: 12,
+      purchasedCredits: 5,
+      monthlyExpiresAt: null,
+    });
+    const service = new CreditService(repository);
+
+    await service.consumeCredits({
+      userId: 'user-1',
+      cost: 10,
+      description: 'page generation',
+      jobId: 'job-1',
+    });
+    const result = await service.refundCredits({
+      userId: 'user-1',
+      amount: 10,
+      description: 'failed page generation',
+      jobId: 'job-1',
+    });
+
+    expect(result).toEqual({
+      monthlyCredits: 12,
+      purchasedCredits: 5,
+      totalCredits: 17,
+      monthlyExpiresAt: null,
+    });
+    expect(repository.ledger.find((entry) => entry.type === 'refund')).toMatchObject({
+      amount: 10,
+      monthlyDelta: 10,
+      purchasedDelta: 0,
+    });
+  });
+
+  it('古い delta なし job 台帳の refund は総額上限付きで purchased に戻す', async () => {
+    const repository = new InMemoryCreditRepository();
+    repository.setBalance({
+      userId: 'user-1',
+      monthlyCredits: 0,
+      purchasedCredits: 20,
+      monthlyExpiresAt: null,
+    });
+    repository.ledger.push({
+      userId: 'user-1',
+      type: 'consume',
+      amount: -10,
+      monthlyAfter: 0,
+      purchasedAfter: 20,
+      description: 'legacy consume',
+      jobId: 'legacy-job',
+    });
+    const service = new CreditService(repository);
+
+    const result = await service.refundCredits({
+      userId: 'user-1',
+      amount: 10,
+      description: 'legacy refund',
+      jobId: 'legacy-job',
+    });
+
+    expect(result).toEqual({
+      monthlyCredits: 0,
+      purchasedCredits: 30,
+      totalCredits: 30,
+      monthlyExpiresAt: null,
+    });
+    expect(repository.ledger.find((entry) => entry.type === 'refund')).toMatchObject({
+      amount: 10,
+      monthlyDelta: 0,
+      purchasedDelta: 10,
+    });
   });
 });

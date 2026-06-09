@@ -41,6 +41,23 @@ class QueryCapturingClient implements DatabaseClient {
       };
     }
 
+    if (text.includes('SUM(monthly_delta)')) {
+      return {
+        command: 'SELECT',
+        rowCount: 1,
+        oid: 0,
+        fields: [],
+        rows: [
+          {
+            monthly_delta: '-7',
+            purchased_delta: '-3',
+            entry_count: '2',
+            complete_entry_count: '2',
+          },
+        ] as unknown as T[],
+      };
+    }
+
     return {
       command: 'INSERT',
       rowCount: 1,
@@ -117,5 +134,47 @@ describe('PostgresCreditRepository', () => {
     expect(client.queries[0]).toContain('type = $2');
     expect(client.queries[0]).toContain('job_id = $3');
     expect(client.valuesList[0]).toEqual(['user-1', 'consume', 'job-1']);
+  });
+
+  it('指定ユーザー・種別・jobIdで台帳bucket delta合計を確認する', async () => {
+    const client = new QueryCapturingClient();
+    const repository = new PostgresCreditRepository(client, new PassthroughTransactionRunner());
+
+    const summary = await repository.sumJobLedgerBucketDeltas('user-1', 'consume', 'job-1', client);
+
+    expect(summary).toEqual({
+      monthlyDelta: -7,
+      purchasedDelta: -3,
+      entryCount: 2,
+      completeEntryCount: 2,
+    });
+    expect(client.queries[0]).toContain('FROM credit_ledger');
+    expect(client.queries[0]).toContain('SUM(monthly_delta)');
+    expect(client.queries[0]).toContain('SUM(purchased_delta)');
+    expect(client.valuesList[0]).toEqual(['user-1', 'consume', 'job-1']);
+  });
+
+  it('台帳作成時にbucket deltaも保存する', async () => {
+    const client = new QueryCapturingClient();
+    const repository = new PostgresCreditRepository(client, new PassthroughTransactionRunner());
+
+    await repository.insertLedger(
+      {
+        userId: 'user-1',
+        type: 'refund',
+        amount: 10,
+        monthlyDelta: 4,
+        purchasedDelta: 6,
+        monthlyAfter: 12,
+        purchasedAfter: 20,
+        description: 'refund',
+        jobId: 'job-1',
+      },
+      client,
+    );
+
+    expect(client.queries[0]).toContain('monthly_delta');
+    expect(client.queries[0]).toContain('purchased_delta');
+    expect(client.valuesList[0]).toEqual(['user-1', 'refund', 10, 4, 6, 12, 20, 'refund', null, 'job-1']);
   });
 });

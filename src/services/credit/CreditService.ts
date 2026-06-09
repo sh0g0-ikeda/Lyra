@@ -1,7 +1,11 @@
 import { SIGNUP_BONUS_CREDITS } from '../../domain/constants/credits.js';
 import { InsufficientCreditsError, ValidationError } from '../../domain/errors/index.js';
 import type { CreditBalance, CreditBalanceSnapshot } from '../../domain/types/credit.js';
-import type { CreditRepository } from '../../repositories/CreditRepository.js';
+import type {
+  CreditLedgerBucketDeltaSummary,
+  CreditRepository,
+} from '../../repositories/CreditRepository.js';
+import type { DatabaseClient } from '../../lib/db.js';
 
 export interface ConsumeCreditsParams {
   userId: string;
@@ -22,6 +26,12 @@ export interface CreditServicePort {
   grantSignupBonus(userId: string): Promise<CreditBalanceSnapshot>;
   consumeCredits(params: ConsumeCreditsParams): Promise<CreditBalanceSnapshot>;
   refundCredits(params: RefundCreditsParams): Promise<CreditBalanceSnapshot>;
+}
+
+interface CreditRefundDeltas {
+  amount: number;
+  monthlyDelta: number;
+  purchasedDelta: number;
 }
 
 export class CreditService implements CreditServicePort {
@@ -58,6 +68,8 @@ export class CreditService implements CreditServicePort {
           userId,
           type: 'signup_bonus',
           amount: SIGNUP_BONUS_CREDITS,
+          monthlyDelta: 0,
+          purchasedDelta: SIGNUP_BONUS_CREDITS,
           monthlyAfter: savedBalance.monthlyCredits,
           purchasedAfter: savedBalance.purchasedCredits,
           description: 'Initial free plan signup bonus',
@@ -103,6 +115,8 @@ export class CreditService implements CreditServicePort {
           userId: params.userId,
           type: 'consume',
           amount: -params.cost,
+          monthlyDelta: -monthlyDeduct,
+          purchasedDelta: -purchasedDeduct,
           monthlyAfter: savedBalance.monthlyCredits,
           purchasedAfter: savedBalance.purchasedCredits,
           description: params.description,
@@ -125,31 +139,27 @@ export class CreditService implements CreditServicePort {
         (await this.creditRepository.getBalanceForUpdate(params.userId, client)) ?? emptyBalance(params.userId);
 
       let refundAmount = params.amount;
+      let refundMonthlyDelta = 0;
+      let refundPurchasedDelta = params.amount;
       if (params.jobId !== undefined) {
-        // Job-scoped refunds must never exceed the credits actually consumed by that job.
-        const consumedLedgerAmount = await this.creditRepository.sumJobLedgerAmount(
+        const refundDeltas = await this.calculateJobScopedRefundDeltas(
           params.userId,
-          'consume',
           params.jobId,
+          params.amount,
           client,
         );
-        const consumedAmount = Math.abs(consumedLedgerAmount);
-        const refundedAmount = await this.creditRepository.sumJobLedgerAmount(
-          params.userId,
-          'refund',
-          params.jobId,
-          client,
-        );
-        const refundableAmount = consumedAmount - refundedAmount;
-        if (refundableAmount <= 0) {
+        if (refundDeltas === null) {
           return toSnapshot(currentBalance);
         }
-        refundAmount = Math.min(params.amount, refundableAmount);
+        refundAmount = refundDeltas.amount;
+        refundMonthlyDelta = refundDeltas.monthlyDelta;
+        refundPurchasedDelta = refundDeltas.purchasedDelta;
       }
 
       const nextBalance: CreditBalance = {
         ...currentBalance,
-        purchasedCredits: currentBalance.purchasedCredits + refundAmount,
+        monthlyCredits: currentBalance.monthlyCredits + refundMonthlyDelta,
+        purchasedCredits: currentBalance.purchasedCredits + refundPurchasedDelta,
       };
 
       const savedBalance =
@@ -164,6 +174,8 @@ export class CreditService implements CreditServicePort {
           userId: params.userId,
           type: 'refund',
           amount: refundAmount,
+          monthlyDelta: refundMonthlyDelta,
+          purchasedDelta: refundPurchasedDelta,
           monthlyAfter: savedBalance.monthlyCredits,
           purchasedAfter: savedBalance.purchasedCredits,
           description: params.description,
@@ -176,6 +188,68 @@ export class CreditService implements CreditServicePort {
     });
   }
 
+  private async calculateJobScopedRefundDeltas(
+    userId: string,
+    jobId: string,
+    requestedAmount: number,
+    client: DatabaseClient,
+  ): Promise<CreditRefundDeltas | null> {
+    const consumedDeltas = await this.creditRepository.sumJobLedgerBucketDeltas(
+      userId,
+      'consume',
+      jobId,
+      client,
+    );
+    const refundedDeltas = await this.creditRepository.sumJobLedgerBucketDeltas(
+      userId,
+      'refund',
+      jobId,
+      client,
+    );
+
+    if (
+      consumedDeltas.entryCount > 0 &&
+      hasCompleteBucketDeltas(consumedDeltas) &&
+      hasCompleteBucketDeltas(refundedDeltas)
+    ) {
+      const remainingMonthly = Math.max(0, -consumedDeltas.monthlyDelta - refundedDeltas.monthlyDelta);
+      const remainingPurchased = Math.max(0, -consumedDeltas.purchasedDelta - refundedDeltas.purchasedDelta);
+      const refundableAmount = remainingMonthly + remainingPurchased;
+      if (refundableAmount <= 0) {
+        return null;
+      }
+
+      const amount = Math.min(requestedAmount, refundableAmount);
+      const monthlyDelta = Math.min(remainingMonthly, amount);
+      return {
+        amount,
+        monthlyDelta,
+        purchasedDelta: amount - monthlyDelta,
+      };
+    }
+
+    // Older ledger rows do not have bucket deltas. Keep the historical behavior
+    // but still cap by total consumed amount to avoid over-crediting.
+    const consumedAmount = Math.abs(
+      await this.creditRepository.sumJobLedgerAmount(userId, 'consume', jobId, client),
+    );
+    const refundedAmount = await this.creditRepository.sumJobLedgerAmount(userId, 'refund', jobId, client);
+    const refundableAmount = consumedAmount - refundedAmount;
+    if (refundableAmount <= 0) {
+      return null;
+    }
+
+    const amount = Math.min(requestedAmount, refundableAmount);
+    return {
+      amount,
+      monthlyDelta: 0,
+      purchasedDelta: amount,
+    };
+  }
+}
+
+function hasCompleteBucketDeltas(summary: CreditLedgerBucketDeltaSummary): boolean {
+  return summary.entryCount === summary.completeEntryCount;
 }
 
 function emptyBalance(userId: string): CreditBalance {

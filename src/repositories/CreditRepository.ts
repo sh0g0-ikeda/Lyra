@@ -10,6 +10,13 @@ interface CreditBalanceRow extends QueryResultRow {
   monthly_expires_at: Date | null;
 }
 
+export interface CreditLedgerBucketDeltaSummary {
+  monthlyDelta: number;
+  purchasedDelta: number;
+  entryCount: number;
+  completeEntryCount: number;
+}
+
 export interface CreditRepository {
   transaction<T>(work: (client: DatabaseClient) => Promise<T>): Promise<T>;
   getBalance(userId: string, client?: DatabaseClient): Promise<CreditBalance | null>;
@@ -29,6 +36,12 @@ export interface CreditRepository {
     jobId: string,
     client: DatabaseClient,
   ): Promise<number>;
+  sumJobLedgerBucketDeltas(
+    userId: string,
+    type: CreditLedgerType,
+    jobId: string,
+    client: DatabaseClient,
+  ): Promise<CreditLedgerBucketDeltaSummary>;
   insertLedger(entry: CreditLedgerEntry, client: DatabaseClient): Promise<void>;
 }
 
@@ -169,6 +182,44 @@ export class PostgresCreditRepository implements CreditRepository {
     return Number(result.rows[0]?.amount ?? '0');
   }
 
+  public async sumJobLedgerBucketDeltas(
+    userId: string,
+    type: CreditLedgerType,
+    jobId: string,
+    client: DatabaseClient,
+  ): Promise<CreditLedgerBucketDeltaSummary> {
+    const result = await client.query<{
+      monthly_delta: string;
+      purchased_delta: string;
+      entry_count: string;
+      complete_entry_count: string;
+    }>(
+      `
+      SELECT
+        COALESCE(SUM(monthly_delta), 0)::text AS monthly_delta,
+        COALESCE(SUM(purchased_delta), 0)::text AS purchased_delta,
+        COUNT(*)::text AS entry_count,
+        COUNT(*) FILTER (
+          WHERE monthly_delta IS NOT NULL
+            AND purchased_delta IS NOT NULL
+        )::text AS complete_entry_count
+      FROM credit_ledger
+      WHERE user_id = $1
+        AND type = $2
+        AND job_id = $3
+      `,
+      [userId, type, jobId],
+    );
+    const row = result.rows[0];
+
+    return {
+      monthlyDelta: Number(row?.monthly_delta ?? '0'),
+      purchasedDelta: Number(row?.purchased_delta ?? '0'),
+      entryCount: Number(row?.entry_count ?? '0'),
+      completeEntryCount: Number(row?.complete_entry_count ?? '0'),
+    };
+  }
+
   public async insertLedger(entry: CreditLedgerEntry, client: DatabaseClient): Promise<void> {
     await client.query(
       `
@@ -176,18 +227,22 @@ export class PostgresCreditRepository implements CreditRepository {
         user_id,
         type,
         amount,
+        monthly_delta,
+        purchased_delta,
         monthly_after,
         purchased_after,
         description,
         stripe_event_id,
         job_id
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
       `,
       [
         entry.userId,
         entry.type,
         entry.amount,
+        entry.monthlyDelta ?? null,
+        entry.purchasedDelta ?? null,
         entry.monthlyAfter,
         entry.purchasedAfter,
         entry.description,
