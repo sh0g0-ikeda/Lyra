@@ -213,14 +213,28 @@ class FakeEntityReferenceService implements EntityReferenceServicePort {
 }
 
 class FakeEntityReferenceImageExportService implements EntityReferenceImageExportServicePort {
-  public lastRequest: { userId: string; entityId: string; refId: string } | null = null;
+  public lastReferenceRequest: { userId: string; entityId: string; refId: string } | null = null;
+  public lastCandidateRequest: { userId: string; entityId: string; s3Key: string } | null = null;
 
   public async exportReferenceImage(
     userId: string,
     requestedEntityId: string,
     refId: string,
   ): Promise<ExportedEntityReferenceImage> {
-    this.lastRequest = { userId, entityId: requestedEntityId, refId };
+    this.lastReferenceRequest = { userId, entityId: requestedEntityId, refId };
+
+    return {
+      imageData: Buffer.from('reference-image'),
+      mimeType: 'image/png',
+    };
+  }
+
+  public async exportCandidateImage(
+    userId: string,
+    requestedEntityId: string,
+    s3Key: string,
+  ): Promise<ExportedEntityReferenceImage> {
+    this.lastCandidateRequest = { userId, entityId: requestedEntityId, s3Key };
 
     return {
       imageData: Buffer.from('reference-image'),
@@ -489,7 +503,7 @@ describe('entity routes', () => {
 
     expect(response.status).toBe(401);
   });
-  it('reference image export は認証済み画像を返す', async () => {
+  it('reference image export returns an authenticated image', async () => {
     const exportService = new FakeEntityReferenceImageExportService();
     const app = createTestApp(new FakeEntityReferenceService(), exportService);
     const token = await createToken();
@@ -504,10 +518,36 @@ describe('entity routes', () => {
     expect(response.headers.get('Content-Type')).toBe('image/png');
     expect(response.headers.get('Cache-Control')).toBe('private, no-store');
     expect(await response.text()).toBe('reference-image');
-    expect(exportService.lastRequest).toEqual({
+    expect(exportService.lastReferenceRequest).toEqual({
       userId: user.id,
       entityId,
       refId: 'ref-1',
+    });
+  });
+
+  it('reference candidate image export returns an authenticated image', async () => {
+    const exportService = new FakeEntityReferenceImageExportService();
+    const app = createTestApp(new FakeEntityReferenceService(), exportService);
+    const token = await createToken();
+    const s3Key = 'tmp/user-1/entities/imports/source.png';
+
+    const response = await app.request(
+      `/api/entities/${entityId}/reference-candidate-image?s3_key=${encodeURIComponent(s3Key)}`,
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      },
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get('Content-Type')).toBe('image/png');
+    expect(response.headers.get('Cache-Control')).toBe('private, no-store');
+    expect(await response.text()).toBe('reference-image');
+    expect(exportService.lastCandidateRequest).toEqual({
+      userId: user.id,
+      entityId,
+      s3Key,
     });
   });
 });

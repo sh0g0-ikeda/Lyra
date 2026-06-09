@@ -1,4 +1,5 @@
 import { Hono, type Context, type MiddlewareHandler } from 'hono';
+import { z } from 'zod';
 import { ValidationError } from '../domain/errors/index.js';
 import type { Entity } from '../domain/types/entity.js';
 import type { EntityReferenceSet } from '../domain/types/entityReference.js';
@@ -16,6 +17,12 @@ import type { EntityReferenceServicePort } from '../services/entity/EntityRefere
 import type { EntityReferenceImageExportServicePort } from '../services/entity/EntityReferenceImageExportService.js';
 import type { AppEnv } from '../types/app.js';
 import { readJsonBody, readOptionalJsonBody, REQUEST_BODY_LIMITS } from './requestBody.js';
+
+const referenceCandidateImageQuerySchema = z
+  .object({
+    s3_key: z.string().trim().min(1).max(512),
+  })
+  .strict();
 
 export interface EntityRouteDependencies {
   authMiddleware: MiddlewareHandler<AppEnv>;
@@ -91,6 +98,27 @@ export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<
       user.id,
       entityId,
       refIdResult.data,
+    );
+
+    return c.body(new Uint8Array(exportedImage.imageData), 200, {
+      'Content-Type': exportedImage.mimeType,
+      'Cache-Control': 'private, no-store',
+    });
+  });
+
+  app.get('/entities/:id/reference-candidate-image', async (c) => {
+    const user = c.get('user');
+    const entityId = parseUuidParam(c, 'id');
+    const query = referenceCandidateImageQuerySchema.safeParse(c.req.query());
+
+    if (!query.success) {
+      throw new ValidationError(query.error.message);
+    }
+
+    const exportedImage = await dependencies.entityReferenceImageExportService.exportCandidateImage(
+      user.id,
+      entityId,
+      query.data.s3_key,
     );
 
     return c.body(new Uint8Array(exportedImage.imageData), 200, {

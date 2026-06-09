@@ -1,6 +1,7 @@
 import { NotFoundError } from '../../domain/errors/index.js';
 import type { StoredImageLoaderPort } from '../../infrastructure/aws/S3StoredImageLoader.js';
 import type { EntityReferenceRepository } from '../../repositories/EntityRepository.js';
+import { ensureAllowedReferenceSourceKey } from './EntityReferenceSourceKeyPolicy.js';
 
 export interface ExportedEntityReferenceImage {
   imageData: Buffer;
@@ -12,6 +13,11 @@ export interface EntityReferenceImageExportServicePort {
     userId: string,
     entityId: string,
     refId: string,
+  ): Promise<ExportedEntityReferenceImage>;
+  exportCandidateImage(
+    userId: string,
+    entityId: string,
+    s3Key: string,
   ): Promise<ExportedEntityReferenceImage>;
 }
 
@@ -37,5 +43,19 @@ export class EntityReferenceImageExportService implements EntityReferenceImageEx
     }
 
     return this.storedImageLoader.loadByS3Key(referenceImage.s3Key);
+  }
+
+  public async exportCandidateImage(
+    userId: string,
+    entityId: string,
+    s3Key: string,
+  ): Promise<ExportedEntityReferenceImage> {
+    const entity = await this.entityRepository.findReferenceContextByIdAndUserId(entityId, userId);
+    if (entity === null) {
+      throw new NotFoundError('Entity not found');
+    }
+
+    ensureAllowedReferenceSourceKey(s3Key, userId, entity.entityId, 's3_key');
+    return this.storedImageLoader.loadByS3Key(s3Key);
   }
 }

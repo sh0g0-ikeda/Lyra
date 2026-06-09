@@ -41,7 +41,7 @@ class FakeStoredImageLoader implements StoredImageLoaderPort {
 }
 
 describe('EntityReferenceImageExportService', () => {
-  it('owned reference image を s3_key から読み込む', async () => {
+  it('loads an owned confirmed reference image by s3_key', async () => {
     const repository = new FakeEntityReferenceRepository();
     const loader = new FakeStoredImageLoader();
     const service = new EntityReferenceImageExportService(
@@ -59,7 +59,7 @@ describe('EntityReferenceImageExportService', () => {
     });
   });
 
-  it('entity が存在しなければ NOT_FOUND になる', async () => {
+  it('returns NOT_FOUND when the entity is missing', async () => {
     const repository = new FakeEntityReferenceRepository();
     repository.context = null;
     const service = new EntityReferenceImageExportService(
@@ -73,7 +73,7 @@ describe('EntityReferenceImageExportService', () => {
     });
   });
 
-  it('ref_id が存在しなければ NOT_FOUND になる', async () => {
+  it('returns NOT_FOUND when the ref_id is missing', async () => {
     const repository = new FakeEntityReferenceRepository();
     const service = new EntityReferenceImageExportService(
       repository,
@@ -83,6 +83,55 @@ describe('EntityReferenceImageExportService', () => {
     await expect(service.exportReferenceImage('user-1', 'entity-1', 'missing-ref')).rejects.toMatchObject({
       code: 'NOT_FOUND',
       message: 'Reference image not found',
+    });
+  });
+
+  it('loads an owned temporary candidate image by s3_key', async () => {
+    const repository = new FakeEntityReferenceRepository();
+    const loader = new FakeStoredImageLoader();
+    const service = new EntityReferenceImageExportService(
+      repository,
+      loader,
+    );
+
+    const result = await service.exportCandidateImage(
+      'user-1',
+      'entity-1',
+      'tmp/user-1/entities/imports/source.png',
+    );
+
+    expect(loader.lastS3Key).toBe('tmp/user-1/entities/imports/source.png');
+    expect(result.mimeType).toBe('image/png');
+  });
+
+  it('loads an owned generated candidate image by s3_key', async () => {
+    const repository = new FakeEntityReferenceRepository();
+    const loader = new FakeStoredImageLoader();
+    const service = new EntityReferenceImageExportService(
+      repository,
+      loader,
+    );
+
+    await service.exportCandidateImage(
+      'user-1',
+      'entity-1',
+      'session/user-1/entities/entity-1/job-1-0.png',
+    );
+
+    expect(loader.lastS3Key).toBe('session/user-1/entities/entity-1/job-1-0.png');
+  });
+
+  it('rejects candidate images outside the owner scope', async () => {
+    const repository = new FakeEntityReferenceRepository();
+    const service = new EntityReferenceImageExportService(
+      repository,
+      new FakeStoredImageLoader(),
+    );
+
+    await expect(
+      service.exportCandidateImage('user-1', 'entity-1', 'tmp/user-2/entities/imports/source.png'),
+    ).rejects.toMatchObject({
+      code: 'VALIDATION_ERROR',
     });
   });
 });

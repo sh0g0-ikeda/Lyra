@@ -20,7 +20,7 @@ import {
 } from 'lucide-react';
 import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { Session, SupabaseClient } from '@supabase/supabase-js';
-import { ApiError, decodeJwtPayload, LyraApiClient } from './lib/api';
+import { ApiError, decodeJwtPayload, LyraApiClient, type BlobResponse } from './lib/api';
 import { shouldAllowManualTokenAuth } from './lib/authMode';
 import {
   beginCognitoLogin,
@@ -1458,7 +1458,7 @@ function StudioShell(props: {
     [episodeDraft],
   );
   const generatedPages = useMemo(
-    () => pages.filter((page) => page.generated_image?.cdn_url !== null && page.generated_image?.cdn_url !== undefined),
+    () => pages.filter((page) => page.generated_image !== null),
     [pages],
   );
   const exportablePages = useMemo(() => generatedPages.map((page) => page.id), [generatedPages]);
@@ -3045,7 +3045,11 @@ function StudioShell(props: {
                             {referenceCandidates.map((candidate) => (
                               <div key={candidate.s3_key} className={`reference-card reference-card-portrait ${referenceSelection.includes(candidate.s3_key) ? 'active' : ''}`}>
                                 <div className="reference-card-media">
-                                  <img alt="" src={candidate.cdn_url} />
+                                  <AuthenticatedImage
+                                    enabled={selectedEntity !== null}
+                                    loadImage={() => api.exportEntityReferenceCandidateImage(selectedEntity?.id ?? '', candidate.s3_key)}
+                                    queryKey={['entity-reference-candidate-image', selectedEntity?.id, candidate.s3_key]}
+                                  />
                                 </div>
                                 <div className="reference-card-body">
                                   <span>{translateUiString(uiLanguage, candidate.source)}</span>
@@ -3096,7 +3100,11 @@ function StudioShell(props: {
                             {entityReferenceSetQuery.data.reference_images.map((image) => (
                               <div key={image.ref_id} className="reference-card reference-card-portrait">
                                 <div className="reference-card-media">
-                                  <img alt="" src={image.cdn_url} />
+                                  <AuthenticatedImage
+                                    enabled={selectedEntity !== null}
+                                    loadImage={() => api.exportEntityReferenceImage(selectedEntity?.id ?? '', image.ref_id)}
+                                    queryKey={['entity-reference-image', selectedEntity?.id, image.ref_id, image.created_at]}
+                                  />
                                 </div>
                                 <div className="reference-card-body">
                                   <strong>{image.ref_id === entityReferenceSetQuery.data.primary_ref_id ? translateUiString(uiLanguage, 'Primary') : translateUiString(uiLanguage, image.source)}</strong>
@@ -3171,19 +3179,19 @@ function StudioShell(props: {
                           key={page.id}
                           className={`page-card ${selectedPage?.id === page.id ? 'active' : ''}`}
                           onClick={() => setSelectedPageId(page.id)}
-                          onDoubleClick={() => {
-                            if (page.generated_image?.cdn_url !== null && page.generated_image?.cdn_url !== undefined) {
-                              openImageLightbox(page.generated_image.cdn_url, `${translateUiString(uiLanguage, 'Page')} ${page.page_number}`);
-                            }
-                          }}
                           type="button"
                         >
                           <div className="page-card-header">
                             <strong>{page.page_number}</strong>
                             <StatusBadge value={page.status} />
                           </div>
-                          {page.generated_image?.cdn_url !== null && page.generated_image?.cdn_url !== undefined ? (
-                            <img alt="" src={page.generated_image.cdn_url} />
+                          {page.generated_image !== null ? (
+                            <AuthenticatedImage
+                              loadImage={() => api.exportPageImage(page.id)}
+                              onDoubleClick={(url) => openImageLightbox(url, `${translateUiString(uiLanguage, 'Page')} ${page.page_number}`)}
+                              placeholderClassName="page-placeholder"
+                              queryKey={['page-image', page.id, page.generated_image.generated_at]}
+                            />
                           ) : (
                             <div className="page-placeholder">
                               <LayoutGrid size={18} />
@@ -3380,13 +3388,14 @@ function StudioShell(props: {
                             </span>
                           </div>
                         ) : null}
-                        {selectedPage.generated_image?.cdn_url !== null && selectedPage.generated_image?.cdn_url !== undefined ? (
+                        {selectedPage.generated_image !== null ? (
                           <div className="generated-image-wrap">
-                            <img
-                              alt=""
+                            <AuthenticatedImage
                               className="generated-image"
-                              onDoubleClick={() => openImageLightbox(selectedPage.generated_image?.cdn_url ?? '', `${translateUiString(uiLanguage, 'Page')} ${selectedPage.page_number}`)}
-                              src={selectedPage.generated_image.cdn_url}
+                              loadImage={() => api.exportPageImage(selectedPage.id)}
+                              onDoubleClick={(url) => openImageLightbox(url, `${translateUiString(uiLanguage, 'Page')} ${selectedPage.page_number}`)}
+                              placeholderClassName="page-placeholder generated-image"
+                              queryKey={['page-image', selectedPage.id, selectedPage.generated_image.generated_at]}
                             />
                             {balloons.map((balloon) => (
                               <div
@@ -3928,6 +3937,58 @@ function StudioShell(props: {
       ) : null}
       </div>
     </UiLanguageContext.Provider>
+  );
+}
+
+function AuthenticatedImage(props: {
+  alt?: string;
+  className?: string;
+  enabled?: boolean;
+  loadImage: () => Promise<BlobResponse>;
+  onDoubleClick?: (url: string) => void;
+  placeholderClassName?: string;
+  queryKey: readonly unknown[];
+}) {
+  const imageQuery = useQuery({
+    queryKey: props.queryKey,
+    queryFn: async () => {
+      const response = await props.loadImage();
+      return response.blob;
+    },
+    enabled: props.enabled ?? true,
+    staleTime: 5 * 60 * 1000,
+  });
+  const [objectUrl, setObjectUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (imageQuery.data === undefined) {
+      setObjectUrl(null);
+      return undefined;
+    }
+
+    const nextUrl = URL.createObjectURL(imageQuery.data);
+    setObjectUrl(nextUrl);
+
+    return () => {
+      URL.revokeObjectURL(nextUrl);
+    };
+  }, [imageQuery.data]);
+
+  if (objectUrl === null) {
+    return <div className={props.placeholderClassName ?? 'thumb-placeholder'} />;
+  }
+
+  return (
+    <img
+      alt={props.alt ?? ''}
+      className={props.className}
+      onDoubleClick={
+        props.onDoubleClick === undefined
+          ? undefined
+          : () => props.onDoubleClick?.(objectUrl)
+      }
+      src={objectUrl}
+    />
   );
 }
 

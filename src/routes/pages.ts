@@ -126,7 +126,7 @@ export function createPageRoutes(dependencies: PageRouteDependencies): Hono<AppE
 
     return c.body(new Uint8Array(exportedImage.imageData), 200, {
       'Content-Type': exportedImage.mimeType,
-      'Cache-Control': 'no-store',
+      'Cache-Control': 'private, no-store',
     });
   });
 

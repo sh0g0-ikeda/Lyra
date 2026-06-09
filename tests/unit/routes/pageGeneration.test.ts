@@ -321,6 +321,7 @@ describe('page generation routes', () => {
 
     expect(response.status).toBe(200);
     expect(response.headers.get('Content-Type')).toBe('image/png');
+    expect(response.headers.get('Cache-Control')).toBe('private, no-store');
     expect(pageExportService.exportedPageId).toBe('33333333-3333-4333-8333-333333333333');
     await expect(response.arrayBuffer()).resolves.toBeInstanceOf(ArrayBuffer);
   });
