@@ -4,6 +4,7 @@ import type { GenerationJob } from '../domain/types/job.js';
 import type { PageGenerationMode } from '../domain/types/pageGeneration.js';
 import type { DatabaseClient, TransactionRunner } from '../lib/db.js';
 import { sanitizePersistedErrorMessage } from '../lib/errorSanitizer.js';
+import { buildPersistedPromptDiagnostics } from '../lib/promptDiagnostics.js';
 import type { PagePromptCompilationMetadata } from '../services/page/PageGenerationWorkerService.js';
 
 export interface CompletePageGenerationInput {
@@ -136,9 +137,7 @@ export class PostgresPageGenerationExecutionRepository implements PageGeneration
             generation_mode: input.generationMode,
             request_kind: input.requestKind,
             cost_usd: input.costUsd,
-            draft_prompt: input.promptMetadata.draftPrompt,
-            compiled_brief: input.promptMetadata.compilerBrief,
-            compiled_prompt: input.promptMetadata.compiledPrompt,
+            ...buildPromptMetadataDiagnostics(input.promptMetadata),
             compiled_prompt_used: input.promptMetadata.compiledPromptUsed,
             prompt_compiler_provider: input.promptMetadata.promptCompilerProvider,
             compiler_model: input.promptMetadata.compilerModel,
@@ -235,4 +234,21 @@ function toJsonObject(value: unknown): Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
+}
+
+function buildPromptMetadataDiagnostics(
+  metadata: PagePromptCompilationMetadata,
+): Record<string, string | number> {
+  const draftPrompt = buildPersistedPromptDiagnostics(metadata.draftPrompt);
+  const compiledBrief = buildPersistedPromptDiagnostics(metadata.compilerBrief);
+  const compiledPrompt = buildPersistedPromptDiagnostics(metadata.compiledPrompt);
+
+  return {
+    draft_prompt_sha256: draftPrompt.sha256,
+    draft_prompt_bytes: draftPrompt.bytes,
+    compiled_brief_sha256: compiledBrief.sha256,
+    compiled_brief_bytes: compiledBrief.bytes,
+    compiled_prompt_sha256: compiledPrompt.sha256,
+    compiled_prompt_bytes: compiledPrompt.bytes,
+  };
 }

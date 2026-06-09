@@ -2,6 +2,7 @@ import type { QueryResultRow } from 'pg';
 import type { GenerationJob } from '../domain/types/job.js';
 import type { DatabaseClient } from '../lib/db.js';
 import { sanitizePersistedErrorMessage } from '../lib/errorSanitizer.js';
+import { buildPersistedPromptDiagnostics } from '../lib/promptDiagnostics.js';
 
 export interface CompleteEntityGenerationInput {
   jobId: string;
@@ -98,8 +99,7 @@ export class PostgresEntityGenerationExecutionRepository implements EntityGenera
             s3_key: candidate.s3Key,
             cdn_url: candidate.cdnUrl,
           })),
-          compiled_brief: input.compiledBrief,
-          compiled_prompt: input.compiledPrompt,
+          ...buildPromptDiagnostics(input),
           cost_usd: input.costUsd,
           compiled_prompt_used: input.compiledPromptUsed,
           prompt_compiler_provider: input.promptCompilerProvider,
@@ -139,6 +139,20 @@ export class PostgresEntityGenerationExecutionRepository implements EntityGenera
 
     return (result.rowCount ?? 0) > 0;
   }
+}
+
+function buildPromptDiagnostics(
+  input: Pick<CompleteEntityGenerationInput, 'compiledBrief' | 'compiledPrompt'>,
+): Record<string, string | number> {
+  const compiledBrief = buildPersistedPromptDiagnostics(input.compiledBrief);
+  const compiledPrompt = buildPersistedPromptDiagnostics(input.compiledPrompt);
+
+  return {
+    compiled_brief_sha256: compiledBrief.sha256,
+    compiled_brief_bytes: compiledBrief.bytes,
+    compiled_prompt_sha256: compiledPrompt.sha256,
+    compiled_prompt_bytes: compiledPrompt.bytes,
+  };
 }
 
 function mapGenerationJobRow(row: GenerationJobRow): GenerationJob {
