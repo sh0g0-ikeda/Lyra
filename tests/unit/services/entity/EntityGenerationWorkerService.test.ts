@@ -141,6 +141,9 @@ class FakePromptCompiler implements EntityReferencePromptCompilerPort {
 class FakeReferenceGenerator implements EntityReferenceGeneratorPort {
   public input: GenerateEntityReferenceCandidatesInput | null = null;
   public shouldThrow = false;
+  public candidates: Array<{ imageData: Buffer; mimeType: string }> = [
+    { imageData: Buffer.from('a'), mimeType: 'image/png' },
+  ];
 
   public async generateCandidates(input: GenerateEntityReferenceCandidatesInput): Promise<{
     candidates: Array<{ imageData: Buffer; mimeType: string }>;
@@ -154,7 +157,7 @@ class FakeReferenceGenerator implements EntityReferenceGeneratorPort {
     }
 
     return {
-      candidates: [{ imageData: Buffer.from('a'), mimeType: 'image/png' }],
+      candidates: this.candidates,
       openaiRequestId: 'req-1',
       costUsd: null,
     };
@@ -520,6 +523,60 @@ describe('EntityGenerationWorkerService', () => {
       jobId: 'job-1',
       userId: 'user-1',
       errorMessage: 'generation failed',
+    });
+  });
+
+  it('generator returns no candidates then job fails and refunds', async () => {
+    const executionRepository = new FakeExecutionRepository();
+    const referenceGenerator = new FakeReferenceGenerator();
+    referenceGenerator.candidates = [];
+    const creditService = new FakeCreditService();
+    const service = buildService({
+      executionRepository,
+      referenceGenerator,
+      creditService,
+    });
+
+    const result = await service.processJob('job-1');
+
+    expect(result).toEqual({ status: 'processed', jobStatus: 'failed' });
+    expect(executionRepository.completed).toBeNull();
+    expect(executionRepository.failed).toMatchObject({
+      jobId: 'job-1',
+      userId: 'user-1',
+      errorMessage: 'Entity reference generator returned no candidates',
+    });
+    expect(creditService.refunded).toMatchObject({
+      userId: 'user-1',
+      amount: 8,
+      jobId: 'job-1',
+    });
+  });
+
+  it('generator returns empty candidate image data then job fails and refunds', async () => {
+    const executionRepository = new FakeExecutionRepository();
+    const referenceGenerator = new FakeReferenceGenerator();
+    referenceGenerator.candidates = [{ imageData: Buffer.alloc(0), mimeType: 'image/png' }];
+    const creditService = new FakeCreditService();
+    const service = buildService({
+      executionRepository,
+      referenceGenerator,
+      creditService,
+    });
+
+    const result = await service.processJob('job-1');
+
+    expect(result).toEqual({ status: 'processed', jobStatus: 'failed' });
+    expect(executionRepository.completed).toBeNull();
+    expect(executionRepository.failed).toMatchObject({
+      jobId: 'job-1',
+      userId: 'user-1',
+      errorMessage: 'Entity reference generator returned empty image data',
+    });
+    expect(creditService.refunded).toMatchObject({
+      userId: 'user-1',
+      amount: 8,
+      jobId: 'job-1',
     });
   });
 

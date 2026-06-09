@@ -71,6 +71,8 @@ export class EntityGenerationWorkerService {
         params.source_s3_key !== undefined,
       );
       const generated = await this.generator.generateCandidates({ prompt: generationPrompt, inputImages });
+      assertGeneratedCandidates(generated.candidates);
+
       const storedCandidates = [];
 
       for (let index = 0; index < generated.candidates.length; index += 1) {
@@ -152,6 +154,18 @@ export class EntityGenerationWorkerService {
         jobId,
       });
     }
+  }
+}
+
+function assertGeneratedCandidates(
+  candidates: Array<{ imageData: Buffer; mimeType: string }>,
+): void {
+  if (candidates.length === 0) {
+    throw new ConfigurationError('Entity reference generator returned no candidates');
+  }
+
+  if (candidates.some((candidate) => candidate.imageData.length === 0)) {
+    throw new ConfigurationError('Entity reference generator returned empty image data');
   }
 }
 
