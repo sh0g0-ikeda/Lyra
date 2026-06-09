@@ -41,6 +41,8 @@ describe('createRateLimitMiddleware', () => {
     ['/api/episodes/episode-1/generate-page-skeleton'],
     ['/api/entities/import-image'],
     ['/api/entities/entity-1/generate-reference'],
+    ['/api/story/collaborate'],
+    ['/api/story/improve-episode-draft'],
   ])('%s は generation bucket で制限する', async (path) => {
     const store = new RecordingRateLimitStore();
     const app = createAuthenticatedTestApp(store);
@@ -57,11 +59,11 @@ describe('createRateLimitMiddleware', () => {
     ]);
   });
 
-  it('StoryAI route は story bucket で制限する', async () => {
+  it('通常の story editing route は story bucket で制限する', async () => {
     const store = new RecordingRateLimitStore();
     const app = createAuthenticatedTestApp(store);
 
-    const response = await app.request('/api/story/collaborate', { method: 'POST' });
+    const response = await app.request('/api/works/work-1', { method: 'PUT' });
 
     expect(response.status).toBe(200);
     expect(store.calls).toEqual([

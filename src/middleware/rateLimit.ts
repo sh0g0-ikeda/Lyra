@@ -7,6 +7,8 @@ import {
   PAGE_GENERATION_ROUTE_PATTERN,
   PAGE_SKELETON_GENERATION_ROUTE_PATTERN,
   RATE_LIMIT_RULES,
+  STORY_COLLABORATION_ROUTE_PATTERN,
+  STORY_EPISODE_IMPROVEMENT_ROUTE_PATTERN,
   STORY_ROUTE_PREFIXES,
   type RateLimitBucket,
 } from '../domain/constants/rateLimit.js';
@@ -134,7 +136,9 @@ function classifyRateLimitBucket(path: string): RateLimitBucket {
     EPISODE_STORY_AUTOFILL_ROUTE_PATTERN.test(path) ||
     PAGE_SKELETON_GENERATION_ROUTE_PATTERN.test(path) ||
     ENTITY_IMPORT_ROUTE_PATTERN.test(path) ||
-    ENTITY_GENERATION_ROUTE_PATTERN.test(path)
+    ENTITY_GENERATION_ROUTE_PATTERN.test(path) ||
+    STORY_COLLABORATION_ROUTE_PATTERN.test(path) ||
+    STORY_EPISODE_IMPROVEMENT_ROUTE_PATTERN.test(path)
   ) {
     return 'generation';
   }

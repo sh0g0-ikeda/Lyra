@@ -25,4 +25,6 @@ export const EPISODE_STORY_AUTOFILL_ROUTE_PATTERN = /^\/api\/episodes\/[^/]+\/au
 export const PAGE_SKELETON_GENERATION_ROUTE_PATTERN = /^\/api\/episodes\/[^/]+\/generate-page-skeleton$/;
 export const ENTITY_IMPORT_ROUTE_PATTERN = /^\/api\/entities\/import-image$/;
 export const ENTITY_GENERATION_ROUTE_PATTERN = /^\/api\/entities\/[^/]+\/generate-reference$/;
+export const STORY_COLLABORATION_ROUTE_PATTERN = /^\/api\/story\/collaborate$/;
+export const STORY_EPISODE_IMPROVEMENT_ROUTE_PATTERN = /^\/api\/story\/improve-episode-draft$/;
 export const STORY_ROUTE_PREFIXES = ['/api/story', '/api/works', '/api/chapters', '/api/episodes'] as const;
