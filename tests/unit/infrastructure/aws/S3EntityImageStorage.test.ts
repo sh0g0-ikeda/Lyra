@@ -33,6 +33,7 @@ describe('S3EntityImageStorage', () => {
 
     const command = client.commands[0] as PutObjectCommand;
     expect(command.input.Key).toContain('tmp/user-1/entities/imports/');
+    expect(command.input.CacheControl).toBe('private, max-age=604800, immutable');
     expect(result.s3Key).toContain('tmp/user-1/entities/imports/');
   });
 
@@ -52,6 +53,7 @@ describe('S3EntityImageStorage', () => {
 
     const command = client.commands[0] as CopyObjectCommand;
     expect(command.input.Key).toBe('saved/user-1/entities/entity-1/ref-1.png');
+    expect(command.input.CacheControl).toBe('private, max-age=31536000, immutable');
     expect(result.cdnUrl).toBe('https://cdn.lyra.test/saved/user-1/entities/entity-1/ref-1.png');
   });
 

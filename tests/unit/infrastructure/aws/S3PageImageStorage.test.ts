@@ -44,7 +44,7 @@ describe('S3PageImageStorage', () => {
       Key: 'session/user-1/pages/page-1/job-1.png',
       Body: Buffer.from('png-bytes'),
       ContentType: 'image/png',
-      CacheControl: 'public, max-age=604800, immutable',
+      CacheControl: 'private, max-age=604800, immutable',
       ServerSideEncryption: 'AES256',
     });
   });
