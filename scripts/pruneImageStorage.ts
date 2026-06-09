@@ -20,6 +20,8 @@ const PRUNE_VALUE_OPTIONS = new Set([
   '--max-deletes',
   '--max-scanned',
 ]);
+const MAX_PRUNE_IMAGE_DELETES = 10_000;
+const MAX_PRUNE_IMAGE_SCANNED = 100_000;
 
 export function parsePruneImageStorageArgs(argv: readonly string[]): PruneImageStorageCliOptions {
   const prefixes: string[] = [];
@@ -60,8 +62,8 @@ export function parsePruneImageStorageArgs(argv: readonly string[]): PruneImageS
     prefixes: prefixes.length === 0 ? ['tmp/', 'session/'] : Array.from(new Set(prefixes)),
     olderThanHours: readPositiveInteger(values, '--older-than-hours', 24),
     protectRecentCandidateHours: readPositiveInteger(values, '--protect-recent-candidate-hours', 48),
-    maxDeletes: readPositiveInteger(values, '--max-deletes', 500),
-    maxScanned: readPositiveInteger(values, '--max-scanned', 5000),
+    maxDeletes: readPositiveInteger(values, '--max-deletes', 500, MAX_PRUNE_IMAGE_DELETES),
+    maxScanned: readPositiveInteger(values, '--max-scanned', 5000, MAX_PRUNE_IMAGE_SCANNED),
     apply: values.get('--apply') === true && values.get('--dry-run') !== true,
     includeSavedUnreferenced: values.get('--include-saved-unreferenced') === true,
   };
@@ -117,7 +119,12 @@ async function main(): Promise<void> {
   }
 }
 
-function readPositiveInteger(values: Map<string, string | boolean>, key: string, defaultValue: number): number {
+function readPositiveInteger(
+  values: Map<string, string | boolean>,
+  key: string,
+  defaultValue: number,
+  maxValue?: number,
+): number {
   const rawValue = values.get(key);
   if (rawValue === undefined) {
     return defaultValue;
@@ -135,6 +142,9 @@ function readPositiveInteger(values: Map<string, string | boolean>, key: string,
   const value = Number(trimmedValue);
   if (!Number.isSafeInteger(value) || value <= 0) {
     throw new Error(`${key} must be a positive integer`);
+  }
+  if (maxValue !== undefined && value > maxValue) {
+    throw new Error(`${key} must be ${maxValue} or less`);
   }
 
   return value;

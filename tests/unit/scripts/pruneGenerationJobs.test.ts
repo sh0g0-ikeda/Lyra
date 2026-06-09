@@ -47,4 +47,11 @@ describe('parsePruneGenerationJobsArgs', () => {
       '9007199254740992',
     ])).toThrow(/--max-deletes must be a positive integer/);
   });
+
+  it('過大な削除件数を拒否する', () => {
+    expect(() => parsePruneGenerationJobsArgs([
+      '--max-deletes',
+      '10001',
+    ])).toThrow(/--max-deletes must be 10000 or less/);
+  });
 });

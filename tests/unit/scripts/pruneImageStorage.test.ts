@@ -75,6 +75,17 @@ describe('parsePruneImageStorageArgs', () => {
     ])).toThrow(/--max-deletes must be a positive integer/);
   });
 
+  it('rejects unusually large delete and scan limits', () => {
+    expect(() => parsePruneImageStorageArgs([
+      '--max-deletes',
+      '10001',
+    ])).toThrow(/--max-deletes must be 10000 or less/);
+    expect(() => parsePruneImageStorageArgs([
+      '--max-scanned',
+      '100001',
+    ])).toThrow(/--max-scanned must be 100000 or less/);
+  });
+
   it('rejects non decimal integer values', () => {
     expect(() => parsePruneImageStorageArgs(['--older-than-hours', '1e3'])).toThrow(
       /--older-than-hours must be a positive integer/,
