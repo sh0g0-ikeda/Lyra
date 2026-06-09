@@ -144,6 +144,7 @@ describe('JobService', () => {
       { userId: 'user-1', pageId: 'page-1' },
     ]);
   });
+
   it('queued entity job 取得時にも stale 回収して再読込結果を返す', async () => {
     const repository = new FakeGenerationJobRepository();
     repository.job = buildJob({

@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
+import type { CreditBalanceSnapshot } from '../../../../src/domain/types/credit.js';
 import type { GenerationJob } from '../../../../src/repositories/GenerationJobRepository.js';
 import type { PageGenerationExecutionRepository } from '../../../../src/repositories/PageGenerationExecutionRepository.js';
 import type {
   PageGenerationRecoveryRepository,
   StalePageGenerationJob,
 } from '../../../../src/repositories/PageGenerationRecoveryRepository.js';
-import type { CreditBalanceSnapshot } from '../../../../src/domain/types/credit.js';
 import type {
   ConsumeCreditsParams,
   CreditServicePort,
@@ -183,7 +183,7 @@ describe('PageGenerationRecoveryService', () => {
     expect(creditService.refunds).toEqual([]);
   });
 
-  it('返金が失敗したstale page jobはfailed化後に失敗を表面化する', async () => {
+  it('返金が失敗した stale page job は failed 化後に失敗を表面化する', async () => {
     const repository = new FakeRecoveryRepository();
     repository.jobs = [
       {
