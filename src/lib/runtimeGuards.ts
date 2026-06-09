@@ -462,7 +462,7 @@ function parseIpv4Address(hostname: string): [number, number, number, number] | 
   return octets as [number, number, number, number];
 }
 
-function isPrivateOrReservedIpv4Address([first, second]: [number, number, number, number]): boolean {
+function isPrivateOrReservedIpv4Address([first, second, third]: [number, number, number, number]): boolean {
   return (
     first === 0 ||
     first === 10 ||
@@ -470,8 +470,14 @@ function isPrivateOrReservedIpv4Address([first, second]: [number, number, number
     (first === 100 && second >= 64 && second <= 127) ||
     (first === 169 && second === 254) ||
     (first === 172 && second >= 16 && second <= 31) ||
+    (first === 192 && second === 0 && third === 0) ||
+    (first === 192 && second === 0 && third === 2) ||
     (first === 192 && second === 168) ||
-    (first === 198 && (second === 18 || second === 19))
+    (first === 192 && second === 88 && third === 99) ||
+    (first === 198 && (second === 18 || second === 19)) ||
+    (first === 198 && second === 51 && third === 100) ||
+    (first === 203 && second === 0 && third === 113) ||
+    first >= 224
   );
 }
 
@@ -483,7 +489,10 @@ function isPrivateOrLinkLocalIpv6Hostname(hostname: string): boolean {
   return (
     hostname === '::' ||
     hostname === '::1' ||
+    hostname === '2001:db8::' ||
+    hostname.startsWith('2001:db8:') ||
     hostname.startsWith('fe80:') ||
+    hostname.startsWith('ff') ||
     hostname.startsWith('fc') ||
     hostname.startsWith('fd')
   );

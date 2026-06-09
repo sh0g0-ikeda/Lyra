@@ -124,6 +124,22 @@ describe('assertSafeWebRuntimeConfig', () => {
     );
   });
 
+  it('production では Cognito と API の documentation/multicast IP host を拒否する', () => {
+    expect(() => {
+      assertSafeWebRuntimeConfig({
+        MODE: 'production',
+        VITE_COGNITO_DOMAIN: 'https://example.auth.ap-northeast-1.amazoncognito.com',
+        VITE_COGNITO_CLIENT_ID: 'client-1',
+        VITE_COGNITO_SCOPES: 'openid email profile',
+        VITE_COGNITO_REDIRECT_URI: 'https://192.0.2.10/callback',
+        VITE_COGNITO_LOGOUT_URI: 'https://[2001:db8::1]/logout',
+        VITE_API_BASE_URL: 'https://203.0.113.10',
+      });
+    }).toThrow(
+      /VITE_COGNITO_REDIRECT_URI must use https.*VITE_COGNITO_LOGOUT_URI must use https.*VITE_API_BASE_URL must use https/,
+    );
+  });
+
   it('production build check では Hosted UI 設定の必須化だけを外せる', () => {
     expect(() => {
       assertSafeWebRuntimeConfig(
