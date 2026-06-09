@@ -109,7 +109,7 @@ class InMemoryCreditRepository implements CreditRepository {
 }
 
 describe('CreditService', () => {
-  it('初回ボーナスの場合に購入クレジットへ200cr付与される', async () => {
+  it('初回ボーナスの場合に購入クレジットへ12cr付与される', async () => {
     const repository = new InMemoryCreditRepository();
     const service = new CreditService(repository);
 

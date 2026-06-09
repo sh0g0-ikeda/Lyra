@@ -433,7 +433,7 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   'Save balloon': '吹き出しを保存',
   'Save scene': 'シーンを保存',
   'Subscription plan': 'サブスクリプション',
-  'Add 1000 credits': '1000クレジットを追加',
+  'Add 50 credits': '50クレジットを追加',
   'Billing portal': '請求管理',
   page_generate: 'ページ生成',
   entity_generate: 'キャラ生成',
@@ -3884,7 +3884,7 @@ function StudioShell(props: {
                     type="button"
                   >
                     <CreditCard size={16} />
-                    {translateUiString(uiLanguage, 'Add 1000 credits')}
+                    {translateUiString(uiLanguage, 'Add 50 credits')}
                   </button>
                   <button
                     className="ghost-button"
