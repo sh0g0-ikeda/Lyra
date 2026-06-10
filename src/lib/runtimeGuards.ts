@@ -7,6 +7,8 @@ interface RuntimeGuardConfig {
   DATABASE_URL?: string;
   DATABASE_POOL_MAX?: number;
   DATABASE_SSL_MODE?: 'disable' | 'require';
+  DATABASE_STATEMENT_TIMEOUT_MS?: number;
+  DATABASE_QUERY_TIMEOUT_MS?: number;
   CORS_ALLOWED_ORIGINS?: string;
   AUTO_RUN_MIGRATIONS?: boolean;
   AUTH_PROVIDER?: 'supabase' | 'cognito';
@@ -44,6 +46,7 @@ interface RuntimeGuardConfig {
 }
 
 const MAX_PRODUCTION_DATABASE_POOL_MAX = 10;
+const MAX_PRODUCTION_DATABASE_TIMEOUT_MS = 60_000;
 const SQS_VISIBILITY_TIMEOUT_BUFFER_SECONDS = 120;
 
 const REQUIRED_PRODUCTION_GENERATION_KEYS = [
@@ -111,11 +114,18 @@ export function assertProductionRuntimeConfig(
 ): void {
   const appEnv = config.APP_ENV;
   const isProductionRuntime = nodeEnv === 'production' || appEnv === 'production';
-  if (!isProductionRuntime) {
-    return;
+  const violations: string[] = [];
+
+  if (config.DEV_AUTH_BYPASS && !isDevAuthBypassRuntimeAllowed(appEnv, nodeEnv)) {
+    violations.push('DEV_AUTH_BYPASS is only allowed in explicit development or test runtimes');
   }
 
-  const violations: string[] = [];
+  if (!isProductionRuntime) {
+    if (violations.length > 0) {
+      throw new ConfigurationError(`Runtime config is unsafe: ${violations.join('; ')}`);
+    }
+    return;
+  }
 
   if (appEnv === 'production' && nodeEnv !== 'production') {
     violations.push('NODE_ENV must be production when APP_ENV is production');
@@ -155,6 +165,22 @@ export function assertProductionRuntimeConfig(
 
   if (config.DATABASE_SSL_MODE !== undefined && config.DATABASE_SSL_MODE !== 'require') {
     violations.push('DATABASE_SSL_MODE must be require in production');
+  }
+
+  if (
+    config.DATABASE_STATEMENT_TIMEOUT_MS !== undefined &&
+    (config.DATABASE_STATEMENT_TIMEOUT_MS < 1 ||
+      config.DATABASE_STATEMENT_TIMEOUT_MS > MAX_PRODUCTION_DATABASE_TIMEOUT_MS)
+  ) {
+    violations.push(`DATABASE_STATEMENT_TIMEOUT_MS must be between 1 and ${MAX_PRODUCTION_DATABASE_TIMEOUT_MS} in production`);
+  }
+
+  if (
+    config.DATABASE_QUERY_TIMEOUT_MS !== undefined &&
+    (config.DATABASE_QUERY_TIMEOUT_MS < 1 ||
+      config.DATABASE_QUERY_TIMEOUT_MS > MAX_PRODUCTION_DATABASE_TIMEOUT_MS)
+  ) {
+    violations.push(`DATABASE_QUERY_TIMEOUT_MS must be between 1 and ${MAX_PRODUCTION_DATABASE_TIMEOUT_MS} in production`);
   }
 
   if (
@@ -297,6 +323,17 @@ export function assertProductionRuntimeConfig(
   if (violations.length > 0) {
     throw new ConfigurationError(`Production runtime config is unsafe: ${violations.join('; ')}`);
   }
+}
+
+export function isDevAuthBypassRuntimeAllowed(
+  appEnv: RuntimeGuardConfig['APP_ENV'],
+  nodeEnv = process.env.NODE_ENV,
+): boolean {
+  if (appEnv === 'production' || nodeEnv === 'production') {
+    return false;
+  }
+
+  return appEnv === 'development' || appEnv === 'test' || nodeEnv === 'development' || nodeEnv === 'test';
 }
 
 function isMissingConfigValue(value: string | undefined): boolean {

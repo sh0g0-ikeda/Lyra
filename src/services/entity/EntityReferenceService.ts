@@ -80,6 +80,7 @@ export class EntityReferenceService implements EntityReferenceServicePort {
     private readonly capacityLimits: GenerationCapacityLimits = DEFAULT_GENERATION_CAPACITY_LIMITS,
     private readonly generationEnabled = true,
     private readonly recoveryService: EntityGenerationRecoveryServicePort = new NoopEntityGenerationRecoveryService(),
+    private readonly importAnalysisEnabled = true,
   ) {}
 
   public async getReferenceSet(userId: string, entityId: string): Promise<EntityReferenceSet> {
@@ -102,23 +103,49 @@ export class EntityReferenceService implements EntityReferenceServicePort {
     if (uploadedImage.sizeBytes > ENTITY_IMPORT_MAX_FILE_SIZE_BYTES) {
       throw new ValidationError('Image file is too large');
     }
+    if (!imageDataMatchesDeclaredMimeType(uploadedImage)) {
+      throw new ValidationError('image_base64 content does not match declared image type');
+    }
+    if (!this.importAnalysisEnabled) {
+      throw new ConflictError('Entity import analysis is temporarily disabled');
+    }
 
-    const storedImage = await this.imageStorage.storeImportedImage({
-      userId,
-      imageData: uploadedImage.imageData,
-      mimeType: uploadedImage.mimeType,
-    });
-    const analysis = await this.imageAnalyzer.analyze({
-      entityType: input.entityType,
-      dataUrl: input.imageBase64,
-    });
+    let creditsConsumed = false;
+    try {
+      await this.creditService.consumeCredits({
+        userId,
+        cost: CREDIT_COSTS.ENTITY_IMPORT_ANALYSIS,
+        description: 'Entity import analysis',
+      });
+      creditsConsumed = true;
 
-    return {
-      suggestedFields: parseStructuredFields(input.entityType, analysis.suggestedFields),
-      promptSupplement: analysis.promptSupplement.slice(0, ENTITY_REFERENCE_LIMITS.MAX_PROMPT_SUPPLEMENT_LENGTH),
-      tmpImageS3Key: storedImage.s3Key,
-      tmpImageCdnUrl: storedImage.cdnUrl,
-    };
+      const storedImage = await this.imageStorage.storeImportedImage({
+        userId,
+        imageData: uploadedImage.imageData,
+        mimeType: uploadedImage.mimeType,
+      });
+      const analysis = await this.imageAnalyzer.analyze({
+        entityType: input.entityType,
+        dataUrl: input.imageBase64,
+      });
+
+      return {
+        suggestedFields: parseStructuredFields(input.entityType, analysis.suggestedFields),
+        promptSupplement: analysis.promptSupplement.slice(0, ENTITY_REFERENCE_LIMITS.MAX_PROMPT_SUPPLEMENT_LENGTH),
+        tmpImageS3Key: storedImage.s3Key,
+        tmpImageCdnUrl: storedImage.cdnUrl,
+      };
+    } catch (error) {
+      if (creditsConsumed) {
+        await this.creditService.refundCredits({
+          userId,
+          amount: CREDIT_COSTS.ENTITY_IMPORT_ANALYSIS,
+          description: 'Refund for failed entity import analysis',
+        });
+      }
+
+      throw error;
+    }
   }
 
   public async enqueueReferenceGeneration(
@@ -358,4 +385,27 @@ function parseImageDataUrl(value: string): ParsedImageDataUrl {
     imageData,
     sizeBytes: imageData.length,
   };
+}
+
+function imageDataMatchesDeclaredMimeType(image: ParsedImageDataUrl): boolean {
+  switch (image.mimeType) {
+    case 'image/png':
+      return startsWithBytes(image.imageData, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    case 'image/jpeg':
+      return startsWithBytes(image.imageData, [0xff, 0xd8, 0xff]);
+    case 'image/webp':
+      return (
+        image.imageData.length >= 12 &&
+        image.imageData.subarray(0, 4).toString('ascii') === 'RIFF' &&
+        image.imageData.subarray(8, 12).toString('ascii') === 'WEBP'
+      );
+  }
+}
+
+function startsWithBytes(value: Buffer, expectedBytes: number[]): boolean {
+  if (value.length < expectedBytes.length) {
+    return false;
+  }
+
+  return expectedBytes.every((expectedByte, index) => value[index] === expectedByte);
 }

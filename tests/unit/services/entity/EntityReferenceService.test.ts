@@ -29,6 +29,7 @@ import type {
 } from '../../../../src/services/credit/CreditService.js';
 
 const now = new Date('2026-04-25T00:00:00.000Z');
+const validPngDataUrl = 'data:image/png;base64,iVBORw0KGgo=';
 
 class FakeEntityReferenceRepository implements EntityReferenceRepository {
   public context: EntityReferenceContext | null = buildReferenceContext();
@@ -171,12 +172,16 @@ class FakeCreditService implements CreditServicePort {
 
 class FakeEntityImportAnalyzer implements EntityImportAnalyzerPort {
   public input: AnalyzeEntityImportInput | null = null;
+  public shouldFail = false;
 
   public async analyze(input: AnalyzeEntityImportInput): Promise<{
     suggestedFields: Record<string, unknown>;
     promptSupplement: string;
   }> {
     this.input = input;
+    if (this.shouldFail) {
+      throw new Error('analysis unavailable');
+    }
 
     return {
       suggestedFields: { art_style: 'anime' },
@@ -269,14 +274,16 @@ describe('EntityReferenceService', () => {
   it('import-image は S3 保存後に AI 解析結果を返す', async () => {
     const analyzer = new FakeEntityImportAnalyzer();
     const storage = new FakeEntityImageStorage();
+    const creditService = new FakeCreditService();
     const service = buildService({
       analyzer,
       storage,
+      creditService,
     });
 
     const result = await service.importImage('user-1', {
       entityType: 'character',
-      imageBase64: 'data:image/png;base64,YWJj',
+      imageBase64: validPngDataUrl,
     });
 
     expect(storage.importedInput).toEqual({
@@ -284,12 +291,83 @@ describe('EntityReferenceService', () => {
       mimeType: 'image/png',
     });
     expect(analyzer.input?.entityType).toBe('character');
+    expect(creditService.consumed).toMatchObject({
+      userId: 'user-1',
+      cost: 1,
+      description: 'Entity import analysis',
+    });
     expect(result).toEqual({
       suggestedFields: { art_style: 'anime' },
       promptSupplement: 'anime heroine, full body, neutral background',
       tmpImageS3Key: 'tmp/user-1/entities/imports/source.png',
       tmpImageCdnUrl: 'https://cdn.lyra.test/tmp/user-1/entities/imports/source.png',
     });
+  });
+
+  it('import-image は MIME と実体が一致しない画像を解析前に拒否する', async () => {
+    const analyzer = new FakeEntityImportAnalyzer();
+    const storage = new FakeEntityImageStorage();
+    const creditService = new FakeCreditService();
+    const service = buildService({
+      analyzer,
+      storage,
+      creditService,
+    });
+
+    await expect(
+      service.importImage('user-1', {
+        entityType: 'character',
+        imageBase64: 'data:image/png;base64,YWJj',
+      }),
+    ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+    expect(creditService.consumed).toBeNull();
+    expect(storage.importedInput).toBeNull();
+    expect(analyzer.input).toBeNull();
+  });
+
+  it('import-image の解析失敗時は消費クレジットを返金する', async () => {
+    const analyzer = new FakeEntityImportAnalyzer();
+    analyzer.shouldFail = true;
+    const creditService = new FakeCreditService();
+    const service = buildService({
+      analyzer,
+      creditService,
+    });
+
+    await expect(
+      service.importImage('user-1', {
+        entityType: 'character',
+        imageBase64: validPngDataUrl,
+      }),
+    ).rejects.toThrow('analysis unavailable');
+    expect(creditService.consumed).toMatchObject({
+      userId: 'user-1',
+      cost: 1,
+    });
+    expect(creditService.refunded).toMatchObject({
+      userId: 'user-1',
+      amount: 1,
+      description: 'Refund for failed entity import analysis',
+    });
+  });
+
+  it('import-image analysis disabled の場合はクレジット消費前に CONFLICT になる', async () => {
+    const creditService = new FakeCreditService();
+    const service = buildService({
+      creditService,
+      importAnalysisEnabled: false,
+    });
+
+    await expect(
+      service.importImage('user-1', {
+        entityType: 'character',
+        imageBase64: validPngDataUrl,
+      }),
+    ).rejects.toMatchObject({
+      code: 'CONFLICT',
+      message: 'Entity import analysis is temporarily disabled',
+    });
+    expect(creditService.consumed).toBeNull();
   });
 
   it('5MB 超の import-image は 422 になる', async () => {
@@ -512,6 +590,7 @@ function buildService(overrides: {
   recoveryService?: FakeEntityGenerationRecoveryService;
   capacityLimits?: { perUser: number; global: number };
   generationEnabled?: boolean;
+  importAnalysisEnabled?: boolean;
 } = {}): EntityReferenceService {
   return new EntityReferenceService(
     overrides.repository ?? new FakeEntityReferenceRepository(),
@@ -523,6 +602,7 @@ function buildService(overrides: {
     overrides.capacityLimits,
     overrides.generationEnabled,
     overrides.recoveryService,
+    overrides.importAnalysisEnabled,
   );
 }
 

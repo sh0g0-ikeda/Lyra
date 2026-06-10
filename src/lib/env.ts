@@ -8,6 +8,8 @@ const envSchema = z.object({
   DATABASE_URL: z.string().min(1).default('postgres://postgres:postgres@localhost:5432/lyra'),
   DATABASE_POOL_MAX: z.coerce.number().int().min(1).max(50).default(10),
   DATABASE_SSL_MODE: z.enum(['disable', 'require']).default(process.env.NODE_ENV === 'production' ? 'require' : 'disable'),
+  DATABASE_STATEMENT_TIMEOUT_MS: z.coerce.number().int().min(0).max(600_000).default(30_000),
+  DATABASE_QUERY_TIMEOUT_MS: z.coerce.number().int().min(0).max(600_000).default(30_000),
   CORS_ALLOWED_ORIGINS: z.string().min(1).optional(),
   AUTO_RUN_MIGRATIONS: z
     .string()
@@ -42,6 +44,18 @@ const envSchema = z.object({
     .string()
     .optional()
     .transform((value) => (value === undefined ? process.env.NODE_ENV !== 'production' : value === 'true')),
+  PAGE_GENERATION_ENABLED: z
+    .string()
+    .optional()
+    .transform((value) => (value === undefined ? true : value === 'true')),
+  ENTITY_GENERATION_ENABLED: z
+    .string()
+    .optional()
+    .transform((value) => (value === undefined ? true : value === 'true')),
+  ENTITY_IMPORT_ANALYSIS_ENABLED: z
+    .string()
+    .optional()
+    .transform((value) => (value === undefined ? true : value === 'true')),
   STRIPE_SECRET_KEY: z.string().min(1).optional(),
   STRIPE_WEBHOOK_SECRET: z.string().min(1).optional(),
   STRIPE_PRICE_STANDARD_MONTHLY: z.string().min(1).optional(),

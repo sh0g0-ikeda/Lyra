@@ -26,7 +26,7 @@ import {
 } from './infrastructure/stripe/StripeBillingClient.js';
 import { db } from './lib/db.js';
 import { env } from './lib/env.js';
-import { assertProductionRuntimeConfig } from './lib/runtimeGuards.js';
+import { assertProductionRuntimeConfig, isDevAuthBypassRuntimeAllowed } from './lib/runtimeGuards.js';
 import { createAuthMiddleware } from './middleware/auth.js';
 import type { AuthProvider, CognitoVerifierConfig } from './middleware/auth.js';
 import { createCorsMiddleware, parseCorsAllowedOrigins } from './middleware/cors.js';
@@ -215,8 +215,12 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
   const resolvedDependencies = resolveDependencies(dependencies);
   const app = new Hono<AppEnv>();
   const localAssetConfig = resolveConfiguredLocalAssetConfig();
-  const enableDevAuthBypass =
+  const requestedDevAuthBypass =
     dependencies.enableDevAuthBypass ?? (process.env.NODE_ENV === 'test' ? false : env.DEV_AUTH_BYPASS);
+  if (requestedDevAuthBypass && !isDevAuthBypassRuntimeAllowed(env.APP_ENV, process.env.NODE_ENV)) {
+    throw new ConfigurationError('DEV_AUTH_BYPASS is only allowed in explicit development or test runtimes');
+  }
+  const enableDevAuthBypass = requestedDevAuthBypass;
   const authMiddleware = createAuthMiddleware(resolvedDependencies.userProvisioningService, {
     authProvider: dependencies.authProvider,
     jwtSecret: dependencies.jwtSecret,
@@ -437,8 +441,9 @@ function resolveDependencies(
         perUser: env.GENERATION_USER_ACTIVE_JOB_LIMIT,
         global: env.GENERATION_GLOBAL_ACTIVE_JOB_LIMIT,
       },
-      env.GENERATION_ENABLED,
+      env.GENERATION_ENABLED && env.ENTITY_GENERATION_ENABLED,
       entityGenerationRecoveryService,
+      env.GENERATION_ENABLED && env.ENTITY_IMPORT_ANALYSIS_ENABLED,
     );
   const entityReferenceImageExportService =
     dependencies.entityReferenceImageExportService ??
@@ -463,7 +468,7 @@ function resolveDependencies(
         perUser: env.GENERATION_USER_ACTIVE_JOB_LIMIT,
         global: env.GENERATION_GLOBAL_ACTIVE_JOB_LIMIT,
       },
-      env.GENERATION_ENABLED,
+      env.GENERATION_ENABLED && env.PAGE_GENERATION_ENABLED,
     );
   const pageFinalizeService =
     dependencies.pageFinalizeService ??

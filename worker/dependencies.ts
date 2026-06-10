@@ -162,6 +162,7 @@ export function resolveWorkerDependencies(
       pageImageRenderer,
       pageImageStorage,
       creditService,
+      env.GENERATION_ENABLED && env.PAGE_GENERATION_ENABLED,
     ),
     entityGenerationWorkerService: new EntityGenerationWorkerService(
       entityGenerationExecutionRepository,
@@ -173,6 +174,7 @@ export function resolveWorkerDependencies(
       creditService,
       storedImageLoader,
       env.OPENAI_IMAGE_MODEL,
+      env.GENERATION_ENABLED && env.ENTITY_GENERATION_ENABLED,
     ),
   };
 }

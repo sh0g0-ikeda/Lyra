@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { ConfigurationError, UnauthorizedError } from '../domain/errors/index.js';
 import type { AuthenticatedUser, SupabaseJwtClaims } from '../domain/types/user.js';
 import { env } from '../lib/env.js';
+import { isDevAuthBypassRuntimeAllowed } from '../lib/runtimeGuards.js';
 import type { UserProvisioningPort } from '../services/auth/UserProvisioningService.js';
 import type { AppEnv } from '../types/app.js';
 
@@ -40,6 +41,9 @@ export function createAuthMiddleware(
   const authProvider = options.authProvider ?? env.AUTH_PROVIDER;
   const jwtSecret = options.jwtSecret ?? env.SUPABASE_JWT_SECRET;
   const enableDevBypass = options.enableDevBypass ?? env.DEV_AUTH_BYPASS;
+  if (enableDevBypass && !isDevAuthBypassRuntimeAllowed(env.APP_ENV, process.env.NODE_ENV)) {
+    throw new ConfigurationError('DEV_AUTH_BYPASS is only allowed in explicit development or test runtimes');
+  }
   const devBypassClaims = options.devBypassClaims ?? {
     sub: env.DEV_AUTH_BYPASS_SUPABASE_ID ?? 'dev-local-user',
     email: env.DEV_AUTH_BYPASS_EMAIL ?? 'dev@local.lyra',

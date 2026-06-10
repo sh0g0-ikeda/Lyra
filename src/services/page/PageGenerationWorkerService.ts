@@ -105,9 +105,14 @@ export class PageGenerationWorkerService {
     private readonly renderer: PageImageRendererPort,
     private readonly storage: PageImageStoragePort,
     private readonly creditService: CreditServicePort,
+    private readonly generationEnabled = true,
   ) {}
 
   public async processJob(jobId: string): Promise<ProcessPageGenerationJobResult> {
+    if (!this.generationEnabled) {
+      throw new ConfigurationError('Page generation worker is temporarily disabled');
+    }
+
     const job = await this.executionRepository.claimQueuedPageGenerationJob(jobId);
     if (job === null) {
       return { status: 'skipped' };

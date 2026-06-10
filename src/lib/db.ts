@@ -18,12 +18,16 @@ export interface DatabasePoolConfigInput {
   connectionString: string;
   max: number;
   sslMode: DatabaseSslMode;
+  statementTimeoutMs: number;
+  queryTimeoutMs: number;
 }
 
 export function buildDatabasePoolConfig(input: DatabasePoolConfigInput): PoolConfig {
   const config: PoolConfig = {
     connectionString: input.connectionString,
     max: input.max,
+    statement_timeout: input.statementTimeoutMs,
+    query_timeout: input.queryTimeoutMs,
   };
 
   if (input.sslMode === 'require') {
@@ -38,6 +42,8 @@ const pool = new Pool(
     connectionString: env.DATABASE_URL,
     max: env.DATABASE_POOL_MAX,
     sslMode: env.DATABASE_SSL_MODE,
+    statementTimeoutMs: env.DATABASE_STATEMENT_TIMEOUT_MS,
+    queryTimeoutMs: env.DATABASE_QUERY_TIMEOUT_MS,
   }),
 );
 

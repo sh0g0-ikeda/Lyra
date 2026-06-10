@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { ConfigurationError } from '../../../src/domain/errors/index.js';
-import { assertProductionRuntimeConfig } from '../../../src/lib/runtimeGuards.js';
+import {
+  assertProductionRuntimeConfig,
+  isDevAuthBypassRuntimeAllowed,
+} from '../../../src/lib/runtimeGuards.js';
 
 const safeProductionConfig = {
   APP_ENV: 'production' as const,
@@ -44,6 +47,27 @@ describe('assertProductionRuntimeConfig', () => {
         'development',
       );
     }).not.toThrow();
+  });
+
+  it('dev auth bypass は明示的な development/test runtime でだけ許可する', () => {
+    expect(isDevAuthBypassRuntimeAllowed('development', undefined)).toBe(true);
+    expect(isDevAuthBypassRuntimeAllowed('test', undefined)).toBe(true);
+    expect(isDevAuthBypassRuntimeAllowed(undefined, 'development')).toBe(true);
+    expect(isDevAuthBypassRuntimeAllowed(undefined, 'test')).toBe(true);
+    expect(isDevAuthBypassRuntimeAllowed(undefined, '')).toBe(false);
+    expect(isDevAuthBypassRuntimeAllowed('production', 'development')).toBe(false);
+    expect(isDevAuthBypassRuntimeAllowed('development', 'production')).toBe(false);
+  });
+
+  it('APP_ENV/NODE_ENV が不明な dev auth bypass を拒否する', () => {
+    expect(() => {
+      assertProductionRuntimeConfig(
+        {
+          DEV_AUTH_BYPASS: true,
+        },
+        '',
+      );
+    }).toThrow(/DEV_AUTH_BYPASS is only allowed/);
   });
 
   it('安全な production 設定を許可する', () => {
@@ -544,6 +568,28 @@ describe('assertProductionRuntimeConfig', () => {
         'production',
       );
     }).toThrow(/DATABASE_POOL_MAX must be <= 10 in production/);
+  });
+
+  it('rejects unsafe database timeouts in production', () => {
+    expect(() => {
+      assertProductionRuntimeConfig(
+        {
+          ...safeProductionConfig,
+          DATABASE_STATEMENT_TIMEOUT_MS: 0,
+        },
+        'production',
+      );
+    }).toThrow(/DATABASE_STATEMENT_TIMEOUT_MS must be between 1 and 60000/);
+
+    expect(() => {
+      assertProductionRuntimeConfig(
+        {
+          ...safeProductionConfig,
+          DATABASE_QUERY_TIMEOUT_MS: 120_000,
+        },
+        'production',
+      );
+    }).toThrow(/DATABASE_QUERY_TIMEOUT_MS must be between 1 and 60000/);
   });
 
   it('requires explicit SQS visibility timeout settings in production', () => {

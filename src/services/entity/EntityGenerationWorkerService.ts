@@ -39,9 +39,14 @@ export class EntityGenerationWorkerService {
     private readonly creditService: CreditServicePort,
     private readonly storedImageLoader: StoredImageLoaderPort,
     private readonly imageModel: string = ENTITY_REFERENCE_GENERATION.MODEL,
+    private readonly generationEnabled = true,
   ) {}
 
   public async processJob(jobId: string): Promise<ProcessEntityGenerationJobResult> {
+    if (!this.generationEnabled) {
+      throw new ConfigurationError('Entity generation worker is temporarily disabled');
+    }
+
     const job = await this.executionRepository.claimQueuedEntityGenerationJob(jobId);
     if (job === null) {
       return { status: 'skipped' };

@@ -30,9 +30,12 @@ bun run migrate
 Create `./.env`:
 
 ```env
+APP_ENV=development
 DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5432/lyra
 DATABASE_POOL_MAX=10
 DATABASE_SSL_MODE=disable
+DATABASE_STATEMENT_TIMEOUT_MS=30000
+DATABASE_QUERY_TIMEOUT_MS=30000
 DEV_AUTH_BYPASS=true
 DEV_AUTH_BYPASS_EMAIL=dev@local.lyra
 SUPABASE_JWT_SECRET=replace-me
@@ -42,11 +45,15 @@ LLM_PAGE_GENERATION_PLANNER_ENABLED=false
 GENERATION_USER_ACTIVE_JOB_LIMIT=2
 GENERATION_GLOBAL_ACTIVE_JOB_LIMIT=10
 GENERATION_ENABLED=false
+PAGE_GENERATION_ENABLED=true
+ENTITY_GENERATION_ENABLED=true
+ENTITY_IMPORT_ANALYSIS_ENABLED=true
 ```
 
 `SUPABASE_JWT_SECRET` is still required for non-bypass local flows and dev token generation.
 The three `LLM_*_ENABLED` flags default to `false`; keep them disabled for lower-cost generation that uses deterministic prompts, and enable them only when you explicitly want extra LLM prompt rewriting or planning.
 `GENERATION_USER_ACTIVE_JOB_LIMIT` and `GENERATION_GLOBAL_ACTIVE_JOB_LIMIT` cap active page/entity generation jobs before queueing provider work.
+`PAGE_GENERATION_ENABLED`, `ENTITY_GENERATION_ENABLED`, and `ENTITY_IMPORT_ANALYSIS_ENABLED` are narrower kill switches under `GENERATION_ENABLED`; use them when only one provider path needs to stop.
 `SQS_GENERATION_VISIBILITY_TIMEOUT_SECONDS` must match the deployed generation queue visibility timeout; keep it at least `OPENAI_TIMEOUT_MS / 1000 + 120` so long image calls are not retried or deleted while still running.
 Set `GENERATION_ENABLED=false` as a kill switch when provider quota, billing, or abuse-control incidents require stopping new generation jobs.
 
@@ -69,6 +76,8 @@ AWS production must provide an explicit non-local PostgreSQL URL:
 DATABASE_URL=postgres://lyra:replace-me@lyra-db.example.ap-northeast-1.rds.amazonaws.com:5432/lyra
 DATABASE_POOL_MAX=10
 DATABASE_SSL_MODE=require
+DATABASE_STATEMENT_TIMEOUT_MS=30000
+DATABASE_QUERY_TIMEOUT_MS=30000
 ```
 
 Set both `APP_ENV=production` and `NODE_ENV=production` for AWS deployments.
@@ -77,7 +86,9 @@ so production safety checks cannot be skipped by an incomplete task definition.
 `NODE_ENV=production` rejects missing database URLs and local hosts such as `localhost`,
 `127.0.0.1`, and `::1`. Production database connections require
 `DATABASE_SSL_MODE=require`; `DATABASE_POOL_MAX` is capped at 10 per API/worker
-process to avoid exhausting RDS connections during scale-out.
+process to avoid exhausting RDS connections during scale-out. `DATABASE_STATEMENT_TIMEOUT_MS`
+and `DATABASE_QUERY_TIMEOUT_MS` should stay bounded so slow or blocked SQL cannot occupy
+connections indefinitely.
 
 Production public URLs such as `IMAGES_CDN_BASE_URL`, Stripe return URLs, and
 `CORS_ALLOWED_ORIGINS` must use HTTPS and non-local, non-private hosts.
@@ -279,6 +290,16 @@ For AWS cost control, pair this with S3 lifecycle rules:
   window you decide to keep.
 - `saved/`: keep durable, encrypted, and private behind CloudFront; use lifecycle transitions only
   after confirming product requirements.
+
+Before exposing the image bucket, apply Block Public Access on all four S3 controls and restrict reads
+to CloudFront/OAC. Example policy material lives under `ops/security/`, including
+`s3-images-bucket-policy.example.json` and `s3-public-access-block.example.json`.
+
+### Edge rate limiting
+
+Use the application rate-limit store for per-user/API buckets and an AWS WAF rate-based rule at the
+edge for coarse IP abuse control. `ops/security/waf-web-acl.example.json` includes the managed rule
+groups plus a sample `RateBasedStatement`.
 
 ### Generation job retention
 
