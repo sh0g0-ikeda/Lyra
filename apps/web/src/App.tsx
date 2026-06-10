@@ -386,6 +386,26 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   Reviewing: '確認中',
   Ready: '準備完了',
   Save: '保存',
+  'Save work': '作品を保存',
+  'Create chapter': '章を追加',
+  'Delete chapter': '章を削除',
+  'Create episode': '話を追加',
+  'Save episode': '話を保存',
+  'Delete episode': '話を削除',
+  'Create scene': 'シーンを作成',
+  'Delete entity': 'キャラを削除',
+  'Create entity': 'キャラを作成',
+  'Save entity': 'キャラを保存',
+  'Generate reference': 'プレビュー生成',
+  'Confirm references': 'リファレンス確定',
+  'Delete reference': 'リファレンス削除',
+  'Save page settings': 'ページ設定を保存',
+  'Save story sources': '話の材料を保存',
+  'Delete panel': 'コマを削除',
+  'Checkout standard': 'サブスク手続き',
+  'Checkout credits': 'クレジット購入',
+  'Open portal': '請求管理',
+  'Generate page skeleton': 'ページ骨格生成',
   'Save chapter': '章を保存',
   'Add chapter': '章を追加',
   'Add episode': '話を追加',
@@ -411,8 +431,8 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   'New character': '新規キャラ',
   'Importing image...': '画像を取り込み中...',
   'Drop or choose image': '画像をドロップまたは選択',
-  'Select one or more candidates and choose a primary image.': '候補を選び、メイン画像を決めます。',
-  'No preview candidates yet.': 'まだプレビュー候補がありません。',
+  'Select a preview and confirm it as the primary image.': 'プレビューを1つ選んで確定します。',
+  'No preview yet.': 'まだプレビューはありません。',
   'Delete with the button only. Clicking the image will not delete it.': '削除はボタンのみです。画像クリックでは削除しません。',
   'No confirmed references yet.': 'まだ確定済みリファレンスがありません。',
   'Creating a new character. Saving here will add a new record and will not overwrite existing characters.':
@@ -452,7 +472,15 @@ const UI_JA_DICTIONARY: Record<string, string> = {
     'ページ骨格を上書き再生成すると、この話の現在のページを置き換えます。',
   Primary: 'メイン',
   Delete: '削除',
-  'Generate full-body candidates': '全身候補を生成',
+  'Generate full-body preview': '全身プレビュー生成',
+  'Preview generation costs 1 credit.': 'プレビュー生成 1cr',
+  'Image import costs 1 credit.': '画像取り込み 1cr',
+  'Page generation starts at 3 credits.': 'ページ生成 3cr〜',
+  'Text AI actions use no credits.': 'テキストAI 0cr',
+  'No recent jobs.': '最近のジョブはありません。',
+  'Only PNG, JPEG, and WebP are allowed.': 'PNG/JPEG/WebPのみ対応。',
+  'Image file is too large.': '画像が大きすぎます。',
+  'Image analyzed. Generate preview next.': '画像解析完了。次にプレビュー生成。',
   Total: '合計',
   Monthly: '月次',
   Purchased: '購入分',
@@ -921,6 +949,11 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   'Story plan autofill can take a while while pages and panels are being distributed.': '話全体の反映は、ページ配分とコマ分割を行うため時間がかかる場合があります。',
   'Character preview generation can take a while. The preview updates when the job finishes.': 'キャラのプレビュー生成は時間がかかる場合があります。完了するとプレビューが更新されます。',
   'Page image generation can take a while. The page image updates when the job finishes.': 'ページ画像生成は時間がかかる場合があります。完了するとページ画像が更新されます。',
+  'Queued. Starts soon.': '待機中。順番に処理します。',
+  'Generating page plan. This can take a while.': '骨格生成中。少し時間がかかります。',
+  'Applying story plan to pages and panels.': 'ページとコマへ反映中。',
+  'Generating preview. It updates when finished.': 'プレビュー生成中。完了後に更新されます。',
+  'Generating page. It updates when finished.': 'ページ生成中。完了後に更新されます。',
   'You do not need to fill every blank field.': 'すべての空欄を埋める必要はありません。',
 };
 
@@ -951,6 +984,15 @@ function translateUiString(language: UiLanguage, value: string): string {
   }
 
   return value;
+}
+
+function formatActionSuccessMessage(language: UiLanguage, actionLabel: string, translatedLabel: string): string {
+  const isAsyncGenerationAction = actionLabel === 'Generate page' || actionLabel === 'Generate reference';
+  if (language === 'ja') {
+    return isAsyncGenerationAction ? `${translatedLabel}を開始` : `${translatedLabel}完了`;
+  }
+
+  return isAsyncGenerationAction ? `${translatedLabel} started.` : `${translatedLabel} completed.`;
 }
 
 function pickUiText(language: UiLanguage, english: string, japanese: string): string {
@@ -1488,11 +1530,11 @@ function StudioShell(props: {
         .find((job) => job.job_type === 'page_generate' && job.params.page_id === selectedPage.id) ?? null;
   const skeletonGenerationMessage =
     busyAction === 'Generate page skeleton'
-      ? 'Page skeleton generation can take a while, especially for long episodes.'
+      ? 'Generating page plan. This can take a while.'
       : null;
   const storyPlanProcessingMessage =
     busyAction === 'Apply story plan'
-      ? 'Story plan autofill can take a while while pages and panels are being distributed.'
+      ? 'Applying story plan to pages and panels.'
       : null;
   const selectedPageFrameCount = framesQuery.data?.frames.length ?? selectedPage?.frame_count ?? 0;
   const selectedPagePanelCount = panelsQuery.data?.panels.length ?? selectedPage?.panel_count ?? 0;
@@ -1503,18 +1545,18 @@ function StudioShell(props: {
   const entityPreviewGenerationMessage =
     selectedEntityGenerationJob !== null
       ? selectedEntityGenerationJob.status === 'queued'
-        ? 'Queued. This task will start soon and can take a while.'
-        : 'Character preview generation can take a while. The preview updates when the job finishes.'
+        ? 'Queued. Starts soon.'
+        : 'Generating preview. It updates when finished.'
       : busyAction === 'Generate reference'
-        ? 'Character preview generation can take a while. The preview updates when the job finishes.'
+        ? 'Generating preview. It updates when finished.'
         : null;
   const pageImageGenerationMessage =
     selectedPageGenerationJob !== null
       ? selectedPageGenerationJob.status === 'queued'
-        ? 'Queued. This task will start soon and can take a while.'
-        : 'Page image generation can take a while. The page image updates when the job finishes.'
+        ? 'Queued. Starts soon.'
+        : 'Generating page. It updates when finished.'
       : busyAction === 'Generate page'
-        ? 'Page image generation can take a while. The page image updates when the job finishes.'
+        ? 'Generating page. It updates when finished.'
         : null;
 
   useEffect(() => {
@@ -1843,7 +1885,11 @@ function StudioShell(props: {
     try {
       setBusyAction(label);
       await action();
-      setNotice({ type: 'success', message: `${label} completed.` });
+      const translatedLabel = translateUiString(uiLanguage, label);
+      setNotice({
+        type: 'success',
+        message: formatActionSuccessMessage(uiLanguage, label, translatedLabel),
+      });
     } catch (error) {
       setNotice({ type: 'error', message: toMessage(error) });
     } finally {
@@ -2200,6 +2246,13 @@ function StudioShell(props: {
                     {storyPlanProcessingMessage !== null ? (
                       <ProcessingHint message={translateUiString(uiLanguage, storyPlanProcessingMessage)} />
                     ) : null}
+                    {selectedEpisode !== null ? (
+                      <div className="state-pill-row">
+                        <span className="state-pill state-pill-neutral">
+                          {translateUiString(uiLanguage, 'Text AI actions use no credits.')}
+                        </span>
+                      </div>
+                    ) : null}
                     <div className="story-tree">
                       <div className="tree-column">
                         <h3>{translateUiString(uiLanguage, 'Chapters')}</h3>
@@ -2376,7 +2429,7 @@ function StudioShell(props: {
                           type="button"
                         >
                           {busyAction === 'Save episode' ? <LoaderCircle className="spin" size={16} /> : <Save size={16} />}
-                          Save
+                          {translateUiString(uiLanguage, 'Save')}
                         </button>
                         <button
                           className="ghost-button danger"
@@ -2936,6 +2989,14 @@ function StudioShell(props: {
                   </PanelSection>
 
                   <PanelSection title="Import / References" collapsible>
+                    <div className="state-pill-row">
+                      <span className="state-pill state-pill-neutral">
+                        {translateUiString(uiLanguage, 'Image import costs 1 credit.')}
+                      </span>
+                      <span className="state-pill state-pill-neutral">
+                        {translateUiString(uiLanguage, 'Preview generation costs 1 credit.')}
+                      </span>
+                    </div>
                     <label className="file-drop">
                       <input
                         accept="image/png,image/jpeg,image/webp"
@@ -2950,6 +3011,7 @@ function StudioShell(props: {
                             setEntityDraft,
                             setUploadedReferenceCandidatesByEntityId,
                             setUploadedReferenceSourceByEntityId,
+                            uiLanguage,
                           )
                         }
                         type="file"
@@ -2980,7 +3042,7 @@ function StudioShell(props: {
                           type="button"
                         >
                           <Sparkles size={16} />
-                          {translateUiString(uiLanguage, 'Generate full-body candidates')}
+                          {translateUiString(uiLanguage, 'Generate full-body preview')}
                         </button>
                         <button
                           className="primary-button"
@@ -3018,7 +3080,7 @@ function StudioShell(props: {
                         <div className="section-header">
                           <div>
                             <h3>{translateUiString(uiLanguage, 'Generated preview')}</h3>
-                            <div className="muted small">{translateUiString(uiLanguage, 'Select one or more candidates and choose a primary image.')}</div>
+                            <div className="muted small">{translateUiString(uiLanguage, 'Select a preview and confirm it as the primary image.')}</div>
                           </div>
                         </div>
                         {referenceCandidates.length > 0 ? (
@@ -3066,7 +3128,7 @@ function StudioShell(props: {
                             ))}
                           </div>
                         ) : (
-                          <div className="selection-empty">{translateUiString(uiLanguage, 'No preview candidates yet.')}</div>
+                          <div className="selection-empty">{translateUiString(uiLanguage, 'No preview yet.')}</div>
                         )}
                       </div>
                       <div className="stack">
@@ -3361,6 +3423,11 @@ function StudioShell(props: {
                             queued={selectedPageGenerationJob?.status === 'queued'}
                           />
                         ) : null}
+                        <div className="state-pill-row">
+                          <span className="state-pill state-pill-neutral">
+                            {translateUiString(uiLanguage, 'Page generation starts at 3 credits.')}
+                          </span>
+                        </div>
                         {selectedPageHasFramePanelMismatch ? (
                           <div className="state-pill-row">
                             <span className="state-pill state-pill-warn">
@@ -3838,6 +3905,9 @@ function StudioShell(props: {
                       <StatusBadge value={job.status} />
                     </div>
                   ))}
+                  {jobs.length === 0 ? (
+                    <div className="muted small">{translateUiString(uiLanguage, 'No recent jobs.')}</div>
+                  ) : null}
                 </div>
               </PanelSection>
             </aside>
@@ -4660,6 +4730,7 @@ async function handleEntityImport(
       | Record<string, string>
       | ((current: Record<string, string>) => Record<string, string>),
   ) => void,
+  uiLanguage: UiLanguage,
 ): Promise<void> {
   const file = event.target.files?.[0];
   if (file === undefined) {
@@ -4669,12 +4740,12 @@ async function handleEntityImport(
   const allowedMimeTypes = new Set(['image/png', 'image/jpeg', 'image/webp']);
   const maxFileSizeBytes = 5 * 1024 * 1024;
   if (!allowedMimeTypes.has(file.type)) {
-    setNotice({ type: 'error', message: 'Only PNG, JPEG, and WebP are allowed.' });
+    setNotice({ type: 'error', message: translateUiString(uiLanguage, 'Only PNG, JPEG, and WebP are allowed.') });
     event.target.value = '';
     return;
   }
   if (file.size > maxFileSizeBytes) {
-    setNotice({ type: 'error', message: 'Image file is too large.' });
+    setNotice({ type: 'error', message: translateUiString(uiLanguage, 'Image file is too large.') });
     event.target.value = '';
     return;
   }
@@ -4707,7 +4778,7 @@ async function handleEntityImport(
         [selectedEntityId]: result.tmp_image_s3_key,
       }));
     }
-    setNotice({ type: 'success', message: 'Image analyzed. Generate full-body candidates next.' });
+    setNotice({ type: 'success', message: translateUiString(uiLanguage, 'Image analyzed. Generate preview next.') });
   } catch (error) {
     setNotice({ type: 'error', message: toMessage(error) });
   } finally {
