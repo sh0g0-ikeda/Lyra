@@ -4,6 +4,7 @@ import type { AppEnv } from '../types/app.js';
 const DEFAULT_SECURITY_HEADERS = {
   'X-Content-Type-Options': 'nosniff',
   'X-Frame-Options': 'DENY',
+  'Content-Security-Policy': "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
   'Referrer-Policy': 'no-referrer',
   'Permissions-Policy': 'camera=(), microphone=(), geolocation=(), payment=()',
   'Cross-Origin-Opener-Policy': 'same-origin',

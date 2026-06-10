@@ -204,7 +204,6 @@ interface SkeletonLockRow extends QueryResultRow {
   id: string;
   page_skeleton_generated: boolean;
   existing_page_count: number;
-  protected_page_count: number;
 }
 
 export class PostgresStoryRepository implements StoryRepository {
@@ -593,14 +592,15 @@ export class PostgresStoryRepository implements StoryRepository {
       return null;
     }
 
+    // Partial updates use undefined as "leave unchanged"; null is an explicit editor clear.
     const normalizedStoryInput = normalizeEpisodeStoryInput({
       storyInputMode: input.storyInputMode ?? currentEpisode.storyInputMode,
-      purpose: input.purpose ?? currentEpisode.purpose,
-      introduction: input.introduction ?? currentEpisode.introduction,
-      middle: input.middle ?? currentEpisode.middle,
-      climax: input.climax ?? currentEpisode.climax,
-      endingHook: input.endingHook ?? currentEpisode.endingHook,
-      storyFullDraft: input.storyFullDraft ?? currentEpisode.storyFullDraft,
+      purpose: pickEpisodeUpdateValue(input.purpose, currentEpisode.purpose),
+      introduction: pickEpisodeUpdateValue(input.introduction, currentEpisode.introduction),
+      middle: pickEpisodeUpdateValue(input.middle, currentEpisode.middle),
+      climax: pickEpisodeUpdateValue(input.climax, currentEpisode.climax),
+      endingHook: pickEpisodeUpdateValue(input.endingHook, currentEpisode.endingHook),
+      storyFullDraft: pickEpisodeUpdateValue(input.storyFullDraft, currentEpisode.storyFullDraft),
     });
 
     try {
@@ -1204,13 +1204,7 @@ export class PostgresStoryRepository implements StoryRepository {
                  SELECT COUNT(*)::int
                  FROM pages
                  WHERE pages.episode_id = episodes.id
-               ) AS existing_page_count,
-               (
-                 SELECT COUNT(*)::int
-                 FROM pages
-                 WHERE pages.episode_id = episodes.id
-                   AND pages.status <> 'designing'
-               ) AS protected_page_count
+               ) AS existing_page_count
         FROM episodes
         INNER JOIN chapters ON chapters.id = episodes.chapter_id
         INNER JOIN works ON works.id = chapters.work_id
@@ -1231,10 +1225,6 @@ export class PostgresStoryRepository implements StoryRepository {
       if (!overwriteExisting && ownershipResult.rows[0].existing_page_count > 0) {
         throw new ConflictError('Episode already has pages');
       }
-      if (overwriteExisting && ownershipResult.rows[0].protected_page_count > 0) {
-        throw new ConflictError('Only designing pages can be replaced by skeleton regeneration');
-      }
-
       const replacedExisting = overwriteExisting && ownershipResult.rows[0].existing_page_count > 0;
 
       if (replacedExisting) {
@@ -1487,6 +1477,10 @@ function mapEpisodeRow(row: EpisodeRow): Episode {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+}
+
+function pickEpisodeUpdateValue<T>(nextValue: T | undefined, currentValue: T): T {
+  return nextValue === undefined ? currentValue : nextValue;
 }
 
 function toStoryEntitySummaries(value: unknown): StoryEntitySummary[] {

@@ -432,7 +432,7 @@ if (!body.success) {
 
 // ❌ 絶対禁止
 
-const openaiKey = 'sk-proj-xxxxx'; // コードにベタ書き
+const openaiKey = 'replace-me-openai-key'; // コードにベタ書き
 
 
 

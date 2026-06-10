@@ -281,6 +281,27 @@ describe('PageFinalizeService', () => {
       new ConflictError('Only confirmed pages can be reopened'),
     );
   });
+
+  it('generated image key が所有者スコープ外なら confirm 前に拒否する', async () => {
+    const pageRepository = new FakePageRepository();
+    pageRepository.context = buildPageContext({
+      generatedImage: {
+        s3Key: 'session/user-2/pages/page-1/job-1.png',
+        cdnUrl: 'https://img.lyra.app/session/user-2/pages/page-1/job-1.png',
+        generationMode: 'standard',
+        generatedAt: '2026-04-24T00:00:00.000Z',
+      },
+    });
+    const storage = new FakeFinalPageImageStorage();
+    const service = buildService({ pageRepository, storage });
+
+    await expect(service.confirmPage('user-1', 'page-1')).rejects.toMatchObject({
+      code: 'CONFIGURATION_ERROR',
+      message: 'generated page image key is outside the owner scope',
+    });
+    expect(storage.lastCopyInput).toBeNull();
+    expect(storage.lastStoredInput).toBeNull();
+  });
 });
 
 function buildService(overrides: {

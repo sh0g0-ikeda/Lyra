@@ -22,10 +22,16 @@ export interface BillingRepository {
   ): Promise<BillingUserProfile | null>;
   setStripeCustomerId(userId: string, stripeCustomerId: string, client?: DatabaseClient): Promise<string | null>;
   updateUserPlanCode(userId: string, planCode: string, client: DatabaseClient): Promise<boolean>;
+  findHighestActiveSubscriptionPlanForUserExcluding(
+    userId: string,
+    excludedStripeSubscriptionId: string,
+    client: DatabaseClient,
+  ): Promise<BillingUserProfile['planCode'] | null>;
+  hasStripeEventProcessed(stripeEventId: string, client?: DatabaseClient): Promise<boolean>;
   markStripeEventProcessed(stripeEventId: string, eventType: string, client: DatabaseClient): Promise<boolean>;
   upsertSubscription(record: SubscriptionRecord, client: DatabaseClient): Promise<void>;
   markSubscriptionDeleted(stripeSubscriptionId: string, client: DatabaseClient): Promise<void>;
-  insertPaymentRecord(record: PaymentRecordInput, client: DatabaseClient): Promise<void>;
+  insertPaymentRecord(record: PaymentRecordInput, client: DatabaseClient): Promise<boolean>;
 }
 
 export class PostgresBillingRepository implements BillingRepository {
@@ -103,6 +109,51 @@ export class PostgresBillingRepository implements BillingRepository {
     return result.rowCount === 1;
   }
 
+  public async findHighestActiveSubscriptionPlanForUserExcluding(
+    userId: string,
+    excludedStripeSubscriptionId: string,
+    client: DatabaseClient,
+  ): Promise<BillingUserProfile['planCode'] | null> {
+    const result = await client.query<{ plan_code: string }>(
+      `
+      SELECT plan_code
+      FROM subscriptions
+      WHERE user_id = $1
+        AND stripe_subscription_id <> $2
+        AND status IN ('active', 'trialing')
+      ORDER BY
+        CASE plan_code
+          WHEN 'premium' THEN 2
+          WHEN 'standard' THEN 1
+          ELSE 0
+        END DESC,
+        current_period_end DESC NULLS LAST,
+        updated_at DESC
+      LIMIT 1
+      `,
+      [userId, excludedStripeSubscriptionId],
+    );
+
+    return (result.rows[0]?.plan_code as BillingUserProfile['planCode'] | undefined) ?? null;
+  }
+
+  public async hasStripeEventProcessed(
+    stripeEventId: string,
+    client: DatabaseClient = this.client,
+  ): Promise<boolean> {
+    const result = await client.query(
+      `
+      SELECT 1
+      FROM processed_stripe_events
+      WHERE stripe_event_id = $1
+      LIMIT 1
+      `,
+      [stripeEventId],
+    );
+
+    return (result.rowCount ?? 0) > 0;
+  }
+
   public async markStripeEventProcessed(
     stripeEventId: string,
     eventType: string,
@@ -168,8 +219,8 @@ export class PostgresBillingRepository implements BillingRepository {
     );
   }
 
-  public async insertPaymentRecord(record: PaymentRecordInput, client: DatabaseClient): Promise<void> {
-    await client.query(
+  public async insertPaymentRecord(record: PaymentRecordInput, client: DatabaseClient): Promise<boolean> {
+    const result = await client.query(
       `
       INSERT INTO payment_records (
         user_id,
@@ -180,6 +231,7 @@ export class PostgresBillingRepository implements BillingRepository {
         status
       )
       VALUES ($1, $2, $3, $4, $5, $6)
+      ON CONFLICT DO NOTHING
       `,
       [
         record.userId,
@@ -190,6 +242,8 @@ export class PostgresBillingRepository implements BillingRepository {
         record.status,
       ],
     );
+
+    return result.rowCount === 1;
   }
 }
 

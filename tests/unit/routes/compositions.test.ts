@@ -87,16 +87,20 @@ describe('composition routes', () => {
       tag: 'action',
       limit: 100,
     });
-    await expect(response.json()).resolves.toMatchObject({
+    const payload = (await response.json()) as Record<string, unknown>;
+    expect(payload).toMatchObject({
       compositions: [
         {
           id: 'battle_single_001',
           category: 'battle',
           entity_count: 2,
+          preview_cdn_url: 'https://img.lyra.app/composition/battle_single_001.png',
           composition_prompt: 'single character, full body, battle stance',
         },
       ],
     });
+    const compositions = payload.compositions as Array<Record<string, unknown>>;
+    expect(compositions[0]).not.toHaveProperty('preview_s3_key');
   });
 
   it('entity_countが0の場合にVALIDATION_ERRORになる', async () => {

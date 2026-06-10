@@ -733,6 +733,7 @@ Runtime:
 - production で dev auth bypass を拒否。
 - production で local asset storage を拒否。
 - production で S3/SQS/CDN/OpenAI/Auth secret 不足を拒否。
+- production で public/external URL の local/private/link-local/internal host を拒否。
 - production の 5xx で内部詳細を返さない。
 
 ## 実装ロードマップ
@@ -811,6 +812,7 @@ Runtime:
 - CloudFront signed URL/cookie が短 TTL かつ狭い scope。
 - superseded 画像に lifecycle がある。
 - production が local storage と dev auth bypass を拒否する。
+- production が public/external URL の local/private/link-local/internal host を拒否する。
 - CloudWatch alarm がある。
 - AWS Budgets / Cost Anomaly Detection / generation kill switch がある。
 - CloudTrail、GuardDuty、IAM Access Analyzer、Security Hub、AWS Config が有効。
@@ -818,3 +820,14 @@ Runtime:
 - production RDS が Multi-AZ。
 - RDS restore test 済み。
 - request ID、job ID、provider request ID で問い合わせ追跡できる。
+
+## Image Delivery Implementation Note
+
+The current app displays generated previews and candidates from `session/*` and
+imported sources from `tmp/*` before the user confirms them. The image bucket
+policy therefore has to allow CloudFront origin access to `saved/*`,
+`session/*`, and `tmp/*`.
+
+Before paid production, viewer access to image paths must be protected at
+CloudFront with signed cookies/URLs or an equivalent authenticated edge policy.
+S3 itself must remain private, with CloudFront as the only read principal.

@@ -32,6 +32,7 @@ class FakeExecutionRepository implements PageGenerationExecutionRepository {
   public completionInput: CompletePageGenerationInput | null = null;
   public failureInput: FailPageGenerationInput | null = null;
   public shouldFailCompletion = false;
+  public failureResult = true;
 
   public async claimQueuedPageGenerationJob(_jobId: string): Promise<GenerationJob | null> {
     return this.claimedJob;
@@ -44,7 +45,7 @@ class FakeExecutionRepository implements PageGenerationExecutionRepository {
 
   public async failPageGeneration(input: FailPageGenerationInput): Promise<boolean> {
     this.failureInput = input;
-    return true;
+    return this.failureResult;
   }
 }
 
@@ -75,6 +76,7 @@ class FakePromptCompiler implements PagePromptCompilerPort {
   public calls = 0;
   public shouldFail = false;
   public failWithConfigurationError = false;
+  public configurationErrorMessage = 'compiler unavailable';
   public compiledPromptText = 'page-prompt-compiled';
 
   public async compilePrompt(
@@ -83,7 +85,7 @@ class FakePromptCompiler implements PagePromptCompilerPort {
     this.calls += 1;
     if (this.shouldFail) {
       if (this.failWithConfigurationError) {
-        throw new ConfigurationError('compiler unavailable');
+        throw new ConfigurationError(this.configurationErrorMessage);
       }
 
       throw new Error('compiler unavailable');
@@ -110,6 +112,8 @@ class FakeInputImageBuilder implements PageGenerationInputImageBuilderPort {
 class FakeRenderer implements PageImageRendererPort {
   public calls: RenderPageImageInput[] = [];
   public shouldFail = false;
+  public imageData = Buffer.from('image-bytes');
+  public mimeType = 'image/png';
 
   public async render(input: RenderPageImageInput): Promise<RenderPageImageResult> {
     this.calls.push(input);
@@ -118,8 +122,8 @@ class FakeRenderer implements PageImageRendererPort {
     }
 
     return {
-      imageData: Buffer.from('image-bytes'),
-      mimeType: 'image/png',
+      imageData: this.imageData,
+      mimeType: this.mimeType,
       openaiRequestId: 'openai-1',
       costUsd: 0.07,
     };
@@ -140,6 +144,7 @@ class FakeStorage implements PageImageStoragePort {
 
 class FakeCreditService implements CreditServicePort {
   public refunds: RefundCreditsParams[] = [];
+  public shouldFailRefund = false;
 
   public async getBalance(_userId: string): Promise<CreditBalanceSnapshot> {
     return { monthlyCredits: 0, purchasedCredits: 0, totalCredits: 0, monthlyExpiresAt: null };
@@ -155,6 +160,10 @@ class FakeCreditService implements CreditServicePort {
 
   public async refundCredits(params: RefundCreditsParams): Promise<CreditBalanceSnapshot> {
     this.refunds.push(params);
+    if (this.shouldFailRefund) {
+      throw new Error('refund unavailable');
+    }
+
     return this.getBalance(params.userId);
   }
 }
@@ -251,6 +260,36 @@ describe('PageGenerationWorkerService', () => {
     expect(renderer.calls[0]?.prompt).toBe('page-prompt-compiled');
   });
 
+  it('planner 出力が長すぎる場合は短くして render に渡す', async () => {
+    const executionRepository = new FakeExecutionRepository();
+    executionRepository.claimedJob = buildJob({
+      generationMode: 'thinking',
+      params: {
+        ...buildJob().params,
+        generation_mode: 'thinking',
+        requires_planner: true,
+      },
+    });
+    const planner = new FakePlanner();
+    planner.output = 'planner-overflow '.repeat(400).trim();
+    const renderer = new FakeRenderer();
+    const service = new PageGenerationWorkerService(
+      executionRepository,
+      new FakePromptBuilder(),
+      new FakePromptCompiler(),
+      new FakeInputImageBuilder(),
+      planner,
+      renderer,
+      new FakeStorage(),
+      new FakeCreditService(),
+    );
+
+    await service.processJob('job-1');
+
+    expect(renderer.calls[0]?.internalPlan?.length).toBeLessThanOrEqual(1200);
+    expect(renderer.calls[0]?.internalPlan).toContain('...');
+  });
+
   it('claim できない job は skip する', async () => {
     const executionRepository = new FakeExecutionRepository();
     executionRepository.claimedJob = null;
@@ -340,6 +379,30 @@ describe('PageGenerationWorkerService', () => {
       description: 'Refund for failed page generation job',
       jobId: 'job-1',
     });
+  });
+
+  it('creditCost が 0 の failed job は refund を呼ばない', async () => {
+    const executionRepository = new FakeExecutionRepository();
+    executionRepository.claimedJob = buildJob({ creditCost: 0 });
+    const renderer = new FakeRenderer();
+    renderer.shouldFail = true;
+    const creditService = new FakeCreditService();
+    const service = new PageGenerationWorkerService(
+      executionRepository,
+      new FakePromptBuilder(),
+      new FakePromptCompiler(),
+      new FakeInputImageBuilder(),
+      new FakePlanner(),
+      renderer,
+      new FakeStorage(),
+      creditService,
+    );
+
+    const result = await service.processJob('job-1');
+
+    expect(result).toEqual({ status: 'processed', jobStatus: 'failed' });
+    expect(executionRepository.failureInput?.errorMessage).toBe('renderer unavailable');
+    expect(creditService.refunds).toEqual([]);
   });
 
   it('completion 保存失敗時も failed に戻して refund する', async () => {
@@ -496,6 +559,132 @@ describe('PageGenerationWorkerService', () => {
     expect(executionRepository.completionInput?.promptMetadata.compilerError).toContain(
       'compiled prompt dropped required visual locks: panel 1',
     );
+  });
+
+  it('prompt compiler の設定エラーを保存するときは機密値を伏せる', async () => {
+    const executionRepository = new FakeExecutionRepository();
+    const promptCompiler = new FakePromptCompiler();
+    promptCompiler.shouldFail = true;
+    promptCompiler.failWithConfigurationError = true;
+    const fakeApiKey = ['sk', 'test-secret'].join('-');
+    promptCompiler.configurationErrorMessage = `compiler failed Authorization: Bearer ${fakeApiKey} ${'x'.repeat(600)}`;
+    const renderer = new FakeRenderer();
+    const service = new PageGenerationWorkerService(
+      executionRepository,
+      new FakePromptBuilder(),
+      promptCompiler,
+      new FakeInputImageBuilder(),
+      new FakePlanner(),
+      renderer,
+      new FakeStorage(),
+      new FakeCreditService(),
+    );
+
+    await service.processJob('job-1');
+
+    expect(renderer.calls[0]?.prompt).toBe('page-prompt-draft');
+    const compilerError = executionRepository.completionInput?.promptMetadata.compilerError;
+    expect(compilerError).toContain('Bearer [redacted]');
+    expect(compilerError).not.toContain(fakeApiKey);
+    expect(compilerError?.length).toBeLessThanOrEqual(300);
+  });
+
+  it('返金が失敗した場合でもpage generation jobはfailedへ進めてSQS再試行にしない', async () => {
+    const executionRepository = new FakeExecutionRepository();
+    const renderer = new FakeRenderer();
+    renderer.shouldFail = true;
+    const creditService = new FakeCreditService();
+    creditService.shouldFailRefund = true;
+    const service = new PageGenerationWorkerService(
+      executionRepository,
+      new FakePromptBuilder(),
+      new FakePromptCompiler(),
+      new FakeInputImageBuilder(),
+      new FakePlanner(),
+      renderer,
+      new FakeStorage(),
+      creditService,
+    );
+
+    const result = await service.processJob('job-1');
+
+    expect(result).toEqual({ status: 'processed', jobStatus: 'failed' });
+    expect(creditService.refunds[0]).toMatchObject({
+      userId: 'user-1',
+      amount: 10,
+      jobId: 'job-1',
+    });
+    expect(executionRepository.failureInput).toMatchObject({
+      jobId: 'job-1',
+      userId: 'user-1',
+      errorMessage: 'renderer unavailable',
+    });
+  });
+
+  it('failed 更新が0件なら既にterminal化されたjobとしてrefundせずSQS再試行を要求しない', async () => {
+    const executionRepository = new FakeExecutionRepository();
+    executionRepository.failureResult = false;
+    const renderer = new FakeRenderer();
+    renderer.shouldFail = true;
+    const creditService = new FakeCreditService();
+    const service = new PageGenerationWorkerService(
+      executionRepository,
+      new FakePromptBuilder(),
+      new FakePromptCompiler(),
+      new FakeInputImageBuilder(),
+      new FakePlanner(),
+      renderer,
+      new FakeStorage(),
+      creditService,
+    );
+
+    const result = await service.processJob('job-1');
+
+    expect(result).toEqual({ status: 'processed', jobStatus: 'failed' });
+    expect(creditService.refunds).toEqual([]);
+    expect(executionRepository.failureInput).toMatchObject({
+      jobId: 'job-1',
+      userId: 'user-1',
+      errorMessage: 'renderer unavailable',
+    });
+  });
+
+  it('renderer returns empty image data then job fails before storage and refunds', async () => {
+    const executionRepository = new FakeExecutionRepository();
+    const renderer = new FakeRenderer();
+    renderer.imageData = Buffer.alloc(0);
+    const storage = new FakeStorage();
+    const creditService = new FakeCreditService();
+    const service = new PageGenerationWorkerService(
+      executionRepository,
+      new FakePromptBuilder(),
+      new FakePromptCompiler(),
+      new FakeInputImageBuilder(),
+      new FakePlanner(),
+      renderer,
+      storage,
+      creditService,
+    );
+
+    const result = await service.processJob('job-1');
+
+    expect(result).toEqual({ status: 'processed', jobStatus: 'failed' });
+    expect(storage.calls).toEqual([]);
+    expect(executionRepository.completionInput).toBeNull();
+    expect(executionRepository.failureInput).toMatchObject({
+      jobId: 'job-1',
+      userId: 'user-1',
+      errorMessage: 'Page image renderer returned empty image data',
+      pageId: 'page-1',
+      previousStatus: 'designing',
+      previousGenerationMode: null,
+    });
+    expect(creditService.refunds[0]).toMatchObject({
+      userId: 'user-1',
+      amount: 10,
+      description: 'Refund for failed page generation job',
+      jobId: 'job-1',
+    });
   });
 });
 

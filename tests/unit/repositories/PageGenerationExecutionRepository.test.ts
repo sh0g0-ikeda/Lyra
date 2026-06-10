@@ -90,9 +90,12 @@ describe('PostgresPageGenerationExecutionRepository', () => {
         generation_mode: 'thinking',
         request_kind: 'regenerate',
         cost_usd: 0.08,
-        draft_prompt: 'draft prompt',
-        compiled_brief: '[TASK]\nbrief',
-        compiled_prompt: 'compiled prompt',
+        draft_prompt_sha256: '8f458698fd5f818ff1e01da76a3ac97549adee06a29cf84d41ac3cbde283c26d',
+        draft_prompt_bytes: 12,
+        compiled_brief_sha256: 'd376876e55ec00bc214966cb93341e2b0e004577fd00dd2537cace8dc2c328df',
+        compiled_brief_bytes: 12,
+        compiled_prompt_sha256: '3933ca9c4b8ba6126fbbfff84d1bdac485836784b4ef147550e757cf8895451a',
+        compiled_prompt_bytes: 15,
         compiled_prompt_used: true,
         prompt_compiler_provider: 'openai',
         compiler_model: 'gpt-5.4-mini',
@@ -106,11 +109,12 @@ describe('PostgresPageGenerationExecutionRepository', () => {
   it('failed 更新でjobとpage stateを元に戻す', async () => {
     const client = new QueryCapturingClient();
     const repository = new PostgresPageGenerationExecutionRepository(client);
+    const fakeApiKey = ['sk', 'testsecret123'].join('-');
 
     const failed = await repository.failPageGeneration({
       jobId: 'job-1',
       userId: 'user-1',
-      errorMessage: 'renderer unavailable',
+      errorMessage: `renderer unavailable Authorization: Bearer ${fakeApiKey} ${'x'.repeat(500)}`,
       pageId: 'page-1',
       previousStatus: 'editing',
       previousGenerationMode: 'standard',
@@ -118,8 +122,12 @@ describe('PostgresPageGenerationExecutionRepository', () => {
 
     expect(failed).toBe(true);
     expect(client.queries[0]).toContain("SET status = 'failed'");
+    expect(client.queries[0]).toContain("status IN ('queued', 'processing')");
     expect(client.queries[1]).toContain('UPDATE pages');
-    expect(client.values[0]).toEqual(['job-1', 'user-1', 'renderer unavailable']);
+    const persistedMessage = String(client.values[0]?.[2]);
+    expect(persistedMessage).toContain('Bearer [redacted]');
+    expect(persistedMessage).not.toContain(fakeApiKey);
+    expect(persistedMessage.length).toBeLessThanOrEqual(300);
     expect(client.values[1]).toEqual(['page-1', 'user-1', 'editing', 'standard']);
   });
   it('job completion更新に失敗した場合はtransactionを失敗させる', async () => {

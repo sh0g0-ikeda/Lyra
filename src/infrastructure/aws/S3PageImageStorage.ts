@@ -5,6 +5,8 @@ import type {
   StorePageImageInput,
   StoredPageImage,
 } from '../../services/page/PageGenerationWorkerService.js';
+import { toSanitizedAwsErrorMessage } from './AwsErrorMessage.js';
+import { SESSION_IMAGE_CACHE_CONTROL } from './S3ImageCacheControl.js';
 
 export interface S3PageImageStorageOptions {
   bucketName: string;
@@ -36,12 +38,12 @@ export class S3PageImageStorage implements PageImageStoragePort {
           Key: s3Key,
           Body: input.imageData,
           ContentType: input.mimeType,
-          CacheControl: 'public, max-age=604800, immutable',
+          CacheControl: SESSION_IMAGE_CACHE_CONTROL,
           ServerSideEncryption: 'AES256',
         }),
       );
     } catch (error) {
-      throw new ConfigurationError(error instanceof Error ? error.message : 'Failed to store page image');
+      throw new ConfigurationError(toSanitizedAwsErrorMessage(error, 'Failed to store page image'));
     }
 
     return {

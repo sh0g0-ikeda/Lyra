@@ -1,5 +1,9 @@
 import type { ErrorHandler } from 'hono';
 import { AppError } from '../domain/errors/index.js';
+import {
+  sanitizeExternalErrorMessage,
+  sanitizePersistedErrorMessage,
+} from '../lib/errorSanitizer.js';
 import type { AppEnv } from '../types/app.js';
 
 export const errorHandler: ErrorHandler<AppEnv> = (error, c) => {
@@ -12,7 +16,7 @@ export const errorHandler: ErrorHandler<AppEnv> = (error, c) => {
         event: 'app_error',
         request_id: requestId,
         code: error.code,
-        message: error.message,
+        message: sanitizePersistedErrorMessage(error, 'Application error'),
         method: c.req.method,
         path: c.req.path,
         status: error.statusCode,
@@ -20,9 +24,10 @@ export const errorHandler: ErrorHandler<AppEnv> = (error, c) => {
     );
 
     const hideServerErrorDetails = process.env.NODE_ENV === 'production' && error.statusCode >= 500;
+    const publicMessage = sanitizeExternalErrorMessage(error.message);
     const responseBody = hideServerErrorDetails
       ? { error: { code: 'INTERNAL_ERROR', message: 'An unexpected error occurred' } }
-      : { error: { code: error.code, message: error.message } };
+      : { error: { code: error.code, message: publicMessage } };
 
     c.res.headers.set('x-request-id', requestId);
     return c.json(responseBody, error.statusCode);
@@ -35,7 +40,7 @@ export const errorHandler: ErrorHandler<AppEnv> = (error, c) => {
       request_id: requestId,
       method: c.req.method,
       path: c.req.path,
-      message: error instanceof Error ? error.message : 'Unexpected error',
+      message: sanitizePersistedErrorMessage(error, 'Unexpected error'),
     }),
   );
   c.res.headers.set('x-request-id', requestId);

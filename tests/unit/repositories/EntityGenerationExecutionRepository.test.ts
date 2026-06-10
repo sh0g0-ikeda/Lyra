@@ -85,8 +85,10 @@ describe('PostgresEntityGenerationExecutionRepository', () => {
             cdn_url: 'https://cdn.lyra.test/session/user-1/entities/entity-1/job-1-1.png',
           },
         ],
-        compiled_brief: 'Character visual anchor: compact bob',
-        compiled_prompt: 'A clean full-body manga character reference with a compact bob.',
+        compiled_brief_sha256: 'bcdc5223b065e1080d01e047d37520e400e1e53addfd9e09d9af350deefee92e',
+        compiled_brief_bytes: 36,
+        compiled_prompt_sha256: '48a3fd8797b9c9c4e3b676f947e5409f530a34611d2056831725bbca2390fd91',
+        compiled_prompt_bytes: 63,
         cost_usd: null,
         compiled_prompt_used: true,
         prompt_compiler_provider: 'openai',
@@ -101,6 +103,25 @@ describe('PostgresEntityGenerationExecutionRepository', () => {
         created_at: '2026-05-26T00:00:00.000Z',
       }),
     );
+  });
+  it('failEntityGeneration は queued と processing の job を failed にできる', async () => {
+    const client = new QueryCapturingClient();
+    const repository = new PostgresEntityGenerationExecutionRepository(client);
+    const fakeApiKey = ['sk', 'testsecret123'].join('-');
+
+    const failed = await repository.failEntityGeneration({
+      jobId: 'job-1',
+      userId: 'user-1',
+      errorMessage: `worker stopped Authorization: Bearer ${fakeApiKey} ${'x'.repeat(500)}`,
+    });
+
+    expect(failed).toBe(true);
+    expect(client.queries[0]).toContain("SET status = 'failed'");
+    expect(client.queries[0]).toContain("status IN ('queued', 'processing')");
+    const persistedMessage = String(client.values?.[2]);
+    expect(persistedMessage).toContain('Bearer [redacted]');
+    expect(persistedMessage).not.toContain(fakeApiKey);
+    expect(persistedMessage.length).toBeLessThanOrEqual(300);
   });
 });
 

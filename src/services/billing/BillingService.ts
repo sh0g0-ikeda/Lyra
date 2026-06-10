@@ -39,11 +39,11 @@ export class BillingService implements BillingServicePort {
     user: AuthenticatedUser,
     planCode: PaidPlanCode,
   ): Promise<SubscriptionCheckoutResult> {
-    if (user.planCode !== 'free') {
+    const billingUser = await this.requireBillingUser(user.id);
+    if (billingUser.planCode !== 'free') {
       throw new ConflictError('Paid plans must be managed through the customer portal');
     }
 
-    const billingUser = await this.requireBillingUser(user.id);
     const customerId = await this.ensureStripeCustomer(billingUser);
     const session = await this.stripeClient.createCheckoutSession({
       customerId,
@@ -130,11 +130,11 @@ export class BillingService implements BillingServicePort {
 
 export function assertBillingConfig(config: BillingServiceConfig): BillingServiceConfig {
   if (
-    config.successUrl.length === 0 ||
-    config.cancelUrl.length === 0 ||
-    config.portalReturnUrl.length === 0 ||
-    Object.values(config.subscriptionPriceIds).some((value) => value.length === 0) ||
-    Object.values(config.creditPackagePriceIds).some((value) => value.length === 0)
+    isBlank(config.successUrl) ||
+    isBlank(config.cancelUrl) ||
+    isBlank(config.portalReturnUrl) ||
+    Object.values(config.subscriptionPriceIds).some(isBlank) ||
+    Object.values(config.creditPackagePriceIds).some(isBlank)
   ) {
     throw new ConfigurationError('Stripe billing configuration is incomplete');
   }
@@ -144,4 +144,8 @@ export function assertBillingConfig(config: BillingServiceConfig): BillingServic
 
 export function getPurchasedCreditsForPackage(packageCode: CreditPackageCode): number {
   return CREDIT_PACKAGE_DEFINITIONS[packageCode].purchasedCredits;
+}
+
+function isBlank(value: string): boolean {
+  return value.trim().length === 0;
 }

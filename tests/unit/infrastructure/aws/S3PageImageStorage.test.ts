@@ -6,18 +6,19 @@ import { S3PageImageStorage } from '../../../../src/infrastructure/aws/S3PageIma
 class FakeS3Client {
   public calls: PutObjectCommand[] = [];
   public shouldThrow = false;
+  public errorMessage = 's3 unavailable';
 
   public async send(command: PutObjectCommand): Promise<void> {
     this.calls.push(command);
 
     if (this.shouldThrow) {
-      throw new Error('s3 unavailable');
+      throw new Error(this.errorMessage);
     }
   }
 }
 
 describe('S3PageImageStorage', () => {
-  it('session配下に生成画像を保存してcdn_urlを返す', async () => {
+  it('session 配下に生成画像を保存して cdn_url を返す', async () => {
     const client = new FakeS3Client();
     const storage = new S3PageImageStorage(client, {
       bucketName: 'lyra-images',
@@ -43,12 +44,12 @@ describe('S3PageImageStorage', () => {
       Key: 'session/user-1/pages/page-1/job-1.png',
       Body: Buffer.from('png-bytes'),
       ContentType: 'image/png',
-      CacheControl: 'public, max-age=604800, immutable',
+      CacheControl: 'private, max-age=604800, immutable',
       ServerSideEncryption: 'AES256',
     });
   });
 
-  it('未対応のmimeTypeはValidationErrorとして弾く', async () => {
+  it('未対応の mimeType は ConfigurationError として扱う', async () => {
     const storage = new S3PageImageStorage(new FakeS3Client(), {
       bucketName: 'lyra-images',
       cdnBaseUrl: 'https://img.lyra.app',
@@ -65,7 +66,7 @@ describe('S3PageImageStorage', () => {
     ).rejects.toEqual(new ConfigurationError('Unsupported page image mime type: application/json'));
   });
 
-  it('S3保存失敗時はConfigurationErrorに変換する', async () => {
+  it('S3 保存失敗時は ConfigurationError に変換する', async () => {
     const client = new FakeS3Client();
     client.shouldThrow = true;
     const storage = new S3PageImageStorage(client, {
@@ -82,5 +83,41 @@ describe('S3PageImageStorage', () => {
         mimeType: 'image/png',
       }),
     ).rejects.toEqual(new ConfigurationError('s3 unavailable'));
+  });
+
+  it('S3 保存失敗時の外部エラー文は機密値を伏せる', async () => {
+    const client = new FakeS3Client();
+    client.shouldThrow = true;
+    const fakeApiKey = ['sk', 'test-secret'].join('-');
+    client.errorMessage = `s3 failed Authorization: Bearer ${fakeApiKey} ${'x'.repeat(600)}`;
+    const storage = new S3PageImageStorage(client, {
+      bucketName: 'lyra-images',
+      cdnBaseUrl: 'https://img.lyra.app',
+    });
+
+    await expect(
+      storage.store({
+        jobId: 'job-1',
+        userId: 'user-1',
+        pageId: 'page-1',
+        imageData: Buffer.from('png-bytes'),
+        mimeType: 'image/png',
+      }),
+    ).rejects.toMatchObject({
+      code: 'CONFIGURATION_ERROR',
+      message: expect.stringContaining('Bearer [redacted]'),
+    });
+
+    await expect(
+      storage.store({
+        jobId: 'job-2',
+        userId: 'user-1',
+        pageId: 'page-1',
+        imageData: Buffer.from('png-bytes'),
+        mimeType: 'image/png',
+      }),
+    ).rejects.not.toMatchObject({
+      message: expect.stringContaining(fakeApiKey),
+    });
   });
 });

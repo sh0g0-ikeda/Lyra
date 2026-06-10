@@ -34,7 +34,7 @@ export interface BalloonContext {
 export interface BalloonRepository {
   findPageContextByIdAndUserId(pageId: string, userId: string): Promise<PageBalloonContext | null>;
   findBalloonContextByIdAndUserId(balloonId: string, userId: string): Promise<BalloonContext | null>;
-  createBalloon(pageId: string, input: CreateBalloonInput): Promise<Balloon>;
+  createBalloon(pageId: string, userId: string, input: CreateBalloonInput): Promise<Balloon | null>;
   findBalloonsByPageIdAndUserId(pageId: string, userId: string): Promise<Balloon[]>;
   replaceBalloonsByPageIdAndUserId(
     pageId: string,
@@ -153,7 +153,7 @@ export class PostgresBalloonRepository implements BalloonRepository {
         };
   }
 
-  public async createBalloon(pageId: string, input: CreateBalloonInput): Promise<Balloon> {
+  public async createBalloon(pageId: string, userId: string, input: CreateBalloonInput): Promise<Balloon | null> {
     const result = await this.client.query<BalloonRow>(
       `
       INSERT INTO balloons (
@@ -169,11 +169,29 @@ export class PostgresBalloonRepository implements BalloonRepository {
         panel_order_reference,
         z_index
       )
-      VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8, $9, $10, $11)
+      SELECT
+        pages.id,
+        $3,
+        $4,
+        $5,
+        $6,
+        $7::jsonb,
+        $8::jsonb,
+        $9,
+        $10,
+        $11,
+        $12
+      FROM pages
+      INNER JOIN episodes ON episodes.id = pages.episode_id
+      INNER JOIN chapters ON chapters.id = episodes.chapter_id
+      INNER JOIN works ON works.id = chapters.work_id
+      WHERE pages.id = $1
+        AND works.user_id = $2
       RETURNING *
       `,
       [
         pageId,
+        userId,
         input.speakerEntityId,
         input.balloonType,
         input.writingMode,
@@ -187,7 +205,7 @@ export class PostgresBalloonRepository implements BalloonRepository {
       ],
     );
 
-    return mapBalloonRow(result.rows[0]);
+    return result.rows[0] === undefined ? null : mapBalloonRow(result.rows[0]);
   }
 
   public async findBalloonsByPageIdAndUserId(pageId: string, userId: string): Promise<Balloon[]> {

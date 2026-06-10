@@ -20,6 +20,7 @@ import type {
 import type { EntityReferencePromptBuilderPort } from '../../../../src/services/entity/EntityReferencePromptBuilder.js';
 import type { EntityReferencePromptCompilerPort } from '../../../../src/services/entity/EntityReferencePromptCompiler.js';
 import { EntityGenerationWorkerService } from '../../../../src/services/entity/EntityGenerationWorkerService.js';
+import { OPENAI_INPUT_IMAGE_MAX_BYTES } from '../../../../src/domain/constants/imageInput.js';
 import type {
   ConsumeCreditsParams,
   CreditServicePort,
@@ -32,6 +33,7 @@ class FakeExecutionRepository implements EntityGenerationExecutionRepository {
   public job: GenerationJob | null = buildJob();
   public completed: CompleteEntityGenerationInput | null = null;
   public failed: { jobId: string; userId: string; errorMessage: string } | null = null;
+  public failureResult = true;
 
   public async claimQueuedEntityGenerationJob(): Promise<GenerationJob | null> {
     return this.job;
@@ -48,7 +50,7 @@ class FakeExecutionRepository implements EntityGenerationExecutionRepository {
     errorMessage: string;
   }): Promise<boolean> {
     this.failed = input;
-    return true;
+    return this.failureResult;
   }
 }
 
@@ -140,6 +142,9 @@ class FakePromptCompiler implements EntityReferencePromptCompilerPort {
 class FakeReferenceGenerator implements EntityReferenceGeneratorPort {
   public input: GenerateEntityReferenceCandidatesInput | null = null;
   public shouldThrow = false;
+  public candidates: Array<{ imageData: Buffer; mimeType: string }> = [
+    { imageData: Buffer.from('a'), mimeType: 'image/png' },
+  ];
 
   public async generateCandidates(input: GenerateEntityReferenceCandidatesInput): Promise<{
     candidates: Array<{ imageData: Buffer; mimeType: string }>;
@@ -153,7 +158,7 @@ class FakeReferenceGenerator implements EntityReferenceGeneratorPort {
     }
 
     return {
-      candidates: [{ imageData: Buffer.from('a'), mimeType: 'image/png' }],
+      candidates: this.candidates,
       openaiRequestId: 'req-1',
       costUsd: null,
     };
@@ -162,12 +167,13 @@ class FakeReferenceGenerator implements EntityReferenceGeneratorPort {
 
 class FakeStoredImageLoader implements StoredImageLoaderPort {
   public loadedS3Keys: string[] = [];
+  public imageData = Buffer.from('uploaded-source');
 
   public async loadByS3Key(s3Key: string): Promise<{ imageData: Buffer; mimeType: 'image/png' }> {
     this.loadedS3Keys.push(s3Key);
 
     return {
-      imageData: Buffer.from('uploaded-source'),
+      imageData: this.imageData,
       mimeType: 'image/png',
     };
   }
@@ -199,6 +205,7 @@ class FakeEntityImageStorage implements EntityImageStoragePort {
 
 class FakeCreditService implements CreditServicePort {
   public refunded: RefundCreditsParams | null = null;
+  public shouldFailRefund = false;
 
   public async getBalance(): Promise<CreditBalanceSnapshot> {
     return { monthlyCredits: 0, purchasedCredits: 0, totalCredits: 0, monthlyExpiresAt: null };
@@ -214,6 +221,10 @@ class FakeCreditService implements CreditServicePort {
 
   public async refundCredits(params: RefundCreditsParams): Promise<CreditBalanceSnapshot> {
     this.refunded = params;
+    if (this.shouldFailRefund) {
+      throw new Error('refund unavailable');
+    }
+
     return this.getBalance();
   }
 }
@@ -236,7 +247,8 @@ describe('EntityGenerationWorkerService', () => {
     expect(promptCompiler.compilerBrief).toContain('Target image: manga full-body character reference');
     expect(referenceGenerator.input?.inputImages).toEqual([]);
     expect(referenceGenerator.input?.prompt).toContain('entity prompt compiled');
-    expect(referenceGenerator.input?.prompt).toContain('Treat this output as a fresh preview variation');
+    expect(referenceGenerator.input?.prompt).toContain('current saved entity inputs only');
+    expect(referenceGenerator.input?.prompt).toContain('current saved text must win');
     expect(referenceGenerator.input?.prompt).toContain('Variation profile');
     expect(executionRepository.completed?.candidates).toHaveLength(1);
     expect(executionRepository.completed?.openaiRequestId).toBe('req-1');
@@ -272,7 +284,8 @@ describe('EntityGenerationWorkerService', () => {
     expect(result).toEqual({ status: 'processed', jobStatus: 'completed' });
     expect(referenceGenerator.input?.inputImages).toEqual([]);
     expect(referenceGenerator.input?.prompt).toContain('entity prompt');
-    expect(referenceGenerator.input?.prompt).toContain('Treat this output as a fresh preview variation');
+    expect(referenceGenerator.input?.prompt).toContain('current saved entity inputs only');
+    expect(referenceGenerator.input?.prompt).toContain('current saved text must win');
     expect(executionRepository.completed?.compiledPromptUsed).toBe(false);
     expect(executionRepository.completed?.promptCompilerProvider).toBe('none');
     expect(executionRepository.completed?.compilerModel).toBeNull();
@@ -326,8 +339,116 @@ describe('EntityGenerationWorkerService', () => {
     ]);
     expect(referenceGenerator.input?.prompt).toContain('entity prompt compiled');
     expect(referenceGenerator.input?.prompt).toContain(
-      'Respect the uploaded source image as the core identity anchor',
+      'Use the uploaded source image only as a user-supplied visual anchor',
     );
+    expect(referenceGenerator.input?.prompt).toContain('obey the current saved text');
+  });
+
+  it('source_s3_key が別ユーザー範囲なら読み込まず failed と refund にする', async () => {
+    const executionRepository = new FakeExecutionRepository();
+    executionRepository.job = buildJob({
+      params: {
+        entity_id: 'entity-1',
+        entity_type: 'character',
+        previous_entity_status: 'draft',
+        source_s3_key: 'tmp/user-2/entities/imports/source.png',
+      },
+    });
+    const referenceGenerator = new FakeReferenceGenerator();
+    const storedImageLoader = new FakeStoredImageLoader();
+    const creditService = new FakeCreditService();
+    const service = buildService({
+      executionRepository,
+      referenceGenerator,
+      storedImageLoader,
+      creditService,
+    });
+
+    const result = await service.processJob('job-1');
+
+    expect(result).toEqual({ status: 'processed', jobStatus: 'failed' });
+    expect(storedImageLoader.loadedS3Keys).toEqual([]);
+    expect(referenceGenerator.input).toBeNull();
+    expect(executionRepository.failed?.errorMessage).toContain('source_s3_key');
+    expect(creditService.refunded).toMatchObject({
+      userId: 'user-1',
+      amount: 8,
+      jobId: 'job-1',
+    });
+  });
+
+  it('source_s3_key の画像が入力上限を超える場合は生成せず failed と refund にする', async () => {
+    const executionRepository = new FakeExecutionRepository();
+    executionRepository.job = buildJob({
+      params: {
+        entity_id: 'entity-1',
+        entity_type: 'character',
+        previous_entity_status: 'draft',
+        source_s3_key: 'tmp/user-1/entities/imports/source.png',
+      },
+    });
+    const referenceGenerator = new FakeReferenceGenerator();
+    const storedImageLoader = new FakeStoredImageLoader();
+    storedImageLoader.imageData = Buffer.alloc(OPENAI_INPUT_IMAGE_MAX_BYTES + 1);
+    const creditService = new FakeCreditService();
+    const service = buildService({
+      executionRepository,
+      referenceGenerator,
+      storedImageLoader,
+      creditService,
+    });
+
+    const result = await service.processJob('job-1');
+
+    expect(result).toEqual({ status: 'processed', jobStatus: 'failed' });
+    expect(storedImageLoader.loadedS3Keys).toEqual(['tmp/user-1/entities/imports/source.png']);
+    expect(referenceGenerator.input).toBeNull();
+    expect(executionRepository.failed?.errorMessage).toContain('input image is too large');
+    expect(creditService.refunded).toMatchObject({
+      userId: 'user-1',
+      amount: 8,
+      jobId: 'job-1',
+    });
+  });
+
+  it('保存済みcreditCostが正なら定価未満でもrefundする', async () => {
+    const executionRepository = new FakeExecutionRepository();
+    executionRepository.job = buildJob({ creditCost: 1 });
+    const referenceGenerator = new FakeReferenceGenerator();
+    const creditService = new FakeCreditService();
+    referenceGenerator.shouldThrow = true;
+    const service = buildService({
+      executionRepository,
+      referenceGenerator,
+      creditService,
+    });
+
+    const result = await service.processJob('job-1');
+
+    expect(result).toEqual({ status: 'processed', jobStatus: 'failed' });
+    expect(creditService.refunded).toMatchObject({
+      userId: 'user-1',
+      amount: 1,
+      jobId: 'job-1',
+    });
+  });
+
+  it('保存済みcreditCostが0ならrefundしない', async () => {
+    const executionRepository = new FakeExecutionRepository();
+    executionRepository.job = buildJob({ creditCost: 0 });
+    const referenceGenerator = new FakeReferenceGenerator();
+    const creditService = new FakeCreditService();
+    referenceGenerator.shouldThrow = true;
+    const service = buildService({
+      executionRepository,
+      referenceGenerator,
+      creditService,
+    });
+
+    const result = await service.processJob('job-1');
+
+    expect(result).toEqual({ status: 'processed', jobStatus: 'failed' });
+    expect(creditService.refunded).toBeNull();
   });
 
   it('生成失敗時は failed と refund に落ちる', async () => {
@@ -356,6 +477,19 @@ describe('EntityGenerationWorkerService', () => {
     });
   });
 
+  it('configured image model を完了メタデータに記録する', async () => {
+    const executionRepository = new FakeExecutionRepository();
+    const service = buildService({
+      executionRepository,
+      imageModel: 'gpt-image-2-mini',
+    });
+
+    const result = await service.processJob('job-1');
+
+    expect(result).toEqual({ status: 'processed', jobStatus: 'completed' });
+    expect(executionRepository.completed?.imageModel).toBe('gpt-image-2-mini');
+  });
+
   it('job ごとに variation profile が変わる', async () => {
     const executionRepositoryA = new FakeExecutionRepository();
     executionRepositoryA.job = buildJob({ id: '1' });
@@ -379,6 +513,110 @@ describe('EntityGenerationWorkerService', () => {
     expect(generatorA.input?.prompt).not.toBe(generatorB.input?.prompt);
   });
 
+  it('返金が失敗した場合でもentity generation jobはfailedへ進めてSQS再試行にしない', async () => {
+    const executionRepository = new FakeExecutionRepository();
+    const referenceGenerator = new FakeReferenceGenerator();
+    referenceGenerator.shouldThrow = true;
+    const creditService = new FakeCreditService();
+    creditService.shouldFailRefund = true;
+    const service = buildService({
+      executionRepository,
+      referenceGenerator,
+      creditService,
+    });
+
+    const result = await service.processJob('job-1');
+
+    expect(result).toEqual({ status: 'processed', jobStatus: 'failed' });
+    expect(creditService.refunded).toMatchObject({
+      userId: 'user-1',
+      amount: 8,
+      jobId: 'job-1',
+    });
+    expect(executionRepository.failed).toMatchObject({
+      jobId: 'job-1',
+      userId: 'user-1',
+      errorMessage: 'generation failed',
+    });
+  });
+
+  it('failed 更新が0件なら既にterminal化されたjobとしてrefundせずSQS再試行を要求しない', async () => {
+    const executionRepository = new FakeExecutionRepository();
+    executionRepository.failureResult = false;
+    const referenceGenerator = new FakeReferenceGenerator();
+    referenceGenerator.shouldThrow = true;
+    const creditService = new FakeCreditService();
+    const service = buildService({
+      executionRepository,
+      referenceGenerator,
+      creditService,
+    });
+
+    const result = await service.processJob('job-1');
+
+    expect(result).toEqual({ status: 'processed', jobStatus: 'failed' });
+    expect(creditService.refunded).toBeNull();
+    expect(executionRepository.failed).toMatchObject({
+      jobId: 'job-1',
+      userId: 'user-1',
+      errorMessage: 'generation failed',
+    });
+  });
+
+  it('generator returns no candidates then job fails and refunds', async () => {
+    const executionRepository = new FakeExecutionRepository();
+    const referenceGenerator = new FakeReferenceGenerator();
+    referenceGenerator.candidates = [];
+    const creditService = new FakeCreditService();
+    const service = buildService({
+      executionRepository,
+      referenceGenerator,
+      creditService,
+    });
+
+    const result = await service.processJob('job-1');
+
+    expect(result).toEqual({ status: 'processed', jobStatus: 'failed' });
+    expect(executionRepository.completed).toBeNull();
+    expect(executionRepository.failed).toMatchObject({
+      jobId: 'job-1',
+      userId: 'user-1',
+      errorMessage: 'Entity reference generator returned no candidates',
+    });
+    expect(creditService.refunded).toMatchObject({
+      userId: 'user-1',
+      amount: 8,
+      jobId: 'job-1',
+    });
+  });
+
+  it('generator returns empty candidate image data then job fails and refunds', async () => {
+    const executionRepository = new FakeExecutionRepository();
+    const referenceGenerator = new FakeReferenceGenerator();
+    referenceGenerator.candidates = [{ imageData: Buffer.alloc(0), mimeType: 'image/png' }];
+    const creditService = new FakeCreditService();
+    const service = buildService({
+      executionRepository,
+      referenceGenerator,
+      creditService,
+    });
+
+    const result = await service.processJob('job-1');
+
+    expect(result).toEqual({ status: 'processed', jobStatus: 'failed' });
+    expect(executionRepository.completed).toBeNull();
+    expect(executionRepository.failed).toMatchObject({
+      jobId: 'job-1',
+      userId: 'user-1',
+      errorMessage: 'Entity reference generator returned empty image data',
+    });
+    expect(creditService.refunded).toMatchObject({
+      userId: 'user-1',
+      amount: 8,
+      jobId: 'job-1',
+    });
+  });
+
 });
 
 function buildService(overrides: {
@@ -390,6 +628,7 @@ function buildService(overrides: {
   imageStorage?: FakeEntityImageStorage;
   creditService?: FakeCreditService;
   storedImageLoader?: FakeStoredImageLoader;
+  imageModel?: string;
 } = {}): EntityGenerationWorkerService {
   return new EntityGenerationWorkerService(
     overrides.executionRepository ?? new FakeExecutionRepository(),
@@ -400,6 +639,7 @@ function buildService(overrides: {
     overrides.imageStorage ?? new FakeEntityImageStorage(),
     overrides.creditService ?? new FakeCreditService(),
     overrides.storedImageLoader ?? new FakeStoredImageLoader(),
+    overrides.imageModel,
   );
 }
 

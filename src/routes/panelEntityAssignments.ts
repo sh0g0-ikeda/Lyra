@@ -5,8 +5,10 @@ import {
   panelEntityAssignmentUuidParamSchema,
   replacePanelEntityAssignmentsBodySchema,
 } from '../lib/validators/panelEntityAssignment.schema.js';
+import { formatZodValidationError } from '../lib/validationErrorFormatter.js';
 import type { PanelEntityAssignmentServicePort } from '../services/page/PanelEntityAssignmentService.js';
 import type { AppEnv } from '../types/app.js';
+import { readJsonBody } from './requestBody.js';
 
 export interface PanelEntityAssignmentRouteDependencies {
   authMiddleware: MiddlewareHandler<AppEnv>;
@@ -28,7 +30,7 @@ export function createPanelEntityAssignmentRoutes(
     const body = replacePanelEntityAssignmentsBodySchema.safeParse(await readJsonBody(c));
 
     if (!body.success) {
-      throw new ValidationError(body.error.message);
+      throw new ValidationError(formatZodValidationError(body.error));
     }
 
     const assignments = await dependencies.panelEntityAssignmentService.replacePanelEntityAssignments(
@@ -53,14 +55,6 @@ export function createPanelEntityAssignmentRoutes(
   });
 
   return app;
-}
-
-async function readJsonBody(c: Context<AppEnv>): Promise<unknown> {
-  try {
-    return await c.req.json();
-  } catch {
-    throw new ValidationError('Request body must be valid JSON');
-  }
 }
 
 function parseUuidParam(c: Context<AppEnv>, name: string): string {

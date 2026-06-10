@@ -1,7 +1,12 @@
-import { ValidationError } from '../../domain/errors/index.js';
 import type { CreditBalance, CreditBalanceSnapshot, CreditLedgerEntry } from '../../domain/types/credit.js';
 import type { DatabaseClient } from '../../lib/db.js';
 import type { CreditRepository } from '../../repositories/CreditRepository.js';
+import {
+  normalizeExpiredMonthlyCredits,
+  systemClock,
+  type Clock,
+} from './CreditBalanceExpiration.js';
+import { assertPositiveSafeCreditAmount } from './CreditAmountValidation.js';
 
 export interface GrantMonthlyCreditsParams {
   userId: string;
@@ -30,20 +35,22 @@ export interface BillingCreditGrantServicePort {
 }
 
 export class BillingCreditGrantService implements BillingCreditGrantServicePort {
-  public constructor(private readonly creditRepository: CreditRepository) {}
+  public constructor(
+    private readonly creditRepository: CreditRepository,
+    private readonly clock: Clock = systemClock,
+  ) {}
 
   public async grantMonthlyCredits(
     params: GrantMonthlyCreditsParams,
     client?: DatabaseClient,
   ): Promise<CreditBalanceSnapshot> {
-    if (params.amount <= 0) {
-      throw new ValidationError('Monthly credit grant amount must be greater than zero');
-    }
+    assertPositiveSafeCreditAmount(params.amount, 'Monthly credit grant amount');
 
     return this.withTransaction(client, async (transactionClient) => {
-      const currentBalance =
+      const currentBalance = this.normalizeBalance(
         (await this.creditRepository.getBalanceForUpdate(params.userId, transactionClient)) ??
-        emptyBalance(params.userId);
+          emptyBalance(params.userId),
+      );
 
       const nextBalance: CreditBalance = {
         ...currentBalance,
@@ -57,6 +64,8 @@ export class BillingCreditGrantService implements BillingCreditGrantServicePort 
           userId: params.userId,
           type: 'monthly_grant',
           amount: params.amount,
+          monthlyDelta: nextBalance.monthlyCredits - currentBalance.monthlyCredits,
+          purchasedDelta: 0,
           balance: savedBalance,
           description: params.description,
           stripeEventId: params.stripeEventId,
@@ -72,14 +81,13 @@ export class BillingCreditGrantService implements BillingCreditGrantServicePort 
     params: GrantPurchasedCreditsParams,
     client?: DatabaseClient,
   ): Promise<CreditBalanceSnapshot> {
-    if (params.amount <= 0) {
-      throw new ValidationError('Purchased credit grant amount must be greater than zero');
-    }
+    assertPositiveSafeCreditAmount(params.amount, 'Purchased credit grant amount');
 
     return this.withTransaction(client, async (transactionClient) => {
-      const currentBalance =
+      const currentBalance = this.normalizeBalance(
         (await this.creditRepository.getBalanceForUpdate(params.userId, transactionClient)) ??
-        emptyBalance(params.userId);
+          emptyBalance(params.userId),
+      );
 
       const nextBalance: CreditBalance = {
         ...currentBalance,
@@ -92,6 +100,8 @@ export class BillingCreditGrantService implements BillingCreditGrantServicePort 
           userId: params.userId,
           type: 'purchase',
           amount: params.amount,
+          monthlyDelta: 0,
+          purchasedDelta: params.amount,
           balance: savedBalance,
           description: params.description,
           stripeEventId: params.stripeEventId,
@@ -112,6 +122,10 @@ export class BillingCreditGrantService implements BillingCreditGrantServicePort 
     }
 
     return this.creditRepository.transaction(work);
+  }
+
+  private normalizeBalance(balance: CreditBalance): CreditBalance {
+    return normalizeExpiredMonthlyCredits(balance, this.clock());
   }
 }
 
@@ -143,6 +157,8 @@ function createLedgerEntry(input: {
   userId: string;
   type: CreditLedgerEntry['type'];
   amount: number;
+  monthlyDelta: number;
+  purchasedDelta: number;
   balance: CreditBalance;
   description: string;
   stripeEventId?: string;
@@ -151,6 +167,8 @@ function createLedgerEntry(input: {
     userId: input.userId,
     type: input.type,
     amount: input.amount,
+    monthlyDelta: input.monthlyDelta,
+    purchasedDelta: input.purchasedDelta,
     monthlyAfter: input.balance.monthlyCredits,
     purchasedAfter: input.balance.purchasedCredits,
     description: input.description,

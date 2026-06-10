@@ -11,6 +11,8 @@ import {
   inferEntityIdsFromTexts,
 } from '../../domain/entityAliases.js';
 import type { AppLanguage } from '../../domain/types/language.js';
+import { STORY_PROMPT_CONTEXT_LIMITS } from '../../domain/storyPromptCompaction.js';
+import { STORY_AI_LIMITS } from '../../domain/constants/storyAi.js';
 import type {
   EpisodePagePlanApplyResult,
   EpisodePagePlanContext,
@@ -27,6 +29,7 @@ import type { PanelComposition, PanelDialogueLine, UpdatePanelInput } from '../.
 import type { PanelEntityAssignment } from '../../domain/types/panelEntityAssignment.js';
 import type { PageRepository } from '../../repositories/PageRepository.js';
 import type { PanelRepository } from '../../repositories/PanelRepository.js';
+import { sanitizePersistedErrorMessage } from '../../lib/errorSanitizer.js';
 import type { StyleReferenceCompilerPort } from '../style/StyleReferenceCompiler.js';
 import { resolveStyleReferenceForPersistence } from '../style/styleReferencePersistence.js';
 import type { PanelEntityAssignmentServicePort } from './PanelEntityAssignmentService.js';
@@ -285,6 +288,11 @@ export class PageService implements PageServicePort {
     if (context.pages.length === 0) {
       throw new ValidationError('Episode must have pages before story autofill can run');
     }
+    if (context.pages.length > STORY_AI_LIMITS.maxSkeletonPages) {
+      throw new ValidationError(
+        `Episode story autofill supports at most ${STORY_AI_LIMITS.maxSkeletonPages} pages`,
+      );
+    }
     if (context.scenes.length === 0) {
       throw new ValidationError('Episode must have at least one scene before story autofill can run');
     }
@@ -338,10 +346,11 @@ export class PageService implements PageServicePort {
         throw error;
       }
 
+      const compilerError = sanitizePersistedErrorMessage(error, 'Page autofill compiler failed');
       console.warn('page_autofill_compiler_fallback', {
         pageId: context.pageId,
         episodeId: context.episodeId,
-        reason: error.message,
+        reason: compilerError,
       });
 
       return {
@@ -350,7 +359,7 @@ export class PageService implements PageServicePort {
         compilerProvider: 'fallback',
         compilerModel: null,
         compilerPromptVersion: null,
-        compilerError: error.message,
+        compilerError,
       };
     }
   }
@@ -382,9 +391,10 @@ export class PageService implements PageServicePort {
         throw error;
       }
 
+      const compilerError = sanitizePersistedErrorMessage(error, 'Episode page plan compiler failed');
       console.warn('episode_page_plan_compiler_fallback', {
         episodeId: context.episodeId,
-        reason: error.message,
+        reason: compilerError,
       });
 
       return {
@@ -393,7 +403,7 @@ export class PageService implements PageServicePort {
         compilerProvider: 'fallback',
         compilerModel: null,
         compilerPromptVersion: null,
-        compilerError: error.message,
+        compilerError,
       };
     }
   }
@@ -1956,7 +1966,18 @@ function buildAutofillCompilerBrief(
   const outputLanguage = language === 'en' ? 'English' : 'Japanese';
   const canonicalEntities = buildCanonicalCompilerEntityRefs(context.entities);
   const entityLookup = new Map(context.entities.map((entity) => [entity.id, entity]));
-  const sceneLines = context.scenes
+  const compactBriefText = (value: string | null | undefined, maxLength?: number): string =>
+    summarizeCompilerText(
+      canonicalizeCompilerBriefText(value, canonicalEntities),
+      maxLength ?? STORY_PROMPT_CONTEXT_LIMITS.generalFieldChars,
+    ) ?? '(none)';
+  const compactBriefList = (values: readonly string[], maxLength = 160): string =>
+    values
+      .map((value) => summarizeCompilerText(canonicalizeCompilerBriefText(value, canonicalEntities), maxLength))
+      .filter((value): value is string => value !== null)
+      .join(' / ') || '(none)';
+  const visibleScenes = context.scenes.slice(0, STORY_PROMPT_CONTEXT_LIMITS.maxSceneSummaries);
+  const sceneLines = visibleScenes
     .map((scene) => {
       const people =
         scene.involvedEntityIds
@@ -1965,12 +1986,13 @@ function buildAutofillCompilerBrief(
 
       return [
         `Scene ${scene.order}`,
-        `location=${canonicalizeCompilerBriefText(scene.location, canonicalEntities) ?? '(none)'}`,
-        `time=${canonicalizeCompilerBriefText(scene.time, canonicalEntities) ?? '(none)'}`,
-        `atmosphere=${canonicalizeCompilerBriefText(scene.atmosphere, canonicalEntities) ?? '(none)'}`,
+        `location=${compactBriefText(scene.location, 80)}`,
+        `time=${compactBriefText(scene.time, 40)}`,
+        `atmosphere=${compactBriefText(scene.atmosphere, 80)}`,
         `people=${people}`,
       ].join(' | ');
     })
+    .concat(context.scenes.length > visibleScenes.length ? [`... (${context.scenes.length - visibleScenes.length} more scenes)`] : [])
     .join('\n');
 
   const panelLines = context.panels
@@ -2019,19 +2041,19 @@ function buildAutofillCompilerBrief(
     `Write every free-text field in natural ${outputLanguage} suitable for direct editing in the Lyra UI.`,
     '',
     '[CHAPTER CONSISTENCY]',
-    `Chapter title: ${canonicalizeCompilerBriefText(context.chapterTitle, canonicalEntities) ?? '(none)'}`,
-    `Chapter purpose: ${canonicalizeCompilerBriefText(context.chapterPurpose, canonicalEntities) ?? '(none)'}`,
-    `Chapter starting state: ${canonicalizeCompilerBriefText(context.chapterStartingState, canonicalEntities) ?? '(none)'}`,
-    `Chapter ending state: ${canonicalizeCompilerBriefText(context.chapterEndingState, canonicalEntities) ?? '(none)'}`,
-    `Chapter emotion curve: ${canonicalizeCompilerBriefText(context.chapterEmotionCurve, canonicalEntities) ?? '(none)'}`,
-    `Chapter key beats: ${context.chapterKeyBeats.map((beat) => canonicalizeCompilerBriefText(beat, canonicalEntities) ?? beat).join(' / ') || '(none)'}`,
+    `Chapter title: ${compactBriefText(context.chapterTitle, 160)}`,
+    `Chapter purpose: ${compactBriefText(context.chapterPurpose)}`,
+    `Chapter starting state: ${compactBriefText(context.chapterStartingState)}`,
+    `Chapter ending state: ${compactBriefText(context.chapterEndingState)}`,
+    `Chapter emotion curve: ${compactBriefText(context.chapterEmotionCurve)}`,
+    `Chapter key beats: ${compactBriefList(context.chapterKeyBeats)}`,
     '',
     '[PAGE]',
-    `Episode purpose: ${canonicalizeCompilerBriefText(context.episodePurpose, canonicalEntities) ?? '(none)'}`,
-    `Introduction: ${canonicalizeCompilerBriefText(context.introduction, canonicalEntities) ?? '(none)'}`,
-    `Middle: ${canonicalizeCompilerBriefText(context.middle, canonicalEntities) ?? '(none)'}`,
-    `Climax: ${canonicalizeCompilerBriefText(context.climax, canonicalEntities) ?? '(none)'}`,
-    `Ending hook: ${canonicalizeCompilerBriefText(context.endingHook, canonicalEntities) ?? '(none)'}`,
+    `Episode purpose: ${compactBriefText(context.episodePurpose)}`,
+    `Introduction: ${compactBriefText(context.introduction)}`,
+    `Middle: ${compactBriefText(context.middle)}`,
+    `Climax: ${compactBriefText(context.climax)}`,
+    `Ending hook: ${compactBriefText(context.endingHook)}`,
     `Current dialogue mode: ${context.dialogueMode}`,
     `Current page dialogue toggle: ${context.pageDialogueToggle ? 'on' : 'off'}`,
     '',
@@ -2081,8 +2103,19 @@ function buildEpisodePlanCompilerBrief(
   const outputLanguage = language === 'en' ? 'English' : 'Japanese';
   const canonicalEntities = buildCanonicalCompilerEntityRefs(context.entities);
   const entityLookup = new Map(context.entities.map((entity) => [entity.id, entity]));
+  const compactBriefText = (value: string | null | undefined, maxLength?: number): string =>
+    summarizeCompilerText(
+      canonicalizeCompilerBriefText(value, canonicalEntities),
+      maxLength ?? STORY_PROMPT_CONTEXT_LIMITS.generalFieldChars,
+    ) ?? '(none)';
+  const compactBriefList = (values: readonly string[], maxLength = 160): string =>
+    values
+      .map((value) => summarizeCompilerText(canonicalizeCompilerBriefText(value, canonicalEntities), maxLength))
+      .filter((value): value is string => value !== null)
+      .join(' / ') || '(none)';
 
-  const sceneLines = context.scenes
+  const visibleScenes = context.scenes.slice(0, STORY_PROMPT_CONTEXT_LIMITS.maxSceneSummaries);
+  const sceneLines = visibleScenes
     .map((scene) => {
       const people =
         scene.involvedEntityIds
@@ -2111,13 +2144,14 @@ function buildEpisodePlanCompilerBrief(
 
       return [
         `Scene ${scene.order} (${scene.id})`,
-        `location=${summarizeCompilerText(canonicalizeCompilerBriefText(scene.location, canonicalEntities), 80) ?? '(none)'}`,
-        `time=${summarizeCompilerText(canonicalizeCompilerBriefText(scene.time, canonicalEntities), 40) ?? '(none)'}`,
-        `atmosphere=${summarizeCompilerText(canonicalizeCompilerBriefText(scene.atmosphere, canonicalEntities), 80) ?? '(none)'}`,
+        `location=${compactBriefText(scene.location, 80)}`,
+        `time=${compactBriefText(scene.time, 40)}`,
+        `atmosphere=${compactBriefText(scene.atmosphere, 80)}`,
         `people=${people}`,
         `state_notes=${summarizeCompilerText(canonicalizeCompilerBriefText(stateNotes, canonicalEntities), 180) ?? 'none'}`,
       ].join(' | ');
     })
+    .concat(context.scenes.length > visibleScenes.length ? [`... (${context.scenes.length - visibleScenes.length} more scenes)`] : [])
     .join('\n');
 
   const entityLines = context.entities
@@ -2165,20 +2199,20 @@ function buildEpisodePlanCompilerBrief(
     `Write every free-text field in natural ${outputLanguage} suitable for direct editing in the Lyra UI.`,
     '',
     '[CHAPTER ARC]',
-    `Title: ${canonicalizeCompilerBriefText(context.chapter.title, canonicalEntities) ?? '(none)'}`,
-    `Purpose: ${canonicalizeCompilerBriefText(context.chapter.purpose, canonicalEntities) ?? '(none)'}`,
-    `Starting state: ${canonicalizeCompilerBriefText(context.chapter.startingState, canonicalEntities) ?? '(none)'}`,
-    `Ending state: ${canonicalizeCompilerBriefText(context.chapter.endingState, canonicalEntities) ?? '(none)'}`,
-    `Emotion curve: ${canonicalizeCompilerBriefText(context.chapter.emotionCurve, canonicalEntities) ?? '(none)'}`,
-    `Key beats: ${context.chapter.keyBeats.map((beat) => canonicalizeCompilerBriefText(beat, canonicalEntities) ?? beat).join(' / ') || '(none)'}`,
+    `Title: ${compactBriefText(context.chapter.title, 160)}`,
+    `Purpose: ${compactBriefText(context.chapter.purpose)}`,
+    `Starting state: ${compactBriefText(context.chapter.startingState)}`,
+    `Ending state: ${compactBriefText(context.chapter.endingState)}`,
+    `Emotion curve: ${compactBriefText(context.chapter.emotionCurve)}`,
+    `Key beats: ${compactBriefList(context.chapter.keyBeats)}`,
     '',
     '[EPISODE ARC]',
-    `Title: ${canonicalizeCompilerBriefText(context.episode.title, canonicalEntities) ?? '(none)'}`,
-    `Purpose: ${canonicalizeCompilerBriefText(context.episode.purpose, canonicalEntities) ?? '(none)'}`,
-    `Introduction: ${canonicalizeCompilerBriefText(context.episode.introduction, canonicalEntities) ?? '(none)'}`,
-    `Middle: ${canonicalizeCompilerBriefText(context.episode.middle, canonicalEntities) ?? '(none)'}`,
-    `Climax: ${canonicalizeCompilerBriefText(context.episode.climax, canonicalEntities) ?? '(none)'}`,
-    `Ending hook: ${canonicalizeCompilerBriefText(context.episode.endingHook, canonicalEntities) ?? '(none)'}`,
+    `Title: ${compactBriefText(context.episode.title, 160)}`,
+    `Purpose: ${compactBriefText(context.episode.purpose)}`,
+    `Introduction: ${compactBriefText(context.episode.introduction)}`,
+    `Middle: ${compactBriefText(context.episode.middle)}`,
+    `Climax: ${compactBriefText(context.episode.climax)}`,
+    `Ending hook: ${compactBriefText(context.episode.endingHook)}`,
     `Estimated pages: ${context.episode.estimatedPages}`,
     '',
     '[SCENES]',

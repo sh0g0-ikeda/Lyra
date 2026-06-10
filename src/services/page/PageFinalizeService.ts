@@ -5,6 +5,7 @@ import type { PageRepository } from '../../repositories/PageRepository.js';
 import type { FinalPageImageStoragePort } from '../../infrastructure/aws/S3FinalPageImageStorage.js';
 import type { StoredImageLoaderPort } from '../../infrastructure/aws/S3StoredImageLoader.js';
 import type { PageBalloonComposerPort } from './PageBalloonComposer.js';
+import { ensureOwnedPageImageKey } from '../storage/StoredImageKeyPolicy.js';
 
 export interface PageFinalizeServicePort {
   confirmPage(userId: string, pageId: string): Promise<void>;
@@ -29,6 +30,7 @@ export class PageFinalizeService implements PageFinalizeServicePort {
     this.ensurePageCanConfirm(page);
 
     const generatedImage = requireGeneratedImage(page);
+    ensureOwnedPageImageKey(generatedImage.s3Key, userId, pageId, 'generated page image key');
     const balloons = await this.balloonRepository.findBalloonsByPageIdAndUserId(pageId, userId);
     const finalizedImage = balloons.length === 0
       ? await this.finalPageImageStorage.finalizePageImage({

@@ -1,6 +1,8 @@
 import { CopyObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import { randomUUID } from 'node:crypto';
 import { ConfigurationError } from '../../domain/errors/index.js';
+import { toSanitizedAwsErrorMessage } from './AwsErrorMessage.js';
+import { SAVED_IMAGE_CACHE_CONTROL, SESSION_IMAGE_CACHE_CONTROL } from './S3ImageCacheControl.js';
 
 export interface StoredEntityImage {
   s3Key: string;
@@ -70,6 +72,7 @@ export class S3EntityImageStorage implements EntityImageStoragePort {
   public async finalizeReferenceImage(input: FinalizeEntityReferenceImageInput): Promise<StoredEntityImage> {
     const extension = readExtension(input.sourceS3Key);
     const destinationKey = `saved/${input.userId}/entities/${input.entityId}/${input.refId}.${extension}`;
+    ensureAllowedEntityReferenceSourceKey(input.sourceS3Key, input.userId, input.entityId);
 
     try {
       await this.client.send(
@@ -77,7 +80,7 @@ export class S3EntityImageStorage implements EntityImageStoragePort {
           Bucket: this.options.bucketName,
           Key: destinationKey,
           CopySource: `${this.options.bucketName}/${input.sourceS3Key}`,
-          CacheControl: 'public, max-age=31536000, immutable',
+          CacheControl: SAVED_IMAGE_CACHE_CONTROL,
           MetadataDirective: 'REPLACE',
           ContentType: extensionToMimeType(extension),
           ServerSideEncryption: 'AES256',
@@ -85,7 +88,7 @@ export class S3EntityImageStorage implements EntityImageStoragePort {
       );
     } catch (error) {
       throw new ConfigurationError(
-        error instanceof Error ? error.message : 'Failed to finalize entity reference image',
+        toSanitizedAwsErrorMessage(error, 'Failed to finalize entity reference image'),
       );
     }
 
@@ -107,13 +110,13 @@ export class S3EntityImageStorage implements EntityImageStoragePort {
           Key: s3Key,
           Body: imageData,
           ContentType: mimeType,
-          CacheControl: 'public, max-age=604800, immutable',
+          CacheControl: SESSION_IMAGE_CACHE_CONTROL,
           ServerSideEncryption: 'AES256',
         }),
       );
     } catch (error) {
       throw new ConfigurationError(
-        error instanceof Error ? error.message : 'Failed to store entity image',
+        toSanitizedAwsErrorMessage(error, 'Failed to store entity image'),
       );
     }
 
@@ -126,6 +129,32 @@ export class S3EntityImageStorage implements EntityImageStoragePort {
 
 function buildCdnUrl(baseUrl: string, key: string): string {
   return new URL(key, `${baseUrl.replace(/\/+$/u, '')}/`).toString();
+}
+
+function ensureAllowedEntityReferenceSourceKey(sourceS3Key: string, userId: string, entityId: string): void {
+  const allowedPrefixes = [
+    `tmp/${userId}/entities/imports/`,
+    `session/${userId}/entities/${entityId}/`,
+  ];
+
+  if (
+    hasUnsafeImageKeySyntax(sourceS3Key) ||
+    !allowedPrefixes.some((prefix) => sourceS3Key.startsWith(prefix))
+  ) {
+    throw new ConfigurationError('Entity reference source image key is outside the entity owner scope');
+  }
+}
+
+function hasUnsafeImageKeySyntax(s3Key: string): boolean {
+  if (s3Key.includes('\\') || s3Key.includes('\0')) {
+    return true;
+  }
+
+  return s3Key.split('/').some((segment) => (
+    segment.length === 0 ||
+    segment === '.' ||
+    segment === '..'
+  ));
 }
 
 function mimeTypeToExtension(mimeType: string): 'png' | 'jpeg' | 'webp' | null {
@@ -145,6 +174,10 @@ function mimeTypeToExtension(mimeType: string): 'png' | 'jpeg' | 'webp' | null {
 }
 
 function readExtension(s3Key: string): 'png' | 'jpeg' | 'webp' {
+  if (s3Key.endsWith('.png')) {
+    return 'png';
+  }
+
   if (s3Key.endsWith('.jpeg') || s3Key.endsWith('.jpg')) {
     return 'jpeg';
   }
@@ -153,7 +186,7 @@ function readExtension(s3Key: string): 'png' | 'jpeg' | 'webp' {
     return 'webp';
   }
 
-  return 'png';
+  throw new ConfigurationError(`Unsupported entity reference source image extension: ${s3Key}`);
 }
 
 function extensionToMimeType(extension: 'png' | 'jpeg' | 'webp'): string {

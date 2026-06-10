@@ -1,25 +1,46 @@
-import { db } from '../src/lib/db.js';
-import { PostgresGenerationJobRepository } from '../src/repositories/GenerationJobRepository.js';
-import { PageGenerationRetryService } from '../src/services/page/PageGenerationRetryService.js';
-import { resolveWorkerDependencies } from '../worker/dependencies.js';
+import { pathToFileURL } from 'node:url';
+import { sanitizePersistedErrorMessage } from '../src/lib/errorSanitizer.js';
+import { parseRetryPageGenerationArgs } from './workerCliArgs.js';
 
 async function main(): Promise<void> {
-  const jobId = process.argv[2];
-  const userId = process.argv[3];
-  if (jobId === undefined || userId === undefined) {
-    throw new Error('Usage: npm run worker:retry -- <job-id> <user-id>');
+  const { jobId, userId } = parseRetryPageGenerationArgs(process.argv.slice(2));
+  const [
+    { closeDatabasePool, db },
+    { PostgresCreditRepository },
+    { PostgresGenerationJobRepository },
+    { CreditService },
+    { PageGenerationRetryService },
+    { resolveWorkerDependencies },
+  ] = await Promise.all([
+    import('../src/lib/db.js'),
+    import('../src/repositories/CreditRepository.js'),
+    import('../src/repositories/GenerationJobRepository.js'),
+    import('../src/services/credit/CreditService.js'),
+    import('../src/services/page/PageGenerationRetryService.js'),
+    import('../worker/dependencies.js'),
+  ]);
+
+  try {
+    const retryService = new PageGenerationRetryService(
+      new PostgresGenerationJobRepository(db),
+      resolveWorkerDependencies().pageGenerationWorkerService,
+      new CreditService(new PostgresCreditRepository(db, db)),
+    );
+
+    await retryService.retryFailedJob(userId, jobId);
+    console.info(`Retried page generation job ${jobId} for user ${userId}`);
+  } finally {
+    await closeDatabasePool();
   }
-
-  const retryService = new PageGenerationRetryService(
-    new PostgresGenerationJobRepository(db),
-    resolveWorkerDependencies().pageGenerationWorkerService,
-  );
-
-  await retryService.retryFailedJob(userId, jobId);
-  console.info(`Retried page generation job ${jobId} for user ${userId}`);
 }
 
-void main().catch((error) => {
-  console.error(error instanceof Error ? error.message : 'Unknown retry error');
-  process.exitCode = 1;
-});
+function isDirectRun(moduleUrl: string, entryPath: string | undefined): boolean {
+  return entryPath !== undefined && moduleUrl === pathToFileURL(entryPath).href;
+}
+
+if (isDirectRun(import.meta.url, process.argv[1])) {
+  void main().catch((error) => {
+    console.error(sanitizePersistedErrorMessage(error, 'Unknown retry error'));
+    process.exitCode = 1;
+  });
+}

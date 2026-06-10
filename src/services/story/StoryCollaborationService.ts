@@ -4,11 +4,20 @@ import {
   buildFullStoryDraftFromStructuredSections,
   normalizeEpisodeStoryInput,
 } from '../../domain/episodeStoryInput.js';
+import {
+  compactCanonicalStoryPromptText,
+  compactStoryPromptText,
+  formatStoryPromptEntityList,
+  formatStoryPromptParts,
+  formatStoryPromptSummaryList,
+  STORY_PROMPT_CONTEXT_LIMITS,
+} from '../../domain/storyPromptCompaction.js';
 import { NotFoundError, ValidationError } from '../../domain/errors/index.js';
 import {
   STORY_EPISODE_IMPROVEMENT_WRITER_MODEL,
 } from '../../domain/constants/storyAi.js';
 import { describeAppLanguage } from '../../domain/types/language.js';
+import { sanitizePersistedErrorMessage } from '../../lib/errorSanitizer.js';
 import type {
   StoryCollaborationInput,
   StoryCollaborationTarget,
@@ -169,7 +178,7 @@ export class StoryCollaborationService implements StoryCollaborationServicePort 
           compilerProvider: 'openai',
           compilerModel: STORY_EPISODE_IMPROVEMENT_WRITER_MODEL,
           compilerPromptVersion: directFallbackPromptVersion,
-          compilerError: error instanceof Error ? error.message : 'Story planning failed',
+          compilerError: sanitizePersistedErrorMessage(error, 'Story planning failed'),
         };
       } catch (writerError) {
         return {
@@ -177,8 +186,7 @@ export class StoryCollaborationService implements StoryCollaborationServicePort 
           compilerProvider: 'fallback',
           compilerModel: null,
           compilerPromptVersion: directFallbackPromptVersion,
-          compilerError:
-            writerError instanceof Error ? writerError.message : 'Story improvement failed',
+          compilerError: sanitizePersistedErrorMessage(writerError, 'Story improvement failed'),
         };
       }
     }
@@ -288,7 +296,7 @@ function buildStoredEpisodePromptSection(
     return 'Current stored episode: same as current editable draft.';
   }
 
-  return `Current stored episode:\n${formatEpisodeDraftFields(storedDraft)}`;
+  return `Current stored episode:\n${formatEpisodeDraftFields(storedDraft, STORED_EPISODE_DRAFT_PROMPT_LIMITS)}`;
 }
 
 function formatTargetSummary(target: StoryCollaborationTarget): string {
@@ -310,8 +318,13 @@ function formatTargetSummary(target: StoryCollaborationTarget): string {
       continue;
     }
 
-    const renderedValue = Array.isArray(value) ? value.join(', ') : String(value);
-    if (renderedValue.length === 0) {
+    const renderedValue = Array.isArray(value)
+      ? value
+          .map((item) => compactStoryPromptText(item, STORY_PROMPT_CONTEXT_LIMITS.payloadFieldChars))
+          .filter((item): item is string => item !== null)
+          .join(', ')
+      : compactStoryPromptText(value, STORY_PROMPT_CONTEXT_LIMITS.payloadFieldChars);
+    if (renderedValue === null || renderedValue.length === 0) {
       continue;
     }
 
@@ -319,36 +332,59 @@ function formatTargetSummary(target: StoryCollaborationTarget): string {
   }
 
   if (target.entities.length > 0) {
-    const visibleEntities = target.entities.slice(0, 20);
-    lines.push(
-      `Entities: ${visibleEntities
-        .map((entity) => `${entity.name} (${entity.entityType}${entity.freeDescription === null ? '' : `, ${entity.freeDescription}`}${entity.aliases.length === 0 ? '' : `, aliases: ${entity.aliases.join(', ')}`})`)
-        .join(' / ')}`,
-    );
+    lines.push(`Entities: ${formatStoryPromptEntityList(target.entities)}`);
   }
 
   if (target.sceneSummaries.length > 0) {
     lines.push(
-      `Scenes: ${target.sceneSummaries
-        .map((scene) => canonicalizeEntityMentionsInText(scene, target.entities) ?? scene)
-        .join(' / ')}`,
+      `Scenes: ${formatStoryPromptSummaryList(target.sceneSummaries, target.entities, {
+        maxItems: STORY_PROMPT_CONTEXT_LIMITS.maxSceneSummaries,
+      })}`,
     );
   }
 
   return lines.join('\n');
 }
 
-function formatEpisodeDraftFields(draft: StoryEpisodeDraftFields): string {
+interface EpisodeDraftPromptLimits {
+  title: number;
+  purpose: number;
+  storyFullDraft: number;
+  body: number;
+}
+
+const EDITABLE_EPISODE_DRAFT_PROMPT_LIMITS: EpisodeDraftPromptLimits = {
+  title: 200,
+  purpose: 2000,
+  storyFullDraft: 8000,
+  body: 2000,
+} as const;
+
+const STORED_EPISODE_DRAFT_PROMPT_LIMITS: EpisodeDraftPromptLimits = {
+  title: 200,
+  purpose: STORY_PROMPT_CONTEXT_LIMITS.generalFieldChars,
+  storyFullDraft: STORY_PROMPT_CONTEXT_LIMITS.generalFieldChars * 2,
+  body: STORY_PROMPT_CONTEXT_LIMITS.generalFieldChars,
+} as const;
+
+function formatEpisodeDraftFields(
+  draft: StoryEpisodeDraftFields,
+  limits = EDITABLE_EPISODE_DRAFT_PROMPT_LIMITS,
+): string {
   return [
-    `Title: ${draft.title ?? '(none)'}`,
-    `Purpose: ${draft.purpose ?? '(none)'}`,
+    `Title: ${compactDraftField(draft.title, limits.title)}`,
+    `Purpose: ${compactDraftField(draft.purpose, limits.purpose)}`,
     `Story input mode: ${draft.storyInputMode}`,
-    `Full story draft: ${draft.storyFullDraft ?? '(none)'}`,
-    `Introduction: ${draft.introduction ?? '(none)'}`,
-    `Middle: ${draft.middle ?? '(none)'}`,
-    `Climax: ${draft.climax ?? '(none)'}`,
-    `Ending hook: ${draft.endingHook ?? '(none)'}`,
+    `Full story draft: ${compactDraftField(draft.storyFullDraft, limits.storyFullDraft)}`,
+    `Introduction: ${compactDraftField(draft.introduction, limits.body)}`,
+    `Middle: ${compactDraftField(draft.middle, limits.body)}`,
+    `Climax: ${compactDraftField(draft.climax, limits.body)}`,
+    `Ending hook: ${compactDraftField(draft.endingHook, limits.body)}`,
   ].join('\n');
+}
+
+function compactDraftField(value: string | null, maxLength: number): string {
+  return compactStoryPromptText(value, maxLength) ?? '(none)';
 }
 
 function episodeDraftsHaveSameEditableContent(
@@ -371,22 +407,29 @@ function normalizeComparableDraftField(value: string | null): string {
 
 function formatEpisodeImprovementContext(context: StoryEpisodeImprovementContext): string {
   const canonicalize = (value: string | null): string | null =>
-    canonicalizeEntityMentionsInText(value, context.entities);
+    compactCanonicalStoryPromptText(value, context.entities);
   return [
-    `Work: ${context.workTitle}`,
-    `Genre: ${context.workGenre ?? '(none)'}`,
+    `Work: ${compactStoryPromptText(context.workTitle) ?? '(none)'}`,
+    `Genre: ${compactStoryPromptText(context.workGenre) ?? '(none)'}`,
     `World setting: ${canonicalize(context.worldSetting) ?? '(none)'}`,
     `Theme: ${canonicalize(context.theme) ?? '(none)'}`,
     `Overall flow: ${canonicalize(context.overallFlow) ?? '(none)'}`,
-    `Chapter: ${[canonicalize(context.chapterTitle), canonicalize(context.chapterPurpose)].filter((value) => value !== null && value.length > 0).join(' / ') || '(none)'}`,
-    `Chapter arc: ${[canonicalize(context.chapterStartingState), canonicalize(context.chapterEndingState), canonicalize(context.chapterEmotionCurve)].filter((value) => value !== null && value.length > 0).join(' / ') || '(none)'}`,
+    `Chapter: ${formatStoryPromptParts([context.chapterTitle, context.chapterPurpose], context.entities)}`,
+    `Chapter arc: ${formatStoryPromptParts(
+      [context.chapterStartingState, context.chapterEndingState, context.chapterEmotionCurve],
+      context.entities,
+    )}`,
     `Estimated pages: ${context.estimatedPages}`,
-    `Entities: ${
-      context.entities.map((entity) => `${entity.name} (${entity.entityType}${entity.freeDescription === null ? '' : `, ${entity.freeDescription}`}${entity.aliases.length === 0 ? '' : `, aliases: ${entity.aliases.join(', ')}`})`).join(' / ') || '(none)'
-    }`,
-    `Scenes: ${context.sceneSummaries.map((scene) => canonicalizeEntityMentionsInText(scene, context.entities) ?? scene).join(' / ') || '(none)'}`,
-    `Other chapters: ${context.chapterSummaries.map((summary) => canonicalize(summary) ?? summary).join(' / ') || '(none)'}`,
-    `Other episodes: ${context.siblingEpisodeSummaries.map((summary) => canonicalize(summary) ?? summary).join(' / ') || '(none)'}`,
+    `Entities: ${formatStoryPromptEntityList(context.entities)}`,
+    `Scenes: ${formatStoryPromptSummaryList(context.sceneSummaries, context.entities, {
+      maxItems: STORY_PROMPT_CONTEXT_LIMITS.maxSceneSummaries,
+    })}`,
+    `Other chapters: ${formatStoryPromptSummaryList(context.chapterSummaries, context.entities, {
+      maxItems: STORY_PROMPT_CONTEXT_LIMITS.maxChapterSummaries,
+    })}`,
+    `Other episodes: ${formatStoryPromptSummaryList(context.siblingEpisodeSummaries, context.entities, {
+      maxItems: STORY_PROMPT_CONTEXT_LIMITS.maxSiblingEpisodeSummaries,
+    })}`,
   ].join('\n');
 }
 

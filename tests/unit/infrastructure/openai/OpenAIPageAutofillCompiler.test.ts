@@ -88,11 +88,34 @@ describe('OpenAIPageAutofillCompiler', () => {
 
     const request = requests[0];
     expect(request.text).toMatchObject({
-      format: expect.objectContaining({
+      format: {
         type: 'json_schema',
         name: 'page_autofill',
         strict: true,
-      }),
+        schema: {
+          properties: {
+            panels: {
+              maxItems: 20,
+              items: {
+                properties: {
+                  dialogue: {
+                    anyOf: [
+                      expect.objectContaining({ maxItems: 20 }),
+                      expect.any(Object),
+                    ],
+                  },
+                  entities: {
+                    anyOf: [
+                      expect.objectContaining({ maxItems: 20 }),
+                      expect.any(Object),
+                    ],
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
     });
     const input = request.input as Array<{ content: Array<{ text: string }> }>;
     const systemPrompt = input[0].content[0].text;

@@ -26,25 +26,35 @@ import {
 } from './infrastructure/stripe/StripeBillingClient.js';
 import { db } from './lib/db.js';
 import { env } from './lib/env.js';
-import { assertProductionRuntimeConfig } from './lib/runtimeGuards.js';
+import { assertProductionRuntimeConfig, isDevAuthBypassRuntimeAllowed } from './lib/runtimeGuards.js';
 import { createAuthMiddleware } from './middleware/auth.js';
 import type { AuthProvider, CognitoVerifierConfig } from './middleware/auth.js';
+import { createCorsMiddleware, parseCorsAllowedOrigins } from './middleware/cors.js';
 import { errorHandler } from './middleware/errorHandler.js';
-import { createRateLimitMiddleware, InMemoryRateLimitStore, type RateLimitStore } from './middleware/rateLimit.js';
+import {
+  createPublicIpRateLimitMiddleware,
+  createRateLimitMiddleware,
+  InMemoryRateLimitStore,
+  type RateLimitStore,
+} from './middleware/rateLimit.js';
 import { createRequestContextMiddleware } from './middleware/requestContext.js';
 import { createSecurityHeadersMiddleware } from './middleware/securityHeaders.js';
 import { PostgresBillingRepository } from './repositories/BillingRepository.js';
 import { PostgresCompositionGalleryRepository } from './repositories/CompositionGalleryRepository.js';
 import { PostgresCreditRepository } from './repositories/CreditRepository.js';
 import { PostgresEntityRepository } from './repositories/EntityRepository.js';
+import { PostgresEntityGenerationExecutionRepository } from './repositories/EntityGenerationExecutionRepository.js';
+import { PostgresEntityGenerationRecoveryRepository } from './repositories/EntityGenerationRecoveryRepository.js';
 import { PostgresGenerationJobRepository } from './repositories/GenerationJobRepository.js';
 import { PostgresBalloonRepository } from './repositories/BalloonRepository.js';
 import { PostgresPanelEntityAssignmentRepository } from './repositories/PanelEntityAssignmentRepository.js';
 import { PostgresPanelFrameRepository } from './repositories/PanelFrameRepository.js';
 import { PostgresPanelRepository } from './repositories/PanelRepository.js';
+import { PostgresPageLayoutRepository } from './repositories/PageLayoutRepository.js';
 import { PostgresPageGenerationExecutionRepository } from './repositories/PageGenerationExecutionRepository.js';
 import { PostgresPageGenerationRecoveryRepository } from './repositories/PageGenerationRecoveryRepository.js';
 import { PostgresPageRepository } from './repositories/PageRepository.js';
+import { PostgresRateLimitStore } from './repositories/RateLimitStore.js';
 import { PostgresSceneRepository } from './repositories/SceneRepository.js';
 import { PostgresStoryRepository } from './repositories/StoryRepository.js';
 import { PostgresUserRepository } from './repositories/UserRepository.js';
@@ -88,16 +98,24 @@ import {
   type EntityReferenceServicePort,
 } from './services/entity/EntityReferenceService.js';
 import {
-  NoopEntityGenerationQueue,
+  EntityReferenceImageExportService,
+  type EntityReferenceImageExportServicePort,
+} from './services/entity/EntityReferenceImageExportService.js';
+import {
   InlineEntityGenerationQueueAdapter,
   SqsEntityGenerationQueueAdapter,
+  UnconfiguredEntityGenerationQueue,
   type EntityGenerationQueuePort,
 } from './services/entity/EntityGenerationQueue.js';
+import {
+  EntityGenerationRecoveryService,
+  type EntityGenerationRecoveryServicePort,
+} from './services/entity/EntityGenerationRecoveryService.js';
 import { JobService, type JobServicePort } from './services/job/JobService.js';
 import {
-  NoopPageGenerationQueue,
   DetachedProcessPageGenerationQueueAdapter,
   SqsPageGenerationQueueAdapter,
+  UnconfiguredPageGenerationQueue,
   type PageGenerationQueuePort,
 } from './services/page/PageGenerationQueue.js';
 import { BalloonService, type BalloonServicePort } from './services/page/BalloonService.js';
@@ -132,6 +150,10 @@ import {
   type PanelServicePort,
 } from './services/page/PanelService.js';
 import {
+  PageLayoutService,
+  type PageLayoutServicePort,
+} from './services/page/PageLayoutService.js';
+import {
   PanelEntityAssignmentService,
   type PanelEntityAssignmentServicePort,
 } from './services/page/PanelEntityAssignmentService.js';
@@ -161,7 +183,9 @@ export interface AppDependencies {
   creditService?: CreditServicePort;
   entityService?: EntityServicePort;
   entityReferenceService?: EntityReferenceServicePort;
+  entityReferenceImageExportService?: EntityReferenceImageExportServicePort;
   entityGenerationQueue?: EntityGenerationQueuePort;
+  entityGenerationRecoveryService?: EntityGenerationRecoveryServicePort;
   jobService?: JobServicePort;
   pageExportService?: PageExportServicePort;
   pageFinalizeService?: PageFinalizeServicePort;
@@ -171,6 +195,7 @@ export interface AppDependencies {
   pageGenerationQueue?: PageGenerationQueuePort;
   pageGenerationService?: PageGenerationServicePort;
   pageGenerationRecoveryService?: PageGenerationRecoveryServicePort;
+  pageLayoutService?: PageLayoutServicePort;
   panelService?: PanelServicePort;
   panelEntityAssignmentService?: PanelEntityAssignmentServicePort;
   panelFrameService?: PanelFrameServicePort;
@@ -196,8 +221,12 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
   const resolvedDependencies = resolveDependencies(dependencies);
   const app = new Hono<AppEnv>();
   const localAssetConfig = resolveConfiguredLocalAssetConfig();
-  const enableDevAuthBypass =
+  const requestedDevAuthBypass =
     dependencies.enableDevAuthBypass ?? (process.env.NODE_ENV === 'test' ? false : env.DEV_AUTH_BYPASS);
+  if (requestedDevAuthBypass && !isDevAuthBypassRuntimeAllowed(env.APP_ENV, process.env.NODE_ENV)) {
+    throw new ConfigurationError('DEV_AUTH_BYPASS is only allowed in explicit development or test runtimes');
+  }
+  const enableDevAuthBypass = requestedDevAuthBypass;
   const authMiddleware = createAuthMiddleware(resolvedDependencies.userProvisioningService, {
     authProvider: dependencies.authProvider,
     jwtSecret: dependencies.jwtSecret,
@@ -211,9 +240,15 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
         await next();
       })
     : createRateLimitMiddleware(resolvedDependencies.rateLimitStore);
+  const webhookRateLimitMiddleware: MiddlewareHandler<AppEnv> = enableDevAuthBypass
+    ? (async (_c, next) => {
+        await next();
+      })
+    : createPublicIpRateLimitMiddleware(resolvedDependencies.rateLimitStore, 'webhook');
 
   app.onError(errorHandler);
   app.use('*', createSecurityHeadersMiddleware());
+  app.use('*', createCorsMiddleware(parseCorsAllowedOrigins(env.CORS_ALLOWED_ORIGINS)));
   app.use('*', createRequestContextMiddleware());
   app.route('/', createHealthRoutes());
   if (localAssetConfig !== null) {
@@ -231,6 +266,7 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
   app.route(
     '/api/webhooks',
     createWebhookRoutes({
+      rateLimitMiddleware: webhookRateLimitMiddleware,
       stripeWebhookService: resolvedDependencies.stripeWebhookService,
     }),
   );
@@ -257,6 +293,7 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
       rateLimitMiddleware,
       entityService: resolvedDependencies.entityService,
       entityReferenceService: resolvedDependencies.entityReferenceService,
+      entityReferenceImageExportService: resolvedDependencies.entityReferenceImageExportService,
     }),
   );
   app.route(
@@ -277,6 +314,7 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
       pageService: resolvedDependencies.pageService,
       pageQueryService: resolvedDependencies.pageQueryService,
       pageGenerationService: resolvedDependencies.pageGenerationService,
+      pageLayoutService: resolvedDependencies.pageLayoutService,
     }),
   );
   app.route(
@@ -357,10 +395,18 @@ function resolveDependencies(
       ? new InlineEntityGenerationQueueAdapter(inlineWorkerDependencies.entityGenerationWorkerService)
       : generationQueue !== null
         ? new SqsEntityGenerationQueueAdapter(generationQueue)
-        : new NoopEntityGenerationQueue());
+        : new UnconfiguredEntityGenerationQueue());
   const billingRepository = new PostgresBillingRepository(db, db);
   const pageRepository = new PostgresPageRepository(db);
   const generationJobRepository = new PostgresGenerationJobRepository(db);
+  const entityGenerationExecutionRepository = new PostgresEntityGenerationExecutionRepository(db);
+  const entityGenerationRecoveryService =
+    dependencies.entityGenerationRecoveryService ??
+    new EntityGenerationRecoveryService(
+      new PostgresEntityGenerationRecoveryRepository(db),
+      entityGenerationExecutionRepository,
+      creditService,
+    );
   const pageGenerationExecutionRepository = new PostgresPageGenerationExecutionRepository(db);
   const pageGenerationRecoveryService =
     dependencies.pageGenerationRecoveryService ??
@@ -377,7 +423,7 @@ function resolveDependencies(
         )
       : generationQueue !== null
         ? new SqsPageGenerationQueueAdapter(generationQueue)
-        : new NoopPageGenerationQueue());
+        : new UnconfiguredPageGenerationQueue());
   const stripeBillingClient = resolveStripeBillingClient();
   const billingService =
     dependencies.billingService ??
@@ -402,8 +448,13 @@ function resolveDependencies(
         perUser: env.GENERATION_USER_ACTIVE_JOB_LIMIT,
         global: env.GENERATION_GLOBAL_ACTIVE_JOB_LIMIT,
       },
-      env.GENERATION_ENABLED,
+      env.GENERATION_ENABLED && env.ENTITY_GENERATION_ENABLED,
+      entityGenerationRecoveryService,
+      env.GENERATION_ENABLED && env.ENTITY_IMPORT_ANALYSIS_ENABLED,
     );
+  const entityReferenceImageExportService =
+    dependencies.entityReferenceImageExportService ??
+    new EntityReferenceImageExportService(entityRepository, resolveStoredPageImageLoader());
   const panelRepository = new PostgresPanelRepository(db);
   const panelFrameRepository = new PostgresPanelFrameRepository(db);
   const balloonRepository = new PostgresBalloonRepository(db);
@@ -424,7 +475,7 @@ function resolveDependencies(
         perUser: env.GENERATION_USER_ACTIVE_JOB_LIMIT,
         global: env.GENERATION_GLOBAL_ACTIVE_JOB_LIMIT,
       },
-      env.GENERATION_ENABLED,
+      env.GENERATION_ENABLED && env.PAGE_GENERATION_ENABLED,
     );
   const pageFinalizeService =
     dependencies.pageFinalizeService ??
@@ -455,7 +506,13 @@ function resolveDependencies(
       resolveEpisodePagePlanCompiler(),
       resolveStyleReferenceCompiler(),
     );
-  const jobService = dependencies.jobService ?? new JobService(generationJobRepository);
+  const jobService =
+    dependencies.jobService ??
+    new JobService(
+      generationJobRepository,
+      pageGenerationRecoveryService,
+      entityGenerationRecoveryService,
+    );
   const storyCollaborationService =
     dependencies.storyCollaborationService ??
     new StoryCollaborationService(
@@ -469,15 +526,24 @@ function resolveDependencies(
   const storyService =
     dependencies.storyService ?? new StoryService(new PostgresStoryRepository(db), entityRepository);
   const panelService =
-    dependencies.panelService ?? new PanelService(panelRepository, entityRepository, panelFrameRepository);
+    dependencies.panelService ??
+    new PanelService(
+      panelRepository,
+      entityRepository,
+      panelFrameRepository,
+      new PostgresCompositionGalleryRepository(db),
+    );
   const panelFrameService =
     dependencies.panelFrameService ?? new PanelFrameService(panelFrameRepository);
+  const pageLayoutService =
+    dependencies.pageLayoutService ??
+    new PageLayoutService(new PostgresPageLayoutRepository(db));
   const sceneService =
     dependencies.sceneService ?? new SceneService(new PostgresSceneRepository(db), entityRepository);
   const userProvisioningService =
     dependencies.userProvisioningService ??
     new UserProvisioningService(new PostgresUserRepository(db), creditService);
-  const rateLimitStore = dependencies.rateLimitStore ?? new InMemoryRateLimitStore();
+  const rateLimitStore = dependencies.rateLimitStore ?? resolveRateLimitStore();
 
   return {
     balloonService,
@@ -487,7 +553,9 @@ function resolveDependencies(
     creditService,
     entityService,
     entityReferenceService,
+    entityReferenceImageExportService,
     entityGenerationQueue,
+    entityGenerationRecoveryService,
     jobService,
     pageExportService,
     pageFinalizeService,
@@ -497,6 +565,7 @@ function resolveDependencies(
     pageGenerationQueue,
     pageGenerationRecoveryService,
     pageGenerationService,
+    pageLayoutService,
     panelService,
     panelEntityAssignmentService,
     panelFrameService,
@@ -509,6 +578,14 @@ function resolveDependencies(
     userProvisioningService,
     rateLimitStore,
   };
+}
+
+function resolveRateLimitStore(): RateLimitStore {
+  if (process.env.NODE_ENV === 'test') {
+    return new InMemoryRateLimitStore();
+  }
+
+  return new PostgresRateLimitStore(db);
 }
 
 function resolveFinalPageImageStorage(): FinalPageImageStoragePort {

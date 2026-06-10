@@ -1,6 +1,7 @@
 import { SignJWT } from 'jose';
 import { describe, expect, it } from 'vitest';
 import { createApp } from '../../../src/app.js';
+import { REQUEST_BODY_LIMITS } from '../../../src/routes/requestBody.js';
 import type { CreditBalanceSnapshot } from '../../../src/domain/types/credit.js';
 import type { EntityReferenceSet } from '../../../src/domain/types/entityReference.js';
 import type { AuthenticatedUser, SupabaseJwtClaims } from '../../../src/domain/types/user.js';
@@ -9,6 +10,10 @@ import type {
   ConfirmEntityReferencesRequest,
   EntityReferenceServicePort,
 } from '../../../src/services/entity/EntityReferenceService.js';
+import type {
+  EntityReferenceImageExportServicePort,
+  ExportedEntityReferenceImage,
+} from '../../../src/services/entity/EntityReferenceImageExportService.js';
 import type {
   ProvisionedUser,
   UserProvisioningPort,
@@ -207,6 +212,37 @@ class FakeEntityReferenceService implements EntityReferenceServicePort {
   }
 }
 
+class FakeEntityReferenceImageExportService implements EntityReferenceImageExportServicePort {
+  public lastReferenceRequest: { userId: string; entityId: string; refId: string } | null = null;
+  public lastCandidateRequest: { userId: string; entityId: string; s3Key: string } | null = null;
+
+  public async exportReferenceImage(
+    userId: string,
+    requestedEntityId: string,
+    refId: string,
+  ): Promise<ExportedEntityReferenceImage> {
+    this.lastReferenceRequest = { userId, entityId: requestedEntityId, refId };
+
+    return {
+      imageData: Buffer.from('reference-image'),
+      mimeType: 'image/png',
+    };
+  }
+
+  public async exportCandidateImage(
+    userId: string,
+    requestedEntityId: string,
+    s3Key: string,
+  ): Promise<ExportedEntityReferenceImage> {
+    this.lastCandidateRequest = { userId, entityId: requestedEntityId, s3Key };
+
+    return {
+      imageData: Buffer.from('reference-image'),
+      mimeType: 'image/png',
+    };
+  }
+}
+
 describe('entity routes', () => {
   it('JWTが正しい場合にエンティティを作成できる', async () => {
     const app = createTestApp();
@@ -247,7 +283,8 @@ describe('entity routes', () => {
     });
 
     expect(response.status).toBe(201);
-    await expect(response.json()).resolves.toMatchObject({
+    const payload = (await response.json()) as Record<string, unknown>;
+    expect(payload).toMatchObject({
       id: entityId,
       work_id: workId,
       entity_type: 'character',
@@ -255,6 +292,31 @@ describe('entity routes', () => {
       prompt_supplement: 'anime heroine',
       status: 'draft',
     });
+    expect(payload).not.toHaveProperty('user_id');
+  });
+
+  it('entity read responses do not expose internal user ids', async () => {
+    const app = createTestApp();
+    const token = await createToken();
+    const authHeaders = {
+      Authorization: `Bearer ${token}`,
+    };
+
+    const listResponse = await app.request(`/api/works/${workId}/entities`, {
+      headers: authHeaders,
+    });
+    const getResponse = await app.request(`/api/entities/${entityId}`, {
+      headers: authHeaders,
+    });
+
+    expect(listResponse.status).toBe(200);
+    expect(getResponse.status).toBe(200);
+
+    const listPayload = (await listResponse.json()) as { entities: Array<Record<string, unknown>> };
+    const getPayload = (await getResponse.json()) as Record<string, unknown>;
+
+    expect(listPayload.entities[0]).not.toHaveProperty('user_id');
+    expect(getPayload).not.toHaveProperty('user_id');
   });
 
   it('未知キー付きの create body は 422 になる', async () => {
@@ -299,12 +361,50 @@ describe('entity routes', () => {
       suggested_fields: { art_style: 'anime' },
       prompt_supplement: 'anime heroine, full body, military uniform',
       tmp_image_s3_key: 'tmp/user-1/entities/imports/source.png',
-      tmp_image_cdn_url: 'https://cdn.lyra.test/tmp/user-1/entities/imports/source.png',
     });
     expect(referenceService.lastImportRequest).toMatchObject({
       userId: user.id,
       entityType: 'character',
     });
+  });
+
+  it('import-image uses the generation rate limit bucket', async () => {
+    const app = createTestApp();
+    const token = await createToken();
+
+    const response = await app.request('/api/entities/import-image', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        entity_type: 'character',
+        image_base64: 'data:image/png;base64,YWJj',
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get('x-ratelimit-limit')).toBe('10');
+  });
+
+  it('import-image は巨大な JSON body を service 呼び出し前に 413 にする', async () => {
+    const referenceService = new FakeEntityReferenceService();
+    const app = createTestApp(referenceService);
+    const token = await createToken();
+
+    const response = await app.request('/api/entities/import-image', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+        'Content-Length': String(REQUEST_BODY_LIMITS.ENTITY_IMPORT_JSON_BYTES + 1),
+      },
+      body: '{}',
+    });
+
+    expect(response.status).toBe(413);
+    expect(referenceService.lastImportRequest).toBeNull();
   });
 
   it('generate-reference は 202 と job_id を返す', async () => {
@@ -348,6 +448,25 @@ describe('entity routes', () => {
     });
   });
 
+  it('generate-reference は巨大な optional JSON body を 413 にする', async () => {
+    const referenceService = new FakeEntityReferenceService();
+    const app = createTestApp(referenceService);
+    const token = await createToken();
+
+    const response = await app.request(`/api/entities/${entityId}/generate-reference`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+        'Content-Length': String(REQUEST_BODY_LIMITS.SMALL_JSON_BYTES + 1),
+      },
+      body: '{}',
+    });
+
+    expect(response.status).toBe(413);
+    expect(referenceService.lastGenerateReferenceRequest).toBeNull();
+  });
+
   it('confirm は reference_set を返す', async () => {
     const referenceService = new FakeEntityReferenceService();
     const app = createTestApp(referenceService);
@@ -366,11 +485,19 @@ describe('entity routes', () => {
     });
 
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toMatchObject({
+    const payload = (await response.json()) as Record<string, unknown>;
+    expect(payload).toMatchObject({
       entity_id: entityId,
       primary_ref_id: 'ref-1',
       status: 'partial',
     });
+    const referenceImages = payload.reference_images as Array<Record<string, unknown>>;
+    expect(referenceImages[0]).toMatchObject({
+      ref_id: 'ref-1',
+      source: 'upload',
+    });
+    expect(referenceImages[0]).not.toHaveProperty('s3_key');
+    expect(referenceImages[0]).not.toHaveProperty('cdn_url');
     expect(referenceService.lastConfirmRequest).toEqual({
       selectedS3Keys: ['tmp/user-1/entities/imports/source.png'],
       primaryS3Key: undefined,
@@ -422,14 +549,63 @@ describe('entity routes', () => {
 
     expect(response.status).toBe(401);
   });
+  it('reference image export returns an authenticated image', async () => {
+    const exportService = new FakeEntityReferenceImageExportService();
+    const app = createTestApp(new FakeEntityReferenceService(), exportService);
+    const token = await createToken();
+
+    const response = await app.request(`/api/entities/${entityId}/reference/ref-1/image`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get('Content-Type')).toBe('image/png');
+    expect(response.headers.get('Cache-Control')).toBe('private, no-store');
+    expect(await response.text()).toBe('reference-image');
+    expect(exportService.lastReferenceRequest).toEqual({
+      userId: user.id,
+      entityId,
+      refId: 'ref-1',
+    });
+  });
+
+  it('reference candidate image export returns an authenticated image', async () => {
+    const exportService = new FakeEntityReferenceImageExportService();
+    const app = createTestApp(new FakeEntityReferenceService(), exportService);
+    const token = await createToken();
+    const s3Key = 'tmp/user-1/entities/imports/source.png';
+
+    const response = await app.request(
+      `/api/entities/${entityId}/reference-candidate-image?s3_key=${encodeURIComponent(s3Key)}`,
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      },
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get('Content-Type')).toBe('image/png');
+    expect(response.headers.get('Cache-Control')).toBe('private, no-store');
+    expect(await response.text()).toBe('reference-image');
+    expect(exportService.lastCandidateRequest).toEqual({
+      userId: user.id,
+      entityId,
+      s3Key,
+    });
+  });
 });
 
 function createTestApp(
   entityReferenceService: EntityReferenceServicePort = new FakeEntityReferenceService(),
+  entityReferenceImageExportService: EntityReferenceImageExportServicePort = new FakeEntityReferenceImageExportService(),
 ): ReturnType<typeof createApp> {
   return createApp({
     creditService: new FakeCreditService(),
     entityReferenceService,
+    entityReferenceImageExportService,
     entityService: new FakeEntityService(),
     enableDevAuthBypass: false,
     userProvisioningService: new FakeUserProvisioningService(),

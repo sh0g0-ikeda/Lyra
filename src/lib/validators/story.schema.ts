@@ -1,5 +1,4 @@
 import { z } from 'zod';
-import { hasConflictingEpisodeStoryInput } from '../../domain/episodeStoryInput.js';
 import { STORY_AI_LIMITS } from '../../domain/constants/storyAi.js';
 
 const text200 = z.string().trim().min(1).max(200);
@@ -87,26 +86,7 @@ export const createEpisodeBodySchema = z
     estimated_pages: z.number().int().min(1).max(STORY_AI_LIMITS.maxSkeletonPages).default(16),
     entities_involved: uuidArray.optional(),
   })
-  .strict()
-  .superRefine((body, context) => {
-    if (
-      hasConflictingEpisodeStoryInput({
-        storyInputMode: body.story_input_mode,
-        purpose: body.purpose ?? null,
-        introduction: body.introduction ?? null,
-        middle: body.middle ?? null,
-        climax: body.climax ?? null,
-        endingHook: body.ending_hook ?? null,
-        storyFullDraft: body.story_full_draft ?? null,
-      })
-    ) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: 'Choose either split story fields or the whole story draft, not both',
-        path: ['story_full_draft'],
-      });
-    }
-  });
+  .strict();
 
 export const updateEpisodeBodySchema = z
   .object({
@@ -124,25 +104,6 @@ export const updateEpisodeBodySchema = z
     status: statusSchema.optional(),
   })
   .strict()
-  .superRefine((body, context) => {
-    if (
-      hasConflictingEpisodeStoryInput({
-        storyInputMode: body.story_input_mode ?? 'structured',
-        purpose: body.purpose ?? null,
-        introduction: body.introduction ?? null,
-        middle: body.middle ?? null,
-        climax: body.climax ?? null,
-        endingHook: body.ending_hook ?? null,
-        storyFullDraft: body.story_full_draft ?? null,
-      })
-    ) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: 'Choose either split story fields or the whole story draft, not both',
-        path: ['story_full_draft'],
-      });
-    }
-  })
   .refine((body) => Object.keys(body).length > 0, {
     message: 'At least one field is required',
   });

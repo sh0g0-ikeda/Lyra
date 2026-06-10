@@ -1,5 +1,5 @@
-import { CREDIT_COSTS } from '../../domain/constants/credits.js';
 import { ENTITY_REFERENCE_GENERATION } from '../../domain/constants/entityReference.js';
+import { OPENAI_INPUT_IMAGE_MAX_BYTES } from '../../domain/constants/imageInput.js';
 import { ConfigurationError } from '../../domain/errors/index.js';
 import { sanitizePersistedErrorMessage } from '../../lib/errorSanitizer.js';
 import type {
@@ -21,6 +21,7 @@ import type {
   CompiledEntityReferencePrompt,
   EntityReferencePromptCompilerPort,
 } from './EntityReferencePromptCompiler.js';
+import { ensureAllowedReferenceSourceKey } from './EntityReferenceSourceKeyPolicy.js';
 
 export interface ProcessEntityGenerationJobResult {
   status: 'processed' | 'skipped';
@@ -37,9 +38,15 @@ export class EntityGenerationWorkerService {
     private readonly imageStorage: EntityImageStoragePort,
     private readonly creditService: CreditServicePort,
     private readonly storedImageLoader: StoredImageLoaderPort,
+    private readonly imageModel: string = ENTITY_REFERENCE_GENERATION.MODEL,
+    private readonly generationEnabled = true,
   ) {}
 
   public async processJob(jobId: string): Promise<ProcessEntityGenerationJobResult> {
+    if (!this.generationEnabled) {
+      throw new ConfigurationError('Entity generation worker is temporarily disabled');
+    }
+
     const job = await this.executionRepository.claimQueuedEntityGenerationJob(jobId);
     if (job === null) {
       return { status: 'skipped' };
@@ -63,13 +70,15 @@ export class EntityGenerationWorkerService {
       const draftPrompt = this.promptBuilder.buildGenerationPrompt(entity);
       const compilerBrief = this.promptBuilder.buildCompilerBrief(entity);
       const compiled = await compilePromptSafely(this.promptCompiler, entity, draftPrompt, compilerBrief);
-      const inputImages = await buildGeneratorInputImages(params, this.storedImageLoader);
+      const inputImages = await buildGeneratorInputImages(params, job.userId, this.storedImageLoader);
       const generationPrompt = buildPreviewVariationPrompt(
         compiled.prompt,
         job.id,
         params.source_s3_key !== undefined,
       );
       const generated = await this.generator.generateCandidates({ prompt: generationPrompt, inputImages });
+      assertGeneratedCandidates(generated.candidates);
+
       const storedCandidates = [];
 
       for (let index = 0; index < generated.candidates.length; index += 1) {
@@ -104,7 +113,7 @@ export class EntityGenerationWorkerService {
         compilerModel: compiled.compilerModel,
         compilerPromptVersion: compiled.compilerPromptVersion,
         compilerError: compiled.compilerProvider === 'none' ? 'Entity prompt compiler fallback used' : null,
-        imageModel: ENTITY_REFERENCE_GENERATION.MODEL,
+        imageModel: this.imageModel,
         imageParams: {
           quality: ENTITY_REFERENCE_GENERATION.QUALITY,
           size: ENTITY_REFERENCE_GENERATION.SIZE,
@@ -140,17 +149,36 @@ export class EntityGenerationWorkerService {
       errorMessage,
     });
     if (!failed) {
-      throw new ConfigurationError('Failed to mark entity generation job as failed');
+      return;
     }
 
-    if (creditCost >= CREDIT_COSTS.ENTITY_GENERATION) {
-      await this.creditService.refundCredits({
-        userId,
-        amount: creditCost,
-        description: 'Refund for failed entity generation job',
-        jobId,
-      });
+    if (creditCost > 0) {
+      try {
+        await this.creditService.refundCredits({
+          userId,
+          amount: creditCost,
+          description: 'Refund for failed entity generation job',
+          jobId,
+        });
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        console.warn(
+          `[entity-generation-worker] failed to refund failed job ${jobId}; recovery will retry missing refund ledger: ${reason}`,
+        );
+      }
     }
+  }
+}
+
+function assertGeneratedCandidates(
+  candidates: Array<{ imageData: Buffer; mimeType: string }>,
+): void {
+  if (candidates.length === 0) {
+    throw new ConfigurationError('Entity reference generator returned no candidates');
+  }
+
+  if (candidates.some((candidate) => candidate.imageData.length === 0)) {
+    throw new ConfigurationError('Entity reference generator returned empty image data');
   }
 }
 
@@ -184,15 +212,17 @@ function buildPreviewVariationPrompt(
 ): string {
   const profile = PREVIEW_VARIATION_PROFILES[selectPreviewVariationProfileIndex(jobId)];
   const sourceImageInstruction = isImageConditioned
-    ? 'Respect the uploaded source image as the core identity anchor, but do not simply recreate the exact same pose, crop, or fold pattern from earlier previews.'
-    : 'Do not simply recreate the exact same pose, crop, or fold pattern from earlier previews.';
+    ? 'Use the uploaded source image only as a user-supplied visual anchor for this request; if it conflicts with the current saved text, obey the current saved text.'
+    : 'No source image is attached, so the current saved text prompt is the only visual source.';
 
   return [
     prompt.trim(),
     '',
-    'Treat this output as a fresh preview variation of the same character reference.',
+    'Create this as a new reference preview from the current saved entity inputs only.',
+    'Do not preserve, restore, imitate, or edit any previous generated preview or any previously confirmed reference image unless it is explicitly attached in this request.',
+    'If the current saved text differs from earlier previews, the current saved text must win.',
     sourceImageInstruction,
-    'Keep the same identity, face shape, hair silhouette, body proportions, and outfit silhouette, but vary only neutral presentation details such as stance weight distribution, arm spacing, head tilt, hair strand grouping, and fabric fold rhythm.',
+    'Use a clearly new neutral presentation while keeping the authored subject readable.',
     `Variation profile ${profile.code}: ${profile.instruction}`,
   ].join(' ');
 }
@@ -254,16 +284,27 @@ async function compilePromptSafely(
 
 async function buildGeneratorInputImages(
   params: PersistedEntityGenerationJobParams,
+  userId: string,
   storedImageLoader: StoredImageLoaderPort,
 ): Promise<Array<{ dataUrl: string }>> {
   if (params.source_s3_key === undefined) {
     return [];
   }
 
+  ensureAllowedReferenceSourceKey(params.source_s3_key, userId, params.entity_id, 'source_s3_key');
   const loadedImage = await storedImageLoader.loadByS3Key(params.source_s3_key);
+  ensureInputImageWithinLimit(loadedImage.imageData);
   return [
     {
       dataUrl: `data:${loadedImage.mimeType};base64,${loadedImage.imageData.toString('base64')}`,
     },
   ];
+}
+
+function ensureInputImageWithinLimit(imageData: Buffer): void {
+  if (imageData.length > OPENAI_INPUT_IMAGE_MAX_BYTES) {
+    throw new ConfigurationError(
+      `Entity generation input image is too large. Maximum size is ${OPENAI_INPUT_IMAGE_MAX_BYTES} bytes.`,
+    );
+  }
 }

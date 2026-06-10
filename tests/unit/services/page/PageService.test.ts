@@ -5,6 +5,7 @@ import {
   NotFoundError,
   ValidationError,
 } from '../../../../src/domain/errors/index.js';
+import { STORY_AI_LIMITS } from '../../../../src/domain/constants/storyAi.js';
 import type {
   EpisodePagePlanApplyResult,
   EpisodePagePlanContext,
@@ -438,6 +439,39 @@ describe('PageService', () => {
     ]);
   });
 
+  it('scene autofill compiler brief compacts long story context', async () => {
+    const pageRepository = new FakePageRepository();
+    const panelRepository = new FakePanelRepository();
+    const assignmentService = new FakePanelEntityAssignmentService();
+    const compiler = new FakePageAutofillCompiler();
+    const longIntroduction = 'page-autofill-overflow-intro '.repeat(80).trim();
+    const longKeyBeat = 'page-autofill-overflow-keybeat '.repeat(80).trim();
+    pageRepository.autofillContext = {
+      ...pageRepository.autofillContext!,
+      introduction: longIntroduction,
+      chapterKeyBeats: [longKeyBeat],
+      scenes: Array.from({ length: 60 }, (_unused, index) => ({
+        id: `scene-${index + 1}`,
+        order: index + 1,
+        location: `Long corridor ${index + 1}`,
+        time: 'Night',
+        atmosphere: `page-autofill-overflow-scene ${index + 1}`,
+        involvedEntityIds: ['11111111-1111-4111-8111-111111111111'],
+        entityStates: [],
+      })),
+    };
+    const service = new PageService(pageRepository, panelRepository, assignmentService, compiler);
+
+    await service.autofillFromScenes('user-1', 'page-1', 'ja');
+
+    const compilerBrief = compiler.lastInput?.compilerBrief ?? '';
+    expect(compilerBrief).toContain('page-autofill-overflow-intro');
+    expect(compilerBrief).not.toContain(longIntroduction);
+    expect(compilerBrief).toContain('page-autofill-overflow-keybeat');
+    expect(compilerBrief).not.toContain(longKeyBeat);
+    expect(compilerBrief).not.toContain('Scene 60');
+  });
+
   it('scene autofill は compiler が出していない creative 欄を補完保存しない', async () => {
     const pageRepository = new FakePageRepository();
     const panelRepository = new FakePanelRepository();
@@ -718,6 +752,51 @@ describe('PageService', () => {
     });
   });
 
+  it('episode story plan compiler brief compacts long story context', async () => {
+    const pageRepository = new FakePageRepository();
+    const panelRepository = new FakePanelRepository();
+    const assignmentService = new FakePanelEntityAssignmentService();
+    const episodeCompiler = new FakeEpisodePagePlanCompiler();
+    const longIntroduction = 'episode-plan-overflow-intro '.repeat(80).trim();
+    const longKeyBeat = 'episode-plan-overflow-keybeat '.repeat(80).trim();
+    pageRepository.episodePlanningContext = {
+      ...pageRepository.episodePlanningContext!,
+      chapter: {
+        ...pageRepository.episodePlanningContext!.chapter,
+        keyBeats: [longKeyBeat],
+      },
+      episode: {
+        ...pageRepository.episodePlanningContext!.episode,
+        introduction: longIntroduction,
+      },
+      scenes: Array.from({ length: 60 }, (_unused, index) => ({
+        id: `scene-${index + 1}`,
+        order: index + 1,
+        location: `Episode corridor ${index + 1}`,
+        time: 'Night',
+        atmosphere: `episode-plan-overflow-scene ${index + 1}`,
+        involvedEntityIds: ['11111111-1111-4111-8111-111111111111'],
+        entityStates: [],
+      })),
+    };
+    const service = new PageService(
+      pageRepository,
+      panelRepository,
+      assignmentService,
+      new FakePageAutofillCompiler(),
+      episodeCompiler,
+    );
+
+    await service.autofillEpisodeFromStory('user-1', 'episode-1', 'ja');
+
+    const compilerBrief = episodeCompiler.lastInput?.compilerBrief ?? '';
+    expect(compilerBrief).toContain('episode-plan-overflow-intro');
+    expect(compilerBrief).not.toContain(longIntroduction);
+    expect(compilerBrief).toContain('episode-plan-overflow-keybeat');
+    expect(compilerBrief).not.toContain(longKeyBeat);
+    expect(compilerBrief).not.toContain('Scene 60');
+  });
+
   it('episode story plan は sparse compiler suggestion に fallback creative text を混ぜない', async () => {
     const pageRepository = new FakePageRepository();
     const panelRepository = new FakePanelRepository();
@@ -872,6 +951,32 @@ describe('PageService', () => {
         text: '……まだ整理しきれない。',
       }),
     ]);
+  });
+
+  it('episode story plan は skeleton 上限を超えるページ数を compiler に渡さない', async () => {
+    const pageRepository = new FakePageRepository();
+    const compiler = new FakeEpisodePagePlanCompiler();
+    const baseContext = buildEpisodePlanningContext();
+    pageRepository.episodePlanningContext = {
+      ...baseContext,
+      pages: Array.from({ length: STORY_AI_LIMITS.maxSkeletonPages + 1 }, (_value, index) => ({
+        ...baseContext.pages[0]!,
+        pageId: `page-${index + 1}`,
+        pageNumber: index + 1,
+      })),
+    };
+    const service = new PageService(
+      pageRepository,
+      new FakePanelRepository(),
+      new FakePanelEntityAssignmentService(),
+      new FakePageAutofillCompiler(),
+      compiler,
+    );
+
+    await expect(service.autofillEpisodeFromStory('user-1', 'episode-1', 'ja')).rejects.toMatchObject({
+      code: 'VALIDATION_ERROR',
+    });
+    expect(compiler.lastInput).toBeNull();
   });
 
   it('episode story plan は page 主役が別にいる時 thought を visible primary ではなく page lead へ寄せる', async () => {

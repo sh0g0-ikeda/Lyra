@@ -1,4 +1,5 @@
 import { ConfigurationError } from '../../domain/errors/index.js';
+import { PAGE_GENERATION_INTERNAL_PLAN_MAX_CHARS } from '../../domain/constants/generation.js';
 import { sanitizePersistedErrorMessage } from '../../lib/errorSanitizer.js';
 import type { GenerationJob } from '../../domain/types/job.js';
 import type {
@@ -104,9 +105,14 @@ export class PageGenerationWorkerService {
     private readonly renderer: PageImageRendererPort,
     private readonly storage: PageImageStoragePort,
     private readonly creditService: CreditServicePort,
+    private readonly generationEnabled = true,
   ) {}
 
   public async processJob(jobId: string): Promise<ProcessPageGenerationJobResult> {
+    if (!this.generationEnabled) {
+      throw new ConfigurationError('Page generation worker is temporarily disabled');
+    }
+
     const job = await this.executionRepository.claimQueuedPageGenerationJob(jobId);
     if (job === null) {
       return { status: 'skipped' };
@@ -157,6 +163,7 @@ export class PageGenerationWorkerService {
         internalPlan,
         inputImages,
       });
+      assertRenderedPageImage(renderResult);
 
       const storedImage = await this.storage.store({
         jobId: job.id,
@@ -202,17 +209,31 @@ export class PageGenerationWorkerService {
       previousStatus: compensation?.previousStatus,
       previousGenerationMode: compensation?.previousGenerationMode,
     });
-
     if (!failed) {
-      throw new ConfigurationError('Failed to mark page generation job as failed');
+      return;
     }
 
-    await this.creditService.refundCredits({
-      userId: job.userId,
-      amount: job.creditCost,
-      description: 'Refund for failed page generation job',
-      jobId: job.id,
-    });
+    if (job.creditCost > 0) {
+      try {
+        await this.creditService.refundCredits({
+          userId: job.userId,
+          amount: job.creditCost,
+          description: 'Refund for failed page generation job',
+          jobId: job.id,
+        });
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        console.warn(
+          `[page-generation-worker] failed to refund failed job ${job.id}; recovery will retry missing refund ledger: ${reason}`,
+        );
+      }
+    }
+  }
+}
+
+function assertRenderedPageImage(renderResult: RenderPageImageResult): void {
+  if (renderResult.imageData.length === 0) {
+    throw new ConfigurationError('Page image renderer returned empty image data');
   }
 }
 
@@ -291,7 +312,7 @@ async function compilePromptSafely(
         compilerModel: null,
         compilerPromptVersion: null,
       },
-      compilerError: error.message,
+      compilerError: sanitizePersistedErrorMessage(error, 'Page prompt compiler failed'),
     };
   }
 }
@@ -470,7 +491,15 @@ function parsePersistedParams(value: Record<string, unknown>): PersistedPageGene
 
 function normalizeOptionalInternalPlan(value: string): string | null {
   const trimmed = value.trim();
-  return trimmed.length === 0 ? null : trimmed;
+  if (trimmed.length === 0) {
+    return null;
+  }
+
+  if (trimmed.length <= PAGE_GENERATION_INTERNAL_PLAN_MAX_CHARS) {
+    return trimmed;
+  }
+
+  return `${trimmed.slice(0, PAGE_GENERATION_INTERNAL_PLAN_MAX_CHARS - 3).trimEnd()}...`;
 }
 
 function extractFailureCompensation(value: Record<string, unknown>): FailureCompensation | null {

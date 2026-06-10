@@ -6,7 +6,6 @@ export type GenerationJobType = 'page_generate' | 'entity_generate';
 
 export interface WorkRecord {
   id: string;
-  user_id: string;
   title: string;
   genre: string | null;
   world_setting: string | null;
@@ -16,7 +15,6 @@ export interface WorkRecord {
   ending_point: string | null;
   overall_flow: string | null;
   version: number;
-  edit_history: Record<string, unknown>[];
   status: StoryStatus;
   created_at: string;
   updated_at: string;
@@ -34,7 +32,6 @@ export interface ChapterRecord {
   entities_involved: string[];
   key_beats: string[];
   version: number;
-  edit_history: Record<string, unknown>[];
   status: StoryStatus;
   created_at: string;
   updated_at: string;
@@ -56,7 +53,6 @@ export interface EpisodeRecord {
   entities_involved: string[];
   page_skeleton_generated: boolean;
   version: number;
-  edit_history: Record<string, unknown>[];
   status: StoryStatus;
   created_at: string;
   updated_at: string;
@@ -65,7 +61,6 @@ export interface EpisodeRecord {
 export interface EntityRecord {
   id: string;
   work_id: string;
-  user_id: string;
   entity_type: 'character' | 'nonhuman' | 'object';
   name: string;
   free_description: string | null;
@@ -79,8 +74,7 @@ export interface EntityRecord {
 
 export interface EntityReferenceImageRecord {
   ref_id: string;
-  s3_key: string;
-  cdn_url: string;
+  cdn_url?: string | null;
   source: 'upload' | 'generated';
   created_at: string;
 }
@@ -111,8 +105,7 @@ export interface SceneRecord {
 }
 
 export interface GeneratedImageRecord {
-  s3_key: string | null;
-  cdn_url: string | null;
+  cdn_url?: string | null;
   generation_mode: 'standard' | 'thinking' | null;
   generated_at: string | null;
 }
@@ -214,7 +207,7 @@ export interface BalloonRecord {
     tip_y: number;
   } | null;
   font_size: number;
-  font_family: string;
+  font_family: 'manga_gothic' | 'mincho' | 'rounded' | 'bold';
   panel_order_reference: number | null;
   z_index: number;
 }
@@ -240,7 +233,6 @@ export interface CompositionRecord {
   name: string;
   category: string;
   entity_count: number;
-  preview_s3_key: string | null;
   preview_cdn_url: string | null;
   composition_prompt: string;
   shot_type: string | null;

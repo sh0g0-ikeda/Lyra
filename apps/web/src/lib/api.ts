@@ -173,7 +173,6 @@ export class LyraApiClient {
     suggested_fields: Record<string, unknown>;
     prompt_supplement: string;
     tmp_image_s3_key: string;
-    tmp_image_cdn_url: string;
   }> {
     return this.request('/api/entities/import-image', { method: 'POST', body });
   }
@@ -298,6 +297,22 @@ export class LyraApiClient {
     });
   }
 
+  public applyPageLayoutTemplate(pageId: string, templateId: string, allowPanelTruncation: boolean): Promise<{
+    template_id: string;
+    panel_count: number;
+    created_panel_count: number;
+    deleted_panel_count: number;
+    frames: PanelFrameRecord[];
+  }> {
+    return this.request(`/api/pages/${pageId}/layout-template`, {
+      method: 'POST',
+      body: {
+        template_id: templateId,
+        allow_panel_truncation: allowPanelTruncation,
+      },
+    });
+  }
+
   public replaceFrames(pageId: string, body: Record<string, unknown>): Promise<{ frames: PanelFrameRecord[] }> {
     return this.request(`/api/pages/${pageId}/frames`, { method: 'PUT', body });
   }
@@ -357,6 +372,37 @@ export class LyraApiClient {
 
   public async exportPageImage(pageId: string): Promise<BlobResponse> {
     const response = await fetch(this.toUrl(`/api/pages/${pageId}/export-image`), this.buildRequest({ method: 'GET' }));
+    if (!response.ok) {
+      throw await this.toApiError(response);
+    }
+
+    return {
+      blob: await response.blob(),
+      contentType: response.headers.get('Content-Type'),
+    };
+  }
+
+  public async exportEntityReferenceImage(entityId: string, refId: string): Promise<BlobResponse> {
+    const response = await fetch(
+      this.toUrl(`/api/entities/${entityId}/reference/${encodeURIComponent(refId)}/image`),
+      this.buildRequest({ method: 'GET' }),
+    );
+    if (!response.ok) {
+      throw await this.toApiError(response);
+    }
+
+    return {
+      blob: await response.blob(),
+      contentType: response.headers.get('Content-Type'),
+    };
+  }
+
+  public async exportEntityReferenceCandidateImage(entityId: string, s3Key: string): Promise<BlobResponse> {
+    const params = new URLSearchParams({ s3_key: s3Key });
+    const response = await fetch(
+      this.toUrl(`/api/entities/${entityId}/reference-candidate-image?${params.toString()}`),
+      this.buildRequest({ method: 'GET' }),
+    );
     if (!response.ok) {
       throw await this.toApiError(response);
     }

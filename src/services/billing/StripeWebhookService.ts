@@ -29,11 +29,19 @@ export class StripeWebhookService implements StripeWebhookServicePort {
   ) {}
 
   public async handleWebhook(rawBody: Buffer, signature: string): Promise<void> {
-    const event = this.stripeClient.constructWebhookEvent(rawBody, signature);
+    const event = this.constructVerifiedWebhookEvent(rawBody, signature);
+
+    if (await this.billingRepository.hasStripeEventProcessed(event.id)) {
+      return;
+    }
 
     switch (event.type) {
       case 'checkout.session.completed':
+      case 'checkout.session.async_payment_succeeded':
         await this.handleCheckoutSessionCompleted(event);
+        return;
+      case 'checkout.session.async_payment_failed':
+        await this.handleCheckoutSessionAsyncPaymentFailed(event);
         return;
       case 'invoice.paid':
         await this.handleInvoicePaid(event);
@@ -54,6 +62,14 @@ export class StripeWebhookService implements StripeWebhookServicePort {
     }
   }
 
+  private constructVerifiedWebhookEvent(rawBody: Buffer, signature: string): Stripe.Event {
+    try {
+      return this.stripeClient.constructWebhookEvent(rawBody, signature);
+    } catch {
+      throw new ValidationError('Stripe webhook signature verification failed');
+    }
+  }
+
   private async handleCheckoutSessionCompleted(event: Stripe.Event): Promise<void> {
     const session = event.data.object as Stripe.Checkout.Session;
     const userId = requireMetadataValue(session.metadata, 'user_id') ?? session.client_reference_id;
@@ -62,6 +78,11 @@ export class StripeWebhookService implements StripeWebhookServicePort {
 
     if (userId === null || stripeCustomerId === null) {
       throw new ValidationError('Checkout session is missing user_id or customer');
+    }
+
+    if (session.payment_status !== 'paid') {
+      await this.markEventProcessedOnly(event);
+      return;
     }
 
     if (kind === 'subscription') {
@@ -73,13 +94,25 @@ export class StripeWebhookService implements StripeWebhookServicePort {
 
       const subscription = await this.stripeClient.retrieveSubscription(stripeSubscriptionId);
       const resolvedPlanCode = this.resolvePlanCodeFromSubscription(subscription, planCode);
+      const paidAmountJpy = session.amount_total ?? 0;
+      const minimumAmountJpy = SUBSCRIPTION_PLAN_DEFINITIONS[resolvedPlanCode].amountJpy;
+      if (paidAmountJpy < minimumAmountJpy) {
+        await this.recordUnderpaidCheckoutSession(event, {
+          userId,
+          stripeCustomerId,
+          sessionId: session.id,
+          kind: 'subscription',
+          amountJpy: paidAmountJpy,
+        });
+        return;
+      }
 
       await this.billingRepository.transaction(async (client) => {
         if (!(await this.billingRepository.markStripeEventProcessed(event.id, event.type, client))) {
           return;
         }
 
-        await this.billingRepository.setStripeCustomerId(userId, stripeCustomerId, client);
+        await this.requireStripeCustomerBinding(userId, stripeCustomerId, client);
         await this.billingRepository.upsertSubscription(
           {
             userId,
@@ -93,17 +126,7 @@ export class StripeWebhookService implements StripeWebhookServicePort {
           client,
         );
         await this.requirePlanUpdate(userId, resolvedPlanCode, client);
-        await this.billingCreditGrantService.grantMonthlyCredits(
-          {
-            userId,
-            amount: SUBSCRIPTION_PLAN_DEFINITIONS[resolvedPlanCode].monthlyCredits,
-            description: `Initial monthly subscription grant for ${resolvedPlanCode}`,
-            expiresAt: subscriptionCurrentPeriodEnd(subscription),
-            stripeEventId: event.id,
-          },
-          client,
-        );
-        await this.billingRepository.insertPaymentRecord(
+        const paymentInserted = await this.billingRepository.insertPaymentRecord(
           {
             userId,
             stripeCheckoutSessionId: session.id,
@@ -114,6 +137,18 @@ export class StripeWebhookService implements StripeWebhookServicePort {
           },
           client,
         );
+        if (paymentInserted) {
+          await this.billingCreditGrantService.grantMonthlyCredits(
+            {
+              userId,
+              amount: SUBSCRIPTION_PLAN_DEFINITIONS[resolvedPlanCode].monthlyCredits,
+              description: `Initial monthly subscription grant for ${resolvedPlanCode}`,
+              expiresAt: subscriptionCurrentPeriodEnd(subscription),
+              stripeEventId: event.id,
+            },
+            client,
+          );
+        }
       });
 
       return;
@@ -121,23 +156,26 @@ export class StripeWebhookService implements StripeWebhookServicePort {
 
     if (kind === 'credit_purchase') {
       const packageCode = requireCreditPackageCode(requireMetadataValue(session.metadata, 'package_code'));
+      const paidAmountJpy = session.amount_total ?? 0;
+      const minimumAmountJpy = CREDIT_PACKAGE_DEFINITIONS[packageCode].amountJpy;
+      if (paidAmountJpy < minimumAmountJpy) {
+        await this.recordUnderpaidCheckoutSession(event, {
+          userId,
+          stripeCustomerId,
+          sessionId: session.id,
+          kind: 'credit_purchase',
+          amountJpy: paidAmountJpy,
+        });
+        return;
+      }
 
       await this.billingRepository.transaction(async (client) => {
         if (!(await this.billingRepository.markStripeEventProcessed(event.id, event.type, client))) {
           return;
         }
 
-        await this.billingRepository.setStripeCustomerId(userId, stripeCustomerId, client);
-        await this.billingCreditGrantService.grantPurchasedCredits(
-          {
-            userId,
-            amount: CREDIT_PACKAGE_DEFINITIONS[packageCode].purchasedCredits,
-            description: `Stripe credit purchase for ${packageCode}`,
-            stripeEventId: event.id,
-          },
-          client,
-        );
-        await this.billingRepository.insertPaymentRecord(
+        await this.requireStripeCustomerBinding(userId, stripeCustomerId, client);
+        const paymentInserted = await this.billingRepository.insertPaymentRecord(
           {
             userId,
             stripeCheckoutSessionId: session.id,
@@ -148,11 +186,122 @@ export class StripeWebhookService implements StripeWebhookServicePort {
           },
           client,
         );
+        if (paymentInserted) {
+          await this.billingCreditGrantService.grantPurchasedCredits(
+            {
+              userId,
+              amount: CREDIT_PACKAGE_DEFINITIONS[packageCode].purchasedCredits,
+              description: `Stripe credit purchase for ${packageCode}`,
+              stripeEventId: event.id,
+            },
+            client,
+          );
+        }
       });
 
       return;
     }
 
+    await this.billingRepository.transaction(async (client) => {
+      await this.billingRepository.markStripeEventProcessed(event.id, event.type, client);
+    });
+  }
+
+  private async handleCheckoutSessionAsyncPaymentFailed(event: Stripe.Event): Promise<void> {
+    const session = event.data.object as Stripe.Checkout.Session;
+    const userId = requireMetadataValue(session.metadata, 'user_id') ?? session.client_reference_id;
+    const kind = requireMetadataValue(session.metadata, 'kind');
+    const stripeCustomerId = typeof session.customer === 'string' ? session.customer : null;
+
+    if (userId === null || stripeCustomerId === null) {
+      await this.markEventProcessedOnly(event);
+      return;
+    }
+
+    const paymentRecordKind = checkoutPaymentRecordKind(kind);
+    await this.billingRepository.transaction(async (client) => {
+      if (!(await this.billingRepository.markStripeEventProcessed(event.id, event.type, client))) {
+        return;
+      }
+
+      await this.requireStripeCustomerBinding(userId, stripeCustomerId, client);
+
+      if (paymentRecordKind === null) {
+        return;
+      }
+
+      await this.billingRepository.insertPaymentRecord(
+        {
+          userId,
+          stripeCheckoutSessionId: session.id,
+          stripeInvoiceId: null,
+          kind: paymentRecordKind,
+          amountJpy: session.amount_total ?? 0,
+          status: 'failed',
+        },
+        client,
+      );
+    });
+  }
+
+  private async recordUnderpaidCheckoutSession(
+    event: Stripe.Event,
+    input: {
+      userId: string;
+      stripeCustomerId: string;
+      sessionId: string;
+      kind: 'subscription' | 'credit_purchase';
+      amountJpy: number;
+    },
+  ): Promise<void> {
+    await this.billingRepository.transaction(async (client) => {
+      if (!(await this.billingRepository.markStripeEventProcessed(event.id, event.type, client))) {
+        return;
+      }
+
+      await this.requireStripeCustomerBinding(input.userId, input.stripeCustomerId, client);
+      await this.billingRepository.insertPaymentRecord(
+        {
+          userId: input.userId,
+          stripeCheckoutSessionId: input.sessionId,
+          stripeInvoiceId: null,
+          kind: input.kind,
+          amountJpy: input.amountJpy,
+          status: 'failed',
+        },
+        client,
+      );
+    });
+  }
+
+  private async recordUnderpaidSubscriptionInvoice(
+    event: Stripe.Event,
+    input: {
+      userId: string;
+      invoiceId: string;
+      amountJpy: number;
+    },
+  ): Promise<void> {
+    await this.billingRepository.transaction(async (client) => {
+      if (!(await this.billingRepository.markStripeEventProcessed(event.id, event.type, client))) {
+        return;
+      }
+
+      await this.billingRepository.insertPaymentRecord(
+        {
+          userId: input.userId,
+          stripeCheckoutSessionId: null,
+          stripeInvoiceId: input.invoiceId,
+          kind: 'subscription',
+          amountJpy: input.amountJpy,
+          status: 'failed',
+        },
+        client,
+      );
+    });
+  }
+
+  private async markEventProcessedOnly(event: Stripe.Event): Promise<void> {
     await this.billingRepository.transaction(async (client) => {
       await this.billingRepository.markStripeEventProcessed(event.id, event.type, client);
     });
@@ -178,6 +327,17 @@ export class StripeWebhookService implements StripeWebhookServicePort {
       throw new NotFoundError('Billing user not found for Stripe customer');
     }
 
+    const paidAmountJpy = invoice.amount_paid;
+    const minimumAmountJpy = SUBSCRIPTION_PLAN_DEFINITIONS[planCode].amountJpy;
+    if (paidAmountJpy < minimumAmountJpy) {
+      await this.recordUnderpaidSubscriptionInvoice(event, {
+        userId: billingUser.userId,
+        invoiceId: invoice.id,
+        amountJpy: paidAmountJpy,
+      });
+      return;
+    }
+
     await this.billingRepository.transaction(async (client) => {
       if (!(await this.billingRepository.markStripeEventProcessed(event.id, event.type, client))) {
         return;
@@ -197,7 +357,19 @@ export class StripeWebhookService implements StripeWebhookServicePort {
       );
       await this.requirePlanUpdate(billingUser.userId, planCode, client);
 
-      if (invoice.billing_reason === 'subscription_cycle') {
+      const paymentInserted = await this.billingRepository.insertPaymentRecord(
+        {
+          userId: billingUser.userId,
+          stripeCheckoutSessionId: null,
+          stripeInvoiceId: invoice.id,
+          kind: 'subscription',
+          amountJpy: invoice.amount_paid,
+          status: 'paid',
+        },
+        client,
+      );
+
+      if (invoice.billing_reason === 'subscription_cycle' && paymentInserted) {
         await this.billingCreditGrantService.grantMonthlyCredits(
           {
             userId: billingUser.userId,
@@ -209,24 +381,13 @@ export class StripeWebhookService implements StripeWebhookServicePort {
           client,
         );
       }
-
-      await this.billingRepository.insertPaymentRecord(
-        {
-          userId: billingUser.userId,
-          stripeCheckoutSessionId: null,
-          stripeInvoiceId: invoice.id,
-          kind: 'subscription',
-          amountJpy: invoice.amount_paid,
-          status: 'paid',
-        },
-        client,
-      );
     });
   }
 
   private async handleInvoicePaymentFailed(event: Stripe.Event): Promise<void> {
     const invoice = event.data.object as Stripe.Invoice;
     const stripeCustomerId = getStringIdentifier(invoice.customer);
+    const stripeSubscriptionId = invoiceSubscriptionId(invoice);
 
     await this.billingRepository.transaction(async (client) => {
       if (!(await this.billingRepository.markStripeEventProcessed(event.id, event.type, client))) {
@@ -242,7 +403,15 @@ export class StripeWebhookService implements StripeWebhookServicePort {
         return;
       }
 
-      await this.requirePlanUpdate(billingUser.userId, 'free', client);
+      const nextPlanCode =
+        stripeSubscriptionId === null
+          ? 'free'
+          : await this.resolveFallbackPlanAfterSubscriptionDeactivation(
+              billingUser.userId,
+              stripeSubscriptionId,
+              client,
+            );
+      await this.requirePlanUpdate(billingUser.userId, nextPlanCode, client);
       await this.billingRepository.insertPaymentRecord(
         {
           userId: billingUser.userId,
@@ -293,8 +462,14 @@ export class StripeWebhookService implements StripeWebhookServicePort {
         client,
       );
 
-      const nextPlanCode: SubscriptionPlanCode =
-        subscription.status === 'active' || subscription.status === 'trialing' ? planCode : 'free';
+      const nextPlanCode =
+        subscription.status === 'active' || subscription.status === 'trialing'
+          ? planCode
+          : await this.resolveFallbackPlanAfterSubscriptionDeactivation(
+              billingUser.userId,
+              subscription.id,
+              client,
+            );
       await this.requirePlanUpdate(billingUser.userId, nextPlanCode, client);
     });
   }
@@ -319,8 +494,28 @@ export class StripeWebhookService implements StripeWebhookServicePort {
         return;
       }
 
-      await this.requirePlanUpdate(billingUser.userId, 'free', client);
+      const nextPlanCode = await this.resolveFallbackPlanAfterSubscriptionDeactivation(
+        billingUser.userId,
+        subscription.id,
+        client,
+      );
+      await this.requirePlanUpdate(billingUser.userId, nextPlanCode, client);
     });
+  }
+
+  private async resolveFallbackPlanAfterSubscriptionDeactivation(
+    userId: string,
+    stripeSubscriptionId: string,
+    client: DatabaseClient,
+  ): Promise<SubscriptionPlanCode> {
+    const activeSubscriptionPlan =
+      await this.billingRepository.findHighestActiveSubscriptionPlanForUserExcluding(
+        userId,
+        stripeSubscriptionId,
+        client,
+      );
+
+    return activeSubscriptionPlan ?? 'free';
   }
 
   private resolvePlanCodeFromSubscription(
@@ -355,6 +550,25 @@ export class StripeWebhookService implements StripeWebhookServicePort {
     const updated = await this.billingRepository.updateUserPlanCode(userId, planCode, client);
     if (!updated) {
       throw new NotFoundError('User not found while updating billing plan');
+    }
+  }
+
+  private async requireStripeCustomerBinding(
+    userId: string,
+    stripeCustomerId: string,
+    client: DatabaseClient,
+  ): Promise<void> {
+    const persistedStripeCustomerId = await this.billingRepository.setStripeCustomerId(
+      userId,
+      stripeCustomerId,
+      client,
+    );
+    if (persistedStripeCustomerId === null) {
+      throw new NotFoundError('User not found while binding Stripe customer');
+    }
+
+    if (persistedStripeCustomerId !== stripeCustomerId) {
+      throw new ValidationError('Stripe customer does not match billing user');
     }
   }
 }
@@ -414,4 +628,12 @@ function requireCreditPackageCode(value: string | null): CreditPackageCode {
   }
 
   throw new ValidationError('Stripe metadata package_code is invalid');
+}
+
+function checkoutPaymentRecordKind(value: string | null): 'subscription' | 'credit_purchase' | null {
+  if (value === 'subscription' || value === 'credit_purchase') {
+    return value;
+  }
+
+  return null;
 }

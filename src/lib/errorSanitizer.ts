@@ -4,9 +4,15 @@ const SENSITIVE_PATTERNS: Array<[RegExp, string]> = [
   [/\b(Authorization)\s*[:=]\s*Bearer\s+[A-Za-z0-9._~+/=-]+/giu, '$1: Bearer [redacted]'],
   [/\bBearer\s+[A-Za-z0-9._~+/=-]+/giu, 'Bearer [redacted]'],
   [/\bsk-[A-Za-z0-9_-]{8,}\b/gu, '[redacted-api-key]'],
-  [/\bAKIA[0-9A-Z]{16}\b/gu, '[redacted-aws-access-key]'],
-  [/(api[_-]?key|x-api-key|client_secret|webhook_secret)\s*[:=]\s*["']?[^"',\s}]+/giu, '$1=[redacted]'],
-  [/(X-Amz-Signature|Signature|sig)=([^&\s]+)/giu, '$1=[redacted]'],
+  [/\bsk_(live|test)_[A-Za-z0-9_-]{8,}\b/gu, '[redacted-stripe-secret-key]'],
+  [/\bwhsec_[A-Za-z0-9_-]{8,}\b/gu, '[redacted-stripe-webhook-secret]'],
+  [/\b[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\b/gu, '[redacted-jwt]'],
+  [/(X-Amz-(?:Signature|Credential|Security-Token)|Signature|sig)=([^&\s]+)/giu, '$1=[redacted]'],
+  [/\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/gu, '[redacted-aws-access-key]'],
+  [
+    /(api[_-]?key|x-api-key|client_secret|webhook_secret|stripe_secret_key|stripe_webhook_secret|aws_access_key_id|aws_secret_access_key|aws_session_token|access_key_id|secret_access_key|session_token|access_token|id_token|refresh_token|code_verifier)["']?\s*[:=]\s*["']?[^"',\s}]+/giu,
+    '$1=[redacted]',
+  ],
   [/data:image\/[a-z0-9.+-]+;base64,[A-Za-z0-9+/=]+/giu, 'data:image/[redacted]'],
 ];
 

@@ -22,6 +22,10 @@ import { isUniqueViolation } from '../../repositories/GenerationJobRepository.js
 import type { EntityReferenceRepository } from '../../repositories/EntityRepository.js';
 import type { CreditServicePort } from '../credit/CreditService.js';
 import type { EntityGenerationQueuePort } from './EntityGenerationQueue.js';
+import {
+  NoopEntityGenerationRecoveryService,
+  type EntityGenerationRecoveryServicePort,
+} from './EntityGenerationRecoveryService.js';
 import type { EntityImportAnalyzerPort } from '../../infrastructure/openai/OpenAIEntityImportAnalyzer.js';
 import type { EntityImageStoragePort } from '../../infrastructure/aws/S3EntityImageStorage.js';
 import {
@@ -29,6 +33,7 @@ import {
   DEFAULT_GENERATION_CAPACITY_LIMITS,
   type GenerationCapacityLimits,
 } from '../generation/GenerationCapacityGuard.js';
+import { ensureAllowedReferenceSourceKey } from './EntityReferenceSourceKeyPolicy.js';
 
 export interface ConfirmEntityReferencesRequest {
   selectedS3Keys: string[];
@@ -74,6 +79,8 @@ export class EntityReferenceService implements EntityReferenceServicePort {
     private readonly generationQueue: EntityGenerationQueuePort,
     private readonly capacityLimits: GenerationCapacityLimits = DEFAULT_GENERATION_CAPACITY_LIMITS,
     private readonly generationEnabled = true,
+    private readonly recoveryService: EntityGenerationRecoveryServicePort = new NoopEntityGenerationRecoveryService(),
+    private readonly importAnalysisEnabled = true,
   ) {}
 
   public async getReferenceSet(userId: string, entityId: string): Promise<EntityReferenceSet> {
@@ -96,23 +103,49 @@ export class EntityReferenceService implements EntityReferenceServicePort {
     if (uploadedImage.sizeBytes > ENTITY_IMPORT_MAX_FILE_SIZE_BYTES) {
       throw new ValidationError('Image file is too large');
     }
+    if (!imageDataMatchesDeclaredMimeType(uploadedImage)) {
+      throw new ValidationError('image_base64 content does not match declared image type');
+    }
+    if (!this.importAnalysisEnabled) {
+      throw new ConflictError('Entity import analysis is temporarily disabled');
+    }
 
-    const storedImage = await this.imageStorage.storeImportedImage({
-      userId,
-      imageData: uploadedImage.imageData,
-      mimeType: uploadedImage.mimeType,
-    });
-    const analysis = await this.imageAnalyzer.analyze({
-      entityType: input.entityType,
-      dataUrl: input.imageBase64,
-    });
+    let creditsConsumed = false;
+    try {
+      await this.creditService.consumeCredits({
+        userId,
+        cost: CREDIT_COSTS.ENTITY_IMPORT_ANALYSIS,
+        description: 'Entity import analysis',
+      });
+      creditsConsumed = true;
 
-    return {
-      suggestedFields: parseStructuredFields(input.entityType, analysis.suggestedFields),
-      promptSupplement: analysis.promptSupplement.slice(0, ENTITY_REFERENCE_LIMITS.MAX_PROMPT_SUPPLEMENT_LENGTH),
-      tmpImageS3Key: storedImage.s3Key,
-      tmpImageCdnUrl: storedImage.cdnUrl,
-    };
+      const storedImage = await this.imageStorage.storeImportedImage({
+        userId,
+        imageData: uploadedImage.imageData,
+        mimeType: uploadedImage.mimeType,
+      });
+      const analysis = await this.imageAnalyzer.analyze({
+        entityType: input.entityType,
+        dataUrl: input.imageBase64,
+      });
+
+      return {
+        suggestedFields: parseStructuredFields(input.entityType, analysis.suggestedFields),
+        promptSupplement: analysis.promptSupplement.slice(0, ENTITY_REFERENCE_LIMITS.MAX_PROMPT_SUPPLEMENT_LENGTH),
+        tmpImageS3Key: storedImage.s3Key,
+        tmpImageCdnUrl: storedImage.cdnUrl,
+      };
+    } catch (error) {
+      if (creditsConsumed) {
+        await this.creditService.refundCredits({
+          userId,
+          amount: CREDIT_COSTS.ENTITY_IMPORT_ANALYSIS,
+          description: 'Refund for failed entity import analysis',
+        });
+      }
+
+      throw error;
+    }
   }
 
   public async enqueueReferenceGeneration(
@@ -135,25 +168,31 @@ export class EntityReferenceService implements EntityReferenceServicePort {
     if (sourceS3Key !== null) {
       ensureAllowedReferenceSourceKey(sourceS3Key, userId, entityId);
     }
+
+    await this.recoveryService.recoverStaleJobsForEntity(userId, entity.entityId);
     await assertGenerationCapacity(this.generationJobRepository, userId, this.capacityLimits);
     await this.ensureNoActiveGenerationJob(userId, entity.entityId);
 
     let creditsConsumed = false;
-    let jobId: string | null = null;
+    const reservedJobId = randomUUID();
+    let createdJobId: string | null = null;
 
     try {
       await this.creditService.consumeCredits({
         userId,
         cost: CREDIT_COSTS.ENTITY_GENERATION,
         description: 'Entity reference generation',
+        jobId: reservedJobId,
       });
       creditsConsumed = true;
 
       const job = await this.generationJobRepository.create({
+        id: reservedJobId,
         userId,
         jobType: 'entity_generate',
         generationMode: null,
         creditCost: CREDIT_COSTS.ENTITY_GENERATION,
+        capacityLimits: this.capacityLimits,
         params: {
           entity_id: entity.entityId,
           entity_type: entity.entityType,
@@ -161,7 +200,7 @@ export class EntityReferenceService implements EntityReferenceServicePort {
           ...(sourceS3Key === null ? {} : { source_s3_key: sourceS3Key }),
         },
       });
-      jobId = job.id;
+      createdJobId = job.id;
 
       const enqueueResult = await this.generationQueue.enqueue({
         jobId: job.id,
@@ -175,17 +214,31 @@ export class EntityReferenceService implements EntityReferenceServicePort {
 
       return { jobId: job.id };
     } catch (error) {
-      if (jobId !== null) {
-        await this.generationJobRepository.markFailed(jobId, 'Failed to enqueue entity generation job');
+      let compensationError: unknown = null;
+
+      if (createdJobId !== null) {
+        try {
+          await this.generationJobRepository.markFailed(createdJobId, 'Failed to enqueue entity generation job');
+        } catch (markError) {
+          compensationError ??= markError;
+        }
       }
 
       if (creditsConsumed) {
-        await this.creditService.refundCredits({
-          userId,
-          amount: CREDIT_COSTS.ENTITY_GENERATION,
-          description: 'Refund for failed entity generation enqueue',
-          jobId: jobId ?? undefined,
-        });
+        try {
+          await this.creditService.refundCredits({
+            userId,
+            amount: CREDIT_COSTS.ENTITY_GENERATION,
+            description: 'Refund for failed entity generation enqueue',
+            jobId: createdJobId ?? reservedJobId,
+          });
+        } catch (refundError) {
+          compensationError ??= refundError;
+        }
+      }
+
+      if (compensationError !== null) {
+        throw compensationError;
       }
 
       if (error instanceof Error) {
@@ -334,17 +387,25 @@ function parseImageDataUrl(value: string): ParsedImageDataUrl {
   };
 }
 
-function ensureAllowedReferenceSourceKey(
-  sourceS3Key: string,
-  userId: string,
-  entityId: string,
-): void {
-  const allowedPrefixes = [
-    `tmp/${userId}/entities/imports/`,
-    `session/${userId}/entities/${entityId}/`,
-  ];
-
-  if (!allowedPrefixes.some((prefix) => sourceS3Key.startsWith(prefix))) {
-    throw new ValidationError('selected_s3_keys contains an invalid image source');
+function imageDataMatchesDeclaredMimeType(image: ParsedImageDataUrl): boolean {
+  switch (image.mimeType) {
+    case 'image/png':
+      return startsWithBytes(image.imageData, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    case 'image/jpeg':
+      return startsWithBytes(image.imageData, [0xff, 0xd8, 0xff]);
+    case 'image/webp':
+      return (
+        image.imageData.length >= 12 &&
+        image.imageData.subarray(0, 4).toString('ascii') === 'RIFF' &&
+        image.imageData.subarray(8, 12).toString('ascii') === 'WEBP'
+      );
   }
+}
+
+function startsWithBytes(value: Buffer, expectedBytes: number[]): boolean {
+  if (value.length < expectedBytes.length) {
+    return false;
+  }
+
+  return expectedBytes.every((expectedByte, index) => value[index] === expectedByte);
 }

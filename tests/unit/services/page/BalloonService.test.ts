@@ -50,7 +50,11 @@ class FakeBalloonRepository implements BalloonRepository {
     return this.balloonContexts.get(`${userId}:${balloonId}`) ?? null;
   }
 
-  public async createBalloon(pageId: string, input: CreateBalloonInput): Promise<Balloon> {
+  public async createBalloon(
+    pageId: string,
+    _userId: string,
+    input: CreateBalloonInput,
+  ): Promise<Balloon | null> {
     const balloon = buildBalloon({
       id: `balloon-${this.balloons.size + 1}`,
       pageId,

@@ -9,7 +9,12 @@ export default defineConfig({
     headless: true,
   },
   webServer: {
-    command: 'npm run dev -- --host 127.0.0.1 --port 4173',
+    command: 'bun run dev -- --host 127.0.0.1 --port 4173',
+    env: {
+      VITE_DEV_AUTH_BYPASS: 'false',
+      VITE_SUPABASE_ANON_KEY: '',
+      VITE_SUPABASE_URL: '',
+    },
     port: 4173,
     reuseExistingServer: true,
     timeout: 30_000,

@@ -6,6 +6,11 @@ coverage/
 !.env.example
 npm-debug.log*
 *.local
+*.log
+.localdata/
+.tmp*
+testbook/
+apps/web/test-results/
 dev-server.*.log
 web-dev.*.log
 api-dev.*.log

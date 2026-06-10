@@ -21,6 +21,7 @@ import type {
 } from '../../../../src/infrastructure/openai/OpenAIEntityImportAnalyzer.js';
 import { EntityReferenceService } from '../../../../src/services/entity/EntityReferenceService.js';
 import type { EntityGenerationQueuePort } from '../../../../src/services/entity/EntityGenerationQueue.js';
+import type { EntityGenerationRecoveryServicePort } from '../../../../src/services/entity/EntityGenerationRecoveryService.js';
 import type {
   ConsumeCreditsParams,
   CreditServicePort,
@@ -28,6 +29,7 @@ import type {
 } from '../../../../src/services/credit/CreditService.js';
 
 const now = new Date('2026-04-25T00:00:00.000Z');
+const validPngDataUrl = 'data:image/png;base64,iVBORw0KGgo=';
 
 class FakeEntityReferenceRepository implements EntityReferenceRepository {
   public context: EntityReferenceContext | null = buildReferenceContext();
@@ -96,17 +98,13 @@ class FakeGenerationJobRepository implements GenerationJobRepository {
     this.createdInput = input;
 
     return buildJob({
-      id: 'job-1',
+      id: input.id ?? 'job-1',
       userId: input.userId,
       jobType: input.jobType,
       generationMode: input.generationMode,
       creditCost: input.creditCost,
       params: input.params,
     });
-  }
-
-  public async findById(): Promise<GenerationJob | null> {
-    return null;
   }
 
   public async findByIdAndUserId(): Promise<GenerationJob | null> {
@@ -147,6 +145,7 @@ class FakeGenerationJobRepository implements GenerationJobRepository {
 class FakeCreditService implements CreditServicePort {
   public consumed: ConsumeCreditsParams | null = null;
   public refunded: RefundCreditsParams | null = null;
+  public shouldFailRefund = false;
 
   public async getBalance(): Promise<CreditBalanceSnapshot> {
     return { monthlyCredits: 0, purchasedCredits: 0, totalCredits: 0, monthlyExpiresAt: null };
@@ -163,18 +162,26 @@ class FakeCreditService implements CreditServicePort {
 
   public async refundCredits(params: RefundCreditsParams): Promise<CreditBalanceSnapshot> {
     this.refunded = params;
+    if (this.shouldFailRefund) {
+      throw new Error('refund unavailable');
+    }
+
     return this.getBalance();
   }
 }
 
 class FakeEntityImportAnalyzer implements EntityImportAnalyzerPort {
   public input: AnalyzeEntityImportInput | null = null;
+  public shouldFail = false;
 
   public async analyze(input: AnalyzeEntityImportInput): Promise<{
     suggestedFields: Record<string, unknown>;
     promptSupplement: string;
   }> {
     this.input = input;
+    if (this.shouldFail) {
+      throw new Error('analysis unavailable');
+    }
 
     return {
       suggestedFields: { art_style: 'anime' },
@@ -223,27 +230,60 @@ class FakeEntityImageStorage implements EntityImageStoragePort {
 
 class FakeEntityGenerationQueue implements EntityGenerationQueuePort {
   public payload: Record<string, unknown> | null = null;
+  public shouldFail = false;
 
   public async enqueue(payload: { jobId: string; userId: string; entityId: string }): Promise<{
     messageId: string | null;
   }> {
     this.payload = payload;
+    if (this.shouldFail) {
+      throw new Error('queue down');
+    }
+
     return { messageId: 'message-1' };
   }
 }
 
+class FakeEntityGenerationRecoveryService implements EntityGenerationRecoveryServicePort {
+  public recoveredEntities: Array<{ userId: string; entityId: string }> = [];
+
+  public async recoverAllStaleJobs(): Promise<number> {
+    return 0;
+  }
+
+  public async recoverStaleJobsForEntity(userId: string, entityId: string): Promise<number> {
+    this.recoveredEntities.push({ userId, entityId });
+    return 0;
+  }
+}
+
 describe('EntityReferenceService', () => {
+  it('generate-reference 前に対象 entity の stale processing job を回収する', async () => {
+    const recoveryService = new FakeEntityGenerationRecoveryService();
+    const service = buildService({
+      recoveryService,
+    });
+
+    await service.enqueueReferenceGeneration('user-1', 'entity-1');
+
+    expect(recoveryService.recoveredEntities).toEqual([
+      { userId: 'user-1', entityId: 'entity-1' },
+    ]);
+  });
+
   it('import-image は S3 保存後に AI 解析結果を返す', async () => {
     const analyzer = new FakeEntityImportAnalyzer();
     const storage = new FakeEntityImageStorage();
+    const creditService = new FakeCreditService();
     const service = buildService({
       analyzer,
       storage,
+      creditService,
     });
 
     const result = await service.importImage('user-1', {
       entityType: 'character',
-      imageBase64: 'data:image/png;base64,YWJj',
+      imageBase64: validPngDataUrl,
     });
 
     expect(storage.importedInput).toEqual({
@@ -251,12 +291,83 @@ describe('EntityReferenceService', () => {
       mimeType: 'image/png',
     });
     expect(analyzer.input?.entityType).toBe('character');
+    expect(creditService.consumed).toMatchObject({
+      userId: 'user-1',
+      cost: 1,
+      description: 'Entity import analysis',
+    });
     expect(result).toEqual({
       suggestedFields: { art_style: 'anime' },
       promptSupplement: 'anime heroine, full body, neutral background',
       tmpImageS3Key: 'tmp/user-1/entities/imports/source.png',
       tmpImageCdnUrl: 'https://cdn.lyra.test/tmp/user-1/entities/imports/source.png',
     });
+  });
+
+  it('import-image は MIME と実体が一致しない画像を解析前に拒否する', async () => {
+    const analyzer = new FakeEntityImportAnalyzer();
+    const storage = new FakeEntityImageStorage();
+    const creditService = new FakeCreditService();
+    const service = buildService({
+      analyzer,
+      storage,
+      creditService,
+    });
+
+    await expect(
+      service.importImage('user-1', {
+        entityType: 'character',
+        imageBase64: 'data:image/png;base64,YWJj',
+      }),
+    ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+    expect(creditService.consumed).toBeNull();
+    expect(storage.importedInput).toBeNull();
+    expect(analyzer.input).toBeNull();
+  });
+
+  it('import-image の解析失敗時は消費クレジットを返金する', async () => {
+    const analyzer = new FakeEntityImportAnalyzer();
+    analyzer.shouldFail = true;
+    const creditService = new FakeCreditService();
+    const service = buildService({
+      analyzer,
+      creditService,
+    });
+
+    await expect(
+      service.importImage('user-1', {
+        entityType: 'character',
+        imageBase64: validPngDataUrl,
+      }),
+    ).rejects.toThrow('analysis unavailable');
+    expect(creditService.consumed).toMatchObject({
+      userId: 'user-1',
+      cost: 1,
+    });
+    expect(creditService.refunded).toMatchObject({
+      userId: 'user-1',
+      amount: 1,
+      description: 'Refund for failed entity import analysis',
+    });
+  });
+
+  it('import-image analysis disabled の場合はクレジット消費前に CONFLICT になる', async () => {
+    const creditService = new FakeCreditService();
+    const service = buildService({
+      creditService,
+      importAnalysisEnabled: false,
+    });
+
+    await expect(
+      service.importImage('user-1', {
+        entityType: 'character',
+        imageBase64: validPngDataUrl,
+      }),
+    ).rejects.toMatchObject({
+      code: 'CONFLICT',
+      message: 'Entity import analysis is temporarily disabled',
+    });
+    expect(creditService.consumed).toBeNull();
   });
 
   it('5MB 超の import-image は 422 になる', async () => {
@@ -271,7 +382,7 @@ describe('EntityReferenceService', () => {
     ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
   });
 
-  it('generate-reference は 8cr を消費して entity_generate job を作る', async () => {
+  it('generate-reference は1crを消費して entity_generate job を作る', async () => {
     const jobs = new FakeGenerationJobRepository();
     const creditService = new FakeCreditService();
     const queue = new FakeEntityGenerationQueue();
@@ -283,15 +394,18 @@ describe('EntityReferenceService', () => {
 
     const result = await service.enqueueReferenceGeneration('user-1', 'entity-1');
 
-    expect(result).toEqual({ jobId: 'job-1' });
+    expect(result.jobId).toBe(jobs.createdInput?.id);
     expect(creditService.consumed).toMatchObject({
       userId: 'user-1',
       cost: 1,
+      jobId: result.jobId,
     });
     expect(jobs.createdInput).toMatchObject({
+      id: result.jobId,
       userId: 'user-1',
       jobType: 'entity_generate',
       creditCost: 1,
+      capacityLimits: { perUser: 2, global: 10 },
       params: {
         entity_id: 'entity-1',
         entity_type: 'character',
@@ -299,7 +413,7 @@ describe('EntityReferenceService', () => {
       },
     });
     expect(queue.payload).toEqual({
-      jobId: 'job-1',
+      jobId: result.jobId,
       userId: 'user-1',
       entityId: 'entity-1',
     });
@@ -345,7 +459,7 @@ describe('EntityReferenceService', () => {
     const service = buildService({
       generationJobRepository: jobs,
       creditService,
-      capacityLimits: { perUser: 2, global: 100 },
+      capacityLimits: { perUser: 2, global: 10 },
     });
 
     await expect(service.enqueueReferenceGeneration('user-1', 'entity-1')).rejects.toMatchObject({
@@ -359,7 +473,7 @@ describe('EntityReferenceService', () => {
     const creditService = new FakeCreditService();
     const service = buildService({
       creditService,
-      capacityLimits: { perUser: 2, global: 100 },
+      capacityLimits: { perUser: 2, global: 10 },
       generationEnabled: false,
     });
 
@@ -399,6 +513,26 @@ describe('EntityReferenceService', () => {
     ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
   });
 
+  it('confirm rejects allowed-prefix source keys with unsupported image extensions', async () => {
+    const service = buildService();
+
+    await expect(
+      service.confirmReferences('user-1', 'entity-1', {
+        selectedS3Keys: ['tmp/user-1/entities/imports/source.txt'],
+      }),
+    ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+  });
+
+  it('generate-reference rejects source keys with unsupported image extensions', async () => {
+    const service = buildService();
+
+    await expect(
+      service.enqueueReferenceGeneration('user-1', 'entity-1', {
+        sourceS3Key: 'session/user-1/entities/entity-1/source.txt',
+      }),
+    ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+  });
+
   it('confirm は 4 枚以上を拒否する', async () => {
     const service = buildService();
 
@@ -423,6 +557,27 @@ describe('EntityReferenceService', () => {
       code: 'CONFLICT',
     });
   });
+
+  it('enqueue補償の返金が失敗してもentity job failed化は行う', async () => {
+    const jobs = new FakeGenerationJobRepository();
+    const creditService = new FakeCreditService();
+    creditService.shouldFailRefund = true;
+    const queue = new FakeEntityGenerationQueue();
+    queue.shouldFail = true;
+    const service = buildService({
+      generationJobRepository: jobs,
+      creditService,
+      queue,
+    });
+
+    await expect(service.enqueueReferenceGeneration('user-1', 'entity-1')).rejects.toThrow('refund unavailable');
+
+    expect(creditService.refunded).toMatchObject({
+      amount: 1,
+      jobId: jobs.createdInput?.id,
+    });
+    expect(jobs.failedJobId).toBe(jobs.createdInput?.id);
+  });
 });
 
 function buildService(overrides: {
@@ -432,8 +587,10 @@ function buildService(overrides: {
   analyzer?: FakeEntityImportAnalyzer;
   storage?: FakeEntityImageStorage;
   queue?: FakeEntityGenerationQueue;
+  recoveryService?: FakeEntityGenerationRecoveryService;
   capacityLimits?: { perUser: number; global: number };
   generationEnabled?: boolean;
+  importAnalysisEnabled?: boolean;
 } = {}): EntityReferenceService {
   return new EntityReferenceService(
     overrides.repository ?? new FakeEntityReferenceRepository(),
@@ -444,6 +601,8 @@ function buildService(overrides: {
     overrides.queue ?? new FakeEntityGenerationQueue(),
     overrides.capacityLimits,
     overrides.generationEnabled,
+    overrides.recoveryService,
+    overrides.importAnalysisEnabled,
   );
 }
 

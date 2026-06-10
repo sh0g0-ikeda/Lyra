@@ -10,6 +10,7 @@ import type {
 import {
   buildLocalAssetUrl,
   copyLocalAsset,
+  inferImageExtensionFromKey,
   type LocalAssetConfig,
   writeLocalAsset,
 } from './LocalAssetFiles.js';
@@ -50,8 +51,9 @@ export class LocalFileEntityImageStorage implements EntityImageStoragePort {
   public async finalizeReferenceImage(
     input: FinalizeEntityReferenceImageInput,
   ): Promise<StoredEntityImage> {
-    const extension = readExtension(input.sourceS3Key);
+    const extension = inferImageExtensionFromKey(input.sourceS3Key);
     const destinationKey = `saved/${input.userId}/entities/${input.entityId}/${input.refId}.${extension}`;
+    ensureAllowedEntityReferenceSourceKey(input.sourceS3Key, input.userId, input.entityId);
     await copyLocalAsset(this.config.rootDir, input.sourceS3Key, destinationKey);
     return {
       s3Key: destinationKey,
@@ -76,15 +78,28 @@ function mimeTypeToExtension(mimeType: string): 'png' | 'jpeg' | 'webp' | null {
   return null;
 }
 
-function readExtension(assetKey: string): 'png' | 'jpeg' | 'webp' {
-  if (assetKey.endsWith('.jpeg') || assetKey.endsWith('.jpg')) {
-    return 'jpeg';
-  }
+function ensureAllowedEntityReferenceSourceKey(sourceS3Key: string, userId: string, entityId: string): void {
+  const allowedPrefixes = [
+    `tmp/${userId}/entities/imports/`,
+    `session/${userId}/entities/${entityId}/`,
+  ];
 
-  if (assetKey.endsWith('.webp')) {
-    return 'webp';
+  if (
+    hasUnsafeImageKeySyntax(sourceS3Key) ||
+    !allowedPrefixes.some((prefix) => sourceS3Key.startsWith(prefix))
+  ) {
+    throw new ConfigurationError('Entity reference source image key is outside the entity owner scope');
   }
-
-  return 'png';
 }
 
+function hasUnsafeImageKeySyntax(s3Key: string): boolean {
+  if (s3Key.includes('\\') || s3Key.includes('\0')) {
+    return true;
+  }
+
+  return s3Key.split('/').some((segment) => (
+    segment.length === 0 ||
+    segment === '.' ||
+    segment === '..'
+  ));
+}

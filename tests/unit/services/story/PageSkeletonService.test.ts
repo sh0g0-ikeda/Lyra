@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { StoryRepository } from '../../../../src/repositories/StoryRepository.js';
 import { PageSkeletonService } from '../../../../src/services/story/PageSkeletonService.js';
 import type { StoryAiClientPort, StoryAiModelRequest } from '../../../../src/services/story/StoryAiClientPort.js';
@@ -240,6 +240,10 @@ class FakeStoryAiClient implements StoryAiClientPort {
 }
 
 describe('PageSkeletonService', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it('persists a generated page skeleton and includes scene context in the prompt', async () => {
     const repository = new FakeStoryRepository();
     const client = new FakeStoryAiClient();
@@ -324,14 +328,15 @@ describe('PageSkeletonService', () => {
     ).rejects.toMatchObject({ code: 'CONFLICT' });
   });
 
-  it('rejects a skeleton that references an entity outside the episode', async () => {
+  it('removes entity ids outside the episode before saving', async () => {
     const client = new FakeStoryAiClient();
     client.generatedPages[0].panels[0].suggestedEntities = ['99999999-9999-4999-8999-999999999999'];
-    const service = new PageSkeletonService(new FakeStoryRepository(), client);
+    const repository = new FakeStoryRepository();
+    const service = new PageSkeletonService(repository, client);
 
-    await expect(
-      service.generateForEpisode('user-1', '33333333-3333-4333-8333-333333333333'),
-    ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+    await service.generateForEpisode('user-1', '33333333-3333-4333-8333-333333333333');
+
+    expect(repository.createdPages[0]?.panels[0]?.suggestedEntities).toEqual([]);
   });
 
   it('repairs suggested panel count and layout from the actual panel array length when uniquely resolvable', async () => {
@@ -349,6 +354,112 @@ describe('PageSkeletonService', () => {
     expect(repository.createdPages[0]?.suggestedPanelCount).toBe(4);
     expect(repository.createdPages[0]?.suggestedLayout).toBe('standard_4');
     expect(repository.createdPages[0]?.panels).toHaveLength(4);
+  });
+
+  it('repairs page numbers, panel orders, and invalid entity ids before saving', async () => {
+    const repository = new FakeStoryRepository();
+    const client = new FakeStoryAiClient();
+    client.generatedPages = [
+      {
+        pageNumber: 2,
+        purpose: 'Set the confrontation',
+        suggestedPanelCount: 4,
+        suggestedLayout: 'standard_4',
+        panels: [
+          {
+            order: 10,
+            panelRole: 'establish',
+            suggestedSize: 'large',
+            situationHint: 'Wide rooftop at night.',
+            suggestedEntities: [
+              '11111111-1111-4111-8111-111111111111',
+              '11111111-1111-4111-8111-111111111111',
+              '99999999-9999-4999-8999-999999999999',
+            ],
+            suggestedDialogueHint: null,
+          },
+          {
+            order: 10,
+            panelRole: 'action',
+            suggestedSize: 'standard',
+            situationHint: 'Aki advances.',
+            suggestedEntities: ['22222222-2222-4222-8222-222222222222'],
+            suggestedDialogueHint: null,
+          },
+          {
+            order: 3,
+            panelRole: 'reaction',
+            suggestedSize: 'standard',
+            situationHint: 'Rin answers.',
+            suggestedEntities: [],
+            suggestedDialogueHint: '...you are late.',
+          },
+          {
+            order: 4,
+            panelRole: 'impact',
+            suggestedSize: 'wide',
+            situationHint: 'Wind gathers.',
+            suggestedEntities: [],
+            suggestedDialogueHint: null,
+          },
+        ],
+      },
+      {
+        pageNumber: 2,
+        purpose: 'Build toward impact',
+        suggestedPanelCount: 3,
+        suggestedLayout: 'top_wide_3',
+        panels: [
+          {
+            order: 8,
+            panelRole: 'action',
+            suggestedSize: 'large',
+            situationHint: 'Both charge.',
+            suggestedEntities: ['11111111-1111-4111-8111-111111111111'],
+            suggestedDialogueHint: null,
+          },
+          {
+            order: 4,
+            panelRole: 'reaction',
+            suggestedSize: 'standard',
+            situationHint: 'Rin holds ground.',
+            suggestedEntities: ['22222222-2222-4222-8222-222222222222'],
+            suggestedDialogueHint: 'Not enough.',
+          },
+          {
+            order: 4,
+            panelRole: 'impact',
+            suggestedSize: 'standard',
+            situationHint: 'Blades collide.',
+            suggestedEntities: [],
+            suggestedDialogueHint: null,
+          },
+        ],
+      },
+    ];
+    const service = new PageSkeletonService(repository, client);
+
+    await service.generateForEpisode('user-1', '33333333-3333-4333-8333-333333333333');
+
+    expect(repository.createdPages.map((page) => page.pageNumber)).toEqual([1, 2]);
+    expect(repository.createdPages[0]?.panels.map((panel) => panel.order)).toEqual([1, 2, 3, 4]);
+    expect(repository.createdPages[1]?.panels.map((panel) => panel.order)).toEqual([1, 2, 3]);
+    expect(repository.createdPages[0]?.panels[0]?.suggestedEntities).toEqual([
+      '11111111-1111-4111-8111-111111111111',
+    ]);
+  });
+
+  it('falls back when generated page count still cannot be repaired', async () => {
+    const repository = new FakeStoryRepository();
+    const client = new FakeStoryAiClient();
+    client.generatedPages = [client.generatedPages[0]!];
+    const service = new PageSkeletonService(repository, client);
+
+    await service.generateForEpisode('user-1', '33333333-3333-4333-8333-333333333333');
+
+    expect(repository.createdPages).toHaveLength(2);
+    expect(repository.createdPages[0]?.suggestedLayout).toBe('standard_4');
+    expect(repository.createdPages[1]?.suggestedLayout).toBe('top_wide_3');
   });
 
   it('falls back to a deterministic skeleton when the model payload is invalid', async () => {
@@ -376,6 +487,28 @@ describe('PageSkeletonService', () => {
       'impact',
     ]);
     expect(repository.createdPages[0]?.panels.some((panel) => panel.suggestedDialogueHint !== null)).toBe(true);
+  });
+
+  it('fallback ログの理由は機密値と長い payload を伏せる', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const client = new FakeStoryAiClient();
+    const fakeApiKey = ['sk', 'test-secret'].join('-');
+    client.errorToThrow = new SyntaxError(
+      `OpenAI page skeleton compiler returned invalid JSON: {"key":"${fakeApiKey}","secret":"${'x'.repeat(600)}"}`,
+    );
+    const repository = new FakeStoryRepository();
+    const service = new PageSkeletonService(repository, client);
+
+    await service.generateForEpisode('user-1', '33333333-3333-4333-8333-333333333333');
+
+    const loggedPayload = warnSpy.mock.calls[0]?.[1] as { reason?: string } | undefined;
+    const reason = loggedPayload?.reason;
+    if (reason === undefined) {
+      throw new Error('fallback reason was not logged');
+    }
+    expect(reason).toContain('[redacted-api-key]');
+    expect(reason).not.toContain(fakeApiKey);
+    expect(reason.length).toBeLessThanOrEqual(300);
   });
 
   it('fallback skeleton infers relevant entities from story text even when structured involved ids are empty', async () => {
@@ -486,5 +619,37 @@ describe('PageSkeletonService', () => {
       replacedExisting: true,
     });
     expect(repository.lastCreateOptions).toEqual({ overwriteExisting: true });
+  });
+
+  it('compacts long page skeleton context before sending it to the model', async () => {
+    const repository = new FakeStoryRepository();
+    const longDescription = 'skeleton-overflow-entity-detail '.repeat(80).trim();
+    const longIntroduction = 'skeleton-overflow-introduction '.repeat(80).trim();
+    repository.skeletonContext = {
+      ...repository.skeletonContext!,
+      introduction: longIntroduction,
+      sceneSummaries: Array.from({ length: 60 }, (_unused, index) => `Scene ${index + 1}: skeleton scene ${index + 1}`),
+      entities: [
+        {
+          id: '11111111-1111-4111-8111-111111111111',
+          name: 'Aki',
+          aliases: ['Long Alias '.repeat(20)],
+          entityType: 'character',
+          freeDescription: longDescription,
+        },
+      ],
+      entitiesInvolved: ['11111111-1111-4111-8111-111111111111'],
+    };
+    const client = new FakeStoryAiClient();
+    const service = new PageSkeletonService(repository, client);
+
+    await service.generateForEpisode('user-1', '33333333-3333-4333-8333-333333333333');
+
+    const userPrompt = client.lastRequest?.userPrompt ?? '';
+    expect(userPrompt).toContain('skeleton-overflow-introduction');
+    expect(userPrompt).not.toContain(longIntroduction);
+    expect(userPrompt).toContain('skeleton-overflow-entity-detail');
+    expect(userPrompt).not.toContain(longDescription);
+    expect(userPrompt).not.toContain('Scene 60: skeleton scene 60');
   });
 });

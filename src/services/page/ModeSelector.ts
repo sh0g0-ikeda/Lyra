@@ -1,5 +1,5 @@
 import {
-  PAGE_GENERATION_CREDIT_COSTS,
+  calculatePageGenerationCreditCost,
   PAGE_GENERATION_QUALITY,
   THINKING_MODE_THRESHOLDS,
 } from '../../domain/constants/generation.js';
@@ -30,16 +30,22 @@ export class ModeSelector {
   }
 
   public selectProfile(
-    input: ModeSelectionInput & { requestKind: PageGenerationRequestKind },
+    input: ModeSelectionInput & {
+      requestKind: PageGenerationRequestKind;
+      billableReferenceCount: number;
+    },
   ): PageGenerationSelection {
+    validateBillableReferenceCount(input.billableReferenceCount);
     const mode = this.selectMode(input);
+    const creditCost = calculatePageGenerationCreditCost(input.billableReferenceCount);
 
     if (input.requestKind === 'regenerate') {
       return {
         requestKind: input.requestKind,
         mode,
         quality: PAGE_GENERATION_QUALITY.REGENERATE,
-        creditCost: PAGE_GENERATION_CREDIT_COSTS.regenerate,
+        creditCost,
+        billableReferenceCount: input.billableReferenceCount,
         // Regeneration is billed and stored separately, but rendering remains a fresh
         // creation from current inputs. Planner usage depends on page complexity only.
         requiresPlanner: mode === 'thinking',
@@ -50,10 +56,8 @@ export class ModeSelector {
       requestKind: input.requestKind,
       mode,
       quality: PAGE_GENERATION_QUALITY.INITIAL,
-      creditCost:
-        mode === 'thinking'
-          ? PAGE_GENERATION_CREDIT_COSTS.thinking
-          : PAGE_GENERATION_CREDIT_COSTS.standard,
+      creditCost,
+      billableReferenceCount: input.billableReferenceCount,
       requiresPlanner: mode === 'thinking',
     };
   }
@@ -66,5 +70,11 @@ function validateCounts(input: ModeSelectionInput): void {
 
   if (!Number.isInteger(input.panelCount) || input.panelCount < 0) {
     throw new ValidationError('panelCount must be a non-negative integer');
+  }
+}
+
+function validateBillableReferenceCount(value: number): void {
+  if (!Number.isInteger(value) || value < 0) {
+    throw new ValidationError('billableReferenceCount must be a non-negative integer');
   }
 }

@@ -1,5 +1,4 @@
 ﻿import { createContext, useContext, useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent, type ReactNode } from 'react';
-import { jsPDF } from 'jspdf';
 import {
   BookOpen,
   Bot,
@@ -21,15 +20,28 @@ import {
 } from 'lucide-react';
 import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { Session, SupabaseClient } from '@supabase/supabase-js';
-import { ApiError, decodeJwtPayload, LyraApiClient } from './lib/api';
-import { createSupabaseBrowserClient } from './lib/supabase';
+import { ApiError, decodeJwtPayload, LyraApiClient, type BlobResponse } from './lib/api';
+import { shouldAllowManualTokenAuth } from './lib/authMode';
+import {
+  beginCognitoLogin,
+  buildCognitoLogoutUrl,
+  clearCognitoSession,
+  completeCognitoRedirectIfPresent,
+  getCognitoApiToken,
+  getCognitoAuthConfig,
+  readStoredCognitoSession,
+  refreshCognitoSession,
+  storeCognitoSession,
+  type CognitoAuthConfig,
+  type CognitoSession,
+} from './lib/cognitoAuth';
 import type {
-  BalloonRecord,
   ChapterRecord,
   EntityRecord,
   EpisodeRecord,
   GenerationJobRecord,
   PageRecord,
+  PanelFrameRecord,
   PanelRecord,
   SceneRecord,
   StoryEpisodeImprovementRecord,
@@ -202,22 +214,24 @@ interface PageSettingsDraft {
   story_continuity_note: string;
 }
 
-interface BalloonDraft {
-  speaker_entity_id: string;
-  balloon_type: 'speech' | 'thought' | 'narration' | 'shout' | 'whisper';
-  writing_mode: 'horizontal' | 'vertical';
-  text: string;
-  position_json: string;
-  tail_json: string;
-  font_size: string;
-  font_family: string;
-  panel_order_reference: string;
+interface PanelFrameDraft {
+  id: string;
+  panel_id: string;
+  reading_order: string;
+  border_style: PanelFrameRecord['border_style'];
+  border_width: string;
+  border_color: string;
   z_index: string;
+  vertices: Array<{ x: string; y: string }>;
+}
+
+interface GenericStructuredFieldRow {
+  key: string;
+  value: string;
 }
 
 interface ReferenceCandidate {
   s3_key: string;
-  cdn_url: string;
   source: 'upload' | 'generated';
 }
 
@@ -280,7 +294,6 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   'Improved ending hook': '改善された終盤 / 引き',
   Frames: 'コマ割り',
   Panels: 'コマ',
-  Balloons: '吹き出し',
   'Page settings': 'ページ設定',
   'Dialogue mode': 'セリフの扱い',
   'Dialogue toggle': 'ページ全体でセリフを画像に含める',
@@ -293,15 +306,17 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   Name: '名前',
   'Free description': '自由記述',
   'Prompt supplement': '補足プロンプト',
-  'Structured fields JSON': '構造化フィールドJSON',
+  'Structured fields': '構造化項目',
+  Field: '項目',
+  Value: '値',
+  'Add field': '項目を追加',
+  'No structured fields yet.': '構造化項目はまだありません。',
   Format: '形式',
   Filename: 'ファイル名',
   'Export selected': '選択ページを保存',
   'Export all': 'すべて保存',
   'Image baked': '画像にセリフを焼き込む',
-  'Balloon only': '吹き出しのみ',
   Mixed: '混在',
-  'Page autofill': 'ページ補完',
   Page: 'ページ',
   Export: '保存',
   'Generated preview': '生成プレビュー',
@@ -320,14 +335,20 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   Reopen: '再編集',
   Template: 'テンプレート',
   Apply: '適用',
-  'Frames JSON': 'コマ割りJSON',
   'Save frames': 'コマ割りを保存',
   'Advanced frame geometry': 'コマ形状の詳細調整',
-  'Advanced balloon geometry': '吹き出し位置の詳細調整',
-  'Position JSON': '位置JSON',
-  'Tail JSON / null': 'しっぽJSON / null',
-  'Panel order ref': '対応コマ順',
-  'Z-index': '重なり順',
+  'Frame geometry': 'コマ形状',
+  'Linked panel': '対応コマ',
+  'No linked panel': '未紐づけ',
+  'Border style': '枠線',
+  'Solid': '実線',
+  'Dashed': '破線',
+  'Border width': '枠線幅',
+  'Border color': '枠線色',
+  Vertex: '頂点',
+  X: 'X',
+  Y: 'Y',
+  'Save frame geometry': 'コマ形状を保存',
   Role: '役割',
   Size: 'サイズ',
   Situation: '状況',
@@ -365,6 +386,26 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   Reviewing: '確認中',
   Ready: '準備完了',
   Save: '保存',
+  'Save work': '作品を保存',
+  'Create chapter': '章を追加',
+  'Delete chapter': '章を削除',
+  'Create episode': '話を追加',
+  'Save episode': '話を保存',
+  'Delete episode': '話を削除',
+  'Create scene': 'シーンを作成',
+  'Delete entity': 'キャラを削除',
+  'Create entity': 'キャラを作成',
+  'Save entity': 'キャラを保存',
+  'Generate reference': 'プレビュー生成',
+  'Confirm references': 'リファレンス確定',
+  'Delete reference': 'リファレンス削除',
+  'Save page settings': 'ページ設定を保存',
+  'Save story sources': '話の材料を保存',
+  'Delete panel': 'コマを削除',
+  'Checkout standard': 'サブスク手続き',
+  'Checkout credits': 'クレジット購入',
+  'Open portal': '請求管理',
+  'Generate page skeleton': 'ページ骨格生成',
   'Save chapter': '章を保存',
   'Add chapter': '章を追加',
   'Add episode': '話を追加',
@@ -373,8 +414,6 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   'Apply story plan': '話全体を反映',
   'Improve draft': '改善する',
   'Apply all': 'すべて反映',
-  'Split story fields and the whole story draft both have content. Please keep only one before saving or generating.':
-    '分割入力と全体入力の両方に内容があります。保存や生成の前にどちらか一方にしてください。',
   'Apply to title': 'タイトルへ反映',
   'Apply purpose': '目的へ反映',
   'Apply introduction': '序盤へ反映',
@@ -387,36 +426,63 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   'Save selected': '選択中を保存',
   'Signed in': 'ログイン中',
   'No work selected': '作品が選択されていません',
+  'Create or select a work from the left panel to start editing.': '左側で作品を作成または選択すると編集を始められます。',
   'Choose the current work, chapter, and episode while editing characters.': 'キャラ編集中の作品・章・話を選択します。',
   'New character': '新規キャラ',
   'Importing image...': '画像を取り込み中...',
   'Drop or choose image': '画像をドロップまたは選択',
-  'Select one or more candidates and choose a primary image.': '候補を選び、メイン画像を決めます。',
-  'No preview candidates yet.': 'まだプレビュー候補がありません。',
+  'Select a preview and confirm it as the primary image.': 'プレビューを1つ選んで確定します。',
+  'No preview yet.': 'まだプレビューはありません。',
   'Delete with the button only. Clicking the image will not delete it.': '削除はボタンのみです。画像クリックでは削除しません。',
   'No confirmed references yet.': 'まだ確定済みリファレンスがありません。',
+  'Creating a new character. Saving here will add a new record and will not overwrite existing characters.':
+    '新規キャラを作成中です。ここで保存すると既存キャラを上書きせず、新しいキャラとして追加します。',
+  'Editing the selected character.': '選択中のキャラを編集しています。',
+  'Delete this character? This cannot be undone.': 'このキャラを削除しますか？この操作は元に戻せません。',
+  'Delete this reference image? This cannot be undone.': 'このリファレンス画像を削除しますか？この操作は元に戻せません。',
+  'Delete this panel? This can break the frame/panel count until frames are adjusted.':
+    'このコマを削除しますか？コマ割りを調整するまでフレーム数とコマ数が一致しなくなる場合があります。',
+  'Use reference': '候補に含める',
+  'Primary reference': 'メインにする',
+  upload: 'アップロード',
+  generated: '生成',
+  'Frame count and panel count do not match. Adjust frames or panels before generating.':
+    'フレーム数とコマ数が一致していません。生成前にコマ割りまたはコマを調整してください。',
+  'Create character': 'キャラを作成',
+  'Save character': 'キャラを保存',
+  'Generate page': 'ページ生成',
+  'Confirm page': 'ページ確定',
+  'Reopen page': '再編集',
+  'Apply frame template': 'テンプレートを適用',
+  'Apply panel layout': 'コマ割りを変更',
+  'Panel layout': 'コマ割り',
+  'Create panel': 'コマを作成',
+  'Save panel': 'コマを保存',
+  'Save scene': 'シーンを保存',
+  'Subscription plan': 'サブスクリプション',
+  'Add 50 credits / ¥1,100': '50クレジットを追加 / 1,100円',
+  'Billing portal': '請求管理',
+  page_generate: 'ページ生成',
+  entity_generate: 'キャラ生成',
   'Switch story context for page editing.': 'ページ編集対象の作品・章・話を選択します。',
   'Double-click image to enlarge': '画像はダブルクリックで拡大',
-  'Fill selected page': '選択中ページを補完',
-  'Use this after the story plan when a single page still needs refinement.': '話全体の反映後も1ページだけ補正したいときに使います。',
-  'The current page plan can be regenerated because every page is still designing.':
-    'この話の既存ページはすべて designing のため、ページ骨格を上書き再生成できます。',
-  'Only episodes with designing pages can regenerate the page plan.':
-    'ページ骨格の再生成は、既存ページがすべて designing の話でのみ行えます。',
-  'Checking current pages before allowing skeleton regeneration.':
-    'ページ骨格の再生成可否を確認するため、現在のページ状態を読み込んでいます。',
-  'Regenerating the page plan will replace the current designing pages for this episode.':
-    'ページ骨格を上書き再生成すると、この話の designing 状態の既存ページを置き換えます。',
+  'Loading current page plan.':
+    '現在のページ骨格を読み込んでいます。',
+  'Regenerating will replace the current pages for this episode.':
+    '再生成すると、この話の現在のページが置き換わります。',
+  'Regenerating the page plan will replace the current pages for this episode.':
+    'ページ骨格を上書き再生成すると、この話の現在のページを置き換えます。',
   Primary: 'メイン',
   Delete: '削除',
-  'Generate full-body candidates': '全身候補を生成',
-  Auto: '自動配置',
-  'Speaker ID': '話者ID',
-  Balloon: '吹き出し種別',
-  Writing: '文字方向',
-  Text: '本文',
-  'Font size': '文字サイズ',
-  'Font family': 'フォント',
+  'Generate full-body preview': '全身プレビュー生成',
+  'Preview generation costs 1 credit.': 'プレビュー生成 1cr',
+  'Image import costs 1 credit.': '画像取り込み 1cr',
+  'Page generation starts at 3 credits.': 'ページ生成 3cr〜',
+  'Text AI actions use no credits.': 'テキストAI 0cr',
+  'No recent jobs.': '最近のジョブはありません。',
+  'Only PNG, JPEG, and WebP are allowed.': 'PNG/JPEG/WebPのみ対応。',
+  'Image file is too large.': '画像が大きすぎます。',
+  'Image analyzed. Generate preview next.': '画像解析完了。次にプレビュー生成。',
   Total: '合計',
   Monthly: '月次',
   Purchased: '購入分',
@@ -504,6 +570,12 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   Ahoge: 'アホ毛',
   'Hair streak': '髪のメッシュ',
   Glasses: '眼鏡',
+  Stubble: '無精ひげ',
+  Beard: 'ひげ',
+  Goatee: 'あごひげ',
+  Earrings: 'ピアス',
+  'Thick eyebrows': '太い眉',
+  'Sharp jawline': '鋭い顎のライン',
   'about six heads tall': '六頭身くらい',
   'about six and a half heads tall': '六・五頭身くらい',
   'about seven heads tall': '七頭身くらい',
@@ -548,15 +620,31 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   'rounded front curve': '丸い前髪ライン',
   'side-swept front': '流した前髪',
   'blunt front': 'ぱっつん前髪',
+  'short textured front': '短く毛束感のある前髪',
+  'comma front': 'コンマ型の前髪',
+  'curtain front': 'カーテン前髪',
+  'messy front': '無造作な前髪',
+  'swept-up front': '立ち上げた前髪',
   'short side locks': '短い横髪',
   'soft cheek framing': '頬を囲う横髪',
   'long side locks': '長い横髪',
   'tucked behind ears': '耳にかけた横髪',
+  'trimmed sides': '短く整えたサイド',
+  'faded sides': 'フェードしたサイド',
+  'shaved sides': '刈り上げたサイド',
+  sideburns: 'もみあげ',
+  'ear-length sides': '耳丈の横髪',
   'clean bob back': 'ボブの後ろ髪',
   'layered back': 'レイヤー後ろ髪',
   'straight long back': 'まっすぐ長い後ろ髪',
   'ponytail fall': 'ポニーテールの落ち感',
   'braided back': '編み込み後ろ髪',
+  'tapered nape': '襟足を短く整える',
+  'short clipped back': '短く刈った後ろ髪',
+  'undercut back': '後ろのアンダーカット',
+  'tied-back hair': '後ろで結んだ髪',
+  'long loose back': '長く下ろした後ろ髪',
+  'wolf nape': 'ウルフ風の襟足',
   'round collar': '丸襟',
   'sharp collar': '尖った襟',
   'standing collar': '立ち襟',
@@ -571,10 +659,15 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   'Long skirt': '長いスカート',
   'Straight pants': '細いパンツ',
   'Wide pants': 'ワイドパンツ',
+  Slacks: 'スラックス',
+  Jeans: 'ジーンズ',
+  'Cargo pants': 'カーゴパンツ',
   Shorts: '短パン',
   Loafers: 'ローファー',
   Sneakers: 'スニーカー',
   Boots: 'ブーツ',
+  'Dress shoes': '革靴',
+  'Combat boots': 'コンバットブーツ',
   Heels: 'ヒール',
   'School shoes': '上履き・制服靴',
   'Bare legs': '素足',
@@ -611,24 +704,45 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   'Serious reliable': '真面目で頼れる',
   'Mysterious fragile': '不思議で儚い',
   'Energetic bold': '元気で大胆',
+  'Stoic reserved': '寡黙で控えめ',
+  'Rugged calm': '無骨で落ち着いた',
+  'Sharp elite': '鋭く知的',
+  'Playful confident': '余裕があり茶目っ気がある',
+  'Mature composed': '大人びて落ち着いた',
   'Upright neat': '背筋が伸びて整っている',
   'Natural relaxed': '自然で力が抜けている',
   'Shy reserved': '控えめでおとなしい',
   'Confident open': '自信があり開いている',
   'Still quiet': '静かで動きが少ない',
+  'Arms crossed': '腕を組む',
+  'Hands in pockets': 'ポケットに手を入れる',
+  'Guarded stance': '警戒した立ち姿',
+  'Wide grounded stance': '足を広げて安定した立ち姿',
+  'Elegant upright': '上品に背筋を伸ばす',
   'Soft smile': 'やわらかな微笑み',
   'Calm neutral': '落ち着いた無表情',
   'Serious focus': '真剣で集中',
   'Cheerful smile': '明るい笑顔',
   'Cool unfazed': '冷静で動じない',
+  'Stern look': '厳しい目つき',
+  'Tired neutral': '疲れた無表情',
+  'Confident smirk': '自信のある片笑い',
+  'Bored gaze': '退屈そうな視線',
+  'Teasing smile': 'からかうような笑み',
   Petite: '小柄',
   Slender: '細身',
   Average: '標準',
   Athletic: '引き締まっている',
   Muscular: '筋肉質',
   Curvy: '丸みがある',
+  Lean: '引き締まった細身',
+  Stocky: 'がっしり',
+  'Broad build': '幅広い体格',
+  'Large build': '大柄',
+  'Very short height': 'かなり低め',
   Short: '低め',
   Tall: '高め',
+  'Very tall height': 'かなり高め',
   Round: '丸型',
   Oval: '卵型',
   Heart: 'ハート型',
@@ -653,24 +767,55 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   Serious: '真面目',
   Black: '黒',
   Brown: '茶',
+  'Dark brown': '濃い茶',
   Blonde: '金',
+  'Ash blonde': 'アッシュブロンド',
+  Auburn: '赤みの茶',
   Silver: '銀',
   White: '白',
   Blue: '青',
   Red: '赤',
   Pink: 'ピンク',
   Purple: '紫',
+  'Two tone': 'ツートーン',
   'Very short': 'かなり短い',
   'Very long': 'かなり長い',
   Wavy: 'ゆるいウェーブ',
   Curly: 'カール',
   Wild: 'ラフ',
+  Tousled: '無造作',
+  Spiky: 'ツンツン',
+  Fluffy: 'ふわっとした',
+  Slick: '撫で付けた',
+  Coarse: '硬め',
+  Shaved: '剃り込み',
   Down: '下ろす',
+  'Short cut': 'ショートカット',
+  'Buzz cut': '坊主',
+  'Crew cut': 'クルーカット',
+  'Two block': 'ツーブロック',
+  Undercut: 'アンダーカット',
+  'Fade cut': 'フェードカット',
+  'Side part': '七三分け',
+  'Center part': 'センター分け',
+  'Comma hair': 'コンマヘア',
+  'Slick back': 'オールバック',
+  'Messy short': '無造作ショート',
+  Pompadour: 'ポンパドール',
+  'Short bob': 'ショートボブ',
+  'Medium layered': 'ミディアムレイヤー',
+  'Wolf cut': 'ウルフカット',
+  'Long straight': 'ロングストレート',
   Ponytail: 'ポニーテール',
+  'Side ponytail': 'サイドポニーテール',
   'Twin tails': 'ツインテール',
   Bun: 'お団子',
+  'Man bun': 'マンバン',
+  Topknot: 'トップノット',
   Braid: '編み込み',
   'Half up': 'ハーフアップ',
+  'Tied back': '後ろで結ぶ',
+  'Shaved sides': 'サイドを刈り上げ',
   Green: '緑',
   Gold: '金',
   Gentle: '穏やか',
@@ -682,10 +827,22 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   Heavy: '重め',
   'Side swept': '流し前髪',
   Blunt: 'ぱっつん',
+  Parted: '分け前髪',
+  'Center parted': 'センター分け前髪',
+  Curtain: 'カーテンバング',
+  'Messy bangs': '無造作前髪',
+  'Short bangs': '短い前髪',
+  'Long bangs': '長い前髪',
   Military: '軍服',
   School: '制服',
   Casual: '私服',
   Suit: 'スーツ',
+  'Business casual': 'ビジネスカジュアル',
+  'Lab coat': '白衣',
+  'Trench coat': 'トレンチコート',
+  Tactical: 'タクティカル',
+  'Traditional formal': '礼装・正装',
+  'Street jacket': 'ストリートジャケット',
   Fantasy: 'ファンタジー',
   Japanese: '和装',
   Streetwear: 'ストリート',
@@ -771,6 +928,10 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   'AI improved': 'AI改善済み',
   Horizontal: '横書き',
   Vertical: '縦書き',
+  'Manga gothic': '漫画ゴシック',
+  'Mincho font': '明朝',
+  'Rounded font': '丸ゴシック',
+  'Bold font': '太字',
   'Characters in panel': 'コマ内キャラ',
   'Pick who appears first, then refine pose, facing, and effects per character.': 'まず登場キャラを決め、その後に向き・ポーズ・エフェクトを詰めます。',
   'Placement first, then expression, pose, and effect.': 'まず配置を決め、その後に表情・ポーズ・エフェクトを詰めます。',
@@ -778,18 +939,24 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   'These lines stay outside the generated panel art.': 'これらの行は生成画像の外側のテキストとして扱われます。',
   Email: 'メールアドレス',
   'Send magic link': 'マジックリンクを送信',
+  'Continue with Cognito': 'Cognitoでログイン',
   'Manual bearer token': '手動ベアラートークン',
   'Magic link sent.': 'マジックリンクを送信しました。',
   'Supabase client is not configured.': 'Supabase クライアントが設定されていません。',
   'Production Console': '制作コンソール',
-  'Story, entity, page, balloon, billing.': 'ストーリー、キャラ、ページ、吹き出し、課金を管理します。',
+  'Story, entity, page, billing.': 'ストーリー、キャラ、ページ、課金を管理します。',
   'Processing. This task can take a while.': '処理中です。この処理には時間がかかる場合があります。',
   'Queued. This task will start soon and can take a while.': '待機中です。まもなく開始され、この処理には時間がかかる場合があります。',
   'Page skeleton generation can take a while, especially for long episodes.': 'ページ骨格生成は、話数やページ数が多いと時間がかかる場合があります。',
   'Story plan autofill can take a while while pages and panels are being distributed.': '話全体の反映は、ページ配分とコマ分割を行うため時間がかかる場合があります。',
   'Character preview generation can take a while. The preview updates when the job finishes.': 'キャラのプレビュー生成は時間がかかる場合があります。完了するとプレビューが更新されます。',
   'Page image generation can take a while. The page image updates when the job finishes.': 'ページ画像生成は時間がかかる場合があります。完了するとページ画像が更新されます。',
-  'Selected page autofill can take a while for dense scenes.': '選択ページの追加補完は、情報量の多いシーンだと時間がかかる場合があります。',
+  'Queued. Starts soon.': '待機中。順番に処理します。',
+  'Generating page plan. This can take a while.': '骨格生成中。少し時間がかかります。',
+  'Applying story plan to pages and panels.': 'ページとコマへ反映中。',
+  'Generating preview. It updates when finished.': 'プレビュー生成中。完了後に更新されます。',
+  'Generating page. It updates when finished.': 'ページ生成中。完了後に更新されます。',
+  'You do not need to fill every blank field.': 'すべての空欄を埋める必要はありません。',
 };
 
 function normalizeUiLanguage(value: string): UiLanguage {
@@ -821,6 +988,15 @@ function translateUiString(language: UiLanguage, value: string): string {
   return value;
 }
 
+function formatActionSuccessMessage(language: UiLanguage, actionLabel: string, translatedLabel: string): string {
+  const isAsyncGenerationAction = actionLabel === 'Generate page' || actionLabel === 'Generate reference';
+  if (language === 'ja') {
+    return isAsyncGenerationAction ? `${translatedLabel}を開始` : `${translatedLabel}完了`;
+  }
+
+  return isAsyncGenerationAction ? `${translatedLabel} started.` : `${translatedLabel} completed.`;
+}
+
 function pickUiText(language: UiLanguage, english: string, japanese: string): string {
   return language === 'en' ? english : japanese;
 }
@@ -828,51 +1004,160 @@ const selectedWorkStorageKey = 'lyra:web:selected-work';
 const selectedChapterStorageKey = 'lyra:web:selected-chapter';
 const selectedEpisodeStorageKey = 'lyra:web:selected-episode';
 const selectedPageStorageKey = 'lyra:web:selected-page';
-const supabase = createSupabaseBrowserClient();
-const devAuthBypassEnabled = import.meta.env.VITE_DEV_AUTH_BYPASS === 'true';
-const devAuthBypassEmail =
-  typeof import.meta.env.VITE_DEV_AUTH_BYPASS_EMAIL === 'string' &&
-  import.meta.env.VITE_DEV_AUTH_BYPASS_EMAIL.length > 0
-    ? import.meta.env.VITE_DEV_AUTH_BYPASS_EMAIL
-    : 'dev@local.lyra';
-const devAuthBypassToken = 'dev-auth-bypass';
+const cognitoRefreshSkewMs = 120_000;
+const maxBrowserTimeoutMs = 2_147_483_647;
+const supabaseAuthConfigured = hasSupabaseAuthConfig();
+const cognitoAuthConfig = getCognitoAuthConfig(
+  {
+    VITE_COGNITO_CLIENT_ID: import.meta.env.VITE_COGNITO_CLIENT_ID,
+    VITE_COGNITO_DOMAIN: import.meta.env.VITE_COGNITO_DOMAIN,
+    VITE_COGNITO_LOGOUT_URI: import.meta.env.VITE_COGNITO_LOGOUT_URI,
+    VITE_COGNITO_REDIRECT_URI: import.meta.env.VITE_COGNITO_REDIRECT_URI,
+    VITE_COGNITO_SCOPES: import.meta.env.VITE_COGNITO_SCOPES,
+    VITE_COGNITO_API_TOKEN_USE: import.meta.env.VITE_COGNITO_API_TOKEN_USE,
+  },
+  typeof window === 'undefined' ? undefined : window.location.origin,
+);
+const devAuthBypass =
+  import.meta.env.DEV && import.meta.env.VITE_DEV_AUTH_BYPASS === 'true'
+    ? {
+        email:
+          typeof import.meta.env.VITE_DEV_AUTH_BYPASS_EMAIL === 'string' &&
+          import.meta.env.VITE_DEV_AUTH_BYPASS_EMAIL.length > 0
+            ? import.meta.env.VITE_DEV_AUTH_BYPASS_EMAIL
+            : 'dev@local.lyra',
+        token: 'dev-auth-bypass',
+      }
+    : null;
+const manualTokenAuthAllowed = shouldAllowManualTokenAuth({
+  MODE: import.meta.env.MODE,
+  PROD: import.meta.env.PROD,
+});
 
 export default function App() {
   const [manualToken, setManualToken] = useStoredString(window.sessionStorage, manualTokenStorageKey, '');
+  const [cognitoSession, setCognitoSession] = useState<CognitoSession | null>(() =>
+    cognitoAuthConfig === null ? null : readStoredCognitoSession(window.sessionStorage),
+  );
+  const [cognitoAuthError, setCognitoAuthError] = useState<string | null>(null);
+  const [supabaseClient, setSupabaseClient] = useState<SupabaseClient | null>(null);
   const [supabaseSession, setSupabaseSession] = useState<Session | null>(null);
   const [pendingAuth, setPendingAuth] = useState(true);
 
   useEffect(() => {
-    if (devAuthBypassEnabled) {
-      setPendingAuth(false);
-      return;
-    }
-
-    if (supabase === null) {
+    if (devAuthBypass !== null) {
       setPendingAuth(false);
       return;
     }
 
     let active = true;
-    void supabase.auth.getSession().then(({ data }) => {
+    let unsubscribe: (() => void) | null = null;
+
+    const initializeAuth = async (): Promise<void> => {
+      if (cognitoAuthConfig !== null) {
+        const result = await completeCognitoRedirectIfPresent(
+          cognitoAuthConfig,
+          window.sessionStorage,
+          window.location,
+          window.history,
+        );
+        if (!active) {
+          return;
+        }
+
+        if (result.session !== null) {
+          setCognitoSession(result.session);
+        }
+        if (result.error !== null) {
+          setCognitoAuthError(result.error);
+        }
+      }
+
+      if (!supabaseAuthConfigured) {
+        setPendingAuth(false);
+        return;
+      }
+
+      const { createSupabaseBrowserClient } = await import('./lib/supabase');
+      const loadedSupabaseClient = createSupabaseBrowserClient();
+      if (!active) {
+        return;
+      }
+
+      setSupabaseClient(loadedSupabaseClient);
+      if (loadedSupabaseClient === null) {
+        setPendingAuth(false);
+        return;
+      }
+
+      const { data } = await loadedSupabaseClient.auth.getSession();
+      if (!active) {
+        return;
+      }
+      setSupabaseSession(data.session);
+      setPendingAuth(false);
+
+      const {
+        data: { subscription },
+      } = loadedSupabaseClient.auth.onAuthStateChange((_event, session) => {
+        setSupabaseSession(session);
+        setPendingAuth(false);
+      });
+      unsubscribe = () => subscription.unsubscribe();
+    };
+
+    void initializeAuth().catch((error: unknown) => {
       if (active) {
-        setSupabaseSession(data.session);
+        setCognitoAuthError(toMessage(error));
         setPendingAuth(false);
       }
     });
 
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSupabaseSession(session);
-      setPendingAuth(false);
-    });
+    return () => {
+      active = false;
+      unsubscribe?.();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (devAuthBypass !== null || cognitoAuthConfig === null || cognitoSession === null) {
+      return;
+    }
+
+    let active = true;
+    const refreshDelayMs = getCognitoRefreshDelay(cognitoSession.expiresAt, Date.now());
+    const timeoutId = window.setTimeout(() => {
+      void refreshCognitoSession(cognitoAuthConfig, cognitoSession)
+        .then((nextSession) => {
+          if (!active) {
+            return;
+          }
+          if (nextSession === null) {
+            clearCognitoSession(window.sessionStorage);
+            setCognitoSession(null);
+            setCognitoAuthError('Cognito session expired. Please sign in again.');
+            return;
+          }
+
+          storeCognitoSession(window.sessionStorage, nextSession);
+          setCognitoSession(nextSession);
+          setCognitoAuthError(null);
+        })
+        .catch((error: unknown) => {
+          if (!active) {
+            return;
+          }
+          clearCognitoSession(window.sessionStorage);
+          setCognitoSession(null);
+          setCognitoAuthError(toMessage(error));
+        });
+    }, refreshDelayMs);
 
     return () => {
       active = false;
-      subscription.unsubscribe();
+      window.clearTimeout(timeoutId);
     };
-  }, []);
+  }, [cognitoSession]);
 
   if (pendingAuth) {
     return (
@@ -882,17 +1167,38 @@ export default function App() {
     );
   }
 
-  const accessToken = devAuthBypassEnabled
-    ? devAuthBypassToken
-    : supabaseSession?.access_token ?? (manualToken.length > 0 ? manualToken : null);
+  const cognitoApiToken =
+    cognitoAuthConfig !== null && cognitoSession !== null
+      ? getCognitoApiToken(cognitoAuthConfig, cognitoSession)
+      : null;
+  const accessToken = devAuthBypass !== null
+    ? devAuthBypass.token
+    : cognitoApiToken ??
+      supabaseSession?.access_token ??
+      (manualTokenAuthAllowed && manualToken.length > 0 ? manualToken : null);
   if (accessToken === null) {
-    return <AuthScreen manualToken={manualToken} onManualTokenChange={setManualToken} supabaseClient={supabase} />;
+    return (
+      <AuthScreen
+        cognitoAuthConfig={cognitoAuthConfig}
+        cognitoAuthError={cognitoAuthError}
+        manualTokenAuthAllowed={manualTokenAuthAllowed}
+        manualToken={manualToken}
+        onCognitoLogin={async () => {
+          if (cognitoAuthConfig !== null) {
+            await beginCognitoLogin(cognitoAuthConfig, window.sessionStorage, window.location, window.crypto);
+          }
+        }}
+        onManualTokenChange={setManualToken}
+        supabaseClient={supabaseClient}
+      />
+    );
   }
 
-  const payload = devAuthBypassEnabled ? null : decodeJwtPayload(accessToken);
-  const email = devAuthBypassEnabled
-    ? devAuthBypassEmail
+  const payload = devAuthBypass !== null ? null : decodeJwtPayload(cognitoSession?.idToken ?? accessToken);
+  const email = devAuthBypass !== null
+    ? devAuthBypass.email
     : (typeof payload?.email === 'string' ? payload.email : null) ??
+      (typeof payload?.username === 'string' ? payload.username : null) ??
       supabaseSession?.user.email ??
       'session';
 
@@ -900,19 +1206,43 @@ export default function App() {
     <StudioShell
       email={email}
       token={accessToken}
-      supabaseClient={supabase}
+      supabaseClient={supabaseClient}
       onLogout={async () => {
-        if (supabase !== null) {
-          await supabase.auth.signOut();
+        const hadCognitoSession = cognitoSession !== null;
+        clearCognitoSession(window.sessionStorage);
+        setCognitoSession(null);
+        if (supabaseClient !== null) {
+          await supabaseClient.auth.signOut();
         }
         setManualToken('');
+        if (hadCognitoSession && cognitoAuthConfig !== null) {
+          window.location.assign(buildCognitoLogoutUrl(cognitoAuthConfig));
+        }
       }}
     />
   );
 }
 
+function getCognitoRefreshDelay(expiresAt: number, now: number): number {
+  const delayMs = expiresAt - now - cognitoRefreshSkewMs;
+  return Math.min(Math.max(delayMs, 0), maxBrowserTimeoutMs);
+}
+
+function hasSupabaseAuthConfig(): boolean {
+  return (
+    typeof import.meta.env.VITE_SUPABASE_URL === 'string' &&
+    import.meta.env.VITE_SUPABASE_URL.length > 0 &&
+    typeof import.meta.env.VITE_SUPABASE_ANON_KEY === 'string' &&
+    import.meta.env.VITE_SUPABASE_ANON_KEY.length > 0
+  );
+}
+
 function AuthScreen(props: {
+  cognitoAuthConfig: CognitoAuthConfig | null;
+  cognitoAuthError: string | null;
+  manualTokenAuthAllowed: boolean;
   manualToken: string;
+  onCognitoLogin: () => Promise<void>;
   onManualTokenChange: (nextValue: string) => void;
   supabaseClient: SupabaseClient | null;
 }) {
@@ -923,6 +1253,9 @@ function AuthScreen(props: {
   const [notice, setNotice] = useState<NoticeState | null>(null);
   const [busy, setBusy] = useState(false);
   const [draftToken, setDraftToken] = useState(props.manualToken);
+  const visibleNotice = notice ?? (
+    props.cognitoAuthError === null ? null : { type: 'error', message: props.cognitoAuthError } satisfies NoticeState
+  );
 
   const submitMagicLink = async (event: FormEvent<HTMLFormElement>): Promise<void> => {
     event.preventDefault();
@@ -950,8 +1283,16 @@ function AuthScreen(props: {
       <div className="auth-card">
         <div className="eyebrow">Lyra</div>
         <h1>{translateUiString(language, 'Production Console')}</h1>
-        <p className="muted">{translateUiString(language, 'Story, entity, page, balloon, billing.')}</p>
-        {notice !== null ? <NoticeBanner notice={notice} /> : null}
+        <p className="muted">{translateUiString(language, 'Story, entity, page, billing.')}</p>
+        {visibleNotice !== null ? <NoticeBanner notice={visibleNotice} /> : null}
+        {props.cognitoAuthConfig !== null ? (
+          <div className="stack">
+            <button className="primary-button" onClick={() => void props.onCognitoLogin()} type="button">
+              <KeyRound size={16} />
+              {translateUiString(language, 'Continue with Cognito')}
+            </button>
+          </div>
+        ) : null}
         {props.supabaseClient !== null ? (
           <form className="stack" onSubmit={submitMagicLink}>
             <label className="field">
@@ -964,26 +1305,30 @@ function AuthScreen(props: {
             </button>
           </form>
         ) : null}
-        <div className="divider" />
-        <div className="stack">
-          <label className="field">
-            <span>{translateUiString(language, 'Manual bearer token')}</span>
-            <textarea
-              rows={6}
-              value={draftToken}
-              onChange={(event) => setDraftToken(event.target.value)}
-              spellCheck={false}
-            />
-          </label>
-          <button
-            className="secondary-button"
-            onClick={() => props.onManualTokenChange(draftToken.trim())}
-            type="button"
-          >
-            <KeyRound size={16} />
-            {translateUiString(language, 'Use token')}
-          </button>
-        </div>
+        {props.manualTokenAuthAllowed ? (
+          <>
+            <div className="divider" />
+            <div className="stack">
+              <label className="field">
+                <span>{translateUiString(language, 'Manual bearer token')}</span>
+                <textarea
+                  rows={6}
+                  value={draftToken}
+                  onChange={(event) => setDraftToken(event.target.value)}
+                  spellCheck={false}
+                />
+              </label>
+              <button
+                className="secondary-button"
+                onClick={() => props.onManualTokenChange(draftToken.trim())}
+                type="button"
+              >
+                <KeyRound size={16} />
+                {translateUiString(language, 'Use token')}
+              </button>
+            </div>
+          </>
+        ) : null}
       </div>
     </div>
   );
@@ -1023,6 +1368,7 @@ function StudioShell(props: {
     compiler_error: string | null;
   } | null>(null);
   const [entityDraft, setEntityDraft] = useState<EntityDraft>(createEmptyEntityDraft());
+  const [entityEditorMode, setEntityEditorMode] = useState<'edit' | 'create'>('edit');
   const [selectedEntityId, setSelectedEntityId] = useState('');
   const [sceneDraft, setSceneDraft] = useState<SceneDraft>(createEmptySceneDraft());
   const [selectedSceneId, setSelectedSceneId] = useState('');
@@ -1030,12 +1376,11 @@ function StudioShell(props: {
   const [panelDraft, setPanelDraft] = useState<PanelDraft>(createEmptyPanelDraft());
   const [selectedPanelId, setSelectedPanelId] = useState('');
   const [panelEntityToAddId, setPanelEntityToAddId] = useState('');
-  const [balloonDraft, setBalloonDraft] = useState<BalloonDraft>(createEmptyBalloonDraft());
-  const [selectedBalloonId, setSelectedBalloonId] = useState('');
   const [frameTemplateId, setFrameTemplateId] = useState('standard_4');
-  const [framesJson, setFramesJson] = useState('[]');
+  const [frameDrafts, setFrameDrafts] = useState<PanelFrameDraft[]>([]);
   const [importingImage, setImportingImage] = useState(false);
   const [uploadedReferenceCandidatesByEntityId, setUploadedReferenceCandidatesByEntityId] = useState<Record<string, ReferenceCandidate[]>>({});
+  const [generatedReferenceCandidatesByEntityId, setGeneratedReferenceCandidatesByEntityId] = useState<Record<string, ReferenceCandidate[]>>({});
   const [uploadedReferenceSourceByEntityId, setUploadedReferenceSourceByEntityId] = useState<Record<string, string>>({});
   const [referenceSelection, setReferenceSelection] = useState<string[]>([]);
   const [referencePrimaryKey, setReferencePrimaryKey] = useState('');
@@ -1082,7 +1427,15 @@ function StudioShell(props: {
     enabled: selectedWorkId.length > 0,
   });
   const entities = useMemo(() => entitiesQuery.data?.entities ?? [], [entitiesQuery.data?.entities]);
-  const selectedEntity = entities.find((entity) => entity.id === selectedEntityId) ?? entities[0] ?? null;
+  const selectedWorkEntityIds = useMemo(
+    () => new Set(entities.map((entity) => entity.id)),
+    [entities],
+  );
+  const loadedSelectedWorkEntityIds = entitiesQuery.isSuccess ? selectedWorkEntityIds : undefined;
+  const selectedEntity =
+    entityEditorMode === 'create'
+      ? null
+      : entities.find((entity) => entity.id === selectedEntityId) ?? entities[0] ?? null;
 
   const entityReferenceSetQuery = useQuery({
     queryKey: ['entity-reference-set', selectedEntity?.id ?? ''],
@@ -1137,40 +1490,21 @@ function StudioShell(props: {
   });
   const frames = useMemo(() => framesQuery.data?.frames ?? [], [framesQuery.data?.frames]);
 
-  const balloonsQuery = useQuery({
-    queryKey: ['balloons', selectedPage?.id ?? ''],
-    queryFn: () => api.getBalloons(selectedPage?.id ?? ''),
-    enabled: selectedPage !== null,
-  });
-  const balloons = useMemo(() => balloonsQuery.data?.balloons ?? [], [balloonsQuery.data?.balloons]);
-  const selectedBalloon = balloons.find((balloon) => balloon.id === selectedBalloonId) ?? balloons[0] ?? null;
-  const episodeStoryInputConflict = useMemo(
-    () => hasEpisodeStoryInputConflict(episodeDraft),
-    [episodeDraft],
-  );
   const generatedPages = useMemo(
-    () => pages.filter((page) => page.generated_image?.cdn_url !== null && page.generated_image?.cdn_url !== undefined),
+    () => pages.filter((page) => page.generated_image !== null),
     [pages],
   );
   const exportablePages = useMemo(() => generatedPages.map((page) => page.id), [generatedPages]);
   const episodeHasExistingPagePlan = selectedEpisode !== null && (selectedEpisode.page_skeleton_generated || pages.length > 0);
   const skeletonContextLoading = selectedEpisode !== null && episodeHasExistingPagePlan && pagesQuery.isLoading;
-  const canOverwritePagePlan =
-    episodeHasExistingPagePlan && !skeletonContextLoading && pages.every((page) => page.status === 'designing');
   const skeletonActionLabel = episodeHasExistingPagePlan ? 'Regenerate page plan' : 'Generate page plan';
   const skeletonActionDisabled =
     selectedEpisode === null ||
-    episodeStoryInputConflict ||
-    busyAction === 'Generate page skeleton' ||
-    (episodeHasExistingPagePlan && !canOverwritePagePlan);
+    busyAction === 'Generate page skeleton';
   const skeletonActionMessage = skeletonContextLoading
-    ? 'Checking current pages before allowing skeleton regeneration.'
-    : episodeStoryInputConflict
-      ? 'Split story fields and the whole story draft both have content. Please keep only one before saving or generating.'
+    ? 'Loading current page plan.'
     : episodeHasExistingPagePlan
-      ? canOverwritePagePlan
-        ? 'The current page plan can be regenerated because every page is still designing.'
-        : 'Only episodes with designing pages can regenerate the page plan.'
+      ? 'Regenerating will replace the current pages for this episode.'
       : null;
 
   const jobQueries = useQueries({
@@ -1181,58 +1515,50 @@ function StudioShell(props: {
         query.state.data?.status === 'queued' || query.state.data?.status === 'processing' ? 4000 : false,
     })),
   });
-  const jobs = jobQueries.map((query) => query.data).filter(isDefined).slice(0, 5);
-  const activeJobs = useMemo(
-    () => jobs.filter((job) => job.status === 'queued' || job.status === 'processing'),
-    [jobs],
-  );
-  const selectedEntityGenerationJob = useMemo(() => {
-    if (selectedEntity === null) {
-      return null;
-    }
-
-    return (
-      [...activeJobs]
+  const trackedJobs = jobQueries.map((query) => query.data).filter(isDefined);
+  const jobs = trackedJobs.slice(0, 5);
+  const activeJobs = trackedJobs.filter((job) => job.status === 'queued' || job.status === 'processing');
+  const selectedEntityGenerationJob =
+    selectedEntity === null
+      ? null
+      : [...activeJobs]
         .reverse()
-        .find((job) => job.job_type === 'entity_generate' && job.params.entity_id === selectedEntity.id) ?? null
-    );
-  }, [activeJobs, selectedEntity]);
-  const selectedPageGenerationJob = useMemo(() => {
-    if (selectedPage === null) {
-      return null;
-    }
-
-    return (
-      [...activeJobs]
+        .find((job) => job.job_type === 'entity_generate' && job.params.entity_id === selectedEntity.id) ?? null;
+  const selectedPageGenerationJob =
+    selectedPage === null
+      ? null
+      : [...activeJobs]
         .reverse()
-        .find((job) => job.job_type === 'page_generate' && job.params.page_id === selectedPage.id) ?? null
-    );
-  }, [activeJobs, selectedPage]);
+        .find((job) => job.job_type === 'page_generate' && job.params.page_id === selectedPage.id) ?? null;
   const skeletonGenerationMessage =
     busyAction === 'Generate page skeleton'
-      ? 'Page skeleton generation can take a while, especially for long episodes.'
+      ? 'Generating page plan. This can take a while.'
       : null;
   const storyPlanProcessingMessage =
     busyAction === 'Apply story plan'
-      ? 'Story plan autofill can take a while while pages and panels are being distributed.'
+      ? 'Applying story plan to pages and panels.'
       : null;
-  const selectedPageAutofillMessage =
-    busyAction === 'Fill selected page' ? 'Selected page autofill can take a while for dense scenes.' : null;
+  const selectedPageFrameCount = framesQuery.data?.frames.length ?? selectedPage?.frame_count ?? 0;
+  const selectedPagePanelCount = panelsQuery.data?.panels.length ?? selectedPage?.panel_count ?? 0;
+  const selectedPageHasFramePanelMismatch =
+    selectedPage !== null && selectedPageFrameCount !== selectedPagePanelCount;
+  const generatePageDisabled =
+    busyAction === 'Generate page' || selectedPageHasFramePanelMismatch;
   const entityPreviewGenerationMessage =
     selectedEntityGenerationJob !== null
       ? selectedEntityGenerationJob.status === 'queued'
-        ? 'Queued. This task will start soon and can take a while.'
-        : 'Character preview generation can take a while. The preview updates when the job finishes.'
+        ? 'Queued. Starts soon.'
+        : 'Generating preview. It updates when finished.'
       : busyAction === 'Generate reference'
-        ? 'Character preview generation can take a while. The preview updates when the job finishes.'
+        ? 'Generating preview. It updates when finished.'
         : null;
   const pageImageGenerationMessage =
     selectedPageGenerationJob !== null
       ? selectedPageGenerationJob.status === 'queued'
-        ? 'Queued. This task will start soon and can take a while.'
-        : 'Page image generation can take a while. The page image updates when the job finishes.'
+        ? 'Queued. Starts soon.'
+        : 'Generating page. It updates when finished.'
       : busyAction === 'Generate page'
-        ? 'Page image generation can take a while. The page image updates when the job finishes.'
+        ? 'Generating page. It updates when finished.'
         : null;
 
   useEffect(() => {
@@ -1264,10 +1590,14 @@ function StudioShell(props: {
   }, [pages, selectedPageId, setSelectedPageId]);
 
   useEffect(() => {
+    if (entityEditorMode === 'create') {
+      return;
+    }
+
     if (!entities.some((entity) => entity.id === selectedEntityId)) {
       setSelectedEntityId(entities[0]?.id ?? '');
     }
-  }, [entities, selectedEntityId]);
+  }, [entities, entityEditorMode, selectedEntityId]);
 
   useEffect(() => {
     if (!scenes.some((scene) => scene.id === selectedSceneId)) {
@@ -1280,12 +1610,6 @@ function StudioShell(props: {
       setSelectedPanelId(panels[0]?.id ?? '');
     }
   }, [panels, selectedPanelId]);
-
-  useEffect(() => {
-    if (!balloons.some((balloon) => balloon.id === selectedBalloonId)) {
-      setSelectedBalloonId(balloons[0]?.id ?? '');
-    }
-  }, [balloons, selectedBalloonId]);
 
   useEffect(() => {
     if (selectedPage !== null) {
@@ -1345,10 +1669,10 @@ function StudioShell(props: {
   }, [selectedEpisode]);
 
   useEffect(() => {
-    if (selectedEntity !== null) {
+    if (entityEditorMode === 'edit' && selectedEntity !== null) {
       setEntityDraft(toEntityDraft(selectedEntity));
     }
-  }, [selectedEntity]);
+  }, [entityEditorMode, selectedEntity]);
 
   useEffect(() => {
     if (selectedScene !== null) {
@@ -1374,17 +1698,11 @@ function StudioShell(props: {
   }, [availablePanelEntities, panelEntityToAddId]);
 
   useEffect(() => {
-    if (selectedBalloon !== null) {
-      setBalloonDraft(toBalloonDraft(selectedBalloon));
-    }
-  }, [selectedBalloon]);
-
-  useEffect(() => {
-    setFramesJson(JSON.stringify(frames, null, 2));
+    setFrameDrafts(frames.map(toPanelFrameDraft));
   }, [frames]);
 
   useEffect(() => {
-    for (const job of jobs) {
+    for (const job of [...trackedJobs].reverse()) {
       if (handledJobsRef.current.has(job.id)) {
         continue;
       }
@@ -1398,57 +1716,40 @@ function StudioShell(props: {
           if (pageId !== null) {
             void queryClient.invalidateQueries({ queryKey: ['panels', pageId] });
             void queryClient.invalidateQueries({ queryKey: ['frames', pageId] });
-            void queryClient.invalidateQueries({ queryKey: ['balloons', pageId] });
           }
 
           void queryClient.invalidateQueries({ queryKey: ['pages'] });
         }
         if (job.job_type === 'entity_generate') {
           const entityId = typeof job.params.entity_id === 'string' ? job.params.entity_id : null;
-          if (entityId !== null) {
-            void queryClient.invalidateQueries({ queryKey: ['entity-reference-set', entityId] });
+            if (entityId !== null) {
+              const nextCandidates = extractGeneratedReferenceCandidates(job);
+              if (nextCandidates.length > 0) {
+                setGeneratedReferenceCandidatesByEntityId((current) =>
+                  sameReferenceCandidates(current[entityId] ?? [], nextCandidates)
+                    ? current
+                    : {
+                        ...current,
+                        [entityId]: nextCandidates,
+                      },
+                );
+              } else {
+                setGeneratedReferenceCandidatesByEntityId((current) => {
+                  if (current[entityId] === undefined) {
+                    return current;
+                  }
+
+                  const remaining = { ...current };
+                  delete remaining[entityId];
+                  return remaining;
+                });
+              }
+              void queryClient.invalidateQueries({ queryKey: ['entity-reference-set', entityId] });
+            }
           }
-        }
       }
     }
-  }, [jobs, queryClient]);
-
-  const generatedReferenceCandidates = useMemo(() => {
-    if (selectedEntity === null) {
-      return [];
-    }
-
-    for (const job of [...jobs].reverse()) {
-      if (
-        job.job_type === 'entity_generate' &&
-        job.status === 'completed' &&
-        job.params.entity_id === selectedEntity.id &&
-        Array.isArray(job.result?.candidates)
-      ) {
-        return (job.result.candidates as unknown[]).flatMap((candidate) => {
-          if (
-            typeof candidate !== 'object' ||
-            candidate === null ||
-            Array.isArray(candidate) ||
-            typeof (candidate as { s3_key?: unknown }).s3_key !== 'string' ||
-            typeof (candidate as { cdn_url?: unknown }).cdn_url !== 'string'
-          ) {
-            return [];
-          }
-
-          return [
-            {
-              s3_key: (candidate as { s3_key: string }).s3_key,
-              cdn_url: (candidate as { cdn_url: string }).cdn_url,
-              source: 'generated' as const,
-            },
-          ];
-        });
-      }
-    }
-
-    return [];
-  }, [jobs, selectedEntity]);
+  }, [trackedJobs, queryClient]);
 
   const referenceCandidates = useMemo(() => {
     if (selectedEntity === null) {
@@ -1456,8 +1757,9 @@ function StudioShell(props: {
     }
 
     const uploadedCandidates = uploadedReferenceCandidatesByEntityId[selectedEntity.id] ?? [];
+    const generatedReferenceCandidates = generatedReferenceCandidatesByEntityId[selectedEntity.id] ?? [];
     return dedupeReferenceCandidates([...uploadedCandidates, ...generatedReferenceCandidates]);
-  }, [generatedReferenceCandidates, selectedEntity, uploadedReferenceCandidatesByEntityId]);
+  }, [generatedReferenceCandidatesByEntityId, selectedEntity, uploadedReferenceCandidatesByEntityId]);
 
   const characterStructuredFields = useMemo(
     () => parseCharacterStructuredFieldsDraft(entityDraft.structured_fields),
@@ -1466,37 +1768,40 @@ function StudioShell(props: {
 
   useEffect(() => {
     if (referenceCandidates.length === 0) {
-      setReferenceSelection([]);
-      setReferencePrimaryKey('');
+      if (referenceSelection.length > 0) {
+        setReferenceSelection([]);
+      }
+      if (referencePrimaryKey.length > 0) {
+        setReferencePrimaryKey('');
+      }
       return;
     }
 
     const hasSelectionForCurrentCandidates = referenceCandidates.some((candidate) =>
       referenceSelection.includes(candidate.s3_key),
     );
+    const firstSelectedCandidateKey = referenceSelection.find((selectedKey) =>
+      referenceCandidates.some((candidate) => candidate.s3_key === selectedKey),
+    );
 
-    if (referenceCandidates.length > 0 && !hasSelectionForCurrentCandidates) {
+    if (!hasSelectionForCurrentCandidates) {
       setReferenceSelection(referenceCandidates.map((candidate) => candidate.s3_key));
       setReferencePrimaryKey(referenceCandidates[0]?.s3_key ?? '');
+      return;
     }
-  }, [referenceCandidates, referenceSelection]);
+
+    if (!referenceCandidates.some((candidate) => candidate.s3_key === referencePrimaryKey)) {
+      setReferencePrimaryKey(firstSelectedCandidateKey ?? referenceCandidates[0]?.s3_key ?? '');
+    }
+  }, [referenceCandidates, referencePrimaryKey, referenceSelection]);
 
   const saveCurrentEpisodeContext = async (): Promise<void> => {
-    if (episodeStoryInputConflict) {
-      throw new Error(
-        translateUiString(
-          uiLanguage,
-          'Split story fields and the whole story draft both have content. Please keep only one before saving or generating.',
-        ),
-      );
-    }
-
     if (selectedEpisode !== null) {
-      await api.updateEpisode(selectedEpisode.id, toEpisodePayload(episodeDraft));
+      await api.updateEpisode(selectedEpisode.id, toEpisodeAutosavePayload(episodeDraft));
     }
 
     if (selectedScene !== null) {
-      await api.updateScene(selectedScene.id, toScenePayload(sceneDraft));
+      await api.updateScene(selectedScene.id, toSceneAutosavePayload(sceneDraft));
     }
 
     if (selectedChapter !== null) {
@@ -1528,15 +1833,65 @@ function StudioShell(props: {
       return;
     }
 
-    await api.updateEntity(selectedEntity.id, toEntityPayload(entityDraft));
+    const savedEntity = await api.updateEntity(selectedEntity.id, toEntityPayload(entityDraft));
+    cacheEntityRecord(savedEntity);
+    setEntityDraft(toEntityDraft(savedEntity));
     await queryClient.invalidateQueries({ queryKey: ['entities', selectedWork.id] });
+  };
+
+  const beginNewEntityDraft = (): void => {
+    setEntityEditorMode('create');
+    setSelectedEntityId('');
+    setEntityDraft(createEmptyEntityDraft());
+    setReferenceSelection([]);
+    setReferencePrimaryKey('');
+  };
+
+  const selectEntityForEditing = (entityId: string): void => {
+    setEntityEditorMode('edit');
+    setSelectedEntityId(entityId);
+    setReferenceSelection([]);
+    setReferencePrimaryKey('');
+  };
+
+  const confirmUiAction = (message: string): boolean => window.confirm(translateUiString(uiLanguage, message));
+
+  const cacheEntityRecord = (entity: EntityRecord): void => {
+    queryClient.setQueryData<{ entities: EntityRecord[] }>(['entities', entity.work_id], (current) => {
+      if (current === undefined) {
+        return { entities: [entity] };
+      }
+
+      const entityExists = current.entities.some((item) => item.id === entity.id);
+      return {
+        ...current,
+        entities: entityExists
+          ? current.entities.map((item) => (item.id === entity.id ? entity : item))
+          : [entity, ...current.entities],
+      };
+    });
+  };
+
+  const removeEntityFromCache = (workId: string, entityId: string): void => {
+    queryClient.setQueryData<{ entities: EntityRecord[] }>(['entities', workId], (current) =>
+      current === undefined
+        ? current
+        : {
+            ...current,
+            entities: current.entities.filter((entity) => entity.id !== entityId),
+          },
+    );
   };
 
   const runAction = async (label: string, action: () => Promise<void>): Promise<void> => {
     try {
       setBusyAction(label);
       await action();
-      setNotice({ type: 'success', message: `${label} completed.` });
+      const translatedLabel = translateUiString(uiLanguage, label);
+      setNotice({
+        type: 'success',
+        message: formatActionSuccessMessage(uiLanguage, label, translatedLabel),
+      });
     } catch (error) {
       setNotice({ type: 'error', message: toMessage(error) });
     } finally {
@@ -1578,15 +1933,15 @@ function StudioShell(props: {
     const baseName = sanitizeFilename(exportFilename.trim().length > 0 ? exportFilename : 'lyra-pages');
 
     if (exportFormat === 'pdf') {
-      const assets = await Promise.all(
-        targetPages.map(async (page) => {
-          const response = await api.exportPageImage(page.id);
-          return {
-            page,
-            dataUrl: await blobToDataUrl(response.blob),
-          };
-        }),
-      );
+      const { jsPDF } = await import('jspdf');
+      const assets: Array<{ page: PageRecord; dataUrl: string }> = [];
+      for (const page of targetPages) {
+        const response = await api.exportPageImage(page.id);
+        assets.push({
+          page,
+          dataUrl: await blobToDataUrl(response.blob),
+        });
+      }
       const pdf = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' });
       assets.forEach((asset, index) => {
         if (index > 0) {
@@ -1601,12 +1956,38 @@ function StudioShell(props: {
     }
 
     const multiple = targetPages.length > 1;
-    await Promise.all(
-      targetPages.map(async (page) => {
-        const response = await api.exportPageImage(page.id);
-        const extension = inferImageExtension(response.contentType);
-        const filename = multiple ? `${baseName}-page-${String(page.page_number).padStart(2, '0')}.${extension}` : `${baseName}.${extension}`;
-        triggerBlobDownload(response.blob, filename);
+    for (const page of targetPages) {
+      const response = await api.exportPageImage(page.id);
+      const extension = inferImageExtension(response.contentType);
+      const filename = multiple ? `${baseName}-page-${String(page.page_number).padStart(2, '0')}.${extension}` : `${baseName}.${extension}`;
+      triggerBlobDownload(response.blob, filename);
+    }
+  };
+
+  const updateFrameDraft = (index: number, patch: Partial<PanelFrameDraft>): void => {
+    setFrameDrafts((current) =>
+      current.map((draft, draftIndex) => (draftIndex === index ? { ...draft, ...patch } : draft)),
+    );
+  };
+
+  const updateFrameVertexDraft = (
+    frameIndex: number,
+    vertexIndex: number,
+    axis: 'x' | 'y',
+    value: string,
+  ): void => {
+    setFrameDrafts((current) =>
+      current.map((draft, draftIndex) => {
+        if (draftIndex !== frameIndex) {
+          return draft;
+        }
+
+        return {
+          ...draft,
+          vertices: draft.vertices.map((vertex, currentVertexIndex) =>
+            currentVertexIndex === vertexIndex ? { ...vertex, [axis]: value } : vertex,
+          ),
+        };
       }),
     );
   };
@@ -1714,6 +2095,7 @@ function StudioShell(props: {
           <section className="empty-state">
             <LayoutGrid size={28} />
             <h2>{translateUiString(uiLanguage, 'No work selected')}</h2>
+            <p>{translateUiString(uiLanguage, 'Create or select a work from the left panel to start editing.')}</p>
           </section>
         ) : (
           <div className="workspace-grid">
@@ -1729,7 +2111,10 @@ function StudioShell(props: {
                         disabled={busyAction === 'Save work'}
                         onClick={() =>
                           void runAction('Save work', async () => {
-                            await api.updateWork(selectedWork.id, toWorkPayload(workDraft));
+                            await api.updateWork(
+                              selectedWork.id,
+                              toWorkPayload(workDraft, loadedSelectedWorkEntityIds),
+                            );
                             await queryClient.invalidateQueries({ queryKey: ['works'] });
                           })
                         }
@@ -1795,7 +2180,7 @@ function StudioShell(props: {
                     actions={
                       <div className="toolbar">
                         <button
-                          className="secondary-button"
+                          className="primary-button"
                           disabled={skeletonActionDisabled}
                           onClick={() => {
                             if (selectedEpisode === null) {
@@ -1807,7 +2192,7 @@ function StudioShell(props: {
                               !window.confirm(
                                 translateUiString(
                                   uiLanguage,
-                                  'Regenerating the page plan will replace the current designing pages for this episode.',
+                                  'Regenerating the page plan will replace the current pages for this episode.',
                                 ),
                               )
                             ) {
@@ -1817,7 +2202,6 @@ function StudioShell(props: {
                               await saveCurrentEpisodeContext();
                               setSelectedPageId('');
                               setSelectedPanelId('');
-                              setSelectedBalloonId('');
                               await api.generatePageSkeleton(selectedEpisode.id, {
                                 overwrite_existing: overwriteExisting,
                                 language: uiLanguage,
@@ -1835,7 +2219,7 @@ function StudioShell(props: {
                         </button>
                         <button
                           className="ghost-button"
-                          disabled={selectedEpisode === null || episodeStoryInputConflict || busyAction === 'Apply story plan'}
+                          disabled={selectedEpisode === null || busyAction === 'Apply story plan'}
                           onClick={() => {
                             if (selectedEpisode === null) {
                               return;
@@ -1864,6 +2248,13 @@ function StudioShell(props: {
                     {storyPlanProcessingMessage !== null ? (
                       <ProcessingHint message={translateUiString(uiLanguage, storyPlanProcessingMessage)} />
                     ) : null}
+                    {selectedEpisode !== null ? (
+                      <div className="state-pill-row">
+                        <span className="state-pill state-pill-neutral">
+                          {translateUiString(uiLanguage, 'Text AI actions use no credits.')}
+                        </span>
+                      </div>
+                    ) : null}
                     <div className="story-tree">
                       <div className="tree-column">
                         <h3>{translateUiString(uiLanguage, 'Chapters')}</h3>
@@ -1889,7 +2280,10 @@ function StudioShell(props: {
                           onSubmit={(event) => {
                             event.preventDefault();
                             void runAction('Create chapter', async () => {
-                              await api.createChapter(selectedWork.id, toCreateChapterPayload(newChapterDraft));
+                              await api.createChapter(
+                                selectedWork.id,
+                                toCreateChapterPayload(newChapterDraft, loadedSelectedWorkEntityIds),
+                              );
                               setNewChapterDraft(createEmptyChapterDraft());
                               await queryClient.invalidateQueries({ queryKey: ['chapters', selectedWork.id] });
                             });
@@ -1936,7 +2330,10 @@ function StudioShell(props: {
                                 className="ghost-button"
                                 onClick={() =>
                                   void runAction('Save chapter', async () => {
-                                    await api.updateChapter(selectedChapter.id, toChapterPayload(chapterDraft));
+                                    await api.updateChapter(
+                                      selectedChapter.id,
+                                      toChapterPayload(chapterDraft, loadedSelectedWorkEntityIds),
+                                    );
                                     await queryClient.invalidateQueries({ queryKey: ['chapters', selectedWork.id] });
                                   })
                                 }
@@ -1980,7 +2377,10 @@ function StudioShell(props: {
                             onSubmit={(event) => {
                               event.preventDefault();
                               void runAction('Create episode', async () => {
-                                await api.createEpisode(selectedChapter.id, toCreateEpisodePayload(newEpisodeDraft));
+                                await api.createEpisode(
+                                  selectedChapter.id,
+                                  toCreateEpisodePayload(newEpisodeDraft, loadedSelectedWorkEntityIds),
+                                );
                                 setNewEpisodeDraft(createEmptyEpisodeDraft());
                                 await queryClient.invalidateQueries({ queryKey: ['episodes', selectedChapter.id] });
                               });
@@ -2018,17 +2418,20 @@ function StudioShell(props: {
                       <div className="toolbar">
                         <button
                           className="secondary-button"
-                          disabled={busyAction === 'Save episode' || episodeStoryInputConflict}
+                          disabled={busyAction === 'Save episode'}
                           onClick={() =>
                             void runAction('Save episode', async () => {
-                              await api.updateEpisode(selectedEpisode.id, toEpisodePayload(episodeDraft));
+                              await api.updateEpisode(
+                                selectedEpisode.id,
+                                toEpisodePayload(episodeDraft, loadedSelectedWorkEntityIds),
+                              );
                               await queryClient.invalidateQueries({ queryKey: ['episodes', selectedChapter?.id ?? ''] });
                             })
                           }
                           type="button"
                         >
                           {busyAction === 'Save episode' ? <LoaderCircle className="spin" size={16} /> : <Save size={16} />}
-                          Save
+                          {translateUiString(uiLanguage, 'Save')}
                         </button>
                         <button
                           className="ghost-button danger"
@@ -2066,14 +2469,6 @@ function StudioShell(props: {
                         ['full', 'Whole draft'],
                       ]}
                     />
-                    {episodeStoryInputConflict ? (
-                      <div className="error-text small">
-                        {translateUiString(
-                          uiLanguage,
-                          'Split story fields and the whole story draft both have content. Please keep only one before saving or generating.',
-                        )}
-                      </div>
-                    ) : null}
                     {episodeDraft.story_input_mode === 'full' ? (
                       <TextAreaField
                         label="Whole story draft"
@@ -2111,7 +2506,7 @@ function StudioShell(props: {
                       <div className="toolbar">
                         <button
                           className="primary-button"
-                          disabled={storyBusy || episodeStoryInputConflict || storyInstruction.trim().length === 0}
+                          disabled={storyBusy || storyInstruction.trim().length === 0}
                           onClick={() => {
                             void (async () => {
                               try {
@@ -2122,14 +2517,7 @@ function StudioShell(props: {
                                   instruction: storyInstruction,
                                   language: uiLanguage,
                                   base_draft: {
-                                    title: nullableString(episodeDraft.title),
-                                    purpose: nullableString(episodeDraft.purpose),
-                                    story_input_mode: episodeDraft.story_input_mode,
-                                    story_full_draft: nullableString(episodeDraft.story_full_draft),
-                                    introduction: nullableString(episodeDraft.introduction),
-                                    middle: nullableString(episodeDraft.middle),
-                                    climax: nullableString(episodeDraft.climax),
-                                    ending_hook: nullableString(episodeDraft.ending_hook),
+                                    ...toEpisodeBaseDraftPayload(episodeDraft),
                                   },
                                 });
                                 setStoryImprovementDraft(result.draft);
@@ -2170,14 +2558,6 @@ function StudioShell(props: {
                     }
                   >
                     <TextAreaField label="Instruction" rows={4} value={storyInstruction} onChange={setStoryInstruction} />
-                    {episodeStoryInputConflict ? (
-                      <div className="error-text small">
-                        {translateUiString(
-                          uiLanguage,
-                          'Split story fields and the whole story draft both have content. Please keep only one before saving or generating.',
-                        )}
-                      </div>
-                    ) : null}
                     {storyImprovementMeta !== null && storyImprovementMeta.compiler_provider !== 'fallback' ? (
                           <div className="muted small">{`${translateUiString(uiLanguage, 'AI improved')} / ${storyImprovementMeta.compiler_model ?? translateUiString(uiLanguage, 'Story AI')}`}</div>
                     ) : null}
@@ -2381,7 +2761,10 @@ function StudioShell(props: {
                         className="secondary-button"
                         onClick={() =>
                           void runAction('Create scene', async () => {
-                            await api.createScene(selectedEpisode.id, toCreateScenePayload(sceneDraft));
+                            await api.createScene(
+                              selectedEpisode.id,
+                              toCreateScenePayload(sceneDraft, loadedSelectedWorkEntityIds),
+                            );
                             setSceneDraft(createEmptySceneDraft());
                             await queryClient.invalidateQueries({ queryKey: ['scenes', selectedEpisode.id] });
                           })
@@ -2396,14 +2779,17 @@ function StudioShell(props: {
                           className="ghost-button"
                           onClick={() =>
                             void runAction('Save scene', async () => {
-                              await api.updateScene(selectedScene.id, toScenePayload(sceneDraft));
+                              await api.updateScene(
+                                selectedScene.id,
+                                toScenePayload(sceneDraft, loadedSelectedWorkEntityIds),
+                              );
                               await queryClient.invalidateQueries({ queryKey: ['scenes', selectedEpisode.id] });
                             })
                           }
                           type="button"
                         >
                           <Save size={16} />
-                          Save selected
+                          {translateUiString(uiLanguage, 'Save scene')}
                         </button>
                       ) : null}
                     </div>
@@ -2447,10 +2833,7 @@ function StudioShell(props: {
                     actions={
                       <button
                         className="secondary-button"
-                        onClick={() => {
-                          setSelectedEntityId('');
-                          setEntityDraft(createEmptyEntityDraft());
-                        }}
+                        onClick={beginNewEntityDraft}
                         type="button"
                       >
                         <RefreshCw size={16} />
@@ -2463,7 +2846,7 @@ function StudioShell(props: {
                         <button
                           key={entity.id}
                           className={`mini-card ${selectedEntity?.id === entity.id ? 'active' : ''}`}
-                          onClick={() => setSelectedEntityId(entity.id)}
+                          onClick={() => selectEntityForEditing(entity.id)}
                           type="button"
                         >
                           <strong>{entity.name}</strong>
@@ -2481,10 +2864,7 @@ function StudioShell(props: {
                       <div className="toolbar">
                         <button
                           className="ghost-button"
-                          onClick={() => {
-                            setSelectedEntityId('');
-                            setEntityDraft(createEmptyEntityDraft());
-                          }}
+                          onClick={beginNewEntityDraft}
                           type="button"
                         >
                           <RefreshCw size={16} />
@@ -2493,12 +2873,17 @@ function StudioShell(props: {
                         {selectedEntity !== null ? (
                           <button
                             className="ghost-button danger"
-                            onClick={() =>
+                            onClick={() => {
+                              if (!confirmUiAction('Delete this character? This cannot be undone.')) {
+                                return;
+                              }
+
                               void runAction('Delete entity', async () => {
                                 await api.deleteEntity(selectedEntity.id);
+                                removeEntityFromCache(selectedWork.id, selectedEntity.id);
                                 await queryClient.invalidateQueries({ queryKey: ['entities', selectedWork.id] });
-                              })
-                            }
+                              });
+                            }}
                             type="button"
                           >
                             <Trash2 size={16} />
@@ -2507,6 +2892,7 @@ function StudioShell(props: {
                       </div>
                     }
                   >
+                    <div className="muted small">{translateUiString(uiLanguage, 'You do not need to fill every blank field.')}</div>
                     <div className="form-grid two">
                       <SelectField
                         label="Type"
@@ -2539,6 +2925,7 @@ function StudioShell(props: {
                     />
                     {entityDraft.entity_type === 'character' ? (
                       <CharacterStructuredFieldsEditor
+                        key={selectedEntity?.id ?? 'new-character'}
                         value={characterStructuredFields}
                         onChange={(nextValue) =>
                           setEntityDraft((current) => ({
@@ -2548,47 +2935,70 @@ function StudioShell(props: {
                         }
                       />
                     ) : (
-                      <TextAreaField
-                        label="Structured fields JSON"
-                        rows={6}
+                      <GenericStructuredFieldsEditor
                         value={entityDraft.structured_fields}
                         onChange={(value) => setEntityDraft({ ...entityDraft, structured_fields: value })}
                       />
                     )}
+                    <div className="state-pill-row">
+                      <span className={`state-pill ${entityEditorMode === 'create' ? 'state-pill-info' : 'state-pill-neutral'}`}>
+                        {translateUiString(
+                          uiLanguage,
+                          entityEditorMode === 'create'
+                            ? 'Creating a new character. Saving here will add a new record and will not overwrite existing characters.'
+                            : 'Editing the selected character.',
+                        )}
+                      </span>
+                    </div>
                     <div className="toolbar">
-                      <button
-                        className="secondary-button"
-                        onClick={() =>
-                          void runAction('Create entity', async () => {
-                            await api.createEntity(selectedWork.id, toEntityPayload(entityDraft));
-                            setEntityDraft(createEmptyEntityDraft());
-                            await queryClient.invalidateQueries({ queryKey: ['entities', selectedWork.id] });
-                          })
-                        }
-                        type="button"
-                      >
-                        <Save size={16} />
-                        {translateUiString(uiLanguage, 'Create')}
-                      </button>
-                      {selectedEntity !== null ? (
+                      {entityEditorMode === 'create' || selectedEntity === null ? (
                         <button
-                          className="ghost-button"
+                          className="secondary-button"
                           onClick={() =>
-                            void runAction('Save entity', async () => {
-                              await api.updateEntity(selectedEntity.id, toEntityPayload(entityDraft));
+                            void runAction('Create entity', async () => {
+                              const createdEntity = await api.createEntity(selectedWork.id, toEntityPayload(entityDraft));
+                              cacheEntityRecord(createdEntity);
+                              setEntityEditorMode('edit');
+                              setSelectedEntityId(createdEntity.id);
+                              setEntityDraft(toEntityDraft(createdEntity));
                               await queryClient.invalidateQueries({ queryKey: ['entities', selectedWork.id] });
                             })
                           }
                           type="button"
                         >
                           <Save size={16} />
-                          {translateUiString(uiLanguage, 'Save selected')}
+                          {translateUiString(uiLanguage, 'Create character')}
+                        </button>
+                      ) : null}
+                      {entityEditorMode === 'edit' && selectedEntity !== null ? (
+                        <button
+                          className="secondary-button"
+                          onClick={() =>
+                            void runAction('Save entity', async () => {
+                              const savedEntity = await api.updateEntity(selectedEntity.id, toEntityPayload(entityDraft));
+                              cacheEntityRecord(savedEntity);
+                              setEntityDraft(toEntityDraft(savedEntity));
+                              await queryClient.invalidateQueries({ queryKey: ['entities', selectedWork.id] });
+                            })
+                          }
+                          type="button"
+                        >
+                          <Save size={16} />
+                          {translateUiString(uiLanguage, 'Save character')}
                         </button>
                       ) : null}
                     </div>
                   </PanelSection>
 
                   <PanelSection title="Import / References" collapsible>
+                    <div className="state-pill-row">
+                      <span className="state-pill state-pill-neutral">
+                        {translateUiString(uiLanguage, 'Image import costs 1 credit.')}
+                      </span>
+                      <span className="state-pill state-pill-neutral">
+                        {translateUiString(uiLanguage, 'Preview generation costs 1 credit.')}
+                      </span>
+                    </div>
                     <label className="file-drop">
                       <input
                         accept="image/png,image/jpeg,image/webp"
@@ -2603,6 +3013,7 @@ function StudioShell(props: {
                             setEntityDraft,
                             setUploadedReferenceCandidatesByEntityId,
                             setUploadedReferenceSourceByEntityId,
+                            uiLanguage,
                           )
                         }
                         type="file"
@@ -2616,6 +3027,12 @@ function StudioShell(props: {
                           onClick={() =>
                             void runAction('Generate reference', async () => {
                               await saveCurrentEntityGenerationContext();
+                              setGeneratedReferenceCandidatesByEntityId((current) => ({
+                                ...current,
+                                [selectedEntity.id]: [],
+                              }));
+                              setReferenceSelection([]);
+                              setReferencePrimaryKey('');
                               const sourceS3Key = uploadedReferenceSourceByEntityId[selectedEntity.id];
                               const result = await api.generateEntityReference(
                                 selectedEntity.id,
@@ -2627,7 +3044,7 @@ function StudioShell(props: {
                           type="button"
                         >
                           <Sparkles size={16} />
-                          {translateUiString(uiLanguage, 'Generate full-body candidates')}
+                          {translateUiString(uiLanguage, 'Generate full-body preview')}
                         </button>
                         <button
                           className="primary-button"
@@ -2665,41 +3082,55 @@ function StudioShell(props: {
                         <div className="section-header">
                           <div>
                             <h3>{translateUiString(uiLanguage, 'Generated preview')}</h3>
-                            <div className="muted small">{translateUiString(uiLanguage, 'Select one or more candidates and choose a primary image.')}</div>
+                            <div className="muted small">{translateUiString(uiLanguage, 'Select a preview and confirm it as the primary image.')}</div>
                           </div>
                         </div>
                         {referenceCandidates.length > 0 ? (
                           <div className="reference-grid reference-grid-portrait">
                             {referenceCandidates.map((candidate) => (
-                              <label key={candidate.s3_key} className={`reference-card reference-card-portrait ${referenceSelection.includes(candidate.s3_key) ? 'active' : ''}`}>
+                              <div key={candidate.s3_key} className={`reference-card reference-card-portrait ${referenceSelection.includes(candidate.s3_key) ? 'active' : ''}`}>
                                 <div className="reference-card-media">
-                                  <img alt="" src={candidate.cdn_url} />
+                                  <AuthenticatedImage
+                                    enabled={selectedEntity !== null}
+                                    loadImage={() => api.exportEntityReferenceCandidateImage(selectedEntity?.id ?? '', candidate.s3_key)}
+                                    queryKey={['entity-reference-candidate-image', selectedEntity?.id, candidate.s3_key]}
+                                  />
                                 </div>
                                 <div className="reference-card-body">
-                                  <span>{candidate.source}</span>
+                                  <span>{translateUiString(uiLanguage, candidate.source)}</span>
+                                  <div className="reference-card-choice-row">
+                                    <label>
+                                      <input
+                                        checked={referenceSelection.includes(candidate.s3_key)}
+                                        onChange={(event) =>
+                                          setReferenceSelection((current) =>
+                                            event.target.checked
+                                              ? current.includes(candidate.s3_key)
+                                                ? current
+                                                : [...current, candidate.s3_key]
+                                              : current.filter((item) => item !== candidate.s3_key),
+                                          )
+                                        }
+                                        type="checkbox"
+                                      />
+                                      {translateUiString(uiLanguage, 'Use reference')}
+                                    </label>
+                                    <label>
+                                      <input
+                                        checked={referencePrimaryKey === candidate.s3_key}
+                                        name="reference-primary"
+                                        onChange={() => setReferencePrimaryKey(candidate.s3_key)}
+                                        type="radio"
+                                      />
+                                      {translateUiString(uiLanguage, 'Primary reference')}
+                                    </label>
+                                  </div>
                                 </div>
-                                <input
-                                  checked={referenceSelection.includes(candidate.s3_key)}
-                                  onChange={(event) =>
-                                    setReferenceSelection((current) =>
-                                      event.target.checked
-                                        ? [...current, candidate.s3_key]
-                                        : current.filter((item) => item !== candidate.s3_key),
-                                    )
-                                  }
-                                  type="checkbox"
-                                />
-                                <input
-                                  checked={referencePrimaryKey === candidate.s3_key}
-                                  name="reference-primary"
-                                  onChange={() => setReferencePrimaryKey(candidate.s3_key)}
-                                  type="radio"
-                                />
-                              </label>
+                              </div>
                             ))}
                           </div>
                         ) : (
-                          <div className="selection-empty">{translateUiString(uiLanguage, 'No preview candidates yet.')}</div>
+                          <div className="selection-empty">{translateUiString(uiLanguage, 'No preview yet.')}</div>
                         )}
                       </div>
                       <div className="stack">
@@ -2714,16 +3145,23 @@ function StudioShell(props: {
                             {entityReferenceSetQuery.data.reference_images.map((image) => (
                               <div key={image.ref_id} className="reference-card reference-card-portrait">
                                 <div className="reference-card-media">
-                                  <img alt="" src={image.cdn_url} />
+                                  <AuthenticatedImage
+                                    enabled={selectedEntity !== null}
+                                    loadImage={() => api.exportEntityReferenceImage(selectedEntity?.id ?? '', image.ref_id)}
+                                    queryKey={['entity-reference-image', selectedEntity?.id, image.ref_id, image.created_at]}
+                                  />
                                 </div>
                                 <div className="reference-card-body">
-                                  <strong>{image.ref_id === entityReferenceSetQuery.data.primary_ref_id ? translateUiString(uiLanguage, 'Primary') : image.source}</strong>
+                                  <strong>{image.ref_id === entityReferenceSetQuery.data.primary_ref_id ? translateUiString(uiLanguage, 'Primary') : translateUiString(uiLanguage, image.source)}</strong>
                                 </div>
                                 <div className="reference-card-actions">
                                   <button
                                     className="ghost-button danger"
                                     onClick={() => {
                                       if (selectedEntity === null) {
+                                        return;
+                                      }
+                                      if (!confirmUiAction('Delete this reference image? This cannot be undone.')) {
                                         return;
                                       }
                                       void runAction('Delete reference', async () => {
@@ -2786,26 +3224,30 @@ function StudioShell(props: {
                           key={page.id}
                           className={`page-card ${selectedPage?.id === page.id ? 'active' : ''}`}
                           onClick={() => setSelectedPageId(page.id)}
-                          onDoubleClick={() => {
-                            if (page.generated_image?.cdn_url !== null && page.generated_image?.cdn_url !== undefined) {
-                              openImageLightbox(page.generated_image.cdn_url, `${translateUiString(uiLanguage, 'Page')} ${page.page_number}`);
-                            }
-                          }}
                           type="button"
                         >
                           <div className="page-card-header">
                             <strong>{page.page_number}</strong>
                             <StatusBadge value={page.status} />
                           </div>
-                          {page.generated_image?.cdn_url !== null && page.generated_image?.cdn_url !== undefined ? (
-                            <img alt="" src={page.generated_image.cdn_url} />
+                          {page.generated_image !== null ? (
+                            <AuthenticatedImage
+                              loadImage={() => api.exportPageImage(page.id)}
+                              onDoubleClick={(url) => openImageLightbox(url, `${translateUiString(uiLanguage, 'Page')} ${page.page_number}`)}
+                              placeholderClassName="page-placeholder"
+                              queryKey={['page-image', page.id, page.generated_image.generated_at]}
+                            />
                           ) : (
                             <div className="page-placeholder">
                               <LayoutGrid size={18} />
                             </div>
                           )}
                           <div className="page-meta-list">
-                            <span>{`frames ${page.frame_count} / panels ${page.panel_count} / balloons ${page.balloon_count}`}</span>
+                            <span>
+                              {uiLanguage === 'ja'
+                                ? `フレーム ${page.frame_count} / コマ ${page.panel_count}`
+                                : `frames ${page.frame_count} / panels ${page.panel_count}`}
+                            </span>
                             <span>{translateUiString(uiLanguage, 'Double-click image to enlarge')}</span>
                           </div>
                         </button>
@@ -2837,7 +3279,6 @@ function StudioShell(props: {
                             onChange={(value) => setPageSettingsDraft((current) => ({ ...current, dialogue_mode: value as PageSettingsDraft['dialogue_mode'] }))}
                             options={[
                               ['image_baked', 'Image baked'],
-                              ['balloon_only', 'Balloon only'],
                               ['mixed', 'Mixed'],
                             ]}
                           />
@@ -2924,17 +3365,21 @@ function StudioShell(props: {
                         title={`Page ${selectedPage.page_number}`}
                         subtitle={
                           uiLanguage === 'ja'
-                            ? `セリフ ${translateUiString(uiLanguage, selectedPage.dialogue_mode === 'image_baked' ? 'Image baked' : selectedPage.dialogue_mode === 'balloon_only' ? 'Balloon only' : 'Mixed')}`
-                            : `dialogue ${selectedPage.dialogue_mode}`
+                            ? `セリフ ${translateUiString(uiLanguage, selectedPage.dialogue_mode === 'image_baked' ? 'Image baked' : 'Mixed')}`
+                            : `dialogue ${selectedPage.dialogue_mode === 'image_baked' ? 'image_baked' : 'mixed'}`
                         }
                         className="page-section-generate"
                         collapsible
                         actions={
                           <div className="toolbar">
                             <button
-                              className="secondary-button"
+                              className="primary-button"
+                              disabled={generatePageDisabled}
                               onClick={() =>
                                 void runAction('Generate page', async () => {
+                                  if (selectedPageHasFramePanelMismatch) {
+                                    throw new Error(translateUiString(uiLanguage, 'Frame count and panel count do not match. Adjust frames or panels before generating.'));
+                                  }
                                   await saveCurrentPageGenerationContext();
                                   const result = await api.generatePage(selectedPage.id);
                                   trackJob(result.job_id);
@@ -2943,7 +3388,7 @@ function StudioShell(props: {
                               type="button"
                             >
                               <Play size={16} />
-                              Generate
+                              {translateUiString(uiLanguage, 'Generate page')}
                             </button>
                             <button
                               className="ghost-button"
@@ -2956,7 +3401,7 @@ function StudioShell(props: {
                               type="button"
                             >
                               <Check size={16} />
-                              Confirm
+                              {translateUiString(uiLanguage, 'Confirm page')}
                             </button>
                             <button
                               className="ghost-button"
@@ -2969,7 +3414,7 @@ function StudioShell(props: {
                               type="button"
                             >
                               <RefreshCw size={16} />
-                              Reopen
+                              {translateUiString(uiLanguage, 'Reopen page')}
                             </button>
                           </div>
                         }
@@ -2980,30 +3425,34 @@ function StudioShell(props: {
                             queued={selectedPageGenerationJob?.status === 'queued'}
                           />
                         ) : null}
-                        {selectedPage.generated_image?.cdn_url !== null && selectedPage.generated_image?.cdn_url !== undefined ? (
+                        <div className="state-pill-row">
+                          <span className="state-pill state-pill-neutral">
+                            {translateUiString(uiLanguage, 'Page generation starts at 3 credits.')}
+                          </span>
+                        </div>
+                        {selectedPageHasFramePanelMismatch ? (
+                          <div className="state-pill-row">
+                            <span className="state-pill state-pill-warn">
+                              {translateUiString(uiLanguage, 'Frame count and panel count do not match. Adjust frames or panels before generating.')}
+                            </span>
+                          </div>
+                        ) : null}
+                        {selectedPage.generated_image !== null ? (
                           <div className="generated-image-wrap">
-                            <img
-                              alt=""
+                            <AuthenticatedImage
                               className="generated-image"
-                              onDoubleClick={() => openImageLightbox(selectedPage.generated_image?.cdn_url ?? '', `${translateUiString(uiLanguage, 'Page')} ${selectedPage.page_number}`)}
-                              src={selectedPage.generated_image.cdn_url}
+                              loadImage={() => api.exportPageImage(selectedPage.id)}
+                              onDoubleClick={(url) => openImageLightbox(url, `${translateUiString(uiLanguage, 'Page')} ${selectedPage.page_number}`)}
+                              placeholderClassName="page-placeholder generated-image"
+                              queryKey={['page-image', selectedPage.id, selectedPage.generated_image.generated_at]}
                             />
-                            {balloons.map((balloon) => (
-                              <div
-                                key={balloon.id}
-                                className={`balloon-overlay ${selectedBalloon?.id === balloon.id ? 'active' : ''}`}
-                                style={toBalloonStyle(balloon)}
-                              >
-                                <span>{balloon.text}</span>
-                              </div>
-                            ))}
                           </div>
                         ) : null}
                       </PanelSection>
 
                       <div className="page-editing-cluster page-section-frames-panels">
                       <PanelSection
-                        title="Frames"
+                        title="Panel layout"
                         collapsible
                         actions={
                           <div className="toolbar">
@@ -3012,7 +3461,7 @@ function StudioShell(props: {
                               <select value={frameTemplateId} onChange={(event) => setFrameTemplateId(event.target.value)}>
                                 {FRAME_TEMPLATE_OPTIONS.map(([value, label]) => (
                                   <option key={value} value={value}>
-                                    {label}
+                                    {translateUiString(uiLanguage, label)}
                                   </option>
                                 ))}
                               </select>
@@ -3020,45 +3469,159 @@ function StudioShell(props: {
                             <button
                               className="ghost-button"
                               onClick={() =>
-                                void runAction('Apply frame template', async () => {
-                                  await api.applyFrameTemplate(selectedPage.id, frameTemplateId);
+                                void runAction('Apply panel layout', async () => {
+                                  const nextPanelCount = FRAME_TEMPLATE_PANEL_COUNTS[frameTemplateId] ?? selectedPagePanelCount;
+                                  const deletedPanelCount = Math.max(selectedPagePanelCount - nextPanelCount, 0);
+                                  if (deletedPanelCount > 0) {
+                                    const confirmed = window.confirm(
+                                      uiLanguage === 'ja'
+                                        ? `後ろの${deletedPanelCount}コマを削除します。続行しますか？`
+                                        : `This will remove ${deletedPanelCount} later panel(s). Continue?`,
+                                    );
+                                    if (!confirmed) {
+                                      return;
+                                    }
+                                  }
+
+                                  await api.applyPageLayoutTemplate(selectedPage.id, frameTemplateId, deletedPanelCount > 0);
                                   await queryClient.invalidateQueries({ queryKey: ['frames', selectedPage.id] });
+                                  await queryClient.invalidateQueries({ queryKey: ['panels', selectedPage.id] });
+                                  if (selectedEpisode !== null) {
+                                    await queryClient.invalidateQueries({ queryKey: ['pages', selectedEpisode.id] });
+                                  }
                                 })
                               }
                               type="button"
                             >
                               <Wand2 size={16} />
-                              Apply
+                              {translateUiString(uiLanguage, 'Apply panel layout')}
                             </button>
                           </div>
                         }
                       >
                         <div className="muted small">
                           {uiLanguage === 'ja'
-                            ? '通常の編集はテンプレートで行い、細かなコマ形状の編集が必要なときだけ詳細設定を開いてください。'
-                            : 'Use templates for normal layout editing. Open advanced settings only when you need manual frame geometry.'}
+                            ? 'テンプレートを選ぶとコマ数も揃います。'
+                            : 'Templates also sync the panel count.'}
                         </div>
                         <details className="advanced-disclosure">
                           <summary>{translateUiString(uiLanguage, 'Advanced frame geometry')}</summary>
-                          <TextAreaField label="Frames JSON" rows={10} value={framesJson} onChange={setFramesJson} />
+                          <div className="frame-editor-list">
+                            {frameDrafts.map((frameDraft, frameIndex) => (
+                              <div className="frame-editor-card" key={frameDraft.id || `frame-${frameIndex}`}>
+                                <div className="frame-editor-header">
+                                  <strong>
+                                    {translateUiString(uiLanguage, 'Frame geometry')} {frameIndex + 1}
+                                  </strong>
+                                  <InputField
+                                    label="Order"
+                                    value={frameDraft.reading_order}
+                                    onChange={(value) => updateFrameDraft(frameIndex, { reading_order: value })}
+                                    type="number"
+                                    min={1}
+                                    max={1000}
+                                  />
+                                </div>
+                                <div className="form-grid three">
+                                  <label className="field">
+                                    <span>{translateUiString(uiLanguage, 'Linked panel')}</span>
+                                    <select
+                                      value={frameDraft.panel_id}
+                                      onChange={(event) => updateFrameDraft(frameIndex, { panel_id: event.target.value })}
+                                    >
+                                      <option value="">{translateUiString(uiLanguage, 'No linked panel')}</option>
+                                      {panels.map((panel) => (
+                                        <option key={panel.id} value={panel.id}>
+                                          {translateUiString(uiLanguage, 'Panel')} {panel.order}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </label>
+                                  <SelectField
+                                    label="Border style"
+                                    value={frameDraft.border_style}
+                                    onChange={(value) =>
+                                      updateFrameDraft(frameIndex, {
+                                        border_style: value as PanelFrameRecord['border_style'],
+                                      })
+                                    }
+                                    options={FRAME_BORDER_STYLE_OPTIONS}
+                                  />
+                                  <InputField
+                                    label="Z-index"
+                                    value={frameDraft.z_index}
+                                    onChange={(value) => updateFrameDraft(frameIndex, { z_index: value })}
+                                    type="number"
+                                    min={0}
+                                    max={1000}
+                                  />
+                                </div>
+                                <div className="form-grid two">
+                                  <InputField
+                                    label="Border width"
+                                    value={frameDraft.border_width}
+                                    onChange={(value) => updateFrameDraft(frameIndex, { border_width: value })}
+                                    type="number"
+                                    min={0}
+                                    max={20}
+                                  />
+                                  <label className="field">
+                                    <span>{translateUiString(uiLanguage, 'Border color')}</span>
+                                    <input
+                                      value={frameDraft.border_color}
+                                      onChange={(event) => updateFrameDraft(frameIndex, { border_color: event.target.value })}
+                                      type="color"
+                                    />
+                                  </label>
+                                </div>
+                                <div className="frame-vertex-grid">
+                                  {frameDraft.vertices.map((vertex, vertexIndex) => (
+                                    <div className="frame-vertex-row" key={`${frameDraft.id || frameIndex}-vertex-${vertexIndex}`}>
+                                      <span>
+                                        {translateUiString(uiLanguage, 'Vertex')} {vertexIndex + 1}
+                                      </span>
+                                      <InputField
+                                        label="X"
+                                        value={vertex.x}
+                                        onChange={(value) => updateFrameVertexDraft(frameIndex, vertexIndex, 'x', value)}
+                                        type="number"
+                                        min={0}
+                                        max={1}
+                                        step={0.01}
+                                      />
+                                      <InputField
+                                        label="Y"
+                                        value={vertex.y}
+                                        onChange={(value) => updateFrameVertexDraft(frameIndex, vertexIndex, 'y', value)}
+                                        type="number"
+                                        min={0}
+                                        max={1}
+                                        step={0.01}
+                                      />
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
                           <button
                             className="secondary-button"
                             onClick={() =>
-                              void runAction('Save frames', async () => {
-                                const parsed = parseJson<Array<Record<string, unknown>>>(framesJson);
-                                await api.replaceFrames(selectedPage.id, { frames: parsed });
+                              void runAction('Save frame geometry', async () => {
+                                await api.replaceFrames(selectedPage.id, toPanelFramesPayload(frameDrafts));
                                 await queryClient.invalidateQueries({ queryKey: ['frames', selectedPage.id] });
                               })
                             }
                             type="button"
                           >
                             <Save size={16} />
-                            Save frames
+                            {translateUiString(uiLanguage, 'Save frame geometry')}
                           </button>
                         </details>
                       </PanelSection>
 
                       <PanelSection title="Panels" collapsible>
+                        <div className="muted small">{translateUiString(uiLanguage, 'You do not need to fill every blank field.')}</div>
                         <div className="list-grid">
                           {panels.map((panel) => (
                             <button
@@ -3127,7 +3690,7 @@ function StudioShell(props: {
                             onChange={(event) => setPanelDraft({ ...panelDraft, dialogue_in_panel: event.target.checked })}
                             type="checkbox"
                           />
-                          Dialogue in panel
+                          {translateUiString(uiLanguage, 'Dialogue in panel')}
                         </label>
                         <PanelAssignmentEditor
                           assignments={panelDraft.assignments}
@@ -3169,7 +3732,7 @@ function StudioShell(props: {
                             type="button"
                           >
                             <Save size={16} />
-                            Create
+                            {translateUiString(uiLanguage, 'Create panel')}
                           </button>
                           {selectedPanel !== null ? (
                             <>
@@ -3186,11 +3749,15 @@ function StudioShell(props: {
                                 type="button"
                               >
                                 <Save size={16} />
-                                Save selected
+                                {translateUiString(uiLanguage, 'Save panel')}
                               </button>
                               <button
                                 className="ghost-button danger"
-                                onClick={() =>
+                                onClick={() => {
+                                  if (!confirmUiAction('Delete this panel? This can break the frame/panel count until frames are adjusted.')) {
+                                    return;
+                                  }
+
                                   void runAction('Delete panel', async () => {
                                     await api.deletePanel(selectedPanel.id);
                                     setSelectedPanelId('');
@@ -3199,8 +3766,8 @@ function StudioShell(props: {
                                     if (selectedEpisode !== null) {
                                       await queryClient.invalidateQueries({ queryKey: ['pages', selectedEpisode.id] });
                                     }
-                                  })
-                                }
+                                  });
+                                }}
                                 type="button"
                               >
                                 <Trash2 size={16} />
@@ -3285,146 +3852,6 @@ function StudioShell(props: {
                         </div>
                       </PanelSection>
 
-                      <PanelSection title="Page autofill" className="page-section-autofill" compact collapsible defaultCollapsed actions={
-                        <button
-                          className="ghost-button"
-                          onClick={() =>
-                            void runAction('Fill selected page', async () => {
-                              await api.autofillPageFromScenes(selectedPage.id, uiLanguage);
-                              await queryClient.invalidateQueries({ queryKey: ['panels', selectedPage.id] });
-                            })
-                          }
-                          type="button"
-                        >
-                          <Wand2 size={16} />
-                          {translateUiString(uiLanguage, 'Fill selected page')}
-                        </button>
-                      }>
-                        <div className="muted small">{translateUiString(uiLanguage, 'Use this after the story plan when a single page still needs refinement.')}</div>
-                        {selectedPageAutofillMessage !== null ? (
-                          <ProcessingHint message={translateUiString(uiLanguage, selectedPageAutofillMessage)} />
-                        ) : null}
-                      </PanelSection>
-
-                      <PanelSection
-                        title="Balloons"
-                        className="page-section-balloons"
-                        collapsible
-                        defaultCollapsed
-                        actions={
-                          <button
-                            className="ghost-button"
-                            onClick={() =>
-                              void runAction('Auto balloons', async () => {
-                                await api.autoBalloons(selectedPage.id);
-                                await queryClient.invalidateQueries({ queryKey: ['balloons', selectedPage.id] });
-                              })
-                            }
-                            type="button"
-                          >
-                            <Sparkles size={16} />
-                            {translateUiString(uiLanguage, 'Auto')}
-                          </button>
-                        }
-                      >
-                        <div className="list-grid">
-                          {balloons.map((balloon) => (
-                            <button
-                              key={balloon.id}
-                              className={`mini-card ${selectedBalloon?.id === balloon.id ? 'active' : ''}`}
-                              onClick={() => setSelectedBalloonId(balloon.id)}
-                              type="button"
-                            >
-                              <strong>{balloon.balloon_type}</strong>
-                              <span>{balloon.text.slice(0, 32)}</span>
-                            </button>
-                          ))}
-                        </div>
-                        <div className="form-grid three">
-                          <InputField label="Speaker ID" value={balloonDraft.speaker_entity_id} onChange={(value) => setBalloonDraft({ ...balloonDraft, speaker_entity_id: value })} />
-                          <SelectField
-                            label="Balloon"
-                            value={balloonDraft.balloon_type}
-                            onChange={(value) => setBalloonDraft({ ...balloonDraft, balloon_type: value as BalloonDraft['balloon_type'] })}
-                            options={[
-                              ['speech', 'Speech'],
-                              ['thought', 'Thought'],
-                              ['narration', 'Narration'],
-                              ['shout', 'Shout'],
-                              ['whisper', 'Whisper'],
-                            ]}
-                          />
-                          <SelectField
-                            label="Writing"
-                            value={balloonDraft.writing_mode}
-                            onChange={(value) => setBalloonDraft({ ...balloonDraft, writing_mode: value as BalloonDraft['writing_mode'] })}
-                            options={[
-                              ['horizontal', 'Horizontal'],
-                              ['vertical', 'Vertical'],
-                            ]}
-                          />
-                        </div>
-                        <TextAreaField label="Text" rows={3} value={balloonDraft.text} onChange={(value) => setBalloonDraft({ ...balloonDraft, text: value })} />
-                        <div className="form-grid two">
-                          <InputField label="Font size" value={balloonDraft.font_size} onChange={(value) => setBalloonDraft({ ...balloonDraft, font_size: value })} />
-                          <InputField label="Font family" value={balloonDraft.font_family} onChange={(value) => setBalloonDraft({ ...balloonDraft, font_family: value })} />
-                        </div>
-                        <details className="advanced-disclosure">
-                          <summary>{translateUiString(uiLanguage, 'Advanced balloon geometry')}</summary>
-                          <div className="form-grid two">
-                            <TextAreaField label="Position JSON" rows={4} value={balloonDraft.position_json} onChange={(value) => setBalloonDraft({ ...balloonDraft, position_json: value })} />
-                            <TextAreaField label="Tail JSON / null" rows={4} value={balloonDraft.tail_json} onChange={(value) => setBalloonDraft({ ...balloonDraft, tail_json: value })} />
-                          </div>
-                          <div className="form-grid two">
-                            <InputField label="Panel order ref" value={balloonDraft.panel_order_reference} onChange={(value) => setBalloonDraft({ ...balloonDraft, panel_order_reference: value })} />
-                            <InputField label="Z-index" value={balloonDraft.z_index} onChange={(value) => setBalloonDraft({ ...balloonDraft, z_index: value })} />
-                          </div>
-                        </details>
-                        <div className="toolbar">
-                          <button
-                            className="secondary-button"
-                            onClick={() =>
-                              void runAction('Create balloon', async () => {
-                                await api.createBalloon(selectedPage.id, toBalloonPayload(balloonDraft));
-                                await queryClient.invalidateQueries({ queryKey: ['balloons', selectedPage.id] });
-                              })
-                            }
-                            type="button"
-                          >
-                            <Save size={16} />
-                            {translateUiString(uiLanguage, 'Create')}
-                          </button>
-                          {selectedBalloon !== null ? (
-                            <>
-                              <button
-                                className="ghost-button"
-                                onClick={() =>
-                                  void runAction('Save balloon', async () => {
-                                    await api.updateBalloon(selectedBalloon.id, toBalloonPayload(balloonDraft));
-                                    await queryClient.invalidateQueries({ queryKey: ['balloons', selectedPage.id] });
-                                  })
-                                }
-                                type="button"
-                              >
-                                <Save size={16} />
-                                Save selected
-                              </button>
-                              <button
-                                className="ghost-button danger"
-                                onClick={() =>
-                                  void runAction('Delete balloon', async () => {
-                                    await api.deleteBalloon(selectedBalloon.id);
-                                    await queryClient.invalidateQueries({ queryKey: ['balloons', selectedPage.id] });
-                                  })
-                                }
-                                type="button"
-                              >
-                                <Trash2 size={16} />
-                              </button>
-                            </>
-                          ) : null}
-                        </div>
-                      </PanelSection>
                     </>
                   ) : null}
                   </div>
@@ -3455,7 +3882,7 @@ function StudioShell(props: {
                     type="button"
                   >
                     <CreditCard size={16} />
-                    Standard
+                    {translateUiString(uiLanguage, 'Subscription plan')}
                   </button>
                   <button
                     className="ghost-button"
@@ -3468,7 +3895,7 @@ function StudioShell(props: {
                     type="button"
                   >
                     <CreditCard size={16} />
-                    Credits 1000
+                    {translateUiString(uiLanguage, 'Add 50 credits / ¥1,100')}
                   </button>
                   <button
                     className="ghost-button"
@@ -3481,7 +3908,7 @@ function StudioShell(props: {
                     type="button"
                   >
                     <CreditCard size={16} />
-                    Portal
+                    {translateUiString(uiLanguage, 'Billing portal')}
                   </button>
                 </div>
               </PanelSection>
@@ -3491,12 +3918,15 @@ function StudioShell(props: {
                   {jobs.map((job) => (
                     <div key={job.id} className="job-row">
                       <div>
-                        <strong>{job.job_type}</strong>
+                        <strong>{translateUiString(uiLanguage, job.job_type)}</strong>
                         <div className="muted small">{job.id}</div>
                       </div>
                       <StatusBadge value={job.status} />
                     </div>
                   ))}
+                  {jobs.length === 0 ? (
+                    <div className="muted small">{translateUiString(uiLanguage, 'No recent jobs.')}</div>
+                  ) : null}
                 </div>
               </PanelSection>
             </aside>
@@ -3520,6 +3950,58 @@ function StudioShell(props: {
       ) : null}
       </div>
     </UiLanguageContext.Provider>
+  );
+}
+
+function AuthenticatedImage(props: {
+  alt?: string;
+  className?: string;
+  enabled?: boolean;
+  loadImage: () => Promise<BlobResponse>;
+  onDoubleClick?: (url: string) => void;
+  placeholderClassName?: string;
+  queryKey: readonly unknown[];
+}) {
+  const imageQuery = useQuery({
+    queryKey: props.queryKey,
+    queryFn: async () => {
+      const response = await props.loadImage();
+      return response.blob;
+    },
+    enabled: props.enabled ?? true,
+    staleTime: 5 * 60 * 1000,
+  });
+  const [objectUrl, setObjectUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (imageQuery.data === undefined) {
+      setObjectUrl(null);
+      return undefined;
+    }
+
+    const nextUrl = URL.createObjectURL(imageQuery.data);
+    setObjectUrl(nextUrl);
+
+    return () => {
+      URL.revokeObjectURL(nextUrl);
+    };
+  }, [imageQuery.data]);
+
+  if (objectUrl === null) {
+    return <div className={props.placeholderClassName ?? 'thumb-placeholder'} />;
+  }
+
+  return (
+    <img
+      alt={props.alt ?? ''}
+      className={props.className}
+      onDoubleClick={
+        props.onDoubleClick === undefined
+          ? undefined
+          : () => props.onDoubleClick?.(objectUrl)
+      }
+      src={objectUrl}
+    />
   );
 }
 
@@ -3589,6 +4071,7 @@ function InputField(props: {
   type?: React.HTMLInputTypeAttribute;
   min?: number;
   max?: number;
+  step?: number | string;
 }) {
   const language = useContext(UiLanguageContext);
   return (
@@ -3600,6 +4083,7 @@ function InputField(props: {
         type={props.type}
         min={props.min}
         max={props.max}
+        step={props.step}
       />
     </label>
   );
@@ -3633,18 +4117,32 @@ function SelectOrCustomField(props: {
   options: Array<[string, string]>;
 }) {
   const language = useContext(UiLanguageContext);
-  const renderOptions = props.options.some(([value]) => value === 'custom')
-    ? props.options
-    : [...props.options, ['custom', 'Custom'] as [string, string]];
-  const concreteOptionValues = new Set(
-    renderOptions.map(([value]) => value).filter((value) => value !== '' && value !== 'custom'),
+  const customInputRef = useRef<HTMLInputElement | null>(null);
+  const renderOptions = useMemo(
+    () =>
+      props.options.some(([value]) => value === 'custom')
+        ? props.options
+        : [...props.options, ['custom', 'Custom'] as [string, string]],
+    [props.options],
   );
-  const selectValue =
+  const concreteOptionValues = useMemo(
+    () => new Set(renderOptions.map(([value]) => value).filter((value) => value !== '' && value !== 'custom')),
+    [renderOptions],
+  );
+  const inferredSelectValue =
     props.value === ''
       ? ''
       : concreteOptionValues.has(props.value)
         ? props.value
         : 'custom';
+  const [customMode, setCustomMode] = useState(inferredSelectValue === 'custom');
+  const selectValue = customMode ? 'custom' : inferredSelectValue;
+
+  useEffect(() => {
+    if (props.value !== '') {
+      setCustomMode(!concreteOptionValues.has(props.value));
+    }
+  }, [concreteOptionValues, props.value]);
 
   return (
     <label className="field">
@@ -3654,11 +4152,12 @@ function SelectOrCustomField(props: {
         onChange={(event) => {
           const nextValue = event.target.value;
           if (nextValue === 'custom') {
-            if (selectValue !== 'custom') {
-              props.onChange('');
-            }
+            setCustomMode(true);
+            props.onChange(concreteOptionValues.has(props.value) ? '' : props.value);
+            window.requestAnimationFrame(() => customInputRef.current?.focus());
             return;
           }
+          setCustomMode(false);
           props.onChange(nextValue);
         }}
       >
@@ -3668,8 +4167,9 @@ function SelectOrCustomField(props: {
           </option>
         ))}
       </select>
-      {selectValue === 'custom' ? (
+      {customMode ? (
         <input
+          ref={customInputRef}
           value={props.value}
           onChange={(event) => props.onChange(event.target.value)}
           placeholder={translateUiString(language, 'Custom value')}
@@ -3753,6 +4253,63 @@ function StringChipListField(props: {
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+function GenericStructuredFieldsEditor(props: {
+  value: string;
+  onChange: (nextValue: string) => void;
+}) {
+  const language = useContext(UiLanguageContext);
+  const rows = useMemo(() => parseGenericStructuredFieldRows(props.value), [props.value]);
+
+  const commitRows = (nextRows: GenericStructuredFieldRow[]): void => {
+    props.onChange(serializeGenericStructuredFieldRows(nextRows));
+  };
+
+  const updateRow = (index: number, patch: Partial<GenericStructuredFieldRow>): void => {
+    commitRows(rows.map((row, rowIndex) => (rowIndex === index ? { ...row, ...patch } : row)));
+  };
+
+  const removeRow = (index: number): void => {
+    commitRows(rows.filter((_, rowIndex) => rowIndex !== index));
+  };
+
+  return (
+    <div className="field-group">
+      <span className="field-label">{translateUiString(language, 'Structured fields')}</span>
+      {rows.length === 0 ? (
+        <div className="muted small">{translateUiString(language, 'No structured fields yet.')}</div>
+      ) : null}
+      <div className="structured-field-list">
+        {rows.map((row, index) => (
+          <div className="structured-field-row" key={`${row.key}-${index}`}>
+            <InputField
+              label="Field"
+              value={row.key}
+              onChange={(value) => updateRow(index, { key: value })}
+            />
+            <TextAreaField
+              label="Value"
+              rows={2}
+              value={row.value}
+              onChange={(value) => updateRow(index, { value })}
+            />
+            <button className="ghost-button danger icon-only" onClick={() => removeRow(index)} type="button">
+              <Trash2 size={16} />
+            </button>
+          </div>
+        ))}
+      </div>
+      <button
+        className="ghost-button"
+        onClick={() => commitRows([...rows, { key: `field_${rows.length + 1}`, value: '' }])}
+        type="button"
+      >
+        <Check size={16} />
+        {translateUiString(language, 'Add field')}
+      </button>
     </div>
   );
 }
@@ -4192,6 +4749,7 @@ async function handleEntityImport(
       | Record<string, string>
       | ((current: Record<string, string>) => Record<string, string>),
   ) => void,
+  uiLanguage: UiLanguage,
 ): Promise<void> {
   const file = event.target.files?.[0];
   if (file === undefined) {
@@ -4201,12 +4759,12 @@ async function handleEntityImport(
   const allowedMimeTypes = new Set(['image/png', 'image/jpeg', 'image/webp']);
   const maxFileSizeBytes = 5 * 1024 * 1024;
   if (!allowedMimeTypes.has(file.type)) {
-    setNotice({ type: 'error', message: 'Only PNG, JPEG, and WebP are allowed.' });
+    setNotice({ type: 'error', message: translateUiString(uiLanguage, 'Only PNG, JPEG, and WebP are allowed.') });
     event.target.value = '';
     return;
   }
   if (file.size > maxFileSizeBytes) {
-    setNotice({ type: 'error', message: 'Image file is too large.' });
+    setNotice({ type: 'error', message: translateUiString(uiLanguage, 'Image file is too large.') });
     event.target.value = '';
     return;
   }
@@ -4229,7 +4787,6 @@ async function handleEntityImport(
         [selectedEntityId]: dedupeReferenceCandidates([
           {
             s3_key: result.tmp_image_s3_key,
-            cdn_url: result.tmp_image_cdn_url,
             source: 'upload',
           },
           ...(current[selectedEntityId] ?? []),
@@ -4240,7 +4797,7 @@ async function handleEntityImport(
         [selectedEntityId]: result.tmp_image_s3_key,
       }));
     }
-    setNotice({ type: 'success', message: 'Image analyzed. Generate full-body candidates next.' });
+    setNotice({ type: 'success', message: translateUiString(uiLanguage, 'Image analyzed. Generate preview next.') });
   } catch (error) {
     setNotice({ type: 'error', message: toMessage(error) });
   } finally {
@@ -4360,28 +4917,38 @@ function toPanelDraft(panel: PanelRecord): PanelDraft {
   };
 }
 
-function toBalloonDraft(balloon: BalloonRecord): BalloonDraft {
+function toPanelFrameDraft(frame: PanelFrameRecord): PanelFrameDraft {
+  const vertices = frame.vertices.slice(0, 4).map((vertex) => ({
+    x: String(vertex.x),
+    y: String(vertex.y),
+  }));
+
+  while (vertices.length < 4) {
+    vertices.push({ x: '0', y: '0' });
+  }
+
   return {
-    speaker_entity_id: balloon.speaker_entity_id ?? '',
-    balloon_type: balloon.balloon_type,
-    writing_mode: balloon.writing_mode,
-    text: balloon.text,
-    position_json: JSON.stringify(balloon.position, null, 2),
-    tail_json: balloon.tail === null ? 'null' : JSON.stringify(balloon.tail, null, 2),
-    font_size: String(balloon.font_size),
-    font_family: balloon.font_family,
-    panel_order_reference: balloon.panel_order_reference === null ? '' : String(balloon.panel_order_reference),
-    z_index: String(balloon.z_index),
+    id: frame.id,
+    panel_id: frame.panel_id ?? '',
+    reading_order: String(frame.reading_order),
+    border_style: frame.border_style,
+    border_width: String(frame.border_width),
+    border_color: frame.border_color,
+    z_index: String(frame.z_index),
+    vertices,
   };
 }
 
-function toWorkPayload(draft: WorkDraft): Record<string, unknown> {
+function toWorkPayload(
+  draft: WorkDraft,
+  allowedEntityIds?: ReadonlySet<string>,
+): Record<string, unknown> {
   return {
     title: draft.title,
     genre: nullableString(draft.genre),
     world_setting: nullableString(draft.world_setting),
     theme: nullableString(draft.theme),
-    main_entity_ids: splitCsv(draft.main_entity_ids),
+    main_entity_ids: splitEntityIdCsv(draft.main_entity_ids, allowedEntityIds),
     starting_point: nullableString(draft.starting_point),
     ending_point: nullableString(draft.ending_point),
     overall_flow: nullableString(draft.overall_flow),
@@ -4402,7 +4969,10 @@ function toCreateWorkPayload(draft: WorkDraft): Record<string, unknown> {
   };
 }
 
-function toChapterPayload(draft: ChapterDraft): Record<string, unknown> {
+function toChapterPayload(
+  draft: ChapterDraft,
+  allowedEntityIds?: ReadonlySet<string>,
+): Record<string, unknown> {
   return {
     order: parseNumberInput(draft.order, 'chapter order'),
     title: nullableString(draft.title),
@@ -4410,13 +4980,16 @@ function toChapterPayload(draft: ChapterDraft): Record<string, unknown> {
     starting_state: nullableString(draft.starting_state),
     ending_state: nullableString(draft.ending_state),
     emotion_curve: nullableString(draft.emotion_curve),
-    entities_involved: splitCsv(draft.entities_involved),
+    entities_involved: splitEntityIdCsv(draft.entities_involved, allowedEntityIds),
     key_beats: splitLines(draft.key_beats),
     status: draft.status,
   };
 }
 
-function toCreateChapterPayload(draft: ChapterDraft): Record<string, unknown> {
+function toCreateChapterPayload(
+  draft: ChapterDraft,
+  allowedEntityIds?: ReadonlySet<string>,
+): Record<string, unknown> {
   return {
     order: parseNumberInput(draft.order, 'chapter order'),
     title: nullableString(draft.title),
@@ -4424,54 +4997,86 @@ function toCreateChapterPayload(draft: ChapterDraft): Record<string, unknown> {
     starting_state: nullableString(draft.starting_state),
     ending_state: nullableString(draft.ending_state),
     emotion_curve: nullableString(draft.emotion_curve),
-    entities_involved: splitCsv(draft.entities_involved),
+    entities_involved: splitEntityIdCsv(draft.entities_involved, allowedEntityIds),
     key_beats: splitLines(draft.key_beats),
   };
 }
 
-function toEpisodePayload(draft: EpisodeDraft): Record<string, unknown> {
+function toEpisodePayload(
+  draft: EpisodeDraft,
+  allowedEntityIds?: ReadonlySet<string>,
+): Record<string, unknown> {
   return {
     order: parseNumberInput(draft.order, 'episode order'),
     title: nullableString(draft.title),
     purpose: nullableString(draft.purpose),
     story_input_mode: draft.story_input_mode,
-    story_full_draft: nullableString(draft.story_full_draft),
-    introduction: nullableString(draft.introduction),
-    middle: nullableString(draft.middle),
-    climax: nullableString(draft.climax),
-    ending_hook: nullableString(draft.ending_hook),
+    story_full_draft: draft.story_input_mode === 'full' ? nullableString(draft.story_full_draft) : null,
+    introduction: draft.story_input_mode === 'structured' ? nullableString(draft.introduction) : null,
+    middle: draft.story_input_mode === 'structured' ? nullableString(draft.middle) : null,
+    climax: draft.story_input_mode === 'structured' ? nullableString(draft.climax) : null,
+    ending_hook: draft.story_input_mode === 'structured' ? nullableString(draft.ending_hook) : null,
     estimated_pages: parseNumberInput(draft.estimated_pages, 'estimated pages'),
-    entities_involved: splitCsv(draft.entities_involved),
+    entities_involved: splitEntityIdCsv(draft.entities_involved, allowedEntityIds),
     status: draft.status,
   };
 }
 
-function toCreateEpisodePayload(draft: EpisodeDraft): Record<string, unknown> {
+function toEpisodeAutosavePayload(draft: EpisodeDraft): Record<string, unknown> {
   return {
     order: parseNumberInput(draft.order, 'episode order'),
     title: nullableString(draft.title),
     purpose: nullableString(draft.purpose),
     story_input_mode: draft.story_input_mode,
-    story_full_draft: nullableString(draft.story_full_draft),
-    introduction: nullableString(draft.introduction),
-    middle: nullableString(draft.middle),
-    climax: nullableString(draft.climax),
-    ending_hook: nullableString(draft.ending_hook),
+    story_full_draft: draft.story_input_mode === 'full' ? nullableString(draft.story_full_draft) : null,
+    introduction: draft.story_input_mode === 'structured' ? nullableString(draft.introduction) : null,
+    middle: draft.story_input_mode === 'structured' ? nullableString(draft.middle) : null,
+    climax: draft.story_input_mode === 'structured' ? nullableString(draft.climax) : null,
+    ending_hook: draft.story_input_mode === 'structured' ? nullableString(draft.ending_hook) : null,
     estimated_pages: parseNumberInput(draft.estimated_pages, 'estimated pages'),
-    entities_involved: splitCsv(draft.entities_involved),
+    status: draft.status,
   };
 }
 
-function hasEpisodeStoryInputConflict(draft: EpisodeDraft): boolean {
-  return (
-    normalizeTextInput(draft.story_full_draft) !== null &&
-    [
-      draft.introduction,
-      draft.middle,
-      draft.climax,
-      draft.ending_hook,
-    ].some((value) => normalizeTextInput(value) !== null)
-  );
+function toCreateEpisodePayload(
+  draft: EpisodeDraft,
+  allowedEntityIds?: ReadonlySet<string>,
+): Record<string, unknown> {
+  return {
+    order: parseNumberInput(draft.order, 'episode order'),
+    title: nullableString(draft.title),
+    purpose: nullableString(draft.purpose),
+    story_input_mode: draft.story_input_mode,
+    story_full_draft: draft.story_input_mode === 'full' ? nullableString(draft.story_full_draft) : null,
+    introduction: draft.story_input_mode === 'structured' ? nullableString(draft.introduction) : null,
+    middle: draft.story_input_mode === 'structured' ? nullableString(draft.middle) : null,
+    climax: draft.story_input_mode === 'structured' ? nullableString(draft.climax) : null,
+    ending_hook: draft.story_input_mode === 'structured' ? nullableString(draft.ending_hook) : null,
+    estimated_pages: parseNumberInput(draft.estimated_pages, 'estimated pages'),
+    entities_involved: splitEntityIdCsv(draft.entities_involved, allowedEntityIds),
+  };
+}
+
+function toEpisodeBaseDraftPayload(draft: EpisodeDraft): {
+  title: string | null;
+  purpose: string | null;
+  story_input_mode: EpisodeDraft['story_input_mode'];
+  story_full_draft: string | null;
+  introduction: string | null;
+  middle: string | null;
+  climax: string | null;
+  ending_hook: string | null;
+} {
+  return {
+    title: nullableString(draft.title),
+    purpose: nullableString(draft.purpose),
+    story_input_mode: draft.story_input_mode,
+    story_full_draft: draft.story_input_mode === 'full' ? nullableString(draft.story_full_draft) : null,
+    introduction: draft.story_input_mode === 'structured' ? nullableString(draft.introduction) : null,
+    middle: draft.story_input_mode === 'structured' ? nullableString(draft.middle) : null,
+    climax: draft.story_input_mode === 'structured' ? nullableString(draft.climax) : null,
+    ending_hook: draft.story_input_mode === 'structured' ? nullableString(draft.ending_hook) : null,
+  };
 }
 
 function convertEpisodeDraftStoryInputMode(
@@ -4486,10 +5091,7 @@ function convertEpisodeDraftStoryInputMode(
     return {
       ...draft,
       story_input_mode: 'full',
-      story_full_draft:
-        normalizeTextInput(draft.story_full_draft) ??
-        buildFullStoryDraftFromEpisodeDraftSections(draft) ??
-        '',
+      story_full_draft: draft.story_full_draft,
       introduction: '',
       middle: '',
       climax: '',
@@ -4553,18 +5155,6 @@ function createEmptyStoryImprovementDraft(
     climax: null,
     ending_hook: null,
   };
-}
-
-function buildFullStoryDraftFromEpisodeDraftSections(draft: Pick<EpisodeDraft, 'introduction' | 'middle' | 'climax' | 'ending_hook'>): string | null {
-  const parts = [draft.introduction, draft.middle, draft.climax, draft.ending_hook]
-    .map((value) => normalizeTextInput(value))
-    .filter((value): value is string => value !== null);
-
-  if (parts.length === 0) {
-    return null;
-  }
-
-  return parts.join('\n\n');
 }
 
 function deriveEpisodeDraftSectionsFromFullStory(fullStoryDraft: string): {
@@ -4678,24 +5268,40 @@ function toEntityPayload(draft: EntityDraft): Record<string, unknown> {
   };
 }
 
-function toScenePayload(draft: SceneDraft): Record<string, unknown> {
+function toScenePayload(
+  draft: SceneDraft,
+  allowedEntityIds?: ReadonlySet<string>,
+): Record<string, unknown> {
   return {
     order: parseNumberInput(draft.order, 'scene order'),
     location: nullableString(draft.location),
     time: nullableString(draft.time),
     atmosphere: nullableString(draft.atmosphere),
-    involved_entity_ids: splitCsv(draft.involved_entity_ids),
+    involved_entity_ids: splitEntityIdCsv(draft.involved_entity_ids, allowedEntityIds),
     status: draft.status,
   };
 }
 
-function toCreateScenePayload(draft: SceneDraft): Record<string, unknown> {
+function toSceneAutosavePayload(draft: SceneDraft): Record<string, unknown> {
   return {
     order: parseNumberInput(draft.order, 'scene order'),
     location: nullableString(draft.location),
     time: nullableString(draft.time),
     atmosphere: nullableString(draft.atmosphere),
-    involved_entity_ids: splitCsv(draft.involved_entity_ids),
+    status: draft.status,
+  };
+}
+
+function toCreateScenePayload(
+  draft: SceneDraft,
+  allowedEntityIds?: ReadonlySet<string>,
+): Record<string, unknown> {
+  return {
+    order: parseNumberInput(draft.order, 'scene order'),
+    location: nullableString(draft.location),
+    time: nullableString(draft.time),
+    atmosphere: nullableString(draft.atmosphere),
+    involved_entity_ids: splitEntityIdCsv(draft.involved_entity_ids, allowedEntityIds),
   };
 }
 
@@ -4755,21 +5361,36 @@ function toPanelAssignmentsPayload(draft: PanelDraft): Record<string, unknown> {
   };
 }
 
-function toBalloonPayload(draft: BalloonDraft): Record<string, unknown> {
+function toPanelFramePayload(draft: PanelFrameDraft): Record<string, unknown> {
+  const borderColor = draft.border_color.trim();
+  if (!/^#[0-9A-Fa-f]{6}$/.test(borderColor)) {
+    throw new Error('border color must be a hex color');
+  }
+
+  const payload: Record<string, unknown> = {
+    panel_id: nullableUuidString(draft.panel_id, 'linked panel'),
+    vertices: draft.vertices.slice(0, 4).map((vertex, index) => ({
+      x: parseBoundedNumberInput(vertex.x, `vertex ${index + 1} x`, 0, 1),
+      y: parseBoundedNumberInput(vertex.y, `vertex ${index + 1} y`, 0, 1),
+    })),
+    border_style: draft.border_style,
+    border_width: parseIntegerInRangeInput(draft.border_width, 'border width', 0, 20),
+    border_color: borderColor,
+    z_index: parseIntegerInRangeInput(draft.z_index, 'z-index', 0, 1000),
+    reading_order: parseIntegerInRangeInput(draft.reading_order, 'reading order', 1, 1000),
+  };
+
+  const frameId = draft.id.trim();
+  if (frameId.length > 0) {
+    payload.id = frameId;
+  }
+
+  return payload;
+}
+
+function toPanelFramesPayload(drafts: PanelFrameDraft[]): Record<string, unknown> {
   return {
-    speaker_entity_id: nullableString(draft.speaker_entity_id),
-    balloon_type: draft.balloon_type,
-    writing_mode: draft.writing_mode,
-    text: draft.text,
-    position: parseJson<Record<string, unknown>>(draft.position_json),
-    tail: draft.tail_json.trim() === 'null' ? null : parseJson<Record<string, unknown>>(draft.tail_json),
-    font_size: parseNumberInput(draft.font_size, 'font size'),
-    font_family: draft.font_family,
-    panel_order_reference:
-      draft.panel_order_reference.trim().length === 0
-        ? null
-        : parseNumberInput(draft.panel_order_reference, 'panel order reference'),
-    z_index: parseNumberInput(draft.z_index, 'z-index'),
+    frames: drafts.map(toPanelFramePayload),
   };
 }
 
@@ -4838,7 +5459,7 @@ function toPageSettingsDraft(page: PageRecord): PageSettingsDraft {
   const layoutConfig = toRecord(page.layout_config);
   const styleReference = toRecord(layoutConfig.style_reference);
   return {
-    dialogue_mode: page.dialogue_mode,
+    dialogue_mode: page.dialogue_mode === 'balloon_only' ? 'mixed' : page.dialogue_mode,
     page_dialogue_toggle: page.page_dialogue_toggle,
     style_reference_title: readString(styleReference.title),
     style_reference_notes: readString(styleReference.notes),
@@ -4924,6 +5545,44 @@ function triggerBlobDownload(blob: Blob, filename: string): void {
   anchor.download = filename;
   anchor.click();
   URL.revokeObjectURL(url);
+}
+
+function parseGenericStructuredFieldRows(value: string): GenericStructuredFieldRow[] {
+  const parsed = parseJson<Record<string, unknown>>(value);
+  return Object.entries(parsed).map(([key, entry]) => ({
+    key,
+    value: stringifyGenericStructuredFieldValue(entry),
+  }));
+}
+
+function serializeGenericStructuredFieldRows(rows: GenericStructuredFieldRow[]): string {
+  const fields: Record<string, string> = {};
+  for (const row of rows) {
+    const key = row.key.trim();
+    if (key.length === 0) {
+      continue;
+    }
+    fields[key] = row.value.trim();
+  }
+
+  return JSON.stringify(fields, null, 2);
+}
+
+function stringifyGenericStructuredFieldValue(value: unknown): string {
+  if (typeof value === 'string') {
+    return value;
+  }
+  if (value === null || value === undefined) {
+    return '';
+  }
+  if (typeof value === 'number' || typeof value === 'boolean') {
+    return String(value);
+  }
+  if (Array.isArray(value) && value.every((entry) => typeof entry !== 'object' || entry === null)) {
+    return value.map((entry) => String(entry)).join(', ');
+  }
+
+  return JSON.stringify(value);
 }
 
 function parseCharacterStructuredFieldsDraft(value: string): CharacterStructuredFieldsDraft {
@@ -5158,6 +5817,11 @@ const CHARACTER_FIRST_IMPRESSION_OPTIONS: Array<[string, string]> = [
   ['serious_reliable', 'Serious reliable'],
   ['mysterious_fragile', 'Mysterious fragile'],
   ['energetic_bold', 'Energetic bold'],
+  ['stoic_reserved', 'Stoic reserved'],
+  ['rugged_calm', 'Rugged calm'],
+  ['sharp_elite', 'Sharp elite'],
+  ['playful_confident', 'Playful confident'],
+  ['mature_composed', 'Mature composed'],
 ];
 const CHARACTER_STANDING_STYLE_OPTIONS: Array<[string, string]> = [
   EMPTY_OPTION,
@@ -5166,6 +5830,11 @@ const CHARACTER_STANDING_STYLE_OPTIONS: Array<[string, string]> = [
   ['shy_reserved', 'Shy reserved'],
   ['confident_open', 'Confident open'],
   ['still_quiet', 'Still quiet'],
+  ['arms_crossed', 'Arms crossed'],
+  ['hands_in_pockets', 'Hands in pockets'],
+  ['guarded_stance', 'Guarded stance'],
+  ['wide_grounded_stance', 'Wide grounded stance'],
+  ['elegant_upright', 'Elegant upright'],
 ];
 const CHARACTER_DEFAULT_EXPRESSION_OPTIONS: Array<[string, string]> = [
   EMPTY_OPTION,
@@ -5175,6 +5844,11 @@ const CHARACTER_DEFAULT_EXPRESSION_OPTIONS: Array<[string, string]> = [
   ['cheerful_smile', 'Cheerful smile'],
   ['shy_reserved', 'Shy reserved'],
   ['cool_unfazed', 'Cool unfazed'],
+  ['stern_look', 'Stern look'],
+  ['tired_neutral', 'Tired neutral'],
+  ['confident_smirk', 'Confident smirk'],
+  ['bored_gaze', 'Bored gaze'],
+  ['teasing_smile', 'Teasing smile'],
 ];
 const CHARACTER_BUILD_OPTIONS: Array<[string, string]> = [
   EMPTY_OPTION,
@@ -5184,12 +5858,18 @@ const CHARACTER_BUILD_OPTIONS: Array<[string, string]> = [
   ['athletic', 'Athletic'],
   ['muscular', 'Muscular'],
   ['curvy', 'Curvy'],
+  ['lean', 'Lean'],
+  ['stocky', 'Stocky'],
+  ['broad', 'Broad build'],
+  ['large', 'Large build'],
 ];
 const CHARACTER_HEIGHT_OPTIONS: Array<[string, string]> = [
   EMPTY_OPTION,
+  ['very_short_height', 'Very short height'],
   ['short', 'Short'],
   ['average', 'Average'],
   ['tall', 'Tall'],
+  ['very_tall_height', 'Very tall height'],
 ];
 const CHARACTER_FACE_SHAPE_OPTIONS: Array<[string, string]> = [
   EMPTY_OPTION,
@@ -5236,13 +5916,19 @@ const CHARACTER_HAIR_COLOR_OPTIONS: Array<[string, string]> = [
   EMPTY_OPTION,
   ['black', 'Black'],
   ['brown', 'Brown'],
+  ['dark_brown', 'Dark brown'],
   ['blonde', 'Blonde'],
+  ['ash_blonde', 'Ash blonde'],
+  ['auburn', 'Auburn'],
   ['silver', 'Silver'],
+  ['gray', 'Gray'],
   ['white', 'White'],
   ['blue', 'Blue'],
+  ['green', 'Green'],
   ['red', 'Red'],
   ['pink', 'Pink'],
   ['purple', 'Purple'],
+  ['two_tone', 'Two tone'],
   ['custom', 'Custom'],
 ];
 const CHARACTER_HAIR_LENGTH_OPTIONS: Array<[string, string]> = [
@@ -5259,15 +5945,42 @@ const CHARACTER_HAIR_STYLE_OPTIONS: Array<[string, string]> = [
   ['wavy', 'Wavy'],
   ['curly', 'Curly'],
   ['wild', 'Wild'],
+  ['tousled', 'Tousled'],
+  ['spiky', 'Spiky'],
+  ['fluffy', 'Fluffy'],
+  ['slick', 'Slick'],
+  ['coarse', 'Coarse'],
+  ['shaved', 'Shaved'],
 ];
 const CHARACTER_HAIR_ARRANGEMENT_OPTIONS: Array<[string, string]> = [
   EMPTY_OPTION,
   ['down', 'Down'],
+  ['short_cut', 'Short cut'],
+  ['buzz_cut', 'Buzz cut'],
+  ['crew_cut', 'Crew cut'],
+  ['two_block', 'Two block'],
+  ['undercut', 'Undercut'],
+  ['fade_cut', 'Fade cut'],
+  ['side_part', 'Side part'],
+  ['center_part', 'Center part'],
+  ['comma_hair', 'Comma hair'],
+  ['slick_back', 'Slick back'],
+  ['messy_short', 'Messy short'],
+  ['pompadour', 'Pompadour'],
+  ['short_bob', 'Short bob'],
+  ['medium_layered', 'Medium layered'],
+  ['wolf_cut', 'Wolf cut'],
+  ['long_straight', 'Long straight'],
   ['ponytail', 'Ponytail'],
+  ['side_ponytail', 'Side ponytail'],
   ['twin_tails', 'Twin tails'],
   ['bun', 'Bun'],
+  ['man_bun', 'Man bun'],
+  ['topknot', 'Topknot'],
   ['braid', 'Braid'],
   ['half_up', 'Half up'],
+  ['tied_back', 'Tied back'],
+  ['shaved_sides', 'Shaved sides'],
   ['custom', 'Custom'],
 ];
 const CHARACTER_EYE_COLOR_OPTIONS: Array<[string, string]> = [
@@ -5340,6 +6053,12 @@ const CHARACTER_HAIR_BANGS_OPTIONS: Array<[string, string]> = [
   ['heavy', 'Heavy'],
   ['side_swept', 'Side swept'],
   ['blunt', 'Blunt'],
+  ['parted', 'Parted'],
+  ['center_parted', 'Center parted'],
+  ['curtain', 'Curtain'],
+  ['messy_bangs', 'Messy bangs'],
+  ['short_bangs', 'Short bangs'],
+  ['long_bangs', 'Long bangs'],
 ];
 const CHARACTER_HAIR_FRONT_SHAPE_OPTIONS: Array<[string, string]> = [
   EMPTY_OPTION,
@@ -5348,6 +6067,11 @@ const CHARACTER_HAIR_FRONT_SHAPE_OPTIONS: Array<[string, string]> = [
   ['rounded front curve', 'rounded front curve'],
   ['side-swept front', 'side-swept front'],
   ['blunt front', 'blunt front'],
+  ['short textured front', 'short textured front'],
+  ['comma front', 'comma front'],
+  ['curtain front', 'curtain front'],
+  ['messy front', 'messy front'],
+  ['swept-up front', 'swept-up front'],
 ];
 const CHARACTER_HAIR_SIDE_OPTIONS: Array<[string, string]> = [
   EMPTY_OPTION,
@@ -5355,6 +6079,11 @@ const CHARACTER_HAIR_SIDE_OPTIONS: Array<[string, string]> = [
   ['soft cheek framing', 'soft cheek framing'],
   ['long side locks', 'long side locks'],
   ['tucked behind ears', 'tucked behind ears'],
+  ['trimmed sides', 'trimmed sides'],
+  ['faded sides', 'faded sides'],
+  ['shaved sides', 'shaved sides'],
+  ['sideburns', 'sideburns'],
+  ['ear-length sides', 'ear-length sides'],
 ];
 const CHARACTER_HAIR_BACK_SHAPE_OPTIONS: Array<[string, string]> = [
   EMPTY_OPTION,
@@ -5363,6 +6092,12 @@ const CHARACTER_HAIR_BACK_SHAPE_OPTIONS: Array<[string, string]> = [
   ['straight long back', 'straight long back'],
   ['ponytail fall', 'ponytail fall'],
   ['braided back', 'braided back'],
+  ['tapered nape', 'tapered nape'],
+  ['short clipped back', 'short clipped back'],
+  ['undercut back', 'undercut back'],
+  ['tied-back hair', 'tied-back hair'],
+  ['long loose back', 'long loose back'],
+  ['wolf nape', 'wolf nape'],
 ];
 const CHARACTER_CLOTHING_CATEGORY_OPTIONS: Array<[string, string]> = [
   EMPTY_OPTION,
@@ -5370,6 +6105,12 @@ const CHARACTER_CLOTHING_CATEGORY_OPTIONS: Array<[string, string]> = [
   ['school', 'School'],
   ['casual', 'Casual'],
   ['suit', 'Suit'],
+  ['business_casual', 'Business casual'],
+  ['lab_coat', 'Lab coat'],
+  ['trench_coat', 'Trench coat'],
+  ['tactical', 'Tactical'],
+  ['traditional_formal', 'Traditional formal'],
+  ['street_jacket', 'Street jacket'],
   ['fantasy', 'Fantasy'],
   ['japanese', 'Japanese'],
   ['streetwear', 'Streetwear'],
@@ -5426,6 +6167,9 @@ const CHARACTER_LOWER_GARMENT_OPTIONS: Array<[string, string]> = [
   ['long skirt', 'Long skirt'],
   ['straight pants', 'Straight pants'],
   ['wide pants', 'Wide pants'],
+  ['slacks', 'Slacks'],
+  ['jeans', 'Jeans'],
+  ['cargo pants', 'Cargo pants'],
   ['shorts', 'Shorts'],
 ];
 const CHARACTER_SHOES_OPTIONS: Array<[string, string]> = [
@@ -5433,6 +6177,8 @@ const CHARACTER_SHOES_OPTIONS: Array<[string, string]> = [
   ['loafers', 'Loafers'],
   ['sneakers', 'Sneakers'],
   ['boots', 'Boots'],
+  ['dress shoes', 'Dress shoes'],
+  ['combat boots', 'Combat boots'],
   ['heels', 'Heels'],
   ['school shoes', 'School shoes'],
 ];
@@ -5501,6 +6247,12 @@ const CHARACTER_DISTINGUISHING_FEATURE_OPTIONS: Array<[string, string]> = [
   ['Ahoge', 'Ahoge'],
   ['Hair streak', 'Hair streak'],
   ['Glasses', 'Glasses'],
+  ['Stubble', 'Stubble'],
+  ['Beard', 'Beard'],
+  ['Goatee', 'Goatee'],
+  ['Earrings', 'Earrings'],
+  ['Thick eyebrows', 'Thick eyebrows'],
+  ['Sharp jawline', 'Sharp jawline'],
   ['custom', 'Custom'],
 ];
 const CHARACTER_HEAD_RATIO_OPTIONS: Array<[string, string]> = [
@@ -5632,7 +6384,21 @@ const FRAME_TEMPLATE_OPTIONS: Array<[string, string]> = [
   ['action_5', 'Action 5'],
   ['battle_7', 'Battle 7'],
 ];
-
+const FRAME_TEMPLATE_PANEL_COUNTS: Record<string, number> = {
+  standard_4: 4,
+  top_wide_3: 3,
+  standard_6: 6,
+  dense_8: 8,
+  climax_2: 2,
+  splash_1: 1,
+  action_5: 5,
+  battle_7: 7,
+};
+const FRAME_BORDER_STYLE_OPTIONS: Array<[PanelFrameRecord['border_style'], string]> = [
+  ['solid', 'Solid'],
+  ['dashed', 'Dashed'],
+  ['none', 'None'],
+];
 function createEmptySceneDraft(): SceneDraft {
   return {
     order: '1',
@@ -5680,30 +6446,6 @@ function createEmptyPanelAssignmentDraft(entityId: string): PanelAssignmentDraft
   };
 }
 
-function createEmptyBalloonDraft(): BalloonDraft {
-  return {
-    speaker_entity_id: '',
-    balloon_type: 'speech',
-    writing_mode: 'horizontal',
-    text: '',
-    position_json: JSON.stringify({ x: 10, y: 10, width: 22, height: 18 }, null, 2),
-    tail_json: 'null',
-    font_size: '18',
-    font_family: 'Noto Sans JP',
-    panel_order_reference: '',
-    z_index: '1',
-  };
-}
-
-function toBalloonStyle(balloon: BalloonRecord): Record<string, string> {
-  return {
-    left: `${balloon.position.x}%`,
-    top: `${balloon.position.y}%`,
-    width: `${balloon.position.width}%`,
-    height: `${balloon.position.height}%`,
-  };
-}
-
 function parseTrackedJobIds(value: string): string[] {
   try {
     const parsed = JSON.parse(value) as unknown;
@@ -5730,11 +6472,42 @@ function parseNumberInput(value: string, label: string): number {
   return parsed;
 }
 
+function parseBoundedNumberInput(value: string, label: string, min: number, max: number): number {
+  const parsed = parseNumberInput(value, label);
+  if (parsed < min || parsed > max) {
+    throw new Error(`${label} must be between ${min} and ${max}`);
+  }
+
+  return parsed;
+}
+
+function parseIntegerInRangeInput(value: string, label: string, min: number, max: number): number {
+  const parsed = parseBoundedNumberInput(value, label, min, max);
+  if (!Number.isInteger(parsed)) {
+    throw new Error(`${label} must be an integer`);
+  }
+
+  return parsed;
+}
+
 function splitCsv(value: string): string[] {
   return value
     .split(',')
     .map((entry) => entry.trim())
     .filter((entry) => entry.length > 0);
+}
+
+function splitEntityIdCsv(
+  value: string,
+  allowedEntityIds?: ReadonlySet<string>,
+): string[] {
+  const ids = splitCsv(value);
+  const filteredIds =
+    allowedEntityIds === undefined
+      ? ids
+      : ids.filter((id) => allowedEntityIds.has(id));
+
+  return [...new Set(filteredIds)];
 }
 
 function dedupeReferenceCandidates(candidates: ReferenceCandidate[]): ReferenceCandidate[] {
@@ -5747,6 +6520,49 @@ function dedupeReferenceCandidates(candidates: ReferenceCandidate[]): ReferenceC
 
     seenKeys.add(candidate.s3_key);
     return true;
+  });
+}
+
+function sameReferenceCandidates(left: ReferenceCandidate[], right: ReferenceCandidate[]): boolean {
+  return (
+    left.length === right.length &&
+    left.every(
+      (candidate, index) =>
+        candidate.s3_key === right[index]?.s3_key &&
+        candidate.source === right[index]?.source,
+    )
+  );
+}
+
+function extractGeneratedReferenceCandidates(job: GenerationJobRecord): ReferenceCandidate[] {
+  if (
+    job.job_type !== 'entity_generate' ||
+    job.status !== 'completed' ||
+    !Array.isArray(job.result?.candidates)
+  ) {
+    return [];
+  }
+
+  if (job.result.provider_result === false) {
+    return [];
+  }
+
+  return (job.result.candidates as unknown[]).flatMap((candidate) => {
+    if (
+      typeof candidate !== 'object' ||
+      candidate === null ||
+      Array.isArray(candidate) ||
+      typeof (candidate as { s3_key?: unknown }).s3_key !== 'string'
+    ) {
+      return [];
+    }
+
+    return [
+      {
+        s3_key: (candidate as { s3_key: string }).s3_key,
+        source: 'generated' as const,
+      },
+    ];
   });
 }
 

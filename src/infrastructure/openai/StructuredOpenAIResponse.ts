@@ -7,6 +7,10 @@ export interface OpenAICompilerResponse {
   output?: unknown;
 }
 
+export type OpenAIInputContent =
+  | { type: 'input_text'; text: string }
+  | { type: 'input_image'; image_url: string };
+
 export interface StructuredOpenAIRequest<T> {
   client: OpenAIClient;
   model: string;
@@ -17,7 +21,7 @@ export interface StructuredOpenAIRequest<T> {
   errorLabel: string;
   input: Array<{
     role: 'system' | 'user' | 'assistant';
-    content: Array<{ type: 'input_text'; text: string }>;
+    content: OpenAIInputContent[];
   }>;
   sanitize?: (value: unknown) => unknown;
 }
@@ -49,9 +53,7 @@ export async function requestStructuredOpenAIResponse<T>(
   try {
     parsed = JSON.parse(normalized);
   } catch {
-    throw new ConfigurationError(
-      `${options.errorLabel} returned invalid JSON: ${normalized.slice(0, 400)}`,
-    );
+    throw new ConfigurationError(`${options.errorLabel} returned invalid JSON`);
   }
 
   const sanitized = options.sanitize === undefined ? parsed : options.sanitize(parsed);
@@ -72,7 +74,7 @@ export async function requestOpenAIText(
     maxOutputTokens: number;
     input: Array<{
       role: 'system' | 'user' | 'assistant';
-      content: Array<{ type: 'input_text'; text: string }>;
+      content: OpenAIInputContent[];
     }>;
     errorLabel: string;
   },

@@ -16,11 +16,13 @@ import {
   updateEpisodeBodySchema,
   updateWorkBodySchema,
 } from '../lib/validators/story.schema.js';
+import { formatZodValidationError } from '../lib/validationErrorFormatter.js';
 import type { StoryServicePort } from '../services/story/StoryService.js';
 import type { StoryCollaborationServicePort } from '../services/story/StoryCollaborationService.js';
 import type { PageSkeletonServicePort } from '../services/story/PageSkeletonService.js';
 import type { PageServicePort } from '../services/page/PageService.js';
 import type { AppEnv } from '../types/app.js';
+import { readJsonBody, readOptionalJsonBody, REQUEST_BODY_LIMITS } from './requestBody.js';
 
 export interface StoryRouteDependencies {
   authMiddleware: MiddlewareHandler<AppEnv>;
@@ -39,10 +41,10 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
 
   app.post('/story/collaborate', async (c) => {
     const user = c.get('user');
-    const body = collaborateStoryBodySchema.safeParse(await readJsonBody(c));
+    const body = collaborateStoryBodySchema.safeParse(await readStoryJsonBody(c));
 
     if (!body.success) {
-      throw new ValidationError(body.error.message);
+      throw new ValidationError(formatZodValidationError(body.error));
     }
 
     const stream = await dependencies.storyCollaborationService.collaborate(user.id, {
@@ -64,10 +66,10 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
 
   app.post('/story/improve-episode-draft', async (c) => {
     const user = c.get('user');
-    const body = improveEpisodeDraftBodySchema.safeParse(await readJsonBody(c));
+    const body = improveEpisodeDraftBodySchema.safeParse(await readStoryJsonBody(c));
 
     if (!body.success) {
-      throw new ValidationError(body.error.message);
+      throw new ValidationError(formatZodValidationError(body.error));
     }
 
     const result = await dependencies.storyCollaborationService.improveEpisodeDraft(user.id, {
@@ -106,10 +108,10 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
 
   app.post('/works', async (c) => {
     const user = c.get('user');
-    const body = createWorkBodySchema.safeParse(await readJsonBody(c));
+    const body = createWorkBodySchema.safeParse(await readStoryJsonBody(c));
 
     if (!body.success) {
-      throw new ValidationError(body.error.message);
+      throw new ValidationError(formatZodValidationError(body.error));
     }
 
     const work = await dependencies.storyService.createWork(user.id, {
@@ -137,10 +139,10 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
   app.put('/works/:id', async (c) => {
     const user = c.get('user');
     const workId = parseUuidParam(c, 'id');
-    const body = updateWorkBodySchema.safeParse(await readJsonBody(c));
+    const body = updateWorkBodySchema.safeParse(await readStoryJsonBody(c));
 
     if (!body.success) {
-      throw new ValidationError(body.error.message);
+      throw new ValidationError(formatZodValidationError(body.error));
     }
 
     const work = await dependencies.storyService.updateWork(user.id, workId, {
@@ -161,10 +163,10 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
   app.post('/works/:id/chapters', async (c) => {
     const user = c.get('user');
     const workId = parseUuidParam(c, 'id');
-    const body = createChapterBodySchema.safeParse(await readJsonBody(c));
+    const body = createChapterBodySchema.safeParse(await readStoryJsonBody(c));
 
     if (!body.success) {
-      throw new ValidationError(body.error.message);
+      throw new ValidationError(formatZodValidationError(body.error));
     }
 
     const chapter = await dependencies.storyService.createChapter(user.id, workId, {
@@ -192,10 +194,10 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
   app.put('/chapters/:id', async (c) => {
     const user = c.get('user');
     const chapterId = parseUuidParam(c, 'id');
-    const body = updateChapterBodySchema.safeParse(await readJsonBody(c));
+    const body = updateChapterBodySchema.safeParse(await readStoryJsonBody(c));
 
     if (!body.success) {
-      throw new ValidationError(body.error.message);
+      throw new ValidationError(formatZodValidationError(body.error));
     }
 
     const chapter = await dependencies.storyService.updateChapter(user.id, chapterId, {
@@ -224,10 +226,10 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
   app.post('/chapters/:id/episodes', async (c) => {
     const user = c.get('user');
     const chapterId = parseUuidParam(c, 'id');
-    const body = createEpisodeBodySchema.safeParse(await readJsonBody(c));
+    const body = createEpisodeBodySchema.safeParse(await readStoryJsonBody(c));
 
     if (!body.success) {
-      throw new ValidationError(body.error.message);
+      throw new ValidationError(formatZodValidationError(body.error));
     }
 
     const episode = await dependencies.storyService.createEpisode(user.id, chapterId, {
@@ -258,10 +260,10 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
   app.put('/episodes/:id', async (c) => {
     const user = c.get('user');
     const episodeId = parseUuidParam(c, 'id');
-    const body = updateEpisodeBodySchema.safeParse(await readJsonBody(c));
+    const body = updateEpisodeBodySchema.safeParse(await readStoryJsonBody(c));
 
     if (!body.success) {
-      throw new ValidationError(body.error.message);
+      throw new ValidationError(formatZodValidationError(body.error));
     }
 
     const episode = await dependencies.storyService.updateEpisode(user.id, episodeId, {
@@ -306,10 +308,15 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
 
     const hasBody = (c.req.header('content-type') ?? '').includes('application/json');
     const body = generatePageSkeletonBodySchema.safeParse(
-      hasBody ? await readJsonBody(c) : {},
+      hasBody
+        ? await readOptionalJsonBody(c, {
+            maxBytes: REQUEST_BODY_LIMITS.SMALL_JSON_BYTES,
+            description: 'Page skeleton options',
+          })
+        : {},
     );
     if (!body.success) {
-      throw new ValidationError(body.error.message);
+      throw new ValidationError(formatZodValidationError(body.error));
     }
 
     const result = await dependencies.pageSkeletonService.generateForEpisode(user.id, parsedEpisodeId.data, {
@@ -369,12 +376,11 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
   return app;
 }
 
-async function readJsonBody(c: Context<AppEnv>): Promise<unknown> {
-  try {
-    return await c.req.json();
-  } catch {
-    throw new ValidationError('Request body must be valid JSON');
-  }
+async function readStoryJsonBody(c: Context<AppEnv>): Promise<unknown> {
+  return readJsonBody(c, {
+    maxBytes: REQUEST_BODY_LIMITS.STORY_JSON_BYTES,
+    description: 'Story JSON request',
+  });
 }
 
 function parseUuidParam(c: Context<AppEnv>, name: string): string {
@@ -389,7 +395,6 @@ function parseUuidParam(c: Context<AppEnv>, name: string): string {
 function toWorkResponse(work: Work): Record<string, unknown> {
   return {
     id: work.id,
-    user_id: work.userId,
     title: work.title,
     genre: work.genre,
     world_setting: work.worldSetting,
@@ -399,7 +404,6 @@ function toWorkResponse(work: Work): Record<string, unknown> {
     ending_point: work.endingPoint,
     overall_flow: work.overallFlow,
     version: work.version,
-    edit_history: work.editHistory,
     status: work.status,
     created_at: work.createdAt.toISOString(),
     updated_at: work.updatedAt.toISOString(),
@@ -419,7 +423,6 @@ function toChapterResponse(chapter: Chapter): Record<string, unknown> {
     entities_involved: chapter.entitiesInvolved,
     key_beats: chapter.keyBeats,
     version: chapter.version,
-    edit_history: chapter.editHistory,
     status: chapter.status,
     created_at: chapter.createdAt.toISOString(),
     updated_at: chapter.updatedAt.toISOString(),
@@ -443,7 +446,6 @@ function toEpisodeResponse(episode: Episode): Record<string, unknown> {
     entities_involved: episode.entitiesInvolved,
     page_skeleton_generated: episode.pageSkeletonGenerated,
     version: episode.version,
-    edit_history: episode.editHistory,
     status: episode.status,
     created_at: episode.createdAt.toISOString(),
     updated_at: episode.updatedAt.toISOString(),

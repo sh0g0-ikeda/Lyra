@@ -1,6 +1,7 @@
 import { expect, test, type Page, type Route } from '@playwright/test';
 
 const manualTokenStorageKey = 'lyra:web:manual-token';
+const uiLanguageStorageKey = 'lyra:web:ui-language';
 
 const work = {
   id: '11111111-1111-4111-8111-111111111111',
@@ -78,7 +79,11 @@ const pageRecord = {
   episode_id: episode.id,
   page_number: 1,
   layout_config: { type: 'template', template_id: '3-panel-standard' },
+  story_source_scene_ids: [],
+  story_page_purpose: null,
+  story_continuity_note: null,
   dialogue_mode: 'mixed',
+  page_dialogue_toggle: true,
   generation_mode: 'standard',
   generated_image: {
     s3_key: 'session/user-1/pages/page-1/job-1.png',
@@ -87,8 +92,28 @@ const pageRecord = {
     generated_at: '2026-04-26T00:00:00.000Z',
   },
   status: 'generated',
+  panel_count: 1,
+  frame_count: 1,
+  balloon_count: 1,
   created_at: '2026-04-26T00:00:00.000Z',
   updated_at: '2026-04-26T00:00:00.000Z',
+};
+
+const frame = {
+  id: 'frame-1',
+  page_id: pageRecord.id,
+  panel_id: 'panel-1',
+  vertices: [
+    { x: 0, y: 0 },
+    { x: 100, y: 0 },
+    { x: 100, y: 100 },
+    { x: 0, y: 100 },
+  ],
+  border_style: 'solid',
+  border_width: 2,
+  border_color: '#111111',
+  z_index: 1,
+  reading_order: 1,
 };
 
 const panel = {
@@ -239,7 +264,7 @@ async function mockApi(route: Route): Promise<void> {
   }
 
   if (pathname === `/api/pages/${pageRecord.id}/frames`) {
-    return json({ frames: [] });
+    return json({ frames: [frame] });
   }
 
   if (pathname === `/api/pages/${pageRecord.id}/balloons`) {
@@ -290,28 +315,36 @@ async function seedAuthenticatedSession(page: Page): Promise<void> {
   }, manualTokenStorageKey);
 }
 
+async function seedEnglishUi(page: Page): Promise<void> {
+  await page.addInitScript((storageKey) => {
+    window.localStorage.setItem(storageKey, 'en');
+  }, uiLanguageStorageKey);
+}
+
 test('shows auth screen without token', async ({ page }) => {
+  await seedEnglishUi(page);
   await page.goto('/');
   await expect(page.getByRole('heading', { name: 'Production Console' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Use token' })).toBeVisible();
 });
 
 test('renders the console with mocked api responses', async ({ page }) => {
+  await seedEnglishUi(page);
   await seedAuthenticatedSession(page);
   await page.route('**/api/**', mockApi);
 
   await page.goto('/');
 
-  await expect(page.getByText('Moonlit Regiment')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Story' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Entities' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Pages' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Moonlit Regiment' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Story', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Entities', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Pages', exact: true })).toBeVisible();
 
-  await page.getByRole('button', { name: 'Entities' }).click();
+  await page.getByRole('button', { name: 'Entities', exact: true }).click();
   await expect(page.getByText('Mizuki')).toBeVisible();
-  await expect(page.getByText('Generate candidates')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Generate full-body candidates' })).toBeVisible();
 
-  await page.getByRole('button', { name: 'Pages' }).click();
-  await expect(page.getByText('Page 1')).toBeVisible();
-  await expect(page.getByRole('button', { name: /speech We are late\./ })).toBeVisible();
+  await page.getByRole('button', { name: 'Pages', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Page 1' })).toBeVisible();
+  await expect(page.getByText('We are late.')).toBeVisible();
 });

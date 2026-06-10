@@ -77,7 +77,12 @@ export class BalloonService implements BalloonServicePort {
     this.ensurePanelOrderReferenceWithinBounds(input.panelOrderReference, pageContext.panelCount);
     await this.ensureSpeakerBelongsToWork(input.speakerEntityId, pageContext.workId, userId);
 
-    return this.balloonRepository.createBalloon(pageId, input);
+    const balloon = await this.balloonRepository.createBalloon(pageId, userId, input);
+    if (balloon === null) {
+      throw new NotFoundError('Page not found');
+    }
+
+    return balloon;
   }
 
   public async listBalloons(userId: string, pageId: string): Promise<Balloon[]> {

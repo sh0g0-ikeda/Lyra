@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { AppError, ConfigurationError, ConflictError, NotFoundError, ValidationError } from '../../domain/errors/index.js';
 import type { PageGenerationContext } from '../../domain/types/page.js';
 import type { PageGenerationRequestKind } from '../../domain/types/pageGeneration.js';
@@ -19,6 +20,7 @@ import {
   NoopPageGenerationRecoveryService,
   type PageGenerationRecoveryServicePort,
 } from './PageGenerationRecoveryService.js';
+import { PAGE_GENERATION_INPUT_IMAGE_LIMITS } from '../../domain/constants/generation.js';
 
 export interface EnqueuePageGenerationResult {
   jobId: string;
@@ -60,7 +62,7 @@ export class PageGenerationService implements PageGenerationServicePort {
     }
 
     this.ensurePageCanGenerate(page);
-    await this.ensureAssignedCharacterReferences(userId, page);
+    const billableReferenceCount = await this.ensureAssignedReferencesAndCountBillableReferences(userId, page);
     await assertGenerationCapacity(this.generationJobRepository, userId, this.capacityLimits);
     await this.ensureNoActiveGenerationJob(userId, page.pageId);
 
@@ -70,25 +72,30 @@ export class PageGenerationService implements PageGenerationServicePort {
       entityCount: countUniqueAssignedEntities(page),
       panelCount: page.panels.length,
       requestKind,
+      billableReferenceCount,
     });
 
     let creditsConsumed = false;
     let pageStateUpdated = false;
-    let jobId: string | null = null;
+    const reservedJobId = randomUUID();
+    let createdJobId: string | null = null;
 
     try {
       await this.creditService.consumeCredits({
         userId,
         cost: selection.creditCost,
         description: describeGeneration(selection.requestKind, selection.mode),
+        jobId: reservedJobId,
       });
       creditsConsumed = true;
 
       const job = await this.generationJobRepository.create({
+        id: reservedJobId,
         userId,
         jobType: 'page_generate',
         generationMode: selection.mode,
         creditCost: selection.creditCost,
+        capacityLimits: this.capacityLimits,
         params: {
           page_id: page.pageId,
           request_kind: selection.requestKind,
@@ -99,7 +106,7 @@ export class PageGenerationService implements PageGenerationServicePort {
           previous_generation_mode: page.generationMode,
         },
       });
-      jobId = job.id;
+      createdJobId = job.id;
 
       const pageUpdated = await this.pageRepository.updateGenerationState(page.pageId, userId, {
         status: 'generating',
@@ -134,24 +141,42 @@ export class PageGenerationService implements PageGenerationServicePort {
         throw error;
       }
 
-      if (jobId !== null) {
-        await this.generationJobRepository.markFailed(jobId, 'Failed to enqueue page generation job');
+      let compensationError: unknown = null;
+
+      if (createdJobId !== null) {
+        try {
+          await this.generationJobRepository.markFailed(createdJobId, 'Failed to enqueue page generation job');
+        } catch (markError) {
+          compensationError ??= markError;
+        }
       }
 
       if (pageStateUpdated) {
-        await this.pageRepository.updateGenerationState(page.pageId, userId, {
-          status: page.status,
-          generationMode: page.generationMode,
-        });
+        try {
+          await this.pageRepository.updateGenerationState(page.pageId, userId, {
+            status: page.status,
+            generationMode: page.generationMode,
+          });
+        } catch (restoreError) {
+          compensationError ??= restoreError;
+        }
       }
 
       if (creditsConsumed) {
-        await this.creditService.refundCredits({
-          userId,
-          amount: selection.creditCost,
-          description: 'Refund for failed page generation enqueue',
-          jobId: jobId ?? undefined,
-        });
+        try {
+          await this.creditService.refundCredits({
+            userId,
+            amount: selection.creditCost,
+            description: 'Refund for failed page generation enqueue',
+            jobId: createdJobId ?? reservedJobId,
+          });
+        } catch (refundError) {
+          compensationError ??= refundError;
+        }
+      }
+
+      if (compensationError !== null) {
+        throw compensationError;
       }
 
       if (error instanceof AppError) {
@@ -204,34 +229,43 @@ export class PageGenerationService implements PageGenerationServicePort {
     }
   }
 
-  private async ensureAssignedCharacterReferences(
+  private async ensureAssignedReferencesAndCountBillableReferences(
     userId: string,
     page: PageGenerationContext,
-  ): Promise<void> {
+  ): Promise<number> {
     const assignedEntityIds = Array.from(
       new Set(page.panels.flatMap((panel) => panel.entities.map((assignment) => assignment.entityId))),
     );
     if (assignedEntityIds.length === 0) {
-      return;
+      return 0;
     }
 
     const entities = await this.entityRepository.findByWorkIdAndUserId(page.workId, userId);
     const assignedCharacters = entities.filter(
       (entity) => entity.entityType === 'character' && assignedEntityIds.includes(entity.id),
     );
-    if (assignedCharacters.length === 0) {
-      return;
-    }
 
     const references = await this.entityRepository.findPrimaryReferenceImagesByEntityIdsAndUserId(
-      assignedCharacters.map((entity) => entity.id),
+      assignedEntityIds,
       page.workId,
       userId,
     );
+
+    const referenceImageCount = new Set(references.map((reference) => reference.entityId)).size;
+    if (referenceImageCount > PAGE_GENERATION_INPUT_IMAGE_LIMITS.MAX_ENTITY_REFERENCE_IMAGES) {
+      throw new ValidationError(
+        `Page generation supports up to ${PAGE_GENERATION_INPUT_IMAGE_LIMITS.MAX_ENTITY_REFERENCE_IMAGES} reference images per page. Reduce assigned characters or split the scene.`,
+      );
+    }
+
+    if (assignedCharacters.length === 0) {
+      return referenceImageCount;
+    }
+
     const referencedCharacterIds = new Set(references.map((reference) => reference.entityId));
     const missingCharacters = assignedCharacters.filter((entity) => !referencedCharacterIds.has(entity.id));
     if (missingCharacters.length === 0) {
-      return;
+      return referenceImageCount;
     }
 
     const missingNames = missingCharacters.map((entity) => entity.name).join(', ');

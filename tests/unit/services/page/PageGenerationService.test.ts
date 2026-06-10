@@ -25,6 +25,7 @@ import type {
 import { ModeSelector } from '../../../../src/services/page/ModeSelector.js';
 import type { PageGenerationRecoveryServicePort } from '../../../../src/services/page/PageGenerationRecoveryService.js';
 import { PageGenerationService } from '../../../../src/services/page/PageGenerationService.js';
+import { PAGE_GENERATION_INPUT_IMAGE_LIMITS } from '../../../../src/domain/constants/generation.js';
 
 const userId = 'user-1';
 const pageId = '11111111-1111-4111-8111-111111111111';
@@ -92,14 +93,11 @@ class FakeGenerationJobRepository implements GenerationJobRepository {
   public async create(input: CreateGenerationJobInput): Promise<GenerationJob> {
     this.created = input;
     return buildJob({
+      id: input.id ?? '44444444-4444-4444-8444-444444444444',
       generationMode: input.generationMode,
       creditCost: input.creditCost,
       params: input.params,
     });
-  }
-
-  public async findById(): Promise<GenerationJob | null> {
-    return buildJob();
   }
 
   public async findByIdAndUserId(): Promise<GenerationJob | null> {
@@ -197,6 +195,7 @@ class FakeEntityRepository implements EntityRepository {
 class FakeCreditService implements CreditServicePort {
   public consumed: ConsumeCreditsParams[] = [];
   public refunded: RefundCreditsParams[] = [];
+  public shouldFailRefund = false;
 
   public async getBalance(): Promise<CreditBalanceSnapshot> {
     return { monthlyCredits: 0, purchasedCredits: 0, totalCredits: 0, monthlyExpiresAt: null };
@@ -213,6 +212,10 @@ class FakeCreditService implements CreditServicePort {
 
   public async refundCredits(params: RefundCreditsParams): Promise<CreditBalanceSnapshot> {
     this.refunded.push(params);
+    if (this.shouldFailRefund) {
+      throw new Error('refund unavailable');
+    }
+
     return this.getBalance();
   }
 }
@@ -262,7 +265,7 @@ describe('PageGenerationService', () => {
     expect(recoveryService.pageIds).toEqual([pageId]);
   });
 
-  it('initial standard は10crでenqueueする', async () => {
+  it('initial standard は3crでenqueueする', async () => {
     const pageRepository = new FakePageRepository();
     const jobRepository = new FakeGenerationJobRepository();
     const creditService = new FakeCreditService();
@@ -278,11 +281,15 @@ describe('PageGenerationService', () => {
 
     const result = await service.enqueuePageGeneration(userId, pageId);
 
-    expect(result).toEqual({ jobId: '44444444-4444-4444-8444-444444444444' });
+    expect(result.jobId).toBe(jobRepository.created?.id);
     expect(creditService.consumed[0]).toMatchObject({
-      cost: 1,
+      cost: 3,
       description: 'Page generation (standard)',
+      jobId: result.jobId,
     });
+    expect(jobRepository.created?.creditCost).toBe(3);
+    expect(jobRepository.created?.id).toEqual(expect.any(String));
+    expect(jobRepository.created?.capacityLimits).toEqual({ perUser: 2, global: 10 });
     expect(jobRepository.created?.params).toMatchObject({
       page_id: pageId,
       request_kind: 'initial',
@@ -298,34 +305,36 @@ describe('PageGenerationService', () => {
       expectedStatus: 'designing',
     });
     expect(queue.lastPayload).toMatchObject({
+      jobId: result.jobId,
       pageId,
       requestKind: 'initial',
       generationMode: 'standard',
       quality: 'medium',
-      creditCost: 1,
+      creditCost: 3,
       requiresPlanner: false,
       previousPageStatus: 'designing',
       previousGenerationMode: null,
     });
   });
 
-  it('initial thinking は14crになる', async () => {
+  it('4体目以降の参照画像を加算してenqueueする', async () => {
     const pageRepository = new FakePageRepository();
+    const entityRepository = new FakeEntityRepository();
+    entityRepository.entities = Array.from({ length: 5 }, (_, index) =>
+      buildEntity(`entity-${index + 1}`, `Character ${index + 1}`, 'character'),
+    );
+    entityRepository.references = entityRepository.entities.map((entity, index) =>
+      buildReference(entity.id, index + 1),
+    );
     pageRepository.context = buildPageContext({
       frameCount: 5,
-      panels: [
-        buildPanelContext('entity-1'),
-        buildPanelContext('entity-2'),
-        buildPanelContext('entity-3'),
-        buildPanelContext('entity-4'),
-        buildPanelContext('entity-5'),
-      ],
+      panels: entityRepository.entities.map((entity) => buildPanelContext(entity.id)),
     });
     const creditService = new FakeCreditService();
     const queue = new FakeQueue();
     const service = new PageGenerationService(
       pageRepository,
-      new FakeEntityRepository(),
+      entityRepository,
       new FakeGenerationJobRepository(),
       creditService,
       queue,
@@ -334,11 +343,12 @@ describe('PageGenerationService', () => {
 
     await service.enqueuePageGeneration(userId, pageId);
 
-    expect(creditService.consumed[0]?.cost).toBe(1);
+    expect(creditService.consumed[0]?.cost).toBe(5);
+    expect(queue.lastPayload?.creditCost).toBe(5);
     expect(queue.lastPayload?.generationMode).toBe('thinking');
   });
 
-  it('generated_image があるページは22crのregenerateになる', async () => {
+  it('generated_image があるページは3crのregenerateになる', async () => {
     const pageRepository = new FakePageRepository();
     pageRepository.context = buildPageContext({
       generatedImage: {
@@ -362,9 +372,10 @@ describe('PageGenerationService', () => {
 
     await service.enqueuePageGeneration(userId, pageId);
 
-    expect(creditService.consumed[0]?.cost).toBe(1);
+    expect(creditService.consumed[0]?.cost).toBe(3);
     expect(queue.lastPayload).toMatchObject({
       requestKind: 'regenerate',
+      creditCost: 3,
       quality: 'medium',
       requiresPlanner: false,
     });
@@ -447,7 +458,7 @@ describe('PageGenerationService', () => {
       new FakeQueue(),
       new ModeSelector(),
       undefined,
-      { perUser: 2, global: 100 },
+      { perUser: 2, global: 10 },
     );
 
     await expect(service.enqueuePageGeneration(userId, pageId)).rejects.toMatchObject({
@@ -467,7 +478,7 @@ describe('PageGenerationService', () => {
       new FakeQueue(),
       new ModeSelector(),
       undefined,
-      { perUser: 2, global: 100 },
+      { perUser: 2, global: 10 },
       false,
     );
 
@@ -480,7 +491,7 @@ describe('PageGenerationService', () => {
 
   it('global active generation limit に達している場合はクレジット消費前にCONFLICTになる', async () => {
     const jobRepository = new FakeGenerationJobRepository();
-    jobRepository.activeGlobally = 100;
+    jobRepository.activeGlobally = 10;
     const creditService = new FakeCreditService();
     const service = new PageGenerationService(
       new FakePageRepository(),
@@ -490,7 +501,7 @@ describe('PageGenerationService', () => {
       new FakeQueue(),
       new ModeSelector(),
       undefined,
-      { perUser: 2, global: 100 },
+      { perUser: 2, global: 10 },
     );
 
     await expect(service.enqueuePageGeneration(userId, pageId)).rejects.toMatchObject({
@@ -534,15 +545,15 @@ describe('PageGenerationService', () => {
       code: 'CONFIGURATION_ERROR',
     });
 
-    expect(jobRepository.failedJobId).toBe('44444444-4444-4444-8444-444444444444');
+    expect(jobRepository.failedJobId).toBe(jobRepository.created?.id);
     expect(pageRepository.updates).toEqual([
       { status: 'generating', generationMode: 'standard', expectedStatus: 'designing' },
       { status: 'designing', generationMode: null },
     ]);
     expect(creditService.refunded[0]).toMatchObject({
-      amount: 1,
+      amount: 3,
       description: 'Refund for failed page generation enqueue',
-      jobId: '44444444-4444-4444-8444-444444444444',
+      jobId: jobRepository.created?.id,
     });
   });
   it('page state updateに失敗した場合はjob failedとrefundで補償する', async () => {
@@ -564,10 +575,10 @@ describe('PageGenerationService', () => {
       message: 'Page generation state changed before enqueue',
     });
 
-    expect(jobRepository.failedJobId).toBe('44444444-4444-4444-8444-444444444444');
+    expect(jobRepository.failedJobId).toBe(jobRepository.created?.id);
     expect(creditService.refunded[0]).toMatchObject({
-      amount: 1,
-      jobId: '44444444-4444-4444-8444-444444444444',
+      amount: 3,
+      jobId: jobRepository.created?.id,
     });
   });
 
@@ -587,11 +598,40 @@ describe('PageGenerationService', () => {
 
     const result = await service.enqueuePageGeneration(userId, pageId);
 
-    expect(result).toEqual({ jobId: '44444444-4444-4444-8444-444444444444' });
+    expect(result.jobId).toBe(jobRepository.created?.id);
     expect(jobRepository.failedJobId).toBeNull();
     expect(creditService.refunded).toEqual([]);
     expect(pageRepository.updates).toEqual([
       { status: 'generating', generationMode: 'standard', expectedStatus: 'designing' },
+    ]);
+  });
+
+  it('enqueue補償の返金が失敗してもpage job failed化と状態復元は行う', async () => {
+    const pageRepository = new FakePageRepository();
+    const jobRepository = new FakeGenerationJobRepository();
+    const creditService = new FakeCreditService();
+    creditService.shouldFailRefund = true;
+    const queue = new FakeQueue();
+    queue.shouldFail = true;
+    const service = new PageGenerationService(
+      pageRepository,
+      new FakeEntityRepository(),
+      jobRepository,
+      creditService,
+      queue,
+      new ModeSelector(),
+    );
+
+    await expect(service.enqueuePageGeneration(userId, pageId)).rejects.toThrow('refund unavailable');
+
+    expect(creditService.refunded[0]).toMatchObject({
+      amount: 3,
+      jobId: jobRepository.created?.id,
+    });
+    expect(jobRepository.failedJobId).toBe(jobRepository.created?.id);
+    expect(pageRepository.updates).toEqual([
+      { status: 'generating', generationMode: 'standard', expectedStatus: 'designing' },
+      { status: 'designing', generationMode: null },
     ]);
   });
 });
@@ -657,6 +697,78 @@ it('assigned character reference が未確定なら VALIDATION_ERROR になる',
   });
 });
 
+it('page generation reference image count が上限を超えるとクレジット消費前に VALIDATION_ERROR になる', async () => {
+  const entityCount = PAGE_GENERATION_INPUT_IMAGE_LIMITS.MAX_ENTITY_REFERENCE_IMAGES + 1;
+  const pageRepository = new FakePageRepository();
+  const entityRepository = new FakeEntityRepository();
+  const creditService = new FakeCreditService();
+
+  entityRepository.entities = Array.from({ length: entityCount }, (_, index) =>
+    buildEntity(`entity-${index + 1}`, `Character ${index + 1}`, 'character'),
+  );
+  entityRepository.references = entityRepository.entities.map((entity, index) => ({
+    entityId: entity.id,
+    refId: `ref-${index + 1}`,
+    s3Key: `saved/user-1/entities/${entity.id}/ref-${index + 1}.png`,
+    cdnUrl: `https://img.lyra.test/${entity.id}.png`,
+  }));
+  pageRepository.context = buildPageContext({
+    frameCount: entityCount,
+    panels: entityRepository.entities.map((entity) => buildPanelContext(entity.id)),
+  });
+
+  const service = new PageGenerationService(
+    pageRepository,
+    entityRepository,
+    new FakeGenerationJobRepository(),
+    creditService,
+    new FakeQueue(),
+    new ModeSelector(),
+  );
+
+  await expect(service.enqueuePageGeneration(userId, pageId)).rejects.toMatchObject({
+    code: 'VALIDATION_ERROR',
+    message: expect.stringContaining('reference images'),
+  });
+  expect(creditService.consumed).toEqual([]);
+});
+
+it('object reference image count が上限を超える場合もクレジット消費前に VALIDATION_ERROR になる', async () => {
+  const entityCount = PAGE_GENERATION_INPUT_IMAGE_LIMITS.MAX_ENTITY_REFERENCE_IMAGES + 1;
+  const pageRepository = new FakePageRepository();
+  const entityRepository = new FakeEntityRepository();
+  const creditService = new FakeCreditService();
+
+  entityRepository.entities = Array.from({ length: entityCount }, (_, index) =>
+    buildEntity(`entity-${index + 1}`, `Object ${index + 1}`, 'object'),
+  );
+  entityRepository.references = entityRepository.entities.map((entity, index) => ({
+    entityId: entity.id,
+    refId: `ref-${index + 1}`,
+    s3Key: `saved/user-1/entities/${entity.id}/ref-${index + 1}.png`,
+    cdnUrl: `https://img.lyra.test/${entity.id}.png`,
+  }));
+  pageRepository.context = buildPageContext({
+    frameCount: entityCount,
+    panels: entityRepository.entities.map((entity) => buildPanelContext(entity.id)),
+  });
+
+  const service = new PageGenerationService(
+    pageRepository,
+    entityRepository,
+    new FakeGenerationJobRepository(),
+    creditService,
+    new FakeQueue(),
+    new ModeSelector(),
+  );
+
+  await expect(service.enqueuePageGeneration(userId, pageId)).rejects.toMatchObject({
+    code: 'VALIDATION_ERROR',
+    message: expect.stringContaining('reference images'),
+  });
+  expect(creditService.consumed).toEqual([]);
+});
+
 function buildPageContext(overrides: Partial<PageGenerationContext> = {}): PageGenerationContext {
   return {
     pageId,
@@ -688,6 +800,15 @@ function buildPanelContext(entityId: string): PageGenerationContext['panels'][nu
         stateId: null,
       },
     ],
+  };
+}
+
+function buildReference(entityId: string, index: number): EntityPrimaryReferenceImage {
+  return {
+    entityId,
+    refId: `ref-${index}`,
+    s3Key: `saved/user-1/entities/${entityId}/ref-${index}.png`,
+    cdnUrl: `https://img.lyra.test/${entityId}.png`,
   };
 }
 

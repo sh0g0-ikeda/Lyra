@@ -1,4 +1,5 @@
 import { env } from '../src/lib/env.js';
+import { sanitizePersistedErrorMessage } from '../src/lib/errorSanitizer.js';
 import { createDevAuthToken } from '../src/services/auth/DevAuthTokenService.js';
 
 function readFlag(name: string): string | null {
@@ -40,7 +41,7 @@ async function main(): Promise<void> {
 }
 
 void main().catch((error: unknown) => {
-  const message = error instanceof Error ? error.message : 'Unknown error';
+  const message = sanitizePersistedErrorMessage(error, 'Unknown error');
   console.error(message);
   process.exitCode = 1;
 });

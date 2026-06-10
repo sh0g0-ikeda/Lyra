@@ -8,8 +8,10 @@ import {
   updateEntityStateBodySchema,
   updateSceneBodySchema,
 } from '../lib/validators/scene.schema.js';
+import { formatZodValidationError } from '../lib/validationErrorFormatter.js';
 import type { SceneServicePort } from '../services/scene/SceneService.js';
 import type { AppEnv } from '../types/app.js';
+import { readJsonBody } from './requestBody.js';
 
 export interface SceneRouteDependencies {
   authMiddleware: MiddlewareHandler<AppEnv>;
@@ -29,7 +31,7 @@ export function createSceneRoutes(dependencies: SceneRouteDependencies): Hono<Ap
     const body = createSceneBodySchema.safeParse(await readJsonBody(c));
 
     if (!body.success) {
-      throw new ValidationError(body.error.message);
+      throw new ValidationError(formatZodValidationError(body.error));
     }
 
     const scene = await dependencies.sceneService.createScene(user.id, episodeId, {
@@ -57,7 +59,7 @@ export function createSceneRoutes(dependencies: SceneRouteDependencies): Hono<Ap
     const body = updateSceneBodySchema.safeParse(await readJsonBody(c));
 
     if (!body.success) {
-      throw new ValidationError(body.error.message);
+      throw new ValidationError(formatZodValidationError(body.error));
     }
 
     const scene = await dependencies.sceneService.updateScene(user.id, sceneId, {
@@ -86,7 +88,7 @@ export function createSceneRoutes(dependencies: SceneRouteDependencies): Hono<Ap
     const body = createEntityStateBodySchema.safeParse(await readJsonBody(c));
 
     if (!body.success) {
-      throw new ValidationError(body.error.message);
+      throw new ValidationError(formatZodValidationError(body.error));
     }
 
     const entityState = await dependencies.sceneService.createEntityState(user.id, entityId, {
@@ -109,7 +111,7 @@ export function createSceneRoutes(dependencies: SceneRouteDependencies): Hono<Ap
     const body = updateEntityStateBodySchema.safeParse(await readJsonBody(c));
 
     if (!body.success) {
-      throw new ValidationError(body.error.message);
+      throw new ValidationError(formatZodValidationError(body.error));
     }
 
     const entityState = await dependencies.sceneService.updateEntityState(user.id, entityId, stateId, {
@@ -126,14 +128,6 @@ export function createSceneRoutes(dependencies: SceneRouteDependencies): Hono<Ap
   });
 
   return app;
-}
-
-async function readJsonBody(c: Context<AppEnv>): Promise<unknown> {
-  try {
-    return await c.req.json();
-  } catch {
-    throw new ValidationError('Request body must be valid JSON');
-  }
 }
 
 function parseUuidParam(c: Context<AppEnv>, name: string): string {

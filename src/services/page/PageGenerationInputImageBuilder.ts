@@ -1,9 +1,12 @@
-import { NotFoundError } from '../../domain/errors/index.js';
+import { NotFoundError, ValidationError } from '../../domain/errors/index.js';
+import { PAGE_GENERATION_INPUT_IMAGE_LIMITS } from '../../domain/constants/generation.js';
+import { OPENAI_INPUT_IMAGE_MAX_BYTES } from '../../domain/constants/imageInput.js';
 import type { PageGenerationInputImage } from '../../domain/types/pageGeneration.js';
 import type { EntityRepository } from '../../repositories/EntityRepository.js';
 import type { PageRepository } from '../../repositories/PageRepository.js';
 import type { StoredImageLoaderPort } from '../../infrastructure/aws/S3StoredImageLoader.js';
 import type { LayoutGuideImageRendererPort } from './LayoutGuideImageRenderer.js';
+import { ensureOwnedEntityReferenceImageKey } from '../storage/StoredImageKeyPolicy.js';
 
 export interface BuildPageGenerationInputImagesInput {
   userId: string;
@@ -38,6 +41,13 @@ export class PageGenerationInputImageBuilder implements PageGenerationInputImage
       page.workId,
       input.userId,
     );
+    const referenceImageCount = new Set(references.map((reference) => reference.entityId)).size;
+    if (referenceImageCount > PAGE_GENERATION_INPUT_IMAGE_LIMITS.MAX_ENTITY_REFERENCE_IMAGES) {
+      throw new ValidationError(
+        `Page generation supports up to ${PAGE_GENERATION_INPUT_IMAGE_LIMITS.MAX_ENTITY_REFERENCE_IMAGES} reference images per page. Reduce assigned characters or split the scene.`,
+      );
+    }
+
     const referenceByEntityId = new Map(references.map((reference) => [reference.entityId, reference]));
 
     const inputImages: PageGenerationInputImage[] = [];
@@ -47,7 +57,9 @@ export class PageGenerationInputImageBuilder implements PageGenerationInputImage
         continue;
       }
 
+      ensureOwnedEntityReferenceImageKey(reference.s3Key, input.userId, entityId);
       const loadedImage = await this.storedImageLoader.loadByS3Key(reference.s3Key);
+      ensureInputImageWithinLimit(loadedImage.imageData);
       inputImages.push({
         role: 'entity_reference',
         label: entityNameById.get(entityId) ?? `entity-${entityId}`,
@@ -90,6 +102,14 @@ function collectEntityIds(
   }
 
   return Array.from(orderedEntityIds);
+}
+
+function ensureInputImageWithinLimit(imageData: Buffer): void {
+  if (imageData.length > OPENAI_INPUT_IMAGE_MAX_BYTES) {
+    throw new ValidationError(
+      `Page generation input image is too large. Maximum size is ${OPENAI_INPUT_IMAGE_MAX_BYTES} bytes.`,
+    );
+  }
 }
 
 function toDataUrl(mimeType: string, imageData: Buffer): string {

@@ -6,8 +6,10 @@ import {
   panelFrameUuidParamSchema,
   replacePanelFramesBodySchema,
 } from '../lib/validators/panelFrame.schema.js';
+import { formatZodValidationError } from '../lib/validationErrorFormatter.js';
 import type { PanelFrameServicePort } from '../services/page/PanelFrameService.js';
 import type { AppEnv } from '../types/app.js';
+import { readJsonBody } from './requestBody.js';
 
 export interface PanelFrameRouteDependencies {
   authMiddleware: MiddlewareHandler<AppEnv>;
@@ -35,7 +37,7 @@ export function createPanelFrameRoutes(dependencies: PanelFrameRouteDependencies
     const body = applyPanelFrameTemplateBodySchema.safeParse(await readJsonBody(c));
 
     if (!body.success) {
-      throw new ValidationError(body.error.message);
+      throw new ValidationError(formatZodValidationError(body.error));
     }
 
     const application = await dependencies.panelFrameService.applyTemplate(
@@ -53,7 +55,7 @@ export function createPanelFrameRoutes(dependencies: PanelFrameRouteDependencies
     const body = replacePanelFramesBodySchema.safeParse(await readJsonBody(c));
 
     if (!body.success) {
-      throw new ValidationError(body.error.message);
+      throw new ValidationError(formatZodValidationError(body.error));
     }
 
     const frames = await dependencies.panelFrameService.replacePageFrames(
@@ -75,14 +77,6 @@ export function createPanelFrameRoutes(dependencies: PanelFrameRouteDependencies
   });
 
   return app;
-}
-
-async function readJsonBody(c: Context<AppEnv>): Promise<unknown> {
-  try {
-    return await c.req.json();
-  } catch {
-    throw new ValidationError('Request body must be valid JSON');
-  }
 }
 
 function parseUuidParam(c: Context<AppEnv>, name: string): string {

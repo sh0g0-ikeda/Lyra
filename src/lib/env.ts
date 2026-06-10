@@ -3,10 +3,21 @@ import { z } from 'zod';
 import { DEFAULT_GENERATION_ACTIVE_JOB_LIMITS } from '../domain/constants/generation.js';
 
 const envSchema = z.object({
+  APP_ENV: z.enum(['development', 'test', 'production']).optional(),
   PORT: z.coerce.number().int().min(1).max(65535).default(3000),
   DATABASE_URL: z.string().min(1).default('postgres://postgres:postgres@localhost:5432/lyra'),
+  DATABASE_POOL_MAX: z.coerce.number().int().min(1).max(50).default(10),
+  DATABASE_SSL_MODE: z.enum(['disable', 'require']).default(process.env.NODE_ENV === 'production' ? 'require' : 'disable'),
+  DATABASE_STATEMENT_TIMEOUT_MS: z.coerce.number().int().min(0).max(600_000).default(30_000),
+  DATABASE_QUERY_TIMEOUT_MS: z.coerce.number().int().min(0).max(600_000).default(30_000),
+  CORS_ALLOWED_ORIGINS: z.string().min(1).optional(),
+  AUTO_RUN_MIGRATIONS: z
+    .string()
+    .optional()
+    .transform((value) => (value === undefined ? process.env.NODE_ENV !== 'production' : value === 'true')),
   AWS_REGION: z.string().min(1).optional(),
   SQS_QUEUE_URL_GENERATION: z.string().url().optional(),
+  SQS_GENERATION_VISIBILITY_TIMEOUT_SECONDS: z.coerce.number().int().min(1).max(43_200).optional(),
   S3_BUCKET_IMAGES: z.string().min(1).optional(),
   IMAGES_CDN_BASE_URL: z.string().url().optional(),
   LOCAL_FILE_STORAGE_DIR: z.string().min(1).optional(),
@@ -15,10 +26,7 @@ const envSchema = z.object({
   OPENAI_IMAGE_MODEL: z.string().min(1).default('gpt-image-2'),
   OPENAI_BASE_URL: z.string().url().default('https://api.openai.com/v1'),
   OPENAI_TIMEOUT_MS: z.coerce.number().int().min(1000).max(600000).default(300000),
-  ANTHROPIC_API_KEY: z.string().min(1).optional(),
-  ANTHROPIC_BASE_URL: z.string().url().default('https://api.anthropic.com'),
-  ANTHROPIC_API_VERSION: z.string().min(1).default('2023-06-01'),
-  ANTHROPIC_TIMEOUT_MS: z.coerce.number().int().min(1000).max(600000).default(300000),
+  LOCAL_IMAGE_FALLBACK_ENABLED: z.string().optional().transform((value) => value === 'true'),
   LLM_PAGE_PROMPT_COMPILER_ENABLED: z.string().optional().transform((value) => value === 'true'),
   LLM_ENTITY_REFERENCE_PROMPT_COMPILER_ENABLED: z.string().optional().transform((value) => value === 'true'),
   LLM_PAGE_GENERATION_PLANNER_ENABLED: z.string().optional().transform((value) => value === 'true'),
@@ -33,6 +41,18 @@ const envSchema = z.object({
     .min(1)
     .default(DEFAULT_GENERATION_ACTIVE_JOB_LIMITS.GLOBAL),
   GENERATION_ENABLED: z
+    .string()
+    .optional()
+    .transform((value) => (value === undefined ? process.env.NODE_ENV !== 'production' : value === 'true')),
+  PAGE_GENERATION_ENABLED: z
+    .string()
+    .optional()
+    .transform((value) => (value === undefined ? true : value === 'true')),
+  ENTITY_GENERATION_ENABLED: z
+    .string()
+    .optional()
+    .transform((value) => (value === undefined ? true : value === 'true')),
+  ENTITY_IMPORT_ANALYSIS_ENABLED: z
     .string()
     .optional()
     .transform((value) => (value === undefined ? true : value === 'true')),
@@ -52,7 +72,7 @@ const envSchema = z.object({
   COGNITO_CLIENT_ID: z.string().min(1).optional(),
   COGNITO_ISSUER: z.string().url().optional(),
   COGNITO_JWKS_URI: z.string().url().optional(),
-  COGNITO_TOKEN_USE: z.enum(['access', 'id']).default('access'),
+  COGNITO_TOKEN_USE: z.enum(['access', 'id']).default('id'),
   COGNITO_REQUIRED_SCOPES: z.string().min(1).optional(),
   COGNITO_REQUIRED_GROUPS: z.string().min(1).optional(),
   ENTERPRISE_STYLE_REFERENCES_ENABLED: z
@@ -64,4 +84,10 @@ const envSchema = z.object({
   DEV_AUTH_BYPASS_EMAIL: z.string().email().optional(),
 });
 
-export const env = envSchema.parse(process.env);
+export type Env = z.infer<typeof envSchema>;
+
+export function parseEnv(source: NodeJS.ProcessEnv = process.env): Env {
+  return envSchema.parse(source);
+}
+
+export const env = parseEnv(process.env);

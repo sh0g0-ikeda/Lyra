@@ -7,6 +7,14 @@
 - request ID and rate limiting
 - failed page-generation retry flow
 
+## Migrations
+- Run `bun run db:check-invariants` before production migrations.
+  - It is read-only.
+  - If it reports violations, fix the listed rows before running schema migrations.
+- Run `bun run migrate` as a one-off deploy task before rolling API tasks.
+- Set `AUTO_RUN_MIGRATIONS=false` for production API tasks.
+- Keep startup auto-migrations only for local development and short-lived test environments.
+
 ## Request tracing
 - Every HTTP response returns `X-Request-Id`
 - API request completion is logged as JSON with:
@@ -18,9 +26,20 @@
   - `user_id`
 
 ## Rate limits
-- page generation: `10 req/min/user`
-- story routes: `20 req/min/user`
+- generation-cost routes: `10 req/min/user`
+  - page generation
+  - page/page-story autofill
+  - page skeleton generation
+  - entity image import/reference generation
+  - StoryAI collaborate / episode draft improvement
+- ordinary story editing routes: `20 req/min/user`
 - default authenticated API: `100 req/min/user`
+- Stripe webhook: `120 req/min/IP`
+
+For public webhook IP buckets, forward `CloudFront-Viewer-Address` when the API
+is behind CloudFront. If that header is absent, the API falls back to the last
+valid `X-Forwarded-For` address, which is the safest application-level fallback
+behind an ALB but should not replace WAF rate-based rules.
 
 Headers:
 - `X-RateLimit-Limit`
@@ -28,14 +47,20 @@ Headers:
 - `X-RateLimit-Reset`
 - `Retry-After` on `429`
 
+Retention:
+- Run `bun run admin:prune-rate-limits -- --older-than-hours 24 --max-deletes 1000`
+  regularly as dry-run first.
+- Add `--apply` after reviewing candidates. The script rechecks `reset_at` during deletion.
+
 ## CloudWatch alarms
 Use `ops/cloudwatch/alarms.example.json` as the seed definition.
 
 Minimum alarms:
-- EC2 CPU `> 80%` for 3 periods
-- worker Lambda `Errors > 0`
-- page generation DLQ visible messages `> 0`
-- API 5xx / host health
+- ALB target 5xx count
+- API ECS CPU and memory
+- generation worker ECS CPU
+- generation queue oldest message age
+- generation DLQ visible messages `> 0`
 
 ## Security baseline
 Use:
@@ -44,7 +69,8 @@ Use:
 
 Minimum posture:
 - AWS managed WAF rule groups
-- CloudFront-only read for `saved/*`
+- CloudFront-only read for `saved/*`, `session/*`, and `tmp/*`
+- CloudFront viewer access for image paths should be protected with signed cookies/URLs or an equivalent authenticated edge policy before paid production
 - deny insecure transport on S3
 
 ## Load tests
@@ -61,7 +87,7 @@ Required env:
 Manual retry:
 
 ```bash
-npm run worker:retry -- <job-id> <user-id>
+bun run worker:retry -- <job-id> <user-id>
 ```
 
 Behavior:

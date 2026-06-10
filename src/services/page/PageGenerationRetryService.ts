@@ -1,6 +1,12 @@
 import { ConflictError, NotFoundError } from '../../domain/errors/index.js';
 import type { GenerationJobRepository } from '../../repositories/GenerationJobRepository.js';
+import { isUniqueViolation } from '../../repositories/GenerationJobRepository.js';
+import type { CreditServicePort } from '../credit/CreditService.js';
 import type { ProcessPageGenerationJobResult } from './PageGenerationWorkerService.js';
+import {
+  DEFAULT_GENERATION_CAPACITY_LIMITS,
+  type GenerationCapacityLimits,
+} from '../generation/GenerationCapacityGuard.js';
 
 export const MAX_PAGE_GENERATION_RETRIES = 3;
 
@@ -16,6 +22,8 @@ export class PageGenerationRetryService implements PageGenerationRetryServicePor
   public constructor(
     private readonly generationJobRepository: GenerationJobRepository,
     private readonly pageGenerationWorkerService: PageGenerationRetryWorkerPort,
+    private readonly creditService: CreditServicePort,
+    private readonly capacityLimits: GenerationCapacityLimits = DEFAULT_GENERATION_CAPACITY_LIMITS,
   ) {}
 
   public async retryFailedJob(userId: string, jobId: string): Promise<void> {
@@ -32,9 +40,44 @@ export class PageGenerationRetryService implements PageGenerationRetryServicePor
       throw new ConflictError('Only failed jobs can be retried');
     }
 
-    const prepared = await this.generationJobRepository.prepareRetry(jobId, MAX_PAGE_GENERATION_RETRIES);
-    if (!prepared) {
-      throw new ConflictError('Generation job exceeded retry limit');
+    let creditsConsumed = false;
+    try {
+      if (job.creditCost > 0) {
+        await this.creditService.consumeCredits({
+          userId,
+          cost: job.creditCost,
+          description: 'Page generation retry',
+          jobId: job.id,
+        });
+        creditsConsumed = true;
+      }
+
+      const prepared = await this.generationJobRepository.prepareRetry(
+        jobId,
+        MAX_PAGE_GENERATION_RETRIES,
+        {
+          userId,
+          capacityLimits: this.capacityLimits,
+        },
+      );
+      if (!prepared) {
+        throw new ConflictError('Generation job exceeded retry limit');
+      }
+    } catch (error) {
+      if (creditsConsumed) {
+        await this.creditService.refundCredits({
+          userId,
+          amount: job.creditCost,
+          description: 'Refund for failed page generation retry setup',
+          jobId: job.id,
+        });
+      }
+
+      if (isUniqueViolation(error)) {
+        throw new ConflictError('Page generation is already queued or processing');
+      }
+
+      throw error;
     }
 
     await this.pageGenerationWorkerService.processJob(jobId);

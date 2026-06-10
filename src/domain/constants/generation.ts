@@ -16,11 +16,40 @@ export const PAGE_GENERATION_CREDIT_COSTS = {
   regenerate: CREDIT_COSTS.PAGE_REGENERATION,
 } as const;
 
+// Pricing is based on the page image request, with extra margin protection for
+// reference-heavy pages because each attached entity reference adds image input cost.
+export const PAGE_GENERATION_REFERENCE_BILLING = {
+  INCLUDED_REFERENCE_COUNT: 3,
+  EXTRA_CREDIT_PER_REFERENCE: 1,
+} as const;
+
+export function calculatePageGenerationCreditCost(referenceCount: number): number {
+  const extraReferenceCount = Math.max(
+    0,
+    referenceCount - PAGE_GENERATION_REFERENCE_BILLING.INCLUDED_REFERENCE_COUNT,
+  );
+
+  return PAGE_GENERATION_CREDIT_COSTS.standard +
+    extraReferenceCount * PAGE_GENERATION_REFERENCE_BILLING.EXTRA_CREDIT_PER_REFERENCE;
+}
+
 export const PAGE_GENERATION_STALE_AFTER_MS = 20 * 60 * 1000;
+export const ENTITY_GENERATION_STALE_AFTER_MS = 20 * 60 * 1000;
+export const GENERATION_RECOVERY_BATCH_LIMIT = 100;
+export const IMAGE_GENERATION_OPENAI_MAX_RETRIES = 1;
+
+export const PAGE_GENERATION_INPUT_IMAGE_LIMITS = {
+  MAX_ENTITY_REFERENCE_IMAGES: 12,
+} as const;
 
 export const DEFAULT_GENERATION_ACTIVE_JOB_LIMITS = {
   PER_USER: 2,
-  GLOBAL: 100,
+  GLOBAL: 10,
+} as const;
+
+export const MAX_PRODUCTION_GENERATION_ACTIVE_JOB_LIMITS = {
+  PER_USER: 5,
+  GLOBAL: 50,
 } as const;
 
 export const PAGE_PROMPT_COMPILER_OPENAI_MODEL = 'gpt-5.4-mini';
@@ -38,3 +67,6 @@ export const PAGE_AUTOFILL_COMPILER_VERSION = 'page_autofill_v2';
 export const EPISODE_PAGE_PLAN_COMPILER_OPENAI_MODEL = 'gpt-5';
 export const EPISODE_PAGE_PLAN_COMPILER_MAX_TOKENS = 24000;
 export const EPISODE_PAGE_PLAN_COMPILER_VERSION = 'episode_page_plan_v2';
+
+export const PAGE_GENERATION_PLANNER_MAX_TOKENS = 700;
+export const PAGE_GENERATION_INTERNAL_PLAN_MAX_CHARS = 1200;

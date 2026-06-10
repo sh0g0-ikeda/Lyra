@@ -190,4 +190,109 @@ describe('EntityReferencePromptBuilder', () => {
     expect(prompt).toContain('Use the named style reference "AKIRA" as a hard rendering constraint.');
     expect(prompt).toContain('Apply these rendering-style anchors through line treatment, shading, finish, and atmosphere only: line quality: precise mechanical linework with confident contour control');
   });
+
+  it('compacts long free text and style reference fields before building generation prompts', () => {
+    const builder = new EntityReferencePromptBuilder();
+    const longFreeDescription = 'quiet visual identity '.repeat(160);
+    const longPromptSupplement = 'keep current saved GUI inputs only '.repeat(120);
+    const longStyleBrief = 'disciplined ink rendering with dense urban structure '.repeat(120);
+    const longAnchor = 'precise contour rhythm with controlled hard edged shadows '.repeat(30);
+
+    const prompt = builder.buildGenerationPrompt({
+      ...baseContext,
+      freeDescription: longFreeDescription,
+      promptSupplement: longPromptSupplement,
+      structuredFields: {
+        ...baseContext.structuredFields,
+        style_reference: {
+          title: 'Long Style',
+          notes: 'avoid noisy over-rendering '.repeat(80),
+          compiled_brief: longStyleBrief,
+          anchors: {
+            line_quality: longAnchor,
+            shape_language: null,
+            face_rendering: null,
+            eye_rendering: null,
+            hair_rendering: null,
+            clothing_rendering: null,
+            background_rendering: longAnchor,
+            shading_rendering: longAnchor,
+            texture_finish: null,
+            motion_treatment: null,
+            dialogue_balloon_treatment: null,
+            atmosphere: longAnchor,
+          },
+          compiler_provider: 'openai',
+          compiler_model: 'gpt-5.4-mini',
+          compiler_prompt_version: 'style_ref_v3',
+          compiled_at: '2026-05-28T00:00:00.000Z',
+        },
+      },
+    });
+    const brief = builder.buildCompilerBrief({
+      ...baseContext,
+      freeDescription: longFreeDescription,
+      promptSupplement: longPromptSupplement,
+      structuredFields: {
+        ...baseContext.structuredFields,
+        style_reference: {
+          title: 'Long Style',
+          notes: 'avoid noisy over-rendering '.repeat(80),
+          compiled_brief: longStyleBrief,
+          anchors: {
+            line_quality: longAnchor,
+            shape_language: null,
+            face_rendering: null,
+            eye_rendering: null,
+            hair_rendering: null,
+            clothing_rendering: null,
+            background_rendering: longAnchor,
+            shading_rendering: longAnchor,
+            texture_finish: null,
+            motion_treatment: null,
+            dialogue_balloon_treatment: null,
+            atmosphere: longAnchor,
+          },
+          compiler_provider: 'openai',
+          compiler_model: 'gpt-5.4-mini',
+          compiler_prompt_version: 'style_ref_v3',
+          compiled_at: '2026-05-28T00:00:00.000Z',
+        },
+      },
+    });
+
+    expect(prompt).toContain('Style interpretation: disciplined ink rendering');
+    expect(prompt).toContain('...');
+    expect(prompt).not.toContain(longStyleBrief.slice(0, 1200));
+    expect(prompt).not.toContain(longPromptSupplement.slice(0, 900));
+    expect(brief).not.toContain(longFreeDescription.slice(0, 900));
+    expect(brief).not.toContain(longStyleBrief.slice(0, 1200));
+    expect(prompt.length).toBeLessThan(5_000);
+    expect(brief.length).toBeLessThan(5_000);
+  });
+
+  it('画像生成用 prompt では非人間の衣服なし指定を安全な影素材表現に寄せる', () => {
+    const builder = new EntityReferencePromptBuilder();
+    const context: EntityReferenceContext = {
+      ...baseContext,
+      entityType: 'nonhuman',
+      name: '神託の影（レーマ）',
+      freeDescription:
+        '白い髪、白い翼をもった真っ黒な人型の影。左の翼は大きめで右の翼は極端に小さい。顔はない。体系は女性より。左腕がない。右手には金色の剣をもっている。衣服は着ていない。全身真っ黒なためアダルト要素ではない。',
+      structuredFields: {},
+      promptSupplement: null,
+    };
+
+    const prompt = builder.buildGenerationPrompt(context);
+    const brief = builder.buildCompilerBrief(context);
+
+    expect(prompt).toContain('fully opaque non-human silhouette surface');
+    expect(prompt).toContain('shadow material');
+    expect(prompt).not.toContain('衣服は着ていない');
+    expect(prompt).not.toContain('アダルト');
+    expect(brief).toContain('fully opaque non-human silhouette surface');
+    expect(brief).not.toContain('衣服は着ていない');
+    expect(brief).not.toContain('アダルト');
+    expect(brief).not.toContain('both hands visible');
+  });
 });

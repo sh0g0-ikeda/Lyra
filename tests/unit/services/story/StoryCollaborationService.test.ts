@@ -52,6 +52,40 @@ class FakeStoryRepository implements StoryRepository {
     ],
     sceneSummaries: ['Scene 1: Rooftop / night / tense'],
   };
+  public improvementContext: StoryEpisodeImprovementContext = {
+    episodeId: '33333333-3333-4333-8333-333333333333',
+    chapterId: 'chapter-1',
+    workId: 'work-1',
+    workTitle: 'Lyra',
+    workGenre: 'dark fantasy',
+    worldSetting: 'Time fractures spread from the sacred tree.',
+    theme: 'Responsibility and delay',
+    overallFlow: 'A reluctant girl joins a time-repair organization.',
+    chapterTitle: 'Chapter 1',
+    chapterPurpose: 'Pull Mio into 辯ｦ.',
+    chapterStartingState: 'Mio is alone.',
+    chapterEndingState: 'Mio sees the organization.',
+    chapterEmotionCurve: 'fear -> disorientation -> resolve',
+    episodeTitle: 'Episode 1',
+    episodePurpose: 'Introduce the rivalry',
+    introduction: 'Current intro',
+    middle: 'Current middle',
+    climax: 'Current climax',
+    endingHook: 'Current hook',
+    estimatedPages: 16,
+    entities: [
+      {
+        id: '11111111-1111-4111-8111-111111111111',
+        name: 'Aki',
+        aliases: [],
+        entityType: 'character',
+        freeDescription: 'Black-haired swordswoman',
+      },
+    ],
+    sceneSummaries: ['Scene 1: Rooftop / night / tense'],
+    chapterSummaries: ['Chapter 2: Aftermath / new responsibilities'],
+    siblingEpisodeSummaries: ['Chapter 1 Episode 2: Arrival / Mio sees the headquarters'],
+  };
 
   public async findWorksByUserId(): Promise<Work[]> {
     return [];
@@ -280,6 +314,47 @@ describe('StoryCollaborationService', () => {
     expect(client.lastRequest?.userPrompt).toContain('rival reveal');
   });
 
+  it('compacts long collaboration target context before sending it to the model', async () => {
+    const repository = new FakeStoryRepository();
+    const longDescription = 'very-long-character-detail '.repeat(80).trim();
+    repository.collaborationTarget = {
+      ...repository.collaborationTarget!,
+      entities: [
+        {
+          id: '11111111-1111-4111-8111-111111111111',
+          name: 'Aki',
+          aliases: [],
+          entityType: 'character',
+          freeDescription: longDescription,
+        },
+      ],
+      sceneSummaries: Array.from({ length: 60 }, (_unused, index) => `Scene ${index + 1}: detail ${index + 1}`),
+    };
+    const client = new FakeStoryAiClient();
+    const service = new StoryCollaborationService(repository, client);
+
+    const stream = await service.collaborate('user-1', {
+      layer: 'episode',
+      targetId: '33333333-3333-4333-8333-333333333333',
+      instruction: 'Tighten the confrontation.',
+      language: 'ja',
+      context: {
+        currentDraft: null,
+        selectedText: null,
+        userNotes: null,
+        focusPoints: [],
+        constraints: [],
+      },
+    });
+    for await (const _chunk of stream) {
+      // drain stream
+    }
+
+    expect(client.lastRequest?.userPrompt).toContain('very-long-character-detail');
+    expect(client.lastRequest?.userPrompt).not.toContain(longDescription);
+    expect(client.lastRequest?.userPrompt).not.toContain('Scene 60: detail 60');
+  });
+
   it('throws NOT_FOUND when the target does not exist', async () => {
     const repository = new FakeStoryRepository();
     repository.collaborationTarget = null;
@@ -381,6 +456,46 @@ describe('StoryCollaborationService', () => {
     expect(planner.lastAuditInput?.draft.introduction).toBe('Improved introduction');
   });
 
+  it('compacts long episode improvement context in the writer prompt', async () => {
+    const repository = new FakeStoryRepository();
+    const longDescription = 'overflow-entity-detail '.repeat(80).trim();
+    repository.findEpisodeImprovementContextByIdAndUserId = async () => ({
+      ...repository.improvementContext,
+      entities: [
+        {
+          id: '11111111-1111-4111-8111-111111111111',
+          name: 'Aki',
+          aliases: ['Sword of the Very Long Rooftop Nickname'.repeat(4)],
+          entityType: 'character',
+          freeDescription: longDescription,
+        },
+      ],
+      sceneSummaries: Array.from({ length: 60 }, (_unused, index) => `Scene ${index + 1}: long scene ${index + 1}`),
+    });
+    const client = new FakeStoryAiClient();
+    const service = new StoryCollaborationService(repository, client);
+
+    await service.improveEpisodeDraft('user-1', {
+      episodeId: '33333333-3333-4333-8333-333333333333',
+      instruction: 'Make the introduction clearer and more visual.',
+      language: 'ja',
+      baseDraft: {
+        title: 'Old title',
+        purpose: 'Old purpose',
+        storyInputMode: 'structured',
+        storyFullDraft: null,
+        introduction: 'Old intro',
+        middle: 'Old middle',
+        climax: 'Old climax',
+        endingHook: 'Old hook',
+      },
+    });
+
+    expect(client.lastRequest?.userPrompt).toContain('overflow-entity-detail');
+    expect(client.lastRequest?.userPrompt).not.toContain(longDescription);
+    expect(client.lastRequest?.userPrompt).not.toContain('Scene 60: long scene 60');
+  });
+
   it('omits duplicated stored episode body when it matches the editable draft', async () => {
     const repository = new FakeStoryRepository();
     const client = new FakeStoryAiClient();
@@ -404,6 +519,40 @@ describe('StoryCollaborationService', () => {
 
     expect(client.lastRequest?.userPrompt).toContain('Current stored episode: same as current editable draft.');
     expect(client.lastRequest?.userPrompt).not.toContain('Current stored episode:\nTitle: Episode 1');
+  });
+
+  it('compacts differing stored episode body before sending it to the writer', async () => {
+    const repository = new FakeStoryRepository();
+    const longStoredIntro = 'stored-introduction-detail '.repeat(200).trim();
+    repository.findEpisodeImprovementContextByIdAndUserId = async () => ({
+      ...repository.improvementContext,
+      introduction: longStoredIntro,
+      middle: 'Different stored middle',
+      climax: 'Different stored climax',
+      endingHook: 'Different stored hook',
+    });
+    const client = new FakeStoryAiClient();
+    const service = new StoryCollaborationService(repository, client);
+
+    await service.improveEpisodeDraft('user-1', {
+      episodeId: '33333333-3333-4333-8333-333333333333',
+      instruction: 'Tighten the current draft.',
+      language: 'ja',
+      baseDraft: {
+        title: 'Editable title',
+        purpose: 'Editable purpose',
+        storyInputMode: 'structured',
+        storyFullDraft: null,
+        introduction: 'Editable intro',
+        middle: 'Editable middle',
+        climax: 'Editable climax',
+        endingHook: 'Editable hook',
+      },
+    });
+
+    expect(client.lastRequest?.userPrompt).toContain('Current stored episode:');
+    expect(client.lastRequest?.userPrompt).toContain('stored-introduction-detail');
+    expect(client.lastRequest?.userPrompt).not.toContain(longStoredIntro);
   });
 
   it('retries the final writer once when the audit requests revision', async () => {

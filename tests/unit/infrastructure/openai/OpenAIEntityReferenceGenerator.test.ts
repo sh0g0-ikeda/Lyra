@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
+import { ConfigurationError } from '../../../../src/domain/errors/index.js';
+import { OPENAI_INPUT_IMAGE_MAX_BYTES } from '../../../../src/domain/constants/imageInput.js';
 import { OpenAIClient } from '../../../../src/infrastructure/openai/OpenAIClient.js';
 import { OpenAIEntityReferenceGenerator } from '../../../../src/infrastructure/openai/OpenAIEntityReferenceGenerator.js';
 
 describe('OpenAIEntityReferenceGenerator', () => {
-  it('source image がない場合は /images/generations で 3 candidates を生成する', async () => {
+  it('source image がない場合は /images/generations で 1 candidate を生成する', async () => {
     let callCount = 0;
     const requestBodies: string[] = [];
     const client = new OpenAIClient({
@@ -78,5 +80,101 @@ describe('OpenAIEntityReferenceGenerator', () => {
     expect(formData.get('model')).toBe('gpt-image-2');
     expect(formData.get('prompt')).toBeTypeOf('string');
     expect(formData.getAll('image[]')).toHaveLength(1);
+  });
+
+  it('unsupported input image MIME は OpenAI 呼び出し前に拒否する', async () => {
+    const client = new OpenAIClient({
+      apiKey: 'test',
+      baseUrl: 'https://api.openai.test/v1',
+      timeoutMs: 1000,
+      fetchFn: async () => {
+        throw new Error('fetch should not be called');
+      },
+      maxRetries: 1,
+    });
+    const generator = new OpenAIEntityReferenceGenerator(client);
+
+    await expect(
+      generator.generateCandidates({
+        prompt: 'entity prompt',
+        inputImages: [{ dataUrl: 'data:text/plain;base64,cmVm' }],
+      }),
+    ).rejects.toEqual(
+      new ConfigurationError('Entity reference generator received an unsupported image input type'),
+    );
+  });
+
+  it('empty input image は OpenAI 呼び出し前に拒否する', async () => {
+    const client = new OpenAIClient({
+      apiKey: 'test',
+      baseUrl: 'https://api.openai.test/v1',
+      timeoutMs: 1000,
+      fetchFn: async () => {
+        throw new Error('fetch should not be called');
+      },
+      maxRetries: 1,
+    });
+    const generator = new OpenAIEntityReferenceGenerator(client);
+
+    await expect(
+      generator.generateCandidates({
+        prompt: 'entity prompt',
+        inputImages: [{ dataUrl: 'data:image/png;base64,====' }],
+      }),
+    ).rejects.toEqual(new ConfigurationError('Entity reference generator received an empty image input'));
+  });
+
+  it('too large input image は OpenAI 呼び出し前に拒否する', async () => {
+    const client = new OpenAIClient({
+      apiKey: 'test',
+      baseUrl: 'https://api.openai.test/v1',
+      timeoutMs: 1000,
+      fetchFn: async () => {
+        throw new Error('fetch should not be called');
+      },
+      maxRetries: 1,
+    });
+    const generator = new OpenAIEntityReferenceGenerator(client);
+    const dataUrl = `data:image/png;base64,${Buffer.alloc(OPENAI_INPUT_IMAGE_MAX_BYTES + 1).toString('base64')}`;
+
+    await expect(
+      generator.generateCandidates({
+        prompt: 'entity prompt',
+        inputImages: [{ dataUrl }],
+      }),
+    ).rejects.toEqual(
+      new ConfigurationError('Entity reference generator received an input image that is too large'),
+    );
+  });
+
+  it('画像データが base64 として空にしか decode できない場合は ConfigurationError を投げる', async () => {
+    const client = new OpenAIClient({
+      apiKey: 'test',
+      baseUrl: 'https://api.openai.test/v1',
+      timeoutMs: 1000,
+      fetchFn: async () =>
+        new Response(
+          JSON.stringify({
+            data: [
+              {
+                b64_json: '====',
+              },
+            ],
+          }),
+          {
+            status: 200,
+            headers: { 'x-request-id': 'req-1', 'Content-Type': 'application/json' },
+          },
+        ),
+      maxRetries: 1,
+    });
+    const generator = new OpenAIEntityReferenceGenerator(client);
+
+    await expect(
+      generator.generateCandidates({
+        prompt: 'entity prompt',
+        inputImages: [],
+      }),
+    ).rejects.toEqual(new ConfigurationError('Entity reference generator returned invalid image data'));
   });
 });

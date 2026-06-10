@@ -1,6 +1,7 @@
 import { NotFoundError, ValidationError } from '../../domain/errors/index.js';
 import type { StoredImageLoaderPort } from '../../infrastructure/aws/S3StoredImageLoader.js';
 import type { PageRepository } from '../../repositories/PageRepository.js';
+import { ensureOwnedPageImageKey } from '../storage/StoredImageKeyPolicy.js';
 
 export interface ExportedPageImage {
   imageData: Buffer;
@@ -27,6 +28,7 @@ export class PageExportService implements PageExportServicePort {
       throw new ValidationError('Page does not have an exportable generated image');
     }
 
+    ensureOwnedPageImageKey(page.generatedImage.s3Key, userId, pageId, 'generated page image key');
     return this.storedImageLoader.loadByS3Key(page.generatedImage.s3Key);
   }
 }

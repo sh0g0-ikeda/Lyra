@@ -1,6 +1,8 @@
 import type { QueryResultRow } from 'pg';
 import type { GenerationJob } from '../domain/types/job.js';
 import type { DatabaseClient } from '../lib/db.js';
+import { sanitizePersistedErrorMessage } from '../lib/errorSanitizer.js';
+import { buildPersistedPromptDiagnostics } from '../lib/promptDiagnostics.js';
 
 export interface CompleteEntityGenerationInput {
   jobId: string;
@@ -16,7 +18,7 @@ export interface CompleteEntityGenerationInput {
   openaiRequestId: string | null;
   costUsd: number | null;
   compiledPromptUsed: boolean;
-  promptCompilerProvider: 'openai' | 'anthropic' | 'none';
+  promptCompilerProvider: 'openai' | 'none';
   compilerModel: string | null;
   compilerPromptVersion: string | null;
   compilerError: string | null;
@@ -97,8 +99,7 @@ export class PostgresEntityGenerationExecutionRepository implements EntityGenera
             s3_key: candidate.s3Key,
             cdn_url: candidate.cdnUrl,
           })),
-          compiled_brief: input.compiledBrief,
-          compiled_prompt: input.compiledPrompt,
+          ...buildPromptDiagnostics(input),
           cost_usd: input.costUsd,
           compiled_prompt_used: input.compiledPromptUsed,
           prompt_compiler_provider: input.promptCompilerProvider,
@@ -121,6 +122,7 @@ export class PostgresEntityGenerationExecutionRepository implements EntityGenera
     userId: string;
     errorMessage: string;
   }): Promise<boolean> {
+    const persistedErrorMessage = sanitizePersistedErrorMessage(input.errorMessage, 'Entity generation failed');
     const result = await this.client.query<GenerationJobRow>(
       `
       UPDATE generation_jobs
@@ -129,14 +131,28 @@ export class PostgresEntityGenerationExecutionRepository implements EntityGenera
           completed_at = NOW()
       WHERE id = $1
         AND user_id = $2
-        AND status = 'processing'
+        AND status IN ('queued', 'processing')
       RETURNING *
       `,
-      [input.jobId, input.userId, input.errorMessage],
+      [input.jobId, input.userId, persistedErrorMessage],
     );
 
     return (result.rowCount ?? 0) > 0;
   }
+}
+
+function buildPromptDiagnostics(
+  input: Pick<CompleteEntityGenerationInput, 'compiledBrief' | 'compiledPrompt'>,
+): Record<string, string | number> {
+  const compiledBrief = buildPersistedPromptDiagnostics(input.compiledBrief);
+  const compiledPrompt = buildPersistedPromptDiagnostics(input.compiledPrompt);
+
+  return {
+    compiled_brief_sha256: compiledBrief.sha256,
+    compiled_brief_bytes: compiledBrief.bytes,
+    compiled_prompt_sha256: compiledPrompt.sha256,
+    compiled_prompt_bytes: compiledPrompt.bytes,
+  };
 }
 
 function mapGenerationJobRow(row: GenerationJobRow): GenerationJob {

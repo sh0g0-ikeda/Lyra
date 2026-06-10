@@ -2,8 +2,10 @@ import { Hono, type Context, type MiddlewareHandler } from 'hono';
 import { ValidationError } from '../domain/errors/index.js';
 import type { Panel, PanelDialogueLine } from '../domain/types/panel.js';
 import { createPanelBodySchema, panelUuidParamSchema, updatePanelBodySchema } from '../lib/validators/panel.schema.js';
+import { formatZodValidationError } from '../lib/validationErrorFormatter.js';
 import type { PanelServicePort } from '../services/page/PanelService.js';
 import type { AppEnv } from '../types/app.js';
+import { readJsonBody } from './requestBody.js';
 
 export interface PanelRouteDependencies {
   authMiddleware: MiddlewareHandler<AppEnv>;
@@ -23,7 +25,7 @@ export function createPanelRoutes(dependencies: PanelRouteDependencies): Hono<Ap
     const body = createPanelBodySchema.safeParse(await readJsonBody(c));
 
     if (!body.success) {
-      throw new ValidationError(body.error.message);
+      throw new ValidationError(formatZodValidationError(body.error));
     }
 
     const panel = await dependencies.panelService.createPanel(user.id, pageId, {
@@ -56,7 +58,7 @@ export function createPanelRoutes(dependencies: PanelRouteDependencies): Hono<Ap
     const body = updatePanelBodySchema.safeParse(await readJsonBody(c));
 
     if (!body.success) {
-      throw new ValidationError(body.error.message);
+      throw new ValidationError(formatZodValidationError(body.error));
     }
 
     const panel = await dependencies.panelService.updatePanel(user.id, panelId, {
@@ -86,14 +88,6 @@ export function createPanelRoutes(dependencies: PanelRouteDependencies): Hono<Ap
   });
 
   return app;
-}
-
-async function readJsonBody(c: Context<AppEnv>): Promise<unknown> {
-  try {
-    return await c.req.json();
-  } catch {
-    throw new ValidationError('Request body must be valid JSON');
-  }
 }
 
 function parseUuidParam(c: Context<AppEnv>, name: string): string {

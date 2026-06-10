@@ -57,7 +57,12 @@ export function resolveLocalAssetPath(rootDir: string, assetKey: string): string
     throw new ConfigurationError('Local asset key must not be empty');
   }
 
-  const normalizedKey = path.posix.normalize(assetKey.replace(/^\/+/u, ''));
+  const rawKey = assetKey.replace(/^\/+/u, '');
+  if (hasUnsafeLocalAssetKeySyntax(rawKey)) {
+    throw new ConfigurationError('Local asset key is invalid');
+  }
+
+  const normalizedKey = path.posix.normalize(rawKey);
   if (normalizedKey === '..' || normalizedKey.startsWith('../')) {
     throw new ConfigurationError('Local asset key is invalid');
   }
@@ -71,15 +76,44 @@ export function resolveLocalAssetPath(rootDir: string, assetKey: string): string
   return absolutePath;
 }
 
+function hasUnsafeLocalAssetKeySyntax(assetKey: string): boolean {
+  if (assetKey.includes('\\') || assetKey.includes('\0')) {
+    return true;
+  }
+
+  return assetKey.split('/').some((segment) => (
+    segment.length === 0 ||
+    segment === '.' ||
+    segment === '..'
+  ));
+}
+
 export function inferImageMimeTypeFromKey(assetKey: string): SupportedImageMimeType {
-  if (assetKey.endsWith('.jpeg') || assetKey.endsWith('.jpg')) {
+  const extension = inferImageExtensionFromKey(assetKey);
+  if (extension === 'jpeg') {
     return 'image/jpeg';
   }
 
-  if (assetKey.endsWith('.webp')) {
+  if (extension === 'webp') {
     return 'image/webp';
   }
 
   return 'image/png';
+}
+
+export function inferImageExtensionFromKey(assetKey: string): 'png' | 'jpeg' | 'webp' {
+  if (assetKey.endsWith('.png')) {
+    return 'png';
+  }
+
+  if (assetKey.endsWith('.jpeg') || assetKey.endsWith('.jpg')) {
+    return 'jpeg';
+  }
+
+  if (assetKey.endsWith('.webp')) {
+    return 'webp';
+  }
+
+  throw new ConfigurationError(`Unsupported local image asset extension: ${assetKey}`);
 }
 

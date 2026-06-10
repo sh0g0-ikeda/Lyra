@@ -499,6 +499,7 @@ const nullableDialogueArraySchema = {
   anyOf: [
     {
       type: 'array',
+      maxItems: 20,
       items: {
         type: 'object',
         additionalProperties: false,
@@ -525,6 +526,7 @@ const nullableEntityAssignmentsSchema = {
   anyOf: [
     {
       type: 'array',
+      maxItems: 20,
       items: {
         type: 'object',
         additionalProperties: false,

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { PANEL_FRAME_TEMPLATE_IDS } from '../../domain/constants/panelFrameTemplates.js';
 
 export const pageUuidParamSchema = z.string().uuid();
 
@@ -44,3 +45,10 @@ export const updatePageSettingsBodySchema = z
   .refine((body) => Object.keys(body).length > 0, {
     message: 'At least one field is required',
   });
+
+export const applyPageLayoutTemplateBodySchema = z
+  .object({
+    template_id: z.enum(PANEL_FRAME_TEMPLATE_IDS),
+    allow_panel_truncation: z.boolean().optional().default(false),
+  })
+  .strict();

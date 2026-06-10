@@ -63,6 +63,24 @@
         "MetricName": "awsManagedIpReputation",
         "SampledRequestsEnabled": true
       }
+    },
+    {
+      "Name": "IpRateLimit",
+      "Priority": 3,
+      "Action": {
+        "Block": {}
+      },
+      "Statement": {
+        "RateBasedStatement": {
+          "Limit": 1000,
+          "AggregateKeyType": "IP"
+        }
+      },
+      "VisibilityConfig": {
+        "CloudWatchMetricsEnabled": true,
+        "MetricName": "ipRateLimit",
+        "SampledRequestsEnabled": true
+      }
     }
   ]
 }

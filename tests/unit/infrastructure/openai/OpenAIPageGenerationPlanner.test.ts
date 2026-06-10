@@ -23,6 +23,12 @@ describe('OpenAIPageGenerationPlanner', () => {
     });
 
     expect(result).toBe('panel flow plan');
+    expect(client.postJson).toHaveBeenCalledWith(
+      '/responses',
+      expect.objectContaining({
+        max_output_tokens: expect.any(Number),
+      }),
+    );
   });
 
   it('テキストが無い場合はConfigurationErrorを投げる', async () => {

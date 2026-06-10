@@ -14,6 +14,11 @@ export interface OpenAIResponse<TBody> {
   requestId: string | null;
 }
 
+interface OpenAIErrorDetails {
+  message: string;
+  code: string | null;
+}
+
 export class OpenAIClient {
   private readonly fetchFn: typeof fetch;
   private readonly maxRetries: number;
@@ -69,13 +74,13 @@ export class OpenAIClient {
         });
 
         if (!response.ok) {
-          const errorMessage = await buildErrorMessage(response);
-          if (attempt < this.maxRetries && isRetryableStatus(response.status)) {
+          const errorDetails = await buildErrorDetails(response);
+          if (attempt < this.maxRetries && isRetryableStatus(response.status, errorDetails)) {
             await sleep(attempt);
             continue;
           }
 
-          throw new ConfigurationError(errorMessage);
+          throw new ConfigurationError(errorDetails.message);
         }
 
         const parsedBody = (await response.json()) as TBody;
@@ -118,28 +123,65 @@ function buildUrl(baseUrl: string, path: string): string {
   return new URL(path.replace(/^\//u, ''), `${baseUrl.replace(/\/+$/u, '')}/`).toString();
 }
 
-async function buildErrorMessage(response: Response): Promise<string> {
+async function buildErrorDetails(response: Response): Promise<OpenAIErrorDetails> {
   const fallbackMessage = `OpenAI request failed with status ${response.status}`;
 
   try {
-    const payload = (await response.json()) as { error?: { message?: unknown } };
+    const payload = (await response.json()) as { error?: { code?: unknown; message?: unknown } };
+    const code = typeof payload.error?.code === 'string' ? payload.error.code : null;
     const message = payload.error?.message;
     if (typeof message === 'string' && message.length > 0) {
-      return sanitizeExternalErrorMessage(message);
+      return {
+        code,
+        message: sanitizeExternalErrorMessage(message),
+      };
     }
   } catch {
-    return fallbackMessage;
+    return {
+      code: null,
+      message: fallbackMessage,
+    };
   }
 
-  return sanitizeExternalErrorMessage(fallbackMessage);
+  return {
+    code: null,
+    message: sanitizeExternalErrorMessage(fallbackMessage),
+  };
 }
 
-function isRetryableStatus(status: number): boolean {
-  return status === 429 || status >= 500;
+function isRetryableStatus(status: number, errorDetails: OpenAIErrorDetails): boolean {
+  if (status >= 500) {
+    return true;
+  }
+
+  if (status !== 429) {
+    return false;
+  }
+
+  return !isQuotaOrBillingError(errorDetails);
+}
+
+function isQuotaOrBillingError(errorDetails: OpenAIErrorDetails): boolean {
+  const code = errorDetails.code?.toLowerCase() ?? '';
+  const message = errorDetails.message.toLowerCase();
+
+  return (
+    code.includes('insufficient_quota') ||
+    code.includes('billing') ||
+    message.includes('insufficient quota') ||
+    message.includes('current quota') ||
+    message.includes('check your plan') ||
+    message.includes('billing details') ||
+    message.includes('credit balance')
+  );
 }
 
 function isRetryableError(error: unknown): boolean {
   if (error instanceof ConfigurationError) {
+    return false;
+  }
+
+  if (error instanceof Error && error.name === 'AbortError') {
     return false;
   }
 

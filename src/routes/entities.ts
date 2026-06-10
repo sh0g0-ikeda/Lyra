@@ -1,4 +1,5 @@
 import { Hono, type Context, type MiddlewareHandler } from 'hono';
+import { z } from 'zod';
 import { ValidationError } from '../domain/errors/index.js';
 import type { Entity } from '../domain/types/entity.js';
 import type { EntityReferenceSet } from '../domain/types/entityReference.js';
@@ -11,15 +12,25 @@ import {
   updateEntityBodySchema,
   uuidParamSchema,
 } from '../lib/validators/entity.schema.js';
+import { formatZodValidationError } from '../lib/validationErrorFormatter.js';
 import type { EntityServicePort } from '../services/entity/EntityService.js';
 import type { EntityReferenceServicePort } from '../services/entity/EntityReferenceService.js';
+import type { EntityReferenceImageExportServicePort } from '../services/entity/EntityReferenceImageExportService.js';
 import type { AppEnv } from '../types/app.js';
+import { readJsonBody, readOptionalJsonBody, REQUEST_BODY_LIMITS } from './requestBody.js';
+
+const referenceCandidateImageQuerySchema = z
+  .object({
+    s3_key: z.string().trim().min(1).max(512),
+  })
+  .strict();
 
 export interface EntityRouteDependencies {
   authMiddleware: MiddlewareHandler<AppEnv>;
   rateLimitMiddleware: MiddlewareHandler<AppEnv>;
   entityService: EntityServicePort;
   entityReferenceService: EntityReferenceServicePort;
+  entityReferenceImageExportService: EntityReferenceImageExportServicePort;
 }
 
 export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<AppEnv> {
@@ -34,7 +45,7 @@ export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<
     const body = createEntityBodySchema.safeParse(await readJsonBody(c));
 
     if (!body.success) {
-      throw new ValidationError(body.error.message);
+      throw new ValidationError(formatZodValidationError(body.error));
     }
 
     const entity = await dependencies.entityService.createEntity(user.id, workId, {
@@ -75,13 +86,55 @@ export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<
     return c.json(toReferenceSetResponse(referenceSet));
   });
 
+  app.get('/entities/:id/reference/:ref_id/image', async (c) => {
+    const user = c.get('user');
+    const entityId = parseUuidParam(c, 'id');
+    const refIdResult = referenceIdParamSchema.safeParse(c.req.param('ref_id'));
+
+    if (!refIdResult.success) {
+      throw new ValidationError(formatZodValidationError(refIdResult.error));
+    }
+
+    const exportedImage = await dependencies.entityReferenceImageExportService.exportReferenceImage(
+      user.id,
+      entityId,
+      refIdResult.data,
+    );
+
+    return c.body(new Uint8Array(exportedImage.imageData), 200, {
+      'Content-Type': exportedImage.mimeType,
+      'Cache-Control': 'private, no-store',
+    });
+  });
+
+  app.get('/entities/:id/reference-candidate-image', async (c) => {
+    const user = c.get('user');
+    const entityId = parseUuidParam(c, 'id');
+    const query = referenceCandidateImageQuerySchema.safeParse(c.req.query());
+
+    if (!query.success) {
+      throw new ValidationError(formatZodValidationError(query.error));
+    }
+
+    const exportedImage = await dependencies.entityReferenceImageExportService.exportCandidateImage(
+      user.id,
+      entityId,
+      query.data.s3_key,
+    );
+
+    return c.body(new Uint8Array(exportedImage.imageData), 200, {
+      'Content-Type': exportedImage.mimeType,
+      'Cache-Control': 'private, no-store',
+    });
+  });
+
   app.put('/entities/:id', async (c) => {
     const user = c.get('user');
     const entityId = parseUuidParam(c, 'id');
     const body = updateEntityBodySchema.safeParse(await readJsonBody(c));
 
     if (!body.success) {
-      throw new ValidationError(body.error.message);
+      throw new ValidationError(formatZodValidationError(body.error));
     }
 
     const entity = await dependencies.entityService.updateEntity(user.id, entityId, {
@@ -106,10 +159,15 @@ export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<
 
   app.post('/entities/import-image', async (c) => {
     const user = c.get('user');
-    const body = importEntityImageBodySchema.safeParse(await readJsonBody(c));
+    const body = importEntityImageBodySchema.safeParse(
+      await readJsonBody(c, {
+        maxBytes: REQUEST_BODY_LIMITS.ENTITY_IMPORT_JSON_BYTES,
+        description: 'Entity image import',
+      }),
+    );
 
     if (!body.success) {
-      throw new ValidationError(body.error.message);
+      throw new ValidationError(formatZodValidationError(body.error));
     }
 
     const result = await dependencies.entityReferenceService.importImage(user.id, {
@@ -121,17 +179,21 @@ export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<
       suggested_fields: result.suggestedFields,
       prompt_supplement: result.promptSupplement,
       tmp_image_s3_key: result.tmpImageS3Key,
-      tmp_image_cdn_url: result.tmpImageCdnUrl,
     });
   });
 
   app.post('/entities/:id/generate-reference', async (c) => {
     const user = c.get('user');
     const entityId = parseUuidParam(c, 'id');
-    const body = generateEntityReferenceBodySchema.safeParse(await readOptionalJsonBody(c));
+    const body = generateEntityReferenceBodySchema.safeParse(
+      await readOptionalJsonBody(c, {
+        maxBytes: REQUEST_BODY_LIMITS.SMALL_JSON_BYTES,
+        description: 'Entity reference generation',
+      }),
+    );
 
     if (!body.success) {
-      throw new ValidationError(body.error.message);
+      throw new ValidationError(formatZodValidationError(body.error));
     }
 
     const result = await dependencies.entityReferenceService.enqueueReferenceGeneration(user.id, entityId, {
@@ -147,7 +209,7 @@ export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<
     const body = confirmEntityReferenceBodySchema.safeParse(await readJsonBody(c));
 
     if (!body.success) {
-      throw new ValidationError(body.error.message);
+      throw new ValidationError(formatZodValidationError(body.error));
     }
 
     const referenceSet = await dependencies.entityReferenceService.confirmReferences(user.id, entityId, {
@@ -165,7 +227,7 @@ export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<
     const refIdResult = referenceIdParamSchema.safeParse(c.req.param('ref_id'));
 
     if (!refIdResult.success) {
-      throw new ValidationError(refIdResult.error.message);
+      throw new ValidationError(formatZodValidationError(refIdResult.error));
     }
 
     const referenceSet = await dependencies.entityReferenceService.deleteReference(
@@ -178,27 +240,6 @@ export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<
   });
 
   return app;
-}
-
-async function readJsonBody(c: Context<AppEnv>): Promise<unknown> {
-  try {
-    return await c.req.json();
-  } catch {
-    throw new ValidationError('Request body must be valid JSON');
-  }
-}
-
-async function readOptionalJsonBody(c: Context<AppEnv>): Promise<unknown> {
-  const rawBody = await c.req.text();
-  if (rawBody.trim().length === 0) {
-    return {};
-  }
-
-  try {
-    return JSON.parse(rawBody) as unknown;
-  } catch {
-    throw new ValidationError('Request body must be valid JSON');
-  }
 }
 
 function parseUuidParam(c: Context<AppEnv>, name: string): string {
@@ -214,7 +255,6 @@ function toEntityResponse(entity: Entity): Record<string, unknown> {
   return {
     id: entity.id,
     work_id: entity.workId,
-    user_id: entity.userId,
     entity_type: entity.entityType,
     name: entity.name,
     free_description: entity.freeDescription,
@@ -235,8 +275,6 @@ function toReferenceSetResponse(referenceSet: EntityReferenceSet): Record<string
     updated_at: referenceSet.updatedAt.toISOString(),
     reference_images: referenceSet.images.map((image) => ({
       ref_id: image.refId,
-      s3_key: image.s3Key,
-      cdn_url: image.cdnUrl,
       source: image.source,
       created_at: image.createdAt,
     })),

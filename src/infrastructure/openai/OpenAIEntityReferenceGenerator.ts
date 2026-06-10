@@ -1,6 +1,7 @@
 import {
   ENTITY_REFERENCE_GENERATION,
 } from '../../domain/constants/entityReference.js';
+import { OPENAI_INPUT_IMAGE_MAX_BYTES } from '../../domain/constants/imageInput.js';
 import { ConfigurationError } from '../../domain/errors/index.js';
 import { OpenAIClient } from './OpenAIClient.js';
 
@@ -75,8 +76,13 @@ export class OpenAIEntityReferenceGenerator implements EntityReferenceGeneratorP
         throw new ConfigurationError('Entity reference generator returned no image data');
       }
 
+      const imageData = Buffer.from(base64Image, 'base64');
+      if (imageData.length === 0) {
+        throw new ConfigurationError('Entity reference generator returned invalid image data');
+      }
+
       candidates.push({
-        imageData: Buffer.from(base64Image, 'base64'),
+        imageData,
         mimeType: 'image/png',
       });
     }
@@ -115,7 +121,23 @@ function dataUrlToBlob(dataUrl: string): Blob {
     throw new ConfigurationError('Entity reference generator received an invalid image input');
   }
 
-  return new Blob([Buffer.from(match.groups.base64, 'base64')], {
+  if (!isSupportedInputImageMimeType(match.groups.mimeType)) {
+    throw new ConfigurationError('Entity reference generator received an unsupported image input type');
+  }
+
+  const imageData = Buffer.from(match.groups.base64, 'base64');
+  if (imageData.length === 0) {
+    throw new ConfigurationError('Entity reference generator received an empty image input');
+  }
+  if (imageData.length > OPENAI_INPUT_IMAGE_MAX_BYTES) {
+    throw new ConfigurationError('Entity reference generator received an input image that is too large');
+  }
+
+  return new Blob([imageData], {
     type: match.groups.mimeType,
   });
+}
+
+function isSupportedInputImageMimeType(value: string): value is 'image/png' | 'image/jpeg' | 'image/webp' {
+  return value === 'image/png' || value === 'image/jpeg' || value === 'image/webp';
 }

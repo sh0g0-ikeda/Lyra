@@ -9,7 +9,6 @@ class QueryCapturingClient implements DatabaseClient, TransactionRunner {
     id: '33333333-3333-4333-8333-333333333333',
     page_skeleton_generated: false,
     existing_page_count: 0,
-    protected_page_count: 0,
   };
 
   public async query<T extends QueryResultRow = QueryResultRow>(
@@ -74,7 +73,6 @@ class ExistingSkeletonClient implements DatabaseClient, TransactionRunner {
             id: '33333333-3333-4333-8333-333333333333',
             page_skeleton_generated: true,
             existing_page_count: 0,
-            protected_page_count: 0,
           },
         ] as unknown as T[],
       };
@@ -91,6 +89,57 @@ class ExistingSkeletonClient implements DatabaseClient, TransactionRunner {
 
   public async transaction<T>(work: (client: DatabaseClient) => Promise<T>): Promise<T> {
     return work(this);
+  }
+}
+
+class EpisodeUpdateCapturingClient implements DatabaseClient {
+  public updateValues: readonly unknown[] | null = null;
+
+  public constructor(private readonly currentEpisodeRow: Record<string, unknown> = episodeRow()) {}
+
+  public async query<T extends QueryResultRow = QueryResultRow>(
+    text: string,
+    values?: readonly unknown[],
+  ): Promise<QueryResult<T>> {
+    if (text.includes('SELECT episodes.*')) {
+      return {
+        command: 'SELECT',
+        rowCount: 1,
+        oid: 0,
+        fields: [],
+        rows: [this.currentEpisodeRow] as unknown as T[],
+      };
+    }
+
+    if (text.includes('UPDATE episodes')) {
+      this.updateValues = values ?? [];
+      return {
+        command: 'UPDATE',
+        rowCount: 1,
+        oid: 0,
+        fields: [],
+        rows: [
+          {
+            ...this.currentEpisodeRow,
+            purpose: this.updateValues[6] as string | null,
+            story_input_mode: this.updateValues[8] as 'structured' | 'full',
+            story_full_draft: this.updateValues[10] as string | null,
+            introduction: this.updateValues[12] as string | null,
+            middle: this.updateValues[14] as string | null,
+            climax: this.updateValues[16] as string | null,
+            ending_hook: this.updateValues[18] as string | null,
+          },
+        ] as unknown as T[],
+      };
+    }
+
+    return {
+      command: 'SELECT',
+      rowCount: 0,
+      oid: 0,
+      fields: [],
+      rows: [],
+    };
   }
 }
 
@@ -193,7 +242,6 @@ describe('PostgresStoryRepository', () => {
       id: '33333333-3333-4333-8333-333333333333',
       page_skeleton_generated: true,
       existing_page_count: 2,
-      protected_page_count: 0,
     };
     const repository = new PostgresStoryRepository(client, client);
 
@@ -223,6 +271,71 @@ describe('PostgresStoryRepository', () => {
       ),
     ).rejects.toMatchObject({ code: 'CONFLICT' });
   });
+
+  it('treats null episode story fields as explicit clears during partial updates', async () => {
+    const client = new EpisodeUpdateCapturingClient();
+    const repository = new PostgresStoryRepository(client);
+
+    const episode = await repository.updateEpisode(
+      '33333333-3333-4333-8333-333333333333',
+      'user-1',
+      {
+        purpose: null,
+        introduction: null,
+        middle: null,
+        climax: null,
+        endingHook: null,
+      },
+    );
+
+    expect(episode).toMatchObject({
+      purpose: null,
+      introduction: null,
+      middle: null,
+      climax: null,
+      endingHook: null,
+    });
+    expect(client.updateValues?.[6]).toBeNull();
+    expect(client.updateValues?.[12]).toBeNull();
+    expect(client.updateValues?.[14]).toBeNull();
+    expect(client.updateValues?.[16]).toBeNull();
+    expect(client.updateValues?.[18]).toBeNull();
+  });
+
+  it('treats null full story draft as an explicit clear during partial updates', async () => {
+    const client = new EpisodeUpdateCapturingClient({
+      ...episodeRow(),
+      story_input_mode: 'full',
+      story_full_draft: 'Stored full draft',
+      introduction: 'Derived introduction',
+      middle: 'Derived middle',
+      climax: 'Derived climax',
+      ending_hook: 'Derived ending',
+    });
+    const repository = new PostgresStoryRepository(client);
+
+    const episode = await repository.updateEpisode(
+      '33333333-3333-4333-8333-333333333333',
+      'user-1',
+      {
+        storyFullDraft: null,
+      },
+    );
+
+    expect(episode).toMatchObject({
+      storyInputMode: 'full',
+      storyFullDraft: null,
+      introduction: null,
+      middle: null,
+      climax: null,
+      endingHook: null,
+    });
+    expect(client.updateValues?.[10]).toBeNull();
+    expect(client.updateValues?.[12]).toBeNull();
+    expect(client.updateValues?.[14]).toBeNull();
+    expect(client.updateValues?.[16]).toBeNull();
+    expect(client.updateValues?.[18]).toBeNull();
+  });
 });
 
 function workRow(): Record<string, unknown> {
@@ -238,6 +351,30 @@ function workRow(): Record<string, unknown> {
     ending_point: null,
     overall_flow: null,
     version: 2,
+    edit_history: [],
+    status: 'draft',
+    created_at: new Date('2026-04-22T00:00:00.000Z'),
+    updated_at: new Date('2026-04-22T00:00:00.000Z'),
+  };
+}
+
+function episodeRow(): Record<string, unknown> {
+  return {
+    id: '33333333-3333-4333-8333-333333333333',
+    chapter_id: '22222222-2222-4222-8222-222222222222',
+    order: 1,
+    title: 'Episode',
+    purpose: 'Stored purpose',
+    story_input_mode: 'structured',
+    story_full_draft: null,
+    introduction: 'Stored introduction',
+    middle: 'Stored middle',
+    climax: 'Stored climax',
+    ending_hook: 'Stored ending',
+    estimated_pages: 8,
+    entities_involved: [],
+    page_skeleton_generated: false,
+    version: 1,
     edit_history: [],
     status: 'draft',
     created_at: new Date('2026-04-22T00:00:00.000Z'),

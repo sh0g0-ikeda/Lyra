@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { createApp } from '../../../src/app.js';
 import type { CreditBalanceSnapshot } from '../../../src/domain/types/credit.js';
 import type { AuthenticatedUser, SupabaseJwtClaims } from '../../../src/domain/types/user.js';
+import { REQUEST_BODY_LIMITS } from '../../../src/routes/requestBody.js';
 import type {
   ProvisionedUser,
   UserProvisioningPort,
@@ -288,14 +289,15 @@ describe('story routes', () => {
     });
 
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({
+    const payload = (await response.json()) as { works: Array<Record<string, unknown>> };
+    expect(payload).toEqual({
       works: [
         expect.objectContaining({
           id: workId,
-          user_id: user.id,
         }),
       ],
     });
+    expect(payload.works[0]).not.toHaveProperty('user_id');
   });
 
   it('creates a work when JWT is valid', async () => {
@@ -315,12 +317,13 @@ describe('story routes', () => {
     });
 
     expect(response.status).toBe(201);
-    await expect(response.json()).resolves.toMatchObject({
+    const payload = (await response.json()) as Record<string, unknown>;
+    expect(payload).toMatchObject({
       id: workId,
-      user_id: user.id,
       title: '作品',
       version: 1,
     });
+    expect(payload).not.toHaveProperty('user_id');
   });
 
   it('returns 422 for invalid work creation input', async () => {
@@ -339,6 +342,10 @@ describe('story routes', () => {
     });
 
     expect(response.status).toBe(422);
+    const payload = (await response.json()) as { error: { message: string } };
+    expect(payload.error.message).toContain('Validation failed:');
+    expect(payload.error.message).not.toContain('"code"');
+    expect(payload.error.message.length).toBeLessThanOrEqual(500);
   });
 
   it('creates a chapter', async () => {
@@ -388,6 +395,36 @@ describe('story routes', () => {
       title: '第一話',
       estimated_pages: 16,
     });
+  });
+
+  it('story list responses do not expose internal edit history', async () => {
+    const app = createTestApp();
+    const token = await createToken();
+    const authHeaders = {
+      Authorization: `Bearer ${token}`,
+    };
+
+    const worksResponse = await app.request('/api/works', {
+      headers: authHeaders,
+    });
+    const chaptersResponse = await app.request(`/api/works/${workId}/chapters`, {
+      headers: authHeaders,
+    });
+    const episodesResponse = await app.request(`/api/chapters/${chapterId}/episodes`, {
+      headers: authHeaders,
+    });
+
+    expect(worksResponse.status).toBe(200);
+    expect(chaptersResponse.status).toBe(200);
+    expect(episodesResponse.status).toBe(200);
+
+    const worksPayload = (await worksResponse.json()) as { works: Array<Record<string, unknown>> };
+    const chaptersPayload = (await chaptersResponse.json()) as { chapters: Array<Record<string, unknown>> };
+    const episodesPayload = (await episodesResponse.json()) as { episodes: Array<Record<string, unknown>> };
+
+    expect(worksPayload.works[0]).not.toHaveProperty('edit_history');
+    expect(chaptersPayload.chapters[0]).not.toHaveProperty('edit_history');
+    expect(episodesPayload.episodes[0]).not.toHaveProperty('edit_history');
   });
 
   it('returns 401 when authentication is missing', async () => {
@@ -571,6 +608,25 @@ describe('story routes', () => {
       },
     });
     expect(pageSkeletonService.overwriteExisting).toBe(true);
+  });
+
+  it('page skeleton 生成は巨大な options body を service 呼び出し前に 413 にする', async () => {
+    const pageSkeletonService = new FakePageSkeletonService();
+    const app = createTestApp(new FakeStoryCollaborationService(), pageSkeletonService);
+    const token = await createToken();
+
+    const response = await app.request(`/api/episodes/${episodeId}/generate-page-skeleton`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+        'Content-Length': String(REQUEST_BODY_LIMITS.SMALL_JSON_BYTES + 1),
+      },
+      body: '{}',
+    });
+
+    expect(response.status).toBe(413);
+    expect(pageSkeletonService.requestedEpisodeId).toBeNull();
   });
 
   it('returns 422 for unknown keys in story CRUD', async () => {

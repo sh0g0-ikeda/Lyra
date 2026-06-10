@@ -6,7 +6,10 @@ import type { PageStatus } from '../../../../src/domain/types/page.js';
 import type { EntityReferenceReader } from '../../../../src/repositories/EntityRepository.js';
 import type { PanelFrameRepository, UpsertPanelFrameInput } from '../../../../src/repositories/PanelFrameRepository.js';
 import type { PagePanelContext, PanelContext, PanelRepository } from '../../../../src/repositories/PanelRepository.js';
-import { PanelService } from '../../../../src/services/page/PanelService.js';
+import {
+  PanelService,
+  type CompositionGalleryReferenceReader,
+} from '../../../../src/services/page/PanelService.js';
 
 const userId = 'user-1';
 const pageId = '11111111-1111-4111-8111-111111111111';
@@ -132,6 +135,14 @@ class FakeEntityReader implements EntityReferenceReader {
     _userId: string,
   ): Promise<number> {
     return entityIds.length === 0 ? 0 : this.matchedEntityCount;
+  }
+}
+
+class FakeCompositionGalleryReader implements CompositionGalleryReferenceReader {
+  public itemIds = new Set(['battle_single_001']);
+
+  public async findByIds(ids: string[]): Promise<Array<{ id: string }>> {
+    return ids.filter((id) => this.itemIds.has(id)).map((id) => ({ id }));
   }
 }
 
@@ -269,6 +280,33 @@ describe('PanelService', () => {
         },
       }),
     ).rejects.toBeInstanceOf(ValidationError);
+  });
+
+  it('rejects unknown gallery item ids before saving panel composition', async () => {
+    const repository = new FakePanelRepository();
+    const galleryReader = new FakeCompositionGalleryReader();
+    galleryReader.itemIds.clear();
+    const service = new PanelService(
+      repository,
+      new FakeEntityReader(),
+      new FakePanelFrameRepository(),
+      galleryReader,
+    );
+
+    await expect(
+      service.createPanel(userId, pageId, {
+        ...buildCreateInput(),
+        composition: {
+          source: 'gallery',
+          galleryItemId: 'missing-gallery-id',
+          compositionPrompt: null,
+          shotType: null,
+          angle: null,
+          customNote: null,
+        },
+      }),
+    ).rejects.toBeInstanceOf(ValidationError);
+    expect(repository.savedCreateInput).toBeNull();
   });
 
   it('throws not found when delete reports false', async () => {

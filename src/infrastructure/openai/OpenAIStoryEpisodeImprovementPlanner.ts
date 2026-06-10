@@ -10,6 +10,13 @@ import type {
   StoryEpisodeImprovementPlan,
 } from '../../domain/types/storyAi.js';
 import {
+  compactStoryPromptText,
+  formatStoryPromptEntityList,
+  formatStoryPromptParts,
+  formatStoryPromptSummaryList,
+  STORY_PROMPT_CONTEXT_LIMITS,
+} from '../../domain/storyPromptCompaction.js';
+import {
   episodeImprovementAuditResponseSchema,
   episodeImprovementPlanResponseSchema,
 } from '../../lib/validators/storyAi.schema.js';
@@ -226,20 +233,27 @@ function formatEpisodeImprovementContext(
   context: PlanStoryEpisodeImprovementInput['context'],
 ): string {
   return [
-    `Work: ${context.workTitle}`,
-    `Genre: ${context.workGenre ?? '(none)'}`,
-    `World setting: ${context.worldSetting ?? '(none)'}`,
-    `Theme: ${context.theme ?? '(none)'}`,
-    `Overall flow: ${context.overallFlow ?? '(none)'}`,
-    `Chapter: ${[context.chapterTitle, context.chapterPurpose].filter((value) => value !== null && value.length > 0).join(' / ') || '(none)'}`,
-    `Chapter arc: ${[context.chapterStartingState, context.chapterEndingState, context.chapterEmotionCurve].filter((value) => value !== null && value.length > 0).join(' / ') || '(none)'}`,
+    `Work: ${compactStoryPromptText(context.workTitle) ?? '(none)'}`,
+    `Genre: ${compactStoryPromptText(context.workGenre) ?? '(none)'}`,
+    `World setting: ${compactStoryPromptText(context.worldSetting) ?? '(none)'}`,
+    `Theme: ${compactStoryPromptText(context.theme) ?? '(none)'}`,
+    `Overall flow: ${compactStoryPromptText(context.overallFlow) ?? '(none)'}`,
+    `Chapter: ${formatStoryPromptParts([context.chapterTitle, context.chapterPurpose], context.entities)}`,
+    `Chapter arc: ${formatStoryPromptParts(
+      [context.chapterStartingState, context.chapterEndingState, context.chapterEmotionCurve],
+      context.entities,
+    )}`,
     `Estimated pages: ${context.estimatedPages}`,
-    `Entities: ${
-      context.entities.map((entity) => `${entity.name} (${entity.entityType}${entity.freeDescription === null ? '' : `, ${entity.freeDescription}`})`).join(' / ') || '(none)'
-    }`,
-    `Scenes: ${context.sceneSummaries.join(' / ') || '(none)'}`,
-    `Other chapters: ${context.chapterSummaries.join(' / ') || '(none)'}`,
-    `Other episodes: ${context.siblingEpisodeSummaries.join(' / ') || '(none)'}`,
+    `Entities: ${formatStoryPromptEntityList(context.entities)}`,
+    `Scenes: ${formatStoryPromptSummaryList(context.sceneSummaries, context.entities, {
+      maxItems: STORY_PROMPT_CONTEXT_LIMITS.maxSceneSummaries,
+    })}`,
+    `Other chapters: ${formatStoryPromptSummaryList(context.chapterSummaries, context.entities, {
+      maxItems: STORY_PROMPT_CONTEXT_LIMITS.maxChapterSummaries,
+    })}`,
+    `Other episodes: ${formatStoryPromptSummaryList(context.siblingEpisodeSummaries, context.entities, {
+      maxItems: STORY_PROMPT_CONTEXT_LIMITS.maxSiblingEpisodeSummaries,
+    })}`,
   ].join('\n');
 }
 

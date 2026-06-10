@@ -799,13 +799,20 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 const STYLE_LOCK_TEXT =
   'Style lock: anime manga illustration, clean black line art, flat colors with manga-style shading, crisp panel borders with visible gutters, right-to-left reading flow, no photorealism, no western comic styling.';
+const STYLE_PROMPT_TEXT_LIMITS = {
+  compiledBrief: 900,
+  anchorLine: 180,
+  notes: 300,
+} as const;
 
 function buildStyleLock(page: PagePromptContext): string {
   if (page.styleReference === null) {
     return STYLE_LOCK_TEXT;
   }
 
-  const anchorLines = buildRenderingStyleAnchorLines(page.styleReference.anchors);
+  const anchorLines = buildRenderingStyleAnchorLines(page.styleReference.anchors).map((line) =>
+    compactStylePromptText(line, STYLE_PROMPT_TEXT_LIMITS.anchorLine),
+  );
   const anchorConstraint =
     anchorLines.length === 0
       ? null
@@ -813,16 +820,34 @@ function buildStyleLock(page: PagePromptContext): string {
   const notes =
     page.styleReference.notes === null || page.styleReference.notes.trim().length === 0
       ? null
-      : `User notes: ${page.styleReference.notes.trim()}.`;
+      : `User notes: ${ensureTerminalPunctuation(
+          compactStylePromptText(page.styleReference.notes, STYLE_PROMPT_TEXT_LIMITS.notes),
+        )}`;
 
   return [
     STYLE_LOCK_TEXT,
     `Named style reference constraint: "${page.styleReference.title}". Treat it as a hard page-wide rendering constraint.`,
-    `Generalized style interpretation: ${page.styleReference.compiledBrief}`,
+    `Generalized style interpretation: ${compactStylePromptText(
+      page.styleReference.compiledBrief,
+      STYLE_PROMPT_TEXT_LIMITS.compiledBrief,
+    )}`,
     'Keep each character face, eye shape, hair silhouette, body proportions, and outfit silhouette anchored to the character reference images. Apply the style reference to rendering treatment, not to character identity.',
     anchorConstraint,
     notes,
   ]
     .filter((value): value is string => value !== null)
     .join(' ');
+}
+
+function compactStylePromptText(value: string, maxLength: number): string {
+  const normalized = normalizeWhitespace(value);
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+
+  return `${normalized.slice(0, Math.max(1, maxLength - 3)).trimEnd()}...`;
+}
+
+function ensureTerminalPunctuation(value: string): string {
+  return /[.!?。！？…]$/u.test(value) ? value : `${value}.`;
 }

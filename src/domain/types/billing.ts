@@ -1,4 +1,8 @@
-import type { CreditPackageCode, SubscriptionPlanCode } from '../constants/billing.js';
+import type {
+  CreditPackageCode,
+  SubscriptionPlanCode,
+  SubscriptionStatus,
+} from '../constants/billing.js';
 
 export type PaymentRecordKind = 'subscription' | 'credit_purchase';
 export type PaymentRecordStatus = 'paid' | 'failed';
@@ -14,20 +18,28 @@ export interface SubscriptionRecord {
   userId: string;
   stripeSubscriptionId: string;
   planCode: SubscriptionPlanCode;
-  status: string;
+  status: SubscriptionStatus;
   currentPeriodStart: Date | null;
   currentPeriodEnd: Date | null;
   cancelAtPeriodEnd: boolean;
 }
 
-export interface PaymentRecordInput {
+interface PaymentRecordBase {
   userId: string;
-  stripeCheckoutSessionId: string | null;
-  stripeInvoiceId: string | null;
   kind: PaymentRecordKind;
   amountJpy: number;
   status: PaymentRecordStatus;
 }
+
+export type PaymentRecordInput =
+  | (PaymentRecordBase & {
+      stripeCheckoutSessionId: string;
+      stripeInvoiceId: null;
+    })
+  | (PaymentRecordBase & {
+      stripeCheckoutSessionId: null;
+      stripeInvoiceId: string;
+    });
 
 export interface SubscriptionCheckoutResult {
   sessionId: string;
