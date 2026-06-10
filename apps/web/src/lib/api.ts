@@ -297,6 +297,22 @@ export class LyraApiClient {
     });
   }
 
+  public applyPageLayoutTemplate(pageId: string, templateId: string, allowPanelTruncation: boolean): Promise<{
+    template_id: string;
+    panel_count: number;
+    created_panel_count: number;
+    deleted_panel_count: number;
+    frames: PanelFrameRecord[];
+  }> {
+    return this.request(`/api/pages/${pageId}/layout-template`, {
+      method: 'POST',
+      body: {
+        template_id: templateId,
+        allow_panel_truncation: allowPanelTruncation,
+      },
+    });
+  }
+
   public replaceFrames(pageId: string, body: Record<string, unknown>): Promise<{ frames: PanelFrameRecord[] }> {
     return this.request(`/api/pages/${pageId}/frames`, { method: 'PUT', body });
   }

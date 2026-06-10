@@ -454,6 +454,8 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   'Confirm page': 'ページ確定',
   'Reopen page': '再編集',
   'Apply frame template': 'テンプレートを適用',
+  'Apply panel layout': 'コマ割りを変更',
+  'Panel layout': 'コマ割り',
   'Create panel': 'コマを作成',
   'Save panel': 'コマを保存',
   'Save scene': 'シーンを保存',
@@ -3450,7 +3452,7 @@ function StudioShell(props: {
 
                       <div className="page-editing-cluster page-section-frames-panels">
                       <PanelSection
-                        title="Frames"
+                        title="Panel layout"
                         collapsible
                         actions={
                           <div className="toolbar">
@@ -3467,23 +3469,40 @@ function StudioShell(props: {
                             <button
                               className="ghost-button"
                               onClick={() =>
-                                void runAction('Apply frame template', async () => {
-                                  await api.applyFrameTemplate(selectedPage.id, frameTemplateId);
+                                void runAction('Apply panel layout', async () => {
+                                  const nextPanelCount = FRAME_TEMPLATE_PANEL_COUNTS[frameTemplateId] ?? selectedPagePanelCount;
+                                  const deletedPanelCount = Math.max(selectedPagePanelCount - nextPanelCount, 0);
+                                  if (deletedPanelCount > 0) {
+                                    const confirmed = window.confirm(
+                                      uiLanguage === 'ja'
+                                        ? `後ろの${deletedPanelCount}コマを削除します。続行しますか？`
+                                        : `This will remove ${deletedPanelCount} later panel(s). Continue?`,
+                                    );
+                                    if (!confirmed) {
+                                      return;
+                                    }
+                                  }
+
+                                  await api.applyPageLayoutTemplate(selectedPage.id, frameTemplateId, deletedPanelCount > 0);
                                   await queryClient.invalidateQueries({ queryKey: ['frames', selectedPage.id] });
+                                  await queryClient.invalidateQueries({ queryKey: ['panels', selectedPage.id] });
+                                  if (selectedEpisode !== null) {
+                                    await queryClient.invalidateQueries({ queryKey: ['pages', selectedEpisode.id] });
+                                  }
                                 })
                               }
                               type="button"
                             >
                               <Wand2 size={16} />
-                              {translateUiString(uiLanguage, 'Apply frame template')}
+                              {translateUiString(uiLanguage, 'Apply panel layout')}
                             </button>
                           </div>
                         }
                       >
                         <div className="muted small">
                           {uiLanguage === 'ja'
-                            ? '通常の編集はテンプレートで行い、細かなコマ形状の編集が必要なときだけ詳細設定を開いてください。'
-                            : 'Use templates for normal layout editing. Open advanced settings only when you need manual frame geometry.'}
+                            ? 'テンプレートを選ぶとコマ数も揃います。'
+                            : 'Templates also sync the panel count.'}
                         </div>
                         <details className="advanced-disclosure">
                           <summary>{translateUiString(uiLanguage, 'Advanced frame geometry')}</summary>
@@ -6365,6 +6384,16 @@ const FRAME_TEMPLATE_OPTIONS: Array<[string, string]> = [
   ['action_5', 'Action 5'],
   ['battle_7', 'Battle 7'],
 ];
+const FRAME_TEMPLATE_PANEL_COUNTS: Record<string, number> = {
+  standard_4: 4,
+  top_wide_3: 3,
+  standard_6: 6,
+  dense_8: 8,
+  climax_2: 2,
+  splash_1: 1,
+  action_5: 5,
+  battle_7: 7,
+};
 const FRAME_BORDER_STYLE_OPTIONS: Array<[PanelFrameRecord['border_style'], string]> = [
   ['solid', 'Solid'],
   ['dashed', 'Dashed'],

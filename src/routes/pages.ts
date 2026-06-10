@@ -3,12 +3,17 @@ import { z } from 'zod';
 import { ValidationError } from '../domain/errors/index.js';
 import { APP_LANGUAGES } from '../domain/types/language.js';
 import type { PageSummary } from '../domain/types/page.js';
-import { updatePageSettingsBodySchema } from '../lib/validators/page.schema.js';
+import type { PanelFrame } from '../domain/types/panelFrame.js';
+import {
+  applyPageLayoutTemplateBodySchema,
+  updatePageSettingsBodySchema,
+} from '../lib/validators/page.schema.js';
 import { formatZodValidationError } from '../lib/validationErrorFormatter.js';
 import type { PageFinalizeServicePort } from '../services/page/PageFinalizeService.js';
 import type { PageQueryServicePort } from '../services/page/PageQueryService.js';
 import type { PageGenerationServicePort } from '../services/page/PageGenerationService.js';
 import type { PageExportServicePort } from '../services/page/PageExportService.js';
+import type { PageLayoutServicePort } from '../services/page/PageLayoutService.js';
 import type { PageServicePort } from '../services/page/PageService.js';
 import type { AppEnv } from '../types/app.js';
 import { readJsonBody, readOptionalJsonBody, REQUEST_BODY_LIMITS } from './requestBody.js';
@@ -28,6 +33,7 @@ export interface PageRouteDependencies {
   pageGenerationService: PageGenerationServicePort;
   pageExportService: PageExportServicePort;
   pageService: PageServicePort;
+  pageLayoutService: PageLayoutServicePort;
 }
 
 export function createPageRoutes(dependencies: PageRouteDependencies): Hono<AppEnv> {
@@ -101,6 +107,33 @@ export function createPageRoutes(dependencies: PageRouteDependencies): Hono<AppE
     });
 
     return c.json(toPageSummaryResponse(page));
+  });
+
+  app.post('/pages/:id/layout-template', async (c) => {
+    const user = c.get('user');
+    const pageId = parseUuidParam(c, 'id');
+    const body = applyPageLayoutTemplateBodySchema.safeParse(
+      await readJsonBody(c, {
+        maxBytes: REQUEST_BODY_LIMITS.SMALL_JSON_BYTES,
+        description: 'Page layout template',
+      }),
+    );
+    if (!body.success) {
+      throw new ValidationError(formatZodValidationError(body.error));
+    }
+
+    const result = await dependencies.pageLayoutService.applyTemplate(user.id, pageId, {
+      templateId: body.data.template_id,
+      allowPanelTruncation: body.data.allow_panel_truncation,
+    });
+
+    return c.json({
+      template_id: result.templateId,
+      panel_count: result.panelCount,
+      created_panel_count: result.createdPanelCount,
+      deleted_panel_count: result.deletedPanelCount,
+      frames: result.frames.map(toPanelFrameResponse),
+    });
   });
 
   app.post('/pages/:id/autofill-from-scenes', async (c) => {
@@ -194,6 +227,20 @@ function toPageSummaryResponse(page: PageSummary): Record<string, unknown> {
     balloon_count: page.balloonCount,
     created_at: page.createdAt.toISOString(),
     updated_at: page.updatedAt.toISOString(),
+  };
+}
+
+function toPanelFrameResponse(frame: PanelFrame): Record<string, unknown> {
+  return {
+    id: frame.id,
+    page_id: frame.pageId,
+    panel_id: frame.panelId,
+    vertices: frame.vertices,
+    border_style: frame.borderStyle,
+    border_width: frame.borderWidth,
+    border_color: frame.borderColor,
+    z_index: frame.zIndex,
+    reading_order: frame.readingOrder,
   };
 }
 

@@ -50,6 +50,7 @@ import { PostgresBalloonRepository } from './repositories/BalloonRepository.js';
 import { PostgresPanelEntityAssignmentRepository } from './repositories/PanelEntityAssignmentRepository.js';
 import { PostgresPanelFrameRepository } from './repositories/PanelFrameRepository.js';
 import { PostgresPanelRepository } from './repositories/PanelRepository.js';
+import { PostgresPageLayoutRepository } from './repositories/PageLayoutRepository.js';
 import { PostgresPageGenerationExecutionRepository } from './repositories/PageGenerationExecutionRepository.js';
 import { PostgresPageGenerationRecoveryRepository } from './repositories/PageGenerationRecoveryRepository.js';
 import { PostgresPageRepository } from './repositories/PageRepository.js';
@@ -149,6 +150,10 @@ import {
   type PanelServicePort,
 } from './services/page/PanelService.js';
 import {
+  PageLayoutService,
+  type PageLayoutServicePort,
+} from './services/page/PageLayoutService.js';
+import {
   PanelEntityAssignmentService,
   type PanelEntityAssignmentServicePort,
 } from './services/page/PanelEntityAssignmentService.js';
@@ -190,6 +195,7 @@ export interface AppDependencies {
   pageGenerationQueue?: PageGenerationQueuePort;
   pageGenerationService?: PageGenerationServicePort;
   pageGenerationRecoveryService?: PageGenerationRecoveryServicePort;
+  pageLayoutService?: PageLayoutServicePort;
   panelService?: PanelServicePort;
   panelEntityAssignmentService?: PanelEntityAssignmentServicePort;
   panelFrameService?: PanelFrameServicePort;
@@ -308,6 +314,7 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
       pageService: resolvedDependencies.pageService,
       pageQueryService: resolvedDependencies.pageQueryService,
       pageGenerationService: resolvedDependencies.pageGenerationService,
+      pageLayoutService: resolvedDependencies.pageLayoutService,
     }),
   );
   app.route(
@@ -528,6 +535,9 @@ function resolveDependencies(
     );
   const panelFrameService =
     dependencies.panelFrameService ?? new PanelFrameService(panelFrameRepository);
+  const pageLayoutService =
+    dependencies.pageLayoutService ??
+    new PageLayoutService(new PostgresPageLayoutRepository(db));
   const sceneService =
     dependencies.sceneService ?? new SceneService(new PostgresSceneRepository(db), entityRepository);
   const userProvisioningService =
@@ -555,6 +565,7 @@ function resolveDependencies(
     pageGenerationQueue,
     pageGenerationRecoveryService,
     pageGenerationService,
+    pageLayoutService,
     panelService,
     panelEntityAssignmentService,
     panelFrameService,

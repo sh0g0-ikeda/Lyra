@@ -58,3 +58,8 @@ export interface PanelFrameTemplateApplication {
   panelCount: number;
   frames: PanelFrame[];
 }
+
+export interface PageLayoutTemplateApplication extends PanelFrameTemplateApplication {
+  createdPanelCount: number;
+  deletedPanelCount: number;
+}
