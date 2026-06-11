@@ -107,6 +107,33 @@ In production, omitted `GENERATION_ENABLED` defaults to `false`; set
 `GENERATION_ENABLED=true` explicitly only after OpenAI billing, SQS workers, S3
 storage, and active-job limits are ready.
 
+Production generation workers should run the long-polling SQS worker, not the
+local single-job helpers:
+
+```powershell
+bun run build
+bun run worker:generation:prod
+```
+
+The worker command runs `node dist/scripts/runGenerationWorker.js`, polls
+`SQS_QUEUE_URL_GENERATION`, and deletes only messages that were processed or
+classified as permanent input errors. Transient worker failures stay in SQS for
+retry after the visibility timeout.
+
+Paid production must protect image CDN paths with CloudFront signed URLs:
+
+```env
+IMAGE_CDN_SIGNING_ENABLED=true
+CLOUDFRONT_KEY_PAIR_ID=Kxxxxxxxxxxxx
+CLOUDFRONT_PRIVATE_KEY=-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----
+CLOUDFRONT_SIGNED_URL_TTL_SECONDS=300
+```
+
+The API keeps stable `s3_key` / `cdn_url` values in the database and signs CDN
+URLs only when building responses. If signing is disabled, API responses avoid
+exposing direct CDN URLs and the authenticated export endpoints remain the
+image-read path.
+
 ### Production auth
 
 Local defaults use Supabase-compatible HS256 dev tokens. AWS production requires Cognito:

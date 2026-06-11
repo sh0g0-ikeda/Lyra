@@ -31,6 +31,10 @@ interface RuntimeGuardConfig {
   SQS_GENERATION_VISIBILITY_TIMEOUT_SECONDS?: number;
   S3_BUCKET_IMAGES?: string;
   IMAGES_CDN_BASE_URL?: string;
+  IMAGE_CDN_SIGNING_ENABLED?: boolean;
+  CLOUDFRONT_KEY_PAIR_ID?: string;
+  CLOUDFRONT_PRIVATE_KEY?: string;
+  CLOUDFRONT_SIGNED_URL_TTL_SECONDS?: number;
   GENERATION_USER_ACTIVE_JOB_LIMIT?: number;
   GENERATION_GLOBAL_ACTIVE_JOB_LIMIT?: number;
   STRIPE_SECRET_KEY?: string;
@@ -311,6 +315,24 @@ export function assertProductionRuntimeConfig(
     isDirectS3Url(config.IMAGES_CDN_BASE_URL)
   ) {
     violations.push('IMAGES_CDN_BASE_URL must not point directly to S3 in production');
+  }
+
+  if (config.IMAGE_CDN_SIGNING_ENABLED !== true) {
+    violations.push('IMAGE_CDN_SIGNING_ENABLED must be true in production');
+  } else {
+    if (isMissingConfigValue(config.CLOUDFRONT_KEY_PAIR_ID)) {
+      violations.push('CLOUDFRONT_KEY_PAIR_ID is required when image CDN signing is enabled');
+    }
+    if (isMissingConfigValue(config.CLOUDFRONT_PRIVATE_KEY)) {
+      violations.push('CLOUDFRONT_PRIVATE_KEY is required when image CDN signing is enabled');
+    }
+  }
+
+  if (
+    config.CLOUDFRONT_SIGNED_URL_TTL_SECONDS !== undefined &&
+    (config.CLOUDFRONT_SIGNED_URL_TTL_SECONDS < 60 || config.CLOUDFRONT_SIGNED_URL_TTL_SECONDS > 86_400)
+  ) {
+    violations.push('CLOUDFRONT_SIGNED_URL_TTL_SECONDS must be between 60 and 86400');
   }
 
   for (const key of PRODUCTION_EXTERNAL_URL_KEYS) {

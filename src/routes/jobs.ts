@@ -2,6 +2,7 @@ import { Hono, type Context, type MiddlewareHandler } from 'hono';
 import { z } from 'zod';
 import { ValidationError } from '../domain/errors/index.js';
 import type { GenerationJob } from '../domain/types/job.js';
+import { signImageCdnUrl } from '../infrastructure/aws/CloudFrontImageUrlSigner.js';
 import type { JobServicePort } from '../services/job/JobService.js';
 import type { AppEnv } from '../types/app.js';
 
@@ -152,6 +153,15 @@ function toEntityCandidateResponse(value: unknown): Array<Record<string, unknown
       return [];
     }
 
-    return [{ s3_key: candidate.s3_key }];
+    const signedCdnUrl = typeof candidate.cdn_url === 'string'
+      ? signImageCdnUrl(candidate.cdn_url)
+      : null;
+
+    return [
+      {
+        s3_key: candidate.s3_key,
+        ...(signedCdnUrl === null ? {} : { cdn_url: signedCdnUrl }),
+      },
+    ];
   });
 }

@@ -24,6 +24,10 @@ const safeProductionConfig = {
   SQS_GENERATION_VISIBILITY_TIMEOUT_SECONDS: 420,
   S3_BUCKET_IMAGES: 'lyra-images',
   IMAGES_CDN_BASE_URL: 'https://images.lyra.test',
+  IMAGE_CDN_SIGNING_ENABLED: true,
+  CLOUDFRONT_KEY_PAIR_ID: 'K1234567890',
+  CLOUDFRONT_PRIVATE_KEY: '-----BEGIN PRIVATE KEY-----\\nkey\\n-----END PRIVATE KEY-----',
+  CLOUDFRONT_SIGNED_URL_TTL_SECONDS: 300,
   STRIPE_SECRET_KEY: 'sk_live_secret123',
   STRIPE_WEBHOOK_SECRET: 'whsec_secret123',
   STRIPE_PRICE_STANDARD_MONTHLY: 'price_standard',
@@ -637,5 +641,27 @@ describe('assertProductionRuntimeConfig', () => {
         'production',
       );
     }).toThrow(/IMAGES_CDN_BASE_URL must not point directly to S3/);
+  });
+
+  it('production では画像CDN署名設定を必須にする', () => {
+    expect(() => {
+      assertProductionRuntimeConfig(
+        {
+          ...safeProductionConfig,
+          IMAGE_CDN_SIGNING_ENABLED: false,
+        },
+        'production',
+      );
+    }).toThrow(/IMAGE_CDN_SIGNING_ENABLED must be true/);
+
+    expect(() => {
+      assertProductionRuntimeConfig(
+        {
+          ...safeProductionConfig,
+          CLOUDFRONT_PRIVATE_KEY: undefined,
+        },
+        'production',
+      );
+    }).toThrow(/CLOUDFRONT_PRIVATE_KEY is required/);
   });
 });

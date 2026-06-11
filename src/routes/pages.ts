@@ -8,6 +8,7 @@ import {
   applyPageLayoutTemplateBodySchema,
   updatePageSettingsBodySchema,
 } from '../lib/validators/page.schema.js';
+import { signImageCdnUrl } from '../infrastructure/aws/CloudFrontImageUrlSigner.js';
 import { formatZodValidationError } from '../lib/validationErrorFormatter.js';
 import type { PageFinalizeServicePort } from '../services/page/PageFinalizeService.js';
 import type { PageQueryServicePort } from '../services/page/PageQueryService.js';
@@ -203,6 +204,8 @@ export function createPageRoutes(dependencies: PageRouteDependencies): Hono<AppE
 }
 
 function toPageSummaryResponse(page: PageSummary): Record<string, unknown> {
+  const signedGeneratedImageUrl = signImageCdnUrl(page.generatedImage?.cdnUrl);
+
   return {
     id: page.id,
     episode_id: page.episodeId,
@@ -220,6 +223,7 @@ function toPageSummaryResponse(page: PageSummary): Record<string, unknown> {
         : {
             generation_mode: page.generatedImage.generationMode,
             generated_at: page.generatedImage.generatedAt,
+            ...(signedGeneratedImageUrl === null ? {} : { cdn_url: signedGeneratedImageUrl }),
           },
     status: page.status,
     panel_count: page.panelCount,

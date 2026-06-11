@@ -13,6 +13,7 @@ import {
   uuidParamSchema,
 } from '../lib/validators/entity.schema.js';
 import { formatZodValidationError } from '../lib/validationErrorFormatter.js';
+import { signImageCdnUrl } from '../infrastructure/aws/CloudFrontImageUrlSigner.js';
 import type { EntityServicePort } from '../services/entity/EntityService.js';
 import type { EntityReferenceServicePort } from '../services/entity/EntityReferenceService.js';
 import type { EntityReferenceImageExportServicePort } from '../services/entity/EntityReferenceImageExportService.js';
@@ -273,10 +274,17 @@ function toReferenceSetResponse(referenceSet: EntityReferenceSet): Record<string
     primary_ref_id: referenceSet.primaryRefId,
     status: referenceSet.status,
     updated_at: referenceSet.updatedAt.toISOString(),
-    reference_images: referenceSet.images.map((image) => ({
-      ref_id: image.refId,
-      source: image.source,
-      created_at: image.createdAt,
-    })),
+    reference_images: referenceSet.images.map(toReferenceImageResponse),
+  };
+}
+
+function toReferenceImageResponse(image: EntityReferenceSet['images'][number]): Record<string, unknown> {
+  const signedCdnUrl = signImageCdnUrl(image.cdnUrl);
+
+  return {
+    ref_id: image.refId,
+    ...(signedCdnUrl === null ? {} : { cdn_url: signedCdnUrl }),
+    source: image.source,
+    created_at: image.createdAt,
   };
 }
