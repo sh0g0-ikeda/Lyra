@@ -7,10 +7,11 @@ import type {
 } from '../../services/page/PageGenerationWorkerService.js';
 import { toSanitizedAwsErrorMessage } from './AwsErrorMessage.js';
 import { SESSION_IMAGE_CACHE_CONTROL } from './S3ImageCacheControl.js';
+import { buildStoredImageUrl } from './S3StoredImageUrl.js';
 
 export interface S3PageImageStorageOptions {
   bucketName: string;
-  cdnBaseUrl: string;
+  cdnBaseUrl?: string;
 }
 
 interface S3PutObjectClient {
@@ -48,17 +49,13 @@ export class S3PageImageStorage implements PageImageStoragePort {
 
     return {
       s3Key,
-      cdnUrl: buildCdnUrl(this.options.cdnBaseUrl, s3Key),
+      cdnUrl: buildStoredImageUrl(this.options, s3Key),
     };
   }
 }
 
 export function createPageImageStorageClient(region?: string): S3Client {
   return new S3Client(region === undefined ? {} : { region });
-}
-
-function buildCdnUrl(baseUrl: string, key: string): string {
-  return new URL(key, `${baseUrl.replace(/\/+$/u, '')}/`).toString();
 }
 
 function mimeTypeToExtension(mimeType: string): 'png' | 'jpeg' | 'webp' | null {

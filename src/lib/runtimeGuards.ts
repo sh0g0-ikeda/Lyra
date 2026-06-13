@@ -30,11 +30,13 @@ interface RuntimeGuardConfig {
   SQS_QUEUE_URL_GENERATION?: string;
   SQS_GENERATION_VISIBILITY_TIMEOUT_SECONDS?: number;
   S3_BUCKET_IMAGES?: string;
+  IMAGE_DELIVERY_MODE?: 'cloudfront_signed' | 's3_presigned';
   IMAGES_CDN_BASE_URL?: string;
   IMAGE_CDN_SIGNING_ENABLED?: boolean;
   CLOUDFRONT_KEY_PAIR_ID?: string;
   CLOUDFRONT_PRIVATE_KEY?: string;
   CLOUDFRONT_SIGNED_URL_TTL_SECONDS?: number;
+  S3_PRESIGNED_URL_TTL_SECONDS?: number;
   GENERATION_USER_ACTIVE_JOB_LIMIT?: number;
   GENERATION_GLOBAL_ACTIVE_JOB_LIMIT?: number;
   STRIPE_SECRET_KEY?: string;
@@ -59,7 +61,6 @@ const REQUIRED_PRODUCTION_GENERATION_KEYS = [
   'OPENAI_IMAGE_MODEL',
   'SQS_QUEUE_URL_GENERATION',
   'S3_BUCKET_IMAGES',
-  'IMAGES_CDN_BASE_URL',
 ] as const;
 
 const STRIPE_KEYS = [
@@ -84,7 +85,6 @@ const STRIPE_PRICE_KEYS = [
 ] as const;
 
 const PRODUCTION_PUBLIC_URL_KEYS = [
-  'IMAGES_CDN_BASE_URL',
   'STRIPE_CHECKOUT_SUCCESS_URL',
   'STRIPE_CHECKOUT_CANCEL_URL',
   'STRIPE_PORTAL_RETURN_URL',
@@ -109,7 +109,6 @@ const PRODUCTION_NON_PLACEHOLDER_KEYS = [
   'OPENAI_BASE_URL',
   'SQS_QUEUE_URL_GENERATION',
   'S3_BUCKET_IMAGES',
-  'IMAGES_CDN_BASE_URL',
 ] as const;
 
 export function assertProductionRuntimeConfig(
@@ -222,6 +221,8 @@ export function assertProductionRuntimeConfig(
     violations.push('LOCAL_IMAGE_FALLBACK_ENABLED must be disabled');
   }
 
+  const imageDeliveryMode = config.IMAGE_DELIVERY_MODE ?? 'cloudfront_signed';
+
   for (const key of REQUIRED_PRODUCTION_GENERATION_KEYS) {
     if (isMissingConfigValue(config[key])) {
       violations.push(`${key} is required`);
@@ -245,6 +246,46 @@ export function assertProductionRuntimeConfig(
     if (hasPlaceholderConfigValue(config[key])) {
       violations.push(`${key} must not use a placeholder value`);
     }
+  }
+
+  if (imageDeliveryMode === 'cloudfront_signed') {
+    const imagesCdnBaseUrl = config.IMAGES_CDN_BASE_URL;
+    if (imagesCdnBaseUrl === undefined || imagesCdnBaseUrl.trim().length === 0) {
+      violations.push('IMAGES_CDN_BASE_URL is required');
+    } else {
+      if (hasPlaceholderConfigValue(imagesCdnBaseUrl)) {
+        violations.push('IMAGES_CDN_BASE_URL must not use a placeholder value');
+      }
+      if (!isSafeProductionHttpsUrl(imagesCdnBaseUrl)) {
+        violations.push('IMAGES_CDN_BASE_URL must use https and a non-local host in production');
+      }
+      if (isDirectS3Url(imagesCdnBaseUrl)) {
+        violations.push('IMAGES_CDN_BASE_URL must not point directly to S3 in production');
+      }
+    }
+
+    if (config.IMAGE_CDN_SIGNING_ENABLED !== true) {
+      violations.push('IMAGE_CDN_SIGNING_ENABLED must be true in production');
+    } else {
+      if (isMissingConfigValue(config.CLOUDFRONT_KEY_PAIR_ID)) {
+        violations.push('CLOUDFRONT_KEY_PAIR_ID is required when image CDN signing is enabled');
+      }
+      if (isMissingConfigValue(config.CLOUDFRONT_PRIVATE_KEY)) {
+        violations.push('CLOUDFRONT_PRIVATE_KEY is required when image CDN signing is enabled');
+      }
+    }
+
+    if (
+      config.CLOUDFRONT_SIGNED_URL_TTL_SECONDS !== undefined &&
+      (config.CLOUDFRONT_SIGNED_URL_TTL_SECONDS < 60 || config.CLOUDFRONT_SIGNED_URL_TTL_SECONDS > 86_400)
+    ) {
+      violations.push('CLOUDFRONT_SIGNED_URL_TTL_SECONDS must be between 60 and 86400');
+    }
+  } else if (
+    config.S3_PRESIGNED_URL_TTL_SECONDS !== undefined &&
+    (config.S3_PRESIGNED_URL_TTL_SECONDS < 60 || config.S3_PRESIGNED_URL_TTL_SECONDS > 3_600)
+  ) {
+    violations.push('S3_PRESIGNED_URL_TTL_SECONDS must be between 60 and 3600');
   }
 
   const openAiImageModel = config.OPENAI_IMAGE_MODEL;
@@ -308,31 +349,6 @@ export function assertProductionRuntimeConfig(
     if (value !== undefined && !isSafeProductionHttpsUrl(value)) {
       violations.push(`${key} must use https and a non-local host in production`);
     }
-  }
-
-  if (
-    config.IMAGES_CDN_BASE_URL !== undefined &&
-    isDirectS3Url(config.IMAGES_CDN_BASE_URL)
-  ) {
-    violations.push('IMAGES_CDN_BASE_URL must not point directly to S3 in production');
-  }
-
-  if (config.IMAGE_CDN_SIGNING_ENABLED !== true) {
-    violations.push('IMAGE_CDN_SIGNING_ENABLED must be true in production');
-  } else {
-    if (isMissingConfigValue(config.CLOUDFRONT_KEY_PAIR_ID)) {
-      violations.push('CLOUDFRONT_KEY_PAIR_ID is required when image CDN signing is enabled');
-    }
-    if (isMissingConfigValue(config.CLOUDFRONT_PRIVATE_KEY)) {
-      violations.push('CLOUDFRONT_PRIVATE_KEY is required when image CDN signing is enabled');
-    }
-  }
-
-  if (
-    config.CLOUDFRONT_SIGNED_URL_TTL_SECONDS !== undefined &&
-    (config.CLOUDFRONT_SIGNED_URL_TTL_SECONDS < 60 || config.CLOUDFRONT_SIGNED_URL_TTL_SECONDS > 86_400)
-  ) {
-    violations.push('CLOUDFRONT_SIGNED_URL_TTL_SECONDS must be between 60 and 86400');
   }
 
   for (const key of PRODUCTION_EXTERNAL_URL_KEYS) {

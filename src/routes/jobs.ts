@@ -25,7 +25,7 @@ export function createJobRoutes(dependencies: JobRouteDependencies): Hono<AppEnv
     const jobId = parseUuidParam(c, 'id');
     const job = await dependencies.jobService.getJob(user.id, jobId);
 
-    return c.json(toJobResponse(job));
+    return c.json(await toJobResponse(job));
   });
 
   return app;
@@ -40,7 +40,7 @@ function parseUuidParam(c: Context<AppEnv>, name: string): string {
   return result.data;
 }
 
-function toJobResponse(job: GenerationJob): Record<string, unknown> {
+async function toJobResponse(job: GenerationJob): Promise<Record<string, unknown>> {
   return {
     id: job.id,
     job_type: job.jobType,
@@ -48,7 +48,7 @@ function toJobResponse(job: GenerationJob): Record<string, unknown> {
     generation_mode: job.generationMode,
     credit_cost: job.creditCost,
     params: toJobParamsResponse(job),
-    result: toJobResultResponse(job),
+    result: await toJobResultResponse(job),
     error_message: job.errorMessage,
     retry_count: job.retryCount,
     created_at: job.createdAt.toISOString(),
@@ -70,13 +70,13 @@ function toJobParamsResponse(job: GenerationJob): Record<string, unknown> {
       ]);
 }
 
-function toJobResultResponse(job: GenerationJob): Record<string, unknown> | null {
+async function toJobResultResponse(job: GenerationJob): Promise<Record<string, unknown> | null> {
   if (job.result === null) {
     return null;
   }
 
   return job.jobType === 'entity_generate'
-    ? toEntityGenerationResultResponse(job)
+    ? await toEntityGenerationResultResponse(job)
     : toPageGenerationResultResponse(job.result);
 }
 
@@ -94,12 +94,12 @@ function toPageGenerationResultResponse(result: Record<string, unknown>): Record
   return response;
 }
 
-function toEntityGenerationResultResponse(job: GenerationJob): Record<string, unknown> {
+async function toEntityGenerationResultResponse(job: GenerationJob): Promise<Record<string, unknown>> {
   const result = job.result ?? {};
   const response: Record<string, unknown> = {};
   response.provider_result = isProviderResult(job);
 
-  const candidates = toEntityCandidateResponse(result.candidates);
+  const candidates = await toEntityCandidateResponse(result.candidates);
   if (candidates.length > 0) {
     response.candidates = candidates;
   }
@@ -143,25 +143,25 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function toEntityCandidateResponse(value: unknown): Array<Record<string, unknown>> {
+async function toEntityCandidateResponse(value: unknown): Promise<Array<Record<string, unknown>>> {
   if (!Array.isArray(value)) {
     return [];
   }
 
-  return value.flatMap((candidate) => {
+  const candidates: Array<Record<string, unknown> | null> = await Promise.all(value.map(async (candidate): Promise<Record<string, unknown> | null> => {
     if (!isRecord(candidate) || typeof candidate.s3_key !== 'string') {
-      return [];
+      return null;
     }
 
     const signedCdnUrl = typeof candidate.cdn_url === 'string'
-      ? signImageCdnUrl(candidate.cdn_url)
+      ? await signImageCdnUrl(candidate.cdn_url, candidate.s3_key)
       : null;
 
-    return [
-      {
-        s3_key: candidate.s3_key,
-        ...(signedCdnUrl === null ? {} : { cdn_url: signedCdnUrl }),
-      },
-    ];
-  });
+    return {
+      s3_key: candidate.s3_key,
+      ...(signedCdnUrl === null ? {} : { cdn_url: signedCdnUrl }),
+    };
+  }));
+
+  return candidates.filter((candidate): candidate is Record<string, unknown> => candidate !== null);
 }

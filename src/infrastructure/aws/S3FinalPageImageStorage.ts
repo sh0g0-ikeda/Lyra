@@ -3,6 +3,7 @@ import { ConfigurationError } from '../../domain/errors/index.js';
 import type { GeneratedPageImage } from '../../domain/types/page.js';
 import { toSanitizedAwsErrorMessage } from './AwsErrorMessage.js';
 import { FINAL_PAGE_IMAGE_CACHE_CONTROL } from './S3ImageCacheControl.js';
+import { buildStoredImageUrl } from './S3StoredImageUrl.js';
 
 export interface FinalizePageImageInput {
   userId: string;
@@ -28,7 +29,7 @@ interface S3FinalPageImageStorageClient {
 
 export interface S3FinalPageImageStorageOptions {
   bucketName: string;
-  cdnBaseUrl: string;
+  cdnBaseUrl?: string;
 }
 
 export class S3FinalPageImageStorage implements FinalPageImageStoragePort {
@@ -64,7 +65,7 @@ export class S3FinalPageImageStorage implements FinalPageImageStoragePort {
     return {
       ...input.generatedImage,
       s3Key: destinationKey,
-      cdnUrl: buildCdnUrl(this.options.cdnBaseUrl, destinationKey),
+      cdnUrl: buildStoredImageUrl(this.options, destinationKey),
     };
   }
 
@@ -98,13 +99,9 @@ export class S3FinalPageImageStorage implements FinalPageImageStoragePort {
     return {
       ...input.generatedImage,
       s3Key: destinationKey,
-      cdnUrl: buildCdnUrl(this.options.cdnBaseUrl, destinationKey),
+      cdnUrl: buildStoredImageUrl(this.options, destinationKey),
     };
   }
-}
-
-function buildCdnUrl(baseUrl: string, key: string): string {
-  return new URL(key, `${baseUrl.replace(/\/+$/u, '')}/`).toString();
 }
 
 function ensureAllowedFinalPageSourceKey(

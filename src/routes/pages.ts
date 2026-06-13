@@ -48,7 +48,7 @@ export function createPageRoutes(dependencies: PageRouteDependencies): Hono<AppE
     const episodeId = parseUuidParam(c, 'id');
     const pages = await dependencies.pageQueryService.listEpisodePages(user.id, episodeId);
 
-    return c.json({ pages: pages.map(toPageSummaryResponse) });
+    return c.json({ pages: await Promise.all(pages.map(toPageSummaryResponse)) });
   });
 
   app.post('/episodes/:id/autofill-pages-from-story', async (c) => {
@@ -107,7 +107,7 @@ export function createPageRoutes(dependencies: PageRouteDependencies): Hono<AppE
       storyContinuityNote: body.data.story_continuity_note,
     });
 
-    return c.json(toPageSummaryResponse(page));
+    return c.json(await toPageSummaryResponse(page));
   });
 
   app.post('/pages/:id/layout-template', async (c) => {
@@ -203,8 +203,11 @@ export function createPageRoutes(dependencies: PageRouteDependencies): Hono<AppE
   return app;
 }
 
-function toPageSummaryResponse(page: PageSummary): Record<string, unknown> {
-  const signedGeneratedImageUrl = signImageCdnUrl(page.generatedImage?.cdnUrl);
+async function toPageSummaryResponse(page: PageSummary): Promise<Record<string, unknown>> {
+  const signedGeneratedImageUrl = await signImageCdnUrl(
+    page.generatedImage?.cdnUrl,
+    page.generatedImage?.s3Key,
+  );
 
   return {
     id: page.id,

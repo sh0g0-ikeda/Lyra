@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { ConfigurationError } from '../../domain/errors/index.js';
 import { toSanitizedAwsErrorMessage } from './AwsErrorMessage.js';
 import { SAVED_IMAGE_CACHE_CONTROL, SESSION_IMAGE_CACHE_CONTROL } from './S3ImageCacheControl.js';
+import { buildStoredImageUrl } from './S3StoredImageUrl.js';
 
 export interface StoredEntityImage {
   s3Key: string;
@@ -36,7 +37,7 @@ export interface EntityImageStoragePort {
 
 export interface S3EntityImageStorageOptions {
   bucketName: string;
-  cdnBaseUrl: string;
+  cdnBaseUrl?: string;
 }
 
 interface S3EntityImageStorageClient {
@@ -94,7 +95,7 @@ export class S3EntityImageStorage implements EntityImageStoragePort {
 
     return {
       s3Key: destinationKey,
-      cdnUrl: buildCdnUrl(this.options.cdnBaseUrl, destinationKey),
+      cdnUrl: buildStoredImageUrl(this.options, destinationKey),
     };
   }
 
@@ -122,13 +123,9 @@ export class S3EntityImageStorage implements EntityImageStoragePort {
 
     return {
       s3Key,
-      cdnUrl: buildCdnUrl(this.options.cdnBaseUrl, s3Key),
+      cdnUrl: buildStoredImageUrl(this.options, s3Key),
     };
   }
-}
-
-function buildCdnUrl(baseUrl: string, key: string): string {
-  return new URL(key, `${baseUrl.replace(/\/+$/u, '')}/`).toString();
 }
 
 function ensureAllowedEntityReferenceSourceKey(sourceS3Key: string, userId: string, entityId: string): void {

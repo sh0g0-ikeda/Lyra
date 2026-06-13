@@ -80,6 +80,40 @@ describe('assertProductionRuntimeConfig', () => {
     }).not.toThrow();
   });
 
+  it('allows production image delivery through short-lived S3 presigned URLs without CloudFront config', () => {
+    expect(() => {
+      assertProductionRuntimeConfig(
+        {
+          ...safeProductionConfig,
+          IMAGE_DELIVERY_MODE: 's3_presigned',
+          IMAGES_CDN_BASE_URL: 'replace-me-cloudfront-url',
+          IMAGE_CDN_SIGNING_ENABLED: false,
+          CLOUDFRONT_KEY_PAIR_ID: undefined,
+          CLOUDFRONT_PRIVATE_KEY: undefined,
+          S3_PRESIGNED_URL_TTL_SECONDS: 300,
+        },
+        'production',
+      );
+    }).not.toThrow();
+  });
+
+  it('rejects too-long S3 presigned URL TTL values in production', () => {
+    expect(() => {
+      assertProductionRuntimeConfig(
+        {
+          ...safeProductionConfig,
+          IMAGE_DELIVERY_MODE: 's3_presigned',
+          IMAGES_CDN_BASE_URL: undefined,
+          IMAGE_CDN_SIGNING_ENABLED: false,
+          CLOUDFRONT_KEY_PAIR_ID: undefined,
+          CLOUDFRONT_PRIVATE_KEY: undefined,
+          S3_PRESIGNED_URL_TTL_SECONDS: 3_601,
+        },
+        'production',
+      );
+    }).toThrow(/S3_PRESIGNED_URL_TTL_SECONDS must be between 60 and 3600/);
+  });
+
   it('requires NODE_ENV production when APP_ENV is production', () => {
     expect(() => {
       assertProductionRuntimeConfig(

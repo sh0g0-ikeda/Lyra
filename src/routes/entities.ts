@@ -84,7 +84,7 @@ export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<
     const entityId = parseUuidParam(c, 'id');
     const referenceSet = await dependencies.entityReferenceService.getReferenceSet(user.id, entityId);
 
-    return c.json(toReferenceSetResponse(referenceSet));
+    return c.json(await toReferenceSetResponse(referenceSet));
   });
 
   app.get('/entities/:id/reference/:ref_id/image', async (c) => {
@@ -219,7 +219,7 @@ export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<
       promptSupplement: body.data.prompt_supplement,
     });
 
-    return c.json(toReferenceSetResponse(referenceSet));
+    return c.json(await toReferenceSetResponse(referenceSet));
   });
 
   app.delete('/entities/:id/reference/:ref_id', async (c) => {
@@ -237,7 +237,7 @@ export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<
       refIdResult.data,
     );
 
-    return c.json(toReferenceSetResponse(referenceSet));
+    return c.json(await toReferenceSetResponse(referenceSet));
   });
 
   return app;
@@ -268,18 +268,18 @@ function toEntityResponse(entity: Entity): Record<string, unknown> {
   };
 }
 
-function toReferenceSetResponse(referenceSet: EntityReferenceSet): Record<string, unknown> {
+async function toReferenceSetResponse(referenceSet: EntityReferenceSet): Promise<Record<string, unknown>> {
   return {
     entity_id: referenceSet.entityId,
     primary_ref_id: referenceSet.primaryRefId,
     status: referenceSet.status,
     updated_at: referenceSet.updatedAt.toISOString(),
-    reference_images: referenceSet.images.map(toReferenceImageResponse),
+    reference_images: await Promise.all(referenceSet.images.map(toReferenceImageResponse)),
   };
 }
 
-function toReferenceImageResponse(image: EntityReferenceSet['images'][number]): Record<string, unknown> {
-  const signedCdnUrl = signImageCdnUrl(image.cdnUrl);
+async function toReferenceImageResponse(image: EntityReferenceSet['images'][number]): Promise<Record<string, unknown>> {
+  const signedCdnUrl = await signImageCdnUrl(image.cdnUrl, image.s3Key);
 
   return {
     ref_id: image.refId,

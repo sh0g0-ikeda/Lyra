@@ -594,7 +594,7 @@ function resolveFinalPageImageStorage(): FinalPageImageStoragePort {
     return new LocalFileFinalPageImageStorage(localAssetConfig);
   }
 
-  if (env.S3_BUCKET_IMAGES === undefined || env.IMAGES_CDN_BASE_URL === undefined) {
+  if (env.S3_BUCKET_IMAGES === undefined) {
     return {
       async finalizePageImage(): Promise<never> {
         throw new ConfigurationError('Final page image storage is not configured');
@@ -607,7 +607,7 @@ function resolveFinalPageImageStorage(): FinalPageImageStoragePort {
 
   return new S3FinalPageImageStorage(createPageImageStorageClient(env.AWS_REGION), {
     bucketName: env.S3_BUCKET_IMAGES,
-    cdnBaseUrl: env.IMAGES_CDN_BASE_URL,
+    cdnBaseUrl: resolveS3ImageStorageCdnBaseUrl(),
   });
 }
 
@@ -653,14 +653,18 @@ function resolveEntityImageStorage(): EntityImageStoragePort {
     return new LocalFileEntityImageStorage(localAssetConfig);
   }
 
-  if (env.S3_BUCKET_IMAGES === undefined || env.IMAGES_CDN_BASE_URL === undefined) {
+  if (env.S3_BUCKET_IMAGES === undefined) {
     return new EntityImageStorageStub();
   }
 
   return new S3EntityImageStorage(createPageImageStorageClient(env.AWS_REGION), {
     bucketName: env.S3_BUCKET_IMAGES,
-    cdnBaseUrl: env.IMAGES_CDN_BASE_URL,
+    cdnBaseUrl: resolveS3ImageStorageCdnBaseUrl(),
   });
+}
+
+function resolveS3ImageStorageCdnBaseUrl(): string | undefined {
+  return env.IMAGE_DELIVERY_MODE === 'cloudfront_signed' ? env.IMAGES_CDN_BASE_URL : undefined;
 }
 
 function resolveEntityImportAnalyzer(): EntityImportAnalyzerPort {

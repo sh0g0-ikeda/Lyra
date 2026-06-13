@@ -38,6 +38,7 @@
     "@aws-sdk/client-secrets-manager": "^3.1067.0",
     "@aws-sdk/client-sqs": "^3.1064.0",
     "@aws-sdk/cloudfront-signer": "^3.1064.0",
+    "@aws-sdk/s3-request-presigner": "^3.1064.0",
     "@hono/node-server": "^1.19.8",
     "dotenv": "^17.2.3",
     "hono": "^4.12.21",

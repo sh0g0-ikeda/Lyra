@@ -269,13 +269,13 @@ function resolvePageImageStorage(): PageImageStoragePort {
     return new LocalFilePageImageStorage(localAssetConfig);
   }
 
-  if (env.S3_BUCKET_IMAGES === undefined || env.IMAGES_CDN_BASE_URL === undefined) {
+  if (env.S3_BUCKET_IMAGES === undefined) {
     return new UnconfiguredPageImageStorage();
   }
 
   return new S3PageImageStorage(createPageImageStorageClient(env.AWS_REGION), {
     bucketName: env.S3_BUCKET_IMAGES,
-    cdnBaseUrl: env.IMAGES_CDN_BASE_URL,
+    cdnBaseUrl: resolveS3ImageStorageCdnBaseUrl(),
   });
 }
 
@@ -323,13 +323,13 @@ function resolveEntityImageStorage(): EntityImageStoragePort {
     return new LocalFileEntityImageStorage(localAssetConfig);
   }
 
-  if (env.S3_BUCKET_IMAGES === undefined || env.IMAGES_CDN_BASE_URL === undefined) {
+  if (env.S3_BUCKET_IMAGES === undefined) {
     return new UnconfiguredEntityImageStorage();
   }
 
   return new S3EntityImageStorage(createPageImageStorageClient(env.AWS_REGION), {
     bucketName: env.S3_BUCKET_IMAGES,
-    cdnBaseUrl: env.IMAGES_CDN_BASE_URL,
+    cdnBaseUrl: resolveS3ImageStorageCdnBaseUrl(),
   });
 }
 
@@ -348,6 +348,10 @@ function resolveStoredImageLoader(): StoredImageLoaderPort {
 
 function resolveConfiguredLocalAssetConfig() {
   return resolveLocalAssetConfig(env.LOCAL_FILE_STORAGE_DIR, env.LOCAL_ASSET_BASE_URL, env.PORT);
+}
+
+function resolveS3ImageStorageCdnBaseUrl(): string | undefined {
+  return env.IMAGE_DELIVERY_MODE === 'cloudfront_signed' ? env.IMAGES_CDN_BASE_URL : undefined;
 }
 
 class UnconfiguredPageGenerationInputImageBuilder implements PageGenerationInputImageBuilderPort {
