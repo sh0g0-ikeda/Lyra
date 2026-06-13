@@ -19,6 +19,7 @@ export type CognitoTokenUse = 'access' | 'id';
 export interface CognitoVerifierConfig {
   issuer: string;
   clientId: string;
+  clientIds?: string[];
   jwksUri?: string;
   tokenUse: CognitoTokenUse;
   requiredScopes: string[];
@@ -116,11 +117,12 @@ async function verifyCognitoToken(
   }
 
   const token = extractBearerToken(authorizationHeader);
+  const allowedClientIds = getAllowedCognitoClientIds(config);
 
   try {
     const verifyOptions =
       config.tokenUse === 'id'
-        ? { issuer: config.issuer, audience: config.clientId, algorithms: ['RS256'] }
+        ? { issuer: config.issuer, audience: allowedClientIds, algorithms: ['RS256'] }
         : { issuer: config.issuer, algorithms: ['RS256'] };
     const result = await jwtVerify(token, jwks, verifyOptions);
     const claims = parseCognitoClaims(result.payload, config);
@@ -147,7 +149,7 @@ function parseCognitoClaims(
     throw new UnauthorizedError();
   }
 
-  if (config.tokenUse === 'access' && payload.client_id !== config.clientId) {
+  if (config.tokenUse === 'access' && !getAllowedCognitoClientIds(config).includes(String(payload.client_id))) {
     throw new UnauthorizedError();
   }
 
@@ -206,11 +208,20 @@ export function resolveCognitoVerifierConfig(): CognitoVerifierConfig | null {
   return {
     issuer,
     clientId: env.COGNITO_CLIENT_ID,
+    clientIds: getAllowedCognitoClientIdsFromEnv(env.COGNITO_CLIENT_ID, env.COGNITO_ALLOWED_CLIENT_IDS),
     jwksUri: env.COGNITO_JWKS_URI,
     tokenUse: env.COGNITO_TOKEN_USE,
     requiredScopes: parseListEnv(env.COGNITO_REQUIRED_SCOPES),
     requiredGroups: parseListEnv(env.COGNITO_REQUIRED_GROUPS),
   };
+}
+
+function getAllowedCognitoClientIds(config: CognitoVerifierConfig): string[] {
+  return Array.from(new Set([config.clientId, ...(config.clientIds ?? [])].filter((clientId) => clientId.length > 0)));
+}
+
+function getAllowedCognitoClientIdsFromEnv(primaryClientId: string, allowedClientIds: string | undefined): string[] {
+  return Array.from(new Set([primaryClientId, ...parseListEnv(allowedClientIds)]));
 }
 
 function resolveCognitoIssuer(): string {

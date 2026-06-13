@@ -78,6 +78,7 @@ const envSchema = z.object({
   SUPABASE_JWT_SECRET: z.string().min(1).optional(),
   COGNITO_USER_POOL_ID: z.string().min(1).optional(),
   COGNITO_CLIENT_ID: z.string().min(1).optional(),
+  COGNITO_ALLOWED_CLIENT_IDS: z.string().min(1).optional(),
   COGNITO_ISSUER: z.string().url().optional(),
   COGNITO_JWKS_URI: z.string().url().optional(),
   COGNITO_TOKEN_USE: z.enum(['access', 'id']).default('id'),

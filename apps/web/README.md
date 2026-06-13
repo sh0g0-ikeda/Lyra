@@ -44,7 +44,8 @@ You can authenticate with:
 For paid production, use Cognito Hosted UI and run `bun run web:build:deploy` for the release
 build. That command sets `LYRA_STRICT_WEB_PRODUCTION_CONFIG=true`, so the build fails if Hosted UI
 is missing, Supabase hosted auth is configured, dev auth bypass is enabled, or public URLs are
-unsafe. If Cognito is configured, `VITE_COGNITO_SCOPES` must be explicit. The recommended
+unsafe. If Cognito is configured, `VITE_COGNITO_SCOPES` must be explicit. For the current
+ID-token based API flow, use the minimal `openid email` scopes. The recommended
 API token mode is `VITE_COGNITO_API_TOKEN_USE=id`, matching backend `COGNITO_TOKEN_USE=id`, because
 the API can verify the ID token audience and read the user email without an extra userinfo call. If
 you switch both sides to `access`, include the API scope in `VITE_COGNITO_SCOPES` and set
