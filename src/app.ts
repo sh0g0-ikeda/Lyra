@@ -379,6 +379,19 @@ export function isWebStaticFallbackPath(path: string): boolean {
   );
 }
 
+const WEB_STATIC_CONTENT_SECURITY_POLICY = [
+  "default-src 'self'",
+  "script-src 'self'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data: blob: https:",
+  "font-src 'self' data:",
+  "connect-src 'self' https://*.amazoncognito.com https://cognito-idp.ap-northeast-1.amazonaws.com",
+  "object-src 'none'",
+  "frame-ancestors 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+].join('; ');
+
 function mountWebStaticRoutes(app: Hono<AppEnv>, root: string): void {
   const staticFileMiddleware = serveStatic<AppEnv>({
     root,
@@ -399,6 +412,7 @@ function mountWebStaticRoutes(app: Hono<AppEnv>, root: string): void {
       'Cache-Control',
       c.req.path.startsWith('/assets/') ? 'public, max-age=31536000, immutable' : 'no-store',
     );
+    c.header('Content-Security-Policy', WEB_STATIC_CONTENT_SECURITY_POLICY);
     return staticFileMiddleware(c, next);
   });
 
@@ -409,6 +423,7 @@ function mountWebStaticRoutes(app: Hono<AppEnv>, root: string): void {
     }
 
     c.header('Cache-Control', 'no-store');
+    c.header('Content-Security-Policy', WEB_STATIC_CONTENT_SECURITY_POLICY);
     return indexFallbackMiddleware(c, next);
   });
 }

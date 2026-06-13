@@ -15,6 +15,7 @@ describe('web static routes', () => {
       expect(response.status).toBe(200);
       expect(response.headers.get('content-type')).toContain('text/html');
       expect(response.headers.get('cache-control')).toBe('no-store');
+      expect(response.headers.get('content-security-policy')).toContain("script-src 'self'");
       await expect(response.text()).resolves.toContain('<div id="root"></div>');
     } finally {
       await rm(root, { force: true, recursive: true });
@@ -33,6 +34,9 @@ describe('web static routes', () => {
       await expect(spaResponse.text()).resolves.toContain('<div id="root"></div>');
       expect(apiResponse.status).toBe(401);
       expect(apiResponse.headers.get('content-type')).not.toContain('text/html');
+      expect(apiResponse.headers.get('content-security-policy')).toBe(
+        "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
+      );
     } finally {
       await rm(root, { force: true, recursive: true });
     }
