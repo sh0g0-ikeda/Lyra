@@ -12,6 +12,7 @@ const envSchema = z.object({
   DATABASE_STATEMENT_TIMEOUT_MS: z.coerce.number().int().min(0).max(600_000).default(30_000),
   DATABASE_QUERY_TIMEOUT_MS: z.coerce.number().int().min(0).max(600_000).default(30_000),
   CORS_ALLOWED_ORIGINS: z.string().min(1).optional(),
+  WEB_STATIC_DIR: z.string().min(1).optional(),
   AUTO_RUN_MIGRATIONS: z
     .string()
     .optional()

@@ -1,3 +1,4 @@
+import { serveStatic } from '@hono/node-server/serve-static';
 import { Hono, type MiddlewareHandler } from 'hono';
 import { ConfigurationError } from './domain/errors/index.js';
 import { createPageImageStorageClient } from './infrastructure/aws/S3PageImageStorage.js';
@@ -213,6 +214,7 @@ export interface AppDependencies {
   cognitoJwks?: JWTVerifyGetKey;
   enableDevAuthBypass?: boolean;
   devAuthBypassClaims?: SupabaseJwtClaims;
+  webStaticDir?: string | null;
 }
 
 export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
@@ -360,8 +362,55 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
       sceneService: resolvedDependencies.sceneService,
     }),
   );
+  const webStaticDir = dependencies.webStaticDir !== undefined ? dependencies.webStaticDir : env.WEB_STATIC_DIR ?? null;
+  if (webStaticDir !== null) {
+    mountWebStaticRoutes(app, webStaticDir);
+  }
 
   return app;
+}
+
+export function isWebStaticFallbackPath(path: string): boolean {
+  return !(
+    path === '/healthz' ||
+    path.startsWith('/api/') ||
+    path === '/api' ||
+    path.startsWith('/local-assets/')
+  );
+}
+
+function mountWebStaticRoutes(app: Hono<AppEnv>, root: string): void {
+  const staticFileMiddleware = serveStatic<AppEnv>({
+    root,
+    index: '__lyra_disabled_directory_index__',
+  });
+  const indexFallbackMiddleware = serveStatic<AppEnv>({
+    root,
+    path: '/index.html',
+  });
+
+  app.use('*', async (c, next) => {
+    if (!isWebStaticFallbackPath(c.req.path)) {
+      await next();
+      return;
+    }
+
+    c.header(
+      'Cache-Control',
+      c.req.path.startsWith('/assets/') ? 'public, max-age=31536000, immutable' : 'no-store',
+    );
+    return staticFileMiddleware(c, next);
+  });
+
+  app.get('*', async (c, next) => {
+    if (!isWebStaticFallbackPath(c.req.path)) {
+      await next();
+      return;
+    }
+
+    c.header('Cache-Control', 'no-store');
+    return indexFallbackMiddleware(c, next);
+  });
 }
 
 function resolveDependencies(
@@ -370,7 +419,13 @@ function resolveDependencies(
   Required<
     Omit<
       AppDependencies,
-      'authProvider' | 'jwtSecret' | 'cognito' | 'cognitoJwks' | 'enableDevAuthBypass' | 'devAuthBypassClaims'
+      | 'authProvider'
+      | 'jwtSecret'
+      | 'cognito'
+      | 'cognitoJwks'
+      | 'enableDevAuthBypass'
+      | 'devAuthBypassClaims'
+      | 'webStaticDir'
     >
   >,
   'storyEpisodeImprovementPlanner'

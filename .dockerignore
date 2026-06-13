@@ -4,6 +4,8 @@
 .localdata
 apps/web/node_modules
 apps/web/dist
+apps/web/.env
+apps/web/test-results
 node_modules
 dist
 coverage
