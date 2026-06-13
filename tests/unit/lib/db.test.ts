@@ -20,6 +20,22 @@ describe('buildDatabasePoolConfig', () => {
     });
   });
 
+  it('uses a configured CA bundle while keeping certificate verification enabled', () => {
+    const config = buildDatabasePoolConfig({
+      connectionString: 'postgres://lyra:secret@db.example.com:5432/lyra',
+      max: 6,
+      sslMode: 'require',
+      sslCa: '-----BEGIN CERTIFICATE-----\ntest-ca\n-----END CERTIFICATE-----\n',
+      statementTimeoutMs: 30_000,
+      queryTimeoutMs: 30_000,
+    });
+
+    expect(config.ssl).toEqual({
+      rejectUnauthorized: true,
+      ca: '-----BEGIN CERTIFICATE-----\ntest-ca\n-----END CERTIFICATE-----\n',
+    });
+  });
+
   it('omits TLS config when sslMode is disable', () => {
     const config = buildDatabasePoolConfig({
       connectionString: 'postgres://postgres:postgres@localhost:5432/lyra',

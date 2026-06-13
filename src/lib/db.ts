@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { Pool, type PoolConfig, type QueryResult, type QueryResultRow } from 'pg';
 import { env } from './env.js';
 
@@ -18,6 +19,7 @@ export interface DatabasePoolConfigInput {
   connectionString: string;
   max: number;
   sslMode: DatabaseSslMode;
+  sslCa?: string;
   statementTimeoutMs: number;
   queryTimeoutMs: number;
 }
@@ -31,10 +33,21 @@ export function buildDatabasePoolConfig(input: DatabasePoolConfigInput): PoolCon
   };
 
   if (input.sslMode === 'require') {
-    config.ssl = { rejectUnauthorized: true };
+    config.ssl = {
+      rejectUnauthorized: true,
+      ...(input.sslCa === undefined ? {} : { ca: input.sslCa }),
+    };
   }
 
   return config;
+}
+
+export function readDatabaseSslCaFile(filePath: string | undefined): string | undefined {
+  if (filePath === undefined) {
+    return undefined;
+  }
+
+  return readFileSync(filePath, 'utf8');
 }
 
 const pool = new Pool(
@@ -42,6 +55,7 @@ const pool = new Pool(
     connectionString: env.DATABASE_URL,
     max: env.DATABASE_POOL_MAX,
     sslMode: env.DATABASE_SSL_MODE,
+    sslCa: readDatabaseSslCaFile(env.DATABASE_SSL_CA_FILE),
     statementTimeoutMs: env.DATABASE_STATEMENT_TIMEOUT_MS,
     queryTimeoutMs: env.DATABASE_QUERY_TIMEOUT_MS,
   }),

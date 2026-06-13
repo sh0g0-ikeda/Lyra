@@ -8,6 +8,7 @@ const envSchema = z.object({
   DATABASE_URL: z.string().min(1).default('postgres://postgres:postgres@localhost:5432/lyra'),
   DATABASE_POOL_MAX: z.coerce.number().int().min(1).max(50).default(10),
   DATABASE_SSL_MODE: z.enum(['disable', 'require']).default(process.env.NODE_ENV === 'production' ? 'require' : 'disable'),
+  DATABASE_SSL_CA_FILE: z.string().min(1).optional(),
   DATABASE_STATEMENT_TIMEOUT_MS: z.coerce.number().int().min(0).max(600_000).default(30_000),
   DATABASE_QUERY_TIMEOUT_MS: z.coerce.number().int().min(0).max(600_000).default(30_000),
   CORS_ALLOWED_ORIGINS: z.string().min(1).optional(),
