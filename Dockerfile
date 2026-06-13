@@ -17,7 +17,7 @@ RUN npm ci
 COPY apps/web ./
 ARG VITE_API_BASE_URL=
 ARG VITE_COGNITO_DOMAIN=https://ap-northeast-1wizlzlgmm.auth.ap-northeast-1.amazoncognito.com
-ARG VITE_COGNITO_CLIENT_ID=2nnfvg2vplvvuouruulepssob1
+ARG VITE_COGNITO_CLIENT_ID=6b2h941o888u2l7ejhv5jog94
 ARG VITE_COGNITO_REDIRECT_URI=https://app.lyra-editor.com/auth/callback
 ARG VITE_COGNITO_LOGOUT_URI=https://app.lyra-editor.com
 ARG VITE_COGNITO_SCOPES="openid email phone"
