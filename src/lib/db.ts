@@ -26,7 +26,7 @@ export interface DatabasePoolConfigInput {
 
 export function buildDatabasePoolConfig(input: DatabasePoolConfigInput): PoolConfig {
   const config: PoolConfig = {
-    connectionString: input.connectionString,
+    connectionString: normalizeDatabaseConnectionString(input.connectionString, input.sslMode),
     max: input.max,
     statement_timeout: input.statementTimeoutMs,
     query_timeout: input.queryTimeoutMs,
@@ -40,6 +40,26 @@ export function buildDatabasePoolConfig(input: DatabasePoolConfigInput): PoolCon
   }
 
   return config;
+}
+
+export function normalizeDatabaseConnectionString(connectionString: string, sslMode: DatabaseSslMode): string {
+  if (sslMode !== 'require') {
+    return connectionString;
+  }
+
+  let url: URL;
+  try {
+    url = new URL(connectionString);
+  } catch {
+    return connectionString;
+  }
+
+  url.searchParams.delete('ssl');
+  url.searchParams.delete('sslmode');
+  url.searchParams.delete('sslcert');
+  url.searchParams.delete('sslkey');
+  url.searchParams.delete('sslrootcert');
+  return url.toString();
 }
 
 export function readDatabaseSslCaFile(filePath: string | undefined): string | undefined {
