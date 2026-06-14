@@ -233,7 +233,7 @@ describe('CreditService', () => {
       purchasedDelta: 10,
     });
   });
-  it('初回ボーナスの場合に購入クレジットへ12cr付与される', async () => {
+  it('初回ボーナスの場合に購入クレジットへ30cr付与される', async () => {
     const repository = new InMemoryCreditRepository();
     const service = new CreditService(repository);
 
@@ -241,8 +241,8 @@ describe('CreditService', () => {
 
     expect(result).toEqual({
       monthlyCredits: 0,
-      purchasedCredits: 12,
-      totalCredits: 12,
+      purchasedCredits: 30,
+      totalCredits: 30,
       monthlyExpiresAt: null,
     });
     expect(repository.ledger).toHaveLength(1);
@@ -258,8 +258,8 @@ describe('CreditService', () => {
 
     expect(result).toEqual({
       monthlyCredits: 0,
-      purchasedCredits: 12,
-      totalCredits: 12,
+      purchasedCredits: 30,
+      totalCredits: 30,
       monthlyExpiresAt: null,
     });
     expect(repository.ledger.filter((entry) => entry.type === 'signup_bonus')).toHaveLength(1);
