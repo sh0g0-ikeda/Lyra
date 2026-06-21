@@ -11,6 +11,25 @@ interface CanonicalAliasVariant {
   normalizedVariant: string;
 }
 
+const GENERIC_ENTITY_LABELS = new Set([
+  '影',
+  '光',
+  '声',
+  '人影',
+  '少女',
+  '少年',
+  '女子高生',
+  '男子高校生',
+  '生徒',
+  '隊員',
+  '班員',
+  '兵士',
+  '青年',
+  '老人',
+]);
+
+const GENERIC_ENTITY_SUFFIX_PATTERN = /(高校生|中学生|小学生|生徒|隊員|班員|兵士|少年|少女|青年|老人)$/u;
+
 export function extractEntityAliases(structuredFields: Record<string, unknown>): string[] {
   const aliasesValue =
     readAliasArray(structuredFields.aliases) ??
@@ -176,15 +195,7 @@ function looksLikeGenericEntityLabel(value: string): boolean {
     return true;
   }
 
-  if (['影', '光', '声', '人影', '少女', '少年', '女子高生', '男子高校生', '生徒', '隊員', '兵士'].includes(normalized)) {
-    return true;
-  }
-
-  if (/(高校生|中学生|小学生|生徒|隊員|班員|少年|少女|青年|老人)$/u.test(normalized)) {
-    return true;
-  }
-
-  return false;
+  return GENERIC_ENTITY_LABELS.has(normalized) || GENERIC_ENTITY_SUFFIX_PATTERN.test(normalized);
 }
 
 function readAliasArray(value: unknown): string[] | null {

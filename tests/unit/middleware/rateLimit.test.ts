@@ -36,14 +36,9 @@ class RecordingRateLimitStore implements RateLimitStore {
 describe('createRateLimitMiddleware', () => {
   it.each([
     ['/api/pages/page-1/generate'],
-    ['/api/pages/page-1/autofill-from-scenes'],
-    ['/api/episodes/episode-1/autofill-pages-from-story'],
-    ['/api/episodes/episode-1/generate-page-skeleton'],
     ['/api/entities/import-image'],
     ['/api/entities/entity-1/generate-reference'],
-    ['/api/story/collaborate'],
-    ['/api/story/improve-episode-draft'],
-  ])('%s は generation bucket で制限する', async (path) => {
+  ])('%s uses the generation bucket', async (path) => {
     const store = new RecordingRateLimitStore();
     const app = createAuthenticatedTestApp(store);
 
@@ -59,11 +54,36 @@ describe('createRateLimitMiddleware', () => {
     ]);
   });
 
-  it('通常の story editing route は story bucket で制限する', async () => {
+  it.each([
+    ['/api/pages/page-1/autofill-from-scenes'],
+    ['/api/episodes/episode-1/autofill-pages-from-story'],
+    ['/api/episodes/episode-1/generate-page-skeleton'],
+    ['/api/story/collaborate'],
+    ['/api/story/improve-episode-draft'],
+  ])('%s uses the text AI bucket', async (path) => {
     const store = new RecordingRateLimitStore();
     const app = createAuthenticatedTestApp(store);
 
-    const response = await app.request('/api/works/work-1', { method: 'PUT' });
+    const response = await app.request(path, { method: 'POST' });
+
+    expect(response.status).toBe(200);
+    expect(store.calls).toEqual([
+      {
+        key: 'storyAi:user-1',
+        maxRequests: RATE_LIMIT_RULES.storyAi.maxRequests,
+        windowSeconds: RATE_LIMIT_RULES.storyAi.windowSeconds,
+      },
+    ]);
+  });
+
+  it.each([
+    ['/api/works/work-1'],
+    ['/api/scenes/scene-1'],
+  ])('%s uses the story editing bucket', async (path) => {
+    const store = new RecordingRateLimitStore();
+    const app = createAuthenticatedTestApp(store);
+
+    const response = await app.request(path, { method: 'PUT' });
 
     expect(response.status).toBe(200);
     expect(store.calls).toEqual([
@@ -74,10 +94,39 @@ describe('createRateLimitMiddleware', () => {
       },
     ]);
   });
+
+  it('page skeleton generation and story autofill do not consume the generation bucket', async () => {
+    const store = new RecordingRateLimitStore();
+    const app = createAuthenticatedTestApp(store);
+
+    await app.request('/api/episodes/episode-1/generate-page-skeleton', { method: 'POST' });
+    await app.request('/api/episodes/episode-1/autofill-pages-from-story', { method: 'POST' });
+
+    expect(store.calls.map((call) => call.key)).toEqual([
+      'storyAi:user-1',
+      'storyAi:user-1',
+    ]);
+  });
+
+  it('read routes use the read bucket', async () => {
+    const store = new RecordingRateLimitStore();
+    const app = createAuthenticatedTestApp(store);
+
+    const response = await app.request('/api/works', { method: 'GET' });
+
+    expect(response.status).toBe(200);
+    expect(store.calls).toEqual([
+      {
+        key: 'read:user-1',
+        maxRequests: RATE_LIMIT_RULES.read.maxRequests,
+        windowSeconds: RATE_LIMIT_RULES.read.windowSeconds,
+      },
+    ]);
+  });
 });
 
 describe('createPublicIpRateLimitMiddleware', () => {
-  it('公開webhookをX-Forwarded-For末尾のIP単位の webhook bucket で制限する', async () => {
+  it('public webhooks use the last X-Forwarded-For IP for the webhook bucket', async () => {
     const store = new RecordingRateLimitStore();
     const app = new Hono<AppEnv>();
     app.use('*', createPublicIpRateLimitMiddleware(store, 'webhook'));
@@ -100,7 +149,7 @@ describe('createPublicIpRateLimitMiddleware', () => {
     ]);
   });
 
-  it('CloudFront-Viewer-Address がある場合はportを落として優先する', async () => {
+  it('CloudFront-Viewer-Address takes precedence with the port removed', async () => {
     const store = new RecordingRateLimitStore();
     const app = new Hono<AppEnv>();
     app.use('*', createPublicIpRateLimitMiddleware(store, 'webhook'));
@@ -118,7 +167,7 @@ describe('createPublicIpRateLimitMiddleware', () => {
     expect(store.calls[0]?.key).toBe('webhook:public:198.51.100.7');
   });
 
-  it('公開IPヘッダーが不正な場合は unknown に丸める', async () => {
+  it('invalid public IP headers are normalized to unknown', async () => {
     const store = new RecordingRateLimitStore();
     const app = new Hono<AppEnv>();
     app.use('*', createPublicIpRateLimitMiddleware(store, 'webhook'));

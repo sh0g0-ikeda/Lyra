@@ -5,7 +5,12 @@ import type {
   SubscriptionPlanCode,
   SubscriptionStatus,
 } from '../../../../src/domain/constants/billing.js';
-import type { BillingUserProfile, PaymentRecordInput, SubscriptionRecord } from '../../../../src/domain/types/billing.js';
+import type {
+  ActiveSubscriptionRecord,
+  BillingUserProfile,
+  PaymentRecordInput,
+  SubscriptionRecord,
+} from '../../../../src/domain/types/billing.js';
 import type { CreditBalanceSnapshot } from '../../../../src/domain/types/credit.js';
 import { ValidationError } from '../../../../src/domain/errors/index.js';
 import type { StripeBillingClientPort } from '../../../../src/infrastructure/stripe/StripeBillingClient.js';
@@ -119,6 +124,32 @@ class InMemoryBillingRepository implements BillingRepository {
     this.activeSubscriptionsByUser.set(userId, subscriptions);
   }
 
+  public async findLatestActiveSubscriptionForUser(userId: string): Promise<ActiveSubscriptionRecord | null> {
+    const storedSubscription = this.subscriptions.find(
+      (subscription) =>
+        subscription.userId === userId && (subscription.status === 'active' || subscription.status === 'trialing'),
+    );
+    if (storedSubscription !== undefined) {
+      return storedSubscription;
+    }
+
+    const activeSubscription = [...(this.activeSubscriptionsByUser.get(userId) ?? [])][0];
+    if (activeSubscription === undefined) {
+      return null;
+    }
+
+    const [stripeSubscriptionId, planCode] = activeSubscription;
+    return {
+      userId,
+      stripeSubscriptionId,
+      planCode,
+      status: 'active',
+      currentPeriodStart: null,
+      currentPeriodEnd: null,
+      cancelAtPeriodEnd: false,
+    };
+  }
+
   public async findHighestActiveSubscriptionPlanForUserExcluding(
     userId: string,
     excludedStripeSubscriptionId: string,
@@ -225,7 +256,11 @@ class FakeStripeBillingClient implements StripeBillingClientPort {
     throw new Error('unused');
   }
 
-  public constructWebhookEvent(): Stripe.Event {
+  public async createSubscriptionUpdatePortalSession(): Promise<never> {
+    throw new Error('unused');
+  }
+
+  public async constructWebhookEvent(): Promise<Stripe.Event> {
     if (this.constructError !== null) {
       throw this.constructError;
     }
@@ -471,6 +506,23 @@ describe('StripeWebhookService', () => {
     const stripeClient = new FakeStripeBillingClient();
     stripeClient.event = buildCustomerSubscriptionUpdatedEvent('price_premium');
     stripeClient.subscription = buildSubscription('premium', 'price_premium');
+    const service = buildService(repository, creditGrantService, stripeClient);
+
+    await service.handleWebhook(Buffer.from('{}'), 'sig');
+
+    expect(repository.subscriptions[0]).toMatchObject({
+      stripeSubscriptionId: 'sub_123',
+      planCode: 'premium',
+    });
+    expect(repository.updatedPlans[0]).toEqual({ userId: 'user-1', planCode: 'premium' });
+  });
+
+  it('customer.subscription.updated uses price id before stale metadata plan code', async () => {
+    const repository = seedRepository();
+    const creditGrantService = new FakeBillingCreditGrantService();
+    const stripeClient = new FakeStripeBillingClient();
+    stripeClient.event = buildCustomerSubscriptionUpdatedEvent('price_premium');
+    stripeClient.subscription = buildSubscription('standard', 'price_premium');
     const service = buildService(repository, creditGrantService, stripeClient);
 
     await service.handleWebhook(Buffer.from('{}'), 'sig');

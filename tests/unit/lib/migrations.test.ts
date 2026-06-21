@@ -214,6 +214,18 @@ describe('runPendingMigrations', () => {
     expect(sql).toContain('VALIDATE CONSTRAINT generation_jobs_job_type_check');
   });
 
+  it('episode story autofill job type is allowed by the updated DB constraint', async () => {
+    const sql = await readFile(
+      join(process.cwd(), 'migrations', '015_add_episode_story_autofill_job_type.sql'),
+      'utf8',
+    );
+
+    expect(sql).toContain(
+      "CHECK (job_type IN ('page_generate', 'entity_generate', 'episode_story_autofill'))",
+    );
+    expect(sql).toContain('VALIDATE CONSTRAINT generation_jobs_job_type_check');
+  });
+
   it('generation_jobs の active resource lock は同一ページ・同一キャラの二重生成を防ぐ', async () => {
     const sql = await readFile(
       join(process.cwd(), 'migrations', '003_add_generation_active_resource_locks.sql'),
@@ -229,6 +241,22 @@ describe('runPendingMigrations', () => {
     expect(sql).toContain("ON generation_jobs ((params->>'entity_id'))");
     expect(sql).toContain("WHERE job_type = 'entity_generate'");
     expect(sql).toContain("AND params ? 'entity_id'");
+  });
+
+  it('episode story autofill active resource lock prevents duplicate active jobs', async () => {
+    const sql = await readFile(
+      join(process.cwd(), 'migrations', '016_add_episode_story_autofill_active_lock.sql'),
+      'utf8',
+    );
+
+    expect(sql).toContain('-- lyra:migration no-transaction');
+    expect(sql).toContain(
+      'CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS idx_generation_jobs_active_episode_story_autofill_resource',
+    );
+    expect(sql).toContain("ON generation_jobs ((params->>'episode_id'))");
+    expect(sql).toContain("WHERE job_type = 'episode_story_autofill'");
+    expect(sql).toContain("AND status IN ('queued', 'processing')");
+    expect(sql).toContain("AND params ? 'episode_id'");
   });
 
   it('課金系の種類と状態はDB制約で型契約を守る', async () => {

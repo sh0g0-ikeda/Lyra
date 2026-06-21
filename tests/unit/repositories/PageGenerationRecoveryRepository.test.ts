@@ -33,10 +33,13 @@ describe('PostgresPageGenerationRecoveryRepository', () => {
     const jobs = await repository.listStaleProcessingJobs(cutoff, 100);
 
     expect(client.queryText).toContain("generation_jobs.status = 'processing'");
-    expect(client.queryText).toContain("generation_jobs.status = 'queued'");
-    expect(client.queryText).toContain('generation_jobs.created_at < $1');
-    expect(client.queryText).toContain('COALESCE(generation_jobs.started_at, generation_jobs.created_at) AS stale_at');
-    expect(client.queryText).toContain('ORDER BY stale_at ASC, generation_jobs.created_at ASC');
+    expect(client.queryText).toContain("generation_jobs.status IN ('processing', 'queued')");
+    expect(client.queryText).toContain("generation_jobs.result->>'progress_updated_at'");
+    expect(client.queryText).toContain("THEN (generation_jobs.result->>'progress_updated_at')::timestamptz");
+    expect(client.queryText).toContain('created_at < $1');
+    expect(client.queryText).toContain('ELSE COALESCE(generation_jobs.started_at, generation_jobs.created_at)');
+    expect(client.queryText).toContain('AND stale_at < $1');
+    expect(client.queryText).toContain('ORDER BY stale_at ASC, created_at ASC');
     expect(client.queryText).toContain('LIMIT $2');
     expect(client.values).toEqual([cutoff, 100]);
     expect(jobs[0]).toMatchObject({

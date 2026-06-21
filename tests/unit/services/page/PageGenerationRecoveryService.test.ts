@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { CreditBalanceSnapshot } from '../../../../src/domain/types/credit.js';
 import type { GenerationJob } from '../../../../src/repositories/GenerationJobRepository.js';
-import type { PageGenerationExecutionRepository } from '../../../../src/repositories/PageGenerationExecutionRepository.js';
+import type {
+  PageGenerationExecutionRepository,
+  TouchPageGenerationProgressInput,
+} from '../../../../src/repositories/PageGenerationExecutionRepository.js';
 import type {
   FailedPageGenerationJobMissingRefund,
   PageGenerationRecoveryRepository,
@@ -46,6 +49,14 @@ class FakeExecutionRepository implements PageGenerationExecutionRepository {
   public shouldRecover = true;
 
   public async claimQueuedPageGenerationJob(): Promise<GenerationJob | null> {
+    throw new Error('not used');
+  }
+
+  public async findPageGenerationJob(): Promise<GenerationJob | null> {
+    throw new Error('not used');
+  }
+
+  public async touchPageGenerationProgress(_input: TouchPageGenerationProgressInput): Promise<boolean> {
     throw new Error('not used');
   }
 

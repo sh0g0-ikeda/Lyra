@@ -96,6 +96,9 @@ class FakeStoryRepository implements StoryRepository {
   public async deleteChapter(_id: string, _userId: string): Promise<boolean> {
     throw new Error('not implemented');
   }
+  public async moveChapter(): Promise<Chapter | null> {
+    throw new Error('not implemented');
+  }
   public async createEpisode(_chapterId: string, _input: CreateEpisodeInput): Promise<Episode> {
     throw new Error('not implemented');
   }
@@ -109,6 +112,9 @@ class FakeStoryRepository implements StoryRepository {
     throw new Error('not implemented');
   }
   public async deleteEpisode(_id: string, _userId: string): Promise<boolean> {
+    throw new Error('not implemented');
+  }
+  public async moveEpisode(): Promise<Episode | null> {
     throw new Error('not implemented');
   }
   public async findCollaborationTargetByIdAndUserId(

@@ -59,15 +59,21 @@ async function toJobResponse(job: GenerationJob): Promise<Record<string, unknown
 }
 
 function toJobParamsResponse(job: GenerationJob): Record<string, unknown> {
-  return job.jobType === 'entity_generate'
-    ? pickKnownFields(job.params, ['entity_id', 'entity_type'])
-    : pickKnownFields(job.params, [
-        'page_id',
-        'request_kind',
-        'generation_mode',
-        'quality',
-        'requires_planner',
-      ]);
+  if (job.jobType === 'entity_generate') {
+    return pickKnownFields(job.params, ['entity_id', 'entity_type']);
+  }
+
+  if (job.jobType === 'episode_story_autofill') {
+    return pickKnownFields(job.params, ['episode_id', 'language']);
+  }
+
+  return pickKnownFields(job.params, [
+    'page_id',
+    'request_kind',
+    'generation_mode',
+    'quality',
+    'requires_planner',
+  ]);
 }
 
 async function toJobResultResponse(job: GenerationJob): Promise<Record<string, unknown> | null> {
@@ -75,9 +81,35 @@ async function toJobResultResponse(job: GenerationJob): Promise<Record<string, u
     return null;
   }
 
-  return job.jobType === 'entity_generate'
-    ? await toEntityGenerationResultResponse(job)
-    : toPageGenerationResultResponse(job.result);
+  if (job.jobType === 'entity_generate') {
+    return await toEntityGenerationResultResponse(job);
+  }
+
+  if (job.jobType === 'episode_story_autofill') {
+    return toEpisodeStoryAutofillResultResponse(job.result);
+  }
+
+  return toPageGenerationResultResponse(job.result);
+}
+
+function toEpisodeStoryAutofillResultResponse(result: Record<string, unknown>): Record<string, unknown> {
+  return pickKnownFields(result, [
+    'updated_page_count',
+    'updated_panel_count',
+    'updated_assignment_count',
+    'filled_field_count',
+    'compiler_used',
+    'compiler_provider',
+    'compiler_model',
+    'compiler_prompt_version',
+    'compiler_error',
+    'progress_stage',
+    'progress_message',
+    'progress_current_chunk',
+    'progress_total_chunks',
+    'progress_started_at',
+    'progress_updated_at',
+  ]);
 }
 
 function toPageGenerationResultResponse(result: Record<string, unknown>): Record<string, unknown> {

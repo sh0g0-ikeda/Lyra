@@ -1,27 +1,36 @@
 import { describe, expect, it } from 'vitest';
 import {
+  ChangeMessageVisibilityBatchCommand,
   DeleteMessageBatchCommand,
   ReceiveMessageCommand,
   type Message,
 } from '@aws-sdk/client-sqs';
 import type { ProcessEntityGenerationJobResult } from '../../../src/services/entity/EntityGenerationWorkerService.js';
 import type { ProcessPageGenerationJobResult } from '../../../src/services/page/PageGenerationWorkerService.js';
+import type { ProcessEpisodeStoryAutofillJobResult } from '../../../src/services/story/EpisodeStoryAutofillWorkerService.js';
 import { GenerationQueuePoller, type SqsPollerClient } from '../../../worker/sqsPoller.js';
 import type { WorkerDependencies } from '../../../worker/index.js';
 
 class FakeSqsPollerClient implements SqsPollerClient {
   public deletedEntries: unknown[] = [];
   public receiveInputs: unknown[] = [];
+  public visibilityInputs: unknown[] = [];
 
   public constructor(private readonly messages: Message[]) {}
 
-  public async send(command: ReceiveMessageCommand | DeleteMessageBatchCommand): Promise<{
+  public async send(
+    command: ReceiveMessageCommand | DeleteMessageBatchCommand | ChangeMessageVisibilityBatchCommand,
+  ): Promise<{
     Messages?: Message[];
     Failed?: Array<{ Id?: string; Message?: string }>;
   }> {
     if (command instanceof ReceiveMessageCommand) {
       this.receiveInputs.push(command.input);
       return { Messages: this.messages };
+    }
+    if (command instanceof ChangeMessageVisibilityBatchCommand) {
+      this.visibilityInputs.push(command.input);
+      return { Failed: [] };
     }
 
     this.deletedEntries = command.input.Entries ?? [];
@@ -51,6 +60,15 @@ class FakeEntityGenerationWorkerService {
 
   public async processJob(jobId: string): Promise<ProcessEntityGenerationJobResult> {
     this.calls.push(jobId);
+    return {
+      status: 'processed',
+      jobStatus: 'completed',
+    };
+  }
+}
+
+class FakeEpisodeStoryAutofillWorkerService {
+  public async processJob(): Promise<ProcessEpisodeStoryAutofillJobResult> {
     return {
       status: 'processed',
       jobStatus: 'completed',
@@ -129,6 +147,7 @@ describe('GenerationQueuePoller', () => {
     expect(client.receiveInputs[0]).toMatchObject({
       MaxNumberOfMessages: 10,
       WaitTimeSeconds: 20,
+      VisibilityTimeout: 900,
     });
   });
 });
@@ -140,6 +159,7 @@ function buildDependencies(
   return {
     pageGenerationWorkerService,
     entityGenerationWorkerService,
+    episodeStoryAutofillWorkerService: new FakeEpisodeStoryAutofillWorkerService(),
   };
 }
 

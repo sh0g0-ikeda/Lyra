@@ -7,6 +7,7 @@ import type {
   CompletePageGenerationInput,
   FailPageGenerationInput,
   PageGenerationExecutionRepository,
+  TouchPageGenerationProgressInput,
 } from '../../../../src/repositories/PageGenerationExecutionRepository.js';
 import type {
   ConsumeCreditsParams,
@@ -29,13 +30,24 @@ import type { PagePromptCompilerPort } from '../../../../src/services/page/PageP
 
 class FakeExecutionRepository implements PageGenerationExecutionRepository {
   public claimedJob: GenerationJob | null = buildJob();
+  public existingJob: GenerationJob | null = null;
   public completionInput: CompletePageGenerationInput | null = null;
   public failureInput: FailPageGenerationInput | null = null;
+  public progressInputs: TouchPageGenerationProgressInput[] = [];
   public shouldFailCompletion = false;
   public failureResult = true;
 
   public async claimQueuedPageGenerationJob(_jobId: string): Promise<GenerationJob | null> {
     return this.claimedJob;
+  }
+
+  public async findPageGenerationJob(_jobId: string): Promise<GenerationJob | null> {
+    return this.existingJob;
+  }
+
+  public async touchPageGenerationProgress(input: TouchPageGenerationProgressInput): Promise<boolean> {
+    this.progressInputs.push(input);
+    return true;
   }
 
   public async completePageGeneration(input: CompletePageGenerationInput): Promise<boolean> {
@@ -306,7 +318,61 @@ describe('PageGenerationWorkerService', () => {
 
     const result = await service.processJob('job-1');
 
-    expect(result).toEqual({ status: 'skipped' });
+    expect(result).toEqual({ status: 'skipped', reason: 'Page generation job no longer exists' });
+  });
+
+  it('claim できないが processing の page job は SQS 再試行にする', async () => {
+    const executionRepository = new FakeExecutionRepository();
+    executionRepository.claimedJob = null;
+    executionRepository.existingJob = buildJob({ status: 'processing' });
+    const service = new PageGenerationWorkerService(
+      executionRepository,
+      new FakePromptBuilder(),
+      new FakePromptCompiler(),
+      new FakeInputImageBuilder(),
+      new FakePlanner(),
+      new FakeRenderer(),
+      new FakeStorage(),
+      new FakeCreditService(),
+    );
+
+    const result = await service.processJob('job-1');
+
+    expect(result).toEqual({
+      status: 'retry',
+      reason: 'Page generation job is already processing',
+    });
+    expect(executionRepository.completionInput).toBeNull();
+    expect(executionRepository.failureInput).toBeNull();
+  });
+
+  it('page generation の進捗 heartbeat を processing job に保存する', async () => {
+    const executionRepository = new FakeExecutionRepository();
+    const service = new PageGenerationWorkerService(
+      executionRepository,
+      new FakePromptBuilder(),
+      new FakePromptCompiler(),
+      new FakeInputImageBuilder(),
+      new FakePlanner(),
+      new FakeRenderer(),
+      new FakeStorage(),
+      new FakeCreditService(),
+    );
+
+    await service.processJob('job-1');
+
+    expect(executionRepository.progressInputs.map((input) => input.message)).toEqual([
+      'Building page prompt.',
+      'Compiling page prompt.',
+      'Preparing reference images.',
+      'Requesting page image from image model.',
+      'Storing generated page image.',
+      'Saving generated page result.',
+    ]);
+    expect(executionRepository.progressInputs[0]).toMatchObject({
+      jobId: 'job-1',
+      userId: 'user-1',
+    });
   });
 
   it('params が壊れている時は復旧情報付きで failed にして refund する', async () => {

@@ -24,6 +24,8 @@ export interface SubscriptionRecord {
   cancelAtPeriodEnd: boolean;
 }
 
+export interface ActiveSubscriptionRecord extends SubscriptionRecord {}
+
 interface PaymentRecordBase {
   userId: string;
   kind: PaymentRecordKind;

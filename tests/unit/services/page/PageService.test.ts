@@ -194,9 +194,11 @@ class FakePageAutofillCompiler implements PageAutofillCompilerPort {
 class FakeEpisodePagePlanCompiler implements EpisodePagePlanCompilerPort {
   public error: Error | null = null;
   public lastInput: CompileEpisodePagePlanInput | null = null;
+  public inputs: CompileEpisodePagePlanInput[] = [];
 
   public async compilePlan(input: CompileEpisodePagePlanInput): Promise<CompiledEpisodePagePlan> {
     this.lastInput = input;
+    this.inputs.push(input);
     if (this.error !== null) {
       throw this.error;
     }
@@ -253,6 +255,86 @@ class FakeEpisodePagePlanCompiler implements EpisodePagePlanCompilerPort {
       compilerPromptVersion: 'page_autofill_v2',
     };
   }
+}
+
+class ChunkAwareEpisodePagePlanCompiler implements EpisodePagePlanCompilerPort {
+  public inputs: CompileEpisodePagePlanInput[] = [];
+  public failOnCall: number | null = null;
+
+  public async compilePlan(input: CompileEpisodePagePlanInput): Promise<CompiledEpisodePagePlan> {
+    this.inputs.push(input);
+    if (this.failOnCall === this.inputs.length) {
+      throw new ConfigurationError('chunk planner unavailable');
+    }
+
+    const pages = extractCompilerBriefPageRefs(input.compilerBrief);
+    return {
+      suggestion: {
+        pages: pages.map((page) => ({
+          pageId: page.pageId,
+          pageNumber: page.pageNumber,
+          sourceSceneIds: ['scene-1'],
+          pagePurpose: `Plan page ${page.pageNumber}.`,
+          continuityNote: `Continue into page ${page.pageNumber + 1}.`,
+          page: {
+            dialogueMode: 'mixed',
+            pageDialogueToggle: true,
+          },
+          panels: [
+            {
+              order: 1,
+              panelRole: 'action',
+              panelSize: 'standard',
+              situationText: `Minerva advances the beat on page ${page.pageNumber}.`,
+              composition: {
+                source: 'custom',
+                shotType: 'half_body',
+                angle: 'front',
+                compositionPrompt: `Frame Minerva clearly for page ${page.pageNumber}.`,
+                customNote: `Keep page ${page.pageNumber} readable.`,
+              },
+              dialogueInPanel: true,
+              dialogue: [
+                {
+                  entityId: '11111111-1111-4111-8111-111111111111',
+                  text: `Page ${page.pageNumber} line.`,
+                  type: 'speech',
+                  position: 'top',
+                },
+              ],
+              backgroundNote: `Rooftop detail for page ${page.pageNumber}.`,
+              entities: [
+                {
+                  entityId: '11111111-1111-4111-8111-111111111111',
+                  role: 'primary',
+                  expression: 'calm',
+                  customExpression: null,
+                  action: 'standing_firm',
+                  customAction: null,
+                  position: 'center',
+                  facingDirection: 'front',
+                  effectNote: null,
+                  stateId: null,
+                },
+              ],
+            },
+          ],
+        })),
+      },
+      compilerProvider: 'openai',
+      compilerModel: 'gpt-5',
+      compilerPromptVersion: 'episode_page_plan_v2',
+    };
+  }
+}
+
+function extractCompilerBriefPageRefs(
+  compilerBrief: string,
+): Array<{ pageId: string; pageNumber: number }> {
+  return Array.from(compilerBrief.matchAll(/^Page (\d+) \(([^)]+)\)$/gmu)).map((match) => ({
+    pageNumber: Number(match[1]),
+    pageId: match[2] ?? '',
+  }));
 }
 
 class FakeStyleReferenceCompiler implements StyleReferenceCompilerPort {
@@ -750,6 +832,67 @@ describe('PageService', () => {
       storyPagePurpose: 'This page quietly escalates the rooftop confrontation.',
       storyContinuityNote: 'Keep the mood restrained and unsettling.',
     });
+  });
+
+  it('episode story plan は大きい episode をページ単位の chunk に分けてから一括保存する', async () => {
+    const pageRepository = new FakePageRepository();
+    pageRepository.episodePlanningContext = buildMultiPageEpisodePlanningContext(7);
+    const panelRepository = new FakePanelRepository();
+    const assignmentService = new FakePanelEntityAssignmentService();
+    const episodeCompiler = new ChunkAwareEpisodePagePlanCompiler();
+    const service = new PageService(
+      pageRepository,
+      panelRepository,
+      assignmentService,
+      new FakePageAutofillCompiler(),
+      episodeCompiler,
+    );
+
+    const result = await service.autofillEpisodeFromStory('user-1', 'episode-1', 'ja');
+
+    expect(result).toMatchObject({
+      updatedPageCount: 7,
+      updatedPanelCount: 7,
+      updatedAssignmentCount: 7,
+      compilerUsed: true,
+      compilerProvider: 'openai',
+      compilerModel: 'gpt-5',
+      compilerPromptVersion: 'episode_page_plan_v2',
+    });
+    expect(episodeCompiler.inputs).toHaveLength(3);
+    expect(episodeCompiler.inputs[0]?.compilerBrief).toContain('Page 1 (page-1)');
+    expect(episodeCompiler.inputs[0]?.compilerBrief).toContain('Page 3 (page-3)');
+    expect(episodeCompiler.inputs[0]?.compilerBrief).not.toContain('Page 4 (page-4)');
+    expect(episodeCompiler.inputs[1]?.compilerBrief).toContain('Page 4 (page-4)');
+    expect(episodeCompiler.inputs[1]?.compilerBrief).toContain('Page 6 (page-6)');
+    expect(episodeCompiler.inputs[2]?.compilerBrief).toContain('Page 7 (page-7)');
+    expect(panelRepository.updatedPanels).toHaveLength(7);
+    expect(assignmentService.updates).toHaveLength(7);
+  });
+
+  it('episode story plan は chunk の一部が失敗した場合に何も保存しない', async () => {
+    const pageRepository = new FakePageRepository();
+    pageRepository.episodePlanningContext = buildMultiPageEpisodePlanningContext(7);
+    const panelRepository = new FakePanelRepository();
+    const assignmentService = new FakePanelEntityAssignmentService();
+    const episodeCompiler = new ChunkAwareEpisodePagePlanCompiler();
+    episodeCompiler.failOnCall = 2;
+    const service = new PageService(
+      pageRepository,
+      panelRepository,
+      assignmentService,
+      new FakePageAutofillCompiler(),
+      episodeCompiler,
+    );
+
+    const result = await service.autofillEpisodeFromStory('user-1', 'episode-1', 'ja');
+
+    expect(result.compilerUsed).toBe(false);
+    expect(result.compilerError).toBe('chunk planner unavailable');
+    expect(episodeCompiler.inputs).toHaveLength(2);
+    expect(pageRepository.updatedInput).toBeNull();
+    expect(panelRepository.updatedPanels).toHaveLength(0);
+    expect(assignmentService.updates).toHaveLength(0);
   });
 
   it('episode story plan compiler brief compacts long story context', async () => {
@@ -1475,8 +1618,8 @@ describe('PageService', () => {
     const result = await service.autofillEpisodeFromStory('user-1', 'episode-1', 'ja');
 
     expect(result.compilerUsed).toBe(false);
-    expect(assignmentService.updates).toHaveLength(0);
     expect(panelRepository.updatedPanels).toHaveLength(0);
+    expect(assignmentService.updates).toHaveLength(0);
   });
 
   it('episode story plan は compiler failure 時に quoted noun 由来 dialogue を保存しない', async () => {
@@ -1593,8 +1736,8 @@ describe('PageService', () => {
     const result = await service.autofillEpisodeFromStory('user-1', 'episode-1', 'ja');
 
     expect(result.compilerUsed).toBe(false);
-    expect(assignmentService.updates).toHaveLength(0);
     expect(panelRepository.updatedPanels).toHaveLength(0);
+    expect(assignmentService.updates).toHaveLength(0);
   });
 
   it('compiler の一般例外は握りつぶさず失敗させる', async () => {
@@ -1770,6 +1913,33 @@ function buildEpisodePlanningContext(): EpisodePagePlanContext {
         panels: [buildAutofillPanelContext()],
       },
     ],
+  };
+}
+
+function buildMultiPageEpisodePlanningContext(pageCount: number): EpisodePagePlanContext {
+  const base = buildEpisodePlanningContext();
+  return {
+    ...base,
+    episode: {
+      ...base.episode,
+      estimatedPages: pageCount,
+    },
+    pages: Array.from({ length: pageCount }, (_value, index) => {
+      const pageNumber = index + 1;
+      return {
+        ...base.pages[0]!,
+        pageId: `page-${pageNumber}`,
+        pageNumber,
+        frameCount: 1,
+        panels: [
+          {
+            ...buildAutofillPanelContext(),
+            id: `panel-${pageNumber}`,
+            order: 1,
+          },
+        ],
+      };
+    }),
   };
 }
 

@@ -109,6 +109,16 @@ import {
   type EntityGenerationQueuePort,
 } from './services/entity/EntityGenerationQueue.js';
 import {
+  EpisodeStoryAutofillService,
+  type EpisodeStoryAutofillServicePort,
+} from './services/story/EpisodeStoryAutofillService.js';
+import {
+  InlineEpisodeStoryAutofillQueueAdapter,
+  SqsEpisodeStoryAutofillQueueAdapter,
+  UnconfiguredEpisodeStoryAutofillQueue,
+  type EpisodeStoryAutofillQueuePort,
+} from './services/story/EpisodeStoryAutofillQueue.js';
+import {
   EntityGenerationRecoveryService,
   type EntityGenerationRecoveryServicePort,
 } from './services/entity/EntityGenerationRecoveryService.js';
@@ -186,6 +196,8 @@ export interface AppDependencies {
   entityReferenceService?: EntityReferenceServicePort;
   entityReferenceImageExportService?: EntityReferenceImageExportServicePort;
   entityGenerationQueue?: EntityGenerationQueuePort;
+  episodeStoryAutofillQueue?: EpisodeStoryAutofillQueuePort;
+  episodeStoryAutofillService?: EpisodeStoryAutofillServicePort;
   entityGenerationRecoveryService?: EntityGenerationRecoveryServicePort;
   jobService?: JobServicePort;
   pageExportService?: PageExportServicePort;
@@ -314,6 +326,7 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
       pageExportService: resolvedDependencies.pageExportService,
       pageFinalizeService: resolvedDependencies.pageFinalizeService,
       pageService: resolvedDependencies.pageService,
+      episodeStoryAutofillService: resolvedDependencies.episodeStoryAutofillService,
       pageQueryService: resolvedDependencies.pageQueryService,
       pageGenerationService: resolvedDependencies.pageGenerationService,
       pageLayoutService: resolvedDependencies.pageLayoutService,
@@ -326,6 +339,7 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
       rateLimitMiddleware,
       pageSkeletonService: resolvedDependencies.pageSkeletonService,
       pageService: resolvedDependencies.pageService,
+      episodeStoryAutofillService: resolvedDependencies.episodeStoryAutofillService,
       storyCollaborationService: resolvedDependencies.storyCollaborationService,
       storyService: resolvedDependencies.storyService,
     }),
@@ -469,6 +483,18 @@ function resolveDependencies(
   const billingRepository = new PostgresBillingRepository(db, db);
   const pageRepository = new PostgresPageRepository(db);
   const generationJobRepository = new PostgresGenerationJobRepository(db);
+  const episodeStoryAutofillQueue =
+    dependencies.episodeStoryAutofillQueue ??
+    (inlineWorkerDependencies !== null
+      ? new InlineEpisodeStoryAutofillQueueAdapter(
+          inlineWorkerDependencies.episodeStoryAutofillWorkerService,
+        )
+      : generationQueue !== null
+        ? new SqsEpisodeStoryAutofillQueueAdapter(generationQueue)
+        : new UnconfiguredEpisodeStoryAutofillQueue());
+  const episodeStoryAutofillService =
+    dependencies.episodeStoryAutofillService ??
+    new EpisodeStoryAutofillService(generationJobRepository, episodeStoryAutofillQueue);
   const entityGenerationExecutionRepository = new PostgresEntityGenerationExecutionRepository(db);
   const entityGenerationRecoveryService =
     dependencies.entityGenerationRecoveryService ??
@@ -625,6 +651,8 @@ function resolveDependencies(
     entityReferenceService,
     entityReferenceImageExportService,
     entityGenerationQueue,
+    episodeStoryAutofillQueue,
+    episodeStoryAutofillService,
     entityGenerationRecoveryService,
     jobService,
     pageExportService,
@@ -832,7 +860,11 @@ class StripeBillingClientStub {
     throw new ConfigurationError('Stripe billing is not configured');
   }
 
-  public constructWebhookEvent(): never {
+  public async createSubscriptionUpdatePortalSession(): Promise<never> {
+    throw new ConfigurationError('Stripe billing is not configured');
+  }
+
+  public async constructWebhookEvent(): Promise<never> {
     throw new ConfigurationError('Stripe billing is not configured');
   }
 

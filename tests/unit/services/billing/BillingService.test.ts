@@ -1,6 +1,7 @@
+import type Stripe from 'stripe';
 import { describe, expect, it } from 'vitest';
 import { ConfigurationError, ConflictError, NotFoundError } from '../../../../src/domain/errors/index.js';
-import type { BillingUserProfile } from '../../../../src/domain/types/billing.js';
+import type { ActiveSubscriptionRecord, BillingUserProfile } from '../../../../src/domain/types/billing.js';
 import type { AuthenticatedUser } from '../../../../src/domain/types/user.js';
 import type { StripeBillingClientPort } from '../../../../src/infrastructure/stripe/StripeBillingClient.js';
 import type { DatabaseClient } from '../../../../src/lib/db.js';
@@ -23,7 +24,9 @@ class InMemoryBillingRepository implements BillingRepository {
     stripeCustomerId: null,
     planCode: 'free',
   };
+  public activeSubscription: ActiveSubscriptionRecord | null = null;
   public persistedCustomerId: string | null = null;
+
   private readonly fakeClient: DatabaseClient = {
     query: async <T extends QueryResultRow = QueryResultRow>(): Promise<QueryResult<T>> => ({
       command: '',
@@ -62,6 +65,10 @@ class InMemoryBillingRepository implements BillingRepository {
     return true;
   }
 
+  public async findLatestActiveSubscriptionForUser(): Promise<ActiveSubscriptionRecord | null> {
+    return this.activeSubscription;
+  }
+
   public async findHighestActiveSubscriptionPlanForUserExcluding(): Promise<BillingUserProfile['planCode'] | null> {
     throw new Error('unused');
   }
@@ -89,6 +96,11 @@ class FakeStripeBillingClient implements StripeBillingClientPort {
   public checkoutPriceId: string | null = null;
   public checkoutCustomerId: string | null = null;
   public portalCustomerId: string | null = null;
+  public portalUpdateCustomerId: string | null = null;
+  public portalUpdateSubscriptionId: string | null = null;
+  public portalUpdateSubscriptionItemId: string | null = null;
+  public portalUpdatePriceId: string | null = null;
+  public subscription: Stripe.Subscription = buildStripeSubscription();
 
   public async createCustomer(input: { userId: string }): Promise<{ id: string }> {
     this.createdCustomerUserId = input.userId;
@@ -116,17 +128,33 @@ class FakeStripeBillingClient implements StripeBillingClientPort {
     };
   }
 
-  public constructWebhookEvent(): never {
+  public async createSubscriptionUpdatePortalSession(input: {
+    customerId: string;
+    subscriptionId: string;
+    subscriptionItemId: string;
+    priceId: string;
+  }): Promise<{ id: string; url: string }> {
+    this.portalUpdateCustomerId = input.customerId;
+    this.portalUpdateSubscriptionId = input.subscriptionId;
+    this.portalUpdateSubscriptionItemId = input.subscriptionItemId;
+    this.portalUpdatePriceId = input.priceId;
+    return {
+      id: 'bps_update_123',
+      url: 'https://billing.stripe.test/update-plan',
+    };
+  }
+
+  public async constructWebhookEvent(): Promise<never> {
     throw new Error('unused');
   }
 
-  public async retrieveSubscription(): Promise<never> {
-    throw new Error('unused');
+  public async retrieveSubscription(): Promise<Stripe.Subscription> {
+    return this.subscription;
   }
 }
 
 describe('BillingService', () => {
-  it('free ユーザーのサブスク Checkout で Stripe customer を作成して session を返す', async () => {
+  it('free user subscription checkout creates Stripe customer and session', async () => {
     const repository = new InMemoryBillingRepository();
     const stripeClient = new FakeStripeBillingClient();
     const service = buildService(repository, stripeClient);
@@ -143,27 +171,37 @@ describe('BillingService', () => {
     expect(repository.persistedCustomerId).toBe('cus_123');
   });
 
-  it('有料プラン中のユーザーは subscription checkout を作れず portal へ誘導する', async () => {
+  it('standard to premium returns a Stripe portal subscription update confirmation flow', async () => {
     const repository = new InMemoryBillingRepository();
     repository.billingUser = {
       ...repository.billingUser!,
+      stripeCustomerId: 'cus_existing',
       planCode: 'standard',
     };
+    repository.activeSubscription = buildActiveSubscription();
     const stripeClient = new FakeStripeBillingClient();
     const service = buildService(repository, stripeClient);
 
-    await expect(
-      service.createSubscriptionCheckoutSession(
-        {
-          ...freeUser,
-          planCode: 'standard',
-        },
-        'premium',
-      ),
-    ).rejects.toBeInstanceOf(ConflictError);
+    const result = await service.createSubscriptionCheckoutSession(
+      {
+        ...freeUser,
+        planCode: 'standard',
+      },
+      'premium',
+    );
+
+    expect(result).toEqual({
+      sessionId: 'bps_update_123',
+      url: 'https://billing.stripe.test/update-plan',
+    });
+    expect(stripeClient.checkoutMode).toBeNull();
+    expect(stripeClient.portalUpdateCustomerId).toBe('cus_existing');
+    expect(stripeClient.portalUpdateSubscriptionId).toBe('sub_standard');
+    expect(stripeClient.portalUpdateSubscriptionItemId).toBe('si_standard');
+    expect(stripeClient.portalUpdatePriceId).toBe('price_premium');
   });
 
-  it('subscription checkout uses the database plan as the source of truth', async () => {
+  it('same paid plan change is rejected', async () => {
     const repository = new InMemoryBillingRepository();
     repository.billingUser = {
       ...repository.billingUser!,
@@ -173,13 +211,33 @@ describe('BillingService', () => {
     const stripeClient = new FakeStripeBillingClient();
     const service = buildService(repository, stripeClient);
 
-    await expect(service.createSubscriptionCheckoutSession(freeUser, 'premium')).rejects.toBeInstanceOf(ConflictError);
+    await expect(service.createSubscriptionCheckoutSession(freeUser, 'standard')).rejects.toBeInstanceOf(
+      ConflictError,
+    );
 
     expect(stripeClient.createdCustomerUserId).toBeNull();
     expect(stripeClient.checkoutMode).toBeNull();
   });
 
-  it('credit checkout は既存 customer を再利用する', async () => {
+  it('premium to standard downgrade is rejected and left to customer portal management', async () => {
+    const repository = new InMemoryBillingRepository();
+    repository.billingUser = {
+      ...repository.billingUser!,
+      stripeCustomerId: 'cus_existing',
+      planCode: 'premium',
+    };
+    const stripeClient = new FakeStripeBillingClient();
+    const service = buildService(repository, stripeClient);
+
+    await expect(service.createSubscriptionCheckoutSession(freeUser, 'standard')).rejects.toBeInstanceOf(
+      ConflictError,
+    );
+
+    expect(stripeClient.checkoutMode).toBeNull();
+    expect(stripeClient.portalUpdatePriceId).toBeNull();
+  });
+
+  it('credit checkout reuses existing customer', async () => {
     const repository = new InMemoryBillingRepository();
     repository.billingUser = {
       ...repository.billingUser!,
@@ -197,7 +255,7 @@ describe('BillingService', () => {
     expect(stripeClient.checkoutPriceId).toBe('price_credits_3000');
   });
 
-  it('portal は customer がないと conflict になる', async () => {
+  it('portal requires an existing Stripe customer', async () => {
     const repository = new InMemoryBillingRepository();
     const stripeClient = new FakeStripeBillingClient();
     const service = buildService(repository, stripeClient);
@@ -205,13 +263,15 @@ describe('BillingService', () => {
     await expect(service.createCustomerPortalSession(freeUser.id)).rejects.toBeInstanceOf(ConflictError);
   });
 
-  it('billing user が存在しない場合は not found になる', async () => {
+  it('missing billing user returns not found', async () => {
     const repository = new InMemoryBillingRepository();
     repository.billingUser = null;
     const stripeClient = new FakeStripeBillingClient();
     const service = buildService(repository, stripeClient);
 
-    await expect(service.createCreditCheckoutSession(freeUser, 'credits_200')).rejects.toBeInstanceOf(NotFoundError);
+    await expect(service.createCreditCheckoutSession(freeUser, 'credits_200')).rejects.toBeInstanceOf(
+      NotFoundError,
+    );
   });
 });
 
@@ -254,4 +314,37 @@ function buildService(
       credits_3000: 'price_credits_3000',
     },
   });
+}
+
+function buildActiveSubscription(): ActiveSubscriptionRecord {
+  return {
+    userId: freeUser.id,
+    stripeSubscriptionId: 'sub_standard',
+    planCode: 'standard',
+    status: 'active',
+    currentPeriodStart: new Date('2026-06-01T00:00:00.000Z'),
+    currentPeriodEnd: new Date('2026-07-01T00:00:00.000Z'),
+    cancelAtPeriodEnd: true,
+  };
+}
+
+function buildStripeSubscription(): Stripe.Subscription {
+  return {
+    id: 'sub_standard',
+    object: 'subscription',
+    customer: 'cus_existing',
+    status: 'active',
+    items: {
+      object: 'list',
+      data: [
+        {
+          id: 'si_standard',
+          object: 'subscription_item',
+          quantity: 1,
+        },
+      ],
+      has_more: false,
+      url: '/v1/subscription_items?subscription=sub_standard',
+    },
+  } as Stripe.Subscription;
 }

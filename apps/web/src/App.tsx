@@ -1,9 +1,10 @@
-﻿import { createContext, useContext, useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent, type ReactNode } from 'react';
 import {
   BookOpen,
   Bot,
   Check,
   ChevronDown,
+  ChevronUp,
   CreditCard,
   Image,
   KeyRound,
@@ -45,17 +46,67 @@ import type {
   PanelRecord,
   SceneRecord,
   StoryEpisodeImprovementRecord,
+  BillingBalanceRecord,
   WorkRecord,
 } from './types/api';
 
 type WorkspaceTab = 'story' | 'entities' | 'pages';
 type UiLanguage = 'ja' | 'en';
+type SubscriptionPlanCode = 'free' | 'standard' | 'premium';
+type SubscriptionCheckoutPlanCode = Exclude<SubscriptionPlanCode, 'free'>;
+type CreditCheckoutPackageCode = 'credits_200' | 'credits_1000' | 'credits_3000';
 
 const MAX_EPISODE_PAGES = 32;
 
+const subscriptionPurchaseOptions: Array<{
+  code: SubscriptionCheckoutPlanCode;
+  credits: number;
+  priceJpy: number;
+  label: { en: string; ja: string };
+}> = [
+  {
+    code: 'standard',
+    credits: 50,
+    priceJpy: 1000,
+    label: { en: 'Standard', ja: 'スタンダード' },
+  },
+  {
+    code: 'premium',
+    credits: 175,
+    priceJpy: 3500,
+    label: { en: 'Premium', ja: 'プレミアム' },
+  },
+];
+
+const creditPurchaseOptions: Array<{
+  code: CreditCheckoutPackageCode;
+  credits: number;
+  priceJpy: number;
+}> = [
+  { code: 'credits_200', credits: 10, priceJpy: 220 },
+  { code: 'credits_1000', credits: 50, priceJpy: 1100 },
+  { code: 'credits_3000', credits: 150, priceJpy: 3300 },
+];
+
+const creditUsageItems: Array<{ en: string; ja: string }> = [
+  { en: 'Character preview / import: 1 credit', ja: 'キャラ生成・取り込み: 1cr' },
+  { en: 'Page generation: 3 credits+', ja: 'ページ生成: 3cr〜' },
+  { en: 'Text AI: free', ja: 'テキストAI: 無料' },
+];
+
 interface NoticeState {
-  type: 'error' | 'success';
+  type: 'error' | 'success' | 'info';
   message: string;
+}
+
+interface BillingReturnMarker {
+  kind: 'subscription' | 'credits' | 'portal';
+  createdAt: number;
+  planCode?: SubscriptionCheckoutPlanCode;
+  packageCode?: CreditCheckoutPackageCode;
+  initialPlanCode?: SubscriptionPlanCode;
+  initialTotalCredits?: number;
+  initialPurchasedCredits?: number;
 }
 
 interface WorkDraft {
@@ -240,6 +291,9 @@ type ExportFormat = 'pdf' | 'image';
 const manualTokenStorageKey = 'lyra:web:manual-token';
 const trackedJobsStorageKey = 'lyra:web:tracked-jobs';
 const uiLanguageStorageKey = 'lyra:web:ui-language';
+const billingReturnPendingStorageKey = 'lyra:web:billing-return-pending';
+const billingReturnVerificationIntervalMs = 2_000;
+const billingReturnVerificationTimeoutMs = 45_000;
 const UiLanguageContext = createContext<UiLanguage>('ja');
 const UI_JA_DICTIONARY: Record<string, string> = {
   Story: 'ストーリー',
@@ -251,6 +305,10 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   Works: '作品一覧',
   'New work': '新しい作品',
   'Create work': '作品を作成',
+  'Loading works...': '作品一覧を読み込み中...',
+  'Could not load works.': '作品一覧を読み込めませんでした。',
+  'No works yet.': '作品はまだありません。',
+  Retry: '再読み込み',
   Chapters: '章',
   Episodes: '話',
   Title: 'タイトル',
@@ -329,6 +387,12 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   'Import / References': '取り込み / リファレンス',
   Credits: 'クレジット',
   Jobs: 'ジョブ',
+  Tutorial: 'チュートリアル',
+  'First run guide': '初回の進め方',
+  'Current plan': '現在のプラン',
+  Current: '現在',
+  Free: 'フリー',
+  'Manage paid plans in Stripe.': '有料プランの変更・解約は「サブスク・請求を管理」で行ってください。',
   'production console': '制作コンソール',
   Generate: '生成',
   Confirm: '確定',
@@ -403,6 +467,7 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   'Save story sources': '話の材料を保存',
   'Delete panel': 'コマを削除',
   'Checkout standard': 'サブスク手続き',
+  'Checkout subscription': 'サブスク手続き',
   'Checkout credits': 'クレジット購入',
   'Open portal': '請求管理',
   'Generate page skeleton': 'ページ骨格生成',
@@ -448,6 +513,11 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   generated: '生成',
   'Frame count and panel count do not match. Adjust frames or panels before generating.':
     'フレーム数とコマ数が一致していません。生成前にコマ割りまたはコマを調整してください。',
+  'Page generation is blocked until panel layout and panel content match.':
+    'コマ割りとコマ内容の数が一致するまでページ生成はできません。',
+  'Current count: frames {frames} / panels {panels}. Apply a panel layout template to sync them before generating.':
+    '現在: コマ割り {frames} / コマ内容 {panels}。生成前にコマ割りテンプレートを適用して数を揃えてください。',
+  'Go to panel layout': 'コマ割りへ移動',
   'Create character': 'キャラを作成',
   'Save character': 'キャラを保存',
   'Generate page': 'ページ生成',
@@ -464,6 +534,7 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   'Billing portal': '請求管理',
   page_generate: 'ページ生成',
   entity_generate: 'キャラ生成',
+  episode_story_autofill: '話全体を反映',
   'Switch story context for page editing.': 'ページ編集対象の作品・章・話を選択します。',
   'Double-click image to enlarge': '画像はダブルクリックで拡大',
   'Loading current page plan.':
@@ -922,6 +993,8 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   'Untitled chapter': '無題の章',
   'New episode title': '新しい話タイトル',
   'Untitled episode': '無題の話',
+  'Move up': '上へ',
+  'Move down': '下へ',
   'No location': '場所未設定',
   Add: '追加',
   English: '英語',
@@ -952,8 +1025,17 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   'Character preview generation can take a while. The preview updates when the job finishes.': 'キャラのプレビュー生成は時間がかかる場合があります。完了するとプレビューが更新されます。',
   'Page image generation can take a while. The page image updates when the job finishes.': 'ページ画像生成は時間がかかる場合があります。完了するとページ画像が更新されます。',
   'Queued. Starts soon.': '待機中。順番に処理します。',
+  'Queued. This process can take around 20 minutes.': '待機中です。この処理は20分程度かかる場合があります。',
   'Generating page plan. This can take a while.': '骨格生成中。少し時間がかかります。',
   'Applying story plan to pages and panels.': 'ページとコマへ反映中。',
+  'Applying story plan to pages and panels. This process can take around 20 minutes.':
+    'ページとコマへ反映中です。この処理は20分程度かかる場合があります。',
+  'Compiling story plan chunks. This process can take around 20 minutes.':
+    'ストーリーをページとコマへ分配中です。この処理は20分程度かかる場合があります。',
+  'Saving story plan to pages and panels. This process can take around 20 minutes.':
+    'ページとコマへ保存中です。この処理は20分程度かかる場合があります。',
+  'Story plan applied to pages and panels.': 'ページとコマへの反映が完了しました。',
+  'Story plan autofill failed.': 'ページとコマへの反映に失敗しました。',
   'Generating preview. It updates when finished.': 'プレビュー生成中。完了後に更新されます。',
   'Generating page. It updates when finished.': 'ページ生成中。完了後に更新されます。',
   'You do not need to fill every blank field.': 'すべての空欄を埋める必要はありません。',
@@ -988,8 +1070,92 @@ function translateUiString(language: UiLanguage, value: string): string {
   return value;
 }
 
+function formatFramePanelMismatchDetail(
+  language: UiLanguage,
+  frameCount: number,
+  panelCount: number,
+): string {
+  return translateUiString(
+    language,
+    'Current count: frames {frames} / panels {panels}. Apply a panel layout template to sync them before generating.',
+  )
+    .replace('{frames}', String(frameCount))
+    .replace('{panels}', String(panelCount));
+}
+
+function getEpisodeStoryAutofillProgressMessage(job: GenerationJobRecord): string {
+  const progressMessage = readStringResultField(job, 'progress_message');
+  return progressMessage ?? 'Applying story plan to pages and panels. This process can take around 20 minutes.';
+}
+
+function getJobProgressText(job: GenerationJobRecord, language: UiLanguage): string | null {
+  const progressMessage = readStringResultField(job, 'progress_message');
+  if (progressMessage === null) {
+    return null;
+  }
+
+  const translatedMessage = translateUiString(language, progressMessage);
+  const chunkLabel = getJobProgressChunkLabel(job);
+  return chunkLabel === null ? translatedMessage : `${translatedMessage} (${chunkLabel})`;
+}
+
+function getJobProgressChunkLabel(job: GenerationJobRecord): string | null {
+  const currentChunk = readNumberResultField(job, 'progress_current_chunk');
+  const totalChunks = readNumberResultField(job, 'progress_total_chunks');
+  if (currentChunk === null || totalChunks === null || totalChunks <= 1) {
+    return null;
+  }
+
+  return `${currentChunk}/${totalChunks}`;
+}
+
+function getJobProgressPercent(job: GenerationJobRecord): number | null {
+  const currentChunk = readNumberResultField(job, 'progress_current_chunk');
+  const totalChunks = readNumberResultField(job, 'progress_total_chunks');
+  if (currentChunk === null || totalChunks === null || totalChunks <= 0) {
+    return null;
+  }
+
+  const boundedCurrent = Math.min(Math.max(currentChunk, 0), totalChunks);
+  return Math.round((boundedCurrent / totalChunks) * 100);
+}
+
+function getJobProgressBarState(job: GenerationJobRecord): { percent: number | null; tone: 'active' | 'queued' | 'completed' | 'failed' } | null {
+  const isActive = job.status === 'queued' || job.status === 'processing';
+  const hasPersistedProgress = readStringResultField(job, 'progress_message') !== null;
+  if (!isActive && !hasPersistedProgress) {
+    return null;
+  }
+
+  if (job.status === 'completed') {
+    return { percent: 100, tone: 'completed' };
+  }
+
+  if (job.status === 'failed') {
+    return { percent: 100, tone: 'failed' };
+  }
+
+  return {
+    percent: getJobProgressPercent(job),
+    tone: job.status === 'queued' ? 'queued' : 'active',
+  };
+}
+
+function readStringResultField(job: GenerationJobRecord, field: string): string | null {
+  const value = job.result?.[field];
+  return typeof value === 'string' && value.length > 0 ? value : null;
+}
+
+function readNumberResultField(job: GenerationJobRecord, field: string): number | null {
+  const value = job.result?.[field];
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
 function formatActionSuccessMessage(language: UiLanguage, actionLabel: string, translatedLabel: string): string {
-  const isAsyncGenerationAction = actionLabel === 'Generate page' || actionLabel === 'Generate reference';
+  const isAsyncGenerationAction =
+    actionLabel === 'Generate page' ||
+    actionLabel === 'Generate reference' ||
+    actionLabel === 'Apply story plan';
   if (language === 'ja') {
     return isAsyncGenerationAction ? `${translatedLabel}を開始` : `${translatedLabel}完了`;
   }
@@ -1000,12 +1166,118 @@ function formatActionSuccessMessage(language: UiLanguage, actionLabel: string, t
 function pickUiText(language: UiLanguage, english: string, japanese: string): string {
   return language === 'en' ? english : japanese;
 }
+
+function formatJpy(value: number): string {
+  return `¥${value.toLocaleString('ja-JP')}`;
+}
+
+function formatPlanLabel(language: UiLanguage, planCode: SubscriptionPlanCode): string {
+  const labels: Record<SubscriptionPlanCode, { en: string; ja: string }> = {
+    free: { en: 'Free', ja: 'フリー' },
+    standard: { en: 'Standard', ja: 'スタンダード' },
+    premium: { en: 'Premium', ja: 'プレミアム' },
+  };
+
+  return pickUiText(language, labels[planCode].en, labels[planCode].ja);
+}
+
+const tutorialSteps: Array<{
+  title: { en: string; ja: string };
+  steps: Array<{ en: string; ja: string }>;
+}> = [
+  {
+    title: { en: 'Story', ja: 'ストーリー' },
+    steps: [
+      {
+        en: 'Create a work from New work after entering at least a title.',
+        ja: 'まずタイトルを入力し、「作品を作成」で新しい作品を作ります。',
+      },
+      {
+        en: 'Add the world setting and overall flow roughly, then save.',
+        ja: '世界観や全体の流れを大まかに書いて保存します。',
+      },
+      {
+        en: 'Add a chapter, then add episodes inside that chapter.',
+        ja: '章を追加し、その章の中に話を追加します。',
+      },
+      {
+        en: 'Write the episode with either split input or full input. Use one input mode at a time.',
+        ja: '話の本文は分割入力か一括入力のどちらかで書きます。両方は同時に使わないでください。',
+      },
+      {
+        en: 'Story AI can improve the current episode and apply the result back into the fields.',
+        ja: 'ストーリーAIを使うと、現在の話を改善して入力欄へ反映できます。',
+      },
+      {
+        en: 'Add Scenes with location, time, and atmosphere before using Apply story plan.',
+        ja: '「話全体を反映」を使う前に、シーンへ場所・時間・雰囲気を入力します。',
+      },
+    ],
+  },
+  {
+    title: { en: 'Characters', ja: 'キャラクター' },
+    steps: [
+      {
+        en: 'Press New character and fill the fields you already know.',
+        ja: '「新規キャラ」を押し、分かっている特徴だけ入力します。',
+      },
+      {
+        en: 'You do not need to fill every blank field. Save the selected character before generation.',
+        ja: 'すべての空欄を埋める必要はありません。生成前に選択中のキャラを保存します。',
+      },
+      {
+        en: 'Generate a full-body preview, then confirm the image you want to use as the reference.',
+        ja: '全身プレビューを生成し、使いたい画像をリファレンスとして確定します。',
+      },
+      {
+        en: 'To use your own image, import it first. You can confirm the imported image or generate a new preview from it.',
+        ja: '手元の画像を使う場合は先に取り込みます。取り込み画像を確定することも、そこからプレビュー生成することもできます。',
+      },
+    ],
+  },
+  {
+    title: { en: 'Page Plan And Export', ja: 'ページ骨格と出力' },
+    steps: [
+      {
+        en: 'After creating the needed characters, return to Story and press Generate page plan.',
+        ja: '必要なキャラを作成したらストーリーへ戻り、「ページ骨格生成」を押します。',
+      },
+      {
+        en: 'Page plan generation creates pages, frames, and panel slots. It can take a few minutes.',
+        ja: 'ページ骨格生成では、ページ・コマ割り・コマ枠を作ります。数分かかることがあります。',
+      },
+      {
+        en: 'Use Apply story plan separately when you want the story distributed into panel details and dialogue.',
+        ja: 'コマ内容やセリフまで自動入力したい場合は、別途「話全体を反映」を押します。',
+      },
+      {
+        en: 'Open Pages, review each page, and adjust panel content, frame template, or panel count.',
+        ja: 'ページを開き、各ページのコマ内容・テンプレート・コマ数を確認して調整します。',
+      },
+      {
+        en: 'When ready, press Generate page. The image is created from the current page inputs.',
+        ja: '調整後に「ページ生成」を押すと、現在の入力内容から画像が生成されます。',
+      },
+      {
+        en: 'If the image is not right, edit the panel inputs and generate the page again.',
+        ja: '結果が合わない場合は、コマの入力内容を直してもう一度ページ生成します。',
+      },
+      {
+        en: 'When finished, choose pages and file format, then download them.',
+        ja: '完成したら、保存するページとファイル形式を選んでダウンロードします。',
+      },
+    ],
+  },
+];
+
 const selectedWorkStorageKey = 'lyra:web:selected-work';
 const selectedChapterStorageKey = 'lyra:web:selected-chapter';
 const selectedEpisodeStorageKey = 'lyra:web:selected-episode';
 const selectedPageStorageKey = 'lyra:web:selected-page';
 const cognitoRefreshSkewMs = 120_000;
 const maxBrowserTimeoutMs = 2_147_483_647;
+const splashVisibleMs = 2_000;
+const splashFadeMs = 650;
 const supabaseAuthConfigured = hasSupabaseAuthConfig();
 const cognitoAuthConfig = getCognitoAuthConfig(
   {
@@ -1043,6 +1315,22 @@ export default function App() {
   const [supabaseClient, setSupabaseClient] = useState<SupabaseClient | null>(null);
   const [supabaseSession, setSupabaseSession] = useState<Session | null>(null);
   const [pendingAuth, setPendingAuth] = useState(true);
+  const [showSplash, setShowSplash] = useState(true);
+  const [splashExiting, setSplashExiting] = useState(false);
+
+  useEffect(() => {
+    const exitTimeout = window.setTimeout(() => {
+      setSplashExiting(true);
+    }, splashVisibleMs);
+    const removeTimeout = window.setTimeout(() => {
+      setShowSplash(false);
+    }, splashVisibleMs + splashFadeMs);
+
+    return () => {
+      window.clearTimeout(exitTimeout);
+      window.clearTimeout(removeTimeout);
+    };
+  }, []);
 
   useEffect(() => {
     if (devAuthBypass !== null) {
@@ -1159,11 +1447,18 @@ export default function App() {
     };
   }, [cognitoSession]);
 
+  const renderWithSplash = (content: ReactNode): ReactNode => (
+    <>
+      {content}
+      {showSplash ? <SplashOverlay exiting={splashExiting} /> : null}
+    </>
+  );
+
   if (pendingAuth) {
-    return (
+    return renderWithSplash(
       <div className="screen-center">
         <LoaderCircle className="spin" size={24} />
-      </div>
+      </div>,
     );
   }
 
@@ -1177,7 +1472,7 @@ export default function App() {
       supabaseSession?.access_token ??
       (manualTokenAuthAllowed && manualToken.length > 0 ? manualToken : null);
   if (accessToken === null) {
-    return (
+    return renderWithSplash(
       <AuthScreen
         cognitoAuthConfig={cognitoAuthConfig}
         cognitoAuthError={cognitoAuthError}
@@ -1190,7 +1485,7 @@ export default function App() {
         }}
         onManualTokenChange={setManualToken}
         supabaseClient={supabaseClient}
-      />
+      />,
     );
   }
 
@@ -1202,7 +1497,7 @@ export default function App() {
       supabaseSession?.user.email ??
       'session';
 
-  return (
+  return renderWithSplash(
     <StudioShell
       email={email}
       token={accessToken}
@@ -1219,7 +1514,15 @@ export default function App() {
           window.location.assign(buildCognitoLogoutUrl(cognitoAuthConfig));
         }
       }}
-    />
+    />,
+  );
+}
+
+function SplashOverlay(props: { exiting: boolean }) {
+  return (
+    <div className={`splash-overlay${props.exiting ? ' exiting' : ''}`} aria-hidden="true">
+      <img className="splash-logo" src="/start_lyra.jpg" alt="" />
+    </div>
   );
 }
 
@@ -1390,6 +1693,9 @@ function StudioShell(props: {
   const [lightboxImageUrl, setLightboxImageUrl] = useState<string | null>(null);
   const [lightboxTitle, setLightboxTitle] = useState('');
   const handledJobsRef = useRef<Set<string>>(new Set());
+  const lastWorkspaceRefreshRef = useRef(0);
+  const billingVerificationTargetRef = useRef<BillingReturnMarker | null>(null);
+  const [billingReturnChecking, setBillingReturnChecking] = useState(false);
 
   const trackedJobList = useMemo(() => parseTrackedJobIds(trackedJobIds), [trackedJobIds]);
 
@@ -1398,6 +1704,9 @@ function StudioShell(props: {
     queryFn: () => api.getWorks(),
   });
   const works = useMemo(() => worksQuery.data?.works ?? [], [worksQuery.data?.works]);
+  const showWorksLoading = works.length === 0 && worksQuery.isLoading;
+  const showWorksError = works.length === 0 && worksQuery.isError;
+  const showWorksEmpty = works.length === 0 && worksQuery.isSuccess;
   const balanceQuery = useQuery({
     queryKey: ['billing-balance'],
     queryFn: () => api.getBalance(),
@@ -1530,14 +1839,24 @@ function StudioShell(props: {
       : [...activeJobs]
         .reverse()
         .find((job) => job.job_type === 'page_generate' && job.params.page_id === selectedPage.id) ?? null;
+  const selectedEpisodeStoryAutofillJob =
+    selectedEpisode === null
+      ? null
+      : [...activeJobs]
+        .reverse()
+        .find((job) => job.job_type === 'episode_story_autofill' && job.params.episode_id === selectedEpisode.id) ?? null;
   const skeletonGenerationMessage =
     busyAction === 'Generate page skeleton'
       ? 'Generating page plan. This can take a while.'
       : null;
   const storyPlanProcessingMessage =
-    busyAction === 'Apply story plan'
-      ? 'Applying story plan to pages and panels.'
-      : null;
+    selectedEpisodeStoryAutofillJob !== null
+      ? selectedEpisodeStoryAutofillJob.status === 'queued'
+        ? 'Queued. This process can take around 20 minutes.'
+        : getEpisodeStoryAutofillProgressMessage(selectedEpisodeStoryAutofillJob)
+      : busyAction === 'Apply story plan'
+        ? 'Applying story plan to pages and panels. This process can take around 20 minutes.'
+        : null;
   const selectedPageFrameCount = framesQuery.data?.frames.length ?? selectedPage?.frame_count ?? 0;
   const selectedPagePanelCount = panelsQuery.data?.panels.length ?? selectedPage?.panel_count ?? 0;
   const selectedPageHasFramePanelMismatch =
@@ -1560,6 +1879,124 @@ function StudioShell(props: {
       : busyAction === 'Generate page'
         ? 'Generating page. It updates when finished.'
         : null;
+
+  const refreshWorkspaceQueries = useCallback((force = false): void => {
+    const now = Date.now();
+    if (!force && now - lastWorkspaceRefreshRef.current < 1500) {
+      return;
+    }
+    lastWorkspaceRefreshRef.current = now;
+
+    const queryKeys: Array<readonly unknown[]> = [
+      ['works'],
+      ['billing-balance'],
+    ];
+
+    if (selectedWorkId.length > 0) {
+      queryKeys.push(['chapters', selectedWorkId], ['entities', selectedWorkId]);
+    }
+    if (selectedChapter !== null) {
+      queryKeys.push(['episodes', selectedChapter.id]);
+    }
+    if (selectedEpisode !== null) {
+      queryKeys.push(['scenes', selectedEpisode.id], ['pages', selectedEpisode.id]);
+    }
+    if (selectedPage !== null) {
+      queryKeys.push(['frames', selectedPage.id], ['panels', selectedPage.id]);
+    }
+
+    for (const queryKey of queryKeys) {
+      void queryClient.invalidateQueries({ queryKey });
+    }
+  }, [queryClient, selectedWorkId, selectedChapter, selectedEpisode, selectedPage]);
+
+  const startBillingReturnVerification = useCallback((marker: BillingReturnMarker): void => {
+    billingVerificationTargetRef.current = marker;
+    setBillingReturnChecking(true);
+    setNotice({ type: 'info', message: formatBillingReturnPendingMessage(uiLanguage, marker.kind) });
+    refreshWorkspaceQueries(true);
+  }, [refreshWorkspaceQueries, uiLanguage]);
+
+  useEffect(() => {
+    const consumeBillingReturnMarker = (): BillingReturnMarker | null => {
+      const marker = readBillingReturnMarker(window.sessionStorage.getItem(billingReturnPendingStorageKey));
+      if (marker !== null) {
+        window.sessionStorage.removeItem(billingReturnPendingStorageKey);
+      }
+      return marker;
+    };
+
+    const handlePageShow = (event: PageTransitionEvent): void => {
+      const marker = event.persisted ? null : consumeBillingReturnMarker();
+      if (marker !== null) {
+        startBillingReturnVerification(marker);
+        return;
+      }
+
+      if (event.persisted) {
+        refreshWorkspaceQueries(true);
+      }
+    };
+
+    const handleVisibilityChange = (): void => {
+      if (document.visibilityState !== 'visible') {
+        return;
+      }
+      const marker = consumeBillingReturnMarker();
+      if (marker !== null) {
+        startBillingReturnVerification(marker);
+      }
+    };
+
+    const initialMarker = consumeBillingReturnMarker();
+    if (initialMarker !== null) {
+      startBillingReturnVerification(initialMarker);
+    }
+
+    window.addEventListener('pageshow', handlePageShow);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      window.removeEventListener('pageshow', handlePageShow);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [refreshWorkspaceQueries, startBillingReturnVerification]);
+
+  useEffect(() => {
+    if (!billingReturnChecking) {
+      return;
+    }
+
+    const intervalId = window.setInterval(() => refreshWorkspaceQueries(true), billingReturnVerificationIntervalMs);
+    const timeoutId = window.setTimeout(() => {
+      if (!billingReturnChecking) {
+        return;
+      }
+      billingVerificationTargetRef.current = null;
+      setBillingReturnChecking(false);
+      setNotice({ type: 'info', message: formatBillingReturnTimeoutMessage(uiLanguage) });
+    }, billingReturnVerificationTimeoutMs);
+
+    return () => {
+      window.clearInterval(intervalId);
+      window.clearTimeout(timeoutId);
+    };
+  }, [billingReturnChecking, refreshWorkspaceQueries, uiLanguage]);
+
+  useEffect(() => {
+    const marker = billingVerificationTargetRef.current;
+    if (!billingReturnChecking || marker === null || balanceQuery.data === undefined) {
+      return;
+    }
+
+    if (!isBillingReturnSatisfied(balanceQuery.data, marker)) {
+      return;
+    }
+
+    billingVerificationTargetRef.current = null;
+    setBillingReturnChecking(false);
+    setNotice({ type: 'success', message: formatBillingReturnSuccessMessage(uiLanguage, marker.kind) });
+  }, [balanceQuery.data, billingReturnChecking, uiLanguage]);
 
   useEffect(() => {
     if (worksQuery.data?.works === undefined) {
@@ -1720,6 +2157,15 @@ function StudioShell(props: {
 
           void queryClient.invalidateQueries({ queryKey: ['pages'] });
         }
+        if (job.job_type === 'episode_story_autofill') {
+          const episodeId = typeof job.params.episode_id === 'string' ? job.params.episode_id : null;
+          if (episodeId !== null) {
+            void queryClient.invalidateQueries({ queryKey: ['pages', episodeId] });
+          }
+          void queryClient.invalidateQueries({ queryKey: ['pages'] });
+          void queryClient.invalidateQueries({ queryKey: ['panels'] });
+          void queryClient.invalidateQueries({ queryKey: ['frames'] });
+        }
         if (job.job_type === 'entity_generate') {
           const entityId = typeof job.params.entity_id === 'string' ? job.params.entity_id : null;
             if (entityId !== null) {
@@ -1787,6 +2233,15 @@ function StudioShell(props: {
     if (!hasSelectionForCurrentCandidates) {
       setReferenceSelection(referenceCandidates.map((candidate) => candidate.s3_key));
       setReferencePrimaryKey(referenceCandidates[0]?.s3_key ?? '');
+      return;
+    }
+
+    if (
+      referencePrimaryKey.length > 0 &&
+      !referenceSelection.includes(referencePrimaryKey) &&
+      referenceCandidates.some((candidate) => candidate.s3_key === referencePrimaryKey)
+    ) {
+      setReferenceSelection([...referenceSelection, referencePrimaryKey]);
       return;
     }
 
@@ -1899,6 +2354,17 @@ function StudioShell(props: {
     }
   };
 
+  const runExternalRedirectAction = async (label: string, action: () => Promise<void>): Promise<void> => {
+    try {
+      setBusyAction(label);
+      setNotice({ type: 'info', message: formatExternalRedirectPendingMessage(uiLanguage, label) });
+      await action();
+    } catch (error) {
+      setNotice({ type: 'error', message: toMessage(error) });
+      setBusyAction(null);
+    }
+  };
+
   const trackJob = (jobId: string): void => {
     setTrackedJobIds(JSON.stringify(Array.from(new Set([jobId, ...trackedJobList])).slice(0, 24)));
   };
@@ -1997,7 +2463,7 @@ function StudioShell(props: {
       <div className="app-shell">
       <aside className="sidebar">
         <div className="brand">
-          <div className="brand-mark">L</div>
+          <img className="brand-mark" src="/logo.png" alt="Lyra" />
           <div>
             <div className="brand-title">Lyra</div>
             <div className="brand-subtitle">{translateUiString(uiLanguage, 'production console')}</div>
@@ -2006,10 +2472,12 @@ function StudioShell(props: {
         <section className="sidebar-section">
           <div className="section-header">
             <h2>{translateUiString(uiLanguage, 'Works')}</h2>
-            <span className="badge">{worksQuery.data?.works.length ?? 0}</span>
+            <span className={`badge ${worksQuery.isFetching ? 'loading' : ''}`}>
+              {worksQuery.isFetching && works.length === 0 ? <LoaderCircle className="spin" size={12} /> : works.length}
+            </span>
           </div>
           <div className="stack gap-xs">
-            {(worksQuery.data?.works ?? []).map((work) => (
+            {works.map((work) => (
               <button
                 key={work.id}
                 className={`nav-item ${selectedWorkId === work.id ? 'active' : ''}`}
@@ -2020,6 +2488,26 @@ function StudioShell(props: {
                 <span>{work.title}</span>
               </button>
             ))}
+            {showWorksLoading ? (
+              <div className="sidebar-status">
+                <LoaderCircle className="spin" size={14} />
+                <span>{translateUiString(uiLanguage, 'Loading works...')}</span>
+              </div>
+            ) : null}
+            {showWorksError ? (
+              <div className="sidebar-status error">
+                <span>{translateUiString(uiLanguage, 'Could not load works.')}</span>
+                <button className="ghost-button" onClick={() => void worksQuery.refetch()} type="button">
+                  <RefreshCw size={14} />
+                  {translateUiString(uiLanguage, 'Retry')}
+                </button>
+              </div>
+            ) : null}
+            {showWorksEmpty ? (
+              <div className="sidebar-status">
+                <span>{translateUiString(uiLanguage, 'No works yet.')}</span>
+              </div>
+            ) : null}
           </div>
         </section>
         <section className="sidebar-section">
@@ -2204,6 +2692,7 @@ function StudioShell(props: {
                               setSelectedPanelId('');
                               await api.generatePageSkeleton(selectedEpisode.id, {
                                 overwrite_existing: overwriteExisting,
+                                apply_story_plan: false,
                                 language: uiLanguage,
                               });
                               await queryClient.invalidateQueries({ queryKey: ['episodes', selectedChapter?.id ?? ''] });
@@ -2219,15 +2708,19 @@ function StudioShell(props: {
                         </button>
                         <button
                           className="ghost-button"
-                          disabled={selectedEpisode === null || busyAction === 'Apply story plan'}
+                          disabled={
+                            selectedEpisode === null ||
+                            busyAction === 'Apply story plan' ||
+                            selectedEpisodeStoryAutofillJob !== null
+                          }
                           onClick={() => {
                             if (selectedEpisode === null) {
                               return;
                             }
                             void runAction('Apply story plan', async () => {
                               await saveCurrentEpisodeContext();
-                              await api.autofillEpisodePagesFromStory(selectedEpisode.id, uiLanguage);
-                              await queryClient.invalidateQueries({ queryKey: ['pages', selectedEpisode.id] });
+                              const result = await api.autofillEpisodePagesFromStory(selectedEpisode.id, uiLanguage);
+                              trackJob(result.job_id);
                               setActiveTab('pages');
                             });
                           }}
@@ -2243,10 +2736,16 @@ function StudioShell(props: {
                       <div className="muted small">{translateUiString(uiLanguage, skeletonActionMessage)}</div>
                     ) : null}
                     {skeletonGenerationMessage !== null ? (
-                      <ProcessingHint message={translateUiString(uiLanguage, skeletonGenerationMessage)} />
+                      <ProcessingHint message={translateUiString(uiLanguage, skeletonGenerationMessage)} showProgress />
                     ) : null}
                     {storyPlanProcessingMessage !== null ? (
-                      <ProcessingHint message={translateUiString(uiLanguage, storyPlanProcessingMessage)} />
+                      <ProcessingHint
+                        message={translateUiString(uiLanguage, storyPlanProcessingMessage)}
+                        progressPercent={
+                          selectedEpisodeStoryAutofillJob === null ? null : getJobProgressPercent(selectedEpisodeStoryAutofillJob)
+                        }
+                        showProgress
+                      />
                     ) : null}
                     {selectedEpisode !== null ? (
                       <div className="state-pill-row">
@@ -2259,20 +2758,53 @@ function StudioShell(props: {
                       <div className="tree-column">
                         <h3>{translateUiString(uiLanguage, 'Chapters')}</h3>
                         <div className="stack gap-xs">
-                          {chapters.map((chapter) => (
-                            <button
-                              key={chapter.id}
-                              className={`tree-item ${selectedChapter?.id === chapter.id ? 'active' : ''}`}
-                              onClick={() => {
-                                setSelectedChapterId(chapter.id);
-                                setSelectedEpisodeId('');
-                                setSelectedWorkId(selectedWork.id);
-                              }}
-                              type="button"
-                            >
-                              <span>{chapter.order}</span>
-                              <strong>{chapter.title ?? translateUiString(uiLanguage, 'Untitled chapter')}</strong>
-                            </button>
+                          {chapters.map((chapter, chapterIndex) => (
+                            <div className="tree-item-row" key={chapter.id}>
+                              <button
+                                className={`tree-item ${selectedChapter?.id === chapter.id ? 'active' : ''}`}
+                                onClick={() => {
+                                  setSelectedChapterId(chapter.id);
+                                  setSelectedEpisodeId('');
+                                  setSelectedWorkId(selectedWork.id);
+                                }}
+                                type="button"
+                              >
+                                <span>{chapter.order}</span>
+                                <strong>{chapter.title ?? translateUiString(uiLanguage, 'Untitled chapter')}</strong>
+                              </button>
+                              <div className="tree-order-actions">
+                                <button
+                                  aria-label={translateUiString(uiLanguage, 'Move up')}
+                                  className="icon-button"
+                                  disabled={busyAction !== null || chapterIndex === 0}
+                                  onClick={() =>
+                                    void runAction(`Move chapter ${chapter.id} up`, async () => {
+                                      await api.moveChapter(chapter.id, 'up');
+                                      await queryClient.invalidateQueries({ queryKey: ['chapters', selectedWork.id] });
+                                    })
+                                  }
+                                  title={translateUiString(uiLanguage, 'Move up')}
+                                  type="button"
+                                >
+                                  <ChevronUp size={15} />
+                                </button>
+                                <button
+                                  aria-label={translateUiString(uiLanguage, 'Move down')}
+                                  className="icon-button"
+                                  disabled={busyAction !== null || chapterIndex === chapters.length - 1}
+                                  onClick={() =>
+                                    void runAction(`Move chapter ${chapter.id} down`, async () => {
+                                      await api.moveChapter(chapter.id, 'down');
+                                      await queryClient.invalidateQueries({ queryKey: ['chapters', selectedWork.id] });
+                                    })
+                                  }
+                                  title={translateUiString(uiLanguage, 'Move down')}
+                                  type="button"
+                                >
+                                  <ChevronDown size={15} />
+                                </button>
+                              </div>
+                            </div>
                           ))}
                         </div>
                         <form
@@ -2359,16 +2891,49 @@ function StudioShell(props: {
                         ) : null}
                         <h3>{translateUiString(uiLanguage, 'Episodes')}</h3>
                         <div className="stack gap-xs">
-                          {episodes.map((episode) => (
-                            <button
-                              key={episode.id}
-                              className={`tree-item ${selectedEpisodeId === episode.id ? 'active' : ''}`}
-                              onClick={() => setSelectedEpisodeId(episode.id)}
-                              type="button"
-                            >
-                              <span>{episode.order}</span>
-                              <strong>{episode.title ?? translateUiString(uiLanguage, 'Untitled episode')}</strong>
-                            </button>
+                          {episodes.map((episode, episodeIndex) => (
+                            <div className="tree-item-row" key={episode.id}>
+                              <button
+                                className={`tree-item ${selectedEpisodeId === episode.id ? 'active' : ''}`}
+                                onClick={() => setSelectedEpisodeId(episode.id)}
+                                type="button"
+                              >
+                                <span>{episode.order}</span>
+                                <strong>{episode.title ?? translateUiString(uiLanguage, 'Untitled episode')}</strong>
+                              </button>
+                              <div className="tree-order-actions">
+                                <button
+                                  aria-label={translateUiString(uiLanguage, 'Move up')}
+                                  className="icon-button"
+                                  disabled={busyAction !== null || episodeIndex === 0}
+                                  onClick={() =>
+                                    void runAction(`Move episode ${episode.id} up`, async () => {
+                                      await api.moveEpisode(episode.id, 'up');
+                                      await queryClient.invalidateQueries({ queryKey: ['episodes', selectedChapter?.id ?? ''] });
+                                    })
+                                  }
+                                  title={translateUiString(uiLanguage, 'Move up')}
+                                  type="button"
+                                >
+                                  <ChevronUp size={15} />
+                                </button>
+                                <button
+                                  aria-label={translateUiString(uiLanguage, 'Move down')}
+                                  className="icon-button"
+                                  disabled={busyAction !== null || episodeIndex === episodes.length - 1}
+                                  onClick={() =>
+                                    void runAction(`Move episode ${episode.id} down`, async () => {
+                                      await api.moveEpisode(episode.id, 'down');
+                                      await queryClient.invalidateQueries({ queryKey: ['episodes', selectedChapter?.id ?? ''] });
+                                    })
+                                  }
+                                  title={translateUiString(uiLanguage, 'Move down')}
+                                  type="button"
+                                >
+                                  <ChevronDown size={15} />
+                                </button>
+                              </div>
+                            </div>
                           ))}
                         </div>
                         {selectedChapter !== null ? (
@@ -3048,11 +3613,18 @@ function StudioShell(props: {
                         </button>
                         <button
                           className="primary-button"
-                          disabled={referenceSelection.length === 0}
+                          disabled={referenceSelection.length === 0 && referencePrimaryKey.length === 0}
                           onClick={() =>
                             void runAction('Confirm references', async () => {
+                              const selectedReferenceKeys = Array.from(
+                                new Set(
+                                  referencePrimaryKey.length > 0
+                                    ? [...referenceSelection, referencePrimaryKey]
+                                    : referenceSelection,
+                                ),
+                              );
                               await api.confirmEntityReference(selectedEntity.id, {
-                                selected_s3_keys: referenceSelection,
+                                selected_s3_keys: selectedReferenceKeys,
                                 primary_s3_key: referencePrimaryKey,
                                 prompt_supplement: entityDraft.prompt_supplement || null,
                               });
@@ -3075,6 +3647,10 @@ function StudioShell(props: {
                       <ProcessingHint
                         message={translateUiString(uiLanguage, entityPreviewGenerationMessage)}
                         queued={selectedEntityGenerationJob?.status === 'queued'}
+                        progressPercent={
+                          selectedEntityGenerationJob === null ? null : getJobProgressPercent(selectedEntityGenerationJob)
+                        }
+                        showProgress
                       />
                     ) : null}
                     <div className="reference-management-grid">
@@ -3119,7 +3695,14 @@ function StudioShell(props: {
                                       <input
                                         checked={referencePrimaryKey === candidate.s3_key}
                                         name="reference-primary"
-                                        onChange={() => setReferencePrimaryKey(candidate.s3_key)}
+                                        onChange={() => {
+                                          setReferencePrimaryKey(candidate.s3_key);
+                                          setReferenceSelection((current) =>
+                                            current.includes(candidate.s3_key)
+                                              ? current
+                                              : [...current, candidate.s3_key],
+                                          );
+                                        }}
                                         type="radio"
                                       />
                                       {translateUiString(uiLanguage, 'Primary reference')}
@@ -3423,6 +4006,10 @@ function StudioShell(props: {
                           <ProcessingHint
                             message={translateUiString(uiLanguage, pageImageGenerationMessage)}
                             queued={selectedPageGenerationJob?.status === 'queued'}
+                            progressPercent={
+                              selectedPageGenerationJob === null ? null : getJobProgressPercent(selectedPageGenerationJob)
+                            }
+                            showProgress
                           />
                         ) : null}
                         <div className="state-pill-row">
@@ -3431,10 +4018,31 @@ function StudioShell(props: {
                           </span>
                         </div>
                         {selectedPageHasFramePanelMismatch ? (
-                          <div className="state-pill-row">
-                            <span className="state-pill state-pill-warn">
-                              {translateUiString(uiLanguage, 'Frame count and panel count do not match. Adjust frames or panels before generating.')}
-                            </span>
+                          <div className="generation-blocking-hint" role="alert">
+                            <div className="generation-blocking-copy">
+                              <strong>
+                                {translateUiString(uiLanguage, 'Page generation is blocked until panel layout and panel content match.')}
+                              </strong>
+                              <span>
+                                {formatFramePanelMismatchDetail(
+                                  uiLanguage,
+                                  selectedPageFrameCount,
+                                  selectedPagePanelCount,
+                                )}
+                              </span>
+                            </div>
+                            <button
+                              className="ghost-button generation-blocking-action"
+                              onClick={() => {
+                                document
+                                  .querySelector('.page-section-frames-panels')
+                                  ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                              }}
+                              type="button"
+                            >
+                              <LayoutGrid size={14} />
+                              {translateUiString(uiLanguage, 'Go to panel layout')}
+                            </button>
                           </div>
                         ) : null}
                         {selectedPage.generated_image !== null ? (
@@ -3860,74 +4468,60 @@ function StudioShell(props: {
             </section>
 
             <aside className="rail">
-              <PanelSection title="Credits" compact>
-                {balanceQuery.data !== undefined ? (
-                  <div className="metric-grid">
-                    <Metric label="Total" value={String(balanceQuery.data.total_credits)} />
-                    <Metric label="Monthly" value={String(balanceQuery.data.monthly_credits)} />
-                    <Metric label="Purchased" value={String(balanceQuery.data.purchased_credits)} />
-                  </div>
-                ) : (
-                  <LoaderCircle className="spin" size={16} />
-                )}
-                <div className="stack gap-xs">
-                  <button
-                    className="secondary-button"
-                    onClick={() =>
-                      void runAction('Checkout standard', async () => {
-                        const result = await api.createSubscriptionCheckout('standard');
-                        redirectToExternalUrl(result.url);
-                      })
-                    }
-                    type="button"
-                  >
-                    <CreditCard size={16} />
-                    {translateUiString(uiLanguage, 'Subscription plan')}
-                  </button>
-                  <button
-                    className="ghost-button"
-                    onClick={() =>
-                      void runAction('Checkout credits', async () => {
-                        const result = await api.createCreditCheckout('credits_1000');
-                        redirectToExternalUrl(result.url);
-                      })
-                    }
-                    type="button"
-                  >
-                    <CreditCard size={16} />
-                    {translateUiString(uiLanguage, 'Add 50 credits / ¥1,100')}
-                  </button>
-                  <button
-                    className="ghost-button"
-                    onClick={() =>
-                      void runAction('Open portal', async () => {
-                        const result = await api.createCustomerPortal();
-                        redirectToExternalUrl(result.url);
-                      })
-                    }
-                    type="button"
-                  >
-                    <CreditCard size={16} />
-                    {translateUiString(uiLanguage, 'Billing portal')}
-                  </button>
-                </div>
-              </PanelSection>
+              <BillingPanel
+                balance={balanceQuery.data}
+                balanceRefreshing={balanceQuery.isFetching}
+                billingReturnChecking={billingReturnChecking}
+                busyAction={busyAction}
+                onOpenPortal={() =>
+                  void runExternalRedirectAction('Open portal', async () => {
+                    const result = await api.createCustomerPortal();
+                    redirectToBillingUrl(result.url, createBillingReturnMarker('portal', balanceQuery.data));
+                  })
+                }
+                onPurchaseCredits={(packageCode) =>
+                  void runExternalRedirectAction('Checkout credits', async () => {
+                    const result = await api.createCreditCheckout(packageCode);
+                    redirectToBillingUrl(result.url, createBillingReturnMarker('credits', balanceQuery.data, { packageCode }));
+                  })
+                }
+                onStartSubscription={(planCode) =>
+                  void runExternalRedirectAction('Checkout subscription', async () => {
+                    const result = await api.createSubscriptionCheckout(planCode);
+                    redirectToBillingUrl(result.url, createBillingReturnMarker('subscription', balanceQuery.data, { planCode }));
+                  })
+                }
+              />
 
               <PanelSection title="Jobs" compact>
                 <div className="stack gap-xs">
-                  {jobs.map((job) => (
-                    <div key={job.id} className="job-row">
-                      <div>
-                        <strong>{translateUiString(uiLanguage, job.job_type)}</strong>
-                        <div className="muted small">{job.id}</div>
+                  {jobs.map((job) => {
+                    const progressText = getJobProgressText(job, uiLanguage);
+                    const progressBarState = getJobProgressBarState(job);
+                    return (
+                      <div key={job.id} className="job-row">
+                        <div>
+                          <strong>{translateUiString(uiLanguage, job.job_type)}</strong>
+                          <div className="muted small">{job.id}</div>
+                          {progressText !== null ? (
+                            <div className="muted small">{progressText}</div>
+                          ) : null}
+                          {progressBarState !== null ? (
+                            <ProgressBar compact percent={progressBarState.percent} tone={progressBarState.tone} />
+                          ) : null}
+                        </div>
+                        <StatusBadge value={job.status} />
                       </div>
-                      <StatusBadge value={job.status} />
-                    </div>
-                  ))}
+                    );
+                  })}
                   {jobs.length === 0 ? (
                     <div className="muted small">{translateUiString(uiLanguage, 'No recent jobs.')}</div>
                   ) : null}
                 </div>
+              </PanelSection>
+
+              <PanelSection title="Tutorial" subtitle="First run guide" compact collapsible>
+                <TutorialGuide />
               </PanelSection>
             </aside>
           </div>
@@ -4046,15 +4640,215 @@ function PanelSection(props: {
   );
 }
 
+function BillingPanel(props: {
+  balance: BillingBalanceRecord | undefined;
+  balanceRefreshing: boolean;
+  billingReturnChecking: boolean;
+  busyAction: string | null;
+  onOpenPortal: () => void;
+  onPurchaseCredits: (packageCode: CreditCheckoutPackageCode) => void;
+  onStartSubscription: (planCode: SubscriptionCheckoutPlanCode) => void;
+}) {
+  const language = useContext(UiLanguageContext);
+  const actionBusy = props.busyAction === 'Checkout subscription' || props.busyAction === 'Checkout credits' || props.busyAction === 'Open portal';
+  const currentPlanCode = props.balance?.plan_code ?? null;
+  const isPaidPlan = currentPlanCode === 'standard' || currentPlanCode === 'premium';
+  const canSelectSubscriptionPlan = (planCode: SubscriptionCheckoutPlanCode): boolean => {
+    if (actionBusy || currentPlanCode === null || currentPlanCode === planCode) {
+      return false;
+    }
+
+    if (currentPlanCode === 'free') {
+      return true;
+    }
+
+    if (currentPlanCode === 'standard') {
+      return planCode === 'premium';
+    }
+
+    return false;
+  };
+  const paidPlanNote =
+    currentPlanCode === 'standard'
+      ? pickUiText(
+          language,
+          'Manage paid plan changes and cancellation from "Manage subscription and invoices".',
+          '有料プランの変更・解約は「サブスク・請求を管理」で行ってください。',
+        )
+      : currentPlanCode === 'premium'
+        ? pickUiText(
+            language,
+            'Manage paid plan changes and cancellation from "Manage subscription and invoices".',
+            '有料プランの変更・解約は「サブスク・請求を管理」で行ってください。',
+          )
+        : null;
+  const billingStatusMessage = actionBusy
+    ? pickUiText(language, 'Preparing Stripe...', 'Stripeページを準備中...')
+    : props.billingReturnChecking
+      ? pickUiText(language, 'Confirming payment result...', '決済結果を確認中...')
+      : props.balanceRefreshing
+        ? pickUiText(language, 'Updating balance...', '残高を更新中...')
+        : null;
+
+  return (
+    <PanelSection
+      title="Credits"
+      subtitle={pickUiText(language, 'Buy and manage credits', '購入と管理')}
+      compact
+      className="billing-panel"
+    >
+      {billingStatusMessage !== null ? (
+        <div className="billing-status">
+          <LoaderCircle className="spin" size={13} />
+          <span>{billingStatusMessage}</span>
+        </div>
+      ) : null}
+
+      {props.balance !== undefined ? (
+        <>
+          <div className="billing-current-plan">
+            <span>{translateUiString(language, 'Current plan')}</span>
+            <strong>{formatPlanLabel(language, props.balance.plan_code)}</strong>
+          </div>
+          <div className="metric-grid billing-balance-grid">
+            <Metric label="Total" value={String(props.balance.total_credits)} />
+            <Metric label="Monthly" value={String(props.balance.monthly_credits)} />
+            <Metric label="Purchased" value={String(props.balance.purchased_credits)} />
+          </div>
+        </>
+      ) : (
+        <div className="billing-loading">
+          <LoaderCircle className="spin" size={16} />
+          <span>{pickUiText(language, 'Loading balance', '残高を読み込み中')}</span>
+        </div>
+      )}
+
+      <div className="billing-block">
+        <div className="billing-block-header">
+          <strong>{pickUiText(language, 'Monthly plan', '月額プラン')}</strong>
+          <span>{pickUiText(language, 'Best value', '最安単価')}</span>
+        </div>
+        {subscriptionPurchaseOptions.map((plan) => (
+          <button
+            className={`billing-option primary-billing-option ${currentPlanCode === plan.code ? 'current' : ''}`}
+            disabled={!canSelectSubscriptionPlan(plan.code)}
+            key={plan.code}
+            onClick={() => props.onStartSubscription(plan.code)}
+            type="button"
+          >
+            <span>
+              <strong>{pickUiText(language, plan.label.en, plan.label.ja)}</strong>
+              <small>
+                {pickUiText(language, `${plan.credits} credits / month`, `月${plan.credits}クレジット`)}
+              </small>
+            </span>
+            <span className="billing-price">
+              {currentPlanCode === plan.code ? translateUiString(language, 'Current') : formatJpy(plan.priceJpy)}
+            </span>
+          </button>
+        ))}
+        {isPaidPlan && paidPlanNote !== null ? <div className="billing-note">{paidPlanNote}</div> : null}
+      </div>
+
+      <div className="billing-block">
+        <div className="billing-block-header">
+          <strong>{pickUiText(language, 'One-time credits', '単発クレジット')}</strong>
+          <span>{pickUiText(language, 'No renewal', '更新なし')}</span>
+        </div>
+        <div className="billing-pack-grid">
+          {creditPurchaseOptions.map((pack) => (
+            <button
+              className="billing-option"
+              disabled={actionBusy}
+              key={pack.code}
+              onClick={() => props.onPurchaseCredits(pack.code)}
+              type="button"
+            >
+              <span>
+                <strong>{pickUiText(language, `${pack.credits} credits`, `${pack.credits}クレジット`)}</strong>
+                <small>{pickUiText(language, 'one-time', '買い切り')}</small>
+              </span>
+              <span className="billing-price">{formatJpy(pack.priceJpy)}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="billing-usage">
+        {creditUsageItems.map((item) => (
+          <span key={item.en}>{pickUiText(language, item.en, item.ja)}</span>
+        ))}
+      </div>
+
+      <button className="ghost-button billing-portal-button" disabled={actionBusy} onClick={props.onOpenPortal} type="button">
+        <CreditCard size={16} />
+        <span>{pickUiText(language, 'Manage subscription and invoices', 'サブスク・請求を管理')}</span>
+      </button>
+    </PanelSection>
+  );
+}
+
+function TutorialGuide() {
+  const language = useContext(UiLanguageContext);
+
+  return (
+    <div className="tutorial-guide">
+      {tutorialSteps.map((group) => (
+        <section key={group.title.en} className="tutorial-group">
+          <h3>{pickUiText(language, group.title.en, group.title.ja)}</h3>
+          <ol>
+            {group.steps.map((step) => (
+              <li key={step.en}>{pickUiText(language, step.en, step.ja)}</li>
+            ))}
+          </ol>
+        </section>
+      ))}
+    </div>
+  );
+}
+
 function NoticeBanner(props: { notice: NoticeState }) {
   return <div className={`notice ${props.notice.type}`}>{props.notice.message}</div>;
 }
 
-function ProcessingHint(props: { message: string; queued?: boolean }) {
+function ProcessingHint(props: { message: string; progressPercent?: number | null; queued?: boolean; showProgress?: boolean }) {
   return (
     <div className={`processing-hint ${props.queued ? 'queued' : 'processing'}`}>
-      <LoaderCircle className="spin" size={14} />
-      <span>{props.message}</span>
+      <div className="processing-hint-line">
+        <LoaderCircle className="spin" size={14} />
+        <span>{props.message}</span>
+      </div>
+      {props.showProgress === true ? (
+        <ProgressBar percent={props.progressPercent ?? null} tone={props.queued ? 'queued' : 'active'} />
+      ) : null}
+    </div>
+  );
+}
+
+function ProgressBar(props: {
+  compact?: boolean;
+  percent: number | null;
+  tone: 'active' | 'queued' | 'completed' | 'failed';
+}) {
+  const normalizedPercent = props.percent === null ? null : Math.min(100, Math.max(0, props.percent));
+  const className = [
+    'progress-bar',
+    normalizedPercent === null ? 'indeterminate' : 'determinate',
+    `progress-${props.tone}`,
+    props.compact === true ? 'compact' : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
+
+  return (
+    <div
+      className={className}
+      role="progressbar"
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={normalizedPercent ?? undefined}
+    >
+      <div className="progress-bar-fill" style={normalizedPercent === null ? undefined : { width: `${normalizedPercent}%` }} />
     </div>
   );
 }
@@ -6640,6 +7434,114 @@ function redirectToExternalUrl(value: string): void {
   }
 
   window.location.assign(url.toString());
+}
+
+function createBillingReturnMarker(
+  kind: BillingReturnMarker['kind'],
+  balance: BillingBalanceRecord | undefined,
+  details: Pick<BillingReturnMarker, 'planCode' | 'packageCode'> = {},
+): BillingReturnMarker {
+  return {
+    kind,
+    createdAt: Date.now(),
+    planCode: details.planCode,
+    packageCode: details.packageCode,
+    initialPlanCode: balance?.plan_code,
+    initialTotalCredits: balance?.total_credits,
+    initialPurchasedCredits: balance?.purchased_credits,
+  };
+}
+
+function readBillingReturnMarker(value: string | null): BillingReturnMarker | null {
+  if (value === null) {
+    return null;
+  }
+
+  if (value === '1') {
+    return { kind: 'portal', createdAt: Date.now() };
+  }
+
+  try {
+    const parsed = JSON.parse(value) as Partial<BillingReturnMarker>;
+    if (parsed.kind !== 'subscription' && parsed.kind !== 'credits' && parsed.kind !== 'portal') {
+      return null;
+    }
+
+    return {
+      kind: parsed.kind,
+      createdAt: typeof parsed.createdAt === 'number' ? parsed.createdAt : Date.now(),
+      planCode: parsed.planCode === 'standard' || parsed.planCode === 'premium' ? parsed.planCode : undefined,
+      packageCode:
+        parsed.packageCode === 'credits_200' || parsed.packageCode === 'credits_1000' || parsed.packageCode === 'credits_3000'
+          ? parsed.packageCode
+          : undefined,
+      initialPlanCode:
+        parsed.initialPlanCode === 'free' || parsed.initialPlanCode === 'standard' || parsed.initialPlanCode === 'premium'
+          ? parsed.initialPlanCode
+          : undefined,
+      initialTotalCredits: typeof parsed.initialTotalCredits === 'number' ? parsed.initialTotalCredits : undefined,
+      initialPurchasedCredits: typeof parsed.initialPurchasedCredits === 'number' ? parsed.initialPurchasedCredits : undefined,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function isBillingReturnSatisfied(balance: BillingBalanceRecord, marker: BillingReturnMarker): boolean {
+  if (marker.kind === 'subscription' && marker.planCode !== undefined) {
+    return balance.plan_code === marker.planCode;
+  }
+
+  if (marker.kind === 'credits') {
+    if (marker.initialPurchasedCredits !== undefined && balance.purchased_credits > marker.initialPurchasedCredits) {
+      return true;
+    }
+    if (marker.initialTotalCredits !== undefined && balance.total_credits > marker.initialTotalCredits) {
+      return true;
+    }
+    return false;
+  }
+
+  return Date.now() - marker.createdAt >= billingReturnVerificationIntervalMs;
+}
+
+function formatExternalRedirectPendingMessage(language: UiLanguage, label: string): string {
+  if (label === 'Open portal') {
+    return pickUiText(language, 'Opening Stripe billing...', 'Stripeの請求管理を開いています。');
+  }
+  return pickUiText(language, 'Preparing Stripe checkout...', 'Stripeの決済ページを準備中です。');
+}
+function formatBillingReturnPendingMessage(language: UiLanguage, kind: BillingReturnMarker['kind']): string {
+  if (kind === 'subscription') {
+    return pickUiText(language, 'Confirming your plan...', 'プランを確認中です。');
+  }
+  if (kind === 'credits') {
+    return pickUiText(language, 'Confirming your credits...', 'クレジットを確認中です。');
+  }
+  return pickUiText(language, 'Refreshing billing...', '請求情報を更新中です。');
+}
+
+function formatBillingReturnSuccessMessage(language: UiLanguage, kind: BillingReturnMarker['kind']): string {
+  if (kind === 'subscription') {
+    return pickUiText(language, 'Plan updated.', 'プランを更新しました。');
+  }
+  if (kind === 'credits') {
+    return pickUiText(language, 'Credits updated.', 'クレジットを更新しました。');
+  }
+  return pickUiText(language, 'Billing updated.', '請求情報を更新しました。');
+}
+
+function formatBillingReturnTimeoutMessage(language: UiLanguage): string {
+  return pickUiText(
+    language,
+    'Payment is still being confirmed. The balance will update automatically after Stripe finishes processing.',
+    '決済結果をまだ確認中です。Stripeの処理後に残高へ反映されます。',
+  );
+}
+
+function redirectToBillingUrl(value: string, marker: BillingReturnMarker): void {
+  window.sessionStorage.setItem(billingReturnPendingStorageKey, JSON.stringify(marker));
+  redirectToExternalUrl(value);
 }
 
 function toDataUrl(file: File): Promise<string> {

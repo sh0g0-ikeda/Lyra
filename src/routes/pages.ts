@@ -16,6 +16,7 @@ import type { PageGenerationServicePort } from '../services/page/PageGenerationS
 import type { PageExportServicePort } from '../services/page/PageExportService.js';
 import type { PageLayoutServicePort } from '../services/page/PageLayoutService.js';
 import type { PageServicePort } from '../services/page/PageService.js';
+import type { EpisodeStoryAutofillServicePort } from '../services/story/EpisodeStoryAutofillService.js';
 import type { AppEnv } from '../types/app.js';
 import { readJsonBody, readOptionalJsonBody, REQUEST_BODY_LIMITS } from './requestBody.js';
 
@@ -34,6 +35,7 @@ export interface PageRouteDependencies {
   pageGenerationService: PageGenerationServicePort;
   pageExportService: PageExportServicePort;
   pageService: PageServicePort;
+  episodeStoryAutofillService: EpisodeStoryAutofillServicePort;
   pageLayoutService: PageLayoutServicePort;
 }
 
@@ -66,11 +68,18 @@ export function createPageRoutes(dependencies: PageRouteDependencies): Hono<AppE
     if (!body.success) {
       throw new ValidationError(formatZodValidationError(body.error));
     }
-    const result = await dependencies.pageService.autofillEpisodeFromStory(
+    const result = await dependencies.episodeStoryAutofillService.enqueueEpisodeStoryAutofill(
       user.id,
       episodeId,
       body.data.language,
     );
+    return c.json({ job_id: result.jobId }, 202);
+  });
+
+  /*
+    if (!result.compilerUsed) {
+      throw new ValidationError('AI反映が時間内に完了しませんでした。コマ情報は変更していません。少し待ってから再度お試しください。');
+    }
 
     return c.json({
       updated_page_count: result.updatedPageCount,
@@ -85,6 +94,7 @@ export function createPageRoutes(dependencies: PageRouteDependencies): Hono<AppE
     });
   });
 
+  */
   app.put('/pages/:id', async (c) => {
     const user = c.get('user');
     const pageId = parseUuidParam(c, 'id');

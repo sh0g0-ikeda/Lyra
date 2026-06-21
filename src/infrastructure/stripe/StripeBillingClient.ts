@@ -22,11 +22,23 @@ export interface CreateStripeCheckoutSessionInput {
   packageCode?: CreditPackageCode;
 }
 
+export interface CreateStripeSubscriptionUpdatePortalSessionInput {
+  customerId: string;
+  subscriptionId: string;
+  subscriptionItemId: string;
+  priceId: string;
+  quantity: number;
+  returnUrl: string;
+}
+
 export interface StripeBillingClientPort {
   createCustomer(input: CreateStripeCustomerInput): Promise<{ id: string }>;
   createCheckoutSession(input: CreateStripeCheckoutSessionInput): Promise<{ id: string; url: string }>;
   createCustomerPortalSession(input: { customerId: string; returnUrl: string }): Promise<{ url: string }>;
-  constructWebhookEvent(payload: Buffer, signature: string): Stripe.Event;
+  createSubscriptionUpdatePortalSession(
+    input: CreateStripeSubscriptionUpdatePortalSessionInput,
+  ): Promise<{ id: string; url: string }>;
+  constructWebhookEvent(payload: Buffer, signature: string): Promise<Stripe.Event>;
   retrieveSubscription(subscriptionId: string): Promise<Stripe.Subscription>;
 }
 
@@ -110,8 +122,41 @@ export class StripeBillingClient implements StripeBillingClientPort {
     return { url: session.url };
   }
 
-  public constructWebhookEvent(payload: Buffer, signature: string): Stripe.Event {
-    return this.stripe.webhooks.constructEvent(payload, signature, this.webhookSecret);
+  public async createSubscriptionUpdatePortalSession(
+    input: CreateStripeSubscriptionUpdatePortalSessionInput,
+  ): Promise<{ id: string; url: string }> {
+    const session = await this.stripe.billingPortal.sessions.create({
+      customer: input.customerId,
+      return_url: input.returnUrl,
+      flow_data: {
+        type: 'subscription_update_confirm',
+        after_completion: {
+          type: 'redirect',
+          redirect: {
+            return_url: input.returnUrl,
+          },
+        },
+        subscription_update_confirm: {
+          subscription: input.subscriptionId,
+          items: [
+            {
+              id: input.subscriptionItemId,
+              price: input.priceId,
+              quantity: input.quantity,
+            },
+          ],
+        },
+      },
+    });
+
+    return {
+      id: session.id,
+      url: session.url,
+    };
+  }
+
+  public async constructWebhookEvent(payload: Buffer, signature: string): Promise<Stripe.Event> {
+    return await this.stripe.webhooks.constructEventAsync(payload, signature, this.webhookSecret);
   }
 
   public async retrieveSubscription(subscriptionId: string): Promise<Stripe.Subscription> {

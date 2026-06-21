@@ -40,8 +40,12 @@ export class BillingService implements BillingServicePort {
     planCode: PaidPlanCode,
   ): Promise<SubscriptionCheckoutResult> {
     const billingUser = await this.requireBillingUser(user.id);
+    if (billingUser.planCode === planCode) {
+      throw new ConflictError('Requested plan is already active');
+    }
+
     if (billingUser.planCode !== 'free') {
-      throw new ConflictError('Paid plans must be managed through the customer portal');
+      return this.createPaidPlanChangeSession(billingUser, planCode);
     }
 
     const customerId = await this.ensureStripeCustomer(billingUser);
@@ -53,6 +57,57 @@ export class BillingService implements BillingServicePort {
       cancelUrl: this.config.cancelUrl,
       userId: user.id,
       planCode,
+    });
+
+    return {
+      sessionId: session.id,
+      url: session.url,
+    };
+  }
+
+  private async createPaidPlanChangeSession(
+    billingUser: BillingUserProfile,
+    planCode: PaidPlanCode,
+  ): Promise<SubscriptionCheckoutResult> {
+    if (billingUser.planCode !== 'standard' || planCode !== 'premium') {
+      throw new ConflictError('Paid plan downgrades must be managed through the customer portal');
+    }
+
+    if (billingUser.stripeCustomerId === null) {
+      throw new ConflictError('Stripe customer is not registered yet');
+    }
+
+    const activeSubscription = await this.billingRepository.findLatestActiveSubscriptionForUser(billingUser.userId);
+    if (activeSubscription === null) {
+      throw new ConflictError('Active Stripe subscription was not found');
+    }
+
+    const stripeSubscription = await this.stripeClient.retrieveSubscription(activeSubscription.stripeSubscriptionId);
+    const stripeCustomerId = getStripeSubscriptionCustomerId(stripeSubscription.customer);
+    if (stripeCustomerId !== billingUser.stripeCustomerId) {
+      throw new ConflictError('Active Stripe subscription does not match the billing user');
+    }
+
+    if (stripeSubscription.status !== 'active' && stripeSubscription.status !== 'trialing') {
+      throw new ConflictError('Only active subscriptions can be changed automatically');
+    }
+
+    if (stripeSubscription.items.data.length !== 1) {
+      throw new ConflictError('Subscriptions with multiple items must be managed through the customer portal');
+    }
+
+    const subscriptionItem = stripeSubscription.items.data[0];
+    if (subscriptionItem === undefined) {
+      throw new ConflictError('Stripe subscription item was not found');
+    }
+
+    const session = await this.stripeClient.createSubscriptionUpdatePortalSession({
+      customerId: billingUser.stripeCustomerId,
+      subscriptionId: stripeSubscription.id,
+      subscriptionItemId: subscriptionItem.id,
+      priceId: this.config.subscriptionPriceIds[planCode],
+      quantity: subscriptionItem.quantity ?? 1,
+      returnUrl: this.config.portalReturnUrl,
     });
 
     return {
@@ -148,4 +203,14 @@ export function getPurchasedCreditsForPackage(packageCode: CreditPackageCode): n
 
 function isBlank(value: string): boolean {
   return value.trim().length === 0;
+}
+
+function getStripeSubscriptionCustomerId(
+  customer: string | { id?: string } | null,
+): string | null {
+  if (typeof customer === 'string') {
+    return customer;
+  }
+
+  return typeof customer?.id === 'string' ? customer.id : null;
 }

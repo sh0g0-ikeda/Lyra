@@ -22,7 +22,7 @@ export interface WorkerQueueEvent {
 export interface WorkerRecordResult {
   messageId: string | null;
   jobId: string | null;
-  status: 'completed' | 'failed' | 'skipped';
+  status: 'completed' | 'failed' | 'skipped' | 'retry';
   reason?: string;
 }
 
@@ -33,6 +33,7 @@ export interface WorkerBatchItemFailure {
 export interface WorkerBatchResult {
   processedCount: number;
   skippedCount: number;
+  retryCount: number;
   failedCount: number;
   batchItemFailures: WorkerBatchItemFailure[];
   results: WorkerRecordResult[];
@@ -58,7 +59,11 @@ export async function handleGenerationQueue(
       continue;
     }
 
-    if (parsedMessage.job_type !== 'page_generate' && parsedMessage.job_type !== 'entity_generate') {
+    if (
+      parsedMessage.job_type !== 'page_generate' &&
+      parsedMessage.job_type !== 'entity_generate' &&
+      parsedMessage.job_type !== 'episode_story_autofill'
+    ) {
       // Unknown job types cannot become valid through SQS retry, so acknowledge and report them.
       results.push({
         messageId: record.messageId ?? null,
@@ -72,7 +77,20 @@ export async function handleGenerationQueue(
     try {
       const result = parsedMessage.job_type === 'page_generate'
         ? await dependencies.pageGenerationWorkerService.processJob(parsedMessage.job_id)
-        : await dependencies.entityGenerationWorkerService.processJob(parsedMessage.job_id);
+        : parsedMessage.job_type === 'entity_generate'
+          ? await dependencies.entityGenerationWorkerService.processJob(parsedMessage.job_id)
+          : await dependencies.episodeStoryAutofillWorkerService.processJob(parsedMessage.job_id);
+      if (result.status === 'retry') {
+        addBatchItemFailure(batchItemFailures, record.messageId);
+        results.push({
+          messageId: record.messageId ?? null,
+          jobId: parsedMessage.job_id,
+          status: 'retry',
+          reason: result.reason ?? 'Worker requested retry',
+        });
+        continue;
+      }
+
       results.push({
         messageId: record.messageId ?? null,
         jobId: parsedMessage.job_id,
@@ -92,6 +110,7 @@ export async function handleGenerationQueue(
   return {
     processedCount: results.filter((result) => result.status === 'completed').length,
     skippedCount: results.filter((result) => result.status === 'skipped').length,
+    retryCount: results.filter((result) => result.status === 'retry').length,
     failedCount: results.filter((result) => result.status === 'failed').length,
     batchItemFailures,
     results,

@@ -47,7 +47,7 @@ describe('OpenAIPageEpisodePlanCompiler', () => {
     const result = await compiler.compilePlan({
       compilerBrief: [
         '[TASK]',
-        'Plan editable page and panel draft fields for the entire episode.',
+        'Plan editable page and panel draft fields for the given existing pages within the episode.',
         '',
         '[CHAPTER ARC]',
         'Purpose: Push the rivalry forward without contradiction.',

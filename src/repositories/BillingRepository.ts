@@ -1,5 +1,10 @@
 import type { QueryResultRow } from 'pg';
-import type { BillingUserProfile, PaymentRecordInput, SubscriptionRecord } from '../domain/types/billing.js';
+import type {
+  ActiveSubscriptionRecord,
+  BillingUserProfile,
+  PaymentRecordInput,
+  SubscriptionRecord,
+} from '../domain/types/billing.js';
 import type { DatabaseClient, TransactionRunner } from '../lib/db.js';
 
 interface BillingUserProfileRow extends QueryResultRow {
@@ -13,6 +18,16 @@ interface StripeCustomerIdRow extends QueryResultRow {
   stripe_customer_id: string | null;
 }
 
+interface SubscriptionRow extends QueryResultRow {
+  user_id: string;
+  stripe_subscription_id: string;
+  plan_code: string;
+  status: string;
+  current_period_start: Date | null;
+  current_period_end: Date | null;
+  cancel_at_period_end: boolean;
+}
+
 export interface BillingRepository {
   transaction<T>(work: (client: DatabaseClient) => Promise<T>): Promise<T>;
   findBillingUserProfile(userId: string, client?: DatabaseClient): Promise<BillingUserProfile | null>;
@@ -22,6 +37,10 @@ export interface BillingRepository {
   ): Promise<BillingUserProfile | null>;
   setStripeCustomerId(userId: string, stripeCustomerId: string, client?: DatabaseClient): Promise<string | null>;
   updateUserPlanCode(userId: string, planCode: string, client: DatabaseClient): Promise<boolean>;
+  findLatestActiveSubscriptionForUser(
+    userId: string,
+    client?: DatabaseClient,
+  ): Promise<ActiveSubscriptionRecord | null>;
   findHighestActiveSubscriptionPlanForUserExcluding(
     userId: string,
     excludedStripeSubscriptionId: string,
@@ -107,6 +126,39 @@ export class PostgresBillingRepository implements BillingRepository {
     );
 
     return result.rowCount === 1;
+  }
+
+  public async findLatestActiveSubscriptionForUser(
+    userId: string,
+    client: DatabaseClient = this.client,
+  ): Promise<ActiveSubscriptionRecord | null> {
+    const result = await client.query<SubscriptionRow>(
+      `
+      SELECT
+        user_id,
+        stripe_subscription_id,
+        plan_code,
+        status,
+        current_period_start,
+        current_period_end,
+        cancel_at_period_end
+      FROM subscriptions
+      WHERE user_id = $1
+        AND status IN ('active', 'trialing')
+      ORDER BY
+        CASE plan_code
+          WHEN 'premium' THEN 2
+          WHEN 'standard' THEN 1
+          ELSE 0
+        END DESC,
+        current_period_end DESC NULLS LAST,
+        updated_at DESC
+      LIMIT 1
+      `,
+      [userId],
+    );
+
+    return result.rows[0] === undefined ? null : mapSubscriptionRow(result.rows[0]);
   }
 
   public async findHighestActiveSubscriptionPlanForUserExcluding(
@@ -253,5 +305,17 @@ function mapBillingUserProfileRow(row: BillingUserProfileRow): BillingUserProfil
     email: row.email,
     stripeCustomerId: row.stripe_customer_id,
     planCode: row.plan_code as BillingUserProfile['planCode'],
+  };
+}
+
+function mapSubscriptionRow(row: SubscriptionRow): ActiveSubscriptionRecord {
+  return {
+    userId: row.user_id,
+    stripeSubscriptionId: row.stripe_subscription_id,
+    planCode: row.plan_code as ActiveSubscriptionRecord['planCode'],
+    status: row.status as ActiveSubscriptionRecord['status'],
+    currentPeriodStart: row.current_period_start,
+    currentPeriodEnd: row.current_period_end,
+    cancelAtPeriodEnd: row.cancel_at_period_end,
   };
 }

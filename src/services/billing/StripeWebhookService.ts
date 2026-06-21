@@ -29,7 +29,7 @@ export class StripeWebhookService implements StripeWebhookServicePort {
   ) {}
 
   public async handleWebhook(rawBody: Buffer, signature: string): Promise<void> {
-    const event = this.constructVerifiedWebhookEvent(rawBody, signature);
+    const event = await this.constructVerifiedWebhookEvent(rawBody, signature);
 
     if (await this.billingRepository.hasStripeEventProcessed(event.id)) {
       return;
@@ -62,9 +62,9 @@ export class StripeWebhookService implements StripeWebhookServicePort {
     }
   }
 
-  private constructVerifiedWebhookEvent(rawBody: Buffer, signature: string): Stripe.Event {
+  private async constructVerifiedWebhookEvent(rawBody: Buffer, signature: string): Promise<Stripe.Event> {
     try {
-      return this.stripeClient.constructWebhookEvent(rawBody, signature);
+      return await this.stripeClient.constructWebhookEvent(rawBody, signature);
     } catch {
       throw new ValidationError('Stripe webhook signature verification failed');
     }
@@ -522,17 +522,17 @@ export class StripeWebhookService implements StripeWebhookServicePort {
     subscription: Stripe.Subscription,
     fallbackPlanCode?: PaidPlanCode,
   ): PaidPlanCode {
-    const metadataPlanCode = subscription.metadata.plan_code;
-    if (metadataPlanCode === 'standard' || metadataPlanCode === 'premium') {
-      return metadataPlanCode;
-    }
-
     const firstItemPriceId = subscription.items.data[0]?.price.id;
     if (firstItemPriceId !== undefined) {
       const planCode = this.config.subscriptionPlanByPriceId[firstItemPriceId];
       if (planCode !== undefined) {
         return planCode;
       }
+    }
+
+    const metadataPlanCode = subscription.metadata.plan_code;
+    if (metadataPlanCode === 'standard' || metadataPlanCode === 'premium') {
+      return metadataPlanCode;
     }
 
     if (fallbackPlanCode !== undefined) {

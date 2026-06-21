@@ -133,7 +133,7 @@ describe('operational guards', () => {
     await expect(secondResponse.json()).resolves.toEqual({
       error: {
         code: 'RATE_LIMITED',
-        message: 'Rate limit exceeded for default. Retry after 60 seconds',
+        message: 'Rate limit exceeded for read. Retry after 60 seconds',
       },
     });
   });

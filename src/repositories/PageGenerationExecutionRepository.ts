@@ -30,8 +30,17 @@ export interface FailPageGenerationInput {
   previousGenerationMode?: PageGenerationMode | null;
 }
 
+export interface TouchPageGenerationProgressInput {
+  jobId: string;
+  userId: string;
+  message: string;
+  updatedAt: string;
+}
+
 export interface PageGenerationExecutionRepository {
   claimQueuedPageGenerationJob(jobId: string): Promise<GenerationJob | null>;
+  findPageGenerationJob(jobId: string): Promise<GenerationJob | null>;
+  touchPageGenerationProgress(input: TouchPageGenerationProgressInput): Promise<boolean>;
   completePageGeneration(input: CompletePageGenerationInput): Promise<boolean>;
   failPageGeneration(input: FailPageGenerationInput): Promise<boolean>;
 }
@@ -78,6 +87,40 @@ export class PostgresPageGenerationExecutionRepository implements PageGeneration
     );
 
     return result.rows[0] === undefined ? null : mapGenerationJobRow(result.rows[0]);
+  }
+
+  public async findPageGenerationJob(jobId: string): Promise<GenerationJob | null> {
+    const result = await this.client.query<GenerationJobRow>(
+      `
+      SELECT *
+      FROM generation_jobs
+      WHERE id = $1
+        AND job_type = 'page_generate'
+      `,
+      [jobId],
+    );
+
+    return result.rows[0] === undefined ? null : mapGenerationJobRow(result.rows[0]);
+  }
+
+  public async touchPageGenerationProgress(input: TouchPageGenerationProgressInput): Promise<boolean> {
+    const result = await this.client.query<GenerationJobRow>(
+      `
+      UPDATE generation_jobs
+      SET result = COALESCE(result, '{}'::jsonb) || jsonb_build_object(
+            'progress_message', $3::text,
+            'progress_updated_at', $4::text
+          )
+      WHERE id = $1
+        AND user_id = $2
+        AND job_type = 'page_generate'
+        AND status = 'processing'
+      RETURNING *
+      `,
+      [input.jobId, input.userId, input.message, input.updatedAt],
+    );
+
+    return (result.rowCount ?? 0) > 0;
   }
 
   public async completePageGeneration(input: CompletePageGenerationInput): Promise<boolean> {
