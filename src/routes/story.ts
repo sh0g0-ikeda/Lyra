@@ -11,6 +11,7 @@ import {
   createChapterBodySchema,
   createEpisodeBodySchema,
   createWorkBodySchema,
+  moveStoryItemBodySchema,
   storyUuidParamSchema,
   updateChapterBodySchema,
   updateEpisodeBodySchema,
@@ -21,6 +22,7 @@ import type { StoryServicePort } from '../services/story/StoryService.js';
 import type { StoryCollaborationServicePort } from '../services/story/StoryCollaborationService.js';
 import type { PageSkeletonServicePort } from '../services/story/PageSkeletonService.js';
 import type { PageServicePort } from '../services/page/PageService.js';
+import type { EpisodeStoryAutofillServicePort } from '../services/story/EpisodeStoryAutofillService.js';
 import type { AppEnv } from '../types/app.js';
 import { readJsonBody, readOptionalJsonBody, REQUEST_BODY_LIMITS } from './requestBody.js';
 
@@ -29,6 +31,7 @@ export interface StoryRouteDependencies {
   rateLimitMiddleware: MiddlewareHandler<AppEnv>;
   pageSkeletonService: PageSkeletonServicePort;
   pageService?: PageServicePort;
+  episodeStoryAutofillService?: EpisodeStoryAutofillServicePort;
   storyCollaborationService: StoryCollaborationServicePort;
   storyService: StoryServicePort;
 }
@@ -223,6 +226,20 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
     return c.body(null, 204);
   });
 
+  app.post('/chapters/:id/move', async (c) => {
+    const user = c.get('user');
+    const chapterId = parseUuidParam(c, 'id');
+    const body = moveStoryItemBodySchema.safeParse(await readStoryJsonBody(c));
+
+    if (!body.success) {
+      throw new ValidationError(formatZodValidationError(body.error));
+    }
+
+    const chapter = await dependencies.storyService.moveChapter(user.id, chapterId, body.data.direction);
+
+    return c.json(toChapterResponse(chapter));
+  });
+
   app.post('/chapters/:id/episodes', async (c) => {
     const user = c.get('user');
     const chapterId = parseUuidParam(c, 'id');
@@ -292,6 +309,20 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
     return c.body(null, 204);
   });
 
+  app.post('/episodes/:id/move', async (c) => {
+    const user = c.get('user');
+    const episodeId = parseUuidParam(c, 'id');
+    const body = moveStoryItemBodySchema.safeParse(await readStoryJsonBody(c));
+
+    if (!body.success) {
+      throw new ValidationError(formatZodValidationError(body.error));
+    }
+
+    const episode = await dependencies.storyService.moveEpisode(user.id, episodeId, body.data.direction);
+
+    return c.json(toEpisodeResponse(episode));
+  });
+
   app.get('/works', async (c) => {
     const user = c.get('user');
     const works = await dependencies.storyService.listWorks(user.id);
@@ -324,41 +355,21 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
       language: body.data.language,
     });
 
-    let storyPlanResult:
-      | {
-          updated_page_count: number;
-          updated_panel_count: number;
-          updated_assignment_count: number;
-          filled_field_count: number;
-          compiler_used: boolean;
-          compiler_provider: 'openai' | 'fallback';
-          compiler_model: string | null;
-          compiler_prompt_version: string | null;
-          compiler_error: string | null;
-        }
-      | null = null;
+    let storyPlanApplied = false;
+    let storyPlanJobId: string | null = null;
 
     if (body.data.apply_story_plan) {
-      if (dependencies.pageService === undefined) {
+      if (dependencies.episodeStoryAutofillService === undefined) {
         throw new ValidationError('Page service is not configured for story plan autofill');
       }
 
-      const applied = await dependencies.pageService.autofillEpisodeFromStory(
+      const applied = await dependencies.episodeStoryAutofillService.enqueueEpisodeStoryAutofill(
         user.id,
         parsedEpisodeId.data,
         body.data.language,
       );
-      storyPlanResult = {
-        updated_page_count: applied.updatedPageCount,
-        updated_panel_count: applied.updatedPanelCount,
-        updated_assignment_count: applied.updatedAssignmentCount,
-        filled_field_count: applied.filledFieldCount,
-        compiler_used: applied.compilerUsed,
-        compiler_provider: applied.compilerProvider,
-        compiler_model: applied.compilerModel,
-        compiler_prompt_version: applied.compilerPromptVersion,
-        compiler_error: applied.compilerError,
-      };
+      storyPlanApplied = true;
+      storyPlanJobId = applied.jobId;
     }
 
     return c.json(
@@ -366,8 +377,8 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
         pages_created: result.pagesCreated,
         panels_created: result.panelsCreated,
         replaced_existing: result.replacedExisting,
-        story_plan_applied: body.data.apply_story_plan,
-        story_plan_result: storyPlanResult,
+        story_plan_applied: storyPlanApplied,
+        story_plan_job_id: storyPlanJobId,
       },
       201,
     );

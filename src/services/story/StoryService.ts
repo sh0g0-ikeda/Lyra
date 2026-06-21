@@ -5,6 +5,7 @@ import type {
   CreateEpisodeInput,
   CreateWorkInput,
   Episode,
+  StoryItemMoveDirection,
   UpdateChapterInput,
   UpdateEpisodeInput,
   UpdateWorkInput,
@@ -34,10 +35,12 @@ export interface StoryServicePort {
   listChapters(userId: string, workId: string): Promise<Chapter[]>;
   updateChapter(userId: string, chapterId: string, input: UpdateChapterInput): Promise<Chapter>;
   deleteChapter(userId: string, chapterId: string): Promise<void>;
+  moveChapter(userId: string, chapterId: string, direction: StoryItemMoveDirection): Promise<Chapter>;
   createEpisode(userId: string, chapterId: string, input: CreateEpisodeInput): Promise<Episode>;
   listEpisodes(userId: string, chapterId: string): Promise<Episode[]>;
   updateEpisode(userId: string, episodeId: string, input: UpdateEpisodeInput): Promise<Episode>;
   deleteEpisode(userId: string, episodeId: string): Promise<void>;
+  moveEpisode(userId: string, episodeId: string, direction: StoryItemMoveDirection): Promise<Episode>;
 }
 
 export class StoryService implements StoryServicePort {
@@ -121,6 +124,19 @@ export class StoryService implements StoryServicePort {
     }
   }
 
+  public async moveChapter(
+    userId: string,
+    chapterId: string,
+    direction: StoryItemMoveDirection,
+  ): Promise<Chapter> {
+    const chapter = await this.storyRepository.moveChapter(chapterId, userId, direction);
+    if (chapter === null) {
+      throw new NotFoundError('Chapter not found');
+    }
+
+    return chapter;
+  }
+
   public async createEpisode(
     userId: string,
     chapterId: string,
@@ -163,6 +179,19 @@ export class StoryService implements StoryServicePort {
     if (!deleted) {
       throw new NotFoundError('Episode not found');
     }
+  }
+
+  public async moveEpisode(
+    userId: string,
+    episodeId: string,
+    direction: StoryItemMoveDirection,
+  ): Promise<Episode> {
+    const episode = await this.storyRepository.moveEpisode(episodeId, userId, direction);
+    if (episode === null) {
+      throw new NotFoundError('Episode not found');
+    }
+
+    return episode;
   }
 
   private async ensureWorkOwnedByUser(userId: string, workId: string): Promise<void> {

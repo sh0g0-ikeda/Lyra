@@ -8,6 +8,7 @@ import {
   applyPageLayoutTemplateBodySchema,
   updatePageSettingsBodySchema,
 } from '../lib/validators/page.schema.js';
+import { signImageCdnUrl } from '../infrastructure/aws/CloudFrontImageUrlSigner.js';
 import { formatZodValidationError } from '../lib/validationErrorFormatter.js';
 import type { PageFinalizeServicePort } from '../services/page/PageFinalizeService.js';
 import type { PageQueryServicePort } from '../services/page/PageQueryService.js';
@@ -15,6 +16,7 @@ import type { PageGenerationServicePort } from '../services/page/PageGenerationS
 import type { PageExportServicePort } from '../services/page/PageExportService.js';
 import type { PageLayoutServicePort } from '../services/page/PageLayoutService.js';
 import type { PageServicePort } from '../services/page/PageService.js';
+import type { EpisodeStoryAutofillServicePort } from '../services/story/EpisodeStoryAutofillService.js';
 import type { AppEnv } from '../types/app.js';
 import { readJsonBody, readOptionalJsonBody, REQUEST_BODY_LIMITS } from './requestBody.js';
 
@@ -33,6 +35,7 @@ export interface PageRouteDependencies {
   pageGenerationService: PageGenerationServicePort;
   pageExportService: PageExportServicePort;
   pageService: PageServicePort;
+  episodeStoryAutofillService: EpisodeStoryAutofillServicePort;
   pageLayoutService: PageLayoutServicePort;
 }
 
@@ -47,7 +50,7 @@ export function createPageRoutes(dependencies: PageRouteDependencies): Hono<AppE
     const episodeId = parseUuidParam(c, 'id');
     const pages = await dependencies.pageQueryService.listEpisodePages(user.id, episodeId);
 
-    return c.json({ pages: pages.map(toPageSummaryResponse) });
+    return c.json({ pages: await Promise.all(pages.map(toPageSummaryResponse)) });
   });
 
   app.post('/episodes/:id/autofill-pages-from-story', async (c) => {
@@ -65,11 +68,18 @@ export function createPageRoutes(dependencies: PageRouteDependencies): Hono<AppE
     if (!body.success) {
       throw new ValidationError(formatZodValidationError(body.error));
     }
-    const result = await dependencies.pageService.autofillEpisodeFromStory(
+    const result = await dependencies.episodeStoryAutofillService.enqueueEpisodeStoryAutofill(
       user.id,
       episodeId,
       body.data.language,
     );
+    return c.json({ job_id: result.jobId }, 202);
+  });
+
+  /*
+    if (!result.compilerUsed) {
+      throw new ValidationError('AI反映が時間内に完了しませんでした。コマ情報は変更していません。少し待ってから再度お試しください。');
+    }
 
     return c.json({
       updated_page_count: result.updatedPageCount,
@@ -84,6 +94,7 @@ export function createPageRoutes(dependencies: PageRouteDependencies): Hono<AppE
     });
   });
 
+  */
   app.put('/pages/:id', async (c) => {
     const user = c.get('user');
     const pageId = parseUuidParam(c, 'id');
@@ -106,7 +117,7 @@ export function createPageRoutes(dependencies: PageRouteDependencies): Hono<AppE
       storyContinuityNote: body.data.story_continuity_note,
     });
 
-    return c.json(toPageSummaryResponse(page));
+    return c.json(await toPageSummaryResponse(page));
   });
 
   app.post('/pages/:id/layout-template', async (c) => {
@@ -202,7 +213,12 @@ export function createPageRoutes(dependencies: PageRouteDependencies): Hono<AppE
   return app;
 }
 
-function toPageSummaryResponse(page: PageSummary): Record<string, unknown> {
+async function toPageSummaryResponse(page: PageSummary): Promise<Record<string, unknown>> {
+  const signedGeneratedImageUrl = await signImageCdnUrl(
+    page.generatedImage?.cdnUrl,
+    page.generatedImage?.s3Key,
+  );
+
   return {
     id: page.id,
     episode_id: page.episodeId,
@@ -220,6 +236,7 @@ function toPageSummaryResponse(page: PageSummary): Record<string, unknown> {
         : {
             generation_mode: page.generatedImage.generationMode,
             generated_at: page.generatedImage.generatedAt,
+            ...(signedGeneratedImageUrl === null ? {} : { cdn_url: signedGeneratedImageUrl }),
           },
     status: page.status,
     panel_count: page.panelCount,

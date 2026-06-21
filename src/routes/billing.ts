@@ -32,6 +32,7 @@ export function createBillingRoutes(dependencies: BillingRouteDependencies): Hon
       purchased_credits: balance.purchasedCredits,
       total_credits: balance.totalCredits,
       monthly_expires_at: balance.monthlyExpiresAt?.toISOString() ?? null,
+      plan_code: user.planCode,
     });
   });
 

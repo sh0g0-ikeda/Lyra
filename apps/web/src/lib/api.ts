@@ -32,7 +32,7 @@ export class ApiError extends Error {
   }
 }
 
-type JsonRequestInit = Omit<RequestInit, 'body'> & { body?: unknown };
+type JsonRequestInit = Omit<RequestInit, 'body'> & { body?: unknown; timeoutMs?: number };
 
 interface JsonErrorBody {
   error?: {
@@ -85,6 +85,13 @@ export class LyraApiClient {
     return this.request(`/api/chapters/${chapterId}`, { method: 'PUT', body });
   }
 
+  public moveChapter(chapterId: string, direction: 'up' | 'down'): Promise<ChapterRecord> {
+    return this.request(`/api/chapters/${chapterId}/move`, {
+      method: 'POST',
+      body: { direction },
+    });
+  }
+
   public deleteChapter(chapterId: string): Promise<void> {
     return this.requestVoid(`/api/chapters/${chapterId}`, { method: 'DELETE' });
   }
@@ -101,6 +108,13 @@ export class LyraApiClient {
     return this.request(`/api/episodes/${episodeId}`, { method: 'PUT', body });
   }
 
+  public moveEpisode(episodeId: string, direction: 'up' | 'down'): Promise<EpisodeRecord> {
+    return this.request(`/api/episodes/${episodeId}/move`, {
+      method: 'POST',
+      body: { direction },
+    });
+  }
+
   public deleteEpisode(episodeId: string): Promise<void> {
     return this.requestVoid(`/api/episodes/${episodeId}`, { method: 'DELETE' });
   }
@@ -113,7 +127,8 @@ export class LyraApiClient {
     panels_created: number;
     replaced_existing: boolean;
     story_plan_applied: boolean;
-    story_plan_result: {
+    story_plan_job_id: string | null;
+    story_plan_result?: {
       updated_page_count: number;
       updated_panel_count: number;
       updated_assignment_count: number;
@@ -232,15 +247,7 @@ export class LyraApiClient {
   }
 
   public autofillEpisodePagesFromStory(episodeId: string, language: 'ja' | 'en'): Promise<{
-    updated_page_count: number;
-    updated_panel_count: number;
-    updated_assignment_count: number;
-    filled_field_count: number;
-    compiler_used: boolean;
-    compiler_provider: 'openai' | 'fallback';
-    compiler_model: string | null;
-    compiler_prompt_version: string | null;
-    compiler_error: string | null;
+    job_id: string;
   }> {
     return this.request(`/api/episodes/${episodeId}/autofill-pages-from-story`, {
       method: 'POST',
@@ -354,6 +361,7 @@ export class LyraApiClient {
     return this.request('/api/billing/checkout/subscription', {
       method: 'POST',
       body: { plan_code: planCode },
+      timeoutMs: 15_000,
     });
   }
 
@@ -363,11 +371,12 @@ export class LyraApiClient {
     return this.request('/api/billing/checkout/credits', {
       method: 'POST',
       body: { package_code: packageCode },
+      timeoutMs: 15_000,
     });
   }
 
   public createCustomerPortal(): Promise<{ url: string }> {
-    return this.request('/api/billing/customer-portal', { method: 'POST' });
+    return this.request('/api/billing/customer-portal', { method: 'POST', timeoutMs: 15_000 });
   }
 
   public async exportPageImage(pageId: string): Promise<BlobResponse> {
@@ -414,7 +423,7 @@ export class LyraApiClient {
   }
 
   private async request<T>(path: string, init: JsonRequestInit = {}): Promise<T> {
-    const response = await fetch(this.toUrl(path), this.buildRequest(init));
+    const response = await this.fetchWithOptionalTimeout(path, init);
     if (!response.ok) {
       throw await this.toApiError(response);
     }
@@ -423,9 +432,28 @@ export class LyraApiClient {
   }
 
   private async requestVoid(path: string, init: JsonRequestInit = {}): Promise<void> {
-    const response = await fetch(this.toUrl(path), this.buildRequest(init));
+    const response = await this.fetchWithOptionalTimeout(path, init);
     if (!response.ok) {
       throw await this.toApiError(response);
+    }
+  }
+
+  private async fetchWithOptionalTimeout(path: string, init: JsonRequestInit): Promise<Response> {
+    if (init.timeoutMs === undefined) {
+      return await fetch(this.toUrl(path), this.buildRequest(init));
+    }
+
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), init.timeoutMs);
+    try {
+      return await fetch(this.toUrl(path), this.buildRequest({ ...init, signal: controller.signal }));
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        throw new ApiError('The billing page took too long to prepare. Please try again.', 504, 'BILLING_TIMEOUT');
+      }
+      throw error;
+    } finally {
+      window.clearTimeout(timeoutId);
     }
   }
 

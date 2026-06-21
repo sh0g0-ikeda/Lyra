@@ -49,6 +49,10 @@ export class JobService implements JobServicePort {
       return (await this.pageGenerationRecoveryService.recoverStaleJobsForPage(userId, pageId)) > 0;
     }
 
+    if (job.jobType === 'episode_story_autofill') {
+      return false;
+    }
+
     const entityId = readStringParam(job.params, 'entity_id');
     if (entityId === null) {
       return false;

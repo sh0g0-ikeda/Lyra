@@ -15,6 +15,22 @@
 - Set `AUTO_RUN_MIGRATIONS=false` for production API tasks.
 - Keep startup auto-migrations only for local development and short-lived test environments.
 
+## Generation workers
+- API tasks only enqueue generation jobs. They do not run image generation inline.
+- ECS/Fargate generation worker tasks should run:
+
+```bash
+bun run worker:generation:prod
+```
+
+- The production command runs `node dist/scripts/runGenerationWorker.js`, so build the
+  backend image with `bun run build` before starting worker tasks.
+- The worker long-polls `SQS_QUEUE_URL_GENERATION`, calls the existing
+  `handleGenerationQueue` processor, and deletes only messages that are not marked
+  for retry.
+- Keep `SQS_GENERATION_VISIBILITY_TIMEOUT_SECONDS` at least
+  `OPENAI_TIMEOUT_MS + 120 seconds`.
+
 ## Request tracing
 - Every HTTP response returns `X-Request-Id`
 - API request completion is logged as JSON with:
@@ -72,6 +88,9 @@ Minimum posture:
 - CloudFront-only read for `saved/*`, `session/*`, and `tmp/*`
 - CloudFront viewer access for image paths should be protected with signed cookies/URLs or an equivalent authenticated edge policy before paid production
 - deny insecure transport on S3
+- Set `IMAGE_CDN_SIGNING_ENABLED=true`, `CLOUDFRONT_KEY_PAIR_ID`, and
+  `CLOUDFRONT_PRIVATE_KEY` in production. API responses only include CDN image
+  URLs when they can be signed at response time.
 
 ## Load tests
 Examples:

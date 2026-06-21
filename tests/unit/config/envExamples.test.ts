@@ -10,7 +10,8 @@ describe('environment examples', () => {
     expect(rootEnvExample).toContain('COGNITO_TOKEN_USE=id');
     expect(rootEnvExample).not.toMatch(/^COGNITO_REQUIRED_SCOPES=/mu);
     expect(webEnvExample).toContain('VITE_COGNITO_API_TOKEN_USE=id');
-    expect(webEnvExample).toContain('VITE_COGNITO_SCOPES=openid email profile');
+    expect(rootEnvExample).toContain('COGNITO_ALLOWED_CLIENT_IDS');
+    expect(webEnvExample).toContain('VITE_COGNITO_SCOPES=openid email');
     expect(webEnvExample).not.toMatch(/^VITE_COGNITO_SCOPES=.*lyra\/api/mu);
   });
 

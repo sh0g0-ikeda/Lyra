@@ -1,3 +1,4 @@
+import { serveStatic } from '@hono/node-server/serve-static';
 import { Hono, type MiddlewareHandler } from 'hono';
 import { ConfigurationError } from './domain/errors/index.js';
 import { createPageImageStorageClient } from './infrastructure/aws/S3PageImageStorage.js';
@@ -108,6 +109,16 @@ import {
   type EntityGenerationQueuePort,
 } from './services/entity/EntityGenerationQueue.js';
 import {
+  EpisodeStoryAutofillService,
+  type EpisodeStoryAutofillServicePort,
+} from './services/story/EpisodeStoryAutofillService.js';
+import {
+  InlineEpisodeStoryAutofillQueueAdapter,
+  SqsEpisodeStoryAutofillQueueAdapter,
+  UnconfiguredEpisodeStoryAutofillQueue,
+  type EpisodeStoryAutofillQueuePort,
+} from './services/story/EpisodeStoryAutofillQueue.js';
+import {
   EntityGenerationRecoveryService,
   type EntityGenerationRecoveryServicePort,
 } from './services/entity/EntityGenerationRecoveryService.js';
@@ -185,6 +196,8 @@ export interface AppDependencies {
   entityReferenceService?: EntityReferenceServicePort;
   entityReferenceImageExportService?: EntityReferenceImageExportServicePort;
   entityGenerationQueue?: EntityGenerationQueuePort;
+  episodeStoryAutofillQueue?: EpisodeStoryAutofillQueuePort;
+  episodeStoryAutofillService?: EpisodeStoryAutofillServicePort;
   entityGenerationRecoveryService?: EntityGenerationRecoveryServicePort;
   jobService?: JobServicePort;
   pageExportService?: PageExportServicePort;
@@ -213,6 +226,7 @@ export interface AppDependencies {
   cognitoJwks?: JWTVerifyGetKey;
   enableDevAuthBypass?: boolean;
   devAuthBypassClaims?: SupabaseJwtClaims;
+  webStaticDir?: string | null;
 }
 
 export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
@@ -312,6 +326,7 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
       pageExportService: resolvedDependencies.pageExportService,
       pageFinalizeService: resolvedDependencies.pageFinalizeService,
       pageService: resolvedDependencies.pageService,
+      episodeStoryAutofillService: resolvedDependencies.episodeStoryAutofillService,
       pageQueryService: resolvedDependencies.pageQueryService,
       pageGenerationService: resolvedDependencies.pageGenerationService,
       pageLayoutService: resolvedDependencies.pageLayoutService,
@@ -324,6 +339,7 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
       rateLimitMiddleware,
       pageSkeletonService: resolvedDependencies.pageSkeletonService,
       pageService: resolvedDependencies.pageService,
+      episodeStoryAutofillService: resolvedDependencies.episodeStoryAutofillService,
       storyCollaborationService: resolvedDependencies.storyCollaborationService,
       storyService: resolvedDependencies.storyService,
     }),
@@ -360,8 +376,70 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
       sceneService: resolvedDependencies.sceneService,
     }),
   );
+  const webStaticDir = dependencies.webStaticDir !== undefined ? dependencies.webStaticDir : env.WEB_STATIC_DIR ?? null;
+  if (webStaticDir !== null) {
+    mountWebStaticRoutes(app, webStaticDir);
+  }
 
   return app;
+}
+
+export function isWebStaticFallbackPath(path: string): boolean {
+  return !(
+    path === '/healthz' ||
+    path.startsWith('/api/') ||
+    path === '/api' ||
+    path.startsWith('/local-assets/')
+  );
+}
+
+const WEB_STATIC_CONTENT_SECURITY_POLICY = [
+  "default-src 'self'",
+  "script-src 'self'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data: blob: https:",
+  "font-src 'self' data:",
+  "connect-src 'self' https://*.amazoncognito.com https://cognito-idp.ap-northeast-1.amazonaws.com",
+  "object-src 'none'",
+  "frame-ancestors 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+].join('; ');
+
+function mountWebStaticRoutes(app: Hono<AppEnv>, root: string): void {
+  const staticFileMiddleware = serveStatic<AppEnv>({
+    root,
+    index: '__lyra_disabled_directory_index__',
+  });
+  const indexFallbackMiddleware = serveStatic<AppEnv>({
+    root,
+    path: '/index.html',
+  });
+
+  app.use('*', async (c, next) => {
+    if (!isWebStaticFallbackPath(c.req.path)) {
+      await next();
+      return;
+    }
+
+    c.header(
+      'Cache-Control',
+      c.req.path.startsWith('/assets/') ? 'public, max-age=31536000, immutable' : 'no-store',
+    );
+    c.header('Content-Security-Policy', WEB_STATIC_CONTENT_SECURITY_POLICY);
+    return staticFileMiddleware(c, next);
+  });
+
+  app.get('*', async (c, next) => {
+    if (!isWebStaticFallbackPath(c.req.path)) {
+      await next();
+      return;
+    }
+
+    c.header('Cache-Control', 'no-store');
+    c.header('Content-Security-Policy', WEB_STATIC_CONTENT_SECURITY_POLICY);
+    return indexFallbackMiddleware(c, next);
+  });
 }
 
 function resolveDependencies(
@@ -370,7 +448,13 @@ function resolveDependencies(
   Required<
     Omit<
       AppDependencies,
-      'authProvider' | 'jwtSecret' | 'cognito' | 'cognitoJwks' | 'enableDevAuthBypass' | 'devAuthBypassClaims'
+      | 'authProvider'
+      | 'jwtSecret'
+      | 'cognito'
+      | 'cognitoJwks'
+      | 'enableDevAuthBypass'
+      | 'devAuthBypassClaims'
+      | 'webStaticDir'
     >
   >,
   'storyEpisodeImprovementPlanner'
@@ -399,6 +483,18 @@ function resolveDependencies(
   const billingRepository = new PostgresBillingRepository(db, db);
   const pageRepository = new PostgresPageRepository(db);
   const generationJobRepository = new PostgresGenerationJobRepository(db);
+  const episodeStoryAutofillQueue =
+    dependencies.episodeStoryAutofillQueue ??
+    (inlineWorkerDependencies !== null
+      ? new InlineEpisodeStoryAutofillQueueAdapter(
+          inlineWorkerDependencies.episodeStoryAutofillWorkerService,
+        )
+      : generationQueue !== null
+        ? new SqsEpisodeStoryAutofillQueueAdapter(generationQueue)
+        : new UnconfiguredEpisodeStoryAutofillQueue());
+  const episodeStoryAutofillService =
+    dependencies.episodeStoryAutofillService ??
+    new EpisodeStoryAutofillService(generationJobRepository, episodeStoryAutofillQueue);
   const entityGenerationExecutionRepository = new PostgresEntityGenerationExecutionRepository(db);
   const entityGenerationRecoveryService =
     dependencies.entityGenerationRecoveryService ??
@@ -555,6 +651,8 @@ function resolveDependencies(
     entityReferenceService,
     entityReferenceImageExportService,
     entityGenerationQueue,
+    episodeStoryAutofillQueue,
+    episodeStoryAutofillService,
     entityGenerationRecoveryService,
     jobService,
     pageExportService,
@@ -594,7 +692,7 @@ function resolveFinalPageImageStorage(): FinalPageImageStoragePort {
     return new LocalFileFinalPageImageStorage(localAssetConfig);
   }
 
-  if (env.S3_BUCKET_IMAGES === undefined || env.IMAGES_CDN_BASE_URL === undefined) {
+  if (env.S3_BUCKET_IMAGES === undefined) {
     return {
       async finalizePageImage(): Promise<never> {
         throw new ConfigurationError('Final page image storage is not configured');
@@ -607,7 +705,7 @@ function resolveFinalPageImageStorage(): FinalPageImageStoragePort {
 
   return new S3FinalPageImageStorage(createPageImageStorageClient(env.AWS_REGION), {
     bucketName: env.S3_BUCKET_IMAGES,
-    cdnBaseUrl: env.IMAGES_CDN_BASE_URL,
+    cdnBaseUrl: resolveS3ImageStorageCdnBaseUrl(),
   });
 }
 
@@ -653,14 +751,18 @@ function resolveEntityImageStorage(): EntityImageStoragePort {
     return new LocalFileEntityImageStorage(localAssetConfig);
   }
 
-  if (env.S3_BUCKET_IMAGES === undefined || env.IMAGES_CDN_BASE_URL === undefined) {
+  if (env.S3_BUCKET_IMAGES === undefined) {
     return new EntityImageStorageStub();
   }
 
   return new S3EntityImageStorage(createPageImageStorageClient(env.AWS_REGION), {
     bucketName: env.S3_BUCKET_IMAGES,
-    cdnBaseUrl: env.IMAGES_CDN_BASE_URL,
+    cdnBaseUrl: resolveS3ImageStorageCdnBaseUrl(),
   });
+}
+
+function resolveS3ImageStorageCdnBaseUrl(): string | undefined {
+  return env.IMAGE_DELIVERY_MODE === 'cloudfront_signed' ? env.IMAGES_CDN_BASE_URL : undefined;
 }
 
 function resolveEntityImportAnalyzer(): EntityImportAnalyzerPort {
@@ -758,7 +860,11 @@ class StripeBillingClientStub {
     throw new ConfigurationError('Stripe billing is not configured');
   }
 
-  public constructWebhookEvent(): never {
+  public async createSubscriptionUpdatePortalSession(): Promise<never> {
+    throw new ConfigurationError('Stripe billing is not configured');
+  }
+
+  public async constructWebhookEvent(): Promise<never> {
     throw new ConfigurationError('Stripe billing is not configured');
   }
 

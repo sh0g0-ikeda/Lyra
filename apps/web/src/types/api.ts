@@ -2,7 +2,7 @@ export type StoryStatus = 'draft' | 'reviewing' | 'ready';
 export type PageStatus = 'designing' | 'generating' | 'generated' | 'editing' | 'confirmed';
 export type PageDialogueMode = 'image_baked' | 'balloon_only' | 'mixed';
 export type GenerationJobStatus = 'queued' | 'processing' | 'completed' | 'failed';
-export type GenerationJobType = 'page_generate' | 'entity_generate';
+export type GenerationJobType = 'page_generate' | 'entity_generate' | 'episode_story_autofill';
 
 export interface WorkRecord {
   id: string;
@@ -246,6 +246,7 @@ export interface BillingBalanceRecord {
   purchased_credits: number;
   total_credits: number;
   monthly_expires_at: string | null;
+  plan_code: 'free' | 'standard' | 'premium';
 }
 
 export interface StoryCollaborationInput {

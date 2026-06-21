@@ -1,4 +1,4 @@
-export const SIGNUP_BONUS_CREDITS = 12;
+export const SIGNUP_BONUS_CREDITS = 30;
 
 export const CREDIT_COSTS = {
   ENTITY_GENERATION: 1,

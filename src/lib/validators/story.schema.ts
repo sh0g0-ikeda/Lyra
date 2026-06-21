@@ -9,6 +9,7 @@ const uuidArray = z.array(z.string().uuid()).max(100);
 const keyBeatsArray = z.array(z.string().trim().min(1).max(500)).max(50);
 const statusSchema = z.enum(['draft', 'reviewing', 'ready']);
 const episodeStoryInputModeSchema = z.enum(['structured', 'full']);
+const storyItemMoveDirectionSchema = z.enum(['up', 'down']);
 
 export const storyUuidParamSchema = z.string().uuid();
 
@@ -107,3 +108,9 @@ export const updateEpisodeBodySchema = z
   .refine((body) => Object.keys(body).length > 0, {
     message: 'At least one field is required',
   });
+
+export const moveStoryItemBodySchema = z
+  .object({
+    direction: storyItemMoveDirectionSchema,
+  })
+  .strict();

@@ -43,8 +43,19 @@ export interface PageServicePort {
     userId: string,
     episodeId: string,
     language: AppLanguage,
+    progressReporter?: EpisodePagePlanProgressReporter,
   ): Promise<EpisodePagePlanApplyResult>;
 }
+
+export interface EpisodePagePlanProgress {
+  stage: 'compiling_chunk' | 'compiled_chunk' | 'applying';
+  message: string;
+  currentChunk: number | null;
+  totalChunks: number | null;
+}
+
+export type EpisodePagePlanProgressReporter =
+  (progress: EpisodePagePlanProgress) => Promise<void> | void;
 
 interface AutofillExecutionResult {
   suggestion: PageAutofillSuggestion;
@@ -69,6 +80,8 @@ interface PanelMergeResult {
   assignments: PanelEntityAssignment[] | null;
   filledFieldCount: number;
 }
+
+const EPISODE_PAGE_PLAN_COMPILER_PAGE_CHUNK_SIZE = 3;
 
 /**
  * Handles page-level editing concerns so the UI can update page behavior and
@@ -273,6 +286,7 @@ export class PageService implements PageServicePort {
     userId: string,
     episodeId: string,
     language: AppLanguage,
+    progressReporter?: EpisodePagePlanProgressReporter,
   ): Promise<EpisodePagePlanApplyResult> {
     if (
       this.panelRepository === undefined ||
@@ -311,12 +325,79 @@ export class PageService implements PageServicePort {
       return buildSkippedEpisodePlanApplyResult('Episode page plan compiler is not configured');
     }
 
-    const compiled = await this.compileEpisodePlanSafely(context, language);
+    const compiled = await this.compileEpisodePlanForContextSafely(context, language, progressReporter);
     if (!compiled.compilerUsed) {
       return buildSkippedEpisodePlanApplyResult(compiled.compilerError);
     }
 
+    await reportEpisodePlanProgress(progressReporter, {
+      stage: 'applying',
+      message: 'Saving story plan to pages and panels. This process can take around 20 minutes.',
+      currentChunk: null,
+      totalChunks: null,
+    });
+
     return this.applyEpisodePlanSuggestion(context, userId, compiled, language);
+  }
+
+  private async compileEpisodePlanForContextSafely(
+    context: EpisodePagePlanContext,
+    language: AppLanguage,
+    progressReporter?: EpisodePagePlanProgressReporter,
+  ): Promise<EpisodePlanExecutionResult> {
+    if (context.pages.length <= EPISODE_PAGE_PLAN_COMPILER_PAGE_CHUNK_SIZE) {
+      await reportEpisodePlanProgress(progressReporter, {
+        stage: 'compiling_chunk',
+        message: 'Compiling story plan chunks. This process can take around 20 minutes.',
+        currentChunk: 1,
+        totalChunks: 1,
+      });
+      const compiled = await this.compileEpisodePlanSafely(context, language);
+      if (compiled.compilerUsed) {
+        await reportEpisodePlanProgress(progressReporter, {
+          stage: 'compiled_chunk',
+          message: 'Compiling story plan chunks. This process can take around 20 minutes.',
+          currentChunk: 1,
+          totalChunks: 1,
+        });
+      }
+      return compiled;
+    }
+
+    const pageChunks = chunkEpisodePlanPages(
+      context.pages,
+      EPISODE_PAGE_PLAN_COMPILER_PAGE_CHUNK_SIZE,
+    );
+    console.info('episode_page_plan_compiler_chunked', {
+      episodeId: context.episodeId,
+      pageCount: context.pages.length,
+      chunkCount: pageChunks.length,
+      chunkSize: EPISODE_PAGE_PLAN_COMPILER_PAGE_CHUNK_SIZE,
+    });
+
+    const compiledChunks: EpisodePlanExecutionResult[] = [];
+    for (const [chunkIndex, pages] of pageChunks.entries()) {
+      await reportEpisodePlanProgress(progressReporter, {
+        stage: 'compiling_chunk',
+        message: 'Compiling story plan chunks. This process can take around 20 minutes.',
+        currentChunk: chunkIndex + 1,
+        totalChunks: pageChunks.length,
+      });
+      const chunkContext = buildEpisodePlanChunkContext(context, pages);
+      const compiled = await this.compileEpisodePlanSafely(chunkContext, language);
+      if (!compiled.compilerUsed) {
+        return compiled;
+      }
+      await reportEpisodePlanProgress(progressReporter, {
+        stage: 'compiled_chunk',
+        message: 'Compiling story plan chunks. This process can take around 20 minutes.',
+        currentChunk: chunkIndex + 1,
+        totalChunks: pageChunks.length,
+      });
+      compiledChunks.push(compiled);
+    }
+
+    return combineEpisodePlanExecutionResults(compiledChunks);
   }
 
   private async compileAutofillSafely(
@@ -543,6 +624,17 @@ function ensurePageEditable(status: PageSummary['status'], actionLabel: string):
   }
 }
 
+async function reportEpisodePlanProgress(
+  reporter: EpisodePagePlanProgressReporter | undefined,
+  progress: EpisodePagePlanProgress,
+): Promise<void> {
+  if (reporter === undefined) {
+    return;
+  }
+
+  await reporter(progress);
+}
+
 function buildSkippedEpisodePlanApplyResult(
   compilerError: string | null,
 ): EpisodePagePlanApplyResult {
@@ -557,6 +649,66 @@ function buildSkippedEpisodePlanApplyResult(
     compilerPromptVersion: null,
     compilerError,
   };
+}
+
+function chunkEpisodePlanPages(
+  pages: EpisodePagePlanContext['pages'],
+  chunkSize: number,
+): EpisodePagePlanContext['pages'][] {
+  const chunks: EpisodePagePlanContext['pages'][] = [];
+  for (let index = 0; index < pages.length; index += chunkSize) {
+    chunks.push(pages.slice(index, index + chunkSize));
+  }
+  return chunks;
+}
+
+function buildEpisodePlanChunkContext(
+  context: EpisodePagePlanContext,
+  pages: EpisodePagePlanContext['pages'],
+): EpisodePagePlanContext {
+  return {
+    ...context,
+    pages,
+  };
+}
+
+function combineEpisodePlanExecutionResults(
+  results: EpisodePlanExecutionResult[],
+): EpisodePlanExecutionResult {
+  const first = results[0];
+  if (first === undefined) {
+    return {
+      suggestion: { pages: [] },
+      compilerUsed: false,
+      compilerProvider: 'fallback',
+      compilerModel: null,
+      compilerPromptVersion: null,
+      compilerError: 'Episode page plan compiler returned no chunks',
+    };
+  }
+
+  return {
+    suggestion: {
+      pages: results.flatMap((result) => result.suggestion.pages),
+    },
+    compilerUsed: true,
+    compilerProvider: 'openai',
+    compilerModel: mergeCompilerMetadata(results.map((result) => result.compilerModel)),
+    compilerPromptVersion: mergeCompilerMetadata(
+      results.map((result) => result.compilerPromptVersion),
+    ),
+    compilerError: null,
+  };
+}
+
+function mergeCompilerMetadata(values: Array<string | null>): string | null {
+  const uniqueValues = Array.from(
+    new Set(values.filter((value): value is string => isMeaningfulText(value))),
+  );
+  if (uniqueValues.length === 0) {
+    return null;
+  }
+  return uniqueValues.join(' + ');
 }
 
 function toRecord(value: unknown): Record<string, unknown> | null {
@@ -1259,9 +1411,6 @@ function mergePanelSuggestion(
     isMeaningfulText(suggestion.panelNotes)
   ) {
     update.panelNotes = suggestion.panelNotes;
-    filledFieldCount += 1;
-  } else if (overwriteExisting && suggestion.panelNotes === null && !isBlank(panel.panelNotes)) {
-    update.panelNotes = null;
     filledFieldCount += 1;
   }
 
@@ -2191,9 +2340,10 @@ function buildEpisodePlanCompilerBrief(
 
   return [
     '[TASK]',
-    'Plan editable page and panel draft fields for the entire episode.',
+    'Plan editable page and panel draft fields for the given existing pages within the episode.',
     `Return suggestions for exactly ${context.pages.length} existing pages, preserving each page_id, page_number, frame_count, and panel order.`,
-    'Work in this order: distribute the episode story across the existing pages, assign contiguous scenes to each page, split each page into panel beats, choose the visible subject or subjects for each panel, then fill the editable fields.',
+    'This brief may contain only a contiguous chunk of pages. Use page_number and estimated pages to place these beats in the full episode instead of restarting the whole story inside the chunk.',
+    'Work in this order: locate these pages within the full episode story, assign contiguous scenes to each page, split each page into panel beats, choose the visible subject or subjects for each panel, then fill the editable fields.',
     'Assign the existing scenes across the existing pages in a grounded, contiguous order.',
     'You may add natural connective reaction or transition shots when they help readability, but do not invent new episode events, hidden subplots, props, or twists.',
     `Write every free-text field in natural ${outputLanguage} suitable for direct editing in the Lyra UI.`,

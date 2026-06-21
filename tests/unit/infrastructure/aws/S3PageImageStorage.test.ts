@@ -18,7 +18,7 @@ class FakeS3Client {
 }
 
 describe('S3PageImageStorage', () => {
-  it('session 配下に生成画像を保存して cdn_url を返す', async () => {
+  it('stores a generated page image under the session prefix and returns a CDN URL', async () => {
     const client = new FakeS3Client();
     const storage = new S3PageImageStorage(client, {
       bucketName: 'lyra-images',
@@ -49,7 +49,27 @@ describe('S3PageImageStorage', () => {
     });
   });
 
-  it('未対応の mimeType は ConfigurationError として扱う', async () => {
+  it('returns an internal s3 URI when no CDN base URL is configured', async () => {
+    const client = new FakeS3Client();
+    const storage = new S3PageImageStorage(client, {
+      bucketName: 'lyra-images',
+    });
+
+    const result = await storage.store({
+      jobId: 'job-1',
+      userId: 'user-1',
+      pageId: 'page-1',
+      imageData: Buffer.from('png-bytes'),
+      mimeType: 'image/png',
+    });
+
+    expect(result).toEqual({
+      s3Key: 'session/user-1/pages/page-1/job-1.png',
+      cdnUrl: 's3://lyra-images/session/user-1/pages/page-1/job-1.png',
+    });
+  });
+
+  it('rejects unsupported mime types', async () => {
     const storage = new S3PageImageStorage(new FakeS3Client(), {
       bucketName: 'lyra-images',
       cdnBaseUrl: 'https://img.lyra.app',
@@ -66,7 +86,7 @@ describe('S3PageImageStorage', () => {
     ).rejects.toEqual(new ConfigurationError('Unsupported page image mime type: application/json'));
   });
 
-  it('S3 保存失敗時は ConfigurationError に変換する', async () => {
+  it('wraps S3 storage failures as configuration errors', async () => {
     const client = new FakeS3Client();
     client.shouldThrow = true;
     const storage = new S3PageImageStorage(client, {
@@ -85,7 +105,7 @@ describe('S3PageImageStorage', () => {
     ).rejects.toEqual(new ConfigurationError('s3 unavailable'));
   });
 
-  it('S3 保存失敗時の外部エラー文は機密値を伏せる', async () => {
+  it('sanitizes secret-like provider error messages', async () => {
     const client = new FakeS3Client();
     client.shouldThrow = true;
     const fakeApiKey = ['sk', 'test-secret'].join('-');

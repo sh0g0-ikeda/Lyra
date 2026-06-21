@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { ProcessEntityGenerationJobResult } from '../../../src/services/entity/EntityGenerationWorkerService.js';
 import type { ProcessPageGenerationJobResult } from '../../../src/services/page/PageGenerationWorkerService.js';
+import type { ProcessEpisodeStoryAutofillJobResult } from '../../../src/services/story/EpisodeStoryAutofillWorkerService.js';
 import {
   handleGenerationQueue,
   type WorkerDependencies,
@@ -34,6 +35,19 @@ class FakeEntityGenerationWorkerService {
   };
 
   public async processJob(jobId: string): Promise<ProcessEntityGenerationJobResult> {
+    this.calls.push(jobId);
+    return this.nextResult;
+  }
+}
+
+class FakeEpisodeStoryAutofillWorkerService {
+  public calls: string[] = [];
+  public nextResult: ProcessEpisodeStoryAutofillJobResult = {
+    status: 'processed',
+    jobStatus: 'completed',
+  };
+
+  public async processJob(jobId: string): Promise<ProcessEpisodeStoryAutofillJobResult> {
     this.calls.push(jobId);
     return this.nextResult;
   }
@@ -170,6 +184,35 @@ describe('worker queue handler', () => {
     expect(result.batchItemFailures).toEqual([{ itemIdentifier: 'message-1' }]);
   });
 
+  it('page worker が retry を返したら SQS メッセージを削除しない', async () => {
+    const pageWorkerService = new FakePageGenerationWorkerService();
+    const entityWorkerService = new FakeEntityGenerationWorkerService();
+    pageWorkerService.nextResult = {
+      status: 'retry',
+      reason: 'Page generation job is already processing',
+    };
+
+    const result = await handleGenerationQueue(
+      buildEvent({
+        job_id: '11111111-1111-4111-8111-111111111111',
+        job_type: 'page_generate',
+      }),
+      buildDependencies(pageWorkerService, entityWorkerService),
+    );
+
+    expect(result).toMatchObject({
+      processedCount: 0,
+      skippedCount: 0,
+      retryCount: 1,
+      failedCount: 0,
+    });
+    expect(result.results[0]).toMatchObject({
+      status: 'retry',
+      reason: 'Page generation job is already processing',
+    });
+    expect(result.batchItemFailures).toEqual([{ itemIdentifier: 'message-1' }]);
+  });
+
   it('worker service 失敗理由は機密値を伏せる', async () => {
     const pageWorkerService = new FakePageGenerationWorkerService();
     const entityWorkerService = new FakeEntityGenerationWorkerService();
@@ -252,6 +295,7 @@ function buildDependencies(
   return {
     pageGenerationWorkerService,
     entityGenerationWorkerService,
+    episodeStoryAutofillWorkerService: new FakeEpisodeStoryAutofillWorkerService(),
   };
 }
 

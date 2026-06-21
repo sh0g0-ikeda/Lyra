@@ -168,6 +168,7 @@ describe('billing routes', () => {
       purchased_credits: 15,
       total_credits: 40,
       monthly_expires_at: null,
+      plan_code: 'free',
     });
   });
 
@@ -193,6 +194,24 @@ describe('billing routes', () => {
       url: 'https://checkout.stripe.test/subscription',
     });
     expect(billingService.subscriptionPlanCode).toBe('standard');
+
+    const premiumResponse = await app.request('/api/billing/checkout/subscription', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        plan_code: 'premium',
+      }),
+    });
+
+    expect(premiumResponse.status).toBe(201);
+    await expect(premiumResponse.json()).resolves.toEqual({
+      session_id: 'cs_sub_123',
+      url: 'https://checkout.stripe.test/subscription',
+    });
+    expect(billingService.subscriptionPlanCode).toBe('premium');
   });
 
   it('クレジット購入 Checkout Session を作成する', async () => {

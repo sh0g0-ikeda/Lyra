@@ -96,6 +96,26 @@ describe('createAuthMiddleware Cognito mode', () => {
     expect(response.status).toBe(401);
   });
 
+  it('許可リストに含まれる別 client_id の access token を許可する', async () => {
+    const fixture = await createCognitoFixture();
+    const provisioningService = new FakeUserProvisioningService();
+    const app = createProtectedApp(provisioningService, fixture.jwks, {
+      ...cognitoConfig,
+      clientIds: ['mobile-client-123'],
+    });
+    const token = await fixture.signToken({ client_id: 'mobile-client-123' });
+
+    const response = await app.request('/protected', {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    expect(response.status).toBe(200);
+    expect(provisioningService.claims).toEqual({
+      sub: 'cognito-user-1',
+      email: 'user@example.com',
+    });
+  });
+
   it('Authorization header に余計な要素がある場合は拒否する', async () => {
     const fixture = await createCognitoFixture();
     const app = createProtectedApp(new FakeUserProvisioningService(), fixture.jwks);
@@ -119,6 +139,33 @@ describe('createAuthMiddleware Cognito mode', () => {
     });
     const token = await fixture.signToken({
       aud: cognitoConfig.clientId,
+      token_use: 'id',
+      scope: undefined,
+    });
+
+    const response = await app.request('/protected', {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    expect(response.status).toBe(200);
+    expect(provisioningService.claims).toEqual({
+      sub: 'cognito-user-1',
+      email: 'user@example.com',
+    });
+  });
+
+  it('id token 運用でも許可リストに含まれる別 audience を許可する', async () => {
+    const fixture = await createCognitoFixture();
+    const provisioningService = new FakeUserProvisioningService();
+    const app = createProtectedApp(provisioningService, fixture.jwks, {
+      ...cognitoConfig,
+      tokenUse: 'id',
+      requiredScopes: [],
+      requiredGroups: [],
+      clientIds: ['mobile-client-123'],
+    });
+    const token = await fixture.signToken({
+      aud: 'mobile-client-123',
       token_use: 'id',
       scope: undefined,
     });

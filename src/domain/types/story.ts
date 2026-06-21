@@ -1,5 +1,6 @@
 export type StoryStatus = 'draft' | 'reviewing' | 'ready';
 export type EpisodeStoryInputMode = 'structured' | 'full';
+export type StoryItemMoveDirection = 'up' | 'down';
 
 export interface Work {
   id: string;

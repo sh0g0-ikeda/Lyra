@@ -16,6 +16,7 @@ import type { PromptBuilderPort } from './PromptBuilder.js';
 import type {
   CompletePageGenerationInput,
   PageGenerationExecutionRepository,
+  TouchPageGenerationProgressInput,
 } from '../../repositories/PageGenerationExecutionRepository.js';
 
 export interface PageGenerationPlanInput {
@@ -82,8 +83,9 @@ export interface PageImageStoragePort {
 }
 
 export interface ProcessPageGenerationJobResult {
-  status: 'processed' | 'skipped';
+  status: 'processed' | 'skipped' | 'retry';
   jobStatus?: 'completed' | 'failed';
+  reason?: string;
 }
 
 export interface BuildPageGenerationInputImagesInput {
@@ -115,7 +117,7 @@ export class PageGenerationWorkerService {
 
     const job = await this.executionRepository.claimQueuedPageGenerationJob(jobId);
     if (job === null) {
-      return { status: 'skipped' };
+      return this.resolveUnclaimedJobResult(jobId);
     }
 
     const params = parsePersistedParams(job.params);
@@ -126,14 +128,17 @@ export class PageGenerationWorkerService {
     }
 
     try {
+      await this.touchJobProgress(job, 'Building page prompt.');
       const builtPrompt = await this.promptBuilder.buildPagePrompt({
         userId: job.userId,
         pageId: params.page_id,
         requestKind: params.request_kind,
         generationMode: params.generation_mode,
       });
+      await this.touchJobProgress(job, 'Compiling page prompt.');
       const compiledPromptResult = await compilePromptSafely(this.promptCompiler, builtPrompt);
       const compiledPrompt = compiledPromptResult.compiledPrompt;
+      await this.touchJobProgress(job, 'Preparing reference images.');
       const inputImages = await this.inputImageBuilder.buildInputImages({
         userId: job.userId,
         pageId: params.page_id,
@@ -141,38 +146,45 @@ export class PageGenerationWorkerService {
 
       const internalPlan = params.requires_planner
         ? normalizeOptionalInternalPlan(
-            await this.planner.buildPlan({
-              jobId: job.id,
-              userId: job.userId,
-              pageId: params.page_id,
-              requestKind: params.request_kind,
-              generationMode: params.generation_mode,
-              prompt: compiledPrompt.prompt,
-            }),
+            await this.withProgressHeartbeat(job, 'Planning page image generation.', () =>
+              this.planner.buildPlan({
+                jobId: job.id,
+                userId: job.userId,
+                pageId: params.page_id,
+                requestKind: params.request_kind,
+                generationMode: params.generation_mode,
+                prompt: compiledPrompt.prompt,
+              }),
+            ),
           )
         : null;
 
-      const renderResult = await this.renderer.render({
-        jobId: job.id,
-        userId: job.userId,
-        pageId: params.page_id,
-        requestKind: params.request_kind,
-        generationMode: params.generation_mode,
-        prompt: compiledPrompt.prompt,
-        quality: params.quality,
-        internalPlan,
-        inputImages,
-      });
+      const renderResult = await this.withProgressHeartbeat(job, 'Requesting page image from image model.', () =>
+        this.renderer.render({
+          jobId: job.id,
+          userId: job.userId,
+          pageId: params.page_id,
+          requestKind: params.request_kind,
+          generationMode: params.generation_mode,
+          prompt: compiledPrompt.prompt,
+          quality: params.quality,
+          internalPlan,
+          inputImages,
+        }),
+      );
       assertRenderedPageImage(renderResult);
 
-      const storedImage = await this.storage.store({
-        jobId: job.id,
-        userId: job.userId,
-        pageId: params.page_id,
-        imageData: renderResult.imageData,
-        mimeType: renderResult.mimeType,
-      });
+      const storedImage = await this.withProgressHeartbeat(job, 'Storing generated page image.', () =>
+        this.storage.store({
+          jobId: job.id,
+          userId: job.userId,
+          pageId: params.page_id,
+          imageData: renderResult.imageData,
+          mimeType: renderResult.mimeType,
+        }),
+      );
 
+      await this.touchJobProgress(job, 'Saving generated page result.');
       const completed = await this.executionRepository.completePageGeneration(
         buildCompletionInput(job, params, storedImage, renderResult, {
           draftPrompt: builtPrompt.draftPrompt,
@@ -193,6 +205,57 @@ export class PageGenerationWorkerService {
     } catch (error) {
       await this.failJob(job, toFailureCompensation(params), toErrorMessage(error));
       return { status: 'processed', jobStatus: 'failed' };
+    }
+  }
+
+  private async resolveUnclaimedJobResult(jobId: string): Promise<ProcessPageGenerationJobResult> {
+    const existingJob = await this.executionRepository.findPageGenerationJob(jobId);
+    if (existingJob === null) {
+      return { status: 'skipped', reason: 'Page generation job no longer exists' };
+    }
+
+    if (existingJob.status === 'processing') {
+      return { status: 'retry', reason: 'Page generation job is already processing' };
+    }
+
+    if (existingJob.status === 'queued') {
+      return { status: 'retry', reason: 'Page generation job was not claimed yet' };
+    }
+
+    return { status: 'skipped', reason: `Page generation job is already ${existingJob.status}` };
+  }
+
+  private async touchJobProgress(job: GenerationJob, message: string): Promise<void> {
+    const input: TouchPageGenerationProgressInput = {
+      jobId: job.id,
+      userId: job.userId,
+      message,
+      updatedAt: new Date().toISOString(),
+    };
+
+    try {
+      await this.executionRepository.touchPageGenerationProgress(input);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      console.warn(`[page-generation-worker] failed to update progress for job ${job.id}: ${reason}`);
+    }
+  }
+
+  private async withProgressHeartbeat<T>(
+    job: GenerationJob,
+    message: string,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    await this.touchJobProgress(job, message);
+    const timer = setInterval(() => {
+      void this.touchJobProgress(job, message);
+    }, PAGE_GENERATION_HEARTBEAT_INTERVAL_MS);
+    unrefTimer(timer);
+
+    try {
+      return await operation();
+    } finally {
+      clearInterval(timer);
     }
   }
 
@@ -227,6 +290,17 @@ export class PageGenerationWorkerService {
           `[page-generation-worker] failed to refund failed job ${job.id}; recovery will retry missing refund ledger: ${reason}`,
         );
       }
+    }
+  }
+}
+
+const PAGE_GENERATION_HEARTBEAT_INTERVAL_MS = 60_000;
+
+function unrefTimer(timer: ReturnType<typeof setInterval>): void {
+  if (typeof timer === 'object' && timer !== null && 'unref' in timer) {
+    const unref = timer.unref;
+    if (typeof unref === 'function') {
+      unref.call(timer);
     }
   }
 }

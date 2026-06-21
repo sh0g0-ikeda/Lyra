@@ -155,6 +155,28 @@ class FakeStoryRepository implements StoryRepository {
     return chapter === null ? false : this.chapters.delete(id);
   }
 
+  public async moveChapter(id: string, userId: string, direction: 'up' | 'down'): Promise<Chapter | null> {
+    const chapter = await this.findChapterByIdAndUserId(id, userId);
+    if (chapter === null) {
+      return null;
+    }
+
+    const siblings = [...this.chapters.values()]
+      .filter((candidate) => candidate.workId === chapter.workId)
+      .sort((left, right) => left.order - right.order);
+    const index = siblings.findIndex((candidate) => candidate.id === id);
+    const neighbor = direction === 'up' ? siblings[index - 1] : siblings[index + 1];
+    if (neighbor === undefined) {
+      return chapter;
+    }
+
+    const movedChapter = { ...chapter, order: neighbor.order, version: chapter.version + 1 };
+    const movedNeighbor = { ...neighbor, order: chapter.order, version: neighbor.version + 1 };
+    this.chapters.set(movedChapter.id, movedChapter);
+    this.chapters.set(movedNeighbor.id, movedNeighbor);
+    return movedChapter;
+  }
+
   public async createEpisode(chapterId: string, input: CreateEpisodeInput): Promise<Episode> {
     const episode: Episode = {
       id: `episode-${this.episodes.size + 1}`,
@@ -232,6 +254,28 @@ class FakeStoryRepository implements StoryRepository {
   public async deleteEpisode(id: string, userId: string): Promise<boolean> {
     const episode = await this.findEpisodeByIdAndUserId(id, userId);
     return episode === null ? false : this.episodes.delete(id);
+  }
+
+  public async moveEpisode(id: string, userId: string, direction: 'up' | 'down'): Promise<Episode | null> {
+    const episode = await this.findEpisodeByIdAndUserId(id, userId);
+    if (episode === null) {
+      return null;
+    }
+
+    const siblings = [...this.episodes.values()]
+      .filter((candidate) => candidate.chapterId === episode.chapterId)
+      .sort((left, right) => left.order - right.order);
+    const index = siblings.findIndex((candidate) => candidate.id === id);
+    const neighbor = direction === 'up' ? siblings[index - 1] : siblings[index + 1];
+    if (neighbor === undefined) {
+      return episode;
+    }
+
+    const movedEpisode = { ...episode, order: neighbor.order, version: episode.version + 1 };
+    const movedNeighbor = { ...neighbor, order: episode.order, version: neighbor.version + 1 };
+    this.episodes.set(movedEpisode.id, movedEpisode);
+    this.episodes.set(movedNeighbor.id, movedNeighbor);
+    return movedEpisode;
   }
 
   public async findCollaborationTargetByIdAndUserId(
@@ -376,6 +420,102 @@ describe('StoryService', () => {
 
     expect(episode.chapterId).toBe(chapter.id);
     expect(episode.pageSkeletonGenerated).toBe(false);
+  });
+
+  it('moves a chapter within the same work', async () => {
+    const service = createService();
+    const work = await service.createWork('user-1', {
+      title: '黒月の騎士',
+      genre: null,
+      worldSetting: null,
+      theme: null,
+      mainEntityIds: [],
+      startingPoint: null,
+      endingPoint: null,
+      overallFlow: null,
+    });
+    const firstChapter = await service.createChapter('user-1', work.id, {
+      order: 1,
+      title: '第一章',
+      purpose: null,
+      startingState: null,
+      endingState: null,
+      emotionCurve: null,
+      entitiesInvolved: [],
+      keyBeats: [],
+    });
+    const secondChapter = await service.createChapter('user-1', work.id, {
+      order: 2,
+      title: '第二章',
+      purpose: null,
+      startingState: null,
+      endingState: null,
+      emotionCurve: null,
+      entitiesInvolved: [],
+      keyBeats: [],
+    });
+
+    const movedChapter = await service.moveChapter('user-1', secondChapter.id, 'up');
+    const chapters = await service.listChapters('user-1', work.id);
+
+    expect(movedChapter).toMatchObject({ id: secondChapter.id, order: 1 });
+    expect(chapters.find((chapter) => chapter.id === firstChapter.id)?.order).toBe(2);
+  });
+
+  it('moves an episode within the same chapter', async () => {
+    const service = createService();
+    const work = await service.createWork('user-1', {
+      title: '黒月の騎士',
+      genre: null,
+      worldSetting: null,
+      theme: null,
+      mainEntityIds: [],
+      startingPoint: null,
+      endingPoint: null,
+      overallFlow: null,
+    });
+    const chapter = await service.createChapter('user-1', work.id, {
+      order: 1,
+      title: '第一章',
+      purpose: null,
+      startingState: null,
+      endingState: null,
+      emotionCurve: null,
+      entitiesInvolved: [],
+      keyBeats: [],
+    });
+    const firstEpisode = await service.createEpisode('user-1', chapter.id, {
+      order: 1,
+      title: '第一話',
+      purpose: null,
+      storyInputMode: 'structured',
+      storyFullDraft: null,
+      introduction: null,
+      middle: null,
+      climax: null,
+      endingHook: null,
+      estimatedPages: 16,
+      entitiesInvolved: [],
+    });
+    const secondEpisode = await service.createEpisode('user-1', chapter.id, {
+      order: 2,
+      title: '第二話',
+      purpose: null,
+      storyInputMode: 'structured',
+      storyFullDraft: null,
+      introduction: null,
+      middle: null,
+      climax: null,
+      endingHook: null,
+      estimatedPages: 16,
+      entitiesInvolved: [],
+    });
+
+    const movedEpisode = await service.moveEpisode('user-1', secondEpisode.id, 'up');
+    const episodes = await service.listEpisodes('user-1', chapter.id);
+
+    expect(movedEpisode).toMatchObject({ id: secondEpisode.id, order: 1 });
+    expect(episodes.find((episode) => episode.id === firstEpisode.id)?.order).toBe(2);
   });
 
   it('returns not found when updating another user episode', async () => {

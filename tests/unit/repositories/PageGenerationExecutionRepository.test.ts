@@ -43,6 +43,41 @@ describe('PostgresPageGenerationExecutionRepository', () => {
     expect(job?.status).toBe('processing');
   });
 
+  it('page generation job を job_type で絞って取得する', async () => {
+    const client = new QueryCapturingClient();
+    const repository = new PostgresPageGenerationExecutionRepository(client);
+
+    const job = await repository.findPageGenerationJob('job-1');
+
+    expect(client.queries[0]).toContain('SELECT *');
+    expect(client.queries[0]).toContain("job_type = 'page_generate'");
+    expect(client.values[0]).toEqual(['job-1']);
+    expect(job?.id).toBe('job-1');
+  });
+
+  it('processing job の progress heartbeat を result に保存する', async () => {
+    const client = new QueryCapturingClient();
+    const repository = new PostgresPageGenerationExecutionRepository(client);
+
+    const touched = await repository.touchPageGenerationProgress({
+      jobId: 'job-1',
+      userId: 'user-1',
+      message: 'Requesting page image from image model.',
+      updatedAt: '2026-06-16T00:00:00.000Z',
+    });
+
+    expect(touched).toBe(true);
+    expect(client.queries[0]).toContain("status = 'processing'");
+    expect(client.queries[0]).toContain('progress_message');
+    expect(client.queries[0]).toContain('progress_updated_at');
+    expect(client.values[0]).toEqual([
+      'job-1',
+      'user-1',
+      'Requesting page image from image model.',
+      '2026-06-16T00:00:00.000Z',
+    ]);
+  });
+
   it('completed 更新でpages.generated_imageとjob.resultを保存する', async () => {
     const client = new QueryCapturingClient();
     const repository = new PostgresPageGenerationExecutionRepository(client);

@@ -72,7 +72,7 @@ export class InMemoryRateLimitStore implements RateLimitStore {
 export function createRateLimitMiddleware(store: RateLimitStore): MiddlewareHandler<AppEnv> {
   return async (c, next) => {
     const user = c.get('user');
-    const bucket = classifyRateLimitBucket(c.req.path);
+    const bucket = classifyRateLimitBucket(c.req.path, c.req.method);
     const rule = RATE_LIMIT_RULES[bucket];
     const result = await store.consume(
       `${bucket}:${user.id}`,
@@ -129,18 +129,28 @@ export function createPublicIpRateLimitMiddleware(
   };
 }
 
-function classifyRateLimitBucket(path: string): RateLimitBucket {
+function classifyRateLimitBucket(path: string, method: string): RateLimitBucket {
   if (
     PAGE_GENERATION_ROUTE_PATTERN.test(path) ||
+    ENTITY_IMPORT_ROUTE_PATTERN.test(path) ||
+    ENTITY_GENERATION_ROUTE_PATTERN.test(path)
+  ) {
+    return 'generation';
+  }
+
+  // Text-only AI routes can be retried during editing and must not consume the stricter image-generation bucket.
+  if (
     PAGE_AUTOFILL_ROUTE_PATTERN.test(path) ||
     EPISODE_STORY_AUTOFILL_ROUTE_PATTERN.test(path) ||
     PAGE_SKELETON_GENERATION_ROUTE_PATTERN.test(path) ||
-    ENTITY_IMPORT_ROUTE_PATTERN.test(path) ||
-    ENTITY_GENERATION_ROUTE_PATTERN.test(path) ||
     STORY_COLLABORATION_ROUTE_PATTERN.test(path) ||
     STORY_EPISODE_IMPROVEMENT_ROUTE_PATTERN.test(path)
   ) {
-    return 'generation';
+    return 'storyAi';
+  }
+
+  if (method.toUpperCase() === 'GET') {
+    return 'read';
   }
 
   if (STORY_ROUTE_PREFIXES.some((prefix) => path.startsWith(prefix))) {

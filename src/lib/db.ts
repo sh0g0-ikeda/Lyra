@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { Pool, type PoolConfig, type QueryResult, type QueryResultRow } from 'pg';
 import { env } from './env.js';
 
@@ -18,23 +19,55 @@ export interface DatabasePoolConfigInput {
   connectionString: string;
   max: number;
   sslMode: DatabaseSslMode;
+  sslCa?: string;
   statementTimeoutMs: number;
   queryTimeoutMs: number;
 }
 
 export function buildDatabasePoolConfig(input: DatabasePoolConfigInput): PoolConfig {
   const config: PoolConfig = {
-    connectionString: input.connectionString,
+    connectionString: normalizeDatabaseConnectionString(input.connectionString, input.sslMode),
     max: input.max,
     statement_timeout: input.statementTimeoutMs,
     query_timeout: input.queryTimeoutMs,
   };
 
   if (input.sslMode === 'require') {
-    config.ssl = { rejectUnauthorized: true };
+    config.ssl = {
+      rejectUnauthorized: true,
+      ...(input.sslCa === undefined ? {} : { ca: input.sslCa }),
+    };
   }
 
   return config;
+}
+
+export function normalizeDatabaseConnectionString(connectionString: string, sslMode: DatabaseSslMode): string {
+  if (sslMode !== 'require') {
+    return connectionString;
+  }
+
+  let url: URL;
+  try {
+    url = new URL(connectionString);
+  } catch {
+    return connectionString;
+  }
+
+  url.searchParams.delete('ssl');
+  url.searchParams.delete('sslmode');
+  url.searchParams.delete('sslcert');
+  url.searchParams.delete('sslkey');
+  url.searchParams.delete('sslrootcert');
+  return url.toString();
+}
+
+export function readDatabaseSslCaFile(filePath: string | undefined): string | undefined {
+  if (filePath === undefined) {
+    return undefined;
+  }
+
+  return readFileSync(filePath, 'utf8');
 }
 
 const pool = new Pool(
@@ -42,6 +75,7 @@ const pool = new Pool(
     connectionString: env.DATABASE_URL,
     max: env.DATABASE_POOL_MAX,
     sslMode: env.DATABASE_SSL_MODE,
+    sslCa: readDatabaseSslCaFile(env.DATABASE_SSL_CA_FILE),
     statementTimeoutMs: env.DATABASE_STATEMENT_TIMEOUT_MS,
     queryTimeoutMs: env.DATABASE_QUERY_TIMEOUT_MS,
   }),

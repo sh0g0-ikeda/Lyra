@@ -2,6 +2,7 @@ import { Hono, type Context, type MiddlewareHandler } from 'hono';
 import { z } from 'zod';
 import { ValidationError } from '../domain/errors/index.js';
 import type { GenerationJob } from '../domain/types/job.js';
+import { signImageCdnUrl } from '../infrastructure/aws/CloudFrontImageUrlSigner.js';
 import type { JobServicePort } from '../services/job/JobService.js';
 import type { AppEnv } from '../types/app.js';
 
@@ -24,7 +25,7 @@ export function createJobRoutes(dependencies: JobRouteDependencies): Hono<AppEnv
     const jobId = parseUuidParam(c, 'id');
     const job = await dependencies.jobService.getJob(user.id, jobId);
 
-    return c.json(toJobResponse(job));
+    return c.json(await toJobResponse(job));
   });
 
   return app;
@@ -39,7 +40,7 @@ function parseUuidParam(c: Context<AppEnv>, name: string): string {
   return result.data;
 }
 
-function toJobResponse(job: GenerationJob): Record<string, unknown> {
+async function toJobResponse(job: GenerationJob): Promise<Record<string, unknown>> {
   return {
     id: job.id,
     job_type: job.jobType,
@@ -47,7 +48,7 @@ function toJobResponse(job: GenerationJob): Record<string, unknown> {
     generation_mode: job.generationMode,
     credit_cost: job.creditCost,
     params: toJobParamsResponse(job),
-    result: toJobResultResponse(job),
+    result: await toJobResultResponse(job),
     error_message: job.errorMessage,
     retry_count: job.retryCount,
     created_at: job.createdAt.toISOString(),
@@ -58,25 +59,57 @@ function toJobResponse(job: GenerationJob): Record<string, unknown> {
 }
 
 function toJobParamsResponse(job: GenerationJob): Record<string, unknown> {
-  return job.jobType === 'entity_generate'
-    ? pickKnownFields(job.params, ['entity_id', 'entity_type'])
-    : pickKnownFields(job.params, [
-        'page_id',
-        'request_kind',
-        'generation_mode',
-        'quality',
-        'requires_planner',
-      ]);
+  if (job.jobType === 'entity_generate') {
+    return pickKnownFields(job.params, ['entity_id', 'entity_type']);
+  }
+
+  if (job.jobType === 'episode_story_autofill') {
+    return pickKnownFields(job.params, ['episode_id', 'language']);
+  }
+
+  return pickKnownFields(job.params, [
+    'page_id',
+    'request_kind',
+    'generation_mode',
+    'quality',
+    'requires_planner',
+  ]);
 }
 
-function toJobResultResponse(job: GenerationJob): Record<string, unknown> | null {
+async function toJobResultResponse(job: GenerationJob): Promise<Record<string, unknown> | null> {
   if (job.result === null) {
     return null;
   }
 
-  return job.jobType === 'entity_generate'
-    ? toEntityGenerationResultResponse(job)
-    : toPageGenerationResultResponse(job.result);
+  if (job.jobType === 'entity_generate') {
+    return await toEntityGenerationResultResponse(job);
+  }
+
+  if (job.jobType === 'episode_story_autofill') {
+    return toEpisodeStoryAutofillResultResponse(job.result);
+  }
+
+  return toPageGenerationResultResponse(job.result);
+}
+
+function toEpisodeStoryAutofillResultResponse(result: Record<string, unknown>): Record<string, unknown> {
+  return pickKnownFields(result, [
+    'updated_page_count',
+    'updated_panel_count',
+    'updated_assignment_count',
+    'filled_field_count',
+    'compiler_used',
+    'compiler_provider',
+    'compiler_model',
+    'compiler_prompt_version',
+    'compiler_error',
+    'progress_stage',
+    'progress_message',
+    'progress_current_chunk',
+    'progress_total_chunks',
+    'progress_started_at',
+    'progress_updated_at',
+  ]);
 }
 
 function toPageGenerationResultResponse(result: Record<string, unknown>): Record<string, unknown> {
@@ -93,12 +126,12 @@ function toPageGenerationResultResponse(result: Record<string, unknown>): Record
   return response;
 }
 
-function toEntityGenerationResultResponse(job: GenerationJob): Record<string, unknown> {
+async function toEntityGenerationResultResponse(job: GenerationJob): Promise<Record<string, unknown>> {
   const result = job.result ?? {};
   const response: Record<string, unknown> = {};
   response.provider_result = isProviderResult(job);
 
-  const candidates = toEntityCandidateResponse(result.candidates);
+  const candidates = await toEntityCandidateResponse(result.candidates);
   if (candidates.length > 0) {
     response.candidates = candidates;
   }
@@ -142,16 +175,25 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function toEntityCandidateResponse(value: unknown): Array<Record<string, unknown>> {
+async function toEntityCandidateResponse(value: unknown): Promise<Array<Record<string, unknown>>> {
   if (!Array.isArray(value)) {
     return [];
   }
 
-  return value.flatMap((candidate) => {
+  const candidates: Array<Record<string, unknown> | null> = await Promise.all(value.map(async (candidate): Promise<Record<string, unknown> | null> => {
     if (!isRecord(candidate) || typeof candidate.s3_key !== 'string') {
-      return [];
+      return null;
     }
 
-    return [{ s3_key: candidate.s3_key }];
-  });
+    const signedCdnUrl = typeof candidate.cdn_url === 'string'
+      ? await signImageCdnUrl(candidate.cdn_url, candidate.s3_key)
+      : null;
+
+    return {
+      s3_key: candidate.s3_key,
+      ...(signedCdnUrl === null ? {} : { cdn_url: signedCdnUrl }),
+    };
+  }));
+
+  return candidates.filter((candidate): candidate is Record<string, unknown> => candidate !== null);
 }

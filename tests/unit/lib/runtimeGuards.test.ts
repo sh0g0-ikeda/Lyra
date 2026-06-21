@@ -24,6 +24,10 @@ const safeProductionConfig = {
   SQS_GENERATION_VISIBILITY_TIMEOUT_SECONDS: 420,
   S3_BUCKET_IMAGES: 'lyra-images',
   IMAGES_CDN_BASE_URL: 'https://images.lyra.test',
+  IMAGE_CDN_SIGNING_ENABLED: true,
+  CLOUDFRONT_KEY_PAIR_ID: 'K1234567890',
+  CLOUDFRONT_PRIVATE_KEY: '-----BEGIN PRIVATE KEY-----\\nkey\\n-----END PRIVATE KEY-----',
+  CLOUDFRONT_SIGNED_URL_TTL_SECONDS: 300,
   STRIPE_SECRET_KEY: 'sk_live_secret123',
   STRIPE_WEBHOOK_SECRET: 'whsec_secret123',
   STRIPE_PRICE_STANDARD_MONTHLY: 'price_standard',
@@ -74,6 +78,40 @@ describe('assertProductionRuntimeConfig', () => {
     expect(() => {
       assertProductionRuntimeConfig(safeProductionConfig, 'production');
     }).not.toThrow();
+  });
+
+  it('allows production image delivery through short-lived S3 presigned URLs without CloudFront config', () => {
+    expect(() => {
+      assertProductionRuntimeConfig(
+        {
+          ...safeProductionConfig,
+          IMAGE_DELIVERY_MODE: 's3_presigned',
+          IMAGES_CDN_BASE_URL: 'replace-me-cloudfront-url',
+          IMAGE_CDN_SIGNING_ENABLED: false,
+          CLOUDFRONT_KEY_PAIR_ID: undefined,
+          CLOUDFRONT_PRIVATE_KEY: undefined,
+          S3_PRESIGNED_URL_TTL_SECONDS: 300,
+        },
+        'production',
+      );
+    }).not.toThrow();
+  });
+
+  it('rejects too-long S3 presigned URL TTL values in production', () => {
+    expect(() => {
+      assertProductionRuntimeConfig(
+        {
+          ...safeProductionConfig,
+          IMAGE_DELIVERY_MODE: 's3_presigned',
+          IMAGES_CDN_BASE_URL: undefined,
+          IMAGE_CDN_SIGNING_ENABLED: false,
+          CLOUDFRONT_KEY_PAIR_ID: undefined,
+          CLOUDFRONT_PRIVATE_KEY: undefined,
+          S3_PRESIGNED_URL_TTL_SECONDS: 3_601,
+        },
+        'production',
+      );
+    }).toThrow(/S3_PRESIGNED_URL_TTL_SECONDS must be between 60 and 3600/);
   });
 
   it('requires NODE_ENV production when APP_ENV is production', () => {
@@ -637,5 +675,27 @@ describe('assertProductionRuntimeConfig', () => {
         'production',
       );
     }).toThrow(/IMAGES_CDN_BASE_URL must not point directly to S3/);
+  });
+
+  it('production では画像CDN署名設定を必須にする', () => {
+    expect(() => {
+      assertProductionRuntimeConfig(
+        {
+          ...safeProductionConfig,
+          IMAGE_CDN_SIGNING_ENABLED: false,
+        },
+        'production',
+      );
+    }).toThrow(/IMAGE_CDN_SIGNING_ENABLED must be true/);
+
+    expect(() => {
+      assertProductionRuntimeConfig(
+        {
+          ...safeProductionConfig,
+          CLOUDFRONT_PRIVATE_KEY: undefined,
+        },
+        'production',
+      );
+    }).toThrow(/CLOUDFRONT_PRIVATE_KEY is required/);
   });
 });

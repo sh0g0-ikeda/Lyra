@@ -124,29 +124,47 @@ export class PostgresPageGenerationRecoveryRepository
 
 function buildStaleJobsQuery(extraConditions: string, limitPlaceholder: string): string {
   return `
+      WITH candidate_jobs AS (
+        SELECT
+          generation_jobs.id AS job_id,
+          generation_jobs.user_id,
+          generation_jobs.credit_cost,
+          generation_jobs.params->>'page_id' AS page_id,
+          generation_jobs.params->>'previous_page_status' AS previous_page_status,
+          generation_jobs.params->>'previous_generation_mode' AS previous_generation_mode,
+          generation_jobs.status,
+          generation_jobs.created_at,
+          CASE
+            WHEN generation_jobs.status = 'processing'
+              AND generation_jobs.result->>'progress_updated_at' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$'
+              THEN (generation_jobs.result->>'progress_updated_at')::timestamptz
+            ELSE COALESCE(generation_jobs.started_at, generation_jobs.created_at)
+          END AS stale_at
+        FROM generation_jobs
+        WHERE generation_jobs.job_type = 'page_generate'
+          AND generation_jobs.status IN ('processing', 'queued')
+          ${extraConditions}
+      )
       SELECT
-        generation_jobs.id AS job_id,
-        generation_jobs.user_id,
-        generation_jobs.credit_cost,
-        generation_jobs.params->>'page_id' AS page_id,
-        generation_jobs.params->>'previous_page_status' AS previous_page_status,
-        generation_jobs.params->>'previous_generation_mode' AS previous_generation_mode,
-        COALESCE(generation_jobs.started_at, generation_jobs.created_at) AS stale_at
-      FROM generation_jobs
-      WHERE generation_jobs.job_type = 'page_generate'
-        AND (
+        job_id,
+        user_id,
+        credit_cost,
+        page_id,
+        previous_page_status,
+        previous_generation_mode,
+        stale_at
+      FROM candidate_jobs
+      WHERE (
           (
-            generation_jobs.status = 'processing'
-            AND generation_jobs.started_at IS NOT NULL
-            AND generation_jobs.started_at < $1
+            status = 'processing'
+            AND stale_at < $1
           )
           OR (
-            generation_jobs.status = 'queued'
-            AND generation_jobs.created_at < $1
+            status = 'queued'
+            AND created_at < $1
           )
         )
-        ${extraConditions}
-      ORDER BY stale_at ASC, generation_jobs.created_at ASC
+      ORDER BY stale_at ASC, created_at ASC
       LIMIT ${limitPlaceholder}
     `;
 }

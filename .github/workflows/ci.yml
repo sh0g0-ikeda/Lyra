@@ -19,14 +19,13 @@ jobs:
           node-version: '22'
           cache: npm
           cache-dependency-path: |
-            package-lock.json
             apps/web/package-lock.json
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
 
       - name: Install backend dependencies
-        run: npm ci
+        run: bun install --frozen-lockfile
 
       - name: Install frontend dependencies
         run: npm --prefix apps/web ci

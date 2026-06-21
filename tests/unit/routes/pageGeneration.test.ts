@@ -25,6 +25,10 @@ import type {
   ProvisionedUser,
   UserProvisioningPort,
 } from '../../../src/services/auth/UserProvisioningService.js';
+import type {
+  EpisodeStoryAutofillServicePort,
+  EnqueueEpisodeStoryAutofillResult,
+} from '../../../src/services/story/EpisodeStoryAutofillService.js';
 
 const jwtSecret = 'unit-test-secret';
 const user: AuthenticatedUser = {
@@ -34,6 +38,8 @@ const user: AuthenticatedUser = {
   displayName: null,
   planCode: 'free',
 };
+
+type EpisodeAutofillRouteResult = Awaited<ReturnType<PageServicePort['autofillEpisodeFromStory']>>;
 
 class FakeUserProvisioningService implements UserProvisioningPort {
   public async provisionFromSupabaseClaims(claims: SupabaseJwtClaims): Promise<ProvisionedUser> {
@@ -126,7 +132,10 @@ class FakePageService implements PageServicePort {
     };
   }
 
-  public async autofillEpisodeFromStory(_userId: string, episodeId: string) {
+  public async autofillEpisodeFromStory(
+    _userId: string,
+    episodeId: string,
+  ): Promise<EpisodeAutofillRouteResult> {
     this.autofilledEpisodeId = episodeId;
     return {
       updatedPageCount: 2,
@@ -139,6 +148,23 @@ class FakePageService implements PageServicePort {
       compilerPromptVersion: 'page_autofill_v2',
       compilerError: null,
     };
+  }
+}
+
+class FakeEpisodeStoryAutofillService implements EpisodeStoryAutofillServicePort {
+  public autofilledEpisodeId: string | null = null;
+  public shouldThrow = false;
+
+  public async enqueueEpisodeStoryAutofill(
+    _userId: string,
+    episodeId: string,
+  ): Promise<EnqueueEpisodeStoryAutofillResult> {
+    this.autofilledEpisodeId = episodeId;
+    if (this.shouldThrow) {
+      throw new NotFoundError('Story autofill is not available');
+    }
+
+    return { jobId: '55555555-5555-4555-8555-555555555555' };
   }
 }
 
@@ -307,12 +333,15 @@ describe('page generation routes', () => {
 
   it('episode 全体の story plan autofill を実行する', async () => {
     const pageService = new FakePageService();
+    const episodeStoryAutofillService = new FakeEpisodeStoryAutofillService();
     const app = createTestApp(
       new FakePageGenerationService(),
       new FakePageFinalizeService(),
       new FakeJobService(),
       new FakePageQueryService(),
       pageService,
+      new FakePageExportService(),
+      episodeStoryAutofillService,
     );
     const token = await createToken();
 
@@ -321,19 +350,41 @@ describe('page generation routes', () => {
       headers: { Authorization: `Bearer ${token}` },
     });
 
-    expect(response.status).toBe(200);
+    expect(response.status).toBe(202);
     await expect(response.json()).resolves.toEqual({
-      updated_page_count: 2,
-      updated_panel_count: 8,
-      updated_assignment_count: 6,
-      filled_field_count: 24,
-      compiler_used: true,
-      compiler_provider: 'openai',
-      compiler_model: 'gpt-5.4-mini',
-      compiler_prompt_version: 'page_autofill_v2',
-      compiler_error: null,
+      job_id: '55555555-5555-4555-8555-555555555555',
     });
-    expect(pageService.autofilledEpisodeId).toBe('33333333-3333-4333-8333-333333333333');
+    expect(pageService.autofilledEpisodeId).toBeNull();
+    expect(episodeStoryAutofillService.autofilledEpisodeId).toBe('33333333-3333-4333-8333-333333333333');
+  });
+
+  it('episode 全体の story plan autofill は enqueue 失敗時に成功扱いしない', async () => {
+    const episodeStoryAutofillService = new FakeEpisodeStoryAutofillService();
+    episodeStoryAutofillService.shouldThrow = true;
+    const app = createTestApp(
+      new FakePageGenerationService(),
+      new FakePageFinalizeService(),
+      new FakeJobService(),
+      new FakePageQueryService(),
+      new FakePageService(),
+      new FakePageExportService(),
+      episodeStoryAutofillService,
+    );
+    const token = await createToken();
+
+    const response = await app.request('/api/episodes/33333333-3333-4333-8333-333333333333/autofill-pages-from-story', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    expect(response.status).toBe(404);
+    await expect(response.json()).resolves.toEqual({
+      error: {
+        code: 'NOT_FOUND',
+        message: 'Story autofill is not available',
+      },
+    });
+    expect(episodeStoryAutofillService.autofilledEpisodeId).toBe('33333333-3333-4333-8333-333333333333');
   });
 
   it('episode 全体の story plan autofill は巨大な options body を service 呼び出し前に 413 にする', async () => {
@@ -574,9 +625,11 @@ function createTestApp(
   pageQueryService: PageQueryServicePort = new FakePageQueryService(),
   pageService: PageServicePort = new FakePageService(),
   pageExportService: PageExportServicePort = new FakePageExportService(),
+  episodeStoryAutofillService: EpisodeStoryAutofillServicePort = new FakeEpisodeStoryAutofillService(),
 ): ReturnType<typeof createApp> {
   return createApp({
     creditService: new FakeCreditService(),
+    episodeStoryAutofillService,
     jobService,
     jwtSecret,
     pageExportService,
