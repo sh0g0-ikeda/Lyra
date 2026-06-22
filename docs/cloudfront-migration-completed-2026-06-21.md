@@ -70,14 +70,17 @@ This document records the production state after the two-stage CloudFront migrat
 - `https://d1a1300ysx6i1r.cloudfront.net/healthz` -> `200`
 - `https://origin.lyra-editor.com/healthz` without the guard header -> blocked
 - ECS API service:
+  - Task definition: `lyra-prod-api:18`
+  - Runtime platform: `LINUX / ARM64`
   - Desired/running/pending: `1 / 1 / 0`
   - Deployment rollout state: `COMPLETED`
 - Worker service:
-  - Task definition: `lyra-prod-worker:3`
+  - Task definition: `lyra-prod-worker:4`
+  - Runtime platform: `LINUX / ARM64`
   - Runtime size: `1 vCPU / 2 GB`
   - Scheduled scaling:
-    - `12:00-24:00 JST`: minimum `1`, maximum `1`
-    - `00:00-12:00 JST`: minimum `0`, maximum `1`
+    - `15:00-24:00 JST`: minimum `1`, maximum `1`
+    - `00:00-15:00 JST`: minimum `0`, maximum `1`
   - Queue reactive scaling:
     - Scale out to `1` when `lyra-prod-generation` has visible messages.
     - Scale in to `0` after visible + in-flight messages stay at `0` for 15 minutes.
@@ -114,4 +117,4 @@ Use this if only the ALB guard rule or SG restriction is too strict.
 - WAF is now easier to add at the CloudFront layer, but it was not enabled during this migration to avoid changing request behavior and cost at the same time.
 - Low-cost operational guardrails are recorded in `docs/cloud-ops-guardrails-2026-06-21.md`.
 - API desired count is still `1`; high availability requires increasing desired count and adding autoscaling.
-- Worker uses a cost-balanced schedule: one always-on worker from noon to midnight JST and zero minimum capacity from midnight to noon JST. During the zero-minimum window, SQS queue alarms can still scale the worker up to one task when generation jobs arrive.
+- Worker uses a cost-balanced schedule: one always-on worker from 15:00 to midnight JST and zero minimum capacity from midnight to 15:00 JST. During the zero-minimum window, SQS queue alarms can still scale the worker up to one task when generation jobs arrive.
