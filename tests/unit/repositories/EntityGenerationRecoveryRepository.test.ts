@@ -59,7 +59,7 @@ describe('PostgresEntityGenerationRecoveryRepository', () => {
     expect(client.values).toEqual([cutoff, 'user-1', 'entity-1', 50]);
   });
 
-  it('failed だが refund 台帳がない entity generation job を再返金対象にする', async () => {
+  it('failed だが refund 台帳がない entity generation job を返金対象にする', async () => {
     const client = new QueryCapturingClient();
     const repository = new PostgresEntityGenerationRecoveryRepository(client);
 

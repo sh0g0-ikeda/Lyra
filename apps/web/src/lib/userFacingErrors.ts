@@ -23,7 +23,7 @@ const messages = {
   },
   network: {
     en: 'Could not connect to the server. Check your connection, reload the page, then try again.',
-    ja: 'サーバーに接続できませんでした。通信状態を確認し、ページを再読み込みしてからもう一度お試しください。',
+    ja: 'サーバーに接続できませんでした。通信状況を確認し、ページを再読み込みしてからもう一度お試しください。',
   },
   authExpired: {
     en: 'Your login session expired. Please sign in again.',
@@ -79,7 +79,7 @@ const messages = {
   },
   skeletonFailed: {
     en: 'The page skeleton could not be created from the story. Shorten or split the story, then try again.',
-    ja: 'ストーリーからページ骨格を作成できませんでした。話を短くするか分けてから、もう一度お試しください。',
+    ja: 'ストーリーからページ骨格を作成できませんでした。文章を短くするか分割してから、もう一度お試しください。',
   },
   storyTooLarge: {
     en: 'The story input is too large. Shorten the text or split it into smaller episodes, then try again.',
@@ -139,7 +139,7 @@ const messages = {
   },
   confirmedPage: {
     en: 'This page is confirmed. Reopen it before editing or regenerating.',
-    ja: 'このページは確定済みです。編集または再生成の前に、確定解除してください。',
+    ja: 'このページは確定済みです。編集または再生成の前に、確定を解除してください。',
   },
   alreadyDone: {
     en: 'This action has already been completed. Reload the page to see the latest state.',
@@ -386,6 +386,9 @@ function findMessageByStatus(status: number | null, normalizedCode: string): Loc
   if (status === 409) {
     return messages.queueBusy;
   }
+  if (status === 413) {
+    return messages.storyTooLarge;
+  }
   if (status === 422 || normalizedCode === 'VALIDATION_ERROR') {
     return messages.validation;
   }
@@ -458,5 +461,5 @@ function containsJapanese(value: string): boolean {
 }
 
 function localize(message: LocalizedMessage, language: UserFacingErrorLanguage): string {
-  return language === 'ja' ? message.ja : message.en;
+  return message[language];
 }

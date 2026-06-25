@@ -62,7 +62,7 @@ describe('PostgresPageGenerationRecoveryRepository', () => {
     expect(client.values).toEqual([cutoff, 'user-1', 'page-1', 50]);
   });
 
-  it('failed だが refund 台帳がない page generation job を再返金対象にする', async () => {
+  it('failed だが refund 台帳がない page generation job を返金対象にする', async () => {
     const client = new QueryCapturingClient();
     const repository = new PostgresPageGenerationRecoveryRepository(client);
 

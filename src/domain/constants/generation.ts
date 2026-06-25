@@ -35,6 +35,7 @@ export function calculatePageGenerationCreditCost(referenceCount: number): numbe
 
 export const PAGE_GENERATION_STALE_AFTER_MS = 20 * 60 * 1000;
 export const ENTITY_GENERATION_STALE_AFTER_MS = 20 * 60 * 1000;
+export const EPISODE_LONG_JOB_STALE_AFTER_MS = 45 * 60 * 1000;
 export const GENERATION_RECOVERY_BATCH_LIMIT = 100;
 export const IMAGE_GENERATION_OPENAI_MAX_RETRIES = 1;
 

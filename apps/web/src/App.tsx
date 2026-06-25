@@ -310,6 +310,7 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   'Could not load works.': '作品一覧を読み込めませんでした。',
   'No works yet.': '作品はまだありません。',
   Retry: '再読み込み',
+  'Sign in again': '再ログイン',
   Chapters: '章',
   Episodes: '話',
   Title: 'タイトル',
@@ -1693,6 +1694,7 @@ function StudioShell(props: {
   const api = useMemo(() => new LyraApiClient(() => props.token), [props.token]);
   const [uiLanguageStored, setUiLanguageStored] = useStoredString(window.localStorage, uiLanguageStorageKey, 'ja');
   const uiLanguage = normalizeUiLanguage(uiLanguageStored);
+  const uiLanguageRef = useRef<UiLanguage>(uiLanguage);
   const isMobileViewport = useIsMobileViewport();
   const [newWorkFormOpen, setNewWorkFormOpen] = useState(!isMobileViewport);
   const [notice, setNotice] = useState<NoticeState | null>(null);
@@ -1746,6 +1748,10 @@ function StudioShell(props: {
   const [billingReturnChecking, setBillingReturnChecking] = useState(false);
 
   useEffect(() => {
+    uiLanguageRef.current = uiLanguage;
+  }, [uiLanguage]);
+
+  useEffect(() => {
     setNewWorkFormOpen(!isMobileViewport);
   }, [isMobileViewport]);
 
@@ -1759,6 +1765,8 @@ function StudioShell(props: {
   const showWorksLoading = works.length === 0 && worksQuery.isLoading;
   const showWorksError = works.length === 0 && worksQuery.isError;
   const showWorksEmpty = works.length === 0 && worksQuery.isSuccess;
+  const worksErrorMessage = showWorksError ? toMessage(worksQuery.error, uiLanguage) : null;
+  const worksErrorNeedsLogin = showWorksError && isApiStatus(worksQuery.error, 401);
   const balanceQuery = useQuery({
     queryKey: ['billing-balance'],
     queryFn: () => api.getBalance(),
@@ -1975,9 +1983,9 @@ function StudioShell(props: {
   const startBillingReturnVerification = useCallback((marker: BillingReturnMarker): void => {
     billingVerificationTargetRef.current = marker;
     setBillingReturnChecking(true);
-    setNotice({ type: 'info', message: formatBillingReturnPendingMessage(uiLanguage, marker.kind) });
+    setNotice({ type: 'info', message: formatBillingReturnPendingMessage(uiLanguageRef.current, marker.kind) });
     refreshWorkspaceQueries(true);
-  }, [refreshWorkspaceQueries, uiLanguage]);
+  }, [refreshWorkspaceQueries]);
 
   useEffect(() => {
     const consumeBillingReturnMarker = (): BillingReturnMarker | null => {
@@ -2036,14 +2044,14 @@ function StudioShell(props: {
       }
       billingVerificationTargetRef.current = null;
       setBillingReturnChecking(false);
-      setNotice({ type: 'info', message: formatBillingReturnTimeoutMessage(uiLanguage) });
+      setNotice({ type: 'info', message: formatBillingReturnTimeoutMessage(uiLanguageRef.current) });
     }, billingReturnVerificationTimeoutMs);
 
     return () => {
       window.clearInterval(intervalId);
       window.clearTimeout(timeoutId);
     };
-  }, [billingReturnChecking, refreshWorkspaceQueries, uiLanguage]);
+  }, [billingReturnChecking, refreshWorkspaceQueries]);
 
   useEffect(() => {
     const marker = billingVerificationTargetRef.current;
@@ -2568,11 +2576,18 @@ function StudioShell(props: {
             ) : null}
             {showWorksError ? (
               <div className="sidebar-status error">
-                <span>{translateUiString(uiLanguage, 'Could not load works.')}</span>
-                <button className="ghost-button" onClick={() => void worksQuery.refetch()} type="button">
-                  <RefreshCw size={14} />
-                  {translateUiString(uiLanguage, 'Retry')}
-                </button>
+                <span>{worksErrorMessage ?? translateUiString(uiLanguage, 'Could not load works.')}</span>
+                {worksErrorNeedsLogin ? (
+                  <button className="ghost-button" onClick={() => void props.onLogout()} type="button">
+                    <LogOut size={14} />
+                    {translateUiString(uiLanguage, 'Sign in again')}
+                  </button>
+                ) : (
+                  <button className="ghost-button" onClick={() => void worksQuery.refetch()} type="button">
+                    <RefreshCw size={14} />
+                    {translateUiString(uiLanguage, 'Retry')}
+                  </button>
+                )}
               </div>
             ) : null}
             {showWorksEmpty ? (
@@ -7526,6 +7541,14 @@ function nullableUuidString(value: string, label: string): string | null {
 
 function toMessage(error: unknown, language: UiLanguage = 'en'): string {
   return formatUserFacingError(error, language);
+}
+
+function isApiStatus(error: unknown, status: number): boolean {
+  if (typeof error !== 'object' || error === null || !('status' in error)) {
+    return false;
+  }
+
+  return (error as { status?: unknown }).status === status;
 }
 
 function useStoredString(

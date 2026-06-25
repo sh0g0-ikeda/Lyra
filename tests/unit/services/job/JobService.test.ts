@@ -43,8 +43,18 @@ class FakeGenerationJobRepository implements GenerationJobRepository {
     throw new Error('not used');
   }
 
-  public async markFailed(): Promise<boolean> {
-    throw new Error('not used');
+  public async markFailed(_jobId: string, errorMessage: string): Promise<boolean> {
+    if (this.job === null) {
+      return false;
+    }
+
+    this.job = {
+      ...this.job,
+      status: 'failed',
+      errorMessage,
+      completedAt: now,
+    };
+    return true;
   }
 
   public async prepareRetry(): Promise<boolean> {
@@ -85,7 +95,7 @@ class FakePageGenerationRecoveryService implements PageGenerationRecoveryService
 }
 
 describe('JobService', () => {
-  it('processing entity job 取得時に stale 回収して再読込結果を返す', async () => {
+  it('processing entity job は stale recovery 後の再読込結果を返す', async () => {
     const repository = new FakeGenerationJobRepository();
     repository.job = buildJob({
       status: 'processing',
@@ -115,7 +125,7 @@ describe('JobService', () => {
     ]);
   });
 
-  it('processing page job 取得時に stale 回収して再読込結果を返す', async () => {
+  it('processing page job は stale recovery 後の再読込結果を返す', async () => {
     const repository = new FakeGenerationJobRepository();
     repository.job = buildJob({
       status: 'processing',
@@ -145,7 +155,7 @@ describe('JobService', () => {
     ]);
   });
 
-  it('queued entity job 取得時にも stale 回収して再読込結果を返す', async () => {
+  it('queued entity job も stale recovery 後の再読込結果を返す', async () => {
     const repository = new FakeGenerationJobRepository();
     repository.job = buildJob({
       status: 'queued',
@@ -175,7 +185,7 @@ describe('JobService', () => {
     ]);
   });
 
-  it('queued page job 取得時にも stale 回収して再読込結果を返す', async () => {
+  it('queued page job も stale recovery 後の再読込結果を返す', async () => {
     const repository = new FakeGenerationJobRepository();
     repository.job = buildJob({
       status: 'queued',
@@ -203,6 +213,77 @@ describe('JobService', () => {
     expect(pageRecoveryService.recoveredPages).toEqual([
       { userId: 'user-1', pageId: 'page-1' },
     ]);
+  });
+
+  it('processing episode_story_autofill job は長時間更新がなければ failed に倒す', async () => {
+    const repository = new FakeGenerationJobRepository();
+    repository.job = buildJob({
+      status: 'processing',
+      jobType: 'episode_story_autofill',
+      creditCost: 0,
+      params: { episode_id: 'episode-1' },
+      result: { progress_updated_at: '2026-06-07T23:00:00.000Z' },
+    });
+    const service = new JobService(
+      repository,
+      new FakePageGenerationRecoveryService(),
+      new FakeEntityGenerationRecoveryService(),
+      45 * 60 * 1000,
+      () => now.getTime(),
+    );
+
+    const job = await service.getJob('user-1', 'job-1');
+
+    expect(job.status).toBe('failed');
+    expect(repository.reads).toBe(2);
+    expect(job.errorMessage).toContain('Long-running story/page planning job stopped');
+  });
+
+  it('processing episode_page_skeleton job は長時間更新がなければ failed に倒す', async () => {
+    const repository = new FakeGenerationJobRepository();
+    repository.job = buildJob({
+      status: 'processing',
+      jobType: 'episode_page_skeleton',
+      creditCost: 0,
+      params: { episode_id: 'episode-1' },
+      startedAt: new Date('2026-06-07T23:00:00.000Z'),
+    });
+    const service = new JobService(
+      repository,
+      new FakePageGenerationRecoveryService(),
+      new FakeEntityGenerationRecoveryService(),
+      45 * 60 * 1000,
+      () => now.getTime(),
+    );
+
+    const job = await service.getJob('user-1', 'job-1');
+
+    expect(job.status).toBe('failed');
+    expect(repository.reads).toBe(2);
+    expect(job.errorMessage).toContain('Long-running story/page planning job stopped');
+  });
+
+  it('episode_story_autofill job がまだ更新中なら failed にしない', async () => {
+    const repository = new FakeGenerationJobRepository();
+    repository.job = buildJob({
+      status: 'processing',
+      jobType: 'episode_story_autofill',
+      creditCost: 0,
+      params: { episode_id: 'episode-1' },
+      result: { progress_updated_at: '2026-06-07T23:40:00.000Z' },
+    });
+    const service = new JobService(
+      repository,
+      new FakePageGenerationRecoveryService(),
+      new FakeEntityGenerationRecoveryService(),
+      45 * 60 * 1000,
+      () => now.getTime(),
+    );
+
+    const job = await service.getJob('user-1', 'job-1');
+
+    expect(job.status).toBe('processing');
+    expect(repository.reads).toBe(1);
   });
 });
 

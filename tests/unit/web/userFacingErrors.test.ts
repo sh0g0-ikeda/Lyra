@@ -41,7 +41,7 @@ describe('userFacingErrors', () => {
 
   it('開発者向けの500系メッセージはそのまま表示しない', () => {
     expect(formatUserFacingError(apiError('OpenAI page compiler returned invalid JSON', 500, null), 'ja')).toBe(
-      'ストーリーからページ骨格を作成できませんでした。話を短くするか分けてから、もう一度お試しください。',
+      'ストーリーからページ骨格を作成できませんでした。文章を短くするか分割してから、もう一度お試しください。',
     );
   });
 
@@ -65,6 +65,16 @@ describe('userFacingErrors', () => {
     expect(formatUserFacingErrorMessage({ message: 'Generation job exceeded retry limit', status: 409 }, 'ja')).toContain(
       '新しく生成',
     );
+  });
+
+  it('413は入力を短くする案内になる', () => {
+    expect(formatUserFacingError(apiError('Payload too large', 413, 'PAYLOAD_TOO_LARGE'), 'ja')).toContain(
+      '文章を短く',
+    );
+  });
+
+  it('401は再ログインを促す', () => {
+    expect(formatUserFacingError(apiError('Unauthorized', 401, null), 'ja')).toContain('もう一度ログイン');
   });
 });
 

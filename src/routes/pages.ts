@@ -76,25 +76,6 @@ export function createPageRoutes(dependencies: PageRouteDependencies): Hono<AppE
     return c.json({ job_id: result.jobId }, 202);
   });
 
-  /*
-    if (!result.compilerUsed) {
-      throw new ValidationError('AI反映が時間内に完了しませんでした。コマ情報は変更していません。少し待ってから再度お試しください。');
-    }
-
-    return c.json({
-      updated_page_count: result.updatedPageCount,
-      updated_panel_count: result.updatedPanelCount,
-      updated_assignment_count: result.updatedAssignmentCount,
-      filled_field_count: result.filledFieldCount,
-      compiler_used: result.compilerUsed,
-      compiler_provider: result.compilerProvider,
-      compiler_model: result.compilerModel,
-      compiler_prompt_version: result.compilerPromptVersion,
-      compiler_error: result.compilerError,
-    });
-  });
-
-  */
   app.put('/pages/:id', async (c) => {
     const user = c.get('user');
     const pageId = parseUuidParam(c, 'id');
