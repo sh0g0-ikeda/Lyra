@@ -89,6 +89,8 @@ export const COGNITO_SESSION_STORAGE_KEY = 'lyra:web:cognito-session';
 const COGNITO_PKCE_STORAGE_KEY = 'lyra:web:cognito-pkce';
 const DEFAULT_COGNITO_SCOPES = ['openid', 'email', 'profile'];
 const COGNITO_PKCE_STATE_TTL_MS = 10 * 60 * 1000;
+const TOKEN_EXPIRY_SKEW_SECONDS = 30;
+const COGNITO_SESSION_APP_MISMATCH_MESSAGE = 'Cognito session no longer matches this app. Please sign in again.';
 
 export function getCognitoAuthConfig(
   env: CognitoAuthEnv,
@@ -161,6 +163,55 @@ export function readStoredCognitoSession(
   }
 }
 
+export function readCompatibleStoredCognitoSession(
+  config: CognitoAuthConfig,
+  storage: WebStorageLike,
+  now = Date.now(),
+): CognitoSession | null {
+  const session = readStoredCognitoSession(storage, now);
+  if (session === null) {
+    return null;
+  }
+
+  if (!isCognitoSessionCompatible(config, session, now)) {
+    clearCognitoSession(storage);
+    return null;
+  }
+
+  return session;
+}
+
+export function isCognitoSessionCompatible(
+  config: CognitoAuthConfig,
+  session: CognitoSession,
+  now = Date.now(),
+): boolean {
+  const token = getCognitoApiToken(config, session);
+  if (token === null) {
+    return false;
+  }
+
+  const payload = decodeJwtPayloadSafely(token);
+  if (payload === null) {
+    return false;
+  }
+
+  if (payload.token_use !== config.apiTokenUse) {
+    return false;
+  }
+
+  const exp = payload.exp;
+  if (typeof exp === 'number' && Number.isFinite(exp) && exp <= Math.floor(now / 1000) + TOKEN_EXPIRY_SKEW_SECONDS) {
+    return false;
+  }
+
+  if (config.apiTokenUse === 'id') {
+    return tokenAudienceIncludesClientId(payload.aud, config.clientId);
+  }
+
+  return payload.client_id === config.clientId;
+}
+
 export function storeCognitoSession(storage: WebStorageLike, session: CognitoSession): void {
   storage.setItem(COGNITO_SESSION_STORAGE_KEY, JSON.stringify(session));
 }
@@ -226,6 +277,7 @@ export async function completeCognitoRedirectIfPresent(
 
   try {
     const session = await exchangeCodeForTokens(config, code, storedState.verifier, fetcher, now);
+    assertCompatibleSession(config, session, now);
     storeCognitoSession(storage, session);
     clearCognitoCallbackUrl(location, history);
     return { handled: true, session, error: null };
@@ -260,7 +312,9 @@ export async function refreshCognitoSession(
   }
 
   const payload = (await response.json()) as CognitoTokenPayload;
-  return parseTokenPayload(payload, now, session.refreshToken);
+  const refreshedSession = parseTokenPayload(payload, now, session.refreshToken);
+  assertCompatibleSession(config, refreshedSession, now);
+  return refreshedSession;
 }
 
 export function buildCognitoAuthorizeUrl(
@@ -413,6 +467,44 @@ function parseScopes(value: string | undefined): string[] {
 
 function parseApiTokenUse(value: string | undefined): CognitoApiTokenUse {
   return value?.trim() === 'access' ? 'access' : 'id';
+}
+
+function assertCompatibleSession(config: CognitoAuthConfig, session: CognitoSession, now: number): void {
+  if (!isCognitoSessionCompatible(config, session, now)) {
+    throw new Error(COGNITO_SESSION_APP_MISMATCH_MESSAGE);
+  }
+}
+
+function decodeJwtPayloadSafely(token: string): Record<string, unknown> | null {
+  const parts = token.split('.');
+  if (parts.length < 2) {
+    return null;
+  }
+
+  try {
+    const normalized = parts[1].replace(/-/gu, '+').replace(/_/gu, '/');
+    const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, '=');
+    const decoded = atob(padded);
+    const payload = JSON.parse(decoded) as unknown;
+
+    return typeof payload === 'object' && payload !== null && !Array.isArray(payload)
+      ? (payload as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function tokenAudienceIncludesClientId(audience: unknown, clientId: string): boolean {
+  if (typeof audience === 'string') {
+    return audience === clientId;
+  }
+
+  if (Array.isArray(audience)) {
+    return audience.includes(clientId);
+  }
+
+  return false;
 }
 
 function trimTrailingSlash(value: string | undefined): string | null {

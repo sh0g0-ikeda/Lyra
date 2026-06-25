@@ -4,6 +4,9 @@ import {
   buildCognitoLogoutUrl,
   completeCognitoRedirectIfPresent,
   getCognitoAuthConfig,
+  getCognitoApiToken,
+  isCognitoSessionCompatible,
+  readCompatibleStoredCognitoSession,
   readStoredCognitoSession,
   refreshCognitoSession,
 } from '../../../apps/web/src/lib/cognitoAuth.js';
@@ -66,6 +69,39 @@ const cognitoConfig = {
   scopes: ['openid'],
   apiTokenUse: 'id' as const,
 };
+
+function createFakeJwt(payload: Record<string, unknown>): string {
+  return `${base64UrlJson({ alg: 'none' })}.${base64UrlJson(payload)}.signature`;
+}
+
+function base64UrlJson(value: Record<string, unknown>): string {
+  return btoa(JSON.stringify(value))
+    .replace(/\+/gu, '-')
+    .replace(/\//gu, '_')
+    .replace(/=+$/u, '');
+}
+
+function createIdToken(overrides: Record<string, unknown> = {}): string {
+  return createFakeJwt({
+    aud: cognitoConfig.clientId,
+    email: 'user@example.com',
+    exp: 3_700,
+    sub: 'cognito-user-1',
+    token_use: 'id',
+    ...overrides,
+  });
+}
+
+function createAccessToken(overrides: Record<string, unknown> = {}): string {
+  return createFakeJwt({
+    client_id: cognitoConfig.clientId,
+    email: 'user@example.com',
+    exp: 3_700,
+    sub: 'cognito-user-1',
+    token_use: 'access',
+    ...overrides,
+  });
+}
 
 describe('cognitoAuth', () => {
   it('Cognito Hosted UI 設定を env から作る', () => {
@@ -145,7 +181,66 @@ describe('cognitoAuth', () => {
     expect(storage.getItem('lyra:web:cognito-session')).toBeNull();
   });
 
+  it('保存済み session が現在の Cognito client と一致すれば利用する', () => {
+    const idToken = createIdToken();
+    const storage = new FakeStorage({
+      'lyra:web:cognito-session': JSON.stringify({
+        accessToken: 'access',
+        idToken,
+        refreshToken: 'refresh',
+        expiresAt: 3_600_000,
+      }),
+    });
+
+    expect(readCompatibleStoredCognitoSession(cognitoConfig, storage, 2_000)).toEqual({
+      accessToken: 'access',
+      idToken,
+      refreshToken: 'refresh',
+      expiresAt: 3_600_000,
+    });
+  });
+
+  it('保存済み session の Cognito client が古ければ破棄する', () => {
+    const storage = new FakeStorage({
+      'lyra:web:cognito-session': JSON.stringify({
+        accessToken: 'access',
+        idToken: createIdToken({ aud: 'old-client' }),
+        refreshToken: 'refresh',
+        expiresAt: 3_600_000,
+      }),
+    });
+
+    expect(readCompatibleStoredCognitoSession(cognitoConfig, storage, 2_000)).toBeNull();
+    expect(storage.getItem('lyra:web:cognito-session')).toBeNull();
+  });
+
+  it('API token 種別が合わない session は利用しない', () => {
+    const session = {
+      accessToken: createAccessToken(),
+      idToken: createFakeJwt({ aud: cognitoConfig.clientId, exp: 3_700, token_use: 'access' }),
+      refreshToken: null,
+      expiresAt: 3_600_000,
+    };
+
+    expect(isCognitoSessionCompatible(cognitoConfig, session, 2_000)).toBe(false);
+  });
+
+  it('access token 運用では client_id が一致する access token を使う', () => {
+    const config = { ...cognitoConfig, apiTokenUse: 'access' as const };
+    const accessToken = createAccessToken();
+    const session = {
+      accessToken,
+      idToken: createIdToken(),
+      refreshToken: null,
+      expiresAt: 3_600_000,
+    };
+
+    expect(getCognitoApiToken(config, session)).toBe(accessToken);
+    expect(isCognitoSessionCompatible(config, session, 2_000)).toBe(true);
+  });
+
   it('callback code を token に交換して session を保存する', async () => {
+    const idToken = createIdToken();
     const storage = new FakeStorage({
       'lyra:web:cognito-pkce': JSON.stringify({
         state: 'state-1',
@@ -169,7 +264,7 @@ describe('cognitoAuth', () => {
           async json() {
             return {
               access_token: 'access-token',
-              id_token: 'id-token',
+              id_token: idToken,
               refresh_token: 'refresh-token',
               expires_in: 3600,
             };
@@ -184,7 +279,7 @@ describe('cognitoAuth', () => {
       error: null,
       session: {
         accessToken: 'access-token',
-        idToken: 'id-token',
+        idToken,
         refreshToken: 'refresh-token',
         expiresAt: 3_610_000,
       },
@@ -228,11 +323,12 @@ describe('cognitoAuth', () => {
   });
 
   it('refresh token で access token を更新し既存 refresh token を保持する', async () => {
+    const idToken = createIdToken();
     const refreshed = await refreshCognitoSession(
       cognitoConfig,
       {
         accessToken: 'old-access-token',
-        idToken: 'old-id-token',
+        idToken: createIdToken(),
         refreshToken: 'refresh-token',
         expiresAt: 100_000,
       },
@@ -246,7 +342,7 @@ describe('cognitoAuth', () => {
           async json() {
             return {
               access_token: 'new-access-token',
-              id_token: 'new-id-token',
+              id_token: idToken,
               expires_in: 1800,
             };
           },
@@ -257,7 +353,7 @@ describe('cognitoAuth', () => {
 
     expect(refreshed).toEqual({
       accessToken: 'new-access-token',
-      idToken: 'new-id-token',
+      idToken,
       refreshToken: 'refresh-token',
       expiresAt: 1_810_000,
     });

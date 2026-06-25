@@ -19,11 +19,11 @@ interface ErrorWithApiFields extends Error {
 const messages = {
   generic: {
     en: 'The operation failed. Save your changes, wait a moment, then try again.',
-    ja: '処理に失敗しました。入力内容を保存してから、少し待ってもう一度お試しください。',
+    ja: '処理に失敗しました。入力内容を保存し、少し待ってからもう一度お試しください。',
   },
   network: {
     en: 'Could not connect to the server. Check your connection, reload the page, then try again.',
-    ja: 'サーバーに接続できませんでした。通信状況を確認し、ページを再読み込みしてからもう一度お試しください。',
+    ja: 'サーバーに接続できませんでした。通信状態を確認し、ページを再読み込みしてからもう一度お試しください。',
   },
   authExpired: {
     en: 'Your login session expired. Please sign in again.',
@@ -79,7 +79,7 @@ const messages = {
   },
   skeletonFailed: {
     en: 'The page skeleton could not be created from the story. Shorten or split the story, then try again.',
-    ja: 'ストーリーからページ骨格を作成できませんでした。文章を短くするか分割してから、もう一度お試しください。',
+    ja: 'ストーリーからページ骨格を作成できませんでした。文章を短くするか話を分けてから、もう一度お試しください。',
   },
   storyTooLarge: {
     en: 'The story input is too large. Shorten the text or split it into smaller episodes, then try again.',
@@ -87,7 +87,7 @@ const messages = {
   },
   needsScene: {
     en: 'Add at least one scene with place, time, and mood before running this action.',
-    ja: '場所・時間・雰囲気が分かるシーンを1つ以上入力してから実行してください。',
+    ja: '実行前に、場所・時間・雰囲気が分かるシーンを1つ以上入力してください。',
   },
   needsPages: {
     en: 'Create the page skeleton first, then run this action.',
@@ -99,7 +99,7 @@ const messages = {
   },
   panelFrameMismatch: {
     en: 'Panel count and frame count do not match. Apply a panel layout or adjust panels before generating.',
-    ja: 'コマ数とコマ枠の数が一致していません。コマ割りテンプレートを適用するか、コマを調整してから生成してください。',
+    ja: 'コマ数とコマ枠数が一致していません。コマ割りテンプレートを適用するか、コマを調整してから生成してください。',
   },
   speakerRequired: {
     en: 'A character is required for speech, thought, shout, and whisper lines. Use narration for lines without a speaker.',
@@ -107,7 +107,7 @@ const messages = {
   },
   entityMismatch: {
     en: 'A character from another work or episode is selected. Review character selections, then save again.',
-    ja: '別の作品または話のキャラクターが選ばれています。キャラクター選択を見直して保存し直してください。',
+    ja: '別の作品または話のキャラクターが選ばれています。キャラクター選択を確認して保存し直してください。',
   },
   duplicateEntity: {
     en: 'The same character is assigned more than once in the same panel. Remove the duplicate assignment.',
@@ -244,6 +244,7 @@ function findMessageBySpecificCause(normalizedMessage: string, normalizedCode: s
       'token exchange failed',
       'access token',
       'id token',
+      'session no longer matches this app',
       'cognito sign in failed',
     ])
   ) {

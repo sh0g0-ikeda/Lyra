@@ -6,7 +6,12 @@ import {
   type GenerationJob,
   type GenerationJobRepository,
 } from '../../repositories/GenerationJobRepository.js';
+import { EPISODE_LONG_JOB_STALE_AFTER_MS } from '../../domain/constants/generation.js';
 import type { EpisodePageSkeletonQueuePort } from './EpisodePageSkeletonQueue.js';
+import {
+  EPISODE_LONG_JOB_STALE_ERROR_MESSAGE,
+  isStaleEpisodeLongJob,
+} from './EpisodeLongJobStalePolicy.js';
 
 export interface EpisodePageSkeletonJobRepository
   extends Pick<GenerationJobRepository, 'create' | 'attachQueueMessageId' | 'markFailed'> {
@@ -39,6 +44,8 @@ export class EpisodePageSkeletonService implements EpisodePageSkeletonServicePor
   public constructor(
     private readonly generationJobRepository: EpisodePageSkeletonJobRepository,
     private readonly queue: EpisodePageSkeletonQueuePort,
+    private readonly episodeLongJobStaleAfterMs: number = EPISODE_LONG_JOB_STALE_AFTER_MS,
+    private readonly now: () => number = () => Date.now(),
   ) {}
 
   public async enqueueEpisodePageSkeleton(
@@ -98,9 +105,21 @@ export class EpisodePageSkeletonService implements EpisodePageSkeletonServicePor
       userId,
       episodeId,
     );
-    if (activeJob !== null) {
-      throw new ConflictError('Episode page skeleton generation is already queued or processing');
+    if (activeJob === null) {
+      return;
     }
+
+    if (isStaleEpisodeLongJob(activeJob, this.now(), this.episodeLongJobStaleAfterMs)) {
+      const recovered = await this.generationJobRepository.markFailed(
+        activeJob.id,
+        EPISODE_LONG_JOB_STALE_ERROR_MESSAGE,
+      );
+      if (recovered) {
+        return;
+      }
+    }
+
+    throw new ConflictError('Episode page skeleton generation is already queued or processing');
   }
 
   private async persistQueueMessageId(jobId: string, messageId: string): Promise<void> {

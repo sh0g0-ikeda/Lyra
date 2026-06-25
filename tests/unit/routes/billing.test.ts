@@ -2,13 +2,14 @@ import { SignJWT } from 'jose';
 import { describe, expect, it } from 'vitest';
 import { createApp } from '../../../src/app.js';
 import type { CreditPackageCode, PaidPlanCode } from '../../../src/domain/constants/billing.js';
-import type { CreditBalanceSnapshot } from '../../../src/domain/types/credit.js';
-import type { AuthenticatedUser, SupabaseJwtClaims } from '../../../src/domain/types/user.js';
 import type {
   CreditCheckoutResult,
   CustomerPortalResult,
   SubscriptionCheckoutResult,
 } from '../../../src/domain/types/billing.js';
+import type { CreditBalanceSnapshot } from '../../../src/domain/types/credit.js';
+import type { AuthenticatedUser, SupabaseJwtClaims } from '../../../src/domain/types/user.js';
+import type { RateLimitResult, RateLimitStore } from '../../../src/middleware/rateLimit.js';
 import type {
   ProvisionedUser,
   UserProvisioningPort,
@@ -20,7 +21,6 @@ import type {
   CreditServicePort,
   RefundCreditsParams,
 } from '../../../src/services/credit/CreditService.js';
-import type { RateLimitResult, RateLimitStore } from '../../../src/middleware/rateLimit.js';
 
 const jwtSecret = 'unit-test-secret';
 const testUser: AuthenticatedUser = {
@@ -138,7 +138,7 @@ class BlockingRateLimitStore implements RateLimitStore {
 }
 
 describe('billing routes', () => {
-  it('Authorizationヘッダーがない場合に401になる', async () => {
+  it('returns 401 when the Authorization header is missing', async () => {
     const app = createTestApp(new FakeBillingService(), new FakeStripeWebhookService());
 
     const response = await app.request('/api/billing/balance');
@@ -152,7 +152,7 @@ describe('billing routes', () => {
     });
   });
 
-  it('JWTが正しい場合にクレジット残高を返す', async () => {
+  it('returns the credit balance when the JWT is valid', async () => {
     const app = createTestApp(new FakeBillingService(), new FakeStripeWebhookService());
     const token = await createToken();
 
@@ -172,7 +172,7 @@ describe('billing routes', () => {
     });
   });
 
-  it('サブスク Checkout Session を作成する', async () => {
+  it('creates subscription checkout sessions for standard and premium plans', async () => {
     const billingService = new FakeBillingService();
     const app = createTestApp(billingService, new FakeStripeWebhookService());
     const token = await createToken();
@@ -214,7 +214,7 @@ describe('billing routes', () => {
     expect(billingService.subscriptionPlanCode).toBe('premium');
   });
 
-  it('クレジット購入 Checkout Session を作成する', async () => {
+  it('creates a credit checkout session', async () => {
     const billingService = new FakeBillingService();
     const app = createTestApp(billingService, new FakeStripeWebhookService());
     const token = await createToken();
@@ -239,7 +239,7 @@ describe('billing routes', () => {
     expect(billingService.creditPackageCode).toBe('credits_1000');
   });
 
-  it('customer portal URL を返す', async () => {
+  it('returns a customer portal URL', async () => {
     const billingService = new FakeBillingService();
     const app = createTestApp(billingService, new FakeStripeWebhookService());
     const token = await createToken();
@@ -258,7 +258,7 @@ describe('billing routes', () => {
     expect(billingService.portalUserId).toBe(testUser.id);
   });
 
-  it('webhook は認証なしで受け取る', async () => {
+  it('accepts signed Stripe webhooks without user authentication', async () => {
     const webhookService = new FakeStripeWebhookService();
     const app = createTestApp(new FakeBillingService(), webhookService);
 
@@ -277,7 +277,7 @@ describe('billing routes', () => {
     expect(webhookService.payload).toBe('{"id":"evt_123"}');
   });
 
-  it('webhook の署名ヘッダーがない場合は422になる', async () => {
+  it('returns 422 when the Stripe signature header is missing', async () => {
     const app = createTestApp(new FakeBillingService(), new FakeStripeWebhookService());
 
     const response = await app.request('/api/webhooks/stripe', {
@@ -291,7 +291,7 @@ describe('billing routes', () => {
     expect(response.status).toBe(422);
   });
 
-  it('webhook rejects oversized payloads before calling the Stripe service', async () => {
+  it('rejects oversized Stripe webhook payloads before calling the Stripe service', async () => {
     const webhookService = new FakeStripeWebhookService();
     const app = createTestApp(new FakeBillingService(), webhookService);
     const body = 'x'.repeat(256 * 1024 + 1);
@@ -310,7 +310,7 @@ describe('billing routes', () => {
     expect(webhookService.payload).toBeNull();
   });
 
-  it('webhook は公開IP rate limit の対象になる', async () => {
+  it('rate limits Stripe webhooks by public IP', async () => {
     const webhookService = new FakeStripeWebhookService();
     const app = createTestApp(new FakeBillingService(), webhookService, new BlockingRateLimitStore());
     const request = {
@@ -335,6 +335,41 @@ describe('billing routes', () => {
         message: 'Rate limit exceeded for webhook. Retry after 60 seconds',
       },
     });
+  });
+
+  it('accepts signed Stripe webhooks sent to the root compatibility endpoint', async () => {
+    const webhookService = new FakeStripeWebhookService();
+    const app = createTestApp(new FakeBillingService(), webhookService);
+
+    const response = await app.request('/', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Stripe-Signature': 't=1,v1=test',
+      },
+      body: '{"id":"evt_root"}',
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ received: true });
+    expect(webhookService.signature).toBe('t=1,v1=test');
+    expect(webhookService.payload).toBe('{"id":"evt_root"}');
+  });
+
+  it('keeps unsigned root POST requests hidden', async () => {
+    const webhookService = new FakeStripeWebhookService();
+    const app = createTestApp(new FakeBillingService(), webhookService);
+
+    const response = await app.request('/', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: '{}',
+    });
+
+    expect(response.status).toBe(404);
+    expect(webhookService.payload).toBeNull();
   });
 });
 

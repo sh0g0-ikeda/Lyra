@@ -31,7 +31,8 @@ import {
   completeCognitoRedirectIfPresent,
   getCognitoApiToken,
   getCognitoAuthConfig,
-  readStoredCognitoSession,
+  isCognitoSessionCompatible,
+  readCompatibleStoredCognitoSession,
   refreshCognitoSession,
   storeCognitoSession,
   type CognitoAuthConfig,
@@ -1195,7 +1196,11 @@ function pickUiText(language: UiLanguage, english: string, japanese: string): st
 }
 
 function formatJpy(value: number): string {
-  return `¥${value.toLocaleString('ja-JP')}`;
+  return new Intl.NumberFormat('ja-JP', {
+    style: 'currency',
+    currency: 'JPY',
+    maximumFractionDigits: 0,
+  }).format(value);
 }
 
 function formatPlanLabel(language: UiLanguage, planCode: SubscriptionPlanCode): string {
@@ -1336,7 +1341,7 @@ const manualTokenAuthAllowed = shouldAllowManualTokenAuth({
 export default function App() {
   const [manualToken, setManualToken] = useStoredString(window.sessionStorage, manualTokenStorageKey, '');
   const [cognitoSession, setCognitoSession] = useState<CognitoSession | null>(() =>
-    cognitoAuthConfig === null ? null : readStoredCognitoSession(window.sessionStorage),
+    cognitoAuthConfig === null ? null : readCompatibleStoredCognitoSession(cognitoAuthConfig, window.sessionStorage),
   );
   const [cognitoAuthError, setCognitoAuthError] = useState<string | null>(null);
   const [supabaseClient, setSupabaseClient] = useState<SupabaseClient | null>(null);
@@ -1451,6 +1456,13 @@ export default function App() {
             clearCognitoSession(window.sessionStorage);
             setCognitoSession(null);
             setCognitoAuthError(toMessage(new Error('Cognito session expired. Please sign in again.'), readStoredUiLanguage()));
+            return;
+          }
+
+          if (!isCognitoSessionCompatible(cognitoAuthConfig, nextSession)) {
+            clearCognitoSession(window.sessionStorage);
+            setCognitoSession(null);
+            setCognitoAuthError(toMessage(new Error('Cognito session no longer matches this app. Please sign in again.'), readStoredUiLanguage()));
             return;
           }
 

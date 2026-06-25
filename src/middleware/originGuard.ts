@@ -7,7 +7,7 @@ interface OriginGuardConfig {
   headerValue?: string;
 }
 
-const ORIGIN_GUARD_EXEMPT_PATHS = new Set(['/healthz']);
+const ORIGIN_GUARD_EXEMPT_PATHS = new Set(['/healthz', '/api/webhooks/stripe']);
 
 export function createOriginGuardMiddleware(config: OriginGuardConfig): MiddlewareHandler<AppEnv> {
   const headerName = config.headerName?.trim();
@@ -20,7 +20,7 @@ export function createOriginGuardMiddleware(config: OriginGuardConfig): Middlewa
   }
 
   return async (c, next) => {
-    if (ORIGIN_GUARD_EXEMPT_PATHS.has(c.req.path)) {
+    if (isOriginGuardExempt(c.req.path, c.req.method, c.req.header('Stripe-Signature'))) {
       return next();
     }
 
@@ -31,6 +31,14 @@ export function createOriginGuardMiddleware(config: OriginGuardConfig): Middlewa
 
     return next();
   };
+}
+
+function isOriginGuardExempt(path: string, method: string, stripeSignature: string | undefined): boolean {
+  if (ORIGIN_GUARD_EXEMPT_PATHS.has(path)) {
+    return true;
+  }
+
+  return path === '/' && method.toUpperCase() === 'POST' && stripeSignature !== undefined && stripeSignature.length > 0;
 }
 
 function constantTimeEquals(left: string, right: string): boolean {

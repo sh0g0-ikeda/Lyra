@@ -74,7 +74,7 @@ import { createPanelFrameRoutes } from './routes/panelFrames.js';
 import { createPageRoutes } from './routes/pages.js';
 import { createSceneRoutes } from './routes/scenes.js';
 import { createStoryRoutes } from './routes/story.js';
-import { createWebhookRoutes } from './routes/webhooks.js';
+import { createRootWebhookCompatibilityRoutes, createWebhookRoutes } from './routes/webhooks.js';
 import { UserProvisioningService, type UserProvisioningPort } from './services/auth/UserProvisioningService.js';
 import {
   BillingService,
@@ -281,6 +281,13 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
     createOriginGuardMiddleware({
       headerName: env.ORIGIN_GUARD_HEADER_NAME,
       headerValue: env.ORIGIN_GUARD_HEADER_VALUE,
+    }),
+  );
+  app.route(
+    '/',
+    createRootWebhookCompatibilityRoutes({
+      rateLimitMiddleware: webhookRateLimitMiddleware,
+      stripeWebhookService: resolvedDependencies.stripeWebhookService,
     }),
   );
   app.route('/', createHealthRoutes());

@@ -6,7 +6,12 @@ import {
   type GenerationJobRepository,
   type GenerationJob,
 } from '../../repositories/GenerationJobRepository.js';
+import { EPISODE_LONG_JOB_STALE_AFTER_MS } from '../../domain/constants/generation.js';
 import type { EpisodeStoryAutofillQueuePort } from './EpisodeStoryAutofillQueue.js';
+import {
+  EPISODE_LONG_JOB_STALE_ERROR_MESSAGE,
+  isStaleEpisodeLongJob,
+} from './EpisodeLongJobStalePolicy.js';
 
 export interface EpisodeStoryAutofillJobRepository
   extends Pick<GenerationJobRepository, 'create' | 'attachQueueMessageId' | 'markFailed'> {
@@ -33,6 +38,8 @@ export class EpisodeStoryAutofillService implements EpisodeStoryAutofillServiceP
   public constructor(
     private readonly generationJobRepository: EpisodeStoryAutofillJobRepository,
     private readonly queue: EpisodeStoryAutofillQueuePort,
+    private readonly episodeLongJobStaleAfterMs: number = EPISODE_LONG_JOB_STALE_AFTER_MS,
+    private readonly now: () => number = () => Date.now(),
   ) {}
 
   public async enqueueEpisodeStoryAutofill(
@@ -95,9 +102,21 @@ export class EpisodeStoryAutofillService implements EpisodeStoryAutofillServiceP
       userId,
       episodeId,
     );
-    if (activeJob !== null) {
-      throw new ConflictError('Episode story autofill is already queued or processing');
+    if (activeJob === null) {
+      return;
     }
+
+    if (isStaleEpisodeLongJob(activeJob, this.now(), this.episodeLongJobStaleAfterMs)) {
+      const recovered = await this.generationJobRepository.markFailed(
+        activeJob.id,
+        EPISODE_LONG_JOB_STALE_ERROR_MESSAGE,
+      );
+      if (recovered) {
+        return;
+      }
+    }
+
+    throw new ConflictError('Episode story autofill is already queued or processing');
   }
 
   private async persistQueueMessageId(jobId: string, messageId: string): Promise<void> {

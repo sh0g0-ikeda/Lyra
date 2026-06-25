@@ -132,12 +132,30 @@ async function verifyCognitoToken(
       email: claims.email,
     };
   } catch (error) {
+    logCognitoAuthRejection(error, config);
     if (error instanceof ConfigurationError || error instanceof UnauthorizedError) {
       throw error;
     }
 
     throw new UnauthorizedError();
   }
+}
+
+function logCognitoAuthRejection(error: unknown, config: CognitoVerifierConfig): void {
+  if (process.env.NODE_ENV === 'test') {
+    return;
+  }
+
+  const reason = error instanceof Error ? error.name : typeof error;
+  console.warn(
+    JSON.stringify({
+      level: 'warn',
+      event: 'cognito_auth_rejected',
+      reason,
+      expected_token_use: config.tokenUse,
+      allowed_client_count: getAllowedCognitoClientIds(config).length,
+    }),
+  );
 }
 
 function parseCognitoClaims(

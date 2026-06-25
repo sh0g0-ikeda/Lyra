@@ -10,6 +10,10 @@ import {
   NoopPageGenerationRecoveryService,
   type PageGenerationRecoveryServicePort,
 } from '../page/PageGenerationRecoveryService.js';
+import {
+  EPISODE_LONG_JOB_STALE_ERROR_MESSAGE,
+  isStaleEpisodeLongJob,
+} from '../story/EpisodeLongJobStalePolicy.js';
 
 export interface JobServicePort {
   getJob(userId: string, jobId: string): Promise<GenerationJob>;
@@ -65,46 +69,18 @@ export class JobService implements JobServicePort {
   }
 
   private async recoverStaleEpisodeLongJob(job: GenerationJob): Promise<boolean> {
-    if (!this.isEpisodeLongJobStale(job)) {
+    if (!isStaleEpisodeLongJob(job, this.now(), this.episodeLongJobStaleAfterMs)) {
       return false;
     }
 
     return this.generationJobRepository.markFailed(
       job.id,
-      'Long-running story/page planning job stopped before completion; recovered stale queued or processing job',
+      EPISODE_LONG_JOB_STALE_ERROR_MESSAGE,
     );
-  }
-
-  private isEpisodeLongJobStale(job: GenerationJob): boolean {
-    const lastActivity = getLastActivityTime(job);
-    return this.now() - lastActivity.getTime() >= this.episodeLongJobStaleAfterMs;
   }
 }
 
 function readStringParam(params: Record<string, unknown>, key: string): string | null {
   const value = params[key];
   return typeof value === 'string' && value.length > 0 ? value : null;
-}
-
-function getLastActivityTime(job: GenerationJob): Date {
-  const progressUpdatedAt = readIsoDateParam(job.result, 'progress_updated_at');
-  if (progressUpdatedAt !== null) {
-    return progressUpdatedAt;
-  }
-
-  return job.startedAt ?? job.createdAt;
-}
-
-function readIsoDateParam(params: Record<string, unknown> | null, key: string): Date | null {
-  if (params === null) {
-    return null;
-  }
-
-  const value = params[key];
-  if (typeof value !== 'string') {
-    return null;
-  }
-
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
