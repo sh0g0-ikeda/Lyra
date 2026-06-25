@@ -1091,11 +1091,11 @@ function repairEpisodePlanSuggestionAgainstContext(
             ? sourcePage.sourceSceneIds
             : fallbackPage.sourceSceneIds,
         pagePurpose: shouldRepairGenericCompilerText(sourcePage?.pagePurpose)
-          ? undefined
-          : sourcePage?.pagePurpose,
+          ? fallbackPage.pagePurpose
+          : coalesceText(sourcePage?.pagePurpose, fallbackPage.pagePurpose),
         continuityNote: shouldRepairGenericCompilerText(sourcePage?.continuityNote)
-          ? undefined
-          : sourcePage?.continuityNote,
+          ? fallbackPage.continuityNote
+          : coalesceText(sourcePage?.continuityNote, fallbackPage.continuityNote),
         page: completePageSettingsSuggestion(sourcePage?.page, fallbackPage.page),
         panels: page.panels.map((existingPanel, panelIndex) => {
           const sourcePanel = sourcePage?.panels.find((candidate) => candidate.order === existingPanel.order);
@@ -1117,6 +1117,7 @@ function repairEpisodePlanSuggestionAgainstContext(
             fallbackPanel,
             pageScene,
             language,
+            { includeFallbackCreativeFields: true },
           );
         }),
       };
@@ -1137,9 +1138,10 @@ function repairPanelSuggestionAgainstFallback(
   fallback: PageAutofillPanelSuggestion | undefined,
   _panelScene: PageAutofillContext['scenes'][number] | EpisodePagePlanContext['scenes'][number] | undefined,
   _language: AppLanguage,
+  options?: { includeFallbackCreativeFields?: boolean },
 ): PageAutofillPanelSuggestion {
   const completed = completePanelSuggestionWithFallback(source, fallback, {
-    includeFallbackCreativeFields: false,
+    includeFallbackCreativeFields: options?.includeFallbackCreativeFields === true,
   });
   const repairedEntities =
     completed.entities === undefined || completed.entities.length === 0

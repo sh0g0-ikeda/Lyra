@@ -940,7 +940,7 @@ describe('PageService', () => {
     expect(compilerBrief).not.toContain('Scene 60');
   });
 
-  it('episode story plan は sparse compiler suggestion に fallback creative text を混ぜない', async () => {
+  it('episode story plan は sparse compiler suggestion を story fallback で field-level 補完する', async () => {
     const pageRepository = new FakePageRepository();
     const panelRepository = new FakePanelRepository();
     const assignmentService = new FakePanelEntityAssignmentService();
@@ -980,27 +980,130 @@ describe('PageService', () => {
     expect(result).toMatchObject({
       updatedPageCount: 1,
       updatedPanelCount: 1,
-      updatedAssignmentCount: 0,
+      updatedAssignmentCount: 1,
     });
     expect(pageRepository.updatedInput).toMatchObject({
       storySourceSceneIds: ['scene-1'],
     });
-    expect(pageRepository.updatedInput?.storyPagePurpose).toBeUndefined();
-    expect(pageRepository.updatedInput?.storyContinuityNote).toBeUndefined();
+    expect(pageRepository.updatedInput?.storyPagePurpose).toEqual(expect.any(String));
+    expect(pageRepository.updatedInput?.storyContinuityNote).toEqual(expect.any(String));
     const updatedPanel = panelRepository.updatedPanels[0];
     expect(updatedPanel?.panelId).toBe('panel-1');
-    expect(updatedPanel?.input.situationText).toBe('A quiet rooftop beat before the conflict sharpens.');
-    expect(updatedPanel?.input.backgroundNote).toBeUndefined();
+    expect(updatedPanel?.input.situationText).toEqual(expect.stringContaining('quiet rooftop beat'));
+    expect(updatedPanel?.input.backgroundNote).toEqual(expect.any(String));
     expect(updatedPanel?.input.composition).toEqual(
       expect.objectContaining({
         source: 'custom',
         shotType: expect.any(String),
         angle: expect.any(String),
+        compositionPrompt: expect.any(String),
+        customNote: expect.any(String),
       }),
     );
-    expect(updatedPanel?.input.composition?.compositionPrompt).toBeNull();
-    expect(updatedPanel?.input.composition?.customNote).toBeNull();
-    expect(assignmentService.updates).toHaveLength(0);
+    expect(assignmentService.updates).toEqual([
+      {
+        panelId: 'panel-1',
+        assignments: [
+          expect.objectContaining({
+            entityId: '11111111-1111-4111-8111-111111111111',
+          }),
+        ],
+      },
+    ]);
+  });
+
+  it('episode story plan の field-level 補完は一般名詞の影をキャラとして割り当てない', async () => {
+    const pageRepository = new FakePageRepository();
+    pageRepository.episodePlanningContext = {
+      ...buildEpisodePlanningContext(),
+      episode: {
+        ...buildEpisodePlanningContext().episode,
+        purpose: '澪が影を見る能力を持つことをエミールが説明する。',
+        introduction: '澪は自分だけが影を見ていることに戸惑う。',
+        middle: '影は人に取り憑くが、ここではまだ正体を断定しない。',
+        climax: 'エミールは影に関わる危険性を話す。',
+        endingHook: '澪はまだ理解しきれないまま話を聞く。',
+      },
+      scenes: [
+        {
+          id: 'scene-1',
+          order: 1,
+          location: 'Corridor',
+          time: 'Morning',
+          atmosphere: 'Tense',
+          involvedEntityIds: ['11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222222'],
+          entityStates: [],
+        },
+      ],
+      entities: [
+        {
+          id: '11111111-1111-4111-8111-111111111111',
+          name: '澪',
+          entityType: 'character',
+          freeDescription: 'A wary new arrival.',
+          promptSupplement: null,
+          structuredFields: {},
+        },
+        {
+          id: '22222222-2222-4222-8222-222222222222',
+          name: 'エミール',
+          entityType: 'character',
+          freeDescription: 'A calm guide from another era.',
+          promptSupplement: null,
+          structuredFields: {},
+        },
+        {
+          id: 'shadow-entity',
+          name: '影',
+          entityType: 'character',
+          freeDescription: 'A generic label that should not be inferred from prose alone.',
+          promptSupplement: null,
+          structuredFields: {},
+        },
+      ],
+    };
+    const panelRepository = new FakePanelRepository();
+    const assignmentService = new FakePanelEntityAssignmentService();
+    const compiler: EpisodePagePlanCompilerPort = {
+      async compilePlan(): Promise<CompiledEpisodePagePlan> {
+        return {
+          suggestion: {
+            pages: [
+              {
+                pageId: 'page-1',
+                pageNumber: 1,
+                panels: [
+                  {
+                    order: 1,
+                    situationText: '澪が影の話を聞いて戸惑う。',
+                  },
+                ],
+              },
+            ],
+          },
+          compilerProvider: 'openai',
+          compilerModel: 'gpt-5',
+          compilerPromptVersion: 'episode_page_plan_v2',
+        };
+      },
+    };
+    const service = new PageService(
+      pageRepository,
+      panelRepository,
+      assignmentService,
+      new FakePageAutofillCompiler(),
+      compiler,
+    );
+
+    const result = await service.autofillEpisodeFromStory('user-1', 'episode-1', 'ja');
+
+    expect(result.compilerUsed).toBe(true);
+    expect(assignmentService.updates).toHaveLength(1);
+    const assignedEntityIds = assignmentService.updates.flatMap((update) =>
+      update.assignments.map((assignment) => assignment.entityId),
+    );
+    expect(assignedEntityIds).toContain('11111111-1111-4111-8111-111111111111');
+    expect(assignedEntityIds).not.toContain('shadow-entity');
   });
 
   it('episode story plan は thought の話者が visible primary と食い違う時に補正する', async () => {
