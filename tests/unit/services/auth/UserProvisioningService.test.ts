@@ -10,13 +10,21 @@ import type {
 } from '../../../../src/services/credit/CreditService.js';
 
 class FakeUserRepository implements UserRepository {
-  public existingUser: AuthenticatedUser | null = null;
+  public existingUserBySupabaseId: AuthenticatedUser | null = null;
+  public existingUserByEmail: AuthenticatedUser | null = null;
   public insertedUser: AuthenticatedUser = buildUser();
   public updatedUser: AuthenticatedUser = buildUser();
+  public linkedUser: AuthenticatedUser = buildUser();
   public insertError: unknown = null;
+  public updateEmailCalls: Array<{ supabaseId: string; email: string }> = [];
+  public linkByEmailCalls: Array<{ email: string; supabaseId: string }> = [];
 
   public async findBySupabaseId(): Promise<AuthenticatedUser | null> {
-    return this.existingUser;
+    return this.existingUserBySupabaseId;
+  }
+
+  public async findByEmail(): Promise<AuthenticatedUser | null> {
+    return this.existingUserByEmail;
   }
 
   public async insertSupabaseUser(): Promise<AuthenticatedUser> {
@@ -27,8 +35,14 @@ class FakeUserRepository implements UserRepository {
     return this.insertedUser;
   }
 
-  public async updateEmail(): Promise<AuthenticatedUser> {
+  public async updateEmail(supabaseId: string, email: string): Promise<AuthenticatedUser> {
+    this.updateEmailCalls.push({ supabaseId, email });
     return this.updatedUser;
+  }
+
+  public async linkSupabaseIdByEmail(email: string, supabaseId: string): Promise<AuthenticatedUser> {
+    this.linkByEmailCalls.push({ email, supabaseId });
+    return this.linkedUser;
   }
 }
 
@@ -63,7 +77,7 @@ class FakeCreditService implements CreditServicePort {
 }
 
 describe('UserProvisioningService', () => {
-  it('新規ユーザー作成時に初回ボーナスを付与する', async () => {
+  it('新規ユーザー作成時だけ初回ボーナスを付与する', async () => {
     const repository = new FakeUserRepository();
     const creditService = new FakeCreditService();
     const service = new UserProvisioningService(repository, creditService);
@@ -80,9 +94,9 @@ describe('UserProvisioningService', () => {
     expect(creditService.signupBonusUserIds).toEqual(['user-1']);
   });
 
-  it('既存ユーザーでも初回ボーナス付与を冪等に再確認する', async () => {
+  it('既存ユーザーでは初回ボーナスを再付与しない', async () => {
     const repository = new FakeUserRepository();
-    repository.existingUser = buildUser();
+    repository.existingUserBySupabaseId = buildUser();
     const creditService = new FakeCreditService();
     const service = new UserProvisioningService(repository, creditService);
 
@@ -92,16 +106,58 @@ describe('UserProvisioningService', () => {
     });
 
     expect(result).toEqual({
-      user: repository.existingUser,
+      user: repository.existingUserBySupabaseId,
       isNewUser: false,
     });
-    expect(creditService.signupBonusUserIds).toEqual(['user-1']);
+    expect(creditService.signupBonusUserIds).toEqual([]);
   });
 
-  it('同時作成競合で既存化したユーザーにも初回ボーナス付与を再確認する', async () => {
+  it('既存ユーザーのメールが変わった場合はメールだけ同期する', async () => {
+    const repository = new FakeUserRepository();
+    repository.existingUserBySupabaseId = buildUser({ email: 'old@example.com' });
+    repository.updatedUser = buildUser({ email: 'new@example.com' });
+    const creditService = new FakeCreditService();
+    const service = new UserProvisioningService(repository, creditService);
+
+    const result = await service.provisionFromSupabaseClaims({
+      sub: 'supabase-1',
+      email: 'New@Example.com',
+    });
+
+    expect(result).toEqual({
+      user: repository.updatedUser,
+      isNewUser: false,
+    });
+    expect(repository.updateEmailCalls).toEqual([{ supabaseId: 'supabase-1', email: 'new@example.com' }]);
+    expect(creditService.signupBonusUserIds).toEqual([]);
+  });
+
+  it('同じメールで認証プロバイダーIDが変わった場合は既存ユーザーに再リンクする', async () => {
+    const repository = new FakeUserRepository();
+    repository.existingUserByEmail = buildUser({ supabaseId: 'old-provider-sub' });
+    repository.linkedUser = buildUser({ supabaseId: 'new-provider-sub' });
+    const creditService = new FakeCreditService();
+    const service = new UserProvisioningService(repository, creditService);
+
+    const result = await service.provisionFromSupabaseClaims({
+      sub: 'new-provider-sub',
+      email: 'USER@example.com',
+    });
+
+    expect(result).toEqual({
+      user: repository.linkedUser,
+      isNewUser: false,
+    });
+    expect(repository.linkByEmailCalls).toEqual([
+      { email: 'user@example.com', supabaseId: 'new-provider-sub' },
+    ]);
+    expect(creditService.signupBonusUserIds).toEqual([]);
+  });
+
+  it('同時作成競合で既存化したユーザーを返す', async () => {
     const repository = new FakeUserRepository();
     repository.insertError = { code: '23505' };
-    repository.updatedUser = buildUser({ email: 'new@example.com' });
+    repository.existingUserBySupabaseId = buildUser({ email: 'new@example.com' });
     const creditService = new FakeCreditService();
     const service = new UserProvisioningService(repository, creditService);
 
@@ -111,10 +167,10 @@ describe('UserProvisioningService', () => {
     });
 
     expect(result).toEqual({
-      user: repository.updatedUser,
+      user: repository.existingUserBySupabaseId,
       isNewUser: false,
     });
-    expect(creditService.signupBonusUserIds).toEqual(['user-1']);
+    expect(creditService.signupBonusUserIds).toEqual([]);
   });
 });
 

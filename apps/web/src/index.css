@@ -932,10 +932,37 @@ a {
   gap: 10px;
 }
 
+.character-fields-group-toggle {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0;
+  text-align: left;
+  width: 100%;
+}
+
+.character-fields-group-toggle:focus-visible {
+  border-radius: 6px;
+  outline: 2px solid rgba(229, 199, 107, 0.8);
+  outline-offset: 3px;
+}
+
 .character-fields-group-title {
   font-size: 0.78rem;
   font-weight: 700;
   color: #e5c76b;
+}
+
+.character-fields-group-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
 
 .character-form-stack {
@@ -2147,6 +2174,196 @@ details.stack summary {
 
   .assignment-toolbar {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 760px) {
+  .app-shell {
+    min-height: 100dvh;
+  }
+
+  .sidebar {
+    gap: 10px;
+    padding: 12px;
+  }
+
+  .brand-mark {
+    width: 32px;
+    height: 32px;
+  }
+
+  .brand-subtitle {
+    display: none;
+  }
+
+  .sidebar-section {
+    gap: 8px;
+  }
+
+  .sidebar-work-list {
+    max-height: min(34dvh, 220px);
+    overflow: auto;
+    padding-right: 2px;
+  }
+
+  .sidebar-create-disclosure {
+    padding: 8px 10px;
+  }
+
+  .topbar {
+    gap: 10px;
+    padding: 10px 12px;
+  }
+
+  .topbar > div:first-child strong {
+    display: block;
+    max-width: 100%;
+    overflow-wrap: anywhere;
+    font-size: 0.92rem;
+  }
+
+  .topbar > .toolbar {
+    gap: 6px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .topbar .tab-button,
+  .topbar .toolbar-select,
+  .topbar > .toolbar > .ghost-button {
+    min-height: 38px;
+    width: 100%;
+  }
+
+  .workspace-grid {
+    gap: 10px;
+    padding: 10px 10px 18px;
+  }
+
+  .main-column {
+    order: 1;
+    gap: 10px;
+  }
+
+  .rail {
+    order: 2;
+    gap: 10px;
+  }
+
+  .panel-section,
+  .story-hierarchy-panel {
+    padding: 10px;
+    gap: 10px;
+  }
+
+  .panel-section.compact {
+    padding: 10px;
+  }
+
+  .section-header {
+    gap: 8px;
+  }
+
+  .section-toggle {
+    gap: 8px;
+  }
+
+  .section-toggle-actions {
+    max-width: 100%;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+
+  .toolbar {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    width: 100%;
+  }
+
+  .toolbar > button,
+  .toolbar > label,
+  .toolbar > select,
+  .toolbar > input {
+    width: 100%;
+    min-width: 0 !important;
+  }
+
+  .form-grid,
+  .form-grid.four,
+  .form-grid.five,
+  .story-inline-grid,
+  .compact-context-grid,
+  .entity-choice-grid,
+  .reference-management-grid,
+  .frame-editor-header,
+  .frame-vertex-grid,
+  .structured-field-row {
+    grid-template-columns: 1fr;
+  }
+
+  .field input,
+  .field select,
+  .field textarea,
+  .toolbar input {
+    padding: 9px 10px;
+  }
+
+  .field textarea {
+    max-height: 168px;
+  }
+
+  .field textarea[rows='10'],
+  .field textarea[rows='12'] {
+    max-height: 220px;
+  }
+
+  .list-grid {
+    grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
+  }
+
+  .page-grid {
+    grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
+  }
+
+  .reference-grid,
+  .reference-grid.reference-grid-portrait {
+    grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
+  }
+
+  .page-card {
+    gap: 6px;
+  }
+
+  .page-placeholder,
+  .thumb-placeholder {
+    min-height: 118px;
+  }
+
+  .generated-image {
+    max-height: 72dvh;
+  }
+
+  .file-drop {
+    min-height: 84px;
+    padding: 12px;
+  }
+
+  .metric-grid,
+  .billing-balance-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .metric {
+    padding: 9px;
+  }
+
+  .billing-option {
+    min-height: 44px;
+    padding: 7px 9px;
+  }
+
+  .job-row {
+    align-items: stretch;
+    flex-direction: column;
   }
 }
 

@@ -52,6 +52,9 @@ export class BillingCreditGrantService implements BillingCreditGrantServicePort 
           emptyBalance(params.userId),
       );
 
+      // Subscription credits are a monthly allowance, not a stored-value top-up.
+      // Each successful subscription cycle replaces the remaining monthly bucket
+      // with the plan amount while purchased credits continue to accumulate.
       const nextBalance: CreditBalance = {
         ...currentBalance,
         monthlyCredits: params.amount,

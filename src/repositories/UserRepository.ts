@@ -12,8 +12,10 @@ interface UserRow extends QueryResultRow {
 
 export interface UserRepository {
   findBySupabaseId(supabaseId: string): Promise<AuthenticatedUser | null>;
+  findByEmail(email: string): Promise<AuthenticatedUser | null>;
   insertSupabaseUser(supabaseId: string, email: string): Promise<AuthenticatedUser>;
   updateEmail(supabaseId: string, email: string): Promise<AuthenticatedUser>;
+  linkSupabaseIdByEmail(email: string, supabaseId: string): Promise<AuthenticatedUser>;
 }
 
 export class PostgresUserRepository implements UserRepository {
@@ -27,6 +29,19 @@ export class PostgresUserRepository implements UserRepository {
       WHERE supabase_id = $1
       `,
       [supabaseId],
+    );
+
+    return result.rows[0] === undefined ? null : mapUserRow(result.rows[0]);
+  }
+
+  public async findByEmail(email: string): Promise<AuthenticatedUser | null> {
+    const result = await this.client.query<UserRow>(
+      `
+      SELECT id, supabase_id, email, display_name, plan_code
+      FROM users
+      WHERE lower(email) = lower($1)
+      `,
+      [email],
     );
 
     return result.rows[0] === undefined ? null : mapUserRow(result.rows[0]);
@@ -55,6 +70,22 @@ export class PostgresUserRepository implements UserRepository {
       RETURNING id, supabase_id, email, display_name, plan_code
       `,
       [supabaseId, email],
+    );
+
+    return mapUserRow(result.rows[0]);
+  }
+
+  public async linkSupabaseIdByEmail(email: string, supabaseId: string): Promise<AuthenticatedUser> {
+    const result = await this.client.query<UserRow>(
+      `
+      UPDATE users
+      SET supabase_id = $2,
+          email = $1,
+          updated_at = NOW()
+      WHERE lower(email) = lower($1)
+      RETURNING id, supabase_id, email, display_name, plan_code
+      `,
+      [email, supabaseId],
     );
 
     return mapUserRow(result.rows[0]);

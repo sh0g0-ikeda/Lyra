@@ -21,8 +21,9 @@ import {
 } from 'lucide-react';
 import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { Session, SupabaseClient } from '@supabase/supabase-js';
-import { ApiError, decodeJwtPayload, LyraApiClient, type BlobResponse } from './lib/api';
+import { decodeJwtPayload, LyraApiClient, type BlobResponse } from './lib/api';
 import { shouldAllowManualTokenAuth } from './lib/authMode';
+import { formatUserFacingError, formatUserFacingErrorMessage } from './lib/userFacingErrors';
 import {
   beginCognitoLogin,
   buildCognitoLogoutUrl,
@@ -416,7 +417,8 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   Role: '役割',
   Size: 'サイズ',
   Situation: '状況',
-  'Composition source': '構図メモ',
+  'Composition source': '構図の入力元',
+  'Advanced panel options': 'コマの詳細設定',
   Shot: 'ショット',
   Angle: 'アングル',
   Background: '背景',
@@ -1045,6 +1047,14 @@ function normalizeUiLanguage(value: string): UiLanguage {
   return value === 'en' ? 'en' : 'ja';
 }
 
+function readStoredUiLanguage(): UiLanguage {
+  if (typeof window === 'undefined') {
+    return 'ja';
+  }
+
+  return normalizeUiLanguage(window.localStorage.getItem(uiLanguageStorageKey) ?? 'ja');
+}
+
 function translateUiString(language: UiLanguage, value: string): string {
   if (language === 'en') {
     return value;
@@ -1099,6 +1109,14 @@ function getJobProgressText(job: GenerationJobRecord, language: UiLanguage): str
   return chunkLabel === null ? translatedMessage : `${translatedMessage} (${chunkLabel})`;
 }
 
+function getJobFailureText(job: GenerationJobRecord, language: UiLanguage): string | null {
+  if (job.status !== 'failed') {
+    return null;
+  }
+
+  return formatUserFacingErrorMessage({ message: job.error_message }, language);
+}
+
 function getJobProgressChunkLabel(job: GenerationJobRecord): string | null {
   const currentChunk = readNumberResultField(job, 'progress_current_chunk');
   const totalChunks = readNumberResultField(job, 'progress_total_chunks');
@@ -1149,6 +1167,10 @@ function readStringResultField(job: GenerationJobRecord, field: string): string 
 function readNumberResultField(job: GenerationJobRecord, field: string): number | null {
   const value = job.result?.[field];
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function formatShortId(id: string): string {
+  return id.slice(0, 8);
 }
 
 function formatActionSuccessMessage(language: UiLanguage, actionLabel: string, translatedLabel: string): string {
@@ -1357,7 +1379,7 @@ export default function App() {
           setCognitoSession(result.session);
         }
         if (result.error !== null) {
-          setCognitoAuthError(result.error);
+          setCognitoAuthError(formatUserFacingErrorMessage({ message: result.error }, readStoredUiLanguage()));
         }
       }
 
@@ -1396,7 +1418,7 @@ export default function App() {
 
     void initializeAuth().catch((error: unknown) => {
       if (active) {
-        setCognitoAuthError(toMessage(error));
+        setCognitoAuthError(toMessage(error, readStoredUiLanguage()));
         setPendingAuth(false);
       }
     });
@@ -1423,7 +1445,7 @@ export default function App() {
           if (nextSession === null) {
             clearCognitoSession(window.sessionStorage);
             setCognitoSession(null);
-            setCognitoAuthError('Cognito session expired. Please sign in again.');
+            setCognitoAuthError(toMessage(new Error('Cognito session expired. Please sign in again.'), readStoredUiLanguage()));
             return;
           }
 
@@ -1437,7 +1459,7 @@ export default function App() {
           }
           clearCognitoSession(window.sessionStorage);
           setCognitoSession(null);
-          setCognitoAuthError(toMessage(error));
+          setCognitoAuthError(toMessage(error, readStoredUiLanguage()));
         });
     }, refreshDelayMs);
 
@@ -1526,6 +1548,26 @@ function SplashOverlay(props: { exiting: boolean }) {
   );
 }
 
+function useIsMobileViewport(): boolean {
+  const [matches, setMatches] = useState(() =>
+    typeof window === 'undefined' ? false : window.matchMedia('(max-width: 760px)').matches,
+  );
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return undefined;
+    }
+
+    const mediaQuery = window.matchMedia('(max-width: 760px)');
+    const updateMatches = (): void => setMatches(mediaQuery.matches);
+    updateMatches();
+    mediaQuery.addEventListener('change', updateMatches);
+    return () => mediaQuery.removeEventListener('change', updateMatches);
+  }, []);
+
+  return matches;
+}
+
 function getCognitoRefreshDelay(expiresAt: number, now: number): number {
   const delayMs = expiresAt - now - cognitoRefreshSkewMs;
   return Math.min(Math.max(delayMs, 0), maxBrowserTimeoutMs);
@@ -1575,7 +1617,7 @@ function AuthScreen(props: {
       }
       setNotice({ type: 'success', message: translateUiString(language, 'Magic link sent.') });
     } catch (error) {
-      setNotice({ type: 'error', message: toMessage(error) });
+      setNotice({ type: 'error', message: toMessage(error, language) });
     } finally {
       setBusy(false);
     }
@@ -1647,6 +1689,8 @@ function StudioShell(props: {
   const api = useMemo(() => new LyraApiClient(() => props.token), [props.token]);
   const [uiLanguageStored, setUiLanguageStored] = useStoredString(window.localStorage, uiLanguageStorageKey, 'ja');
   const uiLanguage = normalizeUiLanguage(uiLanguageStored);
+  const isMobileViewport = useIsMobileViewport();
+  const [newWorkFormOpen, setNewWorkFormOpen] = useState(!isMobileViewport);
   const [notice, setNotice] = useState<NoticeState | null>(null);
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [trackedJobIds, setTrackedJobIds] = useStoredString(window.localStorage, trackedJobsStorageKey, '[]');
@@ -1696,6 +1740,10 @@ function StudioShell(props: {
   const lastWorkspaceRefreshRef = useRef(0);
   const billingVerificationTargetRef = useRef<BillingReturnMarker | null>(null);
   const [billingReturnChecking, setBillingReturnChecking] = useState(false);
+
+  useEffect(() => {
+    setNewWorkFormOpen(!isMobileViewport);
+  }, [isMobileViewport]);
 
   const trackedJobList = useMemo(() => parseTrackedJobIds(trackedJobIds), [trackedJobIds]);
 
@@ -2348,7 +2396,7 @@ function StudioShell(props: {
         message: formatActionSuccessMessage(uiLanguage, label, translatedLabel),
       });
     } catch (error) {
-      setNotice({ type: 'error', message: toMessage(error) });
+      setNotice({ type: 'error', message: toMessage(error, uiLanguage) });
     } finally {
       setBusyAction(null);
     }
@@ -2360,7 +2408,7 @@ function StudioShell(props: {
       setNotice({ type: 'info', message: formatExternalRedirectPendingMessage(uiLanguage, label) });
       await action();
     } catch (error) {
-      setNotice({ type: 'error', message: toMessage(error) });
+      setNotice({ type: 'error', message: toMessage(error, uiLanguage) });
       setBusyAction(null);
     }
   };
@@ -2476,7 +2524,7 @@ function StudioShell(props: {
               {worksQuery.isFetching && works.length === 0 ? <LoaderCircle className="spin" size={12} /> : works.length}
             </span>
           </div>
-          <div className="stack gap-xs">
+            <div className="stack gap-xs sidebar-work-list">
             {works.map((work) => (
               <button
                 key={work.id}
@@ -2510,10 +2558,12 @@ function StudioShell(props: {
             ) : null}
           </div>
         </section>
-        <section className="sidebar-section">
-          <div className="section-header">
-            <h2>{translateUiString(uiLanguage, 'New work')}</h2>
-          </div>
+        <details
+          className="sidebar-disclosure sidebar-create-disclosure"
+          onToggle={(event) => setNewWorkFormOpen(event.currentTarget.open)}
+          open={newWorkFormOpen}
+        >
+          <summary>{translateUiString(uiLanguage, 'New work')}</summary>
           <form
             className="stack"
             onSubmit={(event) => {
@@ -2545,7 +2595,7 @@ function StudioShell(props: {
               {translateUiString(uiLanguage, 'Create')}
             </button>
           </form>
-        </section>
+        </details>
       </aside>
 
       <main className="workspace">
@@ -2593,6 +2643,8 @@ function StudioShell(props: {
                   <PanelSection
                     title={selectedWork.title}
                     subtitle={uiLanguage === 'ja' ? `状態 ${translateUiString(uiLanguage, selectedWork.status)}` : `status ${selectedWork.status}`}
+                    collapsible
+                    mobileDefaultCollapsed
                     actions={
                       <button
                         className="secondary-button"
@@ -2613,20 +2665,10 @@ function StudioShell(props: {
                       </button>
                     }
                   >
-                    <div className="form-grid two">
+                    <div className="form-grid three">
                       <InputField label="Title" value={workDraft.title} onChange={(value) => setWorkDraft({ ...workDraft, title: value })} />
                       <InputField label="Genre" value={workDraft.genre} onChange={(value) => setWorkDraft({ ...workDraft, genre: value })} />
                       <InputField label="Theme" value={workDraft.theme} onChange={(value) => setWorkDraft({ ...workDraft, theme: value })} />
-                      <SelectField
-                        label="Status"
-                        value={workDraft.status}
-                        onChange={(value) => setWorkDraft({ ...workDraft, status: value as WorkDraft['status'] })}
-                        options={[
-                          ['draft', 'Draft'],
-                          ['reviewing', 'Reviewing'],
-                          ['ready', 'Ready'],
-                        ]}
-                      />
                     </div>
                     <div className="form-grid two">
                       <TextAreaField
@@ -2656,15 +2698,12 @@ function StudioShell(props: {
                         onChange={(value) => setWorkDraft({ ...workDraft, ending_point: value })}
                       />
                     </div>
-                    <InputField
-                      label="Main entity IDs"
-                      value={workDraft.main_entity_ids}
-                      onChange={(value) => setWorkDraft({ ...workDraft, main_entity_ids: value })}
-                    />
                   </PanelSection>
 
                   <PanelSection
                     title="Chapter / Episode"
+                    collapsible
+                    mobileDefaultCollapsed
                     actions={
                       <div className="toolbar">
                         <button
@@ -2846,16 +2885,6 @@ function StudioShell(props: {
                             <div className="story-inline-grid story-inline-grid-chapter">
                               <InputField label="Chapter title" value={chapterDraft.title} onChange={(value) => setChapterDraft({ ...chapterDraft, title: value })} />
                               <InputField label="Order" value={chapterDraft.order} onChange={(value) => setChapterDraft({ ...chapterDraft, order: value })} />
-                              <SelectField
-                                label="Status"
-                                value={chapterDraft.status}
-                                onChange={(value) => setChapterDraft({ ...chapterDraft, status: value as ChapterDraft['status'] })}
-                                options={[
-                                  ['draft', 'Draft'],
-                                  ['reviewing', 'Reviewing'],
-                                  ['ready', 'Ready'],
-                                ]}
-                              />
                             </div>
                             <div className="story-inline-actions">
                               <button
@@ -3053,11 +3082,6 @@ function StudioShell(props: {
                         </div>
                       </>
                     )}
-                    <InputField
-                      label="Entity IDs"
-                      value={episodeDraft.entities_involved}
-                      onChange={(value) => setEpisodeDraft({ ...episodeDraft, entities_involved: value })}
-                    />
                   </PanelSection>
 
                   <PanelSection
@@ -3067,6 +3091,8 @@ function StudioShell(props: {
                       'Improve the current episode draft while keeping continuity with the rest of the work.',
                       '作品全体との整合を保ちながら、現在の話の下書きを改善します。',
                     )}
+                    collapsible
+                    mobileDefaultCollapsed
                     actions={
                       <div className="toolbar">
                         <button
@@ -3093,7 +3119,7 @@ function StudioShell(props: {
                                   compiler_error: result.compiler_error,
                                 });
                               } catch (error) {
-                                setNotice({ type: 'error', message: toMessage(error) });
+                                setNotice({ type: 'error', message: toMessage(error, uiLanguage) });
                               } finally {
                                 setStoryBusy(false);
                               }
@@ -3294,7 +3320,7 @@ function StudioShell(props: {
                     )}
                   </PanelSection>
 
-                  <PanelSection title="Scenes">
+                  <PanelSection title="Scenes" collapsible mobileDefaultCollapsed>
                     <div className="list-grid">
                       {scenes.map((scene) => (
                         <button
@@ -3316,11 +3342,6 @@ function StudioShell(props: {
                       <InputField label="Time" value={sceneDraft.time} onChange={(value) => setSceneDraft({ ...sceneDraft, time: value })} />
                       <InputField label="Atmosphere" value={sceneDraft.atmosphere} onChange={(value) => setSceneDraft({ ...sceneDraft, atmosphere: value })} />
                     </div>
-                    <InputField
-                      label="Entity IDs"
-                      value={sceneDraft.involved_entity_ids}
-                      onChange={(value) => setSceneDraft({ ...sceneDraft, involved_entity_ids: value })}
-                    />
                     <div className="toolbar">
                       <button
                         className="secondary-button"
@@ -3364,11 +3385,13 @@ function StudioShell(props: {
 
               {activeTab === 'entities' && selectedWork !== null ? (
                 <>
-                  <div className="compact-context-card">
-                    <div className="compact-context-header">
-                      <strong>{translateUiString(uiLanguage, 'Story context')}</strong>
-                      <span className="muted small">{translateUiString(uiLanguage, 'Choose the current work, chapter, and episode while editing characters.')}</span>
-                    </div>
+                  <PanelSection
+                    title="Story context"
+                    subtitle="Choose the current work, chapter, and episode while editing characters."
+                    compact
+                    collapsible
+                    mobileDefaultCollapsed
+                  >
                     <div className="compact-context-grid">
                       <SelectField
                         label="Work"
@@ -3389,7 +3412,7 @@ function StudioShell(props: {
                         options={episodes.map((episode) => [episode.id, episode.title ?? `Episode ${episode.order}`])}
                       />
                     </div>
-                  </div>
+                  </PanelSection>
 
                   <PanelSection
                     title="Character list"
@@ -3555,7 +3578,7 @@ function StudioShell(props: {
                     </div>
                   </PanelSection>
 
-                  <PanelSection title="Import / References" collapsible>
+                  <PanelSection title="Import / References" collapsible mobileDefaultCollapsed>
                     <div className="state-pill-row">
                       <span className="state-pill state-pill-neutral">
                         {translateUiString(uiLanguage, 'Image import costs 1 credit.')}
@@ -3772,11 +3795,13 @@ function StudioShell(props: {
 
               {activeTab === 'pages' && selectedEpisode !== null ? (
                 <>
-                  <div className="compact-context-card">
-                    <div className="compact-context-header">
-                      <strong>{translateUiString(uiLanguage, 'Target episode')}</strong>
-                      <span className="muted small">{translateUiString(uiLanguage, 'Switch story context for page editing.')}</span>
-                    </div>
+                  <PanelSection
+                    title="Target episode"
+                    subtitle="Switch story context for page editing."
+                    compact
+                    collapsible
+                    mobileDefaultCollapsed
+                  >
                     <div className="compact-context-grid">
                       <SelectField
                         label="Work"
@@ -3797,7 +3822,7 @@ function StudioShell(props: {
                         options={episodes.map((episode) => [episode.id, episode.title ?? `Episode ${episode.order}`])}
                       />
                     </div>
-                  </div>
+                  </PanelSection>
 
                   <div className="page-sections-stack">
                   <PanelSection title="Pages" collapsible>
@@ -3840,7 +3865,7 @@ function StudioShell(props: {
 
                   {selectedPage !== null ? (
                     <>
-                      <PanelSection title="Page settings" className="page-section-settings" collapsible actions={
+                      <PanelSection title="Page settings" className="page-section-settings" collapsible mobileDefaultCollapsed actions={
                         <button
                           className="secondary-button"
                           onClick={() =>
@@ -3891,7 +3916,9 @@ function StudioShell(props: {
                       <PanelSection
                         title="Story sources"
                         className="page-section-story-sources"
+                        compact
                         collapsible
+                        defaultCollapsed
                         actions={
                           <button
                             className="secondary-button"
@@ -4259,19 +4286,7 @@ function StudioShell(props: {
                           />
                         </div>
                         <TextAreaField label="Situation" rows={3} value={panelDraft.situation_text} onChange={(value) => setPanelDraft({ ...panelDraft, situation_text: value })} />
-                        <div className="form-grid three">
-                          <SelectField
-                            label="Composition source"
-                            value={panelDraft.composition_source}
-                            onChange={(value) =>
-                              setPanelDraft({
-                                ...panelDraft,
-                                composition_source: value as PanelDraft['composition_source'],
-                                composition_gallery_item_id: value === 'gallery' ? panelDraft.composition_gallery_item_id : '',
-                              })
-                            }
-                            options={PANEL_COMPOSITION_SOURCE_OPTIONS}
-                          />
+                        <div className="form-grid two">
                           <SelectField
                             label="Shot"
                             value={panelDraft.shot_type}
@@ -4291,7 +4306,24 @@ function StudioShell(props: {
                         </div>
                         <TextAreaField label="Overall composition note" rows={3} value={panelDraft.composition_prompt} onChange={(value) => setPanelDraft({ ...panelDraft, composition_prompt: value })} />
                         <TextAreaField label="Extra camera / staging note" rows={3} value={panelDraft.custom_note} onChange={(value) => setPanelDraft({ ...panelDraft, custom_note: value })} />
-                        <InputField label="Notes" value={panelDraft.panel_notes} onChange={(value) => setPanelDraft({ ...panelDraft, panel_notes: value })} />
+                        <details className="advanced-disclosure">
+                          <summary>{translateUiString(uiLanguage, 'Advanced panel options')}</summary>
+                          <div className="form-grid two">
+                            <SelectField
+                              label="Composition source"
+                              value={panelDraft.composition_source}
+                              onChange={(value) =>
+                                setPanelDraft({
+                                  ...panelDraft,
+                                  composition_source: value as PanelDraft['composition_source'],
+                                  composition_gallery_item_id: value === 'gallery' ? panelDraft.composition_gallery_item_id : '',
+                                })
+                              }
+                              options={PANEL_COMPOSITION_SOURCE_OPTIONS}
+                            />
+                            <InputField label="Notes" value={panelDraft.panel_notes} onChange={(value) => setPanelDraft({ ...panelDraft, panel_notes: value })} />
+                          </div>
+                        </details>
                         <label className="checkbox-row">
                           <input
                             checked={panelDraft.dialogue_in_panel}
@@ -4408,7 +4440,7 @@ function StudioShell(props: {
                       </PanelSection>
                       </div>
 
-                      <PanelSection title="Export" className="page-section-export" collapsible>
+                      <PanelSection title="Export" className="page-section-export" collapsible mobileDefaultCollapsed>
                         <div className="form-grid three">
                           <SelectField
                             label="Format"
@@ -4493,21 +4525,25 @@ function StudioShell(props: {
                 }
               />
 
-              <PanelSection title="Jobs" compact>
+              <PanelSection title="Jobs" compact collapsible mobileDefaultCollapsed>
                 <div className="stack gap-xs">
                   {jobs.map((job) => {
                     const progressText = getJobProgressText(job, uiLanguage);
                     const progressBarState = getJobProgressBarState(job);
+                    const jobErrorText = getJobFailureText(job, uiLanguage);
                     return (
                       <div key={job.id} className="job-row">
                         <div>
                           <strong>{translateUiString(uiLanguage, job.job_type)}</strong>
-                          <div className="muted small">{job.id}</div>
+                          <div className="muted small">#{formatShortId(job.id)}</div>
                           {progressText !== null ? (
                             <div className="muted small">{progressText}</div>
                           ) : null}
                           {progressBarState !== null ? (
                             <ProgressBar compact percent={progressBarState.percent} tone={progressBarState.tone} />
+                          ) : null}
+                          {jobErrorText !== null ? (
+                            <div className="error-text small">{jobErrorText}</div>
                           ) : null}
                         </div>
                         <StatusBadge value={job.status} />
@@ -4520,7 +4556,7 @@ function StudioShell(props: {
                 </div>
               </PanelSection>
 
-              <PanelSection title="Tutorial" subtitle="First run guide" compact collapsible>
+              <PanelSection title="Tutorial" subtitle="First run guide" compact collapsible defaultCollapsed>
                 <TutorialGuide />
               </PanelSection>
             </aside>
@@ -4608,9 +4644,24 @@ function PanelSection(props: {
   children: ReactNode;
   collapsible?: boolean;
   defaultCollapsed?: boolean;
+  mobileDefaultCollapsed?: boolean;
 }) {
   const language = useContext(UiLanguageContext);
-  const [collapsed, setCollapsed] = useState(props.defaultCollapsed ?? false);
+  const isMobileViewport = useIsMobileViewport();
+  const defaultCollapsed = props.defaultCollapsed ?? (props.mobileDefaultCollapsed === true && isMobileViewport);
+  const resetKey = `${props.title}:${String(props.defaultCollapsed ?? '')}:${String(props.mobileDefaultCollapsed ?? '')}:${String(isMobileViewport)}`;
+  const lastResetKeyRef = useRef(resetKey);
+  const [collapsed, setCollapsed] = useState(defaultCollapsed);
+
+  useEffect(() => {
+    if (lastResetKeyRef.current === resetKey) {
+      return;
+    }
+
+    lastResetKeyRef.current = resetKey;
+    setCollapsed(defaultCollapsed);
+  }, [defaultCollapsed, resetKey]);
+
   return (
     <section className={`panel-section ${props.compact ? 'compact' : ''} ${collapsed ? 'collapsed' : ''} ${props.className ?? ''}`.trim()}>
       {props.collapsible ? (
@@ -4695,6 +4746,8 @@ function BillingPanel(props: {
       title="Credits"
       subtitle={pickUiText(language, 'Buy and manage credits', '購入と管理')}
       compact
+      collapsible
+      mobileDefaultCollapsed
       className="billing-panel"
     >
       {billingStatusMessage !== null ? (
@@ -5108,11 +5161,47 @@ function GenericStructuredFieldsEditor(props: {
   );
 }
 
+function CharacterFieldsGroup(props: {
+  children: ReactNode;
+  mobileDefaultOpen?: boolean;
+  title: string;
+}) {
+  const language = useContext(UiLanguageContext);
+  const isMobileViewport = useIsMobileViewport();
+  const defaultOpen = !isMobileViewport || props.mobileDefaultOpen === true;
+  const resetKey = `${props.title}:${String(isMobileViewport)}:${String(props.mobileDefaultOpen ?? false)}`;
+  const lastResetKeyRef = useRef(resetKey);
+  const [open, setOpen] = useState(defaultOpen);
+
+  useEffect(() => {
+    if (lastResetKeyRef.current === resetKey) {
+      return;
+    }
+
+    lastResetKeyRef.current = resetKey;
+    setOpen(defaultOpen);
+  }, [defaultOpen, resetKey]);
+
+  return (
+    <section className={`character-fields-group ${open ? '' : 'collapsed'}`}>
+      <button
+        aria-expanded={open}
+        className="character-fields-group-toggle"
+        onClick={() => setOpen((current) => !current)}
+        type="button"
+      >
+        <span className="character-fields-group-title">{translateUiString(language, props.title)}</span>
+        {open ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+      </button>
+      {open ? <div className="character-fields-group-body">{props.children}</div> : null}
+    </section>
+  );
+}
+
 function CharacterStructuredFieldsEditor(props: {
   value: CharacterStructuredFieldsDraft;
   onChange: (nextValue: CharacterStructuredFieldsDraft) => void;
 }) {
-  const language = useContext(UiLanguageContext);
   const update = (patch: Partial<CharacterStructuredFieldsDraft>): void => {
     props.onChange({
       ...props.value,
@@ -5122,8 +5211,7 @@ function CharacterStructuredFieldsEditor(props: {
 
   return (
     <div className="character-fields-stack">
-      <div className="character-fields-group">
-        <div className="character-fields-group-title">{translateUiString(language, 'Identity')}</div>
+      <CharacterFieldsGroup title="Identity">
         <div className="form-grid three compact-grid">
           <SelectOrCustomField label="Gender" value={props.value.gender_expression} onChange={(value) => update({ gender_expression: value })} options={CHARACTER_GENDER_OPTIONS} />
           <SelectOrCustomField label="Age range" value={props.value.age_range} onChange={(value) => update({ age_range: value })} options={CHARACTER_AGE_RANGE_OPTIONS} />
@@ -5135,10 +5223,9 @@ function CharacterStructuredFieldsEditor(props: {
           <SelectOrCustomField label="Body type" value={props.value.build} onChange={(value) => update({ build: value })} options={CHARACTER_BUILD_OPTIONS} />
           <SelectOrCustomField label="Art style" value={props.value.art_style} onChange={(value) => update({ art_style: value })} options={CHARACTER_ART_STYLE_OPTIONS} />
         </div>
-      </div>
+      </CharacterFieldsGroup>
 
-      <div className="character-fields-group">
-        <div className="character-fields-group-title">{translateUiString(language, 'Anchors')}</div>
+      <CharacterFieldsGroup title="Anchors">
         <StringChipListField
           label="Aliases"
           value={props.value.aliases}
@@ -5161,10 +5248,9 @@ function CharacterStructuredFieldsEditor(props: {
           <SelectOrCustomField label="Leg length" value={props.value.leg_length} onChange={(value) => update({ leg_length: value })} options={CHARACTER_LEG_LENGTH_OPTIONS} />
           <SelectOrCustomField label="Posture axis" value={props.value.posture_axis} onChange={(value) => update({ posture_axis: value })} options={CHARACTER_POSTURE_AXIS_OPTIONS} />
         </div>
-      </div>
+      </CharacterFieldsGroup>
 
-      <div className="character-fields-group">
-        <div className="character-fields-group-title">{translateUiString(language, 'Face')}</div>
+      <CharacterFieldsGroup title="Face">
         <div className="form-grid four compact-grid">
           <SelectOrCustomField label="Face shape" value={props.value.face_shape} onChange={(value) => update({ face_shape: value })} options={CHARACTER_FACE_SHAPE_OPTIONS} />
           <SelectOrCustomField label="Eyebrow shape" value={props.value.eyebrow_shape} onChange={(value) => update({ eyebrow_shape: value })} options={CHARACTER_EYEBROW_SHAPE_OPTIONS} />
@@ -5179,10 +5265,9 @@ function CharacterStructuredFieldsEditor(props: {
           <SelectOrCustomField label="Under-eye detail" value={props.value.under_eye_detail} onChange={(value) => update({ under_eye_detail: value })} options={CHARACTER_UNDER_EYE_DETAIL_OPTIONS} />
           <SelectOrCustomField label="Mouth default" value={props.value.mouth_default} onChange={(value) => update({ mouth_default: value })} options={CHARACTER_MOUTH_DEFAULT_OPTIONS} />
         </div>
-      </div>
+      </CharacterFieldsGroup>
 
-      <div className="character-fields-group">
-        <div className="character-fields-group-title">{translateUiString(language, 'Hair')}</div>
+      <CharacterFieldsGroup title="Hair">
         <div className="form-grid five compact-grid">
           <SelectOrCustomField label="Hair color" value={props.value.hair_color} onChange={(value) => update({ hair_color: value })} options={CHARACTER_HAIR_COLOR_OPTIONS} />
           <SelectOrCustomField label="Hair length" value={props.value.hair_length} onChange={(value) => update({ hair_length: value })} options={CHARACTER_HAIR_LENGTH_OPTIONS} />
@@ -5195,10 +5280,9 @@ function CharacterStructuredFieldsEditor(props: {
           <SelectOrCustomField label="Side hair" value={props.value.hair_side_hair} onChange={(value) => update({ hair_side_hair: value })} options={CHARACTER_HAIR_SIDE_OPTIONS} />
           <SelectOrCustomField label="Back shape" value={props.value.hair_back_shape} onChange={(value) => update({ hair_back_shape: value })} options={CHARACTER_HAIR_BACK_SHAPE_OPTIONS} />
         </div>
-      </div>
+      </CharacterFieldsGroup>
 
-      <div className="character-fields-group">
-        <div className="character-fields-group-title">{translateUiString(language, 'Outfit')}</div>
+      <CharacterFieldsGroup title="Outfit">
         <div className="form-grid three compact-grid">
           <SelectOrCustomField label="Category" value={props.value.clothing_category} onChange={(value) => update({ clothing_category: value })} options={CHARACTER_CLOTHING_CATEGORY_OPTIONS} />
           <SelectOrCustomField label="Main color" value={props.value.clothing_main_color} onChange={(value) => update({ clothing_main_color: value })} options={CHARACTER_CLOTHING_COLOR_OPTIONS} />
@@ -5210,7 +5294,7 @@ function CharacterStructuredFieldsEditor(props: {
           <SelectOrCustomField label="Legwear" value={props.value.socks_or_legwear} onChange={(value) => update({ socks_or_legwear: value })} options={CHARACTER_LEGWEAR_OPTIONS} />
         </div>
         <SelectOrCustomField label="Clothing details" value={props.value.clothing_description} onChange={(value) => update({ clothing_description: value })} options={CHARACTER_CLOTHING_DETAIL_OPTIONS} />
-      </div>
+      </CharacterFieldsGroup>
     </div>
   );
 }
@@ -5593,7 +5677,7 @@ async function handleEntityImport(
     }
     setNotice({ type: 'success', message: translateUiString(uiLanguage, 'Image analyzed. Generate preview next.') });
   } catch (error) {
-    setNotice({ type: 'error', message: toMessage(error) });
+    setNotice({ type: 'error', message: toMessage(error, uiLanguage) });
   } finally {
     setImportingImage(false);
     event.target.value = '';
@@ -7401,15 +7485,8 @@ function nullableUuidString(value: string, label: string): string | null {
   return trimmed;
 }
 
-function toMessage(error: unknown): string {
-  if (error instanceof ApiError) {
-    return error.message;
-  }
-  if (error instanceof Error) {
-    return error.message;
-  }
-
-  return 'Unexpected error';
+function toMessage(error: unknown, language: UiLanguage = 'en'): string {
+  return formatUserFacingError(error, language);
 }
 
 function useStoredString(

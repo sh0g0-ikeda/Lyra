@@ -447,7 +447,7 @@ describe('StripeWebhookService', () => {
     });
   });
 
-  it('invoice.paid の subscription_cycle で月次 grant を行う', async () => {
+  it('invoice.paid の subscription_cycle で月次 allowance を規定値へリセットする', async () => {
     const repository = seedRepository();
     const creditGrantService = new FakeBillingCreditGrantService();
     const stripeClient = new FakeStripeBillingClient();
@@ -458,7 +458,12 @@ describe('StripeWebhookService', () => {
     await service.handleWebhook(Buffer.from('{}'), 'sig');
 
     expect(creditGrantService.monthlyGrants).toHaveLength(1);
-    expect(creditGrantService.monthlyGrants[0]?.stripeEventId).toBe('evt_invoice_paid');
+    expect(creditGrantService.monthlyGrants[0]).toMatchObject({
+      userId: 'user-1',
+      amount: 50,
+      stripeEventId: 'evt_invoice_paid',
+    });
+    expect(creditGrantService.monthlyGrants[0]?.description).toContain('Monthly subscription renewal grant');
     expect(repository.paymentRecords[0]).toMatchObject({
       stripeInvoiceId: 'in_123',
       status: 'paid',

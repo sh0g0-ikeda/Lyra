@@ -19,23 +19,30 @@ export class UserProvisioningService implements UserProvisioningPort {
   ) {}
 
   public async provisionFromSupabaseClaims(claims: SupabaseJwtClaims): Promise<ProvisionedUser> {
-    if (claims.sub.length === 0 || claims.email.length === 0) {
-      throw new UnauthorizedError('Supabase JWT is missing required user claims');
+    const supabaseId = claims.sub.trim();
+    const email = claims.email.trim().toLowerCase();
+    if (supabaseId.length === 0 || email.length === 0) {
+      throw new UnauthorizedError('Auth token is missing required user claims');
     }
 
-    const existingUser = await this.userRepository.findBySupabaseId(claims.sub);
+    const existingUser = await this.userRepository.findBySupabaseId(supabaseId);
     if (existingUser !== null) {
-      const user =
-        existingUser.email === claims.email
-          ? existingUser
-          : await this.userRepository.updateEmail(claims.sub, claims.email);
+      return {
+        user: await this.syncUserEmail(existingUser, supabaseId, email),
+        isNewUser: false,
+      };
+    }
 
-      await this.creditService.grantSignupBonus(user.id);
-      return { user, isNewUser: false };
+    const userByEmail = await this.userRepository.findByEmail(email);
+    if (userByEmail !== null) {
+      return {
+        user: await this.linkExistingEmailUser(userByEmail, supabaseId, email),
+        isNewUser: false,
+      };
     }
 
     try {
-      const user = await this.userRepository.insertSupabaseUser(claims.sub, claims.email);
+      const user = await this.userRepository.insertSupabaseUser(supabaseId, email);
       await this.creditService.grantSignupBonus(user.id);
       return { user, isNewUser: true };
     } catch (error) {
@@ -43,9 +50,59 @@ export class UserProvisioningService implements UserProvisioningPort {
         throw error;
       }
 
-      const user = await this.userRepository.updateEmail(claims.sub, claims.email);
-      await this.creditService.grantSignupBonus(user.id);
-      return { user, isNewUser: false };
+      const userCreatedByConcurrentRequest = await this.userRepository.findBySupabaseId(supabaseId);
+      if (userCreatedByConcurrentRequest !== null) {
+        return {
+          user: await this.syncUserEmail(userCreatedByConcurrentRequest, supabaseId, email),
+          isNewUser: false,
+        };
+      }
+
+      const existingEmailUser = await this.userRepository.findByEmail(email);
+      if (existingEmailUser !== null) {
+        return {
+          user: await this.linkExistingEmailUser(existingEmailUser, supabaseId, email),
+          isNewUser: false,
+        };
+      }
+
+      throw error;
+    }
+  }
+
+  private async syncUserEmail(
+    user: AuthenticatedUser,
+    supabaseId: string,
+    email: string,
+  ): Promise<AuthenticatedUser> {
+    return user.email === email ? user : await this.userRepository.updateEmail(supabaseId, email);
+  }
+
+  private async linkExistingEmailUser(
+    user: AuthenticatedUser,
+    supabaseId: string,
+    email: string,
+  ): Promise<AuthenticatedUser> {
+    // Cognito/Supabase migrations can change the provider subject while the
+    // verified email remains the same. Keep the existing Lyra user id so works,
+    // credits, subscriptions, and generated assets stay attached to the account.
+    if (user.supabaseId === supabaseId) {
+      return this.syncUserEmail(user, supabaseId, email);
+    }
+
+    try {
+      return await this.userRepository.linkSupabaseIdByEmail(email, supabaseId);
+    } catch (error) {
+      if (!isUniqueViolation(error)) {
+        throw error;
+      }
+
+      const linkedByConcurrentRequest = await this.userRepository.findBySupabaseId(supabaseId);
+      if (linkedByConcurrentRequest !== null) {
+        return this.syncUserEmail(linkedByConcurrentRequest, supabaseId, email);
+      }
+
+      throw error;
     }
   }
 }
