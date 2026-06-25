@@ -1541,6 +1541,16 @@ export default function App() {
       email={email}
       token={accessToken}
       supabaseClient={supabaseClient}
+      onAuthExpired={async () => {
+        clearCognitoSession(window.sessionStorage);
+        setCognitoSession(null);
+        setSupabaseSession(null);
+        setManualToken('');
+        setCognitoAuthError(formatUserFacingErrorMessage({ status: 401 }, readStoredUiLanguage()));
+        if (supabaseClient !== null) {
+          await supabaseClient.auth.signOut().catch(() => undefined);
+        }
+      }}
       onLogout={async () => {
         const hadCognitoSession = cognitoSession !== null;
         clearCognitoSession(window.sessionStorage);
@@ -1700,9 +1710,11 @@ function StudioShell(props: {
   email: string;
   token: string;
   supabaseClient: SupabaseClient | null;
+  onAuthExpired: () => Promise<void>;
   onLogout: () => Promise<void>;
 }) {
   const queryClient = useQueryClient();
+  const onAuthExpired = props.onAuthExpired;
   const api = useMemo(() => new LyraApiClient(() => props.token), [props.token]);
   const [uiLanguageStored, setUiLanguageStored] = useStoredString(window.localStorage, uiLanguageStorageKey, 'ja');
   const uiLanguage = normalizeUiLanguage(uiLanguageStored);
@@ -1870,6 +1882,29 @@ function StudioShell(props: {
     enabled: selectedPage !== null,
   });
   const frames = useMemo(() => framesQuery.data?.frames ?? [], [framesQuery.data?.frames]);
+  const authExpiredHandledRef = useRef(false);
+  const apiSessionExpired = [
+    worksQuery.error,
+    balanceQuery.error,
+    chaptersQuery.error,
+    episodesQuery.error,
+    entitiesQuery.error,
+    entityReferenceSetQuery.error,
+    scenesQuery.error,
+    pagesQuery.error,
+    compositionsQuery.error,
+    panelsQuery.error,
+    framesQuery.error,
+  ].some((error) => isApiStatus(error, 401));
+
+  useEffect(() => {
+    if (!apiSessionExpired || authExpiredHandledRef.current) {
+      return;
+    }
+
+    authExpiredHandledRef.current = true;
+    void onAuthExpired();
+  }, [apiSessionExpired, onAuthExpired]);
 
   const generatedPages = useMemo(
     () => pages.filter((page) => page.generated_image !== null),

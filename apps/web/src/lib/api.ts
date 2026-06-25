@@ -34,6 +34,8 @@ export class ApiError extends Error {
 
 type JsonRequestInit = Omit<RequestInit, 'body'> & { body?: unknown; timeoutMs?: number };
 
+const billingRedirectTimeoutMs = 30_000;
+
 interface JsonErrorBody {
   error?: {
     code?: string;
@@ -368,7 +370,7 @@ export class LyraApiClient {
     return this.request('/api/billing/checkout/subscription', {
       method: 'POST',
       body: { plan_code: planCode },
-      timeoutMs: 15_000,
+      timeoutMs: billingRedirectTimeoutMs,
     });
   }
 
@@ -378,12 +380,12 @@ export class LyraApiClient {
     return this.request('/api/billing/checkout/credits', {
       method: 'POST',
       body: { package_code: packageCode },
-      timeoutMs: 15_000,
+      timeoutMs: billingRedirectTimeoutMs,
     });
   }
 
   public createCustomerPortal(): Promise<{ url: string }> {
-    return this.request('/api/billing/customer-portal', { method: 'POST', timeoutMs: 15_000 });
+    return this.request('/api/billing/customer-portal', { method: 'POST', timeoutMs: billingRedirectTimeoutMs });
   }
 
   public async exportPageImage(pageId: string): Promise<BlobResponse> {
