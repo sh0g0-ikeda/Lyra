@@ -259,6 +259,26 @@ describe('runPendingMigrations', () => {
     expect(sql).toContain("AND params ? 'episode_id'");
   });
 
+  it('episode page skeleton job type and active resource lock are declared', async () => {
+    const sql = await readFile(
+      join(process.cwd(), 'migrations', '017_add_episode_page_skeleton_job_type.sql'),
+      'utf8',
+    );
+
+    expect(sql).toContain('-- lyra:migration no-transaction');
+    expect(sql).toContain(
+      "CHECK (job_type IN ('page_generate', 'entity_generate', 'episode_story_autofill', 'episode_page_skeleton'))",
+    );
+    expect(sql).toContain('VALIDATE CONSTRAINT generation_jobs_job_type_check');
+    expect(sql).toContain(
+      'CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS idx_generation_jobs_active_episode_page_skeleton_resource',
+    );
+    expect(sql).toContain("ON generation_jobs ((params->>'episode_id'))");
+    expect(sql).toContain("WHERE job_type = 'episode_page_skeleton'");
+    expect(sql).toContain("AND status IN ('queued', 'processing')");
+    expect(sql).toContain("AND params ? 'episode_id'");
+  });
+
   it('課金系の種類と状態はDB制約で型契約を守る', async () => {
     const sql = await readFile(
       join(process.cwd(), 'migrations', '010_add_billing_state_constraints.sql'),

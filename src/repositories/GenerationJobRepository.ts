@@ -188,6 +188,13 @@ export class PostgresGenerationJobRepository implements GenerationJobRepository 
     return this.findActiveResourceJob(userId, 'episode_story_autofill', 'episode_id', episodeId);
   }
 
+  public async findActiveEpisodePageSkeletonJob(
+    userId: string,
+    episodeId: string,
+  ): Promise<GenerationJob | null> {
+    return this.findActiveResourceJob(userId, 'episode_page_skeleton', 'episode_id', episodeId);
+  }
+
   public async countActiveGenerationJobsByUser(userId: string): Promise<number> {
     return this.countActiveGenerationJobsByUserWithClient(this.client, userId);
   }

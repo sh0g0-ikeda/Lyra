@@ -28,6 +28,8 @@ const safeProductionConfig = {
   CLOUDFRONT_KEY_PAIR_ID: 'K1234567890',
   CLOUDFRONT_PRIVATE_KEY: '-----BEGIN PRIVATE KEY-----\\nkey\\n-----END PRIVATE KEY-----',
   CLOUDFRONT_SIGNED_URL_TTL_SECONDS: 300,
+  ORIGIN_GUARD_HEADER_NAME: 'X-Lyra-Origin-Guard',
+  ORIGIN_GUARD_HEADER_VALUE: 'secret-origin-token',
   STRIPE_SECRET_KEY: 'sk_live_secret123',
   STRIPE_WEBHOOK_SECRET: 'whsec_secret123',
   STRIPE_PRICE_STANDARD_MONTHLY: 'price_standard',
@@ -78,6 +80,19 @@ describe('assertProductionRuntimeConfig', () => {
     expect(() => {
       assertProductionRuntimeConfig(safeProductionConfig, 'production');
     }).not.toThrow();
+  });
+
+  it('production では Origin Guard 設定を要求する', () => {
+    expect(() => {
+      assertProductionRuntimeConfig(
+        {
+          ...safeProductionConfig,
+          ORIGIN_GUARD_HEADER_NAME: undefined,
+          ORIGIN_GUARD_HEADER_VALUE: undefined,
+        },
+        'production',
+      );
+    }).toThrow(/ORIGIN_GUARD_HEADER_NAME is required.*ORIGIN_GUARD_HEADER_VALUE is required/);
   });
 
   it('allows production image delivery through short-lived S3 presigned URLs without CloudFront config', () => {

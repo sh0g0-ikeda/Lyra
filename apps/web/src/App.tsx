@@ -1060,6 +1060,10 @@ function translateUiString(language: UiLanguage, value: string): string {
     return value;
   }
 
+  if (value === 'episode_page_skeleton') {
+    return 'ページ骨格生成';
+  }
+
   const exact = UI_JA_DICTIONARY[value];
   if (exact !== undefined) {
     return exact;
@@ -1893,9 +1897,19 @@ function StudioShell(props: {
       : [...activeJobs]
         .reverse()
         .find((job) => job.job_type === 'episode_story_autofill' && job.params.episode_id === selectedEpisode.id) ?? null;
+  const selectedEpisodePageSkeletonJob =
+    selectedEpisode === null
+      ? null
+      : [...activeJobs]
+        .reverse()
+        .find((job) => job.job_type === 'episode_page_skeleton' && job.params.episode_id === selectedEpisode.id) ?? null;
   const skeletonGenerationMessage =
-    busyAction === 'Generate page skeleton'
-      ? 'Generating page plan. This can take a while.'
+    selectedEpisodePageSkeletonJob !== null
+      ? selectedEpisodePageSkeletonJob.status === 'queued'
+        ? 'Queued. This process can take around 20 minutes.'
+        : getEpisodeStoryAutofillProgressMessage(selectedEpisodePageSkeletonJob)
+      : busyAction === 'Generate page skeleton'
+        ? 'Generating page skeleton. This process can take around 20 minutes.'
       : null;
   const storyPlanProcessingMessage =
     selectedEpisodeStoryAutofillJob !== null
@@ -2210,6 +2224,16 @@ function StudioShell(props: {
           if (episodeId !== null) {
             void queryClient.invalidateQueries({ queryKey: ['pages', episodeId] });
           }
+          void queryClient.invalidateQueries({ queryKey: ['pages'] });
+          void queryClient.invalidateQueries({ queryKey: ['panels'] });
+          void queryClient.invalidateQueries({ queryKey: ['frames'] });
+        }
+        if (job.job_type === 'episode_page_skeleton') {
+          const episodeId = typeof job.params.episode_id === 'string' ? job.params.episode_id : null;
+          if (episodeId !== null) {
+            void queryClient.invalidateQueries({ queryKey: ['pages', episodeId] });
+          }
+          void queryClient.invalidateQueries({ queryKey: ['episodes'] });
           void queryClient.invalidateQueries({ queryKey: ['pages'] });
           void queryClient.invalidateQueries({ queryKey: ['panels'] });
           void queryClient.invalidateQueries({ queryKey: ['frames'] });
@@ -2708,7 +2732,7 @@ function StudioShell(props: {
                       <div className="toolbar">
                         <button
                           className="primary-button"
-                          disabled={skeletonActionDisabled}
+                          disabled={skeletonActionDisabled || selectedEpisodePageSkeletonJob !== null}
                           onClick={() => {
                             if (selectedEpisode === null) {
                               return;
@@ -2729,20 +2753,28 @@ function StudioShell(props: {
                               await saveCurrentEpisodeContext();
                               setSelectedPageId('');
                               setSelectedPanelId('');
-                              await api.generatePageSkeleton(selectedEpisode.id, {
+                              const result = await api.generatePageSkeleton(selectedEpisode.id, {
                                 overwrite_existing: overwriteExisting,
                                 apply_story_plan: false,
                                 language: uiLanguage,
                               });
-                              await queryClient.invalidateQueries({ queryKey: ['episodes', selectedChapter?.id ?? ''] });
-                              await queryClient.invalidateQueries({ queryKey: ['scenes', selectedEpisode.id] });
-                              await queryClient.invalidateQueries({ queryKey: ['pages', selectedEpisode.id] });
+                              if ('job_id' in result) {
+                                trackJob(result.job_id);
+                              } else {
+                                await queryClient.invalidateQueries({ queryKey: ['episodes', selectedChapter?.id ?? ''] });
+                                await queryClient.invalidateQueries({ queryKey: ['scenes', selectedEpisode.id] });
+                                await queryClient.invalidateQueries({ queryKey: ['pages', selectedEpisode.id] });
+                              }
                               setActiveTab('pages');
                             });
                           }}
                           type="button"
                         >
-                          {busyAction === 'Generate page skeleton' ? <LoaderCircle className="spin" size={16} /> : <Sparkles size={16} />}
+                          {busyAction === 'Generate page skeleton' || selectedEpisodePageSkeletonJob !== null ? (
+                            <LoaderCircle className="spin" size={16} />
+                          ) : (
+                            <Sparkles size={16} />
+                          )}
                           {translateUiString(uiLanguage, skeletonActionLabel)}
                         </button>
                         <button
@@ -2750,7 +2782,8 @@ function StudioShell(props: {
                           disabled={
                             selectedEpisode === null ||
                             busyAction === 'Apply story plan' ||
-                            selectedEpisodeStoryAutofillJob !== null
+                            selectedEpisodeStoryAutofillJob !== null ||
+                            selectedEpisodePageSkeletonJob !== null
                           }
                           onClick={() => {
                             if (selectedEpisode === null) {
@@ -2775,7 +2808,13 @@ function StudioShell(props: {
                       <div className="muted small">{translateUiString(uiLanguage, skeletonActionMessage)}</div>
                     ) : null}
                     {skeletonGenerationMessage !== null ? (
-                      <ProcessingHint message={translateUiString(uiLanguage, skeletonGenerationMessage)} showProgress />
+                      <ProcessingHint
+                        message={translateUiString(uiLanguage, skeletonGenerationMessage)}
+                        progressPercent={
+                          selectedEpisodePageSkeletonJob === null ? null : getJobProgressPercent(selectedEpisodePageSkeletonJob)
+                        }
+                        showProgress
+                      />
                     ) : null}
                     {storyPlanProcessingMessage !== null ? (
                       <ProcessingHint

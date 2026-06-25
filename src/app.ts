@@ -32,6 +32,7 @@ import { createAuthMiddleware } from './middleware/auth.js';
 import type { AuthProvider, CognitoVerifierConfig } from './middleware/auth.js';
 import { createCorsMiddleware, parseCorsAllowedOrigins } from './middleware/cors.js';
 import { errorHandler } from './middleware/errorHandler.js';
+import { createOriginGuardMiddleware } from './middleware/originGuard.js';
 import {
   createPublicIpRateLimitMiddleware,
   createRateLimitMiddleware,
@@ -119,6 +120,15 @@ import {
   type EpisodeStoryAutofillQueuePort,
 } from './services/story/EpisodeStoryAutofillQueue.js';
 import {
+  EpisodePageSkeletonService,
+  type EpisodePageSkeletonServicePort,
+} from './services/story/EpisodePageSkeletonService.js';
+import {
+  InlineEpisodePageSkeletonQueueAdapter,
+  SqsEpisodePageSkeletonQueueAdapter,
+  type EpisodePageSkeletonQueuePort,
+} from './services/story/EpisodePageSkeletonQueue.js';
+import {
   EntityGenerationRecoveryService,
   type EntityGenerationRecoveryServicePort,
 } from './services/entity/EntityGenerationRecoveryService.js';
@@ -196,6 +206,8 @@ export interface AppDependencies {
   entityReferenceService?: EntityReferenceServicePort;
   entityReferenceImageExportService?: EntityReferenceImageExportServicePort;
   entityGenerationQueue?: EntityGenerationQueuePort;
+  episodePageSkeletonQueue?: EpisodePageSkeletonQueuePort | null;
+  episodePageSkeletonService?: EpisodePageSkeletonServicePort | null;
   episodeStoryAutofillQueue?: EpisodeStoryAutofillQueuePort;
   episodeStoryAutofillService?: EpisodeStoryAutofillServicePort;
   entityGenerationRecoveryService?: EntityGenerationRecoveryServicePort;
@@ -264,6 +276,13 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
   app.use('*', createSecurityHeadersMiddleware());
   app.use('*', createCorsMiddleware(parseCorsAllowedOrigins(env.CORS_ALLOWED_ORIGINS)));
   app.use('*', createRequestContextMiddleware());
+  app.use(
+    '*',
+    createOriginGuardMiddleware({
+      headerName: env.ORIGIN_GUARD_HEADER_NAME,
+      headerValue: env.ORIGIN_GUARD_HEADER_VALUE,
+    }),
+  );
   app.route('/', createHealthRoutes());
   if (localAssetConfig !== null) {
     app.route('/', createLocalAssetRoutes(localAssetConfig.rootDir));
@@ -338,6 +357,7 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
       authMiddleware,
       rateLimitMiddleware,
       pageSkeletonService: resolvedDependencies.pageSkeletonService,
+      episodePageSkeletonService: resolvedDependencies.episodePageSkeletonService,
       pageService: resolvedDependencies.pageService,
       episodeStoryAutofillService: resolvedDependencies.episodeStoryAutofillService,
       storyCollaborationService: resolvedDependencies.storyCollaborationService,
@@ -454,11 +474,15 @@ function resolveDependencies(
       | 'cognitoJwks'
       | 'enableDevAuthBypass'
       | 'devAuthBypassClaims'
+      | 'episodePageSkeletonQueue'
+      | 'episodePageSkeletonService'
       | 'webStaticDir'
     >
   >,
   'storyEpisodeImprovementPlanner'
 > & {
+  episodePageSkeletonQueue?: EpisodePageSkeletonQueuePort;
+  episodePageSkeletonService?: EpisodePageSkeletonServicePort;
   storyEpisodeImprovementPlanner?: StoryEpisodeImprovementPlannerPort;
 } {
   const creditRepository = new PostgresCreditRepository(db, db);
@@ -495,6 +519,24 @@ function resolveDependencies(
   const episodeStoryAutofillService =
     dependencies.episodeStoryAutofillService ??
     new EpisodeStoryAutofillService(generationJobRepository, episodeStoryAutofillQueue);
+  const episodePageSkeletonQueue =
+    dependencies.episodePageSkeletonQueue === null
+      ? undefined
+      : dependencies.episodePageSkeletonQueue ??
+        (inlineWorkerDependencies !== null
+          ? new InlineEpisodePageSkeletonQueueAdapter(
+              inlineWorkerDependencies.episodePageSkeletonWorkerService,
+            )
+          : generationQueue !== null
+            ? new SqsEpisodePageSkeletonQueueAdapter(generationQueue)
+            : undefined);
+  const episodePageSkeletonService =
+    dependencies.episodePageSkeletonService === null
+      ? undefined
+      : dependencies.episodePageSkeletonService ??
+        (episodePageSkeletonQueue === undefined
+          ? undefined
+          : new EpisodePageSkeletonService(generationJobRepository, episodePageSkeletonQueue));
   const entityGenerationExecutionRepository = new PostgresEntityGenerationExecutionRepository(db);
   const entityGenerationRecoveryService =
     dependencies.entityGenerationRecoveryService ??
@@ -651,6 +693,8 @@ function resolveDependencies(
     entityReferenceService,
     entityReferenceImageExportService,
     entityGenerationQueue,
+    episodePageSkeletonQueue,
+    episodePageSkeletonService,
     episodeStoryAutofillQueue,
     episodeStoryAutofillService,
     entityGenerationRecoveryService,

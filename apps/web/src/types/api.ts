@@ -2,7 +2,11 @@ export type StoryStatus = 'draft' | 'reviewing' | 'ready';
 export type PageStatus = 'designing' | 'generating' | 'generated' | 'editing' | 'confirmed';
 export type PageDialogueMode = 'image_baked' | 'balloon_only' | 'mixed';
 export type GenerationJobStatus = 'queued' | 'processing' | 'completed' | 'failed';
-export type GenerationJobType = 'page_generate' | 'entity_generate' | 'episode_story_autofill';
+export type GenerationJobType =
+  | 'page_generate'
+  | 'entity_generate'
+  | 'episode_story_autofill'
+  | 'episode_page_skeleton';
 
 export interface WorkRecord {
   id: string;

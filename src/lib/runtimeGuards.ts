@@ -37,6 +37,8 @@ interface RuntimeGuardConfig {
   CLOUDFRONT_KEY_PAIR_ID?: string;
   CLOUDFRONT_PRIVATE_KEY?: string;
   CLOUDFRONT_SIGNED_URL_TTL_SECONDS?: number;
+  ORIGIN_GUARD_HEADER_NAME?: string;
+  ORIGIN_GUARD_HEADER_VALUE?: string;
   S3_PRESIGNED_URL_TTL_SECONDS?: number;
   GENERATION_USER_ACTIVE_JOB_LIMIT?: number;
   GENERATION_GLOBAL_ACTIVE_JOB_LIMIT?: number;
@@ -224,6 +226,12 @@ export function assertProductionRuntimeConfig(
   }
 
   const imageDeliveryMode = config.IMAGE_DELIVERY_MODE ?? 'cloudfront_signed';
+  if (isMissingConfigValue(config.ORIGIN_GUARD_HEADER_NAME)) {
+    violations.push('ORIGIN_GUARD_HEADER_NAME is required');
+  }
+  if (isMissingConfigValue(config.ORIGIN_GUARD_HEADER_VALUE)) {
+    violations.push('ORIGIN_GUARD_HEADER_VALUE is required');
+  }
 
   for (const key of REQUIRED_PRODUCTION_GENERATION_KEYS) {
     if (isMissingConfigValue(config[key])) {

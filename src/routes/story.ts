@@ -21,6 +21,7 @@ import { formatZodValidationError } from '../lib/validationErrorFormatter.js';
 import type { StoryServicePort } from '../services/story/StoryService.js';
 import type { StoryCollaborationServicePort } from '../services/story/StoryCollaborationService.js';
 import type { PageSkeletonServicePort } from '../services/story/PageSkeletonService.js';
+import type { EpisodePageSkeletonServicePort } from '../services/story/EpisodePageSkeletonService.js';
 import type { PageServicePort } from '../services/page/PageService.js';
 import type { EpisodeStoryAutofillServicePort } from '../services/story/EpisodeStoryAutofillService.js';
 import type { AppEnv } from '../types/app.js';
@@ -30,6 +31,7 @@ export interface StoryRouteDependencies {
   authMiddleware: MiddlewareHandler<AppEnv>;
   rateLimitMiddleware: MiddlewareHandler<AppEnv>;
   pageSkeletonService: PageSkeletonServicePort;
+  episodePageSkeletonService?: EpisodePageSkeletonServicePort;
   pageService?: PageServicePort;
   episodeStoryAutofillService?: EpisodeStoryAutofillServicePort;
   storyCollaborationService: StoryCollaborationServicePort;
@@ -348,6 +350,27 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
     );
     if (!body.success) {
       throw new ValidationError(formatZodValidationError(body.error));
+    }
+
+    if (dependencies.episodePageSkeletonService !== undefined) {
+      const queued = await dependencies.episodePageSkeletonService.enqueueEpisodePageSkeleton(
+        user.id,
+        parsedEpisodeId.data,
+        {
+          overwriteExisting: body.data.overwrite_existing,
+          applyStoryPlan: body.data.apply_story_plan,
+          language: body.data.language,
+        },
+      );
+
+      return c.json(
+        {
+          job_id: queued.jobId,
+          queued: true,
+          story_plan_applied: body.data.apply_story_plan,
+        },
+        202,
+      );
     }
 
     const result = await dependencies.pageSkeletonService.generateForEpisode(user.id, parsedEpisodeId.data, {

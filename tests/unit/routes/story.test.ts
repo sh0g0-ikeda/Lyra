@@ -754,6 +754,8 @@ function createTestApp(
 ): ReturnType<typeof createApp> {
   return createApp({
     creditService: new FakeCreditService(),
+    episodePageSkeletonQueue: null,
+    episodePageSkeletonService: null,
     episodeStoryAutofillService,
     pageService,
     pageSkeletonService,

@@ -122,24 +122,31 @@ export class LyraApiClient {
   public generatePageSkeleton(
     episodeId: string,
     body?: { overwrite_existing?: boolean; apply_story_plan?: boolean; language?: 'ja' | 'en' },
-  ): Promise<{
-    pages_created: number;
-    panels_created: number;
-    replaced_existing: boolean;
-    story_plan_applied: boolean;
-    story_plan_job_id: string | null;
-    story_plan_result?: {
-      updated_page_count: number;
-      updated_panel_count: number;
-      updated_assignment_count: number;
-      filled_field_count: number;
-      compiler_used: boolean;
-      compiler_provider: 'openai' | 'fallback';
-      compiler_model: string | null;
-      compiler_prompt_version: string | null;
-      compiler_error: string | null;
-    } | null;
-  }> {
+  ): Promise<
+    | {
+        job_id: string;
+        queued: true;
+        story_plan_applied: boolean;
+      }
+    | {
+        pages_created: number;
+        panels_created: number;
+        replaced_existing: boolean;
+        story_plan_applied: boolean;
+        story_plan_job_id: string | null;
+        story_plan_result?: {
+          updated_page_count: number;
+          updated_panel_count: number;
+          updated_assignment_count: number;
+          filled_field_count: number;
+          compiler_used: boolean;
+          compiler_provider: 'openai' | 'fallback';
+          compiler_model: string | null;
+          compiler_prompt_version: string | null;
+          compiler_error: string | null;
+        } | null;
+      }
+  > {
     return this.request(`/api/episodes/${episodeId}/generate-page-skeleton`, {
       method: 'POST',
       ...(body === undefined ? {} : { body }),

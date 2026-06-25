@@ -67,6 +67,15 @@ function toJobParamsResponse(job: GenerationJob): Record<string, unknown> {
     return pickKnownFields(job.params, ['episode_id', 'language']);
   }
 
+  if (job.jobType === 'episode_page_skeleton') {
+    return pickKnownFields(job.params, [
+      'episode_id',
+      'overwrite_existing',
+      'apply_story_plan',
+      'language',
+    ]);
+  }
+
   return pickKnownFields(job.params, [
     'page_id',
     'request_kind',
@@ -89,6 +98,10 @@ async function toJobResultResponse(job: GenerationJob): Promise<Record<string, u
     return toEpisodeStoryAutofillResultResponse(job.result);
   }
 
+  if (job.jobType === 'episode_page_skeleton') {
+    return toEpisodePageSkeletonResultResponse(job.result);
+  }
+
   return toPageGenerationResultResponse(job.result);
 }
 
@@ -103,6 +116,22 @@ function toEpisodeStoryAutofillResultResponse(result: Record<string, unknown>): 
     'compiler_model',
     'compiler_prompt_version',
     'compiler_error',
+    'progress_stage',
+    'progress_message',
+    'progress_current_chunk',
+    'progress_total_chunks',
+    'progress_started_at',
+    'progress_updated_at',
+  ]);
+}
+
+function toEpisodePageSkeletonResultResponse(result: Record<string, unknown>): Record<string, unknown> {
+  return pickKnownFields(result, [
+    'pages_created',
+    'panels_created',
+    'replaced_existing',
+    'story_plan_applied',
+    'story_plan_result',
     'progress_stage',
     'progress_message',
     'progress_current_chunk',

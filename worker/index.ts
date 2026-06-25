@@ -62,7 +62,8 @@ export async function handleGenerationQueue(
     if (
       parsedMessage.job_type !== 'page_generate' &&
       parsedMessage.job_type !== 'entity_generate' &&
-      parsedMessage.job_type !== 'episode_story_autofill'
+      parsedMessage.job_type !== 'episode_story_autofill' &&
+      parsedMessage.job_type !== 'episode_page_skeleton'
     ) {
       // Unknown job types cannot become valid through SQS retry, so acknowledge and report them.
       results.push({
@@ -79,7 +80,9 @@ export async function handleGenerationQueue(
         ? await dependencies.pageGenerationWorkerService.processJob(parsedMessage.job_id)
         : parsedMessage.job_type === 'entity_generate'
           ? await dependencies.entityGenerationWorkerService.processJob(parsedMessage.job_id)
-          : await dependencies.episodeStoryAutofillWorkerService.processJob(parsedMessage.job_id);
+          : parsedMessage.job_type === 'episode_story_autofill'
+            ? await dependencies.episodeStoryAutofillWorkerService.processJob(parsedMessage.job_id)
+            : await dependencies.episodePageSkeletonWorkerService.processJob(parsedMessage.job_id);
       if (result.status === 'retry') {
         addBatchItemFailure(batchItemFailures, record.messageId);
         results.push({

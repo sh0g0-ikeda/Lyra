@@ -4,7 +4,11 @@ import type {
   PageGenerationRequestKind,
 } from './pageGeneration.js';
 
-export type GenerationJobType = 'page_generate' | 'entity_generate' | 'episode_story_autofill';
+export type GenerationJobType =
+  | 'page_generate'
+  | 'entity_generate'
+  | 'episode_story_autofill'
+  | 'episode_page_skeleton';
 export type GenerationJobStatus = 'queued' | 'processing' | 'completed' | 'failed';
 
 export interface PageGenerationJobParams {

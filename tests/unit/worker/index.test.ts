@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { ProcessEntityGenerationJobResult } from '../../../src/services/entity/EntityGenerationWorkerService.js';
 import type { ProcessPageGenerationJobResult } from '../../../src/services/page/PageGenerationWorkerService.js';
+import type { ProcessEpisodePageSkeletonJobResult } from '../../../src/services/story/EpisodePageSkeletonWorkerService.js';
 import type { ProcessEpisodeStoryAutofillJobResult } from '../../../src/services/story/EpisodeStoryAutofillWorkerService.js';
 import {
   handleGenerationQueue,
@@ -48,6 +49,19 @@ class FakeEpisodeStoryAutofillWorkerService {
   };
 
   public async processJob(jobId: string): Promise<ProcessEpisodeStoryAutofillJobResult> {
+    this.calls.push(jobId);
+    return this.nextResult;
+  }
+}
+
+class FakeEpisodePageSkeletonWorkerService {
+  public calls: string[] = [];
+  public nextResult: ProcessEpisodePageSkeletonJobResult = {
+    status: 'processed',
+    jobStatus: 'completed',
+  };
+
+  public async processJob(jobId: string): Promise<ProcessEpisodePageSkeletonJobResult> {
     this.calls.push(jobId);
     return this.nextResult;
   }
@@ -296,6 +310,7 @@ function buildDependencies(
     pageGenerationWorkerService,
     entityGenerationWorkerService,
     episodeStoryAutofillWorkerService: new FakeEpisodeStoryAutofillWorkerService(),
+    episodePageSkeletonWorkerService: new FakeEpisodePageSkeletonWorkerService(),
   };
 }
 

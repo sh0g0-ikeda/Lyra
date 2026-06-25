@@ -7,6 +7,7 @@ import {
 } from '@aws-sdk/client-sqs';
 import type { ProcessEntityGenerationJobResult } from '../../../src/services/entity/EntityGenerationWorkerService.js';
 import type { ProcessPageGenerationJobResult } from '../../../src/services/page/PageGenerationWorkerService.js';
+import type { ProcessEpisodePageSkeletonJobResult } from '../../../src/services/story/EpisodePageSkeletonWorkerService.js';
 import type { ProcessEpisodeStoryAutofillJobResult } from '../../../src/services/story/EpisodeStoryAutofillWorkerService.js';
 import { GenerationQueuePoller, type SqsPollerClient } from '../../../worker/sqsPoller.js';
 import type { WorkerDependencies } from '../../../worker/index.js';
@@ -69,6 +70,15 @@ class FakeEntityGenerationWorkerService {
 
 class FakeEpisodeStoryAutofillWorkerService {
   public async processJob(): Promise<ProcessEpisodeStoryAutofillJobResult> {
+    return {
+      status: 'processed',
+      jobStatus: 'completed',
+    };
+  }
+}
+
+class FakeEpisodePageSkeletonWorkerService {
+  public async processJob(): Promise<ProcessEpisodePageSkeletonJobResult> {
     return {
       status: 'processed',
       jobStatus: 'completed',
@@ -150,6 +160,23 @@ describe('GenerationQueuePoller', () => {
       VisibilityTimeout: 900,
     });
   });
+
+  it('maxNumberOfMessages 未指定時は重い生成ジョブを 1 件ずつ受信する', async () => {
+    const client = new FakeSqsPollerClient([]);
+    const poller = new GenerationQueuePoller(
+      client,
+      buildDependencies(new FakePageGenerationWorkerService(), new FakeEntityGenerationWorkerService()),
+      {
+        queueUrl: 'https://sqs.ap-northeast-1.amazonaws.com/123/lyra-generation',
+      },
+    );
+
+    await poller.pollOnce();
+
+    expect(client.receiveInputs[0]).toMatchObject({
+      MaxNumberOfMessages: 1,
+    });
+  });
 });
 
 function buildDependencies(
@@ -160,6 +187,7 @@ function buildDependencies(
     pageGenerationWorkerService,
     entityGenerationWorkerService,
     episodeStoryAutofillWorkerService: new FakeEpisodeStoryAutofillWorkerService(),
+    episodePageSkeletonWorkerService: new FakeEpisodePageSkeletonWorkerService(),
   };
 }
 

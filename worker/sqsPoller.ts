@@ -33,7 +33,7 @@ export interface GenerationQueuePollResult {
   handlerResult: WorkerBatchResult | null;
 }
 
-const DEFAULT_MAX_NUMBER_OF_MESSAGES = 5;
+const DEFAULT_MAX_NUMBER_OF_MESSAGES = 1;
 const DEFAULT_WAIT_TIME_SECONDS = 20;
 const DEFAULT_VISIBILITY_TIMEOUT_SECONDS = 900;
 const MIN_VISIBILITY_EXTENSION_INTERVAL_MS = 60_000;
