@@ -21,7 +21,7 @@ const safeProductionConfig = {
   OPENAI_IMAGE_MODEL: 'gpt-image-2',
   OPENAI_TIMEOUT_MS: 300_000,
   SQS_QUEUE_URL_GENERATION: 'https://sqs.ap-northeast-1.amazonaws.com/123/lyra-generation',
-  SQS_GENERATION_VISIBILITY_TIMEOUT_SECONDS: 420,
+  SQS_GENERATION_VISIBILITY_TIMEOUT_SECONDS: 1800,
   S3_BUCKET_IMAGES: 'lyra-images',
   IMAGES_CDN_BASE_URL: 'https://images.lyra.test',
   IMAGE_CDN_SIGNING_ENABLED: true,
@@ -663,11 +663,11 @@ describe('assertProductionRuntimeConfig', () => {
         {
           ...safeProductionConfig,
           OPENAI_TIMEOUT_MS: 300_000,
-          SQS_GENERATION_VISIBILITY_TIMEOUT_SECONDS: 359,
+          SQS_GENERATION_VISIBILITY_TIMEOUT_SECONDS: 1799,
         },
         'production',
       );
-    }).toThrow(/SQS_GENERATION_VISIBILITY_TIMEOUT_SECONDS must be >= 420/);
+    }).toThrow(/SQS_GENERATION_VISIBILITY_TIMEOUT_SECONDS must be >= 1800/);
   });
 
   it('rejects direct S3 image URLs in production', () => {

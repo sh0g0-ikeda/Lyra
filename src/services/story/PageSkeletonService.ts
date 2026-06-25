@@ -24,8 +24,19 @@ export interface PageSkeletonServicePort {
   generateForEpisode(
     userId: string,
     episodeId: string,
-    options?: { overwriteExisting?: boolean; language?: AppLanguage },
+    options?: PageSkeletonGenerationOptions,
   ): Promise<PageSkeletonPersistResult>;
+}
+
+export interface PageSkeletonGenerationOptions {
+  overwriteExisting?: boolean;
+  language?: AppLanguage;
+  /**
+   * Legacy synchronous calls can still build a deterministic draft when the
+   * model is unavailable. Queued production flows set this to false so a thin
+   * fallback skeleton is never persisted as if it were an AI result.
+   */
+  allowCompilerFallback?: boolean;
 }
 
 export class PageSkeletonService implements PageSkeletonServicePort {
@@ -37,10 +48,11 @@ export class PageSkeletonService implements PageSkeletonServicePort {
   public async generateForEpisode(
     userId: string,
     episodeId: string,
-    options?: { overwriteExisting?: boolean; language?: AppLanguage },
+    options?: PageSkeletonGenerationOptions,
   ): Promise<PageSkeletonPersistResult> {
     const overwriteExisting = options?.overwriteExisting === true;
     const language = options?.language ?? 'ja';
+    const allowCompilerFallback = options?.allowCompilerFallback !== false;
     const context = await this.storyRepository.findEpisodePageSkeletonContextByIdAndUserId(episodeId, userId);
     if (context === null) {
       throw new NotFoundError('Episode not found');
@@ -72,6 +84,11 @@ export class PageSkeletonService implements PageSkeletonServicePort {
         episodeId,
         reason: fallbackReason,
       });
+      if (!allowCompilerFallback) {
+        throw new ValidationError(
+          'AI page skeleton generation did not complete. Please retry after a few minutes.',
+        );
+      }
       pages = buildFallbackPageSkeleton({ ...context, language });
     }
 
@@ -89,6 +106,11 @@ export class PageSkeletonService implements PageSkeletonServicePort {
         episodeId,
         reason: sanitizePersistedErrorMessage(error, 'Page skeleton validation failed'),
       });
+      if (!allowCompilerFallback) {
+        throw new ValidationError(
+          'AI page skeleton result was incomplete. Please retry after a few minutes.',
+        );
+      }
       pages = repairGeneratedPageSkeleton(
         buildFallbackPageSkeleton({ ...context, language }),
         allowedEntityIds,

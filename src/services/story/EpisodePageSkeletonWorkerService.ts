@@ -65,6 +65,7 @@ export class EpisodePageSkeletonWorkerService implements EpisodePageSkeletonWork
       const result = await this.pageSkeletonService.generateForEpisode(job.userId, episodeId, {
         overwriteExisting,
         language,
+        allowCompilerFallback: false,
       });
 
       let storyPlanResult: EpisodePagePlanApplyResult | null = null;

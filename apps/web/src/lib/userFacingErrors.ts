@@ -23,7 +23,7 @@ const messages = {
   },
   network: {
     en: 'Could not connect to the server. Check your connection, reload the page, then try again.',
-    ja: 'サーバーに接続できませんでした。通信状況を確認し、ページを再読み込みしてからもう一度お試しください。',
+    ja: 'サーバーに接続できませんでした。通信状態を確認し、ページを再読み込みしてからもう一度お試しください。',
   },
   authExpired: {
     en: 'Your login session expired. Please sign in again.',
@@ -269,6 +269,8 @@ function findMessageBySpecificCause(normalizedMessage: string, normalizedCode: s
   }
   if (
     hasAny(normalizedMessage, [
+      'ai page skeleton generation did not complete',
+      'ai page skeleton result was incomplete',
       'invalid json',
       'generated page skeleton',
       'page skeleton page count',

@@ -468,6 +468,40 @@ describe('PageSkeletonService', () => {
     expect(repository.createdPages[1]?.suggestedLayout).toBe('top_wide_3');
   });
 
+  it('does not persist a fallback skeleton when compiler fallback is disabled', async () => {
+    const client = new FakeStoryAiClient();
+    client.errorToThrow = new SyntaxError('Unexpected token');
+    const repository = new FakeStoryRepository();
+    const service = new PageSkeletonService(repository, client);
+
+    await expect(
+      service.generateForEpisode(
+        'user-1',
+        '33333333-3333-4333-8333-333333333333',
+        { allowCompilerFallback: false },
+      ),
+    ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+
+    expect(repository.createdPages).toEqual([]);
+  });
+
+  it('does not persist a validation fallback when compiler fallback is disabled', async () => {
+    const repository = new FakeStoryRepository();
+    const client = new FakeStoryAiClient();
+    client.generatedPages = [client.generatedPages[0]!];
+    const service = new PageSkeletonService(repository, client);
+
+    await expect(
+      service.generateForEpisode(
+        'user-1',
+        '33333333-3333-4333-8333-333333333333',
+        { allowCompilerFallback: false },
+      ),
+    ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+
+    expect(repository.createdPages).toEqual([]);
+  });
+
   it('falls back to a deterministic skeleton when the model payload is invalid', async () => {
     const client = new FakeStoryAiClient();
     client.errorToThrow = new SyntaxError('Unexpected token');

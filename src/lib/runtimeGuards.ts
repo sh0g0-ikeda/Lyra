@@ -57,6 +57,7 @@ interface RuntimeGuardConfig {
 const MAX_PRODUCTION_DATABASE_POOL_MAX = 10;
 const MAX_PRODUCTION_DATABASE_TIMEOUT_MS = 60_000;
 const SQS_VISIBILITY_TIMEOUT_BUFFER_SECONDS = 120;
+const MIN_PRODUCTION_SQS_GENERATION_VISIBILITY_TIMEOUT_SECONDS = 1800;
 
 const REQUIRED_PRODUCTION_GENERATION_KEYS = [
   'AWS_REGION',
@@ -245,7 +246,10 @@ export function assertProductionRuntimeConfig(
     } else {
       const openAiTimeoutMs = config.OPENAI_TIMEOUT_MS ?? 300_000;
       const minimumVisibilityTimeoutSeconds =
-        Math.ceil(openAiTimeoutMs / 1000) + SQS_VISIBILITY_TIMEOUT_BUFFER_SECONDS;
+        Math.max(
+          MIN_PRODUCTION_SQS_GENERATION_VISIBILITY_TIMEOUT_SECONDS,
+          Math.ceil(openAiTimeoutMs / 1000) + SQS_VISIBILITY_TIMEOUT_BUFFER_SECONDS,
+        );
       if (config.SQS_GENERATION_VISIBILITY_TIMEOUT_SECONDS < minimumVisibilityTimeoutSeconds) {
         violations.push(`SQS_GENERATION_VISIBILITY_TIMEOUT_SECONDS must be >= ${minimumVisibilityTimeoutSeconds}`);
       }

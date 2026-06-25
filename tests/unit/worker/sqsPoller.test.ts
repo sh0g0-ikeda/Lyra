@@ -157,7 +157,7 @@ describe('GenerationQueuePoller', () => {
     expect(client.receiveInputs[0]).toMatchObject({
       MaxNumberOfMessages: 10,
       WaitTimeSeconds: 20,
-      VisibilityTimeout: 900,
+      VisibilityTimeout: 1800,
     });
   });
 
