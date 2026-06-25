@@ -106,19 +106,19 @@ const DEPLOYMENT_DATA_INVARIANT_QUERIES: InvariantQuery[] = [
   },
   {
     name: 'generation_jobs.active_page_resource_unique',
-    sql: `SELECT MIN(id)::text AS id FROM generation_jobs WHERE job_type = 'page_generate' AND status IN (${ACTIVE_GENERATION_JOB_STATUSES_SQL}) AND params ? 'page_id' GROUP BY params->>'page_id' HAVING COUNT(*) > 1 ORDER BY MIN(id) LIMIT $1`,
+    sql: `SELECT MIN(id::text) AS id FROM generation_jobs WHERE job_type = 'page_generate' AND status IN (${ACTIVE_GENERATION_JOB_STATUSES_SQL}) AND params ? 'page_id' GROUP BY params->>'page_id' HAVING COUNT(*) > 1 ORDER BY MIN(id::text) LIMIT $1`,
   },
   {
     name: 'generation_jobs.active_entity_resource_unique',
-    sql: `SELECT MIN(id)::text AS id FROM generation_jobs WHERE job_type = 'entity_generate' AND status IN (${ACTIVE_GENERATION_JOB_STATUSES_SQL}) AND params ? 'entity_id' GROUP BY params->>'entity_id' HAVING COUNT(*) > 1 ORDER BY MIN(id) LIMIT $1`,
+    sql: `SELECT MIN(id::text) AS id FROM generation_jobs WHERE job_type = 'entity_generate' AND status IN (${ACTIVE_GENERATION_JOB_STATUSES_SQL}) AND params ? 'entity_id' GROUP BY params->>'entity_id' HAVING COUNT(*) > 1 ORDER BY MIN(id::text) LIMIT $1`,
   },
   {
     name: 'generation_jobs.active_episode_story_autofill_resource_unique',
-    sql: `SELECT MIN(id)::text AS id FROM generation_jobs WHERE job_type = 'episode_story_autofill' AND status IN (${ACTIVE_GENERATION_JOB_STATUSES_SQL}) AND params ? 'episode_id' GROUP BY params->>'episode_id' HAVING COUNT(*) > 1 ORDER BY MIN(id) LIMIT $1`,
+    sql: `SELECT MIN(id::text) AS id FROM generation_jobs WHERE job_type = 'episode_story_autofill' AND status IN (${ACTIVE_GENERATION_JOB_STATUSES_SQL}) AND params ? 'episode_id' GROUP BY params->>'episode_id' HAVING COUNT(*) > 1 ORDER BY MIN(id::text) LIMIT $1`,
   },
   {
     name: 'generation_jobs.active_episode_page_skeleton_resource_unique',
-    sql: `SELECT MIN(id)::text AS id FROM generation_jobs WHERE job_type = 'episode_page_skeleton' AND status IN (${ACTIVE_GENERATION_JOB_STATUSES_SQL}) AND params ? 'episode_id' GROUP BY params->>'episode_id' HAVING COUNT(*) > 1 ORDER BY MIN(id) LIMIT $1`,
+    sql: `SELECT MIN(id::text) AS id FROM generation_jobs WHERE job_type = 'episode_page_skeleton' AND status IN (${ACTIVE_GENERATION_JOB_STATUSES_SQL}) AND params ? 'episode_id' GROUP BY params->>'episode_id' HAVING COUNT(*) > 1 ORDER BY MIN(id::text) LIMIT $1`,
   },
   {
     name: 'generation_jobs.failed_page_missing_refund',
@@ -162,7 +162,7 @@ const DEPLOYMENT_DATA_INVARIANT_QUERIES: InvariantQuery[] = [
   },
   {
     name: 'credit_ledger.stripe_event_id_unique',
-    sql: 'SELECT MIN(id)::text AS id FROM credit_ledger WHERE stripe_event_id IS NOT NULL GROUP BY stripe_event_id HAVING COUNT(*) > 1 ORDER BY MIN(id) LIMIT $1',
+    sql: 'SELECT MIN(id::text) AS id FROM credit_ledger WHERE stripe_event_id IS NOT NULL GROUP BY stripe_event_id HAVING COUNT(*) > 1 ORDER BY MIN(id::text) LIMIT $1',
   },
   {
     name: 'credit_ledger.job_refund_over_consumed',
@@ -186,11 +186,11 @@ const DEPLOYMENT_DATA_INVARIANT_QUERIES: InvariantQuery[] = [
   },
   {
     name: 'payment_records.checkout_session_kind_status_unique',
-    sql: 'SELECT MIN(id)::text AS id FROM payment_records WHERE stripe_checkout_session_id IS NOT NULL GROUP BY stripe_checkout_session_id, kind, status HAVING COUNT(*) > 1 ORDER BY MIN(id) LIMIT $1',
+    sql: 'SELECT MIN(id::text) AS id FROM payment_records WHERE stripe_checkout_session_id IS NOT NULL GROUP BY stripe_checkout_session_id, kind, status HAVING COUNT(*) > 1 ORDER BY MIN(id::text) LIMIT $1',
   },
   {
     name: 'payment_records.invoice_kind_status_unique',
-    sql: 'SELECT MIN(id)::text AS id FROM payment_records WHERE stripe_invoice_id IS NOT NULL GROUP BY stripe_invoice_id, kind, status HAVING COUNT(*) > 1 ORDER BY MIN(id) LIMIT $1',
+    sql: 'SELECT MIN(id::text) AS id FROM payment_records WHERE stripe_invoice_id IS NOT NULL GROUP BY stripe_invoice_id, kind, status HAVING COUNT(*) > 1 ORDER BY MIN(id::text) LIMIT $1',
   },
 ];
 

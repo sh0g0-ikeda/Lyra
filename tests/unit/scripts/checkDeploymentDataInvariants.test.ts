@@ -190,6 +190,9 @@ describe('checkDeploymentDataInvariants', () => {
         query.includes('HAVING COUNT(*) > 1'),
       ),
     ).toBe(true);
+    expect(database.queries.some((query) => query.includes('MIN(id::text)'))).toBe(true);
+    expect(database.queries.some((query) => query.includes('MIN(id)::text'))).toBe(false);
+    expect(database.queries.some((query) => query.includes('ORDER BY MIN(id)'))).toBe(false);
     expect(
       database.queries.some((query) =>
         query.includes("generation_jobs.job_type = 'page_generate'") &&
