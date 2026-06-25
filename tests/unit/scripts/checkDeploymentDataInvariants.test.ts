@@ -93,6 +93,28 @@ class FakeDatabase implements DatabaseClient {
       );
     }
 
+    if (this.violatedCheckName === 'generation_jobs.active_episode_story_autofill_resource_unique') {
+      return (
+        text.includes('FROM generation_jobs') &&
+        text.includes("job_type = 'episode_story_autofill'") &&
+        text.includes("status IN ('queued', 'processing')") &&
+        text.includes("params ? 'episode_id'") &&
+        text.includes("GROUP BY params->>'episode_id'") &&
+        text.includes('HAVING COUNT(*) > 1')
+      );
+    }
+
+    if (this.violatedCheckName === 'generation_jobs.active_episode_page_skeleton_resource_unique') {
+      return (
+        text.includes('FROM generation_jobs') &&
+        text.includes("job_type = 'episode_page_skeleton'") &&
+        text.includes("status IN ('queued', 'processing')") &&
+        text.includes("params ? 'episode_id'") &&
+        text.includes("GROUP BY params->>'episode_id'") &&
+        text.includes('HAVING COUNT(*) > 1')
+      );
+    }
+
     if (this.violatedCheckName === 'database.invalid_indexes') {
       return text.includes('FROM pg_index') && text.includes('NOT pg_index.indisvalid');
     }
@@ -125,6 +147,27 @@ describe('checkDeploymentDataInvariants', () => {
         query.includes("job_type = 'page_generate'") &&
         query.includes("status IN ('queued', 'processing')") &&
         query.includes("GROUP BY params->>'page_id'"),
+      ),
+    ).toBe(true);
+    expect(
+      database.queries.some((query) =>
+        query.includes(
+          "job_type NOT IN ('page_generate', 'entity_generate', 'episode_story_autofill', 'episode_page_skeleton')",
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      database.queries.some((query) =>
+        query.includes("job_type = 'episode_story_autofill'") &&
+        query.includes("status IN ('queued', 'processing')") &&
+        query.includes("GROUP BY params->>'episode_id'"),
+      ),
+    ).toBe(true);
+    expect(
+      database.queries.some((query) =>
+        query.includes("job_type = 'episode_page_skeleton'") &&
+        query.includes("status IN ('queued', 'processing')") &&
+        query.includes("GROUP BY params->>'episode_id'"),
       ),
     ).toBe(true);
     expect(
@@ -218,6 +261,8 @@ describe('checkDeploymentDataInvariants', () => {
     'generation_jobs.failed_page_under_refunded',
     'generation_jobs.failed_entity_under_refunded',
     'credit_ledger.job_refund_over_consumed',
+    'generation_jobs.active_episode_story_autofill_resource_unique',
+    'generation_jobs.active_episode_page_skeleton_resource_unique',
   ])('%s を検出する', async (checkName) => {
     const database = new FakeDatabase(checkName);
 

@@ -23,6 +23,9 @@ export interface DeploymentDataInvariantReport {
 }
 
 const SAMPLE_LIMIT = 10;
+const ACTIVE_GENERATION_JOB_STATUSES_SQL = "'queued', 'processing'";
+const GENERATION_JOB_TYPES_SQL =
+  "'page_generate', 'entity_generate', 'episode_story_autofill', 'episode_page_skeleton'";
 
 const DEPLOYMENT_DATA_INVARIANT_QUERIES: InvariantQuery[] = [
   {
@@ -91,7 +94,7 @@ const DEPLOYMENT_DATA_INVARIANT_QUERIES: InvariantQuery[] = [
   },
   {
     name: 'generation_jobs.job_type',
-    sql: "SELECT id::text AS id FROM generation_jobs WHERE job_type NOT IN ('page_generate', 'entity_generate') ORDER BY id LIMIT $1",
+    sql: `SELECT id::text AS id FROM generation_jobs WHERE job_type NOT IN (${GENERATION_JOB_TYPES_SQL}) ORDER BY id LIMIT $1`,
   },
   {
     name: 'generation_jobs.status',
@@ -103,11 +106,19 @@ const DEPLOYMENT_DATA_INVARIANT_QUERIES: InvariantQuery[] = [
   },
   {
     name: 'generation_jobs.active_page_resource_unique',
-    sql: "SELECT MIN(id)::text AS id FROM generation_jobs WHERE job_type = 'page_generate' AND status IN ('queued', 'processing') AND params ? 'page_id' GROUP BY params->>'page_id' HAVING COUNT(*) > 1 ORDER BY MIN(id) LIMIT $1",
+    sql: `SELECT MIN(id)::text AS id FROM generation_jobs WHERE job_type = 'page_generate' AND status IN (${ACTIVE_GENERATION_JOB_STATUSES_SQL}) AND params ? 'page_id' GROUP BY params->>'page_id' HAVING COUNT(*) > 1 ORDER BY MIN(id) LIMIT $1`,
   },
   {
     name: 'generation_jobs.active_entity_resource_unique',
-    sql: "SELECT MIN(id)::text AS id FROM generation_jobs WHERE job_type = 'entity_generate' AND status IN ('queued', 'processing') AND params ? 'entity_id' GROUP BY params->>'entity_id' HAVING COUNT(*) > 1 ORDER BY MIN(id) LIMIT $1",
+    sql: `SELECT MIN(id)::text AS id FROM generation_jobs WHERE job_type = 'entity_generate' AND status IN (${ACTIVE_GENERATION_JOB_STATUSES_SQL}) AND params ? 'entity_id' GROUP BY params->>'entity_id' HAVING COUNT(*) > 1 ORDER BY MIN(id) LIMIT $1`,
+  },
+  {
+    name: 'generation_jobs.active_episode_story_autofill_resource_unique',
+    sql: `SELECT MIN(id)::text AS id FROM generation_jobs WHERE job_type = 'episode_story_autofill' AND status IN (${ACTIVE_GENERATION_JOB_STATUSES_SQL}) AND params ? 'episode_id' GROUP BY params->>'episode_id' HAVING COUNT(*) > 1 ORDER BY MIN(id) LIMIT $1`,
+  },
+  {
+    name: 'generation_jobs.active_episode_page_skeleton_resource_unique',
+    sql: `SELECT MIN(id)::text AS id FROM generation_jobs WHERE job_type = 'episode_page_skeleton' AND status IN (${ACTIVE_GENERATION_JOB_STATUSES_SQL}) AND params ? 'episode_id' GROUP BY params->>'episode_id' HAVING COUNT(*) > 1 ORDER BY MIN(id) LIMIT $1`,
   },
   {
     name: 'generation_jobs.failed_page_missing_refund',

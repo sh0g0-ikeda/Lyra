@@ -8,7 +8,11 @@
 - failed page-generation retry flow
 
 ## Migrations
-- Run `bun run db:check-invariants` before production migrations.
+- Run `bun run db:check-invariants` locally before production migrations, or
+  `bun run db:check-invariants:prod` inside a built production container.
+- Keep CloudFront's default behavior uncached for HTML and authenticated API
+  routes. Only `/assets/*` should use the managed caching-optimized policy
+  because those filenames are build-hashed.
   - It is read-only.
   - If it reports violations, fix the listed rows before running schema migrations.
 - Run `bun run migrate` as a one-off deploy task before rolling API tasks.
@@ -23,7 +27,7 @@
 bun run worker:generation:prod
 ```
 
-- The production command runs `node dist/scripts/runGenerationWorker.js`, so build the
+- The production command runs `bun dist/scripts/startProductionWorker.js`, so build the
   backend image with `bun run build` before starting worker tasks.
 - The worker long-polls `SQS_QUEUE_URL_GENERATION`, calls the existing
   `handleGenerationQueue` processor, and deletes only messages that are not marked

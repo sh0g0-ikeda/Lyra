@@ -115,7 +115,7 @@ bun run build
 bun run worker:generation:prod
 ```
 
-The worker command runs `node dist/scripts/runGenerationWorker.js`, polls
+The worker command runs `bun dist/scripts/startProductionWorker.js`, polls
 `SQS_QUEUE_URL_GENERATION`, and deletes only messages that were processed or
 classified as permanent input errors. Transient worker failures stay in SQS for
 retry after the visibility timeout.
@@ -125,7 +125,7 @@ Paid production must protect image CDN paths with CloudFront signed URLs:
 ```env
 IMAGE_CDN_SIGNING_ENABLED=true
 CLOUDFRONT_KEY_PAIR_ID=Kxxxxxxxxxxxx
-CLOUDFRONT_PRIVATE_KEY=-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----
+CLOUDFRONT_PRIVATE_KEY=<load from Secrets Manager; do not paste PEM text in source control>
 CLOUDFRONT_SIGNED_URL_TTL_SECONDS=300
 ```
 

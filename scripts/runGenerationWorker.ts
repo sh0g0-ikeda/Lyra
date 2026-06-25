@@ -3,6 +3,7 @@ import { ConfigurationError } from '../src/domain/errors/index.js';
 import { env } from '../src/lib/env.js';
 import { closeDatabasePool, db } from '../src/lib/db.js';
 import { sanitizePersistedErrorMessage } from '../src/lib/errorSanitizer.js';
+import { assertProductionRuntimeConfig } from '../src/lib/runtimeGuards.js';
 import {
   GENERATION_RECOVERY_BATCH_LIMIT,
   ENTITY_GENERATION_STALE_AFTER_MS,
@@ -26,6 +27,8 @@ const GENERATION_RECOVERY_INTERVAL_MS = Math.min(
 );
 
 async function main(): Promise<void> {
+  assertProductionRuntimeConfig(env);
+
   if (env.SQS_QUEUE_URL_GENERATION === undefined) {
     throw new ConfigurationError('SQS_QUEUE_URL_GENERATION is required for generation worker polling');
   }
