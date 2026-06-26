@@ -1327,6 +1327,91 @@ describe('PageService', () => {
     ]);
   });
 
+  it('episode story plan は story lead がそのコマにいない場合は visible な page lead へ話者を補正する', async () => {
+    const pageRepository = new FakePageRepository();
+    pageRepository.episodePlanningContext = {
+      ...buildEpisodePlanningContext(),
+      entities: [
+        ...buildEpisodePlanningContext().entities,
+        {
+          id: '22222222-2222-4222-8222-222222222222',
+          name: 'Emile',
+          entityType: 'character',
+          freeDescription: 'Quiet white-haired boy.',
+          promptSupplement: 'Soft face, careful eyes.',
+          structuredFields: { character_identity: { aliases: [] } },
+        },
+      ],
+    };
+    const panelRepository = new FakePanelRepository();
+    const assignmentService = new FakePanelEntityAssignmentService();
+    const compiler: EpisodePagePlanCompilerPort = {
+      async compilePlan(): Promise<CompiledEpisodePagePlan> {
+        return {
+          suggestion: {
+            pages: [
+              {
+                pageId: 'page-1',
+                pageNumber: 1,
+                sourceSceneIds: ['scene-1'],
+                pagePurpose: 'Emile explains the next step while Minerva is off panel.',
+                continuityNote: 'Keep the explanation focused on the visible speaker.',
+                panels: [
+                  {
+                    order: 1,
+                    situationText: 'Emile stands alone by the window and gives a quiet answer.',
+                    entities: [
+                      {
+                        entityId: '22222222-2222-4222-8222-222222222222',
+                        role: 'primary',
+                        action: 'standing_firm',
+                        position: 'center',
+                        facingDirection: 'front',
+                        expression: 'calm',
+                        customAction: null,
+                        customExpression: null,
+                        effectNote: null,
+                        stateId: null,
+                      },
+                    ],
+                    dialogue: [
+                      {
+                        entityId: null,
+                        text: 'ここから先は、君が選ぶことだ。',
+                        type: 'speech',
+                        position: 'top',
+                      },
+                    ],
+                  },
+                ],
+              },
+            ],
+          },
+          compilerProvider: 'openai',
+          compilerModel: 'gpt-5',
+          compilerPromptVersion: 'episode_page_plan_v2',
+        };
+      },
+    };
+    const service = new PageService(
+      pageRepository,
+      panelRepository,
+      assignmentService,
+      new FakePageAutofillCompiler(),
+      compiler,
+    );
+
+    await service.autofillEpisodeFromStory('user-1', 'episode-1', 'ja');
+
+    expect(panelRepository.updatedPanels[0]?.input.dialogue).toEqual([
+      expect.objectContaining({
+        type: 'speech',
+        entityId: '22222222-2222-4222-8222-222222222222',
+        text: 'ここから先は、君が選ぶことだ。',
+      }),
+    ]);
+  });
+
   it('episode story plan は skeleton 上限を超えるページ数を compiler に渡さない', async () => {
     const pageRepository = new FakePageRepository();
     const compiler = new FakeEpisodePagePlanCompiler();

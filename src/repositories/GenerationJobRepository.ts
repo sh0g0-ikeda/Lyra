@@ -7,6 +7,12 @@ import { sanitizePersistedErrorMessage } from '../lib/errorSanitizer.js';
 
 export type { GenerationJob };
 
+export interface GenerationJobCapacityLimits {
+  perUser: number;
+  global: number;
+  jobTypes?: readonly GenerationJobType[];
+}
+
 export interface CreateGenerationJobInput {
   id?: string;
   userId: string;
@@ -14,18 +20,12 @@ export interface CreateGenerationJobInput {
   generationMode: PageGenerationMode | null;
   creditCost: number;
   params: Record<string, unknown>;
-  capacityLimits?: {
-    perUser: number;
-    global: number;
-  };
+  capacityLimits?: GenerationJobCapacityLimits;
 }
 
 export interface PrepareGenerationJobRetryOptions {
   userId: string;
-  capacityLimits: {
-    perUser: number;
-    global: number;
-  };
+  capacityLimits: GenerationJobCapacityLimits;
 }
 
 export interface PruneExpiredGenerationJobsInput {
@@ -46,8 +46,11 @@ export interface GenerationJobRepository {
   findByIdAndUserId(jobId: string, userId: string): Promise<GenerationJob | null>;
   findActivePageGenerationJob(userId: string, pageId: string): Promise<GenerationJob | null>;
   findActiveEntityGenerationJob(userId: string, entityId: string): Promise<GenerationJob | null>;
-  countActiveGenerationJobsByUser(userId: string): Promise<number>;
-  countActiveGenerationJobs(): Promise<number>;
+  countActiveGenerationJobsByUser(
+    userId: string,
+    jobTypes?: readonly GenerationJobType[],
+  ): Promise<number>;
+  countActiveGenerationJobs(jobTypes?: readonly GenerationJobType[]): Promise<number>;
   attachQueueMessageId(jobId: string, messageId: string): Promise<boolean>;
   markFailed(jobId: string, errorMessage: string): Promise<boolean>;
   prepareRetry(
@@ -75,6 +78,11 @@ interface GenerationJobRow extends QueryResultRow {
   completed_at: Date | null;
   expires_at: Date | null;
 }
+
+const DEFAULT_CAPACITY_JOB_TYPES: readonly GenerationJobType[] = [
+  'page_generate',
+  'entity_generate',
+];
 
 export class PostgresGenerationJobRepository implements GenerationJobRepository {
   private static readonly advisoryLockNamespace = 81_527;
@@ -142,12 +150,17 @@ export class PostgresGenerationJobRepository implements GenerationJobRepository 
     userId: string,
     limits: NonNullable<CreateGenerationJobInput['capacityLimits']>,
   ): Promise<void> {
-    const activeForUser = await this.countActiveGenerationJobsByUserWithClient(client, userId);
+    const jobTypes = normalizeCapacityJobTypes(limits.jobTypes);
+    const activeForUser = await this.countActiveGenerationJobsByUserWithClient(
+      client,
+      userId,
+      jobTypes,
+    );
     if (activeForUser >= limits.perUser) {
       throw new ConflictError('User has too many active generation jobs');
     }
 
-    const activeGlobally = await this.countActiveGenerationJobsWithClient(client);
+    const activeGlobally = await this.countActiveGenerationJobsWithClient(client, jobTypes);
     if (activeGlobally >= limits.global) {
       throw new ConflictError('Generation queue is temporarily full');
     }
@@ -195,40 +208,57 @@ export class PostgresGenerationJobRepository implements GenerationJobRepository 
     return this.findActiveResourceJob(userId, 'episode_page_skeleton', 'episode_id', episodeId);
   }
 
-  public async countActiveGenerationJobsByUser(userId: string): Promise<number> {
-    return this.countActiveGenerationJobsByUserWithClient(this.client, userId);
+  public async countActiveGenerationJobsByUser(
+    userId: string,
+    jobTypes: readonly GenerationJobType[] = DEFAULT_CAPACITY_JOB_TYPES,
+  ): Promise<number> {
+    return this.countActiveGenerationJobsByUserWithClient(
+      this.client,
+      userId,
+      normalizeCapacityJobTypes(jobTypes),
+    );
   }
 
   private async countActiveGenerationJobsByUserWithClient(
     client: DatabaseClient,
     userId: string,
+    jobTypes: readonly GenerationJobType[],
   ): Promise<number> {
     const result = await client.query<{ count: string }>(
       `
       SELECT COUNT(*)::text AS count
       FROM generation_jobs
       WHERE user_id = $1
-        AND job_type IN ('page_generate', 'entity_generate')
+        AND job_type = ANY($2::text[])
         AND status IN ('queued', 'processing')
       `,
-      [userId],
+      [userId, [...jobTypes]],
     );
 
     return Number(result.rows[0]?.count ?? '0');
   }
 
-  public async countActiveGenerationJobs(): Promise<number> {
-    return this.countActiveGenerationJobsWithClient(this.client);
+  public async countActiveGenerationJobs(
+    jobTypes: readonly GenerationJobType[] = DEFAULT_CAPACITY_JOB_TYPES,
+  ): Promise<number> {
+    return this.countActiveGenerationJobsWithClient(
+      this.client,
+      normalizeCapacityJobTypes(jobTypes),
+    );
   }
 
-  private async countActiveGenerationJobsWithClient(client: DatabaseClient): Promise<number> {
+  private async countActiveGenerationJobsWithClient(
+    client: DatabaseClient,
+    jobTypes: readonly GenerationJobType[],
+  ): Promise<number> {
     const result = await client.query<{ count: string }>(
       `
       SELECT COUNT(*)::text AS count
       FROM generation_jobs
-      WHERE job_type IN ('page_generate', 'entity_generate')
+      WHERE job_type = ANY($1::text[])
         AND status IN ('queued', 'processing')
       `,
+      [[...jobTypes]],
     );
 
     return Number(result.rows[0]?.count ?? '0');
@@ -408,6 +438,11 @@ export class PostgresGenerationJobRepository implements GenerationJobRepository 
 
 function isTransactionRunner(client: DatabaseClient & Partial<TransactionRunner>): client is DatabaseClient & TransactionRunner {
   return typeof client.transaction === 'function';
+}
+
+function normalizeCapacityJobTypes(jobTypes: readonly GenerationJobType[] | undefined): readonly GenerationJobType[] {
+  const normalized = jobTypes?.filter((jobType, index, values) => values.indexOf(jobType) === index);
+  return normalized === undefined || normalized.length === 0 ? DEFAULT_CAPACITY_JOB_TYPES : normalized;
 }
 
 export function isUniqueViolation(error: unknown): boolean {

@@ -3,10 +3,15 @@ import { AppError, ConfigurationError, ConflictError } from '../../domain/errors
 import type { AppLanguage } from '../../domain/types/language.js';
 import {
   isUniqueViolation,
+  type GenerationJobCapacityLimits,
   type GenerationJob,
   type GenerationJobRepository,
 } from '../../repositories/GenerationJobRepository.js';
-import { EPISODE_LONG_JOB_STALE_AFTER_MS } from '../../domain/constants/generation.js';
+import {
+  DEFAULT_EPISODE_LONG_JOB_ACTIVE_JOB_LIMITS,
+  EPISODE_LONG_JOB_ACTIVE_JOB_TYPES,
+  EPISODE_LONG_JOB_STALE_AFTER_MS,
+} from '../../domain/constants/generation.js';
 import type { EpisodePageSkeletonQueuePort } from './EpisodePageSkeletonQueue.js';
 import {
   EPISODE_LONG_JOB_STALE_ERROR_MESSAGE,
@@ -46,6 +51,11 @@ export class EpisodePageSkeletonService implements EpisodePageSkeletonServicePor
     private readonly queue: EpisodePageSkeletonQueuePort,
     private readonly episodeLongJobStaleAfterMs: number = EPISODE_LONG_JOB_STALE_AFTER_MS,
     private readonly now: () => number = () => Date.now(),
+    private readonly capacityLimits: GenerationJobCapacityLimits = {
+      perUser: DEFAULT_EPISODE_LONG_JOB_ACTIVE_JOB_LIMITS.PER_USER,
+      global: DEFAULT_EPISODE_LONG_JOB_ACTIVE_JOB_LIMITS.GLOBAL,
+      jobTypes: EPISODE_LONG_JOB_ACTIVE_JOB_TYPES,
+    },
   ) {}
 
   public async enqueueEpisodePageSkeleton(
@@ -71,6 +81,7 @@ export class EpisodePageSkeletonService implements EpisodePageSkeletonServicePor
           apply_story_plan: input.applyStoryPlan,
           language: input.language,
         },
+        capacityLimits: this.capacityLimits,
       });
       createdJobId = job.id;
 

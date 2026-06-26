@@ -1,6 +1,7 @@
 import { serveStatic } from '@hono/node-server/serve-static';
 import { Hono, type MiddlewareHandler } from 'hono';
 import { ConfigurationError } from './domain/errors/index.js';
+import { EPISODE_LONG_JOB_ACTIVE_JOB_TYPES } from './domain/constants/generation.js';
 import { createPageImageStorageClient } from './infrastructure/aws/S3PageImageStorage.js';
 import { S3FinalPageImageStorage, type FinalPageImageStoragePort } from './infrastructure/aws/S3FinalPageImageStorage.js';
 import { S3EntityImageStorage, type EntityImageStoragePort } from './infrastructure/aws/S3EntityImageStorage.js';
@@ -525,7 +526,17 @@ function resolveDependencies(
         : new UnconfiguredEpisodeStoryAutofillQueue());
   const episodeStoryAutofillService =
     dependencies.episodeStoryAutofillService ??
-    new EpisodeStoryAutofillService(generationJobRepository, episodeStoryAutofillQueue);
+    new EpisodeStoryAutofillService(
+      generationJobRepository,
+      episodeStoryAutofillQueue,
+      undefined,
+      undefined,
+      {
+        perUser: env.EPISODE_LONG_JOB_USER_ACTIVE_JOB_LIMIT,
+        global: env.EPISODE_LONG_JOB_GLOBAL_ACTIVE_JOB_LIMIT,
+        jobTypes: EPISODE_LONG_JOB_ACTIVE_JOB_TYPES,
+      },
+    );
   const episodePageSkeletonQueue =
     dependencies.episodePageSkeletonQueue === null
       ? undefined
@@ -543,7 +554,17 @@ function resolveDependencies(
       : dependencies.episodePageSkeletonService ??
         (episodePageSkeletonQueue === undefined
           ? undefined
-          : new EpisodePageSkeletonService(generationJobRepository, episodePageSkeletonQueue));
+          : new EpisodePageSkeletonService(
+              generationJobRepository,
+              episodePageSkeletonQueue,
+              undefined,
+              undefined,
+              {
+                perUser: env.EPISODE_LONG_JOB_USER_ACTIVE_JOB_LIMIT,
+                global: env.EPISODE_LONG_JOB_GLOBAL_ACTIVE_JOB_LIMIT,
+                jobTypes: EPISODE_LONG_JOB_ACTIVE_JOB_TYPES,
+              },
+            ));
   const entityGenerationExecutionRepository = new PostgresEntityGenerationExecutionRepository(db);
   const entityGenerationRecoveryService =
     dependencies.entityGenerationRecoveryService ??

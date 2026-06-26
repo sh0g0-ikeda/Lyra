@@ -1,6 +1,9 @@
 import 'dotenv/config';
 import { z } from 'zod';
-import { DEFAULT_GENERATION_ACTIVE_JOB_LIMITS } from '../domain/constants/generation.js';
+import {
+  DEFAULT_EPISODE_LONG_JOB_ACTIVE_JOB_LIMITS,
+  DEFAULT_GENERATION_ACTIVE_JOB_LIMITS,
+} from '../domain/constants/generation.js';
 
 const envSchema = z.object({
   APP_ENV: z.enum(['development', 'test', 'production']).optional(),
@@ -51,6 +54,16 @@ const envSchema = z.object({
     .int()
     .min(1)
     .default(DEFAULT_GENERATION_ACTIVE_JOB_LIMITS.GLOBAL),
+  EPISODE_LONG_JOB_USER_ACTIVE_JOB_LIMIT: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .default(DEFAULT_EPISODE_LONG_JOB_ACTIVE_JOB_LIMITS.PER_USER),
+  EPISODE_LONG_JOB_GLOBAL_ACTIVE_JOB_LIMIT: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .default(DEFAULT_EPISODE_LONG_JOB_ACTIVE_JOB_LIMITS.GLOBAL),
   GENERATION_ENABLED: z
     .string()
     .optional()

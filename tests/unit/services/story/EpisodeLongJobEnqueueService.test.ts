@@ -145,6 +145,11 @@ describe('Episode long job enqueue services', () => {
     ]);
     expect(repository.createdJobs).toHaveLength(1);
     expect(repository.createdJobs[0]?.jobType).toBe('episode_story_autofill');
+    expect(repository.createdJobs[0]?.capacityLimits).toEqual({
+      perUser: 1,
+      global: 5,
+      jobTypes: ['episode_story_autofill', 'episode_page_skeleton'],
+    });
     expect(queue.payloads).toHaveLength(1);
     expect(repository.attachedMessages).toEqual([
       { jobId: result.jobId, messageId: 'story-message-1' },
@@ -210,6 +215,11 @@ describe('Episode long job enqueue services', () => {
     ]);
     expect(repository.createdJobs).toHaveLength(1);
     expect(repository.createdJobs[0]?.jobType).toBe('episode_page_skeleton');
+    expect(repository.createdJobs[0]?.capacityLimits).toEqual({
+      perUser: 1,
+      global: 5,
+      jobTypes: ['episode_story_autofill', 'episode_page_skeleton'],
+    });
     expect(queue.payloads).toEqual([{ jobId: result.jobId }]);
     expect(repository.attachedMessages).toEqual([
       { jobId: result.jobId, messageId: 'skeleton-message-1' },

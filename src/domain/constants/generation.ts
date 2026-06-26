@@ -53,6 +53,21 @@ export const MAX_PRODUCTION_GENERATION_ACTIVE_JOB_LIMITS = {
   GLOBAL: 50,
 } as const;
 
+export const EPISODE_LONG_JOB_ACTIVE_JOB_TYPES = [
+  'episode_story_autofill',
+  'episode_page_skeleton',
+] as const;
+
+export const DEFAULT_EPISODE_LONG_JOB_ACTIVE_JOB_LIMITS = {
+  PER_USER: 1,
+  GLOBAL: 5,
+} as const;
+
+export const MAX_PRODUCTION_EPISODE_LONG_JOB_ACTIVE_JOB_LIMITS = {
+  PER_USER: 2,
+  GLOBAL: 20,
+} as const;
+
 export const PAGE_PROMPT_COMPILER_OPENAI_MODEL = 'gpt-5.4-mini';
 export const PAGE_PROMPT_COMPILER_MAX_TOKENS = 900;
 export const PAGE_PROMPT_COMPILER_VERSION = 'page_prompt_v2';

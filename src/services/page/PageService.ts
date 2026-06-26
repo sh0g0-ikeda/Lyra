@@ -1929,7 +1929,12 @@ function repairDialogueLinesForPanel(
 
     // Speaker dialogue must reference a visible panel assignment before it reaches panel validation.
     if (requiresDialogueSpeaker(line.type) && !assignmentIds.has(line.entityId ?? '')) {
-      const repairedEntityId = storyLeadEntityId ?? pageLeadEntityId ?? primaryEntityId;
+      const repairedEntityId = selectVisibleDialogueSpeaker(
+        assignmentIds,
+        storyLeadEntityId,
+        pageLeadEntityId,
+        primaryEntityId,
+      );
       if (repairedEntityId === null) {
         return {
           ...line,
@@ -1945,6 +1950,20 @@ function repairDialogueLinesForPanel(
 
     return line;
   });
+}
+
+function selectVisibleDialogueSpeaker(
+  assignmentIds: Set<string>,
+  storyLeadEntityId: string | null,
+  pageLeadEntityId: string | null,
+  primaryEntityId: string | null,
+): string | null {
+  for (const candidate of [storyLeadEntityId, pageLeadEntityId, primaryEntityId]) {
+    if (candidate !== null && assignmentIds.has(candidate)) {
+      return candidate;
+    }
+  }
+  return null;
 }
 
 function requiresDialogueSpeaker(type: PanelDialogueLine['type']): boolean {

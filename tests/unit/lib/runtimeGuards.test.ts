@@ -282,11 +282,13 @@ describe('assertProductionRuntimeConfig', () => {
           ...safeProductionConfig,
           GENERATION_USER_ACTIVE_JOB_LIMIT: 6,
           GENERATION_GLOBAL_ACTIVE_JOB_LIMIT: 51,
+          EPISODE_LONG_JOB_USER_ACTIVE_JOB_LIMIT: 3,
+          EPISODE_LONG_JOB_GLOBAL_ACTIVE_JOB_LIMIT: 21,
         },
         'production',
       );
     }).toThrow(
-      /GENERATION_USER_ACTIVE_JOB_LIMIT must be <= 5.*GENERATION_GLOBAL_ACTIVE_JOB_LIMIT must be <= 50/,
+      /GENERATION_USER_ACTIVE_JOB_LIMIT must be <= 5.*GENERATION_GLOBAL_ACTIVE_JOB_LIMIT must be <= 50.*EPISODE_LONG_JOB_USER_ACTIVE_JOB_LIMIT must be <= 2.*EPISODE_LONG_JOB_GLOBAL_ACTIVE_JOB_LIMIT must be <= 20/,
     );
   });
 

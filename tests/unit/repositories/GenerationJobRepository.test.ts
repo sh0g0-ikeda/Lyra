@@ -113,6 +113,8 @@ describe('PostgresGenerationJobRepository', () => {
     expect(client.queries.some((query) => query.includes('INSERT INTO generation_jobs'))).toBe(true);
     expect(client.valuesList[0]).toEqual([81527, 'generation_jobs:global']);
     expect(client.valuesList[1]).toEqual([81527, 'generation_jobs:user:user-1']);
+    expect(client.valuesList[2]).toEqual(['user-1', ['page_generate', 'entity_generate']]);
+    expect(client.valuesList[3]).toEqual([['page_generate', 'entity_generate']]);
   });
 
   it('capacityLimits 指定時に user 上限へ達していれば job を作成しない', async () => {
@@ -202,8 +204,8 @@ describe('PostgresGenerationJobRepository', () => {
     const count = await repository.countActiveGenerationJobsByUser('user-1');
 
     expect(client.queries[0]).toContain("status IN ('queued', 'processing')");
-    expect(client.queries[0]).toContain("job_type IN ('page_generate', 'entity_generate')");
-    expect(client.values).toEqual(['user-1']);
+    expect(client.queries[0]).toContain('job_type = ANY($2::text[])');
+    expect(client.values).toEqual(['user-1', ['page_generate', 'entity_generate']]);
     expect(count).toBe(2);
   });
 
@@ -214,8 +216,38 @@ describe('PostgresGenerationJobRepository', () => {
     const count = await repository.countActiveGenerationJobs();
 
     expect(client.queries[0]).toContain("status IN ('queued', 'processing')");
-    expect(client.values).toBeUndefined();
+    expect(client.queries[0]).toContain('job_type = ANY($1::text[])');
+    expect(client.values).toEqual([['page_generate', 'entity_generate']]);
     expect(count).toBe(2);
+  });
+
+  it('capacityLimits の jobTypes 指定時は対象ジョブ種別だけを数える', async () => {
+    const client = new CapacityTransactionRunner();
+    const repository = new PostgresGenerationJobRepository(client);
+
+    await repository.create({
+      id: '55555555-5555-4555-8555-555555555555',
+      userId: 'user-1',
+      jobType: 'episode_story_autofill',
+      generationMode: null,
+      creditCost: 0,
+      capacityLimits: {
+        perUser: 2,
+        global: 5,
+        jobTypes: ['episode_story_autofill', 'episode_page_skeleton'],
+      },
+      params: {
+        episode_id: 'episode-1',
+      },
+    });
+
+    expect(client.valuesList[2]).toEqual([
+      'user-1',
+      ['episode_story_autofill', 'episode_page_skeleton'],
+    ]);
+    expect(client.valuesList[3]).toEqual([
+      ['episode_story_autofill', 'episode_page_skeleton'],
+    ]);
   });
 
   it('failed job を retry 用に queued へ戻す', async () => {

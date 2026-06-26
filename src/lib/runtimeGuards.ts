@@ -1,5 +1,8 @@
 import { ConfigurationError } from '../domain/errors/index.js';
-import { MAX_PRODUCTION_GENERATION_ACTIVE_JOB_LIMITS } from '../domain/constants/generation.js';
+import {
+  MAX_PRODUCTION_EPISODE_LONG_JOB_ACTIVE_JOB_LIMITS,
+  MAX_PRODUCTION_GENERATION_ACTIVE_JOB_LIMITS,
+} from '../domain/constants/generation.js';
 
 interface RuntimeGuardConfig {
   APP_ENV?: 'development' | 'test' | 'production';
@@ -45,6 +48,8 @@ interface RuntimeGuardConfig {
   S3_PRESIGNED_URL_TTL_SECONDS?: number;
   GENERATION_USER_ACTIVE_JOB_LIMIT?: number;
   GENERATION_GLOBAL_ACTIVE_JOB_LIMIT?: number;
+  EPISODE_LONG_JOB_USER_ACTIVE_JOB_LIMIT?: number;
+  EPISODE_LONG_JOB_GLOBAL_ACTIVE_JOB_LIMIT?: number;
   STRIPE_SECRET_KEY?: string;
   STRIPE_WEBHOOK_SECRET?: string;
   STRIPE_PRICE_STANDARD_MONTHLY?: string;
@@ -342,6 +347,26 @@ export function assertProductionRuntimeConfig(
   ) {
     violations.push(
       `GENERATION_GLOBAL_ACTIVE_JOB_LIMIT must be <= ${MAX_PRODUCTION_GENERATION_ACTIVE_JOB_LIMITS.GLOBAL}`,
+    );
+  }
+
+  if (
+    config.EPISODE_LONG_JOB_USER_ACTIVE_JOB_LIMIT !== undefined &&
+    config.EPISODE_LONG_JOB_USER_ACTIVE_JOB_LIMIT >
+      MAX_PRODUCTION_EPISODE_LONG_JOB_ACTIVE_JOB_LIMITS.PER_USER
+  ) {
+    violations.push(
+      `EPISODE_LONG_JOB_USER_ACTIVE_JOB_LIMIT must be <= ${MAX_PRODUCTION_EPISODE_LONG_JOB_ACTIVE_JOB_LIMITS.PER_USER}`,
+    );
+  }
+
+  if (
+    config.EPISODE_LONG_JOB_GLOBAL_ACTIVE_JOB_LIMIT !== undefined &&
+    config.EPISODE_LONG_JOB_GLOBAL_ACTIVE_JOB_LIMIT >
+      MAX_PRODUCTION_EPISODE_LONG_JOB_ACTIVE_JOB_LIMITS.GLOBAL
+  ) {
+    violations.push(
+      `EPISODE_LONG_JOB_GLOBAL_ACTIVE_JOB_LIMIT must be <= ${MAX_PRODUCTION_EPISODE_LONG_JOB_ACTIVE_JOB_LIMITS.GLOBAL}`,
     );
   }
 

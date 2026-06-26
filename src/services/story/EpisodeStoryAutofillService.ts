@@ -3,10 +3,15 @@ import { AppError, ConfigurationError, ConflictError } from '../../domain/errors
 import type { AppLanguage } from '../../domain/types/language.js';
 import {
   isUniqueViolation,
+  type GenerationJobCapacityLimits,
   type GenerationJobRepository,
   type GenerationJob,
 } from '../../repositories/GenerationJobRepository.js';
-import { EPISODE_LONG_JOB_STALE_AFTER_MS } from '../../domain/constants/generation.js';
+import {
+  DEFAULT_EPISODE_LONG_JOB_ACTIVE_JOB_LIMITS,
+  EPISODE_LONG_JOB_ACTIVE_JOB_TYPES,
+  EPISODE_LONG_JOB_STALE_AFTER_MS,
+} from '../../domain/constants/generation.js';
 import type { EpisodeStoryAutofillQueuePort } from './EpisodeStoryAutofillQueue.js';
 import {
   EPISODE_LONG_JOB_STALE_ERROR_MESSAGE,
@@ -40,6 +45,11 @@ export class EpisodeStoryAutofillService implements EpisodeStoryAutofillServiceP
     private readonly queue: EpisodeStoryAutofillQueuePort,
     private readonly episodeLongJobStaleAfterMs: number = EPISODE_LONG_JOB_STALE_AFTER_MS,
     private readonly now: () => number = () => Date.now(),
+    private readonly capacityLimits: GenerationJobCapacityLimits = {
+      perUser: DEFAULT_EPISODE_LONG_JOB_ACTIVE_JOB_LIMITS.PER_USER,
+      global: DEFAULT_EPISODE_LONG_JOB_ACTIVE_JOB_LIMITS.GLOBAL,
+      jobTypes: EPISODE_LONG_JOB_ACTIVE_JOB_TYPES,
+    },
   ) {}
 
   public async enqueueEpisodeStoryAutofill(
@@ -63,6 +73,7 @@ export class EpisodeStoryAutofillService implements EpisodeStoryAutofillServiceP
           episode_id: episodeId,
           language,
         },
+        capacityLimits: this.capacityLimits,
       });
       createdJobId = job.id;
 
