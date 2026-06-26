@@ -147,6 +147,14 @@ class FakeStoryRepository implements StoryRepository {
       replacedExisting: options?.overwriteExisting === true,
     };
   }
+
+  public async rollbackFreshPageSkeleton(
+    _episodeId: string,
+    _userId: string,
+    _expectedPageCount: number,
+  ): Promise<boolean> {
+    return true;
+  }
 }
 
 class FakeStoryAiClient implements StoryAiClientPort {

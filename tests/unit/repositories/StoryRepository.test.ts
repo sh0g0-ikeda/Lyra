@@ -9,6 +9,7 @@ class QueryCapturingClient implements DatabaseClient, TransactionRunner {
     id: '33333333-3333-4333-8333-333333333333',
     page_skeleton_generated: false,
     existing_page_count: 0,
+    rollback_safe_page_count: 0,
   };
 
   public async query<T extends QueryResultRow = QueryResultRow>(
@@ -73,6 +74,7 @@ class ExistingSkeletonClient implements DatabaseClient, TransactionRunner {
             id: '33333333-3333-4333-8333-333333333333',
             page_skeleton_generated: true,
             existing_page_count: 0,
+            rollback_safe_page_count: 0,
           },
         ] as unknown as T[],
       };
@@ -258,6 +260,72 @@ describe('PostgresStoryRepository', () => {
       panelsCreated: 0,
       replacedExisting: true,
     });
+  });
+
+  it('rolls back only the expected fresh page skeleton for the owning user', async () => {
+    const client = new QueryCapturingClient();
+    client.lockRow = {
+      id: '33333333-3333-4333-8333-333333333333',
+      page_skeleton_generated: true,
+      existing_page_count: 2,
+      rollback_safe_page_count: 2,
+    };
+    const repository = new PostgresStoryRepository(client, client);
+
+    const rolledBack = await repository.rollbackFreshPageSkeleton(
+      '33333333-3333-4333-8333-333333333333',
+      'user-1',
+      2,
+    );
+
+    expect(rolledBack).toBe(true);
+    expect(client.queries[0]).toContain('works.user_id = $2');
+    expect(client.queries[0]).toContain('FOR UPDATE');
+    expect(client.queries[0]).toContain('rollback_safe_page_count');
+    expect(client.queries.some((query) => query.includes('DELETE FROM pages'))).toBe(true);
+    expect(client.queries.some((query) => query.includes("status = 'designing'"))).toBe(true);
+    expect(client.queries.some((query) => query.includes('generated_image IS NULL'))).toBe(true);
+    expect(client.queries.some((query) => query.includes('page_skeleton_generated = FALSE'))).toBe(true);
+  });
+
+  it('does not rollback when a generated or non-designing page is mixed in', async () => {
+    const client = new QueryCapturingClient();
+    client.lockRow = {
+      id: '33333333-3333-4333-8333-333333333333',
+      page_skeleton_generated: true,
+      existing_page_count: 2,
+      rollback_safe_page_count: 1,
+    };
+    const repository = new PostgresStoryRepository(client, client);
+
+    const rolledBack = await repository.rollbackFreshPageSkeleton(
+      '33333333-3333-4333-8333-333333333333',
+      'user-1',
+      2,
+    );
+
+    expect(rolledBack).toBe(false);
+    expect(client.queries.some((query) => query.includes('DELETE FROM pages'))).toBe(false);
+  });
+
+  it('does not rollback a page skeleton when the expected page count differs', async () => {
+    const client = new QueryCapturingClient();
+    client.lockRow = {
+      id: '33333333-3333-4333-8333-333333333333',
+      page_skeleton_generated: true,
+      existing_page_count: 3,
+      rollback_safe_page_count: 3,
+    };
+    const repository = new PostgresStoryRepository(client, client);
+
+    const rolledBack = await repository.rollbackFreshPageSkeleton(
+      '33333333-3333-4333-8333-333333333333',
+      'user-1',
+      2,
+    );
+
+    expect(rolledBack).toBe(false);
+    expect(client.queries.some((query) => query.includes('DELETE FROM pages'))).toBe(false);
   });
 
   it('rechecks existing skeletons inside the transaction', async () => {

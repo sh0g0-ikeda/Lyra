@@ -262,6 +262,10 @@ class FakePageSkeletonService implements PageSkeletonServicePort {
       replacedExisting: this.overwriteExisting,
     };
   }
+
+  public async rollbackFreshSkeleton(): Promise<boolean> {
+    return false;
+  }
 }
 
 class FakePageService implements PageServicePort {

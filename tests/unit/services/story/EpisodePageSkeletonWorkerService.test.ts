@@ -60,6 +60,12 @@ class FakeEpisodePageSkeletonRepository implements EpisodePageSkeletonExecutionR
 
 class FakePageSkeletonService implements PageSkeletonServicePort {
   public lastOptions: PageSkeletonGenerationOptions | undefined;
+  public rollbackCalls: Array<{ userId: string; episodeId: string; expectedPageCount: number }> = [];
+  public persistResult: PageSkeletonPersistResult = {
+    pagesCreated: 2,
+    panelsCreated: 8,
+    replacedExisting: false,
+  };
 
   public async generateForEpisode(
     _userId: string,
@@ -68,14 +74,34 @@ class FakePageSkeletonService implements PageSkeletonServicePort {
   ): Promise<PageSkeletonPersistResult> {
     this.lastOptions = options;
     return {
-      pagesCreated: 2,
-      panelsCreated: 8,
-      replacedExisting: options?.overwriteExisting === true,
+      ...this.persistResult,
+      replacedExisting: this.persistResult.replacedExisting || options?.overwriteExisting === true,
     };
+  }
+
+  public async rollbackFreshSkeleton(
+    userId: string,
+    episodeId: string,
+    expectedPageCount: number,
+  ): Promise<boolean> {
+    this.rollbackCalls.push({ userId, episodeId, expectedPageCount });
+    return true;
   }
 }
 
 class FakePageService implements PageServicePort {
+  public autofillResult: EpisodePagePlanApplyResult = {
+    updatedPageCount: 1,
+    updatedPanelCount: 4,
+    updatedAssignmentCount: 2,
+    filledFieldCount: 8,
+    compilerUsed: true,
+    compilerProvider: 'openai',
+    compilerModel: 'gpt-4o',
+    compilerPromptVersion: 'test',
+    compilerError: null,
+  };
+
   public async updatePageSettings(): Promise<never> {
     throw new Error('not implemented');
   }
@@ -85,7 +111,7 @@ class FakePageService implements PageServicePort {
   }
 
   public async autofillEpisodeFromStory(): Promise<EpisodePagePlanApplyResult> {
-    throw new Error('not implemented');
+    return this.autofillResult;
   }
 }
 
@@ -109,5 +135,75 @@ describe('EpisodePageSkeletonWorkerService', () => {
     });
     expect(repository.completed).not.toBeNull();
     expect(repository.failed).toBeNull();
+  });
+
+  it('rolls back a newly created skeleton when story plan application cannot use the compiler', async () => {
+    const repository = new FakeEpisodePageSkeletonRepository();
+    repository.job = {
+      ...repository.job!,
+      params: {
+        episode_id: '33333333-3333-4333-8333-333333333333',
+        language: 'ja',
+        overwrite_existing: false,
+        apply_story_plan: true,
+      },
+    };
+    const pageSkeletonService = new FakePageSkeletonService();
+    const pageService = new FakePageService();
+    pageService.autofillResult = {
+      ...pageService.autofillResult,
+      compilerUsed: false,
+      compilerProvider: 'fallback',
+      compilerError: 'compiler unavailable',
+    };
+    const worker = new EpisodePageSkeletonWorkerService(
+      repository,
+      pageSkeletonService,
+      pageService,
+    );
+
+    const result = await worker.processJob('55555555-5555-4555-8555-555555555555');
+
+    expect(result).toEqual({ status: 'processed', jobStatus: 'failed' });
+    expect(repository.completed).toBeNull();
+    expect(repository.failed).not.toBeNull();
+    expect(pageSkeletonService.rollbackCalls).toEqual([
+      {
+        userId: 'user-1',
+        episodeId: '33333333-3333-4333-8333-333333333333',
+        expectedPageCount: 2,
+      },
+    ]);
+  });
+
+  it('does not rollback overwritten pages when story plan application fails', async () => {
+    const repository = new FakeEpisodePageSkeletonRepository();
+    repository.job = {
+      ...repository.job!,
+      params: {
+        episode_id: '33333333-3333-4333-8333-333333333333',
+        language: 'ja',
+        overwrite_existing: true,
+        apply_story_plan: true,
+      },
+    };
+    const pageSkeletonService = new FakePageSkeletonService();
+    const pageService = new FakePageService();
+    pageService.autofillResult = {
+      ...pageService.autofillResult,
+      compilerUsed: false,
+      compilerProvider: 'fallback',
+      compilerError: 'compiler unavailable',
+    };
+    const worker = new EpisodePageSkeletonWorkerService(
+      repository,
+      pageSkeletonService,
+      pageService,
+    );
+
+    const result = await worker.processJob('55555555-5555-4555-8555-555555555555');
+
+    expect(result).toEqual({ status: 'processed', jobStatus: 'failed' });
+    expect(pageSkeletonService.rollbackCalls).toEqual([]);
   });
 });

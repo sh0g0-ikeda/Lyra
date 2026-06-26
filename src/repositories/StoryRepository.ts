@@ -77,6 +77,7 @@ export interface StoryRepository {
     pages: PageSkeletonPageDraft[],
     options?: { overwriteExisting?: boolean },
   ): Promise<PageSkeletonPersistResult | null>;
+  rollbackFreshPageSkeleton(episodeId: string, userId: string, expectedPageCount: number): Promise<boolean>;
 }
 
 interface WorkRow extends QueryResultRow {
@@ -211,6 +212,7 @@ interface SkeletonLockRow extends QueryResultRow {
   id: string;
   page_skeleton_generated: boolean;
   existing_page_count: number;
+  rollback_safe_page_count?: number;
 }
 
 export class PostgresStoryRepository implements StoryRepository {
@@ -1527,6 +1529,103 @@ export class PostgresStoryRepository implements StoryRepository {
         panelsCreated,
         replacedExisting,
       };
+    });
+  }
+
+  public async rollbackFreshPageSkeleton(
+    episodeId: string,
+    userId: string,
+    expectedPageCount: number,
+  ): Promise<boolean> {
+    if (!Number.isSafeInteger(expectedPageCount) || expectedPageCount <= 0) {
+      return false;
+    }
+
+    return runInTransaction(this.client, this.transactionRunner, async (transactionClient) => {
+      const ownershipResult = await transactionClient.query<SkeletonLockRow>(
+        `
+        SELECT episodes.id,
+               episodes.page_skeleton_generated,
+               (
+                 SELECT COUNT(*)::int
+                 FROM pages
+                 WHERE pages.episode_id = episodes.id
+               ) AS existing_page_count,
+               (
+                 SELECT COUNT(*)::int
+                 FROM pages
+                 WHERE pages.episode_id = episodes.id
+                   AND pages.status = 'designing'
+                   AND pages.generated_image IS NULL
+               ) AS rollback_safe_page_count
+        FROM episodes
+        INNER JOIN chapters ON chapters.id = episodes.chapter_id
+        INNER JOIN works ON works.id = chapters.work_id
+        WHERE episodes.id = $1
+          AND works.user_id = $2
+        FOR UPDATE
+        `,
+        [episodeId, userId],
+      );
+
+      const lockedEpisode = ownershipResult.rows[0];
+      if (lockedEpisode === undefined) {
+        return false;
+      }
+      if (!lockedEpisode.page_skeleton_generated || lockedEpisode.existing_page_count === 0) {
+        return false;
+      }
+      if (lockedEpisode.existing_page_count !== expectedPageCount) {
+        return false;
+      }
+      if ((lockedEpisode.rollback_safe_page_count ?? 0) !== expectedPageCount) {
+        return false;
+      }
+
+      await transactionClient.query(
+        `
+        DELETE FROM pages
+        WHERE episode_id = $1
+          AND status = 'designing'
+          AND generated_image IS NULL
+        `,
+        [episodeId],
+      );
+
+      await transactionClient.query(
+        `
+        UPDATE episodes
+        SET page_skeleton_generated = FALSE,
+            edit_history = (
+              SELECT COALESCE(jsonb_agg(history_entry.value ORDER BY history_entry.ordinality), '[]'::jsonb)
+              FROM (
+                SELECT history_entry.value, history_entry.ordinality
+                FROM jsonb_array_elements(
+                  jsonb_build_array(
+                    jsonb_build_object(
+                      'version', episodes.version,
+                      'page_skeleton_generated', episodes.page_skeleton_generated,
+                      'updated_at', episodes.updated_at,
+                      'rollback_reason', 'story_plan_failed'
+                    )
+                  ) || episodes.edit_history
+                ) WITH ORDINALITY AS history_entry(value, ordinality)
+                ORDER BY history_entry.ordinality
+                LIMIT 5
+              ) history_entry
+            ),
+            version = episodes.version + 1,
+            updated_at = NOW()
+        FROM chapters
+        INNER JOIN works ON works.id = chapters.work_id
+        WHERE episodes.id = $1
+          AND episodes.chapter_id = chapters.id
+          AND works.user_id = $2
+        `,
+        [episodeId, userId],
+      );
+
+      return true;
     });
   }
 }

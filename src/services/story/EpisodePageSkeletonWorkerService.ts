@@ -51,6 +51,9 @@ export class EpisodePageSkeletonWorkerService implements EpisodePageSkeletonWork
       return { status: 'processed', jobStatus: 'failed' };
     }
 
+    let skeletonResult: Awaited<ReturnType<PageSkeletonServicePort['generateForEpisode']>> | null = null;
+    let storyPlanCompleted = applyStoryPlan === false;
+
     try {
       await this.recordProgress(job.id, job.userId, {
         stage: 'started',
@@ -67,6 +70,7 @@ export class EpisodePageSkeletonWorkerService implements EpisodePageSkeletonWork
         language,
         allowCompilerFallback: false,
       });
+      skeletonResult = result;
 
       let storyPlanResult: EpisodePagePlanApplyResult | null = null;
       if (applyStoryPlan) {
@@ -92,6 +96,7 @@ export class EpisodePageSkeletonWorkerService implements EpisodePageSkeletonWork
               'AI story plan autofill did not complete; page and panel fields were not changed',
           );
         }
+        storyPlanCompleted = true;
       }
 
       await this.repository.completeEpisodePageSkeleton({
@@ -117,6 +122,14 @@ export class EpisodePageSkeletonWorkerService implements EpisodePageSkeletonWork
         episodeId,
         reason: sanitizePersistedErrorMessage(error, 'Episode page skeleton failed'),
       });
+      if (applyStoryPlan && skeletonResult !== null && !skeletonResult.replacedExisting && !storyPlanCompleted) {
+        await this.rollbackFreshSkeletonAfterStoryPlanFailure(
+          job.id,
+          job.userId,
+          episodeId,
+          skeletonResult.pagesCreated,
+        );
+      }
       await this.repository.failEpisodePageSkeleton({
         jobId: job.id,
         userId: job.userId,
@@ -164,6 +177,38 @@ export class EpisodePageSkeletonWorkerService implements EpisodePageSkeletonWork
       console.warn('episode_page_skeleton_progress_update_failed', {
         jobId,
         reason: sanitizePersistedErrorMessage(error, 'Progress update failed'),
+      });
+    }
+  }
+
+  private async rollbackFreshSkeletonAfterStoryPlanFailure(
+    jobId: string,
+    userId: string,
+    episodeId: string,
+    expectedPageCount: number,
+  ): Promise<void> {
+    try {
+      await this.recordProgress(jobId, userId, {
+        stage: 'rolling_back',
+        message: 'Story plan could not be applied, so the temporary page skeleton is being rolled back.',
+      });
+      const rolledBack = await this.pageSkeletonService.rollbackFreshSkeleton(
+        userId,
+        episodeId,
+        expectedPageCount,
+      );
+      console.warn('episode_page_skeleton_rolled_back_after_story_plan_failure', {
+        jobId,
+        userId,
+        episodeId,
+        rolledBack,
+      });
+    } catch (rollbackError) {
+      console.error('episode_page_skeleton_rollback_failed', {
+        jobId,
+        userId,
+        episodeId,
+        reason: sanitizePersistedErrorMessage(rollbackError, 'Page skeleton rollback failed'),
       });
     }
   }

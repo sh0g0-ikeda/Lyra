@@ -193,6 +193,10 @@ class FakeStoryRepository implements StoryRepository {
   ): Promise<PageSkeletonPersistResult | null> {
     throw new Error('not implemented');
   }
+
+  public async rollbackFreshPageSkeleton(): Promise<boolean> {
+    throw new Error('not implemented');
+  }
 }
 
 class FakeStoryAiClient implements StoryAiClientPort {

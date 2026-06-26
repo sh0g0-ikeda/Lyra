@@ -1038,6 +1038,8 @@ const UI_JA_DICTIONARY: Record<string, string> = {
     'ストーリーをページとコマへ分配中です。この処理は20分程度かかる場合があります。',
   'Saving story plan to pages and panels. This process can take around 20 minutes.':
     'ページとコマへ保存中です。この処理は20分程度かかる場合があります。',
+  'Story plan could not be applied, so the temporary page skeleton is being rolled back.':
+    '話の反映に失敗したため、一時的なページ骨格を元に戻しています。',
   'Story plan applied to pages and panels.': 'ページとコマへの反映が完了しました。',
   'Story plan autofill failed.': 'ページとコマへの反映に失敗しました。',
   'Generating preview. It updates when finished.': 'プレビュー生成中。完了後に更新されます。',

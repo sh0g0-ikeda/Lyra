@@ -308,6 +308,10 @@ class FakeStoryRepository implements StoryRepository {
   ): Promise<PageSkeletonPersistResult | null> {
     return null;
   }
+
+  public async rollbackFreshPageSkeleton(): Promise<boolean> {
+    return false;
+  }
 }
 
 class FakeEntityReferenceReader implements EntityReferenceReader {

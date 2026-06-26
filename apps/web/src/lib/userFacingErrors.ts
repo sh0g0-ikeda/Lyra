@@ -23,7 +23,7 @@ const messages = {
   },
   network: {
     en: 'Could not connect to the server. Check your connection, reload the page, then try again.',
-    ja: 'サーバーに接続できませんでした。通信状態を確認し、ページを再読み込みしてからもう一度お試しください。',
+    ja: 'サーバーに接続できませんでした。通信状況を確認し、ページを再読み込みしてからもう一度お試しください。',
   },
   authExpired: {
     en: 'Your login session expired. Please sign in again.',
@@ -143,7 +143,7 @@ const messages = {
   },
   alreadyDone: {
     en: 'This action has already been completed. Reload the page to see the latest state.',
-    ja: 'この操作はすでに完了しています。ページを再読み込みして最新状態を確認してください。',
+    ja: 'この操作はすでに完了しています。ページを再読み込みして最新の状態を確認してください。',
   },
   layoutWouldDeletePanels: {
     en: 'This layout would remove existing panels. Delete unnecessary panels first, or choose a layout with the same panel count.',

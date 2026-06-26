@@ -26,6 +26,7 @@ export interface PageSkeletonServicePort {
     episodeId: string,
     options?: PageSkeletonGenerationOptions,
   ): Promise<PageSkeletonPersistResult>;
+  rollbackFreshSkeleton(userId: string, episodeId: string, expectedPageCount: number): Promise<boolean>;
 }
 
 export interface PageSkeletonGenerationOptions {
@@ -126,6 +127,14 @@ export class PageSkeletonService implements PageSkeletonServicePort {
     }
 
     return result;
+  }
+
+  public async rollbackFreshSkeleton(
+    userId: string,
+    episodeId: string,
+    expectedPageCount: number,
+  ): Promise<boolean> {
+    return this.storyRepository.rollbackFreshPageSkeleton(episodeId, userId, expectedPageCount);
   }
 }
 
