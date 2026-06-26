@@ -1927,7 +1927,8 @@ function repairDialogueLinesForPanel(
       };
     }
 
-    if (line.type === 'thought' && !assignmentIds.has(line.entityId ?? '')) {
+    // Speaker dialogue must reference a visible panel assignment before it reaches panel validation.
+    if (requiresDialogueSpeaker(line.type) && !assignmentIds.has(line.entityId ?? '')) {
       const repairedEntityId = storyLeadEntityId ?? pageLeadEntityId ?? primaryEntityId;
       if (repairedEntityId === null) {
         return {
@@ -1944,6 +1945,10 @@ function repairDialogueLinesForPanel(
 
     return line;
   });
+}
+
+function requiresDialogueSpeaker(type: PanelDialogueLine['type']): boolean {
+  return type === 'speech' || type === 'thought' || type === 'shout' || type === 'whisper';
 }
 
 function normalizeDialogueText(value: string): string {

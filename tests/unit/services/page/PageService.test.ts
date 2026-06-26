@@ -1190,7 +1190,7 @@ describe('PageService', () => {
     expect(assignedEntityIds).not.toContain('shadow-entity');
   });
 
-  it('episode story plan は thought の話者が visible primary と食い違う時に補正する', async () => {
+  it('episode story plan は話者付きセリフの entityId 欠落や未登場話者を visible primary に補正する', async () => {
     const pageRepository = new FakePageRepository();
     pageRepository.episodePlanningContext = {
       ...buildEpisodePlanningContext(),
@@ -1247,10 +1247,34 @@ describe('PageService', () => {
                     ],
                     dialogue: [
                       {
+                        entityId: null,
+                        text: 'ここで立ち止まるわけにはいかない。',
+                        type: 'speech',
+                        position: 'top',
+                      },
+                      {
                         entityId: '22222222-2222-4222-8222-222222222222',
                         text: '……まだ整理しきれない。',
                         type: 'thought',
                         position: 'top',
+                      },
+                      {
+                        entityId: '33333333-3333-4333-8333-333333333333',
+                        text: '前を見て！',
+                        type: 'shout',
+                        position: 'bottom',
+                      },
+                      {
+                        entityId: null,
+                        text: '声を落として。',
+                        type: 'whisper',
+                        position: 'left',
+                      },
+                      {
+                        entityId: '22222222-2222-4222-8222-222222222222',
+                        text: '朝の空気だけが静かだった。',
+                        type: 'narration',
+                        position: 'center',
                       },
                     ],
                   },
@@ -1276,9 +1300,29 @@ describe('PageService', () => {
 
     expect(panelRepository.updatedPanels[0]?.input.dialogue).toEqual([
       expect.objectContaining({
+        type: 'speech',
+        entityId: '11111111-1111-4111-8111-111111111111',
+        text: 'ここで立ち止まるわけにはいかない。',
+      }),
+      expect.objectContaining({
         type: 'thought',
         entityId: '11111111-1111-4111-8111-111111111111',
         text: '……まだ整理しきれない。',
+      }),
+      expect.objectContaining({
+        type: 'shout',
+        entityId: '11111111-1111-4111-8111-111111111111',
+        text: '前を見て！',
+      }),
+      expect.objectContaining({
+        type: 'whisper',
+        entityId: '11111111-1111-4111-8111-111111111111',
+        text: '声を落として。',
+      }),
+      expect.objectContaining({
+        type: 'narration',
+        entityId: null,
+        text: '朝の空気だけが静かだった。',
       }),
     ]);
   });
