@@ -24,6 +24,9 @@ interface RuntimeGuardConfig {
   LOCAL_FILE_STORAGE_DIR?: string;
   LOCAL_ASSET_BASE_URL?: string;
   LOCAL_IMAGE_FALLBACK_ENABLED?: boolean;
+  LLM_PAGE_PROMPT_COMPILER_ENABLED?: boolean;
+  LLM_ENTITY_REFERENCE_PROMPT_COMPILER_ENABLED?: boolean;
+  LLM_PAGE_GENERATION_PLANNER_ENABLED?: boolean;
   OPENAI_API_KEY?: string;
   OPENAI_IMAGE_MODEL?: string;
   OPENAI_BASE_URL?: string;
@@ -224,6 +227,18 @@ export function assertProductionRuntimeConfig(
 
   if (config.LOCAL_IMAGE_FALLBACK_ENABLED === true) {
     violations.push('LOCAL_IMAGE_FALLBACK_ENABLED must be disabled');
+  }
+
+  if (config.LLM_PAGE_PROMPT_COMPILER_ENABLED !== true) {
+    violations.push('LLM_PAGE_PROMPT_COMPILER_ENABLED must be true in production');
+  }
+
+  if (config.LLM_ENTITY_REFERENCE_PROMPT_COMPILER_ENABLED !== true) {
+    violations.push('LLM_ENTITY_REFERENCE_PROMPT_COMPILER_ENABLED must be true in production');
+  }
+
+  if (config.LLM_PAGE_GENERATION_PLANNER_ENABLED !== true) {
+    violations.push('LLM_PAGE_GENERATION_PLANNER_ENABLED must be true in production');
   }
 
   const imageDeliveryMode = config.IMAGE_DELIVERY_MODE ?? 'cloudfront_signed';

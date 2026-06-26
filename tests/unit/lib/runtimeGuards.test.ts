@@ -17,6 +17,9 @@ const safeProductionConfig = {
   COGNITO_CLIENT_ID: 'client-123',
   COGNITO_TOKEN_USE: 'access' as const,
   COGNITO_REQUIRED_SCOPES: 'lyra/api',
+  LLM_PAGE_PROMPT_COMPILER_ENABLED: true,
+  LLM_ENTITY_REFERENCE_PROMPT_COMPILER_ENABLED: true,
+  LLM_PAGE_GENERATION_PLANNER_ENABLED: true,
   OPENAI_API_KEY: 'sk-proj-openai-key',
   OPENAI_IMAGE_MODEL: 'gpt-image-2',
   OPENAI_TIMEOUT_MS: 300_000,
@@ -200,6 +203,22 @@ describe('assertProductionRuntimeConfig', () => {
         'production',
       );
     }).toThrow(/LOCAL_IMAGE_FALLBACK_ENABLED must be disabled/);
+  });
+
+  it('production では生成品質に必要な LLM 補助を有効化する', () => {
+    expect(() => {
+      assertProductionRuntimeConfig(
+        {
+          ...safeProductionConfig,
+          LLM_PAGE_PROMPT_COMPILER_ENABLED: false,
+          LLM_ENTITY_REFERENCE_PROMPT_COMPILER_ENABLED: false,
+          LLM_PAGE_GENERATION_PLANNER_ENABLED: false,
+        },
+        'production',
+      );
+    }).toThrow(
+      /LLM_PAGE_PROMPT_COMPILER_ENABLED must be true.*LLM_ENTITY_REFERENCE_PROMPT_COMPILER_ENABLED must be true.*LLM_PAGE_GENERATION_PLANNER_ENABLED must be true/,
+    );
   });
 
   it('production では CORS のワイルドカード許可を拒否する', () => {
