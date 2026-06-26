@@ -133,6 +133,13 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
     return c.json(toWorkResponse(work), 201);
   });
 
+  app.get('/works', async (c) => {
+    const user = c.get('user');
+    const works = await dependencies.storyService.listWorks(user.id);
+
+    return c.json({ works: works.map(toWorkResponse) });
+  });
+
   app.get('/works/:id', async (c) => {
     const user = c.get('user');
     const workId = parseUuidParam(c, 'id');
@@ -323,13 +330,6 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
     const episode = await dependencies.storyService.moveEpisode(user.id, episodeId, body.data.direction);
 
     return c.json(toEpisodeResponse(episode));
-  });
-
-  app.get('/works', async (c) => {
-    const user = c.get('user');
-    const works = await dependencies.storyService.listWorks(user.id);
-
-    return c.json({ works: works.map(toWorkResponse) });
   });
 
   app.post('/episodes/:id/generate-page-skeleton', async (c) => {

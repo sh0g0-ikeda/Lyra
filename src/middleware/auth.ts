@@ -176,12 +176,20 @@ function parseCognitoClaims(
     throw new UnauthorizedError('Cognito JWT has invalid user claims');
   }
 
+  if (!isVerifiedEmailClaim(payload.email_verified)) {
+    throw new UnauthorizedError('Cognito email is not verified');
+  }
+
   if (config.tokenUse === 'access') {
     assertRequiredScopes(payload.scope, config.requiredScopes);
   }
   assertRequiredGroups(payload['cognito:groups'], config.requiredGroups);
 
   return parsed.data;
+}
+
+function isVerifiedEmailClaim(emailVerified: unknown): boolean {
+  return emailVerified === true || emailVerified === 'true';
 }
 
 function assertRequiredScopes(scopeClaim: unknown, requiredScopes: string[]): void {

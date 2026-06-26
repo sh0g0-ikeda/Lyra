@@ -60,6 +60,30 @@ describe('createAuthMiddleware Cognito mode', () => {
     });
   });
 
+  it('email_verified が false の token は既存ユーザー紐付け前に拒否する', async () => {
+    const fixture = await createCognitoFixture();
+    const app = createProtectedApp(new FakeUserProvisioningService(), fixture.jwks);
+    const token = await fixture.signToken({ email_verified: false });
+
+    const response = await app.request('/protected', {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    expect(response.status).toBe(401);
+  });
+
+  it('email_verified が欠けている token は拒否する', async () => {
+    const fixture = await createCognitoFixture();
+    const app = createProtectedApp(new FakeUserProvisioningService(), fixture.jwks);
+    const token = await fixture.signToken({ email_verified: undefined });
+
+    const response = await app.request('/protected', {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    expect(response.status).toBe(401);
+  });
+
   it('client_id が一致しない access token を拒否する', async () => {
     const fixture = await createCognitoFixture();
     const app = createProtectedApp(new FakeUserProvisioningService(), fixture.jwks);
@@ -223,6 +247,7 @@ async function createCognitoFixture(): Promise<{
       const payload = removeUndefinedValues({
         sub: 'cognito-user-1',
         email: 'user@example.com',
+        email_verified: true,
         iss: cognitoConfig.issuer,
         client_id: cognitoConfig.clientId,
         token_use: 'access',

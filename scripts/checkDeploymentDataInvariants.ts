@@ -219,6 +219,9 @@ export async function checkDeploymentDataInvariants(
 }
 
 async function main(): Promise<void> {
+  const { loadRuntimeSecretEnv } = await import('../src/lib/runtimeSecretEnv.js');
+  await loadRuntimeSecretEnv();
+
   const { closeDatabasePool, db } = await import('../src/lib/db.js');
 
   try {
