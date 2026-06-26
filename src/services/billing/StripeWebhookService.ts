@@ -329,7 +329,7 @@ export class StripeWebhookService implements StripeWebhookServicePort {
 
     const paidAmountJpy = invoice.amount_paid;
     const minimumAmountJpy = SUBSCRIPTION_PLAN_DEFINITIONS[planCode].amountJpy;
-    if (paidAmountJpy < minimumAmountJpy) {
+    if (requiresFullSubscriptionInvoiceAmount(invoice.billing_reason) && paidAmountJpy < minimumAmountJpy) {
       await this.recordUnderpaidSubscriptionInvoice(event, {
         userId: billingUser.userId,
         invoiceId: invoice.id,
@@ -369,12 +369,15 @@ export class StripeWebhookService implements StripeWebhookServicePort {
         client,
       );
 
-      if (invoice.billing_reason === 'subscription_cycle' && paymentInserted) {
+      if (shouldGrantMonthlyCreditsForPaidInvoice(invoice.billing_reason, paidAmountJpy) && paymentInserted) {
         await this.billingCreditGrantService.grantMonthlyCredits(
           {
             userId: billingUser.userId,
             amount: SUBSCRIPTION_PLAN_DEFINITIONS[planCode].monthlyCredits,
-            description: `Monthly subscription renewal grant for ${planCode}`,
+            description:
+              invoice.billing_reason === 'subscription_update'
+                ? `Subscription plan change grant for ${planCode}`
+                : `Monthly subscription renewal grant for ${planCode}`,
             expiresAt: subscriptionCurrentPeriodEnd(subscription),
             stripeEventId: event.id,
           },
@@ -612,6 +615,23 @@ function invoiceSubscriptionId(invoice: Stripe.Invoice): string | null {
   }
 
   return getStringIdentifier(parent.subscription_details.subscription);
+}
+
+function requiresFullSubscriptionInvoiceAmount(billingReason: Stripe.Invoice.BillingReason | null): boolean {
+  return billingReason === 'subscription_cycle' || billingReason === 'subscription_create';
+}
+
+function shouldGrantMonthlyCreditsForPaidInvoice(
+  billingReason: Stripe.Invoice.BillingReason | null,
+  amountPaidJpy: number,
+): boolean {
+  if (billingReason === 'subscription_cycle') {
+    return true;
+  }
+
+  // Stripe invoices for immediate plan upgrades are prorated. They can be lower
+  // than the full monthly price, but still represent a paid move to the new plan.
+  return billingReason === 'subscription_update' && amountPaidJpy > 0;
 }
 
 function requirePaidPlanCode(value: string | null): PaidPlanCode {

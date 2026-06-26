@@ -1143,26 +1143,37 @@ function repairPanelSuggestionAgainstFallback(
   const completed = completePanelSuggestionWithFallback(source, fallback, {
     includeFallbackCreativeFields: options?.includeFallbackCreativeFields === true,
   });
+  const allowFallbackCreativeRepair = options?.includeFallbackCreativeFields === true;
   const repairedEntities =
     completed.entities === undefined || completed.entities.length === 0
       ? completed.entities
       : completed.entities;
   const fallbackComposition = fallback?.composition;
   const repairedSituation = shouldRepairGenericCompilerText(completed.situationText)
-    ? undefined
+    ? repairCreativeText(undefined, fallback?.situationText, [], allowFallbackCreativeRepair)
     : completed.situationText;
   const repairedBackground = shouldRepairRedundantFieldText(completed.backgroundNote, [
     repairedSituation,
     completed.composition?.compositionPrompt,
   ]) || shouldRepairGenericCompilerText(completed.backgroundNote)
-    ? undefined
+    ? repairCreativeText(
+        undefined,
+        fallback?.backgroundNote,
+        [repairedSituation, completed.composition?.compositionPrompt],
+        allowFallbackCreativeRepair,
+      )
     : completed.backgroundNote;
   const repairedCompositionPrompt = shouldRepairGenericCompilerText(completed.composition?.compositionPrompt) ||
     shouldRepairRedundantFieldText(
     completed.composition?.compositionPrompt,
     [repairedSituation, repairedBackground],
   )
-    ? undefined
+    ? repairCreativeText(
+        undefined,
+        fallbackComposition?.compositionPrompt,
+        [repairedSituation, repairedBackground],
+        allowFallbackCreativeRepair,
+      )
     : completed.composition?.compositionPrompt ?? null;
   const repairedCustomNote = shouldRepairGenericCompilerText(completed.composition?.customNote) ||
     shouldRepairRedundantFieldText(completed.composition?.customNote, [
@@ -1170,7 +1181,12 @@ function repairPanelSuggestionAgainstFallback(
       repairedCompositionPrompt,
       repairedBackground,
     ])
-    ? undefined
+    ? repairCreativeText(
+        undefined,
+        fallbackComposition?.customNote,
+        [repairedSituation, repairedCompositionPrompt, repairedBackground],
+        allowFallbackCreativeRepair,
+      )
     : completed.composition?.customNote ?? null;
   const repairedPanelNotes = shouldRepairGenericCompilerText(completed.panelNotes) ||
     shouldRepairRedundantFieldText(completed.panelNotes, [
@@ -1179,7 +1195,12 @@ function repairPanelSuggestionAgainstFallback(
       repairedCustomNote,
       repairedBackground,
     ])
-    ? undefined
+    ? repairCreativeText(
+        undefined,
+        fallback?.panelNotes,
+        [repairedSituation, repairedCompositionPrompt, repairedCustomNote, repairedBackground],
+        allowFallbackCreativeRepair,
+      )
     : completed.panelNotes;
 
   return {
@@ -1200,6 +1221,25 @@ function repairPanelSuggestionAgainstFallback(
     panelNotes: repairedPanelNotes,
     entities: repairedEntities,
   };
+}
+
+function repairCreativeText(
+  source: string | null | undefined,
+  fallback: string | null | undefined,
+  comparisons: Array<string | null | undefined>,
+  allowFallback: boolean,
+): string | null | undefined {
+  if (!allowFallback) {
+    return source;
+  }
+  if (
+    isMeaningfulText(fallback) &&
+    !shouldRepairGenericCompilerText(fallback) &&
+    !shouldRepairRedundantFieldText(fallback, comparisons)
+  ) {
+    return fallback;
+  }
+  return source;
 }
 
 function coalesceText(
@@ -1619,14 +1659,14 @@ function enrichPanelSuggestionForGeneration(
         entityAssignments,
         context.language,
       )
-    : normalizeProvidedText(suggestion.composition?.customNote, 180);
+    : normalizeProvidedText(suggestion.composition?.customNote, 180, context.language);
   const backgroundNote = fillMissingCreativeFields
     ? normalizeBackgroundNote(
         suggestion.backgroundNote,
         context.scene,
         context.language,
       )
-    : normalizeProvidedText(suggestion.backgroundNote, 140);
+    : normalizeProvidedText(suggestion.backgroundNote, 140, context.language);
   const panelNotes = normalizePanelNotes(
     suggestion.panelNotes,
     context.pagePurpose,
@@ -1693,12 +1733,13 @@ function normalizeSituationText(
     return null;
   }
 
-  let result = ensureSentence(base);
+  let result = ensureSentence(base, language);
   if (entityNames.length > 0 && !mentionsAnyEntity(result, entityNames)) {
     result = ensureSentence(
       language === 'en'
         ? `${formatEntitySubject(entityNames, language)} ${stripTerminalPunctuation(result)}`
         : `${formatEntitySubject(entityNames, language)}が${stripTerminalPunctuation(result)}`,
+      language,
     );
   }
   return result;
@@ -1714,12 +1755,13 @@ function normalizeProvidedSituationText(
     return value === null ? null : undefined;
   }
 
-  let result = ensureSentence(base);
+  let result = ensureSentence(base, language);
   if (entityNames.length > 0 && !mentionsAnyEntity(result, entityNames)) {
     result = ensureSentence(
       language === 'en'
         ? `${formatEntitySubject(entityNames, language)} ${stripTerminalPunctuation(result)}`
         : `${formatEntitySubject(entityNames, language)}が${stripTerminalPunctuation(result)}`,
+      language,
     );
   }
   return result;
@@ -1741,7 +1783,7 @@ function normalizeCompositionPrompt(
     return null;
   }
 
-  let result = ensureSentence(base);
+  let result = ensureSentence(base, language);
   if (entityNames.length > 0 && !mentionsAnyEntity(result, entityNames)) {
     const subject = formatEntitySubject(entityNames, language);
     const framing =
@@ -1771,7 +1813,7 @@ function normalizeProvidedCompositionPrompt(
     return value === null ? null : undefined;
   }
 
-  let result = ensureSentence(base);
+  let result = ensureSentence(base, language);
   if (entityNames.length > 0 && !mentionsAnyEntity(result, entityNames)) {
     const subject = formatEntitySubject(entityNames, language);
     const framing =
@@ -1801,15 +1843,19 @@ function normalizeCameraDirectionNote(
   const base =
     summarizeCompilerText(value, 180) ??
     buildFallbackCameraDirectionNote(entityNames, shotType, angle, role, assignments, language);
-  return base === null ? null : ensureSentence(base);
+  return base === null ? null : ensureSentence(base, language);
 }
 
-function normalizeProvidedText(value: string | null | undefined, maxLength: number): string | null | undefined {
+function normalizeProvidedText(
+  value: string | null | undefined,
+  maxLength: number,
+  language: AppLanguage,
+): string | null | undefined {
   const base = summarizeCompilerText(value, maxLength);
   if (base === null) {
     return value === null ? null : undefined;
   }
-  return ensureSentence(base);
+  return ensureSentence(base, language);
 }
 
 function normalizeBackgroundNote(
@@ -1820,7 +1866,7 @@ function normalizeBackgroundNote(
   const base =
     summarizeCompilerText(value, 140) ??
     buildFallbackBackground(scene, { role: 'establish', size: 'wide', focus: 'setting' }, language);
-  return base === null ? null : ensureSentence(base);
+  return base === null ? null : ensureSentence(base, language);
 }
 
 function normalizePanelNotes(
@@ -1830,7 +1876,7 @@ function normalizePanelNotes(
   _language: AppLanguage,
 ): string | null {
   const base = summarizeCompilerText(value, 180);
-  return base === null ? null : ensureSentence(base);
+  return base === null ? null : ensureSentence(base, _language);
 }
 
 function normalizeDialogueLines(
@@ -1956,8 +2002,8 @@ function buildFallbackCompositionSentence(
       ? fallbackLabel(language, 'Make the beat readable at a glance', 'この瞬間が一目で伝わるように見せる')
       : stripTerminalPunctuation(situationText);
   return language === 'en'
-    ? `Show ${subject} in a ${shot}-leaning frame from a ${cameraAngle}-leaning angle. ${ensureSentence(beat)}`
-    : `${subject}を${shot}寄りで、${cameraAngle}気味の視点から見せる。${ensureSentence(beat)}`;
+    ? `Show ${subject} in a ${shot}-leaning frame from a ${cameraAngle}-leaning angle. ${ensureSentence(beat, language)}`
+    : `${subject}を${shot}寄りで、${cameraAngle}気味の視点から見せる。${ensureSentence(beat, language)}`;
 }
 
 function buildFallbackCameraDirectionNote(
@@ -2044,7 +2090,7 @@ function mentionsAnyEntity(value: string, entityNames: string[]): boolean {
   return entityNames.some((name) => lower.includes(name.toLowerCase()));
 }
 
-function ensureSentence(value: string): string {
+function ensureSentence(value: string, language: AppLanguage = 'ja'): string {
   const normalized = value.replace(/\s+/gu, ' ').trim();
   if (normalized.length === 0) {
     return normalized;
@@ -2052,7 +2098,7 @@ function ensureSentence(value: string): string {
   if (/[.!?。！？]$/u.test(normalized)) {
     return normalized;
   }
-  return `${normalized}。`;
+  return language === 'en' ? `${normalized}.` : `${normalized}。`;
 }
 
 function stripTerminalPunctuation(value: string): string {

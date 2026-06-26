@@ -1537,9 +1537,16 @@ export default function App() {
       (typeof payload?.username === 'string' ? payload.username : null) ??
       supabaseSession?.user.email ??
       'session';
+  const authSessionKey = devAuthBypass !== null
+    ? `dev:${devAuthBypass.email}`
+    : typeof payload?.sub === 'string' && payload.sub.length > 0
+      ? `sub:${payload.sub}`
+      : `email:${email}`;
 
   return renderWithSplash(
     <StudioShell
+      key={authSessionKey}
+      authSessionKey={authSessionKey}
       email={email}
       token={accessToken}
       supabaseClient={supabaseClient}
@@ -1709,6 +1716,7 @@ function AuthScreen(props: {
 }
 
 function StudioShell(props: {
+  authSessionKey: string;
   email: string;
   token: string;
   supabaseClient: SupabaseClient | null;
@@ -1718,6 +1726,15 @@ function StudioShell(props: {
   const queryClient = useQueryClient();
   const onAuthExpired = props.onAuthExpired;
   const api = useMemo(() => new LyraApiClient(() => props.token), [props.token]);
+  const scopedQueryKey = useCallback(
+    (queryKey: readonly unknown[]): readonly unknown[] => ['session', props.authSessionKey, ...queryKey],
+    [props.authSessionKey],
+  );
+  const invalidateScopedQuery = useCallback(
+    (queryKey: readonly unknown[]): Promise<void> =>
+      queryClient.invalidateQueries({ queryKey: scopedQueryKey(queryKey) }),
+    [queryClient, scopedQueryKey],
+  );
   const [uiLanguageStored, setUiLanguageStored] = useStoredString(window.localStorage, uiLanguageStorageKey, 'ja');
   const uiLanguage = normalizeUiLanguage(uiLanguageStored);
   const uiLanguageRef = useRef<UiLanguage>(uiLanguage);
@@ -1725,11 +1742,31 @@ function StudioShell(props: {
   const [newWorkFormOpen, setNewWorkFormOpen] = useState(!isMobileViewport);
   const [notice, setNotice] = useState<NoticeState | null>(null);
   const [busyAction, setBusyAction] = useState<string | null>(null);
-  const [trackedJobIds, setTrackedJobIds] = useStoredString(window.localStorage, trackedJobsStorageKey, '[]');
-  const [selectedWorkId, setSelectedWorkId] = useStoredString(window.localStorage, selectedWorkStorageKey, '');
-  const [selectedChapterId, setSelectedChapterId] = useStoredString(window.localStorage, selectedChapterStorageKey, '');
-  const [selectedEpisodeId, setSelectedEpisodeId] = useStoredString(window.localStorage, selectedEpisodeStorageKey, '');
-  const [selectedPageId, setSelectedPageId] = useStoredString(window.localStorage, selectedPageStorageKey, '');
+  const [trackedJobIds, setTrackedJobIds] = useStoredString(
+    window.localStorage,
+    scopedStorageKey(trackedJobsStorageKey, props.authSessionKey),
+    '[]',
+  );
+  const [selectedWorkId, setSelectedWorkId] = useStoredString(
+    window.localStorage,
+    scopedStorageKey(selectedWorkStorageKey, props.authSessionKey),
+    '',
+  );
+  const [selectedChapterId, setSelectedChapterId] = useStoredString(
+    window.localStorage,
+    scopedStorageKey(selectedChapterStorageKey, props.authSessionKey),
+    '',
+  );
+  const [selectedEpisodeId, setSelectedEpisodeId] = useStoredString(
+    window.localStorage,
+    scopedStorageKey(selectedEpisodeStorageKey, props.authSessionKey),
+    '',
+  );
+  const [selectedPageId, setSelectedPageId] = useStoredString(
+    window.localStorage,
+    scopedStorageKey(selectedPageStorageKey, props.authSessionKey),
+    '',
+  );
   const [activeTab, setActiveTab] = useState<WorkspaceTab>('story');
   const [workDraft, setWorkDraft] = useState<WorkDraft>(createEmptyWorkDraft());
   const [newWorkDraft, setNewWorkDraft] = useState<WorkDraft>(createEmptyWorkDraft());
@@ -1784,7 +1821,7 @@ function StudioShell(props: {
   const trackedJobList = useMemo(() => parseTrackedJobIds(trackedJobIds), [trackedJobIds]);
 
   const worksQuery = useQuery({
-    queryKey: ['works'],
+    queryKey: scopedQueryKey(['works']),
     queryFn: () => api.getWorks(),
   });
   const works = useMemo(() => worksQuery.data?.works ?? [], [worksQuery.data?.works]);
@@ -1794,14 +1831,14 @@ function StudioShell(props: {
   const worksErrorMessage = showWorksError ? toMessage(worksQuery.error, uiLanguage) : null;
   const worksErrorNeedsLogin = showWorksError && isApiStatus(worksQuery.error, 401);
   const balanceQuery = useQuery({
-    queryKey: ['billing-balance'],
+    queryKey: scopedQueryKey(['billing-balance']),
     queryFn: () => api.getBalance(),
   });
 
   const selectedWork = works.find((work) => work.id === selectedWorkId) ?? null;
 
   const chaptersQuery = useQuery({
-    queryKey: ['chapters', selectedWorkId],
+    queryKey: scopedQueryKey(['chapters', selectedWorkId]),
     queryFn: () => api.getChapters(selectedWorkId),
     enabled: selectedWorkId.length > 0,
   });
@@ -1809,7 +1846,7 @@ function StudioShell(props: {
   const selectedChapter = chapters.find((chapter) => chapter.id === selectedChapterId) ?? chapters[0] ?? null;
 
   const episodesQuery = useQuery({
-    queryKey: ['episodes', selectedChapter?.id ?? ''],
+    queryKey: scopedQueryKey(['episodes', selectedChapter?.id ?? '']),
     queryFn: () => api.getEpisodes(selectedChapter?.id ?? ''),
     enabled: selectedChapter !== null,
   });
@@ -1817,7 +1854,7 @@ function StudioShell(props: {
   const selectedEpisode = episodes.find((episode) => episode.id === selectedEpisodeId) ?? episodes[0] ?? null;
 
   const entitiesQuery = useQuery({
-    queryKey: ['entities', selectedWorkId],
+    queryKey: scopedQueryKey(['entities', selectedWorkId]),
     queryFn: () => api.getEntities(selectedWorkId),
     enabled: selectedWorkId.length > 0,
   });
@@ -1833,13 +1870,13 @@ function StudioShell(props: {
       : entities.find((entity) => entity.id === selectedEntityId) ?? entities[0] ?? null;
 
   const entityReferenceSetQuery = useQuery({
-    queryKey: ['entity-reference-set', selectedEntity?.id ?? ''],
+    queryKey: scopedQueryKey(['entity-reference-set', selectedEntity?.id ?? '']),
     queryFn: () => api.getEntityReferenceSet(selectedEntity?.id ?? ''),
     enabled: selectedEntity !== null,
   });
 
   const scenesQuery = useQuery({
-    queryKey: ['scenes', selectedEpisode?.id ?? ''],
+    queryKey: scopedQueryKey(['scenes', selectedEpisode?.id ?? '']),
     queryFn: () => api.getScenes(selectedEpisode?.id ?? ''),
     enabled: selectedEpisode !== null,
   });
@@ -1847,7 +1884,7 @@ function StudioShell(props: {
   const selectedScene = scenes.find((scene) => scene.id === selectedSceneId) ?? scenes[0] ?? null;
 
   const pagesQuery = useQuery({
-    queryKey: ['pages', selectedEpisode?.id ?? ''],
+    queryKey: scopedQueryKey(['pages', selectedEpisode?.id ?? '']),
     queryFn: () => api.getPages(selectedEpisode?.id ?? ''),
     enabled: selectedEpisode !== null,
   });
@@ -1855,7 +1892,7 @@ function StudioShell(props: {
   const selectedPage = pages.find((page) => page.id === selectedPageId) ?? pages[0] ?? null;
 
   const compositionsQuery = useQuery({
-    queryKey: ['compositions'],
+    queryKey: scopedQueryKey(['compositions']),
     queryFn: () => api.getCompositions(),
   });
   const compositions = useMemo(
@@ -1864,7 +1901,7 @@ function StudioShell(props: {
   );
 
   const panelsQuery = useQuery({
-    queryKey: ['panels', selectedPage?.id ?? ''],
+    queryKey: scopedQueryKey(['panels', selectedPage?.id ?? '']),
     queryFn: () => api.getPanels(selectedPage?.id ?? ''),
     enabled: selectedPage !== null,
   });
@@ -1879,7 +1916,7 @@ function StudioShell(props: {
   );
 
   const framesQuery = useQuery({
-    queryKey: ['frames', selectedPage?.id ?? ''],
+    queryKey: scopedQueryKey(['frames', selectedPage?.id ?? '']),
     queryFn: () => api.getFrames(selectedPage?.id ?? ''),
     enabled: selectedPage !== null,
   });
@@ -1927,7 +1964,7 @@ function StudioShell(props: {
 
   const jobQueries = useQueries({
     queries: trackedJobList.map((jobId) => ({
-      queryKey: ['job', jobId],
+      queryKey: scopedQueryKey(['job', jobId]),
       queryFn: () => api.getJob(jobId),
       refetchInterval: (query: { state: { data: GenerationJobRecord | undefined } }) =>
         query.state.data?.status === 'queued' || query.state.data?.status === 'processing' ? 4000 : false,
@@ -2025,9 +2062,9 @@ function StudioShell(props: {
     }
 
     for (const queryKey of queryKeys) {
-      void queryClient.invalidateQueries({ queryKey });
+      void invalidateScopedQuery(queryKey);
     }
-  }, [queryClient, selectedWorkId, selectedChapter, selectedEpisode, selectedPage]);
+  }, [invalidateScopedQuery, selectedWorkId, selectedChapter, selectedEpisode, selectedPage]);
 
   const startBillingReturnVerification = useCallback((marker: BillingReturnMarker): void => {
     billingVerificationTargetRef.current = marker;
@@ -2265,35 +2302,35 @@ function StudioShell(props: {
 
       if (job.status === 'completed' || job.status === 'failed') {
         handledJobsRef.current.add(job.id);
-        void queryClient.invalidateQueries({ queryKey: ['billing-balance'] });
+        void invalidateScopedQuery(['billing-balance']);
 
         if (job.job_type === 'page_generate') {
           const pageId = typeof job.params.page_id === 'string' ? job.params.page_id : null;
           if (pageId !== null) {
-            void queryClient.invalidateQueries({ queryKey: ['panels', pageId] });
-            void queryClient.invalidateQueries({ queryKey: ['frames', pageId] });
+            void invalidateScopedQuery(['panels', pageId]);
+            void invalidateScopedQuery(['frames', pageId]);
           }
 
-          void queryClient.invalidateQueries({ queryKey: ['pages'] });
+          void invalidateScopedQuery(['pages']);
         }
         if (job.job_type === 'episode_story_autofill') {
           const episodeId = typeof job.params.episode_id === 'string' ? job.params.episode_id : null;
           if (episodeId !== null) {
-            void queryClient.invalidateQueries({ queryKey: ['pages', episodeId] });
+            void invalidateScopedQuery(['pages', episodeId]);
           }
-          void queryClient.invalidateQueries({ queryKey: ['pages'] });
-          void queryClient.invalidateQueries({ queryKey: ['panels'] });
-          void queryClient.invalidateQueries({ queryKey: ['frames'] });
+          void invalidateScopedQuery(['pages']);
+          void invalidateScopedQuery(['panels']);
+          void invalidateScopedQuery(['frames']);
         }
         if (job.job_type === 'episode_page_skeleton') {
           const episodeId = typeof job.params.episode_id === 'string' ? job.params.episode_id : null;
           if (episodeId !== null) {
-            void queryClient.invalidateQueries({ queryKey: ['pages', episodeId] });
+            void invalidateScopedQuery(['pages', episodeId]);
           }
-          void queryClient.invalidateQueries({ queryKey: ['episodes'] });
-          void queryClient.invalidateQueries({ queryKey: ['pages'] });
-          void queryClient.invalidateQueries({ queryKey: ['panels'] });
-          void queryClient.invalidateQueries({ queryKey: ['frames'] });
+          void invalidateScopedQuery(['episodes']);
+          void invalidateScopedQuery(['pages']);
+          void invalidateScopedQuery(['panels']);
+          void invalidateScopedQuery(['frames']);
         }
         if (job.job_type === 'entity_generate') {
           const entityId = typeof job.params.entity_id === 'string' ? job.params.entity_id : null;
@@ -2319,12 +2356,12 @@ function StudioShell(props: {
                   return remaining;
                 });
               }
-              void queryClient.invalidateQueries({ queryKey: ['entity-reference-set', entityId] });
+              void invalidateScopedQuery(['entity-reference-set', entityId]);
             }
           }
       }
     }
-  }, [trackedJobs, queryClient]);
+  }, [trackedJobs, invalidateScopedQuery]);
 
   const referenceCandidates = useMemo(() => {
     if (selectedEntity === null) {
@@ -2389,10 +2426,10 @@ function StudioShell(props: {
     }
 
     if (selectedChapter !== null) {
-      await queryClient.invalidateQueries({ queryKey: ['episodes', selectedChapter.id] });
+      await invalidateScopedQuery(['episodes', selectedChapter.id]);
     }
     if (selectedEpisode !== null) {
-      await queryClient.invalidateQueries({ queryKey: ['scenes', selectedEpisode.id] });
+      await invalidateScopedQuery(['scenes', selectedEpisode.id]);
     }
   };
 
@@ -2420,7 +2457,7 @@ function StudioShell(props: {
     const savedEntity = await api.updateEntity(selectedEntity.id, toEntityPayload(entityDraft));
     cacheEntityRecord(savedEntity);
     setEntityDraft(toEntityDraft(savedEntity));
-    await queryClient.invalidateQueries({ queryKey: ['entities', selectedWork.id] });
+    await invalidateScopedQuery(['entities', selectedWork.id]);
   };
 
   const beginNewEntityDraft = (): void => {
@@ -2441,7 +2478,7 @@ function StudioShell(props: {
   const confirmUiAction = (message: string): boolean => window.confirm(translateUiString(uiLanguage, message));
 
   const cacheEntityRecord = (entity: EntityRecord): void => {
-    queryClient.setQueryData<{ entities: EntityRecord[] }>(['entities', entity.work_id], (current) => {
+    queryClient.setQueryData<{ entities: EntityRecord[] }>(scopedQueryKey(['entities', entity.work_id]), (current) => {
       if (current === undefined) {
         return { entities: [entity] };
       }
@@ -2457,7 +2494,7 @@ function StudioShell(props: {
   };
 
   const removeEntityFromCache = (workId: string, entityId: string): void => {
-    queryClient.setQueryData<{ entities: EntityRecord[] }>(['entities', workId], (current) =>
+    queryClient.setQueryData<{ entities: EntityRecord[] }>(scopedQueryKey(['entities', workId]), (current) =>
       current === undefined
         ? current
         : {
@@ -2659,7 +2696,7 @@ function StudioShell(props: {
               void runAction('Create work', async () => {
                 await api.createWork(toCreateWorkPayload(newWorkDraft));
                 setNewWorkDraft(createEmptyWorkDraft());
-                await queryClient.invalidateQueries({ queryKey: ['works'] });
+                await invalidateScopedQuery(['works']);
               });
             }}
           >
@@ -2743,7 +2780,7 @@ function StudioShell(props: {
                               selectedWork.id,
                               toWorkPayload(workDraft, loadedSelectedWorkEntityIds),
                             );
-                            await queryClient.invalidateQueries({ queryKey: ['works'] });
+                            await invalidateScopedQuery(['works']);
                           })
                         }
                         type="button"
@@ -2825,9 +2862,9 @@ function StudioShell(props: {
                               if ('job_id' in result) {
                                 trackJob(result.job_id);
                               } else {
-                                await queryClient.invalidateQueries({ queryKey: ['episodes', selectedChapter?.id ?? ''] });
-                                await queryClient.invalidateQueries({ queryKey: ['scenes', selectedEpisode.id] });
-                                await queryClient.invalidateQueries({ queryKey: ['pages', selectedEpisode.id] });
+                                await invalidateScopedQuery(['episodes', selectedChapter?.id ?? '']);
+                                await invalidateScopedQuery(['scenes', selectedEpisode.id]);
+                                await invalidateScopedQuery(['pages', selectedEpisode.id]);
                               }
                               setActiveTab('pages');
                             });
@@ -2922,7 +2959,7 @@ function StudioShell(props: {
                                   onClick={() =>
                                     void runAction(`Move chapter ${chapter.id} up`, async () => {
                                       await api.moveChapter(chapter.id, 'up');
-                                      await queryClient.invalidateQueries({ queryKey: ['chapters', selectedWork.id] });
+                                      await invalidateScopedQuery(['chapters', selectedWork.id]);
                                     })
                                   }
                                   title={translateUiString(uiLanguage, 'Move up')}
@@ -2937,7 +2974,7 @@ function StudioShell(props: {
                                   onClick={() =>
                                     void runAction(`Move chapter ${chapter.id} down`, async () => {
                                       await api.moveChapter(chapter.id, 'down');
-                                      await queryClient.invalidateQueries({ queryKey: ['chapters', selectedWork.id] });
+                                      await invalidateScopedQuery(['chapters', selectedWork.id]);
                                     })
                                   }
                                   title={translateUiString(uiLanguage, 'Move down')}
@@ -2959,7 +2996,7 @@ function StudioShell(props: {
                                 toCreateChapterPayload(newChapterDraft, loadedSelectedWorkEntityIds),
                               );
                               setNewChapterDraft(createEmptyChapterDraft());
-                              await queryClient.invalidateQueries({ queryKey: ['chapters', selectedWork.id] });
+                              await invalidateScopedQuery(['chapters', selectedWork.id]);
                             });
                           }}
                         >
@@ -2998,7 +3035,7 @@ function StudioShell(props: {
                                       selectedChapter.id,
                                       toChapterPayload(chapterDraft, loadedSelectedWorkEntityIds),
                                     );
-                                    await queryClient.invalidateQueries({ queryKey: ['chapters', selectedWork.id] });
+                                    await invalidateScopedQuery(['chapters', selectedWork.id]);
                                   })
                                 }
                                 type="button"
@@ -3011,7 +3048,7 @@ function StudioShell(props: {
                                 onClick={() =>
                                   void runAction('Delete chapter', async () => {
                                     await api.deleteChapter(selectedChapter.id);
-                                    await queryClient.invalidateQueries({ queryKey: ['chapters', selectedWork.id] });
+                                    await invalidateScopedQuery(['chapters', selectedWork.id]);
                                   })
                                 }
                                 type="button"
@@ -3041,7 +3078,7 @@ function StudioShell(props: {
                                   onClick={() =>
                                     void runAction(`Move episode ${episode.id} up`, async () => {
                                       await api.moveEpisode(episode.id, 'up');
-                                      await queryClient.invalidateQueries({ queryKey: ['episodes', selectedChapter?.id ?? ''] });
+                                      await invalidateScopedQuery(['episodes', selectedChapter?.id ?? '']);
                                     })
                                   }
                                   title={translateUiString(uiLanguage, 'Move up')}
@@ -3056,7 +3093,7 @@ function StudioShell(props: {
                                   onClick={() =>
                                     void runAction(`Move episode ${episode.id} down`, async () => {
                                       await api.moveEpisode(episode.id, 'down');
-                                      await queryClient.invalidateQueries({ queryKey: ['episodes', selectedChapter?.id ?? ''] });
+                                      await invalidateScopedQuery(['episodes', selectedChapter?.id ?? '']);
                                     })
                                   }
                                   title={translateUiString(uiLanguage, 'Move down')}
@@ -3079,7 +3116,7 @@ function StudioShell(props: {
                                   toCreateEpisodePayload(newEpisodeDraft, loadedSelectedWorkEntityIds),
                                 );
                                 setNewEpisodeDraft(createEmptyEpisodeDraft());
-                                await queryClient.invalidateQueries({ queryKey: ['episodes', selectedChapter.id] });
+                                await invalidateScopedQuery(['episodes', selectedChapter.id]);
                               });
                             }}
                           >
@@ -3122,7 +3159,7 @@ function StudioShell(props: {
                                 selectedEpisode.id,
                                 toEpisodePayload(episodeDraft, loadedSelectedWorkEntityIds),
                               );
-                              await queryClient.invalidateQueries({ queryKey: ['episodes', selectedChapter?.id ?? ''] });
+                              await invalidateScopedQuery(['episodes', selectedChapter?.id ?? '']);
                             })
                           }
                           type="button"
@@ -3135,7 +3172,7 @@ function StudioShell(props: {
                           onClick={() =>
                             void runAction('Delete episode', async () => {
                               await api.deleteEpisode(selectedEpisode.id);
-                              await queryClient.invalidateQueries({ queryKey: ['episodes', selectedChapter?.id ?? ''] });
+                              await invalidateScopedQuery(['episodes', selectedChapter?.id ?? '']);
                             })
                           }
                           type="button"
@@ -3455,7 +3492,7 @@ function StudioShell(props: {
                               toCreateScenePayload(sceneDraft, loadedSelectedWorkEntityIds),
                             );
                             setSceneDraft(createEmptySceneDraft());
-                            await queryClient.invalidateQueries({ queryKey: ['scenes', selectedEpisode.id] });
+                            await invalidateScopedQuery(['scenes', selectedEpisode.id]);
                           })
                         }
                         type="button"
@@ -3472,7 +3509,7 @@ function StudioShell(props: {
                                 selectedScene.id,
                                 toScenePayload(sceneDraft, loadedSelectedWorkEntityIds),
                               );
-                              await queryClient.invalidateQueries({ queryKey: ['scenes', selectedEpisode.id] });
+                              await invalidateScopedQuery(['scenes', selectedEpisode.id]);
                             })
                           }
                           type="button"
@@ -3572,7 +3609,7 @@ function StudioShell(props: {
                               void runAction('Delete entity', async () => {
                                 await api.deleteEntity(selectedEntity.id);
                                 removeEntityFromCache(selectedWork.id, selectedEntity.id);
-                                await queryClient.invalidateQueries({ queryKey: ['entities', selectedWork.id] });
+                                await invalidateScopedQuery(['entities', selectedWork.id]);
                               });
                             }}
                             type="button"
@@ -3652,7 +3689,7 @@ function StudioShell(props: {
                               setEntityEditorMode('edit');
                               setSelectedEntityId(createdEntity.id);
                               setEntityDraft(toEntityDraft(createdEntity));
-                              await queryClient.invalidateQueries({ queryKey: ['entities', selectedWork.id] });
+                              await invalidateScopedQuery(['entities', selectedWork.id]);
                             })
                           }
                           type="button"
@@ -3669,7 +3706,7 @@ function StudioShell(props: {
                               const savedEntity = await api.updateEntity(selectedEntity.id, toEntityPayload(entityDraft));
                               cacheEntityRecord(savedEntity);
                               setEntityDraft(toEntityDraft(savedEntity));
-                              await queryClient.invalidateQueries({ queryKey: ['entities', selectedWork.id] });
+                              await invalidateScopedQuery(['entities', selectedWork.id]);
                             })
                           }
                           type="button"
@@ -3759,7 +3796,7 @@ function StudioShell(props: {
                                 delete nextValue[selectedEntity.id];
                                 return nextValue;
                               });
-                              await queryClient.invalidateQueries({ queryKey: ['entity-reference-set', selectedEntity.id] });
+                              await invalidateScopedQuery(['entity-reference-set', selectedEntity.id]);
                             })
                           }
                           type="button"
@@ -3795,7 +3832,7 @@ function StudioShell(props: {
                                   <AuthenticatedImage
                                     enabled={selectedEntity !== null}
                                     loadImage={() => api.exportEntityReferenceCandidateImage(selectedEntity?.id ?? '', candidate.s3_key)}
-                                    queryKey={['entity-reference-candidate-image', selectedEntity?.id, candidate.s3_key]}
+                                    queryKey={scopedQueryKey(['entity-reference-candidate-image', selectedEntity?.id, candidate.s3_key])}
                                   />
                                 </div>
                                 <div className="reference-card-body">
@@ -3857,7 +3894,7 @@ function StudioShell(props: {
                                   <AuthenticatedImage
                                     enabled={selectedEntity !== null}
                                     loadImage={() => api.exportEntityReferenceImage(selectedEntity?.id ?? '', image.ref_id)}
-                                    queryKey={['entity-reference-image', selectedEntity?.id, image.ref_id, image.created_at]}
+                                    queryKey={scopedQueryKey(['entity-reference-image', selectedEntity?.id, image.ref_id, image.created_at])}
                                   />
                                 </div>
                                 <div className="reference-card-body">
@@ -3875,7 +3912,7 @@ function StudioShell(props: {
                                       }
                                       void runAction('Delete reference', async () => {
                                         await api.deleteEntityReference(selectedEntity.id, image.ref_id);
-                                        await queryClient.invalidateQueries({ queryKey: ['entity-reference-set', selectedEntity.id] });
+                                        await invalidateScopedQuery(['entity-reference-set', selectedEntity.id]);
                                       });
                                     }}
                                     type="button"
@@ -3946,7 +3983,7 @@ function StudioShell(props: {
                               loadImage={() => api.exportPageImage(page.id)}
                               onDoubleClick={(url) => openImageLightbox(url, `${translateUiString(uiLanguage, 'Page')} ${page.page_number}`)}
                               placeholderClassName="page-placeholder"
-                              queryKey={['page-image', page.id, page.generated_image.generated_at]}
+                              queryKey={scopedQueryKey(['page-image', page.id, page.generated_image.generated_at])}
                             />
                           ) : (
                             <div className="page-placeholder">
@@ -3974,7 +4011,7 @@ function StudioShell(props: {
                           onClick={() =>
                             void runAction('Save page settings', async () => {
                               await api.updatePage(selectedPage.id, toPageSettingsPayload(pageSettingsDraft));
-                              await queryClient.invalidateQueries({ queryKey: ['pages', selectedEpisode.id] });
+                              await invalidateScopedQuery(['pages', selectedEpisode.id]);
                             })
                           }
                           type="button"
@@ -4028,7 +4065,7 @@ function StudioShell(props: {
                             onClick={() =>
                               void runAction('Save story sources', async () => {
                                 await api.updatePage(selectedPage.id, toPageSettingsPayload(pageSettingsDraft));
-                                await queryClient.invalidateQueries({ queryKey: ['pages', selectedEpisode.id] });
+                                await invalidateScopedQuery(['pages', selectedEpisode.id]);
                               })
                             }
                             type="button"
@@ -4108,7 +4145,7 @@ function StudioShell(props: {
                               onClick={() =>
                                 void runAction('Confirm page', async () => {
                                   await api.confirmPage(selectedPage.id);
-                                  await queryClient.invalidateQueries({ queryKey: ['pages', selectedEpisode.id] });
+                                  await invalidateScopedQuery(['pages', selectedEpisode.id]);
                                 })
                               }
                               type="button"
@@ -4121,7 +4158,7 @@ function StudioShell(props: {
                               onClick={() =>
                                 void runAction('Reopen page', async () => {
                                   await api.reopenPage(selectedPage.id);
-                                  await queryClient.invalidateQueries({ queryKey: ['pages', selectedEpisode.id] });
+                                  await invalidateScopedQuery(['pages', selectedEpisode.id]);
                                 })
                               }
                               type="button"
@@ -4182,7 +4219,7 @@ function StudioShell(props: {
                               loadImage={() => api.exportPageImage(selectedPage.id)}
                               onDoubleClick={(url) => openImageLightbox(url, `${translateUiString(uiLanguage, 'Page')} ${selectedPage.page_number}`)}
                               placeholderClassName="page-placeholder generated-image"
-                              queryKey={['page-image', selectedPage.id, selectedPage.generated_image.generated_at]}
+                              queryKey={scopedQueryKey(['page-image', selectedPage.id, selectedPage.generated_image.generated_at])}
                             />
                           </div>
                         ) : null}
@@ -4222,10 +4259,10 @@ function StudioShell(props: {
                                   }
 
                                   await api.applyPageLayoutTemplate(selectedPage.id, frameTemplateId, deletedPanelCount > 0);
-                                  await queryClient.invalidateQueries({ queryKey: ['frames', selectedPage.id] });
-                                  await queryClient.invalidateQueries({ queryKey: ['panels', selectedPage.id] });
+                                  await invalidateScopedQuery(['frames', selectedPage.id]);
+                                  await invalidateScopedQuery(['panels', selectedPage.id]);
                                   if (selectedEpisode !== null) {
-                                    await queryClient.invalidateQueries({ queryKey: ['pages', selectedEpisode.id] });
+                                    await invalidateScopedQuery(['pages', selectedEpisode.id]);
                                   }
                                 })
                               }
@@ -4347,7 +4384,7 @@ function StudioShell(props: {
                             onClick={() =>
                               void runAction('Save frame geometry', async () => {
                                 await api.replaceFrames(selectedPage.id, toPanelFramesPayload(frameDrafts));
-                                await queryClient.invalidateQueries({ queryKey: ['frames', selectedPage.id] });
+                                await invalidateScopedQuery(['frames', selectedPage.id]);
                               })
                             }
                             type="button"
@@ -4469,7 +4506,7 @@ function StudioShell(props: {
                                   throw error;
                                 }
                                 setSelectedPanelId(createdPanel.id);
-                                await queryClient.invalidateQueries({ queryKey: ['panels', selectedPage.id] });
+                                await invalidateScopedQuery(['panels', selectedPage.id]);
                               })
                             }
                             type="button"
@@ -4486,7 +4523,7 @@ function StudioShell(props: {
                                     const assignmentsPayload = toPanelAssignmentsPayload(panelDraft);
                                     await api.updatePanel(selectedPanel.id, toPanelPayload(panelDraft));
                                     await api.replacePanelAssignments(selectedPanel.id, assignmentsPayload);
-                                    await queryClient.invalidateQueries({ queryKey: ['panels', selectedPage.id] });
+                                    await invalidateScopedQuery(['panels', selectedPage.id]);
                                   })
                                 }
                                 type="button"
@@ -4504,10 +4541,10 @@ function StudioShell(props: {
                                   void runAction('Delete panel', async () => {
                                     await api.deletePanel(selectedPanel.id);
                                     setSelectedPanelId('');
-                                    await queryClient.invalidateQueries({ queryKey: ['panels', selectedPage.id] });
-                                    await queryClient.invalidateQueries({ queryKey: ['frames', selectedPage.id] });
+                                    await invalidateScopedQuery(['panels', selectedPage.id]);
+                                    await invalidateScopedQuery(['frames', selectedPage.id]);
                                     if (selectedEpisode !== null) {
-                                      await queryClient.invalidateQueries({ queryKey: ['pages', selectedEpisode.id] });
+                                      await invalidateScopedQuery(['pages', selectedEpisode.id]);
                                     }
                                   });
                                 }}
@@ -7613,6 +7650,11 @@ function useStoredString(
   };
 
   return [value, updateValue];
+}
+
+function scopedStorageKey(baseKey: string, scope: string): string {
+  const safeScope = scope.replace(/[^a-zA-Z0-9:_-]/gu, '_').slice(0, 160);
+  return `${baseKey}:${safeScope.length === 0 ? 'session' : safeScope}`;
 }
 
 function redirectToExternalUrl(value: string): void {

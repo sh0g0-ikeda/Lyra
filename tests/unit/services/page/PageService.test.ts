@@ -1012,6 +1012,90 @@ describe('PageService', () => {
     ]);
   });
 
+  it('episode story plan は generic な compiler 成功項目を story fallback で置き換える', async () => {
+    const pageRepository = new FakePageRepository();
+    const panelRepository = new FakePanelRepository();
+    const assignmentService = new FakePanelEntityAssignmentService();
+    const compiler: EpisodePagePlanCompilerPort = {
+      async compilePlan(): Promise<CompiledEpisodePagePlan> {
+        return {
+          suggestion: {
+            pages: [
+              {
+                pageId: 'page-1',
+                pageNumber: 1,
+                pagePurpose: 'Page progression',
+                continuityNote: 'Current scene',
+                panels: [
+                  {
+                    order: 1,
+                    situationText: 'The rooftop meeting begins in silence.',
+                    composition: {
+                      source: 'custom',
+                      compositionPrompt: 'Readable composition.',
+                      shotType: 'wide',
+                      angle: 'front',
+                      customNote: 'Current setting.',
+                    },
+                    backgroundNote: 'Current setting.',
+                    entities: [],
+                  },
+                ],
+              },
+            ],
+          },
+          compilerProvider: 'openai',
+          compilerModel: 'gpt-5.4-mini',
+          compilerPromptVersion: 'page_autofill_v2',
+        };
+      },
+    };
+    const service = new PageService(
+      pageRepository,
+      panelRepository,
+      assignmentService,
+      new FakePageAutofillCompiler(),
+      compiler,
+    );
+
+    const result = await service.autofillEpisodeFromStory('user-1', 'episode-1', 'en');
+
+    expect(result.compilerUsed).toBe(true);
+    expect(pageRepository.updatedInput?.storyPagePurpose).not.toBe('Page progression');
+    expect(pageRepository.updatedInput?.storyContinuityNote).not.toBe('Current scene');
+    const updatedPanel = panelRepository.updatedPanels[0];
+    expect(updatedPanel?.input.situationText).toEqual(
+      expect.stringContaining('The rooftop meeting begins in silence'),
+    );
+    expect(updatedPanel?.input.situationText).not.toContain('。');
+    expect(updatedPanel?.input.backgroundNote).toEqual(expect.any(String));
+    expect(updatedPanel?.input.backgroundNote).not.toBe('Current setting.');
+    expect(updatedPanel?.input.backgroundNote).not.toContain('。');
+    expect(updatedPanel?.input.composition).toEqual(
+      expect.objectContaining({
+        source: 'custom',
+        shotType: 'wide',
+        angle: 'front',
+        compositionPrompt: expect.any(String),
+        customNote: expect.any(String),
+      }),
+    );
+    expect(updatedPanel?.input.composition?.compositionPrompt).not.toBe('Readable composition.');
+    expect(updatedPanel?.input.composition?.customNote).not.toBe('Current setting.');
+    expect(updatedPanel?.input.composition?.compositionPrompt).not.toContain('。');
+    expect(updatedPanel?.input.composition?.customNote).not.toContain('。');
+    expect(assignmentService.updates).toEqual([
+      {
+        panelId: 'panel-1',
+        assignments: [
+          expect.objectContaining({
+            entityId: '11111111-1111-4111-8111-111111111111',
+          }),
+        ],
+      },
+    ]);
+  });
+
   it('episode story plan の field-level 補完は一般名詞の影をキャラとして割り当てない', async () => {
     const pageRepository = new FakePageRepository();
     pageRepository.episodePlanningContext = {

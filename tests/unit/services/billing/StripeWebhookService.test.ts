@@ -744,6 +744,52 @@ describe('StripeWebhookService', () => {
       status: 'failed',
     });
   });
+
+  it('subscription_update の日割り請求でも premium plan と月次枠を反映する', async () => {
+    const repository = seedRepository();
+    repository.setUserPlan('user-1', 'standard');
+    const creditGrantService = new FakeBillingCreditGrantService();
+    const stripeClient = new FakeStripeBillingClient();
+    stripeClient.event = buildInvoicePaidEvent('subscription_update', 'evt_invoice_upgrade', 1500);
+    stripeClient.subscription = buildSubscription('premium', 'price_premium');
+    const service = buildService(repository, creditGrantService, stripeClient);
+
+    await service.handleWebhook(Buffer.from('{}'), 'sig');
+
+    expect(repository.updatedPlans[0]).toEqual({ userId: 'user-1', planCode: 'premium' });
+    expect(creditGrantService.monthlyGrants).toHaveLength(1);
+    expect(creditGrantService.monthlyGrants[0]).toMatchObject({
+      userId: 'user-1',
+      amount: 175,
+      stripeEventId: 'evt_invoice_upgrade',
+    });
+    expect(creditGrantService.monthlyGrants[0]?.description).toContain('Subscription plan change grant');
+    expect(repository.paymentRecords[0]).toMatchObject({
+      stripeInvoiceId: 'in_123',
+      amountJpy: 1500,
+      status: 'paid',
+    });
+  });
+
+  it('subscription_update の0円請求は plan だけ反映し月次枠は付与しない', async () => {
+    const repository = seedRepository();
+    repository.setUserPlan('user-1', 'standard');
+    const creditGrantService = new FakeBillingCreditGrantService();
+    const stripeClient = new FakeStripeBillingClient();
+    stripeClient.event = buildInvoicePaidEvent('subscription_update', 'evt_invoice_upgrade_free', 0);
+    stripeClient.subscription = buildSubscription('premium', 'price_premium');
+    const service = buildService(repository, creditGrantService, stripeClient);
+
+    await service.handleWebhook(Buffer.from('{}'), 'sig');
+
+    expect(repository.updatedPlans[0]).toEqual({ userId: 'user-1', planCode: 'premium' });
+    expect(creditGrantService.monthlyGrants).toHaveLength(0);
+    expect(repository.paymentRecords[0]).toMatchObject({
+      stripeInvoiceId: 'in_123',
+      amountJpy: 0,
+      status: 'paid',
+    });
+  });
 });
 
 function seedRepository(): InMemoryBillingRepository {
