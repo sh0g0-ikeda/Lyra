@@ -119,15 +119,17 @@ class FakeEntityRepository implements EntityRepository {
     return 1;
   }
 
-  public async findPrimaryReferenceImagesByEntityIdsAndUserId(): Promise<EntityPrimaryReferenceImage[]> {
-    return [
-      {
-        entityId: 'entity-1',
-        refId: 'ref-1',
-        s3Key: 'saved/user-1/entities/entity-1/ref-1.png',
-        cdnUrl: 'https://img.lyra.app/ref-1.png',
-      },
-    ];
+  public async findPrimaryReferenceImagesByEntityIdsAndUserId(
+    entityIds: string[],
+  ): Promise<EntityPrimaryReferenceImage[]> {
+    return entityIds
+      .filter((entityId) => this.entities.some((entity) => entity.id === entityId))
+      .map((entityId, index) => ({
+        entityId,
+        refId: `ref-${index + 1}`,
+        s3Key: `saved/user-1/entities/${entityId}/ref-${index + 1}.png`,
+        cdnUrl: `https://img.lyra.app/ref-${index + 1}.png`,
+      }));
   }
 
   public async update(_id: string, _userId: string, _input: UpdateEntityInput): Promise<Entity | null> {
@@ -173,16 +175,16 @@ describe('PromptBuilder', () => {
     expect(result.draftPrompt).toContain('Use this image only for Aki; never use it as another character.');
     expect(result.draftPrompt).toContain('Aki is allowed only in panel 1 where listed in the subject lock.');
     expect(result.draftPrompt).toContain(
-      'Panel 1 subject lock: required visible subjects are Aki, role primary, center zone, facing three quarter left.',
+      'Panel 1 subject lock: required visible subjects are Aki, reference Image 1 (Aki), role primary, center zone, facing three quarter left.',
     );
     expect(result.draftPrompt).toContain('Every listed subject must be visibly present and recognizable in this panel.');
     expect(result.draftPrompt).toContain('Do not substitute, merge, swap, or replace these subjects with any other character or reference image.');
-    expect(result.draftPrompt).toContain('Aki is primary in the center zone, facing three quarter left');
+    expect(result.draftPrompt).toContain('Aki, reference Image 1 (Aki), is primary in the center zone, facing three quarter left');
     expect(result.draftPrompt).toContain('Sound effect text in the artwork: "WHOOSH".');
-    expect(result.draftPrompt).toContain('Panel 1 dialogue by Aki: "I will finish this now." as speech at top.');
-    expect(result.draftPrompt).toContain('Dialogue lock for panel 1: line 1 must stay assigned to Aki exactly as written: "I will finish this now."');
+    expect(result.draftPrompt).toContain('Panel 1 dialogue by Aki, reference Image 1 (Aki): "I will finish this now." as speech at top.');
+    expect(result.draftPrompt).toContain('Dialogue lock for panel 1: line 1 must stay assigned to Aki, reference Image 1 (Aki) exactly as written: "I will finish this now."');
     expect(result.draftPrompt).toContain(
-      'Visual lock for panel 1: subjects=Aki; shot=full_body; angle=three_quarter; background cue="Collapsed alley at dusk.".',
+      'Visual lock for panel 1: subjects=Aki [Image 1 (Aki)]; shot=full_body; angle=three_quarter; background cue="Collapsed alley at dusk.".',
     );
     expect(result.draftPrompt).toContain('Reference image roles:');
     expect(result.draftPrompt).toContain('Style lock: anime manga illustration');
@@ -202,12 +204,12 @@ describe('PromptBuilder', () => {
     expect(result.compilerBrief).toContain(
       'Continuity note: Carry the moonlit tension forward into the next page.',
     );
-    expect(result.compilerBrief).toContain('- Dialogue lock: Dialogue lock for panel 1: line 1 must stay assigned to Aki exactly as written: "I will finish this now."');
+    expect(result.compilerBrief).toContain('- Dialogue lock: Dialogue lock for panel 1: line 1 must stay assigned to Aki, reference Image 1 (Aki) exactly as written: "I will finish this now."');
     expect(result.compilerBrief).toContain(
-      '- Subject lock: Panel 1 subject lock: required visible subjects are Aki, role primary, center zone, facing three quarter left.',
+      '- Subject lock: Panel 1 subject lock: required visible subjects are Aki, reference Image 1 (Aki), role primary, center zone, facing three quarter left.',
     );
     expect(result.compilerBrief).toContain(
-      '- Visual lock: Visual lock for panel 1: subjects=Aki; shot=full_body; angle=three_quarter; background cue="Collapsed alley at dusk.".',
+      '- Visual lock: Visual lock for panel 1: subjects=Aki [Image 1 (Aki)]; shot=full_body; angle=three_quarter; background cue="Collapsed alley at dusk.".',
     );
     expect(result.compilerBrief).not.toContain('[CHARACTER CONSISTENCY]');
     expect(result.compilerBrief).not.toContain('Scene continuity:');
@@ -353,6 +355,124 @@ describe('PromptBuilder', () => {
     });
 
     expect(countOccurrences(result.compilerBrief, 'Image 1 (Aki): Aki character reference.')).toBe(1);
+  });
+
+  it('binds reference image labels and structured visual anchors to panel subjects and speakers', async () => {
+    const panelRepository = new FakePanelRepository();
+    panelRepository.panels = [
+      {
+        ...buildPanel(),
+        entities: [
+          {
+            entityId: 'entity-2',
+            role: 'primary',
+            expression: 'calm',
+            customExpression: null,
+            action: 'standing_firm',
+            customAction: null,
+            position: 'center',
+            facingDirection: 'front',
+            effectNote: null,
+            stateId: null,
+          },
+          {
+            entityId: 'entity-1',
+            role: 'secondary',
+            expression: 'surprised',
+            customExpression: null,
+            action: 'standing_firm',
+            customAction: null,
+            position: 'right',
+            facingDirection: 'left',
+            effectNote: null,
+            stateId: null,
+          },
+        ],
+        dialogue: [
+          {
+            entityId: 'entity-2',
+            text: 'What is this?',
+            type: 'speech',
+            position: 'bottom',
+          },
+          {
+            entityId: 'entity-1',
+            text: 'You do not know rhythm games?',
+            type: 'speech',
+            position: 'right',
+          },
+        ],
+      },
+    ];
+    const entityRepository = new FakeEntityRepository();
+    entityRepository.entities = [
+      buildEntity(),
+      buildEntity({
+        id: 'entity-2',
+        name: 'Kasane',
+        promptSupplement: null,
+        freeDescription: null,
+        structuredFields: {
+          gender_expression: 'female',
+          hair: {
+            color: 'black',
+            length: 'short',
+            style: 'straight',
+            bangs: 'heavy',
+          },
+          hair_detail: {
+            front_shape: 'blunt front',
+            back_shape: 'clean bob back',
+          },
+          eyes: {
+            color: 'silver',
+            shape: 'sharp',
+          },
+          clothing: {
+            category: 'school',
+            main_color: 'navy',
+          },
+          outfit_detail: {
+            collar_shape: 'sailor collar',
+            skirt_or_pants_shape: 'short skirt',
+          },
+          build: 'slender',
+          height: 'average',
+        },
+      }),
+    ];
+    const builder = new PromptBuilder(
+      new FakePageRepository(),
+      panelRepository,
+      entityRepository,
+      new FakeCompositionGalleryRepository(),
+    );
+
+    const result = await builder.buildPagePrompt({
+      userId: 'user-1',
+      pageId: 'page-1',
+      requestKind: 'initial',
+      generationMode: 'thinking',
+    });
+
+    expect(result.draftPrompt).toContain(
+      'Image 1 (Kasane): Kasane character reference. Use this image only for Kasane',
+    );
+    expect(result.draftPrompt).toContain(
+      'Kasane visual identity: female, black short straight hair, heavy bangs, blunt front, clean bob back, silver sharp eyes, navy school outfit, sailor collar, short skirt, slender build, average height.',
+    );
+    expect(result.draftPrompt).toContain(
+      'Kasane, reference Image 1 (Kasane), visual identity female, black short straight hair',
+    );
+    expect(result.draftPrompt).toContain(
+      'line 1 must stay assigned to Kasane, reference Image 1 (Kasane), visual identity female, black short straight hair',
+    );
+    expect(result.draftPrompt).toContain(
+      'Do not assign this line to any other subject or reference image.',
+    );
+    expect(result.draftPrompt).toContain(
+      'Visual lock for panel 1: subjects=Kasane [Image 1 (Kasane), female, black short straight hair',
+    );
   });
 
   it('drops redundant long panel notes from the prompt brief', async () => {
@@ -604,7 +724,7 @@ function buildPanel(): Panel {
   };
 }
 
-function buildEntity(): Entity {
+function buildEntity(overrides: Partial<Entity> = {}): Entity {
   return {
     id: 'entity-1',
     workId: 'work-1',
@@ -618,6 +738,7 @@ function buildEntity(): Entity {
     status: 'ready',
     createdAt: new Date('2026-04-24T00:00:00.000Z'),
     updatedAt: new Date('2026-04-24T00:00:00.000Z'),
+    ...overrides,
   };
 }
 

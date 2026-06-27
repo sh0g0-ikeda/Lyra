@@ -37,6 +37,7 @@ export interface PromptBuilderPort {
 }
 
 interface NormalizedReferenceRole {
+  entityId: string | null;
   imageLabel: string;
   role: 'character_reference' | 'layout_reference';
   subject: string;
@@ -173,6 +174,7 @@ function normalizePagePrompt(
   const orderedPanels = [...panels].sort((left, right) => left.order - right.order);
   assertContiguousPanelOrder(orderedPanels);
   const referenceRoles = buildReferenceRoles(page, orderedPanels, entityMap, referencedEntityIds);
+  const referenceLabelByEntityId = buildReferenceLabelMap(referenceRoles);
 
   return {
     pageSummary: buildPageSummary(page, input, orderedPanels.length),
@@ -185,6 +187,7 @@ function normalizePagePrompt(
         orderedPanels[index - 1] ?? null,
         entityMap,
         compositionMap,
+        referenceLabelByEntityId,
         shouldBakeDialogueForPanel(page, panel),
       ),
     ),
@@ -282,6 +285,7 @@ function buildReferenceRoles(
       const anchor = summarizeEntityAnchor(entity);
       const panelScope = formatPanelOrderList(panelOrdersByEntityId.get(entityId) ?? []);
       return {
+        entityId,
         imageLabel: `Image ${index + 1} (${entityName})`,
         role: 'character_reference' as const,
         subject: entityName,
@@ -291,6 +295,7 @@ function buildReferenceRoles(
 
   if (page.layoutConfig.type === 'custom') {
     roles.push({
+      entityId: null,
       imageLabel: `Image ${roles.length + 1} (layout)`,
       role: 'layout_reference',
       subject: 'page layout',
@@ -302,11 +307,22 @@ function buildReferenceRoles(
   return roles;
 }
 
+function buildReferenceLabelMap(referenceRoles: NormalizedReferenceRole[]): Map<string, string> {
+  return new Map(
+    referenceRoles.flatMap((role) =>
+      role.role === 'character_reference' && role.entityId !== null
+        ? [[role.entityId, role.imageLabel] as const]
+        : [],
+    ),
+  );
+}
+
 function buildNormalizedPanelInstruction(
   panel: Panel,
   _previousPanel: Panel | null,
   entityMap: Map<string, Entity>,
   compositionMap: Map<string, CompositionGalleryItem>,
+  referenceLabelByEntityId: Map<string, string>,
   includeDialogue: boolean,
 ): NormalizedPanelInstruction {
   return {
@@ -314,28 +330,42 @@ function buildNormalizedPanelInstruction(
     role: panel.panelRole,
     size: panel.panelSize,
     situation: normalizePanelSituation(panel.situationText),
-    subjectLock: buildSubjectLock(panel, entityMap),
-    characterBeat: buildCharacterBeat(panel.entities, entityMap),
+    subjectLock: buildSubjectLock(panel, entityMap, referenceLabelByEntityId),
+    characterBeat: buildCharacterBeat(panel.entities, entityMap, referenceLabelByEntityId),
     compositionBeat: buildCompositionBeat(panel, compositionMap),
-    dialogueBeats: includeDialogue ? buildDialogueBeats(panel, entityMap) : [],
-    dialogueLock: includeDialogue ? buildDialogueLock(panel, entityMap) : null,
-    visualLock: buildVisualLock(panel, entityMap, compositionMap),
+    dialogueBeats: includeDialogue ? buildDialogueBeats(panel, entityMap, referenceLabelByEntityId) : [],
+    dialogueLock: includeDialogue ? buildDialogueLock(panel, entityMap, referenceLabelByEntityId) : null,
+    visualLock: buildVisualLock(panel, entityMap, compositionMap, referenceLabelByEntityId),
   };
 }
 
-function buildSubjectLock(panel: Panel, entityMap: Map<string, Entity>): string {
+function buildSubjectLock(
+  panel: Panel,
+  entityMap: Map<string, Entity>,
+  referenceLabelByEntityId: Map<string, string>,
+): string {
   const assignments = dedupeAssignmentsByEntity(panel.entities);
   if (assignments.length === 0) {
     return `Panel ${panel.order} subject lock: no named character is assigned to this panel; do not draw any named or referenced character in this panel. Background crowds must remain generic only.`;
   }
 
   const details = assignments.map((assignment) => {
-    const entityName = entityMap.get(assignment.entityId)?.name ?? `Unknown entity ${assignment.entityId}`;
+    const entity = entityMap.get(assignment.entityId);
+    const entityName = entity?.name ?? `Unknown entity ${assignment.entityId}`;
+    const referenceLabel = referenceLabelByEntityId.get(assignment.entityId);
+    const visualAnchor = summarizeEntityVisualIdentity(entity);
     const position = `${humanizeToken(assignment.position)} zone`;
     const facing = assignment.facingDirection === null
       ? null
       : `facing ${humanizeToken(assignment.facingDirection)}`;
-    return [entityName, `role ${assignment.role}`, position, facing]
+    return [
+      entityName,
+      referenceLabel === undefined ? null : `reference ${referenceLabel}`,
+      visualAnchor === null ? null : `visual identity ${visualAnchor}`,
+      `role ${assignment.role}`,
+      position,
+      facing,
+    ]
       .filter((value): value is string => value !== null)
       .join(', ');
   });
@@ -361,6 +391,7 @@ function dedupeAssignmentsByEntity(assignments: PanelEntityAssignment[]): PanelE
 function buildCharacterBeat(
   assignments: PanelEntityAssignment[],
   entityMap: Map<string, Entity>,
+  referenceLabelByEntityId: Map<string, string>,
 ): string {
   if (assignments.length === 0) {
     return 'No character is explicitly assigned to this panel.';
@@ -370,10 +401,17 @@ function buildCharacterBeat(
     .map((assignment) => {
       const entity = entityMap.get(assignment.entityId);
       const entityName = entity?.name ?? `Unknown entity ${assignment.entityId}`;
+      const referenceLabel = referenceLabelByEntityId.get(assignment.entityId);
+      const visualAnchor = summarizeEntityVisualIdentity(entity);
       const expression = assignment.expression === 'custom' ? assignment.customExpression : assignment.expression;
       const action = assignment.action === 'custom' ? assignment.customAction : assignment.action;
       const parts = [
-        `${entityName} is ${assignment.role} in the ${assignment.position} zone`,
+        [
+          entityName,
+          referenceLabel === undefined ? null : `reference ${referenceLabel}`,
+          visualAnchor === null ? null : `visual identity ${visualAnchor}`,
+        ].filter((value): value is string => value !== null).join(', '),
+        `is ${assignment.role} in the ${assignment.position} zone`,
         assignment.facingDirection === null ? null : `facing ${humanizeToken(assignment.facingDirection)}`,
         expression === null ? null : `showing ${humanizeToken(expression)}`,
         action === null ? null : `with ${humanizeToken(action)} body language`,
@@ -441,11 +479,21 @@ function buildCompositionBeat(
   return parts.length === 0 ? 'No additional composition note is provided.' : parts.join(' ');
 }
 
-function buildDialogueBeats(panel: Panel, entityMap: Map<string, Entity>): string[] {
-  return panel.dialogue.map((dialogue) => formatDialogueLine(panel.order, dialogue, entityMap));
+function buildDialogueBeats(
+  panel: Panel,
+  entityMap: Map<string, Entity>,
+  referenceLabelByEntityId: Map<string, string>,
+): string[] {
+  return panel.dialogue.map((dialogue) =>
+    formatDialogueLine(panel.order, dialogue, entityMap, referenceLabelByEntityId),
+  );
 }
 
-function buildDialogueLock(panel: Panel, entityMap: Map<string, Entity>): string | null {
+function buildDialogueLock(
+  panel: Panel,
+  entityMap: Map<string, Entity>,
+  referenceLabelByEntityId: Map<string, string>,
+): string | null {
   if (panel.dialogue.length === 0) {
     return null;
   }
@@ -456,8 +504,8 @@ function buildDialogueLock(panel: Panel, entityMap: Map<string, Entity>): string
       return `line ${ordinal} is narration text and must remain narration, not character speech: "${dialogue.text}"`;
     }
 
-    const speaker = entityMap.get(dialogue.entityId)?.name ?? 'Unknown speaker';
-    return `line ${ordinal} must stay assigned to ${speaker} exactly as written: "${dialogue.text}"`;
+    const speaker = formatEntityReferenceIdentity(dialogue.entityId, entityMap, referenceLabelByEntityId);
+    return `line ${ordinal} must stay assigned to ${speaker} exactly as written: "${dialogue.text}". Do not assign this line to any other subject or reference image`;
   });
 
   return `Dialogue lock for panel ${panel.order}: ${lines.join('; ')}. Do not omit, paraphrase, merge, split, or reassign these lines.`;
@@ -467,11 +515,12 @@ function buildVisualLock(
   panel: Panel,
   entityMap: Map<string, Entity>,
   compositionMap: Map<string, CompositionGalleryItem>,
+  referenceLabelByEntityId: Map<string, string>,
 ): string | null {
   const subjectNames = panel.entities
     .slice()
     .sort((left, right) => assignmentRoleWeight(left.role) - assignmentRoleWeight(right.role))
-    .map((assignment) => entityMap.get(assignment.entityId)?.name ?? assignment.entityId)
+    .map((assignment) => formatEntityVisualLockSubject(assignment.entityId, entityMap, referenceLabelByEntityId))
     .filter((value, index, values) => values.indexOf(value) === index);
   const backgroundCue = sanitizePromptField(panel.backgroundNote, 80) ?? '';
   const galleryItem =
@@ -705,8 +754,11 @@ function formatDialogueLine(
   panelOrder: number,
   dialogue: PanelDialogueLine,
   entityMap: Map<string, Entity>,
+  referenceLabelByEntityId: Map<string, string>,
 ): string {
-  const speaker = dialogue.entityId === null ? null : entityMap.get(dialogue.entityId)?.name ?? 'Unknown speaker';
+  const speaker = dialogue.entityId === null
+    ? null
+    : formatEntityReferenceIdentity(dialogue.entityId, entityMap, referenceLabelByEntityId);
   const prefix =
     speaker === null
       ? `Panel ${panelOrder} dialogue`
@@ -812,14 +864,159 @@ function promptFieldsLookEquivalent(left: string, right: string): boolean {
 }
 
 function summarizeEntityAnchor(entity: Entity | undefined): string {
+  const visualIdentity = summarizeEntityVisualIdentity(entity);
   const source = entity?.promptSupplement ?? entity?.freeDescription ?? '';
   const normalized = normalizeWhitespace(source);
-  if (normalized.length === 0) {
-    return '';
+  const parts: string[] = [];
+
+  if (visualIdentity !== null) {
+    parts.push(`${entity?.name ?? 'Character'} visual identity: ${visualIdentity}.`);
   }
 
-  const trimmed = normalized.length > 160 ? `${normalized.slice(0, 157).trimEnd()}...` : normalized;
-  return `Keep these anchor traits stable: ${trimmed}`;
+  if (normalized.length > 0) {
+    const trimmed = normalized.length > 160 ? `${normalized.slice(0, 157).trimEnd()}...` : normalized;
+    parts.push(`Keep these anchor traits stable: ${trimmed}`);
+  }
+
+  return parts.join(' ');
+}
+
+function formatEntityReferenceIdentity(
+  entityId: string,
+  entityMap: Map<string, Entity>,
+  referenceLabelByEntityId: Map<string, string>,
+): string {
+  const entity = entityMap.get(entityId);
+  const entityName = entity?.name ?? `Unknown entity ${entityId}`;
+  const referenceLabel = referenceLabelByEntityId.get(entityId);
+  const visualIdentity = summarizeEntityVisualIdentity(entity);
+  return [
+    entityName,
+    referenceLabel === undefined ? null : `reference ${referenceLabel}`,
+    visualIdentity === null ? null : `visual identity ${visualIdentity}`,
+  ]
+    .filter((value): value is string => value !== null)
+    .join(', ');
+}
+
+function formatEntityVisualLockSubject(
+  entityId: string,
+  entityMap: Map<string, Entity>,
+  referenceLabelByEntityId: Map<string, string>,
+): string {
+  const entity = entityMap.get(entityId);
+  const entityName = entity?.name ?? entityId;
+  const referenceLabel = referenceLabelByEntityId.get(entityId);
+  const visualIdentity = summarizeEntityVisualIdentity(entity);
+  const details = [
+    referenceLabel,
+    visualIdentity,
+  ].filter((value): value is string => value !== undefined && value !== null);
+  return details.length === 0 ? entityName : `${entityName} [${details.join(', ')}]`;
+}
+
+function summarizeEntityVisualIdentity(entity: Entity | undefined): string | null {
+  if (entity === undefined) {
+    return null;
+  }
+
+  const fields = entity.structuredFields;
+  const parts = [
+    readFieldString(fields, 'gender_expression'),
+    summarizeHair(fields),
+    summarizeEyes(fields),
+    summarizeClothing(fields),
+    summarizeBody(fields),
+    summarizeExpression(fields),
+  ].filter((value): value is string => value !== null);
+
+  if (parts.length === 0) {
+    return null;
+  }
+
+  const summary = parts.join(', ');
+  return summary.length > 320 ? `${summary.slice(0, 317).trimEnd()}...` : summary;
+}
+
+function summarizeHair(fields: Record<string, unknown>): string | null {
+  const hair = readRecord(fields.hair);
+  const hairDetail = readRecord(fields.hair_detail);
+  const values = [
+    readFieldString(hair, 'color'),
+    readFieldString(hair, 'length'),
+    readFieldString(hair, 'style'),
+  ].filter((value): value is string => value !== null);
+  const detailValues = [
+    readFieldString(hair, 'bangs') === null ? null : `${readFieldString(hair, 'bangs')} bangs`,
+    readFieldString(hair, 'arrangement'),
+    readFieldString(hairDetail, 'front_shape'),
+    readFieldString(hairDetail, 'back_shape'),
+    readFieldString(hairDetail, 'side_hair'),
+  ].filter((value): value is string => value !== null);
+  const base = values.length === 0 ? null : `${values.join(' ')} hair`;
+  const allValues = [base, ...detailValues].filter((value): value is string => value !== null);
+  return allValues.length === 0 ? null : allValues.join(', ');
+}
+
+function summarizeEyes(fields: Record<string, unknown>): string | null {
+  const eyes = readRecord(fields.eyes);
+  const values = [
+    readFieldString(eyes, 'color'),
+    readFieldString(eyes, 'shape'),
+  ].filter((value): value is string => value !== null);
+  return values.length === 0 ? null : `${values.join(' ')} eyes`;
+}
+
+function summarizeClothing(fields: Record<string, unknown>): string | null {
+  const clothing = readRecord(fields.clothing);
+  const outfit = readRecord(fields.outfit_detail);
+  const values = [
+    readFieldString(clothing, 'main_color'),
+    readFieldString(clothing, 'category'),
+  ].filter((value): value is string => value !== null);
+  const detailValues = [
+    readFieldString(clothing, 'description'),
+    readFieldString(outfit, 'collar_shape'),
+    readFieldString(outfit, 'sleeve_length'),
+    readFieldString(outfit, 'skirt_or_pants_shape'),
+    readFieldString(outfit, 'shoes'),
+  ].filter((value): value is string => value !== null);
+  const base = values.length === 0 ? null : `${values.join(' ')} outfit`;
+  const allValues = [base, ...detailValues].filter((value): value is string => value !== null);
+  return allValues.length === 0 ? null : allValues.join(', ');
+}
+
+function summarizeBody(fields: Record<string, unknown>): string | null {
+  const values = [
+    readFieldString(fields, 'build') === null ? null : `${readFieldString(fields, 'build')} build`,
+    readFieldString(fields, 'height') === null ? null : `${readFieldString(fields, 'height')} height`,
+    readFieldString(fields, 'age_range') === null ? null : `${readFieldString(fields, 'age_range')} age`,
+  ].filter((value): value is string => value !== null);
+  return values.length === 0 ? null : values.join(', ');
+}
+
+function summarizeExpression(fields: Record<string, unknown>): string | null {
+  const expression = readFieldString(fields, 'default_expression');
+  const impression = readFieldString(fields, 'first_impression');
+  const values = [
+    expression === null ? null : `${expression} expression`,
+    impression,
+  ].filter((value): value is string => value !== null);
+  return values.length === 0 ? null : values.join(', ');
+}
+
+function readRecord(value: unknown): Record<string, unknown> {
+  return isRecord(value) ? value : {};
+}
+
+function readFieldString(fields: Record<string, unknown>, key: string): string | null {
+  const value = fields[key];
+  if (typeof value !== 'string') {
+    return null;
+  }
+
+  const normalized = normalizeWhitespace(humanizeToken(value)).replace(/[;|]/gu, ',');
+  return normalized.length === 0 ? null : normalized;
 }
 
 function collectOrderedEntityIds(panels: Panel[]): string[] {
