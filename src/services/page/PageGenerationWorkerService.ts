@@ -4,6 +4,7 @@ import { sanitizePersistedErrorMessage } from '../../lib/errorSanitizer.js';
 import type { GenerationJob } from '../../domain/types/job.js';
 import type {
   PageGenerationInputImage,
+  PageGenerationInputSnapshot,
   PersistedPageGenerationJobParams,
 } from '../../domain/types/pageGeneration.js';
 import type { PageStatus } from '../../domain/types/page.js';
@@ -16,6 +17,7 @@ import type { PromptBuilderPort } from './PromptBuilder.js';
 import type {
   CompletePageGenerationInput,
   PageGenerationExecutionRepository,
+  SavePageGenerationInputSnapshotInput,
   TouchPageGenerationProgressInput,
 } from '../../repositories/PageGenerationExecutionRepository.js';
 
@@ -37,6 +39,16 @@ export interface PagePromptCompilationMetadata {
   compilerModel: string | null;
   compilerPromptVersion: string | null;
   compilerError: string | null;
+}
+
+export interface PageGenerationStageTimingsMs {
+  prompt_build: number;
+  prompt_compile: number;
+  reference_images: number;
+  planning: number;
+  rendering: number;
+  storage: number;
+  total_before_persist: number;
 }
 
 interface CompiledPagePromptResult {
@@ -128,25 +140,36 @@ export class PageGenerationWorkerService {
     }
 
     try {
+      const startedAtMs = Date.now();
+      const stageTimingsMs = createEmptyPageGenerationStageTimings();
       await this.touchJobProgress(job, 'Building page prompt.');
-      const builtPrompt = await this.promptBuilder.buildPagePrompt({
-        userId: job.userId,
-        pageId: params.page_id,
-        requestKind: params.request_kind,
-        generationMode: params.generation_mode,
-      });
+      const builtPrompt = await measurePageGenerationStage(stageTimingsMs, 'prompt_build', () =>
+        this.promptBuilder.buildPagePrompt({
+          userId: job.userId,
+          pageId: params.page_id,
+          requestKind: params.request_kind,
+          generationMode: params.generation_mode,
+        }),
+      );
+      await this.saveInputSnapshot(job, builtPrompt.inputSnapshot);
       await this.touchJobProgress(job, 'Compiling page prompt.');
-      const compiledPromptResult = await compilePromptSafely(this.promptCompiler, builtPrompt);
+      const compiledPromptResult = await measurePageGenerationStage(stageTimingsMs, 'prompt_compile', () =>
+        compilePromptSafely(this.promptCompiler, builtPrompt),
+      );
       const compiledPrompt = compiledPromptResult.compiledPrompt;
       await this.touchJobProgress(job, 'Preparing reference images.');
-      const inputImages = await this.inputImageBuilder.buildInputImages({
-        userId: job.userId,
-        pageId: params.page_id,
-      });
+      const inputImages = await measurePageGenerationStage(stageTimingsMs, 'reference_images', () =>
+        this.inputImageBuilder.buildInputImages({
+          userId: job.userId,
+          pageId: params.page_id,
+        }),
+      );
+      await this.saveInputSnapshot(job, appendInputImageSnapshot(builtPrompt.inputSnapshot, inputImages));
 
       const internalPlan = params.requires_planner
         ? normalizeOptionalInternalPlan(
-            await this.withProgressHeartbeat(job, 'Planning page image generation.', () =>
+            await measurePageGenerationStage(stageTimingsMs, 'planning', () =>
+              this.withProgressHeartbeat(job, 'Planning page image generation.', () =>
               this.planner.buildPlan({
                 jobId: job.id,
                 userId: job.userId,
@@ -155,34 +178,40 @@ export class PageGenerationWorkerService {
                 generationMode: params.generation_mode,
                 prompt: compiledPrompt.prompt,
               }),
+              ),
             ),
           )
         : null;
 
-      const renderResult = await this.withProgressHeartbeat(job, 'Requesting page image from image model.', () =>
-        this.renderer.render({
-          jobId: job.id,
-          userId: job.userId,
-          pageId: params.page_id,
-          requestKind: params.request_kind,
-          generationMode: params.generation_mode,
-          prompt: compiledPrompt.prompt,
-          quality: params.quality,
-          internalPlan,
-          inputImages,
-        }),
+      const renderResult = await measurePageGenerationStage(stageTimingsMs, 'rendering', () =>
+        this.withProgressHeartbeat(job, 'Requesting page image from image model.', () =>
+          this.renderer.render({
+            jobId: job.id,
+            userId: job.userId,
+            pageId: params.page_id,
+            requestKind: params.request_kind,
+            generationMode: params.generation_mode,
+            prompt: compiledPrompt.prompt,
+            quality: params.quality,
+            internalPlan,
+            inputImages,
+          }),
+        ),
       );
       assertRenderedPageImage(renderResult);
 
-      const storedImage = await this.withProgressHeartbeat(job, 'Storing generated page image.', () =>
-        this.storage.store({
-          jobId: job.id,
-          userId: job.userId,
-          pageId: params.page_id,
-          imageData: renderResult.imageData,
-          mimeType: renderResult.mimeType,
-        }),
+      const storedImage = await measurePageGenerationStage(stageTimingsMs, 'storage', () =>
+        this.withProgressHeartbeat(job, 'Storing generated page image.', () =>
+          this.storage.store({
+            jobId: job.id,
+            userId: job.userId,
+            pageId: params.page_id,
+            imageData: renderResult.imageData,
+            mimeType: renderResult.mimeType,
+          }),
+        ),
       );
+      stageTimingsMs.total_before_persist = Date.now() - startedAtMs;
 
       await this.touchJobProgress(job, 'Saving generated page result.');
       const completed = await this.executionRepository.completePageGeneration(
@@ -195,7 +224,8 @@ export class PageGenerationWorkerService {
           compilerModel: compiledPrompt.compilerModel,
           compilerPromptVersion: compiledPrompt.compilerPromptVersion,
           compilerError: compiledPromptResult.compilerError,
-        }),
+        },
+        stageTimingsMs),
       );
       if (!completed) {
         throw new ConfigurationError('Failed to persist generated page image');
@@ -238,6 +268,25 @@ export class PageGenerationWorkerService {
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
       console.warn(`[page-generation-worker] failed to update progress for job ${job.id}: ${reason}`);
+    }
+  }
+
+  private async saveInputSnapshot(
+    job: GenerationJob,
+    snapshot: SavePageGenerationInputSnapshotInput['snapshot'],
+  ): Promise<void> {
+    const input: SavePageGenerationInputSnapshotInput = {
+      jobId: job.id,
+      userId: job.userId,
+      snapshot,
+      savedAt: new Date().toISOString(),
+    };
+
+    try {
+      await this.executionRepository.savePageGenerationInputSnapshot(input);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      console.warn(`[page-generation-worker] failed to save input snapshot for job ${job.id}: ${reason}`);
     }
   }
 
@@ -305,6 +354,31 @@ function unrefTimer(timer: ReturnType<typeof setInterval>): void {
   }
 }
 
+function createEmptyPageGenerationStageTimings(): PageGenerationStageTimingsMs {
+  return {
+    prompt_build: 0,
+    prompt_compile: 0,
+    reference_images: 0,
+    planning: 0,
+    rendering: 0,
+    storage: 0,
+    total_before_persist: 0,
+  };
+}
+
+async function measurePageGenerationStage<T>(
+  timings: PageGenerationStageTimingsMs,
+  stage: keyof Omit<PageGenerationStageTimingsMs, 'total_before_persist'>,
+  operation: () => Promise<T>,
+): Promise<T> {
+  const startedAtMs = Date.now();
+  try {
+    return await operation();
+  } finally {
+    timings[stage] = Date.now() - startedAtMs;
+  }
+}
+
 function assertRenderedPageImage(renderResult: RenderPageImageResult): void {
   if (renderResult.imageData.length === 0) {
     throw new ConfigurationError('Page image renderer returned empty image data');
@@ -323,6 +397,7 @@ function buildCompletionInput(
   storedImage: StoredPageImage,
   renderResult: RenderPageImageResult,
   promptMetadata: PagePromptCompilationMetadata,
+  stageTimingsMs: PageGenerationStageTimingsMs,
 ): CompletePageGenerationInput {
   return {
     jobId: job.id,
@@ -336,6 +411,20 @@ function buildCompletionInput(
     costUsd: renderResult.costUsd,
     openaiRequestId: renderResult.openaiRequestId,
     promptMetadata,
+    stageTimingsMs,
+  };
+}
+
+function appendInputImageSnapshot(
+  snapshot: PageGenerationInputSnapshot,
+  inputImages: PageGenerationInputImage[],
+): PageGenerationInputSnapshot {
+  return {
+    ...snapshot,
+    inputImages: inputImages.map((image) => ({
+      role: image.role,
+      label: image.label,
+    })),
   };
 }
 
@@ -343,6 +432,18 @@ async function compilePromptSafely(
   compiler: PagePromptCompilerPort,
   builtPrompt: Awaited<ReturnType<PromptBuilderPort['buildPagePrompt']>>,
 ): Promise<CompiledPagePromptResult> {
+  if (shouldUseDraftPromptDirectly(builtPrompt.compilerBrief)) {
+    return {
+      compiledPrompt: {
+        prompt: builtPrompt.draftPrompt,
+        compilerProvider: 'none',
+        compilerModel: null,
+        compilerPromptVersion: null,
+      },
+      compilerError: 'Page prompt compiler skipped because deterministic panel locks are present',
+    };
+  }
+
   try {
     const compiledPrompt = await compiler.compilePrompt({
       draftPrompt: builtPrompt.draftPrompt,
@@ -389,6 +490,10 @@ async function compilePromptSafely(
       compilerError: sanitizePersistedErrorMessage(error, 'Page prompt compiler failed'),
     };
   }
+}
+
+function shouldUseDraftPromptDirectly(compilerBrief: string): boolean {
+  return extractRequiredDialogueLocks(compilerBrief).length > 0 || extractRequiredVisualLocks(compilerBrief).length > 0;
 }
 
 function findMissingDialogueLocks(compilerBrief: string, compiledPrompt: string): string[] {

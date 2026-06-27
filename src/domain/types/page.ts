@@ -158,6 +158,7 @@ export interface EpisodePagePlanContext {
     pageId: string;
     pageNumber: number;
     frameCount: number;
+    layoutConfig: Record<string, unknown>;
     status: PageStatus;
     dialogueMode: PageDialogueMode;
     pageDialogueToggle: boolean;

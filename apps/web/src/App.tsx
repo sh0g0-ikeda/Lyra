@@ -992,6 +992,15 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   'Splash 1': '1枚絵',
   'Action 5': 'アクション5コマ',
   'Battle 7': 'バトル7コマ',
+  'Vertical 2': '上下2コマ',
+  'Bottom wide 3': '下段ワイド3コマ',
+  'Wide top 4': '上段ワイド4コマ',
+  'Tall left 4': '左大ゴマ4コマ',
+  'Balanced 5': '均等5コマ',
+  'Top wide 5': '上段ワイド5コマ',
+  'Split 6': '左右分割6コマ',
+  Preview: 'プレビュー',
+  'Custom / unsynced': 'カスタム / 未同期',
   'Main entity IDs': '主要キャラID',
   'New chapter title': '新しい章タイトル',
   'Untitled chapter': '無題の章',
@@ -1185,6 +1194,7 @@ function formatActionSuccessMessage(language: UiLanguage, actionLabel: string, t
   const isAsyncGenerationAction =
     actionLabel === 'Generate page' ||
     actionLabel === 'Generate reference' ||
+    actionLabel === 'Generate page skeleton' ||
     actionLabel === 'Apply story plan';
   if (language === 'ja') {
     return isAsyncGenerationAction ? `${translatedLabel}を開始` : `${translatedLabel}完了`;
@@ -1805,6 +1815,7 @@ function StudioShell(props: {
   const [exportFilename, setExportFilename] = useState('lyra-pages');
   const [lightboxImageUrl, setLightboxImageUrl] = useState<string | null>(null);
   const [lightboxTitle, setLightboxTitle] = useState('');
+  const [layoutPreviewTemplateId, setLayoutPreviewTemplateId] = useState<string | null>(null);
   const handledJobsRef = useRef<Set<string>>(new Set());
   const lastWorkspaceRefreshRef = useRef(0);
   const billingVerificationTargetRef = useRef<BillingReturnMarker | null>(null);
@@ -2017,6 +2028,25 @@ function StudioShell(props: {
   const selectedPagePanelCount = panelsQuery.data?.panels.length ?? selectedPage?.panel_count ?? 0;
   const selectedPageHasFramePanelMismatch =
     selectedPage !== null && selectedPageFrameCount !== selectedPagePanelCount;
+
+  useEffect(() => {
+    if (selectedPage === null) {
+      setFrameTemplateId('standard_4');
+      return;
+    }
+
+    const nextTemplateId = resolveFrameTemplateSelection(
+      selectedPage.layout_config,
+      selectedPagePanelCount,
+      selectedPageFrameCount,
+    );
+    setFrameTemplateId((current) => (current === nextTemplateId ? current : nextTemplateId));
+  }, [
+    selectedPage,
+    selectedPageFrameCount,
+    selectedPagePanelCount,
+  ]);
+
   const generatePageDisabled =
     busyAction === 'Generate page' || selectedPageHasFramePanelMismatch;
   const entityPreviewGenerationMessage =
@@ -2832,7 +2862,7 @@ function StudioShell(props: {
                     actions={
                       <div className="toolbar">
                         <button
-                          className="primary-button"
+                          className="primary-button skeleton-plan-button"
                           disabled={skeletonActionDisabled || selectedEpisodePageSkeletonJob !== null}
                           onClick={() => {
                             if (selectedEpisode === null) {
@@ -2879,7 +2909,7 @@ function StudioShell(props: {
                           {translateUiString(uiLanguage, skeletonActionLabel)}
                         </button>
                         <button
-                          className="ghost-button"
+                          className="secondary-button story-plan-button"
                           disabled={
                             selectedEpisode === null ||
                             busyAction === 'Apply story plan' ||
@@ -3981,6 +4011,7 @@ function StudioShell(props: {
                           {page.generated_image !== null ? (
                             <AuthenticatedImage
                               loadImage={() => api.exportPageImage(page.id)}
+                              loading="lazy"
                               onDoubleClick={(url) => openImageLightbox(url, `${translateUiString(uiLanguage, 'Page')} ${page.page_number}`)}
                               placeholderClassName="page-placeholder"
                               queryKey={scopedQueryKey(['page-image', page.id, page.generated_image.generated_at])}
@@ -4217,6 +4248,7 @@ function StudioShell(props: {
                             <AuthenticatedImage
                               className="generated-image"
                               loadImage={() => api.exportPageImage(selectedPage.id)}
+                              loading="eager"
                               onDoubleClick={(url) => openImageLightbox(url, `${translateUiString(uiLanguage, 'Page')} ${selectedPage.page_number}`)}
                               placeholderClassName="page-placeholder generated-image"
                               queryKey={scopedQueryKey(['page-image', selectedPage.id, selectedPage.generated_image.generated_at])}
@@ -4234,6 +4266,11 @@ function StudioShell(props: {
                             <label className="field" style={{ minWidth: '14rem' }}>
                               <span>{translateUiString(uiLanguage, 'Template')}</span>
                               <select value={frameTemplateId} onChange={(event) => setFrameTemplateId(event.target.value)}>
+                                {frameTemplateId === CUSTOM_FRAME_TEMPLATE_ID ? (
+                                  <option value={CUSTOM_FRAME_TEMPLATE_ID}>
+                                    {translateUiString(uiLanguage, 'Custom / unsynced')}
+                                  </option>
+                                ) : null}
                                 {FRAME_TEMPLATE_OPTIONS.map(([value, label]) => (
                                   <option key={value} value={value}>
                                     {translateUiString(uiLanguage, label)}
@@ -4243,6 +4280,16 @@ function StudioShell(props: {
                             </label>
                             <button
                               className="ghost-button"
+                              disabled={FRAME_TEMPLATE_PANEL_COUNTS[frameTemplateId] === undefined}
+                              onClick={() => setLayoutPreviewTemplateId(frameTemplateId)}
+                              type="button"
+                            >
+                              <LayoutGrid size={16} />
+                              {translateUiString(uiLanguage, 'Preview')}
+                            </button>
+                            <button
+                              className="ghost-button"
+                              disabled={FRAME_TEMPLATE_PANEL_COUNTS[frameTemplateId] === undefined}
                               onClick={() =>
                                 void runAction('Apply panel layout', async () => {
                                   const nextPanelCount = FRAME_TEMPLATE_PANEL_COUNTS[frameTemplateId] ?? selectedPagePanelCount;
@@ -4718,6 +4765,19 @@ function StudioShell(props: {
           </div>
         </div>
       ) : null}
+      {layoutPreviewTemplateId !== null && FRAME_TEMPLATE_PREVIEWS[layoutPreviewTemplateId] !== undefined ? (
+        <div className="image-lightbox" onClick={() => setLayoutPreviewTemplateId(null)} role="presentation">
+          <div className="layout-preview-dialog" onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true">
+            <div className="image-lightbox-header">
+              <strong>{getFrameTemplateDisplayLabel(uiLanguage, layoutPreviewTemplateId)}</strong>
+              <button className="ghost-button image-lightbox-close" onClick={() => setLayoutPreviewTemplateId(null)} type="button">
+                ×
+              </button>
+            </div>
+            <LayoutTemplatePreview templateId={layoutPreviewTemplateId} />
+          </div>
+        </div>
+      ) : null}
       </div>
     </UiLanguageContext.Provider>
   );
@@ -4728,6 +4788,7 @@ function AuthenticatedImage(props: {
   className?: string;
   enabled?: boolean;
   loadImage: () => Promise<BlobResponse>;
+  loading?: 'eager' | 'lazy';
   onDoubleClick?: (url: string) => void;
   placeholderClassName?: string;
   queryKey: readonly unknown[];
@@ -4758,13 +4819,20 @@ function AuthenticatedImage(props: {
   }, [imageQuery.data]);
 
   if (objectUrl === null) {
-    return <div className={props.placeholderClassName ?? 'thumb-placeholder'} />;
+    const placeholderClassName = `${props.placeholderClassName ?? 'thumb-placeholder'} image-loading-placeholder`.trim();
+    return (
+      <div className={placeholderClassName}>
+        {imageQuery.isFetching ? <span className="image-loading-dot" aria-hidden="true" /> : null}
+      </div>
+    );
   }
 
   return (
     <img
       alt={props.alt ?? ''}
       className={props.className}
+      decoding="async"
+      loading={props.loading ?? 'lazy'}
       onDoubleClick={
         props.onDoubleClick === undefined
           ? undefined
@@ -5042,6 +5110,38 @@ function ProgressBar(props: {
       aria-valuenow={normalizedPercent ?? undefined}
     >
       <div className="progress-bar-fill" style={normalizedPercent === null ? undefined : { width: `${normalizedPercent}%` }} />
+    </div>
+  );
+}
+
+function LayoutTemplatePreview(props: { templateId: string }) {
+  const frames = FRAME_TEMPLATE_PREVIEWS[props.templateId] ?? [];
+
+  return (
+    <div className="layout-preview-body">
+      <svg aria-hidden="true" className="layout-preview-svg" viewBox="0 0 100 140">
+        <rect className="layout-preview-page" height="140" rx="2" width="100" x="0" y="0" />
+        {frames.map((frame, index) => (
+          <polygon
+            className="layout-preview-frame"
+            key={`${props.templateId}-${index}`}
+            points={frame.vertices.map((vertex) => `${vertex.x * 100},${vertex.y * 140}`).join(' ')}
+          />
+        ))}
+        {frames.map((frame, index) => {
+          const center = getFramePreviewCenter(frame.vertices);
+          return (
+            <text
+              className="layout-preview-number"
+              key={`${props.templateId}-label-${index}`}
+              x={center.x * 100}
+              y={center.y * 140}
+            >
+              {index + 1}
+            </text>
+          );
+        })}
+      </svg>
     </div>
   );
 }
@@ -7401,6 +7501,13 @@ const FRAME_TEMPLATE_OPTIONS: Array<[string, string]> = [
   ['splash_1', 'Splash 1'],
   ['action_5', 'Action 5'],
   ['battle_7', 'Battle 7'],
+  ['vertical_2', 'Vertical 2'],
+  ['bottom_wide_3', 'Bottom wide 3'],
+  ['wide_top_4', 'Wide top 4'],
+  ['tall_left_4', 'Tall left 4'],
+  ['balanced_5', 'Balanced 5'],
+  ['top_wide_5', 'Top wide 5'],
+  ['split_6', 'Split 6'],
 ];
 const FRAME_TEMPLATE_PANEL_COUNTS: Record<string, number> = {
   standard_4: 4,
@@ -7411,7 +7518,194 @@ const FRAME_TEMPLATE_PANEL_COUNTS: Record<string, number> = {
   splash_1: 1,
   action_5: 5,
   battle_7: 7,
+  vertical_2: 2,
+  bottom_wide_3: 3,
+  wide_top_4: 4,
+  tall_left_4: 4,
+  balanced_5: 5,
+  top_wide_5: 5,
+  split_6: 6,
 };
+const CUSTOM_FRAME_TEMPLATE_ID = '__custom__';
+const DEFAULT_FRAME_TEMPLATE_BY_PANEL_COUNT: Record<number, string> = {
+  1: 'splash_1',
+  2: 'climax_2',
+  3: 'top_wide_3',
+  4: 'standard_4',
+  5: 'action_5',
+  6: 'standard_6',
+  7: 'battle_7',
+  8: 'dense_8',
+};
+const FRAME_TEMPLATE_LABELS = Object.fromEntries(FRAME_TEMPLATE_OPTIONS) as Record<string, string>;
+const FRAME_TEMPLATE_PREVIEWS: Record<string, Array<{ vertices: Array<{ x: number; y: number }> }>> = {
+  standard_4: [
+    framePreviewRect(0, 0, 0.5, 0.5),
+    framePreviewRect(0.5, 0, 1, 0.5),
+    framePreviewRect(0, 0.5, 0.5, 1),
+    framePreviewRect(0.5, 0.5, 1, 1),
+  ],
+  top_wide_3: [
+    framePreviewRect(0, 0, 1, 0.5),
+    framePreviewRect(0, 0.5, 0.5, 1),
+    framePreviewRect(0.5, 0.5, 1, 1),
+  ],
+  standard_6: [
+    framePreviewRect(0, 0, 1 / 3, 0.5),
+    framePreviewRect(1 / 3, 0, 2 / 3, 0.5),
+    framePreviewRect(2 / 3, 0, 1, 0.5),
+    framePreviewRect(0, 0.5, 1 / 3, 1),
+    framePreviewRect(1 / 3, 0.5, 2 / 3, 1),
+    framePreviewRect(2 / 3, 0.5, 1, 1),
+  ],
+  dense_8: [
+    framePreviewRect(0, 0, 0.25, 0.5),
+    framePreviewRect(0.25, 0, 0.5, 0.5),
+    framePreviewRect(0.5, 0, 0.75, 0.5),
+    framePreviewRect(0.75, 0, 1, 0.5),
+    framePreviewRect(0, 0.5, 0.25, 1),
+    framePreviewRect(0.25, 0.5, 0.5, 1),
+    framePreviewRect(0.5, 0.5, 0.75, 1),
+    framePreviewRect(0.75, 0.5, 1, 1),
+  ],
+  climax_2: [
+    framePreviewRect(0, 0, 0.5, 1),
+    framePreviewRect(0.5, 0, 1, 1),
+  ],
+  splash_1: [framePreviewRect(0, 0, 1, 1)],
+  action_5: [
+    framePreviewRect(0, 0, 0.35, 1),
+    framePreviewRect(0.35, 0, 1, 0.32),
+    framePreviewRect(0.35, 0.32, 0.675, 0.66),
+    framePreviewRect(0.675, 0.32, 1, 0.66),
+    framePreviewRect(0.35, 0.66, 1, 1),
+  ],
+  battle_7: [
+    framePreviewQuad({ x: 0, y: 0 }, { x: 0.35, y: 0 }, { x: 0.28, y: 0.32 }, { x: 0, y: 0.28 }),
+    framePreviewQuad({ x: 0.35, y: 0 }, { x: 0.7, y: 0 }, { x: 0.63, y: 0.32 }, { x: 0.28, y: 0.32 }),
+    framePreviewQuad({ x: 0.7, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 0.28 }, { x: 0.63, y: 0.32 }),
+    framePreviewQuad({ x: 0, y: 0.28 }, { x: 0.63, y: 0.32 }, { x: 0.56, y: 0.68 }, { x: 0, y: 0.66 }),
+    framePreviewQuad({ x: 0.63, y: 0.32 }, { x: 1, y: 0.28 }, { x: 1, y: 0.66 }, { x: 0.56, y: 0.68 }),
+    framePreviewQuad({ x: 0, y: 0.66 }, { x: 0.5, y: 0.68 }, { x: 0.5, y: 1 }, { x: 0, y: 1 }),
+    framePreviewQuad({ x: 0.5, y: 0.68 }, { x: 1, y: 0.66 }, { x: 1, y: 1 }, { x: 0.5, y: 1 }),
+  ],
+  vertical_2: [
+    framePreviewRect(0, 0, 1, 0.48),
+    framePreviewRect(0, 0.48, 1, 1),
+  ],
+  bottom_wide_3: [
+    framePreviewRect(0, 0, 0.5, 0.5),
+    framePreviewRect(0.5, 0, 1, 0.5),
+    framePreviewRect(0, 0.5, 1, 1),
+  ],
+  wide_top_4: [
+    framePreviewRect(0, 0, 1, 0.42),
+    framePreviewRect(0, 0.42, 1 / 3, 1),
+    framePreviewRect(1 / 3, 0.42, 2 / 3, 1),
+    framePreviewRect(2 / 3, 0.42, 1, 1),
+  ],
+  tall_left_4: [
+    framePreviewRect(0, 0, 0.42, 1),
+    framePreviewRect(0.42, 0, 1, 1 / 3),
+    framePreviewRect(0.42, 1 / 3, 1, 2 / 3),
+    framePreviewRect(0.42, 2 / 3, 1, 1),
+  ],
+  balanced_5: [
+    framePreviewRect(0, 0, 0.5, 0.44),
+    framePreviewRect(0.5, 0, 1, 0.44),
+    framePreviewRect(0, 0.44, 1 / 3, 1),
+    framePreviewRect(1 / 3, 0.44, 2 / 3, 1),
+    framePreviewRect(2 / 3, 0.44, 1, 1),
+  ],
+  top_wide_5: [
+    framePreviewRect(0, 0, 1, 0.34),
+    framePreviewRect(0, 0.34, 0.5, 0.67),
+    framePreviewRect(0.5, 0.34, 1, 0.67),
+    framePreviewRect(0, 0.67, 0.5, 1),
+    framePreviewRect(0.5, 0.67, 1, 1),
+  ],
+  split_6: [
+    framePreviewRect(0, 0, 0.48, 1 / 3),
+    framePreviewRect(0, 1 / 3, 0.48, 2 / 3),
+    framePreviewRect(0, 2 / 3, 0.48, 1),
+    framePreviewRect(0.48, 0, 1, 1 / 3),
+    framePreviewRect(0.48, 1 / 3, 1, 2 / 3),
+    framePreviewRect(0.48, 2 / 3, 1, 1),
+  ],
+};
+function resolveFrameTemplateSelection(
+  layoutConfig: Record<string, unknown>,
+  panelCount: number,
+  frameCount: number,
+): string {
+  if (panelCount > 0 && panelCount === frameCount) {
+    const templateId = typeof layoutConfig.template_id === 'string' ? layoutConfig.template_id : null;
+    if (templateId !== null) {
+      const templatePanelCount = FRAME_TEMPLATE_PANEL_COUNTS[templateId];
+      if (templatePanelCount === panelCount) {
+        return templateId;
+      }
+      if (templatePanelCount !== undefined) {
+        return CUSTOM_FRAME_TEMPLATE_ID;
+      }
+    }
+
+    return DEFAULT_FRAME_TEMPLATE_BY_PANEL_COUNT[panelCount] ?? CUSTOM_FRAME_TEMPLATE_ID;
+  }
+
+  const fallbackTemplateId = typeof layoutConfig.template_id === 'string' ? layoutConfig.template_id : null;
+  return fallbackTemplateId !== null && FRAME_TEMPLATE_PANEL_COUNTS[fallbackTemplateId] !== undefined
+    ? fallbackTemplateId
+    : CUSTOM_FRAME_TEMPLATE_ID;
+}
+
+function getFrameTemplateDisplayLabel(language: UiLanguage, templateId: string): string {
+  if (templateId === CUSTOM_FRAME_TEMPLATE_ID) {
+    return translateUiString(language, 'Custom / unsynced');
+  }
+
+  return translateUiString(language, FRAME_TEMPLATE_LABELS[templateId] ?? templateId);
+}
+
+function framePreviewRect(
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+): { vertices: Array<{ x: number; y: number }> } {
+  return {
+    vertices: [
+      { x: x1, y: y1 },
+      { x: x2, y: y1 },
+      { x: x2, y: y2 },
+      { x: x1, y: y2 },
+    ],
+  };
+}
+
+function framePreviewQuad(
+  topLeft: { x: number; y: number },
+  topRight: { x: number; y: number },
+  bottomRight: { x: number; y: number },
+  bottomLeft: { x: number; y: number },
+): { vertices: Array<{ x: number; y: number }> } {
+  return { vertices: [topLeft, topRight, bottomRight, bottomLeft] };
+}
+
+function getFramePreviewCenter(vertices: Array<{ x: number; y: number }>): { x: number; y: number } {
+  const totals = vertices.reduce(
+    (current, vertex) => ({
+      x: current.x + vertex.x,
+      y: current.y + vertex.y,
+    }),
+    { x: 0, y: 0 },
+  );
+
+  return {
+    x: totals.x / vertices.length,
+    y: totals.y / vertices.length,
+  };
+}
 const FRAME_BORDER_STYLE_OPTIONS: Array<[PanelFrameRecord['border_style'], string]> = [
   ['solid', 'Solid'],
   ['dashed', 'Dashed'],

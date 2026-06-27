@@ -2,11 +2,15 @@ import { describe, expect, it } from 'vitest';
 import { ConfigurationError } from '../../../../src/domain/errors/index.js';
 import type { CreditBalanceSnapshot } from '../../../../src/domain/types/credit.js';
 import type { GenerationJob } from '../../../../src/domain/types/job.js';
-import type { PageGenerationInputImage } from '../../../../src/domain/types/pageGeneration.js';
+import type {
+  PageGenerationInputImage,
+  PageGenerationInputSnapshot,
+} from '../../../../src/domain/types/pageGeneration.js';
 import type {
   CompletePageGenerationInput,
   FailPageGenerationInput,
   PageGenerationExecutionRepository,
+  SavePageGenerationInputSnapshotInput,
   TouchPageGenerationProgressInput,
 } from '../../../../src/repositories/PageGenerationExecutionRepository.js';
 import type {
@@ -34,6 +38,7 @@ class FakeExecutionRepository implements PageGenerationExecutionRepository {
   public completionInput: CompletePageGenerationInput | null = null;
   public failureInput: FailPageGenerationInput | null = null;
   public progressInputs: TouchPageGenerationProgressInput[] = [];
+  public snapshotInputs: SavePageGenerationInputSnapshotInput[] = [];
   public shouldFailCompletion = false;
   public failureResult = true;
 
@@ -47,6 +52,11 @@ class FakeExecutionRepository implements PageGenerationExecutionRepository {
 
   public async touchPageGenerationProgress(input: TouchPageGenerationProgressInput): Promise<boolean> {
     this.progressInputs.push(input);
+    return true;
+  }
+
+  public async savePageGenerationInputSnapshot(input: SavePageGenerationInputSnapshotInput): Promise<boolean> {
+    this.snapshotInputs.push(input);
     return true;
   }
 
@@ -76,6 +86,7 @@ class FakePromptBuilder implements PromptBuilderPort {
   public builtPrompt: BuiltPagePrompt = {
     draftPrompt: 'page-prompt-draft',
     compilerBrief: '[TASK]\npage compiler brief',
+    inputSnapshot: buildInputSnapshot(),
   };
 
   public async buildPagePrompt(input: BuildPagePromptInput): Promise<BuiltPagePrompt> {
@@ -209,6 +220,35 @@ describe('PageGenerationWorkerService', () => {
     expect(promptBuilder.calls[0]).toMatchObject({
       userId: 'user-1',
       pageId: 'page-1',
+    });
+    expect(executionRepository.snapshotInputs).toHaveLength(2);
+    expect(executionRepository.snapshotInputs[0]).toMatchObject({
+      jobId: 'job-1',
+      userId: 'user-1',
+      snapshot: {
+        pageId: 'page-1',
+        panelCount: 1,
+        panels: [
+          {
+            order: 1,
+            entityNames: ['Aoi'],
+            dialogue: [
+              {
+                speakerName: 'Aoi',
+                text: 'Go outside.',
+              },
+            ],
+          },
+        ],
+      },
+    });
+    expect(executionRepository.snapshotInputs[1]).toMatchObject({
+      jobId: 'job-1',
+      userId: 'user-1',
+      snapshot: {
+        pageId: 'page-1',
+        inputImages: [{ role: 'entity_reference', label: 'Aoi' }],
+      },
     });
     expect(promptCompiler.calls).toBe(1);
     expect(renderer.calls[0]).toMatchObject({
@@ -439,6 +479,10 @@ describe('PageGenerationWorkerService', () => {
       previousStatus: 'designing',
       previousGenerationMode: null,
     });
+    expect(executionRepository.snapshotInputs).toHaveLength(2);
+    expect(executionRepository.snapshotInputs[1]?.snapshot.inputImages).toEqual([
+      { role: 'entity_reference', label: 'Aoi' },
+    ]);
     expect(creditService.refunds[0]).toMatchObject({
       userId: 'user-1',
       amount: 10,
@@ -545,7 +589,7 @@ describe('PageGenerationWorkerService', () => {
     expect(executionRepository.completionInput).toBeNull();
   });
 
-  it('compiled prompt が required dialogue を落とした場合は draft prompt に fallback する', async () => {
+  it('required dialogue lock がある場合は prompt compiler を呼ばず draft prompt を使う', async () => {
     const executionRepository = new FakeExecutionRepository();
     const promptBuilder = new FakePromptBuilder();
     promptBuilder.builtPrompt = {
@@ -556,6 +600,7 @@ describe('PageGenerationWorkerService', () => {
         '[PANEL INSTRUCTIONS]',
         '- Dialogue lock: Dialogue lock for panel 4: line 1 must stay assigned to Emil exactly as written: "外に出よう。". Do not omit, paraphrase, merge, split, or reassign these lines.',
       ].join('\n'),
+      inputSnapshot: buildInputSnapshot(),
     };
     const promptCompiler = new FakePromptCompiler();
     promptCompiler.compiledPromptText = 'page-prompt-compiled without the authored line';
@@ -573,6 +618,7 @@ describe('PageGenerationWorkerService', () => {
 
     await service.processJob('job-1');
 
+    expect(promptCompiler.calls).toBe(0);
     expect(renderer.calls[0]?.prompt).toBe('page-prompt-draft with Emil: "外に出よう。"');
     expect(executionRepository.completionInput?.promptMetadata).toMatchObject({
       compiledPrompt: 'page-prompt-draft with Emil: "外に出よう。"',
@@ -582,11 +628,11 @@ describe('PageGenerationWorkerService', () => {
       compilerPromptVersion: null,
     });
     expect(executionRepository.completionInput?.promptMetadata.compilerError).toContain(
-      'compiled prompt dropped required dialogue lines: Emil:外に出よう。',
+      'Page prompt compiler skipped because deterministic panel locks are present',
     );
   });
 
-  it('compiled prompt が required visual lock を落とした場合は draft prompt に fallback する', async () => {
+  it('required visual lock がある場合は prompt compiler を呼ばず draft prompt を使う', async () => {
     const executionRepository = new FakeExecutionRepository();
     const promptBuilder = new FakePromptBuilder();
     promptBuilder.builtPrompt = {
@@ -597,6 +643,7 @@ describe('PageGenerationWorkerService', () => {
         '[PANEL INSTRUCTIONS]',
         '- Visual lock: Visual lock for panel 1: subjects=Aki|Rin; shot=wide; angle=front; background cue="school rooftop at night".',
       ].join('\n'),
+      inputSnapshot: buildInputSnapshot(),
     };
     const promptCompiler = new FakePromptCompiler();
     promptCompiler.compiledPromptText = 'page-prompt-compiled focusing on Aki only in close-up';
@@ -614,6 +661,7 @@ describe('PageGenerationWorkerService', () => {
 
     await service.processJob('job-1');
 
+    expect(promptCompiler.calls).toBe(0);
     expect(renderer.calls[0]?.prompt).toBe('page-prompt-draft with Aki and Rin on the rooftop in a wide front shot');
     expect(executionRepository.completionInput?.promptMetadata).toMatchObject({
       compiledPrompt: 'page-prompt-draft with Aki and Rin on the rooftop in a wide front shot',
@@ -623,7 +671,7 @@ describe('PageGenerationWorkerService', () => {
       compilerPromptVersion: null,
     });
     expect(executionRepository.completionInput?.promptMetadata.compilerError).toContain(
-      'compiled prompt dropped required visual locks: panel 1',
+      'Page prompt compiler skipped because deterministic panel locks are present',
     );
   });
 
@@ -753,6 +801,32 @@ describe('PageGenerationWorkerService', () => {
     });
   });
 });
+
+function buildInputSnapshot(): PageGenerationInputSnapshot {
+  return {
+    pageId: 'page-1',
+    requestKind: 'initial',
+    generationMode: 'standard',
+    panelCount: 1,
+    panels: [
+      {
+        panelId: 'panel-1',
+        order: 1,
+        entityIds: ['entity-1'],
+        entityNames: ['Aoi'],
+        dialogue: [
+          {
+            entityId: 'entity-1',
+            speakerName: 'Aoi',
+            type: 'speech',
+            position: 'top',
+            text: 'Go outside.',
+          },
+        ],
+      },
+    ],
+  };
+}
 
 function buildJob(overrides: Partial<GenerationJob> = {}): GenerationJob {
   return {

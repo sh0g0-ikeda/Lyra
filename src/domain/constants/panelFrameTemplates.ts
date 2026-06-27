@@ -13,7 +13,25 @@ export const PANEL_FRAME_TEMPLATE_IDS = [
   'splash_1',
   'action_5',
   'battle_7',
+  'vertical_2',
+  'bottom_wide_3',
+  'wide_top_4',
+  'tall_left_4',
+  'balanced_5',
+  'top_wide_5',
+  'split_6',
 ] as const satisfies readonly PanelFrameTemplateId[];
+
+export const DEFAULT_PANEL_FRAME_TEMPLATE_BY_COUNT = {
+  1: 'splash_1',
+  2: 'climax_2',
+  3: 'top_wide_3',
+  4: 'standard_4',
+  5: 'action_5',
+  6: 'standard_6',
+  7: 'battle_7',
+  8: 'dense_8',
+} as const satisfies Partial<Record<number, PanelFrameTemplateId>>;
 
 export interface PanelFrameTemplate {
   id: PanelFrameTemplateId;
@@ -121,6 +139,77 @@ export const PANEL_FRAME_TEMPLATES: Record<PanelFrameTemplateId, PanelFrameTempl
       frame(7, quad({ x: 0.5, y: 0.68 }, { x: 1, y: 0.66 }, { x: 1, y: 1 }, { x: 0.5, y: 1 })),
     ],
   },
+  vertical_2: {
+    id: 'vertical_2',
+    panelCount: 2,
+    frames: [
+      frame(1, rect(0, 0, 1, 0.48)),
+      frame(2, rect(0, 0.48, 1, 1)),
+    ],
+  },
+  bottom_wide_3: {
+    id: 'bottom_wide_3',
+    panelCount: 3,
+    frames: [
+      frame(1, rect(0, 0, 0.5, 0.5)),
+      frame(2, rect(0.5, 0, 1, 0.5)),
+      frame(3, rect(0, 0.5, 1, 1)),
+    ],
+  },
+  wide_top_4: {
+    id: 'wide_top_4',
+    panelCount: 4,
+    frames: [
+      frame(1, rect(0, 0, 1, 0.42)),
+      frame(2, rect(0, 0.42, 1 / 3, 1)),
+      frame(3, rect(1 / 3, 0.42, 2 / 3, 1)),
+      frame(4, rect(2 / 3, 0.42, 1, 1)),
+    ],
+  },
+  tall_left_4: {
+    id: 'tall_left_4',
+    panelCount: 4,
+    frames: [
+      frame(1, rect(0, 0, 0.42, 1)),
+      frame(2, rect(0.42, 0, 1, 1 / 3)),
+      frame(3, rect(0.42, 1 / 3, 1, 2 / 3)),
+      frame(4, rect(0.42, 2 / 3, 1, 1)),
+    ],
+  },
+  balanced_5: {
+    id: 'balanced_5',
+    panelCount: 5,
+    frames: [
+      frame(1, rect(0, 0, 0.5, 0.44)),
+      frame(2, rect(0.5, 0, 1, 0.44)),
+      frame(3, rect(0, 0.44, 1 / 3, 1)),
+      frame(4, rect(1 / 3, 0.44, 2 / 3, 1)),
+      frame(5, rect(2 / 3, 0.44, 1, 1)),
+    ],
+  },
+  top_wide_5: {
+    id: 'top_wide_5',
+    panelCount: 5,
+    frames: [
+      frame(1, rect(0, 0, 1, 0.34)),
+      frame(2, rect(0, 0.34, 0.5, 0.67)),
+      frame(3, rect(0.5, 0.34, 1, 0.67)),
+      frame(4, rect(0, 0.67, 0.5, 1)),
+      frame(5, rect(0.5, 0.67, 1, 1)),
+    ],
+  },
+  split_6: {
+    id: 'split_6',
+    panelCount: 6,
+    frames: [
+      frame(1, rect(0, 0, 0.48, 1 / 3)),
+      frame(2, rect(0, 1 / 3, 0.48, 2 / 3)),
+      frame(3, rect(0, 2 / 3, 0.48, 1)),
+      frame(4, rect(0.48, 0, 1, 1 / 3)),
+      frame(5, rect(0.48, 1 / 3, 1, 2 / 3)),
+      frame(6, rect(0.48, 2 / 3, 1, 1)),
+    ],
+  },
 };
 
 export function getPanelFrameTemplate(templateId: PanelFrameTemplateId): PanelFrameTemplate {
@@ -132,6 +221,11 @@ export function buildPanelFrameTemplateInputs(templateId: PanelFrameTemplateId):
     ...templateFrame,
     vertices: templateFrame.vertices.map((vertex) => ({ ...vertex })),
   }));
+}
+
+export function resolveDefaultPanelFrameTemplateId(panelCount: number): PanelFrameTemplateId | null {
+  const templatesByCount: Partial<Record<number, PanelFrameTemplateId>> = DEFAULT_PANEL_FRAME_TEMPLATE_BY_COUNT;
+  return templatesByCount[panelCount] ?? null;
 }
 
 function frame(readingOrder: number, vertices: PanelFrameVertex[]): UpsertPanelFrameInput {

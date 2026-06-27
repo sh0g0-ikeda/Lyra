@@ -636,6 +636,7 @@ export class PostgresPageRepository implements PageRepository {
              pages.status,
              pages.dialogue_mode,
              pages.page_dialogue_toggle,
+             pages.layout_config,
              (
                SELECT COUNT(*)::int
                FROM panel_frames
@@ -702,6 +703,7 @@ export class PostgresPageRepository implements PageRepository {
         pageId: pageRow.page_id as string,
         pageNumber: pageRow.page_number as number,
         frameCount: pageRow.frame_count as number,
+        layoutConfig: toJsonObject(pageRow.layout_config),
         status: pageRow.status as PageStatus,
         dialogueMode: toPageDialogueMode(pageRow.dialogue_mode as string),
         pageDialogueToggle: pageRow.page_dialogue_toggle as boolean,

@@ -170,6 +170,13 @@ describe('PromptBuilder', () => {
     expect(result.draftPrompt).toContain('Create page 3 of the episode, covering The hero confronts the rival.');
     expect(result.draftPrompt).toContain('Use the standard_4 template with 4 panels.');
     expect(result.draftPrompt).toContain('Image 1 (Aki): Aki character reference.');
+    expect(result.draftPrompt).toContain('Use this image only for Aki; never use it as another character.');
+    expect(result.draftPrompt).toContain('Aki is allowed only in panel 1 where listed in the subject lock.');
+    expect(result.draftPrompt).toContain(
+      'Panel 1 subject lock: required visible subjects are Aki, role primary, center zone, facing three quarter left.',
+    );
+    expect(result.draftPrompt).toContain('Every listed subject must be visibly present and recognizable in this panel.');
+    expect(result.draftPrompt).toContain('Do not substitute, merge, swap, or replace these subjects with any other character or reference image.');
     expect(result.draftPrompt).toContain('Aki is primary in the center zone, facing three quarter left');
     expect(result.draftPrompt).toContain('Sound effect text in the artwork: "WHOOSH".');
     expect(result.draftPrompt).toContain('Panel 1 dialogue by Aki: "I will finish this now." as speech at top.');
@@ -197,11 +204,37 @@ describe('PromptBuilder', () => {
     );
     expect(result.compilerBrief).toContain('- Dialogue lock: Dialogue lock for panel 1: line 1 must stay assigned to Aki exactly as written: "I will finish this now."');
     expect(result.compilerBrief).toContain(
+      '- Subject lock: Panel 1 subject lock: required visible subjects are Aki, role primary, center zone, facing three quarter left.',
+    );
+    expect(result.compilerBrief).toContain(
       '- Visual lock: Visual lock for panel 1: subjects=Aki; shot=full_body; angle=three_quarter; background cue="Collapsed alley at dusk.".',
     );
     expect(result.compilerBrief).not.toContain('[CHARACTER CONSISTENCY]');
     expect(result.compilerBrief).not.toContain('Scene continuity:');
     expect(countOccurrences(result.compilerBrief, 'Image 1 (Aki): Aki character reference.')).toBe(1);
+    expect(result.inputSnapshot).toMatchObject({
+      pageId: 'page-1',
+      requestKind: 'initial',
+      generationMode: 'thinking',
+      panelCount: 1,
+      panels: [
+        {
+          panelId: 'panel-1',
+          order: 1,
+          entityIds: ['entity-1'],
+          entityNames: ['Aki'],
+          dialogue: [
+            {
+              entityId: 'entity-1',
+              speakerName: 'Aki',
+              type: 'speech',
+              position: 'top',
+              text: 'I will finish this now.',
+            },
+          ],
+        },
+      ],
+    });
   });
 
   it('treats regeneration prompts as fresh renders from current inputs', async () => {

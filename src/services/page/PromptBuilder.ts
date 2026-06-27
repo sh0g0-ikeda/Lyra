@@ -1,10 +1,17 @@
-import { getPanelFrameTemplate } from '../../domain/constants/panelFrameTemplates.js';
+import {
+  PANEL_FRAME_TEMPLATES,
+  getPanelFrameTemplate,
+} from '../../domain/constants/panelFrameTemplates.js';
 import { NotFoundError, ValidationError } from '../../domain/errors/index.js';
 import type { CompositionGalleryItem } from '../../domain/types/composition.js';
 import type { Entity } from '../../domain/types/entity.js';
 import type { Panel, PanelDialogueLine } from '../../domain/types/panel.js';
 import type { PageDialogueMode, PagePromptContext } from '../../domain/types/page.js';
-import type { PageGenerationMode, PageGenerationRequestKind } from '../../domain/types/pageGeneration.js';
+import type {
+  PageGenerationInputSnapshot,
+  PageGenerationMode,
+  PageGenerationRequestKind,
+} from '../../domain/types/pageGeneration.js';
 import type { PanelEntityAssignment } from '../../domain/types/panelEntityAssignment.js';
 import { buildRenderingStyleAnchorLines } from '../../domain/types/styleReference.js';
 import type { CompositionGalleryRepository } from '../../repositories/CompositionGalleryRepository.js';
@@ -22,6 +29,7 @@ export interface BuildPagePromptInput {
 export interface BuiltPagePrompt {
   draftPrompt: string;
   compilerBrief: string;
+  inputSnapshot: PageGenerationInputSnapshot;
 }
 
 export interface PromptBuilderPort {
@@ -40,6 +48,7 @@ interface NormalizedPanelInstruction {
   role: string;
   size: string;
   situation: string;
+  subjectLock: string | null;
   characterBeat: string;
   compositionBeat: string;
   dialogueBeats: string[];
@@ -110,8 +119,45 @@ export class PromptBuilder implements PromptBuilderPort {
     return {
       draftPrompt: buildDraftPrompt(normalized),
       compilerBrief: buildCompilerBrief(normalized),
+      inputSnapshot: buildPageGenerationInputSnapshot(input.pageId, input, panels, entityMap),
     };
   }
+}
+
+function buildPageGenerationInputSnapshot(
+  pageId: string,
+  input: BuildPagePromptInput,
+  panels: Panel[],
+  entityMap: Map<string, Entity>,
+): PageGenerationInputSnapshot {
+  const orderedPanels = [...panels].sort((left, right) => left.order - right.order);
+  return {
+    pageId,
+    requestKind: input.requestKind,
+    generationMode: input.generationMode,
+    panelCount: orderedPanels.length,
+    panels: orderedPanels.map((panel) => {
+      const entityIds = panel.entities
+        .slice()
+        .sort((left, right) => assignmentRoleWeight(left.role) - assignmentRoleWeight(right.role))
+        .map((assignment) => assignment.entityId)
+        .filter((value, index, values) => values.indexOf(value) === index);
+
+      return {
+        panelId: panel.id,
+        order: panel.order,
+        entityIds,
+        entityNames: entityIds.map((entityId) => entityMap.get(entityId)?.name ?? entityId),
+        dialogue: panel.dialogue.map((dialogue) => ({
+          entityId: dialogue.entityId,
+          speakerName: dialogue.entityId === null ? null : entityMap.get(dialogue.entityId)?.name ?? dialogue.entityId,
+          type: dialogue.type,
+          position: dialogue.position,
+          text: dialogue.text,
+        })),
+      };
+    }),
+  };
 }
 
 // The deterministic layer keeps panel order, dialogue, reference roles, and layout fidelity explicit
@@ -213,11 +259,18 @@ function buildReferenceRoles(
   referencedEntityIds: Set<string>,
 ): NormalizedReferenceRole[] {
   const orderedAssignments = new Map<string, PanelEntityAssignment>();
+  const panelOrdersByEntityId = new Map<string, number[]>();
   for (const panel of panels) {
     for (const assignment of panel.entities) {
       if (!orderedAssignments.has(assignment.entityId)) {
         orderedAssignments.set(assignment.entityId, assignment);
       }
+
+      const panelOrders = panelOrdersByEntityId.get(assignment.entityId) ?? [];
+      if (!panelOrders.includes(panel.order)) {
+        panelOrders.push(panel.order);
+      }
+      panelOrdersByEntityId.set(assignment.entityId, panelOrders);
     }
   }
 
@@ -227,11 +280,12 @@ function buildReferenceRoles(
       const entity = entityMap.get(entityId);
       const entityName = entity?.name ?? `Unknown entity ${entityId}`;
       const anchor = summarizeEntityAnchor(entity);
+      const panelScope = formatPanelOrderList(panelOrdersByEntityId.get(entityId) ?? []);
       return {
         imageLabel: `Image ${index + 1} (${entityName})`,
         role: 'character_reference' as const,
         subject: entityName,
-        instruction: `${entityName} character reference. Use this image to keep ${entityName}'s face, hair shape, clothing silhouette, and color blocking stable in every panel. ${anchor}`.trim(),
+        instruction: `${entityName} character reference. Use this image only for ${entityName}; never use it as another character. ${entityName} is allowed only in ${panelScope} where listed in the subject lock. Keep ${entityName}'s face, hair shape, clothing silhouette, and color blocking stable when ${entityName} appears. ${anchor}`.trim(),
       };
     });
 
@@ -260,12 +314,48 @@ function buildNormalizedPanelInstruction(
     role: panel.panelRole,
     size: panel.panelSize,
     situation: normalizePanelSituation(panel.situationText),
+    subjectLock: buildSubjectLock(panel, entityMap),
     characterBeat: buildCharacterBeat(panel.entities, entityMap),
     compositionBeat: buildCompositionBeat(panel, compositionMap),
     dialogueBeats: includeDialogue ? buildDialogueBeats(panel, entityMap) : [],
     dialogueLock: includeDialogue ? buildDialogueLock(panel, entityMap) : null,
     visualLock: buildVisualLock(panel, entityMap, compositionMap),
   };
+}
+
+function buildSubjectLock(panel: Panel, entityMap: Map<string, Entity>): string {
+  const assignments = dedupeAssignmentsByEntity(panel.entities);
+  if (assignments.length === 0) {
+    return `Panel ${panel.order} subject lock: no named character is assigned to this panel; do not draw any named or referenced character in this panel. Background crowds must remain generic only.`;
+  }
+
+  const details = assignments.map((assignment) => {
+    const entityName = entityMap.get(assignment.entityId)?.name ?? `Unknown entity ${assignment.entityId}`;
+    const position = `${humanizeToken(assignment.position)} zone`;
+    const facing = assignment.facingDirection === null
+      ? null
+      : `facing ${humanizeToken(assignment.facingDirection)}`;
+    return [entityName, `role ${assignment.role}`, position, facing]
+      .filter((value): value is string => value !== null)
+      .join(', ');
+  });
+
+  return `Panel ${panel.order} subject lock: required visible subjects are ${details.join('; ')}. Every listed subject must be visibly present and recognizable in this panel. Do not substitute, merge, swap, or replace these subjects with any other character or reference image. Do not draw unassigned named or referenced characters in this panel.`;
+}
+
+function dedupeAssignmentsByEntity(assignments: PanelEntityAssignment[]): PanelEntityAssignment[] {
+  const orderedAssignments = assignments
+    .slice()
+    .sort((left, right) => assignmentRoleWeight(left.role) - assignmentRoleWeight(right.role));
+  const seen = new Set<string>();
+  return orderedAssignments.filter((assignment) => {
+    if (seen.has(assignment.entityId)) {
+      return false;
+    }
+
+    seen.add(assignment.entityId);
+    return true;
+  });
 }
 
 function buildCharacterBeat(
@@ -476,6 +566,8 @@ function buildQualityConstraints(
     'Keep panel borders and gutters clean and unambiguous.',
     'Preserve the authored action progression from one panel to the next without skipping intermediate beats.',
     'Do not let any foreground character drift off-model relative to their reference image.',
+    'For every panel, the listed panel subjects are authoritative; do not replace them with a different referenced character and do not move a character into a panel where they are not listed.',
+    'Panel subject lock lines are hard constraints: every listed required subject must be visible in that panel, and unlisted named or referenced characters must not appear there.',
   ];
 
   if (referenceRoles.length > 0) {
@@ -543,9 +635,10 @@ function buildCompilerBrief(normalized: NormalizedPagePrompt): string {
         const lines = [
           `Panel ${panel.order} (${panel.role}, ${panel.size})`,
           `- Situation: ${panel.situation}`,
+          panel.subjectLock === null ? null : `- Subject lock: ${panel.subjectLock}`,
           `- Character beat: ${panel.characterBeat}`,
           `- Composition beat: ${panel.compositionBeat}`,
-        ];
+        ].filter((value): value is string => value !== null);
 
         if (panel.dialogueBeats.length > 0) {
           lines.push(...panel.dialogueBeats.map((dialogue) => `- Dialogue/SFX: ${dialogue}`));
@@ -585,6 +678,7 @@ function buildPanelInstructionParagraph(panelInstructions: NormalizedPanelInstru
       const parts = [
         `Panel ${panel.order}: This is a ${panel.role} ${panel.size} beat.`,
         `Panel ${panel.order} situation: ${panel.situation}`,
+        panel.subjectLock,
         `Panel ${panel.order} character direction: ${panel.characterBeat}`,
         `Panel ${panel.order} composition and action: ${panel.compositionBeat}`,
         panel.dialogueBeats.length === 0 ? null : `Panel ${panel.order} dialogue and SFX: ${panel.dialogueBeats.join(' ')}`,
@@ -619,6 +713,22 @@ function formatDialogueLine(
       : `Panel ${panelOrder} dialogue by ${speaker}`;
 
   return `${prefix}: "${dialogue.text}" as ${humanizeToken(dialogue.type)} at ${humanizeToken(dialogue.position)}.`;
+}
+
+function formatPanelOrderList(panelOrders: number[]): string {
+  const uniqueOrders = panelOrders
+    .filter((value, index, values) => values.indexOf(value) === index)
+    .sort((left, right) => left - right);
+
+  if (uniqueOrders.length === 0) {
+    return 'panels where explicitly listed';
+  }
+
+  if (uniqueOrders.length === 1) {
+    return `panel ${uniqueOrders[0]}`;
+  }
+
+  return `panels ${uniqueOrders.join(', ')}`;
 }
 
 function normalizePanelSituation(value: string | null): string {
@@ -745,16 +855,7 @@ function readString(value: unknown): string | null {
 }
 
 function isKnownTemplateId(value: string): value is Parameters<typeof getPanelFrameTemplate>[0] {
-  return (
-    value === 'standard_4' ||
-    value === 'top_wide_3' ||
-    value === 'standard_6' ||
-    value === 'dense_8' ||
-    value === 'climax_2' ||
-    value === 'splash_1' ||
-    value === 'action_5' ||
-    value === 'battle_7'
-  );
+  return value in PANEL_FRAME_TEMPLATES;
 }
 
 interface LayoutFrameVertex {

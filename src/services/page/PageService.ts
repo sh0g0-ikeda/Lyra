@@ -13,6 +13,10 @@ import {
 import type { AppLanguage } from '../../domain/types/language.js';
 import { STORY_PROMPT_CONTEXT_LIMITS } from '../../domain/storyPromptCompaction.js';
 import { STORY_AI_LIMITS } from '../../domain/constants/storyAi.js';
+import {
+  buildPanelFrameTemplateInputs,
+  resolveDefaultPanelFrameTemplateId,
+} from '../../domain/constants/panelFrameTemplates.js';
 import type {
   EpisodePagePlanApplyResult,
   EpisodePagePlanContext,
@@ -311,15 +315,7 @@ export class PageService implements PageServicePort {
       throw new ValidationError('Episode must have at least one scene before story autofill can run');
     }
 
-    for (const page of context.pages) {
-      ensurePageEditable(page.status, 'story autofill');
-      if (page.frameCount === 0) {
-        throw new ValidationError('All pages must have frames before story autofill can run');
-      }
-      if (page.panels.length !== page.frameCount) {
-        throw new ValidationError('All pages must have matching panel and frame counts before story autofill can run');
-      }
-    }
+    await this.repairEpisodePlanLayoutMetadataBeforeCompile(userId, context);
 
     if (this.episodePagePlanCompiler === undefined) {
       return buildSkippedEpisodePlanApplyResult('Episode page plan compiler is not configured');
@@ -338,6 +334,38 @@ export class PageService implements PageServicePort {
     });
 
     return this.applyEpisodePlanSuggestion(context, userId, compiled, language);
+  }
+
+  private async repairEpisodePlanLayoutMetadataBeforeCompile(
+    userId: string,
+    context: EpisodePagePlanContext,
+  ): Promise<void> {
+    for (const page of context.pages) {
+      ensurePageEditable(page.status, 'story autofill');
+      if (page.frameCount === 0) {
+        throw new ValidationError('All pages must have frames before story autofill can run');
+      }
+      if (page.panels.length !== page.frameCount) {
+        throw new ValidationError('コマ割りを先に合わせてください');
+      }
+
+      const repairedLayoutConfig = buildRepairedEpisodePageLayoutConfig(
+        page.layoutConfig,
+        page.panels.length,
+        page.frameCount,
+      );
+      if (repairedLayoutConfig !== null) {
+        await this.updatePageSettings(userId, page.pageId, {
+          layoutConfig: repairedLayoutConfig,
+        });
+        page.layoutConfig = repairedLayoutConfig;
+        continue;
+      }
+
+      if (!isEpisodePageLayoutMetadataConsistent(page.layoutConfig, page.panels.length)) {
+        throw new ValidationError('コマ割りを先に合わせてください');
+      }
+    }
   }
 
   private async compileEpisodePlanForContextSafely(
@@ -761,6 +789,79 @@ function buildNextPageLayoutConfig(
   }
 
   return nextLayoutConfig;
+}
+
+function buildRepairedEpisodePageLayoutConfig(
+  layoutConfig: Record<string, unknown>,
+  panelCount: number,
+  frameCount: number,
+): Record<string, unknown> | null {
+  if (panelCount !== frameCount) {
+    return null;
+  }
+
+  const nextLayoutConfig = { ...layoutConfig };
+  let changed = false;
+  let shouldRefreshTemplateFrames = false;
+
+  if (nextLayoutConfig.panel_count !== panelCount) {
+    nextLayoutConfig.panel_count = panelCount;
+    changed = true;
+  }
+
+  const expectedTemplateId = resolveDefaultPanelFrameTemplateId(panelCount);
+  const layoutType = typeof nextLayoutConfig.type === 'string' ? nextLayoutConfig.type : null;
+
+  if (expectedTemplateId !== null && (layoutType === null || layoutType === 'template')) {
+    if (nextLayoutConfig.type !== 'template') {
+      nextLayoutConfig.type = 'template';
+      changed = true;
+      shouldRefreshTemplateFrames = true;
+    }
+    if (nextLayoutConfig.template_id !== expectedTemplateId) {
+      nextLayoutConfig.template_id = expectedTemplateId;
+      changed = true;
+      shouldRefreshTemplateFrames = true;
+    }
+    if (
+      Array.isArray(nextLayoutConfig.frame_definitions) &&
+      nextLayoutConfig.frame_definitions.length !== panelCount
+    ) {
+      changed = true;
+      shouldRefreshTemplateFrames = true;
+    }
+    if (shouldRefreshTemplateFrames) {
+      nextLayoutConfig.frame_definitions = buildPanelFrameTemplateInputs(expectedTemplateId);
+    }
+  } else if (layoutType === 'template') {
+    nextLayoutConfig.type = 'custom';
+    delete nextLayoutConfig.template_id;
+    changed = true;
+  }
+
+  return changed ? nextLayoutConfig : null;
+}
+
+function isEpisodePageLayoutMetadataConsistent(
+  layoutConfig: Record<string, unknown>,
+  panelCount: number,
+): boolean {
+  if (layoutConfig.panel_count !== panelCount) {
+    return false;
+  }
+
+  const layoutType = typeof layoutConfig.type === 'string' ? layoutConfig.type : null;
+  if (layoutType !== 'template') {
+    return true;
+  }
+
+  const templateId = typeof layoutConfig.template_id === 'string' ? layoutConfig.template_id : null;
+  if (templateId === null) {
+    return false;
+  }
+
+  const expectedTemplateId = resolveDefaultPanelFrameTemplateId(panelCount);
+  return expectedTemplateId === null || templateId === expectedTemplateId;
 }
 
 function buildPageScopedAutofillContext(
@@ -1676,6 +1777,7 @@ function enrichPanelSuggestionForGeneration(
   const dialogue = repairDialogueLinesForPanel(
     normalizeDialogueLines(suggestion.dialogue),
     entityAssignments,
+    context.entityLookup,
     context.storyLeadEntityId ?? null,
     context.pageLeadEntityId ?? null,
   );
@@ -1906,6 +2008,7 @@ function normalizeDialogueLines(
 function repairDialogueLinesForPanel(
   lines: PageAutofillPanelSuggestion['dialogue'],
   assignments: PanelEntityAssignment[],
+  entityLookup: Map<string, PageAutofillContext['entities'][number]>,
   storyLeadEntityId: string | null,
   pageLeadEntityId: string | null,
 ): PageAutofillPanelSuggestion['dialogue'] {
@@ -1919,9 +2022,9 @@ function repairDialogueLinesForPanel(
     assignments[0]?.entityId ??
     null;
 
-  return lines.map((line) => {
+  return lines.flatMap((line) => {
     if (line.type === 'narration') {
-      return {
+      return splitCharacterQuotedNarration(line, assignments, entityLookup) ?? {
         ...line,
         entityId: null,
       };
@@ -1950,6 +2053,104 @@ function repairDialogueLinesForPanel(
 
     return line;
   });
+}
+
+function splitCharacterQuotedNarration(
+  line: PanelDialogueLine,
+  assignments: PanelEntityAssignment[],
+  entityLookup: Map<string, PageAutofillContext['entities'][number]>,
+): PanelDialogueLine[] | null {
+  const candidates = buildVisibleDialogueNameCandidates(assignments, entityLookup);
+  if (candidates.length === 0) {
+    return null;
+  }
+
+  const pattern = new RegExp(
+    `(${candidates.map((candidate) => escapeRegExp(candidate.label)).join('|')})\\s*[：:]?\\s*[「『"“](.*?)[」』"”]`,
+    'gu',
+  );
+  const repairedLines: PanelDialogueLine[] = [];
+  let cursor = 0;
+  let matched = false;
+
+  for (const match of line.text.matchAll(pattern)) {
+    const matchedLabel = match[1];
+    const quotedText = normalizeDialogueText(match[2] ?? '');
+    const index = match.index ?? 0;
+    const candidate = candidates.find((item) => item.label === matchedLabel);
+    if (candidate === undefined || !isMeaningfulText(quotedText)) {
+      continue;
+    }
+
+    const leadingNarration = normalizeNarrationRemainder(line.text.slice(cursor, index));
+    if (leadingNarration !== null) {
+      repairedLines.push({
+        ...line,
+        entityId: null,
+        type: 'narration',
+        text: leadingNarration,
+      });
+    }
+
+    repairedLines.push({
+      ...line,
+      entityId: candidate.entityId,
+      type: 'speech',
+      text: quotedText,
+    });
+    cursor = index + match[0].length;
+    matched = true;
+  }
+
+  if (!matched) {
+    return null;
+  }
+
+  const trailingNarration = normalizeNarrationRemainder(line.text.slice(cursor));
+  if (trailingNarration !== null) {
+    repairedLines.push({
+      ...line,
+      entityId: null,
+      type: 'narration',
+      text: trailingNarration,
+    });
+  }
+
+  return repairedLines.length === 0 ? null : repairedLines;
+}
+
+function buildVisibleDialogueNameCandidates(
+  assignments: PanelEntityAssignment[],
+  entityLookup: Map<string, PageAutofillContext['entities'][number]>,
+): Array<{ entityId: string; label: string }> {
+  const candidates: Array<{ entityId: string; label: string }> = [];
+  const seenLabels = new Set<string>();
+
+  for (const assignment of assignments) {
+    const entity = entityLookup.get(assignment.entityId);
+    const labels = [entity?.name ?? null, ...(entity === undefined ? [] : extractEntityAliases(entity.structuredFields))]
+      .filter((value): value is string => isMeaningfulText(value))
+      .sort((left, right) => right.length - left.length);
+
+    for (const label of labels) {
+      if (seenLabels.has(label)) {
+        continue;
+      }
+      seenLabels.add(label);
+      candidates.push({ entityId: assignment.entityId, label });
+    }
+  }
+
+  return candidates.sort((left, right) => right.label.length - left.label.length);
+}
+
+function normalizeNarrationRemainder(value: string): string | null {
+  const trimmed = value.replace(/^[\s　。．、，,.；;：:「」『』"“”]+|[\s　。．、，,.；;：:「」『』"“”]+$/gu, '').trim();
+  return isMeaningfulText(trimmed) ? trimmed : null;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 function selectVisibleDialogueSpeaker(

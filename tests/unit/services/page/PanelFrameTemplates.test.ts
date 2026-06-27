@@ -3,6 +3,7 @@ import {
   PANEL_FRAME_TEMPLATE_IDS,
   buildPanelFrameTemplateInputs,
   getPanelFrameTemplate,
+  resolveDefaultPanelFrameTemplateId,
 } from '../../../../src/domain/constants/panelFrameTemplates.js';
 
 const expectedPanelCounts = {
@@ -14,10 +15,17 @@ const expectedPanelCounts = {
   splash_1: 1,
   action_5: 5,
   battle_7: 7,
+  vertical_2: 2,
+  bottom_wide_3: 3,
+  wide_top_4: 4,
+  tall_left_4: 4,
+  balanced_5: 5,
+  top_wide_5: 5,
+  split_6: 6,
 } as const;
 
 describe('PanelFrame templates', () => {
-  it('Specで定義された8種類のテンプレートを持つ', () => {
+  it('Specで定義されたテンプレートを持つ', () => {
     expect(PANEL_FRAME_TEMPLATE_IDS).toEqual([
       'standard_4',
       'top_wide_3',
@@ -27,6 +35,13 @@ describe('PanelFrame templates', () => {
       'splash_1',
       'action_5',
       'battle_7',
+      'vertical_2',
+      'bottom_wide_3',
+      'wide_top_4',
+      'tall_left_4',
+      'balanced_5',
+      'top_wide_5',
+      'split_6',
     ]);
   });
 
@@ -49,5 +64,13 @@ describe('PanelFrame templates', () => {
         });
       });
     }
+  });
+
+  it('コマ数ごとの既定テンプレートを固定する', () => {
+    expect(resolveDefaultPanelFrameTemplateId(1)).toBe('splash_1');
+    expect(resolveDefaultPanelFrameTemplateId(3)).toBe('top_wide_3');
+    expect(resolveDefaultPanelFrameTemplateId(4)).toBe('standard_4');
+    expect(resolveDefaultPanelFrameTemplateId(5)).toBe('action_5');
+    expect(resolveDefaultPanelFrameTemplateId(9)).toBeNull();
   });
 });

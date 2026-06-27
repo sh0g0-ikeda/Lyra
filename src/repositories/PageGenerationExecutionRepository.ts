@@ -1,11 +1,14 @@
 import type { QueryResultRow } from 'pg';
 import type { PageStatus } from '../domain/types/page.js';
 import type { GenerationJob } from '../domain/types/job.js';
-import type { PageGenerationMode } from '../domain/types/pageGeneration.js';
+import type { PageGenerationInputSnapshot, PageGenerationMode } from '../domain/types/pageGeneration.js';
 import type { DatabaseClient, TransactionRunner } from '../lib/db.js';
 import { sanitizePersistedErrorMessage } from '../lib/errorSanitizer.js';
 import { buildPersistedPromptDiagnostics } from '../lib/promptDiagnostics.js';
-import type { PagePromptCompilationMetadata } from '../services/page/PageGenerationWorkerService.js';
+import type {
+  PageGenerationStageTimingsMs,
+  PagePromptCompilationMetadata,
+} from '../services/page/PageGenerationWorkerService.js';
 
 export interface CompletePageGenerationInput {
   jobId: string;
@@ -19,6 +22,7 @@ export interface CompletePageGenerationInput {
   costUsd: number | null;
   openaiRequestId: string | null;
   promptMetadata: PagePromptCompilationMetadata;
+  stageTimingsMs?: PageGenerationStageTimingsMs;
 }
 
 export interface FailPageGenerationInput {
@@ -37,10 +41,18 @@ export interface TouchPageGenerationProgressInput {
   updatedAt: string;
 }
 
+export interface SavePageGenerationInputSnapshotInput {
+  jobId: string;
+  userId: string;
+  snapshot: PageGenerationInputSnapshot;
+  savedAt: string;
+}
+
 export interface PageGenerationExecutionRepository {
   claimQueuedPageGenerationJob(jobId: string): Promise<GenerationJob | null>;
   findPageGenerationJob(jobId: string): Promise<GenerationJob | null>;
   touchPageGenerationProgress(input: TouchPageGenerationProgressInput): Promise<boolean>;
+  savePageGenerationInputSnapshot(input: SavePageGenerationInputSnapshotInput): Promise<boolean>;
   completePageGeneration(input: CompletePageGenerationInput): Promise<boolean>;
   failPageGeneration(input: FailPageGenerationInput): Promise<boolean>;
 }
@@ -123,6 +135,26 @@ export class PostgresPageGenerationExecutionRepository implements PageGeneration
     return (result.rowCount ?? 0) > 0;
   }
 
+  public async savePageGenerationInputSnapshot(input: SavePageGenerationInputSnapshotInput): Promise<boolean> {
+    const result = await this.client.query<GenerationJobRow>(
+      `
+      UPDATE generation_jobs
+      SET result = COALESCE(result, '{}'::jsonb) || jsonb_build_object(
+            'input_snapshot', $3::jsonb,
+            'input_snapshot_saved_at', $4::text
+          )
+      WHERE id = $1
+        AND user_id = $2
+        AND job_type = 'page_generate'
+        AND status = 'processing'
+      RETURNING *
+      `,
+      [input.jobId, input.userId, JSON.stringify(input.snapshot), input.savedAt],
+    );
+
+    return (result.rowCount ?? 0) > 0;
+  }
+
   public async completePageGeneration(input: CompletePageGenerationInput): Promise<boolean> {
     return this.client.transaction(async (transactionClient) => {
       const pageUpdate = await transactionClient.query<PageUpdateRow>(
@@ -163,7 +195,7 @@ export class PostgresPageGenerationExecutionRepository implements PageGeneration
         `
         UPDATE generation_jobs
         SET status = 'completed',
-            result = $3::jsonb,
+            result = COALESCE(result, '{}'::jsonb) || $3::jsonb,
             openai_request_id = $4::text,
             completed_at = NOW()
         WHERE id = $1
@@ -186,6 +218,7 @@ export class PostgresPageGenerationExecutionRepository implements PageGeneration
             compiler_model: input.promptMetadata.compilerModel,
             compiler_prompt_version: input.promptMetadata.compilerPromptVersion,
             compiler_error: input.promptMetadata.compilerError,
+            stage_timings_ms: input.stageTimingsMs ?? null,
           }),
           input.openaiRequestId,
         ],

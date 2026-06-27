@@ -78,6 +78,49 @@ describe('PostgresPageGenerationExecutionRepository', () => {
     ]);
   });
 
+  it('processing job の入力スナップショットを result に保存する', async () => {
+    const client = new QueryCapturingClient();
+    const repository = new PostgresPageGenerationExecutionRepository(client);
+
+    const saved = await repository.savePageGenerationInputSnapshot({
+      jobId: 'job-1',
+      userId: 'user-1',
+      savedAt: '2026-06-16T00:01:00.000Z',
+      snapshot: {
+        pageId: 'page-1',
+        requestKind: 'initial',
+        generationMode: 'standard',
+        panelCount: 1,
+        panels: [
+          {
+            panelId: 'panel-1',
+            order: 1,
+            entityIds: ['entity-1'],
+            entityNames: ['Aoi'],
+            dialogue: [
+              {
+                entityId: 'entity-1',
+                speakerName: 'Aoi',
+                type: 'speech',
+                position: 'top',
+                text: 'Go outside.',
+              },
+            ],
+          },
+        ],
+      },
+    });
+
+    expect(saved).toBe(true);
+    expect(client.queries[0]).toContain("status = 'processing'");
+    expect(client.queries[0]).toContain('input_snapshot');
+    expect(client.queries[0]).toContain('input_snapshot_saved_at');
+    expect(client.values[0]?.[0]).toBe('job-1');
+    expect(client.values[0]?.[1]).toBe('user-1');
+    expect(client.values[0]?.[2]).toEqual(expect.stringContaining('"entityNames":["Aoi"]'));
+    expect(client.values[0]?.[3]).toBe('2026-06-16T00:01:00.000Z');
+  });
+
   it('completed 更新でpages.generated_imageとjob.resultを保存する', async () => {
     const client = new QueryCapturingClient();
     const repository = new PostgresPageGenerationExecutionRepository(client);
@@ -108,6 +151,7 @@ describe('PostgresPageGenerationExecutionRepository', () => {
     expect(completed).toBe(true);
     expect(client.queries[0]).toContain('UPDATE pages');
     expect(client.queries[1]).toContain("SET status = 'completed'");
+    expect(client.queries[1]).toContain("COALESCE(result, '{}'::jsonb) || $3::jsonb");
     expect(client.values[0]).toEqual([
       'page-1',
       'user-1',
@@ -136,6 +180,7 @@ describe('PostgresPageGenerationExecutionRepository', () => {
         compiler_model: 'gpt-5.4-mini',
         compiler_prompt_version: 'page_prompt_v2',
         compiler_error: null,
+        stage_timings_ms: null,
       }),
       'openai-1',
     ]);

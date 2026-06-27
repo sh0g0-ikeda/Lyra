@@ -540,13 +540,15 @@ a {
 }
 
 .tutorial-group {
-  border-top: 1px solid rgba(229, 199, 107, 0.1);
-  padding-top: 10px;
+  border: 1px solid rgba(245, 211, 102, 0.24);
+  border-radius: 8px;
+  padding: 10px;
+  background: linear-gradient(180deg, rgba(245, 211, 102, 0.12), rgba(21, 21, 21, 0.88));
 }
 
 .tutorial-group:first-child {
-  border-top: 0;
-  padding-top: 0;
+  border-top: 1px solid rgba(245, 211, 102, 0.24);
+  padding-top: 10px;
 }
 
 .tutorial-group h3 {
@@ -559,7 +561,7 @@ a {
 .tutorial-group ol {
   margin: 0;
   padding-left: 1.2rem;
-  color: #d8d8d8;
+  color: #f0e7c5;
   font-size: 0.78rem;
   line-height: 1.55;
 }
@@ -790,6 +792,20 @@ a {
 .secondary-button:hover:not(:disabled) {
   border-color: rgba(119, 174, 255, 0.56);
   background: rgba(40, 57, 88, 0.96);
+}
+
+.story-plan-button {
+  border-color: rgba(245, 211, 102, 0.72);
+  background: linear-gradient(180deg, #ffe18a, #d7aa35);
+  color: #17120a;
+  font-weight: 750;
+  box-shadow: 0 8px 22px rgba(221, 183, 76, 0.24);
+}
+
+.story-plan-button:hover:not(:disabled) {
+  border-color: rgba(245, 211, 102, 0.86);
+  background: linear-gradient(180deg, #ffeba6, #dfb84b);
+  box-shadow: 0 10px 24px rgba(221, 183, 76, 0.3);
 }
 
 .ghost-button {
@@ -1168,6 +1184,26 @@ a {
   color: #8a8a8a;
 }
 
+.image-loading-placeholder {
+  position: relative;
+  overflow: hidden;
+}
+
+.image-loading-dot {
+  width: 18px;
+  height: 18px;
+  border: 2px solid rgba(245, 211, 102, 0.22);
+  border-top-color: rgba(245, 211, 102, 0.88);
+  border-radius: 50%;
+  animation: image-loading-spin 0.8s linear infinite;
+}
+
+@keyframes image-loading-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .generated-image-wrap {
   position: relative;
   border-radius: 8px;
@@ -1231,6 +1267,50 @@ a {
   object-fit: contain;
   border-radius: 8px;
   background: #0d0d0d;
+}
+
+.layout-preview-dialog {
+  width: min(420px, 100%);
+  max-height: calc(100vh - 48px);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(229, 199, 107, 0.18);
+  background: #111;
+  padding: 12px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
+}
+
+.layout-preview-body {
+  display: grid;
+  place-items: center;
+  padding: 8px;
+  border-radius: 8px;
+  background: #080808;
+}
+
+.layout-preview-svg {
+  width: min(260px, 72vw);
+  height: auto;
+}
+
+.layout-preview-page {
+  fill: #f5f1e6;
+}
+
+.layout-preview-frame {
+  fill: rgba(22, 22, 22, 0.08);
+  stroke: #121212;
+  stroke-width: 1.4;
+}
+
+.layout-preview-number {
+  dominant-baseline: middle;
+  fill: #111;
+  font-size: 7px;
+  font-weight: 800;
+  text-anchor: middle;
 }
 
 .balloon-overlay {
@@ -2103,6 +2183,10 @@ details.stack summary {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .image-loading-dot {
+    animation: none;
+  }
+
   .progress-bar.indeterminate .progress-bar-fill {
     animation: none;
     transform: none;

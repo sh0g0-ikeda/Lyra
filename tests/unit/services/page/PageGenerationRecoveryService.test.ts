@@ -3,6 +3,7 @@ import type { CreditBalanceSnapshot } from '../../../../src/domain/types/credit.
 import type { GenerationJob } from '../../../../src/repositories/GenerationJobRepository.js';
 import type {
   PageGenerationExecutionRepository,
+  SavePageGenerationInputSnapshotInput,
   TouchPageGenerationProgressInput,
 } from '../../../../src/repositories/PageGenerationExecutionRepository.js';
 import type {
@@ -57,6 +58,12 @@ class FakeExecutionRepository implements PageGenerationExecutionRepository {
   }
 
   public async touchPageGenerationProgress(_input: TouchPageGenerationProgressInput): Promise<boolean> {
+    throw new Error('not used');
+  }
+
+  public async savePageGenerationInputSnapshot(
+    _input: SavePageGenerationInputSnapshotInput,
+  ): Promise<boolean> {
     throw new Error('not used');
   }
 

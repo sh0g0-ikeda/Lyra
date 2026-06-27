@@ -1,4 +1,5 @@
 import type { PageStatus } from './page.js';
+import type { PanelDialoguePosition, PanelDialogueType } from './panel.js';
 
 export type PageGenerationMode = 'standard' | 'thinking';
 export type PageGenerationRequestKind = 'initial' | 'regenerate';
@@ -46,4 +47,34 @@ export interface PersistedPageGenerationJobParams {
   requires_planner: boolean;
   previous_page_status: PageStatus;
   previous_generation_mode: PageGenerationMode | null;
+}
+
+export interface PageGenerationInputSnapshotDialogue {
+  entityId: string | null;
+  speakerName: string | null;
+  type: PanelDialogueType;
+  position: PanelDialoguePosition;
+  text: string;
+}
+
+export interface PageGenerationInputSnapshotPanel {
+  panelId: string;
+  order: number;
+  entityIds: string[];
+  entityNames: string[];
+  dialogue: PageGenerationInputSnapshotDialogue[];
+}
+
+export interface PageGenerationInputSnapshotImage {
+  role: PageGenerationInputImageRole;
+  label: string;
+}
+
+export interface PageGenerationInputSnapshot {
+  pageId: string;
+  requestKind: PageGenerationRequestKind;
+  generationMode: PageGenerationMode;
+  panelCount: number;
+  panels: PageGenerationInputSnapshotPanel[];
+  inputImages?: PageGenerationInputSnapshotImage[];
 }

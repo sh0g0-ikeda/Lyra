@@ -8,7 +8,14 @@ export type PanelFrameTemplateId =
   | 'climax_2'
   | 'splash_1'
   | 'action_5'
-  | 'battle_7';
+  | 'battle_7'
+  | 'vertical_2'
+  | 'bottom_wide_3'
+  | 'wide_top_4'
+  | 'tall_left_4'
+  | 'balanced_5'
+  | 'top_wide_5'
+  | 'split_6';
 
 export interface PanelFrameVertex {
   x: number;

@@ -1,5 +1,6 @@
 ﻿import { PANEL_FRAME_TEMPLATES } from '../../domain/constants/panelFrameTemplates.js';
 import { STORY_AI_LIMITS } from '../../domain/constants/storyAi.js';
+import { resolveDefaultPanelFrameTemplateId } from '../../domain/constants/panelFrameTemplates.js';
 import { inferEntityIdsFromTexts } from '../../domain/entityAliases.js';
 import { AppError, ConflictError, NotFoundError, ValidationError } from '../../domain/errors/index.js';
 import { distributeStoryBeats } from '../../domain/storyBeatDistribution.js';
@@ -606,11 +607,8 @@ function repairGeneratedPageSkeleton(
       ),
     }));
     const actualPanelCount = repairedPanels.length;
-    const matchingTemplates = Object.values(PANEL_FRAME_TEMPLATES).filter(
-      (template) => template.panelCount === actualPanelCount,
-    );
     const repairedLayout =
-      matchingTemplates.length >= 1 ? matchingTemplates[0]!.id : page.suggestedLayout;
+      resolveDefaultPanelFrameTemplateId(actualPanelCount) ?? page.suggestedLayout;
 
     return {
       ...page,

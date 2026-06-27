@@ -39,6 +39,7 @@ class FakePageRepository implements PageRepository {
   public autofillContext: PageAutofillContext | null = buildAutofillContext();
   public episodePlanningContext: EpisodePagePlanContext | null = buildEpisodePlanningContext();
   public updatedInput: UpdatePageSettingsInput | null = null;
+  public updatedInputs: UpdatePageSettingsInput[] = [];
 
   public async findPagesByEpisodeIdAndUserId(): Promise<PageSummary[]> {
     return this.page === null ? [] : [this.page];
@@ -70,6 +71,7 @@ class FakePageRepository implements PageRepository {
     input: UpdatePageSettingsInput,
   ): Promise<PageSummary | null> {
     this.updatedInput = input;
+    this.updatedInputs.push(input);
     if (this.page !== null) {
       this.page = {
         ...this.page,
@@ -834,6 +836,89 @@ describe('PageService', () => {
     });
   });
 
+  it('episode story plan は compiler 実行前に page layout metadata を panel 数へ修復する', async () => {
+    const pageRepository = new FakePageRepository();
+    pageRepository.episodePlanningContext = {
+      ...buildEpisodePlanningContext(),
+      pages: [
+        {
+          pageId: 'page-1',
+          pageNumber: 1,
+          frameCount: 5,
+          layoutConfig: { type: 'template', template_id: 'standard_4', panel_count: 4 },
+          status: 'editing',
+          dialogueMode: 'mixed',
+          pageDialogueToggle: true,
+          panels: Array.from({ length: 5 }, (_value, index) => ({
+            ...buildAutofillPanelContext(),
+            id: `panel-${index + 1}`,
+            order: index + 1,
+          })),
+        },
+      ],
+    };
+    const panelRepository = new FakePanelRepository();
+    const assignmentService = new FakePanelEntityAssignmentService();
+    const episodeCompiler = new FakeEpisodePagePlanCompiler();
+    const service = new PageService(
+      pageRepository,
+      panelRepository,
+      assignmentService,
+      new FakePageAutofillCompiler(),
+      episodeCompiler,
+    );
+
+    await service.autofillEpisodeFromStory('user-1', 'episode-1', 'ja');
+
+    expect(episodeCompiler.lastInput).not.toBeNull();
+    expect(pageRepository.updatedInputs[0]).toMatchObject({
+      layoutConfig: {
+        type: 'template',
+        template_id: 'action_5',
+        panel_count: 5,
+      },
+    });
+    const frameDefinitions = pageRepository.updatedInputs[0]?.layoutConfig?.frame_definitions;
+    expect(Array.isArray(frameDefinitions) ? frameDefinitions : []).toHaveLength(5);
+  });
+
+  it('episode story plan は frame 数と panel 数がずれていると compiler を呼ばず拒否する', async () => {
+    const pageRepository = new FakePageRepository();
+    pageRepository.episodePlanningContext = {
+      ...buildEpisodePlanningContext(),
+      pages: [
+        {
+          pageId: 'page-1',
+          pageNumber: 1,
+          frameCount: 4,
+          layoutConfig: { type: 'template', template_id: 'standard_4', panel_count: 4 },
+          status: 'editing',
+          dialogueMode: 'mixed',
+          pageDialogueToggle: true,
+          panels: Array.from({ length: 5 }, (_value, index) => ({
+            ...buildAutofillPanelContext(),
+            id: `panel-${index + 1}`,
+            order: index + 1,
+          })),
+        },
+      ],
+    };
+    const episodeCompiler = new FakeEpisodePagePlanCompiler();
+    const service = new PageService(
+      pageRepository,
+      new FakePanelRepository(),
+      new FakePanelEntityAssignmentService(),
+      new FakePageAutofillCompiler(),
+      episodeCompiler,
+    );
+
+    await expect(service.autofillEpisodeFromStory('user-1', 'episode-1', 'ja')).rejects.toThrow(
+      'コマ割りを先に合わせてください',
+    );
+    expect(episodeCompiler.lastInput).toBeNull();
+    expect(pageRepository.updatedInputs).toHaveLength(0);
+  });
+
   it('episode story plan は大きい episode をページ単位の chunk に分けてから一括保存する', async () => {
     const pageRepository = new FakePageRepository();
     pageRepository.episodePlanningContext = buildMultiPageEpisodePlanningContext(7);
@@ -1276,6 +1361,12 @@ describe('PageService', () => {
                         type: 'narration',
                         position: 'center',
                       },
+                      {
+                        entityId: null,
+                        text: 'Minerva「ここで決める。」',
+                        type: 'narration',
+                        position: 'bottom',
+                      },
                     ],
                   },
                 ],
@@ -1323,6 +1414,11 @@ describe('PageService', () => {
         type: 'narration',
         entityId: null,
         text: '朝の空気だけが静かだった。',
+      }),
+      expect.objectContaining({
+        type: 'speech',
+        entityId: '11111111-1111-4111-8111-111111111111',
+        text: 'ここで決める。',
       }),
     ]);
   });
@@ -1707,6 +1803,7 @@ describe('PageService', () => {
           pageId: 'page-1',
           pageNumber: 1,
           frameCount: 1,
+          layoutConfig: { type: 'template', template_id: 'splash_1', panel_count: 1 },
           status: 'editing',
           dialogueMode: 'mixed',
           pageDialogueToggle: true,
@@ -1716,6 +1813,7 @@ describe('PageService', () => {
           pageId: 'page-2',
           pageNumber: 2,
           frameCount: 1,
+          layoutConfig: { type: 'template', template_id: 'splash_1', panel_count: 1 },
           status: 'editing',
           dialogueMode: 'mixed',
           pageDialogueToggle: true,
@@ -1760,6 +1858,7 @@ describe('PageService', () => {
           pageId: 'page-1',
           pageNumber: 1,
           frameCount: 1,
+          layoutConfig: { type: 'template', template_id: 'splash_1', panel_count: 1 },
           status: 'editing',
           dialogueMode: 'mixed',
           pageDialogueToggle: true,
@@ -1832,6 +1931,7 @@ describe('PageService', () => {
           pageId: 'page-1',
           pageNumber: 1,
           frameCount: 4,
+          layoutConfig: { type: 'template', template_id: 'standard_4', panel_count: 4 },
           status: 'editing',
           dialogueMode: 'mixed',
           pageDialogueToggle: true,
@@ -1904,6 +2004,7 @@ describe('PageService', () => {
           pageId: 'page-1',
           pageNumber: 1,
           frameCount: 4,
+          layoutConfig: { type: 'template', template_id: 'standard_4', panel_count: 4 },
           status: 'editing',
           dialogueMode: 'mixed',
           pageDialogueToggle: true,
@@ -2027,6 +2128,7 @@ describe('PageService', () => {
           pageId: 'page-1',
           pageNumber: 1,
           frameCount: 1,
+          layoutConfig: { type: 'template', template_id: 'splash_1', panel_count: 1 },
           status: 'editing',
           dialogueMode: 'mixed',
           pageDialogueToggle: true,
@@ -2223,6 +2325,7 @@ function buildEpisodePlanningContext(): EpisodePagePlanContext {
         pageId: 'page-1',
         pageNumber: 1,
         frameCount: 1,
+        layoutConfig: { type: 'template', template_id: 'splash_1', panel_count: 1 },
         status: 'editing',
         dialogueMode: 'mixed',
         pageDialogueToggle: true,
