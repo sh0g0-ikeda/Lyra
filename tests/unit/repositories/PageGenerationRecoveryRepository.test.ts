@@ -58,8 +58,33 @@ describe('PostgresPageGenerationRecoveryRepository', () => {
 
     expect(client.queryText).toContain('generation_jobs.user_id = $2');
     expect(client.queryText).toContain("generation_jobs.params->>'page_id' = $3");
-    expect(client.queryText).toContain('LIMIT $4');
-    expect(client.values).toEqual([cutoff, 'user-1', 'page-1', 50]);
+    expect(client.queryText).toContain('LIMIT $5');
+    expect(client.values).toEqual([cutoff, 'user-1', 'page-1', null, 50]);
+  });
+
+  it('page指定回収では組織ジョブにactive member条件を追加する', async () => {
+    const client = new QueryCapturingClient();
+    const repository = new PostgresPageGenerationRecoveryRepository(client);
+    const cutoff = new Date('2026-06-08T00:00:00.000Z');
+
+    await repository.listStaleProcessingJobsForPage(
+      'user-1',
+      'page-1',
+      cutoff,
+      50,
+      '11111111-1111-4111-8111-111111111111',
+    );
+
+    expect(client.queryText).toContain('FROM organization_members');
+    expect(client.queryText).toContain('organization_members.user_id = $2');
+    expect(client.queryText).toContain("organization_members.status = 'active'");
+    expect(client.values).toEqual([
+      cutoff,
+      'user-1',
+      'page-1',
+      '11111111-1111-4111-8111-111111111111',
+      50,
+    ]);
   });
 
   it('failed だが refund 台帳がない page generation job を返金対象にする', async () => {
@@ -86,8 +111,30 @@ describe('PostgresPageGenerationRecoveryRepository', () => {
 
     expect(client.queryText).toContain('generation_jobs.user_id = $1');
     expect(client.queryText).toContain("generation_jobs.params->>'page_id' = $2");
-    expect(client.queryText).toContain('LIMIT $3');
-    expect(client.values).toEqual(['user-1', 'page-1', 50]);
+    expect(client.queryText).toContain('LIMIT $4');
+    expect(client.values).toEqual(['user-1', 'page-1', null, 50]);
+  });
+
+  it('page指定の未返金failed job回収では組織ジョブにactive member条件を追加する', async () => {
+    const client = new QueryCapturingClient();
+    const repository = new PostgresPageGenerationRecoveryRepository(client);
+
+    await repository.listFailedJobsMissingRefundForPage(
+      'user-1',
+      'page-1',
+      50,
+      '11111111-1111-4111-8111-111111111111',
+    );
+
+    expect(client.queryText).toContain('FROM organization_members');
+    expect(client.queryText).toContain('organization_members.user_id = $1');
+    expect(client.queryText).toContain("organization_members.status = 'active'");
+    expect(client.values).toEqual([
+      'user-1',
+      'page-1',
+      '11111111-1111-4111-8111-111111111111',
+      50,
+    ]);
   });
 });
 

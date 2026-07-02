@@ -9,6 +9,7 @@ import {
   updateSceneBodySchema,
 } from '../lib/validators/scene.schema.js';
 import { formatZodValidationError } from '../lib/validationErrorFormatter.js';
+import type { OrganizationServicePort } from '../services/organization/OrganizationService.js';
 import type { SceneServicePort } from '../services/scene/SceneService.js';
 import type { AppEnv } from '../types/app.js';
 import { readJsonBody } from './requestBody.js';
@@ -17,6 +18,7 @@ export interface SceneRouteDependencies {
   authMiddleware: MiddlewareHandler<AppEnv>;
   rateLimitMiddleware: MiddlewareHandler<AppEnv>;
   sceneService: SceneServicePort;
+  organizationService?: OrganizationServicePort;
 }
 
 export function createSceneRoutes(dependencies: SceneRouteDependencies): Hono<AppEnv> {
@@ -28,6 +30,8 @@ export function createSceneRoutes(dependencies: SceneRouteDependencies): Hono<Ap
   app.post('/episodes/:id/scenes', async (c) => {
     const user = c.get('user');
     const episodeId = parseUuidParam(c, 'id');
+    const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'edit_work');
     const body = createSceneBodySchema.safeParse(await readJsonBody(c));
 
     if (!body.success) {
@@ -40,7 +44,7 @@ export function createSceneRoutes(dependencies: SceneRouteDependencies): Hono<Ap
       time: body.data.time ?? null,
       atmosphere: body.data.atmosphere ?? null,
       involvedEntityIds: body.data.involved_entity_ids ?? [],
-    });
+    }, organizationId);
 
     return c.json(toSceneResponse(scene), 201);
   });
@@ -48,7 +52,9 @@ export function createSceneRoutes(dependencies: SceneRouteDependencies): Hono<Ap
   app.get('/episodes/:id/scenes', async (c) => {
     const user = c.get('user');
     const episodeId = parseUuidParam(c, 'id');
-    const scenes = await dependencies.sceneService.listScenes(user.id, episodeId);
+    const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'view_work');
+    const scenes = await dependencies.sceneService.listScenes(user.id, episodeId, organizationId);
 
     return c.json({ scenes: scenes.map(toSceneResponse) });
   });
@@ -56,6 +62,8 @@ export function createSceneRoutes(dependencies: SceneRouteDependencies): Hono<Ap
   app.put('/scenes/:id', async (c) => {
     const user = c.get('user');
     const sceneId = parseUuidParam(c, 'id');
+    const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'edit_work');
     const body = updateSceneBodySchema.safeParse(await readJsonBody(c));
 
     if (!body.success) {
@@ -69,7 +77,7 @@ export function createSceneRoutes(dependencies: SceneRouteDependencies): Hono<Ap
       atmosphere: body.data.atmosphere,
       involvedEntityIds: body.data.involved_entity_ids,
       status: body.data.status,
-    });
+    }, organizationId);
 
     return c.json(toSceneResponse(scene));
   });
@@ -77,7 +85,9 @@ export function createSceneRoutes(dependencies: SceneRouteDependencies): Hono<Ap
   app.delete('/scenes/:id', async (c) => {
     const user = c.get('user');
     const sceneId = parseUuidParam(c, 'id');
-    await dependencies.sceneService.deleteScene(user.id, sceneId);
+    const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'edit_work');
+    await dependencies.sceneService.deleteScene(user.id, sceneId, organizationId);
 
     return c.body(null, 204);
   });
@@ -85,6 +95,8 @@ export function createSceneRoutes(dependencies: SceneRouteDependencies): Hono<Ap
   app.post('/entities/:id/states', async (c) => {
     const user = c.get('user');
     const entityId = parseUuidParam(c, 'id');
+    const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'edit_work');
     const body = createEntityStateBodySchema.safeParse(await readJsonBody(c));
 
     if (!body.success) {
@@ -99,7 +111,7 @@ export function createSceneRoutes(dependencies: SceneRouteDependencies): Hono<Ap
       hairNote: body.data.hair_note ?? null,
       expressionDefault: body.data.expression_default,
       extraNote: body.data.extra_note ?? null,
-    });
+    }, organizationId);
 
     return c.json(toEntityStateResponse(entityState), 201);
   });
@@ -108,6 +120,8 @@ export function createSceneRoutes(dependencies: SceneRouteDependencies): Hono<Ap
     const user = c.get('user');
     const entityId = parseUuidParam(c, 'id');
     const stateId = parseUuidParam(c, 'state_id');
+    const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'edit_work');
     const body = updateEntityStateBodySchema.safeParse(await readJsonBody(c));
 
     if (!body.success) {
@@ -122,7 +136,7 @@ export function createSceneRoutes(dependencies: SceneRouteDependencies): Hono<Ap
       hairNote: body.data.hair_note,
       expressionDefault: body.data.expression_default,
       extraNote: body.data.extra_note,
-    });
+    }, organizationId);
 
     return c.json(toEntityStateResponse(entityState));
   });
@@ -137,6 +151,37 @@ function parseUuidParam(c: Context<AppEnv>, name: string): string {
   }
 
   return result.data;
+}
+
+function parseOptionalOrganizationId(c: Context<AppEnv>): string | null {
+  const raw = c.req.query('organization_id');
+  if (raw === undefined || raw.trim().length === 0) {
+    return null;
+  }
+
+  const result = sceneUuidParamSchema.safeParse(raw);
+  if (!result.success) {
+    throw new ValidationError('organization_id must be a valid UUID');
+  }
+
+  return result.data;
+}
+
+async function requireOrganizationCapability(
+  c: Context<AppEnv>,
+  dependencies: SceneRouteDependencies,
+  organizationId: string | null,
+  capability: Parameters<OrganizationServicePort['requireMembership']>[2],
+): Promise<void> {
+  if (organizationId === null) {
+    return;
+  }
+  if (dependencies.organizationService === undefined) {
+    throw new ValidationError('Organization workspace is unavailable');
+  }
+
+  const user = c.get('user');
+  await dependencies.organizationService.requireMembership(organizationId, user.id, capability);
 }
 
 function toSceneResponse(scene: Scene): Record<string, unknown> {

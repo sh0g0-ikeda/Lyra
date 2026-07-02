@@ -181,8 +181,6 @@ describe('OpenAIStoryAiClient', () => {
       postJson: async () => ({
         body: {
           output_text: JSON.stringify({
-            title: 'Improved title',
-            purpose: 'Improved purpose',
             introduction: 'Improved intro',
             middle: 'Improved middle',
             climax: 'Improved climax',
@@ -200,8 +198,6 @@ describe('OpenAIStoryAiClient', () => {
     });
 
     expect(result).toEqual({
-      title: 'Improved title',
-      purpose: 'Improved purpose',
       introduction: 'Improved intro',
       middle: 'Improved middle',
       climax: 'Improved climax',

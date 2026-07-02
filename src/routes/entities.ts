@@ -17,6 +17,7 @@ import { signImageCdnUrl } from '../infrastructure/aws/CloudFrontImageUrlSigner.
 import type { EntityServicePort } from '../services/entity/EntityService.js';
 import type { EntityReferenceServicePort } from '../services/entity/EntityReferenceService.js';
 import type { EntityReferenceImageExportServicePort } from '../services/entity/EntityReferenceImageExportService.js';
+import type { OrganizationServicePort } from '../services/organization/OrganizationService.js';
 import type { AppEnv } from '../types/app.js';
 import { readJsonBody, readOptionalJsonBody, REQUEST_BODY_LIMITS } from './requestBody.js';
 
@@ -32,6 +33,7 @@ export interface EntityRouteDependencies {
   entityService: EntityServicePort;
   entityReferenceService: EntityReferenceServicePort;
   entityReferenceImageExportService: EntityReferenceImageExportServicePort;
+  organizationService?: OrganizationServicePort;
 }
 
 export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<AppEnv> {
@@ -43,6 +45,8 @@ export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<
   app.post('/works/:work_id/entities', async (c) => {
     const user = c.get('user');
     const workId = parseUuidParam(c, 'work_id');
+    const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'edit_work');
     const body = createEntityBodySchema.safeParse(await readJsonBody(c));
 
     if (!body.success) {
@@ -56,7 +60,7 @@ export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<
       promptSupplement: body.data.prompt_supplement ?? null,
       structuredFields: body.data.structured_fields ?? {},
       speechProfile: body.data.speech_profile ?? {},
-    });
+    }, organizationId);
 
     return c.json(toEntityResponse(entity), 201);
   });
@@ -64,7 +68,9 @@ export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<
   app.get('/works/:work_id/entities', async (c) => {
     const user = c.get('user');
     const workId = parseUuidParam(c, 'work_id');
-    const entities = await dependencies.entityService.listEntities(user.id, workId);
+    const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'view_work');
+    const entities = await dependencies.entityService.listEntities(user.id, workId, organizationId);
 
     return c.json({
       entities: entities.map(toEntityResponse),
@@ -74,7 +80,9 @@ export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<
   app.get('/entities/:id', async (c) => {
     const user = c.get('user');
     const entityId = parseUuidParam(c, 'id');
-    const entity = await dependencies.entityService.getEntity(user.id, entityId);
+    const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'view_work');
+    const entity = await dependencies.entityService.getEntity(user.id, entityId, organizationId);
 
     return c.json(toEntityResponse(entity));
   });
@@ -82,7 +90,9 @@ export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<
   app.get('/entities/:id/reference-set', async (c) => {
     const user = c.get('user');
     const entityId = parseUuidParam(c, 'id');
-    const referenceSet = await dependencies.entityReferenceService.getReferenceSet(user.id, entityId);
+    const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'view_work');
+    const referenceSet = await dependencies.entityReferenceService.getReferenceSet(user.id, entityId, organizationId);
 
     return c.json(await toReferenceSetResponse(referenceSet));
   });
@@ -90,6 +100,8 @@ export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<
   app.get('/entities/:id/reference/:ref_id/image', async (c) => {
     const user = c.get('user');
     const entityId = parseUuidParam(c, 'id');
+    const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'view_work');
     const refIdResult = referenceIdParamSchema.safeParse(c.req.param('ref_id'));
 
     if (!refIdResult.success) {
@@ -100,6 +112,7 @@ export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<
       user.id,
       entityId,
       refIdResult.data,
+      organizationId,
     );
 
     return c.body(new Uint8Array(exportedImage.imageData), 200, {
@@ -111,6 +124,8 @@ export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<
   app.get('/entities/:id/reference-candidate-image', async (c) => {
     const user = c.get('user');
     const entityId = parseUuidParam(c, 'id');
+    const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'view_work');
     const query = referenceCandidateImageQuerySchema.safeParse(c.req.query());
 
     if (!query.success) {
@@ -121,6 +136,7 @@ export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<
       user.id,
       entityId,
       query.data.s3_key,
+      organizationId,
     );
 
     return c.body(new Uint8Array(exportedImage.imageData), 200, {
@@ -132,6 +148,8 @@ export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<
   app.put('/entities/:id', async (c) => {
     const user = c.get('user');
     const entityId = parseUuidParam(c, 'id');
+    const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'edit_work');
     const body = updateEntityBodySchema.safeParse(await readJsonBody(c));
 
     if (!body.success) {
@@ -145,7 +163,7 @@ export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<
       promptSupplement: body.data.prompt_supplement,
       structuredFields: body.data.structured_fields,
       speechProfile: body.data.speech_profile,
-    });
+    }, organizationId);
 
     return c.json(toEntityResponse(entity));
   });
@@ -153,13 +171,17 @@ export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<
   app.delete('/entities/:id', async (c) => {
     const user = c.get('user');
     const entityId = parseUuidParam(c, 'id');
-    await dependencies.entityService.deleteEntity(user.id, entityId);
+    const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'edit_work');
+    await dependencies.entityService.deleteEntity(user.id, entityId, organizationId);
 
     return c.body(null, 204);
   });
 
   app.post('/entities/import-image', async (c) => {
     const user = c.get('user');
+    const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'generate');
     const body = importEntityImageBodySchema.safeParse(
       await readJsonBody(c, {
         maxBytes: REQUEST_BODY_LIMITS.ENTITY_IMPORT_JSON_BYTES,
@@ -174,7 +196,7 @@ export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<
     const result = await dependencies.entityReferenceService.importImage(user.id, {
       entityType: body.data.entity_type,
       imageBase64: body.data.image_base64,
-    });
+    }, organizationId);
 
     return c.json({
       suggested_fields: result.suggestedFields,
@@ -186,6 +208,8 @@ export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<
   app.post('/entities/:id/generate-reference', async (c) => {
     const user = c.get('user');
     const entityId = parseUuidParam(c, 'id');
+    const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'generate');
     const body = generateEntityReferenceBodySchema.safeParse(
       await readOptionalJsonBody(c, {
         maxBytes: REQUEST_BODY_LIMITS.SMALL_JSON_BYTES,
@@ -199,7 +223,7 @@ export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<
 
     const result = await dependencies.entityReferenceService.enqueueReferenceGeneration(user.id, entityId, {
       sourceS3Key: body.data.source_s3_key,
-    });
+    }, organizationId);
 
     return c.json({ job_id: result.jobId }, 202);
   });
@@ -207,6 +231,8 @@ export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<
   app.post('/entities/:id/reference/confirm', async (c) => {
     const user = c.get('user');
     const entityId = parseUuidParam(c, 'id');
+    const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'edit_work');
     const body = confirmEntityReferenceBodySchema.safeParse(await readJsonBody(c));
 
     if (!body.success) {
@@ -217,7 +243,7 @@ export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<
       selectedS3Keys: body.data.selected_s3_keys,
       primaryS3Key: body.data.primary_s3_key,
       promptSupplement: body.data.prompt_supplement,
-    });
+    }, organizationId);
 
     return c.json(await toReferenceSetResponse(referenceSet));
   });
@@ -225,6 +251,8 @@ export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<
   app.delete('/entities/:id/reference/:ref_id', async (c) => {
     const user = c.get('user');
     const entityId = parseUuidParam(c, 'id');
+    const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'edit_work');
     const refIdResult = referenceIdParamSchema.safeParse(c.req.param('ref_id'));
 
     if (!refIdResult.success) {
@@ -235,6 +263,7 @@ export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<
       user.id,
       entityId,
       refIdResult.data,
+      organizationId,
     );
 
     return c.json(await toReferenceSetResponse(referenceSet));
@@ -250,6 +279,34 @@ function parseUuidParam(c: Context<AppEnv>, name: string): string {
   }
 
   return result.data;
+}
+
+function parseOptionalOrganizationId(c: Context<AppEnv>): string | null {
+  const raw = c.req.query('organization_id');
+  if (raw === undefined || raw.trim().length === 0) {
+    return null;
+  }
+  const result = uuidParamSchema.safeParse(raw);
+  if (!result.success) {
+    throw new ValidationError('organization_id must be a valid UUID');
+  }
+  return result.data;
+}
+
+async function requireOrganizationCapability(
+  c: Context<AppEnv>,
+  dependencies: EntityRouteDependencies,
+  organizationId: string | null,
+  capability: Parameters<NonNullable<EntityRouteDependencies['organizationService']>['requireMembership']>[2],
+): Promise<void> {
+  if (organizationId === null) {
+    return;
+  }
+  if (dependencies.organizationService === undefined) {
+    throw new ValidationError('Organization support is not configured');
+  }
+  const user = c.get('user');
+  await dependencies.organizationService.requireMembership(organizationId, user.id, capability);
 }
 
 function toEntityResponse(entity: Entity): Record<string, unknown> {

@@ -10,6 +10,7 @@ import { ensureOwnedEntityReferenceImageKey } from '../storage/StoredImageKeyPol
 
 export interface BuildPageGenerationInputImagesInput {
   userId: string;
+  organizationId?: string | null;
   pageId: string;
 }
 
@@ -28,18 +29,24 @@ export class PageGenerationInputImageBuilder implements PageGenerationInputImage
   public async buildInputImages(
     input: BuildPageGenerationInputImagesInput,
   ): Promise<PageGenerationInputImage[]> {
-    const page = await this.pageRepository.findGenerationContextByIdAndUserId(input.pageId, input.userId);
+    const page = await this.pageRepository.findGenerationContextByIdAndUserId(
+      input.pageId,
+      input.userId,
+      input.organizationId ?? null,
+    );
     if (page === null) {
       throw new NotFoundError('Page not found');
     }
 
+    const organizationId = page.organizationId ?? input.organizationId ?? null;
     const entityIds = collectEntityIds(page.panels);
-    const entities = await this.entityRepository.findByWorkIdAndUserId(page.workId, input.userId);
+    const entities = await this.entityRepository.findByWorkIdAndUserId(page.workId, input.userId, organizationId);
     const entityNameById = new Map(entities.map((entity) => [entity.id, entity.name]));
     const references = await this.entityRepository.findPrimaryReferenceImagesByEntityIdsAndUserId(
       entityIds,
       page.workId,
       input.userId,
+      organizationId,
     );
     const referenceImageCount = new Set(references.map((reference) => reference.entityId)).size;
     if (referenceImageCount > PAGE_GENERATION_INPUT_IMAGE_LIMITS.MAX_ENTITY_REFERENCE_IMAGES) {
@@ -57,7 +64,7 @@ export class PageGenerationInputImageBuilder implements PageGenerationInputImage
         continue;
       }
 
-      ensureOwnedEntityReferenceImageKey(reference.s3Key, input.userId, entityId);
+      ensureOwnedEntityReferenceImageKey(reference.s3Key, reference.ownerUserId ?? input.userId, entityId);
       const loadedImage = await this.storedImageLoader.loadByS3Key(reference.s3Key);
       ensureInputImageWithinLimit(loadedImage.imageData);
       inputImages.push({

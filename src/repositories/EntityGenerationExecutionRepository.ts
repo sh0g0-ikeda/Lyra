@@ -39,6 +39,7 @@ export interface EntityGenerationExecutionRepository {
 interface GenerationJobRow extends QueryResultRow {
   id: string;
   user_id: string;
+  organization_id: string | null;
   job_type: GenerationJob['jobType'];
   status: GenerationJob['status'];
   generation_mode: string | null;
@@ -159,6 +160,7 @@ function mapGenerationJobRow(row: GenerationJobRow): GenerationJob {
   return {
     id: row.id,
     userId: row.user_id,
+    organizationId: row.organization_id,
     jobType: row.job_type,
     status: row.status,
     generationMode: row.generation_mode === 'standard' || row.generation_mode === 'thinking'

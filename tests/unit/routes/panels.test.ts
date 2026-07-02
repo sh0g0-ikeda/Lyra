@@ -68,6 +68,8 @@ class FakePanelService implements PanelServicePort {
   public lastUpdatedPanelId: string | null = null;
   public lastUpdateRequest: UpdatePanelRequest | null = null;
   public lastDeletedPanelId: string | null = null;
+  public lastReorderedPageId: string | null = null;
+  public lastReorderedPanelIds: string[] | null = null;
 
   public async createPanel(
     _userId: string,
@@ -95,6 +97,16 @@ class FakePanelService implements PanelServicePort {
 
   public async deletePanel(_userId: string, requestedPanelId: string): Promise<void> {
     this.lastDeletedPanelId = requestedPanelId;
+  }
+
+  public async reorderPanels(
+    _userId: string,
+    requestedPageId: string,
+    panelIds: string[],
+  ): Promise<Panel[]> {
+    this.lastReorderedPageId = requestedPageId;
+    this.lastReorderedPanelIds = panelIds;
+    return panelIds.map((id, index) => buildPanel({ id, pageId: requestedPageId, order: index + 1 }));
   }
 }
 
@@ -279,6 +291,37 @@ describe('panel routes', () => {
     const response = await app.request(`/api/pages/${pageId}/panels`);
 
     expect(response.status).toBe(401);
+  });
+
+  it('JWT is valid, panels can be reordered for a page', async () => {
+    const panelService = new FakePanelService();
+    const app = createTestApp(panelService);
+    const token = await createToken();
+    const nextPanelIds = [
+      '44444444-4444-4444-8444-444444444444',
+      '55555555-5555-4555-8555-555555555555',
+    ];
+
+    const response = await app.request(`/api/pages/${pageId}/panels/order`, {
+      method: 'PUT',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        panel_ids: nextPanelIds,
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(panelService.lastReorderedPageId).toBe(pageId);
+    expect(panelService.lastReorderedPanelIds).toEqual(nextPanelIds);
+    await expect(response.json()).resolves.toMatchObject({
+      panels: [
+        { id: nextPanelIds[0], order: 1 },
+        { id: nextPanelIds[1], order: 2 },
+      ],
+    });
   });
 });
 

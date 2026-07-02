@@ -41,6 +41,7 @@ export interface PageGenerationQueuePayload {
 
 export interface PersistedPageGenerationJobParams {
   page_id: string;
+  work_id?: string | null;
   request_kind: PageGenerationRequestKind;
   generation_mode: PageGenerationMode;
   quality: PageGenerationQuality;

@@ -8,6 +8,7 @@ import { describeAppLanguage } from '../../domain/types/language.js';
 import type {
   StoryEpisodeDraftFields,
   StoryEpisodeImprovementPlan,
+  StoryEpisodeImprovementSectionPlan,
 } from '../../domain/types/storyAi.js';
 import {
   compactStoryPromptText,
@@ -96,8 +97,6 @@ export class OpenAIStoryEpisodeImprovementPlanner implements StoryEpisodeImprove
       audit: {
         verdict: validated.verdict,
         globalIssues: validated.global_issues,
-        title: validated.title,
-        purpose: validated.purpose,
         introduction: validated.introduction,
         middle: validated.middle,
         climax: validated.climax,
@@ -121,7 +120,6 @@ function buildPlannerSystemPrompt(language: PlanStoryEpisodeImprovementInput['la
     'Bias the plan toward page and panel adaptation: every section should become easier to split into scenes, pages, and panel beats after rewriting.',
     'Prefer concrete visual and causal beats over abstract thematic summaries.',
     `For introduction, middle, climax, and ending_hook, identify compact visual beats and narration hints that would later help page autofill and panel planning in ${outputLanguage}.`,
-    'Keep purpose concise but practical: it should say what the episode accomplishes in story terms and what emotional or informational turn it must deliver.',
     'Return JSON only.',
   ].join(' ');
 }
@@ -138,7 +136,7 @@ function buildPlannerUserPrompt(input: PlanStoryEpisodeImprovementInput): string
     '',
     `Context:\n${formatEpisodeImprovementContext(input.context)}`,
     '',
-    'Return JSON with exactly these keys: story_objective, must_preserve, continuity_guards, page_adaptation_notes, title, purpose, introduction, middle, climax, ending_hook.',
+    'Return JSON with exactly these keys: story_objective, must_preserve, continuity_guards, page_adaptation_notes, introduction, middle, climax, ending_hook.',
     'Each section object must contain: objective, must_include, visual_beats, narration_hints, continuity_guards, avoid.',
     'Keep arrays compact and useful for later page and panel planning.',
   ].join('\n');
@@ -193,15 +191,13 @@ function buildAuditUserPrompt(input: AuditStoryEpisodeImprovementInput): string 
     '',
     `Candidate rewritten draft:\n${formatEpisodeDraftFields(input.draft)}`,
     '',
-    'Return JSON with keys: verdict, global_issues, title, purpose, introduction, middle, climax, ending_hook.',
+    'Return JSON with keys: verdict, global_issues, introduction, middle, climax, ending_hook.',
     'Use short actionable notes only. If the draft is good enough, return verdict "pass" and empty arrays.',
   ].join('\n');
 }
 
 function formatEpisodeDraftFields(draft: StoryEpisodeDraftFields): string {
   return [
-    `Title: ${draft.title ?? '(none)'}`,
-    `Purpose: ${draft.purpose ?? '(none)'}`,
     `Story input mode: ${draft.storyInputMode}`,
     `Full story draft: ${draft.storyFullDraft ?? '(none)'}`,
     `Introduction: ${draft.introduction ?? '(none)'}`,
@@ -216,8 +212,6 @@ function episodeDraftsHaveSameEditableContent(
   right: StoryEpisodeDraftFields,
 ): boolean {
   return (
-    normalizeComparableDraftField(left.title) === normalizeComparableDraftField(right.title) &&
-    normalizeComparableDraftField(left.purpose) === normalizeComparableDraftField(right.purpose) &&
     normalizeComparableDraftField(left.introduction) === normalizeComparableDraftField(right.introduction) &&
     normalizeComparableDraftField(left.middle) === normalizeComparableDraftField(right.middle) &&
     normalizeComparableDraftField(left.climax) === normalizeComparableDraftField(right.climax) &&
@@ -239,6 +233,7 @@ function formatEpisodeImprovementContext(
     `Theme: ${compactStoryPromptText(context.theme) ?? '(none)'}`,
     `Overall flow: ${compactStoryPromptText(context.overallFlow) ?? '(none)'}`,
     `Chapter: ${formatStoryPromptParts([context.chapterTitle, context.chapterPurpose], context.entities)}`,
+    `Episode: ${formatStoryPromptParts([context.episodeTitle, context.episodePurpose], context.entities)}`,
     `Chapter arc: ${formatStoryPromptParts(
       [context.chapterStartingState, context.chapterEndingState, context.chapterEmotionCurve],
       context.entities,
@@ -265,8 +260,6 @@ function mapPlanPayload(
     mustPreserve: payload.must_preserve,
     continuityGuards: payload.continuity_guards,
     pageAdaptationNotes: payload.page_adaptation_notes,
-    title: mapSectionPlan(payload.title),
-    purpose: mapSectionPlan(payload.purpose),
     introduction: mapSectionPlan(payload.introduction),
     middle: mapSectionPlan(payload.middle),
     climax: mapSectionPlan(payload.climax),
@@ -275,8 +268,8 @@ function mapPlanPayload(
 }
 
 function mapSectionPlan(
-  section: z.infer<typeof episodeImprovementPlanResponseSchema>['title'],
-): StoryEpisodeImprovementPlan['title'] {
+  section: z.infer<typeof episodeImprovementPlanResponseSchema>['introduction'],
+): StoryEpisodeImprovementSectionPlan {
   return {
     objective: section.objective,
     mustInclude: section.must_include,
@@ -293,8 +286,6 @@ function mapPlanForPrompt(plan: StoryEpisodeImprovementPlan): Record<string, unk
     must_preserve: plan.mustPreserve,
     continuity_guards: plan.continuityGuards,
     page_adaptation_notes: plan.pageAdaptationNotes,
-    title: mapSectionForPrompt(plan.title),
-    purpose: mapSectionForPrompt(plan.purpose),
     introduction: mapSectionForPrompt(plan.introduction),
     middle: mapSectionForPrompt(plan.middle),
     climax: mapSectionForPrompt(plan.climax),
@@ -303,7 +294,7 @@ function mapPlanForPrompt(plan: StoryEpisodeImprovementPlan): Record<string, unk
 }
 
 function mapSectionForPrompt(
-  section: StoryEpisodeImprovementPlan['title'],
+  section: StoryEpisodeImprovementSectionPlan,
 ): Record<string, unknown> {
   return {
     objective: section.objective,
@@ -353,8 +344,6 @@ const episodeImprovementPlanJsonSchema = {
     'must_preserve',
     'continuity_guards',
     'page_adaptation_notes',
-    'title',
-    'purpose',
     'introduction',
     'middle',
     'climax',
@@ -365,8 +354,6 @@ const episodeImprovementPlanJsonSchema = {
     must_preserve: boundedStringListJsonSchema,
     continuity_guards: boundedStringListJsonSchema,
     page_adaptation_notes: boundedStringListJsonSchema,
-    title: episodeImprovementSectionPlanJsonSchema,
-    purpose: episodeImprovementSectionPlanJsonSchema,
     introduction: episodeImprovementSectionPlanJsonSchema,
     middle: episodeImprovementSectionPlanJsonSchema,
     climax: episodeImprovementSectionPlanJsonSchema,
@@ -380,8 +367,6 @@ const episodeImprovementAuditJsonSchema = {
   required: [
     'verdict',
     'global_issues',
-    'title',
-    'purpose',
     'introduction',
     'middle',
     'climax',
@@ -390,8 +375,6 @@ const episodeImprovementAuditJsonSchema = {
   properties: {
     verdict: { type: 'string', enum: ['pass', 'revise'] },
     global_issues: boundedStringListJsonSchema,
-    title: boundedStringListJsonSchema,
-    purpose: boundedStringListJsonSchema,
     introduction: boundedStringListJsonSchema,
     middle: boundedStringListJsonSchema,
     climax: boundedStringListJsonSchema,

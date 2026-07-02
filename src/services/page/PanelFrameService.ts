@@ -20,16 +20,18 @@ export type {
 };
 
 export interface PanelFrameServicePort {
-  listPageFrames(userId: string, pageId: string): Promise<PanelFrame[]>;
+  listPageFrames(userId: string, pageId: string, organizationId?: string | null): Promise<PanelFrame[]>;
   replacePageFrames(
     userId: string,
     pageId: string,
     frames: UpsertPanelFrameInput[],
+    organizationId?: string | null,
   ): Promise<PanelFrame[]>;
   applyTemplate(
     userId: string,
     pageId: string,
     templateId: PanelFrameTemplateId,
+    organizationId?: string | null,
   ): Promise<PanelFrameTemplateApplication>;
 }
 
@@ -40,32 +42,38 @@ export interface PanelFrameServicePort {
 export class PanelFrameService implements PanelFrameServicePort {
   public constructor(private readonly panelFrameRepository: PanelFrameRepository) {}
 
-  public async listPageFrames(userId: string, pageId: string): Promise<PanelFrame[]> {
-    await this.ensurePageOwnedByUser(userId, pageId);
-    return this.panelFrameRepository.findFramesByPageIdAndUserId(pageId, userId);
+  public async listPageFrames(
+    userId: string,
+    pageId: string,
+    organizationId: string | null = null,
+  ): Promise<PanelFrame[]> {
+    await this.ensurePageOwnedByUser(userId, pageId, organizationId);
+    return this.panelFrameRepository.findFramesByPageIdAndUserId(pageId, userId, organizationId);
   }
 
   public async replacePageFrames(
     userId: string,
     pageId: string,
     frames: UpsertPanelFrameInput[],
+    organizationId: string | null = null,
   ): Promise<PanelFrame[]> {
-    await this.ensurePageOwnedByUser(userId, pageId);
-    await this.ensurePanelsBelongToPage(userId, pageId, frames);
+    await this.ensurePageOwnedByUser(userId, pageId, organizationId);
+    await this.ensurePanelsBelongToPage(userId, pageId, frames, organizationId);
 
     return this.panelFrameRepository.replaceFramesByPageIdAndUserId(pageId, userId, frames, {
       type: 'custom',
       panelCount: frames.length,
       frameDefinitions: frames,
-    });
+    }, organizationId);
   }
 
   public async applyTemplate(
     userId: string,
     pageId: string,
     templateId: PanelFrameTemplateId,
+    organizationId: string | null = null,
   ): Promise<PanelFrameTemplateApplication> {
-    await this.ensurePageOwnedByUser(userId, pageId);
+    await this.ensurePageOwnedByUser(userId, pageId, organizationId);
 
     const template = getPanelFrameTemplate(templateId);
     const frames = buildPanelFrameTemplateInputs(templateId);
@@ -79,6 +87,7 @@ export class PanelFrameService implements PanelFrameServicePort {
         panelCount: template.panelCount,
         frameDefinitions: frames,
       },
+      organizationId,
     );
 
     return {
@@ -88,8 +97,16 @@ export class PanelFrameService implements PanelFrameServicePort {
     };
   }
 
-  private async ensurePageOwnedByUser(userId: string, pageId: string): Promise<void> {
-    const pageContext = await this.panelFrameRepository.findPageContextByIdAndUserId(pageId, userId);
+  private async ensurePageOwnedByUser(
+    userId: string,
+    pageId: string,
+    organizationId: string | null,
+  ): Promise<void> {
+    const pageContext = await this.panelFrameRepository.findPageContextByIdAndUserId(
+      pageId,
+      userId,
+      organizationId,
+    );
     if (pageContext === null) {
       throw new NotFoundError('Page not found');
     }
@@ -101,6 +118,7 @@ export class PanelFrameService implements PanelFrameServicePort {
     userId: string,
     pageId: string,
     frames: UpsertPanelFrameInput[],
+    organizationId: string | null,
   ): Promise<void> {
     const requestedPanelIds = [
       ...new Set(frames.flatMap((frame) => (frame.panelId === null ? [] : [frame.panelId]))),
@@ -113,6 +131,7 @@ export class PanelFrameService implements PanelFrameServicePort {
       pageId,
       userId,
       requestedPanelIds,
+      organizationId,
     );
     const matchedPanelIdSet = new Set(matchedPanelIds);
     const hasMissingPanel = requestedPanelIds.some((panelId) => !matchedPanelIdSet.has(panelId));

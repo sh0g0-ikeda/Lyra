@@ -55,8 +55,34 @@ describe('PostgresEntityGenerationRecoveryRepository', () => {
 
     expect(client.queryText).toContain('generation_jobs.user_id = $2');
     expect(client.queryText).toContain("generation_jobs.params->>'entity_id' = $3");
-    expect(client.queryText).toContain('LIMIT $4');
-    expect(client.values).toEqual([cutoff, 'user-1', 'entity-1', 50]);
+    expect(client.queryText).toContain('generation_jobs.organization_id IS NULL');
+    expect(client.queryText).toContain('LIMIT $5');
+    expect(client.values).toEqual([cutoff, 'user-1', 'entity-1', null, 50]);
+  });
+
+  it('entity指定回収では組織ジョブにactive member条件を追加する', async () => {
+    const client = new QueryCapturingClient();
+    const repository = new PostgresEntityGenerationRecoveryRepository(client);
+    const cutoff = new Date('2026-06-08T00:00:00.000Z');
+
+    await repository.listStaleProcessingJobsForEntity(
+      'user-1',
+      'entity-1',
+      cutoff,
+      50,
+      '11111111-1111-4111-8111-111111111111',
+    );
+
+    expect(client.queryText).toContain('FROM organization_members');
+    expect(client.queryText).toContain('organization_members.user_id = $2');
+    expect(client.queryText).toContain("organization_members.status = 'active'");
+    expect(client.values).toEqual([
+      cutoff,
+      'user-1',
+      'entity-1',
+      '11111111-1111-4111-8111-111111111111',
+      50,
+    ]);
   });
 
   it('failed だが refund 台帳がない entity generation job を返金対象にする', async () => {
@@ -83,8 +109,34 @@ describe('PostgresEntityGenerationRecoveryRepository', () => {
 
     expect(client.queryText).toContain('generation_jobs.user_id = $1');
     expect(client.queryText).toContain("generation_jobs.params->>'entity_id' = $2");
-    expect(client.queryText).toContain('LIMIT $3');
-    expect(client.values).toEqual(['user-1', 'entity-1', 50]);
+    expect(client.queryText).toContain(
+      "COALESCE(credit_ledger.organization_id::text, '') = COALESCE(generation_jobs.organization_id::text, '')",
+    );
+    expect(client.queryText).toContain('generation_jobs.organization_id IS NULL');
+    expect(client.queryText).toContain('LIMIT $4');
+    expect(client.values).toEqual(['user-1', 'entity-1', null, 50]);
+  });
+
+  it('entity指定の未返金failed job回収では組織ジョブにactive member条件を追加する', async () => {
+    const client = new QueryCapturingClient();
+    const repository = new PostgresEntityGenerationRecoveryRepository(client);
+
+    await repository.listFailedJobsMissingRefundForEntity(
+      'user-1',
+      'entity-1',
+      50,
+      '11111111-1111-4111-8111-111111111111',
+    );
+
+    expect(client.queryText).toContain('FROM organization_members');
+    expect(client.queryText).toContain('organization_members.user_id = $1');
+    expect(client.queryText).toContain("organization_members.status = 'active'");
+    expect(client.values).toEqual([
+      'user-1',
+      'entity-1',
+      '11111111-1111-4111-8111-111111111111',
+      50,
+    ]);
   });
 });
 

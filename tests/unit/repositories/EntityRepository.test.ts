@@ -55,7 +55,7 @@ describe('PostgresEntityRepository', () => {
     const result = await repository.findReferenceContextByIdAndUserId('entity-1', 'user-1');
 
     expect(client.queries[0]).toContain('entities.user_id = $2');
-    expect(client.valuesList[0]).toEqual(['entity-1', 'user-1']);
+    expect(client.valuesList[0]).toEqual(['entity-1', 'user-1', null]);
     expect(result).toMatchObject({
       entityId: 'entity-1',
       userId: 'user-1',
@@ -88,8 +88,46 @@ describe('PostgresEntityRepository', () => {
     expect(client.queries[0]).toContain('FOR UPDATE OF reference_sets');
     expect(client.queries[1]).toContain('UPDATE reference_sets');
     expect(client.queries[2]).toContain('UPDATE entities');
+    expect(client.queries[2]).toContain('organization_id IS NULL');
     expect(client.valuesList[1]?.[3]).toBe('ref-2');
     expect(client.valuesList[2]?.[3]).toBe('anime heroine');
+  });
+
+  it('deleteReferenceImage は個人スコープで法人Workspace内キャラを更新しない', async () => {
+    const client = new QueryCapturingClient();
+    const repository = new PostgresEntityRepository(client);
+
+    await repository.deleteReferenceImage({
+      entityId: 'entity-1',
+      userId: 'user-1',
+      refId: 'ref-1',
+    });
+
+    expect(client.queries[2]).toContain('UPDATE entities');
+    expect(client.queries[2]).toContain('organization_id IS NULL');
+    expect(client.valuesList[2]).toEqual(['entity-1', 'user-1', 'draft', null]);
+  });
+
+  it('update は個人スコープで法人Workspace内キャラを更新しない', async () => {
+    const client = new QueryCapturingClient();
+    const repository = new PostgresEntityRepository(client);
+
+    await repository.update('entity-1', 'user-1', { name: 'Updated' });
+
+    expect(client.queries[0]).toContain('UPDATE entities');
+    expect(client.queries[0]).toContain('organization_id IS NULL');
+    expect(client.valuesList[0]?.[12]).toBeNull();
+  });
+
+  it('delete は個人スコープで法人Workspace内キャラを削除しない', async () => {
+    const client = new QueryCapturingClient();
+    const repository = new PostgresEntityRepository(client);
+
+    await repository.delete('entity-1', 'user-1');
+
+    expect(client.queries[0]).toContain('DELETE FROM entities');
+    expect(client.queries[0]).toContain('organization_id IS NULL');
+    expect(client.valuesList[0]).toEqual(['entity-1', 'user-1', null]);
   });
 
   it('countEntityStateUsageByReferenceId は user_id で絞る', async () => {
@@ -99,7 +137,7 @@ describe('PostgresEntityRepository', () => {
     await repository.countEntityStateUsageByReferenceId('entity-1', 'user-1', 'ref-1');
 
     expect(client.queries[0]).toContain('entities.user_id = $2');
-    expect(client.valuesList[0]).toEqual(['entity-1', 'user-1', 'ref-1']);
+    expect(client.valuesList[0]).toEqual(['entity-1', 'user-1', 'ref-1', null]);
   });
 });
 

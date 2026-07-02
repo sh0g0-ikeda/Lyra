@@ -275,8 +275,9 @@ describe('PageSkeletonService', () => {
     });
     expect(repository.createdPages).toHaveLength(2);
     expect(client.lastRequest?.systemPrompt).toContain(
-      'Treat the episode draft and scene list as the primary source of truth for page content.',
+      'Treat the episode draft as the primary source of truth for page content.',
     );
+    expect(client.lastRequest?.systemPrompt).toContain('do not require scenes to build the skeleton');
     expect(client.lastRequest?.systemPrompt).toContain('Return exactly 2 pages');
     expect(client.lastRequest?.userPrompt).toContain('Scene 1: Rooftop / night / tense');
     expect(client.lastRequest?.userPrompt).toContain('Chapter consistency note: Chapter 1 / Set the stakes');

@@ -98,10 +98,18 @@ class FakePanelRepository implements PanelRepository {
   public async compactPanelOrdersAfterDelete(): Promise<void> {
     throw new Error('not used');
   }
+
+  public async reorderPanels(): Promise<Panel[]> {
+    throw new Error('not used');
+  }
 }
 
 class FakeEntityRepository implements EntityRepository {
   public entities: Entity[] = [buildEntity()];
+  public lastFindByWorkArgs: { workId: string; userId: string; organizationId: string | null } | null = null;
+  public lastReferenceArgs:
+    | { entityIds: string[]; workId: string; userId: string; organizationId: string | null }
+    | null = null;
 
   public async create(_input: CreateEntityInput): Promise<Entity> {
     throw new Error('not used');
@@ -111,7 +119,12 @@ class FakeEntityRepository implements EntityRepository {
     throw new Error('not used');
   }
 
-  public async findByWorkIdAndUserId(): Promise<Entity[]> {
+  public async findByWorkIdAndUserId(
+    workId: string,
+    userId: string,
+    organizationId: string | null = null,
+  ): Promise<Entity[]> {
+    this.lastFindByWorkArgs = { workId, userId, organizationId };
     return this.entities;
   }
 
@@ -121,7 +134,11 @@ class FakeEntityRepository implements EntityRepository {
 
   public async findPrimaryReferenceImagesByEntityIdsAndUserId(
     entityIds: string[],
+    workId: string,
+    userId: string,
+    organizationId: string | null = null,
   ): Promise<EntityPrimaryReferenceImage[]> {
+    this.lastReferenceArgs = { entityIds, workId, userId, organizationId };
     return entityIds
       .filter((entityId) => this.entities.some((entity) => entity.id === entityId))
       .map((entityId, index) => ({
@@ -236,6 +253,38 @@ describe('PromptBuilder', () => {
           ],
         },
       ],
+    });
+  });
+
+  it('法人Workspaceのページではプロンプト用entityとreferenceもorganizationIdで読む', async () => {
+    const pageRepository = new FakePageRepository();
+    pageRepository.promptContext = buildPagePromptContext({ organizationId: 'org-1' });
+    const entityRepository = new FakeEntityRepository();
+    const builder = new PromptBuilder(
+      pageRepository,
+      new FakePanelRepository(),
+      entityRepository,
+      new FakeCompositionGalleryRepository(),
+    );
+
+    await builder.buildPagePrompt({
+      userId: 'user-1',
+      organizationId: 'org-1',
+      pageId: 'page-1',
+      requestKind: 'initial',
+      generationMode: 'standard',
+    });
+
+    expect(entityRepository.lastFindByWorkArgs).toEqual({
+      workId: 'work-1',
+      userId: 'user-1',
+      organizationId: 'org-1',
+    });
+    expect(entityRepository.lastReferenceArgs).toEqual({
+      entityIds: ['entity-1'],
+      workId: 'work-1',
+      userId: 'user-1',
+      organizationId: 'org-1',
     });
   });
 

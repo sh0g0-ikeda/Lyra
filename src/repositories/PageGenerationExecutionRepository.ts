@@ -1,4 +1,4 @@
-import type { QueryResultRow } from 'pg';
+﻿import type { QueryResultRow } from 'pg';
 import type { PageStatus } from '../domain/types/page.js';
 import type { GenerationJob } from '../domain/types/job.js';
 import type { PageGenerationInputSnapshot, PageGenerationMode } from '../domain/types/pageGeneration.js';
@@ -13,6 +13,7 @@ import type {
 export interface CompletePageGenerationInput {
   jobId: string;
   userId: string;
+  organizationId?: string | null;
   pageId: string;
   generationMode: PageGenerationMode;
   requestKind: 'initial' | 'regenerate';
@@ -28,6 +29,7 @@ export interface CompletePageGenerationInput {
 export interface FailPageGenerationInput {
   jobId: string;
   userId: string;
+  organizationId?: string | null;
   errorMessage: string;
   pageId?: string;
   previousStatus?: PageStatus;
@@ -60,6 +62,7 @@ export interface PageGenerationExecutionRepository {
 interface GenerationJobRow extends QueryResultRow {
   id: string;
   user_id: string;
+  organization_id: string | null;
   job_type: GenerationJob['jobType'];
   status: GenerationJob['status'];
   generation_mode: string | null;
@@ -174,7 +177,20 @@ export class PostgresPageGenerationExecutionRepository implements PageGeneration
         INNER JOIN works ON works.id = chapters.work_id
         WHERE pages.id = $1
           AND pages.episode_id = episodes.id
-          AND works.user_id = $2
+          AND (
+            ($7::uuid IS NULL AND works.user_id = $2 AND works.organization_id IS NULL)
+            OR (
+            $7::uuid IS NOT NULL
+            AND works.organization_id = $7::uuid
+            AND EXISTS (
+              SELECT 1
+              FROM organization_members
+              WHERE organization_members.organization_id = works.organization_id
+                AND organization_members.user_id = $2
+                AND organization_members.status = 'active'
+            )
+          )
+          )
         RETURNING pages.id
         `,
         [
@@ -184,6 +200,7 @@ export class PostgresPageGenerationExecutionRepository implements PageGeneration
           input.cdnUrl,
           input.generationMode,
           input.generatedAt,
+          input.organizationId ?? null,
         ],
       );
 
@@ -269,10 +286,29 @@ export class PostgresPageGenerationExecutionRepository implements PageGeneration
           INNER JOIN works ON works.id = chapters.work_id
           WHERE pages.id = $1
             AND pages.episode_id = episodes.id
-            AND works.user_id = $2
+            AND (
+              ($5::uuid IS NULL AND works.user_id = $2 AND works.organization_id IS NULL)
+              OR (
+            $5::uuid IS NOT NULL
+            AND works.organization_id = $5::uuid
+            AND EXISTS (
+              SELECT 1
+              FROM organization_members
+              WHERE organization_members.organization_id = works.organization_id
+                AND organization_members.user_id = $2
+                AND organization_members.status = 'active'
+            )
+          )
+            )
           RETURNING pages.id
           `,
-          [input.pageId, input.userId, input.previousStatus, input.previousGenerationMode],
+          [
+            input.pageId,
+            input.userId,
+            input.previousStatus,
+            input.previousGenerationMode,
+            input.organizationId ?? null,
+          ],
         );
       }
 
@@ -285,6 +321,7 @@ function mapGenerationJobRow(row: GenerationJobRow): GenerationJob {
   return {
     id: row.id,
     userId: row.user_id,
+    organizationId: row.organization_id,
     jobType: row.job_type,
     status: row.status,
     generationMode: toPageGenerationMode(row.generation_mode),

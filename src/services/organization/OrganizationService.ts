@@ -1,0 +1,1087 @@
+import { createHash, randomBytes } from 'node:crypto';
+import {
+  ENTERPRISE_PLAN_DEFINITIONS,
+  type CreditPackageCode,
+  CREDIT_PACKAGE_DEFINITIONS,
+  type EnterprisePlanCode,
+} from '../../domain/constants/billing.js';
+import {
+  ConflictError,
+  ForbiddenError,
+  InsufficientCreditsError,
+  NotFoundError,
+  ValidationError,
+} from '../../domain/errors/index.js';
+import type {
+  Organization,
+  OrganizationAuditLog,
+  OrganizationCapability,
+  OrganizationCreditBalance,
+  OrganizationInvitation,
+  OrganizationMember,
+  OrganizationMemberRole,
+  OrganizationStatus,
+  OrganizationUsageEvent,
+  OrganizationWorkspaceSummary,
+} from '../../domain/types/organization.js';
+import { roleHasCapability } from '../../domain/types/organization.js';
+import type { DatabaseClient } from '../../lib/db.js';
+import type { OrganizationRepository } from '../../repositories/OrganizationRepository.js';
+
+const BILLING_AUDIT_ACTION_PREFIXES = ['billing.', 'credit.', 'subscription.'] as const;
+
+export interface CreateOrganizationRequest {
+  name: string;
+  legalName: string | null;
+  billingEmail: string | null;
+}
+
+export interface UpdateOrganizationRequest {
+  name?: string;
+  legalName?: string | null;
+  billingEmail?: string | null;
+}
+
+export interface AdminUpdateOrganizationContractRequest {
+  planKey?: EnterprisePlanCode;
+  status?: OrganizationStatus;
+  billingEmail?: string | null;
+}
+
+export interface CreateOrganizationInvitationResult {
+  invitation: OrganizationInvitation;
+  token: string;
+}
+
+export interface ConsumeOrganizationCreditsRequest {
+  userId: string;
+  organizationId: string;
+  cost: number;
+  description: string;
+  jobId?: string | null;
+  workId?: string | null;
+  eventType?: string;
+}
+
+export interface GrantOrganizationCreditsRequest {
+  organizationId: string;
+  actorUserId: string | null;
+  amount: number;
+  description: string;
+  stripeEventId?: string | null;
+}
+
+export interface RecordOrganizationGenerationRequest {
+  organizationId: string;
+  userId: string;
+  workId?: string | null;
+  jobId: string;
+  generationType: string;
+  creditAmount?: number;
+  metadata?: Record<string, unknown>;
+}
+
+export interface RecordOrganizationWorkExportRequest {
+  organizationId: string;
+  userId: string;
+  workId: string;
+  pageId?: string | null;
+  metadata?: Record<string, unknown>;
+}
+
+export interface OrganizationServicePort {
+  listWorkspaces(userId: string): Promise<OrganizationWorkspaceSummary[]>;
+  createOrganization(userId: string, input: CreateOrganizationRequest): Promise<OrganizationWorkspaceSummary>;
+  getOrganization(userId: string, organizationId: string): Promise<OrganizationWorkspaceSummary>;
+  updateOrganization(userId: string, organizationId: string, input: UpdateOrganizationRequest): Promise<Organization>;
+  adminUpdateOrganizationContract(
+    actorUserId: string,
+    organizationId: string,
+    input: AdminUpdateOrganizationContractRequest,
+  ): Promise<Organization>;
+  adminGrantCredits(
+    input: GrantOrganizationCreditsRequest & {
+      bucket: 'monthly' | 'purchased';
+      packageCode?: CreditPackageCode | null;
+    },
+  ): Promise<OrganizationCreditBalance>;
+  listMembers(userId: string, organizationId: string): Promise<OrganizationMember[]>;
+  inviteMember(
+    userId: string,
+    organizationId: string,
+    input: { email: string; role: OrganizationMemberRole },
+  ): Promise<CreateOrganizationInvitationResult>;
+  acceptInvitation(userId: string, email: string, token: string): Promise<OrganizationWorkspaceSummary>;
+  updateMember(
+    userId: string,
+    organizationId: string,
+    memberId: string,
+    input: { role?: OrganizationMemberRole; status?: 'active' | 'suspended' | 'removed' },
+  ): Promise<OrganizationMember>;
+  removeMember(userId: string, organizationId: string, memberId: string): Promise<void>;
+  requireMembership(
+    organizationId: string,
+    userId: string,
+    capability?: OrganizationCapability,
+    client?: DatabaseClient,
+  ): Promise<OrganizationMember>;
+  getCreditBalance(userId: string, organizationId: string): Promise<OrganizationCreditBalance>;
+  consumeCredits(input: ConsumeOrganizationCreditsRequest): Promise<OrganizationCreditBalance>;
+  refundCredits(input: GrantOrganizationCreditsRequest & { jobId?: string | null }): Promise<OrganizationCreditBalance>;
+  grantMonthlyCredits(
+    input: GrantOrganizationCreditsRequest,
+    client?: DatabaseClient,
+  ): Promise<OrganizationCreditBalance>;
+  grantPurchasedCredits(
+    input: GrantOrganizationCreditsRequest & { packageCode?: CreditPackageCode | null },
+    client?: DatabaseClient,
+  ): Promise<OrganizationCreditBalance>;
+  listUsageEvents(userId: string, organizationId: string): Promise<OrganizationUsageEvent[]>;
+  listAuditLogs(userId: string, organizationId: string): Promise<OrganizationAuditLog[]>;
+  recordGenerationCompleted(input: RecordOrganizationGenerationRequest): Promise<void>;
+  recordGenerationFailed(input: RecordOrganizationGenerationRequest & { errorMessage?: string | null }): Promise<void>;
+  recordWorkExported(input: RecordOrganizationWorkExportRequest): Promise<void>;
+}
+
+/**
+ * OrganizationService is the authorization boundary for enterprise workspaces.
+ * Existing personal flows do not pass organizationId and continue to use the
+ * personal user_id scope. Calls with organizationId must pass through this
+ * service before reading works, members, billing data, or shared credits.
+ */
+export class OrganizationService implements OrganizationServicePort {
+  public constructor(private readonly organizationRepository: OrganizationRepository) {}
+
+  public async listWorkspaces(userId: string): Promise<OrganizationWorkspaceSummary[]> {
+    return this.organizationRepository.listWorkspacesByUserId(userId);
+  }
+
+  public async createOrganization(
+    userId: string,
+    input: CreateOrganizationRequest,
+  ): Promise<OrganizationWorkspaceSummary> {
+    return this.organizationRepository.transaction(async (client) => {
+      const organization = await this.organizationRepository.createOrganization(
+        {
+          name: input.name,
+          legalName: input.legalName,
+          billingEmail: input.billingEmail,
+          planKey: 'enterprise_a',
+          createdByUserId: userId,
+        },
+        client,
+      );
+      const membership = await this.organizationRepository.createOrUpdateMember(
+        {
+          organizationId: organization.id,
+          userId,
+          role: 'owner',
+          status: 'active',
+          invitedByUserId: null,
+          joinedAt: new Date(),
+        },
+        client,
+      );
+      const balance = await this.organizationRepository.createCreditBalance(organization.id, client);
+      await this.organizationRepository.insertAuditLog(
+        {
+          organizationId: organization.id,
+          actorUserId: userId,
+          action: 'organization.created',
+          targetType: 'organization',
+          targetId: organization.id,
+        },
+        client,
+      );
+      return { organization, membership, balance };
+    });
+  }
+
+  public async getOrganization(
+    userId: string,
+    organizationId: string,
+  ): Promise<OrganizationWorkspaceSummary> {
+    const membership = await this.requireMembership(organizationId, userId);
+    const organization = await this.organizationRepository.findOrganizationById(organizationId);
+    if (organization === null) {
+      throw new NotFoundError('Organization not found');
+    }
+
+    return {
+      organization,
+      membership,
+      balance: await this.organizationRepository.getCreditBalance(organizationId),
+    };
+  }
+
+  public async updateOrganization(
+    userId: string,
+    organizationId: string,
+    input: UpdateOrganizationRequest,
+  ): Promise<Organization> {
+    await this.requireMembership(organizationId, userId, 'manage_organization');
+    // User-facing workspace edits must never alter contract state. Plan/status
+    // changes are reserved for admin operations and Stripe webhook handling.
+    const allowedUpdate = {
+      name: input.name,
+      legalName: input.legalName,
+      billingEmail: input.billingEmail,
+    };
+    const organization = await this.organizationRepository.updateOrganization(organizationId, allowedUpdate);
+    if (organization === null) {
+      throw new NotFoundError('Organization not found');
+    }
+    await this.organizationRepository.insertAuditLog({
+      organizationId,
+      actorUserId: userId,
+      action: 'organization.updated',
+      targetType: 'organization',
+      targetId: organizationId,
+      metadata: {
+        fields: Object.keys(allowedUpdate).filter(
+          (key) => allowedUpdate[key as keyof typeof allowedUpdate] !== undefined,
+        ),
+      },
+    });
+    return organization;
+  }
+
+  public async adminUpdateOrganizationContract(
+    actorUserId: string,
+    organizationId: string,
+    input: AdminUpdateOrganizationContractRequest,
+  ): Promise<Organization> {
+    return this.organizationRepository.transaction(async (client) => {
+      const before = await this.organizationRepository.findOrganizationById(organizationId, client);
+      if (before === null) {
+        throw new NotFoundError('Organization not found');
+      }
+
+      const organization = await this.organizationRepository.updateOrganization(
+        organizationId,
+        {
+          planKey: input.planKey,
+          status: input.status,
+          billingEmail: input.billingEmail,
+        },
+        client,
+      );
+      if (organization === null) {
+        throw new NotFoundError('Organization not found');
+      }
+
+      await this.organizationRepository.insertAuditLog(
+        {
+          organizationId,
+          actorUserId,
+          action: 'organization.contract_updated',
+          targetType: 'organization',
+          targetId: organizationId,
+          metadata: {
+            from_plan_key: before.planKey,
+            to_plan_key: organization.planKey,
+            from_status: before.status,
+            to_status: organization.status,
+            billing_email_changed: before.billingEmail !== organization.billingEmail,
+          },
+        },
+        client,
+      );
+      return organization;
+    });
+  }
+
+  public async adminGrantCredits(
+    input: GrantOrganizationCreditsRequest & {
+      bucket: 'monthly' | 'purchased';
+      packageCode?: CreditPackageCode | null;
+    },
+  ): Promise<OrganizationCreditBalance> {
+    if (input.bucket === 'monthly') {
+      return this.grantMonthlyCredits(input);
+    }
+    return this.grantPurchasedCredits({
+      ...input,
+      packageCode: input.packageCode ?? null,
+    });
+  }
+
+  public async listMembers(userId: string, organizationId: string): Promise<OrganizationMember[]> {
+    await this.requireMembership(organizationId, userId, 'manage_members');
+    return this.organizationRepository.listMembers(organizationId);
+  }
+
+  public async inviteMember(
+    userId: string,
+    organizationId: string,
+    input: { email: string; role: OrganizationMemberRole },
+  ): Promise<CreateOrganizationInvitationResult> {
+    await this.requireMembership(organizationId, userId, 'manage_members');
+    if (input.role === 'owner') {
+      await this.requireMembership(organizationId, userId, 'manage_organization');
+    }
+
+    const normalizedEmail = input.email.trim().toLowerCase();
+    const token = randomBytes(32).toString('base64url');
+    const tokenHash = hashInvitationToken(token);
+    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+
+    return this.organizationRepository.transaction(async (client) => {
+      const existing = await this.organizationRepository.findPendingInvitationByEmail(
+        organizationId,
+        normalizedEmail,
+        client,
+      );
+      if (existing !== null) {
+        throw new ConflictError('An active invitation already exists for this email');
+      }
+
+      const invitation = await this.organizationRepository.createInvitation(
+        {
+          organizationId,
+          email: normalizedEmail,
+          role: input.role,
+          tokenHash,
+          invitedByUserId: userId,
+          expiresAt,
+        },
+        client,
+      );
+      await this.organizationRepository.insertAuditLog(
+        {
+          organizationId,
+          actorUserId: userId,
+          action: 'member.invited',
+          targetType: 'invitation',
+          targetId: invitation.id,
+          metadata: { email: normalizedEmail, role: input.role },
+        },
+        client,
+      );
+      return { invitation, token };
+    });
+  }
+
+  public async acceptInvitation(
+    userId: string,
+    email: string,
+    token: string,
+  ): Promise<OrganizationWorkspaceSummary> {
+    const tokenHash = hashInvitationToken(token);
+    const normalizedEmail = email.trim().toLowerCase();
+
+    return this.organizationRepository.transaction(async (client) => {
+      const invitation = await this.organizationRepository.findInvitationByTokenHash(tokenHash, client);
+      if (invitation === null || invitation.status !== 'pending') {
+        throw new NotFoundError('Invitation not found');
+      }
+      if (invitation.expiresAt.getTime() < Date.now()) {
+        await this.organizationRepository.updateInvitation(invitation.id, { status: 'expired' }, client);
+        throw new ConflictError('Invitation has expired');
+      }
+      if (invitation.email !== normalizedEmail) {
+        throw new ForbiddenError('Invitation email does not match the signed-in account');
+      }
+
+      const membership = await this.organizationRepository.createOrUpdateMember(
+        {
+          organizationId: invitation.organizationId,
+          userId,
+          role: invitation.role,
+          status: 'active',
+          invitedByUserId: invitation.invitedByUserId,
+          joinedAt: new Date(),
+        },
+        client,
+      );
+      await this.organizationRepository.updateInvitation(
+        invitation.id,
+        {
+          status: 'accepted',
+          acceptedByUserId: userId,
+          acceptedAt: new Date(),
+        },
+        client,
+      );
+      await this.organizationRepository.insertAuditLog(
+        {
+          organizationId: invitation.organizationId,
+          actorUserId: userId,
+          action: 'member.joined',
+          targetType: 'member',
+          targetId: membership.id,
+          metadata: { role: invitation.role },
+        },
+        client,
+      );
+      const organization = await this.organizationRepository.findOrganizationById(invitation.organizationId, client);
+      if (organization === null) {
+        throw new NotFoundError('Organization not found');
+      }
+      return {
+        organization,
+        membership,
+        balance: await this.organizationRepository.getCreditBalance(invitation.organizationId, client),
+      };
+    });
+  }
+
+  public async updateMember(
+    userId: string,
+    organizationId: string,
+    memberId: string,
+    input: { role?: OrganizationMemberRole; status?: 'active' | 'suspended' | 'removed' },
+  ): Promise<OrganizationMember> {
+    await this.requireMembership(organizationId, userId, 'manage_members');
+    return this.organizationRepository.transaction(async (client) => {
+      const current = await this.organizationRepository.findMemberById(organizationId, memberId, client);
+      if (current === null) {
+        throw new NotFoundError('Member not found');
+      }
+      if (touchesOwnerAuthority(current, input)) {
+        await this.requireMembership(organizationId, userId, 'manage_organization', client);
+      }
+      await this.ensureLastOwnerIsKept(organizationId, current, input, client);
+      const updated = await this.organizationRepository.updateMember(organizationId, memberId, input, client);
+      if (updated === null) {
+        throw new NotFoundError('Member not found');
+      }
+      for (const entry of memberAuditEntries(current, updated)) {
+        await this.organizationRepository.insertAuditLog(
+          {
+            organizationId,
+            actorUserId: userId,
+            action: entry.action,
+            targetType: 'member',
+            targetId: memberId,
+            metadata: entry.metadata,
+          },
+          client,
+        );
+      }
+      return updated;
+    });
+  }
+
+  public async removeMember(userId: string, organizationId: string, memberId: string): Promise<void> {
+    await this.updateMember(userId, organizationId, memberId, { status: 'removed' });
+  }
+
+  public async requireMembership(
+    organizationId: string,
+    userId: string,
+    capability?: OrganizationCapability,
+    client?: DatabaseClient,
+  ): Promise<OrganizationMember> {
+    const organization = await this.organizationRepository.findOrganizationById(organizationId, client);
+    if (organization === null) {
+      throw new NotFoundError('Organization not found');
+    }
+    const member = await this.organizationRepository.findMemberByOrganizationAndUser(
+      organizationId,
+      userId,
+      client,
+    );
+    if (member === null || member.status !== 'active') {
+      throw new NotFoundError('Organization not found');
+    }
+    if (capability !== undefined && !roleHasCapability(member.role, capability)) {
+      throw new ForbiddenError('You do not have permission for this organization action');
+    }
+    if (!canUseOrganizationCapabilityByStatus(organization.status, capability)) {
+      throw new ForbiddenError('This organization workspace is not available for this action');
+    }
+    return member;
+  }
+
+  public async getCreditBalance(
+    userId: string,
+    organizationId: string,
+  ): Promise<OrganizationCreditBalance> {
+    await this.requireMembership(organizationId, userId);
+    return (await this.organizationRepository.getCreditBalance(organizationId)) ?? emptyOrgBalance(organizationId);
+  }
+
+  public async consumeCredits(input: ConsumeOrganizationCreditsRequest): Promise<OrganizationCreditBalance> {
+    assertPositiveInteger(input.cost, 'Credit cost');
+
+    return this.organizationRepository.transaction(async (client) => {
+      await this.requireMembership(input.organizationId, input.userId, 'generate', client);
+      const balance =
+        (await this.organizationRepository.getCreditBalanceForUpdate(input.organizationId, client)) ??
+        (await this.organizationRepository.createCreditBalance(input.organizationId, client));
+      const total = balance.monthlyCredits + balance.purchasedCredits;
+      if (total < input.cost) {
+        throw new InsufficientCreditsError();
+      }
+
+      const monthlyDelta = -Math.min(balance.monthlyCredits, input.cost);
+      const purchasedDelta = -(input.cost + monthlyDelta);
+      const next = await this.organizationRepository.updateCreditBalance(
+        {
+          ...balance,
+          monthlyCredits: balance.monthlyCredits + monthlyDelta,
+          purchasedCredits: balance.purchasedCredits + purchasedDelta,
+        },
+        client,
+      );
+      await insertOrganizationCreditLedger(client, {
+        userId: input.userId,
+        organizationId: input.organizationId,
+        type: 'consume',
+        amount: -input.cost,
+        monthlyDelta,
+        purchasedDelta,
+        monthlyAfter: next.monthlyCredits,
+        purchasedAfter: next.purchasedCredits,
+        description: input.description,
+        stripeEventId: null,
+        jobId: input.jobId ?? null,
+      });
+      await this.organizationRepository.insertUsageEvent(
+        {
+          organizationId: input.organizationId,
+          userId: input.userId,
+          workId: input.workId ?? null,
+          generationJobId: input.jobId ?? null,
+          eventType: input.eventType ?? 'generation.credit_consumed',
+          creditAmount: input.cost,
+          metadata: buildCreditUsageMetadata({
+            eventType: input.eventType ?? 'generation.credit_consumed',
+            creditsUsed: input.cost,
+            status: usageStatusForEvent(input.eventType ?? 'generation.credit_consumed'),
+            description: input.description,
+          }),
+        },
+        client,
+      );
+      if (isGenerationStartedEvent(input.eventType ?? 'generation.credit_consumed')) {
+        await this.organizationRepository.insertAuditLog(
+          {
+            organizationId: input.organizationId,
+            actorUserId: input.userId,
+            action: input.eventType ?? 'generation.started',
+            targetType: 'generation_job',
+            targetId: input.jobId ?? null,
+            metadata: {
+              work_id: input.workId ?? null,
+              ...buildCreditUsageMetadata({
+                eventType: input.eventType ?? 'generation.started',
+                creditsUsed: input.cost,
+                status: 'started',
+                description: input.description,
+              }),
+            },
+          },
+          client,
+        );
+      }
+      await this.organizationRepository.insertAuditLog(
+        {
+          organizationId: input.organizationId,
+          actorUserId: input.userId,
+          action: 'credit.consumed',
+          targetType: 'credit',
+          targetId: input.jobId ?? null,
+          metadata: {
+            amount: input.cost,
+            monthly_delta: monthlyDelta,
+            purchased_delta: purchasedDelta,
+            monthly_after: next.monthlyCredits,
+            purchased_after: next.purchasedCredits,
+            work_id: input.workId ?? null,
+            event_type: input.eventType ?? 'generation.credit_consumed',
+            description: input.description,
+          },
+        },
+        client,
+      );
+      return next;
+    });
+  }
+
+  public async refundCredits(
+    input: GrantOrganizationCreditsRequest & { jobId?: string | null },
+  ): Promise<OrganizationCreditBalance> {
+    assertPositiveInteger(input.amount, 'Refund amount');
+    return this.organizationRepository.transaction(async (client) => {
+      const balance =
+        (await this.organizationRepository.getCreditBalanceForUpdate(input.organizationId, client)) ??
+        (await this.organizationRepository.createCreditBalance(input.organizationId, client));
+      const next = await this.organizationRepository.updateCreditBalance(
+        {
+          ...balance,
+          purchasedCredits: balance.purchasedCredits + input.amount,
+        },
+        client,
+      );
+      await insertOrganizationCreditLedger(client, {
+        userId: input.actorUserId,
+        organizationId: input.organizationId,
+        type: 'refund',
+        amount: input.amount,
+        monthlyDelta: 0,
+        purchasedDelta: input.amount,
+        monthlyAfter: next.monthlyCredits,
+        purchasedAfter: next.purchasedCredits,
+        description: input.description,
+        stripeEventId: input.stripeEventId ?? null,
+        jobId: input.jobId ?? null,
+      });
+      await this.organizationRepository.insertUsageEvent(
+        {
+          organizationId: input.organizationId,
+          userId: input.actorUserId,
+          workId: null,
+          generationJobId: input.jobId ?? null,
+          eventType: 'credit.refunded',
+          creditAmount: 0,
+          metadata: {
+            action_type: 'refund',
+            status: 'refunded',
+            credits_refunded: input.amount,
+            stripe_event_id: input.stripeEventId ?? null,
+            description: input.description,
+          },
+        },
+        client,
+      );
+      await this.organizationRepository.insertAuditLog(
+        {
+          organizationId: input.organizationId,
+          actorUserId: input.actorUserId,
+          action: 'credit.refunded',
+          targetType: 'credit',
+          targetId: input.jobId ?? null,
+          metadata: {
+            amount: input.amount,
+            monthly_delta: 0,
+            purchased_delta: input.amount,
+            monthly_after: next.monthlyCredits,
+            purchased_after: next.purchasedCredits,
+            stripe_event_id: input.stripeEventId ?? null,
+            description: input.description,
+          },
+        },
+        client,
+      );
+      return next;
+    });
+  }
+
+  public async grantMonthlyCredits(
+    input: GrantOrganizationCreditsRequest,
+    client?: DatabaseClient,
+  ): Promise<OrganizationCreditBalance> {
+    assertPositiveInteger(input.amount, 'Monthly credit grant amount');
+    const work = async (transactionClient: DatabaseClient): Promise<OrganizationCreditBalance> => {
+      const balance =
+        (await this.organizationRepository.getCreditBalanceForUpdate(input.organizationId, transactionClient)) ??
+        (await this.organizationRepository.createCreditBalance(input.organizationId, transactionClient));
+      const nextExpiresAt = new Date(Date.now() + 31 * 24 * 60 * 60 * 1000);
+      const next = await this.organizationRepository.updateCreditBalance(
+        {
+          ...balance,
+          monthlyCredits: input.amount,
+          monthlyExpiresAt: nextExpiresAt,
+        },
+        transactionClient,
+      );
+      await insertOrganizationCreditLedger(transactionClient, {
+        userId: input.actorUserId,
+        organizationId: input.organizationId,
+        type: 'monthly_grant',
+        amount: input.amount,
+        monthlyDelta: input.amount - balance.monthlyCredits,
+        purchasedDelta: 0,
+        monthlyAfter: next.monthlyCredits,
+        purchasedAfter: next.purchasedCredits,
+        description: input.description,
+        stripeEventId: input.stripeEventId ?? null,
+        jobId: null,
+      });
+      await this.organizationRepository.insertAuditLog(
+        {
+          organizationId: input.organizationId,
+          actorUserId: input.actorUserId,
+          action: 'credit.granted',
+          targetType: 'credit',
+          targetId: null,
+          metadata: {
+            grant_type: 'monthly',
+            amount: input.amount,
+            monthly_after: next.monthlyCredits,
+            purchased_after: next.purchasedCredits,
+            monthly_expires_at: next.monthlyExpiresAt?.toISOString() ?? null,
+            stripe_event_id: input.stripeEventId ?? null,
+            description: input.description,
+          },
+        },
+        transactionClient,
+      );
+      return next;
+    };
+    return client === undefined ? this.organizationRepository.transaction(work) : work(client);
+  }
+
+  public async grantPurchasedCredits(
+    input: GrantOrganizationCreditsRequest & { packageCode?: CreditPackageCode | null },
+    client?: DatabaseClient,
+  ): Promise<OrganizationCreditBalance> {
+    assertPositiveInteger(input.amount, 'Purchased credit grant amount');
+    const work = async (transactionClient: DatabaseClient): Promise<OrganizationCreditBalance> => {
+      const balance =
+        (await this.organizationRepository.getCreditBalanceForUpdate(input.organizationId, transactionClient)) ??
+        (await this.organizationRepository.createCreditBalance(input.organizationId, transactionClient));
+      const next = await this.organizationRepository.updateCreditBalance(
+        {
+          ...balance,
+          purchasedCredits: balance.purchasedCredits + input.amount,
+        },
+        transactionClient,
+      );
+      await insertOrganizationCreditLedger(transactionClient, {
+        userId: input.actorUserId,
+        organizationId: input.organizationId,
+        type: 'purchased_grant',
+        amount: input.amount,
+        monthlyDelta: 0,
+        purchasedDelta: input.amount,
+        monthlyAfter: next.monthlyCredits,
+        purchasedAfter: next.purchasedCredits,
+        description: input.description,
+        stripeEventId: input.stripeEventId ?? null,
+        jobId: null,
+      });
+      await this.organizationRepository.insertAuditLog(
+        {
+          organizationId: input.organizationId,
+          actorUserId: input.actorUserId,
+          action: 'credit.granted',
+          targetType: 'credit',
+          targetId: null,
+          metadata: {
+            grant_type: 'purchased',
+            amount: input.amount,
+            package_code: input.packageCode ?? null,
+            monthly_after: next.monthlyCredits,
+            purchased_after: next.purchasedCredits,
+            stripe_event_id: input.stripeEventId ?? null,
+            description: input.description,
+          },
+        },
+        transactionClient,
+      );
+      return next;
+    };
+    return client === undefined ? this.organizationRepository.transaction(work) : work(client);
+  }
+
+  public async listUsageEvents(userId: string, organizationId: string): Promise<OrganizationUsageEvent[]> {
+    await this.requireMembership(organizationId, userId, 'view_usage');
+    return this.organizationRepository.listUsageEvents(organizationId, 200);
+  }
+
+  public async listAuditLogs(userId: string, organizationId: string): Promise<OrganizationAuditLog[]> {
+    const member = await this.requireMembership(organizationId, userId);
+    if (roleHasCapability(member.role, 'view_audit_logs')) {
+      return this.organizationRepository.listAuditLogs(organizationId, 200);
+    }
+    if (roleHasCapability(member.role, 'view_billing')) {
+      return this.organizationRepository.listAuditLogsByActionPrefixes(
+        organizationId,
+        BILLING_AUDIT_ACTION_PREFIXES,
+        200,
+      );
+    }
+    throw new ForbiddenError('You do not have permission for this organization action');
+  }
+
+  public async recordGenerationCompleted(input: RecordOrganizationGenerationRequest): Promise<void> {
+    await this.recordGenerationEvent('generation.completed', input);
+  }
+
+  public async recordGenerationFailed(
+    input: RecordOrganizationGenerationRequest & { errorMessage?: string | null },
+  ): Promise<void> {
+    await this.recordGenerationEvent('generation.failed', {
+      ...input,
+      metadata: {
+        ...(input.metadata ?? {}),
+        error_message: input.errorMessage ?? null,
+      },
+    });
+  }
+
+  public async recordWorkExported(input: RecordOrganizationWorkExportRequest): Promise<void> {
+    await this.organizationRepository.transaction(async (client) => {
+      await this.organizationRepository.insertUsageEvent(
+        {
+          organizationId: input.organizationId,
+          userId: input.userId,
+          workId: input.workId,
+          generationJobId: null,
+          eventType: 'work.exported',
+          creditAmount: 0,
+          metadata: {
+            page_id: input.pageId ?? null,
+            ...(input.metadata ?? {}),
+          },
+        },
+        client,
+      );
+      await this.organizationRepository.insertAuditLog(
+        {
+          organizationId: input.organizationId,
+          actorUserId: input.userId,
+          action: 'work.exported',
+          targetType: 'work',
+          targetId: input.workId,
+          metadata: {
+            page_id: input.pageId ?? null,
+            ...(input.metadata ?? {}),
+          },
+        },
+        client,
+      );
+    });
+  }
+
+  private async recordGenerationEvent(
+    action: 'generation.completed' | 'generation.failed',
+    input: RecordOrganizationGenerationRequest,
+  ): Promise<void> {
+    const metadata = {
+      action_type: 'generation',
+      generation_type: input.generationType,
+      status: action === 'generation.completed' ? 'completed' : 'failed',
+      credits_used: input.creditAmount ?? 0,
+      ...(input.metadata ?? {}),
+    };
+    await this.organizationRepository.transaction(async (client) => {
+      await this.organizationRepository.insertUsageEvent(
+        {
+          organizationId: input.organizationId,
+          userId: input.userId,
+          workId: input.workId ?? null,
+          generationJobId: input.jobId,
+          eventType: action,
+          creditAmount: input.creditAmount ?? 0,
+          metadata,
+        },
+        client,
+      );
+      await this.organizationRepository.insertAuditLog(
+        {
+          organizationId: input.organizationId,
+          actorUserId: input.userId,
+          action,
+          targetType: 'generation_job',
+          targetId: input.jobId,
+          metadata: {
+            work_id: input.workId ?? null,
+            ...metadata,
+          },
+        },
+        client,
+      );
+    });
+  }
+
+  private async ensureLastOwnerIsKept(
+    organizationId: string,
+    current: OrganizationMember,
+    input: { role?: OrganizationMemberRole; status?: 'active' | 'suspended' | 'removed' },
+    client: DatabaseClient,
+  ): Promise<void> {
+    const wouldLoseOwner =
+      current.role === 'owner' &&
+      current.status === 'active' &&
+      ((input.role !== undefined && input.role !== 'owner') ||
+        (input.status !== undefined && input.status !== 'active'));
+    if (!wouldLoseOwner) {
+      return;
+    }
+    const ownerCount = await this.organizationRepository.countActiveOwners(organizationId, client);
+    if (ownerCount <= 1) {
+      throw new ConflictError('Organization must keep at least one active owner');
+    }
+  }
+}
+
+function memberAuditEntries(
+  before: OrganizationMember,
+  after: OrganizationMember,
+): Array<{ action: string; metadata: Record<string, unknown> }> {
+  const entries: Array<{ action: string; metadata: Record<string, unknown> }> = [];
+  if (before.role !== after.role) {
+    entries.push({
+      action: 'member.role_updated',
+      metadata: { from_role: before.role, to_role: after.role },
+    });
+  }
+  if (before.status !== after.status) {
+    if (after.status === 'suspended') {
+      entries.push({
+        action: 'member.suspended',
+        metadata: { from_status: before.status, to_status: after.status },
+      });
+    } else if (after.status === 'removed') {
+      entries.push({
+        action: 'member.removed',
+        metadata: { from_status: before.status, to_status: after.status },
+      });
+    }
+  }
+  return entries;
+}
+
+function touchesOwnerAuthority(
+  current: OrganizationMember,
+  input: { role?: OrganizationMemberRole; status?: 'active' | 'suspended' | 'removed' },
+): boolean {
+  return current.role === 'owner' || input.role === 'owner';
+}
+
+export function monthlyCreditsForEnterprisePlan(planKey: EnterprisePlanCode): number {
+  return ENTERPRISE_PLAN_DEFINITIONS[planKey].monthlyCredits;
+}
+
+export function purchasedCreditsForPackage(packageCode: CreditPackageCode): number {
+  return CREDIT_PACKAGE_DEFINITIONS[packageCode].purchasedCredits;
+}
+
+function hashInvitationToken(token: string): string {
+  return createHash('sha256').update(token, 'utf8').digest('hex');
+}
+
+function assertPositiveInteger(value: number, label: string): void {
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new ValidationError(`${label} must be a positive integer`);
+  }
+}
+
+function canUseOrganizationCapabilityByStatus(
+  status: OrganizationStatus,
+  capability?: OrganizationCapability,
+): boolean {
+  if (capability === undefined) {
+    return true;
+  }
+
+  if (status === 'active' || status === 'trialing') {
+    return true;
+  }
+
+  if (capability === 'manage_billing' || capability === 'view_billing') {
+    return true;
+  }
+
+  if (status === 'past_due') {
+    return capability === 'view_work' || capability === 'view_usage' || capability === 'view_audit_logs';
+  }
+
+  return false;
+}
+
+function buildCreditUsageMetadata(input: {
+  eventType: string;
+  creditsUsed: number;
+  status: string;
+  description: string;
+}): Record<string, unknown> {
+  return {
+    action_type: 'generation',
+    generation_type: inferGenerationType(input.eventType),
+    status: input.status,
+    credits_used: input.creditsUsed,
+    description: input.description,
+  };
+}
+
+function usageStatusForEvent(eventType: string): string {
+  if (eventType.endsWith('.started')) {
+    return 'started';
+  }
+  return 'consumed';
+}
+
+function isGenerationStartedEvent(eventType: string): boolean {
+  return eventType === 'generation.started' || eventType === 'entity_generation.started';
+}
+
+function inferGenerationType(eventType: string): string | null {
+  if (
+    eventType === 'generation.started' ||
+    eventType === 'generation.completed' ||
+    eventType === 'generation.failed'
+  ) {
+    return 'page_generate';
+  }
+  if (eventType.startsWith('entity_generation.')) {
+    return 'entity_generate';
+  }
+  if (eventType.startsWith('entity_import.')) {
+    return 'entity_import_analysis';
+  }
+  return null;
+}
+
+function emptyOrgBalance(organizationId: string): OrganizationCreditBalance {
+  return {
+    organizationId,
+    monthlyCredits: 0,
+    purchasedCredits: 0,
+    monthlyExpiresAt: null,
+    updatedAt: new Date(0),
+  };
+}
+
+async function insertOrganizationCreditLedger(
+  client: DatabaseClient,
+  entry: {
+    userId: string | null;
+    organizationId: string;
+    type: 'consume' | 'refund' | 'monthly_grant' | 'purchased_grant';
+    amount: number;
+    monthlyDelta: number;
+    purchasedDelta: number;
+    monthlyAfter: number;
+    purchasedAfter: number;
+    description: string;
+    stripeEventId: string | null;
+    jobId: string | null;
+  },
+): Promise<void> {
+  await client.query(
+    `
+    INSERT INTO credit_ledger (
+      user_id,
+      organization_id,
+      type,
+      amount,
+      monthly_delta,
+      purchased_delta,
+      monthly_after,
+      purchased_after,
+      description,
+      stripe_event_id,
+      job_id
+    )
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+    `,
+    [
+      entry.userId,
+      entry.organizationId,
+      entry.type,
+      entry.amount,
+      entry.monthlyDelta,
+      entry.purchasedDelta,
+      entry.monthlyAfter,
+      entry.purchasedAfter,
+      entry.description,
+      entry.stripeEventId,
+      entry.jobId,
+    ],
+  );
+}

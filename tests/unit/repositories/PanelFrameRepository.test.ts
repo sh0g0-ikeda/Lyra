@@ -38,8 +38,9 @@ describe('PostgresPanelFrameRepository', () => {
     const frames = await repository.findFramesByPageIdAndUserId('page-1', 'user-1');
 
     expect(client.queries[0]).toContain('works.user_id = $2');
+    expect(client.queries[0]).toContain('organization_members.user_id = $2');
     expect(client.queries[0]).toContain('ORDER BY panel_frames.reading_order ASC');
-    expect(client.values).toEqual(['page-1', 'user-1']);
+    expect(client.values).toEqual(['page-1', 'user-1', null]);
     expect(frames[0]).toMatchObject({
       id: 'frame-1',
       pageId: 'page-1',
@@ -73,6 +74,7 @@ describe('PostgresPanelFrameRepository', () => {
     expect(client.queries[0]).toContain('works.user_id = $2');
     expect(client.queries[1]).toContain('INSERT INTO panel_frames');
     expect(client.queries[1]).toContain('works.user_id = $10');
+    expect(client.queries[1]).toContain('organization_members.user_id = $10');
     expect(client.values).toEqual([
       null,
       'page-1',
@@ -89,6 +91,7 @@ describe('PostgresPanelFrameRepository', () => {
       2,
       1,
       'user-1',
+      null,
     ]);
   });
 
@@ -163,6 +166,7 @@ describe('PostgresPanelFrameRepository', () => {
         },
       ]),
       'splash_1',
+      null,
     ]);
   });
 

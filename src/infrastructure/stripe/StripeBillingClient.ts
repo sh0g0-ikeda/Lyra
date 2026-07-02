@@ -1,14 +1,13 @@
 import Stripe from 'stripe';
-import type {
-  CreditPackageCode,
-  PaidPlanCode,
-  SubscriptionPlanCode,
-} from '../../domain/constants/billing.js';
+import type { CreditPackageCode, PaidPlanCode, SubscriptionPlanCode } from '../../domain/constants/billing.js';
+import { isSubscriptionPlanCode } from '../../domain/constants/billing.js';
 import { ValidationError } from '../../domain/errors/index.js';
 
 export interface CreateStripeCustomerInput {
   userId: string;
   email: string;
+  organizationId?: string | null;
+  name?: string | null;
 }
 
 export interface CreateStripeCheckoutSessionInput {
@@ -18,6 +17,7 @@ export interface CreateStripeCheckoutSessionInput {
   successUrl: string;
   cancelUrl: string;
   userId: string;
+  organizationId?: string | null;
   planCode?: PaidPlanCode;
   packageCode?: CreditPackageCode;
 }
@@ -58,12 +58,18 @@ export class StripeBillingClient implements StripeBillingClientPort {
     const customer = await this.stripe.customers.create(
       {
         email: input.email,
+        name: input.name ?? undefined,
         metadata: {
           user_id: input.userId,
+          lyra_organization_id: input.organizationId ?? '',
+          organization_id: input.organizationId ?? '',
         },
       },
       {
-        idempotencyKey: `lyra-customer-${input.userId}`,
+        idempotencyKey:
+          input.organizationId !== null && input.organizationId !== undefined
+            ? `lyra-organization-customer-${input.organizationId}`
+            : `lyra-customer-${input.userId}`,
       },
     );
 
@@ -85,6 +91,8 @@ export class StripeBillingClient implements StripeBillingClientPort {
       client_reference_id: input.userId,
       metadata: {
         user_id: input.userId,
+        lyra_organization_id: input.organizationId ?? '',
+        organization_id: input.organizationId ?? '',
         kind: input.mode === 'subscription' ? 'subscription' : 'credit_purchase',
         plan_code: input.planCode ?? '',
         package_code: input.packageCode ?? '',
@@ -94,6 +102,8 @@ export class StripeBillingClient implements StripeBillingClientPort {
           ? {
               metadata: {
                 user_id: input.userId,
+                lyra_organization_id: input.organizationId ?? '',
+                organization_id: input.organizationId ?? '',
                 plan_code: input.planCode ?? '',
               },
             }
@@ -168,7 +178,7 @@ export function getStripeSubscriptionPlanCode(
   subscription: Stripe.Subscription,
 ): SubscriptionPlanCode | null {
   const metadataPlanCode = subscription.metadata.plan_code;
-  if (metadataPlanCode === 'standard' || metadataPlanCode === 'premium' || metadataPlanCode === 'free') {
+  if (isSubscriptionPlanCode(metadataPlanCode)) {
     return metadataPlanCode;
   }
 

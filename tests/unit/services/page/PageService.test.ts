@@ -127,6 +127,10 @@ class FakePanelRepository implements PanelRepository {
   public async compactPanelOrdersAfterDelete(): Promise<never> {
     throw new Error('not implemented');
   }
+
+  public async reorderPanels(): Promise<never> {
+    throw new Error('not implemented');
+  }
 }
 
 class FakePanelEntityAssignmentService implements PanelEntityAssignmentServicePort {
@@ -831,6 +835,39 @@ describe('PageService', () => {
     ]);
     expect(pageRepository.updatedInput).toMatchObject({
       storySourceSceneIds: ['scene-1'],
+      storyPagePurpose: 'This page quietly escalates the rooftop confrontation.',
+      storyContinuityNote: 'Keep the mood restrained and unsettling.',
+    });
+  });
+
+  it('episode story plan は scene がなくても episode text から pages と panels に反映する', async () => {
+    const pageRepository = new FakePageRepository();
+    pageRepository.episodePlanningContext = { ...buildEpisodePlanningContext(), scenes: [] };
+    const panelRepository = new FakePanelRepository();
+    const assignmentService = new FakePanelEntityAssignmentService();
+    const episodeCompiler = new FakeEpisodePagePlanCompiler();
+    const service = new PageService(
+      pageRepository,
+      panelRepository,
+      assignmentService,
+      new FakePageAutofillCompiler(),
+      episodeCompiler,
+    );
+
+    const result = await service.autofillEpisodeFromStory('user-1', 'episode-1', 'ja');
+
+    expect(result).toMatchObject({
+      updatedPageCount: 1,
+      updatedPanelCount: 1,
+      updatedAssignmentCount: 1,
+      compilerUsed: true,
+    });
+    const compilerBrief = episodeCompiler.lastInput?.compilerBrief ?? '';
+    expect(compilerBrief).toContain('[SCENES]');
+    expect(compilerBrief).toContain('(none)');
+    expect(compilerBrief).toContain('When [SCENES] is (none), source_scene_ids must be empty.');
+    expect(pageRepository.updatedInput).toMatchObject({
+      storySourceSceneIds: [],
       storyPagePurpose: 'This page quietly escalates the rooftop confrontation.',
       storyContinuityNote: 'Keep the mood restrained and unsettling.',
     });
@@ -2169,17 +2206,27 @@ describe('PageService', () => {
     await expect(service.autofillFromScenes('user-1', 'page-1', 'ja')).rejects.toThrow('unexpected compiler bug');
   });
 
-  it('scene がないと autofill を拒否する', async () => {
+  it('scene がなくても page autofill を実行する', async () => {
     const pageRepository = new FakePageRepository();
     pageRepository.autofillContext = { ...buildAutofillContext(), scenes: [] };
+    const panelRepository = new FakePanelRepository();
+    const assignmentService = new FakePanelEntityAssignmentService();
+    const compiler = new FakePageAutofillCompiler();
     const service = new PageService(
       pageRepository,
-      new FakePanelRepository(),
-      new FakePanelEntityAssignmentService(),
-      new FakePageAutofillCompiler(),
+      panelRepository,
+      assignmentService,
+      compiler,
     );
 
-    await expect(service.autofillFromScenes('user-1', 'page-1', 'ja')).rejects.toBeInstanceOf(ValidationError);
+    const result = await service.autofillFromScenes('user-1', 'page-1', 'ja');
+
+    expect(result.compilerUsed).toBe(true);
+    expect(panelRepository.updatedPanels).toHaveLength(1);
+    expect(assignmentService.updates).toHaveLength(1);
+    const compilerBrief = compiler.lastInput?.compilerBrief ?? '';
+    expect(compilerBrief).toContain('[SCENES]');
+    expect(compilerBrief).toContain('(none)');
   });
 
   it('frame 数と panel 数がずれていると autofill を拒否する', async () => {

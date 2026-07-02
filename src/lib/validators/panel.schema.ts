@@ -100,6 +100,12 @@ export const updatePanelBodySchema = z
     message: 'At least one field is required',
   });
 
+export const reorderPanelsBodySchema = z
+  .object({
+    panel_ids: z.array(z.string().uuid()).min(1).max(1000),
+  })
+  .strict();
+
 function requiresSpeaker(type: z.infer<typeof panelDialogueLineSchema>['type']): boolean {
   return type === 'speech' || type === 'thought' || type === 'shout' || type === 'whisper';
 }

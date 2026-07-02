@@ -304,7 +304,7 @@ class FakePageService implements PageServicePort {
 
 class FailingStoryPlanPageService extends FakePageService {
   public override async autofillEpisodeFromStory(): Promise<never> {
-    throw new ValidationError('Episode must have at least one scene before story autofill can run');
+    throw new ValidationError('Story plan could not be applied');
   }
 }
 

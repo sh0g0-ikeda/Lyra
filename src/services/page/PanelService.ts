@@ -19,10 +19,26 @@ export type {
 };
 
 export interface PanelServicePort {
-  createPanel(userId: string, pageId: string, input: CreatePanelInput): Promise<Panel>;
-  listPanels(userId: string, pageId: string): Promise<Panel[]>;
-  updatePanel(userId: string, panelId: string, input: UpdatePanelInput): Promise<Panel>;
-  deletePanel(userId: string, panelId: string): Promise<void>;
+  createPanel(
+    userId: string,
+    pageId: string,
+    input: CreatePanelInput,
+    organizationId?: string | null,
+  ): Promise<Panel>;
+  listPanels(userId: string, pageId: string, organizationId?: string | null): Promise<Panel[]>;
+  updatePanel(
+    userId: string,
+    panelId: string,
+    input: UpdatePanelInput,
+    organizationId?: string | null,
+  ): Promise<Panel>;
+  deletePanel(userId: string, panelId: string, organizationId?: string | null): Promise<void>;
+  reorderPanels(
+    userId: string,
+    pageId: string,
+    panelIds: string[],
+    organizationId?: string | null,
+  ): Promise<Panel[]>;
 }
 
 export interface CompositionGalleryReferenceReader {
@@ -41,8 +57,13 @@ export class PanelService implements PanelServicePort {
     private readonly compositionGalleryReader?: CompositionGalleryReferenceReader,
   ) {}
 
-  public async createPanel(userId: string, pageId: string, input: CreatePanelInput): Promise<Panel> {
-    const pageContext = await this.panelRepository.findPageContextByIdAndUserId(pageId, userId);
+  public async createPanel(
+    userId: string,
+    pageId: string,
+    input: CreatePanelInput,
+    organizationId: string | null = null,
+  ): Promise<Panel> {
+    const pageContext = await this.panelRepository.findPageContextByIdAndUserId(pageId, userId, organizationId);
     if (pageContext === null) {
       throw new NotFoundError('Page not found');
     }
@@ -51,10 +72,10 @@ export class PanelService implements PanelServicePort {
     const normalizedInput = normalizeCreateInput(input);
     const dialogue = normalizedInput.dialogue ?? [];
     ensureDialogueShape(dialogue);
-    await this.ensureDialogueEntitiesBelongToWork(userId, pageContext.workId, dialogue);
+    await this.ensureDialogueEntitiesBelongToWork(userId, pageContext.workId, dialogue, organizationId);
     await this.ensureGalleryCompositionExists(normalizedInput.composition);
 
-    const panel = await this.panelRepository.createPanel(pageId, userId, normalizedInput);
+    const panel = await this.panelRepository.createPanel(pageId, userId, normalizedInput, organizationId);
     if (panel === null) {
       throw new NotFoundError('Page not found');
     }
@@ -62,17 +83,22 @@ export class PanelService implements PanelServicePort {
     return panel;
   }
 
-  public async listPanels(userId: string, pageId: string): Promise<Panel[]> {
-    const pageContext = await this.panelRepository.findPageContextByIdAndUserId(pageId, userId);
+  public async listPanels(userId: string, pageId: string, organizationId: string | null = null): Promise<Panel[]> {
+    const pageContext = await this.panelRepository.findPageContextByIdAndUserId(pageId, userId, organizationId);
     if (pageContext === null) {
       throw new NotFoundError('Page not found');
     }
 
-    return this.panelRepository.findPanelsByPageIdAndUserId(pageId, userId);
+    return this.panelRepository.findPanelsByPageIdAndUserId(pageId, userId, organizationId);
   }
 
-  public async updatePanel(userId: string, panelId: string, input: UpdatePanelInput): Promise<Panel> {
-    const panelContext = await this.panelRepository.findPanelContextByIdAndUserId(panelId, userId);
+  public async updatePanel(
+    userId: string,
+    panelId: string,
+    input: UpdatePanelInput,
+    organizationId: string | null = null,
+  ): Promise<Panel> {
+    const panelContext = await this.panelRepository.findPanelContextByIdAndUserId(panelId, userId, organizationId);
     if (panelContext === null) {
       throw new NotFoundError('Panel not found');
     }
@@ -85,11 +111,12 @@ export class PanelService implements PanelServicePort {
         userId,
         panelContext.workId,
         normalizedInput.dialogue,
+        organizationId,
       );
     }
     await this.ensureGalleryCompositionExists(normalizedInput.composition);
 
-    const panel = await this.panelRepository.updatePanel(panelId, userId, normalizedInput);
+    const panel = await this.panelRepository.updatePanel(panelId, userId, normalizedInput, organizationId);
     if (panel === null) {
       throw new NotFoundError('Panel not found');
     }
@@ -97,15 +124,15 @@ export class PanelService implements PanelServicePort {
     return panel;
   }
 
-  public async deletePanel(userId: string, panelId: string): Promise<void> {
-    const panelContext = await this.panelRepository.findPanelContextByIdAndUserId(panelId, userId);
+  public async deletePanel(userId: string, panelId: string, organizationId: string | null = null): Promise<void> {
+    const panelContext = await this.panelRepository.findPanelContextByIdAndUserId(panelId, userId, organizationId);
     if (panelContext === null) {
       throw new NotFoundError('Panel not found');
     }
 
     ensurePageEditable(panelContext.pageStatus, 'panels');
 
-    const deleted = await this.panelRepository.deletePanel(panelId, userId);
+    const deleted = await this.panelRepository.deletePanel(panelId, userId, organizationId);
     if (!deleted) {
       throw new NotFoundError('Panel not found');
     }
@@ -114,18 +141,44 @@ export class PanelService implements PanelServicePort {
       panelContext.pageId,
       userId,
       panelContext.panelOrder,
+      organizationId,
     );
     await this.reconcileFramesAfterDelete(
       userId,
       panelContext.pageId,
       panelContext.panelOrder,
+      organizationId,
     );
+  }
+
+  public async reorderPanels(
+    userId: string,
+    pageId: string,
+    panelIds: string[],
+    organizationId: string | null = null,
+  ): Promise<Panel[]> {
+    const pageContext = await this.panelRepository.findPageContextByIdAndUserId(pageId, userId, organizationId);
+    if (pageContext === null) {
+      throw new NotFoundError('Page not found');
+    }
+    ensurePageEditable(pageContext.pageStatus, 'panels');
+
+    const currentPanels = await this.panelRepository.findPanelsByPageIdAndUserId(pageId, userId, organizationId);
+    ensurePanelReorderMatchesCurrentPanels(currentPanels, panelIds);
+
+    const reorderedPanels = await this.panelRepository.reorderPanels(pageId, userId, panelIds, organizationId);
+    ensurePanelReorderMatchesCurrentPanels(reorderedPanels, panelIds);
+    ensurePanelOrderMatchesRequest(reorderedPanels, panelIds);
+    await this.reconcileFramesAfterReorder(userId, pageId, reorderedPanels, organizationId);
+
+    return reorderedPanels;
   }
 
   private async ensureDialogueEntitiesBelongToWork(
     userId: string,
     workId: string,
     dialogue: PanelDialogueLine[],
+    organizationId: string | null,
   ): Promise<void> {
     const entityIds = [
       ...new Set(
@@ -139,11 +192,10 @@ export class PanelService implements PanelServicePort {
       return;
     }
 
-    const matchedEntityCount = await this.entityReader.countByIdsAndWorkIdAndUserId(
-      entityIds,
-      workId,
-      userId,
-    );
+    const matchedEntityCount =
+      organizationId === null || this.entityReader.countByIdsAndWorkId === undefined
+        ? await this.entityReader.countByIdsAndWorkIdAndUserId(entityIds, workId, userId)
+        : await this.entityReader.countByIdsAndWorkId(entityIds, workId);
     if (matchedEntityCount !== entityIds.length) {
       throw new ValidationError('All dialogue entity_id values must belong to the panel work');
     }
@@ -173,13 +225,14 @@ export class PanelService implements PanelServicePort {
     userId: string,
     pageId: string,
     deletedOrder: number,
+    organizationId: string | null,
   ): Promise<void> {
-    const currentFrames = await this.panelFrameRepository.findFramesByPageIdAndUserId(pageId, userId);
+    const currentFrames = await this.panelFrameRepository.findFramesByPageIdAndUserId(pageId, userId, organizationId);
     if (currentFrames.length === 0) {
       return;
     }
 
-    const remainingPanels = await this.panelRepository.findPanelsByPageIdAndUserId(pageId, userId);
+    const remainingPanels = await this.panelRepository.findPanelsByPageIdAndUserId(pageId, userId, organizationId);
     const targetCount = remainingPanels.length;
     const compactedFrames = compactFramesForDeletedPanel(currentFrames, deletedOrder, targetCount);
 
@@ -192,7 +245,56 @@ export class PanelService implements PanelServicePort {
       type: 'custom',
       panelCount: frameInputs.length,
       frameDefinitions: frameInputs,
-    });
+    }, organizationId);
+  }
+
+  private async reconcileFramesAfterReorder(
+    userId: string,
+    pageId: string,
+    reorderedPanels: Panel[],
+    organizationId: string | null,
+  ): Promise<void> {
+    const currentFrames = await this.panelFrameRepository.findFramesByPageIdAndUserId(pageId, userId, organizationId);
+    if (currentFrames.length === 0 || currentFrames.length !== reorderedPanels.length) {
+      return;
+    }
+
+    const panelOrderById = new Map(
+      reorderedPanels.map((panel, index) => [panel.id, index + 1] as const),
+    );
+    const framePanelIds = new Set(currentFrames.map((frame) => frame.panelId));
+    const everyPanelHasFrame = reorderedPanels.every((panel) => framePanelIds.has(panel.id));
+    if (!everyPanelHasFrame) {
+      return;
+    }
+
+    const reorderedFrames = [...currentFrames]
+      .sort((left, right) => {
+        const leftOrder =
+          left.panelId === null
+            ? Number.MAX_SAFE_INTEGER
+            : panelOrderById.get(left.panelId) ?? Number.MAX_SAFE_INTEGER;
+        const rightOrder =
+          right.panelId === null
+            ? Number.MAX_SAFE_INTEGER
+            : panelOrderById.get(right.panelId) ?? Number.MAX_SAFE_INTEGER;
+        return leftOrder === rightOrder ? left.readingOrder - right.readingOrder : leftOrder - rightOrder;
+      })
+      .map((frame, index) => ({
+        ...frame,
+        readingOrder: index + 1,
+      }));
+
+    if (!didFramesChange(currentFrames, reorderedFrames)) {
+      return;
+    }
+
+    const frameInputs = reorderedFrames.map(toFrameInput);
+    await this.panelFrameRepository.replaceFramesByPageIdAndUserId(pageId, userId, frameInputs, {
+      type: 'custom',
+      panelCount: frameInputs.length,
+      frameDefinitions: frameInputs,
+    }, organizationId);
   }
 }
 
@@ -237,6 +339,33 @@ function normalizeComposition(composition: PanelComposition | undefined): PanelC
     galleryItemId:
       normalizedComposition.source === 'gallery' ? normalizedComposition.galleryItemId : null,
   };
+}
+
+function ensurePanelReorderMatchesCurrentPanels(currentPanels: Panel[], panelIds: string[]): void {
+  if (currentPanels.length !== panelIds.length) {
+    throw new ValidationError('Panel reorder must include every current panel exactly once');
+  }
+
+  const currentPanelIds = new Set(currentPanels.map((panel) => panel.id));
+  const requestedPanelIds = new Set<string>();
+
+  for (const panelId of panelIds) {
+    if (!currentPanelIds.has(panelId)) {
+      throw new ValidationError('Panel reorder includes an unknown panel id');
+    }
+    if (requestedPanelIds.has(panelId)) {
+      throw new ValidationError('Panel reorder includes duplicate panel ids');
+    }
+    requestedPanelIds.add(panelId);
+  }
+}
+
+function ensurePanelOrderMatchesRequest(panels: Panel[], panelIds: string[]): void {
+  for (const [index, panelId] of panelIds.entries()) {
+    if (panels[index]?.id !== panelId) {
+      throw new ValidationError('Panel reorder was not persisted');
+    }
+  }
 }
 
 function compactFramesForDeletedPanel(

@@ -12,6 +12,7 @@ export interface PanelEntityAssignmentServicePort {
     userId: string,
     panelId: string,
     assignments: PanelEntityAssignment[],
+    organizationId?: string | null,
   ): Promise<PanelEntityAssignment[]>;
 }
 
@@ -26,25 +27,28 @@ export class PanelEntityAssignmentService implements PanelEntityAssignmentServic
     userId: string,
     panelId: string,
     assignments: PanelEntityAssignment[],
+    organizationId: string | null = null,
   ): Promise<PanelEntityAssignment[]> {
     const normalizedAssignments = normalizeAssignments(assignments);
 
     const panelContext = await this.panelEntityAssignmentRepository.findPanelContextByIdAndUserId(
       panelId,
       userId,
+      organizationId,
     );
     if (panelContext === null) {
       throw new NotFoundError('Panel not found');
     }
 
     ensureUniqueEntityAssignments(normalizedAssignments);
-    await this.ensureEntitiesBelongToWork(userId, panelContext.workId, normalizedAssignments);
-    await this.ensureEntityStatesMatchAssignments(userId, panelContext.workId, normalizedAssignments);
+    await this.ensureEntitiesBelongToWork(userId, panelContext.workId, normalizedAssignments, organizationId);
+    await this.ensureEntityStatesMatchAssignments(userId, panelContext.workId, normalizedAssignments, organizationId);
 
     const savedAssignments = await this.panelEntityAssignmentRepository.updatePanelEntityAssignments(
       panelId,
       userId,
       normalizedAssignments,
+      organizationId,
     );
     if (savedAssignments === null) {
       throw new NotFoundError('Panel not found');
@@ -57,6 +61,7 @@ export class PanelEntityAssignmentService implements PanelEntityAssignmentServic
     userId: string,
     workId: string,
     assignments: PanelEntityAssignment[],
+    organizationId: string | null,
   ): Promise<void> {
     const entityIds = [...new Set(assignments.map((assignment) => assignment.entityId))];
     if (entityIds.length === 0) {
@@ -68,6 +73,7 @@ export class PanelEntityAssignmentService implements PanelEntityAssignmentServic
         entityIds,
         workId,
         userId,
+        organizationId,
       );
     if (matchedEntityCount !== entityIds.length) {
       throw new ValidationError('All assigned entities must belong to the panel work');
@@ -78,6 +84,7 @@ export class PanelEntityAssignmentService implements PanelEntityAssignmentServic
     userId: string,
     workId: string,
     assignments: PanelEntityAssignment[],
+    organizationId: string | null,
   ): Promise<void> {
     const pairs = uniqueStateReferences(assignments);
     if (pairs.length === 0) {
@@ -89,6 +96,7 @@ export class PanelEntityAssignmentService implements PanelEntityAssignmentServic
         pairs,
         workId,
         userId,
+        organizationId,
       );
     if (matchedPairCount !== pairs.length) {
       throw new ValidationError('All state_id values must belong to their assigned entity');

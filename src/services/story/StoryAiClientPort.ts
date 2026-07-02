@@ -7,7 +7,7 @@ export interface StoryAiModelRequest {
 
 export type StoryEpisodeDraftWriterOutput = Pick<
   StoryEpisodeDraftFields,
-  'title' | 'purpose' | 'introduction' | 'middle' | 'climax' | 'endingHook'
+  'introduction' | 'middle' | 'climax' | 'endingHook'
 >;
 
 export interface StoryAiClientPort {

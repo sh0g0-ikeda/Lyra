@@ -16,6 +16,7 @@ export const storyUuidParamSchema = z.string().uuid();
 export const createWorkBodySchema = z
   .object({
     title: text200,
+    organization_id: z.string().uuid().nullable().optional(),
     genre: nullableText200.optional(),
     world_setting: nullableText2000.optional(),
     theme: nullableText2000.optional(),

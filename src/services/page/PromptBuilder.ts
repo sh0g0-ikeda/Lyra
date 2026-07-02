@@ -21,12 +21,14 @@ import type { PanelRepository } from '../../repositories/PanelRepository.js';
 
 export interface BuildPagePromptInput {
   userId: string;
+  organizationId?: string | null;
   pageId: string;
   generationMode: PageGenerationMode;
   requestKind: PageGenerationRequestKind;
 }
 
 export interface BuiltPagePrompt {
+  workId: string;
   draftPrompt: string;
   compilerBrief: string;
   inputSnapshot: PageGenerationInputSnapshot;
@@ -78,17 +80,26 @@ export class PromptBuilder implements PromptBuilderPort {
   ) {}
 
   public async buildPagePrompt(input: BuildPagePromptInput): Promise<BuiltPagePrompt> {
-    const page = await this.pageRepository.findPromptContextByIdAndUserId(input.pageId, input.userId);
+    const page = await this.pageRepository.findPromptContextByIdAndUserId(
+      input.pageId,
+      input.userId,
+      input.organizationId ?? null,
+    );
     if (page === null) {
       throw new NotFoundError('Page not found');
     }
 
-    const panels = await this.panelRepository.findPanelsByPageIdAndUserId(input.pageId, input.userId);
+    const panels = await this.panelRepository.findPanelsByPageIdAndUserId(
+      input.pageId,
+      input.userId,
+      input.organizationId ?? null,
+    );
     if (panels.length === 0) {
       throw new ValidationError('Page must have at least one panel before generation');
     }
 
-    const entities = await this.entityRepository.findByWorkIdAndUserId(page.workId, input.userId);
+    const organizationId = page.organizationId ?? input.organizationId ?? null;
+    const entities = await this.entityRepository.findByWorkIdAndUserId(page.workId, input.userId, organizationId);
     const entityMap = new Map(entities.map((entity) => [entity.id, entity]));
     // Fetch the exact reference set used by the renderer so "Image 1 / Image 2 ..."
     // in the compiled prompt always matches the actual uploaded image order.
@@ -98,6 +109,7 @@ export class PromptBuilder implements PromptBuilderPort {
           collectOrderedEntityIds(panels),
           page.workId,
           input.userId,
+          organizationId,
         )
       ).map((reference) => reference.entityId),
     );
@@ -118,6 +130,7 @@ export class PromptBuilder implements PromptBuilderPort {
     );
 
     return {
+      workId: page.workId,
       draftPrompt: buildDraftPrompt(normalized),
       compilerBrief: buildCompilerBrief(normalized),
       inputSnapshot: buildPageGenerationInputSnapshot(input.pageId, input, panels, entityMap),

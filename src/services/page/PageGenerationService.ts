@@ -3,6 +3,7 @@ import { AppError, ConfigurationError, ConflictError, NotFoundError, ValidationE
 import type { PageGenerationContext } from '../../domain/types/page.js';
 import type { PageGenerationRequestKind } from '../../domain/types/pageGeneration.js';
 import type { CreditServicePort } from '../credit/CreditService.js';
+import type { OrganizationServicePort } from '../organization/OrganizationService.js';
 import {
   isUniqueViolation,
   type GenerationJobRepository,
@@ -27,7 +28,11 @@ export interface EnqueuePageGenerationResult {
 }
 
 export interface PageGenerationServicePort {
-  enqueuePageGeneration(userId: string, pageId: string): Promise<EnqueuePageGenerationResult>;
+  enqueuePageGeneration(
+    userId: string,
+    pageId: string,
+    organizationId?: string | null,
+  ): Promise<EnqueuePageGenerationResult>;
 }
 
 /**
@@ -45,26 +50,33 @@ export class PageGenerationService implements PageGenerationServicePort {
     private readonly recoveryService: PageGenerationRecoveryServicePort = new NoopPageGenerationRecoveryService(),
     private readonly capacityLimits: GenerationCapacityLimits = DEFAULT_GENERATION_CAPACITY_LIMITS,
     private readonly generationEnabled = true,
+    private readonly organizationService?: OrganizationServicePort,
   ) {}
 
   public async enqueuePageGeneration(
     userId: string,
     pageId: string,
+    organizationId: string | null = null,
   ): Promise<EnqueuePageGenerationResult> {
-    await this.recoveryService.recoverStaleJobsForPage(userId, pageId);
+    await this.recoveryService.recoverStaleJobsForPage(userId, pageId, organizationId);
     if (!this.generationEnabled) {
       throw new ConflictError('Generation is temporarily disabled');
     }
 
-    const page = await this.pageRepository.findGenerationContextByIdAndUserId(pageId, userId);
+    if (organizationId !== null) {
+      await this.getOrganizationService().requireMembership(organizationId, userId, 'generate');
+    }
+
+    const page = await this.pageRepository.findGenerationContextByIdAndUserId(pageId, userId, organizationId);
     if (page === null) {
       throw new NotFoundError('Page not found');
     }
 
+    const pageOrganizationId = page.organizationId ?? null;
     this.ensurePageCanGenerate(page);
     const billableReferenceCount = await this.ensureAssignedReferencesAndCountBillableReferences(userId, page);
     await assertGenerationCapacity(this.generationJobRepository, userId, this.capacityLimits);
-    await this.ensureNoActiveGenerationJob(userId, page.pageId);
+    await this.ensureNoActiveGenerationJob(userId, page.pageId, pageOrganizationId);
 
     const requestKind: PageGenerationRequestKind =
       page.generatedImage === null ? 'initial' : 'regenerate';
@@ -81,8 +93,10 @@ export class PageGenerationService implements PageGenerationServicePort {
     let createdJobId: string | null = null;
 
     try {
-      await this.creditService.consumeCredits({
+      await this.consumeCredits({
         userId,
+        organizationId: pageOrganizationId,
+        workId: page.workId,
         cost: selection.creditCost,
         description: describeGeneration(selection.requestKind, selection.mode),
         jobId: reservedJobId,
@@ -92,12 +106,14 @@ export class PageGenerationService implements PageGenerationServicePort {
       const job = await this.generationJobRepository.create({
         id: reservedJobId,
         userId,
+        organizationId: page.organizationId,
         jobType: 'page_generate',
         generationMode: selection.mode,
         creditCost: selection.creditCost,
         capacityLimits: this.capacityLimits,
         params: {
           page_id: page.pageId,
+          work_id: page.workId,
           request_kind: selection.requestKind,
           generation_mode: selection.mode,
           quality: selection.quality,
@@ -108,11 +124,16 @@ export class PageGenerationService implements PageGenerationServicePort {
       });
       createdJobId = job.id;
 
-      const pageUpdated = await this.pageRepository.updateGenerationState(page.pageId, userId, {
-        status: 'generating',
-        generationMode: selection.mode,
-        expectedStatus: page.status,
-      });
+      const pageUpdated = await this.pageRepository.updateGenerationState(
+        page.pageId,
+        userId,
+        {
+          status: 'generating',
+          generationMode: selection.mode,
+          expectedStatus: page.status,
+        },
+        pageOrganizationId,
+      );
       if (!pageUpdated) {
         throw new ConflictError('Page generation state changed before enqueue');
       }
@@ -153,10 +174,15 @@ export class PageGenerationService implements PageGenerationServicePort {
 
       if (pageStateUpdated) {
         try {
-          await this.pageRepository.updateGenerationState(page.pageId, userId, {
-            status: page.status,
-            generationMode: page.generationMode,
-          });
+          await this.pageRepository.updateGenerationState(
+            page.pageId,
+            userId,
+            {
+              status: page.status,
+              generationMode: page.generationMode,
+            },
+            pageOrganizationId,
+          );
         } catch (restoreError) {
           compensationError ??= restoreError;
         }
@@ -164,8 +190,9 @@ export class PageGenerationService implements PageGenerationServicePort {
 
       if (creditsConsumed) {
         try {
-          await this.creditService.refundCredits({
+          await this.refundCredits({
             userId,
+            organizationId: pageOrganizationId,
             amount: selection.creditCost,
             description: 'Refund for failed page generation enqueue',
             jobId: createdJobId ?? reservedJobId,
@@ -222,8 +249,12 @@ export class PageGenerationService implements PageGenerationServicePort {
     }
   }
 
-  private async ensureNoActiveGenerationJob(userId: string, pageId: string): Promise<void> {
-    const activeJob = await this.generationJobRepository.findActivePageGenerationJob(userId, pageId);
+  private async ensureNoActiveGenerationJob(
+    userId: string,
+    pageId: string,
+    organizationId: string | null,
+  ): Promise<void> {
+    const activeJob = await this.generationJobRepository.findActivePageGenerationJob(userId, pageId, organizationId);
     if (activeJob !== null) {
       throw new ConflictError('Page generation is already queued or processing');
     }
@@ -240,7 +271,8 @@ export class PageGenerationService implements PageGenerationServicePort {
       return 0;
     }
 
-    const entities = await this.entityRepository.findByWorkIdAndUserId(page.workId, userId);
+    const organizationId = page.organizationId ?? null;
+    const entities = await this.entityRepository.findByWorkIdAndUserId(page.workId, userId, organizationId);
     const assignedCharacters = entities.filter(
       (entity) => entity.entityType === 'character' && assignedEntityIds.includes(entity.id),
     );
@@ -249,6 +281,7 @@ export class PageGenerationService implements PageGenerationServicePort {
       assignedEntityIds,
       page.workId,
       userId,
+      organizationId,
     );
 
     const referenceImageCount = new Set(references.map((reference) => reference.entityId)).size;
@@ -272,6 +305,70 @@ export class PageGenerationService implements PageGenerationServicePort {
     throw new ValidationError(
       `Generate requires confirmed character references for: ${missingNames}`,
     );
+  }
+
+  private async consumeCredits(input: {
+    userId: string;
+    organizationId: string | null;
+    workId: string;
+    cost: number;
+    description: string;
+    jobId: string;
+  }): Promise<void> {
+    const organizationId = input.organizationId ?? null;
+    if (organizationId === null) {
+      await this.creditService.consumeCredits({
+        userId: input.userId,
+        cost: input.cost,
+        description: input.description,
+        jobId: input.jobId,
+      });
+      return;
+    }
+
+    await this.getOrganizationService().consumeCredits({
+      userId: input.userId,
+      organizationId,
+      workId: input.workId,
+      cost: input.cost,
+      description: input.description,
+      jobId: input.jobId,
+      eventType: 'generation.started',
+    });
+  }
+
+  private async refundCredits(input: {
+    userId: string;
+    organizationId: string | null;
+    amount: number;
+    description: string;
+    jobId: string;
+  }): Promise<void> {
+    const organizationId = input.organizationId ?? null;
+    if (organizationId === null) {
+      await this.creditService.refundCredits({
+        userId: input.userId,
+        amount: input.amount,
+        description: input.description,
+        jobId: input.jobId,
+      });
+      return;
+    }
+
+    await this.getOrganizationService().refundCredits({
+      organizationId,
+      actorUserId: input.userId,
+      amount: input.amount,
+      description: input.description,
+      jobId: input.jobId,
+    });
+  }
+
+  private getOrganizationService(): OrganizationServicePort {
+    if (this.organizationService === undefined) {
+      throw new ConfigurationError('Organization service is required for enterprise generation');
+    }
+    return this.organizationService;
   }
 }
 

@@ -69,7 +69,7 @@ export class EpisodePageSkeletonWorkerService implements EpisodePageSkeletonWork
         overwriteExisting,
         language,
         allowCompilerFallback: false,
-      });
+      }, job.organizationId);
       skeletonResult = result;
 
       let storyPlanResult: EpisodePagePlanApplyResult | null = null;
@@ -89,6 +89,7 @@ export class EpisodePageSkeletonWorkerService implements EpisodePageSkeletonWork
           async (progress) => {
             await this.recordEpisodePlanProgress(job.id, job.userId, progress);
           },
+          job.organizationId,
         );
         if (!storyPlanResult.compilerUsed) {
           throw new ValidationError(
@@ -128,6 +129,7 @@ export class EpisodePageSkeletonWorkerService implements EpisodePageSkeletonWork
           job.userId,
           episodeId,
           skeletonResult.pagesCreated,
+          job.organizationId ?? null,
         );
       }
       await this.repository.failEpisodePageSkeleton({
@@ -186,6 +188,7 @@ export class EpisodePageSkeletonWorkerService implements EpisodePageSkeletonWork
     userId: string,
     episodeId: string,
     expectedPageCount: number,
+    organizationId: string | null,
   ): Promise<void> {
     try {
       await this.recordProgress(jobId, userId, {
@@ -196,6 +199,7 @@ export class EpisodePageSkeletonWorkerService implements EpisodePageSkeletonWork
         userId,
         episodeId,
         expectedPageCount,
+        organizationId,
       );
       console.warn('episode_page_skeleton_rolled_back_after_story_plan_failure', {
         jobId,

@@ -30,6 +30,20 @@ export function ensureOwnedPageImageKey(
   }
 }
 
+export function ensurePageImageKeyForPage(
+  s3Key: string,
+  pageId: string,
+  fieldName = 'page image key',
+): void {
+  ensureSafeImageKey(s3Key, fieldName);
+
+  if (isPageSessionImageKey(s3Key, pageId) || isFinalPageImageKey(s3Key, pageId)) {
+    return;
+  }
+
+  throw new ConfigurationError(`${fieldName} is outside the page scope`);
+}
+
 function isOwnedFinalPageImageKey(s3Key: string, userId: string, pageId: string): boolean {
   const savedFinalPrefix = `saved/${userId}/pages/${pageId}_final.`;
   if (!s3Key.startsWith(savedFinalPrefix)) {
@@ -37,6 +51,26 @@ function isOwnedFinalPageImageKey(s3Key: string, userId: string, pageId: string)
   }
 
   const extension = s3Key.slice(savedFinalPrefix.length).toLowerCase();
+  return extension === 'png' || extension === 'jpg' || extension === 'jpeg' || extension === 'webp';
+}
+
+function isPageSessionImageKey(s3Key: string, pageId: string): boolean {
+  const segments = s3Key.split('/');
+  return (
+    segments.length >= 5 &&
+    segments[0] === 'session' &&
+    segments[2] === 'pages' &&
+    segments[3] === pageId
+  );
+}
+
+function isFinalPageImageKey(s3Key: string, pageId: string): boolean {
+  const savedFinalMarker = `/pages/${pageId}_final.`;
+  if (!s3Key.startsWith('saved/') || !s3Key.includes(savedFinalMarker)) {
+    return false;
+  }
+
+  const extension = s3Key.slice(s3Key.indexOf(savedFinalMarker) + savedFinalMarker.length).toLowerCase();
   return extension === 'png' || extension === 'jpg' || extension === 'jpeg' || extension === 'webp';
 }
 

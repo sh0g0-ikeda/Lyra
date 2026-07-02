@@ -41,13 +41,24 @@ import type { PageAutofillCompilerPort } from './PageAutofillCompiler.js';
 import type { EpisodePagePlanCompilerPort } from './EpisodePagePlanCompiler.js';
 
 export interface PageServicePort {
-  updatePageSettings(userId: string, pageId: string, input: UpdatePageSettingsInput): Promise<PageSummary>;
-  autofillFromScenes(userId: string, pageId: string, language: AppLanguage): Promise<PageAutofillResult>;
+  updatePageSettings(
+    userId: string,
+    pageId: string,
+    input: UpdatePageSettingsInput,
+    organizationId?: string | null,
+  ): Promise<PageSummary>;
+  autofillFromScenes(
+    userId: string,
+    pageId: string,
+    language: AppLanguage,
+    organizationId?: string | null,
+  ): Promise<PageAutofillResult>;
   autofillEpisodeFromStory(
     userId: string,
     episodeId: string,
     language: AppLanguage,
     progressReporter?: EpisodePagePlanProgressReporter,
+    organizationId?: string | null,
   ): Promise<EpisodePagePlanApplyResult>;
 }
 
@@ -106,8 +117,9 @@ export class PageService implements PageServicePort {
     userId: string,
     pageId: string,
     input: UpdatePageSettingsInput,
+    organizationId: string | null = null,
   ): Promise<PageSummary> {
-    const page = await this.pageRepository.findPageByIdAndUserId(pageId, userId);
+    const page = await this.pageRepository.findPageByIdAndUserId(pageId, userId, organizationId);
     if (page === null) {
       throw new NotFoundError('Page not found');
     }
@@ -137,7 +149,7 @@ export class PageService implements PageServicePort {
             layoutConfig: nextLayoutConfig,
           };
 
-    const updatedPage = await this.pageRepository.updatePageSettings(pageId, userId, persistedInput);
+    const updatedPage = await this.pageRepository.updatePageSettings(pageId, userId, persistedInput, organizationId);
     if (updatedPage === null) {
       throw new NotFoundError('Page not found');
     }
@@ -149,6 +161,7 @@ export class PageService implements PageServicePort {
     userId: string,
     pageId: string,
     language: AppLanguage,
+    organizationId: string | null = null,
   ): Promise<PageAutofillResult> {
     if (
       this.panelRepository === undefined ||
@@ -158,7 +171,7 @@ export class PageService implements PageServicePort {
       throw new ConfigurationError('Page autofill service is not fully configured');
     }
 
-    const context = await this.pageRepository.findAutofillContextByIdAndUserId(pageId, userId);
+    const context = await this.pageRepository.findAutofillContextByIdAndUserId(pageId, userId, organizationId);
     if (context === null) {
       throw new NotFoundError('Page not found');
     }
@@ -169,9 +182,6 @@ export class PageService implements PageServicePort {
     }
     if (context.panels.length !== context.frameCount) {
       throw new ValidationError('Page panel count must match frame count before scene autofill can run');
-    }
-    if (context.scenes.length === 0) {
-      throw new ValidationError('Episode must have at least one scene before page autofill can run');
     }
 
     const compiled = await this.compileAutofillSafely(context, language);
@@ -188,7 +198,7 @@ export class PageService implements PageServicePort {
     ) {
       const nextPageSettings = mergePageSettings(context, compiled.suggestion.page);
       if (nextPageSettings !== null) {
-        await this.updatePageSettings(userId, pageId, nextPageSettings);
+        await this.updatePageSettings(userId, pageId, nextPageSettings, organizationId);
       }
     }
 
@@ -259,14 +269,19 @@ export class PageService implements PageServicePort {
 
       const merge = mergePanelSuggestion(panel, suggestion);
       if (merge.panelUpdate !== null) {
-        const updated = await this.panelRepository.updatePanel(panel.id, userId, merge.panelUpdate);
+        const updated = await this.panelRepository.updatePanel(panel.id, userId, merge.panelUpdate, organizationId);
         if (updated === null) {
           throw new NotFoundError('Panel not found');
         }
       }
 
       if (merge.assignments !== null) {
-        await this.panelEntityAssignmentService.replacePanelEntityAssignments(userId, panel.id, merge.assignments);
+        await this.panelEntityAssignmentService.replacePanelEntityAssignments(
+          userId,
+          panel.id,
+          merge.assignments,
+          organizationId,
+        );
       }
 
       if (merge.panelUpdate !== null || merge.assignments !== null) {
@@ -291,6 +306,7 @@ export class PageService implements PageServicePort {
     episodeId: string,
     language: AppLanguage,
     progressReporter?: EpisodePagePlanProgressReporter,
+    organizationId: string | null = null,
   ): Promise<EpisodePagePlanApplyResult> {
     if (
       this.panelRepository === undefined ||
@@ -299,7 +315,11 @@ export class PageService implements PageServicePort {
       throw new ConfigurationError('Episode page planning service is not fully configured');
     }
 
-    const context = await this.pageRepository.findEpisodePlanningContextByIdAndUserId(episodeId, userId);
+    const context = await this.pageRepository.findEpisodePlanningContextByIdAndUserId(
+      episodeId,
+      userId,
+      organizationId,
+    );
     if (context === null) {
       throw new NotFoundError('Episode not found');
     }
@@ -311,11 +331,8 @@ export class PageService implements PageServicePort {
         `Episode story autofill supports at most ${STORY_AI_LIMITS.maxSkeletonPages} pages`,
       );
     }
-    if (context.scenes.length === 0) {
-      throw new ValidationError('Episode must have at least one scene before story autofill can run');
-    }
 
-    await this.repairEpisodePlanLayoutMetadataBeforeCompile(userId, context);
+    await this.repairEpisodePlanLayoutMetadataBeforeCompile(userId, context, organizationId);
 
     if (this.episodePagePlanCompiler === undefined) {
       return buildSkippedEpisodePlanApplyResult('Episode page plan compiler is not configured');
@@ -333,12 +350,13 @@ export class PageService implements PageServicePort {
       totalChunks: null,
     });
 
-    return this.applyEpisodePlanSuggestion(context, userId, compiled, language);
+    return this.applyEpisodePlanSuggestion(context, userId, compiled, language, organizationId);
   }
 
   private async repairEpisodePlanLayoutMetadataBeforeCompile(
     userId: string,
     context: EpisodePagePlanContext,
+    organizationId: string | null,
   ): Promise<void> {
     for (const page of context.pages) {
       ensurePageEditable(page.status, 'story autofill');
@@ -357,7 +375,7 @@ export class PageService implements PageServicePort {
       if (repairedLayoutConfig !== null) {
         await this.updatePageSettings(userId, page.pageId, {
           layoutConfig: repairedLayoutConfig,
-        });
+        }, organizationId);
         page.layoutConfig = repairedLayoutConfig;
         continue;
       }
@@ -522,6 +540,7 @@ export class PageService implements PageServicePort {
     userId: string,
     compiled: EpisodePlanExecutionResult,
     language: AppLanguage,
+    organizationId: string | null,
   ): Promise<EpisodePagePlanApplyResult> {
     const normalizedSuggestion = normalizeEpisodePlanToContext(context, compiled.suggestion, language);
     validateEpisodePlanAgainstContext(context, normalizedSuggestion);
@@ -553,21 +572,26 @@ export class PageService implements PageServicePort {
         throw new ValidationError('Episode page plan referenced an unknown page');
       }
 
+      const sourceSceneIds = normalizeEpisodePlanSourceSceneIds(context, pageSuggestion.sourceSceneIds);
       const pageContext = buildPageScopedAutofillContext(context, pageIndex);
       const nextPageSettings = mergePageSettings(pageContext, pageSuggestion.page, {
         overwriteExisting: true,
-        storySourceSceneIds: pageSuggestion.sourceSceneIds,
+        storySourceSceneIds: sourceSceneIds,
         storyPagePurpose: pageSuggestion.pagePurpose,
         storyContinuityNote: pageSuggestion.continuityNote,
       });
       if (nextPageSettings !== null) {
-        await this.updatePageSettings(userId, page.pageId, nextPageSettings);
+        await this.updatePageSettings(userId, page.pageId, nextPageSettings, organizationId);
         updatedPageCount += 1;
         filledFieldCount += Object.keys(nextPageSettings).length;
       }
 
       const panelsByOrder = new Map(page.panels.map((panel) => [panel.order, panel] as const));
-      const pageScenes = resolveEpisodePlanScenesForPage(context, pageSuggestion, pageIndex);
+      const pageScenes = resolveEpisodePlanScenesForPage(
+        context,
+        { ...pageSuggestion, sourceSceneIds },
+        pageIndex,
+      );
       const pageLeadEntityId = inferPageLeadEntityIdFromPanelSuggestions(
         pageSuggestion.panels,
         inferFallbackEntityIds(
@@ -606,7 +630,7 @@ export class PageService implements PageServicePort {
         });
 
         if (merge.panelUpdate !== null) {
-          const updated = await this.panelRepository!.updatePanel(panel.id, userId, merge.panelUpdate);
+          const updated = await this.panelRepository!.updatePanel(panel.id, userId, merge.panelUpdate, organizationId);
           if (updated === null) {
             throw new NotFoundError('Panel not found');
           }
@@ -617,6 +641,7 @@ export class PageService implements PageServicePort {
             userId,
             panel.id,
             merge.assignments,
+            organizationId,
           );
           updatedAssignmentCount += merge.assignments.length;
         }
@@ -970,7 +995,10 @@ function normalizeEpisodePlanToContext(
       return {
         pageId: existingPage.pageId,
         pageNumber: existingPage.pageNumber,
-        sourceSceneIds: coalesceStringArray(sourcePage?.sourceSceneIds, fallbackPage.sourceSceneIds),
+        sourceSceneIds: normalizeEpisodePlanSourceSceneIds(
+          context,
+          coalesceStringArray(sourcePage?.sourceSceneIds, fallbackPage.sourceSceneIds),
+        ),
         pagePurpose: sourcePage?.pagePurpose,
         continuityNote: sourcePage?.continuityNote,
         page: completePageSettingsSuggestion(sourcePage?.page, fallbackPage.page),
@@ -1370,6 +1398,16 @@ function coalesceStringArray(source: string[] | undefined, fallback: string[] | 
     return source;
   }
   return fallback;
+}
+
+function normalizeEpisodePlanSourceSceneIds(
+  context: EpisodePagePlanContext,
+  sourceSceneIds: string[] | undefined,
+): string[] {
+  if (context.scenes.length === 0) {
+    return [];
+  }
+  return sourceSceneIds ?? [];
 }
 
 function coalesceDialogue(
@@ -2457,8 +2495,9 @@ function buildAutofillCompilerBrief(
     '[TASK]',
     `Fill editable page and panel draft fields for page ${context.pageNumber} of ${context.totalPagesInEpisode}.`,
     `Return suggestions for exactly ${context.frameCount} panels with orders 1 through ${context.frameCount}.`,
-    'Work in this order: decide the page beat, split it into panel beats in reading order, choose the visible subject or subjects for each panel, then fill the editable fields.',
-    'Decide what each panel should show so the page faithfully expresses the supplied episode and scene information without inventing a new episode event.',
+    'Work in this order: decide the page beat, split it into panel beats in Japanese manga reading order (right-to-left within a row, then top-to-bottom across rows), choose the visible subject or subjects for each panel, then fill the editable fields.',
+    'Panel order numbers must match the saved layout reading order; panel 1 is the first panel a manga reader sees.',
+    'Decide what each panel should show so the page faithfully expresses the supplied episode story and any scene information without inventing a new episode event.',
     'Only provide fields that are useful as editable defaults.',
     `Write every free-text field in natural ${outputLanguage} suitable for direct editing in the Lyra UI.`,
     '',
@@ -2510,9 +2549,9 @@ function buildAutofillCompilerBrief(
     '',
     '[RULES]',
     'Use only provided entity IDs.',
-    'Do not add extra characters, props, weapons, or dramatic background details that are not supported by the scenes.',
+    'Do not add extra characters, props, weapons, or dramatic background details that are not supported by the episode story or provided scenes.',
     'Use the chapter arc only to keep continuity and avoid contradictions across the broader chapter.',
-    'Convert scene mood into visible composition, posture, and expression cues.',
+    'Use scene mood for visible composition, posture, and expression cues when scenes are provided; otherwise infer restrained cues from the episode story.',
     'Prefer grounded camera and staging choices over flashy ones.',
     'Keep each suggestion concise and editable.',
   ].join('\n');
@@ -2616,8 +2655,8 @@ function buildEpisodePlanCompilerBrief(
     'Plan editable page and panel draft fields for the given existing pages within the episode.',
     `Return suggestions for exactly ${context.pages.length} existing pages, preserving each page_id, page_number, frame_count, and panel order.`,
     'This brief may contain only a contiguous chunk of pages. Use page_number and estimated pages to place these beats in the full episode instead of restarting the whole story inside the chunk.',
-    'Work in this order: locate these pages within the full episode story, assign contiguous scenes to each page, split each page into panel beats, choose the visible subject or subjects for each panel, then fill the editable fields.',
-    'Assign the existing scenes across the existing pages in a grounded, contiguous order.',
+    'Work in this order: locate these pages within the full episode story, use scene entries when provided, split each page into panel beats, choose the visible subject or subjects for each panel, then fill the editable fields.',
+    'If scenes are provided, assign them across the existing pages in a grounded, contiguous order. If no scenes are provided, leave source_scene_ids empty and use the episode story itself.',
     'You may add natural connective reaction or transition shots when they help readability, but do not invent new episode events, hidden subplots, props, or twists.',
     `Write every free-text field in natural ${outputLanguage} suitable for direct editing in the Lyra UI.`,
     '',
@@ -2664,14 +2703,14 @@ function buildEpisodePlanCompilerBrief(
     '',
     '[OUTPUT CONTRACT]',
     'Return one JSON object matching the supplied episode_page_plan schema.',
-    'Use only existing page_id, page_number, panel order, scene ID, and entity ID values from this brief.',
+    'Use only existing page_id, page_number, panel order, scene ID, and entity ID values from this brief. When [SCENES] is (none), source_scene_ids must be empty.',
     'Use only enum values allowed by the schema, and prefer null or omission over invented values or unsupported details.',
     '',
     '[RULES]',
-    'Do not contradict the chapter arc, episode arc, or scene order.',
+    'Do not contradict the chapter arc, episode arc, or scene order when scenes exist.',
     'Keep the page plan readable and not flashy or quirky for its own sake.',
     'Use chapter emotion curve and episode structure to decide pacing and shot intensity.',
-    'Convert scene mood and personality implications into visible but restrained cues in posture, gaze, spacing, and camera distance.',
+    'Convert scene mood and personality implications into visible but restrained cues in posture, gaze, spacing, and camera distance when scenes are provided; otherwise infer those cues from the episode text.',
     'Do not add unsupported violence, props, weapons, locations, or surprise plot events.',
     'Silent panels are allowed, but do not leave the page plan underwritten when the story clearly implies speech, thought, or brief narration.',
   ].join('\n');

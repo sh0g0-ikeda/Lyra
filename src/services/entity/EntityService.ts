@@ -32,11 +32,21 @@ export interface UpdateEntityRequest {
 }
 
 export interface EntityServicePort {
-  createEntity(userId: string, workId: string, input: CreateEntityRequest): Promise<Entity>;
-  listEntities(userId: string, workId: string): Promise<Entity[]>;
-  getEntity(userId: string, entityId: string): Promise<Entity>;
-  updateEntity(userId: string, entityId: string, input: UpdateEntityRequest): Promise<Entity>;
-  deleteEntity(userId: string, entityId: string): Promise<void>;
+  createEntity(
+    userId: string,
+    workId: string,
+    input: CreateEntityRequest,
+    organizationId?: string | null,
+  ): Promise<Entity>;
+  listEntities(userId: string, workId: string, organizationId?: string | null): Promise<Entity[]>;
+  getEntity(userId: string, entityId: string, organizationId?: string | null): Promise<Entity>;
+  updateEntity(
+    userId: string,
+    entityId: string,
+    input: UpdateEntityRequest,
+    organizationId?: string | null,
+  ): Promise<Entity>;
+  deleteEntity(userId: string, entityId: string, organizationId?: string | null): Promise<void>;
 }
 
 export class EntityService implements EntityServicePort {
@@ -46,8 +56,13 @@ export class EntityService implements EntityServicePort {
     private readonly styleReferenceCompiler?: StyleReferenceCompilerPort,
   ) {}
 
-  public async createEntity(userId: string, workId: string, input: CreateEntityRequest): Promise<Entity> {
-    await this.ensureWorkOwnedByUser(workId, userId);
+  public async createEntity(
+    userId: string,
+    workId: string,
+    input: CreateEntityRequest,
+    organizationId: string | null = null,
+  ): Promise<Entity> {
+    await this.ensureWorkAccessible(workId, userId, organizationId);
     const parsedStructuredFields = parseStructuredFields(input.entityType, input.structuredFields);
 
     const createInput: CreateEntityInput = {
@@ -68,13 +83,13 @@ export class EntityService implements EntityServicePort {
     return this.entityRepository.create(createInput);
   }
 
-  public async listEntities(userId: string, workId: string): Promise<Entity[]> {
-    await this.ensureWorkOwnedByUser(workId, userId);
-    return this.entityRepository.findByWorkIdAndUserId(workId, userId);
+  public async listEntities(userId: string, workId: string, organizationId: string | null = null): Promise<Entity[]> {
+    await this.ensureWorkAccessible(workId, userId, organizationId);
+    return this.entityRepository.findByWorkIdAndUserId(workId, userId, organizationId);
   }
 
-  public async getEntity(userId: string, entityId: string): Promise<Entity> {
-    const entity = await this.entityRepository.findByIdAndUserId(entityId, userId);
+  public async getEntity(userId: string, entityId: string, organizationId: string | null = null): Promise<Entity> {
+    const entity = await this.entityRepository.findByIdAndUserId(entityId, userId, organizationId);
     if (entity === null) {
       throw new NotFoundError('Entity not found');
     }
@@ -86,8 +101,9 @@ export class EntityService implements EntityServicePort {
     userId: string,
     entityId: string,
     input: UpdateEntityRequest,
+    organizationId: string | null = null,
   ): Promise<Entity> {
-    const currentEntity = await this.getEntity(userId, entityId);
+    const currentEntity = await this.getEntity(userId, entityId, organizationId);
     const nextEntityType = input.entityType ?? currentEntity.entityType;
     const entityTypeChanged =
       input.entityType !== undefined && input.entityType !== currentEntity.entityType;
@@ -115,7 +131,7 @@ export class EntityService implements EntityServicePort {
           : normalizeSpeechProfile(nextEntityType, input.speechProfile),
     };
 
-    const entity = await this.entityRepository.update(entityId, userId, updateInput);
+    const entity = await this.entityRepository.update(entityId, userId, updateInput, organizationId);
     if (entity === null) {
       throw new NotFoundError('Entity not found');
     }
@@ -123,15 +139,19 @@ export class EntityService implements EntityServicePort {
     return entity;
   }
 
-  public async deleteEntity(userId: string, entityId: string): Promise<void> {
-    const deleted = await this.entityRepository.delete(entityId, userId);
+  public async deleteEntity(userId: string, entityId: string, organizationId: string | null = null): Promise<void> {
+    const deleted = await this.entityRepository.delete(entityId, userId, organizationId);
     if (!deleted) {
       throw new NotFoundError('Entity not found');
     }
   }
 
-  private async ensureWorkOwnedByUser(workId: string, userId: string): Promise<void> {
-    const work = await this.workReader.findByIdAndUserId(workId, userId);
+  private async ensureWorkAccessible(
+    workId: string,
+    userId: string,
+    organizationId: string | null,
+  ): Promise<void> {
+    const work = await this.workReader.findByIdAndUserId(workId, userId, organizationId);
     if (work === null) {
       throw new NotFoundError('Work not found');
     }

@@ -59,8 +59,6 @@ export class OpenAIStoryAiClient implements StoryAiClientPort {
     });
 
     return {
-      title: parsed.title,
-      purpose: parsed.purpose,
       introduction: parsed.introduction,
       middle: parsed.middle,
       climax: parsed.climax,
@@ -232,10 +230,8 @@ const pageSkeletonJsonSchema = {
 const improveEpisodeDraftJsonSchema = {
   type: 'object',
   additionalProperties: false,
-  required: ['title', 'purpose', 'introduction', 'middle', 'climax', 'ending_hook'],
+  required: ['introduction', 'middle', 'climax', 'ending_hook'],
   properties: {
-    title: nullableStringSchema,
-    purpose: nullableStringSchema,
     introduction: nullableStringSchema,
     middle: nullableStringSchema,
     climax: nullableStringSchema,

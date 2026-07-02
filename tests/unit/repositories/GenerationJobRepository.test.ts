@@ -50,6 +50,7 @@ describe('PostgresGenerationJobRepository', () => {
     expect(client.values).toEqual([
       null,
       'user-1',
+      null,
       'page_generate',
       'standard',
       10,
@@ -83,6 +84,7 @@ describe('PostgresGenerationJobRepository', () => {
     expect(client.values).toEqual([
       '55555555-5555-4555-8555-555555555555',
       'user-1',
+      null,
       'entity_generate',
       null,
       1,
@@ -184,8 +186,30 @@ describe('PostgresGenerationJobRepository', () => {
 
     expect(client.queries[0]).toContain("status IN ('queued', 'processing')");
     expect(client.queries[0]).toContain('params->>$3 = $4');
-    expect(client.values).toEqual(['user-1', 'page_generate', 'page_id', 'page-1']);
+    expect(client.values).toEqual(['user-1', 'page_generate', 'page_id', 'page-1', null]);
     expect(job?.id).toBe('job-1');
+  });
+
+  it('組織のactive job取得ではactive memberであることを確認する', async () => {
+    const client = new QueryCapturingClient();
+    const repository = new PostgresGenerationJobRepository(client);
+
+    await repository.findActivePageGenerationJob(
+      'user-1',
+      'page-1',
+      '11111111-1111-4111-8111-111111111111',
+    );
+
+    expect(client.queries[0]).toContain('FROM organization_members');
+    expect(client.queries[0]).toContain('organization_members.user_id = $1');
+    expect(client.queries[0]).toContain("organization_members.status = 'active'");
+    expect(client.values).toEqual([
+      'user-1',
+      'page_generate',
+      'page_id',
+      'page-1',
+      '11111111-1111-4111-8111-111111111111',
+    ]);
   });
 
   it('active entity generation job は entity_id で取得する', async () => {
@@ -194,7 +218,7 @@ describe('PostgresGenerationJobRepository', () => {
 
     await repository.findActiveEntityGenerationJob('user-1', 'entity-1');
 
-    expect(client.values).toEqual(['user-1', 'entity_generate', 'entity_id', 'entity-1']);
+    expect(client.values).toEqual(['user-1', 'entity_generate', 'entity_id', 'entity-1', null]);
   });
 
   it('user active generation job 数を集計する', async () => {

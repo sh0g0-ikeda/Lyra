@@ -6,6 +6,7 @@ import type {
   CreditCheckoutResult,
   CustomerPortalResult,
   SubscriptionCheckoutResult,
+  SubscriptionPlanCatalogEntry,
 } from '../../../src/domain/types/billing.js';
 import type { CreditBalanceSnapshot } from '../../../src/domain/types/credit.js';
 import type { AuthenticatedUser, SupabaseJwtClaims } from '../../../src/domain/types/user.js';
@@ -101,6 +102,33 @@ class FakeBillingService implements BillingServicePort {
       url: 'https://billing.stripe.test/portal',
     };
   }
+
+  public getSubscriptionPlanCatalog(): SubscriptionPlanCatalogEntry[] {
+    return [
+      {
+        planCode: 'standard',
+        displayNameJa: 'スタンダード',
+        displayNameEn: 'Standard',
+        monthlyCredits: 50,
+        amountJpy: 1000,
+        minimumContractMonths: 1,
+        trialDays: 0,
+        isEnterprise: false,
+        configured: true,
+      },
+      {
+        planCode: 'premium',
+        displayNameJa: 'プレミアム',
+        displayNameEn: 'Premium',
+        monthlyCredits: 175,
+        amountJpy: 3000,
+        minimumContractMonths: 1,
+        trialDays: 0,
+        isEnterprise: false,
+        configured: true,
+      },
+    ];
+  }
 }
 
 class FakeStripeWebhookService implements StripeWebhookServicePort {
@@ -169,10 +197,34 @@ describe('billing routes', () => {
       total_credits: 40,
       monthly_expires_at: null,
       plan_code: 'free',
+      subscription_plans: [
+        {
+          plan_code: 'standard',
+          display_name_ja: 'スタンダード',
+          display_name_en: 'Standard',
+          monthly_credits: 50,
+          amount_jpy: 1000,
+          minimum_contract_months: 1,
+          trial_days: 0,
+          is_enterprise: false,
+          configured: true,
+        },
+        {
+          plan_code: 'premium',
+          display_name_ja: 'プレミアム',
+          display_name_en: 'Premium',
+          monthly_credits: 175,
+          amount_jpy: 3000,
+          minimum_contract_months: 1,
+          trial_days: 0,
+          is_enterprise: false,
+          configured: true,
+        },
+      ],
     });
   });
 
-  it('creates subscription checkout sessions for standard and premium plans', async () => {
+  it('creates subscription checkout sessions for consumer plans and rejects enterprise plans', async () => {
     const billingService = new FakeBillingService();
     const app = createTestApp(billingService, new FakeStripeWebhookService());
     const token = await createToken();
@@ -211,6 +263,20 @@ describe('billing routes', () => {
       session_id: 'cs_sub_123',
       url: 'https://checkout.stripe.test/subscription',
     });
+    expect(billingService.subscriptionPlanCode).toBe('premium');
+
+    const enterpriseResponse = await app.request('/api/billing/checkout/subscription', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        plan_code: 'enterprise_a',
+      }),
+    });
+
+    expect(enterpriseResponse.status).toBe(422);
     expect(billingService.subscriptionPlanCode).toBe('premium');
   });
 

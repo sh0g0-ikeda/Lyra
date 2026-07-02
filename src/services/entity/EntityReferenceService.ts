@@ -21,6 +21,7 @@ import type { GenerationJobRepository } from '../../repositories/GenerationJobRe
 import { isUniqueViolation } from '../../repositories/GenerationJobRepository.js';
 import type { EntityReferenceRepository } from '../../repositories/EntityRepository.js';
 import type { CreditServicePort } from '../credit/CreditService.js';
+import type { OrganizationServicePort } from '../organization/OrganizationService.js';
 import type { EntityGenerationQueuePort } from './EntityGenerationQueue.js';
 import {
   NoopEntityGenerationRecoveryService,
@@ -42,13 +43,14 @@ export interface ConfirmEntityReferencesRequest {
 }
 
 export interface EntityReferenceServicePort {
-  getReferenceSet(userId: string, entityId: string): Promise<EntityReferenceSet>;
+  getReferenceSet(userId: string, entityId: string, organizationId?: string | null): Promise<EntityReferenceSet>;
   importImage(
     userId: string,
     input: {
       entityType: EntityType;
       imageBase64: string;
     },
+    organizationId?: string | null,
   ): Promise<EntityImportAnalysis>;
   enqueueReferenceGeneration(
     userId: string,
@@ -56,13 +58,20 @@ export interface EntityReferenceServicePort {
     input?: {
       sourceS3Key?: string | null;
     },
+    organizationId?: string | null,
   ): Promise<{ jobId: string }>;
   confirmReferences(
     userId: string,
     entityId: string,
     input: ConfirmEntityReferencesRequest,
+    organizationId?: string | null,
   ): Promise<EntityReferenceSet>;
-  deleteReference(userId: string, entityId: string, refId: string): Promise<EntityReferenceSet>;
+  deleteReference(
+    userId: string,
+    entityId: string,
+    refId: string,
+    organizationId?: string | null,
+  ): Promise<EntityReferenceSet>;
 }
 
 /**
@@ -81,10 +90,15 @@ export class EntityReferenceService implements EntityReferenceServicePort {
     private readonly generationEnabled = true,
     private readonly recoveryService: EntityGenerationRecoveryServicePort = new NoopEntityGenerationRecoveryService(),
     private readonly importAnalysisEnabled = true,
+    private readonly organizationService?: OrganizationServicePort,
   ) {}
 
-  public async getReferenceSet(userId: string, entityId: string): Promise<EntityReferenceSet> {
-    const entity = await this.entityRepository.findReferenceContextByIdAndUserId(entityId, userId);
+  public async getReferenceSet(
+    userId: string,
+    entityId: string,
+    organizationId: string | null = null,
+  ): Promise<EntityReferenceSet> {
+    const entity = await this.entityRepository.findReferenceContextByIdAndUserId(entityId, userId, organizationId);
     if (entity === null) {
       throw new NotFoundError('Entity not found');
     }
@@ -98,6 +112,7 @@ export class EntityReferenceService implements EntityReferenceServicePort {
       entityType: EntityType;
       imageBase64: string;
     },
+    organizationId: string | null = null,
   ): Promise<EntityImportAnalysis> {
     const uploadedImage = parseImageDataUrl(input.imageBase64);
     if (uploadedImage.sizeBytes > ENTITY_IMPORT_MAX_FILE_SIZE_BYTES) {
@@ -112,11 +127,21 @@ export class EntityReferenceService implements EntityReferenceServicePort {
 
     let creditsConsumed = false;
     try {
-      await this.creditService.consumeCredits({
-        userId,
-        cost: CREDIT_COSTS.ENTITY_IMPORT_ANALYSIS,
-        description: 'Entity import analysis',
-      });
+      if (organizationId === null) {
+        await this.creditService.consumeCredits({
+          userId,
+          cost: CREDIT_COSTS.ENTITY_IMPORT_ANALYSIS,
+          description: 'Entity import analysis',
+        });
+      } else {
+        await this.getOrganizationService().consumeCredits({
+          userId,
+          organizationId,
+          cost: CREDIT_COSTS.ENTITY_IMPORT_ANALYSIS,
+          description: 'Entity import analysis',
+          eventType: 'entity_import.started',
+        });
+      }
       creditsConsumed = true;
 
       const storedImage = await this.imageStorage.storeImportedImage({
@@ -137,11 +162,20 @@ export class EntityReferenceService implements EntityReferenceServicePort {
       };
     } catch (error) {
       if (creditsConsumed) {
-        await this.creditService.refundCredits({
-          userId,
-          amount: CREDIT_COSTS.ENTITY_IMPORT_ANALYSIS,
-          description: 'Refund for failed entity import analysis',
-        });
+        if (organizationId === null) {
+          await this.creditService.refundCredits({
+            userId,
+            amount: CREDIT_COSTS.ENTITY_IMPORT_ANALYSIS,
+            description: 'Refund for failed entity import analysis',
+          });
+        } else {
+          await this.getOrganizationService().refundCredits({
+            organizationId,
+            actorUserId: userId,
+            amount: CREDIT_COSTS.ENTITY_IMPORT_ANALYSIS,
+            description: 'Refund for failed entity import analysis',
+          });
+        }
       }
 
       throw error;
@@ -154,12 +188,13 @@ export class EntityReferenceService implements EntityReferenceServicePort {
     input?: {
       sourceS3Key?: string | null;
     },
+    organizationId: string | null = null,
   ): Promise<{ jobId: string }> {
     if (!this.generationEnabled) {
       throw new ConflictError('Generation is temporarily disabled');
     }
 
-    const entity = await this.entityRepository.findReferenceContextByIdAndUserId(entityId, userId);
+    const entity = await this.entityRepository.findReferenceContextByIdAndUserId(entityId, userId, organizationId);
     if (entity === null) {
       throw new NotFoundError('Entity not found');
     }
@@ -169,26 +204,39 @@ export class EntityReferenceService implements EntityReferenceServicePort {
       ensureAllowedReferenceSourceKey(sourceS3Key, userId, entityId);
     }
 
-    await this.recoveryService.recoverStaleJobsForEntity(userId, entity.entityId);
+    await this.recoveryService.recoverStaleJobsForEntity(userId, entity.entityId, organizationId);
     await assertGenerationCapacity(this.generationJobRepository, userId, this.capacityLimits);
-    await this.ensureNoActiveGenerationJob(userId, entity.entityId);
+    await this.ensureNoActiveGenerationJob(userId, entity.entityId, organizationId);
 
     let creditsConsumed = false;
     const reservedJobId = randomUUID();
     let createdJobId: string | null = null;
 
     try {
-      await this.creditService.consumeCredits({
-        userId,
-        cost: CREDIT_COSTS.ENTITY_GENERATION,
-        description: 'Entity reference generation',
-        jobId: reservedJobId,
-      });
+      if (organizationId === null) {
+        await this.creditService.consumeCredits({
+          userId,
+          cost: CREDIT_COSTS.ENTITY_GENERATION,
+          description: 'Entity reference generation',
+          jobId: reservedJobId,
+        });
+      } else {
+        await this.getOrganizationService().consumeCredits({
+          userId,
+          organizationId,
+          workId: entity.workId,
+          cost: CREDIT_COSTS.ENTITY_GENERATION,
+          description: 'Entity reference generation',
+          jobId: reservedJobId,
+          eventType: 'entity_generation.started',
+        });
+      }
       creditsConsumed = true;
 
       const job = await this.generationJobRepository.create({
         id: reservedJobId,
         userId,
+        organizationId,
         jobType: 'entity_generate',
         generationMode: null,
         creditCost: CREDIT_COSTS.ENTITY_GENERATION,
@@ -226,12 +274,22 @@ export class EntityReferenceService implements EntityReferenceServicePort {
 
       if (creditsConsumed) {
         try {
-          await this.creditService.refundCredits({
-            userId,
-            amount: CREDIT_COSTS.ENTITY_GENERATION,
-            description: 'Refund for failed entity generation enqueue',
-            jobId: createdJobId ?? reservedJobId,
-          });
+          if (organizationId === null) {
+            await this.creditService.refundCredits({
+              userId,
+              amount: CREDIT_COSTS.ENTITY_GENERATION,
+              description: 'Refund for failed entity generation enqueue',
+              jobId: createdJobId ?? reservedJobId,
+            });
+          } else {
+            await this.getOrganizationService().refundCredits({
+              organizationId,
+              actorUserId: userId,
+              amount: CREDIT_COSTS.ENTITY_GENERATION,
+              description: 'Refund for failed entity generation enqueue',
+              jobId: createdJobId ?? reservedJobId,
+            });
+          }
         } catch (refundError) {
           compensationError ??= refundError;
         }
@@ -257,8 +315,9 @@ export class EntityReferenceService implements EntityReferenceServicePort {
     userId: string,
     entityId: string,
     input: ConfirmEntityReferencesRequest,
+    organizationId: string | null = null,
   ): Promise<EntityReferenceSet> {
-    const entity = await this.entityRepository.findReferenceContextByIdAndUserId(entityId, userId);
+    const entity = await this.entityRepository.findReferenceContextByIdAndUserId(entityId, userId, organizationId);
     if (entity === null) {
       throw new NotFoundError('Entity not found');
     }
@@ -303,6 +362,7 @@ export class EntityReferenceService implements EntityReferenceServicePort {
     const saved = await this.entityRepository.saveConfirmedReferences({
       entityId,
       userId,
+      organizationId,
       images: finalizedImages,
       primaryRefId: primaryReference.refId,
       promptSupplement: input.promptSupplement,
@@ -315,8 +375,13 @@ export class EntityReferenceService implements EntityReferenceServicePort {
     return saved;
   }
 
-  public async deleteReference(userId: string, entityId: string, refId: string): Promise<EntityReferenceSet> {
-    const entity = await this.entityRepository.findReferenceContextByIdAndUserId(entityId, userId);
+  public async deleteReference(
+    userId: string,
+    entityId: string,
+    refId: string,
+    organizationId: string | null = null,
+  ): Promise<EntityReferenceSet> {
+    const entity = await this.entityRepository.findReferenceContextByIdAndUserId(entityId, userId, organizationId);
     if (entity === null) {
       throw new NotFoundError('Entity not found');
     }
@@ -329,6 +394,7 @@ export class EntityReferenceService implements EntityReferenceServicePort {
       entityId,
       userId,
       refId,
+      organizationId,
     );
     if (usageCount > 0) {
       throw new ConflictError('Reference image is currently used by an entity state');
@@ -337,6 +403,7 @@ export class EntityReferenceService implements EntityReferenceServicePort {
     const updated = await this.entityRepository.deleteReferenceImage({
       entityId,
       userId,
+      organizationId,
       refId,
     });
     if (updated === null) {
@@ -355,11 +422,22 @@ export class EntityReferenceService implements EntityReferenceServicePort {
     }
   }
 
-  private async ensureNoActiveGenerationJob(userId: string, entityId: string): Promise<void> {
-    const activeJob = await this.generationJobRepository.findActiveEntityGenerationJob(userId, entityId);
+  private async ensureNoActiveGenerationJob(
+    userId: string,
+    entityId: string,
+    organizationId: string | null,
+  ): Promise<void> {
+    const activeJob = await this.generationJobRepository.findActiveEntityGenerationJob(userId, entityId, organizationId);
     if (activeJob !== null) {
       throw new ConflictError('Entity reference generation is already queued or processing');
     }
+  }
+
+  private getOrganizationService(): OrganizationServicePort {
+    if (this.organizationService === undefined) {
+      throw new ConfigurationError('Organization service is required for enterprise entity generation');
+    }
+    return this.organizationService;
   }
 }
 

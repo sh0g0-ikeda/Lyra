@@ -20,7 +20,11 @@ import {
 
 export interface EpisodePageSkeletonJobRepository
   extends Pick<GenerationJobRepository, 'create' | 'attachQueueMessageId' | 'markFailed'> {
-  findActiveEpisodePageSkeletonJob(userId: string, episodeId: string): Promise<GenerationJob | null>;
+  findActiveEpisodePageSkeletonJob(
+    userId: string,
+    episodeId: string,
+    organizationId?: string | null,
+  ): Promise<GenerationJob | null>;
 }
 
 export interface EnqueueEpisodePageSkeletonInput {
@@ -38,6 +42,7 @@ export interface EpisodePageSkeletonServicePort {
     userId: string,
     episodeId: string,
     input: EnqueueEpisodePageSkeletonInput,
+    organizationId?: string | null,
   ): Promise<EnqueueEpisodePageSkeletonResult>;
 }
 
@@ -62,8 +67,9 @@ export class EpisodePageSkeletonService implements EpisodePageSkeletonServicePor
     userId: string,
     episodeId: string,
     input: EnqueueEpisodePageSkeletonInput,
+    organizationId: string | null = null,
   ): Promise<EnqueueEpisodePageSkeletonResult> {
-    await this.ensureNoActiveJob(userId, episodeId);
+    await this.ensureNoActiveJob(userId, episodeId, organizationId);
 
     const reservedJobId = randomUUID();
     let createdJobId: string | null = null;
@@ -72,6 +78,7 @@ export class EpisodePageSkeletonService implements EpisodePageSkeletonServicePor
       const job = await this.generationJobRepository.create({
         id: reservedJobId,
         userId,
+        organizationId,
         jobType: 'episode_page_skeleton',
         generationMode: null,
         creditCost: 0,
@@ -80,6 +87,7 @@ export class EpisodePageSkeletonService implements EpisodePageSkeletonServicePor
           overwrite_existing: input.overwriteExisting,
           apply_story_plan: input.applyStoryPlan,
           language: input.language,
+          organization_id: organizationId,
         },
         capacityLimits: this.capacityLimits,
       });
@@ -111,10 +119,11 @@ export class EpisodePageSkeletonService implements EpisodePageSkeletonServicePor
     }
   }
 
-  private async ensureNoActiveJob(userId: string, episodeId: string): Promise<void> {
+  private async ensureNoActiveJob(userId: string, episodeId: string, organizationId: string | null): Promise<void> {
     const activeJob = await this.generationJobRepository.findActiveEpisodePageSkeletonJob(
       userId,
       episodeId,
+      organizationId,
     );
     if (activeJob === null) {
       return;

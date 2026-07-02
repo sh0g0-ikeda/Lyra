@@ -6,6 +6,7 @@ import type { DatabaseClient } from '../lib/db.js';
 export interface StalePageGenerationJob {
   jobId: string;
   userId: string;
+  organizationId?: string | null;
   creditCost: number;
   pageId: string;
   previousStatus: PageStatus;
@@ -16,6 +17,7 @@ export interface StalePageGenerationJob {
 export interface FailedPageGenerationJobMissingRefund {
   jobId: string;
   userId: string;
+  organizationId?: string | null;
   creditCost: number;
   pageId: string;
   completedAt: Date | null;
@@ -28,18 +30,21 @@ export interface PageGenerationRecoveryRepository {
     pageId: string,
     cutoff: Date,
     limit: number,
+    organizationId?: string | null,
   ): Promise<StalePageGenerationJob[]>;
   listFailedJobsMissingRefund(limit: number): Promise<FailedPageGenerationJobMissingRefund[]>;
   listFailedJobsMissingRefundForPage(
     userId: string,
     pageId: string,
     limit: number,
+    organizationId?: string | null,
   ): Promise<FailedPageGenerationJobMissingRefund[]>;
 }
 
 interface StalePageGenerationJobRow extends QueryResultRow {
   job_id: string;
   user_id: string;
+  organization_id: string | null;
   credit_cost: number;
   page_id: string;
   previous_page_status: string | null;
@@ -50,6 +55,7 @@ interface StalePageGenerationJobRow extends QueryResultRow {
 interface FailedPageGenerationJobMissingRefundRow extends QueryResultRow {
   job_id: string;
   user_id: string;
+  organization_id: string | null;
   credit_cost: number;
   page_id: string | null;
   completed_at: Date | null;
@@ -75,6 +81,7 @@ export class PostgresPageGenerationRecoveryRepository
     pageId: string,
     cutoff: Date,
     limit: number,
+    organizationId: string | null = null,
   ): Promise<StalePageGenerationJob[]> {
     validateRecoveryLimit(limit);
     const result = await this.client.query<StalePageGenerationJobRow>(
@@ -82,10 +89,24 @@ export class PostgresPageGenerationRecoveryRepository
         `
          AND generation_jobs.user_id = $2
          AND generation_jobs.params->>'page_id' = $3
+         AND (
+           ($4::uuid IS NULL AND generation_jobs.organization_id IS NULL)
+           OR (
+             $4::uuid IS NOT NULL
+             AND generation_jobs.organization_id = $4::uuid
+             AND EXISTS (
+               SELECT 1
+               FROM organization_members
+               WHERE organization_members.organization_id = generation_jobs.organization_id
+                 AND organization_members.user_id = $2
+                 AND organization_members.status = 'active'
+             )
+           )
+         )
       `,
-        '$4',
+        '$5',
       ),
-      [cutoff, userId, pageId, limit],
+      [cutoff, userId, pageId, organizationId, limit],
     );
 
     return result.rows.flatMap(mapStalePageGenerationJobRow);
@@ -105,6 +126,7 @@ export class PostgresPageGenerationRecoveryRepository
     userId: string,
     pageId: string,
     limit: number,
+    organizationId: string | null = null,
   ): Promise<FailedPageGenerationJobMissingRefund[]> {
     validateRecoveryLimit(limit);
     const result = await this.client.query<FailedPageGenerationJobMissingRefundRow>(
@@ -112,10 +134,24 @@ export class PostgresPageGenerationRecoveryRepository
         `
          AND generation_jobs.user_id = $1
          AND generation_jobs.params->>'page_id' = $2
+         AND (
+           ($3::uuid IS NULL AND generation_jobs.organization_id IS NULL)
+           OR (
+             $3::uuid IS NOT NULL
+             AND generation_jobs.organization_id = $3::uuid
+             AND EXISTS (
+               SELECT 1
+               FROM organization_members
+               WHERE organization_members.organization_id = generation_jobs.organization_id
+                 AND organization_members.user_id = $1
+                 AND organization_members.status = 'active'
+             )
+           )
+         )
       `,
-        '$3',
+        '$4',
       ),
-      [userId, pageId, limit],
+      [userId, pageId, organizationId, limit],
     );
 
     return result.rows.flatMap(mapFailedPageGenerationJobMissingRefundRow);
@@ -128,6 +164,7 @@ function buildStaleJobsQuery(extraConditions: string, limitPlaceholder: string):
         SELECT
           generation_jobs.id AS job_id,
           generation_jobs.user_id,
+          generation_jobs.organization_id,
           generation_jobs.credit_cost,
           generation_jobs.params->>'page_id' AS page_id,
           generation_jobs.params->>'previous_page_status' AS previous_page_status,
@@ -148,6 +185,7 @@ function buildStaleJobsQuery(extraConditions: string, limitPlaceholder: string):
       SELECT
         job_id,
         user_id,
+        organization_id,
         credit_cost,
         page_id,
         previous_page_status,
@@ -174,6 +212,7 @@ function buildFailedJobsMissingRefundQuery(extraConditions: string, limitPlaceho
       SELECT
         generation_jobs.id AS job_id,
         generation_jobs.user_id,
+        generation_jobs.organization_id,
         generation_jobs.credit_cost,
         generation_jobs.params->>'page_id' AS page_id,
         generation_jobs.completed_at
@@ -186,6 +225,7 @@ function buildFailedJobsMissingRefundQuery(extraConditions: string, limitPlaceho
           SELECT 1
           FROM credit_ledger
           WHERE credit_ledger.user_id = generation_jobs.user_id
+            AND COALESCE(credit_ledger.organization_id::text, '') = COALESCE(generation_jobs.organization_id::text, '')
             AND credit_ledger.job_id = generation_jobs.id
             AND credit_ledger.type = 'refund'
         )
@@ -211,6 +251,7 @@ function mapStalePageGenerationJobRow(row: StalePageGenerationJobRow): StalePage
     {
       jobId: row.job_id,
       userId: row.user_id,
+      organizationId: row.organization_id,
       creditCost: row.credit_cost,
       pageId: row.page_id,
       previousStatus,
@@ -231,6 +272,7 @@ function mapFailedPageGenerationJobMissingRefundRow(
     {
       jobId: row.job_id,
       userId: row.user_id,
+      organizationId: row.organization_id,
       creditCost: row.credit_cost,
       pageId: row.page_id,
       completedAt: row.completed_at,

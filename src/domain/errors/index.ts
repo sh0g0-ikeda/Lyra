@@ -41,6 +41,12 @@ export class NotFoundError extends AppError {
   }
 }
 
+export class ForbiddenError extends AppError {
+  public constructor(message = 'Forbidden') {
+    super('FORBIDDEN', message, 403);
+  }
+}
+
 export class ConflictError extends AppError {
   public constructor(message = 'Conflict') {
     super('CONFLICT', message, 409);

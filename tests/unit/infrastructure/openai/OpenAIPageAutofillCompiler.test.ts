@@ -131,6 +131,7 @@ describe('OpenAIPageAutofillCompiler', () => {
     expect(systemPrompt).toContain('natural Japanese a character would actually say or think');
     expect(systemPrompt).toContain('reads like an actual conversation');
     expect(systemPrompt).toContain('composition.custom_note');
+    expect(systemPrompt).toContain('do not require scenes to produce a useful page draft');
     expect(systemPrompt).toContain('Treat chapter information only as a consistency guard');
     expect(userPrompt).toContain('[TASK]');
     expect(userPrompt).toContain('Return the final JSON now.');

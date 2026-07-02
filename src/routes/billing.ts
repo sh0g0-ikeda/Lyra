@@ -33,6 +33,17 @@ export function createBillingRoutes(dependencies: BillingRouteDependencies): Hon
       total_credits: balance.totalCredits,
       monthly_expires_at: balance.monthlyExpiresAt?.toISOString() ?? null,
       plan_code: user.planCode,
+      subscription_plans: dependencies.billingService.getSubscriptionPlanCatalog().map((plan) => ({
+        plan_code: plan.planCode,
+        display_name_ja: plan.displayNameJa,
+        display_name_en: plan.displayNameEn,
+        monthly_credits: plan.monthlyCredits,
+        amount_jpy: plan.amountJpy,
+        minimum_contract_months: plan.minimumContractMonths,
+        trial_days: plan.trialDays,
+        is_enterprise: plan.isEnterprise,
+        configured: plan.configured,
+      })),
     });
   });
 

@@ -88,8 +88,6 @@ export interface StoryEpisodeImprovementPlan {
   mustPreserve: string[];
   continuityGuards: string[];
   pageAdaptationNotes: string[];
-  title: StoryEpisodeImprovementSectionPlan;
-  purpose: StoryEpisodeImprovementSectionPlan;
   introduction: StoryEpisodeImprovementSectionPlan;
   middle: StoryEpisodeImprovementSectionPlan;
   climax: StoryEpisodeImprovementSectionPlan;
@@ -99,8 +97,6 @@ export interface StoryEpisodeImprovementPlan {
 export interface StoryEpisodeImprovementAudit {
   verdict: 'pass' | 'revise';
   globalIssues: string[];
-  title: string[];
-  purpose: string[];
   introduction: string[];
   middle: string[];
   climax: string[];

@@ -9,10 +9,11 @@ import type {
   StaleEntityGenerationJob,
 } from '../../repositories/EntityGenerationRecoveryRepository.js';
 import type { CreditServicePort } from '../credit/CreditService.js';
+import type { OrganizationServicePort } from '../organization/OrganizationService.js';
 
 export interface EntityGenerationRecoveryServicePort {
   recoverAllStaleJobs(): Promise<number>;
-  recoverStaleJobsForEntity(userId: string, entityId: string): Promise<number>;
+  recoverStaleJobsForEntity(userId: string, entityId: string, organizationId?: string | null): Promise<number>;
 }
 
 export class NoopEntityGenerationRecoveryService implements EntityGenerationRecoveryServicePort {
@@ -36,6 +37,7 @@ export class EntityGenerationRecoveryService implements EntityGenerationRecovery
     private readonly creditService: CreditServicePort,
     private readonly staleAfterMs: number = ENTITY_GENERATION_STALE_AFTER_MS,
     private readonly batchLimit: number = GENERATION_RECOVERY_BATCH_LIMIT,
+    private readonly organizationService?: OrganizationServicePort,
   ) {}
 
   public async recoverAllStaleJobs(): Promise<number> {
@@ -47,16 +49,26 @@ export class EntityGenerationRecoveryService implements EntityGenerationRecovery
     return recoveredStaleCount + refundedFailedCount;
   }
 
-  public async recoverStaleJobsForEntity(userId: string, entityId: string): Promise<number> {
+  public async recoverStaleJobsForEntity(
+    userId: string,
+    entityId: string,
+    organizationId: string | null = null,
+  ): Promise<number> {
     const jobs = await this.recoveryRepository.listStaleProcessingJobsForEntity(
       userId,
       entityId,
       this.buildCutoff(),
       this.batchLimit,
+      organizationId,
     );
     const recoveredStaleCount = await this.recoverJobs(jobs);
     const refundedFailedCount = await this.refundFailedJobsMissingRefund(
-      await this.recoveryRepository.listFailedJobsMissingRefundForEntity(userId, entityId, this.batchLimit),
+      await this.recoveryRepository.listFailedJobsMissingRefundForEntity(
+        userId,
+        entityId,
+        this.batchLimit,
+        organizationId,
+      ),
     );
     return recoveredStaleCount + refundedFailedCount;
   }
@@ -80,12 +92,13 @@ export class EntityGenerationRecoveryService implements EntityGenerationRecovery
       }
 
       if (job.creditCost > 0) {
-        await this.creditService.refundCredits({
-          userId: job.userId,
-          amount: job.creditCost,
-          description: 'Refund for stale entity generation job',
-          jobId: job.jobId,
-        });
+        await this.refundJobCredits(
+          job.organizationId ?? null,
+          job.userId,
+          job.creditCost,
+          job.jobId,
+          'Refund for stale entity generation job',
+        );
       }
 
       recoveredCount += 1;
@@ -107,12 +120,13 @@ export class EntityGenerationRecoveryService implements EntityGenerationRecovery
         continue;
       }
 
-      await this.creditService.refundCredits({
-        userId: job.userId,
-        amount: job.creditCost,
-        description: 'Refund for failed entity generation job missing refund ledger',
-        jobId: job.jobId,
-      });
+      await this.refundJobCredits(
+        job.organizationId ?? null,
+        job.userId,
+        job.creditCost,
+        job.jobId,
+        'Refund for failed entity generation job missing refund ledger',
+      );
 
       refundedCount += 1;
       console.warn(
@@ -121,5 +135,35 @@ export class EntityGenerationRecoveryService implements EntityGenerationRecovery
     }
 
     return refundedCount;
+  }
+
+  private async refundJobCredits(
+    organizationId: string | null,
+    userId: string,
+    amount: number,
+    jobId: string,
+    description: string,
+  ): Promise<void> {
+    if (organizationId === null) {
+      await this.creditService.refundCredits({
+        userId,
+        amount,
+        description,
+        jobId,
+      });
+      return;
+    }
+
+    if (this.organizationService === undefined) {
+      throw new Error('Organization service is required to refund enterprise entity generation jobs');
+    }
+
+    await this.organizationService.refundCredits({
+      organizationId,
+      actorUserId: userId,
+      amount,
+      description,
+      jobId,
+    });
   }
 }

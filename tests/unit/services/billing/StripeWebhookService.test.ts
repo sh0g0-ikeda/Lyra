@@ -8,20 +8,31 @@ import type {
 import type {
   ActiveSubscriptionRecord,
   BillingUserProfile,
+  PaymentRecord,
   PaymentRecordInput,
   SubscriptionRecord,
 } from '../../../../src/domain/types/billing.js';
+import type { Organization, OrganizationCreditBalance } from '../../../../src/domain/types/organization.js';
 import type { CreditBalanceSnapshot } from '../../../../src/domain/types/credit.js';
 import { ValidationError } from '../../../../src/domain/errors/index.js';
 import type { StripeBillingClientPort } from '../../../../src/infrastructure/stripe/StripeBillingClient.js';
 import type { DatabaseClient } from '../../../../src/lib/db.js';
 import type { BillingRepository } from '../../../../src/repositories/BillingRepository.js';
+import type { OrganizationRepository } from '../../../../src/repositories/OrganizationRepository.js';
 import type {
   BillingCreditGrantServicePort,
   GrantMonthlyCreditsParams,
   GrantPurchasedCreditsParams,
 } from '../../../../src/services/credit/BillingCreditGrantService.js';
 import { StripeWebhookService } from '../../../../src/services/billing/StripeWebhookService.js';
+import type { OrganizationServicePort } from '../../../../src/services/organization/OrganizationService.js';
+
+type SubscriptionPriceId =
+  | 'price_standard'
+  | 'price_premium'
+  | 'price_enterprise_a'
+  | 'price_enterprise_b'
+  | 'price_enterprise_c';
 
 class InMemoryBillingRepository implements BillingRepository {
   public processedEvents = new Set<string>();
@@ -141,6 +152,7 @@ class InMemoryBillingRepository implements BillingRepository {
     const [stripeSubscriptionId, planCode] = activeSubscription;
     return {
       userId,
+      organizationId: null,
       stripeSubscriptionId,
       planCode,
       status: 'active',
@@ -189,6 +201,14 @@ class InMemoryBillingRepository implements BillingRepository {
     this.paymentRecords.push(record);
     return true;
   }
+
+  public async findLatestSubscriptionForOrganization(): Promise<null> {
+    return null;
+  }
+
+  public async listPaymentRecordsByOrganizationId(): Promise<PaymentRecord[]> {
+    return [];
+  }
 }
 
 class FakeBillingCreditGrantService implements BillingCreditGrantServicePort {
@@ -227,6 +247,18 @@ function comparePlansDescending(left: SubscriptionPlanCode, right: SubscriptionP
 }
 
 function planRank(planCode: SubscriptionPlanCode): number {
+  if (planCode === 'enterprise_c') {
+    return 5;
+  }
+
+  if (planCode === 'enterprise_b') {
+    return 4;
+  }
+
+  if (planCode === 'enterprise_a') {
+    return 3;
+  }
+
   if (planCode === 'premium') {
     return 2;
   }
@@ -320,6 +352,118 @@ describe('StripeWebhookService', () => {
     expect(repository.paymentRecords[0]).toMatchObject({
       kind: 'subscription',
       amountJpy: 1000,
+      status: 'paid',
+    });
+  });
+
+  it('checkout.session.completed grants enterprise monthly credits to the organization workspace', async () => {
+    const repository = seedRepository();
+    const creditGrantService = new FakeBillingCreditGrantService();
+    const organizationService = new FakeOrganizationService();
+    const organizationRepository = new FakeOrganizationRepository();
+    const stripeClient = new FakeStripeBillingClient();
+    stripeClient.event = buildCheckoutSubscriptionEvent({
+      id: 'evt_checkout_enterprise_a',
+      amountTotal: 10000,
+      planCode: 'enterprise_a',
+      organizationId: 'org-1',
+    });
+    stripeClient.subscription = buildSubscription('enterprise_a', 'price_enterprise_a', 'active', 'org-1');
+    const service = buildService(
+      repository,
+      creditGrantService,
+      stripeClient,
+      organizationService as unknown as OrganizationServicePort,
+      organizationRepository as unknown as OrganizationRepository,
+    );
+
+    await service.handleWebhook(Buffer.from('{}'), 'sig');
+
+    expect(repository.updatedPlans).toHaveLength(0);
+    expect(organizationService.monthlyGrants[0]).toMatchObject({
+      organizationId: 'org-1',
+      actorUserId: 'user-1',
+      amount: 600,
+      stripeEventId: 'evt_checkout_enterprise_a',
+    });
+    expect(organizationRepository.organizations.get('org-1')).toMatchObject({
+      planKey: 'enterprise_a',
+      stripeSubscriptionId: 'sub_123',
+    });
+    expect(repository.paymentRecords[0]).toMatchObject({
+      organizationId: 'org-1',
+      kind: 'subscription',
+      amountJpy: 10000,
+      status: 'paid',
+    });
+  });
+
+  it('checkout.session.completed accepts lyra_organization_id metadata for organization subscriptions', async () => {
+    const repository = seedRepository();
+    const creditGrantService = new FakeBillingCreditGrantService();
+    const organizationService = new FakeOrganizationService();
+    const organizationRepository = new FakeOrganizationRepository();
+    const stripeClient = new FakeStripeBillingClient();
+    stripeClient.event = buildCheckoutSubscriptionEvent({
+      id: 'evt_checkout_enterprise_a_lyra_metadata',
+      amountTotal: 10000,
+      planCode: 'enterprise_a',
+      lyraOrganizationId: 'org-1',
+    });
+    stripeClient.subscription = buildSubscription('enterprise_a', 'price_enterprise_a', 'active', null, 'org-1');
+    const service = buildService(
+      repository,
+      creditGrantService,
+      stripeClient,
+      organizationService as unknown as OrganizationServicePort,
+      organizationRepository as unknown as OrganizationRepository,
+    );
+
+    await service.handleWebhook(Buffer.from('{}'), 'sig');
+
+    expect(organizationService.monthlyGrants[0]).toMatchObject({
+      organizationId: 'org-1',
+      actorUserId: 'user-1',
+      amount: 600,
+      stripeEventId: 'evt_checkout_enterprise_a_lyra_metadata',
+    });
+    expect(repository.updatedPlans).toHaveLength(0);
+  });
+
+  it('invoice.paid subscription_cycle grants Enterprise C monthly credits to the organization workspace', async () => {
+    const repository = seedRepository();
+    const creditGrantService = new FakeBillingCreditGrantService();
+    const organizationService = new FakeOrganizationService();
+    const organizationRepository = new FakeOrganizationRepository();
+    const stripeClient = new FakeStripeBillingClient();
+    stripeClient.event = buildInvoicePaidEvent('subscription_cycle', 'evt_invoice_enterprise_c', 100000);
+    stripeClient.subscription = buildSubscription('enterprise_c', 'price_enterprise_c', 'active', 'org-1');
+    const service = buildService(
+      repository,
+      creditGrantService,
+      stripeClient,
+      organizationService as unknown as OrganizationServicePort,
+      organizationRepository as unknown as OrganizationRepository,
+    );
+
+    await service.handleWebhook(Buffer.from('{}'), 'sig');
+
+    expect(repository.updatedPlans).toHaveLength(0);
+    expect(organizationService.monthlyGrants[0]).toMatchObject({
+      organizationId: 'org-1',
+      actorUserId: 'user-1',
+      amount: 7000,
+      stripeEventId: 'evt_invoice_enterprise_c',
+    });
+    expect(organizationRepository.organizations.get('org-1')).toMatchObject({
+      planKey: 'enterprise_c',
+      stripeSubscriptionId: 'sub_123',
+    });
+    expect(repository.paymentRecords[0]).toMatchObject({
+      organizationId: 'org-1',
+      stripeInvoiceId: 'in_123',
+      invoiceUrl: 'https://billing.stripe.test/invoice/in_123',
+      amountJpy: 100000,
       status: 'paid',
     });
   });
@@ -790,6 +934,42 @@ describe('StripeWebhookService', () => {
       status: 'paid',
     });
   });
+
+  it('subscription_update reflects Enterprise B and grants its monthly credit bucket to the organization', async () => {
+    const repository = seedRepository();
+    const creditGrantService = new FakeBillingCreditGrantService();
+    const organizationService = new FakeOrganizationService();
+    const organizationRepository = new FakeOrganizationRepository();
+    const stripeClient = new FakeStripeBillingClient();
+    stripeClient.event = buildInvoicePaidEvent('subscription_update', 'evt_invoice_enterprise_b_upgrade', 20000);
+    stripeClient.subscription = buildSubscription('enterprise_b', 'price_enterprise_b', 'active', 'org-1');
+    const service = buildService(
+      repository,
+      creditGrantService,
+      stripeClient,
+      organizationService as unknown as OrganizationServicePort,
+      organizationRepository as unknown as OrganizationRepository,
+    );
+
+    await service.handleWebhook(Buffer.from('{}'), 'sig');
+
+    expect(repository.updatedPlans).toHaveLength(0);
+    expect(organizationService.monthlyGrants[0]).toMatchObject({
+      organizationId: 'org-1',
+      actorUserId: 'user-1',
+      amount: 2000,
+      stripeEventId: 'evt_invoice_enterprise_b_upgrade',
+    });
+    expect(organizationRepository.organizations.get('org-1')).toMatchObject({
+      planKey: 'enterprise_b',
+    });
+    expect(repository.paymentRecords[0]).toMatchObject({
+      organizationId: 'org-1',
+      stripeInvoiceId: 'in_123',
+      amountJpy: 20000,
+      status: 'paid',
+    });
+  });
 });
 
 function seedRepository(): InMemoryBillingRepository {
@@ -805,17 +985,180 @@ function seedRepository(): InMemoryBillingRepository {
   return repository;
 }
 
+function buildOrganization(overrides: Partial<Organization> = {}): Organization {
+  return {
+    id: 'org-1',
+    type: 'business',
+    name: 'Lyra Enterprise',
+    legalName: 'Lyra Enterprise Inc.',
+    status: 'active',
+    planKey: 'enterprise_a',
+    billingEmail: 'billing@example.com',
+    stripeCustomerId: 'cus_123',
+    stripeSubscriptionId: null,
+    createdByUserId: 'user-1',
+    createdAt: new Date('2026-06-01T00:00:00.000Z'),
+    updatedAt: new Date('2026-06-01T00:00:00.000Z'),
+    ...overrides,
+  };
+}
+
 function buildService(
   repository: BillingRepository,
   creditGrantService: BillingCreditGrantServicePort,
   stripeClient: StripeBillingClientPort,
+  organizationService: OrganizationServicePort = buildUnusedOrganizationService(),
+  organizationRepository: OrganizationRepository = buildUnusedOrganizationRepository(),
 ): StripeWebhookService {
-  return new StripeWebhookService(repository, creditGrantService, stripeClient, {
-    subscriptionPlanByPriceId: {
-      price_standard: 'standard',
-      price_premium: 'premium',
+  return new StripeWebhookService(
+    repository,
+    creditGrantService,
+    organizationService,
+    organizationRepository,
+    stripeClient,
+    {
+      subscriptionPlanByPriceId: {
+        price_standard: 'standard',
+        price_premium: 'premium',
+        price_enterprise_a: 'enterprise_a',
+        price_enterprise_b: 'enterprise_b',
+        price_enterprise_c: 'enterprise_c',
+      },
     },
-  });
+  );
+}
+
+class FakeOrganizationService {
+  public monthlyGrants: Array<{
+    organizationId: string;
+    actorUserId: string | null;
+    amount: number;
+    description: string;
+    stripeEventId?: string | null;
+  }> = [];
+  public purchasedGrants: Array<{
+    organizationId: string;
+    actorUserId: string | null;
+    amount: number;
+    description: string;
+    stripeEventId?: string | null;
+    packageCode?: string | null;
+  }> = [];
+
+  public async grantMonthlyCredits(input: {
+    organizationId: string;
+    actorUserId: string | null;
+    amount: number;
+    description: string;
+    stripeEventId?: string | null;
+  }): Promise<OrganizationCreditBalance> {
+    this.monthlyGrants.push(input);
+    return {
+      organizationId: input.organizationId,
+      monthlyCredits: input.amount,
+      purchasedCredits: 0,
+      monthlyExpiresAt: new Date('2026-07-01T00:00:00.000Z'),
+      updatedAt: new Date('2026-06-01T00:00:00.000Z'),
+    };
+  }
+
+  public async grantPurchasedCredits(input: {
+    organizationId: string;
+    actorUserId: string | null;
+    amount: number;
+    description: string;
+    stripeEventId?: string | null;
+    packageCode?: string | null;
+  }): Promise<OrganizationCreditBalance> {
+    this.purchasedGrants.push(input);
+    return {
+      organizationId: input.organizationId,
+      monthlyCredits: 0,
+      purchasedCredits: input.amount,
+      monthlyExpiresAt: null,
+      updatedAt: new Date('2026-06-01T00:00:00.000Z'),
+    };
+  }
+}
+
+class FakeOrganizationRepository {
+  public organizations = new Map<string, Organization>();
+  public updates: Array<{ organizationId: string; input: Record<string, unknown> }> = [];
+  public auditLogs: Array<{
+    organizationId: string;
+    actorUserId: string | null;
+    action: string;
+    targetType: string;
+    targetId: string | null;
+    metadata?: Record<string, unknown>;
+  }> = [];
+
+  public constructor() {
+    this.organizations.set('org-1', buildOrganization());
+  }
+
+  public async findOrganizationById(organizationId: string): Promise<Organization | null> {
+    return this.organizations.get(organizationId) ?? null;
+  }
+
+  public async updateOrganization(
+    organizationId: string,
+    input: Partial<Organization> & {
+      planKey?: Organization['planKey'];
+      stripeCustomerId?: string | null;
+      stripeSubscriptionId?: string | null;
+    },
+  ): Promise<Organization | null> {
+    const current = this.organizations.get(organizationId);
+    if (current === undefined) {
+      return null;
+    }
+    const next: Organization = {
+      ...current,
+      ...input,
+      updatedAt: new Date('2026-06-01T00:00:00.000Z'),
+    };
+    this.organizations.set(organizationId, next);
+    this.updates.push({ organizationId, input });
+    return next;
+  }
+
+  public async insertAuditLog(input: {
+    organizationId: string;
+    actorUserId: string | null;
+    action: string;
+    targetType: string;
+    targetId: string | null;
+    metadata?: Record<string, unknown>;
+  }): Promise<void> {
+    this.auditLogs.push(input);
+  }
+}
+
+function buildUnusedOrganizationService(): OrganizationServicePort {
+  return new Proxy(
+    {},
+    {
+      get() {
+        return async (): Promise<never> => {
+          throw new Error('unexpected organization service call in personal webhook test');
+        };
+      },
+    },
+  ) as unknown as OrganizationServicePort;
+}
+
+function buildUnusedOrganizationRepository(): OrganizationRepository {
+  return new Proxy(
+    {},
+    {
+      get() {
+        return async (): Promise<never> => {
+          throw new Error('unexpected organization repository call in personal webhook test');
+        };
+      },
+    },
+  ) as unknown as OrganizationRepository;
 }
 
 function buildCheckoutSubscriptionEvent(options: {
@@ -824,7 +1167,11 @@ function buildCheckoutSubscriptionEvent(options: {
   type?: string;
   customerId?: string;
   amountTotal?: number;
+  planCode?: PaidPlanCode;
+  organizationId?: string;
+  lyraOrganizationId?: string;
 } = {}): Stripe.Event {
+  const planCode = options.planCode ?? 'standard';
   return {
     id: options.id ?? 'evt_checkout_sub',
     object: 'event',
@@ -840,7 +1187,9 @@ function buildCheckoutSubscriptionEvent(options: {
         metadata: {
           kind: 'subscription',
           user_id: 'user-1',
-          plan_code: 'standard',
+          lyra_organization_id: options.lyraOrganizationId ?? '',
+          organization_id: options.organizationId ?? '',
+          plan_code: planCode,
         },
         payment_status: options.paymentStatus ?? 'paid',
         amount_total: options.amountTotal ?? 1000,
@@ -903,6 +1252,7 @@ function buildInvoicePaidEvent(
         id: 'in_123',
         object: 'invoice',
         customer: 'cus_123',
+        hosted_invoice_url: 'https://billing.stripe.test/invoice/in_123',
         amount_paid: amountPaid,
         amount_due: amountPaid,
         billing_reason: billingReason,
@@ -959,16 +1309,23 @@ function buildInvoicePaymentFailedEvent(stripeSubscriptionId: string | null = 's
 }
 
 function buildCustomerSubscriptionUpdatedEvent(
-  priceId: 'price_standard' | 'price_premium',
+  priceId: SubscriptionPriceId,
   status: SubscriptionStatus = 'active',
 ): Stripe.Event {
+  const planCodeByPriceId: Record<SubscriptionPriceId, PaidPlanCode> = {
+    price_standard: 'standard',
+    price_premium: 'premium',
+    price_enterprise_a: 'enterprise_a',
+    price_enterprise_b: 'enterprise_b',
+    price_enterprise_c: 'enterprise_c',
+  };
   return {
     id: 'evt_sub_updated',
     object: 'event',
     api_version: '2025-03-31',
     created: 1,
     data: {
-      object: buildSubscription(priceId === 'price_standard' ? 'standard' : 'premium', priceId, status),
+      object: buildSubscription(planCodeByPriceId[priceId], priceId, status),
     },
     livemode: false,
     pending_webhooks: 1,
@@ -979,7 +1336,7 @@ function buildCustomerSubscriptionUpdatedEvent(
 
 function buildCustomerSubscriptionDeletedEvent(
   planCode: PaidPlanCode = 'standard',
-  priceId: 'price_standard' | 'price_premium' = 'price_standard',
+  priceId: SubscriptionPriceId = 'price_standard',
 ): Stripe.Event {
   return {
     id: 'evt_sub_deleted',
@@ -998,8 +1355,10 @@ function buildCustomerSubscriptionDeletedEvent(
 
 function buildSubscription(
   planCode: PaidPlanCode = 'standard',
-  priceId: 'price_standard' | 'price_premium' = 'price_standard',
+  priceId: SubscriptionPriceId = 'price_standard',
   status: SubscriptionStatus = 'active',
+  organizationId?: string | null,
+  lyraOrganizationId?: string,
 ): Stripe.Subscription {
   return {
     id: 'sub_123',
@@ -1009,6 +1368,9 @@ function buildSubscription(
     cancel_at_period_end: false,
     metadata: {
       plan_code: planCode,
+      user_id: 'user-1',
+      lyra_organization_id: lyraOrganizationId ?? '',
+      organization_id: organizationId ?? '',
     },
     items: {
       object: 'list',

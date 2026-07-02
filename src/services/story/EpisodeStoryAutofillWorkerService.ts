@@ -63,6 +63,7 @@ export class EpisodeStoryAutofillWorkerService implements EpisodeStoryAutofillWo
         async (progress) => {
           await this.recordProgress(job.id, job.userId, progress);
         },
+        job.organizationId,
       );
       if (!result.compilerUsed) {
         throw new ValidationError(

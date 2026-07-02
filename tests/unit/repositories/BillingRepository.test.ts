@@ -74,6 +74,7 @@ describe('PostgresBillingRepository', () => {
     await repository.upsertSubscription(
       {
         userId: 'user-1',
+        organizationId: null,
         stripeSubscriptionId: 'sub_123',
         planCode: 'premium',
         status: 'active',
@@ -88,6 +89,7 @@ describe('PostgresBillingRepository', () => {
     expect(client.queries[0]).toContain('ON CONFLICT (stripe_subscription_id)');
     expect(client.values[0]).toEqual([
       'user-1',
+      null,
       'sub_123',
       'premium',
       'active',
@@ -104,6 +106,7 @@ describe('PostgresBillingRepository', () => {
     const inserted = await repository.insertPaymentRecord(
       {
         userId: 'user-1',
+        organizationId: null,
         stripeCheckoutSessionId: 'cs_123',
         stripeInvoiceId: null,
         kind: 'credit_purchase',
@@ -116,7 +119,7 @@ describe('PostgresBillingRepository', () => {
     expect(inserted).toBe(true);
     expect(client.queries[0]).toContain('INSERT INTO payment_records');
     expect(client.queries[0]).toContain('ON CONFLICT DO NOTHING');
-    expect(client.values[0]).toEqual(['user-1', 'cs_123', null, 'credit_purchase', 2000, 'paid']);
+    expect(client.values[0]).toEqual(['user-1', null, 'cs_123', null, null, 'credit_purchase', 2000, 'paid']);
   });
 
   it('指定subscription以外の最上位有効subscription planを取得する', async () => {
@@ -147,6 +150,7 @@ describe('PostgresBillingRepository', () => {
     const inserted = await repository.insertPaymentRecord(
       {
         userId: 'user-1',
+        organizationId: null,
         stripeCheckoutSessionId: null,
         stripeInvoiceId: 'in_123',
         kind: 'subscription',
@@ -159,7 +163,38 @@ describe('PostgresBillingRepository', () => {
     expect(inserted).toBe(true);
     expect(client.queries[0]).toContain('INSERT INTO payment_records');
     expect(client.queries[0]).toContain('ON CONFLICT DO NOTHING');
-    expect(client.values[0]).toEqual(['user-1', null, 'in_123', 'subscription', 1980, 'paid']);
+    expect(client.values[0]).toEqual(['user-1', null, null, 'in_123', null, 'subscription', 1980, 'paid']);
+  });
+
+  it('法人subscription summaryはStripe subscription idを返さない', async () => {
+    const client = new QueryCapturingClient();
+    client.rows = [
+      {
+        user_id: 'user-1',
+        organization_id: 'org-1',
+        stripe_subscription_id: 'sub_123',
+        plan_code: 'enterprise_b',
+        status: 'active',
+        current_period_start: new Date('2026-07-01T00:00:00.000Z'),
+        current_period_end: new Date('2026-08-01T00:00:00.000Z'),
+        cancel_at_period_end: false,
+      },
+    ];
+    const repository = new PostgresBillingRepository(client, client);
+
+    const result = await repository.findLatestSubscriptionForOrganization('org-1');
+
+    expect(client.queries[0]).toContain('FROM subscriptions');
+    expect(client.queries[0]).toContain('organization_id = $1');
+    expect(client.values[0]).toEqual(['org-1']);
+    expect(result).toEqual({
+      organizationId: 'org-1',
+      planCode: 'enterprise_b',
+      status: 'active',
+      currentPeriodStart: new Date('2026-07-01T00:00:00.000Z'),
+      currentPeriodEnd: new Date('2026-08-01T00:00:00.000Z'),
+      cancelAtPeriodEnd: false,
+    });
   });
 
   it('重複 payment record は false を返す', async () => {
@@ -170,6 +205,7 @@ describe('PostgresBillingRepository', () => {
     const inserted = await repository.insertPaymentRecord(
       {
         userId: 'user-1',
+        organizationId: null,
         stripeCheckoutSessionId: 'cs_123',
         stripeInvoiceId: null,
         kind: 'credit_purchase',

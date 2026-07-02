@@ -3,10 +3,20 @@ import type {
   BillingBalanceRecord,
   ChapterRecord,
   CompositionRecord,
+  CurrentSessionRecord,
   EntityRecord,
   EntityReferenceSetRecord,
   EpisodeRecord,
   GenerationJobRecord,
+  OrganizationAuditLogRecord,
+  OrganizationBillingSummaryRecord,
+  OrganizationBillingPlanRecord,
+  OrganizationCreditBalanceRecord,
+  OrganizationInvoiceRecord,
+  OrganizationMemberRecord,
+  OrganizationUsageEventRecord,
+  OrganizationUsageSummaryRecord,
+  OrganizationWorkspaceRecord,
   PageRecord,
   PanelFrameRecord,
   PanelRecord,
@@ -63,67 +73,185 @@ export class LyraApiClient {
     this.baseUrl = typeof configuredBaseUrl === 'string' ? configuredBaseUrl : '';
   }
 
-  public getWorks(): Promise<{ works: WorkRecord[] }> {
-    return this.request('/api/works');
+  public getOrganizationWorkspaces(): Promise<{ organizations: OrganizationWorkspaceRecord[] }> {
+    return this.request('/api/organizations');
   }
 
-  public createWork(body: Record<string, unknown>): Promise<WorkRecord> {
-    return this.request('/api/works', { method: 'POST', body });
+  public getCurrentSession(): Promise<CurrentSessionRecord> {
+    return this.request('/api/me');
   }
 
-  public updateWork(workId: string, body: Record<string, unknown>): Promise<WorkRecord> {
-    return this.request(`/api/works/${workId}`, { method: 'PUT', body });
+  public createOrganization(body: {
+    name: string;
+    legal_name?: string | null;
+    billing_email?: string | null;
+  }): Promise<OrganizationWorkspaceRecord> {
+    return this.request('/api/organizations', { method: 'POST', body });
   }
 
-  public getChapters(workId: string): Promise<{ chapters: ChapterRecord[] }> {
-    return this.request(`/api/works/${workId}/chapters`);
+  public getOrganization(organizationId: string): Promise<OrganizationWorkspaceRecord> {
+    return this.request(`/api/organizations/${organizationId}`);
   }
 
-  public createChapter(workId: string, body: Record<string, unknown>): Promise<ChapterRecord> {
-    return this.request(`/api/works/${workId}/chapters`, { method: 'POST', body });
+  public updateOrganization(organizationId: string, body: Record<string, unknown>): Promise<{
+    organization: OrganizationWorkspaceRecord['organization'];
+  }> {
+    return this.request(`/api/organizations/${organizationId}`, { method: 'PATCH', body });
   }
 
-  public updateChapter(chapterId: string, body: Record<string, unknown>): Promise<ChapterRecord> {
-    return this.request(`/api/chapters/${chapterId}`, { method: 'PUT', body });
+  public getOrganizationMembers(organizationId: string): Promise<{ members: OrganizationMemberRecord[] }> {
+    return this.request(`/api/organizations/${organizationId}/members`);
   }
 
-  public moveChapter(chapterId: string, direction: 'up' | 'down'): Promise<ChapterRecord> {
-    return this.request(`/api/chapters/${chapterId}/move`, {
+  public inviteOrganizationMember(
+    organizationId: string,
+    body: { email: string; role: OrganizationMemberRecord['role'] },
+  ): Promise<{
+    invitation: Record<string, unknown>;
+    invitation_token: string;
+  }> {
+    return this.request(`/api/organizations/${organizationId}/invitations`, { method: 'POST', body });
+  }
+
+  public updateOrganizationMember(
+    organizationId: string,
+    memberId: string,
+    body: { role?: OrganizationMemberRecord['role']; status?: OrganizationMemberRecord['status'] },
+  ): Promise<{ member: OrganizationMemberRecord }> {
+    return this.request(`/api/organizations/${organizationId}/members/${memberId}`, { method: 'PATCH', body });
+  }
+
+  public removeOrganizationMember(organizationId: string, memberId: string): Promise<void> {
+    return this.requestVoid(`/api/organizations/${organizationId}/members/${memberId}`, { method: 'DELETE' });
+  }
+
+  public acceptOrganizationInvitation(token: string): Promise<OrganizationWorkspaceRecord> {
+    return this.request('/api/organization-invitations/accept', { method: 'POST', body: { token } });
+  }
+
+  public getOrganizationBalance(organizationId: string): Promise<OrganizationCreditBalanceRecord> {
+    return this.request(`/api/organizations/${organizationId}/credits/balance`);
+  }
+
+  public getOrganizationUsage(organizationId: string): Promise<{
+    usage_events: OrganizationUsageEventRecord[];
+    summary: OrganizationUsageSummaryRecord;
+  }> {
+    return this.request(`/api/organizations/${organizationId}/usage`);
+  }
+
+  public getOrganizationAuditLogs(organizationId: string): Promise<{ audit_logs: OrganizationAuditLogRecord[] }> {
+    return this.request(`/api/organizations/${organizationId}/audit-logs`);
+  }
+
+  public getOrganizationBillingPlans(organizationId: string): Promise<{ subscription_plans: OrganizationBillingPlanRecord[] }> {
+    return this.request(`/api/organizations/${organizationId}/billing/plans`);
+  }
+
+  public getOrganizationBilling(organizationId: string): Promise<OrganizationBillingSummaryRecord> {
+    return this.request(`/api/organizations/${organizationId}/billing`);
+  }
+
+  public getOrganizationInvoices(organizationId: string): Promise<{ invoices: OrganizationInvoiceRecord[] }> {
+    return this.request(`/api/organizations/${organizationId}/invoices`);
+  }
+
+  public createOrganizationSubscriptionCheckout(
+    organizationId: string,
+    planCode: 'enterprise_a' | 'enterprise_b' | 'enterprise_c',
+  ): Promise<{ session_id: string; url: string }> {
+    return this.request(`/api/organizations/${organizationId}/billing/checkout/subscription`, {
+      method: 'POST',
+      body: { plan_code: planCode },
+      timeoutMs: billingRedirectTimeoutMs,
+    });
+  }
+
+  public createOrganizationCreditCheckout(
+    organizationId: string,
+    packageCode: 'credits_200' | 'credits_1000' | 'credits_3000',
+  ): Promise<{ session_id: string; package_code: string; url: string }> {
+    return this.request(`/api/organizations/${organizationId}/billing/checkout/credits`, {
+      method: 'POST',
+      body: { package_code: packageCode },
+      timeoutMs: billingRedirectTimeoutMs,
+    });
+  }
+
+  public createOrganizationCustomerPortal(organizationId: string): Promise<{ url: string }> {
+    return this.request(`/api/organizations/${organizationId}/billing/customer-portal`, {
+      method: 'POST',
+      timeoutMs: billingRedirectTimeoutMs,
+    });
+  }
+
+  public getWorks(organizationId?: string | null): Promise<{ works: WorkRecord[] }> {
+    return this.request(`/api/works${organizationQuery(organizationId)}`);
+  }
+
+  public createWork(body: Record<string, unknown>, organizationId?: string | null): Promise<WorkRecord> {
+    return this.request('/api/works', {
+      method: 'POST',
+      body: organizationId === undefined || organizationId === null || organizationId.trim().length === 0
+        ? body
+        : { ...body, organization_id: organizationId },
+    });
+  }
+
+  public updateWork(workId: string, body: Record<string, unknown>, organizationId?: string | null): Promise<WorkRecord> {
+    return this.request(`/api/works/${workId}${organizationQuery(organizationId)}`, { method: 'PUT', body });
+  }
+
+  public getChapters(workId: string, organizationId?: string | null): Promise<{ chapters: ChapterRecord[] }> {
+    return this.request(`/api/works/${workId}/chapters${organizationQuery(organizationId)}`);
+  }
+
+  public createChapter(workId: string, body: Record<string, unknown>, organizationId?: string | null): Promise<ChapterRecord> {
+    return this.request(`/api/works/${workId}/chapters${organizationQuery(organizationId)}`, { method: 'POST', body });
+  }
+
+  public updateChapter(chapterId: string, body: Record<string, unknown>, organizationId?: string | null): Promise<ChapterRecord> {
+    return this.request(`/api/chapters/${chapterId}${organizationQuery(organizationId)}`, { method: 'PUT', body });
+  }
+
+  public moveChapter(chapterId: string, direction: 'up' | 'down', organizationId?: string | null): Promise<ChapterRecord> {
+    return this.request(`/api/chapters/${chapterId}/move${organizationQuery(organizationId)}`, {
       method: 'POST',
       body: { direction },
     });
   }
 
-  public deleteChapter(chapterId: string): Promise<void> {
-    return this.requestVoid(`/api/chapters/${chapterId}`, { method: 'DELETE' });
+  public deleteChapter(chapterId: string, organizationId?: string | null): Promise<void> {
+    return this.requestVoid(`/api/chapters/${chapterId}${organizationQuery(organizationId)}`, { method: 'DELETE' });
   }
 
-  public getEpisodes(chapterId: string): Promise<{ episodes: EpisodeRecord[] }> {
-    return this.request(`/api/chapters/${chapterId}/episodes`);
+  public getEpisodes(chapterId: string, organizationId?: string | null): Promise<{ episodes: EpisodeRecord[] }> {
+    return this.request(`/api/chapters/${chapterId}/episodes${organizationQuery(organizationId)}`);
   }
 
-  public createEpisode(chapterId: string, body: Record<string, unknown>): Promise<EpisodeRecord> {
-    return this.request(`/api/chapters/${chapterId}/episodes`, { method: 'POST', body });
+  public createEpisode(chapterId: string, body: Record<string, unknown>, organizationId?: string | null): Promise<EpisodeRecord> {
+    return this.request(`/api/chapters/${chapterId}/episodes${organizationQuery(organizationId)}`, { method: 'POST', body });
   }
 
-  public updateEpisode(episodeId: string, body: Record<string, unknown>): Promise<EpisodeRecord> {
-    return this.request(`/api/episodes/${episodeId}`, { method: 'PUT', body });
+  public updateEpisode(episodeId: string, body: Record<string, unknown>, organizationId?: string | null): Promise<EpisodeRecord> {
+    return this.request(`/api/episodes/${episodeId}${organizationQuery(organizationId)}`, { method: 'PUT', body });
   }
 
-  public moveEpisode(episodeId: string, direction: 'up' | 'down'): Promise<EpisodeRecord> {
-    return this.request(`/api/episodes/${episodeId}/move`, {
+  public moveEpisode(episodeId: string, direction: 'up' | 'down', organizationId?: string | null): Promise<EpisodeRecord> {
+    return this.request(`/api/episodes/${episodeId}/move${organizationQuery(organizationId)}`, {
       method: 'POST',
       body: { direction },
     });
   }
 
-  public deleteEpisode(episodeId: string): Promise<void> {
-    return this.requestVoid(`/api/episodes/${episodeId}`, { method: 'DELETE' });
+  public deleteEpisode(episodeId: string, organizationId?: string | null): Promise<void> {
+    return this.requestVoid(`/api/episodes/${episodeId}${organizationQuery(organizationId)}`, { method: 'DELETE' });
   }
 
   public generatePageSkeleton(
     episodeId: string,
     body?: { overwrite_existing?: boolean; apply_story_plan?: boolean; language?: 'ja' | 'en' },
+    organizationId?: string | null,
   ): Promise<
     | {
         job_id: string;
@@ -149,14 +277,18 @@ export class LyraApiClient {
         } | null;
       }
   > {
-    return this.request(`/api/episodes/${episodeId}/generate-page-skeleton`, {
+    return this.request(`/api/episodes/${episodeId}/generate-page-skeleton${organizationQuery(organizationId)}`, {
       method: 'POST',
       ...(body === undefined ? {} : { body }),
     });
   }
 
-  public streamStoryCollaboration(input: StoryCollaborationInput, handlers: SseHandlers): Promise<void> {
-    return this.stream('/api/story/collaborate', input, handlers);
+  public streamStoryCollaboration(
+    input: StoryCollaborationInput,
+    handlers: SseHandlers,
+    organizationId?: string | null,
+  ): Promise<void> {
+    return this.stream(`/api/story/collaborate${organizationQuery(organizationId)}`, input, handlers);
   }
 
   public improveEpisodeDraft(body: {
@@ -173,77 +305,78 @@ export class LyraApiClient {
       climax: string | null;
       ending_hook: string | null;
     };
-  }): Promise<StoryEpisodeImprovementRecord> {
-    return this.request('/api/story/improve-episode-draft', { method: 'POST', body });
+  }, organizationId?: string | null): Promise<StoryEpisodeImprovementRecord> {
+    return this.request(`/api/story/improve-episode-draft${organizationQuery(organizationId)}`, { method: 'POST', body });
   }
 
-  public getEntities(workId: string): Promise<{ entities: EntityRecord[] }> {
-    return this.request(`/api/works/${workId}/entities`);
+  public getEntities(workId: string, organizationId?: string | null): Promise<{ entities: EntityRecord[] }> {
+    return this.request(`/api/works/${workId}/entities${organizationQuery(organizationId)}`);
   }
 
-  public createEntity(workId: string, body: Record<string, unknown>): Promise<EntityRecord> {
-    return this.request(`/api/works/${workId}/entities`, { method: 'POST', body });
+  public createEntity(workId: string, body: Record<string, unknown>, organizationId?: string | null): Promise<EntityRecord> {
+    return this.request(`/api/works/${workId}/entities${organizationQuery(organizationId)}`, { method: 'POST', body });
   }
 
-  public updateEntity(entityId: string, body: Record<string, unknown>): Promise<EntityRecord> {
-    return this.request(`/api/entities/${entityId}`, { method: 'PUT', body });
+  public updateEntity(entityId: string, body: Record<string, unknown>, organizationId?: string | null): Promise<EntityRecord> {
+    return this.request(`/api/entities/${entityId}${organizationQuery(organizationId)}`, { method: 'PUT', body });
   }
 
-  public deleteEntity(entityId: string): Promise<void> {
-    return this.requestVoid(`/api/entities/${entityId}`, { method: 'DELETE' });
+  public deleteEntity(entityId: string, organizationId?: string | null): Promise<void> {
+    return this.requestVoid(`/api/entities/${entityId}${organizationQuery(organizationId)}`, { method: 'DELETE' });
   }
 
-  public importEntityImage(body: Record<string, unknown>): Promise<{
+  public importEntityImage(body: Record<string, unknown>, organizationId?: string | null): Promise<{
     suggested_fields: Record<string, unknown>;
     prompt_supplement: string;
     tmp_image_s3_key: string;
   }> {
-    return this.request('/api/entities/import-image', { method: 'POST', body });
+    return this.request(`/api/entities/import-image${organizationQuery(organizationId)}`, { method: 'POST', body });
   }
 
-  public generateEntityReference(entityId: string, body?: Record<string, unknown>): Promise<{ job_id: string }> {
-    return this.request(`/api/entities/${entityId}/generate-reference`, {
+  public generateEntityReference(entityId: string, body?: Record<string, unknown>, organizationId?: string | null): Promise<{ job_id: string }> {
+    return this.request(`/api/entities/${entityId}/generate-reference${organizationQuery(organizationId)}`, {
       method: 'POST',
       ...(body === undefined ? {} : { body }),
     });
   }
 
-  public getEntityReferenceSet(entityId: string): Promise<EntityReferenceSetRecord> {
-    return this.request(`/api/entities/${entityId}/reference-set`);
+  public getEntityReferenceSet(entityId: string, organizationId?: string | null): Promise<EntityReferenceSetRecord> {
+    return this.request(`/api/entities/${entityId}/reference-set${organizationQuery(organizationId)}`);
   }
 
   public confirmEntityReference(
     entityId: string,
     body: Record<string, unknown>,
+    organizationId?: string | null,
   ): Promise<EntityReferenceSetRecord> {
-    return this.request(`/api/entities/${entityId}/reference/confirm`, { method: 'POST', body });
+    return this.request(`/api/entities/${entityId}/reference/confirm${organizationQuery(organizationId)}`, { method: 'POST', body });
   }
 
-  public deleteEntityReference(entityId: string, refId: string): Promise<EntityReferenceSetRecord> {
-    return this.request(`/api/entities/${entityId}/reference/${refId}`, { method: 'DELETE' });
+  public deleteEntityReference(entityId: string, refId: string, organizationId?: string | null): Promise<EntityReferenceSetRecord> {
+    return this.request(`/api/entities/${entityId}/reference/${refId}${organizationQuery(organizationId)}`, { method: 'DELETE' });
   }
 
-  public getScenes(episodeId: string): Promise<{ scenes: SceneRecord[] }> {
-    return this.request(`/api/episodes/${episodeId}/scenes`);
+  public getScenes(episodeId: string, organizationId?: string | null): Promise<{ scenes: SceneRecord[] }> {
+    return this.request(`/api/episodes/${episodeId}/scenes${organizationQuery(organizationId)}`);
   }
 
-  public createScene(episodeId: string, body: Record<string, unknown>): Promise<SceneRecord> {
-    return this.request(`/api/episodes/${episodeId}/scenes`, { method: 'POST', body });
+  public createScene(episodeId: string, body: Record<string, unknown>, organizationId?: string | null): Promise<SceneRecord> {
+    return this.request(`/api/episodes/${episodeId}/scenes${organizationQuery(organizationId)}`, { method: 'POST', body });
   }
 
-  public updateScene(sceneId: string, body: Record<string, unknown>): Promise<SceneRecord> {
-    return this.request(`/api/scenes/${sceneId}`, { method: 'PUT', body });
+  public updateScene(sceneId: string, body: Record<string, unknown>, organizationId?: string | null): Promise<SceneRecord> {
+    return this.request(`/api/scenes/${sceneId}${organizationQuery(organizationId)}`, { method: 'PUT', body });
   }
 
-  public getPages(episodeId: string): Promise<{ pages: PageRecord[] }> {
-    return this.request(`/api/episodes/${episodeId}/pages`);
+  public getPages(episodeId: string, organizationId?: string | null): Promise<{ pages: PageRecord[] }> {
+    return this.request(`/api/episodes/${episodeId}/pages${organizationQuery(organizationId)}`);
   }
 
-  public updatePage(pageId: string, body: Record<string, unknown>): Promise<PageRecord> {
-    return this.request(`/api/pages/${pageId}`, { method: 'PUT', body });
+  public updatePage(pageId: string, body: Record<string, unknown>, organizationId?: string | null): Promise<PageRecord> {
+    return this.request(`/api/pages/${pageId}${organizationQuery(organizationId)}`, { method: 'PUT', body });
   }
 
-  public autofillPageFromScenes(pageId: string, language: 'ja' | 'en'): Promise<{
+  public autofillPageFromScenes(pageId: string, language: 'ja' | 'en', organizationId?: string | null): Promise<{
     updated_panel_count: number;
     filled_field_count: number;
     compiler_used: boolean;
@@ -252,75 +385,82 @@ export class LyraApiClient {
     compiler_prompt_version: string | null;
     compiler_error: string | null;
   }> {
-    return this.request(`/api/pages/${pageId}/autofill-from-scenes`, { method: 'POST', body: { language } });
+    return this.request(`/api/pages/${pageId}/autofill-from-scenes${organizationQuery(organizationId)}`, { method: 'POST', body: { language } });
   }
 
-  public autofillEpisodePagesFromStory(episodeId: string, language: 'ja' | 'en'): Promise<{
+  public autofillEpisodePagesFromStory(episodeId: string, language: 'ja' | 'en', organizationId?: string | null): Promise<{
     job_id: string;
   }> {
-    return this.request(`/api/episodes/${episodeId}/autofill-pages-from-story`, {
+    return this.request(`/api/episodes/${episodeId}/autofill-pages-from-story${organizationQuery(organizationId)}`, {
       method: 'POST',
       body: { language },
     });
   }
 
-  public generatePage(pageId: string): Promise<{ job_id: string }> {
-    return this.request(`/api/pages/${pageId}/generate`, { method: 'POST' });
+  public generatePage(pageId: string, organizationId?: string | null): Promise<{ job_id: string }> {
+    return this.request(`/api/pages/${pageId}/generate${organizationQuery(organizationId)}`, { method: 'POST' });
   }
 
-  public confirmPage(pageId: string): Promise<void> {
-    return this.requestVoid(`/api/pages/${pageId}/confirm`, { method: 'POST' });
+  public confirmPage(pageId: string, organizationId?: string | null): Promise<void> {
+    return this.requestVoid(`/api/pages/${pageId}/confirm${organizationQuery(organizationId)}`, { method: 'POST' });
   }
 
-  public reopenPage(pageId: string): Promise<void> {
-    return this.requestVoid(`/api/pages/${pageId}/reopen`, { method: 'POST' });
+  public reopenPage(pageId: string, organizationId?: string | null): Promise<void> {
+    return this.requestVoid(`/api/pages/${pageId}/reopen${organizationQuery(organizationId)}`, { method: 'POST' });
   }
 
-  public getPanels(pageId: string): Promise<{ panels: PanelRecord[] }> {
-    return this.request(`/api/pages/${pageId}/panels`);
+  public getPanels(pageId: string, organizationId?: string | null): Promise<{ panels: PanelRecord[] }> {
+    return this.request(`/api/pages/${pageId}/panels${organizationQuery(organizationId)}`);
   }
 
-  public createPanel(pageId: string, body: Record<string, unknown>): Promise<PanelRecord> {
-    return this.request(`/api/pages/${pageId}/panels`, { method: 'POST', body });
+  public createPanel(pageId: string, body: Record<string, unknown>, organizationId?: string | null): Promise<PanelRecord> {
+    return this.request(`/api/pages/${pageId}/panels${organizationQuery(organizationId)}`, { method: 'POST', body });
   }
 
-  public updatePanel(panelId: string, body: Record<string, unknown>): Promise<PanelRecord> {
-    return this.request(`/api/panels/${panelId}`, { method: 'PUT', body });
+  public updatePanel(panelId: string, body: Record<string, unknown>, organizationId?: string | null): Promise<PanelRecord> {
+    return this.request(`/api/panels/${panelId}${organizationQuery(organizationId)}`, { method: 'PUT', body });
   }
 
-  public deletePanel(panelId: string): Promise<void> {
-    return this.requestVoid(`/api/panels/${panelId}`, { method: 'DELETE' });
+  public deletePanel(panelId: string, organizationId?: string | null): Promise<void> {
+    return this.requestVoid(`/api/panels/${panelId}${organizationQuery(organizationId)}`, { method: 'DELETE' });
   }
 
-  public replacePanelAssignments(panelId: string, body: Record<string, unknown>): Promise<{
+  public reorderPanels(pageId: string, panelIds: string[], organizationId?: string | null): Promise<{ panels: PanelRecord[] }> {
+    return this.request(`/api/pages/${pageId}/panels/order${organizationQuery(organizationId)}`, {
+      method: 'PUT',
+      body: { panel_ids: panelIds },
+    });
+  }
+
+  public replacePanelAssignments(panelId: string, body: Record<string, unknown>, organizationId?: string | null): Promise<{
     entities: PanelRecord['entities'];
   }> {
-    return this.request(`/api/panels/${panelId}/entities`, { method: 'PUT', body });
+    return this.request(`/api/panels/${panelId}/entities${organizationQuery(organizationId)}`, { method: 'PUT', body });
   }
 
-  public getFrames(pageId: string): Promise<{ frames: PanelFrameRecord[] }> {
-    return this.request(`/api/pages/${pageId}/frames`);
+  public getFrames(pageId: string, organizationId?: string | null): Promise<{ frames: PanelFrameRecord[] }> {
+    return this.request(`/api/pages/${pageId}/frames${organizationQuery(organizationId)}`);
   }
 
-  public applyFrameTemplate(pageId: string, templateId: string): Promise<{
+  public applyFrameTemplate(pageId: string, templateId: string, organizationId?: string | null): Promise<{
     template_id: string;
     panel_count: number;
     frames: PanelFrameRecord[];
   }> {
-    return this.request(`/api/pages/${pageId}/frames/apply-template`, {
+    return this.request(`/api/pages/${pageId}/frames/apply-template${organizationQuery(organizationId)}`, {
       method: 'POST',
       body: { template_id: templateId },
     });
   }
 
-  public applyPageLayoutTemplate(pageId: string, templateId: string, allowPanelTruncation: boolean): Promise<{
+  public applyPageLayoutTemplate(pageId: string, templateId: string, allowPanelTruncation: boolean, organizationId?: string | null): Promise<{
     template_id: string;
     panel_count: number;
     created_panel_count: number;
     deleted_panel_count: number;
     frames: PanelFrameRecord[];
   }> {
-    return this.request(`/api/pages/${pageId}/layout-template`, {
+    return this.request(`/api/pages/${pageId}/layout-template${organizationQuery(organizationId)}`, {
       method: 'POST',
       body: {
         template_id: templateId,
@@ -329,8 +469,8 @@ export class LyraApiClient {
     });
   }
 
-  public replaceFrames(pageId: string, body: Record<string, unknown>): Promise<{ frames: PanelFrameRecord[] }> {
-    return this.request(`/api/pages/${pageId}/frames`, { method: 'PUT', body });
+  public replaceFrames(pageId: string, body: Record<string, unknown>, organizationId?: string | null): Promise<{ frames: PanelFrameRecord[] }> {
+    return this.request(`/api/pages/${pageId}/frames${organizationQuery(organizationId)}`, { method: 'PUT', body });
   }
 
   public getBalloons(pageId: string): Promise<{ balloons: BalloonRecord[] }> {
@@ -388,21 +528,9 @@ export class LyraApiClient {
     return this.request('/api/billing/customer-portal', { method: 'POST', timeoutMs: billingRedirectTimeoutMs });
   }
 
-  public async exportPageImage(pageId: string): Promise<BlobResponse> {
-    const response = await fetch(this.toUrl(`/api/pages/${pageId}/export-image`), this.buildRequest({ method: 'GET' }));
-    if (!response.ok) {
-      throw await this.toApiError(response);
-    }
-
-    return {
-      blob: await response.blob(),
-      contentType: response.headers.get('Content-Type'),
-    };
-  }
-
-  public async exportEntityReferenceImage(entityId: string, refId: string): Promise<BlobResponse> {
+  public async exportPageImage(pageId: string, organizationId?: string | null): Promise<BlobResponse> {
     const response = await fetch(
-      this.toUrl(`/api/entities/${entityId}/reference/${encodeURIComponent(refId)}/image`),
+      this.toUrl(`/api/pages/${pageId}/export-image${organizationQuery(organizationId)}`),
       this.buildRequest({ method: 'GET' }),
     );
     if (!response.ok) {
@@ -415,8 +543,34 @@ export class LyraApiClient {
     };
   }
 
-  public async exportEntityReferenceCandidateImage(entityId: string, s3Key: string): Promise<BlobResponse> {
+  public async exportEntityReferenceImage(
+    entityId: string,
+    refId: string,
+    organizationId?: string | null,
+  ): Promise<BlobResponse> {
+    const response = await fetch(
+      this.toUrl(`/api/entities/${entityId}/reference/${encodeURIComponent(refId)}/image${organizationQuery(organizationId)}`),
+      this.buildRequest({ method: 'GET' }),
+    );
+    if (!response.ok) {
+      throw await this.toApiError(response);
+    }
+
+    return {
+      blob: await response.blob(),
+      contentType: response.headers.get('Content-Type'),
+    };
+  }
+
+  public async exportEntityReferenceCandidateImage(
+    entityId: string,
+    s3Key: string,
+    organizationId?: string | null,
+  ): Promise<BlobResponse> {
     const params = new URLSearchParams({ s3_key: s3Key });
+    if (organizationId !== undefined && organizationId !== null && organizationId.trim().length > 0) {
+      params.set('organization_id', organizationId);
+    }
     const response = await fetch(
       this.toUrl(`/api/entities/${entityId}/reference-candidate-image?${params.toString()}`),
       this.buildRequest({ method: 'GET' }),
@@ -592,4 +746,12 @@ export function decodeJwtPayload(token: string): Record<string, unknown> | null 
   } catch {
     return null;
   }
+}
+
+function organizationQuery(organizationId: string | null | undefined): string {
+  if (organizationId === undefined || organizationId === null || organizationId.trim().length === 0) {
+    return '';
+  }
+
+  return `?organization_id=${encodeURIComponent(organizationId)}`;
 }

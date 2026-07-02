@@ -6,7 +6,9 @@ import type {
   EntityReferenceContext,
   PersistedEntityGenerationJobParams,
 } from '../../domain/types/entityReference.js';
+import type { GenerationJob } from '../../domain/types/job.js';
 import type { CreditServicePort } from '../credit/CreditService.js';
+import type { OrganizationServicePort } from '../organization/OrganizationService.js';
 import type { EntityReferenceRepository } from '../../repositories/EntityRepository.js';
 import type { EntityGenerationExecutionRepository } from '../../repositories/EntityGenerationExecutionRepository.js';
 import type {
@@ -40,6 +42,7 @@ export class EntityGenerationWorkerService {
     private readonly storedImageLoader: StoredImageLoaderPort,
     private readonly imageModel: string = ENTITY_REFERENCE_GENERATION.MODEL,
     private readonly generationEnabled = true,
+    private readonly organizationService?: OrganizationServicePort,
   ) {}
 
   public async processJob(jobId: string): Promise<ProcessEntityGenerationJobResult> {
@@ -54,18 +57,21 @@ export class EntityGenerationWorkerService {
 
     const params = parsePersistedParams(job.params);
     if (params === null) {
-      await this.failJob(job.id, job.userId, job.creditCost, 'Entity generation job params are invalid');
+      await this.failJob(job, 'Entity generation job params are invalid', null);
       return { status: 'processed', jobStatus: 'failed' };
     }
 
+    let workIdForAudit: string | null = null;
     try {
       const entity = await this.entityRepository.findReferenceContextByIdAndUserId(
         params.entity_id,
         job.userId,
+        job.organizationId ?? null,
       );
       if (entity === null) {
         throw new ConfigurationError('Entity not found for generation job');
       }
+      workIdForAudit = entity.workId;
 
       const draftPrompt = this.promptBuilder.buildGenerationPrompt(entity);
       const compilerBrief = this.promptBuilder.buildCompilerBrief(entity);
@@ -125,47 +131,124 @@ export class EntityGenerationWorkerService {
         throw new ConfigurationError('Failed to persist entity generation job result');
       }
 
+      await this.recordGenerationCompleted(job, entity, generated);
       return { status: 'processed', jobStatus: 'completed' };
     } catch (error) {
-      await this.failJob(
-        job.id,
-        job.userId,
-        job.creditCost,
-        sanitizePersistedErrorMessage(error, 'Entity generation failed'),
-      );
+      await this.failJob(job, sanitizePersistedErrorMessage(error, 'Entity generation failed'), workIdForAudit);
       return { status: 'processed', jobStatus: 'failed' };
     }
   }
 
   private async failJob(
-    jobId: string,
-    userId: string,
-    creditCost: number,
+    job: GenerationJob,
     errorMessage: string,
+    workId: string | null,
   ): Promise<void> {
     const failed = await this.executionRepository.failEntityGeneration({
-      jobId,
-      userId,
+      jobId: job.id,
+      userId: job.userId,
       errorMessage,
     });
     if (!failed) {
       return;
     }
 
-    if (creditCost > 0) {
+    if (job.creditCost > 0) {
       try {
-        await this.creditService.refundCredits({
-          userId,
-          amount: creditCost,
-          description: 'Refund for failed entity generation job',
-          jobId,
-        });
+        await this.refundFailedJobCredits(job);
       } catch (error) {
         const reason = error instanceof Error ? error.message : String(error);
         console.warn(
-          `[entity-generation-worker] failed to refund failed job ${jobId}; recovery will retry missing refund ledger: ${reason}`,
+          `[entity-generation-worker] failed to refund failed job ${job.id}; recovery will retry missing refund ledger: ${reason}`,
         );
       }
+    }
+
+    await this.recordGenerationFailed(job, workId, errorMessage);
+  }
+
+  private async refundFailedJobCredits(job: GenerationJob): Promise<void> {
+    const organizationId = job.organizationId ?? null;
+    if (organizationId === null) {
+      await this.creditService.refundCredits({
+        userId: job.userId,
+        amount: job.creditCost,
+        description: 'Refund for failed entity generation job',
+        jobId: job.id,
+      });
+      return;
+    }
+
+    if (this.organizationService === undefined) {
+      throw new ConfigurationError('Organization service is required to refund enterprise entity generation jobs');
+    }
+
+    await this.organizationService.refundCredits({
+      organizationId,
+      actorUserId: job.userId,
+      amount: job.creditCost,
+      description: 'Refund for failed entity generation job',
+      jobId: job.id,
+    });
+  }
+
+  private async recordGenerationCompleted(
+    job: GenerationJob,
+    entity: EntityReferenceContext,
+    generated: { openaiRequestId: string | null; costUsd: number | null },
+  ): Promise<void> {
+    const organizationId = job.organizationId ?? null;
+    if (organizationId === null || this.organizationService === undefined) {
+      return;
+    }
+
+    try {
+      await this.organizationService.recordGenerationCompleted({
+        organizationId,
+        userId: job.userId,
+        workId: entity.workId,
+        jobId: job.id,
+        generationType: 'entity_generate',
+        metadata: {
+          entity_id: entity.entityId,
+          entity_type: entity.entityType,
+          image_model: this.imageModel,
+          cost_usd: generated.costUsd,
+          openai_request_id: generated.openaiRequestId,
+        },
+      });
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      console.warn(`[entity-generation-worker] failed to record enterprise generation completion ${job.id}: ${reason}`);
+    }
+  }
+
+  private async recordGenerationFailed(
+    job: GenerationJob,
+    workId: string | null,
+    errorMessage: string,
+  ): Promise<void> {
+    const organizationId = job.organizationId ?? null;
+    if (organizationId === null || this.organizationService === undefined) {
+      return;
+    }
+
+    try {
+      await this.organizationService.recordGenerationFailed({
+        organizationId,
+        userId: job.userId,
+        workId,
+        jobId: job.id,
+        generationType: 'entity_generate',
+        errorMessage,
+        metadata: {
+          entity_id: typeof job.params.entity_id === 'string' ? job.params.entity_id : null,
+          entity_type: typeof job.params.entity_type === 'string' ? job.params.entity_type : null,
+        },
+      });
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      console.warn(`[entity-generation-worker] failed to record enterprise generation failure ${job.id}: ${reason}`);
     }
   }
 }

@@ -1,0 +1,7 @@
+User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /auth/
+Disallow: /local-assets/
+
+Sitemap: https://app.lyra-editor.com/sitemap.xml

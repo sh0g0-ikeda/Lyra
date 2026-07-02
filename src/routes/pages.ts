@@ -16,6 +16,7 @@ import type { PageGenerationServicePort } from '../services/page/PageGenerationS
 import type { PageExportServicePort } from '../services/page/PageExportService.js';
 import type { PageLayoutServicePort } from '../services/page/PageLayoutService.js';
 import type { PageServicePort } from '../services/page/PageService.js';
+import type { OrganizationServicePort } from '../services/organization/OrganizationService.js';
 import type { EpisodeStoryAutofillServicePort } from '../services/story/EpisodeStoryAutofillService.js';
 import type { AppEnv } from '../types/app.js';
 import { readJsonBody, readOptionalJsonBody, REQUEST_BODY_LIMITS } from './requestBody.js';
@@ -37,6 +38,7 @@ export interface PageRouteDependencies {
   pageService: PageServicePort;
   episodeStoryAutofillService: EpisodeStoryAutofillServicePort;
   pageLayoutService: PageLayoutServicePort;
+  organizationService?: OrganizationServicePort;
 }
 
 export function createPageRoutes(dependencies: PageRouteDependencies): Hono<AppEnv> {
@@ -48,7 +50,9 @@ export function createPageRoutes(dependencies: PageRouteDependencies): Hono<AppE
   app.get('/episodes/:id/pages', async (c) => {
     const user = c.get('user');
     const episodeId = parseUuidParam(c, 'id');
-    const pages = await dependencies.pageQueryService.listEpisodePages(user.id, episodeId);
+    const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'view_work');
+    const pages = await dependencies.pageQueryService.listEpisodePages(user.id, episodeId, organizationId);
 
     return c.json({ pages: await Promise.all(pages.map(toPageSummaryResponse)) });
   });
@@ -56,6 +60,8 @@ export function createPageRoutes(dependencies: PageRouteDependencies): Hono<AppE
   app.post('/episodes/:id/autofill-pages-from-story', async (c) => {
     const user = c.get('user');
     const episodeId = parseUuidParam(c, 'id');
+    const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'edit_work');
     const hasBody = (c.req.header('content-type') ?? '').includes('application/json');
     const body = languageBodySchema.safeParse(
       hasBody
@@ -72,6 +78,7 @@ export function createPageRoutes(dependencies: PageRouteDependencies): Hono<AppE
       user.id,
       episodeId,
       body.data.language,
+      organizationId,
     );
     return c.json({ job_id: result.jobId }, 202);
   });
@@ -79,6 +86,8 @@ export function createPageRoutes(dependencies: PageRouteDependencies): Hono<AppE
   app.put('/pages/:id', async (c) => {
     const user = c.get('user');
     const pageId = parseUuidParam(c, 'id');
+    const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'edit_work');
     const body = updatePageSettingsBodySchema.safeParse(
       await readJsonBody(c, {
         maxBytes: REQUEST_BODY_LIMITS.SMALL_JSON_BYTES,
@@ -89,14 +98,19 @@ export function createPageRoutes(dependencies: PageRouteDependencies): Hono<AppE
       throw new ValidationError(formatZodValidationError(body.error));
     }
 
-    const page = await dependencies.pageService.updatePageSettings(user.id, pageId, {
-      dialogueMode: body.data.dialogue_mode,
-      pageDialogueToggle: body.data.page_dialogue_toggle,
-      styleReference: body.data.style_reference,
-      storySourceSceneIds: body.data.story_source_scene_ids,
-      storyPagePurpose: body.data.story_page_purpose,
-      storyContinuityNote: body.data.story_continuity_note,
-    });
+    const page = await dependencies.pageService.updatePageSettings(
+      user.id,
+      pageId,
+      {
+        dialogueMode: body.data.dialogue_mode,
+        pageDialogueToggle: body.data.page_dialogue_toggle,
+        styleReference: body.data.style_reference,
+        storySourceSceneIds: body.data.story_source_scene_ids,
+        storyPagePurpose: body.data.story_page_purpose,
+        storyContinuityNote: body.data.story_continuity_note,
+      },
+      organizationId,
+    );
 
     return c.json(await toPageSummaryResponse(page));
   });
@@ -104,6 +118,8 @@ export function createPageRoutes(dependencies: PageRouteDependencies): Hono<AppE
   app.post('/pages/:id/layout-template', async (c) => {
     const user = c.get('user');
     const pageId = parseUuidParam(c, 'id');
+    const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'edit_work');
     const body = applyPageLayoutTemplateBodySchema.safeParse(
       await readJsonBody(c, {
         maxBytes: REQUEST_BODY_LIMITS.SMALL_JSON_BYTES,
@@ -114,10 +130,15 @@ export function createPageRoutes(dependencies: PageRouteDependencies): Hono<AppE
       throw new ValidationError(formatZodValidationError(body.error));
     }
 
-    const result = await dependencies.pageLayoutService.applyTemplate(user.id, pageId, {
-      templateId: body.data.template_id,
-      allowPanelTruncation: body.data.allow_panel_truncation,
-    });
+    const result = await dependencies.pageLayoutService.applyTemplate(
+      user.id,
+      pageId,
+      {
+        templateId: body.data.template_id,
+        allowPanelTruncation: body.data.allow_panel_truncation,
+      },
+      organizationId,
+    );
 
     return c.json({
       template_id: result.templateId,
@@ -131,6 +152,8 @@ export function createPageRoutes(dependencies: PageRouteDependencies): Hono<AppE
   app.post('/pages/:id/autofill-from-scenes', async (c) => {
     const user = c.get('user');
     const pageId = parseUuidParam(c, 'id');
+    const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'edit_work');
     const hasBody = (c.req.header('content-type') ?? '').includes('application/json');
     const body = languageBodySchema.safeParse(
       hasBody
@@ -143,7 +166,12 @@ export function createPageRoutes(dependencies: PageRouteDependencies): Hono<AppE
     if (!body.success) {
       throw new ValidationError(formatZodValidationError(body.error));
     }
-    const result = await dependencies.pageService.autofillFromScenes(user.id, pageId, body.data.language);
+    const result = await dependencies.pageService.autofillFromScenes(
+      user.id,
+      pageId,
+      body.data.language,
+      organizationId,
+    );
 
     return c.json({
       updated_panel_count: result.updatedPanelCount,
@@ -159,7 +187,9 @@ export function createPageRoutes(dependencies: PageRouteDependencies): Hono<AppE
   app.post('/pages/:id/generate', async (c) => {
     const user = c.get('user');
     const pageId = parseUuidParam(c, 'id');
-    const result = await dependencies.pageGenerationService.enqueuePageGeneration(user.id, pageId);
+    const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'generate');
+    const result = await dependencies.pageGenerationService.enqueuePageGeneration(user.id, pageId, organizationId);
 
     return c.json({ job_id: result.jobId }, 202);
   });
@@ -167,7 +197,9 @@ export function createPageRoutes(dependencies: PageRouteDependencies): Hono<AppE
   app.get('/pages/:id/export-image', async (c) => {
     const user = c.get('user');
     const pageId = parseUuidParam(c, 'id');
-    const exportedImage = await dependencies.pageExportService.exportGeneratedImage(user.id, pageId);
+    const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'export');
+    const exportedImage = await dependencies.pageExportService.exportGeneratedImage(user.id, pageId, organizationId);
 
     return c.body(new Uint8Array(exportedImage.imageData), 200, {
       'Content-Type': exportedImage.mimeType,
@@ -178,7 +210,9 @@ export function createPageRoutes(dependencies: PageRouteDependencies): Hono<AppE
   app.post('/pages/:id/confirm', async (c) => {
     const user = c.get('user');
     const pageId = parseUuidParam(c, 'id');
-    await dependencies.pageFinalizeService.confirmPage(user.id, pageId);
+    const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'edit_work');
+    await dependencies.pageFinalizeService.confirmPage(user.id, pageId, organizationId);
 
     return c.body(null, 204);
   });
@@ -186,7 +220,9 @@ export function createPageRoutes(dependencies: PageRouteDependencies): Hono<AppE
   app.post('/pages/:id/reopen', async (c) => {
     const user = c.get('user');
     const pageId = parseUuidParam(c, 'id');
-    await dependencies.pageFinalizeService.reopenPage(user.id, pageId);
+    const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'edit_work');
+    await dependencies.pageFinalizeService.reopenPage(user.id, pageId, organizationId);
 
     return c.body(null, 204);
   });
@@ -249,4 +285,35 @@ function parseUuidParam(c: Context<AppEnv>, name: string): string {
   }
 
   return result.data;
+}
+
+function parseOptionalOrganizationId(c: Context<AppEnv>): string | null {
+  const raw = c.req.query('organization_id');
+  if (raw === undefined || raw.trim().length === 0) {
+    return null;
+  }
+
+  const result = uuidParamSchema.safeParse(raw);
+  if (!result.success) {
+    throw new ValidationError('organization_id must be a valid UUID');
+  }
+
+  return result.data;
+}
+
+async function requireOrganizationCapability(
+  c: Context<AppEnv>,
+  dependencies: PageRouteDependencies,
+  organizationId: string | null,
+  capability: Parameters<OrganizationServicePort['requireMembership']>[2],
+): Promise<void> {
+  if (organizationId === null) {
+    return;
+  }
+  if (dependencies.organizationService === undefined) {
+    throw new ValidationError('Organization service is not configured');
+  }
+
+  const user = c.get('user');
+  await dependencies.organizationService.requireMembership(organizationId, user.id, capability);
 }

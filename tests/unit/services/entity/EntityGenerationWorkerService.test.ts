@@ -26,6 +26,11 @@ import type {
   CreditServicePort,
   RefundCreditsParams,
 } from '../../../../src/services/credit/CreditService.js';
+import type {
+  GrantOrganizationCreditsRequest,
+  OrganizationServicePort,
+  RecordOrganizationGenerationRequest,
+} from '../../../../src/services/organization/OrganizationService.js';
 
 const now = new Date('2026-04-25T00:00:00.000Z');
 
@@ -55,7 +60,14 @@ class FakeExecutionRepository implements EntityGenerationExecutionRepository {
 }
 
 class FakeEntityReferenceRepository implements EntityReferenceRepository {
-  public async findReferenceContextByIdAndUserId(): Promise<EntityReferenceContext | null> {
+  public lookups: Array<{ entityId: string; userId: string; organizationId: string | null }> = [];
+
+  public async findReferenceContextByIdAndUserId(
+    entityId: string,
+    userId: string,
+    organizationId: string | null = null,
+  ): Promise<EntityReferenceContext | null> {
+    this.lookups.push({ entityId, userId, organizationId });
     return {
       entityId: 'entity-1',
       workId: 'work-1',
@@ -226,6 +238,29 @@ class FakeCreditService implements CreditServicePort {
     }
 
     return this.getBalance();
+  }
+}
+
+class FakeOrganizationService {
+  public completedGenerations: RecordOrganizationGenerationRequest[] = [];
+  public failedGenerations: Array<RecordOrganizationGenerationRequest & { errorMessage?: string | null }> = [];
+  public refunds: Array<GrantOrganizationCreditsRequest & { jobId?: string | null }> = [];
+
+  public async recordGenerationCompleted(input: RecordOrganizationGenerationRequest): Promise<void> {
+    this.completedGenerations.push(input);
+  }
+
+  public async recordGenerationFailed(
+    input: RecordOrganizationGenerationRequest & { errorMessage?: string | null },
+  ): Promise<void> {
+    this.failedGenerations.push(input);
+  }
+
+  public async refundCredits(
+    input: GrantOrganizationCreditsRequest & { jobId?: string | null },
+  ): Promise<unknown> {
+    this.refunds.push(input);
+    return { monthlyCredits: 0, purchasedCredits: 0, totalCredits: 0, monthlyExpiresAt: null };
   }
 }
 
@@ -617,6 +652,77 @@ describe('EntityGenerationWorkerService', () => {
     });
   });
 
+  it('法人キャラ生成は組織スコープで読み込み、完了を組織利用履歴へ記録する', async () => {
+    const executionRepository = new FakeExecutionRepository();
+    executionRepository.job = buildJob({ organizationId: 'org-1' });
+    const entityRepository = new FakeEntityReferenceRepository();
+    const organizationService = new FakeOrganizationService();
+    const service = buildService({
+      executionRepository,
+      entityRepository,
+      organizationService,
+    });
+
+    const result = await service.processJob('job-1');
+
+    expect(result).toEqual({ status: 'processed', jobStatus: 'completed' });
+    expect(entityRepository.lookups).toEqual([
+      { entityId: 'entity-1', userId: 'user-1', organizationId: 'org-1' },
+    ]);
+    expect(organizationService.completedGenerations).toEqual([
+      expect.objectContaining({
+        organizationId: 'org-1',
+        userId: 'user-1',
+        workId: 'work-1',
+        jobId: 'job-1',
+        generationType: 'entity_generate',
+        metadata: expect.objectContaining({
+          entity_id: 'entity-1',
+          entity_type: 'character',
+          image_model: 'gpt-image-2',
+          openai_request_id: 'req-1',
+        }),
+      }),
+    ]);
+  });
+
+  it('法人キャラ生成の失敗は個人残高ではなく組織残高へ返金して監査する', async () => {
+    const executionRepository = new FakeExecutionRepository();
+    executionRepository.job = buildJob({ organizationId: 'org-1' });
+    const referenceGenerator = new FakeReferenceGenerator();
+    referenceGenerator.shouldThrow = true;
+    const creditService = new FakeCreditService();
+    const organizationService = new FakeOrganizationService();
+    const service = buildService({
+      executionRepository,
+      referenceGenerator,
+      creditService,
+      organizationService,
+    });
+
+    const result = await service.processJob('job-1');
+
+    expect(result).toEqual({ status: 'processed', jobStatus: 'failed' });
+    expect(creditService.refunded).toBeNull();
+    expect(organizationService.refunds).toEqual([
+      expect.objectContaining({
+        organizationId: 'org-1',
+        actorUserId: 'user-1',
+        amount: 8,
+        jobId: 'job-1',
+      }),
+    ]);
+    expect(organizationService.failedGenerations).toEqual([
+      expect.objectContaining({
+        organizationId: 'org-1',
+        userId: 'user-1',
+        workId: 'work-1',
+        jobId: 'job-1',
+        generationType: 'entity_generate',
+        errorMessage: 'generation failed',
+      }),
+    ]);
+  });
 });
 
 function buildService(overrides: {
@@ -629,6 +735,7 @@ function buildService(overrides: {
   creditService?: FakeCreditService;
   storedImageLoader?: FakeStoredImageLoader;
   imageModel?: string;
+  organizationService?: FakeOrganizationService;
 } = {}): EntityGenerationWorkerService {
   return new EntityGenerationWorkerService(
     overrides.executionRepository ?? new FakeExecutionRepository(),
@@ -640,6 +747,8 @@ function buildService(overrides: {
     overrides.creditService ?? new FakeCreditService(),
     overrides.storedImageLoader ?? new FakeStoredImageLoader(),
     overrides.imageModel,
+    true,
+    overrides.organizationService as unknown as OrganizationServicePort | undefined,
   );
 }
 

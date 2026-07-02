@@ -3,7 +3,7 @@ import { OpenAIClient } from '../../../../src/infrastructure/openai/OpenAIClient
 import { OpenAIStoryEpisodeImprovementPlanner } from '../../../../src/infrastructure/openai/OpenAIStoryEpisodeImprovementPlanner.js';
 
 describe('OpenAIStoryEpisodeImprovementPlanner', () => {
-  it('editable draft と stored episode が同じ場合は stored episode 本文を再掲しない', async () => {
+  it('does not resend stored episode body when editable draft matches it', async () => {
     const requests: Array<Record<string, unknown>> = [];
     const client = {
       postJson: async (_path: string, payload: Record<string, unknown>) => {
@@ -15,8 +15,6 @@ describe('OpenAIStoryEpisodeImprovementPlanner', () => {
               must_preserve: [],
               continuity_guards: [],
               page_adaptation_notes: [],
-              title: buildSection(),
-              purpose: buildSection(),
               introduction: buildSection(),
               middle: buildSection(),
               climax: buildSection(),
@@ -32,49 +30,16 @@ describe('OpenAIStoryEpisodeImprovementPlanner', () => {
     await planner.planEpisodeImprovement({
       instruction: 'Tighten the draft.',
       language: 'ja',
-      baseDraft: {
-        title: 'Episode 1',
-        purpose: 'Introduce the rivalry',
-        storyInputMode: 'structured',
-        storyFullDraft: null,
-        introduction: 'Current intro',
-        middle: 'Current middle',
-        climax: 'Current climax',
-        endingHook: 'Current hook',
-      },
-      context: {
-        episodeId: 'episode-1',
-        chapterId: 'chapter-1',
-        workId: 'work-1',
-        workTitle: 'Lyra',
-        workGenre: 'dark fantasy',
-        worldSetting: 'A fractured time city.',
-        theme: 'Responsibility',
-        overallFlow: 'A reluctant girl joins a time-repair organization.',
-        chapterTitle: 'Chapter 1',
-        chapterPurpose: 'Start the story.',
-        chapterStartingState: 'Mio is alone.',
-        chapterEndingState: 'Mio sees the organization.',
-        chapterEmotionCurve: 'fear -> resolve',
-        episodeTitle: 'Episode 1',
-        episodePurpose: 'Introduce the rivalry',
-        introduction: 'Current intro',
-        middle: 'Current middle',
-        climax: 'Current climax',
-        endingHook: 'Current hook',
-        estimatedPages: 16,
-        entities: [],
-        sceneSummaries: [],
-        chapterSummaries: [],
-        siblingEpisodeSummaries: [],
-      },
+      baseDraft: createDraft(),
+      context: createContext(),
     });
 
     const input = requests[0]?.input as Array<{ content: Array<{ text: string }> }>;
     const userPrompt = input[1]?.content[0]?.text ?? '';
     expect(userPrompt).toContain('Current stored episode: same as current editable draft.');
-    expect(userPrompt).not.toContain('Current stored episode:\nTitle: Episode 1');
+    expect(userPrompt).not.toContain('Current stored episode:\nStory input mode: structured');
   });
+
   it('compacts long context before sending the planning request', async () => {
     const requests: Array<Record<string, unknown>> = [];
     const client = {
@@ -87,8 +52,6 @@ describe('OpenAIStoryEpisodeImprovementPlanner', () => {
               must_preserve: [],
               continuity_guards: [],
               page_adaptation_notes: [],
-              title: buildSection(),
-              purpose: buildSection(),
               introduction: buildSection(),
               middle: buildSection(),
               climax: buildSection(),
@@ -105,37 +68,9 @@ describe('OpenAIStoryEpisodeImprovementPlanner', () => {
     await planner.planEpisodeImprovement({
       instruction: 'Tighten the draft.',
       language: 'ja',
-      baseDraft: {
-        title: 'Episode 1',
-        purpose: 'Introduce the rivalry',
-        storyInputMode: 'structured',
-        storyFullDraft: null,
-        introduction: 'Current intro',
-        middle: 'Current middle',
-        climax: 'Current climax',
-        endingHook: 'Current hook',
-      },
+      baseDraft: createDraft(),
       context: {
-        episodeId: 'episode-1',
-        chapterId: 'chapter-1',
-        workId: 'work-1',
-        workTitle: 'Lyra',
-        workGenre: 'dark fantasy',
-        worldSetting: 'A fractured time city.',
-        theme: 'Responsibility',
-        overallFlow: 'A reluctant girl joins a time-repair organization.',
-        chapterTitle: 'Chapter 1',
-        chapterPurpose: 'Start the story.',
-        chapterStartingState: 'Mio is alone.',
-        chapterEndingState: 'Mio sees the organization.',
-        chapterEmotionCurve: 'fear -> resolve',
-        episodeTitle: 'Episode 1',
-        episodePurpose: 'Introduce the rivalry',
-        introduction: 'Current intro',
-        middle: 'Current middle',
-        climax: 'Current climax',
-        endingHook: 'Current hook',
-        estimatedPages: 16,
+        ...createContext(),
         entities: [
           {
             id: 'entity-1',
@@ -146,8 +81,6 @@ describe('OpenAIStoryEpisodeImprovementPlanner', () => {
           },
         ],
         sceneSummaries: Array.from({ length: 60 }, (_unused, index) => `Scene ${index + 1}: planning scene ${index + 1}`),
-        chapterSummaries: [],
-        siblingEpisodeSummaries: [],
       },
     });
 
@@ -158,6 +91,48 @@ describe('OpenAIStoryEpisodeImprovementPlanner', () => {
     expect(userPrompt).not.toContain('Scene 60: planning scene 60');
   });
 });
+
+function createDraft() {
+  return {
+    title: 'Episode 1',
+    purpose: 'Introduce the rivalry',
+    storyInputMode: 'structured' as const,
+    storyFullDraft: null,
+    introduction: 'Current intro',
+    middle: 'Current middle',
+    climax: 'Current climax',
+    endingHook: 'Current hook',
+  };
+}
+
+function createContext() {
+  return {
+    episodeId: 'episode-1',
+    chapterId: 'chapter-1',
+    workId: 'work-1',
+    workTitle: 'Lyra',
+    workGenre: 'dark fantasy',
+    worldSetting: 'A fractured time city.',
+    theme: 'Responsibility',
+    overallFlow: 'A reluctant girl joins a time-repair organization.',
+    chapterTitle: 'Chapter 1',
+    chapterPurpose: 'Start the story.',
+    chapterStartingState: 'Mio is alone.',
+    chapterEndingState: 'Mio sees the organization.',
+    chapterEmotionCurve: 'fear -> resolve',
+    episodeTitle: 'Episode 1',
+    episodePurpose: 'Introduce the rivalry',
+    introduction: 'Current intro',
+    middle: 'Current middle',
+    climax: 'Current climax',
+    endingHook: 'Current hook',
+    estimatedPages: 16,
+    entities: [],
+    sceneSummaries: [],
+    chapterSummaries: [],
+    siblingEpisodeSummaries: [],
+  };
+}
 
 function buildSection(): Record<string, unknown> {
   return {

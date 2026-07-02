@@ -54,6 +54,9 @@ interface RuntimeGuardConfig {
   STRIPE_WEBHOOK_SECRET?: string;
   STRIPE_PRICE_STANDARD_MONTHLY?: string;
   STRIPE_PRICE_PREMIUM_MONTHLY?: string;
+  STRIPE_PRICE_ENTERPRISE_A_MONTHLY?: string;
+  STRIPE_PRICE_ENTERPRISE_B_MONTHLY?: string;
+  STRIPE_PRICE_ENTERPRISE_C_MONTHLY?: string;
   STRIPE_PRICE_CREDITS_200?: string;
   STRIPE_PRICE_CREDITS_1000?: string;
   STRIPE_PRICE_CREDITS_3000?: string;
@@ -91,9 +94,18 @@ const STRIPE_KEYS = [
 const STRIPE_PRICE_KEYS = [
   'STRIPE_PRICE_STANDARD_MONTHLY',
   'STRIPE_PRICE_PREMIUM_MONTHLY',
+  'STRIPE_PRICE_ENTERPRISE_A_MONTHLY',
+  'STRIPE_PRICE_ENTERPRISE_B_MONTHLY',
+  'STRIPE_PRICE_ENTERPRISE_C_MONTHLY',
   'STRIPE_PRICE_CREDITS_200',
   'STRIPE_PRICE_CREDITS_1000',
   'STRIPE_PRICE_CREDITS_3000',
+] as const;
+
+const OPTIONAL_STRIPE_PRICE_KEYS = [
+  'STRIPE_PRICE_ENTERPRISE_A_MONTHLY',
+  'STRIPE_PRICE_ENTERPRISE_B_MONTHLY',
+  'STRIPE_PRICE_ENTERPRISE_C_MONTHLY',
 ] as const;
 
 const PRODUCTION_PUBLIC_URL_KEYS = [
@@ -374,7 +386,11 @@ export function assertProductionRuntimeConfig(
   if (missingStripeKeys.length > 0) {
     violations.push(`Stripe config is incomplete: ${missingStripeKeys.join(', ')}`);
   }
-  const placeholderStripeKeys = STRIPE_KEYS.filter((key) => hasPlaceholderConfigValue(config[key]));
+  const placeholderStripeKeys: string[] = STRIPE_KEYS.filter((key) => hasPlaceholderConfigValue(config[key]));
+  const placeholderOptionalStripePriceKeys = OPTIONAL_STRIPE_PRICE_KEYS.filter((key) =>
+    hasPlaceholderConfigValue(config[key]),
+  );
+  placeholderStripeKeys.push(...placeholderOptionalStripePriceKeys);
   if (placeholderStripeKeys.length > 0) {
     violations.push(`Stripe config contains placeholder values: ${placeholderStripeKeys.join(', ')}`);
   }

@@ -8,14 +8,18 @@ async function main(): Promise<void> {
     { closeDatabasePool, db },
     { PostgresCreditRepository },
     { PostgresGenerationJobRepository },
+    { PostgresOrganizationRepository },
     { CreditService },
+    { OrganizationService },
     { PageGenerationRetryService },
     { resolveWorkerDependencies },
   ] = await Promise.all([
     import('../src/lib/db.js'),
     import('../src/repositories/CreditRepository.js'),
     import('../src/repositories/GenerationJobRepository.js'),
+    import('../src/repositories/OrganizationRepository.js'),
     import('../src/services/credit/CreditService.js'),
+    import('../src/services/organization/OrganizationService.js'),
     import('../src/services/page/PageGenerationRetryService.js'),
     import('../worker/dependencies.js'),
   ]);
@@ -25,6 +29,8 @@ async function main(): Promise<void> {
       new PostgresGenerationJobRepository(db),
       resolveWorkerDependencies().pageGenerationWorkerService,
       new CreditService(new PostgresCreditRepository(db, db)),
+      undefined,
+      new OrganizationService(new PostgresOrganizationRepository(db, db)),
     );
 
     await retryService.retryFailedJob(userId, jobId);

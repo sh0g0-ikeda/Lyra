@@ -8,6 +8,7 @@ import type {
   CreditServicePort,
   RefundCreditsParams,
 } from '../../../../src/services/credit/CreditService.js';
+import type { OrganizationServicePort } from '../../../../src/services/organization/OrganizationService.js';
 import type { ProcessPageGenerationJobResult } from '../../../../src/services/page/PageGenerationWorkerService.js';
 import {
   MAX_PAGE_GENERATION_RETRIES,
@@ -98,6 +99,21 @@ class FakeCreditService implements CreditServicePort {
   }
 }
 
+class FakeOrganizationService {
+  public consumed: unknown[] = [];
+  public refunded: unknown[] = [];
+
+  public async consumeCredits(params: unknown): Promise<unknown> {
+    this.consumed.push(params);
+    return {};
+  }
+
+  public async refundCredits(params: unknown): Promise<unknown> {
+    this.refunded.push(params);
+    return {};
+  }
+}
+
 describe('PageGenerationRetryService', () => {
   it('所有者の failed page_generate job を再課金して retry できる', async () => {
     const repository = new InMemoryGenerationJobRepository();
@@ -130,6 +146,35 @@ describe('PageGenerationRetryService', () => {
     expect(creditService.consumed).toEqual([]);
     expect(creditService.refunded).toEqual([]);
     expect(repository.preparedRetryWith).toBe(MAX_PAGE_GENERATION_RETRIES);
+    expect(workerService.processedJobId).toBe('job-1');
+  });
+
+  it('法人 failed page_generate job は法人共有クレジットで retry する', async () => {
+    const repository = new InMemoryGenerationJobRepository();
+    repository.job = buildJob({ organizationId: 'org-1' });
+    const workerService = new FakePageGenerationWorkerService();
+    const creditService = new FakeCreditService();
+    const organizationService = new FakeOrganizationService();
+    const service = new PageGenerationRetryService(
+      repository,
+      workerService,
+      creditService,
+      undefined,
+      organizationService as unknown as OrganizationServicePort,
+    );
+
+    await service.retryFailedJob('user-1', 'job-1');
+
+    expect(creditService.consumed).toEqual([]);
+    expect(organizationService.consumed[0]).toMatchObject({
+      organizationId: 'org-1',
+      userId: 'user-1',
+      cost: 10,
+      description: 'Page generation retry',
+      jobId: 'job-1',
+      eventType: 'generation.started',
+    });
+    expect(organizationService.refunded).toEqual([]);
     expect(workerService.processedJobId).toBe('job-1');
   });
 
@@ -181,6 +226,36 @@ describe('PageGenerationRetryService', () => {
     expect(creditService.consumed).toHaveLength(1);
     expect(creditService.refunded[0]).toMatchObject({
       userId: 'user-1',
+      amount: 10,
+      description: 'Refund for failed page generation retry setup',
+      jobId: 'job-1',
+    });
+  });
+
+  it('法人 retry 準備に失敗した場合は法人共有クレジットへ返金する', async () => {
+    const repository = new InMemoryGenerationJobRepository();
+    repository.job = buildJob({ organizationId: 'org-1' });
+    repository.prepareRetryResult = false;
+    const creditService = new FakeCreditService();
+    const organizationService = new FakeOrganizationService();
+    const workerService = new FakePageGenerationWorkerService();
+    const service = new PageGenerationRetryService(
+      repository,
+      workerService,
+      creditService,
+      undefined,
+      organizationService as unknown as OrganizationServicePort,
+    );
+
+    await expect(service.retryFailedJob('user-1', 'job-1')).rejects.toBeInstanceOf(ConflictError);
+
+    expect(workerService.processedJobId).toBeNull();
+    expect(creditService.consumed).toEqual([]);
+    expect(creditService.refunded).toEqual([]);
+    expect(organizationService.consumed).toHaveLength(1);
+    expect(organizationService.refunded[0]).toMatchObject({
+      organizationId: 'org-1',
+      actorUserId: 'user-1',
       amount: 10,
       description: 'Refund for failed page generation retry setup',
       jobId: 'job-1',

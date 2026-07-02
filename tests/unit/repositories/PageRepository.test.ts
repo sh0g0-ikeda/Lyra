@@ -173,7 +173,7 @@ describe('PostgresPageRepository', () => {
     const page = await repository.findGenerationContextByIdAndUserId('page-1', 'user-1');
 
     expect(client.queries[0]).toContain('works.user_id = $2');
-    expect(client.values).toEqual(['page-1', 'user-1']);
+    expect(client.values).toEqual(['page-1', 'user-1', null]);
     expect(page).toMatchObject({
       pageId: 'page-1',
       workId: 'work-1',
@@ -195,7 +195,7 @@ describe('PostgresPageRepository', () => {
     expect(updated).toBe(true);
     expect(client.queries[0]).toContain('UPDATE pages');
     expect(client.queries[0]).toContain('works.user_id = $2');
-    expect(client.values).toEqual(['page-1', 'user-1', 'generating', 'thinking', null]);
+    expect(client.values).toEqual(['page-1', 'user-1', 'generating', 'thinking', null, null]);
   });
 
   it('prompt 用の page 文脈を返す', async () => {
@@ -251,8 +251,8 @@ describe('PostgresPageRepository', () => {
         }),
       ],
     });
-    expect(client.valueHistory[0]).toEqual(['page-1', 'user-1']);
-    expect(client.valueHistory[1]).toEqual(['page-1', 'user-1']);
+    expect(client.valueHistory[0]).toEqual(['page-1', 'user-1', null]);
+    expect(client.valueHistory[1]).toEqual(['page-1', 'user-1', null]);
   });
 
   it('page settings を更新できる', async () => {
@@ -288,6 +288,7 @@ describe('PostgresPageRepository', () => {
         story_page_purpose: 'This page escalates the rooftop confrontation.',
         story_continuity_note: 'Keep the mood restrained for the next page.',
       }),
+      null,
     ]);
     expect(updated).toMatchObject({
       id: 'page-1',
@@ -325,6 +326,7 @@ describe('PostgresPageRepository', () => {
       'https://img.lyra.app/saved/user-1/pages/page-1_final.png',
       'standard',
       '2026-04-24T00:00:00.000Z',
+      null,
     ]);
   });
 });

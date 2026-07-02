@@ -5,6 +5,7 @@ import { PostgresStoryRepository } from '../../../src/repositories/StoryReposito
 
 class QueryCapturingClient implements DatabaseClient, TransactionRunner {
   public queries: string[] = [];
+  public values: readonly unknown[] | undefined;
   public lockRow: Record<string, unknown> = {
     id: '33333333-3333-4333-8333-333333333333',
     page_skeleton_generated: false,
@@ -14,9 +15,10 @@ class QueryCapturingClient implements DatabaseClient, TransactionRunner {
 
   public async query<T extends QueryResultRow = QueryResultRow>(
     text: string,
-    _values?: readonly unknown[],
+    values?: readonly unknown[],
   ): Promise<QueryResult<T>> {
     this.queries.push(text);
+    this.values = values;
 
     if (text.includes('FOR UPDATE')) {
       return {
@@ -157,6 +159,57 @@ describe('PostgresStoryRepository', () => {
     expect(client.queries[0]).toContain('edit_history');
     expect(client.queries[0]).toContain('jsonb_build_object');
     expect(client.queries[0]).toContain('LIMIT 5');
+  });
+
+  it('requires active organization membership when listing organization works', async () => {
+    const client = new QueryCapturingClient();
+    const repository = new PostgresStoryRepository(client);
+
+    await repository.findWorksByUserId('user-1', '11111111-1111-4111-8111-111111111111');
+
+    expect(client.queries[0]).toContain('FROM organization_members');
+    expect(client.queries[0]).toContain('organization_members.user_id = $1');
+    expect(client.queries[0]).toContain("organization_members.status = 'active'");
+    expect(client.values).toEqual(['user-1', '11111111-1111-4111-8111-111111111111']);
+  });
+
+  it('requires active organization membership when reading an organization work', async () => {
+    const client = new QueryCapturingClient();
+    const repository = new PostgresStoryRepository(client);
+
+    await repository.findWorkByIdAndUserId(
+      '22222222-2222-4222-8222-222222222222',
+      'user-1',
+      '11111111-1111-4111-8111-111111111111',
+    );
+
+    expect(client.queries[0]).toContain('FROM organization_members');
+    expect(client.queries[0]).toContain('organization_members.user_id = $2');
+    expect(client.queries[0]).toContain("organization_members.status = 'active'");
+    expect(client.values).toEqual([
+      '22222222-2222-4222-8222-222222222222',
+      'user-1',
+      '11111111-1111-4111-8111-111111111111',
+    ]);
+  });
+
+  it('requires active organization membership when updating an organization work', async () => {
+    const client = new QueryCapturingClient();
+    const repository = new PostgresStoryRepository(client);
+
+    await repository.updateWork(
+      '22222222-2222-4222-8222-222222222222',
+      'user-1',
+      { title: 'Enterprise Work' },
+      '11111111-1111-4111-8111-111111111111',
+    );
+
+    expect(client.queries[0]).toContain('FROM organization_members');
+    expect(client.queries[0]).toContain('organization_members.user_id = $2');
+    expect(client.queries[0]).toContain("organization_members.status = 'active'");
+    expect(client.values?.[0]).toBe('22222222-2222-4222-8222-222222222222');
+    expect(client.values?.[1]).toBe('user-1');
+    expect(client.values?.[18]).toBe('11111111-1111-4111-8111-111111111111');
   });
 
   it('maps duplicate chapter order to VALIDATION_ERROR', async () => {

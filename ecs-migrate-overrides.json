@@ -1,0 +1,12 @@
+{
+  "containerOverrides": [
+    {
+      "name": "api",
+      "command": [
+        "bun",
+        "--eval",
+        "await import('./dist/src/lib/runtimeSecretEnv.js').then((m) => m.loadRuntimeSecretEnv()); await import('./dist/scripts/migrate.js');"
+      ]
+    }
+  ]
+}

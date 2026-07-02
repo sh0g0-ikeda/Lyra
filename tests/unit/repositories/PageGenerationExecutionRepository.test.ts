@@ -159,6 +159,7 @@ describe('PostgresPageGenerationExecutionRepository', () => {
       'https://cdn.lyra.test/page-1.png',
       'thinking',
       '2026-04-24T00:00:00.000Z',
+      null,
     ]);
     expect(client.values[1]).toEqual([
       'job-1',
@@ -208,7 +209,7 @@ describe('PostgresPageGenerationExecutionRepository', () => {
     expect(persistedMessage).toContain('Bearer [redacted]');
     expect(persistedMessage).not.toContain(fakeApiKey);
     expect(persistedMessage.length).toBeLessThanOrEqual(300);
-    expect(client.values[1]).toEqual(['page-1', 'user-1', 'editing', 'standard']);
+    expect(client.values[1]).toEqual(['page-1', 'user-1', 'editing', 'standard', null]);
   });
   it('job completion更新に失敗した場合はtransactionを失敗させる', async () => {
     const client = new QueryCapturingClient();

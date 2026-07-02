@@ -1,0 +1,26 @@
+{
+  "files.watcherExclude": {
+    "**/.git/**": true,
+    "**/.localdata/**": true,
+    "**/.tmp/**": true,
+    "**/dist/**": true,
+    "**/node_modules/**": true,
+    "**/apps/web/dist/**": true,
+    "**/apps/web/node_modules/**": true,
+    "**/*.log": true,
+    "**/*.out.log": true,
+    "**/*.err.log": true
+  },
+  "search.exclude": {
+    "**/.git": true,
+    "**/.localdata": true,
+    "**/.tmp": true,
+    "**/dist": true,
+    "**/node_modules": true,
+    "**/apps/web/dist": true,
+    "**/apps/web/node_modules": true,
+    "**/*.log": true,
+    "**/*.out.log": true,
+    "**/*.err.log": true
+  }
+}

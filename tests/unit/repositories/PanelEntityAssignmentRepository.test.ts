@@ -32,7 +32,7 @@ describe('PostgresPanelEntityAssignmentRepository', () => {
     const context = await repository.findPanelContextByIdAndUserId('panel-1', 'user-1');
 
     expect(client.queries[0]).toContain('works.user_id = $2');
-    expect(client.values).toEqual(['panel-1', 'user-1']);
+    expect(client.values).toEqual(['panel-1', 'user-1', null]);
     expect(context).toEqual({ panelId: 'panel-1', pageId: 'page-1', workId: 'work-1' });
   });
 
@@ -44,7 +44,7 @@ describe('PostgresPanelEntityAssignmentRepository', () => {
 
     expect(client.queries[0]).toContain('COUNT(DISTINCT id)::int AS count');
     expect(client.queries[0]).toContain('work_id = $2');
-    expect(client.values).toEqual([['entity-1'], 'work-1', 'user-1']);
+    expect(client.values).toEqual([['entity-1'], 'work-1', 'user-1', null]);
   });
 
   it('entity_stateが指定entityと同一workに属する数を数える', async () => {
@@ -64,6 +64,7 @@ describe('PostgresPanelEntityAssignmentRepository', () => {
       JSON.stringify([{ entity_id: 'entity-1', state_id: 'state-1' }]),
       'work-1',
       'user-1',
+      null,
     ]);
   });
 
@@ -105,6 +106,7 @@ describe('PostgresPanelEntityAssignmentRepository', () => {
           state_id: 'state-1',
         },
       ]),
+      null,
     ]);
     expect(assignments?.[0]).toMatchObject({ entityId: 'entity-1', stateId: 'state-1' });
   });

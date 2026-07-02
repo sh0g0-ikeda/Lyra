@@ -1,4 +1,4 @@
-import type { QueryResultRow } from 'pg';
+﻿import type { QueryResultRow } from 'pg';
 import type {
   PanelEntityAssignment,
   PanelEntityAction,
@@ -19,21 +19,28 @@ export interface PanelContext {
 }
 
 export interface PanelEntityAssignmentRepository {
-  findPanelContextByIdAndUserId(panelId: string, userId: string): Promise<PanelContext | null>;
+  findPanelContextByIdAndUserId(
+    panelId: string,
+    userId: string,
+    organizationId?: string | null,
+  ): Promise<PanelContext | null>;
   countEntitiesByIdsAndWorkIdAndUserId(
     entityIds: string[],
     workId: string,
     userId: string,
+    organizationId?: string | null,
   ): Promise<number>;
   countEntityStatePairsByWorkIdAndUserId(
     pairs: PanelEntityStateReference[],
     workId: string,
     userId: string,
+    organizationId?: string | null,
   ): Promise<number>;
   updatePanelEntityAssignments(
     panelId: string,
     userId: string,
     assignments: PanelEntityAssignment[],
+    organizationId?: string | null,
   ): Promise<PanelEntityAssignment[] | null>;
 }
 
@@ -57,6 +64,7 @@ export class PostgresPanelEntityAssignmentRepository implements PanelEntityAssig
   public async findPanelContextByIdAndUserId(
     panelId: string,
     userId: string,
+    organizationId: string | null = null,
   ): Promise<PanelContext | null> {
     const result = await this.client.query<PanelContextRow>(
       `
@@ -69,9 +77,22 @@ export class PostgresPanelEntityAssignmentRepository implements PanelEntityAssig
       INNER JOIN chapters ON chapters.id = episodes.chapter_id
       INNER JOIN works ON works.id = chapters.work_id
       WHERE panels.id = $1
-        AND works.user_id = $2
+        AND (
+          ($3::uuid IS NULL AND works.user_id = $2 AND works.organization_id IS NULL)
+          OR (
+            $3::uuid IS NOT NULL
+            AND works.organization_id = $3::uuid
+            AND EXISTS (
+              SELECT 1
+              FROM organization_members
+              WHERE organization_members.organization_id = works.organization_id
+                AND organization_members.user_id = $2
+                AND organization_members.status = 'active'
+            )
+          )
+        )
       `,
-      [panelId, userId],
+      [panelId, userId, organizationId],
     );
 
     const row = result.rows[0];
@@ -82,6 +103,7 @@ export class PostgresPanelEntityAssignmentRepository implements PanelEntityAssig
     entityIds: string[],
     workId: string,
     userId: string,
+    organizationId: string | null = null,
   ): Promise<number> {
     if (entityIds.length === 0) {
       return 0;
@@ -93,9 +115,12 @@ export class PostgresPanelEntityAssignmentRepository implements PanelEntityAssig
       FROM entities
       WHERE id = ANY($1::uuid[])
         AND work_id = $2
-        AND user_id = $3
+        AND (
+          $4::uuid IS NOT NULL
+          OR user_id = $3
+        )
       `,
-      [entityIds, workId, userId],
+      [entityIds, workId, userId, organizationId],
     );
 
     return result.rows[0]?.count ?? 0;
@@ -105,6 +130,7 @@ export class PostgresPanelEntityAssignmentRepository implements PanelEntityAssig
     pairs: PanelEntityStateReference[],
     workId: string,
     userId: string,
+    organizationId: string | null = null,
   ): Promise<number> {
     if (pairs.length === 0) {
       return 0;
@@ -123,7 +149,10 @@ export class PostgresPanelEntityAssignmentRepository implements PanelEntityAssig
        AND entity_states.entity_id = requested.entity_id
       INNER JOIN entities ON entities.id = requested.entity_id
       WHERE entities.work_id = $2
-        AND entities.user_id = $3
+        AND (
+          $4::uuid IS NOT NULL
+          OR entities.user_id = $3
+        )
       `,
       [
         JSON.stringify(
@@ -134,6 +163,7 @@ export class PostgresPanelEntityAssignmentRepository implements PanelEntityAssig
         ),
         workId,
         userId,
+        organizationId,
       ],
     );
 
@@ -144,6 +174,7 @@ export class PostgresPanelEntityAssignmentRepository implements PanelEntityAssig
     panelId: string,
     userId: string,
     assignments: PanelEntityAssignment[],
+    organizationId: string | null = null,
   ): Promise<PanelEntityAssignment[] | null> {
     const result = await this.client.query<PanelEntitiesRow>(
       `
@@ -156,10 +187,23 @@ export class PostgresPanelEntityAssignmentRepository implements PanelEntityAssig
       INNER JOIN works ON works.id = chapters.work_id
       WHERE panels.id = $1
         AND panels.page_id = pages.id
-        AND works.user_id = $2
+        AND (
+          ($4::uuid IS NULL AND works.user_id = $2 AND works.organization_id IS NULL)
+          OR (
+            $4::uuid IS NOT NULL
+            AND works.organization_id = $4::uuid
+            AND EXISTS (
+              SELECT 1
+              FROM organization_members
+              WHERE organization_members.organization_id = works.organization_id
+                AND organization_members.user_id = $2
+                AND organization_members.status = 'active'
+            )
+          )
+        )
       RETURNING panels.entities
       `,
-      [panelId, userId, JSON.stringify(assignments.map(toPanelEntityAssignmentJson))],
+      [panelId, userId, JSON.stringify(assignments.map(toPanelEntityAssignmentJson)), organizationId],
     );
 
     const row = result.rows[0];

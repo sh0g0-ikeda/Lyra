@@ -20,7 +20,11 @@ import {
 
 export interface EpisodeStoryAutofillJobRepository
   extends Pick<GenerationJobRepository, 'create' | 'attachQueueMessageId' | 'markFailed'> {
-  findActiveEpisodeStoryAutofillJob(userId: string, episodeId: string): Promise<GenerationJob | null>;
+  findActiveEpisodeStoryAutofillJob(
+    userId: string,
+    episodeId: string,
+    organizationId?: string | null,
+  ): Promise<GenerationJob | null>;
 }
 
 export interface EnqueueEpisodeStoryAutofillResult {
@@ -32,6 +36,7 @@ export interface EpisodeStoryAutofillServicePort {
     userId: string,
     episodeId: string,
     language: AppLanguage,
+    organizationId?: string | null,
   ): Promise<EnqueueEpisodeStoryAutofillResult>;
 }
 
@@ -56,8 +61,9 @@ export class EpisodeStoryAutofillService implements EpisodeStoryAutofillServiceP
     userId: string,
     episodeId: string,
     language: AppLanguage,
+    organizationId: string | null = null,
   ): Promise<EnqueueEpisodeStoryAutofillResult> {
-    await this.ensureNoActiveJob(userId, episodeId);
+    await this.ensureNoActiveJob(userId, episodeId, organizationId);
 
     const reservedJobId = randomUUID();
     let createdJobId: string | null = null;
@@ -66,12 +72,14 @@ export class EpisodeStoryAutofillService implements EpisodeStoryAutofillServiceP
       const job = await this.generationJobRepository.create({
         id: reservedJobId,
         userId,
+        organizationId,
         jobType: 'episode_story_autofill',
         generationMode: null,
         creditCost: 0,
         params: {
           episode_id: episodeId,
           language,
+          organization_id: organizationId,
         },
         capacityLimits: this.capacityLimits,
       });
@@ -80,6 +88,7 @@ export class EpisodeStoryAutofillService implements EpisodeStoryAutofillServiceP
       const enqueueResult = await this.queue.enqueue({
         jobId: job.id,
         userId,
+        organizationId,
         episodeId,
         language,
       });
@@ -108,10 +117,11 @@ export class EpisodeStoryAutofillService implements EpisodeStoryAutofillServiceP
     }
   }
 
-  private async ensureNoActiveJob(userId: string, episodeId: string): Promise<void> {
+  private async ensureNoActiveJob(userId: string, episodeId: string, organizationId: string | null): Promise<void> {
     const activeJob = await this.generationJobRepository.findActiveEpisodeStoryAutofillJob(
       userId,
       episodeId,
+      organizationId,
     );
     if (activeJob === null) {
       return;

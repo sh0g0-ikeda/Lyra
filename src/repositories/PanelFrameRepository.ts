@@ -1,4 +1,4 @@
-import type { QueryResultRow } from 'pg';
+﻿import type { QueryResultRow } from 'pg';
 import type {
   PageLayoutFrameUpdate,
   PanelFrame,
@@ -19,18 +19,24 @@ export interface PageFrameContext {
 }
 
 export interface PanelFrameRepository {
-  findPageContextByIdAndUserId(pageId: string, userId: string): Promise<PageFrameContext | null>;
+  findPageContextByIdAndUserId(
+    pageId: string,
+    userId: string,
+    organizationId?: string | null,
+  ): Promise<PageFrameContext | null>;
   findPanelIdsByPageIdAndUserId(
     pageId: string,
     userId: string,
     panelIds: string[],
+    organizationId?: string | null,
   ): Promise<string[]>;
-  findFramesByPageIdAndUserId(pageId: string, userId: string): Promise<PanelFrame[]>;
+  findFramesByPageIdAndUserId(pageId: string, userId: string, organizationId?: string | null): Promise<PanelFrame[]>;
   replaceFramesByPageIdAndUserId(
     pageId: string,
     userId: string,
     frames: UpsertPanelFrameInput[],
     layoutUpdate?: PageLayoutFrameUpdate,
+    organizationId?: string | null,
   ): Promise<PanelFrame[]>;
 }
 
@@ -62,6 +68,7 @@ export class PostgresPanelFrameRepository implements PanelFrameRepository {
   public async findPageContextByIdAndUserId(
     pageId: string,
     userId: string,
+    organizationId: string | null = null,
   ): Promise<PageFrameContext | null> {
     const result = await this.client.query<PageFrameContextRow>(
       `
@@ -73,9 +80,22 @@ export class PostgresPanelFrameRepository implements PanelFrameRepository {
       INNER JOIN chapters ON chapters.id = episodes.chapter_id
       INNER JOIN works ON works.id = chapters.work_id
       WHERE pages.id = $1
-        AND works.user_id = $2
+        AND (
+          ($3::uuid IS NULL AND works.user_id = $2 AND works.organization_id IS NULL)
+          OR (
+            $3::uuid IS NOT NULL
+            AND works.organization_id = $3::uuid
+            AND EXISTS (
+              SELECT 1
+              FROM organization_members
+              WHERE organization_members.organization_id = works.organization_id
+                AND organization_members.user_id = $2
+                AND organization_members.status = 'active'
+            )
+          )
+        )
       `,
-      [pageId, userId],
+      [pageId, userId, organizationId],
     );
 
     const row = result.rows[0];
@@ -88,6 +108,7 @@ export class PostgresPanelFrameRepository implements PanelFrameRepository {
     pageId: string,
     userId: string,
     panelIds: string[],
+    organizationId: string | null = null,
   ): Promise<string[]> {
     if (panelIds.length === 0) {
       return [];
@@ -102,16 +123,33 @@ export class PostgresPanelFrameRepository implements PanelFrameRepository {
       INNER JOIN chapters ON chapters.id = episodes.chapter_id
       INNER JOIN works ON works.id = chapters.work_id
       WHERE panels.page_id = $1
-        AND works.user_id = $2
+        AND (
+          ($4::uuid IS NULL AND works.user_id = $2 AND works.organization_id IS NULL)
+          OR (
+            $4::uuid IS NOT NULL
+            AND works.organization_id = $4::uuid
+            AND EXISTS (
+              SELECT 1
+              FROM organization_members
+              WHERE organization_members.organization_id = works.organization_id
+                AND organization_members.user_id = $2
+                AND organization_members.status = 'active'
+            )
+          )
+        )
         AND panels.id = ANY($3::uuid[])
       `,
-      [pageId, userId, panelIds],
+      [pageId, userId, panelIds, organizationId],
     );
 
     return result.rows.map((row) => row.id);
   }
 
-  public async findFramesByPageIdAndUserId(pageId: string, userId: string): Promise<PanelFrame[]> {
+  public async findFramesByPageIdAndUserId(
+    pageId: string,
+    userId: string,
+    organizationId: string | null = null,
+  ): Promise<PanelFrame[]> {
     const result = await this.client.query<PanelFrameRow>(
       `
       SELECT panel_frames.id,
@@ -129,10 +167,23 @@ export class PostgresPanelFrameRepository implements PanelFrameRepository {
       INNER JOIN chapters ON chapters.id = episodes.chapter_id
       INNER JOIN works ON works.id = chapters.work_id
       WHERE panel_frames.page_id = $1
-        AND works.user_id = $2
+        AND (
+          ($3::uuid IS NULL AND works.user_id = $2 AND works.organization_id IS NULL)
+          OR (
+            $3::uuid IS NOT NULL
+            AND works.organization_id = $3::uuid
+            AND EXISTS (
+              SELECT 1
+              FROM organization_members
+              WHERE organization_members.organization_id = works.organization_id
+                AND organization_members.user_id = $2
+                AND organization_members.status = 'active'
+            )
+          )
+        )
       ORDER BY panel_frames.reading_order ASC
       `,
-      [pageId, userId],
+      [pageId, userId, organizationId],
     );
 
     return result.rows.map(mapPanelFrameRow);
@@ -143,6 +194,7 @@ export class PostgresPanelFrameRepository implements PanelFrameRepository {
     userId: string,
     frames: UpsertPanelFrameInput[],
     layoutUpdate?: PageLayoutFrameUpdate,
+    organizationId: string | null = null,
   ): Promise<PanelFrame[]> {
     return this.client.transaction(async (transactionClient) => {
       await transactionClient.query(
@@ -154,9 +206,22 @@ export class PostgresPanelFrameRepository implements PanelFrameRepository {
         INNER JOIN works ON works.id = chapters.work_id
         WHERE panel_frames.page_id = $1
           AND panel_frames.page_id = pages.id
-          AND works.user_id = $2
+          AND (
+            ($3::uuid IS NULL AND works.user_id = $2 AND works.organization_id IS NULL)
+            OR (
+            $3::uuid IS NOT NULL
+            AND works.organization_id = $3::uuid
+            AND EXISTS (
+              SELECT 1
+              FROM organization_members
+              WHERE organization_members.organization_id = works.organization_id
+                AND organization_members.user_id = $2
+                AND organization_members.status = 'active'
+            )
+          )
+          )
         `,
-        [pageId, userId],
+        [pageId, userId, organizationId],
       );
 
       const savedFrames: PanelFrame[] = [];
@@ -189,7 +254,20 @@ export class PostgresPanelFrameRepository implements PanelFrameRepository {
           INNER JOIN chapters ON chapters.id = episodes.chapter_id
           INNER JOIN works ON works.id = chapters.work_id
           WHERE pages.id = $2
-            AND works.user_id = $10
+            AND (
+              ($11::uuid IS NULL AND works.user_id = $10 AND works.organization_id IS NULL)
+              OR (
+            $11::uuid IS NOT NULL
+            AND works.organization_id = $11::uuid
+            AND EXISTS (
+              SELECT 1
+              FROM organization_members
+              WHERE organization_members.organization_id = works.organization_id
+                AND organization_members.user_id = $10
+                AND organization_members.status = 'active'
+            )
+          )
+            )
             AND (
               $3::uuid IS NULL
               OR EXISTS (
@@ -212,6 +290,7 @@ export class PostgresPanelFrameRepository implements PanelFrameRepository {
             frame.zIndex,
             frame.readingOrder,
             userId,
+            organizationId,
           ],
         );
 
@@ -224,7 +303,7 @@ export class PostgresPanelFrameRepository implements PanelFrameRepository {
       }
 
       if (layoutUpdate !== undefined) {
-        await updatePageFrameLayoutConfig(transactionClient, pageId, userId, layoutUpdate);
+        await updatePageFrameLayoutConfig(transactionClient, pageId, userId, layoutUpdate, organizationId);
       }
 
       return savedFrames.sort((left, right) => left.readingOrder - right.readingOrder);
@@ -237,6 +316,7 @@ async function updatePageFrameLayoutConfig(
   pageId: string,
   userId: string,
   layoutUpdate: PageLayoutFrameUpdate,
+  organizationId: string | null,
 ): Promise<void> {
   await client.query(
     `
@@ -257,7 +337,20 @@ async function updatePageFrameLayoutConfig(
     INNER JOIN works ON works.id = chapters.work_id
     WHERE pages.id = $1
       AND pages.episode_id = episodes.id
-      AND works.user_id = $2
+      AND (
+        ($7::uuid IS NULL AND works.user_id = $2 AND works.organization_id IS NULL)
+        OR (
+            $7::uuid IS NOT NULL
+            AND works.organization_id = $7::uuid
+            AND EXISTS (
+              SELECT 1
+              FROM organization_members
+              WHERE organization_members.organization_id = works.organization_id
+                AND organization_members.user_id = $2
+                AND organization_members.status = 'active'
+            )
+          )
+      )
     `,
     [
       pageId,
@@ -266,6 +359,7 @@ async function updatePageFrameLayoutConfig(
       layoutUpdate.panelCount,
       JSON.stringify(toLayoutFrameDefinitions(layoutUpdate.frameDefinitions)),
       layoutUpdate.type === 'template' ? layoutUpdate.templateId : null,
+      organizationId,
     ],
   );
 }

@@ -84,6 +84,9 @@ const envSchema = z.object({
   STRIPE_WEBHOOK_SECRET: z.string().min(1).optional(),
   STRIPE_PRICE_STANDARD_MONTHLY: z.string().min(1).optional(),
   STRIPE_PRICE_PREMIUM_MONTHLY: z.string().min(1).optional(),
+  STRIPE_PRICE_ENTERPRISE_A_MONTHLY: z.string().min(1).optional(),
+  STRIPE_PRICE_ENTERPRISE_B_MONTHLY: z.string().min(1).optional(),
+  STRIPE_PRICE_ENTERPRISE_C_MONTHLY: z.string().min(1).optional(),
   STRIPE_PRICE_CREDITS_200: z.string().min(1).optional(),
   STRIPE_PRICE_CREDITS_1000: z.string().min(1).optional(),
   STRIPE_PRICE_CREDITS_3000: z.string().min(1).optional(),
@@ -104,6 +107,11 @@ const envSchema = z.object({
     .string()
     .optional()
     .transform((value) => (value === undefined ? true : value === 'true')),
+  ENTERPRISE_FEATURES_ENABLED: z
+    .string()
+    .optional()
+    .transform((value) => (value === undefined ? true : value === 'true')),
+  ADMIN_USER_EMAILS: z.string().optional().default(''),
   DEV_AUTH_BYPASS: z.string().optional().transform((value) => value === 'true'),
   DEV_AUTH_BYPASS_SUPABASE_ID: z.string().min(1).optional(),
   DEV_AUTH_BYPASS_EMAIL: z.string().email().optional(),

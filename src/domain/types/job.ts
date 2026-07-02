@@ -22,6 +22,7 @@ export interface PageGenerationJobParams {
 export interface GenerationJob {
   id: string;
   userId: string;
+  organizationId?: string | null;
   jobType: GenerationJobType;
   status: GenerationJobStatus;
   generationMode: PageGenerationMode | null;

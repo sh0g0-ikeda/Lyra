@@ -16,6 +16,7 @@ export interface GenerationJobCapacityLimits {
 export interface CreateGenerationJobInput {
   id?: string;
   userId: string;
+  organizationId?: string | null;
   jobType: GenerationJobType;
   generationMode: PageGenerationMode | null;
   creditCost: number;
@@ -44,8 +45,16 @@ export interface PruneExpiredGenerationJobsResult {
 export interface GenerationJobRepository {
   create(input: CreateGenerationJobInput): Promise<GenerationJob>;
   findByIdAndUserId(jobId: string, userId: string): Promise<GenerationJob | null>;
-  findActivePageGenerationJob(userId: string, pageId: string): Promise<GenerationJob | null>;
-  findActiveEntityGenerationJob(userId: string, entityId: string): Promise<GenerationJob | null>;
+  findActivePageGenerationJob(
+    userId: string,
+    pageId: string,
+    organizationId?: string | null,
+  ): Promise<GenerationJob | null>;
+  findActiveEntityGenerationJob(
+    userId: string,
+    entityId: string,
+    organizationId?: string | null,
+  ): Promise<GenerationJob | null>;
   countActiveGenerationJobsByUser(
     userId: string,
     jobTypes?: readonly GenerationJobType[],
@@ -63,6 +72,7 @@ export interface GenerationJobRepository {
 interface GenerationJobRow extends QueryResultRow {
   id: string;
   user_id: string;
+  organization_id: string | null;
   job_type: GenerationJobType;
   status: GenerationJob['status'];
   generation_mode: string | null;
@@ -112,18 +122,20 @@ export class PostgresGenerationJobRepository implements GenerationJobRepository 
       INSERT INTO generation_jobs (
         id,
         user_id,
+        organization_id,
         job_type,
         generation_mode,
         credit_cost,
         params,
         expires_at
       )
-      VALUES (COALESCE($1::uuid, gen_random_uuid()), $2, $3, $4, $5, $6::jsonb, NOW() + INTERVAL '7 days')
+      VALUES (COALESCE($1::uuid, gen_random_uuid()), $2, $3, $4, $5, $6, $7::jsonb, NOW() + INTERVAL '7 days')
       RETURNING *
       `,
       [
         input.id ?? null,
         input.userId,
+        input.organizationId ?? null,
         input.jobType,
         input.generationMode,
         input.creditCost,
@@ -183,29 +195,33 @@ export class PostgresGenerationJobRepository implements GenerationJobRepository 
   public async findActivePageGenerationJob(
     userId: string,
     pageId: string,
+    organizationId: string | null = null,
   ): Promise<GenerationJob | null> {
-    return this.findActiveResourceJob(userId, 'page_generate', 'page_id', pageId);
+    return this.findActiveResourceJob(userId, 'page_generate', 'page_id', pageId, organizationId);
   }
 
   public async findActiveEntityGenerationJob(
     userId: string,
     entityId: string,
+    organizationId: string | null = null,
   ): Promise<GenerationJob | null> {
-    return this.findActiveResourceJob(userId, 'entity_generate', 'entity_id', entityId);
+    return this.findActiveResourceJob(userId, 'entity_generate', 'entity_id', entityId, organizationId);
   }
 
   public async findActiveEpisodeStoryAutofillJob(
     userId: string,
     episodeId: string,
+    organizationId: string | null = null,
   ): Promise<GenerationJob | null> {
-    return this.findActiveResourceJob(userId, 'episode_story_autofill', 'episode_id', episodeId);
+    return this.findActiveResourceJob(userId, 'episode_story_autofill', 'episode_id', episodeId, organizationId);
   }
 
   public async findActiveEpisodePageSkeletonJob(
     userId: string,
     episodeId: string,
+    organizationId: string | null = null,
   ): Promise<GenerationJob | null> {
-    return this.findActiveResourceJob(userId, 'episode_page_skeleton', 'episode_id', episodeId);
+    return this.findActiveResourceJob(userId, 'episode_page_skeleton', 'episode_id', episodeId, organizationId);
   }
 
   public async countActiveGenerationJobsByUser(
@@ -417,19 +433,33 @@ export class PostgresGenerationJobRepository implements GenerationJobRepository 
     jobType: GenerationJobType,
     resourceParamKey: 'page_id' | 'entity_id' | 'episode_id',
     resourceId: string,
+    organizationId: string | null,
   ): Promise<GenerationJob | null> {
     const result = await this.client.query<GenerationJobRow>(
       `
       SELECT *
       FROM generation_jobs
-      WHERE user_id = $1
-        AND job_type = $2
+      WHERE job_type = $2
         AND status IN ('queued', 'processing')
         AND params->>$3 = $4
+        AND (
+          ($5::uuid IS NULL AND user_id = $1 AND organization_id IS NULL)
+          OR (
+            $5::uuid IS NOT NULL
+            AND organization_id = $5::uuid
+            AND EXISTS (
+              SELECT 1
+              FROM organization_members
+              WHERE organization_members.organization_id = generation_jobs.organization_id
+                AND organization_members.user_id = $1
+                AND organization_members.status = 'active'
+            )
+          )
+        )
       ORDER BY created_at DESC
       LIMIT 1
       `,
-      [userId, jobType, resourceParamKey, resourceId],
+      [userId, jobType, resourceParamKey, resourceId, organizationId],
     );
 
     return result.rows[0] === undefined ? null : mapGenerationJobRow(result.rows[0]);
@@ -458,6 +488,7 @@ function mapGenerationJobRow(row: GenerationJobRow): GenerationJob {
   return {
     id: row.id,
     userId: row.user_id,
+    organizationId: row.organization_id,
     jobType: row.job_type,
     status: row.status,
     generationMode: toPageGenerationMode(row.generation_mode),

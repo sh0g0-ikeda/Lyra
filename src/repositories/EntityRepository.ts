@@ -19,6 +19,7 @@ export type { CreateEntityInput, Entity, UpdateEntityInput };
 
 export interface EntityPrimaryReferenceImage {
   entityId: string;
+  ownerUserId?: string;
   refId: string;
   s3Key: string;
   cdnUrl: string;
@@ -26,27 +27,44 @@ export interface EntityPrimaryReferenceImage {
 
 export interface EntityRepository {
   create(input: CreateEntityInput): Promise<Entity>;
-  findByIdAndUserId(id: string, userId: string): Promise<Entity | null>;
-  findByWorkIdAndUserId(workId: string, userId: string): Promise<Entity[]>;
-  countByIdsAndWorkIdAndUserId(entityIds: string[], workId: string, userId: string): Promise<number>;
+  findByIdAndUserId(id: string, userId: string, organizationId?: string | null): Promise<Entity | null>;
+  findByWorkIdAndUserId(workId: string, userId: string, organizationId?: string | null): Promise<Entity[]>;
+  countByIdsAndWorkIdAndUserId(
+    entityIds: string[],
+    workId: string,
+    userId: string,
+    organizationId?: string | null,
+  ): Promise<number>;
   findPrimaryReferenceImagesByEntityIdsAndUserId(
     entityIds: string[],
     workId: string,
     userId: string,
+    organizationId?: string | null,
   ): Promise<EntityPrimaryReferenceImage[]>;
-  update(id: string, userId: string, input: UpdateEntityInput): Promise<Entity | null>;
-  delete(id: string, userId: string): Promise<boolean>;
+  update(id: string, userId: string, input: UpdateEntityInput, organizationId?: string | null): Promise<Entity | null>;
+  delete(id: string, userId: string, organizationId?: string | null): Promise<boolean>;
 }
 
 export interface EntityReferenceReader {
-  countByIdsAndWorkIdAndUserId(entityIds: string[], workId: string, userId: string): Promise<number>;
+  countByIdsAndWorkIdAndUserId(
+    entityIds: string[],
+    workId: string,
+    userId: string,
+    organizationId?: string | null,
+  ): Promise<number>;
+  countByIdsAndWorkId?(entityIds: string[], workId: string): Promise<number>;
 }
 
 export interface EntityReferenceRepository {
-  findReferenceContextByIdAndUserId(entityId: string, userId: string): Promise<EntityReferenceContext | null>;
+  findReferenceContextByIdAndUserId(
+    entityId: string,
+    userId: string,
+    organizationId?: string | null,
+  ): Promise<EntityReferenceContext | null>;
   saveConfirmedReferences(input: {
     entityId: string;
     userId: string;
+    organizationId?: string | null;
     images: EntityReferenceImage[];
     primaryRefId: string;
     promptSupplement?: string | null;
@@ -54,9 +72,15 @@ export interface EntityReferenceRepository {
   deleteReferenceImage(input: {
     entityId: string;
     userId: string;
+    organizationId?: string | null;
     refId: string;
   }): Promise<EntityReferenceSet | null>;
-  countEntityStateUsageByReferenceId(entityId: string, userId: string, refId: string): Promise<number>;
+  countEntityStateUsageByReferenceId(
+    entityId: string,
+    userId: string,
+    refId: string,
+    organizationId?: string | null,
+  ): Promise<number>;
 }
 
 interface EntityRow extends QueryResultRow {
@@ -76,6 +100,7 @@ interface EntityRow extends QueryResultRow {
 
 interface EntityReferenceSetRow extends QueryResultRow {
   entity_id: string;
+  owner_user_id?: string;
   reference_images: unknown;
   primary_ref_id: string | null;
   reference_set_status: EntityReferenceSetStatus;
@@ -130,30 +155,66 @@ export class PostgresEntityRepository implements EntityRepository, EntityReferen
     return mapEntityRow(result.rows[0]);
   }
 
-  public async findByIdAndUserId(id: string, userId: string): Promise<Entity | null> {
+  public async findByIdAndUserId(
+    id: string,
+    userId: string,
+    organizationId: string | null = null,
+  ): Promise<Entity | null> {
     const result = await this.client.query<EntityRow>(
       `
-      SELECT *
+      SELECT entities.*
       FROM entities
-      WHERE id = $1
-        AND user_id = $2
+      INNER JOIN works ON works.id = entities.work_id
+      WHERE entities.id = $1
+        AND (
+          ($3::uuid IS NULL AND works.organization_id IS NULL AND entities.user_id = $2)
+          OR (
+            $3::uuid IS NOT NULL
+            AND works.organization_id = $3::uuid
+            AND EXISTS (
+              SELECT 1
+              FROM organization_members
+              WHERE organization_members.organization_id = works.organization_id
+                AND organization_members.user_id = $2
+                AND organization_members.status = 'active'
+            )
+          )
+        )
       `,
-      [id, userId],
+      [id, userId, organizationId],
     );
 
     return result.rows[0] === undefined ? null : mapEntityRow(result.rows[0]);
   }
 
-  public async findByWorkIdAndUserId(workId: string, userId: string): Promise<Entity[]> {
+  public async findByWorkIdAndUserId(
+    workId: string,
+    userId: string,
+    organizationId: string | null = null,
+  ): Promise<Entity[]> {
     const result = await this.client.query<EntityRow>(
       `
-      SELECT *
+      SELECT entities.*
       FROM entities
-      WHERE work_id = $1
-        AND user_id = $2
-      ORDER BY created_at DESC
+      INNER JOIN works ON works.id = entities.work_id
+      WHERE entities.work_id = $1
+        AND (
+          ($3::uuid IS NULL AND works.organization_id IS NULL AND entities.user_id = $2)
+          OR (
+            $3::uuid IS NOT NULL
+            AND works.organization_id = $3::uuid
+            AND EXISTS (
+              SELECT 1
+              FROM organization_members
+              WHERE organization_members.organization_id = works.organization_id
+                AND organization_members.user_id = $2
+                AND organization_members.status = 'active'
+            )
+          )
+        )
+      ORDER BY entities.created_at DESC
       `,
-      [workId, userId],
+      [workId, userId, organizationId],
     );
 
     return result.rows.map(mapEntityRow);
@@ -162,6 +223,7 @@ export class PostgresEntityRepository implements EntityRepository, EntityReferen
   public async findReferenceContextByIdAndUserId(
     entityId: string,
     userId: string,
+    organizationId: string | null = null,
   ): Promise<EntityReferenceContext | null> {
     const result = await this.client.query<EntityRow & EntityReferenceSetRow>(
       `
@@ -173,10 +235,24 @@ export class PostgresEntityRepository implements EntityRepository, EntityReferen
              reference_sets.updated_at
       FROM entities
       INNER JOIN reference_sets ON reference_sets.entity_id = entities.id
+      INNER JOIN works ON works.id = entities.work_id
       WHERE entities.id = $1
-        AND entities.user_id = $2
+        AND (
+          ($3::uuid IS NULL AND works.organization_id IS NULL AND entities.user_id = $2)
+          OR (
+            $3::uuid IS NOT NULL
+            AND works.organization_id = $3::uuid
+            AND EXISTS (
+              SELECT 1
+              FROM organization_members
+              WHERE organization_members.organization_id = works.organization_id
+                AND organization_members.user_id = $2
+                AND organization_members.status = 'active'
+            )
+          )
+        )
       `,
-      [entityId, userId],
+      [entityId, userId, organizationId],
     );
 
     const row = result.rows[0];
@@ -187,7 +263,41 @@ export class PostgresEntityRepository implements EntityRepository, EntityReferen
     entityIds: string[],
     workId: string,
     userId: string,
+    organizationId: string | null = null,
   ): Promise<number> {
+    if (entityIds.length === 0) {
+      return 0;
+    }
+
+    const result = await this.client.query<{ count: number }>(
+      `
+      SELECT COUNT(DISTINCT entities.id)::int AS count
+      FROM entities
+      INNER JOIN works ON works.id = entities.work_id
+      WHERE entities.id = ANY($1::uuid[])
+        AND entities.work_id = $2
+        AND (
+          ($4::uuid IS NULL AND works.organization_id IS NULL AND entities.user_id = $3)
+          OR (
+            $4::uuid IS NOT NULL
+            AND works.organization_id = $4::uuid
+            AND EXISTS (
+              SELECT 1
+              FROM organization_members
+              WHERE organization_members.organization_id = works.organization_id
+                AND organization_members.user_id = $3
+                AND organization_members.status = 'active'
+            )
+          )
+        )
+      `,
+      [entityIds, workId, userId, organizationId],
+    );
+
+    return result.rows[0]?.count ?? 0;
+  }
+
+  public async countByIdsAndWorkId(entityIds: string[], workId: string): Promise<number> {
     if (entityIds.length === 0) {
       return 0;
     }
@@ -198,9 +308,8 @@ export class PostgresEntityRepository implements EntityRepository, EntityReferen
       FROM entities
       WHERE id = ANY($1::uuid[])
         AND work_id = $2
-        AND user_id = $3
       `,
-      [entityIds, workId, userId],
+      [entityIds, workId],
     );
 
     return result.rows[0]?.count ?? 0;
@@ -210,6 +319,7 @@ export class PostgresEntityRepository implements EntityRepository, EntityReferen
     entityIds: string[],
     workId: string,
     userId: string,
+    organizationId: string | null = null,
   ): Promise<EntityPrimaryReferenceImage[]> {
     if (entityIds.length === 0) {
       return [];
@@ -218,17 +328,32 @@ export class PostgresEntityRepository implements EntityRepository, EntityReferen
     const result = await this.client.query<EntityReferenceSetRow>(
       `
       SELECT entities.id AS entity_id,
+             entities.user_id AS owner_user_id,
              reference_sets.reference_images,
              reference_sets.primary_ref_id,
              reference_sets.status AS reference_set_status,
              reference_sets.updated_at
       FROM entities
       INNER JOIN reference_sets ON reference_sets.entity_id = entities.id
+      INNER JOIN works ON works.id = entities.work_id
       WHERE entities.id = ANY($1::uuid[])
         AND entities.work_id = $2
-        AND entities.user_id = $3
+        AND (
+          ($4::uuid IS NULL AND works.organization_id IS NULL AND entities.user_id = $3)
+          OR (
+            $4::uuid IS NOT NULL
+            AND works.organization_id = $4::uuid
+            AND EXISTS (
+              SELECT 1
+              FROM organization_members
+              WHERE organization_members.organization_id = works.organization_id
+                AND organization_members.user_id = $3
+                AND organization_members.status = 'active'
+            )
+          )
+        )
       `,
-      [entityIds, workId, userId],
+      [entityIds, workId, userId, organizationId],
     );
 
     return result.rows.flatMap((row) => {
@@ -246,6 +371,7 @@ export class PostgresEntityRepository implements EntityRepository, EntityReferen
       return [
         {
           entityId: row.entity_id,
+          ownerUserId: row.owner_user_id ?? userId,
           refId: row.primary_ref_id,
           s3Key: primaryReference.s3Key,
           cdnUrl: primaryReference.cdnUrl,
@@ -257,6 +383,7 @@ export class PostgresEntityRepository implements EntityRepository, EntityReferen
   public async saveConfirmedReferences(input: {
     entityId: string;
     userId: string;
+    organizationId?: string | null;
     images: EntityReferenceImage[];
     primaryRefId: string;
     promptSupplement?: string | null;
@@ -276,11 +403,25 @@ export class PostgresEntityRepository implements EntityRepository, EntityReferen
                reference_sets.updated_at
         FROM reference_sets
         INNER JOIN entities ON entities.id = reference_sets.entity_id
+        INNER JOIN works ON works.id = entities.work_id
         WHERE reference_sets.entity_id = $1
-          AND entities.user_id = $2
+          AND (
+            ($3::uuid IS NULL AND works.organization_id IS NULL AND entities.user_id = $2)
+            OR (
+              $3::uuid IS NOT NULL
+              AND works.organization_id = $3::uuid
+              AND EXISTS (
+                SELECT 1
+                FROM organization_members
+                WHERE organization_members.organization_id = works.organization_id
+                  AND organization_members.user_id = $2
+                  AND organization_members.status = 'active'
+              )
+            )
+          )
         FOR UPDATE OF reference_sets
         `,
-        [input.entityId, input.userId],
+        [input.entityId, input.userId, input.organizationId ?? null],
       );
 
       const currentRow = current.rows[0];
@@ -305,9 +446,23 @@ export class PostgresEntityRepository implements EntityRepository, EntityReferen
             status = $5,
             updated_at = NOW()
         FROM entities
+        INNER JOIN works ON works.id = entities.work_id
         WHERE reference_sets.entity_id = $1
           AND entities.id = reference_sets.entity_id
-          AND entities.user_id = $2
+          AND (
+            ($6::uuid IS NULL AND works.organization_id IS NULL AND entities.user_id = $2)
+            OR (
+              $6::uuid IS NOT NULL
+              AND works.organization_id = $6::uuid
+              AND EXISTS (
+                SELECT 1
+                FROM organization_members
+                WHERE organization_members.organization_id = works.organization_id
+                  AND organization_members.user_id = $2
+                  AND organization_members.status = 'active'
+              )
+            )
+          )
         RETURNING reference_sets.entity_id,
                   reference_sets.reference_images,
                   reference_sets.primary_ref_id,
@@ -320,6 +475,7 @@ export class PostgresEntityRepository implements EntityRepository, EntityReferen
           JSON.stringify(mergedImages.map(toReferenceImageRecord)),
           primaryRefId,
           referenceSetStatus,
+          input.organizationId ?? null,
         ],
       );
 
@@ -333,7 +489,25 @@ export class PostgresEntityRepository implements EntityRepository, EntityReferen
             status = $5,
             updated_at = NOW()
         WHERE id = $1
-          AND user_id = $2
+          AND (
+            ($6::uuid IS NULL AND user_id = $2 AND work_id IN (
+              SELECT id
+              FROM works
+              WHERE organization_id IS NULL
+            ))
+            OR ($6::uuid IS NOT NULL AND work_id IN (
+              SELECT id
+              FROM works
+              WHERE organization_id = $6::uuid
+                AND EXISTS (
+                  SELECT 1
+                  FROM organization_members
+                  WHERE organization_members.organization_id = works.organization_id
+                    AND organization_members.user_id = $2
+                    AND organization_members.status = 'active'
+                )
+            ))
+          )
         `,
         [
           input.entityId,
@@ -341,6 +515,7 @@ export class PostgresEntityRepository implements EntityRepository, EntityReferen
           input.promptSupplement !== undefined,
           input.promptSupplement ?? null,
           mergedImages.length === 0 ? 'draft' : 'ready',
+          input.organizationId ?? null,
         ],
       );
 
@@ -352,6 +527,7 @@ export class PostgresEntityRepository implements EntityRepository, EntityReferen
   public async deleteReferenceImage(input: {
     entityId: string;
     userId: string;
+    organizationId?: string | null;
     refId: string;
   }): Promise<EntityReferenceSet | null> {
     const runner = this.client.transaction?.bind(this.client);
@@ -369,11 +545,25 @@ export class PostgresEntityRepository implements EntityRepository, EntityReferen
                reference_sets.updated_at
         FROM reference_sets
         INNER JOIN entities ON entities.id = reference_sets.entity_id
+        INNER JOIN works ON works.id = entities.work_id
         WHERE reference_sets.entity_id = $1
-          AND entities.user_id = $2
+          AND (
+            ($3::uuid IS NULL AND works.organization_id IS NULL AND entities.user_id = $2)
+            OR (
+              $3::uuid IS NOT NULL
+              AND works.organization_id = $3::uuid
+              AND EXISTS (
+                SELECT 1
+                FROM organization_members
+                WHERE organization_members.organization_id = works.organization_id
+                  AND organization_members.user_id = $2
+                  AND organization_members.status = 'active'
+              )
+            )
+          )
         FOR UPDATE OF reference_sets
         `,
-        [input.entityId, input.userId],
+        [input.entityId, input.userId, input.organizationId ?? null],
       );
 
       const currentRow = current.rows[0];
@@ -399,9 +589,23 @@ export class PostgresEntityRepository implements EntityRepository, EntityReferen
             status = $5,
             updated_at = NOW()
         FROM entities
+        INNER JOIN works ON works.id = entities.work_id
         WHERE reference_sets.entity_id = $1
           AND entities.id = reference_sets.entity_id
-          AND entities.user_id = $2
+          AND (
+            ($6::uuid IS NULL AND works.organization_id IS NULL AND entities.user_id = $2)
+            OR (
+              $6::uuid IS NOT NULL
+              AND works.organization_id = $6::uuid
+              AND EXISTS (
+                SELECT 1
+                FROM organization_members
+                WHERE organization_members.organization_id = works.organization_id
+                  AND organization_members.user_id = $2
+                  AND organization_members.status = 'active'
+              )
+            )
+          )
         RETURNING reference_sets.entity_id,
                   reference_sets.reference_images,
                   reference_sets.primary_ref_id,
@@ -414,6 +618,7 @@ export class PostgresEntityRepository implements EntityRepository, EntityReferen
           JSON.stringify(nextImages.map(toReferenceImageRecord)),
           primaryRefId,
           referenceSetStatus,
+          input.organizationId ?? null,
         ],
       );
 
@@ -423,9 +628,27 @@ export class PostgresEntityRepository implements EntityRepository, EntityReferen
         SET status = $3,
             updated_at = NOW()
         WHERE id = $1
-          AND user_id = $2
+          AND (
+            ($4::uuid IS NULL AND user_id = $2 AND work_id IN (
+              SELECT id
+              FROM works
+              WHERE organization_id IS NULL
+            ))
+            OR ($4::uuid IS NOT NULL AND work_id IN (
+              SELECT id
+              FROM works
+              WHERE organization_id = $4::uuid
+                AND EXISTS (
+                  SELECT 1
+                  FROM organization_members
+                  WHERE organization_members.organization_id = works.organization_id
+                    AND organization_members.user_id = $2
+                    AND organization_members.status = 'active'
+                )
+            ))
+          )
         `,
-        [input.entityId, input.userId, nextImages.length === 0 ? 'draft' : 'ready'],
+        [input.entityId, input.userId, nextImages.length === 0 ? 'draft' : 'ready', input.organizationId ?? null],
       );
 
       const updatedRow = updatedReferenceSet.rows[0];
@@ -437,23 +660,43 @@ export class PostgresEntityRepository implements EntityRepository, EntityReferen
     entityId: string,
     userId: string,
     refId: string,
+    organizationId: string | null = null,
   ): Promise<number> {
     const result = await this.client.query<{ count: number }>(
       `
       SELECT COUNT(entity_states.id)::int AS count
       FROM entity_states
       INNER JOIN entities ON entities.id = entity_states.entity_id
+      INNER JOIN works ON works.id = entities.work_id
       WHERE entity_states.entity_id = $1
-        AND entities.user_id = $2
+        AND (
+          ($4::uuid IS NULL AND works.organization_id IS NULL AND entities.user_id = $2)
+          OR (
+            $4::uuid IS NOT NULL
+            AND works.organization_id = $4::uuid
+            AND EXISTS (
+              SELECT 1
+              FROM organization_members
+              WHERE organization_members.organization_id = works.organization_id
+                AND organization_members.user_id = $2
+                AND organization_members.status = 'active'
+            )
+          )
+        )
         AND entity_states.costume_ref_id = $3
       `,
-      [entityId, userId, refId],
+      [entityId, userId, refId, organizationId],
     );
 
     return result.rows[0]?.count ?? 0;
   }
 
-  public async update(id: string, userId: string, input: UpdateEntityInput): Promise<Entity | null> {
+  public async update(
+    id: string,
+    userId: string,
+    input: UpdateEntityInput,
+    organizationId: string | null = null,
+  ): Promise<Entity | null> {
     const result = await this.client.query<EntityRow>(
       `
       UPDATE entities
@@ -465,7 +708,25 @@ export class PostgresEntityRepository implements EntityRepository, EntityReferen
           speech_profile = CASE WHEN $11::boolean THEN $12::jsonb ELSE speech_profile END,
           updated_at = NOW()
       WHERE id = $1
-        AND user_id = $2
+        AND (
+          ($13::uuid IS NULL AND user_id = $2 AND work_id IN (
+              SELECT id
+              FROM works
+              WHERE organization_id IS NULL
+            ))
+          OR ($13::uuid IS NOT NULL AND work_id IN (
+              SELECT id
+              FROM works
+              WHERE organization_id = $13::uuid
+                AND EXISTS (
+                  SELECT 1
+                  FROM organization_members
+                  WHERE organization_members.organization_id = works.organization_id
+                    AND organization_members.user_id = $2
+                    AND organization_members.status = 'active'
+                )
+            ))
+        )
       RETURNING *
       `,
       [
@@ -481,20 +742,39 @@ export class PostgresEntityRepository implements EntityRepository, EntityReferen
         JSON.stringify(input.structuredFields ?? {}),
         input.speechProfile !== undefined,
         JSON.stringify(input.speechProfile ?? {}),
+        organizationId,
       ],
     );
 
     return result.rows[0] === undefined ? null : mapEntityRow(result.rows[0]);
   }
 
-  public async delete(id: string, userId: string): Promise<boolean> {
+  public async delete(id: string, userId: string, organizationId: string | null = null): Promise<boolean> {
     const result = await this.client.query(
       `
       DELETE FROM entities
       WHERE id = $1
-        AND user_id = $2
+        AND (
+          ($3::uuid IS NULL AND user_id = $2 AND work_id IN (
+              SELECT id
+              FROM works
+              WHERE organization_id IS NULL
+            ))
+          OR ($3::uuid IS NOT NULL AND work_id IN (
+              SELECT id
+              FROM works
+              WHERE organization_id = $3::uuid
+                AND EXISTS (
+                  SELECT 1
+                  FROM organization_members
+                  WHERE organization_members.organization_id = works.organization_id
+                    AND organization_members.user_id = $2
+                    AND organization_members.status = 'active'
+                )
+            ))
+        )
       `,
-      [id, userId],
+      [id, userId, organizationId],
     );
 
     return (result.rowCount ?? 0) > 0;

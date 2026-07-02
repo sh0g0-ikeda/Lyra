@@ -27,20 +27,20 @@ export type {
 };
 
 export interface StoryServicePort {
-  listWorks(userId: string): Promise<Work[]>;
+  listWorks(userId: string, organizationId?: string | null): Promise<Work[]>;
   createWork(userId: string, input: CreateWorkInput): Promise<Work>;
-  getWork(userId: string, workId: string): Promise<Work>;
-  updateWork(userId: string, workId: string, input: UpdateWorkInput): Promise<Work>;
-  createChapter(userId: string, workId: string, input: CreateChapterInput): Promise<Chapter>;
-  listChapters(userId: string, workId: string): Promise<Chapter[]>;
-  updateChapter(userId: string, chapterId: string, input: UpdateChapterInput): Promise<Chapter>;
-  deleteChapter(userId: string, chapterId: string): Promise<void>;
-  moveChapter(userId: string, chapterId: string, direction: StoryItemMoveDirection): Promise<Chapter>;
-  createEpisode(userId: string, chapterId: string, input: CreateEpisodeInput): Promise<Episode>;
-  listEpisodes(userId: string, chapterId: string): Promise<Episode[]>;
-  updateEpisode(userId: string, episodeId: string, input: UpdateEpisodeInput): Promise<Episode>;
-  deleteEpisode(userId: string, episodeId: string): Promise<void>;
-  moveEpisode(userId: string, episodeId: string, direction: StoryItemMoveDirection): Promise<Episode>;
+  getWork(userId: string, workId: string, organizationId?: string | null): Promise<Work>;
+  updateWork(userId: string, workId: string, input: UpdateWorkInput, organizationId?: string | null): Promise<Work>;
+  createChapter(userId: string, workId: string, input: CreateChapterInput, organizationId?: string | null): Promise<Chapter>;
+  listChapters(userId: string, workId: string, organizationId?: string | null): Promise<Chapter[]>;
+  updateChapter(userId: string, chapterId: string, input: UpdateChapterInput, organizationId?: string | null): Promise<Chapter>;
+  deleteChapter(userId: string, chapterId: string, organizationId?: string | null): Promise<void>;
+  moveChapter(userId: string, chapterId: string, direction: StoryItemMoveDirection, organizationId?: string | null): Promise<Chapter>;
+  createEpisode(userId: string, chapterId: string, input: CreateEpisodeInput, organizationId?: string | null): Promise<Episode>;
+  listEpisodes(userId: string, chapterId: string, organizationId?: string | null): Promise<Episode[]>;
+  updateEpisode(userId: string, episodeId: string, input: UpdateEpisodeInput, organizationId?: string | null): Promise<Episode>;
+  deleteEpisode(userId: string, episodeId: string, organizationId?: string | null): Promise<void>;
+  moveEpisode(userId: string, episodeId: string, direction: StoryItemMoveDirection, organizationId?: string | null): Promise<Episode>;
 }
 
 export class StoryService implements StoryServicePort {
@@ -57,12 +57,12 @@ export class StoryService implements StoryServicePort {
     return this.storyRepository.createWork(userId, input);
   }
 
-  public async listWorks(userId: string): Promise<Work[]> {
-    return this.storyRepository.findWorksByUserId(userId);
+  public async listWorks(userId: string, organizationId: string | null = null): Promise<Work[]> {
+    return this.storyRepository.findWorksByUserId(userId, organizationId);
   }
 
-  public async getWork(userId: string, workId: string): Promise<Work> {
-    const work = await this.storyRepository.findWorkByIdAndUserId(workId, userId);
+  public async getWork(userId: string, workId: string, organizationId: string | null = null): Promise<Work> {
+    const work = await this.storyRepository.findWorkByIdAndUserId(workId, userId, organizationId);
     if (work === null) {
       throw new NotFoundError('Work not found');
     }
@@ -70,14 +70,19 @@ export class StoryService implements StoryServicePort {
     return work;
   }
 
-  public async updateWork(userId: string, workId: string, input: UpdateWorkInput): Promise<Work> {
-    await this.ensureWorkOwnedByUser(userId, workId);
+  public async updateWork(
+    userId: string,
+    workId: string,
+    input: UpdateWorkInput,
+    organizationId: string | null = null,
+  ): Promise<Work> {
+    await this.ensureWorkOwnedByUser(userId, workId, organizationId);
 
     if (input.mainEntityIds !== undefined) {
-      await this.ensureEntitiesBelongToWork(userId, workId, input.mainEntityIds);
+      await this.ensureEntitiesBelongToWork(userId, workId, input.mainEntityIds, organizationId);
     }
 
-    const work = await this.storyRepository.updateWork(workId, userId, input);
+    const work = await this.storyRepository.updateWork(workId, userId, input, organizationId);
     if (work === null) {
       throw new NotFoundError('Work not found');
     }
@@ -85,31 +90,37 @@ export class StoryService implements StoryServicePort {
     return work;
   }
 
-  public async createChapter(userId: string, workId: string, input: CreateChapterInput): Promise<Chapter> {
-    await this.ensureWorkOwnedByUser(userId, workId);
-    await this.ensureEntitiesBelongToWork(userId, workId, input.entitiesInvolved);
+  public async createChapter(
+    userId: string,
+    workId: string,
+    input: CreateChapterInput,
+    organizationId: string | null = null,
+  ): Promise<Chapter> {
+    await this.ensureWorkOwnedByUser(userId, workId, organizationId);
+    await this.ensureEntitiesBelongToWork(userId, workId, input.entitiesInvolved, organizationId);
     return this.storyRepository.createChapter(workId, input);
   }
 
-  public async listChapters(userId: string, workId: string): Promise<Chapter[]> {
-    await this.ensureWorkOwnedByUser(userId, workId);
-    return this.storyRepository.findChaptersByWorkIdAndUserId(workId, userId);
+  public async listChapters(userId: string, workId: string, organizationId: string | null = null): Promise<Chapter[]> {
+    await this.ensureWorkOwnedByUser(userId, workId, organizationId);
+    return this.storyRepository.findChaptersByWorkIdAndUserId(workId, userId, organizationId);
   }
 
   public async updateChapter(
     userId: string,
     chapterId: string,
     input: UpdateChapterInput,
+    organizationId: string | null = null,
   ): Promise<Chapter> {
-    const currentChapter = await this.storyRepository.findChapterByIdAndUserId(chapterId, userId);
+    const currentChapter = await this.storyRepository.findChapterByIdAndUserId(chapterId, userId, organizationId);
     if (currentChapter === null) {
       throw new NotFoundError('Chapter not found');
     }
     if (input.entitiesInvolved !== undefined) {
-      await this.ensureEntitiesBelongToWork(userId, currentChapter.workId, input.entitiesInvolved);
+      await this.ensureEntitiesBelongToWork(userId, currentChapter.workId, input.entitiesInvolved, organizationId);
     }
 
-    const chapter = await this.storyRepository.updateChapter(chapterId, userId, input);
+    const chapter = await this.storyRepository.updateChapter(chapterId, userId, input, organizationId);
     if (chapter === null) {
       throw new NotFoundError('Chapter not found');
     }
@@ -117,8 +128,8 @@ export class StoryService implements StoryServicePort {
     return chapter;
   }
 
-  public async deleteChapter(userId: string, chapterId: string): Promise<void> {
-    const deleted = await this.storyRepository.deleteChapter(chapterId, userId);
+  public async deleteChapter(userId: string, chapterId: string, organizationId: string | null = null): Promise<void> {
+    const deleted = await this.storyRepository.deleteChapter(chapterId, userId, organizationId);
     if (!deleted) {
       throw new NotFoundError('Chapter not found');
     }
@@ -128,8 +139,9 @@ export class StoryService implements StoryServicePort {
     userId: string,
     chapterId: string,
     direction: StoryItemMoveDirection,
+    organizationId: string | null = null,
   ): Promise<Chapter> {
-    const chapter = await this.storyRepository.moveChapter(chapterId, userId, direction);
+    const chapter = await this.storyRepository.moveChapter(chapterId, userId, direction, organizationId);
     if (chapter === null) {
       throw new NotFoundError('Chapter not found');
     }
@@ -141,32 +153,34 @@ export class StoryService implements StoryServicePort {
     userId: string,
     chapterId: string,
     input: CreateEpisodeInput,
+    organizationId: string | null = null,
   ): Promise<Episode> {
-    const chapter = await this.ensureChapterOwnedByUser(userId, chapterId);
-    await this.ensureEntitiesBelongToWork(userId, chapter.workId, input.entitiesInvolved);
+    const chapter = await this.ensureChapterOwnedByUser(userId, chapterId, organizationId);
+    await this.ensureEntitiesBelongToWork(userId, chapter.workId, input.entitiesInvolved, organizationId);
     return this.storyRepository.createEpisode(chapterId, input);
   }
 
-  public async listEpisodes(userId: string, chapterId: string): Promise<Episode[]> {
-    await this.ensureChapterOwnedByUser(userId, chapterId);
-    return this.storyRepository.findEpisodesByChapterIdAndUserId(chapterId, userId);
+  public async listEpisodes(userId: string, chapterId: string, organizationId: string | null = null): Promise<Episode[]> {
+    await this.ensureChapterOwnedByUser(userId, chapterId, organizationId);
+    return this.storyRepository.findEpisodesByChapterIdAndUserId(chapterId, userId, organizationId);
   }
 
   public async updateEpisode(
     userId: string,
     episodeId: string,
     input: UpdateEpisodeInput,
+    organizationId: string | null = null,
   ): Promise<Episode> {
-    const currentEpisode = await this.storyRepository.findEpisodeByIdAndUserId(episodeId, userId);
+    const currentEpisode = await this.storyRepository.findEpisodeByIdAndUserId(episodeId, userId, organizationId);
     if (currentEpisode === null) {
       throw new NotFoundError('Episode not found');
     }
     if (input.entitiesInvolved !== undefined) {
-      const chapter = await this.ensureChapterOwnedByUser(userId, currentEpisode.chapterId);
-      await this.ensureEntitiesBelongToWork(userId, chapter.workId, input.entitiesInvolved);
+      const chapter = await this.ensureChapterOwnedByUser(userId, currentEpisode.chapterId, organizationId);
+      await this.ensureEntitiesBelongToWork(userId, chapter.workId, input.entitiesInvolved, organizationId);
     }
 
-    const episode = await this.storyRepository.updateEpisode(episodeId, userId, input);
+    const episode = await this.storyRepository.updateEpisode(episodeId, userId, input, organizationId);
     if (episode === null) {
       throw new NotFoundError('Episode not found');
     }
@@ -174,8 +188,8 @@ export class StoryService implements StoryServicePort {
     return episode;
   }
 
-  public async deleteEpisode(userId: string, episodeId: string): Promise<void> {
-    const deleted = await this.storyRepository.deleteEpisode(episodeId, userId);
+  public async deleteEpisode(userId: string, episodeId: string, organizationId: string | null = null): Promise<void> {
+    const deleted = await this.storyRepository.deleteEpisode(episodeId, userId, organizationId);
     if (!deleted) {
       throw new NotFoundError('Episode not found');
     }
@@ -185,8 +199,9 @@ export class StoryService implements StoryServicePort {
     userId: string,
     episodeId: string,
     direction: StoryItemMoveDirection,
+    organizationId: string | null = null,
   ): Promise<Episode> {
-    const episode = await this.storyRepository.moveEpisode(episodeId, userId, direction);
+    const episode = await this.storyRepository.moveEpisode(episodeId, userId, direction, organizationId);
     if (episode === null) {
       throw new NotFoundError('Episode not found');
     }
@@ -194,12 +209,16 @@ export class StoryService implements StoryServicePort {
     return episode;
   }
 
-  private async ensureWorkOwnedByUser(userId: string, workId: string): Promise<void> {
-    await this.getWork(userId, workId);
+  private async ensureWorkOwnedByUser(userId: string, workId: string, organizationId: string | null): Promise<void> {
+    await this.getWork(userId, workId, organizationId);
   }
 
-  private async ensureChapterOwnedByUser(userId: string, chapterId: string): Promise<Chapter> {
-    const chapter = await this.storyRepository.findChapterByIdAndUserId(chapterId, userId);
+  private async ensureChapterOwnedByUser(
+    userId: string,
+    chapterId: string,
+    organizationId: string | null,
+  ): Promise<Chapter> {
+    const chapter = await this.storyRepository.findChapterByIdAndUserId(chapterId, userId, organizationId);
     if (chapter === null) {
       throw new NotFoundError('Chapter not found');
     }
@@ -211,17 +230,17 @@ export class StoryService implements StoryServicePort {
     userId: string,
     workId: string,
     entityIds: string[],
+    organizationId: string | null,
   ): Promise<void> {
     const uniqueEntityIds = [...new Set(entityIds)];
     if (uniqueEntityIds.length === 0) {
       return;
     }
 
-    const matchedEntityCount = await this.entityReferenceReader.countByIdsAndWorkIdAndUserId(
-      uniqueEntityIds,
-      workId,
-      userId,
-    );
+    const matchedEntityCount =
+      organizationId === null || this.entityReferenceReader.countByIdsAndWorkId === undefined
+        ? await this.entityReferenceReader.countByIdsAndWorkIdAndUserId(uniqueEntityIds, workId, userId)
+        : await this.entityReferenceReader.countByIdsAndWorkId(uniqueEntityIds, workId);
     if (matchedEntityCount !== uniqueEntityIds.length) {
       throw new ValidationError('All referenced entities must belong to the work');
     }

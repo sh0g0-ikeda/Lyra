@@ -43,7 +43,7 @@ const messages = {
   },
   validation: {
     en: 'Some input is incomplete or inconsistent. Check the highlighted fields and try again.',
-    ja: '入力内容に不足または不整合があります。入力欄を確認してからもう一度お試しください。',
+    ja: '入力内容に不足または不整合があります。入力内容を確認してからもう一度お試しください。',
   },
   credits: {
     en: 'Credits are insufficient. Add credits, then try again.',
@@ -60,6 +60,10 @@ const messages = {
   billingTimeout: {
     en: 'The billing page took too long to open. Wait a moment, then open it again.',
     ja: '決済ページの準備に時間がかかっています。少し待ってからもう一度開いてください。',
+  },
+  billingPlanUnavailable: {
+    en: 'This plan is not available for purchase yet. Choose another plan or try again after setup is complete.',
+    ja: 'このプランはまだ購入できません。別のプランを選ぶか、設定完了後にもう一度お試しください。',
   },
   unavailable: {
     en: 'This feature is temporarily unavailable. Wait a while, then try again.',
@@ -86,8 +90,8 @@ const messages = {
     ja: 'ストーリーの入力量が大きすぎます。文章を短くするか、話を分けてからもう一度お試しください。',
   },
   needsScene: {
-    en: 'Add at least one scene with place, time, and mood before running this action.',
-    ja: '実行前に、場所・時間・雰囲気が分かるシーンを1つ以上入力してください。',
+    en: 'This action can run without scenes, but the current story context could not be prepared. Save the story, then try again.',
+    ja: 'シーンなしでも実行できますが、現在のストーリー情報を準備できませんでした。ストーリーを保存してから再度お試しください。',
   },
   needsPages: {
     en: 'Create the page skeleton first, then run this action.',
@@ -249,6 +253,14 @@ function findMessageBySpecificCause(normalizedMessage: string, normalizedCode: s
     ])
   ) {
     return messages.authExpired;
+  }
+  if (
+    hasAny(normalizedMessage, [
+      'subscription plan is not available',
+      'stripe price id is not configured',
+    ])
+  ) {
+    return messages.billingPlanUnavailable;
   }
   if (hasAny(normalizedMessage, ['stripe checkout session url', 'stripe billing', 'redirect url is invalid', 'billing page'])) {
     return messages.billingUnavailable;

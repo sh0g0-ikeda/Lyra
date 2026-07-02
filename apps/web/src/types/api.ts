@@ -10,6 +10,7 @@ export type GenerationJobType =
 
 export interface WorkRecord {
   id: string;
+  organization_id: string | null;
   title: string;
   genre: string | null;
   world_setting: string | null;
@@ -250,7 +251,156 @@ export interface BillingBalanceRecord {
   purchased_credits: number;
   total_credits: number;
   monthly_expires_at: string | null;
-  plan_code: 'free' | 'standard' | 'premium';
+  plan_code: 'free' | 'standard' | 'premium' | 'enterprise_a' | 'enterprise_b' | 'enterprise_c';
+  subscription_plans: Array<{
+    plan_code: 'standard' | 'premium' | 'enterprise_a' | 'enterprise_b' | 'enterprise_c';
+    display_name_ja: string;
+    display_name_en: string;
+    monthly_credits: number;
+    amount_jpy: number;
+    minimum_contract_months: number;
+    trial_days: number;
+    is_enterprise: boolean;
+    configured: boolean;
+  }>;
+}
+
+export type OrganizationRole = 'owner' | 'admin' | 'billing' | 'editor' | 'creator' | 'viewer';
+export type OrganizationStatus = 'active' | 'trialing' | 'past_due' | 'suspended' | 'canceled';
+
+export interface OrganizationRecord {
+  id: string;
+  type: 'business' | 'internal';
+  name: string;
+  legal_name: string | null;
+  status: OrganizationStatus;
+  plan_key: 'enterprise_a' | 'enterprise_b' | 'enterprise_c';
+  billing_email: string | null;
+  created_by_user_id: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface OrganizationMemberRecord {
+  id: string;
+  organization_id: string;
+  user_id: string;
+  email: string;
+  display_name: string | null;
+  role: OrganizationRole;
+  status: 'invited' | 'active' | 'suspended' | 'removed';
+  invited_by_user_id: string | null;
+  joined_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface OrganizationCreditBalanceRecord {
+  organization_id: string;
+  monthly_credits: number;
+  purchased_credits: number;
+  total_credits: number;
+  monthly_expires_at: string | null;
+  updated_at: string;
+}
+
+export interface OrganizationBillingPlanRecord {
+  plan_code: 'enterprise_a' | 'enterprise_b' | 'enterprise_c';
+  display_name_ja: string;
+  display_name_en: string;
+  monthly_credits: number;
+  amount_jpy: number;
+  minimum_contract_months: number;
+  trial_days: number;
+  is_enterprise: true;
+  configured: boolean;
+}
+
+export interface OrganizationUsageSummaryRecord {
+  current_month_total_credits: number;
+  by_member: Array<{ key: string; credits: number }>;
+  by_work: Array<{ key: string; credits: number }>;
+  by_generation_type: Array<{ key: string; credits: number }>;
+}
+
+export interface OrganizationUsageEventRecord {
+  id: string;
+  organization_id: string;
+  user_id: string | null;
+  work_id: string | null;
+  generation_job_id: string | null;
+  event_type: string;
+  credit_amount: number;
+  metadata: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface OrganizationAuditLogRecord {
+  id: string;
+  organization_id: string;
+  actor_user_id: string | null;
+  action: string;
+  target_type: string;
+  target_id: string | null;
+  metadata: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface OrganizationInvoiceRecord {
+  id: string;
+  user_id: string | null;
+  organization_id: string;
+  kind: 'subscription' | 'credit_purchase';
+  amount_jpy: number;
+  status: 'paid' | 'failed';
+  invoice_url: string | null;
+  created_at: string;
+}
+
+export interface OrganizationSubscriptionSummaryRecord {
+  organization_id: string;
+  plan_code: 'free' | 'standard' | 'premium' | 'enterprise_a' | 'enterprise_b' | 'enterprise_c' | string;
+  status: string;
+  current_period_start: string | null;
+  current_period_end: string | null;
+  cancel_at_period_end: boolean;
+}
+
+export interface OrganizationBillingSummaryRecord {
+  workspace: OrganizationWorkspaceRecord;
+  subscription: OrganizationSubscriptionSummaryRecord | null;
+  subscription_plans: OrganizationBillingPlanRecord[];
+}
+
+export interface OrganizationWorkspaceRecord {
+  organization: OrganizationRecord;
+  membership: OrganizationMemberRecord;
+  balance: OrganizationCreditBalanceRecord | null;
+}
+
+export interface CurrentUserRecord {
+  id: string;
+  email: string;
+  display_name: string | null;
+  plan_code: 'free' | 'standard' | 'premium' | 'enterprise_a' | 'enterprise_b' | 'enterprise_c' | string;
+}
+
+export interface CurrentUserOrganizationRecord {
+  id: string;
+  name: string;
+  status: OrganizationStatus;
+  plan_key: 'enterprise_a' | 'enterprise_b' | 'enterprise_c';
+  role: OrganizationRole;
+  membership_status: OrganizationMemberRecord['status'];
+  monthly_credits: number;
+  purchased_credits: number;
+  total_credits: number;
+  monthly_expires_at: string | null;
+}
+
+export interface CurrentSessionRecord {
+  user: CurrentUserRecord;
+  organizations: CurrentUserOrganizationRecord[];
 }
 
 export interface StoryCollaborationInput {

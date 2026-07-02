@@ -5,11 +5,11 @@ import type { PageRepository } from '../../repositories/PageRepository.js';
 import type { FinalPageImageStoragePort } from '../../infrastructure/aws/S3FinalPageImageStorage.js';
 import type { StoredImageLoaderPort } from '../../infrastructure/aws/S3StoredImageLoader.js';
 import type { PageBalloonComposerPort } from './PageBalloonComposer.js';
-import { ensureOwnedPageImageKey } from '../storage/StoredImageKeyPolicy.js';
+import { ensureOwnedPageImageKey, ensurePageImageKeyForPage } from '../storage/StoredImageKeyPolicy.js';
 
 export interface PageFinalizeServicePort {
-  confirmPage(userId: string, pageId: string): Promise<void>;
-  reopenPage(userId: string, pageId: string): Promise<void>;
+  confirmPage(userId: string, pageId: string, organizationId?: string | null): Promise<void>;
+  reopenPage(userId: string, pageId: string, organizationId?: string | null): Promise<void>;
 }
 
 export class PageFinalizeService implements PageFinalizeServicePort {
@@ -21,8 +21,8 @@ export class PageFinalizeService implements PageFinalizeServicePort {
     private readonly finalPageImageStorage: FinalPageImageStoragePort,
   ) {}
 
-  public async confirmPage(userId: string, pageId: string): Promise<void> {
-    const page = await this.pageRepository.findGenerationContextByIdAndUserId(pageId, userId);
+  public async confirmPage(userId: string, pageId: string, organizationId: string | null = null): Promise<void> {
+    const page = await this.pageRepository.findGenerationContextByIdAndUserId(pageId, userId, organizationId);
     if (page === null) {
       throw new NotFoundError('Page not found');
     }
@@ -30,7 +30,11 @@ export class PageFinalizeService implements PageFinalizeServicePort {
     this.ensurePageCanConfirm(page);
 
     const generatedImage = requireGeneratedImage(page);
-    ensureOwnedPageImageKey(generatedImage.s3Key, userId, pageId, 'generated page image key');
+    if (organizationId === null) {
+      ensureOwnedPageImageKey(generatedImage.s3Key, userId, pageId, 'generated page image key');
+    } else {
+      ensurePageImageKeyForPage(generatedImage.s3Key, pageId, 'generated page image key');
+    }
     const balloons = await this.balloonRepository.findBalloonsByPageIdAndUserId(pageId, userId);
     const finalizedImage = balloons.length === 0
       ? await this.finalPageImageStorage.finalizePageImage({
@@ -41,11 +45,16 @@ export class PageFinalizeService implements PageFinalizeServicePort {
         })
       : await this.composeAndStoreFinalImage(userId, pageId, generatedImage, balloons);
 
-    const updated = await this.pageRepository.updateGeneratedImageAndState(pageId, userId, {
-      status: 'confirmed',
-      generationMode: page.generationMode,
-      generatedImage: finalizedImage,
-    });
+    const updated = await this.pageRepository.updateGeneratedImageAndState(
+      pageId,
+      userId,
+      {
+        status: 'confirmed',
+        generationMode: page.generationMode,
+        generatedImage: finalizedImage,
+      },
+      organizationId,
+    );
     if (!updated) {
       throw new ConfigurationError('Failed to confirm page');
     }
@@ -72,8 +81,8 @@ export class PageFinalizeService implements PageFinalizeServicePort {
     });
   }
 
-  public async reopenPage(userId: string, pageId: string): Promise<void> {
-    const page = await this.pageRepository.findGenerationContextByIdAndUserId(pageId, userId);
+  public async reopenPage(userId: string, pageId: string, organizationId: string | null = null): Promise<void> {
+    const page = await this.pageRepository.findGenerationContextByIdAndUserId(pageId, userId, organizationId);
     if (page === null) {
       throw new NotFoundError('Page not found');
     }
@@ -82,10 +91,15 @@ export class PageFinalizeService implements PageFinalizeServicePort {
       throw new ConflictError('Only confirmed pages can be reopened');
     }
 
-    const updated = await this.pageRepository.updateGenerationState(pageId, userId, {
-      status: 'editing',
-      generationMode: page.generationMode,
-    });
+    const updated = await this.pageRepository.updateGenerationState(
+      pageId,
+      userId,
+      {
+        status: 'editing',
+        generationMode: page.generationMode,
+      },
+      organizationId,
+    );
     if (!updated) {
       throw new ConfigurationError('Failed to reopen page');
     }

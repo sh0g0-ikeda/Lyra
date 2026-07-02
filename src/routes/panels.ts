@@ -1,9 +1,15 @@
 import { Hono, type Context, type MiddlewareHandler } from 'hono';
 import { ValidationError } from '../domain/errors/index.js';
 import type { Panel, PanelDialogueLine } from '../domain/types/panel.js';
-import { createPanelBodySchema, panelUuidParamSchema, updatePanelBodySchema } from '../lib/validators/panel.schema.js';
+import {
+  createPanelBodySchema,
+  panelUuidParamSchema,
+  reorderPanelsBodySchema,
+  updatePanelBodySchema,
+} from '../lib/validators/panel.schema.js';
 import { formatZodValidationError } from '../lib/validationErrorFormatter.js';
 import type { PanelServicePort } from '../services/page/PanelService.js';
+import type { OrganizationServicePort } from '../services/organization/OrganizationService.js';
 import type { AppEnv } from '../types/app.js';
 import { readJsonBody } from './requestBody.js';
 
@@ -11,6 +17,7 @@ export interface PanelRouteDependencies {
   authMiddleware: MiddlewareHandler<AppEnv>;
   rateLimitMiddleware: MiddlewareHandler<AppEnv>;
   panelService: PanelServicePort;
+  organizationService?: OrganizationServicePort;
 }
 
 export function createPanelRoutes(dependencies: PanelRouteDependencies): Hono<AppEnv> {
@@ -22,24 +29,31 @@ export function createPanelRoutes(dependencies: PanelRouteDependencies): Hono<Ap
   app.post('/pages/:id/panels', async (c) => {
     const user = c.get('user');
     const pageId = parseUuidParam(c, 'id');
+    const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'edit_work');
     const body = createPanelBodySchema.safeParse(await readJsonBody(c));
 
     if (!body.success) {
       throw new ValidationError(formatZodValidationError(body.error));
     }
 
-    const panel = await dependencies.panelService.createPanel(user.id, pageId, {
-      order: body.data.order,
-      panelRole: body.data.panel_role,
-      panelSize: body.data.panel_size,
-      situationText: body.data.situation_text ?? null,
-      composition: toCompositionRequest(body.data.composition),
-      dialogueInPanel: body.data.dialogue_in_panel,
-      dialogue: body.data.dialogue.map(toDialogueLineRequest),
-      sfxText: body.data.sfx_text ?? null,
-      backgroundNote: body.data.background_note ?? null,
-      panelNotes: body.data.panel_notes ?? null,
-    });
+    const panel = await dependencies.panelService.createPanel(
+      user.id,
+      pageId,
+      {
+        order: body.data.order,
+        panelRole: body.data.panel_role,
+        panelSize: body.data.panel_size,
+        situationText: body.data.situation_text ?? null,
+        composition: toCompositionRequest(body.data.composition),
+        dialogueInPanel: body.data.dialogue_in_panel,
+        dialogue: body.data.dialogue.map(toDialogueLineRequest),
+        sfxText: body.data.sfx_text ?? null,
+        backgroundNote: body.data.background_note ?? null,
+        panelNotes: body.data.panel_notes ?? null,
+      },
+      organizationId,
+    );
 
     return c.json(toPanelResponse(panel), 201);
   });
@@ -47,7 +61,25 @@ export function createPanelRoutes(dependencies: PanelRouteDependencies): Hono<Ap
   app.get('/pages/:id/panels', async (c) => {
     const user = c.get('user');
     const pageId = parseUuidParam(c, 'id');
-    const panels = await dependencies.panelService.listPanels(user.id, pageId);
+    const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'view_work');
+    const panels = await dependencies.panelService.listPanels(user.id, pageId, organizationId);
+
+    return c.json({ panels: panels.map(toPanelResponse) });
+  });
+
+  app.put('/pages/:id/panels/order', async (c) => {
+    const user = c.get('user');
+    const pageId = parseUuidParam(c, 'id');
+    const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'edit_work');
+    const body = reorderPanelsBodySchema.safeParse(await readJsonBody(c));
+
+    if (!body.success) {
+      throw new ValidationError(formatZodValidationError(body.error));
+    }
+
+    const panels = await dependencies.panelService.reorderPanels(user.id, pageId, body.data.panel_ids, organizationId);
 
     return c.json({ panels: panels.map(toPanelResponse) });
   });
@@ -55,26 +87,33 @@ export function createPanelRoutes(dependencies: PanelRouteDependencies): Hono<Ap
   app.put('/panels/:id', async (c) => {
     const user = c.get('user');
     const panelId = parseUuidParam(c, 'id');
+    const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'edit_work');
     const body = updatePanelBodySchema.safeParse(await readJsonBody(c));
 
     if (!body.success) {
       throw new ValidationError(formatZodValidationError(body.error));
     }
 
-    const panel = await dependencies.panelService.updatePanel(user.id, panelId, {
-      order: body.data.order,
-      panelRole: body.data.panel_role,
-      panelSize: body.data.panel_size,
-      situationText: body.data.situation_text,
-      composition:
-        body.data.composition === undefined ? undefined : toCompositionRequest(body.data.composition),
-      dialogueInPanel: body.data.dialogue_in_panel,
-      dialogue:
-        body.data.dialogue === undefined ? undefined : body.data.dialogue.map(toDialogueLineRequest),
-      sfxText: body.data.sfx_text,
-      backgroundNote: body.data.background_note,
-      panelNotes: body.data.panel_notes,
-    });
+    const panel = await dependencies.panelService.updatePanel(
+      user.id,
+      panelId,
+      {
+        order: body.data.order,
+        panelRole: body.data.panel_role,
+        panelSize: body.data.panel_size,
+        situationText: body.data.situation_text,
+        composition:
+          body.data.composition === undefined ? undefined : toCompositionRequest(body.data.composition),
+        dialogueInPanel: body.data.dialogue_in_panel,
+        dialogue:
+          body.data.dialogue === undefined ? undefined : body.data.dialogue.map(toDialogueLineRequest),
+        sfxText: body.data.sfx_text,
+        backgroundNote: body.data.background_note,
+        panelNotes: body.data.panel_notes,
+      },
+      organizationId,
+    );
 
     return c.json(toPanelResponse(panel));
   });
@@ -82,7 +121,9 @@ export function createPanelRoutes(dependencies: PanelRouteDependencies): Hono<Ap
   app.delete('/panels/:id', async (c) => {
     const user = c.get('user');
     const panelId = parseUuidParam(c, 'id');
-    await dependencies.panelService.deletePanel(user.id, panelId);
+    const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'edit_work');
+    await dependencies.panelService.deletePanel(user.id, panelId, organizationId);
 
     return c.body(null, 204);
   });
@@ -97,6 +138,37 @@ function parseUuidParam(c: Context<AppEnv>, name: string): string {
   }
 
   return result.data;
+}
+
+function parseOptionalOrganizationId(c: Context<AppEnv>): string | null {
+  const raw = c.req.query('organization_id');
+  if (raw === undefined || raw.trim().length === 0) {
+    return null;
+  }
+
+  const result = panelUuidParamSchema.safeParse(raw);
+  if (!result.success) {
+    throw new ValidationError('organization_id must be a valid UUID');
+  }
+
+  return result.data;
+}
+
+async function requireOrganizationCapability(
+  c: Context<AppEnv>,
+  dependencies: PanelRouteDependencies,
+  organizationId: string | null,
+  capability: Parameters<OrganizationServicePort['requireMembership']>[2],
+): Promise<void> {
+  if (organizationId === null) {
+    return;
+  }
+  if (dependencies.organizationService === undefined) {
+    throw new ValidationError('Organization service is not configured');
+  }
+
+  const user = c.get('user');
+  await dependencies.organizationService.requireMembership(organizationId, user.id, capability);
 }
 
 function toCompositionRequest(

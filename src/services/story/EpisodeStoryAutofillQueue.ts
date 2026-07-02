@@ -7,6 +7,7 @@ import { sanitizePersistedErrorMessage } from '../../lib/errorSanitizer.js';
 export interface EpisodeStoryAutofillQueuePayload {
   jobId: string;
   userId: string;
+  organizationId: string | null;
   episodeId: string;
   language: AppLanguage;
 }

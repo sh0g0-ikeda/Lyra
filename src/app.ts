@@ -1,6 +1,8 @@
 import { serveStatic } from '@hono/node-server/serve-static';
 import { Hono, type MiddlewareHandler } from 'hono';
 import { ConfigurationError } from './domain/errors/index.js';
+import type { PaidPlanCode } from './domain/constants/billing.js';
+import type { SubscriptionPlanCatalogEntry } from './domain/types/billing.js';
 import { EPISODE_LONG_JOB_ACTIVE_JOB_TYPES } from './domain/constants/generation.js';
 import { createPageImageStorageClient } from './infrastructure/aws/S3PageImageStorage.js';
 import { S3FinalPageImageStorage, type FinalPageImageStoragePort } from './infrastructure/aws/S3FinalPageImageStorage.js';
@@ -49,6 +51,7 @@ import { PostgresEntityRepository } from './repositories/EntityRepository.js';
 import { PostgresEntityGenerationExecutionRepository } from './repositories/EntityGenerationExecutionRepository.js';
 import { PostgresEntityGenerationRecoveryRepository } from './repositories/EntityGenerationRecoveryRepository.js';
 import { PostgresGenerationJobRepository } from './repositories/GenerationJobRepository.js';
+import { PostgresOrganizationRepository } from './repositories/OrganizationRepository.js';
 import { PostgresBalloonRepository } from './repositories/BalloonRepository.js';
 import { PostgresPanelEntityAssignmentRepository } from './repositories/PanelEntityAssignmentRepository.js';
 import { PostgresPanelFrameRepository } from './repositories/PanelFrameRepository.js';
@@ -69,10 +72,13 @@ import { createEntityRoutes } from './routes/entities.js';
 import { createHealthRoutes } from './routes/health.js';
 import { createJobRoutes } from './routes/jobs.js';
 import { createLocalAssetRoutes } from './routes/localAssets.js';
+import { createMeRoutes } from './routes/me.js';
 import { createPanelRoutes } from './routes/panels.js';
 import { createPanelEntityAssignmentRoutes } from './routes/panelEntityAssignments.js';
 import { createPanelFrameRoutes } from './routes/panelFrames.js';
 import { createPageRoutes } from './routes/pages.js';
+import { createAdminOrganizationRoutes } from './routes/adminOrganizations.js';
+import { createOrganizationRoutes } from './routes/organizations.js';
 import { createSceneRoutes } from './routes/scenes.js';
 import { createStoryRoutes } from './routes/story.js';
 import { createRootWebhookCompatibilityRoutes, createWebhookRoutes } from './routes/webhooks.js';
@@ -182,6 +188,15 @@ import {
 import { PanelFrameService, type PanelFrameServicePort } from './services/page/PanelFrameService.js';
 import { SceneService, type SceneServicePort } from './services/scene/SceneService.js';
 import {
+  OrganizationService,
+  type OrganizationServicePort,
+} from './services/organization/OrganizationService.js';
+import {
+  OrganizationBillingService,
+  assertOrganizationBillingConfig,
+  type OrganizationBillingServicePort,
+} from './services/organization/OrganizationBillingService.js';
+import {
   PageSkeletonService,
   type PageSkeletonServicePort,
 } from './services/story/PageSkeletonService.js';
@@ -213,6 +228,8 @@ export interface AppDependencies {
   episodeStoryAutofillService?: EpisodeStoryAutofillServicePort;
   entityGenerationRecoveryService?: EntityGenerationRecoveryServicePort;
   jobService?: JobServicePort;
+  organizationService?: OrganizationServicePort;
+  organizationBillingService?: OrganizationBillingServicePort;
   pageExportService?: PageExportServicePort;
   pageFinalizeService?: PageFinalizeServicePort;
   pageService?: PageServicePort;
@@ -335,6 +352,7 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
       entityService: resolvedDependencies.entityService,
       entityReferenceService: resolvedDependencies.entityReferenceService,
       entityReferenceImageExportService: resolvedDependencies.entityReferenceImageExportService,
+      organizationService: resolvedDependencies.organizationService,
     }),
   );
   app.route(
@@ -347,6 +365,34 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
   );
   app.route(
     '/api',
+    createMeRoutes({
+      authMiddleware,
+      rateLimitMiddleware,
+      organizationService: env.ENTERPRISE_FEATURES_ENABLED ? resolvedDependencies.organizationService : undefined,
+    }),
+  );
+  if (env.ENTERPRISE_FEATURES_ENABLED) {
+    app.route(
+      '/api',
+      createOrganizationRoutes({
+        authMiddleware,
+        rateLimitMiddleware,
+        organizationService: resolvedDependencies.organizationService,
+        organizationBillingService: resolvedDependencies.organizationBillingService,
+      }),
+    );
+    app.route(
+      '/api',
+      createAdminOrganizationRoutes({
+        authMiddleware,
+        rateLimitMiddleware,
+        organizationService: resolvedDependencies.organizationService,
+        adminEmails: parseAdminEmails(env.ADMIN_USER_EMAILS),
+      }),
+    );
+  }
+  app.route(
+    '/api',
     createPageRoutes({
       authMiddleware,
       rateLimitMiddleware,
@@ -357,6 +403,7 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
       pageQueryService: resolvedDependencies.pageQueryService,
       pageGenerationService: resolvedDependencies.pageGenerationService,
       pageLayoutService: resolvedDependencies.pageLayoutService,
+      organizationService: resolvedDependencies.organizationService,
     }),
   );
   app.route(
@@ -368,6 +415,7 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
       episodePageSkeletonService: resolvedDependencies.episodePageSkeletonService,
       pageService: resolvedDependencies.pageService,
       episodeStoryAutofillService: resolvedDependencies.episodeStoryAutofillService,
+      organizationService: resolvedDependencies.organizationService,
       storyCollaborationService: resolvedDependencies.storyCollaborationService,
       storyService: resolvedDependencies.storyService,
     }),
@@ -378,6 +426,7 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
       authMiddleware,
       rateLimitMiddleware,
       panelService: resolvedDependencies.panelService,
+      organizationService: resolvedDependencies.organizationService,
     }),
   );
   app.route(
@@ -386,6 +435,7 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
       authMiddleware,
       rateLimitMiddleware,
       panelEntityAssignmentService: resolvedDependencies.panelEntityAssignmentService,
+      organizationService: resolvedDependencies.organizationService,
     }),
   );
   app.route(
@@ -394,6 +444,7 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
       authMiddleware,
       rateLimitMiddleware,
       panelFrameService: resolvedDependencies.panelFrameService,
+      organizationService: resolvedDependencies.organizationService,
     }),
   );
   app.route(
@@ -402,6 +453,7 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
       authMiddleware,
       rateLimitMiddleware,
       sceneService: resolvedDependencies.sceneService,
+      organizationService: resolvedDependencies.organizationService,
     }),
   );
   const webStaticDir = dependencies.webStaticDir !== undefined ? dependencies.webStaticDir : env.WEB_STATIC_DIR ?? null;
@@ -423,7 +475,7 @@ export function isWebStaticFallbackPath(path: string): boolean {
 
 const WEB_STATIC_CONTENT_SECURITY_POLICY = [
   "default-src 'self'",
-  "script-src 'self'",
+  "script-src 'self' 'sha256-m7ViBh063Idnmu3GIO3JLKhQAvcEYJ2KFhL39okn8ss='",
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob: https:",
   "font-src 'self' data:",
@@ -513,6 +565,10 @@ function resolveDependencies(
         ? new SqsEntityGenerationQueueAdapter(generationQueue)
         : new UnconfiguredEntityGenerationQueue());
   const billingRepository = new PostgresBillingRepository(db, db);
+  const organizationRepository = new PostgresOrganizationRepository(db, db);
+  const organizationService =
+    dependencies.organizationService ??
+    new OrganizationService(organizationRepository);
   const pageRepository = new PostgresPageRepository(db);
   const generationJobRepository = new PostgresGenerationJobRepository(db);
   const episodeStoryAutofillQueue =
@@ -572,6 +628,9 @@ function resolveDependencies(
       new PostgresEntityGenerationRecoveryRepository(db),
       entityGenerationExecutionRepository,
       creditService,
+      undefined,
+      undefined,
+      organizationService,
     );
   const pageGenerationExecutionRepository = new PostgresPageGenerationExecutionRepository(db);
   const pageGenerationRecoveryService =
@@ -580,6 +639,9 @@ function resolveDependencies(
       new PostgresPageGenerationRecoveryRepository(db),
       pageGenerationExecutionRepository,
       creditService,
+      undefined,
+      undefined,
+      organizationService,
     );
   const pageGenerationQueue =
     dependencies.pageGenerationQueue ??
@@ -594,9 +656,23 @@ function resolveDependencies(
   const billingService =
     dependencies.billingService ??
     resolveBillingService(billingRepository, stripeBillingClient);
+  const organizationBillingService =
+    dependencies.organizationBillingService ??
+    resolveOrganizationBillingService(
+      organizationService,
+      organizationRepository,
+      billingRepository,
+      stripeBillingClient,
+    );
   const stripeWebhookService =
     dependencies.stripeWebhookService ??
-    resolveStripeWebhookService(billingRepository, billingCreditGrantService, stripeBillingClient);
+    resolveStripeWebhookService(
+      billingRepository,
+      billingCreditGrantService,
+      organizationService,
+      organizationRepository,
+      stripeBillingClient,
+    );
   const storyAiClient = dependencies.storyAiClient ?? resolveStoryAiClient();
   const entityService =
     dependencies.entityService ??
@@ -617,6 +693,7 @@ function resolveDependencies(
       env.GENERATION_ENABLED && env.ENTITY_GENERATION_ENABLED,
       entityGenerationRecoveryService,
       env.GENERATION_ENABLED && env.ENTITY_IMPORT_ANALYSIS_ENABLED,
+      organizationService,
     );
   const entityReferenceImageExportService =
     dependencies.entityReferenceImageExportService ??
@@ -642,6 +719,7 @@ function resolveDependencies(
         global: env.GENERATION_GLOBAL_ACTIVE_JOB_LIMIT,
       },
       env.GENERATION_ENABLED && env.PAGE_GENERATION_ENABLED,
+      organizationService,
     );
   const pageFinalizeService =
     dependencies.pageFinalizeService ??
@@ -654,7 +732,7 @@ function resolveDependencies(
     );
   const pageExportService =
     dependencies.pageExportService ??
-    new PageExportService(pageRepository, resolveStoredPageImageLoader());
+    new PageExportService(pageRepository, resolveStoredPageImageLoader(), organizationService);
   const pageQueryService =
     dependencies.pageQueryService ?? new PageQueryService(pageRepository, new PostgresStoryRepository(db));
   const panelEntityAssignmentService =
@@ -727,6 +805,8 @@ function resolveDependencies(
     episodeStoryAutofillService,
     entityGenerationRecoveryService,
     jobService,
+    organizationService,
+    organizationBillingService,
     pageExportService,
     pageFinalizeService,
     pageService,
@@ -889,6 +969,13 @@ function resolveConfiguredLocalAssetConfig(): LocalAssetConfig | null {
   return resolveLocalAssetConfig(env.LOCAL_FILE_STORAGE_DIR, env.LOCAL_ASSET_BASE_URL, env.PORT);
 }
 
+function parseAdminEmails(value: string): string[] {
+  return value
+    .split(',')
+    .map((email) => email.trim().toLowerCase())
+    .filter((email) => email.length > 0);
+}
+
 function buildOpenAIClient(): OpenAIClient | null {
   if (env.OPENAI_API_KEY === undefined) {
     return null;
@@ -963,6 +1050,42 @@ function resolveBillingService(
       subscriptionPriceIds: {
         standard: env.STRIPE_PRICE_STANDARD_MONTHLY ?? '',
         premium: env.STRIPE_PRICE_PREMIUM_MONTHLY ?? '',
+        enterprise_a: env.STRIPE_PRICE_ENTERPRISE_A_MONTHLY,
+        enterprise_b: env.STRIPE_PRICE_ENTERPRISE_B_MONTHLY,
+        enterprise_c: env.STRIPE_PRICE_ENTERPRISE_C_MONTHLY,
+      },
+      creditPackagePriceIds: {
+        credits_200: env.STRIPE_PRICE_CREDITS_200 ?? '',
+        credits_1000: env.STRIPE_PRICE_CREDITS_1000 ?? '',
+        credits_3000: env.STRIPE_PRICE_CREDITS_3000 ?? '',
+      },
+    }),
+  );
+}
+
+function resolveOrganizationBillingService(
+  organizationService: OrganizationServicePort,
+  organizationRepository: PostgresOrganizationRepository,
+  billingRepository: PostgresBillingRepository,
+  stripeBillingClient: StripeBillingClientPort,
+): OrganizationBillingServicePort {
+  if (!hasStripeBillingConfig()) {
+    return new OrganizationBillingServiceStub();
+  }
+
+  return new OrganizationBillingService(
+    organizationService,
+    organizationRepository,
+    billingRepository,
+    stripeBillingClient,
+    assertOrganizationBillingConfig({
+      successUrl: env.STRIPE_CHECKOUT_SUCCESS_URL ?? '',
+      cancelUrl: env.STRIPE_CHECKOUT_CANCEL_URL ?? '',
+      portalReturnUrl: env.STRIPE_PORTAL_RETURN_URL ?? '',
+      subscriptionPriceIds: {
+        enterprise_a: env.STRIPE_PRICE_ENTERPRISE_A_MONTHLY,
+        enterprise_b: env.STRIPE_PRICE_ENTERPRISE_B_MONTHLY,
+        enterprise_c: env.STRIPE_PRICE_ENTERPRISE_C_MONTHLY,
       },
       creditPackagePriceIds: {
         credits_200: env.STRIPE_PRICE_CREDITS_200 ?? '',
@@ -976,18 +1099,36 @@ function resolveBillingService(
 function resolveStripeWebhookService(
   billingRepository: PostgresBillingRepository,
   billingCreditGrantService: BillingCreditGrantServicePort,
+  organizationService: OrganizationServicePort,
+  organizationRepository: PostgresOrganizationRepository,
   stripeBillingClient: StripeBillingClientPort,
 ): StripeWebhookServicePort {
   if (!hasStripeBillingConfig()) {
     return new StripeWebhookServiceStub();
   }
 
-  return new StripeWebhookService(billingRepository, billingCreditGrantService, stripeBillingClient, {
-    subscriptionPlanByPriceId: {
-      [env.STRIPE_PRICE_STANDARD_MONTHLY as string]: 'standard',
-      [env.STRIPE_PRICE_PREMIUM_MONTHLY as string]: 'premium',
+  return new StripeWebhookService(
+    billingRepository,
+    billingCreditGrantService,
+    organizationService,
+    organizationRepository,
+    stripeBillingClient,
+    {
+      subscriptionPlanByPriceId: buildSubscriptionPlanByPriceId(),
     },
-  });
+  );
+}
+
+function buildSubscriptionPlanByPriceId(): Record<string, PaidPlanCode> {
+  return Object.fromEntries(
+    [
+      [env.STRIPE_PRICE_STANDARD_MONTHLY, 'standard'],
+      [env.STRIPE_PRICE_PREMIUM_MONTHLY, 'premium'],
+      [env.STRIPE_PRICE_ENTERPRISE_A_MONTHLY, 'enterprise_a'],
+      [env.STRIPE_PRICE_ENTERPRISE_B_MONTHLY, 'enterprise_b'],
+      [env.STRIPE_PRICE_ENTERPRISE_C_MONTHLY, 'enterprise_c'],
+    ].filter((entry): entry is [string, PaidPlanCode] => typeof entry[0] === 'string' && entry[0].trim().length > 0),
+  );
 }
 
 function hasStripeBillingConfig(): boolean {
@@ -1016,6 +1157,36 @@ class BillingServiceStub {
 
   public async createCustomerPortalSession(): Promise<never> {
     throw new ConfigurationError('Stripe billing is not configured');
+  }
+
+  public getSubscriptionPlanCatalog(): SubscriptionPlanCatalogEntry[] {
+    return [];
+  }
+}
+
+class OrganizationBillingServiceStub {
+  public async createSubscriptionCheckoutSession(): Promise<never> {
+    throw new ConfigurationError('Stripe organization billing is not configured');
+  }
+
+  public async createCreditCheckoutSession(): Promise<never> {
+    throw new ConfigurationError('Stripe organization billing is not configured');
+  }
+
+  public async createCustomerPortalSession(): Promise<never> {
+    throw new ConfigurationError('Stripe organization billing is not configured');
+  }
+
+  public async getOrganizationSubscriptionSummary(): Promise<never> {
+    throw new ConfigurationError('Stripe organization billing is not configured');
+  }
+
+  public async listOrganizationInvoices(): Promise<never> {
+    throw new ConfigurationError('Stripe organization billing is not configured');
+  }
+
+  public getEnterprisePlanCatalog(): SubscriptionPlanCatalogEntry[] {
+    return [];
   }
 }
 

@@ -19,8 +19,14 @@ const now = new Date('2026-04-22T00:00:00.000Z');
 class FakeWorkReader implements WorkReader {
   public ownedWorkIds = new Set<string>();
 
-  public async findByIdAndUserId(id: string, userId: string): Promise<{ id: string; userId: string } | null> {
-    return this.ownedWorkIds.has(`${userId}:${id}`) ? { id, userId } : null;
+  public async findByIdAndUserId(
+    id: string,
+    userId: string,
+    organizationId: string | null = null,
+  ): Promise<{ id: string; userId: string; organizationId: string | null } | null> {
+    return this.ownedWorkIds.has(`${userId}:${id}`)
+      ? { id, userId, organizationId }
+      : null;
   }
 }
 

@@ -5,6 +5,7 @@ export type StoryItemMoveDirection = 'up' | 'down';
 export interface Work {
   id: string;
   userId: string;
+  organizationId?: string | null;
   title: string;
   genre: string | null;
   worldSetting: string | null;
@@ -62,6 +63,7 @@ export interface Episode {
 
 export interface CreateWorkInput {
   title: string;
+  organizationId?: string | null;
   genre: string | null;
   worldSetting: string | null;
   theme: string | null;

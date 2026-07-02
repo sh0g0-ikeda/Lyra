@@ -1,0 +1,18 @@
+{
+  "Comment": "ACM validation for app.lyra-editor.com",
+  "Changes": [
+    {
+      "Action": "UPSERT",
+      "ResourceRecordSet": {
+        "Name": "_bd3fe07aa29a4c70d69de9537c0d3429.app.lyra-editor.com.",
+        "Type": "CNAME",
+        "TTL": 300,
+        "ResourceRecords": [
+          {
+            "Value": "_20c747de17b18c65de5a07cef6fa451a.jkddzztszm.acm-validations.aws."
+          }
+        ]
+      }
+    }
+  ]
+}

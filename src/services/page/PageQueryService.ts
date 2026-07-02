@@ -4,7 +4,7 @@ import type { PageRepository } from '../../repositories/PageRepository.js';
 import type { StoryRepository } from '../../repositories/StoryRepository.js';
 
 export interface PageQueryServicePort {
-  listEpisodePages(userId: string, episodeId: string): Promise<PageSummary[]>;
+  listEpisodePages(userId: string, episodeId: string, organizationId?: string | null): Promise<PageSummary[]>;
 }
 
 export class PageQueryService implements PageQueryServicePort {
@@ -13,12 +13,16 @@ export class PageQueryService implements PageQueryServicePort {
     private readonly storyRepository: StoryRepository,
   ) {}
 
-  public async listEpisodePages(userId: string, episodeId: string): Promise<PageSummary[]> {
-    const episode = await this.storyRepository.findEpisodeByIdAndUserId(episodeId, userId);
+  public async listEpisodePages(
+    userId: string,
+    episodeId: string,
+    organizationId: string | null = null,
+  ): Promise<PageSummary[]> {
+    const episode = await this.storyRepository.findEpisodeByIdAndUserId(episodeId, userId, organizationId);
     if (episode === null) {
       throw new NotFoundError('Episode not found');
     }
 
-    return this.pageRepository.findPagesByEpisodeIdAndUserId(episodeId, userId);
+    return this.pageRepository.findPagesByEpisodeIdAndUserId(episodeId, userId, organizationId);
   }
 }

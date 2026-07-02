@@ -9,6 +9,7 @@ import type {
 } from '../../domain/types/pageGeneration.js';
 import type { PageStatus } from '../../domain/types/page.js';
 import type { CreditServicePort } from '../credit/CreditService.js';
+import type { OrganizationServicePort } from '../organization/OrganizationService.js';
 import type {
   CompiledPagePrompt,
   PagePromptCompilerPort,
@@ -24,6 +25,7 @@ import type {
 export interface PageGenerationPlanInput {
   jobId: string;
   userId: string;
+  organizationId?: string | null;
   pageId: string;
   requestKind: PersistedPageGenerationJobParams['request_kind'];
   generationMode: PersistedPageGenerationJobParams['generation_mode'];
@@ -80,6 +82,7 @@ export interface PageImageRendererPort {
 export interface StorePageImageInput {
   jobId: string;
   userId: string;
+  organizationId?: string | null;
   pageId: string;
   imageData: Buffer;
   mimeType: string;
@@ -102,6 +105,7 @@ export interface ProcessPageGenerationJobResult {
 
 export interface BuildPageGenerationInputImagesInput {
   userId: string;
+  organizationId?: string | null;
   pageId: string;
 }
 
@@ -120,6 +124,7 @@ export class PageGenerationWorkerService {
     private readonly storage: PageImageStoragePort,
     private readonly creditService: CreditServicePort,
     private readonly generationEnabled = true,
+    private readonly organizationService?: OrganizationServicePort,
   ) {}
 
   public async processJob(jobId: string): Promise<ProcessPageGenerationJobResult> {
@@ -146,6 +151,7 @@ export class PageGenerationWorkerService {
       const builtPrompt = await measurePageGenerationStage(stageTimingsMs, 'prompt_build', () =>
         this.promptBuilder.buildPagePrompt({
           userId: job.userId,
+          organizationId: job.organizationId ?? null,
           pageId: params.page_id,
           requestKind: params.request_kind,
           generationMode: params.generation_mode,
@@ -161,6 +167,7 @@ export class PageGenerationWorkerService {
       const inputImages = await measurePageGenerationStage(stageTimingsMs, 'reference_images', () =>
         this.inputImageBuilder.buildInputImages({
           userId: job.userId,
+          organizationId: job.organizationId ?? null,
           pageId: params.page_id,
         }),
       );
@@ -173,6 +180,7 @@ export class PageGenerationWorkerService {
               this.planner.buildPlan({
                 jobId: job.id,
                 userId: job.userId,
+                organizationId: job.organizationId ?? null,
                 pageId: params.page_id,
                 requestKind: params.request_kind,
                 generationMode: params.generation_mode,
@@ -188,6 +196,7 @@ export class PageGenerationWorkerService {
           this.renderer.render({
             jobId: job.id,
             userId: job.userId,
+            organizationId: job.organizationId ?? null,
             pageId: params.page_id,
             requestKind: params.request_kind,
             generationMode: params.generation_mode,
@@ -205,6 +214,7 @@ export class PageGenerationWorkerService {
           this.storage.store({
             jobId: job.id,
             userId: job.userId,
+            organizationId: job.organizationId ?? null,
             pageId: params.page_id,
             imageData: renderResult.imageData,
             mimeType: renderResult.mimeType,
@@ -231,6 +241,7 @@ export class PageGenerationWorkerService {
         throw new ConfigurationError('Failed to persist generated page image');
       }
 
+      await this.recordGenerationCompleted(job, params, builtPrompt.workId, renderResult, stageTimingsMs);
       return { status: 'processed', jobStatus: 'completed' };
     } catch (error) {
       await this.failJob(job, toFailureCompensation(params), toErrorMessage(error));
@@ -316,6 +327,7 @@ export class PageGenerationWorkerService {
     const failed = await this.executionRepository.failPageGeneration({
       jobId: job.id,
       userId: job.userId,
+      organizationId: job.organizationId ?? null,
       errorMessage,
       pageId: compensation?.pageId,
       previousStatus: compensation?.previousStatus,
@@ -327,12 +339,7 @@ export class PageGenerationWorkerService {
 
     if (job.creditCost > 0) {
       try {
-        await this.creditService.refundCredits({
-          userId: job.userId,
-          amount: job.creditCost,
-          description: 'Refund for failed page generation job',
-          jobId: job.id,
-        });
+        await this.refundFailedJobCredits(job);
       } catch (error) {
         const reason = error instanceof Error ? error.message : String(error);
         console.warn(
@@ -340,6 +347,99 @@ export class PageGenerationWorkerService {
         );
       }
     }
+
+    await this.recordGenerationFailed(job, compensation, errorMessage);
+  }
+
+  private async recordGenerationCompleted(
+    job: GenerationJob,
+    params: PersistedPageGenerationJobParams,
+    workId: string,
+    renderResult: RenderPageImageResult,
+    stageTimingsMs: PageGenerationStageTimingsMs,
+  ): Promise<void> {
+    const organizationId = job.organizationId ?? null;
+    if (organizationId === null || this.organizationService === undefined) {
+      return;
+    }
+
+    try {
+      await this.organizationService.recordGenerationCompleted({
+        organizationId,
+        userId: job.userId,
+        workId,
+        jobId: job.id,
+        generationType: 'page_generate',
+        metadata: {
+          page_id: params.page_id,
+          request_kind: params.request_kind,
+          generation_mode: params.generation_mode,
+          quality: params.quality,
+          cost_usd: renderResult.costUsd,
+          openai_request_id: renderResult.openaiRequestId,
+          stage_timings_ms: stageTimingsMs,
+        },
+      });
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      console.warn(`[page-generation-worker] failed to record enterprise generation completion ${job.id}: ${reason}`);
+    }
+  }
+
+  private async recordGenerationFailed(
+    job: GenerationJob,
+    compensation: FailureCompensation | null,
+    errorMessage: string,
+  ): Promise<void> {
+    const organizationId = job.organizationId ?? null;
+    if (organizationId === null || this.organizationService === undefined) {
+      return;
+    }
+
+    try {
+      await this.organizationService.recordGenerationFailed({
+        organizationId,
+        userId: job.userId,
+        workId: compensation?.workId ?? null,
+        jobId: job.id,
+        generationType: 'page_generate',
+        errorMessage,
+        metadata: {
+          page_id: compensation?.pageId ?? null,
+          work_id: compensation?.workId ?? null,
+          previous_status: compensation?.previousStatus ?? null,
+          previous_generation_mode: compensation?.previousGenerationMode ?? null,
+        },
+      });
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      console.warn(`[page-generation-worker] failed to record enterprise generation failure ${job.id}: ${reason}`);
+    }
+  }
+
+  private async refundFailedJobCredits(job: GenerationJob): Promise<void> {
+    const organizationId = job.organizationId ?? null;
+    if (organizationId === null) {
+      await this.creditService.refundCredits({
+        userId: job.userId,
+        amount: job.creditCost,
+        description: 'Refund for failed page generation job',
+        jobId: job.id,
+      });
+      return;
+    }
+
+    if (this.organizationService === undefined) {
+      throw new ConfigurationError('Organization service is required to refund enterprise page generation jobs');
+    }
+
+    await this.organizationService.refundCredits({
+      organizationId,
+      actorUserId: job.userId,
+      amount: job.creditCost,
+      description: 'Refund for failed page generation job',
+      jobId: job.id,
+    });
   }
 }
 
@@ -387,6 +487,7 @@ function assertRenderedPageImage(renderResult: RenderPageImageResult): void {
 
 interface FailureCompensation {
   pageId: string;
+  workId: string | null;
   previousStatus: PageStatus;
   previousGenerationMode: PersistedPageGenerationJobParams['previous_generation_mode'];
 }
@@ -402,6 +503,7 @@ function buildCompletionInput(
   return {
     jobId: job.id,
     userId: job.userId,
+    organizationId: job.organizationId ?? null,
     pageId: params.page_id,
     generationMode: params.generation_mode,
     requestKind: params.request_kind,
@@ -638,6 +740,7 @@ function humanizeToken(value: string): string {
 
 function parsePersistedParams(value: Record<string, unknown>): PersistedPageGenerationJobParams | null {
   const pageId = value.page_id;
+  const workId = value.work_id;
   const requestKind = value.request_kind;
   const generationMode = value.generation_mode;
   const quality = value.quality;
@@ -659,6 +762,7 @@ function parsePersistedParams(value: Record<string, unknown>): PersistedPageGene
 
   return {
     page_id: pageId,
+    work_id: typeof workId === 'string' && workId.length > 0 ? workId : null,
     request_kind: requestKind,
     generation_mode: generationMode,
     quality,
@@ -683,6 +787,7 @@ function normalizeOptionalInternalPlan(value: string): string | null {
 
 function extractFailureCompensation(value: Record<string, unknown>): FailureCompensation | null {
   const pageId = value.page_id;
+  const workId = value.work_id;
   const previousPageStatus = value.previous_page_status;
   const previousGenerationMode = value.previous_generation_mode;
 
@@ -696,6 +801,7 @@ function extractFailureCompensation(value: Record<string, unknown>): FailureComp
 
   return {
     pageId,
+    workId: typeof workId === 'string' && workId.length > 0 ? workId : null,
     previousStatus: previousPageStatus,
     previousGenerationMode,
   };
@@ -704,6 +810,7 @@ function extractFailureCompensation(value: Record<string, unknown>): FailureComp
 function toFailureCompensation(params: PersistedPageGenerationJobParams): FailureCompensation {
   return {
     pageId: params.page_id,
+    workId: typeof params.work_id === 'string' && params.work_id.length > 0 ? params.work_id : null,
     previousStatus: params.previous_page_status,
     previousGenerationMode: params.previous_generation_mode,
   };

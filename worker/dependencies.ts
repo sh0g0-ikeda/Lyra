@@ -4,6 +4,7 @@ import { PostgresEntityGenerationExecutionRepository } from '../src/repositories
 import { PostgresEpisodePageSkeletonExecutionRepository } from '../src/repositories/EpisodePageSkeletonExecutionRepository.js';
 import { PostgresEpisodeStoryAutofillExecutionRepository } from '../src/repositories/EpisodeStoryAutofillExecutionRepository.js';
 import { PostgresPageGenerationExecutionRepository } from '../src/repositories/PageGenerationExecutionRepository.js';
+import { PostgresOrganizationRepository } from '../src/repositories/OrganizationRepository.js';
 import { CreditService, type CreditServicePort } from '../src/services/credit/CreditService.js';
 import {
   EntityGenerationWorkerService,
@@ -93,6 +94,10 @@ import {
   type PageSkeletonServicePort,
 } from '../src/services/story/PageSkeletonService.js';
 import type { StoryAiClientPort } from '../src/services/story/StoryAiClientPort.js';
+import {
+  OrganizationService,
+  type OrganizationServicePort,
+} from '../src/services/organization/OrganizationService.js';
 
 export interface PageGenerationWorkerPort {
   processJob(jobId: string): Promise<ProcessPageGenerationJobResult>;
@@ -133,6 +138,7 @@ export interface WorkerDependencyOverrides {
   pageSkeletonService?: PageSkeletonServicePort;
   storyAiClient?: StoryAiClientPort;
   episodePagePlanCompiler?: EpisodePagePlanCompilerPort;
+  organizationService?: OrganizationServicePort;
   pageGenerationWorkerService?: PageGenerationWorkerPort;
   entityGenerationWorkerService?: EntityGenerationWorkerPort;
   episodeStoryAutofillWorkerService?: EpisodeStoryAutofillWorkerPort;
@@ -194,6 +200,9 @@ export function resolveWorkerDependencies(
 
   const creditService =
     overrides.creditService ?? new CreditService(new PostgresCreditRepository(db, db));
+  const organizationService =
+    overrides.organizationService ??
+    new OrganizationService(new PostgresOrganizationRepository(db, db));
   const promptBuilder =
     overrides.promptBuilder ??
     new PromptBuilder(
@@ -254,6 +263,7 @@ export function resolveWorkerDependencies(
       pageImageStorage,
       creditService,
       env.GENERATION_ENABLED && env.PAGE_GENERATION_ENABLED,
+      organizationService,
     ),
     entityGenerationWorkerService: new EntityGenerationWorkerService(
       entityGenerationExecutionRepository,
@@ -266,6 +276,7 @@ export function resolveWorkerDependencies(
       storedImageLoader,
       env.OPENAI_IMAGE_MODEL,
       env.GENERATION_ENABLED && env.ENTITY_GENERATION_ENABLED,
+      organizationService,
     ),
     episodeStoryAutofillWorkerService: new EpisodeStoryAutofillWorkerService(
       episodeStoryAutofillExecutionRepository,

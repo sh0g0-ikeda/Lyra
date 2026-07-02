@@ -1,11 +1,19 @@
-import type { CreditPackageCode, PaidPlanCode } from '../../domain/constants/billing.js';
-import { CREDIT_PACKAGE_DEFINITIONS } from '../../domain/constants/billing.js';
+import type { ConsumerPaidPlanCode, CreditPackageCode, PaidPlanCode } from '../../domain/constants/billing.js';
+import {
+  CREDIT_PACKAGE_DEFINITIONS,
+  ENTERPRISE_PLAN_DEFINITIONS,
+  getBillingPlanRank,
+  isEnterprisePlanCode,
+  PAID_PLAN_CODES,
+  SUBSCRIPTION_PLAN_DEFINITIONS,
+} from '../../domain/constants/billing.js';
 import { ConflictError, ConfigurationError, NotFoundError } from '../../domain/errors/index.js';
 import type {
   BillingUserProfile,
   CreditCheckoutResult,
   CustomerPortalResult,
   SubscriptionCheckoutResult,
+  SubscriptionPlanCatalogEntry,
 } from '../../domain/types/billing.js';
 import type { AuthenticatedUser } from '../../domain/types/user.js';
 import type { StripeBillingClientPort } from '../../infrastructure/stripe/StripeBillingClient.js';
@@ -15,7 +23,7 @@ export interface BillingServiceConfig {
   successUrl: string;
   cancelUrl: string;
   portalReturnUrl: string;
-  subscriptionPriceIds: Record<PaidPlanCode, string>;
+  subscriptionPriceIds: Record<PaidPlanCode, string | undefined>;
   creditPackagePriceIds: Record<CreditPackageCode, string>;
 }
 
@@ -26,6 +34,7 @@ export interface BillingServicePort {
   ): Promise<SubscriptionCheckoutResult>;
   createCreditCheckoutSession(user: AuthenticatedUser, packageCode: CreditPackageCode): Promise<CreditCheckoutResult>;
   createCustomerPortalSession(userId: string): Promise<CustomerPortalResult>;
+  getSubscriptionPlanCatalog(): SubscriptionPlanCatalogEntry[];
 }
 
 export class BillingService implements BillingServicePort {
@@ -39,19 +48,24 @@ export class BillingService implements BillingServicePort {
     user: AuthenticatedUser,
     planCode: PaidPlanCode,
   ): Promise<SubscriptionCheckoutResult> {
+    if (isEnterprisePlanCode(planCode)) {
+      throw new ConflictError('Enterprise subscriptions must be managed from an organization workspace');
+    }
+
     const billingUser = await this.requireBillingUser(user.id);
     if (billingUser.planCode === planCode) {
       throw new ConflictError('Requested plan is already active');
     }
 
+    const priceId = this.requireSubscriptionPriceId(planCode);
     if (billingUser.planCode !== 'free') {
-      return this.createPaidPlanChangeSession(billingUser, planCode);
+      return this.createPaidPlanChangeSession(billingUser, planCode, priceId);
     }
 
     const customerId = await this.ensureStripeCustomer(billingUser);
     const session = await this.stripeClient.createCheckoutSession({
       customerId,
-      priceId: this.config.subscriptionPriceIds[planCode],
+      priceId,
       mode: 'subscription',
       successUrl: this.config.successUrl,
       cancelUrl: this.config.cancelUrl,
@@ -68,8 +82,9 @@ export class BillingService implements BillingServicePort {
   private async createPaidPlanChangeSession(
     billingUser: BillingUserProfile,
     planCode: PaidPlanCode,
+    priceId: string,
   ): Promise<SubscriptionCheckoutResult> {
-    if (billingUser.planCode !== 'standard' || planCode !== 'premium') {
+    if (getBillingPlanRank(planCode) <= getBillingPlanRank(billingUser.planCode)) {
       throw new ConflictError('Paid plan downgrades must be managed through the customer portal');
     }
 
@@ -105,7 +120,7 @@ export class BillingService implements BillingServicePort {
       customerId: billingUser.stripeCustomerId,
       subscriptionId: stripeSubscription.id,
       subscriptionItemId: subscriptionItem.id,
-      priceId: this.config.subscriptionPriceIds[planCode],
+      priceId,
       quantity: subscriptionItem.quantity ?? 1,
       returnUrl: this.config.portalReturnUrl,
     });
@@ -155,6 +170,20 @@ export class BillingService implements BillingServicePort {
     };
   }
 
+  public getSubscriptionPlanCatalog(): SubscriptionPlanCatalogEntry[] {
+    return PAID_PLAN_CODES.filter((planCode) => !isEnterprisePlanCode(planCode)).map((planCode) => ({
+      planCode,
+      displayNameJa: displayNameJaForPlan(planCode),
+      displayNameEn: displayNameEnForPlan(planCode),
+      monthlyCredits: getMonthlyCreditsForPlan(planCode),
+      amountJpy: getAmountJpyForPlan(planCode),
+      minimumContractMonths: minimumContractMonthsForPlan(planCode),
+      trialDays: trialDaysForPlan(planCode),
+      isEnterprise: false,
+      configured: !isBlank(this.config.subscriptionPriceIds[planCode] ?? ''),
+    }));
+  }
+
   private async requireBillingUser(userId: string): Promise<BillingUserProfile> {
     const billingUser = await this.billingRepository.findBillingUserProfile(userId);
     if (billingUser === null) {
@@ -181,14 +210,28 @@ export class BillingService implements BillingServicePort {
 
     return persistedCustomerId;
   }
+
+  private requireSubscriptionPriceId(planCode: PaidPlanCode): string {
+    const priceId = this.config.subscriptionPriceIds[planCode]?.trim();
+    if (priceId === undefined || isBlank(priceId)) {
+      throw new ConfigurationError(`Subscription plan is not available for checkout yet: ${planCode}`);
+    }
+
+    return priceId;
+  }
 }
 
 export function assertBillingConfig(config: BillingServiceConfig): BillingServiceConfig {
+  const requiredConsumerPriceIds: Record<ConsumerPaidPlanCode, string | undefined> = {
+    standard: config.subscriptionPriceIds.standard,
+    premium: config.subscriptionPriceIds.premium,
+  };
+
   if (
     isBlank(config.successUrl) ||
     isBlank(config.cancelUrl) ||
     isBlank(config.portalReturnUrl) ||
-    Object.values(config.subscriptionPriceIds).some(isBlank) ||
+    Object.values(requiredConsumerPriceIds).some((value) => isBlank(value ?? '')) ||
     Object.values(config.creditPackagePriceIds).some(isBlank)
   ) {
     throw new ConfigurationError('Stripe billing configuration is incomplete');
@@ -205,9 +248,67 @@ function isBlank(value: string): boolean {
   return value.trim().length === 0;
 }
 
-function getStripeSubscriptionCustomerId(
-  customer: string | { id?: string } | null,
-): string | null {
+function getMonthlyCreditsForPlan(planCode: PaidPlanCode): number {
+  if (isEnterprisePlanCode(planCode)) {
+    return ENTERPRISE_PLAN_DEFINITIONS[planCode].monthlyCredits;
+  }
+
+  return SUBSCRIPTION_PLAN_DEFINITIONS[planCode].monthlyCredits;
+}
+
+function getAmountJpyForPlan(planCode: PaidPlanCode): number {
+  if (isEnterprisePlanCode(planCode)) {
+    return ENTERPRISE_PLAN_DEFINITIONS[planCode].amountJpy;
+  }
+
+  return SUBSCRIPTION_PLAN_DEFINITIONS[planCode].amountJpy;
+}
+
+function minimumContractMonthsForPlan(planCode: PaidPlanCode): number {
+  if (isEnterprisePlanCode(planCode)) {
+    return ENTERPRISE_PLAN_DEFINITIONS[planCode].minimumContractMonths;
+  }
+
+  return 1;
+}
+
+function trialDaysForPlan(planCode: PaidPlanCode): number {
+  if (isEnterprisePlanCode(planCode)) {
+    return ENTERPRISE_PLAN_DEFINITIONS[planCode].trialDays;
+  }
+
+  return 0;
+}
+
+function displayNameJaForPlan(planCode: PaidPlanCode): string {
+  switch (planCode) {
+    case 'standard':
+      return '\u30b9\u30bf\u30f3\u30c0\u30fc\u30c9';
+    case 'premium':
+      return '\u30d7\u30ec\u30df\u30a2\u30e0';
+    case 'enterprise_a':
+    case 'enterprise_b':
+    case 'enterprise_c':
+      return ENTERPRISE_PLAN_DEFINITIONS[planCode].displayNameJa;
+  }
+}
+
+function displayNameEnForPlan(planCode: PaidPlanCode): string {
+  switch (planCode) {
+    case 'standard':
+      return 'Standard';
+    case 'premium':
+      return 'Premium';
+    case 'enterprise_a':
+      return 'Enterprise Plan A';
+    case 'enterprise_b':
+      return 'Enterprise Plan B';
+    case 'enterprise_c':
+      return 'Enterprise Plan C';
+  }
+}
+
+function getStripeSubscriptionCustomerId(customer: string | { id?: string } | null): string | null {
   if (typeof customer === 'string') {
     return customer;
   }

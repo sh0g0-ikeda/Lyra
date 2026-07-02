@@ -7,6 +7,7 @@ import {
   replacePanelFramesBodySchema,
 } from '../lib/validators/panelFrame.schema.js';
 import { formatZodValidationError } from '../lib/validationErrorFormatter.js';
+import type { OrganizationServicePort } from '../services/organization/OrganizationService.js';
 import type { PanelFrameServicePort } from '../services/page/PanelFrameService.js';
 import type { AppEnv } from '../types/app.js';
 import { readJsonBody } from './requestBody.js';
@@ -15,6 +16,7 @@ export interface PanelFrameRouteDependencies {
   authMiddleware: MiddlewareHandler<AppEnv>;
   rateLimitMiddleware: MiddlewareHandler<AppEnv>;
   panelFrameService: PanelFrameServicePort;
+  organizationService?: OrganizationServicePort;
 }
 
 export function createPanelFrameRoutes(dependencies: PanelFrameRouteDependencies): Hono<AppEnv> {
@@ -26,7 +28,9 @@ export function createPanelFrameRoutes(dependencies: PanelFrameRouteDependencies
   app.get('/pages/:id/frames', async (c) => {
     const user = c.get('user');
     const pageId = parseUuidParam(c, 'id');
-    const frames = await dependencies.panelFrameService.listPageFrames(user.id, pageId);
+    const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'view_work');
+    const frames = await dependencies.panelFrameService.listPageFrames(user.id, pageId, organizationId);
 
     return c.json({ frames: frames.map(toPanelFrameResponse) });
   });
@@ -34,6 +38,8 @@ export function createPanelFrameRoutes(dependencies: PanelFrameRouteDependencies
   app.post('/pages/:id/frames/apply-template', async (c) => {
     const user = c.get('user');
     const pageId = parseUuidParam(c, 'id');
+    const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'edit_work');
     const body = applyPanelFrameTemplateBodySchema.safeParse(await readJsonBody(c));
 
     if (!body.success) {
@@ -44,6 +50,7 @@ export function createPanelFrameRoutes(dependencies: PanelFrameRouteDependencies
       user.id,
       pageId,
       body.data.template_id,
+      organizationId,
     );
 
     return c.json(toPanelFrameTemplateApplicationResponse(application));
@@ -52,6 +59,8 @@ export function createPanelFrameRoutes(dependencies: PanelFrameRouteDependencies
   app.put('/pages/:id/frames', async (c) => {
     const user = c.get('user');
     const pageId = parseUuidParam(c, 'id');
+    const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'edit_work');
     const body = replacePanelFramesBodySchema.safeParse(await readJsonBody(c));
 
     if (!body.success) {
@@ -71,6 +80,7 @@ export function createPanelFrameRoutes(dependencies: PanelFrameRouteDependencies
         zIndex: frame.z_index,
         readingOrder: frame.reading_order,
       })),
+      organizationId,
     );
 
     return c.json({ frames: frames.map(toPanelFrameResponse) });
@@ -86,6 +96,37 @@ function parseUuidParam(c: Context<AppEnv>, name: string): string {
   }
 
   return result.data;
+}
+
+function parseOptionalOrganizationId(c: Context<AppEnv>): string | null {
+  const raw = c.req.query('organization_id');
+  if (raw === undefined || raw.trim().length === 0) {
+    return null;
+  }
+
+  const result = panelFrameUuidParamSchema.safeParse(raw);
+  if (!result.success) {
+    throw new ValidationError('organization_id must be a valid UUID');
+  }
+
+  return result.data;
+}
+
+async function requireOrganizationCapability(
+  c: Context<AppEnv>,
+  dependencies: PanelFrameRouteDependencies,
+  organizationId: string | null,
+  capability: Parameters<OrganizationServicePort['requireMembership']>[2],
+): Promise<void> {
+  if (organizationId === null) {
+    return;
+  }
+  if (dependencies.organizationService === undefined) {
+    throw new ValidationError('Organization workspace is unavailable');
+  }
+
+  const user = c.get('user');
+  await dependencies.organizationService.requireMembership(organizationId, user.id, capability);
 }
 
 function toPanelFrameResponse(frame: PanelFrame): Record<string, unknown> {

@@ -30,6 +30,8 @@ class FakePanelRepository implements PanelRepository {
   public savedUpdateInput: UpdatePanelInput | null = null;
   public compactedDeleteOrder: number | null = null;
   public pagePanels: Panel[] = [buildPanel({ order: 1 }), buildPanel({ id: 'panel-3', order: 2 })];
+  public reorderedPanelIds: string[] | null = null;
+  public persistReorder = true;
 
   public async findPageContextByIdAndUserId(
     requestedPageId: string,
@@ -77,6 +79,25 @@ class FakePanelRepository implements PanelRepository {
     deletedOrder: number,
   ): Promise<void> {
     this.compactedDeleteOrder = deletedOrder;
+  }
+
+  public async reorderPanels(
+    requestedPageId: string,
+    _userId: string,
+    panelIds: string[],
+  ): Promise<Panel[]> {
+    this.reorderedPanelIds = panelIds;
+    if (!this.persistReorder) {
+      return this.findPanelsByPageIdAndUserId(requestedPageId, _userId);
+    }
+    this.pagePanels = panelIds.map((id, index) =>
+      buildPanel({
+        id,
+        pageId: requestedPageId,
+        order: index + 1,
+      }),
+    );
+    return this.findPanelsByPageIdAndUserId(requestedPageId, _userId);
   }
 }
 
@@ -335,6 +356,57 @@ describe('PanelService', () => {
     });
   });
 
+  it('reorders panels and linked frames together', async () => {
+    const repository = new FakePanelRepository();
+    repository.pagePanels = [
+      buildPanel({ id: 'panel-a', order: 1 }),
+      buildPanel({ id: 'panel-b', order: 2 }),
+      buildPanel({ id: 'panel-c', order: 3 }),
+    ];
+    const frameRepository = new FakePanelFrameRepository();
+    frameRepository.frames = [
+      { ...buildFrame('frame-a', 1), panelId: 'panel-a' },
+      { ...buildFrame('frame-b', 2), panelId: 'panel-b' },
+      { ...buildFrame('frame-c', 3), panelId: 'panel-c' },
+    ];
+    const service = new PanelService(repository, new FakeEntityReader(), frameRepository);
+
+    const panels = await service.reorderPanels(userId, pageId, ['panel-c', 'panel-a', 'panel-b']);
+
+    expect(repository.reorderedPanelIds).toEqual(['panel-c', 'panel-a', 'panel-b']);
+    expect(panels.map((panel) => panel.id)).toEqual(['panel-c', 'panel-a', 'panel-b']);
+    expect(frameRepository.replacedFrames).toMatchObject([
+      { id: 'frame-c', panelId: 'panel-c', readingOrder: 1 },
+      { id: 'frame-a', panelId: 'panel-a', readingOrder: 2 },
+      { id: 'frame-b', panelId: 'panel-b', readingOrder: 3 },
+    ]);
+    expect(frameRepository.replacedLayoutUpdate).toMatchObject({
+      type: 'custom',
+      panelCount: 3,
+    });
+  });
+
+  it('rejects panel reorder when the requested ids do not match the current page panels', async () => {
+    const repository = new FakePanelRepository();
+    const service = new PanelService(repository, new FakeEntityReader(), new FakePanelFrameRepository());
+
+    await expect(service.reorderPanels(userId, pageId, ['panel-3'])).rejects.toBeInstanceOf(
+      ValidationError,
+    );
+    expect(repository.reorderedPanelIds).toBeNull();
+  });
+
+  it('rejects panel reorder when persistence returns a different order', async () => {
+    const repository = new FakePanelRepository();
+    repository.persistReorder = false;
+    const service = new PanelService(repository, new FakeEntityReader(), new FakePanelFrameRepository());
+
+    await expect(service.reorderPanels(userId, pageId, ['panel-3', panelId])).rejects.toBeInstanceOf(
+      ValidationError,
+    );
+    expect(repository.reorderedPanelIds).toEqual(['panel-3', panelId]);
+  });
+
   it.each(['confirmed', 'generating'] satisfies PageStatus[])(
     '%s page cannot create panels',
     async (pageStatus) => {
@@ -369,6 +441,19 @@ describe('PanelService', () => {
       const service = new PanelService(repository, new FakeEntityReader(), new FakePanelFrameRepository());
 
       await expect(service.deletePanel(userId, panelId)).rejects.toBeInstanceOf(ConflictError);
+    },
+  );
+
+  it.each(['confirmed', 'generating'] satisfies PageStatus[])(
+    '%s page cannot reorder panels',
+    async (pageStatus) => {
+      const repository = new FakePanelRepository();
+      repository.pageContext = { pageId, workId, pageStatus };
+      const service = new PanelService(repository, new FakeEntityReader(), new FakePanelFrameRepository());
+
+      await expect(
+        service.reorderPanels(userId, pageId, [panelId, 'panel-3']),
+      ).rejects.toBeInstanceOf(ConflictError);
     },
   );
 });

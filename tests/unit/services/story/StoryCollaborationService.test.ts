@@ -221,8 +221,6 @@ class FakeStoryAiClient implements StoryAiClientPort {
   public async improveEpisodeDraft(request: StoryAiModelRequest) {
     this.lastRequest = request;
     return {
-      title: 'Improved title',
-      purpose: 'Improved purpose',
       introduction: 'Improved introduction',
       middle: 'Improved middle',
       climax: 'Improved climax',
@@ -246,8 +244,6 @@ class FakeStoryEpisodeImprovementPlanner implements StoryEpisodeImprovementPlann
         mustPreserve: ['Mio wakes in the facility', 'Emile guides her through headquarters'],
         continuityGuards: ['Do not contradict Chapter 2 setup'],
         pageAdaptationNotes: ['Keep each section adaptable into concrete scene beats'],
-        title: buildSectionPlan('Title anchor'),
-        purpose: buildSectionPlan('Purpose anchor'),
         introduction: buildSectionPlan('Introduction anchor'),
         middle: buildSectionPlan('Middle anchor'),
         climax: buildSectionPlan('Climax anchor'),
@@ -267,8 +263,6 @@ class FakeStoryEpisodeImprovementPlanner implements StoryEpisodeImprovementPlann
       audit: {
         verdict: this.auditVerdict,
         globalIssues: this.auditVerdict === 'revise' ? ['Clarify the handoff into the headquarters reveal.'] : [],
-        title: [],
-        purpose: [],
         introduction: [],
         middle: [],
         climax: [],
@@ -458,6 +452,8 @@ describe('StoryCollaborationService', () => {
     });
 
     expect(result.compilerProvider).toBe('openai');
+    expect(result.draft.title).toBe('Old title');
+    expect(result.draft.purpose).toBe('Old purpose');
     expect(result.draft.introduction).toBe('Improved introduction');
     expect(planner.lastPlanInput?.context.siblingEpisodeSummaries).toContain(
       'Chapter 1 Episode 2: Arrival / Mio sees the headquarters',

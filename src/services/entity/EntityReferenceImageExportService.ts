@@ -14,11 +14,13 @@ export interface EntityReferenceImageExportServicePort {
     userId: string,
     entityId: string,
     refId: string,
+    organizationId?: string | null,
   ): Promise<ExportedEntityReferenceImage>;
   exportCandidateImage(
     userId: string,
     entityId: string,
     s3Key: string,
+    organizationId?: string | null,
   ): Promise<ExportedEntityReferenceImage>;
 }
 
@@ -32,8 +34,9 @@ export class EntityReferenceImageExportService implements EntityReferenceImageEx
     userId: string,
     entityId: string,
     refId: string,
+    organizationId: string | null = null,
   ): Promise<ExportedEntityReferenceImage> {
-    const entity = await this.entityRepository.findReferenceContextByIdAndUserId(entityId, userId);
+    const entity = await this.entityRepository.findReferenceContextByIdAndUserId(entityId, userId, organizationId);
     if (entity === null) {
       throw new NotFoundError('Entity not found');
     }
@@ -43,7 +46,7 @@ export class EntityReferenceImageExportService implements EntityReferenceImageEx
       throw new NotFoundError('Reference image not found');
     }
 
-    ensureOwnedEntityReferenceImageKey(referenceImage.s3Key, userId, entity.entityId);
+    ensureOwnedEntityReferenceImageKey(referenceImage.s3Key, entity.userId, entity.entityId);
     return this.storedImageLoader.loadByS3Key(referenceImage.s3Key);
   }
 
@@ -51,8 +54,9 @@ export class EntityReferenceImageExportService implements EntityReferenceImageEx
     userId: string,
     entityId: string,
     s3Key: string,
+    organizationId: string | null = null,
   ): Promise<ExportedEntityReferenceImage> {
-    const entity = await this.entityRepository.findReferenceContextByIdAndUserId(entityId, userId);
+    const entity = await this.entityRepository.findReferenceContextByIdAndUserId(entityId, userId, organizationId);
     if (entity === null) {
       throw new NotFoundError('Entity not found');
     }

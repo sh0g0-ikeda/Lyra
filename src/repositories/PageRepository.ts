@@ -1,4 +1,4 @@
-import type { QueryResultRow } from 'pg';
+﻿import type { QueryResultRow } from 'pg';
 import type {
   EpisodePagePlanContext,
   EpisodePagePlanSceneEntityStateContext,
@@ -29,20 +29,26 @@ const STORY_PAGE_PURPOSE_KEY = 'story_page_purpose';
 const STORY_CONTINUITY_NOTE_KEY = 'story_continuity_note';
 
 export interface PageRepository {
-  findPagesByEpisodeIdAndUserId(episodeId: string, userId: string): Promise<PageSummary[]>;
-  findPageByIdAndUserId(pageId: string, userId: string): Promise<PageSummary | null>;
-  findGenerationContextByIdAndUserId(pageId: string, userId: string): Promise<PageGenerationContext | null>;
-  findPromptContextByIdAndUserId(pageId: string, userId: string): Promise<PagePromptContext | null>;
-  findAutofillContextByIdAndUserId(pageId: string, userId: string): Promise<PageAutofillContext | null>;
+  findPagesByEpisodeIdAndUserId(episodeId: string, userId: string, organizationId?: string | null): Promise<PageSummary[]>;
+  findPageByIdAndUserId(pageId: string, userId: string, organizationId?: string | null): Promise<PageSummary | null>;
+  findGenerationContextByIdAndUserId(pageId: string, userId: string, organizationId?: string | null): Promise<PageGenerationContext | null>;
+  findPromptContextByIdAndUserId(pageId: string, userId: string, organizationId?: string | null): Promise<PagePromptContext | null>;
+  findAutofillContextByIdAndUserId(
+    pageId: string,
+    userId: string,
+    organizationId?: string | null,
+  ): Promise<PageAutofillContext | null>;
   findEpisodePlanningContextByIdAndUserId(
     episodeId: string,
     userId: string,
+    organizationId?: string | null,
   ): Promise<EpisodePagePlanContext | null>;
-  updatePageSettings(pageId: string, userId: string, input: UpdatePageSettingsInput): Promise<PageSummary | null>;
+  updatePageSettings(pageId: string, userId: string, input: UpdatePageSettingsInput, organizationId?: string | null): Promise<PageSummary | null>;
   updateGenerationState(
     pageId: string,
     userId: string,
     input: PageGenerationStateUpdate,
+    organizationId?: string | null,
   ): Promise<boolean>;
   updateGeneratedImageAndState(
     pageId: string,
@@ -52,12 +58,14 @@ export interface PageRepository {
       generationMode: PageGenerationMode | null;
       generatedImage: GeneratedPageImage;
     },
+    organizationId?: string | null,
   ): Promise<boolean>;
 }
 
 interface GenerationContextRow extends QueryResultRow {
   page_id: string;
   work_id: string;
+  organization_id: string | null;
   layout_config: unknown;
   generated_image: unknown;
   generation_mode: string | null;
@@ -151,6 +159,7 @@ export class PostgresPageRepository implements PageRepository {
   public async findPagesByEpisodeIdAndUserId(
     episodeId: string,
     userId: string,
+    organizationId: string | null = null,
   ): Promise<PageSummary[]> {
     const result = await this.client.query<PageSummaryRow>(
       `
@@ -176,11 +185,24 @@ export class PostgresPageRepository implements PageRepository {
       LEFT JOIN panel_frames ON panel_frames.page_id = pages.id
       LEFT JOIN balloons ON balloons.page_id = pages.id
       WHERE pages.episode_id = $1
-        AND works.user_id = $2
+        AND (
+          ($3::uuid IS NULL AND works.user_id = $2 AND works.organization_id IS NULL)
+          OR (
+            $3::uuid IS NOT NULL
+            AND works.organization_id = $3::uuid
+            AND EXISTS (
+              SELECT 1
+              FROM organization_members
+              WHERE organization_members.organization_id = works.organization_id
+                AND organization_members.user_id = $2
+                AND organization_members.status = 'active'
+            )
+          )
+        )
       GROUP BY pages.id
       ORDER BY pages.page_number ASC
       `,
-      [episodeId, userId],
+      [episodeId, userId, organizationId],
     );
 
     return result.rows.map((row) => {
@@ -207,7 +229,11 @@ export class PostgresPageRepository implements PageRepository {
     });
   }
 
-  public async findPageByIdAndUserId(pageId: string, userId: string): Promise<PageSummary | null> {
+  public async findPageByIdAndUserId(
+    pageId: string,
+    userId: string,
+    organizationId: string | null = null,
+  ): Promise<PageSummary | null> {
     const result = await this.client.query<PageSummaryRow>(
       `
       SELECT pages.id,
@@ -232,10 +258,23 @@ export class PostgresPageRepository implements PageRepository {
       LEFT JOIN panel_frames ON panel_frames.page_id = pages.id
       LEFT JOIN balloons ON balloons.page_id = pages.id
       WHERE pages.id = $1
-        AND works.user_id = $2
+        AND (
+          ($3::uuid IS NULL AND works.user_id = $2 AND works.organization_id IS NULL)
+          OR (
+            $3::uuid IS NOT NULL
+            AND works.organization_id = $3::uuid
+            AND EXISTS (
+              SELECT 1
+              FROM organization_members
+              WHERE organization_members.organization_id = works.organization_id
+                AND organization_members.user_id = $2
+                AND organization_members.status = 'active'
+            )
+          )
+        )
       GROUP BY pages.id
       `,
-      [pageId, userId],
+      [pageId, userId, organizationId],
     );
 
     const row = result.rows[0];
@@ -268,11 +307,13 @@ export class PostgresPageRepository implements PageRepository {
   public async findGenerationContextByIdAndUserId(
     pageId: string,
     userId: string,
+    organizationId: string | null = null,
   ): Promise<PageGenerationContext | null> {
     const result = await this.client.query<GenerationContextRow>(
       `
       SELECT pages.id AS page_id,
              chapters.work_id,
+             works.organization_id,
              pages.layout_config,
              pages.generated_image,
              pages.generation_mode,
@@ -298,19 +339,33 @@ export class PostgresPageRepository implements PageRepository {
       INNER JOIN works ON works.id = chapters.work_id
       LEFT JOIN panels ON panels.page_id = pages.id
       WHERE pages.id = $1
-        AND works.user_id = $2
-      GROUP BY pages.id, chapters.work_id, pages.layout_config, pages.generated_image, pages.generation_mode, pages.status
+        AND (
+          ($3::uuid IS NULL AND works.user_id = $2 AND works.organization_id IS NULL)
+          OR (
+            $3::uuid IS NOT NULL
+            AND works.organization_id = $3::uuid
+            AND EXISTS (
+              SELECT 1
+              FROM organization_members
+              WHERE organization_members.organization_id = works.organization_id
+                AND organization_members.user_id = $2
+                AND organization_members.status = 'active'
+            )
+          )
+        )
+      GROUP BY pages.id, chapters.work_id, works.organization_id, pages.layout_config, pages.generated_image, pages.generation_mode, pages.status
       `,
-      [pageId, userId],
+      [pageId, userId, organizationId],
     );
 
     const row = result.rows[0];
     return row === undefined
       ? null
       : {
-          pageId: row.page_id,
-          workId: row.work_id,
-          layoutConfig: toJsonObject(row.layout_config),
+        pageId: row.page_id,
+        workId: row.work_id,
+        organizationId: row.organization_id,
+        layoutConfig: toJsonObject(row.layout_config),
           generatedImage: toGeneratedPageImage(row.generated_image),
           generationMode: toPageGenerationMode(row.generation_mode),
           status: row.status,
@@ -322,6 +377,7 @@ export class PostgresPageRepository implements PageRepository {
   public async findPromptContextByIdAndUserId(
     pageId: string,
     userId: string,
+    organizationId: string | null = null,
   ): Promise<PagePromptContext | null> {
     const result = await this.client.query<PromptContextRow>(
       `
@@ -364,9 +420,22 @@ export class PostgresPageRepository implements PageRepository {
       INNER JOIN chapters ON chapters.id = episodes.chapter_id
       INNER JOIN works ON works.id = chapters.work_id
       WHERE pages.id = $1
-        AND works.user_id = $2
+        AND (
+          ($3::uuid IS NULL AND works.user_id = $2 AND works.organization_id IS NULL)
+          OR (
+            $3::uuid IS NOT NULL
+            AND works.organization_id = $3::uuid
+            AND EXISTS (
+              SELECT 1
+              FROM organization_members
+              WHERE organization_members.organization_id = works.organization_id
+                AND organization_members.user_id = $2
+                AND organization_members.status = 'active'
+            )
+          )
+        )
       `,
-      [pageId, userId],
+      [pageId, userId, organizationId],
     );
 
     const row = result.rows[0];
@@ -393,6 +462,7 @@ export class PostgresPageRepository implements PageRepository {
   public async findAutofillContextByIdAndUserId(
     pageId: string,
     userId: string,
+    organizationId: string | null = null,
   ): Promise<PageAutofillContext | null> {
     const result = await this.client.query<AutofillContextRow>(
       `
@@ -475,16 +545,28 @@ export class PostgresPageRepository implements PageRepository {
                )
                FROM entities
                WHERE entities.work_id = chapters.work_id
-                 AND entities.user_id = works.user_id
              ) AS entities
       FROM pages
       INNER JOIN episodes ON episodes.id = pages.episode_id
       INNER JOIN chapters ON chapters.id = episodes.chapter_id
       INNER JOIN works ON works.id = chapters.work_id
       WHERE pages.id = $1
-        AND works.user_id = $2
+        AND (
+          ($3::uuid IS NULL AND works.user_id = $2 AND works.organization_id IS NULL)
+          OR (
+            $3::uuid IS NOT NULL
+            AND works.organization_id = $3::uuid
+            AND EXISTS (
+              SELECT 1
+              FROM organization_members
+              WHERE organization_members.organization_id = works.organization_id
+                AND organization_members.user_id = $2
+                AND organization_members.status = 'active'
+            )
+          )
+        )
       `,
-      [pageId, userId],
+      [pageId, userId, organizationId],
     );
 
     const row = result.rows[0];
@@ -501,10 +583,23 @@ export class PostgresPageRepository implements PageRepository {
       INNER JOIN chapters ON chapters.id = episodes.chapter_id
       INNER JOIN works ON works.id = chapters.work_id
       WHERE panels.page_id = $1
-        AND works.user_id = $2
+        AND (
+          ($3::uuid IS NULL AND works.user_id = $2 AND works.organization_id IS NULL)
+          OR (
+            $3::uuid IS NOT NULL
+            AND works.organization_id = $3::uuid
+            AND EXISTS (
+              SELECT 1
+              FROM organization_members
+              WHERE organization_members.organization_id = works.organization_id
+                AND organization_members.user_id = $2
+                AND organization_members.status = 'active'
+            )
+          )
+        )
       ORDER BY panels."order" ASC
       `,
-      [pageId, userId],
+      [pageId, userId, organizationId],
     );
 
     return {
@@ -538,6 +633,7 @@ export class PostgresPageRepository implements PageRepository {
   public async findEpisodePlanningContextByIdAndUserId(
     episodeId: string,
     userId: string,
+    organizationId: string | null = null,
   ): Promise<EpisodePagePlanContext | null> {
     const result = await this.client.query<EpisodePlanContextRow>(
       `
@@ -613,15 +709,27 @@ export class PostgresPageRepository implements PageRepository {
                )
                FROM entities
                WHERE entities.work_id = chapters.work_id
-                 AND entities.user_id = works.user_id
              ) AS entities
       FROM episodes
       INNER JOIN chapters ON chapters.id = episodes.chapter_id
       INNER JOIN works ON works.id = chapters.work_id
       WHERE episodes.id = $1
-        AND works.user_id = $2
+        AND (
+          ($3::uuid IS NULL AND works.user_id = $2 AND works.organization_id IS NULL)
+          OR (
+            $3::uuid IS NOT NULL
+            AND works.organization_id = $3::uuid
+            AND EXISTS (
+              SELECT 1
+              FROM organization_members
+              WHERE organization_members.organization_id = works.organization_id
+                AND organization_members.user_id = $2
+                AND organization_members.status = 'active'
+            )
+          )
+        )
       `,
-      [episodeId, userId],
+      [episodeId, userId, organizationId],
     );
 
     const row = result.rows[0];
@@ -647,10 +755,23 @@ export class PostgresPageRepository implements PageRepository {
       INNER JOIN chapters ON chapters.id = episodes.chapter_id
       INNER JOIN works ON works.id = chapters.work_id
       WHERE pages.episode_id = $1
-        AND works.user_id = $2
+        AND (
+          ($3::uuid IS NULL AND works.user_id = $2 AND works.organization_id IS NULL)
+          OR (
+            $3::uuid IS NOT NULL
+            AND works.organization_id = $3::uuid
+            AND EXISTS (
+              SELECT 1
+              FROM organization_members
+              WHERE organization_members.organization_id = works.organization_id
+                AND organization_members.user_id = $2
+                AND organization_members.status = 'active'
+            )
+          )
+        )
       ORDER BY pages.page_number ASC
       `,
-      [episodeId, userId],
+      [episodeId, userId, organizationId],
     );
 
     const panelsResult = await this.client.query<QueryResultRow>(
@@ -662,10 +783,23 @@ export class PostgresPageRepository implements PageRepository {
       INNER JOIN chapters ON chapters.id = episodes.chapter_id
       INNER JOIN works ON works.id = chapters.work_id
       WHERE pages.episode_id = $1
-        AND works.user_id = $2
+        AND (
+          ($3::uuid IS NULL AND works.user_id = $2 AND works.organization_id IS NULL)
+          OR (
+            $3::uuid IS NOT NULL
+            AND works.organization_id = $3::uuid
+            AND EXISTS (
+              SELECT 1
+              FROM organization_members
+              WHERE organization_members.organization_id = works.organization_id
+                AND organization_members.user_id = $2
+                AND organization_members.status = 'active'
+            )
+          )
+        )
       ORDER BY panels.page_id ASC, panels."order" ASC
       `,
-      [episodeId, userId],
+      [episodeId, userId, organizationId],
     );
 
     const panelsByPageId = new Map<string, PageAutofillPanelContext[]>();
@@ -716,6 +850,7 @@ export class PostgresPageRepository implements PageRepository {
     pageId: string,
     userId: string,
     input: UpdatePageSettingsInput,
+    organizationId: string | null = null,
   ): Promise<PageSummary | null> {
     await this.client.query(
       `
@@ -732,7 +867,20 @@ export class PostgresPageRepository implements PageRepository {
       INNER JOIN works ON works.id = chapters.work_id
       WHERE pages.id = $1
         AND pages.episode_id = episodes.id
-        AND works.user_id = $2
+        AND (
+          ($7::uuid IS NULL AND works.user_id = $2 AND works.organization_id IS NULL)
+          OR (
+            $7::uuid IS NOT NULL
+            AND works.organization_id = $7::uuid
+            AND EXISTS (
+              SELECT 1
+              FROM organization_members
+              WHERE organization_members.organization_id = works.organization_id
+                AND organization_members.user_id = $2
+                AND organization_members.status = 'active'
+            )
+          )
+        )
       `,
       [
         pageId,
@@ -741,16 +889,18 @@ export class PostgresPageRepository implements PageRepository {
         input.pageDialogueToggle ?? null,
         input.layoutConfig !== undefined,
         input.layoutConfig === undefined ? null : JSON.stringify(input.layoutConfig),
+        organizationId,
       ],
     );
 
-    return this.findPageByIdAndUserId(pageId, userId);
+    return this.findPageByIdAndUserId(pageId, userId, organizationId);
   }
 
   public async updateGenerationState(
     pageId: string,
     userId: string,
     input: PageGenerationStateUpdate,
+    organizationId: string | null = null,
   ): Promise<boolean> {
     const result = await this.client.query<UpdateRow>(
       `
@@ -763,11 +913,24 @@ export class PostgresPageRepository implements PageRepository {
       INNER JOIN works ON works.id = chapters.work_id
       WHERE pages.id = $1
         AND pages.episode_id = episodes.id
-        AND works.user_id = $2
+        AND (
+          ($6::uuid IS NULL AND works.user_id = $2 AND works.organization_id IS NULL)
+          OR (
+            $6::uuid IS NOT NULL
+            AND works.organization_id = $6::uuid
+            AND EXISTS (
+              SELECT 1
+              FROM organization_members
+              WHERE organization_members.organization_id = works.organization_id
+                AND organization_members.user_id = $2
+                AND organization_members.status = 'active'
+            )
+          )
+        )
         AND ($5::text IS NULL OR pages.status = $5::text)
       RETURNING pages.id
       `,
-      [pageId, userId, input.status, input.generationMode, input.expectedStatus ?? null],
+      [pageId, userId, input.status, input.generationMode, input.expectedStatus ?? null, organizationId],
     );
 
     return (result.rowCount ?? 0) > 0;
@@ -781,6 +944,7 @@ export class PostgresPageRepository implements PageRepository {
       generationMode: PageGenerationMode | null;
       generatedImage: GeneratedPageImage;
     },
+    organizationId: string | null = null,
   ): Promise<boolean> {
     const result = await this.client.query<UpdateRow>(
       `
@@ -799,7 +963,20 @@ export class PostgresPageRepository implements PageRepository {
       INNER JOIN works ON works.id = chapters.work_id
       WHERE pages.id = $1
         AND pages.episode_id = episodes.id
-        AND works.user_id = $2
+        AND (
+          ($9::uuid IS NULL AND works.user_id = $2 AND works.organization_id IS NULL)
+          OR (
+            $9::uuid IS NOT NULL
+            AND works.organization_id = $9::uuid
+            AND EXISTS (
+              SELECT 1
+              FROM organization_members
+              WHERE organization_members.organization_id = works.organization_id
+                AND organization_members.user_id = $2
+                AND organization_members.status = 'active'
+            )
+          )
+        )
       RETURNING pages.id
       `,
       [
@@ -811,6 +988,7 @@ export class PostgresPageRepository implements PageRepository {
         input.generatedImage.cdnUrl,
         input.generatedImage.generationMode,
         input.generatedImage.generatedAt,
+        organizationId,
       ],
     );
 

@@ -12,11 +12,17 @@ import type {
   CreditServicePort,
   RefundCreditsParams,
 } from '../../../../src/services/credit/CreditService.js';
+import type {
+  GrantOrganizationCreditsRequest,
+  OrganizationServicePort,
+} from '../../../../src/services/organization/OrganizationService.js';
 import { EntityGenerationRecoveryService } from '../../../../src/services/entity/EntityGenerationRecoveryService.js';
 
 class FakeRecoveryRepository implements EntityGenerationRecoveryRepository {
   public jobs: StaleEntityGenerationJob[] = [];
   public failedJobsMissingRefund: FailedEntityGenerationJobMissingRefund[] = [];
+  public entityStaleLookup: { userId: string; entityId: string; organizationId: string | null } | null = null;
+  public entityFailedLookup: { userId: string; entityId: string; organizationId: string | null } | null = null;
 
   public async listStaleProcessingJobs(): Promise<StaleEntityGenerationJob[]> {
     return [...this.jobs];
@@ -25,8 +31,17 @@ class FakeRecoveryRepository implements EntityGenerationRecoveryRepository {
   public async listStaleProcessingJobsForEntity(
     userId: string,
     entityId: string,
+    _cutoff?: Date,
+    _limit?: number,
+    organizationId: string | null = null,
   ): Promise<StaleEntityGenerationJob[]> {
-    return this.jobs.filter((job) => job.userId === userId && job.entityId === entityId);
+    this.entityStaleLookup = { userId, entityId, organizationId };
+    return this.jobs.filter(
+      (job) =>
+        job.userId === userId &&
+        job.entityId === entityId &&
+        (organizationId === null ? job.organizationId == null : job.organizationId === organizationId),
+    );
   }
 
   public async listFailedJobsMissingRefund(): Promise<FailedEntityGenerationJobMissingRefund[]> {
@@ -36,8 +51,16 @@ class FakeRecoveryRepository implements EntityGenerationRecoveryRepository {
   public async listFailedJobsMissingRefundForEntity(
     userId: string,
     entityId: string,
+    _limit?: number,
+    organizationId: string | null = null,
   ): Promise<FailedEntityGenerationJobMissingRefund[]> {
-    return this.failedJobsMissingRefund.filter((job) => job.userId === userId && job.entityId === entityId);
+    this.entityFailedLookup = { userId, entityId, organizationId };
+    return this.failedJobsMissingRefund.filter(
+      (job) =>
+        job.userId === userId &&
+        job.entityId === entityId &&
+        (organizationId === null ? job.organizationId == null : job.organizationId === organizationId),
+    );
   }
 }
 
@@ -90,6 +113,17 @@ class FakeCreditService implements CreditServicePort {
     }
 
     return this.getBalance();
+  }
+}
+
+class FakeOrganizationService {
+  public refunds: Array<GrantOrganizationCreditsRequest & { jobId?: string | null }> = [];
+
+  public async refundCredits(
+    params: GrantOrganizationCreditsRequest & { jobId?: string | null },
+  ): Promise<unknown> {
+    this.refunds.push(params);
+    return { monthlyCredits: 0, purchasedCredits: 0, totalCredits: 0, monthlyExpiresAt: null };
   }
 }
 
@@ -313,5 +347,91 @@ describe('EntityGenerationRecoveryService', () => {
     expect(recoveredCount).toBe(0);
     expect(executionRepository.failedJobIds).toEqual([]);
     expect(creditService.refunds).toEqual([]);
+  });
+
+  it('法人 stale entity job は組織残高へ返金する', async () => {
+    const repository = new FakeRecoveryRepository();
+    repository.jobs = [
+      {
+        jobId: 'job-1',
+        userId: 'user-1',
+        organizationId: 'org-1',
+        creditCost: 1,
+        entityId: 'entity-1',
+        staleAt: new Date('2026-06-03T00:00:00.000Z'),
+      },
+    ];
+    const executionRepository = new FakeExecutionRepository();
+    const creditService = new FakeCreditService();
+    const organizationService = new FakeOrganizationService();
+    const service = new EntityGenerationRecoveryService(
+      repository,
+      executionRepository,
+      creditService,
+      1,
+      50,
+      organizationService as unknown as OrganizationServicePort,
+    );
+
+    const recoveredCount = await service.recoverAllStaleJobs();
+
+    expect(recoveredCount).toBe(1);
+    expect(creditService.refunds).toEqual([]);
+    expect(organizationService.refunds).toEqual([
+      expect.objectContaining({
+        organizationId: 'org-1',
+        actorUserId: 'user-1',
+        amount: 1,
+        jobId: 'job-1',
+      }),
+    ]);
+  });
+
+  it('法人 entity 指定回収では organizationId を条件にして未返金 failed job を組織残高へ戻す', async () => {
+    const repository = new FakeRecoveryRepository();
+    repository.failedJobsMissingRefund = [
+      {
+        jobId: 'job-personal',
+        userId: 'user-1',
+        organizationId: null,
+        creditCost: 1,
+        entityId: 'entity-1',
+        completedAt: null,
+      },
+      {
+        jobId: 'job-org',
+        userId: 'user-1',
+        organizationId: 'org-1',
+        creditCost: 2,
+        entityId: 'entity-1',
+        completedAt: null,
+      },
+    ];
+    const executionRepository = new FakeExecutionRepository();
+    const creditService = new FakeCreditService();
+    const organizationService = new FakeOrganizationService();
+    const service = new EntityGenerationRecoveryService(
+      repository,
+      executionRepository,
+      creditService,
+      1,
+      50,
+      organizationService as unknown as OrganizationServicePort,
+    );
+
+    const recoveredCount = await service.recoverStaleJobsForEntity('user-1', 'entity-1', 'org-1');
+
+    expect(recoveredCount).toBe(1);
+    expect(repository.entityStaleLookup).toEqual({ userId: 'user-1', entityId: 'entity-1', organizationId: 'org-1' });
+    expect(repository.entityFailedLookup).toEqual({ userId: 'user-1', entityId: 'entity-1', organizationId: 'org-1' });
+    expect(creditService.refunds).toEqual([]);
+    expect(organizationService.refunds).toEqual([
+      expect.objectContaining({
+        organizationId: 'org-1',
+        actorUserId: 'user-1',
+        amount: 2,
+        jobId: 'job-org',
+      }),
+    ]);
   });
 });

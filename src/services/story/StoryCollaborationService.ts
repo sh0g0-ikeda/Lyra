@@ -30,13 +30,18 @@ import type {
 } from '../../domain/types/storyAi.js';
 import type { StoryRepository } from '../../repositories/StoryRepository.js';
 import type { StoryEpisodeImprovementPlannerPort } from './StoryEpisodeImprovementPlanner.js';
-import type { StoryAiClientPort } from './StoryAiClientPort.js';
+import type { StoryAiClientPort, StoryEpisodeDraftWriterOutput } from './StoryAiClientPort.js';
 
 export interface StoryCollaborationServicePort {
-  collaborate(userId: string, input: StoryCollaborationInput): Promise<AsyncIterable<string>>;
+  collaborate(
+    userId: string,
+    input: StoryCollaborationInput,
+    organizationId?: string | null,
+  ): Promise<AsyncIterable<string>>;
   improveEpisodeDraft(
     userId: string,
     input: StoryEpisodeImprovementInput,
+    organizationId?: string | null,
   ): Promise<StoryEpisodeImprovementResult>;
 }
 
@@ -50,11 +55,13 @@ export class StoryCollaborationService implements StoryCollaborationServicePort 
   public async collaborate(
     userId: string,
     input: StoryCollaborationInput,
+    organizationId: string | null = null,
   ): Promise<AsyncIterable<string>> {
     const target = await this.storyRepository.findCollaborationTargetByIdAndUserId(
       input.layer,
       input.targetId,
       userId,
+      organizationId,
     );
     if (target === null) {
       throw new NotFoundError(`${capitalizeLayer(input.layer)} not found`);
@@ -73,6 +80,7 @@ export class StoryCollaborationService implements StoryCollaborationServicePort 
   public async improveEpisodeDraft(
     userId: string,
     input: StoryEpisodeImprovementInput,
+    organizationId: string | null = null,
   ): Promise<StoryEpisodeImprovementResult> {
     ensureEpisodeImprovementFitsLimits(input);
     const normalizedBaseDraft = normalizeEpisodeDraftFields(input.baseDraft);
@@ -80,6 +88,7 @@ export class StoryCollaborationService implements StoryCollaborationServicePort 
     const context = await this.storyRepository.findEpisodeImprovementContextByIdAndUserId(
       input.episodeId,
       userId,
+      organizationId,
     );
     if (context === null) {
       throw new NotFoundError('Episode not found');
@@ -89,15 +98,18 @@ export class StoryCollaborationService implements StoryCollaborationServicePort 
 
     try {
       if (this.storyEpisodeImprovementPlanner === undefined) {
-        const directDraft = await this.storyAiClient.improveEpisodeDraft({
-          systemPrompt: buildEpisodeImprovementWriterSystemPrompt(input.language),
-          userPrompt: buildEpisodeImprovementWriterUserPrompt(
-            context,
-            { ...input, baseDraft: normalizedBaseDraft },
-            null,
-            null,
-          ),
-        });
+        const directDraft = mergeWriterOutputWithStableMetadata(
+          normalizedBaseDraft,
+          await this.storyAiClient.improveEpisodeDraft({
+            systemPrompt: buildEpisodeImprovementWriterSystemPrompt(input.language),
+            userPrompt: buildEpisodeImprovementWriterUserPrompt(
+              context,
+              { ...input, baseDraft: normalizedBaseDraft },
+              null,
+              null,
+            ),
+          }),
+        );
 
         return {
           draft: projectEpisodeDraftToMode(input.baseDraft.storyInputMode, directDraft),
@@ -116,15 +128,18 @@ export class StoryCollaborationService implements StoryCollaborationServicePort 
       });
 
       const firstPass = normalizeStructuredWriterOutput(
-        await this.storyAiClient.improveEpisodeDraft({
-          systemPrompt: buildEpisodeImprovementWriterSystemPrompt(input.language),
-          userPrompt: buildEpisodeImprovementWriterUserPrompt(
-            context,
-            { ...input, baseDraft: normalizedBaseDraft },
-            plan.plan,
-            null,
-          ),
-        }),
+        mergeWriterOutputWithStableMetadata(
+          normalizedBaseDraft,
+          await this.storyAiClient.improveEpisodeDraft({
+            systemPrompt: buildEpisodeImprovementWriterSystemPrompt(input.language),
+            userPrompt: buildEpisodeImprovementWriterUserPrompt(
+              context,
+              { ...input, baseDraft: normalizedBaseDraft },
+              plan.plan,
+              null,
+            ),
+          }),
+        ),
       );
 
       const audit = await this.storyEpisodeImprovementPlanner.auditEpisodeImprovement({
@@ -139,15 +154,18 @@ export class StoryCollaborationService implements StoryCollaborationServicePort 
       const finalDraft =
         audit.audit.verdict === 'revise' && hasActionableAuditNotes(audit.audit)
           ? normalizeStructuredWriterOutput(
-              await this.storyAiClient.improveEpisodeDraft({
-                systemPrompt: buildEpisodeImprovementWriterSystemPrompt(input.language),
-                userPrompt: buildEpisodeImprovementWriterUserPrompt(
-                  context,
-                  { ...input, baseDraft: normalizedBaseDraft },
-                  plan.plan,
-                  audit.audit,
-                ),
-              }),
+              mergeWriterOutputWithStableMetadata(
+                normalizedBaseDraft,
+                await this.storyAiClient.improveEpisodeDraft({
+                  systemPrompt: buildEpisodeImprovementWriterSystemPrompt(input.language),
+                  userPrompt: buildEpisodeImprovementWriterUserPrompt(
+                    context,
+                    { ...input, baseDraft: normalizedBaseDraft },
+                    plan.plan,
+                    audit.audit,
+                  ),
+                }),
+              ),
             )
           : firstPass;
 
@@ -163,15 +181,18 @@ export class StoryCollaborationService implements StoryCollaborationServicePort 
       };
     } catch (error) {
       try {
-        const directDraft = await this.storyAiClient.improveEpisodeDraft({
-          systemPrompt: buildEpisodeImprovementWriterSystemPrompt(input.language),
-          userPrompt: buildEpisodeImprovementWriterUserPrompt(
-            context,
-            { ...input, baseDraft: normalizedBaseDraft },
-            null,
-            null,
-          ),
-        });
+        const directDraft = mergeWriterOutputWithStableMetadata(
+          normalizedBaseDraft,
+          await this.storyAiClient.improveEpisodeDraft({
+            systemPrompt: buildEpisodeImprovementWriterSystemPrompt(input.language),
+            userPrompt: buildEpisodeImprovementWriterUserPrompt(
+              context,
+              { ...input, baseDraft: normalizedBaseDraft },
+              null,
+              null,
+            ),
+          }),
+        );
 
         return {
           draft: projectEpisodeDraftToMode(input.baseDraft.storyInputMode, directDraft),
@@ -239,8 +260,9 @@ function buildEpisodeImprovementWriterSystemPrompt(
     `Write each field in practical ${outputLanguage} prose for direct use in the editor form.`,
     'Write in a way that remains easy to split into scenes, pages, and panel beats later.',
     'Prefer concrete named subjects, visible actions, causal progression, emotional turns, and page-friendly beats over abstract summary language.',
-    'The purpose field should stay concise. The story body fields may be richer, but they should still read like editable draft prose, not notes or bullet points.',
-    'Return JSON with exactly these keys: title, purpose, introduction, middle, climax, ending_hook.',
+    'The story body fields may be richer, but they should still read like editable draft prose, not notes or bullet points.',
+    'Do not rewrite the title or purpose metadata. They are not part of this output.',
+    'Return JSON with exactly these keys: introduction, middle, climax, ending_hook.',
     `Each value must be ${outputLanguage} prose or null. Do not add commentary or markdown.`,
   ].join('\n');
 }
@@ -372,8 +394,6 @@ function formatEpisodeDraftFields(
   limits = EDITABLE_EPISODE_DRAFT_PROMPT_LIMITS,
 ): string {
   return [
-    `Title: ${compactDraftField(draft.title, limits.title)}`,
-    `Purpose: ${compactDraftField(draft.purpose, limits.purpose)}`,
     `Story input mode: ${draft.storyInputMode}`,
     `Full story draft: ${compactDraftField(draft.storyFullDraft, limits.storyFullDraft)}`,
     `Introduction: ${compactDraftField(draft.introduction, limits.body)}`,
@@ -392,8 +412,6 @@ function episodeDraftsHaveSameEditableContent(
   right: StoryEpisodeDraftFields,
 ): boolean {
   return (
-    normalizeComparableDraftField(left.title) === normalizeComparableDraftField(right.title) &&
-    normalizeComparableDraftField(left.purpose) === normalizeComparableDraftField(right.purpose) &&
     normalizeComparableDraftField(left.introduction) === normalizeComparableDraftField(right.introduction) &&
     normalizeComparableDraftField(left.middle) === normalizeComparableDraftField(right.middle) &&
     normalizeComparableDraftField(left.climax) === normalizeComparableDraftField(right.climax) &&
@@ -415,6 +433,7 @@ function formatEpisodeImprovementContext(context: StoryEpisodeImprovementContext
     `Theme: ${canonicalize(context.theme) ?? '(none)'}`,
     `Overall flow: ${canonicalize(context.overallFlow) ?? '(none)'}`,
     `Chapter: ${formatStoryPromptParts([context.chapterTitle, context.chapterPurpose], context.entities)}`,
+    `Episode: ${formatStoryPromptParts([context.episodeTitle, context.episodePurpose], context.entities)}`,
     `Chapter arc: ${formatStoryPromptParts(
       [context.chapterStartingState, context.chapterEndingState, context.chapterEmotionCurve],
       context.entities,
@@ -440,8 +459,6 @@ function formatEpisodeImprovementPlan(plan: StoryEpisodeImprovementPlan): string
     `Continuity guards: ${plan.continuityGuards.join(' / ') || '(none)'}`,
     `Page adaptation notes: ${plan.pageAdaptationNotes.join(' / ') || '(none)'}`,
     '',
-    ...formatSectionPlan('Title', plan.title),
-    ...formatSectionPlan('Purpose', plan.purpose),
     ...formatSectionPlan('Introduction', plan.introduction),
     ...formatSectionPlan('Middle', plan.middle),
     ...formatSectionPlan('Climax', plan.climax),
@@ -451,7 +468,7 @@ function formatEpisodeImprovementPlan(plan: StoryEpisodeImprovementPlan): string
 
 function formatSectionPlan(
   label: string,
-  section: StoryEpisodeImprovementPlan['title'],
+  section: StoryEpisodeImprovementPlan['introduction'],
 ): string[] {
   return [
     `${label} objective: ${section.objective ?? '(none)'}`,
@@ -467,8 +484,6 @@ function formatEpisodeImprovementAudit(audit: StoryEpisodeImprovementAudit): str
   return [
     `Verdict: ${audit.verdict}`,
     `Global issues: ${audit.globalIssues.join(' / ') || '(none)'}`,
-    `Title notes: ${audit.title.join(' / ') || '(none)'}`,
-    `Purpose notes: ${audit.purpose.join(' / ') || '(none)'}`,
     `Introduction notes: ${audit.introduction.join(' / ') || '(none)'}`,
     `Middle notes: ${audit.middle.join(' / ') || '(none)'}`,
     `Climax notes: ${audit.climax.join(' / ') || '(none)'}`,
@@ -575,6 +590,24 @@ function normalizeStructuredWriterOutput(
   });
 }
 
+function mergeWriterOutputWithStableMetadata(
+  baseDraft: StoryEpisodeDraftFields,
+  writerOutput: StoryEpisodeDraftWriterOutput,
+): Pick<
+  StoryEpisodeDraftFields,
+  'title' | 'purpose' | 'introduction' | 'middle' | 'climax' | 'endingHook'
+> {
+  // StoryAI now rewrites only body prose; title and purpose stay user-owned metadata.
+  return {
+    title: baseDraft.title,
+    purpose: baseDraft.purpose,
+    introduction: writerOutput.introduction,
+    middle: writerOutput.middle,
+    climax: writerOutput.climax,
+    endingHook: writerOutput.endingHook,
+  };
+}
+
 function projectEpisodeDraftToMode(
   storyInputMode: StoryEpisodeDraftFields['storyInputMode'],
   draft: Pick<
@@ -629,8 +662,6 @@ function normalizeNullableField(value: string | null, maxLength: number): string
 function hasActionableAuditNotes(audit: StoryEpisodeImprovementAudit): boolean {
   return (
     audit.globalIssues.length > 0 ||
-    audit.title.length > 0 ||
-    audit.purpose.length > 0 ||
     audit.introduction.length > 0 ||
     audit.middle.length > 0 ||
     audit.climax.length > 0 ||
@@ -641,8 +672,6 @@ function hasActionableAuditNotes(audit: StoryEpisodeImprovementAudit): boolean {
 function summarizeAuditNotes(audit: StoryEpisodeImprovementAudit): string {
   return [
     ...audit.globalIssues,
-    ...audit.title,
-    ...audit.purpose,
     ...audit.introduction,
     ...audit.middle,
     ...audit.climax,

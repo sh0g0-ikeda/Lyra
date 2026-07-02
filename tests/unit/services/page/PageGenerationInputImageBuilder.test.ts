@@ -160,12 +160,20 @@ class FakeEntityRepository implements EntityRepository {
     },
   ];
   public lastArgs:
-    | { entityIds: string[]; workId: string; userId: string }
+    | { entityIds: string[]; workId: string; userId: string; organizationId: string | null }
     | null = null;
 
   public async create(_input: CreateEntityInput): Promise<Entity> { throw new Error('not used'); }
   public async findByIdAndUserId(_id: string, _userId: string): Promise<Entity | null> { throw new Error('not used'); }
-  public async findByWorkIdAndUserId(_workId: string, _userId: string): Promise<Entity[]> { return this.entities; }
+  public lastFindByWorkArgs: { workId: string; userId: string; organizationId: string | null } | null = null;
+  public async findByWorkIdAndUserId(
+    workId: string,
+    userId: string,
+    organizationId: string | null = null,
+  ): Promise<Entity[]> {
+    this.lastFindByWorkArgs = { workId, userId, organizationId };
+    return this.entities;
+  }
   public async countByIdsAndWorkIdAndUserId(
     _entityIds: string[],
     _workId: string,
@@ -177,8 +185,9 @@ class FakeEntityRepository implements EntityRepository {
     entityIds: string[],
     workId: string,
     userId: string,
+    organizationId: string | null = null,
   ): Promise<EntityPrimaryReferenceImage[]> {
-    this.lastArgs = { entityIds, workId, userId };
+    this.lastArgs = { entityIds, workId, userId, organizationId };
     return this.references;
   }
 }
@@ -272,6 +281,7 @@ describe('PageGenerationInputImageBuilder', () => {
       entityIds: ['entity-1', 'entity-2'],
       workId: 'work-1',
       userId: 'user-1',
+      organizationId: null,
     });
     expect(result).toHaveLength(2);
     expect(result[0]).toMatchObject({
@@ -279,6 +289,41 @@ describe('PageGenerationInputImageBuilder', () => {
       label: 'Aoi',
     });
     expect(result[0]?.dataUrl.startsWith('data:image/png;base64,')).toBe(true);
+  });
+
+  it('法人Workspaceのページでは参照画像取得にも同じorganizationIdを使う', async () => {
+    const pageRepository = new FakePageRepository();
+    pageRepository.generationContext = {
+      ...pageRepository.generationContext!,
+      organizationId: 'org-1',
+    };
+    const entityRepository = new FakeEntityRepository();
+    const layoutGuideImageRenderer = new FakeLayoutGuideImageRenderer();
+    layoutGuideImageRenderer.nextResult = null;
+    const builder = new PageGenerationInputImageBuilder(
+      pageRepository,
+      entityRepository,
+      new FakeStoredImageLoader(),
+      layoutGuideImageRenderer,
+    );
+
+    await builder.buildInputImages({
+      userId: 'user-1',
+      organizationId: 'org-1',
+      pageId: 'page-1',
+    });
+
+    expect(entityRepository.lastFindByWorkArgs).toEqual({
+      workId: 'work-1',
+      userId: 'user-1',
+      organizationId: 'org-1',
+    });
+    expect(entityRepository.lastArgs).toEqual({
+      entityIds: ['entity-1', 'entity-2'],
+      workId: 'work-1',
+      userId: 'user-1',
+      organizationId: 'org-1',
+    });
   });
 
   it('custom layout では最後に layout_reference を追加する', async () => {

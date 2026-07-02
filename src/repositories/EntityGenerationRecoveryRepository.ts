@@ -4,6 +4,7 @@ import type { DatabaseClient } from '../lib/db.js';
 export interface StaleEntityGenerationJob {
   jobId: string;
   userId: string;
+  organizationId?: string | null;
   creditCost: number;
   entityId: string;
   staleAt: Date;
@@ -12,6 +13,7 @@ export interface StaleEntityGenerationJob {
 export interface FailedEntityGenerationJobMissingRefund {
   jobId: string;
   userId: string;
+  organizationId?: string | null;
   creditCost: number;
   entityId: string;
   completedAt: Date | null;
@@ -24,18 +26,21 @@ export interface EntityGenerationRecoveryRepository {
     entityId: string,
     cutoff: Date,
     limit: number,
+    organizationId?: string | null,
   ): Promise<StaleEntityGenerationJob[]>;
   listFailedJobsMissingRefund(limit: number): Promise<FailedEntityGenerationJobMissingRefund[]>;
   listFailedJobsMissingRefundForEntity(
     userId: string,
     entityId: string,
     limit: number,
+    organizationId?: string | null,
   ): Promise<FailedEntityGenerationJobMissingRefund[]>;
 }
 
 interface StaleEntityGenerationJobRow extends QueryResultRow {
   job_id: string;
   user_id: string;
+  organization_id: string | null;
   credit_cost: number;
   entity_id: string | null;
   stale_at: Date;
@@ -44,6 +49,7 @@ interface StaleEntityGenerationJobRow extends QueryResultRow {
 interface FailedEntityGenerationJobMissingRefundRow extends QueryResultRow {
   job_id: string;
   user_id: string;
+  organization_id: string | null;
   credit_cost: number;
   entity_id: string | null;
   completed_at: Date | null;
@@ -69,6 +75,7 @@ export class PostgresEntityGenerationRecoveryRepository
     entityId: string,
     cutoff: Date,
     limit: number,
+    organizationId: string | null = null,
   ): Promise<StaleEntityGenerationJob[]> {
     validateRecoveryLimit(limit);
     const result = await this.client.query<StaleEntityGenerationJobRow>(
@@ -76,10 +83,24 @@ export class PostgresEntityGenerationRecoveryRepository
         `
          AND generation_jobs.user_id = $2
          AND generation_jobs.params->>'entity_id' = $3
+         AND (
+           ($4::uuid IS NULL AND generation_jobs.organization_id IS NULL)
+           OR (
+             $4::uuid IS NOT NULL
+             AND generation_jobs.organization_id = $4::uuid
+             AND EXISTS (
+               SELECT 1
+               FROM organization_members
+               WHERE organization_members.organization_id = generation_jobs.organization_id
+                 AND organization_members.user_id = $2
+                 AND organization_members.status = 'active'
+             )
+           )
+         )
       `,
-        '$4',
+        '$5',
       ),
-      [cutoff, userId, entityId, limit],
+      [cutoff, userId, entityId, organizationId, limit],
     );
 
     return result.rows.flatMap(mapStaleEntityGenerationJobRow);
@@ -99,6 +120,7 @@ export class PostgresEntityGenerationRecoveryRepository
     userId: string,
     entityId: string,
     limit: number,
+    organizationId: string | null = null,
   ): Promise<FailedEntityGenerationJobMissingRefund[]> {
     validateRecoveryLimit(limit);
     const result = await this.client.query<FailedEntityGenerationJobMissingRefundRow>(
@@ -106,10 +128,24 @@ export class PostgresEntityGenerationRecoveryRepository
         `
          AND generation_jobs.user_id = $1
          AND generation_jobs.params->>'entity_id' = $2
+         AND (
+           ($3::uuid IS NULL AND generation_jobs.organization_id IS NULL)
+           OR (
+             $3::uuid IS NOT NULL
+             AND generation_jobs.organization_id = $3::uuid
+             AND EXISTS (
+               SELECT 1
+               FROM organization_members
+               WHERE organization_members.organization_id = generation_jobs.organization_id
+                 AND organization_members.user_id = $1
+                 AND organization_members.status = 'active'
+             )
+           )
+         )
       `,
-        '$3',
+        '$4',
       ),
-      [userId, entityId, limit],
+      [userId, entityId, organizationId, limit],
     );
 
     return result.rows.flatMap(mapFailedEntityGenerationJobMissingRefundRow);
@@ -121,6 +157,7 @@ function buildStaleJobsQuery(extraConditions: string, limitPlaceholder: string):
       SELECT
         generation_jobs.id AS job_id,
         generation_jobs.user_id,
+        generation_jobs.organization_id,
         generation_jobs.credit_cost,
         generation_jobs.params->>'entity_id' AS entity_id,
         COALESCE(generation_jobs.started_at, generation_jobs.created_at) AS stale_at
@@ -148,6 +185,7 @@ function buildFailedJobsMissingRefundQuery(extraConditions: string, limitPlaceho
       SELECT
         generation_jobs.id AS job_id,
         generation_jobs.user_id,
+        generation_jobs.organization_id,
         generation_jobs.credit_cost,
         generation_jobs.params->>'entity_id' AS entity_id,
         generation_jobs.completed_at
@@ -160,6 +198,7 @@ function buildFailedJobsMissingRefundQuery(extraConditions: string, limitPlaceho
           SELECT 1
           FROM credit_ledger
           WHERE credit_ledger.user_id = generation_jobs.user_id
+            AND COALESCE(credit_ledger.organization_id::text, '') = COALESCE(generation_jobs.organization_id::text, '')
             AND credit_ledger.job_id = generation_jobs.id
             AND credit_ledger.type = 'refund'
         )
@@ -186,6 +225,7 @@ function mapStaleEntityGenerationJobRow(
     {
       jobId: row.job_id,
       userId: row.user_id,
+      organizationId: row.organization_id,
       creditCost: row.credit_cost,
       entityId: row.entity_id,
       staleAt: row.stale_at,
@@ -204,6 +244,7 @@ function mapFailedEntityGenerationJobMissingRefundRow(
     {
       jobId: row.job_id,
       userId: row.user_id,
+      organizationId: row.organization_id,
       creditCost: row.credit_cost,
       entityId: row.entity_id,
       completedAt: row.completed_at,

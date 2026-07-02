@@ -26,8 +26,14 @@ export interface PageSkeletonServicePort {
     userId: string,
     episodeId: string,
     options?: PageSkeletonGenerationOptions,
+    organizationId?: string | null,
   ): Promise<PageSkeletonPersistResult>;
-  rollbackFreshSkeleton(userId: string, episodeId: string, expectedPageCount: number): Promise<boolean>;
+  rollbackFreshSkeleton(
+    userId: string,
+    episodeId: string,
+    expectedPageCount: number,
+    organizationId?: string | null,
+  ): Promise<boolean>;
 }
 
 export interface PageSkeletonGenerationOptions {
@@ -51,11 +57,16 @@ export class PageSkeletonService implements PageSkeletonServicePort {
     userId: string,
     episodeId: string,
     options?: PageSkeletonGenerationOptions,
+    organizationId: string | null = null,
   ): Promise<PageSkeletonPersistResult> {
     const overwriteExisting = options?.overwriteExisting === true;
     const language = options?.language ?? 'ja';
     const allowCompilerFallback = options?.allowCompilerFallback !== false;
-    const context = await this.storyRepository.findEpisodePageSkeletonContextByIdAndUserId(episodeId, userId);
+    const context = await this.storyRepository.findEpisodePageSkeletonContextByIdAndUserId(
+      episodeId,
+      userId,
+      organizationId,
+    );
     if (context === null) {
       throw new NotFoundError('Episode not found');
     }
@@ -122,7 +133,7 @@ export class PageSkeletonService implements PageSkeletonServicePort {
 
     const result = await this.storyRepository.createPageSkeleton(episodeId, userId, pages, {
       overwriteExisting,
-    });
+    }, organizationId);
     if (result === null) {
       throw new NotFoundError('Episode not found');
     }
@@ -134,8 +145,9 @@ export class PageSkeletonService implements PageSkeletonServicePort {
     userId: string,
     episodeId: string,
     expectedPageCount: number,
+    organizationId: string | null = null,
   ): Promise<boolean> {
-    return this.storyRepository.rollbackFreshPageSkeleton(episodeId, userId, expectedPageCount);
+    return this.storyRepository.rollbackFreshPageSkeleton(episodeId, userId, expectedPageCount, organizationId);
   }
 }
 
@@ -144,9 +156,10 @@ function buildPageSkeletonSystemPrompt(estimatedPages: number, language: AppLang
   return [
     'You are Lyra Story AI.',
     `Generate a manga page skeleton in ${outputLanguage} and return JSON only.`,
-    'Treat the episode draft and scene list as the primary source of truth for page content.',
+    'Treat the episode draft as the primary source of truth for page content. Use the scene list when it is provided, but do not require scenes to build the skeleton.',
     'Use chapter context only as a consistency check so the episode does not contradict the larger chapter arc.',
-    'Work in this order: first distribute the story across the exact page count, then decide each page purpose, then split each page into panel beats in reading order, then choose the visible entities for each panel.',
+    'Work in this order: first distribute the story across the exact page count, then decide each page purpose, then split each page into panel beats in Japanese manga reading order: right-to-left within a row, then top-to-bottom across rows.',
+    'Panel order numbers must match the selected layout template reading order; panel 1 is the first panel a manga reader sees.',
     `Return exactly ${estimatedPages} pages.`,
     `Allowed layout ids: ${Object.keys(PANEL_FRAME_TEMPLATES).join(', ')}.`,
     'Allowed panel_role values: establish, action, reaction, emphasis, transition, pause, impact.',

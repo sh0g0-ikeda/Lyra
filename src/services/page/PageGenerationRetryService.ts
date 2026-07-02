@@ -1,7 +1,9 @@
-import { ConflictError, NotFoundError } from '../../domain/errors/index.js';
+import { ConflictError, ConfigurationError, NotFoundError } from '../../domain/errors/index.js';
+import type { GenerationJob } from '../../domain/types/job.js';
 import type { GenerationJobRepository } from '../../repositories/GenerationJobRepository.js';
 import { isUniqueViolation } from '../../repositories/GenerationJobRepository.js';
 import type { CreditServicePort } from '../credit/CreditService.js';
+import type { OrganizationServicePort } from '../organization/OrganizationService.js';
 import type { ProcessPageGenerationJobResult } from './PageGenerationWorkerService.js';
 import {
   DEFAULT_GENERATION_CAPACITY_LIMITS,
@@ -24,6 +26,7 @@ export class PageGenerationRetryService implements PageGenerationRetryServicePor
     private readonly pageGenerationWorkerService: PageGenerationRetryWorkerPort,
     private readonly creditService: CreditServicePort,
     private readonly capacityLimits: GenerationCapacityLimits = DEFAULT_GENERATION_CAPACITY_LIMITS,
+    private readonly organizationService?: OrganizationServicePort,
   ) {}
 
   public async retryFailedJob(userId: string, jobId: string): Promise<void> {
@@ -43,12 +46,7 @@ export class PageGenerationRetryService implements PageGenerationRetryServicePor
     let creditsConsumed = false;
     try {
       if (job.creditCost > 0) {
-        await this.creditService.consumeCredits({
-          userId,
-          cost: job.creditCost,
-          description: 'Page generation retry',
-          jobId: job.id,
-        });
+        await this.consumeRetryCredits(userId, job);
         creditsConsumed = true;
       }
 
@@ -65,12 +63,7 @@ export class PageGenerationRetryService implements PageGenerationRetryServicePor
       }
     } catch (error) {
       if (creditsConsumed) {
-        await this.creditService.refundCredits({
-          userId,
-          amount: job.creditCost,
-          description: 'Refund for failed page generation retry setup',
-          jobId: job.id,
-        });
+        await this.refundRetryCredits(userId, job);
       }
 
       if (isUniqueViolation(error)) {
@@ -81,5 +74,56 @@ export class PageGenerationRetryService implements PageGenerationRetryServicePor
     }
 
     await this.pageGenerationWorkerService.processJob(jobId);
+  }
+
+  private async consumeRetryCredits(userId: string, job: GenerationJob): Promise<void> {
+    const organizationId = job.organizationId ?? null;
+    if (organizationId === null) {
+      await this.creditService.consumeCredits({
+        userId,
+        cost: job.creditCost,
+        description: 'Page generation retry',
+        jobId: job.id,
+      });
+      return;
+    }
+
+    if (this.organizationService === undefined) {
+      throw new ConfigurationError('Organization service is required to retry enterprise page generation jobs');
+    }
+
+    await this.organizationService.consumeCredits({
+      organizationId,
+      userId,
+      cost: job.creditCost,
+      description: 'Page generation retry',
+      jobId: job.id,
+      eventType: 'generation.started',
+    });
+  }
+
+  private async refundRetryCredits(userId: string, job: GenerationJob): Promise<void> {
+    const organizationId = job.organizationId ?? null;
+    if (organizationId === null) {
+      await this.creditService.refundCredits({
+        userId,
+        amount: job.creditCost,
+        description: 'Refund for failed page generation retry setup',
+        jobId: job.id,
+      });
+      return;
+    }
+
+    if (this.organizationService === undefined) {
+      throw new ConfigurationError('Organization service is required to refund enterprise page generation retries');
+    }
+
+    await this.organizationService.refundCredits({
+      organizationId,
+      actorUserId: userId,
+      amount: job.creditCost,
+      description: 'Refund for failed page generation retry setup',
+      jobId: job.id,
+    });
   }
 }

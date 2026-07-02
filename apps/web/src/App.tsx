@@ -2,6 +2,8 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import {
   BookOpen,
   Bot,
+  BriefcaseBusiness,
+  Building2,
   Check,
   ChevronDown,
   ChevronUp,
@@ -17,6 +19,7 @@ import {
   Save,
   Sparkles,
   Trash2,
+  Users,
   Wand2,
 } from 'lucide-react';
 import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -49,19 +52,37 @@ import type {
   SceneRecord,
   StoryEpisodeImprovementRecord,
   BillingBalanceRecord,
+  OrganizationAuditLogRecord,
+  OrganizationBillingPlanRecord,
+  OrganizationInvoiceRecord,
+  OrganizationMemberRecord,
   WorkRecord,
 } from './types/api';
 
-type WorkspaceTab = 'story' | 'entities' | 'pages';
+type WorkspaceTab = 'story' | 'entities' | 'pages' | 'account' | 'tutorial';
 type UiLanguage = 'ja' | 'en';
-type SubscriptionPlanCode = 'free' | 'standard' | 'premium';
+type SubscriptionPlanCode = 'free' | 'standard' | 'premium' | 'enterprise_a' | 'enterprise_b' | 'enterprise_c';
+type ConsumerSubscriptionCheckoutPlanCode = 'standard' | 'premium';
 type SubscriptionCheckoutPlanCode = Exclude<SubscriptionPlanCode, 'free'>;
 type CreditCheckoutPackageCode = 'credits_200' | 'credits_1000' | 'credits_3000';
+type EnterprisePlanCode = 'enterprise_a' | 'enterprise_b' | 'enterprise_c';
+
+interface SubscriptionPlanOption {
+  plan_code: SubscriptionCheckoutPlanCode;
+  display_name_ja: string;
+  display_name_en: string;
+  monthly_credits: number;
+  amount_jpy: number;
+  minimum_contract_months: number;
+  trial_days: number;
+  is_enterprise: boolean;
+  configured: boolean;
+}
 
 const MAX_EPISODE_PAGES = 32;
 
 const subscriptionPurchaseOptions: Array<{
-  code: SubscriptionCheckoutPlanCode;
+  code: ConsumerSubscriptionCheckoutPlanCode;
   credits: number;
   priceJpy: number;
   label: { en: string; ja: string };
@@ -70,16 +91,27 @@ const subscriptionPurchaseOptions: Array<{
     code: 'standard',
     credits: 50,
     priceJpy: 1000,
-    label: { en: 'Standard', ja: 'スタンダード' },
+    label: { en: 'Standard', ja: '\u30b9\u30bf\u30f3\u30c0\u30fc\u30c9' },
   },
   {
     code: 'premium',
     credits: 175,
     priceJpy: 3500,
-    label: { en: 'Premium', ja: 'プレミアム' },
+    label: { en: 'Premium', ja: '\u30d7\u30ec\u30df\u30a2\u30e0' },
   },
 ];
 
+const organizationRoleOptions: Array<{
+  value: OrganizationMemberRecord['role'];
+  label: { en: string; ja: string };
+}> = [
+  { value: 'owner', label: { en: 'Owner', ja: '\u30aa\u30fc\u30ca\u30fc' } },
+  { value: 'admin', label: { en: 'Admin', ja: '\u7ba1\u7406\u8005' } },
+  { value: 'billing', label: { en: 'Billing', ja: '\u8acb\u6c42\u7ba1\u7406' } },
+  { value: 'editor', label: { en: 'Editor', ja: '\u7de8\u96c6\u8005' } },
+  { value: 'creator', label: { en: 'Creator', ja: '\u5236\u4f5c\u8005' } },
+  { value: 'viewer', label: { en: 'Viewer', ja: '\u95b2\u89a7\u8005' } },
+];
 const creditPurchaseOptions: Array<{
   code: CreditCheckoutPackageCode;
   credits: number;
@@ -91,11 +123,10 @@ const creditPurchaseOptions: Array<{
 ];
 
 const creditUsageItems: Array<{ en: string; ja: string }> = [
-  { en: 'Character preview / import: 1 credit', ja: 'キャラ生成・取り込み: 1cr' },
-  { en: 'Page generation: 3 credits+', ja: 'ページ生成: 3cr〜' },
-  { en: 'Text AI: free', ja: 'テキストAI: 無料' },
+  { en: 'Character preview / import: 1 credit', ja: '\u30ad\u30e3\u30e9\u30d7\u30ec\u30d3\u30e5\u30fc\u30fb\u53d6\u308a\u8fbc\u307f: 1\u30af\u30ec\u30b8\u30c3\u30c8' },
+  { en: 'Page generation: 3 credits+', ja: '\u30da\u30fc\u30b8\u751f\u6210: 3\u30af\u30ec\u30b8\u30c3\u30c8\u4ee5\u4e0a' },
+  { en: 'Text AI: free', ja: '\u30c6\u30ad\u30b9\u30c8AI: \u7121\u6599' },
 ];
-
 interface NoticeState {
   type: 'error' | 'success' | 'info';
   message: string;
@@ -106,9 +137,13 @@ interface BillingReturnMarker {
   createdAt: number;
   planCode?: SubscriptionCheckoutPlanCode;
   packageCode?: CreditCheckoutPackageCode;
+  organizationId?: string;
   initialPlanCode?: SubscriptionPlanCode;
   initialTotalCredits?: number;
   initialPurchasedCredits?: number;
+  initialOrganizationPlanCode?: EnterprisePlanCode;
+  initialOrganizationTotalCredits?: number;
+  initialOrganizationPurchasedCredits?: number;
 }
 
 interface WorkDraft {
@@ -278,6 +313,12 @@ interface PanelFrameDraft {
   vertices: Array<{ x: string; y: string }>;
 }
 
+interface FramePreviewDefinition {
+  vertices: Array<{ x: number; y: number }>;
+  readingOrder?: number;
+  borderStyle?: PanelFrameRecord['border_style'];
+}
+
 interface GenericStructuredFieldRow {
   key: string;
   value: string;
@@ -394,6 +435,16 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   'First run guide': '初回の進め方',
   'Current plan': '現在のプラン',
   Current: '現在',
+  active: '有効',
+  trialing: '試用中',
+  past_due: '支払い遅延',
+  canceled: '解約済み',
+  unpaid: '未払い',
+  incomplete: '支払い未完了',
+  incomplete_expired: '支払い期限切れ',
+  paused: '停止中',
+  paid: '支払い済み',
+  failed: '失敗',
   Free: 'フリー',
   'Manage paid plans in Stripe.': '有料プランの変更・解約は「サブスク・請求を管理」で行ってください。',
   'production console': '制作コンソール',
@@ -1054,6 +1105,26 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   'Generating preview. It updates when finished.': 'プレビュー生成中。完了後に更新されます。',
   'Generating page. It updates when finished.': 'ページ生成中。完了後に更新されます。',
   'You do not need to fill every blank field.': 'すべての空欄を埋める必要はありません。',
+  'Current episode selection': '現在の話の選択',
+  'Choose the work, chapter, and episode being edited.': '編集する作品・章・話を選択します。',
+  'Create a work before writing story content.': 'ストーリーを書く前に作品を作成してください。',
+  'Import reference': 'レファレンス取り込み',
+  'Preview / Confirm': 'プレビュー / 確定',
+  'Style constraints': '画風制約',
+  Guide: 'ガイド',
+  Panel: 'コマ',
+  'Move earlier': '前へ移動',
+  'Move later': '後へ移動',
+  'Move panel up': 'コマを前へ移動',
+  'Move panel down': 'コマを後へ移動',
+  'Z-index': '重なり順',
+  Account: 'アカウント',
+  Language: '言語',
+  'Log out': 'ログアウト',
+  'Work overview': '作品概要',
+  'Advanced work context': '作品概要の詳細',
+  'Body proportion details': '体型バランスの詳細',
+  'Mobile navigation': 'モバイルナビゲーション',
 };
 
 function normalizeUiLanguage(value: string): UiLanguage {
@@ -1074,7 +1145,7 @@ function translateUiString(language: UiLanguage, value: string): string {
   }
 
   if (value === 'episode_page_skeleton') {
-    return 'ページ骨格生成';
+    return '\u30da\u30fc\u30b8\u9aa8\u683c\u751f\u6210';
   }
 
   const exact = UI_JA_DICTIONARY[value];
@@ -1083,15 +1154,15 @@ function translateUiString(language: UiLanguage, value: string): string {
   }
 
   if (/^Page \d+$/.test(value)) {
-    return value.replace(/^Page (\d+)$/, '$1ページ目');
+    return value.replace(/^Page (\d+)$/, '$1\u30da\u30fc\u30b8');
   }
 
   if (/^Line \d+$/.test(value)) {
-    return value.replace(/^Line (\d+)$/, '$1行目');
+    return value.replace(/^Line (\d+)$/, '$1\u884c');
   }
 
   if (/^(\d+) records$/.test(value)) {
-    return value.replace(/^(\d+) records$/, '$1件');
+    return value.replace(/^(\d+) records$/, '$1\u4ef6');
   }
 
   return value;
@@ -1108,6 +1179,21 @@ function formatFramePanelMismatchDetail(
   )
     .replace('{frames}', String(frameCount))
     .replace('{panels}', String(panelCount));
+}
+
+function formatDeletePanelConfirmMessage(language: UiLanguage, panelOrder: number): string {
+  return language === 'ja'
+    ? `${panelOrder}\u30b3\u30de\u76ee\u3092\u524a\u9664\u3057\u307e\u3059\u304b\uff1f\u6b8b\u308a\u306e\u30b3\u30de\u756a\u53f7\u3068\u30b3\u30de\u5272\u308a\u306f\u81ea\u52d5\u3067\u8a70\u3081\u307e\u3059\u3002`
+    : `Delete panel ${panelOrder}? Remaining panel order and frames will be compacted automatically.`;
+}
+
+function formatPanelOrderLabel(language: UiLanguage, panelOrder: number): string {
+  return language === 'ja' ? `${panelOrder}\u30b3\u30de\u76ee` : `Panel ${panelOrder}`;
+}
+
+function formatPanelRoleLabel(language: UiLanguage, panelRole: PanelRecord['panel_role']): string {
+  const label = PANEL_ROLE_OPTIONS.find(([value]) => value === panelRole)?.[1] ?? panelRole;
+  return translateUiString(language, label);
 }
 
 function getEpisodeStoryAutofillProgressMessage(job: GenerationJobRecord): string {
@@ -1197,7 +1283,7 @@ function formatActionSuccessMessage(language: UiLanguage, actionLabel: string, t
     actionLabel === 'Generate page skeleton' ||
     actionLabel === 'Apply story plan';
   if (language === 'ja') {
-    return isAsyncGenerationAction ? `${translatedLabel}を開始` : `${translatedLabel}完了`;
+    return isAsyncGenerationAction ? `${translatedLabel}\u3092\u958b\u59cb\u3057\u307e\u3057\u305f\u3002` : `${translatedLabel}\u304c\u5b8c\u4e86\u3057\u307e\u3057\u305f\u3002`;
   }
 
   return isAsyncGenerationAction ? `${translatedLabel} started.` : `${translatedLabel} completed.`;
@@ -1215,16 +1301,83 @@ function formatJpy(value: number): string {
   }).format(value);
 }
 
+function formatIsoDateTime(language: UiLanguage, isoDate: string): string {
+  const date = new Date(isoDate);
+  if (Number.isNaN(date.getTime())) {
+    return isoDate;
+  }
+  return new Intl.DateTimeFormat(language === 'ja' ? 'ja-JP' : 'en-US', {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(date);
+}
+
+function formatInvoiceKind(language: UiLanguage, invoice: OrganizationInvoiceRecord): string {
+  if (invoice.kind === 'credit_purchase') {
+    return pickUiText(language, 'Credit purchase', '追加クレジット');
+  }
+  return pickUiText(language, 'Subscription', 'サブスク');
+}
+
+function formatAuditAction(language: UiLanguage, log: OrganizationAuditLogRecord): string {
+  const labels: Record<string, { en: string; ja: string }> = {
+    'organization.created': { en: 'Organization created', ja: '法人作成' },
+    'organization.updated': { en: 'Organization updated', ja: '法人更新' },
+    'member.invited': { en: 'Member invited', ja: 'メンバー招待' },
+    'member.joined': { en: 'Member joined', ja: 'メンバー参加' },
+    'member.role_updated': { en: 'Member role updated', ja: '権限変更' },
+    'member.suspended': { en: 'Member suspended', ja: 'メンバー停止' },
+    'member.removed': { en: 'Member removed', ja: 'メンバー削除' },
+    'credit.granted': { en: 'Credits granted', ja: 'クレジット付与' },
+    'credit.consumed': { en: 'Credits consumed', ja: 'クレジット消費' },
+    'credit.refunded': { en: 'Credits refunded', ja: 'クレジット返却' },
+    'billing.portal_opened': { en: 'Billing portal opened', ja: '請求ポータル表示' },
+    'subscription.updated': { en: 'Subscription updated', ja: 'サブスク更新' },
+    'generation.started': { en: 'Generation started', ja: '生成開始' },
+    'generation.completed': { en: 'Generation completed', ja: '生成完了' },
+    'generation.failed': { en: 'Generation failed', ja: '生成失敗' },
+    'work.exported': { en: 'Work exported', ja: '作品エクスポート' },
+  };
+  const label = labels[log.action];
+  return label === undefined ? log.action : pickUiText(language, label.en, label.ja);
+}
+
 function formatPlanLabel(language: UiLanguage, planCode: SubscriptionPlanCode): string {
   const labels: Record<SubscriptionPlanCode, { en: string; ja: string }> = {
-    free: { en: 'Free', ja: 'フリー' },
-    standard: { en: 'Standard', ja: 'スタンダード' },
-    premium: { en: 'Premium', ja: 'プレミアム' },
+    free: { en: 'Free', ja: '\u30d5\u30ea\u30fc' },
+    standard: { en: 'Standard', ja: '\u30b9\u30bf\u30f3\u30c0\u30fc\u30c9' },
+    premium: { en: 'Premium', ja: '\u30d7\u30ec\u30df\u30a2\u30e0' },
+    enterprise_a: { en: 'Enterprise A', ja: '\u30a8\u30f3\u30bf\u30fc\u30d7\u30e9\u30a4\u30ba A' },
+    enterprise_b: { en: 'Enterprise B', ja: '\u30a8\u30f3\u30bf\u30fc\u30d7\u30e9\u30a4\u30ba B' },
+    enterprise_c: { en: 'Enterprise C', ja: '\u30a8\u30f3\u30bf\u30fc\u30d7\u30e9\u30a4\u30ba C' },
   };
 
   return pickUiText(language, labels[planCode].en, labels[planCode].ja);
 }
 
+function getSubscriptionPlanRank(planCode: SubscriptionPlanCode): number {
+  switch (planCode) {
+    case 'enterprise_c':
+      return 5;
+    case 'enterprise_b':
+      return 4;
+    case 'enterprise_a':
+      return 3;
+    case 'premium':
+      return 2;
+    case 'standard':
+      return 1;
+    case 'free':
+      return 0;
+  }
+}
+
+function formatOrganizationRoleLabel(language: UiLanguage, role: OrganizationMemberRecord['role']): string {
+  const match = organizationRoleOptions.find((option) => option.value === role);
+  return match === undefined ? role : pickUiText(language, match.label.en, match.label.ja);
+}
 const tutorialSteps: Array<{
   title: { en: string; ja: string };
   steps: Array<{ en: string; ja: string }>;
@@ -1318,6 +1471,7 @@ const selectedWorkStorageKey = 'lyra:web:selected-work';
 const selectedChapterStorageKey = 'lyra:web:selected-chapter';
 const selectedEpisodeStorageKey = 'lyra:web:selected-episode';
 const selectedPageStorageKey = 'lyra:web:selected-page';
+const selectedOrganizationStorageKey = 'lyra:web:selected-organization';
 const cognitoRefreshSkewMs = 120_000;
 const maxBrowserTimeoutMs = 2_147_483_647;
 const splashVisibleMs = 2_000;
@@ -1736,7 +1890,23 @@ function StudioShell(props: {
   const queryClient = useQueryClient();
   const onAuthExpired = props.onAuthExpired;
   const api = useMemo(() => new LyraApiClient(() => props.token), [props.token]);
+  const [selectedOrganizationId, setSelectedOrganizationId] = useStoredString(
+    window.localStorage,
+    scopedStorageKey(selectedOrganizationStorageKey, props.authSessionKey),
+    '',
+  );
+  const activeOrganizationId = selectedOrganizationId.trim().length > 0 ? selectedOrganizationId : null;
   const scopedQueryKey = useCallback(
+    (queryKey: readonly unknown[]): readonly unknown[] => [
+      'session',
+      props.authSessionKey,
+      'workspace',
+      activeOrganizationId ?? 'personal',
+      ...queryKey,
+    ],
+    [props.authSessionKey, activeOrganizationId],
+  );
+  const sessionQueryKey = useCallback(
     (queryKey: readonly unknown[]): readonly unknown[] => ['session', props.authSessionKey, ...queryKey],
     [props.authSessionKey],
   );
@@ -1749,7 +1919,6 @@ function StudioShell(props: {
   const uiLanguage = normalizeUiLanguage(uiLanguageStored);
   const uiLanguageRef = useRef<UiLanguage>(uiLanguage);
   const isMobileViewport = useIsMobileViewport();
-  const [newWorkFormOpen, setNewWorkFormOpen] = useState(!isMobileViewport);
   const [notice, setNotice] = useState<NoticeState | null>(null);
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [trackedJobIds, setTrackedJobIds] = useStoredString(
@@ -1816,6 +1985,23 @@ function StudioShell(props: {
   const [lightboxImageUrl, setLightboxImageUrl] = useState<string | null>(null);
   const [lightboxTitle, setLightboxTitle] = useState('');
   const [layoutPreviewTemplateId, setLayoutPreviewTemplateId] = useState<string | null>(null);
+  const [organizationDraft, setOrganizationDraft] = useState<{
+    name: string;
+    legal_name: string;
+    billing_email: string;
+  }>({
+    name: '',
+    legal_name: '',
+    billing_email: props.email,
+  });
+  const [organizationInviteDraft, setOrganizationInviteDraft] = useState<{
+    email: string;
+    role: OrganizationMemberRecord['role'];
+  }>({
+    email: '',
+    role: 'editor',
+  });
+  const [organizationInvitationToken, setOrganizationInvitationToken] = useState('');
   const handledJobsRef = useRef<Set<string>>(new Set());
   const lastWorkspaceRefreshRef = useRef(0);
   const billingVerificationTargetRef = useRef<BillingReturnMarker | null>(null);
@@ -1826,14 +2012,164 @@ function StudioShell(props: {
   }, [uiLanguage]);
 
   useEffect(() => {
-    setNewWorkFormOpen(!isMobileViewport);
-  }, [isMobileViewport]);
+    if (!isMobileViewport && activeTab === 'tutorial') {
+      setActiveTab('story');
+    }
+  }, [activeTab, isMobileViewport]);
+
+  useEffect(() => {
+    setSelectedWorkId('');
+    setSelectedChapterId('');
+    setSelectedEpisodeId('');
+    setSelectedPageId('');
+    setSelectedEntityId('');
+    setSelectedSceneId('');
+    setSelectedPanelId('');
+    setEntityEditorMode('edit');
+  }, [
+    activeOrganizationId,
+    setSelectedWorkId,
+    setSelectedChapterId,
+    setSelectedEpisodeId,
+    setSelectedPageId,
+    setSelectedEntityId,
+    setSelectedSceneId,
+    setSelectedPanelId,
+  ]);
 
   const trackedJobList = useMemo(() => parseTrackedJobIds(trackedJobIds), [trackedJobIds]);
 
+  const organizationWorkspacesQuery = useQuery({
+    queryKey: sessionQueryKey(['organizations']),
+    queryFn: () => api.getOrganizationWorkspaces(),
+  });
+  const organizationWorkspaces = useMemo(
+    () => organizationWorkspacesQuery.data?.organizations ?? [],
+    [organizationWorkspacesQuery.data?.organizations],
+  );
+  const activeOrganizationWorkspace =
+    activeOrganizationId === null
+      ? null
+      : organizationWorkspaces.find((workspace) => workspace.organization.id === activeOrganizationId) ?? null;
+  const activeOrganizationRole = activeOrganizationWorkspace?.membership.role ?? null;
+  const canManageActiveOrganization =
+    activeOrganizationRole === 'owner' || activeOrganizationRole === 'admin';
+  const canManageActiveOrganizationMembers = canManageActiveOrganization;
+  const canViewActiveOrganizationBilling =
+    activeOrganizationRole === 'owner' || activeOrganizationRole === 'billing';
+  const canManageActiveOrganizationBilling = canViewActiveOrganizationBilling;
+  const canViewActiveOrganizationUsage =
+    activeOrganizationRole === 'owner' ||
+    activeOrganizationRole === 'admin';
+  const canViewActiveOrganizationAudit =
+    canViewActiveOrganizationUsage ||
+    activeOrganizationRole === 'billing';
+  const canViewActiveOrganizationWorks =
+    activeOrganizationId === null ||
+    (activeOrganizationWorkspace !== null && activeOrganizationRole !== 'billing');
+  const organizationBalanceQuery = useQuery({
+    queryKey: sessionQueryKey(['organization-balance', activeOrganizationId ?? '']),
+    queryFn: () => api.getOrganizationBalance(activeOrganizationId ?? ''),
+    enabled: activeOrganizationId !== null && activeOrganizationWorkspace !== null,
+  });
+  const organizationMembersQuery = useQuery({
+    queryKey: sessionQueryKey(['organization-members', activeOrganizationId ?? '']),
+    queryFn: () => api.getOrganizationMembers(activeOrganizationId ?? ''),
+    enabled: activeOrganizationId !== null && canManageActiveOrganizationMembers,
+  });
+  const organizationBillingQuery = useQuery({
+    queryKey: sessionQueryKey(['organization-billing', activeOrganizationId ?? '']),
+    queryFn: () => api.getOrganizationBilling(activeOrganizationId ?? ''),
+    enabled: activeOrganizationId !== null && canViewActiveOrganizationBilling,
+  });
+  const organizationUsageQuery = useQuery({
+    queryKey: sessionQueryKey(['organization-usage', activeOrganizationId ?? '']),
+    queryFn: () => api.getOrganizationUsage(activeOrganizationId ?? ''),
+    enabled: activeOrganizationId !== null && canViewActiveOrganizationUsage,
+  });
+  const organizationAuditLogsQuery = useQuery({
+    queryKey: sessionQueryKey(['organization-audit-logs', activeOrganizationId ?? '']),
+    queryFn: () => api.getOrganizationAuditLogs(activeOrganizationId ?? ''),
+    enabled: activeOrganizationId !== null && canViewActiveOrganizationAudit,
+  });
+  const organizationInvoicesQuery = useQuery({
+    queryKey: sessionQueryKey(['organization-invoices', activeOrganizationId ?? '']),
+    queryFn: () => api.getOrganizationInvoices(activeOrganizationId ?? ''),
+    enabled: activeOrganizationId !== null && canViewActiveOrganizationBilling,
+  });
+  const organizationMembers = useMemo(
+    () => organizationMembersQuery.data?.members ?? [],
+    [organizationMembersQuery.data?.members],
+  );
+  const activeOrganizationBalance = organizationBalanceQuery.data ?? activeOrganizationWorkspace?.balance ?? null;
+  const activeOrganizationSubscription = organizationBillingQuery.data?.subscription ?? null;
+  const organizationSubscriptionPlans = organizationBillingQuery.data?.subscription_plans ?? [];
+  const organizationUsageSummary = organizationUsageQuery.data?.summary ?? null;
+  const organizationAuditLogs = organizationAuditLogsQuery.data?.audit_logs ?? [];
+  const organizationInvoices = organizationInvoicesQuery.data?.invoices ?? [];
+  const organizationBillingBusy =
+    busyAction === 'Checkout organization subscription' ||
+    busyAction === 'Checkout organization credits' ||
+    busyAction === 'Open organization portal';
+  const hasActiveOrganizationSubscription = activeOrganizationSubscription !== null;
+  const activeOrganizationPlanCode =
+    hasActiveOrganizationSubscription && isEnterpriseSubscriptionCheckoutPlanCode(activeOrganizationSubscription.plan_code)
+      ? activeOrganizationSubscription.plan_code
+      : null;
+  const canSelectOrganizationSubscriptionPlan = (plan: OrganizationBillingPlanRecord): boolean => {
+    if (
+      !canManageActiveOrganizationBilling ||
+      organizationBillingBusy ||
+      activeOrganizationWorkspace === null ||
+      !plan.configured
+    ) {
+      return false;
+    }
+
+    if (!hasActiveOrganizationSubscription) {
+      return true;
+    }
+
+    if (activeOrganizationPlanCode === plan.plan_code) {
+      return false;
+    }
+
+    if (activeOrganizationPlanCode === null) {
+      return true;
+    }
+
+    return getSubscriptionPlanRank(plan.plan_code) > getSubscriptionPlanRank(activeOrganizationPlanCode);
+  };
+
+  useEffect(() => {
+    if (
+      activeOrganizationId !== null &&
+      organizationWorkspacesQuery.isSuccess &&
+      activeOrganizationWorkspace === null
+    ) {
+      setSelectedOrganizationId('');
+    }
+  }, [
+    activeOrganizationId,
+    activeOrganizationWorkspace,
+    organizationWorkspacesQuery.isSuccess,
+    setSelectedOrganizationId,
+  ]);
+
+  useEffect(() => {
+    if (
+      activeOrganizationId !== null &&
+      activeOrganizationRole === 'billing' &&
+      (activeTab === 'story' || activeTab === 'entities' || activeTab === 'pages')
+    ) {
+      setActiveTab('account');
+    }
+  }, [activeOrganizationId, activeOrganizationRole, activeTab]);
+
   const worksQuery = useQuery({
     queryKey: scopedQueryKey(['works']),
-    queryFn: () => api.getWorks(),
+    queryFn: () => api.getWorks(activeOrganizationId),
+    enabled: canViewActiveOrganizationWorks,
   });
   const works = useMemo(() => worksQuery.data?.works ?? [], [worksQuery.data?.works]);
   const showWorksLoading = works.length === 0 && worksQuery.isLoading;
@@ -1850,7 +2186,7 @@ function StudioShell(props: {
 
   const chaptersQuery = useQuery({
     queryKey: scopedQueryKey(['chapters', selectedWorkId]),
-    queryFn: () => api.getChapters(selectedWorkId),
+    queryFn: () => api.getChapters(selectedWorkId, activeOrganizationId),
     enabled: selectedWorkId.length > 0,
   });
   const chapters = useMemo(() => chaptersQuery.data?.chapters ?? [], [chaptersQuery.data?.chapters]);
@@ -1858,7 +2194,7 @@ function StudioShell(props: {
 
   const episodesQuery = useQuery({
     queryKey: scopedQueryKey(['episodes', selectedChapter?.id ?? '']),
-    queryFn: () => api.getEpisodes(selectedChapter?.id ?? ''),
+    queryFn: () => api.getEpisodes(selectedChapter?.id ?? '', activeOrganizationId),
     enabled: selectedChapter !== null,
   });
   const episodes = useMemo(() => episodesQuery.data?.episodes ?? [], [episodesQuery.data?.episodes]);
@@ -1866,7 +2202,7 @@ function StudioShell(props: {
 
   const entitiesQuery = useQuery({
     queryKey: scopedQueryKey(['entities', selectedWorkId]),
-    queryFn: () => api.getEntities(selectedWorkId),
+    queryFn: () => api.getEntities(selectedWorkId, activeOrganizationId),
     enabled: selectedWorkId.length > 0,
   });
   const entities = useMemo(() => entitiesQuery.data?.entities ?? [], [entitiesQuery.data?.entities]);
@@ -1882,13 +2218,13 @@ function StudioShell(props: {
 
   const entityReferenceSetQuery = useQuery({
     queryKey: scopedQueryKey(['entity-reference-set', selectedEntity?.id ?? '']),
-    queryFn: () => api.getEntityReferenceSet(selectedEntity?.id ?? ''),
+    queryFn: () => api.getEntityReferenceSet(selectedEntity?.id ?? '', activeOrganizationId),
     enabled: selectedEntity !== null,
   });
 
   const scenesQuery = useQuery({
     queryKey: scopedQueryKey(['scenes', selectedEpisode?.id ?? '']),
-    queryFn: () => api.getScenes(selectedEpisode?.id ?? ''),
+    queryFn: () => api.getScenes(selectedEpisode?.id ?? '', activeOrganizationId),
     enabled: selectedEpisode !== null,
   });
   const scenes = useMemo(() => scenesQuery.data?.scenes ?? [], [scenesQuery.data?.scenes]);
@@ -1896,7 +2232,7 @@ function StudioShell(props: {
 
   const pagesQuery = useQuery({
     queryKey: scopedQueryKey(['pages', selectedEpisode?.id ?? '']),
-    queryFn: () => api.getPages(selectedEpisode?.id ?? ''),
+    queryFn: () => api.getPages(selectedEpisode?.id ?? '', activeOrganizationId),
     enabled: selectedEpisode !== null,
   });
   const pages = useMemo(() => pagesQuery.data?.pages ?? [], [pagesQuery.data?.pages]);
@@ -1913,7 +2249,7 @@ function StudioShell(props: {
 
   const panelsQuery = useQuery({
     queryKey: scopedQueryKey(['panels', selectedPage?.id ?? '']),
-    queryFn: () => api.getPanels(selectedPage?.id ?? ''),
+    queryFn: () => api.getPanels(selectedPage?.id ?? '', activeOrganizationId),
     enabled: selectedPage !== null,
   });
   const panels = useMemo(() => panelsQuery.data?.panels ?? [], [panelsQuery.data?.panels]);
@@ -1928,12 +2264,15 @@ function StudioShell(props: {
 
   const framesQuery = useQuery({
     queryKey: scopedQueryKey(['frames', selectedPage?.id ?? '']),
-    queryFn: () => api.getFrames(selectedPage?.id ?? ''),
+    queryFn: () => api.getFrames(selectedPage?.id ?? '', activeOrganizationId),
     enabled: selectedPage !== null,
   });
   const frames = useMemo(() => framesQuery.data?.frames ?? [], [framesQuery.data?.frames]);
   const authExpiredHandledRef = useRef(false);
   const apiSessionExpired = [
+    organizationWorkspacesQuery.error,
+    organizationBalanceQuery.error,
+    organizationMembersQuery.error,
     worksQuery.error,
     balanceQuery.error,
     chaptersQuery.error,
@@ -2028,6 +2367,21 @@ function StudioShell(props: {
   const selectedPagePanelCount = panelsQuery.data?.panels.length ?? selectedPage?.panel_count ?? 0;
   const selectedPageHasFramePanelMismatch =
     selectedPage !== null && selectedPageFrameCount !== selectedPagePanelCount;
+  const canPreviewFrameTemplate =
+    frameTemplateId === CUSTOM_FRAME_TEMPLATE_ID
+      ? frameDrafts.length > 0
+      : FRAME_TEMPLATE_PANEL_COUNTS[frameTemplateId] !== undefined;
+  const layoutPreviewFrames = useMemo(() => {
+    if (layoutPreviewTemplateId === null) {
+      return [];
+    }
+
+    if (layoutPreviewTemplateId === CUSTOM_FRAME_TEMPLATE_ID) {
+      return frameDrafts.map(toFramePreviewDefinition).filter(isDefined);
+    }
+
+    return FRAME_TEMPLATE_PREVIEWS[layoutPreviewTemplateId] ?? [];
+  }, [frameDrafts, layoutPreviewTemplateId]);
 
   useEffect(() => {
     if (selectedPage === null) {
@@ -2039,9 +2393,11 @@ function StudioShell(props: {
       selectedPage.layout_config,
       selectedPagePanelCount,
       selectedPageFrameCount,
+      frameDrafts,
     );
     setFrameTemplateId((current) => (current === nextTemplateId ? current : nextTemplateId));
   }, [
+    frameDrafts,
     selectedPage,
     selectedPageFrameCount,
     selectedPagePanelCount,
@@ -2094,7 +2450,22 @@ function StudioShell(props: {
     for (const queryKey of queryKeys) {
       void invalidateScopedQuery(queryKey);
     }
-  }, [invalidateScopedQuery, selectedWorkId, selectedChapter, selectedEpisode, selectedPage]);
+    void queryClient.invalidateQueries({ queryKey: sessionQueryKey(['organizations']) });
+    if (activeOrganizationId !== null) {
+      void queryClient.invalidateQueries({ queryKey: sessionQueryKey(['organization-balance', activeOrganizationId]) });
+      void queryClient.invalidateQueries({ queryKey: sessionQueryKey(['organization-members', activeOrganizationId]) });
+      void queryClient.invalidateQueries({ queryKey: sessionQueryKey(['organization-billing-plans', activeOrganizationId]) });
+    }
+  }, [
+    activeOrganizationId,
+    invalidateScopedQuery,
+    queryClient,
+    selectedWorkId,
+    selectedChapter,
+    selectedEpisode,
+    selectedPage,
+    sessionQueryKey,
+  ]);
 
   const startBillingReturnVerification = useCallback((marker: BillingReturnMarker): void => {
     billingVerificationTargetRef.current = marker;
@@ -2171,18 +2542,46 @@ function StudioShell(props: {
 
   useEffect(() => {
     const marker = billingVerificationTargetRef.current;
-    if (!billingReturnChecking || marker === null || balanceQuery.data === undefined) {
+    if (!billingReturnChecking || marker === null) {
       return;
     }
 
-    if (!isBillingReturnSatisfied(balanceQuery.data, marker)) {
+    const markerOrganizationWorkspace =
+      marker.organizationId === undefined
+        ? null
+        : organizationWorkspaces.find((workspace) => workspace.organization.id === marker.organizationId) ?? null;
+    const markerOrganizationBalance =
+      marker.organizationId !== undefined && activeOrganizationId === marker.organizationId
+        ? organizationBalanceQuery.data ?? markerOrganizationWorkspace?.balance ?? null
+        : markerOrganizationWorkspace?.balance ?? null;
+
+    if (
+      !isBillingReturnSatisfied(balanceQuery.data, marker, {
+        planCode:
+          marker.organizationId !== undefined &&
+          activeOrganizationId === marker.organizationId &&
+          isEnterpriseSubscriptionCheckoutPlanCode(activeOrganizationSubscription?.plan_code)
+            ? activeOrganizationSubscription.plan_code
+            : null,
+        totalCredits: markerOrganizationBalance?.total_credits ?? null,
+        purchasedCredits: markerOrganizationBalance?.purchased_credits ?? null,
+      })
+    ) {
       return;
     }
 
     billingVerificationTargetRef.current = null;
     setBillingReturnChecking(false);
     setNotice({ type: 'success', message: formatBillingReturnSuccessMessage(uiLanguage, marker.kind) });
-  }, [balanceQuery.data, billingReturnChecking, uiLanguage]);
+  }, [
+    activeOrganizationId,
+    activeOrganizationSubscription,
+    balanceQuery.data,
+    billingReturnChecking,
+    organizationBalanceQuery.data,
+    organizationWorkspaces,
+    uiLanguage,
+  ]);
 
   useEffect(() => {
     if (worksQuery.data?.works === undefined) {
@@ -2448,11 +2847,11 @@ function StudioShell(props: {
 
   const saveCurrentEpisodeContext = async (): Promise<void> => {
     if (selectedEpisode !== null) {
-      await api.updateEpisode(selectedEpisode.id, toEpisodeAutosavePayload(episodeDraft));
+      await api.updateEpisode(selectedEpisode.id, toEpisodeAutosavePayload(episodeDraft), activeOrganizationId);
     }
 
     if (selectedScene !== null) {
-      await api.updateScene(selectedScene.id, toSceneAutosavePayload(sceneDraft));
+      await api.updateScene(selectedScene.id, toSceneAutosavePayload(sceneDraft), activeOrganizationId);
     }
 
     if (selectedChapter !== null) {
@@ -2463,19 +2862,15 @@ function StudioShell(props: {
     }
   };
 
-  const setEpisodeStoryInputMode = (nextMode: EpisodeDraft['story_input_mode']): void => {
-    setEpisodeDraft((current) => convertEpisodeDraftStoryInputMode(current, nextMode));
-  };
-
   const saveCurrentPageGenerationContext = async (): Promise<void> => {
     if (selectedPage !== null) {
-      await api.updatePage(selectedPage.id, toPageSettingsPayload(pageSettingsDraft));
+      await api.updatePage(selectedPage.id, toPageSettingsPayload(pageSettingsDraft), activeOrganizationId);
     }
 
     if (selectedPage !== null && selectedPanel !== null) {
       const assignmentsPayload = toPanelAssignmentsPayload(panelDraft);
-      await api.updatePanel(selectedPanel.id, toPanelPayload(panelDraft));
-      await api.replacePanelAssignments(selectedPanel.id, assignmentsPayload);
+      await api.updatePanel(selectedPanel.id, toPanelPayload(panelDraft), activeOrganizationId);
+      await api.replacePanelAssignments(selectedPanel.id, assignmentsPayload, activeOrganizationId);
     }
   };
 
@@ -2484,7 +2879,7 @@ function StudioShell(props: {
       return;
     }
 
-    const savedEntity = await api.updateEntity(selectedEntity.id, toEntityPayload(entityDraft));
+    const savedEntity = await api.updateEntity(selectedEntity.id, toEntityPayload(entityDraft), activeOrganizationId);
     cacheEntityRecord(savedEntity);
     setEntityDraft(toEntityDraft(savedEntity));
     await invalidateScopedQuery(['entities', selectedWork.id]);
@@ -2506,6 +2901,57 @@ function StudioShell(props: {
   };
 
   const confirmUiAction = (message: string): boolean => window.confirm(translateUiString(uiLanguage, message));
+
+  const refreshSelectedPagePanelData = async (pageId: string): Promise<void> => {
+    await invalidateScopedQuery(['panels', pageId]);
+    await invalidateScopedQuery(['frames', pageId]);
+    if (selectedEpisode !== null) {
+      await invalidateScopedQuery(['pages', selectedEpisode.id]);
+    }
+  };
+
+  const reorderPanelWithinSelectedPage = async (
+    panelId: string,
+    direction: 'up' | 'down',
+  ): Promise<void> => {
+    if (selectedPage === null) {
+      return;
+    }
+
+    const currentIndex = panels.findIndex((panel) => panel.id === panelId);
+    const targetIndex = direction === 'up' ? currentIndex - 1 : currentIndex + 1;
+    if (currentIndex < 0 || targetIndex < 0 || targetIndex >= panels.length) {
+      return;
+    }
+
+    const nextPanels = [...panels];
+    const currentPanel = nextPanels[currentIndex];
+    const targetPanel = nextPanels[targetIndex];
+    if (currentPanel === undefined || targetPanel === undefined) {
+      return;
+    }
+    nextPanels[currentIndex] = targetPanel;
+    nextPanels[targetIndex] = currentPanel;
+
+    await api.reorderPanels(selectedPage.id, nextPanels.map((panel) => panel.id), activeOrganizationId);
+    setSelectedPanelId(panelId);
+    await refreshSelectedPagePanelData(selectedPage.id);
+  };
+
+  const deletePanelFromSelectedPage = async (panel: PanelRecord): Promise<void> => {
+    if (selectedPage === null) {
+      return;
+    }
+
+    const deletedIndex = panels.findIndex((item) => item.id === panel.id);
+    const remainingPanels = panels.filter((item) => item.id !== panel.id);
+    const nextSelectedPanelId =
+      remainingPanels[Math.min(deletedIndex, remainingPanels.length - 1)]?.id ?? '';
+
+    await api.deletePanel(panel.id, activeOrganizationId);
+    setSelectedPanelId(nextSelectedPanelId);
+    await refreshSelectedPagePanelData(selectedPage.id);
+  };
 
   const cacheEntityRecord = (entity: EntityRecord): void => {
     queryClient.setQueryData<{ entities: EntityRecord[] }>(scopedQueryKey(['entities', entity.work_id]), (current) => {
@@ -2598,7 +3044,7 @@ function StudioShell(props: {
       const { jsPDF } = await import('jspdf');
       const assets: Array<{ page: PageRecord; dataUrl: string }> = [];
       for (const page of targetPages) {
-        const response = await api.exportPageImage(page.id);
+        const response = await api.exportPageImage(page.id, activeOrganizationId);
         assets.push({
           page,
           dataUrl: await blobToDataUrl(response.blob),
@@ -2619,7 +3065,7 @@ function StudioShell(props: {
 
     const multiple = targetPages.length > 1;
     for (const page of targetPages) {
-      const response = await api.exportPageImage(page.id);
+      const response = await api.exportPageImage(page.id, activeOrganizationId);
       const extension = inferImageExtension(response.contentType);
       const filename = multiple ? `${baseName}-page-${String(page.page_number).padStart(2, '0')}.${extension}` : `${baseName}.${extension}`;
       triggerBlobDownload(response.blob, filename);
@@ -2654,6 +3100,660 @@ function StudioShell(props: {
     );
   };
 
+  const workspacePanel = (
+    <PanelSection
+      title={pickUiText(uiLanguage, 'Workspace', '\u30ef\u30fc\u30af\u30b9\u30da\u30fc\u30b9')}
+      subtitle={pickUiText(
+        uiLanguage,
+        'Switch between personal work and organization work.',
+        '\u500b\u4eba\u5229\u7528\u3068\u6cd5\u4eba\u5229\u7528\u3092\u5207\u308a\u66ff\u3048\u307e\u3059\u3002',
+      )}
+      className="organization-panel"
+      compact
+    >
+      <label className="field">
+        <span>{pickUiText(uiLanguage, 'Current workspace', '\u73fe\u5728\u306e\u4f5c\u696d\u5834\u6240')}</span>
+        <select value={activeOrganizationId ?? ''} onChange={(event) => setSelectedOrganizationId(event.target.value)}>
+          <option value="">{pickUiText(uiLanguage, 'Personal', '\u500b\u4eba')}</option>
+          {organizationWorkspaces.map((workspace) => (
+            <option key={workspace.organization.id} value={workspace.organization.id}>
+              {workspace.organization.name}
+            </option>
+          ))}
+        </select>
+      </label>
+
+      {activeOrganizationWorkspace !== null ? (
+        <div className="organization-active-card">
+          <div className="organization-active-header">
+            <div>
+              <strong>{activeOrganizationWorkspace.organization.name}</strong>
+              <span>
+                {hasActiveOrganizationSubscription
+                  ? activeOrganizationPlanCode === null
+                    ? pickUiText(uiLanguage, 'Unknown plan', '\u4e0d\u660e\u306a\u30d7\u30e9\u30f3')
+                    : formatPlanLabel(uiLanguage, activeOrganizationPlanCode)
+                  : pickUiText(uiLanguage, 'No paid plan', '\u6709\u6599\u30d7\u30e9\u30f3\u672a\u5951\u7d04')}{' '}
+                /{' '}
+                {formatOrganizationRoleLabel(uiLanguage, activeOrganizationWorkspace.membership.role)}
+              </span>
+            </div>
+            <StatusBadge value={activeOrganizationWorkspace.organization.status} />
+          </div>
+          <div className="metric-grid organization-metrics">
+            <Metric
+              label={pickUiText(uiLanguage, 'Shared credits', '\u5171\u6709\u30af\u30ec\u30b8\u30c3\u30c8')}
+              value={String(activeOrganizationBalance?.total_credits ?? 0)}
+            />
+            <Metric label={pickUiText(uiLanguage, 'Monthly', '\u6708\u984d\u5206')} value={String(activeOrganizationBalance?.monthly_credits ?? 0)} />
+            <Metric label={pickUiText(uiLanguage, 'Purchased', '\u8ffd\u52a0\u5206')} value={String(activeOrganizationBalance?.purchased_credits ?? 0)} />
+          </div>
+          <div className="muted small">
+            {pickUiText(
+              uiLanguage,
+              'Generation in this workspace consumes organization shared credits.',
+              '\u3053\u306e\u30ef\u30fc\u30af\u30b9\u30da\u30fc\u30b9\u5185\u306e\u751f\u6210\u306f\u6cd5\u4eba\u5171\u6709\u30af\u30ec\u30b8\u30c3\u30c8\u3092\u4f7f\u3044\u307e\u3059\u3002',
+            )}
+          </div>
+
+          {canViewActiveOrganizationBilling ? (
+          <div className="organization-billing-panel">
+            <div className="billing-block-header">
+              <strong>{pickUiText(uiLanguage, 'Organization billing', '\u6cd5\u4eba\u8acb\u6c42')}</strong>
+              <span>
+                {canManageActiveOrganizationBilling
+                  ? pickUiText(uiLanguage, 'Owner/Billing', '\u30aa\u30fc\u30ca\u30fc\u30fb\u8acb\u6c42\u7ba1\u7406')
+                  : pickUiText(uiLanguage, 'Billing permission required', '\u8acb\u6c42\u7ba1\u7406\u6a29\u9650\u304c\u5fc5\u8981')}
+              </span>
+            </div>
+            <div className="billing-current-plan">
+              <span>
+                {pickUiText(uiLanguage, 'Current organization plan', '\u73fe\u5728\u306e\u6cd5\u4eba\u30d7\u30e9\u30f3')}
+              </span>
+              <strong>
+                {activeOrganizationPlanCode === null
+                  ? pickUiText(uiLanguage, 'No paid plan', '\u6709\u6599\u30d7\u30e9\u30f3\u672a\u5951\u7d04')
+                  : formatPlanLabel(uiLanguage, activeOrganizationPlanCode)}
+              </strong>
+            </div>
+            <div className="billing-current-plan">
+              <span>{pickUiText(uiLanguage, 'Subscription status', '\u30b5\u30d6\u30b9\u30af\u72b6\u614b')}</span>
+              <strong>
+                {activeOrganizationSubscription === null
+                  ? pickUiText(uiLanguage, 'Not started', '\u672a\u958b\u59cb')
+                  : translateUiString(uiLanguage, activeOrganizationSubscription.status)}
+              </strong>
+            </div>
+            <div className="billing-current-plan">
+              <span>{pickUiText(uiLanguage, 'Next billing date', '\u6b21\u56de\u8acb\u6c42\u65e5')}</span>
+              <strong>
+                {activeOrganizationSubscription?.current_period_end === null ||
+                activeOrganizationSubscription?.current_period_end === undefined
+                  ? '-'
+                  : formatIsoDateTime(uiLanguage, activeOrganizationSubscription.current_period_end)}
+              </strong>
+            </div>
+            {activeOrganizationSubscription?.cancel_at_period_end === true ? (
+              <div className="billing-note">
+                {pickUiText(
+                  uiLanguage,
+                  'This subscription is scheduled to end at the current period end.',
+                  '\u3053\u306e\u30b5\u30d6\u30b9\u30af\u306f\u73fe\u5728\u306e\u671f\u9593\u7d42\u4e86\u65e5\u306b\u505c\u6b62\u4e88\u5b9a\u3067\u3059\u3002',
+                )}
+              </div>
+            ) : null}
+            {organizationBillingQuery.isLoading ? (
+              <div className="billing-loading">
+                <LoaderCircle className="spin" size={16} />
+                <span>{pickUiText(uiLanguage, 'Loading organization plans', '\u6cd5\u4eba\u30d7\u30e9\u30f3\u3092\u8aad\u307f\u8fbc\u307f\u4e2d')}</span>
+              </div>
+            ) : null}
+            {organizationBillingQuery.isError ? (
+              <div className="billing-note">
+                {pickUiText(
+                  uiLanguage,
+                  'Organization billing plans could not be loaded. Please reload and try again.',
+                  '\u6cd5\u4eba\u30d7\u30e9\u30f3\u3092\u8aad\u307f\u8fbc\u3081\u307e\u305b\u3093\u3067\u3057\u305f\u3002\u518d\u8aad\u307f\u8fbc\u307f\u5f8c\u306b\u8a66\u3057\u3066\u304f\u3060\u3055\u3044\u3002',
+                )}
+              </div>
+            ) : null}
+            {organizationSubscriptionPlans.map((plan) => {
+              const isCurrent = activeOrganizationPlanCode === plan.plan_code;
+              const canSelectPlan = canSelectOrganizationSubscriptionPlan(plan);
+              const detailParts = [
+                pickUiText(
+                  uiLanguage,
+                  `${plan.monthly_credits} shared credits / month`,
+                  `\u6708${plan.monthly_credits}\u5171\u6709\u30af\u30ec\u30b8\u30c3\u30c8`,
+                ),
+              ];
+              if (plan.minimum_contract_months > 1) {
+                detailParts.push(
+                  pickUiText(
+                    uiLanguage,
+                    `${plan.minimum_contract_months} month minimum`,
+                    `\u6700\u4f4e${plan.minimum_contract_months}\u304b\u6708`,
+                  ),
+                );
+              }
+              const statusLabel = !plan.configured
+                ? pickUiText(uiLanguage, 'Preparing', '\u6e96\u5099\u4e2d')
+                : isCurrent
+                  ? pickUiText(uiLanguage, 'Current', '\u73fe\u5728')
+                  : formatJpy(plan.amount_jpy);
+
+              return (
+                <button
+                  className={`billing-option primary-billing-option ${isCurrent ? 'current' : ''}`}
+                  disabled={!canSelectPlan}
+                  key={plan.plan_code}
+                  onClick={() =>
+                    void runExternalRedirectAction('Checkout organization subscription', async () => {
+                      const organizationId = activeOrganizationId ?? '';
+                      const result = await api.createOrganizationSubscriptionCheckout(organizationId, plan.plan_code);
+                      redirectToBillingUrl(
+                        result.url,
+                        createBillingReturnMarker('subscription', balanceQuery.data, {
+                          planCode: plan.plan_code,
+                          organizationId,
+                          initialOrganizationPlanCode: activeOrganizationPlanCode ?? undefined,
+                          initialOrganizationTotalCredits: activeOrganizationBalance?.total_credits ?? undefined,
+                          initialOrganizationPurchasedCredits: activeOrganizationBalance?.purchased_credits ?? undefined,
+                        }),
+                      );
+                    })
+                  }
+                  type="button"
+                >
+                  <span>
+                    <strong>{pickUiText(uiLanguage, plan.display_name_en, plan.display_name_ja)}</strong>
+                    <small>{detailParts.join(' / ')}</small>
+                  </span>
+                  <span className="billing-price">{statusLabel}</span>
+                </button>
+              );
+            })}
+            <div className="billing-note">
+              {pickUiText(
+                uiLanguage,
+                'Plan downgrades, cancellation, and invoice details are managed from the organization billing portal.',
+                '\u30d7\u30e9\u30f3\u306e\u4e0b\u4f4d\u5909\u66f4\u30fb\u89e3\u7d04\u30fb\u8acb\u6c42\u660e\u7d30\u306f\u6cd5\u4eba\u8acb\u6c42\u30dd\u30fc\u30bf\u30eb\u3067\u7ba1\u7406\u3057\u307e\u3059\u3002',
+              )}
+            </div>
+            <div className="billing-pack-grid organization-credit-packs">
+              {creditPurchaseOptions.map((pack) => (
+                <button
+                  className="billing-option"
+                  disabled={!canManageActiveOrganizationBilling || organizationBillingBusy}
+                  key={pack.code}
+                  onClick={() =>
+                    void runExternalRedirectAction('Checkout organization credits', async () => {
+                      const organizationId = activeOrganizationId ?? '';
+                      const result = await api.createOrganizationCreditCheckout(organizationId, pack.code);
+                      redirectToBillingUrl(
+                        result.url,
+                        createBillingReturnMarker('credits', balanceQuery.data, {
+                          packageCode: pack.code,
+                          organizationId,
+                          initialOrganizationPlanCode: activeOrganizationPlanCode ?? undefined,
+                          initialOrganizationTotalCredits: activeOrganizationBalance?.total_credits ?? undefined,
+                          initialOrganizationPurchasedCredits: activeOrganizationBalance?.purchased_credits ?? undefined,
+                        }),
+                      );
+                    })
+                  }
+                  type="button"
+                >
+                  <span>
+                    <strong>{pickUiText(uiLanguage, `${pack.credits} shared credits`, `${pack.credits}\u5171\u6709\u30af\u30ec\u30b8\u30c3\u30c8`)}</strong>
+                    <small>{pickUiText(uiLanguage, 'one-time add-on', '\u8ffd\u52a0\u8cfc\u5165')}</small>
+                  </span>
+                  <span className="billing-price">{formatJpy(pack.priceJpy)}</span>
+                </button>
+              ))}
+            </div>
+            <button
+              className="ghost-button billing-portal-button"
+              disabled={!canManageActiveOrganizationBilling || organizationBillingBusy}
+              onClick={() =>
+                void runExternalRedirectAction('Open organization portal', async () => {
+                  const organizationId = activeOrganizationId ?? '';
+                  const result = await api.createOrganizationCustomerPortal(organizationId);
+                  redirectToBillingUrl(
+                    result.url,
+                    createBillingReturnMarker('portal', balanceQuery.data, {
+                      organizationId,
+                      initialOrganizationPlanCode: activeOrganizationPlanCode ?? undefined,
+                      initialOrganizationTotalCredits: activeOrganizationBalance?.total_credits ?? undefined,
+                      initialOrganizationPurchasedCredits: activeOrganizationBalance?.purchased_credits ?? undefined,
+                    }),
+                  );
+                })
+              }
+              type="button"
+            >
+              <CreditCard size={16} />
+              <span>{pickUiText(uiLanguage, 'Manage organization billing', '\u6cd5\u4eba\u8acb\u6c42\u3092\u7ba1\u7406')}</span>
+            </button>
+          </div>
+          ) : (
+            <div className="billing-note">
+              {pickUiText(
+                uiLanguage,
+                'Billing details are shown only to owners and billing members.',
+                '請求情報はオーナーと請求担当だけに表示されます。',
+              )}
+            </div>
+          )}
+
+          {canViewActiveOrganizationUsage ? (
+            <div className="organization-admin-panel">
+              <div className="billing-block-header">
+                <strong>{pickUiText(uiLanguage, 'Usage summary', '利用量')}</strong>
+                <span>{organizationUsageQuery.isFetching ? pickUiText(uiLanguage, 'Refreshing', '更新中') : pickUiText(uiLanguage, 'Current month', '今月')}</span>
+              </div>
+              {organizationUsageSummary === null ? (
+                <div className="muted small">{pickUiText(uiLanguage, 'No usage data yet.', 'まだ利用量はありません。')}</div>
+              ) : (
+                <>
+                  <div className="metric-grid organization-metrics">
+                    <Metric
+                      label={pickUiText(uiLanguage, 'Credits used', '消費クレジット')}
+                      value={String(organizationUsageSummary.current_month_total_credits)}
+                    />
+                    <Metric
+                      label={pickUiText(uiLanguage, 'Members used', '利用メンバー')}
+                      value={String(organizationUsageSummary.by_member.length)}
+                    />
+                    <Metric
+                      label={pickUiText(uiLanguage, 'Works used', '利用作品')}
+                      value={String(organizationUsageSummary.by_work.length)}
+                    />
+                  </div>
+                  <div className="organization-compact-list">
+                    {organizationUsageSummary.by_generation_type.slice(0, 4).map((item) => (
+                      <div className="organization-compact-row" key={item.key}>
+                        <span>{translateUiString(uiLanguage, item.key)}</span>
+                        <strong>{item.credits}</strong>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+          ) : null}
+
+          {canViewActiveOrganizationBilling ? (
+            <div className="organization-admin-panel">
+              <div className="billing-block-header">
+                <strong>{pickUiText(uiLanguage, 'Recent invoices', '最近の請求')}</strong>
+                <span>{organizationInvoicesQuery.isFetching ? pickUiText(uiLanguage, 'Refreshing', '更新中') : String(organizationInvoices.length)}</span>
+              </div>
+              <div className="organization-compact-list">
+                {organizationInvoices.slice(0, 5).map((invoice) => (
+                  <div className="organization-compact-row" key={invoice.id}>
+                    <span>
+                      {formatInvoiceKind(uiLanguage, invoice)} / {formatIsoDateTime(uiLanguage, invoice.created_at)}
+                    </span>
+                    <strong>
+                      {formatJpy(invoice.amount_jpy)} / {translateUiString(uiLanguage, invoice.status)}
+                    </strong>
+                    {invoice.invoice_url === null ? null : (
+                      <a href={invoice.invoice_url} rel="noreferrer" target="_blank">
+                        {pickUiText(uiLanguage, 'Invoice', '\u8acb\u6c42\u66f8')}
+                      </a>
+                    )}
+                  </div>
+                ))}
+                {organizationInvoices.length === 0 ? (
+                  <div className="muted small">{pickUiText(uiLanguage, 'No invoice records yet.', '請求履歴はまだありません。')}</div>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
+
+          {canViewActiveOrganizationAudit ? (
+            <div className="organization-admin-panel">
+              <div className="billing-block-header">
+                <strong>{pickUiText(uiLanguage, 'Audit log', '監査ログ')}</strong>
+                <span>{organizationAuditLogsQuery.isFetching ? pickUiText(uiLanguage, 'Refreshing', '更新中') : String(organizationAuditLogs.length)}</span>
+              </div>
+              <div className="organization-compact-list">
+                {organizationAuditLogs.slice(0, 8).map((log) => (
+                  <div className="organization-compact-row" key={log.id}>
+                    <span>{formatAuditAction(uiLanguage, log)}</span>
+                    <strong>{formatIsoDateTime(uiLanguage, log.created_at)}</strong>
+                  </div>
+                ))}
+                {organizationAuditLogs.length === 0 ? (
+                  <div className="muted small">{pickUiText(uiLanguage, 'No audit events yet.', '監査イベントはまだありません。')}</div>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
+
+          {canManageActiveOrganizationMembers ? (
+            <div className="organization-members">
+              <div className="billing-block-header">
+                <strong>{pickUiText(uiLanguage, 'Members', '\u30e1\u30f3\u30d0\u30fc')}</strong>
+                <span>
+                  {organizationMembersQuery.isFetching
+                    ? pickUiText(uiLanguage, 'Refreshing', '\u66f4\u65b0\u4e2d')
+                    : `${organizationMembers.length}`}
+                </span>
+              </div>
+              <div className="organization-member-list">
+                {organizationMembers.map((member) => (
+                  <div className="organization-member-row" key={member.id}>
+                    <div>
+                      <strong>{member.email}</strong>
+                      <span>
+                        {formatOrganizationRoleLabel(uiLanguage, member.role)} / {translateUiString(uiLanguage, member.status)}
+                      </span>
+                    </div>
+                    <div className="organization-member-actions">
+                      <select
+                        aria-label={pickUiText(uiLanguage, 'Member role', '\u30e1\u30f3\u30d0\u30fc\u6a29\u9650')}
+                        disabled={busyAction === 'Update organization member'}
+                        value={member.role}
+                        onChange={(event) => {
+                          const nextRole = event.target.value as OrganizationMemberRecord['role'];
+                          void runAction('Update organization member', async () => {
+                            await api.updateOrganizationMember(activeOrganizationId ?? '', member.id, { role: nextRole });
+                            await queryClient.invalidateQueries({
+                              queryKey: sessionQueryKey(['organization-members', activeOrganizationId ?? '']),
+                            });
+                            await queryClient.invalidateQueries({ queryKey: sessionQueryKey(['organizations']) });
+                          });
+                        }}
+                      >
+                        {organizationRoleOptions.map((role) => (
+                          <option key={role.value} value={role.value}>
+                            {pickUiText(uiLanguage, role.label.en, role.label.ja)}
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        className="icon-button danger"
+                        disabled={busyAction === 'Remove organization member'}
+                        onClick={() => {
+                          if (
+                            !window.confirm(
+                              pickUiText(
+                                uiLanguage,
+                                'Remove this member from the workspace?',
+                                '\u3053\u306e\u30e1\u30f3\u30d0\u30fc\u3092\u30ef\u30fc\u30af\u30b9\u30da\u30fc\u30b9\u304b\u3089\u5916\u3057\u307e\u3059\u304b\uff1f',
+                              ),
+                            )
+                          ) {
+                            return;
+                          }
+                          void runAction('Remove organization member', async () => {
+                            await api.removeOrganizationMember(activeOrganizationId ?? '', member.id);
+                            await queryClient.invalidateQueries({
+                              queryKey: sessionQueryKey(['organization-members', activeOrganizationId ?? '']),
+                            });
+                            await queryClient.invalidateQueries({ queryKey: sessionQueryKey(['organizations']) });
+                          });
+                        }}
+                        title={pickUiText(uiLanguage, 'Remove member', '\u30e1\u30f3\u30d0\u30fc\u3092\u524a\u9664')}
+                        type="button"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+                {organizationMembers.length === 0 ? (
+                  <div className="muted small">
+                    {pickUiText(uiLanguage, 'No members loaded.', '\u30e1\u30f3\u30d0\u30fc\u3092\u8aad\u307f\u8fbc\u3093\u3067\u3044\u307e\u305b\u3093\u3002')}
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
+
+          {canManageActiveOrganizationMembers ? (
+            <form
+              className="organization-invite-form"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void runAction('Invite organization member', async () => {
+                  const response = await api.inviteOrganizationMember(activeOrganizationId ?? '', {
+                    email: organizationInviteDraft.email.trim(),
+                    role: organizationInviteDraft.role,
+                  });
+                  setOrganizationInvitationToken(response.invitation_token);
+                  setOrganizationInviteDraft({ email: '', role: 'editor' });
+                  await queryClient.invalidateQueries({
+                    queryKey: sessionQueryKey(['organization-members', activeOrganizationId ?? '']),
+                  });
+                });
+              }}
+            >
+              <div className="form-grid two">
+                <InputField
+                  label={pickUiText(uiLanguage, 'Invite email', '\u62db\u5f85\u30e1\u30fc\u30eb')}
+                  value={organizationInviteDraft.email}
+                  onChange={(value) => setOrganizationInviteDraft((current) => ({ ...current, email: value }))}
+                />
+                <label className="field">
+                  <span>{pickUiText(uiLanguage, 'Role', '\u6a29\u9650')}</span>
+                  <select
+                    value={organizationInviteDraft.role}
+                    onChange={(event) =>
+                      setOrganizationInviteDraft((current) => ({
+                        ...current,
+                        role: event.target.value as OrganizationMemberRecord['role'],
+                      }))
+                    }
+                  >
+                    {organizationRoleOptions
+                      .filter((role) => role.value !== 'owner' || activeOrganizationRole === 'owner')
+                      .map((role) => (
+                        <option key={role.value} value={role.value}>
+                          {pickUiText(uiLanguage, role.label.en, role.label.ja)}
+                        </option>
+                      ))}
+                  </select>
+                </label>
+              </div>
+              <button className="ghost-button" disabled={busyAction === 'Invite organization member'} type="submit">
+                <Users size={16} />
+                {pickUiText(uiLanguage, 'Invite member', '\u30e1\u30f3\u30d0\u30fc\u3092\u62db\u5f85')}
+              </button>
+              {organizationInvitationToken.length > 0 ? (
+                <div className="organization-invitation-token">
+                  <span>{pickUiText(uiLanguage, 'Invitation token', '\u62db\u5f85\u30c8\u30fc\u30af\u30f3')}</span>
+                  <code>{organizationInvitationToken}</code>
+                  <button className="ghost-button" onClick={() => setOrganizationInvitationToken('')} type="button">
+                    {pickUiText(uiLanguage, 'Dismiss', '\u9589\u3058\u308b')}
+                  </button>
+                </div>
+              ) : null}
+            </form>
+          ) : null}
+        </div>
+      ) : (
+        <form
+          className="organization-create-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void runAction('Create organization', async () => {
+              const createdWorkspace = await api.createOrganization({
+                name: organizationDraft.name.trim(),
+                legal_name: organizationDraft.legal_name.trim().length > 0 ? organizationDraft.legal_name.trim() : null,
+                billing_email:
+                  organizationDraft.billing_email.trim().length > 0 ? organizationDraft.billing_email.trim() : props.email,
+              });
+              setSelectedOrganizationId(createdWorkspace.organization.id);
+              setOrganizationDraft({
+                name: '',
+                legal_name: '',
+                billing_email: props.email,
+              });
+              await queryClient.invalidateQueries({ queryKey: sessionQueryKey(['organizations']) });
+            });
+          }}
+        >
+          <div className="billing-block-header">
+            <strong>{pickUiText(uiLanguage, 'Create organization', '\u6cd5\u4eba\u30ef\u30fc\u30af\u30b9\u30da\u30fc\u30b9\u3092\u4f5c\u6210')}</strong>
+            <span>{pickUiText(uiLanguage, 'Owner role is assigned to you.', '\u4f5c\u6210\u8005\u304c\u30aa\u30fc\u30ca\u30fc\u306b\u306a\u308a\u307e\u3059')}</span>
+          </div>
+          <div className="form-grid two">
+            <InputField
+              label={pickUiText(uiLanguage, 'Organization name', '\u6cd5\u4eba\u540d')}
+              value={organizationDraft.name}
+              onChange={(value) => setOrganizationDraft((current) => ({ ...current, name: value }))}
+            />
+            <InputField
+              label={pickUiText(uiLanguage, 'Billing email', '\u8acb\u6c42\u30e1\u30fc\u30eb')}
+              value={organizationDraft.billing_email}
+              onChange={(value) => setOrganizationDraft((current) => ({ ...current, billing_email: value }))}
+            />
+            <InputField
+              label={pickUiText(uiLanguage, 'Legal name', '\u6b63\u5f0f\u540d\u79f0')}
+              value={organizationDraft.legal_name}
+              onChange={(value) => setOrganizationDraft((current) => ({ ...current, legal_name: value }))}
+            />
+          </div>
+          <button className="primary-button" disabled={busyAction === 'Create organization'} type="submit">
+            {busyAction === 'Create organization' ? <LoaderCircle className="spin" size={16} /> : <Building2 size={16} />}
+            {pickUiText(uiLanguage, 'Create organization', '\u6cd5\u4eba\u3092\u4f5c\u6210')}
+          </button>
+        </form>
+      )}
+    </PanelSection>
+  );
+
+  const createWorkPanel = (
+    <PanelSection
+      title="New work"
+      subtitle="Create a work before writing story content."
+      className="story-create-work-panel"
+      compact={selectedWork !== null}
+      collapsible={selectedWork !== null}
+    >
+      <form
+        className="story-create-form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          void runAction('Create work', async () => {
+            const createdWork = await api.createWork(toCreateWorkPayload(newWorkDraft), activeOrganizationId);
+            setNewWorkDraft(createEmptyWorkDraft());
+            setSelectedWorkId(createdWork.id);
+            setActiveTab('story');
+            await invalidateScopedQuery(['works']);
+          });
+        }}
+      >
+        <div className="form-grid two">
+          <InputField
+            label="Title"
+            value={newWorkDraft.title}
+            onChange={(value) => setNewWorkDraft({ ...newWorkDraft, title: value })}
+          />
+          <InputField
+            label="Genre"
+            value={newWorkDraft.genre}
+            onChange={(value) => setNewWorkDraft({ ...newWorkDraft, genre: value })}
+          />
+        </div>
+        <button className="primary-button" disabled={busyAction === 'Create work'} type="submit">
+          {busyAction === 'Create work' ? <LoaderCircle className="spin" size={16} /> : <Save size={16} />}
+          {translateUiString(uiLanguage, 'Create')}
+        </button>
+      </form>
+    </PanelSection>
+  );
+
+  const accountPanel = (
+    <>
+      {workspacePanel}
+
+      <BillingPanel
+        balance={balanceQuery.data}
+        balanceRefreshing={balanceQuery.isFetching}
+        billingReturnChecking={billingReturnChecking}
+        busyAction={busyAction}
+        onOpenPortal={() =>
+          void runExternalRedirectAction('Open portal', async () => {
+            const result = await api.createCustomerPortal();
+            redirectToBillingUrl(result.url, createBillingReturnMarker('portal', balanceQuery.data));
+          })
+        }
+        onPurchaseCredits={(packageCode) =>
+          void runExternalRedirectAction('Checkout credits', async () => {
+            const result = await api.createCreditCheckout(packageCode);
+            redirectToBillingUrl(result.url, createBillingReturnMarker('credits', balanceQuery.data, { packageCode }));
+          })
+        }
+        onStartSubscription={(planCode) =>
+          void runExternalRedirectAction('Checkout subscription', async () => {
+            const result = await api.createSubscriptionCheckout(planCode);
+            redirectToBillingUrl(result.url, createBillingReturnMarker('subscription', balanceQuery.data, { planCode }));
+          })
+        }
+      />
+
+      <PanelSection title="Account" className="mobile-account-controls" compact>
+        <div className="mobile-account-meta">
+          <span>{translateUiString(uiLanguage, 'Signed in')}</span>
+          <strong>{props.email}</strong>
+        </div>
+        <label className="field">
+          <span>{translateUiString(uiLanguage, 'Language')}</span>
+          <select value={uiLanguage} onChange={(event) => setUiLanguageStored(event.target.value)}>
+            <option value="ja">日本語</option>
+            <option value="en">{translateUiString(uiLanguage, 'English')}</option>
+          </select>
+        </label>
+        <button className="ghost-button mobile-account-logout" onClick={() => void props.onLogout()} type="button">
+          <LogOut size={16} />
+          {translateUiString(uiLanguage, 'Log out')}
+        </button>
+      </PanelSection>
+
+      <PanelSection title="Jobs" compact collapsible>
+        <div className="stack gap-xs">
+          {jobs.map((job) => {
+            const progressText = getJobProgressText(job, uiLanguage);
+            const progressBarState = getJobProgressBarState(job);
+            const jobErrorText = getJobFailureText(job, uiLanguage);
+            return (
+              <div key={job.id} className="job-row">
+                <div>
+                  <strong>{translateUiString(uiLanguage, job.job_type)}</strong>
+                  <div className="muted small">#{formatShortId(job.id)}</div>
+                  {progressText !== null ? (
+                    <div className="muted small">{progressText}</div>
+                  ) : null}
+                  {progressBarState !== null ? (
+                    <ProgressBar compact percent={progressBarState.percent} tone={progressBarState.tone} />
+                  ) : null}
+                  {jobErrorText !== null ? (
+                    <div className="error-text small">{jobErrorText}</div>
+                  ) : null}
+                </div>
+                <StatusBadge value={job.status} />
+              </div>
+            );
+          })}
+          {jobs.length === 0 ? (
+            <div className="muted small">{translateUiString(uiLanguage, 'No recent jobs.')}</div>
+          ) : null}
+        </div>
+      </PanelSection>
+
+    </>
+  );
+
+  const tutorialPanel = (
+    <PanelSection title="Tutorial" subtitle="First run guide" className="tutorial-section" compact>
+      <TutorialGuide />
+    </PanelSection>
+  );
+
   return (
     <UiLanguageContext.Provider value={uiLanguage}>
       <div className="app-shell">
@@ -2665,92 +3765,102 @@ function StudioShell(props: {
             <div className="brand-subtitle">{translateUiString(uiLanguage, 'production console')}</div>
           </div>
         </div>
-        <section className="sidebar-section">
+        <section className="sidebar-section sidebar-workspace-switcher">
           <div className="section-header">
-            <h2>{translateUiString(uiLanguage, 'Works')}</h2>
-            <span className={`badge ${worksQuery.isFetching ? 'loading' : ''}`}>
-              {worksQuery.isFetching && works.length === 0 ? <LoaderCircle className="spin" size={12} /> : works.length}
-            </span>
+            <h2>{pickUiText(uiLanguage, 'Workspace', '\u4f5c\u696d\u5834\u6240')}</h2>
+            {organizationWorkspacesQuery.isFetching ? <LoaderCircle className="spin muted-icon" size={13} /> : null}
           </div>
-            <div className="stack gap-xs sidebar-work-list">
-            {works.map((work) => (
-              <button
-                key={work.id}
-                className={`nav-item ${selectedWorkId === work.id ? 'active' : ''}`}
-                onClick={() => setSelectedWorkId(work.id)}
-                type="button"
-              >
-                <BookOpen size={16} />
-                <span>{work.title}</span>
-              </button>
-            ))}
-            {showWorksLoading ? (
-              <div className="sidebar-status">
-                <LoaderCircle className="spin" size={14} />
-                <span>{translateUiString(uiLanguage, 'Loading works...')}</span>
-              </div>
-            ) : null}
-            {showWorksError ? (
-              <div className="sidebar-status error">
-                <span>{worksErrorMessage ?? translateUiString(uiLanguage, 'Could not load works.')}</span>
-                {worksErrorNeedsLogin ? (
-                  <button className="ghost-button" onClick={() => void props.onLogout()} type="button">
-                    <LogOut size={14} />
-                    {translateUiString(uiLanguage, 'Sign in again')}
-                  </button>
-                ) : (
-                  <button className="ghost-button" onClick={() => void worksQuery.refetch()} type="button">
-                    <RefreshCw size={14} />
-                    {translateUiString(uiLanguage, 'Retry')}
-                  </button>
-                )}
-              </div>
-            ) : null}
-            {showWorksEmpty ? (
-              <div className="sidebar-status">
-                <span>{translateUiString(uiLanguage, 'No works yet.')}</span>
-              </div>
-            ) : null}
+          <label className="field compact-field">
+            <span>{pickUiText(uiLanguage, 'Scope', '\u7bc4\u56f2')}</span>
+            <select value={activeOrganizationId ?? ''} onChange={(event) => setSelectedOrganizationId(event.target.value)}>
+              <option value="">{pickUiText(uiLanguage, 'Personal', '\u500b\u4eba')}</option>
+              {organizationWorkspaces.map((workspace) => (
+                <option key={workspace.organization.id} value={workspace.organization.id}>
+                  {workspace.organization.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="sidebar-workspace-summary">
+            {activeOrganizationWorkspace === null ? (
+              <span>{pickUiText(uiLanguage, 'Personal credits are used.', '\u500b\u4eba\u30af\u30ec\u30b8\u30c3\u30c8\u3092\u4f7f\u3044\u307e\u3059\u3002')}</span>
+            ) : (
+              <>
+                <BriefcaseBusiness size={14} />
+                <span>
+                  {formatOrganizationRoleLabel(uiLanguage, activeOrganizationWorkspace.membership.role)} /{' '}
+                  {activeOrganizationBalance?.total_credits ?? 0}
+                  {pickUiText(uiLanguage, ' credits', '\u30af\u30ec\u30b8\u30c3\u30c8')}
+                </span>
+              </>
+            )}
           </div>
         </section>
-        <details
-          className="sidebar-disclosure sidebar-create-disclosure"
-          onToggle={(event) => setNewWorkFormOpen(event.currentTarget.open)}
-          open={newWorkFormOpen}
-        >
-          <summary>{translateUiString(uiLanguage, 'New work')}</summary>
-          <form
-            className="stack"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void runAction('Create work', async () => {
-                await api.createWork(toCreateWorkPayload(newWorkDraft));
-                setNewWorkDraft(createEmptyWorkDraft());
-                await invalidateScopedQuery(['works']);
-              });
-            }}
-          >
-            <label className="field">
-              <span>{translateUiString(uiLanguage, 'Title')}</span>
-              <input
-                required
-                value={newWorkDraft.title}
-                onChange={(event) => setNewWorkDraft({ ...newWorkDraft, title: event.target.value })}
-              />
-            </label>
-            <label className="field">
-              <span>{translateUiString(uiLanguage, 'Genre')}</span>
-              <input
-                value={newWorkDraft.genre}
-                onChange={(event) => setNewWorkDraft({ ...newWorkDraft, genre: event.target.value })}
-              />
-            </label>
-            <button className="primary-button" disabled={busyAction === 'Create work'} type="submit">
-              {busyAction === 'Create work' ? <LoaderCircle className="spin" size={16} /> : <Save size={16} />}
-              {translateUiString(uiLanguage, 'Create')}
-            </button>
-          </form>
-        </details>
+        {canViewActiveOrganizationWorks ? (
+          <section className="sidebar-section">
+            <div className="section-header">
+              <h2>{translateUiString(uiLanguage, 'Works')}</h2>
+              <span className={`badge ${worksQuery.isFetching ? 'loading' : ''}`}>
+                {worksQuery.isFetching && works.length === 0 ? <LoaderCircle className="spin" size={12} /> : works.length}
+              </span>
+            </div>
+            <div className="stack gap-xs sidebar-work-list">
+              {works.map((work) => (
+                <button
+                  key={work.id}
+                  className={`nav-item ${selectedWorkId === work.id ? 'active' : ''}`}
+                  onClick={() => setSelectedWorkId(work.id)}
+                  type="button"
+                >
+                  <BookOpen size={16} />
+                  <span>{work.title}</span>
+                </button>
+              ))}
+              {showWorksLoading ? (
+                <div className="sidebar-status">
+                  <LoaderCircle className="spin" size={14} />
+                  <span>{translateUiString(uiLanguage, 'Loading works...')}</span>
+                </div>
+              ) : null}
+              {showWorksError ? (
+                <div className="sidebar-status error">
+                  <span>{worksErrorMessage ?? translateUiString(uiLanguage, 'Could not load works.')}</span>
+                  {worksErrorNeedsLogin ? (
+                    <button className="ghost-button" onClick={() => void props.onLogout()} type="button">
+                      <LogOut size={14} />
+                      {translateUiString(uiLanguage, 'Sign in again')}
+                    </button>
+                  ) : (
+                    <button className="ghost-button" onClick={() => void worksQuery.refetch()} type="button">
+                      <RefreshCw size={14} />
+                      {translateUiString(uiLanguage, 'Retry')}
+                    </button>
+                  )}
+                </div>
+              ) : null}
+              {showWorksEmpty ? (
+                <div className="sidebar-status">
+                  <span>{translateUiString(uiLanguage, 'No works yet.')}</span>
+                </div>
+              ) : null}
+            </div>
+          </section>
+        ) : (
+          <section className="sidebar-section">
+            <div className="section-header">
+              <h2>{pickUiText(uiLanguage, 'Billing workspace', '請求ワークスペース')}</h2>
+            </div>
+            <div className="sidebar-status">
+              <span>
+                {pickUiText(
+                  uiLanguage,
+                  'This role can manage billing and usage only.',
+                  'この権限では請求と利用量だけを管理できます。',
+                )}
+              </span>
+            </div>
+          </section>
+        )}
       </aside>
 
       <main className="workspace">
@@ -2759,18 +3869,26 @@ function StudioShell(props: {
             <div className="eyebrow">{translateUiString(uiLanguage, 'Signed in')}</div>
             <strong>{props.email}</strong>
           </div>
-          <div className="toolbar">
-            <button className={`tab-button ${activeTab === 'story' ? 'active' : ''}`} onClick={() => setActiveTab('story')} type="button">
-              <Bot size={16} />
-              {translateUiString(uiLanguage, 'Story')}
-            </button>
-            <button className={`tab-button ${activeTab === 'entities' ? 'active' : ''}`} onClick={() => setActiveTab('entities')} type="button">
-              <Image size={16} />
-              {translateUiString(uiLanguage, 'Entities')}
-            </button>
-            <button className={`tab-button ${activeTab === 'pages' ? 'active' : ''}`} onClick={() => setActiveTab('pages')} type="button">
-              <PanelsTopLeft size={16} />
-              {translateUiString(uiLanguage, 'Pages')}
+          <div className="toolbar desktop-workspace-toolbar">
+            {canViewActiveOrganizationWorks ? (
+              <>
+                <button className={`tab-button ${activeTab === 'story' ? 'active' : ''}`} onClick={() => setActiveTab('story')} type="button">
+                  <Bot size={16} />
+                  {translateUiString(uiLanguage, 'Story')}
+                </button>
+                <button className={`tab-button ${activeTab === 'entities' ? 'active' : ''}`} onClick={() => setActiveTab('entities')} type="button">
+                  <Image size={16} />
+                  {translateUiString(uiLanguage, 'Entities')}
+                </button>
+                <button className={`tab-button ${activeTab === 'pages' ? 'active' : ''}`} onClick={() => setActiveTab('pages')} type="button">
+                  <PanelsTopLeft size={16} />
+                  {translateUiString(uiLanguage, 'Pages')}
+                </button>
+              </>
+            ) : null}
+            <button className={`tab-button ${activeTab === 'account' ? 'active' : ''}`} onClick={() => setActiveTab('account')} type="button">
+              <BriefcaseBusiness size={16} />
+              {pickUiText(uiLanguage, 'Workspace', 'ワークスペース')}
             </button>
             <select className="toolbar-select" value={uiLanguage} onChange={(event) => setUiLanguageStored(event.target.value)}>
               <option value="ja">日本語</option>
@@ -2784,7 +3902,25 @@ function StudioShell(props: {
 
         {notice !== null ? <NoticeBanner notice={notice} /> : null}
 
-        {selectedWork === null ? (
+        {!canViewActiveOrganizationWorks ? (
+          <div className="workspace-grid mobile-account-workspace">
+            <section className="main-column mobile-account-column">{accountPanel}</section>
+          </div>
+        ) : activeTab === 'account' ? (
+          <div className="workspace-grid mobile-account-workspace">
+            <section className="main-column mobile-account-column">{accountPanel}</section>
+          </div>
+        ) : activeTab === 'tutorial' ? (
+          <div className="workspace-grid mobile-account-workspace">
+            <section className="main-column mobile-account-column">{tutorialPanel}</section>
+          </div>
+        ) : selectedWork === null && activeTab === 'story' ? (
+          <div className="workspace-grid">
+            <section className="main-column">
+              {createWorkPanel}
+            </section>
+          </div>
+        ) : selectedWork === null ? (
           <section className="empty-state">
             <LayoutGrid size={28} />
             <h2>{translateUiString(uiLanguage, 'No work selected')}</h2>
@@ -2795,11 +3931,15 @@ function StudioShell(props: {
             <section className="main-column">
               {activeTab === 'story' ? (
                 <>
+                  {createWorkPanel}
+
                   <PanelSection
-                    title={selectedWork.title}
-                    subtitle={uiLanguage === 'ja' ? `状態 ${translateUiString(uiLanguage, selectedWork.status)}` : `status ${selectedWork.status}`}
+                    title="Work overview"
+                    subtitle={uiLanguage === 'ja' ? `状態: ${translateUiString(uiLanguage, selectedWork.status)}` : `status ${selectedWork.status}`}
+                    className="work-overview-section"
+                    compact
                     collapsible
-                    mobileDefaultCollapsed
+                    defaultCollapsed
                     actions={
                       <button
                         className="secondary-button"
@@ -2809,6 +3949,7 @@ function StudioShell(props: {
                             await api.updateWork(
                               selectedWork.id,
                               toWorkPayload(workDraft, loadedSelectedWorkEntityIds),
+                              activeOrganizationId,
                             );
                             await invalidateScopedQuery(['works']);
                           })
@@ -2816,49 +3957,51 @@ function StudioShell(props: {
                         type="button"
                       >
                         {busyAction === 'Save work' ? <LoaderCircle className="spin" size={16} /> : <Save size={16} />}
-                        Save
+                        {translateUiString(uiLanguage, 'Save')}
                       </button>
                     }
                   >
-                    <div className="form-grid three">
+                    <div className="form-grid two">
                       <InputField label="Title" value={workDraft.title} onChange={(value) => setWorkDraft({ ...workDraft, title: value })} />
                       <InputField label="Genre" value={workDraft.genre} onChange={(value) => setWorkDraft({ ...workDraft, genre: value })} />
+                    </div>
+                    <details className="advanced-disclosure work-context-disclosure">
+                      <summary>{translateUiString(uiLanguage, 'Advanced work context')}</summary>
+                      <div className="form-grid two">
+                        <TextAreaField
+                          label="World"
+                          rows={3}
+                          value={workDraft.world_setting}
+                          onChange={(value) => setWorkDraft({ ...workDraft, world_setting: value })}
+                        />
+                        <TextAreaField
+                          label="Overall flow"
+                          rows={3}
+                          value={workDraft.overall_flow}
+                          onChange={(value) => setWorkDraft({ ...workDraft, overall_flow: value })}
+                        />
+                      </div>
                       <InputField label="Theme" value={workDraft.theme} onChange={(value) => setWorkDraft({ ...workDraft, theme: value })} />
-                    </div>
-                    <div className="form-grid two">
-                      <TextAreaField
-                        label="World"
-                        rows={3}
-                        value={workDraft.world_setting}
-                        onChange={(value) => setWorkDraft({ ...workDraft, world_setting: value })}
-                      />
-                      <TextAreaField
-                        label="Overall flow"
-                        rows={3}
-                        value={workDraft.overall_flow}
-                        onChange={(value) => setWorkDraft({ ...workDraft, overall_flow: value })}
-                      />
-                    </div>
-                    <div className="form-grid two">
-                      <TextAreaField
-                        label="Starting point"
-                        rows={2}
-                        value={workDraft.starting_point}
-                        onChange={(value) => setWorkDraft({ ...workDraft, starting_point: value })}
-                      />
-                      <TextAreaField
-                        label="Ending point"
-                        rows={2}
-                        value={workDraft.ending_point}
-                        onChange={(value) => setWorkDraft({ ...workDraft, ending_point: value })}
-                      />
-                    </div>
+                      <div className="form-grid two">
+                        <TextAreaField
+                          label="Starting point"
+                          rows={2}
+                          value={workDraft.starting_point}
+                          onChange={(value) => setWorkDraft({ ...workDraft, starting_point: value })}
+                        />
+                        <TextAreaField
+                          label="Ending point"
+                          rows={2}
+                          value={workDraft.ending_point}
+                          onChange={(value) => setWorkDraft({ ...workDraft, ending_point: value })}
+                        />
+                      </div>
+                    </details>
                   </PanelSection>
 
                   <PanelSection
                     title="Chapter / Episode"
                     collapsible
-                    mobileDefaultCollapsed
                     actions={
                       <div className="toolbar">
                         <button
@@ -2884,11 +4027,15 @@ function StudioShell(props: {
                               await saveCurrentEpisodeContext();
                               setSelectedPageId('');
                               setSelectedPanelId('');
-                              const result = await api.generatePageSkeleton(selectedEpisode.id, {
-                                overwrite_existing: overwriteExisting,
-                                apply_story_plan: false,
-                                language: uiLanguage,
-                              });
+                              const result = await api.generatePageSkeleton(
+                                selectedEpisode.id,
+                                {
+                                  overwrite_existing: overwriteExisting,
+                                  apply_story_plan: false,
+                                  language: uiLanguage,
+                                },
+                                activeOrganizationId,
+                              );
                               if ('job_id' in result) {
                                 trackJob(result.job_id);
                               } else {
@@ -2922,7 +4069,11 @@ function StudioShell(props: {
                             }
                             void runAction('Apply story plan', async () => {
                               await saveCurrentEpisodeContext();
-                              const result = await api.autofillEpisodePagesFromStory(selectedEpisode.id, uiLanguage);
+                              const result = await api.autofillEpisodePagesFromStory(
+                                selectedEpisode.id,
+                                uiLanguage,
+                                activeOrganizationId,
+                              );
                               trackJob(result.job_id);
                               setActiveTab('pages');
                             });
@@ -2988,7 +4139,7 @@ function StudioShell(props: {
                                   disabled={busyAction !== null || chapterIndex === 0}
                                   onClick={() =>
                                     void runAction(`Move chapter ${chapter.id} up`, async () => {
-                                      await api.moveChapter(chapter.id, 'up');
+                                      await api.moveChapter(chapter.id, 'up', activeOrganizationId);
                                       await invalidateScopedQuery(['chapters', selectedWork.id]);
                                     })
                                   }
@@ -3003,7 +4154,7 @@ function StudioShell(props: {
                                   disabled={busyAction !== null || chapterIndex === chapters.length - 1}
                                   onClick={() =>
                                     void runAction(`Move chapter ${chapter.id} down`, async () => {
-                                      await api.moveChapter(chapter.id, 'down');
+                                      await api.moveChapter(chapter.id, 'down', activeOrganizationId);
                                       await invalidateScopedQuery(['chapters', selectedWork.id]);
                                     })
                                   }
@@ -3024,6 +4175,7 @@ function StudioShell(props: {
                               await api.createChapter(
                                 selectedWork.id,
                                 toCreateChapterPayload(newChapterDraft, loadedSelectedWorkEntityIds),
+                                activeOrganizationId,
                               );
                               setNewChapterDraft(createEmptyChapterDraft());
                               await invalidateScopedQuery(['chapters', selectedWork.id]);
@@ -3064,6 +4216,7 @@ function StudioShell(props: {
                                     await api.updateChapter(
                                       selectedChapter.id,
                                       toChapterPayload(chapterDraft, loadedSelectedWorkEntityIds),
+                                      activeOrganizationId,
                                     );
                                     await invalidateScopedQuery(['chapters', selectedWork.id]);
                                   })
@@ -3071,13 +4224,13 @@ function StudioShell(props: {
                                 type="button"
                               >
                                 <Save size={16} />
-                                Save chapter
+                                {translateUiString(uiLanguage, 'Save chapter')}
                               </button>
                               <button
                                 className="ghost-button danger"
                                 onClick={() =>
                                   void runAction('Delete chapter', async () => {
-                                    await api.deleteChapter(selectedChapter.id);
+                                    await api.deleteChapter(selectedChapter.id, activeOrganizationId);
                                     await invalidateScopedQuery(['chapters', selectedWork.id]);
                                   })
                                 }
@@ -3107,7 +4260,7 @@ function StudioShell(props: {
                                   disabled={busyAction !== null || episodeIndex === 0}
                                   onClick={() =>
                                     void runAction(`Move episode ${episode.id} up`, async () => {
-                                      await api.moveEpisode(episode.id, 'up');
+                                      await api.moveEpisode(episode.id, 'up', activeOrganizationId);
                                       await invalidateScopedQuery(['episodes', selectedChapter?.id ?? '']);
                                     })
                                   }
@@ -3122,7 +4275,7 @@ function StudioShell(props: {
                                   disabled={busyAction !== null || episodeIndex === episodes.length - 1}
                                   onClick={() =>
                                     void runAction(`Move episode ${episode.id} down`, async () => {
-                                      await api.moveEpisode(episode.id, 'down');
+                                      await api.moveEpisode(episode.id, 'down', activeOrganizationId);
                                       await invalidateScopedQuery(['episodes', selectedChapter?.id ?? '']);
                                     })
                                   }
@@ -3144,6 +4297,7 @@ function StudioShell(props: {
                                 await api.createEpisode(
                                   selectedChapter.id,
                                   toCreateEpisodePayload(newEpisodeDraft, loadedSelectedWorkEntityIds),
+                                  activeOrganizationId,
                                 );
                                 setNewEpisodeDraft(createEmptyEpisodeDraft());
                                 await invalidateScopedQuery(['episodes', selectedChapter.id]);
@@ -3188,6 +4342,7 @@ function StudioShell(props: {
                               await api.updateEpisode(
                                 selectedEpisode.id,
                                 toEpisodePayload(episodeDraft, loadedSelectedWorkEntityIds),
+                                activeOrganizationId,
                               );
                               await invalidateScopedQuery(['episodes', selectedChapter?.id ?? '']);
                             })
@@ -3201,7 +4356,7 @@ function StudioShell(props: {
                           className="ghost-button danger"
                           onClick={() =>
                             void runAction('Delete episode', async () => {
-                              await api.deleteEpisode(selectedEpisode.id);
+                              await api.deleteEpisode(selectedEpisode.id, activeOrganizationId);
                               await invalidateScopedQuery(['episodes', selectedChapter?.id ?? '']);
                             })
                           }
@@ -3223,35 +4378,12 @@ function StudioShell(props: {
                         max={MAX_EPISODE_PAGES}
                       />
                     </div>
-                    <TextAreaField label="Purpose" rows={2} value={episodeDraft.purpose} onChange={(value) => setEpisodeDraft({ ...episodeDraft, purpose: value })} />
-                    <SelectField
-                      label="Story input mode"
-                      value={episodeDraft.story_input_mode}
-                      onChange={(value) => setEpisodeStoryInputMode(value as EpisodeDraft['story_input_mode'])}
-                      options={[
-                        ['structured', 'Split sections'],
-                        ['full', 'Whole draft'],
-                      ]}
+                    <TextAreaField
+                      label="Whole story draft"
+                      rows={10}
+                      value={episodeDraft.story_full_draft}
+                      onChange={(value) => setEpisodeDraft({ ...episodeDraft, story_input_mode: 'full', story_full_draft: value })}
                     />
-                    {episodeDraft.story_input_mode === 'full' ? (
-                      <TextAreaField
-                        label="Whole story draft"
-                        rows={10}
-                        value={episodeDraft.story_full_draft}
-                        onChange={(value) => setEpisodeDraft({ ...episodeDraft, story_full_draft: value })}
-                      />
-                    ) : (
-                      <>
-                        <div className="form-grid two">
-                          <TextAreaField label="Introduction" rows={3} value={episodeDraft.introduction} onChange={(value) => setEpisodeDraft({ ...episodeDraft, introduction: value })} />
-                          <TextAreaField label="Middle" rows={3} value={episodeDraft.middle} onChange={(value) => setEpisodeDraft({ ...episodeDraft, middle: value })} />
-                        </div>
-                        <div className="form-grid two">
-                          <TextAreaField label="Climax" rows={3} value={episodeDraft.climax} onChange={(value) => setEpisodeDraft({ ...episodeDraft, climax: value })} />
-                          <TextAreaField label="Ending hook" rows={3} value={episodeDraft.ending_hook} onChange={(value) => setEpisodeDraft({ ...episodeDraft, ending_hook: value })} />
-                        </div>
-                      </>
-                    )}
                   </PanelSection>
 
                   <PanelSection
@@ -3259,7 +4391,7 @@ function StudioShell(props: {
                     subtitle={pickUiText(
                       uiLanguage,
                       'Improve the current episode draft while keeping continuity with the rest of the work.',
-                      '作品全体との整合を保ちながら、現在の話の下書きを改善します。',
+                      '\u4f5c\u54c1\u5168\u4f53\u3068\u306e\u6574\u5408\u3092\u4fdd\u3061\u306a\u304c\u3089\u3001\u73fe\u5728\u306e\u8a71\u306e\u4e0b\u66f8\u304d\u3092\u6539\u5584\u3057\u307e\u3059\u3002',
                     )}
                     collapsible
                     mobileDefaultCollapsed
@@ -3280,7 +4412,7 @@ function StudioShell(props: {
                                   base_draft: {
                                     ...toEpisodeBaseDraftPayload(episodeDraft),
                                   },
-                                });
+                                }, activeOrganizationId);
                                 setStoryImprovementDraft(result.draft);
                                 setStoryImprovementMeta({
                                   compiler_provider: result.compiler_provider,
@@ -3322,42 +4454,8 @@ function StudioShell(props: {
                     {storyImprovementMeta !== null && storyImprovementMeta.compiler_provider !== 'fallback' ? (
                           <div className="muted small">{`${translateUiString(uiLanguage, 'AI improved')} / ${storyImprovementMeta.compiler_model ?? translateUiString(uiLanguage, 'Story AI')}`}</div>
                     ) : null}
-                    <div className="stack">
-                      <TextAreaField
-                        label="Improved title"
-                        rows={2}
-                        value={storyImprovementDraft?.title ?? ''}
-                        onChange={(value) =>
-                          setStoryImprovementDraft((current) => ({
-                            ...(current ?? createEmptyStoryImprovementDraft(episodeDraft.story_input_mode)),
-                            title: value,
-                          }))
-                        }
-                      />
-                      <button className="secondary-button" onClick={() => setEpisodeDraft((current) => ({ ...current, title: storyImprovementDraft?.title ?? current.title }))} type="button">
-                        <Save size={16} />
-                        {translateUiString(uiLanguage, 'Apply to title')}
-                      </button>
-                    </div>
                     {episodeDraft.story_input_mode === 'full' ? (
                       <>
-                        <div className="stack">
-                          <TextAreaField
-                            label="Improved purpose"
-                            rows={4}
-                            value={storyImprovementDraft?.purpose ?? ''}
-                            onChange={(value) =>
-                              setStoryImprovementDraft((current) => ({
-                                ...(current ?? createEmptyStoryImprovementDraft('full')),
-                                purpose: value,
-                              }))
-                            }
-                          />
-                          <button className="secondary-button" onClick={() => setEpisodeDraft((current) => ({ ...current, purpose: storyImprovementDraft?.purpose ?? current.purpose }))} type="button">
-                            <Save size={16} />
-                            {translateUiString(uiLanguage, 'Apply purpose')}
-                          </button>
-                        </div>
                         <div className="stack">
                           <TextAreaField
                             label="Improved full story"
@@ -3400,23 +4498,6 @@ function StudioShell(props: {
                         <div className="form-grid two">
                           <div className="stack">
                             <TextAreaField
-                              label="Improved purpose"
-                              rows={4}
-                              value={storyImprovementDraft?.purpose ?? ''}
-                              onChange={(value) =>
-                                setStoryImprovementDraft((current) => ({
-                                  ...(current ?? createEmptyStoryImprovementDraft('structured')),
-                                  purpose: value,
-                                }))
-                              }
-                            />
-                            <button className="secondary-button" onClick={() => setEpisodeDraft((current) => ({ ...current, purpose: storyImprovementDraft?.purpose ?? current.purpose }))} type="button">
-                              <Save size={16} />
-                              {translateUiString(uiLanguage, 'Apply purpose')}
-                            </button>
-                          </div>
-                          <div className="stack">
-                            <TextAreaField
                               label="Improved introduction"
                               rows={6}
                               value={storyImprovementDraft?.introduction ?? ''}
@@ -3432,8 +4513,6 @@ function StudioShell(props: {
                               {translateUiString(uiLanguage, 'Apply introduction')}
                             </button>
                           </div>
-                        </div>
-                        <div className="form-grid two">
                           <div className="stack">
                             <TextAreaField
                               label="Improved middle"
@@ -3451,6 +4530,8 @@ function StudioShell(props: {
                               {translateUiString(uiLanguage, 'Apply middle')}
                             </button>
                           </div>
+                        </div>
+                        <div className="form-grid two">
                           <div className="stack">
                             <TextAreaField
                               label="Improved climax"
@@ -3468,23 +4549,23 @@ function StudioShell(props: {
                               {translateUiString(uiLanguage, 'Apply climax')}
                             </button>
                           </div>
-                        </div>
-                        <div className="stack">
-                          <TextAreaField
-                            label="Improved ending hook"
-                            rows={6}
-                            value={storyImprovementDraft?.ending_hook ?? ''}
-                            onChange={(value) =>
-                              setStoryImprovementDraft((current) => ({
-                                ...(current ?? createEmptyStoryImprovementDraft('structured')),
-                                ending_hook: value,
-                              }))
-                            }
-                          />
-                          <button className="secondary-button" onClick={() => setEpisodeDraft((current) => ({ ...current, ending_hook: storyImprovementDraft?.ending_hook ?? current.ending_hook }))} type="button">
-                            <Save size={16} />
-                            {translateUiString(uiLanguage, 'Apply ending hook')}
-                          </button>
+                          <div className="stack">
+                            <TextAreaField
+                              label="Improved ending hook"
+                              rows={6}
+                              value={storyImprovementDraft?.ending_hook ?? ''}
+                              onChange={(value) =>
+                                setStoryImprovementDraft((current) => ({
+                                  ...(current ?? createEmptyStoryImprovementDraft('structured')),
+                                  ending_hook: value,
+                                }))
+                              }
+                            />
+                            <button className="secondary-button" onClick={() => setEpisodeDraft((current) => ({ ...current, ending_hook: storyImprovementDraft?.ending_hook ?? current.ending_hook }))} type="button">
+                              <Save size={16} />
+                              {translateUiString(uiLanguage, 'Apply ending hook')}
+                            </button>
+                          </div>
                         </div>
                       </>
                     )}
@@ -3520,6 +4601,7 @@ function StudioShell(props: {
                             await api.createScene(
                               selectedEpisode.id,
                               toCreateScenePayload(sceneDraft, loadedSelectedWorkEntityIds),
+                              activeOrganizationId,
                             );
                             setSceneDraft(createEmptySceneDraft());
                             await invalidateScopedQuery(['scenes', selectedEpisode.id]);
@@ -3538,6 +4620,7 @@ function StudioShell(props: {
                               await api.updateScene(
                                 selectedScene.id,
                                 toScenePayload(sceneDraft, loadedSelectedWorkEntityIds),
+                                activeOrganizationId,
                               );
                               await invalidateScopedQuery(['scenes', selectedEpisode.id]);
                             })
@@ -3556,11 +4639,10 @@ function StudioShell(props: {
               {activeTab === 'entities' && selectedWork !== null ? (
                 <>
                   <PanelSection
-                    title="Story context"
-                    subtitle="Choose the current work, chapter, and episode while editing characters."
+                    title="Current episode selection"
+                    subtitle="Choose the work, chapter, and episode being edited."
                     compact
                     collapsible
-                    mobileDefaultCollapsed
                   >
                     <div className="compact-context-grid">
                       <SelectField
@@ -3637,7 +4719,7 @@ function StudioShell(props: {
                               }
 
                               void runAction('Delete entity', async () => {
-                                await api.deleteEntity(selectedEntity.id);
+                                await api.deleteEntity(selectedEntity.id, activeOrganizationId);
                                 removeEntityFromCache(selectedWork.id, selectedEntity.id);
                                 await invalidateScopedQuery(['entities', selectedWork.id]);
                               });
@@ -3714,7 +4796,11 @@ function StudioShell(props: {
                           className="secondary-button"
                           onClick={() =>
                             void runAction('Create entity', async () => {
-                              const createdEntity = await api.createEntity(selectedWork.id, toEntityPayload(entityDraft));
+                              const createdEntity = await api.createEntity(
+                                selectedWork.id,
+                                toEntityPayload(entityDraft),
+                                activeOrganizationId,
+                              );
                               cacheEntityRecord(createdEntity);
                               setEntityEditorMode('edit');
                               setSelectedEntityId(createdEntity.id);
@@ -3733,7 +4819,11 @@ function StudioShell(props: {
                           className="secondary-button"
                           onClick={() =>
                             void runAction('Save entity', async () => {
-                              const savedEntity = await api.updateEntity(selectedEntity.id, toEntityPayload(entityDraft));
+                              const savedEntity = await api.updateEntity(
+                                selectedEntity.id,
+                                toEntityPayload(entityDraft),
+                                activeOrganizationId,
+                              );
                               cacheEntityRecord(savedEntity);
                               setEntityDraft(toEntityDraft(savedEntity));
                               await invalidateScopedQuery(['entities', selectedWork.id]);
@@ -3748,13 +4838,10 @@ function StudioShell(props: {
                     </div>
                   </PanelSection>
 
-                  <PanelSection title="Import / References" collapsible mobileDefaultCollapsed>
+                  <PanelSection title="Import reference" collapsible>
                     <div className="state-pill-row">
                       <span className="state-pill state-pill-neutral">
                         {translateUiString(uiLanguage, 'Image import costs 1 credit.')}
-                      </span>
-                      <span className="state-pill state-pill-neutral">
-                        {translateUiString(uiLanguage, 'Preview generation costs 1 credit.')}
                       </span>
                     </div>
                     <label className="file-drop">
@@ -3766,6 +4853,7 @@ function StudioShell(props: {
                             entityDraft.entity_type,
                             selectedEntity?.id ?? null,
                             api,
+                            activeOrganizationId,
                             setImportingImage,
                             setNotice,
                             setEntityDraft,
@@ -3778,6 +4866,14 @@ function StudioShell(props: {
                       />
                       <span>{importingImage ? translateUiString(uiLanguage, 'Importing image...') : translateUiString(uiLanguage, 'Drop or choose image')}</span>
                     </label>
+                  </PanelSection>
+
+                  <PanelSection title="Preview / Confirm" collapsible>
+                    <div className="state-pill-row">
+                      <span className="state-pill state-pill-neutral">
+                        {translateUiString(uiLanguage, 'Preview generation costs 1 credit.')}
+                      </span>
+                    </div>
                     {selectedEntity !== null ? (
                       <div className="toolbar">
                         <button
@@ -3795,6 +4891,7 @@ function StudioShell(props: {
                               const result = await api.generateEntityReference(
                                 selectedEntity.id,
                                 sourceS3Key === undefined ? undefined : { source_s3_key: sourceS3Key },
+                                activeOrganizationId,
                               );
                               trackJob(result.job_id);
                             })
@@ -3816,11 +4913,15 @@ function StudioShell(props: {
                                     : referenceSelection,
                                 ),
                               );
-                              await api.confirmEntityReference(selectedEntity.id, {
-                                selected_s3_keys: selectedReferenceKeys,
-                                primary_s3_key: referencePrimaryKey,
-                                prompt_supplement: entityDraft.prompt_supplement || null,
-                              });
+                              await api.confirmEntityReference(
+                                selectedEntity.id,
+                                {
+                                  selected_s3_keys: selectedReferenceKeys,
+                                  primary_s3_key: referencePrimaryKey,
+                                  prompt_supplement: entityDraft.prompt_supplement || null,
+                                },
+                                activeOrganizationId,
+                              );
                               setUploadedReferenceCandidatesByEntityId((current) => {
                                 const nextValue = { ...current };
                                 delete nextValue[selectedEntity.id];
@@ -3846,7 +4947,7 @@ function StudioShell(props: {
                         showProgress
                       />
                     ) : null}
-                    <div className="reference-management-grid">
+                    <div className="reference-management-grid preview-confirm-grid">
                       <div className="stack">
                         <div className="section-header">
                           <div>
@@ -3861,7 +4962,14 @@ function StudioShell(props: {
                                 <div className="reference-card-media">
                                   <AuthenticatedImage
                                     enabled={selectedEntity !== null}
-                                    loadImage={() => api.exportEntityReferenceCandidateImage(selectedEntity?.id ?? '', candidate.s3_key)}
+                                    loadImage={() =>
+                                      api.exportEntityReferenceCandidateImage(
+                                        selectedEntity?.id ?? '',
+                                        candidate.s3_key,
+                                        activeOrganizationId,
+                                      )
+                                    }
+                                    onClick={(url) => openImageLightbox(url, translateUiString(uiLanguage, 'Generated preview'))}
                                     queryKey={scopedQueryKey(['entity-reference-candidate-image', selectedEntity?.id, candidate.s3_key])}
                                   />
                                 </div>
@@ -3923,7 +5031,14 @@ function StudioShell(props: {
                                 <div className="reference-card-media">
                                   <AuthenticatedImage
                                     enabled={selectedEntity !== null}
-                                    loadImage={() => api.exportEntityReferenceImage(selectedEntity?.id ?? '', image.ref_id)}
+                                    loadImage={() =>
+                                      api.exportEntityReferenceImage(
+                                        selectedEntity?.id ?? '',
+                                        image.ref_id,
+                                        activeOrganizationId,
+                                      )
+                                    }
+                                    onClick={(url) => openImageLightbox(url, translateUiString(uiLanguage, 'Confirmed references'))}
                                     queryKey={scopedQueryKey(['entity-reference-image', selectedEntity?.id, image.ref_id, image.created_at])}
                                   />
                                 </div>
@@ -3941,7 +5056,11 @@ function StudioShell(props: {
                                         return;
                                       }
                                       void runAction('Delete reference', async () => {
-                                        await api.deleteEntityReference(selectedEntity.id, image.ref_id);
+                                        await api.deleteEntityReference(
+                                          selectedEntity.id,
+                                          image.ref_id,
+                                          activeOrganizationId,
+                                        );
                                         await invalidateScopedQuery(['entity-reference-set', selectedEntity.id]);
                                       });
                                     }}
@@ -3966,11 +5085,10 @@ function StudioShell(props: {
               {activeTab === 'pages' && selectedEpisode !== null ? (
                 <>
                   <PanelSection
-                    title="Target episode"
-                    subtitle="Switch story context for page editing."
+                    title="Current episode selection"
+                    subtitle="Choose the work, chapter, and episode being edited."
                     compact
                     collapsible
-                    mobileDefaultCollapsed
                   >
                     <div className="compact-context-grid">
                       <SelectField
@@ -4010,7 +5128,7 @@ function StudioShell(props: {
                           </div>
                           {page.generated_image !== null ? (
                             <AuthenticatedImage
-                              loadImage={() => api.exportPageImage(page.id)}
+                              loadImage={() => api.exportPageImage(page.id, activeOrganizationId)}
                               loading="lazy"
                               onDoubleClick={(url) => openImageLightbox(url, `${translateUiString(uiLanguage, 'Page')} ${page.page_number}`)}
                               placeholderClassName="page-placeholder"
@@ -4036,12 +5154,16 @@ function StudioShell(props: {
 
                   {selectedPage !== null ? (
                     <>
-                      <PanelSection title="Page settings" className="page-section-settings" collapsible mobileDefaultCollapsed actions={
+                      <PanelSection title="Style constraints" className="page-section-style-constraints" compact collapsible actions={
                         <button
                           className="secondary-button"
                           onClick={() =>
                             void runAction('Save page settings', async () => {
-                              await api.updatePage(selectedPage.id, toPageSettingsPayload(pageSettingsDraft));
+                              await api.updatePage(
+                                selectedPage.id,
+                                toPageSettingsPayload(pageSettingsDraft),
+                                activeOrganizationId,
+                              );
                               await invalidateScopedQuery(['pages', selectedEpisode.id]);
                             })
                           }
@@ -4051,25 +5173,6 @@ function StudioShell(props: {
                           {translateUiString(uiLanguage, 'Save')}
                         </button>
                       }>
-                        <div className="form-grid three">
-                          <SelectField
-                            label="Dialogue mode"
-                            value={pageSettingsDraft.dialogue_mode}
-                            onChange={(value) => setPageSettingsDraft((current) => ({ ...current, dialogue_mode: value as PageSettingsDraft['dialogue_mode'] }))}
-                            options={[
-                              ['image_baked', 'Image baked'],
-                              ['mixed', 'Mixed'],
-                            ]}
-                          />
-                          <label className="checkbox-row">
-                            <input
-                              checked={pageSettingsDraft.page_dialogue_toggle}
-                              onChange={(event) => setPageSettingsDraft((current) => ({ ...current, page_dialogue_toggle: event.target.checked }))}
-                              type="checkbox"
-                            />
-                            {translateUiString(uiLanguage, 'Dialogue toggle')}
-                          </label>
-                        </div>
                         <div className="form-grid two">
                           <InputField
                             label="Style reference title"
@@ -4095,7 +5198,11 @@ function StudioShell(props: {
                             className="secondary-button"
                             onClick={() =>
                               void runAction('Save story sources', async () => {
-                                await api.updatePage(selectedPage.id, toPageSettingsPayload(pageSettingsDraft));
+                                await api.updatePage(
+                                  selectedPage.id,
+                                  toPageSettingsPayload(pageSettingsDraft),
+                                  activeOrganizationId,
+                                );
                                 await invalidateScopedQuery(['pages', selectedEpisode.id]);
                               })
                             }
@@ -4117,7 +5224,7 @@ function StudioShell(props: {
                               ))
                             ) : (
                               <span className="muted-text">
-                                {uiLanguage === 'ja' ? 'まだ関連シーンが設定されていません' : 'No linked scenes yet'}
+                                {uiLanguage === 'ja' ? '\u307e\u3060\u95a2\u9023\u30b7\u30fc\u30f3\u306f\u3042\u308a\u307e\u305b\u3093\u3002' : 'No linked scenes yet'}
                               </span>
                             )}
                           </div>
@@ -4146,8 +5253,8 @@ function StudioShell(props: {
                         title={`Page ${selectedPage.page_number}`}
                         subtitle={
                           uiLanguage === 'ja'
-                            ? `セリフ ${translateUiString(uiLanguage, selectedPage.dialogue_mode === 'image_baked' ? 'Image baked' : 'Mixed')}`
-                            : `dialogue ${selectedPage.dialogue_mode === 'image_baked' ? 'image_baked' : 'mixed'}`
+                            ? `セリフ: ${translateUiString(uiLanguage, selectedPage.dialogue_mode === 'image_baked' ? 'Image baked' : selectedPage.dialogue_mode === 'balloon_only' ? 'Balloon only' : 'Mixed')}`
+                            : `dialogue ${selectedPage.dialogue_mode}`
                         }
                         className="page-section-generate"
                         collapsible
@@ -4162,7 +5269,7 @@ function StudioShell(props: {
                                     throw new Error(translateUiString(uiLanguage, 'Frame count and panel count do not match. Adjust frames or panels before generating.'));
                                   }
                                   await saveCurrentPageGenerationContext();
-                                  const result = await api.generatePage(selectedPage.id);
+                                  const result = await api.generatePage(selectedPage.id, activeOrganizationId);
                                   trackJob(result.job_id);
                                 })
                               }
@@ -4175,7 +5282,7 @@ function StudioShell(props: {
                               className="ghost-button"
                               onClick={() =>
                                 void runAction('Confirm page', async () => {
-                                  await api.confirmPage(selectedPage.id);
+                                  await api.confirmPage(selectedPage.id, activeOrganizationId);
                                   await invalidateScopedQuery(['pages', selectedEpisode.id]);
                                 })
                               }
@@ -4188,7 +5295,7 @@ function StudioShell(props: {
                               className="ghost-button"
                               onClick={() =>
                                 void runAction('Reopen page', async () => {
-                                  await api.reopenPage(selectedPage.id);
+                                  await api.reopenPage(selectedPage.id, activeOrganizationId);
                                   await invalidateScopedQuery(['pages', selectedEpisode.id]);
                                 })
                               }
@@ -4247,7 +5354,7 @@ function StudioShell(props: {
                           <div className="generated-image-wrap">
                             <AuthenticatedImage
                               className="generated-image"
-                              loadImage={() => api.exportPageImage(selectedPage.id)}
+                              loadImage={() => api.exportPageImage(selectedPage.id, activeOrganizationId)}
                               loading="eager"
                               onDoubleClick={(url) => openImageLightbox(url, `${translateUiString(uiLanguage, 'Page')} ${selectedPage.page_number}`)}
                               placeholderClassName="page-placeholder generated-image"
@@ -4260,6 +5367,7 @@ function StudioShell(props: {
                       <div className="page-editing-cluster page-section-frames-panels">
                       <PanelSection
                         title="Panel layout"
+                        className="layout-control-section"
                         collapsible
                         actions={
                           <div className="toolbar">
@@ -4279,8 +5387,8 @@ function StudioShell(props: {
                               </select>
                             </label>
                             <button
-                              className="ghost-button"
-                              disabled={FRAME_TEMPLATE_PANEL_COUNTS[frameTemplateId] === undefined}
+                              className="ghost-button layout-preview-button"
+                              disabled={!canPreviewFrameTemplate}
                               onClick={() => setLayoutPreviewTemplateId(frameTemplateId)}
                               type="button"
                             >
@@ -4295,17 +5403,17 @@ function StudioShell(props: {
                                   const nextPanelCount = FRAME_TEMPLATE_PANEL_COUNTS[frameTemplateId] ?? selectedPagePanelCount;
                                   const deletedPanelCount = Math.max(selectedPagePanelCount - nextPanelCount, 0);
                                   if (deletedPanelCount > 0) {
-                                    const confirmed = window.confirm(
-                                      uiLanguage === 'ja'
-                                        ? `後ろの${deletedPanelCount}コマを削除します。続行しますか？`
-                                        : `This will remove ${deletedPanelCount} later panel(s). Continue?`,
+                                    throw new Error(
+                                      'This layout would remove existing panels. Delete unnecessary panels first, or choose a layout with the same panel count.',
                                     );
-                                    if (!confirmed) {
-                                      return;
-                                    }
                                   }
 
-                                  await api.applyPageLayoutTemplate(selectedPage.id, frameTemplateId, deletedPanelCount > 0);
+                                  await api.applyPageLayoutTemplate(
+                                    selectedPage.id,
+                                    frameTemplateId,
+                                    false,
+                                    activeOrganizationId,
+                                  );
                                   await invalidateScopedQuery(['frames', selectedPage.id]);
                                   await invalidateScopedQuery(['panels', selectedPage.id]);
                                   if (selectedEpisode !== null) {
@@ -4323,7 +5431,7 @@ function StudioShell(props: {
                       >
                         <div className="muted small">
                           {uiLanguage === 'ja'
-                            ? 'テンプレートを選ぶとコマ数も揃います。'
+                            ? '\u30c6\u30f3\u30d7\u30ec\u30fc\u30c8\u3092\u9078\u3076\u3068\u30b3\u30de\u6570\u3082\u63c3\u3044\u307e\u3059\u3002'
                             : 'Templates also sync the panel count.'}
                         </div>
                         <details className="advanced-disclosure">
@@ -4430,7 +5538,11 @@ function StudioShell(props: {
                             className="secondary-button"
                             onClick={() =>
                               void runAction('Save frame geometry', async () => {
-                                await api.replaceFrames(selectedPage.id, toPanelFramesPayload(frameDrafts));
+                                await api.replaceFrames(
+                                  selectedPage.id,
+                                  toPanelFramesPayload(frameDrafts),
+                                  activeOrganizationId,
+                                );
                                 await invalidateScopedQuery(['frames', selectedPage.id]);
                               })
                             }
@@ -4444,17 +5556,71 @@ function StudioShell(props: {
 
                       <PanelSection title="Panels" collapsible>
                         <div className="muted small">{translateUiString(uiLanguage, 'You do not need to fill every blank field.')}</div>
-                        <div className="list-grid">
-                          {panels.map((panel) => (
-                            <button
+                        <div className="panel-order-list">
+                          {panels.map((panel, panelIndex) => (
+                            <div
                               key={panel.id}
-                              className={`mini-card ${selectedPanel?.id === panel.id ? 'active' : ''}`}
-                              onClick={() => setSelectedPanelId(panel.id)}
-                              type="button"
+                              className={`panel-order-row ${selectedPanel?.id === panel.id ? 'active' : ''}`}
                             >
-                              <strong>{panel.order}</strong>
-                              <span>{panel.panel_role}</span>
-                            </button>
+                              <button
+                                className="panel-order-main"
+                                onClick={() => setSelectedPanelId(panel.id)}
+                                type="button"
+                              >
+                                <strong>{formatPanelOrderLabel(uiLanguage, panel.order)}</strong>
+                                <span>{formatPanelRoleLabel(uiLanguage, panel.panel_role)}</span>
+                              </button>
+                              <div className="panel-order-actions" aria-label={`${translateUiString(uiLanguage, 'Panel')} ${panel.order}`}>
+                                <button
+                                  aria-label={translateUiString(uiLanguage, 'Move panel up')}
+                                  className="compact-action-button"
+                                  disabled={panelIndex === 0}
+                                  onClick={() =>
+                                    void runAction('Move panel up', async () => {
+                                      await reorderPanelWithinSelectedPage(panel.id, 'up');
+                                    })
+                                  }
+                                  title={translateUiString(uiLanguage, 'Move panel up')}
+                                  type="button"
+                                >
+                                  <ChevronUp size={15} />
+                                  <span>{translateUiString(uiLanguage, 'Move earlier')}</span>
+                                </button>
+                                <button
+                                  aria-label={translateUiString(uiLanguage, 'Move panel down')}
+                                  className="compact-action-button"
+                                  disabled={panelIndex === panels.length - 1}
+                                  onClick={() =>
+                                    void runAction('Move panel down', async () => {
+                                      await reorderPanelWithinSelectedPage(panel.id, 'down');
+                                    })
+                                  }
+                                  title={translateUiString(uiLanguage, 'Move panel down')}
+                                  type="button"
+                                >
+                                  <ChevronDown size={15} />
+                                  <span>{translateUiString(uiLanguage, 'Move later')}</span>
+                                </button>
+                                <button
+                                  aria-label={translateUiString(uiLanguage, 'Delete panel')}
+                                  className="compact-action-button danger"
+                                  onClick={() => {
+                                    if (!window.confirm(formatDeletePanelConfirmMessage(uiLanguage, panel.order))) {
+                                      return;
+                                    }
+
+                                    void runAction('Delete panel', async () => {
+                                      await deletePanelFromSelectedPage(panel);
+                                    });
+                                  }}
+                                  title={translateUiString(uiLanguage, 'Delete panel')}
+                                  type="button"
+                                >
+                                  <Trash2 size={15} />
+                                  <span>{translateUiString(uiLanguage, 'Delete')}</span>
+                                </button>
+                              </div>
+                            </div>
                           ))}
                         </div>
                         <div className="form-grid three">
@@ -4545,11 +5711,19 @@ function StudioShell(props: {
                             onClick={() =>
                               void runAction('Create panel', async () => {
                                 const assignmentsPayload = toPanelAssignmentsPayload(panelDraft);
-                                const createdPanel = await api.createPanel(selectedPage.id, toPanelPayload(panelDraft));
+                                const createdPanel = await api.createPanel(
+                                  selectedPage.id,
+                                  toPanelPayload(panelDraft),
+                                  activeOrganizationId,
+                                );
                                 try {
-                                  await api.replacePanelAssignments(createdPanel.id, assignmentsPayload);
+                                  await api.replacePanelAssignments(
+                                    createdPanel.id,
+                                    assignmentsPayload,
+                                    activeOrganizationId,
+                                  );
                                 } catch (error) {
-                                  await api.deletePanel(createdPanel.id).catch(() => undefined);
+                                  await api.deletePanel(createdPanel.id, activeOrganizationId).catch(() => undefined);
                                   throw error;
                                 }
                                 setSelectedPanelId(createdPanel.id);
@@ -4568,8 +5742,16 @@ function StudioShell(props: {
                                 onClick={() =>
                                   void runAction('Save panel', async () => {
                                     const assignmentsPayload = toPanelAssignmentsPayload(panelDraft);
-                                    await api.updatePanel(selectedPanel.id, toPanelPayload(panelDraft));
-                                    await api.replacePanelAssignments(selectedPanel.id, assignmentsPayload);
+                                    await api.updatePanel(
+                                      selectedPanel.id,
+                                      toPanelPayload(panelDraft),
+                                      activeOrganizationId,
+                                    );
+                                    await api.replacePanelAssignments(
+                                      selectedPanel.id,
+                                      assignmentsPayload,
+                                      activeOrganizationId,
+                                    );
                                     await invalidateScopedQuery(['panels', selectedPage.id]);
                                   })
                                 }
@@ -4581,18 +5763,12 @@ function StudioShell(props: {
                               <button
                                 className="ghost-button danger"
                                 onClick={() => {
-                                  if (!confirmUiAction('Delete this panel? This can break the frame/panel count until frames are adjusted.')) {
+                                  if (!window.confirm(formatDeletePanelConfirmMessage(uiLanguage, selectedPanel.order))) {
                                     return;
                                   }
 
                                   void runAction('Delete panel', async () => {
-                                    await api.deletePanel(selectedPanel.id);
-                                    setSelectedPanelId('');
-                                    await invalidateScopedQuery(['panels', selectedPage.id]);
-                                    await invalidateScopedQuery(['frames', selectedPage.id]);
-                                    if (selectedEpisode !== null) {
-                                      await invalidateScopedQuery(['pages', selectedEpisode.id]);
-                                    }
+                                    await deletePanelFromSelectedPage(selectedPanel);
                                   });
                                 }}
                                 type="button"
@@ -4687,76 +5863,70 @@ function StudioShell(props: {
             </section>
 
             <aside className="rail">
-              <BillingPanel
-                balance={balanceQuery.data}
-                balanceRefreshing={balanceQuery.isFetching}
-                billingReturnChecking={billingReturnChecking}
-                busyAction={busyAction}
-                onOpenPortal={() =>
-                  void runExternalRedirectAction('Open portal', async () => {
-                    const result = await api.createCustomerPortal();
-                    redirectToBillingUrl(result.url, createBillingReturnMarker('portal', balanceQuery.data));
-                  })
-                }
-                onPurchaseCredits={(packageCode) =>
-                  void runExternalRedirectAction('Checkout credits', async () => {
-                    const result = await api.createCreditCheckout(packageCode);
-                    redirectToBillingUrl(result.url, createBillingReturnMarker('credits', balanceQuery.data, { packageCode }));
-                  })
-                }
-                onStartSubscription={(planCode) =>
-                  void runExternalRedirectAction('Checkout subscription', async () => {
-                    const result = await api.createSubscriptionCheckout(planCode);
-                    redirectToBillingUrl(result.url, createBillingReturnMarker('subscription', balanceQuery.data, { planCode }));
-                  })
-                }
-              />
-
-              <PanelSection title="Jobs" compact collapsible mobileDefaultCollapsed>
-                <div className="stack gap-xs">
-                  {jobs.map((job) => {
-                    const progressText = getJobProgressText(job, uiLanguage);
-                    const progressBarState = getJobProgressBarState(job);
-                    const jobErrorText = getJobFailureText(job, uiLanguage);
-                    return (
-                      <div key={job.id} className="job-row">
-                        <div>
-                          <strong>{translateUiString(uiLanguage, job.job_type)}</strong>
-                          <div className="muted small">#{formatShortId(job.id)}</div>
-                          {progressText !== null ? (
-                            <div className="muted small">{progressText}</div>
-                          ) : null}
-                          {progressBarState !== null ? (
-                            <ProgressBar compact percent={progressBarState.percent} tone={progressBarState.tone} />
-                          ) : null}
-                          {jobErrorText !== null ? (
-                            <div className="error-text small">{jobErrorText}</div>
-                          ) : null}
-                        </div>
-                        <StatusBadge value={job.status} />
-                      </div>
-                    );
-                  })}
-                  {jobs.length === 0 ? (
-                    <div className="muted small">{translateUiString(uiLanguage, 'No recent jobs.')}</div>
-                  ) : null}
-                </div>
-              </PanelSection>
-
-              <PanelSection title="Tutorial" subtitle="First run guide" compact collapsible defaultCollapsed>
-                <TutorialGuide />
-              </PanelSection>
+              {accountPanel}
+              {tutorialPanel}
             </aside>
           </div>
         )}
       </main>
+      <nav className="mobile-bottom-nav" aria-label="Mobile navigation">
+        {canViewActiveOrganizationWorks ? (
+          <>
+            <button
+              aria-current={activeTab === 'story' ? 'page' : undefined}
+              className={activeTab === 'story' ? 'active' : ''}
+              onClick={() => setActiveTab('story')}
+              type="button"
+            >
+              <Bot size={20} />
+              <span>{translateUiString(uiLanguage, 'Story')}</span>
+            </button>
+            <button
+              aria-current={activeTab === 'entities' ? 'page' : undefined}
+              className={activeTab === 'entities' ? 'active' : ''}
+              onClick={() => setActiveTab('entities')}
+              type="button"
+            >
+              <Image size={20} />
+              <span>{translateUiString(uiLanguage, 'Entities')}</span>
+            </button>
+            <button
+              aria-current={activeTab === 'pages' ? 'page' : undefined}
+              className={activeTab === 'pages' ? 'active' : ''}
+              onClick={() => setActiveTab('pages')}
+              type="button"
+            >
+              <PanelsTopLeft size={20} />
+              <span>{translateUiString(uiLanguage, 'Pages')}</span>
+            </button>
+          </>
+        ) : null}
+        <button
+          aria-current={activeTab === 'account' ? 'page' : undefined}
+          className={activeTab === 'account' ? 'active' : ''}
+          onClick={() => setActiveTab('account')}
+          type="button"
+        >
+          <CreditCard size={20} />
+          <span>{translateUiString(uiLanguage, 'Account')}</span>
+        </button>
+        <button
+          aria-current={activeTab === 'tutorial' ? 'page' : undefined}
+          className={activeTab === 'tutorial' ? 'active' : ''}
+          onClick={() => setActiveTab('tutorial')}
+          type="button"
+        >
+          <BookOpen size={20} />
+          <span>{translateUiString(uiLanguage, 'Guide')}</span>
+        </button>
+      </nav>
       {lightboxImageUrl !== null ? (
         <div className="image-lightbox" onClick={closeImageLightbox} role="presentation">
           <div className="image-lightbox-dialog" onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true">
             <div className="image-lightbox-header">
               <strong>{lightboxTitle}</strong>
               <button className="ghost-button image-lightbox-close" onClick={closeImageLightbox} type="button">
-                ×
+                ・・・
               </button>
             </div>
             <div className="image-lightbox-body">
@@ -4765,16 +5935,15 @@ function StudioShell(props: {
           </div>
         </div>
       ) : null}
-      {layoutPreviewTemplateId !== null && FRAME_TEMPLATE_PREVIEWS[layoutPreviewTemplateId] !== undefined ? (
+      {layoutPreviewTemplateId !== null && layoutPreviewFrames.length > 0 ? (
         <div className="image-lightbox" onClick={() => setLayoutPreviewTemplateId(null)} role="presentation">
           <div className="layout-preview-dialog" onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true">
             <div className="image-lightbox-header">
               <strong>{getFrameTemplateDisplayLabel(uiLanguage, layoutPreviewTemplateId)}</strong>
               <button className="ghost-button image-lightbox-close" onClick={() => setLayoutPreviewTemplateId(null)} type="button">
-                ×
-              </button>
+                ・・・              </button>
             </div>
-            <LayoutTemplatePreview templateId={layoutPreviewTemplateId} />
+            <LayoutTemplatePreview frames={layoutPreviewFrames} />
           </div>
         </div>
       ) : null}
@@ -4789,6 +5958,7 @@ function AuthenticatedImage(props: {
   enabled?: boolean;
   loadImage: () => Promise<BlobResponse>;
   loading?: 'eager' | 'lazy';
+  onClick?: (url: string) => void;
   onDoubleClick?: (url: string) => void;
   placeholderClassName?: string;
   queryKey: readonly unknown[];
@@ -4833,6 +6003,11 @@ function AuthenticatedImage(props: {
       className={props.className}
       decoding="async"
       loading={props.loading ?? 'lazy'}
+      onClick={
+        props.onClick === undefined
+          ? undefined
+          : () => props.onClick?.(objectUrl)
+      }
       onDoubleClick={
         props.onDoubleClick === undefined
           ? undefined
@@ -4906,14 +6081,32 @@ function BillingPanel(props: {
   busyAction: string | null;
   onOpenPortal: () => void;
   onPurchaseCredits: (packageCode: CreditCheckoutPackageCode) => void;
-  onStartSubscription: (planCode: SubscriptionCheckoutPlanCode) => void;
+  onStartSubscription: (planCode: ConsumerSubscriptionCheckoutPlanCode) => void;
 }) {
   const language = useContext(UiLanguageContext);
   const actionBusy = props.busyAction === 'Checkout subscription' || props.busyAction === 'Checkout credits' || props.busyAction === 'Open portal';
   const currentPlanCode = props.balance?.plan_code ?? null;
-  const isPaidPlan = currentPlanCode === 'standard' || currentPlanCode === 'premium';
-  const canSelectSubscriptionPlan = (planCode: SubscriptionCheckoutPlanCode): boolean => {
-    if (actionBusy || currentPlanCode === null || currentPlanCode === planCode) {
+  const subscriptionPlans: SubscriptionPlanOption[] =
+    props.balance?.subscription_plans ??
+    subscriptionPurchaseOptions.map((plan) => ({
+      plan_code: plan.code,
+      display_name_ja: plan.code === 'standard' ? '\u30b9\u30bf\u30f3\u30c0\u30fc\u30c9' : '\u30d7\u30ec\u30df\u30a2\u30e0',
+      display_name_en: plan.label.en,
+      monthly_credits: plan.credits,
+      amount_jpy: plan.priceJpy,
+      minimum_contract_months: 1,
+      trial_days: 0,
+      is_enterprise: false,
+      configured: true,
+    }));
+  const consumerSubscriptionPlans = subscriptionPlans.filter(
+    (plan): plan is SubscriptionPlanOption & { plan_code: ConsumerSubscriptionCheckoutPlanCode } =>
+      !plan.is_enterprise && isConsumerSubscriptionCheckoutPlanCode(plan.plan_code),
+  );
+  const isPaidPlan = currentPlanCode !== null && currentPlanCode !== 'free';
+  const canSelectSubscriptionPlan = (planCode: ConsumerSubscriptionCheckoutPlanCode): boolean => {
+    const plan = subscriptionPlans.find((current) => current.plan_code === planCode);
+    if (actionBusy || currentPlanCode === null || currentPlanCode === planCode || plan?.configured !== true) {
       return false;
     }
 
@@ -4921,41 +6114,67 @@ function BillingPanel(props: {
       return true;
     }
 
-    if (currentPlanCode === 'standard') {
-      return planCode === 'premium';
+    return getSubscriptionPlanRank(planCode) > getSubscriptionPlanRank(currentPlanCode);
+  };
+  const planLabel = (plan: SubscriptionPlanOption): string =>
+    pickUiText(language, plan.display_name_en, plan.display_name_ja);
+  const paidPlanNote = isPaidPlan
+    ? pickUiText(
+        language,
+        'Manage paid plan changes and cancellation from "Manage subscription and invoices".',
+        '\u6709\u6599\u30d7\u30e9\u30f3\u306e\u5909\u66f4\u30fb\u89e3\u7d04\u306f\u300c\u30b5\u30d6\u30b9\u30af\u30fb\u8acb\u6c42\u3092\u7ba1\u7406\u300d\u3067\u884c\u3063\u3066\u304f\u3060\u3055\u3044\u3002',
+      )
+    : null;
+  const billingStatusMessage = actionBusy
+    ? pickUiText(language, 'Opening Stripe...', 'Stripe\u3092\u958b\u3044\u3066\u3044\u307e\u3059...')
+    : props.billingReturnChecking
+      ? pickUiText(language, 'Confirming payment result...', '\u6c7a\u6e08\u7d50\u679c\u3092\u78ba\u8a8d\u3057\u3066\u3044\u307e\u3059...')
+      : props.balanceRefreshing
+        ? pickUiText(language, 'Updating balance...', '\u6b8b\u9ad8\u3092\u66f4\u65b0\u3057\u3066\u3044\u307e\u3059...')
+        : null;
+  const renderSubscriptionPlanButton = (
+    plan: SubscriptionPlanOption & { plan_code: ConsumerSubscriptionCheckoutPlanCode },
+    isPrimary: boolean,
+  ) => {
+    const isCurrent = currentPlanCode === plan.plan_code;
+    const disabled = !canSelectSubscriptionPlan(plan.plan_code);
+    const statusLabel = !plan.configured
+      ? pickUiText(language, 'Preparing', '\u6e96\u5099\u4e2d')
+      : isCurrent
+        ? pickUiText(language, 'Current', '\u73fe\u5728')
+        : formatJpy(plan.amount_jpy);
+    const detailParts = [
+      pickUiText(language, `${plan.monthly_credits} credits / month`, `\u6708${plan.monthly_credits}\u30af\u30ec\u30b8\u30c3\u30c8`),
+    ];
+    if (plan.minimum_contract_months > 1) {
+      detailParts.push(
+        pickUiText(language, `${plan.minimum_contract_months} month minimum`, `\u6700\u4f4e${plan.minimum_contract_months}\u304b\u6708`),
+      );
     }
 
-    return false;
+    return (
+      <button
+        className={`billing-option ${isPrimary ? 'primary-billing-option' : ''} ${isCurrent ? 'current' : ''}`}
+        disabled={disabled}
+        key={plan.plan_code}
+        onClick={() => props.onStartSubscription(plan.plan_code)}
+        type="button"
+      >
+        <span>
+          <strong>{planLabel(plan)}</strong>
+          <small>{detailParts.join(' / ')}</small>
+        </span>
+        <span className="billing-price">{statusLabel}</span>
+      </button>
+    );
   };
-  const paidPlanNote =
-    currentPlanCode === 'standard'
-      ? pickUiText(
-          language,
-          'Manage paid plan changes and cancellation from "Manage subscription and invoices".',
-          '有料プランの変更・解約は「サブスク・請求を管理」で行ってください。',
-        )
-      : currentPlanCode === 'premium'
-        ? pickUiText(
-            language,
-            'Manage paid plan changes and cancellation from "Manage subscription and invoices".',
-            '有料プランの変更・解約は「サブスク・請求を管理」で行ってください。',
-          )
-        : null;
-  const billingStatusMessage = actionBusy
-    ? pickUiText(language, 'Preparing Stripe...', 'Stripeページを準備中...')
-    : props.billingReturnChecking
-      ? pickUiText(language, 'Confirming payment result...', '決済結果を確認中...')
-      : props.balanceRefreshing
-        ? pickUiText(language, 'Updating balance...', '残高を更新中...')
-        : null;
 
   return (
     <PanelSection
       title="Credits"
-      subtitle={pickUiText(language, 'Buy and manage credits', '購入と管理')}
+      subtitle={pickUiText(language, 'Buy and manage credits', '\u6b8b\u9ad8\u3068\u8cfc\u5165')}
       compact
       collapsible
-      mobileDefaultCollapsed
       className="billing-panel"
     >
       {billingStatusMessage !== null ? (
@@ -4968,53 +6187,35 @@ function BillingPanel(props: {
       {props.balance !== undefined ? (
         <>
           <div className="billing-current-plan">
-            <span>{translateUiString(language, 'Current plan')}</span>
+            <span>{pickUiText(language, 'Current plan', '\u73fe\u5728\u306e\u30d7\u30e9\u30f3')}</span>
             <strong>{formatPlanLabel(language, props.balance.plan_code)}</strong>
           </div>
           <div className="metric-grid billing-balance-grid">
-            <Metric label="Total" value={String(props.balance.total_credits)} />
-            <Metric label="Monthly" value={String(props.balance.monthly_credits)} />
-            <Metric label="Purchased" value={String(props.balance.purchased_credits)} />
+            <Metric label={pickUiText(language, 'Total', '\u5408\u8a08')} value={String(props.balance.total_credits)} />
+            <Metric label={pickUiText(language, 'Monthly', '\u6708\u984d\u5206')} value={String(props.balance.monthly_credits)} />
+            <Metric label={pickUiText(language, 'Purchased', '\u8ffd\u52a0\u8cfc\u5165\u5206')} value={String(props.balance.purchased_credits)} />
           </div>
         </>
       ) : (
         <div className="billing-loading">
           <LoaderCircle className="spin" size={16} />
-          <span>{pickUiText(language, 'Loading balance', '残高を読み込み中')}</span>
+          <span>{pickUiText(language, 'Loading balance', '\u6b8b\u9ad8\u3092\u8aad\u307f\u8fbc\u307f\u4e2d')}</span>
         </div>
       )}
 
       <div className="billing-block">
         <div className="billing-block-header">
-          <strong>{pickUiText(language, 'Monthly plan', '月額プラン')}</strong>
-          <span>{pickUiText(language, 'Best value', '最安単価')}</span>
+          <strong>{pickUiText(language, 'Monthly plans', '\u6708\u984d\u30d7\u30e9\u30f3')}</strong>
+          <span>{pickUiText(language, 'Personal use', '\u500b\u4eba\u5411\u3051')}</span>
         </div>
-        {subscriptionPurchaseOptions.map((plan) => (
-          <button
-            className={`billing-option primary-billing-option ${currentPlanCode === plan.code ? 'current' : ''}`}
-            disabled={!canSelectSubscriptionPlan(plan.code)}
-            key={plan.code}
-            onClick={() => props.onStartSubscription(plan.code)}
-            type="button"
-          >
-            <span>
-              <strong>{pickUiText(language, plan.label.en, plan.label.ja)}</strong>
-              <small>
-                {pickUiText(language, `${plan.credits} credits / month`, `月${plan.credits}クレジット`)}
-              </small>
-            </span>
-            <span className="billing-price">
-              {currentPlanCode === plan.code ? translateUiString(language, 'Current') : formatJpy(plan.priceJpy)}
-            </span>
-          </button>
-        ))}
+        {consumerSubscriptionPlans.map((plan) => renderSubscriptionPlanButton(plan, true))}
         {isPaidPlan && paidPlanNote !== null ? <div className="billing-note">{paidPlanNote}</div> : null}
       </div>
 
       <div className="billing-block">
         <div className="billing-block-header">
-          <strong>{pickUiText(language, 'One-time credits', '単発クレジット')}</strong>
-          <span>{pickUiText(language, 'No renewal', '更新なし')}</span>
+          <strong>{pickUiText(language, 'One-time credits', '\u8ffd\u52a0\u30af\u30ec\u30b8\u30c3\u30c8')}</strong>
+          <span>{pickUiText(language, 'No renewal', '\u66f4\u65b0\u306a\u3057')}</span>
         </div>
         <div className="billing-pack-grid">
           {creditPurchaseOptions.map((pack) => (
@@ -5026,8 +6227,8 @@ function BillingPanel(props: {
               type="button"
             >
               <span>
-                <strong>{pickUiText(language, `${pack.credits} credits`, `${pack.credits}クレジット`)}</strong>
-                <small>{pickUiText(language, 'one-time', '買い切り')}</small>
+                <strong>{pickUiText(language, `${pack.credits} credits`, `${pack.credits}\u30af\u30ec\u30b8\u30c3\u30c8`)}</strong>
+                <small>{pickUiText(language, 'one-time', '\u8cb7\u3044\u5207\u308a')}</small>
               </span>
               <span className="billing-price">{formatJpy(pack.priceJpy)}</span>
             </button>
@@ -5043,12 +6244,11 @@ function BillingPanel(props: {
 
       <button className="ghost-button billing-portal-button" disabled={actionBusy} onClick={props.onOpenPortal} type="button">
         <CreditCard size={16} />
-        <span>{pickUiText(language, 'Manage subscription and invoices', 'サブスク・請求を管理')}</span>
+        <span>{pickUiText(language, 'Manage subscription and invoices', '\u30b5\u30d6\u30b9\u30af\u30fb\u8acb\u6c42\u3092\u7ba1\u7406')}</span>
       </button>
     </PanelSection>
   );
 }
-
 function TutorialGuide() {
   const language = useContext(UiLanguageContext);
 
@@ -5114,30 +6314,33 @@ function ProgressBar(props: {
   );
 }
 
-function LayoutTemplatePreview(props: { templateId: string }) {
-  const frames = FRAME_TEMPLATE_PREVIEWS[props.templateId] ?? [];
-
+function LayoutTemplatePreview(props: { frames: FramePreviewDefinition[] }) {
   return (
     <div className="layout-preview-body">
       <svg aria-hidden="true" className="layout-preview-svg" viewBox="0 0 100 140">
         <rect className="layout-preview-page" height="140" rx="2" width="100" x="0" y="0" />
-        {frames.map((frame, index) => (
-          <polygon
-            className="layout-preview-frame"
-            key={`${props.templateId}-${index}`}
-            points={frame.vertices.map((vertex) => `${vertex.x * 100},${vertex.y * 140}`).join(' ')}
-          />
-        ))}
-        {frames.map((frame, index) => {
+        {props.frames.map((frame, index) => {
+          const readingOrder = frame.readingOrder ?? index + 1;
+          const borderStyle = frame.borderStyle ?? 'solid';
+          return (
+            <polygon
+              className={`layout-preview-frame layout-preview-frame-${borderStyle}`}
+              key={`layout-preview-frame-${readingOrder}`}
+              points={frame.vertices.map((vertex) => `${vertex.x * 100},${vertex.y * 140}`).join(' ')}
+            />
+          );
+        })}
+        {props.frames.map((frame, index) => {
+          const readingOrder = frame.readingOrder ?? index + 1;
           const center = getFramePreviewCenter(frame.vertices);
           return (
             <text
               className="layout-preview-number"
-              key={`${props.templateId}-label-${index}`}
+              key={`layout-preview-label-${readingOrder}`}
               x={center.x * 100}
               y={center.y * 140}
             >
-              {index + 1}
+              {readingOrder}
             </text>
           );
         })}
@@ -5403,13 +6606,14 @@ function GenericStructuredFieldsEditor(props: {
 
 function CharacterFieldsGroup(props: {
   children: ReactNode;
+  defaultOpen?: boolean;
   mobileDefaultOpen?: boolean;
   title: string;
 }) {
   const language = useContext(UiLanguageContext);
   const isMobileViewport = useIsMobileViewport();
-  const defaultOpen = !isMobileViewport || props.mobileDefaultOpen === true;
-  const resetKey = `${props.title}:${String(isMobileViewport)}:${String(props.mobileDefaultOpen ?? false)}`;
+  const defaultOpen = props.defaultOpen ?? (!isMobileViewport || props.mobileDefaultOpen === true);
+  const resetKey = `${props.title}:${String(isMobileViewport)}:${String(props.mobileDefaultOpen ?? false)}:${String(props.defaultOpen ?? '')}`;
   const lastResetKeyRef = useRef(resetKey);
   const [open, setOpen] = useState(defaultOpen);
 
@@ -5442,6 +6646,7 @@ function CharacterStructuredFieldsEditor(props: {
   value: CharacterStructuredFieldsDraft;
   onChange: (nextValue: CharacterStructuredFieldsDraft) => void;
 }) {
+  const language = useContext(UiLanguageContext);
   const update = (patch: Partial<CharacterStructuredFieldsDraft>): void => {
     props.onChange({
       ...props.value,
@@ -5463,9 +6668,6 @@ function CharacterStructuredFieldsEditor(props: {
           <SelectOrCustomField label="Body type" value={props.value.build} onChange={(value) => update({ build: value })} options={CHARACTER_BUILD_OPTIONS} />
           <SelectOrCustomField label="Art style" value={props.value.art_style} onChange={(value) => update({ art_style: value })} options={CHARACTER_ART_STYLE_OPTIONS} />
         </div>
-      </CharacterFieldsGroup>
-
-      <CharacterFieldsGroup title="Anchors">
         <StringChipListField
           label="Aliases"
           value={props.value.aliases}
@@ -5474,6 +6676,9 @@ function CharacterStructuredFieldsEditor(props: {
           addLabel="Add alias"
           emptyLabel="No aliases yet."
         />
+      </CharacterFieldsGroup>
+
+      <CharacterFieldsGroup title="Anchors" defaultOpen={false}>
         <div className="form-grid two compact-grid">
           <SelectOrCustomField label="Visual anchor" value={props.value.visual_anchor} onChange={(value) => update({ visual_anchor: value })} options={CHARACTER_VISUAL_ANCHOR_OPTIONS} />
           <SelectOrCustomField label="Signature feature" value={props.value.signature_feature} onChange={(value) => update({ signature_feature: value })} options={CHARACTER_SIGNATURE_FEATURE_OPTIONS} />
@@ -5482,12 +6687,15 @@ function CharacterStructuredFieldsEditor(props: {
           <SelectOrCustomField label="Silhouette keywords" value={props.value.silhouette_keywords} onChange={(value) => update({ silhouette_keywords: value })} options={CHARACTER_SILHOUETTE_KEYWORD_OPTIONS} />
           <SelectOrCustomField label="Distinguishing features" value={props.value.distinguishing_features} onChange={(value) => update({ distinguishing_features: value })} options={CHARACTER_DISTINGUISHING_FEATURE_OPTIONS} />
         </div>
-        <div className="form-grid four compact-grid">
-          <SelectOrCustomField label="Head/body ratio" value={props.value.head_to_body_ratio} onChange={(value) => update({ head_to_body_ratio: value })} options={CHARACTER_HEAD_RATIO_OPTIONS} />
-          <SelectOrCustomField label="Shoulder width" value={props.value.shoulder_width} onChange={(value) => update({ shoulder_width: value })} options={CHARACTER_SHOULDER_WIDTH_OPTIONS} />
-          <SelectOrCustomField label="Leg length" value={props.value.leg_length} onChange={(value) => update({ leg_length: value })} options={CHARACTER_LEG_LENGTH_OPTIONS} />
-          <SelectOrCustomField label="Posture axis" value={props.value.posture_axis} onChange={(value) => update({ posture_axis: value })} options={CHARACTER_POSTURE_AXIS_OPTIONS} />
-        </div>
+        <details className="advanced-disclosure character-anchor-detail">
+          <summary>{translateUiString(language, 'Body proportion details')}</summary>
+          <div className="form-grid four compact-grid">
+            <SelectOrCustomField label="Head/body ratio" value={props.value.head_to_body_ratio} onChange={(value) => update({ head_to_body_ratio: value })} options={CHARACTER_HEAD_RATIO_OPTIONS} />
+            <SelectOrCustomField label="Shoulder width" value={props.value.shoulder_width} onChange={(value) => update({ shoulder_width: value })} options={CHARACTER_SHOULDER_WIDTH_OPTIONS} />
+            <SelectOrCustomField label="Leg length" value={props.value.leg_length} onChange={(value) => update({ leg_length: value })} options={CHARACTER_LEG_LENGTH_OPTIONS} />
+            <SelectOrCustomField label="Posture axis" value={props.value.posture_axis} onChange={(value) => update({ posture_axis: value })} options={CHARACTER_POSTURE_AXIS_OPTIONS} />
+          </div>
+        </details>
       </CharacterFieldsGroup>
 
       <CharacterFieldsGroup title="Face">
@@ -5854,6 +7062,7 @@ async function handleEntityImport(
   entityType: EntityDraft['entity_type'],
   selectedEntityId: string | null,
   api: LyraApiClient,
+  organizationId: string | null,
   setImportingImage: (nextValue: boolean) => void,
   setNotice: (nextValue: NoticeState) => void,
   setEntityDraft: (nextValue: EntityDraft | ((current: EntityDraft) => EntityDraft)) => void,
@@ -5893,7 +7102,7 @@ async function handleEntityImport(
     const result = await api.importEntityImage({
       entity_type: entityType,
       image_base64: imageBase64,
-    });
+    }, organizationId);
     setEntityDraft((current) => ({
       ...current,
       structured_fields: JSON.stringify(result.suggested_fields, null, 2),
@@ -5953,21 +7162,45 @@ function toChapterDraft(chapter: ChapterRecord): ChapterDraft {
 }
 
 function toEpisodeDraft(episode: EpisodeRecord): EpisodeDraft {
-  const storyInputMode = episode.story_input_mode;
+  const storyFullDraft = buildFullEpisodeStoryText({
+    story_full_draft: episode.story_full_draft,
+    introduction: episode.introduction,
+    middle: episode.middle,
+    climax: episode.climax,
+    ending_hook: episode.ending_hook,
+  });
   return {
     order: String(episode.order),
     title: episode.title ?? '',
     purpose: episode.purpose ?? '',
-    story_input_mode: storyInputMode,
-    story_full_draft: storyInputMode === 'full' ? episode.story_full_draft ?? '' : '',
-    introduction: storyInputMode === 'structured' ? episode.introduction ?? '' : '',
-    middle: storyInputMode === 'structured' ? episode.middle ?? '' : '',
-    climax: storyInputMode === 'structured' ? episode.climax ?? '' : '',
-    ending_hook: storyInputMode === 'structured' ? episode.ending_hook ?? '' : '',
+    story_input_mode: 'full',
+    story_full_draft: storyFullDraft,
+    introduction: '',
+    middle: '',
+    climax: '',
+    ending_hook: '',
     estimated_pages: String(episode.estimated_pages),
     entities_involved: episode.entities_involved.join(', '),
     status: episode.status,
   };
+}
+
+function buildFullEpisodeStoryText(parts: {
+  story_full_draft?: string | null;
+  introduction?: string | null;
+  middle?: string | null;
+  climax?: string | null;
+  ending_hook?: string | null;
+}): string {
+  const fullDraft = parts.story_full_draft?.trim();
+  if (fullDraft !== undefined && fullDraft.length > 0) {
+    return fullDraft;
+  }
+
+  return [parts.introduction, parts.middle, parts.climax, parts.ending_hook]
+    .map((part) => part?.trim() ?? '')
+    .filter((part) => part.length > 0)
+    .join('\n\n');
 }
 
 function toEntityDraft(entity: EntityRecord): EntityDraft {
@@ -6057,6 +7290,33 @@ function toPanelFrameDraft(frame: PanelFrameRecord): PanelFrameDraft {
   };
 }
 
+function toFramePreviewDefinition(draft: PanelFrameDraft): FramePreviewDefinition | undefined {
+  const readingOrder = Number.parseInt(draft.reading_order, 10);
+  const vertices = draft.vertices.flatMap((vertex) => {
+    const x = Number.parseFloat(vertex.x);
+    const y = Number.parseFloat(vertex.y);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) {
+      return [];
+    }
+
+    return [{ x: clampFramePreviewCoordinate(x), y: clampFramePreviewCoordinate(y) }];
+  });
+
+  if (vertices.length < 3) {
+    return undefined;
+  }
+
+  return {
+    vertices,
+    readingOrder: Number.isFinite(readingOrder) ? readingOrder : undefined,
+    borderStyle: draft.border_style,
+  };
+}
+
+function clampFramePreviewCoordinate(value: number): number {
+  return Math.max(0, Math.min(1, value));
+}
+
 function toWorkPayload(
   draft: WorkDraft,
   allowedEntityIds?: ReadonlySet<string>,
@@ -6124,16 +7384,17 @@ function toEpisodePayload(
   draft: EpisodeDraft,
   allowedEntityIds?: ReadonlySet<string>,
 ): Record<string, unknown> {
+  const storyFullDraft = buildFullEpisodeStoryText(draft);
   return {
     order: parseNumberInput(draft.order, 'episode order'),
     title: nullableString(draft.title),
     purpose: nullableString(draft.purpose),
-    story_input_mode: draft.story_input_mode,
-    story_full_draft: draft.story_input_mode === 'full' ? nullableString(draft.story_full_draft) : null,
-    introduction: draft.story_input_mode === 'structured' ? nullableString(draft.introduction) : null,
-    middle: draft.story_input_mode === 'structured' ? nullableString(draft.middle) : null,
-    climax: draft.story_input_mode === 'structured' ? nullableString(draft.climax) : null,
-    ending_hook: draft.story_input_mode === 'structured' ? nullableString(draft.ending_hook) : null,
+    story_input_mode: 'full',
+    story_full_draft: nullableString(storyFullDraft),
+    introduction: null,
+    middle: null,
+    climax: null,
+    ending_hook: null,
     estimated_pages: parseNumberInput(draft.estimated_pages, 'estimated pages'),
     entities_involved: splitEntityIdCsv(draft.entities_involved, allowedEntityIds),
     status: draft.status,
@@ -6141,16 +7402,17 @@ function toEpisodePayload(
 }
 
 function toEpisodeAutosavePayload(draft: EpisodeDraft): Record<string, unknown> {
+  const storyFullDraft = buildFullEpisodeStoryText(draft);
   return {
     order: parseNumberInput(draft.order, 'episode order'),
     title: nullableString(draft.title),
     purpose: nullableString(draft.purpose),
-    story_input_mode: draft.story_input_mode,
-    story_full_draft: draft.story_input_mode === 'full' ? nullableString(draft.story_full_draft) : null,
-    introduction: draft.story_input_mode === 'structured' ? nullableString(draft.introduction) : null,
-    middle: draft.story_input_mode === 'structured' ? nullableString(draft.middle) : null,
-    climax: draft.story_input_mode === 'structured' ? nullableString(draft.climax) : null,
-    ending_hook: draft.story_input_mode === 'structured' ? nullableString(draft.ending_hook) : null,
+    story_input_mode: 'full',
+    story_full_draft: nullableString(storyFullDraft),
+    introduction: null,
+    middle: null,
+    climax: null,
+    ending_hook: null,
     estimated_pages: parseNumberInput(draft.estimated_pages, 'estimated pages'),
     status: draft.status,
   };
@@ -6160,16 +7422,17 @@ function toCreateEpisodePayload(
   draft: EpisodeDraft,
   allowedEntityIds?: ReadonlySet<string>,
 ): Record<string, unknown> {
+  const storyFullDraft = buildFullEpisodeStoryText(draft);
   return {
     order: parseNumberInput(draft.order, 'episode order'),
     title: nullableString(draft.title),
     purpose: nullableString(draft.purpose),
-    story_input_mode: draft.story_input_mode,
-    story_full_draft: draft.story_input_mode === 'full' ? nullableString(draft.story_full_draft) : null,
-    introduction: draft.story_input_mode === 'structured' ? nullableString(draft.introduction) : null,
-    middle: draft.story_input_mode === 'structured' ? nullableString(draft.middle) : null,
-    climax: draft.story_input_mode === 'structured' ? nullableString(draft.climax) : null,
-    ending_hook: draft.story_input_mode === 'structured' ? nullableString(draft.ending_hook) : null,
+    story_input_mode: 'full',
+    story_full_draft: nullableString(storyFullDraft),
+    introduction: null,
+    middle: null,
+    climax: null,
+    ending_hook: null,
     estimated_pages: parseNumberInput(draft.estimated_pages, 'estimated pages'),
     entities_involved: splitEntityIdCsv(draft.entities_involved, allowedEntityIds),
   };
@@ -6185,47 +7448,16 @@ function toEpisodeBaseDraftPayload(draft: EpisodeDraft): {
   climax: string | null;
   ending_hook: string | null;
 } {
+  const storyFullDraft = buildFullEpisodeStoryText(draft);
   return {
     title: nullableString(draft.title),
     purpose: nullableString(draft.purpose),
-    story_input_mode: draft.story_input_mode,
-    story_full_draft: draft.story_input_mode === 'full' ? nullableString(draft.story_full_draft) : null,
-    introduction: draft.story_input_mode === 'structured' ? nullableString(draft.introduction) : null,
-    middle: draft.story_input_mode === 'structured' ? nullableString(draft.middle) : null,
-    climax: draft.story_input_mode === 'structured' ? nullableString(draft.climax) : null,
-    ending_hook: draft.story_input_mode === 'structured' ? nullableString(draft.ending_hook) : null,
-  };
-}
-
-function convertEpisodeDraftStoryInputMode(
-  draft: EpisodeDraft,
-  nextMode: EpisodeDraft['story_input_mode'],
-): EpisodeDraft {
-  if (draft.story_input_mode === nextMode) {
-    return draft;
-  }
-
-  if (nextMode === 'full') {
-    return {
-      ...draft,
-      story_input_mode: 'full',
-      story_full_draft: draft.story_full_draft,
-      introduction: '',
-      middle: '',
-      climax: '',
-      ending_hook: '',
-    };
-  }
-
-  const derivedSections = deriveEpisodeDraftSectionsFromFullStory(draft.story_full_draft);
-  return {
-    ...draft,
-    story_input_mode: 'structured',
-    story_full_draft: '',
-    introduction: draft.introduction || derivedSections.introduction,
-    middle: draft.middle || derivedSections.middle,
-    climax: draft.climax || derivedSections.climax,
-    ending_hook: draft.ending_hook || derivedSections.ending_hook,
+    story_input_mode: 'full',
+    story_full_draft: nullableString(storyFullDraft),
+    introduction: null,
+    middle: null,
+    climax: null,
+    ending_hook: null,
   };
 }
 
@@ -6233,30 +7465,21 @@ function applyStoryImprovementDraftToEpisodeDraft(
   draft: EpisodeDraft,
   improvement: StoryEpisodeImprovementRecord['draft'],
 ): EpisodeDraft {
-  if (improvement.story_input_mode === 'full') {
-    return {
-      ...draft,
-      title: improvement.title ?? draft.title,
-      purpose: improvement.purpose ?? draft.purpose,
-      story_input_mode: 'full',
-      story_full_draft: improvement.story_full_draft ?? draft.story_full_draft,
-      introduction: '',
-      middle: '',
-      climax: '',
-      ending_hook: '',
-    };
-  }
-
-  return {
-    ...draft,
-    title: improvement.title ?? draft.title,
-    purpose: improvement.purpose ?? draft.purpose,
-    story_input_mode: 'structured',
-    story_full_draft: '',
+  const storyFullDraft = buildFullEpisodeStoryText({
+    story_full_draft: improvement.story_full_draft ?? draft.story_full_draft,
     introduction: improvement.introduction ?? draft.introduction,
     middle: improvement.middle ?? draft.middle,
     climax: improvement.climax ?? draft.climax,
     ending_hook: improvement.ending_hook ?? draft.ending_hook,
+  });
+  return {
+    ...draft,
+    story_input_mode: 'full',
+    story_full_draft: storyFullDraft,
+    introduction: '',
+    middle: '',
+    climax: '',
+    ending_hook: '',
   };
 }
 
@@ -6273,103 +7496,6 @@ function createEmptyStoryImprovementDraft(
     climax: null,
     ending_hook: null,
   };
-}
-
-function deriveEpisodeDraftSectionsFromFullStory(fullStoryDraft: string): {
-  introduction: string;
-  middle: string;
-  climax: string;
-  ending_hook: string;
-} {
-  const normalizedFullStory = normalizeTextInput(fullStoryDraft);
-  if (normalizedFullStory === null) {
-    return {
-      introduction: '',
-      middle: '',
-      climax: '',
-      ending_hook: '',
-    };
-  }
-
-  const segments = splitEpisodeStorySegments(normalizedFullStory);
-  if (segments.length === 0) {
-    return {
-      introduction: '',
-      middle: '',
-      climax: '',
-      ending_hook: '',
-    };
-  }
-
-  const bucketCount = Math.min(4, segments.length);
-  const buckets = Array.from({ length: bucketCount }, () => [] as string[]);
-
-  for (let index = 0; index < segments.length; index += 1) {
-    const bucketIndex = Math.min(bucketCount - 1, Math.floor((index * bucketCount) / segments.length));
-    buckets[bucketIndex]?.push(segments[index] ?? '');
-  }
-
-  return {
-    introduction: buckets[0]?.join('\n\n') ?? '',
-    middle: buckets[1]?.join('\n\n') ?? '',
-    climax: buckets[2]?.join('\n\n') ?? '',
-    ending_hook: buckets[3]?.join('\n\n') ?? '',
-  };
-}
-
-function splitEpisodeStorySegments(fullStoryDraft: string): string[] {
-  const paragraphs = fullStoryDraft
-    .replace(/\r\n/g, '\n')
-    .split(/\n{2,}/u)
-    .map((segment) => segment.trim())
-    .filter((segment) => segment.length > 0);
-
-  if (paragraphs.length >= 2) {
-    return paragraphs;
-  }
-
-  const sentences = splitEpisodeStoryIntoSentences(fullStoryDraft);
-  if (sentences.length > 0) {
-    return sentences;
-  }
-
-  return [fullStoryDraft];
-}
-
-function splitEpisodeStoryIntoSentences(fullStoryDraft: string): string[] {
-  const sentences: string[] = [];
-  let current = '';
-
-  for (let index = 0; index < fullStoryDraft.length; index += 1) {
-    const character = fullStoryDraft[index] ?? '';
-    current += character;
-    if (isEpisodeStorySentenceBoundary(character, fullStoryDraft[index + 1] ?? '')) {
-      const normalized = current.trim();
-      if (normalized.length > 0) {
-        sentences.push(normalized);
-      }
-      current = '';
-    }
-  }
-
-  const trailing = current.trim();
-  if (trailing.length > 0) {
-    sentences.push(trailing);
-  }
-
-  return sentences;
-}
-
-function isEpisodeStorySentenceBoundary(current: string, next: string): boolean {
-  if (current === '。' || current === '！' || current === '？' || current === '!' || current === '?') {
-    return true;
-  }
-
-  if (current !== '.') {
-    return false;
-  }
-
-  return next === '' || next === ' ' || next === '\n';
 }
 
 function toEntityPayload(draft: EntityDraft): Record<string, unknown> {
@@ -6545,7 +7671,7 @@ function createEmptyEpisodeDraft(): EpisodeDraft {
     order: '1',
     title: '',
     purpose: '',
-    story_input_mode: 'structured',
+    story_input_mode: 'full',
     story_full_draft: '',
     introduction: '',
     middle: '',
@@ -6576,9 +7702,12 @@ function requiresPanelDialogueSpeaker(type: PanelDialogueDraft['type']): boolean
 function toPageSettingsDraft(page: PageRecord): PageSettingsDraft {
   const layoutConfig = toRecord(page.layout_config);
   const styleReference = toRecord(layoutConfig.style_reference);
+  const dialogueMode = page.page_dialogue_toggle === false || page.dialogue_mode === 'balloon_only'
+    ? 'balloon_only'
+    : page.dialogue_mode;
   return {
-    dialogue_mode: page.dialogue_mode === 'balloon_only' ? 'mixed' : page.dialogue_mode,
-    page_dialogue_toggle: page.page_dialogue_toggle,
+    dialogue_mode: dialogueMode,
+    page_dialogue_toggle: dialogueMode !== 'balloon_only',
     style_reference_title: readString(styleReference.title),
     style_reference_notes: readString(styleReference.notes),
     story_source_scene_ids: Array.isArray(page.story_source_scene_ids) ? page.story_source_scene_ids : [],
@@ -6615,8 +7744,8 @@ function resolveStorySourceScenes(sceneIds: string[], scenes: SceneRecord[]): Sc
 }
 
 function formatStorySourceSceneLabel(scene: SceneRecord, uiLanguage: UiLanguage): string {
-  const location = scene.location ?? (uiLanguage === 'ja' ? '場所未設定' : 'Unknown location');
-  const parts = [`${uiLanguage === 'ja' ? 'シーン' : 'Scene'} ${scene.order}`, location];
+  const location = scene.location ?? (uiLanguage === 'ja' ? '\u5834\u6240\u672a\u8a2d\u5b9a' : 'Unknown location');
+  const parts = [(uiLanguage === 'ja' ? '\u30b7\u30fc\u30f3' : 'Scene') + ' ' + String(scene.order), location];
   if (scene.time !== null) {
     parts.push(scene.time);
   }
@@ -7494,6 +8623,7 @@ const PANEL_DIALOGUE_POSITION_OPTIONS: Array<[PanelDialogueDraft['position'], st
 ];
 const FRAME_TEMPLATE_OPTIONS: Array<[string, string]> = [
   ['standard_4', 'Standard 4'],
+  ['stacked_wide_4', 'Stacked wide 4'],
   ['top_wide_3', 'Top wide 3'],
   ['standard_6', 'Standard 6'],
   ['dense_8', 'Dense 8'],
@@ -7504,13 +8634,17 @@ const FRAME_TEMPLATE_OPTIONS: Array<[string, string]> = [
   ['vertical_2', 'Vertical 2'],
   ['bottom_wide_3', 'Bottom wide 3'],
   ['wide_top_4', 'Wide top 4'],
+  ['wide_bottom_4', 'Wide bottom 4'],
   ['tall_left_4', 'Tall left 4'],
+  ['right_tall_4', 'Right tall 4'],
   ['balanced_5', 'Balanced 5'],
+  ['middle_wide_5', 'Middle wide 5'],
   ['top_wide_5', 'Top wide 5'],
   ['split_6', 'Split 6'],
 ];
 const FRAME_TEMPLATE_PANEL_COUNTS: Record<string, number> = {
   standard_4: 4,
+  stacked_wide_4: 4,
   top_wide_3: 3,
   standard_6: 6,
   dense_8: 8,
@@ -7521,128 +8655,154 @@ const FRAME_TEMPLATE_PANEL_COUNTS: Record<string, number> = {
   vertical_2: 2,
   bottom_wide_3: 3,
   wide_top_4: 4,
+  wide_bottom_4: 4,
   tall_left_4: 4,
+  right_tall_4: 4,
   balanced_5: 5,
+  middle_wide_5: 5,
   top_wide_5: 5,
   split_6: 6,
 };
 const CUSTOM_FRAME_TEMPLATE_ID = '__custom__';
-const DEFAULT_FRAME_TEMPLATE_BY_PANEL_COUNT: Record<number, string> = {
-  1: 'splash_1',
-  2: 'climax_2',
-  3: 'top_wide_3',
-  4: 'standard_4',
-  5: 'action_5',
-  6: 'standard_6',
-  7: 'battle_7',
-  8: 'dense_8',
-};
+const FRAME_PREVIEW_COORDINATE_TOLERANCE = 0.001;
 const FRAME_TEMPLATE_LABELS = Object.fromEntries(FRAME_TEMPLATE_OPTIONS) as Record<string, string>;
-const FRAME_TEMPLATE_PREVIEWS: Record<string, Array<{ vertices: Array<{ x: number; y: number }> }>> = {
+const FRAME_TEMPLATE_PREVIEWS: Record<string, FramePreviewDefinition[]> = {
   standard_4: [
-    framePreviewRect(0, 0, 0.5, 0.5),
     framePreviewRect(0.5, 0, 1, 0.5),
-    framePreviewRect(0, 0.5, 0.5, 1),
+    framePreviewRect(0, 0, 0.5, 0.5),
     framePreviewRect(0.5, 0.5, 1, 1),
+    framePreviewRect(0, 0.5, 0.5, 1),
+  ],
+  stacked_wide_4: [
+    framePreviewRect(0, 0, 1, 0.25),
+    framePreviewRect(0, 0.25, 1, 0.5),
+    framePreviewRect(0, 0.5, 1, 0.75),
+    framePreviewRect(0, 0.75, 1, 1),
   ],
   top_wide_3: [
     framePreviewRect(0, 0, 1, 0.5),
-    framePreviewRect(0, 0.5, 0.5, 1),
     framePreviewRect(0.5, 0.5, 1, 1),
+    framePreviewRect(0, 0.5, 0.5, 1),
   ],
   standard_6: [
-    framePreviewRect(0, 0, 1 / 3, 0.5),
-    framePreviewRect(1 / 3, 0, 2 / 3, 0.5),
     framePreviewRect(2 / 3, 0, 1, 0.5),
-    framePreviewRect(0, 0.5, 1 / 3, 1),
-    framePreviewRect(1 / 3, 0.5, 2 / 3, 1),
+    framePreviewRect(1 / 3, 0, 2 / 3, 0.5),
+    framePreviewRect(0, 0, 1 / 3, 0.5),
     framePreviewRect(2 / 3, 0.5, 1, 1),
+    framePreviewRect(1 / 3, 0.5, 2 / 3, 1),
+    framePreviewRect(0, 0.5, 1 / 3, 1),
   ],
   dense_8: [
-    framePreviewRect(0, 0, 0.25, 0.5),
-    framePreviewRect(0.25, 0, 0.5, 0.5),
-    framePreviewRect(0.5, 0, 0.75, 0.5),
     framePreviewRect(0.75, 0, 1, 0.5),
-    framePreviewRect(0, 0.5, 0.25, 1),
-    framePreviewRect(0.25, 0.5, 0.5, 1),
-    framePreviewRect(0.5, 0.5, 0.75, 1),
+    framePreviewRect(0.5, 0, 0.75, 0.5),
+    framePreviewRect(0.25, 0, 0.5, 0.5),
+    framePreviewRect(0, 0, 0.25, 0.5),
     framePreviewRect(0.75, 0.5, 1, 1),
+    framePreviewRect(0.5, 0.5, 0.75, 1),
+    framePreviewRect(0.25, 0.5, 0.5, 1),
+    framePreviewRect(0, 0.5, 0.25, 1),
   ],
   climax_2: [
-    framePreviewRect(0, 0, 0.5, 1),
     framePreviewRect(0.5, 0, 1, 1),
+    framePreviewRect(0, 0, 0.5, 1),
   ],
   splash_1: [framePreviewRect(0, 0, 1, 1)],
   action_5: [
-    framePreviewRect(0, 0, 0.35, 1),
     framePreviewRect(0.35, 0, 1, 0.32),
-    framePreviewRect(0.35, 0.32, 0.675, 0.66),
     framePreviewRect(0.675, 0.32, 1, 0.66),
+    framePreviewRect(0.35, 0.32, 0.675, 0.66),
     framePreviewRect(0.35, 0.66, 1, 1),
+    framePreviewRect(0, 0, 0.35, 1),
   ],
   battle_7: [
-    framePreviewQuad({ x: 0, y: 0 }, { x: 0.35, y: 0 }, { x: 0.28, y: 0.32 }, { x: 0, y: 0.28 }),
-    framePreviewQuad({ x: 0.35, y: 0 }, { x: 0.7, y: 0 }, { x: 0.63, y: 0.32 }, { x: 0.28, y: 0.32 }),
     framePreviewQuad({ x: 0.7, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 0.28 }, { x: 0.63, y: 0.32 }),
-    framePreviewQuad({ x: 0, y: 0.28 }, { x: 0.63, y: 0.32 }, { x: 0.56, y: 0.68 }, { x: 0, y: 0.66 }),
+    framePreviewQuad({ x: 0.35, y: 0 }, { x: 0.7, y: 0 }, { x: 0.63, y: 0.32 }, { x: 0.28, y: 0.32 }),
+    framePreviewQuad({ x: 0, y: 0 }, { x: 0.35, y: 0 }, { x: 0.28, y: 0.32 }, { x: 0, y: 0.28 }),
     framePreviewQuad({ x: 0.63, y: 0.32 }, { x: 1, y: 0.28 }, { x: 1, y: 0.66 }, { x: 0.56, y: 0.68 }),
-    framePreviewQuad({ x: 0, y: 0.66 }, { x: 0.5, y: 0.68 }, { x: 0.5, y: 1 }, { x: 0, y: 1 }),
+    framePreviewQuad({ x: 0, y: 0.28 }, { x: 0.63, y: 0.32 }, { x: 0.56, y: 0.68 }, { x: 0, y: 0.66 }),
     framePreviewQuad({ x: 0.5, y: 0.68 }, { x: 1, y: 0.66 }, { x: 1, y: 1 }, { x: 0.5, y: 1 }),
+    framePreviewQuad({ x: 0, y: 0.66 }, { x: 0.5, y: 0.68 }, { x: 0.5, y: 1 }, { x: 0, y: 1 }),
   ],
   vertical_2: [
     framePreviewRect(0, 0, 1, 0.48),
     framePreviewRect(0, 0.48, 1, 1),
   ],
   bottom_wide_3: [
-    framePreviewRect(0, 0, 0.5, 0.5),
     framePreviewRect(0.5, 0, 1, 0.5),
+    framePreviewRect(0, 0, 0.5, 0.5),
     framePreviewRect(0, 0.5, 1, 1),
   ],
   wide_top_4: [
     framePreviewRect(0, 0, 1, 0.42),
-    framePreviewRect(0, 0.42, 1 / 3, 1),
-    framePreviewRect(1 / 3, 0.42, 2 / 3, 1),
     framePreviewRect(2 / 3, 0.42, 1, 1),
+    framePreviewRect(1 / 3, 0.42, 2 / 3, 1),
+    framePreviewRect(0, 0.42, 1 / 3, 1),
+  ],
+  wide_bottom_4: [
+    framePreviewRect(2 / 3, 0, 1, 0.58),
+    framePreviewRect(1 / 3, 0, 2 / 3, 0.58),
+    framePreviewRect(0, 0, 1 / 3, 0.58),
+    framePreviewRect(0, 0.58, 1, 1),
   ],
   tall_left_4: [
-    framePreviewRect(0, 0, 0.42, 1),
     framePreviewRect(0.42, 0, 1, 1 / 3),
     framePreviewRect(0.42, 1 / 3, 1, 2 / 3),
     framePreviewRect(0.42, 2 / 3, 1, 1),
+    framePreviewRect(0, 0, 0.42, 1),
+  ],
+  right_tall_4: [
+    framePreviewRect(0.58, 0, 1, 1),
+    framePreviewRect(0, 0, 0.58, 1 / 3),
+    framePreviewRect(0, 1 / 3, 0.58, 2 / 3),
+    framePreviewRect(0, 2 / 3, 0.58, 1),
   ],
   balanced_5: [
-    framePreviewRect(0, 0, 0.5, 0.44),
     framePreviewRect(0.5, 0, 1, 0.44),
-    framePreviewRect(0, 0.44, 1 / 3, 1),
-    framePreviewRect(1 / 3, 0.44, 2 / 3, 1),
+    framePreviewRect(0, 0, 0.5, 0.44),
     framePreviewRect(2 / 3, 0.44, 1, 1),
+    framePreviewRect(1 / 3, 0.44, 2 / 3, 1),
+    framePreviewRect(0, 0.44, 1 / 3, 1),
+  ],
+  middle_wide_5: [
+    framePreviewRect(0.5, 0, 1, 0.3),
+    framePreviewRect(0, 0, 0.5, 0.3),
+    framePreviewRect(0, 0.3, 1, 0.68),
+    framePreviewRect(0.5, 0.68, 1, 1),
+    framePreviewRect(0, 0.68, 0.5, 1),
   ],
   top_wide_5: [
     framePreviewRect(0, 0, 1, 0.34),
-    framePreviewRect(0, 0.34, 0.5, 0.67),
     framePreviewRect(0.5, 0.34, 1, 0.67),
-    framePreviewRect(0, 0.67, 0.5, 1),
+    framePreviewRect(0, 0.34, 0.5, 0.67),
     framePreviewRect(0.5, 0.67, 1, 1),
+    framePreviewRect(0, 0.67, 0.5, 1),
   ],
   split_6: [
-    framePreviewRect(0, 0, 0.48, 1 / 3),
-    framePreviewRect(0, 1 / 3, 0.48, 2 / 3),
-    framePreviewRect(0, 2 / 3, 0.48, 1),
     framePreviewRect(0.48, 0, 1, 1 / 3),
     framePreviewRect(0.48, 1 / 3, 1, 2 / 3),
     framePreviewRect(0.48, 2 / 3, 1, 1),
+    framePreviewRect(0, 0, 0.48, 1 / 3),
+    framePreviewRect(0, 1 / 3, 0.48, 2 / 3),
+    framePreviewRect(0, 2 / 3, 0.48, 1),
   ],
 };
 function resolveFrameTemplateSelection(
   layoutConfig: Record<string, unknown>,
   panelCount: number,
   frameCount: number,
+  frameDrafts: PanelFrameDraft[],
 ): string {
   if (panelCount > 0 && panelCount === frameCount) {
     const templateId = typeof layoutConfig.template_id === 'string' ? layoutConfig.template_id : null;
     if (templateId !== null) {
       const templatePanelCount = FRAME_TEMPLATE_PANEL_COUNTS[templateId];
       if (templatePanelCount === panelCount) {
+        if (
+          frameDrafts.length === panelCount &&
+          !doFrameDraftsMatchTemplate(frameDrafts, templateId)
+        ) {
+          return CUSTOM_FRAME_TEMPLATE_ID;
+        }
         return templateId;
       }
       if (templatePanelCount !== undefined) {
@@ -7650,13 +8810,51 @@ function resolveFrameTemplateSelection(
       }
     }
 
-    return DEFAULT_FRAME_TEMPLATE_BY_PANEL_COUNT[panelCount] ?? CUSTOM_FRAME_TEMPLATE_ID;
+    return CUSTOM_FRAME_TEMPLATE_ID;
   }
 
   const fallbackTemplateId = typeof layoutConfig.template_id === 'string' ? layoutConfig.template_id : null;
   return fallbackTemplateId !== null && FRAME_TEMPLATE_PANEL_COUNTS[fallbackTemplateId] !== undefined
     ? fallbackTemplateId
     : CUSTOM_FRAME_TEMPLATE_ID;
+}
+
+function doFrameDraftsMatchTemplate(frameDrafts: PanelFrameDraft[], templateId: string): boolean {
+  const expectedFrames = FRAME_TEMPLATE_PREVIEWS[templateId];
+  if (expectedFrames === undefined || expectedFrames.length !== frameDrafts.length) {
+    return false;
+  }
+
+  const actualFrames = frameDrafts
+    .map(toFramePreviewDefinition)
+    .filter(isDefined)
+    .sort((left, right) => (left.readingOrder ?? 0) - (right.readingOrder ?? 0));
+
+  if (actualFrames.length !== expectedFrames.length) {
+    return false;
+  }
+
+  return expectedFrames.every((expectedFrame, index) =>
+    areFramePreviewVerticesEqual(actualFrames[index]?.vertices ?? [], expectedFrame.vertices),
+  );
+}
+
+function areFramePreviewVerticesEqual(
+  actualVertices: Array<{ x: number; y: number }>,
+  expectedVertices: Array<{ x: number; y: number }>,
+): boolean {
+  if (actualVertices.length !== expectedVertices.length) {
+    return false;
+  }
+
+  return expectedVertices.every((expectedVertex, index) => {
+    const actualVertex = actualVertices[index];
+    return (
+      actualVertex !== undefined &&
+      Math.abs(actualVertex.x - expectedVertex.x) <= FRAME_PREVIEW_COORDINATE_TOLERANCE &&
+      Math.abs(actualVertex.y - expectedVertex.y) <= FRAME_PREVIEW_COORDINATE_TOLERANCE
+    );
+  });
 }
 
 function getFrameTemplateDisplayLabel(language: UiLanguage, templateId: string): string {
@@ -7672,7 +8870,7 @@ function framePreviewRect(
   y1: number,
   x2: number,
   y2: number,
-): { vertices: Array<{ x: number; y: number }> } {
+): FramePreviewDefinition {
   return {
     vertices: [
       { x: x1, y: y1 },
@@ -7688,7 +8886,7 @@ function framePreviewQuad(
   topRight: { x: number; y: number },
   bottomRight: { x: number; y: number },
   bottomLeft: { x: number; y: number },
-): { vertices: Array<{ x: number; y: number }> } {
+): FramePreviewDefinition {
   return { vertices: [topLeft, topRight, bottomRight, bottomLeft] };
 }
 
@@ -7889,10 +9087,6 @@ function nullableString(value: string): string | null {
   return value.trim().length === 0 ? null : value.trim();
 }
 
-function normalizeTextInput(value: string): string | null {
-  return nullableString(value);
-}
-
 function emptyStringToNull(value: string): string | null {
   return value.trim().length === 0 ? null : value;
 }
@@ -7938,10 +9132,17 @@ function useStoredString(
 ): [string, (nextValue: string) => void] {
   const [value, setValue] = useState(() => storage.getItem(storageKey) ?? fallbackValue);
 
-  const updateValue = (nextValue: string): void => {
-    setValue(nextValue);
-    storage.setItem(storageKey, nextValue);
-  };
+  useEffect(() => {
+    const nextValue = storage.getItem(storageKey) ?? fallbackValue;
+    setValue((current) => (current === nextValue ? current : nextValue));
+  }, [fallbackValue, storage, storageKey]);
+
+  const updateValue = useCallback((nextValue: string): void => {
+    setValue((current) => (current === nextValue ? current : nextValue));
+    if (storage.getItem(storageKey) !== nextValue) {
+      storage.setItem(storageKey, nextValue);
+    }
+  }, [storage, storageKey]);
 
   return [value, updateValue];
 }
@@ -7963,17 +9164,45 @@ function redirectToExternalUrl(value: string): void {
 function createBillingReturnMarker(
   kind: BillingReturnMarker['kind'],
   balance: BillingBalanceRecord | undefined,
-  details: Pick<BillingReturnMarker, 'planCode' | 'packageCode'> = {},
+  details: Pick<
+    BillingReturnMarker,
+    | 'planCode'
+    | 'packageCode'
+    | 'organizationId'
+    | 'initialOrganizationPlanCode'
+    | 'initialOrganizationTotalCredits'
+    | 'initialOrganizationPurchasedCredits'
+  > = {},
 ): BillingReturnMarker {
   return {
     kind,
     createdAt: Date.now(),
     planCode: details.planCode,
     packageCode: details.packageCode,
+    organizationId: details.organizationId,
     initialPlanCode: balance?.plan_code,
     initialTotalCredits: balance?.total_credits,
     initialPurchasedCredits: balance?.purchased_credits,
+    initialOrganizationPlanCode: details.initialOrganizationPlanCode,
+    initialOrganizationTotalCredits: details.initialOrganizationTotalCredits,
+    initialOrganizationPurchasedCredits: details.initialOrganizationPurchasedCredits,
   };
+}
+
+function isConsumerSubscriptionCheckoutPlanCode(value: unknown): value is ConsumerSubscriptionCheckoutPlanCode {
+  return value === 'standard' || value === 'premium';
+}
+
+function isEnterpriseSubscriptionCheckoutPlanCode(value: unknown): value is EnterprisePlanCode {
+  return value === 'enterprise_a' || value === 'enterprise_b' || value === 'enterprise_c';
+}
+
+function isSubscriptionCheckoutPlanCode(value: unknown): value is SubscriptionCheckoutPlanCode {
+  return isConsumerSubscriptionCheckoutPlanCode(value) || isEnterpriseSubscriptionCheckoutPlanCode(value);
+}
+
+function isSubscriptionPlanCode(value: unknown): value is SubscriptionPlanCode {
+  return value === 'free' || isSubscriptionCheckoutPlanCode(value);
 }
 
 function readBillingReturnMarker(value: string | null): BillingReturnMarker | null {
@@ -7994,24 +9223,68 @@ function readBillingReturnMarker(value: string | null): BillingReturnMarker | nu
     return {
       kind: parsed.kind,
       createdAt: typeof parsed.createdAt === 'number' ? parsed.createdAt : Date.now(),
-      planCode: parsed.planCode === 'standard' || parsed.planCode === 'premium' ? parsed.planCode : undefined,
+      planCode: isSubscriptionCheckoutPlanCode(parsed.planCode) ? parsed.planCode : undefined,
       packageCode:
         parsed.packageCode === 'credits_200' || parsed.packageCode === 'credits_1000' || parsed.packageCode === 'credits_3000'
           ? parsed.packageCode
           : undefined,
-      initialPlanCode:
-        parsed.initialPlanCode === 'free' || parsed.initialPlanCode === 'standard' || parsed.initialPlanCode === 'premium'
-          ? parsed.initialPlanCode
-          : undefined,
+      organizationId: typeof parsed.organizationId === 'string' && parsed.organizationId.trim().length > 0
+        ? parsed.organizationId
+        : undefined,
+      initialPlanCode: isSubscriptionPlanCode(parsed.initialPlanCode) ? parsed.initialPlanCode : undefined,
       initialTotalCredits: typeof parsed.initialTotalCredits === 'number' ? parsed.initialTotalCredits : undefined,
       initialPurchasedCredits: typeof parsed.initialPurchasedCredits === 'number' ? parsed.initialPurchasedCredits : undefined,
+      initialOrganizationPlanCode: isEnterpriseSubscriptionCheckoutPlanCode(parsed.initialOrganizationPlanCode)
+        ? parsed.initialOrganizationPlanCode
+        : undefined,
+      initialOrganizationTotalCredits:
+        typeof parsed.initialOrganizationTotalCredits === 'number' ? parsed.initialOrganizationTotalCredits : undefined,
+      initialOrganizationPurchasedCredits:
+        typeof parsed.initialOrganizationPurchasedCredits === 'number' ? parsed.initialOrganizationPurchasedCredits : undefined,
     };
   } catch {
     return null;
   }
 }
+function isBillingReturnSatisfied(
+  balance: BillingBalanceRecord | undefined,
+  marker: BillingReturnMarker,
+  organizationState: {
+    planCode: EnterprisePlanCode | null;
+    totalCredits: number | null;
+    purchasedCredits: number | null;
+  },
+): boolean {
+  if (marker.organizationId !== undefined) {
+    if (marker.kind === 'subscription' && isEnterpriseSubscriptionCheckoutPlanCode(marker.planCode)) {
+      return organizationState.planCode === marker.planCode;
+    }
 
-function isBillingReturnSatisfied(balance: BillingBalanceRecord, marker: BillingReturnMarker): boolean {
+    if (marker.kind === 'credits') {
+      if (
+        marker.initialOrganizationPurchasedCredits !== undefined &&
+        organizationState.purchasedCredits !== null &&
+        organizationState.purchasedCredits > marker.initialOrganizationPurchasedCredits
+      ) {
+        return true;
+      }
+      if (
+        marker.initialOrganizationTotalCredits !== undefined &&
+        organizationState.totalCredits !== null &&
+        organizationState.totalCredits > marker.initialOrganizationTotalCredits
+      ) {
+        return true;
+      }
+      return false;
+    }
+
+    return Date.now() - marker.createdAt >= billingReturnVerificationIntervalMs;
+  }
+
+  if (balance === undefined) {
+    return false;
+  }
+
   if (marker.kind === 'subscription' && marker.planCode !== undefined) {
     return balance.plan_code === marker.planCode;
   }
@@ -8031,35 +9304,36 @@ function isBillingReturnSatisfied(balance: BillingBalanceRecord, marker: Billing
 
 function formatExternalRedirectPendingMessage(language: UiLanguage, label: string): string {
   if (label === 'Open portal') {
-    return pickUiText(language, 'Opening Stripe billing...', 'Stripeの請求管理を開いています。');
+    return pickUiText(language, 'Opening Stripe billing...', 'Stripe\u306e\u8acb\u6c42\u7ba1\u7406\u3092\u958b\u3044\u3066\u3044\u307e\u3059\u3002');
   }
-  return pickUiText(language, 'Preparing Stripe checkout...', 'Stripeの決済ページを準備中です。');
+  return pickUiText(language, 'Preparing Stripe checkout...', 'Stripe\u306e\u6c7a\u6e08\u753b\u9762\u3092\u6e96\u5099\u3057\u3066\u3044\u307e\u3059\u3002');
 }
+
 function formatBillingReturnPendingMessage(language: UiLanguage, kind: BillingReturnMarker['kind']): string {
   if (kind === 'subscription') {
-    return pickUiText(language, 'Confirming your plan...', 'プランを確認中です。');
+    return pickUiText(language, 'Confirming your plan...', '\u30d7\u30e9\u30f3\u3092\u78ba\u8a8d\u4e2d\u3067\u3059\u3002');
   }
   if (kind === 'credits') {
-    return pickUiText(language, 'Confirming your credits...', 'クレジットを確認中です。');
+    return pickUiText(language, 'Confirming your credits...', '\u30af\u30ec\u30b8\u30c3\u30c8\u3092\u78ba\u8a8d\u4e2d\u3067\u3059\u3002');
   }
-  return pickUiText(language, 'Refreshing billing...', '請求情報を更新中です。');
+  return pickUiText(language, 'Refreshing billing...', '\u8acb\u6c42\u60c5\u5831\u3092\u66f4\u65b0\u4e2d\u3067\u3059\u3002');
 }
 
 function formatBillingReturnSuccessMessage(language: UiLanguage, kind: BillingReturnMarker['kind']): string {
   if (kind === 'subscription') {
-    return pickUiText(language, 'Plan updated.', 'プランを更新しました。');
+    return pickUiText(language, 'Plan updated.', '\u30d7\u30e9\u30f3\u3092\u66f4\u65b0\u3057\u307e\u3057\u305f\u3002');
   }
   if (kind === 'credits') {
-    return pickUiText(language, 'Credits updated.', 'クレジットを更新しました。');
+    return pickUiText(language, 'Credits updated.', '\u30af\u30ec\u30b8\u30c3\u30c8\u3092\u66f4\u65b0\u3057\u307e\u3057\u305f\u3002');
   }
-  return pickUiText(language, 'Billing updated.', '請求情報を更新しました。');
+  return pickUiText(language, 'Billing updated.', '\u8acb\u6c42\u60c5\u5831\u3092\u66f4\u65b0\u3057\u307e\u3057\u305f\u3002');
 }
 
 function formatBillingReturnTimeoutMessage(language: UiLanguage): string {
   return pickUiText(
     language,
     'Payment is still being confirmed. The balance will update automatically after Stripe finishes processing.',
-    '決済結果をまだ確認中です。Stripeの処理後に残高へ反映されます。',
+    '\u6c7a\u6e08\u306f\u307e\u3060\u78ba\u8a8d\u4e2d\u3067\u3059\u3002Stripe\u306e\u51e6\u7406\u5b8c\u4e86\u5f8c\u306b\u6b8b\u9ad8\u306f\u81ea\u52d5\u3067\u66f4\u65b0\u3055\u308c\u307e\u3059\u3002',
   );
 }
 
@@ -8087,7 +9361,4 @@ function toDataUrl(file: File): Promise<string> {
 function isDefined<T>(value: T | undefined): value is T {
   return value !== undefined;
 }
-
-
-
 

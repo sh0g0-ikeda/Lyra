@@ -35,18 +35,36 @@ export interface SceneWorkContext {
 }
 
 export interface SceneRepository {
-  findEpisodeContextByIdAndUserId(episodeId: string, userId: string): Promise<EpisodeSceneContext | null>;
-  findSceneContextByIdAndUserId(sceneId: string, userId: string): Promise<SceneWorkContext | null>;
+  findEpisodeContextByIdAndUserId(
+    episodeId: string,
+    userId: string,
+    organizationId?: string | null,
+  ): Promise<EpisodeSceneContext | null>;
+  findSceneContextByIdAndUserId(
+    sceneId: string,
+    userId: string,
+    organizationId?: string | null,
+  ): Promise<SceneWorkContext | null>;
   createScene(episodeId: string, input: CreateSceneInput): Promise<Scene>;
-  findScenesByEpisodeIdAndUserId(episodeId: string, userId: string): Promise<Scene[]>;
-  updateScene(sceneId: string, userId: string, input: UpdateSceneInput): Promise<Scene | null>;
-  deleteScene(sceneId: string, userId: string): Promise<boolean>;
+  findScenesByEpisodeIdAndUserId(
+    episodeId: string,
+    userId: string,
+    organizationId?: string | null,
+  ): Promise<Scene[]>;
+  updateScene(
+    sceneId: string,
+    userId: string,
+    input: UpdateSceneInput,
+    organizationId?: string | null,
+  ): Promise<Scene | null>;
+  deleteScene(sceneId: string, userId: string, organizationId?: string | null): Promise<boolean>;
   createEntityState(entityId: string, input: CreateEntityStateInput): Promise<EntityState>;
   updateEntityState(
     entityId: string,
     stateId: string,
     userId: string,
     input: UpdateEntityStateInput,
+    organizationId?: string | null,
   ): Promise<EntityState | null>;
 }
 
@@ -125,6 +143,7 @@ export class PostgresSceneRepository implements SceneRepository {
   public async findEpisodeContextByIdAndUserId(
     episodeId: string,
     userId: string,
+    organizationId: string | null = null,
   ): Promise<EpisodeSceneContext | null> {
     const result = await this.client.query<EpisodeSceneContextRow>(
       `
@@ -134,9 +153,22 @@ export class PostgresSceneRepository implements SceneRepository {
       INNER JOIN chapters ON chapters.id = episodes.chapter_id
       INNER JOIN works ON works.id = chapters.work_id
       WHERE episodes.id = $1
-        AND works.user_id = $2
+        AND (
+          ($3::uuid IS NULL AND works.organization_id IS NULL AND works.user_id = $2)
+          OR (
+            $3::uuid IS NOT NULL
+            AND works.organization_id = $3::uuid
+            AND EXISTS (
+              SELECT 1
+              FROM organization_members
+              WHERE organization_members.organization_id = works.organization_id
+                AND organization_members.user_id = $2
+                AND organization_members.status = 'active'
+            )
+          )
+        )
       `,
-      [episodeId, userId],
+      [episodeId, userId, organizationId],
     );
 
     const row = result.rows[0];
@@ -146,6 +178,7 @@ export class PostgresSceneRepository implements SceneRepository {
   public async findSceneContextByIdAndUserId(
     sceneId: string,
     userId: string,
+    organizationId: string | null = null,
   ): Promise<SceneWorkContext | null> {
     const result = await this.client.query<SceneWorkContextRow>(
       `
@@ -157,9 +190,22 @@ export class PostgresSceneRepository implements SceneRepository {
       INNER JOIN chapters ON chapters.id = episodes.chapter_id
       INNER JOIN works ON works.id = chapters.work_id
       WHERE scenes.id = $1
-        AND works.user_id = $2
+        AND (
+          ($3::uuid IS NULL AND works.organization_id IS NULL AND works.user_id = $2)
+          OR (
+            $3::uuid IS NOT NULL
+            AND works.organization_id = $3::uuid
+            AND EXISTS (
+              SELECT 1
+              FROM organization_members
+              WHERE organization_members.organization_id = works.organization_id
+                AND organization_members.user_id = $2
+                AND organization_members.status = 'active'
+            )
+          )
+        )
       `,
-      [sceneId, userId],
+      [sceneId, userId, organizationId],
     );
 
     const row = result.rows[0];
@@ -202,6 +248,7 @@ export class PostgresSceneRepository implements SceneRepository {
   public async findScenesByEpisodeIdAndUserId(
     episodeId: string,
     userId: string,
+    organizationId: string | null = null,
   ): Promise<Scene[]> {
     const result = await this.client.query<SceneRow>(
       `
@@ -211,10 +258,23 @@ export class PostgresSceneRepository implements SceneRepository {
       INNER JOIN chapters ON chapters.id = episodes.chapter_id
       INNER JOIN works ON works.id = chapters.work_id
       WHERE scenes.episode_id = $1
-        AND works.user_id = $2
+        AND (
+          ($3::uuid IS NULL AND works.organization_id IS NULL AND works.user_id = $2)
+          OR (
+            $3::uuid IS NOT NULL
+            AND works.organization_id = $3::uuid
+            AND EXISTS (
+              SELECT 1
+              FROM organization_members
+              WHERE organization_members.organization_id = works.organization_id
+                AND organization_members.user_id = $2
+                AND organization_members.status = 'active'
+            )
+          )
+        )
       ORDER BY scenes."order" ASC
       `,
-      [episodeId, userId],
+      [episodeId, userId, organizationId],
     );
 
     return result.rows.map(mapSceneRow);
@@ -224,6 +284,7 @@ export class PostgresSceneRepository implements SceneRepository {
     sceneId: string,
     userId: string,
     input: UpdateSceneInput,
+    organizationId: string | null = null,
   ): Promise<Scene | null> {
     try {
       const result = await this.client.query<IdRow>(
@@ -241,7 +302,20 @@ export class PostgresSceneRepository implements SceneRepository {
         INNER JOIN works ON works.id = chapters.work_id
         WHERE scenes.id = $1
           AND scenes.episode_id = episodes.id
-          AND works.user_id = $2
+          AND (
+            ($13::uuid IS NULL AND works.organization_id IS NULL AND works.user_id = $2)
+            OR (
+              $13::uuid IS NOT NULL
+              AND works.organization_id = $13::uuid
+              AND EXISTS (
+                SELECT 1
+                FROM organization_members
+                WHERE organization_members.organization_id = works.organization_id
+                  AND organization_members.user_id = $2
+                  AND organization_members.status = 'active'
+              )
+            )
+          )
         RETURNING scenes.id
         `,
         [
@@ -257,6 +331,7 @@ export class PostgresSceneRepository implements SceneRepository {
           input.involvedEntityIds !== undefined,
           input.involvedEntityIds ?? [],
           input.status ?? null,
+          organizationId,
         ],
       );
 
@@ -264,13 +339,17 @@ export class PostgresSceneRepository implements SceneRepository {
         return null;
       }
 
-      return this.findSceneByIdAndUserId(result.rows[0].id, userId);
+      return this.findSceneByIdAndUserId(result.rows[0].id, userId, organizationId);
     } catch (error) {
       throw mapOrderConflict(error, 'Scene order must be unique within the episode');
     }
   }
 
-  public async deleteScene(sceneId: string, userId: string): Promise<boolean> {
+  public async deleteScene(
+    sceneId: string,
+    userId: string,
+    organizationId: string | null = null,
+  ): Promise<boolean> {
     const result = await this.client.query(
       `
       DELETE FROM scenes
@@ -279,9 +358,22 @@ export class PostgresSceneRepository implements SceneRepository {
         AND scenes.episode_id = episodes.id
         AND episodes.chapter_id = chapters.id
         AND chapters.work_id = works.id
-        AND works.user_id = $2
+        AND (
+          ($3::uuid IS NULL AND works.organization_id IS NULL AND works.user_id = $2)
+          OR (
+            $3::uuid IS NOT NULL
+            AND works.organization_id = $3::uuid
+            AND EXISTS (
+              SELECT 1
+              FROM organization_members
+              WHERE organization_members.organization_id = works.organization_id
+                AND organization_members.user_id = $2
+                AND organization_members.status = 'active'
+            )
+          )
+        )
       `,
-      [sceneId, userId],
+      [sceneId, userId, organizationId],
     );
 
     return (result.rowCount ?? 0) > 0;
@@ -323,6 +415,7 @@ export class PostgresSceneRepository implements SceneRepository {
     stateId: string,
     userId: string,
     input: UpdateEntityStateInput,
+    organizationId: string | null = null,
   ): Promise<EntityState | null> {
     const result = await this.client.query<EntityStateRow>(
       `
@@ -335,10 +428,24 @@ export class PostgresSceneRepository implements SceneRepository {
           expression_default = COALESCE($14, entity_states.expression_default),
           extra_note = CASE WHEN $15::boolean THEN $16 ELSE entity_states.extra_note END
       FROM entities
+      INNER JOIN works ON works.id = entities.work_id
       WHERE entity_states.id = $1
         AND entity_states.entity_id = $2
         AND entity_states.entity_id = entities.id
-        AND entities.user_id = $3
+        AND (
+          ($17::uuid IS NULL AND works.organization_id IS NULL AND entities.user_id = $3)
+          OR (
+            $17::uuid IS NOT NULL
+            AND works.organization_id = $17::uuid
+            AND EXISTS (
+              SELECT 1
+              FROM organization_members
+              WHERE organization_members.organization_id = works.organization_id
+                AND organization_members.user_id = $3
+                AND organization_members.status = 'active'
+            )
+          )
+        )
       RETURNING entity_states.*
       `,
       [
@@ -358,13 +465,18 @@ export class PostgresSceneRepository implements SceneRepository {
         input.expressionDefault ?? null,
         input.extraNote !== undefined,
         input.extraNote ?? null,
+        organizationId,
       ],
     );
 
     return result.rows[0] === undefined ? null : mapEntityStateRow(result.rows[0]);
   }
 
-  private async findSceneByIdAndUserId(sceneId: string, userId: string): Promise<Scene | null> {
+  private async findSceneByIdAndUserId(
+    sceneId: string,
+    userId: string,
+    organizationId: string | null,
+  ): Promise<Scene | null> {
     const result = await this.client.query<SceneRow>(
       `
       SELECT ${sceneSelectColumns}
@@ -373,9 +485,22 @@ export class PostgresSceneRepository implements SceneRepository {
       INNER JOIN chapters ON chapters.id = episodes.chapter_id
       INNER JOIN works ON works.id = chapters.work_id
       WHERE scenes.id = $1
-        AND works.user_id = $2
+        AND (
+          ($3::uuid IS NULL AND works.organization_id IS NULL AND works.user_id = $2)
+          OR (
+            $3::uuid IS NOT NULL
+            AND works.organization_id = $3::uuid
+            AND EXISTS (
+              SELECT 1
+              FROM organization_members
+              WHERE organization_members.organization_id = works.organization_id
+                AND organization_members.user_id = $2
+                AND organization_members.status = 'active'
+            )
+          )
+        )
       `,
-      [sceneId, userId],
+      [sceneId, userId, organizationId],
     );
 
     return result.rows[0] === undefined ? null : mapSceneRow(result.rows[0]);

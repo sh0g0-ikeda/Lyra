@@ -3,6 +3,7 @@ import {
   PAGE_GENERATION_STALE_AFTER_MS,
 } from '../../domain/constants/generation.js';
 import type { CreditServicePort } from '../credit/CreditService.js';
+import type { OrganizationServicePort } from '../organization/OrganizationService.js';
 import type { PageGenerationExecutionRepository } from '../../repositories/PageGenerationExecutionRepository.js';
 import type {
   FailedPageGenerationJobMissingRefund,
@@ -12,7 +13,7 @@ import type {
 
 export interface PageGenerationRecoveryServicePort {
   recoverAllStaleJobs(): Promise<number>;
-  recoverStaleJobsForPage(userId: string, pageId: string): Promise<number>;
+  recoverStaleJobsForPage(userId: string, pageId: string, organizationId?: string | null): Promise<number>;
 }
 
 export class NoopPageGenerationRecoveryService implements PageGenerationRecoveryServicePort {
@@ -37,6 +38,7 @@ export class PageGenerationRecoveryService implements PageGenerationRecoveryServ
     private readonly creditService: CreditServicePort,
     private readonly staleAfterMs: number = PAGE_GENERATION_STALE_AFTER_MS,
     private readonly batchLimit: number = GENERATION_RECOVERY_BATCH_LIMIT,
+    private readonly organizationService?: OrganizationServicePort,
   ) {}
 
   public async recoverAllStaleJobs(): Promise<number> {
@@ -48,16 +50,21 @@ export class PageGenerationRecoveryService implements PageGenerationRecoveryServ
     return recoveredStaleCount + refundedFailedCount;
   }
 
-  public async recoverStaleJobsForPage(userId: string, pageId: string): Promise<number> {
+  public async recoverStaleJobsForPage(
+    userId: string,
+    pageId: string,
+    organizationId: string | null = null,
+  ): Promise<number> {
     const jobs = await this.recoveryRepository.listStaleProcessingJobsForPage(
       userId,
       pageId,
       this.buildCutoff(),
       this.batchLimit,
+      organizationId,
     );
     const recoveredStaleCount = await this.recoverJobs(jobs);
     const refundedFailedCount = await this.refundFailedJobsMissingRefund(
-      await this.recoveryRepository.listFailedJobsMissingRefundForPage(userId, pageId, this.batchLimit),
+      await this.recoveryRepository.listFailedJobsMissingRefundForPage(userId, pageId, this.batchLimit, organizationId),
     );
     return recoveredStaleCount + refundedFailedCount;
   }
@@ -77,6 +84,7 @@ export class PageGenerationRecoveryService implements PageGenerationRecoveryServ
         pageId: job.pageId,
         previousStatus: job.previousStatus,
         previousGenerationMode: job.previousGenerationMode,
+        organizationId: job.organizationId ?? null,
       });
 
       if (!recovered) {
@@ -84,12 +92,7 @@ export class PageGenerationRecoveryService implements PageGenerationRecoveryServ
       }
 
       if (job.creditCost > 0) {
-        await this.creditService.refundCredits({
-          userId: job.userId,
-          amount: job.creditCost,
-          description: 'Refund for stale page generation job',
-          jobId: job.jobId,
-        });
+        await this.refundJobCredits(job.organizationId ?? null, job.userId, job.creditCost, job.jobId, 'Refund for stale page generation job');
       }
 
       recoveredCount += 1;
@@ -111,12 +114,13 @@ export class PageGenerationRecoveryService implements PageGenerationRecoveryServ
         continue;
       }
 
-      await this.creditService.refundCredits({
-        userId: job.userId,
-        amount: job.creditCost,
-        description: 'Refund for failed page generation job missing refund ledger',
-        jobId: job.jobId,
-      });
+      await this.refundJobCredits(
+        job.organizationId ?? null,
+        job.userId,
+        job.creditCost,
+        job.jobId,
+        'Refund for failed page generation job missing refund ledger',
+      );
 
       refundedCount += 1;
       console.warn(
@@ -125,5 +129,35 @@ export class PageGenerationRecoveryService implements PageGenerationRecoveryServ
     }
 
     return refundedCount;
+  }
+
+  private async refundJobCredits(
+    organizationId: string | null,
+    userId: string,
+    creditCost: number,
+    jobId: string,
+    description: string,
+  ): Promise<void> {
+    if (organizationId === null) {
+      await this.creditService.refundCredits({
+        userId,
+        amount: creditCost,
+        description,
+        jobId,
+      });
+      return;
+    }
+
+    if (this.organizationService === undefined) {
+      throw new Error('Organization service is required to refund enterprise page generation jobs');
+    }
+
+    await this.organizationService.refundCredits({
+      organizationId,
+      actorUserId: userId,
+      amount: creditCost,
+      description,
+      jobId,
+    });
   }
 }

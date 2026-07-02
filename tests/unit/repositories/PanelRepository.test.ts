@@ -49,7 +49,7 @@ describe('PostgresPanelRepository', () => {
 
     expect(client.queries[0]).toContain('works.user_id = $2');
     expect(client.queries[0]).toContain('ORDER BY panels."order" ASC');
-    expect(client.values).toEqual(['page-1', 'user-1']);
+    expect(client.values).toEqual(['page-1', 'user-1', null]);
     expect(panels[0]).toMatchObject({
       id: 'panel-1',
       pageId: 'page-1',
@@ -118,6 +118,7 @@ describe('PostgresPanelRepository', () => {
       'Boom',
       'Smoke everywhere',
       'Large reaction panel',
+      null,
     ]);
   });
 
@@ -194,7 +195,22 @@ describe('PostgresPanelRepository', () => {
 
     expect(client.queries[0]).toContain('UPDATE panels');
     expect(client.queries[0]).toContain('panels."order" > $3');
-    expect(client.values).toEqual(['page-1', 'user-1', 2]);
+    expect(client.values).toEqual(['page-1', 'user-1', 2, null]);
+  });
+
+  it('reorders panels with user ownership checks and temporary negative orders', async () => {
+    const client = new QueryCapturingClient();
+    const repository = new PostgresPanelRepository(client);
+
+    await repository.reorderPanels('page-1', 'user-1', ['panel-3', 'panel-1', 'panel-2']);
+
+    expect(client.queries[0]).toContain('WITH requested_order');
+    expect(client.queries[0]).toContain('SET "order" = -requested_order.new_order');
+    expect(client.queries[0]).toContain('works.user_id = $2');
+    expect(client.valuesList[0]).toEqual(['page-1', 'user-1', ['panel-3', 'panel-1', 'panel-2'], null]);
+    expect(client.queries[1]).toContain('SET "order" = -panels."order"');
+    expect(client.queries[1]).toContain('works.user_id = $2');
+    expect(client.queries[2]).toContain('ORDER BY panels."order" ASC');
   });
 
   it('legacy skeleton entity payload without new optional keys is still readable', async () => {

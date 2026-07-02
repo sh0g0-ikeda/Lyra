@@ -1,4 +1,4 @@
-import type { QueryResultRow } from 'pg';
+﻿import type { QueryResultRow } from 'pg';
 import { buildPanelFrameTemplateInputs } from '../domain/constants/panelFrameTemplates.js';
 import type {
   Chapter,
@@ -42,47 +42,57 @@ export type {
 };
 
 export interface StoryRepository {
-  findWorksByUserId(userId: string): Promise<Work[]>;
+  findWorksByUserId(userId: string, organizationId?: string | null): Promise<Work[]>;
   createWork(userId: string, input: CreateWorkInput): Promise<Work>;
-  findWorkByIdAndUserId(id: string, userId: string): Promise<Work | null>;
-  updateWork(id: string, userId: string, input: UpdateWorkInput): Promise<Work | null>;
+  findWorkByIdAndUserId(id: string, userId: string, organizationId?: string | null): Promise<Work | null>;
+  updateWork(id: string, userId: string, input: UpdateWorkInput, organizationId?: string | null): Promise<Work | null>;
   createChapter(workId: string, input: CreateChapterInput): Promise<Chapter>;
-  findChaptersByWorkIdAndUserId(workId: string, userId: string): Promise<Chapter[]>;
-  findChapterByIdAndUserId(id: string, userId: string): Promise<Chapter | null>;
-  updateChapter(id: string, userId: string, input: UpdateChapterInput): Promise<Chapter | null>;
-  deleteChapter(id: string, userId: string): Promise<boolean>;
-  moveChapter(id: string, userId: string, direction: StoryItemMoveDirection): Promise<Chapter | null>;
+  findChaptersByWorkIdAndUserId(workId: string, userId: string, organizationId?: string | null): Promise<Chapter[]>;
+  findChapterByIdAndUserId(id: string, userId: string, organizationId?: string | null): Promise<Chapter | null>;
+  updateChapter(id: string, userId: string, input: UpdateChapterInput, organizationId?: string | null): Promise<Chapter | null>;
+  deleteChapter(id: string, userId: string, organizationId?: string | null): Promise<boolean>;
+  moveChapter(id: string, userId: string, direction: StoryItemMoveDirection, organizationId?: string | null): Promise<Chapter | null>;
   createEpisode(chapterId: string, input: CreateEpisodeInput): Promise<Episode>;
-  findEpisodesByChapterIdAndUserId(chapterId: string, userId: string): Promise<Episode[]>;
-  findEpisodeByIdAndUserId(id: string, userId: string): Promise<Episode | null>;
-  updateEpisode(id: string, userId: string, input: UpdateEpisodeInput): Promise<Episode | null>;
-  deleteEpisode(id: string, userId: string): Promise<boolean>;
-  moveEpisode(id: string, userId: string, direction: StoryItemMoveDirection): Promise<Episode | null>;
+  findEpisodesByChapterIdAndUserId(chapterId: string, userId: string, organizationId?: string | null): Promise<Episode[]>;
+  findEpisodeByIdAndUserId(id: string, userId: string, organizationId?: string | null): Promise<Episode | null>;
+  updateEpisode(id: string, userId: string, input: UpdateEpisodeInput, organizationId?: string | null): Promise<Episode | null>;
+  deleteEpisode(id: string, userId: string, organizationId?: string | null): Promise<boolean>;
+  moveEpisode(id: string, userId: string, direction: StoryItemMoveDirection, organizationId?: string | null): Promise<Episode | null>;
   findCollaborationTargetByIdAndUserId(
     layer: StoryCollaborationLayer,
     targetId: string,
     userId: string,
+    organizationId?: string | null,
   ): Promise<StoryCollaborationTarget | null>;
   findEpisodePageSkeletonContextByIdAndUserId(
     episodeId: string,
     userId: string,
+    organizationId?: string | null,
   ): Promise<EpisodePageSkeletonContext | null>;
   findEpisodeImprovementContextByIdAndUserId(
     episodeId: string,
     userId: string,
+    organizationId?: string | null,
   ): Promise<StoryEpisodeImprovementContext | null>;
   createPageSkeleton(
     episodeId: string,
     userId: string,
     pages: PageSkeletonPageDraft[],
     options?: { overwriteExisting?: boolean },
+    organizationId?: string | null,
   ): Promise<PageSkeletonPersistResult | null>;
-  rollbackFreshPageSkeleton(episodeId: string, userId: string, expectedPageCount: number): Promise<boolean>;
+  rollbackFreshPageSkeleton(
+    episodeId: string,
+    userId: string,
+    expectedPageCount: number,
+    organizationId?: string | null,
+  ): Promise<boolean>;
 }
 
 interface WorkRow extends QueryResultRow {
   id: string;
   user_id: string;
+  organization_id: string | null;
   title: string;
   genre: string | null;
   world_setting: string | null;
@@ -221,15 +231,28 @@ export class PostgresStoryRepository implements StoryRepository {
     private readonly transactionRunner?: TransactionRunner,
   ) {}
 
-  public async findWorksByUserId(userId: string): Promise<Work[]> {
+  public async findWorksByUserId(userId: string, organizationId: string | null = null): Promise<Work[]> {
     const result = await this.client.query<WorkRow>(
       `
       SELECT *
       FROM works
-      WHERE user_id = $1
+      WHERE (
+        ($2::uuid IS NULL AND user_id = $1 AND organization_id IS NULL)
+        OR (
+          $2::uuid IS NOT NULL
+          AND organization_id = $2::uuid
+          AND EXISTS (
+            SELECT 1
+            FROM organization_members
+            WHERE organization_members.organization_id = works.organization_id
+              AND organization_members.user_id = $1
+              AND organization_members.status = 'active'
+          )
+        )
+      )
       ORDER BY updated_at DESC, created_at DESC
       `,
-      [userId],
+      [userId, organizationId],
     );
 
     return result.rows.map(mapWorkRow);
@@ -240,6 +263,7 @@ export class PostgresStoryRepository implements StoryRepository {
       `
       INSERT INTO works (
         user_id,
+        organization_id,
         title,
         genre,
         world_setting,
@@ -249,11 +273,12 @@ export class PostgresStoryRepository implements StoryRepository {
         ending_point,
         overall_flow
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
       RETURNING *
       `,
       [
         userId,
+        input.organizationId ?? null,
         normalizePossiblyMojibake(input.title),
         normalizeNullableText(input.genre),
         normalizeNullableText(input.worldSetting),
@@ -268,21 +293,43 @@ export class PostgresStoryRepository implements StoryRepository {
     return mapWorkRow(result.rows[0]);
   }
 
-  public async findWorkByIdAndUserId(id: string, userId: string): Promise<Work | null> {
+  public async findWorkByIdAndUserId(
+    id: string,
+    userId: string,
+    organizationId: string | null = null,
+  ): Promise<Work | null> {
     const result = await this.client.query<WorkRow>(
       `
       SELECT *
       FROM works
       WHERE id = $1
-        AND user_id = $2
+        AND (
+          ($3::uuid IS NULL AND user_id = $2 AND organization_id IS NULL)
+          OR (
+            $3::uuid IS NOT NULL
+            AND organization_id = $3::uuid
+            AND EXISTS (
+              SELECT 1
+              FROM organization_members
+              WHERE organization_members.organization_id = works.organization_id
+                AND organization_members.user_id = $2
+                AND organization_members.status = 'active'
+            )
+          )
+        )
       `,
-      [id, userId],
+      [id, userId, organizationId],
     );
 
     return result.rows[0] === undefined ? null : mapWorkRow(result.rows[0]);
   }
 
-  public async updateWork(id: string, userId: string, input: UpdateWorkInput): Promise<Work | null> {
+  public async updateWork(
+    id: string,
+    userId: string,
+    input: UpdateWorkInput,
+    organizationId: string | null = null,
+  ): Promise<Work | null> {
     const result = await this.client.query<WorkRow>(
       `
       UPDATE works
@@ -323,7 +370,20 @@ export class PostgresStoryRepository implements StoryRepository {
           version = version + 1,
           updated_at = NOW()
       WHERE id = $1
-        AND user_id = $2
+        AND (
+          ($19::uuid IS NULL AND user_id = $2 AND organization_id IS NULL)
+          OR (
+            $19::uuid IS NOT NULL
+            AND organization_id = $19::uuid
+            AND EXISTS (
+              SELECT 1
+              FROM organization_members
+              WHERE organization_members.organization_id = works.organization_id
+                AND organization_members.user_id = $2
+                AND organization_members.status = 'active'
+            )
+          )
+        )
       RETURNING *
       `,
       [
@@ -345,6 +405,7 @@ export class PostgresStoryRepository implements StoryRepository {
         input.overallFlow !== undefined,
         normalizeNullableText(input.overallFlow ?? null),
         input.status ?? null,
+        organizationId,
       ],
     );
 
@@ -388,38 +449,77 @@ export class PostgresStoryRepository implements StoryRepository {
     }
   }
 
-  public async findChaptersByWorkIdAndUserId(workId: string, userId: string): Promise<Chapter[]> {
+  public async findChaptersByWorkIdAndUserId(
+    workId: string,
+    userId: string,
+    organizationId: string | null = null,
+  ): Promise<Chapter[]> {
     const result = await this.client.query<ChapterRow>(
       `
       SELECT chapters.*
       FROM chapters
       INNER JOIN works ON works.id = chapters.work_id
       WHERE chapters.work_id = $1
-        AND works.user_id = $2
+        AND (
+          ($3::uuid IS NULL AND works.user_id = $2 AND works.organization_id IS NULL)
+          OR (
+            $3::uuid IS NOT NULL
+            AND works.organization_id = $3::uuid
+            AND EXISTS (
+              SELECT 1
+              FROM organization_members
+              WHERE organization_members.organization_id = works.organization_id
+                AND organization_members.user_id = $2
+                AND organization_members.status = 'active'
+            )
+          )
+        )
       ORDER BY chapters."order" ASC
       `,
-      [workId, userId],
+      [workId, userId, organizationId],
     );
 
     return result.rows.map(mapChapterRow);
   }
 
-  public async findChapterByIdAndUserId(id: string, userId: string): Promise<Chapter | null> {
+  public async findChapterByIdAndUserId(
+    id: string,
+    userId: string,
+    organizationId: string | null = null,
+  ): Promise<Chapter | null> {
     const result = await this.client.query<ChapterRow>(
       `
       SELECT chapters.*
       FROM chapters
       INNER JOIN works ON works.id = chapters.work_id
       WHERE chapters.id = $1
-        AND works.user_id = $2
+        AND (
+          ($3::uuid IS NULL AND works.user_id = $2 AND works.organization_id IS NULL)
+          OR (
+            $3::uuid IS NOT NULL
+            AND works.organization_id = $3::uuid
+            AND EXISTS (
+              SELECT 1
+              FROM organization_members
+              WHERE organization_members.organization_id = works.organization_id
+                AND organization_members.user_id = $2
+                AND organization_members.status = 'active'
+            )
+          )
+        )
       `,
-      [id, userId],
+      [id, userId, organizationId],
     );
 
     return result.rows[0] === undefined ? null : mapChapterRow(result.rows[0]);
   }
 
-  public async updateChapter(id: string, userId: string, input: UpdateChapterInput): Promise<Chapter | null> {
+  public async updateChapter(
+    id: string,
+    userId: string,
+    input: UpdateChapterInput,
+    organizationId: string | null = null,
+  ): Promise<Chapter | null> {
     try {
       const result = await this.client.query<ChapterRow>(
         `
@@ -463,7 +563,20 @@ export class PostgresStoryRepository implements StoryRepository {
         FROM works
         WHERE chapters.id = $1
           AND chapters.work_id = works.id
-          AND works.user_id = $2
+          AND (
+            ($19::uuid IS NULL AND works.user_id = $2 AND works.organization_id IS NULL)
+            OR (
+            $19::uuid IS NOT NULL
+            AND works.organization_id = $19::uuid
+            AND EXISTS (
+              SELECT 1
+              FROM organization_members
+              WHERE organization_members.organization_id = works.organization_id
+                AND organization_members.user_id = $2
+                AND organization_members.status = 'active'
+            )
+          )
+          )
         RETURNING chapters.*
         `,
         [
@@ -485,6 +598,7 @@ export class PostgresStoryRepository implements StoryRepository {
           input.keyBeats !== undefined,
           input.keyBeats ?? [],
           input.status ?? null,
+          organizationId,
         ],
       );
 
@@ -494,16 +608,29 @@ export class PostgresStoryRepository implements StoryRepository {
     }
   }
 
-  public async deleteChapter(id: string, userId: string): Promise<boolean> {
+  public async deleteChapter(id: string, userId: string, organizationId: string | null = null): Promise<boolean> {
     const result = await this.client.query(
       `
       DELETE FROM chapters
       USING works
       WHERE chapters.id = $1
         AND chapters.work_id = works.id
-        AND works.user_id = $2
+        AND (
+          ($3::uuid IS NULL AND works.user_id = $2 AND works.organization_id IS NULL)
+          OR (
+            $3::uuid IS NOT NULL
+            AND works.organization_id = $3::uuid
+            AND EXISTS (
+              SELECT 1
+              FROM organization_members
+              WHERE organization_members.organization_id = works.organization_id
+                AND organization_members.user_id = $2
+                AND organization_members.status = 'active'
+            )
+          )
+        )
       `,
-      [id, userId],
+      [id, userId, organizationId],
     );
 
     return (result.rowCount ?? 0) > 0;
@@ -513,6 +640,7 @@ export class PostgresStoryRepository implements StoryRepository {
     id: string,
     userId: string,
     direction: StoryItemMoveDirection,
+    organizationId: string | null = null,
   ): Promise<Chapter | null> {
     return runInTransaction(this.client, this.transactionRunner, async (transactionClient) => {
       const currentResult = await transactionClient.query<ChapterRow>(
@@ -521,10 +649,23 @@ export class PostgresStoryRepository implements StoryRepository {
         FROM chapters
         INNER JOIN works ON works.id = chapters.work_id
         WHERE chapters.id = $1
-          AND works.user_id = $2
+          AND (
+            ($3::uuid IS NULL AND works.user_id = $2 AND works.organization_id IS NULL)
+            OR (
+            $3::uuid IS NOT NULL
+            AND works.organization_id = $3::uuid
+            AND EXISTS (
+              SELECT 1
+              FROM organization_members
+              WHERE organization_members.organization_id = works.organization_id
+                AND organization_members.user_id = $2
+                AND organization_members.status = 'active'
+            )
+          )
+          )
         FOR UPDATE OF chapters
         `,
-        [id, userId],
+        [id, userId, organizationId],
       );
       const current = currentResult.rows[0];
       if (current === undefined) {
@@ -616,7 +757,11 @@ export class PostgresStoryRepository implements StoryRepository {
     }
   }
 
-  public async findEpisodesByChapterIdAndUserId(chapterId: string, userId: string): Promise<Episode[]> {
+  public async findEpisodesByChapterIdAndUserId(
+    chapterId: string,
+    userId: string,
+    organizationId: string | null = null,
+  ): Promise<Episode[]> {
     const result = await this.client.query<EpisodeRow>(
       `
       SELECT episodes.*
@@ -624,16 +769,33 @@ export class PostgresStoryRepository implements StoryRepository {
       INNER JOIN chapters ON chapters.id = episodes.chapter_id
       INNER JOIN works ON works.id = chapters.work_id
       WHERE episodes.chapter_id = $1
-        AND works.user_id = $2
+        AND (
+          ($3::uuid IS NULL AND works.user_id = $2 AND works.organization_id IS NULL)
+          OR (
+            $3::uuid IS NOT NULL
+            AND works.organization_id = $3::uuid
+            AND EXISTS (
+              SELECT 1
+              FROM organization_members
+              WHERE organization_members.organization_id = works.organization_id
+                AND organization_members.user_id = $2
+                AND organization_members.status = 'active'
+            )
+          )
+        )
       ORDER BY episodes."order" ASC
       `,
-      [chapterId, userId],
+      [chapterId, userId, organizationId],
     );
 
     return result.rows.map(mapEpisodeRow);
   }
 
-  public async findEpisodeByIdAndUserId(id: string, userId: string): Promise<Episode | null> {
+  public async findEpisodeByIdAndUserId(
+    id: string,
+    userId: string,
+    organizationId: string | null = null,
+  ): Promise<Episode | null> {
     const result = await this.client.query<EpisodeRow>(
       `
       SELECT episodes.*
@@ -641,16 +803,34 @@ export class PostgresStoryRepository implements StoryRepository {
       INNER JOIN chapters ON chapters.id = episodes.chapter_id
       INNER JOIN works ON works.id = chapters.work_id
       WHERE episodes.id = $1
-        AND works.user_id = $2
+        AND (
+          ($3::uuid IS NULL AND works.user_id = $2 AND works.organization_id IS NULL)
+          OR (
+            $3::uuid IS NOT NULL
+            AND works.organization_id = $3::uuid
+            AND EXISTS (
+              SELECT 1
+              FROM organization_members
+              WHERE organization_members.organization_id = works.organization_id
+                AND organization_members.user_id = $2
+                AND organization_members.status = 'active'
+            )
+          )
+        )
       `,
-      [id, userId],
+      [id, userId, organizationId],
     );
 
     return result.rows[0] === undefined ? null : mapEpisodeRow(result.rows[0]);
   }
 
-  public async updateEpisode(id: string, userId: string, input: UpdateEpisodeInput): Promise<Episode | null> {
-    const currentEpisode = await this.findEpisodeByIdAndUserId(id, userId);
+  public async updateEpisode(
+    id: string,
+    userId: string,
+    input: UpdateEpisodeInput,
+    organizationId: string | null = null,
+  ): Promise<Episode | null> {
+    const currentEpisode = await this.findEpisodeByIdAndUserId(id, userId, organizationId);
     if (currentEpisode === null) {
       return null;
     }
@@ -716,7 +896,20 @@ export class PostgresStoryRepository implements StoryRepository {
         INNER JOIN works ON works.id = chapters.work_id
         WHERE episodes.id = $1
           AND episodes.chapter_id = chapters.id
-          AND works.user_id = $2
+          AND (
+            ($24::uuid IS NULL AND works.user_id = $2 AND works.organization_id IS NULL)
+            OR (
+            $24::uuid IS NOT NULL
+            AND works.organization_id = $24::uuid
+            AND EXISTS (
+              SELECT 1
+              FROM organization_members
+              WHERE organization_members.organization_id = works.organization_id
+                AND organization_members.user_id = $2
+                AND organization_members.status = 'active'
+            )
+          )
+          )
         RETURNING episodes.*
         `,
         [
@@ -743,6 +936,7 @@ export class PostgresStoryRepository implements StoryRepository {
           input.entitiesInvolved !== undefined,
           input.entitiesInvolved ?? [],
           input.status ?? null,
+          organizationId,
         ],
       );
 
@@ -752,7 +946,7 @@ export class PostgresStoryRepository implements StoryRepository {
     }
   }
 
-  public async deleteEpisode(id: string, userId: string): Promise<boolean> {
+  public async deleteEpisode(id: string, userId: string, organizationId: string | null = null): Promise<boolean> {
     const result = await this.client.query(
       `
       DELETE FROM episodes
@@ -760,9 +954,22 @@ export class PostgresStoryRepository implements StoryRepository {
       WHERE episodes.id = $1
         AND episodes.chapter_id = chapters.id
         AND chapters.work_id = works.id
-        AND works.user_id = $2
+        AND (
+          ($3::uuid IS NULL AND works.user_id = $2 AND works.organization_id IS NULL)
+          OR (
+            $3::uuid IS NOT NULL
+            AND works.organization_id = $3::uuid
+            AND EXISTS (
+              SELECT 1
+              FROM organization_members
+              WHERE organization_members.organization_id = works.organization_id
+                AND organization_members.user_id = $2
+                AND organization_members.status = 'active'
+            )
+          )
+        )
       `,
-      [id, userId],
+      [id, userId, organizationId],
     );
 
     return (result.rowCount ?? 0) > 0;
@@ -772,6 +979,7 @@ export class PostgresStoryRepository implements StoryRepository {
     id: string,
     userId: string,
     direction: StoryItemMoveDirection,
+    organizationId: string | null = null,
   ): Promise<Episode | null> {
     return runInTransaction(this.client, this.transactionRunner, async (transactionClient) => {
       const currentResult = await transactionClient.query<EpisodeRow>(
@@ -781,10 +989,23 @@ export class PostgresStoryRepository implements StoryRepository {
         INNER JOIN chapters ON chapters.id = episodes.chapter_id
         INNER JOIN works ON works.id = chapters.work_id
         WHERE episodes.id = $1
-          AND works.user_id = $2
+          AND (
+            ($3::uuid IS NULL AND works.user_id = $2 AND works.organization_id IS NULL)
+            OR (
+            $3::uuid IS NOT NULL
+            AND works.organization_id = $3::uuid
+            AND EXISTS (
+              SELECT 1
+              FROM organization_members
+              WHERE organization_members.organization_id = works.organization_id
+                AND organization_members.user_id = $2
+                AND organization_members.status = 'active'
+            )
+          )
+          )
         FOR UPDATE OF episodes
         `,
-        [id, userId],
+        [id, userId, organizationId],
       );
       const current = currentResult.rows[0];
       if (current === undefined) {
@@ -827,6 +1048,7 @@ export class PostgresStoryRepository implements StoryRepository {
     layer: StoryCollaborationLayer,
     targetId: string,
     userId: string,
+    organizationId: string | null = null,
   ): Promise<StoryCollaborationTarget | null> {
     const result =
       layer === 'work'
@@ -862,14 +1084,26 @@ export class PostgresStoryRepository implements StoryRepository {
                      )
                      FROM entities
                      WHERE entities.work_id = works.id
-                       AND entities.user_id = works.user_id
                    ) AS entities,
                    '[]'::jsonb AS scene_summaries
             FROM works
             WHERE works.id = $1
-              AND works.user_id = $2
+              AND (
+                ($3::uuid IS NULL AND works.user_id = $2 AND works.organization_id IS NULL)
+                OR (
+            $3::uuid IS NOT NULL
+            AND works.organization_id = $3::uuid
+            AND EXISTS (
+              SELECT 1
+              FROM organization_members
+              WHERE organization_members.organization_id = works.organization_id
+                AND organization_members.user_id = $2
+                AND organization_members.status = 'active'
+            )
+          )
+              )
             `,
-            [targetId, userId],
+            [targetId, userId, organizationId],
           )
         : layer === 'chapter'
           ? await this.client.query<CollaborationRow>(
@@ -907,15 +1141,27 @@ export class PostgresStoryRepository implements StoryRepository {
                        FROM entities
                        WHERE entities.id = ANY(chapters.entities_involved)
                          AND entities.work_id = works.id
-                         AND entities.user_id = works.user_id
                      ) AS entities,
                      '[]'::jsonb AS scene_summaries
               FROM chapters
               INNER JOIN works ON works.id = chapters.work_id
               WHERE chapters.id = $1
-                AND works.user_id = $2
+                AND (
+                  ($3::uuid IS NULL AND works.user_id = $2 AND works.organization_id IS NULL)
+                  OR (
+            $3::uuid IS NOT NULL
+            AND works.organization_id = $3::uuid
+            AND EXISTS (
+              SELECT 1
+              FROM organization_members
+              WHERE organization_members.organization_id = works.organization_id
+                AND organization_members.user_id = $2
+                AND organization_members.status = 'active'
+            )
+          )
+                )
               `,
-              [targetId, userId],
+              [targetId, userId, organizationId],
             )
           : await this.client.query<CollaborationRow>(
               `
@@ -953,7 +1199,6 @@ export class PostgresStoryRepository implements StoryRepository {
                        FROM entities
                        WHERE entities.id = ANY(episodes.entities_involved)
                          AND entities.work_id = works.id
-                         AND entities.user_id = works.user_id
                      ) AS entities,
                      (
                        SELECT COALESCE(
@@ -986,9 +1231,22 @@ export class PostgresStoryRepository implements StoryRepository {
               INNER JOIN chapters ON chapters.id = episodes.chapter_id
               INNER JOIN works ON works.id = chapters.work_id
               WHERE episodes.id = $1
-                AND works.user_id = $2
+                AND (
+                  ($3::uuid IS NULL AND works.user_id = $2 AND works.organization_id IS NULL)
+                  OR (
+            $3::uuid IS NOT NULL
+            AND works.organization_id = $3::uuid
+            AND EXISTS (
+              SELECT 1
+              FROM organization_members
+              WHERE organization_members.organization_id = works.organization_id
+                AND organization_members.user_id = $2
+                AND organization_members.status = 'active'
+            )
+          )
+                )
               `,
-              [targetId, userId],
+              [targetId, userId, organizationId],
             );
 
     const row = result.rows[0];
@@ -1010,6 +1268,7 @@ export class PostgresStoryRepository implements StoryRepository {
   public async findEpisodePageSkeletonContextByIdAndUserId(
     episodeId: string,
     userId: string,
+    organizationId: string | null = null,
   ): Promise<EpisodePageSkeletonContext | null> {
     const result = await this.client.query<EpisodeSkeletonContextRow>(
       `
@@ -1063,7 +1322,6 @@ export class PostgresStoryRepository implements StoryRepository {
                )
                FROM entities
                WHERE entities.work_id = works.id
-                 AND entities.user_id = works.user_id
              ) AS entities,
              (
                SELECT COALESCE(
@@ -1096,9 +1354,22 @@ export class PostgresStoryRepository implements StoryRepository {
       INNER JOIN chapters ON chapters.id = episodes.chapter_id
       INNER JOIN works ON works.id = chapters.work_id
       WHERE episodes.id = $1
-        AND works.user_id = $2
+        AND (
+          ($3::uuid IS NULL AND works.user_id = $2 AND works.organization_id IS NULL)
+          OR (
+            $3::uuid IS NOT NULL
+            AND works.organization_id = $3::uuid
+            AND EXISTS (
+              SELECT 1
+              FROM organization_members
+              WHERE organization_members.organization_id = works.organization_id
+                AND organization_members.user_id = $2
+                AND organization_members.status = 'active'
+            )
+          )
+        )
       `,
-      [episodeId, userId],
+      [episodeId, userId, organizationId],
     );
 
     const row = result.rows[0];
@@ -1141,6 +1412,7 @@ export class PostgresStoryRepository implements StoryRepository {
   public async findEpisodeImprovementContextByIdAndUserId(
     episodeId: string,
     userId: string,
+    organizationId: string | null = null,
   ): Promise<StoryEpisodeImprovementContext | null> {
     const result = await this.client.query<EpisodeImprovementContextRow>(
       `
@@ -1181,7 +1453,6 @@ export class PostgresStoryRepository implements StoryRepository {
                FROM entities
                WHERE entities.id = ANY(episodes.entities_involved)
                  AND entities.work_id = works.id
-                 AND entities.user_id = works.user_id
              ) AS entities,
              (
                SELECT COALESCE(
@@ -1270,9 +1541,22 @@ export class PostgresStoryRepository implements StoryRepository {
       INNER JOIN chapters ON chapters.id = episodes.chapter_id
       INNER JOIN works ON works.id = chapters.work_id
       WHERE episodes.id = $1
-        AND works.user_id = $2
+        AND (
+          ($3::uuid IS NULL AND works.user_id = $2 AND works.organization_id IS NULL)
+          OR (
+            $3::uuid IS NOT NULL
+            AND works.organization_id = $3::uuid
+            AND EXISTS (
+              SELECT 1
+              FROM organization_members
+              WHERE organization_members.organization_id = works.organization_id
+                AND organization_members.user_id = $2
+                AND organization_members.status = 'active'
+            )
+          )
+        )
       `,
-      [episodeId, userId],
+      [episodeId, userId, organizationId],
     );
 
     const row = result.rows[0];
@@ -1311,6 +1595,7 @@ export class PostgresStoryRepository implements StoryRepository {
     userId: string,
     pages: PageSkeletonPageDraft[],
     options?: { overwriteExisting?: boolean },
+    organizationId: string | null = null,
   ): Promise<PageSkeletonPersistResult | null> {
     const overwriteExisting = options?.overwriteExisting === true;
     return runInTransaction(this.client, this.transactionRunner, async (transactionClient) => {
@@ -1327,10 +1612,23 @@ export class PostgresStoryRepository implements StoryRepository {
         INNER JOIN chapters ON chapters.id = episodes.chapter_id
         INNER JOIN works ON works.id = chapters.work_id
         WHERE episodes.id = $1
-          AND works.user_id = $2
+          AND (
+            ($3::uuid IS NULL AND works.user_id = $2 AND works.organization_id IS NULL)
+            OR (
+            $3::uuid IS NOT NULL
+            AND works.organization_id = $3::uuid
+            AND EXISTS (
+              SELECT 1
+              FROM organization_members
+              WHERE organization_members.organization_id = works.organization_id
+                AND organization_members.user_id = $2
+                AND organization_members.status = 'active'
+            )
+          )
+          )
         FOR UPDATE
         `,
-        [episodeId, userId],
+        [episodeId, userId, organizationId],
       );
 
       if (ownershipResult.rows[0] === undefined) {
@@ -1519,9 +1817,22 @@ export class PostgresStoryRepository implements StoryRepository {
         INNER JOIN works ON works.id = chapters.work_id
         WHERE episodes.id = $1
           AND episodes.chapter_id = chapters.id
-          AND works.user_id = $2
+          AND (
+            ($3::uuid IS NULL AND works.user_id = $2 AND works.organization_id IS NULL)
+            OR (
+            $3::uuid IS NOT NULL
+            AND works.organization_id = $3::uuid
+            AND EXISTS (
+              SELECT 1
+              FROM organization_members
+              WHERE organization_members.organization_id = works.organization_id
+                AND organization_members.user_id = $2
+                AND organization_members.status = 'active'
+            )
+          )
+          )
         `,
-        [episodeId, userId],
+        [episodeId, userId, organizationId],
       );
 
       return {
@@ -1536,6 +1847,7 @@ export class PostgresStoryRepository implements StoryRepository {
     episodeId: string,
     userId: string,
     expectedPageCount: number,
+    organizationId: string | null = null,
   ): Promise<boolean> {
     if (!Number.isSafeInteger(expectedPageCount) || expectedPageCount <= 0) {
       return false;
@@ -1562,10 +1874,23 @@ export class PostgresStoryRepository implements StoryRepository {
         INNER JOIN chapters ON chapters.id = episodes.chapter_id
         INNER JOIN works ON works.id = chapters.work_id
         WHERE episodes.id = $1
-          AND works.user_id = $2
+          AND (
+            ($3::uuid IS NULL AND works.user_id = $2 AND works.organization_id IS NULL)
+            OR (
+            $3::uuid IS NOT NULL
+            AND works.organization_id = $3::uuid
+            AND EXISTS (
+              SELECT 1
+              FROM organization_members
+              WHERE organization_members.organization_id = works.organization_id
+                AND organization_members.user_id = $2
+                AND organization_members.status = 'active'
+            )
+          )
+          )
         FOR UPDATE
         `,
-        [episodeId, userId],
+        [episodeId, userId, organizationId],
       );
 
       const lockedEpisode = ownershipResult.rows[0];
@@ -1620,9 +1945,22 @@ export class PostgresStoryRepository implements StoryRepository {
         INNER JOIN works ON works.id = chapters.work_id
         WHERE episodes.id = $1
           AND episodes.chapter_id = chapters.id
-          AND works.user_id = $2
+          AND (
+            ($3::uuid IS NULL AND works.user_id = $2 AND works.organization_id IS NULL)
+            OR (
+            $3::uuid IS NOT NULL
+            AND works.organization_id = $3::uuid
+            AND EXISTS (
+              SELECT 1
+              FROM organization_members
+              WHERE organization_members.organization_id = works.organization_id
+                AND organization_members.user_id = $2
+                AND organization_members.status = 'active'
+            )
+          )
+          )
         `,
-        [episodeId, userId],
+        [episodeId, userId, organizationId],
       );
 
       return true;
@@ -1634,6 +1972,7 @@ function mapWorkRow(row: WorkRow): Work {
   return {
     id: row.id,
     userId: row.user_id,
+    organizationId: row.organization_id,
     title: normalizePossiblyMojibake(row.title),
     genre: normalizeNullableText(row.genre),
     worldSetting: normalizeNullableText(row.world_setting),

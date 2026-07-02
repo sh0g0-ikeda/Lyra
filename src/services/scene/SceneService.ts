@@ -21,20 +21,26 @@ export type {
 };
 
 export interface SceneEntityReader extends EntityReferenceReader {
-  findByIdAndUserId(entityId: string, userId: string): Promise<Entity | null>;
+  findByIdAndUserId(entityId: string, userId: string, organizationId?: string | null): Promise<Entity | null>;
 }
 
 export interface SceneServicePort {
-  createScene(userId: string, episodeId: string, input: CreateSceneInput): Promise<Scene>;
-  listScenes(userId: string, episodeId: string): Promise<Scene[]>;
-  updateScene(userId: string, sceneId: string, input: UpdateSceneInput): Promise<Scene>;
-  deleteScene(userId: string, sceneId: string): Promise<void>;
-  createEntityState(userId: string, entityId: string, input: CreateEntityStateInput): Promise<EntityState>;
+  createScene(userId: string, episodeId: string, input: CreateSceneInput, organizationId?: string | null): Promise<Scene>;
+  listScenes(userId: string, episodeId: string, organizationId?: string | null): Promise<Scene[]>;
+  updateScene(userId: string, sceneId: string, input: UpdateSceneInput, organizationId?: string | null): Promise<Scene>;
+  deleteScene(userId: string, sceneId: string, organizationId?: string | null): Promise<void>;
+  createEntityState(
+    userId: string,
+    entityId: string,
+    input: CreateEntityStateInput,
+    organizationId?: string | null,
+  ): Promise<EntityState>;
   updateEntityState(
     userId: string,
     entityId: string,
     stateId: string,
     input: UpdateEntityStateInput,
+    organizationId?: string | null,
   ): Promise<EntityState>;
 }
 
@@ -48,36 +54,58 @@ export class SceneService implements SceneServicePort {
     private readonly entityReader: SceneEntityReader,
   ) {}
 
-  public async createScene(userId: string, episodeId: string, input: CreateSceneInput): Promise<Scene> {
-    const episodeContext = await this.sceneRepository.findEpisodeContextByIdAndUserId(episodeId, userId);
+  public async createScene(
+    userId: string,
+    episodeId: string,
+    input: CreateSceneInput,
+    organizationId: string | null = null,
+  ): Promise<Scene> {
+    const episodeContext = await this.sceneRepository.findEpisodeContextByIdAndUserId(
+      episodeId,
+      userId,
+      organizationId,
+    );
     if (episodeContext === null) {
       throw new NotFoundError('Episode not found');
     }
 
-    await this.ensureEntitiesBelongToWork(userId, episodeContext.workId, input.involvedEntityIds);
+    await this.ensureEntitiesBelongToWork(userId, episodeContext.workId, input.involvedEntityIds, organizationId);
     return this.sceneRepository.createScene(episodeId, input);
   }
 
-  public async listScenes(userId: string, episodeId: string): Promise<Scene[]> {
-    const episodeContext = await this.sceneRepository.findEpisodeContextByIdAndUserId(episodeId, userId);
+  public async listScenes(
+    userId: string,
+    episodeId: string,
+    organizationId: string | null = null,
+  ): Promise<Scene[]> {
+    const episodeContext = await this.sceneRepository.findEpisodeContextByIdAndUserId(
+      episodeId,
+      userId,
+      organizationId,
+    );
     if (episodeContext === null) {
       throw new NotFoundError('Episode not found');
     }
 
-    return this.sceneRepository.findScenesByEpisodeIdAndUserId(episodeId, userId);
+    return this.sceneRepository.findScenesByEpisodeIdAndUserId(episodeId, userId, organizationId);
   }
 
-  public async updateScene(userId: string, sceneId: string, input: UpdateSceneInput): Promise<Scene> {
-    const sceneContext = await this.sceneRepository.findSceneContextByIdAndUserId(sceneId, userId);
+  public async updateScene(
+    userId: string,
+    sceneId: string,
+    input: UpdateSceneInput,
+    organizationId: string | null = null,
+  ): Promise<Scene> {
+    const sceneContext = await this.sceneRepository.findSceneContextByIdAndUserId(sceneId, userId, organizationId);
     if (sceneContext === null) {
       throw new NotFoundError('Scene not found');
     }
 
     if (input.involvedEntityIds !== undefined) {
-      await this.ensureEntitiesBelongToWork(userId, sceneContext.workId, input.involvedEntityIds);
+      await this.ensureEntitiesBelongToWork(userId, sceneContext.workId, input.involvedEntityIds, organizationId);
     }
 
-    const scene = await this.sceneRepository.updateScene(sceneId, userId, input);
+    const scene = await this.sceneRepository.updateScene(sceneId, userId, input, organizationId);
     if (scene === null) {
       throw new NotFoundError('Scene not found');
     }
@@ -85,8 +113,8 @@ export class SceneService implements SceneServicePort {
     return scene;
   }
 
-  public async deleteScene(userId: string, sceneId: string): Promise<void> {
-    const deleted = await this.sceneRepository.deleteScene(sceneId, userId);
+  public async deleteScene(userId: string, sceneId: string, organizationId: string | null = null): Promise<void> {
+    const deleted = await this.sceneRepository.deleteScene(sceneId, userId, organizationId);
     if (!deleted) {
       throw new NotFoundError('Scene not found');
     }
@@ -96,9 +124,10 @@ export class SceneService implements SceneServicePort {
     userId: string,
     entityId: string,
     input: CreateEntityStateInput,
+    organizationId: string | null = null,
   ): Promise<EntityState> {
-    const entity = await this.ensureEntityOwnedByUser(userId, entityId);
-    await this.ensureSceneMatchesEntityWork(userId, entity.workId, input.sceneId);
+    const entity = await this.ensureEntityOwnedByUser(userId, entityId, organizationId);
+    await this.ensureSceneMatchesEntityWork(userId, entity.workId, input.sceneId, organizationId);
 
     return this.sceneRepository.createEntityState(entityId, input);
   }
@@ -108,13 +137,20 @@ export class SceneService implements SceneServicePort {
     entityId: string,
     stateId: string,
     input: UpdateEntityStateInput,
+    organizationId: string | null = null,
   ): Promise<EntityState> {
-    const entity = await this.ensureEntityOwnedByUser(userId, entityId);
+    const entity = await this.ensureEntityOwnedByUser(userId, entityId, organizationId);
     if (input.sceneId !== undefined) {
-      await this.ensureSceneMatchesEntityWork(userId, entity.workId, input.sceneId);
+      await this.ensureSceneMatchesEntityWork(userId, entity.workId, input.sceneId, organizationId);
     }
 
-    const entityState = await this.sceneRepository.updateEntityState(entityId, stateId, userId, input);
+    const entityState = await this.sceneRepository.updateEntityState(
+      entityId,
+      stateId,
+      userId,
+      input,
+      organizationId,
+    );
     if (entityState === null) {
       throw new NotFoundError('Entity state not found');
     }
@@ -122,8 +158,12 @@ export class SceneService implements SceneServicePort {
     return entityState;
   }
 
-  private async ensureEntityOwnedByUser(userId: string, entityId: string): Promise<Entity> {
-    const entity = await this.entityReader.findByIdAndUserId(entityId, userId);
+  private async ensureEntityOwnedByUser(
+    userId: string,
+    entityId: string,
+    organizationId: string | null,
+  ): Promise<Entity> {
+    const entity = await this.entityReader.findByIdAndUserId(entityId, userId, organizationId);
     if (entity === null) {
       throw new NotFoundError('Entity not found');
     }
@@ -135,12 +175,13 @@ export class SceneService implements SceneServicePort {
     userId: string,
     entityWorkId: string,
     sceneId: string | null,
+    organizationId: string | null,
   ): Promise<void> {
     if (sceneId === null) {
       return;
     }
 
-    const sceneContext = await this.sceneRepository.findSceneContextByIdAndUserId(sceneId, userId);
+    const sceneContext = await this.sceneRepository.findSceneContextByIdAndUserId(sceneId, userId, organizationId);
     if (sceneContext === null) {
       throw new NotFoundError('Scene not found');
     }
@@ -154,17 +195,17 @@ export class SceneService implements SceneServicePort {
     userId: string,
     workId: string,
     entityIds: string[],
+    organizationId: string | null,
   ): Promise<void> {
     const uniqueEntityIds = [...new Set(entityIds)];
     if (uniqueEntityIds.length === 0) {
       return;
     }
 
-    const matchedEntityCount = await this.entityReader.countByIdsAndWorkIdAndUserId(
-      uniqueEntityIds,
-      workId,
-      userId,
-    );
+    const matchedEntityCount =
+      organizationId === null || this.entityReader.countByIdsAndWorkId === undefined
+        ? await this.entityReader.countByIdsAndWorkIdAndUserId(uniqueEntityIds, workId, userId, organizationId)
+        : await this.entityReader.countByIdsAndWorkId(uniqueEntityIds, workId);
     if (matchedEntityCount !== uniqueEntityIds.length) {
       throw new ValidationError('All referenced entities must belong to the work');
     }

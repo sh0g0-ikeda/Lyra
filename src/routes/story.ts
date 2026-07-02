@@ -24,6 +24,7 @@ import type { PageSkeletonServicePort } from '../services/story/PageSkeletonServ
 import type { EpisodePageSkeletonServicePort } from '../services/story/EpisodePageSkeletonService.js';
 import type { PageServicePort } from '../services/page/PageService.js';
 import type { EpisodeStoryAutofillServicePort } from '../services/story/EpisodeStoryAutofillService.js';
+import type { OrganizationServicePort } from '../services/organization/OrganizationService.js';
 import type { AppEnv } from '../types/app.js';
 import { readJsonBody, readOptionalJsonBody, REQUEST_BODY_LIMITS } from './requestBody.js';
 
@@ -34,6 +35,7 @@ export interface StoryRouteDependencies {
   episodePageSkeletonService?: EpisodePageSkeletonServicePort;
   pageService?: PageServicePort;
   episodeStoryAutofillService?: EpisodeStoryAutofillServicePort;
+  organizationService?: OrganizationServicePort;
   storyCollaborationService: StoryCollaborationServicePort;
   storyService: StoryServicePort;
 }
@@ -46,11 +48,14 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
 
   app.post('/story/collaborate', async (c) => {
     const user = c.get('user');
+    const organizationId = parseOptionalOrganizationId(c);
     const body = collaborateStoryBodySchema.safeParse(await readStoryJsonBody(c));
 
     if (!body.success) {
       throw new ValidationError(formatZodValidationError(body.error));
     }
+
+    await requireOrganizationCapability(c, dependencies, organizationId, 'edit_work');
 
     const stream = await dependencies.storyCollaborationService.collaborate(user.id, {
       layer: body.data.layer,
@@ -64,18 +69,21 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
         focusPoints: body.data.context.focus_points,
         constraints: body.data.context.constraints,
       },
-    });
+    }, organizationId);
 
     return createSseResponse(stream);
   });
 
   app.post('/story/improve-episode-draft', async (c) => {
     const user = c.get('user');
+    const organizationId = parseOptionalOrganizationId(c);
     const body = improveEpisodeDraftBodySchema.safeParse(await readStoryJsonBody(c));
 
     if (!body.success) {
       throw new ValidationError(formatZodValidationError(body.error));
     }
+
+    await requireOrganizationCapability(c, dependencies, organizationId, 'edit_work');
 
     const result = await dependencies.storyCollaborationService.improveEpisodeDraft(user.id, {
       episodeId: body.data.episode_id,
@@ -91,7 +99,7 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
         climax: body.data.base_draft.climax,
         endingHook: body.data.base_draft.ending_hook,
       },
-    });
+    }, organizationId);
 
     return c.json({
       draft: {
@@ -119,7 +127,11 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
       throw new ValidationError(formatZodValidationError(body.error));
     }
 
+    const organizationId = body.data.organization_id ?? null;
+    await requireOrganizationCapability(c, dependencies, organizationId, 'create_work');
+
     const work = await dependencies.storyService.createWork(user.id, {
+      organizationId,
       title: body.data.title,
       genre: body.data.genre ?? null,
       worldSetting: body.data.world_setting ?? null,
@@ -135,7 +147,9 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
 
   app.get('/works', async (c) => {
     const user = c.get('user');
-    const works = await dependencies.storyService.listWorks(user.id);
+    const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'view_work');
+    const works = await dependencies.storyService.listWorks(user.id, organizationId);
 
     return c.json({ works: works.map(toWorkResponse) });
   });
@@ -143,7 +157,9 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
   app.get('/works/:id', async (c) => {
     const user = c.get('user');
     const workId = parseUuidParam(c, 'id');
-    const work = await dependencies.storyService.getWork(user.id, workId);
+    const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'view_work');
+    const work = await dependencies.storyService.getWork(user.id, workId, organizationId);
 
     return c.json(toWorkResponse(work));
   });
@@ -151,6 +167,8 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
   app.put('/works/:id', async (c) => {
     const user = c.get('user');
     const workId = parseUuidParam(c, 'id');
+    const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'edit_work');
     const body = updateWorkBodySchema.safeParse(await readStoryJsonBody(c));
 
     if (!body.success) {
@@ -167,7 +185,7 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
       endingPoint: body.data.ending_point,
       overallFlow: body.data.overall_flow,
       status: body.data.status,
-    });
+    }, organizationId);
 
     return c.json(toWorkResponse(work));
   });
@@ -175,6 +193,8 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
   app.post('/works/:id/chapters', async (c) => {
     const user = c.get('user');
     const workId = parseUuidParam(c, 'id');
+    const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'edit_work');
     const body = createChapterBodySchema.safeParse(await readStoryJsonBody(c));
 
     if (!body.success) {
@@ -190,7 +210,7 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
       emotionCurve: body.data.emotion_curve ?? null,
       entitiesInvolved: body.data.entities_involved ?? [],
       keyBeats: body.data.key_beats ?? [],
-    });
+    }, organizationId);
 
     return c.json(toChapterResponse(chapter), 201);
   });
@@ -198,7 +218,9 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
   app.get('/works/:id/chapters', async (c) => {
     const user = c.get('user');
     const workId = parseUuidParam(c, 'id');
-    const chapters = await dependencies.storyService.listChapters(user.id, workId);
+    const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'view_work');
+    const chapters = await dependencies.storyService.listChapters(user.id, workId, organizationId);
 
     return c.json({ chapters: chapters.map(toChapterResponse) });
   });
@@ -206,6 +228,8 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
   app.put('/chapters/:id', async (c) => {
     const user = c.get('user');
     const chapterId = parseUuidParam(c, 'id');
+    const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'edit_work');
     const body = updateChapterBodySchema.safeParse(await readStoryJsonBody(c));
 
     if (!body.success) {
@@ -222,7 +246,7 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
       entitiesInvolved: body.data.entities_involved,
       keyBeats: body.data.key_beats,
       status: body.data.status,
-    });
+    }, organizationId);
 
     return c.json(toChapterResponse(chapter));
   });
@@ -230,7 +254,9 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
   app.delete('/chapters/:id', async (c) => {
     const user = c.get('user');
     const chapterId = parseUuidParam(c, 'id');
-    await dependencies.storyService.deleteChapter(user.id, chapterId);
+    const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'edit_work');
+    await dependencies.storyService.deleteChapter(user.id, chapterId, organizationId);
 
     return c.body(null, 204);
   });
@@ -238,13 +264,15 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
   app.post('/chapters/:id/move', async (c) => {
     const user = c.get('user');
     const chapterId = parseUuidParam(c, 'id');
+    const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'edit_work');
     const body = moveStoryItemBodySchema.safeParse(await readStoryJsonBody(c));
 
     if (!body.success) {
       throw new ValidationError(formatZodValidationError(body.error));
     }
 
-    const chapter = await dependencies.storyService.moveChapter(user.id, chapterId, body.data.direction);
+    const chapter = await dependencies.storyService.moveChapter(user.id, chapterId, body.data.direction, organizationId);
 
     return c.json(toChapterResponse(chapter));
   });
@@ -252,6 +280,8 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
   app.post('/chapters/:id/episodes', async (c) => {
     const user = c.get('user');
     const chapterId = parseUuidParam(c, 'id');
+    const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'edit_work');
     const body = createEpisodeBodySchema.safeParse(await readStoryJsonBody(c));
 
     if (!body.success) {
@@ -270,7 +300,7 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
       endingHook: body.data.ending_hook ?? null,
       estimatedPages: body.data.estimated_pages,
       entitiesInvolved: body.data.entities_involved ?? [],
-    });
+    }, organizationId);
 
     return c.json(toEpisodeResponse(episode), 201);
   });
@@ -278,7 +308,9 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
   app.get('/chapters/:id/episodes', async (c) => {
     const user = c.get('user');
     const chapterId = parseUuidParam(c, 'id');
-    const episodes = await dependencies.storyService.listEpisodes(user.id, chapterId);
+    const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'view_work');
+    const episodes = await dependencies.storyService.listEpisodes(user.id, chapterId, organizationId);
 
     return c.json({ episodes: episodes.map(toEpisodeResponse) });
   });
@@ -286,6 +318,8 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
   app.put('/episodes/:id', async (c) => {
     const user = c.get('user');
     const episodeId = parseUuidParam(c, 'id');
+    const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'edit_work');
     const body = updateEpisodeBodySchema.safeParse(await readStoryJsonBody(c));
 
     if (!body.success) {
@@ -305,7 +339,7 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
       estimatedPages: body.data.estimated_pages,
       entitiesInvolved: body.data.entities_involved,
       status: body.data.status,
-    });
+    }, organizationId);
 
     return c.json(toEpisodeResponse(episode));
   });
@@ -313,7 +347,9 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
   app.delete('/episodes/:id', async (c) => {
     const user = c.get('user');
     const episodeId = parseUuidParam(c, 'id');
-    await dependencies.storyService.deleteEpisode(user.id, episodeId);
+    const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'edit_work');
+    await dependencies.storyService.deleteEpisode(user.id, episodeId, organizationId);
 
     return c.body(null, 204);
   });
@@ -321,19 +357,23 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
   app.post('/episodes/:id/move', async (c) => {
     const user = c.get('user');
     const episodeId = parseUuidParam(c, 'id');
+    const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'edit_work');
     const body = moveStoryItemBodySchema.safeParse(await readStoryJsonBody(c));
 
     if (!body.success) {
       throw new ValidationError(formatZodValidationError(body.error));
     }
 
-    const episode = await dependencies.storyService.moveEpisode(user.id, episodeId, body.data.direction);
+    const episode = await dependencies.storyService.moveEpisode(user.id, episodeId, body.data.direction, organizationId);
 
     return c.json(toEpisodeResponse(episode));
   });
 
   app.post('/episodes/:id/generate-page-skeleton', async (c) => {
     const user = c.get('user');
+    const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'edit_work');
     const parsedEpisodeId = generatePageSkeletonParamSchema.safeParse(c.req.param('id'));
     if (!parsedEpisodeId.success) {
       throw new ValidationError('id must be a valid UUID');
@@ -361,6 +401,7 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
           applyStoryPlan: body.data.apply_story_plan,
           language: body.data.language,
         },
+        organizationId,
       );
 
       return c.json(
@@ -376,7 +417,7 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
     const result = await dependencies.pageSkeletonService.generateForEpisode(user.id, parsedEpisodeId.data, {
       overwriteExisting: body.data.overwrite_existing,
       language: body.data.language,
-    });
+    }, organizationId);
 
     let storyPlanApplied = false;
     let storyPlanJobId: string | null = null;
@@ -390,6 +431,7 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
         user.id,
         parsedEpisodeId.data,
         body.data.language,
+        organizationId,
       );
       storyPlanApplied = true;
       storyPlanJobId = applied.jobId;
@@ -417,6 +459,37 @@ async function readStoryJsonBody(c: Context<AppEnv>): Promise<unknown> {
   });
 }
 
+function parseOptionalOrganizationId(c: Context<AppEnv>): string | null {
+  const raw = c.req.query('organization_id');
+  if (raw === undefined || raw.trim().length === 0) {
+    return null;
+  }
+
+  const result = storyUuidParamSchema.safeParse(raw);
+  if (!result.success) {
+    throw new ValidationError('organization_id must be a valid UUID');
+  }
+
+  return result.data;
+}
+
+async function requireOrganizationCapability(
+  c: Context<AppEnv>,
+  dependencies: StoryRouteDependencies,
+  organizationId: string | null,
+  capability: Parameters<NonNullable<StoryRouteDependencies['organizationService']>['requireMembership']>[2],
+): Promise<void> {
+  if (organizationId === null) {
+    return;
+  }
+  if (dependencies.organizationService === undefined) {
+    throw new ValidationError('Organization service is not configured');
+  }
+
+  const user = c.get('user');
+  await dependencies.organizationService.requireMembership(organizationId, user.id, capability);
+}
+
 function parseUuidParam(c: Context<AppEnv>, name: string): string {
   const result = storyUuidParamSchema.safeParse(c.req.param(name));
   if (!result.success) {
@@ -430,6 +503,7 @@ function toWorkResponse(work: Work): Record<string, unknown> {
   return {
     id: work.id,
     title: work.title,
+    organization_id: work.organizationId ?? null,
     genre: work.genre,
     world_setting: work.worldSetting,
     theme: work.theme,

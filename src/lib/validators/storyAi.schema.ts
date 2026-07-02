@@ -99,8 +99,6 @@ export const pageSkeletonResponseSchema = z
 
 export const improveEpisodeDraftResponseSchema = z
   .object({
-    title: nullableText(200),
-    purpose: nullableText(2000),
     introduction: nullableText(2000),
     middle: nullableText(2000),
     climax: nullableText(2000),
@@ -128,8 +126,6 @@ export const episodeImprovementPlanResponseSchema = z
     must_preserve: boundedPlannerList,
     continuity_guards: boundedPlannerList,
     page_adaptation_notes: boundedPlannerList,
-    title: episodeImprovementSectionPlanSchema,
-    purpose: episodeImprovementSectionPlanSchema,
     introduction: episodeImprovementSectionPlanSchema,
     middle: episodeImprovementSectionPlanSchema,
     climax: episodeImprovementSectionPlanSchema,
@@ -143,8 +139,6 @@ export const episodeImprovementAuditResponseSchema = z
   .object({
     verdict: z.enum(['pass', 'revise']),
     global_issues: auditNoteListSchema,
-    title: auditNoteListSchema,
-    purpose: auditNoteListSchema,
     introduction: auditNoteListSchema,
     middle: auditNoteListSchema,
     climax: auditNoteListSchema,

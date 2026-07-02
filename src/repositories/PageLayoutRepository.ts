@@ -1,4 +1,4 @@
-import type { QueryResultRow } from 'pg';
+﻿import type { QueryResultRow } from 'pg';
 import type {
   PageLayoutTemplateApplication,
   PanelFrame,
@@ -23,6 +23,7 @@ export interface PageLayoutRepository {
     userId: string,
     pageId: string,
     input: ApplyPageLayoutTemplateInput,
+    organizationId?: string | null,
   ): Promise<PageLayoutTemplateApplication>;
 }
 
@@ -68,9 +69,10 @@ export class PostgresPageLayoutRepository implements PageLayoutRepository {
     userId: string,
     pageId: string,
     input: ApplyPageLayoutTemplateInput,
+    organizationId: string | null = null,
   ): Promise<PageLayoutTemplateApplication> {
     return this.client.transaction(async (transactionClient) => {
-      await ensureEditableOwnedPage(transactionClient, userId, pageId);
+      await ensureEditableOwnedPage(transactionClient, userId, pageId, organizationId);
 
       const currentPanels = await listPanelsForUpdate(transactionClient, pageId);
       const currentPanelCount = currentPanels.length;
@@ -116,6 +118,7 @@ async function ensureEditableOwnedPage(
   client: DatabaseClient,
   userId: string,
   pageId: string,
+  organizationId: string | null,
 ): Promise<void> {
   const result = await client.query<PageLayoutContextRow>(
     `
@@ -126,10 +129,23 @@ async function ensureEditableOwnedPage(
     INNER JOIN chapters ON chapters.id = episodes.chapter_id
     INNER JOIN works ON works.id = chapters.work_id
     WHERE pages.id = $1
-      AND works.user_id = $2
+      AND (
+        ($3::uuid IS NULL AND works.user_id = $2 AND works.organization_id IS NULL)
+        OR (
+            $3::uuid IS NOT NULL
+            AND works.organization_id = $3::uuid
+            AND EXISTS (
+              SELECT 1
+              FROM organization_members
+              WHERE organization_members.organization_id = works.organization_id
+                AND organization_members.user_id = $2
+                AND organization_members.status = 'active'
+            )
+          )
+      )
     FOR UPDATE OF pages
     `,
-    [pageId, userId],
+    [pageId, userId, organizationId],
   );
 
   const page = result.rows[0];

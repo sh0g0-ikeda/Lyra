@@ -22,6 +22,7 @@ import type {
   EnqueuePageGenerationResult,
   PageGenerationQueuePort,
 } from '../../../../src/services/page/PageGenerationQueue.js';
+import type { OrganizationServicePort } from '../../../../src/services/organization/OrganizationService.js';
 import { ModeSelector } from '../../../../src/services/page/ModeSelector.js';
 import type { PageGenerationRecoveryServicePort } from '../../../../src/services/page/PageGenerationRecoveryService.js';
 import { PageGenerationService } from '../../../../src/services/page/PageGenerationService.js';
@@ -145,6 +146,10 @@ class FakeEntityRepository implements EntityRepository {
     buildEntity('entity-1', 'Aoi', 'character'),
     buildEntity('entity-2', 'Leo', 'character'),
   ];
+  public lastFindByWorkArgs: { workId: string; userId: string; organizationId: string | null } | null = null;
+  public lastReferenceArgs:
+    | { entityIds: string[]; workId: string; userId: string; organizationId: string | null }
+    | null = null;
 
   public references: EntityPrimaryReferenceImage[] = [
     {
@@ -169,7 +174,12 @@ class FakeEntityRepository implements EntityRepository {
     return null;
   }
 
-  public async findByWorkIdAndUserId() {
+  public async findByWorkIdAndUserId(
+    workId: string,
+    requestedUserId: string,
+    organizationId: string | null = null,
+  ) {
+    this.lastFindByWorkArgs = { workId, userId: requestedUserId, organizationId };
     return this.entities;
   }
 
@@ -179,7 +189,11 @@ class FakeEntityRepository implements EntityRepository {
 
   public async findPrimaryReferenceImagesByEntityIdsAndUserId(
     entityIds: string[],
+    workId: string,
+    requestedUserId: string,
+    organizationId: string | null = null,
   ): Promise<EntityPrimaryReferenceImage[]> {
+    this.lastReferenceArgs = { entityIds, workId, userId: requestedUserId, organizationId };
     return this.references.filter((reference) => entityIds.includes(reference.entityId));
   }
 
@@ -189,6 +203,18 @@ class FakeEntityRepository implements EntityRepository {
 
   public async delete(): Promise<boolean> {
     return false;
+  }
+}
+
+class FakeOrganizationService {
+  public consumed: unknown[] = [];
+  public async requireMembership(): Promise<unknown> {
+    return {};
+  }
+
+  public async consumeCredits(input: unknown): Promise<unknown> {
+    this.consumed.push(input);
+    return {};
   }
 }
 
@@ -346,6 +372,45 @@ describe('PageGenerationService', () => {
     expect(creditService.consumed[0]?.cost).toBe(5);
     expect(queue.lastPayload?.creditCost).toBe(5);
     expect(queue.lastPayload?.generationMode).toBe('thinking');
+  });
+
+  it('法人Workspaceのページ生成前検査では法人スコープでキャラと参照画像を読む', async () => {
+    const pageRepository = new FakePageRepository();
+    pageRepository.context = buildPageContext({ organizationId: 'org-1' });
+    const entityRepository = new FakeEntityRepository();
+    const organizationService = new FakeOrganizationService();
+    const service = new PageGenerationService(
+      pageRepository,
+      entityRepository,
+      new FakeGenerationJobRepository(),
+      new FakeCreditService(),
+      new FakeQueue(),
+      new ModeSelector(),
+      undefined,
+      undefined,
+      true,
+      organizationService as unknown as OrganizationServicePort,
+    );
+
+    await service.enqueuePageGeneration(userId, pageId, 'org-1');
+
+    expect(entityRepository.lastFindByWorkArgs).toEqual({
+      workId: 'work-1',
+      userId,
+      organizationId: 'org-1',
+    });
+    expect(entityRepository.lastReferenceArgs).toEqual({
+      entityIds: ['entity-1'],
+      workId: 'work-1',
+      userId,
+      organizationId: 'org-1',
+    });
+    expect(organizationService.consumed[0]).toMatchObject({
+      userId,
+      organizationId: 'org-1',
+      workId: 'work-1',
+      eventType: 'generation.started',
+    });
   });
 
   it('generated_image があるページは3crのregenerateになる', async () => {

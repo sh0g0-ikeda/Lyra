@@ -1,5 +1,6 @@
 import type {
   CreditPackageCode,
+  PaidPlanCode,
   SubscriptionPlanCode,
   SubscriptionStatus,
 } from '../constants/billing.js';
@@ -15,7 +16,8 @@ export interface BillingUserProfile {
 }
 
 export interface SubscriptionRecord {
-  userId: string;
+  userId: string | null;
+  organizationId: string | null;
   stripeSubscriptionId: string;
   planCode: SubscriptionPlanCode;
   status: SubscriptionStatus;
@@ -26,11 +28,22 @@ export interface SubscriptionRecord {
 
 export interface ActiveSubscriptionRecord extends SubscriptionRecord {}
 
+export interface OrganizationSubscriptionSummary {
+  organizationId: string;
+  planCode: SubscriptionPlanCode;
+  status: SubscriptionStatus;
+  currentPeriodStart: Date | null;
+  currentPeriodEnd: Date | null;
+  cancelAtPeriodEnd: boolean;
+}
+
 interface PaymentRecordBase {
-  userId: string;
+  userId: string | null;
+  organizationId: string | null;
   kind: PaymentRecordKind;
   amountJpy: number;
   status: PaymentRecordStatus;
+  invoiceUrl?: string | null;
 }
 
 export type PaymentRecordInput =
@@ -42,6 +55,13 @@ export type PaymentRecordInput =
       stripeCheckoutSessionId: null;
       stripeInvoiceId: string;
     });
+
+export interface PaymentRecord extends PaymentRecordBase {
+  id: string;
+  stripeCheckoutSessionId: string | null;
+  stripeInvoiceId: string | null;
+  createdAt: Date;
+}
 
 export interface SubscriptionCheckoutResult {
   sessionId: string;
@@ -56,4 +76,16 @@ export interface CreditCheckoutResult {
 
 export interface CustomerPortalResult {
   url: string;
+}
+
+export interface SubscriptionPlanCatalogEntry {
+  planCode: PaidPlanCode;
+  displayNameJa: string;
+  displayNameEn: string;
+  monthlyCredits: number;
+  amountJpy: number;
+  minimumContractMonths: number;
+  trialDays: number;
+  isEnterprise: boolean;
+  configured: boolean;
 }

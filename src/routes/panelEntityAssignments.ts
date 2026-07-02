@@ -6,6 +6,7 @@ import {
   replacePanelEntityAssignmentsBodySchema,
 } from '../lib/validators/panelEntityAssignment.schema.js';
 import { formatZodValidationError } from '../lib/validationErrorFormatter.js';
+import type { OrganizationServicePort } from '../services/organization/OrganizationService.js';
 import type { PanelEntityAssignmentServicePort } from '../services/page/PanelEntityAssignmentService.js';
 import type { AppEnv } from '../types/app.js';
 import { readJsonBody } from './requestBody.js';
@@ -14,6 +15,7 @@ export interface PanelEntityAssignmentRouteDependencies {
   authMiddleware: MiddlewareHandler<AppEnv>;
   rateLimitMiddleware: MiddlewareHandler<AppEnv>;
   panelEntityAssignmentService: PanelEntityAssignmentServicePort;
+  organizationService?: OrganizationServicePort;
 }
 
 export function createPanelEntityAssignmentRoutes(
@@ -27,6 +29,8 @@ export function createPanelEntityAssignmentRoutes(
   app.put('/panels/:id/entities', async (c) => {
     const user = c.get('user');
     const panelId = parseUuidParam(c, 'id');
+    const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'edit_work');
     const body = replacePanelEntityAssignmentsBodySchema.safeParse(await readJsonBody(c));
 
     if (!body.success) {
@@ -49,6 +53,7 @@ export function createPanelEntityAssignmentRoutes(
         effectNote: assignment.effect_note,
         stateId: assignment.state_id,
       })),
+      organizationId,
     );
 
     return c.json({ entities: assignments.map(toPanelEntityAssignmentResponse) });
@@ -64,6 +69,37 @@ function parseUuidParam(c: Context<AppEnv>, name: string): string {
   }
 
   return result.data;
+}
+
+function parseOptionalOrganizationId(c: Context<AppEnv>): string | null {
+  const raw = c.req.query('organization_id');
+  if (raw === undefined || raw.trim().length === 0) {
+    return null;
+  }
+
+  const result = panelEntityAssignmentUuidParamSchema.safeParse(raw);
+  if (!result.success) {
+    throw new ValidationError('organization_id must be a valid UUID');
+  }
+
+  return result.data;
+}
+
+async function requireOrganizationCapability(
+  c: Context<AppEnv>,
+  dependencies: PanelEntityAssignmentRouteDependencies,
+  organizationId: string | null,
+  capability: Parameters<OrganizationServicePort['requireMembership']>[2],
+): Promise<void> {
+  if (organizationId === null) {
+    return;
+  }
+  if (dependencies.organizationService === undefined) {
+    throw new ValidationError('Organization workspace is unavailable');
+  }
+
+  const user = c.get('user');
+  await dependencies.organizationService.requireMembership(organizationId, user.id, capability);
 }
 
 function toPanelEntityAssignmentResponse(assignment: PanelEntityAssignment): Record<string, unknown> {

@@ -19,6 +19,11 @@ import type {
   RefundCreditsParams,
 } from '../../../../src/services/credit/CreditService.js';
 import type {
+  OrganizationServicePort,
+  RecordOrganizationGenerationRequest,
+  GrantOrganizationCreditsRequest,
+} from '../../../../src/services/organization/OrganizationService.js';
+import type {
   PageGenerationInputImageBuilderPort,
   PageGenerationPlanInput,
   PageGenerationPlannerPort,
@@ -84,6 +89,7 @@ class FakePlanner implements PageGenerationPlannerPort {
 class FakePromptBuilder implements PromptBuilderPort {
   public calls: BuildPagePromptInput[] = [];
   public builtPrompt: BuiltPagePrompt = {
+    workId: 'work-1',
     draftPrompt: 'page-prompt-draft',
     compilerBrief: '[TASK]\npage compiler brief',
     inputSnapshot: buildInputSnapshot(),
@@ -188,6 +194,29 @@ class FakeCreditService implements CreditServicePort {
     }
 
     return this.getBalance(params.userId);
+  }
+}
+
+class FakeOrganizationService {
+  public completedGenerations: RecordOrganizationGenerationRequest[] = [];
+  public failedGenerations: Array<RecordOrganizationGenerationRequest & { errorMessage?: string | null }> = [];
+  public refunds: Array<GrantOrganizationCreditsRequest & { jobId?: string | null }> = [];
+
+  public async recordGenerationCompleted(input: RecordOrganizationGenerationRequest): Promise<void> {
+    this.completedGenerations.push(input);
+  }
+
+  public async recordGenerationFailed(
+    input: RecordOrganizationGenerationRequest & { errorMessage?: string | null },
+  ): Promise<void> {
+    this.failedGenerations.push(input);
+  }
+
+  public async refundCredits(
+    input: GrantOrganizationCreditsRequest & { jobId?: string | null },
+  ): Promise<unknown> {
+    this.refunds.push(input);
+    return { monthlyCredits: 0, purchasedCredits: 0, totalCredits: 0, monthlyExpiresAt: null };
   }
 }
 
@@ -593,6 +622,7 @@ describe('PageGenerationWorkerService', () => {
     const executionRepository = new FakeExecutionRepository();
     const promptBuilder = new FakePromptBuilder();
     promptBuilder.builtPrompt = {
+      workId: 'work-1',
       draftPrompt: 'page-prompt-draft with Emil: "外に出よう。"',
       compilerBrief: [
         '[TASK]',
@@ -636,6 +666,7 @@ describe('PageGenerationWorkerService', () => {
     const executionRepository = new FakeExecutionRepository();
     const promptBuilder = new FakePromptBuilder();
     promptBuilder.builtPrompt = {
+      workId: 'work-1',
       draftPrompt: 'page-prompt-draft with Aki and Rin on the rooftop in a wide front shot',
       compilerBrief: [
         '[TASK]',
@@ -800,6 +831,93 @@ describe('PageGenerationWorkerService', () => {
       jobId: 'job-1',
     });
   });
+
+  it('法人ページ生成の完了を組織利用履歴へ記録する', async () => {
+    const executionRepository = new FakeExecutionRepository();
+    executionRepository.claimedJob = buildJob({ organizationId: 'org-1' });
+    const organizationService = new FakeOrganizationService();
+    const service = new PageGenerationWorkerService(
+      executionRepository,
+      new FakePromptBuilder(),
+      new FakePromptCompiler(),
+      new FakeInputImageBuilder(),
+      new FakePlanner(),
+      new FakeRenderer(),
+      new FakeStorage(),
+      new FakeCreditService(),
+      true,
+      organizationService as unknown as OrganizationServicePort,
+    );
+
+    const result = await service.processJob('job-1');
+
+    expect(result).toEqual({ status: 'processed', jobStatus: 'completed' });
+    expect(organizationService.completedGenerations).toEqual([
+      expect.objectContaining({
+        organizationId: 'org-1',
+        userId: 'user-1',
+        workId: 'work-1',
+        jobId: 'job-1',
+        generationType: 'page_generate',
+        metadata: expect.objectContaining({
+          page_id: 'page-1',
+          request_kind: 'initial',
+          generation_mode: 'standard',
+          quality: 'medium',
+          openai_request_id: 'openai-1',
+          cost_usd: 0.07,
+        }),
+      }),
+    ]);
+  });
+
+  it('法人ページ生成の失敗は個人残高ではなく組織残高へ返金して監査する', async () => {
+    const executionRepository = new FakeExecutionRepository();
+    executionRepository.claimedJob = buildJob({ organizationId: 'org-1' });
+    const renderer = new FakeRenderer();
+    renderer.shouldFail = true;
+    const creditService = new FakeCreditService();
+    const organizationService = new FakeOrganizationService();
+    const service = new PageGenerationWorkerService(
+      executionRepository,
+      new FakePromptBuilder(),
+      new FakePromptCompiler(),
+      new FakeInputImageBuilder(),
+      new FakePlanner(),
+      renderer,
+      new FakeStorage(),
+      creditService,
+      true,
+      organizationService as unknown as OrganizationServicePort,
+    );
+
+    const result = await service.processJob('job-1');
+
+    expect(result).toEqual({ status: 'processed', jobStatus: 'failed' });
+    expect(creditService.refunds).toEqual([]);
+    expect(organizationService.refunds).toEqual([
+      expect.objectContaining({
+        organizationId: 'org-1',
+        actorUserId: 'user-1',
+        amount: 10,
+        jobId: 'job-1',
+      }),
+    ]);
+    expect(organizationService.failedGenerations).toEqual([
+      expect.objectContaining({
+        organizationId: 'org-1',
+        userId: 'user-1',
+        workId: 'work-1',
+        jobId: 'job-1',
+        generationType: 'page_generate',
+        errorMessage: 'renderer unavailable',
+        metadata: expect.objectContaining({
+          page_id: 'page-1',
+          work_id: 'work-1',
+        }),
+      }),
+    ]);
+  });
 });
 
 function buildInputSnapshot(): PageGenerationInputSnapshot {
@@ -838,6 +956,7 @@ function buildJob(overrides: Partial<GenerationJob> = {}): GenerationJob {
     creditCost: 10,
     params: {
       page_id: 'page-1',
+      work_id: 'work-1',
       request_kind: 'initial',
       generation_mode: 'standard',
       quality: 'medium',

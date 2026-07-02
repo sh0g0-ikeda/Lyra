@@ -28,6 +28,7 @@ export interface PageGenerationPanelContext {
 export interface PageGenerationContext {
   pageId: string;
   workId: string;
+  organizationId?: string | null;
   layoutConfig: Record<string, unknown>;
   generatedImage: GeneratedPageImage | null;
   generationMode: PageGenerationMode | null;
@@ -39,6 +40,7 @@ export interface PageGenerationContext {
 export interface PagePromptContext {
   pageId: string;
   workId: string;
+  organizationId?: string | null;
   pageNumber: number;
   episodePurpose: string | null;
   sceneSummaries: string[];

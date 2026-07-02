@@ -39,7 +39,7 @@ describe('userFacingErrors', () => {
     ).toContain('コマ割りテンプレート');
   });
 
-  it('開発者向けの500系メッセージはそのまま表示しない', () => {
+  it('開発者向け500系メッセージはそのまま表示しない', () => {
     expect(formatUserFacingError(apiError('OpenAI page compiler returned invalid JSON', 500, null), 'ja')).toBe(
       'ストーリーからページ骨格を作成できませんでした。文章を短くするか話を分けてから、もう一度お試しください。',
     );
@@ -49,6 +49,15 @@ describe('userFacingErrors', () => {
     expect(formatUserFacingErrorMessage({ message: 'Stripe Checkout session URL is not available' }, 'ja')).toContain(
       '課金パネル',
     );
+  });
+
+  it('未設定の法人プランでは購入不可を伝える', () => {
+    expect(
+      formatUserFacingErrorMessage(
+        { message: 'Subscription plan is not available for checkout yet: enterprise_a', status: 500 },
+        'ja',
+      ),
+    ).toContain('まだ購入できません');
   });
 
   it('既存ページありの骨格生成エラーでは上書き再生成を促す', () => {

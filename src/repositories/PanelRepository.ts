@@ -1,4 +1,4 @@
-import type { QueryResultRow } from 'pg';
+﻿import type { QueryResultRow } from 'pg';
 import { ValidationError } from '../domain/errors/index.js';
 import type {
   CreatePanelInput,
@@ -43,13 +43,42 @@ export interface PanelContext {
 }
 
 export interface PanelRepository {
-  findPageContextByIdAndUserId(pageId: string, userId: string): Promise<PagePanelContext | null>;
-  findPanelContextByIdAndUserId(panelId: string, userId: string): Promise<PanelContext | null>;
-  createPanel(pageId: string, userId: string, input: CreatePanelInput): Promise<Panel | null>;
-  findPanelsByPageIdAndUserId(pageId: string, userId: string): Promise<Panel[]>;
-  updatePanel(panelId: string, userId: string, input: UpdatePanelInput): Promise<Panel | null>;
-  deletePanel(panelId: string, userId: string): Promise<boolean>;
-  compactPanelOrdersAfterDelete(pageId: string, userId: string, deletedOrder: number): Promise<void>;
+  findPageContextByIdAndUserId(
+    pageId: string,
+    userId: string,
+    organizationId?: string | null,
+  ): Promise<PagePanelContext | null>;
+  findPanelContextByIdAndUserId(
+    panelId: string,
+    userId: string,
+    organizationId?: string | null,
+  ): Promise<PanelContext | null>;
+  createPanel(
+    pageId: string,
+    userId: string,
+    input: CreatePanelInput,
+    organizationId?: string | null,
+  ): Promise<Panel | null>;
+  findPanelsByPageIdAndUserId(pageId: string, userId: string, organizationId?: string | null): Promise<Panel[]>;
+  updatePanel(
+    panelId: string,
+    userId: string,
+    input: UpdatePanelInput,
+    organizationId?: string | null,
+  ): Promise<Panel | null>;
+  deletePanel(panelId: string, userId: string, organizationId?: string | null): Promise<boolean>;
+  compactPanelOrdersAfterDelete(
+    pageId: string,
+    userId: string,
+    deletedOrder: number,
+    organizationId?: string | null,
+  ): Promise<void>;
+  reorderPanels(
+    pageId: string,
+    userId: string,
+    panelIds: string[],
+    organizationId?: string | null,
+  ): Promise<Panel[]>;
 }
 
 interface PagePanelContextRow extends QueryResultRow {
@@ -90,6 +119,7 @@ export class PostgresPanelRepository implements PanelRepository {
   public async findPageContextByIdAndUserId(
     pageId: string,
     userId: string,
+    organizationId: string | null = null,
   ): Promise<PagePanelContext | null> {
     const result = await this.client.query<PagePanelContextRow>(
       `
@@ -101,9 +131,22 @@ export class PostgresPanelRepository implements PanelRepository {
       INNER JOIN chapters ON chapters.id = episodes.chapter_id
       INNER JOIN works ON works.id = chapters.work_id
       WHERE pages.id = $1
-        AND works.user_id = $2
+        AND (
+          ($3::uuid IS NULL AND works.user_id = $2 AND works.organization_id IS NULL)
+          OR (
+            $3::uuid IS NOT NULL
+            AND works.organization_id = $3::uuid
+            AND EXISTS (
+              SELECT 1
+              FROM organization_members
+              WHERE organization_members.organization_id = works.organization_id
+                AND organization_members.user_id = $2
+                AND organization_members.status = 'active'
+            )
+          )
+        )
       `,
-      [pageId, userId],
+      [pageId, userId, organizationId],
     );
 
     const row = result.rows[0];
@@ -115,6 +158,7 @@ export class PostgresPanelRepository implements PanelRepository {
   public async findPanelContextByIdAndUserId(
     panelId: string,
     userId: string,
+    organizationId: string | null = null,
   ): Promise<PanelContext | null> {
     const result = await this.client.query<PanelContextRow>(
       `
@@ -129,9 +173,22 @@ export class PostgresPanelRepository implements PanelRepository {
       INNER JOIN chapters ON chapters.id = episodes.chapter_id
       INNER JOIN works ON works.id = chapters.work_id
       WHERE panels.id = $1
-        AND works.user_id = $2
+        AND (
+          ($3::uuid IS NULL AND works.user_id = $2 AND works.organization_id IS NULL)
+          OR (
+            $3::uuid IS NOT NULL
+            AND works.organization_id = $3::uuid
+            AND EXISTS (
+              SELECT 1
+              FROM organization_members
+              WHERE organization_members.organization_id = works.organization_id
+                AND organization_members.user_id = $2
+                AND organization_members.status = 'active'
+            )
+          )
+        )
       `,
-      [panelId, userId],
+      [panelId, userId, organizationId],
     );
 
     const row = result.rows[0];
@@ -146,7 +203,12 @@ export class PostgresPanelRepository implements PanelRepository {
         };
   }
 
-  public async createPanel(pageId: string, userId: string, input: CreatePanelInput): Promise<Panel | null> {
+  public async createPanel(
+    pageId: string,
+    userId: string,
+    input: CreatePanelInput,
+    organizationId: string | null = null,
+  ): Promise<Panel | null> {
     try {
       const result = await this.client.query<PanelRow>(
         `
@@ -180,7 +242,20 @@ export class PostgresPanelRepository implements PanelRepository {
         INNER JOIN chapters ON chapters.id = episodes.chapter_id
         INNER JOIN works ON works.id = chapters.work_id
         WHERE pages.id = $1
-          AND works.user_id = $2
+          AND (
+            ($13::uuid IS NULL AND works.user_id = $2 AND works.organization_id IS NULL)
+            OR (
+            $13::uuid IS NOT NULL
+            AND works.organization_id = $13::uuid
+            AND EXISTS (
+              SELECT 1
+              FROM organization_members
+              WHERE organization_members.organization_id = works.organization_id
+                AND organization_members.user_id = $2
+                AND organization_members.status = 'active'
+            )
+          )
+          )
         RETURNING *
         `,
         [
@@ -196,6 +271,7 @@ export class PostgresPanelRepository implements PanelRepository {
           input.sfxText ?? null,
           input.backgroundNote ?? null,
           input.panelNotes ?? null,
+          organizationId,
         ],
       );
 
@@ -206,7 +282,11 @@ export class PostgresPanelRepository implements PanelRepository {
     }
   }
 
-  public async findPanelsByPageIdAndUserId(pageId: string, userId: string): Promise<Panel[]> {
+  public async findPanelsByPageIdAndUserId(
+    pageId: string,
+    userId: string,
+    organizationId: string | null = null,
+  ): Promise<Panel[]> {
     const result = await this.client.query<PanelRow>(
       `
       SELECT panels.*
@@ -216,16 +296,34 @@ export class PostgresPanelRepository implements PanelRepository {
       INNER JOIN chapters ON chapters.id = episodes.chapter_id
       INNER JOIN works ON works.id = chapters.work_id
       WHERE panels.page_id = $1
-        AND works.user_id = $2
+        AND (
+          ($3::uuid IS NULL AND works.user_id = $2 AND works.organization_id IS NULL)
+          OR (
+            $3::uuid IS NOT NULL
+            AND works.organization_id = $3::uuid
+            AND EXISTS (
+              SELECT 1
+              FROM organization_members
+              WHERE organization_members.organization_id = works.organization_id
+                AND organization_members.user_id = $2
+                AND organization_members.status = 'active'
+            )
+          )
+        )
       ORDER BY panels."order" ASC
       `,
-      [pageId, userId],
+      [pageId, userId, organizationId],
     );
 
     return result.rows.map(mapPanelRow);
   }
 
-  public async updatePanel(panelId: string, userId: string, input: UpdatePanelInput): Promise<Panel | null> {
+  public async updatePanel(
+    panelId: string,
+    userId: string,
+    input: UpdatePanelInput,
+    organizationId: string | null = null,
+  ): Promise<Panel | null> {
     try {
       const result = await this.client.query<PanelRow>(
         `
@@ -247,7 +345,20 @@ export class PostgresPanelRepository implements PanelRepository {
         INNER JOIN works ON works.id = chapters.work_id
         WHERE panels.id = $1
           AND panels.page_id = pages.id
-          AND works.user_id = $2
+          AND (
+            ($20::uuid IS NULL AND works.user_id = $2 AND works.organization_id IS NULL)
+            OR (
+            $20::uuid IS NOT NULL
+            AND works.organization_id = $20::uuid
+            AND EXISTS (
+              SELECT 1
+              FROM organization_members
+              WHERE organization_members.organization_id = works.organization_id
+                AND organization_members.user_id = $2
+                AND organization_members.status = 'active'
+            )
+          )
+          )
         RETURNING panels.*
         `,
         [
@@ -270,6 +381,7 @@ export class PostgresPanelRepository implements PanelRepository {
           input.backgroundNote ?? null,
           input.panelNotes !== undefined,
           input.panelNotes ?? null,
+          organizationId,
         ],
       );
 
@@ -280,7 +392,7 @@ export class PostgresPanelRepository implements PanelRepository {
     }
   }
 
-  public async deletePanel(panelId: string, userId: string): Promise<boolean> {
+  public async deletePanel(panelId: string, userId: string, organizationId: string | null = null): Promise<boolean> {
     return this.client.transaction(async (transactionClient) => {
       await transactionClient.query(
         `
@@ -296,10 +408,23 @@ export class PostgresPanelRepository implements PanelRepository {
             INNER JOIN works ON works.id = chapters.work_id
             WHERE panels.id = $1
               AND panel_frames.page_id = pages.id
-              AND works.user_id = $2
+              AND (
+                ($3::uuid IS NULL AND works.user_id = $2 AND works.organization_id IS NULL)
+                OR (
+            $3::uuid IS NOT NULL
+            AND works.organization_id = $3::uuid
+            AND EXISTS (
+              SELECT 1
+              FROM organization_members
+              WHERE organization_members.organization_id = works.organization_id
+                AND organization_members.user_id = $2
+                AND organization_members.status = 'active'
+            )
+          )
+              )
           )
         `,
-        [panelId, userId],
+        [panelId, userId, organizationId],
       );
 
       const result = await transactionClient.query<QueryResultRow>(
@@ -311,10 +436,23 @@ export class PostgresPanelRepository implements PanelRepository {
         INNER JOIN works ON works.id = chapters.work_id
         WHERE panels.id = $1
           AND panels.page_id = pages.id
-          AND works.user_id = $2
+          AND (
+            ($3::uuid IS NULL AND works.user_id = $2 AND works.organization_id IS NULL)
+            OR (
+            $3::uuid IS NOT NULL
+            AND works.organization_id = $3::uuid
+            AND EXISTS (
+              SELECT 1
+              FROM organization_members
+              WHERE organization_members.organization_id = works.organization_id
+                AND organization_members.user_id = $2
+                AND organization_members.status = 'active'
+            )
+          )
+          )
         RETURNING panels.id
         `,
-        [panelId, userId],
+        [panelId, userId, organizationId],
       );
 
       return result.rows[0] !== undefined;
@@ -325,6 +463,7 @@ export class PostgresPanelRepository implements PanelRepository {
     pageId: string,
     userId: string,
     deletedOrder: number,
+    organizationId: string | null = null,
   ): Promise<void> {
     await this.client.query(
       `
@@ -337,11 +476,133 @@ export class PostgresPanelRepository implements PanelRepository {
       INNER JOIN works ON works.id = chapters.work_id
       WHERE panels.page_id = pages.id
         AND pages.id = $1
-        AND works.user_id = $2
+        AND (
+          ($4::uuid IS NULL AND works.user_id = $2 AND works.organization_id IS NULL)
+          OR (
+            $4::uuid IS NOT NULL
+            AND works.organization_id = $4::uuid
+            AND EXISTS (
+              SELECT 1
+              FROM organization_members
+              WHERE organization_members.organization_id = works.organization_id
+                AND organization_members.user_id = $2
+                AND organization_members.status = 'active'
+            )
+          )
+        )
         AND panels."order" > $3
       `,
-      [pageId, userId, deletedOrder],
+      [pageId, userId, deletedOrder, organizationId],
     );
+  }
+
+  public async reorderPanels(
+    pageId: string,
+    userId: string,
+    panelIds: string[],
+    organizationId: string | null = null,
+  ): Promise<Panel[]> {
+    if (panelIds.length === 0) {
+      return [];
+    }
+
+    return this.client.transaction(async (transactionClient) => {
+      await transactionClient.query(
+        `
+        WITH requested_order AS (
+          SELECT requested.id,
+                 requested.ordinality::int AS new_order
+          FROM unnest($3::uuid[]) WITH ORDINALITY AS requested(id, ordinality)
+        )
+        UPDATE panels
+        SET "order" = -requested_order.new_order,
+            updated_at = NOW()
+        FROM requested_order,
+             pages
+        INNER JOIN episodes ON episodes.id = pages.episode_id
+        INNER JOIN chapters ON chapters.id = episodes.chapter_id
+        INNER JOIN works ON works.id = chapters.work_id
+        WHERE panels.id = requested_order.id
+          AND panels.page_id = pages.id
+          AND panels.page_id = $1
+          AND (
+            ($4::uuid IS NULL AND works.user_id = $2 AND works.organization_id IS NULL)
+            OR (
+            $4::uuid IS NOT NULL
+            AND works.organization_id = $4::uuid
+            AND EXISTS (
+              SELECT 1
+              FROM organization_members
+              WHERE organization_members.organization_id = works.organization_id
+                AND organization_members.user_id = $2
+                AND organization_members.status = 'active'
+            )
+          )
+          )
+        `,
+        [pageId, userId, panelIds, organizationId],
+      );
+
+      await transactionClient.query(
+        `
+        UPDATE panels
+        SET "order" = -panels."order",
+            updated_at = NOW()
+        FROM pages
+        INNER JOIN episodes ON episodes.id = pages.episode_id
+        INNER JOIN chapters ON chapters.id = episodes.chapter_id
+        INNER JOIN works ON works.id = chapters.work_id
+        WHERE panels.page_id = pages.id
+          AND panels.page_id = $1
+          AND (
+            ($3::uuid IS NULL AND works.user_id = $2 AND works.organization_id IS NULL)
+            OR (
+            $3::uuid IS NOT NULL
+            AND works.organization_id = $3::uuid
+            AND EXISTS (
+              SELECT 1
+              FROM organization_members
+              WHERE organization_members.organization_id = works.organization_id
+                AND organization_members.user_id = $2
+                AND organization_members.status = 'active'
+            )
+          )
+          )
+          AND panels."order" < 0
+        `,
+        [pageId, userId, organizationId],
+      );
+
+      const result = await transactionClient.query<PanelRow>(
+        `
+        SELECT panels.*
+        FROM panels
+        INNER JOIN pages ON pages.id = panels.page_id
+        INNER JOIN episodes ON episodes.id = pages.episode_id
+        INNER JOIN chapters ON chapters.id = episodes.chapter_id
+        INNER JOIN works ON works.id = chapters.work_id
+        WHERE panels.page_id = $1
+          AND (
+            ($3::uuid IS NULL AND works.user_id = $2 AND works.organization_id IS NULL)
+            OR (
+            $3::uuid IS NOT NULL
+            AND works.organization_id = $3::uuid
+            AND EXISTS (
+              SELECT 1
+              FROM organization_members
+              WHERE organization_members.organization_id = works.organization_id
+                AND organization_members.user_id = $2
+                AND organization_members.status = 'active'
+            )
+          )
+          )
+        ORDER BY panels."order" ASC
+        `,
+        [pageId, userId, organizationId],
+      );
+
+      return result.rows.map(mapPanelRow);
+    });
   }
 }
 
