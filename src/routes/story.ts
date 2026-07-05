@@ -141,6 +141,7 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
       endingPoint: body.data.ending_point ?? null,
       overallFlow: body.data.overall_flow ?? null,
     });
+    await recordOrganizationAudit(dependencies, organizationId, user.id, 'work.created', 'work', work.id);
 
     return c.json(toWorkResponse(work), 201);
   });
@@ -186,6 +187,7 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
       overallFlow: body.data.overall_flow,
       status: body.data.status,
     }, organizationId);
+    await recordOrganizationAudit(dependencies, organizationId, user.id, 'work.updated', 'work', workId);
 
     return c.json(toWorkResponse(work));
   });
@@ -211,6 +213,9 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
       entitiesInvolved: body.data.entities_involved ?? [],
       keyBeats: body.data.key_beats ?? [],
     }, organizationId);
+    await recordOrganizationAudit(dependencies, organizationId, user.id, 'chapter.created', 'chapter', chapter.id, {
+      work_id: workId,
+    });
 
     return c.json(toChapterResponse(chapter), 201);
   });
@@ -247,6 +252,7 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
       keyBeats: body.data.key_beats,
       status: body.data.status,
     }, organizationId);
+    await recordOrganizationAudit(dependencies, organizationId, user.id, 'chapter.updated', 'chapter', chapterId);
 
     return c.json(toChapterResponse(chapter));
   });
@@ -257,6 +263,7 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
     const organizationId = parseOptionalOrganizationId(c);
     await requireOrganizationCapability(c, dependencies, organizationId, 'edit_work');
     await dependencies.storyService.deleteChapter(user.id, chapterId, organizationId);
+    await recordOrganizationAudit(dependencies, organizationId, user.id, 'chapter.deleted', 'chapter', chapterId);
 
     return c.body(null, 204);
   });
@@ -273,6 +280,9 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
     }
 
     const chapter = await dependencies.storyService.moveChapter(user.id, chapterId, body.data.direction, organizationId);
+    await recordOrganizationAudit(dependencies, organizationId, user.id, 'chapter.moved', 'chapter', chapterId, {
+      direction: body.data.direction,
+    });
 
     return c.json(toChapterResponse(chapter));
   });
@@ -301,6 +311,9 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
       estimatedPages: body.data.estimated_pages,
       entitiesInvolved: body.data.entities_involved ?? [],
     }, organizationId);
+    await recordOrganizationAudit(dependencies, organizationId, user.id, 'episode.created', 'episode', episode.id, {
+      chapter_id: chapterId,
+    });
 
     return c.json(toEpisodeResponse(episode), 201);
   });
@@ -340,6 +353,7 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
       entitiesInvolved: body.data.entities_involved,
       status: body.data.status,
     }, organizationId);
+    await recordOrganizationAudit(dependencies, organizationId, user.id, 'episode.updated', 'episode', episodeId);
 
     return c.json(toEpisodeResponse(episode));
   });
@@ -350,6 +364,7 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
     const organizationId = parseOptionalOrganizationId(c);
     await requireOrganizationCapability(c, dependencies, organizationId, 'edit_work');
     await dependencies.storyService.deleteEpisode(user.id, episodeId, organizationId);
+    await recordOrganizationAudit(dependencies, organizationId, user.id, 'episode.deleted', 'episode', episodeId);
 
     return c.body(null, 204);
   });
@@ -366,6 +381,9 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
     }
 
     const episode = await dependencies.storyService.moveEpisode(user.id, episodeId, body.data.direction, organizationId);
+    await recordOrganizationAudit(dependencies, organizationId, user.id, 'episode.moved', 'episode', episodeId, {
+      direction: body.data.direction,
+    });
 
     return c.json(toEpisodeResponse(episode));
   });
@@ -403,6 +421,19 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
         },
         organizationId,
       );
+      await recordOrganizationAudit(
+        dependencies,
+        organizationId,
+        user.id,
+        'episode.page_skeleton_queued',
+        'episode',
+        parsedEpisodeId.data,
+        {
+          job_id: queued.jobId,
+          overwrite_existing: body.data.overwrite_existing,
+          apply_story_plan: body.data.apply_story_plan,
+        },
+      );
 
       return c.json(
         {
@@ -436,6 +467,20 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
       storyPlanApplied = true;
       storyPlanJobId = applied.jobId;
     }
+    await recordOrganizationAudit(
+      dependencies,
+      organizationId,
+      user.id,
+      'episode.page_skeleton_generated',
+      'episode',
+      parsedEpisodeId.data,
+      {
+        pages_created: result.pagesCreated,
+        panels_created: result.panelsCreated,
+        replaced_existing: result.replacedExisting,
+        story_plan_job_id: storyPlanJobId,
+      },
+    );
 
     return c.json(
       {
@@ -488,6 +533,28 @@ async function requireOrganizationCapability(
 
   const user = c.get('user');
   await dependencies.organizationService.requireMembership(organizationId, user.id, capability);
+}
+
+async function recordOrganizationAudit(
+  dependencies: StoryRouteDependencies,
+  organizationId: string | null,
+  actorUserId: string,
+  action: string,
+  targetType: string,
+  targetId: string | null,
+  metadata?: Record<string, unknown>,
+): Promise<void> {
+  if (organizationId === null || dependencies.organizationService === undefined) {
+    return;
+  }
+  await dependencies.organizationService.recordAuditEvent({
+    organizationId,
+    actorUserId,
+    action,
+    targetType,
+    targetId,
+    metadata,
+  });
 }
 
 function parseUuidParam(c: Context<AppEnv>, name: string): string {

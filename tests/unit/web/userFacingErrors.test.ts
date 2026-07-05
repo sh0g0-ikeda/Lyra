@@ -15,6 +15,29 @@ describe('userFacingErrors', () => {
     );
   });
 
+  it('Cognito email_verified false ではメール確認を促す', () => {
+    expect(formatUserFacingErrorMessage({ message: 'Cognito email is not verified' }, 'ja')).toContain('メール確認');
+  });
+
+  it('招待メール不一致では招待されたメールでのログインを促す', () => {
+    expect(
+      formatUserFacingErrorMessage(
+        { message: 'Invitation email does not match the signed-in account', status: 403 },
+        'ja',
+      ),
+    ).toContain('招待されたメールアドレス');
+  });
+
+  it('期限切れ招待では再送依頼を促す', () => {
+    expect(formatUserFacingErrorMessage({ message: 'Invitation has expired', status: 409 }, 'ja')).toContain('再送');
+  });
+
+  it('無効な招待では新しい招待リンクを促す', () => {
+    expect(formatUserFacingErrorMessage({ message: 'Invitation not found', status: 404 }, 'ja')).toContain(
+      '新しい招待リンク',
+    );
+  });
+
   it('クレジット不足では購入を促す', () => {
     expect(formatUserFacingError(apiError('Credit balance is insufficient', 402, 'INSUFFICIENT_CREDITS'), 'ja')).toBe(
       'クレジットが不足しています。クレジットを購入してからもう一度お試しください。',
@@ -90,6 +113,22 @@ describe('userFacingErrors', () => {
     expect(
       formatUserFacingErrorMessage({ message: 'Cognito session no longer matches this app. Please sign in again.' }, 'ja'),
     ).toContain('もう一度ログイン');
+  });
+
+  it('pending招待の重複は生成ジョブではなく招待の案内にする', () => {
+    const message = formatUserFacingErrorMessage(
+      { message: 'An active invitation already exists for this email', status: 409, code: 'CONFLICT' },
+      'ja',
+    );
+
+    expect(message).toContain('招待');
+    expect(message).not.toContain('生成処理');
+  });
+
+  it('未知の409は生成ジョブ待機とは表示しない', () => {
+    const message = formatUserFacingErrorMessage({ message: 'Only pending invitations can be resent', status: 409 }, 'ja');
+
+    expect(message).not.toContain('生成処理');
   });
 });
 

@@ -2,9 +2,11 @@ import type { EnterprisePlanCode } from '../constants/billing.js';
 
 export type OrganizationType = 'business' | 'internal';
 export type OrganizationStatus = 'active' | 'trialing' | 'past_due' | 'suspended' | 'canceled';
-export type OrganizationMemberRole = 'owner' | 'admin' | 'billing' | 'editor' | 'creator' | 'viewer';
+export type OrganizationMemberRole = 'owner' | 'admin' | 'billing' | 'editor' | 'viewer';
 export type OrganizationMemberStatus = 'invited' | 'active' | 'suspended' | 'removed';
 export type OrganizationInvitationStatus = 'pending' | 'accepted' | 'revoked' | 'expired';
+export type OrganizationInvitationSendStatus = 'not_sent' | 'sending' | 'sent' | 'failed';
+export type EmailDeliveryStatus = 'sending' | 'sent' | 'failed' | 'disabled';
 
 export interface Organization {
   id: string;
@@ -41,10 +43,33 @@ export interface OrganizationInvitation {
   email: string;
   role: OrganizationMemberRole;
   status: OrganizationInvitationStatus;
+  sendStatus: OrganizationInvitationSendStatus;
+  sendErrorCode: string | null;
+  sendErrorMessage: string | null;
+  sentAt: Date | null;
+  lastSentAt: Date | null;
+  resendCount: number;
   invitedByUserId: string;
   acceptedByUserId: string | null;
   expiresAt: Date;
   acceptedAt: Date | null;
+  revokedAt: Date | null;
+  revokedByUserId: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface EmailDeliveryLog {
+  id: string;
+  organizationId: string | null;
+  invitationId: string | null;
+  recipientEmail: string;
+  templateKey: string;
+  provider: string;
+  status: EmailDeliveryStatus;
+  providerMessageId: string | null;
+  errorCode: string | null;
+  errorMessage: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -122,7 +147,6 @@ export const ORGANIZATION_ROLE_CAPABILITIES: Record<
   ],
   billing: ['manage_billing', 'view_billing'],
   editor: ['create_work', 'edit_work', 'generate', 'export', 'view_work'],
-  creator: ['create_work', 'edit_work', 'generate', 'view_work'],
   viewer: ['view_work'],
 } as const;
 

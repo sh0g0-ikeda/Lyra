@@ -265,7 +265,7 @@ export interface BillingBalanceRecord {
   }>;
 }
 
-export type OrganizationRole = 'owner' | 'admin' | 'billing' | 'editor' | 'creator' | 'viewer';
+export type OrganizationRole = 'owner' | 'admin' | 'billing' | 'editor' | 'viewer';
 export type OrganizationStatus = 'active' | 'trialing' | 'past_due' | 'suspended' | 'canceled';
 
 export interface OrganizationRecord {
@@ -293,6 +293,42 @@ export interface OrganizationMemberRecord {
   joined_at: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface OrganizationInvitationRecord {
+  id: string;
+  organization_id: string;
+  email: string;
+  role: OrganizationRole;
+  status: 'pending' | 'accepted' | 'revoked' | 'expired';
+  send_status: 'not_sent' | 'sending' | 'sent' | 'failed';
+  send_error_code: string | null;
+  send_error_message: string | null;
+  sent_at: string | null;
+  last_sent_at: string | null;
+  resend_count: number;
+  invited_by_user_id: string;
+  accepted_by_user_id: string | null;
+  expires_at: string;
+  accepted_at: string | null;
+  revoked_at: string | null;
+  revoked_by_user_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface OrganizationInvitationPreviewRecord {
+  organization: Pick<OrganizationRecord, 'id' | 'name'>;
+  invitation: Pick<OrganizationInvitationRecord, 'email' | 'role' | 'status' | 'expires_at'>;
+}
+
+export interface OrganizationInvitationCreateRecord {
+  invitation: OrganizationInvitationRecord;
+  invitation_url: string;
+  email_delivery: {
+    status: 'disabled' | 'sent' | 'failed';
+    errorMessage?: string;
+  };
 }
 
 export interface OrganizationCreditBalanceRecord {
@@ -398,8 +434,16 @@ export interface CurrentUserOrganizationRecord {
   monthly_expires_at: string | null;
 }
 
+export interface CurrentUserCreditRecord {
+  monthly_credits: number;
+  purchased_credits: number;
+  total_credits: number;
+  monthly_expires_at: string | null;
+}
+
 export interface CurrentSessionRecord {
   user: CurrentUserRecord;
+  personal_credits: CurrentUserCreditRecord | null;
   organizations: CurrentUserOrganizationRecord[];
 }
 

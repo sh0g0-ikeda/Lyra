@@ -2,6 +2,7 @@ import { SignJWT } from 'jose';
 import { describe, expect, it } from 'vitest';
 import { createApp } from '../../../src/app.js';
 import { REQUEST_BODY_LIMITS } from '../../../src/routes/requestBody.js';
+import { env } from '../../../src/lib/env.js';
 import type { CreditBalanceSnapshot } from '../../../src/domain/types/credit.js';
 import type { EntityReferenceSet } from '../../../src/domain/types/entityReference.js';
 import type { AuthenticatedUser, SupabaseJwtClaims } from '../../../src/domain/types/user.js';
@@ -23,6 +24,7 @@ import type {
   CreditServicePort,
   RefundCreditsParams,
 } from '../../../src/services/credit/CreditService.js';
+import { createReferenceCandidateToken } from '../../../src/services/entity/ReferenceCandidateToken.js';
 
 const jwtSecret = 'unit-test-secret';
 const user: AuthenticatedUser = {
@@ -319,7 +321,7 @@ describe('entity routes', () => {
     expect(getPayload).not.toHaveProperty('user_id');
   });
 
-  it('未知キー付きの create body は 422 になる', async () => {
+  it('未知のキー付き create body は 422 になる', async () => {
     const app = createTestApp();
     const token = await createToken();
 
@@ -339,7 +341,7 @@ describe('entity routes', () => {
     expect(response.status).toBe(422);
   });
 
-  it('import-image は suggested_fields と tmp key を返す', async () => {
+  it('import-image は suggested_fields と候補トークンを返す', async () => {
     const referenceService = new FakeEntityReferenceService();
     const app = createTestApp(referenceService);
     const token = await createToken();
@@ -357,11 +359,13 @@ describe('entity routes', () => {
     });
 
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({
+    const payload = (await response.json()) as Record<string, unknown>;
+    expect(payload).toMatchObject({
       suggested_fields: { art_style: 'anime' },
       prompt_supplement: 'anime heroine, full body, military uniform',
-      tmp_image_s3_key: 'tmp/user-1/entities/imports/source.png',
     });
+    expect(typeof payload.tmp_image_token).toBe('string');
+    expect(payload).not.toHaveProperty('tmp_image_s3_key');
     expect(referenceService.lastImportRequest).toMatchObject({
       userId: user.id,
       entityType: 'character',
@@ -424,7 +428,7 @@ describe('entity routes', () => {
     });
   });
 
-  it('generate-reference は source_s3_key を受けて full-body 候補化に渡す', async () => {
+  it('generate-reference は source_s3_key を後方互換で受ける', async () => {
     const referenceService = new FakeEntityReferenceService();
     const app = createTestApp(referenceService);
     const token = await createToken();
@@ -505,6 +509,42 @@ describe('entity routes', () => {
     });
   });
 
+  it('confirm は候補トークンを内部S3キーへ解決して reference_set を返す', async () => {
+    const referenceService = new FakeEntityReferenceService();
+    const app = createTestApp(referenceService);
+    const token = await createToken();
+    const candidateToken = createReferenceCandidateToken({
+      userId: user.id,
+      entityId,
+      s3Key: 'tmp/user-1/entities/imports/source.png',
+    }, {
+      secret: env.REFERENCE_CANDIDATE_TOKEN_SECRET
+        ?? env.SUPABASE_JWT_SECRET
+        ?? env.STRIPE_WEBHOOK_SECRET
+        ?? 'development-reference-candidate-token-secret',
+    });
+
+    const response = await app.request(`/api/entities/${entityId}/reference/confirm`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        selected_candidate_tokens: [candidateToken],
+        primary_candidate_token: candidateToken,
+        prompt_supplement: 'anime heroine',
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(referenceService.lastConfirmRequest).toEqual({
+      selectedS3Keys: ['tmp/user-1/entities/imports/source.png'],
+      primaryS3Key: 'tmp/user-1/entities/imports/source.png',
+      promptSupplement: 'anime heroine',
+    });
+  });
+
   it('confirm の duplicate key は 422 になる', async () => {
     const app = createTestApp();
     const token = await createToken();
@@ -576,9 +616,19 @@ describe('entity routes', () => {
     const app = createTestApp(new FakeEntityReferenceService(), exportService);
     const token = await createToken();
     const s3Key = 'tmp/user-1/entities/imports/source.png';
+    const candidateToken = createReferenceCandidateToken({
+      userId: user.id,
+      entityId,
+      s3Key,
+    }, {
+      secret: env.REFERENCE_CANDIDATE_TOKEN_SECRET
+        ?? env.SUPABASE_JWT_SECRET
+        ?? env.STRIPE_WEBHOOK_SECRET
+        ?? 'development-reference-candidate-token-secret',
+    });
 
     const response = await app.request(
-      `/api/entities/${entityId}/reference-candidate-image?s3_key=${encodeURIComponent(s3Key)}`,
+      `/api/entities/${entityId}/reference-candidate-image?candidate_token=${encodeURIComponent(candidateToken)}`,
       {
         headers: {
           Authorization: `Bearer ${token}`,

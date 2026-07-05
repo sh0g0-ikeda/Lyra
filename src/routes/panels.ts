@@ -54,6 +54,10 @@ export function createPanelRoutes(dependencies: PanelRouteDependencies): Hono<Ap
       },
       organizationId,
     );
+    await recordOrganizationAudit(dependencies, organizationId, user.id, 'panel.created', 'panel', panel.id, {
+      page_id: pageId,
+      order: body.data.order,
+    });
 
     return c.json(toPanelResponse(panel), 201);
   });
@@ -80,6 +84,9 @@ export function createPanelRoutes(dependencies: PanelRouteDependencies): Hono<Ap
     }
 
     const panels = await dependencies.panelService.reorderPanels(user.id, pageId, body.data.panel_ids, organizationId);
+    await recordOrganizationAudit(dependencies, organizationId, user.id, 'panel.reordered', 'page', pageId, {
+      panel_count: body.data.panel_ids.length,
+    });
 
     return c.json({ panels: panels.map(toPanelResponse) });
   });
@@ -114,6 +121,9 @@ export function createPanelRoutes(dependencies: PanelRouteDependencies): Hono<Ap
       },
       organizationId,
     );
+    await recordOrganizationAudit(dependencies, organizationId, user.id, 'panel.updated', 'panel', panelId, {
+      fields: Object.keys(body.data),
+    });
 
     return c.json(toPanelResponse(panel));
   });
@@ -124,6 +134,7 @@ export function createPanelRoutes(dependencies: PanelRouteDependencies): Hono<Ap
     const organizationId = parseOptionalOrganizationId(c);
     await requireOrganizationCapability(c, dependencies, organizationId, 'edit_work');
     await dependencies.panelService.deletePanel(user.id, panelId, organizationId);
+    await recordOrganizationAudit(dependencies, organizationId, user.id, 'panel.deleted', 'panel', panelId);
 
     return c.body(null, 204);
   });
@@ -169,6 +180,28 @@ async function requireOrganizationCapability(
 
   const user = c.get('user');
   await dependencies.organizationService.requireMembership(organizationId, user.id, capability);
+}
+
+async function recordOrganizationAudit(
+  dependencies: PanelRouteDependencies,
+  organizationId: string | null,
+  actorUserId: string,
+  action: string,
+  targetType: string,
+  targetId: string | null,
+  metadata?: Record<string, unknown>,
+): Promise<void> {
+  if (organizationId === null || dependencies.organizationService === undefined) {
+    return;
+  }
+  await dependencies.organizationService.recordAuditEvent({
+    organizationId,
+    actorUserId,
+    action,
+    targetType,
+    targetId,
+    metadata,
+  });
 }
 
 function toCompositionRequest(

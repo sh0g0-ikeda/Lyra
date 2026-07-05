@@ -4,6 +4,7 @@ import type {
   Organization,
   OrganizationAuditLog,
   OrganizationCreditBalance,
+  OrganizationInvitation,
   OrganizationMember,
   OrganizationMemberRole,
   OrganizationMemberStatus,
@@ -15,6 +16,10 @@ import type {
   OrganizationRepository,
 } from '../../../../src/repositories/OrganizationRepository.js';
 import { OrganizationService } from '../../../../src/services/organization/OrganizationService.js';
+import type {
+  InvitationEmailDeliveryResult,
+  OrganizationInvitationEmailServicePort,
+} from '../../../../src/services/organization/OrganizationInvitationEmailService.js';
 
 interface AuditLogInput {
   organizationId: string;
@@ -180,12 +185,12 @@ describe('OrganizationService', () => {
 
   it('法人共有残高はWorkspace所属メンバーなら確認できる', async () => {
     const repository = new InMemoryOrganizationRepository();
-    repository.setMember(buildMember({ id: 'member-creator', userId: 'creator-user', role: 'creator' }));
+    repository.setMember(buildMember({ id: 'member-editor', userId: 'editor-user', role: 'editor' }));
     repository.balance = buildBalance({ monthlyCredits: 40, purchasedCredits: 12 });
 
     const service = buildService(repository);
 
-    await expect(service.getCreditBalance('creator-user', 'org-1')).resolves.toMatchObject({
+    await expect(service.getCreditBalance('editor-user', 'org-1')).resolves.toMatchObject({
       monthlyCredits: 40,
       purchasedCredits: 12,
     });
@@ -316,6 +321,60 @@ describe('OrganizationService', () => {
         actorUserId: 'owner-user',
         targetId: 'member-editor',
         metadata: { from_role: 'editor', to_role: 'viewer' },
+      }),
+    ]);
+  });
+
+  it('メンバー停止と復帰を監査ログに残す', async () => {
+    const repository = new InMemoryOrganizationRepository();
+    repository.setMember(buildMember({ id: 'member-owner', userId: 'owner-user', role: 'owner' }));
+    repository.setMember(buildMember({ id: 'member-editor', userId: 'editor-user', role: 'editor' }));
+
+    const service = buildService(repository);
+
+    await service.updateMember('owner-user', 'org-1', 'member-editor', { status: 'suspended' });
+    await service.updateMember('owner-user', 'org-1', 'member-editor', { status: 'active' });
+
+    expect(repository.insertedAuditLogs).toEqual([
+      expect.objectContaining({
+        action: 'member.suspended',
+        actorUserId: 'owner-user',
+        targetId: 'member-editor',
+        metadata: { from_status: 'active', to_status: 'suspended' },
+      }),
+      expect.objectContaining({
+        action: 'member.reactivated',
+        actorUserId: 'owner-user',
+        targetId: 'member-editor',
+        metadata: { from_status: 'suspended', to_status: 'active' },
+      }),
+    ]);
+  });
+
+  it('汎用監査イベントを本文なしの最小メタデータで記録できる', async () => {
+    const repository = new InMemoryOrganizationRepository();
+    const service = buildService(repository);
+
+    await service.recordAuditEvent({
+      organizationId: 'org-1',
+      actorUserId: 'user-1',
+      action: 'episode.updated',
+      targetType: 'episode',
+      targetId: 'episode-1',
+      metadata: {
+        fields: ['title', 'story_full_draft'],
+        skipped: undefined,
+      },
+    });
+
+    expect(repository.insertedAuditLogs).toEqual([
+      expect.objectContaining({
+        organizationId: 'org-1',
+        actorUserId: 'user-1',
+        action: 'episode.updated',
+        targetType: 'episode',
+        targetId: 'episode-1',
+        metadata: { fields: ['title', 'story_full_draft'] },
       }),
     ]);
   });
@@ -527,10 +586,172 @@ describe('OrganizationService', () => {
       metadata: { page_id: 'page-1' },
     });
   });
+  it('招待作成時に招待URLとメール送信結果を返す', async () => {
+    const repository = new InMemoryOrganizationRepository();
+    repository.setMember(buildMember({ id: 'member-owner', userId: 'owner-user', role: 'owner' }));
+    const emailService = new FakeInvitationEmailService({ status: 'sent' });
+    const service = buildService(repository, emailService);
+
+    const result = await service.inviteMember('owner-user', 'org-1', {
+      email: 'New.Member@Example.com',
+      role: 'editor',
+    });
+
+    expect(result.invitation).toMatchObject({
+      email: 'new.member@example.com',
+      role: 'editor',
+      status: 'pending',
+    });
+    expect(result.invitationUrl).toContain('/invite/');
+    expect(result.emailDelivery).toEqual({ status: 'sent' });
+    expect(emailService.deliveries[0]).toMatchObject({
+      organization: expect.objectContaining({ id: 'org-1' }),
+      invitation: expect.objectContaining({ email: 'new.member@example.com' }),
+    });
+    expect(repository.insertedAuditLogs).toEqual([
+      expect.objectContaining({
+        action: 'member.invited',
+        targetType: 'invitation',
+      }),
+    ]);
+  });
+
+  it('招待再送ではtokenを作り直し再送回数を増やす', async () => {
+    const repository = new InMemoryOrganizationRepository();
+    repository.setMember(buildMember({ id: 'member-owner', userId: 'owner-user', role: 'owner' }));
+    // Duplicate pending invites should be recoverable from the same invite form.
+    // A failed delivery from an earlier attempt must not force the user into a hidden manual cleanup path.
+    {
+      const duplicateRepository = new InMemoryOrganizationRepository();
+      duplicateRepository.setMember(buildMember({ id: 'member-owner', userId: 'owner-user', role: 'owner' }));
+      duplicateRepository.invitations = [
+        buildInvitation({
+          id: 'duplicate-invitation-1',
+          email: 'new.member@example.com',
+          status: 'pending',
+          resendCount: 0,
+          sendStatus: 'failed',
+          sendErrorCode: 'old_error',
+          sendErrorMessage: 'old failure',
+        }),
+      ];
+      const duplicateEmailService = new FakeInvitationEmailService({ status: 'sent' });
+      const duplicateService = buildService(duplicateRepository, duplicateEmailService);
+
+      const duplicateResult = await duplicateService.inviteMember('owner-user', 'org-1', {
+        email: 'New.Member@Example.com',
+        role: 'viewer',
+      });
+
+      expect(duplicateRepository.invitations).toHaveLength(1);
+      expect(duplicateResult.invitation).toMatchObject({
+        id: 'duplicate-invitation-1',
+        email: 'new.member@example.com',
+        role: 'viewer',
+        status: 'pending',
+        resendCount: 1,
+        sendStatus: 'not_sent',
+        sendErrorCode: null,
+        sendErrorMessage: null,
+      });
+      expect(duplicateResult.emailDelivery).toEqual({ status: 'sent' });
+      expect(duplicateRepository.insertedAuditLogs).toEqual([
+        expect.objectContaining({
+          action: 'member.invitation_resent',
+          targetId: 'duplicate-invitation-1',
+        }),
+      ]);
+    }
+
+    repository.invitations = [buildInvitation({ id: 'invitation-1', resendCount: 0 })];
+    const emailService = new FakeInvitationEmailService({ status: 'disabled' });
+    const service = buildService(repository, emailService);
+
+    const result = await service.resendInvitation('owner-user', 'org-1', 'invitation-1');
+
+    expect(result.invitationUrl).toContain('/invite/');
+    expect(result.emailDelivery).toEqual({ status: 'disabled' });
+    expect(result.invitation).toMatchObject({
+      id: 'invitation-1',
+      resendCount: 1,
+      sendStatus: 'not_sent',
+    });
+    expect(repository.invitations[0]).toMatchObject({
+      id: 'invitation-1',
+      resendCount: 1,
+      sendStatus: 'not_sent',
+      sendErrorCode: null,
+      sendErrorMessage: null,
+    });
+    expect(repository.insertedAuditLogs).toEqual([
+      expect.objectContaining({
+        action: 'member.invitation_resent',
+      }),
+    ]);
+  });
+
+  it('pending招待を取り消すと受諾不能な状態にする', async () => {
+    const repository = new InMemoryOrganizationRepository();
+    repository.setMember(buildMember({ id: 'member-owner', userId: 'owner-user', role: 'owner' }));
+    repository.invitations = [buildInvitation({ id: 'invitation-1', status: 'pending' })];
+    const service = buildService(repository);
+
+    const invitation = await service.revokeInvitation('owner-user', 'org-1', 'invitation-1');
+
+    expect(invitation).toMatchObject({
+      id: 'invitation-1',
+      status: 'revoked',
+      revokedByUserId: 'owner-user',
+    });
+    expect(repository.insertedAuditLogs).toEqual([
+      expect.objectContaining({
+        action: 'member.invitation_revoked',
+      }),
+    ]);
+  });
+
+  it('期限切れpending招待のpreviewはexpiredへ正規化する', async () => {
+    const repository = new InMemoryOrganizationRepository();
+    repository.invitations = [
+      buildInvitation({
+        id: 'invitation-1',
+        status: 'pending',
+        expiresAt: new Date(Date.now() - 60_000),
+      }),
+    ];
+    const service = buildService(repository);
+
+    const preview = await service.previewInvitation('raw-token');
+
+    expect(preview.invitation.status).toBe('expired');
+    expect(repository.invitations[0]?.status).toBe('expired');
+  });
 });
 
-function buildService(repository: InMemoryOrganizationRepository): OrganizationService {
-  return new OrganizationService(repository as unknown as OrganizationRepository);
+function buildService(
+  repository: InMemoryOrganizationRepository,
+  invitationEmailService?: OrganizationInvitationEmailServicePort,
+): OrganizationService {
+  return new OrganizationService(repository as unknown as OrganizationRepository, invitationEmailService);
+}
+
+class FakeInvitationEmailService implements OrganizationInvitationEmailServicePort {
+  public readonly deliveries: Array<{
+    organization: Organization;
+    invitation: OrganizationInvitation;
+    invitationUrl: string;
+  }> = [];
+
+  public constructor(private readonly result: InvitationEmailDeliveryResult) {}
+
+  public async deliverInvitation(input: {
+    organization: Organization;
+    invitation: OrganizationInvitation;
+    invitationUrl: string;
+  }): Promise<InvitationEmailDeliveryResult> {
+    this.deliveries.push(input);
+    return this.result;
+  }
 }
 
 class InMemoryOrganizationRepository {
@@ -541,6 +762,8 @@ class InMemoryOrganizationRepository {
   public insertedAuditLogs: AuditLogInput[] = [];
   public insertedUsageEvents: UsageEventInput[] = [];
   public createdOrganizations: CreateOrganizationRecord[] = [];
+  public invitations: OrganizationInvitation[] = [];
+  public emailDeliveryLogs: unknown[] = [];
   public prefixRequests: string[][] = [];
   public usedFullAuditLogAccess = false;
   public activeOwnerCount = 1;
@@ -653,6 +876,120 @@ class InMemoryOrganizationRepository {
     return this.activeOwnerCount;
   }
 
+  public async createInvitation(input: {
+    organizationId: string;
+    email: string;
+    role: OrganizationMemberRole;
+    tokenHash: string;
+    invitedByUserId: string;
+    expiresAt: Date;
+  }): Promise<OrganizationInvitation> {
+    void input.tokenHash;
+    const invitation = buildInvitation({
+      organizationId: input.organizationId,
+      email: input.email.toLowerCase(),
+      role: input.role,
+      invitedByUserId: input.invitedByUserId,
+      expiresAt: input.expiresAt,
+    });
+    this.invitations.unshift(invitation);
+    return invitation;
+  }
+
+  public async listInvitations(organizationId: string): Promise<OrganizationInvitation[]> {
+    return this.invitations.filter((invitation) => invitation.organizationId === organizationId);
+  }
+
+  public async findPendingInvitationByEmail(
+    organizationId: string,
+    email: string,
+  ): Promise<OrganizationInvitation | null> {
+    return (
+      this.invitations.find(
+        (invitation) =>
+          invitation.organizationId === organizationId &&
+          invitation.email === email.toLowerCase() &&
+          invitation.status === 'pending',
+      ) ?? null
+    );
+  }
+
+  public async findInvitationByTokenHash(): Promise<OrganizationInvitation | null> {
+    return this.invitations[0] ?? null;
+  }
+
+  public async findInvitationById(
+    organizationId: string,
+    invitationId: string,
+  ): Promise<OrganizationInvitation | null> {
+    return (
+      this.invitations.find(
+        (invitation) => invitation.organizationId === organizationId && invitation.id === invitationId,
+      ) ?? null
+    );
+  }
+
+  public async updateInvitation(
+    invitationId: string,
+    input: { status: OrganizationInvitation['status']; acceptedByUserId?: string | null; acceptedAt?: Date | null },
+  ): Promise<OrganizationInvitation | null> {
+    return this.updateStoredInvitation(invitationId, {
+      status: input.status,
+      acceptedByUserId: input.acceptedByUserId,
+      acceptedAt: input.acceptedAt,
+    });
+  }
+
+  public async updateInvitationToken(
+    invitationId: string,
+    input: { tokenHash: string; expiresAt: Date; role?: OrganizationMemberRole },
+  ): Promise<OrganizationInvitation | null> {
+    void input.tokenHash;
+    return this.updateStoredInvitation(invitationId, {
+      expiresAt: input.expiresAt,
+      ...(input.role === undefined ? {} : { role: input.role }),
+      status: 'pending',
+    });
+  }
+
+  public async updateInvitationSendStatus(
+    invitationId: string,
+    input: {
+      sendStatus: OrganizationInvitation['sendStatus'];
+      errorCode?: string | null;
+      errorMessage?: string | null;
+      incrementResendCount?: boolean;
+      sentAt?: Date | null;
+      lastSentAt?: Date | null;
+    },
+  ): Promise<OrganizationInvitation | null> {
+    const current = await this.findInvitationById('org-1', invitationId);
+    return this.updateStoredInvitation(invitationId, {
+      sendStatus: input.sendStatus,
+      sendErrorCode: input.errorCode === undefined ? current?.sendErrorCode : input.errorCode,
+      sendErrorMessage: input.errorMessage === undefined ? current?.sendErrorMessage : input.errorMessage,
+      sentAt: input.sentAt === undefined ? current?.sentAt : input.sentAt,
+      lastSentAt: input.lastSentAt === undefined ? current?.lastSentAt : input.lastSentAt,
+      resendCount: (current?.resendCount ?? 0) + (input.incrementResendCount === true ? 1 : 0),
+    });
+  }
+
+  public async revokeInvitation(
+    invitationId: string,
+    input: { revokedByUserId: string; revokedAt: Date },
+  ): Promise<OrganizationInvitation | null> {
+    return this.updateStoredInvitation(invitationId, {
+      status: 'revoked',
+      revokedByUserId: input.revokedByUserId,
+      revokedAt: input.revokedAt,
+    });
+  }
+
+  public async insertEmailDeliveryLog(input: unknown): Promise<unknown> {
+    this.emailDeliveryLogs.push(input);
+    return input;
+  }
+
   public async getCreditBalance(): Promise<OrganizationCreditBalance> {
     return this.balance;
   }
@@ -697,6 +1034,23 @@ class InMemoryOrganizationRepository {
 
   public async insertUsageEvent(input: UsageEventInput): Promise<void> {
     this.insertedUsageEvents.push(input);
+  }
+
+  private updateStoredInvitation(
+    invitationId: string,
+    patch: Partial<OrganizationInvitation>,
+  ): OrganizationInvitation | null {
+    const index = this.invitations.findIndex((invitation) => invitation.id === invitationId);
+    if (index < 0) {
+      return null;
+    }
+    const updated = {
+      ...this.invitations[index],
+      ...patch,
+      updatedAt: new Date('2026-01-02T00:00:00.000Z'),
+    };
+    this.invitations[index] = updated;
+    return updated;
   }
 }
 
@@ -745,6 +1099,31 @@ function buildBalance(overrides: Partial<OrganizationCreditBalance> = {}): Organ
     monthlyCredits: 0,
     purchasedCredits: 0,
     monthlyExpiresAt: null,
+    updatedAt: new Date('2026-01-01T00:00:00.000Z'),
+    ...overrides,
+  };
+}
+
+function buildInvitation(overrides: Partial<OrganizationInvitation> = {}): OrganizationInvitation {
+  return {
+    id: 'invitation-1',
+    organizationId: 'org-1',
+    email: 'invited@example.com',
+    role: 'editor',
+    status: 'pending',
+    sendStatus: 'not_sent',
+    sendErrorCode: null,
+    sendErrorMessage: null,
+    sentAt: null,
+    lastSentAt: null,
+    resendCount: 0,
+    invitedByUserId: 'user-1',
+    acceptedByUserId: null,
+    expiresAt: new Date('2026-01-08T00:00:00.000Z'),
+    acceptedAt: null,
+    revokedAt: null,
+    revokedByUserId: null,
+    createdAt: new Date('2026-01-01T00:00:00.000Z'),
     updatedAt: new Date('2026-01-01T00:00:00.000Z'),
     ...overrides,
   };

@@ -528,9 +528,8 @@ describe('page generation routes', () => {
     expect(result).not.toHaveProperty('compiler_error');
     expect(result).not.toHaveProperty('image_model');
     expect(result).not.toHaveProperty('image_params');
-    expect(candidates[0]).toEqual({
-      s3_key: 'session/user-1/entities/entity/job-1.png',
-    });
+    expect(typeof candidates[0]?.candidate_token).toBe('string');
+    expect(candidates[0]).not.toHaveProperty('s3_key');
     expect(candidates[0]).not.toHaveProperty('cdn_url');
     const params = payload.params as Record<string, unknown>;
     expect(params).not.toHaveProperty('source_s3_key');

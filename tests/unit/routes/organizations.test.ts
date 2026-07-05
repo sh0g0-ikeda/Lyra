@@ -1,16 +1,20 @@
 import { describe, expect, it } from 'vitest';
 import type { MiddlewareHandler } from 'hono';
+import { createApp } from '../../../src/app.js';
 import type {
   OrganizationCapability,
   OrganizationAuditLog,
   OrganizationCreditBalance,
+  OrganizationInvitation,
   OrganizationUsageEvent,
   OrganizationWorkspaceSummary,
 } from '../../../src/domain/types/organization.js';
 import type { PaymentRecord } from '../../../src/domain/types/billing.js';
-import type { AuthenticatedUser } from '../../../src/domain/types/user.js';
+import type { AuthenticatedUser, SupabaseJwtClaims } from '../../../src/domain/types/user.js';
+import type { RateLimitResult, RateLimitStore } from '../../../src/middleware/rateLimit.js';
 import type { AppEnv } from '../../../src/types/app.js';
 import { createOrganizationRoutes } from '../../../src/routes/organizations.js';
+import type { ProvisionedUser, UserProvisioningPort } from '../../../src/services/auth/UserProvisioningService.js';
 import type { OrganizationBillingServicePort } from '../../../src/services/organization/OrganizationBillingService.js';
 import type { OrganizationServicePort } from '../../../src/services/organization/OrganizationService.js';
 
@@ -225,6 +229,172 @@ describe('createOrganizationRoutes', () => {
     expect(response.status).toBe(422);
     expect(organizationService.createdOrganizations).toHaveLength(0);
   });
+  it('招待作成APIは招待URLと送信結果を返し、生トークンは返さない', async () => {
+    const routes = createOrganizationRoutes({
+      authMiddleware: buildAuthMiddleware(testUser),
+      rateLimitMiddleware: buildPassThroughMiddleware(),
+      organizationService: new FakeOrganizationService() as unknown as OrganizationServicePort,
+      organizationBillingService: new FakeOrganizationBillingService() as unknown as OrganizationBillingServicePort,
+    });
+
+    const response = await routes.request(`/organizations/${organizationId}/invitations`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        email: 'member@example.com',
+        role: 'editor',
+      }),
+    });
+
+    expect(response.status).toBe(201);
+    const body = (await response.json()) as Record<string, unknown>;
+    expect(body).toMatchObject({
+      invitation_url: 'https://app.lyra-editor.com/invite/new-token',
+      email_delivery: { status: 'sent' },
+    });
+    expect(body).not.toHaveProperty('invitation_token');
+  });
+
+  it('招待preview APIはログイン前に最小情報だけを返す', async () => {
+    const routes = createOrganizationRoutes({
+      authMiddleware: buildAuthMiddleware(testUser),
+      rateLimitMiddleware: buildPassThroughMiddleware(),
+      publicRateLimitMiddleware: buildPassThroughMiddleware(),
+      organizationService: new FakeOrganizationService() as unknown as OrganizationServicePort,
+      organizationBillingService: new FakeOrganizationBillingService() as unknown as OrganizationBillingServicePort,
+    });
+
+    const response = await routes.request('/organization-invitations/raw-token-value-with-enough-length');
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as Record<string, unknown>;
+    expect(body).toEqual({
+      organization: {
+        id: organizationId,
+        name: 'Lyra Studio',
+      },
+      invitation: {
+        email: 'member@example.com',
+        role: 'editor',
+        status: 'pending',
+        expires_at: '2026-07-08T00:00:00.000Z',
+      },
+    });
+  });
+
+  it('招待preview APIは公開レート制限を通す', async () => {
+    let publicRateLimitCount = 0;
+    const routes = createOrganizationRoutes({
+      authMiddleware: buildAuthMiddleware(testUser),
+      rateLimitMiddleware: buildPassThroughMiddleware(),
+      publicRateLimitMiddleware: async (_c, next) => {
+        publicRateLimitCount += 1;
+        await next();
+      },
+      organizationService: new FakeOrganizationService() as unknown as OrganizationServicePort,
+      organizationBillingService: new FakeOrganizationBillingService() as unknown as OrganizationBillingServicePort,
+    });
+
+    const response = await routes.request('/organization-invitations/raw-token-value-with-enough-length');
+
+    expect(response.status).toBe(200);
+    expect(publicRateLimitCount).toBe(1);
+  });
+
+  it('招待プレビューAPIはアプリ全体でもログイン前に取得できる', async () => {
+    const app = createApp({
+      enableDevAuthBypass: false,
+      jwtSecret: 'unit-test-secret',
+      userProvisioningService: new FakeUserProvisioningService(),
+      rateLimitStore: new AllowingRateLimitStore(),
+      organizationService: new FakeOrganizationService() as unknown as OrganizationServicePort,
+      organizationBillingService: new FakeOrganizationBillingService() as unknown as OrganizationBillingServicePort,
+    });
+
+    const response = await app.request('/api/organization-invitations/raw-token-value-with-enough-length');
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      organization: {
+        id: organizationId,
+        name: 'Lyra Studio',
+      },
+      invitation: {
+        email: 'member@example.com',
+        role: 'editor',
+        status: 'pending',
+        expires_at: '2026-07-08T00:00:00.000Z',
+      },
+    });
+  });
+
+  it('招待一覧APIは送信状態と再送回数を返す', async () => {
+    const routes = createOrganizationRoutes({
+      authMiddleware: buildAuthMiddleware(testUser),
+      rateLimitMiddleware: buildPassThroughMiddleware(),
+      organizationService: new FakeOrganizationService() as unknown as OrganizationServicePort,
+      organizationBillingService: new FakeOrganizationBillingService() as unknown as OrganizationBillingServicePort,
+    });
+
+    const response = await routes.request(`/organizations/${organizationId}/invitations`);
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { invitations: Array<Record<string, unknown>> };
+    expect(body.invitations[0]).toMatchObject({
+      id: '550e8400-e29b-41d4-a716-446655440010',
+      organization_id: organizationId,
+      email: 'member@example.com',
+      role: 'editor',
+      status: 'pending',
+      send_status: 'failed',
+      send_error_code: 'MessageRejected',
+      resend_count: 1,
+    });
+  });
+
+  it('招待再送APIは新しい招待URLと送信結果を返す', async () => {
+    const routes = createOrganizationRoutes({
+      authMiddleware: buildAuthMiddleware(testUser),
+      rateLimitMiddleware: buildPassThroughMiddleware(),
+      organizationService: new FakeOrganizationService() as unknown as OrganizationServicePort,
+      organizationBillingService: new FakeOrganizationBillingService() as unknown as OrganizationBillingServicePort,
+    });
+
+    const response = await routes.request(
+      `/organizations/${organizationId}/invitations/550e8400-e29b-41d4-a716-446655440010/resend`,
+      { method: 'POST' },
+    );
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as Record<string, unknown>;
+    expect(body).toMatchObject({
+      invitation_url: 'https://app.lyra-editor.com/invite/new-token',
+      email_delivery: { status: 'sent' },
+    });
+    expect(body).not.toHaveProperty('invitation_token');
+  });
+
+  it('招待取り消しAPIはrevoked状態を返す', async () => {
+    const routes = createOrganizationRoutes({
+      authMiddleware: buildAuthMiddleware(testUser),
+      rateLimitMiddleware: buildPassThroughMiddleware(),
+      organizationService: new FakeOrganizationService() as unknown as OrganizationServicePort,
+      organizationBillingService: new FakeOrganizationBillingService() as unknown as OrganizationBillingServicePort,
+    });
+
+    const response = await routes.request(
+      `/organizations/${organizationId}/invitations/550e8400-e29b-41d4-a716-446655440010/revoke`,
+      { method: 'POST' },
+    );
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { invitation: Record<string, unknown> };
+    expect(body.invitation).toMatchObject({
+      id: '550e8400-e29b-41d4-a716-446655440010',
+      status: 'revoked',
+      revoked_by_user_id: 'user-1',
+    });
+  });
 });
 
 function buildAuthMiddleware(user: AuthenticatedUser): MiddlewareHandler<AppEnv> {
@@ -370,6 +540,74 @@ class FakeOrganizationService {
   public async getCreditBalance(): Promise<OrganizationCreditBalance> {
     return buildWorkspace().balance as OrganizationCreditBalance;
   }
+
+  public async listInvitations(): Promise<OrganizationInvitation[]> {
+    return [buildInvitation()];
+  }
+
+  public async inviteMember(): Promise<{
+    invitation: OrganizationInvitation;
+    invitationUrl: string;
+    emailDelivery: { status: 'sent' };
+  }> {
+    return {
+      invitation: buildInvitation({
+        sendStatus: 'sent',
+        sendErrorCode: null,
+        sendErrorMessage: null,
+        sentAt: new Date('2026-07-02T00:00:00.000Z'),
+        lastSentAt: new Date('2026-07-02T00:00:00.000Z'),
+      }),
+      invitationUrl: 'https://app.lyra-editor.com/invite/new-token',
+      emailDelivery: { status: 'sent' },
+    };
+  }
+
+  public async resendInvitation(): Promise<{
+    invitation: OrganizationInvitation;
+    invitationUrl: string;
+    emailDelivery: { status: 'sent' };
+  }> {
+    return {
+      invitation: buildInvitation({
+        sendStatus: 'sent',
+        sendErrorCode: null,
+        sendErrorMessage: null,
+        sentAt: new Date('2026-07-02T00:00:00.000Z'),
+        lastSentAt: new Date('2026-07-02T00:00:00.000Z'),
+        resendCount: 2,
+      }),
+      invitationUrl: 'https://app.lyra-editor.com/invite/new-token',
+      emailDelivery: { status: 'sent' },
+    };
+  }
+
+  public async revokeInvitation(): Promise<OrganizationInvitation> {
+    return buildInvitation({
+      status: 'revoked',
+      revokedAt: new Date('2026-07-02T00:00:00.000Z'),
+      revokedByUserId: 'user-1',
+    });
+  }
+
+  public async previewInvitation(): Promise<{
+    organization: { id: string; name: string };
+    invitation: Pick<OrganizationInvitation, 'email' | 'role' | 'status' | 'expiresAt'>;
+  }> {
+    const invitation = buildInvitation();
+    return {
+      organization: {
+        id: organizationId,
+        name: 'Lyra Studio',
+      },
+      invitation: {
+        email: invitation.email,
+        role: invitation.role,
+        status: invitation.status,
+        expiresAt: invitation.expiresAt,
+      },
+    };
+  }
 }
 
 function buildWorkspace(): OrganizationWorkspaceSummary {
@@ -409,4 +647,53 @@ function buildWorkspace(): OrganizationWorkspaceSummary {
       updatedAt: new Date('2026-07-01T00:00:00.000Z'),
     },
   };
+}
+
+function buildInvitation(overrides: Partial<OrganizationInvitation> = {}): OrganizationInvitation {
+  return {
+    id: '550e8400-e29b-41d4-a716-446655440010',
+    organizationId,
+    email: 'member@example.com',
+    role: 'editor',
+    status: 'pending',
+    sendStatus: 'failed',
+    sendErrorCode: 'MessageRejected',
+    sendErrorMessage: 'Email address is not verified',
+    sentAt: null,
+    lastSentAt: new Date('2026-07-02T00:00:00.000Z'),
+    resendCount: 1,
+    invitedByUserId: 'user-1',
+    acceptedByUserId: null,
+    expiresAt: new Date('2026-07-08T00:00:00.000Z'),
+    acceptedAt: null,
+    revokedAt: null,
+    revokedByUserId: null,
+    createdAt: new Date('2026-07-01T00:00:00.000Z'),
+    updatedAt: new Date('2026-07-01T00:00:00.000Z'),
+    ...overrides,
+  };
+}
+
+class FakeUserProvisioningService implements UserProvisioningPort {
+  public async provisionFromSupabaseClaims(claims: SupabaseJwtClaims): Promise<ProvisionedUser> {
+    return {
+      user: {
+        ...testUser,
+        supabaseId: claims.sub,
+        email: claims.email,
+      },
+      isNewUser: false,
+    };
+  }
+}
+
+class AllowingRateLimitStore implements RateLimitStore {
+  public async consume(_key: string, maxRequests: number, windowSeconds: number): Promise<RateLimitResult> {
+    return {
+      allowed: true,
+      remaining: Math.max(maxRequests - 1, 0),
+      retryAfterSeconds: windowSeconds,
+      resetAt: new Date('2026-07-01T00:00:00.000Z'),
+    };
+  }
 }

@@ -186,11 +186,13 @@ export const importEntityImageBodySchema = z
   .object({
     image_base64: z.string().min(1).max(Math.ceil((ENTITY_IMPORT_MAX_FILE_SIZE_BYTES * 4) / 3) + 1024),
     entity_type: entityTypeSchema,
+    entity_id: uuidParamSchema.optional(),
   })
   .strict();
 
 export const generateEntityReferenceBodySchema = z
   .object({
+    source_candidate_token: z.string().min(1).max(4096).optional(),
     source_s3_key: z.string().min(1).max(512).optional(),
   })
   .strict();
@@ -200,8 +202,15 @@ export const confirmEntityReferenceBodySchema = z
     selected_s3_keys: z
       .array(z.string().min(1).max(512))
       .min(ENTITY_REFERENCE_LIMITS.MIN_CONFIRM_COUNT)
-      .max(ENTITY_REFERENCE_LIMITS.MAX_CONFIRM_COUNT),
+      .max(ENTITY_REFERENCE_LIMITS.MAX_CONFIRM_COUNT)
+      .optional(),
+    selected_candidate_tokens: z
+      .array(z.string().min(1).max(4096))
+      .min(ENTITY_REFERENCE_LIMITS.MIN_CONFIRM_COUNT)
+      .max(ENTITY_REFERENCE_LIMITS.MAX_CONFIRM_COUNT)
+      .optional(),
     primary_s3_key: z.string().min(1).max(512).optional(),
+    primary_candidate_token: z.string().min(1).max(4096).optional(),
     prompt_supplement: z
       .string()
       .max(ENTITY_REFERENCE_LIMITS.MAX_PROMPT_SUPPLEMENT_LENGTH)
@@ -210,23 +219,31 @@ export const confirmEntityReferenceBodySchema = z
   })
   .strict()
   .superRefine((body, ctx) => {
-    const uniqueKeyCount = new Set(body.selected_s3_keys).size;
-    if (uniqueKeyCount !== body.selected_s3_keys.length) {
+    if (body.selected_s3_keys === undefined && body.selected_candidate_tokens === undefined) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: 'selected_s3_keys must not contain duplicates',
-        path: ['selected_s3_keys'],
+        message: 'selected_candidate_tokens is required',
+        path: ['selected_candidate_tokens'],
+      });
+      return;
+    }
+
+    const selectedValues = body.selected_candidate_tokens ?? body.selected_s3_keys ?? [];
+    const primaryValue = body.primary_candidate_token ?? body.primary_s3_key;
+    const uniqueKeyCount = new Set(selectedValues).size;
+    if (uniqueKeyCount !== selectedValues.length) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'selected references must not contain duplicates',
+        path: [body.selected_candidate_tokens === undefined ? 'selected_s3_keys' : 'selected_candidate_tokens'],
       });
     }
 
-    if (
-      body.primary_s3_key !== undefined &&
-      !body.selected_s3_keys.includes(body.primary_s3_key)
-    ) {
+    if (primaryValue !== undefined && !selectedValues.includes(primaryValue)) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: 'primary_s3_key must be included in selected_s3_keys',
-        path: ['primary_s3_key'],
+        message: 'primary reference must be included in selected references',
+        path: [body.primary_candidate_token === undefined ? 'primary_s3_key' : 'primary_candidate_token'],
       });
     }
   });

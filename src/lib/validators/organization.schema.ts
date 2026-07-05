@@ -4,7 +4,7 @@ const organizationName = z.string().trim().min(1).max(120);
 const nullableOrganizationText = z.string().trim().min(1).max(200).nullable().optional();
 const email = z.string().trim().email().max(320);
 const uuid = z.string().uuid();
-const organizationRoleSchema = z.enum(['owner', 'admin', 'billing', 'editor', 'creator', 'viewer']);
+const organizationRoleSchema = z.enum(['owner', 'admin', 'billing', 'editor', 'viewer']);
 const enterprisePlanSchema = z.enum(['enterprise_a', 'enterprise_b', 'enterprise_c']);
 
 export const organizationUuidParamSchema = uuid;

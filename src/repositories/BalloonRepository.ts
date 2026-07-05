@@ -32,17 +32,36 @@ export interface BalloonContext {
 }
 
 export interface BalloonRepository {
-  findPageContextByIdAndUserId(pageId: string, userId: string): Promise<PageBalloonContext | null>;
-  findBalloonContextByIdAndUserId(balloonId: string, userId: string): Promise<BalloonContext | null>;
-  createBalloon(pageId: string, userId: string, input: CreateBalloonInput): Promise<Balloon | null>;
-  findBalloonsByPageIdAndUserId(pageId: string, userId: string): Promise<Balloon[]>;
+  findPageContextByIdAndUserId(
+    pageId: string,
+    userId: string,
+    organizationId?: string | null,
+  ): Promise<PageBalloonContext | null>;
+  findBalloonContextByIdAndUserId(
+    balloonId: string,
+    userId: string,
+    organizationId?: string | null,
+  ): Promise<BalloonContext | null>;
+  createBalloon(
+    pageId: string,
+    userId: string,
+    input: CreateBalloonInput,
+    organizationId?: string | null,
+  ): Promise<Balloon | null>;
+  findBalloonsByPageIdAndUserId(pageId: string, userId: string, organizationId?: string | null): Promise<Balloon[]>;
   replaceBalloonsByPageIdAndUserId(
     pageId: string,
     userId: string,
     inputs: CreateBalloonInput[],
+    organizationId?: string | null,
   ): Promise<Balloon[]>;
-  updateBalloon(balloonId: string, userId: string, input: UpdateBalloonInput): Promise<Balloon | null>;
-  deleteBalloon(balloonId: string, userId: string): Promise<boolean>;
+  updateBalloon(
+    balloonId: string,
+    userId: string,
+    input: UpdateBalloonInput,
+    organizationId?: string | null,
+  ): Promise<Balloon | null>;
+  deleteBalloon(balloonId: string, userId: string, organizationId?: string | null): Promise<boolean>;
 }
 
 interface PageContextRow extends QueryResultRow {
@@ -82,7 +101,11 @@ interface BalloonRow extends QueryResultRow {
 export class PostgresBalloonRepository implements BalloonRepository {
   public constructor(private readonly client: DatabaseClient & TransactionRunner) {}
 
-  public async findPageContextByIdAndUserId(pageId: string, userId: string): Promise<PageBalloonContext | null> {
+  public async findPageContextByIdAndUserId(
+    pageId: string,
+    userId: string,
+    organizationId: string | null = null,
+  ): Promise<PageBalloonContext | null> {
     const result = await this.client.query<PageContextRow>(
       `
       SELECT pages.id AS page_id,
@@ -97,10 +120,23 @@ export class PostgresBalloonRepository implements BalloonRepository {
       INNER JOIN works ON works.id = chapters.work_id
       LEFT JOIN panels ON panels.page_id = pages.id
       WHERE pages.id = $1
-        AND works.user_id = $2
+        AND (
+          ($3::uuid IS NULL AND works.user_id = $2 AND works.organization_id IS NULL)
+          OR (
+            $3::uuid IS NOT NULL
+            AND works.organization_id = $3::uuid
+            AND EXISTS (
+              SELECT 1
+              FROM organization_members
+              WHERE organization_members.organization_id = works.organization_id
+                AND organization_members.user_id = $2
+                AND organization_members.status = 'active'
+            )
+          )
+        )
       GROUP BY pages.id, chapters.work_id, pages.status, pages.dialogue_mode, pages.generated_image
       `,
-      [pageId, userId],
+      [pageId, userId, organizationId],
     );
 
     const row = result.rows[0];
@@ -116,7 +152,11 @@ export class PostgresBalloonRepository implements BalloonRepository {
         };
   }
 
-  public async findBalloonContextByIdAndUserId(balloonId: string, userId: string): Promise<BalloonContext | null> {
+  public async findBalloonContextByIdAndUserId(
+    balloonId: string,
+    userId: string,
+    organizationId: string | null = null,
+  ): Promise<BalloonContext | null> {
     const result = await this.client.query<BalloonContextRow>(
       `
       SELECT balloons.id AS balloon_id,
@@ -133,10 +173,23 @@ export class PostgresBalloonRepository implements BalloonRepository {
       INNER JOIN works ON works.id = chapters.work_id
       LEFT JOIN panels ON panels.page_id = pages.id
       WHERE balloons.id = $1
-        AND works.user_id = $2
+        AND (
+          ($3::uuid IS NULL AND works.user_id = $2 AND works.organization_id IS NULL)
+          OR (
+            $3::uuid IS NOT NULL
+            AND works.organization_id = $3::uuid
+            AND EXISTS (
+              SELECT 1
+              FROM organization_members
+              WHERE organization_members.organization_id = works.organization_id
+                AND organization_members.user_id = $2
+                AND organization_members.status = 'active'
+            )
+          )
+        )
       GROUP BY balloons.id, pages.id, chapters.work_id, pages.status, pages.dialogue_mode, pages.generated_image
       `,
-      [balloonId, userId],
+      [balloonId, userId, organizationId],
     );
 
     const row = result.rows[0];
@@ -153,7 +206,12 @@ export class PostgresBalloonRepository implements BalloonRepository {
         };
   }
 
-  public async createBalloon(pageId: string, userId: string, input: CreateBalloonInput): Promise<Balloon | null> {
+  public async createBalloon(
+    pageId: string,
+    userId: string,
+    input: CreateBalloonInput,
+    organizationId: string | null = null,
+  ): Promise<Balloon | null> {
     const result = await this.client.query<BalloonRow>(
       `
       INSERT INTO balloons (
@@ -186,7 +244,20 @@ export class PostgresBalloonRepository implements BalloonRepository {
       INNER JOIN chapters ON chapters.id = episodes.chapter_id
       INNER JOIN works ON works.id = chapters.work_id
       WHERE pages.id = $1
-        AND works.user_id = $2
+        AND (
+          ($13::uuid IS NULL AND works.user_id = $2 AND works.organization_id IS NULL)
+          OR (
+            $13::uuid IS NOT NULL
+            AND works.organization_id = $13::uuid
+            AND EXISTS (
+              SELECT 1
+              FROM organization_members
+              WHERE organization_members.organization_id = works.organization_id
+                AND organization_members.user_id = $2
+                AND organization_members.status = 'active'
+            )
+          )
+        )
       RETURNING *
       `,
       [
@@ -202,13 +273,18 @@ export class PostgresBalloonRepository implements BalloonRepository {
         input.fontFamily,
         input.panelOrderReference,
         input.zIndex,
+        organizationId,
       ],
     );
 
     return result.rows[0] === undefined ? null : mapBalloonRow(result.rows[0]);
   }
 
-  public async findBalloonsByPageIdAndUserId(pageId: string, userId: string): Promise<Balloon[]> {
+  public async findBalloonsByPageIdAndUserId(
+    pageId: string,
+    userId: string,
+    organizationId: string | null = null,
+  ): Promise<Balloon[]> {
     const result = await this.client.query<BalloonRow>(
       `
       SELECT balloons.*
@@ -218,10 +294,23 @@ export class PostgresBalloonRepository implements BalloonRepository {
       INNER JOIN chapters ON chapters.id = episodes.chapter_id
       INNER JOIN works ON works.id = chapters.work_id
       WHERE balloons.page_id = $1
-        AND works.user_id = $2
+        AND (
+          ($3::uuid IS NULL AND works.user_id = $2 AND works.organization_id IS NULL)
+          OR (
+            $3::uuid IS NOT NULL
+            AND works.organization_id = $3::uuid
+            AND EXISTS (
+              SELECT 1
+              FROM organization_members
+              WHERE organization_members.organization_id = works.organization_id
+                AND organization_members.user_id = $2
+                AND organization_members.status = 'active'
+            )
+          )
+        )
       ORDER BY balloons.z_index ASC, balloons.id ASC
       `,
-      [pageId, userId],
+      [pageId, userId, organizationId],
     );
 
     return result.rows.map(mapBalloonRow);
@@ -231,6 +320,7 @@ export class PostgresBalloonRepository implements BalloonRepository {
     pageId: string,
     userId: string,
     inputs: CreateBalloonInput[],
+    organizationId: string | null = null,
   ): Promise<Balloon[]> {
     return this.client.transaction(async (transactionClient) => {
       await transactionClient.query(
@@ -242,9 +332,22 @@ export class PostgresBalloonRepository implements BalloonRepository {
           AND pages.episode_id = episodes.id
           AND episodes.chapter_id = chapters.id
           AND chapters.work_id = works.id
-          AND works.user_id = $2
+          AND (
+            ($3::uuid IS NULL AND works.user_id = $2 AND works.organization_id IS NULL)
+            OR (
+              $3::uuid IS NOT NULL
+              AND works.organization_id = $3::uuid
+              AND EXISTS (
+                SELECT 1
+                FROM organization_members
+                WHERE organization_members.organization_id = works.organization_id
+                  AND organization_members.user_id = $2
+                  AND organization_members.status = 'active'
+              )
+            )
+          )
         `,
-        [pageId, userId],
+        [pageId, userId, organizationId],
       );
 
       const saved: Balloon[] = [];
@@ -281,7 +384,20 @@ export class PostgresBalloonRepository implements BalloonRepository {
           INNER JOIN chapters ON chapters.id = episodes.chapter_id
           INNER JOIN works ON works.id = chapters.work_id
           WHERE pages.id = $1
-            AND works.user_id = $2
+            AND (
+              ($13::uuid IS NULL AND works.user_id = $2 AND works.organization_id IS NULL)
+              OR (
+                $13::uuid IS NOT NULL
+                AND works.organization_id = $13::uuid
+                AND EXISTS (
+                  SELECT 1
+                  FROM organization_members
+                  WHERE organization_members.organization_id = works.organization_id
+                    AND organization_members.user_id = $2
+                    AND organization_members.status = 'active'
+                )
+              )
+            )
           RETURNING *
           `,
           [
@@ -297,6 +413,7 @@ export class PostgresBalloonRepository implements BalloonRepository {
             input.fontFamily,
             input.panelOrderReference,
             input.zIndex,
+            organizationId,
           ],
         );
 
@@ -310,7 +427,12 @@ export class PostgresBalloonRepository implements BalloonRepository {
     });
   }
 
-  public async updateBalloon(balloonId: string, userId: string, input: UpdateBalloonInput): Promise<Balloon | null> {
+  public async updateBalloon(
+    balloonId: string,
+    userId: string,
+    input: UpdateBalloonInput,
+    organizationId: string | null = null,
+  ): Promise<Balloon | null> {
     const result = await this.client.query<BalloonRow>(
       `
       UPDATE balloons
@@ -330,7 +452,20 @@ export class PostgresBalloonRepository implements BalloonRepository {
       INNER JOIN works ON works.id = chapters.work_id
       WHERE balloons.id = $1
         AND balloons.page_id = pages.id
-        AND works.user_id = $2
+        AND (
+          ($17::uuid IS NULL AND works.user_id = $2 AND works.organization_id IS NULL)
+          OR (
+            $17::uuid IS NOT NULL
+            AND works.organization_id = $17::uuid
+            AND EXISTS (
+              SELECT 1
+              FROM organization_members
+              WHERE organization_members.organization_id = works.organization_id
+                AND organization_members.user_id = $2
+                AND organization_members.status = 'active'
+            )
+          )
+        )
       RETURNING balloons.*
       `,
       [
@@ -350,13 +485,18 @@ export class PostgresBalloonRepository implements BalloonRepository {
         input.panelOrderReference !== undefined,
         input.panelOrderReference ?? null,
         input.zIndex ?? null,
+        organizationId,
       ],
     );
 
     return result.rows[0] === undefined ? null : mapBalloonRow(result.rows[0]);
   }
 
-  public async deleteBalloon(balloonId: string, userId: string): Promise<boolean> {
+  public async deleteBalloon(
+    balloonId: string,
+    userId: string,
+    organizationId: string | null = null,
+  ): Promise<boolean> {
     const result = await this.client.query(
       `
       DELETE FROM balloons
@@ -366,9 +506,22 @@ export class PostgresBalloonRepository implements BalloonRepository {
         AND pages.episode_id = episodes.id
         AND episodes.chapter_id = chapters.id
         AND chapters.work_id = works.id
-        AND works.user_id = $2
+        AND (
+          ($3::uuid IS NULL AND works.user_id = $2 AND works.organization_id IS NULL)
+          OR (
+            $3::uuid IS NOT NULL
+            AND works.organization_id = $3::uuid
+            AND EXISTS (
+              SELECT 1
+              FROM organization_members
+              WHERE organization_members.organization_id = works.organization_id
+                AND organization_members.user_id = $2
+                AND organization_members.status = 'active'
+            )
+          )
+        )
       `,
-      [balloonId, userId],
+      [balloonId, userId, organizationId],
     );
 
     return (result.rowCount ?? 0) > 0;

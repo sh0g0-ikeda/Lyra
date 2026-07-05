@@ -33,6 +33,11 @@ import type {
   UpdateWorkRequest,
   Work,
 } from '../../../src/services/story/StoryService.js';
+import type {
+  OrganizationCapability,
+  OrganizationWorkspaceSummary,
+} from '../../../src/domain/types/organization.js';
+import type { OrganizationServicePort } from '../../../src/services/organization/OrganizationService.js';
 
 const jwtSecret = 'unit-test-secret';
 const user: AuthenticatedUser = {
@@ -79,12 +84,17 @@ class FakeCreditService implements CreditServicePort {
 }
 
 class FakeStoryService implements StoryServicePort {
-  public async listWorks(userId: string): Promise<Work[]> {
-    return [buildWork({ userId })];
+  public listWorksOrganizationId: string | null | undefined = undefined;
+  public createWorkOrganizationId: string | null | undefined = undefined;
+
+  public async listWorks(userId: string, organizationId?: string | null): Promise<Work[]> {
+    this.listWorksOrganizationId = organizationId;
+    return [buildWork({ userId, organizationId: organizationId ?? null })];
   }
 
   public async createWork(userId: string, input: CreateWorkRequest): Promise<Work> {
-    return buildWork({ userId, title: input.title });
+    this.createWorkOrganizationId = input.organizationId;
+    return buildWork({ userId, title: input.title, organizationId: input.organizationId ?? null });
   }
 
   public async getWork(userId: string, requestedWorkId: string): Promise<Work> {
@@ -367,6 +377,65 @@ describe('story routes', () => {
       version: 1,
     });
     expect(payload).not.toHaveProperty('user_id');
+  });
+
+  it('法人workspace指定の作品作成ではmembership確認とorganizationId伝播を行う', async () => {
+    const storyService = new FakeStoryService();
+    const organizationService = new FakeOrganizationService();
+    const app = createTestApp({
+      storyService,
+      organizationService: organizationService as unknown as OrganizationServicePort,
+    });
+    const token = await createToken();
+
+    const response = await app.request('/api/works', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        organization_id: '550e8400-e29b-41d4-a716-446655440000',
+        title: '法人作品',
+        genre: 'business manga',
+      }),
+    });
+
+    expect(response.status).toBe(201);
+    expect(storyService.createWorkOrganizationId).toBe('550e8400-e29b-41d4-a716-446655440000');
+    expect(organizationService.requiredMemberships).toEqual([
+      {
+        organizationId: '550e8400-e29b-41d4-a716-446655440000',
+        userId: user.id,
+        capability: 'create_work',
+      },
+    ]);
+  });
+
+  it('法人workspace指定の作品一覧ではmembership確認とorganizationId伝播を行う', async () => {
+    const storyService = new FakeStoryService();
+    const organizationService = new FakeOrganizationService();
+    const app = createTestApp({
+      storyService,
+      organizationService: organizationService as unknown as OrganizationServicePort,
+    });
+    const token = await createToken();
+
+    const response = await app.request('/api/works?organization_id=550e8400-e29b-41d4-a716-446655440000', {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    expect(response.status).toBe(200);
+    expect(storyService.listWorksOrganizationId).toBe('550e8400-e29b-41d4-a716-446655440000');
+    expect(organizationService.requiredMemberships).toEqual([
+      {
+        organizationId: '550e8400-e29b-41d4-a716-446655440000',
+        userId: user.id,
+        capability: 'view_work',
+      },
+    ]);
   });
 
   it('returns 422 for invalid work creation input', async () => {
@@ -750,24 +819,95 @@ describe('story routes', () => {
   });
 });
 
+interface CreateStoryTestAppOptions {
+  storyCollaborationService?: StoryCollaborationServicePort;
+  pageSkeletonService?: PageSkeletonServicePort;
+  pageService?: PageServicePort;
+  episodeStoryAutofillService?: EpisodeStoryAutofillServicePort;
+  storyService?: StoryServicePort;
+  organizationService?: OrganizationServicePort;
+}
+
 function createTestApp(
-  storyCollaborationService: StoryCollaborationServicePort = new FakeStoryCollaborationService(),
+  optionsOrStoryCollaborationService: StoryCollaborationServicePort | CreateStoryTestAppOptions = new FakeStoryCollaborationService(),
   pageSkeletonService: PageSkeletonServicePort = new FakePageSkeletonService(),
   pageService: PageServicePort = new FakePageService(),
   episodeStoryAutofillService: EpisodeStoryAutofillServicePort = new FakeEpisodeStoryAutofillService(),
 ): ReturnType<typeof createApp> {
+  const options = isCreateStoryTestAppOptions(optionsOrStoryCollaborationService)
+    ? optionsOrStoryCollaborationService
+    : {
+        storyCollaborationService: optionsOrStoryCollaborationService,
+        pageSkeletonService,
+        pageService,
+        episodeStoryAutofillService,
+      };
+
   return createApp({
     creditService: new FakeCreditService(),
     episodePageSkeletonQueue: null,
     episodePageSkeletonService: null,
-    episodeStoryAutofillService,
-    pageService,
-    pageSkeletonService,
-    storyCollaborationService,
-    storyService: new FakeStoryService(),
+    episodeStoryAutofillService: options.episodeStoryAutofillService ?? new FakeEpisodeStoryAutofillService(),
+    organizationService: options.organizationService,
+    pageService: options.pageService ?? new FakePageService(),
+    pageSkeletonService: options.pageSkeletonService ?? new FakePageSkeletonService(),
+    storyCollaborationService: options.storyCollaborationService ?? new FakeStoryCollaborationService(),
+    storyService: options.storyService ?? new FakeStoryService(),
     userProvisioningService: new FakeUserProvisioningService(),
     jwtSecret,
   });
+}
+
+function isCreateStoryTestAppOptions(value: unknown): value is CreateStoryTestAppOptions {
+  return typeof value === 'object' && value !== null && !('collaborate' in value);
+}
+
+class FakeOrganizationService {
+  public requiredMemberships: Array<{
+    organizationId: string;
+    userId: string;
+    capability: OrganizationCapability;
+  }> = [];
+  public auditEvents: Array<{
+    organizationId: string;
+    actorUserId: string | null;
+    action: string;
+    targetType: string;
+    targetId?: string | null;
+    metadata?: Record<string, unknown>;
+  }> = [];
+
+  public async requireMembership(
+    organizationId: string,
+    userId: string,
+    capability: OrganizationCapability,
+  ): Promise<OrganizationWorkspaceSummary['membership']> {
+    this.requiredMemberships.push({ organizationId, userId, capability });
+    return {
+      id: 'member-1',
+      organizationId,
+      userId,
+      email: user.email,
+      displayName: user.displayName,
+      role: 'owner',
+      status: 'active',
+      invitedByUserId: null,
+      joinedAt: now,
+      createdAt: now,
+      updatedAt: now,
+    };
+  }
+
+  public async recordAuditEvent(input: {
+    organizationId: string;
+    actorUserId: string | null;
+    action: string;
+    targetType: string;
+    targetId?: string | null;
+    metadata?: Record<string, unknown>;
+  }): Promise<void> {
+    this.auditEvents.push(input);
+  }
 }
 
 function buildWork(overrides: Partial<Work> = {}): Work {

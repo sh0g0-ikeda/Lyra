@@ -1,4 +1,4 @@
-export type UserFacingErrorLanguage = 'ja' | 'en';
+﻿export type UserFacingErrorLanguage = 'ja' | 'en';
 
 interface UserFacingErrorInput {
   message?: string | null;
@@ -45,6 +45,10 @@ const messages = {
     en: 'Some input is incomplete or inconsistent. Check the highlighted fields and try again.',
     ja: '入力内容に不足または不整合があります。入力内容を確認してからもう一度お試しください。',
   },
+  conflict: {
+    en: 'This operation cannot be completed in the current state. Reload the page, check the latest state, then try again.',
+    ja: '現在の状態ではこの操作を完了できません。ページを再読み込みし、最新の状態を確認してからもう一度お試しください。',
+  },
   credits: {
     en: 'Credits are insufficient. Add credits, then try again.',
     ja: 'クレジットが不足しています。クレジットを購入してからもう一度お試しください。',
@@ -55,11 +59,11 @@ const messages = {
   },
   timeout: {
     en: 'The operation is still taking time. Wait a while, then reload the page or jobs list. Avoid starting it again immediately.',
-    ja: '処理に時間がかかっています。しばらく待ってからページまたはジョブ一覧を再読み込みしてください。すぐに重複実行しないでください。',
+    ja: '処理に時間がかかっています。しばらく待ってからページまたはジョブ一覧を再読み込みしてください。すぐに同じ処理を重ねて開始しないでください。',
   },
   billingTimeout: {
     en: 'The billing page took too long to open. Wait a moment, then open it again.',
-    ja: '決済ページの準備に時間がかかっています。少し待ってからもう一度開いてください。',
+    ja: '決済ページの表示に時間がかかっています。少し待ってからもう一度開いてください。',
   },
   billingPlanUnavailable: {
     en: 'This plan is not available for purchase yet. Choose another plan or try again after setup is complete.',
@@ -68,6 +72,22 @@ const messages = {
   unavailable: {
     en: 'This feature is temporarily unavailable. Wait a while, then try again.',
     ja: 'この機能は一時的に利用できません。少し待ってからもう一度お試しください。',
+  },
+  activeInvitation: {
+    en: 'An invitation for this email is already pending. Use resend from the pending invitation list, or revoke it before inviting again.',
+    ja: 'このメールアドレスへの招待はすでに保留中です。保留中の招待から再送するか、取り消してから招待し直してください。',
+  },
+  invitationNotFound: {
+    en: 'This invitation link is not valid. Ask the organization administrator to send a new invitation link.',
+    ja: 'この招待リンクは有効ではありません。組織の管理者に新しい招待リンクの送信を依頼してください。',
+  },
+  invitationExpired: {
+    en: 'This invitation link has expired. Ask the organization administrator to resend the invitation.',
+    ja: 'この招待リンクは期限切れです。組織の管理者に招待の再送を依頼してください。',
+  },
+  invitationEmailMismatch: {
+    en: 'This invitation is for a different email address. Sign out, then sign in or register with the invited email address.',
+    ja: 'この招待は別のメールアドレス宛てです。ログアウトして、招待されたメールアドレスでログインまたは登録してください。',
   },
   queueBusy: {
     en: 'Generation is already queued or running. Wait for the current job to finish before trying again.',
@@ -91,7 +111,7 @@ const messages = {
   },
   needsScene: {
     en: 'This action can run without scenes, but the current story context could not be prepared. Save the story, then try again.',
-    ja: 'シーンなしでも実行できますが、現在のストーリー情報を準備できませんでした。ストーリーを保存してから再度お試しください。',
+    ja: 'シーンなしでも実行できますが、現在のストーリー情報を準備できませんでした。ストーリーを保存してからもう一度お試しください。',
   },
   needsPages: {
     en: 'Create the page skeleton first, then run this action.',
@@ -241,6 +261,18 @@ function findMessageBySpecificCause(normalizedMessage: string, normalizedCode: s
   if (hasAny(normalizedMessage, ['user is not confirmed', 'not confirmed'])) {
     return messages.authNotConfirmed;
   }
+  if (hasAny(normalizedMessage, ['cognito email is not verified', 'email is not verified'])) {
+    return messages.authNotConfirmed;
+  }
+  if (hasAny(normalizedMessage, ['invitation email does not match', 'invited email does not match'])) {
+    return messages.invitationEmailMismatch;
+  }
+  if (hasAny(normalizedMessage, ['invitation has expired', 'invitation expired'])) {
+    return messages.invitationExpired;
+  }
+  if (hasAny(normalizedMessage, ['invitation not found', 'invalid invitation'])) {
+    return messages.invitationNotFound;
+  }
   if (
     hasAny(normalizedMessage, [
       'session expired',
@@ -267,6 +299,9 @@ function findMessageBySpecificCause(normalizedMessage: string, normalizedCode: s
   }
   if (hasAny(normalizedMessage, ['temporarily disabled', 'not configured', 'not available'])) {
     return messages.unavailable;
+  }
+  if (hasAny(normalizedMessage, ['active invitation already exists', 'invitation already exists'])) {
+    return messages.activeInvitation;
   }
   if (hasAny(normalizedMessage, ['already queued or processing', 'already generating', 'page is still generating'])) {
     return messages.queueBusy;
@@ -397,7 +432,7 @@ function findMessageByStatus(status: number | null, normalizedCode: string): Loc
     return messages.validation;
   }
   if (status === 409) {
-    return messages.queueBusy;
+    return messages.conflict;
   }
   if (status === 413) {
     return messages.storyTooLarge;

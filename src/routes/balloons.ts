@@ -7,6 +7,7 @@ import {
   updateBalloonBodySchema,
 } from '../lib/validators/balloon.schema.js';
 import { formatZodValidationError } from '../lib/validationErrorFormatter.js';
+import type { OrganizationServicePort } from '../services/organization/OrganizationService.js';
 import type { BalloonServicePort } from '../services/page/BalloonService.js';
 import type { AppEnv } from '../types/app.js';
 import { readJsonBody } from './requestBody.js';
@@ -15,6 +16,7 @@ export interface BalloonRouteDependencies {
   authMiddleware: MiddlewareHandler<AppEnv>;
   rateLimitMiddleware: MiddlewareHandler<AppEnv>;
   balloonService: BalloonServicePort;
+  organizationService?: OrganizationServicePort;
 }
 
 export function createBalloonRoutes(dependencies: BalloonRouteDependencies): Hono<AppEnv> {
@@ -26,28 +28,35 @@ export function createBalloonRoutes(dependencies: BalloonRouteDependencies): Hon
   app.post('/pages/:id/balloons', async (c) => {
     const user = c.get('user');
     const pageId = parseUuidParam(c, 'id');
+    const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'edit_work');
     const body = createBalloonBodySchema.safeParse(await readJsonBody(c));
     if (!body.success) {
       throw new ValidationError(formatZodValidationError(body.error));
     }
 
-    const balloon = await dependencies.balloonService.createBalloon(user.id, pageId, {
-      speakerEntityId: body.data.speaker_entity_id ?? null,
-      balloonType: body.data.balloon_type,
-      writingMode: body.data.writing_mode,
-      text: body.data.text,
-      position: body.data.position,
-      tail: body.data.tail === undefined ? null : body.data.tail === null ? null : {
-        baseX: body.data.tail.base_x,
-        baseY: body.data.tail.base_y,
-        tipX: body.data.tail.tip_x,
-        tipY: body.data.tail.tip_y,
+    const balloon = await dependencies.balloonService.createBalloon(
+      user.id,
+      pageId,
+      {
+        speakerEntityId: body.data.speaker_entity_id ?? null,
+        balloonType: body.data.balloon_type,
+        writingMode: body.data.writing_mode,
+        text: body.data.text,
+        position: body.data.position,
+        tail: body.data.tail === undefined ? null : body.data.tail === null ? null : {
+          baseX: body.data.tail.base_x,
+          baseY: body.data.tail.base_y,
+          tipX: body.data.tail.tip_x,
+          tipY: body.data.tail.tip_y,
+        },
+        fontSize: body.data.font_size,
+        fontFamily: body.data.font_family,
+        panelOrderReference: body.data.panel_order_reference ?? null,
+        zIndex: body.data.z_index,
       },
-      fontSize: body.data.font_size,
-      fontFamily: body.data.font_family,
-      panelOrderReference: body.data.panel_order_reference ?? null,
-      zIndex: body.data.z_index,
-    });
+      organizationId,
+    );
 
     return c.json(toBalloonResponse(balloon), 201);
   });
@@ -55,7 +64,9 @@ export function createBalloonRoutes(dependencies: BalloonRouteDependencies): Hon
   app.get('/pages/:id/balloons', async (c) => {
     const user = c.get('user');
     const pageId = parseUuidParam(c, 'id');
-    const balloons = await dependencies.balloonService.listBalloons(user.id, pageId);
+    const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'view_work');
+    const balloons = await dependencies.balloonService.listBalloons(user.id, pageId, organizationId);
 
     return c.json({ balloons: balloons.map(toBalloonResponse) });
   });
@@ -63,7 +74,9 @@ export function createBalloonRoutes(dependencies: BalloonRouteDependencies): Hon
   app.post('/pages/:id/auto-balloons', async (c) => {
     const user = c.get('user');
     const pageId = parseUuidParam(c, 'id');
-    const balloons = await dependencies.balloonService.autoGenerateBalloons(user.id, pageId);
+    const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'edit_work');
+    const balloons = await dependencies.balloonService.autoGenerateBalloons(user.id, pageId, organizationId);
 
     return c.json({ balloons: balloons.map(toBalloonResponse) });
   });
@@ -71,28 +84,35 @@ export function createBalloonRoutes(dependencies: BalloonRouteDependencies): Hon
   app.put('/balloons/:id', async (c) => {
     const user = c.get('user');
     const balloonId = parseUuidParam(c, 'id');
+    const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'edit_work');
     const body = updateBalloonBodySchema.safeParse(await readJsonBody(c));
     if (!body.success) {
       throw new ValidationError(formatZodValidationError(body.error));
     }
 
-    const balloon = await dependencies.balloonService.updateBalloon(user.id, balloonId, {
-      speakerEntityId: body.data.speaker_entity_id,
-      balloonType: body.data.balloon_type,
-      writingMode: body.data.writing_mode,
-      text: body.data.text,
-      position: body.data.position,
-      tail: body.data.tail === undefined ? undefined : body.data.tail === null ? null : {
-        baseX: body.data.tail.base_x,
-        baseY: body.data.tail.base_y,
-        tipX: body.data.tail.tip_x,
-        tipY: body.data.tail.tip_y,
+    const balloon = await dependencies.balloonService.updateBalloon(
+      user.id,
+      balloonId,
+      {
+        speakerEntityId: body.data.speaker_entity_id,
+        balloonType: body.data.balloon_type,
+        writingMode: body.data.writing_mode,
+        text: body.data.text,
+        position: body.data.position,
+        tail: body.data.tail === undefined ? undefined : body.data.tail === null ? null : {
+          baseX: body.data.tail.base_x,
+          baseY: body.data.tail.base_y,
+          tipX: body.data.tail.tip_x,
+          tipY: body.data.tail.tip_y,
+        },
+        fontSize: body.data.font_size,
+        fontFamily: body.data.font_family,
+        panelOrderReference: body.data.panel_order_reference,
+        zIndex: body.data.z_index,
       },
-      fontSize: body.data.font_size,
-      fontFamily: body.data.font_family,
-      panelOrderReference: body.data.panel_order_reference,
-      zIndex: body.data.z_index,
-    });
+      organizationId,
+    );
 
     return c.json(toBalloonResponse(balloon));
   });
@@ -100,7 +120,9 @@ export function createBalloonRoutes(dependencies: BalloonRouteDependencies): Hon
   app.delete('/balloons/:id', async (c) => {
     const user = c.get('user');
     const balloonId = parseUuidParam(c, 'id');
-    await dependencies.balloonService.deleteBalloon(user.id, balloonId);
+    const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'edit_work');
+    await dependencies.balloonService.deleteBalloon(user.id, balloonId, organizationId);
 
     return c.body(null, 204);
   });
@@ -115,6 +137,36 @@ function parseUuidParam(c: Context<AppEnv>, name: string): string {
   }
 
   return result.data;
+}
+
+function parseOptionalOrganizationId(c: Context<AppEnv>): string | null {
+  const raw = c.req.query('organization_id');
+  if (raw === undefined || raw.trim() === '') {
+    return null;
+  }
+
+  const result = balloonUuidParamSchema.safeParse(raw);
+  if (!result.success) {
+    throw new ValidationError('organization_id must be a valid UUID');
+  }
+
+  return result.data;
+}
+
+async function requireOrganizationCapability(
+  c: Context<AppEnv>,
+  dependencies: BalloonRouteDependencies,
+  organizationId: string | null,
+  capability: Parameters<NonNullable<BalloonRouteDependencies['organizationService']>['requireMembership']>[2],
+): Promise<void> {
+  if (organizationId === null) {
+    return;
+  }
+  if (dependencies.organizationService === undefined) {
+    throw new ValidationError('Organization support is not enabled');
+  }
+  const user = c.get('user');
+  await dependencies.organizationService.requireMembership(organizationId, user.id, capability);
 }
 
 function toBalloonResponse(balloon: Balloon): Record<string, unknown> {

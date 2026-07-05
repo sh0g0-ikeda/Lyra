@@ -14,18 +14,27 @@ import {
 } from '../lib/validators/entity.schema.js';
 import { formatZodValidationError } from '../lib/validationErrorFormatter.js';
 import { signImageCdnUrl } from '../infrastructure/aws/CloudFrontImageUrlSigner.js';
+import { env } from '../lib/env.js';
 import type { EntityServicePort } from '../services/entity/EntityService.js';
 import type { EntityReferenceServicePort } from '../services/entity/EntityReferenceService.js';
 import type { EntityReferenceImageExportServicePort } from '../services/entity/EntityReferenceImageExportService.js';
+import {
+  createReferenceCandidateToken,
+  parseReferenceCandidateToken,
+} from '../services/entity/ReferenceCandidateToken.js';
 import type { OrganizationServicePort } from '../services/organization/OrganizationService.js';
 import type { AppEnv } from '../types/app.js';
 import { readJsonBody, readOptionalJsonBody, REQUEST_BODY_LIMITS } from './requestBody.js';
 
 const referenceCandidateImageQuerySchema = z
   .object({
-    s3_key: z.string().trim().min(1).max(512),
+    candidate_token: z.string().trim().min(1).max(4096).optional(),
+    s3_key: z.string().trim().min(1).max(512).optional(),
   })
-  .strict();
+  .strict()
+  .refine((query) => query.candidate_token !== undefined || query.s3_key !== undefined, {
+    message: 'candidate_token is required',
+  });
 
 export interface EntityRouteDependencies {
   authMiddleware: MiddlewareHandler<AppEnv>;
@@ -61,6 +70,10 @@ export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<
       structuredFields: body.data.structured_fields ?? {},
       speechProfile: body.data.speech_profile ?? {},
     }, organizationId);
+    await recordOrganizationAudit(dependencies, organizationId, user.id, 'entity.created', 'entity', entity.id, {
+      work_id: workId,
+      entity_type: body.data.entity_type,
+    });
 
     return c.json(toEntityResponse(entity), 201);
   });
@@ -132,10 +145,22 @@ export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<
       throw new ValidationError(formatZodValidationError(query.error));
     }
 
+    const candidateS3Key = query.data.candidate_token === undefined
+      ? query.data.s3_key
+      : parseReferenceCandidateToken(query.data.candidate_token, {
+        userId: user.id,
+        entityId,
+      }, {
+        secret: getReferenceCandidateTokenSecret(),
+      });
+    if (candidateS3Key === undefined) {
+      throw new ValidationError('candidate_token is required');
+    }
+
     const exportedImage = await dependencies.entityReferenceImageExportService.exportCandidateImage(
       user.id,
       entityId,
-      query.data.s3_key,
+      candidateS3Key,
       organizationId,
     );
 
@@ -164,6 +189,9 @@ export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<
       structuredFields: body.data.structured_fields,
       speechProfile: body.data.speech_profile,
     }, organizationId);
+    await recordOrganizationAudit(dependencies, organizationId, user.id, 'entity.updated', 'entity', entityId, {
+      fields: Object.keys(body.data),
+    });
 
     return c.json(toEntityResponse(entity));
   });
@@ -174,6 +202,7 @@ export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<
     const organizationId = parseOptionalOrganizationId(c);
     await requireOrganizationCapability(c, dependencies, organizationId, 'edit_work');
     await dependencies.entityService.deleteEntity(user.id, entityId, organizationId);
+    await recordOrganizationAudit(dependencies, organizationId, user.id, 'entity.deleted', 'entity', entityId);
 
     return c.body(null, 204);
   });
@@ -201,7 +230,13 @@ export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<
     return c.json({
       suggested_fields: result.suggestedFields,
       prompt_supplement: result.promptSupplement,
-      tmp_image_s3_key: result.tmpImageS3Key,
+      tmp_image_token: createReferenceCandidateToken({
+        userId: user.id,
+        entityId: body.data.entity_id ?? '',
+        s3Key: result.tmpImageS3Key,
+      }, {
+        secret: getReferenceCandidateTokenSecret(),
+      }),
     });
   });
 
@@ -222,8 +257,19 @@ export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<
     }
 
     const result = await dependencies.entityReferenceService.enqueueReferenceGeneration(user.id, entityId, {
-      sourceS3Key: body.data.source_s3_key,
+      sourceS3Key: body.data.source_candidate_token === undefined
+        ? body.data.source_s3_key
+        : parseReferenceCandidateToken(body.data.source_candidate_token, {
+          userId: user.id,
+          entityId,
+        }, {
+          secret: getReferenceCandidateTokenSecret(),
+        }),
     }, organizationId);
+    await recordOrganizationAudit(dependencies, organizationId, user.id, 'entity.reference_generation_queued', 'entity', entityId, {
+      job_id: result.jobId,
+      source_image_attached: body.data.source_candidate_token !== undefined || body.data.source_s3_key !== undefined,
+    });
 
     return c.json({ job_id: result.jobId }, 202);
   });
@@ -239,11 +285,34 @@ export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<
       throw new ValidationError(formatZodValidationError(body.error));
     }
 
+    const selectedS3Keys = body.data.selected_candidate_tokens === undefined
+      ? (body.data.selected_s3_keys ?? [])
+      : body.data.selected_candidate_tokens.map((token) =>
+        parseReferenceCandidateToken(token, {
+          userId: user.id,
+          entityId,
+        }, {
+          secret: getReferenceCandidateTokenSecret(),
+        }),
+      );
+    const primaryS3Key = body.data.primary_candidate_token === undefined
+      ? body.data.primary_s3_key
+      : parseReferenceCandidateToken(body.data.primary_candidate_token, {
+        userId: user.id,
+        entityId,
+      }, {
+        secret: getReferenceCandidateTokenSecret(),
+      });
+
     const referenceSet = await dependencies.entityReferenceService.confirmReferences(user.id, entityId, {
-      selectedS3Keys: body.data.selected_s3_keys,
-      primaryS3Key: body.data.primary_s3_key,
+      selectedS3Keys,
+      primaryS3Key,
       promptSupplement: body.data.prompt_supplement,
     }, organizationId);
+    await recordOrganizationAudit(dependencies, organizationId, user.id, 'entity.reference_confirmed', 'entity', entityId, {
+      selected_count: selectedS3Keys.length,
+      primary_selected: primaryS3Key !== undefined,
+    });
 
     return c.json(await toReferenceSetResponse(referenceSet));
   });
@@ -265,6 +334,9 @@ export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<
       refIdResult.data,
       organizationId,
     );
+    await recordOrganizationAudit(dependencies, organizationId, user.id, 'entity.reference_deleted', 'entity', entityId, {
+      ref_id: refIdResult.data,
+    });
 
     return c.json(await toReferenceSetResponse(referenceSet));
   });
@@ -279,6 +351,13 @@ function parseUuidParam(c: Context<AppEnv>, name: string): string {
   }
 
   return result.data;
+}
+
+function getReferenceCandidateTokenSecret(): string {
+  return env.REFERENCE_CANDIDATE_TOKEN_SECRET
+    ?? env.SUPABASE_JWT_SECRET
+    ?? env.STRIPE_WEBHOOK_SECRET
+    ?? 'development-reference-candidate-token-secret';
 }
 
 function parseOptionalOrganizationId(c: Context<AppEnv>): string | null {
@@ -307,6 +386,28 @@ async function requireOrganizationCapability(
   }
   const user = c.get('user');
   await dependencies.organizationService.requireMembership(organizationId, user.id, capability);
+}
+
+async function recordOrganizationAudit(
+  dependencies: EntityRouteDependencies,
+  organizationId: string | null,
+  actorUserId: string,
+  action: string,
+  targetType: string,
+  targetId: string | null,
+  metadata?: Record<string, unknown>,
+): Promise<void> {
+  if (organizationId === null || dependencies.organizationService === undefined) {
+    return;
+  }
+  await dependencies.organizationService.recordAuditEvent({
+    organizationId,
+    actorUserId,
+    action,
+    targetType,
+    targetId,
+    metadata,
+  });
 }
 
 function toEntityResponse(entity: Entity): Record<string, unknown> {

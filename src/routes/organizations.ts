@@ -30,12 +30,31 @@ import { readJsonBody, REQUEST_BODY_LIMITS } from './requestBody.js';
 export interface OrganizationRouteDependencies {
   authMiddleware: MiddlewareHandler<AppEnv>;
   rateLimitMiddleware: MiddlewareHandler<AppEnv>;
+  publicRateLimitMiddleware?: MiddlewareHandler<AppEnv>;
   organizationService: OrganizationServicePort;
   organizationBillingService: OrganizationBillingServicePort;
 }
 
 export function createOrganizationRoutes(dependencies: OrganizationRouteDependencies): Hono<AppEnv> {
   const app = new Hono<AppEnv>();
+
+  app.get('/organization-invitations/:token', dependencies.publicRateLimitMiddleware ?? buildNoopMiddleware(), async (c) => {
+    const token = c.req.param('token').trim();
+    const body = acceptInvitationBodySchema.safeParse({ token });
+    if (!body.success) {
+      throw new ValidationError(formatZodValidationError(body.error));
+    }
+    const preview = await dependencies.organizationService.previewInvitation(body.data.token);
+    return c.json({
+      organization: preview.organization,
+      invitation: {
+        email: preview.invitation.email,
+        role: preview.invitation.role,
+        status: preview.invitation.status,
+        expires_at: preview.invitation.expiresAt.toISOString(),
+      },
+    });
+  });
 
   app.use('*', dependencies.authMiddleware);
   app.use('*', dependencies.rateLimitMiddleware);
@@ -109,10 +128,38 @@ export function createOrganizationRoutes(dependencies: OrganizationRouteDependen
     return c.json(
       {
         invitation: toInvitationResponse(result.invitation),
-        invitation_token: result.token,
+        invitation_url: result.invitationUrl,
+        email_delivery: result.emailDelivery,
       },
       201,
     );
+  });
+
+  app.get('/organizations/:organizationId/invitations', async (c) => {
+    const user = c.get('user');
+    const organizationId = parseOrganizationId(c);
+    const invitations = await dependencies.organizationService.listInvitations(user.id, organizationId);
+    return c.json({ invitations: invitations.map(toInvitationResponse) });
+  });
+
+  app.post('/organizations/:organizationId/invitations/:invitationId/resend', async (c) => {
+    const user = c.get('user');
+    const organizationId = parseOrganizationId(c);
+    const invitationId = parseUuidParam(c, 'invitationId');
+    const result = await dependencies.organizationService.resendInvitation(user.id, organizationId, invitationId);
+    return c.json({
+      invitation: toInvitationResponse(result.invitation),
+      invitation_url: result.invitationUrl,
+      email_delivery: result.emailDelivery,
+    });
+  });
+
+  app.post('/organizations/:organizationId/invitations/:invitationId/revoke', async (c) => {
+    const user = c.get('user');
+    const organizationId = parseOrganizationId(c);
+    const invitationId = parseUuidParam(c, 'invitationId');
+    const invitation = await dependencies.organizationService.revokeInvitation(user.id, organizationId, invitationId);
+    return c.json({ invitation: toInvitationResponse(invitation) });
   });
 
   app.post('/organization-invitations/accept', async (c) => {
@@ -291,6 +338,12 @@ export function createOrganizationRoutes(dependencies: OrganizationRouteDependen
   return app;
 }
 
+function buildNoopMiddleware(): MiddlewareHandler<AppEnv> {
+  return async (_c, next) => {
+    await next();
+  };
+}
+
 function toPlanResponse(plan: ReturnType<OrganizationBillingServicePort['getEnterprisePlanCatalog']>[number]): Record<string, unknown> {
   return {
     plan_code: plan.planCode,
@@ -371,10 +424,18 @@ function toInvitationResponse(invitation: OrganizationInvitation): Record<string
     email: invitation.email,
     role: invitation.role,
     status: invitation.status,
+    send_status: invitation.sendStatus,
+    send_error_code: invitation.sendErrorCode,
+    send_error_message: invitation.sendErrorMessage,
+    sent_at: invitation.sentAt?.toISOString() ?? null,
+    last_sent_at: invitation.lastSentAt?.toISOString() ?? null,
+    resend_count: invitation.resendCount,
     invited_by_user_id: invitation.invitedByUserId,
     accepted_by_user_id: invitation.acceptedByUserId,
     expires_at: invitation.expiresAt.toISOString(),
     accepted_at: invitation.acceptedAt?.toISOString() ?? null,
+    revoked_at: invitation.revokedAt?.toISOString() ?? null,
+    revoked_by_user_id: invitation.revokedByUserId,
     created_at: invitation.createdAt.toISOString(),
     updated_at: invitation.updatedAt.toISOString(),
   };

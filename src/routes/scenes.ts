@@ -45,6 +45,9 @@ export function createSceneRoutes(dependencies: SceneRouteDependencies): Hono<Ap
       atmosphere: body.data.atmosphere ?? null,
       involvedEntityIds: body.data.involved_entity_ids ?? [],
     }, organizationId);
+    await recordOrganizationAudit(dependencies, organizationId, user.id, 'scene.created', 'scene', scene.id, {
+      episode_id: episodeId,
+    });
 
     return c.json(toSceneResponse(scene), 201);
   });
@@ -78,6 +81,9 @@ export function createSceneRoutes(dependencies: SceneRouteDependencies): Hono<Ap
       involvedEntityIds: body.data.involved_entity_ids,
       status: body.data.status,
     }, organizationId);
+    await recordOrganizationAudit(dependencies, organizationId, user.id, 'scene.updated', 'scene', sceneId, {
+      fields: Object.keys(body.data),
+    });
 
     return c.json(toSceneResponse(scene));
   });
@@ -88,6 +94,7 @@ export function createSceneRoutes(dependencies: SceneRouteDependencies): Hono<Ap
     const organizationId = parseOptionalOrganizationId(c);
     await requireOrganizationCapability(c, dependencies, organizationId, 'edit_work');
     await dependencies.sceneService.deleteScene(user.id, sceneId, organizationId);
+    await recordOrganizationAudit(dependencies, organizationId, user.id, 'scene.deleted', 'scene', sceneId);
 
     return c.body(null, 204);
   });
@@ -112,6 +119,10 @@ export function createSceneRoutes(dependencies: SceneRouteDependencies): Hono<Ap
       expressionDefault: body.data.expression_default,
       extraNote: body.data.extra_note ?? null,
     }, organizationId);
+    await recordOrganizationAudit(dependencies, organizationId, user.id, 'entity_state.created', 'entity_state', entityState.id, {
+      entity_id: entityId,
+      scene_id: body.data.scene_id ?? null,
+    });
 
     return c.json(toEntityStateResponse(entityState), 201);
   });
@@ -137,6 +148,10 @@ export function createSceneRoutes(dependencies: SceneRouteDependencies): Hono<Ap
       expressionDefault: body.data.expression_default,
       extraNote: body.data.extra_note,
     }, organizationId);
+    await recordOrganizationAudit(dependencies, organizationId, user.id, 'entity_state.updated', 'entity_state', stateId, {
+      entity_id: entityId,
+      fields: Object.keys(body.data),
+    });
 
     return c.json(toEntityStateResponse(entityState));
   });
@@ -182,6 +197,28 @@ async function requireOrganizationCapability(
 
   const user = c.get('user');
   await dependencies.organizationService.requireMembership(organizationId, user.id, capability);
+}
+
+async function recordOrganizationAudit(
+  dependencies: SceneRouteDependencies,
+  organizationId: string | null,
+  actorUserId: string,
+  action: string,
+  targetType: string,
+  targetId: string | null,
+  metadata?: Record<string, unknown>,
+): Promise<void> {
+  if (organizationId === null || dependencies.organizationService === undefined) {
+    return;
+  }
+  await dependencies.organizationService.recordAuditEvent({
+    organizationId,
+    actorUserId,
+    action,
+    targetType,
+    targetId,
+    metadata,
+  });
 }
 
 function toSceneResponse(scene: Scene): Record<string, unknown> {

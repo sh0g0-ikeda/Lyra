@@ -1,8 +1,10 @@
 import type { MiddlewareHandler } from 'hono';
 import {
   EPISODE_STORY_AUTOFILL_ROUTE_PATTERN,
+  BILLING_ACTION_ROUTE_PATTERNS,
   ENTITY_IMPORT_ROUTE_PATTERN,
   ENTITY_GENERATION_ROUTE_PATTERN,
+  ORGANIZATION_INVITATION_ROUTE_PATTERNS,
   PAGE_AUTOFILL_ROUTE_PATTERN,
   PAGE_GENERATION_ROUTE_PATTERN,
   PAGE_SKELETON_GENERATION_ROUTE_PATTERN,
@@ -130,6 +132,8 @@ export function createPublicIpRateLimitMiddleware(
 }
 
 function classifyRateLimitBucket(path: string, method: string): RateLimitBucket {
+  const normalizedMethod = method.toUpperCase();
+
   if (
     PAGE_GENERATION_ROUTE_PATTERN.test(path) ||
     ENTITY_IMPORT_ROUTE_PATTERN.test(path) ||
@@ -149,7 +153,21 @@ function classifyRateLimitBucket(path: string, method: string): RateLimitBucket 
     return 'storyAi';
   }
 
-  if (method.toUpperCase() === 'GET') {
+  if (
+    normalizedMethod === 'POST' &&
+    ORGANIZATION_INVITATION_ROUTE_PATTERNS.some((pattern) => pattern.test(path))
+  ) {
+    return 'invitation';
+  }
+
+  if (
+    normalizedMethod === 'POST' &&
+    BILLING_ACTION_ROUTE_PATTERNS.some((pattern) => pattern.test(path))
+  ) {
+    return 'billingAction';
+  }
+
+  if (normalizedMethod === 'GET') {
     return 'read';
   }
 

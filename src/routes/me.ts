@@ -1,12 +1,14 @@
 import { Hono, type MiddlewareHandler } from 'hono';
 import type { OrganizationWorkspaceSummary } from '../domain/types/organization.js';
 import type { AuthenticatedUser } from '../domain/types/user.js';
+import type { CreditServicePort } from '../services/credit/CreditService.js';
 import type { OrganizationServicePort } from '../services/organization/OrganizationService.js';
 import type { AppEnv } from '../types/app.js';
 
 export interface MeRouteDependencies {
   authMiddleware: MiddlewareHandler<AppEnv>;
   rateLimitMiddleware: MiddlewareHandler<AppEnv>;
+  creditService?: CreditServicePort;
   organizationService?: OrganizationServicePort;
 }
 
@@ -27,9 +29,22 @@ export function createMeRoutes(dependencies: MeRouteDependencies): Hono<AppEnv> 
       dependencies.organizationService === undefined
         ? []
         : await dependencies.organizationService.listWorkspaces(user.id);
+    const personalCredits =
+      dependencies.creditService === undefined
+        ? null
+        : await dependencies.creditService.getBalance(user.id);
 
     return c.json({
       user: toUserResponse(user),
+      personal_credits:
+        personalCredits === null
+          ? null
+          : {
+              monthly_credits: personalCredits.monthlyCredits,
+              purchased_credits: personalCredits.purchasedCredits,
+              total_credits: personalCredits.totalCredits,
+              monthly_expires_at: personalCredits.monthlyExpiresAt?.toISOString() ?? null,
+            },
       organizations: organizations.map(toWorkspaceResponse),
     });
   });

@@ -14,6 +14,7 @@ interface RuntimeGuardConfig {
   DATABASE_QUERY_TIMEOUT_MS?: number;
   CORS_ALLOWED_ORIGINS?: string;
   AUTO_RUN_MIGRATIONS?: boolean;
+  APP_PUBLIC_URL?: string;
   AUTH_PROVIDER?: 'supabase' | 'cognito';
   SUPABASE_JWT_SECRET?: string;
   AWS_REGION?: string;
@@ -43,6 +44,7 @@ interface RuntimeGuardConfig {
   CLOUDFRONT_KEY_PAIR_ID?: string;
   CLOUDFRONT_PRIVATE_KEY?: string;
   CLOUDFRONT_SIGNED_URL_TTL_SECONDS?: number;
+  REFERENCE_CANDIDATE_TOKEN_SECRET?: string;
   ORIGIN_GUARD_HEADER_NAME?: string;
   ORIGIN_GUARD_HEADER_VALUE?: string;
   S3_PRESIGNED_URL_TTL_SECONDS?: number;
@@ -109,6 +111,7 @@ const OPTIONAL_STRIPE_PRICE_KEYS = [
 ] as const;
 
 const PRODUCTION_PUBLIC_URL_KEYS = [
+  'APP_PUBLIC_URL',
   'STRIPE_CHECKOUT_SUCCESS_URL',
   'STRIPE_CHECKOUT_CANCEL_URL',
   'STRIPE_PORTAL_RETURN_URL',
@@ -129,6 +132,7 @@ const PRODUCTION_NON_PLACEHOLDER_KEYS = [
   'COGNITO_ALLOWED_CLIENT_IDS',
   'COGNITO_ISSUER',
   'COGNITO_JWKS_URI',
+  'REFERENCE_CANDIDATE_TOKEN_SECRET',
   'OPENAI_API_KEY',
   'OPENAI_IMAGE_MODEL',
   'OPENAI_BASE_URL',
@@ -292,6 +296,13 @@ export function assertProductionRuntimeConfig(
     if (hasPlaceholderConfigValue(config[key])) {
       violations.push(`${key} must not use a placeholder value`);
     }
+  }
+
+  if (
+    config.REFERENCE_CANDIDATE_TOKEN_SECRET !== undefined &&
+    config.REFERENCE_CANDIDATE_TOKEN_SECRET.trim().length < 32
+  ) {
+    violations.push('REFERENCE_CANDIDATE_TOKEN_SECRET must be at least 32 characters');
   }
 
   if (imageDeliveryMode === 'cloudfront_signed') {

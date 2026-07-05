@@ -3,7 +3,10 @@ import type {
   Organization,
   OrganizationAuditLog,
   OrganizationCreditBalance,
+  EmailDeliveryLog,
+  EmailDeliveryStatus,
   OrganizationInvitation,
+  OrganizationInvitationSendStatus,
   OrganizationMember,
   OrganizationMemberRole,
   OrganizationMemberStatus,
@@ -49,10 +52,33 @@ interface OrganizationInvitationRow extends QueryResultRow {
   email: string;
   role: OrganizationMemberRole;
   status: OrganizationInvitation['status'];
+  send_status: OrganizationInvitationSendStatus;
+  send_error_code: string | null;
+  send_error_message: string | null;
+  sent_at: Date | null;
+  last_sent_at: Date | null;
+  resend_count: number;
   invited_by_user_id: string;
   accepted_by_user_id: string | null;
   expires_at: Date;
   accepted_at: Date | null;
+  revoked_at: Date | null;
+  revoked_by_user_id: string | null;
+  created_at: Date;
+  updated_at: Date;
+}
+
+interface EmailDeliveryLogRow extends QueryResultRow {
+  id: string;
+  organization_id: string | null;
+  invitation_id: string | null;
+  recipient_email: string;
+  template_key: string;
+  provider: string;
+  status: EmailDeliveryStatus;
+  provider_message_id: string | null;
+  error_code: string | null;
+  error_message: string | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -184,12 +210,18 @@ export interface OrganizationRepository {
   ): Promise<OrganizationMember | null>;
   countActiveOwners(organizationId: string, client: DatabaseClient): Promise<number>;
   createInvitation(input: CreateOrganizationInvitationRecord, client: DatabaseClient): Promise<OrganizationInvitation>;
+  listInvitations(organizationId: string, client?: DatabaseClient): Promise<OrganizationInvitation[]>;
   findPendingInvitationByEmail(
     organizationId: string,
     email: string,
     client?: DatabaseClient,
   ): Promise<OrganizationInvitation | null>;
   findInvitationByTokenHash(tokenHash: string, client: DatabaseClient): Promise<OrganizationInvitation | null>;
+  findInvitationById(
+    organizationId: string,
+    invitationId: string,
+    client?: DatabaseClient,
+  ): Promise<OrganizationInvitation | null>;
   updateInvitation(
     invitationId: string,
     input: {
@@ -199,6 +231,43 @@ export interface OrganizationRepository {
     },
     client: DatabaseClient,
   ): Promise<OrganizationInvitation | null>;
+  updateInvitationToken(
+    invitationId: string,
+    input: { tokenHash: string; expiresAt: Date; role?: OrganizationMemberRole },
+    client: DatabaseClient,
+  ): Promise<OrganizationInvitation | null>;
+  updateInvitationSendStatus(
+    invitationId: string,
+    input: {
+      sendStatus: OrganizationInvitationSendStatus;
+      providerMessageId?: string | null;
+      errorCode?: string | null;
+      errorMessage?: string | null;
+      incrementResendCount?: boolean;
+      sentAt?: Date | null;
+      lastSentAt?: Date | null;
+    },
+    client?: DatabaseClient,
+  ): Promise<OrganizationInvitation | null>;
+  revokeInvitation(
+    invitationId: string,
+    input: { revokedByUserId: string; revokedAt: Date },
+    client: DatabaseClient,
+  ): Promise<OrganizationInvitation | null>;
+  insertEmailDeliveryLog(
+    input: {
+      organizationId: string | null;
+      invitationId: string | null;
+      recipientEmail: string;
+      templateKey: string;
+      provider: string;
+      status: EmailDeliveryStatus;
+      providerMessageId?: string | null;
+      errorCode?: string | null;
+      errorMessage?: string | null;
+    },
+    client?: DatabaseClient,
+  ): Promise<EmailDeliveryLog>;
   getCreditBalance(organizationId: string, client?: DatabaseClient): Promise<OrganizationCreditBalance | null>;
   getCreditBalanceForUpdate(organizationId: string, client: DatabaseClient): Promise<OrganizationCreditBalance | null>;
   createCreditBalance(organizationId: string, client: DatabaseClient): Promise<OrganizationCreditBalance>;
@@ -234,6 +303,28 @@ export interface OrganizationRepository {
   ): Promise<OrganizationAuditLog[]>;
   listUsageEvents(organizationId: string, limit: number): Promise<OrganizationUsageEvent[]>;
 }
+
+const INVITATION_RETURNING_COLUMNS = `
+  id,
+  organization_id,
+  email,
+  role,
+  status,
+  send_status,
+  send_error_code,
+  send_error_message,
+  sent_at,
+  last_sent_at,
+  resend_count,
+  invited_by_user_id,
+  accepted_by_user_id,
+  expires_at,
+  accepted_at,
+  revoked_at,
+  revoked_by_user_id,
+  created_at,
+  updated_at
+`;
 
 export class PostgresOrganizationRepository implements OrganizationRepository {
   public constructor(
@@ -502,7 +593,6 @@ export class PostgresOrganizationRepository implements OrganizationRepository {
           WHEN 'admin' THEN 1
           WHEN 'billing' THEN 2
           WHEN 'editor' THEN 3
-          WHEN 'creator' THEN 4
           ELSE 5
         END,
         users.email ASC
@@ -567,12 +657,29 @@ export class PostgresOrganizationRepository implements OrganizationRepository {
         expires_at
       )
       VALUES ($1, lower($2), $3, $4, $5, $6)
-      RETURNING id, organization_id, email, role, status, invited_by_user_id, accepted_by_user_id, expires_at, accepted_at, created_at, updated_at
+      RETURNING ${INVITATION_RETURNING_COLUMNS}
       `,
       [input.organizationId, input.email, input.role, input.tokenHash, input.invitedByUserId, input.expiresAt],
     );
 
     return mapInvitationRow(result.rows[0]);
+  }
+
+  public async listInvitations(
+    organizationId: string,
+    client: DatabaseClient = this.client,
+  ): Promise<OrganizationInvitation[]> {
+    const result = await client.query<OrganizationInvitationRow>(
+      `
+      SELECT ${INVITATION_RETURNING_COLUMNS}
+      FROM organization_invitations
+      WHERE organization_id = $1
+      ORDER BY created_at DESC
+      `,
+      [organizationId],
+    );
+
+    return result.rows.map(mapInvitationRow);
   }
 
   public async findPendingInvitationByEmail(
@@ -582,7 +689,7 @@ export class PostgresOrganizationRepository implements OrganizationRepository {
   ): Promise<OrganizationInvitation | null> {
     const result = await client.query<OrganizationInvitationRow>(
       `
-      SELECT id, organization_id, email, role, status, invited_by_user_id, accepted_by_user_id, expires_at, accepted_at, created_at, updated_at
+      SELECT ${INVITATION_RETURNING_COLUMNS}
       FROM organization_invitations
       WHERE organization_id = $1
         AND lower(email) = lower($2)
@@ -601,12 +708,31 @@ export class PostgresOrganizationRepository implements OrganizationRepository {
   ): Promise<OrganizationInvitation | null> {
     const result = await client.query<OrganizationInvitationRow>(
       `
-      SELECT id, organization_id, email, role, status, invited_by_user_id, accepted_by_user_id, expires_at, accepted_at, created_at, updated_at
+      SELECT ${INVITATION_RETURNING_COLUMNS}
       FROM organization_invitations
       WHERE token_hash = $1
       FOR UPDATE
       `,
       [tokenHash],
+    );
+
+    return result.rows[0] === undefined ? null : mapInvitationRow(result.rows[0]);
+  }
+
+  public async findInvitationById(
+    organizationId: string,
+    invitationId: string,
+    client: DatabaseClient = this.client,
+  ): Promise<OrganizationInvitation | null> {
+    const result = await client.query<OrganizationInvitationRow>(
+      `
+      SELECT ${INVITATION_RETURNING_COLUMNS}
+      FROM organization_invitations
+      WHERE organization_id = $1
+        AND id = $2
+      LIMIT 1
+      `,
+      [organizationId, invitationId],
     );
 
     return result.rows[0] === undefined ? null : mapInvitationRow(result.rows[0]);
@@ -627,9 +753,10 @@ export class PostgresOrganizationRepository implements OrganizationRepository {
       SET status = $2,
           accepted_by_user_id = CASE WHEN $3::boolean THEN $4 ELSE accepted_by_user_id END,
           accepted_at = CASE WHEN $5::boolean THEN $6 ELSE accepted_at END,
+          revoked_at = CASE WHEN $2 = 'revoked' THEN NOW() ELSE revoked_at END,
           updated_at = NOW()
       WHERE id = $1
-      RETURNING id, organization_id, email, role, status, invited_by_user_id, accepted_by_user_id, expires_at, accepted_at, created_at, updated_at
+      RETURNING ${INVITATION_RETURNING_COLUMNS}
       `,
       [
         invitationId,
@@ -642,6 +769,140 @@ export class PostgresOrganizationRepository implements OrganizationRepository {
     );
 
     return result.rows[0] === undefined ? null : mapInvitationRow(result.rows[0]);
+  }
+
+  public async updateInvitationToken(
+    invitationId: string,
+    input: { tokenHash: string; expiresAt: Date; role?: OrganizationMemberRole },
+    client: DatabaseClient,
+  ): Promise<OrganizationInvitation | null> {
+    const result = await client.query<OrganizationInvitationRow>(
+      `
+      UPDATE organization_invitations
+      SET token_hash = $2,
+          expires_at = $3,
+          role = COALESCE($4, role),
+          status = 'pending',
+          updated_at = NOW()
+      WHERE id = $1
+      RETURNING ${INVITATION_RETURNING_COLUMNS}
+      `,
+      [invitationId, input.tokenHash, input.expiresAt, input.role ?? null],
+    );
+
+    return result.rows[0] === undefined ? null : mapInvitationRow(result.rows[0]);
+  }
+
+  public async updateInvitationSendStatus(
+    invitationId: string,
+    input: {
+      sendStatus: OrganizationInvitationSendStatus;
+      providerMessageId?: string | null;
+      errorCode?: string | null;
+      errorMessage?: string | null;
+      incrementResendCount?: boolean;
+      sentAt?: Date | null;
+      lastSentAt?: Date | null;
+    },
+    client: DatabaseClient = this.client,
+  ): Promise<OrganizationInvitation | null> {
+    void input.providerMessageId;
+    const result = await client.query<OrganizationInvitationRow>(
+      `
+      UPDATE organization_invitations
+      SET send_status = $2,
+          send_error_code = CASE WHEN $3::boolean THEN $4 ELSE send_error_code END,
+          send_error_message = CASE WHEN $5::boolean THEN $6 ELSE send_error_message END,
+          sent_at = CASE WHEN $7::boolean THEN $8 ELSE sent_at END,
+          last_sent_at = CASE WHEN $9::boolean THEN $10 ELSE last_sent_at END,
+          resend_count = CASE WHEN $11::boolean THEN resend_count + 1 ELSE resend_count END,
+          updated_at = NOW()
+      WHERE id = $1
+      RETURNING ${INVITATION_RETURNING_COLUMNS}
+      `,
+      [
+        invitationId,
+        input.sendStatus,
+        input.errorCode !== undefined,
+        input.errorCode ?? null,
+        input.errorMessage !== undefined,
+        input.errorMessage ?? null,
+        input.sentAt !== undefined,
+        input.sentAt ?? null,
+        input.lastSentAt !== undefined,
+        input.lastSentAt ?? null,
+        input.incrementResendCount === true,
+      ],
+    );
+
+    return result.rows[0] === undefined ? null : mapInvitationRow(result.rows[0]);
+  }
+
+  public async revokeInvitation(
+    invitationId: string,
+    input: { revokedByUserId: string; revokedAt: Date },
+    client: DatabaseClient,
+  ): Promise<OrganizationInvitation | null> {
+    const result = await client.query<OrganizationInvitationRow>(
+      `
+      UPDATE organization_invitations
+      SET status = 'revoked',
+          revoked_at = $2,
+          revoked_by_user_id = $3,
+          updated_at = NOW()
+      WHERE id = $1
+      RETURNING ${INVITATION_RETURNING_COLUMNS}
+      `,
+      [invitationId, input.revokedAt, input.revokedByUserId],
+    );
+
+    return result.rows[0] === undefined ? null : mapInvitationRow(result.rows[0]);
+  }
+
+  public async insertEmailDeliveryLog(
+    input: {
+      organizationId: string | null;
+      invitationId: string | null;
+      recipientEmail: string;
+      templateKey: string;
+      provider: string;
+      status: EmailDeliveryStatus;
+      providerMessageId?: string | null;
+      errorCode?: string | null;
+      errorMessage?: string | null;
+    },
+    client: DatabaseClient = this.client,
+  ): Promise<EmailDeliveryLog> {
+    const result = await client.query<EmailDeliveryLogRow>(
+      `
+      INSERT INTO email_delivery_logs (
+        organization_id,
+        invitation_id,
+        recipient_email,
+        template_key,
+        provider,
+        status,
+        provider_message_id,
+        error_code,
+        error_message
+      )
+      VALUES ($1, $2, lower($3), $4, $5, $6, $7, $8, $9)
+      RETURNING id, organization_id, invitation_id, recipient_email, template_key, provider, status, provider_message_id, error_code, error_message, created_at, updated_at
+      `,
+      [
+        input.organizationId,
+        input.invitationId,
+        input.recipientEmail,
+        input.templateKey,
+        input.provider,
+        input.status,
+        input.providerMessageId ?? null,
+        input.errorCode ?? null,
+        input.errorMessage ?? null,
+      ],
+    );
+
+    return mapEmailDeliveryLogRow(result.rows[0]);
   }
 
   public async getCreditBalance(
@@ -865,7 +1126,7 @@ function mapMemberRow(row: OrganizationMemberRow): OrganizationMember {
     userId: row.user_id,
     email: row.email,
     displayName: row.display_name,
-    role: row.role,
+    role: normalizeOrganizationMemberRole(row.role),
     status: row.status,
     invitedByUserId: row.invited_by_user_id,
     joinedAt: row.joined_at,
@@ -879,12 +1140,41 @@ function mapInvitationRow(row: OrganizationInvitationRow): OrganizationInvitatio
     id: row.id,
     organizationId: row.organization_id,
     email: row.email,
-    role: row.role,
+    role: normalizeOrganizationMemberRole(row.role),
     status: row.status,
+    sendStatus: row.send_status,
+    sendErrorCode: row.send_error_code,
+    sendErrorMessage: row.send_error_message,
+    sentAt: row.sent_at,
+    lastSentAt: row.last_sent_at,
+    resendCount: Number(row.resend_count),
     invitedByUserId: row.invited_by_user_id,
     acceptedByUserId: row.accepted_by_user_id,
     expiresAt: row.expires_at,
     acceptedAt: row.accepted_at,
+    revokedAt: row.revoked_at,
+    revokedByUserId: row.revoked_by_user_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function normalizeOrganizationMemberRole(role: string): OrganizationMemberRole {
+  return role === 'creator' ? 'editor' : (role as OrganizationMemberRole);
+}
+
+function mapEmailDeliveryLogRow(row: EmailDeliveryLogRow): EmailDeliveryLog {
+  return {
+    id: row.id,
+    organizationId: row.organization_id,
+    invitationId: row.invitation_id,
+    recipientEmail: row.recipient_email,
+    templateKey: row.template_key,
+    provider: row.provider,
+    status: row.status,
+    providerMessageId: row.provider_message_id,
+    errorCode: row.error_code,
+    errorMessage: row.error_message,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

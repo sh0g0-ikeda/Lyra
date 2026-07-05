@@ -1,7 +1,7 @@
 import { serveStatic } from '@hono/node-server/serve-static';
 import { Hono, type MiddlewareHandler } from 'hono';
-import { ConfigurationError } from './domain/errors/index.js';
-import type { PaidPlanCode } from './domain/constants/billing.js';
+import { ConfigurationError, ValidationError } from './domain/errors/index.js';
+import type { EnterprisePlanCode, PaidPlanCode } from './domain/constants/billing.js';
 import type { SubscriptionPlanCatalogEntry } from './domain/types/billing.js';
 import { EPISODE_LONG_JOB_ACTIVE_JOB_TYPES } from './domain/constants/generation.js';
 import { createPageImageStorageClient } from './infrastructure/aws/S3PageImageStorage.js';
@@ -120,6 +120,8 @@ import {
   EpisodeStoryAutofillService,
   type EpisodeStoryAutofillServicePort,
 } from './services/story/EpisodeStoryAutofillService.js';
+import { acceptInvitationBodySchema } from './lib/validators/organization.schema.js';
+import { formatZodValidationError } from './lib/validationErrorFormatter.js';
 import {
   InlineEpisodeStoryAutofillQueueAdapter,
   SqsEpisodeStoryAutofillQueueAdapter,
@@ -196,6 +198,14 @@ import {
   assertOrganizationBillingConfig,
   type OrganizationBillingServicePort,
 } from './services/organization/OrganizationBillingService.js';
+import { DisabledEmailDeliveryService } from './services/email/DisabledEmailDeliveryService.js';
+import type { EmailDeliveryPort } from './services/email/EmailDeliveryPort.js';
+import { SesEmailDeliveryService } from './services/email/SesEmailDeliveryService.js';
+import { InvitationUrlBuilder } from './services/organization/InvitationUrlBuilder.js';
+import {
+  OrganizationInvitationEmailService,
+  type OrganizationInvitationEmailServicePort,
+} from './services/organization/OrganizationInvitationEmailService.js';
 import {
   PageSkeletonService,
   type PageSkeletonServicePort,
@@ -289,6 +299,11 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
         await next();
       })
     : createPublicIpRateLimitMiddleware(resolvedDependencies.rateLimitStore, 'webhook');
+  const publicReadRateLimitMiddleware: MiddlewareHandler<AppEnv> = enableDevAuthBypass
+    ? (async (_c, next) => {
+        await next();
+      })
+    : createPublicIpRateLimitMiddleware(resolvedDependencies.rateLimitStore, 'read');
 
   app.onError(errorHandler);
   app.use('*', createSecurityHeadersMiddleware());
@@ -328,12 +343,35 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
       stripeWebhookService: resolvedDependencies.stripeWebhookService,
     }),
   );
+  if (env.ENTERPRISE_FEATURES_ENABLED) {
+    // Keep invitation preview public. It must be registered before authenticated
+    // /api sub-apps, whose middleware would otherwise turn the preview into 401.
+    app.get('/api/organization-invitations/:token', publicReadRateLimitMiddleware, async (c) => {
+      const token = c.req.param('token').trim();
+      const body = acceptInvitationBodySchema.safeParse({ token });
+      if (!body.success) {
+        throw new ValidationError(formatZodValidationError(body.error));
+      }
+
+      const preview = await resolvedDependencies.organizationService.previewInvitation(body.data.token);
+      return c.json({
+        organization: preview.organization,
+        invitation: {
+          email: preview.invitation.email,
+          role: preview.invitation.role,
+          status: preview.invitation.status,
+          expires_at: preview.invitation.expiresAt.toISOString(),
+        },
+      });
+    });
+  }
   app.route(
     '/api',
     createBalloonRoutes({
       authMiddleware,
       rateLimitMiddleware,
       balloonService: resolvedDependencies.balloonService,
+      organizationService: resolvedDependencies.organizationService,
     }),
   );
   app.route(
@@ -368,6 +406,7 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
     createMeRoutes({
       authMiddleware,
       rateLimitMiddleware,
+      creditService: resolvedDependencies.creditService,
       organizationService: env.ENTERPRISE_FEATURES_ENABLED ? resolvedDependencies.organizationService : undefined,
     }),
   );
@@ -377,6 +416,7 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
       createOrganizationRoutes({
         authMiddleware,
         rateLimitMiddleware,
+        publicRateLimitMiddleware: publicReadRateLimitMiddleware,
         organizationService: resolvedDependencies.organizationService,
         organizationBillingService: resolvedDependencies.organizationBillingService,
       }),
@@ -566,9 +606,14 @@ function resolveDependencies(
         : new UnconfiguredEntityGenerationQueue());
   const billingRepository = new PostgresBillingRepository(db, db);
   const organizationRepository = new PostgresOrganizationRepository(db, db);
+  const organizationInvitationEmailService = resolveOrganizationInvitationEmailService(organizationRepository);
   const organizationService =
     dependencies.organizationService ??
-    new OrganizationService(organizationRepository);
+    new OrganizationService(
+      organizationRepository,
+      organizationInvitationEmailService,
+      new InvitationUrlBuilder(env.APP_PUBLIC_URL),
+    );
   const pageRepository = new PostgresPageRepository(db);
   const generationJobRepository = new PostgresGenerationJobRepository(db);
   const episodeStoryAutofillQueue =
@@ -838,6 +883,34 @@ function resolveRateLimitStore(): RateLimitStore {
   return new PostgresRateLimitStore(db);
 }
 
+function resolveOrganizationInvitationEmailService(
+  organizationRepository: PostgresOrganizationRepository,
+): OrganizationInvitationEmailServicePort {
+  return new OrganizationInvitationEmailService(
+    organizationRepository,
+    resolveEmailDeliveryService(),
+    env.INVITATION_EMAIL_ENABLED,
+  );
+}
+
+function resolveEmailDeliveryService(): EmailDeliveryPort {
+  if (env.EMAIL_PROVIDER === 'ses') {
+    if (env.SES_FROM_EMAIL === undefined || env.AWS_REGION === undefined) {
+      console.warn(
+        '[email] EMAIL_PROVIDER=ses but SES_FROM_EMAIL or AWS_REGION is not configured; invitation email delivery is disabled',
+      );
+      return new DisabledEmailDeliveryService();
+    }
+    return new SesEmailDeliveryService({
+      region: env.AWS_REGION,
+      fromEmail: env.SES_FROM_EMAIL,
+      configurationSet: env.SES_CONFIGURATION_SET,
+    });
+  }
+
+  return new DisabledEmailDeliveryService();
+}
+
 function resolveFinalPageImageStorage(): FinalPageImageStoragePort {
   const localAssetConfig = resolveConfiguredLocalAssetConfig();
   if (localAssetConfig !== null) {
@@ -1050,9 +1123,9 @@ function resolveBillingService(
       subscriptionPriceIds: {
         standard: env.STRIPE_PRICE_STANDARD_MONTHLY ?? '',
         premium: env.STRIPE_PRICE_PREMIUM_MONTHLY ?? '',
-        enterprise_a: env.STRIPE_PRICE_ENTERPRISE_A_MONTHLY,
-        enterprise_b: env.STRIPE_PRICE_ENTERPRISE_B_MONTHLY,
-        enterprise_c: env.STRIPE_PRICE_ENTERPRISE_C_MONTHLY,
+        enterprise_a: resolveEnterpriseStripePriceId('enterprise_a'),
+        enterprise_b: resolveEnterpriseStripePriceId('enterprise_b'),
+        enterprise_c: resolveEnterpriseStripePriceId('enterprise_c'),
       },
       creditPackagePriceIds: {
         credits_200: env.STRIPE_PRICE_CREDITS_200 ?? '',
@@ -1083,9 +1156,9 @@ function resolveOrganizationBillingService(
       cancelUrl: env.STRIPE_CHECKOUT_CANCEL_URL ?? '',
       portalReturnUrl: env.STRIPE_PORTAL_RETURN_URL ?? '',
       subscriptionPriceIds: {
-        enterprise_a: env.STRIPE_PRICE_ENTERPRISE_A_MONTHLY,
-        enterprise_b: env.STRIPE_PRICE_ENTERPRISE_B_MONTHLY,
-        enterprise_c: env.STRIPE_PRICE_ENTERPRISE_C_MONTHLY,
+        enterprise_a: resolveEnterpriseStripePriceId('enterprise_a'),
+        enterprise_b: resolveEnterpriseStripePriceId('enterprise_b'),
+        enterprise_c: resolveEnterpriseStripePriceId('enterprise_c'),
       },
       creditPackagePriceIds: {
         credits_200: env.STRIPE_PRICE_CREDITS_200 ?? '',
@@ -1094,6 +1167,16 @@ function resolveOrganizationBillingService(
       },
     }),
   );
+}
+
+function resolveEnterpriseStripePriceId(planCode: EnterprisePlanCode): string | undefined {
+  if (planCode === 'enterprise_a') {
+    return env.STRIPE_PRICE_ENTERPRISE_A_MONTHLY ?? env.STRIPE_ENTERPRISE_A_PRICE_ID;
+  }
+  if (planCode === 'enterprise_b') {
+    return env.STRIPE_PRICE_ENTERPRISE_B_MONTHLY ?? env.STRIPE_ENTERPRISE_B_PRICE_ID;
+  }
+  return env.STRIPE_PRICE_ENTERPRISE_C_MONTHLY ?? env.STRIPE_ENTERPRISE_C_PRICE_ID;
 }
 
 function resolveStripeWebhookService(

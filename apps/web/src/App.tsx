@@ -8,6 +8,7 @@ import {
   ChevronDown,
   ChevronUp,
   CreditCard,
+  Download,
   Image,
   KeyRound,
   LayoutGrid,
@@ -54,6 +55,8 @@ import type {
   BillingBalanceRecord,
   OrganizationAuditLogRecord,
   OrganizationBillingPlanRecord,
+  OrganizationInvitationPreviewRecord,
+  OrganizationInvitationRecord,
   OrganizationInvoiceRecord,
   OrganizationMemberRecord,
   WorkRecord,
@@ -66,6 +69,7 @@ type ConsumerSubscriptionCheckoutPlanCode = 'standard' | 'premium';
 type SubscriptionCheckoutPlanCode = Exclude<SubscriptionPlanCode, 'free'>;
 type CreditCheckoutPackageCode = 'credits_200' | 'credits_1000' | 'credits_3000';
 type EnterprisePlanCode = 'enterprise_a' | 'enterprise_b' | 'enterprise_c';
+type OrganizationDetailPanelKey = 'billing' | 'usage' | 'invoices' | 'audit' | 'members' | 'invitations';
 
 interface SubscriptionPlanOption {
   plan_code: SubscriptionCheckoutPlanCode;
@@ -109,9 +113,17 @@ const organizationRoleOptions: Array<{
   { value: 'admin', label: { en: 'Admin', ja: '\u7ba1\u7406\u8005' } },
   { value: 'billing', label: { en: 'Billing', ja: '\u8acb\u6c42\u7ba1\u7406' } },
   { value: 'editor', label: { en: 'Editor', ja: '\u7de8\u96c6\u8005' } },
-  { value: 'creator', label: { en: 'Creator', ja: '\u5236\u4f5c\u8005' } },
   { value: 'viewer', label: { en: 'Viewer', ja: '\u95b2\u89a7\u8005' } },
 ];
+
+const organizationMemberStatusOptions: Array<{
+  value: Extract<OrganizationMemberRecord['status'], 'active' | 'suspended'>;
+  label: { en: string; ja: string };
+}> = [
+  { value: 'active', label: { en: 'Active', ja: '有効' } },
+  { value: 'suspended', label: { en: 'Suspended', ja: '停止中' } },
+];
+
 const creditPurchaseOptions: Array<{
   code: CreditCheckoutPackageCode;
   credits: number;
@@ -325,7 +337,7 @@ interface GenericStructuredFieldRow {
 }
 
 interface ReferenceCandidate {
-  s3_key: string;
+  candidate_token: string;
   source: 'upload' | 'generated';
 }
 
@@ -364,7 +376,7 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   'Overall flow': '全体の流れ',
   'Starting point': '開始地点',
   'Ending point': '終着点',
-  'Main characters': '主な登場人物',
+  'Main characters': '主要キャラ',
   'Chapter title': '章タイトル',
   'Episode draft': '話の下書き',
   'Story input mode': 'ストーリー入力方式',
@@ -375,7 +387,7 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   'Apply full story': '全体ストーリーへ反映',
   'Estimated pages': '想定ページ数',
   Purpose: '目的',
-  Introduction: '序盤',
+  Introduction: '導入',
   Middle: '中盤',
   Climax: 'クライマックス',
   'Ending hook': '終盤 / 引き',
@@ -390,10 +402,10 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   Instruction: '指示',
   'Improved title': '改善タイトル',
   'Improved purpose': '改善された目的',
-  'Improved introduction': '改善された序盤',
+  'Improved introduction': '改善された導入',
   'Improved middle': '改善された中盤',
   'Improved climax': '改善されたクライマックス',
-  'Improved ending hook': '改善された終盤 / 引き',
+  'Improved ending hook': '改善された引き',
   Frames: 'コマ割り',
   Panels: 'コマ',
   'Page settings': 'ページ設定',
@@ -404,7 +416,7 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   'Story sources': '話の材料',
   'Source scenes': '元シーン',
   'Page purpose': 'ページの目的',
-  'Continuity note': '連続性メモ',
+  'Continuity note': 'つながりメモ',
   Name: '名前',
   'Free description': '自由記述',
   'Prompt supplement': '補足プロンプト',
@@ -422,13 +434,13 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   Page: 'ページ',
   Export: '保存',
   'Generated preview': '生成プレビュー',
-  'Confirmed references': '確定済みリファレンス',
+  'Confirmed references': '確定済みレファレンス',
   'Character list': 'キャラ一覧',
   'Character editor': 'キャラ編集',
   'Story context': 'ストーリー文脈',
   'Target episode': '対象の話',
   'Chapter / Episode': '章と話',
-  'Import / References': '取り込み / リファレンス',
+  'Import / References': '取り込み / レファレンス',
   Credits: 'クレジット',
   Jobs: 'ジョブ',
   Tutorial: 'チュートリアル',
@@ -442,7 +454,7 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   unpaid: '未払い',
   incomplete: '支払い未完了',
   incomplete_expired: '支払い期限切れ',
-  paused: '停止中',
+  paused: '一時停止中',
   paid: '支払い済み',
   failed: '失敗',
   Free: 'フリー',
@@ -459,18 +471,16 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   'Linked panel': '対応コマ',
   'No linked panel': '未紐づけ',
   'Border style': '枠線',
-  'Solid': '実線',
-  'Dashed': '破線',
+  Solid: '実線',
+  Dashed: '破線',
   'Border width': '枠線幅',
   'Border color': '枠線色',
   Vertex: '頂点',
-  X: 'X',
-  Y: 'Y',
   'Save frame geometry': 'コマ形状を保存',
   Role: '役割',
   Size: 'サイズ',
   Situation: '状況',
-  'Composition source': '構図の入力元',
+  'Composition source': '構図メモ',
   'Advanced panel options': 'コマの詳細設定',
   Shot: 'ショット',
   Angle: 'アングル',
@@ -482,7 +492,7 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   'Dialogue in panel': 'コマ内にセリフを含める',
   Dialogue: 'セリフ',
   Speaker: '話者',
-  Type: '種別',
+  Type: '種類',
   Placement: '配置',
   Line: '行',
   'Add character': 'キャラを追加',
@@ -493,13 +503,12 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   'State override ID': '状態上書きID',
   Expression: '表情',
   Pose: 'ポーズ',
-  Effect: 'エフェクト',
+  Effect: '効果',
   'Custom expression': '自由入力の表情',
   'Custom pose': '自由入力のポーズ',
   'Add line': '行を追加',
-  'No dialogue lines yet.': 'まだセリフ行がありません。',
-  'Speaker is required for speech, thought, shout, and whisper lines.':
-    'セリフ・思考・叫び・ささやきには話者が必要です。',
+  'No dialogue lines yet.': 'まだセリフ行はありません。',
+  'Speaker is required for speech, thought, shout, and whisper lines.': 'セリフ・思考・叫び・ささやきには話者が必要です。',
   'Narration / none': 'ナレーション / なし',
   Draft: '下書き',
   Reviewing: '確認中',
@@ -516,8 +525,8 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   'Create entity': 'キャラを作成',
   'Save entity': 'キャラを保存',
   'Generate reference': 'プレビュー生成',
-  'Confirm references': 'リファレンス確定',
-  'Delete reference': 'リファレンス削除',
+  'Confirm references': 'レファレンス確定',
+  'Delete reference': 'レファレンス削除',
   'Save page settings': 'ページ設定を保存',
   'Save story sources': '話の材料を保存',
   'Delete panel': 'コマを削除',
@@ -536,10 +545,10 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   'Apply all': 'すべて反映',
   'Apply to title': 'タイトルへ反映',
   'Apply purpose': '目的へ反映',
-  'Apply introduction': '序盤へ反映',
+  'Apply introduction': '導入へ反映',
   'Apply middle': '中盤へ反映',
   'Apply climax': 'クライマックスへ反映',
-  'Apply ending hook': '終盤へ反映',
+  'Apply ending hook': '引きへ反映',
   'Reset draft': '下書きを戻す',
   'Use token': 'トークンを使う',
   Create: '作成',
@@ -551,27 +560,22 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   'New character': '新規キャラ',
   'Importing image...': '画像を取り込み中...',
   'Drop or choose image': '画像をドロップまたは選択',
-  'Select a preview and confirm it as the primary image.': 'プレビューを1つ選んで確定します。',
+  'Select a preview and confirm it as the primary image.': 'プレビューを選んで確定します。',
   'No preview yet.': 'まだプレビューはありません。',
-  'Delete with the button only. Clicking the image will not delete it.': '削除はボタンのみです。画像クリックでは削除しません。',
-  'No confirmed references yet.': 'まだ確定済みリファレンスがありません。',
-  'Creating a new character. Saving here will add a new record and will not overwrite existing characters.':
-    '新規キャラを作成中です。ここで保存すると既存キャラを上書きせず、新しいキャラとして追加します。',
+  'Delete with the button only. Clicking the image will not delete it.': '削除はボタンから行います。画像クリックでは削除されません。',
+  'No confirmed references yet.': '確定済みレファレンスはまだありません。',
+  'Creating a new character. Saving here will add a new record and will not overwrite existing characters.': '新規キャラ作成中です。保存すると既存キャラを上書きせず、新しいキャラとして追加します。',
   'Editing the selected character.': '選択中のキャラを編集しています。',
   'Delete this character? This cannot be undone.': 'このキャラを削除しますか？この操作は元に戻せません。',
-  'Delete this reference image? This cannot be undone.': 'このリファレンス画像を削除しますか？この操作は元に戻せません。',
-  'Delete this panel? This can break the frame/panel count until frames are adjusted.':
-    'このコマを削除しますか？コマ割りを調整するまでフレーム数とコマ数が一致しなくなる場合があります。',
+  'Delete this reference image? This cannot be undone.': 'このレファレンス画像を削除しますか？この操作は元に戻せません。',
+  'Delete this panel? This can break the frame/panel count until frames are adjusted.': 'このコマを削除しますか？コマ割りを調整するまで、枠数とコマ数が一致しない場合があります。',
   'Use reference': '候補に含める',
   'Primary reference': 'メインにする',
   upload: 'アップロード',
   generated: '生成',
-  'Frame count and panel count do not match. Adjust frames or panels before generating.':
-    'フレーム数とコマ数が一致していません。生成前にコマ割りまたはコマを調整してください。',
-  'Page generation is blocked until panel layout and panel content match.':
-    'コマ割りとコマ内容の数が一致するまでページ生成はできません。',
-  'Current count: frames {frames} / panels {panels}. Apply a panel layout template to sync them before generating.':
-    '現在: コマ割り {frames} / コマ内容 {panels}。生成前にコマ割りテンプレートを適用して数を揃えてください。',
+  'Frame count and panel count do not match. Adjust frames or panels before generating.': 'コマ割り数とコマ数が一致していません。生成前に調整してください。',
+  'Page generation is blocked until panel layout and panel content match.': 'コマ割りとコマ内容の数が一致するまでページ生成はできません。',
+  'Current count: frames {frames} / panels {panels}. Apply a panel layout template to sync them before generating.': '現在: コマ割り {frames} / コマ内容 {panels}。生成前にテンプレートを適用して数を揃えてください。',
   'Go to panel layout': 'コマ割りへ移動',
   'Create character': 'キャラを作成',
   'Save character': 'キャラを保存',
@@ -591,24 +595,21 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   entity_generate: 'キャラ生成',
   episode_story_autofill: '話全体を反映',
   'Switch story context for page editing.': 'ページ編集対象の作品・章・話を選択します。',
-  'Double-click image to enlarge': '画像はダブルクリックで拡大',
-  'Loading current page plan.':
-    '現在のページ骨格を読み込んでいます。',
-  'Regenerating will replace the current pages for this episode.':
-    '再生成すると、この話の現在のページが置き換わります。',
-  'Regenerating the page plan will replace the current pages for this episode.':
-    'ページ骨格を上書き再生成すると、この話の現在のページを置き換えます。',
+  'Double-click image to enlarge': '画像をダブルクリックで拡大',
+  'Loading current page plan.': '現在のページ骨格を読み込んでいます。',
+  'Regenerating will replace the current pages for this episode.': '再生成すると、この話の現在のページが置き換わります。',
+  'Regenerating the page plan will replace the current pages for this episode.': 'ページ骨格を上書き再生成すると、この話の現在のページを置き換えます。',
   Primary: 'メイン',
   Delete: '削除',
   'Generate full-body preview': '全身プレビュー生成',
   'Preview generation costs 1 credit.': 'プレビュー生成 1cr',
   'Image import costs 1 credit.': '画像取り込み 1cr',
-  'Page generation starts at 3 credits.': 'ページ生成 3cr〜',
+  'Page generation starts at 3 credits.': 'ページ生成 3crから',
   'Text AI actions use no credits.': 'テキストAI 0cr',
   'No recent jobs.': '最近のジョブはありません。',
-  'Only PNG, JPEG, and WebP are allowed.': 'PNG/JPEG/WebPのみ対応。',
+  'Only PNG, JPEG, and WebP are allowed.': 'PNG/JPEG/WebPのみ対応しています。',
   'Image file is too large.': '画像が大きすぎます。',
-  'Image analyzed. Generate preview next.': '画像解析完了。次にプレビュー生成。',
+  'Image analyzed. Generate preview next.': '画像解析が完了しました。次にプレビューを生成してください。',
   Total: '合計',
   Monthly: '月次',
   Purchased: '購入分',
@@ -638,493 +639,43 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   'Shoulder width': '肩幅',
   'Leg length': '脚の長さ',
   'Posture axis': '姿勢の軸',
-  'Face shape': '輪郭',
-  'Eyebrow shape': '眉の形',
-  'Nose shape': '鼻の形',
-  'Mouth shape': '口の形',
-  'Eye color': '目の色',
-  'Eye shape': '目の形',
-  'Eyelid type': 'まぶた',
-  'Eye size': '目の大きさ',
-  'Eye angle': '目の角度',
-  'Pupil style': '瞳の描き方',
-  'Under-eye detail': '目元の特徴',
-  'Mouth default': '口元の既定形',
   'Hair color': '髪色',
   'Hair length': '髪の長さ',
-  'Hair style': '髪質',
+  'Hair style': '髪型',
   'Hair arrangement': '髪のまとめ方',
   Bangs: '前髪',
-  'Front shape': '前髪の形',
-  'Side hair': '横髪',
-  'Back shape': '後ろ髪',
-  Category: '服カテゴリ',
-  'Main color': '主色',
-  Impression: '印象',
-  'Collar shape': '襟の形',
-  'Sleeve length': '袖丈',
-  'Skirt or pants': '下半身の形',
-  Shoes: '靴',
-  Legwear: 'レッグウェア',
-  'Clothing details': '服装の詳細',
-  'Custom value': '自由入力値',
-  'Face + hair balance': '顔と髪のまとまり',
-  'Eye line': '目元の印象',
-  'Silhouette outline': '外形シルエット',
-  'Posture read': '姿勢の読み取り',
-  'Outfit shape': '服の形',
-  'Color blocking': '配色ブロック',
-  'Accessory / prop': '装飾・小物',
-  'Hair shape': '髪型',
-  'Eye color contrast': '瞳の色対比',
-  'Expression gap': '表情のギャップ',
-  'Silhouette edge': '輪郭のクセ',
-  Accessory: 'アクセサリー',
-  'Scar / mark': '傷・印',
-  Stance: '立ち方',
-  'Compact silhouette': 'コンパクトなシルエット',
-  'Tall and slender': '高身長で細身',
-  'Broad-shouldered': '肩幅が広い',
-  'Long coat outline': 'ロングコート輪郭',
-  'Skirt line': 'スカートの線',
-  'Military block': '軍服的な塊感',
-  'Soft rounded outline': '柔らかく丸い輪郭',
-  'Beauty mark': 'ほくろ',
-  Scar: '傷',
-  'Eye bags': '隈',
-  Fang: '八重歯',
-  Ahoge: 'アホ毛',
-  'Hair streak': '髪のメッシュ',
-  Glasses: '眼鏡',
-  Stubble: '無精ひげ',
-  Beard: 'ひげ',
-  Goatee: 'あごひげ',
-  Earrings: 'ピアス',
-  'Thick eyebrows': '太い眉',
-  'Sharp jawline': '鋭い顎のライン',
-  'about six heads tall': '六頭身くらい',
-  'about six and a half heads tall': '六・五頭身くらい',
-  'about seven heads tall': '七頭身くらい',
-  'about seven and a half heads tall': '七・五頭身くらい',
-  'about eight heads tall': '八頭身くらい',
-  'narrow shoulders': '肩幅が狭い',
-  'balanced shoulders': '肩幅は標準',
-  'broad shoulders': '肩幅が広い',
-  'short legs': '脚が短め',
-  'balanced leg length': '脚の長さは標準',
-  'long legs': '脚が長い',
-  'centered and straight': '軸が中央でまっすぐ',
-  'slightly forward-leaning': '少し前傾',
-  'slightly backward-leaning': '少し後傾',
-  'soft inward posture': '少し内向き',
-  'open outward posture': '外向きに開く',
-  'small eyes': '小さめの目',
-  'balanced eyes': '標準的な目',
-  'large eyes': '大きめの目',
-  'very large eyes': 'かなり大きい目',
-  'level eye line': '水平な目元',
-  'slightly upturned eyes': '少しつり目',
-  'strongly upturned eyes': '強いつり目',
-  'slightly downturned eyes': '少したれ目',
-  'drooping eyes': 'たれ目',
-  'small pupils': '小さめの瞳',
-  'large pupils': '大きめの瞳',
-  'sharp pupils': '鋭い瞳',
-  'soft round pupils': '丸く柔らかい瞳',
-  'bright reflective pupils': '反射の強い瞳',
-  'none visible': '目立たない',
-  'soft shadows': '薄い影',
-  'defined lower lash line': '下まつげの線がある',
-  'slight eye bags': '軽い隈',
-  'heavy eye bags': '強い隈',
-  'closed neutral mouth': '閉じた無表情',
-  'slight smile': 'わずかな笑み',
-  'firm straight mouth': '固い一直線の口元',
-  'soft parted lips': '少し開いた柔らかい口元',
-  'straight front line': '前髪の直線ライン',
-  'center-parted front': 'センター分け',
-  'rounded front curve': '丸い前髪ライン',
-  'side-swept front': '流した前髪',
-  'blunt front': 'ぱっつん前髪',
-  'short textured front': '短く毛束感のある前髪',
-  'comma front': 'コンマ型の前髪',
-  'curtain front': 'カーテン前髪',
-  'messy front': '無造作な前髪',
-  'swept-up front': '立ち上げた前髪',
-  'short side locks': '短い横髪',
-  'soft cheek framing': '頬を囲う横髪',
-  'long side locks': '長い横髪',
-  'tucked behind ears': '耳にかけた横髪',
-  'trimmed sides': '短く整えたサイド',
-  'faded sides': 'フェードしたサイド',
-  'shaved sides': '刈り上げたサイド',
-  sideburns: 'もみあげ',
-  'ear-length sides': '耳丈の横髪',
-  'clean bob back': 'ボブの後ろ髪',
-  'layered back': 'レイヤー後ろ髪',
-  'straight long back': 'まっすぐ長い後ろ髪',
-  'ponytail fall': 'ポニーテールの落ち感',
-  'braided back': '編み込み後ろ髪',
-  'tapered nape': '襟足を短く整える',
-  'short clipped back': '短く刈った後ろ髪',
-  'undercut back': '後ろのアンダーカット',
-  'tied-back hair': '後ろで結んだ髪',
-  'long loose back': '長く下ろした後ろ髪',
-  'wolf nape': 'ウルフ風の襟足',
-  'round collar': '丸襟',
-  'sharp collar': '尖った襟',
-  'standing collar': '立ち襟',
-  'sailor collar': 'セーラー襟',
-  'hooded neckline': 'フード付き首元',
-  Sleeveless: 'ノースリーブ',
-  'Short sleeves': '半袖',
-  'Three-quarter sleeves': '七分袖',
-  'Long sleeves': '長袖',
-  'Wide sleeves': '幅広袖',
-  'Short skirt': '短いスカート',
-  'Long skirt': '長いスカート',
-  'Straight pants': '細いパンツ',
-  'Wide pants': 'ワイドパンツ',
-  Slacks: 'スラックス',
-  Jeans: 'ジーンズ',
-  'Cargo pants': 'カーゴパンツ',
-  Shorts: '短パン',
-  Loafers: 'ローファー',
-  Sneakers: 'スニーカー',
-  Boots: 'ブーツ',
-  'Dress shoes': '革靴',
-  'Combat boots': 'コンバットブーツ',
-  Heels: 'ヒール',
-  'School shoes': '上履き・制服靴',
-  'Bare legs': '素足',
-  'Ankle socks': '短い靴下',
-  'Knee socks': '膝下ソックス',
-  'Thigh-high socks': 'ニーハイ',
-  Tights: 'タイツ',
-  'Simple uniform detailing': 'シンプルな制服ディテール',
-  'Layered practical details': '実用的な重ね着ディテール',
-  'Ornamental trim': '装飾的な縁取り',
-  'Combat utility details': '実戦向けの装備ディテール',
-  'Minimal clean design': 'ミニマルで整理されたデザイン',
-  Female: '女性',
-  Male: '男性',
-  Androgynous: '中性的',
-  Unspecified: '未指定',
-  Child: '子ども',
-  'Early teens': '10代前半',
-  'Late teens': '10代後半',
-  Twenties: '20代',
-  Thirties: '30代',
-  'Forties+': '40代以上',
-  Ageless: '年齢不詳',
-  Fair: '色白',
-  Light: '明るめ',
-  Medium: '中間',
-  Tan: '日焼け',
-  Deep: '濃いめ',
-  Custom: '自由入力',
-  'Bright friendly': '明るく親しみやすい',
-  'Quiet neat': '静かで整っている',
-  'Cool distant': 'クールで距離がある',
-  'Gentle soft': '柔らかく穏やか',
-  'Serious reliable': '真面目で頼れる',
-  'Mysterious fragile': '不思議で儚い',
-  'Energetic bold': '元気で大胆',
-  'Stoic reserved': '寡黙で控えめ',
-  'Rugged calm': '無骨で落ち着いた',
-  'Sharp elite': '鋭く知的',
-  'Playful confident': '余裕があり茶目っ気がある',
-  'Mature composed': '大人びて落ち着いた',
-  'Upright neat': '背筋が伸びて整っている',
-  'Natural relaxed': '自然で力が抜けている',
-  'Shy reserved': '控えめでおとなしい',
-  'Confident open': '自信があり開いている',
-  'Still quiet': '静かで動きが少ない',
-  'Arms crossed': '腕を組む',
-  'Hands in pockets': 'ポケットに手を入れる',
-  'Guarded stance': '警戒した立ち姿',
-  'Wide grounded stance': '足を広げて安定した立ち姿',
-  'Elegant upright': '上品に背筋を伸ばす',
-  'Soft smile': 'やわらかな微笑み',
-  'Calm neutral': '落ち着いた無表情',
-  'Serious focus': '真剣で集中',
-  'Cheerful smile': '明るい笑顔',
-  'Cool unfazed': '冷静で動じない',
-  'Stern look': '厳しい目つき',
-  'Tired neutral': '疲れた無表情',
-  'Confident smirk': '自信のある片笑い',
-  'Bored gaze': '退屈そうな視線',
-  'Teasing smile': 'からかうような笑み',
-  Petite: '小柄',
-  Slender: '細身',
-  Average: '標準',
-  Athletic: '引き締まっている',
-  Muscular: '筋肉質',
-  Curvy: '丸みがある',
-  Lean: '引き締まった細身',
-  Stocky: 'がっしり',
-  'Broad build': '幅広い体格',
-  'Large build': '大柄',
-  'Very short height': 'かなり低め',
-  Short: '低め',
-  Tall: '高め',
-  'Very tall height': 'かなり高め',
-  Round: '丸型',
-  Oval: '卵型',
-  Heart: 'ハート型',
-  Square: '四角型',
-  Diamond: 'ひし形',
-  Long: '長め',
-  'Soft triangle': 'やわらかな三角形',
-  Straight: '直線的',
-  'Soft arch': 'ゆるいアーチ',
-  'High arch': '高いアーチ',
-  Thick: '太め',
-  Thin: '細め',
-  Sharp: '鋭い',
-  Small: '小さめ',
-  Button: 'ボタン鼻',
-  Rounded: '丸い',
-  Broad: '広め',
-  Soft: 'やわらかい',
-  Full: 'ふっくら',
-  Wide: '広い',
-  Smirk: '片笑い',
-  Serious: '真面目',
-  Black: '黒',
-  Brown: '茶',
-  'Dark brown': '濃い茶',
-  Blonde: '金',
-  'Ash blonde': 'アッシュブロンド',
-  Auburn: '赤みの茶',
-  Silver: '銀',
-  White: '白',
-  Blue: '青',
-  Red: '赤',
-  Pink: 'ピンク',
-  Purple: '紫',
-  'Two tone': 'ツートーン',
-  'Very short': 'かなり短い',
-  'Very long': 'かなり長い',
-  Wavy: 'ゆるいウェーブ',
-  Curly: 'カール',
-  Wild: 'ラフ',
-  Tousled: '無造作',
-  Spiky: 'ツンツン',
-  Fluffy: 'ふわっとした',
-  Slick: '撫で付けた',
-  Coarse: '硬め',
-  Shaved: '剃り込み',
-  Down: '下ろす',
-  'Short cut': 'ショートカット',
-  'Buzz cut': '坊主',
-  'Crew cut': 'クルーカット',
-  'Two block': 'ツーブロック',
-  Undercut: 'アンダーカット',
-  'Fade cut': 'フェードカット',
-  'Side part': '七三分け',
-  'Center part': 'センター分け',
-  'Comma hair': 'コンマヘア',
-  'Slick back': 'オールバック',
-  'Messy short': '無造作ショート',
-  Pompadour: 'ポンパドール',
-  'Short bob': 'ショートボブ',
-  'Medium layered': 'ミディアムレイヤー',
-  'Wolf cut': 'ウルフカット',
-  'Long straight': 'ロングストレート',
-  Ponytail: 'ポニーテール',
-  'Side ponytail': 'サイドポニーテール',
-  'Twin tails': 'ツインテール',
-  Bun: 'お団子',
-  'Man bun': 'マンバン',
-  Topknot: 'トップノット',
-  Braid: '編み込み',
-  'Half up': 'ハーフアップ',
-  'Tied back': '後ろで結ぶ',
-  'Shaved sides': 'サイドを刈り上げ',
-  Green: '緑',
-  Gold: '金',
-  Gentle: '穏やか',
-  Narrow: '細い',
-  Single: '一重',
-  Double: '二重',
-  None: 'なし',
-  standard: '標準',
-  Heavy: '重め',
-  'Side swept': '流し前髪',
-  Blunt: 'ぱっつん',
-  Parted: '分け前髪',
-  'Center parted': 'センター分け前髪',
-  Curtain: 'カーテンバング',
-  'Messy bangs': '無造作前髪',
-  'Short bangs': '短い前髪',
-  'Long bangs': '長い前髪',
-  Military: '軍服',
-  School: '制服',
-  Casual: '私服',
-  Suit: 'スーツ',
-  'Business casual': 'ビジネスカジュアル',
-  'Lab coat': '白衣',
-  'Trench coat': 'トレンチコート',
-  Tactical: 'タクティカル',
-  'Traditional formal': '礼装・正装',
-  'Street jacket': 'ストリートジャケット',
-  Fantasy: 'ファンタジー',
-  Japanese: '和装',
-  Streetwear: 'ストリート',
-  Hoodie: 'パーカー',
-  Sports: 'スポーツ',
-  'Winter coat': '冬コート',
-  Workwear: '作業着',
-  Armor: '鎧',
-  Gothic: 'ゴシック',
-  'Formal dress': 'フォーマル',
-  'Idol stage': 'ステージ衣装',
-  Navy: 'ネイビー',
-  Gray: 'グレー',
-  Formal: 'フォーマル',
-  Practical: '実用的',
-  Elegant: '上品',
-  Rough: 'ラフ',
-  Cute: 'かわいい',
-  Anime: 'アニメ',
-  'Semi-realistic': 'セミリアル',
-  Manga: '漫画',
-  Painterly: '絵画調',
-  Establish: '導入',
-  Action: '動き',
-  Reaction: '反応',
-  Emphasis: '強調',
-  Transition: 'つなぎ',
-  Pause: '間',
-  Impact: 'インパクト',
-  Standard: '標準',
-  Large: '大',
-  Splash: 'スプラッシュ',
-  'AI auto': 'AI自動',
-  Gallery: 'ギャラリー',
-  'Full body': '全身',
-  'Half body': '半身',
-  'Close up': '寄り',
-  'Extreme close up': '極寄り',
-  Front: '正面',
-  Side: '横',
-  'Three quarter': '斜め',
-  'Bird eye': '俯瞰',
-  'Worm eye': '煽り',
-  'Dutch angle': 'ダッチアングル',
-  Secondary: '補助',
-  Left: '左',
-  Center: '中央',
-  Away: '背面',
-  '3/4 left': '左斜め',
-  '3/4 right': '右斜め',
-  Determined: '決意',
-  Calm: '落ち着き',
-  Angry: '怒り',
-  Sad: '悲しみ',
-  Surprised: '驚き',
-  'Standing firm': '立つ',
-  Attacking: '攻撃',
-  Defending: '防御',
-  Running: '走る',
-  Speech: '会話',
-  Thought: '心の声',
-  Narration: 'ナレーション',
-  Shout: '叫び',
-  Whisper: 'ささやき',
-  Top: '上',
-  Bottom: '下',
-  'Standard 4': '標準4コマ',
-  'Top wide 3': '上段ワイド3コマ',
-  'Standard 6': '標準6コマ',
-  'Dense 8': '密集8コマ',
-  'Climax 2': 'クライマックス2コマ',
-  'Splash 1': '1枚絵',
-  'Action 5': 'アクション5コマ',
-  'Battle 7': 'バトル7コマ',
-  'Vertical 2': '上下2コマ',
-  'Bottom wide 3': '下段ワイド3コマ',
-  'Wide top 4': '上段ワイド4コマ',
-  'Tall left 4': '左大ゴマ4コマ',
-  'Balanced 5': '均等5コマ',
-  'Top wide 5': '上段ワイド5コマ',
-  'Split 6': '左右分割6コマ',
-  Preview: 'プレビュー',
-  'Custom / unsynced': 'カスタム / 未同期',
-  'Main entity IDs': '主要キャラID',
-  'New chapter title': '新しい章タイトル',
-  'Untitled chapter': '無題の章',
-  'New episode title': '新しい話タイトル',
-  'Untitled episode': '無題の話',
-  'Move up': '上へ',
-  'Move down': '下へ',
-  'No location': '場所未設定',
-  Add: '追加',
+  'Eye color': '瞳の色',
+  'Eye shape': '目の形',
+  Eyelids: 'まぶた',
+  'Face shape': '顔の形',
+  Eyebrows: '眉',
+  Nose: '鼻',
+  Mouth: '口',
+  'Outfit category': '服装カテゴリ',
+  'Outfit silhouette': '服装シルエット',
+  'Main colors': '主な色',
+  'Key accessories': '小物',
+  'Speech style': '話し方',
+  'Catchphrases': '口癖',
+  'Pronouns': '一人称・二人称',
+  'Mobile navigation': 'モバイルナビゲーション',
   English: '英語',
-  'AI improved': 'AI改善済み',
-  Horizontal: '横書き',
-  Vertical: '縦書き',
-  'Manga gothic': '漫画ゴシック',
-  'Mincho font': '明朝',
-  'Rounded font': '丸ゴシック',
-  'Bold font': '太字',
-  'Characters in panel': 'コマ内キャラ',
-  'Pick who appears first, then refine pose, facing, and effects per character.': 'まず登場キャラを決め、その後に向き・ポーズ・エフェクトを詰めます。',
-  'Placement first, then expression, pose, and effect.': 'まず配置を決め、その後に表情・ポーズ・エフェクトを詰めます。',
-  'These lines will be considered inside the generated panel art.': 'これらの行は生成画像のコマ内テキストとして扱われます。',
-  'These lines stay outside the generated panel art.': 'これらの行は生成画像の外側のテキストとして扱われます。',
-  Email: 'メールアドレス',
-  'Send magic link': 'マジックリンクを送信',
-  'Continue with Cognito': 'Cognitoでログイン',
-  'Manual bearer token': '手動ベアラートークン',
-  'Magic link sent.': 'マジックリンクを送信しました。',
-  'Supabase client is not configured.': 'Supabase クライアントが設定されていません。',
-  'Production Console': '制作コンソール',
-  'Story, entity, page, billing.': 'ストーリー、キャラ、ページ、課金を管理します。',
-  'Processing. This task can take a while.': '処理中です。この処理には時間がかかる場合があります。',
-  'Queued. This task will start soon and can take a while.': '待機中です。まもなく開始され、この処理には時間がかかる場合があります。',
-  'Page skeleton generation can take a while, especially for long episodes.': 'ページ骨格生成は、話数やページ数が多いと時間がかかる場合があります。',
-  'Story plan autofill can take a while while pages and panels are being distributed.': '話全体の反映は、ページ配分とコマ分割を行うため時間がかかる場合があります。',
-  'Character preview generation can take a while. The preview updates when the job finishes.': 'キャラのプレビュー生成は時間がかかる場合があります。完了するとプレビューが更新されます。',
-  'Page image generation can take a while. The page image updates when the job finishes.': 'ページ画像生成は時間がかかる場合があります。完了するとページ画像が更新されます。',
-  'Queued. Starts soon.': '待機中。順番に処理します。',
-  'Queued. This process can take around 20 minutes.': '待機中です。この処理は20分程度かかる場合があります。',
-  'Generating page plan. This can take a while.': '骨格生成中。少し時間がかかります。',
-  'Applying story plan to pages and panels.': 'ページとコマへ反映中。',
-  'Applying story plan to pages and panels. This process can take around 20 minutes.':
-    'ページとコマへ反映中です。この処理は20分程度かかる場合があります。',
-  'Compiling story plan chunks. This process can take around 20 minutes.':
-    'ストーリーをページとコマへ分配中です。この処理は20分程度かかる場合があります。',
-  'Saving story plan to pages and panels. This process can take around 20 minutes.':
-    'ページとコマへ保存中です。この処理は20分程度かかる場合があります。',
-  'Story plan could not be applied, so the temporary page skeleton is being rolled back.':
-    '話の反映に失敗したため、一時的なページ骨格を元に戻しています。',
-  'Story plan applied to pages and panels.': 'ページとコマへの反映が完了しました。',
-  'Story plan autofill failed.': 'ページとコマへの反映に失敗しました。',
-  'Generating preview. It updates when finished.': 'プレビュー生成中。完了後に更新されます。',
-  'Generating page. It updates when finished.': 'ページ生成中。完了後に更新されます。',
-  'You do not need to fill every blank field.': 'すべての空欄を埋める必要はありません。',
-  'Current episode selection': '現在の話の選択',
-  'Choose the work, chapter, and episode being edited.': '編集する作品・章・話を選択します。',
-  'Create a work before writing story content.': 'ストーリーを書く前に作品を作成してください。',
-  'Import reference': 'レファレンス取り込み',
-  'Preview / Confirm': 'プレビュー / 確定',
-  'Style constraints': '画風制約',
-  Guide: 'ガイド',
-  Panel: 'コマ',
-  'Move earlier': '前へ移動',
-  'Move later': '後へ移動',
-  'Move panel up': 'コマを前へ移動',
-  'Move panel down': 'コマを後へ移動',
-  'Z-index': '重なり順',
-  Account: 'アカウント',
   Language: '言語',
+  Account: 'アカウント',
   'Log out': 'ログアウト',
   'Work overview': '作品概要',
   'Advanced work context': '作品概要の詳細',
   'Body proportion details': '体型バランスの詳細',
-  'Mobile navigation': 'モバイルナビゲーション',
+  Guide: 'ガイド',
+  Panel: 'コマ',
+  'Move earlier': '前へ移動',
+  'Move later': '後ろへ移動',
+  'Move panel up': 'コマを前へ移動',
+  'Move panel down': 'コマを後ろへ移動',
+  'Z-index': '重なり順',
+  'Style constraints': '画風制約',
+  'Import reference': 'レファレンス取り込み',
+  'Preview / Confirm': 'プレビュー / 確定',
 };
 
 function normalizeUiLanguage(value: string): UiLanguage {
@@ -1316,7 +867,7 @@ function formatIsoDateTime(language: UiLanguage, isoDate: string): string {
 
 function formatInvoiceKind(language: UiLanguage, invoice: OrganizationInvoiceRecord): string {
   if (invoice.kind === 'credit_purchase') {
-    return pickUiText(language, 'Credit purchase', '追加クレジット');
+    return pickUiText(language, 'Credit purchase', 'クレジット購入');
   }
   return pickUiText(language, 'Subscription', 'サブスク');
 }
@@ -1326,10 +877,51 @@ function formatAuditAction(language: UiLanguage, log: OrganizationAuditLogRecord
     'organization.created': { en: 'Organization created', ja: '法人作成' },
     'organization.updated': { en: 'Organization updated', ja: '法人更新' },
     'member.invited': { en: 'Member invited', ja: 'メンバー招待' },
+    'member.invitation_resent': { en: 'Invitation resent', ja: '招待再送' },
+    'member.invitation_revoked': { en: 'Invitation revoked', ja: '招待取消' },
+    'member.invitation_email_sent': { en: 'Invitation email sent', ja: '招待メール送信' },
+    'member.invitation_email_failed': { en: 'Invitation email failed', ja: '招待メール失敗' },
     'member.joined': { en: 'Member joined', ja: 'メンバー参加' },
-    'member.role_updated': { en: 'Member role updated', ja: '権限変更' },
+    'member.role_updated': { en: 'Member role updated', ja: 'メンバー権限更新' },
     'member.suspended': { en: 'Member suspended', ja: 'メンバー停止' },
+    'member.reactivated': { en: 'Member reactivated', ja: 'メンバー復帰' },
     'member.removed': { en: 'Member removed', ja: 'メンバー削除' },
+    'work.created': { en: 'Work created', ja: '作品作成' },
+    'work.updated': { en: 'Work updated', ja: '作品更新' },
+    'chapter.created': { en: 'Chapter created', ja: '章作成' },
+    'chapter.updated': { en: 'Chapter updated', ja: '章更新' },
+    'chapter.deleted': { en: 'Chapter deleted', ja: '章削除' },
+    'chapter.moved': { en: 'Chapter moved', ja: '章並び替え' },
+    'episode.created': { en: 'Episode created', ja: '話作成' },
+    'episode.updated': { en: 'Episode updated', ja: '話更新' },
+    'episode.deleted': { en: 'Episode deleted', ja: '話削除' },
+    'episode.moved': { en: 'Episode moved', ja: '話並び替え' },
+    'episode.page_skeleton_queued': { en: 'Page skeleton queued', ja: 'ページ骨格生成開始' },
+    'episode.page_skeleton_generated': { en: 'Page skeleton generated', ja: 'ページ骨格生成' },
+    'episode.story_autofill_queued': { en: 'Story applied to pages', ja: '話全体を反映開始' },
+    'entity.created': { en: 'Character created', ja: 'キャラ作成' },
+    'entity.updated': { en: 'Character updated', ja: 'キャラ更新' },
+    'entity.deleted': { en: 'Character deleted', ja: 'キャラ削除' },
+    'entity.reference_generation_queued': { en: 'Reference generation queued', ja: '参照生成開始' },
+    'entity.reference_confirmed': { en: 'Reference confirmed', ja: '参照確定' },
+    'entity.reference_deleted': { en: 'Reference deleted', ja: '参照削除' },
+    'page.settings_updated': { en: 'Page settings updated', ja: 'ページ設定更新' },
+    'page.layout_template_applied': { en: 'Panel layout applied', ja: 'コマ割り適用' },
+    'page.autofill_from_scenes_applied': { en: 'Page autofill applied', ja: 'ページ補完' },
+    'page.generation_queued': { en: 'Page generation queued', ja: 'ページ生成開始' },
+    'page.confirmed': { en: 'Page confirmed', ja: 'ページ確定' },
+    'page.reopened': { en: 'Page reopened', ja: 'ページ再編集' },
+    'panel.created': { en: 'Panel created', ja: 'コマ作成' },
+    'panel.updated': { en: 'Panel updated', ja: 'コマ更新' },
+    'panel.deleted': { en: 'Panel deleted', ja: 'コマ削除' },
+    'panel.reordered': { en: 'Panels reordered', ja: 'コマ並び替え' },
+    'panel_frame.template_applied': { en: 'Panel frame template applied', ja: 'コマ枠テンプレ適用' },
+    'panel_frame.replaced': { en: 'Panel frames replaced', ja: 'コマ枠更新' },
+    'scene.created': { en: 'Scene created', ja: 'シーン作成' },
+    'scene.updated': { en: 'Scene updated', ja: 'シーン更新' },
+    'scene.deleted': { en: 'Scene deleted', ja: 'シーン削除' },
+    'entity_state.created': { en: 'Character state created', ja: 'キャラ状態作成' },
+    'entity_state.updated': { en: 'Character state updated', ja: 'キャラ状態更新' },
     'credit.granted': { en: 'Credits granted', ja: 'クレジット付与' },
     'credit.consumed': { en: 'Credits consumed', ja: 'クレジット消費' },
     'credit.refunded': { en: 'Credits refunded', ja: 'クレジット返却' },
@@ -1338,23 +930,75 @@ function formatAuditAction(language: UiLanguage, log: OrganizationAuditLogRecord
     'generation.started': { en: 'Generation started', ja: '生成開始' },
     'generation.completed': { en: 'Generation completed', ja: '生成完了' },
     'generation.failed': { en: 'Generation failed', ja: '生成失敗' },
-    'work.exported': { en: 'Work exported', ja: '作品エクスポート' },
+    'work.exported': { en: 'Work exported', ja: '作品保存' },
   };
   const label = labels[log.action];
   return label === undefined ? log.action : pickUiText(language, label.en, label.ja);
 }
 
+function formatInvitationSendStatus(language: UiLanguage, status: OrganizationInvitationRecord['send_status']): string {
+  const labels: Record<OrganizationInvitationRecord['send_status'], { en: string; ja: string }> = {
+    not_sent: { en: 'Not sent', ja: '未送信' },
+    sending: { en: 'Sending', ja: '送信中' },
+    sent: { en: 'Sent', ja: '送信済み' },
+    failed: { en: 'Failed', ja: '送信失敗' },
+  };
+  return pickUiText(language, labels[status].en, labels[status].ja);
+}
+
+function formatInvitationDeliveryNotice(
+  language: UiLanguage,
+  status: 'disabled' | 'sent' | 'failed',
+): string {
+  if (status === 'sent') {
+    return pickUiText(language, 'Invitation email sent.', '招待メールを送信しました。');
+  }
+  if (status === 'disabled') {
+    return pickUiText(
+      language,
+      'Email delivery is not configured. Copy and share the invitation link.',
+      'メール送信は未設定です。招待リンクをコピーして共有してください。',
+    );
+  }
+  return pickUiText(
+    language,
+    'Invitation email failed. Copy the link or try resending.',
+    '招待メールの送信に失敗しました。リンクをコピーするか、再送してください。',
+  );
+}
+
+function formatInvitationSendError(language: UiLanguage, message: string): string {
+  const lowerMessage = message.toLowerCase();
+  if (
+    lowerMessage.includes('accessdenied') ||
+    lowerMessage.includes('not authorized') ||
+    lowerMessage.includes('ses') ||
+    lowerMessage.includes('arn:')
+  ) {
+    return pickUiText(
+      language,
+      'Email delivery is not available. Copy the invitation link and share it directly.',
+      'メール送信を利用できません。招待リンクをコピーして直接共有してください。',
+    );
+  }
+  return pickUiText(
+    language,
+    'Invitation email could not be sent. Copy the invitation link or try resending.',
+    '招待メールを送信できませんでした。招待リンクをコピーするか、再送してください。',
+  );
+}
+
 function formatPlanLabel(language: UiLanguage, planCode: SubscriptionPlanCode): string {
   const labels: Record<SubscriptionPlanCode, { en: string; ja: string }> = {
-    free: { en: 'Free', ja: '\u30d5\u30ea\u30fc' },
-    standard: { en: 'Standard', ja: '\u30b9\u30bf\u30f3\u30c0\u30fc\u30c9' },
-    premium: { en: 'Premium', ja: '\u30d7\u30ec\u30df\u30a2\u30e0' },
-    enterprise_a: { en: 'Enterprise A', ja: '\u30a8\u30f3\u30bf\u30fc\u30d7\u30e9\u30a4\u30ba A' },
-    enterprise_b: { en: 'Enterprise B', ja: '\u30a8\u30f3\u30bf\u30fc\u30d7\u30e9\u30a4\u30ba B' },
-    enterprise_c: { en: 'Enterprise C', ja: '\u30a8\u30f3\u30bf\u30fc\u30d7\u30e9\u30a4\u30ba C' },
+    free: { en: 'Free', ja: 'フリー' },
+    standard: { en: 'Standard', ja: 'スタンダード' },
+    premium: { en: 'Premium', ja: 'プレミアム' },
+    enterprise_a: { en: 'Enterprise A', ja: 'エンタープライズ A' },
+    enterprise_b: { en: 'Enterprise B', ja: 'エンタープライズ B' },
+    enterprise_c: { en: 'Enterprise C', ja: 'エンタープライズ C' },
   };
-
-  return pickUiText(language, labels[planCode].en, labels[planCode].ja);
+  const label = labels[planCode];
+  return pickUiText(language, label.en, label.ja);
 }
 
 function getSubscriptionPlanRank(planCode: SubscriptionPlanCode): number {
@@ -1378,6 +1022,18 @@ function formatOrganizationRoleLabel(language: UiLanguage, role: OrganizationMem
   const match = organizationRoleOptions.find((option) => option.value === role);
   return match === undefined ? role : pickUiText(language, match.label.en, match.label.ja);
 }
+
+function formatOrganizationMemberStatusLabel(language: UiLanguage, status: OrganizationMemberRecord['status']): string {
+  if (status === 'removed') {
+    return pickUiText(language, 'Removed', '削除済み');
+  }
+  if (status === 'invited') {
+    return pickUiText(language, 'Invited', '招待中');
+  }
+  const match = organizationMemberStatusOptions.find((option) => option.value === status);
+  return match === undefined ? status : pickUiText(language, match.label.en, match.label.ja);
+}
+
 const tutorialSteps: Array<{
   title: { en: string; ja: string };
   steps: Array<{ en: string; ja: string }>;
@@ -1385,93 +1041,42 @@ const tutorialSteps: Array<{
   {
     title: { en: 'Story', ja: 'ストーリー' },
     steps: [
-      {
-        en: 'Create a work from New work after entering at least a title.',
-        ja: 'まずタイトルを入力し、「作品を作成」で新しい作品を作ります。',
-      },
-      {
-        en: 'Add the world setting and overall flow roughly, then save.',
-        ja: '世界観や全体の流れを大まかに書いて保存します。',
-      },
-      {
-        en: 'Add a chapter, then add episodes inside that chapter.',
-        ja: '章を追加し、その章の中に話を追加します。',
-      },
-      {
-        en: 'Write the episode with either split input or full input. Use one input mode at a time.',
-        ja: '話の本文は分割入力か一括入力のどちらかで書きます。両方は同時に使わないでください。',
-      },
-      {
-        en: 'Story AI can improve the current episode and apply the result back into the fields.',
-        ja: 'ストーリーAIを使うと、現在の話を改善して入力欄へ反映できます。',
-      },
-      {
-        en: 'Add Scenes with location, time, and atmosphere before using Apply story plan.',
-        ja: '「話全体を反映」を使う前に、シーンへ場所・時間・雰囲気を入力します。',
-      },
+      { en: 'Create a work from New work after entering at least a title.', ja: 'まずタイトルを入れて新しい作品を作成します。' },
+      { en: 'Add the world setting and overall flow roughly, then save.', ja: '世界観や全体の流れを大まかに書いて保存します。' },
+      { en: 'Add a chapter, then add episodes inside that chapter.', ja: '章を追加し、その中に話を追加します。' },
+      { en: 'Write the episode using the full story input.', ja: '話は全体入力欄にまとめて書きます。' },
+      { en: 'Story AI can improve the current episode and apply the result back into the fields.', ja: 'ストーリーAIで現在の話を改善し、入力欄に反映できます。' },
+      { en: 'Scenes are optional. Add location, time, and atmosphere when you want more control over page planning.', ja: 'シーンは任意です。場所・時間・雰囲気を細かく指定したい時に使います。' },
     ],
   },
   {
     title: { en: 'Characters', ja: 'キャラクター' },
     steps: [
-      {
-        en: 'Press New character and fill the fields you already know.',
-        ja: '「新規キャラ」を押し、分かっている特徴だけ入力します。',
-      },
-      {
-        en: 'You do not need to fill every blank field. Save the selected character before generation.',
-        ja: 'すべての空欄を埋める必要はありません。生成前に選択中のキャラを保存します。',
-      },
-      {
-        en: 'Generate a full-body preview, then confirm the image you want to use as the reference.',
-        ja: '全身プレビューを生成し、使いたい画像をリファレンスとして確定します。',
-      },
-      {
-        en: 'To use your own image, import it first. You can confirm the imported image or generate a new preview from it.',
-        ja: '手元の画像を使う場合は先に取り込みます。取り込み画像を確定することも、そこからプレビュー生成することもできます。',
-      },
+      { en: 'Press New character and fill the fields you already know.', ja: '新規キャラを押し、分かっている項目から入力します。' },
+      { en: 'You do not need to fill every blank field. Save the selected character before generation.', ja: 'すべての空欄を埋める必要はありません。生成前に選択中のキャラを保存します。' },
+      { en: 'Generate a full-body preview, then confirm the image you want to use as the reference.', ja: '全身プレビューを生成し、使いたい画像を確定します。' },
+      { en: 'To use your own image, import it first. You can confirm the imported image or generate a new preview from it.', ja: '自分の画像を使う場合は先に取り込みます。取り込み画像の確定や、そこからの再プレビュー生成もできます。' },
     ],
   },
   {
-    title: { en: 'Page Plan And Export', ja: 'ページ骨格と出力' },
+    title: { en: 'Page Plan And Export', ja: 'ページ生成と保存' },
     steps: [
-      {
-        en: 'After creating the needed characters, return to Story and press Generate page plan.',
-        ja: '必要なキャラを作成したらストーリーへ戻り、「ページ骨格生成」を押します。',
-      },
-      {
-        en: 'Page plan generation creates pages, frames, and panel slots. It can take a few minutes.',
-        ja: 'ページ骨格生成では、ページ・コマ割り・コマ枠を作ります。数分かかることがあります。',
-      },
-      {
-        en: 'Use Apply story plan separately when you want the story distributed into panel details and dialogue.',
-        ja: 'コマ内容やセリフまで自動入力したい場合は、別途「話全体を反映」を押します。',
-      },
-      {
-        en: 'Open Pages, review each page, and adjust panel content, frame template, or panel count.',
-        ja: 'ページを開き、各ページのコマ内容・テンプレート・コマ数を確認して調整します。',
-      },
-      {
-        en: 'When ready, press Generate page. The image is created from the current page inputs.',
-        ja: '調整後に「ページ生成」を押すと、現在の入力内容から画像が生成されます。',
-      },
-      {
-        en: 'If the image is not right, edit the panel inputs and generate the page again.',
-        ja: '結果が合わない場合は、コマの入力内容を直してもう一度ページ生成します。',
-      },
-      {
-        en: 'When finished, choose pages and file format, then download them.',
-        ja: '完成したら、保存するページとファイル形式を選んでダウンロードします。',
-      },
+      { en: 'After creating the needed characters, return to Story and press Generate page plan.', ja: '必要なキャラを作成したら、ストーリーに戻ってページ骨格を生成します。' },
+      { en: 'Page plan generation creates pages, frames, and panel slots. It can take a few minutes.', ja: 'ページ骨格生成ではページ、枠、コマ欄を作ります。数分かかる場合があります。' },
+      { en: 'Use Apply story plan separately when you want the story distributed into panel details and dialogue.', ja: '話を各コマの内容やセリフへ分配したい時は、話全体を反映します。' },
+      { en: 'Open Pages, review each page, and adjust panel content, frame template, or panel count.', ja: 'ページを開き、各ページのコマ内容、コマ割り、コマ数を調整します。' },
+      { en: 'When ready, press Generate page. The image is created from the current page inputs.', ja: '調整できたらページ生成を押します。現在の入力内容から画像を作成します。' },
+      { en: 'If the image is not right, edit the panel inputs and generate the page again.', ja: '結果が合わない場合はコマ入力を修正して再生成します。' },
+      { en: 'When finished, choose pages and file format, then download them.', ja: '完成したらページとファイル形式を選び、ダウンロードします。' },
     ],
   },
 ];
-
+const selectedOrganizationStorageKey = 'lyra:web:selected-organization';
 const selectedWorkStorageKey = 'lyra:web:selected-work';
 const selectedChapterStorageKey = 'lyra:web:selected-chapter';
 const selectedEpisodeStorageKey = 'lyra:web:selected-episode';
 const selectedPageStorageKey = 'lyra:web:selected-page';
-const selectedOrganizationStorageKey = 'lyra:web:selected-organization';
+const pendingOrganizationInviteTokenStorageKey = 'lyra.pendingOrganizationInviteToken';
 const cognitoRefreshSkewMs = 120_000;
 const maxBrowserTimeoutMs = 2_147_483_647;
 const splashVisibleMs = 2_000;
@@ -1504,6 +1109,20 @@ const manualTokenAuthAllowed = shouldAllowManualTokenAuth({
   PROD: import.meta.env.PROD,
 });
 
+function readInviteTokenFromLocation(location: Location): string | null {
+  const match = location.pathname.match(/^\/invite\/([^/]+)\/?$/u);
+  if (match === null) {
+    return null;
+  }
+
+  try {
+    const token = decodeURIComponent(match[1]).trim();
+    return token.length > 0 ? token : null;
+  } catch {
+    return null;
+  }
+}
+
 export default function App() {
   const [manualToken, setManualToken] = useStoredString(window.sessionStorage, manualTokenStorageKey, '');
   const [cognitoSession, setCognitoSession] = useState<CognitoSession | null>(() =>
@@ -1515,6 +1134,8 @@ export default function App() {
   const [pendingAuth, setPendingAuth] = useState(true);
   const [showSplash, setShowSplash] = useState(true);
   const [splashExiting, setSplashExiting] = useState(false);
+  const publicApi = useMemo(() => new LyraApiClient(() => null), []);
+  const inviteTokenFromPath = readInviteTokenFromLocation(window.location);
 
   useEffect(() => {
     const exitTimeout = window.setTimeout(() => {
@@ -1677,6 +1298,28 @@ export default function App() {
       supabaseSession?.access_token ??
       (manualTokenAuthAllowed && manualToken.length > 0 ? manualToken : null);
   if (accessToken === null) {
+    if (inviteTokenFromPath !== null) {
+      return renderWithSplash(
+        <InviteLandingScreen
+          token={inviteTokenFromPath}
+          authenticated={false}
+          api={publicApi}
+          authError={cognitoAuthError}
+          onAccept={async () => undefined}
+          onLogin={async () => {
+            if (cognitoAuthConfig === null) {
+              throw new Error(
+                readStoredUiLanguage() === 'en'
+                  ? 'Sign-in is not configured. Please contact the site administrator.'
+                  : 'ログイン設定が未完了です。サイト管理者に連絡してください。',
+              );
+            }
+            await beginCognitoLogin(cognitoAuthConfig, window.sessionStorage, window.location, window.crypto);
+          }}
+        />,
+      );
+    }
+
     return renderWithSplash(
       <AuthScreen
         cognitoAuthConfig={cognitoAuthConfig}
@@ -1706,6 +1349,29 @@ export default function App() {
     : typeof payload?.sub === 'string' && payload.sub.length > 0
       ? `sub:${payload.sub}`
       : `email:${email}`;
+  const authedApi = new LyraApiClient(() => accessToken);
+
+  if (inviteTokenFromPath !== null) {
+    return renderWithSplash(
+      <InviteLandingScreen
+        token={inviteTokenFromPath}
+        authenticated={true}
+        api={authedApi}
+        authError={cognitoAuthError}
+        onAccept={async () => {
+          const workspace = await authedApi.acceptOrganizationInvitation(inviteTokenFromPath);
+          window.sessionStorage.removeItem(pendingOrganizationInviteTokenStorageKey);
+          window.localStorage.setItem(
+            scopedStorageKey(selectedOrganizationStorageKey, authSessionKey),
+            workspace.organization.id,
+          );
+          window.history.replaceState(null, '', '/');
+          window.location.assign('/');
+        }}
+        onLogin={async () => undefined}
+      />,
+    );
+  }
 
   return renderWithSplash(
     <StudioShell
@@ -1879,6 +1545,170 @@ function AuthScreen(props: {
   );
 }
 
+function InviteLandingScreen(props: {
+  token: string;
+  authenticated: boolean;
+  api: LyraApiClient;
+  authError: string | null;
+  onAccept: () => Promise<void>;
+  onLogin: () => Promise<void>;
+}) {
+  const language = normalizeUiLanguage(
+    typeof window !== 'undefined' && window.localStorage.getItem(uiLanguageStorageKey) === 'en' ? 'en' : 'ja',
+  );
+  const [notice, setNotice] = useState<NoticeState | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [nowMs, setNowMs] = useState(0);
+  useEffect(() => {
+    const updateNow = (): void => setNowMs(Date.now());
+    updateNow();
+    const timer = window.setInterval(updateNow, 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
+  const previewQuery = useQuery({
+    queryKey: ['organization-invitation-preview', props.token],
+    queryFn: () => props.api.previewOrganizationInvitation(props.token),
+    retry: false,
+  });
+  const preview = previewQuery.data ?? null;
+  const invitationUnavailable =
+    preview !== null &&
+    (preview.invitation.status !== 'pending' ||
+      (nowMs > 0 && Date.parse(preview.invitation.expires_at) <= nowMs));
+  const canProceedWithInvite = !busy && !invitationUnavailable;
+  const visibleNotice =
+    notice ??
+    (props.authError === null ? null : { type: 'error', message: props.authError } satisfies NoticeState);
+
+  const acceptInvite = async (): Promise<void> => {
+    try {
+      setBusy(true);
+      setNotice(null);
+      await props.onAccept();
+      setNotice({
+        type: 'success',
+        message: pickUiText(language, 'Joined the organization.', '法人ワークスペースに参加しました。'),
+      });
+    } catch (error) {
+      setNotice({ type: 'error', message: toMessage(error, language) });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const beginLogin = async (): Promise<void> => {
+    try {
+      setBusy(true);
+      window.sessionStorage.setItem(pendingOrganizationInviteTokenStorageKey, props.token);
+      await props.onLogin();
+    } catch (error) {
+      window.sessionStorage.removeItem(pendingOrganizationInviteTokenStorageKey);
+      setNotice({ type: 'error', message: toMessage(error, language) });
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="auth-shell">
+      <div className="auth-card invite-card">
+        <div className="eyebrow">Lyra</div>
+        <h1>{pickUiText(language, 'Organization invitation', '法人ワークスペースへの招待')}</h1>
+        {visibleNotice !== null ? <NoticeBanner notice={visibleNotice} /> : null}
+        {previewQuery.isLoading ? (
+          <div className="screen-inline-status">
+            <LoaderCircle className="spin" size={18} />
+            <span>{pickUiText(language, 'Checking invitation...', '招待リンクを確認しています...')}</span>
+          </div>
+        ) : previewQuery.isError ? (
+          <NoticeBanner
+            notice={{
+              type: 'info',
+              message: pickUiText(
+                language,
+                'The invitation could not be checked before sign-in. If this is the latest link, sign in or register with the invited email and Lyra will check it again.',
+                'ログイン前の招待確認に失敗しました。最新のリンクであれば、招待されたメールアドレスでログインまたは登録すると再確認します。',
+              ),
+            }}
+          />
+        ) : preview !== null ? (
+          <>
+            <InvitePreviewDetails language={language} preview={preview} />
+            {invitationUnavailable ? (
+              <NoticeBanner
+                notice={{
+                  type: 'error',
+                  message: pickUiText(
+                    language,
+                    'This invitation is expired, revoked, or already used. Ask the organization owner to resend it.',
+                    'この招待は期限切れ、取り消し済み、または使用済みです。管理者に再送を依頼してください。',
+                  ),
+                }}
+              />
+            ) : null}
+          </>
+        ) : null}
+        <p className="muted compact-copy">
+          {pickUiText(
+            language,
+            'Use the same email address that received this invitation. New users can register from the sign-in page.',
+            '招待されたメールアドレスと同じメールでログインまたは登録してください。未登録の場合もログイン画面から登録できます。',
+          )}
+        </p>
+        <div className="stack">
+          {props.authenticated ? (
+            <button
+              className="primary-button"
+              disabled={!canProceedWithInvite}
+              onClick={() => void acceptInvite()}
+              type="button"
+            >
+              {busy ? <LoaderCircle className="spin" size={16} /> : <Check size={16} />}
+              {pickUiText(language, 'Join organization', '参加する')}
+            </button>
+          ) : (
+            <button
+              className="primary-button"
+              disabled={!canProceedWithInvite}
+              onClick={() => void beginLogin()}
+              type="button"
+            >
+              {busy ? <LoaderCircle className="spin" size={16} /> : <KeyRound size={16} />}
+              {pickUiText(language, 'Sign in or register to join', 'ログインまたは登録して参加')}
+            </button>
+          )}
+          <button className="secondary-button" onClick={() => window.location.assign('/')} type="button">
+            {pickUiText(language, 'Back to Lyra', 'Lyraへ戻る')}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+function InvitePreviewDetails(props: {
+  language: UiLanguage;
+  preview: OrganizationInvitationPreviewRecord;
+}) {
+  return (
+    <div className="invite-preview">
+      <div>
+        <span>{pickUiText(props.language, 'Organization', '組織')}</span>
+        <strong>{props.preview.organization.name}</strong>
+      </div>
+      <div>
+        <span>{pickUiText(props.language, 'Invited email', '招待メール')}</span>
+        <strong>{props.preview.invitation.email}</strong>
+      </div>
+      <div>
+        <span>{pickUiText(props.language, 'Role', '権限')}</span>
+        <strong>{formatOrganizationRoleLabel(props.language, props.preview.invitation.role)}</strong>
+      </div>
+      <div>
+        <span>{pickUiText(props.language, 'Expires at', '有効期限')}</span>
+        <strong>{formatIsoDateTime(props.language, props.preview.invitation.expires_at)}</strong>
+      </div>
+    </div>
+  );
+}
 function StudioShell(props: {
   authSessionKey: string;
   email: string;
@@ -1918,6 +1748,7 @@ function StudioShell(props: {
   const [uiLanguageStored, setUiLanguageStored] = useStoredString(window.localStorage, uiLanguageStorageKey, 'ja');
   const uiLanguage = normalizeUiLanguage(uiLanguageStored);
   const uiLanguageRef = useRef<UiLanguage>(uiLanguage);
+  const pendingInviteAcceptRef = useRef(false);
   const isMobileViewport = useIsMobileViewport();
   const [notice, setNotice] = useState<NoticeState | null>(null);
   const [busyAction, setBusyAction] = useState<string | null>(null);
@@ -2001,7 +1832,10 @@ function StudioShell(props: {
     email: '',
     role: 'editor',
   });
-  const [organizationInvitationToken, setOrganizationInvitationToken] = useState('');
+  const [organizationInvitationShareUrl, setOrganizationInvitationShareUrl] = useState('');
+  const [collapsedOrganizationPanels, setCollapsedOrganizationPanels] = useState<
+    Partial<Record<OrganizationDetailPanelKey, boolean>>
+  >({});
   const handledJobsRef = useRef<Set<string>>(new Set());
   const lastWorkspaceRefreshRef = useRef(0);
   const billingVerificationTargetRef = useRef<BillingReturnMarker | null>(null);
@@ -2077,6 +1911,11 @@ function StudioShell(props: {
     queryFn: () => api.getOrganizationMembers(activeOrganizationId ?? ''),
     enabled: activeOrganizationId !== null && canManageActiveOrganizationMembers,
   });
+  const organizationInvitationsQuery = useQuery({
+    queryKey: sessionQueryKey(['organization-invitations', activeOrganizationId ?? '']),
+    queryFn: () => api.getOrganizationInvitations(activeOrganizationId ?? ''),
+    enabled: activeOrganizationId !== null && canManageActiveOrganizationMembers,
+  });
   const organizationBillingQuery = useQuery({
     queryKey: sessionQueryKey(['organization-billing', activeOrganizationId ?? '']),
     queryFn: () => api.getOrganizationBilling(activeOrganizationId ?? ''),
@@ -2101,6 +1940,10 @@ function StudioShell(props: {
     () => organizationMembersQuery.data?.members ?? [],
     [organizationMembersQuery.data?.members],
   );
+  const organizationInvitations = useMemo(
+    () => organizationInvitationsQuery.data?.invitations ?? [],
+    [organizationInvitationsQuery.data?.invitations],
+  );
   const activeOrganizationBalance = organizationBalanceQuery.data ?? activeOrganizationWorkspace?.balance ?? null;
   const activeOrganizationSubscription = organizationBillingQuery.data?.subscription ?? null;
   const organizationSubscriptionPlans = organizationBillingQuery.data?.subscription_plans ?? [];
@@ -2116,6 +1959,14 @@ function StudioShell(props: {
     hasActiveOrganizationSubscription && isEnterpriseSubscriptionCheckoutPlanCode(activeOrganizationSubscription.plan_code)
       ? activeOrganizationSubscription.plan_code
       : null;
+  const isOrganizationPanelCollapsed = (panelKey: OrganizationDetailPanelKey): boolean =>
+    collapsedOrganizationPanels[panelKey] === true;
+  const toggleOrganizationPanel = (panelKey: OrganizationDetailPanelKey): void => {
+    setCollapsedOrganizationPanels((current) => ({
+      ...current,
+      [panelKey]: current[panelKey] !== true,
+    }));
+  };
   const canSelectOrganizationSubscriptionPlan = (plan: OrganizationBillingPlanRecord): boolean => {
     if (
       !canManageActiveOrganizationBilling ||
@@ -2140,6 +1991,37 @@ function StudioShell(props: {
 
     return getSubscriptionPlanRank(plan.plan_code) > getSubscriptionPlanRank(activeOrganizationPlanCode);
   };
+
+  useEffect(() => {
+    const pendingToken = window.sessionStorage.getItem(pendingOrganizationInviteTokenStorageKey);
+    if (pendingToken === null || pendingToken.trim().length === 0 || pendingInviteAcceptRef.current) {
+      return;
+    }
+
+    pendingInviteAcceptRef.current = true;
+    void api.acceptOrganizationInvitation(pendingToken.trim())
+      .then((workspace) => {
+        window.sessionStorage.removeItem(pendingOrganizationInviteTokenStorageKey);
+        setSelectedOrganizationId(workspace.organization.id);
+        setNotice({
+          type: 'success',
+          message: pickUiText(uiLanguageRef.current, 'Joined the organization.', '法人ワークスペースに参加しました。'),
+        });
+        void queryClient.invalidateQueries({ queryKey: sessionQueryKey(['organizations']) });
+        void queryClient.invalidateQueries({
+          queryKey: sessionQueryKey(['organization-balance', workspace.organization.id]),
+        });
+      })
+      .catch((error: unknown) => {
+        setNotice({
+          type: 'error',
+          message: toMessage(error, uiLanguageRef.current),
+        });
+      })
+      .finally(() => {
+        pendingInviteAcceptRef.current = false;
+      });
+  }, [api, queryClient, sessionQueryKey, setSelectedOrganizationId]);
 
   useEffect(() => {
     if (
@@ -2454,6 +2336,7 @@ function StudioShell(props: {
     if (activeOrganizationId !== null) {
       void queryClient.invalidateQueries({ queryKey: sessionQueryKey(['organization-balance', activeOrganizationId]) });
       void queryClient.invalidateQueries({ queryKey: sessionQueryKey(['organization-members', activeOrganizationId]) });
+      void queryClient.invalidateQueries({ queryKey: sessionQueryKey(['organization-invitations', activeOrganizationId]) });
       void queryClient.invalidateQueries({ queryKey: sessionQueryKey(['organization-billing-plans', activeOrganizationId]) });
     }
   }, [
@@ -2819,29 +2702,29 @@ function StudioShell(props: {
     }
 
     const hasSelectionForCurrentCandidates = referenceCandidates.some((candidate) =>
-      referenceSelection.includes(candidate.s3_key),
+      referenceSelection.includes(candidate.candidate_token),
     );
     const firstSelectedCandidateKey = referenceSelection.find((selectedKey) =>
-      referenceCandidates.some((candidate) => candidate.s3_key === selectedKey),
+      referenceCandidates.some((candidate) => candidate.candidate_token === selectedKey),
     );
 
     if (!hasSelectionForCurrentCandidates) {
-      setReferenceSelection(referenceCandidates.map((candidate) => candidate.s3_key));
-      setReferencePrimaryKey(referenceCandidates[0]?.s3_key ?? '');
+      setReferenceSelection(referenceCandidates.map((candidate) => candidate.candidate_token));
+      setReferencePrimaryKey(referenceCandidates[0]?.candidate_token ?? '');
       return;
     }
 
     if (
       referencePrimaryKey.length > 0 &&
       !referenceSelection.includes(referencePrimaryKey) &&
-      referenceCandidates.some((candidate) => candidate.s3_key === referencePrimaryKey)
+      referenceCandidates.some((candidate) => candidate.candidate_token === referencePrimaryKey)
     ) {
       setReferenceSelection([...referenceSelection, referencePrimaryKey]);
       return;
     }
 
-    if (!referenceCandidates.some((candidate) => candidate.s3_key === referencePrimaryKey)) {
-      setReferencePrimaryKey(firstSelectedCandidateKey ?? referenceCandidates[0]?.s3_key ?? '');
+    if (!referenceCandidates.some((candidate) => candidate.candidate_token === referencePrimaryKey)) {
+      setReferencePrimaryKey(firstSelectedCandidateKey ?? referenceCandidates[0]?.candidate_token ?? '');
     }
   }, [referenceCandidates, referencePrimaryKey, referenceSelection]);
 
@@ -2980,14 +2863,14 @@ function StudioShell(props: {
     );
   };
 
-  const runAction = async (label: string, action: () => Promise<void>): Promise<void> => {
+  const runAction = async (label: string, action: () => Promise<string | void>): Promise<void> => {
     try {
       setBusyAction(label);
-      await action();
+      const customSuccessMessage = await action();
       const translatedLabel = translateUiString(uiLanguage, label);
       setNotice({
         type: 'success',
-        message: formatActionSuccessMessage(uiLanguage, label, translatedLabel),
+        message: customSuccessMessage ?? formatActionSuccessMessage(uiLanguage, label, translatedLabel),
       });
     } catch (error) {
       setNotice({ type: 'error', message: toMessage(error, uiLanguage) });
@@ -3102,7 +2985,7 @@ function StudioShell(props: {
 
   const workspacePanel = (
     <PanelSection
-      title={pickUiText(uiLanguage, 'Workspace', '\u30ef\u30fc\u30af\u30b9\u30da\u30fc\u30b9')}
+      title={pickUiText(uiLanguage, 'Workspace', 'ワークスペース')}
       subtitle={pickUiText(
         uiLanguage,
         'Switch between personal work and organization work.',
@@ -3157,15 +3040,17 @@ function StudioShell(props: {
           </div>
 
           {canViewActiveOrganizationBilling ? (
-          <div className="organization-billing-panel">
-            <div className="billing-block-header">
-              <strong>{pickUiText(uiLanguage, 'Organization billing', '\u6cd5\u4eba\u8acb\u6c42')}</strong>
-              <span>
-                {canManageActiveOrganizationBilling
-                  ? pickUiText(uiLanguage, 'Owner/Billing', '\u30aa\u30fc\u30ca\u30fc\u30fb\u8acb\u6c42\u7ba1\u7406')
-                  : pickUiText(uiLanguage, 'Billing permission required', '\u8acb\u6c42\u7ba1\u7406\u6a29\u9650\u304c\u5fc5\u8981')}
-              </span>
-            </div>
+          <OrganizationDetailPanel
+            className="organization-billing-panel"
+            collapsed={isOrganizationPanelCollapsed('billing')}
+            meta={
+              canManageActiveOrganizationBilling
+                ? pickUiText(uiLanguage, 'Owner/Billing', '\u30aa\u30fc\u30ca\u30fc\u30fb\u8acb\u6c42\u7ba1\u7406')
+                : pickUiText(uiLanguage, 'Billing permission required', '\u8acb\u6c42\u7ba1\u7406\u6a29\u9650\u304c\u5fc5\u8981')
+            }
+            onToggle={() => toggleOrganizationPanel('billing')}
+            title={pickUiText(uiLanguage, 'Organization billing', '\u6cd5\u4eba\u8acb\u6c42')}
+          >
             <div className="billing-current-plan">
               <span>
                 {pickUiText(uiLanguage, 'Current organization plan', '\u73fe\u5728\u306e\u6cd5\u4eba\u30d7\u30e9\u30f3')}
@@ -3237,7 +3122,7 @@ function StudioShell(props: {
                 );
               }
               const statusLabel = !plan.configured
-                ? pickUiText(uiLanguage, 'Preparing', '\u6e96\u5099\u4e2d')
+                ? pickUiText(uiLanguage, 'Setup required', '\u7ba1\u7406\u8005\u8a2d\u5b9a\u5f85\u3061')
                 : isCurrent
                   ? pickUiText(uiLanguage, 'Current', '\u73fe\u5728')
                   : formatJpy(plan.amount_jpy);
@@ -3276,8 +3161,8 @@ function StudioShell(props: {
             <div className="billing-note">
               {pickUiText(
                 uiLanguage,
-                'Plan downgrades, cancellation, and invoice details are managed from the organization billing portal.',
-                '\u30d7\u30e9\u30f3\u306e\u4e0b\u4f4d\u5909\u66f4\u30fb\u89e3\u7d04\u30fb\u8acb\u6c42\u660e\u7d30\u306f\u6cd5\u4eba\u8acb\u6c42\u30dd\u30fc\u30bf\u30eb\u3067\u7ba1\u7406\u3057\u307e\u3059\u3002',
+                'Paid plan changes, cancellation, and invoice details are managed from "Manage organization billing". Monthly plan credits reset to the plan allowance and do not roll over. Purchased credits roll over.',
+                '有料プランの変更・解約・請求詳細は「法人請求を管理」で行ってください。毎月のプラン分クレジットは規定値に更新され、未使用分は繰り越されません。追加購入クレジットは繰り越されます。',
               )}
             </div>
             <div className="billing-pack-grid organization-credit-packs">
@@ -3335,30 +3220,57 @@ function StudioShell(props: {
               <CreditCard size={16} />
               <span>{pickUiText(uiLanguage, 'Manage organization billing', '\u6cd5\u4eba\u8acb\u6c42\u3092\u7ba1\u7406')}</span>
             </button>
-          </div>
+          </OrganizationDetailPanel>
           ) : (
             <div className="billing-note">
               {pickUiText(
                 uiLanguage,
                 'Billing details are shown only to owners and billing members.',
-                '請求情報はオーナーと請求担当だけに表示されます。',
+                '請求情報はオーナーと請求担当にのみ表示されます。',
               )}
             </div>
           )}
 
           {canViewActiveOrganizationUsage ? (
-            <div className="organization-admin-panel">
+            <OrganizationDetailPanel
+              className="organization-admin-panel"
+              collapsed={isOrganizationPanelCollapsed('usage')}
+              meta={
+                organizationUsageQuery.isFetching
+                  ? pickUiText(uiLanguage, 'Refreshing', '更新中')
+                  : pickUiText(uiLanguage, 'Current month', '今月')
+              }
+              onToggle={() => toggleOrganizationPanel('usage')}
+              title={pickUiText(uiLanguage, 'Usage summary', '利用状況')}
+            >
               <div className="billing-block-header">
-                <strong>{pickUiText(uiLanguage, 'Usage summary', '利用量')}</strong>
-                <span>{organizationUsageQuery.isFetching ? pickUiText(uiLanguage, 'Refreshing', '更新中') : pickUiText(uiLanguage, 'Current month', '今月')}</span>
+                <strong>{pickUiText(uiLanguage, 'Usage summary', '利用状況')}</strong>
+                <div className="billing-block-actions">
+                  <span>{organizationUsageQuery.isFetching ? pickUiText(uiLanguage, 'Refreshing', '更新中') : pickUiText(uiLanguage, 'Current month', '今月')}</span>
+                  <button
+                    className="ghost-button compact"
+                    disabled={busyAction === 'Download organization usage CSV' || activeOrganizationId === null}
+                    onClick={() =>
+                      void runAction('Download organization usage CSV', async () => {
+                        const response = await api.downloadOrganizationUsageCsv(activeOrganizationId ?? '');
+                        const date = new Date().toISOString().slice(0, 10);
+                        triggerBlobDownload(response.blob, `lyra-organization-usage-${date}.csv`);
+                      })
+                    }
+                    type="button"
+                  >
+                    <Download size={14} />
+                    <span>{pickUiText(uiLanguage, 'CSV', 'CSV保存')}</span>
+                  </button>
+                </div>
               </div>
               {organizationUsageSummary === null ? (
-                <div className="muted small">{pickUiText(uiLanguage, 'No usage data yet.', 'まだ利用量はありません。')}</div>
+                <div className="muted small">{pickUiText(uiLanguage, 'No usage data yet.', 'まだ利用データはありません。')}</div>
               ) : (
                 <>
                   <div className="metric-grid organization-metrics">
                     <Metric
-                      label={pickUiText(uiLanguage, 'Credits used', '消費クレジット')}
+                      label={pickUiText(uiLanguage, 'Credits used', '使用クレジット')}
                       value={String(organizationUsageSummary.current_month_total_credits)}
                     />
                     <Metric
@@ -3366,7 +3278,7 @@ function StudioShell(props: {
                       value={String(organizationUsageSummary.by_member.length)}
                     />
                     <Metric
-                      label={pickUiText(uiLanguage, 'Works used', '利用作品')}
+                      label={pickUiText(uiLanguage, 'Works used', '作品数')}
                       value={String(organizationUsageSummary.by_work.length)}
                     />
                   </div>
@@ -3380,13 +3292,19 @@ function StudioShell(props: {
                   </div>
                 </>
               )}
-            </div>
+            </OrganizationDetailPanel>
           ) : null}
 
           {canViewActiveOrganizationBilling ? (
-            <div className="organization-admin-panel">
+            <OrganizationDetailPanel
+              className="organization-admin-panel"
+              collapsed={isOrganizationPanelCollapsed('invoices')}
+              meta={organizationInvoicesQuery.isFetching ? pickUiText(uiLanguage, 'Refreshing', '更新中') : String(organizationInvoices.length)}
+              onToggle={() => toggleOrganizationPanel('invoices')}
+              title={pickUiText(uiLanguage, 'Recent invoices', '請求履歴')}
+            >
               <div className="billing-block-header">
-                <strong>{pickUiText(uiLanguage, 'Recent invoices', '最近の請求')}</strong>
+                <strong>{pickUiText(uiLanguage, 'Recent invoices', '請求履歴')}</strong>
                 <span>{organizationInvoicesQuery.isFetching ? pickUiText(uiLanguage, 'Refreshing', '更新中') : String(organizationInvoices.length)}</span>
               </div>
               <div className="organization-compact-list">
@@ -3406,14 +3324,20 @@ function StudioShell(props: {
                   </div>
                 ))}
                 {organizationInvoices.length === 0 ? (
-                  <div className="muted small">{pickUiText(uiLanguage, 'No invoice records yet.', '請求履歴はまだありません。')}</div>
+                  <div className="muted small">{pickUiText(uiLanguage, 'No invoice records yet.', 'まだ請求履歴はありません。')}</div>
                 ) : null}
               </div>
-            </div>
+            </OrganizationDetailPanel>
           ) : null}
 
           {canViewActiveOrganizationAudit ? (
-            <div className="organization-admin-panel">
+            <OrganizationDetailPanel
+              className="organization-admin-panel"
+              collapsed={isOrganizationPanelCollapsed('audit')}
+              meta={organizationAuditLogsQuery.isFetching ? pickUiText(uiLanguage, 'Refreshing', '更新中') : String(organizationAuditLogs.length)}
+              onToggle={() => toggleOrganizationPanel('audit')}
+              title={pickUiText(uiLanguage, 'Audit log', '監査ログ')}
+            >
               <div className="billing-block-header">
                 <strong>{pickUiText(uiLanguage, 'Audit log', '監査ログ')}</strong>
                 <span>{organizationAuditLogsQuery.isFetching ? pickUiText(uiLanguage, 'Refreshing', '更新中') : String(organizationAuditLogs.length)}</span>
@@ -3426,19 +3350,25 @@ function StudioShell(props: {
                   </div>
                 ))}
                 {organizationAuditLogs.length === 0 ? (
-                  <div className="muted small">{pickUiText(uiLanguage, 'No audit events yet.', '監査イベントはまだありません。')}</div>
+                  <div className="muted small">{pickUiText(uiLanguage, 'No audit events yet.', 'まだ監査イベントはありません。')}</div>
                 ) : null}
               </div>
-            </div>
+            </OrganizationDetailPanel>
           ) : null}
 
           {canManageActiveOrganizationMembers ? (
-            <div className="organization-members">
+            <OrganizationDetailPanel
+              className="organization-members"
+              collapsed={isOrganizationPanelCollapsed('members')}
+              meta={organizationMembersQuery.isFetching ? pickUiText(uiLanguage, 'Refreshing', '更新中') : `${organizationMembers.length}`}
+              onToggle={() => toggleOrganizationPanel('members')}
+              title={pickUiText(uiLanguage, 'Members', '\u30e1\u30f3\u30d0\u30fc')}
+            >
               <div className="billing-block-header">
                 <strong>{pickUiText(uiLanguage, 'Members', '\u30e1\u30f3\u30d0\u30fc')}</strong>
                 <span>
                   {organizationMembersQuery.isFetching
-                    ? pickUiText(uiLanguage, 'Refreshing', '\u66f4\u65b0\u4e2d')
+                    ? pickUiText(uiLanguage, 'Refreshing', '更新中')
                     : `${organizationMembers.length}`}
                 </span>
               </div>
@@ -3448,7 +3378,7 @@ function StudioShell(props: {
                     <div>
                       <strong>{member.email}</strong>
                       <span>
-                        {formatOrganizationRoleLabel(uiLanguage, member.role)} / {translateUiString(uiLanguage, member.status)}
+                        {formatOrganizationRoleLabel(uiLanguage, member.role)} / {formatOrganizationMemberStatusLabel(uiLanguage, member.status)}
                       </span>
                     </div>
                     <div className="organization-member-actions">
@@ -3463,6 +3393,9 @@ function StudioShell(props: {
                             await queryClient.invalidateQueries({
                               queryKey: sessionQueryKey(['organization-members', activeOrganizationId ?? '']),
                             });
+                            await queryClient.invalidateQueries({
+                              queryKey: sessionQueryKey(['organization-audit-logs', activeOrganizationId ?? '']),
+                            });
                             await queryClient.invalidateQueries({ queryKey: sessionQueryKey(['organizations']) });
                           });
                         }}
@@ -3470,6 +3403,30 @@ function StudioShell(props: {
                         {organizationRoleOptions.map((role) => (
                           <option key={role.value} value={role.value}>
                             {pickUiText(uiLanguage, role.label.en, role.label.ja)}
+                          </option>
+                        ))}
+                      </select>
+                      <select
+                        aria-label={pickUiText(uiLanguage, 'Member status', '\u30e1\u30f3\u30d0\u30fc\u72b6\u614b')}
+                        disabled={busyAction === 'Update organization member' || member.status === 'removed' || member.status === 'invited'}
+                        value={member.status === 'suspended' ? 'suspended' : 'active'}
+                        onChange={(event) => {
+                          const nextStatus = event.target.value as Extract<OrganizationMemberRecord['status'], 'active' | 'suspended'>;
+                          void runAction('Update organization member', async () => {
+                            await api.updateOrganizationMember(activeOrganizationId ?? '', member.id, { status: nextStatus });
+                            await queryClient.invalidateQueries({
+                              queryKey: sessionQueryKey(['organization-members', activeOrganizationId ?? '']),
+                            });
+                            await queryClient.invalidateQueries({
+                              queryKey: sessionQueryKey(['organization-audit-logs', activeOrganizationId ?? '']),
+                            });
+                            await queryClient.invalidateQueries({ queryKey: sessionQueryKey(['organizations']) });
+                          });
+                        }}
+                      >
+                        {organizationMemberStatusOptions.map((status) => (
+                          <option key={status.value} value={status.value}>
+                            {pickUiText(uiLanguage, status.label.en, status.label.ja)}
                           </option>
                         ))}
                       </select>
@@ -3493,6 +3450,9 @@ function StudioShell(props: {
                             await queryClient.invalidateQueries({
                               queryKey: sessionQueryKey(['organization-members', activeOrganizationId ?? '']),
                             });
+                            await queryClient.invalidateQueries({
+                              queryKey: sessionQueryKey(['organization-audit-logs', activeOrganizationId ?? '']),
+                            });
                             await queryClient.invalidateQueries({ queryKey: sessionQueryKey(['organizations']) });
                           });
                         }}
@@ -3510,7 +3470,102 @@ function StudioShell(props: {
                   </div>
                 ) : null}
               </div>
-            </div>
+            </OrganizationDetailPanel>
+          ) : null}
+
+          {canManageActiveOrganizationMembers ? (
+            <OrganizationDetailPanel
+              className="organization-admin-panel"
+              collapsed={isOrganizationPanelCollapsed('invitations')}
+              meta={
+                organizationInvitationsQuery.isFetching
+                  ? pickUiText(uiLanguage, 'Refreshing', '更新中')
+                  : `${organizationInvitations.length}`
+              }
+              onToggle={() => toggleOrganizationPanel('invitations')}
+              title={pickUiText(uiLanguage, 'Invitations', '招待')}
+            >
+              <div className="billing-block-header">
+                <strong>{pickUiText(uiLanguage, 'Invitations', '招待')}</strong>
+                <span>
+                  {organizationInvitationsQuery.isFetching
+                    ? pickUiText(uiLanguage, 'Refreshing', '更新中')
+                    : `${organizationInvitations.length}`}
+                </span>
+              </div>
+              <div className="organization-compact-list">
+                {organizationInvitations.map((invitation) => (
+                  <div className="organization-invitation-row" key={invitation.id}>
+                    <div className="organization-invitation-main">
+                      <strong>{invitation.email}</strong>
+                      <span>
+                        {formatOrganizationRoleLabel(uiLanguage, invitation.role)} / {translateUiString(uiLanguage, invitation.status)} /{' '}
+                        {formatInvitationSendStatus(uiLanguage, invitation.send_status)}
+                      </span>
+                      {invitation.send_error_message === null ? null : (
+                        <span className="error-text small">{formatInvitationSendError(uiLanguage, invitation.send_error_message)}</span>
+                      )}
+                    </div>
+                    <div className="organization-invitation-meta">
+                      <span>{formatIsoDateTime(uiLanguage, invitation.expires_at)}</span>
+                      <span>
+                        {pickUiText(uiLanguage, 'Resent', '再送')} {invitation.resend_count}
+                      </span>
+                    </div>
+                    <div className="organization-invitation-actions">
+                      <button
+                        className="ghost-button compact"
+                        disabled={busyAction === 'Resend organization invitation' || invitation.status !== 'pending'}
+                        onClick={() => {
+                          void runAction('Resend organization invitation', async () => {
+                            const response = await api.resendOrganizationInvitation(activeOrganizationId ?? '', invitation.id);
+                            setOrganizationInvitationShareUrl(response.invitation_url);
+                            await queryClient.invalidateQueries({
+                              queryKey: sessionQueryKey(['organization-invitations', activeOrganizationId ?? '']),
+                            });
+                            return formatInvitationDeliveryNotice(uiLanguage, response.email_delivery.status);
+                          });
+                        }}
+                        type="button"
+                      >
+                        <RefreshCw size={14} />
+                        {pickUiText(uiLanguage, 'Resend', '再送')}
+                      </button>
+                      <button
+                        className="ghost-button danger compact"
+                        disabled={busyAction === 'Revoke organization invitation' || invitation.status !== 'pending'}
+                        onClick={() => {
+                          if (
+                            !window.confirm(
+                              pickUiText(
+                                uiLanguage,
+                                'Revoke this invitation?',
+                                'この招待を取り消しますか？',
+                              ),
+                            )
+                          ) {
+                            return;
+                          }
+                          void runAction('Revoke organization invitation', async () => {
+                            await api.revokeOrganizationInvitation(activeOrganizationId ?? '', invitation.id);
+                            await queryClient.invalidateQueries({
+                              queryKey: sessionQueryKey(['organization-invitations', activeOrganizationId ?? '']),
+                            });
+                          });
+                        }}
+                        type="button"
+                      >
+                        <Trash2 size={14} />
+                        {pickUiText(uiLanguage, 'Revoke', '取消')}
+                      </button>
+                    </div>
+                  </div>
+                ))}
+                {organizationInvitations.length === 0 ? (
+                  <div className="muted small">{pickUiText(uiLanguage, 'No pending invitations.', '保留中の招待はありません。')}</div>
+                ) : null}
+              </div>
+            </OrganizationDetailPanel>
           ) : null}
 
           {canManageActiveOrganizationMembers ? (
@@ -3523,11 +3578,15 @@ function StudioShell(props: {
                     email: organizationInviteDraft.email.trim(),
                     role: organizationInviteDraft.role,
                   });
-                  setOrganizationInvitationToken(response.invitation_token);
+                  setOrganizationInvitationShareUrl(response.invitation_url);
                   setOrganizationInviteDraft({ email: '', role: 'editor' });
                   await queryClient.invalidateQueries({
                     queryKey: sessionQueryKey(['organization-members', activeOrganizationId ?? '']),
                   });
+                  await queryClient.invalidateQueries({
+                    queryKey: sessionQueryKey(['organization-invitations', activeOrganizationId ?? '']),
+                  });
+                  return formatInvitationDeliveryNotice(uiLanguage, response.email_delivery.status);
                 });
               }}
             >
@@ -3562,13 +3621,42 @@ function StudioShell(props: {
                 <Users size={16} />
                 {pickUiText(uiLanguage, 'Invite member', '\u30e1\u30f3\u30d0\u30fc\u3092\u62db\u5f85')}
               </button>
-              {organizationInvitationToken.length > 0 ? (
+              {organizationInvitationShareUrl.length > 0 ? (
                 <div className="organization-invitation-token">
-                  <span>{pickUiText(uiLanguage, 'Invitation token', '\u62db\u5f85\u30c8\u30fc\u30af\u30f3')}</span>
-                  <code>{organizationInvitationToken}</code>
-                  <button className="ghost-button" onClick={() => setOrganizationInvitationToken('')} type="button">
-                    {pickUiText(uiLanguage, 'Dismiss', '\u9589\u3058\u308b')}
-                  </button>
+                  <span>{pickUiText(uiLanguage, 'Invitation link', '招待リンク')}</span>
+                  <code>{organizationInvitationShareUrl}</code>
+                  <div className="organization-invitation-actions">
+                    <button
+                      className="ghost-button compact"
+                      onClick={() => {
+                        if (navigator.clipboard === undefined) {
+                          setNotice({
+                            type: 'error',
+                            message: pickUiText(uiLanguage, 'Clipboard is not available in this browser.', 'このブラウザではクリップボードを使えません。'),
+                          });
+                          return;
+                        }
+                        void navigator.clipboard.writeText(organizationInvitationShareUrl).then(
+                          () =>
+                            setNotice({
+                              type: 'success',
+                              message: pickUiText(uiLanguage, 'Invitation link copied.', '招待リンクをコピーしました。'),
+                            }),
+                          () =>
+                            setNotice({
+                              type: 'error',
+                              message: pickUiText(uiLanguage, 'Could not copy the link.', 'リンクをコピーできませんでした。'),
+                            }),
+                        );
+                      }}
+                      type="button"
+                    >
+                      {pickUiText(uiLanguage, 'Copy link', 'リンクをコピー')}
+                    </button>
+                    <button className="ghost-button compact" onClick={() => setOrganizationInvitationShareUrl('')} type="button">
+                      {pickUiText(uiLanguage, 'Dismiss', '\u9589\u3058\u308b')}
+                    </button>
+                  </div>
                 </div>
               ) : null}
             </form>
@@ -3767,7 +3855,7 @@ function StudioShell(props: {
         </div>
         <section className="sidebar-section sidebar-workspace-switcher">
           <div className="section-header">
-            <h2>{pickUiText(uiLanguage, 'Workspace', '\u4f5c\u696d\u5834\u6240')}</h2>
+              {pickUiText(uiLanguage, 'Workspace', 'ワークスペース')}
             {organizationWorkspacesQuery.isFetching ? <LoaderCircle className="spin muted-icon" size={13} /> : null}
           </div>
           <label className="field compact-field">
@@ -3855,7 +3943,7 @@ function StudioShell(props: {
                 {pickUiText(
                   uiLanguage,
                   'This role can manage billing and usage only.',
-                  'この権限では請求と利用量だけを管理できます。',
+                  'この権限では請求と利用状況のみ管理できます。',
                 )}
               </span>
             </div>
@@ -3891,7 +3979,7 @@ function StudioShell(props: {
               {pickUiText(uiLanguage, 'Workspace', 'ワークスペース')}
             </button>
             <select className="toolbar-select" value={uiLanguage} onChange={(event) => setUiLanguageStored(event.target.value)}>
-              <option value="ja">日本語</option>
+            <option value="ja">日本語</option>
               <option value="en">{translateUiString(uiLanguage, 'English')}</option>
             </select>
             <button className="ghost-button" onClick={() => void props.onLogout()} type="button">
@@ -3935,7 +4023,7 @@ function StudioShell(props: {
 
                   <PanelSection
                     title="Work overview"
-                    subtitle={uiLanguage === 'ja' ? `状態: ${translateUiString(uiLanguage, selectedWork.status)}` : `status ${selectedWork.status}`}
+                    subtitle={uiLanguage === 'ja' ? `状態 ${translateUiString(uiLanguage, selectedWork.status)}` : `status ${selectedWork.status}`}
                     className="work-overview-section"
                     compact
                     collapsible
@@ -4887,10 +4975,10 @@ function StudioShell(props: {
                               }));
                               setReferenceSelection([]);
                               setReferencePrimaryKey('');
-                              const sourceS3Key = uploadedReferenceSourceByEntityId[selectedEntity.id];
+                              const sourceCandidateToken = uploadedReferenceSourceByEntityId[selectedEntity.id];
                               const result = await api.generateEntityReference(
                                 selectedEntity.id,
-                                sourceS3Key === undefined ? undefined : { source_s3_key: sourceS3Key },
+                                sourceCandidateToken === undefined ? undefined : { source_candidate_token: sourceCandidateToken },
                                 activeOrganizationId,
                               );
                               trackJob(result.job_id);
@@ -4916,8 +5004,8 @@ function StudioShell(props: {
                               await api.confirmEntityReference(
                                 selectedEntity.id,
                                 {
-                                  selected_s3_keys: selectedReferenceKeys,
-                                  primary_s3_key: referencePrimaryKey,
+                                  selected_candidate_tokens: selectedReferenceKeys,
+                                  primary_candidate_token: referencePrimaryKey,
                                   prompt_supplement: entityDraft.prompt_supplement || null,
                                 },
                                 activeOrganizationId,
@@ -4958,19 +5046,19 @@ function StudioShell(props: {
                         {referenceCandidates.length > 0 ? (
                           <div className="reference-grid reference-grid-portrait">
                             {referenceCandidates.map((candidate) => (
-                              <div key={candidate.s3_key} className={`reference-card reference-card-portrait ${referenceSelection.includes(candidate.s3_key) ? 'active' : ''}`}>
+                              <div key={candidate.candidate_token} className={`reference-card reference-card-portrait ${referenceSelection.includes(candidate.candidate_token) ? 'active' : ''}`}>
                                 <div className="reference-card-media">
                                   <AuthenticatedImage
                                     enabled={selectedEntity !== null}
                                     loadImage={() =>
                                       api.exportEntityReferenceCandidateImage(
                                         selectedEntity?.id ?? '',
-                                        candidate.s3_key,
+                                        candidate.candidate_token,
                                         activeOrganizationId,
                                       )
                                     }
                                     onClick={(url) => openImageLightbox(url, translateUiString(uiLanguage, 'Generated preview'))}
-                                    queryKey={scopedQueryKey(['entity-reference-candidate-image', selectedEntity?.id, candidate.s3_key])}
+                                    queryKey={scopedQueryKey(['entity-reference-candidate-image', selectedEntity?.id, candidate.candidate_token])}
                                   />
                                 </div>
                                 <div className="reference-card-body">
@@ -4978,14 +5066,14 @@ function StudioShell(props: {
                                   <div className="reference-card-choice-row">
                                     <label>
                                       <input
-                                        checked={referenceSelection.includes(candidate.s3_key)}
+                                        checked={referenceSelection.includes(candidate.candidate_token)}
                                         onChange={(event) =>
                                           setReferenceSelection((current) =>
                                             event.target.checked
-                                              ? current.includes(candidate.s3_key)
+                                              ? current.includes(candidate.candidate_token)
                                                 ? current
-                                                : [...current, candidate.s3_key]
-                                              : current.filter((item) => item !== candidate.s3_key),
+                                                : [...current, candidate.candidate_token]
+                                              : current.filter((item) => item !== candidate.candidate_token),
                                           )
                                         }
                                         type="checkbox"
@@ -4994,14 +5082,14 @@ function StudioShell(props: {
                                     </label>
                                     <label>
                                       <input
-                                        checked={referencePrimaryKey === candidate.s3_key}
+                                        checked={referencePrimaryKey === candidate.candidate_token}
                                         name="reference-primary"
                                         onChange={() => {
-                                          setReferencePrimaryKey(candidate.s3_key);
+                                          setReferencePrimaryKey(candidate.candidate_token);
                                           setReferenceSelection((current) =>
-                                            current.includes(candidate.s3_key)
+                                            current.includes(candidate.candidate_token)
                                               ? current
-                                              : [...current, candidate.s3_key],
+                                              : [...current, candidate.candidate_token],
                                           );
                                         }}
                                         type="radio"
@@ -5142,7 +5230,7 @@ function StudioShell(props: {
                           <div className="page-meta-list">
                             <span>
                               {uiLanguage === 'ja'
-                                ? `フレーム ${page.frame_count} / コマ ${page.panel_count}`
+                                ? `枠 ${page.frame_count} / コマ ${page.panel_count}`
                                 : `frames ${page.frame_count} / panels ${page.panel_count}`}
                             </span>
                             <span>{translateUiString(uiLanguage, 'Double-click image to enlarge')}</span>
@@ -5253,7 +5341,7 @@ function StudioShell(props: {
                         title={`Page ${selectedPage.page_number}`}
                         subtitle={
                           uiLanguage === 'ja'
-                            ? `セリフ: ${translateUiString(uiLanguage, selectedPage.dialogue_mode === 'image_baked' ? 'Image baked' : selectedPage.dialogue_mode === 'balloon_only' ? 'Balloon only' : 'Mixed')}`
+                            ? `セリフ ${translateUiString(uiLanguage, selectedPage.dialogue_mode === 'image_baked' ? 'Image baked' : selectedPage.dialogue_mode === 'balloon_only' ? 'Balloon only' : 'Mixed')}`
                             : `dialogue ${selectedPage.dialogue_mode}`
                         }
                         className="page-section-generate"
@@ -5926,7 +6014,7 @@ function StudioShell(props: {
             <div className="image-lightbox-header">
               <strong>{lightboxTitle}</strong>
               <button className="ghost-button image-lightbox-close" onClick={closeImageLightbox} type="button">
-                ・・・
+                {'\u00d7'}
               </button>
             </div>
             <div className="image-lightbox-body">
@@ -5941,7 +6029,8 @@ function StudioShell(props: {
             <div className="image-lightbox-header">
               <strong>{getFrameTemplateDisplayLabel(uiLanguage, layoutPreviewTemplateId)}</strong>
               <button className="ghost-button image-lightbox-close" onClick={() => setLayoutPreviewTemplateId(null)} type="button">
-                ・・・              </button>
+                {'\u00d7'}
+              </button>
             </div>
             <LayoutTemplatePreview frames={layoutPreviewFrames} />
           </div>
@@ -6074,6 +6163,33 @@ function PanelSection(props: {
   );
 }
 
+function OrganizationDetailPanel(props: {
+  children: ReactNode;
+  className?: string;
+  collapsed: boolean;
+  meta?: ReactNode;
+  onToggle: () => void;
+  title: string;
+}) {
+  return (
+    <section
+      className={`organization-collapsible-panel ${props.className ?? ''} ${props.collapsed ? 'collapsed' : ''}`.trim()}
+    >
+      <button
+        aria-expanded={!props.collapsed}
+        className="organization-collapsible-header"
+        onClick={props.onToggle}
+        type="button"
+      >
+        <strong>{props.title}</strong>
+        {props.meta === undefined ? null : <span>{props.meta}</span>}
+        <ChevronDown className={`section-toggle-icon ${props.collapsed ? '' : 'open'}`.trim()} size={16} />
+      </button>
+      {props.collapsed ? null : <div className="organization-collapsible-body">{props.children}</div>}
+    </section>
+  );
+}
+
 function BillingPanel(props: {
   balance: BillingBalanceRecord | undefined;
   balanceRefreshing: boolean;
@@ -6139,7 +6255,7 @@ function BillingPanel(props: {
     const isCurrent = currentPlanCode === plan.plan_code;
     const disabled = !canSelectSubscriptionPlan(plan.plan_code);
     const statusLabel = !plan.configured
-      ? pickUiText(language, 'Preparing', '\u6e96\u5099\u4e2d')
+      ? pickUiText(language, 'Setup required', '\u7ba1\u7406\u8005\u8a2d\u5b9a\u5f85\u3061')
       : isCurrent
         ? pickUiText(language, 'Current', '\u73fe\u5728')
         : formatJpy(plan.amount_jpy);
@@ -7101,6 +7217,7 @@ async function handleEntityImport(
     const imageBase64 = await toDataUrl(file);
     const result = await api.importEntityImage({
       entity_type: entityType,
+      ...(selectedEntityId === null ? {} : { entity_id: selectedEntityId }),
       image_base64: imageBase64,
     }, organizationId);
     setEntityDraft((current) => ({
@@ -7113,7 +7230,7 @@ async function handleEntityImport(
         ...current,
         [selectedEntityId]: dedupeReferenceCandidates([
           {
-            s3_key: result.tmp_image_s3_key,
+            candidate_token: result.tmp_image_token,
             source: 'upload',
           },
           ...(current[selectedEntityId] ?? []),
@@ -7121,7 +7238,7 @@ async function handleEntityImport(
       }));
       setUploadedReferenceSourceByEntityId((current) => ({
         ...current,
-        [selectedEntityId]: result.tmp_image_s3_key,
+        [selectedEntityId]: result.tmp_image_token,
       }));
     }
     setNotice({ type: 'success', message: translateUiString(uiLanguage, 'Image analyzed. Generate preview next.') });
@@ -9024,11 +9141,11 @@ function dedupeReferenceCandidates(candidates: ReferenceCandidate[]): ReferenceC
   const seenKeys = new Set<string>();
 
   return candidates.filter((candidate) => {
-    if (seenKeys.has(candidate.s3_key)) {
+    if (seenKeys.has(candidate.candidate_token)) {
       return false;
     }
 
-    seenKeys.add(candidate.s3_key);
+    seenKeys.add(candidate.candidate_token);
     return true;
   });
 }
@@ -9038,7 +9155,7 @@ function sameReferenceCandidates(left: ReferenceCandidate[], right: ReferenceCan
     left.length === right.length &&
     left.every(
       (candidate, index) =>
-        candidate.s3_key === right[index]?.s3_key &&
+        candidate.candidate_token === right[index]?.candidate_token &&
         candidate.source === right[index]?.source,
     )
   );
@@ -9062,14 +9179,14 @@ function extractGeneratedReferenceCandidates(job: GenerationJobRecord): Referenc
       typeof candidate !== 'object' ||
       candidate === null ||
       Array.isArray(candidate) ||
-      typeof (candidate as { s3_key?: unknown }).s3_key !== 'string'
+      typeof (candidate as { candidate_token?: unknown }).candidate_token !== 'string'
     ) {
       return [];
     }
 
     return [
       {
-        s3_key: (candidate as { s3_key: string }).s3_key,
+        candidate_token: (candidate as { candidate_token: string }).candidate_token,
         source: 'generated' as const,
       },
     ];

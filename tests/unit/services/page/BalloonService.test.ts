@@ -39,13 +39,18 @@ class FakeBalloonRepository implements BalloonRepository {
     this.balloons.set(balloon.id, balloon);
   }
 
-  public async findPageContextByIdAndUserId(pageId: string, userId: string): Promise<PageBalloonContext | null> {
+  public async findPageContextByIdAndUserId(
+    pageId: string,
+    userId: string,
+    _organizationId?: string | null,
+  ): Promise<PageBalloonContext | null> {
     return this.pageContexts.get(`${userId}:${pageId}`) ?? null;
   }
 
   public async findBalloonContextByIdAndUserId(
     balloonId: string,
     userId: string,
+    _organizationId?: string | null,
   ): Promise<BalloonContext | null> {
     return this.balloonContexts.get(`${userId}:${balloonId}`) ?? null;
   }
@@ -54,6 +59,7 @@ class FakeBalloonRepository implements BalloonRepository {
     pageId: string,
     _userId: string,
     input: CreateBalloonInput,
+    _organizationId?: string | null,
   ): Promise<Balloon | null> {
     const balloon = buildBalloon({
       id: `balloon-${this.balloons.size + 1}`,
@@ -64,8 +70,12 @@ class FakeBalloonRepository implements BalloonRepository {
     return balloon;
   }
 
-  public async findBalloonsByPageIdAndUserId(pageId: string, userId: string): Promise<Balloon[]> {
-    const context = await this.findPageContextByIdAndUserId(pageId, userId);
+  public async findBalloonsByPageIdAndUserId(
+    pageId: string,
+    userId: string,
+    organizationId?: string | null,
+  ): Promise<Balloon[]> {
+    const context = await this.findPageContextByIdAndUserId(pageId, userId, organizationId);
     if (context === null) {
       return [];
     }
@@ -77,6 +87,7 @@ class FakeBalloonRepository implements BalloonRepository {
     pageId: string,
     _userId: string,
     inputs: CreateBalloonInput[],
+    _organizationId?: string | null,
   ): Promise<Balloon[]> {
     this.replacedInputs = inputs;
     this.balloons.clear();
@@ -95,6 +106,7 @@ class FakeBalloonRepository implements BalloonRepository {
     balloonId: string,
     _userId: string,
     input: UpdateBalloonInput,
+    _organizationId?: string | null,
   ): Promise<Balloon | null> {
     const balloon = this.balloons.get(balloonId);
     if (balloon === undefined) {
@@ -119,7 +131,7 @@ class FakeBalloonRepository implements BalloonRepository {
     return updated;
   }
 
-  public async deleteBalloon(balloonId: string, _userId: string): Promise<boolean> {
+  public async deleteBalloon(balloonId: string, _userId: string, _organizationId?: string | null): Promise<boolean> {
     return this.balloons.delete(balloonId);
   }
 }
@@ -135,6 +147,7 @@ class FakeEntityReader implements EntityReferenceReader {
     entityIds: string[],
     workId: string,
     userId: string,
+    _organizationId?: string | null,
   ): Promise<number> {
     return [...new Set(entityIds)].filter((entityId) => {
       const entity = this.entities.get(`${userId}:${entityId}`);
@@ -146,7 +159,11 @@ class FakeEntityReader implements EntityReferenceReader {
 class FakePanelReader implements BalloonPanelReader {
   public panels: Panel[] = [];
 
-  public async findPanelsByPageIdAndUserId(_pageId: string, _userId: string): Promise<Panel[]> {
+  public async findPanelsByPageIdAndUserId(
+    _pageId: string,
+    _userId: string,
+    _organizationId?: string | null,
+  ): Promise<Panel[]> {
     return this.panels;
   }
 }
@@ -154,7 +171,11 @@ class FakePanelReader implements BalloonPanelReader {
 class FakeFrameReader implements BalloonFrameReader {
   public frames: PanelFrame[] = [];
 
-  public async findFramesByPageIdAndUserId(_pageId: string, _userId: string): Promise<PanelFrame[]> {
+  public async findFramesByPageIdAndUserId(
+    _pageId: string,
+    _userId: string,
+    _organizationId?: string | null,
+  ): Promise<PanelFrame[]> {
     return this.frames;
   }
 }

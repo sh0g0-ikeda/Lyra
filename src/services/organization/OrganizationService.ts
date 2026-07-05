@@ -27,6 +27,11 @@ import type {
 import { roleHasCapability } from '../../domain/types/organization.js';
 import type { DatabaseClient } from '../../lib/db.js';
 import type { OrganizationRepository } from '../../repositories/OrganizationRepository.js';
+import { InvitationUrlBuilder } from './InvitationUrlBuilder.js';
+import type {
+  InvitationEmailDeliveryResult,
+  OrganizationInvitationEmailServicePort,
+} from './OrganizationInvitationEmailService.js';
 
 const BILLING_AUDIT_ACTION_PREFIXES = ['billing.', 'credit.', 'subscription.'] as const;
 
@@ -50,7 +55,8 @@ export interface AdminUpdateOrganizationContractRequest {
 
 export interface CreateOrganizationInvitationResult {
   invitation: OrganizationInvitation;
-  token: string;
+  invitationUrl: string;
+  emailDelivery: InvitationEmailDeliveryResult;
 }
 
 export interface ConsumeOrganizationCreditsRequest {
@@ -89,6 +95,15 @@ export interface RecordOrganizationWorkExportRequest {
   metadata?: Record<string, unknown>;
 }
 
+export interface RecordOrganizationAuditEventRequest {
+  organizationId: string;
+  actorUserId: string | null;
+  action: string;
+  targetType: string;
+  targetId?: string | null;
+  metadata?: Record<string, unknown>;
+}
+
 export interface OrganizationServicePort {
   listWorkspaces(userId: string): Promise<OrganizationWorkspaceSummary[]>;
   createOrganization(userId: string, input: CreateOrganizationRequest): Promise<OrganizationWorkspaceSummary>;
@@ -106,11 +121,22 @@ export interface OrganizationServicePort {
     },
   ): Promise<OrganizationCreditBalance>;
   listMembers(userId: string, organizationId: string): Promise<OrganizationMember[]>;
+  listInvitations(userId: string, organizationId: string): Promise<OrganizationInvitation[]>;
   inviteMember(
     userId: string,
     organizationId: string,
     input: { email: string; role: OrganizationMemberRole },
   ): Promise<CreateOrganizationInvitationResult>;
+  resendInvitation(
+    userId: string,
+    organizationId: string,
+    invitationId: string,
+  ): Promise<CreateOrganizationInvitationResult>;
+  revokeInvitation(userId: string, organizationId: string, invitationId: string): Promise<OrganizationInvitation>;
+  previewInvitation(token: string): Promise<{
+    organization: Pick<Organization, 'id' | 'name'>;
+    invitation: Pick<OrganizationInvitation, 'email' | 'role' | 'status' | 'expiresAt'>;
+  }>;
   acceptInvitation(userId: string, email: string, token: string): Promise<OrganizationWorkspaceSummary>;
   updateMember(
     userId: string,
@@ -141,6 +167,7 @@ export interface OrganizationServicePort {
   recordGenerationCompleted(input: RecordOrganizationGenerationRequest): Promise<void>;
   recordGenerationFailed(input: RecordOrganizationGenerationRequest & { errorMessage?: string | null }): Promise<void>;
   recordWorkExported(input: RecordOrganizationWorkExportRequest): Promise<void>;
+  recordAuditEvent(input: RecordOrganizationAuditEventRequest, client?: DatabaseClient): Promise<void>;
 }
 
 /**
@@ -150,7 +177,11 @@ export interface OrganizationServicePort {
  * service before reading works, members, billing data, or shared credits.
  */
 export class OrganizationService implements OrganizationServicePort {
-  public constructor(private readonly organizationRepository: OrganizationRepository) {}
+  public constructor(
+    private readonly organizationRepository: OrganizationRepository,
+    private readonly invitationEmailService?: OrganizationInvitationEmailServicePort,
+    private readonly invitationUrlBuilder: InvitationUrlBuilder = new InvitationUrlBuilder('http://localhost:5173'),
+  ) {}
 
   public async listWorkspaces(userId: string): Promise<OrganizationWorkspaceSummary[]> {
     return this.organizationRepository.listWorkspacesByUserId(userId);
@@ -311,6 +342,11 @@ export class OrganizationService implements OrganizationServicePort {
     return this.organizationRepository.listMembers(organizationId);
   }
 
+  public async listInvitations(userId: string, organizationId: string): Promise<OrganizationInvitation[]> {
+    await this.requireMembership(organizationId, userId, 'manage_members');
+    return this.organizationRepository.listInvitations(organizationId);
+  }
+
   public async inviteMember(
     userId: string,
     organizationId: string,
@@ -325,15 +361,51 @@ export class OrganizationService implements OrganizationServicePort {
     const token = randomBytes(32).toString('base64url');
     const tokenHash = hashInvitationToken(token);
     const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    const organization = await this.organizationRepository.findOrganizationById(organizationId);
+    if (organization === null) {
+      throw new NotFoundError('Organization not found');
+    }
 
-    return this.organizationRepository.transaction(async (client) => {
+    const invitation = await this.organizationRepository.transaction(async (client) => {
       const existing = await this.organizationRepository.findPendingInvitationByEmail(
         organizationId,
         normalizedEmail,
         client,
       );
       if (existing !== null) {
-        throw new ConflictError('An active invitation already exists for this email');
+        const renewedInvitation = await this.organizationRepository.updateInvitationToken(
+          existing.id,
+          { tokenHash, expiresAt, role: input.role },
+          client,
+        );
+        if (renewedInvitation === null) {
+          throw new NotFoundError('Invitation not found');
+        }
+        const resetInvitation = await this.organizationRepository.updateInvitationSendStatus(
+          existing.id,
+          {
+            sendStatus: 'not_sent',
+            errorCode: null,
+            errorMessage: null,
+            incrementResendCount: true,
+          },
+          client,
+        );
+        if (resetInvitation === null) {
+          throw new NotFoundError('Invitation not found');
+        }
+        await this.organizationRepository.insertAuditLog(
+          {
+            organizationId,
+            actorUserId: userId,
+            action: 'member.invitation_resent',
+            targetType: 'invitation',
+            targetId: existing.id,
+            metadata: { email: normalizedEmail, role: input.role, reason: 'duplicate_pending_invite' },
+          },
+          client,
+        );
+        return resetInvitation;
       }
 
       const invitation = await this.organizationRepository.createInvitation(
@@ -358,8 +430,163 @@ export class OrganizationService implements OrganizationServicePort {
         },
         client,
       );
-      return { invitation, token };
+      return invitation;
     });
+
+    return this.buildInvitationResult(organization, invitation, token);
+  }
+
+  public async resendInvitation(
+    userId: string,
+    organizationId: string,
+    invitationId: string,
+  ): Promise<CreateOrganizationInvitationResult> {
+    await this.requireMembership(organizationId, userId, 'manage_members');
+    const token = randomBytes(32).toString('base64url');
+    const tokenHash = hashInvitationToken(token);
+    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+
+    const { organization, invitation } = await this.organizationRepository.transaction(async (client) => {
+      const organization = await this.organizationRepository.findOrganizationById(organizationId, client);
+      if (organization === null) {
+        throw new NotFoundError('Organization not found');
+      }
+      const current = await this.organizationRepository.findInvitationById(organizationId, invitationId, client);
+      if (current === null) {
+        throw new NotFoundError('Invitation not found');
+      }
+      if (current.status !== 'pending') {
+        throw new ConflictError('Only pending invitations can be resent');
+      }
+      const invitation = await this.organizationRepository.updateInvitationToken(
+        invitationId,
+        { tokenHash, expiresAt },
+        client,
+      );
+      if (invitation === null) {
+        throw new NotFoundError('Invitation not found');
+      }
+      const resetInvitation = await this.organizationRepository.updateInvitationSendStatus(
+        invitationId,
+        {
+          sendStatus: 'not_sent',
+          errorCode: null,
+          errorMessage: null,
+          incrementResendCount: true,
+        },
+        client,
+      );
+      if (resetInvitation === null) {
+        throw new NotFoundError('Invitation not found');
+      }
+      await this.organizationRepository.insertAuditLog(
+        {
+          organizationId,
+          actorUserId: userId,
+          action: 'member.invitation_resent',
+          targetType: 'invitation',
+          targetId: invitationId,
+          metadata: { email: invitation.email, role: invitation.role },
+        },
+        client,
+      );
+      return { organization, invitation: resetInvitation };
+    });
+
+    return this.buildInvitationResult(organization, invitation, token);
+  }
+
+  public async revokeInvitation(
+    userId: string,
+    organizationId: string,
+    invitationId: string,
+  ): Promise<OrganizationInvitation> {
+    await this.requireMembership(organizationId, userId, 'manage_members');
+    return this.organizationRepository.transaction(async (client) => {
+      const current = await this.organizationRepository.findInvitationById(organizationId, invitationId, client);
+      if (current === null) {
+        throw new NotFoundError('Invitation not found');
+      }
+      if (current.status !== 'pending') {
+        throw new ConflictError('Only pending invitations can be revoked');
+      }
+      const revoked = await this.organizationRepository.revokeInvitation(
+        invitationId,
+        {
+          revokedAt: new Date(),
+          revokedByUserId: userId,
+        },
+        client,
+      );
+      if (revoked === null) {
+        throw new NotFoundError('Invitation not found');
+      }
+      await this.organizationRepository.insertAuditLog(
+        {
+          organizationId,
+          actorUserId: userId,
+          action: 'member.invitation_revoked',
+          targetType: 'invitation',
+          targetId: invitationId,
+          metadata: { email: current.email, role: current.role },
+        },
+        client,
+      );
+      return revoked;
+    });
+  }
+
+  public async previewInvitation(token: string): Promise<{
+    organization: Pick<Organization, 'id' | 'name'>;
+    invitation: Pick<OrganizationInvitation, 'email' | 'role' | 'status' | 'expiresAt'>;
+  }> {
+    const tokenHash = hashInvitationToken(token);
+    const invitation = await this.organizationRepository.transaction(async (client) => {
+      const current = await this.organizationRepository.findInvitationByTokenHash(tokenHash, client);
+      if (current === null) {
+        return null;
+      }
+      if (current.status === 'pending' && current.expiresAt.getTime() < Date.now()) {
+        return this.organizationRepository.updateInvitation(current.id, { status: 'expired' }, client);
+      }
+      return current;
+    });
+    if (invitation === null) {
+      logInvitationDiagnostic('organization_invitation_preview_failed', { reason: 'token_not_found' });
+      throw new NotFoundError('Invitation not found');
+    }
+    const organization = await this.organizationRepository.findOrganizationById(invitation.organizationId);
+    if (organization === null) {
+      logInvitationDiagnostic('organization_invitation_preview_failed', {
+        reason: 'organization_not_found',
+        invitationId: invitation.id,
+        organizationId: invitation.organizationId,
+        invitedEmailDomain: emailDomain(invitation.email),
+        invitationStatus: invitation.status,
+      });
+      throw new NotFoundError('Organization not found');
+    }
+    if (invitation.status !== 'pending') {
+      logInvitationDiagnostic('organization_invitation_preview_unavailable', {
+        reason: 'non_pending_status',
+        invitationId: invitation.id,
+        organizationId: invitation.organizationId,
+        invitedEmailDomain: emailDomain(invitation.email),
+        invitationStatus: invitation.status,
+      });
+    }
+    return {
+      organization: {
+        id: organization.id,
+        name: organization.name,
+      },
+      invitation: {
+        email: invitation.email,
+        role: invitation.role,
+        status: invitation.status,
+        expiresAt: invitation.expiresAt,
+      },
+    };
   }
 
   public async acceptInvitation(
@@ -373,13 +600,37 @@ export class OrganizationService implements OrganizationServicePort {
     return this.organizationRepository.transaction(async (client) => {
       const invitation = await this.organizationRepository.findInvitationByTokenHash(tokenHash, client);
       if (invitation === null || invitation.status !== 'pending') {
+        logInvitationDiagnostic('organization_invitation_accept_failed', {
+          reason: invitation === null ? 'token_not_found' : 'non_pending_status',
+          invitationId: invitation?.id,
+          organizationId: invitation?.organizationId,
+          invitedEmailDomain: invitation === null ? undefined : emailDomain(invitation.email),
+          signedInEmailDomain: emailDomain(normalizedEmail),
+          invitationStatus: invitation?.status,
+        });
         throw new NotFoundError('Invitation not found');
       }
       if (invitation.expiresAt.getTime() < Date.now()) {
         await this.organizationRepository.updateInvitation(invitation.id, { status: 'expired' }, client);
+        logInvitationDiagnostic('organization_invitation_accept_failed', {
+          reason: 'expired',
+          invitationId: invitation.id,
+          organizationId: invitation.organizationId,
+          invitedEmailDomain: emailDomain(invitation.email),
+          signedInEmailDomain: emailDomain(normalizedEmail),
+          invitationStatus: invitation.status,
+        });
         throw new ConflictError('Invitation has expired');
       }
       if (invitation.email !== normalizedEmail) {
+        logInvitationDiagnostic('organization_invitation_accept_failed', {
+          reason: 'email_mismatch',
+          invitationId: invitation.id,
+          organizationId: invitation.organizationId,
+          invitedEmailDomain: emailDomain(invitation.email),
+          signedInEmailDomain: emailDomain(normalizedEmail),
+          invitationStatus: invitation.status,
+        });
         throw new ForbiddenError('Invitation email does not match the signed-in account');
       }
 
@@ -414,6 +665,14 @@ export class OrganizationService implements OrganizationServicePort {
         },
         client,
       );
+      logInvitationDiagnostic('organization_invitation_accept_succeeded', {
+        reason: 'accepted',
+        invitationId: invitation.id,
+        organizationId: invitation.organizationId,
+        invitedEmailDomain: emailDomain(invitation.email),
+        signedInEmailDomain: emailDomain(normalizedEmail),
+        invitationStatus: 'accepted',
+      });
       const organization = await this.organizationRepository.findOrganizationById(invitation.organizationId, client);
       if (organization === null) {
         throw new NotFoundError('Organization not found');
@@ -424,6 +683,29 @@ export class OrganizationService implements OrganizationServicePort {
         balance: await this.organizationRepository.getCreditBalance(invitation.organizationId, client),
       };
     });
+  }
+
+  private async buildInvitationResult(
+    organization: Organization,
+    invitation: OrganizationInvitation,
+    token: string,
+  ): Promise<CreateOrganizationInvitationResult> {
+    const invitationUrl = this.invitationUrlBuilder.buildInvitationUrl(token);
+    const emailDelivery =
+      this.invitationEmailService === undefined
+        ? ({ status: 'disabled' } as const)
+        : await this.invitationEmailService.deliverInvitation({
+            organization,
+            invitation,
+            invitationUrl,
+          });
+    const latestInvitation =
+      (await this.organizationRepository.findInvitationById(organization.id, invitation.id)) ?? invitation;
+    return {
+      invitation: latestInvitation,
+      invitationUrl,
+      emailDelivery,
+    };
   }
 
   public async updateMember(
@@ -847,6 +1129,23 @@ export class OrganizationService implements OrganizationServicePort {
     });
   }
 
+  public async recordAuditEvent(
+    input: RecordOrganizationAuditEventRequest,
+    client?: DatabaseClient,
+  ): Promise<void> {
+    await this.organizationRepository.insertAuditLog(
+      {
+        organizationId: input.organizationId,
+        actorUserId: input.actorUserId,
+        action: input.action,
+        targetType: input.targetType,
+        targetId: input.targetId ?? null,
+        metadata: compactAuditMetadata(input.metadata ?? {}),
+      },
+      client,
+    );
+  }
+
   private async recordGenerationEvent(
     action: 'generation.completed' | 'generation.failed',
     input: RecordOrganizationGenerationRequest,
@@ -931,9 +1230,19 @@ function memberAuditEntries(
         action: 'member.removed',
         metadata: { from_status: before.status, to_status: after.status },
       });
+    } else if (after.status === 'active') {
+      entries.push({
+        action: 'member.reactivated',
+        metadata: { from_status: before.status, to_status: after.status },
+      });
     }
   }
   return entries;
+}
+
+function compactAuditMetadata(metadata: Record<string, unknown>): Record<string, unknown> {
+  const entries = Object.entries(metadata).filter(([, value]) => value !== undefined);
+  return Object.fromEntries(entries.slice(0, 30));
 }
 
 function touchesOwnerAuthority(
@@ -953,6 +1262,35 @@ export function purchasedCreditsForPackage(packageCode: CreditPackageCode): numb
 
 function hashInvitationToken(token: string): string {
   return createHash('sha256').update(token, 'utf8').digest('hex');
+}
+
+interface InvitationDiagnosticFields {
+  reason: string;
+  invitationId?: string;
+  organizationId?: string;
+  invitedEmailDomain?: string;
+  signedInEmailDomain?: string;
+  invitationStatus?: OrganizationInvitation['status'];
+}
+
+function logInvitationDiagnostic(event: string, fields: InvitationDiagnosticFields): void {
+  console.info(
+    JSON.stringify({
+      level: fields.reason === 'accepted' ? 'info' : 'warn',
+      event,
+      reason: fields.reason,
+      invitation_id: fields.invitationId,
+      organization_id: fields.organizationId,
+      invited_email_domain: fields.invitedEmailDomain,
+      signed_in_email_domain: fields.signedInEmailDomain,
+      invitation_status: fields.invitationStatus,
+    }),
+  );
+}
+
+function emailDomain(email: string): string {
+  const [, domain = ''] = email.trim().toLowerCase().split('@');
+  return domain;
 }
 
 function assertPositiveInteger(value: number, label: string): void {

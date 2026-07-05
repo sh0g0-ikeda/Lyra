@@ -108,6 +108,54 @@ describe('createRateLimitMiddleware', () => {
     ]);
   });
 
+  it.each([
+    ['/api/organizations/org-1/invitations'],
+    ['/api/organizations/org-1/invitations/invitation-1/resend'],
+    ['/api/organizations/org-1/invitations/invitation-1/revoke'],
+    ['/api/organization-invitations/accept'],
+    ['/api/invitations/token-1/accept'],
+  ])('%s uses the invitation bucket', async (path) => {
+    const store = new RecordingRateLimitStore();
+    const app = createAuthenticatedTestApp(store);
+
+    const response = await app.request(path, { method: 'POST' });
+
+    expect(response.status).toBe(200);
+    expect(store.calls).toEqual([
+      {
+        key: 'invitation:user-1',
+        maxRequests: RATE_LIMIT_RULES.invitation.maxRequests,
+        windowSeconds: RATE_LIMIT_RULES.invitation.windowSeconds,
+      },
+    ]);
+  });
+
+  it.each([
+    ['/api/billing/checkout/subscription'],
+    ['/api/billing/checkout/credits'],
+    ['/api/billing/customer-portal'],
+    ['/api/organizations/org-1/billing/checkout/subscription'],
+    ['/api/organizations/org-1/billing/subscription-checkout-session'],
+    ['/api/organizations/org-1/billing/checkout/credits'],
+    ['/api/organizations/org-1/billing/credit-pack-checkout-session'],
+    ['/api/organizations/org-1/billing/customer-portal'],
+    ['/api/organizations/org-1/billing/customer-portal-session'],
+  ])('%s uses the billing action bucket', async (path) => {
+    const store = new RecordingRateLimitStore();
+    const app = createAuthenticatedTestApp(store);
+
+    const response = await app.request(path, { method: 'POST' });
+
+    expect(response.status).toBe(200);
+    expect(store.calls).toEqual([
+      {
+        key: 'billingAction:user-1',
+        maxRequests: RATE_LIMIT_RULES.billingAction.maxRequests,
+        windowSeconds: RATE_LIMIT_RULES.billingAction.windowSeconds,
+      },
+    ]);
+  });
+
   it('read routes use the read bucket', async () => {
     const store = new RecordingRateLimitStore();
     const app = createAuthenticatedTestApp(store);

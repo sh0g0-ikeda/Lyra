@@ -52,6 +52,11 @@ export function createPanelFrameRoutes(dependencies: PanelFrameRouteDependencies
       body.data.template_id,
       organizationId,
     );
+    await recordOrganizationAudit(dependencies, organizationId, user.id, 'panel_frame.template_applied', 'page', pageId, {
+      template_id: application.templateId,
+      panel_count: application.panelCount,
+      frame_count: application.frames.length,
+    });
 
     return c.json(toPanelFrameTemplateApplicationResponse(application));
   });
@@ -82,6 +87,9 @@ export function createPanelFrameRoutes(dependencies: PanelFrameRouteDependencies
       })),
       organizationId,
     );
+    await recordOrganizationAudit(dependencies, organizationId, user.id, 'panel_frame.replaced', 'page', pageId, {
+      frame_count: frames.length,
+    });
 
     return c.json({ frames: frames.map(toPanelFrameResponse) });
   });
@@ -127,6 +135,28 @@ async function requireOrganizationCapability(
 
   const user = c.get('user');
   await dependencies.organizationService.requireMembership(organizationId, user.id, capability);
+}
+
+async function recordOrganizationAudit(
+  dependencies: PanelFrameRouteDependencies,
+  organizationId: string | null,
+  actorUserId: string,
+  action: string,
+  targetType: string,
+  targetId: string | null,
+  metadata?: Record<string, unknown>,
+): Promise<void> {
+  if (organizationId === null || dependencies.organizationService === undefined) {
+    return;
+  }
+  await dependencies.organizationService.recordAuditEvent({
+    organizationId,
+    actorUserId,
+    action,
+    targetType,
+    targetId,
+    metadata,
+  });
 }
 
 function toPanelFrameResponse(frame: PanelFrame): Record<string, unknown> {

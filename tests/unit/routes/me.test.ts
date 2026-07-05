@@ -1,9 +1,11 @@
-import { describe, expect, it } from 'vitest';
+﻿import { describe, expect, it } from 'vitest';
 import type { MiddlewareHandler } from 'hono';
 import type { AuthenticatedUser } from '../../../src/domain/types/user.js';
+import type { CreditBalanceSnapshot } from '../../../src/domain/types/credit.js';
 import type { OrganizationWorkspaceSummary } from '../../../src/domain/types/organization.js';
 import type { AppEnv } from '../../../src/types/app.js';
 import { createMeRoutes } from '../../../src/routes/me.js';
+import type { CreditServicePort } from '../../../src/services/credit/CreditService.js';
 import type { OrganizationServicePort } from '../../../src/services/organization/OrganizationService.js';
 
 const testUser: AuthenticatedUser = {
@@ -20,6 +22,7 @@ describe('createMeRoutes', () => {
     const routes = createMeRoutes({
       authMiddleware: buildAuthMiddleware(testUser),
       rateLimitMiddleware: buildPassThroughMiddleware(),
+      creditService: new FakeCreditService() as CreditServicePort,
       organizationService: organizationService as unknown as OrganizationServicePort,
     });
 
@@ -32,6 +35,12 @@ describe('createMeRoutes', () => {
         email: 'owner@example.com',
         display_name: 'Owner',
         plan_code: 'standard',
+      },
+      personal_credits: {
+        monthly_credits: 30,
+        purchased_credits: 12,
+        total_credits: 42,
+        monthly_expires_at: '2026-07-31T00:00:00.000Z',
       },
       organizations: [
         {
@@ -63,6 +72,29 @@ function buildPassThroughMiddleware(): MiddlewareHandler<AppEnv> {
   return async (_c, next) => {
     await next();
   };
+}
+
+class FakeCreditService implements CreditServicePort {
+  public async getBalance(_userId: string): Promise<CreditBalanceSnapshot> {
+    return {
+      monthlyCredits: 30,
+      purchasedCredits: 12,
+      totalCredits: 42,
+      monthlyExpiresAt: new Date('2026-07-31T00:00:00.000Z'),
+    };
+  }
+
+  public async grantSignupBonus(userId: string): Promise<CreditBalanceSnapshot> {
+    return this.getBalance(userId);
+  }
+
+  public async consumeCredits(): Promise<CreditBalanceSnapshot> {
+    return this.getBalance('user-1');
+  }
+
+  public async refundCredits(): Promise<CreditBalanceSnapshot> {
+    return this.getBalance('user-1');
+  }
 }
 
 class FakeOrganizationService {

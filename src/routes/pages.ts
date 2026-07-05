@@ -80,6 +80,10 @@ export function createPageRoutes(dependencies: PageRouteDependencies): Hono<AppE
       body.data.language,
       organizationId,
     );
+    await recordOrganizationAudit(dependencies, organizationId, user.id, 'episode.story_autofill_queued', 'episode', episodeId, {
+      job_id: result.jobId,
+      language: body.data.language,
+    });
     return c.json({ job_id: result.jobId }, 202);
   });
 
@@ -111,6 +115,9 @@ export function createPageRoutes(dependencies: PageRouteDependencies): Hono<AppE
       },
       organizationId,
     );
+    await recordOrganizationAudit(dependencies, organizationId, user.id, 'page.settings_updated', 'page', pageId, {
+      fields: Object.keys(body.data),
+    });
 
     return c.json(await toPageSummaryResponse(page));
   });
@@ -139,6 +146,12 @@ export function createPageRoutes(dependencies: PageRouteDependencies): Hono<AppE
       },
       organizationId,
     );
+    await recordOrganizationAudit(dependencies, organizationId, user.id, 'page.layout_template_applied', 'page', pageId, {
+      template_id: result.templateId,
+      panel_count: result.panelCount,
+      created_panel_count: result.createdPanelCount,
+      deleted_panel_count: result.deletedPanelCount,
+    });
 
     return c.json({
       template_id: result.templateId,
@@ -172,6 +185,11 @@ export function createPageRoutes(dependencies: PageRouteDependencies): Hono<AppE
       body.data.language,
       organizationId,
     );
+    await recordOrganizationAudit(dependencies, organizationId, user.id, 'page.autofill_from_scenes_applied', 'page', pageId, {
+      updated_panel_count: result.updatedPanelCount,
+      filled_field_count: result.filledFieldCount,
+      compiler_used: result.compilerUsed,
+    });
 
     return c.json({
       updated_panel_count: result.updatedPanelCount,
@@ -190,6 +208,9 @@ export function createPageRoutes(dependencies: PageRouteDependencies): Hono<AppE
     const organizationId = parseOptionalOrganizationId(c);
     await requireOrganizationCapability(c, dependencies, organizationId, 'generate');
     const result = await dependencies.pageGenerationService.enqueuePageGeneration(user.id, pageId, organizationId);
+    await recordOrganizationAudit(dependencies, organizationId, user.id, 'page.generation_queued', 'page', pageId, {
+      job_id: result.jobId,
+    });
 
     return c.json({ job_id: result.jobId }, 202);
   });
@@ -213,6 +234,7 @@ export function createPageRoutes(dependencies: PageRouteDependencies): Hono<AppE
     const organizationId = parseOptionalOrganizationId(c);
     await requireOrganizationCapability(c, dependencies, organizationId, 'edit_work');
     await dependencies.pageFinalizeService.confirmPage(user.id, pageId, organizationId);
+    await recordOrganizationAudit(dependencies, organizationId, user.id, 'page.confirmed', 'page', pageId);
 
     return c.body(null, 204);
   });
@@ -223,6 +245,7 @@ export function createPageRoutes(dependencies: PageRouteDependencies): Hono<AppE
     const organizationId = parseOptionalOrganizationId(c);
     await requireOrganizationCapability(c, dependencies, organizationId, 'edit_work');
     await dependencies.pageFinalizeService.reopenPage(user.id, pageId, organizationId);
+    await recordOrganizationAudit(dependencies, organizationId, user.id, 'page.reopened', 'page', pageId);
 
     return c.body(null, 204);
   });
@@ -316,4 +339,26 @@ async function requireOrganizationCapability(
 
   const user = c.get('user');
   await dependencies.organizationService.requireMembership(organizationId, user.id, capability);
+}
+
+async function recordOrganizationAudit(
+  dependencies: PageRouteDependencies,
+  organizationId: string | null,
+  actorUserId: string,
+  action: string,
+  targetType: string,
+  targetId: string | null,
+  metadata?: Record<string, unknown>,
+): Promise<void> {
+  if (organizationId === null || dependencies.organizationService === undefined) {
+    return;
+  }
+  await dependencies.organizationService.recordAuditEvent({
+    organizationId,
+    actorUserId,
+    action,
+    targetType,
+    targetId,
+    metadata,
+  });
 }

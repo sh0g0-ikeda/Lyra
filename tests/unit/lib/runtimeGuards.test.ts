@@ -8,6 +8,7 @@ import {
 const safeProductionConfig = {
   APP_ENV: 'production' as const,
   DEV_AUTH_BYPASS: false,
+  APP_PUBLIC_URL: 'https://app.lyra.test',
   DATABASE_URL: 'postgres://lyra:secret@lyra-db.abc123.ap-northeast-1.rds.amazonaws.com:5432/lyra',
   DATABASE_POOL_MAX: 10,
   DATABASE_SSL_MODE: 'require' as const,
@@ -31,6 +32,7 @@ const safeProductionConfig = {
   CLOUDFRONT_KEY_PAIR_ID: 'K1234567890',
   CLOUDFRONT_PRIVATE_KEY: '-----BEGIN PRIVATE KEY-----\\nkey\\n-----END PRIVATE KEY-----',
   CLOUDFRONT_SIGNED_URL_TTL_SECONDS: 300,
+  REFERENCE_CANDIDATE_TOKEN_SECRET: 'reference-candidate-token-secret-for-runtime-tests',
   ORIGIN_GUARD_HEADER_NAME: 'X-Lyra-Origin-Guard',
   ORIGIN_GUARD_HEADER_VALUE: 'secret-origin-token',
   STRIPE_SECRET_KEY: 'sk_live_secret123',
@@ -83,6 +85,18 @@ describe('assertProductionRuntimeConfig', () => {
     expect(() => {
       assertProductionRuntimeConfig(safeProductionConfig, 'production');
     }).not.toThrow();
+  });
+
+  it('production では招待URLに使う公開URLの localhost 既定値を拒否する', () => {
+    expect(() => {
+      assertProductionRuntimeConfig(
+        {
+          ...safeProductionConfig,
+          APP_PUBLIC_URL: 'http://localhost:5173',
+        },
+        'production',
+      );
+    }).toThrow(/APP_PUBLIC_URL must use https and a non-local host in production/);
   });
 
   it('production では Origin Guard 設定を要求する', () => {

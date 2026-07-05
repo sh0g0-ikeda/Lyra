@@ -3,6 +3,8 @@ import { z } from 'zod';
 import { ValidationError } from '../domain/errors/index.js';
 import type { GenerationJob } from '../domain/types/job.js';
 import { signImageCdnUrl } from '../infrastructure/aws/CloudFrontImageUrlSigner.js';
+import { env } from '../lib/env.js';
+import { createReferenceCandidateToken } from '../services/entity/ReferenceCandidateToken.js';
 import type { JobServicePort } from '../services/job/JobService.js';
 import type { AppEnv } from '../types/app.js';
 
@@ -160,7 +162,10 @@ async function toEntityGenerationResultResponse(job: GenerationJob): Promise<Rec
   const response: Record<string, unknown> = {};
   response.provider_result = isProviderResult(job);
 
-  const candidates = await toEntityCandidateResponse(result.candidates);
+  const entityId = typeof job.params.entity_id === 'string' ? job.params.entity_id : null;
+  const candidates = entityId === null
+    ? []
+    : await toEntityCandidateResponse(result.candidates, job.userId, entityId);
   if (candidates.length > 0) {
     response.candidates = candidates;
   }
@@ -204,7 +209,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-async function toEntityCandidateResponse(value: unknown): Promise<Array<Record<string, unknown>>> {
+async function toEntityCandidateResponse(
+  value: unknown,
+  userId: string,
+  entityId: string,
+): Promise<Array<Record<string, unknown>>> {
   if (!Array.isArray(value)) {
     return [];
   }
@@ -219,10 +228,23 @@ async function toEntityCandidateResponse(value: unknown): Promise<Array<Record<s
       : null;
 
     return {
-      s3_key: candidate.s3_key,
+      candidate_token: createReferenceCandidateToken({
+        userId,
+        entityId,
+        s3Key: candidate.s3_key,
+      }, {
+        secret: getReferenceCandidateTokenSecret(),
+      }),
       ...(signedCdnUrl === null ? {} : { cdn_url: signedCdnUrl }),
     };
   }));
 
   return candidates.filter((candidate): candidate is Record<string, unknown> => candidate !== null);
+}
+
+function getReferenceCandidateTokenSecret(): string {
+  return env.REFERENCE_CANDIDATE_TOKEN_SECRET
+    ?? env.SUPABASE_JWT_SECRET
+    ?? env.STRIPE_WEBHOOK_SECRET
+    ?? 'development-reference-candidate-token-secret';
 }

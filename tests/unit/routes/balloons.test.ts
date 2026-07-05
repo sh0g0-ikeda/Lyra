@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { createApp } from '../../../src/app.js';
 import type { Balloon } from '../../../src/domain/types/balloon.js';
 import type { CreditBalanceSnapshot } from '../../../src/domain/types/credit.js';
+import type { OrganizationMember } from '../../../src/domain/types/organization.js';
 import type { AuthenticatedUser, SupabaseJwtClaims } from '../../../src/domain/types/user.js';
 import type {
   ProvisionedUser,
@@ -13,6 +14,7 @@ import type {
   CreditServicePort,
   RefundCreditsParams,
 } from '../../../src/services/credit/CreditService.js';
+import type { OrganizationServicePort } from '../../../src/services/organization/OrganizationService.js';
 import type { BalloonServicePort } from '../../../src/services/page/BalloonService.js';
 
 const jwtSecret = 'unit-test-secret';
@@ -56,7 +58,14 @@ class FakeCreditService implements CreditServicePort {
 }
 
 class FakeBalloonService implements BalloonServicePort {
-  public async autoGenerateBalloons(_userId: string, pageId: string): Promise<Balloon[]> {
+  public lastOrganizationId: string | null | undefined;
+
+  public async autoGenerateBalloons(
+    _userId: string,
+    pageId: string,
+    organizationId?: string | null,
+  ): Promise<Balloon[]> {
+    this.lastOrganizationId = organizationId;
     return [
       buildBalloon({
         id: 'auto-1',
@@ -66,19 +75,34 @@ class FakeBalloonService implements BalloonServicePort {
     ];
   }
 
-  public async createBalloon(_userId: string, pageId: string): Promise<Balloon> {
+  public async createBalloon(
+    _userId: string,
+    pageId: string,
+    _input: unknown,
+    organizationId?: string | null,
+  ): Promise<Balloon> {
+    this.lastOrganizationId = organizationId;
     return buildBalloon({ id: 'balloon-1', pageId });
   }
 
-  public async listBalloons(_userId: string, pageId: string): Promise<Balloon[]> {
+  public async listBalloons(_userId: string, pageId: string, organizationId?: string | null): Promise<Balloon[]> {
+    this.lastOrganizationId = organizationId;
     return [buildBalloon({ id: 'balloon-1', pageId })];
   }
 
-  public async updateBalloon(_userId: string, balloonId: string): Promise<Balloon> {
+  public async updateBalloon(
+    _userId: string,
+    balloonId: string,
+    _input: unknown,
+    organizationId?: string | null,
+  ): Promise<Balloon> {
+    this.lastOrganizationId = organizationId;
     return buildBalloon({ id: balloonId, text: 'updated' });
   }
 
-  public async deleteBalloon(_userId: string, _balloonId: string): Promise<void> {}
+  public async deleteBalloon(_userId: string, _balloonId: string, organizationId?: string | null): Promise<void> {
+    this.lastOrganizationId = organizationId;
+  }
 }
 
 describe('balloon routes', () => {
@@ -166,6 +190,63 @@ describe('balloon routes', () => {
     });
   });
 
+  it('法人ページの Balloon 作成では edit_work を確認して organization_id を渡す', async () => {
+    const balloonService = new FakeBalloonService();
+    const organizationService = {
+      calls: [] as Array<{ organizationId: string; userId: string; capability: string }>,
+      async requireMembership(
+        organizationId: string,
+        userId: string,
+        capability?: Parameters<OrganizationServicePort['requireMembership']>[2],
+      ): Promise<OrganizationMember> {
+        this.calls.push({ organizationId, userId, capability: capability ?? 'view_work' });
+        return {
+          id: 'member-1',
+          organizationId,
+          userId,
+          email: user.email,
+          displayName: null,
+          role: 'owner',
+          status: 'active',
+          invitedByUserId: null,
+          joinedAt: new Date('2026-01-01T00:00:00.000Z'),
+          createdAt: new Date('2026-01-01T00:00:00.000Z'),
+          updatedAt: new Date('2026-01-01T00:00:00.000Z'),
+        };
+      },
+    };
+    const app = createTestApp({ balloonService, organizationService });
+    const token = await createToken();
+    const organizationId = '44444444-4444-4444-8444-444444444444';
+
+    const response = await app.request(
+      `/api/pages/33333333-3333-4333-8333-333333333333/balloons?organization_id=${organizationId}`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          balloon_type: 'speech',
+          text: 'hello',
+          position: {
+            x: 0.1,
+            y: 0.2,
+            width: 0.3,
+            height: 0.2,
+          },
+        }),
+      },
+    );
+
+    expect(response.status).toBe(201);
+    expect(organizationService.calls).toEqual([
+      { organizationId, userId: user.id, capability: 'edit_work' },
+    ]);
+    expect(balloonService.lastOrganizationId).toBe(organizationId);
+  });
+
   it('不正な UUID は 422 になる', async () => {
     const app = createTestApp();
     const token = await createToken();
@@ -207,10 +288,14 @@ describe('balloon routes', () => {
   });
 });
 
-function createTestApp(): ReturnType<typeof createApp> {
+function createTestApp(overrides: {
+  balloonService?: BalloonServicePort;
+  organizationService?: Partial<OrganizationServicePort>;
+} = {}): ReturnType<typeof createApp> {
   return createApp({
-    balloonService: new FakeBalloonService(),
+    balloonService: overrides.balloonService ?? new FakeBalloonService(),
     creditService: new FakeCreditService(),
+    organizationService: overrides.organizationService as OrganizationServicePort | undefined,
     userProvisioningService: new FakeUserProvisioningService(),
     jwtSecret,
   });

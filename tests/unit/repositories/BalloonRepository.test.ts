@@ -48,7 +48,18 @@ describe('PostgresBalloonRepository', () => {
     await repository.findPageContextByIdAndUserId('page-1', 'user-1');
 
     expect(client.queries[0]).toContain('works.user_id = $2');
-    expect(client.values).toEqual(['page-1', 'user-1']);
+    expect(client.values).toEqual(['page-1', 'user-1', null]);
+  });
+
+  it('法人 page context 取得は organization_id と active member で絞る', async () => {
+    const client = new QueryCapturingClient();
+    const repository = new PostgresBalloonRepository(client);
+
+    await repository.findPageContextByIdAndUserId('page-1', 'user-1', 'org-1');
+
+    expect(client.queries[0]).toContain('works.organization_id = $3::uuid');
+    expect(client.queries[0]).toContain('organization_members.status =');
+    expect(client.values).toEqual(['page-1', 'user-1', 'org-1']);
   });
 
   it('page context に status と panel_count を含める', async () => {
@@ -100,6 +111,7 @@ describe('PostgresBalloonRepository', () => {
       'manga_gothic',
       1,
       10,
+      null,
     ]);
   });
 
@@ -185,6 +197,7 @@ describe('PostgresBalloonRepository', () => {
       'manga_gothic',
       1,
       10,
+      null,
     ]);
     expect(balloons).toHaveLength(1);
   });

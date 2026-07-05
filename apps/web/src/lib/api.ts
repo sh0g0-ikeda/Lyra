@@ -12,6 +12,9 @@ import type {
   OrganizationBillingSummaryRecord,
   OrganizationBillingPlanRecord,
   OrganizationCreditBalanceRecord,
+  OrganizationInvitationCreateRecord,
+  OrganizationInvitationPreviewRecord,
+  OrganizationInvitationRecord,
   OrganizationInvoiceRecord,
   OrganizationMemberRecord,
   OrganizationUsageEventRecord,
@@ -106,11 +109,30 @@ export class LyraApiClient {
   public inviteOrganizationMember(
     organizationId: string,
     body: { email: string; role: OrganizationMemberRecord['role'] },
-  ): Promise<{
-    invitation: Record<string, unknown>;
-    invitation_token: string;
-  }> {
+  ): Promise<OrganizationInvitationCreateRecord> {
     return this.request(`/api/organizations/${organizationId}/invitations`, { method: 'POST', body });
+  }
+
+  public getOrganizationInvitations(organizationId: string): Promise<{ invitations: OrganizationInvitationRecord[] }> {
+    return this.request(`/api/organizations/${organizationId}/invitations`);
+  }
+
+  public resendOrganizationInvitation(
+    organizationId: string,
+    invitationId: string,
+  ): Promise<OrganizationInvitationCreateRecord> {
+    return this.request(`/api/organizations/${organizationId}/invitations/${invitationId}/resend`, {
+      method: 'POST',
+    });
+  }
+
+  public revokeOrganizationInvitation(
+    organizationId: string,
+    invitationId: string,
+  ): Promise<{ invitation: OrganizationInvitationRecord }> {
+    return this.request(`/api/organizations/${organizationId}/invitations/${invitationId}/revoke`, {
+      method: 'POST',
+    });
   }
 
   public updateOrganizationMember(
@@ -129,6 +151,10 @@ export class LyraApiClient {
     return this.request('/api/organization-invitations/accept', { method: 'POST', body: { token } });
   }
 
+  public previewOrganizationInvitation(token: string): Promise<OrganizationInvitationPreviewRecord> {
+    return this.request(`/api/organization-invitations/${encodeURIComponent(token)}`);
+  }
+
   public getOrganizationBalance(organizationId: string): Promise<OrganizationCreditBalanceRecord> {
     return this.request(`/api/organizations/${organizationId}/credits/balance`);
   }
@@ -138,6 +164,21 @@ export class LyraApiClient {
     summary: OrganizationUsageSummaryRecord;
   }> {
     return this.request(`/api/organizations/${organizationId}/usage`);
+  }
+
+  public async downloadOrganizationUsageCsv(organizationId: string): Promise<BlobResponse> {
+    const response = await fetch(
+      this.toUrl(`/api/organizations/${organizationId}/usage.csv`),
+      this.buildRequest({ method: 'GET' }),
+    );
+    if (!response.ok) {
+      throw await this.toApiError(response);
+    }
+
+    return {
+      blob: await response.blob(),
+      contentType: response.headers.get('Content-Type'),
+    };
   }
 
   public getOrganizationAuditLogs(organizationId: string): Promise<{ audit_logs: OrganizationAuditLogRecord[] }> {
@@ -328,7 +369,7 @@ export class LyraApiClient {
   public importEntityImage(body: Record<string, unknown>, organizationId?: string | null): Promise<{
     suggested_fields: Record<string, unknown>;
     prompt_supplement: string;
-    tmp_image_s3_key: string;
+    tmp_image_token: string;
   }> {
     return this.request(`/api/entities/import-image${organizationQuery(organizationId)}`, { method: 'POST', body });
   }
@@ -564,10 +605,10 @@ export class LyraApiClient {
 
   public async exportEntityReferenceCandidateImage(
     entityId: string,
-    s3Key: string,
+    candidateToken: string,
     organizationId?: string | null,
   ): Promise<BlobResponse> {
-    const params = new URLSearchParams({ s3_key: s3Key });
+    const params = new URLSearchParams({ candidate_token: candidateToken });
     if (organizationId !== undefined && organizationId !== null && organizationId.trim().length > 0) {
       params.set('organization_id', organizationId);
     }
