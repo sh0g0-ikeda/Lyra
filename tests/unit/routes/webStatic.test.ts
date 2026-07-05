@@ -8,7 +8,7 @@ describe('web static routes', () => {
   it('root path returns the web index when web static dir is configured', async () => {
     const root = await createStaticFixture();
     try {
-      const app = createApp({ webStaticDir: root });
+      const app = createApp({ jwtSecret: 'test-web-static-secret', webStaticDir: root });
 
       const response = await app.request('/');
 
@@ -25,7 +25,7 @@ describe('web static routes', () => {
   it('SPA route returns the web index without swallowing API 404s', async () => {
     const root = await createStaticFixture();
     try {
-      const app = createApp({ webStaticDir: root });
+      const app = createApp({ jwtSecret: 'test-web-static-secret', webStaticDir: root });
 
       const spaResponse = await app.request('/auth/callback?code=test');
       const apiResponse = await app.request('/api/not-found');
