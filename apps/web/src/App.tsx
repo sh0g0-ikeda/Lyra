@@ -9387,6 +9387,13 @@ function isSubscriptionPlanCode(value: unknown): value is SubscriptionPlanCode {
   return value === 'free' || isSubscriptionCheckoutPlanCode(value);
 }
 
+function getConsumerPlanMonthlyCredits(planCode: SubscriptionCheckoutPlanCode | undefined): number | null {
+  if (!isConsumerSubscriptionCheckoutPlanCode(planCode)) {
+    return null;
+  }
+  return subscriptionPurchaseOptions.find((plan) => plan.code === planCode)?.credits ?? null;
+}
+
 function readBillingReturnMarker(value: string | null): BillingReturnMarker | null {
   if (value === null) {
     return null;
@@ -9468,7 +9475,16 @@ function isBillingReturnSatisfied(
   }
 
   if (marker.kind === 'subscription' && marker.planCode !== undefined) {
-    return balance.plan_code === marker.planCode;
+    if (balance.plan_code !== marker.planCode) {
+      return false;
+    }
+
+    const expectedMonthlyCredits = getConsumerPlanMonthlyCredits(marker.planCode);
+    if (expectedMonthlyCredits === null) {
+      return true;
+    }
+
+    return balance.monthly_credits >= expectedMonthlyCredits;
   }
 
   if (marker.kind === 'credits') {
