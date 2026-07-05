@@ -201,7 +201,7 @@ describe('PromptBuilder', () => {
     expect(result.draftPrompt).toContain('Panel 1 dialogue by Aki, reference Image 1 (Aki): "I will finish this now." as speech at top.');
     expect(result.draftPrompt).toContain('Dialogue lock for panel 1: line 1 must stay assigned to Aki, reference Image 1 (Aki) exactly as written: "I will finish this now."');
     expect(result.draftPrompt).toContain(
-      'Visual lock for panel 1: subjects=Aki [Image 1 (Aki)]; shot=full_body; angle=three_quarter; background cue="Collapsed alley at dusk.".',
+      'Visual lock for panel 1: subjects=Aki [Image 1 (Aki)]; situation cue="Hero lunges forward."; shot=full_body; angle=three_quarter; background cue="Collapsed alley at dusk.".',
     );
     expect(result.draftPrompt).toContain('Reference image roles:');
     expect(result.draftPrompt).toContain('Style lock: anime manga illustration');
@@ -226,7 +226,7 @@ describe('PromptBuilder', () => {
       '- Subject lock: Panel 1 subject lock: required visible subjects are Aki, reference Image 1 (Aki), role primary, center zone, facing three quarter left.',
     );
     expect(result.compilerBrief).toContain(
-      '- Visual lock: Visual lock for panel 1: subjects=Aki [Image 1 (Aki)]; shot=full_body; angle=three_quarter; background cue="Collapsed alley at dusk.".',
+      '- Visual lock: Visual lock for panel 1: subjects=Aki [Image 1 (Aki)]; situation cue="Hero lunges forward."; shot=full_body; angle=three_quarter; background cue="Collapsed alley at dusk.".',
     );
     expect(result.compilerBrief).not.toContain('[CHARACTER CONSISTENCY]');
     expect(result.compilerBrief).not.toContain('Scene continuity:');

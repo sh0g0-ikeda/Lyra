@@ -656,6 +656,7 @@ function extractRequiredDialogueLocks(compilerBrief: string): RequiredDialogueLo
 interface RequiredVisualLock {
   panelOrder: number;
   subjects: string[];
+  situationCue: string | null;
   shot: string | null;
   angle: string | null;
   backgroundCue: string | null;
@@ -674,12 +675,22 @@ function findMissingVisualLocks(compilerBrief: string, compiledPrompt: string): 
       lock.shot !== null && !normalizedPrompt.includes(humanizeToken(lock.shot).toLowerCase()) ? lock.shot : null;
     const missingAngle =
       lock.angle !== null && !normalizedPrompt.includes(humanizeToken(lock.angle).toLowerCase()) ? lock.angle : null;
+    const missingSituation =
+      lock.situationCue !== null && !normalizedPrompt.includes(lock.situationCue.toLowerCase())
+        ? lock.situationCue
+        : null;
     const missingBackground =
       lock.backgroundCue !== null && !normalizedPrompt.includes(lock.backgroundCue.toLowerCase())
         ? lock.backgroundCue
         : null;
 
-    if (missingSubjects.length === 0 && missingShot === null && missingAngle === null && missingBackground === null) {
+    if (
+      missingSubjects.length === 0 &&
+      missingShot === null &&
+      missingAngle === null &&
+      missingSituation === null &&
+      missingBackground === null
+    ) {
       return [];
     }
 
@@ -687,6 +698,7 @@ function findMissingVisualLocks(compilerBrief: string, compiledPrompt: string): 
       missingSubjects.length === 0 ? null : `subjects=${missingSubjects.join('|')}`,
       missingShot === null ? null : `shot=${humanizeToken(missingShot)}`,
       missingAngle === null ? null : `angle=${humanizeToken(missingAngle)}`,
+      missingSituation === null ? null : `situation=${missingSituation}`,
       missingBackground === null ? null : `background=${missingBackground}`,
     ].filter((value): value is string => value !== null);
 
@@ -704,7 +716,7 @@ function extractRequiredVisualLocks(compilerBrief: string): RequiredVisualLock[]
     }
 
     const match = line.match(
-      /Visual lock for panel (\d+): subjects=(.*?); shot=(.*?); angle=(.*?); background cue="(.*?)"\./u,
+      /Visual lock for panel (\d+): subjects=(.*?);(?: situation cue="(.*?)";)? shot=(.*?); angle=(.*?); background cue="(.*?)"\./u,
     );
     if (match === null) {
       continue;
@@ -718,13 +730,15 @@ function extractRequiredVisualLocks(compilerBrief: string): RequiredVisualLock[]
             .split('|')
             .map((value) => value.trim())
             .filter((value) => value.length > 0);
-    const shot = match[3] === 'unspecified' ? null : match[3];
-    const angle = match[4] === 'unspecified' ? null : match[4];
-    const backgroundCue = match[5] === '(none)' ? null : match[5];
+    const situationCue = match[3] === undefined || match[3] === '(none)' ? null : match[3];
+    const shot = match[4] === 'unspecified' ? null : match[4];
+    const angle = match[5] === 'unspecified' ? null : match[5];
+    const backgroundCue = match[6] === '(none)' ? null : match[6];
 
     locks.push({
       panelOrder,
       subjects,
+      situationCue,
       shot,
       angle,
       backgroundCue,

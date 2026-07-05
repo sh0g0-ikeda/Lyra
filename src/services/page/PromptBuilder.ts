@@ -535,7 +535,8 @@ function buildVisualLock(
     .sort((left, right) => assignmentRoleWeight(left.role) - assignmentRoleWeight(right.role))
     .map((assignment) => formatEntityVisualLockSubject(assignment.entityId, entityMap, referenceLabelByEntityId))
     .filter((value, index, values) => values.indexOf(value) === index);
-  const backgroundCue = sanitizePromptField(panel.backgroundNote, 80) ?? '';
+  const situationCue = normalizePanelSituation(panel.situationText);
+  const backgroundCue = sanitizePromptField(panel.backgroundNote, 100) ?? '';
   const galleryItem =
     panel.composition.source === 'gallery' && panel.composition.galleryItemId !== null
       ? compositionMap.get(panel.composition.galleryItemId) ?? null
@@ -546,6 +547,7 @@ function buildVisualLock(
   return [
     `Visual lock for panel ${panel.order}:`,
     `subjects=${subjectNames.length === 0 ? '(none)' : subjectNames.join('|')};`,
+    `situation cue="${situationCue}";`,
     `shot=${shotType};`,
     `angle=${angle};`,
     `background cue="${backgroundCue.length === 0 ? '(none)' : backgroundCue}".`,
@@ -630,6 +632,7 @@ function buildQualityConstraints(
     'Do not let any foreground character drift off-model relative to their reference image.',
     'For every panel, the listed panel subjects are authoritative; do not replace them with a different referenced character and do not move a character into a panel where they are not listed.',
     'Panel subject lock lines are hard constraints: every listed required subject must be visible in that panel, and unlisted named or referenced characters must not appear there.',
+    'Panel situation cues and background cues are mandatory visual content for their panels, not optional mood notes.',
   ];
 
   if (referenceRoles.length > 0) {
@@ -1111,7 +1114,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 const STYLE_LOCK_TEXT =
   'Style lock: anime manga illustration, clean black line art, flat colors with manga-style shading, crisp panel borders with visible gutters, right-to-left reading flow, no photorealism, no western comic styling.';
 const STYLE_PROMPT_TEXT_LIMITS = {
-  compiledBrief: 900,
+  compiledBrief: 820,
   anchorLine: 180,
   notes: 300,
 } as const;
