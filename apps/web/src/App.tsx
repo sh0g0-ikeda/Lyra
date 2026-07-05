@@ -27,6 +27,7 @@ import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { Session, SupabaseClient } from '@supabase/supabase-js';
 import { decodeJwtPayload, LyraApiClient, type BlobResponse } from './lib/api';
 import { shouldAllowManualTokenAuth } from './lib/authMode';
+import { ORGANIZATION_FEATURES_AVAILABLE } from './lib/featureFlags';
 import { formatUserFacingError, formatUserFacingErrorMessage } from './lib/userFacingErrors';
 import {
   beginCognitoLogin,
@@ -84,7 +85,6 @@ interface SubscriptionPlanOption {
 }
 
 const MAX_EPISODE_PAGES = 32;
-const ORGANIZATION_FEATURES_AVAILABLE = false;
 
 const subscriptionPurchaseOptions: Array<{
   code: ConsumerSubscriptionCheckoutPlanCode;

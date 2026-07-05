@@ -18,6 +18,7 @@ Available variables:
 - `VITE_COGNITO_LOGOUT_URI`
 - `VITE_COGNITO_SCOPES`
 - `VITE_COGNITO_API_TOKEN_USE`
+- `VITE_ORGANIZATION_FEATURES_ENABLED`
 
 If `VITE_API_BASE_URL` points to a different origin than the web app, set the
 backend `CORS_ALLOWED_ORIGINS` to the web origin. Production must use explicit
@@ -51,6 +52,10 @@ the API can verify the ID token audience and read the user email without an extr
 you switch both sides to `access`, include the API scope in `VITE_COGNITO_SCOPES` and set
 `COGNITO_REQUIRED_SCOPES` on the backend. `VITE_DEV_AUTH_BYPASS=true` is local-only and is not
 allowed in production builds.
+
+Enterprise workspace UI is gated by `VITE_ORGANIZATION_FEATURES_ENABLED`. Leave it unset or `false`
+for the personal-only release. Set it to `true` and rebuild the web app when organization features
+are ready to be shown again.
 
 Do not configure Cognito and Supabase Hosted Auth together in a paid production build. The build
 guard rejects that combination because it can show a login option whose token the API will not

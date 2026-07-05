@@ -11,6 +11,7 @@ interface ImportMetaEnv {
   readonly VITE_COGNITO_LOGOUT_URI?: string;
   readonly VITE_COGNITO_SCOPES?: string;
   readonly VITE_COGNITO_API_TOKEN_USE?: string;
+  readonly VITE_ORGANIZATION_FEATURES_ENABLED?: string;
   readonly VITE_DEV_AUTH_BYPASS?: string;
   readonly VITE_DEV_AUTH_BYPASS_EMAIL?: string;
 }
