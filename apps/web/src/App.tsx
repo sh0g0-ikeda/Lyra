@@ -84,6 +84,7 @@ interface SubscriptionPlanOption {
 }
 
 const MAX_EPISODE_PAGES = 32;
+const ORGANIZATION_FEATURES_AVAILABLE = false;
 
 const subscriptionPurchaseOptions: Array<{
   code: ConsumerSubscriptionCheckoutPlanCode;
@@ -1725,7 +1726,8 @@ function StudioShell(props: {
     scopedStorageKey(selectedOrganizationStorageKey, props.authSessionKey),
     '',
   );
-  const activeOrganizationId = selectedOrganizationId.trim().length > 0 ? selectedOrganizationId : null;
+  const activeOrganizationId =
+    ORGANIZATION_FEATURES_AVAILABLE && selectedOrganizationId.trim().length > 0 ? selectedOrganizationId : null;
   const scopedQueryKey = useCallback(
     (queryKey: readonly unknown[]): readonly unknown[] => [
       'session',
@@ -1852,6 +1854,12 @@ function StudioShell(props: {
   }, [activeTab, isMobileViewport]);
 
   useEffect(() => {
+    if (!ORGANIZATION_FEATURES_AVAILABLE && selectedOrganizationId.trim().length > 0) {
+      setSelectedOrganizationId('');
+    }
+  }, [selectedOrganizationId, setSelectedOrganizationId]);
+
+  useEffect(() => {
     setSelectedWorkId('');
     setSelectedChapterId('');
     setSelectedEpisodeId('');
@@ -1876,9 +1884,10 @@ function StudioShell(props: {
   const organizationWorkspacesQuery = useQuery({
     queryKey: sessionQueryKey(['organizations']),
     queryFn: () => api.getOrganizationWorkspaces(),
+    enabled: ORGANIZATION_FEATURES_AVAILABLE,
   });
   const organizationWorkspaces = useMemo(
-    () => organizationWorkspacesQuery.data?.organizations ?? [],
+    () => (ORGANIZATION_FEATURES_AVAILABLE ? (organizationWorkspacesQuery.data?.organizations ?? []) : []),
     [organizationWorkspacesQuery.data?.organizations],
   );
   const activeOrganizationWorkspace =
@@ -1993,6 +2002,11 @@ function StudioShell(props: {
   };
 
   useEffect(() => {
+    if (!ORGANIZATION_FEATURES_AVAILABLE) {
+      window.sessionStorage.removeItem(pendingOrganizationInviteTokenStorageKey);
+      return;
+    }
+
     const pendingToken = window.sessionStorage.getItem(pendingOrganizationInviteTokenStorageKey);
     if (pendingToken === null || pendingToken.trim().length === 0 || pendingInviteAcceptRef.current) {
       return;
@@ -2986,14 +3000,24 @@ function StudioShell(props: {
   const workspacePanel = (
     <PanelSection
       title={pickUiText(uiLanguage, 'Workspace', 'ワークスペース')}
-      subtitle={pickUiText(
-        uiLanguage,
-        'Switch between personal work and organization work.',
-        '\u500b\u4eba\u5229\u7528\u3068\u6cd5\u4eba\u5229\u7528\u3092\u5207\u308a\u66ff\u3048\u307e\u3059\u3002',
-      )}
+      subtitle={
+        ORGANIZATION_FEATURES_AVAILABLE
+          ? pickUiText(
+              uiLanguage,
+              'Switch between personal work and organization work.',
+              '\u500b\u4eba\u5229\u7528\u3068\u6cd5\u4eba\u5229\u7528\u3092\u5207\u308a\u66ff\u3048\u307e\u3059\u3002',
+            )
+          : pickUiText(
+              uiLanguage,
+              'Personal use is available now.',
+              '\u73fe\u5728\u306f\u500b\u4eba\u5229\u7528\u306e\u307f\u3054\u5229\u7528\u3044\u305f\u3060\u3051\u307e\u3059\u3002',
+            )
+      }
       className="organization-panel"
       compact
     >
+      {ORGANIZATION_FEATURES_AVAILABLE ? (
+        <>
       <label className="field">
         <span>{pickUiText(uiLanguage, 'Current workspace', '\u73fe\u5728\u306e\u4f5c\u696d\u5834\u6240')}</span>
         <select value={activeOrganizationId ?? ''} onChange={(event) => setSelectedOrganizationId(event.target.value)}>
@@ -3711,6 +3735,28 @@ function StudioShell(props: {
           </button>
         </form>
       )}
+        </>
+      ) : (
+        <div className="organization-coming-soon">
+          <div className="organization-coming-soon-header">
+            <BriefcaseBusiness size={18} />
+            <strong>
+              {pickUiText(
+                uiLanguage,
+                'Organization features are coming soon',
+                '\u6cd5\u4eba\u6a5f\u80fd\u306f\u8fd1\u65e5\u8ffd\u52a0\u4e88\u5b9a\u3067\u3059',
+              )}
+            </strong>
+          </div>
+          <p>
+            {pickUiText(
+              uiLanguage,
+              'For this release, please create works in your personal workspace. Organization workspaces, shared credits, invitations, and enterprise billing will be enabled after SES approval is complete.',
+              '\u3053\u306e\u30ea\u30ea\u30fc\u30b9\u3067\u306f\u500b\u4eba\u306e\u4f5c\u696d\u5834\u6240\u3067\u4f5c\u54c1\u3092\u4f5c\u6210\u3057\u3066\u304f\u3060\u3055\u3044\u3002SES\u627f\u8a8d\u5f8c\u306b\u3001\u6cd5\u4eba\u30ef\u30fc\u30af\u30b9\u30da\u30fc\u30b9\u3001\u5171\u6709\u30af\u30ec\u30b8\u30c3\u30c8\u3001\u62db\u5f85\u3001\u6cd5\u4eba\u8acb\u6c42\u3092\u6709\u52b9\u5316\u3057\u307e\u3059\u3002',
+            )}
+          </p>
+        </div>
+      )}
     </PanelSection>
   );
 
@@ -3856,8 +3902,12 @@ function StudioShell(props: {
         <section className="sidebar-section sidebar-workspace-switcher">
           <div className="section-header">
               {pickUiText(uiLanguage, 'Workspace', 'ワークスペース')}
-            {organizationWorkspacesQuery.isFetching ? <LoaderCircle className="spin muted-icon" size={13} /> : null}
+            {ORGANIZATION_FEATURES_AVAILABLE && organizationWorkspacesQuery.isFetching ? (
+              <LoaderCircle className="spin muted-icon" size={13} />
+            ) : null}
           </div>
+          {ORGANIZATION_FEATURES_AVAILABLE ? (
+            <>
           <label className="field compact-field">
             <span>{pickUiText(uiLanguage, 'Scope', '\u7bc4\u56f2')}</span>
             <select value={activeOrganizationId ?? ''} onChange={(event) => setSelectedOrganizationId(event.target.value)}>
@@ -3883,6 +3933,19 @@ function StudioShell(props: {
               </>
             )}
           </div>
+            </>
+          ) : (
+            <div className="sidebar-workspace-summary organization-coming-soon-sidebar">
+              <BriefcaseBusiness size={14} />
+              <span>
+                {pickUiText(
+                  uiLanguage,
+                  'Organization features are coming soon',
+                  '\u6cd5\u4eba\u6a5f\u80fd\u306f\u8fd1\u65e5\u8ffd\u52a0\u4e88\u5b9a\u3067\u3059',
+                )}
+              </span>
+            </div>
+          )}
         </section>
         {canViewActiveOrganizationWorks ? (
           <section className="sidebar-section">
