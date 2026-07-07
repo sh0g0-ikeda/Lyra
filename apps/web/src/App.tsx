@@ -693,9 +693,8 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   'These lines will be considered inside the generated panel art.': 'これらのセリフは生成画像内に含める前提で扱います。',
   'These lines stay outside the generated panel art.': 'これらのセリフは生成画像の外側で扱います。',
   'You do not need to fill every blank field.': 'すべての空欄を埋める必要はありません。',
-  'Production Console': '制作コンソール',
-  'Story, entity, page, billing.': 'ストーリー、キャラ、ページ、課金を管理します。',
-  'Continue with Cognito': 'Cognitoで続行',
+  'Lyra AI manga editor': 'Lyra AI漫画エディタ',
+  'Sign in or create an account': 'ログイン・アカウント登録はこちら',
   Email: 'メールアドレス',
   'Send magic link': 'ログインリンクを送信',
   'Magic link sent.': 'ログインリンクを送信しました。',
@@ -1916,14 +1915,14 @@ function AuthScreen(props: {
     <div className="auth-shell">
       <div className="auth-card">
         <div className="eyebrow">Lyra</div>
-        <h1>{translateUiString(language, 'Production Console')}</h1>
-        <p className="muted">{translateUiString(language, 'Story, entity, page, billing.')}</p>
+        <h1>Lyra Japan</h1>
+        <p className="muted">{translateUiString(language, 'Lyra AI manga editor')}</p>
         {visibleNotice !== null ? <NoticeBanner notice={visibleNotice} /> : null}
         {props.cognitoAuthConfig !== null ? (
           <div className="stack">
             <button className="primary-button" onClick={() => void props.onCognitoLogin()} type="button">
               <KeyRound size={16} />
-              {translateUiString(language, 'Continue with Cognito')}
+              {translateUiString(language, 'Sign in or create an account')}
             </button>
           </div>
         ) : null}
