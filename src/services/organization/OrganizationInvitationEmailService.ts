@@ -44,7 +44,7 @@ export class OrganizationInvitationEmailService implements OrganizationInvitatio
     try {
       const result = await this.emailDelivery.send({
         to: input.invitation.email,
-        subject: `Lyra invitation to ${input.organization.name}`,
+        subject: `Lyraワークスペースへの招待 / Invitation to ${input.organization.name}`,
         textBody: buildInvitationTextBody(input.organization, input.invitation, input.invitationUrl),
         htmlBody: buildInvitationHtmlBody(input.organization, input.invitation, input.invitationUrl),
         tags: {
@@ -143,8 +143,21 @@ function buildInvitationTextBody(
   invitationUrl: string,
 ): string {
   return [
-    `${organization.name} has invited you to Lyra.`,
+    'Lyraワークスペースへの招待',
     '',
+    `${organization.name} からLyraワークスペースへ招待されています。`,
+    '',
+    `権限: ${invitation.role}`,
+    `有効期限: ${invitation.expiresAt.toISOString()}`,
+    '',
+    '参加するには、以下のリンクを開いてください。',
+    invitationUrl,
+    '',
+    'この招待に心当たりがない場合は、このメールを無視してください。',
+    '',
+    '---',
+    '',
+    `${organization.name} has invited you to Lyra.`,
     `Role: ${invitation.role}`,
     `Invitation expires: ${invitation.expiresAt.toISOString()}`,
     '',
@@ -163,12 +176,20 @@ function buildInvitationHtmlBody(
   const safeOrganizationName = escapeHtml(organization.name);
   const safeRole = escapeHtml(invitation.role);
   const safeInvitationUrl = escapeHtml(invitationUrl);
+  const safeExpiresAt = escapeHtml(invitation.expiresAt.toISOString());
   return [
     '<!doctype html>',
     '<html><body>',
+    '<h1>Lyraワークスペースへの招待</h1>',
+    `<p><strong>${safeOrganizationName}</strong> からLyraワークスペースへ招待されています。</p>`,
+    `<p>権限: ${safeRole}</p>`,
+    `<p>有効期限: ${safeExpiresAt}</p>`,
+    `<p><a href="${safeInvitationUrl}">Lyraワークスペースに参加する</a></p>`,
+    '<p>この招待に心当たりがない場合は、このメールを無視してください。</p>',
+    '<hr>',
     `<p><strong>${safeOrganizationName}</strong> has invited you to Lyra.</p>`,
     `<p>Role: ${safeRole}</p>`,
-    `<p>Invitation expires: ${escapeHtml(invitation.expiresAt.toISOString())}</p>`,
+    `<p>Invitation expires: ${safeExpiresAt}</p>`,
     `<p><a href="${safeInvitationUrl}">Join Lyra workspace</a></p>`,
     '<p>If you did not expect this invitation, you can ignore this email.</p>',
     '</body></html>',

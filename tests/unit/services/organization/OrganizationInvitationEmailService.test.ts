@@ -71,13 +71,15 @@ describe('OrganizationInvitationEmailService', () => {
     expect(result).toEqual({ status: 'sent' });
     expect(emailDelivery.sentInputs[0]).toMatchObject({
       to: 'member@example.com',
-      subject: 'Lyra invitation to Studio Alpha',
+      subject: 'Lyraワークスペースへの招待 / Invitation to Studio Alpha',
       tags: {
         template: 'organization_invitation',
         organizationId: 'org-1',
         invitationId: 'invitation-1',
       },
     });
+    expect(emailDelivery.sentInputs[0]?.textBody).toContain('Lyraワークスペースへの招待');
+    expect(emailDelivery.sentInputs[0]?.textBody).toContain('Studio Alpha has invited you to Lyra.');
     expect(repository.sendStatusUpdates.map((update) => update.sendStatus)).toEqual(['sending', 'sent']);
     expect(repository.emailDeliveryLogs[0]).toMatchObject({
       provider: 'ses',
