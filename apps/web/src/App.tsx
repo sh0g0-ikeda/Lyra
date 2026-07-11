@@ -4222,36 +4222,105 @@ function StudioShell(props: {
     </PanelSection>
   );
 
+  const personalBillingPanel =
+    activeOrganizationId === null ? (
+      <BillingPanel
+        balance={balanceQuery.data}
+        balanceRefreshing={balanceQuery.isFetching}
+        billingReturnChecking={billingReturnChecking}
+        busyAction={busyAction}
+        onOpenPortal={() =>
+          void runExternalRedirectAction('Open portal', async () => {
+            const result = await api.createCustomerPortal();
+            redirectToBillingUrl(result.url, createBillingReturnMarker('portal', balanceQuery.data));
+          })
+        }
+        onPurchaseCredits={(packageCode) =>
+          void runExternalRedirectAction('Checkout credits', async () => {
+            const result = await api.createCreditCheckout(packageCode);
+            redirectToBillingUrl(result.url, createBillingReturnMarker('credits', balanceQuery.data, { packageCode }));
+          })
+        }
+        onStartSubscription={(planCode) =>
+          void runExternalRedirectAction('Checkout subscription', async () => {
+            const result = await api.createSubscriptionCheckout(planCode);
+            redirectToBillingUrl(result.url, createBillingReturnMarker('subscription', balanceQuery.data, { planCode }));
+          })
+        }
+      />
+    ) : null;
+
+  const organizationCreditSummaryPanel =
+    activeOrganizationWorkspace !== null ? (
+      <PanelSection
+        title={pickUiText(uiLanguage, 'Credits', '\u30af\u30ec\u30b8\u30c3\u30c8')}
+        subtitle={pickUiText(uiLanguage, 'Workspace shared balance', '\u30ef\u30fc\u30af\u30b9\u30da\u30fc\u30b9\u5171\u6709\u6b8b\u9ad8')}
+        className="organization-credit-summary-panel"
+        compact
+        collapsible
+      >
+        <div className="metric-grid organization-metrics">
+          <Metric
+            label={pickUiText(uiLanguage, 'Shared credits', '\u5171\u6709\u30af\u30ec\u30b8\u30c3\u30c8')}
+            value={String(activeOrganizationBalance?.total_credits ?? 0)}
+          />
+          <Metric
+            label={pickUiText(uiLanguage, 'Monthly', '\u6708\u984d\u5206')}
+            value={String(activeOrganizationBalance?.monthly_credits ?? 0)}
+          />
+          <Metric
+            label={pickUiText(uiLanguage, 'Purchased', '\u8ffd\u52a0\u5206')}
+            value={String(activeOrganizationBalance?.purchased_credits ?? 0)}
+          />
+        </div>
+        <div className="muted small">
+          {pickUiText(
+            uiLanguage,
+            'Plan, billing, members, invitations, and audit logs are managed from Workspace.',
+            '\u30d7\u30e9\u30f3\u3001\u8acb\u6c42\u3001\u30e1\u30f3\u30d0\u30fc\u3001\u62db\u5f85\u3001\u76e3\u67fb\u30ed\u30b0\u306f\u30ef\u30fc\u30af\u30b9\u30da\u30fc\u30b9\u304b\u3089\u7ba1\u7406\u3057\u307e\u3059\u3002',
+          )}
+        </div>
+      </PanelSection>
+    ) : null;
+
+  const jobsPanel = (
+    <PanelSection title="Jobs" compact collapsible>
+      <div className="stack gap-xs">
+        {jobs.map((job) => {
+          const progressText = getJobProgressText(job, uiLanguage);
+          const progressBarState = getJobProgressBarState(job);
+          const jobErrorText = getJobFailureText(job, uiLanguage);
+          return (
+            <div key={job.id} className="job-row">
+              <div>
+                <strong>{translateUiString(uiLanguage, job.job_type)}</strong>
+                <div className="muted small">#{formatShortId(job.id)}</div>
+                {progressText !== null ? (
+                  <div className="muted small">{progressText}</div>
+                ) : null}
+                {progressBarState !== null ? (
+                  <ProgressBar compact percent={progressBarState.percent} tone={progressBarState.tone} />
+                ) : null}
+                {jobErrorText !== null ? (
+                  <div className="error-text small">{jobErrorText}</div>
+                ) : null}
+              </div>
+              <StatusBadge value={job.status} />
+            </div>
+          );
+        })}
+        {jobs.length === 0 ? (
+          <div className="muted small">{translateUiString(uiLanguage, 'No recent jobs.')}</div>
+        ) : null}
+      </div>
+    </PanelSection>
+  );
+
   const accountPanel = (
     <>
       {workspacePanel}
 
-      {activeOrganizationId === null ? (
-        <BillingPanel
-          balance={balanceQuery.data}
-          balanceRefreshing={balanceQuery.isFetching}
-          billingReturnChecking={billingReturnChecking}
-          busyAction={busyAction}
-          onOpenPortal={() =>
-            void runExternalRedirectAction('Open portal', async () => {
-              const result = await api.createCustomerPortal();
-              redirectToBillingUrl(result.url, createBillingReturnMarker('portal', balanceQuery.data));
-            })
-          }
-          onPurchaseCredits={(packageCode) =>
-            void runExternalRedirectAction('Checkout credits', async () => {
-              const result = await api.createCreditCheckout(packageCode);
-              redirectToBillingUrl(result.url, createBillingReturnMarker('credits', balanceQuery.data, { packageCode }));
-            })
-          }
-          onStartSubscription={(planCode) =>
-            void runExternalRedirectAction('Checkout subscription', async () => {
-              const result = await api.createSubscriptionCheckout(planCode);
-              redirectToBillingUrl(result.url, createBillingReturnMarker('subscription', balanceQuery.data, { planCode }));
-            })
-          }
-        />
-      ) : null}
+      {personalBillingPanel}
 
       <PanelSection title="Account" className="mobile-account-controls" compact>
         <div className="mobile-account-meta">
@@ -4271,36 +4340,7 @@ function StudioShell(props: {
         </button>
       </PanelSection>
 
-      <PanelSection title="Jobs" compact collapsible>
-        <div className="stack gap-xs">
-          {jobs.map((job) => {
-            const progressText = getJobProgressText(job, uiLanguage);
-            const progressBarState = getJobProgressBarState(job);
-            const jobErrorText = getJobFailureText(job, uiLanguage);
-            return (
-              <div key={job.id} className="job-row">
-                <div>
-                  <strong>{translateUiString(uiLanguage, job.job_type)}</strong>
-                  <div className="muted small">#{formatShortId(job.id)}</div>
-                  {progressText !== null ? (
-                    <div className="muted small">{progressText}</div>
-                  ) : null}
-                  {progressBarState !== null ? (
-                    <ProgressBar compact percent={progressBarState.percent} tone={progressBarState.tone} />
-                  ) : null}
-                  {jobErrorText !== null ? (
-                    <div className="error-text small">{jobErrorText}</div>
-                  ) : null}
-                </div>
-                <StatusBadge value={job.status} />
-              </div>
-            );
-          })}
-          {jobs.length === 0 ? (
-            <div className="muted small">{translateUiString(uiLanguage, 'No recent jobs.')}</div>
-          ) : null}
-        </div>
-      </PanelSection>
+      {jobsPanel}
 
     </>
   );
@@ -4309,6 +4349,15 @@ function StudioShell(props: {
     <PanelSection title="Tutorial" subtitle="First run guide" className="tutorial-section" compact>
       <TutorialGuide />
     </PanelSection>
+  );
+
+  const railPanel = (
+    <>
+      {personalBillingPanel}
+      {organizationCreditSummaryPanel}
+      {jobsPanel}
+      {tutorialPanel}
+    </>
   );
 
   return (
@@ -6437,8 +6486,7 @@ function StudioShell(props: {
             </section>
 
             <aside className="rail">
-              {accountPanel}
-              {tutorialPanel}
+              {railPanel}
             </aside>
           </div>
         )}
