@@ -4226,30 +4226,32 @@ function StudioShell(props: {
     <>
       {workspacePanel}
 
-      <BillingPanel
-        balance={balanceQuery.data}
-        balanceRefreshing={balanceQuery.isFetching}
-        billingReturnChecking={billingReturnChecking}
-        busyAction={busyAction}
-        onOpenPortal={() =>
-          void runExternalRedirectAction('Open portal', async () => {
-            const result = await api.createCustomerPortal();
-            redirectToBillingUrl(result.url, createBillingReturnMarker('portal', balanceQuery.data));
-          })
-        }
-        onPurchaseCredits={(packageCode) =>
-          void runExternalRedirectAction('Checkout credits', async () => {
-            const result = await api.createCreditCheckout(packageCode);
-            redirectToBillingUrl(result.url, createBillingReturnMarker('credits', balanceQuery.data, { packageCode }));
-          })
-        }
-        onStartSubscription={(planCode) =>
-          void runExternalRedirectAction('Checkout subscription', async () => {
-            const result = await api.createSubscriptionCheckout(planCode);
-            redirectToBillingUrl(result.url, createBillingReturnMarker('subscription', balanceQuery.data, { planCode }));
-          })
-        }
-      />
+      {activeOrganizationId === null ? (
+        <BillingPanel
+          balance={balanceQuery.data}
+          balanceRefreshing={balanceQuery.isFetching}
+          billingReturnChecking={billingReturnChecking}
+          busyAction={busyAction}
+          onOpenPortal={() =>
+            void runExternalRedirectAction('Open portal', async () => {
+              const result = await api.createCustomerPortal();
+              redirectToBillingUrl(result.url, createBillingReturnMarker('portal', balanceQuery.data));
+            })
+          }
+          onPurchaseCredits={(packageCode) =>
+            void runExternalRedirectAction('Checkout credits', async () => {
+              const result = await api.createCreditCheckout(packageCode);
+              redirectToBillingUrl(result.url, createBillingReturnMarker('credits', balanceQuery.data, { packageCode }));
+            })
+          }
+          onStartSubscription={(planCode) =>
+            void runExternalRedirectAction('Checkout subscription', async () => {
+              const result = await api.createSubscriptionCheckout(planCode);
+              redirectToBillingUrl(result.url, createBillingReturnMarker('subscription', balanceQuery.data, { planCode }));
+            })
+          }
+        />
+      ) : null}
 
       <PanelSection title="Account" className="mobile-account-controls" compact>
         <div className="mobile-account-meta">
