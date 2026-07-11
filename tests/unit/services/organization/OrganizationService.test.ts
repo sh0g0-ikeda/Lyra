@@ -183,6 +183,23 @@ describe('OrganizationService', () => {
     );
   });
 
+  it('Adminは請求情報の閲覧と請求管理をできない', async () => {
+    const repository = new InMemoryOrganizationRepository();
+    repository.setMember(buildMember({ id: 'member-admin', userId: 'admin-user', role: 'admin' }));
+
+    const service = buildService(repository);
+
+    await expect(service.requireMembership('org-1', 'admin-user', 'view_usage')).resolves.toMatchObject({
+      role: 'admin',
+    });
+    await expect(service.requireMembership('org-1', 'admin-user', 'view_billing')).rejects.toBeInstanceOf(
+      ForbiddenError,
+    );
+    await expect(service.requireMembership('org-1', 'admin-user', 'manage_billing')).rejects.toBeInstanceOf(
+      ForbiddenError,
+    );
+  });
+
   it('法人共有残高はWorkspace所属メンバーなら確認できる', async () => {
     const repository = new InMemoryOrganizationRepository();
     repository.setMember(buildMember({ id: 'member-editor', userId: 'editor-user', role: 'editor' }));

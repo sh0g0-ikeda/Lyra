@@ -3490,7 +3490,7 @@ function StudioShell(props: {
             collapsed={isOrganizationPanelCollapsed('billing')}
             meta={
               canManageActiveOrganizationBilling
-                ? pickUiText(uiLanguage, 'Owner/Billing', '\u30aa\u30fc\u30ca\u30fc\u30fb\u8acb\u6c42\u7ba1\u7406')
+                ? pickUiText(uiLanguage, 'Owner/Billing only', '\u30aa\u30fc\u30ca\u30fc\u30fb\u8acb\u6c42\u7ba1\u7406\u306e\u307f')
                 : pickUiText(uiLanguage, 'Billing permission required', '\u8acb\u6c42\u7ba1\u7406\u6a29\u9650\u304c\u5fc5\u8981')
             }
             onToggle={() => toggleOrganizationPanel('billing')}
