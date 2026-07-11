@@ -1503,6 +1503,14 @@ a {
   }
 }
 
+.image-load-error {
+  max-width: 86%;
+  text-align: center;
+  color: #ffb4ad;
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+
 .generated-image-wrap {
   position: relative;
   border-radius: 8px;

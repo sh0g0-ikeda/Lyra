@@ -339,6 +339,7 @@ interface GenericStructuredFieldRow {
 
 interface ReferenceCandidate {
   candidate_token: string;
+  cdn_url?: string;
   source: 'upload' | 'generated';
 }
 
@@ -565,6 +566,7 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   'No preview yet.': 'まだプレビューはありません。',
   'Delete with the button only. Clicking the image will not delete it.': '削除はボタンから行います。画像クリックでは削除されません。',
   'No confirmed references yet.': '確定済みレファレンスはまだありません。',
+  'Could not load image.': '画像を読み込めませんでした。',
   'Creating a new character. Saving here will add a new record and will not overwrite existing characters.': '新規キャラ作成中です。保存すると既存キャラを上書きせず、新しいキャラとして追加します。',
   'Editing the selected character.': '選択中のキャラを編集しています。',
   'Delete this character? This cannot be undone.': 'このキャラを削除しますか？この操作は元に戻せません。',
@@ -5605,16 +5607,14 @@ function StudioShell(props: {
                             {referenceCandidates.map((candidate) => (
                               <div key={candidate.candidate_token} className={`reference-card reference-card-portrait ${referenceSelection.includes(candidate.candidate_token) ? 'active' : ''}`}>
                                 <div className="reference-card-media">
-                                  <AuthenticatedImage
+                                  <ReferenceCandidateImage
+                                    api={api}
+                                    candidate={candidate}
+                                    entityId={selectedEntity?.id ?? ''}
+                                    errorLabel={translateUiString(uiLanguage, 'Could not load image.')}
                                     enabled={selectedEntity !== null}
-                                    loadImage={() =>
-                                      api.exportEntityReferenceCandidateImage(
-                                        selectedEntity?.id ?? '',
-                                        candidate.candidate_token,
-                                        activeOrganizationId,
-                                      )
-                                    }
                                     onClick={(url) => openImageLightbox(url, translateUiString(uiLanguage, 'Generated preview'))}
+                                    organizationId={activeOrganizationId}
                                     queryKey={scopedQueryKey(['entity-reference-candidate-image', selectedEntity?.id, candidate.candidate_token])}
                                   />
                                 </div>
@@ -6601,6 +6601,7 @@ function AuthenticatedImage(props: {
   alt?: string;
   className?: string;
   enabled?: boolean;
+  errorLabel?: string;
   loadImage: () => Promise<BlobResponse>;
   loading?: 'eager' | 'lazy';
   onClick?: (url: string) => void;
@@ -6638,6 +6639,7 @@ function AuthenticatedImage(props: {
     return (
       <div className={placeholderClassName}>
         {imageQuery.isFetching ? <span className="image-loading-dot" aria-hidden="true" /> : null}
+        {imageQuery.isError ? <span className="image-load-error">{props.errorLabel ?? 'Image could not be loaded.'}</span> : null}
       </div>
     );
   }
@@ -6659,6 +6661,53 @@ function AuthenticatedImage(props: {
           : () => props.onDoubleClick?.(objectUrl)
       }
       src={objectUrl}
+    />
+  );
+}
+
+function ReferenceCandidateImage(props: {
+  api: LyraApiClient;
+  candidate: ReferenceCandidate;
+  enabled: boolean;
+  entityId: string;
+  errorLabel: string;
+  onClick: (url: string) => void;
+  organizationId: string | null;
+  queryKey: readonly unknown[];
+}) {
+  const [directUrlFailed, setDirectUrlFailed] = useState(false);
+  const directUrl = props.candidate.cdn_url;
+
+  useEffect(() => {
+    setDirectUrlFailed(false);
+  }, [directUrl]);
+
+  if (directUrl !== undefined && directUrl.trim().length > 0 && !directUrlFailed) {
+    return (
+      <img
+        alt=""
+        decoding="async"
+        loading="lazy"
+        onClick={() => props.onClick(directUrl)}
+        onError={() => setDirectUrlFailed(true)}
+        src={directUrl}
+      />
+    );
+  }
+
+  return (
+    <AuthenticatedImage
+      enabled={props.enabled}
+      errorLabel={props.errorLabel}
+      loadImage={() =>
+        props.api.exportEntityReferenceCandidateImage(
+          props.entityId,
+          props.candidate.candidate_token,
+          props.organizationId,
+        )
+      }
+      onClick={props.onClick}
+      queryKey={props.queryKey}
     />
   );
 }
@@ -9712,6 +9761,7 @@ function sameReferenceCandidates(left: ReferenceCandidate[], right: ReferenceCan
     left.every(
       (candidate, index) =>
         candidate.candidate_token === right[index]?.candidate_token &&
+        candidate.cdn_url === right[index]?.cdn_url &&
         candidate.source === right[index]?.source,
     )
   );
@@ -9743,6 +9793,11 @@ function extractGeneratedReferenceCandidates(job: GenerationJobRecord): Referenc
     return [
       {
         candidate_token: (candidate as { candidate_token: string }).candidate_token,
+        ...(
+          typeof (candidate as { cdn_url?: unknown }).cdn_url === 'string'
+            ? { cdn_url: (candidate as { cdn_url: string }).cdn_url }
+            : {}
+        ),
         source: 'generated' as const,
       },
     ];
