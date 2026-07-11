@@ -412,6 +412,32 @@ describe('story routes', () => {
     ]);
   });
 
+  it('法人workspace指定の作品作成では監査ログ失敗だけで作成を失敗扱いにしない', async () => {
+    const storyService = new FakeStoryService();
+    const organizationService = new FailingAuditOrganizationService();
+    const app = createTestApp({
+      storyService,
+      organizationService: organizationService as unknown as OrganizationServicePort,
+    });
+    const token = await createToken();
+
+    const response = await app.request('/api/works', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        organization_id: '550e8400-e29b-41d4-a716-446655440000',
+        title: '法人作品',
+        genre: 'business manga',
+      }),
+    });
+
+    expect(response.status).toBe(201);
+    expect(storyService.createWorkOrganizationId).toBe('550e8400-e29b-41d4-a716-446655440000');
+  });
+
   it('法人workspace指定の作品一覧ではmembership確認とorganizationId伝播を行う', async () => {
     const storyService = new FakeStoryService();
     const organizationService = new FakeOrganizationService();
@@ -907,6 +933,12 @@ class FakeOrganizationService {
     metadata?: Record<string, unknown>;
   }): Promise<void> {
     this.auditEvents.push(input);
+  }
+}
+
+class FailingAuditOrganizationService extends FakeOrganizationService {
+  public override async recordAuditEvent(): Promise<void> {
+    throw new Error('audit insert failed');
   }
 }
 

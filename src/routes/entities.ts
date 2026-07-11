@@ -13,6 +13,7 @@ import {
   uuidParamSchema,
 } from '../lib/validators/entity.schema.js';
 import { formatZodValidationError } from '../lib/validationErrorFormatter.js';
+import { sanitizePersistedErrorMessage } from '../lib/errorSanitizer.js';
 import { signImageCdnUrl } from '../infrastructure/aws/CloudFrontImageUrlSigner.js';
 import { env } from '../lib/env.js';
 import type { EntityServicePort } from '../services/entity/EntityService.js';
@@ -400,14 +401,27 @@ async function recordOrganizationAudit(
   if (organizationId === null || dependencies.organizationService === undefined) {
     return;
   }
-  await dependencies.organizationService.recordAuditEvent({
-    organizationId,
-    actorUserId,
-    action,
-    targetType,
-    targetId,
-    metadata,
-  });
+  try {
+    await dependencies.organizationService.recordAuditEvent({
+      organizationId,
+      actorUserId,
+      action,
+      targetType,
+      targetId,
+      metadata,
+    });
+  } catch (error) {
+    console.warn(
+      JSON.stringify({
+        level: 'warn',
+        event: 'organization_audit_log_failed',
+        action,
+        target_type: targetType,
+        target_id: targetId,
+        message: sanitizePersistedErrorMessage(error, 'Organization audit log failed'),
+      }),
+    );
+  }
 }
 
 function toEntityResponse(entity: Entity): Record<string, unknown> {

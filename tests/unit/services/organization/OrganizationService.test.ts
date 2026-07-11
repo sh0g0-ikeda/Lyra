@@ -500,7 +500,7 @@ describe('OrganizationService', () => {
       organizationId: 'org-1',
       userId: 'editor-user',
       workId: 'work-1',
-      generationJobId: 'job-1',
+      generationJobId: null,
       eventType: 'generation.started',
       creditAmount: 3,
       metadata: {

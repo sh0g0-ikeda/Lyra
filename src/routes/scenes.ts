@@ -9,6 +9,7 @@ import {
   updateSceneBodySchema,
 } from '../lib/validators/scene.schema.js';
 import { formatZodValidationError } from '../lib/validationErrorFormatter.js';
+import { sanitizePersistedErrorMessage } from '../lib/errorSanitizer.js';
 import type { OrganizationServicePort } from '../services/organization/OrganizationService.js';
 import type { SceneServicePort } from '../services/scene/SceneService.js';
 import type { AppEnv } from '../types/app.js';
@@ -211,14 +212,27 @@ async function recordOrganizationAudit(
   if (organizationId === null || dependencies.organizationService === undefined) {
     return;
   }
-  await dependencies.organizationService.recordAuditEvent({
-    organizationId,
-    actorUserId,
-    action,
-    targetType,
-    targetId,
-    metadata,
-  });
+  try {
+    await dependencies.organizationService.recordAuditEvent({
+      organizationId,
+      actorUserId,
+      action,
+      targetType,
+      targetId,
+      metadata,
+    });
+  } catch (error) {
+    console.warn(
+      JSON.stringify({
+        level: 'warn',
+        event: 'organization_audit_log_failed',
+        action,
+        target_type: targetType,
+        target_id: targetId,
+        message: sanitizePersistedErrorMessage(error, 'Organization audit log failed'),
+      }),
+    );
+  }
 }
 
 function toSceneResponse(scene: Scene): Record<string, unknown> {

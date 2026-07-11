@@ -18,6 +18,7 @@ import {
   updateWorkBodySchema,
 } from '../lib/validators/story.schema.js';
 import { formatZodValidationError } from '../lib/validationErrorFormatter.js';
+import { sanitizePersistedErrorMessage } from '../lib/errorSanitizer.js';
 import type { StoryServicePort } from '../services/story/StoryService.js';
 import type { StoryCollaborationServicePort } from '../services/story/StoryCollaborationService.js';
 import type { PageSkeletonServicePort } from '../services/story/PageSkeletonService.js';
@@ -547,14 +548,27 @@ async function recordOrganizationAudit(
   if (organizationId === null || dependencies.organizationService === undefined) {
     return;
   }
-  await dependencies.organizationService.recordAuditEvent({
-    organizationId,
-    actorUserId,
-    action,
-    targetType,
-    targetId,
-    metadata,
-  });
+  try {
+    await dependencies.organizationService.recordAuditEvent({
+      organizationId,
+      actorUserId,
+      action,
+      targetType,
+      targetId,
+      metadata,
+    });
+  } catch (error) {
+    console.warn(
+      JSON.stringify({
+        level: 'warn',
+        event: 'organization_audit_log_failed',
+        action,
+        target_type: targetType,
+        target_id: targetId,
+        message: sanitizePersistedErrorMessage(error, 'Organization audit log failed'),
+      }),
+    );
+  }
 }
 
 function parseUuidParam(c: Context<AppEnv>, name: string): string {

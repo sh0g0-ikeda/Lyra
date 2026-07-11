@@ -2331,6 +2331,11 @@ function StudioShell(props: {
   const canViewActiveOrganizationWorks =
     activeOrganizationId === null ||
     (activeOrganizationWorkspace !== null && activeOrganizationRole !== 'billing');
+  const canCreateActiveOrganizationWorks =
+    activeOrganizationId === null ||
+    activeOrganizationRole === 'owner' ||
+    activeOrganizationRole === 'admin' ||
+    activeOrganizationRole === 'editor';
   const organizationBalanceQuery = useQuery({
     queryKey: sessionQueryKey(['organization-balance', activeOrganizationId ?? '']),
     queryFn: () => api.getOrganizationBalance(activeOrganizationId ?? ''),
@@ -2500,11 +2505,12 @@ function StudioShell(props: {
   });
 
   const selectedWork = works.find((work) => work.id === selectedWorkId) ?? null;
+  const selectedWorkScopedId = selectedWork?.id ?? '';
 
   const chaptersQuery = useQuery({
-    queryKey: scopedQueryKey(['chapters', selectedWorkId]),
-    queryFn: () => api.getChapters(selectedWorkId, activeOrganizationId),
-    enabled: selectedWorkId.length > 0,
+    queryKey: scopedQueryKey(['chapters', selectedWorkScopedId]),
+    queryFn: () => api.getChapters(selectedWorkScopedId, activeOrganizationId),
+    enabled: selectedWork !== null,
   });
   const chapters = useMemo(() => chaptersQuery.data?.chapters ?? [], [chaptersQuery.data?.chapters]);
   const selectedChapter = chapters.find((chapter) => chapter.id === selectedChapterId) ?? chapters[0] ?? null;
@@ -2518,9 +2524,9 @@ function StudioShell(props: {
   const selectedEpisode = episodes.find((episode) => episode.id === selectedEpisodeId) ?? episodes[0] ?? null;
 
   const entitiesQuery = useQuery({
-    queryKey: scopedQueryKey(['entities', selectedWorkId]),
-    queryFn: () => api.getEntities(selectedWorkId, activeOrganizationId),
-    enabled: selectedWorkId.length > 0,
+    queryKey: scopedQueryKey(['entities', selectedWorkScopedId]),
+    queryFn: () => api.getEntities(selectedWorkScopedId, activeOrganizationId),
+    enabled: selectedWork !== null,
   });
   const entities = useMemo(() => entitiesQuery.data?.entities ?? [], [entitiesQuery.data?.entities]);
   const selectedWorkEntityIds = useMemo(
@@ -4181,7 +4187,23 @@ function StudioShell(props: {
     </PanelSection>
   );
 
-  const createWorkPanel = (
+  const createWorkPanel = !canCreateActiveOrganizationWorks ? (
+    <PanelSection
+      title="New work"
+      subtitle="Create a work before writing story content."
+      className="story-create-work-panel"
+      compact={selectedWork !== null}
+      collapsible={selectedWork !== null}
+    >
+      <div className="inline-warning">
+        {pickUiText(
+          uiLanguage,
+          'This workspace role cannot create works. Ask the workspace owner or an admin to change your role.',
+          '\u3053\u306e\u30ef\u30fc\u30af\u30b9\u30da\u30fc\u30b9\u3067\u306f\u4f5c\u54c1\u3092\u4f5c\u6210\u3067\u304d\u307e\u305b\u3093\u3002\u30aa\u30fc\u30ca\u30fc\u307e\u305f\u306f\u7ba1\u7406\u8005\u306b\u6a29\u9650\u5909\u66f4\u3092\u4f9d\u983c\u3057\u3066\u304f\u3060\u3055\u3044\u3002',
+        )}
+      </div>
+    </PanelSection>
+  ) : (
     <PanelSection
       title="New work"
       subtitle="Create a work before writing story content."

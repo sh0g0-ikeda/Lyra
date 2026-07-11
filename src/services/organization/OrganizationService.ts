@@ -825,7 +825,7 @@ export class OrganizationService implements OrganizationServicePort {
           organizationId: input.organizationId,
           userId: input.userId,
           workId: input.workId ?? null,
-          generationJobId: input.jobId ?? null,
+          generationJobId: null,
           eventType: input.eventType ?? 'generation.credit_consumed',
           creditAmount: input.cost,
           metadata: buildCreditUsageMetadata({
@@ -915,7 +915,7 @@ export class OrganizationService implements OrganizationServicePort {
           organizationId: input.organizationId,
           userId: input.actorUserId,
           workId: null,
-          generationJobId: input.jobId ?? null,
+          generationJobId: null,
           eventType: 'credit.refunded',
           creditAmount: 0,
           metadata: {

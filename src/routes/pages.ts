@@ -10,6 +10,7 @@ import {
 } from '../lib/validators/page.schema.js';
 import { signImageCdnUrl } from '../infrastructure/aws/CloudFrontImageUrlSigner.js';
 import { formatZodValidationError } from '../lib/validationErrorFormatter.js';
+import { sanitizePersistedErrorMessage } from '../lib/errorSanitizer.js';
 import type { PageFinalizeServicePort } from '../services/page/PageFinalizeService.js';
 import type { PageQueryServicePort } from '../services/page/PageQueryService.js';
 import type { PageGenerationServicePort } from '../services/page/PageGenerationService.js';
@@ -353,12 +354,25 @@ async function recordOrganizationAudit(
   if (organizationId === null || dependencies.organizationService === undefined) {
     return;
   }
-  await dependencies.organizationService.recordAuditEvent({
-    organizationId,
-    actorUserId,
-    action,
-    targetType,
-    targetId,
-    metadata,
-  });
+  try {
+    await dependencies.organizationService.recordAuditEvent({
+      organizationId,
+      actorUserId,
+      action,
+      targetType,
+      targetId,
+      metadata,
+    });
+  } catch (error) {
+    console.warn(
+      JSON.stringify({
+        level: 'warn',
+        event: 'organization_audit_log_failed',
+        action,
+        target_type: targetType,
+        target_id: targetId,
+        message: sanitizePersistedErrorMessage(error, 'Organization audit log failed'),
+      }),
+    );
+  }
 }
