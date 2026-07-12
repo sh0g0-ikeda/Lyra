@@ -64,6 +64,24 @@ describe('PostgresGenerationJobRepository capacity configuration', () => {
     expect(client.valuesList[1]).toEqual([81527, 'generation_jobs:user:user-1']);
   });
 
+  it('retry は organizationId がある場合 organization scope の capacity lock を使う', async () => {
+    const client = new CapacityTransactionRunner();
+    const repository = new PostgresGenerationJobRepository(client);
+
+    const prepared = await repository.prepareRetry('job-1', 3, {
+      userId: 'user-1',
+      organizationId: '44444444-4444-4444-8444-444444444444',
+      capacityLimits: { perUser: 3, global: 5 },
+    });
+
+    expect(prepared).toBe(true);
+    expect(client.valuesList[0]).toEqual([81527, 'generation_jobs:global']);
+    expect(client.valuesList[1]).toEqual([
+      81527,
+      'generation_jobs:organization:44444444-4444-4444-8444-444444444444',
+    ]);
+  });
+
   it('retry の capacityLimits 指定時に transaction 非対応 client なら queued に戻さず設定エラーにする', async () => {
     const client = new QueryCapturingClient();
     const repository = new PostgresGenerationJobRepository(client);
@@ -100,7 +118,7 @@ class CapacityTransactionClient implements DatabaseClient {
     this.queries.push(text);
     this.valuesList.push(values);
 
-    if (text.includes('COUNT(*)::text AS count') && text.includes('user_id = $1')) {
+    if (text.includes('COUNT(*)::text AS count') && text.includes('organization_id IS NULL')) {
       return {
         command: 'SELECT',
         rowCount: 1,

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { ConflictError } from '../../../../src/domain/errors/index.js';
 import type { CreditBalanceSnapshot } from '../../../../src/domain/types/credit.js';
 import type {
   EntityReferenceContext,
@@ -95,6 +96,14 @@ class FakeGenerationJobRepository implements GenerationJobRepository {
   public activeGlobally = 0;
 
   public async create(input: CreateGenerationJobInput): Promise<GenerationJob> {
+    if (input.capacityLimits !== undefined) {
+      if (this.activeForUser >= input.capacityLimits.perUser) {
+        throw new ConflictError('Generation scope has too many active generation jobs');
+      }
+      if (this.activeGlobally >= input.capacityLimits.global) {
+        throw new ConflictError('Generation queue is temporarily full');
+      }
+    }
     this.createdInput = input;
 
     return buildJob({
@@ -464,7 +473,7 @@ describe('EntityReferenceService', () => {
 
     await expect(service.enqueueReferenceGeneration('user-1', 'entity-1')).rejects.toMatchObject({
       code: 'CONFLICT',
-      message: 'User has too many active generation jobs',
+      message: 'Generation scope has too many active generation jobs',
     });
     expect(creditService.consumed).toBeNull();
   });
@@ -570,7 +579,7 @@ describe('EntityReferenceService', () => {
       queue,
     });
 
-    await expect(service.enqueueReferenceGeneration('user-1', 'entity-1')).rejects.toThrow('refund unavailable');
+    await expect(service.enqueueReferenceGeneration('user-1', 'entity-1')).rejects.toThrow('queue down');
 
     expect(creditService.refunded).toMatchObject({
       amount: 1,

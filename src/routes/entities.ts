@@ -13,7 +13,6 @@ import {
   uuidParamSchema,
 } from '../lib/validators/entity.schema.js';
 import { formatZodValidationError } from '../lib/validationErrorFormatter.js';
-import { sanitizePersistedErrorMessage } from '../lib/errorSanitizer.js';
 import { signImageCdnUrl } from '../infrastructure/aws/CloudFrontImageUrlSigner.js';
 import { env } from '../lib/env.js';
 import type { EntityServicePort } from '../services/entity/EntityService.js';
@@ -25,6 +24,11 @@ import {
 } from '../services/entity/ReferenceCandidateToken.js';
 import type { OrganizationServicePort } from '../services/organization/OrganizationService.js';
 import type { AppEnv } from '../types/app.js';
+import {
+  parseOptionalOrganizationId,
+  recordOrganizationAudit,
+  requireOrganizationCapability,
+} from './organizationRouteHelpers.js';
 import { readJsonBody, readOptionalJsonBody, REQUEST_BODY_LIMITS } from './requestBody.js';
 
 const referenceCandidateImageQuerySchema = z
@@ -359,69 +363,6 @@ function getReferenceCandidateTokenSecret(): string {
     ?? env.SUPABASE_JWT_SECRET
     ?? env.STRIPE_WEBHOOK_SECRET
     ?? 'development-reference-candidate-token-secret';
-}
-
-function parseOptionalOrganizationId(c: Context<AppEnv>): string | null {
-  const raw = c.req.query('organization_id');
-  if (raw === undefined || raw.trim().length === 0) {
-    return null;
-  }
-  const result = uuidParamSchema.safeParse(raw);
-  if (!result.success) {
-    throw new ValidationError('organization_id must be a valid UUID');
-  }
-  return result.data;
-}
-
-async function requireOrganizationCapability(
-  c: Context<AppEnv>,
-  dependencies: EntityRouteDependencies,
-  organizationId: string | null,
-  capability: Parameters<NonNullable<EntityRouteDependencies['organizationService']>['requireMembership']>[2],
-): Promise<void> {
-  if (organizationId === null) {
-    return;
-  }
-  if (dependencies.organizationService === undefined) {
-    throw new ValidationError('Organization support is not configured');
-  }
-  const user = c.get('user');
-  await dependencies.organizationService.requireMembership(organizationId, user.id, capability);
-}
-
-async function recordOrganizationAudit(
-  dependencies: EntityRouteDependencies,
-  organizationId: string | null,
-  actorUserId: string,
-  action: string,
-  targetType: string,
-  targetId: string | null,
-  metadata?: Record<string, unknown>,
-): Promise<void> {
-  if (organizationId === null || dependencies.organizationService === undefined) {
-    return;
-  }
-  try {
-    await dependencies.organizationService.recordAuditEvent({
-      organizationId,
-      actorUserId,
-      action,
-      targetType,
-      targetId,
-      metadata,
-    });
-  } catch (error) {
-    console.warn(
-      JSON.stringify({
-        level: 'warn',
-        event: 'organization_audit_log_failed',
-        action,
-        target_type: targetType,
-        target_id: targetId,
-        message: sanitizePersistedErrorMessage(error, 'Organization audit log failed'),
-      }),
-    );
-  }
 }
 
 function toEntityResponse(entity: Entity): Record<string, unknown> {

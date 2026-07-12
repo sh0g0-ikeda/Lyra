@@ -10,6 +10,10 @@ import { formatZodValidationError } from '../lib/validationErrorFormatter.js';
 import type { OrganizationServicePort } from '../services/organization/OrganizationService.js';
 import type { BalloonServicePort } from '../services/page/BalloonService.js';
 import type { AppEnv } from '../types/app.js';
+import {
+  parseOptionalOrganizationId,
+  requireOrganizationCapability,
+} from './organizationRouteHelpers.js';
 import { readJsonBody } from './requestBody.js';
 
 export interface BalloonRouteDependencies {
@@ -137,36 +141,6 @@ function parseUuidParam(c: Context<AppEnv>, name: string): string {
   }
 
   return result.data;
-}
-
-function parseOptionalOrganizationId(c: Context<AppEnv>): string | null {
-  const raw = c.req.query('organization_id');
-  if (raw === undefined || raw.trim() === '') {
-    return null;
-  }
-
-  const result = balloonUuidParamSchema.safeParse(raw);
-  if (!result.success) {
-    throw new ValidationError('organization_id must be a valid UUID');
-  }
-
-  return result.data;
-}
-
-async function requireOrganizationCapability(
-  c: Context<AppEnv>,
-  dependencies: BalloonRouteDependencies,
-  organizationId: string | null,
-  capability: Parameters<NonNullable<BalloonRouteDependencies['organizationService']>['requireMembership']>[2],
-): Promise<void> {
-  if (organizationId === null) {
-    return;
-  }
-  if (dependencies.organizationService === undefined) {
-    throw new ValidationError('Organization support is not enabled');
-  }
-  const user = c.get('user');
-  await dependencies.organizationService.requireMembership(organizationId, user.id, capability);
 }
 
 function toBalloonResponse(balloon: Balloon): Record<string, unknown> {

@@ -55,6 +55,7 @@ export class PageGenerationRetryService implements PageGenerationRetryServicePor
         MAX_PAGE_GENERATION_RETRIES,
         {
           userId,
+          organizationId: job.organizationId ?? null,
           capacityLimits: this.capacityLimits,
         },
       );

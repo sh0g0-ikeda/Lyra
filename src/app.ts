@@ -896,6 +896,11 @@ function resolveOrganizationInvitationEmailService(
 function resolveEmailDeliveryService(): EmailDeliveryPort {
   if (env.EMAIL_PROVIDER === 'ses') {
     if (env.SES_FROM_EMAIL === undefined || env.AWS_REGION === undefined) {
+      if (env.APP_ENV === 'production' || process.env.NODE_ENV === 'production' || env.INVITATION_EMAIL_ENABLED) {
+        throw new ConfigurationError(
+          'EMAIL_PROVIDER=ses requires SES_FROM_EMAIL and AWS_REGION when invitation email delivery is enabled',
+        );
+      }
       console.warn(
         '[email] EMAIL_PROVIDER=ses but SES_FROM_EMAIL or AWS_REGION is not configured; invitation email delivery is disabled',
       );
@@ -906,6 +911,10 @@ function resolveEmailDeliveryService(): EmailDeliveryPort {
       fromEmail: env.SES_FROM_EMAIL,
       configurationSet: env.SES_CONFIGURATION_SET,
     });
+  }
+
+  if (env.INVITATION_EMAIL_ENABLED && (env.APP_ENV === 'production' || process.env.NODE_ENV === 'production')) {
+    throw new ConfigurationError('INVITATION_EMAIL_ENABLED=true requires EMAIL_PROVIDER=ses in production');
   }
 
   return new DisabledEmailDeliveryService();

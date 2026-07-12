@@ -13,6 +13,11 @@ export interface GenerationJobCapacityLimits {
   jobTypes?: readonly GenerationJobType[];
 }
 
+interface GenerationCapacityScope {
+  userId: string;
+  organizationId: string | null;
+}
+
 export interface CreateGenerationJobInput {
   id?: string;
   userId: string;
@@ -26,6 +31,7 @@ export interface CreateGenerationJobInput {
 
 export interface PrepareGenerationJobRetryOptions {
   userId: string;
+  organizationId?: string | null;
   capacityLimits: GenerationJobCapacityLimits;
 }
 
@@ -104,8 +110,9 @@ export class PostgresGenerationJobRepository implements GenerationJobRepository 
     if (capacityLimits !== undefined) {
       const transactionRunner = this.requireTransactionRunnerForCapacity();
       return transactionRunner.transaction(async (transactionClient) => {
-        await this.lockGenerationCapacity(transactionClient, input.userId);
-        await this.assertCapacityWithinTransaction(transactionClient, input.userId, capacityLimits);
+        const scope = getGenerationCapacityScope(input.userId, input.organizationId ?? null);
+        await this.lockGenerationCapacity(transactionClient, scope);
+        await this.assertCapacityWithinTransaction(transactionClient, scope, capacityLimits);
         return this.insertJob(transactionClient, input);
       });
     }
@@ -146,30 +153,30 @@ export class PostgresGenerationJobRepository implements GenerationJobRepository 
     return mapGenerationJobRow(result.rows[0]);
   }
 
-  private async lockGenerationCapacity(client: DatabaseClient, userId: string): Promise<void> {
+  private async lockGenerationCapacity(client: DatabaseClient, scope: GenerationCapacityScope): Promise<void> {
     await client.query(
       'SELECT pg_advisory_xact_lock($1::int, hashtext($2)::int)',
       [PostgresGenerationJobRepository.advisoryLockNamespace, 'generation_jobs:global'],
     );
     await client.query(
       'SELECT pg_advisory_xact_lock($1::int, hashtext($2)::int)',
-      [PostgresGenerationJobRepository.advisoryLockNamespace, `generation_jobs:user:${userId}`],
+      [PostgresGenerationJobRepository.advisoryLockNamespace, formatGenerationCapacityScopeKey(scope)],
     );
   }
 
   private async assertCapacityWithinTransaction(
     client: DatabaseClient,
-    userId: string,
+    scope: GenerationCapacityScope,
     limits: NonNullable<CreateGenerationJobInput['capacityLimits']>,
   ): Promise<void> {
     const jobTypes = normalizeCapacityJobTypes(limits.jobTypes);
-    const activeForUser = await this.countActiveGenerationJobsByUserWithClient(
+    const activeForScope = await this.countActiveGenerationJobsByScopeWithClient(
       client,
-      userId,
+      scope,
       jobTypes,
     );
-    if (activeForUser >= limits.perUser) {
-      throw new ConflictError('User has too many active generation jobs');
+    if (activeForScope >= limits.perUser) {
+      throw new ConflictError('Generation scope has too many active generation jobs');
     }
 
     const activeGlobally = await this.countActiveGenerationJobsWithClient(client, jobTypes);
@@ -240,15 +247,30 @@ export class PostgresGenerationJobRepository implements GenerationJobRepository 
     userId: string,
     jobTypes: readonly GenerationJobType[],
   ): Promise<number> {
+    return this.countActiveGenerationJobsByScopeWithClient(
+      client,
+      { userId, organizationId: null },
+      jobTypes,
+    );
+  }
+
+  private async countActiveGenerationJobsByScopeWithClient(
+    client: DatabaseClient,
+    scope: GenerationCapacityScope,
+    jobTypes: readonly GenerationJobType[],
+  ): Promise<number> {
     const result = await client.query<{ count: string }>(
       `
       SELECT COUNT(*)::text AS count
       FROM generation_jobs
-      WHERE user_id = $1
-        AND job_type = ANY($2::text[])
+      WHERE (
+          ($1::uuid IS NULL AND user_id = $2 AND organization_id IS NULL)
+          OR ($1::uuid IS NOT NULL AND organization_id = $1::uuid)
+        )
+        AND job_type = ANY($3::text[])
         AND status IN ('queued', 'processing')
       `,
-      [userId, [...jobTypes]],
+      [scope.organizationId, scope.userId, [...jobTypes]],
     );
 
     return Number(result.rows[0]?.count ?? '0');
@@ -320,10 +342,11 @@ export class PostgresGenerationJobRepository implements GenerationJobRepository 
     if (options !== undefined) {
       const transactionRunner = this.requireTransactionRunnerForCapacity();
       return transactionRunner.transaction(async (transactionClient) => {
-        await this.lockGenerationCapacity(transactionClient, options.userId);
+        const scope = getGenerationCapacityScope(options.userId, options.organizationId ?? null);
+        await this.lockGenerationCapacity(transactionClient, scope);
         await this.assertCapacityWithinTransaction(
           transactionClient,
-          options.userId,
+          scope,
           options.capacityLimits,
         );
         return this.prepareRetryWithClient(transactionClient, jobId, maxRetryCount);
@@ -473,6 +496,16 @@ function isTransactionRunner(client: DatabaseClient & Partial<TransactionRunner>
 function normalizeCapacityJobTypes(jobTypes: readonly GenerationJobType[] | undefined): readonly GenerationJobType[] {
   const normalized = jobTypes?.filter((jobType, index, values) => values.indexOf(jobType) === index);
   return normalized === undefined || normalized.length === 0 ? DEFAULT_CAPACITY_JOB_TYPES : normalized;
+}
+
+function getGenerationCapacityScope(userId: string, organizationId: string | null): GenerationCapacityScope {
+  return { userId, organizationId };
+}
+
+function formatGenerationCapacityScopeKey(scope: GenerationCapacityScope): string {
+  return scope.organizationId === null
+    ? `generation_jobs:user:${scope.userId}`
+    : `generation_jobs:organization:${scope.organizationId}`;
 }
 
 export function isUniqueViolation(error: unknown): boolean {

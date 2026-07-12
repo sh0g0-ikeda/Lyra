@@ -102,6 +102,7 @@ describe('PageGenerationRetryService capacity guard', () => {
 
     expect(repository.prepareRetryOptions).toEqual({
       userId: 'user-1',
+      organizationId: null,
       capacityLimits: { perUser: 4, global: 8 },
     });
   });

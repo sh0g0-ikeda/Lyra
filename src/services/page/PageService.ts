@@ -1273,10 +1273,9 @@ function repairPanelSuggestionAgainstFallback(
     includeFallbackCreativeFields: options?.includeFallbackCreativeFields === true,
   });
   const allowFallbackCreativeRepair = options?.includeFallbackCreativeFields === true;
-  const repairedEntities =
-    completed.entities === undefined || completed.entities.length === 0
-      ? completed.entities
-      : completed.entities;
+  const repairedEntities = shouldRepairEmptyEntityAssignments(source, fallback, allowFallbackCreativeRepair)
+    ? fallback?.entities
+    : completed.entities;
   const fallbackComposition = fallback?.composition;
   const repairedSituation = shouldRepairGenericCompilerText(completed.situationText)
     ? repairCreativeText(undefined, fallback?.situationText, [], allowFallbackCreativeRepair)
@@ -1352,6 +1351,29 @@ function repairPanelSuggestionAgainstFallback(
   };
 }
 
+function shouldRepairEmptyEntityAssignments(
+  source: PageAutofillPanelSuggestion | undefined,
+  fallback: PageAutofillPanelSuggestion | undefined,
+  allowFallbackCreativeRepair: boolean,
+): boolean {
+  if (!allowFallbackCreativeRepair || !Array.isArray(source?.entities) || source.entities.length > 0) {
+    return false;
+  }
+  if (!Array.isArray(fallback?.entities) || fallback.entities.length === 0) {
+    return false;
+  }
+
+  return (
+    shouldRepairGenericCompilerText(source.backgroundNote) ||
+    shouldRepairGenericCompilerText(source.composition?.compositionPrompt) ||
+    shouldRepairGenericCompilerText(source.composition?.customNote) ||
+    shouldRepairRedundantFieldText(source.backgroundNote, [
+      source.situationText,
+      source.composition?.compositionPrompt,
+    ])
+  );
+}
+
 function repairCreativeText(
   source: string | null | undefined,
   fallback: string | null | undefined,
@@ -1414,14 +1436,11 @@ function coalesceDialogue(
   source: PageAutofillPanelSuggestion['dialogue'],
   fallback: PageAutofillPanelSuggestion['dialogue'],
 ): PageAutofillPanelSuggestion['dialogue'] {
-  if (Array.isArray(source) && source.length > 0) {
+  if (Array.isArray(source)) {
     return source;
   }
   if (Array.isArray(fallback) && fallback.length > 0) {
     return fallback;
-  }
-  if (Array.isArray(source)) {
-    return source;
   }
   return fallback;
 }
@@ -1430,14 +1449,11 @@ function coalesceAssignments(
   source: PageAutofillPanelSuggestion['entities'],
   fallback: PageAutofillPanelSuggestion['entities'],
 ): PageAutofillPanelSuggestion['entities'] {
-  if (Array.isArray(source) && source.length > 0) {
+  if (Array.isArray(source)) {
     return source;
   }
   if (Array.isArray(fallback) && fallback.length > 0) {
     return fallback;
-  }
-  if (Array.isArray(source)) {
-    return source;
   }
   return fallback;
 }

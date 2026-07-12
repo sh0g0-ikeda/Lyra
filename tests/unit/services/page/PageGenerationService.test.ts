@@ -92,6 +92,14 @@ class FakeGenerationJobRepository implements GenerationJobRepository {
   public activeGlobally = 0;
 
   public async create(input: CreateGenerationJobInput): Promise<GenerationJob> {
+    if (input.capacityLimits !== undefined) {
+      if (this.activeForUser >= input.capacityLimits.perUser) {
+        throw new ConflictError('Generation scope has too many active generation jobs');
+      }
+      if (this.activeGlobally >= input.capacityLimits.global) {
+        throw new ConflictError('Generation queue is temporarily full');
+      }
+    }
     this.created = input;
     return buildJob({
       id: input.id ?? '44444444-4444-4444-8444-444444444444',
@@ -528,7 +536,7 @@ describe('PageGenerationService', () => {
 
     await expect(service.enqueuePageGeneration(userId, pageId)).rejects.toMatchObject({
       code: 'CONFLICT',
-      message: 'User has too many active generation jobs',
+      message: 'Generation scope has too many active generation jobs',
     });
     expect(creditService.consumed).toEqual([]);
   });
@@ -687,7 +695,7 @@ describe('PageGenerationService', () => {
       new ModeSelector(),
     );
 
-    await expect(service.enqueuePageGeneration(userId, pageId)).rejects.toThrow('refund unavailable');
+    await expect(service.enqueuePageGeneration(userId, pageId)).rejects.toThrow('Failed to enqueue page generation job');
 
     expect(creditService.refunded[0]).toMatchObject({
       amount: 3,
