@@ -104,6 +104,22 @@ describe('PostgresEntityGenerationExecutionRepository', () => {
       }),
     );
   });
+  it('エンティティ生成の進捗時刻を更新する', async () => {
+    const client = new QueryCapturingClient();
+    const repository = new PostgresEntityGenerationExecutionRepository(client);
+
+    const touched = await repository.touchEntityGenerationProgress({
+      jobId: 'job-1',
+      userId: 'user-1',
+      message: 'Generating entity reference.',
+      updatedAt: '2026-07-13T00:00:00.000Z',
+    });
+
+    expect(touched).toBe(true);
+    expect(client.queries[0]).toContain('progress_updated_at');
+    expect(client.queries[0]).toContain("status = 'processing'");
+  });
+
   it('failEntityGeneration は queued と processing の job を failed にできる', async () => {
     const client = new QueryCapturingClient();
     const repository = new PostgresEntityGenerationExecutionRepository(client);
@@ -118,6 +134,7 @@ describe('PostgresEntityGenerationExecutionRepository', () => {
     expect(failed).toBe(true);
     expect(client.queries[0]).toContain("SET status = 'failed'");
     expect(client.queries[0]).toContain("status IN ('queued', 'processing')");
+    expect(client.queries[0]).toContain("result->>'progress_updated_at'");
     const persistedMessage = String(client.values?.[2]);
     expect(persistedMessage).toContain('Bearer [redacted]');
     expect(persistedMessage).not.toContain(fakeApiKey);

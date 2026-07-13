@@ -41,8 +41,9 @@ export class EntityGenerationRecoveryService implements EntityGenerationRecovery
   ) {}
 
   public async recoverAllStaleJobs(): Promise<number> {
-    const jobs = await this.recoveryRepository.listStaleProcessingJobs(this.buildCutoff(), this.batchLimit);
-    const recoveredStaleCount = await this.recoverJobs(jobs);
+    const staleBefore = this.buildCutoff();
+    const jobs = await this.recoveryRepository.listStaleProcessingJobs(staleBefore, this.batchLimit);
+    const recoveredStaleCount = await this.recoverJobs(jobs, staleBefore);
     const refundedFailedCount = await this.refundFailedJobsMissingRefund(
       await this.recoveryRepository.listFailedJobsMissingRefund(this.batchLimit),
     );
@@ -54,14 +55,15 @@ export class EntityGenerationRecoveryService implements EntityGenerationRecovery
     entityId: string,
     organizationId: string | null = null,
   ): Promise<number> {
+    const staleBefore = this.buildCutoff();
     const jobs = await this.recoveryRepository.listStaleProcessingJobsForEntity(
       userId,
       entityId,
-      this.buildCutoff(),
+      staleBefore,
       this.batchLimit,
       organizationId,
     );
-    const recoveredStaleCount = await this.recoverJobs(jobs);
+    const recoveredStaleCount = await this.recoverJobs(jobs, staleBefore);
     const refundedFailedCount = await this.refundFailedJobsMissingRefund(
       await this.recoveryRepository.listFailedJobsMissingRefundForEntity(
         userId,
@@ -77,31 +79,41 @@ export class EntityGenerationRecoveryService implements EntityGenerationRecovery
     return new Date(Date.now() - this.staleAfterMs);
   }
 
-  private async recoverJobs(jobs: StaleEntityGenerationJob[]): Promise<number> {
+  private async recoverJobs(jobs: StaleEntityGenerationJob[], staleBefore: Date): Promise<number> {
     let recoveredCount = 0;
 
     for (const job of jobs) {
-      const recovered = await this.executionRepository.failEntityGeneration({
-        jobId: job.jobId,
-        userId: job.userId,
-        errorMessage: 'Entity reference generation worker stopped before completion; recovered stale queued or processing job',
-      });
+      let recovered = false;
+      try {
+        recovered = await this.executionRepository.failEntityGeneration({
+          jobId: job.jobId,
+          userId: job.userId,
+          errorMessage: 'Entity reference generation worker stopped before completion; recovered stale queued or processing job',
+          staleBefore,
+        });
+      } catch (error) {
+        console.error(`[entity-generation-recovery] failed to transition stale job ${job.jobId}`, error);
+        continue;
+      }
 
       if (!recovered) {
         continue;
       }
 
-      if (job.creditCost > 0) {
-        await this.refundJobCredits(
-          job.organizationId ?? null,
-          job.userId,
-          job.creditCost,
-          job.jobId,
-          'Refund for stale entity generation job',
-        );
-      }
-
       recoveredCount += 1;
+      if (job.creditCost > 0) {
+        try {
+          await this.refundJobCredits(
+            job.organizationId ?? null,
+            job.userId,
+            job.creditCost,
+            job.jobId,
+            'Refund for stale entity generation job',
+          );
+        } catch (error) {
+          console.error(`[entity-generation-recovery] deferred refund for stale job ${job.jobId}`, error);
+        }
+      }
       console.warn(
         `[entity-generation-recovery] recovered stale job ${job.jobId} for entity ${job.entityId} stale since ${job.staleAt.toISOString()}`,
       );
@@ -120,13 +132,18 @@ export class EntityGenerationRecoveryService implements EntityGenerationRecovery
         continue;
       }
 
-      await this.refundJobCredits(
-        job.organizationId ?? null,
-        job.userId,
-        job.creditCost,
-        job.jobId,
-        'Refund for failed entity generation job missing refund ledger',
-      );
+      try {
+        await this.refundJobCredits(
+          job.organizationId ?? null,
+          job.userId,
+          job.creditCost,
+          job.jobId,
+          'Refund for failed entity generation job missing refund ledger',
+        );
+      } catch (error) {
+        console.error(`[entity-generation-recovery] failed refund remains pending for job ${job.jobId}`, error);
+        continue;
+      }
 
       refundedCount += 1;
       console.warn(

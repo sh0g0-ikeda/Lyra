@@ -30,6 +30,8 @@ export interface ProcessEntityGenerationJobResult {
   jobStatus?: 'completed' | 'failed';
 }
 
+const ENTITY_GENERATION_HEARTBEAT_INTERVAL_MS = 60_000;
+
 export class EntityGenerationWorkerService {
   public constructor(
     private readonly executionRepository: EntityGenerationExecutionRepository,
@@ -55,15 +57,17 @@ export class EntityGenerationWorkerService {
       return { status: 'skipped' };
     }
 
-    const params = parsePersistedParams(job.params);
-    if (params === null) {
-      await this.failJob(job, 'Entity generation job params are invalid', null);
-      return { status: 'processed', jobStatus: 'failed' };
-    }
-
-    let workIdForAudit: string | null = null;
+    const heartbeatTimer = await this.startProgressHeartbeat(job);
     try {
-      const entity = await this.entityRepository.findReferenceContextByIdAndUserId(
+      const params = parsePersistedParams(job.params);
+      if (params === null) {
+        await this.failJob(job, 'Entity generation job params are invalid', null);
+        return { status: 'processed', jobStatus: 'failed' };
+      }
+
+      let workIdForAudit: string | null = null;
+      try {
+        const entity = await this.entityRepository.findReferenceContextByIdAndUserId(
         params.entity_id,
         job.userId,
         job.organizationId ?? null,
@@ -131,11 +135,35 @@ export class EntityGenerationWorkerService {
         throw new ConfigurationError('Failed to persist entity generation job result');
       }
 
-      await this.recordGenerationCompleted(job, entity, generated);
-      return { status: 'processed', jobStatus: 'completed' };
+        await this.recordGenerationCompleted(job, entity, generated);
+        return { status: 'processed', jobStatus: 'completed' };
+      } catch (error) {
+        await this.failJob(job, sanitizePersistedErrorMessage(error, 'Entity generation failed'), workIdForAudit);
+        return { status: 'processed', jobStatus: 'failed' };
+      }
+    } finally {
+      clearInterval(heartbeatTimer);
+    }
+  }
+
+  private async startProgressHeartbeat(job: GenerationJob): Promise<ReturnType<typeof setInterval>> {
+    await this.touchJobProgress(job);
+    return setInterval(() => {
+      void this.touchJobProgress(job);
+    }, ENTITY_GENERATION_HEARTBEAT_INTERVAL_MS);
+  }
+
+  private async touchJobProgress(job: GenerationJob): Promise<void> {
+    try {
+      await this.executionRepository.touchEntityGenerationProgress({
+        jobId: job.id,
+        userId: job.userId,
+        message: 'Generating entity reference.',
+        updatedAt: new Date().toISOString(),
+      });
     } catch (error) {
-      await this.failJob(job, sanitizePersistedErrorMessage(error, 'Entity generation failed'), workIdForAudit);
-      return { status: 'processed', jobStatus: 'failed' };
+      const reason = error instanceof Error ? error.message : String(error);
+      console.warn(`[entity-generation-worker] heartbeat failed for job ${job.id}: ${reason}`);
     }
   }
 

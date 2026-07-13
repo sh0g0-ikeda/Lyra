@@ -162,6 +162,30 @@ export interface CreateOrganizationInvitationRecord {
   expiresAt: Date;
 }
 
+export type OrganizationCreditLedgerType = 'consume' | 'refund' | 'monthly_grant' | 'purchased_grant';
+
+export interface OrganizationCreditLedgerEntryInput {
+  userId: string | null;
+  organizationId: string;
+  type: OrganizationCreditLedgerType;
+  amount: number;
+  monthlyDelta: number;
+  purchasedDelta: number;
+  monthlyAfter: number;
+  purchasedAfter: number;
+  description: string;
+  stripeEventId: string | null;
+  jobId: string | null;
+}
+
+export interface OrganizationJobCreditLedgerSummary {
+  amount: number;
+  monthlyDelta: number;
+  purchasedDelta: number;
+  entryCount: number;
+  completeEntryCount: number;
+}
+
 export interface OrganizationRepository {
   transaction<T>(work: (client: DatabaseClient) => Promise<T>): Promise<T>;
   createOrganization(input: CreateOrganizationRecord, client: DatabaseClient): Promise<Organization>;
@@ -272,6 +296,13 @@ export interface OrganizationRepository {
   getCreditBalanceForUpdate(organizationId: string, client: DatabaseClient): Promise<OrganizationCreditBalance | null>;
   createCreditBalance(organizationId: string, client: DatabaseClient): Promise<OrganizationCreditBalance>;
   updateCreditBalance(balance: OrganizationCreditBalance, client: DatabaseClient): Promise<OrganizationCreditBalance>;
+  summarizeJobCreditLedger(
+    organizationId: string,
+    jobId: string,
+    type: 'consume' | 'refund',
+    client: DatabaseClient,
+  ): Promise<OrganizationJobCreditLedgerSummary>;
+  insertCreditLedger(entry: OrganizationCreditLedgerEntryInput, client: DatabaseClient): Promise<void>;
   insertAuditLog(
     input: {
       organizationId: string;
@@ -981,6 +1012,72 @@ export class PostgresOrganizationRepository implements OrganizationRepository {
     );
 
     return mapBalanceRow(result.rows[0]);
+  }
+
+  public async summarizeJobCreditLedger(
+    organizationId: string,
+    jobId: string,
+    type: 'consume' | 'refund',
+    client: DatabaseClient,
+  ): Promise<OrganizationJobCreditLedgerSummary> {
+    const result = await client.query<{
+      amount: string;
+      monthly_delta: string;
+      purchased_delta: string;
+      entry_count: string;
+      complete_entry_count: string;
+    }>(
+      `
+      SELECT COALESCE(SUM(amount), 0)::text AS amount,
+             COALESCE(SUM(monthly_delta), 0)::text AS monthly_delta,
+             COALESCE(SUM(purchased_delta), 0)::text AS purchased_delta,
+             COUNT(*)::text AS entry_count,
+             COUNT(*) FILTER (
+               WHERE monthly_delta IS NOT NULL AND purchased_delta IS NOT NULL
+             )::text AS complete_entry_count
+      FROM credit_ledger
+      WHERE organization_id = $1
+        AND job_id = $2
+        AND type = $3
+      `,
+      [organizationId, jobId, type],
+    );
+    const row = result.rows[0];
+    return {
+      amount: Number(row?.amount ?? '0'),
+      monthlyDelta: Number(row?.monthly_delta ?? '0'),
+      purchasedDelta: Number(row?.purchased_delta ?? '0'),
+      entryCount: Number(row?.entry_count ?? '0'),
+      completeEntryCount: Number(row?.complete_entry_count ?? '0'),
+    };
+  }
+
+  public async insertCreditLedger(
+    entry: OrganizationCreditLedgerEntryInput,
+    client: DatabaseClient,
+  ): Promise<void> {
+    await client.query(
+      `
+      INSERT INTO credit_ledger (
+        user_id, organization_id, type, amount, monthly_delta, purchased_delta,
+        monthly_after, purchased_after, description, stripe_event_id, job_id
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+      `,
+      [
+        entry.userId,
+        entry.organizationId,
+        entry.type,
+        entry.amount,
+        entry.monthlyDelta,
+        entry.purchasedDelta,
+        entry.monthlyAfter,
+        entry.purchasedAfter,
+        entry.description,
+        entry.stripeEventId,
+        entry.jobId,
+      ],
+    );
   }
 
   public async insertAuditLog(

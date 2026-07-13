@@ -98,6 +98,7 @@ describe('PostgresPageGenerationRecoveryRepository', () => {
     expect(client.queryText).toContain('NOT EXISTS');
     expect(client.queryText).toContain('FROM credit_ledger');
     expect(client.queryText).toContain("credit_ledger.type = 'refund'");
+    expect(client.queryText).toContain("consumed_ledger.type = 'consume'");
     expect(client.queryText).toContain('ORDER BY generation_jobs.completed_at ASC NULLS FIRST, generation_jobs.created_at ASC');
     expect(client.queryText).toContain('LIMIT $1');
     expect(client.values).toEqual([100]);

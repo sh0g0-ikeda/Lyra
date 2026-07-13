@@ -34,6 +34,7 @@ export interface FailPageGenerationInput {
   pageId?: string;
   previousStatus?: PageStatus;
   previousGenerationMode?: PageGenerationMode | null;
+  staleBefore?: Date;
 }
 
 export interface TouchPageGenerationProgressInput {
@@ -261,9 +262,28 @@ export class PostgresPageGenerationExecutionRepository implements PageGeneration
         WHERE id = $1
           AND user_id = $2
           AND status IN ('queued', 'processing')
+          AND (
+            $4::timestamptz IS NULL
+            OR (
+              status = 'queued'
+              AND created_at < $4::timestamptz
+            )
+            OR (
+              status = 'processing'
+              AND COALESCE(
+                CASE
+                  WHEN result->>'progress_updated_at' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$'
+                  THEN (result->>'progress_updated_at')::timestamptz
+                  ELSE NULL
+                END,
+                started_at,
+                created_at
+              ) < $4::timestamptz
+            )
+          )
         RETURNING *
         `,
-        [input.jobId, input.userId, persistedErrorMessage],
+        [input.jobId, input.userId, persistedErrorMessage, input.staleBefore?.toISOString() ?? null],
       );
 
       if ((jobUpdate.rowCount ?? 0) === 0) {

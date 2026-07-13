@@ -160,14 +160,29 @@ function buildStaleJobsQuery(extraConditions: string, limitPlaceholder: string):
         generation_jobs.organization_id,
         generation_jobs.credit_cost,
         generation_jobs.params->>'entity_id' AS entity_id,
-        COALESCE(generation_jobs.started_at, generation_jobs.created_at) AS stale_at
+        COALESCE(
+          CASE
+            WHEN generation_jobs.result->>'progress_updated_at' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$'
+            THEN (generation_jobs.result->>'progress_updated_at')::timestamptz
+            ELSE NULL
+          END,
+          generation_jobs.started_at,
+          generation_jobs.created_at
+        ) AS stale_at
       FROM generation_jobs
       WHERE generation_jobs.job_type = 'entity_generate'
         AND (
           (
             generation_jobs.status = 'processing'
-            AND generation_jobs.started_at IS NOT NULL
-            AND generation_jobs.started_at < $1
+            AND COALESCE(
+              CASE
+                WHEN generation_jobs.result->>'progress_updated_at' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$'
+                THEN (generation_jobs.result->>'progress_updated_at')::timestamptz
+                ELSE NULL
+              END,
+              generation_jobs.started_at,
+              generation_jobs.created_at
+            ) < $1
           )
           OR (
             generation_jobs.status = 'queued'
@@ -194,6 +209,14 @@ function buildFailedJobsMissingRefundQuery(extraConditions: string, limitPlaceho
         AND generation_jobs.status = 'failed'
         AND generation_jobs.credit_cost > 0
         AND generation_jobs.params ? 'entity_id'
+        AND EXISTS (
+          SELECT 1
+          FROM credit_ledger AS consumed_ledger
+          WHERE consumed_ledger.user_id = generation_jobs.user_id
+            AND COALESCE(consumed_ledger.organization_id::text, '') = COALESCE(generation_jobs.organization_id::text, '')
+            AND consumed_ledger.job_id = generation_jobs.id
+            AND consumed_ledger.type = 'consume'
+        )
         AND NOT EXISTS (
           SELECT 1
           FROM credit_ledger

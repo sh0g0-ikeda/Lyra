@@ -436,6 +436,7 @@ describe('story routes', () => {
 
     expect(response.status).toBe(201);
     expect(storyService.createWorkOrganizationId).toBe('550e8400-e29b-41d4-a716-446655440000');
+    expect(organizationService.auditAttempts).toBe(3);
   });
 
   it('法人workspace指定の作品一覧ではmembership確認とorganizationId伝播を行う', async () => {
@@ -937,7 +938,10 @@ class FakeOrganizationService {
 }
 
 class FailingAuditOrganizationService extends FakeOrganizationService {
+  public auditAttempts = 0;
+
   public override async recordAuditEvent(): Promise<void> {
+    this.auditAttempts += 1;
     throw new Error('audit insert failed');
   }
 }

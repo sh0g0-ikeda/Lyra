@@ -7,6 +7,7 @@ import type { OrganizationServicePort } from '../services/organization/Organizat
 import type { AppEnv } from '../types/app.js';
 
 const organizationIdQuerySchema = z.string().uuid();
+const ORGANIZATION_AUDIT_WRITE_MAX_ATTEMPTS = 3;
 
 export interface OrganizationRouteDependencies {
   organizationService?: OrganizationServicePort;
@@ -56,25 +57,33 @@ export async function recordOrganizationAudit(
     return;
   }
 
-  try {
-    await dependencies.organizationService.recordAuditEvent({
-      organizationId,
-      actorUserId,
-      action,
-      targetType,
-      targetId,
-      metadata,
-    });
-  } catch (error) {
-    console.warn(
-      JSON.stringify({
-        level: 'warn',
-        event: 'organization_audit_log_failed',
+  for (let attempt = 1; attempt <= ORGANIZATION_AUDIT_WRITE_MAX_ATTEMPTS; attempt += 1) {
+    try {
+      await dependencies.organizationService.recordAuditEvent({
+        organizationId,
+        actorUserId,
         action,
-        target_type: targetType,
-        target_id: targetId,
-        message: sanitizePersistedErrorMessage(error, 'Organization audit log failed'),
-      }),
-    );
+        targetType,
+        targetId,
+        metadata,
+      });
+      return;
+    } catch (error) {
+      if (attempt < ORGANIZATION_AUDIT_WRITE_MAX_ATTEMPTS) {
+        continue;
+      }
+      console.error(
+        JSON.stringify({
+          level: 'error',
+          event: 'organization_audit_log_failed',
+          organization_id: organizationId,
+          action,
+          target_type: targetType,
+          target_id: targetId,
+          attempts: ORGANIZATION_AUDIT_WRITE_MAX_ATTEMPTS,
+          message: sanitizePersistedErrorMessage(error, 'Organization audit log failed'),
+        }),
+      );
+    }
   }
 }
