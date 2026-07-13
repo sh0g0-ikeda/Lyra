@@ -13,7 +13,6 @@ import type { PageRepository } from '../../repositories/PageRepository.js';
 import { ModeSelector } from './ModeSelector.js';
 import type { PageGenerationQueuePort } from './PageGenerationQueue.js';
 import {
-  assertGenerationCapacity,
   DEFAULT_GENERATION_CAPACITY_LIMITS,
   type GenerationCapacityLimits,
 } from '../generation/GenerationCapacityGuard.js';
@@ -75,7 +74,6 @@ export class PageGenerationService implements PageGenerationServicePort {
     const pageOrganizationId = page.organizationId ?? null;
     this.ensurePageCanGenerate(page);
     const billableReferenceCount = await this.ensureAssignedReferencesAndCountBillableReferences(userId, page);
-    await assertGenerationCapacity(this.generationJobRepository, userId, this.capacityLimits);
     await this.ensureNoActiveGenerationJob(userId, page.pageId, pageOrganizationId);
 
     const requestKind: PageGenerationRequestKind =
@@ -93,20 +91,10 @@ export class PageGenerationService implements PageGenerationServicePort {
     let createdJobId: string | null = null;
 
     try {
-      await this.consumeCredits({
-        userId,
-        organizationId: pageOrganizationId,
-        workId: page.workId,
-        cost: selection.creditCost,
-        description: describeGeneration(selection.requestKind, selection.mode),
-        jobId: reservedJobId,
-      });
-      creditsConsumed = true;
-
       const job = await this.generationJobRepository.create({
         id: reservedJobId,
         userId,
-        organizationId: page.organizationId,
+        organizationId: pageOrganizationId,
         jobType: 'page_generate',
         generationMode: selection.mode,
         creditCost: selection.creditCost,
@@ -123,6 +111,16 @@ export class PageGenerationService implements PageGenerationServicePort {
         },
       });
       createdJobId = job.id;
+
+      await this.consumeCredits({
+        userId,
+        organizationId: pageOrganizationId,
+        workId: page.workId,
+        cost: selection.creditCost,
+        description: describeGeneration(selection.requestKind, selection.mode),
+        jobId: job.id,
+      });
+      creditsConsumed = true;
 
       const pageUpdated = await this.pageRepository.updateGenerationState(
         page.pageId,
@@ -158,10 +156,6 @@ export class PageGenerationService implements PageGenerationServicePort {
 
       return { jobId: job.id };
     } catch (error) {
-      if (error instanceof AppError && !creditsConsumed) {
-        throw error;
-      }
-
       let compensationError: unknown = null;
 
       if (createdJobId !== null) {
@@ -203,7 +197,10 @@ export class PageGenerationService implements PageGenerationServicePort {
       }
 
       if (compensationError !== null) {
-        throw compensationError;
+        logPageGenerationCompensationFailure('page_generation_enqueue_compensation_failed', compensationError, {
+          job_id: createdJobId ?? reservedJobId,
+          page_id: page.pageId,
+        });
       }
 
       if (error instanceof AppError) {
@@ -228,7 +225,10 @@ export class PageGenerationService implements PageGenerationServicePort {
     }
 
     if (page.frameCount !== page.panels.length) {
-      throw new ValidationError('Page frame count must match panel count before generation');
+      const layoutFrameCount = getLayoutFrameCount(page.layoutConfig);
+      if (layoutFrameCount !== page.panels.length) {
+        throw new ValidationError('Page frame count must match panel count before generation');
+      }
     }
 
     if (page.status === 'generating') {
@@ -376,6 +376,26 @@ function countUniqueAssignedEntities(page: PageGenerationContext): number {
   return new Set(
     page.panels.flatMap((panel) => panel.entities.map((assignment) => assignment.entityId)),
   ).size;
+}
+
+function getLayoutFrameCount(layoutConfig: Record<string, unknown>): number | null {
+  const frameDefinitions = layoutConfig.frame_definitions;
+  return Array.isArray(frameDefinitions) ? frameDefinitions.length : null;
+}
+
+function logPageGenerationCompensationFailure(
+  event: string,
+  error: unknown,
+  metadata: Record<string, unknown>,
+): void {
+  console.error(
+    JSON.stringify({
+      level: 'error',
+      event,
+      message: error instanceof Error ? error.message : String(error),
+      ...metadata,
+    }),
+  );
 }
 
 function describeGeneration(requestKind: PageGenerationRequestKind, mode: 'standard' | 'thinking'): string {

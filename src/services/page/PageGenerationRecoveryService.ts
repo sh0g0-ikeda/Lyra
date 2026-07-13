@@ -42,8 +42,9 @@ export class PageGenerationRecoveryService implements PageGenerationRecoveryServ
   ) {}
 
   public async recoverAllStaleJobs(): Promise<number> {
-    const jobs = await this.recoveryRepository.listStaleProcessingJobs(this.buildCutoff(), this.batchLimit);
-    const recoveredStaleCount = await this.recoverJobs(jobs);
+    const staleBefore = this.buildCutoff();
+    const jobs = await this.recoveryRepository.listStaleProcessingJobs(staleBefore, this.batchLimit);
+    const recoveredStaleCount = await this.recoverJobs(jobs, staleBefore);
     const refundedFailedCount = await this.refundFailedJobsMissingRefund(
       await this.recoveryRepository.listFailedJobsMissingRefund(this.batchLimit),
     );
@@ -55,14 +56,15 @@ export class PageGenerationRecoveryService implements PageGenerationRecoveryServ
     pageId: string,
     organizationId: string | null = null,
   ): Promise<number> {
+    const staleBefore = this.buildCutoff();
     const jobs = await this.recoveryRepository.listStaleProcessingJobsForPage(
       userId,
       pageId,
-      this.buildCutoff(),
+      staleBefore,
       this.batchLimit,
       organizationId,
     );
-    const recoveredStaleCount = await this.recoverJobs(jobs);
+    const recoveredStaleCount = await this.recoverJobs(jobs, staleBefore);
     const refundedFailedCount = await this.refundFailedJobsMissingRefund(
       await this.recoveryRepository.listFailedJobsMissingRefundForPage(userId, pageId, this.batchLimit, organizationId),
     );
@@ -73,29 +75,39 @@ export class PageGenerationRecoveryService implements PageGenerationRecoveryServ
     return new Date(Date.now() - this.staleAfterMs);
   }
 
-  private async recoverJobs(jobs: StalePageGenerationJob[]): Promise<number> {
+  private async recoverJobs(jobs: StalePageGenerationJob[], staleBefore: Date): Promise<number> {
     let recoveredCount = 0;
 
     for (const job of jobs) {
-      const recovered = await this.executionRepository.failPageGeneration({
-        jobId: job.jobId,
-        userId: job.userId,
-        errorMessage: 'Page generation worker stopped before completion; recovered stale queued or processing job',
-        pageId: job.pageId,
-        previousStatus: job.previousStatus,
-        previousGenerationMode: job.previousGenerationMode,
-        organizationId: job.organizationId ?? null,
-      });
+      let recovered = false;
+      try {
+        recovered = await this.executionRepository.failPageGeneration({
+          jobId: job.jobId,
+          userId: job.userId,
+          errorMessage: 'Page generation worker stopped before completion; recovered stale queued or processing job',
+          pageId: job.pageId,
+          previousStatus: job.previousStatus,
+          previousGenerationMode: job.previousGenerationMode,
+          organizationId: job.organizationId ?? null,
+          staleBefore,
+        });
+      } catch (error) {
+        console.error(`[page-generation-recovery] failed to transition stale job ${job.jobId}`, error);
+        continue;
+      }
 
       if (!recovered) {
         continue;
       }
 
-      if (job.creditCost > 0) {
-        await this.refundJobCredits(job.organizationId ?? null, job.userId, job.creditCost, job.jobId, 'Refund for stale page generation job');
-      }
-
       recoveredCount += 1;
+      if (job.creditCost > 0) {
+        try {
+          await this.refundJobCredits(job.organizationId ?? null, job.userId, job.creditCost, job.jobId, 'Refund for stale page generation job');
+        } catch (error) {
+          console.error(`[page-generation-recovery] deferred refund for stale job ${job.jobId}`, error);
+        }
+      }
       console.warn(
         `[page-generation-recovery] recovered stale job ${job.jobId} for page ${job.pageId} stale since ${job.staleAt.toISOString()}`,
       );
@@ -114,13 +126,18 @@ export class PageGenerationRecoveryService implements PageGenerationRecoveryServ
         continue;
       }
 
-      await this.refundJobCredits(
-        job.organizationId ?? null,
-        job.userId,
-        job.creditCost,
-        job.jobId,
-        'Refund for failed page generation job missing refund ledger',
-      );
+      try {
+        await this.refundJobCredits(
+          job.organizationId ?? null,
+          job.userId,
+          job.creditCost,
+          job.jobId,
+          'Refund for failed page generation job missing refund ledger',
+        );
+      } catch (error) {
+        console.error(`[page-generation-recovery] failed refund remains pending for job ${job.jobId}`, error);
+        continue;
+      }
 
       refundedCount += 1;
       console.warn(

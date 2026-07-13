@@ -115,8 +115,36 @@ describe('PostgresGenerationJobRepository', () => {
     expect(client.queries.some((query) => query.includes('INSERT INTO generation_jobs'))).toBe(true);
     expect(client.valuesList[0]).toEqual([81527, 'generation_jobs:global']);
     expect(client.valuesList[1]).toEqual([81527, 'generation_jobs:user:user-1']);
-    expect(client.valuesList[2]).toEqual(['user-1', ['page_generate', 'entity_generate']]);
+    expect(client.valuesList[2]).toEqual([null, 'user-1', ['page_generate', 'entity_generate']]);
     expect(client.valuesList[3]).toEqual([['page_generate', 'entity_generate']]);
+  });
+
+  it('capacityLimits 指定時は organization 単位で advisory lock と上限確認を行う', async () => {
+    const client = new CapacityTransactionRunner();
+    const repository = new PostgresGenerationJobRepository(client);
+
+    await repository.create({
+      id: '55555555-5555-4555-8555-555555555555',
+      userId: 'user-1',
+      organizationId: '66666666-6666-4666-8666-666666666666',
+      jobType: 'page_generate',
+      generationMode: 'standard',
+      creditCost: 1,
+      capacityLimits: { perUser: 3, global: 5 },
+      params: {
+        page_id: 'page-1',
+      },
+    });
+
+    expect(client.valuesList[1]).toEqual([
+      81527,
+      'generation_jobs:organization:66666666-6666-4666-8666-666666666666',
+    ]);
+    expect(client.valuesList[2]).toEqual([
+      '66666666-6666-4666-8666-666666666666',
+      'user-1',
+      ['page_generate', 'entity_generate'],
+    ]);
   });
 
   it('capacityLimits 指定時に user 上限へ達していれば job を作成しない', async () => {
@@ -137,7 +165,7 @@ describe('PostgresGenerationJobRepository', () => {
       }),
     ).rejects.toMatchObject({
       code: 'CONFLICT',
-      message: 'User has too many active generation jobs',
+      message: 'Generation scope has too many active generation jobs',
     });
 
     expect(client.queries.some((query) => query.includes('INSERT INTO generation_jobs'))).toBe(false);
@@ -228,8 +256,8 @@ describe('PostgresGenerationJobRepository', () => {
     const count = await repository.countActiveGenerationJobsByUser('user-1');
 
     expect(client.queries[0]).toContain("status IN ('queued', 'processing')");
-    expect(client.queries[0]).toContain('job_type = ANY($2::text[])');
-    expect(client.values).toEqual(['user-1', ['page_generate', 'entity_generate']]);
+    expect(client.queries[0]).toContain('job_type = ANY($3::text[])');
+    expect(client.values).toEqual([null, 'user-1', ['page_generate', 'entity_generate']]);
     expect(count).toBe(2);
   });
 
@@ -266,6 +294,7 @@ describe('PostgresGenerationJobRepository', () => {
     });
 
     expect(client.valuesList[2]).toEqual([
+      null,
       'user-1',
       ['episode_story_autofill', 'episode_page_skeleton'],
     ]);
@@ -442,7 +471,7 @@ class CapacityTransactionClient implements DatabaseClient {
     this.queries.push(text);
     this.valuesList.push(values);
 
-    if (text.includes('COUNT(*)::text AS count') && text.includes('user_id = $1')) {
+    if (text.includes('COUNT(*)::text AS count') && text.includes('organization_id IS NULL')) {
       return {
         command: 'SELECT',
         rowCount: 1,

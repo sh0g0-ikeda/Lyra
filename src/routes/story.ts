@@ -26,6 +26,11 @@ import type { PageServicePort } from '../services/page/PageService.js';
 import type { EpisodeStoryAutofillServicePort } from '../services/story/EpisodeStoryAutofillService.js';
 import type { OrganizationServicePort } from '../services/organization/OrganizationService.js';
 import type { AppEnv } from '../types/app.js';
+import {
+  parseOptionalOrganizationId,
+  recordOrganizationAudit,
+  requireOrganizationCapability,
+} from './organizationRouteHelpers.js';
 import { readJsonBody, readOptionalJsonBody, REQUEST_BODY_LIMITS } from './requestBody.js';
 
 export interface StoryRouteDependencies {
@@ -501,59 +506,6 @@ async function readStoryJsonBody(c: Context<AppEnv>): Promise<unknown> {
   return readJsonBody(c, {
     maxBytes: REQUEST_BODY_LIMITS.STORY_JSON_BYTES,
     description: 'Story JSON request',
-  });
-}
-
-function parseOptionalOrganizationId(c: Context<AppEnv>): string | null {
-  const raw = c.req.query('organization_id');
-  if (raw === undefined || raw.trim().length === 0) {
-    return null;
-  }
-
-  const result = storyUuidParamSchema.safeParse(raw);
-  if (!result.success) {
-    throw new ValidationError('organization_id must be a valid UUID');
-  }
-
-  return result.data;
-}
-
-async function requireOrganizationCapability(
-  c: Context<AppEnv>,
-  dependencies: StoryRouteDependencies,
-  organizationId: string | null,
-  capability: Parameters<NonNullable<StoryRouteDependencies['organizationService']>['requireMembership']>[2],
-): Promise<void> {
-  if (organizationId === null) {
-    return;
-  }
-  if (dependencies.organizationService === undefined) {
-    throw new ValidationError('Organization service is not configured');
-  }
-
-  const user = c.get('user');
-  await dependencies.organizationService.requireMembership(organizationId, user.id, capability);
-}
-
-async function recordOrganizationAudit(
-  dependencies: StoryRouteDependencies,
-  organizationId: string | null,
-  actorUserId: string,
-  action: string,
-  targetType: string,
-  targetId: string | null,
-  metadata?: Record<string, unknown>,
-): Promise<void> {
-  if (organizationId === null || dependencies.organizationService === undefined) {
-    return;
-  }
-  await dependencies.organizationService.recordAuditEvent({
-    organizationId,
-    actorUserId,
-    action,
-    targetType,
-    targetId,
-    metadata,
   });
 }
 

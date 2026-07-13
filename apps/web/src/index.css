@@ -662,6 +662,15 @@ a {
     rgba(26, 26, 26, 0.9);
 }
 
+.inline-warning {
+  border: 1px solid rgba(239, 68, 68, 0.42);
+  border-radius: 8px;
+  background: rgba(127, 29, 29, 0.22);
+  color: #fecaca;
+  padding: 12px 14px;
+  line-height: 1.7;
+}
+
 .layout-control-section,
 .tutorial-section {
   border-color: rgba(229, 199, 107, 0.28);
@@ -1492,6 +1501,14 @@ a {
   to {
     transform: rotate(360deg);
   }
+}
+
+.image-load-error {
+  max-width: 86%;
+  text-align: center;
+  color: #ffb4ad;
+  font-size: 0.8rem;
+  line-height: 1.45;
 }
 
 .generated-image-wrap {

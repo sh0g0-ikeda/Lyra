@@ -339,6 +339,7 @@ interface GenericStructuredFieldRow {
 
 interface ReferenceCandidate {
   candidate_token: string;
+  cdn_url?: string;
   source: 'upload' | 'generated';
 }
 
@@ -565,6 +566,7 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   'No preview yet.': 'まだプレビューはありません。',
   'Delete with the button only. Clicking the image will not delete it.': '削除はボタンから行います。画像クリックでは削除されません。',
   'No confirmed references yet.': '確定済みレファレンスはまだありません。',
+  'Could not load image.': '画像を読み込めませんでした。',
   'Creating a new character. Saving here will add a new record and will not overwrite existing characters.': '新規キャラ作成中です。保存すると既存キャラを上書きせず、新しいキャラとして追加します。',
   'Editing the selected character.': '選択中のキャラを編集しています。',
   'Delete this character? This cannot be undone.': 'このキャラを削除しますか？この操作は元に戻せません。',
@@ -677,6 +679,425 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   'Style constraints': '画風制約',
   'Import reference': 'レファレンス取り込み',
   'Preview / Confirm': 'プレビュー / 確定',
+  Preview: 'プレビュー',
+  Add: '追加',
+  'Move up': '上へ移動',
+  'Move down': '下へ移動',
+  'Custom value': '自由入力',
+  'Custom / unsynced': 'カスタム / 未同期',
+  'Untitled chapter': '無題の章',
+  'Untitled episode': '無題の話',
+  'No location': '場所未設定',
+  'AI improved': 'AI改善済み',
+  'Characters in panel': 'コマ内のキャラ',
+  'Pick who appears first, then refine pose, facing, and effects per character.': '登場キャラを選び、キャラごとのポーズ・向き・効果を調整します。',
+  'Placement first, then expression, pose, and effect.': '配置を決めてから、表情・ポーズ・効果を調整します。',
+  'These lines will be considered inside the generated panel art.': 'これらのセリフは生成画像内に含める前提で扱います。',
+  'These lines stay outside the generated panel art.': 'これらのセリフは生成画像の外側で扱います。',
+  'You do not need to fill every blank field.': 'すべての空欄を埋める必要はありません。',
+  'Lyra AI manga editor': 'Lyra AI漫画エディタ',
+  'Sign in or create an account': 'ログイン・アカウント登録はこちら',
+  Email: 'メールアドレス',
+  'Send magic link': 'ログインリンクを送信',
+  'Magic link sent.': 'ログインリンクを送信しました。',
+  'Manual bearer token': '手動トークン',
+  'Supabase client is not configured.': 'ログイン設定がまだ完了していません。',
+  'Applying story plan to pages and panels. This process can take around 20 minutes.': 'ページとコマへ反映中です。この処理は20分程度かかる場合があります。',
+};
+
+const UI_JA_OPTION_DICTIONARY: Record<string, string> = {
+  Character: 'キャラクター',
+  Nonhuman: '人外',
+  Object: '物体',
+  Image: '画像',
+  PDF: 'PDF',
+  Custom: 'カスタム',
+  Female: '女性',
+  Male: '男性',
+  Androgynous: '中性的',
+  Unspecified: '指定なし',
+  Child: '子ども',
+  'Early teens': '10代前半',
+  'Late teens': '10代後半',
+  Twenties: '20代',
+  Thirties: '30代',
+  'Forties+': '40代以上',
+  Ageless: '年齢不詳',
+  Fair: '色白',
+  Light: '明るめ',
+  Medium: '中間',
+  Tan: '小麦色',
+  Deep: '濃いめ',
+  'Bright friendly': '明るく親しみやすい',
+  'Quiet neat': '静かで整った印象',
+  'Cool distant': 'クールで距離感がある',
+  'Gentle soft': '穏やかで柔らかい',
+  'Serious reliable': '真面目で信頼感がある',
+  'Mysterious fragile': '神秘的で儚い',
+  'Energetic bold': '活発で大胆',
+  'Stoic reserved': '寡黙で控えめ',
+  'Rugged calm': '無骨で落ち着いた',
+  'Sharp elite': '鋭くエリート感がある',
+  'Playful confident': '遊び心があり自信がある',
+  'Mature composed': '大人びて落ち着いた',
+  'Upright neat': '背筋を伸ばした整った立ち姿',
+  'Natural relaxed': '自然でリラックスした立ち姿',
+  'Shy reserved': '内気で控えめ',
+  'Confident open': '自信があり開いた姿勢',
+  'Still quiet': '静かに佇む',
+  'Arms crossed': '腕組み',
+  'Hands in pockets': 'ポケットに手',
+  'Guarded stance': '警戒した立ち姿',
+  'Wide grounded stance': '足を広げた安定姿勢',
+  'Elegant upright': '優雅に直立',
+  'Soft smile': '柔らかな笑み',
+  'Calm neutral': '落ち着いた無表情',
+  'Serious focus': '真剣な集中',
+  'Cheerful smile': '明るい笑顔',
+  'Cool unfazed': 'クールで動じない',
+  'Stern look': '厳しい表情',
+  'Tired neutral': '疲れた無表情',
+  'Confident smirk': '自信のある笑み',
+  'Bored gaze': '退屈そうな視線',
+  'Teasing smile': 'からかうような笑み',
+  Petite: '小柄',
+  Slender: '細身',
+  Average: '標準',
+  Athletic: '引き締まった体型',
+  Muscular: '筋肉質',
+  Curvy: '曲線的',
+  Lean: 'すらりとした体型',
+  Stocky: 'がっしり',
+  'Broad build': '肩幅のある体格',
+  'Large build': '大柄',
+  'Very short height': 'かなり低身長',
+  Short: '低め',
+  Tall: '高め',
+  'Very tall height': 'かなり高身長',
+  Round: '丸型',
+  Oval: '卵型',
+  Heart: 'ハート型',
+  Square: '四角型',
+  Diamond: 'ダイヤ型',
+  Long: '長め',
+  'Soft triangle': '柔らかい三角形',
+  Straight: 'ストレート',
+  'Soft arch': '緩やかなアーチ',
+  'High arch': '高いアーチ',
+  Thick: '太め',
+  Thin: '細め',
+  Sharp: 'シャープ',
+  Small: '小さめ',
+  Button: '丸い小鼻',
+  Rounded: '丸みあり',
+  Broad: '広め',
+  Soft: '柔らかい',
+  Full: 'ふっくら',
+  Wide: '広め',
+  Smirk: 'にやり',
+  Serious: '真面目',
+  Black: '黒',
+  Brown: '茶',
+  'Dark brown': '暗い茶',
+  Blonde: '金髪',
+  'Ash blonde': 'アッシュブロンド',
+  Auburn: '赤茶',
+  Silver: '銀',
+  Gray: '灰',
+  White: '白',
+  Blue: '青',
+  Green: '緑',
+  Red: '赤',
+  Pink: 'ピンク',
+  Purple: '紫',
+  'Two tone': 'ツートーン',
+  'Very short': 'かなり短い',
+  'Very long': 'かなり長い',
+  Wavy: 'ウェーブ',
+  Curly: 'カール',
+  Wild: 'ワイルド',
+  Tousled: '無造作',
+  Spiky: 'ツンツン',
+  Fluffy: 'ふわふわ',
+  Slick: 'なでつけ',
+  Coarse: '硬め',
+  Shaved: '剃り込み',
+  Down: '下ろし髪',
+  'Short cut': 'ショートカット',
+  'Buzz cut': '坊主',
+  'Crew cut': 'クルーカット',
+  'Two block': 'ツーブロック',
+  Undercut: 'アンダーカット',
+  'Fade cut': 'フェードカット',
+  'Side part': '七三分け',
+  'Center part': 'センター分け',
+  'Comma hair': 'コンマヘア',
+  'Slick back': 'オールバック',
+  'Messy short': '無造作ショート',
+  Pompadour: 'ポンパドール',
+  'Short bob': 'ショートボブ',
+  'Medium layered': 'ミディアムレイヤー',
+  'Wolf cut': 'ウルフカット',
+  'Long straight': 'ロングストレート',
+  Ponytail: 'ポニーテール',
+  'Side ponytail': 'サイドポニー',
+  'Twin tails': 'ツインテール',
+  Bun: 'お団子',
+  'Man bun': 'マンバン',
+  Topknot: 'トップノット',
+  Braid: '三つ編み',
+  'Half up': 'ハーフアップ',
+  'Tied back': '後ろ結び',
+  'Shaved sides': '刈り上げ',
+  'shaved sides': '刈り上げ',
+  Gold: '金',
+  Gentle: '優しい',
+  Narrow: '細い',
+  Single: '一重',
+  Double: '二重',
+  'small eyes': '小さな目',
+  'balanced eyes': '標準的な目',
+  'large eyes': '大きな目',
+  'very large eyes': 'かなり大きな目',
+  'level eye line': '水平な目線',
+  'slightly upturned eyes': '少しつり目',
+  'strongly upturned eyes': '強いつり目',
+  'slightly downturned eyes': '少したれ目',
+  'drooping eyes': 'たれ目',
+  'small pupils': '小さな瞳孔',
+  'large pupils': '大きな瞳孔',
+  'sharp pupils': '鋭い瞳孔',
+  'soft round pupils': '丸く柔らかい瞳孔',
+  'bright reflective pupils': '光を反射する瞳',
+  'none visible': '目立たない',
+  'soft shadows': '薄い影',
+  'defined lower lash line': '下まつげの線',
+  'slight eye bags': '薄い目袋',
+  'heavy eye bags': '濃い目袋',
+  'closed neutral mouth': '閉じた自然な口',
+  'slight smile': 'かすかな笑み',
+  'firm straight mouth': '固い一文字口',
+  'soft parted lips': '少し開いた柔らかい口',
+  None: 'なし',
+  Standard: '標準',
+  Heavy: '重め',
+  'Side swept': '横流し',
+  Blunt: 'ぱっつん',
+  Parted: '分け前髪',
+  'Center parted': 'センター分け',
+  Curtain: 'カーテンバング',
+  'Messy bangs': '無造作前髪',
+  'Short bangs': '短い前髪',
+  'Long bangs': '長い前髪',
+  'straight front line': 'まっすぐな前髪ライン',
+  'center-parted front': 'センター分けの前髪',
+  'rounded front curve': '丸みのある前髪',
+  'side-swept front': '横流しの前髪',
+  'blunt front': 'ぱっつん前髪',
+  'short textured front': '短く動きのある前髪',
+  'comma front': 'コンマ風前髪',
+  'curtain front': 'カーテン風前髪',
+  'messy front': '無造作な前髪',
+  'swept-up front': '上げた前髪',
+  'short side locks': '短いサイド髪',
+  'soft cheek framing': '頬を囲む柔らかい髪',
+  'long side locks': '長いサイド髪',
+  'tucked behind ears': '耳かけ',
+  'trimmed sides': '整えたサイド',
+  'faded sides': 'フェードしたサイド',
+  sideburns: 'もみあげ',
+  'ear-length sides': '耳丈のサイド',
+  'clean bob back': '整ったボブ後ろ髪',
+  'layered back': 'レイヤーの後ろ髪',
+  'straight long back': 'まっすぐな長い後ろ髪',
+  'ponytail fall': 'ポニーテールの垂れ',
+  'braided back': '編み込みの後ろ髪',
+  'tapered nape': '襟足を絞った形',
+  'short clipped back': '短く刈った後ろ髪',
+  'undercut back': 'アンダーカットの後ろ髪',
+  'tied-back hair': '後ろで結んだ髪',
+  'long loose back': '長く下ろした後ろ髪',
+  'wolf nape': 'ウルフ風の襟足',
+  Military: 'ミリタリー',
+  School: '学生服',
+  Casual: 'カジュアル',
+  Suit: 'スーツ',
+  'Business casual': 'ビジネスカジュアル',
+  'Lab coat': '白衣',
+  'Trench coat': 'トレンチコート',
+  Tactical: 'タクティカル',
+  'Traditional formal': '伝統的な正装',
+  'Street jacket': 'ストリートジャケット',
+  Fantasy: 'ファンタジー',
+  Japanese: '和装',
+  Streetwear: 'ストリートウェア',
+  Hoodie: 'パーカー',
+  Sports: 'スポーツ',
+  'Winter coat': '冬用コート',
+  Workwear: '作業着',
+  Armor: '鎧',
+  Gothic: 'ゴシック',
+  'Formal dress': 'フォーマルドレス',
+  'Idol stage': 'アイドル衣装',
+  Navy: 'ネイビー',
+  Formal: 'フォーマル',
+  Practical: '実用的',
+  Elegant: '上品',
+  Rough: 'ラフ',
+  Cute: 'かわいい',
+  'round collar': '丸襟',
+  'sharp collar': '鋭い襟',
+  'standing collar': '立ち襟',
+  'sailor collar': 'セーラー襟',
+  'hooded neckline': 'フード付き首元',
+  Sleeveless: 'ノースリーブ',
+  'Short sleeves': '半袖',
+  'Three-quarter sleeves': '七分袖',
+  'Long sleeves': '長袖',
+  'Wide sleeves': '広袖',
+  'Short skirt': '短いスカート',
+  'Long skirt': '長いスカート',
+  'Straight pants': 'ストレートパンツ',
+  'Wide pants': 'ワイドパンツ',
+  Slacks: 'スラックス',
+  Jeans: 'ジーンズ',
+  'Cargo pants': 'カーゴパンツ',
+  Shorts: 'ショートパンツ',
+  Loafers: 'ローファー',
+  Sneakers: 'スニーカー',
+  Boots: 'ブーツ',
+  'Dress shoes': '革靴',
+  'Combat boots': 'コンバットブーツ',
+  Heels: 'ヒール',
+  'School shoes': '学生靴',
+  'Bare legs': '素足',
+  'Ankle socks': 'くるぶし丈ソックス',
+  'Knee socks': '膝丈ソックス',
+  'Thigh-high socks': 'サイハイソックス',
+  Tights: 'タイツ',
+  'Simple uniform detailing': 'シンプルな制服ディテール',
+  'Layered practical details': '重ね着風の実用ディテール',
+  'Ornamental trim': '装飾的な縁取り',
+  'Combat utility details': '戦闘用の実用ディテール',
+  'Minimal clean design': '装飾の少ない clean な設計',
+  Anime: 'アニメ調',
+  'Semi-realistic': 'セミリアル',
+  Manga: '漫画調',
+  Painterly: '絵画調',
+  'Face + hair balance': '顔と髪のバランス',
+  'Eye line': '目線',
+  'Silhouette outline': 'シルエット輪郭',
+  'Posture read': '姿勢の読み取り',
+  'Outfit shape': '服装の形',
+  'Color blocking': '色の配置',
+  'Accessory / prop': '小物・持ち物',
+  'Hair shape': '髪型',
+  'Eye color contrast': '瞳色の対比',
+  'Expression gap': '表情のギャップ',
+  'Silhouette edge': 'シルエットの端',
+  Accessory: 'アクセサリー',
+  'Scar / mark': '傷・印',
+  Stance: '立ち姿',
+  'Compact silhouette': 'コンパクトなシルエット',
+  'Tall and slender': '背が高く細身',
+  'Broad-shouldered': '肩幅が広い',
+  'Long coat outline': 'ロングコートの輪郭',
+  'Skirt line': 'スカートライン',
+  'Military block': 'ミリタリー調の塊感',
+  'Soft rounded outline': '柔らかい丸みの輪郭',
+  'Beauty mark': 'ほくろ',
+  Scar: '傷',
+  'Eye bags': '目袋',
+  Fang: '八重歯',
+  Ahoge: 'アホ毛',
+  'Hair streak': 'メッシュ',
+  Glasses: '眼鏡',
+  Stubble: '無精ひげ',
+  Beard: 'ひげ',
+  Goatee: 'あごひげ',
+  Earrings: 'イヤリング',
+  'Thick eyebrows': '太い眉',
+  'Sharp jawline': '鋭い輪郭',
+  'about six heads tall': '約6頭身',
+  'about six and a half heads tall': '約6.5頭身',
+  'about seven heads tall': '約7頭身',
+  'about seven and a half heads tall': '約7.5頭身',
+  'about eight heads tall': '約8頭身',
+  'narrow shoulders': '狭い肩幅',
+  'balanced shoulders': '標準的な肩幅',
+  'broad shoulders': '広い肩幅',
+  'short legs': '短めの脚',
+  'balanced leg length': '標準的な脚の長さ',
+  'long legs': '長い脚',
+  'centered and straight': '中心がまっすぐ',
+  'slightly forward-leaning': '少し前傾',
+  'slightly backward-leaning': '少し後傾',
+  'soft inward posture': '柔らかく内向き',
+  'open outward posture': '開いた外向き',
+  Establish: '導入',
+  Action: 'アクション',
+  Reaction: 'リアクション',
+  Emphasis: '強調',
+  Transition: '転換',
+  Pause: '間',
+  Impact: 'インパクト',
+  Large: '大きい',
+  Splash: '見開き風',
+  'AI auto': 'AI自動',
+  Gallery: 'ギャラリー',
+  'Full body': '全身',
+  'Half body': '半身',
+  'Close up': 'アップ',
+  'Extreme close up': '極端なアップ',
+  Front: '正面',
+  Side: '横',
+  'Three quarter': '斜め',
+  'Bird eye': '俯瞰',
+  'Worm eye': 'あおり',
+  'Dutch angle': '斜め構図',
+  Secondary: 'サブ',
+  Left: '左',
+  Center: '中央',
+  Right: '右',
+  Away: '背面',
+  '3/4 left': '左斜め',
+  '3/4 right': '右斜め',
+  Determined: '決意',
+  Calm: '落ち着き',
+  Angry: '怒り',
+  Sad: '悲しみ',
+  Surprised: '驚き',
+  'Standing firm': 'しっかり立つ',
+  Attacking: '攻撃',
+  Defending: '防御',
+  Running: '走る',
+  Speech: 'セリフ',
+  Thought: '思考',
+  Narration: 'ナレーション',
+  Shout: '叫び',
+  Whisper: 'ささやき',
+  Top: '上',
+  Bottom: '下',
+  'Standard 4': '標準4コマ',
+  'Stacked wide 4': '横長4段',
+  'Top wide 3': '上段広め3コマ',
+  'Standard 6': '標準6コマ',
+  'Dense 8': '密集8コマ',
+  'Climax 2': 'クライマックス2コマ',
+  'Splash 1': '大ゴマ1コマ',
+  'Action 5': 'アクション5コマ',
+  'Battle 7': 'バトル7コマ',
+  'Vertical 2': '縦2コマ',
+  'Bottom wide 3': '下段広め3コマ',
+  'Wide top 4': '上段広め4コマ',
+  'Wide bottom 4': '下段広め4コマ',
+  'Tall left 4': '左縦長4コマ',
+  'Right tall 4': '右縦長4コマ',
+  'Balanced 5': 'バランス5コマ',
+  'Middle wide 5': '中段広め5コマ',
+  'Top wide 5': '上段広め5コマ',
+  'Split 6': '分割6コマ',
+  Dashed: '破線',
 };
 
 function normalizeUiLanguage(value: string): UiLanguage {
@@ -700,7 +1121,7 @@ function translateUiString(language: UiLanguage, value: string): string {
     return '\u30da\u30fc\u30b8\u9aa8\u683c\u751f\u6210';
   }
 
-  const exact = UI_JA_DICTIONARY[value];
+  const exact = UI_JA_DICTIONARY[value] ?? UI_JA_OPTION_DICTIONARY[value];
   if (exact !== undefined) {
     return exact;
   }
@@ -1496,14 +1917,14 @@ function AuthScreen(props: {
     <div className="auth-shell">
       <div className="auth-card">
         <div className="eyebrow">Lyra</div>
-        <h1>{translateUiString(language, 'Production Console')}</h1>
-        <p className="muted">{translateUiString(language, 'Story, entity, page, billing.')}</p>
+        <h1>Lyra Japan</h1>
+        <p className="muted">{translateUiString(language, 'Lyra AI manga editor')}</p>
         {visibleNotice !== null ? <NoticeBanner notice={visibleNotice} /> : null}
         {props.cognitoAuthConfig !== null ? (
           <div className="stack">
             <button className="primary-button" onClick={() => void props.onCognitoLogin()} type="button">
               <KeyRound size={16} />
-              {translateUiString(language, 'Continue with Cognito')}
+              {translateUiString(language, 'Sign in or create an account')}
             </button>
           </div>
         ) : null}
@@ -1912,6 +2333,11 @@ function StudioShell(props: {
   const canViewActiveOrganizationWorks =
     activeOrganizationId === null ||
     (activeOrganizationWorkspace !== null && activeOrganizationRole !== 'billing');
+  const canCreateActiveOrganizationWorks =
+    activeOrganizationId === null ||
+    activeOrganizationRole === 'owner' ||
+    activeOrganizationRole === 'admin' ||
+    activeOrganizationRole === 'editor';
   const organizationBalanceQuery = useQuery({
     queryKey: sessionQueryKey(['organization-balance', activeOrganizationId ?? '']),
     queryFn: () => api.getOrganizationBalance(activeOrganizationId ?? ''),
@@ -2081,11 +2507,12 @@ function StudioShell(props: {
   });
 
   const selectedWork = works.find((work) => work.id === selectedWorkId) ?? null;
+  const selectedWorkScopedId = selectedWork?.id ?? '';
 
   const chaptersQuery = useQuery({
-    queryKey: scopedQueryKey(['chapters', selectedWorkId]),
-    queryFn: () => api.getChapters(selectedWorkId, activeOrganizationId),
-    enabled: selectedWorkId.length > 0,
+    queryKey: scopedQueryKey(['chapters', selectedWorkScopedId]),
+    queryFn: () => api.getChapters(selectedWorkScopedId, activeOrganizationId),
+    enabled: selectedWork !== null,
   });
   const chapters = useMemo(() => chaptersQuery.data?.chapters ?? [], [chaptersQuery.data?.chapters]);
   const selectedChapter = chapters.find((chapter) => chapter.id === selectedChapterId) ?? chapters[0] ?? null;
@@ -2099,9 +2526,9 @@ function StudioShell(props: {
   const selectedEpisode = episodes.find((episode) => episode.id === selectedEpisodeId) ?? episodes[0] ?? null;
 
   const entitiesQuery = useQuery({
-    queryKey: scopedQueryKey(['entities', selectedWorkId]),
-    queryFn: () => api.getEntities(selectedWorkId, activeOrganizationId),
-    enabled: selectedWorkId.length > 0,
+    queryKey: scopedQueryKey(['entities', selectedWorkScopedId]),
+    queryFn: () => api.getEntities(selectedWorkScopedId, activeOrganizationId),
+    enabled: selectedWork !== null,
   });
   const entities = useMemo(() => entitiesQuery.data?.entities ?? [], [entitiesQuery.data?.entities]);
   const selectedWorkEntityIds = useMemo(
@@ -3071,7 +3498,7 @@ function StudioShell(props: {
             collapsed={isOrganizationPanelCollapsed('billing')}
             meta={
               canManageActiveOrganizationBilling
-                ? pickUiText(uiLanguage, 'Owner/Billing', '\u30aa\u30fc\u30ca\u30fc\u30fb\u8acb\u6c42\u7ba1\u7406')
+                ? pickUiText(uiLanguage, 'Owner/Billing only', '\u30aa\u30fc\u30ca\u30fc\u30fb\u8acb\u6c42\u7ba1\u7406\u306e\u307f')
                 : pickUiText(uiLanguage, 'Billing permission required', '\u8acb\u6c42\u7ba1\u7406\u6a29\u9650\u304c\u5fc5\u8981')
             }
             onToggle={() => toggleOrganizationPanel('billing')}
@@ -3762,7 +4189,23 @@ function StudioShell(props: {
     </PanelSection>
   );
 
-  const createWorkPanel = (
+  const createWorkPanel = !canCreateActiveOrganizationWorks ? (
+    <PanelSection
+      title="New work"
+      subtitle="Create a work before writing story content."
+      className="story-create-work-panel"
+      compact={selectedWork !== null}
+      collapsible={selectedWork !== null}
+    >
+      <div className="inline-warning">
+        {pickUiText(
+          uiLanguage,
+          'This workspace role cannot create works. Ask the workspace owner or an admin to change your role.',
+          '\u3053\u306e\u30ef\u30fc\u30af\u30b9\u30da\u30fc\u30b9\u3067\u306f\u4f5c\u54c1\u3092\u4f5c\u6210\u3067\u304d\u307e\u305b\u3093\u3002\u30aa\u30fc\u30ca\u30fc\u307e\u305f\u306f\u7ba1\u7406\u8005\u306b\u6a29\u9650\u5909\u66f4\u3092\u4f9d\u983c\u3057\u3066\u304f\u3060\u3055\u3044\u3002',
+        )}
+      </div>
+    </PanelSection>
+  ) : (
     <PanelSection
       title="New work"
       subtitle="Create a work before writing story content."
@@ -3803,10 +4246,8 @@ function StudioShell(props: {
     </PanelSection>
   );
 
-  const accountPanel = (
-    <>
-      {workspacePanel}
-
+  const personalBillingPanel =
+    activeOrganizationId === null ? (
       <BillingPanel
         balance={balanceQuery.data}
         balanceRefreshing={balanceQuery.isFetching}
@@ -3831,6 +4272,79 @@ function StudioShell(props: {
           })
         }
       />
+    ) : null;
+
+  const organizationCreditSummaryPanel =
+    activeOrganizationWorkspace !== null ? (
+      <PanelSection
+        title={pickUiText(uiLanguage, 'Credits', '\u30af\u30ec\u30b8\u30c3\u30c8')}
+        subtitle={pickUiText(uiLanguage, 'Workspace shared balance', '\u30ef\u30fc\u30af\u30b9\u30da\u30fc\u30b9\u5171\u6709\u6b8b\u9ad8')}
+        className="organization-credit-summary-panel"
+        compact
+        collapsible
+      >
+        <div className="metric-grid organization-metrics">
+          <Metric
+            label={pickUiText(uiLanguage, 'Shared credits', '\u5171\u6709\u30af\u30ec\u30b8\u30c3\u30c8')}
+            value={String(activeOrganizationBalance?.total_credits ?? 0)}
+          />
+          <Metric
+            label={pickUiText(uiLanguage, 'Monthly', '\u6708\u984d\u5206')}
+            value={String(activeOrganizationBalance?.monthly_credits ?? 0)}
+          />
+          <Metric
+            label={pickUiText(uiLanguage, 'Purchased', '\u8ffd\u52a0\u5206')}
+            value={String(activeOrganizationBalance?.purchased_credits ?? 0)}
+          />
+        </div>
+        <div className="muted small">
+          {pickUiText(
+            uiLanguage,
+            'Plan, billing, members, invitations, and audit logs are managed from Workspace.',
+            '\u30d7\u30e9\u30f3\u3001\u8acb\u6c42\u3001\u30e1\u30f3\u30d0\u30fc\u3001\u62db\u5f85\u3001\u76e3\u67fb\u30ed\u30b0\u306f\u30ef\u30fc\u30af\u30b9\u30da\u30fc\u30b9\u304b\u3089\u7ba1\u7406\u3057\u307e\u3059\u3002',
+          )}
+        </div>
+      </PanelSection>
+    ) : null;
+
+  const jobsPanel = (
+    <PanelSection title="Jobs" compact collapsible>
+      <div className="stack gap-xs">
+        {jobs.map((job) => {
+          const progressText = getJobProgressText(job, uiLanguage);
+          const progressBarState = getJobProgressBarState(job);
+          const jobErrorText = getJobFailureText(job, uiLanguage);
+          return (
+            <div key={job.id} className="job-row">
+              <div>
+                <strong>{translateUiString(uiLanguage, job.job_type)}</strong>
+                <div className="muted small">#{formatShortId(job.id)}</div>
+                {progressText !== null ? (
+                  <div className="muted small">{progressText}</div>
+                ) : null}
+                {progressBarState !== null ? (
+                  <ProgressBar compact percent={progressBarState.percent} tone={progressBarState.tone} />
+                ) : null}
+                {jobErrorText !== null ? (
+                  <div className="error-text small">{jobErrorText}</div>
+                ) : null}
+              </div>
+              <StatusBadge value={job.status} />
+            </div>
+          );
+        })}
+        {jobs.length === 0 ? (
+          <div className="muted small">{translateUiString(uiLanguage, 'No recent jobs.')}</div>
+        ) : null}
+      </div>
+    </PanelSection>
+  );
+
+  const accountPanel = (
+    <>
+      {workspacePanel}
+
+      {personalBillingPanel}
 
       <PanelSection title="Account" className="mobile-account-controls" compact>
         <div className="mobile-account-meta">
@@ -3850,36 +4364,7 @@ function StudioShell(props: {
         </button>
       </PanelSection>
 
-      <PanelSection title="Jobs" compact collapsible>
-        <div className="stack gap-xs">
-          {jobs.map((job) => {
-            const progressText = getJobProgressText(job, uiLanguage);
-            const progressBarState = getJobProgressBarState(job);
-            const jobErrorText = getJobFailureText(job, uiLanguage);
-            return (
-              <div key={job.id} className="job-row">
-                <div>
-                  <strong>{translateUiString(uiLanguage, job.job_type)}</strong>
-                  <div className="muted small">#{formatShortId(job.id)}</div>
-                  {progressText !== null ? (
-                    <div className="muted small">{progressText}</div>
-                  ) : null}
-                  {progressBarState !== null ? (
-                    <ProgressBar compact percent={progressBarState.percent} tone={progressBarState.tone} />
-                  ) : null}
-                  {jobErrorText !== null ? (
-                    <div className="error-text small">{jobErrorText}</div>
-                  ) : null}
-                </div>
-                <StatusBadge value={job.status} />
-              </div>
-            );
-          })}
-          {jobs.length === 0 ? (
-            <div className="muted small">{translateUiString(uiLanguage, 'No recent jobs.')}</div>
-          ) : null}
-        </div>
-      </PanelSection>
+      {jobsPanel}
 
     </>
   );
@@ -3888,6 +4373,15 @@ function StudioShell(props: {
     <PanelSection title="Tutorial" subtitle="First run guide" className="tutorial-section" compact>
       <TutorialGuide />
     </PanelSection>
+  );
+
+  const railPanel = (
+    <>
+      {personalBillingPanel}
+      {organizationCreditSummaryPanel}
+      {jobsPanel}
+      {tutorialPanel}
+    </>
   );
 
   return (
@@ -5113,16 +5607,14 @@ function StudioShell(props: {
                             {referenceCandidates.map((candidate) => (
                               <div key={candidate.candidate_token} className={`reference-card reference-card-portrait ${referenceSelection.includes(candidate.candidate_token) ? 'active' : ''}`}>
                                 <div className="reference-card-media">
-                                  <AuthenticatedImage
+                                  <ReferenceCandidateImage
+                                    api={api}
+                                    candidate={candidate}
+                                    entityId={selectedEntity?.id ?? ''}
+                                    errorLabel={translateUiString(uiLanguage, 'Could not load image.')}
                                     enabled={selectedEntity !== null}
-                                    loadImage={() =>
-                                      api.exportEntityReferenceCandidateImage(
-                                        selectedEntity?.id ?? '',
-                                        candidate.candidate_token,
-                                        activeOrganizationId,
-                                      )
-                                    }
                                     onClick={(url) => openImageLightbox(url, translateUiString(uiLanguage, 'Generated preview'))}
+                                    organizationId={activeOrganizationId}
                                     queryKey={scopedQueryKey(['entity-reference-candidate-image', selectedEntity?.id, candidate.candidate_token])}
                                   />
                                 </div>
@@ -6016,8 +6508,7 @@ function StudioShell(props: {
             </section>
 
             <aside className="rail">
-              {accountPanel}
-              {tutorialPanel}
+              {railPanel}
             </aside>
           </div>
         )}
@@ -6110,6 +6601,7 @@ function AuthenticatedImage(props: {
   alt?: string;
   className?: string;
   enabled?: boolean;
+  errorLabel?: string;
   loadImage: () => Promise<BlobResponse>;
   loading?: 'eager' | 'lazy';
   onClick?: (url: string) => void;
@@ -6147,6 +6639,7 @@ function AuthenticatedImage(props: {
     return (
       <div className={placeholderClassName}>
         {imageQuery.isFetching ? <span className="image-loading-dot" aria-hidden="true" /> : null}
+        {imageQuery.isError ? <span className="image-load-error">{props.errorLabel ?? 'Image could not be loaded.'}</span> : null}
       </div>
     );
   }
@@ -6168,6 +6661,53 @@ function AuthenticatedImage(props: {
           : () => props.onDoubleClick?.(objectUrl)
       }
       src={objectUrl}
+    />
+  );
+}
+
+function ReferenceCandidateImage(props: {
+  api: LyraApiClient;
+  candidate: ReferenceCandidate;
+  enabled: boolean;
+  entityId: string;
+  errorLabel: string;
+  onClick: (url: string) => void;
+  organizationId: string | null;
+  queryKey: readonly unknown[];
+}) {
+  const [directUrlFailed, setDirectUrlFailed] = useState(false);
+  const directUrl = props.candidate.cdn_url;
+
+  useEffect(() => {
+    setDirectUrlFailed(false);
+  }, [directUrl]);
+
+  if (directUrl !== undefined && directUrl.trim().length > 0 && !directUrlFailed) {
+    return (
+      <img
+        alt=""
+        decoding="async"
+        loading="lazy"
+        onClick={() => props.onClick(directUrl)}
+        onError={() => setDirectUrlFailed(true)}
+        src={directUrl}
+      />
+    );
+  }
+
+  return (
+    <AuthenticatedImage
+      enabled={props.enabled}
+      errorLabel={props.errorLabel}
+      loadImage={() =>
+        props.api.exportEntityReferenceCandidateImage(
+          props.entityId,
+          props.candidate.candidate_token,
+          props.organizationId,
+        )
+      }
+      onClick={props.onClick}
+      queryKey={props.queryKey}
     />
   );
 }
@@ -9221,6 +9761,7 @@ function sameReferenceCandidates(left: ReferenceCandidate[], right: ReferenceCan
     left.every(
       (candidate, index) =>
         candidate.candidate_token === right[index]?.candidate_token &&
+        candidate.cdn_url === right[index]?.cdn_url &&
         candidate.source === right[index]?.source,
     )
   );
@@ -9252,6 +9793,11 @@ function extractGeneratedReferenceCandidates(job: GenerationJobRecord): Referenc
     return [
       {
         candidate_token: (candidate as { candidate_token: string }).candidate_token,
+        ...(
+          typeof (candidate as { cdn_url?: unknown }).cdn_url === 'string'
+            ? { cdn_url: (candidate as { cdn_url: string }).cdn_url }
+            : {}
+        ),
         source: 'generated' as const,
       },
     ];

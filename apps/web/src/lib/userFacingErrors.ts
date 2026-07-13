@@ -37,6 +37,10 @@ const messages = {
     en: 'This account cannot perform that operation. Check that you are signed in with the correct account.',
     ja: 'このアカウントではその操作を実行できません。正しいアカウントでログインしているか確認してください。',
   },
+  workspacePermission: {
+    en: 'You do not have permission for this workspace action. Ask the workspace owner or an admin to change your role.',
+    ja: 'このワークスペースでその操作を行う権限がありません。オーナーまたは管理者に権限変更を依頼してください。',
+  },
   notFound: {
     en: 'The target data could not be found. Reload the page, then select it again.',
     ja: '対象のデータが見つかりませんでした。ページを再読み込みしてから、もう一度選択してください。',
@@ -263,6 +267,16 @@ function findMessageBySpecificCause(normalizedMessage: string, normalizedCode: s
   }
   if (hasAny(normalizedMessage, ['cognito email is not verified', 'email is not verified'])) {
     return messages.authNotConfirmed;
+  }
+  if (
+    hasAny(normalizedMessage, [
+      'permission for this organization action',
+      'organization workspace is unavailable',
+      'organization service is not configured',
+      'organization support is not configured',
+    ])
+  ) {
+    return messages.workspacePermission;
   }
   if (hasAny(normalizedMessage, ['invitation email does not match', 'invited email does not match'])) {
     return messages.invitationEmailMismatch;

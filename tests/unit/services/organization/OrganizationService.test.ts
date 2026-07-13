@@ -40,6 +40,20 @@ interface UsageEventInput {
   metadata?: Record<string, unknown>;
 }
 
+interface OrganizationCreditLedgerTestEntry {
+  userId: string | null;
+  organizationId: string;
+  type: 'consume' | 'refund' | 'monthly_grant' | 'purchased_grant';
+  amount: number;
+  monthlyDelta: number;
+  purchasedDelta: number;
+  monthlyAfter: number;
+  purchasedAfter: number;
+  description: string;
+  stripeEventId: string | null;
+  jobId: string | null;
+}
+
 const fakeClient = {
   query: async () => ({ rows: [] }),
 } as unknown as DatabaseClient;
@@ -179,6 +193,23 @@ describe('OrganizationService', () => {
       ForbiddenError,
     );
     await expect(service.requireMembership('org-1', 'billing-user', 'view_usage')).rejects.toBeInstanceOf(
+      ForbiddenError,
+    );
+  });
+
+  it('Adminは請求情報の閲覧と請求管理をできない', async () => {
+    const repository = new InMemoryOrganizationRepository();
+    repository.setMember(buildMember({ id: 'member-admin', userId: 'admin-user', role: 'admin' }));
+
+    const service = buildService(repository);
+
+    await expect(service.requireMembership('org-1', 'admin-user', 'view_usage')).resolves.toMatchObject({
+      role: 'admin',
+    });
+    await expect(service.requireMembership('org-1', 'admin-user', 'view_billing')).rejects.toBeInstanceOf(
+      ForbiddenError,
+    );
+    await expect(service.requireMembership('org-1', 'admin-user', 'manage_billing')).rejects.toBeInstanceOf(
       ForbiddenError,
     );
   });
@@ -503,6 +534,15 @@ describe('OrganizationService', () => {
   it('法人生成返金は利用履歴にも残すが消費集計は増やさない', async () => {
     const repository = new InMemoryOrganizationRepository();
     repository.balance = buildBalance({ purchasedCredits: 2 });
+    repository.creditLedger.push(buildCreditLedgerEntry({
+      type: 'consume',
+      amount: -3,
+      monthlyDelta: 0,
+      purchasedDelta: -3,
+      monthlyAfter: 0,
+      purchasedAfter: 2,
+      jobId: 'job-1',
+    }));
     const service = buildService(repository);
 
     await service.refundCredits({
@@ -527,6 +567,63 @@ describe('OrganizationService', () => {
       action: 'credit.refunded',
       targetId: 'job-1',
     });
+  });
+
+  it('法人jobの消費履歴がない場合は返金しない', async () => {
+    const repository = new InMemoryOrganizationRepository();
+    repository.balance = buildBalance({ monthlyCredits: 4, purchasedCredits: 2 });
+    const service = buildService(repository);
+
+    const balance = await service.refundCredits({
+      organizationId: 'org-1', actorUserId: 'editor-user', amount: 3,
+      description: 'Refund failed generation', jobId: 'job-without-consume',
+    });
+
+    expect(balance).toMatchObject({ monthlyCredits: 4, purchasedCredits: 2 });
+    expect(repository.creditLedger).toEqual([]);
+    expect(repository.insertedUsageEvents).toEqual([]);
+  });
+
+  it('法人jobの返金は消費元の月次・購入バケットへ戻す', async () => {
+    const repository = new InMemoryOrganizationRepository();
+    repository.balance = buildBalance({ monthlyCredits: 7, purchasedCredits: 3 });
+    repository.creditLedger.push(buildCreditLedgerEntry({
+      type: 'consume', amount: -5, monthlyDelta: -3, purchasedDelta: -2,
+      monthlyAfter: 7, purchasedAfter: 3, jobId: 'job-1',
+    }));
+    const service = buildService(repository);
+
+    const balance = await service.refundCredits({
+      organizationId: 'org-1', actorUserId: 'editor-user', amount: 5,
+      description: 'Refund failed generation', jobId: 'job-1',
+    });
+
+    expect(balance).toMatchObject({ monthlyCredits: 10, purchasedCredits: 5 });
+    expect(repository.creditLedger.at(-1)).toMatchObject({
+      type: 'refund', amount: 5, monthlyDelta: 3, purchasedDelta: 2, jobId: 'job-1',
+    });
+  });
+
+  it('法人jobの返金を同じjob IDで再実行しても二重返金しない', async () => {
+    const repository = new InMemoryOrganizationRepository();
+    repository.balance = buildBalance({ monthlyCredits: 7, purchasedCredits: 3 });
+    repository.creditLedger.push(buildCreditLedgerEntry({
+      type: 'consume', amount: -3, monthlyDelta: -3, purchasedDelta: 0,
+      monthlyAfter: 7, purchasedAfter: 3, jobId: 'job-1',
+    }));
+    const service = buildService(repository);
+
+    await service.refundCredits({
+      organizationId: 'org-1', actorUserId: 'editor-user', amount: 3,
+      description: 'First refund', jobId: 'job-1',
+    });
+    const second = await service.refundCredits({
+      organizationId: 'org-1', actorUserId: 'editor-user', amount: 3,
+      description: 'Duplicate refund', jobId: 'job-1',
+    });
+
+    expect(second).toMatchObject({ monthlyCredits: 10, purchasedCredits: 3 });
+    expect(repository.creditLedger.filter((entry) => entry.type === 'refund')).toHaveLength(1);
   });
 
   it('法人月額クレジットは更新時に蓄積せず規定値へリセットする', async () => {
@@ -768,6 +865,7 @@ class InMemoryOrganizationRepository {
   public usedFullAuditLogAccess = false;
   public activeOwnerCount = 1;
   public balance: OrganizationCreditBalance = buildBalance();
+  public creditLedger: OrganizationCreditLedgerTestEntry[] = [];
 
   public setMember(member: OrganizationMember): void {
     this.members.set(memberKey(member.organizationId, member.userId), member);
@@ -1008,6 +1106,35 @@ class InMemoryOrganizationRepository {
     return this.balance;
   }
 
+  public async summarizeJobCreditLedger(
+    organizationId: string,
+    jobId: string,
+    type: 'consume' | 'refund',
+  ): Promise<{
+    amount: number;
+    monthlyDelta: number;
+    purchasedDelta: number;
+    entryCount: number;
+    completeEntryCount: number;
+  }> {
+    return this.creditLedger
+      .filter((entry) => entry.organizationId === organizationId && entry.jobId === jobId && entry.type === type)
+      .reduce(
+        (summary, entry) => ({
+          amount: summary.amount + entry.amount,
+          monthlyDelta: summary.monthlyDelta + entry.monthlyDelta,
+          purchasedDelta: summary.purchasedDelta + entry.purchasedDelta,
+          entryCount: summary.entryCount + 1,
+          completeEntryCount: summary.completeEntryCount + 1,
+        }),
+        { amount: 0, monthlyDelta: 0, purchasedDelta: 0, entryCount: 0, completeEntryCount: 0 },
+      );
+  }
+
+  public async insertCreditLedger(entry: OrganizationCreditLedgerTestEntry): Promise<void> {
+    this.creditLedger.push(entry);
+  }
+
   public async listAuditLogs(organizationId: string, limit: number): Promise<OrganizationAuditLog[]> {
     this.usedFullAuditLogAccess = true;
     return this.auditLogs.filter((log) => log.organizationId === organizationId).slice(0, limit);
@@ -1100,6 +1227,25 @@ function buildBalance(overrides: Partial<OrganizationCreditBalance> = {}): Organ
     purchasedCredits: 0,
     monthlyExpiresAt: null,
     updatedAt: new Date('2026-01-01T00:00:00.000Z'),
+    ...overrides,
+  };
+}
+
+function buildCreditLedgerEntry(
+  overrides: Partial<OrganizationCreditLedgerTestEntry> = {},
+): OrganizationCreditLedgerTestEntry {
+  return {
+    userId: 'editor-user',
+    organizationId: 'org-1',
+    type: 'consume',
+    amount: -1,
+    monthlyDelta: -1,
+    purchasedDelta: 0,
+    monthlyAfter: 0,
+    purchasedAfter: 0,
+    description: 'Generation credit ledger entry',
+    stripeEventId: null,
+    jobId: 'job-1',
     ...overrides,
   };
 }

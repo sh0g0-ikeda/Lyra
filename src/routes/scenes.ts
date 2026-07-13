@@ -12,6 +12,11 @@ import { formatZodValidationError } from '../lib/validationErrorFormatter.js';
 import type { OrganizationServicePort } from '../services/organization/OrganizationService.js';
 import type { SceneServicePort } from '../services/scene/SceneService.js';
 import type { AppEnv } from '../types/app.js';
+import {
+  parseOptionalOrganizationId,
+  recordOrganizationAudit,
+  requireOrganizationCapability,
+} from './organizationRouteHelpers.js';
 import { readJsonBody } from './requestBody.js';
 
 export interface SceneRouteDependencies {
@@ -166,59 +171,6 @@ function parseUuidParam(c: Context<AppEnv>, name: string): string {
   }
 
   return result.data;
-}
-
-function parseOptionalOrganizationId(c: Context<AppEnv>): string | null {
-  const raw = c.req.query('organization_id');
-  if (raw === undefined || raw.trim().length === 0) {
-    return null;
-  }
-
-  const result = sceneUuidParamSchema.safeParse(raw);
-  if (!result.success) {
-    throw new ValidationError('organization_id must be a valid UUID');
-  }
-
-  return result.data;
-}
-
-async function requireOrganizationCapability(
-  c: Context<AppEnv>,
-  dependencies: SceneRouteDependencies,
-  organizationId: string | null,
-  capability: Parameters<OrganizationServicePort['requireMembership']>[2],
-): Promise<void> {
-  if (organizationId === null) {
-    return;
-  }
-  if (dependencies.organizationService === undefined) {
-    throw new ValidationError('Organization workspace is unavailable');
-  }
-
-  const user = c.get('user');
-  await dependencies.organizationService.requireMembership(organizationId, user.id, capability);
-}
-
-async function recordOrganizationAudit(
-  dependencies: SceneRouteDependencies,
-  organizationId: string | null,
-  actorUserId: string,
-  action: string,
-  targetType: string,
-  targetId: string | null,
-  metadata?: Record<string, unknown>,
-): Promise<void> {
-  if (organizationId === null || dependencies.organizationService === undefined) {
-    return;
-  }
-  await dependencies.organizationService.recordAuditEvent({
-    organizationId,
-    actorUserId,
-    action,
-    targetType,
-    targetId,
-    metadata,
-  });
 }
 
 function toSceneResponse(scene: Scene): Record<string, unknown> {

@@ -807,7 +807,7 @@ export class OrganizationService implements OrganizationServicePort {
         },
         client,
       );
-      await insertOrganizationCreditLedger(client, {
+      await this.organizationRepository.insertCreditLedger({
         userId: input.userId,
         organizationId: input.organizationId,
         type: 'consume',
@@ -819,7 +819,7 @@ export class OrganizationService implements OrganizationServicePort {
         description: input.description,
         stripeEventId: null,
         jobId: input.jobId ?? null,
-      });
+      }, client);
       await this.organizationRepository.insertUsageEvent(
         {
           organizationId: input.organizationId,
@@ -890,38 +890,50 @@ export class OrganizationService implements OrganizationServicePort {
       const balance =
         (await this.organizationRepository.getCreditBalanceForUpdate(input.organizationId, client)) ??
         (await this.organizationRepository.createCreditBalance(input.organizationId, client));
+      const refundDeltas = input.jobId === undefined || input.jobId === null
+        ? { amount: input.amount, monthlyDelta: 0, purchasedDelta: input.amount }
+        : await this.calculateOrganizationJobRefundDeltas(
+            input.organizationId,
+            input.jobId,
+            input.amount,
+            client,
+          );
+      if (refundDeltas === null) {
+        return balance;
+      }
       const next = await this.organizationRepository.updateCreditBalance(
         {
           ...balance,
-          purchasedCredits: balance.purchasedCredits + input.amount,
+          monthlyCredits: balance.monthlyCredits + refundDeltas.monthlyDelta,
+          purchasedCredits: balance.purchasedCredits + refundDeltas.purchasedDelta,
         },
         client,
       );
-      await insertOrganizationCreditLedger(client, {
+      await this.organizationRepository.insertCreditLedger({
         userId: input.actorUserId,
         organizationId: input.organizationId,
         type: 'refund',
-        amount: input.amount,
-        monthlyDelta: 0,
-        purchasedDelta: input.amount,
+        amount: refundDeltas.amount,
+        monthlyDelta: refundDeltas.monthlyDelta,
+        purchasedDelta: refundDeltas.purchasedDelta,
         monthlyAfter: next.monthlyCredits,
         purchasedAfter: next.purchasedCredits,
         description: input.description,
         stripeEventId: input.stripeEventId ?? null,
         jobId: input.jobId ?? null,
-      });
+      }, client);
       await this.organizationRepository.insertUsageEvent(
         {
           organizationId: input.organizationId,
           userId: input.actorUserId,
           workId: null,
-          generationJobId: input.jobId ?? null,
+          generationJobId: null,
           eventType: 'credit.refunded',
           creditAmount: 0,
           metadata: {
             action_type: 'refund',
             status: 'refunded',
-            credits_refunded: input.amount,
+            credits_refunded: refundDeltas.amount,
             stripe_event_id: input.stripeEventId ?? null,
             description: input.description,
           },
@@ -936,9 +948,9 @@ export class OrganizationService implements OrganizationServicePort {
           targetType: 'credit',
           targetId: input.jobId ?? null,
           metadata: {
-            amount: input.amount,
-            monthly_delta: 0,
-            purchased_delta: input.amount,
+            amount: refundDeltas.amount,
+            monthly_delta: refundDeltas.monthlyDelta,
+            purchased_delta: refundDeltas.purchasedDelta,
             monthly_after: next.monthlyCredits,
             purchased_after: next.purchasedCredits,
             stripe_event_id: input.stripeEventId ?? null,
@@ -949,6 +961,49 @@ export class OrganizationService implements OrganizationServicePort {
       );
       return next;
     });
+  }
+
+  private async calculateOrganizationJobRefundDeltas(
+    organizationId: string,
+    jobId: string,
+    requestedAmount: number,
+    client: DatabaseClient,
+  ): Promise<{ amount: number; monthlyDelta: number; purchasedDelta: number } | null> {
+    const consumed = await this.organizationRepository.summarizeJobCreditLedger(
+      organizationId,
+      jobId,
+      'consume',
+      client,
+    );
+    if (consumed.entryCount === 0) {
+      return null;
+    }
+    const refunded = await this.organizationRepository.summarizeJobCreditLedger(
+      organizationId,
+      jobId,
+      'refund',
+      client,
+    );
+    if (
+      consumed.entryCount !== consumed.completeEntryCount ||
+      refunded.entryCount !== refunded.completeEntryCount
+    ) {
+      const refundableAmount = Math.abs(consumed.amount) - refunded.amount;
+      if (refundableAmount <= 0) {
+        return null;
+      }
+      const amount = Math.min(requestedAmount, refundableAmount);
+      return { amount, monthlyDelta: 0, purchasedDelta: amount };
+    }
+    const remainingMonthly = Math.max(0, -consumed.monthlyDelta - refunded.monthlyDelta);
+    const remainingPurchased = Math.max(0, -consumed.purchasedDelta - refunded.purchasedDelta);
+    const refundableAmount = remainingMonthly + remainingPurchased;
+    if (refundableAmount <= 0) {
+      return null;
+    }
+    const amount = Math.min(requestedAmount, refundableAmount);
+    const monthlyDelta = Math.min(remainingMonthly, amount);
+    return { amount, monthlyDelta, purchasedDelta: amount - monthlyDelta };
   }
 
   public async grantMonthlyCredits(
@@ -969,7 +1024,7 @@ export class OrganizationService implements OrganizationServicePort {
         },
         transactionClient,
       );
-      await insertOrganizationCreditLedger(transactionClient, {
+      await this.organizationRepository.insertCreditLedger({
         userId: input.actorUserId,
         organizationId: input.organizationId,
         type: 'monthly_grant',
@@ -981,7 +1036,7 @@ export class OrganizationService implements OrganizationServicePort {
         description: input.description,
         stripeEventId: input.stripeEventId ?? null,
         jobId: null,
-      });
+      }, transactionClient);
       await this.organizationRepository.insertAuditLog(
         {
           organizationId: input.organizationId,
@@ -1022,7 +1077,7 @@ export class OrganizationService implements OrganizationServicePort {
         },
         transactionClient,
       );
-      await insertOrganizationCreditLedger(transactionClient, {
+      await this.organizationRepository.insertCreditLedger({
         userId: input.actorUserId,
         organizationId: input.organizationId,
         type: 'purchased_grant',
@@ -1034,7 +1089,7 @@ export class OrganizationService implements OrganizationServicePort {
         description: input.description,
         stripeEventId: input.stripeEventId ?? null,
         jobId: null,
-      });
+      }, transactionClient);
       await this.organizationRepository.insertAuditLog(
         {
           organizationId: input.organizationId,
@@ -1373,53 +1428,4 @@ function emptyOrgBalance(organizationId: string): OrganizationCreditBalance {
     monthlyExpiresAt: null,
     updatedAt: new Date(0),
   };
-}
-
-async function insertOrganizationCreditLedger(
-  client: DatabaseClient,
-  entry: {
-    userId: string | null;
-    organizationId: string;
-    type: 'consume' | 'refund' | 'monthly_grant' | 'purchased_grant';
-    amount: number;
-    monthlyDelta: number;
-    purchasedDelta: number;
-    monthlyAfter: number;
-    purchasedAfter: number;
-    description: string;
-    stripeEventId: string | null;
-    jobId: string | null;
-  },
-): Promise<void> {
-  await client.query(
-    `
-    INSERT INTO credit_ledger (
-      user_id,
-      organization_id,
-      type,
-      amount,
-      monthly_delta,
-      purchased_delta,
-      monthly_after,
-      purchased_after,
-      description,
-      stripe_event_id,
-      job_id
-    )
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-    `,
-    [
-      entry.userId,
-      entry.organizationId,
-      entry.type,
-      entry.amount,
-      entry.monthlyDelta,
-      entry.purchasedDelta,
-      entry.monthlyAfter,
-      entry.purchasedAfter,
-      entry.description,
-      entry.stripeEventId,
-      entry.jobId,
-    ],
-  );
 }

@@ -14,9 +14,11 @@ import { PostgresEntityGenerationExecutionRepository } from '../src/repositories
 import { PostgresEntityGenerationRecoveryRepository } from '../src/repositories/EntityGenerationRecoveryRepository.js';
 import { PostgresPageGenerationExecutionRepository } from '../src/repositories/PageGenerationExecutionRepository.js';
 import { PostgresPageGenerationRecoveryRepository } from '../src/repositories/PageGenerationRecoveryRepository.js';
+import { PostgresOrganizationRepository } from '../src/repositories/OrganizationRepository.js';
 import { CreditService } from '../src/services/credit/CreditService.js';
 import { EntityGenerationRecoveryService } from '../src/services/entity/EntityGenerationRecoveryService.js';
 import { PageGenerationRecoveryService } from '../src/services/page/PageGenerationRecoveryService.js';
+import { OrganizationService, type OrganizationServicePort } from '../src/services/organization/OrganizationService.js';
 import { resolveWorkerDependencies } from '../worker/dependencies.js';
 import { GenerationQueuePoller } from '../worker/sqsPoller.js';
 
@@ -33,7 +35,8 @@ async function main(): Promise<void> {
     throw new ConfigurationError('SQS_QUEUE_URL_GENERATION is required for generation worker polling');
   }
 
-  const recoveryRunner = new GenerationWorkerRecoveryRunner();
+  const organizationService = new OrganizationService(new PostgresOrganizationRepository(db, db));
+  const recoveryRunner = new GenerationWorkerRecoveryRunner(organizationService);
   await recoveryRunner.run('startup');
 
   const poller = new GenerationQueuePoller(
@@ -73,6 +76,8 @@ async function main(): Promise<void> {
 class GenerationWorkerRecoveryRunner {
   private inFlight = false;
 
+  public constructor(private readonly organizationService: OrganizationServicePort) {}
+
   public async run(reason: 'startup' | 'periodic'): Promise<void> {
     if (this.inFlight) {
       return;
@@ -87,6 +92,7 @@ class GenerationWorkerRecoveryRunner {
         creditService,
         PAGE_GENERATION_STALE_AFTER_MS,
         GENERATION_RECOVERY_BATCH_LIMIT,
+        this.organizationService,
       ).recoverAllStaleJobs();
       const recoveredEntityCount = await new EntityGenerationRecoveryService(
         new PostgresEntityGenerationRecoveryRepository(db),
@@ -94,6 +100,7 @@ class GenerationWorkerRecoveryRunner {
         creditService,
         ENTITY_GENERATION_STALE_AFTER_MS,
         GENERATION_RECOVERY_BATCH_LIMIT,
+        this.organizationService,
       ).recoverAllStaleJobs();
       const recoveredCount = recoveredPageCount + recoveredEntityCount;
 

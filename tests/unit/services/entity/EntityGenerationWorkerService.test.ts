@@ -39,9 +39,20 @@ class FakeExecutionRepository implements EntityGenerationExecutionRepository {
   public completed: CompleteEntityGenerationInput | null = null;
   public failed: { jobId: string; userId: string; errorMessage: string } | null = null;
   public failureResult = true;
+  public progressTouches: Array<{ jobId: string; userId: string; message: string; updatedAt: string }> = [];
 
   public async claimQueuedEntityGenerationJob(): Promise<GenerationJob | null> {
     return this.job;
+  }
+
+  public async touchEntityGenerationProgress(input: {
+    jobId: string;
+    userId: string;
+    message: string;
+    updatedAt: string;
+  }): Promise<boolean> {
+    this.progressTouches.push(input);
+    return true;
   }
 
   public async completeEntityGeneration(input: CompleteEntityGenerationInput): Promise<boolean> {
@@ -278,6 +289,8 @@ describe('EntityGenerationWorkerService', () => {
     const result = await service.processJob('job-1');
 
     expect(result).toEqual({ status: 'processed', jobStatus: 'completed' });
+    expect(executionRepository.progressTouches).toHaveLength(1);
+    expect(executionRepository.progressTouches[0]).toMatchObject({ jobId: 'job-1', userId: 'user-1' });
     expect(promptCompiler.draftPrompt).toBe('entity prompt');
     expect(promptCompiler.compilerBrief).toContain('Target image: manga full-body character reference');
     expect(referenceGenerator.input?.inputImages).toEqual([]);

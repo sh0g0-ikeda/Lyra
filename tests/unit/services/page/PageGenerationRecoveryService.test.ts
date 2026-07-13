@@ -47,6 +47,7 @@ class FakeRecoveryRepository implements PageGenerationRecoveryRepository {
 
 class FakeExecutionRepository implements PageGenerationExecutionRepository {
   public failedJobIds: string[] = [];
+  public staleBeforeByJobId = new Map<string, Date | undefined>();
   public shouldRecover = true;
 
   public async claimQueuedPageGenerationJob(): Promise<GenerationJob | null> {
@@ -76,12 +77,14 @@ class FakeExecutionRepository implements PageGenerationExecutionRepository {
     userId: string;
     errorMessage: string;
     pageId?: string;
+    staleBefore?: Date;
   }): Promise<boolean> {
     if (!this.shouldRecover) {
       return false;
     }
 
     this.failedJobIds.push(input.jobId);
+    this.staleBeforeByJobId.set(input.jobId, input.staleBefore);
     return true;
   }
 }
@@ -89,6 +92,7 @@ class FakeExecutionRepository implements PageGenerationExecutionRepository {
 class FakeCreditService implements CreditServicePort {
   public refunds: RefundCreditsParams[] = [];
   public shouldFailRefund = false;
+  public failedRefundJobIds = new Set<string>();
 
   public async getBalance(): Promise<CreditBalanceSnapshot> {
     return { monthlyCredits: 0, purchasedCredits: 0, totalCredits: 0, monthlyExpiresAt: null };
@@ -104,7 +108,7 @@ class FakeCreditService implements CreditServicePort {
 
   public async refundCredits(params: RefundCreditsParams): Promise<CreditBalanceSnapshot> {
     this.refunds.push(params);
-    if (this.shouldFailRefund) {
+    if (this.shouldFailRefund || (params.jobId !== undefined && this.failedRefundJobIds.has(params.jobId))) {
       throw new Error('refund unavailable');
     }
 
@@ -283,7 +287,7 @@ describe('PageGenerationRecoveryService', () => {
     expect(creditService.refunds).toEqual([]);
   });
 
-  it('返金が失敗した stale page job は failed 化後に失敗を表面化する', async () => {
+  it('返金が失敗しても後続の stale page job を復旧する', async () => {
     const repository = new FakeRecoveryRepository();
     repository.jobs = [
       {
@@ -295,10 +299,19 @@ describe('PageGenerationRecoveryService', () => {
         previousGenerationMode: null,
         staleAt: new Date('2026-06-03T00:00:00.000Z'),
       },
+      {
+        jobId: 'job-2',
+        userId: 'user-1',
+        creditCost: 1,
+        pageId: 'page-2',
+        previousStatus: 'designing',
+        previousGenerationMode: null,
+        staleAt: new Date('2026-06-03T00:00:00.000Z'),
+      },
     ];
     const executionRepository = new FakeExecutionRepository();
     const creditService = new FakeCreditService();
-    creditService.shouldFailRefund = true;
+    creditService.failedRefundJobIds.add('job-1');
     const service = new PageGenerationRecoveryService(
       repository,
       executionRepository,
@@ -306,14 +319,12 @@ describe('PageGenerationRecoveryService', () => {
       1,
     );
 
-    await expect(service.recoverAllStaleJobs()).rejects.toThrow('refund unavailable');
+    const recoveredCount = await service.recoverAllStaleJobs();
 
-    expect(creditService.refunds[0]).toMatchObject({
-      userId: 'user-1',
-      amount: 1,
-      jobId: 'job-1',
-    });
-    expect(executionRepository.failedJobIds).toEqual(['job-1']);
+    expect(recoveredCount).toBe(2);
+    expect(creditService.refunds.map((refund) => refund.jobId)).toEqual(['job-1', 'job-2']);
+    expect(executionRepository.failedJobIds).toEqual(['job-1', 'job-2']);
+    expect(executionRepository.staleBeforeByJobId.get('job-1')).toBeInstanceOf(Date);
   });
 
   it('stale page job の failed 化が競合で失敗した場合は refund しない', async () => {

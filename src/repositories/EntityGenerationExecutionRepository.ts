@@ -30,10 +30,25 @@ export interface CompleteEntityGenerationInput {
   createdAt: string;
 }
 
+export interface TouchEntityGenerationProgressInput {
+  jobId: string;
+  userId: string;
+  message: string;
+  updatedAt: string;
+}
+
+export interface FailEntityGenerationInput {
+  jobId: string;
+  userId: string;
+  errorMessage: string;
+  staleBefore?: Date;
+}
+
 export interface EntityGenerationExecutionRepository {
   claimQueuedEntityGenerationJob(jobId: string): Promise<GenerationJob | null>;
+  touchEntityGenerationProgress(input: TouchEntityGenerationProgressInput): Promise<boolean>;
   completeEntityGeneration(input: CompleteEntityGenerationInput): Promise<boolean>;
-  failEntityGeneration(input: { jobId: string; userId: string; errorMessage: string }): Promise<boolean>;
+  failEntityGeneration(input: FailEntityGenerationInput): Promise<boolean>;
 }
 
 interface GenerationJobRow extends QueryResultRow {
@@ -77,6 +92,26 @@ export class PostgresEntityGenerationExecutionRepository implements EntityGenera
     return result.rows[0] === undefined ? null : mapGenerationJobRow(result.rows[0]);
   }
 
+  public async touchEntityGenerationProgress(input: TouchEntityGenerationProgressInput): Promise<boolean> {
+    const result = await this.client.query<GenerationJobRow>(
+      `
+      UPDATE generation_jobs
+      SET result = COALESCE(result, '{}'::jsonb) || jsonb_build_object(
+            'progress_message', $3::text,
+            'progress_updated_at', $4::text
+          )
+      WHERE id = $1
+        AND user_id = $2
+        AND job_type = 'entity_generate'
+        AND status = 'processing'
+      RETURNING *
+      `,
+      [input.jobId, input.userId, input.message, input.updatedAt],
+    );
+
+    return (result.rowCount ?? 0) > 0;
+  }
+
   public async completeEntityGeneration(input: CompleteEntityGenerationInput): Promise<boolean> {
     const result = await this.client.query<GenerationJobRow>(
       `
@@ -118,11 +153,7 @@ export class PostgresEntityGenerationExecutionRepository implements EntityGenera
     return (result.rowCount ?? 0) > 0;
   }
 
-  public async failEntityGeneration(input: {
-    jobId: string;
-    userId: string;
-    errorMessage: string;
-  }): Promise<boolean> {
+  public async failEntityGeneration(input: FailEntityGenerationInput): Promise<boolean> {
     const persistedErrorMessage = sanitizePersistedErrorMessage(input.errorMessage, 'Entity generation failed');
     const result = await this.client.query<GenerationJobRow>(
       `
@@ -133,9 +164,28 @@ export class PostgresEntityGenerationExecutionRepository implements EntityGenera
       WHERE id = $1
         AND user_id = $2
         AND status IN ('queued', 'processing')
+        AND (
+          $4::timestamptz IS NULL
+          OR (
+            status = 'queued'
+            AND created_at < $4::timestamptz
+          )
+          OR (
+            status = 'processing'
+            AND COALESCE(
+              CASE
+                WHEN result->>'progress_updated_at' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$'
+                THEN (result->>'progress_updated_at')::timestamptz
+                ELSE NULL
+              END,
+              started_at,
+              created_at
+            ) < $4::timestamptz
+          )
+        )
       RETURNING *
       `,
-      [input.jobId, input.userId, persistedErrorMessage],
+      [input.jobId, input.userId, persistedErrorMessage, input.staleBefore?.toISOString() ?? null],
     );
 
     return (result.rowCount ?? 0) > 0;

@@ -221,6 +221,14 @@ function buildFailedJobsMissingRefundQuery(extraConditions: string, limitPlaceho
         AND generation_jobs.status = 'failed'
         AND generation_jobs.credit_cost > 0
         AND generation_jobs.params ? 'page_id'
+        AND EXISTS (
+          SELECT 1
+          FROM credit_ledger AS consumed_ledger
+          WHERE consumed_ledger.user_id = generation_jobs.user_id
+            AND COALESCE(consumed_ledger.organization_id::text, '') = COALESCE(generation_jobs.organization_id::text, '')
+            AND consumed_ledger.job_id = generation_jobs.id
+            AND consumed_ledger.type = 'consume'
+        )
         AND NOT EXISTS (
           SELECT 1
           FROM credit_ledger
