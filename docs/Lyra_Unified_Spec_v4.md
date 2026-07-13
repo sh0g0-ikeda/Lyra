@@ -80,6 +80,15 @@ Generation and regeneration both create a new result from the current saved inpu
 A previous generated page image is not an implicit image reference. Confirmed entity
 reference images are explicit character-consistency inputs.
 
+Story-to-page autofill plans beat ownership across the complete episode before
+expanding the existing pages in bounded chunks. The combined draft is audited for
+cross-page repetition, dialogue placement, chronology, and page handoffs before
+page or panel content is persisted. Reported chunks may be repaired once; a draft
+that still fails the final audit is rejected without applying generated content.
+The plan uses each existing page's frame count as its story capacity and carries
+scene character-state notes such as costume and injury through the global
+continuity brief.
+
 ## 7. Credits and billing
 
 Text AI operations are free. Entity preview/import analysis and page generation use

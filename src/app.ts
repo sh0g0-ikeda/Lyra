@@ -19,6 +19,8 @@ import {
   type EntityImportAnalyzerPort,
 } from './infrastructure/openai/OpenAIEntityImportAnalyzer.js';
 import { OpenAIPageAutofillCompiler } from './infrastructure/openai/OpenAIPageAutofillCompiler.js';
+import { OpenAIEpisodeBeatPlanCompiler } from './infrastructure/openai/OpenAIEpisodeBeatPlanCompiler.js';
+import { OpenAIEpisodePlanAuditCompiler } from './infrastructure/openai/OpenAIEpisodePlanAuditCompiler.js';
 import { OpenAIPageEpisodePlanCompiler } from './infrastructure/openai/OpenAIPageEpisodePlanCompiler.js';
 import { OpenAIClient } from './infrastructure/openai/OpenAIClient.js';
 import { OpenAIStoryAiClient } from './infrastructure/openai/OpenAIStoryAiClient.js';
@@ -168,6 +170,8 @@ import {
 import { PageService, type PageServicePort } from './services/page/PageService.js';
 import type { PageAutofillCompilerPort } from './services/page/PageAutofillCompiler.js';
 import type { EpisodePagePlanCompilerPort } from './services/page/EpisodePagePlanCompiler.js';
+import type { EpisodeBeatPlanCompilerPort } from './services/page/EpisodeBeatPlanCompiler.js';
+import type { EpisodePlanAuditCompilerPort } from './services/page/EpisodePlanAuditCompiler.js';
 import type { StyleReferenceCompilerPort } from './services/style/StyleReferenceCompiler.js';
 import {
   SharpPageBalloonComposer,
@@ -806,6 +810,9 @@ function resolveDependencies(
       resolvePageAutofillCompiler(),
       resolveEpisodePagePlanCompiler(),
       resolveStyleReferenceCompiler(),
+      resolveEpisodeBeatPlanCompiler(),
+      resolveEpisodePlanAuditCompiler(),
+      env.EPISODE_PAGE_PLAN_CONTINUITY_V3_ENABLED,
     );
   const jobService =
     dependencies.jobService ??
@@ -1044,6 +1051,32 @@ function resolveEpisodePagePlanCompiler(): EpisodePagePlanCompilerPort {
   }
 
   return new OpenAIPageEpisodePlanCompiler(client);
+}
+
+function resolveEpisodeBeatPlanCompiler(): EpisodeBeatPlanCompilerPort {
+  const client = buildOpenAIClient();
+  if (client === null) {
+    return {
+      async compileBeatPlan(): Promise<never> {
+        throw new ConfigurationError('OpenAI episode beat plan compiler is not configured');
+      },
+    };
+  }
+
+  return new OpenAIEpisodeBeatPlanCompiler(client);
+}
+
+function resolveEpisodePlanAuditCompiler(): EpisodePlanAuditCompilerPort {
+  const client = buildOpenAIClient();
+  if (client === null) {
+    return {
+      async auditPlan(): Promise<never> {
+        throw new ConfigurationError('OpenAI episode plan audit compiler is not configured');
+      },
+    };
+  }
+
+  return new OpenAIEpisodePlanAuditCompiler(client);
 }
 
 function resolveStyleReferenceCompiler(): StyleReferenceCompilerPort | undefined {
