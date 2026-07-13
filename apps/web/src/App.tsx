@@ -27,6 +27,10 @@ import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { Session, SupabaseClient } from '@supabase/supabase-js';
 import { decodeJwtPayload, LyraApiClient, type BlobResponse } from './lib/api';
 import { shouldAllowManualTokenAuth } from './lib/authMode';
+import {
+  formatSubscriptionPlanLabel as formatPlanLabel,
+  getSubscriptionPlanRank,
+} from './lib/billingContract';
 import { ORGANIZATION_FEATURES_AVAILABLE } from './lib/featureFlags';
 import { formatUserFacingError, formatUserFacingErrorMessage } from './lib/userFacingErrors';
 import {
@@ -1408,36 +1412,6 @@ function formatInvitationSendError(language: UiLanguage, message: string): strin
     'Invitation email could not be sent. Copy the invitation link or try resending.',
     '招待メールを送信できませんでした。招待リンクをコピーするか、再送してください。',
   );
-}
-
-function formatPlanLabel(language: UiLanguage, planCode: SubscriptionPlanCode): string {
-  const labels: Record<SubscriptionPlanCode, { en: string; ja: string }> = {
-    free: { en: 'Free', ja: 'フリー' },
-    standard: { en: 'Standard', ja: 'スタンダード' },
-    premium: { en: 'Premium', ja: 'プレミアム' },
-    enterprise_a: { en: 'Enterprise A', ja: 'エンタープライズ A' },
-    enterprise_b: { en: 'Enterprise B', ja: 'エンタープライズ B' },
-    enterprise_c: { en: 'Enterprise C', ja: 'エンタープライズ C' },
-  };
-  const label = labels[planCode];
-  return pickUiText(language, label.en, label.ja);
-}
-
-function getSubscriptionPlanRank(planCode: SubscriptionPlanCode): number {
-  switch (planCode) {
-    case 'enterprise_c':
-      return 5;
-    case 'enterprise_b':
-      return 4;
-    case 'enterprise_a':
-      return 3;
-    case 'premium':
-      return 2;
-    case 'standard':
-      return 1;
-    case 'free':
-      return 0;
-  }
 }
 
 function formatOrganizationRoleLabel(language: UiLanguage, role: OrganizationMemberRecord['role']): string {

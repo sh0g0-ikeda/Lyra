@@ -9,6 +9,25 @@ on:
 jobs:
   verify:
     runs-on: ubuntu-latest
+    env:
+      APP_ENV: test
+      NODE_ENV: test
+      DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/lyra_test
+      DATABASE_SSL_MODE: disable
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: lyra_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d lyra_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -36,6 +55,12 @@ jobs:
       - name: Run Bun test entrypoint
         run: bun test
 
+      - name: Apply migrations to PostgreSQL
+        run: bun run migrate
+
+      - name: Verify PostgreSQL deployment invariants
+        run: bun run db:check-invariants
+
       - name: Build backend
         run: bun run build
 
@@ -44,3 +69,10 @@ jobs:
 
       - name: Build frontend
         run: npm --prefix apps/web run build
+
+      - name: Install Playwright Chromium
+        working-directory: apps/web
+        run: npx playwright install --with-deps chromium
+
+      - name: Run browser smoke tests
+        run: npm --prefix apps/web run e2e

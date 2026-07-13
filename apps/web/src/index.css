@@ -2790,6 +2790,33 @@ details.stack summary {
   font-size: 1.4rem;
 }
 
+.app-error-boundary {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: #0b0b0b;
+  color: #f5f5f5;
+}
+
+.app-error-boundary > section {
+  width: min(100%, 520px);
+  padding: 24px;
+  border: 1px solid #5c4d22;
+  border-radius: 8px;
+  background: #151515;
+}
+
+.app-error-boundary h1 {
+  margin: 0 0 12px;
+  font-size: 24px;
+}
+
+.app-error-boundary p {
+  margin: 0 0 20px;
+  color: #b8b8b8;
+}
+
 .invite-card {
   width: min(520px, 100%);
 }
