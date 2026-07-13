@@ -20,6 +20,7 @@ import {
 import type {
   EpisodePagePlanApplyResult,
   EpisodePagePlanContext,
+  EpisodePagePlanPageSuggestion,
   EpisodePagePlanSuggestion,
   PageAutofillContext,
   PageAutofillPanelContext,
@@ -39,6 +40,20 @@ import { resolveStyleReferenceForPersistence } from '../style/styleReferencePers
 import type { PanelEntityAssignmentServicePort } from './PanelEntityAssignmentService.js';
 import type { PageAutofillCompilerPort } from './PageAutofillCompiler.js';
 import type { EpisodePagePlanCompilerPort } from './EpisodePagePlanCompiler.js';
+import type { EpisodeBeatPlanCompilerPort } from './EpisodeBeatPlanCompiler.js';
+import type {
+  EpisodePlanAuditIssue,
+  EpisodePlanAuditCompilerPort,
+} from './EpisodePlanAuditCompiler.js';
+import {
+  buildEpisodeBeatPlanCompilerBrief,
+  buildEpisodeDetailContinuitySupplement,
+  buildEpisodePlanAuditBrief,
+  detectDeterministicContinuityIssues,
+  fingerprintEpisodePlanningContext,
+  mergeEpisodePlanAuditIssues,
+  validateEpisodeBeatPlanCoverage,
+} from './EpisodePlanContinuity.js';
 
 export interface PageServicePort {
   updatePageSettings(
@@ -63,7 +78,13 @@ export interface PageServicePort {
 }
 
 export interface EpisodePagePlanProgress {
-  stage: 'compiling_chunk' | 'compiled_chunk' | 'applying';
+  stage:
+    | 'planning_episode'
+    | 'compiling_chunk'
+    | 'compiled_chunk'
+    | 'auditing_episode'
+    | 'repairing_chunk'
+    | 'applying';
   message: string;
   currentChunk: number | null;
   totalChunks: number | null;
@@ -111,6 +132,9 @@ export class PageService implements PageServicePort {
     private readonly pageAutofillCompiler?: PageAutofillCompilerPort,
     private readonly episodePagePlanCompiler?: EpisodePagePlanCompilerPort,
     private readonly styleReferenceCompiler?: StyleReferenceCompilerPort,
+    private readonly episodeBeatPlanCompiler?: EpisodeBeatPlanCompilerPort,
+    private readonly episodePlanAuditCompiler?: EpisodePlanAuditCompilerPort,
+    private readonly episodePlanContinuityV3Enabled = false,
   ) {}
 
   public async updatePageSettings(
@@ -338,10 +362,23 @@ export class PageService implements PageServicePort {
       return buildSkippedEpisodePlanApplyResult('Episode page plan compiler is not configured');
     }
 
+    const initialContextFingerprint = this.episodePlanContinuityV3Enabled
+      ? fingerprintEpisodePlanningContext(context)
+      : null;
     const compiled = await this.compileEpisodePlanForContextSafely(context, language, progressReporter);
     if (!compiled.compilerUsed) {
       return buildSkippedEpisodePlanApplyResult(compiled.compilerError);
     }
+
+    const contextForApply =
+      initialContextFingerprint === null
+        ? context
+        : await this.refetchUnchangedEpisodePlanContext(
+            userId,
+            episodeId,
+            organizationId,
+            initialContextFingerprint,
+          );
 
     await reportEpisodePlanProgress(progressReporter, {
       stage: 'applying',
@@ -350,7 +387,30 @@ export class PageService implements PageServicePort {
       totalChunks: null,
     });
 
-    return this.applyEpisodePlanSuggestion(context, userId, compiled, language, organizationId);
+    return this.applyEpisodePlanSuggestion(contextForApply, userId, compiled, language, organizationId);
+  }
+
+  private async refetchUnchangedEpisodePlanContext(
+    userId: string,
+    episodeId: string,
+    organizationId: string | null,
+    initialFingerprint: string,
+  ): Promise<EpisodePagePlanContext> {
+    const currentContext = await this.pageRepository.findEpisodePlanningContextByIdAndUserId(
+      episodeId,
+      userId,
+      organizationId,
+    );
+    if (
+      currentContext === null ||
+      fingerprintEpisodePlanningContext(currentContext) !== initialFingerprint
+    ) {
+      throw new ConflictError(
+        'The episode changed while the story plan was being compiled. Run the operation again.',
+      );
+    }
+
+    return currentContext;
   }
 
   private async repairEpisodePlanLayoutMetadataBeforeCompile(
@@ -391,6 +451,37 @@ export class PageService implements PageServicePort {
     language: AppLanguage,
     progressReporter?: EpisodePagePlanProgressReporter,
   ): Promise<EpisodePlanExecutionResult> {
+    if (this.episodePlanContinuityV3Enabled) {
+      try {
+        return await this.compileEpisodePlanWithContinuityV3(
+          context,
+          language,
+          progressReporter,
+        );
+      } catch (error) {
+        if (!(error instanceof ConfigurationError)) {
+          throw error;
+        }
+
+        const compilerError = sanitizePersistedErrorMessage(
+          error,
+          'Episode continuity planning failed',
+        );
+        console.warn('episode_page_plan_continuity_v3_rejected', {
+          episodeId: context.episodeId,
+          reason: compilerError,
+        });
+        return {
+          suggestion: { pages: [] },
+          compilerUsed: false,
+          compilerProvider: 'fallback',
+          compilerModel: null,
+          compilerPromptVersion: null,
+          compilerError,
+        };
+      }
+    }
+
     if (context.pages.length <= EPISODE_PAGE_PLAN_COMPILER_PAGE_CHUNK_SIZE) {
       await reportEpisodePlanProgress(progressReporter, {
         stage: 'compiling_chunk',
@@ -446,6 +537,186 @@ export class PageService implements PageServicePort {
     return combineEpisodePlanExecutionResults(compiledChunks);
   }
 
+  private async compileEpisodePlanWithContinuityV3(
+    context: EpisodePagePlanContext,
+    language: AppLanguage,
+    progressReporter?: EpisodePagePlanProgressReporter,
+  ): Promise<EpisodePlanExecutionResult> {
+    if (this.episodeBeatPlanCompiler === undefined || this.episodePlanAuditCompiler === undefined) {
+      throw new ConfigurationError('Episode continuity v3 compilers are not configured');
+    }
+
+    await reportEpisodePlanProgress(progressReporter, {
+      stage: 'planning_episode',
+      message: 'Planning story beats across the full episode. This process can take around 20 minutes.',
+      currentChunk: null,
+      totalChunks: null,
+    });
+    const compiledBeatPlan = await this.episodeBeatPlanCompiler.compileBeatPlan({
+      compilerBrief: buildEpisodeBeatPlanCompilerBrief(context, language),
+      language,
+    });
+    validateEpisodeBeatPlanCoverage(context, compiledBeatPlan.plan);
+
+    const pageChunks = chunkEpisodePlanPages(
+      context.pages,
+      EPISODE_PAGE_PLAN_COMPILER_PAGE_CHUNK_SIZE,
+    );
+    console.info('episode_page_plan_continuity_v3_started', {
+      episodeId: context.episodeId,
+      pageCount: context.pages.length,
+      chunkCount: pageChunks.length,
+    });
+
+    const compiledChunks: EpisodePlanExecutionResult[] = [];
+    for (const [chunkIndex, pages] of pageChunks.entries()) {
+      await reportEpisodePlanProgress(progressReporter, {
+        stage: 'compiling_chunk',
+        message: 'Compiling story plan chunks. This process can take around 20 minutes.',
+        currentChunk: chunkIndex + 1,
+        totalChunks: pageChunks.length,
+      });
+      const chunkContext = buildEpisodePlanChunkContext(context, pages);
+      const compiled = await this.compileEpisodePlanSafely(
+        chunkContext,
+        language,
+        buildEpisodeDetailContinuitySupplement({
+          context,
+          plan: compiledBeatPlan.plan,
+          currentPageIds: new Set(pages.map((page) => page.pageId)),
+          completedPages: compiledChunks.flatMap((result) => result.suggestion.pages),
+        }),
+      );
+      if (!compiled.compilerUsed) {
+        return compiled;
+      }
+      compiledChunks.push(compiled);
+      await reportEpisodePlanProgress(progressReporter, {
+        stage: 'compiled_chunk',
+        message: 'Compiling story plan chunks. This process can take around 20 minutes.',
+        currentChunk: chunkIndex + 1,
+        totalChunks: pageChunks.length,
+      });
+    }
+
+    let combined = combineEpisodePlanExecutionResults(compiledChunks);
+    let issues = await this.auditEpisodePlanWithContinuityV3(
+      context,
+      compiledBeatPlan.plan,
+      combined.suggestion,
+      language,
+      progressReporter,
+      1,
+      2,
+    );
+    if (issues.length === 0) {
+      return combined;
+    }
+
+    const affectedChunkIndexes = resolveAffectedEpisodePlanChunkIndexes(pageChunks, issues);
+    for (const chunkIndex of affectedChunkIndexes) {
+      const pages = pageChunks[chunkIndex];
+      if (pages === undefined) {
+        throw new ConfigurationError('Episode continuity repair selected an unknown chunk');
+      }
+      const currentPageIds = new Set(pages.map((page) => page.pageId));
+      const chunkIssues = issues.filter((issue) =>
+        issue.pageIds.some((pageId) => currentPageIds.has(pageId)),
+      );
+      const repairTargetPageIds = new Set(
+        chunkIssues.flatMap((issue) =>
+          issue.pageIds.filter((pageId) => currentPageIds.has(pageId)),
+        ),
+      );
+      const currentDraftPages = combined.suggestion.pages.filter((page) =>
+        currentPageIds.has(page.pageId),
+      );
+      await reportEpisodePlanProgress(progressReporter, {
+        stage: 'repairing_chunk',
+        message: 'Repairing page continuity. This process can take around 20 minutes.',
+        currentChunk: null,
+        totalChunks: null,
+      });
+      const repaired = await this.compileEpisodePlanSafely(
+        buildEpisodePlanChunkContext(context, pages),
+        language,
+        buildEpisodeDetailContinuitySupplement({
+          context,
+          plan: compiledBeatPlan.plan,
+          currentPageIds,
+          completedPages: combined.suggestion.pages.filter(
+            (page) => !currentPageIds.has(page.pageId),
+          ),
+          currentDraftPages,
+          repairIssues: chunkIssues,
+        }),
+      );
+      if (!repaired.compilerUsed) {
+        return repaired;
+      }
+      compiledChunks[chunkIndex] = preserveUnreportedRepairPages(
+        currentDraftPages,
+        repaired,
+        repairTargetPageIds,
+      );
+      combined = combineEpisodePlanExecutionResults(compiledChunks);
+    }
+
+    combined = combineEpisodePlanExecutionResults(compiledChunks);
+    issues = await this.auditEpisodePlanWithContinuityV3(
+      context,
+      compiledBeatPlan.plan,
+      combined.suggestion,
+      language,
+      progressReporter,
+      2,
+      2,
+    );
+    if (issues.length > 0) {
+      throw new ConfigurationError(
+        `Episode continuity audit still found ${issues.length} issue(s) after bounded repair`,
+      );
+    }
+
+    return combined;
+  }
+
+  private async auditEpisodePlanWithContinuityV3(
+    context: EpisodePagePlanContext,
+    plan: Awaited<ReturnType<EpisodeBeatPlanCompilerPort['compileBeatPlan']>>['plan'],
+    suggestion: EpisodePagePlanSuggestion,
+    language: AppLanguage,
+    progressReporter: EpisodePagePlanProgressReporter | undefined,
+    auditPass: number,
+    totalAuditPasses: number,
+  ): Promise<EpisodePlanAuditIssue[]> {
+    console.info('episode_page_plan_continuity_v3_audit_started', {
+      episodeId: context.episodeId,
+      auditPass,
+      totalAuditPasses,
+    });
+    await reportEpisodePlanProgress(progressReporter, {
+      stage: 'auditing_episode',
+      message: 'Checking continuity across all pages. This process can take around 20 minutes.',
+      currentChunk: null,
+      totalChunks: null,
+    });
+    const compiledAudit = await this.episodePlanAuditCompiler!.auditPlan({
+      compilerBrief: buildEpisodePlanAuditBrief({ context, plan, suggestion, language }),
+      language,
+    });
+    if (!compiledAudit.audit.accepted && compiledAudit.audit.issues.length === 0) {
+      throw new ConfigurationError('Episode continuity audit rejected the plan without repair instructions');
+    }
+
+    const knownPageIds = new Set(context.pages.map((page) => page.pageId));
+    return mergeEpisodePlanAuditIssues(
+      detectDeterministicContinuityIssues(suggestion),
+      compiledAudit.audit.issues,
+      knownPageIds,
+    );
+  }
+
   private async compileAutofillSafely(
     context: PageAutofillContext,
     language: AppLanguage,
@@ -494,8 +765,12 @@ export class PageService implements PageServicePort {
   private async compileEpisodePlanSafely(
     context: EpisodePagePlanContext,
     language: AppLanguage,
+    continuitySupplement?: string,
   ): Promise<EpisodePlanExecutionResult> {
-    const compilerBrief = buildEpisodePlanCompilerBrief(context, language);
+    const baseCompilerBrief = buildEpisodePlanCompilerBrief(context, language);
+    const compilerBrief = continuitySupplement === undefined
+      ? baseCompilerBrief
+      : `${baseCompilerBrief}\n${continuitySupplement}`;
     const fallbackSuggestion = buildFallbackEpisodePlanSuggestion(context, language);
 
     try {
@@ -725,6 +1000,31 @@ function buildEpisodePlanChunkContext(
   };
 }
 
+function resolveAffectedEpisodePlanChunkIndexes(
+  pageChunks: EpisodePagePlanContext['pages'][],
+  issues: EpisodePlanAuditIssue[],
+): number[] {
+  const chunkByPageId = new Map<string, number>();
+  for (const [chunkIndex, pages] of pageChunks.entries()) {
+    for (const page of pages) {
+      chunkByPageId.set(page.pageId, chunkIndex);
+    }
+  }
+
+  const indexes = new Set<number>();
+  for (const issue of issues) {
+    for (const pageId of issue.pageIds) {
+      const chunkIndex = chunkByPageId.get(pageId);
+      if (chunkIndex === undefined) {
+        throw new ConfigurationError('Episode continuity audit referenced an unknown page');
+      }
+      indexes.add(chunkIndex);
+    }
+  }
+
+  return Array.from(indexes).sort((left, right) => left - right);
+}
+
 function combineEpisodePlanExecutionResults(
   results: EpisodePlanExecutionResult[],
 ): EpisodePlanExecutionResult {
@@ -751,6 +1051,35 @@ function combineEpisodePlanExecutionResults(
       results.map((result) => result.compilerPromptVersion),
     ),
     compilerError: null,
+  };
+}
+
+function preserveUnreportedRepairPages(
+  currentDraftPages: EpisodePagePlanPageSuggestion[],
+  repaired: EpisodePlanExecutionResult,
+  repairTargetPageIds: ReadonlySet<string>,
+): EpisodePlanExecutionResult {
+  const currentDraftByPageId = new Map(
+    currentDraftPages.map((page) => [page.pageId, page] as const),
+  );
+
+  return {
+    ...repaired,
+    suggestion: {
+      pages: repaired.suggestion.pages.map((page) => {
+        if (repairTargetPageIds.has(page.pageId)) {
+          return page;
+        }
+
+        const currentDraft = currentDraftByPageId.get(page.pageId);
+        if (currentDraft === undefined) {
+          throw new ConfigurationError(
+            'Episode continuity repair returned an unexpected page',
+          );
+        }
+        return currentDraft;
+      }),
+    },
   };
 }
 

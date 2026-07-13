@@ -54,6 +54,8 @@ import {
 import { OpenAIPageGenerationPlanner } from '../src/infrastructure/openai/OpenAIPageGenerationPlanner.js';
 import { OpenAIPageImageRenderer } from '../src/infrastructure/openai/OpenAIPageImageRenderer.js';
 import { OpenAIPagePromptCompiler } from '../src/infrastructure/openai/OpenAIPagePromptCompiler.js';
+import { OpenAIEpisodeBeatPlanCompiler } from '../src/infrastructure/openai/OpenAIEpisodeBeatPlanCompiler.js';
+import { OpenAIEpisodePlanAuditCompiler } from '../src/infrastructure/openai/OpenAIEpisodePlanAuditCompiler.js';
 import { OpenAIPageEpisodePlanCompiler } from '../src/infrastructure/openai/OpenAIPageEpisodePlanCompiler.js';
 import { OpenAIStoryAiClient } from '../src/infrastructure/openai/OpenAIStoryAiClient.js';
 import { OpenAIEntityReferencePromptCompiler } from '../src/infrastructure/openai/OpenAIEntityReferencePromptCompiler.js';
@@ -79,6 +81,8 @@ import { LayoutGuideImageRenderer } from '../src/services/page/LayoutGuideImageR
 import { PageService, type PageServicePort } from '../src/services/page/PageService.js';
 import { PanelEntityAssignmentService } from '../src/services/page/PanelEntityAssignmentService.js';
 import type { EpisodePagePlanCompilerPort } from '../src/services/page/EpisodePagePlanCompiler.js';
+import type { EpisodeBeatPlanCompilerPort } from '../src/services/page/EpisodeBeatPlanCompiler.js';
+import type { EpisodePlanAuditCompilerPort } from '../src/services/page/EpisodePlanAuditCompiler.js';
 import {
   EpisodeStoryAutofillWorkerService,
   type EpisodeStoryAutofillWorkerPort,
@@ -138,6 +142,8 @@ export interface WorkerDependencyOverrides {
   pageSkeletonService?: PageSkeletonServicePort;
   storyAiClient?: StoryAiClientPort;
   episodePagePlanCompiler?: EpisodePagePlanCompilerPort;
+  episodeBeatPlanCompiler?: EpisodeBeatPlanCompilerPort;
+  episodePlanAuditCompiler?: EpisodePlanAuditCompilerPort;
   organizationService?: OrganizationServicePort;
   pageGenerationWorkerService?: PageGenerationWorkerPort;
   entityGenerationWorkerService?: EntityGenerationWorkerPort;
@@ -244,6 +250,10 @@ export function resolveWorkerDependencies(
       new PanelEntityAssignmentService(new PostgresPanelEntityAssignmentRepository(db)),
       undefined,
       overrides.episodePagePlanCompiler ?? resolveEpisodePagePlanCompiler(),
+      undefined,
+      overrides.episodeBeatPlanCompiler ?? resolveEpisodeBeatPlanCompiler(),
+      overrides.episodePlanAuditCompiler ?? resolveEpisodePlanAuditCompiler(),
+      env.EPISODE_PAGE_PLAN_CONTINUITY_V3_ENABLED,
     );
   const pageSkeletonService =
     overrides.pageSkeletonService ??
@@ -439,6 +449,32 @@ function resolveEpisodePagePlanCompiler(): EpisodePagePlanCompilerPort {
   }
 
   return new OpenAIPageEpisodePlanCompiler(client);
+}
+
+function resolveEpisodeBeatPlanCompiler(): EpisodeBeatPlanCompilerPort {
+  const client = buildOpenAIClient();
+  if (client === null) {
+    return {
+      async compileBeatPlan(): Promise<never> {
+        throw new ConfigurationError('OpenAI episode beat plan compiler is not configured');
+      },
+    };
+  }
+
+  return new OpenAIEpisodeBeatPlanCompiler(client);
+}
+
+function resolveEpisodePlanAuditCompiler(): EpisodePlanAuditCompilerPort {
+  const client = buildOpenAIClient();
+  if (client === null) {
+    return {
+      async auditPlan(): Promise<never> {
+        throw new ConfigurationError('OpenAI episode plan audit compiler is not configured');
+      },
+    };
+  }
+
+  return new OpenAIEpisodePlanAuditCompiler(client);
 }
 
 function resolveStoryAiClient(): StoryAiClientPort {
