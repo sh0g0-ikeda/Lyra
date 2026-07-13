@@ -170,7 +170,7 @@ const composition = {
   created_at: '2026-04-26T00:00:00.000Z',
 };
 
-async function mockApi(route: Route): Promise<void> {
+async function mockApi(route: Route, options: { legacyBilling?: boolean } = {}): Promise<void> {
   const url = new URL(route.request().url());
   const { pathname } = url;
 
@@ -281,6 +281,12 @@ async function mockApi(route: Route): Promise<void> {
       purchased_credits: 40,
       total_credits: 140,
       monthly_expires_at: null,
+      ...(options.legacyBilling
+        ? {}
+        : {
+            plan_code: 'free',
+            subscription_plans: [],
+          }),
     });
   }
 
@@ -324,7 +330,8 @@ async function seedEnglishUi(page: Page): Promise<void> {
 test('shows auth screen without token', async ({ page }) => {
   await seedEnglishUi(page);
   await page.goto('/');
-  await expect(page.getByRole('heading', { name: 'Production Console' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Lyra Japan' })).toBeVisible();
+  await expect(page.getByText('Lyra AI manga editor')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Use token' })).toBeVisible();
 });
 
@@ -335,16 +342,30 @@ test('renders the console with mocked api responses', async ({ page }) => {
 
   await page.goto('/');
 
-  await expect(page.getByRole('heading', { name: 'Moonlit Regiment' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Moonlit Regiment', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Story', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Entities', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Pages', exact: true })).toBeVisible();
 
   await page.getByRole('button', { name: 'Entities', exact: true }).click();
   await expect(page.getByText('Mizuki')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Generate full-body candidates' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Generate full-body preview' })).toBeVisible();
 
   await page.getByRole('button', { name: 'Pages', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Page 1' })).toBeVisible();
-  await expect(page.getByText('We are late.')).toBeVisible();
+  await expect(page.getByRole('textbox', { name: 'Situation' })).toHaveValue('Mizuki enters the fort.');
+});
+
+test('keeps the console usable with a legacy billing response', async ({ page }) => {
+  const pageErrors: Error[] = [];
+  page.on('pageerror', (error) => pageErrors.push(error));
+  await seedEnglishUi(page);
+  await seedAuthenticatedSession(page);
+  await page.route('**/api/**', (route) => mockApi(route, { legacyBilling: true }));
+
+  await page.goto('/');
+
+  await expect(page.getByRole('button', { name: 'Moonlit Regiment', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Story', exact: true })).toBeVisible();
+  expect(pageErrors).toEqual([]);
 });
