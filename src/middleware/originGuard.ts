@@ -7,7 +7,7 @@ interface OriginGuardConfig {
   headerValue?: string;
 }
 
-const ORIGIN_GUARD_EXEMPT_PATHS = new Set(['/healthz', '/api/webhooks/stripe']);
+const ORIGIN_GUARD_EXEMPT_PATHS = new Set(['/healthz', '/readyz', '/api/webhooks/stripe']);
 
 export function createOriginGuardMiddleware(config: OriginGuardConfig): MiddlewareHandler<AppEnv> {
   const headerName = config.headerName?.trim();

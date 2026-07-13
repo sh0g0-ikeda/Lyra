@@ -69,7 +69,7 @@ import { createBillingRoutes } from './routes/billing.js';
 import { createBalloonRoutes } from './routes/balloons.js';
 import { createCompositionRoutes } from './routes/compositions.js';
 import { createEntityRoutes } from './routes/entities.js';
-import { createHealthRoutes } from './routes/health.js';
+import { createHealthRoutes, type ReadinessCheck } from './routes/health.js';
 import { createJobRoutes } from './routes/jobs.js';
 import { createLocalAssetRoutes } from './routes/localAssets.js';
 import { createMeRoutes } from './routes/me.js';
@@ -267,6 +267,7 @@ export interface AppDependencies {
   enableDevAuthBypass?: boolean;
   devAuthBypassClaims?: SupabaseJwtClaims;
   webStaticDir?: string | null;
+  readinessCheck?: ReadinessCheck;
 }
 
 export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
@@ -323,7 +324,16 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
       stripeWebhookService: resolvedDependencies.stripeWebhookService,
     }),
   );
-  app.route('/', createHealthRoutes());
+  app.route(
+    '/',
+    createHealthRoutes({
+      readinessCheck:
+        dependencies.readinessCheck ??
+        (async () => {
+          await db.query('SELECT 1');
+        }),
+    }),
+  );
   if (localAssetConfig !== null) {
     app.route('/', createLocalAssetRoutes(localAssetConfig.rootDir));
   }
@@ -507,6 +517,7 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
 export function isWebStaticFallbackPath(path: string): boolean {
   return !(
     path === '/healthz' ||
+    path === '/readyz' ||
     path.startsWith('/api/') ||
     path === '/api' ||
     path.startsWith('/local-assets/')
@@ -577,6 +588,7 @@ function resolveDependencies(
       | 'episodePageSkeletonQueue'
       | 'episodePageSkeletonService'
       | 'webStaticDir'
+      | 'readinessCheck'
     >
   >,
   'storyEpisodeImprovementPlanner'
