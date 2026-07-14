@@ -13,6 +13,7 @@ const now = new Date('2026-06-08T00:00:00.000Z');
 class FakeGenerationJobRepository implements GenerationJobRepository {
   public job: GenerationJob | null = null;
   public reads = 0;
+  public finalizedCancellations: string[] = [];
 
   public async create(_input: CreateGenerationJobInput): Promise<GenerationJob> {
     throw new Error('not used');
@@ -60,10 +61,30 @@ class FakeGenerationJobRepository implements GenerationJobRepository {
   public async prepareRetry(): Promise<boolean> {
     throw new Error('not used');
   }
+
+  public async requestCancellation(): Promise<GenerationJob | null> {
+    throw new Error('not used');
+  }
+
+  public async finalizeCancellation(jobId: string): Promise<boolean> {
+    this.finalizedCancellations.push(jobId);
+    if (this.job === null || this.job.id !== jobId) {
+      return false;
+    }
+
+    this.job = {
+      ...this.job,
+      status: 'cancelled',
+      cancelledAt: now,
+      completedAt: now,
+    };
+    return true;
+  }
 }
 
 class FakeEntityGenerationRecoveryService implements EntityGenerationRecoveryServicePort {
   public recoveredEntities: Array<{ userId: string; entityId: string }> = [];
+  public organizationIds: Array<string | null | undefined> = [];
 
   public constructor(private readonly onRecover: () => void = () => {}) {}
 
@@ -71,8 +92,13 @@ class FakeEntityGenerationRecoveryService implements EntityGenerationRecoverySer
     return 0;
   }
 
-  public async recoverStaleJobsForEntity(userId: string, entityId: string): Promise<number> {
+  public async recoverStaleJobsForEntity(
+    userId: string,
+    entityId: string,
+    organizationId?: string | null,
+  ): Promise<number> {
     this.recoveredEntities.push({ userId, entityId });
+    this.organizationIds.push(organizationId);
     this.onRecover();
     return 1;
   }
@@ -80,6 +106,7 @@ class FakeEntityGenerationRecoveryService implements EntityGenerationRecoverySer
 
 class FakePageGenerationRecoveryService implements PageGenerationRecoveryServicePort {
   public recoveredPages: Array<{ userId: string; pageId: string }> = [];
+  public organizationIds: Array<string | null | undefined> = [];
 
   public constructor(private readonly onRecover: () => void = () => {}) {}
 
@@ -87,8 +114,13 @@ class FakePageGenerationRecoveryService implements PageGenerationRecoveryService
     return 0;
   }
 
-  public async recoverStaleJobsForPage(userId: string, pageId: string): Promise<number> {
+  public async recoverStaleJobsForPage(
+    userId: string,
+    pageId: string,
+    organizationId?: string | null,
+  ): Promise<number> {
     this.recoveredPages.push({ userId, pageId });
+    this.organizationIds.push(organizationId);
     this.onRecover();
     return 1;
   }
@@ -215,6 +247,26 @@ describe('JobService', () => {
     ]);
   });
 
+  it('法人の page job を回復する場合は organization scope を維持する', async () => {
+    const repository = new FakeGenerationJobRepository();
+    repository.job = buildJob({
+      status: 'processing',
+      jobType: 'page_generate',
+      organizationId: 'organization-1',
+      params: { page_id: 'page-1' },
+    });
+    const pageRecoveryService = new FakePageGenerationRecoveryService();
+    const service = new JobService(
+      repository,
+      pageRecoveryService,
+      new FakeEntityGenerationRecoveryService(),
+    );
+
+    await service.getJob('user-1', 'job-1', 'organization-1');
+
+    expect(pageRecoveryService.organizationIds).toEqual(['organization-1']);
+  });
+
   it('processing episode_story_autofill job は長時間更新がなければ failed に倒す', async () => {
     const repository = new FakeGenerationJobRepository();
     repository.job = buildJob({
@@ -285,6 +337,31 @@ describe('JobService', () => {
     expect(job.status).toBe('processing');
     expect(repository.reads).toBe(1);
   });
+  it('停止要求済みの話全体反映ジョブが stale の場合は cancelled に確定する', async () => {
+    const repository = new FakeGenerationJobRepository();
+    repository.job = buildJob({
+      status: 'processing',
+      jobType: 'episode_story_autofill',
+      creditCost: 0,
+      params: { episode_id: 'episode-1' },
+      result: { progress_updated_at: '2026-06-07T23:00:00.000Z' },
+      cancelRequestedAt: new Date('2026-06-07T23:10:00.000Z'),
+      cancelRequestedBy: 'user-1',
+    });
+    const service = new JobService(
+      repository,
+      new FakePageGenerationRecoveryService(),
+      new FakeEntityGenerationRecoveryService(),
+      45 * 60 * 1000,
+      () => now.getTime(),
+    );
+
+    const job = await service.getJob('user-1', 'job-1');
+
+    expect(job.status).toBe('cancelled');
+    expect(repository.finalizedCancellations).toEqual(['job-1']);
+    expect(job.errorMessage).toBeNull();
+  });
 });
 
 function buildJob(overrides: Partial<GenerationJob> = {}): GenerationJob {
@@ -305,6 +382,10 @@ function buildJob(overrides: Partial<GenerationJob> = {}): GenerationJob {
     startedAt: null,
     completedAt: null,
     expiresAt: null,
+    cancelRequestedAt: null,
+    cancelRequestedBy: null,
+    cancelledAt: null,
+    commitStartedAt: null,
     ...overrides,
   };
 }

@@ -72,22 +72,37 @@ delivery uses authenticated export or short-lived CloudFront signed URLs.
 
 Long-running page, entity, page-skeleton, and story-autofill work is represented by
 `generation_jobs`. Active jobs use `queued` or `processing`; terminal jobs use
-`completed` or `failed`. Active-job uniqueness prevents duplicate work for the same
-resource. SQS visibility, provider timeout, retry classification, recovery, and
-credit refund must remain coordinated.
+`completed`, `failed`, or `cancelled`. Active-job uniqueness prevents duplicate work
+for the same resource. SQS visibility, provider timeout, retry classification,
+recovery, cancellation, and credit refund must remain coordinated. Job lookup and
+cancellation are scoped to personal ownership or active organization membership.
 
 Generation and regeneration both create a new result from the current saved inputs.
 A previous generated page image is not an implicit image reference. Confirmed entity
 reference images are explicit character-consistency inputs.
 
 Story-to-page autofill plans beat ownership across the complete episode before
-expanding the existing pages in bounded chunks. The combined draft is audited for
-cross-page repetition, dialogue placement, chronology, and page handoffs before
-page or panel content is persisted. Reported chunks may be repaired once; a draft
-that still fails the final audit is rejected without applying generated content.
-The plan uses each existing page's frame count as its story capacity and carries
-scene character-state notes such as costume and injury through the global
+expanding the existing pages. Detail compilation uses adaptive, consecutive page
+packs sized by estimated structured-output cost; it must not use a fixed three-page
+split. A page is never split between packs, and a pack may contain the full episode
+when it fits the safe output budget.
+
+The combined draft is reviewed for cross-page repetition, dialogue placement,
+chronology, page handoffs, entity assignment, and editable visual fields before any
+page or panel content is persisted. Review repairs are field-level patches: page and
+panel identity, order, and panel count are immutable. Unknown identifiers or invalid
+patch targets are rejected. Unresolved `error` findings block persistence; warning-
+only findings are retained as safe telemetry and do not discard otherwise usable
+content. The plan uses each existing page's frame count as its story capacity and
+carries scene character-state notes such as costume and injury through the global
 continuity brief.
+
+Episode autofill supports cooperative cancellation while queued or before the
+atomic persistence gate. Once `commit_started_at` is set, cancellation is rejected
+and the complete generated plan is written in one PostgreSQL transaction. The
+transaction locks the authorized episode planning graph, rechecks the input
+fingerprint, and applies page, panel, and entity assignment changes together so a
+concurrent edit is not silently overwritten and a partial plan cannot be exposed.
 
 ## 7. Credits and billing
 

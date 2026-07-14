@@ -13,6 +13,7 @@ import {
 import type { AppLanguage } from '../../domain/types/language.js';
 import { STORY_PROMPT_CONTEXT_LIMITS } from '../../domain/storyPromptCompaction.js';
 import { STORY_AI_LIMITS } from '../../domain/constants/storyAi.js';
+import { packEpisodePlanPages } from '../../domain/episodePlanPacking.js';
 import {
   buildPanelFrameTemplateInputs,
   resolveDefaultPanelFrameTemplateId,
@@ -42,9 +43,18 @@ import type { PageAutofillCompilerPort } from './PageAutofillCompiler.js';
 import type { EpisodePagePlanCompilerPort } from './EpisodePagePlanCompiler.js';
 import type { EpisodeBeatPlanCompilerPort } from './EpisodeBeatPlanCompiler.js';
 import type {
+  EpisodePlanPersistencePort,
+  EpisodePlanPersistenceResources,
+} from './EpisodePlanPersistence.js';
+import type {
+  EpisodePlanAudit,
   EpisodePlanAuditIssue,
   EpisodePlanAuditCompilerPort,
 } from './EpisodePlanAuditCompiler.js';
+import {
+  applyEpisodePlanAuditRepairs,
+  hasBlockingEpisodePlanAuditIssues,
+} from './EpisodePlanReviewRepair.js';
 import {
   buildEpisodeBeatPlanCompilerBrief,
   buildEpisodeDetailContinuitySupplement,
@@ -74,7 +84,13 @@ export interface PageServicePort {
     language: AppLanguage,
     progressReporter?: EpisodePagePlanProgressReporter,
     organizationId?: string | null,
+    executionControl?: EpisodePagePlanExecutionControl,
   ): Promise<EpisodePagePlanApplyResult>;
+}
+
+export interface EpisodePagePlanExecutionControl {
+  checkpoint(): Promise<void>;
+  beginCommit(): Promise<void>;
 }
 
 export interface EpisodePagePlanProgress {
@@ -92,6 +108,11 @@ export interface EpisodePagePlanProgress {
 
 export type EpisodePagePlanProgressReporter =
   (progress: EpisodePagePlanProgress) => Promise<void> | void;
+
+export interface EpisodePlanReliabilityOptions {
+  adaptivePackingEnabled?: boolean;
+  inlineRepairEnabled?: boolean;
+}
 
 interface AutofillExecutionResult {
   suggestion: PageAutofillSuggestion;
@@ -135,6 +156,8 @@ export class PageService implements PageServicePort {
     private readonly episodeBeatPlanCompiler?: EpisodeBeatPlanCompilerPort,
     private readonly episodePlanAuditCompiler?: EpisodePlanAuditCompilerPort,
     private readonly episodePlanContinuityV3Enabled = false,
+    private readonly episodePlanReliabilityOptions: EpisodePlanReliabilityOptions = {},
+    private readonly episodePlanPersistence?: EpisodePlanPersistencePort,
   ) {}
 
   public async updatePageSettings(
@@ -143,7 +166,23 @@ export class PageService implements PageServicePort {
     input: UpdatePageSettingsInput,
     organizationId: string | null = null,
   ): Promise<PageSummary> {
-    const page = await this.pageRepository.findPageByIdAndUserId(pageId, userId, organizationId);
+    return this.updatePageSettingsWithRepository(
+      this.pageRepository,
+      userId,
+      pageId,
+      input,
+      organizationId,
+    );
+  }
+
+  private async updatePageSettingsWithRepository(
+    pageRepository: PageRepository,
+    userId: string,
+    pageId: string,
+    input: UpdatePageSettingsInput,
+    organizationId: string | null,
+  ): Promise<PageSummary> {
+    const page = await pageRepository.findPageByIdAndUserId(pageId, userId, organizationId);
     if (page === null) {
       throw new NotFoundError('Page not found');
     }
@@ -173,7 +212,7 @@ export class PageService implements PageServicePort {
             layoutConfig: nextLayoutConfig,
           };
 
-    const updatedPage = await this.pageRepository.updatePageSettings(pageId, userId, persistedInput, organizationId);
+    const updatedPage = await pageRepository.updatePageSettings(pageId, userId, persistedInput, organizationId);
     if (updatedPage === null) {
       throw new NotFoundError('Page not found');
     }
@@ -331,7 +370,9 @@ export class PageService implements PageServicePort {
     language: AppLanguage,
     progressReporter?: EpisodePagePlanProgressReporter,
     organizationId: string | null = null,
+    executionControl?: EpisodePagePlanExecutionControl,
   ): Promise<EpisodePagePlanApplyResult> {
+    await executionControl?.checkpoint();
     if (
       this.panelRepository === undefined ||
       this.panelEntityAssignmentService === undefined
@@ -355,30 +396,98 @@ export class PageService implements PageServicePort {
         `Episode story autofill supports at most ${STORY_AI_LIMITS.maxSkeletonPages} pages`,
       );
     }
+    await executionControl?.checkpoint();
 
-    await this.repairEpisodePlanLayoutMetadataBeforeCompile(userId, context, organizationId);
+    const controlledProgressReporter = createCheckpointedEpisodePlanProgressReporter(
+      progressReporter,
+      executionControl,
+    );
+
+    const deferLayoutPersistence =
+      executionControl !== undefined ||
+      this.episodePlanReliabilityOptions.adaptivePackingEnabled === true ||
+      this.episodePlanReliabilityOptions.inlineRepairEnabled === true;
+    const episodePlanPersistence = this.episodePlanPersistence;
+    const shouldUseAtomicPersistence =
+      deferLayoutPersistence && episodePlanPersistence !== undefined;
+    const initialContextFingerprint =
+      (this.episodePlanContinuityV3Enabled || shouldUseAtomicPersistence) &&
+      deferLayoutPersistence
+        ? fingerprintEpisodePlanningContext(context)
+        : null;
+    const deferredLayouts = await this.repairEpisodePlanLayoutMetadataBeforeCompile(
+      userId,
+      context,
+      organizationId,
+      deferLayoutPersistence,
+    );
 
     if (this.episodePagePlanCompiler === undefined) {
       return buildSkippedEpisodePlanApplyResult('Episode page plan compiler is not configured');
     }
 
-    const initialContextFingerprint = this.episodePlanContinuityV3Enabled
-      ? fingerprintEpisodePlanningContext(context)
+    const contextFingerprint =
+      this.episodePlanContinuityV3Enabled || shouldUseAtomicPersistence
+      ? initialContextFingerprint ?? fingerprintEpisodePlanningContext(context)
       : null;
-    const compiled = await this.compileEpisodePlanForContextSafely(context, language, progressReporter);
+    const compiled = await this.compileEpisodePlanForContextSafely(
+      context,
+      language,
+      controlledProgressReporter,
+    );
+    await executionControl?.checkpoint();
     if (!compiled.compilerUsed) {
       return buildSkippedEpisodePlanApplyResult(compiled.compilerError);
     }
 
+    if (
+      contextFingerprint !== null &&
+      shouldUseAtomicPersistence
+    ) {
+      await executionControl?.checkpoint();
+      return episodePlanPersistence.withLockedEpisodePlan(
+        { episodeId, userId, organizationId },
+        async (lockedContext, resources) => {
+          if (fingerprintEpisodePlanningContext(lockedContext) !== contextFingerprint) {
+            throw new ConflictError(
+              'The episode changed while the story plan was being compiled. Run the operation again.',
+            );
+          }
+
+          applyDeferredEpisodePlanLayouts(lockedContext, deferredLayouts);
+          await executionControl?.beginCommit();
+          await reportEpisodePlanProgress(progressReporter, {
+            stage: 'applying',
+            message: 'Saving story plan to pages and panels. This process can take around 20 minutes.',
+            currentChunk: null,
+            totalChunks: null,
+          });
+          return this.applyEpisodePlanSuggestion(
+            lockedContext,
+            userId,
+            compiled,
+            language,
+            organizationId,
+            deferredLayouts,
+            resources,
+          );
+        },
+      );
+    }
+
     const contextForApply =
-      initialContextFingerprint === null
+      contextFingerprint === null
         ? context
         : await this.refetchUnchangedEpisodePlanContext(
             userId,
             episodeId,
             organizationId,
-            initialContextFingerprint,
+            contextFingerprint,
           );
+    await executionControl?.checkpoint();
+    applyDeferredEpisodePlanLayouts(contextForApply, deferredLayouts);
+
+    await executionControl?.beginCommit();
 
     await reportEpisodePlanProgress(progressReporter, {
       stage: 'applying',
@@ -387,7 +496,14 @@ export class PageService implements PageServicePort {
       totalChunks: null,
     });
 
-    return this.applyEpisodePlanSuggestion(contextForApply, userId, compiled, language, organizationId);
+    return this.applyEpisodePlanSuggestion(
+      contextForApply,
+      userId,
+      compiled,
+      language,
+      organizationId,
+      deferredLayouts,
+    );
   }
 
   private async refetchUnchangedEpisodePlanContext(
@@ -417,7 +533,9 @@ export class PageService implements PageServicePort {
     userId: string,
     context: EpisodePagePlanContext,
     organizationId: string | null,
-  ): Promise<void> {
+    deferPersistence = false,
+  ): Promise<ReadonlyMap<string, UpdatePageSettingsInput['layoutConfig']>> {
+    const deferredLayouts = new Map<string, UpdatePageSettingsInput['layoutConfig']>();
     for (const page of context.pages) {
       ensurePageEditable(page.status, 'story autofill');
       if (page.frameCount === 0) {
@@ -433,9 +551,13 @@ export class PageService implements PageServicePort {
         page.frameCount,
       );
       if (repairedLayoutConfig !== null) {
-        await this.updatePageSettings(userId, page.pageId, {
-          layoutConfig: repairedLayoutConfig,
-        }, organizationId);
+        if (deferPersistence) {
+          deferredLayouts.set(page.pageId, repairedLayoutConfig);
+        } else {
+          await this.updatePageSettings(userId, page.pageId, {
+            layoutConfig: repairedLayoutConfig,
+          }, organizationId);
+        }
         page.layoutConfig = repairedLayoutConfig;
         continue;
       }
@@ -444,6 +566,8 @@ export class PageService implements PageServicePort {
         throw new ValidationError('コマ割りを先に合わせてください');
       }
     }
+
+    return deferredLayouts;
   }
 
   private async compileEpisodePlanForContextSafely(
@@ -482,7 +606,8 @@ export class PageService implements PageServicePort {
       }
     }
 
-    if (context.pages.length <= EPISODE_PAGE_PLAN_COMPILER_PAGE_CHUNK_SIZE) {
+    const pageChunks = this.buildEpisodePlanPagePacks(context);
+    if (pageChunks.length === 1) {
       await reportEpisodePlanProgress(progressReporter, {
         stage: 'compiling_chunk',
         message: 'Compiling story plan chunks. This process can take around 20 minutes.',
@@ -501,15 +626,13 @@ export class PageService implements PageServicePort {
       return compiled;
     }
 
-    const pageChunks = chunkEpisodePlanPages(
-      context.pages,
-      EPISODE_PAGE_PLAN_COMPILER_PAGE_CHUNK_SIZE,
-    );
     console.info('episode_page_plan_compiler_chunked', {
       episodeId: context.episodeId,
       pageCount: context.pages.length,
       chunkCount: pageChunks.length,
-      chunkSize: EPISODE_PAGE_PLAN_COMPILER_PAGE_CHUNK_SIZE,
+      strategy: this.episodePlanReliabilityOptions.adaptivePackingEnabled === true
+        ? 'adaptive_output_weight'
+        : 'fixed_page_count',
     });
 
     const compiledChunks: EpisodePlanExecutionResult[] = [];
@@ -537,6 +660,18 @@ export class PageService implements PageServicePort {
     return combineEpisodePlanExecutionResults(compiledChunks);
   }
 
+  private buildEpisodePlanPagePacks(
+    context: EpisodePagePlanContext,
+  ): EpisodePagePlanContext['pages'][] {
+    if (this.episodePlanReliabilityOptions.adaptivePackingEnabled === true) {
+      return packEpisodePlanPages(context.pages);
+    }
+    return chunkEpisodePlanPages(
+      context.pages,
+      EPISODE_PAGE_PLAN_COMPILER_PAGE_CHUNK_SIZE,
+    );
+  }
+
   private async compileEpisodePlanWithContinuityV3(
     context: EpisodePagePlanContext,
     language: AppLanguage,
@@ -558,10 +693,7 @@ export class PageService implements PageServicePort {
     });
     validateEpisodeBeatPlanCoverage(context, compiledBeatPlan.plan);
 
-    const pageChunks = chunkEpisodePlanPages(
-      context.pages,
-      EPISODE_PAGE_PLAN_COMPILER_PAGE_CHUNK_SIZE,
-    );
+    const pageChunks = this.buildEpisodePlanPagePacks(context);
     console.info('episode_page_plan_continuity_v3_started', {
       episodeId: context.episodeId,
       pageCount: context.pages.length,
@@ -600,7 +732,17 @@ export class PageService implements PageServicePort {
     }
 
     let combined = combineEpisodePlanExecutionResults(compiledChunks);
-    let issues = await this.auditEpisodePlanWithContinuityV3(
+    if (this.episodePlanReliabilityOptions.inlineRepairEnabled === true) {
+      return this.reviewAndRepairEpisodePlanInline(
+        context,
+        compiledBeatPlan.plan,
+        combined,
+        language,
+        progressReporter,
+      );
+    }
+
+    let audit = await this.auditEpisodePlanWithContinuityV3(
       context,
       compiledBeatPlan.plan,
       combined.suggestion,
@@ -609,6 +751,7 @@ export class PageService implements PageServicePort {
       1,
       2,
     );
+    let issues = audit.issues;
     if (issues.length === 0) {
       return combined;
     }
@@ -663,7 +806,7 @@ export class PageService implements PageServicePort {
     }
 
     combined = combineEpisodePlanExecutionResults(compiledChunks);
-    issues = await this.auditEpisodePlanWithContinuityV3(
+    audit = await this.auditEpisodePlanWithContinuityV3(
       context,
       compiledBeatPlan.plan,
       combined.suggestion,
@@ -672,6 +815,7 @@ export class PageService implements PageServicePort {
       2,
       2,
     );
+    issues = audit.issues;
     if (issues.length > 0) {
       throw new ConfigurationError(
         `Episode continuity audit still found ${issues.length} issue(s) after bounded repair`,
@@ -679,6 +823,82 @@ export class PageService implements PageServicePort {
     }
 
     return combined;
+  }
+
+  private async reviewAndRepairEpisodePlanInline(
+    context: EpisodePagePlanContext,
+    plan: Awaited<ReturnType<EpisodeBeatPlanCompilerPort['compileBeatPlan']>>['plan'],
+    combined: EpisodePlanExecutionResult,
+    language: AppLanguage,
+    progressReporter?: EpisodePagePlanProgressReporter,
+  ): Promise<EpisodePlanExecutionResult> {
+    const firstAudit = await this.auditEpisodePlanWithContinuityV3(
+      context,
+      plan,
+      combined.suggestion,
+      language,
+      progressReporter,
+      1,
+      2,
+    );
+    logEpisodePlanAuditSummary(context.episodeId, 1, firstAudit);
+    if (!hasBlockingEpisodePlanAuditIssues(firstAudit.issues)) {
+      return combined;
+    }
+
+    if ((firstAudit.pageRepairs?.length ?? 0) + (firstAudit.panelRepairs?.length ?? 0) === 0) {
+      throw new ConfigurationError(
+        'Episode continuity audit returned errors without a field-level repair',
+      );
+    }
+
+    await reportEpisodePlanProgress(progressReporter, {
+      stage: 'repairing_chunk',
+      message: 'Applying targeted continuity repairs. This process can take around 20 minutes.',
+      currentChunk: null,
+      totalChunks: null,
+    });
+    const repairedSuggestion = applyEpisodePlanAuditRepairs({
+      suggestion: combined.suggestion,
+      audit: firstAudit,
+      knownPanelOrdersByPageId: new Map(
+        context.pages.map((page) => [
+          page.pageId,
+          new Set(page.panels.map((panel) => panel.order)),
+        ] as const),
+      ),
+    });
+    const normalizedSuggestion = normalizeEpisodePlanToContext(
+      context,
+      repairedSuggestion,
+      language,
+    );
+    validateEpisodePlanAgainstContext(context, normalizedSuggestion);
+    const repairedCombined: EpisodePlanExecutionResult = {
+      ...combined,
+      suggestion: normalizedSuggestion,
+    };
+
+    const finalAudit = await this.auditEpisodePlanWithContinuityV3(
+      context,
+      plan,
+      repairedCombined.suggestion,
+      language,
+      progressReporter,
+      2,
+      2,
+    );
+    logEpisodePlanAuditSummary(context.episodeId, 2, finalAudit);
+    const blockingIssueCount = finalAudit.issues.filter(
+      (issue) => issue.severity === 'error',
+    ).length;
+    if (blockingIssueCount > 0) {
+      throw new ConfigurationError(
+        `Episode continuity audit still found ${blockingIssueCount} blocking issue(s) after bounded repair`,
+      );
+    }
+
+    return repairedCombined;
   }
 
   private async auditEpisodePlanWithContinuityV3(
@@ -689,7 +909,7 @@ export class PageService implements PageServicePort {
     progressReporter: EpisodePagePlanProgressReporter | undefined,
     auditPass: number,
     totalAuditPasses: number,
-  ): Promise<EpisodePlanAuditIssue[]> {
+  ): Promise<EpisodePlanAudit> {
     console.info('episode_page_plan_continuity_v3_audit_started', {
       episodeId: context.episodeId,
       auditPass,
@@ -710,11 +930,14 @@ export class PageService implements PageServicePort {
     }
 
     const knownPageIds = new Set(context.pages.map((page) => page.pageId));
-    return mergeEpisodePlanAuditIssues(
-      detectDeterministicContinuityIssues(suggestion),
-      compiledAudit.audit.issues,
-      knownPageIds,
-    );
+    return {
+      ...compiledAudit.audit,
+      issues: mergeEpisodePlanAuditIssues(
+        detectDeterministicContinuityIssues(suggestion),
+        compiledAudit.audit.issues,
+        knownPageIds,
+      ),
+    };
   }
 
   private async compileAutofillSafely(
@@ -816,7 +1039,17 @@ export class PageService implements PageServicePort {
     compiled: EpisodePlanExecutionResult,
     language: AppLanguage,
     organizationId: string | null,
+    deferredLayouts: ReadonlyMap<string, UpdatePageSettingsInput['layoutConfig']> = new Map(),
+    resources?: EpisodePlanPersistenceResources,
   ): Promise<EpisodePagePlanApplyResult> {
+    const pageRepository = resources?.pageRepository ?? this.pageRepository;
+    const panelRepository = resources?.panelRepository ?? this.panelRepository;
+    const panelEntityAssignmentService =
+      resources?.panelEntityAssignmentService ?? this.panelEntityAssignmentService;
+    if (panelRepository === undefined || panelEntityAssignmentService === undefined) {
+      throw new ConfigurationError('Episode page planning service is not fully configured');
+    }
+
     const normalizedSuggestion = normalizeEpisodePlanToContext(context, compiled.suggestion, language);
     validateEpisodePlanAgainstContext(context, normalizedSuggestion);
 
@@ -849,14 +1082,27 @@ export class PageService implements PageServicePort {
 
       const sourceSceneIds = normalizeEpisodePlanSourceSceneIds(context, pageSuggestion.sourceSceneIds);
       const pageContext = buildPageScopedAutofillContext(context, pageIndex);
-      const nextPageSettings = mergePageSettings(pageContext, pageSuggestion.page, {
+      const mergedPageSettings = mergePageSettings(pageContext, pageSuggestion.page, {
         overwriteExisting: true,
         storySourceSceneIds: sourceSceneIds,
         storyPagePurpose: pageSuggestion.pagePurpose,
         storyContinuityNote: pageSuggestion.continuityNote,
       });
+      const deferredLayout = deferredLayouts.get(page.pageId);
+      const nextPageSettings = deferredLayout === undefined
+        ? mergedPageSettings
+        : {
+            ...(mergedPageSettings ?? {}),
+            layoutConfig: deferredLayout,
+          };
       if (nextPageSettings !== null) {
-        await this.updatePageSettings(userId, page.pageId, nextPageSettings, organizationId);
+        await this.updatePageSettingsWithRepository(
+          pageRepository,
+          userId,
+          page.pageId,
+          nextPageSettings,
+          organizationId,
+        );
         updatedPageCount += 1;
         filledFieldCount += Object.keys(nextPageSettings).length;
       }
@@ -905,14 +1151,14 @@ export class PageService implements PageServicePort {
         });
 
         if (merge.panelUpdate !== null) {
-          const updated = await this.panelRepository!.updatePanel(panel.id, userId, merge.panelUpdate, organizationId);
+          const updated = await panelRepository.updatePanel(panel.id, userId, merge.panelUpdate, organizationId);
           if (updated === null) {
             throw new NotFoundError('Panel not found');
           }
         }
 
         if (merge.assignments !== null) {
-          await this.panelEntityAssignmentService!.replacePanelEntityAssignments(
+          await panelEntityAssignmentService.replacePanelEntityAssignments(
             userId,
             panel.id,
             merge.assignments,
@@ -963,6 +1209,20 @@ async function reportEpisodePlanProgress(
   await reporter(progress);
 }
 
+function createCheckpointedEpisodePlanProgressReporter(
+  reporter: EpisodePagePlanProgressReporter | undefined,
+  executionControl: EpisodePagePlanExecutionControl | undefined,
+): EpisodePagePlanProgressReporter | undefined {
+  if (reporter === undefined && executionControl === undefined) {
+    return undefined;
+  }
+
+  return async (progress) => {
+    await executionControl?.checkpoint();
+    await reporter?.(progress);
+  };
+}
+
 function buildSkippedEpisodePlanApplyResult(
   compilerError: string | null,
 ): EpisodePagePlanApplyResult {
@@ -988,6 +1248,41 @@ function chunkEpisodePlanPages(
     chunks.push(pages.slice(index, index + chunkSize));
   }
   return chunks;
+}
+
+function applyDeferredEpisodePlanLayouts(
+  context: EpisodePagePlanContext,
+  deferredLayouts: ReadonlyMap<string, UpdatePageSettingsInput['layoutConfig']>,
+): void {
+  if (deferredLayouts.size === 0) {
+    return;
+  }
+
+  const pagesById = new Map(context.pages.map((page) => [page.pageId, page] as const));
+  for (const [pageId, layoutConfig] of deferredLayouts) {
+    const page = pagesById.get(pageId);
+    if (page === undefined || layoutConfig === undefined) {
+      throw new ConflictError('The episode layout changed while the story plan was being compiled');
+    }
+    page.layoutConfig = layoutConfig;
+  }
+}
+
+function logEpisodePlanAuditSummary(
+  episodeId: string,
+  auditPass: number,
+  audit: EpisodePlanAudit,
+): void {
+  console.info('episode_page_plan_continuity_v3_audit_completed', {
+    episodeId,
+    auditPass,
+    errorCount: audit.issues.filter((issue) => issue.severity === 'error').length,
+    warningCount: audit.issues.filter((issue) => issue.severity === 'warning').length,
+    issueCodes: audit.issues.map((issue) => issue.code),
+    affectedPageIds: Array.from(new Set(audit.issues.flatMap((issue) => issue.pageIds))),
+    pageRepairCount: audit.pageRepairs?.length ?? 0,
+    panelRepairCount: audit.panelRepairs?.length ?? 0,
+  });
 }
 
 function buildEpisodePlanChunkContext(

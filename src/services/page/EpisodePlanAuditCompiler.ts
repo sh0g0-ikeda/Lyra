@@ -1,4 +1,8 @@
 import type { AppLanguage } from '../../domain/types/language.js';
+import type {
+  PageAutofillPanelSuggestion,
+  PageDialogueMode,
+} from '../../domain/types/page.js';
 
 export type EpisodePlanAuditIssueCode =
   | 'duplicate_dialogue'
@@ -17,9 +21,55 @@ export interface EpisodePlanAuditIssue {
   repairInstruction: string;
 }
 
+export type EpisodePlanAuditPageRepairField =
+  | 'sourceSceneIds'
+  | 'pagePurpose'
+  | 'continuityNote'
+  | 'dialogueMode'
+  | 'pageDialogueToggle';
+
+export interface EpisodePlanAuditPageRepairPatch {
+  sourceSceneIds?: string[];
+  pagePurpose?: string | null;
+  continuityNote?: string | null;
+  dialogueMode?: PageDialogueMode;
+  pageDialogueToggle?: boolean;
+}
+
+export interface EpisodePlanAuditPageRepair {
+  pageId: string;
+  changedFields: EpisodePlanAuditPageRepairField[];
+  patch: EpisodePlanAuditPageRepairPatch;
+}
+
+export type EpisodePlanAuditPanelRepairField =
+  | 'panelRole'
+  | 'panelSize'
+  | 'situationText'
+  | 'composition'
+  | 'dialogueInPanel'
+  | 'dialogue'
+  | 'sfxText'
+  | 'backgroundNote'
+  | 'panelNotes'
+  | 'entities';
+
+export type EpisodePlanAuditPanelRepairPatch = Partial<
+  Omit<PageAutofillPanelSuggestion, 'order'>
+>;
+
+export interface EpisodePlanAuditPanelRepair {
+  pageId: string;
+  panelOrder: number;
+  changedFields: EpisodePlanAuditPanelRepairField[];
+  patch: EpisodePlanAuditPanelRepairPatch;
+}
+
 export interface EpisodePlanAudit {
   accepted: boolean;
   issues: EpisodePlanAuditIssue[];
+  pageRepairs?: EpisodePlanAuditPageRepair[];
+  panelRepairs?: EpisodePlanAuditPanelRepair[];
 }
 
 export interface CompileEpisodePlanAuditInput {

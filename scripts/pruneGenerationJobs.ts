@@ -113,7 +113,7 @@ function printUsage(): void {
     'Usage:',
     '  bun run admin:prune-jobs -- [--max-deletes 500] [--apply]',
     '',
-    'Default mode is dry-run. Only completed or failed generation jobs past expires_at are deleted.',
+    'Default mode is dry-run. Only completed, failed, or cancelled generation jobs past expires_at are deleted.',
   ].join('\n'));
 }
 

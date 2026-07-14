@@ -54,6 +54,18 @@ const envSchema = z.object({
     .string()
     .optional()
     .transform((value) => (value === undefined ? true : value === 'true')),
+  EPISODE_PAGE_PLAN_ADAPTIVE_PACKING_ENABLED: z
+    .string()
+    .optional()
+    .transform((value) => value === 'true'),
+  EPISODE_PLAN_INLINE_REPAIR_ENABLED: z
+    .string()
+    .optional()
+    .transform((value) => value === 'true'),
+  EPISODE_STORY_AUTOFILL_CANCELLATION_ENABLED: z
+    .string()
+    .optional()
+    .transform((value) => value === 'true'),
   GENERATION_USER_ACTIVE_JOB_LIMIT: z.coerce
     .number()
     .int()

@@ -7,10 +7,15 @@ import { env } from '../lib/env.js';
 import { createReferenceCandidateToken } from '../services/entity/ReferenceCandidateToken.js';
 import type { JobServicePort } from '../services/job/JobService.js';
 import type { AppEnv } from '../types/app.js';
+import {
+  parseOptionalOrganizationId,
+  requireOrganizationCapability,
+  type OrganizationRouteDependencies,
+} from './organizationRouteHelpers.js';
 
 const uuidParamSchema = z.string().uuid();
 
-export interface JobRouteDependencies {
+export interface JobRouteDependencies extends OrganizationRouteDependencies {
   authMiddleware: MiddlewareHandler<AppEnv>;
   rateLimitMiddleware: MiddlewareHandler<AppEnv>;
   jobService: JobServicePort;
@@ -25,7 +30,19 @@ export function createJobRoutes(dependencies: JobRouteDependencies): Hono<AppEnv
   app.get('/jobs/:id', async (c) => {
     const user = c.get('user');
     const jobId = parseUuidParam(c, 'id');
-    const job = await dependencies.jobService.getJob(user.id, jobId);
+    const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'view_work');
+    const job = await dependencies.jobService.getJob(user.id, jobId, organizationId);
+
+    return c.json(await toJobResponse(job));
+  });
+
+  app.post('/jobs/:id/cancel', async (c) => {
+    const user = c.get('user');
+    const jobId = parseUuidParam(c, 'id');
+    const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'edit_work');
+    const job = await dependencies.jobService.cancelJob(user.id, jobId, organizationId);
 
     return c.json(await toJobResponse(job));
   });
@@ -57,6 +74,9 @@ async function toJobResponse(job: GenerationJob): Promise<Record<string, unknown
     started_at: job.startedAt?.toISOString() ?? null,
     completed_at: job.completedAt?.toISOString() ?? null,
     expires_at: job.expiresAt?.toISOString() ?? null,
+    cancel_requested_at: job.cancelRequestedAt?.toISOString() ?? null,
+    cancelled_at: job.cancelledAt?.toISOString() ?? null,
+    commit_started_at: job.commitStartedAt?.toISOString() ?? null,
   };
 }
 

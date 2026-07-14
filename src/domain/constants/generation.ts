@@ -90,7 +90,7 @@ export const EPISODE_BEAT_PLAN_COMPILER_VERSION = 'episode_beat_plan_v1';
 
 export const EPISODE_PLAN_AUDIT_COMPILER_OPENAI_MODEL = 'gpt-5';
 export const EPISODE_PLAN_AUDIT_COMPILER_MAX_TOKENS = 12000;
-export const EPISODE_PLAN_AUDIT_COMPILER_VERSION = 'episode_plan_audit_v1';
+export const EPISODE_PLAN_AUDIT_COMPILER_VERSION = 'episode_plan_audit_v2';
 
 export const PAGE_GENERATION_PLANNER_MAX_TOKENS = 700;
 export const PAGE_GENERATION_INTERNAL_PLAN_MAX_CHARS = 1200;

@@ -3,6 +3,7 @@ import { PostgresCreditRepository } from '../src/repositories/CreditRepository.j
 import { PostgresEntityGenerationExecutionRepository } from '../src/repositories/EntityGenerationExecutionRepository.js';
 import { PostgresEpisodePageSkeletonExecutionRepository } from '../src/repositories/EpisodePageSkeletonExecutionRepository.js';
 import { PostgresEpisodeStoryAutofillExecutionRepository } from '../src/repositories/EpisodeStoryAutofillExecutionRepository.js';
+import { PostgresEpisodePlanPersistenceRepository } from '../src/repositories/EpisodePlanPersistenceRepository.js';
 import { PostgresPageGenerationExecutionRepository } from '../src/repositories/PageGenerationExecutionRepository.js';
 import { PostgresOrganizationRepository } from '../src/repositories/OrganizationRepository.js';
 import { CreditService, type CreditServicePort } from '../src/services/credit/CreditService.js';
@@ -254,6 +255,11 @@ export function resolveWorkerDependencies(
       overrides.episodeBeatPlanCompiler ?? resolveEpisodeBeatPlanCompiler(),
       overrides.episodePlanAuditCompiler ?? resolveEpisodePlanAuditCompiler(),
       env.EPISODE_PAGE_PLAN_CONTINUITY_V3_ENABLED,
+      {
+        adaptivePackingEnabled: env.EPISODE_PAGE_PLAN_ADAPTIVE_PACKING_ENABLED,
+        inlineRepairEnabled: env.EPISODE_PLAN_INLINE_REPAIR_ENABLED,
+      },
+      new PostgresEpisodePlanPersistenceRepository(db),
     );
   const pageSkeletonService =
     overrides.pageSkeletonService ??
@@ -291,6 +297,7 @@ export function resolveWorkerDependencies(
     episodeStoryAutofillWorkerService: new EpisodeStoryAutofillWorkerService(
       episodeStoryAutofillExecutionRepository,
       pageService,
+      env.EPISODE_STORY_AUTOFILL_CANCELLATION_ENABLED,
     ),
     episodePageSkeletonWorkerService: new EpisodePageSkeletonWorkerService(
       episodePageSkeletonExecutionRepository,

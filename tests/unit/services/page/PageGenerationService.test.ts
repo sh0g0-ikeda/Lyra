@@ -932,6 +932,10 @@ function buildJob(overrides: Partial<GenerationJob> = {}): GenerationJob {
     startedAt: null,
     completedAt: null,
     expiresAt: new Date('2026-05-01T00:00:00.000Z'),
+    cancelRequestedAt: null,
+    cancelRequestedBy: null,
+    cancelledAt: null,
+    commitStartedAt: null,
     ...overrides,
   };
 }

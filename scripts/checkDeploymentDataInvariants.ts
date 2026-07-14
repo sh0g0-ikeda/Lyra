@@ -98,7 +98,7 @@ const DEPLOYMENT_DATA_INVARIANT_QUERIES: InvariantQuery[] = [
   },
   {
     name: 'generation_jobs.status',
-    sql: "SELECT id::text AS id FROM generation_jobs WHERE status NOT IN ('queued', 'processing', 'completed', 'failed') ORDER BY id LIMIT $1",
+    sql: "SELECT id::text AS id FROM generation_jobs WHERE status NOT IN ('queued', 'processing', 'completed', 'failed', 'cancelled') ORDER BY id LIMIT $1",
   },
   {
     name: 'generation_jobs.generation_mode',
