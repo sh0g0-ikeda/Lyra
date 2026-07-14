@@ -539,8 +539,14 @@ export class LyraApiClient {
     return this.request(`/api/compositions${query.length > 0 ? `?${query}` : ''}`);
   }
 
-  public getJob(jobId: string): Promise<GenerationJobRecord> {
-    return this.request(`/api/jobs/${jobId}`);
+  public getJob(jobId: string, organizationId?: string | null): Promise<GenerationJobRecord> {
+    return this.request(`/api/jobs/${jobId}${organizationQuery(organizationId)}`);
+  }
+
+  public cancelJob(jobId: string, organizationId?: string | null): Promise<GenerationJobRecord> {
+    return this.request(`/api/jobs/${jobId}/cancel${organizationQuery(organizationId)}`, {
+      method: 'POST',
+    });
   }
 
   public getBalance(): Promise<BillingBalanceRecord> {

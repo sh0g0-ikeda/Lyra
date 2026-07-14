@@ -33,6 +33,10 @@ class FakeEpisodePageSkeletonRepository implements EpisodePageSkeletonExecutionR
     startedAt: null,
     completedAt: null,
     expiresAt: null,
+    cancelRequestedAt: null,
+    cancelRequestedBy: null,
+    cancelledAt: null,
+    commitStartedAt: null,
   };
   public completed: unknown = null;
   public failed: unknown = null;

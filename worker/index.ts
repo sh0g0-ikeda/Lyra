@@ -97,7 +97,10 @@ export async function handleGenerationQueue(
       results.push({
         messageId: record.messageId ?? null,
         jobId: parsedMessage.job_id,
-        status: result.status === 'skipped' ? 'skipped' : result.jobStatus ?? 'completed',
+        status:
+          result.status === 'skipped' || result.jobStatus === 'cancelled'
+            ? 'skipped'
+            : result.jobStatus ?? 'completed',
       });
     } catch (error) {
       addBatchItemFailure(batchItemFailures, record.messageId);

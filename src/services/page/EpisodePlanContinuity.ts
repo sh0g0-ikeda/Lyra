@@ -291,6 +291,9 @@ export function buildEpisodePlanAuditBrief(input: {
     MAX_AUDIT_PANEL_SUMMARY_CHARS,
   );
   const entityLabels = buildEntityLabelLookup(input.context);
+  const deterministicFindingLines = formatDeterministicAuditFindingLines(
+    detectDeterministicContinuityIssues(input.suggestion),
+  );
 
   return [
     '[AUDIT PURPOSE]',
@@ -309,8 +312,12 @@ export function buildEpisodePlanAuditBrief(input: {
       .sort(compareSuggestionPages)
       .flatMap((page) => formatAuditPage(page, panelBudget, entityLabels)),
     '',
+    '[DETERMINISTIC FINDINGS THAT MUST BE REPAIRED]',
+    ...deterministicFindingLines,
+    '',
     '[AUDIT CONTRACT]',
     'Check the entire draft against the source and ledger, not each page in isolation.',
+    'Every deterministic finding above is binding: return an error issue and a field-level repair for its target page.',
     'Target page_ids that must be recompiled. For repetition, target the later occurrence unless both pages must change.',
   ].join('\n');
 }
@@ -375,6 +382,36 @@ export function detectDeterministicContinuityIssues(
   }
 
   return deduplicateAuditIssues(issues);
+}
+
+function formatDeterministicAuditFindingLines(
+  issues: readonly EpisodePlanAuditIssue[],
+): string[] {
+  if (issues.length === 0) {
+    return ['(none)'];
+  }
+
+  const grouped = new Map<
+    EpisodePlanAuditIssue['code'],
+    { pageIds: Set<string>; repairInstruction: string }
+  >();
+  for (const issue of issues) {
+    const existing = grouped.get(issue.code);
+    if (existing === undefined) {
+      grouped.set(issue.code, {
+        pageIds: new Set(issue.pageIds),
+        repairInstruction: issue.repairInstruction,
+      });
+      continue;
+    }
+    for (const pageId of issue.pageIds) {
+      existing.pageIds.add(pageId);
+    }
+  }
+
+  return Array.from(grouped, ([code, finding]) =>
+    `${code} | pages=${Array.from(finding.pageIds).join(',')} | repair=${truncatePromptText(finding.repairInstruction, 300)}`,
+  );
 }
 
 export function mergeEpisodePlanAuditIssues(

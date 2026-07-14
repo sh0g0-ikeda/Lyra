@@ -19,6 +19,7 @@ import {
   RefreshCw,
   Save,
   Sparkles,
+  Square,
   Trash2,
   Users,
   Wand2,
@@ -463,6 +464,7 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   paused: '一時停止中',
   paid: '支払い済み',
   failed: '失敗',
+  cancelled: '\u505c\u6b62\u6e08\u307f',
   Free: 'フリー',
   'Manage paid plans in Stripe.': '有料プランの変更・解約は「サブスク・請求を管理」で行ってください。',
   'production console': '制作コンソール',
@@ -614,6 +616,14 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   'Page generation starts at 3 credits.': 'ページ生成 3crから',
   'Text AI actions use no credits.': 'テキストAI 0cr',
   'No recent jobs.': '最近のジョブはありません。',
+  Stop: '\u505c\u6b62',
+  'Stopping...': '\u505c\u6b62\u4e2d...',
+  Remove: '\u524a\u9664',
+  'Stop this story apply job?': '\u8a71\u5168\u4f53\u306e\u53cd\u6620\u3092\u505c\u6b62\u3057\u307e\u3059\u304b\uff1f',
+  'Stop requested. The current safe step will finish before stopping.': '\u505c\u6b62\u3092\u53d7\u3051\u4ed8\u3051\u307e\u3057\u305f\u3002\u73fe\u5728\u306e\u5b89\u5168\u306a\u51e6\u7406\u5358\u4f4d\u304c\u7d42\u308f\u308a\u6b21\u7b2c\u3001\u505c\u6b62\u3057\u307e\u3059\u3002',
+  'Story plan autofill was stopped.': '\u8a71\u5168\u4f53\u306e\u53cd\u6620\u3092\u505c\u6b62\u3057\u307e\u3057\u305f\u3002',
+  'Saving changes. Stop is no longer available.': '\u4fdd\u5b58\u4e2d\u306e\u305f\u3081\u3001\u505c\u6b62\u3067\u304d\u307e\u305b\u3093\u3002',
+  'Remove from job history': '\u30b8\u30e7\u30d6\u5c65\u6b74\u304b\u3089\u524a\u9664',
   'Only PNG, JPEG, and WebP are allowed.': 'PNG/JPEG/WebPのみ対応しています。',
   'Image file is too large.': '画像が大きすぎます。',
   'Image analyzed. Generate preview next.': '画像解析が完了しました。次にプレビューを生成してください。',
@@ -715,6 +725,8 @@ const UI_JA_DICTIONARY: Record<string, string> = {
     '\u5168\u30da\u30fc\u30b8\u306e\u91cd\u8907\u3068\u3064\u306a\u304c\u308a\u3092\u78ba\u8a8d\u3057\u3066\u3044\u307e\u3059\u3002\u3053\u306e\u51e6\u7406\u306f20\u5206\u7a0b\u5ea6\u304b\u304b\u308b\u5834\u5408\u304c\u3042\u308a\u307e\u3059\u3002',
   'Repairing page continuity. This process can take around 20 minutes.':
     '\u91cd\u8907\u3084\u3064\u306a\u304c\u308a\u306e\u554f\u984c\u3092\u4fee\u6b63\u3057\u3066\u3044\u307e\u3059\u3002\u3053\u306e\u51e6\u7406\u306f20\u5206\u7a0b\u5ea6\u304b\u304b\u308b\u5834\u5408\u304c\u3042\u308a\u307e\u3059\u3002',
+  'Applying targeted continuity repairs. This process can take around 20 minutes.':
+    '\u554f\u984c\u306e\u3042\u308b\u30da\u30fc\u30b8\u3068\u30b3\u30de\u3060\u3051\u3092\u4fee\u6b63\u3057\u3066\u3044\u307e\u3059\u3002\u3053\u306e\u51e6\u7406\u306f20\u5206\u7a0b\u5ea6\u304b\u304b\u308b\u5834\u5408\u304c\u3042\u308a\u307e\u3059\u3002',
   'Saving story plan to pages and panels. This process can take around 20 minutes.':
     '\u30da\u30fc\u30b8\u3068\u30b3\u30de\u3078\u53cd\u6620\u3057\u3066\u3044\u307e\u3059\u3002\u3053\u306e\u51e6\u7406\u306f20\u5206\u7a0b\u5ea6\u304b\u304b\u308b\u5834\u5408\u304c\u3042\u308a\u307e\u3059\u3002',
   'Story plan applied to pages and panels.':
@@ -1232,9 +1244,13 @@ function getJobProgressPercent(job: GenerationJobRecord): number | null {
   return Math.round((boundedCurrent / totalChunks) * 100);
 }
 
-function getJobProgressBarState(job: GenerationJobRecord): { percent: number | null; tone: 'active' | 'queued' | 'completed' | 'failed' } | null {
+function getJobProgressBarState(job: GenerationJobRecord): { percent: number | null; tone: 'active' | 'queued' | 'completed' | 'failed' | 'cancelled' } | null {
   const isActive = job.status === 'queued' || job.status === 'processing';
   const hasPersistedProgress = readStringResultField(job, 'progress_message') !== null;
+  if (job.status === 'cancelled') {
+    return { percent: 100, tone: 'cancelled' };
+  }
+
   if (!isActive && !hasPersistedProgress) {
     return null;
   }
@@ -2165,10 +2181,17 @@ function StudioShell(props: {
   const isMobileViewport = useIsMobileViewport();
   const [notice, setNotice] = useState<NoticeState | null>(null);
   const [busyAction, setBusyAction] = useState<string | null>(null);
+  const legacyTrackedJobsKey = scopedStorageKey(trackedJobsStorageKey, props.authSessionKey);
+  const workspaceTrackedJobsKey = scopedStorageKey(
+    trackedJobsStorageKey,
+    `${props.authSessionKey}:workspace:${activeOrganizationId ?? 'personal'}`,
+  );
+  const legacyTrackedJobsFallback =
+    activeOrganizationId === null ? (window.localStorage.getItem(legacyTrackedJobsKey) ?? '[]') : '[]';
   const [trackedJobIds, setTrackedJobIds] = useStoredString(
     window.localStorage,
-    scopedStorageKey(trackedJobsStorageKey, props.authSessionKey),
-    '[]',
+    workspaceTrackedJobsKey,
+    legacyTrackedJobsFallback,
   );
   const [selectedWorkId, setSelectedWorkId] = useStoredString(
     window.localStorage,
@@ -2628,7 +2651,7 @@ function StudioShell(props: {
   const jobQueries = useQueries({
     queries: trackedJobList.map((jobId) => ({
       queryKey: scopedQueryKey(['job', jobId]),
-      queryFn: () => api.getJob(jobId),
+      queryFn: () => api.getJob(jobId, activeOrganizationId),
       refetchInterval: (query: { state: { data: GenerationJobRecord | undefined } }) =>
         query.state.data?.status === 'queued' || query.state.data?.status === 'processing' ? 4000 : false,
     })),
@@ -3043,7 +3066,7 @@ function StudioShell(props: {
         continue;
       }
 
-      if (job.status === 'completed' || job.status === 'failed') {
+      if (job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled') {
         handledJobsRef.current.add(job.id);
         void invalidateScopedQuery(['billing-balance']);
 
@@ -3323,6 +3346,38 @@ function StudioShell(props: {
 
   const trackJob = (jobId: string): void => {
     setTrackedJobIds(JSON.stringify(Array.from(new Set([jobId, ...trackedJobList])).slice(0, 24)));
+  };
+
+  const cancelTrackedJob = async (job: GenerationJobRecord): Promise<void> => {
+    if (!window.confirm(translateUiString(uiLanguage, 'Stop this story apply job?'))) {
+      return;
+    }
+
+    const actionKey = `cancel-job:${job.id}`;
+    try {
+      setBusyAction(actionKey);
+      const updatedJob = await api.cancelJob(job.id, activeOrganizationId);
+      queryClient.setQueryData(scopedQueryKey(['job', job.id]), updatedJob);
+      setNotice({
+        type: updatedJob.status === 'cancelled' ? 'success' : 'info',
+        message: translateUiString(
+          uiLanguage,
+          updatedJob.status === 'cancelled'
+            ? 'Story plan autofill was stopped.'
+            : 'Stop requested. The current safe step will finish before stopping.',
+        ),
+      });
+    } catch (error) {
+      setNotice({ type: 'error', message: toMessage(error, uiLanguage) });
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  const removeTrackedJob = (jobId: string): void => {
+    setTrackedJobIds(JSON.stringify(trackedJobList.filter((trackedJobId) => trackedJobId !== jobId)));
+    handledJobsRef.current.delete(jobId);
+    queryClient.removeQueries({ queryKey: scopedQueryKey(['job', jobId]) });
   };
 
   const toggleExportPageSelection = (pageId: string): void => {
@@ -4302,13 +4357,23 @@ function StudioShell(props: {
           const progressText = getJobProgressText(job, uiLanguage);
           const progressBarState = getJobProgressBarState(job);
           const jobErrorText = getJobFailureText(job, uiLanguage);
+          const isTerminalJob =
+            job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled';
+          const isStoryAutofillActive =
+            job.job_type === 'episode_story_autofill' &&
+            (job.status === 'queued' || job.status === 'processing');
+          const cancellationPending = typeof job.cancel_requested_at === 'string';
+          const commitStarted = typeof job.commit_started_at === 'string';
+          const cancelActionKey = `cancel-job:${job.id}`;
           return (
             <div key={job.id} className="job-row">
               <div>
                 <strong>{translateUiString(uiLanguage, job.job_type)}</strong>
                 <div className="muted small">#{formatShortId(job.id)}</div>
                 {progressText !== null ? (
-                  <div className="muted small">{progressText}</div>
+                  <div aria-live="polite" className="muted small" role="status">
+                    {progressText}
+                  </div>
                 ) : null}
                 {progressBarState !== null ? (
                   <ProgressBar compact percent={progressBarState.percent} tone={progressBarState.tone} />
@@ -4316,8 +4381,44 @@ function StudioShell(props: {
                 {jobErrorText !== null ? (
                   <div className="error-text small">{jobErrorText}</div>
                 ) : null}
+                {isStoryAutofillActive && commitStarted ? (
+                  <div className="muted small">
+                    {translateUiString(uiLanguage, 'Saving changes. Stop is no longer available.')}
+                  </div>
+                ) : null}
               </div>
-              <StatusBadge value={job.status} />
+              <div className="job-row-actions">
+                <StatusBadge value={job.status} />
+                {isStoryAutofillActive ? (
+                  <button
+                    className="job-stop-button"
+                    disabled={cancellationPending || commitStarted || busyAction === cancelActionKey}
+                    onClick={() => void cancelTrackedJob(job)}
+                    type="button"
+                  >
+                    {cancellationPending || busyAction === cancelActionKey ? (
+                      <LoaderCircle className="spin" size={14} />
+                    ) : (
+                      <Square size={13} />
+                    )}
+                    {translateUiString(
+                      uiLanguage,
+                      cancellationPending || busyAction === cancelActionKey ? 'Stopping...' : 'Stop',
+                    )}
+                  </button>
+                ) : null}
+                {isTerminalJob ? (
+                  <button
+                    aria-label={translateUiString(uiLanguage, 'Remove from job history')}
+                    className="icon-button"
+                    onClick={() => removeTrackedJob(job.id)}
+                    title={translateUiString(uiLanguage, 'Remove from job history')}
+                    type="button"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                ) : null}
+              </div>
             </div>
           );
         })}
@@ -6998,7 +7099,7 @@ function ProcessingHint(props: { message: string; progressPercent?: number | nul
 function ProgressBar(props: {
   compact?: boolean;
   percent: number | null;
-  tone: 'active' | 'queued' | 'completed' | 'failed';
+  tone: 'active' | 'queued' | 'completed' | 'failed' | 'cancelled';
 }) {
   const normalizedPercent = props.percent === null ? null : Math.min(100, Math.max(0, props.percent));
   const className = [

@@ -126,5 +126,9 @@ function buildJob(): GenerationJob {
     startedAt: new Date('2026-04-24T00:00:00.000Z'),
     completedAt: new Date('2026-04-24T00:01:00.000Z'),
     expiresAt: new Date('2026-05-01T00:00:00.000Z'),
+    cancelRequestedAt: null,
+    cancelRequestedBy: null,
+    cancelledAt: null,
+    commitStartedAt: null,
   };
 }

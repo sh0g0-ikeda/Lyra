@@ -9,7 +9,7 @@ export type GenerationJobType =
   | 'entity_generate'
   | 'episode_story_autofill'
   | 'episode_page_skeleton';
-export type GenerationJobStatus = 'queued' | 'processing' | 'completed' | 'failed';
+export type GenerationJobStatus = 'queued' | 'processing' | 'completed' | 'failed' | 'cancelled';
 
 export interface PageGenerationJobParams {
   pageId: string;
@@ -37,4 +37,8 @@ export interface GenerationJob {
   startedAt: Date | null;
   completedAt: Date | null;
   expiresAt: Date | null;
+  cancelRequestedAt: Date | null;
+  cancelRequestedBy: string | null;
+  cancelledAt: Date | null;
+  commitStartedAt: Date | null;
 }

@@ -69,6 +69,10 @@ interface GenerationJobRow extends QueryResultRow {
   started_at: Date | null;
   completed_at: Date | null;
   expires_at: Date | null;
+  cancel_requested_at: Date | null;
+  cancel_requested_by: string | null;
+  cancelled_at: Date | null;
+  commit_started_at: Date | null;
 }
 
 export class PostgresEntityGenerationExecutionRepository implements EntityGenerationExecutionRepository {
@@ -233,5 +237,9 @@ function mapGenerationJobRow(row: GenerationJobRow): GenerationJob {
     startedAt: row.started_at,
     completedAt: row.completed_at,
     expiresAt: row.expires_at,
+    cancelRequestedAt: row.cancel_requested_at,
+    cancelRequestedBy: row.cancel_requested_by,
+    cancelledAt: row.cancelled_at,
+    commitStartedAt: row.commit_started_at,
   };
 }

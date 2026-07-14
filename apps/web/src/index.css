@@ -2462,6 +2462,39 @@ a {
   flex: 1;
 }
 
+.job-row-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 7px;
+  flex: 0 0 auto;
+}
+
+.job-stop-button {
+  min-height: 32px;
+  padding: 5px 9px;
+  border: 1px solid rgba(244, 67, 54, 0.58);
+  border-radius: 6px;
+  background: rgba(244, 67, 54, 0.08);
+  color: #ff8b83;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font: inherit;
+  font-size: 0.75rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.job-stop-button:hover:not(:disabled) {
+  background: rgba(244, 67, 54, 0.16);
+}
+
+.job-stop-button:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
 .status-badge {
   padding: 4px 8px;
   border-radius: 999px;
@@ -2495,6 +2528,11 @@ a {
 .status-failed {
   background: rgba(244, 67, 54, 0.12);
   color: #f77e75;
+}
+
+.status-cancelled {
+  background: rgba(158, 158, 158, 0.12);
+  color: #bdbdbd;
 }
 
 .state-pill-row {
@@ -2659,6 +2697,10 @@ a {
 
 .progress-failed .progress-bar-fill {
   background: linear-gradient(90deg, #f35f55, #ffaaa3);
+}
+
+.progress-cancelled .progress-bar-fill {
+  background: linear-gradient(90deg, #777, #bdbdbd);
 }
 
 .progress-bar.indeterminate .progress-bar-fill {
@@ -3330,6 +3372,10 @@ details.stack summary {
   .job-row {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .job-row-actions {
+    justify-content: space-between;
   }
 }
 

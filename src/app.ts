@@ -3,7 +3,10 @@ import { Hono, type MiddlewareHandler } from 'hono';
 import { ConfigurationError, ValidationError } from './domain/errors/index.js';
 import type { EnterprisePlanCode, PaidPlanCode } from './domain/constants/billing.js';
 import type { SubscriptionPlanCatalogEntry } from './domain/types/billing.js';
-import { EPISODE_LONG_JOB_ACTIVE_JOB_TYPES } from './domain/constants/generation.js';
+import {
+  EPISODE_LONG_JOB_ACTIVE_JOB_TYPES,
+  EPISODE_LONG_JOB_STALE_AFTER_MS,
+} from './domain/constants/generation.js';
 import { createPageImageStorageClient } from './infrastructure/aws/S3PageImageStorage.js';
 import { S3FinalPageImageStorage, type FinalPageImageStoragePort } from './infrastructure/aws/S3FinalPageImageStorage.js';
 import { S3EntityImageStorage, type EntityImageStoragePort } from './infrastructure/aws/S3EntityImageStorage.js';
@@ -52,6 +55,7 @@ import { PostgresCreditRepository } from './repositories/CreditRepository.js';
 import { PostgresEntityRepository } from './repositories/EntityRepository.js';
 import { PostgresEntityGenerationExecutionRepository } from './repositories/EntityGenerationExecutionRepository.js';
 import { PostgresEntityGenerationRecoveryRepository } from './repositories/EntityGenerationRecoveryRepository.js';
+import { PostgresEpisodePlanPersistenceRepository } from './repositories/EpisodePlanPersistenceRepository.js';
 import { PostgresGenerationJobRepository } from './repositories/GenerationJobRepository.js';
 import { PostgresOrganizationRepository } from './repositories/OrganizationRepository.js';
 import { PostgresBalloonRepository } from './repositories/BalloonRepository.js';
@@ -413,6 +417,7 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
       authMiddleware,
       rateLimitMiddleware,
       jobService: resolvedDependencies.jobService,
+      organizationService: resolvedDependencies.organizationService,
     }),
   );
   app.route(
@@ -813,6 +818,11 @@ function resolveDependencies(
       resolveEpisodeBeatPlanCompiler(),
       resolveEpisodePlanAuditCompiler(),
       env.EPISODE_PAGE_PLAN_CONTINUITY_V3_ENABLED,
+      {
+        adaptivePackingEnabled: env.EPISODE_PAGE_PLAN_ADAPTIVE_PACKING_ENABLED,
+        inlineRepairEnabled: env.EPISODE_PLAN_INLINE_REPAIR_ENABLED,
+      },
+      new PostgresEpisodePlanPersistenceRepository(db),
     );
   const jobService =
     dependencies.jobService ??
@@ -820,6 +830,9 @@ function resolveDependencies(
       generationJobRepository,
       pageGenerationRecoveryService,
       entityGenerationRecoveryService,
+      EPISODE_LONG_JOB_STALE_AFTER_MS,
+      () => Date.now(),
+      env.EPISODE_STORY_AUTOFILL_CANCELLATION_ENABLED,
     );
   const storyCollaborationService =
     dependencies.storyCollaborationService ??

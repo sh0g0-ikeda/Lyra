@@ -2,6 +2,9 @@ import { expect, test, type Page, type Route } from '@playwright/test';
 
 const manualTokenStorageKey = 'lyra:web:manual-token';
 const uiLanguageStorageKey = 'lyra:web:ui-language';
+const legacyTrackedJobsStorageKey = 'lyra:web:tracked-jobs:email:session';
+const personalTrackedJobsStorageKey = `${legacyTrackedJobsStorageKey}:workspace:personal`;
+const cancellableStoryJobId = '77777777-7777-4777-8777-777777777777';
 
 const work = {
   id: '11111111-1111-4111-8111-111111111111',
@@ -170,7 +173,10 @@ const composition = {
   created_at: '2026-04-26T00:00:00.000Z',
 };
 
-async function mockApi(route: Route, options: { legacyBilling?: boolean } = {}): Promise<void> {
+async function mockApi(
+  route: Route,
+  options: { legacyBilling?: boolean; legacyJobCancellationFields?: boolean } = {},
+): Promise<void> {
   const url = new URL(route.request().url());
   const { pathname } = url;
 
@@ -290,6 +296,58 @@ async function mockApi(route: Route, options: { legacyBilling?: boolean } = {}):
     });
   }
 
+  if (pathname === `/api/jobs/${cancellableStoryJobId}/cancel` && route.request().method() === 'POST') {
+    return json({
+      id: cancellableStoryJobId,
+      job_type: 'episode_story_autofill',
+      status: 'cancelled',
+      generation_mode: null,
+      credit_cost: 0,
+      params: { episode_id: episode.id, language: 'en' },
+      result: {
+        progress_stage: 'cancelled',
+        progress_message: 'Story plan autofill was stopped.',
+      },
+      error_message: null,
+      retry_count: 0,
+      created_at: '2026-04-26T00:00:00.000Z',
+      started_at: null,
+      completed_at: '2026-04-26T00:00:02.000Z',
+      expires_at: null,
+      cancel_requested_at: '2026-04-26T00:00:02.000Z',
+      cancelled_at: '2026-04-26T00:00:02.000Z',
+      commit_started_at: null,
+    });
+  }
+
+  if (pathname === `/api/jobs/${cancellableStoryJobId}`) {
+    return json({
+      id: cancellableStoryJobId,
+      job_type: 'episode_story_autofill',
+      status: 'queued',
+      generation_mode: null,
+      credit_cost: 0,
+      params: { episode_id: episode.id, language: 'en' },
+      result: {
+        progress_stage: 'queued',
+        progress_message: 'Queued. This process can take around 20 minutes.',
+      },
+      error_message: null,
+      retry_count: 0,
+      created_at: '2026-04-26T00:00:00.000Z',
+      started_at: null,
+      completed_at: null,
+      expires_at: null,
+      ...(options.legacyJobCancellationFields
+        ? {}
+        : {
+            cancel_requested_at: null,
+            cancelled_at: null,
+            commit_started_at: null,
+          }),
+    });
+  }
+
   if (pathname.startsWith('/api/jobs/')) {
     return json({
       id: 'job-1',
@@ -305,6 +363,9 @@ async function mockApi(route: Route, options: { legacyBilling?: boolean } = {}):
       started_at: '2026-04-26T00:00:01.000Z',
       completed_at: '2026-04-26T00:00:02.000Z',
       expires_at: null,
+      cancel_requested_at: null,
+      cancelled_at: null,
+      commit_started_at: null,
     });
   }
 
@@ -325,6 +386,16 @@ async function seedEnglishUi(page: Page): Promise<void> {
   await page.addInitScript((storageKey) => {
     window.localStorage.setItem(storageKey, 'en');
   }, uiLanguageStorageKey);
+}
+
+async function seedTrackedJobs(
+  page: Page,
+  jobIds: string[],
+  storageKey = personalTrackedJobsStorageKey,
+): Promise<void> {
+  await page.addInitScript(({ storageKey, values }) => {
+    window.localStorage.setItem(storageKey, JSON.stringify(values));
+  }, { storageKey, values: jobIds });
 }
 
 test('shows auth screen without token', async ({ page }) => {
@@ -354,6 +425,40 @@ test('renders the console with mocked api responses', async ({ page }) => {
   await page.getByRole('button', { name: 'Pages', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Page 1' })).toBeVisible();
   await expect(page.getByRole('textbox', { name: 'Situation' })).toHaveValue('Mizuki enters the fort.');
+});
+
+test('stops a queued story apply job and removes it from local history', async ({ page }) => {
+  await seedEnglishUi(page);
+  await seedAuthenticatedSession(page);
+  await seedTrackedJobs(page, [cancellableStoryJobId]);
+  await page.route('**/api/**', mockApi);
+
+  await page.goto('/');
+
+  const stopButton = page.getByRole('button', { name: 'Stop', exact: true });
+  await expect(stopButton).toBeVisible();
+  page.once('dialog', (dialog) => dialog.accept());
+  await stopButton.click();
+
+  await expect(page.getByText('cancelled', { exact: true })).toBeVisible();
+  const removeButton = page.getByRole('button', { name: 'Remove from job history' });
+  await expect(removeButton).toBeVisible();
+  await removeButton.click();
+  await expect(page.getByText('No recent jobs.')).toBeVisible();
+});
+
+test('keeps stop available when a rolling API response omits cancellation fields', async ({ page }) => {
+  await seedEnglishUi(page);
+  await seedAuthenticatedSession(page);
+  await seedTrackedJobs(page, [cancellableStoryJobId], legacyTrackedJobsStorageKey);
+  await page.route('**/api/**', (route) =>
+    mockApi(route, { legacyJobCancellationFields: true }),
+  );
+
+  await page.goto('/');
+
+  await expect(page.getByRole('button', { name: 'Stop', exact: true })).toBeEnabled();
+  await expect(page.getByText('Saving has started, so this job can no longer be stopped.')).toHaveCount(0);
 });
 
 test('keeps the console usable with a legacy billing response', async ({ page }) => {

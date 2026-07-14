@@ -165,6 +165,36 @@ describe('EpisodePlanContinuity', () => {
     expect(brief).toContain('speech:司カサネ:これは私に届いた手紙だ。');
   });
 
+  it('決定論的に検出した重複を同じ監査で必ず修復する対象として渡す', () => {
+    const context = buildContext();
+    context.pages = context.pages.slice(0, 2);
+    const plan = buildBeatPlan();
+    plan.pages = plan.pages.slice(0, 2);
+    const suggestion = buildVerboseSuggestion();
+    suggestion.pages = suggestion.pages.slice(0, 2).map((page) => ({
+      ...page,
+      panels: [
+        {
+          order: 1,
+          situationText: `ページ${page.pageNumber}だけの状況。`,
+          dialogue: [
+            {
+              entityId: null,
+              type: 'narration',
+              position: 'top',
+              text: 'そこにいるの？',
+            },
+          ],
+        },
+      ],
+    }));
+
+    const brief = buildEpisodePlanAuditBrief({ context, plan, suggestion, language: 'ja' });
+
+    expect(brief).toContain('[DETERMINISTIC FINDINGS THAT MUST BE REPAIRED]');
+    expect(brief).toContain(`duplicate_dialogue | pages=${pageId(2)}`);
+  });
+
   it('最大構成でも後続 chunk 用 brief を上限内に収めつつ既出ページを残す', () => {
     const context = buildContext();
     const plan = buildBeatPlan();
