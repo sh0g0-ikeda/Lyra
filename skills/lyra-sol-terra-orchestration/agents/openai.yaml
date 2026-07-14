@@ -1,0 +1,4 @@
+interface:
+  display_name: "Lyra Sol/Terra Orchestration"
+  short_description: "Coordinate Sol-led design with Terra execution for Lyra work."
+  default_prompt: "Use $lyra-sol-terra-orchestration to plan and coordinate a Lyra implementation task with Sol/Terra roles."
