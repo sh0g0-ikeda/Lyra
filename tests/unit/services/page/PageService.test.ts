@@ -449,11 +449,15 @@ class FakeEpisodeBeatPlanCompiler implements EpisodeBeatPlanCompilerPort {
 class FakeEpisodePlanAuditCompiler implements EpisodePlanAuditCompilerPort {
   public inputs: CompileEpisodePlanAuditInput[] = [];
   public audits: CompiledEpisodePlanAudit['audit'][] = [];
+  public error: Error | null = null;
 
   public async auditPlan(
     input: CompileEpisodePlanAuditInput,
   ): Promise<CompiledEpisodePlanAudit> {
     this.inputs.push(input);
+    if (this.error !== null) {
+      throw this.error;
+    }
     return {
       audit: this.audits.shift() ?? { accepted: true, issues: [] },
       compilerProvider: 'openai',
@@ -1246,12 +1250,52 @@ describe('PageService', () => {
     expect(episodeCompiler.inputs[1]?.compilerBrief).toContain('Page 1 (page-1)');
     expect(episodeCompiler.inputs[1]?.compilerBrief).toContain('[FUTURE RESERVED BEATS]');
     expect(auditCompiler.inputs).toHaveLength(1);
+    expect(auditCompiler.inputs[0]?.pageIds).toEqual([
+      'page-1',
+      'page-2',
+      'page-3',
+      'page-4',
+      'page-5',
+      'page-6',
+      'page-7',
+    ]);
     expect(progressEvents.find((progress) => progress.stage === 'auditing_episode')).toMatchObject({
       currentChunk: null,
       totalChunks: null,
     });
     expect(pageRepository.episodePlanningContextReadCount).toBe(2);
     expect(panelRepository.updatedPanels).toHaveLength(7);
+  });
+
+  it('continuity v3 の監査応答が回復不能な場合はページとコマを保存しない', async () => {
+    const pageRepository = new FakePageRepository();
+    pageRepository.episodePlanningContext = buildMultiPageEpisodePlanningContext(4);
+    const panelRepository = new FakePanelRepository();
+    const assignmentService = new FakePanelEntityAssignmentService();
+    const auditCompiler = new FakeEpisodePlanAuditCompiler();
+    auditCompiler.error = new ConfigurationError(
+      'OpenAI episode plan audit compiler returned invalid JSON',
+    );
+    const service = new PageService(
+      pageRepository,
+      panelRepository,
+      assignmentService,
+      new FakePageAutofillCompiler(),
+      new ChunkAwareEpisodePagePlanCompiler(),
+      undefined,
+      new FakeEpisodeBeatPlanCompiler(),
+      auditCompiler,
+      true,
+      { adaptivePackingEnabled: true, inlineRepairEnabled: true },
+    );
+
+    const result = await service.autofillEpisodeFromStory('user-1', 'episode-1', 'ja');
+
+    expect(result.compilerUsed).toBe(false);
+    expect(result.compilerError).toContain('returned invalid JSON');
+    expect(pageRepository.updatedInputs).toHaveLength(0);
+    expect(panelRepository.updatedPanels).toHaveLength(0);
+    expect(assignmentService.updates).toHaveLength(0);
   });
 
   it('adaptive packing 有効時は4コマ10ページを出力量に応じた2つのpackで処理する', async () => {

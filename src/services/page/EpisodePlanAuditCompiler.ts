@@ -75,6 +75,8 @@ export interface EpisodePlanAudit {
 export interface CompileEpisodePlanAuditInput {
   compilerBrief: string;
   language: AppLanguage;
+  pageIds: string[];
+  beforeRetry?: () => Promise<void>;
 }
 
 export interface CompiledEpisodePlanAudit {

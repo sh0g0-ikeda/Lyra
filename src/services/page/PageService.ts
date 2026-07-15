@@ -982,6 +982,15 @@ export class PageService implements PageServicePort {
     const compiledAudit = await this.episodePlanAuditCompiler!.auditPlan({
       compilerBrief: buildEpisodePlanAuditBrief({ context, plan, suggestion, language }),
       language,
+      pageIds: context.pages.map((page) => page.pageId),
+      beforeRetry: async () => {
+        await reportEpisodePlanProgress(progressReporter, {
+          stage: 'auditing_episode',
+          message: 'Retrying the final continuity audit safely. This process can take around 20 minutes.',
+          currentChunk: null,
+          totalChunks: null,
+        });
+      },
     });
     if (!compiledAudit.audit.accepted && compiledAudit.audit.issues.length === 0) {
       throw new ConfigurationError('Episode continuity audit rejected the plan without repair instructions');
