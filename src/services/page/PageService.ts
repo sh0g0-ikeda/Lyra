@@ -858,22 +858,12 @@ export class PageService implements PageServicePort {
       currentChunk: null,
       totalChunks: null,
     });
-    const repairedSuggestion = applyEpisodePlanAuditRepairs({
-      suggestion: combined.suggestion,
-      audit: firstAudit,
-      knownPanelOrdersByPageId: new Map(
-        context.pages.map((page) => [
-          page.pageId,
-          new Set(page.panels.map((panel) => panel.order)),
-        ] as const),
-      ),
-    });
-    const normalizedSuggestion = normalizeEpisodePlanToContext(
+    const normalizedSuggestion = this.applyValidatedEpisodePlanAuditRepairs(
       context,
-      repairedSuggestion,
+      combined.suggestion,
+      firstAudit,
       language,
     );
-    validateEpisodePlanAgainstContext(context, normalizedSuggestion);
     const repairedCombined: EpisodePlanExecutionResult = {
       ...combined,
       suggestion: normalizedSuggestion,
@@ -889,16 +879,84 @@ export class PageService implements PageServicePort {
       2,
     );
     logEpisodePlanAuditSummary(context.episodeId, 2, finalAudit);
-    const blockingIssueCount = finalAudit.issues.filter(
+    if (!hasBlockingEpisodePlanAuditIssues(finalAudit.issues)) {
+      return repairedCombined;
+    }
+
+    await reportEpisodePlanProgress(progressReporter, {
+      stage: 'repairing_chunk',
+      message: 'Applying final targeted continuity repairs. This process can take around 20 minutes.',
+      currentChunk: null,
+      totalChunks: null,
+    });
+    const finalSuggestion = this.applyValidatedEpisodePlanAuditRepairs(
+      context,
+      repairedCombined.suggestion,
+      finalAudit,
+      language,
+    );
+    const deterministicIssues = detectDeterministicContinuityIssues(finalSuggestion).filter(
       (issue) => issue.severity === 'error',
-    ).length;
-    if (blockingIssueCount > 0) {
+    );
+    if (deterministicIssues.length > 0) {
       throw new ConfigurationError(
-        `Episode continuity audit still found ${blockingIssueCount} blocking issue(s) after bounded repair`,
+        `Episode continuity audit repair left ${deterministicIssues.length} deterministic issue(s)`,
+      );
+    }
+    console.info('episode_page_plan_continuity_v3_final_repairs_applied', {
+      episodeId: context.episodeId,
+      pageRepairCount: finalAudit.pageRepairs?.length ?? 0,
+      panelRepairCount: finalAudit.panelRepairs?.length ?? 0,
+    });
+
+    const verificationAudit = await this.auditEpisodePlanWithContinuityV3(
+      context,
+      plan,
+      finalSuggestion,
+      language,
+      progressReporter,
+      3,
+      3,
+    );
+    logEpisodePlanAuditSummary(context.episodeId, 3, verificationAudit);
+    const unresolvedIssues = verificationAudit.issues.filter(
+      (issue) => issue.severity === 'error',
+    );
+    if (unresolvedIssues.length > 0) {
+      throw new ConfigurationError(
+        `Episode continuity final verification found ${unresolvedIssues.length} unresolved issue(s)`,
       );
     }
 
-    return repairedCombined;
+    return {
+      ...repairedCombined,
+      suggestion: finalSuggestion,
+    };
+  }
+
+  private applyValidatedEpisodePlanAuditRepairs(
+    context: EpisodePagePlanContext,
+    suggestion: EpisodePagePlanSuggestion,
+    audit: EpisodePlanAudit,
+    language: AppLanguage,
+  ): EpisodePagePlanSuggestion {
+    const repairedSuggestion = applyEpisodePlanAuditRepairs({
+      suggestion,
+      audit,
+      knownPanelOrdersByPageId: new Map(
+        context.pages.map((page) => [
+          page.pageId,
+          new Set(page.panels.map((panel) => panel.order)),
+        ] as const),
+      ),
+    });
+    const normalizedSuggestion = normalizeEpisodePlanToContext(
+      context,
+      repairedSuggestion,
+      language,
+    );
+    validateEpisodePlanAgainstContext(context, normalizedSuggestion);
+    return normalizedSuggestion;
   }
 
   private async auditEpisodePlanWithContinuityV3(
