@@ -124,6 +124,7 @@ function buildSystemPrompt(language: CompileEpisodePlanAuditInput['language']): 
     'For a defect repeated from an earlier page, target the later page that must change whenever possible.',
     'Use severity=error only when the draft cannot be safely saved without repair. Use warning for non-blocking improvements.',
     'Return field-level repairs for every repairable error. Change only fields named in changed_fields and never change page IDs, page numbers, panel orders, or panel counts.',
+    'Every field named in changed_fields must have a corresponding patch value. Use an empty array, never null, to clear dialogue, entities, or source_scene_ids. Never use null for roles, sizes, composition, dialogue_in_panel, dialogue_mode, or page_dialogue_toggle.',
     'Do not return repairs for warnings or pages that are not named by an error.',
     'Set accepted to true when no error-severity issue remains; warnings may still be present.',
     `Write issue messages and repair instructions in natural ${outputLanguage}.`,

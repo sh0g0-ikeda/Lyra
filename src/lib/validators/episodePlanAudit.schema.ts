@@ -37,6 +37,24 @@ export const episodePlanAuditPanelRepairFields = [
   'entities',
 ] as const;
 
+type EpisodePlanAuditPageRepairField = (typeof episodePlanAuditPageRepairFields)[number];
+type EpisodePlanAuditPanelRepairField = (typeof episodePlanAuditPanelRepairFields)[number];
+
+const nonNullablePageRepairFields: ReadonlySet<EpisodePlanAuditPageRepairField> = new Set([
+  'source_scene_ids',
+  'dialogue_mode',
+  'page_dialogue_toggle',
+]);
+
+const nonNullablePanelRepairFields: ReadonlySet<EpisodePlanAuditPanelRepairField> = new Set([
+  'panel_role',
+  'panel_size',
+  'composition',
+  'dialogue_in_panel',
+  'dialogue',
+  'entities',
+]);
+
 const episodePlanAuditIssueSchema = z
   .object({
     code: z.enum(episodePlanAuditIssueCodes),
@@ -84,7 +102,18 @@ const episodePlanAuditPageRepairSchema = z
       .refine((fields) => new Set(fields).size === fields.length, 'changed_fields must be unique'),
     patch: pageRepairPatchSchema,
   })
-  .strict();
+  .strict()
+  .superRefine((repair, context) => {
+    for (const field of repair.changed_fields) {
+      if (nonNullablePageRepairFields.has(field) && repair.patch[field] === null) {
+        context.addIssue({
+          code: 'custom',
+          path: ['patch', field],
+          message: `${field} must not be null when included in changed_fields`,
+        });
+      }
+    }
+  });
 
 const episodePlanAuditPanelRepairSchema = z
   .object({
@@ -97,7 +126,18 @@ const episodePlanAuditPanelRepairSchema = z
       .refine((fields) => new Set(fields).size === fields.length, 'changed_fields must be unique'),
     patch: panelRepairPatchSchema,
   })
-  .strict();
+  .strict()
+  .superRefine((repair, context) => {
+    for (const field of repair.changed_fields) {
+      if (nonNullablePanelRepairFields.has(field) && repair.patch[field] === null) {
+        context.addIssue({
+          code: 'custom',
+          path: ['patch', field],
+          message: `${field} must not be null when included in changed_fields`,
+        });
+      }
+    }
+  });
 
 export const episodePlanAuditSchema = z
   .object({
