@@ -53,12 +53,14 @@ The migration is additive. Existing `queued`, `processing`, `completed`, and
    A page is never split. Small and normal episodes compile in one or two calls.
 6. Combine and schema-validate the draft against known page, panel, scene, and
    entity identifiers.
-7. Run one review-and-repair call over the complete draft. The response contains
-   findings and explicit page/panel field patches.
-8. Apply only declared fields to the in-memory draft. IDs, page order, panel
-   order, and panel counts are immutable.
-9. Run deterministic continuity checks. Run a second model review only when an
-   unresolved `error` remains.
+7. Run one review call over the complete draft. The response contains findings
+   and explicit page/panel field patches.
+8. When the first review contains an `error`, apply its declared fields to the
+   in-memory draft exactly once. IDs, page order, panel order, and panel counts
+   are immutable.
+9. Run deterministic continuity checks and one final audit pass over the
+   once-repaired draft. A repair proposed by this verification is not applied,
+   and a third audit pass is never started.
 10. Reject only unresolved `error` findings. Record warnings as safe telemetry.
 11. Re-fetch the episode and compare its fingerprint.
 12. Atomically enter the commit gate if cancellation has not been requested.
@@ -89,6 +91,13 @@ Static Zod validation is followed by context validation. Unknown IDs, unknown
 panel orders, duplicate patch targets, and attempts to change immutable fields
 are rejected. The merge code copies only allowlisted fields. LLM output is never
 written directly to the database.
+
+The repair budget is bounded per execution: at most one field-level patch set is
+applied and at most two audit passes are started. Each pass may still use the
+compiler client's bounded transport retry for a retryable provider failure. If
+the final verification reports an `error`, the complete draft is discarded
+without persistence. This avoids stochastic repair loops and keeps provider cost
+and latency bounded.
 
 Safe telemetry records stage duration, pass number, finding code/severity, and
 page identifiers. It excludes story text, dialogue text, prompts, API keys, and

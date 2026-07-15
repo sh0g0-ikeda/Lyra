@@ -751,19 +751,22 @@ export class PageService implements PageServicePort {
       1,
       2,
     );
-    let issues = audit.issues;
-    if (issues.length === 0) {
+    let blockingIssues = audit.issues.filter((issue) => issue.severity === 'error');
+    if (blockingIssues.length === 0) {
       return combined;
     }
 
-    const affectedChunkIndexes = resolveAffectedEpisodePlanChunkIndexes(pageChunks, issues);
+    const affectedChunkIndexes = resolveAffectedEpisodePlanChunkIndexes(
+      pageChunks,
+      blockingIssues,
+    );
     for (const chunkIndex of affectedChunkIndexes) {
       const pages = pageChunks[chunkIndex];
       if (pages === undefined) {
         throw new ConfigurationError('Episode continuity repair selected an unknown chunk');
       }
       const currentPageIds = new Set(pages.map((page) => page.pageId));
-      const chunkIssues = issues.filter((issue) =>
+      const chunkIssues = blockingIssues.filter((issue) =>
         issue.pageIds.some((pageId) => currentPageIds.has(pageId)),
       );
       const repairTargetPageIds = new Set(
@@ -815,10 +818,10 @@ export class PageService implements PageServicePort {
       2,
       2,
     );
-    issues = audit.issues;
-    if (issues.length > 0) {
+    blockingIssues = audit.issues.filter((issue) => issue.severity === 'error');
+    if (blockingIssues.length > 0) {
       throw new ConfigurationError(
-        `Episode continuity audit still found ${issues.length} issue(s) after bounded repair`,
+        `Episode continuity audit still found ${blockingIssues.length} issue(s) after bounded repair`,
       );
     }
 
@@ -883,55 +886,21 @@ export class PageService implements PageServicePort {
       return repairedCombined;
     }
 
-    await reportEpisodePlanProgress(progressReporter, {
-      stage: 'repairing_chunk',
-      message: 'Applying final targeted continuity repairs. This process can take around 20 minutes.',
-      currentChunk: null,
-      totalChunks: null,
-    });
-    const finalSuggestion = this.applyValidatedEpisodePlanAuditRepairs(
-      context,
-      repairedCombined.suggestion,
-      finalAudit,
-      language,
-    );
-    const deterministicIssues = detectDeterministicContinuityIssues(finalSuggestion).filter(
+    const unresolvedIssues = finalAudit.issues.filter(
       (issue) => issue.severity === 'error',
     );
-    if (deterministicIssues.length > 0) {
-      throw new ConfigurationError(
-        `Episode continuity audit repair left ${deterministicIssues.length} deterministic issue(s)`,
-      );
-    }
-    console.info('episode_page_plan_continuity_v3_final_repairs_applied', {
+    console.warn('episode_page_plan_continuity_v3_verification_rejected', {
       episodeId: context.episodeId,
-      pageRepairCount: finalAudit.pageRepairs?.length ?? 0,
-      panelRepairCount: finalAudit.panelRepairs?.length ?? 0,
+      repairPassCount: 1,
+      unresolvedErrorCount: unresolvedIssues.length,
+      issueCodes: unresolvedIssues.map((issue) => issue.code),
+      affectedPageIds: Array.from(
+        new Set(unresolvedIssues.flatMap((issue) => issue.pageIds)),
+      ),
     });
-
-    const verificationAudit = await this.auditEpisodePlanWithContinuityV3(
-      context,
-      plan,
-      finalSuggestion,
-      language,
-      progressReporter,
-      3,
-      3,
+    throw new ConfigurationError(
+      `Episode continuity verification found ${unresolvedIssues.length} unresolved issue(s) after one repair pass`,
     );
-    logEpisodePlanAuditSummary(context.episodeId, 3, verificationAudit);
-    const unresolvedIssues = verificationAudit.issues.filter(
-      (issue) => issue.severity === 'error',
-    );
-    if (unresolvedIssues.length > 0) {
-      throw new ConfigurationError(
-        `Episode continuity final verification found ${unresolvedIssues.length} unresolved issue(s)`,
-      );
-    }
-
-    return {
-      ...repairedCombined,
-      suggestion: finalSuggestion,
-    };
   }
 
   private applyValidatedEpisodePlanAuditRepairs(
@@ -986,7 +955,7 @@ export class PageService implements PageServicePort {
       beforeRetry: async () => {
         await reportEpisodePlanProgress(progressReporter, {
           stage: 'auditing_episode',
-          message: 'Retrying the final continuity audit safely. This process can take around 20 minutes.',
+          message: 'Retrying the continuity audit safely. This process can take around 20 minutes.',
           currentChunk: null,
           totalChunks: null,
         });
