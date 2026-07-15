@@ -169,4 +169,51 @@ describe('EpisodePlanReviewRepair', () => {
       }),
     ).toThrow(ConfigurationError);
   });
+
+  it('複数のerrorの一部にしかfield-level repairがない場合は拒否する', () => {
+    const suggestion = buildSuggestion();
+    const firstPage = suggestion.pages[0]!;
+    suggestion.pages.push({
+      ...firstPage,
+      pageId: '22222222-2222-4222-8222-222222222222',
+      pageNumber: 2,
+      panels: firstPage.panels.map((panel) => ({ ...panel })),
+    });
+
+    expect(() =>
+      applyEpisodePlanAuditRepairs({
+        suggestion,
+        knownPanelOrdersByPageId: new Map([
+          ['11111111-1111-4111-8111-111111111111', new Set([1])],
+          ['22222222-2222-4222-8222-222222222222', new Set([1])],
+        ]),
+        audit: buildAudit({
+          issues: [
+            {
+              code: 'timeline_discontinuity',
+              severity: 'error',
+              pageIds: ['11111111-1111-4111-8111-111111111111'],
+              message: 'Page 1 rewinds the story.',
+              repairInstruction: 'Advance page 1.',
+            },
+            {
+              code: 'dialogue_misplacement',
+              severity: 'error',
+              pageIds: ['22222222-2222-4222-8222-222222222222'],
+              message: 'Page 2 places dialogue too early.',
+              repairInstruction: 'Move the dialogue on page 2.',
+            },
+          ],
+          panelRepairs: [
+            {
+              pageId: '11111111-1111-4111-8111-111111111111',
+              panelOrder: 1,
+              changedFields: ['situationText'],
+              patch: { situationText: 'Page 1 now advances the story.' },
+            },
+          ],
+        }),
+      }),
+    ).toThrow('without a field-level repair');
+  });
 });
