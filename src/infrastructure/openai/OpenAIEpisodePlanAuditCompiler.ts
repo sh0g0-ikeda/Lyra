@@ -1,4 +1,5 @@
 import {
+  EPISODE_PLAN_AUDIT_COMPILER_MAX_ATTEMPTS,
   EPISODE_PLAN_AUDIT_COMPILER_MAX_TOKENS,
   EPISODE_PLAN_AUDIT_COMPILER_OPENAI_MODEL,
   EPISODE_PLAN_AUDIT_COMPILER_VERSION,
@@ -22,7 +23,10 @@ import type {
   EpisodePlanAuditCompilerPort,
 } from '../../services/page/EpisodePlanAuditCompiler.js';
 import { OpenAIClient } from './OpenAIClient.js';
-import { requestStructuredOpenAIResponse } from './StructuredOpenAIResponse.js';
+import {
+  requestStructuredOpenAIResponse,
+  StructuredOpenAIResponseError,
+} from './StructuredOpenAIResponse.js';
 
 export class OpenAIEpisodePlanAuditCompiler implements EpisodePlanAuditCompilerPort {
   public constructor(
@@ -33,25 +37,57 @@ export class OpenAIEpisodePlanAuditCompiler implements EpisodePlanAuditCompilerP
   public async auditPlan(
     input: CompileEpisodePlanAuditInput,
   ): Promise<CompiledEpisodePlanAudit> {
-    const validated = await requestStructuredOpenAIResponse({
-      client: this.client,
-      model: this.model,
-      maxOutputTokens: EPISODE_PLAN_AUDIT_COMPILER_MAX_TOKENS,
-      schemaName: 'episode_plan_audit',
-      jsonSchema: episodePlanAuditJsonSchema,
-      responseSchema: episodePlanAuditSchema,
-      errorLabel: 'OpenAI episode plan audit compiler',
-      input: [
-        {
-          role: 'system',
-          content: [{ type: 'input_text', text: buildSystemPrompt(input.language) }],
-        },
-        {
-          role: 'user',
-          content: [{ type: 'input_text', text: input.compilerBrief }],
-        },
-      ],
-    });
+    const allowedPageIds = [...new Set(input.pageIds)];
+    if (allowedPageIds.length === 0) {
+      throw new ConfigurationError('Episode plan audit requires at least one page ID');
+    }
+
+    const requestInput = [
+      {
+        role: 'system' as const,
+        content: [{ type: 'input_text' as const, text: buildSystemPrompt(input.language) }],
+      },
+      {
+        role: 'user' as const,
+        content: [{ type: 'input_text' as const, text: input.compilerBrief }],
+      },
+    ];
+    let validated: AuditPayload | null = null;
+    for (let attempt = 1; attempt <= EPISODE_PLAN_AUDIT_COMPILER_MAX_ATTEMPTS; attempt += 1) {
+      try {
+        validated = await requestStructuredOpenAIResponse({
+          client: this.client,
+          model: this.model,
+          maxOutputTokens: EPISODE_PLAN_AUDIT_COMPILER_MAX_TOKENS,
+          schemaName: 'episode_plan_audit',
+          jsonSchema: buildEpisodePlanAuditJsonSchema(allowedPageIds),
+          responseSchema: episodePlanAuditSchema,
+          errorLabel: 'OpenAI episode plan audit compiler',
+          input: requestInput,
+        });
+        break;
+      } catch (error) {
+        if (
+          !(error instanceof StructuredOpenAIResponseError) ||
+          !error.retryable ||
+          attempt >= EPISODE_PLAN_AUDIT_COMPILER_MAX_ATTEMPTS
+        ) {
+          throw error;
+        }
+
+        await input.beforeRetry?.();
+        console.warn('episode_plan_audit_compiler_retry', {
+          attempt,
+          nextAttempt: attempt + 1,
+          reason: error.reason,
+          requestId: error.requestId,
+        });
+      }
+    }
+
+    if (validated === null) {
+      throw new ConfigurationError('OpenAI episode plan audit compiler failed');
+    }
 
     return {
       audit: {
@@ -378,88 +414,94 @@ const panelRepairPatchJsonSchema = {
   },
 } as const;
 
-const episodePlanAuditJsonSchema = {
-  type: 'object',
-  additionalProperties: false,
-  required: ['accepted', 'issues', 'page_repairs', 'panel_repairs'],
-  properties: {
-    accepted: { type: 'boolean' },
-    issues: {
-      type: 'array',
-      maxItems: STORY_AI_LIMITS.maxSkeletonPages * 4,
-      items: {
-        type: 'object',
-        additionalProperties: false,
-        required: ['code', 'severity', 'page_ids', 'message', 'repair_instruction'],
-        properties: {
-          code: { type: 'string', enum: episodePlanAuditIssueCodes },
-          severity: { type: 'string', enum: ['warning', 'error'] },
-          page_ids: {
-            type: 'array',
-            minItems: 1,
-            maxItems: STORY_AI_LIMITS.maxSkeletonPages,
-            items: { type: 'string' },
+function buildEpisodePlanAuditJsonSchema(
+  allowedPageIds: readonly string[],
+): Record<string, unknown> {
+  const pageIdJsonSchema = { type: 'string', enum: [...allowedPageIds] };
+
+  return {
+    type: 'object',
+    additionalProperties: false,
+    required: ['accepted', 'issues', 'page_repairs', 'panel_repairs'],
+    properties: {
+      accepted: { type: 'boolean' },
+      issues: {
+        type: 'array',
+        maxItems: STORY_AI_LIMITS.maxSkeletonPages * 4,
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['code', 'severity', 'page_ids', 'message', 'repair_instruction'],
+          properties: {
+            code: { type: 'string', enum: episodePlanAuditIssueCodes },
+            severity: { type: 'string', enum: ['warning', 'error'] },
+            page_ids: {
+              type: 'array',
+              minItems: 1,
+              maxItems: STORY_AI_LIMITS.maxSkeletonPages,
+              items: pageIdJsonSchema,
+            },
+            message: { type: 'string', minLength: 1, maxLength: 1000 },
+            repair_instruction: { type: 'string', minLength: 1, maxLength: 1000 },
           },
-          message: { type: 'string', minLength: 1, maxLength: 1000 },
-          repair_instruction: { type: 'string', minLength: 1, maxLength: 1000 },
         },
       },
-    },
-    page_repairs: {
-      type: 'array',
-      maxItems: STORY_AI_LIMITS.maxSkeletonPages,
-      items: {
-        type: 'object',
-        additionalProperties: false,
-        required: ['page_id', 'changed_fields', 'patch'],
-        properties: {
-          page_id: { type: 'string' },
-          changed_fields: {
-            type: 'array',
-            minItems: 1,
-            maxItems: episodePlanAuditPageRepairFields.length,
-            items: { type: 'string', enum: episodePlanAuditPageRepairFields },
-          },
-          patch: {
-            type: 'object',
-            additionalProperties: false,
-            required: [
-              'source_scene_ids',
-              'page_purpose',
-              'continuity_note',
-              'dialogue_mode',
-              'page_dialogue_toggle',
-            ],
-            properties: {
-              source_scene_ids: nullableArray({ type: 'string' }, 100),
-              page_purpose: nullableString(500),
-              continuity_note: nullableString(1000),
-              dialogue_mode: nullableEnum(['image_baked', 'balloon_only', 'mixed']),
-              page_dialogue_toggle: nullableBoolean,
+      page_repairs: {
+        type: 'array',
+        maxItems: STORY_AI_LIMITS.maxSkeletonPages,
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['page_id', 'changed_fields', 'patch'],
+          properties: {
+            page_id: pageIdJsonSchema,
+            changed_fields: {
+              type: 'array',
+              minItems: 1,
+              maxItems: episodePlanAuditPageRepairFields.length,
+              items: { type: 'string', enum: episodePlanAuditPageRepairFields },
+            },
+            patch: {
+              type: 'object',
+              additionalProperties: false,
+              required: [
+                'source_scene_ids',
+                'page_purpose',
+                'continuity_note',
+                'dialogue_mode',
+                'page_dialogue_toggle',
+              ],
+              properties: {
+                source_scene_ids: nullableArray({ type: 'string' }, 100),
+                page_purpose: nullableString(500),
+                continuity_note: nullableString(1000),
+                dialogue_mode: nullableEnum(['image_baked', 'balloon_only', 'mixed']),
+                page_dialogue_toggle: nullableBoolean,
+              },
             },
           },
         },
       },
-    },
-    panel_repairs: {
-      type: 'array',
-      maxItems: STORY_AI_LIMITS.maxSkeletonPages * STORY_AI_LIMITS.maxPanelsPerPage,
-      items: {
-        type: 'object',
-        additionalProperties: false,
-        required: ['page_id', 'panel_order', 'changed_fields', 'patch'],
-        properties: {
-          page_id: { type: 'string' },
-          panel_order: { type: 'integer', minimum: 1, maximum: 1000 },
-          changed_fields: {
-            type: 'array',
-            minItems: 1,
-            maxItems: episodePlanAuditPanelRepairFields.length,
-            items: { type: 'string', enum: episodePlanAuditPanelRepairFields },
+      panel_repairs: {
+        type: 'array',
+        maxItems: STORY_AI_LIMITS.maxSkeletonPages * STORY_AI_LIMITS.maxPanelsPerPage,
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['page_id', 'panel_order', 'changed_fields', 'patch'],
+          properties: {
+            page_id: pageIdJsonSchema,
+            panel_order: { type: 'integer', minimum: 1, maximum: 1000 },
+            changed_fields: {
+              type: 'array',
+              minItems: 1,
+              maxItems: episodePlanAuditPanelRepairFields.length,
+              items: { type: 'string', enum: episodePlanAuditPanelRepairFields },
+            },
+            patch: panelRepairPatchJsonSchema,
           },
-          patch: panelRepairPatchJsonSchema,
         },
       },
     },
-  },
-} as const;
+  };
+}
