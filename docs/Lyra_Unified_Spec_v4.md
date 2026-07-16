@@ -91,7 +91,12 @@ The combined draft is reviewed for cross-page repetition, dialogue placement,
 chronology, page handoffs, entity assignment, and editable visual fields before any
 page or panel content is persisted. Review repairs are field-level patches: page and
 panel identity, order, and panel count are immutable. Unknown identifiers or invalid
-patch targets are rejected. Unresolved `error` findings block persistence; warning-
+patch targets are rejected. Semantic review uses at most two audit passes and applies
+each pass's validated field-level repairs once; it must not recursively audit or
+repair. The first audit is required. If the second audit remains unavailable after
+its structured-output retry, the already repaired draft proceeds to the deterministic
+gate instead of being discarded. After bounded repair, schema, identifier, structure,
+and deterministic cross-page duplicate errors block persistence. Residual semantic-
 only findings are retained as safe telemetry and do not discard otherwise usable
 content. The plan uses each existing page's frame count as its story capacity and
 carries scene character-state notes such as costume and injury through the global

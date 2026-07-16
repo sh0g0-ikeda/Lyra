@@ -1,5 +1,8 @@
 # Episode Autofill Final Audit Repair Design
 
+> Superseded by `docs/episode-autofill-semantic-gate-design.md`. This document
+> describes the former three-audit design and is retained only as change history.
+
 ## Purpose and scope
 
 Fix `episode_story_autofill` jobs that fail after the second whole-episode audit even

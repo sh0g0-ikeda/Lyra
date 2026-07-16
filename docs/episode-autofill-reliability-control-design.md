@@ -53,13 +53,18 @@ The migration is additive. Existing `queued`, `processing`, `completed`, and
    A page is never split. Small and normal episodes compile in one or two calls.
 6. Combine and schema-validate the draft against known page, panel, scene, and
    entity identifiers.
-7. Run one review-and-repair call over the complete draft. The response contains
-   findings and explicit page/panel field patches.
-8. Apply only declared fields to the in-memory draft. IDs, page order, panel
-   order, and panel counts are immutable.
-9. Run deterministic continuity checks. Run a second model review only when an
-   unresolved `error` remains.
-10. Reject only unresolved `error` findings. Record warnings as safe telemetry.
+7. Run one review call over the complete draft. The response contains findings
+   and explicit page/panel field patches.
+8. When the first review contains an `error`, apply its declared fields to the
+   in-memory draft exactly once. IDs, page order, panel order, and panel counts
+   are immutable.
+9. Run deterministic continuity checks and one final audit pass over the
+   once-repaired draft. Apply that pass's validated field-level patches once,
+   and never start a third audit pass. If the second audit remains unavailable
+   after its bounded structured-output retry, continue with the deterministic gate.
+10. Reject invalid schema/identifiers/structure and unresolved deterministic
+    duplicate findings. Record residual semantic findings as safe telemetry instead
+    of discarding an otherwise usable complete draft.
 11. Re-fetch the episode and compare its fingerprint.
 12. Atomically enter the commit gate if cancellation has not been requested.
 13. Persist page and panel changes. Cancellation is no longer accepted once this
@@ -89,6 +94,14 @@ Static Zod validation is followed by context validation. Unknown IDs, unknown
 panel orders, duplicate patch targets, and attempts to change immutable fields
 are rejected. The merge code copies only allowlisted fields. LLM output is never
 written directly to the database.
+
+The repair budget is bounded per execution: each of at most two audit passes may
+apply its validated field-level patch set once. A third semantic audit and recursive
+repair are forbidden. Each pass may still use the compiler client's bounded transport
+retry for a retryable provider failure. After repair, invalid structure, identifiers,
+repair targets, or deterministic duplicate findings discard the draft. Residual
+semantic-only findings do not. This avoids stochastic repair loops and keeps provider
+cost and latency bounded.
 
 Safe telemetry records stage duration, pass number, finding code/severity, and
 page identifiers. It excludes story text, dialogue text, prompts, API keys, and
