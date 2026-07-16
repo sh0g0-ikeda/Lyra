@@ -872,34 +872,107 @@ export class PageService implements PageServicePort {
       suggestion: normalizedSuggestion,
     };
 
-    const finalAudit = await this.auditEpisodePlanWithContinuityV3(
-      context,
-      plan,
-      repairedCombined.suggestion,
-      language,
-      progressReporter,
-      2,
-      2,
-    );
+    let finalAudit: EpisodePlanAudit;
+    try {
+      finalAudit = await this.auditEpisodePlanWithContinuityV3(
+        context,
+        plan,
+        repairedCombined.suggestion,
+        language,
+        progressReporter,
+        2,
+        2,
+      );
+    } catch (error) {
+      if (!(error instanceof ConfigurationError)) {
+        throw error;
+      }
+      this.assertDeterministicallyValidEpisodePlan(context, repairedCombined.suggestion);
+      console.warn('episode_page_plan_continuity_v3_second_audit_unavailable', {
+        episodeId: context.episodeId,
+        reason: sanitizePersistedErrorMessage(
+          error,
+          'Episode continuity verification unavailable',
+        ),
+      });
+      return repairedCombined;
+    }
     logEpisodePlanAuditSummary(context.episodeId, 2, finalAudit);
     if (!hasBlockingEpisodePlanAuditIssues(finalAudit.issues)) {
       return repairedCombined;
     }
 
-    const unresolvedIssues = finalAudit.issues.filter(
+    const reportedErrors = finalAudit.issues.filter(
       (issue) => issue.severity === 'error',
     );
-    console.warn('episode_page_plan_continuity_v3_verification_rejected', {
+    const finalRepairCount =
+      (finalAudit.pageRepairs?.length ?? 0) + (finalAudit.panelRepairs?.length ?? 0);
+    let finalSuggestion = repairedCombined.suggestion;
+
+    if (finalRepairCount > 0) {
+      const repairPageIds = new Set([
+        ...(finalAudit.pageRepairs ?? []).map((repair) => repair.pageId),
+        ...(finalAudit.panelRepairs ?? []).map((repair) => repair.pageId),
+      ]);
+      finalSuggestion = this.applyValidatedEpisodePlanAuditRepairs(
+        context,
+        finalSuggestion,
+        {
+          ...finalAudit,
+          issues: finalAudit.issues.filter(
+            (issue) =>
+              issue.severity !== 'error' ||
+              issue.pageIds.some((pageId) => repairPageIds.has(pageId)),
+          ),
+        },
+        language,
+      );
+      console.info('episode_page_plan_continuity_v3_final_repairs_applied', {
+        episodeId: context.episodeId,
+        pageRepairCount: finalAudit.pageRepairs?.length ?? 0,
+        panelRepairCount: finalAudit.panelRepairs?.length ?? 0,
+      });
+    }
+
+    this.assertDeterministicallyValidEpisodePlan(context, finalSuggestion);
+
+    console.warn('episode_page_plan_continuity_v3_bounded_review_completed', {
       episodeId: context.episodeId,
-      repairPassCount: 1,
-      unresolvedErrorCount: unresolvedIssues.length,
-      issueCodes: unresolvedIssues.map((issue) => issue.code),
+      repairPassCount: finalRepairCount > 0 ? 2 : 1,
+      secondAuditReportedErrorCount: reportedErrors.length,
+      issueCodes: reportedErrors.map((issue) => issue.code),
       affectedPageIds: Array.from(
-        new Set(unresolvedIssues.flatMap((issue) => issue.pageIds)),
+        new Set(reportedErrors.flatMap((issue) => issue.pageIds)),
+      ),
+    });
+    return {
+      ...repairedCombined,
+      suggestion: finalSuggestion,
+    };
+  }
+
+  private assertDeterministicallyValidEpisodePlan(
+    context: EpisodePagePlanContext,
+    suggestion: EpisodePagePlanSuggestion,
+  ): void {
+    validateEpisodePlanAgainstContext(context, suggestion);
+    const deterministicErrors = detectDeterministicContinuityIssues(suggestion).filter(
+      (issue) => issue.severity === 'error',
+    );
+    if (deterministicErrors.length === 0) {
+      return;
+    }
+
+    console.warn('episode_page_plan_continuity_v3_deterministic_rejected', {
+      episodeId: context.episodeId,
+      deterministicErrorCount: deterministicErrors.length,
+      issueCodes: deterministicErrors.map((issue) => issue.code),
+      affectedPageIds: Array.from(
+        new Set(deterministicErrors.flatMap((issue) => issue.pageIds)),
       ),
     });
     throw new ConfigurationError(
-      `Episode continuity verification found ${unresolvedIssues.length} unresolved issue(s) after one repair pass`,
+      `Episode continuity deterministic verification found ${deterministicErrors.length} unresolved issue(s) after bounded repair`,
     );
   }
 
