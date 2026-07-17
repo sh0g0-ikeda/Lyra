@@ -1,50 +1,82 @@
-# Hackathon README rewrite design
+# Innovation Cup repository presentation design
 
 ## Purpose and scope
 
-Rewrite `README.md` so a first-time hackathon reviewer can understand Lyra's
-problem, user flow, differentiators, architecture, live demo, and local startup
-path without reading operations documentation first.
+Prepare Lyra's public repository for a short, English-first hackathon review.
+The work is limited to repository presentation, public documentation, security
+reporting guidance, and public-information auditing.
 
-This change does not modify application behavior, APIs, persistence, billing,
-authentication, generation jobs, or cloud resources. Detailed production
-configuration remains in the existing specification and operations documents.
+This change does not modify application behavior, APIs, database contracts,
+authentication, authorization, billing, generation jobs, or AWS resources. It
+does not create fictional screenshots, metrics, awards, customers, or product
+claims.
 
 ## Specification basis
 
-- `docs/Lyra_Unified_Spec_v4.md` section 2 for the product boundary and primary
-  user flow.
-- Section 3 for architecture boundaries.
-- Sections 4 through 9 for authentication, tenancy, generation, billing,
+- `docs/Lyra_Unified_Spec_v4.md` section 2 defines the product boundary and
+  end-to-end production flow described in the README.
+- Section 3 defines the architecture boundaries used by the diagrams and
+  repository map.
+- Sections 4 through 9 constrain authentication, tenancy, billing, generation,
   safety, and availability claims.
-- Section 10 for verification commands.
+- Section 10 defines the verification commands documented for contributors.
 
-## Information order
+## Affected layers and interfaces
 
-1. Product name, one-sentence value, visual, live demo, and CI state.
-2. User problem and Lyra's editable story-to-page approach.
-3. Main features and an end-to-end user flow.
-4. Technical differentiators and a Mermaid architecture diagram.
-5. Technology stack and repository map.
-6. Minimal local startup with image generation disabled by default.
-7. Optional provider setup, verification commands, and documentation links.
-8. Current operational notes and project status without exposing secrets.
+- Public documentation: `README.md`, `SECURITY.md`, and the repository's
+  licensing notice.
+- Reviewer assets: `docs/assets/README_ASSETS_REQUIRED.md` documents the real
+  screenshots still required from the running product.
+- GitHub presentation: CI badge, repository links, and PR metadata guidance.
+
+There are no runtime inputs, outputs, persistence changes, external API calls,
+or job-contract changes.
+
+## Information architecture
+
+1. English product identity, CI state, OGP image, and concise value statement.
+2. Demo-first links and the developer's role.
+3. Problem, objective differentiation, and product walkthrough.
+4. Story compilation pipeline before infrastructure details.
+5. Features and reviewer evaluation points with English summaries.
+6. System architecture, stack, repository structure, setup, and verification.
+7. Security reporting, source-availability notice, and operational caveats.
+8. Existing Japanese explanation remains available and technically detailed.
 
 ## Security and accuracy controls
 
-- Do not include credentials, account IDs, private endpoints, or secret values.
-- Describe only features present in current code and the maintained spec.
-- Make it explicit that local AI/image generation requires provider credentials.
-- Keep production configuration in referenced documents instead of encouraging
-  readers to paste production secrets into local files.
+- Never include credential values, private endpoints, account IDs, or customer
+  data in the README, security policy, commit message, or PR description.
+- Classify public identifiers and placeholders separately from usable secrets.
+- Do not delete production configuration merely because it appears in public
+  documentation; recommend private relocation where appropriate.
+- Describe only behavior supported by the maintained specification, routes,
+  services, package files, and tests.
+- Do not add an open-source license. Use an explicit no-license-grant notice for
+  portfolio and technical-review availability.
+- Keep vulnerability reports out of public issues and avoid promising an SLA.
 
-## Verification
+## Verification plan
 
-This is documentation-only, so a new failing automated test is not useful.
-Verify Markdown links and image paths, Mermaid syntax, documented package
-scripts, UTF-8 text integrity, `git diff --check`, and the existing CI workflow.
+This is documentation-only, so a new failing application test would not test
+the changed behavior. Verification covers:
 
-## Delegation
+- local Markdown links and image targets;
+- Mermaid source structure and code-fence balance;
+- documented package scripts and technology versions;
+- UTF-8 integrity and `git diff --check`;
+- dependency installation and the repository's existing CI commands where the
+  local environment permits them.
 
-No Terra delegation. The write scope is one README plus this short design note,
-and the product claims must be reviewed together against the current spec.
+Commands that require a running PostgreSQL service, browser dependencies, or
+external infrastructure must be reported honestly if unavailable.
+
+## Sol/Terra delegation
+
+- Sol owns information architecture, final claims, edits, integration,
+  verification, commits, and the pull request.
+- A read-only Terra audit checks public security exposure without reporting
+  secret values.
+- A separate read-only Terra audit checks assets, package scripts, stack
+  versions, links, and README accuracy.
+- Neither Terra task may edit files or perform production operations.
