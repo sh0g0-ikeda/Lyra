@@ -147,6 +147,82 @@ class EpisodeUpdateCapturingClient implements DatabaseClient {
   }
 }
 
+class CrossChapterEpisodeMoveClient implements DatabaseClient, TransactionRunner {
+  public readonly queries: string[] = [];
+  public readonly queryValues: Array<readonly unknown[] | undefined> = [];
+
+  public async query<T extends QueryResultRow = QueryResultRow>(
+    text: string,
+    values?: readonly unknown[],
+  ): Promise<QueryResult<T>> {
+    this.queries.push(text);
+    this.queryValues.push(values);
+
+    if (text.includes('INNER JOIN chapters') && text.includes('FOR UPDATE OF episodes')) {
+      return resultRows([
+        {
+          ...episodeRow(),
+          work_id: '11111111-1111-4111-8111-111111111111',
+          chapter_order: 1,
+        },
+      ]);
+    }
+    if (text.includes('WHERE episodes.chapter_id') && text.includes('LIMIT 1')) {
+      return resultRows([]);
+    }
+    if (text.includes('FROM chapters') && text.includes('chapters.work_id')) {
+      return resultRows([
+        {
+          id: '44444444-4444-4444-8444-444444444444',
+          work_id: '11111111-1111-4111-8111-111111111111',
+          order: 2,
+          title: 'Chapter 2',
+          purpose: null,
+          starting_state: null,
+          ending_state: null,
+          emotion_curve: null,
+          entities_involved: [],
+          key_beats: [],
+          version: 1,
+          edit_history: [],
+          status: 'draft',
+          created_at: new Date('2026-04-22T00:00:00.000Z'),
+          updated_at: new Date('2026-04-22T00:00:00.000Z'),
+        },
+      ]);
+    }
+    if (text.includes('chapter_id = ANY')) {
+      return resultRows([
+        episodeRow(),
+        {
+          id: '55555555-5555-4555-8555-555555555555',
+          chapter_id: '44444444-4444-4444-8444-444444444444',
+          order: 1,
+        },
+      ]);
+    }
+    if (text.includes('MAX("order")') && text.includes('FROM episodes')) {
+      return resultRows([{ maximum_order: 1, temporary_order: 100001 }]);
+    }
+    if (text.includes('SET chapter_id = $2')) {
+      return resultRows([
+        {
+          ...episodeRow(),
+          chapter_id: '44444444-4444-4444-8444-444444444444',
+          order: 1,
+          version: 2,
+        },
+      ], 'UPDATE');
+    }
+
+    return resultRows([], text.trimStart().startsWith('SELECT') ? 'SELECT' : 'UPDATE');
+  }
+
+  public async transaction<T>(work: (client: DatabaseClient) => Promise<T>): Promise<T> {
+    return work(this);
+  }
+}
+
 describe('PostgresStoryRepository', () => {
   it('writes edit_history into update SQL', async () => {
     const client = new QueryCapturingClient();
@@ -457,7 +533,45 @@ describe('PostgresStoryRepository', () => {
     expect(client.updateValues?.[16]).toBeNull();
     expect(client.updateValues?.[18]).toBeNull();
   });
+
+  it('章境界移動では同一作品の隣接章を解決して話IDを維持する', async () => {
+    const client = new CrossChapterEpisodeMoveClient();
+    const repository = new PostgresStoryRepository(client, client);
+
+    const moved = await repository.moveEpisode(
+      '33333333-3333-4333-8333-333333333333',
+      'user-1',
+      'down',
+      null,
+      true,
+    );
+
+    expect(moved).toMatchObject({
+      id: '33333333-3333-4333-8333-333333333333',
+      chapterId: '44444444-4444-4444-8444-444444444444',
+      order: 1,
+    });
+    expect(client.queries.some((query) => query.includes('chapters.work_id = $1'))).toBe(true);
+    expect(client.queries.some((query) => query.includes('SET chapter_id = $2'))).toBe(true);
+    expect(client.queryValues).toContainEqual([
+      '55555555-5555-4555-8555-555555555555',
+      2,
+    ]);
+  });
 });
+
+function resultRows<T extends QueryResultRow = QueryResultRow>(
+  rows: QueryResultRow[],
+  command: 'SELECT' | 'UPDATE' = 'SELECT',
+): QueryResult<T> {
+  return {
+    command,
+    rowCount: rows.length,
+    oid: 0,
+    fields: [],
+    rows: rows as T[],
+  };
+}
 
 function workRow(): Record<string, unknown> {
   return {

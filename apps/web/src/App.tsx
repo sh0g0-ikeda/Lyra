@@ -26,6 +26,7 @@ import {
 } from 'lucide-react';
 import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { Session, SupabaseClient } from '@supabase/supabase-js';
+import { StoryHierarchyTree } from './components/StoryHierarchyTree';
 import { decodeJwtPayload, LyraApiClient, type BlobResponse } from './lib/api';
 import { shouldAllowManualTokenAuth } from './lib/authMode';
 import {
@@ -90,6 +91,7 @@ interface SubscriptionPlanOption {
 }
 
 const MAX_EPISODE_PAGES = 32;
+const SHOW_LEGACY_STORY_HIERARCHY = false;
 
 const subscriptionPurchaseOptions: Array<{
   code: ConsumerSubscriptionCheckoutPlanCode;
@@ -201,6 +203,12 @@ interface EpisodeDraft {
   estimated_pages: string;
   entities_involved: string;
   status: 'draft' | 'reviewing' | 'ready';
+}
+
+interface PreservedStoryDraft<TDraft> {
+  id: string;
+  expectedTitle: string | null;
+  draft: TDraft;
 }
 
 interface EntityDraft {
@@ -447,6 +455,7 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   'Story context': 'ストーリー文脈',
   'Target episode': '対象の話',
   'Chapter / Episode': '章と話',
+  'Page planning': 'ページ設計',
   'Import / References': '取り込み / レファレンス',
   Credits: 'クレジット',
   Jobs: 'ジョブ',
@@ -526,6 +535,8 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   'Create chapter': '章を追加',
   'Delete chapter': '章を削除',
   'Create episode': '話を追加',
+  'Move chapter': '章を移動',
+  'Move episode': '話を移動',
   'Save episode': '話を保存',
   'Delete episode': '話を削除',
   'Create scene': 'シーンを作成',
@@ -2220,6 +2231,12 @@ function StudioShell(props: {
   const [newChapterDraft, setNewChapterDraft] = useState<ChapterDraft>(createEmptyChapterDraft());
   const [episodeDraft, setEpisodeDraft] = useState<EpisodeDraft>(createEmptyEpisodeDraft());
   const [newEpisodeDraft, setNewEpisodeDraft] = useState<EpisodeDraft>(createEmptyEpisodeDraft());
+  const preservedWorkDraftRef = useRef<PreservedStoryDraft<WorkDraft> | null>(null);
+  const preservedChapterDraftRef = useRef<PreservedStoryDraft<ChapterDraft> | null>(null);
+  const preservedEpisodeDraftRef = useRef<PreservedStoryDraft<EpisodeDraft> | null>(null);
+  const hydratedWorkVersionRef = useRef<string | null>(null);
+  const hydratedChapterVersionRef = useRef<string | null>(null);
+  const hydratedEpisodeVersionRef = useRef<string | null>(null);
   const [storyInstruction, setStoryInstruction] = useState('');
   const [storyBusy, setStoryBusy] = useState(false);
   const [storyImprovementDraft, setStoryImprovementDraft] = useState<StoryEpisodeImprovementRecord['draft'] | null>(null);
@@ -2931,16 +2948,22 @@ function StudioShell(props: {
   }, [selectedWorkId, setSelectedWorkId, worksQuery.data]);
 
   useEffect(() => {
+    if (!chaptersQuery.isSuccess) {
+      return;
+    }
     if (!chapters.some((chapter) => chapter.id === selectedChapterId)) {
       setSelectedChapterId(chapters[0]?.id ?? '');
     }
-  }, [chapters, selectedChapterId, setSelectedChapterId]);
+  }, [chapters, chaptersQuery.isSuccess, selectedChapterId, setSelectedChapterId]);
 
   useEffect(() => {
+    if (!episodesQuery.isSuccess) {
+      return;
+    }
     if (!episodes.some((episode) => episode.id === selectedEpisodeId)) {
       setSelectedEpisodeId(episodes[0]?.id ?? '');
     }
-  }, [episodes, selectedEpisodeId, setSelectedEpisodeId]);
+  }, [episodes, episodesQuery.isSuccess, selectedEpisodeId, setSelectedEpisodeId]);
 
   useEffect(() => {
     if (!pages.some((page) => page.id === selectedPageId)) {
@@ -3010,21 +3033,63 @@ function StudioShell(props: {
   }, [selectedEpisode]);
 
   useEffect(() => {
-    if (selectedWork !== null) {
-      setWorkDraft(toWorkDraft(selectedWork));
+    if (selectedWork === null) {
+      hydratedWorkVersionRef.current = null;
+      return;
     }
+    const hydrationKey = `${selectedWork.id}:${selectedWork.version}`;
+    const preserved = preservedWorkDraftRef.current;
+    preservedWorkDraftRef.current = null;
+    if (preserved?.id === selectedWork.id && preserved.expectedTitle === selectedWork.title) {
+      hydratedWorkVersionRef.current = hydrationKey;
+      setWorkDraft(preserved.draft);
+      return;
+    }
+    if (hydratedWorkVersionRef.current === hydrationKey) {
+      return;
+    }
+    hydratedWorkVersionRef.current = hydrationKey;
+    setWorkDraft(toWorkDraft(selectedWork));
   }, [selectedWork]);
 
   useEffect(() => {
-    if (selectedChapter !== null) {
-      setChapterDraft(toChapterDraft(selectedChapter));
+    if (selectedChapter === null) {
+      hydratedChapterVersionRef.current = null;
+      return;
     }
+    const hydrationKey = `${selectedChapter.id}:${selectedChapter.version}`;
+    const preserved = preservedChapterDraftRef.current;
+    preservedChapterDraftRef.current = null;
+    if (preserved?.id === selectedChapter.id && preserved.expectedTitle === selectedChapter.title) {
+      hydratedChapterVersionRef.current = hydrationKey;
+      setChapterDraft(preserved.draft);
+      return;
+    }
+    if (hydratedChapterVersionRef.current === hydrationKey) {
+      return;
+    }
+    hydratedChapterVersionRef.current = hydrationKey;
+    setChapterDraft(toChapterDraft(selectedChapter));
   }, [selectedChapter]);
 
   useEffect(() => {
-    if (selectedEpisode !== null) {
-      setEpisodeDraft(toEpisodeDraft(selectedEpisode));
+    if (selectedEpisode === null) {
+      hydratedEpisodeVersionRef.current = null;
+      return;
     }
+    const hydrationKey = `${selectedEpisode.id}:${selectedEpisode.version}`;
+    const preserved = preservedEpisodeDraftRef.current;
+    preservedEpisodeDraftRef.current = null;
+    if (preserved?.id === selectedEpisode.id && preserved.expectedTitle === selectedEpisode.title) {
+      hydratedEpisodeVersionRef.current = hydrationKey;
+      setEpisodeDraft(preserved.draft);
+      return;
+    }
+    if (hydratedEpisodeVersionRef.current === hydrationKey) {
+      return;
+    }
+    hydratedEpisodeVersionRef.current = hydrationKey;
+    setEpisodeDraft(toEpisodeDraft(selectedEpisode));
   }, [selectedEpisode]);
 
   useEffect(() => {
@@ -4541,17 +4606,73 @@ function StudioShell(props: {
               </span>
             </div>
             <div className="stack gap-xs sidebar-work-list">
-              {works.map((work) => (
-                <button
-                  key={work.id}
-                  className={`nav-item ${selectedWorkId === work.id ? 'active' : ''}`}
-                  onClick={() => setSelectedWorkId(work.id)}
-                  type="button"
-                >
-                  <BookOpen size={16} />
-                  <span>{work.title}</span>
-                </button>
-              ))}
+              {works.length > 0 ? (
+                <StoryHierarchyTree
+                  api={api}
+                  busyAction={busyAction}
+                  invalidateScopedQuery={invalidateScopedQuery}
+                  language={uiLanguage}
+                  onSelectChapter={(workId, chapterId) => {
+                    setSelectedWorkId(workId);
+                    setSelectedChapterId(chapterId);
+                    setSelectedEpisodeId('');
+                  }}
+                  onSelectEpisode={(workId, chapterId, episodeId) => {
+                    setSelectedWorkId(workId);
+                    setSelectedChapterId(chapterId);
+                    setSelectedEpisodeId(episodeId);
+                  }}
+                  onWorkMetadataChanged={(updatedWork) => {
+                    if (updatedWork.id !== selectedWorkId) {
+                      return;
+                    }
+                    const preservedDraft = { ...workDraft, title: updatedWork.title };
+                    preservedWorkDraftRef.current = {
+                      id: updatedWork.id,
+                      expectedTitle: updatedWork.title,
+                      draft: preservedDraft,
+                    };
+                    setWorkDraft(preservedDraft);
+                  }}
+                  onChapterMetadataChanged={(updatedChapter) => {
+                    if (updatedChapter.id !== selectedChapterId) {
+                      return;
+                    }
+                    const preservedDraft = { ...chapterDraft, title: updatedChapter.title ?? '' };
+                    preservedChapterDraftRef.current = {
+                      id: updatedChapter.id,
+                      expectedTitle: updatedChapter.title,
+                      draft: preservedDraft,
+                    };
+                    setChapterDraft(preservedDraft);
+                  }}
+                  onEpisodeMetadataChanged={(updatedEpisode) => {
+                    if (updatedEpisode.id !== selectedEpisodeId) {
+                      return;
+                    }
+                    const preservedDraft = { ...episodeDraft, title: updatedEpisode.title ?? '' };
+                    preservedEpisodeDraftRef.current = {
+                      id: updatedEpisode.id,
+                      expectedTitle: updatedEpisode.title,
+                      draft: preservedDraft,
+                    };
+                    setEpisodeDraft(preservedDraft);
+                  }}
+                  onSelectWork={(workId) => {
+                    setSelectedWorkId(workId);
+                    setSelectedChapterId('');
+                    setSelectedEpisodeId('');
+                  }}
+                  organizationId={activeOrganizationId}
+                  runAction={runAction}
+                  scopedQueryKey={scopedQueryKey}
+                  selectedChapterId={selectedChapterId}
+                  selectedEpisodeId={selectedEpisodeId}
+                  selectedWorkId={selectedWorkId}
+                  storageScope={`${props.authSessionKey}:workspace:${activeOrganizationId ?? 'personal'}`}
+                  works={works}
+                />
+              ) : null}
               {showWorksLoading ? (
                 <div className="sidebar-status">
                   <LoaderCircle className="spin" size={14} />
@@ -4736,7 +4857,7 @@ function StudioShell(props: {
                   </PanelSection>
 
                   <PanelSection
-                    title="Chapter / Episode"
+                    title="Page planning"
                     collapsible
                     actions={
                       <div className="toolbar">
@@ -4850,6 +4971,7 @@ function StudioShell(props: {
                         </span>
                       </div>
                     ) : null}
+                    {SHOW_LEGACY_STORY_HIERARCHY ? (
                     <div className="story-tree">
                       <div className="tree-column">
                         <h3>{translateUiString(uiLanguage, 'Chapters')}</h3>
@@ -4861,7 +4983,7 @@ function StudioShell(props: {
                                 onClick={() => {
                                   setSelectedChapterId(chapter.id);
                                   setSelectedEpisodeId('');
-                                  setSelectedWorkId(selectedWork.id);
+                                  setSelectedWorkId(selectedWork?.id ?? '');
                                 }}
                                 type="button"
                               >
@@ -4876,7 +4998,7 @@ function StudioShell(props: {
                                   onClick={() =>
                                     void runAction(`Move chapter ${chapter.id} up`, async () => {
                                       await api.moveChapter(chapter.id, 'up', activeOrganizationId);
-                                      await invalidateScopedQuery(['chapters', selectedWork.id]);
+                                      await invalidateScopedQuery(['chapters', selectedWork?.id ?? '']);
                                     })
                                   }
                                   title={translateUiString(uiLanguage, 'Move up')}
@@ -4891,7 +5013,7 @@ function StudioShell(props: {
                                   onClick={() =>
                                     void runAction(`Move chapter ${chapter.id} down`, async () => {
                                       await api.moveChapter(chapter.id, 'down', activeOrganizationId);
-                                      await invalidateScopedQuery(['chapters', selectedWork.id]);
+                                      await invalidateScopedQuery(['chapters', selectedWork?.id ?? '']);
                                     })
                                   }
                                   title={translateUiString(uiLanguage, 'Move down')}
@@ -4909,12 +5031,12 @@ function StudioShell(props: {
                             event.preventDefault();
                             void runAction('Create chapter', async () => {
                               await api.createChapter(
-                                selectedWork.id,
+                                selectedWork?.id ?? '',
                                 toCreateChapterPayload(newChapterDraft, loadedSelectedWorkEntityIds),
                                 activeOrganizationId,
                               );
                               setNewChapterDraft(createEmptyChapterDraft());
-                              await invalidateScopedQuery(['chapters', selectedWork.id]);
+                              await invalidateScopedQuery(['chapters', selectedWork?.id ?? '']);
                             });
                           }}
                         >
@@ -4954,7 +5076,7 @@ function StudioShell(props: {
                                       toChapterPayload(chapterDraft, loadedSelectedWorkEntityIds),
                                       activeOrganizationId,
                                     );
-                                    await invalidateScopedQuery(['chapters', selectedWork.id]);
+                                    await invalidateScopedQuery(['chapters', selectedWork?.id ?? '']);
                                   })
                                 }
                                 type="button"
@@ -4967,7 +5089,7 @@ function StudioShell(props: {
                                 onClick={() =>
                                   void runAction('Delete chapter', async () => {
                                     await api.deleteChapter(selectedChapter.id, activeOrganizationId);
-                                    await invalidateScopedQuery(['chapters', selectedWork.id]);
+                                    await invalidateScopedQuery(['chapters', selectedWork?.id ?? '']);
                                   })
                                 }
                                 type="button"
@@ -5060,6 +5182,7 @@ function StudioShell(props: {
                         ) : null}
                       </div>
                     </div>
+                    ) : null}
                   </PanelSection>
                 </>
               ) : null}
@@ -5090,12 +5213,21 @@ function StudioShell(props: {
                         </button>
                         <button
                           className="ghost-button danger"
-                          onClick={() =>
+                          onClick={() => {
+                            const episodeTitle = selectedEpisode.title?.trim() || translateUiString(uiLanguage, 'Untitled episode');
+                            if (!window.confirm(pickUiText(
+                              uiLanguage,
+                              `Delete episode “${episodeTitle}”? Its editing data will also be deleted. This cannot be undone.`,
+                              `話「${episodeTitle}」を本当に削除しますか？\nこの話に紐づく編集データも削除され、元に戻せません。`,
+                            ))) {
+                              return;
+                            }
                             void runAction('Delete episode', async () => {
                               await api.deleteEpisode(selectedEpisode.id, activeOrganizationId);
+                              setSelectedEpisodeId('');
                               await invalidateScopedQuery(['episodes', selectedChapter?.id ?? '']);
-                            })
-                          }
+                            });
+                          }}
                           type="button"
                         >
                           <Trash2 size={16} />

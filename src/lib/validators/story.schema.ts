@@ -115,3 +115,10 @@ export const moveStoryItemBodySchema = z
     direction: storyItemMoveDirectionSchema,
   })
   .strict();
+
+export const moveEpisodeBodySchema = z
+  .object({
+    direction: storyItemMoveDirectionSchema,
+    cross_chapter: z.boolean().optional().default(false),
+  })
+  .strict();

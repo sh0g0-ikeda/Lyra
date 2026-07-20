@@ -40,7 +40,13 @@ export interface StoryServicePort {
   listEpisodes(userId: string, chapterId: string, organizationId?: string | null): Promise<Episode[]>;
   updateEpisode(userId: string, episodeId: string, input: UpdateEpisodeInput, organizationId?: string | null): Promise<Episode>;
   deleteEpisode(userId: string, episodeId: string, organizationId?: string | null): Promise<void>;
-  moveEpisode(userId: string, episodeId: string, direction: StoryItemMoveDirection, organizationId?: string | null): Promise<Episode>;
+  moveEpisode(
+    userId: string,
+    episodeId: string,
+    direction: StoryItemMoveDirection,
+    organizationId?: string | null,
+    crossChapter?: boolean,
+  ): Promise<Episode>;
 }
 
 export class StoryService implements StoryServicePort {
@@ -200,8 +206,15 @@ export class StoryService implements StoryServicePort {
     episodeId: string,
     direction: StoryItemMoveDirection,
     organizationId: string | null = null,
+    crossChapter = false,
   ): Promise<Episode> {
-    const episode = await this.storyRepository.moveEpisode(episodeId, userId, direction, organizationId);
+    const episode = await this.storyRepository.moveEpisode(
+      episodeId,
+      userId,
+      direction,
+      organizationId,
+      crossChapter,
+    );
     if (episode === null) {
       throw new NotFoundError('Episode not found');
     }
