@@ -414,6 +414,12 @@ test('renders the console with mocked api responses', async ({ page }) => {
   await page.goto('/');
 
   await expect(page.getByRole('button', { name: 'Moonlit Regiment', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: '1 First movement', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: '1 Arrival', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Collapse work', exact: true }).click();
+  await expect(page.getByRole('button', { name: '1 First movement', exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Expand work', exact: true }).click();
+  await expect(page.getByRole('button', { name: '1 First movement', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Story', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Entities', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Pages', exact: true })).toBeVisible();
@@ -425,6 +431,22 @@ test('renders the console with mocked api responses', async ({ page }) => {
   await page.getByRole('button', { name: 'Pages', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Page 1' })).toBeVisible();
   await expect(page.getByRole('textbox', { name: 'Situation' })).toHaveValue('Mizuki enters the fort.');
+});
+
+test('keeps the story hierarchy usable on a mobile viewport', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await seedEnglishUi(page);
+  await seedAuthenticatedSession(page);
+  await page.route('**/api/**', mockApi);
+
+  await page.goto('/');
+
+  await expect(page.getByRole('button', { name: 'Moonlit Regiment', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: '1 First movement', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: '1 Arrival', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Rename chapter', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Delete episode', exact: true })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
 });
 
 test('stops a queued story apply job and removes it from local history', async ({ page }) => {

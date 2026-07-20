@@ -256,7 +256,13 @@ class FakeStoryRepository implements StoryRepository {
     return episode === null ? false : this.episodes.delete(id);
   }
 
-  public async moveEpisode(id: string, userId: string, direction: 'up' | 'down'): Promise<Episode | null> {
+  public async moveEpisode(
+    id: string,
+    userId: string,
+    direction: 'up' | 'down',
+    _organizationId?: string | null,
+    crossChapter = false,
+  ): Promise<Episode | null> {
     const episode = await this.findEpisodeByIdAndUserId(id, userId);
     if (episode === null) {
       return null;
@@ -267,8 +273,44 @@ class FakeStoryRepository implements StoryRepository {
       .sort((left, right) => left.order - right.order);
     const index = siblings.findIndex((candidate) => candidate.id === id);
     const neighbor = direction === 'up' ? siblings[index - 1] : siblings[index + 1];
-    if (neighbor === undefined) {
+    if (neighbor === undefined && !crossChapter) {
       return episode;
+    }
+
+    if (neighbor === undefined) {
+      const chapter = this.chapters.get(episode.chapterId);
+      if (chapter === undefined) {
+        return episode;
+      }
+      const orderedChapters = [...this.chapters.values()]
+        .filter((candidate) => candidate.workId === chapter.workId)
+        .sort((left, right) => left.order - right.order);
+      const chapterIndex = orderedChapters.findIndex((candidate) => candidate.id === chapter.id);
+      const destinationChapter = orderedChapters[direction === 'up' ? chapterIndex - 1 : chapterIndex + 1];
+      if (destinationChapter === undefined) {
+        return episode;
+      }
+
+      const sourceEpisodes = siblings.filter((candidate) => candidate.id !== episode.id);
+      sourceEpisodes.forEach((candidate, sourceIndex) => {
+        this.episodes.set(candidate.id, { ...candidate, order: sourceIndex + 1 });
+      });
+      const destinationEpisodes = [...this.episodes.values()]
+        .filter((candidate) => candidate.chapterId === destinationChapter.id)
+        .sort((left, right) => left.order - right.order);
+      if (direction === 'down') {
+        destinationEpisodes.forEach((candidate) => {
+          this.episodes.set(candidate.id, { ...candidate, order: candidate.order + 1 });
+        });
+      }
+      const movedAcrossChapter = {
+        ...episode,
+        chapterId: destinationChapter.id,
+        order: direction === 'up' ? destinationEpisodes.length + 1 : 1,
+        version: episode.version + 1,
+      };
+      this.episodes.set(episode.id, movedAcrossChapter);
+      return movedAcrossChapter;
     }
 
     const movedEpisode = { ...episode, order: neighbor.order, version: episode.version + 1 };
@@ -520,6 +562,182 @@ describe('StoryService', () => {
 
     expect(movedEpisode).toMatchObject({ id: secondEpisode.id, order: 1 });
     expect(episodes.find((episode) => episode.id === firstEpisode.id)?.order).toBe(2);
+  });
+
+  it('章末の話を次章の先頭へ移動する', async () => {
+    const service = createService();
+    const work = await service.createWork('user-1', {
+      title: '黒月の騎士',
+      genre: null,
+      worldSetting: null,
+      theme: null,
+      mainEntityIds: [],
+      startingPoint: null,
+      endingPoint: null,
+      overallFlow: null,
+    });
+    const firstChapter = await service.createChapter('user-1', work.id, {
+      order: 1,
+      title: '第一章',
+      purpose: null,
+      startingState: null,
+      endingState: null,
+      emotionCurve: null,
+      entitiesInvolved: [],
+      keyBeats: [],
+    });
+    const secondChapter = await service.createChapter('user-1', work.id, {
+      order: 2,
+      title: '第二章',
+      purpose: null,
+      startingState: null,
+      endingState: null,
+      emotionCurve: null,
+      entitiesInvolved: [],
+      keyBeats: [],
+    });
+    const movingEpisode = await service.createEpisode('user-1', firstChapter.id, {
+      order: 1,
+      title: '第一話',
+      purpose: null,
+      storyInputMode: 'structured',
+      storyFullDraft: null,
+      introduction: null,
+      middle: null,
+      climax: null,
+      endingHook: null,
+      estimatedPages: 16,
+      entitiesInvolved: [],
+    });
+    const destinationEpisode = await service.createEpisode('user-1', secondChapter.id, {
+      order: 1,
+      title: '第二話',
+      purpose: null,
+      storyInputMode: 'structured',
+      storyFullDraft: null,
+      introduction: null,
+      middle: null,
+      climax: null,
+      endingHook: null,
+      estimatedPages: 16,
+      entitiesInvolved: [],
+    });
+
+    const movedEpisode = await service.moveEpisode('user-1', movingEpisode.id, 'down', null, true);
+    const sourceEpisodes = await service.listEpisodes('user-1', firstChapter.id);
+    const destinationEpisodes = await service.listEpisodes('user-1', secondChapter.id);
+
+    expect(movedEpisode).toMatchObject({ id: movingEpisode.id, chapterId: secondChapter.id, order: 1 });
+    expect(sourceEpisodes).toHaveLength(0);
+    expect(destinationEpisodes.find((episode) => episode.id === destinationEpisode.id)?.order).toBe(2);
+  });
+
+  it('章境界フラグを省略した話は章を越えず、明示した上移動では前章末尾へ移る', async () => {
+    const service = createService();
+    const work = await service.createWork('user-1', {
+      title: '境界移動テスト',
+      genre: null,
+      worldSetting: null,
+      theme: null,
+      mainEntityIds: [],
+      startingPoint: null,
+      endingPoint: null,
+      overallFlow: null,
+    });
+    const firstChapter = await service.createChapter('user-1', work.id, {
+      order: 1,
+      title: '第一章',
+      purpose: null,
+      startingState: null,
+      endingState: null,
+      emotionCurve: null,
+      entitiesInvolved: [],
+      keyBeats: [],
+    });
+    const secondChapter = await service.createChapter('user-1', work.id, {
+      order: 2,
+      title: '第二章',
+      purpose: null,
+      startingState: null,
+      endingState: null,
+      emotionCurve: null,
+      entitiesInvolved: [],
+      keyBeats: [],
+    });
+    await service.createEpisode('user-1', firstChapter.id, {
+      order: 1,
+      title: '第一話',
+      purpose: null,
+      storyInputMode: 'structured',
+      storyFullDraft: null,
+      introduction: null,
+      middle: null,
+      climax: null,
+      endingHook: null,
+      estimatedPages: 16,
+      entitiesInvolved: [],
+    });
+    const movingEpisode = await service.createEpisode('user-1', secondChapter.id, {
+      order: 1,
+      title: '第二話',
+      purpose: null,
+      storyInputMode: 'structured',
+      storyFullDraft: null,
+      introduction: null,
+      middle: null,
+      climax: null,
+      endingHook: null,
+      estimatedPages: 16,
+      entitiesInvolved: [],
+    });
+
+    const unchanged = await service.moveEpisode('user-1', movingEpisode.id, 'up');
+    const moved = await service.moveEpisode('user-1', movingEpisode.id, 'up', null, true);
+
+    expect(unchanged).toMatchObject({ chapterId: secondChapter.id, order: 1 });
+    expect(moved).toMatchObject({ chapterId: firstChapter.id, order: 2 });
+    expect(await service.listEpisodes('user-1', secondChapter.id)).toHaveLength(0);
+  });
+
+  it('作品端で章境界移動を要求しても同じ話を変更せず返す', async () => {
+    const service = createService();
+    const work = await service.createWork('user-1', {
+      title: '終端テスト',
+      genre: null,
+      worldSetting: null,
+      theme: null,
+      mainEntityIds: [],
+      startingPoint: null,
+      endingPoint: null,
+      overallFlow: null,
+    });
+    const chapter = await service.createChapter('user-1', work.id, {
+      order: 1,
+      title: '唯一の章',
+      purpose: null,
+      startingState: null,
+      endingState: null,
+      emotionCurve: null,
+      entitiesInvolved: [],
+      keyBeats: [],
+    });
+    const episode = await service.createEpisode('user-1', chapter.id, {
+      order: 1,
+      title: '唯一の話',
+      purpose: null,
+      storyInputMode: 'structured',
+      storyFullDraft: null,
+      introduction: null,
+      middle: null,
+      climax: null,
+      endingHook: null,
+      estimatedPages: 16,
+      entitiesInvolved: [],
+    });
+
+    const moved = await service.moveEpisode('user-1', episode.id, 'down', null, true);
+
+    expect(moved).toMatchObject({ id: episode.id, chapterId: chapter.id, order: 1, version: 1 });
   });
 
   it('returns not found when updating another user episode', async () => {

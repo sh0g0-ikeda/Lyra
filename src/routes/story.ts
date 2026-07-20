@@ -12,6 +12,7 @@ import {
   createEpisodeBodySchema,
   createWorkBodySchema,
   moveStoryItemBodySchema,
+  moveEpisodeBodySchema,
   storyUuidParamSchema,
   updateChapterBodySchema,
   updateEpisodeBodySchema,
@@ -379,15 +380,23 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
     const episodeId = parseUuidParam(c, 'id');
     const organizationId = parseOptionalOrganizationId(c);
     await requireOrganizationCapability(c, dependencies, organizationId, 'edit_work');
-    const body = moveStoryItemBodySchema.safeParse(await readStoryJsonBody(c));
+    const body = moveEpisodeBodySchema.safeParse(await readStoryJsonBody(c));
 
     if (!body.success) {
       throw new ValidationError(formatZodValidationError(body.error));
     }
 
-    const episode = await dependencies.storyService.moveEpisode(user.id, episodeId, body.data.direction, organizationId);
+    const episode = await dependencies.storyService.moveEpisode(
+      user.id,
+      episodeId,
+      body.data.direction,
+      organizationId,
+      body.data.cross_chapter,
+    );
     await recordOrganizationAudit(dependencies, organizationId, user.id, 'episode.moved', 'episode', episodeId, {
       direction: body.data.direction,
+      cross_chapter: body.data.cross_chapter,
+      destination_chapter_id: episode.chapterId,
     });
 
     return c.json(toEpisodeResponse(episode));

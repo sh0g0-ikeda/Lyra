@@ -278,10 +278,15 @@ export class LyraApiClient {
     return this.request(`/api/episodes/${episodeId}${organizationQuery(organizationId)}`, { method: 'PUT', body });
   }
 
-  public moveEpisode(episodeId: string, direction: 'up' | 'down', organizationId?: string | null): Promise<EpisodeRecord> {
+  public moveEpisode(
+    episodeId: string,
+    direction: 'up' | 'down',
+    organizationId?: string | null,
+    crossChapter = false,
+  ): Promise<EpisodeRecord> {
     return this.request(`/api/episodes/${episodeId}/move${organizationQuery(organizationId)}`, {
       method: 'POST',
-      body: { direction },
+      body: crossChapter ? { direction, cross_chapter: true } : { direction },
     });
   }
 
