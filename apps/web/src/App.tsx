@@ -16,6 +16,7 @@ import {
   LogOut,
   PanelsTopLeft,
   Play,
+  Plus,
   RefreshCw,
   Save,
   Sparkles,
@@ -2227,6 +2228,7 @@ function StudioShell(props: {
   const [activeTab, setActiveTab] = useState<WorkspaceTab>('story');
   const [workDraft, setWorkDraft] = useState<WorkDraft>(createEmptyWorkDraft());
   const [newWorkDraft, setNewWorkDraft] = useState<WorkDraft>(createEmptyWorkDraft());
+  const [newWorkComposerOpen, setNewWorkComposerOpen] = useState(true);
   const [chapterDraft, setChapterDraft] = useState<ChapterDraft>(createEmptyChapterDraft());
   const [newChapterDraft, setNewChapterDraft] = useState<ChapterDraft>(createEmptyChapterDraft());
   const [episodeDraft, setEpisodeDraft] = useState<EpisodeDraft>(createEmptyEpisodeDraft());
@@ -4297,30 +4299,29 @@ function StudioShell(props: {
     </PanelSection>
   );
 
-  const createWorkPanel = !canCreateActiveOrganizationWorks ? (
-    <PanelSection
-      title="New work"
-      subtitle="Create a work before writing story content."
-      className="story-create-work-panel"
-      compact={selectedWork !== null}
-      collapsible={selectedWork !== null}
-    >
-      <div className="inline-warning">
+  const sidebarCreateWorkPanel = !canCreateActiveOrganizationWorks ? (
+    <div className="sidebar-status error sidebar-create-permission">
+      <span>
         {pickUiText(
           uiLanguage,
           'This workspace role cannot create works. Ask the workspace owner or an admin to change your role.',
           '\u3053\u306e\u30ef\u30fc\u30af\u30b9\u30da\u30fc\u30b9\u3067\u306f\u4f5c\u54c1\u3092\u4f5c\u6210\u3067\u304d\u307e\u305b\u3093\u3002\u30aa\u30fc\u30ca\u30fc\u307e\u305f\u306f\u7ba1\u7406\u8005\u306b\u6a29\u9650\u5909\u66f4\u3092\u4f9d\u983c\u3057\u3066\u304f\u3060\u3055\u3044\u3002',
         )}
-      </div>
-    </PanelSection>
+      </span>
+    </div>
   ) : (
-    <PanelSection
-      title="New work"
-      subtitle="Create a work before writing story content."
-      className="story-create-work-panel"
-      compact={selectedWork !== null}
-      collapsible={selectedWork !== null}
+    <details
+      className="sidebar-disclosure sidebar-create-disclosure"
+      onToggle={(event) => setNewWorkComposerOpen(event.currentTarget.open)}
+      open={newWorkComposerOpen}
     >
+      <summary>
+        <span className="sidebar-create-summary-label">
+          <Plus size={15} />
+          {translateUiString(uiLanguage, 'New work')}
+        </span>
+        <ChevronDown className="sidebar-disclosure-chevron" size={15} />
+      </summary>
       <form
         className="story-create-form"
         onSubmit={(event) => {
@@ -4334,24 +4335,17 @@ function StudioShell(props: {
           });
         }}
       >
-        <div className="form-grid two">
-          <InputField
-            label="Title"
-            value={newWorkDraft.title}
-            onChange={(value) => setNewWorkDraft({ ...newWorkDraft, title: value })}
-          />
-          <InputField
-            label="Genre"
-            value={newWorkDraft.genre}
-            onChange={(value) => setNewWorkDraft({ ...newWorkDraft, genre: value })}
-          />
-        </div>
+        <InputField
+          label="Title"
+          value={newWorkDraft.title}
+          onChange={(value) => setNewWorkDraft({ ...newWorkDraft, title: value })}
+        />
         <button className="primary-button" disabled={busyAction === 'Create work'} type="submit">
-          {busyAction === 'Create work' ? <LoaderCircle className="spin" size={16} /> : <Save size={16} />}
+          {busyAction === 'Create work' ? <LoaderCircle className="spin" size={16} /> : <Plus size={16} />}
           {translateUiString(uiLanguage, 'Create')}
         </button>
       </form>
-    </PanelSection>
+    </details>
   );
 
   const personalBillingPanel =
@@ -4605,6 +4599,7 @@ function StudioShell(props: {
                 {worksQuery.isFetching && works.length === 0 ? <LoaderCircle className="spin" size={12} /> : works.length}
               </span>
             </div>
+            {sidebarCreateWorkPanel}
             <div className="stack gap-xs sidebar-work-list">
               {works.length > 0 ? (
                 <StoryHierarchyTree
@@ -4771,12 +4766,6 @@ function StudioShell(props: {
           <div className="workspace-grid mobile-account-workspace">
             <section className="main-column mobile-account-column">{tutorialPanel}</section>
           </div>
-        ) : selectedWork === null && activeTab === 'story' ? (
-          <div className="workspace-grid">
-            <section className="main-column">
-              {createWorkPanel}
-            </section>
-          </div>
         ) : selectedWork === null ? (
           <section className="empty-state">
             <LayoutGrid size={28} />
@@ -4788,8 +4777,6 @@ function StudioShell(props: {
             <section className="main-column">
               {activeTab === 'story' ? (
                 <>
-                  {createWorkPanel}
-
                   <PanelSection
                     title="Work overview"
                     subtitle={uiLanguage === 'ja' ? `状態 ${translateUiString(uiLanguage, selectedWork.status)}` : `status ${selectedWork.status}`}
@@ -4818,10 +4805,7 @@ function StudioShell(props: {
                       </button>
                     }
                   >
-                    <div className="form-grid two">
-                      <InputField label="Title" value={workDraft.title} onChange={(value) => setWorkDraft({ ...workDraft, title: value })} />
-                      <InputField label="Genre" value={workDraft.genre} onChange={(value) => setWorkDraft({ ...workDraft, genre: value })} />
-                    </div>
+                    <InputField label="Title" value={workDraft.title} onChange={(value) => setWorkDraft({ ...workDraft, title: value })} />
                     <details className="advanced-disclosure work-context-disclosure">
                       <summary>{translateUiString(uiLanguage, 'Advanced work context')}</summary>
                       <div className="form-grid two">

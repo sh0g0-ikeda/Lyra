@@ -433,6 +433,53 @@ test('renders the console with mocked api responses', async ({ page }) => {
   await expect(page.getByRole('textbox', { name: 'Situation' })).toHaveValue('Mizuki enters the fort.');
 });
 
+test('creates works from the sidebar without exposing or clearing genre', async ({ page }) => {
+  await seedEnglishUi(page);
+  await seedAuthenticatedSession(page);
+
+  let createPayload: Record<string, unknown> | null = null;
+  let updatePayload: Record<string, unknown> | null = null;
+  await page.route('**/api/**', async (route) => {
+    const request = route.request();
+    const pathname = new URL(request.url()).pathname;
+    if (pathname === '/api/works' && request.method() === 'POST') {
+      createPayload = request.postDataJSON() as Record<string, unknown>;
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(work),
+      });
+    }
+    if (pathname === `/api/works/${work.id}` && request.method() === 'PUT') {
+      updatePayload = request.postDataJSON() as Record<string, unknown>;
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(work),
+      });
+    }
+    return mockApi(route);
+  });
+
+  await page.goto('/');
+
+  const sidebar = page.locator('aside.sidebar');
+  await expect(sidebar.getByText('New work', { exact: true })).toBeVisible();
+  const newWorkTitle = sidebar.getByRole('textbox', { name: 'Title', exact: true });
+  await expect(newWorkTitle).toBeVisible();
+  await expect(sidebar.getByRole('textbox', { name: 'Genre', exact: true })).toHaveCount(0);
+  await expect(page.locator('main').getByText('New work', { exact: true })).toHaveCount(0);
+
+  await newWorkTitle.fill('Sidebar work');
+  await sidebar.getByRole('button', { name: 'Create', exact: true }).click();
+  await expect.poll(() => createPayload).toMatchObject({ title: 'Sidebar work', genre: null });
+
+  await page.getByText('Work overview', { exact: true }).click();
+  await expect(page.getByRole('textbox', { name: 'Genre', exact: true })).toHaveCount(0);
+  await page.locator('.work-overview-section').getByRole('button', { name: 'Save', exact: true }).click();
+  await expect.poll(() => updatePayload).toMatchObject({ genre: 'fantasy' });
+});
+
 test('keeps the story hierarchy usable on a mobile viewport', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await seedEnglishUi(page);
@@ -440,6 +487,10 @@ test('keeps the story hierarchy usable on a mobile viewport', async ({ page }) =
   await page.route('**/api/**', mockApi);
 
   await page.goto('/');
+
+  const sidebar = page.locator('aside.sidebar');
+  await expect(sidebar.getByText('New work', { exact: true })).toBeVisible();
+  await expect(sidebar.getByRole('textbox', { name: 'Title', exact: true })).toBeVisible();
 
   await expect(page.getByRole('button', { name: 'Moonlit Regiment', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: '1 First movement', exact: true })).toBeVisible();

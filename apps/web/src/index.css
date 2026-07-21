@@ -190,6 +190,68 @@ a {
   margin-top: 12px;
 }
 
+.sidebar-create-disclosure {
+  padding: 8px 9px;
+  border-color: rgba(229, 199, 107, 0.22);
+  background: rgba(229, 199, 107, 0.045);
+}
+
+.sidebar-create-disclosure summary {
+  min-height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: #ded3ae;
+}
+
+.sidebar-create-summary-label {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.sidebar-create-summary-label svg {
+  flex: 0 0 auto;
+  color: #e5c76b;
+}
+
+.sidebar-disclosure-chevron {
+  flex: 0 0 auto;
+  color: #8d856f;
+  transition: transform 0.16s ease;
+}
+
+.sidebar-create-disclosure[open] .sidebar-disclosure-chevron {
+  transform: rotate(180deg);
+}
+
+.sidebar-create-disclosure .story-create-form {
+  margin-top: 8px;
+  gap: 7px;
+}
+
+.sidebar-create-disclosure .field {
+  gap: 4px;
+}
+
+.sidebar-create-disclosure .field span {
+  font-size: 0.72rem;
+}
+
+.sidebar-create-disclosure .field input {
+  min-height: 36px;
+}
+
+.sidebar-create-disclosure .primary-button {
+  width: 100%;
+}
+
+.sidebar-create-permission {
+  padding: 7px 8px;
+}
+
 .section-header {
   display: flex;
   align-items: flex-start;
@@ -653,13 +715,6 @@ a {
 
 .work-overview-section .muted {
   font-size: 0.78rem;
-}
-
-.story-create-work-panel {
-  border-color: rgba(229, 199, 107, 0.18);
-  background:
-    linear-gradient(90deg, rgba(229, 199, 107, 0.07), transparent 36%),
-    rgba(26, 26, 26, 0.9);
 }
 
 .inline-warning {
