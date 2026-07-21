@@ -21,6 +21,7 @@
     "test:coverage": "vitest run --coverage",
     "db:check-invariants": "tsx scripts/checkDeploymentDataInvariants.ts",
     "migrate": "tsx scripts/migrate.ts",
+    "migrate:prod": "bun dist/scripts/startProductionMigration.js",
     "auth:dev-token": "tsx scripts/createDevAuthToken.ts --raw",
     "auth:dev-token:json": "tsx scripts/createDevAuthToken.ts",
     "worker:generation": "tsx scripts/runGenerationWorker.ts",
