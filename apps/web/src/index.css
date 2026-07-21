@@ -362,14 +362,149 @@ a {
   position: sticky;
   top: 0;
   z-index: 5;
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   align-items: center;
-  justify-content: space-between;
   gap: 16px;
   padding: 14px 20px;
   border-bottom: 1px solid rgba(229, 199, 107, 0.1);
   background: rgba(10, 10, 10, 0.86);
   backdrop-filter: blur(14px);
+}
+
+.primary-navigation {
+  grid-column: 2;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(124px, 1fr));
+  gap: 8px;
+}
+
+.primary-navigation .tab-button {
+  min-height: 42px;
+  padding: 0 14px;
+  white-space: nowrap;
+}
+
+.primary-navigation .tab-button.active {
+  background: rgba(229, 199, 107, 0.09);
+  border-color: rgba(229, 199, 107, 0.48);
+  color: #fff7dc;
+}
+
+.topbar-account {
+  grid-column: 3;
+  justify-self: end;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.topbar-identity {
+  min-width: 0;
+  text-align: right;
+}
+
+.topbar-identity strong {
+  display: block;
+  max-width: min(260px, 22vw);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-menu {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.account-menu-trigger {
+  width: 44px;
+  height: 42px;
+  padding: 0;
+  border: 1px solid rgba(229, 199, 107, 0.18);
+  border-radius: 8px;
+  background: #171717;
+  color: #e5e5e5;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  transition:
+    border-color 0.16s ease,
+    background-color 0.16s ease,
+    box-shadow 0.16s ease;
+}
+
+.account-menu-trigger:hover,
+.account-menu-trigger:focus-visible,
+.account-menu-trigger.active {
+  border-color: rgba(229, 199, 107, 0.48);
+  background: rgba(229, 199, 107, 0.08);
+  box-shadow: 0 0 0 1px rgba(229, 199, 107, 0.1) inset;
+}
+
+.account-menu-popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 12;
+  width: 248px;
+  padding: 6px;
+  border: 1px solid rgba(229, 199, 107, 0.2);
+  border-radius: 8px;
+  background: #171717;
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.48);
+}
+
+.account-menu-item {
+  width: 100%;
+  min-height: 40px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #ededed;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 9px;
+  font-weight: 600;
+  text-align: left;
+}
+
+.account-menu-item:hover,
+.account-menu-item:focus-visible,
+.account-menu-item.active {
+  background: rgba(229, 199, 107, 0.09);
+}
+
+.account-menu-item.danger {
+  color: #ffb0b0;
+}
+
+.account-menu-language {
+  min-height: 48px;
+  margin: 4px 0;
+  padding: 5px 10px;
+  border-top: 1px solid rgba(229, 199, 107, 0.1);
+  border-bottom: 1px solid rgba(229, 199, 107, 0.1);
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  color: #b7b7b7;
+  font-size: 0.78rem;
+}
+
+.account-menu-language select {
+  min-width: 0;
+  height: 34px;
+  border: 1px solid rgba(229, 199, 107, 0.16);
+  border-radius: 6px;
+  background: #1d2025;
+  color: #f2f2f2;
+  padding: 0 8px;
 }
 
 .workspace-summary-panel {
@@ -3307,6 +3442,24 @@ details.stack summary {
 }
 
 @media (max-width: 1200px) {
+  .topbar {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .primary-navigation {
+    grid-column: 1;
+    justify-self: start;
+    grid-template-columns: repeat(3, minmax(112px, 1fr));
+  }
+
+  .topbar-account {
+    grid-column: 2;
+  }
+
+  .topbar-identity strong {
+    max-width: 190px;
+  }
+
   .workspace-summary-panel {
     grid-template-columns: 1fr;
   }
@@ -3331,8 +3484,8 @@ details.stack summary {
   }
 
   .topbar {
-    align-items: stretch;
-    flex-direction: column;
+    align-items: center;
+    grid-template-columns: minmax(0, 1fr) auto;
     padding: 12px 16px;
   }
 
@@ -3432,17 +3585,33 @@ details.stack summary {
   }
 
   .topbar {
+    display: flex;
     align-items: center;
     flex-direction: row;
+    justify-content: flex-start;
     gap: 10px;
     padding: 10px 12px;
   }
 
-  .topbar > div:first-child strong {
+  .topbar-identity {
+    text-align: left;
+  }
+
+  .topbar-identity strong {
     display: block;
     max-width: 100%;
     overflow-wrap: anywhere;
+    white-space: normal;
     font-size: 0.92rem;
+  }
+
+  .topbar-account {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .account-menu {
+    display: none;
   }
 
   .topbar > .toolbar {
