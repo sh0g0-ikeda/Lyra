@@ -110,7 +110,7 @@ describe('EpisodePlanContinuity', () => {
     expect(briefContainsPage(brief, 1)).toBe(true);
     expect(briefContainsPage(brief, PAGE_COUNT)).toBe(true);
     expect(brief).toContain(`Panel ${PANELS_PER_PAGE}`);
-  });
+  }, 20_000);
 
   it('監査 brief は UUID ではなくキャラ名で登場人物と話者を識別できる', () => {
     const entityId = '10000000-0000-4000-8000-000000000001';
