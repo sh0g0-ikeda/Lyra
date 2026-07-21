@@ -67,7 +67,6 @@ import type {
   OrganizationInvitationRecord,
   OrganizationInvoiceRecord,
   OrganizationMemberRecord,
-  WorkRecord,
 } from './types/api';
 
 type WorkspaceTab = 'story' | 'entities' | 'pages' | 'account' | 'tutorial';
@@ -2226,17 +2225,14 @@ function StudioShell(props: {
     '',
   );
   const [activeTab, setActiveTab] = useState<WorkspaceTab>('story');
-  const [workDraft, setWorkDraft] = useState<WorkDraft>(createEmptyWorkDraft());
   const [newWorkDraft, setNewWorkDraft] = useState<WorkDraft>(createEmptyWorkDraft());
   const [newWorkComposerOpen, setNewWorkComposerOpen] = useState(true);
   const [chapterDraft, setChapterDraft] = useState<ChapterDraft>(createEmptyChapterDraft());
   const [newChapterDraft, setNewChapterDraft] = useState<ChapterDraft>(createEmptyChapterDraft());
   const [episodeDraft, setEpisodeDraft] = useState<EpisodeDraft>(createEmptyEpisodeDraft());
   const [newEpisodeDraft, setNewEpisodeDraft] = useState<EpisodeDraft>(createEmptyEpisodeDraft());
-  const preservedWorkDraftRef = useRef<PreservedStoryDraft<WorkDraft> | null>(null);
   const preservedChapterDraftRef = useRef<PreservedStoryDraft<ChapterDraft> | null>(null);
   const preservedEpisodeDraftRef = useRef<PreservedStoryDraft<EpisodeDraft> | null>(null);
-  const hydratedWorkVersionRef = useRef<string | null>(null);
   const hydratedChapterVersionRef = useRef<string | null>(null);
   const hydratedEpisodeVersionRef = useRef<string | null>(null);
   const [storyInstruction, setStoryInstruction] = useState('');
@@ -3033,26 +3029,6 @@ function StudioShell(props: {
       setExportFilename(sanitizeFilename(selectedEpisode.title ?? `episode-${selectedEpisode.order}`));
     }
   }, [selectedEpisode]);
-
-  useEffect(() => {
-    if (selectedWork === null) {
-      hydratedWorkVersionRef.current = null;
-      return;
-    }
-    const hydrationKey = `${selectedWork.id}:${selectedWork.version}`;
-    const preserved = preservedWorkDraftRef.current;
-    preservedWorkDraftRef.current = null;
-    if (preserved?.id === selectedWork.id && preserved.expectedTitle === selectedWork.title) {
-      hydratedWorkVersionRef.current = hydrationKey;
-      setWorkDraft(preserved.draft);
-      return;
-    }
-    if (hydratedWorkVersionRef.current === hydrationKey) {
-      return;
-    }
-    hydratedWorkVersionRef.current = hydrationKey;
-    setWorkDraft(toWorkDraft(selectedWork));
-  }, [selectedWork]);
 
   useEffect(() => {
     if (selectedChapter === null) {
@@ -4617,18 +4593,6 @@ function StudioShell(props: {
                     setSelectedChapterId(chapterId);
                     setSelectedEpisodeId(episodeId);
                   }}
-                  onWorkMetadataChanged={(updatedWork) => {
-                    if (updatedWork.id !== selectedWorkId) {
-                      return;
-                    }
-                    const preservedDraft = { ...workDraft, title: updatedWork.title };
-                    preservedWorkDraftRef.current = {
-                      id: updatedWork.id,
-                      expectedTitle: updatedWork.title,
-                      draft: preservedDraft,
-                    };
-                    setWorkDraft(preservedDraft);
-                  }}
                   onChapterMetadataChanged={(updatedChapter) => {
                     if (updatedChapter.id !== selectedChapterId) {
                       return;
@@ -4777,69 +4741,6 @@ function StudioShell(props: {
             <section className="main-column">
               {activeTab === 'story' ? (
                 <>
-                  <PanelSection
-                    title="Work overview"
-                    subtitle={uiLanguage === 'ja' ? `状態 ${translateUiString(uiLanguage, selectedWork.status)}` : `status ${selectedWork.status}`}
-                    className="work-overview-section"
-                    compact
-                    collapsible
-                    defaultCollapsed
-                    actions={
-                      <button
-                        className="secondary-button"
-                        disabled={busyAction === 'Save work'}
-                        onClick={() =>
-                          void runAction('Save work', async () => {
-                            await api.updateWork(
-                              selectedWork.id,
-                              toWorkPayload(workDraft, loadedSelectedWorkEntityIds),
-                              activeOrganizationId,
-                            );
-                            await invalidateScopedQuery(['works']);
-                          })
-                        }
-                        type="button"
-                      >
-                        {busyAction === 'Save work' ? <LoaderCircle className="spin" size={16} /> : <Save size={16} />}
-                        {translateUiString(uiLanguage, 'Save')}
-                      </button>
-                    }
-                  >
-                    <InputField label="Title" value={workDraft.title} onChange={(value) => setWorkDraft({ ...workDraft, title: value })} />
-                    <details className="advanced-disclosure work-context-disclosure">
-                      <summary>{translateUiString(uiLanguage, 'Advanced work context')}</summary>
-                      <div className="form-grid two">
-                        <TextAreaField
-                          label="World"
-                          rows={3}
-                          value={workDraft.world_setting}
-                          onChange={(value) => setWorkDraft({ ...workDraft, world_setting: value })}
-                        />
-                        <TextAreaField
-                          label="Overall flow"
-                          rows={3}
-                          value={workDraft.overall_flow}
-                          onChange={(value) => setWorkDraft({ ...workDraft, overall_flow: value })}
-                        />
-                      </div>
-                      <InputField label="Theme" value={workDraft.theme} onChange={(value) => setWorkDraft({ ...workDraft, theme: value })} />
-                      <div className="form-grid two">
-                        <TextAreaField
-                          label="Starting point"
-                          rows={2}
-                          value={workDraft.starting_point}
-                          onChange={(value) => setWorkDraft({ ...workDraft, starting_point: value })}
-                        />
-                        <TextAreaField
-                          label="Ending point"
-                          rows={2}
-                          value={workDraft.ending_point}
-                          onChange={(value) => setWorkDraft({ ...workDraft, ending_point: value })}
-                        />
-                      </div>
-                    </details>
-                  </PanelSection>
-
                   <PanelSection
                     title="Page planning"
                     collapsible
@@ -8060,20 +7961,6 @@ async function handleEntityImport(
   }
 }
 
-function toWorkDraft(work: WorkRecord): WorkDraft {
-  return {
-    title: work.title,
-    genre: work.genre ?? '',
-    world_setting: work.world_setting ?? '',
-    theme: work.theme ?? '',
-    main_entity_ids: work.main_entity_ids.join(', '),
-    starting_point: work.starting_point ?? '',
-    ending_point: work.ending_point ?? '',
-    overall_flow: work.overall_flow ?? '',
-    status: work.status,
-  };
-}
-
 function toChapterDraft(chapter: ChapterRecord): ChapterDraft {
   return {
     order: String(chapter.order),
@@ -8242,23 +8129,6 @@ function toFramePreviewDefinition(draft: PanelFrameDraft): FramePreviewDefinitio
 
 function clampFramePreviewCoordinate(value: number): number {
   return Math.max(0, Math.min(1, value));
-}
-
-function toWorkPayload(
-  draft: WorkDraft,
-  allowedEntityIds?: ReadonlySet<string>,
-): Record<string, unknown> {
-  return {
-    title: draft.title,
-    genre: nullableString(draft.genre),
-    world_setting: nullableString(draft.world_setting),
-    theme: nullableString(draft.theme),
-    main_entity_ids: splitEntityIdCsv(draft.main_entity_ids, allowedEntityIds),
-    starting_point: nullableString(draft.starting_point),
-    ending_point: nullableString(draft.ending_point),
-    overall_flow: nullableString(draft.overall_flow),
-    status: draft.status,
-  };
 }
 
 function toCreateWorkPayload(draft: WorkDraft): Record<string, unknown> {

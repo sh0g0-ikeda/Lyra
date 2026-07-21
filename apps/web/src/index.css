@@ -544,13 +544,11 @@ a {
   background: rgba(255, 255, 255, 0.03);
 }
 
-.work-context-disclosure,
 .episode-purpose-disclosure,
 .character-anchor-detail {
   margin-top: 10px;
 }
 
-.work-context-disclosure summary,
 .episode-purpose-disclosure summary,
 .character-anchor-detail summary {
   color: #e8d184;
@@ -700,21 +698,6 @@ a {
   background: rgba(229, 199, 107, 0.11);
   color: #f2dd88;
   box-shadow: 0 0 0 1px rgba(255, 233, 150, 0.08) inset;
-}
-
-.work-overview-section {
-  border-color: rgba(229, 199, 107, 0.06);
-  background: rgba(20, 20, 20, 0.72);
-  box-shadow: none;
-}
-
-.work-overview-section .section-header h2 {
-  color: #d7ceb1;
-  font-size: 1rem;
-}
-
-.work-overview-section .muted {
-  font-size: 0.78rem;
 }
 
 .inline-warning {
