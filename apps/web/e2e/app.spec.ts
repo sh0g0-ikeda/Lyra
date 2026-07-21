@@ -470,6 +470,46 @@ test('creates works from the sidebar without rendering a work overview editor', 
   await expect(page.getByRole('textbox', { name: 'Genre', exact: true })).toHaveCount(0);
 });
 
+test('PCヘッダーで制作ナビと設定メニューを階層分離する', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await seedEnglishUi(page);
+  await seedAuthenticatedSession(page);
+  await page.route('**/api/**', mockApi);
+
+  await page.goto('/');
+
+  const primaryNavigation = page.getByRole('navigation', { name: 'Primary navigation' });
+  await expect(primaryNavigation).toBeVisible();
+  await expect(primaryNavigation.getByRole('button')).toHaveCount(3);
+  await expect(primaryNavigation.getByRole('button', { name: 'Story', exact: true })).toBeVisible();
+  await expect(primaryNavigation.getByRole('button', { name: 'Entities', exact: true })).toBeVisible();
+  await expect(primaryNavigation.getByRole('button', { name: 'Pages', exact: true })).toBeVisible();
+  await expect(primaryNavigation.getByRole('button', { name: 'Workspace', exact: true })).toHaveCount(0);
+
+  const sidebar = page.locator('aside.sidebar');
+  await expect(sidebar.locator('.sidebar-workspace-switcher')).toContainText('Workspace');
+
+  const accountMenuButton = page.getByRole('button', { name: 'Account menu', exact: true });
+  await expect(accountMenuButton).toBeVisible();
+  await accountMenuButton.click();
+
+  const accountMenu = page.locator('.account-menu-popover');
+  await expect(accountMenu).toBeVisible();
+  await expect(accountMenu.getByRole('button', { name: 'Workspace settings', exact: true })).toBeVisible();
+  const languageSelect = accountMenu.getByRole('combobox', { name: 'Language', exact: true });
+  await expect(languageSelect).toBeVisible();
+  await expect(accountMenu.getByRole('button', { name: 'Log out', exact: true })).toBeVisible();
+
+  await languageSelect.selectOption('ja');
+  await expect(page.getByRole('navigation', { name: '制作ナビゲーション' })).toBeVisible();
+  const localizedAccountMenuButton = page.getByRole('button', { name: 'アカウントメニュー', exact: true });
+  await expect(localizedAccountMenuButton).toBeVisible();
+
+  await page.keyboard.press('Escape');
+  await expect(accountMenu).toBeHidden();
+  await expect(localizedAccountMenuButton).toBeFocused();
+});
+
 test('keeps the story hierarchy usable on a mobile viewport', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await seedEnglishUi(page);

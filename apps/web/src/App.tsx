@@ -687,6 +687,9 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   'Catchphrases': '口癖',
   'Pronouns': '一人称・二人称',
   'Mobile navigation': 'モバイルナビゲーション',
+  'Primary navigation': '制作ナビゲーション',
+  'Account menu': 'アカウントメニュー',
+  'Workspace settings': 'ワークスペース設定',
   English: '英語',
   Language: '言語',
   Account: 'アカウント',
@@ -2225,6 +2228,9 @@ function StudioShell(props: {
     '',
   );
   const [activeTab, setActiveTab] = useState<WorkspaceTab>('story');
+  const [accountMenuOpen, setAccountMenuOpen] = useState(false);
+  const accountMenuRef = useRef<HTMLDivElement | null>(null);
+  const accountMenuTriggerRef = useRef<HTMLButtonElement | null>(null);
   const [newWorkDraft, setNewWorkDraft] = useState<WorkDraft>(createEmptyWorkDraft());
   const [newWorkComposerOpen, setNewWorkComposerOpen] = useState(true);
   const [chapterDraft, setChapterDraft] = useState<ChapterDraft>(createEmptyChapterDraft());
@@ -2301,6 +2307,38 @@ function StudioShell(props: {
       setActiveTab('story');
     }
   }, [activeTab, isMobileViewport]);
+
+  useEffect(() => {
+    if (!accountMenuOpen) {
+      return undefined;
+    }
+
+    const closeOnOutsidePointer = (event: PointerEvent): void => {
+      if (event.target instanceof Node && !accountMenuRef.current?.contains(event.target)) {
+        setAccountMenuOpen(false);
+      }
+    };
+    const closeOnEscape = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape') {
+        return;
+      }
+      setAccountMenuOpen(false);
+      accountMenuTriggerRef.current?.focus();
+    };
+
+    document.addEventListener('pointerdown', closeOnOutsidePointer);
+    document.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.removeEventListener('pointerdown', closeOnOutsidePointer);
+      document.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [accountMenuOpen]);
+
+  useEffect(() => {
+    if (isMobileViewport) {
+      setAccountMenuOpen(false);
+    }
+  }, [isMobileViewport]);
 
   useEffect(() => {
     if (!ORGANIZATION_FEATURES_AVAILABLE && selectedOrganizationId.trim().length > 0) {
@@ -4681,38 +4719,77 @@ function StudioShell(props: {
 
       <main className="workspace">
         <header className="topbar">
-          <div>
-            <div className="eyebrow">{translateUiString(uiLanguage, 'Signed in')}</div>
-            <strong>{props.email}</strong>
-          </div>
-          <div className="toolbar desktop-workspace-toolbar">
-            {canViewActiveOrganizationWorks ? (
-              <>
-                <button className={`tab-button ${activeTab === 'story' ? 'active' : ''}`} onClick={() => setActiveTab('story')} type="button">
-                  <Bot size={16} />
-                  {translateUiString(uiLanguage, 'Story')}
-                </button>
-                <button className={`tab-button ${activeTab === 'entities' ? 'active' : ''}`} onClick={() => setActiveTab('entities')} type="button">
-                  <Image size={16} />
-                  {translateUiString(uiLanguage, 'Entities')}
-                </button>
-                <button className={`tab-button ${activeTab === 'pages' ? 'active' : ''}`} onClick={() => setActiveTab('pages')} type="button">
-                  <PanelsTopLeft size={16} />
-                  {translateUiString(uiLanguage, 'Pages')}
-                </button>
-              </>
-            ) : null}
-            <button className={`tab-button ${activeTab === 'account' ? 'active' : ''}`} onClick={() => setActiveTab('account')} type="button">
-              <BriefcaseBusiness size={16} />
-              {pickUiText(uiLanguage, 'Workspace', 'ワークスペース')}
-            </button>
-            <select className="toolbar-select" value={uiLanguage} onChange={(event) => setUiLanguageStored(event.target.value)}>
-            <option value="ja">日本語</option>
-              <option value="en">{translateUiString(uiLanguage, 'English')}</option>
-            </select>
-            <button className="ghost-button" onClick={() => void props.onLogout()} type="button">
-              <LogOut size={16} />
-            </button>
+          {canViewActiveOrganizationWorks ? (
+            <nav
+              aria-label={translateUiString(uiLanguage, 'Primary navigation')}
+              className="primary-navigation desktop-workspace-toolbar"
+            >
+              <button className={`tab-button ${activeTab === 'story' ? 'active' : ''}`} onClick={() => setActiveTab('story')} type="button">
+                <BookOpen size={17} />
+                {translateUiString(uiLanguage, 'Story')}
+              </button>
+              <button className={`tab-button ${activeTab === 'entities' ? 'active' : ''}`} onClick={() => setActiveTab('entities')} type="button">
+                <Image size={17} />
+                {translateUiString(uiLanguage, 'Entities')}
+              </button>
+              <button className={`tab-button ${activeTab === 'pages' ? 'active' : ''}`} onClick={() => setActiveTab('pages')} type="button">
+                <PanelsTopLeft size={17} />
+                {translateUiString(uiLanguage, 'Pages')}
+              </button>
+            </nav>
+          ) : null}
+          <div className="topbar-account">
+            <div className="topbar-identity">
+              <div className="eyebrow">{translateUiString(uiLanguage, 'Signed in')}</div>
+              <strong>{props.email}</strong>
+            </div>
+            <div className="account-menu" ref={accountMenuRef}>
+              <button
+                aria-expanded={accountMenuOpen}
+                aria-haspopup="true"
+                aria-label={translateUiString(uiLanguage, 'Account menu')}
+                className={`account-menu-trigger ${activeTab === 'account' ? 'active' : ''}`}
+                onClick={() => setAccountMenuOpen((current) => !current)}
+                ref={accountMenuTriggerRef}
+                type="button"
+              >
+                <Users size={18} />
+                <ChevronDown size={15} />
+              </button>
+              {accountMenuOpen ? (
+                <div
+                  aria-label={translateUiString(uiLanguage, 'Account menu')}
+                  className="account-menu-popover"
+                >
+                  <button
+                    className={`account-menu-item ${activeTab === 'account' ? 'active' : ''}`}
+                    onClick={() => {
+                      setActiveTab('account');
+                      setAccountMenuOpen(false);
+                    }}
+                    type="button"
+                  >
+                    <BriefcaseBusiness size={17} />
+                    {translateUiString(uiLanguage, 'Workspace settings')}
+                  </button>
+                  <label className="account-menu-language">
+                    <span>{translateUiString(uiLanguage, 'Language')}</span>
+                    <select
+                      aria-label={translateUiString(uiLanguage, 'Language')}
+                      value={uiLanguage}
+                      onChange={(event) => setUiLanguageStored(event.target.value)}
+                    >
+                      <option value="ja">日本語</option>
+                      <option value="en">{translateUiString(uiLanguage, 'English')}</option>
+                    </select>
+                  </label>
+                  <button className="account-menu-item danger" onClick={() => void props.onLogout()} type="button">
+                    <LogOut size={17} />
+                    {translateUiString(uiLanguage, 'Log out')}
+                  </button>
+                </div>
+              ) : null}
+            </div>
           </div>
         </header>
 
