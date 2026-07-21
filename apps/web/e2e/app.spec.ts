@@ -444,8 +444,65 @@ test('keeps the story hierarchy usable on a mobile viewport', async ({ page }) =
   await expect(page.getByRole('button', { name: 'Moonlit Regiment', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: '1 First movement', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: '1 Arrival', exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Rename chapter', exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Delete episode', exact: true })).toBeVisible();
+
+  await expect(page.getByRole('menuitem', { name: 'Rename chapter', exact: true })).toHaveCount(0);
+  const workMenuTrigger = page.getByRole('button', { name: 'Actions for work “Moonlit Regiment”', exact: true });
+  await workMenuTrigger.click();
+  await expect(page.getByRole('menuitem', { name: 'Rename work', exact: true })).toBeVisible();
+  await expect(page.getByRole('menuitem', { name: 'Add chapter', exact: true })).toBeVisible();
+  await page.keyboard.press('Escape');
+
+  const episodeMenuTrigger = page.getByRole('button', { name: 'Actions for episode “Arrival”', exact: true });
+  await expect(episodeMenuTrigger).toBeVisible();
+
+  const titleAndTriggerDoNotOverlap = await page.evaluate(() => {
+    const title = document.querySelector<HTMLButtonElement>('.story-hierarchy-episode-row .story-hierarchy-title');
+    const trigger = document.querySelector<HTMLButtonElement>('.story-hierarchy-episode-row .story-hierarchy-menu-trigger');
+    if (title === null || trigger === null) {
+      return false;
+    }
+    const titleRect = title.getBoundingClientRect();
+    const triggerRect = trigger.getBoundingClientRect();
+    return titleRect.width >= 100 && titleRect.right <= triggerRect.left;
+  });
+  expect(titleAndTriggerDoNotOverlap).toBe(true);
+
+  await episodeMenuTrigger.focus();
+  await page.keyboard.press('ArrowDown');
+  await expect(episodeMenuTrigger).toHaveAttribute('aria-expanded', 'true');
+  const episodeMenu = page.getByRole('menu', { name: 'Actions for episode “Arrival”', exact: true });
+  await expect(episodeMenu).toBeVisible();
+  await expect(episodeMenu.getByRole('menuitem', { name: 'Move episode up', exact: true })).toBeDisabled();
+  await expect(episodeMenu.getByRole('menuitem', { name: 'Move episode down', exact: true })).toBeDisabled();
+  const renameEpisode = episodeMenu.getByRole('menuitem', { name: 'Rename episode', exact: true });
+  const deleteEpisode = episodeMenu.getByRole('menuitem', { name: 'Delete episode', exact: true });
+  await expect(renameEpisode).toBeFocused();
+  await page.keyboard.press('End');
+  await expect(deleteEpisode).toBeFocused();
+  await page.keyboard.press('Home');
+  await expect(renameEpisode).toBeFocused();
+
+  await page.keyboard.press('Escape');
+  await expect(episodeMenu).toHaveCount(0);
+  await expect(episodeMenuTrigger).toBeFocused();
+  await expect(episodeMenuTrigger).toHaveAttribute('aria-expanded', 'false');
+
+  await episodeMenuTrigger.click();
+  await page.getByRole('menuitem', { name: 'Rename episode', exact: true }).click();
+  const episodeTitleInput = page.getByRole('textbox', { name: 'Episode title', exact: true });
+  await expect(episodeTitleInput).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('button', { name: '1 Arrival', exact: true })).toBeVisible();
+
+  const chapterMenuTrigger = page.getByRole('button', { name: 'Actions for chapter “First movement”', exact: true });
+  await chapterMenuTrigger.click();
+  await expect(page.getByRole('menuitem', { name: 'Rename chapter', exact: true })).toBeVisible();
+  await expect(page.getByRole('menuitem', { name: 'Add episode', exact: true })).toBeVisible();
+  await expect(page.getByRole('menuitem', { name: 'Move chapter up', exact: true })).toBeDisabled();
+  await expect(page.getByRole('menuitem', { name: 'Move chapter down', exact: true })).toBeDisabled();
+  await expect(page.getByRole('menuitem', { name: 'Delete chapter', exact: true })).toBeVisible();
+  await page.mouse.click(380, 800);
+  await expect(page.getByRole('menuitem', { name: 'Add episode', exact: true })).toHaveCount(0);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
 });
 

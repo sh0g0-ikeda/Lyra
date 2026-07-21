@@ -1,4 +1,16 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent, type KeyboardEvent, type ReactNode } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type FormEvent,
+  type KeyboardEvent,
+  type ReactNode,
+} from 'react';
+import { createPortal } from 'react-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
   BookOpen,
@@ -10,6 +22,7 @@ import {
   Folder,
   FolderOpen,
   LoaderCircle,
+  EllipsisVertical,
   Pencil,
   Plus,
   Trash2,
@@ -65,6 +78,15 @@ interface ChapterNodeProps extends Omit<WorkNodeProps, 'work' | 'expanded' | 'on
   chapters: ChapterRecord[];
   chapterIndex: number;
   expanded: boolean;
+}
+
+interface HierarchyMenuAction {
+  label: string;
+  icon: ReactNode;
+  onSelect: () => void;
+  disabled?: boolean;
+  danger?: boolean;
+  separatorBefore?: boolean;
 }
 
 function text(language: UiLanguage, english: string, japanese: string): string {
@@ -274,27 +296,31 @@ function StoryWorkNode(props: WorkNodeProps) {
           </button>
         )}
         {!renaming ? (
-          <div className="story-hierarchy-actions">
-            <TreeIconButton
-              disabled={busy}
-              label={text(props.language, 'Rename work', '作品名を変更')}
-              onClick={() => setRenaming(true)}
-            >
-              <Pencil size={14} />
-            </TreeIconButton>
-            <TreeIconButton
-              disabled={busy}
-              label={text(props.language, 'Add chapter', '章を追加')}
-              onClick={() => {
-                if (!props.expanded) {
-                  props.onToggleWork(props.work.id);
-                }
-                setAddingChapter(true);
-              }}
-            >
-              <Plus size={15} />
-            </TreeIconButton>
-          </div>
+          <HierarchyActionMenu
+            actions={[
+              {
+                icon: <Pencil size={15} />,
+                label: text(props.language, 'Rename work', '作品名を変更'),
+                onSelect: () => setRenaming(true),
+              },
+              {
+                icon: <Plus size={16} />,
+                label: text(props.language, 'Add chapter', '章を追加'),
+                onSelect: () => {
+                  if (!props.expanded) {
+                    props.onToggleWork(props.work.id);
+                  }
+                  setAddingChapter(true);
+                },
+              },
+            ]}
+            disabled={busy}
+            label={text(
+              props.language,
+              `Actions for work “${props.work.title}”`,
+              `作品「${props.work.title}」の操作`,
+            )}
+          />
         ) : null}
       </div>
 
@@ -527,32 +553,51 @@ function StoryChapterNode(props: ChapterNodeProps) {
           </button>
         )}
         {!renaming ? (
-          <div className="story-hierarchy-actions">
-            <TreeIconButton disabled={busy || props.chapterIndex === 0} label={text(props.language, 'Move chapter up', '章を上へ')} onClick={() => moveChapter('up')}>
-              <ChevronUp size={14} />
-            </TreeIconButton>
-            <TreeIconButton disabled={busy || props.chapterIndex === props.chapters.length - 1} label={text(props.language, 'Move chapter down', '章を下へ')} onClick={() => moveChapter('down')}>
-              <ChevronDown size={14} />
-            </TreeIconButton>
-            <TreeIconButton disabled={busy} label={text(props.language, 'Rename chapter', '章名を変更')} onClick={() => setRenaming(true)}>
-              <Pencil size={13} />
-            </TreeIconButton>
-            <TreeIconButton
-              disabled={busy}
-              label={text(props.language, 'Add episode', '話を追加')}
-              onClick={() => {
-                if (!props.expanded) {
-                  props.onToggleChapter(props.chapter.id);
-                }
-                setAddingEpisode(true);
-              }}
-            >
-              <Plus size={15} />
-            </TreeIconButton>
-            <TreeIconButton danger disabled={busy} label={text(props.language, 'Delete chapter', '章を削除')} onClick={deleteChapter}>
-              <Trash2 size={13} />
-            </TreeIconButton>
-          </div>
+          <HierarchyActionMenu
+            actions={[
+              {
+                icon: <Pencil size={15} />,
+                label: text(props.language, 'Rename chapter', '章名を変更'),
+                onSelect: () => setRenaming(true),
+              },
+              {
+                icon: <Plus size={16} />,
+                label: text(props.language, 'Add episode', '話を追加'),
+                onSelect: () => {
+                  if (!props.expanded) {
+                    props.onToggleChapter(props.chapter.id);
+                  }
+                  setAddingEpisode(true);
+                },
+              },
+              {
+                disabled: props.chapterIndex === 0,
+                icon: <ChevronUp size={15} />,
+                label: text(props.language, 'Move chapter up', '章を上へ'),
+                onSelect: () => moveChapter('up'),
+                separatorBefore: true,
+              },
+              {
+                disabled: props.chapterIndex === props.chapters.length - 1,
+                icon: <ChevronDown size={15} />,
+                label: text(props.language, 'Move chapter down', '章を下へ'),
+                onSelect: () => moveChapter('down'),
+              },
+              {
+                danger: true,
+                icon: <Trash2 size={15} />,
+                label: text(props.language, 'Delete chapter', '章を削除'),
+                onSelect: deleteChapter,
+                separatorBefore: true,
+              },
+            ]}
+            disabled={busy}
+            label={text(
+              props.language,
+              `Actions for chapter “${chapterTitle}”`,
+              `章「${chapterTitle}」の操作`,
+            )}
+          />
         ) : null}
       </div>
 
@@ -697,20 +742,41 @@ function EpisodeRow(props: {
         </button>
       )}
       {!renaming ? (
-        <div className="story-hierarchy-actions">
-          <TreeIconButton disabled={props.busy || !props.upAllowed} label={text(props.language, 'Move episode up', '話を上へ')} onClick={props.onMoveUp}>
-            <ChevronUp size={14} />
-          </TreeIconButton>
-          <TreeIconButton disabled={props.busy || !props.downAllowed} label={text(props.language, 'Move episode down', '話を下へ')} onClick={props.onMoveDown}>
-            <ChevronDown size={14} />
-          </TreeIconButton>
-          <TreeIconButton disabled={props.busy} label={text(props.language, 'Rename episode', '話名を変更')} onClick={() => setRenaming(true)}>
-            <Pencil size={13} />
-          </TreeIconButton>
-          <TreeIconButton danger disabled={props.busy} label={text(props.language, 'Delete episode', '話を削除')} onClick={props.onDelete}>
-            <Trash2 size={13} />
-          </TreeIconButton>
-        </div>
+        <HierarchyActionMenu
+          actions={[
+            {
+              icon: <Pencil size={15} />,
+              label: text(props.language, 'Rename episode', '話名を変更'),
+              onSelect: () => setRenaming(true),
+            },
+            {
+              disabled: !props.upAllowed,
+              icon: <ChevronUp size={15} />,
+              label: text(props.language, 'Move episode up', '話を上へ'),
+              onSelect: props.onMoveUp,
+              separatorBefore: true,
+            },
+            {
+              disabled: !props.downAllowed,
+              icon: <ChevronDown size={15} />,
+              label: text(props.language, 'Move episode down', '話を下へ'),
+              onSelect: props.onMoveDown,
+            },
+            {
+              danger: true,
+              icon: <Trash2 size={15} />,
+              label: text(props.language, 'Delete episode', '話を削除'),
+              onSelect: props.onDelete,
+              separatorBefore: true,
+            },
+          ]}
+          disabled={props.busy}
+          label={text(
+            props.language,
+            `Actions for episode “${props.episodeTitle}”`,
+            `話「${props.episodeTitle}」の操作`,
+          )}
+        />
       ) : null}
     </div>
   );
@@ -750,6 +816,223 @@ function InlineTitleEditor(props: {
       <TreeIconButton label={text(props.language, 'Cancel', 'キャンセル')} onClick={props.onCancel}>
         <X size={13} />
       </TreeIconButton>
+    </div>
+  );
+}
+
+const HIERARCHY_MENU_WIDTH = 208;
+const HIERARCHY_MENU_EDGE_GAP = 8;
+const HIERARCHY_MENU_TRIGGER_GAP = 4;
+
+function HierarchyActionMenu(props: {
+  actions: HierarchyMenuAction[];
+  disabled: boolean;
+  label: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [position, setPosition] = useState<{ left: number; top: number } | null>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const itemRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const focusEdgeRef = useRef<'first' | 'last'>('first');
+  const menuId = useId();
+
+  const enabledItemIndexes = useMemo(
+    () => props.actions.flatMap((action, index) => (action.disabled === true ? [] : [index])),
+    [props.actions],
+  );
+
+  const closeMenu = useCallback((restoreFocus: boolean): void => {
+    setOpen(false);
+    setPosition(null);
+    if (restoreFocus) {
+      window.requestAnimationFrame(() => triggerRef.current?.focus());
+    }
+  }, []);
+
+  const placeMenu = useCallback((): void => {
+    const trigger = triggerRef.current;
+    if (trigger === null) {
+      return;
+    }
+    const rect = trigger.getBoundingClientRect();
+    const separators = props.actions.filter((action) => action.separatorBefore === true).length;
+    const itemHeight = window.matchMedia('(max-width: 760px)').matches ? 42 : 36;
+    const estimatedHeight = props.actions.length * itemHeight + separators * 5 + 8;
+    const spaceBelow = window.innerHeight - rect.bottom - HIERARCHY_MENU_TRIGGER_GAP;
+    const openAbove = spaceBelow < estimatedHeight && rect.top >= estimatedHeight + HIERARCHY_MENU_TRIGGER_GAP;
+    const unclampedTop = openAbove
+      ? rect.top - estimatedHeight - HIERARCHY_MENU_TRIGGER_GAP
+      : rect.bottom + HIERARCHY_MENU_TRIGGER_GAP;
+    const top = Math.min(
+      Math.max(HIERARCHY_MENU_EDGE_GAP, unclampedTop),
+      Math.max(HIERARCHY_MENU_EDGE_GAP, window.innerHeight - estimatedHeight - HIERARCHY_MENU_EDGE_GAP),
+    );
+    const left = Math.min(
+      Math.max(HIERARCHY_MENU_EDGE_GAP, rect.right - HIERARCHY_MENU_WIDTH),
+      Math.max(HIERARCHY_MENU_EDGE_GAP, window.innerWidth - HIERARCHY_MENU_WIDTH - HIERARCHY_MENU_EDGE_GAP),
+    );
+    setPosition({ left, top });
+  }, [props.actions]);
+
+  useEffect(() => {
+    if (props.disabled && open) {
+      closeMenu(false);
+    }
+  }, [closeMenu, open, props.disabled]);
+
+  useLayoutEffect(() => {
+    if (!open) {
+      return undefined;
+    }
+    placeMenu();
+    const focusFrame = window.requestAnimationFrame(() => {
+      const targetIndex = focusEdgeRef.current === 'last'
+        ? enabledItemIndexes.at(-1)
+        : enabledItemIndexes[0];
+      if (targetIndex !== undefined) {
+        itemRefs.current[targetIndex]?.focus();
+      }
+    });
+
+    const handlePointerDown = (event: PointerEvent): void => {
+      const target = event.target;
+      if (!(target instanceof Node)) {
+        return;
+      }
+      if (triggerRef.current?.contains(target) || menuRef.current?.contains(target)) {
+        return;
+      }
+      closeMenu(false);
+    };
+    const handleViewportChange = (): void => placeMenu();
+
+    document.addEventListener('pointerdown', handlePointerDown, true);
+    window.addEventListener('resize', handleViewportChange);
+    window.addEventListener('scroll', handleViewportChange, true);
+    return () => {
+      window.cancelAnimationFrame(focusFrame);
+      document.removeEventListener('pointerdown', handlePointerDown, true);
+      window.removeEventListener('resize', handleViewportChange);
+      window.removeEventListener('scroll', handleViewportChange, true);
+    };
+  }, [closeMenu, enabledItemIndexes, open, placeMenu]);
+
+  const openMenu = (focusEdge: 'first' | 'last'): void => {
+    focusEdgeRef.current = focusEdge;
+    setOpen(true);
+  };
+
+  const handleTriggerKeyDown = (event: KeyboardEvent<HTMLButtonElement>): void => {
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault();
+      openMenu(event.key === 'ArrowUp' ? 'last' : 'first');
+    }
+  };
+
+  const handleMenuKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      event.stopPropagation();
+      closeMenu(true);
+      return;
+    }
+    if (event.key === 'Tab') {
+      closeMenu(false);
+      return;
+    }
+    if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    const activeIndex = itemRefs.current.findIndex((item) => item === document.activeElement);
+    const currentEnabledPosition = enabledItemIndexes.indexOf(activeIndex);
+    let targetIndex: number | undefined;
+    if (event.key === 'Home') {
+      targetIndex = enabledItemIndexes[0];
+    } else if (event.key === 'End') {
+      targetIndex = enabledItemIndexes.at(-1);
+    } else if (event.key === 'ArrowDown') {
+      const nextPosition = currentEnabledPosition < 0 ? 0 : (currentEnabledPosition + 1) % enabledItemIndexes.length;
+      targetIndex = enabledItemIndexes[nextPosition];
+    } else {
+      const previousPosition = currentEnabledPosition <= 0 ? enabledItemIndexes.length - 1 : currentEnabledPosition - 1;
+      targetIndex = enabledItemIndexes[previousPosition];
+    }
+    if (targetIndex !== undefined) {
+      itemRefs.current[targetIndex]?.focus();
+    }
+  };
+
+  const selectAction = (action: HierarchyMenuAction): void => {
+    if (action.disabled === true) {
+      return;
+    }
+    closeMenu(false);
+    action.onSelect();
+    window.requestAnimationFrame(() => {
+      if (document.activeElement === document.body) {
+        triggerRef.current?.focus();
+      }
+    });
+  };
+
+  return (
+    <div className="story-hierarchy-menu-anchor">
+      <button
+        aria-controls={open ? menuId : undefined}
+        aria-expanded={open}
+        aria-haspopup="menu"
+        aria-label={props.label}
+        className="story-hierarchy-menu-trigger"
+        disabled={props.disabled}
+        onClick={() => {
+          if (open) {
+            closeMenu(false);
+          } else {
+            openMenu('first');
+          }
+        }}
+        onKeyDown={handleTriggerKeyDown}
+        ref={triggerRef}
+        title={props.label}
+        type="button"
+      >
+        <EllipsisVertical size={18} />
+      </button>
+      {open && position !== null
+        ? createPortal(
+            <div
+              aria-label={props.label}
+              className="story-hierarchy-action-menu"
+              id={menuId}
+              onKeyDown={handleMenuKeyDown}
+              ref={menuRef}
+              role="menu"
+              style={{ left: position.left, top: position.top }}
+            >
+              {props.actions.map((action, index) => (
+                <button
+                  className={`story-hierarchy-menu-item${action.danger === true ? ' danger' : ''}${action.separatorBefore === true ? ' separator-before' : ''}`}
+                  disabled={action.disabled === true}
+                  key={action.label}
+                  onClick={() => selectAction(action)}
+                  ref={(element) => {
+                    itemRefs.current[index] = element;
+                  }}
+                  role="menuitem"
+                  tabIndex={-1}
+                  type="button"
+                >
+                  {action.icon}
+                  <span>{action.label}</span>
+                </button>
+              ))}
+            </div>,
+            document.body,
+          )
+        : null}
     </div>
   );
 }
