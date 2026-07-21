@@ -370,4 +370,29 @@ describe('runPendingMigrations', () => {
     );
     expect(sql).toContain('VALIDATE CONSTRAINT pages_status_check');
   });
+
+  it('旧クレジット消費行は一意に特定できるjob_idだけを補完する', async () => {
+    const sql = await readFile(
+      join(process.cwd(), 'migrations', '026_backfill_legacy_credit_consume_job_links.sql'),
+      'utf8',
+    );
+
+    expect(sql).toContain("generation_jobs.job_type IN ('page_generate', 'entity_generate')");
+    expect(sql).toContain("generation_jobs.status IN ('failed', 'cancelled')");
+    expect(sql).toContain('WITH verified_pairs (ledger_id, job_id) AS');
+    expect(sql.match(/'[-0-9a-f]{36}'::uuid, '[-0-9a-f]{36}'::uuid/giu)).toHaveLength(12);
+    expect(sql).toContain("consume_ledger.type = 'consume'");
+    expect(sql).toContain('consume_ledger.job_id IS NULL');
+    expect(sql).toContain('consume_ledger.amount = -generation_jobs.credit_cost');
+    expect(sql).toContain('consume_ledger.organization_id = generation_jobs.organization_id');
+    expect(sql).toContain('consume_ledger.user_id = generation_jobs.user_id');
+    expect(sql).toContain('refund_ledger.amount = generation_jobs.credit_cost');
+    expect(sql).toContain('SET job_id = verified_pairs.job_id');
+    expect(sql).not.toContain('created_at BETWEEN');
+    expect(sql).not.toContain("INTERVAL '5 seconds'");
+    expect(sql).not.toMatch(/SET\s+(?:\w+\.)?amount\b/iu);
+    expect(sql).not.toContain('UPDATE credit_balances');
+    expect(sql).not.toContain('UPDATE organization_credit_balances');
+    expect(sql).not.toMatch(/\bDELETE\s+FROM\b/iu);
+  });
 });
