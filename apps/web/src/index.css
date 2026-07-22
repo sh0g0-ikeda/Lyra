@@ -1310,6 +1310,24 @@ a {
   gap: 10px;
 }
 
+.entity-reference-import {
+  display: grid;
+  gap: 8px;
+}
+
+.entity-reference-import-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.character-editor-section .entity-reference-import .file-drop {
+  min-height: 96px;
+  padding: 14px;
+}
+
 .character-fields-stack {
   display: flex;
   flex-direction: column;

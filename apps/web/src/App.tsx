@@ -656,6 +656,8 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   Face: '顔',
   Hair: '髪',
   Outfit: '服装',
+  'Clothing details': '服装の詳細',
+  'Describe the outfit in natural language': '服装を自然な文章で入力してください。',
   Gender: '性別表現',
   'Age range': '年齢帯',
   'Skin tone': '肌の色',
@@ -5608,17 +5610,41 @@ function StudioShell(props: {
                       />
                       <InputField label="Name" value={entityDraft.name} onChange={(value) => setEntityDraft({ ...entityDraft, name: value })} />
                     </div>
+                    <div className="entity-reference-import">
+                      <div className="entity-reference-import-header">
+                        <strong>{translateUiString(uiLanguage, 'Import reference')}</strong>
+                        <span className="state-pill state-pill-neutral">
+                          {translateUiString(uiLanguage, 'Image import costs 1 credit.')}
+                        </span>
+                      </div>
+                      <label className="file-drop">
+                        <input
+                          accept="image/png,image/jpeg,image/webp"
+                          onChange={(event) =>
+                            void handleEntityImport(
+                              event,
+                              entityDraft.entity_type,
+                              selectedEntity?.id ?? null,
+                              api,
+                              activeOrganizationId,
+                              setImportingImage,
+                              setNotice,
+                              setEntityDraft,
+                              setUploadedReferenceCandidatesByEntityId,
+                              setUploadedReferenceSourceByEntityId,
+                              uiLanguage,
+                            )
+                          }
+                          type="file"
+                        />
+                        <span>{importingImage ? translateUiString(uiLanguage, 'Importing image...') : translateUiString(uiLanguage, 'Drop or choose image')}</span>
+                      </label>
+                    </div>
                     <TextAreaField
                       label="Free description"
                       rows={3}
                       value={entityDraft.free_description}
                       onChange={(value) => setEntityDraft({ ...entityDraft, free_description: value })}
-                    />
-                    <TextAreaField
-                      label="Prompt supplement"
-                      rows={3}
-                      value={entityDraft.prompt_supplement}
-                      onChange={(value) => setEntityDraft({ ...entityDraft, prompt_supplement: value })}
                     />
                     {entityDraft.entity_type === 'character' ? (
                       <CharacterStructuredFieldsEditor
@@ -5693,36 +5719,6 @@ function StudioShell(props: {
                         </button>
                       ) : null}
                     </div>
-                  </PanelSection>
-
-                  <PanelSection title="Import reference" collapsible>
-                    <div className="state-pill-row">
-                      <span className="state-pill state-pill-neutral">
-                        {translateUiString(uiLanguage, 'Image import costs 1 credit.')}
-                      </span>
-                    </div>
-                    <label className="file-drop">
-                      <input
-                        accept="image/png,image/jpeg,image/webp"
-                        onChange={(event) =>
-                          void handleEntityImport(
-                            event,
-                            entityDraft.entity_type,
-                            selectedEntity?.id ?? null,
-                            api,
-                            activeOrganizationId,
-                            setImportingImage,
-                            setNotice,
-                            setEntityDraft,
-                            setUploadedReferenceCandidatesByEntityId,
-                            setUploadedReferenceSourceByEntityId,
-                            uiLanguage,
-                          )
-                        }
-                        type="file"
-                      />
-                      <span>{importingImage ? translateUiString(uiLanguage, 'Importing image...') : translateUiString(uiLanguage, 'Drop or choose image')}</span>
-                    </label>
                   </PanelSection>
 
                   <PanelSection title="Preview / Confirm" collapsible>
@@ -7405,12 +7401,19 @@ function TextAreaField(props: {
   value: string;
   onChange: (value: string) => void;
   rows: number;
+  placeholder?: string;
 }) {
   const language = useContext(UiLanguageContext);
   return (
     <label className="field">
       <span>{translateUiString(language, props.label)}</span>
-      <textarea rows={props.rows} value={props.value} onChange={(event) => props.onChange(event.target.value)} spellCheck={false} />
+      <textarea
+        rows={props.rows}
+        value={props.value}
+        onChange={(event) => props.onChange(event.target.value)}
+        placeholder={props.placeholder === undefined ? undefined : translateUiString(language, props.placeholder)}
+        spellCheck={false}
+      />
     </label>
   );
 }
@@ -7577,7 +7580,6 @@ function CharacterStructuredFieldsEditor(props: {
   value: CharacterStructuredFieldsDraft;
   onChange: (nextValue: CharacterStructuredFieldsDraft) => void;
 }) {
-  const language = useContext(UiLanguageContext);
   const update = (patch: Partial<CharacterStructuredFieldsDraft>): void => {
     props.onChange({
       ...props.value,
@@ -7607,26 +7609,6 @@ function CharacterStructuredFieldsEditor(props: {
           addLabel="Add alias"
           emptyLabel="No aliases yet."
         />
-      </CharacterFieldsGroup>
-
-      <CharacterFieldsGroup title="Anchors" defaultOpen={false}>
-        <div className="form-grid two compact-grid">
-          <SelectOrCustomField label="Visual anchor" value={props.value.visual_anchor} onChange={(value) => update({ visual_anchor: value })} options={CHARACTER_VISUAL_ANCHOR_OPTIONS} />
-          <SelectOrCustomField label="Signature feature" value={props.value.signature_feature} onChange={(value) => update({ signature_feature: value })} options={CHARACTER_SIGNATURE_FEATURE_OPTIONS} />
-        </div>
-        <div className="form-grid two compact-grid">
-          <SelectOrCustomField label="Silhouette keywords" value={props.value.silhouette_keywords} onChange={(value) => update({ silhouette_keywords: value })} options={CHARACTER_SILHOUETTE_KEYWORD_OPTIONS} />
-          <SelectOrCustomField label="Distinguishing features" value={props.value.distinguishing_features} onChange={(value) => update({ distinguishing_features: value })} options={CHARACTER_DISTINGUISHING_FEATURE_OPTIONS} />
-        </div>
-        <details className="advanced-disclosure character-anchor-detail">
-          <summary>{translateUiString(language, 'Body proportion details')}</summary>
-          <div className="form-grid four compact-grid">
-            <SelectOrCustomField label="Head/body ratio" value={props.value.head_to_body_ratio} onChange={(value) => update({ head_to_body_ratio: value })} options={CHARACTER_HEAD_RATIO_OPTIONS} />
-            <SelectOrCustomField label="Shoulder width" value={props.value.shoulder_width} onChange={(value) => update({ shoulder_width: value })} options={CHARACTER_SHOULDER_WIDTH_OPTIONS} />
-            <SelectOrCustomField label="Leg length" value={props.value.leg_length} onChange={(value) => update({ leg_length: value })} options={CHARACTER_LEG_LENGTH_OPTIONS} />
-            <SelectOrCustomField label="Posture axis" value={props.value.posture_axis} onChange={(value) => update({ posture_axis: value })} options={CHARACTER_POSTURE_AXIS_OPTIONS} />
-          </div>
-        </details>
       </CharacterFieldsGroup>
 
       <CharacterFieldsGroup title="Face">
@@ -7672,7 +7654,13 @@ function CharacterStructuredFieldsEditor(props: {
           <SelectOrCustomField label="Shoes" value={props.value.shoes} onChange={(value) => update({ shoes: value })} options={CHARACTER_SHOES_OPTIONS} />
           <SelectOrCustomField label="Legwear" value={props.value.socks_or_legwear} onChange={(value) => update({ socks_or_legwear: value })} options={CHARACTER_LEGWEAR_OPTIONS} />
         </div>
-        <SelectOrCustomField label="Clothing details" value={props.value.clothing_description} onChange={(value) => update({ clothing_description: value })} options={CHARACTER_CLOTHING_DETAIL_OPTIONS} />
+        <TextAreaField
+          label="Clothing details"
+          value={props.value.clothing_description}
+          onChange={(value) => update({ clothing_description: value })}
+          placeholder="Describe the outfit in natural language"
+          rows={3}
+        />
       </CharacterFieldsGroup>
     </div>
   );
@@ -9338,102 +9326,12 @@ const CHARACTER_LEGWEAR_OPTIONS: Array<[string, string]> = [
   ['thigh-high socks', 'Thigh-high socks'],
   ['tights', 'Tights'],
 ];
-const CHARACTER_CLOTHING_DETAIL_OPTIONS: Array<[string, string]> = [
-  EMPTY_OPTION,
-  ['simple uniform detailing', 'Simple uniform detailing'],
-  ['layered practical details', 'Layered practical details'],
-  ['ornamental trim', 'Ornamental trim'],
-  ['combat utility details', 'Combat utility details'],
-  ['minimal clean design', 'Minimal clean design'],
-];
 const CHARACTER_ART_STYLE_OPTIONS: Array<[string, string]> = [
   EMPTY_OPTION,
   ['anime', 'Anime'],
   ['semi_realistic', 'Semi-realistic'],
   ['manga', 'Manga'],
   ['painterly', 'Painterly'],
-];
-const CHARACTER_VISUAL_ANCHOR_OPTIONS: Array<[string, string]> = [
-  EMPTY_OPTION,
-  ['Face + hair balance', 'Face + hair balance'],
-  ['Eye line', 'Eye line'],
-  ['Silhouette outline', 'Silhouette outline'],
-  ['Posture read', 'Posture read'],
-  ['Outfit shape', 'Outfit shape'],
-  ['Color blocking', 'Color blocking'],
-  ['Accessory / prop', 'Accessory / prop'],
-  ['custom', 'Custom'],
-];
-const CHARACTER_SIGNATURE_FEATURE_OPTIONS: Array<[string, string]> = [
-  EMPTY_OPTION,
-  ['Hair shape', 'Hair shape'],
-  ['Eye color contrast', 'Eye color contrast'],
-  ['Expression gap', 'Expression gap'],
-  ['Silhouette edge', 'Silhouette edge'],
-  ['Accessory', 'Accessory'],
-  ['Scar / mark', 'Scar / mark'],
-  ['Stance', 'Stance'],
-  ['custom', 'Custom'],
-];
-const CHARACTER_SILHOUETTE_KEYWORD_OPTIONS: Array<[string, string]> = [
-  EMPTY_OPTION,
-  ['Compact silhouette', 'Compact silhouette'],
-  ['Tall and slender', 'Tall and slender'],
-  ['Broad-shouldered', 'Broad-shouldered'],
-  ['Long coat outline', 'Long coat outline'],
-  ['Skirt line', 'Skirt line'],
-  ['Military block', 'Military block'],
-  ['Soft rounded outline', 'Soft rounded outline'],
-  ['custom', 'Custom'],
-];
-const CHARACTER_DISTINGUISHING_FEATURE_OPTIONS: Array<[string, string]> = [
-  EMPTY_OPTION,
-  ['Beauty mark', 'Beauty mark'],
-  ['Scar', 'Scar'],
-  ['Eye bags', 'Eye bags'],
-  ['Fang', 'Fang'],
-  ['Ahoge', 'Ahoge'],
-  ['Hair streak', 'Hair streak'],
-  ['Glasses', 'Glasses'],
-  ['Stubble', 'Stubble'],
-  ['Beard', 'Beard'],
-  ['Goatee', 'Goatee'],
-  ['Earrings', 'Earrings'],
-  ['Thick eyebrows', 'Thick eyebrows'],
-  ['Sharp jawline', 'Sharp jawline'],
-  ['custom', 'Custom'],
-];
-const CHARACTER_HEAD_RATIO_OPTIONS: Array<[string, string]> = [
-  EMPTY_OPTION,
-  ['about six heads tall', 'about six heads tall'],
-  ['about six and a half heads tall', 'about six and a half heads tall'],
-  ['about seven heads tall', 'about seven heads tall'],
-  ['about seven and a half heads tall', 'about seven and a half heads tall'],
-  ['about eight heads tall', 'about eight heads tall'],
-  ['custom', 'Custom'],
-];
-const CHARACTER_SHOULDER_WIDTH_OPTIONS: Array<[string, string]> = [
-  EMPTY_OPTION,
-  ['narrow shoulders', 'narrow shoulders'],
-  ['balanced shoulders', 'balanced shoulders'],
-  ['broad shoulders', 'broad shoulders'],
-  ['custom', 'Custom'],
-];
-const CHARACTER_LEG_LENGTH_OPTIONS: Array<[string, string]> = [
-  EMPTY_OPTION,
-  ['short legs', 'short legs'],
-  ['balanced leg length', 'balanced leg length'],
-  ['long legs', 'long legs'],
-  ['custom', 'Custom'],
-];
-const CHARACTER_POSTURE_AXIS_OPTIONS: Array<[string, string]> = [
-  EMPTY_OPTION,
-  ['centered and straight', 'centered and straight'],
-  ['slightly forward-leaning', 'slightly forward-leaning'],
-  ['slightly backward-leaning', 'slightly backward-leaning'],
-  ['soft inward posture', 'soft inward posture'],
-  ['open outward posture', 'open outward posture'],
-  ['custom', 'Custom'],
 ];
 const PANEL_ROLE_OPTIONS: Array<[PanelDraft['panel_role'], string]> = [
   ['establish', 'Establish'],

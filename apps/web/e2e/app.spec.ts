@@ -433,6 +433,62 @@ test('renders the console with mocked api responses', async ({ page }) => {
   await expect(page.getByRole('textbox', { name: 'Situation' })).toHaveValue('Mizuki enters the fort.');
 });
 
+test('キャラ編集では画像取り込みを自由記述の前に置き不要な詳細入力を隠す', async ({ page }) => {
+  await seedEnglishUi(page);
+  await seedAuthenticatedSession(page);
+  await page.route('**/api/**', mockApi);
+
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Entities', exact: true }).click();
+
+  const editorSection = page
+    .getByRole('heading', { name: 'Character editor', exact: true })
+    .locator('xpath=ancestor::section[1]');
+
+  await expect(editorSection.getByText('Import reference', { exact: true })).toBeVisible();
+  await expect(editorSection.locator('input[type="file"]')).toHaveAttribute(
+    'accept',
+    'image/png,image/jpeg,image/webp',
+  );
+
+  const importPrecedesFreeDescription = await editorSection.evaluate((section) => {
+    const importControl = section.querySelector('.entity-reference-import');
+    const freeDescriptionLabel = Array.from(section.querySelectorAll('label.field')).find(
+      (label) => label.querySelector('span')?.textContent === 'Free description',
+    );
+    if (importControl === null || freeDescriptionLabel === undefined) {
+      return false;
+    }
+    return Boolean(importControl.compareDocumentPosition(freeDescriptionLabel) & Node.DOCUMENT_POSITION_FOLLOWING);
+  });
+  expect(importPrecedesFreeDescription).toBe(true);
+
+  await expect(editorSection.getByRole('textbox', { name: 'Prompt supplement', exact: true })).toHaveCount(0);
+  await expect(editorSection.getByText('Anchors', { exact: true })).toHaveCount(0);
+
+  const clothingDetails = editorSection.getByRole('textbox', { name: 'Clothing details', exact: true });
+  await expect(clothingDetails).toBeVisible();
+  await expect(clothingDetails).toHaveAttribute('placeholder', 'Describe the outfit in natural language');
+  await expect(editorSection.getByRole('combobox', { name: 'Clothing details', exact: true })).toHaveCount(0);
+
+  await page.getByRole('button', { name: 'Account menu', exact: true }).click();
+  await page.getByRole('combobox', { name: 'Language', exact: true }).selectOption('ja');
+  await page.keyboard.press('Escape');
+
+  const localizedEditorSection = page.locator('.character-editor-section');
+  await expect(localizedEditorSection.getByText('レファレンス取り込み', { exact: true })).toBeVisible();
+  await expect(localizedEditorSection.getByRole('textbox', { name: '自由記述', exact: true })).toBeVisible();
+  await expect(localizedEditorSection.getByRole('textbox', { name: '服装の詳細', exact: true })).toHaveAttribute(
+    'placeholder',
+    '服装を自然な文章で入力してください。',
+  );
+  await expect(localizedEditorSection.getByText('補足プロンプト', { exact: true })).toHaveCount(0);
+  await expect(localizedEditorSection.getByText('再現アンカー', { exact: true })).toHaveCount(0);
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+});
+
 test('ストーリー画面で各AI操作の役割とシーンが任意であることを説明する', async ({ page }) => {
   await seedEnglishUi(page);
   await seedAuthenticatedSession(page);
