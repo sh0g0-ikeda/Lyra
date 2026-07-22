@@ -1061,8 +1061,8 @@ a {
 .field-help {
   margin-top: -2px;
   font-size: 0.72rem;
-  line-height: 1.35;
-  color: #6f6f6f;
+  line-height: 1.45;
+  color: #9a9a9a;
 }
 
 .field input,
@@ -2830,7 +2830,13 @@ a {
 }
 
 .page-section-style-constraints {
-  order: 2;
+  order: 0;
+  border-color: rgba(229, 199, 107, 0.24);
+  background: rgba(229, 199, 107, 0.035);
+}
+
+.page-section-pages {
+  order: 1;
 }
 
 .page-section-story-sources {
@@ -2959,9 +2965,58 @@ a {
   }
 }
 
-.assignment-editor,
+.advanced-disclosure-help {
+  margin: 2px 0 4px;
+  max-width: 72ch;
+}
+
+.panel-editor-group {
+  --panel-editor-accent: #e5c76b;
+  gap: 12px;
+  border-top: 1px solid rgba(229, 199, 107, 0.14);
+  padding-top: 16px;
+}
+
 .dialogue-editor {
+  --panel-editor-accent: #75a9d6;
+}
+
+.panel-editor-item {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
   gap: 10px;
+  padding: 14px 14px 14px 16px;
+  border-left: 3px solid var(--panel-editor-accent);
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.panel-editor-item-kind {
+  margin-bottom: 3px;
+  color: var(--panel-editor-accent);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.panel-editor-speaker-summary {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 5px 8px;
+  margin-top: 5px;
+}
+
+.panel-editor-speaker-summary span {
+  color: #929292;
+  font-size: 0.72rem;
+}
+
+.panel-editor-speaker-summary strong {
+  color: #f0f0f0;
+  font-size: 0.82rem;
+  overflow-wrap: anywhere;
 }
 
 .dialogue-line-card {

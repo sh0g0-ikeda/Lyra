@@ -489,6 +489,134 @@ test('キャラ編集では画像取り込みを自由記述の前に置き不�
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
 });
 
+test('初心者向け案内とページ編集の情報境界を明確にする', async ({ page }) => {
+  await seedEnglishUi(page);
+  await seedAuthenticatedSession(page);
+  await page.route('**/api/**', async (route) => {
+    const pathname = new URL(route.request().url()).pathname;
+    if (pathname === `/api/pages/${pageRecord.id}/panels`) {
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          panels: [
+            {
+              ...panel,
+              entities: [
+                {
+                  entity_id: entity.id,
+                  role: 'primary',
+                  expression: 'neutral',
+                  custom_expression: null,
+                  action: 'standing',
+                  custom_action: null,
+                  position: 'center',
+                  facing_direction: 'front',
+                  effect_note: null,
+                  state_id: null,
+                },
+              ],
+              dialogue: [
+                {
+                  entity_id: entity.id,
+                  text: 'We should go.',
+                  type: 'speech',
+                  position: 'top',
+                },
+              ],
+            },
+          ],
+        }),
+      });
+    }
+    return mockApi(route);
+  });
+
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Entities', exact: true }).click();
+
+  const characterEditor = page.locator('.character-editor-section');
+  await expect(
+    characterEditor.getByText(
+      'Upload a character image you already have. Lyra will use its appearance as a reference when creating your manga.',
+      { exact: true },
+    ),
+  ).toBeVisible();
+  await expect(
+    characterEditor.getByText(
+      'Use this box for details not covered by the choices, or for special instructions you want Lyra to follow.',
+      { exact: true },
+    ),
+  ).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Current episode selection', exact: true })).toHaveCount(0);
+
+  await page.getByRole('button', { name: 'Pages', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Current episode selection', exact: true })).toHaveCount(0);
+
+  const pageStack = page.locator('.page-sections-stack');
+  const artDirection = pageStack.locator('.page-section-style-constraints');
+  await expect(artDirection.getByRole('heading', { name: 'Page art direction', exact: true })).toBeVisible();
+  await expect(
+    artDirection.getByText(
+      'Keep generated pages visually consistent by adding an art reference and the desired linework, color, or mood.',
+      { exact: true },
+    ),
+  ).toBeVisible();
+  await expect(artDirection.getByRole('textbox', { name: 'Art style reference', exact: true })).toBeVisible();
+  await expect(artDirection.getByRole('textbox', { name: 'Visual direction notes', exact: true })).toBeVisible();
+  expect(
+    await pageStack.evaluate((stack) => {
+      const artSection = stack.querySelector('.page-section-style-constraints');
+      const pagesSection = stack.querySelector('.page-section-pages');
+      if (artSection === null || pagesSection === null) {
+        return false;
+      }
+      return Boolean(artSection.compareDocumentPosition(pagesSection) & Node.DOCUMENT_POSITION_FOLLOWING);
+    }),
+  ).toBe(true);
+
+  await page.getByText('Advanced frame geometry', { exact: true }).click();
+  await expect(
+    page.getByText(
+      'You can leave this unchanged. Adjust it only when you want precise control over panel shapes and placement.',
+      { exact: true },
+    ),
+  ).toBeVisible();
+
+  const characterGroup = page.locator('.panel-editor-group.character-assignment-editor');
+  await expect(characterGroup).toBeVisible();
+  await expect(characterGroup.locator('.character-assignment-card')).toContainText('Appearing character');
+  await expect(characterGroup.locator('.character-assignment-card')).toContainText('Mizuki');
+
+  const dialogueGroup = page.locator('.panel-editor-group.dialogue-editor');
+  await expect(dialogueGroup).toBeVisible();
+  await expect(dialogueGroup.locator('.dialogue-line-card')).toContainText('Dialogue 1');
+  await expect(dialogueGroup.locator('.dialogue-line-card')).toContainText('Mizuki');
+
+  await page.getByRole('button', { name: 'Account menu', exact: true }).click();
+  await page.getByRole('combobox', { name: 'Language', exact: true }).selectOption('ja');
+  await page.keyboard.press('Escape');
+
+  await page.getByRole('button', { name: 'キャラクター', exact: true }).click();
+  await expect(
+    page.getByText('手元のキャラクター画像をアップロードすると、その見た目を参考にLyraの漫画へ登場させられます。', {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    page.getByText('選択肢にない特徴や、特別に反映したい設定があればここに書いてください。', {
+      exact: true,
+    }),
+  ).toBeVisible();
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole('button', { name: 'ページ', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'ページの絵柄・雰囲気', exact: true })).toBeVisible();
+  await expect(page.locator('.character-assignment-card')).toBeVisible();
+  await expect(page.locator('.dialogue-line-card')).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+});
+
 test('ストーリー画面で各AI操作の役割とシーンが任意であることを説明する', async ({ page }) => {
   await seedEnglishUi(page);
   await seedAuthenticatedSession(page);
