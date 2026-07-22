@@ -428,12 +428,19 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   'Dialogue toggle': 'ページ全体でセリフを画像に含める',
   'Style reference title': '画風制約の作品名',
   'Style reference notes': '画風制約メモ',
+  'Page art direction': 'ページの絵柄・雰囲気',
+  'Keep generated pages visually consistent by adding an art reference and the desired linework, color, or mood.':
+    'ページ全体の絵柄をそろえるための設定です。参考にしたい画風と、線・色・雰囲気の希望を入力してください。',
+  'Art style reference': '参考にする画風・作品名',
+  'Visual direction notes': '絵柄・雰囲気の希望',
   'Story sources': '話の材料',
   'Source scenes': '元シーン',
   'Page purpose': 'ページの目的',
   'Continuity note': 'つながりメモ',
   Name: '名前',
   'Free description': '自由記述',
+  'Use this box for details not covered by the choices, or for special instructions you want Lyra to follow.':
+    '選択肢にない特徴や、特別に反映したい設定があればここに書いてください。',
   'Prompt supplement': '補足プロンプト',
   'Structured fields': '構造化項目',
   Field: '項目',
@@ -494,6 +501,8 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   Apply: '適用',
   'Save frames': 'コマ割りを保存',
   'Advanced frame geometry': 'コマ形状の詳細調整',
+  'You can leave this unchanged. Adjust it only when you want precise control over panel shapes and placement.':
+    '通常は変更しなくても使えます。コマの形や配置を細かく整えたい場合だけ調整してください。',
   'Frame geometry': 'コマ形状',
   'Linked panel': '対応コマ',
   'No linked panel': '未紐づけ',
@@ -718,6 +727,8 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   'Z-index': '重なり順',
   'Style constraints': '画風制約',
   'Import reference': 'レファレンス取り込み',
+  'Upload a character image you already have. Lyra will use its appearance as a reference when creating your manga.':
+    '手元のキャラクター画像をアップロードすると、その見た目を参考にLyraの漫画へ登場させられます。',
   'Preview / Confirm': 'プレビュー / 確定',
   Preview: 'プレビュー',
   Add: '追加',
@@ -730,6 +741,7 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   'No location': '場所未設定',
   'AI improved': 'AI改善済み',
   'Characters in panel': 'コマ内のキャラ',
+  'Appearing character': '登場キャラ',
   'Pick who appears first, then refine pose, facing, and effects per character.': '登場キャラを選び、キャラごとのポーズ・向き・効果を調整します。',
   'Placement first, then expression, pose, and effect.': '配置を決めてから、表情・ポーズ・効果を調整します。',
   'These lines will be considered inside the generated panel art.': 'これらのセリフは生成画像内に含める前提で扱います。',
@@ -5498,34 +5510,6 @@ function StudioShell(props: {
               {activeTab === 'entities' && selectedWork !== null ? (
                 <>
                   <PanelSection
-                    title="Current episode selection"
-                    subtitle="Choose the work, chapter, and episode being edited."
-                    compact
-                    collapsible
-                  >
-                    <div className="compact-context-grid">
-                      <SelectField
-                        label="Work"
-                        value={selectedWorkId}
-                        onChange={setSelectedWorkId}
-                        options={works.map((work) => [work.id, work.title])}
-                      />
-                      <SelectField
-                        label="Chapter"
-                        value={selectedChapter?.id ?? ''}
-                        onChange={setSelectedChapterId}
-                        options={chapters.map((chapter) => [chapter.id, chapter.title ?? `Chapter ${chapter.order}`])}
-                      />
-                      <SelectField
-                        label="Episode"
-                        value={selectedEpisode?.id ?? ''}
-                        onChange={setSelectedEpisodeId}
-                        options={episodes.map((episode) => [episode.id, episode.title ?? `Episode ${episode.order}`])}
-                      />
-                    </div>
-                  </PanelSection>
-
-                  <PanelSection
                     title="Character list"
                     subtitle={`${entities.length} records`}
                     collapsible
@@ -5617,6 +5601,12 @@ function StudioShell(props: {
                           {translateUiString(uiLanguage, 'Image import costs 1 credit.')}
                         </span>
                       </div>
+                      <div className="field-help">
+                        {translateUiString(
+                          uiLanguage,
+                          'Upload a character image you already have. Lyra will use its appearance as a reference when creating your manga.',
+                        )}
+                      </div>
                       <label className="file-drop">
                         <input
                           accept="image/png,image/jpeg,image/webp"
@@ -5645,6 +5635,7 @@ function StudioShell(props: {
                       rows={3}
                       value={entityDraft.free_description}
                       onChange={(value) => setEntityDraft({ ...entityDraft, free_description: value })}
+                      helpText="Use this box for details not covered by the choices, or for special instructions you want Lyra to follow."
                     />
                     {entityDraft.entity_type === 'character' ? (
                       <CharacterStructuredFieldsEditor
@@ -5935,36 +5926,54 @@ function StudioShell(props: {
 
               {activeTab === 'pages' && selectedEpisode !== null ? (
                 <>
-                  <PanelSection
-                    title="Current episode selection"
-                    subtitle="Choose the work, chapter, and episode being edited."
-                    compact
-                    collapsible
-                  >
-                    <div className="compact-context-grid">
-                      <SelectField
-                        label="Work"
-                        value={selectedWorkId}
-                        onChange={setSelectedWorkId}
-                        options={works.map((work) => [work.id, work.title])}
-                      />
-                      <SelectField
-                        label="Chapter"
-                        value={selectedChapter?.id ?? ''}
-                        onChange={setSelectedChapterId}
-                        options={chapters.map((chapter) => [chapter.id, chapter.title ?? `Chapter ${chapter.order}`])}
-                      />
-                      <SelectField
-                        label="Episode"
-                        value={selectedEpisode?.id ?? ''}
-                        onChange={setSelectedEpisodeId}
-                        options={episodes.map((episode) => [episode.id, episode.title ?? `Episode ${episode.order}`])}
-                      />
-                    </div>
-                  </PanelSection>
-
                   <div className="page-sections-stack">
-                  <PanelSection title="Pages" collapsible>
+                  {selectedPage !== null ? (
+                    <PanelSection
+                      title="Page art direction"
+                      subtitle="Keep generated pages visually consistent by adding an art reference and the desired linework, color, or mood."
+                      className="page-section-style-constraints"
+                      compact
+                      collapsible
+                      actions={
+                        <button
+                          className="secondary-button"
+                          onClick={() =>
+                            void runAction('Save page settings', async () => {
+                              await api.updatePage(
+                                selectedPage.id,
+                                toPageSettingsPayload(pageSettingsDraft),
+                                activeOrganizationId,
+                              );
+                              await invalidateScopedQuery(['pages', selectedEpisode.id]);
+                            })
+                          }
+                          type="button"
+                        >
+                          <Save size={16} />
+                          {translateUiString(uiLanguage, 'Save')}
+                        </button>
+                      }
+                    >
+                      <div className="form-grid two">
+                        <InputField
+                          label="Art style reference"
+                          value={pageSettingsDraft.style_reference_title}
+                          onChange={(value) =>
+                            setPageSettingsDraft((current) => ({ ...current, style_reference_title: value }))
+                          }
+                        />
+                        <InputField
+                          label="Visual direction notes"
+                          value={pageSettingsDraft.style_reference_notes}
+                          onChange={(value) =>
+                            setPageSettingsDraft((current) => ({ ...current, style_reference_notes: value }))
+                          }
+                        />
+                      </div>
+                    </PanelSection>
+                  ) : null}
+
+                  <PanelSection title="Pages" className="page-section-pages" collapsible>
                     <div className="page-grid">
                       {pages.map((page) => (
                         <button
@@ -6005,39 +6014,6 @@ function StudioShell(props: {
 
                   {selectedPage !== null ? (
                     <>
-                      <PanelSection title="Style constraints" className="page-section-style-constraints" compact collapsible actions={
-                        <button
-                          className="secondary-button"
-                          onClick={() =>
-                            void runAction('Save page settings', async () => {
-                              await api.updatePage(
-                                selectedPage.id,
-                                toPageSettingsPayload(pageSettingsDraft),
-                                activeOrganizationId,
-                              );
-                              await invalidateScopedQuery(['pages', selectedEpisode.id]);
-                            })
-                          }
-                          type="button"
-                        >
-                          <Save size={16} />
-                          {translateUiString(uiLanguage, 'Save')}
-                        </button>
-                      }>
-                        <div className="form-grid two">
-                          <InputField
-                            label="Style reference title"
-                            value={pageSettingsDraft.style_reference_title}
-                            onChange={(value) => setPageSettingsDraft((current) => ({ ...current, style_reference_title: value }))}
-                          />
-                          <InputField
-                            label="Style reference notes"
-                            value={pageSettingsDraft.style_reference_notes}
-                            onChange={(value) => setPageSettingsDraft((current) => ({ ...current, style_reference_notes: value }))}
-                          />
-                        </div>
-                      </PanelSection>
-
                       <PanelSection
                         title="Story sources"
                         className="page-section-story-sources"
@@ -6287,6 +6263,12 @@ function StudioShell(props: {
                         </div>
                         <details className="advanced-disclosure">
                           <summary>{translateUiString(uiLanguage, 'Advanced frame geometry')}</summary>
+                          <div className="field-help advanced-disclosure-help">
+                            {translateUiString(
+                              uiLanguage,
+                              'You can leave this unchanged. Adjust it only when you want precise control over panel shapes and placement.',
+                            )}
+                          </div>
                           <div className="frame-editor-list">
                             {frameDrafts.map((frameDraft, frameIndex) => (
                               <div className="frame-editor-card" key={frameDraft.id || `frame-${frameIndex}`}>
@@ -7402,12 +7384,17 @@ function TextAreaField(props: {
   onChange: (value: string) => void;
   rows: number;
   placeholder?: string;
+  helpText?: string;
 }) {
   const language = useContext(UiLanguageContext);
   return (
     <label className="field">
       <span>{translateUiString(language, props.label)}</span>
+      {props.helpText === undefined ? null : (
+        <small className="field-help">{translateUiString(language, props.helpText)}</small>
+      )}
       <textarea
+        aria-label={translateUiString(language, props.label)}
         rows={props.rows}
         value={props.value}
         onChange={(event) => props.onChange(event.target.value)}
@@ -7692,7 +7679,7 @@ function PanelAssignmentEditor(props: {
   };
 
   return (
-    <div className="stack">
+    <div className="stack panel-editor-group assignment-editor character-assignment-editor">
       <div className="section-header">
         <div>
           <h3>{translateUiString(language, 'Characters in panel')}</h3>
@@ -7734,9 +7721,12 @@ function PanelAssignmentEditor(props: {
           const entity = props.allEntities.find((entry) => entry.id === assignment.entity_id);
 
           return (
-            <div key={assignment.entity_id} className="panel-section compact">
+            <section key={assignment.entity_id} className="panel-editor-item assignment-card character-assignment-card">
               <div className="section-header">
                 <div>
+                  <div className="panel-editor-item-kind">
+                    {translateUiString(language, 'Appearing character')}
+                  </div>
                   <h3>{entity?.name ?? assignment.entity_id}</h3>
                   <div className="muted">{translateUiString(language, 'Placement first, then expression, pose, and effect.')}</div>
                 </div>
@@ -7832,7 +7822,7 @@ function PanelAssignmentEditor(props: {
                   )}
                 </div>
               ) : null}
-            </div>
+            </section>
           );
         })
       )}
@@ -7873,7 +7863,7 @@ function PanelDialogueEditor(props: {
   };
 
   return (
-    <div className="stack">
+    <div className="stack panel-editor-group dialogue-editor">
       <div className="section-header">
         <div>
           <h3>{translateUiString(language, 'Dialogue')}</h3>
@@ -7894,12 +7884,19 @@ function PanelDialogueEditor(props: {
         props.dialogues.map((dialogue, index) => {
           const speakerRequired = requiresPanelDialogueSpeaker(dialogue.type);
           const speakerMissing = speakerRequired && dialogue.entity_id.trim().length === 0;
+          const speaker = props.entities.find((entity) => entity.id === dialogue.entity_id);
+          const speakerLabel = speaker?.name ?? translateUiString(language, 'Narration / none');
 
           return (
-          <div key={`${dialogue.entity_id}-${index}`} className="panel-section compact">
+          <section key={`${dialogue.entity_id}-${index}`} className="panel-editor-item dialogue-line-card">
             <div className="section-header">
               <div>
-                <h3>Line {index + 1}</h3>
+                <div className="panel-editor-item-kind">{translateUiString(language, 'Dialogue')}</div>
+                <h3>{translateUiString(language, 'Dialogue')} {index + 1}</h3>
+                <div className="panel-editor-speaker-summary">
+                  <span>{translateUiString(language, 'Speaker')}</span>
+                  <strong>{speakerLabel}</strong>
+                </div>
               </div>
               <button className="ghost-button danger" onClick={() => removeDialogue(index)} type="button">
                 <Trash2 size={16} />
@@ -7958,7 +7955,7 @@ function PanelDialogueEditor(props: {
                 {translateUiString(language, 'Speaker is required for speech, thought, shout, and whisper lines.')}
               </div>
             ) : null}
-          </div>
+          </section>
         );
         })
       )}
