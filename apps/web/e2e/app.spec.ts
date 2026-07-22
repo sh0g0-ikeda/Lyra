@@ -433,6 +433,70 @@ test('renders the console with mocked api responses', async ({ page }) => {
   await expect(page.getByRole('textbox', { name: 'Situation' })).toHaveValue('Mizuki enters the fort.');
 });
 
+test('ストーリー画面で各AI操作の役割とシーンが任意であることを説明する', async ({ page }) => {
+  await seedEnglishUi(page);
+  await seedAuthenticatedSession(page);
+  await page.route('**/api/**', mockApi);
+
+  await page.goto('/');
+
+  const pagePlanningSection = page
+    .getByRole('heading', { name: 'Page planning', exact: true })
+    .locator('xpath=ancestor::section[1]');
+  await expect(
+    pagePlanningSection.getByText('Use these two steps to turn the episode story into panel details.', { exact: true }),
+  ).toBeVisible();
+  await expect(pagePlanningSection.locator('.feature-guidance')).toContainText(
+    '1. Regenerate page planBuilds the page and panel allocation and the overall story flow.',
+  );
+  await expect(pagePlanningSection.locator('.feature-guidance')).toContainText(
+    '2. Apply story planFills each panel with characters, situation, composition, and dialogue based on that plan.',
+  );
+  await expect(
+    page.getByText(
+      'Story AI follows your instruction to improve the episode and rewrites it for reliable page and panel planning. Recommended before planning pages.',
+      { exact: true },
+    ),
+  ).toBeVisible();
+  await expect(
+    page.getByText(
+      'Set the location, time, and mood to keep backgrounds and atmosphere consistent across the episode. Scenes are optional; generation works without them.',
+      { exact: true },
+    ),
+  ).toBeVisible();
+
+  await page.getByRole('button', { name: 'Account menu', exact: true }).click();
+  await page.getByRole('combobox', { name: 'Language', exact: true }).selectOption('ja');
+
+  const localizedPagePlanningSection = page
+    .getByRole('heading', { name: 'ページ設計', exact: true })
+    .locator('xpath=ancestor::section[1]');
+  await expect(
+    localizedPagePlanningSection.getByText('入力したストーリーをコマへ反映する2段階の操作です。', { exact: true }),
+  ).toBeVisible();
+  await expect(localizedPagePlanningSection.locator('.feature-guidance')).toContainText(
+    '1. ページ骨格を上書き再生成ストーリーをもとに、ページとコマの配分・全体の流れを組み立てます。',
+  );
+  await expect(localizedPagePlanningSection.locator('.feature-guidance')).toContainText(
+    '2. 話全体を反映決めた配分に沿って、各コマの登場人物・状況・構図・セリフを自動入力します。',
+  );
+  await expect(
+    page.getByText(
+      '指示に沿って話を改善し、ページやコマへ分けやすい文章に整えます。ページ設計の前に使うのがおすすめです。',
+      { exact: true },
+    ),
+  ).toBeVisible();
+  await expect(
+    page.getByText(
+      '話全体の場所・時間帯・雰囲気をそろえ、ページをまたいだ背景の一貫性を高めます。未設定でも生成できます。',
+      { exact: true },
+    ),
+  ).toBeVisible();
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+});
+
 test('creates works from the sidebar without rendering a work overview editor', async ({ page }) => {
   await seedEnglishUi(page);
   await seedAuthenticatedSession(page);

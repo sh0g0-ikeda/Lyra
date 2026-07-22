@@ -456,6 +456,16 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   'Target episode': '対象の話',
   'Chapter / Episode': '章と話',
   'Page planning': 'ページ設計',
+  'Use these two steps to turn the episode story into panel details.':
+    '入力したストーリーをコマへ反映する2段階の操作です。',
+  'Builds the page and panel allocation and the overall story flow.':
+    'ストーリーをもとに、ページとコマの配分・全体の流れを組み立てます。',
+  'Fills each panel with characters, situation, composition, and dialogue based on that plan.':
+    '決めた配分に沿って、各コマの登場人物・状況・構図・セリフを自動入力します。',
+  'Story AI follows your instruction to improve the episode and rewrites it for reliable page and panel planning. Recommended before planning pages.':
+    '指示に沿って話を改善し、ページやコマへ分けやすい文章に整えます。ページ設計の前に使うのがおすすめです。',
+  'Set the location, time, and mood to keep backgrounds and atmosphere consistent across the episode. Scenes are optional; generation works without them.':
+    '話全体の場所・時間帯・雰囲気をそろえ、ページをまたいだ背景の一貫性を高めます。未設定でも生成できます。',
   'Import / References': '取り込み / レファレンス',
   Credits: 'クレジット',
   Jobs: 'ジョブ',
@@ -4905,6 +4915,22 @@ function StudioShell(props: {
                       </div>
                     }
                   >
+                    <div className="feature-guidance">
+                      <p>{translateUiString(uiLanguage, 'Use these two steps to turn the episode story into panel details.')}</p>
+                      <p>
+                        <strong>{`1. ${translateUiString(uiLanguage, skeletonActionLabel)}`}</strong>
+                        <span>{translateUiString(uiLanguage, 'Builds the page and panel allocation and the overall story flow.')}</span>
+                      </p>
+                      <p>
+                        <strong>{`2. ${translateUiString(uiLanguage, 'Apply story plan')}`}</strong>
+                        <span>
+                          {translateUiString(
+                            uiLanguage,
+                            'Fills each panel with characters, situation, composition, and dialogue based on that plan.',
+                          )}
+                        </span>
+                      </p>
+                    </div>
                     {skeletonActionMessage !== null ? (
                       <div className="muted small">{translateUiString(uiLanguage, skeletonActionMessage)}</div>
                     ) : null}
@@ -5218,11 +5244,7 @@ function StudioShell(props: {
 
                   <PanelSection
                     title="Story AI"
-                    subtitle={pickUiText(
-                      uiLanguage,
-                      'Improve the current episode draft while keeping continuity with the rest of the work.',
-                      '\u4f5c\u54c1\u5168\u4f53\u3068\u306e\u6574\u5408\u3092\u4fdd\u3061\u306a\u304c\u3089\u3001\u73fe\u5728\u306e\u8a71\u306e\u4e0b\u66f8\u304d\u3092\u6539\u5584\u3057\u307e\u3059\u3002',
-                    )}
+                    subtitle="Story AI follows your instruction to improve the episode and rewrites it for reliable page and panel planning. Recommended before planning pages."
                     collapsible
                     mobileDefaultCollapsed
                     actions={
@@ -5401,7 +5423,12 @@ function StudioShell(props: {
                     )}
                   </PanelSection>
 
-                  <PanelSection title="Scenes" collapsible mobileDefaultCollapsed>
+                  <PanelSection
+                    title="Scenes"
+                    subtitle="Set the location, time, and mood to keep backgrounds and atmosphere consistent across the episode. Scenes are optional; generation works without them."
+                    collapsible
+                    mobileDefaultCollapsed
+                  >
                     <div className="list-grid">
                       {scenes.map((scene) => (
                         <button
