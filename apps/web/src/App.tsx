@@ -37,6 +37,17 @@ import {
 import { ORGANIZATION_FEATURES_AVAILABLE } from './lib/featureFlags';
 import { formatUserFacingError, formatUserFacingErrorMessage } from './lib/userFacingErrors';
 import {
+  getEntityReferenceGenerationBlockers,
+  getPageGenerationBlockers,
+  getPageSkeletonBlockers,
+  getReferenceConfirmationBlockers,
+  getStoryApplyBlockers,
+  hasBlockingErrors,
+  pickLocalizedText,
+  type GenerationBlocker,
+  type GenerationReadinessTarget,
+} from './lib/generationReadiness';
+import {
   beginCognitoLogin,
   buildCognitoLogoutUrl,
   clearCognitoSession,
@@ -1249,19 +1260,6 @@ function formatEntityTypeLabel(language: UiLanguage, entityType: EntityDraft['en
     object: 'Object',
   };
   return translateUiString(language, labelByType[entityType]);
-}
-
-function formatFramePanelMismatchDetail(
-  language: UiLanguage,
-  frameCount: number,
-  panelCount: number,
-): string {
-  return translateUiString(
-    language,
-    'Current count: frames {frames} / panels {panels}. Apply a panel layout template to sync them before generating.',
-  )
-    .replace('{frames}', String(frameCount))
-    .replace('{panels}', String(panelCount));
 }
 
 function formatDeletePanelConfirmMessage(language: UiLanguage, panelOrder: number): string {
@@ -2858,8 +2856,70 @@ function StudioShell(props: {
     selectedPagePanelCount,
   ]);
 
+  const activeCreditBalance =
+    activeOrganizationId === null
+      ? balanceQuery.data?.total_credits ?? null
+      : activeOrganizationBalance?.total_credits ?? null;
+  const pageGenerationBlockers = getPageGenerationBlockers({
+    page: selectedPage,
+    panels,
+    frames,
+    entities,
+    activePageJob: selectedPageGenerationJob,
+    availableCredits: activeCreditBalance,
+  });
+  const entityReferenceGenerationBlockers = getEntityReferenceGenerationBlockers({
+    entity: selectedEntity,
+    activeEntityJob: selectedEntityGenerationJob,
+    availableCredits: activeCreditBalance,
+  });
+  const referenceConfirmationBlockers = getReferenceConfirmationBlockers({
+    selectedCandidateTokens: referenceSelection,
+    primaryCandidateToken: referencePrimaryKey,
+  });
+  const pageSkeletonBlockers = getPageSkeletonBlockers({
+    episodeSelected: selectedEpisode !== null,
+    activeStoryJob: selectedEpisodeStoryAutofillJob,
+    activeSkeletonJob: selectedEpisodePageSkeletonJob,
+  });
+  const storyApplyBlockers = getStoryApplyBlockers({
+    episodeSelected: selectedEpisode !== null,
+    pages,
+    activeStoryJob: selectedEpisodeStoryAutofillJob,
+    activeSkeletonJob: selectedEpisodePageSkeletonJob,
+  });
+  const pageGenerationBlocked = hasBlockingErrors(pageGenerationBlockers);
+  const entityReferenceGenerationBlocked = hasBlockingErrors(entityReferenceGenerationBlockers);
+  const referenceConfirmationBlocked = hasBlockingErrors(referenceConfirmationBlockers);
+  const pageSkeletonBlocked = hasBlockingErrors(pageSkeletonBlockers);
+  const storyApplyBlocked = hasBlockingErrors(storyApplyBlockers);
+  const navigateToReadinessTarget = useCallback((target: GenerationReadinessTarget): void => {
+    if (target === 'entities' || target === 'references') {
+      setActiveTab('entities');
+      return;
+    }
+
+    if (target === 'pages' || target === 'layout') {
+      setActiveTab('pages');
+      if (target === 'layout') {
+        window.setTimeout(() => {
+          document
+            .querySelector('.page-section-frames-panels')
+            ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }, 0);
+      }
+      return;
+    }
+
+    if (target === 'billing') {
+      setActiveTab('account');
+      return;
+    }
+
+    setActiveTab('story');
+  }, []);
   const generatePageDisabled =
-    busyAction === 'Generate page' || selectedPageHasFramePanelMismatch;
+    busyAction === 'Generate page' || pageGenerationBlocked;
   const entityPreviewGenerationMessage =
     selectedEntityGenerationJob !== null
       ? selectedEntityGenerationJob.status === 'queued'
@@ -3285,6 +3345,8 @@ function StudioShell(props: {
     const generatedReferenceCandidates = generatedReferenceCandidatesByEntityId[selectedEntity.id] ?? [];
     return dedupeReferenceCandidates([...uploadedCandidates, ...generatedReferenceCandidates]);
   }, [generatedReferenceCandidatesByEntityId, selectedEntity, uploadedReferenceCandidatesByEntityId]);
+  const visibleReferenceConfirmationBlockers =
+    selectedEntity === null || referenceCandidates.length === 0 ? [] : referenceConfirmationBlockers;
 
   const characterStructuredFields = useMemo(
     () => parseCharacterStructuredFieldsDraft(entityDraft.structured_fields),
@@ -4891,7 +4953,7 @@ function StudioShell(props: {
                       <div className="toolbar">
                         <button
                           className="primary-button skeleton-plan-button"
-                          disabled={skeletonActionDisabled || selectedEpisodePageSkeletonJob !== null}
+                          disabled={skeletonActionDisabled || selectedEpisodePageSkeletonJob !== null || pageSkeletonBlocked}
                           onClick={() => {
                             if (selectedEpisode === null) {
                               return;
@@ -4946,7 +5008,8 @@ function StudioShell(props: {
                             selectedEpisode === null ||
                             busyAction === 'Apply story plan' ||
                             selectedEpisodeStoryAutofillJob !== null ||
-                            selectedEpisodePageSkeletonJob !== null
+                            selectedEpisodePageSkeletonJob !== null ||
+                            storyApplyBlocked
                           }
                           onClick={() => {
                             if (selectedEpisode === null) {
@@ -4987,6 +5050,16 @@ function StudioShell(props: {
                         </span>
                       </p>
                     </div>
+                    <GenerationReadinessNotice
+                      blockers={pageSkeletonBlockers}
+                      language={uiLanguage}
+                      onAction={navigateToReadinessTarget}
+                    />
+                    <GenerationReadinessNotice
+                      blockers={storyApplyBlockers}
+                      language={uiLanguage}
+                      onAction={navigateToReadinessTarget}
+                    />
                     {skeletonActionMessage !== null ? (
                       <div className="muted small">{translateUiString(uiLanguage, skeletonActionMessage)}</div>
                     ) : null}
@@ -5764,6 +5837,7 @@ function StudioShell(props: {
                       <div className="toolbar">
                         <button
                           className="secondary-button"
+                          disabled={entityReferenceGenerationBlocked}
                           onClick={() =>
                             void runAction('Generate reference', async () => {
                               await saveCurrentEntityGenerationContext();
@@ -5789,7 +5863,7 @@ function StudioShell(props: {
                         </button>
                         <button
                           className="primary-button"
-                          disabled={referenceSelection.length === 0 && referencePrimaryKey.length === 0}
+                          disabled={referenceConfirmationBlocked}
                           onClick={() =>
                             void runAction('Confirm references', async () => {
                               const selectedReferenceKeys = Array.from(
@@ -5823,6 +5897,16 @@ function StudioShell(props: {
                         </button>
                       </div>
                     ) : null}
+                    <GenerationReadinessNotice
+                      blockers={entityReferenceGenerationBlockers}
+                      language={uiLanguage}
+                      onAction={navigateToReadinessTarget}
+                    />
+                    <GenerationReadinessNotice
+                      blockers={visibleReferenceConfirmationBlockers}
+                      language={uiLanguage}
+                      onAction={navigateToReadinessTarget}
+                    />
                     {entityPreviewGenerationMessage !== null ? (
                       <ProcessingHint
                         message={translateUiString(uiLanguage, entityPreviewGenerationMessage)}
@@ -6191,34 +6275,11 @@ function StudioShell(props: {
                             {translateUiString(uiLanguage, 'Page generation starts at 3 credits.')}
                           </span>
                         </div>
-                        {selectedPageHasFramePanelMismatch ? (
-                          <div className="generation-blocking-hint" role="alert">
-                            <div className="generation-blocking-copy">
-                              <strong>
-                                {translateUiString(uiLanguage, 'Page generation is blocked until panel layout and panel content match.')}
-                              </strong>
-                              <span>
-                                {formatFramePanelMismatchDetail(
-                                  uiLanguage,
-                                  selectedPageFrameCount,
-                                  selectedPagePanelCount,
-                                )}
-                              </span>
-                            </div>
-                            <button
-                              className="ghost-button generation-blocking-action"
-                              onClick={() => {
-                                document
-                                  .querySelector('.page-section-frames-panels')
-                                  ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                              }}
-                              type="button"
-                            >
-                              <LayoutGrid size={14} />
-                              {translateUiString(uiLanguage, 'Go to panel layout')}
-                            </button>
-                          </div>
-                        ) : null}
+                        <GenerationReadinessNotice
+                          blockers={pageGenerationBlockers}
+                          language={uiLanguage}
+                          onAction={navigateToReadinessTarget}
+                        />
                         {selectedPage.generated_image !== null ? (
                           <div className="generated-image-wrap">
                             <AuthenticatedImage
@@ -7233,6 +7294,43 @@ function ProcessingHint(props: { message: string; progressPercent?: number | nul
       {props.showProgress === true ? (
         <ProgressBar percent={props.progressPercent ?? null} tone={props.queued ? 'queued' : 'active'} />
       ) : null}
+    </div>
+  );
+}
+
+function GenerationReadinessNotice(props: {
+  blockers: GenerationBlocker[];
+  language: UiLanguage;
+  onAction: (target: GenerationReadinessTarget) => void;
+}) {
+  if (props.blockers.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="generation-readiness-notice" role="alert">
+      <div className="generation-readiness-heading">
+        <strong>
+          {pickUiText(props.language, 'Before generating, fix these items.', '生成前に、以下を確認してください。')}
+        </strong>
+      </div>
+      <div className="generation-readiness-list">
+        {props.blockers.map((blockerItem) => (
+          <div className="generation-readiness-item" key={blockerItem.code}>
+            <div className="generation-readiness-copy">
+              <strong>{pickLocalizedText(props.language, blockerItem.title)}</strong>
+              <span>{pickLocalizedText(props.language, blockerItem.detail)}</span>
+            </div>
+            <button
+              className="ghost-button generation-readiness-action"
+              onClick={() => props.onAction(blockerItem.target)}
+              type="button"
+            >
+              {pickLocalizedText(props.language, blockerItem.actionLabel)}
+            </button>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
