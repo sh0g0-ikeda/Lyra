@@ -6641,50 +6641,6 @@ function StudioShell(props: {
                           entities={entities}
                           onChange={(dialogues) => setPanelDraft({ ...panelDraft, dialogues })}
                         />
-                        <div className="toolbar">
-                          {selectedPanel !== null ? (
-                            <>
-                              <button
-                                className="ghost-button"
-                                onClick={() =>
-                                  void runAction('Save panel', async () => {
-                                    const assignmentsPayload = toPanelAssignmentsPayload(panelDraft);
-                                    await api.updatePanel(
-                                      selectedPanel.id,
-                                      toPanelPayload(panelDraft),
-                                      activeOrganizationId,
-                                    );
-                                    await api.replacePanelAssignments(
-                                      selectedPanel.id,
-                                      assignmentsPayload,
-                                      activeOrganizationId,
-                                    );
-                                    await invalidateScopedQuery(['panels', selectedPage.id]);
-                                  })
-                                }
-                                type="button"
-                              >
-                                <Save size={16} />
-                                {translateUiString(uiLanguage, 'Save panel')}
-                              </button>
-                              <button
-                                className="ghost-button danger"
-                                onClick={() => {
-                                  if (!window.confirm(formatDeletePanelConfirmMessage(uiLanguage, selectedPanel.order))) {
-                                    return;
-                                  }
-
-                                  void runAction('Delete panel', async () => {
-                                    await deletePanelFromSelectedPage(selectedPanel);
-                                  });
-                                }}
-                                type="button"
-                              >
-                                <Trash2 size={16} />
-                              </button>
-                            </>
-                          ) : null}
-                        </div>
                         <div className="composition-strip">
                           {compositions.slice(0, 10).map((composition) => (
                             <button
@@ -6707,6 +6663,48 @@ function StudioShell(props: {
                             </button>
                           ))}
                         </div>
+                        {selectedPanel !== null ? (
+                          <div className="panel-save-actions">
+                            <button
+                              className="secondary-button panel-save-button"
+                              onClick={() =>
+                                void runAction('Save panel', async () => {
+                                  const assignmentsPayload = toPanelAssignmentsPayload(panelDraft);
+                                  await api.updatePanel(
+                                    selectedPanel.id,
+                                    toPanelPayload(panelDraft),
+                                    activeOrganizationId,
+                                  );
+                                  await api.replacePanelAssignments(
+                                    selectedPanel.id,
+                                    assignmentsPayload,
+                                    activeOrganizationId,
+                                  );
+                                  await invalidateScopedQuery(['panels', selectedPage.id]);
+                                })
+                              }
+                              type="button"
+                            >
+                              <Save size={16} />
+                              {translateUiString(uiLanguage, 'Save panel')}
+                            </button>
+                            <button
+                              className="ghost-button danger panel-delete-button"
+                              onClick={() => {
+                                if (!window.confirm(formatDeletePanelConfirmMessage(uiLanguage, selectedPanel.order))) {
+                                  return;
+                                }
+
+                                void runAction('Delete panel', async () => {
+                                  await deletePanelFromSelectedPage(selectedPanel);
+                                });
+                              }}
+                              type="button"
+                            >
+                              <Trash2 size={16} />
+                            </button>
+                          </div>
+                        ) : null}
                       </PanelSection>
                       </div>
 

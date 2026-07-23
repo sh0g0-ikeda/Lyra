@@ -3034,6 +3034,37 @@ a {
   margin-top: 2px;
 }
 
+.panel-save-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 4px;
+  padding: 14px 0 2px;
+  border-top: 1px solid rgba(119, 174, 255, 0.18);
+}
+
+.panel-save-button {
+  min-width: min(320px, 100%);
+  min-height: 42px;
+  border-color: rgba(119, 174, 255, 0.62);
+  background: linear-gradient(180deg, rgba(48, 78, 124, 0.98), rgba(31, 52, 87, 0.98));
+  color: #eef6ff;
+  box-shadow: 0 8px 20px rgba(33, 74, 138, 0.2);
+}
+
+.panel-save-button:hover:not(:disabled) {
+  border-color: rgba(144, 193, 255, 0.78);
+  background: linear-gradient(180deg, rgba(56, 91, 143, 1), rgba(36, 62, 100, 1));
+  box-shadow: 0 10px 24px rgba(33, 74, 138, 0.28);
+}
+
+.panel-delete-button {
+  min-width: 44px;
+  min-height: 42px;
+  padding: 0 12px;
+}
+
 .job-row {
   border-radius: 8px;
   border: 1px solid rgba(229, 199, 107, 0.08);
@@ -3956,6 +3987,17 @@ details.stack summary {
   .toolbar > input {
     width: 100%;
     min-width: 0 !important;
+  }
+
+  .panel-save-actions {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    width: 100%;
+  }
+
+  .panel-save-button {
+    width: 100%;
+    min-width: 0;
   }
 
   .form-grid,
