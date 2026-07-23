@@ -6642,35 +6642,6 @@ function StudioShell(props: {
                           onChange={(dialogues) => setPanelDraft({ ...panelDraft, dialogues })}
                         />
                         <div className="toolbar">
-                          <button
-                            className="secondary-button"
-                            onClick={() =>
-                              void runAction('Create panel', async () => {
-                                const assignmentsPayload = toPanelAssignmentsPayload(panelDraft);
-                                const createdPanel = await api.createPanel(
-                                  selectedPage.id,
-                                  toPanelPayload(panelDraft),
-                                  activeOrganizationId,
-                                );
-                                try {
-                                  await api.replacePanelAssignments(
-                                    createdPanel.id,
-                                    assignmentsPayload,
-                                    activeOrganizationId,
-                                  );
-                                } catch (error) {
-                                  await api.deletePanel(createdPanel.id, activeOrganizationId).catch(() => undefined);
-                                  throw error;
-                                }
-                                setSelectedPanelId(createdPanel.id);
-                                await invalidateScopedQuery(['panels', selectedPage.id]);
-                              })
-                            }
-                            type="button"
-                          >
-                            <Save size={16} />
-                            {translateUiString(uiLanguage, 'Create panel')}
-                          </button>
                           {selectedPanel !== null ? (
                             <>
                               <button
