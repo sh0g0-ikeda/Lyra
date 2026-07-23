@@ -76,7 +76,9 @@ const pageSkeletonPanelSchema = z
     panel_role: z.enum(['establish', 'action', 'reaction', 'emphasis', 'transition', 'pause', 'impact']),
     suggested_size: z.enum(['standard', 'large', 'wide', 'narrow', 'splash']),
     situation_hint: z.string().trim().min(1).max(2000),
-    suggested_entities: z.array(z.string().uuid()).max(STORY_AI_LIMITS.maxEntitiesPerPanel),
+    suggested_entities: z
+      .array(z.string().trim().min(1).max(STORY_AI_LIMITS.listEntryMaxLength))
+      .max(STORY_AI_LIMITS.maxEntitiesPerPanel),
     suggested_dialogue_hint: z.string().trim().min(1).max(1000).nullable(),
   })
   .strict();

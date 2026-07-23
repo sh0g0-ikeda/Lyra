@@ -176,6 +176,52 @@ describe('OpenAIStoryAiClient', () => {
     expect(requests).toHaveLength(1);
   });
 
+  it('page skeleton の suggested_entities に UUID ではない値が混じっても service 修復に渡せる', async () => {
+    const client = {
+      postJson: async () => ({
+        body: {
+          output_text: JSON.stringify({
+            pages: [
+              {
+                page_number: 1,
+                purpose: 'Open on the roof.',
+                suggested_panel_count: 1,
+                suggested_layout: 'splash_1',
+                panels: [
+                  {
+                    order: 1,
+                    panel_role: 'establish',
+                    suggested_size: 'large',
+                    situation_hint: 'Aki steps onto the moonlit roof.',
+                    suggested_entities: [
+                      '11111111-1111-4111-8111-111111111111',
+                      'Kasane',
+                      'not-a-uuid',
+                    ],
+                    suggested_dialogue_hint: null,
+                  },
+                ],
+              },
+            ],
+          }),
+        },
+        requestId: 'req-invalid-entity-id',
+      }),
+    } as unknown as OpenAIClient;
+
+    const storyAiClient = new OpenAIStoryAiClient(client);
+    const result = await storyAiClient.generatePageSkeleton({
+      systemPrompt: 'system',
+      userPrompt: 'user',
+    });
+
+    expect(result[0]?.panels[0]?.suggestedEntities).toEqual([
+      '11111111-1111-4111-8111-111111111111',
+      'Kasane',
+      'not-a-uuid',
+    ]);
+  });
+
   it('episode draft improvement を strict structured output で返す', async () => {
     const client = {
       postJson: async () => ({
