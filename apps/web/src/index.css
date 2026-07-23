@@ -3027,6 +3027,13 @@ a {
   font-size: 0.86rem;
 }
 
+.dialogue-add-button {
+  align-self: stretch;
+  width: 100%;
+  min-height: 42px;
+  margin-top: 2px;
+}
+
 .job-row {
   border-radius: 8px;
   border: 1px solid rgba(229, 199, 107, 0.08);

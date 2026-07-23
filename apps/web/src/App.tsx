@@ -481,6 +481,16 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   'Current plan': '現在のプラン',
   Current: '現在',
   active: '有効',
+  draft: '下書き',
+  reviewing: '確認中',
+  ready: '準備完了',
+  designing: '設計中',
+  generating: '生成中',
+  editing: '編集中',
+  confirmed: '確定済み',
+  queued: '待機中',
+  processing: '処理中',
+  completed: '完了',
   trialing: '試用中',
   past_due: '支払い遅延',
   canceled: '解約済み',
@@ -531,6 +541,7 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   Type: '種類',
   Placement: '配置',
   Line: '行',
+  'Dialogue text': 'セリフ本文',
   'Add character': 'キャラを追加',
   'Add to panel': 'コマに追加',
   'No more entities': '追加できるキャラがありません。',
@@ -542,7 +553,7 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   Effect: '効果',
   'Custom expression': '自由入力の表情',
   'Custom pose': '自由入力のポーズ',
-  'Add line': '行を追加',
+  'Add dialogue': 'セリフを追加',
   'No dialogue lines yet.': 'まだセリフ行はありません。',
   'Speaker is required for speech, thought, shout, and whisper lines.': 'セリフ・思考・叫び・ささやきには話者が必要です。',
   'Narration / none': 'ナレーション / なし',
@@ -697,9 +708,29 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   'Eye shape': '目の形',
   Eyelids: 'まぶた',
   'Face shape': '顔の形',
+  'Eyebrow shape': '眉の形',
+  'Nose shape': '鼻の形',
+  'Mouth shape': '口の形',
+  'Eyelid type': 'まぶたの種類',
+  'Eye size': '目の大きさ',
+  'Eye angle': '目尻の向き',
+  'Pupil style': '瞳孔の表現',
+  'Under-eye detail': '目元の特徴',
+  'Mouth default': '通常時の口元',
   Eyebrows: '眉',
   Nose: '鼻',
   Mouth: '口',
+  'Front shape': '前髪の形',
+  'Side hair': '横髪',
+  'Back shape': '後ろ髪の形',
+  Category: '服装カテゴリ',
+  'Main color': 'メインカラー',
+  Impression: '服装の印象',
+  'Collar shape': '襟の形',
+  'Sleeve length': '袖の長さ',
+  'Skirt or pants': 'ボトムス',
+  Shoes: '靴',
+  Legwear: '靴下・脚まわり',
   'Outfit category': '服装カテゴリ',
   'Outfit silhouette': '服装シルエット',
   'Main colors': '主な色',
@@ -724,6 +755,8 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   'Move later': '後ろへ移動',
   'Move panel up': 'コマを前へ移動',
   'Move panel down': 'コマを後ろへ移動',
+  'New chapter title': '新しい章のタイトル',
+  'New episode title': '新しい話のタイトル',
   'Z-index': '重なり順',
   'Style constraints': '画風制約',
   'Import reference': 'レファレンス取り込み',
@@ -1207,6 +1240,15 @@ function translateUiString(language: UiLanguage, value: string): string {
   }
 
   return value;
+}
+
+function formatEntityTypeLabel(language: UiLanguage, entityType: EntityDraft['entity_type']): string {
+  const labelByType: Record<EntityDraft['entity_type'], string> = {
+    character: 'Character',
+    nonhuman: 'Nonhuman',
+    object: 'Object',
+  };
+  return translateUiString(language, labelByType[entityType]);
 }
 
 function formatFramePanelMismatchDetail(
@@ -5533,7 +5575,7 @@ function StudioShell(props: {
                           type="button"
                         >
                           <strong>{entity.name}</strong>
-                          <span>{entity.entity_type}</span>
+                          <span>{formatEntityTypeLabel(uiLanguage, entity.entity_type)}</span>
                         </button>
                       ))}
                     </div>
@@ -7873,10 +7915,6 @@ function PanelDialogueEditor(props: {
               : translateUiString(language, 'These lines stay outside the generated panel art.')}
           </div>
         </div>
-        <button className="ghost-button" onClick={addDialogue} type="button">
-          <Save size={16} />
-          {translateUiString(language, 'Add line')}
-        </button>
       </div>
       {props.dialogues.length === 0 ? (
         <div className="muted">{translateUiString(language, 'No dialogue lines yet.')}</div>
@@ -7945,7 +7983,7 @@ function PanelDialogueEditor(props: {
               />
             </div>
             <TextAreaField
-              label="Line"
+              label="Dialogue text"
               rows={2}
               value={dialogue.text}
               onChange={(value) => updateDialogue(index, { text: value })}
@@ -7959,6 +7997,10 @@ function PanelDialogueEditor(props: {
         );
         })
       )}
+      <button className="primary-button dialogue-add-button" onClick={addDialogue} type="button">
+        <Plus size={18} />
+        {translateUiString(language, 'Add dialogue')}
+      </button>
     </div>
   );
 }
