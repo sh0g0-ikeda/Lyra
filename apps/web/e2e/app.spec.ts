@@ -592,6 +592,19 @@ test('初心者向け案内とページ編集の情報境界を明確にする',
   await expect(dialogueGroup).toBeVisible();
   await expect(dialogueGroup.locator('.dialogue-line-card')).toContainText('Dialogue 1');
   await expect(dialogueGroup.locator('.dialogue-line-card')).toContainText('Mizuki');
+  const addDialogueButton = dialogueGroup.getByRole('button', { name: 'Add dialogue', exact: true });
+  await expect(addDialogueButton).toBeVisible();
+  await expect(dialogueGroup.getByRole('button', { name: 'Add line', exact: true })).toHaveCount(0);
+  expect(
+    await dialogueGroup.evaluate((group) => {
+      const lastDialogue = group.querySelector('.dialogue-line-card:last-of-type');
+      const addButton = group.querySelector('.dialogue-add-button');
+      if (lastDialogue === null || addButton === null) {
+        return false;
+      }
+      return Boolean(lastDialogue.compareDocumentPosition(addButton) & Node.DOCUMENT_POSITION_FOLLOWING);
+    }),
+  ).toBe(true);
 
   await page.getByRole('button', { name: 'Account menu', exact: true }).click();
   await page.getByRole('combobox', { name: 'Language', exact: true }).selectOption('ja');
@@ -608,12 +621,42 @@ test('初心者向け案内とページ編集の情報境界を明確にする',
       exact: true,
     }),
   ).toBeVisible();
+  const localizedEntityCard = page.locator('.list-grid .mini-card').filter({ hasText: 'Mizuki' });
+  await expect(localizedEntityCard).toContainText('キャラクター');
+  await expect(localizedEntityCard.getByText('character', { exact: true })).toHaveCount(0);
+  for (const localizedCharacterLabel of [
+    '眉の形',
+    '鼻の形',
+    '口の形',
+    'まぶたの種類',
+    '目の大きさ',
+    '目尻の向き',
+    '瞳孔の表現',
+    '目元の特徴',
+    '通常時の口元',
+    '前髪の形',
+    '横髪',
+    '後ろ髪の形',
+    '服装カテゴリ',
+    'メインカラー',
+    '服装の印象',
+    '襟の形',
+    '袖の長さ',
+    'ボトムス',
+    '靴',
+    '靴下・脚まわり',
+  ]) {
+    await expect(page.getByRole('combobox', { name: localizedCharacterLabel, exact: true })).toBeVisible();
+  }
 
   await page.setViewportSize({ width: 390, height: 844 });
   await page.getByRole('button', { name: 'ページ', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'ページの絵柄・雰囲気', exact: true })).toBeVisible();
   await expect(page.locator('.character-assignment-card')).toBeVisible();
   await expect(page.locator('.dialogue-line-card')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'セリフを追加', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: '行を追加', exact: true })).toHaveCount(0);
+  await expect(page.getByLabel('セリフ本文', { exact: true })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
 });
 
