@@ -206,6 +206,7 @@ function StoryWorkNode(props: WorkNodeProps) {
     queryKey: chapterQueryKey,
     queryFn: () => props.api.getChapters(props.work.id, props.organizationId),
     enabled: props.expanded || props.selectedWorkId === props.work.id,
+    placeholderData: (previousData) => previousData,
   });
   const chapters = useMemo(
     () => sortStoryItems(chaptersQuery.data?.chapters ?? []),
@@ -392,6 +393,7 @@ function StoryChapterNode(props: ChapterNodeProps) {
     queryKey: props.scopedQueryKey(['episodes', props.chapter.id]),
     queryFn: () => props.api.getEpisodes(props.chapter.id, props.organizationId),
     enabled: props.expanded || props.selectedChapterId === props.chapter.id,
+    placeholderData: (previousData) => previousData,
   });
   const episodes = useMemo(
     () => sortStoryItems(episodesQuery.data?.episodes ?? []),

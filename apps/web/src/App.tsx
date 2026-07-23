@@ -2765,12 +2765,14 @@ function StudioShell(props: {
       ? 'Regenerating will replace the current pages for this episode.'
       : null;
 
+  const polledJobList = trackedJobList.slice(0, 8);
   const jobQueries = useQueries({
-    queries: trackedJobList.map((jobId) => ({
+    queries: polledJobList.map((jobId) => ({
       queryKey: scopedQueryKey(['job', jobId]),
       queryFn: () => api.getJob(jobId, activeOrganizationId),
       refetchInterval: (query: { state: { data: GenerationJobRecord | undefined } }) =>
-        query.state.data?.status === 'queued' || query.state.data?.status === 'processing' ? 4000 : false,
+        query.state.data?.status === 'queued' || query.state.data?.status === 'processing' ? 8000 : false,
+      staleTime: 4_000,
     })),
   });
   const trackedJobs = jobQueries.map((query) => query.data).filter(isDefined);
@@ -3554,7 +3556,7 @@ function StudioShell(props: {
   };
 
   const trackJob = (jobId: string): void => {
-    setTrackedJobIds(JSON.stringify(Array.from(new Set([jobId, ...trackedJobList])).slice(0, 24)));
+    setTrackedJobIds(JSON.stringify(Array.from(new Set([jobId, ...trackedJobList])).slice(0, 12)));
   };
 
   const cancelTrackedJob = async (job: GenerationJobRecord): Promise<void> => {
