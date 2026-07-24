@@ -28,6 +28,7 @@ const GENERATION_JOB_TYPES_SQL =
   "'page_generate', 'entity_generate', 'episode_story_autofill', 'episode_page_skeleton'";
 const GENERATION_JOB_LEDGER_SCOPE_SQL =
   '((generation_jobs.organization_id IS NULL AND credit_ledger.organization_id IS NULL AND credit_ledger.user_id = generation_jobs.user_id) OR (generation_jobs.organization_id IS NOT NULL AND credit_ledger.organization_id = generation_jobs.organization_id))';
+const GENERATION_JOB_CONSUME_LEDGER_EXISTS_SQL = `EXISTS (SELECT 1 FROM credit_ledger WHERE credit_ledger.job_id = generation_jobs.id AND credit_ledger.type = 'consume' AND ${GENERATION_JOB_LEDGER_SCOPE_SQL})`;
 
 const DEPLOYMENT_DATA_INVARIANT_QUERIES: InvariantQuery[] = [
   {
@@ -124,11 +125,11 @@ const DEPLOYMENT_DATA_INVARIANT_QUERIES: InvariantQuery[] = [
   },
   {
     name: 'generation_jobs.failed_page_missing_refund',
-    sql: `SELECT generation_jobs.id::text AS id FROM generation_jobs WHERE generation_jobs.job_type = 'page_generate' AND generation_jobs.status = 'failed' AND generation_jobs.credit_cost > 0 AND NOT EXISTS (SELECT 1 FROM credit_ledger WHERE credit_ledger.job_id = generation_jobs.id AND credit_ledger.type = 'refund' AND ${GENERATION_JOB_LEDGER_SCOPE_SQL}) ORDER BY generation_jobs.id LIMIT $1`,
+    sql: `SELECT generation_jobs.id::text AS id FROM generation_jobs WHERE generation_jobs.job_type = 'page_generate' AND generation_jobs.status = 'failed' AND generation_jobs.credit_cost > 0 AND ${GENERATION_JOB_CONSUME_LEDGER_EXISTS_SQL} AND NOT EXISTS (SELECT 1 FROM credit_ledger WHERE credit_ledger.job_id = generation_jobs.id AND credit_ledger.type = 'refund' AND ${GENERATION_JOB_LEDGER_SCOPE_SQL}) ORDER BY generation_jobs.id LIMIT $1`,
   },
   {
     name: 'generation_jobs.failed_entity_missing_refund',
-    sql: `SELECT generation_jobs.id::text AS id FROM generation_jobs WHERE generation_jobs.job_type = 'entity_generate' AND generation_jobs.status = 'failed' AND generation_jobs.credit_cost > 0 AND NOT EXISTS (SELECT 1 FROM credit_ledger WHERE credit_ledger.job_id = generation_jobs.id AND credit_ledger.type = 'refund' AND ${GENERATION_JOB_LEDGER_SCOPE_SQL}) ORDER BY generation_jobs.id LIMIT $1`,
+    sql: `SELECT generation_jobs.id::text AS id FROM generation_jobs WHERE generation_jobs.job_type = 'entity_generate' AND generation_jobs.status = 'failed' AND generation_jobs.credit_cost > 0 AND ${GENERATION_JOB_CONSUME_LEDGER_EXISTS_SQL} AND NOT EXISTS (SELECT 1 FROM credit_ledger WHERE credit_ledger.job_id = generation_jobs.id AND credit_ledger.type = 'refund' AND ${GENERATION_JOB_LEDGER_SCOPE_SQL}) ORDER BY generation_jobs.id LIMIT $1`,
   },
   {
     name: 'generation_jobs.failed_page_under_refunded',
