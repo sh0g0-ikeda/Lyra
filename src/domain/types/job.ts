@@ -9,7 +9,7 @@ export type GenerationJobType =
   | 'entity_generate'
   | 'episode_story_autofill'
   | 'episode_page_skeleton';
-export type GenerationJobStatus = 'queued' | 'processing' | 'completed' | 'failed' | 'canceled';
+export type GenerationJobStatus = 'queued' | 'processing' | 'completed' | 'failed' | 'cancelled';
 
 export const MAX_GENERATION_JOB_CREDIT_SETTLEMENT_CREDITS = 2_147_483_647;
 
@@ -45,7 +45,7 @@ export function createGenerationJobCreditSettlement(
   if (refunded > 0) {
     return { chargedCredits: charged, refundedCredits: refunded, netCredits, status: 'partially_refunded' };
   }
-  if (status === 'failed' || status === 'canceled') {
+  if (status === 'failed' || status === 'cancelled') {
     return { chargedCredits: charged, refundedCredits: 0, netCredits, status: 'refund_pending' };
   }
   return { chargedCredits: charged, refundedCredits: 0, netCredits, status: 'charged' };
@@ -81,7 +81,9 @@ export interface GenerationJob {
   openaiRequestId: string | null;
   errorMessage: string | null;
   cancelRequestedAt?: Date | null;
-  cancelRequestedByUserId?: string | null;
+  cancelRequestedBy?: string | null;
+  cancelledAt?: Date | null;
+  commitStartedAt?: Date | null;
   retryCount: number;
   createdAt: Date;
   startedAt: Date | null;

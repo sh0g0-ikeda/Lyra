@@ -32,16 +32,19 @@ import type {
 export class ApiError extends Error {
   public readonly status: number;
   public readonly code: string | null;
+  public readonly retryAfterMs: number | null;
 
   public constructor(
     message: string,
     status: number,
     code: string | null,
+    retryAfterMs: number | null = null,
   ) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
     this.code = code;
+    this.retryAfterMs = retryAfterMs;
   }
 }
 
@@ -278,10 +281,15 @@ export class LyraApiClient {
     return this.request(`/api/episodes/${episodeId}${organizationQuery(organizationId)}`, { method: 'PUT', body });
   }
 
-  public moveEpisode(episodeId: string, direction: 'up' | 'down', organizationId?: string | null): Promise<EpisodeRecord> {
+  public moveEpisode(
+    episodeId: string,
+    direction: 'up' | 'down',
+    organizationId?: string | null,
+    crossChapter = false,
+  ): Promise<EpisodeRecord> {
     return this.request(`/api/episodes/${episodeId}/move${organizationQuery(organizationId)}`, {
       method: 'POST',
-      body: { direction },
+      body: crossChapter ? { direction, cross_chapter: true } : { direction },
     });
   }
 
@@ -539,8 +547,14 @@ export class LyraApiClient {
     return this.request(`/api/compositions${query.length > 0 ? `?${query}` : ''}`);
   }
 
-  public getJob(jobId: string): Promise<GenerationJobRecord> {
-    return this.request(`/api/jobs/${jobId}`);
+  public getJob(jobId: string, organizationId?: string | null): Promise<GenerationJobRecord> {
+    return this.request(`/api/jobs/${jobId}${organizationQuery(organizationId)}`);
+  }
+
+  public cancelJob(jobId: string, organizationId?: string | null): Promise<GenerationJobRecord> {
+    return this.request(`/api/jobs/${jobId}/cancel${organizationQuery(organizationId)}`, {
+      method: 'POST',
+    });
   }
 
   public getBalance(): Promise<BillingBalanceRecord> {
@@ -757,16 +771,35 @@ export class LyraApiClient {
 
   private async toApiError(response: Response): Promise<ApiError> {
     const fallbackMessage = `${response.status} ${response.statusText}`;
+    const retryAfterMs = parseRetryAfterMs(response.headers.get('Retry-After'));
 
     try {
       const json = (await response.json()) as JsonErrorBody;
       const message = json.error?.message ?? fallbackMessage;
       const code = json.error?.code ?? null;
-      return new ApiError(message, response.status, code);
+      return new ApiError(message, response.status, code, retryAfterMs);
     } catch {
-      return new ApiError(fallbackMessage, response.status, null);
+      return new ApiError(fallbackMessage, response.status, null, retryAfterMs);
     }
   }
+}
+
+function parseRetryAfterMs(value: string | null): number | null {
+  if (value === null || value.trim().length === 0) {
+    return null;
+  }
+
+  const seconds = Number(value);
+  if (Number.isFinite(seconds) && seconds >= 0) {
+    return Math.min(seconds * 1000, 60_000);
+  }
+
+  const retryAt = Date.parse(value);
+  if (!Number.isFinite(retryAt)) {
+    return null;
+  }
+
+  return Math.min(Math.max(retryAt - Date.now(), 0), 60_000);
 }
 
 export function decodeJwtPayload(token: string): Record<string, unknown> | null {

@@ -46,6 +46,7 @@ class FakeDatabase implements DatabaseClient {
         text.includes("generation_jobs.status = 'failed'") &&
         text.includes('generation_jobs.credit_cost > 0') &&
         text.includes('FROM credit_ledger') &&
+        text.includes("credit_ledger.type = 'consume'") &&
         text.includes("credit_ledger.type = 'refund'")
       );
     }
@@ -57,6 +58,7 @@ class FakeDatabase implements DatabaseClient {
         text.includes("generation_jobs.status = 'failed'") &&
         text.includes('generation_jobs.credit_cost > 0') &&
         text.includes('FROM credit_ledger') &&
+        text.includes("credit_ledger.type = 'consume'") &&
         text.includes("credit_ledger.type = 'refund'")
       );
     }
@@ -203,6 +205,7 @@ describe('checkDeploymentDataInvariants', () => {
         query.includes("generation_jobs.job_type = 'page_generate'") &&
         query.includes("generation_jobs.status = 'failed'") &&
         query.includes('generation_jobs.credit_cost > 0') &&
+        query.includes("credit_ledger.type = 'consume'") &&
         query.includes('credit_ledger.job_id = generation_jobs.id') &&
         query.includes("credit_ledger.type = 'refund'"),
       ),
@@ -212,6 +215,7 @@ describe('checkDeploymentDataInvariants', () => {
         query.includes("generation_jobs.job_type = 'entity_generate'") &&
         query.includes("generation_jobs.status = 'failed'") &&
         query.includes('generation_jobs.credit_cost > 0') &&
+        query.includes("credit_ledger.type = 'consume'") &&
         query.includes('credit_ledger.job_id = generation_jobs.id') &&
         query.includes("credit_ledger.type = 'refund'"),
       ),
@@ -234,6 +238,30 @@ describe('checkDeploymentDataInvariants', () => {
         query.includes('ABS(ledger.consumed_amount) > ledger.refunded_amount'),
       ),
     ).toBe(true);
+    const failedJobLedgerQueries = database.queries.filter(
+      (query) =>
+        query.includes('FROM generation_jobs') &&
+        query.includes("generation_jobs.status = 'failed'") &&
+        query.includes('FROM credit_ledger'),
+    );
+    expect(failedJobLedgerQueries).toHaveLength(4);
+    for (const query of failedJobLedgerQueries) {
+      expect(query).toContain('generation_jobs.organization_id IS NULL');
+      expect(query).toContain('credit_ledger.organization_id IS NULL');
+      expect(query).toContain('credit_ledger.user_id = generation_jobs.user_id');
+      expect(query).toContain('generation_jobs.organization_id IS NOT NULL');
+      expect(query).toContain('credit_ledger.organization_id = generation_jobs.organization_id');
+    }
+    const refundOverConsumedQuery = database.queries.find(
+      (query) =>
+        query.includes('FROM credit_ledger') &&
+        query.includes('refunded_amount > consumed_amount'),
+    );
+    expect(refundOverConsumedQuery).toBeDefined();
+    expect(refundOverConsumedQuery).toContain('organization_id IS NULL');
+    expect(refundOverConsumedQuery).toContain('GROUP BY user_id, job_id');
+    expect(refundOverConsumedQuery).toContain('organization_id IS NOT NULL');
+    expect(refundOverConsumedQuery).toContain('GROUP BY organization_id, job_id');
     expect(database.queries.some((query) => query.includes('FROM pg_index'))).toBe(true);
     expect(
       database.queries.some((query) =>

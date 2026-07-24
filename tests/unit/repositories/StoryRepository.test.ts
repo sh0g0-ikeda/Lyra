@@ -652,6 +652,7 @@ describe('PostgresStoryRepository', () => {
       ),
     ).toBe(true);
   });
+
 });
 
 function queryResult<T extends QueryResultRow>(rows: T[]): QueryResult<T> {

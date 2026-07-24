@@ -3,7 +3,7 @@ ALTER TABLE generation_jobs
 
 ALTER TABLE generation_jobs
   ADD CONSTRAINT generation_jobs_status_check
-  CHECK (status IN ('queued', 'processing', 'completed', 'failed', 'canceled')) NOT VALID;
+  CHECK (status IN ('queued', 'processing', 'completed', 'failed', 'cancelled')) NOT VALID;
 
 ALTER TABLE generation_jobs
   VALIDATE CONSTRAINT generation_jobs_status_check;
@@ -29,7 +29,7 @@ RETURNS trigger
 LANGUAGE plpgsql
 AS $$
 DECLARE
-  canceled boolean;
+  cancelled boolean;
   refund_monthly integer;
   refund_purchased integer;
   next_monthly integer;
@@ -40,13 +40,13 @@ BEGIN
     RETURN NEW;
   END IF;
 
-  SELECT status = 'canceled'
-  INTO canceled
+  SELECT status = 'cancelled'
+  INTO cancelled
   FROM generation_jobs
   WHERE id = NEW.job_id
   FOR UPDATE;
 
-  IF COALESCE(canceled, false) = false THEN
+  IF COALESCE(cancelled, false) = false THEN
     RETURN NEW;
   END IF;
 

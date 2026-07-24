@@ -202,8 +202,48 @@ describe('PostgresGenerationJobRepository', () => {
     const job = await repository.findByIdAndUserId('job-1', 'user-1');
 
     expect(client.queries[0]).toContain('user_id = $2');
-    expect(client.values).toEqual(['job-1', 'user-1']);
+    expect(client.values).toEqual(['job-1', 'user-1', null]);
     expect(job?.userId).toBe('user-1');
+  });
+
+  it('法人ジョブ取得は指定法人の active member に限定する', async () => {
+    const client = new QueryCapturingClient();
+    const repository = new PostgresGenerationJobRepository(client);
+
+    await repository.findByIdAndUserId(
+      'job-1',
+      'user-1',
+      '11111111-1111-4111-8111-111111111111',
+    );
+
+    expect(client.queries[0]).toContain('generation_jobs.organization_id = $3::uuid');
+    expect(client.queries[0]).toContain('FROM organization_members');
+    expect(client.queries[0]).toContain("organization_members.status = 'active'");
+    expect(client.values).toEqual([
+      'job-1',
+      'user-1',
+      '11111111-1111-4111-8111-111111111111',
+    ]);
+  });
+
+  it('法人ジョブ停止は指定法人の active member に限定する', async () => {
+    const client = new QueryCapturingClient();
+    const repository = new PostgresGenerationJobRepository(client);
+
+    await repository.requestCancellation(
+      'job-1',
+      'user-1',
+      '11111111-1111-4111-8111-111111111111',
+    );
+
+    expect(client.queries[0]).toContain('generation_jobs.organization_id = $3::uuid');
+    expect(client.queries[0]).toContain('FROM organization_members');
+    expect(client.queries[0]).toContain("organization_members.status = 'active'");
+    expect(client.values).toEqual([
+      'job-1',
+      'user-1',
+      '11111111-1111-4111-8111-111111111111',
+    ]);
   });
 
   it('active page generation job は page_id で取得する', async () => {
@@ -350,7 +390,7 @@ describe('PostgresGenerationJobRepository', () => {
       truncated: false,
     });
     expect(client.queries[0]).toContain('expires_at < NOW()');
-    expect(client.queries[0]).toContain("status IN ('completed', 'failed', 'canceled')");
+    expect(client.queries[0]).toContain("status IN ('completed', 'failed', 'cancelled')");
     expect(client.queries[0]).toContain('LIMIT $1');
     expect(client.values).toEqual([11]);
     expect(client.queries.some((query) => query.includes('DELETE FROM generation_jobs'))).toBe(false);
@@ -382,7 +422,7 @@ describe('PostgresGenerationJobRepository', () => {
     });
 
     expect(client.queries[1]).toContain('expires_at < NOW()');
-    expect(client.queries[1]).toContain("status IN ('completed', 'failed', 'canceled')");
+    expect(client.queries[1]).toContain("status IN ('completed', 'failed', 'cancelled')");
   });
 
   it('期限切れジョブ削除の上限値が不正な場合は拒否する', async () => {

@@ -14,7 +14,7 @@ import type { PageSkeletonServicePort } from './PageSkeletonService.js';
 
 export interface ProcessEpisodePageSkeletonJobResult {
   status: 'processed' | 'skipped';
-  jobStatus?: 'completed' | 'failed' | 'canceled';
+  jobStatus?: 'completed' | 'failed' | 'cancelled';
 }
 
 export interface EpisodePageSkeletonWorkerPort {
@@ -35,7 +35,7 @@ export class EpisodePageSkeletonWorkerService implements EpisodePageSkeletonWork
       return { status: 'skipped' };
     }
     if (await this.finalizeCancellationIfRequested(job.id)) {
-      return { status: 'processed', jobStatus: 'canceled' };
+      return { status: 'processed', jobStatus: 'cancelled' };
     }
 
     const episodeId = readStringParam(job.params, 'episode_id');
@@ -78,7 +78,7 @@ export class EpisodePageSkeletonWorkerService implements EpisodePageSkeletonWork
       skeletonResult = result;
 
       if (await this.finalizeCancellationIfRequested(job.id)) {
-        return { status: 'processed', jobStatus: 'canceled' };
+        return { status: 'processed', jobStatus: 'cancelled' };
       }
 
       let storyPlanResult: EpisodePagePlanApplyResult | null = null;
@@ -113,7 +113,7 @@ export class EpisodePageSkeletonWorkerService implements EpisodePageSkeletonWork
       }
 
       if (await this.finalizeCancellationIfRequested(job.id)) {
-        return { status: 'processed', jobStatus: 'canceled' };
+        return { status: 'processed', jobStatus: 'cancelled' };
       }
 
       const completed = await this.repository.completeEpisodePageSkeleton({
@@ -125,7 +125,7 @@ export class EpisodePageSkeletonWorkerService implements EpisodePageSkeletonWork
       });
       if (!completed) {
         if (await this.finalizeCancellationIfRequested(job.id)) {
-          return { status: 'processed', jobStatus: 'canceled' };
+          return { status: 'processed', jobStatus: 'cancelled' };
         }
         throw new ValidationError('Failed to persist episode page skeleton result');
       }
@@ -140,7 +140,7 @@ export class EpisodePageSkeletonWorkerService implements EpisodePageSkeletonWork
       return { status: 'processed', jobStatus: 'completed' };
     } catch (error) {
       if (error instanceof ProcessingCancellationRequestedError) {
-        return { status: 'processed', jobStatus: 'canceled' };
+        return { status: 'processed', jobStatus: 'cancelled' };
       }
       console.warn('episode_page_skeleton_failed', {
         jobId: job.id,

@@ -28,7 +28,7 @@ import { ensureAllowedReferenceSourceKey } from './EntityReferenceSourceKeyPolic
 
 export interface ProcessEntityGenerationJobResult {
   status: 'processed' | 'skipped';
-  jobStatus?: 'completed' | 'failed' | 'canceled';
+  jobStatus?: 'completed' | 'failed' | 'cancelled';
 }
 
 const ENTITY_GENERATION_HEARTBEAT_INTERVAL_MS = 60_000;
@@ -59,7 +59,7 @@ export class EntityGenerationWorkerService {
       return { status: 'skipped' };
     }
     if (await this.finalizeCancellationIfRequested(job)) {
-      return { status: 'processed', jobStatus: 'canceled' };
+      return { status: 'processed', jobStatus: 'cancelled' };
     }
 
     const heartbeatTimer = await this.startProgressHeartbeat(job);
@@ -95,14 +95,14 @@ export class EntityGenerationWorkerService {
       assertGeneratedCandidates(generated.candidates);
 
       if (await this.finalizeCancellationIfRequested(job)) {
-        return { status: 'processed', jobStatus: 'canceled' };
+        return { status: 'processed', jobStatus: 'cancelled' };
       }
 
       const storedCandidates = [];
 
       for (let index = 0; index < generated.candidates.length; index += 1) {
         if (await this.finalizeCancellationIfRequested(job)) {
-          return { status: 'processed', jobStatus: 'canceled' };
+          return { status: 'processed', jobStatus: 'cancelled' };
         }
         const candidate = generated.candidates[index];
         const storedImage = await this.imageStorage.storeGeneratedCandidate({
@@ -122,7 +122,7 @@ export class EntityGenerationWorkerService {
       }
 
       if (await this.finalizeCancellationIfRequested(job)) {
-        return { status: 'processed', jobStatus: 'canceled' };
+        return { status: 'processed', jobStatus: 'cancelled' };
       }
       const completed = await this.executionRepository.completeEntityGeneration({
         jobId: job.id,
@@ -148,7 +148,7 @@ export class EntityGenerationWorkerService {
 
       if (!completed) {
         if (await this.finalizeCancellationIfRequested(job)) {
-          return { status: 'processed', jobStatus: 'canceled' };
+          return { status: 'processed', jobStatus: 'cancelled' };
         }
         throw new ConfigurationError('Failed to persist entity generation job result');
       }

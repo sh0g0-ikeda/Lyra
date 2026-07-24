@@ -27,6 +27,7 @@
     "mobile:web-parity:check": "node scripts/auditMobileWebParity.mjs --check",
     "db:check-invariants": "tsx scripts/checkDeploymentDataInvariants.ts",
     "migrate": "tsx scripts/migrate.ts",
+    "migrate:prod": "bun dist/scripts/startProductionMigration.js",
     "auth:dev-token": "tsx scripts/createDevAuthToken.ts --raw",
     "auth:dev-token:json": "tsx scripts/createDevAuthToken.ts",
     "worker:generation": "tsx scripts/runGenerationWorker.ts",
@@ -49,15 +50,15 @@
     "@aws-sdk/client-sqs": "^3.1064.0",
     "@aws-sdk/cloudfront-signer": "^3.1064.0",
     "@aws-sdk/s3-request-presigner": "^3.1064.0",
-    "@hono/node-server": "^1.19.8",
+    "@hono/node-server": "^2.0.11",
     "dotenv": "^17.2.3",
     "google-auth-library": "^10.9.1",
     "googleapis": "^173.0.0",
-    "hono": "^4.12.21",
+    "hono": "^4.12.32",
     "jose": "^6.1.2",
     "pg": "^8.16.3",
     "pngjs": "^7.0.0",
-    "sharp": "^0.34.5",
+    "sharp": "^0.35.3",
     "stripe": "^22.1.0",
     "zod": "^4.1.12"
   },
@@ -68,5 +69,10 @@
     "tsx": "^4.21.0",
     "typescript": "^5.9.3",
     "vitest": "^4.0.14"
+  },
+  "overrides": {
+    "googleapis-common": {
+      "gaxios": "7.3.0"
+    }
   }
 }

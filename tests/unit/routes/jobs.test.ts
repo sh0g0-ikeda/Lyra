@@ -110,7 +110,7 @@ describe('job routes', () => {
     service.job = buildJob({
       status: 'processing',
       cancelRequestedAt: new Date('2026-07-25T00:03:00.000Z'),
-      cancelRequestedByUserId: userId,
+      cancelRequestedBy: userId,
     });
     const app = createTestApp(service);
 
@@ -122,8 +122,12 @@ describe('job routes', () => {
       cancel: { available: false, reason_key: 'job.action.cancelRequested' },
     }));
     expect(JSON.stringify(body)).not.toContain('cancelRequestedAt');
-    expect(JSON.stringify(body)).not.toContain('cancel_requested_at');
-    expect(JSON.stringify(body)).not.toContain('cancelRequestedByUserId');
+    expect(JSON.stringify(body)).not.toContain('cancelRequestedBy');
+    expect(body).toMatchObject({
+      cancel_requested_at: '2026-07-25T00:03:00.000Z',
+      cancelled_at: null,
+      commit_started_at: null,
+    });
     expect(() => generationJobSchema.parse(body)).not.toThrow();
   });
 
@@ -153,6 +157,9 @@ function createTestApp(service: FakeJobService): Hono<AppEnv> {
     },
     rateLimitMiddleware: async (_c, next) => next(),
     jobService: service as never,
+    organizationService: {
+      requireMembership: async () => undefined,
+    } as never,
   });
 }
 

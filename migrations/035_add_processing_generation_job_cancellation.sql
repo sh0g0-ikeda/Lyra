@@ -1,6 +1,8 @@
 ALTER TABLE generation_jobs
   ADD COLUMN IF NOT EXISTS cancel_requested_at timestamptz NULL,
-  ADD COLUMN IF NOT EXISTS cancel_requested_by_user_id uuid NULL REFERENCES users(id);
+  ADD COLUMN IF NOT EXISTS cancel_requested_by uuid NULL REFERENCES users(id) ON DELETE SET NULL,
+  ADD COLUMN IF NOT EXISTS cancelled_at timestamptz NULL,
+  ADD COLUMN IF NOT EXISTS commit_started_at timestamptz NULL;
 
 ALTER TABLE generation_jobs
   DROP CONSTRAINT IF EXISTS generation_jobs_cancel_request_metadata_check;
@@ -8,8 +10,8 @@ ALTER TABLE generation_jobs
 ALTER TABLE generation_jobs
   ADD CONSTRAINT generation_jobs_cancel_request_metadata_check
   CHECK (
-    (cancel_requested_at IS NULL AND cancel_requested_by_user_id IS NULL)
-    OR (cancel_requested_at IS NOT NULL AND cancel_requested_by_user_id IS NOT NULL)
+    (cancel_requested_at IS NULL AND cancel_requested_by IS NULL)
+    OR (cancel_requested_at IS NOT NULL AND cancel_requested_by IS NOT NULL)
   ) NOT VALID;
 
 ALTER TABLE generation_jobs

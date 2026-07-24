@@ -7,6 +7,7 @@ import type { PageServicePort } from '../../../../src/services/page/PageService.
 class FakeRepository implements EpisodeStoryAutofillExecutionRepository {
   public completed = false;
   public failed = false;
+  public cancellationRequested = true;
   public async claimQueuedEpisodeStoryAutofillJob(): Promise<GenerationJob | null> {
     return {
       id: '55555555-5555-4555-8555-555555555555', userId: 'user-1', jobType: 'episode_story_autofill',
@@ -17,6 +18,11 @@ class FakeRepository implements EpisodeStoryAutofillExecutionRepository {
     };
   }
   public async updateEpisodeStoryAutofillProgress(): Promise<boolean> { return true; }
+  public async isEpisodeStoryAutofillCancellationRequested(): Promise<boolean> {
+    return this.cancellationRequested;
+  }
+  public async beginEpisodeStoryAutofillCommit(): Promise<boolean> { return false; }
+  public async cancelEpisodeStoryAutofill(): Promise<boolean> { return true; }
   public async completeEpisodeStoryAutofill(): Promise<boolean> { this.completed = true; return true; }
   public async failEpisodeStoryAutofill(): Promise<boolean> { this.failed = true; return true; }
 }
@@ -35,12 +41,12 @@ describe('EpisodeStoryAutofillWorkerService processing cancellation', () => {
     const worker = new EpisodeStoryAutofillWorkerService(
       repository,
       pageService,
-      { finalizeCancellationIfRequested: async () => true },
+      true,
     );
 
     await expect(worker.processJob('55555555-5555-4555-8555-555555555555')).resolves.toEqual({
       status: 'processed',
-      jobStatus: 'canceled',
+      jobStatus: 'cancelled',
     });
     expect(pageService.calls).toBe(0);
     expect(repository.completed).toBe(false);

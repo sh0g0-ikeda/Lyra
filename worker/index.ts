@@ -101,7 +101,8 @@ export async function handleGenerationQueue(
         messageId: record.messageId ?? null,
         jobId: parsedMessage.job_id,
         status:
-          result.status === 'skipped' || result.jobStatus === 'canceled'
+          result.status === 'skipped' ||
+          result.jobStatus === 'cancelled'
             ? 'skipped'
             : result.jobStatus ?? 'completed',
       });

@@ -16,15 +16,18 @@ import {
   LogOut,
   PanelsTopLeft,
   Play,
+  Plus,
   RefreshCw,
   Save,
   Sparkles,
+  Square,
   Trash2,
   Users,
   Wand2,
 } from 'lucide-react';
 import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { Session, SupabaseClient } from '@supabase/supabase-js';
+import { StoryHierarchyTree } from './components/StoryHierarchyTree';
 import { decodeJwtPayload, LyraApiClient, type BlobResponse } from './lib/api';
 import { shouldAllowManualTokenAuth } from './lib/authMode';
 import {
@@ -34,6 +37,17 @@ import {
 import { ORGANIZATION_FEATURES_AVAILABLE } from './lib/featureFlags';
 import { readInvitationTokenFromPath } from './lib/invitationPath';
 import { formatUserFacingError, formatUserFacingErrorMessage } from './lib/userFacingErrors';
+import {
+  getEntityReferenceGenerationBlockers,
+  getPageGenerationBlockers,
+  getPageSkeletonBlockers,
+  getReferenceConfirmationBlockers,
+  getStoryApplyBlockers,
+  hasBlockingErrors,
+  pickLocalizedText,
+  type GenerationBlocker,
+  type GenerationReadinessTarget,
+} from './lib/generationReadiness';
 import {
   beginCognitoLogin,
   buildCognitoLogoutUrl,
@@ -65,7 +79,6 @@ import type {
   OrganizationInvitationRecord,
   OrganizationInvoiceRecord,
   OrganizationMemberRecord,
-  WorkRecord,
 } from './types/api';
 
 type WorkspaceTab = 'story' | 'entities' | 'pages' | 'account' | 'tutorial';
@@ -90,6 +103,7 @@ interface SubscriptionPlanOption {
 }
 
 const MAX_EPISODE_PAGES = 32;
+const SHOW_LEGACY_STORY_HIERARCHY = false;
 
 const subscriptionPurchaseOptions: Array<{
   code: ConsumerSubscriptionCheckoutPlanCode;
@@ -201,6 +215,12 @@ interface EpisodeDraft {
   estimated_pages: string;
   entities_involved: string;
   status: 'draft' | 'reviewing' | 'ready';
+}
+
+interface PreservedStoryDraft<TDraft> {
+  id: string;
+  expectedTitle: string | null;
+  draft: TDraft;
 }
 
 interface EntityDraft {
@@ -420,12 +440,19 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   'Dialogue toggle': 'ページ全体でセリフを画像に含める',
   'Style reference title': '画風制約の作品名',
   'Style reference notes': '画風制約メモ',
+  'Page art direction': 'ページの絵柄・雰囲気',
+  'Keep generated pages visually consistent by adding an art reference and the desired linework, color, or mood.':
+    'ページ全体の絵柄をそろえるための設定です。参考にしたい画風と、線・色・雰囲気の希望を入力してください。',
+  'Art style reference': '参考にする画風・作品名',
+  'Visual direction notes': '絵柄・雰囲気の希望',
   'Story sources': '話の材料',
   'Source scenes': '元シーン',
   'Page purpose': 'ページの目的',
   'Continuity note': 'つながりメモ',
   Name: '名前',
   'Free description': '自由記述',
+  'Use this box for details not covered by the choices, or for special instructions you want Lyra to follow.':
+    '選択肢にない特徴や、特別に反映したい設定があればここに書いてください。',
   'Prompt supplement': '補足プロンプト',
   'Structured fields': '構造化項目',
   Field: '項目',
@@ -447,6 +474,17 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   'Story context': 'ストーリー文脈',
   'Target episode': '対象の話',
   'Chapter / Episode': '章と話',
+  'Page planning': 'ページ設計',
+  'Use these two steps to turn the episode story into panel details.':
+    '入力したストーリーをコマへ反映する2段階の操作です。',
+  'Builds the page and panel allocation and the overall story flow.':
+    'ストーリーをもとに、ページとコマの配分・全体の流れを組み立てます。',
+  'Fills each panel with characters, situation, composition, and dialogue based on that plan.':
+    '決めた配分に沿って、各コマの登場人物・状況・構図・セリフを自動入力します。',
+  'Story AI follows your instruction to improve the episode and rewrites it for reliable page and panel planning. Recommended before planning pages.':
+    '指示に沿って話を改善し、ページやコマへ分けやすい文章に整えます。ページ設計の前に使うのがおすすめです。',
+  'Set the location, time, and mood to keep backgrounds and atmosphere consistent across the episode. Scenes are optional; generation works without them.':
+    '話全体の場所・時間帯・雰囲気をそろえ、ページをまたいだ背景の一貫性を高めます。未設定でも生成できます。',
   'Import / References': '取り込み / レファレンス',
   Credits: 'クレジット',
   Jobs: 'ジョブ',
@@ -455,6 +493,16 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   'Current plan': '現在のプラン',
   Current: '現在',
   active: '有効',
+  draft: '下書き',
+  reviewing: '確認中',
+  ready: '準備完了',
+  designing: '設計中',
+  generating: '生成中',
+  editing: '編集中',
+  confirmed: '確定済み',
+  queued: '待機中',
+  processing: '処理中',
+  completed: '完了',
   trialing: '試用中',
   past_due: '支払い遅延',
   canceled: '解約済み',
@@ -464,6 +512,7 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   paused: '一時停止中',
   paid: '支払い済み',
   failed: '失敗',
+  cancelled: '\u505c\u6b62\u6e08\u307f',
   Free: 'フリー',
   'Manage paid plans in Stripe.': '有料プランの変更・解約は「サブスク・請求を管理」で行ってください。',
   'production console': '制作コンソール',
@@ -474,6 +523,8 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   Apply: '適用',
   'Save frames': 'コマ割りを保存',
   'Advanced frame geometry': 'コマ形状の詳細調整',
+  'You can leave this unchanged. Adjust it only when you want precise control over panel shapes and placement.':
+    '通常は変更しなくても使えます。コマの形や配置を細かく整えたい場合だけ調整してください。',
   'Frame geometry': 'コマ形状',
   'Linked panel': '対応コマ',
   'No linked panel': '未紐づけ',
@@ -502,6 +553,7 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   Type: '種類',
   Placement: '配置',
   Line: '行',
+  'Dialogue text': 'セリフ本文',
   'Add character': 'キャラを追加',
   'Add to panel': 'コマに追加',
   'No more entities': '追加できるキャラがありません。',
@@ -513,7 +565,7 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   Effect: '効果',
   'Custom expression': '自由入力の表情',
   'Custom pose': '自由入力のポーズ',
-  'Add line': '行を追加',
+  'Add dialogue': 'セリフを追加',
   'No dialogue lines yet.': 'まだセリフ行はありません。',
   'Speaker is required for speech, thought, shout, and whisper lines.': 'セリフ・思考・叫び・ささやきには話者が必要です。',
   'Narration / none': 'ナレーション / なし',
@@ -525,6 +577,8 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   'Create chapter': '章を追加',
   'Delete chapter': '章を削除',
   'Create episode': '話を追加',
+  'Move chapter': '章を移動',
+  'Move episode': '話を移動',
   'Save episode': '話を保存',
   'Delete episode': '話を削除',
   'Create scene': 'シーンを作成',
@@ -615,6 +669,14 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   'Page generation starts at 3 credits.': 'ページ生成 3crから',
   'Text AI actions use no credits.': 'テキストAI 0cr',
   'No recent jobs.': '最近のジョブはありません。',
+  Stop: '\u505c\u6b62',
+  'Stopping...': '\u505c\u6b62\u4e2d...',
+  Remove: '\u524a\u9664',
+  'Stop this story apply job?': '\u8a71\u5168\u4f53\u306e\u53cd\u6620\u3092\u505c\u6b62\u3057\u307e\u3059\u304b\uff1f',
+  'Stop requested. The current safe step will finish before stopping.': '\u505c\u6b62\u3092\u53d7\u3051\u4ed8\u3051\u307e\u3057\u305f\u3002\u73fe\u5728\u306e\u5b89\u5168\u306a\u51e6\u7406\u5358\u4f4d\u304c\u7d42\u308f\u308a\u6b21\u7b2c\u3001\u505c\u6b62\u3057\u307e\u3059\u3002',
+  'Story plan autofill was stopped.': '\u8a71\u5168\u4f53\u306e\u53cd\u6620\u3092\u505c\u6b62\u3057\u307e\u3057\u305f\u3002',
+  'Saving changes. Stop is no longer available.': '\u4fdd\u5b58\u4e2d\u306e\u305f\u3081\u3001\u505c\u6b62\u3067\u304d\u307e\u305b\u3093\u3002',
+  'Remove from job history': '\u30b8\u30e7\u30d6\u5c65\u6b74\u304b\u3089\u524a\u9664',
   'Only PNG, JPEG, and WebP are allowed.': 'PNG/JPEG/WebPのみ対応しています。',
   'Image file is too large.': '画像が大きすぎます。',
   'Image analyzed. Generate preview next.': '画像解析が完了しました。次にプレビューを生成してください。',
@@ -626,6 +688,8 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   Face: '顔',
   Hair: '髪',
   Outfit: '服装',
+  'Clothing details': '服装の詳細',
+  'Describe the outfit in natural language': '服装を自然な文章で入力してください。',
   Gender: '性別表現',
   'Age range': '年齢帯',
   'Skin tone': '肌の色',
@@ -656,9 +720,29 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   'Eye shape': '目の形',
   Eyelids: 'まぶた',
   'Face shape': '顔の形',
+  'Eyebrow shape': '眉の形',
+  'Nose shape': '鼻の形',
+  'Mouth shape': '口の形',
+  'Eyelid type': 'まぶたの種類',
+  'Eye size': '目の大きさ',
+  'Eye angle': '目尻の向き',
+  'Pupil style': '瞳孔の表現',
+  'Under-eye detail': '目元の特徴',
+  'Mouth default': '通常時の口元',
   Eyebrows: '眉',
   Nose: '鼻',
   Mouth: '口',
+  'Front shape': '前髪の形',
+  'Side hair': '横髪',
+  'Back shape': '後ろ髪の形',
+  Category: '服装カテゴリ',
+  'Main color': 'メインカラー',
+  Impression: '服装の印象',
+  'Collar shape': '襟の形',
+  'Sleeve length': '袖の長さ',
+  'Skirt or pants': 'ボトムス',
+  Shoes: '靴',
+  Legwear: '靴下・脚まわり',
   'Outfit category': '服装カテゴリ',
   'Outfit silhouette': '服装シルエット',
   'Main colors': '主な色',
@@ -667,6 +751,9 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   'Catchphrases': '口癖',
   'Pronouns': '一人称・二人称',
   'Mobile navigation': 'モバイルナビゲーション',
+  'Primary navigation': '制作ナビゲーション',
+  'Account menu': 'アカウントメニュー',
+  'Workspace settings': 'ワークスペース設定',
   English: '英語',
   Language: '言語',
   Account: 'アカウント',
@@ -680,9 +767,13 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   'Move later': '後ろへ移動',
   'Move panel up': 'コマを前へ移動',
   'Move panel down': 'コマを後ろへ移動',
+  'New chapter title': '新しい章のタイトル',
+  'New episode title': '新しい話のタイトル',
   'Z-index': '重なり順',
   'Style constraints': '画風制約',
   'Import reference': 'レファレンス取り込み',
+  'Upload a character image you already have. Lyra will use its appearance as a reference when creating your manga.':
+    '手元のキャラクター画像をアップロードすると、その見た目を参考にLyraの漫画へ登場させられます。',
   'Preview / Confirm': 'プレビュー / 確定',
   Preview: 'プレビュー',
   Add: '追加',
@@ -695,6 +786,7 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   'No location': '場所未設定',
   'AI improved': 'AI改善済み',
   'Characters in panel': 'コマ内のキャラ',
+  'Appearing character': '登場キャラ',
   'Pick who appears first, then refine pose, facing, and effects per character.': '登場キャラを選び、キャラごとのポーズ・向き・効果を調整します。',
   'Placement first, then expression, pose, and effect.': '配置を決めてから、表情・ポーズ・効果を調整します。',
   'These lines will be considered inside the generated panel art.': 'これらのセリフは生成画像内に含める前提で扱います。',
@@ -708,6 +800,22 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   'Manual bearer token': '手動トークン',
   'Supabase client is not configured.': 'ログイン設定がまだ完了していません。',
   'Applying story plan to pages and panels. This process can take around 20 minutes.': 'ページとコマへ反映中です。この処理は20分程度かかる場合があります。',
+  'Planning story beats across the full episode. This process can take around 20 minutes.':
+    '\u8a71\u5168\u4f53\u306e\u6d41\u308c\u3092\u30da\u30fc\u30b8\u3054\u3068\u306b\u6574\u7406\u3057\u3066\u3044\u307e\u3059\u3002\u3053\u306e\u51e6\u7406\u306f20\u5206\u7a0b\u5ea6\u304b\u304b\u308b\u5834\u5408\u304c\u3042\u308a\u307e\u3059\u3002',
+  'Compiling story plan chunks. This process can take around 20 minutes.':
+    '\u30da\u30fc\u30b8\u3068\u30b3\u30de\u306e\u5185\u5bb9\u3092\u4f5c\u6210\u3057\u3066\u3044\u307e\u3059\u3002\u3053\u306e\u51e6\u7406\u306f20\u5206\u7a0b\u5ea6\u304b\u304b\u308b\u5834\u5408\u304c\u3042\u308a\u307e\u3059\u3002',
+  'Checking continuity across all pages. This process can take around 20 minutes.':
+    '\u5168\u30da\u30fc\u30b8\u306e\u91cd\u8907\u3068\u3064\u306a\u304c\u308a\u3092\u78ba\u8a8d\u3057\u3066\u3044\u307e\u3059\u3002\u3053\u306e\u51e6\u7406\u306f20\u5206\u7a0b\u5ea6\u304b\u304b\u308b\u5834\u5408\u304c\u3042\u308a\u307e\u3059\u3002',
+  'Repairing page continuity. This process can take around 20 minutes.':
+    '\u91cd\u8907\u3084\u3064\u306a\u304c\u308a\u306e\u554f\u984c\u3092\u4fee\u6b63\u3057\u3066\u3044\u307e\u3059\u3002\u3053\u306e\u51e6\u7406\u306f20\u5206\u7a0b\u5ea6\u304b\u304b\u308b\u5834\u5408\u304c\u3042\u308a\u307e\u3059\u3002',
+  'Applying targeted continuity repairs. This process can take around 20 minutes.':
+    '\u554f\u984c\u306e\u3042\u308b\u30da\u30fc\u30b8\u3068\u30b3\u30de\u3060\u3051\u3092\u4fee\u6b63\u3057\u3066\u3044\u307e\u3059\u3002\u3053\u306e\u51e6\u7406\u306f20\u5206\u7a0b\u5ea6\u304b\u304b\u308b\u5834\u5408\u304c\u3042\u308a\u307e\u3059\u3002',
+  'Saving story plan to pages and panels. This process can take around 20 minutes.':
+    '\u30da\u30fc\u30b8\u3068\u30b3\u30de\u3078\u53cd\u6620\u3057\u3066\u3044\u307e\u3059\u3002\u3053\u306e\u51e6\u7406\u306f20\u5206\u7a0b\u5ea6\u304b\u304b\u308b\u5834\u5408\u304c\u3042\u308a\u307e\u3059\u3002',
+  'Story plan applied to pages and panels.':
+    '\u30da\u30fc\u30b8\u3068\u30b3\u30de\u3078\u306e\u53cd\u6620\u304c\u5b8c\u4e86\u3057\u307e\u3057\u305f\u3002',
+  'Story plan autofill failed.':
+    '\u30da\u30fc\u30b8\u3068\u30b3\u30de\u3078\u306e\u53cd\u6620\u306b\u5931\u6557\u3057\u307e\u3057\u305f\u3002\u5165\u529b\u5185\u5bb9\u3092\u4fdd\u5b58\u3057\u3001\u5c11\u3057\u5f85\u3063\u3066\u304b\u3089\u3082\u3046\u4e00\u5ea6\u304a\u8a66\u3057\u304f\u3060\u3055\u3044\u3002',
 };
 
 const UI_JA_OPTION_DICTIONARY: Record<string, string> = {
@@ -1146,17 +1254,13 @@ function translateUiString(language: UiLanguage, value: string): string {
   return value;
 }
 
-function formatFramePanelMismatchDetail(
-  language: UiLanguage,
-  frameCount: number,
-  panelCount: number,
-): string {
-  return translateUiString(
-    language,
-    'Current count: frames {frames} / panels {panels}. Apply a panel layout template to sync them before generating.',
-  )
-    .replace('{frames}', String(frameCount))
-    .replace('{panels}', String(panelCount));
+function formatEntityTypeLabel(language: UiLanguage, entityType: EntityDraft['entity_type']): string {
+  const labelByType: Record<EntityDraft['entity_type'], string> = {
+    character: 'Character',
+    nonhuman: 'Nonhuman',
+    object: 'Object',
+  };
+  return translateUiString(language, labelByType[entityType]);
 }
 
 function formatDeletePanelConfirmMessage(language: UiLanguage, panelOrder: number): string {
@@ -1219,9 +1323,13 @@ function getJobProgressPercent(job: GenerationJobRecord): number | null {
   return Math.round((boundedCurrent / totalChunks) * 100);
 }
 
-function getJobProgressBarState(job: GenerationJobRecord): { percent: number | null; tone: 'active' | 'queued' | 'completed' | 'failed' } | null {
+function getJobProgressBarState(job: GenerationJobRecord): { percent: number | null; tone: 'active' | 'queued' | 'completed' | 'failed' | 'cancelled' } | null {
   const isActive = job.status === 'queued' || job.status === 'processing';
   const hasPersistedProgress = readStringResultField(job, 'progress_message') !== null;
+  if (job.status === 'cancelled') {
+    return { percent: 100, tone: 'cancelled' };
+  }
+
   if (!isActive && !hasPersistedProgress) {
     return null;
   }
@@ -2138,10 +2246,17 @@ function StudioShell(props: {
   const isMobileViewport = useIsMobileViewport();
   const [notice, setNotice] = useState<NoticeState | null>(null);
   const [busyAction, setBusyAction] = useState<string | null>(null);
+  const legacyTrackedJobsKey = scopedStorageKey(trackedJobsStorageKey, props.authSessionKey);
+  const workspaceTrackedJobsKey = scopedStorageKey(
+    trackedJobsStorageKey,
+    `${props.authSessionKey}:workspace:${activeOrganizationId ?? 'personal'}`,
+  );
+  const legacyTrackedJobsFallback =
+    activeOrganizationId === null ? (window.localStorage.getItem(legacyTrackedJobsKey) ?? '[]') : '[]';
   const [trackedJobIds, setTrackedJobIds] = useStoredString(
     window.localStorage,
-    scopedStorageKey(trackedJobsStorageKey, props.authSessionKey),
-    '[]',
+    workspaceTrackedJobsKey,
+    legacyTrackedJobsFallback,
   );
   const [selectedWorkId, setSelectedWorkId] = useStoredString(
     window.localStorage,
@@ -2164,12 +2279,19 @@ function StudioShell(props: {
     '',
   );
   const [activeTab, setActiveTab] = useState<WorkspaceTab>('story');
-  const [workDraft, setWorkDraft] = useState<WorkDraft>(createEmptyWorkDraft());
+  const [accountMenuOpen, setAccountMenuOpen] = useState(false);
+  const accountMenuRef = useRef<HTMLDivElement | null>(null);
+  const accountMenuTriggerRef = useRef<HTMLButtonElement | null>(null);
   const [newWorkDraft, setNewWorkDraft] = useState<WorkDraft>(createEmptyWorkDraft());
+  const [newWorkComposerOpen, setNewWorkComposerOpen] = useState(true);
   const [chapterDraft, setChapterDraft] = useState<ChapterDraft>(createEmptyChapterDraft());
   const [newChapterDraft, setNewChapterDraft] = useState<ChapterDraft>(createEmptyChapterDraft());
   const [episodeDraft, setEpisodeDraft] = useState<EpisodeDraft>(createEmptyEpisodeDraft());
   const [newEpisodeDraft, setNewEpisodeDraft] = useState<EpisodeDraft>(createEmptyEpisodeDraft());
+  const preservedChapterDraftRef = useRef<PreservedStoryDraft<ChapterDraft> | null>(null);
+  const preservedEpisodeDraftRef = useRef<PreservedStoryDraft<EpisodeDraft> | null>(null);
+  const hydratedChapterVersionRef = useRef<string | null>(null);
+  const hydratedEpisodeVersionRef = useRef<string | null>(null);
   const [storyInstruction, setStoryInstruction] = useState('');
   const [storyBusy, setStoryBusy] = useState(false);
   const [storyImprovementDraft, setStoryImprovementDraft] = useState<StoryEpisodeImprovementRecord['draft'] | null>(null);
@@ -2236,6 +2358,38 @@ function StudioShell(props: {
       setActiveTab('story');
     }
   }, [activeTab, isMobileViewport]);
+
+  useEffect(() => {
+    if (!accountMenuOpen) {
+      return undefined;
+    }
+
+    const closeOnOutsidePointer = (event: PointerEvent): void => {
+      if (event.target instanceof Node && !accountMenuRef.current?.contains(event.target)) {
+        setAccountMenuOpen(false);
+      }
+    };
+    const closeOnEscape = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape') {
+        return;
+      }
+      setAccountMenuOpen(false);
+      accountMenuTriggerRef.current?.focus();
+    };
+
+    document.addEventListener('pointerdown', closeOnOutsidePointer);
+    document.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.removeEventListener('pointerdown', closeOnOutsidePointer);
+      document.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [accountMenuOpen]);
+
+  useEffect(() => {
+    if (isMobileViewport) {
+      setAccountMenuOpen(false);
+    }
+  }, [isMobileViewport]);
 
   useEffect(() => {
     if (!ORGANIZATION_FEATURES_AVAILABLE && selectedOrganizationId.trim().length > 0) {
@@ -2598,12 +2752,14 @@ function StudioShell(props: {
       ? 'Regenerating will replace the current pages for this episode.'
       : null;
 
+  const polledJobList = trackedJobList.slice(0, 8);
   const jobQueries = useQueries({
-    queries: trackedJobList.map((jobId) => ({
+    queries: polledJobList.map((jobId) => ({
       queryKey: scopedQueryKey(['job', jobId]),
-      queryFn: () => api.getJob(jobId),
+      queryFn: () => api.getJob(jobId, activeOrganizationId),
       refetchInterval: (query: { state: { data: GenerationJobRecord | undefined } }) =>
-        query.state.data?.status === 'queued' || query.state.data?.status === 'processing' ? 4000 : false,
+        query.state.data?.status === 'queued' || query.state.data?.status === 'processing' ? 8000 : false,
+      staleTime: 4_000,
     })),
   });
   const trackedJobs = jobQueries.map((query) => query.data).filter(isDefined);
@@ -2689,8 +2845,70 @@ function StudioShell(props: {
     selectedPagePanelCount,
   ]);
 
+  const activeCreditBalance =
+    activeOrganizationId === null
+      ? balanceQuery.data?.total_credits ?? null
+      : activeOrganizationBalance?.total_credits ?? null;
+  const pageGenerationBlockers = getPageGenerationBlockers({
+    page: selectedPage,
+    panels,
+    frames,
+    entities,
+    activePageJob: selectedPageGenerationJob,
+    availableCredits: activeCreditBalance,
+  });
+  const entityReferenceGenerationBlockers = getEntityReferenceGenerationBlockers({
+    entity: selectedEntity,
+    activeEntityJob: selectedEntityGenerationJob,
+    availableCredits: activeCreditBalance,
+  });
+  const referenceConfirmationBlockers = getReferenceConfirmationBlockers({
+    selectedCandidateTokens: referenceSelection,
+    primaryCandidateToken: referencePrimaryKey,
+  });
+  const pageSkeletonBlockers = getPageSkeletonBlockers({
+    episodeSelected: selectedEpisode !== null,
+    activeStoryJob: selectedEpisodeStoryAutofillJob,
+    activeSkeletonJob: selectedEpisodePageSkeletonJob,
+  });
+  const storyApplyBlockers = getStoryApplyBlockers({
+    episodeSelected: selectedEpisode !== null,
+    pages,
+    activeStoryJob: selectedEpisodeStoryAutofillJob,
+    activeSkeletonJob: selectedEpisodePageSkeletonJob,
+  });
+  const pageGenerationBlocked = hasBlockingErrors(pageGenerationBlockers);
+  const entityReferenceGenerationBlocked = hasBlockingErrors(entityReferenceGenerationBlockers);
+  const referenceConfirmationBlocked = hasBlockingErrors(referenceConfirmationBlockers);
+  const pageSkeletonBlocked = hasBlockingErrors(pageSkeletonBlockers);
+  const storyApplyBlocked = hasBlockingErrors(storyApplyBlockers);
+  const navigateToReadinessTarget = useCallback((target: GenerationReadinessTarget): void => {
+    if (target === 'entities' || target === 'references') {
+      setActiveTab('entities');
+      return;
+    }
+
+    if (target === 'pages' || target === 'layout') {
+      setActiveTab('pages');
+      if (target === 'layout') {
+        window.setTimeout(() => {
+          document
+            .querySelector('.page-section-frames-panels')
+            ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }, 0);
+      }
+      return;
+    }
+
+    if (target === 'billing') {
+      setActiveTab('account');
+      return;
+    }
+
+    setActiveTab('story');
+  }, []);
   const generatePageDisabled =
-    busyAction === 'Generate page' || selectedPageHasFramePanelMismatch;
+    busyAction === 'Generate page' || pageGenerationBlocked;
   const entityPreviewGenerationMessage =
     selectedEntityGenerationJob !== null
       ? selectedEntityGenerationJob.status === 'queued'
@@ -2881,16 +3099,22 @@ function StudioShell(props: {
   }, [selectedWorkId, setSelectedWorkId, worksQuery.data]);
 
   useEffect(() => {
+    if (!chaptersQuery.isSuccess) {
+      return;
+    }
     if (!chapters.some((chapter) => chapter.id === selectedChapterId)) {
       setSelectedChapterId(chapters[0]?.id ?? '');
     }
-  }, [chapters, selectedChapterId, setSelectedChapterId]);
+  }, [chapters, chaptersQuery.isSuccess, selectedChapterId, setSelectedChapterId]);
 
   useEffect(() => {
+    if (!episodesQuery.isSuccess) {
+      return;
+    }
     if (!episodes.some((episode) => episode.id === selectedEpisodeId)) {
       setSelectedEpisodeId(episodes[0]?.id ?? '');
     }
-  }, [episodes, selectedEpisodeId, setSelectedEpisodeId]);
+  }, [episodes, episodesQuery.isSuccess, selectedEpisodeId, setSelectedEpisodeId]);
 
   useEffect(() => {
     if (!pages.some((page) => page.id === selectedPageId)) {
@@ -2960,21 +3184,43 @@ function StudioShell(props: {
   }, [selectedEpisode]);
 
   useEffect(() => {
-    if (selectedWork !== null) {
-      setWorkDraft(toWorkDraft(selectedWork));
+    if (selectedChapter === null) {
+      hydratedChapterVersionRef.current = null;
+      return;
     }
-  }, [selectedWork]);
-
-  useEffect(() => {
-    if (selectedChapter !== null) {
-      setChapterDraft(toChapterDraft(selectedChapter));
+    const hydrationKey = `${selectedChapter.id}:${selectedChapter.version}`;
+    const preserved = preservedChapterDraftRef.current;
+    preservedChapterDraftRef.current = null;
+    if (preserved?.id === selectedChapter.id && preserved.expectedTitle === selectedChapter.title) {
+      hydratedChapterVersionRef.current = hydrationKey;
+      setChapterDraft(preserved.draft);
+      return;
     }
+    if (hydratedChapterVersionRef.current === hydrationKey) {
+      return;
+    }
+    hydratedChapterVersionRef.current = hydrationKey;
+    setChapterDraft(toChapterDraft(selectedChapter));
   }, [selectedChapter]);
 
   useEffect(() => {
-    if (selectedEpisode !== null) {
-      setEpisodeDraft(toEpisodeDraft(selectedEpisode));
+    if (selectedEpisode === null) {
+      hydratedEpisodeVersionRef.current = null;
+      return;
     }
+    const hydrationKey = `${selectedEpisode.id}:${selectedEpisode.version}`;
+    const preserved = preservedEpisodeDraftRef.current;
+    preservedEpisodeDraftRef.current = null;
+    if (preserved?.id === selectedEpisode.id && preserved.expectedTitle === selectedEpisode.title) {
+      hydratedEpisodeVersionRef.current = hydrationKey;
+      setEpisodeDraft(preserved.draft);
+      return;
+    }
+    if (hydratedEpisodeVersionRef.current === hydrationKey) {
+      return;
+    }
+    hydratedEpisodeVersionRef.current = hydrationKey;
+    setEpisodeDraft(toEpisodeDraft(selectedEpisode));
   }, [selectedEpisode]);
 
   useEffect(() => {
@@ -3016,7 +3262,7 @@ function StudioShell(props: {
         continue;
       }
 
-      if (job.status === 'completed' || job.status === 'failed') {
+      if (job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled') {
         handledJobsRef.current.add(job.id);
         void invalidateScopedQuery(['billing-balance']);
 
@@ -3088,6 +3334,8 @@ function StudioShell(props: {
     const generatedReferenceCandidates = generatedReferenceCandidatesByEntityId[selectedEntity.id] ?? [];
     return dedupeReferenceCandidates([...uploadedCandidates, ...generatedReferenceCandidates]);
   }, [generatedReferenceCandidatesByEntityId, selectedEntity, uploadedReferenceCandidatesByEntityId]);
+  const visibleReferenceConfirmationBlockers =
+    selectedEntity === null || referenceCandidates.length === 0 ? [] : referenceConfirmationBlockers;
 
   const characterStructuredFields = useMemo(
     () => parseCharacterStructuredFieldsDraft(entityDraft.structured_fields),
@@ -3295,7 +3543,39 @@ function StudioShell(props: {
   };
 
   const trackJob = (jobId: string): void => {
-    setTrackedJobIds(JSON.stringify(Array.from(new Set([jobId, ...trackedJobList])).slice(0, 24)));
+    setTrackedJobIds(JSON.stringify(Array.from(new Set([jobId, ...trackedJobList])).slice(0, 12)));
+  };
+
+  const cancelTrackedJob = async (job: GenerationJobRecord): Promise<void> => {
+    if (!window.confirm(translateUiString(uiLanguage, 'Stop this story apply job?'))) {
+      return;
+    }
+
+    const actionKey = `cancel-job:${job.id}`;
+    try {
+      setBusyAction(actionKey);
+      const updatedJob = await api.cancelJob(job.id, activeOrganizationId);
+      queryClient.setQueryData(scopedQueryKey(['job', job.id]), updatedJob);
+      setNotice({
+        type: updatedJob.status === 'cancelled' ? 'success' : 'info',
+        message: translateUiString(
+          uiLanguage,
+          updatedJob.status === 'cancelled'
+            ? 'Story plan autofill was stopped.'
+            : 'Stop requested. The current safe step will finish before stopping.',
+        ),
+      });
+    } catch (error) {
+      setNotice({ type: 'error', message: toMessage(error, uiLanguage) });
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  const removeTrackedJob = (jobId: string): void => {
+    setTrackedJobIds(JSON.stringify(trackedJobList.filter((trackedJobId) => trackedJobId !== jobId)));
+    handledJobsRef.current.delete(jobId);
+    queryClient.removeQueries({ queryKey: scopedQueryKey(['job', jobId]) });
   };
 
   const toggleExportPageSelection = (pageId: string): void => {
@@ -4150,30 +4430,29 @@ function StudioShell(props: {
     </PanelSection>
   );
 
-  const createWorkPanel = !canCreateActiveOrganizationWorks ? (
-    <PanelSection
-      title="New work"
-      subtitle="Create a work before writing story content."
-      className="story-create-work-panel"
-      compact={selectedWork !== null}
-      collapsible={selectedWork !== null}
-    >
-      <div className="inline-warning">
+  const sidebarCreateWorkPanel = !canCreateActiveOrganizationWorks ? (
+    <div className="sidebar-status error sidebar-create-permission">
+      <span>
         {pickUiText(
           uiLanguage,
           'This workspace role cannot create works. Ask the workspace owner or an admin to change your role.',
           '\u3053\u306e\u30ef\u30fc\u30af\u30b9\u30da\u30fc\u30b9\u3067\u306f\u4f5c\u54c1\u3092\u4f5c\u6210\u3067\u304d\u307e\u305b\u3093\u3002\u30aa\u30fc\u30ca\u30fc\u307e\u305f\u306f\u7ba1\u7406\u8005\u306b\u6a29\u9650\u5909\u66f4\u3092\u4f9d\u983c\u3057\u3066\u304f\u3060\u3055\u3044\u3002',
         )}
-      </div>
-    </PanelSection>
+      </span>
+    </div>
   ) : (
-    <PanelSection
-      title="New work"
-      subtitle="Create a work before writing story content."
-      className="story-create-work-panel"
-      compact={selectedWork !== null}
-      collapsible={selectedWork !== null}
+    <details
+      className="sidebar-disclosure sidebar-create-disclosure"
+      onToggle={(event) => setNewWorkComposerOpen(event.currentTarget.open)}
+      open={newWorkComposerOpen}
     >
+      <summary>
+        <span className="sidebar-create-summary-label">
+          <Plus size={15} />
+          {translateUiString(uiLanguage, 'New work')}
+        </span>
+        <ChevronDown className="sidebar-disclosure-chevron" size={15} />
+      </summary>
       <form
         className="story-create-form"
         onSubmit={(event) => {
@@ -4187,24 +4466,17 @@ function StudioShell(props: {
           });
         }}
       >
-        <div className="form-grid two">
-          <InputField
-            label="Title"
-            value={newWorkDraft.title}
-            onChange={(value) => setNewWorkDraft({ ...newWorkDraft, title: value })}
-          />
-          <InputField
-            label="Genre"
-            value={newWorkDraft.genre}
-            onChange={(value) => setNewWorkDraft({ ...newWorkDraft, genre: value })}
-          />
-        </div>
+        <InputField
+          label="Title"
+          value={newWorkDraft.title}
+          onChange={(value) => setNewWorkDraft({ ...newWorkDraft, title: value })}
+        />
         <button className="primary-button" disabled={busyAction === 'Create work'} type="submit">
-          {busyAction === 'Create work' ? <LoaderCircle className="spin" size={16} /> : <Save size={16} />}
+          {busyAction === 'Create work' ? <LoaderCircle className="spin" size={16} /> : <Plus size={16} />}
           {translateUiString(uiLanguage, 'Create')}
         </button>
       </form>
-    </PanelSection>
+    </details>
   );
 
   const personalBillingPanel =
@@ -4275,13 +4547,23 @@ function StudioShell(props: {
           const progressText = getJobProgressText(job, uiLanguage);
           const progressBarState = getJobProgressBarState(job);
           const jobErrorText = getJobFailureText(job, uiLanguage);
+          const isTerminalJob =
+            job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled';
+          const isStoryAutofillActive =
+            job.job_type === 'episode_story_autofill' &&
+            (job.status === 'queued' || job.status === 'processing');
+          const cancellationPending = typeof job.cancel_requested_at === 'string';
+          const commitStarted = typeof job.commit_started_at === 'string';
+          const cancelActionKey = `cancel-job:${job.id}`;
           return (
             <div key={job.id} className="job-row">
               <div>
                 <strong>{translateUiString(uiLanguage, job.job_type)}</strong>
                 <div className="muted small">#{formatShortId(job.id)}</div>
                 {progressText !== null ? (
-                  <div className="muted small">{progressText}</div>
+                  <div aria-live="polite" className="muted small" role="status">
+                    {progressText}
+                  </div>
                 ) : null}
                 {progressBarState !== null ? (
                   <ProgressBar compact percent={progressBarState.percent} tone={progressBarState.tone} />
@@ -4289,8 +4571,44 @@ function StudioShell(props: {
                 {jobErrorText !== null ? (
                   <div className="error-text small">{jobErrorText}</div>
                 ) : null}
+                {isStoryAutofillActive && commitStarted ? (
+                  <div className="muted small">
+                    {translateUiString(uiLanguage, 'Saving changes. Stop is no longer available.')}
+                  </div>
+                ) : null}
               </div>
-              <StatusBadge value={job.status} />
+              <div className="job-row-actions">
+                <StatusBadge value={job.status} />
+                {isStoryAutofillActive ? (
+                  <button
+                    className="job-stop-button"
+                    disabled={cancellationPending || commitStarted || busyAction === cancelActionKey}
+                    onClick={() => void cancelTrackedJob(job)}
+                    type="button"
+                  >
+                    {cancellationPending || busyAction === cancelActionKey ? (
+                      <LoaderCircle className="spin" size={14} />
+                    ) : (
+                      <Square size={13} />
+                    )}
+                    {translateUiString(
+                      uiLanguage,
+                      cancellationPending || busyAction === cancelActionKey ? 'Stopping...' : 'Stop',
+                    )}
+                  </button>
+                ) : null}
+                {isTerminalJob ? (
+                  <button
+                    aria-label={translateUiString(uiLanguage, 'Remove from job history')}
+                    className="icon-button"
+                    onClick={() => removeTrackedJob(job.id)}
+                    title={translateUiString(uiLanguage, 'Remove from job history')}
+                    type="button"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                ) : null}
+              </div>
             </div>
           );
         })}
@@ -4412,18 +4730,63 @@ function StudioShell(props: {
                 {worksQuery.isFetching && works.length === 0 ? <LoaderCircle className="spin" size={12} /> : works.length}
               </span>
             </div>
+            {sidebarCreateWorkPanel}
             <div className="stack gap-xs sidebar-work-list">
-              {works.map((work) => (
-                <button
-                  key={work.id}
-                  className={`nav-item ${selectedWorkId === work.id ? 'active' : ''}`}
-                  onClick={() => setSelectedWorkId(work.id)}
-                  type="button"
-                >
-                  <BookOpen size={16} />
-                  <span>{work.title}</span>
-                </button>
-              ))}
+              {works.length > 0 ? (
+                <StoryHierarchyTree
+                  api={api}
+                  busyAction={busyAction}
+                  invalidateScopedQuery={invalidateScopedQuery}
+                  language={uiLanguage}
+                  onSelectChapter={(workId, chapterId) => {
+                    setSelectedWorkId(workId);
+                    setSelectedChapterId(chapterId);
+                    setSelectedEpisodeId('');
+                  }}
+                  onSelectEpisode={(workId, chapterId, episodeId) => {
+                    setSelectedWorkId(workId);
+                    setSelectedChapterId(chapterId);
+                    setSelectedEpisodeId(episodeId);
+                  }}
+                  onChapterMetadataChanged={(updatedChapter) => {
+                    if (updatedChapter.id !== selectedChapterId) {
+                      return;
+                    }
+                    const preservedDraft = { ...chapterDraft, title: updatedChapter.title ?? '' };
+                    preservedChapterDraftRef.current = {
+                      id: updatedChapter.id,
+                      expectedTitle: updatedChapter.title,
+                      draft: preservedDraft,
+                    };
+                    setChapterDraft(preservedDraft);
+                  }}
+                  onEpisodeMetadataChanged={(updatedEpisode) => {
+                    if (updatedEpisode.id !== selectedEpisodeId) {
+                      return;
+                    }
+                    const preservedDraft = { ...episodeDraft, title: updatedEpisode.title ?? '' };
+                    preservedEpisodeDraftRef.current = {
+                      id: updatedEpisode.id,
+                      expectedTitle: updatedEpisode.title,
+                      draft: preservedDraft,
+                    };
+                    setEpisodeDraft(preservedDraft);
+                  }}
+                  onSelectWork={(workId) => {
+                    setSelectedWorkId(workId);
+                    setSelectedChapterId('');
+                    setSelectedEpisodeId('');
+                  }}
+                  organizationId={activeOrganizationId}
+                  runAction={runAction}
+                  scopedQueryKey={scopedQueryKey}
+                  selectedChapterId={selectedChapterId}
+                  selectedEpisodeId={selectedEpisodeId}
+                  selectedWorkId={selectedWorkId}
+                  storageScope={`${props.authSessionKey}:workspace:${activeOrganizationId ?? 'personal'}`}
+                  works={works}
+                />
+              ) : null}
               {showWorksLoading ? (
                 <div className="sidebar-status">
                   <LoaderCircle className="spin" size={14} />
@@ -4473,38 +4836,77 @@ function StudioShell(props: {
 
       <main className="workspace">
         <header className="topbar">
-          <div>
-            <div className="eyebrow">{translateUiString(uiLanguage, 'Signed in')}</div>
-            <strong>{props.email}</strong>
-          </div>
-          <div className="toolbar desktop-workspace-toolbar">
-            {canViewActiveOrganizationWorks ? (
-              <>
-                <button className={`tab-button ${activeTab === 'story' ? 'active' : ''}`} onClick={() => setActiveTab('story')} type="button">
-                  <Bot size={16} />
-                  {translateUiString(uiLanguage, 'Story')}
-                </button>
-                <button className={`tab-button ${activeTab === 'entities' ? 'active' : ''}`} onClick={() => setActiveTab('entities')} type="button">
-                  <Image size={16} />
-                  {translateUiString(uiLanguage, 'Entities')}
-                </button>
-                <button className={`tab-button ${activeTab === 'pages' ? 'active' : ''}`} onClick={() => setActiveTab('pages')} type="button">
-                  <PanelsTopLeft size={16} />
-                  {translateUiString(uiLanguage, 'Pages')}
-                </button>
-              </>
-            ) : null}
-            <button className={`tab-button ${activeTab === 'account' ? 'active' : ''}`} onClick={() => setActiveTab('account')} type="button">
-              <BriefcaseBusiness size={16} />
-              {pickUiText(uiLanguage, 'Workspace', 'ワークスペース')}
-            </button>
-            <select className="toolbar-select" value={uiLanguage} onChange={(event) => setUiLanguageStored(event.target.value)}>
-            <option value="ja">日本語</option>
-              <option value="en">{translateUiString(uiLanguage, 'English')}</option>
-            </select>
-            <button className="ghost-button" onClick={() => void props.onLogout()} type="button">
-              <LogOut size={16} />
-            </button>
+          {canViewActiveOrganizationWorks ? (
+            <nav
+              aria-label={translateUiString(uiLanguage, 'Primary navigation')}
+              className="primary-navigation desktop-workspace-toolbar"
+            >
+              <button className={`tab-button ${activeTab === 'story' ? 'active' : ''}`} onClick={() => setActiveTab('story')} type="button">
+                <BookOpen size={17} />
+                {translateUiString(uiLanguage, 'Story')}
+              </button>
+              <button className={`tab-button ${activeTab === 'entities' ? 'active' : ''}`} onClick={() => setActiveTab('entities')} type="button">
+                <Image size={17} />
+                {translateUiString(uiLanguage, 'Entities')}
+              </button>
+              <button className={`tab-button ${activeTab === 'pages' ? 'active' : ''}`} onClick={() => setActiveTab('pages')} type="button">
+                <PanelsTopLeft size={17} />
+                {translateUiString(uiLanguage, 'Pages')}
+              </button>
+            </nav>
+          ) : null}
+          <div className="topbar-account">
+            <div className="topbar-identity">
+              <div className="eyebrow">{translateUiString(uiLanguage, 'Signed in')}</div>
+              <strong>{props.email}</strong>
+            </div>
+            <div className="account-menu" ref={accountMenuRef}>
+              <button
+                aria-expanded={accountMenuOpen}
+                aria-haspopup="true"
+                aria-label={translateUiString(uiLanguage, 'Account menu')}
+                className={`account-menu-trigger ${activeTab === 'account' ? 'active' : ''}`}
+                onClick={() => setAccountMenuOpen((current) => !current)}
+                ref={accountMenuTriggerRef}
+                type="button"
+              >
+                <Users size={18} />
+                <ChevronDown size={15} />
+              </button>
+              {accountMenuOpen ? (
+                <div
+                  aria-label={translateUiString(uiLanguage, 'Account menu')}
+                  className="account-menu-popover"
+                >
+                  <button
+                    className={`account-menu-item ${activeTab === 'account' ? 'active' : ''}`}
+                    onClick={() => {
+                      setActiveTab('account');
+                      setAccountMenuOpen(false);
+                    }}
+                    type="button"
+                  >
+                    <BriefcaseBusiness size={17} />
+                    {translateUiString(uiLanguage, 'Workspace settings')}
+                  </button>
+                  <label className="account-menu-language">
+                    <span>{translateUiString(uiLanguage, 'Language')}</span>
+                    <select
+                      aria-label={translateUiString(uiLanguage, 'Language')}
+                      value={uiLanguage}
+                      onChange={(event) => setUiLanguageStored(event.target.value)}
+                    >
+                      <option value="ja">日本語</option>
+                      <option value="en">{translateUiString(uiLanguage, 'English')}</option>
+                    </select>
+                  </label>
+                  <button className="account-menu-item danger" onClick={() => void props.onLogout()} type="button">
+                    <LogOut size={17} />
+                    {translateUiString(uiLanguage, 'Log out')}
+                  </button>
+                </div>
+              ) : null}
+            </div>
           </div>
         </header>
 
@@ -4522,12 +4924,6 @@ function StudioShell(props: {
           <div className="workspace-grid mobile-account-workspace">
             <section className="main-column mobile-account-column">{tutorialPanel}</section>
           </div>
-        ) : selectedWork === null && activeTab === 'story' ? (
-          <div className="workspace-grid">
-            <section className="main-column">
-              {createWorkPanel}
-            </section>
-          </div>
         ) : selectedWork === null ? (
           <section className="empty-state">
             <LayoutGrid size={28} />
@@ -4539,82 +4935,14 @@ function StudioShell(props: {
             <section className="main-column">
               {activeTab === 'story' ? (
                 <>
-                  {createWorkPanel}
-
                   <PanelSection
-                    title="Work overview"
-                    subtitle={uiLanguage === 'ja' ? `状態 ${translateUiString(uiLanguage, selectedWork.status)}` : `status ${selectedWork.status}`}
-                    className="work-overview-section"
-                    compact
-                    collapsible
-                    defaultCollapsed
-                    actions={
-                      <button
-                        className="secondary-button"
-                        disabled={busyAction === 'Save work'}
-                        onClick={() =>
-                          void runAction('Save work', async () => {
-                            await api.updateWork(
-                              selectedWork.id,
-                              toWorkPayload(workDraft, loadedSelectedWorkEntityIds),
-                              activeOrganizationId,
-                            );
-                            await invalidateScopedQuery(['works']);
-                          })
-                        }
-                        type="button"
-                      >
-                        {busyAction === 'Save work' ? <LoaderCircle className="spin" size={16} /> : <Save size={16} />}
-                        {translateUiString(uiLanguage, 'Save')}
-                      </button>
-                    }
-                  >
-                    <div className="form-grid two">
-                      <InputField label="Title" value={workDraft.title} onChange={(value) => setWorkDraft({ ...workDraft, title: value })} />
-                      <InputField label="Genre" value={workDraft.genre} onChange={(value) => setWorkDraft({ ...workDraft, genre: value })} />
-                    </div>
-                    <details className="advanced-disclosure work-context-disclosure">
-                      <summary>{translateUiString(uiLanguage, 'Advanced work context')}</summary>
-                      <div className="form-grid two">
-                        <TextAreaField
-                          label="World"
-                          rows={3}
-                          value={workDraft.world_setting}
-                          onChange={(value) => setWorkDraft({ ...workDraft, world_setting: value })}
-                        />
-                        <TextAreaField
-                          label="Overall flow"
-                          rows={3}
-                          value={workDraft.overall_flow}
-                          onChange={(value) => setWorkDraft({ ...workDraft, overall_flow: value })}
-                        />
-                      </div>
-                      <InputField label="Theme" value={workDraft.theme} onChange={(value) => setWorkDraft({ ...workDraft, theme: value })} />
-                      <div className="form-grid two">
-                        <TextAreaField
-                          label="Starting point"
-                          rows={2}
-                          value={workDraft.starting_point}
-                          onChange={(value) => setWorkDraft({ ...workDraft, starting_point: value })}
-                        />
-                        <TextAreaField
-                          label="Ending point"
-                          rows={2}
-                          value={workDraft.ending_point}
-                          onChange={(value) => setWorkDraft({ ...workDraft, ending_point: value })}
-                        />
-                      </div>
-                    </details>
-                  </PanelSection>
-
-                  <PanelSection
-                    title="Chapter / Episode"
+                    title="Page planning"
                     collapsible
                     actions={
                       <div className="toolbar">
                         <button
                           className="primary-button skeleton-plan-button"
-                          disabled={skeletonActionDisabled || selectedEpisodePageSkeletonJob !== null}
+                          disabled={skeletonActionDisabled || selectedEpisodePageSkeletonJob !== null || pageSkeletonBlocked}
                           onClick={() => {
                             if (selectedEpisode === null) {
                               return;
@@ -4669,7 +4997,8 @@ function StudioShell(props: {
                             selectedEpisode === null ||
                             busyAction === 'Apply story plan' ||
                             selectedEpisodeStoryAutofillJob !== null ||
-                            selectedEpisodePageSkeletonJob !== null
+                            selectedEpisodePageSkeletonJob !== null ||
+                            storyApplyBlocked
                           }
                           onClick={() => {
                             if (selectedEpisode === null) {
@@ -4694,6 +5023,32 @@ function StudioShell(props: {
                       </div>
                     }
                   >
+                    <div className="feature-guidance">
+                      <p>{translateUiString(uiLanguage, 'Use these two steps to turn the episode story into panel details.')}</p>
+                      <p>
+                        <strong>{`1. ${translateUiString(uiLanguage, skeletonActionLabel)}`}</strong>
+                        <span>{translateUiString(uiLanguage, 'Builds the page and panel allocation and the overall story flow.')}</span>
+                      </p>
+                      <p>
+                        <strong>{`2. ${translateUiString(uiLanguage, 'Apply story plan')}`}</strong>
+                        <span>
+                          {translateUiString(
+                            uiLanguage,
+                            'Fills each panel with characters, situation, composition, and dialogue based on that plan.',
+                          )}
+                        </span>
+                      </p>
+                    </div>
+                    <GenerationReadinessNotice
+                      blockers={pageSkeletonBlockers}
+                      language={uiLanguage}
+                      onAction={navigateToReadinessTarget}
+                    />
+                    <GenerationReadinessNotice
+                      blockers={storyApplyBlockers}
+                      language={uiLanguage}
+                      onAction={navigateToReadinessTarget}
+                    />
                     {skeletonActionMessage !== null ? (
                       <div className="muted small">{translateUiString(uiLanguage, skeletonActionMessage)}</div>
                     ) : null}
@@ -4722,6 +5077,7 @@ function StudioShell(props: {
                         </span>
                       </div>
                     ) : null}
+                    {SHOW_LEGACY_STORY_HIERARCHY ? (
                     <div className="story-tree">
                       <div className="tree-column">
                         <h3>{translateUiString(uiLanguage, 'Chapters')}</h3>
@@ -4733,7 +5089,7 @@ function StudioShell(props: {
                                 onClick={() => {
                                   setSelectedChapterId(chapter.id);
                                   setSelectedEpisodeId('');
-                                  setSelectedWorkId(selectedWork.id);
+                                  setSelectedWorkId(selectedWork?.id ?? '');
                                 }}
                                 type="button"
                               >
@@ -4748,7 +5104,7 @@ function StudioShell(props: {
                                   onClick={() =>
                                     void runAction(`Move chapter ${chapter.id} up`, async () => {
                                       await api.moveChapter(chapter.id, 'up', activeOrganizationId);
-                                      await invalidateScopedQuery(['chapters', selectedWork.id]);
+                                      await invalidateScopedQuery(['chapters', selectedWork?.id ?? '']);
                                     })
                                   }
                                   title={translateUiString(uiLanguage, 'Move up')}
@@ -4763,7 +5119,7 @@ function StudioShell(props: {
                                   onClick={() =>
                                     void runAction(`Move chapter ${chapter.id} down`, async () => {
                                       await api.moveChapter(chapter.id, 'down', activeOrganizationId);
-                                      await invalidateScopedQuery(['chapters', selectedWork.id]);
+                                      await invalidateScopedQuery(['chapters', selectedWork?.id ?? '']);
                                     })
                                   }
                                   title={translateUiString(uiLanguage, 'Move down')}
@@ -4781,12 +5137,12 @@ function StudioShell(props: {
                             event.preventDefault();
                             void runAction('Create chapter', async () => {
                               await api.createChapter(
-                                selectedWork.id,
+                                selectedWork?.id ?? '',
                                 toCreateChapterPayload(newChapterDraft, loadedSelectedWorkEntityIds),
                                 activeOrganizationId,
                               );
                               setNewChapterDraft(createEmptyChapterDraft());
-                              await invalidateScopedQuery(['chapters', selectedWork.id]);
+                              await invalidateScopedQuery(['chapters', selectedWork?.id ?? '']);
                             });
                           }}
                         >
@@ -4826,7 +5182,7 @@ function StudioShell(props: {
                                       toChapterPayload(chapterDraft, loadedSelectedWorkEntityIds),
                                       activeOrganizationId,
                                     );
-                                    await invalidateScopedQuery(['chapters', selectedWork.id]);
+                                    await invalidateScopedQuery(['chapters', selectedWork?.id ?? '']);
                                   })
                                 }
                                 type="button"
@@ -4839,7 +5195,7 @@ function StudioShell(props: {
                                 onClick={() =>
                                   void runAction('Delete chapter', async () => {
                                     await api.deleteChapter(selectedChapter.id, activeOrganizationId);
-                                    await invalidateScopedQuery(['chapters', selectedWork.id]);
+                                    await invalidateScopedQuery(['chapters', selectedWork?.id ?? '']);
                                   })
                                 }
                                 type="button"
@@ -4932,6 +5288,7 @@ function StudioShell(props: {
                         ) : null}
                       </div>
                     </div>
+                    ) : null}
                   </PanelSection>
                 </>
               ) : null}
@@ -4962,12 +5319,21 @@ function StudioShell(props: {
                         </button>
                         <button
                           className="ghost-button danger"
-                          onClick={() =>
+                          onClick={() => {
+                            const episodeTitle = selectedEpisode.title?.trim() || translateUiString(uiLanguage, 'Untitled episode');
+                            if (!window.confirm(pickUiText(
+                              uiLanguage,
+                              `Delete episode “${episodeTitle}”? Its editing data will also be deleted. This cannot be undone.`,
+                              `話「${episodeTitle}」を本当に削除しますか？\nこの話に紐づく編集データも削除され、元に戻せません。`,
+                            ))) {
+                              return;
+                            }
                             void runAction('Delete episode', async () => {
                               await api.deleteEpisode(selectedEpisode.id, activeOrganizationId);
+                              setSelectedEpisodeId('');
                               await invalidateScopedQuery(['episodes', selectedChapter?.id ?? '']);
-                            })
-                          }
+                            });
+                          }}
                           type="button"
                         >
                           <Trash2 size={16} />
@@ -4996,11 +5362,7 @@ function StudioShell(props: {
 
                   <PanelSection
                     title="Story AI"
-                    subtitle={pickUiText(
-                      uiLanguage,
-                      'Improve the current episode draft while keeping continuity with the rest of the work.',
-                      '\u4f5c\u54c1\u5168\u4f53\u3068\u306e\u6574\u5408\u3092\u4fdd\u3061\u306a\u304c\u3089\u3001\u73fe\u5728\u306e\u8a71\u306e\u4e0b\u66f8\u304d\u3092\u6539\u5584\u3057\u307e\u3059\u3002',
-                    )}
+                    subtitle="Story AI follows your instruction to improve the episode and rewrites it for reliable page and panel planning. Recommended before planning pages."
                     collapsible
                     mobileDefaultCollapsed
                     actions={
@@ -5179,7 +5541,12 @@ function StudioShell(props: {
                     )}
                   </PanelSection>
 
-                  <PanelSection title="Scenes" collapsible mobileDefaultCollapsed>
+                  <PanelSection
+                    title="Scenes"
+                    subtitle="Set the location, time, and mood to keep backgrounds and atmosphere consistent across the episode. Scenes are optional; generation works without them."
+                    collapsible
+                    mobileDefaultCollapsed
+                  >
                     <div className="list-grid">
                       {scenes.map((scene) => (
                         <button
@@ -5247,34 +5614,6 @@ function StudioShell(props: {
               {activeTab === 'entities' && selectedWork !== null ? (
                 <>
                   <PanelSection
-                    title="Current episode selection"
-                    subtitle="Choose the work, chapter, and episode being edited."
-                    compact
-                    collapsible
-                  >
-                    <div className="compact-context-grid">
-                      <SelectField
-                        label="Work"
-                        value={selectedWorkId}
-                        onChange={setSelectedWorkId}
-                        options={works.map((work) => [work.id, work.title])}
-                      />
-                      <SelectField
-                        label="Chapter"
-                        value={selectedChapter?.id ?? ''}
-                        onChange={setSelectedChapterId}
-                        options={chapters.map((chapter) => [chapter.id, chapter.title ?? `Chapter ${chapter.order}`])}
-                      />
-                      <SelectField
-                        label="Episode"
-                        value={selectedEpisode?.id ?? ''}
-                        onChange={setSelectedEpisodeId}
-                        options={episodes.map((episode) => [episode.id, episode.title ?? `Episode ${episode.order}`])}
-                      />
-                    </div>
-                  </PanelSection>
-
-                  <PanelSection
                     title="Character list"
                     subtitle={`${entities.length} records`}
                     collapsible
@@ -5298,7 +5637,7 @@ function StudioShell(props: {
                           type="button"
                         >
                           <strong>{entity.name}</strong>
-                          <span>{entity.entity_type}</span>
+                          <span>{formatEntityTypeLabel(uiLanguage, entity.entity_type)}</span>
                         </button>
                       ))}
                     </div>
@@ -5359,17 +5698,48 @@ function StudioShell(props: {
                       />
                       <InputField label="Name" value={entityDraft.name} onChange={(value) => setEntityDraft({ ...entityDraft, name: value })} />
                     </div>
+                    <div className="entity-reference-import">
+                      <div className="entity-reference-import-header">
+                        <strong>{translateUiString(uiLanguage, 'Import reference')}</strong>
+                        <span className="state-pill state-pill-neutral">
+                          {translateUiString(uiLanguage, 'Image import costs 1 credit.')}
+                        </span>
+                      </div>
+                      <div className="field-help">
+                        {translateUiString(
+                          uiLanguage,
+                          'Upload a character image you already have. Lyra will use its appearance as a reference when creating your manga.',
+                        )}
+                      </div>
+                      <label className="file-drop">
+                        <input
+                          accept="image/png,image/jpeg,image/webp"
+                          onChange={(event) =>
+                            void handleEntityImport(
+                              event,
+                              entityDraft.entity_type,
+                              selectedEntity?.id ?? null,
+                              api,
+                              activeOrganizationId,
+                              setImportingImage,
+                              setNotice,
+                              setEntityDraft,
+                              setUploadedReferenceCandidatesByEntityId,
+                              setUploadedReferenceSourceByEntityId,
+                              uiLanguage,
+                            )
+                          }
+                          type="file"
+                        />
+                        <span>{importingImage ? translateUiString(uiLanguage, 'Importing image...') : translateUiString(uiLanguage, 'Drop or choose image')}</span>
+                      </label>
+                    </div>
                     <TextAreaField
                       label="Free description"
                       rows={3}
                       value={entityDraft.free_description}
                       onChange={(value) => setEntityDraft({ ...entityDraft, free_description: value })}
-                    />
-                    <TextAreaField
-                      label="Prompt supplement"
-                      rows={3}
-                      value={entityDraft.prompt_supplement}
-                      onChange={(value) => setEntityDraft({ ...entityDraft, prompt_supplement: value })}
+                      helpText="Use this box for details not covered by the choices, or for special instructions you want Lyra to follow."
                     />
                     {entityDraft.entity_type === 'character' ? (
                       <CharacterStructuredFieldsEditor
@@ -5446,36 +5816,6 @@ function StudioShell(props: {
                     </div>
                   </PanelSection>
 
-                  <PanelSection title="Import reference" collapsible>
-                    <div className="state-pill-row">
-                      <span className="state-pill state-pill-neutral">
-                        {translateUiString(uiLanguage, 'Image import costs 1 credit.')}
-                      </span>
-                    </div>
-                    <label className="file-drop">
-                      <input
-                        accept="image/png,image/jpeg,image/webp"
-                        onChange={(event) =>
-                          void handleEntityImport(
-                            event,
-                            entityDraft.entity_type,
-                            selectedEntity?.id ?? null,
-                            api,
-                            activeOrganizationId,
-                            setImportingImage,
-                            setNotice,
-                            setEntityDraft,
-                            setUploadedReferenceCandidatesByEntityId,
-                            setUploadedReferenceSourceByEntityId,
-                            uiLanguage,
-                          )
-                        }
-                        type="file"
-                      />
-                      <span>{importingImage ? translateUiString(uiLanguage, 'Importing image...') : translateUiString(uiLanguage, 'Drop or choose image')}</span>
-                    </label>
-                  </PanelSection>
-
                   <PanelSection title="Preview / Confirm" collapsible>
                     <div className="state-pill-row">
                       <span className="state-pill state-pill-neutral">
@@ -5486,6 +5826,7 @@ function StudioShell(props: {
                       <div className="toolbar">
                         <button
                           className="secondary-button"
+                          disabled={entityReferenceGenerationBlocked}
                           onClick={() =>
                             void runAction('Generate reference', async () => {
                               await saveCurrentEntityGenerationContext();
@@ -5511,7 +5852,7 @@ function StudioShell(props: {
                         </button>
                         <button
                           className="primary-button"
-                          disabled={referenceSelection.length === 0 && referencePrimaryKey.length === 0}
+                          disabled={referenceConfirmationBlocked}
                           onClick={() =>
                             void runAction('Confirm references', async () => {
                               const selectedReferenceKeys = Array.from(
@@ -5545,6 +5886,16 @@ function StudioShell(props: {
                         </button>
                       </div>
                     ) : null}
+                    <GenerationReadinessNotice
+                      blockers={entityReferenceGenerationBlockers}
+                      language={uiLanguage}
+                      onAction={navigateToReadinessTarget}
+                    />
+                    <GenerationReadinessNotice
+                      blockers={visibleReferenceConfirmationBlockers}
+                      language={uiLanguage}
+                      onAction={navigateToReadinessTarget}
+                    />
                     {entityPreviewGenerationMessage !== null ? (
                       <ProcessingHint
                         message={translateUiString(uiLanguage, entityPreviewGenerationMessage)}
@@ -5690,36 +6041,54 @@ function StudioShell(props: {
 
               {activeTab === 'pages' && selectedEpisode !== null ? (
                 <>
-                  <PanelSection
-                    title="Current episode selection"
-                    subtitle="Choose the work, chapter, and episode being edited."
-                    compact
-                    collapsible
-                  >
-                    <div className="compact-context-grid">
-                      <SelectField
-                        label="Work"
-                        value={selectedWorkId}
-                        onChange={setSelectedWorkId}
-                        options={works.map((work) => [work.id, work.title])}
-                      />
-                      <SelectField
-                        label="Chapter"
-                        value={selectedChapter?.id ?? ''}
-                        onChange={setSelectedChapterId}
-                        options={chapters.map((chapter) => [chapter.id, chapter.title ?? `Chapter ${chapter.order}`])}
-                      />
-                      <SelectField
-                        label="Episode"
-                        value={selectedEpisode?.id ?? ''}
-                        onChange={setSelectedEpisodeId}
-                        options={episodes.map((episode) => [episode.id, episode.title ?? `Episode ${episode.order}`])}
-                      />
-                    </div>
-                  </PanelSection>
-
                   <div className="page-sections-stack">
-                  <PanelSection title="Pages" collapsible>
+                  {selectedPage !== null ? (
+                    <PanelSection
+                      title="Page art direction"
+                      subtitle="Keep generated pages visually consistent by adding an art reference and the desired linework, color, or mood."
+                      className="page-section-style-constraints"
+                      compact
+                      collapsible
+                      actions={
+                        <button
+                          className="secondary-button"
+                          onClick={() =>
+                            void runAction('Save page settings', async () => {
+                              await api.updatePage(
+                                selectedPage.id,
+                                toPageSettingsPayload(pageSettingsDraft),
+                                activeOrganizationId,
+                              );
+                              await invalidateScopedQuery(['pages', selectedEpisode.id]);
+                            })
+                          }
+                          type="button"
+                        >
+                          <Save size={16} />
+                          {translateUiString(uiLanguage, 'Save')}
+                        </button>
+                      }
+                    >
+                      <div className="form-grid two">
+                        <InputField
+                          label="Art style reference"
+                          value={pageSettingsDraft.style_reference_title}
+                          onChange={(value) =>
+                            setPageSettingsDraft((current) => ({ ...current, style_reference_title: value }))
+                          }
+                        />
+                        <InputField
+                          label="Visual direction notes"
+                          value={pageSettingsDraft.style_reference_notes}
+                          onChange={(value) =>
+                            setPageSettingsDraft((current) => ({ ...current, style_reference_notes: value }))
+                          }
+                        />
+                      </div>
+                    </PanelSection>
+                  ) : null}
+
+                  <PanelSection title="Pages" className="page-section-pages" collapsible>
                     <div className="page-grid">
                       {pages.map((page) => (
                         <button
@@ -5760,39 +6129,6 @@ function StudioShell(props: {
 
                   {selectedPage !== null ? (
                     <>
-                      <PanelSection title="Style constraints" className="page-section-style-constraints" compact collapsible actions={
-                        <button
-                          className="secondary-button"
-                          onClick={() =>
-                            void runAction('Save page settings', async () => {
-                              await api.updatePage(
-                                selectedPage.id,
-                                toPageSettingsPayload(pageSettingsDraft),
-                                activeOrganizationId,
-                              );
-                              await invalidateScopedQuery(['pages', selectedEpisode.id]);
-                            })
-                          }
-                          type="button"
-                        >
-                          <Save size={16} />
-                          {translateUiString(uiLanguage, 'Save')}
-                        </button>
-                      }>
-                        <div className="form-grid two">
-                          <InputField
-                            label="Style reference title"
-                            value={pageSettingsDraft.style_reference_title}
-                            onChange={(value) => setPageSettingsDraft((current) => ({ ...current, style_reference_title: value }))}
-                          />
-                          <InputField
-                            label="Style reference notes"
-                            value={pageSettingsDraft.style_reference_notes}
-                            onChange={(value) => setPageSettingsDraft((current) => ({ ...current, style_reference_notes: value }))}
-                          />
-                        </div>
-                      </PanelSection>
-
                       <PanelSection
                         title="Story sources"
                         className="page-section-story-sources"
@@ -5928,34 +6264,11 @@ function StudioShell(props: {
                             {translateUiString(uiLanguage, 'Page generation starts at 3 credits.')}
                           </span>
                         </div>
-                        {selectedPageHasFramePanelMismatch ? (
-                          <div className="generation-blocking-hint" role="alert">
-                            <div className="generation-blocking-copy">
-                              <strong>
-                                {translateUiString(uiLanguage, 'Page generation is blocked until panel layout and panel content match.')}
-                              </strong>
-                              <span>
-                                {formatFramePanelMismatchDetail(
-                                  uiLanguage,
-                                  selectedPageFrameCount,
-                                  selectedPagePanelCount,
-                                )}
-                              </span>
-                            </div>
-                            <button
-                              className="ghost-button generation-blocking-action"
-                              onClick={() => {
-                                document
-                                  .querySelector('.page-section-frames-panels')
-                                  ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                              }}
-                              type="button"
-                            >
-                              <LayoutGrid size={14} />
-                              {translateUiString(uiLanguage, 'Go to panel layout')}
-                            </button>
-                          </div>
-                        ) : null}
+                        <GenerationReadinessNotice
+                          blockers={pageGenerationBlockers}
+                          language={uiLanguage}
+                          onAction={navigateToReadinessTarget}
+                        />
                         {selectedPage.generated_image !== null ? (
                           <div className="generated-image-wrap">
                             <AuthenticatedImage
@@ -6042,6 +6355,12 @@ function StudioShell(props: {
                         </div>
                         <details className="advanced-disclosure">
                           <summary>{translateUiString(uiLanguage, 'Advanced frame geometry')}</summary>
+                          <div className="field-help advanced-disclosure-help">
+                            {translateUiString(
+                              uiLanguage,
+                              'You can leave this unchanged. Adjust it only when you want precise control over panel shapes and placement.',
+                            )}
+                          </div>
                           <div className="frame-editor-list">
                             {frameDrafts.map((frameDraft, frameIndex) => (
                               <div className="frame-editor-card" key={frameDraft.id || `frame-${frameIndex}`}>
@@ -6311,79 +6630,6 @@ function StudioShell(props: {
                           entities={entities}
                           onChange={(dialogues) => setPanelDraft({ ...panelDraft, dialogues })}
                         />
-                        <div className="toolbar">
-                          <button
-                            className="secondary-button"
-                            onClick={() =>
-                              void runAction('Create panel', async () => {
-                                const assignmentsPayload = toPanelAssignmentsPayload(panelDraft);
-                                const createdPanel = await api.createPanel(
-                                  selectedPage.id,
-                                  toPanelPayload(panelDraft),
-                                  activeOrganizationId,
-                                );
-                                try {
-                                  await api.replacePanelAssignments(
-                                    createdPanel.id,
-                                    assignmentsPayload,
-                                    activeOrganizationId,
-                                  );
-                                } catch (error) {
-                                  await api.deletePanel(createdPanel.id, activeOrganizationId).catch(() => undefined);
-                                  throw error;
-                                }
-                                setSelectedPanelId(createdPanel.id);
-                                await invalidateScopedQuery(['panels', selectedPage.id]);
-                              })
-                            }
-                            type="button"
-                          >
-                            <Save size={16} />
-                            {translateUiString(uiLanguage, 'Create panel')}
-                          </button>
-                          {selectedPanel !== null ? (
-                            <>
-                              <button
-                                className="ghost-button"
-                                onClick={() =>
-                                  void runAction('Save panel', async () => {
-                                    const assignmentsPayload = toPanelAssignmentsPayload(panelDraft);
-                                    await api.updatePanel(
-                                      selectedPanel.id,
-                                      toPanelPayload(panelDraft),
-                                      activeOrganizationId,
-                                    );
-                                    await api.replacePanelAssignments(
-                                      selectedPanel.id,
-                                      assignmentsPayload,
-                                      activeOrganizationId,
-                                    );
-                                    await invalidateScopedQuery(['panels', selectedPage.id]);
-                                  })
-                                }
-                                type="button"
-                              >
-                                <Save size={16} />
-                                {translateUiString(uiLanguage, 'Save panel')}
-                              </button>
-                              <button
-                                className="ghost-button danger"
-                                onClick={() => {
-                                  if (!window.confirm(formatDeletePanelConfirmMessage(uiLanguage, selectedPanel.order))) {
-                                    return;
-                                  }
-
-                                  void runAction('Delete panel', async () => {
-                                    await deletePanelFromSelectedPage(selectedPanel);
-                                  });
-                                }}
-                                type="button"
-                              >
-                                <Trash2 size={16} />
-                              </button>
-                            </>
-                          ) : null}
-                        </div>
                         <div className="composition-strip">
                           {compositions.slice(0, 10).map((composition) => (
                             <button
@@ -6406,6 +6652,48 @@ function StudioShell(props: {
                             </button>
                           ))}
                         </div>
+                        {selectedPanel !== null ? (
+                          <div className="panel-save-actions">
+                            <button
+                              className="secondary-button panel-save-button"
+                              onClick={() =>
+                                void runAction('Save panel', async () => {
+                                  const assignmentsPayload = toPanelAssignmentsPayload(panelDraft);
+                                  await api.updatePanel(
+                                    selectedPanel.id,
+                                    toPanelPayload(panelDraft),
+                                    activeOrganizationId,
+                                  );
+                                  await api.replacePanelAssignments(
+                                    selectedPanel.id,
+                                    assignmentsPayload,
+                                    activeOrganizationId,
+                                  );
+                                  await invalidateScopedQuery(['panels', selectedPage.id]);
+                                })
+                              }
+                              type="button"
+                            >
+                              <Save size={16} />
+                              {translateUiString(uiLanguage, 'Save panel')}
+                            </button>
+                            <button
+                              className="ghost-button danger panel-delete-button"
+                              onClick={() => {
+                                if (!window.confirm(formatDeletePanelConfirmMessage(uiLanguage, selectedPanel.order))) {
+                                  return;
+                                }
+
+                                void runAction('Delete panel', async () => {
+                                  await deletePanelFromSelectedPage(selectedPanel);
+                                });
+                              }}
+                              type="button"
+                            >
+                              <Trash2 size={16} />
+                            </button>
+                          </div>
+                        ) : null}
                       </PanelSection>
                       </div>
 
@@ -6968,10 +7256,47 @@ function ProcessingHint(props: { message: string; progressPercent?: number | nul
   );
 }
 
+function GenerationReadinessNotice(props: {
+  blockers: GenerationBlocker[];
+  language: UiLanguage;
+  onAction: (target: GenerationReadinessTarget) => void;
+}) {
+  if (props.blockers.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="generation-readiness-notice" role="alert">
+      <div className="generation-readiness-heading">
+        <strong>
+          {pickUiText(props.language, 'Before generating, fix these items.', '生成前に、以下を確認してください。')}
+        </strong>
+      </div>
+      <div className="generation-readiness-list">
+        {props.blockers.map((blockerItem) => (
+          <div className="generation-readiness-item" key={blockerItem.code}>
+            <div className="generation-readiness-copy">
+              <strong>{pickLocalizedText(props.language, blockerItem.title)}</strong>
+              <span>{pickLocalizedText(props.language, blockerItem.detail)}</span>
+            </div>
+            <button
+              className="ghost-button generation-readiness-action"
+              onClick={() => props.onAction(blockerItem.target)}
+              type="button"
+            >
+              {pickLocalizedText(props.language, blockerItem.actionLabel)}
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function ProgressBar(props: {
   compact?: boolean;
   percent: number | null;
-  tone: 'active' | 'queued' | 'completed' | 'failed';
+  tone: 'active' | 'queued' | 'completed' | 'failed' | 'cancelled';
 }) {
   const normalizedPercent = props.percent === null ? null : Math.min(100, Math.max(0, props.percent));
   const className = [
@@ -7156,12 +7481,24 @@ function TextAreaField(props: {
   value: string;
   onChange: (value: string) => void;
   rows: number;
+  placeholder?: string;
+  helpText?: string;
 }) {
   const language = useContext(UiLanguageContext);
   return (
     <label className="field">
       <span>{translateUiString(language, props.label)}</span>
-      <textarea rows={props.rows} value={props.value} onChange={(event) => props.onChange(event.target.value)} spellCheck={false} />
+      {props.helpText === undefined ? null : (
+        <small className="field-help">{translateUiString(language, props.helpText)}</small>
+      )}
+      <textarea
+        aria-label={translateUiString(language, props.label)}
+        rows={props.rows}
+        value={props.value}
+        onChange={(event) => props.onChange(event.target.value)}
+        placeholder={props.placeholder === undefined ? undefined : translateUiString(language, props.placeholder)}
+        spellCheck={false}
+      />
     </label>
   );
 }
@@ -7328,7 +7665,6 @@ function CharacterStructuredFieldsEditor(props: {
   value: CharacterStructuredFieldsDraft;
   onChange: (nextValue: CharacterStructuredFieldsDraft) => void;
 }) {
-  const language = useContext(UiLanguageContext);
   const update = (patch: Partial<CharacterStructuredFieldsDraft>): void => {
     props.onChange({
       ...props.value,
@@ -7358,26 +7694,6 @@ function CharacterStructuredFieldsEditor(props: {
           addLabel="Add alias"
           emptyLabel="No aliases yet."
         />
-      </CharacterFieldsGroup>
-
-      <CharacterFieldsGroup title="Anchors" defaultOpen={false}>
-        <div className="form-grid two compact-grid">
-          <SelectOrCustomField label="Visual anchor" value={props.value.visual_anchor} onChange={(value) => update({ visual_anchor: value })} options={CHARACTER_VISUAL_ANCHOR_OPTIONS} />
-          <SelectOrCustomField label="Signature feature" value={props.value.signature_feature} onChange={(value) => update({ signature_feature: value })} options={CHARACTER_SIGNATURE_FEATURE_OPTIONS} />
-        </div>
-        <div className="form-grid two compact-grid">
-          <SelectOrCustomField label="Silhouette keywords" value={props.value.silhouette_keywords} onChange={(value) => update({ silhouette_keywords: value })} options={CHARACTER_SILHOUETTE_KEYWORD_OPTIONS} />
-          <SelectOrCustomField label="Distinguishing features" value={props.value.distinguishing_features} onChange={(value) => update({ distinguishing_features: value })} options={CHARACTER_DISTINGUISHING_FEATURE_OPTIONS} />
-        </div>
-        <details className="advanced-disclosure character-anchor-detail">
-          <summary>{translateUiString(language, 'Body proportion details')}</summary>
-          <div className="form-grid four compact-grid">
-            <SelectOrCustomField label="Head/body ratio" value={props.value.head_to_body_ratio} onChange={(value) => update({ head_to_body_ratio: value })} options={CHARACTER_HEAD_RATIO_OPTIONS} />
-            <SelectOrCustomField label="Shoulder width" value={props.value.shoulder_width} onChange={(value) => update({ shoulder_width: value })} options={CHARACTER_SHOULDER_WIDTH_OPTIONS} />
-            <SelectOrCustomField label="Leg length" value={props.value.leg_length} onChange={(value) => update({ leg_length: value })} options={CHARACTER_LEG_LENGTH_OPTIONS} />
-            <SelectOrCustomField label="Posture axis" value={props.value.posture_axis} onChange={(value) => update({ posture_axis: value })} options={CHARACTER_POSTURE_AXIS_OPTIONS} />
-          </div>
-        </details>
       </CharacterFieldsGroup>
 
       <CharacterFieldsGroup title="Face">
@@ -7423,7 +7739,13 @@ function CharacterStructuredFieldsEditor(props: {
           <SelectOrCustomField label="Shoes" value={props.value.shoes} onChange={(value) => update({ shoes: value })} options={CHARACTER_SHOES_OPTIONS} />
           <SelectOrCustomField label="Legwear" value={props.value.socks_or_legwear} onChange={(value) => update({ socks_or_legwear: value })} options={CHARACTER_LEGWEAR_OPTIONS} />
         </div>
-        <SelectOrCustomField label="Clothing details" value={props.value.clothing_description} onChange={(value) => update({ clothing_description: value })} options={CHARACTER_CLOTHING_DETAIL_OPTIONS} />
+        <TextAreaField
+          label="Clothing details"
+          value={props.value.clothing_description}
+          onChange={(value) => update({ clothing_description: value })}
+          placeholder="Describe the outfit in natural language"
+          rows={3}
+        />
       </CharacterFieldsGroup>
     </div>
   );
@@ -7455,7 +7777,7 @@ function PanelAssignmentEditor(props: {
   };
 
   return (
-    <div className="stack">
+    <div className="stack panel-editor-group assignment-editor character-assignment-editor">
       <div className="section-header">
         <div>
           <h3>{translateUiString(language, 'Characters in panel')}</h3>
@@ -7497,9 +7819,12 @@ function PanelAssignmentEditor(props: {
           const entity = props.allEntities.find((entry) => entry.id === assignment.entity_id);
 
           return (
-            <div key={assignment.entity_id} className="panel-section compact">
+            <section key={assignment.entity_id} className="panel-editor-item assignment-card character-assignment-card">
               <div className="section-header">
                 <div>
+                  <div className="panel-editor-item-kind">
+                    {translateUiString(language, 'Appearing character')}
+                  </div>
                   <h3>{entity?.name ?? assignment.entity_id}</h3>
                   <div className="muted">{translateUiString(language, 'Placement first, then expression, pose, and effect.')}</div>
                 </div>
@@ -7595,7 +7920,7 @@ function PanelAssignmentEditor(props: {
                   )}
                 </div>
               ) : null}
-            </div>
+            </section>
           );
         })
       )}
@@ -7636,7 +7961,7 @@ function PanelDialogueEditor(props: {
   };
 
   return (
-    <div className="stack">
+    <div className="stack panel-editor-group dialogue-editor">
       <div className="section-header">
         <div>
           <h3>{translateUiString(language, 'Dialogue')}</h3>
@@ -7646,10 +7971,6 @@ function PanelDialogueEditor(props: {
               : translateUiString(language, 'These lines stay outside the generated panel art.')}
           </div>
         </div>
-        <button className="ghost-button" onClick={addDialogue} type="button">
-          <Save size={16} />
-          {translateUiString(language, 'Add line')}
-        </button>
       </div>
       {props.dialogues.length === 0 ? (
         <div className="muted">{translateUiString(language, 'No dialogue lines yet.')}</div>
@@ -7657,12 +7978,19 @@ function PanelDialogueEditor(props: {
         props.dialogues.map((dialogue, index) => {
           const speakerRequired = requiresPanelDialogueSpeaker(dialogue.type);
           const speakerMissing = speakerRequired && dialogue.entity_id.trim().length === 0;
+          const speaker = props.entities.find((entity) => entity.id === dialogue.entity_id);
+          const speakerLabel = speaker?.name ?? translateUiString(language, 'Narration / none');
 
           return (
-          <div key={`${dialogue.entity_id}-${index}`} className="panel-section compact">
+          <section key={`${dialogue.entity_id}-${index}`} className="panel-editor-item dialogue-line-card">
             <div className="section-header">
               <div>
-                <h3>Line {index + 1}</h3>
+                <div className="panel-editor-item-kind">{translateUiString(language, 'Dialogue')}</div>
+                <h3>{translateUiString(language, 'Dialogue')} {index + 1}</h3>
+                <div className="panel-editor-speaker-summary">
+                  <span>{translateUiString(language, 'Speaker')}</span>
+                  <strong>{speakerLabel}</strong>
+                </div>
               </div>
               <button className="ghost-button danger" onClick={() => removeDialogue(index)} type="button">
                 <Trash2 size={16} />
@@ -7711,7 +8039,7 @@ function PanelDialogueEditor(props: {
               />
             </div>
             <TextAreaField
-              label="Line"
+              label="Dialogue text"
               rows={2}
               value={dialogue.text}
               onChange={(value) => updateDialogue(index, { text: value })}
@@ -7721,10 +8049,14 @@ function PanelDialogueEditor(props: {
                 {translateUiString(language, 'Speaker is required for speech, thought, shout, and whisper lines.')}
               </div>
             ) : null}
-          </div>
+          </section>
         );
         })
       )}
+      <button className="primary-button dialogue-add-button" onClick={addDialogue} type="button">
+        <Plus size={18} />
+        {translateUiString(language, 'Add dialogue')}
+      </button>
     </div>
   );
 }
@@ -7814,20 +8146,6 @@ async function handleEntityImport(
     setImportingImage(false);
     event.target.value = '';
   }
-}
-
-function toWorkDraft(work: WorkRecord): WorkDraft {
-  return {
-    title: work.title,
-    genre: work.genre ?? '',
-    world_setting: work.world_setting ?? '',
-    theme: work.theme ?? '',
-    main_entity_ids: work.main_entity_ids.join(', '),
-    starting_point: work.starting_point ?? '',
-    ending_point: work.ending_point ?? '',
-    overall_flow: work.overall_flow ?? '',
-    status: work.status,
-  };
 }
 
 function toChapterDraft(chapter: ChapterRecord): ChapterDraft {
@@ -7998,23 +8316,6 @@ function toFramePreviewDefinition(draft: PanelFrameDraft): FramePreviewDefinitio
 
 function clampFramePreviewCoordinate(value: number): number {
   return Math.max(0, Math.min(1, value));
-}
-
-function toWorkPayload(
-  draft: WorkDraft,
-  allowedEntityIds?: ReadonlySet<string>,
-): Record<string, unknown> {
-  return {
-    title: draft.title,
-    genre: nullableString(draft.genre),
-    world_setting: nullableString(draft.world_setting),
-    theme: nullableString(draft.theme),
-    main_entity_ids: splitEntityIdCsv(draft.main_entity_ids, allowedEntityIds),
-    starting_point: nullableString(draft.starting_point),
-    ending_point: nullableString(draft.ending_point),
-    overall_flow: nullableString(draft.overall_flow),
-    status: draft.status,
-  };
 }
 
 function toCreateWorkPayload(draft: WorkDraft): Record<string, unknown> {
@@ -9120,102 +9421,12 @@ const CHARACTER_LEGWEAR_OPTIONS: Array<[string, string]> = [
   ['thigh-high socks', 'Thigh-high socks'],
   ['tights', 'Tights'],
 ];
-const CHARACTER_CLOTHING_DETAIL_OPTIONS: Array<[string, string]> = [
-  EMPTY_OPTION,
-  ['simple uniform detailing', 'Simple uniform detailing'],
-  ['layered practical details', 'Layered practical details'],
-  ['ornamental trim', 'Ornamental trim'],
-  ['combat utility details', 'Combat utility details'],
-  ['minimal clean design', 'Minimal clean design'],
-];
 const CHARACTER_ART_STYLE_OPTIONS: Array<[string, string]> = [
   EMPTY_OPTION,
   ['anime', 'Anime'],
   ['semi_realistic', 'Semi-realistic'],
   ['manga', 'Manga'],
   ['painterly', 'Painterly'],
-];
-const CHARACTER_VISUAL_ANCHOR_OPTIONS: Array<[string, string]> = [
-  EMPTY_OPTION,
-  ['Face + hair balance', 'Face + hair balance'],
-  ['Eye line', 'Eye line'],
-  ['Silhouette outline', 'Silhouette outline'],
-  ['Posture read', 'Posture read'],
-  ['Outfit shape', 'Outfit shape'],
-  ['Color blocking', 'Color blocking'],
-  ['Accessory / prop', 'Accessory / prop'],
-  ['custom', 'Custom'],
-];
-const CHARACTER_SIGNATURE_FEATURE_OPTIONS: Array<[string, string]> = [
-  EMPTY_OPTION,
-  ['Hair shape', 'Hair shape'],
-  ['Eye color contrast', 'Eye color contrast'],
-  ['Expression gap', 'Expression gap'],
-  ['Silhouette edge', 'Silhouette edge'],
-  ['Accessory', 'Accessory'],
-  ['Scar / mark', 'Scar / mark'],
-  ['Stance', 'Stance'],
-  ['custom', 'Custom'],
-];
-const CHARACTER_SILHOUETTE_KEYWORD_OPTIONS: Array<[string, string]> = [
-  EMPTY_OPTION,
-  ['Compact silhouette', 'Compact silhouette'],
-  ['Tall and slender', 'Tall and slender'],
-  ['Broad-shouldered', 'Broad-shouldered'],
-  ['Long coat outline', 'Long coat outline'],
-  ['Skirt line', 'Skirt line'],
-  ['Military block', 'Military block'],
-  ['Soft rounded outline', 'Soft rounded outline'],
-  ['custom', 'Custom'],
-];
-const CHARACTER_DISTINGUISHING_FEATURE_OPTIONS: Array<[string, string]> = [
-  EMPTY_OPTION,
-  ['Beauty mark', 'Beauty mark'],
-  ['Scar', 'Scar'],
-  ['Eye bags', 'Eye bags'],
-  ['Fang', 'Fang'],
-  ['Ahoge', 'Ahoge'],
-  ['Hair streak', 'Hair streak'],
-  ['Glasses', 'Glasses'],
-  ['Stubble', 'Stubble'],
-  ['Beard', 'Beard'],
-  ['Goatee', 'Goatee'],
-  ['Earrings', 'Earrings'],
-  ['Thick eyebrows', 'Thick eyebrows'],
-  ['Sharp jawline', 'Sharp jawline'],
-  ['custom', 'Custom'],
-];
-const CHARACTER_HEAD_RATIO_OPTIONS: Array<[string, string]> = [
-  EMPTY_OPTION,
-  ['about six heads tall', 'about six heads tall'],
-  ['about six and a half heads tall', 'about six and a half heads tall'],
-  ['about seven heads tall', 'about seven heads tall'],
-  ['about seven and a half heads tall', 'about seven and a half heads tall'],
-  ['about eight heads tall', 'about eight heads tall'],
-  ['custom', 'Custom'],
-];
-const CHARACTER_SHOULDER_WIDTH_OPTIONS: Array<[string, string]> = [
-  EMPTY_OPTION,
-  ['narrow shoulders', 'narrow shoulders'],
-  ['balanced shoulders', 'balanced shoulders'],
-  ['broad shoulders', 'broad shoulders'],
-  ['custom', 'Custom'],
-];
-const CHARACTER_LEG_LENGTH_OPTIONS: Array<[string, string]> = [
-  EMPTY_OPTION,
-  ['short legs', 'short legs'],
-  ['balanced leg length', 'balanced leg length'],
-  ['long legs', 'long legs'],
-  ['custom', 'Custom'],
-];
-const CHARACTER_POSTURE_AXIS_OPTIONS: Array<[string, string]> = [
-  EMPTY_OPTION,
-  ['centered and straight', 'centered and straight'],
-  ['slightly forward-leaning', 'slightly forward-leaning'],
-  ['slightly backward-leaning', 'slightly backward-leaning'],
-  ['soft inward posture', 'soft inward posture'],
-  ['open outward posture', 'open outward posture'],
-  ['custom', 'Custom'],
 ];
 const PANEL_ROLE_OPTIONS: Array<[PanelDraft['panel_role'], string]> = [
   ['establish', 'Establish'],

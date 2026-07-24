@@ -100,6 +100,18 @@ describe('parseEnv', () => {
     expect(enabled.PUSH_PROVIDER_TIMEOUT_MS).toBe(8000);
     expect(enabled.PUSH_DELIVERY_INTERVAL_MS).toBe(20000);
   });
+
+  it('episode continuity v3 は未設定時に有効になる', () => {
+    const parsed = parseEnv({});
+
+    expect(parsed.EPISODE_PAGE_PLAN_CONTINUITY_V3_ENABLED).toBe(true);
+  });
+
+  it('episode continuity v3 は明示的に無効化できる', () => {
+    const parsed = parseEnv({ EPISODE_PAGE_PLAN_CONTINUITY_V3_ENABLED: 'false' });
+
+    expect(parsed.EPISODE_PAGE_PLAN_CONTINUITY_V3_ENABLED).toBe(false);
+  });
 });
 
 const encryptionKey = Buffer.alloc(32, 7).toString('base64');

@@ -22,6 +22,9 @@ export interface UpdateEpisodeStoryAutofillProgressInput {
 export interface EpisodeStoryAutofillExecutionRepository {
   claimQueuedEpisodeStoryAutofillJob(jobId: string): Promise<GenerationJob | null>;
   updateEpisodeStoryAutofillProgress(input: UpdateEpisodeStoryAutofillProgressInput): Promise<boolean>;
+  isEpisodeStoryAutofillCancellationRequested(jobId: string, userId: string): Promise<boolean>;
+  beginEpisodeStoryAutofillCommit(jobId: string, userId: string): Promise<boolean>;
+  cancelEpisodeStoryAutofill(jobId: string, userId: string): Promise<boolean>;
   completeEpisodeStoryAutofill(input: CompleteEpisodeStoryAutofillInput): Promise<boolean>;
   failEpisodeStoryAutofill(input: {
     jobId: string;
@@ -43,13 +46,15 @@ interface GenerationJobRow extends QueryResultRow {
   sqs_message_id: string | null;
   openai_request_id: string | null;
   error_message: string | null;
-  cancel_requested_at: Date | null;
-  cancel_requested_by_user_id: string | null;
   retry_count: number;
   created_at: Date;
   started_at: Date | null;
   completed_at: Date | null;
   expires_at: Date | null;
+  cancel_requested_at: Date | null;
+  cancel_requested_by: string | null;
+  cancelled_at: Date | null;
+  commit_started_at: Date | null;
 }
 
 export class PostgresEpisodeStoryAutofillExecutionRepository
@@ -67,6 +72,7 @@ export class PostgresEpisodeStoryAutofillExecutionRepository
       WHERE id = $1
         AND job_type = 'episode_story_autofill'
         AND status = 'queued'
+        AND cancel_requested_at IS NULL
       RETURNING *
       `,
       [jobId],
@@ -111,6 +117,70 @@ export class PostgresEpisodeStoryAutofillExecutionRepository
     return (result.rowCount ?? 0) > 0;
   }
 
+  public async isEpisodeStoryAutofillCancellationRequested(
+    jobId: string,
+    userId: string,
+  ): Promise<boolean> {
+    const result = await this.client.query<{ cancellation_requested: boolean }>(
+      `
+      SELECT cancel_requested_at IS NOT NULL AS cancellation_requested
+      FROM generation_jobs
+      WHERE id = $1
+        AND user_id = $2
+        AND job_type = 'episode_story_autofill'
+        AND status = 'processing'
+      `,
+      [jobId, userId],
+    );
+
+    return result.rows[0]?.cancellation_requested === true;
+  }
+
+  public async beginEpisodeStoryAutofillCommit(jobId: string, userId: string): Promise<boolean> {
+    const result = await this.client.query<GenerationJobRow>(
+      `
+      UPDATE generation_jobs
+      SET commit_started_at = NOW()
+      WHERE id = $1
+        AND user_id = $2
+        AND job_type = 'episode_story_autofill'
+        AND status = 'processing'
+        AND cancel_requested_at IS NULL
+        AND commit_started_at IS NULL
+      RETURNING *
+      `,
+      [jobId, userId],
+    );
+
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  public async cancelEpisodeStoryAutofill(jobId: string, userId: string): Promise<boolean> {
+    const result = await this.client.query<GenerationJobRow>(
+      `
+      UPDATE generation_jobs
+      SET status = 'cancelled',
+          cancelled_at = COALESCE(cancelled_at, NOW()),
+          completed_at = COALESCE(completed_at, NOW()),
+          result = COALESCE(result, '{}'::jsonb) || jsonb_build_object(
+            'progress_stage', 'cancelled',
+            'progress_message', 'Story plan autofill was stopped.',
+            'progress_updated_at', NOW()
+          )
+      WHERE id = $1
+        AND user_id = $2
+        AND job_type = 'episode_story_autofill'
+        AND status IN ('processing', 'cancelled')
+        AND cancel_requested_at IS NOT NULL
+        AND commit_started_at IS NULL
+      RETURNING *
+      `,
+      [jobId, userId],
+    );
+
+    return (result.rowCount ?? 0) > 0;
+  }
+
   public async completeEpisodeStoryAutofill(
     input: CompleteEpisodeStoryAutofillInput,
   ): Promise<boolean> {
@@ -124,6 +194,7 @@ export class PostgresEpisodeStoryAutofillExecutionRepository
         AND user_id = $2
         AND status = 'processing'
         AND cancel_requested_at IS NULL
+        AND commit_started_at IS NOT NULL
       RETURNING *
       `,
       [
@@ -208,6 +279,10 @@ function mapGenerationJobRow(row: GenerationJobRow): GenerationJob {
     startedAt: row.started_at,
     completedAt: row.completed_at,
     expiresAt: row.expires_at,
+    cancelRequestedAt: row.cancel_requested_at,
+    cancelRequestedBy: row.cancel_requested_by,
+    cancelledAt: row.cancelled_at,
+    commitStartedAt: row.commit_started_at,
   };
 }
 

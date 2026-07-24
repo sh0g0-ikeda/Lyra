@@ -120,3 +120,10 @@ export const moveStoryItemBodySchema = z
     cross_chapter: z.boolean().optional().default(false),
   })
   .strict();
+
+export const moveEpisodeBodySchema = z
+  .object({
+    direction: storyItemMoveDirectionSchema,
+    cross_chapter: z.boolean().optional().default(false),
+  })
+  .strict();

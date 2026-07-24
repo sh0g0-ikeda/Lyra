@@ -100,7 +100,7 @@ export const auditCRequirements = [
     behavior: 'Style-reference title and notes are editable independently from dialogue and persist in page data.',
     web: [{
       path: 'apps/web/src/App.tsx',
-      markers: ['label="Style reference title"', 'label="Style reference notes"']
+      markers: ['label="Art style reference"', 'label="Visual direction notes"']
     }],
     mobile: [{
       path: 'apps/mobile/src/screens/PagesScreen.tsx',

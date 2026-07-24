@@ -117,6 +117,13 @@ describe('production app metadata', () => {
     }
   });
 
+  it('Sentry資格情報がない非本番ビルドではsource map uploadを無効にする', () => {
+    for (const profile of ['development', 'preview', 'smoke']) {
+      expect(easConfig.build?.[profile]?.env?.SENTRY_DISABLE_AUTO_UPLOAD).toBe('true');
+    }
+    expect(easConfig.build?.production?.env?.SENTRY_DISABLE_AUTO_UPLOAD).toBeUndefined();
+  });
+
   it('iOS privacy manifest で tracking 無効を明示する', () => {
     expect(config.expo.ios?.privacyManifests).toMatchObject({
       NSPrivacyTracking: false,

@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 describe('030 mobile push token registry migration', () => {
   it('個人user所有・暗号化保存・token dedupeをdatabase制約にする', async () => {
     const sql = await readFile(
-      join(process.cwd(), 'migrations', '030_add_mobile_push_token_registry.sql'),
+      join(process.cwd(), 'migrations', '033_add_mobile_push_token_registry.sql'),
       'utf8',
     );
     const normalized = sql.toLowerCase();

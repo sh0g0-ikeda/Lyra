@@ -1,7 +1,14 @@
 import { EPISODE_LONG_JOB_STALE_AFTER_MS } from '../../domain/constants/generation.js';
-import { AppError, ConfigurationError, NotFoundError, ValidationError } from '../../domain/errors/index.js';
+import {
+  AppError,
+  ConfigurationError,
+  ConflictError,
+  NotFoundError,
+  ValidationError,
+} from '../../domain/errors/index.js';
 import type { GenerationJob, GenerationJobStatus, GenerationJobType } from '../../domain/types/job.js';
 import type {
+  GenerationJobCancellationRepository,
   GenerationJobListCursor,
   GenerationJobRepository,
 } from '../../repositories/GenerationJobRepository.js';
@@ -41,11 +48,12 @@ export interface GenerationJobListResponse {
 
 export class JobService implements JobServicePort {
   public constructor(
-    private readonly generationJobRepository: GenerationJobRepository,
+    private readonly generationJobRepository: GenerationJobRepository & Partial<GenerationJobCancellationRepository>,
     private readonly pageGenerationRecoveryService: PageGenerationRecoveryServicePort = new NoopPageGenerationRecoveryService(),
     private readonly entityGenerationRecoveryService: EntityGenerationRecoveryServicePort = new NoopEntityGenerationRecoveryService(),
     private readonly episodeLongJobStaleAfterMs: number = EPISODE_LONG_JOB_STALE_AFTER_MS,
     private readonly now: () => number = () => Date.now(),
+    private readonly cancellationEnabled = true,
   ) {}
 
   public async getJob(
@@ -59,12 +67,6 @@ export class JobService implements JobServicePort {
     }
 
     if (job.status !== 'queued' && job.status !== 'processing') {
-      return job;
-    }
-
-    // Existing recovery ports are personal-resource scoped. Organization jobs
-    // remain readable here without attempting a recovery through that boundary.
-    if (organizationId !== null) {
       return job;
     }
 
@@ -99,10 +101,49 @@ export class JobService implements JobServicePort {
   public async cancelJob(
     userId: string,
     jobId: string,
-    organizationId: string | null,
+    organizationId: string | null = null,
   ): Promise<GenerationJob> {
+    const current = await this.findJobForView(userId, jobId, organizationId);
+    if (current === null) {
+      throw new NotFoundError('Job not found');
+    }
+    if (current.status === 'cancelled') {
+      return current;
+    }
+    if (
+      current.jobType === 'episode_story_autofill' &&
+      !this.cancellationEnabled
+    ) {
+      throw new AppError(
+        'JOB_CANCELLATION_DISABLED',
+        'Job cancellation is temporarily unavailable.',
+        409,
+      );
+    }
+    if (current.commitStartedAt !== null && current.commitStartedAt !== undefined) {
+      throw new ConflictError('This job is already saving its result and cannot be canceled');
+    }
+
     if (this.generationJobRepository.cancelForScope === undefined) {
-      throw new ConfigurationError('Generation job cancellation repository is not configured');
+      if (this.generationJobRepository.requestCancellation === undefined) {
+        throw new ConfigurationError('Generation job cancellation repository is not configured');
+      }
+      const requested = await this.generationJobRepository.requestCancellation(
+        jobId,
+        userId,
+        organizationId,
+      );
+      if (requested !== null) {
+        return requested;
+      }
+      const latest = await this.findJobForView(userId, jobId, organizationId);
+      if (latest === null) {
+        throw new NotFoundError('Job not found');
+      }
+      if (latest.status === 'cancelled') {
+        return latest;
+      }
+      throw new ConflictError('This job is already saving its result or has finished');
     }
 
     const result = await this.generationJobRepository.cancelForScope({
@@ -115,6 +156,9 @@ export class JobService implements JobServicePort {
       throw new NotFoundError('Job not found');
     }
     if (result.kind === 'terminal') {
+      if (result.job.status === 'cancelled') {
+        return result.job;
+      }
       throw new AppError(
         'JOB_CANCEL_NOT_QUEUED',
         'Only active jobs can be canceled.',
@@ -157,9 +201,7 @@ export class JobService implements JobServicePort {
     organizationId: string | null,
   ): Promise<GenerationJob | null> {
     if (this.generationJobRepository.findByIdForScope === undefined) {
-      return organizationId === null
-        ? this.generationJobRepository.findByIdAndUserId(jobId, userId)
-        : null;
+      return this.generationJobRepository.findByIdAndUserId(jobId, userId, organizationId);
     }
     return this.generationJobRepository.findByIdForScope({
       userId,
@@ -176,7 +218,13 @@ export class JobService implements JobServicePort {
         return false;
       }
 
-      return (await this.pageGenerationRecoveryService.recoverStaleJobsForPage(userId, pageId)) > 0;
+      return (
+        await this.pageGenerationRecoveryService.recoverStaleJobsForPage(
+          userId,
+          pageId,
+          job.organizationId ?? null,
+        )
+      ) > 0;
     }
 
     if (job.jobType === 'episode_story_autofill' || job.jobType === 'episode_page_skeleton') {
@@ -188,11 +236,32 @@ export class JobService implements JobServicePort {
       return false;
     }
 
-    return (await this.entityGenerationRecoveryService.recoverStaleJobsForEntity(userId, entityId)) > 0;
+    return (
+      await this.entityGenerationRecoveryService.recoverStaleJobsForEntity(
+        userId,
+        entityId,
+        job.organizationId ?? null,
+      )
+    ) > 0;
   }
 
   private async recoverStaleEpisodeLongJob(job: GenerationJob): Promise<boolean> {
     if (!isStaleEpisodeLongJob(job, this.now(), this.episodeLongJobStaleAfterMs)) {
+      return false;
+    }
+
+    if (
+      job.jobType === 'episode_story_autofill' &&
+      job.cancelRequestedAt !== null &&
+      job.cancelRequestedAt !== undefined &&
+      job.commitStartedAt === null
+    ) {
+      if (this.generationJobRepository.finalizeCancellationIfRequested !== undefined) {
+        return this.generationJobRepository.finalizeCancellationIfRequested(job.id);
+      }
+      if (this.generationJobRepository.finalizeCancellation !== undefined) {
+        return this.generationJobRepository.finalizeCancellation(job.id);
+      }
       return false;
     }
 

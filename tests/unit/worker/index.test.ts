@@ -82,7 +82,7 @@ describe('worker queue handler', () => {
   it('canceled job delivery is acknowledged as skipped rather than retried', async () => {
     const pageWorkerService = new FakePageGenerationWorkerService();
     const entityWorkerService = new FakeEntityGenerationWorkerService();
-    pageWorkerService.nextResult = { status: 'processed', jobStatus: 'canceled' };
+    pageWorkerService.nextResult = { status: 'processed', jobStatus: 'cancelled' };
 
     const result = await handleGenerationQueue(
       buildEvent({

@@ -25,6 +25,7 @@ import {
   createEpisodeBodySchema,
   createWorkBodySchema,
   moveStoryItemBodySchema,
+  moveEpisodeBodySchema,
   storyUuidParamSchema,
   updateChapterBodySchema,
   updateEpisodeBodySchema,
@@ -422,7 +423,7 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
     const episodeId = parseUuidParam(c, 'id');
     const organizationId = parseOptionalOrganizationId(c);
     await requireOrganizationCapability(c, dependencies, organizationId, 'edit_work');
-    const body = moveStoryItemBodySchema.safeParse(await readStoryJsonBody(c));
+    const body = moveEpisodeBodySchema.safeParse(await readStoryJsonBody(c));
 
     if (!body.success) {
       throw new ValidationError(formatZodValidationError(body.error));

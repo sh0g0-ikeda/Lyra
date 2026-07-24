@@ -116,7 +116,7 @@ class ProcessingCancellationClient implements DatabaseClient, TransactionRunner 
         status: 'processing',
         credit_cost: 0,
         cancel_requested_at: new Date('2026-07-25T00:05:00.000Z'),
-        cancel_requested_by_user_id: '11111111-1111-4111-8111-111111111111',
+        cancel_requested_by: '11111111-1111-4111-8111-111111111111',
       })) as QueryResult<T>;
     }
     if (sql.includes('WITH scoped_job AS')) {
@@ -128,7 +128,7 @@ class ProcessingCancellationClient implements DatabaseClient, TransactionRunner 
         cancel_requested_at: this.cancellationRequested
           ? new Date('2026-07-25T00:05:00.000Z')
           : null,
-        cancel_requested_by_user_id: this.cancellationRequested
+        cancel_requested_by: this.cancellationRequested
           ? '11111111-1111-4111-8111-111111111111'
           : null,
       })) as QueryResult<T>;
@@ -172,7 +172,7 @@ function jobRow(overrides: Record<string, unknown>): Record<string, unknown> {
     openai_request_id: null,
     error_message: null,
     cancel_requested_at: null,
-    cancel_requested_by_user_id: null,
+    cancel_requested_by: null,
     retry_count: 0,
     created_at: new Date('2026-07-25T00:00:00.000Z'),
     started_at: null,

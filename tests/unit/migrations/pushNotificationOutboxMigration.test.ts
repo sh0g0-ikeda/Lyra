@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 describe('031 mobile push notification outbox migration', () => {
   it('terminal job と端末別配送を同一トランザクションで一度だけ記録する', async () => {
     const sql = await readFile(
-      join(process.cwd(), 'migrations', '031_add_mobile_push_notification_outbox.sql'),
+      join(process.cwd(), 'migrations', '034_add_mobile_push_notification_outbox.sql'),
       'utf8',
     );
     const normalized = sql.toLowerCase();
@@ -31,7 +31,7 @@ describe('031 mobile push notification outbox migration', () => {
 
   it('cancel は通知対象に含めず配送leaseと再試行時刻を保持する', async () => {
     const sql = await readFile(
-      join(process.cwd(), 'migrations', '031_add_mobile_push_notification_outbox.sql'),
+      join(process.cwd(), 'migrations', '034_add_mobile_push_notification_outbox.sql'),
       'utf8',
     );
     const normalized = sql.toLowerCase();

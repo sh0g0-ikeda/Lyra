@@ -696,6 +696,46 @@ describe('story routes', () => {
     expect(response.status).toBe(422);
   });
 
+  it('章境界を越える話移動を明示的にserviceへ伝える', async () => {
+    const storyService = new FakeStoryService();
+    const app = createTestApp({ storyService });
+    const token = await createToken();
+
+    const response = await app.request(`/api/episodes/${episodeId}/move`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        direction: 'down',
+        cross_chapter: true,
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(storyService.moveEpisodeCrossChapter).toBe(true);
+  });
+
+  it('章境界移動フラグがbooleanでない場合は拒否する', async () => {
+    const app = createTestApp();
+    const token = await createToken();
+
+    const response = await app.request(`/api/episodes/${episodeId}/move`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        direction: 'down',
+        cross_chapter: 'true',
+      }),
+    });
+
+    expect(response.status).toBe(422);
+  });
+
   it('story list responses do not expose internal edit history', async () => {
     const app = createTestApp();
     const token = await createToken();

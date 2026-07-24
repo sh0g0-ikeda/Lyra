@@ -5,6 +5,28 @@ import { OpenAIClient } from './OpenAIClient.js';
 export interface OpenAICompilerResponse {
   output_text?: unknown;
   output?: unknown;
+  status?: unknown;
+  incomplete_details?: unknown;
+}
+
+export type StructuredOpenAIResponseFailureReason =
+  | 'incomplete_max_output_tokens'
+  | 'incomplete_other'
+  | 'refusal'
+  | 'unsuccessful_status'
+  | 'no_output'
+  | 'invalid_json'
+  | 'invalid_payload';
+
+export class StructuredOpenAIResponseError extends ConfigurationError {
+  public constructor(
+    message: string,
+    public readonly reason: StructuredOpenAIResponseFailureReason,
+    public readonly retryable: boolean,
+    public readonly requestId: string | null,
+  ) {
+    super(message);
+  }
 }
 
 export type OpenAIInputContent =
@@ -43,9 +65,23 @@ export async function requestStructuredOpenAIResponse<T>(
     input: options.input,
   });
 
+  const responseStateFailure = inspectStructuredResponseState(
+    response.body,
+    options.errorLabel,
+    response.requestId,
+  );
+  if (responseStateFailure !== null) {
+    throw responseStateFailure;
+  }
+
   const outputText = extractOpenAIOutputText(response.body);
   if (outputText === null) {
-    throw new ConfigurationError(`${options.errorLabel} returned no text output`);
+    throw new StructuredOpenAIResponseError(
+      `${options.errorLabel} returned no text output`,
+      'no_output',
+      true,
+      response.requestId,
+    );
   }
 
   const normalized = normalizeCompiledJson(outputText);
@@ -53,18 +89,94 @@ export async function requestStructuredOpenAIResponse<T>(
   try {
     parsed = JSON.parse(normalized);
   } catch {
-    throw new ConfigurationError(`${options.errorLabel} returned invalid JSON`);
+    throw new StructuredOpenAIResponseError(
+      `${options.errorLabel} returned invalid JSON`,
+      'invalid_json',
+      true,
+      response.requestId,
+    );
   }
 
   const sanitized = options.sanitize === undefined ? parsed : options.sanitize(parsed);
   const validated = options.responseSchema.safeParse(sanitized);
   if (!validated.success) {
-    throw new ConfigurationError(
+    throw new StructuredOpenAIResponseError(
       `${options.errorLabel} returned an invalid payload: ${z.prettifyError(validated.error)}`,
+      'invalid_payload',
+      true,
+      response.requestId,
     );
   }
 
   return validated.data;
+}
+
+function inspectStructuredResponseState(
+  response: OpenAICompilerResponse,
+  errorLabel: string,
+  requestId: string | null,
+): StructuredOpenAIResponseError | null {
+  if (containsRefusal(response.output)) {
+    return new StructuredOpenAIResponseError(
+      `${errorLabel} refused structured output`,
+      'refusal',
+      false,
+      requestId,
+    );
+  }
+
+  if (response.status === 'incomplete') {
+    const reason = readIncompleteReason(response.incomplete_details);
+    if (reason === 'max_output_tokens') {
+      return new StructuredOpenAIResponseError(
+        `${errorLabel} reached its structured output limit`,
+        'incomplete_max_output_tokens',
+        true,
+        requestId,
+      );
+    }
+
+    return new StructuredOpenAIResponseError(
+      `${errorLabel} returned incomplete structured output`,
+      'incomplete_other',
+      false,
+      requestId,
+    );
+  }
+
+  if (typeof response.status === 'string' && response.status !== 'completed') {
+    return new StructuredOpenAIResponseError(
+      `${errorLabel} did not complete structured output`,
+      'unsuccessful_status',
+      false,
+      requestId,
+    );
+  }
+
+  return null;
+}
+
+function containsRefusal(output: unknown): boolean {
+  if (!Array.isArray(output)) {
+    return false;
+  }
+
+  return output.some((item) => {
+    if (!isRecord(item) || !Array.isArray(item.content)) {
+      return false;
+    }
+
+    return item.content.some(
+      (content) => isRecord(content) && content.type === 'refusal',
+    );
+  });
+}
+
+function readIncompleteReason(value: unknown): string | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+  return typeof value.reason === 'string' ? value.reason : null;
 }
 
 export async function requestOpenAIText(

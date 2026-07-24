@@ -709,6 +709,10 @@ function buildJob(overrides: Partial<GenerationJob>): GenerationJob {
     startedAt: null,
     completedAt: null,
     expiresAt: null,
+    cancelRequestedAt: null,
+    cancelRequestedBy: null,
+    cancelledAt: null,
+    commitStartedAt: null,
     ...overrides,
   };
 }

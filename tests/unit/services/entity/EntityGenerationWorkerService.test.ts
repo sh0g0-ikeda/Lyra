@@ -287,7 +287,7 @@ describe('EntityGenerationWorkerService', () => {
 
     await expect(service.processJob('job-1')).resolves.toEqual({
       status: 'processed',
-      jobStatus: 'canceled',
+      jobStatus: 'cancelled',
     });
     expect(referenceGenerator.input).toBeNull();
     expect(executionRepository.completed).toBeNull();
@@ -806,6 +806,10 @@ function buildJob(overrides: Partial<GenerationJob> = {}): GenerationJob {
     startedAt: null,
     completedAt: null,
     expiresAt: null,
+    cancelRequestedAt: null,
+    cancelRequestedBy: null,
+    cancelledAt: null,
+    commitStartedAt: null,
     ...overrides,
   };
 }

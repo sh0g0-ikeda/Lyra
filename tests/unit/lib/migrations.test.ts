@@ -373,7 +373,7 @@ describe('runPendingMigrations', () => {
 
   it('account deletion request has resumable checkpoints', async () => {
     const sql = await readFile(
-      join(process.cwd(), 'migrations', '024_add_account_deletion_requests.sql'),
+      join(process.cwd(), 'migrations', '027_add_account_deletion_requests.sql'),
       'utf8',
     );
 
@@ -388,11 +388,11 @@ describe('runPendingMigrations', () => {
 
   it('ジョブ管理 migration は取消状態、論理非表示、遅延消費の返金ガードを定義する', async () => {
     const sql = await readFile(
-      join(process.cwd(), 'migrations', '027_add_generation_job_management.sql'),
+      join(process.cwd(), 'migrations', '030_add_generation_job_management.sql'),
       'utf8',
     );
 
-    expect(sql).toContain("CHECK (status IN ('queued', 'processing', 'completed', 'failed', 'canceled'))");
+    expect(sql).toContain("CHECK (status IN ('queued', 'processing', 'completed', 'failed', 'cancelled'))");
     expect(sql).toContain('CREATE TABLE IF NOT EXISTS generation_job_history_hides');
     expect(sql).toContain('PRIMARY KEY (generation_job_id, user_id)');
     expect(sql).toContain('CREATE OR REPLACE FUNCTION refund_late_canceled_generation_job_consume()');
@@ -402,7 +402,7 @@ describe('runPendingMigrations', () => {
 
   it('entity reference upload token は期限・MIME・size・single-use をDB制約で持つ', async () => {
     const sql = await readFile(
-      join(process.cwd(), 'migrations', '028_add_entity_reference_upload_tokens.sql'),
+      join(process.cwd(), 'migrations', '031_add_entity_reference_upload_tokens.sql'),
       'utf8',
     );
 
@@ -417,7 +417,7 @@ describe('runPendingMigrations', () => {
 
   it('episode export jobs persist bounded artifacts and a durable dispatch outbox', async () => {
     const sql = await readFile(
-      join(process.cwd(), 'migrations', '029_add_episode_export_jobs.sql'),
+      join(process.cwd(), 'migrations', '032_add_episode_export_jobs.sql'),
       'utf8',
     );
     expect(sql).toContain('CREATE TABLE export_jobs');
@@ -428,5 +428,30 @@ describe('runPendingMigrations', () => {
     expect(sql).toContain('CREATE TABLE export_job_outbox');
     expect(sql).toContain('WHERE dispatched_at IS NULL');
     expect(sql).toContain('artifact_deleted_at TIMESTAMPTZ');
+  });
+
+  it('旧クレジット消費行は一意に特定できるjob_idだけを補完する', async () => {
+    const sql = await readFile(
+      join(process.cwd(), 'migrations', '026_backfill_legacy_credit_consume_job_links.sql'),
+      'utf8',
+    );
+
+    expect(sql).toContain("generation_jobs.job_type IN ('page_generate', 'entity_generate')");
+    expect(sql).toContain("generation_jobs.status IN ('failed', 'cancelled')");
+    expect(sql).toContain('WITH verified_pairs (ledger_id, job_id) AS');
+    expect(sql.match(/'[-0-9a-f]{36}'::uuid, '[-0-9a-f]{36}'::uuid/giu)).toHaveLength(12);
+    expect(sql).toContain("consume_ledger.type = 'consume'");
+    expect(sql).toContain('consume_ledger.job_id IS NULL');
+    expect(sql).toContain('consume_ledger.amount = -generation_jobs.credit_cost');
+    expect(sql).toContain('consume_ledger.organization_id = generation_jobs.organization_id');
+    expect(sql).toContain('consume_ledger.user_id = generation_jobs.user_id');
+    expect(sql).toContain('refund_ledger.amount = generation_jobs.credit_cost');
+    expect(sql).toContain('SET job_id = verified_pairs.job_id');
+    expect(sql).not.toContain('created_at BETWEEN');
+    expect(sql).not.toContain("INTERVAL '5 seconds'");
+    expect(sql).not.toMatch(/SET\s+(?:\w+\.)?amount\b/iu);
+    expect(sql).not.toContain('UPDATE credit_balances');
+    expect(sql).not.toContain('UPDATE organization_credit_balances');
+    expect(sql).not.toMatch(/\bDELETE\s+FROM\b/iu);
   });
 });

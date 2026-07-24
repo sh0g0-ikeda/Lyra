@@ -26,6 +26,9 @@ const SAMPLE_LIMIT = 10;
 const ACTIVE_GENERATION_JOB_STATUSES_SQL = "'queued', 'processing'";
 const GENERATION_JOB_TYPES_SQL =
   "'page_generate', 'entity_generate', 'episode_story_autofill', 'episode_page_skeleton'";
+const GENERATION_JOB_LEDGER_SCOPE_SQL =
+  '((generation_jobs.organization_id IS NULL AND credit_ledger.organization_id IS NULL AND credit_ledger.user_id = generation_jobs.user_id) OR (generation_jobs.organization_id IS NOT NULL AND credit_ledger.organization_id = generation_jobs.organization_id))';
+const GENERATION_JOB_CONSUME_LEDGER_EXISTS_SQL = `EXISTS (SELECT 1 FROM credit_ledger WHERE credit_ledger.job_id = generation_jobs.id AND credit_ledger.type = 'consume' AND ${GENERATION_JOB_LEDGER_SCOPE_SQL})`;
 
 const DEPLOYMENT_DATA_INVARIANT_QUERIES: InvariantQuery[] = [
   {
@@ -98,7 +101,7 @@ const DEPLOYMENT_DATA_INVARIANT_QUERIES: InvariantQuery[] = [
   },
   {
     name: 'generation_jobs.status',
-    sql: "SELECT id::text AS id FROM generation_jobs WHERE status NOT IN ('queued', 'processing', 'completed', 'failed') ORDER BY id LIMIT $1",
+    sql: "SELECT id::text AS id FROM generation_jobs WHERE status NOT IN ('queued', 'processing', 'completed', 'failed', 'cancelled') ORDER BY id LIMIT $1",
   },
   {
     name: 'generation_jobs.generation_mode',
@@ -122,19 +125,19 @@ const DEPLOYMENT_DATA_INVARIANT_QUERIES: InvariantQuery[] = [
   },
   {
     name: 'generation_jobs.failed_page_missing_refund',
-    sql: "SELECT generation_jobs.id::text AS id FROM generation_jobs WHERE generation_jobs.job_type = 'page_generate' AND generation_jobs.status = 'failed' AND generation_jobs.credit_cost > 0 AND NOT EXISTS (SELECT 1 FROM credit_ledger WHERE credit_ledger.user_id = generation_jobs.user_id AND credit_ledger.job_id = generation_jobs.id AND credit_ledger.type = 'refund') ORDER BY generation_jobs.id LIMIT $1",
+    sql: `SELECT generation_jobs.id::text AS id FROM generation_jobs WHERE generation_jobs.job_type = 'page_generate' AND generation_jobs.status = 'failed' AND generation_jobs.credit_cost > 0 AND ${GENERATION_JOB_CONSUME_LEDGER_EXISTS_SQL} AND NOT EXISTS (SELECT 1 FROM credit_ledger WHERE credit_ledger.job_id = generation_jobs.id AND credit_ledger.type = 'refund' AND ${GENERATION_JOB_LEDGER_SCOPE_SQL}) ORDER BY generation_jobs.id LIMIT $1`,
   },
   {
     name: 'generation_jobs.failed_entity_missing_refund',
-    sql: "SELECT generation_jobs.id::text AS id FROM generation_jobs WHERE generation_jobs.job_type = 'entity_generate' AND generation_jobs.status = 'failed' AND generation_jobs.credit_cost > 0 AND NOT EXISTS (SELECT 1 FROM credit_ledger WHERE credit_ledger.user_id = generation_jobs.user_id AND credit_ledger.job_id = generation_jobs.id AND credit_ledger.type = 'refund') ORDER BY generation_jobs.id LIMIT $1",
+    sql: `SELECT generation_jobs.id::text AS id FROM generation_jobs WHERE generation_jobs.job_type = 'entity_generate' AND generation_jobs.status = 'failed' AND generation_jobs.credit_cost > 0 AND ${GENERATION_JOB_CONSUME_LEDGER_EXISTS_SQL} AND NOT EXISTS (SELECT 1 FROM credit_ledger WHERE credit_ledger.job_id = generation_jobs.id AND credit_ledger.type = 'refund' AND ${GENERATION_JOB_LEDGER_SCOPE_SQL}) ORDER BY generation_jobs.id LIMIT $1`,
   },
   {
     name: 'generation_jobs.failed_page_under_refunded',
-    sql: "SELECT generation_jobs.id::text AS id FROM generation_jobs JOIN LATERAL (SELECT COALESCE(SUM(credit_ledger.amount) FILTER (WHERE credit_ledger.type = 'consume'), 0) AS consumed_amount, COALESCE(SUM(credit_ledger.amount) FILTER (WHERE credit_ledger.type = 'refund'), 0) AS refunded_amount FROM credit_ledger WHERE credit_ledger.user_id = generation_jobs.user_id AND credit_ledger.job_id = generation_jobs.id) ledger ON TRUE WHERE generation_jobs.job_type = 'page_generate' AND generation_jobs.status = 'failed' AND generation_jobs.credit_cost > 0 AND ABS(ledger.consumed_amount) > ledger.refunded_amount ORDER BY generation_jobs.id LIMIT $1",
+    sql: `SELECT generation_jobs.id::text AS id FROM generation_jobs JOIN LATERAL (SELECT COALESCE(SUM(credit_ledger.amount) FILTER (WHERE credit_ledger.type = 'consume'), 0) AS consumed_amount, COALESCE(SUM(credit_ledger.amount) FILTER (WHERE credit_ledger.type = 'refund'), 0) AS refunded_amount FROM credit_ledger WHERE credit_ledger.job_id = generation_jobs.id AND ${GENERATION_JOB_LEDGER_SCOPE_SQL}) ledger ON TRUE WHERE generation_jobs.job_type = 'page_generate' AND generation_jobs.status = 'failed' AND generation_jobs.credit_cost > 0 AND ABS(ledger.consumed_amount) > ledger.refunded_amount ORDER BY generation_jobs.id LIMIT $1`,
   },
   {
     name: 'generation_jobs.failed_entity_under_refunded',
-    sql: "SELECT generation_jobs.id::text AS id FROM generation_jobs JOIN LATERAL (SELECT COALESCE(SUM(credit_ledger.amount) FILTER (WHERE credit_ledger.type = 'consume'), 0) AS consumed_amount, COALESCE(SUM(credit_ledger.amount) FILTER (WHERE credit_ledger.type = 'refund'), 0) AS refunded_amount FROM credit_ledger WHERE credit_ledger.user_id = generation_jobs.user_id AND credit_ledger.job_id = generation_jobs.id) ledger ON TRUE WHERE generation_jobs.job_type = 'entity_generate' AND generation_jobs.status = 'failed' AND generation_jobs.credit_cost > 0 AND ABS(ledger.consumed_amount) > ledger.refunded_amount ORDER BY generation_jobs.id LIMIT $1",
+    sql: `SELECT generation_jobs.id::text AS id FROM generation_jobs JOIN LATERAL (SELECT COALESCE(SUM(credit_ledger.amount) FILTER (WHERE credit_ledger.type = 'consume'), 0) AS consumed_amount, COALESCE(SUM(credit_ledger.amount) FILTER (WHERE credit_ledger.type = 'refund'), 0) AS refunded_amount FROM credit_ledger WHERE credit_ledger.job_id = generation_jobs.id AND ${GENERATION_JOB_LEDGER_SCOPE_SQL}) ledger ON TRUE WHERE generation_jobs.job_type = 'entity_generate' AND generation_jobs.status = 'failed' AND generation_jobs.credit_cost > 0 AND ABS(ledger.consumed_amount) > ledger.refunded_amount ORDER BY generation_jobs.id LIMIT $1`,
   },
   {
     name: 'users.plan_code',
@@ -198,7 +201,7 @@ const DEPLOYMENT_DATA_INVARIANT_QUERIES: InvariantQuery[] = [
   },
   {
     name: 'credit_ledger.job_refund_over_consumed',
-    sql: "SELECT job_id::text AS id FROM (SELECT user_id, job_id, ABS(COALESCE(SUM(amount) FILTER (WHERE type = 'consume'), 0)) AS consumed_amount, COALESCE(SUM(amount) FILTER (WHERE type = 'refund'), 0) AS refunded_amount FROM credit_ledger WHERE job_id IS NOT NULL GROUP BY user_id, job_id) ledger WHERE refunded_amount > consumed_amount ORDER BY job_id LIMIT $1",
+    sql: "WITH scoped_ledger AS (SELECT job_id, ABS(COALESCE(SUM(amount) FILTER (WHERE type = 'consume'), 0)) AS consumed_amount, COALESCE(SUM(amount) FILTER (WHERE type = 'refund'), 0) AS refunded_amount FROM credit_ledger WHERE job_id IS NOT NULL AND organization_id IS NULL GROUP BY user_id, job_id UNION ALL SELECT job_id, ABS(COALESCE(SUM(amount) FILTER (WHERE type = 'consume'), 0)) AS consumed_amount, COALESCE(SUM(amount) FILTER (WHERE type = 'refund'), 0) AS refunded_amount FROM credit_ledger WHERE job_id IS NOT NULL AND organization_id IS NOT NULL GROUP BY organization_id, job_id) SELECT job_id::text AS id FROM scoped_ledger WHERE refunded_amount > consumed_amount ORDER BY job_id LIMIT $1",
   },
   {
     name: 'payment_records.kind',

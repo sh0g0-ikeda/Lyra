@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 describe('026 mobile store purchase ledger migration', () => {
   it('keeps personal store purchases and every idempotency barrier in database constraints', async () => {
     const sql = await readFile(
-      join(process.cwd(), 'migrations', '026_add_mobile_store_purchase_ledger.sql'),
+      join(process.cwd(), 'migrations', '029_add_mobile_store_purchase_ledger.sql'),
       'utf8',
     );
 

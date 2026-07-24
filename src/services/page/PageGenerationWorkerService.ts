@@ -100,7 +100,7 @@ export interface PageImageStoragePort {
 
 export interface ProcessPageGenerationJobResult {
   status: 'processed' | 'skipped' | 'retry';
-  jobStatus?: 'completed' | 'failed' | 'canceled';
+  jobStatus?: 'completed' | 'failed' | 'cancelled';
   reason?: string;
 }
 
@@ -139,7 +139,7 @@ export class PageGenerationWorkerService {
       return this.resolveUnclaimedJobResult(jobId);
     }
     if (await this.finalizeCancellationIfRequested(job)) {
-      return { status: 'processed', jobStatus: 'canceled' };
+      return { status: 'processed', jobStatus: 'cancelled' };
     }
 
     const params = parsePersistedParams(job.params);
@@ -197,7 +197,7 @@ export class PageGenerationWorkerService {
         : null;
 
       if (await this.finalizeCancellationIfRequested(job)) {
-        return { status: 'processed', jobStatus: 'canceled' };
+        return { status: 'processed', jobStatus: 'cancelled' };
       }
 
       const renderResult = await measurePageGenerationStage(stageTimingsMs, 'rendering', () =>
@@ -219,7 +219,7 @@ export class PageGenerationWorkerService {
       assertRenderedPageImage(renderResult);
 
       if (await this.finalizeCancellationIfRequested(job)) {
-        return { status: 'processed', jobStatus: 'canceled' };
+        return { status: 'processed', jobStatus: 'cancelled' };
       }
 
       const storedImage = await measurePageGenerationStage(stageTimingsMs, 'storage', () =>
@@ -237,7 +237,7 @@ export class PageGenerationWorkerService {
       stageTimingsMs.total_before_persist = Date.now() - startedAtMs;
 
       if (await this.finalizeCancellationIfRequested(job)) {
-        return { status: 'processed', jobStatus: 'canceled' };
+        return { status: 'processed', jobStatus: 'cancelled' };
       }
       await this.touchJobProgress(job, 'Saving generated page result.');
       const completed = await this.executionRepository.completePageGeneration(
@@ -255,7 +255,7 @@ export class PageGenerationWorkerService {
       );
       if (!completed) {
         if (await this.finalizeCancellationIfRequested(job)) {
-          return { status: 'processed', jobStatus: 'canceled' };
+          return { status: 'processed', jobStatus: 'cancelled' };
         }
         throw new ConfigurationError('Failed to persist generated page image');
       }

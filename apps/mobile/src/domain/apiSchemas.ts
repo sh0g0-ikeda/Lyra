@@ -390,7 +390,10 @@ export const generationJobSchema = z.object({
   created_at: timestamp,
   started_at: nullableString,
   completed_at: nullableString,
-  expires_at: nullableString
+  expires_at: nullableString,
+  cancel_requested_at: nullableString.optional(),
+  cancelled_at: nullableString.optional(),
+  commit_started_at: nullableString.optional()
 });
 
 export const generationJobsResponseSchema = z.object({

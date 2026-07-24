@@ -1,7 +1,7 @@
 export type StoryStatus = 'draft' | 'reviewing' | 'ready';
 export type PageStatus = 'designing' | 'generating' | 'generated' | 'editing' | 'confirmed';
 export type PageDialogueMode = 'image_baked' | 'balloon_only' | 'mixed';
-export type GenerationJobStatus = 'queued' | 'processing' | 'completed' | 'failed';
+export type GenerationJobStatus = 'queued' | 'processing' | 'completed' | 'failed' | 'cancelled';
 export type GenerationJobType =
   | 'page_generate'
   | 'entity_generate'
@@ -231,6 +231,9 @@ export interface GenerationJobRecord {
   started_at: string | null;
   completed_at: string | null;
   expires_at: string | null;
+  cancel_requested_at?: string | null;
+  cancelled_at?: string | null;
+  commit_started_at?: string | null;
 }
 
 export interface CompositionRecord {

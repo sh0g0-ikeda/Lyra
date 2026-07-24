@@ -50,6 +50,22 @@ const envSchema = z.object({
   LLM_PAGE_PROMPT_COMPILER_ENABLED: z.string().optional().transform((value) => value === 'true'),
   LLM_ENTITY_REFERENCE_PROMPT_COMPILER_ENABLED: z.string().optional().transform((value) => value === 'true'),
   LLM_PAGE_GENERATION_PLANNER_ENABLED: z.string().optional().transform((value) => value === 'true'),
+  EPISODE_PAGE_PLAN_CONTINUITY_V3_ENABLED: z
+    .string()
+    .optional()
+    .transform((value) => (value === undefined ? true : value === 'true')),
+  EPISODE_PAGE_PLAN_ADAPTIVE_PACKING_ENABLED: z
+    .string()
+    .optional()
+    .transform((value) => value === 'true'),
+  EPISODE_PLAN_INLINE_REPAIR_ENABLED: z
+    .string()
+    .optional()
+    .transform((value) => value === 'true'),
+  EPISODE_STORY_AUTOFILL_CANCELLATION_ENABLED: z
+    .string()
+    .optional()
+    .transform((value) => value === 'true'),
   GENERATION_USER_ACTIVE_JOB_LIMIT: z.coerce
     .number()
     .int()

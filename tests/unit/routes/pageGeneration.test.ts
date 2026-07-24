@@ -21,6 +21,7 @@ import type {
   RefundCreditsParams,
 } from '../../../src/services/credit/CreditService.js';
 import type { JobServicePort } from '../../../src/services/job/JobService.js';
+import type { OrganizationServicePort } from '../../../src/services/organization/OrganizationService.js';
 import type { PageExportServicePort } from '../../../src/services/page/PageExportService.js';
 import type { PageFinalizeServicePort } from '../../../src/services/page/PageFinalizeService.js';
 import type {
@@ -289,12 +290,34 @@ class InvalidPageResponseQueryService extends FakePageQueryService {
 
 class FakeJobService implements JobServicePort {
   public job: GenerationJob | null = buildJob();
+  public cancelledJob: {
+    userId: string;
+    jobId: string;
+    organizationId: string | null;
+  } | null = null;
 
-  public async getJob(_userId: string, _jobId: string): Promise<GenerationJob> {
+  public async getJob(
+    _userId: string,
+    _jobId: string,
+    _organizationId: string | null = null,
+  ): Promise<GenerationJob> {
     if (this.job === null) {
       throw new NotFoundError('Job not found');
     }
 
+    return this.job;
+  }
+
+  public async cancelJob(
+    userId: string,
+    jobId: string,
+    organizationId: string | null = null,
+  ): Promise<GenerationJob> {
+    if (this.job === null) {
+      throw new NotFoundError('Job not found');
+    }
+
+    this.cancelledJob = { userId, jobId, organizationId };
     return this.job;
   }
 }
@@ -894,6 +917,110 @@ describe('page generation routes', () => {
     expect(payload).not.toHaveProperty('sqs_message_id');
   });
 
+  it('話全体反映 job の停止要求を認証ユーザーで受け付ける', async () => {
+    const jobService = new FakeJobService();
+    jobService.job = buildJob();
+    jobService.job = {
+      ...jobService.job,
+      jobType: 'episode_story_autofill',
+      status: 'processing',
+      generationMode: null,
+      creditCost: 0,
+      params: { episode_id: '44444444-4444-4444-8444-444444444444', language: 'ja' },
+      cancelRequestedAt: new Date('2026-05-01T00:00:03.000Z'),
+    };
+    const app = createTestApp(
+      new FakePageGenerationService(),
+      new FakePageFinalizeService(),
+      jobService,
+    );
+    const token = await createToken();
+
+    const response = await app.request(
+      '/api/jobs/22222222-2222-4222-8222-222222222222/cancel',
+      {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      },
+    );
+
+    expect(response.status).toBe(200);
+    expect(jobService.cancelledJob).toEqual({
+      userId: user.id,
+      jobId: '22222222-2222-4222-8222-222222222222',
+      organizationId: null,
+    });
+    await expect(response.json()).resolves.toMatchObject({
+      job_type: 'episode_story_autofill',
+      status: 'processing',
+      cancel_requested_at: '2026-05-01T00:00:03.000Z',
+      commit_started_at: null,
+    });
+  });
+
+  it('法人の話全体反映 job は権限確認後に法人スコープで停止する', async () => {
+    const organizationId = '11111111-1111-4111-8111-111111111111';
+    const requiredMemberships: Array<{
+      organizationId: string;
+      userId: string;
+      capability: string;
+    }> = [];
+    const organizationService = {
+      requireMembership: async (
+        requestedOrganizationId: string,
+        userId: string,
+        capability: string,
+      ) => {
+        requiredMemberships.push({
+          organizationId: requestedOrganizationId,
+          userId,
+          capability,
+        });
+        return {};
+      },
+    } as unknown as OrganizationServicePort;
+    const jobService = new FakeJobService();
+    jobService.job = {
+      ...buildJob(),
+      jobType: 'episode_story_autofill',
+      status: 'processing',
+      generationMode: null,
+      creditCost: 0,
+      organizationId,
+      params: { episode_id: '44444444-4444-4444-8444-444444444444', language: 'ja' },
+    };
+    const app = createTestApp(
+      new FakePageGenerationService(),
+      new FakePageFinalizeService(),
+      jobService,
+      new FakePageQueryService(),
+      new FakePageService(),
+      new FakePageExportService(),
+      new FakeEpisodeStoryAutofillService(),
+      undefined,
+      organizationService,
+    );
+    const token = await createToken();
+
+    const response = await app.request(
+      `/api/jobs/22222222-2222-4222-8222-222222222222/cancel?organization_id=${organizationId}`,
+      {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      },
+    );
+
+    expect(response.status).toBe(200);
+    expect(requiredMemberships).toEqual([
+      { organizationId, userId: user.id, capability: 'generate' },
+    ]);
+    expect(jobService.cancelledJob).toEqual({
+      userId: user.id,
+      jobId: '22222222-2222-4222-8222-222222222222',
+      organizationId,
+    });
+  });
+
   it('jobs endpoint は entity job の内部 source key を返さない', async () => {
     const jobService = new FakeJobService();
     jobService.job = buildEntityJob();
@@ -1023,11 +1150,13 @@ function createTestApp(
   pageExportService: PageExportServicePort = new FakePageExportService(),
   episodeStoryAutofillService: EpisodeStoryAutofillServicePort = new FakeEpisodeStoryAutofillService(),
   pageThumbnailService: PageThumbnailServicePort = new FakePageThumbnailService(),
+  organizationService?: OrganizationServicePort,
 ): ReturnType<typeof createApp> {
   return createApp({
     creditService: new FakeCreditService(),
     episodeStoryAutofillService,
     jobService,
+    organizationService,
     jwtSecret,
     pageExportService,
     pageFinalizeService,
@@ -1110,6 +1239,10 @@ function buildJob(): GenerationJob {
     startedAt: new Date('2026-05-01T00:00:01.000Z'),
     completedAt: new Date('2026-05-01T00:00:02.000Z'),
     expiresAt: null,
+    cancelRequestedAt: null,
+    cancelRequestedBy: null,
+    cancelledAt: null,
+    commitStartedAt: null,
   };
 }
 
@@ -1151,6 +1284,10 @@ function buildEntityJob(overrides: Partial<GenerationJob> = {}): GenerationJob {
     startedAt: new Date('2026-05-01T00:00:01.000Z'),
     completedAt: new Date('2026-05-01T00:00:02.000Z'),
     expiresAt: null,
+    cancelRequestedAt: null,
+    cancelRequestedBy: null,
+    cancelledAt: null,
+    commitStartedAt: null,
     ...overrides,
   };
 }

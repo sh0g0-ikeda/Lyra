@@ -13,11 +13,15 @@ import { createReferenceCandidateToken } from '../services/entity/ReferenceCandi
 import type { JobServicePort } from '../services/job/JobService.js';
 import type { AppEnv } from '../types/app.js';
 import { assertMobileResponseContract } from './mobileResponseContract.js';
-import { parseOptionalOrganizationId } from './organizationRouteHelpers.js';
+import {
+  parseOptionalOrganizationId,
+  requireOrganizationCapability,
+  type OrganizationRouteDependencies,
+} from './organizationRouteHelpers.js';
 
 const uuidParamSchema = z.string().uuid();
 
-export interface JobRouteDependencies {
+export interface JobRouteDependencies extends OrganizationRouteDependencies {
   authMiddleware: MiddlewareHandler<AppEnv>;
   rateLimitMiddleware: MiddlewareHandler<AppEnv>;
   jobService: JobServicePort;
@@ -35,6 +39,7 @@ export function createJobRoutes(dependencies: JobRouteDependencies): Hono<AppEnv
       throw new ConfigurationError('Generation job list service is not configured');
     }
     const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'view_work');
     const query = parseJobListQuery(c);
     const page = await dependencies.jobService.listJobs({
       userId: user.id,
@@ -59,6 +64,7 @@ export function createJobRoutes(dependencies: JobRouteDependencies): Hono<AppEnv
     }
     const jobId = parseUuidParam(c, 'id');
     const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'generate');
     const job = await dependencies.jobService.cancelJob(user.id, jobId, organizationId);
 
     const payload = await toJobResponse(job);
@@ -72,6 +78,7 @@ export function createJobRoutes(dependencies: JobRouteDependencies): Hono<AppEnv
     }
     const jobId = parseUuidParam(c, 'id');
     const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'view_work');
     await dependencies.jobService.hideJobFromHistory(user.id, jobId, organizationId);
 
     return c.body(null, 204);
@@ -81,6 +88,7 @@ export function createJobRoutes(dependencies: JobRouteDependencies): Hono<AppEnv
     const user = c.get('user');
     const jobId = parseUuidParam(c, 'id');
     const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'view_work');
     const job = await dependencies.jobService.getJob(user.id, jobId, organizationId);
 
     const payload = await toJobResponse(job);
@@ -90,13 +98,13 @@ export function createJobRoutes(dependencies: JobRouteDependencies): Hono<AppEnv
   return app;
 }
 
-const JOB_LIST_STATUSES: readonly GenerationJobStatus[] = [
+const JOB_LIST_API_STATUSES = [
   'queued',
   'processing',
   'completed',
   'failed',
   'canceled',
-];
+] as const;
 const JOB_LIST_TYPES: readonly GenerationJobType[] = [
   'page_generate',
   'entity_generate',
@@ -126,7 +134,8 @@ function parseJobListQuery(c: Context<AppEnv>): {
   return {
     limit,
     cursor: rawCursor ?? null,
-    statuses: parseJobFilter(c.req.query('status'), JOB_LIST_STATUSES, 'status'),
+    statuses: parseJobFilter(c.req.query('status'), JOB_LIST_API_STATUSES, 'status')
+      .map((status): GenerationJobStatus => status === 'canceled' ? 'cancelled' : status),
     jobTypes: parseJobFilter(c.req.query('type'), JOB_LIST_TYPES, 'type'),
   };
 }
@@ -161,7 +170,7 @@ async function toJobResponse(job: GenerationJob): Promise<Record<string, unknown
   return {
     id: job.id,
     job_type: job.jobType,
-    status: job.status,
+    status: job.status === 'cancelled' ? 'canceled' : job.status,
     generation_mode: job.generationMode,
     credit_cost: job.creditCost,
     ...(job.creditSettlement === undefined
@@ -192,6 +201,9 @@ async function toJobResponse(job: GenerationJob): Promise<Record<string, unknown
     started_at: job.startedAt?.toISOString() ?? null,
     completed_at: job.completedAt?.toISOString() ?? null,
     expires_at: job.expiresAt?.toISOString() ?? null,
+    cancel_requested_at: job.cancelRequestedAt?.toISOString() ?? null,
+    cancelled_at: job.cancelledAt?.toISOString() ?? null,
+    commit_started_at: job.commitStartedAt?.toISOString() ?? null,
   };
 }
 
@@ -266,7 +278,7 @@ function normalizeJobProgressStage(value: string | null): JobProgressStage | nul
 }
 
 function toSafeJobError(job: GenerationJob): SafeJobErrorResponse {
-  if (job.status === 'canceled') {
+  if (job.status === 'cancelled') {
     return {
       code: 'JOB_CANCELLED',
       messageKey: 'job.error.cancelled',
@@ -321,7 +333,7 @@ function matchesAny(value: string, candidates: readonly string[]): boolean {
 }
 
 function toJobActions(job: GenerationJob): Record<string, unknown> {
-  const terminal = job.status === 'completed' || job.status === 'failed' || job.status === 'canceled';
+  const terminal = job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled';
   const cancellationPending =
     job.status === 'processing' &&
     job.cancelRequestedAt !== null &&

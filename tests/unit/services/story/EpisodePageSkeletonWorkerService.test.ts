@@ -33,6 +33,10 @@ class FakeEpisodePageSkeletonRepository implements EpisodePageSkeletonExecutionR
     startedAt: null,
     completedAt: null,
     expiresAt: null,
+    cancelRequestedAt: null,
+    cancelRequestedBy: null,
+    cancelledAt: null,
+    commitStartedAt: null,
   };
   public completed: unknown = null;
   public failed: unknown = null;
@@ -128,7 +132,7 @@ describe('EpisodePageSkeletonWorkerService', () => {
 
     await expect(worker.processJob('55555555-5555-4555-8555-555555555555')).resolves.toEqual({
       status: 'processed',
-      jobStatus: 'canceled',
+      jobStatus: 'cancelled',
     });
     expect(pageSkeletonService.lastOptions).toBeUndefined();
     expect(repository.completed).toBeNull();

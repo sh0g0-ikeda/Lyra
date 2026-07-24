@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { GenerationJob } from '../../../../src/domain/types/job.js';
-import type { GenerationJobRepository } from '../../../../src/repositories/GenerationJobRepository.js';
+import type {
+  GenerationJobCancellationRepository,
+  GenerationJobRepository,
+} from '../../../../src/repositories/GenerationJobRepository.js';
 import { JobService } from '../../../../src/services/job/JobService.js';
 
 const userId = '11111111-1111-4111-8111-111111111111';
@@ -10,7 +13,7 @@ const jobId = '33333333-3333-4333-8333-333333333333';
 describe('JobService management', () => {
   it('一覧取得では tenant scope と view_work 権限をリポジトリに渡す', async () => {
     const listForScope = vi.fn().mockResolvedValue({ jobs: [buildJob()], nextCursor: null });
-    const service = new JobService({ listForScope } as unknown as GenerationJobRepository);
+    const service = new JobService(asJobRepository({ listForScope }));
 
     const result = await (service as unknown as {
       listJobs: (input: unknown) => Promise<unknown>;
@@ -41,10 +44,11 @@ describe('JobService management', () => {
       job: buildJob({
         status: 'processing',
         cancelRequestedAt: new Date('2026-07-25T00:05:00.000Z'),
-        cancelRequestedByUserId: userId,
+        cancelRequestedBy: userId,
       }),
     });
-    const service = new JobService({ cancelForScope } as unknown as GenerationJobRepository);
+    const findByIdForScope = vi.fn().mockResolvedValue(buildJob({ status: 'processing' }));
+    const service = new JobService(asJobRepository({ cancelForScope, findByIdForScope }));
 
     await expect((service as unknown as {
       cancelJob: (userId: string, jobId: string, organizationId: string | null) => Promise<GenerationJob>;
@@ -62,7 +66,7 @@ describe('JobService management', () => {
 
   it('完了済みジョブだけを論理非表示にする', async () => {
     const hideFromHistory = vi.fn().mockResolvedValue({ kind: 'active', job: buildJob({ status: 'queued' }) });
-    const service = new JobService({ hideFromHistory } as unknown as GenerationJobRepository);
+    const service = new JobService(asJobRepository({ hideFromHistory }));
 
     await expect(
       (service as unknown as {
@@ -74,6 +78,12 @@ describe('JobService management', () => {
     });
   });
 });
+
+function asJobRepository(
+  repository: Partial<GenerationJobRepository & GenerationJobCancellationRepository>,
+): GenerationJobRepository & Partial<GenerationJobCancellationRepository> {
+  return repository as GenerationJobRepository & Partial<GenerationJobCancellationRepository>;
+}
 
 function buildJob(overrides: Partial<GenerationJob> = {}): GenerationJob {
   return {

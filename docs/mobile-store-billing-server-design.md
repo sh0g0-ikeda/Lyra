@@ -55,7 +55,7 @@ POST /api/webhooks/mobile-purchases/google
 
 ## Persistence and idempotency
 
-Migration `026_add_mobile_store_purchase_ledger.sql` adds:
+Migration `029_add_mobile_store_purchase_ledger.sql` adds:
 
 1. `mobile_store_purchases`, unique on `(store, external_purchase_key)`. The
    key is an HMAC digest, so a Google purchase token is never persisted raw.

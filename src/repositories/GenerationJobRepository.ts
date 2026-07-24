@@ -107,7 +107,11 @@ export interface PruneExpiredGenerationJobsResult {
 
 export interface GenerationJobRepository {
   create(input: CreateGenerationJobInput): Promise<GenerationJob>;
-  findByIdAndUserId(jobId: string, userId: string): Promise<GenerationJob | null>;
+  findByIdAndUserId(
+    jobId: string,
+    userId: string,
+    organizationId?: string | null,
+  ): Promise<GenerationJob | null>;
   findActivePageGenerationJob(
     userId: string,
     pageId: string,
@@ -138,6 +142,15 @@ export interface GenerationJobRepository {
   hideFromHistory?(input: FindGenerationJobForScopeInput): Promise<HideGenerationJobHistoryResult>;
 }
 
+export interface GenerationJobCancellationRepository {
+  requestCancellation(
+    jobId: string,
+    userId: string,
+    organizationId?: string | null,
+  ): Promise<GenerationJob | null>;
+  finalizeCancellation(jobId: string): Promise<boolean>;
+}
+
 interface GenerationJobRow extends QueryResultRow {
   id: string;
   user_id: string;
@@ -152,7 +165,9 @@ interface GenerationJobRow extends QueryResultRow {
   openai_request_id: string | null;
   error_message: string | null;
   cancel_requested_at: Date | null;
-  cancel_requested_by_user_id: string | null;
+  cancel_requested_by: string | null;
+  cancelled_at: Date | null;
+  commit_started_at: Date | null;
   retry_count: number;
   created_at: Date;
   started_at: Date | null;
@@ -190,7 +205,9 @@ const DEFAULT_CAPACITY_JOB_TYPES: readonly GenerationJobType[] = [
   'entity_generate',
 ];
 
-export class PostgresGenerationJobRepository implements GenerationJobRepository {
+export class PostgresGenerationJobRepository
+  implements GenerationJobRepository, GenerationJobCancellationRepository
+{
   private static readonly advisoryLockNamespace = 81_527;
 
   public constructor(private readonly client: DatabaseClient & Partial<TransactionRunner>) {}
@@ -275,15 +292,34 @@ export class PostgresGenerationJobRepository implements GenerationJobRepository 
     }
   }
 
-  public async findByIdAndUserId(jobId: string, userId: string): Promise<GenerationJob | null> {
+  public async findByIdAndUserId(
+    jobId: string,
+    userId: string,
+    organizationId: string | null = null,
+  ): Promise<GenerationJob | null> {
     const result = await this.client.query<GenerationJobRow>(
       `
-      SELECT *
+      SELECT generation_jobs.*
       FROM generation_jobs
       WHERE id = $1
-        AND user_id = $2
+        AND (
+          ($3::uuid IS NULL
+            AND generation_jobs.user_id = $2
+            AND generation_jobs.organization_id IS NULL)
+          OR (
+            $3::uuid IS NOT NULL
+            AND generation_jobs.organization_id = $3::uuid
+            AND EXISTS (
+              SELECT 1
+              FROM organization_members
+              WHERE organization_members.organization_id = generation_jobs.organization_id
+                AND organization_members.user_id = $2
+                AND organization_members.status = 'active'
+            )
+          )
+        )
       `,
-      [jobId, userId],
+      [jobId, userId, organizationId],
     );
 
     return result.rows[0] === undefined ? null : mapGenerationJobRow(result.rows[0]);
@@ -398,14 +434,17 @@ export class PostgresGenerationJobRepository implements GenerationJobRepository 
       const canceledResult = await client.query<GenerationJobRow>(
         `
         UPDATE generation_jobs
-        SET status = 'canceled',
+        SET status = 'cancelled',
+            cancel_requested_at = COALESCE(cancel_requested_at, NOW()),
+            cancel_requested_by = COALESCE(cancel_requested_by, $2::uuid),
+            cancelled_at = COALESCE(cancelled_at, NOW()),
             completed_at = NOW(),
             error_message = NULL
         WHERE id = $1
           AND status = 'queued'
         RETURNING *
         `,
-        [job.id],
+        [job.id, input.userId],
       );
       const canceledRow = canceledResult.rows[0];
       if (canceledRow === undefined) {
@@ -441,9 +480,10 @@ export class PostgresGenerationJobRepository implements GenerationJobRepository 
       `
       UPDATE generation_jobs
       SET cancel_requested_at = COALESCE(cancel_requested_at, NOW()),
-          cancel_requested_by_user_id = COALESCE(cancel_requested_by_user_id, $2::uuid)
+          cancel_requested_by = COALESCE(cancel_requested_by, $2::uuid)
       WHERE id = $1
         AND status = 'processing'
+        AND commit_started_at IS NULL
         AND ${buildGenerationJobScopeSql('generation_jobs', input.capability, 2, 3)}
       RETURNING *
       `,
@@ -496,12 +536,14 @@ export class PostgresGenerationJobRepository implements GenerationJobRepository 
       const canceledResult = await client.query<GenerationJobRow>(
         `
         UPDATE generation_jobs
-        SET status = 'canceled',
+        SET status = 'cancelled',
+            cancelled_at = COALESCE(cancelled_at, NOW()),
             completed_at = NOW(),
             error_message = NULL
         WHERE id = $1
           AND status = 'processing'
           AND cancel_requested_at IS NOT NULL
+          AND commit_started_at IS NULL
         RETURNING *
         `,
         [job.id],
@@ -512,7 +554,7 @@ export class PostgresGenerationJobRepository implements GenerationJobRepository 
       }
 
       const canceledJob = mapGenerationJobRow(canceledRow);
-      const actorUserId = canceledJob.cancelRequestedByUserId ?? canceledJob.userId;
+      const actorUserId = canceledJob.cancelRequestedBy ?? canceledJob.userId;
       const refundedCredits = await this.refundCanceledJobCredits(client, canceledJob, actorUserId);
       await this.recordOrganizationCancellation(client, canceledJob, actorUserId, refundedCredits);
       return true;
@@ -661,6 +703,81 @@ export class PostgresGenerationJobRepository implements GenerationJobRepository 
     return (result.rowCount ?? 0) > 0;
   }
 
+  public async requestCancellation(
+    jobId: string,
+    userId: string,
+    organizationId: string | null = null,
+  ): Promise<GenerationJob | null> {
+    const result = await this.client.query<GenerationJobRow>(
+      `
+      UPDATE generation_jobs
+      SET cancel_requested_at = COALESCE(cancel_requested_at, NOW()),
+          cancel_requested_by = COALESCE(cancel_requested_by, $2::uuid),
+          status = CASE WHEN status = 'queued' THEN 'cancelled' ELSE status END,
+          cancelled_at = CASE WHEN status = 'queued' THEN NOW() ELSE cancelled_at END,
+          completed_at = CASE WHEN status = 'queued' THEN NOW() ELSE completed_at END,
+          result = COALESCE(result, '{}'::jsonb) || jsonb_build_object(
+            'progress_stage', CASE WHEN status = 'queued' THEN 'cancelled' ELSE 'cancellation_requested' END,
+            'progress_message', CASE
+              WHEN status = 'queued' THEN 'Story plan autofill was stopped.'
+              ELSE 'Stop requested. The current safe step will finish before stopping.'
+            END,
+            'progress_updated_at', NOW()
+          )
+      WHERE id = $1
+        AND (
+          ($3::uuid IS NULL
+            AND generation_jobs.user_id = $2
+            AND generation_jobs.organization_id IS NULL)
+          OR (
+            $3::uuid IS NOT NULL
+            AND generation_jobs.organization_id = $3::uuid
+            AND EXISTS (
+              SELECT 1
+              FROM organization_members
+              WHERE organization_members.organization_id = generation_jobs.organization_id
+                AND organization_members.user_id = $2
+                AND organization_members.status = 'active'
+            )
+          )
+        )
+        AND job_type = 'episode_story_autofill'
+        AND status IN ('queued', 'processing')
+        AND commit_started_at IS NULL
+      RETURNING *
+      `,
+      [jobId, userId, organizationId],
+    );
+
+    return result.rows[0] === undefined ? null : mapGenerationJobRow(result.rows[0]);
+  }
+
+  public async finalizeCancellation(jobId: string): Promise<boolean> {
+    const result = await this.client.query<GenerationJobRow>(
+      `
+      UPDATE generation_jobs
+      SET status = 'cancelled',
+          cancelled_at = COALESCE(cancelled_at, NOW()),
+          completed_at = COALESCE(completed_at, NOW()),
+          error_message = NULL,
+          result = COALESCE(result, '{}'::jsonb) || jsonb_build_object(
+            'progress_stage', 'cancelled',
+            'progress_message', 'Story plan autofill was stopped.',
+            'progress_updated_at', NOW()
+          )
+      WHERE id = $1
+        AND job_type = 'episode_story_autofill'
+        AND status = 'processing'
+        AND cancel_requested_at IS NOT NULL
+        AND commit_started_at IS NULL
+      RETURNING *
+      `,
+      [jobId],
+    );
+
+    return (result.rowCount ?? 0) > 0;
+  }
+
   public async markFailed(jobId: string, errorMessage: string): Promise<boolean> {
     const persistedErrorMessage = sanitizePersistedErrorMessage(errorMessage, 'Generation job failed');
     const result = await this.client.query<GenerationJobRow>(
@@ -671,6 +788,7 @@ export class PostgresGenerationJobRepository implements GenerationJobRepository 
           completed_at = NOW()
       WHERE id = $1
         AND status IN ('queued', 'processing')
+        AND cancel_requested_at IS NULL
       RETURNING *
       `,
       [jobId, persistedErrorMessage],
@@ -978,7 +1096,11 @@ export class PostgresGenerationJobRepository implements GenerationJobRepository 
           completed_at = NULL,
           error_message = NULL,
           openai_request_id = NULL,
-          sqs_message_id = NULL
+          sqs_message_id = NULL,
+          cancel_requested_at = NULL,
+          cancel_requested_by = NULL,
+          cancelled_at = NULL,
+          commit_started_at = NULL
       WHERE id = $1
         AND status = 'failed'
         AND retry_count < $2
@@ -1017,7 +1139,7 @@ export class PostgresGenerationJobRepository implements GenerationJobRepository 
       WHERE id = ANY($1::uuid[])
         AND expires_at IS NOT NULL
         AND expires_at < NOW()
-        AND status IN ('completed', 'failed', 'canceled')
+        AND status IN ('completed', 'failed', 'cancelled')
       RETURNING id
       `,
       [idsToDelete],
@@ -1039,7 +1161,7 @@ export class PostgresGenerationJobRepository implements GenerationJobRepository 
       FROM generation_jobs
       WHERE expires_at IS NOT NULL
         AND expires_at < NOW()
-        AND status IN ('completed', 'failed', 'canceled')
+        AND status IN ('completed', 'failed', 'cancelled')
       ORDER BY expires_at ASC, created_at ASC
       LIMIT $1
       `,
@@ -1124,7 +1246,7 @@ function generationJobOrganizationRoles(
 }
 
 function isTerminalGenerationJobStatus(status: GenerationJobStatus): boolean {
-  return status === 'completed' || status === 'failed' || status === 'canceled';
+  return status === 'completed' || status === 'failed' || status === 'cancelled';
 }
 
 function calculateCanceledJobRefund(
@@ -1217,7 +1339,9 @@ function mapGenerationJobRow(row: GenerationJobRow): GenerationJob {
     openaiRequestId: row.openai_request_id,
     errorMessage: row.error_message,
     cancelRequestedAt: row.cancel_requested_at,
-    cancelRequestedByUserId: row.cancel_requested_by_user_id,
+    cancelRequestedBy: row.cancel_requested_by,
+    cancelledAt: row.cancelled_at,
+    commitStartedAt: row.commit_started_at,
     retryCount: row.retry_count,
     createdAt: row.created_at,
     startedAt: row.started_at,

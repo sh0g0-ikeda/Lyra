@@ -940,7 +940,7 @@ describe('PageGenerationWorkerService', () => {
 
     await expect(service.processJob('job-1')).resolves.toEqual({
       status: 'processed',
-      jobStatus: 'canceled',
+      jobStatus: 'cancelled',
     });
     expect(renderer.calls).toEqual([]);
     expect(executionRepository.completionInput).toBeNull();
@@ -968,7 +968,7 @@ describe('PageGenerationWorkerService', () => {
 
     await expect(service.processJob('job-1')).resolves.toEqual({
       status: 'processed',
-      jobStatus: 'canceled',
+      jobStatus: 'cancelled',
     });
     expect(renderer.calls).toHaveLength(1);
     expect(storage.calls).toEqual([]);
@@ -1029,6 +1029,10 @@ function buildJob(overrides: Partial<GenerationJob> = {}): GenerationJob {
     startedAt: new Date('2026-04-24T00:01:00.000Z'),
     completedAt: null,
     expiresAt: new Date('2026-05-01T00:00:00.000Z'),
+    cancelRequestedAt: null,
+    cancelRequestedBy: null,
+    cancelledAt: null,
+    commitStartedAt: null,
     ...overrides,
   };
 }
