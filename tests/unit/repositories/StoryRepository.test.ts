@@ -2,10 +2,12 @@ import type { QueryResult, QueryResultRow } from 'pg';
 import { describe, expect, it } from 'vitest';
 import type { DatabaseClient, TransactionRunner } from '../../../src/lib/db.js';
 import { PostgresStoryRepository } from '../../../src/repositories/StoryRepository.js';
+import { decodeListCursor } from '../../../src/domain/pagination.js';
 
 class QueryCapturingClient implements DatabaseClient, TransactionRunner {
   public queries: string[] = [];
   public values: readonly unknown[] | undefined;
+  public pageRows: Record<string, unknown>[] | null = null;
   public lockRow: Record<string, unknown> = {
     id: '33333333-3333-4333-8333-333333333333',
     page_skeleton_generated: false,
@@ -19,6 +21,16 @@ class QueryCapturingClient implements DatabaseClient, TransactionRunner {
   ): Promise<QueryResult<T>> {
     this.queries.push(text);
     this.values = values;
+
+    if (text.includes('ORDER BY works.updated_at DESC, works.id DESC')) {
+      return {
+        command: 'SELECT',
+        rowCount: this.pageRows?.length ?? 0,
+        oid: 0,
+        fields: [],
+        rows: (this.pageRows ?? []) as T[],
+      };
+    }
 
     if (text.includes('FOR UPDATE')) {
       return {
@@ -98,6 +110,7 @@ class ExistingSkeletonClient implements DatabaseClient, TransactionRunner {
 
 class EpisodeUpdateCapturingClient implements DatabaseClient {
   public updateValues: readonly unknown[] | null = null;
+  public updateQuery: string | null = null;
 
   public constructor(private readonly currentEpisodeRow: Record<string, unknown> = episodeRow()) {}
 
@@ -116,6 +129,7 @@ class EpisodeUpdateCapturingClient implements DatabaseClient {
     }
 
     if (text.includes('UPDATE episodes')) {
+      this.updateQuery = text;
       this.updateValues = values ?? [];
       return {
         command: 'UPDATE',
@@ -244,9 +258,12 @@ describe('PostgresStoryRepository', () => {
 
     await repository.updateWork('11111111-1111-4111-8111-111111111111', 'user-1', {
       title: 'Lyra Revised',
+      expectedUpdatedAt: '2026-04-22T00:00:00.000Z',
     });
 
     expect(client.queries[0]).toContain('edit_history');
+    expect(client.queries[0]).toContain('works.updated_at = $20::timestamptz');
+    expect(client.values?.[19]).toBe('2026-04-22T00:00:00.000Z');
     expect(client.queries[0]).toContain('jsonb_build_object');
     expect(client.queries[0]).toContain('LIMIT 5');
   });
@@ -290,7 +307,7 @@ describe('PostgresStoryRepository', () => {
     await repository.updateWork(
       '22222222-2222-4222-8222-222222222222',
       'user-1',
-      { title: 'Enterprise Work' },
+      { title: 'Enterprise Work', expectedUpdatedAt: '2026-04-22T00:00:00.000Z' },
       '11111111-1111-4111-8111-111111111111',
     );
 
@@ -491,6 +508,7 @@ describe('PostgresStoryRepository', () => {
       '33333333-3333-4333-8333-333333333333',
       'user-1',
       {
+        expectedUpdatedAt: '2026-04-22T00:00:00.000Z',
         purpose: null,
         introduction: null,
         middle: null,
@@ -529,6 +547,7 @@ describe('PostgresStoryRepository', () => {
       '33333333-3333-4333-8333-333333333333',
       'user-1',
       {
+        expectedUpdatedAt: '2026-04-22T00:00:00.000Z',
         storyFullDraft: null,
       },
     );
@@ -546,6 +565,49 @@ describe('PostgresStoryRepository', () => {
     expect(client.updateValues?.[14]).toBeNull();
     expect(client.updateValues?.[16]).toBeNull();
     expect(client.updateValues?.[18]).toBeNull();
+    expect(client.updateQuery).toContain('episodes.updated_at = $25::timestamptz');
+    expect(client.updateValues?.[24]).toBe('2026-04-22T00:00:00.000Z');
+  });
+
+  it('lists a bounded work page with tenant scope, stable keyset ordering, and a cursor from the last returned row', async () => {
+    const client = new QueryCapturingClient();
+    client.pageRows = [
+      workRow({ id: '11111111-1111-4111-8111-111111111111', updated_at: new Date('2026-04-24T00:00:00.000Z') }),
+      workRow({ id: '22222222-2222-4222-8222-222222222222', updated_at: new Date('2026-04-24T00:00:00.000Z') }),
+      workRow({ id: '33333333-3333-4333-8333-333333333333', updated_at: new Date('2026-04-23T00:00:00.000Z') }),
+    ];
+    const repository = new PostgresStoryRepository(client);
+
+    const result = await repository.findWorksPageByUserId('user-1', {
+      limit: 2,
+      cursor: { sort: '2026-04-25T00:00:00.000Z', id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' },
+    }, '99999999-9999-4999-8999-999999999999');
+
+    expect(result.items.map((work) => work.id)).toEqual([
+      '11111111-1111-4111-8111-111111111111',
+      '22222222-2222-4222-8222-222222222222',
+    ]);
+    expect(result.nextCursor).toBeTypeOf('string');
+    expect(decodeListCursor(result.nextCursor ?? '', 'works')).toEqual({
+      sort: '2026-04-24T00:00:00.000Z',
+      id: '22222222-2222-4222-8222-222222222222',
+    });
+    expect(client.queries[0]).toContain('FROM organization_members');
+    expect(client.queries[0]).toContain('works.updated_at < $3::timestamptz');
+    expect(client.queries[0]).toContain('works.updated_at = $3::timestamptz AND works.id < $4::uuid');
+    expect(client.queries[0]).toContain('ORDER BY works.updated_at DESC, works.id DESC');
+    expect(client.queries[0]).toContain('LIMIT $5');
+    expect(client.queries[0]).not.toContain('OFFSET');
+    expect(client.queries[0].indexOf("organization_members.status = 'active'")).toBeLessThan(
+      client.queries[0].indexOf('works.updated_at < $3::timestamptz'),
+    );
+    expect(client.values).toEqual([
+      'user-1',
+      '99999999-9999-4999-8999-999999999999',
+      '2026-04-25T00:00:00.000Z',
+      'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      3,
+    ]);
   });
 
   it('locks the work and both chapter episode sets before moving a boundary episode', async () => {
@@ -602,7 +664,7 @@ function queryResult<T extends QueryResultRow>(rows: T[]): QueryResult<T> {
   };
 }
 
-function workRow(): Record<string, unknown> {
+function workRow(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     id: '11111111-1111-4111-8111-111111111111',
     user_id: 'user-1',
@@ -619,6 +681,7 @@ function workRow(): Record<string, unknown> {
     status: 'draft',
     created_at: new Date('2026-04-22T00:00:00.000Z'),
     updated_at: new Date('2026-04-22T00:00:00.000Z'),
+    ...overrides,
   };
 }
 

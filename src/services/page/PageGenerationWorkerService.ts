@@ -21,6 +21,7 @@ import type {
   SavePageGenerationInputSnapshotInput,
   TouchPageGenerationProgressInput,
 } from '../../repositories/PageGenerationExecutionRepository.js';
+import type { GenerationJobCancellationCheckpointPort } from '../../repositories/GenerationJobRepository.js';
 
 export interface PageGenerationPlanInput {
   jobId: string;
@@ -99,7 +100,7 @@ export interface PageImageStoragePort {
 
 export interface ProcessPageGenerationJobResult {
   status: 'processed' | 'skipped' | 'retry';
-  jobStatus?: 'completed' | 'failed';
+  jobStatus?: 'completed' | 'failed' | 'canceled';
   reason?: string;
 }
 
@@ -125,6 +126,7 @@ export class PageGenerationWorkerService {
     private readonly creditService: CreditServicePort,
     private readonly generationEnabled = true,
     private readonly organizationService?: OrganizationServicePort,
+    private readonly cancellationCheckpoint?: GenerationJobCancellationCheckpointPort,
   ) {}
 
   public async processJob(jobId: string): Promise<ProcessPageGenerationJobResult> {
@@ -135,6 +137,9 @@ export class PageGenerationWorkerService {
     const job = await this.executionRepository.claimQueuedPageGenerationJob(jobId);
     if (job === null) {
       return this.resolveUnclaimedJobResult(jobId);
+    }
+    if (await this.finalizeCancellationIfRequested(job)) {
+      return { status: 'processed', jobStatus: 'canceled' };
     }
 
     const params = parsePersistedParams(job.params);
@@ -191,6 +196,10 @@ export class PageGenerationWorkerService {
           )
         : null;
 
+      if (await this.finalizeCancellationIfRequested(job)) {
+        return { status: 'processed', jobStatus: 'canceled' };
+      }
+
       const renderResult = await measurePageGenerationStage(stageTimingsMs, 'rendering', () =>
         this.withProgressHeartbeat(job, 'Requesting page image from image model.', () =>
           this.renderer.render({
@@ -209,6 +218,10 @@ export class PageGenerationWorkerService {
       );
       assertRenderedPageImage(renderResult);
 
+      if (await this.finalizeCancellationIfRequested(job)) {
+        return { status: 'processed', jobStatus: 'canceled' };
+      }
+
       const storedImage = await measurePageGenerationStage(stageTimingsMs, 'storage', () =>
         this.withProgressHeartbeat(job, 'Storing generated page image.', () =>
           this.storage.store({
@@ -223,6 +236,9 @@ export class PageGenerationWorkerService {
       );
       stageTimingsMs.total_before_persist = Date.now() - startedAtMs;
 
+      if (await this.finalizeCancellationIfRequested(job)) {
+        return { status: 'processed', jobStatus: 'canceled' };
+      }
       await this.touchJobProgress(job, 'Saving generated page result.');
       const completed = await this.executionRepository.completePageGeneration(
         buildCompletionInput(job, params, storedImage, renderResult, {
@@ -238,6 +254,9 @@ export class PageGenerationWorkerService {
         stageTimingsMs),
       );
       if (!completed) {
+        if (await this.finalizeCancellationIfRequested(job)) {
+          return { status: 'processed', jobStatus: 'canceled' };
+        }
         throw new ConfigurationError('Failed to persist generated page image');
       }
 
@@ -349,6 +368,10 @@ export class PageGenerationWorkerService {
     }
 
     await this.recordGenerationFailed(job, compensation, errorMessage);
+  }
+
+  private async finalizeCancellationIfRequested(job: GenerationJob): Promise<boolean> {
+    return this.cancellationCheckpoint?.finalizeCancellationIfRequested(job.id) ?? false;
   }
 
   private async recordGenerationCompleted(

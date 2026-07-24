@@ -59,7 +59,6 @@ describe('PostgresPageLayoutRepository', () => {
         templateId: 'top_wide_3',
         targetPanelCount: 3,
         frameDefinitions: frameDefinitions(3),
-        allowPanelTruncation: false,
       }),
     ).rejects.toBeInstanceOf(ConflictError);
 
@@ -67,38 +66,20 @@ describe('PostgresPageLayoutRepository', () => {
     expect(client.queries.some((query) => query.includes('DELETE FROM panel_frames'))).toBe(false);
   });
 
-  it('縮小テンプレートはパネル数とフレーム数を同時に同期する', async () => {
+  it('縮小テンプレートは暗黙削除許可を持たず常に拒否する', async () => {
     const client = new QueryCapturingClient();
     const repository = new PostgresPageLayoutRepository(client);
 
-    const result = await repository.applyTemplateAndSyncPanels('user-1', 'page-1', {
-      templateId: 'top_wide_3',
-      targetPanelCount: 3,
-      frameDefinitions: frameDefinitions(3),
-      allowPanelTruncation: true,
-    });
+    await expect(
+      repository.applyTemplateAndSyncPanels('user-1', 'page-1', {
+        templateId: 'top_wide_3',
+        targetPanelCount: 3,
+        frameDefinitions: frameDefinitions(3),
+      }),
+    ).rejects.toBeInstanceOf(ConflictError);
 
-    expect(result).toMatchObject({
-      templateId: 'top_wide_3',
-      panelCount: 3,
-      createdPanelCount: 0,
-      deletedPanelCount: 1,
-    });
-    expect(result.frames).toHaveLength(3);
-    expect(result.frames.map((frame) => frame.panelId)).toEqual(['panel-1', 'panel-2', 'panel-3']);
-
-    const deleteFramesIndex = client.queries.findIndex((query) => query.includes('DELETE FROM panel_frames'));
-    const deletePanelsIndex = client.queries.findIndex((query) => query.includes('DELETE FROM panels'));
-    expect(deleteFramesIndex).toBeGreaterThanOrEqual(0);
-    expect(deletePanelsIndex).toBeGreaterThan(deleteFramesIndex);
-
-    const layoutUpdateIndex = client.queries.findIndex((query) => query.includes('UPDATE pages'));
-    expect(client.valuesList[layoutUpdateIndex]?.[3]).toBe('top_wide_3');
-    expect(JSON.parse(String(client.valuesList[layoutUpdateIndex]?.[2]))).toMatchObject([
-      { panel_id: 'panel-1', reading_order: 1 },
-      { panel_id: 'panel-2', reading_order: 2 },
-      { panel_id: 'panel-3', reading_order: 3 },
-    ]);
+    expect(client.queries.some((query) => query.includes('DELETE FROM panels'))).toBe(false);
+    expect(client.queries.some((query) => query.includes('DELETE FROM panel_frames'))).toBe(false);
   });
 });
 

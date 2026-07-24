@@ -1,0 +1,20 @@
+appId: ${APP_ID}
+name: "E2E-04: entity import/generate/confirm"
+tags: [staging, entity, generation]
+---
+- runFlow:
+    file: ../helpers/launch-authenticated.yaml
+- runFlow:
+    file: ../helpers/open-characters.yaml
+- assertVisible: ${E2E_FIXTURE_ENTITY_NAME}
+- tapOn: ${E2E_FIXTURE_ENTITY_NAME}
+- addMedia: ${E2E_ENTITY_IMPORT_IMAGE_PATH}
+- tapOn: ${E2E_ENTITY_IMPORT_LABEL}
+- assertVisible: ${E2E_ENTITY_GENERATE_LABEL}
+- tapOn: ${E2E_ENTITY_GENERATE_LABEL}
+- extendedWaitUntil:
+    visible: ${E2E_ENTITY_CONFIRM_LABEL}
+    timeout: 90000
+- tapOn: ${E2E_ENTITY_CONFIRM_LABEL}
+- assertVisible: ${E2E_ENTITY_REFERENCE_READY_LABEL}
+- takeScreenshot: E2E-04-entity-reference

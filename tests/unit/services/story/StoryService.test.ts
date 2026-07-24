@@ -26,9 +26,14 @@ import type { EntityReferenceReader } from '../../../../src/repositories/EntityR
 const now = new Date('2026-04-22T00:00:00.000Z');
 
 class FakeStoryRepository implements StoryRepository {
+  public staleWorkUpdate = false;
+  public disappearBeforeWorkUpdate = false;
+  public disappearBeforeChapterUpdate = false;
+  public disappearBeforeEpisodeUpdate = false;
   private readonly works = new Map<string, Work>();
   private readonly chapters = new Map<string, Chapter>();
   private readonly episodes = new Map<string, Episode>();
+  public lastWorkPageRequest: { limit: number; cursor: { sort: string | number; id: string } | null } | null = null;
 
   public async findWorksByUserId(userId: string): Promise<Work[]> {
     return [...this.works.values()].filter((work) => work.userId === userId);
@@ -64,6 +69,13 @@ class FakeStoryRepository implements StoryRepository {
   public async updateWork(id: string, userId: string, input: UpdateWorkInput): Promise<Work | null> {
     const work = await this.findWorkByIdAndUserId(id, userId);
     if (work === null) {
+      return null;
+    }
+    if (this.disappearBeforeWorkUpdate) {
+      this.works.delete(id);
+      return null;
+    }
+    if (this.staleWorkUpdate) {
       return null;
     }
 
@@ -129,6 +141,10 @@ class FakeStoryRepository implements StoryRepository {
   public async updateChapter(id: string, userId: string, input: UpdateChapterInput): Promise<Chapter | null> {
     const chapter = await this.findChapterByIdAndUserId(id, userId);
     if (chapter === null) {
+      return null;
+    }
+    if (this.disappearBeforeChapterUpdate) {
+      this.chapters.delete(id);
       return null;
     }
 
@@ -227,6 +243,10 @@ class FakeStoryRepository implements StoryRepository {
     if (episode === null) {
       return null;
     }
+    if (this.disappearBeforeEpisodeUpdate) {
+      this.episodes.delete(id);
+      return null;
+    }
 
     const updatedEpisode: Episode = {
       ...episode,
@@ -321,6 +341,14 @@ class FakeStoryRepository implements StoryRepository {
     return movedEpisode;
   }
 
+  public async findWorksPageByUserId(
+    userId: string,
+    request: { limit: number; cursor: { sort: string | number; id: string } | null },
+  ): Promise<{ items: Work[]; nextCursor: string | null }> {
+    this.lastWorkPageRequest = request;
+    return { items: await this.findWorksByUserId(userId), nextCursor: null };
+  }
+
   public async findCollaborationTargetByIdAndUserId(
     _layer: StoryCollaborationLayer,
     _targetId: string,
@@ -371,6 +399,19 @@ class FakeEntityReferenceReader implements EntityReferenceReader {
 }
 
 describe('StoryService', () => {
+  it('delegates bounded work pages without changing the legacy full-list method', async () => {
+    const repository = new FakeStoryRepository();
+    const service = new StoryService(repository, new FakeEntityReferenceReader());
+    await service.createWork('user-1', {
+      title: 'Paged work', genre: null, worldSetting: null, theme: null, mainEntityIds: [], startingPoint: null, endingPoint: null, overallFlow: null,
+    });
+
+    const result = await service.listWorksPage('user-1', { limit: 2, cursor: null });
+
+    expect(result.items).toHaveLength(1);
+    expect(result.nextCursor).toBeNull();
+    expect(repository.lastWorkPageRequest).toEqual({ limit: 2, cursor: null });
+  });
   it('creates a work', async () => {
     const service = createService();
 
@@ -404,11 +445,68 @@ describe('StoryService', () => {
     });
 
     const updatedWork = await service.updateWork('user-1', work.id, {
+      expectedUpdatedAt: now.toISOString(),
       title: '黒月の騎士 改',
     });
 
     expect(updatedWork.title).toBe('黒月の騎士 改');
     expect(updatedWork.version).toBe(2);
+  });
+
+  it('authorized work revision conflict returns RESOURCE_STALE without mutation', async () => {
+    const repository = new FakeStoryRepository();
+    const service = new StoryService(repository, new FakeEntityReferenceReader());
+    const work = await service.createWork('user-1', {
+      title: 'Revision target',
+      genre: null,
+      worldSetting: null,
+      theme: null,
+      mainEntityIds: [],
+      startingPoint: null,
+      endingPoint: null,
+      overallFlow: null,
+    });
+    repository.staleWorkUpdate = true;
+
+    await expect(
+      service.updateWork('user-1', work.id, {
+        expectedUpdatedAt: now.toISOString(),
+        title: 'Must not persist',
+      }),
+    ).rejects.toMatchObject({ code: 'RESOURCE_STALE' } satisfies Partial<AppError>);
+    await expect(service.getWork('user-1', work.id)).resolves.toMatchObject({ title: 'Revision target' });
+  });
+
+  it('conditional update 後にアクセス可能なリソースが消えた場合は NOT_FOUND を返す', async () => {
+    const repository = new FakeStoryRepository();
+    const service = new StoryService(repository, new FakeEntityReferenceReader());
+    const work = await createStoryWork(service);
+    const chapter = await createStoryChapter(service, work.id, 1);
+    const episode = await createStoryEpisode(service, chapter.id, 1);
+
+    Object.assign(repository, { disappearBeforeEpisodeUpdate: true });
+    await expect(
+      service.updateEpisode('user-1', episode.id, {
+        expectedUpdatedAt: now.toISOString(),
+        title: 'Must not persist',
+      }),
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' } satisfies Partial<AppError>);
+
+    Object.assign(repository, { disappearBeforeChapterUpdate: true });
+    await expect(
+      service.updateChapter('user-1', chapter.id, {
+        expectedUpdatedAt: now.toISOString(),
+        title: 'Must not persist',
+      }),
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' } satisfies Partial<AppError>);
+
+    Object.assign(repository, { disappearBeforeWorkUpdate: true });
+    await expect(
+      service.updateWork('user-1', work.id, {
+        expectedUpdatedAt: now.toISOString(),
+        title: 'Must not persist',
+      }),
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' } satisfies Partial<AppError>);
   });
 
   it('returns not found when creating a chapter under another user work', async () => {
@@ -651,6 +749,7 @@ describe('StoryService', () => {
 
     await expect(
       service.updateEpisode('user-2', episode.id, {
+        expectedUpdatedAt: now.toISOString(),
         title: 'updated',
       }),
     ).rejects.toMatchObject({ code: 'NOT_FOUND' } satisfies Partial<AppError>);

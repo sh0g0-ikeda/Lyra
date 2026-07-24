@@ -1,5 +1,5 @@
 import { SignJWT } from 'jose';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createApp } from '../../../src/app.js';
 import type { CreditBalanceSnapshot } from '../../../src/domain/types/credit.js';
 import type { AuthenticatedUser, SupabaseJwtClaims } from '../../../src/domain/types/user.js';
@@ -20,6 +20,7 @@ import type {
   CreditServicePort,
   RefundCreditsParams,
 } from '../../../src/services/credit/CreditService.js';
+import type { OrganizationServicePort } from '../../../src/services/organization/OrganizationService.js';
 
 const jwtSecret = 'unit-test-secret';
 const user: AuthenticatedUser = {
@@ -99,6 +100,10 @@ class FakeSceneService implements SceneServicePort {
   }
 
   public async deleteScene(_userId: string, _requestedSceneId: string): Promise<void> {}
+
+  public async listEntityStates(_userId: string, requestedEntityId: string): Promise<EntityState[]> {
+    return [buildEntityState({ entityId: requestedEntityId })];
+  }
 
   public async createEntityState(
     _userId: string,
@@ -207,14 +212,61 @@ describe('scene routes', () => {
 
     expect(response.status).toBe(401);
   });
+
+  it('entity_stateを本人の一覧として取得できる', async () => {
+    const app = createTestApp();
+    const token = await createToken();
+
+    const response = await app.request(`/api/entities/${entityId}/states`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      entity_states: [{ id: stateId, entity_id: entityId, scene_id: sceneId }],
+    });
+  });
+
+  it('法人のentity_state一覧はview_work権限を要求する', async () => {
+    const requireMembership = vi.fn().mockResolvedValue(undefined);
+    const app = createTestApp({
+      organizationService: { requireMembership } as unknown as OrganizationServicePort,
+    });
+    const token = await createToken();
+    const organizationId = '77777777-7777-4777-8777-777777777777';
+
+    const response = await app.request(`/api/entities/${entityId}/states?organization_id=${organizationId}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    expect(response.status).toBe(200);
+    expect(requireMembership).toHaveBeenCalledWith(organizationId, user.id, 'view_work');
+  });
+
+  it('Scene一覧の成功応答がcanonical schemaに違反する場合は500になる', async () => {
+    const sceneService = new FakeSceneService();
+    sceneService.listScenes = async () => [buildScene({ order: 0 })];
+    const app = createTestApp({ sceneService });
+    const token = await createToken();
+
+    const response = await app.request(`/api/episodes/${episodeId}/scenes`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    expect(response.status).toBe(500);
+  });
 });
 
-function createTestApp(): ReturnType<typeof createApp> {
+function createTestApp(overrides: {
+  organizationService?: OrganizationServicePort;
+  sceneService?: SceneServicePort;
+} = {}): ReturnType<typeof createApp> {
   return createApp({
     creditService: new FakeCreditService(),
     sceneService: new FakeSceneService(),
     userProvisioningService: new FakeUserProvisioningService(),
     jwtSecret,
+    ...overrides,
   });
 }
 

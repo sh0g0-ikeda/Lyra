@@ -1,0 +1,16 @@
+{
+  "ID": "expire-lyra-temporary-uploads-after-1-day",
+  "Status": "Enabled",
+  "Filter": {
+    "Prefix": "tmp/"
+  },
+  "Expiration": {
+    "Days": 1
+  },
+  "NoncurrentVersionExpiration": {
+    "NoncurrentDays": 1
+  },
+  "AbortIncompleteMultipartUpload": {
+    "DaysAfterInitiation": 1
+  }
+}

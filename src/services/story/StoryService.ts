@@ -1,4 +1,5 @@
-import { NotFoundError, ValidationError } from '../../domain/errors/index.js';
+import { NotFoundError, ResourceStaleError, ValidationError } from '../../domain/errors/index.js';
+import type { ListPage, ListPageRequest } from '../../domain/pagination.js';
 import type {
   Chapter,
   CreateChapterInput,
@@ -14,6 +15,10 @@ import type {
 import type { StoryRepository } from '../../repositories/StoryRepository.js';
 import type { EntityReferenceReader } from '../../repositories/EntityRepository.js';
 
+interface StoryPaginationReader {
+  findWorksPageByUserId(userId: string, request: ListPageRequest, organizationId?: string | null): Promise<ListPage<Work>>;
+}
+
 export type {
   Chapter,
   CreateChapterInput as CreateChapterRequest,
@@ -28,6 +33,7 @@ export type {
 
 export interface StoryServicePort {
   listWorks(userId: string, organizationId?: string | null): Promise<Work[]>;
+  listWorksPage(userId: string, request: ListPageRequest, organizationId?: string | null): Promise<ListPage<Work>>;
   createWork(userId: string, input: CreateWorkInput): Promise<Work>;
   getWork(userId: string, workId: string, organizationId?: string | null): Promise<Work>;
   updateWork(userId: string, workId: string, input: UpdateWorkInput, organizationId?: string | null): Promise<Work>;
@@ -68,6 +74,15 @@ export class StoryService implements StoryServicePort {
     return this.storyRepository.findWorksByUserId(userId, organizationId);
   }
 
+  public async listWorksPage(
+    userId: string,
+    request: ListPageRequest,
+    organizationId: string | null = null,
+  ): Promise<ListPage<Work>> {
+    return (this.storyRepository as StoryRepository & StoryPaginationReader)
+      .findWorksPageByUserId(userId, request, organizationId);
+  }
+
   public async getWork(userId: string, workId: string, organizationId: string | null = null): Promise<Work> {
     const work = await this.storyRepository.findWorkByIdAndUserId(workId, userId, organizationId);
     if (work === null) {
@@ -91,7 +106,11 @@ export class StoryService implements StoryServicePort {
 
     const work = await this.storyRepository.updateWork(workId, userId, input, organizationId);
     if (work === null) {
-      throw new NotFoundError('Work not found');
+      const currentWork = await this.storyRepository.findWorkByIdAndUserId(workId, userId, organizationId);
+      if (currentWork === null) {
+        throw new NotFoundError('Work not found');
+      }
+      throw new ResourceStaleError();
     }
 
     return work;
@@ -129,7 +148,11 @@ export class StoryService implements StoryServicePort {
 
     const chapter = await this.storyRepository.updateChapter(chapterId, userId, input, organizationId);
     if (chapter === null) {
-      throw new NotFoundError('Chapter not found');
+      const latestChapter = await this.storyRepository.findChapterByIdAndUserId(chapterId, userId, organizationId);
+      if (latestChapter === null) {
+        throw new NotFoundError('Chapter not found');
+      }
+      throw new ResourceStaleError();
     }
 
     return chapter;
@@ -199,7 +222,11 @@ export class StoryService implements StoryServicePort {
 
     const episode = await this.storyRepository.updateEpisode(episodeId, userId, input, organizationId);
     if (episode === null) {
-      throw new NotFoundError('Episode not found');
+      const latestEpisode = await this.storyRepository.findEpisodeByIdAndUserId(episodeId, userId, organizationId);
+      if (latestEpisode === null) {
+        throw new NotFoundError('Episode not found');
+      }
+      throw new ResourceStaleError();
     }
 
     return episode;

@@ -1,11 +1,25 @@
+import { createHash } from 'node:crypto';
 import { Hono, type Context, type MiddlewareHandler } from 'hono';
 import { z } from 'zod';
+import {
+  jobAcceptedSchema,
+  layoutTemplateResponseSchema,
+  pageAutofillResponseSchema,
+  pageGenerationReadinessSchema,
+  pageLayoutTemplatesResponseSchema,
+  pageSchema,
+  pagesResponseSchema,
+  saveAndGeneratePageResponseSchema,
+} from '../../packages/api-contract/src/mobileApiSchemas.js';
+import { listPanelFrameTemplateDefinitions } from '../domain/constants/panelFrameTemplates.js';
 import { ValidationError } from '../domain/errors/index.js';
+import { decodeListCursor, normalizeListPageLimit, type ListPageRequest } from '../domain/pagination.js';
 import { APP_LANGUAGES } from '../domain/types/language.js';
 import type { PageSummary } from '../domain/types/page.js';
 import type { PanelFrame } from '../domain/types/panelFrame.js';
 import {
   applyPageLayoutTemplateBodySchema,
+  saveAndGeneratePageBodySchema,
   updatePageSettingsBodySchema,
 } from '../lib/validators/page.schema.js';
 import { signImageCdnUrl } from '../infrastructure/aws/CloudFrontImageUrlSigner.js';
@@ -16,6 +30,7 @@ import type { PageGenerationServicePort } from '../services/page/PageGenerationS
 import type { PageExportServicePort } from '../services/page/PageExportService.js';
 import type { PageLayoutServicePort } from '../services/page/PageLayoutService.js';
 import type { PageServicePort } from '../services/page/PageService.js';
+import type { PageThumbnailServicePort } from '../services/page/PageThumbnailService.js';
 import type { OrganizationServicePort } from '../services/organization/OrganizationService.js';
 import type { EpisodeStoryAutofillServicePort } from '../services/story/EpisodeStoryAutofillService.js';
 import type { AppEnv } from '../types/app.js';
@@ -24,6 +39,7 @@ import {
   recordOrganizationAudit,
   requireOrganizationCapability,
 } from './organizationRouteHelpers.js';
+import { assertMobileResponseContract } from './mobileResponseContract.js';
 import { readJsonBody, readOptionalJsonBody, REQUEST_BODY_LIMITS } from './requestBody.js';
 
 const uuidParamSchema = z.string().uuid();
@@ -33,6 +49,11 @@ const languageBodySchema = z
   })
   .strict();
 
+const pageListQuerySchema = z.object({
+  limit: z.coerce.number().finite().int().optional(),
+  cursor: z.string().min(1).max(1024).optional(),
+});
+
 export interface PageRouteDependencies {
   authMiddleware: MiddlewareHandler<AppEnv>;
   rateLimitMiddleware: MiddlewareHandler<AppEnv>;
@@ -40,6 +61,7 @@ export interface PageRouteDependencies {
   pageQueryService: PageQueryServicePort;
   pageGenerationService: PageGenerationServicePort;
   pageExportService: PageExportServicePort;
+  pageThumbnailService: PageThumbnailServicePort;
   pageService: PageServicePort;
   episodeStoryAutofillService: EpisodeStoryAutofillServicePort;
   pageLayoutService: PageLayoutServicePort;
@@ -52,14 +74,57 @@ export function createPageRoutes(dependencies: PageRouteDependencies): Hono<AppE
   app.use('*', dependencies.authMiddleware);
   app.use('*', dependencies.rateLimitMiddleware);
 
+  app.get('/page-layout-templates', (c) => {
+    const templates = listPanelFrameTemplateDefinitions().map((template) => ({
+      id: template.id,
+      label_key: template.labelKey,
+      panel_count: template.panelCount,
+      reading_direction: template.readingDirection,
+      preview_aspect_ratio: template.previewAspectRatio,
+      supported_page_sizes: [...template.supportedPageSizes],
+      frames: template.frames.map((frame) => ({
+        vertices: frame.vertices.map((vertex) => ({ ...vertex })),
+        border_style: frame.borderStyle,
+        border_width: frame.borderWidth,
+        border_color: frame.borderColor,
+        z_index: frame.zIndex,
+        reading_order: frame.readingOrder,
+      })),
+    }));
+
+    return c.json(
+      assertMobileResponseContract(pageLayoutTemplatesResponseSchema, { templates }),
+    );
+  });
+
   app.get('/episodes/:id/pages', async (c) => {
     const user = c.get('user');
     const episodeId = parseUuidParam(c, 'id');
     const organizationId = parseOptionalOrganizationId(c);
     await requireOrganizationCapability(c, dependencies, organizationId, 'view_work');
+    const pageRequest = parsePageListRequest(c);
+    if (pageRequest !== null) {
+      const result = await dependencies.pageQueryService.listEpisodePagesPage(user.id, episodeId, pageRequest, organizationId);
+      const payload = {
+        pages: await Promise.all(result.items.map(toPageSummaryResponse)),
+        next_cursor: result.nextCursor,
+      };
+      return c.json(assertMobileResponseContract(pagesResponseSchema, payload));
+    }
     const pages = await dependencies.pageQueryService.listEpisodePages(user.id, episodeId, organizationId);
 
-    return c.json({ pages: await Promise.all(pages.map(toPageSummaryResponse)) });
+    const payload = { pages: await Promise.all(pages.map(toPageSummaryResponse)) };
+    return c.json(assertMobileResponseContract(pagesResponseSchema, payload));
+  });
+
+  app.get('/pages/:id', async (c) => {
+    const user = c.get('user');
+    const pageId = parseUuidParam(c, 'id');
+    const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'view_work');
+    const page = await dependencies.pageQueryService.getPage(user.id, pageId, organizationId);
+
+    return c.json(assertMobileResponseContract(pageSchema, await toPageSummaryResponse(page)));
   });
 
   app.post('/episodes/:id/autofill-pages-from-story', async (c) => {
@@ -89,7 +154,7 @@ export function createPageRoutes(dependencies: PageRouteDependencies): Hono<AppE
       job_id: result.jobId,
       language: body.data.language,
     });
-    return c.json({ job_id: result.jobId }, 202);
+    return c.json(assertMobileResponseContract(jobAcceptedSchema, { job_id: result.jobId }), 202);
   });
 
   app.put('/pages/:id', async (c) => {
@@ -124,7 +189,7 @@ export function createPageRoutes(dependencies: PageRouteDependencies): Hono<AppE
       fields: Object.keys(body.data),
     });
 
-    return c.json(await toPageSummaryResponse(page));
+    return c.json(assertMobileResponseContract(pageSchema, await toPageSummaryResponse(page)));
   });
 
   app.post('/pages/:id/layout-template', async (c) => {
@@ -147,7 +212,6 @@ export function createPageRoutes(dependencies: PageRouteDependencies): Hono<AppE
       pageId,
       {
         templateId: body.data.template_id,
-        allowPanelTruncation: body.data.allow_panel_truncation,
       },
       organizationId,
     );
@@ -158,13 +222,14 @@ export function createPageRoutes(dependencies: PageRouteDependencies): Hono<AppE
       deleted_panel_count: result.deletedPanelCount,
     });
 
-    return c.json({
+    const payload = {
       template_id: result.templateId,
       panel_count: result.panelCount,
       created_panel_count: result.createdPanelCount,
       deleted_panel_count: result.deletedPanelCount,
       frames: result.frames.map(toPanelFrameResponse),
-    });
+    };
+    return c.json(assertMobileResponseContract(layoutTemplateResponseSchema, payload));
   });
 
   app.post('/pages/:id/autofill-from-scenes', async (c) => {
@@ -196,7 +261,7 @@ export function createPageRoutes(dependencies: PageRouteDependencies): Hono<AppE
       compiler_used: result.compilerUsed,
     });
 
-    return c.json({
+    const payload = {
       updated_panel_count: result.updatedPanelCount,
       filled_field_count: result.filledFieldCount,
       compiler_used: result.compilerUsed,
@@ -204,7 +269,8 @@ export function createPageRoutes(dependencies: PageRouteDependencies): Hono<AppE
       compiler_model: result.compilerModel,
       compiler_prompt_version: result.compilerPromptVersion,
       compiler_error: result.compilerError,
-    });
+    };
+    return c.json(assertMobileResponseContract(pageAutofillResponseSchema, payload));
   });
 
   app.post('/pages/:id/generate', async (c) => {
@@ -217,7 +283,120 @@ export function createPageRoutes(dependencies: PageRouteDependencies): Hono<AppE
       job_id: result.jobId,
     });
 
-    return c.json({ job_id: result.jobId }, 202);
+    return c.json(assertMobileResponseContract(jobAcceptedSchema, { job_id: result.jobId }), 202);
+  });
+
+  app.get('/pages/:id/generation-readiness', async (c) => {
+    const user = c.get('user');
+    const pageId = parseUuidParam(c, 'id');
+    const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'generate');
+    const readiness = await dependencies.pageGenerationService.getGenerationReadiness(user.id, pageId, organizationId);
+
+    const payload = {
+      ready: readiness.ready,
+      blockers: readiness.blockers.map((blocker) => ({
+        code: blocker.code,
+        entity_id: blocker.entityId,
+        field: blocker.field,
+        action: blocker.action,
+        message_key: blocker.messageKey,
+      })),
+      warnings: readiness.warnings,
+      estimated_credit_cost: readiness.estimatedCreditCost,
+      page_revision: readiness.pageRevision,
+    };
+    return c.json(assertMobileResponseContract(pageGenerationReadinessSchema, payload));
+  });
+
+  app.post('/pages/:id/save-and-generate', async (c) => {
+    const user = c.get('user');
+    const pageId = parseUuidParam(c, 'id');
+    const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'edit_work');
+    await requireOrganizationCapability(c, dependencies, organizationId, 'generate');
+    const requestId = readIdempotencyKey(c);
+    const body = saveAndGeneratePageBodySchema.safeParse(
+      await readJsonBody(c, {
+        maxBytes: REQUEST_BODY_LIMITS.SAVE_AND_GENERATE_JSON_BYTES,
+        description: 'Save and generate page',
+      }),
+    );
+    if (!body.success) {
+      throw new ValidationError(formatZodValidationError(body.error));
+    }
+
+    const result = await dependencies.pageGenerationService.saveAndGenerate(
+      user.id,
+      pageId,
+      {
+        expectedUpdatedAt: body.data.expected_updated_at,
+        page: {
+          dialogueMode: body.data.page.dialogue_mode,
+          pageDialogueToggle: body.data.page.page_dialogue_toggle,
+          styleReference: body.data.page.style_reference,
+          storySourceSceneIds: body.data.page.story_source_scene_ids,
+          storyPagePurpose: body.data.page.story_page_purpose,
+          storyContinuityNote: body.data.page.story_continuity_note,
+        },
+        panels: body.data.panels.map((panel) => ({
+          id: panel.id,
+          order: panel.order,
+          panelRole: panel.panel_role,
+          panelSize: panel.panel_size,
+          situationText: panel.situation_text,
+          composition: {
+            source: panel.composition.source,
+            galleryItemId: panel.composition.gallery_item_id,
+            compositionPrompt: panel.composition.composition_prompt,
+            shotType: panel.composition.shot_type,
+            angle: panel.composition.angle,
+            customNote: panel.composition.custom_note,
+          },
+          dialogueInPanel: panel.dialogue_in_panel,
+          dialogue: panel.dialogue.map((dialogue) => ({
+            entityId: dialogue.entity_id,
+            text: dialogue.text,
+            type: dialogue.type,
+            position: dialogue.position,
+          })),
+          sfxText: panel.sfx_text,
+          backgroundNote: panel.background_note,
+          panelNotes: panel.panel_notes,
+          entities: panel.entities.map((assignment) => ({
+            entityId: assignment.entity_id,
+            role: assignment.role,
+            expression: assignment.expression,
+            customExpression: assignment.custom_expression,
+            action: assignment.action,
+            customAction: assignment.custom_action,
+            position: assignment.position,
+            facingDirection: assignment.facing_direction,
+            effectNote: assignment.effect_note,
+            stateId: assignment.state_id,
+          })),
+        })),
+        frames: body.data.frames.map((frame) => ({
+          panelId: frame.panel_id,
+          vertices: frame.vertices,
+          borderStyle: frame.border_style,
+          borderWidth: frame.border_width,
+          borderColor: frame.border_color,
+          zIndex: frame.z_index,
+          readingOrder: frame.reading_order,
+        })),
+        language: body.data.generation.language,
+        requestId,
+      },
+      organizationId,
+    );
+    await recordOrganizationAudit(dependencies, organizationId, user.id, 'page.save_and_generate_queued', 'page', pageId, {
+      job_id: result.jobId,
+      request_id: requestId,
+    });
+
+    const payload = { job_id: result.jobId, page_revision: result.pageRevision };
+    return c.json(assertMobileResponseContract(saveAndGeneratePageResponseSchema, payload), 202);
   });
 
   app.get('/pages/:id/export-image', async (c) => {
@@ -231,6 +410,37 @@ export function createPageRoutes(dependencies: PageRouteDependencies): Hono<AppE
       'Content-Type': exportedImage.mimeType,
       'Cache-Control': 'private, no-store',
     });
+  });
+
+  app.get('/pages/:id/thumbnail', async (c) => {
+    const user = c.get('user');
+    const pageId = parseUuidParam(c, 'id');
+    const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'view_work');
+    const revision = await dependencies.pageThumbnailService.getGeneratedImageThumbnailRevision(
+      user.id,
+      pageId,
+      organizationId,
+    );
+    const etag = `"page-thumbnail-${
+      createHash('sha256').update(revision).digest('hex').slice(0, 24)
+    }"`;
+    const headers = {
+      'Cache-Control': 'private, max-age=300',
+      'Content-Type': 'image/webp',
+      ETag: etag,
+      Vary: 'Authorization',
+    };
+    if (c.req.header('If-None-Match') === etag) {
+      return c.body(null, 304, headers);
+    }
+
+    const thumbnail = await dependencies.pageThumbnailService.getGeneratedImageThumbnail(
+      user.id,
+      pageId,
+      organizationId,
+    );
+    return c.body(new Uint8Array(thumbnail.imageData), 200, headers);
   });
 
   app.post('/pages/:id/confirm', async (c) => {
@@ -313,4 +523,38 @@ function parseUuidParam(c: Context<AppEnv>, name: string): string {
   }
 
   return result.data;
+}
+
+function readIdempotencyKey(c: Context<AppEnv>): string {
+  const value = c.req.header('Idempotency-Key');
+  if (value === undefined || !/^[A-Za-z0-9][A-Za-z0-9._-]{7,127}$/u.test(value)) {
+    throw new ValidationError('Idempotency-Key must be 8 to 128 URL-safe characters');
+  }
+  return value;
+}
+
+function parsePageListRequest(c: Context<AppEnv>): ListPageRequest | null {
+  const rawLimit = c.req.query('limit');
+  const rawCursor = c.req.query('cursor');
+  if (rawLimit === undefined && rawCursor === undefined) {
+    return null;
+  }
+
+  const parsed = pageListQuerySchema.safeParse({ limit: rawLimit, cursor: rawCursor });
+  if (!parsed.success || parsed.data.limit === undefined) {
+    throw new ValidationError('limit must be an integer from 1 through 100 and is required with cursor');
+  }
+  const limit = normalizeListPageLimit(parsed.data.limit);
+  if (limit === null) {
+    throw new ValidationError('limit must be an integer from 1 through 100');
+  }
+  if (parsed.data.cursor === undefined) {
+    return { limit, cursor: null };
+  }
+
+  const cursor = decodeListCursor(parsed.data.cursor, 'pages');
+  if (cursor === null || typeof cursor.sort !== 'number' || !Number.isInteger(cursor.sort) || cursor.sort < 1) {
+    throw new ValidationError('cursor is invalid for pages');
+  }
+  return { limit, cursor };
 }

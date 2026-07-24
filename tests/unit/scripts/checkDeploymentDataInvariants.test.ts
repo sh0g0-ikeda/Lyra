@@ -135,7 +135,12 @@ describe('checkDeploymentDataInvariants', () => {
     expect(report.checkedCount).toBeGreaterThan(20);
     expect(database.queries.some((query) => query.includes('generation_jobs'))).toBe(true);
     expect(database.queries.some((query) => query.includes('credit_ledger'))).toBe(true);
-    expect(database.queries.some((query) => query.includes("type = 'consume' AND amount < 0"))).toBe(true);
+    expect(
+      database.queries.some((query) =>
+        query.includes("type IN ('consume', 'purchase_reversal')") &&
+        query.includes('amount < 0'),
+      ),
+    ).toBe(true);
     expect(database.queries.some((query) => query.includes('incomplete_expired'))).toBe(true);
     expect(
       database.queries.some((query) =>
@@ -230,6 +235,38 @@ describe('checkDeploymentDataInvariants', () => {
       ),
     ).toBe(true);
     expect(database.queries.some((query) => query.includes('FROM pg_index'))).toBe(true);
+    expect(
+      database.queries.some((query) =>
+        query.includes('FROM mobile_store_purchases') &&
+        query.includes("state NOT IN ('pending', 'active', 'cancelled', 'expired', 'refunded', 'revoked', 'failed')"),
+      ),
+    ).toBe(true);
+    expect(
+      database.queries.some((query) =>
+        query.includes('FROM mobile_store_purchases') &&
+        query.includes("kind = 'subscription'") &&
+        query.includes("kind = 'credit_pack'"),
+      ),
+    ).toBe(true);
+    expect(
+      database.queries.some((query) =>
+        query.includes('FROM mobile_store_purchase_events') &&
+        query.includes("operation NOT IN ('observe', 'grant', 'reverse')"),
+      ),
+    ).toBe(true);
+    expect(
+      database.queries.some((query) =>
+        query.includes('FROM credit_ledger') &&
+        query.includes("'purchase_reversal'") &&
+        query.includes('amount < 0'),
+      ),
+    ).toBe(true);
+    expect(
+      database.queries.some((query) =>
+        query.includes('GROUP BY mobile_store_event_key') &&
+        query.includes('HAVING COUNT(*) > 1'),
+      ),
+    ).toBe(true);
   });
 
   it('違反行があればチェック名とサンプル ID を返す', async () => {

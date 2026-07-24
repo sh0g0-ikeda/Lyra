@@ -9,7 +9,9 @@ import type {
   FailedPageGenerationJobMissingRefund,
   PageGenerationRecoveryRepository,
   StalePageGenerationJob,
+  UndispatchedPageGenerationJob,
 } from '../../repositories/PageGenerationRecoveryRepository.js';
+import type { PageGenerationQueuePort } from './PageGenerationQueue.js';
 
 export interface PageGenerationRecoveryServicePort {
   recoverAllStaleJobs(): Promise<number>;
@@ -39,16 +41,18 @@ export class PageGenerationRecoveryService implements PageGenerationRecoveryServ
     private readonly staleAfterMs: number = PAGE_GENERATION_STALE_AFTER_MS,
     private readonly batchLimit: number = GENERATION_RECOVERY_BATCH_LIMIT,
     private readonly organizationService?: OrganizationServicePort,
+    private readonly pageGenerationQueue?: PageGenerationQueuePort,
   ) {}
 
   public async recoverAllStaleJobs(): Promise<number> {
+    const dispatchedCount = await this.recoverUndispatchedJobs();
     const staleBefore = this.buildCutoff();
     const jobs = await this.recoveryRepository.listStaleProcessingJobs(staleBefore, this.batchLimit);
     const recoveredStaleCount = await this.recoverJobs(jobs, staleBefore);
     const refundedFailedCount = await this.refundFailedJobsMissingRefund(
       await this.recoveryRepository.listFailedJobsMissingRefund(this.batchLimit),
     );
-    return recoveredStaleCount + refundedFailedCount;
+    return dispatchedCount + recoveredStaleCount + refundedFailedCount;
   }
 
   public async recoverStaleJobsForPage(
@@ -73,6 +77,28 @@ export class PageGenerationRecoveryService implements PageGenerationRecoveryServ
 
   private buildCutoff(): Date {
     return new Date(Date.now() - this.staleAfterMs);
+  }
+
+  private async recoverUndispatchedJobs(): Promise<number> {
+    if (this.pageGenerationQueue === undefined) {
+      return 0;
+    }
+    let dispatchedCount = 0;
+    const jobs = await this.recoveryRepository.listQueuedJobsMissingDispatch(this.batchLimit);
+    for (const job of jobs) {
+      try {
+        const queued = await this.pageGenerationQueue.enqueue(toQueuePayload(job));
+        if (queued.messageId === null) {
+          continue;
+        }
+        if (await this.recoveryRepository.attachQueueMessageId(job.jobId, queued.messageId)) {
+          dispatchedCount += 1;
+        }
+      } catch (error) {
+        console.error(`[page-generation-recovery] deferred outbox delivery for job ${job.jobId}`, error);
+      }
+    }
+    return dispatchedCount;
   }
 
   private async recoverJobs(jobs: StalePageGenerationJob[], staleBefore: Date): Promise<number> {
@@ -177,4 +203,19 @@ export class PageGenerationRecoveryService implements PageGenerationRecoveryServ
       jobId,
     });
   }
+}
+
+function toQueuePayload(job: UndispatchedPageGenerationJob) {
+  return {
+    jobId: job.jobId,
+    userId: job.userId,
+    pageId: job.pageId,
+    requestKind: job.requestKind,
+    generationMode: job.generationMode,
+    quality: job.quality,
+    creditCost: job.creditCost,
+    requiresPlanner: job.requiresPlanner,
+    previousPageStatus: job.previousStatus,
+    previousGenerationMode: job.previousGenerationMode,
+  };
 }

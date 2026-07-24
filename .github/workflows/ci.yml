@@ -49,6 +49,15 @@ jobs:
       - name: Install frontend dependencies
         run: npm --prefix apps/web ci
 
+      - name: Verify generated Mobile API contracts
+        run: bun run mobile:contracts:check
+
+      - name: Verify Mobile API method inventory
+        run: bun run mobile:api-inventory:check
+
+      - name: Verify Mobile Web parity inventory
+        run: bun run mobile:web-parity:check
+
       - name: Run Vitest suite
         run: bun run test
 
@@ -76,3 +85,49 @@ jobs:
 
       - name: Run browser smoke tests
         run: npm --prefix apps/web run e2e
+
+  mobile-verify:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/mobile
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: apps/mobile/package-lock.json
+
+      - name: Install Mobile dependencies
+        run: npm ci
+
+      - name: Verify Expo dependency compatibility
+        run: npx expo install --check
+
+      - name: Diagnose Expo project
+        run: npx expo-doctor
+
+      - name: Verify generated API contracts
+        run: npm run contracts:check
+
+      - name: Check Mobile types
+        run: npm run typecheck
+
+      - name: Lint Mobile
+        run: npm run lint
+
+      - name: Test Mobile
+        run: npm test
+
+      - name: Check Japanese source encoding
+        run: npm run check:mojibake
+
+      - name: Export Android bundle
+        run: npm run export:android
+
+      - name: Export iOS bundle
+        run: npm run export:ios

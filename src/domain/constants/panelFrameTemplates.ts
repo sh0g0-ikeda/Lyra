@@ -43,6 +43,17 @@ export interface PanelFrameTemplate {
   frames: UpsertPanelFrameInput[];
 }
 
+export const PANEL_FRAME_TEMPLATE_READING_DIRECTION = 'right_to_left_top_to_bottom' as const;
+export const PANEL_FRAME_TEMPLATE_PREVIEW_ASPECT_RATIO = 0.7;
+export const PANEL_FRAME_TEMPLATE_SUPPORTED_PAGE_SIZES = ['normalized_portrait'] as const;
+
+export interface PanelFrameTemplateDefinition extends PanelFrameTemplate {
+  labelKey: `page.layoutTemplate.${PanelFrameTemplateId}`;
+  readingDirection: typeof PANEL_FRAME_TEMPLATE_READING_DIRECTION;
+  previewAspectRatio: typeof PANEL_FRAME_TEMPLATE_PREVIEW_ASPECT_RATIO;
+  supportedPageSizes: typeof PANEL_FRAME_TEMPLATE_SUPPORTED_PAGE_SIZES;
+}
+
 const defaultFrameStyle = {
   panelId: null,
   borderStyle: 'solid',
@@ -259,6 +270,20 @@ export const PANEL_FRAME_TEMPLATES: Record<PanelFrameTemplateId, PanelFrameTempl
 
 export function getPanelFrameTemplate(templateId: PanelFrameTemplateId): PanelFrameTemplate {
   return PANEL_FRAME_TEMPLATES[templateId];
+}
+
+export function listPanelFrameTemplateDefinitions(): PanelFrameTemplateDefinition[] {
+  return PANEL_FRAME_TEMPLATE_IDS.map((templateId) => {
+    const template = getPanelFrameTemplate(templateId);
+    return {
+      ...template,
+      frames: buildPanelFrameTemplateInputs(templateId),
+      labelKey: `page.layoutTemplate.${templateId}`,
+      readingDirection: PANEL_FRAME_TEMPLATE_READING_DIRECTION,
+      previewAspectRatio: PANEL_FRAME_TEMPLATE_PREVIEW_ASPECT_RATIO,
+      supportedPageSizes: PANEL_FRAME_TEMPLATE_SUPPORTED_PAGE_SIZES,
+    };
+  });
 }
 
 export function buildPanelFrameTemplateInputs(templateId: PanelFrameTemplateId): UpsertPanelFrameInput[] {

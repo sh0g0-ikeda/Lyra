@@ -67,7 +67,36 @@ class FakeEpisodePageSkeletonWorkerService {
   }
 }
 
+class FakeEpisodeExportWorkerService {
+  public calls: string[] = [];
+
+  public async processJob(
+    jobId: string
+  ): Promise<{ status: 'completed'; jobStatus: 'completed' }> {
+    this.calls.push(jobId);
+    return { status: 'completed', jobStatus: 'completed' };
+  }
+}
+
 describe('worker queue handler', () => {
+  it('canceled job delivery is acknowledged as skipped rather than retried', async () => {
+    const pageWorkerService = new FakePageGenerationWorkerService();
+    const entityWorkerService = new FakeEntityGenerationWorkerService();
+    pageWorkerService.nextResult = { status: 'processed', jobStatus: 'canceled' };
+
+    const result = await handleGenerationQueue(
+      buildEvent({
+        job_id: '11111111-1111-4111-8111-111111111111',
+        job_type: 'page_generate',
+      }),
+      buildDependencies(pageWorkerService, entityWorkerService),
+    );
+
+    expect(result.batchItemFailures).toEqual([]);
+    expect(result).toMatchObject({ processedCount: 0, skippedCount: 1, retryCount: 0 });
+    expect(result.results[0]).toMatchObject({ status: 'skipped' });
+  });
+
   it('page_generate の場合に page worker service を呼ぶ', async () => {
     const pageWorkerService = new FakePageGenerationWorkerService();
     const entityWorkerService = new FakeEntityGenerationWorkerService();
@@ -111,6 +140,34 @@ describe('worker queue handler', () => {
       processedCount: 1,
       skippedCount: 0,
       failedCount: 0,
+    });
+  });
+
+  it('episode_export の場合に export worker service を呼ぶ', async () => {
+    const pageWorkerService = new FakePageGenerationWorkerService();
+    const entityWorkerService = new FakeEntityGenerationWorkerService();
+    const exportWorkerService = new FakeEpisodeExportWorkerService();
+    const dependencies = buildDependencies(
+      pageWorkerService,
+      entityWorkerService,
+      exportWorkerService
+    );
+
+    const result = await handleGenerationQueue(
+      buildEvent({
+        job_id: '11111111-1111-4111-8111-111111111111',
+        job_type: 'episode_export',
+      }),
+      dependencies,
+    );
+
+    expect(exportWorkerService.calls).toEqual([
+      '11111111-1111-4111-8111-111111111111',
+    ]);
+    expect(result).toMatchObject({
+      processedCount: 1,
+      failedCount: 0,
+      retryCount: 0,
     });
   });
 
@@ -305,12 +362,14 @@ describe('worker queue handler', () => {
 function buildDependencies(
   pageGenerationWorkerService: FakePageGenerationWorkerService,
   entityGenerationWorkerService: FakeEntityGenerationWorkerService,
+  episodeExportWorkerService = new FakeEpisodeExportWorkerService(),
 ): WorkerDependencies {
   return {
     pageGenerationWorkerService,
     entityGenerationWorkerService,
     episodeStoryAutofillWorkerService: new FakeEpisodeStoryAutofillWorkerService(),
     episodePageSkeletonWorkerService: new FakeEpisodePageSkeletonWorkerService(),
+    episodeExportWorkerService,
   };
 }
 

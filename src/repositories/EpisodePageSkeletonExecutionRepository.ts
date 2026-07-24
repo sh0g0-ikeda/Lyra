@@ -46,6 +46,8 @@ interface GenerationJobRow extends QueryResultRow {
   sqs_message_id: string | null;
   openai_request_id: string | null;
   error_message: string | null;
+  cancel_requested_at: Date | null;
+  cancel_requested_by_user_id: string | null;
   retry_count: number;
   created_at: Date;
   started_at: Date | null;
@@ -103,6 +105,7 @@ export class PostgresEpisodePageSkeletonExecutionRepository
         AND user_id = $2
         AND job_type = 'episode_page_skeleton'
         AND status = 'processing'
+        AND cancel_requested_at IS NULL
       RETURNING *
       `,
       [
@@ -125,6 +128,7 @@ export class PostgresEpisodePageSkeletonExecutionRepository
       WHERE id = $1
         AND user_id = $2
         AND status = 'processing'
+        AND cancel_requested_at IS NULL
       RETURNING *
       `,
       [
@@ -175,6 +179,7 @@ export class PostgresEpisodePageSkeletonExecutionRepository
       WHERE id = $1
         AND user_id = $2
         AND status IN ('queued', 'processing')
+        AND cancel_requested_at IS NULL
       RETURNING *
       `,
       [

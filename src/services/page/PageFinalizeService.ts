@@ -35,7 +35,11 @@ export class PageFinalizeService implements PageFinalizeServicePort {
     } else {
       ensurePageImageKeyForPage(generatedImage.s3Key, pageId, 'generated page image key');
     }
-    const balloons = await this.balloonRepository.findBalloonsByPageIdAndUserId(pageId, userId);
+    const balloons = await this.balloonRepository.findBalloonsByPageIdAndUserId(
+      pageId,
+      userId,
+      organizationId,
+    );
     const finalizedImage = balloons.length === 0
       ? await this.finalPageImageStorage.finalizePageImage({
           userId,

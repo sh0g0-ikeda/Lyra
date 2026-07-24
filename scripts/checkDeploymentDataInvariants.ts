@@ -149,12 +149,40 @@ const DEPLOYMENT_DATA_INVARIANT_QUERIES: InvariantQuery[] = [
     sql: "SELECT id::text AS id FROM subscriptions WHERE status NOT IN ('active', 'canceled', 'incomplete', 'incomplete_expired', 'past_due', 'paused', 'trialing', 'unpaid') ORDER BY id LIMIT $1",
   },
   {
+    name: 'mobile_store_purchases.store',
+    sql: "SELECT id::text AS id FROM mobile_store_purchases WHERE store NOT IN ('apple', 'google') ORDER BY id LIMIT $1",
+  },
+  {
+    name: 'mobile_store_purchases.environment',
+    sql: "SELECT id::text AS id FROM mobile_store_purchases WHERE environment NOT IN ('sandbox', 'production') ORDER BY id LIMIT $1",
+  },
+  {
+    name: 'mobile_store_purchases.state',
+    sql: "SELECT id::text AS id FROM mobile_store_purchases WHERE state NOT IN ('pending', 'active', 'cancelled', 'expired', 'refunded', 'revoked', 'failed') ORDER BY id LIMIT $1",
+  },
+  {
+    name: 'mobile_store_purchases.product_mapping',
+    sql: "SELECT id::text AS id FROM mobile_store_purchases WHERE NOT ((kind = 'subscription' AND plan_code IN ('standard', 'premium') AND credit_package_code IS NULL) OR (kind = 'credit_pack' AND plan_code IS NULL AND credit_package_code IN ('credits_200', 'credits_1000', 'credits_3000'))) ORDER BY id LIMIT $1",
+  },
+  {
+    name: 'mobile_store_purchase_events.store',
+    sql: "SELECT id::text AS id FROM mobile_store_purchase_events WHERE store NOT IN ('apple', 'google') ORDER BY id LIMIT $1",
+  },
+  {
+    name: 'mobile_store_purchase_events.operation',
+    sql: "SELECT id::text AS id FROM mobile_store_purchase_events WHERE operation NOT IN ('observe', 'grant', 'reverse') ORDER BY id LIMIT $1",
+  },
+  {
+    name: 'mobile_store_purchase_events.state',
+    sql: "SELECT id::text AS id FROM mobile_store_purchase_events WHERE state NOT IN ('pending', 'active', 'cancelled', 'expired', 'refunded', 'revoked', 'failed') ORDER BY id LIMIT $1",
+  },
+  {
     name: 'credit_ledger.type',
-    sql: "SELECT id::text AS id FROM credit_ledger WHERE type NOT IN ('signup_bonus', 'monthly_grant', 'purchase', 'consume', 'refund') ORDER BY id LIMIT $1",
+    sql: "SELECT id::text AS id FROM credit_ledger WHERE type NOT IN ('signup_bonus', 'monthly_grant', 'purchase', 'purchase_reversal', 'consume', 'refund') ORDER BY id LIMIT $1",
   },
   {
     name: 'credit_ledger.amount_sign',
-    sql: "SELECT id::text AS id FROM credit_ledger WHERE NOT ((type = 'consume' AND amount < 0) OR (type IN ('signup_bonus', 'monthly_grant', 'purchase', 'refund') AND amount > 0)) ORDER BY id LIMIT $1",
+    sql: "SELECT id::text AS id FROM credit_ledger WHERE NOT ((type IN ('consume', 'purchase_reversal') AND amount < 0) OR (type IN ('signup_bonus', 'monthly_grant', 'purchase', 'refund') AND amount > 0)) ORDER BY id LIMIT $1",
   },
   {
     name: 'credit_ledger.bucket_delta_pair',
@@ -163,6 +191,10 @@ const DEPLOYMENT_DATA_INVARIANT_QUERIES: InvariantQuery[] = [
   {
     name: 'credit_ledger.stripe_event_id_unique',
     sql: 'SELECT MIN(id::text) AS id FROM credit_ledger WHERE stripe_event_id IS NOT NULL GROUP BY stripe_event_id HAVING COUNT(*) > 1 ORDER BY MIN(id::text) LIMIT $1',
+  },
+  {
+    name: 'credit_ledger.mobile_store_event_key_unique',
+    sql: 'SELECT MIN(id::text) AS id FROM credit_ledger WHERE mobile_store_event_key IS NOT NULL GROUP BY mobile_store_event_key HAVING COUNT(*) > 1 ORDER BY MIN(id::text) LIMIT $1',
   },
   {
     name: 'credit_ledger.job_refund_over_consumed',

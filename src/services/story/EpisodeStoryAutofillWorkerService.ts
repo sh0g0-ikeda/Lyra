@@ -3,12 +3,13 @@ import type { AppLanguage } from '../../domain/types/language.js';
 import type {
   EpisodeStoryAutofillExecutionRepository,
 } from '../../repositories/EpisodeStoryAutofillExecutionRepository.js';
+import type { GenerationJobCancellationCheckpointPort } from '../../repositories/GenerationJobRepository.js';
 import { sanitizePersistedErrorMessage } from '../../lib/errorSanitizer.js';
 import type { EpisodePagePlanProgress, PageServicePort } from '../page/PageService.js';
 
 export interface ProcessEpisodeStoryAutofillJobResult {
   status: 'processed' | 'skipped';
-  jobStatus?: 'completed' | 'failed';
+  jobStatus?: 'completed' | 'failed' | 'canceled';
 }
 
 export interface EpisodeStoryAutofillWorkerPort {
@@ -24,12 +25,16 @@ export class EpisodeStoryAutofillWorkerService implements EpisodeStoryAutofillWo
   public constructor(
     private readonly repository: EpisodeStoryAutofillExecutionRepository,
     private readonly pageService: PageServicePort,
+    private readonly cancellationCheckpoint?: GenerationJobCancellationCheckpointPort,
   ) {}
 
   public async processJob(jobId: string): Promise<ProcessEpisodeStoryAutofillJobResult> {
     const job = await this.repository.claimQueuedEpisodeStoryAutofillJob(jobId);
     if (job === null) {
       return { status: 'skipped' };
+    }
+    if (await this.finalizeCancellationIfRequested(job.id)) {
+      return { status: 'processed', jobStatus: 'canceled' };
     }
 
     const episodeId = readStringParam(job.params, 'episode_id');
@@ -61,6 +66,9 @@ export class EpisodeStoryAutofillWorkerService implements EpisodeStoryAutofillWo
         episodeId,
         language,
         async (progress) => {
+          if (await this.finalizeCancellationIfRequested(job.id)) {
+            throw new ProcessingCancellationRequestedError();
+          }
           await this.recordProgress(job.id, job.userId, progress);
         },
         job.organizationId,
@@ -72,11 +80,21 @@ export class EpisodeStoryAutofillWorkerService implements EpisodeStoryAutofillWo
         );
       }
 
-      await this.repository.completeEpisodeStoryAutofill({
+      if (await this.finalizeCancellationIfRequested(job.id)) {
+        return { status: 'processed', jobStatus: 'canceled' };
+      }
+
+      const completed = await this.repository.completeEpisodeStoryAutofill({
         jobId: job.id,
         userId: job.userId,
         result,
       });
+      if (!completed) {
+        if (await this.finalizeCancellationIfRequested(job.id)) {
+          return { status: 'processed', jobStatus: 'canceled' };
+        }
+        throw new ValidationError('Failed to persist episode story autofill result');
+      }
       console.info('episode_story_autofill_completed', {
         jobId: job.id,
         userId: job.userId,
@@ -87,6 +105,9 @@ export class EpisodeStoryAutofillWorkerService implements EpisodeStoryAutofillWo
       });
       return { status: 'processed', jobStatus: 'completed' };
     } catch (error) {
+      if (error instanceof ProcessingCancellationRequestedError) {
+        return { status: 'processed', jobStatus: 'canceled' };
+      }
       console.warn('episode_story_autofill_failed', {
         jobId: job.id,
         userId: job.userId,
@@ -100,6 +121,10 @@ export class EpisodeStoryAutofillWorkerService implements EpisodeStoryAutofillWo
       });
       return { status: 'processed', jobStatus: 'failed' };
     }
+  }
+
+  private async finalizeCancellationIfRequested(jobId: string): Promise<boolean> {
+    return this.cancellationCheckpoint?.finalizeCancellationIfRequested(jobId) ?? false;
   }
 
   private async recordProgress(
@@ -129,6 +154,8 @@ export class EpisodeStoryAutofillWorkerService implements EpisodeStoryAutofillWo
     }
   }
 }
+
+class ProcessingCancellationRequestedError extends Error {}
 
 function readStringParam(params: Record<string, unknown>, key: string): string | null {
   const value = params[key];

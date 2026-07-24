@@ -1,0 +1,89 @@
+# Mobile Completion Requirement Ledger
+
+This ledger is the requirement-by-requirement completion record for
+`docs/mobile_completion_gap_spec.md`. `Done` is used only when implementation and
+authoritative verification evidence both exist. `In progress` is not release-ready.
+
+## Gap register
+
+| ID | Priority | Status | Current evidence or remaining proof |
+|---|---|---|---|
+| MOB-BASE-001 | P0 | Partial | `apps/mobile` exists and local gates pass; Git tracking, final commit/push, and PR remain. |
+| MOB-BASE-002 | P0 | Done | Character syntax fixed; `npm run typecheck` passes. |
+| MOB-BASE-003 | P0 | Partial | UTF-8 source and tests are intact, all UI copy uses typed ja/en dictionaries, catalog parity and direct-literal guards pass, and `check:mojibake` passes; remote CI and real-device Japanese proof remain. |
+| MOB-BASE-004 | P0 | Partial | `mobile-verify` CI job exists; tracked remote green result remains. |
+| MOB-BASE-005 | P0 | Partial | ESLint 9 and Vitest run the full Mobile suite. Maestro has a staging runner, an exact E2E-01..18 manifest, shared helpers, and runner/config/inventory tests. E2E-11 now performs a real offline write attempt and requires zero accepted/queued Backend-write evidence; E2E-15 requires HMAC-signed, correlated Store/provider/Webhook/ledger evidence. Installing Maestro and executing the suite on physical iOS/Android devices remain. |
+| MOB-API-001 | P0 | Done | Canonical schemas/types/payloads live in `packages/api-contract`; generated Mobile copies and the 112-method route/auth/scope/schema inventory are drift-checked in CI. Every Mobile JSON production route validates the same canonical response schema fail-closed while preserving its wire payload; binary, redirect, SSE, and 204 contracts have dedicated handling and tests. |
+| MOB-API-002 | P0 | Done | Balloon methods and cache keys include organization scope; regression test passes. |
+| MOB-API-003 | P1 | Done | Scene delete and entity-state CRUD have tenant-scoped Backend/API/UI coverage, bounded fields, role checks, and contract tests. |
+| MOB-API-004 | P1 | Done | Request classes use bounded timeout and retry classification; `requestPolicy.test.ts` and API tests pass. |
+| MOB-API-005 | P1 | Done | Works, entities, pages, organization members/invitations/usage/audit, and jobs use bounded opaque cursor pagination with tenant-scoped keyset queries and stable tie-breakers. Mobile uses `useInfiniteQuery`, ID de-duplication, authorized selected-record detail fallback, and independent `FlatList` surfaces; focused Backend 203 tests and all 270 Mobile tests pass. |
+| MOB-API-006 | P1 | Partial | Presign, binary PUT, token finalize, cancel, progress, and retry policy pass tests. A checked `tmp/` one-day lifecycle template and invariant test exist; applying/verifying it on production S3 and real-device upload proof remain. |
+| MOB-AUTH-001 | P0 | Partial | Android assetlinks, iOS AASA generation, and both-platform app-link config exist and are tested. The current production host still returns the SPA HTML for both association files; deploying them, confirming Cognito callback/logout registration, signing iOS with the real Team ID, and physical-device proof remain. |
+| MOB-AUTH-002 | P0 | Partial | Invitation parser, SecureStore persistence, detail/accept/workspace-switch flow, and distinct expired/revoked/used/email-mismatch explanations pass focused tests; real Cognito email, universal-link, and Web-fallback E2E remain. |
+| MOB-AUTH-003 | P0 | Done | `SessionBootstrapRecovery` distinguishes loading, 401, network/5xx, 403, and empty states. Retry retains tokens and workspace selection, refetches `/api/me`, and applies the successful session only; 8 focused tests cover UI and integration. |
+| MOB-AUTH-004 | P1 | Done | Token refresh is single-flight and 401 is retried once; concurrency/API tests pass. |
+| MOB-AUTH-005 | P0 | Partial | Account deletion orchestration, acknowledgements, Backend tests, and UI exist. Preview and copy distinguish Web/Stripe subscriptions, which the deletion flow cancels, from active App Store/Google Play subscriptions, which users must cancel in each store. Production Cognito/Stripe/store/S3 proof remains. |
+| MOB-ORG-001 | P0 | Done | Personal/organization balance, billing surface, and workspace-scoped queries are separated and capability tested. |
+| MOB-ORG-002 | P1 | Done | Account-owned full-screen organization management covers create/detail/update, members, invitations, role/remove, balances/plans/checkouts/portal, invoices, cursor-paginated usage/audit, and authenticated CSV share/save. Feature-disabled mode makes no organization API calls; focused component tests pass. |
+| MOB-ORG-003 | P0 | Done | Mobile capability matrix and Backend role enforcement cover view/edit/generate/billing/management actions. |
+| MOB-BILL-001 | P0 | Done | Organization checkout/portal URLs come from Backend and open in the system browser. Foreground return enters an explicit confirming state, then uses finite 0.5/1/2/4/8-second backoff over authoritative plan/balance/paid-invoice snapshots. Only a proven server change displays completion; cancel/back/timeout remains unconfirmed with retry. Policy, notice, and foreground integration tests pass. |
+| MOB-BILL-002 | P1 | Done | Personal and organization plans, monthly/purchased/total credits, renewal date, cancellation-at-period-end state, and management actions are rendered in Japanese and English with focused component coverage. |
+| MOB-BILL-003 | P0 | Partial | StoreKit/Play adapter, server-owned platform-specific product catalog, server verification, idempotent ledger, restore, signed notifications, disabled unavailable state, and focused tests exist; Apple sandbox/Google license-tester purchase, pending, cancel, restore, renewal, and refund E2E proof plus store-console metadata matching remain. |
+| MOB-STORY-001 | P1 | Done | Full-screen hierarchy sheet, lazy collapsible nodes, menus, title-only rename, confirmed delete, and cross-chapter moves pass Mobile and Backend tests. |
+| MOB-STORY-002 | P1 | Done | Legacy work/chapter/purpose/structured inputs are hidden and updates are partial so stored values are preserved. |
+| MOB-STORY-003 | P1 | Done | Scene UI explicitly says optional, zero-scene generation is allowed, and CRUD/delete confirmation are implemented. |
+| MOB-STORY-004 | P1 | Done | Initial and overwrite modes use distinct labels, destructive confirmation lists existing page/panel counts, and enqueue displays only “処理を開始しました” until the authoritative job becomes terminal. Component tests cover the started-versus-completed wording. |
+| MOB-STORY-005 | P1 | Done | StoryAI improves the current episode as a full-story draft, keeps improvement and apply actions separate, supports iterative re-input, never exposes title/purpose apply actions, and Backend context includes sibling episodes and chapters. Mobile component and Backend collaboration tests pass. |
+| MOB-STORY-006 | P1 | Done | The 20-minute warning, real/indeterminate progress, elapsed time, focus/foreground server rediscovery, queued cancellation, and ledger-backed charge/refund states are implemented. Long-job behavior is covered by focused state, foreground, resource rediscovery, and settlement tests. |
+| MOB-ENTITY-001 | P0 | Done | Same fix as MOB-BASE-002; TypeScript passes. |
+| MOB-ENTITY-002 | P1 | Done | Current field order, aliases, GUI, import, free description, save, and hidden-field preservation are implemented. `characterLatestUiContract.test.ts` provides the component regression contract. |
+| MOB-ENTITY-003 | P1 | Done | Broad clothing category/color/impression remain GUI fields, detailed collar/sleeve/lower-garment/shoes/legwear controls are hidden, `clothing_description` is natural-language input, legacy hidden values are preserved without duplication, and focused component/payload tests pass. |
+| MOB-ENTITY-004 | P0 | Done | One active candidate, unified preview/confirmed scroller, confirmation policy, modal preview, and revision cache invalidation are implemented and policy tested. |
+| MOB-ENTITY-005 | P1 | Done | Unsaved/name/type/import/active-job/credit/permission/feature-disabled blockers are individually rendered from authoritative availability data, with editor/import/account actions and focused tests. |
+| MOB-PAGE-001 | P1 | Partial | `expo-image`, revision cache key, adjacent prefetch, virtualized page picker, logout/workspace cache purge, and memory-warning memory-cache release exist. The authenticated Backend thumbnail endpoint performs bounded WebP resize and handles a matching ETag before loading/rendering the source image. Physical-device 4G latency and memory-budget measurements remain. |
+| MOB-PAGE-002 | P1 | Done | The default-expanded first Pages editor is titled “画風の参考” and uses dictionary-backed “参考にしたい作品・画風” and “線、色、雰囲気など守りたいこと” fields, independent of dialogue settings. Exact-copy tests pass. |
+| MOB-PAGE-003 | P1 | Done | Shared templates, modal radio selection, panel-count geometry, and real frame preview use Backend contracts and pass tests. |
+| MOB-PAGE-004 | P0 | Done | Backend accepts only `allow_panel_truncation:false` and never deletes implicitly. Mobile lists the exact trailing deletion candidates with situation/entity/dialogue summaries, supports reordering another target to the end, requires the existing destructive confirmation for each explicit deletion, and enables template application only after the count is safe; route/service/repository/component tests pass. |
+| MOB-PAGE-005 | P1 | Done | `PanelOrderList` shows normalized order, role, situation summary, and an ellipsis menu per compact row. Move earlier/later is disabled at boundaries, role uses a radio modal, and delete uses the existing content-summary confirmation; Backend `PanelService.reorderPanels` verifies and persists exact 1..N order. `PanelOrderList.test.tsx` covers the row and actions. |
+| MOB-PAGE-006 | P1 | Done | `PanelEditorSections` enforces the five required domains in order with separator-based collapsible sections and the optional-field guidance. Character/dialogue item frames retain all related fields, custom fields remain conditional, and component tests cover order/collapse. |
+| MOB-PAGE-007 | P1 | Done | `PanelDialogueEditor` uses “セリフを追加”, allows null narration speakers, limits required speakers to assigned panel entities, and warns on character-name quotation inside narration. Policy and component tests cover all required cases. |
+| MOB-PAGE-008 | P0 | Done | Server generation-readiness blockers are rendered with actions and generation is blocked on the authoritative result. |
+| MOB-PAGE-009 | P0 | Done | Atomic generation captures the saved page/panel/frame/entity-reference snapshot; service/repository tests pass. |
+| MOB-PAGE-010 | P1 | Done | `PageProvenanceFields` renders resolved source scenes as read-only chips and page-purpose/continuity as two-line inputs. Backend `PagePromptContext` exposes scene summaries rather than source IDs, and PromptBuilder tests prove summaries, purpose, and continuity are included in draft/compiler briefs. |
+| MOB-PAGE-011 | P1 | Partial | Async server PDF/zip jobs, selection, signed download, and sharing exist; production storage/share failure E2E remains. |
+| MOB-PAGE-012 | P0 | Done | Save-and-generate is transactional with outbox/idempotency and `PAGE_STALE` rollback tests. |
+| MOB-PAGE-013 | P0 | Done | Image-external dialogue is disabled in Mobile and safely handed to the organization-scoped Web editor. |
+| MOB-PAGE-014 | P0 | Done | Generation readiness API/helper are shared by UI and service and covered by API/service tests. |
+| MOB-PAGE-015 | P1 | Done | Layout-template API is shared and Mobile parses Backend geometry with contract tests. |
+| MOB-JOB-001 | P1 | Done | Tenant-scoped cursor list and Account UI are implemented with repository/route tests. |
+| MOB-JOB-002 | P1 | Done | Queued and processing cancellation are role-scoped. Processing requests persist a cancellation marker, workers checkpoint before publication, completion races are lock-guarded, and refunds are idempotent with ledger settlement. Mobile distinguishes actionable, requested, canceled, and terminal-history states. |
+| MOB-JOB-003 | P1 | Done | Stage, real percent, indeterminate state, elapsed time, foreground refresh, retry/cancel/hide, and ledger-backed settlement display exist. Story, Pages, and Characters query server active jobs by resource on focus/foreground instead of trusting only screen-local IDs. |
+| MOB-JOB-004 | P2 | Partial | Foreground refresh, encrypted native token registration, redacted APNs/FCM outbox delivery, logout unregister, and tap routing are implemented and focused tests pass. Provider credentials, signed builds, real delivery, and both-platform tap E2E remain. |
+| MOB-JOB-005 | P0 | Done | Backend safe serializer and Mobile message-key/support-ID rendering do not expose raw provider errors. |
+| MOB-STATE-001 | P0 | Done | Selection storage and query keys are scoped by user plus organization and invalid IDs are cleared. |
+| MOB-STATE-002 | P1 | Done | The shared dirty-state provider guards tab/workspace/background/logout transitions with an app-controlled save/discard/cancel modal, de-duplicates simultaneous resolutions, and safely resolves pending requests on unmount. Focused provider and integration tests pass. |
+| MOB-STATE-003 | P1 | Done | Offline banner, no write queue, draft retention, reconnect query integration, and contextual retry/login/workspace actions are implemented across the editor and account/invitation failure surfaces. Focused actionable-error and resource-reload tests pass. |
+| MOB-STATE-004 | P1 | Done | Page, work, chapter, episode, entity, and organization updates carry expected revision timestamps and return stable stale-resource conflicts; focused schema/service/Mobile handling tests exist. |
+| MOB-REL-001 | P0 | Partial | Icons, splash, metadata, URLs, age declarations, and store copy exist; store screenshots remain. |
+| MOB-REL-002 | P0 | Partial | EAS build/submit/update profiles exist and both local exports pass; signed iOS/production submit and remote CI proof remain. |
+| MOB-REL-003 | P0 | Partial | Privacy manifest, policy, retention, deletion, and declarations exist; store-console declaration proof remains. |
+| MOB-REL-004 | P0 | Partial | Production config validation, fixed origins, and environment matrix exist. Ten known public production values are synchronized to EAS, including API/Cognito/app-link/workspace settings. Sentry secrets, deployed AASA/assetlinks/legal routes, product mapping verification, and real production-build proof remain. |
+
+## Cross-cutting requirements
+
+| Area | Status | Completion evidence required |
+|---|---|---|
+| Actionable errors | Done | Safe error mapping/support IDs and contextual retry/login/workspace/dismiss actions are integrated across session, workspace, invitation, account, story, character, and page surfaces; focused matrix and integration tests pass. |
+| i18n | Done | Typed ja/en catalogs have exact key parity, parameterized formatting, no `pickText` call sites, no direct bilingual display literals, and passing Japanese mojibake guards. |
+| Accessibility | Partial | Labels, 44 pt targets, controlled modal boundaries, escape handling, and trigger focus restoration have component contracts. Physical-device 200% text, keyboard, safe-area, VoiceOver, and TalkBack evidence remain. |
+| Performance | Partial | `expo-image`, thumbnail/full-image separation, revision cache keys, prefetch, cursor pagination, virtualized list surfaces, cache purge, memory-warning release, and ETag-before-render behavior are implemented. Measured physical-device latency, frame, and memory budgets remain. |
+| Observability | Partial | Production-only Sentry wiring, release/environment tags, PII redaction, support IDs, request/job correlation, and source-map configuration are implemented and tested. Production DSN/auth/project setup, uploaded source maps, dashboard/alert proof, and one sanitized production event remain. |
+| Personal E2E | Partial | Exact Maestro scenarios, staging runner, and evidence contract exist. Offline-write acceptance fails closed without zero accepted/queued Backend evidence, and store acceptance fails closed without signed correlated provider/Webhook/ledger evidence. Section 9.1 has not yet been executed on physical iOS and Android devices. |
+| Organization E2E | Partial | Exact Maestro scenarios, staging runner, and evidence contract exist; Section 9.2 has not yet been executed on physical iOS and Android devices with role/tenant/ledger evidence. |
+| Long-job E2E | Partial | Restart/foreground/network-interruption scenarios and evidence contract exist; Section 9.3 has not yet been executed on both physical platforms. |
+| Audit A | Done | `docs/mobile-api-method-inventory.md` maps all 112 public Mobile API methods to HTTP route, auth, organization scope, and response contract; AST generation verifies every Backend route and CI rejects drift. |
+| Audit B | Done | `docs/mobile-backend-route-inventory.md` classifies all 124 mounted Backend routes with a concrete Mobile path or an exact reviewed exclusion; unclassified route count is zero and CI rejects drift. |
+| Audit C | Done | `docs/mobile-web-parity-inventory.md` maps all 11 required creator/layout/billing/job/credit/tutorial behaviors to implementation and verification evidence; unclassified requirement count is zero and CI rejects drift. |
+| Audit D | Open | Real-device flows and network/log/job/ledger/S3/UI state traced. |
+| Release Gate | Open | Every command and additional gate in section 12 has authoritative green evidence. |

@@ -1,7 +1,13 @@
 ﻿import { SignJWT } from 'jose';
 import { describe, expect, it } from 'vitest';
+import {
+  pageSkeletonResponseSchema,
+  storyCollaborationEventSchema,
+  storyEpisodeImprovementSchema,
+  worksResponseSchema,
+} from '../../../packages/api-contract/src/mobileApiSchemas.js';
 import { createApp } from '../../../src/app.js';
-import { ValidationError } from '../../../src/domain/errors/index.js';
+import { ResourceStaleError, ValidationError } from '../../../src/domain/errors/index.js';
 import type { CreditBalanceSnapshot } from '../../../src/domain/types/credit.js';
 import type { AuthenticatedUser, SupabaseJwtClaims } from '../../../src/domain/types/user.js';
 import { REQUEST_BODY_LIMITS } from '../../../src/routes/requestBody.js';
@@ -85,8 +91,13 @@ class FakeCreditService implements CreditServicePort {
 
 class FakeStoryService implements StoryServicePort {
   public listWorksOrganizationId: string | null | undefined = undefined;
+  public listWorksPageRequest: { limit: number; cursor: { sort: string | number; id: string } | null } | null = null;
   public createWorkOrganizationId: string | null | undefined = undefined;
   public moveEpisodeCrossChapter: boolean | undefined = undefined;
+  public lastUpdateWork: UpdateWorkRequest | null = null;
+  public lastUpdateChapter: UpdateChapterRequest | null = null;
+  public lastUpdateEpisode: UpdateEpisodeRequest | null = null;
+  public updateWorkError: Error | null = null;
 
   public async listWorks(userId: string, organizationId?: string | null): Promise<Work[]> {
     this.listWorksOrganizationId = organizationId;
@@ -107,6 +118,10 @@ class FakeStoryService implements StoryServicePort {
     requestedWorkId: string,
     input: UpdateWorkRequest,
   ): Promise<Work> {
+    if (this.updateWorkError !== null) {
+      throw this.updateWorkError;
+    }
+    this.lastUpdateWork = input;
     return buildWork({ id: requestedWorkId, userId, title: input.title ?? '作品', version: 2 });
   }
 
@@ -127,6 +142,7 @@ class FakeStoryService implements StoryServicePort {
     requestedChapterId: string,
     input: UpdateChapterRequest,
   ): Promise<Chapter> {
+    this.lastUpdateChapter = input;
     return buildChapter({ id: requestedChapterId, title: input.title ?? '第一章', version: 2 });
   }
 
@@ -152,6 +168,19 @@ class FakeStoryService implements StoryServicePort {
     return [buildEpisode({ chapterId: requestedChapterId })];
   }
 
+  public async listWorksPage(
+    userId: string,
+    request: { limit: number; cursor: { sort: string | number; id: string } | null },
+    organizationId?: string | null,
+  ): Promise<{ items: Work[]; nextCursor: string | null }> {
+    this.listWorksOrganizationId = organizationId;
+    this.listWorksPageRequest = request;
+    return {
+      items: [buildWork({ userId, organizationId: organizationId ?? null })],
+      nextCursor: 'eyJ2IjoxLCJrIjoid29ya3MiLCJzb3J0IjoiMjAyNi0wNC0yMlQwMDowMDowMC4wMDBaIiwiaWQiOiIxMTExMTExMS0xMTExLTQxMTEtODExMS0xMTExMTExMTExMTEifQ',
+    };
+  }
+
   public async getEpisode(_userId: string, requestedEpisodeId: string): Promise<Episode> {
     return buildEpisode({ id: requestedEpisodeId });
   }
@@ -161,6 +190,7 @@ class FakeStoryService implements StoryServicePort {
     requestedEpisodeId: string,
     input: UpdateEpisodeRequest,
   ): Promise<Episode> {
+    this.lastUpdateEpisode = input;
     return buildEpisode({ id: requestedEpisodeId, title: input.title ?? '第一話', version: 2 });
   }
 
@@ -181,6 +211,7 @@ class FakeStoryService implements StoryServicePort {
 class FakeStoryCollaborationService implements StoryCollaborationServicePort {
   public lastInput: Record<string, unknown> | null = null;
   public lastImproveInput: Record<string, unknown> | null = null;
+  public chunks: string[] = ['first', 'second'];
 
   public async collaborate(
     userId: string,
@@ -200,9 +231,9 @@ class FakeStoryCollaborationService implements StoryCollaborationServicePort {
   ): Promise<AsyncIterable<string>> {
     this.lastInput = { userId, ...input };
 
+    const chunks = this.chunks;
     return (async function* streamChunks(): AsyncGenerator<string, void, void> {
-      yield 'first';
-      yield 'second';
+      yield* chunks;
     })();
   }
 
@@ -350,14 +381,15 @@ describe('story routes', () => {
     });
 
     expect(response.status).toBe(200);
-    const payload = (await response.json()) as { works: Array<Record<string, unknown>> };
-    expect(payload).toEqual({
+    const rawPayload = await response.json();
+    expect(rawPayload).toEqual({
       works: [
         expect.objectContaining({
           id: workId,
         }),
       ],
     });
+    const payload = worksResponseSchema.parse(rawPayload);
     expect(payload.works[0]).not.toHaveProperty('user_id');
   });
 
@@ -418,6 +450,37 @@ describe('story routes', () => {
         capability: 'create_work',
       },
     ]);
+  });
+
+  it('returns a bounded work page only when limit is supplied and preserves the legacy response otherwise', async () => {
+    const storyService = new FakeStoryService();
+    const app = createTestApp({ storyService });
+    const token = await createToken();
+
+    const legacyResponse = await app.request('/api/works', { headers: { Authorization: `Bearer ${token}` } });
+    const pagedResponse = await app.request('/api/works?limit=2', { headers: { Authorization: `Bearer ${token}` } });
+
+    expect(await legacyResponse.json()).toEqual({ works: [expect.any(Object)] });
+    expect(pagedResponse.status).toBe(200);
+    expect(await pagedResponse.json()).toEqual({
+      works: [expect.any(Object)],
+      next_cursor: 'eyJ2IjoxLCJrIjoid29ya3MiLCJzb3J0IjoiMjAyNi0wNC0yMlQwMDowMDowMC4wMDBaIiwiaWQiOiIxMTExMTExMS0xMTExLTQxMTEtODExMS0xMTExMTExMTExMTEifQ',
+    });
+    expect(storyService.listWorksPageRequest).toEqual({ limit: 2, cursor: null });
+  });
+
+  it('rejects invalid work page limits and malformed or cross-kind cursors before the service call', async () => {
+    const storyService = new FakeStoryService();
+    const app = createTestApp({ storyService });
+    const token = await createToken();
+    const headers = { Authorization: `Bearer ${token}` };
+    const crossKindCursor = 'eyJ2IjoxLCJrIjoiZW50aXRpZXMiLCJzb3J0IjoiMjAyNi0wNC0yMlQwMDowMDowMC4wMDBaIiwiaWQiOiIxMTExMTExMS0xMTExLTQxMTEtODExMS0xMTExMTExMTExMTEifQ';
+
+    for (const query of ['?limit=0', '?limit=101', '?limit=1.5', '?cursor=bad', `?cursor=${crossKindCursor}`, `?limit=1&cursor=${crossKindCursor}`, `?limit=1&cursor=${'a'.repeat(1025)}`]) {
+      const response = await app.request(`/api/works${query}`, { headers });
+      expect(response.status).toBe(422);
+    }
+    expect(storyService.listWorksPageRequest).toBeNull();
   });
 
   it('法人workspace指定の作品作成では監査ログ失敗だけで作成を失敗扱いにしない', async () => {
@@ -696,12 +759,46 @@ describe('story routes', () => {
 
     expect(response.status).toBe(200);
     expect(response.headers.get('content-type')).toContain('text/event-stream');
-    await expect(response.text()).resolves.toContain('"text":"first"');
+    const wire = await response.text();
+    expect(wire).toContain('"text":"first"');
+    expect(() => storyCollaborationEventSchema.parse({
+      event: 'chunk',
+      data: { text: 'first' },
+    })).not.toThrow();
+    expect(() => storyCollaborationEventSchema.parse({
+      event: 'done',
+      data: {},
+    })).not.toThrow();
     expect(collaborationService.lastInput).toMatchObject({
       userId: user.id,
       layer: 'episode',
       targetId: episodeId,
     });
+  });
+
+  it('canonical 上限を超える story collaboration chunk は送信を拒否する', async () => {
+    const collaborationService = new FakeStoryCollaborationService();
+    collaborationService.chunks = ['x'.repeat(25_001)];
+    const app = createTestApp(collaborationService, new FakePageSkeletonService());
+    const token = await createToken();
+
+    const response = await app.request('/api/story/collaborate', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        layer: 'episode',
+        target_id: episodeId,
+        instruction: '描写を整える',
+        language: 'ja',
+        context: {},
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.text()).rejects.toThrow('Mobile response contract validation failed');
   });
 
   it('story collaborate returns 422 for unknown keys', async () => {
@@ -755,7 +852,8 @@ describe('story routes', () => {
     });
 
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({
+    const payload = await response.json();
+    expect(payload).toEqual({
       draft: {
         title: '改善済みタイトル',
         purpose: '改善済みの目的',
@@ -771,6 +869,7 @@ describe('story routes', () => {
       compiler_prompt_version: 'story_episode_improve_v1',
       compiler_error: null,
     });
+    expect(() => storyEpisodeImprovementSchema.parse(payload)).not.toThrow();
     expect(collaborationService.lastImproveInput).toMatchObject({
       userId: user.id,
       episodeId,
@@ -791,13 +890,15 @@ describe('story routes', () => {
     });
 
     expect(response.status).toBe(201);
-    await expect(response.json()).resolves.toEqual({
+    const payload = await response.json();
+    expect(payload).toEqual({
       pages_created: 16,
       panels_created: 80,
       replaced_existing: false,
       story_plan_applied: true,
       story_plan_job_id: '55555555-5555-4555-8555-555555555555',
     });
+    expect(() => pageSkeletonResponseSchema.parse(payload)).not.toThrow();
     expect(pageSkeletonService.requestedEpisodeId).toBe(episodeId);
   });
 
@@ -894,6 +995,83 @@ describe('story routes', () => {
     });
 
     expect(response.status).toBe(422);
+  });
+
+  it('work/chapter/episode update は expected_updated_at を必須として service へ渡す', async () => {
+    const storyService = new FakeStoryService();
+    const app = createTestApp({ storyService });
+    const token = await createToken();
+    const headers = {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    };
+    const revision = '2026-04-22T00:00:00.000Z';
+
+    const missingRevision = await app.request(`/api/works/${workId}`, {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify({ title: '更新後の作品' }),
+    });
+    expect(missingRevision.status).toBe(422);
+
+    expect(
+      (
+        await app.request(`/api/works/${workId}`, {
+          method: 'PUT',
+          headers,
+          body: JSON.stringify({ title: '更新後の作品', expected_updated_at: revision }),
+        })
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await app.request(`/api/chapters/${chapterId}`, {
+          method: 'PUT',
+          headers,
+          body: JSON.stringify({ title: '更新後の章', expected_updated_at: revision }),
+        })
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await app.request(`/api/episodes/${episodeId}`, {
+          method: 'PUT',
+          headers,
+          body: JSON.stringify({ title: '更新後の話', expected_updated_at: revision }),
+        })
+      ).status,
+    ).toBe(200);
+
+    expect(storyService.lastUpdateWork?.expectedUpdatedAt).toBe(revision);
+    expect(storyService.lastUpdateChapter?.expectedUpdatedAt).toBe(revision);
+    expect(storyService.lastUpdateEpisode?.expectedUpdatedAt).toBe(revision);
+  });
+
+  it('work update の競合は安定した RESOURCE_STALE 409 を返す', async () => {
+    const storyService = new FakeStoryService();
+    Object.assign(storyService, { updateWorkError: new ResourceStaleError() });
+    const app = createTestApp({ storyService });
+    const token = await createToken();
+
+    const response = await app.request(`/api/works/${workId}`, {
+      method: 'PUT',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        title: '更新後の作品',
+        expected_updated_at: '2026-04-22T00:00:00.000Z',
+      }),
+    });
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({
+      error: {
+        code: 'RESOURCE_STALE',
+        message: 'The resource was changed by another edit. Reload and review the latest state.',
+      },
+    });
   });
 });
 

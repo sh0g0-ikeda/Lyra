@@ -1,0 +1,8 @@
+- launchApp:
+    clearState: true
+- extendedWaitUntil:
+    visible:
+      id: auth-login-button
+    timeout: 20000
+- assertVisible:
+    id: auth-screen

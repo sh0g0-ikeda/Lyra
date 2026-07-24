@@ -32,6 +32,9 @@ class FakeWorkReader implements WorkReader {
 
 class FakeEntityRepository implements EntityRepository {
   private readonly entities = new Map<string, Entity>();
+  public staleUpdate = false;
+  public disappearBeforeUpdate = false;
+  public lastEntityPageRequest: { limit: number; cursor: { sort: string | number; id: string } | null } | null = null;
 
   public async create(input: CreateEntityInput): Promise<Entity> {
     const entity: Entity = {
@@ -63,6 +66,15 @@ class FakeEntityRepository implements EntityRepository {
     );
   }
 
+  public async findEntitiesPageByWorkIdAndUserId(
+    workId: string,
+    userId: string,
+    request: { limit: number; cursor: { sort: string | number; id: string } | null },
+  ): Promise<{ items: Entity[]; nextCursor: string | null }> {
+    this.lastEntityPageRequest = request;
+    return { items: await this.findByWorkIdAndUserId(workId, userId), nextCursor: null };
+  }
+
   public async countByIdsAndWorkIdAndUserId(
     entityIds: string[],
     workId: string,
@@ -81,6 +93,13 @@ class FakeEntityRepository implements EntityRepository {
   public async update(id: string, userId: string, input: UpdateEntityInput): Promise<Entity | null> {
     const currentEntity = await this.findByIdAndUserId(id, userId);
     if (currentEntity === null) {
+      return null;
+    }
+    if (this.disappearBeforeUpdate) {
+      this.entities.delete(id);
+      return null;
+    }
+    if (this.staleUpdate) {
       return null;
     }
 
@@ -138,6 +157,20 @@ class FakeStyleReferenceCompiler implements StyleReferenceCompilerPort {
 }
 
 describe('EntityService', () => {
+  it('delegates a bounded entity page after confirming work access', async () => {
+    const workReader = new FakeWorkReader();
+    workReader.ownedWorkIds.add('user-1:work-1');
+    const repository = new FakeEntityRepository();
+    const service = new EntityService(repository, workReader);
+    await service.createEntity('user-1', 'work-1', {
+      entityType: 'character', name: 'Paged entity', freeDescription: null, structuredFields: {}, speechProfile: {},
+    });
+
+    const result = await service.listEntitiesPage('user-1', 'work-1', { limit: 2, cursor: null });
+
+    expect(result.items).toHaveLength(1);
+    expect(repository.lastEntityPageRequest).toEqual({ limit: 2, cursor: null });
+  });
   it('所有している作品の場合にエンティティを作成できる', async () => {
     const workReader = new FakeWorkReader();
     workReader.ownedWorkIds.add('user-1:work-1');
@@ -271,6 +304,7 @@ describe('EntityService', () => {
     });
 
     const updatedEntity = await service.updateEntity('user-1', entity.id, {
+      expectedUpdatedAt: now.toISOString(),
       entityType: 'object',
     });
 
@@ -293,6 +327,7 @@ describe('EntityService', () => {
     });
 
     const updatedEntity = await service.updateEntity('user-1', entity.id, {
+      expectedUpdatedAt: now.toISOString(),
       name: '月華 改',
     });
 
@@ -334,5 +369,50 @@ describe('EntityService', () => {
         compiler_prompt_version: 'style_ref_v3',
       },
     });
+  });
+
+  it('authorized entity revision conflict returns RESOURCE_STALE without mutation', async () => {
+    const workReader = new FakeWorkReader();
+    workReader.ownedWorkIds.add('user-1:work-1');
+    const repository = new FakeEntityRepository();
+    const service = new EntityService(repository, workReader);
+    const entity = await service.createEntity('user-1', 'work-1', {
+      entityType: 'character',
+      name: 'Revision target',
+      freeDescription: null,
+      structuredFields: {},
+      speechProfile: {},
+    });
+    repository.staleUpdate = true;
+
+    await expect(
+      service.updateEntity('user-1', entity.id, {
+        expectedUpdatedAt: now.toISOString(),
+        name: 'Must not persist',
+      }),
+    ).rejects.toMatchObject({ code: 'RESOURCE_STALE' } satisfies Partial<AppError>);
+    await expect(service.getEntity('user-1', entity.id)).resolves.toMatchObject({ name: 'Revision target' });
+  });
+
+  it('conditional update 後にアクセス可能なentityが消えた場合は NOT_FOUND を返す', async () => {
+    const workReader = new FakeWorkReader();
+    workReader.ownedWorkIds.add('user-1:work-1');
+    const repository = new FakeEntityRepository();
+    const service = new EntityService(repository, workReader);
+    const entity = await service.createEntity('user-1', 'work-1', {
+      entityType: 'character',
+      name: 'Disappearing entity',
+      freeDescription: null,
+      structuredFields: {},
+      speechProfile: {},
+    });
+    Object.assign(repository, { disappearBeforeUpdate: true });
+
+    await expect(
+      service.updateEntity('user-1', entity.id, {
+        expectedUpdatedAt: now.toISOString(),
+        name: 'Must not persist',
+      }),
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' } satisfies Partial<AppError>);
   });
 });

@@ -1,4 +1,5 @@
-import { NotFoundError } from '../../domain/errors/index.js';
+import { NotFoundError, ResourceStaleError } from '../../domain/errors/index.js';
+import type { ListPage, ListPageRequest } from '../../domain/pagination.js';
 import type {
   CreateEntityInput,
   Entity,
@@ -10,6 +11,15 @@ import type { EntityRepository } from '../../repositories/EntityRepository.js';
 import type { WorkReader } from '../../repositories/WorkRepository.js';
 import type { StyleReferenceCompilerPort } from '../style/StyleReferenceCompiler.js';
 import { resolveStyleReferenceForPersistence } from '../style/styleReferencePersistence.js';
+
+interface EntityPaginationReader {
+  findEntitiesPageByWorkIdAndUserId(
+    workId: string,
+    userId: string,
+    request: ListPageRequest,
+    organizationId?: string | null,
+  ): Promise<ListPage<Entity>>;
+}
 
 export type { Entity };
 
@@ -23,6 +33,7 @@ export interface CreateEntityRequest {
 }
 
 export interface UpdateEntityRequest {
+  expectedUpdatedAt: string;
   entityType?: EntityType;
   name?: string;
   freeDescription?: string | null;
@@ -39,6 +50,7 @@ export interface EntityServicePort {
     organizationId?: string | null,
   ): Promise<Entity>;
   listEntities(userId: string, workId: string, organizationId?: string | null): Promise<Entity[]>;
+  listEntitiesPage(userId: string, workId: string, request: ListPageRequest, organizationId?: string | null): Promise<ListPage<Entity>>;
   getEntity(userId: string, entityId: string, organizationId?: string | null): Promise<Entity>;
   updateEntity(
     userId: string,
@@ -88,6 +100,17 @@ export class EntityService implements EntityServicePort {
     return this.entityRepository.findByWorkIdAndUserId(workId, userId, organizationId);
   }
 
+  public async listEntitiesPage(
+    userId: string,
+    workId: string,
+    request: ListPageRequest,
+    organizationId: string | null = null,
+  ): Promise<ListPage<Entity>> {
+    await this.ensureWorkAccessible(workId, userId, organizationId);
+    return (this.entityRepository as EntityRepository & EntityPaginationReader)
+      .findEntitiesPageByWorkIdAndUserId(workId, userId, request, organizationId);
+  }
+
   public async getEntity(userId: string, entityId: string, organizationId: string | null = null): Promise<Entity> {
     const entity = await this.entityRepository.findByIdAndUserId(entityId, userId, organizationId);
     if (entity === null) {
@@ -133,7 +156,11 @@ export class EntityService implements EntityServicePort {
 
     const entity = await this.entityRepository.update(entityId, userId, updateInput, organizationId);
     if (entity === null) {
-      throw new NotFoundError('Entity not found');
+      const latestEntity = await this.entityRepository.findByIdAndUserId(entityId, userId, organizationId);
+      if (latestEntity === null) {
+        throw new NotFoundError('Entity not found');
+      }
+      throw new ResourceStaleError();
     }
 
     return entity;

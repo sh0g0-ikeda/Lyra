@@ -1,0 +1,7 @@
+packages/api-contract/src/mobileApiSchemas.ts text eol=lf
+packages/api-contract/src/mobileApiTypes.ts text eol=lf
+packages/api-contract/src/mobileApiPayloads.ts text eol=lf
+apps/mobile/src/domain/apiSchemas.ts text eol=lf
+apps/mobile/src/domain/types.ts text eol=lf
+apps/mobile/src/domain/payloads.ts text eol=lf
+scripts/generateMobileApiContract.mjs text eol=lf

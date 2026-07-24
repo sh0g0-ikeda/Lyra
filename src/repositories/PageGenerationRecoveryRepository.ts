@@ -23,6 +23,19 @@ export interface FailedPageGenerationJobMissingRefund {
   completedAt: Date | null;
 }
 
+export interface UndispatchedPageGenerationJob {
+  jobId: string;
+  userId: string;
+  pageId: string;
+  requestKind: 'initial' | 'regenerate';
+  generationMode: PageGenerationMode;
+  quality: 'medium' | 'high';
+  creditCost: number;
+  requiresPlanner: boolean;
+  previousStatus: PageStatus;
+  previousGenerationMode: PageGenerationMode | null;
+}
+
 export interface PageGenerationRecoveryRepository {
   listStaleProcessingJobs(cutoff: Date, limit: number): Promise<StalePageGenerationJob[]>;
   listStaleProcessingJobsForPage(
@@ -39,6 +52,8 @@ export interface PageGenerationRecoveryRepository {
     limit: number,
     organizationId?: string | null,
   ): Promise<FailedPageGenerationJobMissingRefund[]>;
+  listQueuedJobsMissingDispatch(limit: number): Promise<UndispatchedPageGenerationJob[]>;
+  attachQueueMessageId(jobId: string, messageId: string): Promise<boolean>;
 }
 
 interface StalePageGenerationJobRow extends QueryResultRow {
@@ -59,6 +74,19 @@ interface FailedPageGenerationJobMissingRefundRow extends QueryResultRow {
   credit_cost: number;
   page_id: string | null;
   completed_at: Date | null;
+}
+
+interface UndispatchedPageGenerationJobRow extends QueryResultRow {
+  job_id: string;
+  user_id: string;
+  page_id: string | null;
+  request_kind: string | null;
+  generation_mode: string | null;
+  quality: string | null;
+  credit_cost: number;
+  requires_planner: boolean | null;
+  previous_page_status: string | null;
+  previous_generation_mode: string | null;
 }
 
 export class PostgresPageGenerationRecoveryRepository
@@ -155,6 +183,47 @@ export class PostgresPageGenerationRecoveryRepository
     );
 
     return result.rows.flatMap(mapFailedPageGenerationJobMissingRefundRow);
+  }
+
+  public async listQueuedJobsMissingDispatch(limit: number): Promise<UndispatchedPageGenerationJob[]> {
+    validateRecoveryLimit(limit);
+    const result = await this.client.query<UndispatchedPageGenerationJobRow>(
+      `
+      SELECT generation_jobs.id AS job_id,
+             generation_jobs.user_id,
+             generation_jobs.params->>'page_id' AS page_id,
+             generation_jobs.params->>'request_kind' AS request_kind,
+             generation_jobs.params->>'generation_mode' AS generation_mode,
+             generation_jobs.params->>'quality' AS quality,
+             generation_jobs.credit_cost,
+             COALESCE((generation_jobs.params->>'requires_planner')::boolean, false) AS requires_planner,
+             generation_jobs.params->>'previous_page_status' AS previous_page_status,
+             generation_jobs.params->>'previous_generation_mode' AS previous_generation_mode
+      FROM generation_jobs
+      WHERE generation_jobs.job_type = 'page_generate'
+        AND generation_jobs.status = 'queued'
+        AND generation_jobs.sqs_message_id IS NULL
+      ORDER BY generation_jobs.created_at ASC
+      LIMIT $1
+      `,
+      [limit],
+    );
+    return result.rows.flatMap(mapUndispatchedPageGenerationJobRow);
+  }
+
+  public async attachQueueMessageId(jobId: string, messageId: string): Promise<boolean> {
+    const result = await this.client.query(
+      `
+      UPDATE generation_jobs
+      SET sqs_message_id = $2
+      WHERE id = $1
+        AND job_type = 'page_generate'
+        AND status = 'queued'
+        AND sqs_message_id IS NULL
+      `,
+      [jobId, messageId],
+    );
+    return (result.rowCount ?? 0) === 1;
   }
 }
 
@@ -267,6 +336,32 @@ function mapStalePageGenerationJobRow(row: StalePageGenerationJobRow): StalePage
       staleAt: row.stale_at,
     },
   ];
+}
+
+function mapUndispatchedPageGenerationJobRow(row: UndispatchedPageGenerationJobRow): UndispatchedPageGenerationJob[] {
+  const previousStatus = toPageStatus(row.previous_page_status);
+  const generationMode = toPageGenerationMode(row.generation_mode);
+  if (
+    row.page_id === null ||
+    previousStatus === null ||
+    generationMode === null ||
+    (row.request_kind !== 'initial' && row.request_kind !== 'regenerate') ||
+    (row.quality !== 'medium' && row.quality !== 'high')
+  ) {
+    return [];
+  }
+  return [{
+    jobId: row.job_id,
+    userId: row.user_id,
+    pageId: row.page_id,
+    requestKind: row.request_kind,
+    generationMode,
+    quality: row.quality,
+    creditCost: row.credit_cost,
+    requiresPlanner: row.requires_planner ?? false,
+    previousStatus,
+    previousGenerationMode: toPageGenerationMode(row.previous_generation_mode),
+  }];
 }
 
 function mapFailedPageGenerationJobMissingRefundRow(

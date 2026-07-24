@@ -60,6 +60,21 @@ describe('PostgresSceneRepository', () => {
     expect(client.queries[0]).toContain('entities.user_id = $3');
   });
 
+  it('entity_state一覧SQLが個人所有と有効な法人メンバーシップで絞る', async () => {
+    const client = new QueryCapturingClient(entityStateRow());
+    const repository = new PostgresSceneRepository(client);
+
+    await repository.findEntityStatesByEntityIdAndUserId(
+      '55555555-5555-4555-8555-555555555555',
+      'user-1',
+      '77777777-7777-4777-8777-777777777777',
+    );
+
+    expect(client.queries[0]).toContain('entities.user_id = $2');
+    expect(client.queries[0]).toContain('works.organization_id = $3::uuid');
+    expect(client.queries[0]).toContain("organization_members.status = 'active'");
+  });
+
   it('Sceneのorder重複の場合にVALIDATION_ERRORになる', async () => {
     const repository = new PostgresSceneRepository(new UniqueViolationClient());
 

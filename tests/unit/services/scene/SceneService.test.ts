@@ -113,6 +113,13 @@ class FakeSceneRepository implements SceneRepository {
     return sceneContext === null ? false : this.scenes.delete(sceneId);
   }
 
+  public async findEntityStatesByEntityIdAndUserId(
+    entityId: string,
+    _userId: string,
+  ): Promise<EntityState[]> {
+    return [...this.entityStates.values()].filter((entityState) => entityState.entityId === entityId);
+  }
+
   public async createEntityState(entityId: string, input: CreateEntityStateInput): Promise<EntityState> {
     const entityState: EntityState = {
       id: `state-${this.entityStates.size + 1}`,
@@ -246,6 +253,37 @@ describe('SceneService', () => {
     expect(entityState.entityId).toBe('entity-1');
     expect(entityState.sceneId).toBeNull();
     expect(entityState.expressionDefault).toBe('determined');
+  });
+
+  it('本人が所有するentityのstateだけを一覧取得できる', async () => {
+    const { service, sceneRepository, entityReader } = createService();
+    entityReader.addEntity(buildEntity({ id: 'entity-1', workId: 'work-1' }));
+    entityReader.addEntity(buildEntity({ id: 'entity-2', workId: 'work-1' }));
+    await sceneRepository.createEntityState('entity-1', {
+      sceneId: null,
+      costumeNote: '制服',
+      costumeRefId: null,
+      conditionNote: null,
+      hairNote: null,
+      expressionDefault: 'neutral',
+      extraNote: null,
+    });
+    await sceneRepository.createEntityState('entity-2', {
+      sceneId: null,
+      costumeNote: '私服',
+      costumeRefId: null,
+      conditionNote: null,
+      hairNote: null,
+      expressionDefault: 'neutral',
+      extraNote: null,
+    });
+
+    await expect(service.listEntityStates('user-1', 'entity-1')).resolves.toMatchObject([
+      { entityId: 'entity-1', costumeNote: '制服' },
+    ]);
+    await expect(service.listEntityStates('user-2', 'entity-1')).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+    } satisfies Partial<AppError>);
   });
 
   it('entity_stateのSceneが別作品の場合にVALIDATION_ERRORになる', async () => {

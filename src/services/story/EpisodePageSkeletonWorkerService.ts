@@ -4,6 +4,7 @@ import type { EpisodePagePlanApplyResult } from '../../domain/types/page.js';
 import type {
   EpisodePageSkeletonExecutionRepository,
 } from '../../repositories/EpisodePageSkeletonExecutionRepository.js';
+import type { GenerationJobCancellationCheckpointPort } from '../../repositories/GenerationJobRepository.js';
 import { sanitizePersistedErrorMessage } from '../../lib/errorSanitizer.js';
 import type {
   EpisodePagePlanProgress,
@@ -13,7 +14,7 @@ import type { PageSkeletonServicePort } from './PageSkeletonService.js';
 
 export interface ProcessEpisodePageSkeletonJobResult {
   status: 'processed' | 'skipped';
-  jobStatus?: 'completed' | 'failed';
+  jobStatus?: 'completed' | 'failed' | 'canceled';
 }
 
 export interface EpisodePageSkeletonWorkerPort {
@@ -25,12 +26,16 @@ export class EpisodePageSkeletonWorkerService implements EpisodePageSkeletonWork
     private readonly repository: EpisodePageSkeletonExecutionRepository,
     private readonly pageSkeletonService: PageSkeletonServicePort,
     private readonly pageService?: PageServicePort,
+    private readonly cancellationCheckpoint?: GenerationJobCancellationCheckpointPort,
   ) {}
 
   public async processJob(jobId: string): Promise<ProcessEpisodePageSkeletonJobResult> {
     const job = await this.repository.claimQueuedEpisodePageSkeletonJob(jobId);
     if (job === null) {
       return { status: 'skipped' };
+    }
+    if (await this.finalizeCancellationIfRequested(job.id)) {
+      return { status: 'processed', jobStatus: 'canceled' };
     }
 
     const episodeId = readStringParam(job.params, 'episode_id');
@@ -72,6 +77,10 @@ export class EpisodePageSkeletonWorkerService implements EpisodePageSkeletonWork
       }, job.organizationId);
       skeletonResult = result;
 
+      if (await this.finalizeCancellationIfRequested(job.id)) {
+        return { status: 'processed', jobStatus: 'canceled' };
+      }
+
       let storyPlanResult: EpisodePagePlanApplyResult | null = null;
       if (applyStoryPlan) {
         if (this.pageService === undefined) {
@@ -87,6 +96,9 @@ export class EpisodePageSkeletonWorkerService implements EpisodePageSkeletonWork
           episodeId,
           language,
           async (progress) => {
+            if (await this.finalizeCancellationIfRequested(job.id)) {
+              throw new ProcessingCancellationRequestedError();
+            }
             await this.recordEpisodePlanProgress(job.id, job.userId, progress);
           },
           job.organizationId,
@@ -100,13 +112,23 @@ export class EpisodePageSkeletonWorkerService implements EpisodePageSkeletonWork
         storyPlanCompleted = true;
       }
 
-      await this.repository.completeEpisodePageSkeleton({
+      if (await this.finalizeCancellationIfRequested(job.id)) {
+        return { status: 'processed', jobStatus: 'canceled' };
+      }
+
+      const completed = await this.repository.completeEpisodePageSkeleton({
         jobId: job.id,
         userId: job.userId,
         result,
         storyPlanApplied: applyStoryPlan,
         storyPlanResult,
       });
+      if (!completed) {
+        if (await this.finalizeCancellationIfRequested(job.id)) {
+          return { status: 'processed', jobStatus: 'canceled' };
+        }
+        throw new ValidationError('Failed to persist episode page skeleton result');
+      }
       console.info('episode_page_skeleton_completed', {
         jobId: job.id,
         userId: job.userId,
@@ -117,6 +139,9 @@ export class EpisodePageSkeletonWorkerService implements EpisodePageSkeletonWork
       });
       return { status: 'processed', jobStatus: 'completed' };
     } catch (error) {
+      if (error instanceof ProcessingCancellationRequestedError) {
+        return { status: 'processed', jobStatus: 'canceled' };
+      }
       console.warn('episode_page_skeleton_failed', {
         jobId: job.id,
         userId: job.userId,
@@ -139,6 +164,10 @@ export class EpisodePageSkeletonWorkerService implements EpisodePageSkeletonWork
       });
       return { status: 'processed', jobStatus: 'failed' };
     }
+  }
+
+  private async finalizeCancellationIfRequested(jobId: string): Promise<boolean> {
+    return this.cancellationCheckpoint?.finalizeCancellationIfRequested(jobId) ?? false;
   }
 
   private async recordProgress(
@@ -217,6 +246,8 @@ export class EpisodePageSkeletonWorkerService implements EpisodePageSkeletonWork
     }
   }
 }
+
+class ProcessingCancellationRequestedError extends Error {}
 
 function readStringParam(params: Record<string, unknown>, key: string): string | null {
   const value = params[key];

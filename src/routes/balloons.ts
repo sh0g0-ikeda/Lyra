@@ -1,4 +1,8 @@
 import { Hono, type Context, type MiddlewareHandler } from 'hono';
+import {
+  balloonSchema,
+  balloonsResponseSchema,
+} from '../../packages/api-contract/src/mobileApiSchemas.js';
 import { ValidationError } from '../domain/errors/index.js';
 import type { Balloon } from '../domain/types/balloon.js';
 import {
@@ -14,6 +18,7 @@ import {
   parseOptionalOrganizationId,
   requireOrganizationCapability,
 } from './organizationRouteHelpers.js';
+import { assertMobileResponseContract } from './mobileResponseContract.js';
 import { readJsonBody } from './requestBody.js';
 
 export interface BalloonRouteDependencies {
@@ -62,7 +67,7 @@ export function createBalloonRoutes(dependencies: BalloonRouteDependencies): Hon
       organizationId,
     );
 
-    return c.json(toBalloonResponse(balloon), 201);
+    return c.json(assertMobileResponseContract(balloonSchema, toBalloonResponse(balloon)), 201);
   });
 
   app.get('/pages/:id/balloons', async (c) => {
@@ -72,7 +77,8 @@ export function createBalloonRoutes(dependencies: BalloonRouteDependencies): Hon
     await requireOrganizationCapability(c, dependencies, organizationId, 'view_work');
     const balloons = await dependencies.balloonService.listBalloons(user.id, pageId, organizationId);
 
-    return c.json({ balloons: balloons.map(toBalloonResponse) });
+    const payload = { balloons: balloons.map(toBalloonResponse) };
+    return c.json(assertMobileResponseContract(balloonsResponseSchema, payload));
   });
 
   app.post('/pages/:id/auto-balloons', async (c) => {
@@ -82,7 +88,8 @@ export function createBalloonRoutes(dependencies: BalloonRouteDependencies): Hon
     await requireOrganizationCapability(c, dependencies, organizationId, 'edit_work');
     const balloons = await dependencies.balloonService.autoGenerateBalloons(user.id, pageId, organizationId);
 
-    return c.json({ balloons: balloons.map(toBalloonResponse) });
+    const payload = { balloons: balloons.map(toBalloonResponse) };
+    return c.json(assertMobileResponseContract(balloonsResponseSchema, payload));
   });
 
   app.put('/balloons/:id', async (c) => {
@@ -118,7 +125,7 @@ export function createBalloonRoutes(dependencies: BalloonRouteDependencies): Hon
       organizationId,
     );
 
-    return c.json(toBalloonResponse(balloon));
+    return c.json(assertMobileResponseContract(balloonSchema, toBalloonResponse(balloon)));
   });
 
   app.delete('/balloons/:id', async (c) => {

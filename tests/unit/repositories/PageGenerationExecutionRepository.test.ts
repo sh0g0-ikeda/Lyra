@@ -149,10 +149,13 @@ describe('PostgresPageGenerationExecutionRepository', () => {
     });
 
     expect(completed).toBe(true);
-    expect(client.queries[0]).toContain('UPDATE pages');
-    expect(client.queries[1]).toContain("SET status = 'completed'");
-    expect(client.queries[1]).toContain("COALESCE(result, '{}'::jsonb) || $3::jsonb");
-    expect(client.values[0]).toEqual([
+    expect(client.queries[0]).toContain('SELECT *');
+    expect(client.queries[0]).toContain('FOR UPDATE');
+    expect(client.queries[0]).toContain('cancel_requested_at IS NULL');
+    expect(client.queries[1]).toContain('UPDATE pages');
+    expect(client.queries[2]).toContain("SET status = 'completed'");
+    expect(client.queries[2]).toContain("COALESCE(result, '{}'::jsonb) || $3::jsonb");
+    expect(client.values[1]).toEqual([
       'page-1',
       'user-1',
       'session/user-1/pages/page-1/result.png',
@@ -161,7 +164,7 @@ describe('PostgresPageGenerationExecutionRepository', () => {
       '2026-04-24T00:00:00.000Z',
       null,
     ]);
-    expect(client.values[1]).toEqual([
+    expect(client.values[2]).toEqual([
       'job-1',
       'user-1',
       JSON.stringify({
@@ -213,7 +216,7 @@ describe('PostgresPageGenerationExecutionRepository', () => {
   });
   it('job completion更新に失敗した場合はtransactionを失敗させる', async () => {
     const client = new QueryCapturingClient();
-    client.rowCounts = [1, 0];
+    client.rowCounts = [1, 1, 0];
     const repository = new PostgresPageGenerationExecutionRepository(client);
 
     await expect(

@@ -1,0 +1,21 @@
+appId: ${APP_ID}
+name: "E2E-06: page edit/generate/confirm/export"
+tags: [staging, page, export]
+---
+- runFlow:
+    file: ../helpers/launch-authenticated.yaml
+- runFlow:
+    file: ../helpers/open-pages.yaml
+- assertVisible: ${E2E_FIXTURE_PAGE_TITLE}
+- tapOn: ${E2E_FIXTURE_PAGE_TITLE}
+- tapOn: ${E2E_PAGE_EDIT_LABEL}
+- tapOn: ${E2E_PAGE_GENERATE_LABEL}
+- extendedWaitUntil:
+    visible: ${E2E_PAGE_CONFIRM_LABEL}
+    timeout: 120000
+- tapOn: ${E2E_PAGE_CONFIRM_LABEL}
+- tapOn: ${E2E_PAGE_EXPORT_LABEL}
+- extendedWaitUntil:
+    visible: ${E2E_EXPORT_READY_LABEL}
+    timeout: 90000
+- takeScreenshot: E2E-06-export-ready

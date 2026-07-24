@@ -1,0 +1,17 @@
+appId: ${APP_ID}
+name: "E2E-17: active job recovery after app restart"
+tags: [staging, job, recovery]
+---
+- runFlow:
+    file: ../helpers/launch-authenticated.yaml
+- runFlow:
+    file: ../helpers/open-account.yaml
+- assertVisible: ${E2E_ACTIVE_JOB_LABEL}
+- runFlow:
+    file: ../helpers/restart-after-process-death.yaml
+- extendedWaitUntil:
+    visible:
+      id: tab-account
+    timeout: 45000
+- assertVisible: ${E2E_ACTIVE_JOB_RECOVERED_LABEL}
+- takeScreenshot: E2E-17-recovered-job

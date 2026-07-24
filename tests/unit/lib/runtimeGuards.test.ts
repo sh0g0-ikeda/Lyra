@@ -129,6 +129,20 @@ describe('assertProductionRuntimeConfig', () => {
     }).not.toThrow();
   });
 
+  it('rejects enabled mobile store billing when production sandbox settings are present', () => {
+    expect(() => {
+      assertProductionRuntimeConfig(
+        {
+          ...safeProductionConfig,
+          MOBILE_STORE_BILLING_ENABLED: true,
+          APPLE_STORE_ALLOW_SANDBOX: true,
+          GOOGLE_PLAY_ALLOW_TEST_PURCHASES: false,
+        },
+        'production',
+      );
+    }).toThrow(/Mobile store billing config is incomplete.*sandbox and test purchases must be disabled/);
+  });
+
   it('rejects too-long S3 presigned URL TTL values in production', () => {
     expect(() => {
       assertProductionRuntimeConfig(

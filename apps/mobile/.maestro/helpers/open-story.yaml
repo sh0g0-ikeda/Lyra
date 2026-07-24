@@ -1,0 +1,4 @@
+- tapOn:
+    id: tab-story
+- assertVisible:
+    id: tab-story

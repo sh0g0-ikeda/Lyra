@@ -15,7 +15,6 @@ export interface ApplyPageLayoutTemplateInput {
   templateId: PanelFrameTemplateId;
   targetPanelCount: number;
   frameDefinitions: UpsertPanelFrameInput[];
-  allowPanelTruncation: boolean;
 }
 
 export interface PageLayoutRepository {
@@ -79,16 +78,12 @@ export class PostgresPageLayoutRepository implements PageLayoutRepository {
       const deletedPanelCount = Math.max(currentPanelCount - input.targetPanelCount, 0);
       const createdPanelCount = Math.max(input.targetPanelCount - currentPanelCount, 0);
 
-      if (deletedPanelCount > 0 && !input.allowPanelTruncation) {
+      if (deletedPanelCount > 0) {
         throw new ConflictError('Applying this template would delete panels');
       }
 
       await compactPanelOrders(transactionClient, pageId);
       await deleteFramesForPage(transactionClient, pageId);
-
-      if (deletedPanelCount > 0) {
-        await deletePanelsAfterOrder(transactionClient, pageId, input.targetPanelCount);
-      }
 
       if (createdPanelCount > 0) {
         await createEmptyPanels(transactionClient, pageId, currentPanelCount, input.targetPanelCount);
@@ -215,21 +210,6 @@ async function compactPanelOrders(client: DatabaseClient, pageId: string): Promi
       AND panels."order" < 0
     `,
     [pageId],
-  );
-}
-
-async function deletePanelsAfterOrder(
-  client: DatabaseClient,
-  pageId: string,
-  targetPanelCount: number,
-): Promise<void> {
-  await client.query(
-    `
-    DELETE FROM panels
-    WHERE page_id = $1
-      AND "order" > $2
-    `,
-    [pageId, targetPanelCount],
   );
 }
 

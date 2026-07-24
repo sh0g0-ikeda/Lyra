@@ -73,6 +73,8 @@ interface GenerationJobRow extends QueryResultRow {
   sqs_message_id: string | null;
   openai_request_id: string | null;
   error_message: string | null;
+  cancel_requested_at: Date | null;
+  cancel_requested_by_user_id: string | null;
   retry_count: number;
   created_at: Date;
   started_at: Date | null;
@@ -131,6 +133,7 @@ export class PostgresPageGenerationExecutionRepository implements PageGeneration
         AND user_id = $2
         AND job_type = 'page_generate'
         AND status = 'processing'
+        AND cancel_requested_at IS NULL
       RETURNING *
       `,
       [input.jobId, input.userId, input.message, input.updatedAt],
@@ -151,6 +154,8 @@ export class PostgresPageGenerationExecutionRepository implements PageGeneration
         AND user_id = $2
         AND job_type = 'page_generate'
         AND status = 'processing'
+        AND cancel_requested_at IS NULL
+        AND NOT (COALESCE(result, '{}'::jsonb) ? 'input_snapshot')
       RETURNING *
       `,
       [input.jobId, input.userId, JSON.stringify(input.snapshot), input.savedAt],
@@ -161,6 +166,23 @@ export class PostgresPageGenerationExecutionRepository implements PageGeneration
 
   public async completePageGeneration(input: CompletePageGenerationInput): Promise<boolean> {
     return this.client.transaction(async (transactionClient) => {
+      const checkpoint = await transactionClient.query<GenerationJobRow>(
+        `
+        SELECT *
+        FROM generation_jobs
+        WHERE id = $1
+          AND user_id = $2
+          AND job_type = 'page_generate'
+          AND status = 'processing'
+          AND cancel_requested_at IS NULL
+        FOR UPDATE
+        `,
+        [input.jobId, input.userId],
+      );
+      if ((checkpoint.rowCount ?? 0) === 0) {
+        return false;
+      }
+
       const pageUpdate = await transactionClient.query<PageUpdateRow>(
         `
         UPDATE pages
@@ -219,6 +241,7 @@ export class PostgresPageGenerationExecutionRepository implements PageGeneration
         WHERE id = $1
           AND user_id = $2
           AND status = 'processing'
+          AND cancel_requested_at IS NULL
         RETURNING *
         `,
         [
@@ -262,6 +285,7 @@ export class PostgresPageGenerationExecutionRepository implements PageGeneration
         WHERE id = $1
           AND user_id = $2
           AND status IN ('queued', 'processing')
+          AND cancel_requested_at IS NULL
           AND (
             $4::timestamptz IS NULL
             OR (

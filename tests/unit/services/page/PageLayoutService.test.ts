@@ -32,7 +32,6 @@ describe('PageLayoutService', () => {
 
     const result = await service.applyTemplate('user-1', 'page-1', {
       templateId: 'top_wide_3',
-      allowPanelTruncation: true,
     });
 
     expect(result).toMatchObject({
@@ -42,7 +41,6 @@ describe('PageLayoutService', () => {
     expect(repository.lastInput).toMatchObject({
       templateId: 'top_wide_3',
       targetPanelCount: 3,
-      allowPanelTruncation: true,
     });
     expect(repository.lastInput?.frameDefinitions).toHaveLength(3);
   });

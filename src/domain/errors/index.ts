@@ -53,6 +53,18 @@ export class ConflictError extends AppError {
   }
 }
 
+export class PageStaleError extends AppError {
+  public constructor() {
+    super('PAGE_STALE', 'The page was changed by another edit. Reload before generating.', 409);
+  }
+}
+
+export class ResourceStaleError extends AppError {
+  public constructor() {
+    super('RESOURCE_STALE', 'The resource was changed by another edit. Reload and review the latest state.', 409);
+  }
+}
+
 export class InsufficientCreditsError extends AppError {
   public constructor() {
     super('INSUFFICIENT_CREDITS', 'Credit balance is insufficient', 402);

@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { AppError, ConfigurationError, ConflictError, NotFoundError, ValidationError } from '../../domain/errors/index.js';
 import type { PageGenerationContext } from '../../domain/types/page.js';
-import type { PageGenerationRequestKind } from '../../domain/types/pageGeneration.js';
+import type { PageGenerationInputSnapshotReference, PageGenerationRequestKind } from '../../domain/types/pageGeneration.js';
 import type { CreditServicePort } from '../credit/CreditService.js';
 import type { OrganizationServicePort } from '../organization/OrganizationService.js';
 import {
@@ -20,10 +20,32 @@ import {
   NoopPageGenerationRecoveryService,
   type PageGenerationRecoveryServicePort,
 } from './PageGenerationRecoveryService.js';
-import { PAGE_GENERATION_INPUT_IMAGE_LIMITS } from '../../domain/constants/generation.js';
+import {
+  PageGenerationReadinessEvaluator,
+  type PageGenerationBlocker,
+} from './PageGenerationReadiness.js';
+import {
+  isPageAtomicGenerationRepository,
+  type SaveAndGeneratePageInput,
+} from './PageSaveAndGenerate.js';
 
 export interface EnqueuePageGenerationResult {
   jobId: string;
+}
+
+export interface PageGenerationReadinessResult {
+  ready: boolean;
+  blockers: PageGenerationBlocker[];
+  warnings: [];
+  estimatedCreditCost: number;
+  pageRevision: string;
+}
+
+export type { SaveAndGeneratePageInput } from './PageSaveAndGenerate.js';
+
+export interface SaveAndGeneratePageResult {
+  jobId: string;
+  pageRevision: string;
 }
 
 export interface PageGenerationServicePort {
@@ -32,6 +54,17 @@ export interface PageGenerationServicePort {
     pageId: string,
     organizationId?: string | null,
   ): Promise<EnqueuePageGenerationResult>;
+  getGenerationReadiness(
+    userId: string,
+    pageId: string,
+    organizationId?: string | null,
+  ): Promise<PageGenerationReadinessResult>;
+  saveAndGenerate(
+    userId: string,
+    pageId: string,
+    input: SaveAndGeneratePageInput,
+    organizationId?: string | null,
+  ): Promise<SaveAndGeneratePageResult>;
 }
 
 /**
@@ -58,10 +91,6 @@ export class PageGenerationService implements PageGenerationServicePort {
     organizationId: string | null = null,
   ): Promise<EnqueuePageGenerationResult> {
     await this.recoveryService.recoverStaleJobsForPage(userId, pageId, organizationId);
-    if (!this.generationEnabled) {
-      throw new ConflictError('Generation is temporarily disabled');
-    }
-
     if (organizationId !== null) {
       await this.getOrganizationService().requireMembership(organizationId, userId, 'generate');
     }
@@ -72,9 +101,9 @@ export class PageGenerationService implements PageGenerationServicePort {
     }
 
     const pageOrganizationId = page.organizationId ?? null;
-    this.ensurePageCanGenerate(page);
-    const billableReferenceCount = await this.ensureAssignedReferencesAndCountBillableReferences(userId, page);
-    await this.ensureNoActiveGenerationJob(userId, page.pageId, pageOrganizationId);
+    const readiness = await this.assessReadiness(userId, page, pageOrganizationId);
+    this.throwIfNotReady(readiness);
+    const billableReferenceCount = readiness.billableReferenceCount;
 
     const requestKind: PageGenerationRequestKind =
       page.generatedImage === null ? 'initial' : 'regenerate';
@@ -215,29 +244,168 @@ export class PageGenerationService implements PageGenerationServicePort {
     }
   }
 
-  private ensurePageCanGenerate(page: PageGenerationContext): void {
-    if (page.frameCount === 0) {
-      throw new ValidationError('Page must have at least one frame before generation');
+  public async getGenerationReadiness(
+    userId: string,
+    pageId: string,
+    organizationId: string | null = null,
+  ): Promise<PageGenerationReadinessResult> {
+    if (organizationId !== null) {
+      await this.getOrganizationService().requireMembership(organizationId, userId, 'generate');
     }
-
-    if (page.panels.length === 0) {
-      throw new ValidationError('Page must have at least one panel before generation');
+    const page = await this.pageRepository.findGenerationContextByIdAndUserId(pageId, userId, organizationId);
+    if (page === null) {
+      throw new NotFoundError('Page not found');
     }
+    const readiness = await this.assessReadiness(userId, page, page.organizationId ?? null);
+    const requestKind: PageGenerationRequestKind = page.generatedImage === null ? 'initial' : 'regenerate';
+    const selection = this.modeSelector.selectProfile({
+      entityCount: countUniqueAssignedEntities(page),
+      panelCount: page.panels.length,
+      requestKind,
+      billableReferenceCount: readiness.billableReferenceCount,
+    });
+    const creditBlocker = await this.getCreditReadinessBlocker(userId, page.organizationId ?? null, selection.creditCost);
+    const blockers = creditBlocker === null ? readiness.blockers : [...readiness.blockers, creditBlocker];
+    const summary = await this.pageRepository.findPageByIdAndUserId(pageId, userId, organizationId);
+    if (summary === null) {
+      throw new NotFoundError('Page not found');
+    }
+    return {
+      ready: blockers.length === 0,
+      blockers,
+      warnings: [],
+      estimatedCreditCost: selection.creditCost,
+      pageRevision: summary.updatedAt.toISOString(),
+    };
+  }
 
-    if (page.frameCount !== page.panels.length) {
-      const layoutFrameCount = getLayoutFrameCount(page.layoutConfig);
-      if (layoutFrameCount !== page.panels.length) {
-        throw new ValidationError('Page frame count must match panel count before generation');
+  public async saveAndGenerate(
+    userId: string,
+    pageId: string,
+    input: SaveAndGeneratePageInput,
+    organizationId: string | null = null,
+  ): Promise<SaveAndGeneratePageResult> {
+    if (organizationId !== null) {
+      await this.getOrganizationService().requireMembership(organizationId, userId, 'edit_work');
+      await this.getOrganizationService().requireMembership(organizationId, userId, 'generate');
+    }
+    if (!isPageAtomicGenerationRepository(this.pageRepository)) {
+      throw new ConfigurationError('Atomic page save-and-generate repository is not configured');
+    }
+    if (!this.generationEnabled) {
+      throw new ConflictError('Generation is temporarily disabled');
+    }
+    const page = await this.pageRepository.findGenerationContextByIdAndUserId(pageId, userId, organizationId);
+    if (page === null) {
+      throw new NotFoundError('Page not found');
+    }
+    const candidate = {
+      ...page,
+      layoutConfig: buildSavedLayoutConfig(page.layoutConfig, input),
+      frameCount: input.frames.length,
+      panels: input.panels.map((panel) => ({
+        panelId: panel.id,
+        order: panel.order,
+        entities: panel.entities,
+        dialogue: panel.dialogue,
+      })),
+    } satisfies PageGenerationContext;
+    const readiness = await this.assessReadiness(userId, candidate, page.organizationId ?? null);
+    this.throwIfNotReady(readiness);
+    const requestKind: PageGenerationRequestKind = page.generatedImage === null ? 'initial' : 'regenerate';
+    const selection = this.modeSelector.selectProfile({
+      entityCount: countUniqueAssignedEntities(candidate),
+      panelCount: candidate.panels.length,
+      requestKind,
+      billableReferenceCount: readiness.billableReferenceCount,
+    });
+    let result: SaveAndGeneratePageResult;
+    try {
+      result = await this.pageRepository.saveAndCreateGenerationJob({
+        ...input,
+        pageId,
+        userId,
+        organizationId: page.organizationId ?? null,
+        layoutConfig: candidate.layoutConfig,
+        selection,
+        inputSnapshot: buildInputSnapshot(candidate, input, selection, readiness.entityNames, readiness.references),
+        capacityLimits: this.capacityLimits,
+      });
+    } catch (error) {
+      if (isUniqueViolation(error)) {
+        throw new ConflictError('Page generation is already queued or processing');
       }
+      throw error;
     }
+    try {
+      const enqueueResult = await this.pageGenerationQueue.enqueue({
+        jobId: result.jobId,
+        userId,
+        pageId,
+        requestKind: selection.requestKind,
+        generationMode: selection.mode,
+        quality: selection.quality,
+        creditCost: selection.creditCost,
+        requiresPlanner: selection.requiresPlanner,
+        previousPageStatus: page.status,
+        previousGenerationMode: page.generationMode,
+      });
+      if (enqueueResult.messageId !== null) {
+        await this.persistQueueMessageId(result.jobId, enqueueResult.messageId);
+      }
+    } catch (error) {
+      // The durable queued job is the outbox record. Do not undo the committed
+      // page revision or credit ledger; retrying the same request id dispatches it.
+      logPageGenerationCompensationFailure('page_generation_outbox_delivery_deferred', error, {
+        job_id: result.jobId,
+        page_id: pageId,
+      });
+    }
+    return result;
+  }
 
-    if (page.status === 'generating') {
-      throw new ConflictError('Page is already generating');
-    }
+  private async assessReadiness(
+    userId: string,
+    page: PageGenerationContext,
+    organizationId: string | null,
+  ) {
+    const activeJob = await this.generationJobRepository.findActivePageGenerationJob(userId, page.pageId, organizationId);
+    return new PageGenerationReadinessEvaluator(this.entityRepository).assess({
+      userId,
+      page,
+      generationEnabled: this.generationEnabled,
+      hasActiveGenerationJob: activeJob !== null,
+    });
+  }
 
-    if (page.status === 'confirmed') {
-      throw new ConflictError('Confirmed pages must be reopened before regeneration');
+  private throwIfNotReady(readiness: Awaited<ReturnType<PageGenerationService['assessReadiness']>>): void {
+    const first = readiness.blockers[0];
+    if (first === undefined) {
+      return;
     }
+    const message = readiness.firstFailureMessage ?? 'Page generation is not ready';
+    if (first.code === 'PAGE_GENERATING' || first.code === 'PAGE_REOPEN_REQUIRED' || first.code === 'ACTIVE_GENERATION_JOB' || first.code === 'GENERATION_DISABLED') {
+      throw new ConflictError(message);
+    }
+    throw new ValidationError(message);
+  }
+
+  private async getCreditReadinessBlocker(
+    userId: string,
+    organizationId: string | null,
+    creditCost: number,
+  ): Promise<PageGenerationBlocker | null> {
+    if (organizationId !== null) {
+      const balance = await this.getOrganizationService().getCreditBalance(userId, organizationId);
+      return balance.monthlyCredits + balance.purchasedCredits >= creditCost
+        ? null
+        : insufficientCreditBlocker();
+    }
+    const balance = await this.creditService.getBalance(userId);
+    if (balance.totalCredits >= creditCost) {
+      return null;
+    }
+    return insufficientCreditBlocker();
   }
 
   private async persistQueueMessageId(jobId: string, messageId: string): Promise<void> {
@@ -247,64 +415,6 @@ export class PageGenerationService implements PageGenerationServicePort {
       // The queue already accepted the job. Missing metadata should not refund
       // credits or roll back page state because the worker may still run.
     }
-  }
-
-  private async ensureNoActiveGenerationJob(
-    userId: string,
-    pageId: string,
-    organizationId: string | null,
-  ): Promise<void> {
-    const activeJob = await this.generationJobRepository.findActivePageGenerationJob(userId, pageId, organizationId);
-    if (activeJob !== null) {
-      throw new ConflictError('Page generation is already queued or processing');
-    }
-  }
-
-  private async ensureAssignedReferencesAndCountBillableReferences(
-    userId: string,
-    page: PageGenerationContext,
-  ): Promise<number> {
-    const assignedEntityIds = Array.from(
-      new Set(page.panels.flatMap((panel) => panel.entities.map((assignment) => assignment.entityId))),
-    );
-    if (assignedEntityIds.length === 0) {
-      return 0;
-    }
-
-    const organizationId = page.organizationId ?? null;
-    const entities = await this.entityRepository.findByWorkIdAndUserId(page.workId, userId, organizationId);
-    const assignedCharacters = entities.filter(
-      (entity) => entity.entityType === 'character' && assignedEntityIds.includes(entity.id),
-    );
-
-    const references = await this.entityRepository.findPrimaryReferenceImagesByEntityIdsAndUserId(
-      assignedEntityIds,
-      page.workId,
-      userId,
-      organizationId,
-    );
-
-    const referenceImageCount = new Set(references.map((reference) => reference.entityId)).size;
-    if (referenceImageCount > PAGE_GENERATION_INPUT_IMAGE_LIMITS.MAX_ENTITY_REFERENCE_IMAGES) {
-      throw new ValidationError(
-        `Page generation supports up to ${PAGE_GENERATION_INPUT_IMAGE_LIMITS.MAX_ENTITY_REFERENCE_IMAGES} reference images per page. Reduce assigned characters or split the scene.`,
-      );
-    }
-
-    if (assignedCharacters.length === 0) {
-      return referenceImageCount;
-    }
-
-    const referencedCharacterIds = new Set(references.map((reference) => reference.entityId));
-    const missingCharacters = assignedCharacters.filter((entity) => !referencedCharacterIds.has(entity.id));
-    if (missingCharacters.length === 0) {
-      return referenceImageCount;
-    }
-
-    const missingNames = missingCharacters.map((entity) => entity.name).join(', ');
-    throw new ValidationError(
-      `Generate requires confirmed character references for: ${missingNames}`,
-    );
   }
 
   private async consumeCredits(input: {
@@ -372,15 +482,83 @@ export class PageGenerationService implements PageGenerationServicePort {
   }
 }
 
+function insufficientCreditBlocker(): PageGenerationBlocker {
+  return {
+    code: 'INSUFFICIENT_CREDITS',
+    entityId: null,
+    field: 'generation',
+    action: 'none',
+    messageKey: 'page.blocker.insufficientCredits',
+  };
+}
+
 function countUniqueAssignedEntities(page: PageGenerationContext): number {
   return new Set(
     page.panels.flatMap((panel) => panel.entities.map((assignment) => assignment.entityId)),
   ).size;
 }
 
-function getLayoutFrameCount(layoutConfig: Record<string, unknown>): number | null {
-  const frameDefinitions = layoutConfig.frame_definitions;
-  return Array.isArray(frameDefinitions) ? frameDefinitions.length : null;
+function buildSavedLayoutConfig(
+  existing: Record<string, unknown>,
+  input: SaveAndGeneratePageInput,
+): Record<string, unknown> {
+  const layoutConfig: Record<string, unknown> = {
+    ...existing,
+    panel_count: input.panels.length,
+    frame_definitions: input.frames.map((frame) => ({
+      panel_id: frame.panelId,
+      vertices: frame.vertices,
+      border_style: frame.borderStyle,
+      border_width: frame.borderWidth,
+      border_color: frame.borderColor,
+      z_index: frame.zIndex,
+      reading_order: frame.readingOrder,
+    })),
+  };
+  if (input.page.styleReference !== undefined) {
+    layoutConfig.style_reference = input.page.styleReference;
+  }
+  if (input.page.storySourceSceneIds !== undefined) {
+    layoutConfig.story_source_scene_ids = input.page.storySourceSceneIds;
+  }
+  if (input.page.storyPagePurpose !== undefined) {
+    layoutConfig.story_page_purpose = input.page.storyPagePurpose;
+  }
+  if (input.page.storyContinuityNote !== undefined) {
+    layoutConfig.story_continuity_note = input.page.storyContinuityNote;
+  }
+  return layoutConfig;
+}
+
+function buildInputSnapshot(
+  page: PageGenerationContext,
+  input: SaveAndGeneratePageInput,
+  selection: ReturnType<ModeSelector['selectProfile']>,
+  entityNames: ReadonlyMap<string, string>,
+  references: PageGenerationInputSnapshotReference[],
+) {
+  return {
+    pageId: page.pageId,
+    requestKind: selection.requestKind,
+    generationMode: selection.mode,
+    panelCount: input.panels.length,
+    references,
+    panels: [...input.panels]
+      .sort((left, right) => left.order - right.order)
+      .map((panel) => ({
+        panelId: panel.id,
+        order: panel.order,
+        entityIds: panel.entities.map((entity) => entity.entityId),
+        entityNames: panel.entities.map((entity) => entityNames.get(entity.entityId) ?? entity.entityId),
+        dialogue: panel.dialogue.map((dialogue) => ({
+          entityId: dialogue.entityId,
+          speakerName: dialogue.entityId === null ? null : entityNames.get(dialogue.entityId) ?? dialogue.entityId,
+          type: dialogue.type,
+          position: dialogue.position,
+          text: dialogue.text,
+        })),
+      })),
+  };
 }
 
 function logPageGenerationCompensationFailure(

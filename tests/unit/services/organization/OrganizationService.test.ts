@@ -823,6 +823,38 @@ describe('OrganizationService', () => {
     expect(preview.invitation.status).toBe('expired');
     expect(repository.invitations[0]?.status).toBe('expired');
   });
+  it('ページングした組織一覧では認可後にのみRepositoryを読む', async () => {
+    const repository = new InMemoryOrganizationRepository();
+    const service = buildService(repository);
+
+    await expect(
+      service.listMembersPage('not-a-member', 'org-1', { limit: 1, cursor: null }),
+    ).rejects.toBeInstanceOf(Error);
+    expect(repository.pageReadCount).toBe(0);
+
+    repository.setMember(buildMember({ userId: 'owner-user', role: 'owner' }));
+    await service.listMembersPage('owner-user', 'org-1', { limit: 1, cursor: null });
+    await service.listInvitationsPage('owner-user', 'org-1', { limit: 1, cursor: null });
+    await service.listUsageEventsPage('owner-user', 'org-1', { limit: 1, cursor: null });
+    await service.listAuditLogsPage('owner-user', 'org-1', { limit: 1, cursor: null });
+
+    expect(repository.pageReadCount).toBe(4);
+  });
+
+  it('ページングした使用量一覧はページ外のイベントを含むsummaryを返す', async () => {
+    const repository = new InMemoryOrganizationRepository();
+    repository.setMember(buildMember({ userId: 'owner-user', role: 'owner' }));
+    repository.usageEvents = [
+      buildUsageEvent('usage-page', -3),
+      buildUsageEvent('usage-not-in-page', -9),
+    ];
+    const service = buildService(repository);
+
+    const result = await service.listUsageEventsPage('owner-user', 'org-1', { limit: 1, cursor: null });
+
+    expect(result.page.items).toHaveLength(1);
+    expect(result.summary.currentMonthTotalCredits).toBe(-12);
+  });
 });
 
 function buildService(
@@ -866,6 +898,7 @@ class InMemoryOrganizationRepository {
   public activeOwnerCount = 1;
   public balance: OrganizationCreditBalance = buildBalance();
   public creditLedger: OrganizationCreditLedgerTestEntry[] = [];
+  public pageReadCount = 0;
 
   public setMember(member: OrganizationMember): void {
     this.members.set(memberKey(member.organizationId, member.userId), member);
@@ -996,6 +1029,27 @@ class InMemoryOrganizationRepository {
 
   public async listInvitations(organizationId: string): Promise<OrganizationInvitation[]> {
     return this.invitations.filter((invitation) => invitation.organizationId === organizationId);
+  }
+
+  public async listMembersPage(
+    organizationId: string,
+    page: { limit: number },
+  ): Promise<{ items: OrganizationMember[]; nextCursor: string | null }> {
+    this.pageReadCount += 1;
+    return {
+      items: Array.from(this.members.values())
+        .filter((member) => member.organizationId === organizationId)
+        .slice(0, page.limit),
+      nextCursor: null,
+    };
+  }
+
+  public async listInvitationsPage(
+    organizationId: string,
+    page: { limit: number },
+  ): Promise<{ items: OrganizationInvitation[]; nextCursor: string | null }> {
+    this.pageReadCount += 1;
+    return { items: (await this.listInvitations(organizationId)).slice(0, page.limit), nextCursor: null };
   }
 
   public async findPendingInvitationByEmail(
@@ -1155,6 +1209,51 @@ class InMemoryOrganizationRepository {
       .slice(0, limit);
   }
 
+  public async listAuditLogsPage(
+    organizationId: string,
+    page: { limit: number },
+  ): Promise<{ items: OrganizationAuditLog[]; nextCursor: string | null }> {
+    this.pageReadCount += 1;
+    return { items: await this.listAuditLogs(organizationId, page.limit), nextCursor: null };
+  }
+
+  public async listAuditLogsByActionPrefixesPage(
+    organizationId: string,
+    actionPrefixes: readonly string[],
+    page: { limit: number },
+  ): Promise<{ items: OrganizationAuditLog[]; nextCursor: string | null }> {
+    this.pageReadCount += 1;
+    return {
+      items: await this.listAuditLogsByActionPrefixes(organizationId, actionPrefixes, page.limit),
+      nextCursor: null,
+    };
+  }
+
+  public async listUsageEventsPage(
+    organizationId: string,
+    page: { limit: number },
+  ): Promise<{ items: OrganizationUsageEvent[]; nextCursor: string | null }> {
+    this.pageReadCount += 1;
+    return {
+      items: this.usageEvents.filter((event) => event.organizationId === organizationId).slice(0, page.limit),
+      nextCursor: null,
+    };
+  }
+
+  public async summarizeUsageEvents(): Promise<{
+    currentMonthTotalCredits: number;
+    byMember: Array<{ key: string; credits: number }>;
+    byWork: Array<{ key: string; credits: number }>;
+    byGenerationType: Array<{ key: string; credits: number }>;
+  }> {
+    return {
+      currentMonthTotalCredits: this.usageEvents.reduce((sum, event) => sum + event.creditAmount, 0),
+      byMember: [],
+      byWork: [],
+      byGenerationType: [],
+    };
+  }
+
   public async insertAuditLog(input: AuditLogInput): Promise<void> {
     this.insertedAuditLogs.push(input);
   }
@@ -1183,6 +1282,20 @@ class InMemoryOrganizationRepository {
 
 function memberKey(organizationId: string, userId: string): string {
   return `${organizationId}:${userId}`;
+}
+
+function buildUsageEvent(id: string, creditAmount: number): OrganizationUsageEvent {
+  return {
+    id,
+    organizationId: 'org-1',
+    userId: 'owner-user',
+    workId: 'work-1',
+    generationJobId: null,
+    eventType: 'page.generate',
+    creditAmount,
+    metadata: {},
+    createdAt: new Date(),
+  };
 }
 
 function buildMember(overrides: Partial<OrganizationMember> = {}): OrganizationMember {

@@ -1,7 +1,12 @@
 import type Stripe from 'stripe';
 import { describe, expect, it } from 'vitest';
 import { ConfigurationError, ConflictError, NotFoundError } from '../../../../src/domain/errors/index.js';
-import type { ActiveSubscriptionRecord, BillingUserProfile, PaymentRecord } from '../../../../src/domain/types/billing.js';
+import type {
+  ActiveSubscriptionRecord,
+  BillingUserProfile,
+  PaymentRecord,
+  PersonalSubscriptionSummary,
+} from '../../../../src/domain/types/billing.js';
 import type { AuthenticatedUser } from '../../../../src/domain/types/user.js';
 import type { StripeBillingClientPort } from '../../../../src/infrastructure/stripe/StripeBillingClient.js';
 import type { DatabaseClient } from '../../../../src/lib/db.js';
@@ -25,6 +30,7 @@ class InMemoryBillingRepository implements BillingRepository {
     planCode: 'free',
   };
   public activeSubscription: ActiveSubscriptionRecord | null = null;
+  public personalSubscription: PersonalSubscriptionSummary | null = null;
   public persistedCustomerId: string | null = null;
 
   private readonly fakeClient: DatabaseClient = {
@@ -69,6 +75,10 @@ class InMemoryBillingRepository implements BillingRepository {
     return this.activeSubscription;
   }
 
+  public async findLatestSubscriptionSummaryForUser(): Promise<PersonalSubscriptionSummary | null> {
+    return this.personalSubscription;
+  }
+
   public async findLatestSubscriptionForOrganization(): Promise<null> {
     return null;
   }
@@ -108,6 +118,7 @@ class FakeStripeBillingClient implements StripeBillingClientPort {
   public portalUpdateSubscriptionId: string | null = null;
   public portalUpdateSubscriptionItemId: string | null = null;
   public portalUpdatePriceId: string | null = null;
+  public retrieveSubscriptionCalls = 0;
   public subscription: Stripe.Subscription = buildStripeSubscription();
 
   public async createCustomer(input: { userId: string }): Promise<{ id: string }> {
@@ -157,11 +168,28 @@ class FakeStripeBillingClient implements StripeBillingClientPort {
   }
 
   public async retrieveSubscription(): Promise<Stripe.Subscription> {
+    this.retrieveSubscriptionCalls += 1;
     return this.subscription;
   }
 }
 
 describe('BillingService', () => {
+  it('reads the persisted personal subscription summary without a Stripe API request', async () => {
+    const repository = new InMemoryBillingRepository();
+    repository.personalSubscription = {
+      planCode: 'premium',
+      status: 'trialing',
+      currentPeriodEnd: new Date('2026-08-01T00:00:00.000Z'),
+      cancelAtPeriodEnd: false,
+    };
+    const stripeClient = new FakeStripeBillingClient();
+    const service = buildService(repository, stripeClient);
+
+    await expect(service.getPersonalSubscriptionSummary(freeUser.id)).resolves.toEqual(repository.personalSubscription);
+    expect(stripeClient.checkoutMode).toBeNull();
+    expect(stripeClient.retrieveSubscriptionCalls).toBe(0);
+  });
+
   it('free user subscription checkout creates Stripe customer and session', async () => {
     const repository = new InMemoryBillingRepository();
     const stripeClient = new FakeStripeBillingClient();

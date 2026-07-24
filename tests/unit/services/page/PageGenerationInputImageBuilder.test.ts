@@ -26,6 +26,7 @@ class FakePageRepository implements PageRepository {
     panels: [
       {
         panelId: 'panel-1',
+        order: 1,
         entities: [
           {
             entityId: 'entity-1',
@@ -52,9 +53,11 @@ class FakePageRepository implements PageRepository {
             stateId: null,
           },
         ],
+        dialogue: [],
       },
       {
         panelId: 'panel-2',
+        order: 2,
         entities: [
           {
             entityId: 'entity-1',
@@ -69,6 +72,7 @@ class FakePageRepository implements PageRepository {
             stateId: null,
           },
         ],
+        dialogue: [],
       },
     ],
   };
@@ -238,6 +242,7 @@ function buildTestEntity(id: string, name: string): Entity {
 function buildTestPanel(entityId: string): PageGenerationContext['panels'][number] {
   return {
     panelId: `panel-${entityId}`,
+    order: 1,
     entities: [
       {
         entityId,
@@ -252,6 +257,7 @@ function buildTestPanel(entityId: string): PageGenerationContext['panels'][numbe
         stateId: null,
       },
     ],
+    dialogue: [],
   };
 }
 

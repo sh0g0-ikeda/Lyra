@@ -1,0 +1,15 @@
+appId: ${APP_ID}
+name: "E2E-12: Japanese/English switch"
+tags: [staging, localization]
+---
+- runFlow:
+    file: ../helpers/launch-authenticated.yaml
+- runFlow:
+    file: ../helpers/open-account.yaml
+- tapOn: ${E2E_LANGUAGE_LABEL}
+- tapOn: ${E2E_LANGUAGE_ENGLISH_LABEL}
+- assertVisible: ${E2E_LANGUAGE_ENGLISH_ASSERTION}
+- tapOn: ${E2E_LANGUAGE_LABEL}
+- tapOn: ${E2E_LANGUAGE_JAPANESE_LABEL}
+- assertVisible: ${E2E_LANGUAGE_JAPANESE_ASSERTION}
+- takeScreenshot: E2E-12-language-switch

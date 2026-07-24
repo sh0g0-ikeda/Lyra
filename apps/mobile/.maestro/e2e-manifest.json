@@ -1,0 +1,154 @@
+{
+  "applicationId": "com.lyra.mobile",
+  "version": 1,
+  "scenarios": [
+    {
+      "id": "E2E-01",
+      "title": "signup/confirm/login/logout",
+      "platforms": { "ios": "required", "android": "required" },
+      "flow": "flows/e2e-01-signup-confirm-login-logout.yaml",
+      "fixtures": ["fixture-new-account"],
+      "requiredEnv": ["E2E_SIGNUP_EMAIL", "E2E_SIGNUP_PASSWORD", "E2E_SIGNUP_CONFIRMATION_CODE", "E2E_AUTH_SIGN_UP_LABEL", "E2E_AUTH_EMAIL_LABEL", "E2E_AUTH_PASSWORD_LABEL", "E2E_AUTH_CONFIRMATION_LABEL", "E2E_AUTH_SUBMIT_LABEL", "E2E_AUTH_CONFIRM_LABEL", "E2E_LOGOUT_LABEL", "E2E_LOGOUT_CONFIRM_LABEL"]
+    },
+    {
+      "id": "E2E-02",
+      "title": "token refresh/background",
+      "platforms": { "ios": "required", "android": "required" },
+      "flow": "flows/e2e-02-token-refresh-background.yaml",
+      "fixtures": ["fixture-token-refresh-user"],
+      "requiredEnv": ["E2E_LOGIN_EMAIL", "E2E_LOGIN_PASSWORD", "E2E_AUTH_EMAIL_LABEL", "E2E_AUTH_PASSWORD_LABEL", "E2E_AUTH_SUBMIT_LABEL", "E2E_SESSION_READY_LABEL"]
+    },
+    {
+      "id": "E2E-03",
+      "title": "personal full creation flow",
+      "platforms": { "ios": "required", "android": "required" },
+      "flow": "flows/e2e-03-personal-full-creation-flow.yaml",
+      "fixtures": ["fixture-personal-owner", "fixture-personal-work"],
+      "requiredEnv": ["E2E_LOGIN_EMAIL", "E2E_LOGIN_PASSWORD", "E2E_AUTH_EMAIL_LABEL", "E2E_AUTH_PASSWORD_LABEL", "E2E_AUTH_SUBMIT_LABEL", "E2E_CREATE_WORK_LABEL", "E2E_WORK_TITLE_INPUT_LABEL", "E2E_NEW_WORK_TITLE", "E2E_SAVE_WORK_LABEL", "E2E_CREATE_CHAPTER_LABEL", "E2E_CHAPTER_TITLE_INPUT_LABEL", "E2E_NEW_CHAPTER_TITLE", "E2E_SAVE_CHAPTER_LABEL", "E2E_CREATE_EPISODE_LABEL", "E2E_EPISODE_TITLE_INPUT_LABEL", "E2E_NEW_EPISODE_TITLE", "E2E_SAVE_EPISODE_LABEL", "E2E_CREATE_PAGE_LABEL", "E2E_NEW_PAGE_LABEL"]
+    },
+    {
+      "id": "E2E-04",
+      "title": "entity import/generate/confirm",
+      "platforms": { "ios": "required", "android": "required" },
+      "flow": "flows/e2e-04-entity-import-generate-confirm.yaml",
+      "fixtures": ["fixture-entity-reference"],
+      "requiredEnv": ["E2E_LOGIN_EMAIL", "E2E_LOGIN_PASSWORD", "E2E_AUTH_EMAIL_LABEL", "E2E_AUTH_PASSWORD_LABEL", "E2E_AUTH_SUBMIT_LABEL", "E2E_FIXTURE_ENTITY_NAME", "E2E_ENTITY_IMPORT_IMAGE_PATH", "E2E_ENTITY_IMPORT_LABEL", "E2E_ENTITY_GENERATE_LABEL", "E2E_ENTITY_CONFIRM_LABEL", "E2E_ENTITY_REFERENCE_READY_LABEL"]
+    },
+    {
+      "id": "E2E-05",
+      "title": "skeleton/story apply/recovery",
+      "platforms": { "ios": "required", "android": "required" },
+      "flow": "flows/e2e-05-skeleton-story-apply-recovery.yaml",
+      "fixtures": ["fixture-story-recovery"],
+      "requiredEnv": ["E2E_LOGIN_EMAIL", "E2E_LOGIN_PASSWORD", "E2E_AUTH_EMAIL_LABEL", "E2E_AUTH_PASSWORD_LABEL", "E2E_AUTH_SUBMIT_LABEL", "E2E_FIXTURE_EPISODE_TITLE", "E2E_STORY_GENERATE_LABEL", "E2E_STORY_APPLY_LABEL", "E2E_STORY_RECOVERY_LABEL", "E2E_STORY_RECOVERED_LABEL"]
+    },
+    {
+      "id": "E2E-06",
+      "title": "page edit/generate/confirm/export",
+      "platforms": { "ios": "required", "android": "required" },
+      "flow": "flows/e2e-06-page-edit-generate-confirm-export.yaml",
+      "fixtures": ["fixture-page-export"],
+      "requiredEnv": ["E2E_LOGIN_EMAIL", "E2E_LOGIN_PASSWORD", "E2E_AUTH_EMAIL_LABEL", "E2E_AUTH_PASSWORD_LABEL", "E2E_AUTH_SUBMIT_LABEL", "E2E_FIXTURE_PAGE_TITLE", "E2E_PAGE_EDIT_LABEL", "E2E_PAGE_GENERATE_LABEL", "E2E_PAGE_CONFIRM_LABEL", "E2E_PAGE_EXPORT_LABEL", "E2E_EXPORT_READY_LABEL"]
+    },
+    {
+      "id": "E2E-07",
+      "title": "insufficient credit/action",
+      "platforms": { "ios": "required", "android": "required" },
+      "flow": "flows/e2e-07-insufficient-credit-action.yaml",
+      "fixtures": ["fixture-no-credit-user"],
+      "requiredEnv": ["E2E_LOGIN_EMAIL", "E2E_LOGIN_PASSWORD", "E2E_AUTH_EMAIL_LABEL", "E2E_AUTH_PASSWORD_LABEL", "E2E_AUTH_SUBMIT_LABEL", "E2E_CREDIT_TRIGGER_LABEL", "E2E_INSUFFICIENT_CREDIT_LABEL", "E2E_CREDIT_ACTION_LABEL"]
+    },
+    {
+      "id": "E2E-08",
+      "title": "org invitation/new account",
+      "platforms": { "ios": "required", "android": "required" },
+      "flow": "flows/e2e-08-org-invitation-new-account.yaml",
+      "fixtures": ["fixture-org-invitation", "fixture-org-invitee"],
+      "requiredEnv": ["E2E_INVITATION_URL", "E2E_INVITEE_EMAIL", "E2E_INVITEE_PASSWORD", "E2E_INVITEE_CONFIRMATION_CODE", "E2E_AUTH_SIGN_UP_LABEL", "E2E_AUTH_EMAIL_LABEL", "E2E_AUTH_PASSWORD_LABEL", "E2E_AUTH_CONFIRMATION_LABEL", "E2E_AUTH_SUBMIT_LABEL", "E2E_AUTH_CONFIRM_LABEL", "E2E_INVITATION_ORGANIZATION_LABEL", "E2E_INVITATION_ACCEPT_LABEL"]
+    },
+    {
+      "id": "E2E-09",
+      "title": "org role permissions",
+      "platforms": { "ios": "required", "android": "required" },
+      "flow": "flows/e2e-09-org-role-permissions.yaml",
+      "fixtures": ["fixture-org-viewer", "fixture-org-editor"],
+      "requiredEnv": ["E2E_LOGIN_EMAIL", "E2E_LOGIN_PASSWORD", "E2E_AUTH_EMAIL_LABEL", "E2E_AUTH_PASSWORD_LABEL", "E2E_AUTH_SUBMIT_LABEL", "E2E_ORG_VIEW_ONLY_LABEL", "E2E_ORG_EDIT_FORBIDDEN_LABEL", "E2E_ORG_WORKSPACE_LABEL"]
+    },
+    {
+      "id": "E2E-10",
+      "title": "org credit/billing handoff",
+      "platforms": { "ios": "required", "android": "required" },
+      "flow": "flows/e2e-10-org-credit-billing-handoff.yaml",
+      "fixtures": ["fixture-org-billing-member"],
+      "requiredEnv": ["E2E_LOGIN_EMAIL", "E2E_LOGIN_PASSWORD", "E2E_AUTH_EMAIL_LABEL", "E2E_AUTH_PASSWORD_LABEL", "E2E_AUTH_SUBMIT_LABEL", "E2E_ORG_BILLING_LABEL", "E2E_ORG_CREDIT_LABEL", "E2E_ORG_BILLING_HANDOFF_LABEL"]
+    },
+    {
+      "id": "E2E-11",
+      "title": "offline/retry/no draft loss",
+      "platforms": { "ios": "required", "android": "required" },
+      "flow": "flows/e2e-11-offline-retry-no-draft-loss.yaml",
+      "fixtures": ["fixture-offline-draft"],
+      "requiredEnv": ["E2E_LOGIN_EMAIL", "E2E_LOGIN_PASSWORD", "E2E_AUTH_EMAIL_LABEL", "E2E_AUTH_PASSWORD_LABEL", "E2E_AUTH_SUBMIT_LABEL", "E2E_OFFLINE_DRAFT_INPUT_LABEL", "E2E_OFFLINE_DRAFT_TEXT", "E2E_OFFLINE_LABEL", "E2E_RETRY_LABEL", "E2E_DRAFT_PRESERVED_LABEL"],
+      "platformRequiredEnv": { "ios": ["E2E_NETWORK_CONTROL_URL", "E2E_NETWORK_CONTROL_TOKEN", "E2E_NETWORK_DEVICE_ID", "E2E_NETWORK_HARNESS_EVIDENCE_PATH"] },
+      "externalEvidence": { "ios": ["E2E_NETWORK_HARNESS_EVIDENCE_PATH"] }
+    },
+    {
+      "id": "E2E-12",
+      "title": "Japanese/English switch",
+      "platforms": { "ios": "required", "android": "required" },
+      "flow": "flows/e2e-12-japanese-english-switch.yaml",
+      "fixtures": ["fixture-language-user"],
+      "requiredEnv": ["E2E_LOGIN_EMAIL", "E2E_LOGIN_PASSWORD", "E2E_AUTH_EMAIL_LABEL", "E2E_AUTH_PASSWORD_LABEL", "E2E_AUTH_SUBMIT_LABEL", "E2E_LANGUAGE_LABEL", "E2E_LANGUAGE_JAPANESE_LABEL", "E2E_LANGUAGE_ENGLISH_LABEL", "E2E_LANGUAGE_JAPANESE_ASSERTION", "E2E_LANGUAGE_ENGLISH_ASSERTION"]
+    },
+    {
+      "id": "E2E-13",
+      "title": "deep link cold/warm start",
+      "platforms": { "ios": "required", "android": "required" },
+      "flow": "flows/e2e-13-deep-link-cold-warm-start.yaml",
+      "fixtures": ["fixture-deep-link-invitation"],
+      "requiredEnv": ["E2E_LOGIN_EMAIL", "E2E_LOGIN_PASSWORD", "E2E_AUTH_EMAIL_LABEL", "E2E_AUTH_PASSWORD_LABEL", "E2E_AUTH_SUBMIT_LABEL", "E2E_DEEP_LINK_URL", "E2E_DEEP_LINK_DESTINATION_LABEL"]
+    },
+    {
+      "id": "E2E-14",
+      "title": "account deletion",
+      "platforms": { "ios": "required", "android": "required" },
+      "flow": "flows/e2e-14-account-deletion.yaml",
+      "fixtures": ["fixture-deletion-account"],
+      "requiredEnv": ["E2E_LOGIN_EMAIL", "E2E_LOGIN_PASSWORD", "E2E_AUTH_EMAIL_LABEL", "E2E_AUTH_PASSWORD_LABEL", "E2E_AUTH_SUBMIT_LABEL", "E2E_ACCOUNT_DELETION_LABEL", "E2E_ACCOUNT_DELETION_CONFIRMATION_LABEL", "E2E_ACCOUNT_DELETION_CONFIRMATION", "E2E_ACCOUNT_DELETION_SUBMIT_LABEL", "E2E_ACCOUNT_DELETION_RESULT_LABEL"]
+    },
+    {
+      "id": "E2E-15",
+      "title": "personal purchase/pending/restore/refund",
+      "platforms": { "ios": "StoreKit sandbox", "android": "Play license test" },
+      "flow": "flows/e2e-15-personal-purchase-pending-restore-refund.yaml",
+      "fixtures": ["fixture-store-personal-user"],
+      "requiredEnv": ["E2E_LOGIN_EMAIL", "E2E_LOGIN_PASSWORD", "E2E_AUTH_EMAIL_LABEL", "E2E_AUTH_PASSWORD_LABEL", "E2E_AUTH_SUBMIT_LABEL", "E2E_STORE_TEST_ACKNOWLEDGED", "E2E_PURCHASE_LABEL", "E2E_PURCHASE_PENDING_LABEL", "E2E_PURCHASE_RESTORE_LABEL", "E2E_PURCHASE_REFUND_LABEL", "E2E_PURCHASE_RENEWAL_LABEL", "E2E_PURCHASE_RENEWAL_RESULT_LABEL", "E2E_PURCHASE_RESULT_LABEL"],
+      "platformRequiredEnv": { "ios": ["E2E_STOREKIT_SANDBOX_ACCOUNT", "E2E_STOREKIT_PROVIDER_EVIDENCE_PATH", "E2E_STORE_SERVER_WEBHOOK_EVIDENCE_PATH", "E2E_STORE_PENDING_EVIDENCE_PATH", "E2E_STORE_RESTORE_EVIDENCE_PATH", "E2E_STORE_REFUND_EVIDENCE_PATH", "E2E_STORE_RENEWAL_EVIDENCE_PATH"], "android": ["E2E_PLAY_LICENSE_TEST_ACCOUNT", "E2E_PLAY_PROVIDER_EVIDENCE_PATH", "E2E_STORE_SERVER_WEBHOOK_EVIDENCE_PATH", "E2E_STORE_PENDING_EVIDENCE_PATH", "E2E_STORE_RESTORE_EVIDENCE_PATH", "E2E_STORE_REFUND_EVIDENCE_PATH", "E2E_STORE_RENEWAL_EVIDENCE_PATH"] },
+      "externalEvidence": { "ios": ["E2E_STOREKIT_PROVIDER_EVIDENCE_PATH", "E2E_STORE_SERVER_WEBHOOK_EVIDENCE_PATH", "E2E_STORE_PENDING_EVIDENCE_PATH", "E2E_STORE_RESTORE_EVIDENCE_PATH", "E2E_STORE_REFUND_EVIDENCE_PATH", "E2E_STORE_RENEWAL_EVIDENCE_PATH"], "android": ["E2E_PLAY_PROVIDER_EVIDENCE_PATH", "E2E_STORE_SERVER_WEBHOOK_EVIDENCE_PATH", "E2E_STORE_PENDING_EVIDENCE_PATH", "E2E_STORE_RESTORE_EVIDENCE_PATH", "E2E_STORE_REFUND_EVIDENCE_PATH", "E2E_STORE_RENEWAL_EVIDENCE_PATH"] }
+    },
+    {
+      "id": "E2E-16",
+      "title": "save-and-generate atomicity/409 conflict",
+      "platforms": { "ios": "required", "android": "required" },
+      "flow": "flows/e2e-16-save-and-generate-atomicity-409-conflict.yaml",
+      "fixtures": ["fixture-page-conflict"],
+      "requiredEnv": ["E2E_LOGIN_EMAIL", "E2E_LOGIN_PASSWORD", "E2E_AUTH_EMAIL_LABEL", "E2E_AUTH_PASSWORD_LABEL", "E2E_AUTH_SUBMIT_LABEL", "E2E_CONFLICT_PAGE_LABEL", "E2E_SAVE_AND_GENERATE_LABEL", "E2E_CONFLICT_LABEL", "E2E_CONFLICT_RESOLUTION_LABEL"]
+    },
+    {
+      "id": "E2E-17",
+      "title": "active job recovery after app restart",
+      "platforms": { "ios": "required", "android": "required" },
+      "flow": "flows/e2e-17-active-job-recovery-after-app-restart.yaml",
+      "fixtures": ["fixture-active-generation-job"],
+      "requiredEnv": ["E2E_LOGIN_EMAIL", "E2E_LOGIN_PASSWORD", "E2E_AUTH_EMAIL_LABEL", "E2E_AUTH_PASSWORD_LABEL", "E2E_AUTH_SUBMIT_LABEL", "E2E_ACTIVE_JOB_LABEL", "E2E_ACTIVE_JOB_RECOVERED_LABEL"]
+    },
+    {
+      "id": "E2E-18",
+      "title": "external dialogue is unavailable until balloon flow is complete",
+      "platforms": { "ios": "required", "android": "required" },
+      "flow": "flows/e2e-18-external-dialogue-requires-balloon-flow.yaml",
+      "fixtures": ["fixture-balloon-required-page"],
+      "requiredEnv": ["E2E_LOGIN_EMAIL", "E2E_LOGIN_PASSWORD", "E2E_AUTH_EMAIL_LABEL", "E2E_AUTH_PASSWORD_LABEL", "E2E_AUTH_SUBMIT_LABEL", "E2E_EXTERNAL_DIALOGUE_LABEL", "E2E_BALLOON_REQUIRED_LABEL", "E2E_BALLOON_COMPLETE_LABEL", "E2E_EXTERNAL_DIALOGUE_AVAILABLE_LABEL"]
+    }
+  ]
+}

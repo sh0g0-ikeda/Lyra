@@ -17,6 +17,7 @@ import type {
   CreditServicePort,
   RefundCreditsParams,
 } from '../../../src/services/credit/CreditService.js';
+import { compositionsResponseSchema } from '../../../packages/api-contract/src/mobileApiSchemas.js';
 
 const jwtSecret = 'unit-test-secret';
 const user: AuthenticatedUser = {
@@ -88,6 +89,7 @@ describe('composition routes', () => {
       limit: 100,
     });
     const payload = (await response.json()) as Record<string, unknown>;
+    expect(compositionsResponseSchema.safeParse(payload).success).toBe(true);
     expect(payload).toMatchObject({
       compositions: [
         {

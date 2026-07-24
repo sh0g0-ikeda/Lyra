@@ -918,6 +918,62 @@ describe('PageGenerationWorkerService', () => {
       }),
     ]);
   });
+  it('claim直後に取消が確定していれば provider 呼出しも結果公開もせず canceled として完了する', async () => {
+    const executionRepository = new FakeExecutionRepository();
+    const renderer = new FakeRenderer();
+    const cancellationCheckpoint = {
+      finalizeCancellationIfRequested: async () => true,
+    };
+    const service = new PageGenerationWorkerService(
+      executionRepository,
+      new FakePromptBuilder(),
+      new FakePromptCompiler(),
+      new FakeInputImageBuilder(),
+      new FakePlanner(),
+      renderer,
+      new FakeStorage(),
+      new FakeCreditService(),
+      true,
+      undefined,
+      cancellationCheckpoint,
+    );
+
+    await expect(service.processJob('job-1')).resolves.toEqual({
+      status: 'processed',
+      jobStatus: 'canceled',
+    });
+    expect(renderer.calls).toEqual([]);
+    expect(executionRepository.completionInput).toBeNull();
+    expect(executionRepository.failureInput).toBeNull();
+  });
+
+  it('in-flight provider callの後に取消が確定した場合は画像を保存も公開もせず canceled として完了する', async () => {
+    const executionRepository = new FakeExecutionRepository();
+    const renderer = new FakeRenderer();
+    const storage = new FakeStorage();
+    const checkpoints = [false, false, true];
+    const service = new PageGenerationWorkerService(
+      executionRepository,
+      new FakePromptBuilder(),
+      new FakePromptCompiler(),
+      new FakeInputImageBuilder(),
+      new FakePlanner(),
+      renderer,
+      storage,
+      new FakeCreditService(),
+      true,
+      undefined,
+      { finalizeCancellationIfRequested: async () => checkpoints.shift() ?? false },
+    );
+
+    await expect(service.processJob('job-1')).resolves.toEqual({
+      status: 'processed',
+      jobStatus: 'canceled',
+    });
+    expect(renderer.calls).toHaveLength(1);
+    expect(storage.calls).toEqual([]);
+    expect(executionRepository.completionInput).toBeNull();
+  });
 });
 
 function buildInputSnapshot(): PageGenerationInputSnapshot {

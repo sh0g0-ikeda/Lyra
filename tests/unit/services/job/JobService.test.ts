@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { GenerationJob } from '../../../../src/domain/types/job.js';
 import type {
   CreateGenerationJobInput,
+  FindGenerationJobForScopeInput,
   GenerationJobRepository,
 } from '../../../../src/repositories/GenerationJobRepository.js';
 import type { EntityGenerationRecoveryServicePort } from '../../../../src/services/entity/EntityGenerationRecoveryService.js';
@@ -13,12 +14,19 @@ const now = new Date('2026-06-08T00:00:00.000Z');
 class FakeGenerationJobRepository implements GenerationJobRepository {
   public job: GenerationJob | null = null;
   public reads = 0;
+  public scopedReads: FindGenerationJobForScopeInput[] = [];
 
   public async create(_input: CreateGenerationJobInput): Promise<GenerationJob> {
     throw new Error('not used');
   }
 
   public async findByIdAndUserId(): Promise<GenerationJob | null> {
+    this.reads += 1;
+    return this.job;
+  }
+
+  public async findByIdForScope(input: FindGenerationJobForScopeInput): Promise<GenerationJob | null> {
+    this.scopedReads.push(input);
     this.reads += 1;
     return this.job;
   }
@@ -95,6 +103,35 @@ class FakePageGenerationRecoveryService implements PageGenerationRecoveryService
 }
 
 describe('JobService', () => {
+  it('returns the settlement attached to the authorized job without rewriting it', async () => {
+    const repository = new FakeGenerationJobRepository();
+    repository.job = buildJob({
+      status: 'failed',
+      creditSettlement: {
+        chargedCredits: 5,
+        refundedCredits: 0,
+        netCredits: 5,
+        status: 'refund_pending',
+      },
+    });
+    const service = new JobService(repository);
+
+    const job = await service.getJob('user-1', 'job-1', 'organization-1');
+
+    expect(job.creditSettlement).toEqual({
+      chargedCredits: 5,
+      refundedCredits: 0,
+      netCredits: 5,
+      status: 'refund_pending',
+    });
+    expect(repository.scopedReads).toEqual([{
+      userId: 'user-1',
+      organizationId: 'organization-1',
+      capability: 'view_work',
+      jobId: 'job-1',
+    }]);
+  });
+
   it('processing entity job は stale recovery 後の再読込結果を返す', async () => {
     const repository = new FakeGenerationJobRepository();
     repository.job = buildJob({

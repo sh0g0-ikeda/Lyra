@@ -75,6 +75,7 @@ class FakePageRepository implements PageRepository {
 
 class FakeBalloonRepository implements BalloonRepository {
   public balloons: Balloon[] = [];
+  public lastListScope: { pageId: string; userId: string; organizationId: string | null } | null = null;
 
   public async findPageContextByIdAndUserId(): Promise<never> {
     throw new Error('not used');
@@ -88,7 +89,12 @@ class FakeBalloonRepository implements BalloonRepository {
     throw new Error('not used');
   }
 
-  public async findBalloonsByPageIdAndUserId(): Promise<Balloon[]> {
+  public async findBalloonsByPageIdAndUserId(
+    pageId: string,
+    userId: string,
+    organizationId: string | null = null,
+  ): Promise<Balloon[]> {
+    this.lastListScope = { pageId, userId, organizationId };
     return this.balloons;
   }
 
@@ -170,6 +176,19 @@ class FakeFinalPageImageStorage implements FinalPageImageStoragePort {
 }
 
 describe('PageFinalizeService', () => {
+  it('法人ページ確定時に吹き出しも同じ法人スコープで取得する', async () => {
+    const balloonRepository = new FakeBalloonRepository();
+    const service = buildService({ balloonRepository });
+
+    await service.confirmPage('user-1', 'page-1', 'organization-1');
+
+    expect(balloonRepository.lastListScope).toEqual({
+      pageId: 'page-1',
+      userId: 'user-1',
+      organizationId: 'organization-1',
+    });
+  });
+
   it('balloon がない generated page は copy で confirm する', async () => {
     const pageRepository = new FakePageRepository();
     const balloonRepository = new FakeBalloonRepository();

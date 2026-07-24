@@ -1,0 +1,14 @@
+appId: ${APP_ID}
+name: "E2E-09: org role permissions"
+tags: [staging, organization, authorization]
+---
+- runFlow:
+    file: ../helpers/launch-authenticated.yaml
+- runFlow:
+    file: ../helpers/open-account.yaml
+- assertVisible: ${E2E_ORG_WORKSPACE_LABEL}
+- runFlow:
+    file: ../helpers/open-story.yaml
+- assertVisible: ${E2E_ORG_VIEW_ONLY_LABEL}
+- assertVisible: ${E2E_ORG_EDIT_FORBIDDEN_LABEL}
+- takeScreenshot: E2E-09-role-permissions

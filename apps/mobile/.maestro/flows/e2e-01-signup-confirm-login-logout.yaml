@@ -1,0 +1,37 @@
+appId: ${APP_ID}
+name: "E2E-01: signup/confirm/login/logout"
+tags: [staging, account]
+---
+- runFlow:
+    file: ../helpers/launch-auth.yaml
+- tapOn:
+    id: auth-login-button
+- extendedWaitUntil:
+    visible: ${E2E_AUTH_SIGN_UP_LABEL}
+    timeout: 30000
+- tapOn: ${E2E_AUTH_SIGN_UP_LABEL}
+- tapOn: ${E2E_AUTH_EMAIL_LABEL}
+- inputText: ${E2E_SIGNUP_EMAIL}
+- tapOn: ${E2E_AUTH_PASSWORD_LABEL}
+- inputText: ${E2E_SIGNUP_PASSWORD}
+- hideKeyboard
+- tapOn: ${E2E_AUTH_SUBMIT_LABEL}
+- extendedWaitUntil:
+    visible: ${E2E_AUTH_CONFIRMATION_LABEL}
+    timeout: 30000
+- tapOn: ${E2E_AUTH_CONFIRMATION_LABEL}
+- inputText: ${E2E_SIGNUP_CONFIRMATION_CODE}
+- tapOn: ${E2E_AUTH_CONFIRM_LABEL}
+- extendedWaitUntil:
+    visible:
+      id: tab-account
+    timeout: 45000
+- runFlow:
+    file: ../helpers/open-account.yaml
+- tapOn: ${E2E_LOGOUT_LABEL}
+- tapOn: ${E2E_LOGOUT_CONFIRM_LABEL}
+- extendedWaitUntil:
+    visible:
+      id: auth-login-button
+    timeout: 30000
+- takeScreenshot: E2E-01-login-shell

@@ -253,6 +253,41 @@ describe('panel entity assignment routes', () => {
 
     expect(response.status).toBe(401);
   });
+
+  it('割当の成功応答がcanonical schemaに違反する場合は500になる', async () => {
+    const panelEntityAssignmentService = new FakePanelEntityAssignmentService();
+    panelEntityAssignmentService.replacePanelEntityAssignments = async (
+      _userId,
+      _requestedPanelId,
+      assignments,
+    ) => [{
+      ...assignments[0]!,
+      role: 'invalid-role' as PanelEntityAssignment['role'],
+    }];
+    const app = createTestApp(panelEntityAssignmentService);
+    const token = await createToken();
+
+    const response = await app.request(`/api/panels/${panelId}/entities`, {
+      method: 'PUT',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        entities: [
+          {
+            entity_id: entityId,
+            role: 'primary',
+            expression: 'calm',
+            action: 'standing_firm',
+            position: 'center',
+          },
+        ],
+      }),
+    });
+
+    expect(response.status).toBe(500);
+  });
 });
 
 function createTestApp(

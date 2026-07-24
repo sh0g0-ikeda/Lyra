@@ -1,0 +1,16 @@
+appId: ${APP_ID}
+name: "E2E-15: personal purchase/pending/restore/refund"
+tags: [store, staging, personal]
+---
+- runFlow:
+    file: ../helpers/launch-authenticated.yaml
+- runFlow:
+    file: ../helpers/open-account.yaml
+- tapOn: ${E2E_PURCHASE_LABEL}
+- assertVisible: ${E2E_PURCHASE_PENDING_LABEL}
+- tapOn: ${E2E_PURCHASE_RESTORE_LABEL}
+- assertVisible: ${E2E_PURCHASE_RESULT_LABEL}
+- assertVisible: ${E2E_PURCHASE_REFUND_LABEL}
+- assertVisible: ${E2E_PURCHASE_RENEWAL_LABEL}
+- assertVisible: ${E2E_PURCHASE_RENEWAL_RESULT_LABEL}
+- takeScreenshot: E2E-15-store-result

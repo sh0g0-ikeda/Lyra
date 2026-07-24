@@ -268,6 +268,19 @@ describe('panel frame routes', () => {
 
     expect(response.status).toBe(401);
   });
+
+  it('枠一覧の成功応答がcanonical schemaに違反する場合は500になる', async () => {
+    const panelFrameService = new FakePanelFrameService();
+    panelFrameService.listPageFrames = async () => [buildFrame({ borderWidth: -1 })];
+    const app = createTestApp(panelFrameService);
+    const token = await createToken();
+
+    const response = await app.request(`/api/pages/${pageId}/frames`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    expect(response.status).toBe(500);
+  });
 });
 
 function createTestApp(panelFrameService: PanelFrameServicePort): ReturnType<typeof createApp> {

@@ -10,6 +10,7 @@ import type {
   BillingUserProfile,
   PaymentRecord,
   PaymentRecordInput,
+  PersonalSubscriptionSummary,
   SubscriptionRecord,
 } from '../../../../src/domain/types/billing.js';
 import type { Organization, OrganizationCreditBalance } from '../../../../src/domain/types/organization.js';
@@ -203,6 +204,10 @@ class InMemoryBillingRepository implements BillingRepository {
   }
 
   public async findLatestSubscriptionForOrganization(): Promise<null> {
+    return null;
+  }
+
+  public async findLatestSubscriptionSummaryForUser(): Promise<PersonalSubscriptionSummary | null> {
     return null;
   }
 

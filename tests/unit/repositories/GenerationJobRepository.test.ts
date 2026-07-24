@@ -350,7 +350,7 @@ describe('PostgresGenerationJobRepository', () => {
       truncated: false,
     });
     expect(client.queries[0]).toContain('expires_at < NOW()');
-    expect(client.queries[0]).toContain("status IN ('completed', 'failed')");
+    expect(client.queries[0]).toContain("status IN ('completed', 'failed', 'canceled')");
     expect(client.queries[0]).toContain('LIMIT $1');
     expect(client.values).toEqual([11]);
     expect(client.queries.some((query) => query.includes('DELETE FROM generation_jobs'))).toBe(false);
@@ -382,7 +382,7 @@ describe('PostgresGenerationJobRepository', () => {
     });
 
     expect(client.queries[1]).toContain('expires_at < NOW()');
-    expect(client.queries[1]).toContain("status IN ('completed', 'failed')");
+    expect(client.queries[1]).toContain("status IN ('completed', 'failed', 'canceled')");
   });
 
   it('期限切れジョブ削除の上限値が不正な場合は拒否する', async () => {

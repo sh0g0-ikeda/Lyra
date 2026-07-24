@@ -23,6 +23,7 @@ import type {
   StoryEntitySummary,
 } from '../domain/types/storyAi.js';
 import { ConflictError, ValidationError } from '../domain/errors/index.js';
+import { encodeListCursor, type ListPage, type ListPageRequest } from '../domain/pagination.js';
 import { normalizeEpisodeStoryInput } from '../domain/episodeStoryInput.js';
 import type { DatabaseClient, TransactionRunner } from '../lib/db.js';
 import { isUniqueViolation } from '../lib/dbErrors.js';
@@ -269,6 +270,52 @@ export class PostgresStoryRepository implements StoryRepository {
     return result.rows.map(mapWorkRow);
   }
 
+  public async findWorksPageByUserId(
+    userId: string,
+    request: ListPageRequest,
+    organizationId: string | null = null,
+  ): Promise<ListPage<Work>> {
+    const cursorUpdatedAt = request.cursor?.sort ?? null;
+    const cursorId = request.cursor?.id ?? null;
+    const result = await this.client.query<WorkRow>(
+      `
+      SELECT *
+      FROM works
+      WHERE (
+        ($2::uuid IS NULL AND user_id = $1 AND organization_id IS NULL)
+        OR (
+          $2::uuid IS NOT NULL
+          AND organization_id = $2::uuid
+          AND EXISTS (
+            SELECT 1
+            FROM organization_members
+            WHERE organization_members.organization_id = works.organization_id
+              AND organization_members.user_id = $1
+              AND organization_members.status = 'active'
+          )
+        )
+      )
+        AND (
+          $3::timestamptz IS NULL
+          OR works.updated_at < $3::timestamptz
+          OR (works.updated_at = $3::timestamptz AND works.id < $4::uuid)
+        )
+      ORDER BY works.updated_at DESC, works.id DESC
+      LIMIT $5
+      `,
+      [userId, organizationId, cursorUpdatedAt, cursorId, request.limit + 1],
+    );
+    const rows = result.rows.slice(0, request.limit);
+    const lastRow = rows[rows.length - 1];
+
+    return {
+      items: rows.map(mapWorkRow),
+      nextCursor: result.rows.length > request.limit && lastRow !== undefined
+        ? encodeListCursor('works', lastRow.updated_at.toISOString(), lastRow.id)
+        : null,
+    };
+  }
+
   public async createWork(userId: string, input: CreateWorkInput): Promise<Work> {
     const result = await this.client.query<WorkRow>(
       `
@@ -381,6 +428,7 @@ export class PostgresStoryRepository implements StoryRepository {
           version = version + 1,
           updated_at = NOW()
       WHERE id = $1
+        AND works.updated_at = $20::timestamptz
         AND (
           ($19::uuid IS NULL AND user_id = $2 AND organization_id IS NULL)
           OR (
@@ -417,6 +465,7 @@ export class PostgresStoryRepository implements StoryRepository {
         normalizeNullableText(input.overallFlow ?? null),
         input.status ?? null,
         organizationId,
+        input.expectedUpdatedAt,
       ],
     );
 
@@ -574,6 +623,7 @@ export class PostgresStoryRepository implements StoryRepository {
         FROM works
         WHERE chapters.id = $1
           AND chapters.work_id = works.id
+          AND chapters.updated_at = $20::timestamptz
           AND (
             ($19::uuid IS NULL AND works.user_id = $2 AND works.organization_id IS NULL)
             OR (
@@ -610,6 +660,7 @@ export class PostgresStoryRepository implements StoryRepository {
           input.keyBeats ?? [],
           input.status ?? null,
           organizationId,
+          input.expectedUpdatedAt,
         ],
       );
 
@@ -907,6 +958,7 @@ export class PostgresStoryRepository implements StoryRepository {
         INNER JOIN works ON works.id = chapters.work_id
         WHERE episodes.id = $1
           AND episodes.chapter_id = chapters.id
+          AND episodes.updated_at = $25::timestamptz
           AND (
             ($24::uuid IS NULL AND works.user_id = $2 AND works.organization_id IS NULL)
             OR (
@@ -948,6 +1000,7 @@ export class PostgresStoryRepository implements StoryRepository {
           input.entitiesInvolved ?? [],
           input.status ?? null,
           organizationId,
+          input.expectedUpdatedAt,
         ],
       );
 

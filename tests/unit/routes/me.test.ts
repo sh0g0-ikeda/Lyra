@@ -7,6 +7,7 @@ import type { AppEnv } from '../../../src/types/app.js';
 import { createMeRoutes } from '../../../src/routes/me.js';
 import type { CreditServicePort } from '../../../src/services/credit/CreditService.js';
 import type { OrganizationServicePort } from '../../../src/services/organization/OrganizationService.js';
+import { currentSessionSchema } from '../../../packages/api-contract/src/mobileApiSchemas.js';
 
 const testUser: AuthenticatedUser = {
   id: 'user-1',
@@ -29,7 +30,9 @@ describe('createMeRoutes', () => {
     const response = await routes.request('/me');
 
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({
+    const payload = await response.json();
+    expect(currentSessionSchema.safeParse(payload).success).toBe(true);
+    expect(payload).toEqual({
       user: {
         id: 'user-1',
         email: 'owner@example.com',

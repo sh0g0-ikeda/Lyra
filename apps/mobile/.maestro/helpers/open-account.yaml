@@ -1,0 +1,4 @@
+- tapOn:
+    id: tab-account
+- assertVisible:
+    id: tab-account

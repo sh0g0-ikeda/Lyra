@@ -4,6 +4,7 @@ import {
   ENTITY_IMPORT_MAX_FILE_SIZE_BYTES,
   ENTITY_REFERENCE_LIMITS,
 } from '../../domain/constants/entityReference.js';
+import type { EntityReferenceUploadMimeType } from '../../domain/constants/entityReferenceUpload.js';
 import {
   ConfigurationError,
   ConflictError,
@@ -42,12 +43,24 @@ export interface ConfirmEntityReferencesRequest {
 }
 
 export interface EntityReferenceServicePort {
+  isReferenceGenerationEnabled(): boolean;
   getReferenceSet(userId: string, entityId: string, organizationId?: string | null): Promise<EntityReferenceSet>;
   importImage(
     userId: string,
     input: {
       entityType: EntityType;
       imageBase64: string;
+    },
+    organizationId?: string | null,
+  ): Promise<EntityImportAnalysis>;
+  importUploadedImage(
+    userId: string,
+    input: {
+      entityType: EntityType;
+      imageData: Buffer;
+      mimeType: EntityReferenceUploadMimeType;
+      tmpImageS3Key: string;
+      tmpImageCdnUrl: string;
     },
     organizationId?: string | null,
   ): Promise<EntityImportAnalysis>;
@@ -91,6 +104,10 @@ export class EntityReferenceService implements EntityReferenceServicePort {
     private readonly importAnalysisEnabled = true,
     private readonly organizationService?: OrganizationServicePort,
   ) {}
+
+  public isReferenceGenerationEnabled(): boolean {
+    return this.generationEnabled;
+  }
 
   public async getReferenceSet(
     userId: string,
@@ -158,6 +175,91 @@ export class EntityReferenceService implements EntityReferenceServicePort {
         promptSupplement: analysis.promptSupplement.slice(0, ENTITY_REFERENCE_LIMITS.MAX_PROMPT_SUPPLEMENT_LENGTH),
         tmpImageS3Key: storedImage.s3Key,
         tmpImageCdnUrl: storedImage.cdnUrl,
+      };
+    } catch (error) {
+      if (creditsConsumed) {
+        try {
+          if (organizationId === null) {
+            await this.creditService.refundCredits({
+              userId,
+              amount: CREDIT_COSTS.ENTITY_IMPORT_ANALYSIS,
+              description: 'Refund for failed entity import analysis',
+            });
+          } else {
+            await this.getOrganizationService().refundCredits({
+              organizationId,
+              actorUserId: userId,
+              amount: CREDIT_COSTS.ENTITY_IMPORT_ANALYSIS,
+              description: 'Refund for failed entity import analysis',
+            });
+          }
+        } catch (refundError) {
+          logEntityReferenceCompensationFailure('entity_import_refund_failed', refundError, {
+            user_id: userId,
+            organization_id: organizationId,
+          });
+        }
+      }
+
+      throw error;
+    }
+  }
+
+  public async importUploadedImage(
+    userId: string,
+    input: {
+      entityType: EntityType;
+      imageData: Buffer;
+      mimeType: EntityReferenceUploadMimeType;
+      tmpImageS3Key: string;
+      tmpImageCdnUrl: string;
+    },
+    organizationId: string | null = null,
+  ): Promise<EntityImportAnalysis> {
+    const uploadedImage: ParsedImageDataUrl = {
+      mimeType: input.mimeType,
+      imageData: input.imageData,
+      sizeBytes: input.imageData.length,
+    };
+    if (uploadedImage.sizeBytes > ENTITY_IMPORT_MAX_FILE_SIZE_BYTES) {
+      throw new ValidationError('Image file is too large');
+    }
+    if (!imageDataMatchesDeclaredMimeType(uploadedImage)) {
+      throw new ValidationError('Uploaded image content does not match declared image type');
+    }
+    if (!this.importAnalysisEnabled) {
+      throw new ConflictError('Entity import analysis is temporarily disabled');
+    }
+
+    let creditsConsumed = false;
+    try {
+      if (organizationId === null) {
+        await this.creditService.consumeCredits({
+          userId,
+          cost: CREDIT_COSTS.ENTITY_IMPORT_ANALYSIS,
+          description: 'Entity import analysis',
+        });
+      } else {
+        await this.getOrganizationService().consumeCredits({
+          userId,
+          organizationId,
+          cost: CREDIT_COSTS.ENTITY_IMPORT_ANALYSIS,
+          description: 'Entity import analysis',
+          eventType: 'entity_import.started',
+        });
+      }
+      creditsConsumed = true;
+
+      const analysis = await this.imageAnalyzer.analyze({
+        entityType: input.entityType,
+        dataUrl: `data:${input.mimeType};base64,${input.imageData.toString('base64')}`,
+      });
+
+      return {
+        suggestedFields: parseStructuredFields(input.entityType, analysis.suggestedFields),
+        promptSupplement: analysis.promptSupplement.slice(0, ENTITY_REFERENCE_LIMITS.MAX_PROMPT_SUPPLEMENT_LENGTH),
+        tmpImageS3Key: input.tmpImageS3Key,
+        tmpImageCdnUrl: input.tmpImageCdnUrl,
       };
     } catch (error) {
       if (creditsConsumed) {

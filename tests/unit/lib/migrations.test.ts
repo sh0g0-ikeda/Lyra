@@ -370,4 +370,63 @@ describe('runPendingMigrations', () => {
     );
     expect(sql).toContain('VALIDATE CONSTRAINT pages_status_check');
   });
+
+  it('account deletion request has resumable checkpoints', async () => {
+    const sql = await readFile(
+      join(process.cwd(), 'migrations', '024_add_account_deletion_requests.sql'),
+      'utf8',
+    );
+
+    expect(sql).toContain('CREATE TABLE account_deletion_requests');
+    expect(sql).toContain("CHECK (status IN ('blocked', 'processing', 'pending_external_action', 'completed'))");
+    expect(sql).toContain('cancelled_subscription_ids text[]');
+    expect(sql).toContain('identity_disabled_at timestamptz');
+    expect(sql).toContain('identity_deleted_at timestamptz');
+    expect(sql).toContain('scheduled_asset_keys text[]');
+    expect(sql).toContain('data_anonymized_at timestamptz');
+  });
+
+  it('ジョブ管理 migration は取消状態、論理非表示、遅延消費の返金ガードを定義する', async () => {
+    const sql = await readFile(
+      join(process.cwd(), 'migrations', '027_add_generation_job_management.sql'),
+      'utf8',
+    );
+
+    expect(sql).toContain("CHECK (status IN ('queued', 'processing', 'completed', 'failed', 'canceled'))");
+    expect(sql).toContain('CREATE TABLE IF NOT EXISTS generation_job_history_hides');
+    expect(sql).toContain('PRIMARY KEY (generation_job_id, user_id)');
+    expect(sql).toContain('CREATE OR REPLACE FUNCTION refund_late_canceled_generation_job_consume()');
+    expect(sql).toContain('FOR UPDATE');
+    expect(sql).toContain('CREATE TRIGGER generation_job_late_consume_refund');
+  });
+
+  it('entity reference upload token は期限・MIME・size・single-use をDB制約で持つ', async () => {
+    const sql = await readFile(
+      join(process.cwd(), 'migrations', '028_add_entity_reference_upload_tokens.sql'),
+      'utf8',
+    );
+
+    expect(sql).toContain('CREATE TABLE entity_reference_upload_tokens');
+    expect(sql).toContain('token_hash TEXT NOT NULL UNIQUE');
+    expect(sql).toContain("purpose IN ('entity_reference_import')");
+    expect(sql).toContain("mime_type IN ('image/jpeg', 'image/png', 'image/webp')");
+    expect(sql).toContain('size_bytes > 0 AND size_bytes <= 5242880');
+    expect(sql).toContain("s3_key LIKE 'tmp/%'");
+    expect(sql).toContain('WHERE consumed_at IS NULL');
+  });
+
+  it('episode export jobs persist bounded artifacts and a durable dispatch outbox', async () => {
+    const sql = await readFile(
+      join(process.cwd(), 'migrations', '029_add_episode_export_jobs.sql'),
+      'utf8',
+    );
+    expect(sql).toContain('CREATE TABLE export_jobs');
+    expect(sql).toContain("format IN ('pdf', 'zip')");
+    expect(sql).toContain("status IN ('queued', 'processing', 'completed', 'failed', 'canceled')");
+    expect(sql).toContain('cardinality(page_ids) BETWEEN 1 AND 100');
+    expect(sql).toContain('CREATE UNIQUE INDEX idx_export_jobs_idempotency_scope');
+    expect(sql).toContain('CREATE TABLE export_job_outbox');
+    expect(sql).toContain('WHERE dispatched_at IS NULL');
+    expect(sql).toContain('artifact_deleted_at TIMESTAMPTZ');
+  });
 });

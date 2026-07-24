@@ -276,6 +276,23 @@ class FakeOrganizationService {
 }
 
 describe('EntityGenerationWorkerService', () => {
+  it('claim直後に取消が確定していれば provider 呼出しも候補保存もせず canceled として完了する', async () => {
+    const executionRepository = new FakeExecutionRepository();
+    const referenceGenerator = new FakeReferenceGenerator();
+    const service = buildService({
+      executionRepository,
+      referenceGenerator,
+      cancellationCheckpoint: { finalizeCancellationIfRequested: async () => true },
+    });
+
+    await expect(service.processJob('job-1')).resolves.toEqual({
+      status: 'processed',
+      jobStatus: 'canceled',
+    });
+    expect(referenceGenerator.input).toBeNull();
+    expect(executionRepository.completed).toBeNull();
+    expect(executionRepository.failed).toBeNull();
+  });
   it('entity_generate job を処理して candidates を保存する', async () => {
     const executionRepository = new FakeExecutionRepository();
     const referenceGenerator = new FakeReferenceGenerator();
@@ -749,6 +766,7 @@ function buildService(overrides: {
   storedImageLoader?: FakeStoredImageLoader;
   imageModel?: string;
   organizationService?: FakeOrganizationService;
+  cancellationCheckpoint?: { finalizeCancellationIfRequested(jobId: string): Promise<boolean> };
 } = {}): EntityGenerationWorkerService {
   return new EntityGenerationWorkerService(
     overrides.executionRepository ?? new FakeExecutionRepository(),
@@ -762,6 +780,7 @@ function buildService(overrides: {
     overrides.imageModel,
     true,
     overrides.organizationService as unknown as OrganizationServicePort | undefined,
+    overrides.cancellationCheckpoint,
   );
 }
 

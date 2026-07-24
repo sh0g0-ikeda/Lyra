@@ -229,4 +229,35 @@ describe('PostgresBillingRepository', () => {
     expect(client.queries[0]).toContain('stripe_event_id = $1');
     expect(client.values[0]).toEqual(['evt_1']);
   });
+  it('個人subscription summaryはStripe subscription idを返さない', async () => {
+    const client = new QueryCapturingClient();
+    client.rows = [
+      {
+        user_id: 'user-1',
+        organization_id: null,
+        stripe_subscription_id: 'sub_123',
+        plan_code: 'standard',
+        status: 'active',
+        current_period_start: new Date('2026-07-01T00:00:00.000Z'),
+        current_period_end: new Date('2026-08-01T00:00:00.000Z'),
+        cancel_at_period_end: true,
+      },
+    ];
+    const repository = new PostgresBillingRepository(client, client);
+
+    const result = await repository.findLatestSubscriptionSummaryForUser('user-1');
+
+    expect(client.queries[0]).toContain('FROM subscriptions');
+    expect(client.queries[0]).toContain('mobile_store_purchases');
+    expect(client.queries[0]).toContain('user_id = $1');
+    expect(client.queries[0]).toContain('organization_id IS NULL');
+    expect(client.values[0]).toEqual(['user-1']);
+    expect(result).toEqual({
+      planCode: 'standard',
+      status: 'active',
+      currentPeriodEnd: new Date('2026-08-01T00:00:00.000Z'),
+      cancelAtPeriodEnd: true,
+    });
+    expect(JSON.stringify(result)).not.toContain('sub_123');
+  });
 });

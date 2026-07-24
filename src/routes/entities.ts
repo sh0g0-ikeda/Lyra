@@ -1,8 +1,17 @@
 import { Hono, type Context, type MiddlewareHandler } from 'hono';
 import { z } from 'zod';
-import { ValidationError } from '../domain/errors/index.js';
+import {
+  entitiesResponseSchema,
+  entityImportResponseSchema,
+  entityReferenceGenerationAvailabilitySchema,
+  entityReferenceSetSchema,
+  entitySchema,
+  jobAcceptedSchema,
+} from '../../packages/api-contract/src/mobileApiSchemas.js';
+import { ConfigurationError, ValidationError } from '../domain/errors/index.js';
+import { decodeListCursor, normalizeListPageLimit, type ListPageRequest } from '../domain/pagination.js';
 import type { Entity } from '../domain/types/entity.js';
-import type { EntityReferenceSet } from '../domain/types/entityReference.js';
+import type { EntityImportAnalysis, EntityReferenceSet } from '../domain/types/entityReference.js';
 import {
   confirmEntityReferenceBodySchema,
   createEntityBodySchema,
@@ -17,6 +26,7 @@ import { signImageCdnUrl } from '../infrastructure/aws/CloudFrontImageUrlSigner.
 import { env } from '../lib/env.js';
 import type { EntityServicePort } from '../services/entity/EntityService.js';
 import type { EntityReferenceServicePort } from '../services/entity/EntityReferenceService.js';
+import type { EntityReferenceUploadServicePort } from '../services/entity/EntityReferenceUploadService.js';
 import type { EntityReferenceImageExportServicePort } from '../services/entity/EntityReferenceImageExportService.js';
 import {
   createReferenceCandidateToken,
@@ -29,6 +39,7 @@ import {
   recordOrganizationAudit,
   requireOrganizationCapability,
 } from './organizationRouteHelpers.js';
+import { assertMobileResponseContract } from './mobileResponseContract.js';
 import { readJsonBody, readOptionalJsonBody, REQUEST_BODY_LIMITS } from './requestBody.js';
 
 const referenceCandidateImageQuerySchema = z
@@ -41,11 +52,17 @@ const referenceCandidateImageQuerySchema = z
     message: 'candidate_token is required',
   });
 
+const entityPageQuerySchema = z.object({
+  limit: z.coerce.number().finite().int().optional(),
+  cursor: z.string().min(1).max(1024).optional(),
+});
+
 export interface EntityRouteDependencies {
   authMiddleware: MiddlewareHandler<AppEnv>;
   rateLimitMiddleware: MiddlewareHandler<AppEnv>;
   entityService: EntityServicePort;
   entityReferenceService: EntityReferenceServicePort;
+  entityReferenceUploadService?: EntityReferenceUploadServicePort;
   entityReferenceImageExportService: EntityReferenceImageExportServicePort;
   organizationService?: OrganizationServicePort;
 }
@@ -80,7 +97,7 @@ export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<
       entity_type: body.data.entity_type,
     });
 
-    return c.json(toEntityResponse(entity), 201);
+    return c.json(assertMobileResponseContract(entitySchema, toEntityResponse(entity)), 201);
   });
 
   app.get('/works/:work_id/entities', async (c) => {
@@ -88,12 +105,30 @@ export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<
     const workId = parseUuidParam(c, 'work_id');
     const organizationId = parseOptionalOrganizationId(c);
     await requireOrganizationCapability(c, dependencies, organizationId, 'view_work');
+    const pageRequest = parseEntityPageRequest(c);
+    if (pageRequest !== null) {
+      const result = await dependencies.entityService.listEntitiesPage(user.id, workId, pageRequest, organizationId);
+      const payload = {
+        entities: result.items.map(toEntityResponse),
+        next_cursor: result.nextCursor,
+      };
+      return c.json(assertMobileResponseContract(entitiesResponseSchema, payload));
+    }
     const entities = await dependencies.entityService.listEntities(user.id, workId, organizationId);
 
-    return c.json({
+    const payload = {
       entities: entities.map(toEntityResponse),
-    });
+    };
+    return c.json(assertMobileResponseContract(entitiesResponseSchema, payload));
   });
+
+  app.get('/entities/reference-generation-availability', (c) =>
+    c.json(
+      assertMobileResponseContract(entityReferenceGenerationAvailabilitySchema, {
+        enabled: dependencies.entityReferenceService.isReferenceGenerationEnabled(),
+      }),
+    ),
+  );
 
   app.get('/entities/:id', async (c) => {
     const user = c.get('user');
@@ -102,7 +137,7 @@ export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<
     await requireOrganizationCapability(c, dependencies, organizationId, 'view_work');
     const entity = await dependencies.entityService.getEntity(user.id, entityId, organizationId);
 
-    return c.json(toEntityResponse(entity));
+    return c.json(assertMobileResponseContract(entitySchema, toEntityResponse(entity)));
   });
 
   app.get('/entities/:id/reference-set', async (c) => {
@@ -112,7 +147,9 @@ export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<
     await requireOrganizationCapability(c, dependencies, organizationId, 'view_work');
     const referenceSet = await dependencies.entityReferenceService.getReferenceSet(user.id, entityId, organizationId);
 
-    return c.json(await toReferenceSetResponse(referenceSet));
+    return c.json(
+      assertMobileResponseContract(entityReferenceSetSchema, await toReferenceSetResponse(referenceSet)),
+    );
   });
 
   app.get('/entities/:id/reference/:ref_id/image', async (c) => {
@@ -187,6 +224,7 @@ export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<
     }
 
     const entity = await dependencies.entityService.updateEntity(user.id, entityId, {
+      expectedUpdatedAt: body.data.expected_updated_at,
       entityType: body.data.entity_type,
       name: body.data.name,
       freeDescription: body.data.free_description,
@@ -195,10 +233,10 @@ export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<
       speechProfile: body.data.speech_profile,
     }, organizationId);
     await recordOrganizationAudit(dependencies, organizationId, user.id, 'entity.updated', 'entity', entityId, {
-      fields: Object.keys(body.data),
+      fields: Object.keys(body.data).filter((field) => field !== 'expected_updated_at'),
     });
 
-    return c.json(toEntityResponse(entity));
+    return c.json(assertMobileResponseContract(entitySchema, toEntityResponse(entity)));
   });
 
   app.delete('/entities/:id', async (c) => {
@@ -227,22 +265,35 @@ export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<
       throw new ValidationError(formatZodValidationError(body.error));
     }
 
-    const result = await dependencies.entityReferenceService.importImage(user.id, {
-      entityType: body.data.entity_type,
-      imageBase64: body.data.image_base64,
-    }, organizationId);
+    let candidateEntityId = body.data.entity_id ?? '';
+    let result: EntityImportAnalysis;
+    if ('upload_token' in body.data) {
+      const uploadedResult = await importUploadedEntityImage(dependencies, user.id, {
+        uploadToken: body.data.upload_token,
+        entityType: body.data.entity_type,
+        entityId: body.data.entity_id ?? null,
+      }, organizationId);
+      candidateEntityId = uploadedResult.entityId ?? '';
+      result = uploadedResult;
+    } else {
+      result = await dependencies.entityReferenceService.importImage(user.id, {
+        entityType: body.data.entity_type,
+        imageBase64: body.data.image_base64,
+      }, organizationId);
+    }
 
-    return c.json({
+    const payload = {
       suggested_fields: result.suggestedFields,
       prompt_supplement: result.promptSupplement,
       tmp_image_token: createReferenceCandidateToken({
         userId: user.id,
-        entityId: body.data.entity_id ?? '',
+        entityId: candidateEntityId,
         s3Key: result.tmpImageS3Key,
       }, {
         secret: getReferenceCandidateTokenSecret(),
       }),
-    });
+    };
+    return c.json(assertMobileResponseContract(entityImportResponseSchema, payload));
   });
 
   app.post('/entities/:id/generate-reference', async (c) => {
@@ -276,7 +327,7 @@ export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<
       source_image_attached: body.data.source_candidate_token !== undefined || body.data.source_s3_key !== undefined,
     });
 
-    return c.json({ job_id: result.jobId }, 202);
+    return c.json(assertMobileResponseContract(jobAcceptedSchema, { job_id: result.jobId }), 202);
   });
 
   app.post('/entities/:id/reference/confirm', async (c) => {
@@ -319,7 +370,9 @@ export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<
       primary_selected: primaryS3Key !== undefined,
     });
 
-    return c.json(await toReferenceSetResponse(referenceSet));
+    return c.json(
+      assertMobileResponseContract(entityReferenceSetSchema, await toReferenceSetResponse(referenceSet)),
+    );
   });
 
   app.delete('/entities/:id/reference/:ref_id', async (c) => {
@@ -343,10 +396,29 @@ export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<
       ref_id: refIdResult.data,
     });
 
-    return c.json(await toReferenceSetResponse(referenceSet));
+    return c.json(
+      assertMobileResponseContract(entityReferenceSetSchema, await toReferenceSetResponse(referenceSet)),
+    );
   });
 
   return app;
+}
+
+async function importUploadedEntityImage(
+  dependencies: EntityRouteDependencies,
+  userId: string,
+  input: {
+    uploadToken: string;
+    entityType: 'character' | 'nonhuman' | 'object';
+    entityId: string | null;
+  },
+  organizationId: string | null,
+) {
+  if (dependencies.entityReferenceUploadService === undefined) {
+    throw new ConfigurationError('Entity reference upload is not configured');
+  }
+
+  return dependencies.entityReferenceUploadService.importUploadedImage(userId, input, organizationId);
 }
 
 function parseUuidParam(c: Context<AppEnv>, name: string): string {
@@ -363,6 +435,32 @@ function getReferenceCandidateTokenSecret(): string {
     ?? env.SUPABASE_JWT_SECRET
     ?? env.STRIPE_WEBHOOK_SECRET
     ?? 'development-reference-candidate-token-secret';
+}
+
+function parseEntityPageRequest(c: Context<AppEnv>): ListPageRequest | null {
+  const rawLimit = c.req.query('limit');
+  const rawCursor = c.req.query('cursor');
+  if (rawLimit === undefined && rawCursor === undefined) {
+    return null;
+  }
+
+  const parsed = entityPageQuerySchema.safeParse({ limit: rawLimit, cursor: rawCursor });
+  if (!parsed.success || parsed.data.limit === undefined) {
+    throw new ValidationError('limit must be an integer from 1 through 100 and is required with cursor');
+  }
+  const limit = normalizeListPageLimit(parsed.data.limit);
+  if (limit === null) {
+    throw new ValidationError('limit must be an integer from 1 through 100');
+  }
+  if (parsed.data.cursor === undefined) {
+    return { limit, cursor: null };
+  }
+
+  const cursor = decodeListCursor(parsed.data.cursor, 'entities');
+  if (cursor === null || typeof cursor.sort !== 'string' || !z.string().datetime({ offset: true }).safeParse(cursor.sort).success) {
+    throw new ValidationError('cursor is invalid for entities');
+  }
+  return { limit, cursor };
 }
 
 function toEntityResponse(entity: Entity): Record<string, unknown> {
