@@ -82,11 +82,12 @@ async function verifySupabaseToken(
   authorizationHeader: string | undefined,
   jwtSecret: string | undefined,
 ): Promise<SupabaseJwtClaims> {
+  const token = extractBearerToken(authorizationHeader);
+
   if (jwtSecret === undefined) {
     throw new ConfigurationError('SUPABASE_JWT_SECRET is not set');
   }
 
-  const token = extractBearerToken(authorizationHeader);
   const secret = new TextEncoder().encode(jwtSecret);
 
   try {
@@ -112,11 +113,12 @@ async function verifyCognitoToken(
   config: CognitoVerifierConfig | null,
   jwks: JWTVerifyGetKey | null,
 ): Promise<SupabaseJwtClaims> {
+  const token = extractBearerToken(authorizationHeader);
+
   if (config === null || jwks === null) {
     throw new ConfigurationError('Cognito auth is not configured');
   }
 
-  const token = extractBearerToken(authorizationHeader);
   const allowedClientIds = getAllowedCognitoClientIds(config);
 
   try {
