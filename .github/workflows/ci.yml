@@ -62,7 +62,11 @@ jobs:
         run: bun run test
 
       - name: Run Bun test entrypoint
-        run: bun test
+        run: >-
+          bun test
+          tests/unit/lib/migrations.test.ts
+          tests/unit/ops/Dockerfile.test.ts
+          tests/unit/scripts/mobileApiBidirectionalAudit.test.ts
 
       - name: Apply migrations to PostgreSQL
         run: bun run migrate

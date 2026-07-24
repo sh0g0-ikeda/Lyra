@@ -8,10 +8,10 @@ authoritative verification evidence both exist. `In progress` is not release-rea
 
 | ID | Priority | Status | Current evidence or remaining proof |
 |---|---|---|---|
-| MOB-BASE-001 | P0 | Partial | `apps/mobile` exists and local gates pass; Git tracking, final commit/push, and PR remain. |
+| MOB-BASE-001 | P0 | Done | `apps/mobile` is tracked in draft PR #67 and clean-checkout `mobile-verify` completes `npm ci` from the committed lockfile. |
 | MOB-BASE-002 | P0 | Done | Character syntax fixed; `npm run typecheck` passes. |
-| MOB-BASE-003 | P0 | Partial | UTF-8 source and tests are intact, all UI copy uses typed ja/en dictionaries, catalog parity and direct-literal guards pass, and `check:mojibake` passes; remote CI and real-device Japanese proof remain. |
-| MOB-BASE-004 | P0 | Partial | `mobile-verify` CI job exists; tracked remote green result remains. |
+| MOB-BASE-003 | P0 | Partial | UTF-8 source and tests are intact, all UI copy uses typed ja/en dictionaries, catalog parity and direct-literal guards pass, and remote `check:mojibake` passes; real-device Japanese proof remains. |
+| MOB-BASE-004 | P0 | Done | The clean-checkout `mobile-verify` job installs the committed lockfile and passes Expo compatibility/doctor, contracts, typecheck, lint, 395 tests, mojibake, and Android/iOS exports. |
 | MOB-BASE-005 | P0 | Partial | ESLint 9 and Vitest run the full Mobile suite. Maestro has a staging runner, an exact E2E-01..18 manifest, shared helpers, and runner/config/inventory tests. E2E-11 now performs a real offline write attempt and requires zero accepted/queued Backend-write evidence; E2E-15 requires HMAC-signed, correlated Store/provider/Webhook/ledger evidence. Installing Maestro and executing the suite on physical iOS/Android devices remain. |
 | MOB-API-001 | P0 | Done | Canonical schemas/types/payloads live in `packages/api-contract`; generated Mobile copies and the 112-method route/auth/scope/schema inventory are drift-checked in CI. Every Mobile JSON production route validates the same canonical response schema fail-closed while preserving its wire payload; binary, redirect, SSE, and 204 contracts have dedicated handling and tests. |
 | MOB-API-002 | P0 | Done | Balloon methods and cache keys include organization scope; regression test passes. |
@@ -59,14 +59,14 @@ authoritative verification evidence both exist. `In progress` is not release-rea
 | MOB-JOB-001 | P1 | Done | Tenant-scoped cursor list and Account UI are implemented with repository/route tests. |
 | MOB-JOB-002 | P1 | Done | Queued and processing cancellation are role-scoped. Processing requests persist a cancellation marker, workers checkpoint before publication, completion races are lock-guarded, and refunds are idempotent with ledger settlement. Mobile distinguishes actionable, requested, canceled, and terminal-history states. |
 | MOB-JOB-003 | P1 | Done | Stage, real percent, indeterminate state, elapsed time, foreground refresh, retry/cancel/hide, and ledger-backed settlement display exist. Story, Pages, and Characters query server active jobs by resource on focus/foreground instead of trusting only screen-local IDs. |
-| MOB-JOB-004 | P2 | Partial | Foreground refresh, encrypted native token registration, redacted APNs/FCM outbox delivery, logout unregister, and tap routing are implemented and focused tests pass. Provider credentials, signed builds, real delivery, and both-platform tap E2E remain. |
+| MOB-JOB-004 | P2 | Partial | Foreground refresh, encrypted native token registration, redacted APNs/FCM outbox delivery, logout unregister, and tap routing are implemented and focused tests pass. A signed Android preview build exists; provider credentials, signed iOS, real delivery, and both-platform tap E2E remain. |
 | MOB-JOB-005 | P0 | Done | Backend safe serializer and Mobile message-key/support-ID rendering do not expose raw provider errors. |
 | MOB-STATE-001 | P0 | Done | Selection storage and query keys are scoped by user plus organization and invalid IDs are cleared. |
 | MOB-STATE-002 | P1 | Done | The shared dirty-state provider guards tab/workspace/background/logout transitions with an app-controlled save/discard/cancel modal, de-duplicates simultaneous resolutions, and safely resolves pending requests on unmount. Focused provider and integration tests pass. |
 | MOB-STATE-003 | P1 | Done | Offline banner, no write queue, draft retention, reconnect query integration, and contextual retry/login/workspace actions are implemented across the editor and account/invitation failure surfaces. Focused actionable-error and resource-reload tests pass. |
 | MOB-STATE-004 | P1 | Done | Page, work, chapter, episode, entity, and organization updates carry expected revision timestamps and return stable stale-resource conflicts; focused schema/service/Mobile handling tests exist. |
 | MOB-REL-001 | P0 | Partial | Icons, splash, metadata, URLs, age declarations, and store copy exist; store screenshots remain. |
-| MOB-REL-002 | P0 | Partial | EAS build/submit/update profiles exist and both local exports pass; signed iOS/production submit and remote CI proof remain. |
+| MOB-REL-002 | P0 | Partial | EAS build/submit/update profiles exist, clean-checkout CI exports both platforms, and signed Android preview build 19 finished at `0b8fa5eb-2dd6-4b9a-9e54-1ab99a72b662`; signed iOS and production build/submit remain. |
 | MOB-REL-003 | P0 | Partial | Privacy manifest, policy, retention, deletion, and declarations exist; store-console declaration proof remains. |
 | MOB-REL-004 | P0 | Partial | Production config validation, fixed origins, and environment matrix exist. Ten known public production values are synchronized to EAS, including API/Cognito/app-link/workspace settings. Sentry secrets, deployed AASA/assetlinks/legal routes, product mapping verification, and real production-build proof remain. |
 
