@@ -71,8 +71,6 @@
     "vitest": "^4.0.14"
   },
   "overrides": {
-    "googleapis-common": {
-      "gaxios": "7.3.0"
-    }
+    "gaxios": "7.3.0"
   }
 }
