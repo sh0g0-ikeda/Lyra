@@ -46,6 +46,7 @@ class FakeDatabase implements DatabaseClient {
         text.includes("generation_jobs.status = 'failed'") &&
         text.includes('generation_jobs.credit_cost > 0') &&
         text.includes('FROM credit_ledger') &&
+        text.includes("credit_ledger.type = 'consume'") &&
         text.includes("credit_ledger.type = 'refund'")
       );
     }
@@ -57,6 +58,7 @@ class FakeDatabase implements DatabaseClient {
         text.includes("generation_jobs.status = 'failed'") &&
         text.includes('generation_jobs.credit_cost > 0') &&
         text.includes('FROM credit_ledger') &&
+        text.includes("credit_ledger.type = 'consume'") &&
         text.includes("credit_ledger.type = 'refund'")
       );
     }
@@ -198,6 +200,7 @@ describe('checkDeploymentDataInvariants', () => {
         query.includes("generation_jobs.job_type = 'page_generate'") &&
         query.includes("generation_jobs.status = 'failed'") &&
         query.includes('generation_jobs.credit_cost > 0') &&
+        query.includes("credit_ledger.type = 'consume'") &&
         query.includes('credit_ledger.job_id = generation_jobs.id') &&
         query.includes("credit_ledger.type = 'refund'"),
       ),
@@ -207,6 +210,7 @@ describe('checkDeploymentDataInvariants', () => {
         query.includes("generation_jobs.job_type = 'entity_generate'") &&
         query.includes("generation_jobs.status = 'failed'") &&
         query.includes('generation_jobs.credit_cost > 0') &&
+        query.includes("credit_ledger.type = 'consume'") &&
         query.includes('credit_ledger.job_id = generation_jobs.id') &&
         query.includes("credit_ledger.type = 'refund'"),
       ),
