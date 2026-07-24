@@ -256,7 +256,13 @@ class FakeStoryRepository implements StoryRepository {
     return episode === null ? false : this.episodes.delete(id);
   }
 
-  public async moveEpisode(id: string, userId: string, direction: 'up' | 'down'): Promise<Episode | null> {
+  public async moveEpisode(
+    id: string,
+    userId: string,
+    direction: 'up' | 'down',
+    _organizationId?: string | null,
+    crossChapter = false,
+  ): Promise<Episode | null> {
     const episode = await this.findEpisodeByIdAndUserId(id, userId);
     if (episode === null) {
       return null;
@@ -267,14 +273,51 @@ class FakeStoryRepository implements StoryRepository {
       .sort((left, right) => left.order - right.order);
     const index = siblings.findIndex((candidate) => candidate.id === id);
     const neighbor = direction === 'up' ? siblings[index - 1] : siblings[index + 1];
-    if (neighbor === undefined) {
+    if (neighbor !== undefined) {
+      const movedEpisode = { ...episode, order: neighbor.order, version: episode.version + 1 };
+      const movedNeighbor = { ...neighbor, order: episode.order, version: neighbor.version + 1 };
+      this.episodes.set(movedEpisode.id, movedEpisode);
+      this.episodes.set(movedNeighbor.id, movedNeighbor);
+      return movedEpisode;
+    }
+
+    if (!crossChapter) {
       return episode;
     }
 
-    const movedEpisode = { ...episode, order: neighbor.order, version: episode.version + 1 };
-    const movedNeighbor = { ...neighbor, order: episode.order, version: neighbor.version + 1 };
+    const sourceChapter = this.chapters.get(episode.chapterId);
+    if (sourceChapter === undefined) {
+      return episode;
+    }
+    const chapters = [...this.chapters.values()]
+      .filter((candidate) => candidate.workId === sourceChapter.workId)
+      .sort((left, right) => left.order - right.order);
+    const chapterIndex = chapters.findIndex((candidate) => candidate.id === sourceChapter.id);
+    const destinationChapter = direction === 'up' ? chapters[chapterIndex - 1] : chapters[chapterIndex + 1];
+    if (destinationChapter === undefined) {
+      return episode;
+    }
+
+    const destinationEpisodes = [...this.episodes.values()]
+      .filter((candidate) => candidate.chapterId === destinationChapter.id)
+      .sort((left, right) => left.order - right.order);
+    const nextOrder = direction === 'up' ? destinationEpisodes.length + 1 : 1;
+    const shiftedEpisodes = direction === 'up' ? [] : destinationEpisodes;
+    for (const destinationEpisode of shiftedEpisodes) {
+      this.episodes.set(destinationEpisode.id, {
+        ...destinationEpisode,
+        order: destinationEpisode.order + 1,
+        version: destinationEpisode.version + 1,
+      });
+    }
+
+    const movedEpisode = {
+      ...episode,
+      chapterId: destinationChapter.id,
+      order: nextOrder,
+      version: episode.version + 1,
+    };
     this.episodes.set(movedEpisode.id, movedEpisode);
-    this.episodes.set(movedNeighbor.id, movedNeighbor);
     return movedEpisode;
   }
 
@@ -522,6 +565,54 @@ describe('StoryService', () => {
     expect(episodes.find((episode) => episode.id === firstEpisode.id)?.order).toBe(2);
   });
 
+  it('moves a chapter-end episode to order one of the next chapter only when cross chapter is enabled', async () => {
+    const service = createService();
+    const work = await createStoryWork(service);
+    const firstChapter = await createStoryChapter(service, work.id, 1);
+    const secondChapter = await createStoryChapter(service, work.id, 2);
+    const episode = await createStoryEpisode(service, firstChapter.id, 1);
+    const destinationEpisode = await createStoryEpisode(service, secondChapter.id, 1);
+
+    const unchanged = await service.moveEpisode('user-1', episode.id, 'down');
+    expect(unchanged).toMatchObject({ id: episode.id, chapterId: firstChapter.id, order: 1 });
+
+    const moved = await service.moveEpisode('user-1', episode.id, 'down', null, true);
+    const destinationEpisodes = await service.listEpisodes('user-1', secondChapter.id);
+
+    expect(moved).toMatchObject({ id: episode.id, chapterId: secondChapter.id, order: 1 });
+    expect(destinationEpisodes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: episode.id, order: 1 }),
+        expect.objectContaining({ id: destinationEpisode.id, order: 2 }),
+      ]),
+    );
+  });
+
+  it('moves a chapter-first episode to the end of the previous empty chapter', async () => {
+    const service = createService();
+    const work = await createStoryWork(service);
+    const firstChapter = await createStoryChapter(service, work.id, 1);
+    const secondChapter = await createStoryChapter(service, work.id, 2);
+    const episode = await createStoryEpisode(service, secondChapter.id, 1);
+
+    const moved = await service.moveEpisode('user-1', episode.id, 'up', null, true);
+    const sourceEpisodes = await service.listEpisodes('user-1', secondChapter.id);
+
+    expect(moved).toMatchObject({ id: episode.id, chapterId: firstChapter.id, order: 1 });
+    expect(sourceEpisodes).toEqual([]);
+  });
+
+  it('keeps the episode unchanged when cross chapter movement has no adjacent chapter', async () => {
+    const service = createService();
+    const work = await createStoryWork(service);
+    const chapter = await createStoryChapter(service, work.id, 1);
+    const episode = await createStoryEpisode(service, chapter.id, 1);
+
+    const moved = await service.moveEpisode('user-1', episode.id, 'down', null, true);
+
+    expect(moved).toMatchObject({ id: episode.id, chapterId: chapter.id, order: 1, version: 1 });
+  });
+
   it('returns not found when updating another user episode', async () => {
     const service = createService();
     const work = await service.createWork('user-1', {
@@ -657,4 +748,46 @@ function createService(
   entityReferenceReader: EntityReferenceReader = new FakeEntityReferenceReader(),
 ): StoryService {
   return new StoryService(new FakeStoryRepository(), entityReferenceReader);
+}
+
+async function createStoryWork(service: StoryService): Promise<Work> {
+  return service.createWork('user-1', {
+    title: 'Story work',
+    genre: null,
+    worldSetting: null,
+    theme: null,
+    mainEntityIds: [],
+    startingPoint: null,
+    endingPoint: null,
+    overallFlow: null,
+  });
+}
+
+async function createStoryChapter(service: StoryService, workId: string, order: number): Promise<Chapter> {
+  return service.createChapter('user-1', workId, {
+    order,
+    title: `Chapter ${order}`,
+    purpose: null,
+    startingState: null,
+    endingState: null,
+    emotionCurve: null,
+    entitiesInvolved: [],
+    keyBeats: [],
+  });
+}
+
+async function createStoryEpisode(service: StoryService, chapterId: string, order: number): Promise<Episode> {
+  return service.createEpisode('user-1', chapterId, {
+    order,
+    title: `Episode ${order}`,
+    purpose: null,
+    storyInputMode: 'structured',
+    storyFullDraft: null,
+    introduction: null,
+    middle: null,
+    climax: null,
+    endingHook: null,
+    estimatedPages: 16,
+    entitiesInvolved: [],
+  });
 }

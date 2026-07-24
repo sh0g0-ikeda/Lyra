@@ -113,5 +113,6 @@ export const updateEpisodeBodySchema = z
 export const moveStoryItemBodySchema = z
   .object({
     direction: storyItemMoveDirectionSchema,
+    cross_chapter: z.boolean().optional().default(false),
   })
   .strict();

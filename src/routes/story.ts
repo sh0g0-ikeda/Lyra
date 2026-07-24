@@ -385,9 +385,19 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
       throw new ValidationError(formatZodValidationError(body.error));
     }
 
-    const episode = await dependencies.storyService.moveEpisode(user.id, episodeId, body.data.direction, organizationId);
+    const sourceEpisode = await dependencies.storyService.getEpisode(user.id, episodeId, organizationId);
+    const episode = await dependencies.storyService.moveEpisode(
+      user.id,
+      episodeId,
+      body.data.direction,
+      organizationId,
+      body.data.cross_chapter,
+    );
     await recordOrganizationAudit(dependencies, organizationId, user.id, 'episode.moved', 'episode', episodeId, {
       direction: body.data.direction,
+      cross_chapter: body.data.cross_chapter,
+      source_chapter_id: sourceEpisode.chapterId,
+      destination_chapter_id: episode.chapterId,
     });
 
     return c.json(toEpisodeResponse(episode));

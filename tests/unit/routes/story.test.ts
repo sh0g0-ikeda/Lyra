@@ -86,6 +86,7 @@ class FakeCreditService implements CreditServicePort {
 class FakeStoryService implements StoryServicePort {
   public listWorksOrganizationId: string | null | undefined = undefined;
   public createWorkOrganizationId: string | null | undefined = undefined;
+  public moveEpisodeCrossChapter: boolean | undefined = undefined;
 
   public async listWorks(userId: string, organizationId?: string | null): Promise<Work[]> {
     this.listWorksOrganizationId = organizationId;
@@ -151,6 +152,10 @@ class FakeStoryService implements StoryServicePort {
     return [buildEpisode({ chapterId: requestedChapterId })];
   }
 
+  public async getEpisode(_userId: string, requestedEpisodeId: string): Promise<Episode> {
+    return buildEpisode({ id: requestedEpisodeId });
+  }
+
   public async updateEpisode(
     _userId: string,
     requestedEpisodeId: string,
@@ -165,7 +170,10 @@ class FakeStoryService implements StoryServicePort {
     _userId: string,
     requestedEpisodeId: string,
     direction: 'up' | 'down',
+    _organizationId?: string | null,
+    crossChapter?: boolean,
   ): Promise<Episode> {
+    this.moveEpisodeCrossChapter = crossChapter;
     return buildEpisode({ id: requestedEpisodeId, order: direction === 'up' ? 1 : 2, version: 2 });
   }
 }
@@ -560,7 +568,8 @@ describe('story routes', () => {
   });
 
   it('moves an episode', async () => {
-    const app = createTestApp();
+    const storyService = new FakeStoryService();
+    const app = createTestApp({ storyService });
     const token = await createToken();
 
     const response = await app.request(`/api/episodes/${episodeId}/move`, {
@@ -580,6 +589,48 @@ describe('story routes', () => {
       order: 2,
       version: 2,
     });
+    expect(storyService.moveEpisodeCrossChapter).toBe(false);
+  });
+
+  it('passes the optional cross chapter move flag without accepting a destination chapter id', async () => {
+    const storyService = new FakeStoryService();
+    const app = createTestApp({ storyService });
+    const token = await createToken();
+
+    const response = await app.request(`/api/episodes/${episodeId}/move`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        direction: 'down',
+        cross_chapter: true,
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(storyService.moveEpisodeCrossChapter).toBe(true);
+  });
+
+  it('rejects a client supplied destination chapter id for an episode move', async () => {
+    const app = createTestApp();
+    const token = await createToken();
+
+    const response = await app.request(`/api/episodes/${episodeId}/move`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        direction: 'down',
+        cross_chapter: true,
+        destination_chapter_id: chapterId,
+      }),
+    });
+
+    expect(response.status).toBe(422);
   });
 
   it('story list responses do not expose internal edit history', async () => {

@@ -57,7 +57,13 @@ export interface StoryRepository {
   findEpisodeByIdAndUserId(id: string, userId: string, organizationId?: string | null): Promise<Episode | null>;
   updateEpisode(id: string, userId: string, input: UpdateEpisodeInput, organizationId?: string | null): Promise<Episode | null>;
   deleteEpisode(id: string, userId: string, organizationId?: string | null): Promise<boolean>;
-  moveEpisode(id: string, userId: string, direction: StoryItemMoveDirection, organizationId?: string | null): Promise<Episode | null>;
+  moveEpisode(
+    id: string,
+    userId: string,
+    direction: StoryItemMoveDirection,
+    organizationId?: string | null,
+    crossChapter?: boolean,
+  ): Promise<Episode | null>;
   findCollaborationTargetByIdAndUserId(
     layer: StoryCollaborationLayer,
     targetId: string,
@@ -146,6 +152,11 @@ interface EpisodeRow extends QueryResultRow {
   status: StoryStatus;
   created_at: Date;
   updated_at: Date;
+}
+
+interface EpisodeMoveRow extends EpisodeRow {
+  work_id: string;
+  chapter_order: number;
 }
 
 interface CollaborationRow extends QueryResultRow {
@@ -980,11 +991,12 @@ export class PostgresStoryRepository implements StoryRepository {
     userId: string,
     direction: StoryItemMoveDirection,
     organizationId: string | null = null,
+    crossChapter = false,
   ): Promise<Episode | null> {
-    return runInTransaction(this.client, this.transactionRunner, async (transactionClient) => {
-      const currentResult = await transactionClient.query<EpisodeRow>(
+    return runInTransaction(this.client, resolveTransactionRunner(this.client, this.transactionRunner), async (transactionClient) => {
+      const workLockResult = await transactionClient.query<IdRow>(
         `
-        SELECT episodes.*
+        SELECT works.id
         FROM episodes
         INNER JOIN chapters ON chapters.id = episodes.chapter_id
         INNER JOIN works ON works.id = chapters.work_id
@@ -1003,13 +1015,29 @@ export class PostgresStoryRepository implements StoryRepository {
             )
           )
           )
-        FOR UPDATE OF episodes
+        FOR UPDATE OF works
         `,
         [id, userId, organizationId],
       );
+      const work = workLockResult.rows[0];
+      if (work === undefined) {
+        return null;
+      }
+
+      const currentResult = await transactionClient.query<EpisodeMoveRow>(
+        `
+        SELECT episodes.*, chapters.work_id, chapters."order" AS chapter_order
+        FROM episodes
+        INNER JOIN chapters ON chapters.id = episodes.chapter_id
+        WHERE episodes.id = $1
+          AND chapters.work_id = $2
+        FOR UPDATE OF episodes, chapters
+        `,
+        [id, work.id],
+      );
       const current = currentResult.rows[0];
       if (current === undefined) {
-        return null;
+        throw new ValidationError('Episode disappeared while moving');
       }
 
       const neighborResult = await transactionClient.query<EpisodeRow>(
@@ -1026,7 +1054,36 @@ export class PostgresStoryRepository implements StoryRepository {
       );
       const neighbor = neighborResult.rows[0];
       if (neighbor === undefined) {
-        return mapEpisodeRow(current);
+        if (!crossChapter) {
+          return mapEpisodeRow(current);
+        }
+
+        const adjacentChapterResult = await transactionClient.query<ChapterRow>(
+          `
+          SELECT chapters.*
+          FROM chapters
+          WHERE chapters.work_id = $1
+            AND chapters."order" ${direction === 'up' ? '<' : '>'} $2
+          ORDER BY chapters."order" ${direction === 'up' ? 'DESC' : 'ASC'}
+          LIMIT 1
+          `,
+          [current.work_id, current.chapter_order],
+        );
+        const adjacentChapter = adjacentChapterResult.rows[0];
+        if (adjacentChapter === undefined) {
+          return mapEpisodeRow(current);
+        }
+
+        try {
+          return await moveEpisodeAcrossChapterBoundary(
+            transactionClient,
+            current,
+            adjacentChapter,
+            direction,
+          );
+        } catch (error) {
+          throw mapOrderConflict(error, 'Episode order must be unique within the chapter');
+        }
       }
 
       try {
@@ -2089,6 +2146,137 @@ async function swapEpisodeOrders(
   return mapEpisodeRow(movedEpisode);
 }
 
+async function moveEpisodeAcrossChapterBoundary(
+  client: DatabaseClient,
+  current: EpisodeMoveRow,
+  adjacentChapter: ChapterRow,
+  direction: StoryItemMoveDirection,
+): Promise<Episode> {
+  const lockedChaptersResult = await client.query<ChapterRow>(
+    `
+    SELECT chapters.*
+    FROM chapters
+    WHERE chapters.id = ANY($1::uuid[])
+    ORDER BY chapters."order" ASC, chapters.id ASC
+    FOR UPDATE
+    `,
+    [[current.chapter_id, adjacentChapter.id]],
+  );
+  const lockedChapters = lockedChaptersResult.rows;
+  if (lockedChapters.length !== 2) {
+    throw new ValidationError('Failed to lock source and destination chapters');
+  }
+
+  const lockedEpisodesResult = await client.query<EpisodeRow>(
+    `
+    SELECT episodes.*
+    FROM episodes
+    INNER JOIN chapters ON chapters.id = episodes.chapter_id
+    WHERE episodes.chapter_id = ANY($1::uuid[])
+    ORDER BY chapters."order" ASC, episodes."order" ASC, episodes.id ASC
+    FOR UPDATE OF episodes
+    `,
+    [[current.chapter_id, adjacentChapter.id]],
+  );
+  const lockedEpisodes = lockedEpisodesResult.rows;
+  const lockedCurrent = lockedEpisodes.find((episode) => episode.id === current.id);
+  if (lockedCurrent === undefined) {
+    throw new ValidationError('Failed to lock current episode');
+  }
+
+  const sourceEpisodes = lockedEpisodes
+    .filter((episode) => episode.chapter_id === current.chapter_id)
+    .sort(compareEpisodesByOrder);
+  const destinationEpisodes = lockedEpisodes
+    .filter((episode) => episode.chapter_id === adjacentChapter.id)
+    .sort(compareEpisodesByOrder);
+  const sourceRemaining = sourceEpisodes.filter((episode) => episode.id !== current.id);
+
+  const sourceFinalOrders = new Map(sourceRemaining.map((episode, index) => [episode.id, index + 1]));
+  const destinationStartOrder = direction === 'down' ? 2 : 1;
+  const destinationFinalOrders = new Map(
+    destinationEpisodes.map((episode, index) => [episode.id, destinationStartOrder + index]),
+  );
+  const sourceChanged = sourceRemaining.filter(
+    (episode) => sourceFinalOrders.get(episode.id) !== episode.order,
+  );
+  const destinationChanged = destinationEpisodes.filter(
+    (episode) => destinationFinalOrders.get(episode.id) !== episode.order,
+  );
+
+  await moveEpisodeToTemporaryOrder(
+    client,
+    lockedCurrent.id,
+    temporaryEpisodeOrder(sourceEpisodes, 0),
+  );
+  for (const [index, episode] of sourceChanged.entries()) {
+    await moveEpisodeToTemporaryOrder(client, episode.id, temporaryEpisodeOrder(sourceEpisodes, index + 1));
+  }
+  for (const [index, episode] of destinationChanged.entries()) {
+    await moveEpisodeToTemporaryOrder(client, episode.id, temporaryEpisodeOrder(destinationEpisodes, index));
+  }
+
+  for (const episode of sourceChanged) {
+    await finalizeEpisodeOrder(client, episode.id, sourceFinalOrders.get(episode.id) ?? episode.order);
+  }
+  for (const episode of destinationChanged) {
+    await finalizeEpisodeOrder(client, episode.id, destinationFinalOrders.get(episode.id) ?? episode.order);
+  }
+
+  const destinationOrder = direction === 'down' ? 1 : destinationEpisodes.length + 1;
+  const movedResult = await client.query<EpisodeRow>(
+    `
+    UPDATE episodes
+    SET chapter_id = $2,
+        "order" = $3,
+        version = version + 1,
+        updated_at = NOW()
+    WHERE id = $1
+    RETURNING *
+    `,
+    [lockedCurrent.id, adjacentChapter.id, destinationOrder],
+  );
+  const movedEpisode = movedResult.rows[0];
+  if (movedEpisode === undefined) {
+    throw new ValidationError('Failed to move episode across chapter boundary');
+  }
+
+  return mapEpisodeRow(movedEpisode);
+}
+
+function compareEpisodesByOrder(left: EpisodeRow, right: EpisodeRow): number {
+  return left.order - right.order || left.id.localeCompare(right.id);
+}
+
+function temporaryEpisodeOrder(episodes: EpisodeRow[], offset: number): number {
+  const maxOrder = episodes.reduce((maximum, episode) => Math.max(maximum, episode.order), 0);
+  return maxOrder + 100000 + offset;
+}
+
+async function moveEpisodeToTemporaryOrder(client: DatabaseClient, episodeId: string, order: number): Promise<void> {
+  await client.query(
+    `
+    UPDATE episodes
+    SET "order" = $2
+    WHERE id = $1
+    `,
+    [episodeId, order],
+  );
+}
+
+async function finalizeEpisodeOrder(client: DatabaseClient, episodeId: string, order: number): Promise<void> {
+  await client.query(
+    `
+    UPDATE episodes
+    SET "order" = $2,
+        version = version + 1,
+        updated_at = NOW()
+    WHERE id = $1
+    `,
+    [episodeId, order],
+  );
+}
+
 async function nextTemporaryChapterOrder(client: DatabaseClient, workId: string): Promise<number> {
   const result = await client.query<TemporaryOrderRow>(
     `
@@ -2320,6 +2508,18 @@ async function runInTransaction<T>(
   }
 
   return work(client);
+}
+
+function resolveTransactionRunner(
+  client: DatabaseClient,
+  explicitTransactionRunner: TransactionRunner | undefined,
+): TransactionRunner | undefined {
+  if (explicitTransactionRunner !== undefined) {
+    return explicitTransactionRunner;
+  }
+
+  const candidate = client as Partial<TransactionRunner>;
+  return typeof candidate.transaction === 'function' ? (candidate as TransactionRunner) : undefined;
 }
 
 function mapOrderConflict(error: unknown, message: string): Error {

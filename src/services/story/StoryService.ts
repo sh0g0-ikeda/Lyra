@@ -38,9 +38,16 @@ export interface StoryServicePort {
   moveChapter(userId: string, chapterId: string, direction: StoryItemMoveDirection, organizationId?: string | null): Promise<Chapter>;
   createEpisode(userId: string, chapterId: string, input: CreateEpisodeInput, organizationId?: string | null): Promise<Episode>;
   listEpisodes(userId: string, chapterId: string, organizationId?: string | null): Promise<Episode[]>;
+  getEpisode(userId: string, episodeId: string, organizationId?: string | null): Promise<Episode>;
   updateEpisode(userId: string, episodeId: string, input: UpdateEpisodeInput, organizationId?: string | null): Promise<Episode>;
   deleteEpisode(userId: string, episodeId: string, organizationId?: string | null): Promise<void>;
-  moveEpisode(userId: string, episodeId: string, direction: StoryItemMoveDirection, organizationId?: string | null): Promise<Episode>;
+  moveEpisode(
+    userId: string,
+    episodeId: string,
+    direction: StoryItemMoveDirection,
+    organizationId?: string | null,
+    crossChapter?: boolean,
+  ): Promise<Episode>;
 }
 
 export class StoryService implements StoryServicePort {
@@ -165,16 +172,26 @@ export class StoryService implements StoryServicePort {
     return this.storyRepository.findEpisodesByChapterIdAndUserId(chapterId, userId, organizationId);
   }
 
+  public async getEpisode(
+    userId: string,
+    episodeId: string,
+    organizationId: string | null = null,
+  ): Promise<Episode> {
+    const episode = await this.storyRepository.findEpisodeByIdAndUserId(episodeId, userId, organizationId);
+    if (episode === null) {
+      throw new NotFoundError('Episode not found');
+    }
+
+    return episode;
+  }
+
   public async updateEpisode(
     userId: string,
     episodeId: string,
     input: UpdateEpisodeInput,
     organizationId: string | null = null,
   ): Promise<Episode> {
-    const currentEpisode = await this.storyRepository.findEpisodeByIdAndUserId(episodeId, userId, organizationId);
-    if (currentEpisode === null) {
-      throw new NotFoundError('Episode not found');
-    }
+    const currentEpisode = await this.getEpisode(userId, episodeId, organizationId);
     if (input.entitiesInvolved !== undefined) {
       const chapter = await this.ensureChapterOwnedByUser(userId, currentEpisode.chapterId, organizationId);
       await this.ensureEntitiesBelongToWork(userId, chapter.workId, input.entitiesInvolved, organizationId);
@@ -200,8 +217,15 @@ export class StoryService implements StoryServicePort {
     episodeId: string,
     direction: StoryItemMoveDirection,
     organizationId: string | null = null,
+    crossChapter = false,
   ): Promise<Episode> {
-    const episode = await this.storyRepository.moveEpisode(episodeId, userId, direction, organizationId);
+    const episode = await this.storyRepository.moveEpisode(
+      episodeId,
+      userId,
+      direction,
+      organizationId,
+      crossChapter,
+    );
     if (episode === null) {
       throw new NotFoundError('Episode not found');
     }

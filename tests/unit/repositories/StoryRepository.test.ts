@@ -147,6 +147,96 @@ class EpisodeUpdateCapturingClient implements DatabaseClient {
   }
 }
 
+class CrossChapterEpisodeMoveClient implements DatabaseClient, TransactionRunner {
+  public queries: string[] = [];
+  public inputs: Array<{ text: string; values: readonly unknown[] | undefined }> = [];
+  public transactionCount = 0;
+
+  public async query<T extends QueryResultRow = QueryResultRow>(
+    text: string,
+    values?: readonly unknown[],
+  ): Promise<QueryResult<T>> {
+    this.queries.push(text);
+    this.inputs.push({ text, values });
+
+    if (text.includes('FOR UPDATE OF works')) {
+      return queryResult([{ id: '11111111-1111-4111-8111-111111111111' }] as unknown as T[]);
+    }
+    if (text.includes('AS chapter_order')) {
+      return queryResult([
+        {
+          ...episodeRow(),
+          work_id: '11111111-1111-4111-8111-111111111111',
+          chapter_order: 1,
+        },
+      ] as unknown as T[]);
+    }
+    if (text.includes('episodes.chapter_id = $1')) {
+      return queryResult([] as unknown as T[]);
+    }
+    if (text.includes('chapters.work_id = $1')) {
+      return queryResult([
+        {
+          id: '44444444-4444-4444-8444-444444444444',
+          work_id: '11111111-1111-4111-8111-111111111111',
+          order: 2,
+          title: 'Chapter 2',
+          purpose: null,
+          starting_state: null,
+          ending_state: null,
+          emotion_curve: null,
+          entities_involved: [],
+          key_beats: [],
+          version: 1,
+          edit_history: [],
+          status: 'draft',
+          created_at: new Date('2026-04-22T00:00:00.000Z'),
+          updated_at: new Date('2026-04-22T00:00:00.000Z'),
+        },
+      ] as unknown as T[]);
+    }
+    if (text.includes('chapters.id = ANY')) {
+      return queryResult([
+        { id: '22222222-2222-4222-8222-222222222222' },
+        { id: '44444444-4444-4444-8444-444444444444' },
+      ] as unknown as T[]);
+    }
+    if (text.includes('episodes.chapter_id = ANY')) {
+      return queryResult([
+        episodeRow(),
+        {
+          ...episodeRow(),
+          id: '66666666-6666-4666-8666-666666666666',
+          order: 2,
+        },
+        {
+          ...episodeRow(),
+          id: '55555555-5555-4555-8555-555555555555',
+          chapter_id: '44444444-4444-4444-8444-444444444444',
+          order: 1,
+        },
+      ] as unknown as T[]);
+    }
+    if (text.includes('SET chapter_id = $2')) {
+      return queryResult([
+        {
+          ...episodeRow(),
+          chapter_id: '44444444-4444-4444-8444-444444444444',
+          order: 1,
+          version: 2,
+        },
+      ] as unknown as T[]);
+    }
+
+    return queryResult([] as unknown as T[]);
+  }
+
+  public async transaction<T>(work: (client: DatabaseClient) => Promise<T>): Promise<T> {
+    this.transactionCount += 1;
+    return work(this);
+  }
+}
+
 describe('PostgresStoryRepository', () => {
   it('writes edit_history into update SQL', async () => {
     const client = new QueryCapturingClient();
@@ -457,7 +547,60 @@ describe('PostgresStoryRepository', () => {
     expect(client.updateValues?.[16]).toBeNull();
     expect(client.updateValues?.[18]).toBeNull();
   });
+
+  it('locks the work and both chapter episode sets before moving a boundary episode', async () => {
+    const client = new CrossChapterEpisodeMoveClient();
+    const repository = new PostgresStoryRepository(client);
+
+    const moved = await repository.moveEpisode(
+      '33333333-3333-4333-8333-333333333333',
+      'user-1',
+      'down',
+      '77777777-7777-4777-8777-777777777777',
+      true,
+    );
+
+    expect(moved).toMatchObject({
+      id: '33333333-3333-4333-8333-333333333333',
+      chapterId: '44444444-4444-4444-8444-444444444444',
+      order: 1,
+    });
+    expect(client.transactionCount).toBe(1);
+    expect(client.queries[0]).toContain('FOR UPDATE OF works');
+    expect(client.queries[0]).toContain('organization_members.status = \'active\'');
+    expect(client.queries.some((query) => query.includes('chapters.id = ANY'))).toBe(true);
+    expect(client.queries.some((query) => query.includes('episodes.chapter_id = ANY'))).toBe(true);
+    expect(client.queries.some((query) => query.includes('SET chapter_id = $2'))).toBe(true);
+    expect(client.queries.some((query) => query.includes('DELETE FROM episodes'))).toBe(false);
+    expect(client.queries.some((query) => query.includes('INSERT INTO episodes'))).toBe(false);
+    expect(
+      client.inputs.some(
+        (input) =>
+          input.text.includes('SET "order" = $2') &&
+          input.values?.[0] === '66666666-6666-4666-8666-666666666666' &&
+          input.values?.[1] === 1,
+      ),
+    ).toBe(true);
+    expect(
+      client.inputs.some(
+        (input) =>
+          input.text.includes('SET "order" = $2') &&
+          input.values?.[0] === '55555555-5555-4555-8555-555555555555' &&
+          input.values?.[1] === 2,
+      ),
+    ).toBe(true);
+  });
 });
+
+function queryResult<T extends QueryResultRow>(rows: T[]): QueryResult<T> {
+  return {
+    command: 'SELECT',
+    rowCount: rows.length,
+    oid: 0,
+    fields: [],
+    rows,
+  };
+}
 
 function workRow(): Record<string, unknown> {
   return {
