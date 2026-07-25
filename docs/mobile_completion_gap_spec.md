@@ -1744,7 +1744,7 @@ Gap 0 の定義:
 - 最新 Android APK の署名証明書 SHA-256 は本番 `assetlinks.json` と一致した。
 - Maestro 2.7.0 は operator host に導入済みであり、実機接続後に E2E-01..18 を実行できる。
 - 専用 Firebase project は `com.lyra.mobile` と検証済み EAS 署名証明書を登録し、Android API key は package と署名 SHA-1 に制限済みである。Android client file は EAS file secret、最小権限 FCM sender credential と push token 暗号化鍵は production AWS secret に格納し、OAuth と FCM `validate_only` 200 を確認した。APNs と両実機配送の受入完了までは push を無効のまま維持する。
-- canonical schema 026 専用 preflight、push outbox の forward repair 036、旧 Mobile migration filename・状態値・取消依頼者のforward補完、Web/Apple 設定に依存しない非 root ARM64 migration image を実装した。空DBへの001–036通し適用と旧filename適用済みDBの双方で全50 data invariantを確認した。本番migrationは未実行である。
+- canonical schema 026 専用 preflight、push outbox の forward repair 036、旧 Mobile migration filename・状態値・取消依頼者のforward補完、Web/Apple 設定に依存しない非 root ARM64 migration image を実装した。空DBへの001–036通し適用と旧filename適用済みDBの双方で全50 data invariantを確認した。commit `59605ed` の migration image は ECR tag `migration-59605ed-arm64` として発行し、`linux/arm64` を読戻し確認した。本番ECS taskとmigrationは未実行である。
 - コードとリポジトリ内設定で解消できる未分類差分は 0。
 - production Sentry、Apple Team ID/iOS実機署名、AASA の本番配信、store console/sandbox、APNs、application rollout、FCM/APNs 実配送、実機 E2E の外部証跡は未完了。
 

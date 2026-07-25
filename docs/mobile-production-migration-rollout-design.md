@@ -91,3 +91,12 @@ physical-device acceptance remain separate release gates.
 Terra performed the read-only migration-by-migration compatibility audit. Sol
 owns the forward repair, preflight design, Docker integration, production
 decision, and final verification.
+
+## Published migration image
+
+- Source commit: `59605ed42c26cb2f4936c7272ca0a33eb8ee1c7d`
+- ECR tag: `lyra-prod-api:migration-59605ed-arm64`
+- OCI index digest:
+  `sha256:da810033a7bc1c763b704d49f3db600c46ef01e34e74ffa10e6327b3ff88bfb4`
+- Readback platform: `linux/arm64`
+- Status: published only; no ECS task or production migration has run.
