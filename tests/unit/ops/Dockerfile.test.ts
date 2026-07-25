@@ -61,7 +61,13 @@ describe('production Dockerfile', () => {
       'utf8',
     );
 
-    expect(workflow).toContain('uses: docker/setup-qemu-action@v3');
+    expect(workflow.match(/uses: actions\/checkout@v7/gu) ?? []).toHaveLength(2);
+    expect(workflow.match(/uses: actions\/setup-node@v7/gu) ?? []).toHaveLength(2);
+    expect(workflow).toContain('uses: docker/setup-qemu-action@v4');
+    expect(workflow).not.toMatch(
+      /uses: (?:actions\/checkout|actions\/setup-node)@v4/u,
+    );
+    expect(workflow).not.toContain('uses: docker/setup-qemu-action@v3');
     expect(workflow).toContain('platforms: arm64');
     expect(workflow).toContain(
       'docker buildx build --platform linux/arm64 --target migration-runtime --tag lyra-migration-ci --load .',
