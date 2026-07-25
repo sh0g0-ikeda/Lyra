@@ -12,9 +12,11 @@ interface ExpoAppConfig {
       | [
           string,
           {
+            cameraPermission?: boolean;
             image?: string;
             backgroundColor?: string;
             imageWidth?: number;
+            microphonePermission?: boolean;
             resizeMode?: string;
           },
         ]
@@ -31,6 +33,7 @@ interface ExpoAppConfig {
     };
     android?: {
       versionCode?: number;
+      blockedPermissions?: string[];
       adaptiveIcon?: { foregroundImage?: string; backgroundColor?: string };
     };
   };
@@ -144,6 +147,30 @@ describe('production app metadata', () => {
       expect(easConfig.build?.[profile]?.env?.SENTRY_DISABLE_AUTO_UPLOAD).toBe('true');
     }
     expect(easConfig.build?.production?.env?.SENTRY_DISABLE_AUTO_UPLOAD).toBeUndefined();
+  });
+
+  it('未使用のcamera、microphone、overlay権限を最終Manifestから除外する', () => {
+    const imagePickerPlugin = config.expo.plugins?.find(
+      (plugin): plugin is [
+        string,
+        {
+          cameraPermission?: boolean;
+          microphonePermission?: boolean;
+        },
+      ] => Array.isArray(plugin) && plugin[0] === 'expo-image-picker',
+    );
+
+    expect(imagePickerPlugin?.[1]).toMatchObject({
+      cameraPermission: false,
+      microphonePermission: false,
+    });
+    expect(config.expo.android?.blockedPermissions).toEqual(
+      expect.arrayContaining([
+        'android.permission.CAMERA',
+        'android.permission.RECORD_AUDIO',
+        'android.permission.SYSTEM_ALERT_WINDOW',
+      ]),
+    );
   });
 
   it('iOS privacy manifest で tracking 無効を明示する', () => {

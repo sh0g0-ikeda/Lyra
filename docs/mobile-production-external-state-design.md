@@ -52,6 +52,12 @@ credentials, configure a store, or claim physical-device acceptance.
 - FCM setup alone does not enable push. `PUSH_NOTIFICATIONS_ENABLED` remains
   false until APNs credentials are also installed and both provider paths can
   pass real-device delivery tests.
+- Release-like Android artifacts are inspected after EAS build. The application
+  uses only the system image library picker and has no camera or screen-overlay
+  feature, so `CAMERA`, `RECORD_AUDIO`, and `SYSTEM_ALERT_WINDOW` are blocked
+  from the merged manifest. Signature, package/version, deep links, notification
+  permission, Firebase components, and exported components are verified against
+  the downloaded APK rather than inferred from source configuration.
 - Production updates require immediate AWS readback. No secret values are
   written to source, logs, or documentation.
 
