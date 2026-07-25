@@ -1742,7 +1742,9 @@ Gap 0 の定義:
 - production API task role は `saved/*` のタグ操作と対象 Cognito pool の disable/delete だけを追加許可し、対象外 prefix が implicit deny になることをシミュレーション済みである。
 - `assetlinks.json`、privacy、terms、support、legal CSS は private S3 prefix と OAC 経由で本番配信され、source と応答本文の SHA-256、Content-Type、`nosniff`、S3 直アクセス 403 を確認した。
 - 最新 Android APK の署名証明書 SHA-256 は本番 `assetlinks.json` と一致した。
+- Maestro 2.7.0 は operator host に導入済みであり、実機接続後に E2E-01..18 を実行できる。
+- 専用 Firebase project は `com.lyra.mobile` と検証済み EAS 署名証明書を登録し、Android client file は EAS file secret、最小権限 FCM sender credential と push token 暗号化鍵は production AWS secret に格納済みである。APNs と両実機配送の受入完了までは push を無効のまま維持する。
 - コードとリポジトリ内設定で解消できる未分類差分は 0。
-- production Sentry、Apple Team ID/iOS実機署名、AASA の本番配信、store console/sandbox、APNs/FCM、application rollout、実機 E2E の外部証跡は未完了。
+- production Sentry、Apple Team ID/iOS実機署名、AASA の本番配信、store console/sandbox、APNs、application rollout、FCM/APNs 実配送、実機 E2E の外部証跡は未完了。
 
 このため、実装監査は完了したが、production release 判定は外部受入証跡が揃うまで不可である。

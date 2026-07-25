@@ -44,6 +44,14 @@ credentials, configure a store, or claim physical-device acceptance.
 - The API task role preserves its existing image, queue, secret, and SES
   permissions. Account deletion adds only exact `saved/*` object-tagging
   actions and Cognito disable/delete actions scoped to the production pool.
+- Android push uses a dedicated Firebase project registered to
+  `com.lyra.mobile` and the signature-verified EAS certificate. The Android
+  client file is an EAS file secret. The FCM sender credential is a dedicated
+  service account with only `roles/firebasecloudmessaging.admin`, stored only
+  in the production AWS secret.
+- FCM setup alone does not enable push. `PUSH_NOTIFICATIONS_ENABLED` remains
+  false until APNs credentials are also installed and both provider paths can
+  pass real-device delivery tests.
 - Production updates require immediate AWS readback. No secret values are
   written to source, logs, or documentation.
 

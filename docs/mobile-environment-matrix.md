@@ -17,7 +17,7 @@ stored here or in the Mobile bundle.
 | Store product mapping | None | Sandbox values from EAS environment | Production values from the server-owned product catalog |
 | Android Firebase client config | Local file outside Git | EAS file secret `GOOGLE_SERVICES_JSON` | EAS file secret `GOOGLE_SERVICES_JSON` |
 | APNs environment | Sandbox | Sandbox | Production |
-| Push provider credentials | Disabled or local secrets | Server secret store | Server secret store |
+| Push provider credentials | Disabled or local secrets | Server secret store | FCM installed in AWS; APNs pending |
 | Crash reporting | Disabled | Disabled | Sentry DSN from EAS `production` environment |
 | Source map upload | Disabled | Disabled | EAS sensitive secrets `SENTRY_AUTH_TOKEN`, `SENTRY_ORG`, and `SENTRY_PROJECT` |
 
@@ -48,9 +48,12 @@ Native push requires two independent configuration surfaces:
    service-account JSON through the server secret store. It sends only generic job
    status copy and opaque UUID routing fields.
 
-Until both Android client configuration and server provider credentials are
-installed, `PUSH_NOTIFICATIONS_ENABLED` remains `false`. iOS signing must enable
-the Push Notifications entitlement and APNs key access for `com.lyra.mobile`.
+The Android client file, dedicated FCM sender credential, and token-encryption
+keys are installed. `PUSH_NOTIFICATIONS_ENABLED` remains `false` until APNs is
+also installed, the application revision containing the push implementation is
+deployed, and real-device delivery passes on both platforms. iOS signing must
+enable the Push Notifications entitlement and APNs key access for
+`com.lyra.mobile`.
 
 The Android fingerprint above was extracted from and signature-verified against
 EAS build `0b8fa5eb-2dd6-4b9a-9e54-1ab99a72b662` (build 19). It must be updated if the

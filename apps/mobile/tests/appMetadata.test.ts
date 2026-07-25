@@ -110,6 +110,9 @@ describe('production app metadata', () => {
       autoIncrement: true,
       channel: 'production',
     });
+    expect(easConfig.build?.preview).toMatchObject({
+      autoIncrement: true,
+    });
     expect(easConfig.submit?.production?.android?.track).toBe('internal');
     expect(easConfig.submit?.production?.ios).toBeDefined();
   });

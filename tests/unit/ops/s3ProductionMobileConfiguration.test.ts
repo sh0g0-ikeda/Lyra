@@ -230,4 +230,34 @@ describe('production mobile S3 configuration', () => {
         'arn:aws:cognito-idp:ap-northeast-1:452284481392:userpool/ap-northeast-1_wiZLzlGMM',
     });
   });
+
+  it('Firebase production manifestはLyra packageと検証済み署名だけを登録する', async () => {
+    const manifest = await readJson(
+      'ops/google/firebase-mobile.production.json',
+    );
+
+    expect(manifest).toEqual({
+      projectId: 'lyra-mobile-prod-452284',
+      displayName: 'Lyra Mobile Production',
+      requiredApis: [
+        'firebase.googleapis.com',
+        'fcm.googleapis.com',
+      ],
+      androidApp: {
+        displayName: 'Lyra Mobile Android',
+        packageName: 'com.lyra.mobile',
+        sha256Certificate:
+          'DD:DF:94:7C:55:AE:BB:15:82:51:37:92:05:D8:77:47:29:DF:BD:C0:97:90:08:EB:93:47:66:96:B8:78:20:0B',
+      },
+      fcmSender: {
+        serviceAccountId: 'lyra-fcm-sender',
+        role: 'roles/firebasecloudmessaging.admin',
+      },
+      secretDestinations: {
+        androidClient: 'EAS GOOGLE_SERVICES_JSON file secret',
+        serverCredential:
+          'AWS lyra/prod/app PUSH_FCM_SERVICE_ACCOUNT_JSON_BASE64',
+      },
+    });
+  });
 });

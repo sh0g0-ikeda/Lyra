@@ -20,6 +20,7 @@
     "preview": {
       "environment": "preview",
       "distribution": "internal",
+      "autoIncrement": true,
       "env": {
         "EXPO_PUBLIC_BUILD_ENVIRONMENT": "preview",
         "EXPO_PUBLIC_APP_LINK_HOST": "app.lyra-editor.com",
