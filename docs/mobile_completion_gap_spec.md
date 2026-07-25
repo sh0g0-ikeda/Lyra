@@ -1735,7 +1735,7 @@ Gap 0 の定義:
 - `apps/mobile` は lockfile、設定、source、assets、tests を含めて Git 追跡されている。
 - clean checkout の `mobile-verify` は install、Expo doctor、contract、typecheck、lint、396 tests、文字化け検査、Android/iOS export を完走した。
 - Mobile API 112 methods、Backend 124 routes、Web parity 11 requirements は Audit A/B/C で未分類 0。
-- EAS Android preview build 19 は署名済み APK を生成し、build `0b8fa5eb-2dd6-4b9a-9e54-1ab99a72b662` が完了した。
+- EAS Android preview build 20 は Firebase client 設定を含む署名済み APK を生成し、build `60107a7c-6b9a-4eed-a834-d80353bb4d94` が完了した。APK の署名、本番 Firebase project/App/sender ID、SHA-256 `32162208CE04098EB2945C582160105F12A54E4B302E7ED234A1975CE14DFC07` を実体から検証済みである。
 - EAS iOS simulator build 19 は実 Xcode build を完走し、build `c8c3eba8-bdf4-443b-a08d-aedb510f5d07` が完了した。これは実機署名の証拠ではない。
 - production Cognito は Web、固定 HTTPS Mobile、fallback custom scheme の callback/logout URL を登録済みである。
 - production S3 は `tmp/` の1日失効、未完了 multipart の1日中断、削除予定タグの1日失効、固定 origin PUT CORS を読戻し検証済みである。

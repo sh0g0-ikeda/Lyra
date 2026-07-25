@@ -56,9 +56,11 @@ enable the Push Notifications entitlement and APNs key access for
 `com.lyra.mobile`.
 
 The Android fingerprint above was extracted from and signature-verified against
-EAS build `0b8fa5eb-2dd6-4b9a-9e54-1ab99a72b662` (build 19). It must be updated if the
-upload/signing key changes. The production Web image fails its build unless
-`APPLE_DEVELOPER_TEAM_ID` is a valid ten-character Team ID. The checked-in
-generator combines it with `com.lyra.mobile` and authorizes only Mobile auth and
-invitation paths. The real value, deployed HTTPS response, and device association
-cannot be finalized until an Apple Developer account and signed iOS build exist.
+EAS build `60107a7c-6b9a-4eed-a834-d80353bb4d94` (build 20). The downloaded APK
+also contains the registered Firebase project, App ID, and sender ID. It must be
+updated if the upload/signing key changes. The production Web image fails its
+build unless `APPLE_DEVELOPER_TEAM_ID` is a valid ten-character Team ID. The
+checked-in generator combines it with `com.lyra.mobile` and authorizes only
+Mobile auth and invitation paths. The real value, deployed HTTPS response, and
+device association cannot be finalized until an Apple Developer account and
+signed iOS build exist.
