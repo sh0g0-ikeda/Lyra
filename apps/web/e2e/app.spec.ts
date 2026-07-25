@@ -840,7 +840,8 @@ test('keeps the story hierarchy usable on a mobile viewport', async ({ page }) =
   expect(titleAndTriggerDoNotOverlap).toBe(true);
 
   await episodeMenuTrigger.focus();
-  await page.keyboard.press('ArrowDown');
+  await expect(episodeMenuTrigger).toBeFocused();
+  await episodeMenuTrigger.press('ArrowDown');
   await expect(episodeMenuTrigger).toHaveAttribute('aria-expanded', 'true');
   const episodeMenu = page.getByRole('menu', { name: 'Actions for episode “Arrival”', exact: true });
   await expect(episodeMenu).toBeVisible();
