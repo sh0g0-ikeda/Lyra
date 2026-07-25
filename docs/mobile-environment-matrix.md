@@ -52,8 +52,8 @@ Until both Android client configuration and server provider credentials are
 installed, `PUSH_NOTIFICATIONS_ENABLED` remains `false`. iOS signing must enable
 the Push Notifications entitlement and APNs key access for `com.lyra.mobile`.
 
-The Android fingerprint above was extracted from EAS build
-`2ebddb42-b3ed-41df-9c58-1471b00c10cd` (build 19). It must be updated if the
+The Android fingerprint above was extracted from and signature-verified against
+EAS build `0b8fa5eb-2dd6-4b9a-9e54-1ab99a72b662` (build 19). It must be updated if the
 upload/signing key changes. The production Web image fails its build unless
 `APPLE_DEVELOPER_TEAM_ID` is a valid ten-character Team ID. The checked-in
 generator combines it with `com.lyra.mobile` and authorizes only Mobile auth and

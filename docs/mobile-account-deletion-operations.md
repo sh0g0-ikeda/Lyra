@@ -15,6 +15,13 @@ unrelated lifecycle rules.
 For a versioned bucket, both current and noncurrent versions must expire. The
 example includes both settings.
 
+`ops/security/s3-images-lifecycle.production.json` is the complete reviewed
+production configuration. It preserves the existing multipart and noncurrent
+version rules while adding the temporary-upload and account-deletion rules.
+The tag-filtered account-deletion rule intentionally has no
+`AbortIncompleteMultipartUpload` action; the bucket-wide one-day rule already
+covers incomplete uploads, and S3 does not permit that action with a tag filter.
+
 ## IAM
 
 The API task role needs only these account-deletion permissions:
@@ -25,6 +32,10 @@ The API task role needs only these account-deletion permissions:
 - `cognito-idp:AdminDeleteUser` on the production user pool
 
 It does not need `s3:DeleteObject` for the account-deletion flow.
+
+`ops/security/iam-api-runtime.production.json` is the complete production API
+task-role policy. Its account-deletion statements are scoped to `saved/*` and
+the single production Cognito pool.
 
 ## Verification
 

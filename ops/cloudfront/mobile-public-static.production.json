@@ -1,0 +1,44 @@
+{
+  "distributionId": "E3B8V7G1NPTTMS",
+  "bucket": "lyra-prod-images-452284481392",
+  "prefix": "public/mobile",
+  "origin": {
+    "id": "lyra-prod-mobile-public-static-origin",
+    "domainName": "lyra-prod-images-452284481392.s3.ap-northeast-1.amazonaws.com",
+    "originAccessControlId": "E1O0E031GX28JO"
+  },
+  "cachePolicyId": "658327ea-f89d-4fab-a63d-7e88639e58f6",
+  "responseHeadersPolicyId": "67f7725c-6f97-4210-82d7-5512b31e9d03",
+  "files": [
+    {
+      "source": "apps/web/public/.well-known/assetlinks.json",
+      "key": "public/mobile/.well-known/assetlinks.json",
+      "path": "/.well-known/assetlinks.json",
+      "contentType": "application/json"
+    },
+    {
+      "source": "apps/web/public/privacy.html",
+      "key": "public/mobile/privacy.html",
+      "path": "/privacy.html",
+      "contentType": "text/html; charset=utf-8"
+    },
+    {
+      "source": "apps/web/public/terms.html",
+      "key": "public/mobile/terms.html",
+      "path": "/terms.html",
+      "contentType": "text/html; charset=utf-8"
+    },
+    {
+      "source": "apps/web/public/support.html",
+      "key": "public/mobile/support.html",
+      "path": "/support.html",
+      "contentType": "text/html; charset=utf-8"
+    },
+    {
+      "source": "apps/web/public/legal.css",
+      "key": "public/mobile/legal.css",
+      "path": "/legal.css",
+      "contentType": "text/css; charset=utf-8"
+    }
+  ]
+}
