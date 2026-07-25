@@ -77,6 +77,19 @@ jobs:
       - name: Build backend
         run: bun run build
 
+      - name: Setup ARM64 emulation
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: Build migration-only production image
+        run: docker buildx build --platform linux/arm64 --target migration-runtime --tag lyra-migration-ci --load .
+
+      - name: Probe migration-only production image
+        run: |
+          test "$(docker image inspect lyra-migration-ci --format '{{.Architecture}}/{{.Config.User}}')" = 'arm64/65532:65532'
+          docker run --rm --platform linux/arm64 --entrypoint /usr/local/bin/bun lyra-migration-ci -e "import { existsSync } from 'node:fs'; const required = ['dist/scripts/startProductionMigration.js', 'dist/scripts/checkPreMobileMigrationInvariants.js', 'dist/packages/api-contract/src/mobileApiSchemas.js', 'migrations/036_fix_push_notification_cancelled_guard.sql', 'certs/rds-ap-northeast-1-bundle.pem']; if (!required.every(existsSync) || process.getuid?.() !== 65532) process.exit(1); await import('sharp');"
+
       - name: Lint frontend
         run: npm --prefix apps/web run lint
 

@@ -136,6 +136,57 @@ describe('runPendingMigrations', () => {
     expect(db.insertedFilenames).toEqual(['002_second.sql']);
   });
 
+  it('旧Mobile migration名は同一内容だけを補完し変更済みmigrationは再適用する', async () => {
+    const migrationsDir = await createTempMigrations({
+      '024_add_generation_job_cancellation.sql': 'SELECT 24 AS skip_reconciled_cancellation;',
+      '027_add_account_deletion_requests.sql': 'SELECT 27 AS skip_same_account;',
+      '028_add_page_story_metadata_columns.sql': 'SELECT 28 AS skip_same_pages;',
+      '029_add_mobile_store_purchase_ledger.sql': 'SELECT 29 AS skip_same_store;',
+      '030_add_generation_job_management.sql': 'SELECT 30 AS reapply_jobs;',
+      '031_add_entity_reference_upload_tokens.sql': 'SELECT 31 AS skip_same_uploads;',
+      '032_add_episode_export_jobs.sql': 'SELECT 32 AS skip_same_exports;',
+      '033_add_mobile_push_token_registry.sql': 'SELECT 33 AS skip_same_tokens;',
+      '034_add_mobile_push_notification_outbox.sql': 'SELECT 34 AS skip_same_outbox;',
+      '035_add_processing_generation_job_cancellation.sql': 'SELECT 35 AS reapply_cancellation;',
+    });
+    const db = new FakeMigrationDb([
+      '024_add_account_deletion_requests.sql',
+      '025_add_page_story_metadata_columns.sql',
+      '026_add_mobile_store_purchase_ledger.sql',
+      '027_add_generation_job_management.sql',
+      '028_add_entity_reference_upload_tokens.sql',
+      '029_add_episode_export_jobs.sql',
+      '030_add_mobile_push_token_registry.sql',
+      '031_add_mobile_push_notification_outbox.sql',
+      '032_add_processing_generation_job_cancellation.sql',
+    ]);
+
+    const applied = await runPendingMigrations(db, { migrationsDir });
+
+    expect(applied).toEqual([
+      '030_add_generation_job_management.sql',
+      '035_add_processing_generation_job_cancellation.sql',
+    ]);
+    expect(db.insertedFilenames).toEqual(
+      expect.arrayContaining([
+        '024_add_generation_job_cancellation.sql',
+        '027_add_account_deletion_requests.sql',
+        '028_add_page_story_metadata_columns.sql',
+        '029_add_mobile_store_purchase_ledger.sql',
+        '031_add_entity_reference_upload_tokens.sql',
+        '032_add_episode_export_jobs.sql',
+        '033_add_mobile_push_token_registry.sql',
+        '034_add_mobile_push_notification_outbox.sql',
+      ]),
+    );
+    expect(db.executedSql.some((sql) => sql.includes('skip_same_'))).toBe(false);
+    expect(
+      db.executedSql.some((sql) => sql.includes('skip_reconciled_cancellation')),
+    ).toBe(false);
+    expect(db.executedSql.some((sql) => sql.includes('reapply_jobs'))).toBe(true);
+    expect(db.executedSql.some((sql) => sql.includes('reapply_cancellation'))).toBe(true);
+  });
+
   it('migration lock が先に取られている場合は再試行する', async () => {
     const migrationsDir = await createTempMigrations({
       '001_first.sql': 'SELECT 1;',

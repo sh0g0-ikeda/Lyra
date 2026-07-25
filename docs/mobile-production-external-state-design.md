@@ -49,6 +49,10 @@ credentials, configure a store, or claim physical-device acceptance.
   client file is an EAS file secret. The FCM sender credential is a dedicated
   service account with only `roles/firebasecloudmessaging.admin`, stored only
   in the production AWS secret.
+- The Firebase Android API key keeps Firebase's service allowlist and adds an
+  Android application restriction for `com.lyra.mobile` plus the SHA-1 derived
+  from the same signature-verified EAS certificate. OAuth acquisition and an
+  FCM `validate_only` request must succeed without logging either credential.
 - FCM setup alone does not enable push. `PUSH_NOTIFICATIONS_ENABLED` remains
   false until APNs credentials are also installed and both provider paths can
   pass real-device delivery tests.

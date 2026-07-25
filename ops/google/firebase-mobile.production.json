@@ -8,7 +8,13 @@
   "androidApp": {
     "displayName": "Lyra Mobile Android",
     "packageName": "com.lyra.mobile",
+    "sha1Certificate": "3C:BD:66:C9:E5:66:23:21:8A:BC:40:5E:3D:DF:6D:DA:39:93:14:EA",
     "sha256Certificate": "DD:DF:94:7C:55:AE:BB:15:82:51:37:92:05:D8:77:47:29:DF:BD:C0:97:90:08:EB:93:47:66:96:B8:78:20:0B"
+  },
+  "androidApiKey": {
+    "allowedPackageName": "com.lyra.mobile",
+    "allowedSha1Certificate": "3C:BD:66:C9:E5:66:23:21:8A:BC:40:5E:3D:DF:6D:DA:39:93:14:EA",
+    "apiTargetsManagedByFirebase": true
   },
   "fcmSender": {
     "serviceAccountId": "lyra-fcm-sender",

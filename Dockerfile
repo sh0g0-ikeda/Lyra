@@ -5,6 +5,7 @@ RUN bun install --frozen-lockfile
 
 FROM deps AS build
 COPY tsconfig.json ./
+COPY packages/api-contract ./packages/api-contract
 COPY src ./src
 COPY scripts ./scripts
 COPY worker ./worker
@@ -14,6 +15,24 @@ FROM oven/bun:1.3.14 AS production-deps
 WORKDIR /app
 COPY package.json bun.lock ./
 RUN bun install --frozen-lockfile --production
+
+FROM oven/bun:1.3.14-distroless@sha256:c28c51287af70bab8e0b66fc4b6a30cfb92a727ebc88045223adc9f4c9d09307 AS runtime-base
+ENV NODE_ENV=production
+ENV WEB_STATIC_DIR=./public
+ENV LD_LIBRARY_PATH=/usr/lib
+WORKDIR /app
+COPY --from=production-deps /usr/lib/*-linux-gnu/libstdc++.so.6* /usr/lib/
+COPY --from=production-deps /lib/*-linux-gnu/libgcc_s.so.1 /usr/lib/
+COPY --chown=65532:65532 package.json bun.lock ./
+COPY --chown=65532:65532 --from=production-deps /app/node_modules ./node_modules
+COPY --chown=65532:65532 --from=build /app/dist ./dist
+COPY --chown=65532:65532 migrations ./migrations
+COPY --chown=65532:65532 ops/certs ./certs
+USER 65532:65532
+ENTRYPOINT []
+
+FROM runtime-base AS migration-runtime
+CMD ["/usr/local/bin/bun", "dist/scripts/startProductionMigration.js"]
 
 FROM --platform=$BUILDPLATFORM node:24-slim AS web-build
 WORKDIR /app/apps/web
@@ -41,20 +60,7 @@ ENV VITE_ORGANIZATION_FEATURES_ENABLED=$VITE_ORGANIZATION_FEATURES_ENABLED
 ENV APPLE_DEVELOPER_TEAM_ID=$APPLE_DEVELOPER_TEAM_ID
 RUN npm run build
 
-FROM oven/bun:1.3.14-distroless@sha256:c28c51287af70bab8e0b66fc4b6a30cfb92a727ebc88045223adc9f4c9d09307 AS runtime
-ENV NODE_ENV=production
-ENV WEB_STATIC_DIR=./public
-ENV LD_LIBRARY_PATH=/usr/lib
-WORKDIR /app
-COPY --from=production-deps /usr/lib/*-linux-gnu/libstdc++.so.6* /usr/lib/
-COPY --from=production-deps /lib/*-linux-gnu/libgcc_s.so.1 /usr/lib/
-COPY --chown=65532:65532 package.json bun.lock ./
-COPY --chown=65532:65532 --from=production-deps /app/node_modules ./node_modules
-COPY --chown=65532:65532 --from=build /app/dist ./dist
+FROM runtime-base AS runtime
 COPY --chown=65532:65532 --from=web-build /app/apps/web/dist ./public
-COPY --chown=65532:65532 migrations ./migrations
-COPY --chown=65532:65532 ops/certs ./certs
-USER 65532:65532
 EXPOSE 3000
-ENTRYPOINT []
 CMD ["/usr/local/bin/bun", "dist/scripts/startProductionApi.js"]

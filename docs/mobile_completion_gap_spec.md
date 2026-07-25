@@ -1735,7 +1735,7 @@ Gap 0 の定義:
 - `apps/mobile` は lockfile、設定、source、assets、tests を含めて Git 追跡されている。
 - clean checkout の `mobile-verify` は install、Expo doctor、contract、typecheck、lint、397 tests、文字化け検査、Android/iOS export を完走した。
 - Mobile API 112 methods、Backend 124 routes、Web parity 11 requirements は Audit A/B/C で未分類 0。
-- EAS Android preview build 20 は Firebase client 設定を含む署名済み APK を生成し、build `60107a7c-6b9a-4eed-a834-d80353bb4d94` が完了した。APK の署名、本番 Firebase project/App/sender ID、SHA-256 `32162208CE04098EB2945C582160105F12A54E4B302E7ED234A1975CE14DFC07` を実体から検証済みである。
+- EAS Android preview build 21 は Firebase client 設定と不要権限の除外を含む署名済み APK を生成し、build `4c9d2354-01ce-4540-b8be-ede38190c617` が完了した。APK Signature Scheme v2、package/version、本番 Firebase project/App/sender ID、HTTPS app links、SHA-256 `523A26D8A75877F6653D1F5538AD8BBDD9662D9B93BAC91C60D3C6239E6536A9` を実体から検証し、`CAMERA`、`RECORD_AUDIO`、`SYSTEM_ALERT_WINDOW` が merged manifest に存在しないことを確認済みである。
 - EAS iOS simulator build 19 は実 Xcode build を完走し、build `c8c3eba8-bdf4-443b-a08d-aedb510f5d07` が完了した。これは実機署名の証拠ではない。
 - production Cognito は Web、固定 HTTPS Mobile、fallback custom scheme の callback/logout URL を登録済みである。
 - production S3 は `tmp/` の1日失効、未完了 multipart の1日中断、削除予定タグの1日失効、固定 origin PUT CORS を読戻し検証済みである。
@@ -1743,7 +1743,8 @@ Gap 0 の定義:
 - `assetlinks.json`、privacy、terms、support、legal CSS は private S3 prefix と OAC 経由で本番配信され、source と応答本文の SHA-256、Content-Type、`nosniff`、S3 直アクセス 403 を確認した。
 - 最新 Android APK の署名証明書 SHA-256 は本番 `assetlinks.json` と一致した。
 - Maestro 2.7.0 は operator host に導入済みであり、実機接続後に E2E-01..18 を実行できる。
-- 専用 Firebase project は `com.lyra.mobile` と検証済み EAS 署名証明書を登録し、Android client file は EAS file secret、最小権限 FCM sender credential と push token 暗号化鍵は production AWS secret に格納済みである。APNs と両実機配送の受入完了までは push を無効のまま維持する。
+- 専用 Firebase project は `com.lyra.mobile` と検証済み EAS 署名証明書を登録し、Android API key は package と署名 SHA-1 に制限済みである。Android client file は EAS file secret、最小権限 FCM sender credential と push token 暗号化鍵は production AWS secret に格納し、OAuth と FCM `validate_only` 200 を確認した。APNs と両実機配送の受入完了までは push を無効のまま維持する。
+- canonical schema 026 専用 preflight、push outbox の forward repair 036、旧 Mobile migration filename・状態値・取消依頼者のforward補完、Web/Apple 設定に依存しない非 root ARM64 migration image を実装した。空DBへの001–036通し適用と旧filename適用済みDBの双方で全50 data invariantを確認した。本番migrationは未実行である。
 - コードとリポジトリ内設定で解消できる未分類差分は 0。
 - production Sentry、Apple Team ID/iOS実機署名、AASA の本番配信、store console/sandbox、APNs、application rollout、FCM/APNs 実配送、実機 E2E の外部証跡は未完了。
 

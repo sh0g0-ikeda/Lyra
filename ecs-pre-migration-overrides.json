@@ -1,0 +1,11 @@
+{
+  "containerOverrides": [
+    {
+      "name": "api",
+      "command": [
+        "/usr/local/bin/bun",
+        "dist/scripts/checkPreMobileMigrationInvariants.js"
+      ]
+    }
+  ]
+}

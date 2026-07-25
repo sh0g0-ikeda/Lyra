@@ -108,6 +108,10 @@ const DEPLOYMENT_DATA_INVARIANT_QUERIES: InvariantQuery[] = [
     sql: "SELECT id::text AS id FROM generation_jobs WHERE generation_mode IS NOT NULL AND generation_mode NOT IN ('standard', 'thinking') ORDER BY id LIMIT $1",
   },
   {
+    name: 'generation_jobs.cancel_request_metadata_pair',
+    sql: 'SELECT id::text AS id FROM generation_jobs WHERE (cancel_requested_at IS NULL) <> (cancel_requested_by IS NULL) ORDER BY id LIMIT $1',
+  },
+  {
     name: 'generation_jobs.active_page_resource_unique',
     sql: `SELECT MIN(id::text) AS id FROM generation_jobs WHERE job_type = 'page_generate' AND status IN (${ACTIVE_GENERATION_JOB_STATUSES_SQL}) AND params ? 'page_id' GROUP BY params->>'page_id' HAVING COUNT(*) > 1 ORDER BY MIN(id::text) LIMIT $1`,
   },
@@ -229,12 +233,113 @@ const DEPLOYMENT_DATA_INVARIANT_QUERIES: InvariantQuery[] = [
   },
 ];
 
+const MOBILE_BASELINE_026_FILENAMES = [
+  '001_initial_schema.sql',
+  '002_add_episode_story_input_mode.sql',
+  '003_add_generation_active_resource_locks.sql',
+  '004_add_rate_limit_buckets.sql',
+  '005_add_billing_idempotency_indexes.sql',
+  '006_add_generation_job_retention_index.sql',
+  '007_add_credit_refund_job_idempotency_index.sql',
+  '008_add_credit_ledger_bucket_deltas.sql',
+  '009_add_generation_job_state_constraints.sql',
+  '010_add_billing_state_constraints.sql',
+  '011_add_core_app_state_constraints.sql',
+  '012_add_credit_ledger_amount_sign_constraint.sql',
+  '013_add_subscription_status_constraint.sql',
+  '014_add_payment_record_external_id_constraint.sql',
+  '015_add_episode_story_autofill_job_type.sql',
+  '016_add_episode_story_autofill_active_lock.sql',
+  '017_add_episode_page_skeleton_job_type.sql',
+  '018_allow_enterprise_billing_plan_codes.sql',
+  '019_add_organization_workspaces.sql',
+  '020_add_payment_record_invoice_url.sql',
+  '021_add_organization_workspace_indexes.sql',
+  '022_add_organization_invitation_delivery.sql',
+  '023_merge_creator_role_into_editor.sql',
+  '024_add_generation_job_cancellation.sql',
+  '025_include_cancelled_jobs_in_retention_index.sql',
+  '026_backfill_legacy_credit_consume_job_links.sql',
+] as const;
+
+const SCHEMA_026_INVARIANT_NAMES = new Set([
+  'database.invalid_indexes',
+  'works.status',
+  'chapters.status',
+  'episodes.status',
+  'scenes.status',
+  'entities.status',
+  'reference_sets.status',
+  'pages.status',
+  'pages.dialogue_mode',
+  'pages.generation_mode',
+  'panels.panel_role',
+  'panels.panel_size',
+  'panel_frames.border_style',
+  'balloons.balloon_type',
+  'balloons.writing_mode',
+  'balloons.font_family',
+  'generation_jobs.job_type',
+  'generation_jobs.status',
+  'generation_jobs.generation_mode',
+  'generation_jobs.cancel_request_metadata_pair',
+  'generation_jobs.active_page_resource_unique',
+  'generation_jobs.active_entity_resource_unique',
+  'generation_jobs.active_episode_story_autofill_resource_unique',
+  'generation_jobs.active_episode_page_skeleton_resource_unique',
+  'generation_jobs.failed_page_missing_refund',
+  'generation_jobs.failed_entity_missing_refund',
+  'generation_jobs.failed_page_under_refunded',
+  'generation_jobs.failed_entity_under_refunded',
+  'users.plan_code',
+  'subscriptions.plan_code',
+  'subscriptions.status',
+  'credit_ledger.type',
+  'credit_ledger.amount_sign',
+  'credit_ledger.bucket_delta_pair',
+  'credit_ledger.stripe_event_id_unique',
+  'credit_ledger.job_refund_over_consumed',
+  'payment_records.kind',
+  'payment_records.status',
+  'payment_records.amount_jpy',
+  'payment_records.external_id_pair',
+  'payment_records.checkout_session_kind_status_unique',
+  'payment_records.invoice_kind_status_unique',
+]);
+
+const MOBILE_BASELINE_026_VALUES_SQL = MOBILE_BASELINE_026_FILENAMES
+  .map((filename) => `('${filename}')`)
+  .join(', ');
+
+const PRE_MOBILE_MIGRATION_INVARIANT_QUERIES: InvariantQuery[] = [
+  {
+    name: 'schema_migrations.mobile_baseline_026',
+    sql: `WITH expected(filename) AS (VALUES ${MOBILE_BASELINE_026_VALUES_SQL}), actual(filename) AS (SELECT filename::text FROM schema_migrations), drift(id) AS (SELECT 'missing:' || expected.filename FROM expected LEFT JOIN actual USING (filename) WHERE actual.filename IS NULL UNION ALL SELECT 'unexpected:' || actual.filename FROM actual LEFT JOIN expected USING (filename) WHERE expected.filename IS NULL) SELECT id FROM drift ORDER BY id LIMIT $1`,
+  },
+  ...DEPLOYMENT_DATA_INVARIANT_QUERIES.filter((query) =>
+    SCHEMA_026_INVARIANT_NAMES.has(query.name),
+  ),
+];
+
 export async function checkDeploymentDataInvariants(
   database: DatabaseClient,
 ): Promise<DeploymentDataInvariantReport> {
+  return checkInvariantQueries(database, DEPLOYMENT_DATA_INVARIANT_QUERIES);
+}
+
+export async function checkPreMobileMigrationDataInvariants(
+  database: DatabaseClient,
+): Promise<DeploymentDataInvariantReport> {
+  return checkInvariantQueries(database, PRE_MOBILE_MIGRATION_INVARIANT_QUERIES);
+}
+
+async function checkInvariantQueries(
+  database: DatabaseClient,
+  queries: readonly InvariantQuery[],
+): Promise<DeploymentDataInvariantReport> {
   const violations: DeploymentDataInvariantViolation[] = [];
 
-  for (const query of DEPLOYMENT_DATA_INVARIANT_QUERIES) {
+  for (const query of queries) {
     const result = await database.query<InvariantRow>(query.sql, [SAMPLE_LIMIT]);
     if (result.rows.length === 0) {
       continue;
@@ -248,7 +353,7 @@ export async function checkDeploymentDataInvariants(
 
   return {
     ok: violations.length === 0,
-    checkedCount: DEPLOYMENT_DATA_INVARIANT_QUERIES.length,
+    checkedCount: queries.length,
     violations,
   };
 }

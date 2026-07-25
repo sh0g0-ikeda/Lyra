@@ -9,6 +9,66 @@ const MIGRATION_LOCK_NAME = 'schema_migrations';
 const DEFAULT_MIGRATION_LOCK_STALE_SECONDS = 15 * 60;
 const DEFAULT_MIGRATION_LOCK_POLL_MS = 250;
 const DEFAULT_MIGRATION_LOCK_MAX_ATTEMPTS = 240;
+const LEGACY_PROCESSING_CANCELLATION_MIGRATION =
+  '032_add_processing_generation_job_cancellation.sql';
+const CANONICAL_GENERATION_CANCELLATION_MIGRATION =
+  '024_add_generation_job_cancellation.sql';
+const LEGACY_MOBILE_GENERATION_CANCELLATION_REPAIR_SQL = `
+  ALTER TABLE generation_jobs
+    DROP CONSTRAINT IF EXISTS generation_jobs_status_check;
+
+  ALTER TABLE generation_jobs
+    ADD COLUMN IF NOT EXISTS cancel_requested_at TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS cancel_requested_by UUID REFERENCES users(id) ON DELETE SET NULL,
+    ADD COLUMN IF NOT EXISTS cancelled_at TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS commit_started_at TIMESTAMPTZ;
+
+  UPDATE generation_jobs
+  SET status = 'cancelled'
+  WHERE status = 'canceled';
+
+  UPDATE generation_jobs
+  SET cancel_requested_by = cancel_requested_by_user_id
+  WHERE cancel_requested_at IS NOT NULL
+    AND cancel_requested_by IS NULL;
+
+  ALTER TABLE generation_jobs
+    ADD CONSTRAINT generation_jobs_status_check
+    CHECK (status IN ('queued', 'processing', 'completed', 'failed', 'cancelled')) NOT VALID;
+
+  ALTER TABLE generation_jobs
+    VALIDATE CONSTRAINT generation_jobs_status_check;
+`;
+const LEGACY_MOBILE_MIGRATION_ALIASES = [
+  {
+    legacy: '024_add_account_deletion_requests.sql',
+    canonical: '027_add_account_deletion_requests.sql',
+  },
+  {
+    legacy: '025_add_page_story_metadata_columns.sql',
+    canonical: '028_add_page_story_metadata_columns.sql',
+  },
+  {
+    legacy: '026_add_mobile_store_purchase_ledger.sql',
+    canonical: '029_add_mobile_store_purchase_ledger.sql',
+  },
+  {
+    legacy: '028_add_entity_reference_upload_tokens.sql',
+    canonical: '031_add_entity_reference_upload_tokens.sql',
+  },
+  {
+    legacy: '029_add_episode_export_jobs.sql',
+    canonical: '032_add_episode_export_jobs.sql',
+  },
+  {
+    legacy: '030_add_mobile_push_token_registry.sql',
+    canonical: '033_add_mobile_push_token_registry.sql',
+  },
+  {
+    legacy: '031_add_mobile_push_notification_outbox.sql',
+    canonical: '034_add_mobile_push_notification_outbox.sql',
+  },
+] as const;
 
 export async function runPendingMigrations(
   db: MigrationRunnerPort,
@@ -57,6 +117,12 @@ async function runPendingMigrationsWithLock(
     .filter((filename) => filename.endsWith('.sql'))
     .sort();
 
+  await reconcileLegacyMobileMigrationFilenames(
+    db,
+    appliedFilenames,
+    new Set(migrationFilenames),
+  );
+
   const appliedNow: string[] = [];
 
   for (const filename of migrationFilenames) {
@@ -83,6 +149,43 @@ async function runPendingMigrationsWithLock(
   }
 
   return appliedNow;
+}
+
+async function reconcileLegacyMobileMigrationFilenames(
+  db: MigrationRunnerPort,
+  appliedFilenames: Set<string>,
+  availableFilenames: ReadonlySet<string>,
+): Promise<void> {
+  if (
+    availableFilenames.has(CANONICAL_GENERATION_CANCELLATION_MIGRATION) &&
+    appliedFilenames.has(LEGACY_PROCESSING_CANCELLATION_MIGRATION) &&
+    !appliedFilenames.has(CANONICAL_GENERATION_CANCELLATION_MIGRATION)
+  ) {
+    await db.transaction(async (client) => {
+      await client.query(LEGACY_MOBILE_GENERATION_CANCELLATION_REPAIR_SQL);
+      await client.query(
+        'INSERT INTO schema_migrations (filename) VALUES ($1) ON CONFLICT DO NOTHING',
+        [CANONICAL_GENERATION_CANCELLATION_MIGRATION],
+      );
+    });
+    appliedFilenames.add(CANONICAL_GENERATION_CANCELLATION_MIGRATION);
+  }
+
+  for (const alias of LEGACY_MOBILE_MIGRATION_ALIASES) {
+    if (
+      !availableFilenames.has(alias.canonical) ||
+      !appliedFilenames.has(alias.legacy) ||
+      appliedFilenames.has(alias.canonical)
+    ) {
+      continue;
+    }
+
+    await db.query(
+      'INSERT INTO schema_migrations (filename) VALUES ($1) ON CONFLICT DO NOTHING',
+      [alias.canonical],
+    );
+    appliedFilenames.add(alias.canonical);
+  }
 }
 
 async function acquireMigrationLock(
