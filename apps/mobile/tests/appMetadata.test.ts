@@ -22,13 +22,17 @@ interface ExpoAppConfig {
     runtimeVersion?: { policy?: string };
     updates?: { fallbackToCacheTimeout?: number; url?: string };
     ios?: {
+      buildNumber?: string;
       privacyManifests?: {
         NSPrivacyTracking?: boolean;
         NSPrivacyTrackingDomains?: string[];
         NSPrivacyCollectedDataTypes?: { NSPrivacyCollectedDataType?: string }[];
       };
     };
-    android?: { adaptiveIcon?: { foregroundImage?: string; backgroundColor?: string } };
+    android?: {
+      versionCode?: number;
+      adaptiveIcon?: { foregroundImage?: string; backgroundColor?: string };
+    };
   };
 }
 
@@ -44,6 +48,7 @@ const easConfig = JSON.parse(
     autoIncrement?: boolean;
     channel?: string;
     env?: Record<string, string>;
+    ios?: { simulator?: boolean };
   }>;
   submit?: { production?: { android?: { track?: string }; ios?: object } };
 };
@@ -107,6 +112,20 @@ describe('production app metadata', () => {
     });
     expect(easConfig.submit?.production?.android?.track).toBe('internal');
     expect(easConfig.submit?.production?.ios).toBeDefined();
+  });
+
+  it('remote version管理を単一ソースにし資格情報不要のiOS simulator buildを定義する', () => {
+    expect(config.expo.ios?.buildNumber).toBeUndefined();
+    expect(config.expo.android?.versionCode).toBeUndefined();
+    expect(easConfig.build?.['ios-simulator']).toMatchObject({
+      env: {
+        EXPO_PUBLIC_BUILD_ENVIRONMENT: 'preview',
+        EXPO_PUBLIC_APP_LINK_HOST: 'app.lyra-editor.com',
+        EXPO_PUBLIC_ORGANIZATION_FEATURES_ENABLED: 'true',
+        SENTRY_DISABLE_AUTO_UPLOAD: 'true',
+      },
+      ios: { simulator: true },
+    });
   });
 
   it('preview、smoke、productionで法人受入導線を有効にする', () => {

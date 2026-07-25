@@ -30,6 +30,19 @@
         "buildType": "apk"
       }
     },
+    "ios-simulator": {
+      "environment": "preview",
+      "distribution": "internal",
+      "env": {
+        "EXPO_PUBLIC_BUILD_ENVIRONMENT": "preview",
+        "EXPO_PUBLIC_APP_LINK_HOST": "app.lyra-editor.com",
+        "EXPO_PUBLIC_ORGANIZATION_FEATURES_ENABLED": "true",
+        "SENTRY_DISABLE_AUTO_UPLOAD": "true"
+      },
+      "ios": {
+        "simulator": true
+      }
+    },
     "smoke": {
       "environment": "preview",
       "distribution": "internal",

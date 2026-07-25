@@ -50,7 +50,6 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.lyra.mobile",
-      "buildNumber": "19",
       "associatedDomains": [
         "applinks:app.lyra-editor.com"
       ],
@@ -116,7 +115,6 @@
     },
     "android": {
       "package": "com.lyra.mobile",
-      "versionCode": 19,
       "blockedPermissions": [
         "android.permission.RECORD_AUDIO"
       ],
