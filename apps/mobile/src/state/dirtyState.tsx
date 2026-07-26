@@ -18,6 +18,7 @@ import type { UiLanguage } from '@/domain/types';
 import { UnsavedChangesResolutionDialog } from '@/components/UnsavedChangesResolutionDialog';
 
 interface DirtyStateContextValue {
+  clearResolvedRevision: (id: string) => void;
   hasDirtyEditors: boolean;
   register: (registration: DirtyEditorRegistration) => () => void;
   resolveDirtyEditors: (language: UiLanguage) => Promise<boolean>;
@@ -34,6 +35,7 @@ interface PendingDirtyResolution {
 
 export function DirtyStateProvider({ children }: PropsWithChildren): React.JSX.Element {
   const registrationsRef = useRef(new Map<string, DirtyEditorRegistration>());
+  const resolvedRevisionsRef = useRef(new Map<string, string>());
   const resolutionRef = useRef<Promise<boolean> | null>(null);
   const backgroundSaveRef = useRef<Promise<boolean> | null>(null);
   const pendingResolutionRef = useRef<PendingDirtyResolution | null>(null);
@@ -42,6 +44,13 @@ export function DirtyStateProvider({ children }: PropsWithChildren): React.JSX.E
     useState<PendingDirtyResolution | null>(null);
 
   const register = useCallback((registration: DirtyEditorRegistration): (() => void) => {
+    if (
+      registration.revision !== undefined &&
+      resolvedRevisionsRef.current.get(registration.id) === registration.revision
+    ) {
+      return () => undefined;
+    }
+    resolvedRevisionsRef.current.delete(registration.id);
     registrationsRef.current.set(registration.id, registration);
     setRegistrationCount(registrationsRef.current.size);
     return () => {
@@ -53,15 +62,28 @@ export function DirtyStateProvider({ children }: PropsWithChildren): React.JSX.E
     };
   }, []);
 
+  const clearResolvedRevision = useCallback((id: string): void => {
+    resolvedRevisionsRef.current.delete(id);
+  }, []);
+
   const removeResolvedRegistrations = useCallback(
     (registrations: readonly DirtyEditorRegistration[]): void => {
       let removed = false;
       registrations.forEach((registration) => {
         const current = registrationsRef.current.get(registration.id);
-        const sameResolvedRevision =
-          registration.revision !== undefined &&
-          current?.revision === registration.revision;
-        if (current === registration || sameResolvedRevision) {
+        if (registration.revision !== undefined) {
+          if (
+            current === undefined ||
+            current.revision !== registration.revision
+          ) {
+            return;
+          }
+          registrationsRef.current.delete(registration.id);
+          removed = true;
+          resolvedRevisionsRef.current.set(registration.id, registration.revision);
+          return;
+        }
+        if (current === registration) {
           registrationsRef.current.delete(registration.id);
           removed = true;
         }
@@ -145,12 +167,19 @@ export function DirtyStateProvider({ children }: PropsWithChildren): React.JSX.E
 
   const value = useMemo<DirtyStateContextValue>(
     () => ({
+      clearResolvedRevision,
       hasDirtyEditors: registrationCount > 0,
       register,
       resolveDirtyEditors,
       saveDirtyEditors
     }),
-    [register, registrationCount, resolveDirtyEditors, saveDirtyEditors]
+    [
+      clearResolvedRevision,
+      register,
+      registrationCount,
+      resolveDirtyEditors,
+      saveDirtyEditors
+    ]
   );
 
   return (
@@ -180,9 +209,10 @@ export function useDirtyEditorRegistration(input: {
   discard: () => void;
   save: () => Promise<void>;
 }): void {
-  const { register } = useDirtyState();
+  const { clearResolvedRevision, register } = useDirtyState();
   useEffect(() => {
     if (!input.dirty) {
+      clearResolvedRevision(input.id);
       return;
     }
     return register({
@@ -191,5 +221,13 @@ export function useDirtyEditorRegistration(input: {
       discard: input.discard,
       save: input.save
     });
-  }, [input.dirty, input.discard, input.id, input.revision, input.save, register]);
+  }, [
+    clearResolvedRevision,
+    input.dirty,
+    input.discard,
+    input.id,
+    input.revision,
+    input.save,
+    register
+  ]);
 }

@@ -62,14 +62,37 @@ export function useWorkspaceContextSelection(): WorkspaceContextData {
     () => flattenUniqueRecords(worksQuery.data?.pages.map((page) => page.works) ?? []),
     [worksQuery.data?.pages],
   );
+  const fetchNextWorksPage = worksQuery.fetchNextPage;
+  const hasNextWorksPage = worksQuery.hasNextPage;
+  const isFetchingNextWorksPage = worksQuery.isFetchingNextPage;
   const selectedWorkFromList =
     loadedWorks.find((work) => work.id === selection.workId) ?? null;
+  const shouldFetchSelectedWorkDetail =
+    worksQuery.isSuccess &&
+    selection.workId !== null &&
+    selectedWorkFromList === null;
   const selectedWorkQuery = useQuery({
-    enabled: selection.workId !== null && selectedWorkFromList === null,
+    enabled: shouldFetchSelectedWorkDetail,
     queryKey: workDetailQueryKey(sessionKey, selection.workId, organizationId),
     queryFn: () => api.getWork(selection.workId ?? '', organizationId),
   });
   const selectedWork = selectedWorkFromList ?? selectedWorkQuery.data ?? null;
+  const selectedWorkDetailNotFound =
+    shouldFetchSelectedWorkDetail &&
+    selectedWorkQuery.error instanceof ApiError &&
+    selectedWorkQuery.error.status === 404;
+  const selectedWorkListIncomplete =
+    hasNextWorksPage || isFetchingNextWorksPage;
+  const selectedWorkDetailError =
+    shouldFetchSelectedWorkDetail &&
+    !(selectedWorkDetailNotFound && selectedWorkListIncomplete)
+      ? selectedWorkQuery.error
+      : null;
+  const selectedWorkNotFound =
+    selection.workId !== null &&
+    selectedWork === null &&
+    selectedWorkDetailNotFound &&
+    !selectedWorkListIncomplete;
   const works = useMemo(
     () => selectedWork === null || loadedWorks.some((work) => work.id === selectedWork.id)
       ? loadedWorks
@@ -78,12 +101,9 @@ export function useWorkspaceContextSelection(): WorkspaceContextData {
   );
 
   const chaptersQuery = useQuery({
-    enabled: selection.workId !== null && !(
-      selectedWorkQuery.error instanceof ApiError &&
-      selectedWorkQuery.error.status === 404
-    ),
-    queryKey: chaptersQueryKey(sessionKey, selection.workId, organizationId),
-    queryFn: () => api.getChapters(selection.workId ?? '', organizationId)
+    enabled: selectedWork !== null,
+    queryKey: chaptersQueryKey(sessionKey, selectedWork?.id ?? null, organizationId),
+    queryFn: () => api.getChapters(selectedWork?.id ?? '', organizationId)
   });
   const chapters = useMemo(() => chaptersQuery.data?.chapters ?? [], [chaptersQuery.data?.chapters]);
   const selectedChapter = chapters.find((chapter) => chapter.id === selection.chapterId) ?? null;
@@ -97,14 +117,26 @@ export function useWorkspaceContextSelection(): WorkspaceContextData {
   const selectedEpisode = episodes.find((episode) => episode.id === selection.episodeId) ?? null;
 
   useEffect(() => {
+    if (
+      !selectedWorkDetailNotFound ||
+      !hasNextWorksPage ||
+      isFetchingNextWorksPage
+    ) {
+      return;
+    }
+    void fetchNextWorksPage();
+  }, [
+    fetchNextWorksPage,
+    hasNextWorksPage,
+    isFetchingNextWorksPage,
+    selectedWorkDetailNotFound,
+  ]);
+
+  useEffect(() => {
     if (!worksQuery.isSuccess) {
       return;
     }
-    if (
-      selection.workId !== null &&
-      selectedWorkQuery.error instanceof ApiError &&
-      selectedWorkQuery.error.status === 404
-    ) {
+    if (selectedWorkNotFound) {
       void updateSelection(
         { workId: null, chapterId: null, episodeId: null, pageId: null, entityId: null },
         { skipDirtyCheck: true }
@@ -130,7 +162,7 @@ export function useWorkspaceContextSelection(): WorkspaceContextData {
     selectedChapter,
     selectedEpisode,
     selectedWork,
-    selectedWorkQuery.error,
+    selectedWorkNotFound,
     selection.chapterId,
     selection.episodeId,
     selection.workId,
@@ -142,13 +174,14 @@ export function useWorkspaceContextSelection(): WorkspaceContextData {
     works,
     chapters,
     episodes,
-    selectedWorkId:
-      selectedWorkQuery.error instanceof ApiError && selectedWorkQuery.error.status === 404
-        ? null
-        : selection.workId,
+    selectedWorkId: selectedWorkNotFound ? null : selection.workId,
     selectedChapterId: selectedChapter?.id ?? null,
     selectedEpisodeId: selectedEpisode?.id ?? null,
-    error: worksQuery.error ?? selectedWorkQuery.error ?? chaptersQuery.error ?? episodesQuery.error,
+    error:
+      worksQuery.error ??
+      selectedWorkDetailError ??
+      chaptersQuery.error ??
+      episodesQuery.error,
     hasMoreWorks: worksQuery.hasNextPage,
     isFetchingMoreWorks: worksQuery.isFetchingNextPage,
     loadMoreWorks: () => {
@@ -156,9 +189,15 @@ export function useWorkspaceContextSelection(): WorkspaceContextData {
     },
     retry: () => {
       void worksQuery.refetch();
-      void selectedWorkQuery.refetch();
-      void chaptersQuery.refetch();
-      void episodesQuery.refetch();
+      if (shouldFetchSelectedWorkDetail) {
+        void selectedWorkQuery.refetch();
+      }
+      if (selectedWork !== null) {
+        void chaptersQuery.refetch();
+      }
+      if (selectedChapter !== null) {
+        void episodesQuery.refetch();
+      }
     },
   };
 }

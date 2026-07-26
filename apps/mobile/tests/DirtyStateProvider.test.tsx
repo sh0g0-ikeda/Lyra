@@ -65,6 +65,154 @@ function Probe({
 }
 
 describe('DirtyStateProvider', () => {
+  it('保存成功後に同じrevisionでcallbackが更新されても再登録しない', async () => {
+    const firstSave = vi.fn().mockResolvedValue(undefined);
+    const secondSave = vi.fn().mockResolvedValue(undefined);
+    let value: ProbeValue | null = null;
+    let renderer: ReactTestRenderer | null = null;
+    const onValue = (nextValue: ProbeValue): void => {
+      value = nextValue;
+    };
+
+    await act(async () => {
+      renderer = create(
+        <DirtyStateProvider>
+          <Probe
+            dirty
+            discard={vi.fn()}
+            onValue={onValue}
+            revision="revision-a"
+            save={firstSave}
+          />
+        </DirtyStateProvider>
+      );
+    });
+
+    const firstResolution = value?.resolve();
+    await act(async () => {
+      renderer?.root.findByType('dirty-resolution-dialog').props.onSelect('save');
+      await firstResolution;
+    });
+
+    await act(async () => {
+      renderer?.update(
+        <DirtyStateProvider>
+          <Probe
+            dirty
+            discard={vi.fn()}
+            onValue={onValue}
+            revision="revision-a"
+            save={secondSave}
+          />
+        </DirtyStateProvider>
+      );
+    });
+
+    expect(value?.hasDirtyEditors).toBe(false);
+    await expect(value?.resolve()).resolves.toBe(true);
+    expect(firstSave).toHaveBeenCalledOnce();
+    expect(secondSave).not.toHaveBeenCalled();
+  });
+
+  it('破棄成功後に同じrevisionでcallbackが更新されても再登録しない', async () => {
+    const firstDiscard = vi.fn();
+    const secondDiscard = vi.fn();
+    let value: ProbeValue | null = null;
+    let renderer: ReactTestRenderer | null = null;
+    const onValue = (nextValue: ProbeValue): void => {
+      value = nextValue;
+    };
+
+    await act(async () => {
+      renderer = create(
+        <DirtyStateProvider>
+          <Probe
+            dirty
+            discard={firstDiscard}
+            onValue={onValue}
+            revision="revision-a"
+            save={vi.fn().mockResolvedValue(undefined)}
+          />
+        </DirtyStateProvider>
+      );
+    });
+
+    const firstResolution = value?.resolve();
+    await act(async () => {
+      renderer?.root.findByType('dirty-resolution-dialog').props.onSelect('discard');
+      await firstResolution;
+    });
+
+    await act(async () => {
+      renderer?.update(
+        <DirtyStateProvider>
+          <Probe
+            dirty
+            discard={secondDiscard}
+            onValue={onValue}
+            revision="revision-a"
+            save={vi.fn().mockResolvedValue(undefined)}
+          />
+        </DirtyStateProvider>
+      );
+    });
+
+    expect(value?.hasDirtyEditors).toBe(false);
+    await expect(value?.resolve()).resolves.toBe(true);
+    expect(firstDiscard).toHaveBeenCalledOnce();
+    expect(secondDiscard).not.toHaveBeenCalled();
+  });
+
+  it('保存完了前にcleanになったrevisionは後から再登録できる', async () => {
+    let finishSave: (() => void) | null = null;
+    const save = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finishSave = resolve;
+        })
+    );
+    let value: ProbeValue | null = null;
+    let renderer: ReactTestRenderer | null = null;
+    const onValue = (nextValue: ProbeValue): void => {
+      value = nextValue;
+    };
+    const renderProbe = (dirty: boolean): React.JSX.Element => (
+      <DirtyStateProvider>
+        <Probe
+          dirty={dirty}
+          discard={vi.fn()}
+          onValue={onValue}
+          revision="revision-a"
+          save={save}
+        />
+      </DirtyStateProvider>
+    );
+
+    await act(async () => {
+      renderer = create(renderProbe(true));
+    });
+    const pending = value?.resolve();
+    act(() => {
+      renderer?.root.findByType('dirty-resolution-dialog').props.onSelect('save');
+    });
+    await vi.waitFor(() => {
+      expect(save).toHaveBeenCalledOnce();
+    });
+
+    await act(async () => {
+      renderer?.update(renderProbe(false));
+    });
+    await act(async () => {
+      finishSave?.();
+      await pending;
+    });
+    await act(async () => {
+      renderer?.update(renderProbe(true));
+    });
+
+    expect(value?.hasDirtyEditors).toBe(true);
+  });
+
   it('保存中に新しい編集が入った場合は新しいdirty登録を残す', async () => {
     let finishSave: (() => void) | null = null;
     const save = vi.fn(

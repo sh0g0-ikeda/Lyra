@@ -71,6 +71,7 @@ import type {
   PanelRecord
 } from '@/domain/types';
 import { useActiveResourceJobId } from '@/hooks/useActiveResourceJobId';
+import { useResetOnScopeChange } from '@/hooks/useResetOnScopeChange';
 import { confirmAction, confirmDestructiveAction } from '@/lib/confirm';
 import { config } from '@/lib/config';
 import { appendOrganizationQuery, downloadAuthenticatedFile, downloadExternalFile } from '@/lib/download';
@@ -1523,6 +1524,7 @@ export function PagesScreen(): React.JSX.Element {
   ]);
 
   const pageEditorRevision = JSON.stringify({
+    pageId: selectedPage?.id ?? null,
     frameDrafts: frameDrafts.map(toFrameRecord),
     page: {
       continuityNote,
@@ -1692,6 +1694,33 @@ export function PagesScreen(): React.JSX.Element {
   const openWebEditorMutation = useMutation({
     mutationFn: () => Linking.openURL(WEB_EDITOR_URL)
   });
+
+  const pageErrorScope = JSON.stringify([
+    sessionKey,
+    organizationId,
+    activeWorkId,
+    activeEpisodeId,
+    selectedPage?.id ?? null
+  ]);
+  useResetOnScopeChange(pageErrorScope, [
+    updatePageMutation.reset,
+    autofillPageFromScenesMutation.reset,
+    applyTemplateMutation.reset,
+    applyFrameTemplateMutation.reset,
+    replaceFramesMutation.reset,
+    createPanelMutation.reset,
+    updatePanelMutation.reset,
+    deletePanelMutation.reset,
+    reorderPanelMutation.reset,
+    changePanelRoleMutation.reset,
+    generatePageMutation.reset,
+    confirmPageMutation.reset,
+    reopenPageMutation.reset,
+    exportPagesMutation.reset,
+    downloadPageMutation.reset,
+    () => setPageImageDownloadError(null),
+    openWebEditorMutation.reset
+  ]);
 
   const confirmDeletePanel = (targetPanel: PanelRecord): void => {
     const situationSummary =
