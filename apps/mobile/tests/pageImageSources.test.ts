@@ -3,7 +3,9 @@ import { describe, expect, it } from 'vitest';
 import type { PageRecord } from '@/domain/types';
 import {
   buildFullPageImageSource,
+  buildFullPageImageSources,
   buildPageThumbnailImageSource,
+  buildPageThumbnailImageSources,
 } from '@/domain/pageImageSources';
 
 const page: PageRecord = {
@@ -31,6 +33,45 @@ const page: PageRecord = {
 };
 
 describe('page image sources', () => {
+  it('原寸画像はCDN、認証付き原寸、認証付きサムネイルの順で候補を返す', () => {
+    const sources = buildFullPageImageSources({
+      apiBaseUrl: 'https://app.lyra-editor.com',
+      authorizationHeader: 'Bearer token',
+      organizationId: 'organization-1',
+      page,
+      sessionKey: 'user-1',
+    });
+
+    expect(sources).toHaveLength(3);
+    expect(sources[0]).toMatchObject({
+      uri: 'https://cdn.lyra.test/full-page.png?Signature=signed',
+    });
+    expect(sources[0]?.headers).toBeUndefined();
+    expect(sources[1]?.uri).toContain('/api/pages/page-1/export-image?organization_id=organization-1');
+    expect(sources[1]?.headers).toEqual({ Authorization: 'Bearer token' });
+    expect(sources[2]?.uri).toContain('/api/pages/page-1/thumbnail?organization_id=organization-1');
+    expect(sources[2]?.headers).toEqual({ Authorization: 'Bearer token' });
+  });
+
+  it('一覧画像は認証付きサムネイル失敗時にCDNと原寸APIへ退避できる', () => {
+    const sources = buildPageThumbnailImageSources({
+      apiBaseUrl: 'https://app.lyra-editor.com',
+      authorizationHeader: 'Bearer token',
+      organizationId: null,
+      page,
+      sessionKey: 'user-1',
+    });
+
+    expect(sources).toHaveLength(3);
+    expect(sources[0]?.uri).toContain('/api/pages/page-1/thumbnail?');
+    expect(sources[0]?.headers).toEqual({ Authorization: 'Bearer token' });
+    expect(sources[1]).toMatchObject({
+      uri: 'https://cdn.lyra.test/full-page.png?Signature=signed',
+    });
+    expect(sources[2]?.uri).toContain('/api/pages/page-1/export-image?');
+    expect(sources[2]?.headers).toEqual({ Authorization: 'Bearer token' });
+  });
+
   it('選択ページのfull画像だけ署名済みCDN URLを使う', () => {
     const source = buildFullPageImageSource({
       apiBaseUrl: 'https://app.lyra-editor.com',

@@ -3,13 +3,13 @@ import {
   resolvePageImageDelivery,
   withPageImageRevision,
 } from '@/domain/pageImageCache';
+import {
+  deduplicateImageSources,
+  type RemoteImageSource,
+} from '@/domain/imageSourceCandidates';
 import type { PageRecord } from '@/domain/types';
 
-export interface PageImageSource {
-  uri: string;
-  cacheKey: string;
-  headers?: Record<string, string>;
-}
+export type PageImageSource = RemoteImageSource & { cacheKey: string };
 
 interface PageImageSourceInput {
   apiBaseUrl: string;
@@ -22,62 +22,147 @@ interface PageImageSourceInput {
 export function buildFullPageImageSource(
   input: PageImageSourceInput,
 ): PageImageSource {
+  const source = buildFullPageImageSources(input)[0];
+  if (source === undefined || source.cacheKey === undefined) {
+    throw new Error('A page image source could not be built.');
+  }
+  return { ...source, cacheKey: source.cacheKey };
+}
+
+export function buildFullPageImageSources(
+  input: PageImageSourceInput,
+): RemoteImageSource[] {
   const revision =
     input.page.generated_image?.generated_at ?? input.page.updated_at;
-  const cacheKey = buildPageImageCacheKey({
+  const fullCacheKey = buildPageImageCacheKey({
     sessionKey: input.sessionKey,
     organizationId: input.organizationId,
     pageId: input.page.id,
     revision,
     variant: 'full',
   });
-  const delivery = resolvePageImageDelivery({
-    cdnUrl: input.page.generated_image?.cdn_url,
-    authenticatedFallbackUrl: buildAuthenticatedImageUrl(
-      input.apiBaseUrl,
-      input.page.id,
-      'export-image',
-      input.organizationId,
-    ),
-  });
-  if (!delivery.requiresAuthentication) {
-    return {
-      uri: delivery.uri,
-      cacheKey,
-    };
-  }
-
-  return {
-    uri: withPageImageRevision(delivery.uri, revision, cacheKey),
-    cacheKey,
-    ...authorizationHeaders(input.authorizationHeader),
-  };
-}
-
-export function buildPageThumbnailImageSource(
-  input: PageImageSourceInput,
-): PageImageSource {
-  const revision =
-    input.page.generated_image?.generated_at ?? input.page.updated_at;
-  const cacheKey = buildPageImageCacheKey({
+  const thumbnailCacheKey = buildPageImageCacheKey({
     sessionKey: input.sessionKey,
     organizationId: input.organizationId,
     pageId: input.page.id,
     revision,
     variant: 'thumbnail',
   });
-  const uri = buildAuthenticatedImageUrl(
+  const authenticatedFullUrl = buildAuthenticatedImageUrl(
+    input.apiBaseUrl,
+    input.page.id,
+    'export-image',
+    input.organizationId,
+  );
+  const authenticatedThumbnailUrl = buildAuthenticatedImageUrl(
     input.apiBaseUrl,
     input.page.id,
     'thumbnail',
     input.organizationId,
   );
+  const delivery = resolvePageImageDelivery({
+    cdnUrl: input.page.generated_image?.cdn_url,
+    authenticatedFallbackUrl: authenticatedFullUrl,
+  });
+  return deduplicateImageSources([
+    delivery.requiresAuthentication
+      ? null
+      : {
+          uri: delivery.uri,
+          cacheKey: fullCacheKey,
+        },
+    {
+      uri: withPageImageRevision(
+        authenticatedFullUrl,
+        revision,
+        fullCacheKey,
+      ),
+      cacheKey: fullCacheKey,
+      ...authorizationHeaders(input.authorizationHeader),
+    },
+    {
+      uri: withPageImageRevision(
+        authenticatedThumbnailUrl,
+        revision,
+        thumbnailCacheKey,
+      ),
+      cacheKey: thumbnailCacheKey,
+      ...authorizationHeaders(input.authorizationHeader),
+    },
+  ]);
+}
 
-  return {
-    uri: withPageImageRevision(uri, revision, cacheKey),
-    cacheKey,
-    ...authorizationHeaders(input.authorizationHeader),
-  };
+export function buildPageThumbnailImageSource(
+  input: PageImageSourceInput,
+): PageImageSource {
+  const source = buildPageThumbnailImageSources(input)[0];
+  if (source === undefined || source.cacheKey === undefined) {
+    throw new Error('A page thumbnail source could not be built.');
+  }
+  return { ...source, cacheKey: source.cacheKey };
+}
+
+export function buildPageThumbnailImageSources(
+  input: PageImageSourceInput,
+): RemoteImageSource[] {
+  const revision =
+    input.page.generated_image?.generated_at ?? input.page.updated_at;
+  const thumbnailCacheKey = buildPageImageCacheKey({
+    sessionKey: input.sessionKey,
+    organizationId: input.organizationId,
+    pageId: input.page.id,
+    revision,
+    variant: 'thumbnail',
+  });
+  const fullCacheKey = buildPageImageCacheKey({
+    sessionKey: input.sessionKey,
+    organizationId: input.organizationId,
+    pageId: input.page.id,
+    revision,
+    variant: 'full',
+  });
+  const authenticatedThumbnailUrl = buildAuthenticatedImageUrl(
+    input.apiBaseUrl,
+    input.page.id,
+    'thumbnail',
+    input.organizationId,
+  );
+  const authenticatedFullUrl = buildAuthenticatedImageUrl(
+    input.apiBaseUrl,
+    input.page.id,
+    'export-image',
+    input.organizationId,
+  );
+  const delivery = resolvePageImageDelivery({
+    cdnUrl: input.page.generated_image?.cdn_url,
+    authenticatedFallbackUrl: authenticatedFullUrl,
+  });
+  return deduplicateImageSources([
+    {
+      uri: withPageImageRevision(
+        authenticatedThumbnailUrl,
+        revision,
+        thumbnailCacheKey,
+      ),
+      cacheKey: thumbnailCacheKey,
+      ...authorizationHeaders(input.authorizationHeader),
+    },
+    delivery.requiresAuthentication
+      ? null
+      : {
+          uri: delivery.uri,
+          cacheKey: fullCacheKey,
+        },
+    {
+      uri: withPageImageRevision(
+        authenticatedFullUrl,
+        revision,
+        fullCacheKey,
+      ),
+      cacheKey: fullCacheKey,
+      ...authorizationHeaders(input.authorizationHeader),
+    },
+  ]);
 }
 
 function buildAuthenticatedImageUrl(

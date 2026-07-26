@@ -91,6 +91,34 @@ const makeFrame = (panelId: string, readingOrder: number): PanelFrameRecord => (
 });
 
 describe('pageAtomicGeneration', () => {
+  it('状態UIを隠しても保存済みstate_idを生成payloadに残す', () => {
+    const stateId = '88888888-8888-4888-8888-888888888888';
+    const firstPanel = {
+      ...makePanel(firstPanelId, 1, '既存の状態を維持するコマ'),
+      entities: [
+        {
+          ...assignment,
+          state_id: stateId
+        }
+      ]
+    };
+
+    const payload = buildAtomicSaveAndGeneratePayload({
+      page: {
+        ...page,
+        panel_count: 1,
+        frame_count: 1
+      },
+      pagePatch: {},
+      panels: [firstPanel],
+      selectedPanelOverride: null,
+      frames: [makeFrame(firstPanelId, 1)],
+      language: 'ja'
+    });
+
+    expect(payload.panels[0]?.entities[0]?.state_id).toBe(stateId);
+  });
+
   it('選択中コマの下書きだけを統合し全コマと全枠を保持する', () => {
     const firstPanel = makePanel(firstPanelId, 1, '保存済みの1コマ目');
     const secondPanel = makePanel(secondPanelId, 2, '保存済みの2コマ目');

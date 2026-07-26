@@ -4,6 +4,7 @@ export type DirtyStateChoice = 'save' | 'discard' | 'cancel';
 
 export interface DirtyEditorRegistration {
   id: string;
+  revision?: string;
   discard: () => void;
   save: () => Promise<void>;
 }

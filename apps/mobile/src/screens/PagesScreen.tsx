@@ -15,6 +15,7 @@ import { JobStatusCard } from '@/components/JobStatusCard';
 import { LayoutTemplatePreview, type FramePreviewDefinition } from '@/components/LayoutTemplatePreview';
 import { Notice } from '@/components/Notice';
 import { PageCompletionActions } from '@/components/PageCompletionActions';
+import { PageImageViewer } from '@/components/PageImageViewer';
 import { PageSceneAutofillAction } from '@/components/PageSceneAutofillAction';
 import { PageThumbnailPicker } from '@/components/PageThumbnailPicker';
 import { PageProvenanceFields } from '@/components/PageProvenanceFields';
@@ -41,15 +42,21 @@ import {
   panelSizeOptions,
   shotTypeOptions
 } from '@/constants/options';
+import { panelCharacterStateOverrideUiEnabled } from '@/constants/mobileFeatureVisibility';
 import { colors, spacing, textStyles } from '@/constants/theme';
+import { shouldHydrateEditorDraft } from '@/domain/editorDraftSyncPolicy';
+import {
+  imageSourceListIdentity,
+  type RemoteImageSource
+} from '@/domain/imageSourceCandidates';
 import { buildAtomicSaveAndGeneratePayload } from '@/domain/pageAtomicGeneration';
 import { isPanelDialogueSpeakerValid } from '@/domain/panelDialoguePolicy';
 import { buildPageEntityStateOptions } from '@/domain/pageEntityStateOptions';
 import { buildEpisodeExportPayload } from '@/domain/pageExport';
 import { createSafeLayoutTemplatePayload, selectExcessPanels } from '@/domain/pageSafety';
 import {
-  buildFullPageImageSource,
-  buildPageThumbnailImageSource
+  buildFullPageImageSources,
+  buildPageThumbnailImageSources
 } from '@/domain/pageImageSources';
 import type {
   CompositionRecord,
@@ -635,15 +642,17 @@ function AssignmentEditor(props: {
               <FormField editable={!props.disabled} label={t(props.language, "generated.screens.PagesScreen.custom.pose.c687f0ab")} maxLength={100} onChangeText={(value) => updateAssignment(assignment.entity_id, { custom_action: value })} value={assignment.custom_action ?? ''} />
             ) : null}
             <FormField editable={!props.disabled} label={t(props.language, "generated.screens.PagesScreen.effect.e2da3225")} maxLength={200} onChangeText={(value) => updateAssignment(assignment.entity_id, { effect_note: value })} value={assignment.effect_note ?? ''} />
-            <PanelDisclosure defaultCollapsed title={t(props.language, "generated.screens.PagesScreen.advanced.050db87b")}>
-              <EntityStatePicker
-                disabled={props.disabled}
-                entityId={assignment.entity_id}
-                language={props.language}
-                onSelect={(stateId) => updateAssignment(assignment.entity_id, { state_id: stateId })}
-                selectedStateId={assignment.state_id}
-              />
-            </PanelDisclosure>
+            {panelCharacterStateOverrideUiEnabled ? (
+              <PanelDisclosure defaultCollapsed title={t(props.language, "generated.screens.PagesScreen.advanced.050db87b")}>
+                <EntityStatePicker
+                  disabled={props.disabled}
+                  entityId={assignment.entity_id}
+                  language={props.language}
+                  onSelect={(stateId) => updateAssignment(assignment.entity_id, { state_id: stateId })}
+                  selectedStateId={assignment.state_id}
+                />
+              </PanelDisclosure>
+            ) : null}
           </View>
         );
       })}
@@ -795,7 +804,8 @@ export function PagesScreen(): React.JSX.Element {
   const [pageStale, setPageStale] = useState(false);
   const [previewImageUri, setPreviewImageUri] = useState<string | null>(null);
   const [previewImageHeaders, setPreviewImageHeaders] = useState<ImageRequestHeaders | undefined>(undefined);
-  const [pageImageFailed, setPageImageFailed] = useState(false);
+  const [failedPageImageSourceIdentity, setFailedPageImageSourceIdentity] =
+    useState<string | null>(null);
   const lastSyncedPageId = useRef<string | null>(null);
   const lastSyncedPanelId = useRef<string | null>(null);
   const lastSyncedFramePageId = useRef<string | null>(null);
@@ -882,10 +892,6 @@ export function PagesScreen(): React.JSX.Element {
     setExportSelectedPageIds([]);
   }, [activeEpisodeId, organizationId, sessionKey]);
 
-  useEffect(() => {
-    setPageImageFailed(false);
-  }, [selectedPage?.generated_image?.generated_at, selectedPage?.id]);
-
   const generatedPages = useMemo(
     () => pages.filter((page) => page.generated_image !== null),
     [pages]
@@ -894,8 +900,8 @@ export function PagesScreen(): React.JSX.Element {
     () => (tokens === null ? null : `Bearer ${tokens.idToken}`),
     [tokens]
   );
-  const fullPageImageSourceFor = useCallback((page: PageRecord) =>
-    buildFullPageImageSource({
+  const fullPageImageSourcesFor = useCallback((page: PageRecord) =>
+    buildFullPageImageSources({
       apiBaseUrl: config.apiBaseUrl,
       authorizationHeader: imageAuthorizationHeader,
       organizationId,
@@ -903,8 +909,8 @@ export function PagesScreen(): React.JSX.Element {
       sessionKey,
     }),
   [imageAuthorizationHeader, organizationId, sessionKey]);
-  const pageThumbnailImageSourceFor = useCallback((page: PageRecord) =>
-    buildPageThumbnailImageSource({
+  const pageThumbnailImageSourcesFor = useCallback((page: PageRecord) =>
+    buildPageThumbnailImageSources({
       apiBaseUrl: config.apiBaseUrl,
       authorizationHeader: imageAuthorizationHeader,
       organizationId,
@@ -912,10 +918,14 @@ export function PagesScreen(): React.JSX.Element {
       sessionKey,
     }),
   [imageAuthorizationHeader, organizationId, sessionKey]);
-  const selectedPageImageSource = useMemo(
-    () => selectedPage === null ? null : fullPageImageSourceFor(selectedPage),
-    [fullPageImageSourceFor, selectedPage]
+  const selectedPageImageSources = useMemo(
+    () => selectedPage === null ? [] : fullPageImageSourcesFor(selectedPage),
+    [fullPageImageSourcesFor, selectedPage]
   );
+  const selectedPageImageSourceIdentity =
+    imageSourceListIdentity(selectedPageImageSources);
+  const pageImageFailed =
+    failedPageImageSourceIdentity === selectedPageImageSourceIdentity;
 
   useEffect(() => {
     if (selectedPage === null) {
@@ -927,7 +937,8 @@ export function PagesScreen(): React.JSX.Element {
     }
     const adjacentSources = [pages[selectedIndex - 1], pages[selectedIndex + 1]]
       .filter((page): page is PageRecord => page?.generated_image !== null && page !== undefined)
-      .map((page) => pageThumbnailImageSourceFor(page));
+      .map((page) => pageThumbnailImageSourcesFor(page)[0])
+      .filter((source): source is RemoteImageSource => source !== undefined);
     if (adjacentSources.length > 0) {
       void Promise.all(
         adjacentSources.map((source) =>
@@ -938,7 +949,7 @@ export function PagesScreen(): React.JSX.Element {
         )
       );
     }
-  }, [pageThumbnailImageSourceFor, pages, selectedPage]);
+  }, [pageThumbnailImageSourcesFor, pages, selectedPage]);
 
   const scenesQuery = useQuery({
     enabled: activeEpisodeId !== null,
@@ -1152,14 +1163,21 @@ export function PagesScreen(): React.JSX.Element {
 
   useEffect(() => {
     const nextPageId = selectedPage?.id ?? null;
-    if (lastSyncedFramePageId.current === nextPageId && framesDirty) {
+    if (
+      !shouldHydrateEditorDraft({
+        hasServerSnapshot: framesQuery.data !== undefined,
+        hasUnsavedChanges: framesDirty,
+        lastResourceId: lastSyncedFramePageId.current,
+        resourceId: nextPageId
+      })
+    ) {
       return;
     }
     lastSyncedFramePageId.current = nextPageId;
     const drafts = (framesQuery.data?.frames ?? []).map(toFrameDraft);
     setFrameDrafts(drafts);
     setFrameId((current) => (current !== null && drafts.some((frame) => frame.id === current) ? current : drafts[0]?.id ?? null));
-  }, [framesDirty, framesQuery.data?.frames, selectedPage?.id]);
+  }, [framesDirty, framesQuery.data, selectedPage?.id]);
 
   const invalidatePageReadiness = async (): Promise<void> => {
     await queryClient.invalidateQueries({
@@ -1504,8 +1522,25 @@ export function PagesScreen(): React.JSX.Element {
     updatePanelMutation
   ]);
 
+  const pageEditorRevision = JSON.stringify({
+    frameDrafts: frameDrafts.map(toFrameRecord),
+    page: {
+      continuityNote,
+      pagePurpose,
+      sourceSceneIds,
+      styleReferenceNotes,
+      styleReferenceTitle
+    },
+    panel: {
+      assignments: assignments.map(toAssignmentRecord),
+      panelId,
+      payload: panelPayload()
+    }
+  });
+
   useDirtyEditorRegistration({
     id: 'pages-editor',
+    revision: pageEditorRevision,
     dirty: pageDirty || panelDirty || framesDirty,
     discard: discardAllPageDrafts,
     save: saveAllPageDrafts
@@ -1995,7 +2030,7 @@ export function PagesScreen(): React.JSX.Element {
           emptyLabel={t(language, 'emptyPages')}
           hasNextPage={pagesQuery.hasNextPage}
           helperText={t(language, "generated.screens.PagesScreen.choose.a.page.to.edit.unsaved.edits.are.453ccf41")}
-          imageSourceFor={pageThumbnailImageSourceFor}
+          imageSourcesFor={pageThumbnailImageSourcesFor}
           isFetchingNextPage={pagesQuery.isFetchingNextPage}
           language={language}
           onEndReached={() => {
@@ -2014,25 +2049,20 @@ export function PagesScreen(): React.JSX.Element {
                 : t(language, "generated.screens.PagesScreen.no.generated.image.yet.d6a7448d")}
             </Text>
           ) : (
-            <Pressable
-              accessibilityLabel={t(language, "generated.components.ImagePreviewModal.image.preview.0f884bd2")}
-              accessibilityRole="imagebutton"
-              onPress={() => {
-                setPreviewImageHeaders(selectedPageImageSource?.headers);
-                setPreviewImageUri(selectedPageImageSource?.uri ?? null);
+            <PageImageViewer
+              expandLabel={t(language, "generated.components.ImagePreviewModal.image.preview.0f884bd2")}
+              imageStyle={styles.pageImage}
+              onExhausted={() =>
+                setFailedPageImageSourceIdentity(
+                  selectedPageImageSourceIdentity
+                )
+              }
+              onExpand={(source) => {
+                setPreviewImageHeaders(source.headers);
+                setPreviewImageUri(source.uri);
               }}
-            >
-              <ExpoImage
-                cachePolicy="memory-disk"
-                contentFit="contain"
-                onError={() => setPageImageFailed(true)}
-                priority="high"
-                recyclingKey={selectedPageImageSource?.cacheKey}
-                source={selectedPageImageSource}
-                style={styles.pageImage}
-                transition={150}
-              />
-            </Pressable>
+              sources={selectedPageImageSources}
+            />
           )}
         </View>
       </Section>

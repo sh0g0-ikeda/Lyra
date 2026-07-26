@@ -34,6 +34,11 @@ vi.mock('expo-image', () => ({
   Image: (props: Record<string, unknown>) => React.createElement('expo-image', props)
 }));
 
+vi.mock('lucide-react-native', () => ({
+  Circle: (props: Record<string, unknown>) => React.createElement('circle-icon', props),
+  CircleCheck: (props: Record<string, unknown>) => React.createElement('circle-check-icon', props)
+}));
+
 const page = (id: string, pageNumber: number, generated: boolean): PageRecord => ({
   id,
   episode_id: 'episode-1',
@@ -67,7 +72,7 @@ describe('PageThumbnailPicker', () => {
       renderer = create(
         <PageThumbnailPicker
           emptyLabel="ページなし"
-          imageSourceFor={(item) => ({ uri: item.generated_image?.cdn_url ?? '' })}
+          imageSourcesFor={(item) => [{ uri: item.generated_image?.cdn_url ?? '' }]}
           language="ja"
           onSelect={vi.fn()}
           pages={[page('page-1', 1, true), page('page-2', 2, false)]}
@@ -92,7 +97,7 @@ describe('PageThumbnailPicker', () => {
       renderer = create(
         <PageThumbnailPicker
           emptyLabel="No pages"
-          imageSourceFor={() => ({ uri: 'https://cdn.lyra.test/page.png' })}
+          imageSourcesFor={() => [{ uri: 'https://cdn.lyra.test/page.png' }]}
           language="en"
           onSelect={onSelect}
           pages={[page('page-1', 1, true)]}
@@ -116,7 +121,7 @@ describe('PageThumbnailPicker', () => {
         <PageThumbnailPicker
           emptyLabel="No pages"
           hasNextPage
-          imageSourceFor={() => null}
+          imageSourcesFor={() => []}
           isFetchingNextPage={false}
           language="en"
           onEndReached={onEndReached}

@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Image,
   Modal,
   Pressable,
   ScrollView,
@@ -24,14 +23,23 @@ import { JobStatusCard } from '@/components/JobStatusCard';
 import { Notice } from '@/components/Notice';
 import { PrimaryButton } from '@/components/PrimaryButton';
 import { RecordPicker } from '@/components/RecordPicker';
+import { ResilientImage } from '@/components/ResilientImage';
 import { Screen } from '@/components/Screen';
 import { Section } from '@/components/Section';
 import { SegmentedControl } from '@/components/SegmentedControl';
 import { WorkspaceContextPicker, useWorkspaceContextSelection } from '@/components/WorkspaceContextPicker';
 import { entityTypes, type LabelOption } from '@/constants/options';
+import { characterContinuityStateUiEnabled } from '@/constants/mobileFeatureVisibility';
 import { colors, spacing, textStyles } from '@/constants/theme';
 import { mergeCharacterClothingDescription } from '@/domain/characterClothing';
+import { buildEntityReferenceImageSources } from '@/domain/entityImageSources';
 import { entityDirtySaveIntent } from '@/domain/editorDirtyPolicy';
+import {
+  deduplicateImageSources,
+  imageSourceListIdentity,
+  publicHttpsImageSource,
+  type RemoteImageSource
+} from '@/domain/imageSourceCandidates';
 import {
   buildEntityReferenceGenerationBlockers,
   buildSingleCandidateConfirmation,
@@ -278,23 +286,6 @@ const candidateImageUri = (
   return `${baseUrl}/api/entities/${encodeURIComponent(entityId)}/reference-candidate-image?${params.toString()}`;
 };
 
-const referenceImageUri = (
-  entityId: string | null,
-  refId: string,
-  organizationId: string | null,
-  revision: string
-): string | null => {
-  if (entityId === null || refId.trim().length === 0) {
-    return null;
-  }
-  const baseUrl = config.apiBaseUrl.replace(/\/+$/, '');
-  const path = appendOrganizationQuery(
-    `/api/entities/${encodeURIComponent(entityId)}/reference/${encodeURIComponent(refId)}/image`,
-    organizationId
-  );
-  return `${baseUrl}${path}${path.includes('?') ? '&' : '?'}revision=${encodeURIComponent(revision)}`;
-};
-
 interface ReferenceCandidatePreviewProps {
   candidate: EntityReferenceCandidate;
   fallbackUri: string | null;
@@ -311,17 +302,33 @@ function ReferenceCandidatePreview({
   onOpen
 }: ReferenceCandidatePreviewProps): React.JSX.Element {
   const directUri = candidate.cdn_url?.trim() ?? '';
-  const [directUriFailed, setDirectUriFailed] = useState(false);
-  const [fallbackUriFailed, setFallbackUriFailed] = useState(false);
+  const sources = useMemo(
+    () =>
+      deduplicateImageSources([
+        publicHttpsImageSource(directUri),
+        fallbackUri === null
+          ? null
+          : {
+              uri: fallbackUri,
+              ...(headers === undefined ? {} : { headers })
+            }
+      ]),
+    [directUri, fallbackUri, headers]
+  );
+  const sourceIdentity = imageSourceListIdentity(sources);
+  const [resolvedSource, setResolvedSource] = useState<{
+    sourceIdentity: string;
+    source: RemoteImageSource;
+  } | null>(null);
+  const [failedSourceIdentity, setFailedSourceIdentity] =
+    useState<string | null>(null);
+  const activeSource =
+    resolvedSource?.sourceIdentity === sourceIdentity
+      ? resolvedSource.source
+      : sources[0] ?? null;
+  const failed = failedSourceIdentity === sourceIdentity;
 
-  useEffect(() => {
-    setDirectUriFailed(false);
-    setFallbackUriFailed(false);
-  }, [directUri, fallbackUri]);
-
-  const useDirectUri = directUri.length > 0 && !directUriFailed;
-  const uri = useDirectUri ? directUri : fallbackUri;
-  if (uri === null || (!useDirectUri && fallbackUriFailed)) {
+  if (activeSource === null || failed) {
     return (
       <View style={styles.candidateImageError}>
         <Text style={styles.caption}>{t(language, "generated.screens.CharactersScreen.could.not.load.image.c9ff565e")}</Text>
@@ -329,24 +336,75 @@ function ReferenceCandidatePreview({
     );
   }
 
-  const requestHeaders = useDirectUri ? undefined : headers;
   return (
     <Pressable
       accessibilityLabel={t(language, "generated.components.ImagePreviewModal.image.preview.0f884bd2")}
       accessibilityRole="imagebutton"
-      onPress={() => onOpen(uri, requestHeaders)}
+      onPress={() => onOpen(activeSource.uri, activeSource.headers)}
     >
-      <Image
-        onError={() => {
-          if (useDirectUri) {
-            setDirectUriFailed(true);
-            return;
-          }
-          setFallbackUriFailed(true);
-        }}
-        resizeMode="cover"
-        source={requestHeaders === undefined ? { uri } : { uri, headers: requestHeaders }}
+      <ResilientImage
+        contentFit="cover"
+        onExhausted={() => setFailedSourceIdentity(sourceIdentity)}
+        onSourceChange={(source) =>
+          setResolvedSource({
+            sourceIdentity,
+            source
+          })
+        }
+        sources={sources}
         style={styles.candidateImage}
+      />
+    </Pressable>
+  );
+}
+
+function ConfirmedReferencePreview({
+  language,
+  onOpen,
+  sources
+}: {
+  language: 'ja' | 'en';
+  onOpen: (uri: string, headers?: ImageRequestHeaders) => void;
+  sources: readonly RemoteImageSource[];
+}): React.JSX.Element {
+  const sourceIdentity = imageSourceListIdentity(sources);
+  const [resolvedSource, setResolvedSource] = useState<{
+    sourceIdentity: string;
+    source: RemoteImageSource;
+  } | null>(null);
+  const [failedSourceIdentity, setFailedSourceIdentity] =
+    useState<string | null>(null);
+  const activeSource =
+    resolvedSource?.sourceIdentity === sourceIdentity
+      ? resolvedSource.source
+      : sources[0] ?? null;
+  const failed = failedSourceIdentity === sourceIdentity;
+
+  if (activeSource === null || failed) {
+    return (
+      <View style={styles.candidateImageError}>
+        <Text style={styles.caption}>{t(language, "generated.screens.CharactersScreen.could.not.load.image.c9ff565e")}</Text>
+      </View>
+    );
+  }
+
+  return (
+    <Pressable
+      accessibilityLabel={t(language, "generated.components.ImagePreviewModal.image.preview.0f884bd2")}
+      accessibilityRole="imagebutton"
+      onPress={() => onOpen(activeSource.uri, activeSource.headers)}
+    >
+      <ResilientImage
+        contentFit="cover"
+        onExhausted={() => setFailedSourceIdentity(sourceIdentity)}
+        onSourceChange={(source) =>
+          setResolvedSource({
+            sourceIdentity,
+            source
+          })
+        }
+        sources={sources}
+        style={styles.referenceImage}
       />
     </Pressable>
   );
@@ -1754,13 +1812,15 @@ export function CharactersScreen(): React.JSX.Element {
   });
 
   const entityStatesQuery = useQuery({
-    enabled: selectedEntity !== null,
+    enabled: characterContinuityStateUiEnabled && selectedEntity !== null,
     queryKey: entityStatesQueryKey(sessionKey, selectedEntity?.id ?? null, organizationId),
     queryFn: () => api.getEntityStates(selectedEntity?.id ?? '', organizationId),
   });
 
   const scenesQuery = useQuery({
-    enabled: workspaceContext.selectedEpisodeId !== null,
+    enabled:
+      characterContinuityStateUiEnabled &&
+      workspaceContext.selectedEpisodeId !== null,
     queryKey: scenesQueryKey(sessionKey, workspaceContext.selectedEpisodeId, organizationId),
     queryFn: () => api.getScenes(workspaceContext.selectedEpisodeId ?? '', organizationId),
   });
@@ -2800,27 +2860,26 @@ export function CharactersScreen(): React.JSX.Element {
                 </View>
               )}
           {(referenceQuery.data?.reference_images ?? []).map((reference) => {
-            const uri = referenceImageUri(
-              selectedEntity?.id ?? null,
-              reference.ref_id,
-              organizationId,
-              referenceQuery.data?.updated_at ?? ''
-            );
+            const sources =
+              selectedEntity === null
+                ? []
+                : buildEntityReferenceImageSources({
+                    apiBaseUrl: config.apiBaseUrl,
+                    authorizationHeader:
+                      imageRequestHeaders?.Authorization ?? null,
+                    entityId: selectedEntity.id,
+                    organizationId,
+                    reference,
+                    revision: referenceQuery.data?.updated_at ?? reference.created_at,
+                    sessionKey
+                  });
             return (
             <View key={reference.ref_id} style={styles.referenceCard}>
-              {uri === null ? null : (
-                <Pressable
-                  accessibilityLabel={t(language, "generated.components.ImagePreviewModal.image.preview.0f884bd2")}
-                  accessibilityRole="imagebutton"
-                  onPress={() => openImagePreview(uri, imageRequestHeaders)}
-                >
-                  <Image
-                    resizeMode="cover"
-                    source={imageRequestHeaders === undefined ? { uri } : { uri, headers: imageRequestHeaders }}
-                    style={styles.referenceImage}
-                  />
-                </Pressable>
-              )}
+              <ConfirmedReferencePreview
+                language={language}
+                onOpen={openImagePreview}
+                sources={sources}
+              />
               <Text style={styles.caption}>{reference.source}</Text>
               <Text style={styles.referenceId}>{t(language, "generated.screens.CharactersScreen.confirmed.reference.c533ad2d")}</Text>
               <Pressable accessibilityRole="button" disabled={!canExport} onPress={() => downloadReferenceMutation.mutate(reference.ref_id)} style={styles.smallLink}>
@@ -2881,12 +2940,13 @@ export function CharactersScreen(): React.JSX.Element {
           variant="secondary"
         />
       </Section>
-      <Section
-        collapsible
-        persistKey="characters:continuity-states"
-        subtitle={t(language, "generated.screens.CharactersScreen.save.appearance.injury.hair.expression.a.c2141b7d")}
-        title={t(language, "generated.screens.CharactersScreen.continuity.states.48740dcf")}
-      >
+      {characterContinuityStateUiEnabled ? (
+        <Section
+          collapsible
+          persistKey="characters:continuity-states"
+          subtitle={t(language, "generated.screens.CharactersScreen.save.appearance.injury.hair.expression.a.c2141b7d")}
+          title={t(language, "generated.screens.CharactersScreen.continuity.states.48740dcf")}
+        >
         {selectedEntity === null ? (
           <Notice message={t(language, "generated.screens.CharactersScreen.select.a.character.to.view.continuity.st.daadb345")} tone="info" />
         ) : (
@@ -2980,7 +3040,8 @@ export function CharactersScreen(): React.JSX.Element {
             )}
           </>
         )}
-      </Section>
+        </Section>
+      ) : null}
       <ImagePreviewModal headers={previewImageHeaders} language={language} onClose={closeImagePreview} uri={previewImageUri} />
     </Screen>
   );

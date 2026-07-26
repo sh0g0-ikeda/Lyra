@@ -53,6 +53,26 @@ export function DirtyStateProvider({ children }: PropsWithChildren): React.JSX.E
     };
   }, []);
 
+  const removeResolvedRegistrations = useCallback(
+    (registrations: readonly DirtyEditorRegistration[]): void => {
+      let removed = false;
+      registrations.forEach((registration) => {
+        const current = registrationsRef.current.get(registration.id);
+        const sameResolvedRevision =
+          registration.revision !== undefined &&
+          current?.revision === registration.revision;
+        if (current === registration || sameResolvedRevision) {
+          registrationsRef.current.delete(registration.id);
+          removed = true;
+        }
+      });
+      if (removed) {
+        setRegistrationCount(registrationsRef.current.size);
+      }
+    },
+    []
+  );
+
   const settlePendingResolution = useCallback((choice: DirtyStateChoice): void => {
     const pending = pendingResolutionRef.current;
     if (pending === null) {
@@ -60,8 +80,13 @@ export function DirtyStateProvider({ children }: PropsWithChildren): React.JSX.E
     }
     pendingResolutionRef.current = null;
     setPendingResolution(null);
-    void applyDirtyStateChoice(pending.registrations, choice).then(pending.resolve);
-  }, []);
+    void applyDirtyStateChoice(pending.registrations, choice).then((allowed) => {
+      if (allowed) {
+        removeResolvedRegistrations(pending.registrations);
+      }
+      pending.resolve(allowed);
+    });
+  }, [removeResolvedRegistrations]);
 
   const resolveDirtyEditors = useCallback((language: UiLanguage): Promise<boolean> => {
     if (registrationsRef.current.size === 0) {
@@ -92,10 +117,13 @@ export function DirtyStateProvider({ children }: PropsWithChildren): React.JSX.E
     if (backgroundSaveRef.current !== null) {
       return backgroundSaveRef.current;
     }
-    const save = applyDirtyStateChoice(
-      [...registrationsRef.current.values()],
-      'save'
-    );
+    const registrations = [...registrationsRef.current.values()];
+    const save = applyDirtyStateChoice(registrations, 'save').then((allowed) => {
+      if (allowed) {
+        removeResolvedRegistrations(registrations);
+      }
+      return allowed;
+    });
     backgroundSaveRef.current = save;
     void save.finally(() => {
       if (backgroundSaveRef.current === save) {
@@ -103,7 +131,7 @@ export function DirtyStateProvider({ children }: PropsWithChildren): React.JSX.E
       }
     });
     return save;
-  }, []);
+  }, [removeResolvedRegistrations]);
 
   useEffect(
     () => () => {
@@ -147,6 +175,7 @@ export function useDirtyState(): DirtyStateContextValue {
 
 export function useDirtyEditorRegistration(input: {
   id: string;
+  revision?: string;
   dirty: boolean;
   discard: () => void;
   save: () => Promise<void>;
@@ -158,8 +187,9 @@ export function useDirtyEditorRegistration(input: {
     }
     return register({
       id: input.id,
+      revision: input.revision,
       discard: input.discard,
       save: input.save
     });
-  }, [input.dirty, input.discard, input.id, input.save, register]);
+  }, [input.dirty, input.discard, input.id, input.revision, input.save, register]);
 }
