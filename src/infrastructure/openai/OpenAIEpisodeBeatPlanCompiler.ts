@@ -80,6 +80,14 @@ function buildSystemPrompt(language: CompileEpisodeBeatPlanInput['language']): s
     'A handoff must explain what motion, question, reveal, or emotional pressure carries the reader into the next page.',
     'Do not invent events, characters, locations, props, or facts not supported by the brief.',
     `Write all free-text values in natural ${outputLanguage}.`,
+    'OUTPUT BUDGET — mandatory:',
+    'Do not omit required pages, fields, chronology, or story facts; shorten wording instead.',
+    'Keep each story beat concise and factual, at most 45 characters.',
+    'Keep entry_state, exit_state, dialogue_intent, and handoff concise and factual, at most 60 characters each.',
+    'Keep each new_information item at most 45 characters and include at most two necessary items per page.',
+    'Do not repeat story context, character descriptions, actions, discoveries, or dialogue purposes already covered by another page.',
+    'Do not add explanations, alternatives, examples, camera directions, finished dialogue, or decorative prose.',
+    'Aim to keep all free-text values in the complete response under 8,000 characters.',
   ].join(' ');
 }
 
