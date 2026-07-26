@@ -31,4 +31,6 @@ export const apiRetryDelay = (failureCount: number): number =>
   Math.min(RETRY_MAX_DELAY_MS, RETRY_BASE_DELAY_MS * (2 ** Math.max(0, failureCount)));
 
 export const shouldRetryApiQuery = (failureCount: number, error: unknown): boolean =>
-  failureCount < 2 && isRetryableRequestError(error);
+  failureCount < 2 &&
+  !(typeof error === 'object' && error !== null && Reflect.get(error, 'status') === 429) &&
+  isRetryableRequestError(error);

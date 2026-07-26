@@ -197,6 +197,99 @@ describe('WorkspaceContextPicker recovery actions', () => {
     expect(mocks.resolveDirtyEditors).toHaveBeenCalledWith('ja');
     expect(mocks.navigate).toHaveBeenCalledWith('Account');
   });
+  it('利用可能な階層データがある場合は再取得の429を表示しない', async () => {
+    const worksError = new ApiError('busy', 429, 'RATE_LIMITED');
+    mocks.useInfiniteQuery.mockReturnValue({
+      data: { pages: [{ works: [selectedWork], next_cursor: null }] },
+      error: worksError,
+      fetchNextPage: vi.fn(),
+      hasNextPage: false,
+      isFetchingNextPage: false,
+      isSuccess: true,
+      refetch: vi.fn()
+    });
+    mocks.useQuery.mockImplementation((options: { queryKey: readonly unknown[] }) => {
+      if (options.queryKey[0] === 'chapters') {
+        return {
+          data: { chapters: [] },
+          error: null,
+          isSuccess: true,
+          refetch: vi.fn()
+        };
+      }
+      return {
+        data: undefined,
+        error: null,
+        isSuccess: false,
+        refetch: vi.fn()
+      };
+    });
+    let value: WorkspaceContextData | null = null;
+
+    await act(async () => {
+      create(
+        <SelectionProbe
+          onValue={(nextValue) => {
+            value = nextValue;
+          }}
+        />
+      );
+    });
+
+    expect(value?.error).toBeNull();
+  });
+
+  it('再試行では失敗した現在の階層取得だけを呼び直す', async () => {
+    mocks.selection.chapterId = 'chapter-1';
+    const worksRefetch = vi.fn();
+    const chaptersRefetch = vi.fn();
+    const episodesRefetch = vi.fn();
+    const chaptersError = new ApiError('unavailable', 503, 'SERVICE_UNAVAILABLE');
+    mocks.useInfiniteQuery.mockReturnValue({
+      data: { pages: [{ works: [selectedWork], next_cursor: null }] },
+      error: null,
+      fetchNextPage: vi.fn(),
+      hasNextPage: false,
+      isFetchingNextPage: false,
+      isSuccess: true,
+      refetch: worksRefetch
+    });
+    mocks.useQuery.mockImplementation((options: { queryKey: readonly unknown[] }) => {
+      if (options.queryKey[0] === 'chapters') {
+        return {
+          data: undefined,
+          error: chaptersError,
+          isSuccess: false,
+          refetch: chaptersRefetch
+        };
+      }
+      return {
+        data: undefined,
+        error: null,
+        isSuccess: false,
+        refetch: episodesRefetch
+      };
+    });
+    let value: WorkspaceContextData | null = null;
+
+    await act(async () => {
+      create(
+        <SelectionProbe
+          onValue={(nextValue) => {
+            value = nextValue;
+          }}
+        />
+      );
+    });
+    act(() => {
+      value?.retry();
+    });
+
+    expect(value?.error).toBe(chaptersError);
+    expect(chaptersRefetch).toHaveBeenCalledOnce();
+    expect(worksRefetch).not.toHaveBeenCalled();
+    expect(episodesRefetch).not.toHaveBeenCalled();
+  });
 });
 
 describe('useWorkspaceContextSelection', () => {

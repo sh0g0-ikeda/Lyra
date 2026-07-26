@@ -3,7 +3,8 @@ import { describe, expect, it } from 'vitest';
 import {
   apiRetryDelay,
   isRetryableRequestError,
-  requestTimeoutMs
+  requestTimeoutMs,
+  shouldRetryApiQuery
 } from '@/lib/requestPolicy';
 import { ApiError } from '@/lib/api';
 
@@ -32,5 +33,11 @@ describe('request policy', () => {
     expect(apiRetryDelay(1)).toBe(1_000);
     expect(apiRetryDelay(2)).toBe(2_000);
     expect(apiRetryDelay(9)).toBe(4_000);
+  });
+  it('429は自動再試行せず利用者の明示操作を待つ', () => {
+    expect(shouldRetryApiQuery(0, new ApiError('busy', 429, 'RATE_LIMITED')))
+      .toBe(false);
+    expect(shouldRetryApiQuery(0, new ApiError('unavailable', 503, null)))
+      .toBe(true);
   });
 });

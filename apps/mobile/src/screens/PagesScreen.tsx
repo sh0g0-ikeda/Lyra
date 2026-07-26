@@ -54,6 +54,7 @@ import { isPanelDialogueSpeakerValid } from '@/domain/panelDialoguePolicy';
 import { buildPageEntityStateOptions } from '@/domain/pageEntityStateOptions';
 import { buildEpisodeExportPayload } from '@/domain/pageExport';
 import { createSafeLayoutTemplatePayload, selectExcessPanels } from '@/domain/pageSafety';
+import { selectPageForEpisode } from '@/domain/pageSelection';
 import {
   buildFullPageImageSources,
   buildPageThumbnailImageSources
@@ -104,6 +105,11 @@ import {
   jobsQueryKey,
   scenesQueryKey
 } from '@/lib/queryKeys';
+import {
+  currentQueryError,
+  isApiNotFoundError,
+  supportingQueryError
+} from '@/lib/queryErrorPolicy';
 import { userErrorMessage } from '@/lib/userMessages';
 import type { MobileTabParamList } from '@/navigation/tabs';
 import { useAppState } from '@/state/appState';
@@ -841,12 +847,47 @@ export function PagesScreen(): React.JSX.Element {
     () => pages.find((page) => page.id === selection.pageId) ?? null,
     [pages, selection.pageId],
   );
+  const shouldFetchSelectedPageDetail =
+    activeEpisodeId !== null &&
+    pagesQuery.isSuccess &&
+    selection.pageId !== null &&
+    selectedPageFromList === null;
   const selectedPageQuery = useQuery({
-    enabled: selection.pageId !== null && selectedPageFromList === null,
+    enabled: shouldFetchSelectedPageDetail,
     queryKey: pageDetailQueryKey(sessionKey, selection.pageId, organizationId),
     queryFn: () => api.getPage(selection.pageId ?? '', organizationId),
   });
-  const selectedPage = selectedPageFromList ?? selectedPageQuery.data ?? null;
+  const selectedPageCandidate =
+    selectedPageFromList ?? selectedPageQuery.data ?? null;
+  const selectedPage =
+    selectedPageCandidate?.episode_id === activeEpisodeId
+      ? selectedPageCandidate
+      : null;
+  const selectedPageDetailNotFound =
+    shouldFetchSelectedPageDetail &&
+    selectedPageQuery.error instanceof ApiError &&
+    selectedPageQuery.error.status === 404;
+  const selectedPageWrongEpisode =
+    shouldFetchSelectedPageDetail &&
+    selectedPageQuery.data !== undefined &&
+    selectPageForEpisode(selectedPageQuery.data, activeEpisodeId) === null;
+  useEffect(() => {
+    if (
+      selection.pageId === null ||
+      (!selectedPageDetailNotFound && !selectedPageWrongEpisode)
+    ) {
+      return;
+    }
+    void updateSelection(
+      { pageId: null },
+      { skipDirtyCheck: true }
+    );
+  }, [
+    selectedPageDetailNotFound,
+    selectedPageWrongEpisode,
+    selection.pageId,
+    updateSelection
+  ]);
   const activeServerJobId = useActiveResourceJobId({
     api,
     jobTypes: ['page_generate'],
@@ -952,14 +993,16 @@ export function PagesScreen(): React.JSX.Element {
     }
   }, [pageThumbnailImageSourcesFor, pages, selectedPage]);
 
+  const pageHierarchyReady =
+    activeEpisodeId !== null && pagesQuery.isSuccess;
   const scenesQuery = useQuery({
-    enabled: activeEpisodeId !== null,
+    enabled: pageHierarchyReady,
     queryKey: scenesQueryKey(sessionKey, activeEpisodeId, organizationId),
     queryFn: () => api.getScenes(activeEpisodeId ?? '', organizationId)
   });
 
   const entitiesQuery = useInfiniteQuery({
-    enabled: activeWorkId !== null,
+    enabled: pageHierarchyReady && activeWorkId !== null,
     queryKey: entitiesInfiniteQueryKey(sessionKey, activeWorkId, organizationId),
     initialPageParam: null as string | null,
     queryFn: ({ pageParam }) => api.getEntitiesPage(activeWorkId ?? '', {
@@ -971,6 +1014,7 @@ export function PagesScreen(): React.JSX.Element {
   });
 
   const compositionsQuery = useQuery({
+    enabled: selectedPage !== null,
     queryKey: compositionsQueryKey(sessionKey),
     queryFn: () => api.getCompositions()
   });
@@ -986,6 +1030,26 @@ export function PagesScreen(): React.JSX.Element {
     queryKey: framesQueryKey(sessionKey, selectedPage?.id ?? null, organizationId),
     queryFn: () => api.getFrames(selectedPage?.id ?? '', organizationId)
   });
+  const selectedPageResourceNotFound =
+    selectedPage !== null &&
+    [
+      pageGenerationReadinessQuery.error,
+      panelsQuery.error,
+      framesQuery.error
+    ].some(isApiNotFoundError);
+  useEffect(() => {
+    if (!selectedPageResourceNotFound || selection.pageId === null) {
+      return;
+    }
+    void updateSelection(
+      { pageId: null },
+      { skipDirtyCheck: true }
+    );
+  }, [
+    selectedPageResourceNotFound,
+    selection.pageId,
+    updateSelection
+  ]);
 
   const selectedPanel = useMemo(
     () => panelsQuery.data?.panels.find((panel) => panel.id === panelId) ?? null,
@@ -1917,15 +1981,7 @@ export function PagesScreen(): React.JSX.Element {
     });
   };
 
-  const pageErrors = [
-    pagesQuery.error,
-    pageLayoutTemplatesQuery.error,
-    pageGenerationReadinessQuery.error,
-    panelsQuery.error,
-    framesQuery.error,
-    scenesQuery.error,
-    entitiesQuery.error,
-    compositionsQuery.error,
+  const mutationErrors = [
     updatePageMutation.error,
     autofillPageFromScenesMutation.error,
     applyTemplateMutation.error,
@@ -1942,6 +1998,110 @@ export function PagesScreen(): React.JSX.Element {
     exportPagesMutation.error,
     openWebEditorMutation.error
   ].filter((error): error is Error => error instanceof Error);
+  const pagesError = currentQueryError({
+    data: pagesQuery.data,
+    enabled: activeEpisodeId !== null,
+    error: pagesQuery.error
+  });
+  const selectedPageError = supportingQueryError({
+    data: selectedPageQuery.data,
+    enabled: shouldFetchSelectedPageDetail,
+    error: selectedPageQuery.error
+  });
+  const pageLayoutTemplatesError = supportingQueryError({
+    data: pageLayoutTemplatesQuery.data,
+    enabled: true,
+    error: pageLayoutTemplatesQuery.error
+  });
+  const pageGenerationReadinessError = supportingQueryError({
+    data: pageGenerationReadinessQuery.data,
+    enabled: canGenerate && selectedPage !== null,
+    error: pageGenerationReadinessQuery.error
+  });
+  const panelsError = currentQueryError({
+    data: panelsQuery.data,
+    enabled: selectedPage !== null,
+    error: panelsQuery.error
+  });
+  const framesError = currentQueryError({
+    data: framesQuery.data,
+    enabled: selectedPage !== null,
+    error: framesQuery.error
+  });
+  const scenesError = supportingQueryError({
+    data: scenesQuery.data,
+    enabled: pageHierarchyReady,
+    error: scenesQuery.error
+  });
+  const entitiesError = supportingQueryError({
+    data: entitiesQuery.data,
+    enabled: pageHierarchyReady && activeWorkId !== null,
+    error: entitiesQuery.error
+  });
+  const compositionsError = supportingQueryError({
+    data: compositionsQuery.data,
+    enabled: selectedPage !== null,
+    error: compositionsQuery.error
+  });
+  const queryFailures = [
+    {
+      error: pagesError,
+      retry: () => {
+        void pagesQuery.refetch();
+      }
+    },
+    {
+      error: selectedPageError,
+      retry: () => {
+        void selectedPageQuery.refetch();
+      }
+    },
+    {
+      error: panelsError,
+      retry: () => {
+        void panelsQuery.refetch();
+      }
+    },
+    {
+      error: framesError,
+      retry: () => {
+        void framesQuery.refetch();
+      }
+    },
+    {
+      error: pageLayoutTemplatesError,
+      retry: () => {
+        void pageLayoutTemplatesQuery.refetch();
+      }
+    },
+    {
+      error: pageGenerationReadinessError,
+      retry: () => {
+        void pageGenerationReadinessQuery.refetch();
+      }
+    },
+    {
+      error: scenesError,
+      retry: () => {
+        void scenesQuery.refetch();
+      }
+    },
+    {
+      error: entitiesError,
+      retry: () => {
+        void entitiesQuery.refetch();
+      }
+    },
+    {
+      error: compositionsError,
+      retry: () => {
+        void compositionsQuery.refetch();
+      }
+    }
+  ].filter(
+    (failure): failure is { error: Error; retry: () => void } =>
+      failure.error instanceof Error
+  );
 
   const toggleExportPage = (pageId: string): void => {
     setExportSelectedPageIds((current) =>
@@ -1996,7 +2156,17 @@ export function PagesScreen(): React.JSX.Element {
     void invalidatePageLayoutTemplates();
     void invalidatePageReadiness();
   };
-  const primaryPageError = pageErrors[0] ?? null;
+  const primaryPageFailure =
+    queryFailures[0] ??
+    (mutationErrors[0] === undefined
+      ? null
+      : {
+          error: mutationErrors[0],
+          retry: () => {
+            void invalidatePages();
+          }
+        });
+  const primaryPageError = primaryPageFailure?.error ?? null;
   const navigateAfterDirtyCheck = (
     target: 'Account' | 'Characters'
   ): void => {
@@ -2050,7 +2220,9 @@ export function PagesScreen(): React.JSX.Element {
           onReloadStale={() => {
             void reloadAfterPageStale();
           }}
-          onRetry={refreshPages}
+          onRetry={() => {
+            primaryPageFailure?.retry();
+          }}
         />
       )}
 

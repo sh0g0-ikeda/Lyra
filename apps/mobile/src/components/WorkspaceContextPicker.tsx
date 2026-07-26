@@ -21,6 +21,7 @@ import {
   nextCursorFromPage,
 } from '@/lib/listPagination';
 import { navigationRef } from '@/navigation/navigationRef';
+import { currentQueryError } from '@/lib/queryErrorPolicy';
 import { useAppState } from '@/state/appState';
 import { useDirtyState } from '@/state/dirtyState';
 
@@ -86,7 +87,11 @@ export function useWorkspaceContextSelection(): WorkspaceContextData {
   const selectedWorkDetailError =
     shouldFetchSelectedWorkDetail &&
     !(selectedWorkDetailNotFound && selectedWorkListIncomplete)
-      ? selectedWorkQuery.error
+      ? currentQueryError({
+          data: selectedWorkQuery.data,
+          enabled: true,
+          error: selectedWorkQuery.error,
+        })
       : null;
   const selectedWorkNotFound =
     selection.workId !== null &&
@@ -115,6 +120,27 @@ export function useWorkspaceContextSelection(): WorkspaceContextData {
   });
   const episodes = useMemo(() => episodesQuery.data?.episodes ?? [], [episodesQuery.data?.episodes]);
   const selectedEpisode = episodes.find((episode) => episode.id === selection.episodeId) ?? null;
+  const worksError = currentQueryError({
+    data: worksQuery.data,
+    enabled: true,
+    error: worksQuery.error,
+  });
+  const chaptersError = currentQueryError({
+    data: chaptersQuery.data,
+    enabled: selectedWork !== null,
+    error: chaptersQuery.error,
+  });
+  const episodesError = currentQueryError({
+    data: episodesQuery.data,
+    enabled: selectedChapter !== null,
+    error: episodesQuery.error,
+  });
+  const hierarchyFailure = [
+    { error: worksError, retry: worksQuery.refetch },
+    { error: selectedWorkDetailError, retry: selectedWorkQuery.refetch },
+    { error: chaptersError, retry: chaptersQuery.refetch },
+    { error: episodesError, retry: episodesQuery.refetch },
+  ].find((candidate) => candidate.error !== null) ?? null;
 
   useEffect(() => {
     if (
@@ -177,27 +203,14 @@ export function useWorkspaceContextSelection(): WorkspaceContextData {
     selectedWorkId: selectedWorkNotFound ? null : selection.workId,
     selectedChapterId: selectedChapter?.id ?? null,
     selectedEpisodeId: selectedEpisode?.id ?? null,
-    error:
-      worksQuery.error ??
-      selectedWorkDetailError ??
-      chaptersQuery.error ??
-      episodesQuery.error,
+    error: hierarchyFailure?.error ?? null,
     hasMoreWorks: worksQuery.hasNextPage,
     isFetchingMoreWorks: worksQuery.isFetchingNextPage,
     loadMoreWorks: () => {
       void worksQuery.fetchNextPage();
     },
     retry: () => {
-      void worksQuery.refetch();
-      if (shouldFetchSelectedWorkDetail) {
-        void selectedWorkQuery.refetch();
-      }
-      if (selectedWork !== null) {
-        void chaptersQuery.refetch();
-      }
-      if (selectedChapter !== null) {
-        void episodesQuery.refetch();
-      }
+      void (hierarchyFailure?.retry ?? worksQuery.refetch)();
     },
   };
 }
