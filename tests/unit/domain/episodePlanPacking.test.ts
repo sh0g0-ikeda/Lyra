@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
+  EPISODE_BEAT_PLAN_LEDGER_PACK_OUTPUT_CHARS,
   EPISODE_PLAN_DETAIL_PACK_OUTPUT_UNITS,
+  estimateEpisodeBeatPlanLedgerOutputChars,
+  packEpisodeBeatPlanLedgerPages,
   packEpisodePlanPages,
 } from '../../../src/domain/episodePlanPacking.js';
 
@@ -49,5 +52,34 @@ describe('packEpisodePlanPages', () => {
 
   it('ページがない場合に空のpack一覧になる', () => {
     expect(packEpisodePlanPages([])).toEqual([]);
+  });
+});
+
+describe('packEpisodeBeatPlanLedgerPages', () => {
+  it('台帳の出力量に応じて連続ページを分け、1パックを8ページ以下にする', () => {
+    const packs = packEpisodeBeatPlanLedgerPages(
+      buildPages(Array.from({ length: 10 }, () => 4)),
+    );
+
+    expect(packs.map((pack) => pack.map((page) => page.pageId))).toEqual([
+      ['page-1', 'page-2', 'page-3', 'page-4', 'page-5', 'page-6', 'page-7', 'page-8'],
+      ['page-9', 'page-10'],
+    ]);
+    expect(packs.every((pack) => pack.length <= 8)).toBe(true);
+    expect(
+      packs.every(
+        (pack) =>
+          pack.reduce(
+            (total, page) => total + estimateEpisodeBeatPlanLedgerOutputChars(page),
+            0,
+          ) <= EPISODE_BEAT_PLAN_LEDGER_PACK_OUTPUT_CHARS,
+      ),
+    ).toBe(true);
+  });
+
+  it('大きな1ページは途中で分けず、そのまま単独パックにする', () => {
+    const pages = buildPages([100, 1]);
+
+    expect(packEpisodeBeatPlanLedgerPages(pages)).toEqual([[pages[0]], [pages[1]]]);
   });
 });

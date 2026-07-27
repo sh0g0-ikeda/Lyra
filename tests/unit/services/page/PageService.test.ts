@@ -22,10 +22,13 @@ import type {
   CompileEpisodePagePlanInput,
   EpisodePagePlanCompilerPort,
 } from '../../../../src/services/page/EpisodePagePlanCompiler.js';
-import type {
-  CompiledEpisodeBeatPlan,
-  CompileEpisodeBeatPlanInput,
-  EpisodeBeatPlanCompilerPort,
+import {
+  EpisodeBeatPlanOutputLimitError,
+  type CompiledEpisodeBeatPlan,
+  type CompiledEpisodeBeatPlanOutline,
+  type CompileEpisodeBeatPlanInput,
+  type CompileEpisodeBeatPlanOutlineInput,
+  type EpisodeBeatPlanCompilerPort,
 } from '../../../../src/services/page/EpisodeBeatPlanCompiler.js';
 import type {
   CompiledEpisodePlanAudit,
@@ -417,13 +420,21 @@ class FourPanelEpisodePagePlanCompiler extends ChunkAwareEpisodePagePlanCompiler
 
 class FakeEpisodeBeatPlanCompiler implements EpisodeBeatPlanCompilerPort {
   public inputs: CompileEpisodeBeatPlanInput[] = [];
+  public outlineInputs: CompileEpisodeBeatPlanOutlineInput[] = [];
   public pagesToReturn: CompiledEpisodeBeatPlan['plan']['pages'] | null = null;
+  public outputLimitAbovePageCount: number | null = null;
 
   public async compileBeatPlan(
     input: CompileEpisodeBeatPlanInput,
   ): Promise<CompiledEpisodeBeatPlan> {
     this.inputs.push(input);
     const pageRefs = extractCompilerBriefPageRefs(input.compilerBrief);
+    if (
+      this.outputLimitAbovePageCount !== null &&
+      pageRefs.length > this.outputLimitAbovePageCount
+    ) {
+      throw new EpisodeBeatPlanOutputLimitError();
+    }
     const pages =
       this.pagesToReturn ??
       pageRefs.map((page) => ({
@@ -442,6 +453,27 @@ class FakeEpisodeBeatPlanCompiler implements EpisodeBeatPlanCompilerPort {
       compilerProvider: 'openai',
       compilerModel: 'gpt-5',
       compilerPromptVersion: 'episode_beat_plan_v1',
+    };
+  }
+
+  public async compileOutline(
+    input: CompileEpisodeBeatPlanOutlineInput,
+  ): Promise<CompiledEpisodeBeatPlanOutline> {
+    this.outlineInputs.push(input);
+    const pageRefs = extractCompilerBriefPageRefs(input.compilerBrief);
+
+    return {
+      outline: {
+        pages: pageRefs.map((page) => ({
+          pageId: page.pageId,
+          pageNumber: page.pageNumber,
+          storyAnchor: `Reserve the unique story movement for page ${page.pageNumber}.`,
+          reservedTransition: `Carry page ${page.pageNumber} into the next beat.`,
+        })),
+      },
+      compilerProvider: 'openai',
+      compilerModel: 'gpt-5',
+      compilerPromptVersion: 'episode_beat_outline_v1',
     };
   }
 }
@@ -1270,6 +1302,96 @@ describe('PageService', () => {
     });
     expect(pageRepository.episodePlanningContextReadCount).toBe(2);
     expect(panelRepository.updatedPanels).toHaveLength(7);
+  });
+
+  it('continuity v3 は大きい話の台帳を全話アウトラインと連続パックに分けてから詳細生成する', async () => {
+    const pageRepository = new FakePageRepository();
+    pageRepository.episodePlanningContext = buildMultiPageEpisodePlanningContext(10);
+    const panelRepository = new FakePanelRepository();
+    const assignmentService = new FakePanelEntityAssignmentService();
+    const beatPlanCompiler = new FakeEpisodeBeatPlanCompiler();
+    const service = new PageService(
+      pageRepository,
+      panelRepository,
+      assignmentService,
+      new FakePageAutofillCompiler(),
+      new ChunkAwareEpisodePagePlanCompiler(),
+      undefined,
+      beatPlanCompiler,
+      new FakeEpisodePlanAuditCompiler(),
+      true,
+    );
+
+    const result = await service.autofillEpisodeFromStory('user-1', 'episode-1', 'ja');
+
+    expect(result.compilerUsed).toBe(true);
+    expect(beatPlanCompiler.outlineInputs).toHaveLength(1);
+    expect(beatPlanCompiler.inputs).toHaveLength(2);
+    expect(beatPlanCompiler.inputs[0]?.compilerBrief).toContain('[TARGET PAGES]');
+    expect(beatPlanCompiler.inputs[0]?.compilerBrief).toContain('Page 8 (page-8) | frame_count=1');
+    expect(beatPlanCompiler.inputs[0]?.compilerBrief).not.toContain('Page 9 (page-9) | frame_count=1');
+    expect(beatPlanCompiler.inputs[1]?.compilerBrief).toContain('[GLOBAL EPISODE OUTLINE]');
+    expect(beatPlanCompiler.inputs[1]?.compilerBrief).toContain('[ALREADY PLANNED LEDGER]');
+    expect(beatPlanCompiler.inputs[1]?.compilerBrief).toContain('Page 9 (page-9) | frame_count=1');
+    expect(panelRepository.updatedPanels).toHaveLength(10);
+  });
+
+  it('continuity v3 は上限に達した台帳パックだけを半分に分け、成功済みパックを再生成しない', async () => {
+    const pageRepository = new FakePageRepository();
+    pageRepository.episodePlanningContext = buildMultiPageEpisodePlanningContext(10);
+    const panelRepository = new FakePanelRepository();
+    const assignmentService = new FakePanelEntityAssignmentService();
+    const beatPlanCompiler = new FakeEpisodeBeatPlanCompiler();
+    beatPlanCompiler.outputLimitAbovePageCount = 4;
+    const service = new PageService(
+      pageRepository,
+      panelRepository,
+      assignmentService,
+      new FakePageAutofillCompiler(),
+      new ChunkAwareEpisodePagePlanCompiler(),
+      undefined,
+      beatPlanCompiler,
+      new FakeEpisodePlanAuditCompiler(),
+      true,
+    );
+
+    const result = await service.autofillEpisodeFromStory('user-1', 'episode-1', 'ja');
+
+    expect(result.compilerUsed).toBe(true);
+    expect(beatPlanCompiler.outlineInputs).toHaveLength(1);
+    expect(
+      beatPlanCompiler.inputs.map(
+        (input) => extractCompilerBriefPageRefs(input.compilerBrief).length,
+      ),
+    ).toEqual([8, 4, 4, 2]);
+    expect(panelRepository.updatedPanels).toHaveLength(10);
+  });
+
+  it('continuity v3 は1ページまで分割した台帳が上限に達した場合に何も保存しない', async () => {
+    const pageRepository = new FakePageRepository();
+    pageRepository.episodePlanningContext = buildMultiPageEpisodePlanningContext(4);
+    const panelRepository = new FakePanelRepository();
+    const assignmentService = new FakePanelEntityAssignmentService();
+    const beatPlanCompiler = new FakeEpisodeBeatPlanCompiler();
+    beatPlanCompiler.outputLimitAbovePageCount = 0;
+    const service = new PageService(
+      pageRepository,
+      panelRepository,
+      assignmentService,
+      new FakePageAutofillCompiler(),
+      new ChunkAwareEpisodePagePlanCompiler(),
+      undefined,
+      beatPlanCompiler,
+      new FakeEpisodePlanAuditCompiler(),
+      true,
+    );
+
+    const result = await service.autofillEpisodeFromStory('user-1', 'episode-1', 'ja');
+
+    expect(result.compilerUsed).toBe(false);
+    expect(pageRepository.updatedInputs).toHaveLength(0);
+    expect(panelRepository.updatedPanels).toHaveLength(0);
+    expect(assignmentService.updates).toHaveLength(0);
   });
 
   it('continuity v3 の監査応答が回復不能な場合はページとコマを保存しない', async () => {
