@@ -896,7 +896,7 @@ export function StoryScreen(): React.JSX.Element {
       )}
       <WorkspaceHierarchyNavigator context={workspaceContext} />
 
-      <Section collapsible persistKey="story:episode:v2" subtitle={t(language, "generated.screens.StoryScreen.use.one.full.story.draft.e2ff378b")} title={t(language, "generated.screens.StoryScreen.episode.d3de27bf")}>
+      <Section collapsible persistKey="story:episode" subtitle={t(language, "generated.screens.StoryScreen.use.one.full.story.draft.e2ff378b")} title={t(language, "generated.screens.StoryScreen.episode.d3de27bf")}>
         {selectedEpisode === null ? (
           <Notice message={t(language, "generated.screens.StoryScreen.select.an.episode.from.the.hierarchy.874ba80d")} tone="info" />
         ) : (
@@ -960,7 +960,7 @@ export function StoryScreen(): React.JSX.Element {
       <Section
         collapsible
         defaultCollapsed
-        persistKey="story:scenes:v2"
+        persistKey="story:scenes"
         showSubtitleWhenCollapsed
         subtitle={t(language, "generated.screens.StoryScreen.use.scenes.to.keep.location.time.and.atm.4de6caa0")}
         title={t(language, 'scenes')}

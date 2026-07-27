@@ -2304,7 +2304,7 @@ export function PagesScreen(): React.JSX.Element {
         </Section>
       ) : (
         <>
-      <Section collapsible defaultCollapsed persistKey="pages:style:v2" title={t(language, 'styleReference')}>
+      <Section collapsible defaultCollapsed persistKey="pages:style" title={t(language, 'styleReference')}>
         <FormField editable={canEdit} label={t(language, 'styleReferenceTitle')} maxLength={200} onChangeText={setStyleReferenceTitle} value={styleReferenceTitle} />
         <FormField editable={canEdit} label={t(language, 'styleReferenceNotes')} maxLength={2000} multiline onChangeText={setStyleReferenceNotes} value={styleReferenceNotes} />
         <PrimaryButton disabled={!canEdit || selectedPage === null} disabledReason={!canEdit ? t(language, "generated.screens.PagesScreen.editing.permission.is.required.6d3b86ee") : selectedPage === null ? t(language, "generated.screens.PagesScreen.select.a.page.first.50276876") : undefined} label={t(language, 'save')} loading={updatePageMutation.isPending} onPress={() => updatePageMutation.mutate()} />

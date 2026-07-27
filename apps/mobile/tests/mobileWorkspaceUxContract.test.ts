@@ -29,9 +29,9 @@ describe('mobile workspace navigation and editor UX contract', () => {
 
   it('話は初期表示し、Story AIをシーンより前に置き、シーン説明を閉じた状態でも示す', () => {
     const source = renderSource('StoryScreen');
-    const episode = source.indexOf('persistKey="story:episode:v2"');
+    const episode = source.indexOf('persistKey="story:episode"');
     const storyAi = source.indexOf('persistKey="story:story-ai"');
-    const scenes = source.indexOf('persistKey="story:scenes:v2"');
+    const scenes = source.indexOf('persistKey="story:scenes"');
 
     expect(episode).toBeGreaterThanOrEqual(0);
     expect(source.slice(Math.max(0, episode - 100), episode)).not.toContain('defaultCollapsed');
@@ -54,7 +54,7 @@ describe('mobile workspace navigation and editor UX contract', () => {
 
   it('ページの画風レファレンスは初期状態で閉じる', () => {
     const source = renderSource('PagesScreen');
-    const style = source.indexOf('persistKey="pages:style:v2"');
+    const style = source.indexOf('persistKey="pages:style"');
 
     expect(source.slice(Math.max(0, style - 120), style)).toContain('defaultCollapsed');
   });
