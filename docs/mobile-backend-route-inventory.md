@@ -21,7 +21,7 @@ Unclassified routes: **0**
 | `/api/billing/checkout/subscription` | POST | Web-only store policy | Personal Web Stripe checkout must not be reused for Mobile digital purchases. |
 | `/api/billing/customer-portal` | POST | Web-only store policy | Personal Stripe portal remains a Web account operation. |
 | `/api/chapters/:id` | DELETE | Mobile UI | api.deleteChapter -> apps/mobile/src/components/StoryHierarchySheet.tsx |
-| `/api/chapters/:id` | PUT | Mobile UI | api.updateChapter -> apps/mobile/src/components/StoryHierarchySheet.tsx, apps/mobile/src/screens/StoryScreen.tsx |
+| `/api/chapters/:id` | PUT | Mobile UI | api.updateChapter -> apps/mobile/src/components/StoryHierarchySheet.tsx |
 | `/api/chapters/:id/episodes` | GET | Mobile UI | api.getEpisodes -> apps/mobile/src/components/StoryHierarchySheet.tsx, apps/mobile/src/components/WorkspaceContextPicker.tsx, apps/mobile/src/screens/StoryScreen.tsx |
 | `/api/chapters/:id/episodes` | POST | Mobile UI | api.createEpisode -> apps/mobile/src/components/StoryHierarchySheet.tsx |
 | `/api/chapters/:id/move` | POST | Mobile UI | api.moveChapter -> apps/mobile/src/components/StoryHierarchySheet.tsx |
@@ -125,7 +125,7 @@ Unclassified routes: **0**
 | `/api/works` | GET | Mobile UI | api.getWorks, api.getWorksPage -> apps/mobile/src/components/WorkspaceContextPicker.tsx, apps/mobile/src/screens/StoryScreen.tsx |
 | `/api/works` | POST | Mobile UI | api.createWork -> apps/mobile/src/components/StoryHierarchySheet.tsx |
 | `/api/works/:id` | GET | Mobile UI | api.getWork -> apps/mobile/src/components/StoryHierarchySheet.tsx, apps/mobile/src/components/WorkspaceContextPicker.tsx, apps/mobile/src/screens/StoryScreen.tsx |
-| `/api/works/:id` | PUT | Mobile UI | api.updateWork -> apps/mobile/src/components/StoryHierarchySheet.tsx, apps/mobile/src/screens/StoryScreen.tsx |
+| `/api/works/:id` | PUT | Mobile UI | api.updateWork -> apps/mobile/src/components/StoryHierarchySheet.tsx |
 | `/api/works/:id/chapters` | GET | Mobile UI | api.getChapters -> apps/mobile/src/components/StoryHierarchySheet.tsx, apps/mobile/src/components/WorkspaceContextPicker.tsx, apps/mobile/src/screens/StoryScreen.tsx |
 | `/api/works/:id/chapters` | POST | Mobile UI | api.createChapter -> apps/mobile/src/components/StoryHierarchySheet.tsx |
 | `/api/works/:work_id/entities` | GET | Mobile UI | api.getEntities, api.getEntitiesPage -> apps/mobile/src/screens/CharactersScreen.tsx, apps/mobile/src/screens/PagesScreen.tsx, apps/mobile/src/screens/StoryScreen.tsx |
