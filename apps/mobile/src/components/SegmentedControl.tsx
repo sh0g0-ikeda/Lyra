@@ -117,10 +117,10 @@ const styles = StyleSheet.create({
     lineHeight: 20
   },
   container: {
-    backgroundColor: colors.surfaceAlt,
-    borderColor: colors.border,
+    backgroundColor: colors.controlSurface,
+    borderColor: colors.controlBorder,
     borderRadius: radius.md,
-    borderWidth: 1,
+    borderWidth: 1.5,
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: spacing.xs,
@@ -174,7 +174,8 @@ const styles = StyleSheet.create({
   },
   radioOption: {
     alignItems: 'center',
-    borderColor: colors.border,
+    backgroundColor: colors.controlSurface,
+    borderColor: colors.controlBorder,
     borderRadius: radius.sm,
     borderWidth: 1,
     flexDirection: 'row',
@@ -217,10 +218,10 @@ const styles = StyleSheet.create({
   },
   trigger: {
     alignItems: 'center',
-    backgroundColor: colors.field,
-    borderColor: colors.border,
+    backgroundColor: colors.controlSurface,
+    borderColor: colors.controlBorder,
     borderRadius: radius.sm,
-    borderWidth: 1,
+    borderWidth: 1.5,
     flexDirection: 'row',
     gap: spacing.sm,
     minHeight: 44,

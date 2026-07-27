@@ -13,7 +13,8 @@ import { Screen } from '@/components/Screen';
 import { Section } from '@/components/Section';
 import { StoryCollaborationPanel } from '@/components/StoryCollaborationPanel';
 import { StoryGenerationControls } from '@/components/StoryGenerationControls';
-import { StoryHierarchySheet } from '@/components/StoryHierarchySheet';
+import { WorkspaceHierarchyNavigator } from '@/components/WorkspaceHierarchyNavigator';
+import { useWorkspaceContextSelection } from '@/components/WorkspaceContextPicker';
 import { colors, spacing, textStyles } from '@/constants/theme';
 import {
   extractImprovedFullStory,
@@ -120,15 +121,11 @@ function EntityChips({ entities, selectedIds, onChange, emptyLabel }: EntityChip
 
 export function StoryScreen(): React.JSX.Element {
   const queryClient = useQueryClient();
-  const { api, hasCapability, language, logout, selection, session, sessionKey, trackJob, updateSelection } = useAppState();
+  const { api, hasCapability, language, logout, selection, sessionKey, trackJob } = useAppState();
   const { resolveDirtyEditors } = useDirtyState();
   const organizationId = selection.organizationId;
-  const canCreateWork = hasCapability('create_work');
   const canEdit = hasCapability('edit_work');
   const canGenerate = hasCapability('generate');
-  const [hierarchyVisible, setHierarchyVisible] = useState(false);
-  const [workTitle, setWorkTitle] = useState('');
-  const [chapterTitle, setChapterTitle] = useState('');
   const [episodeTitle, setEpisodeTitle] = useState('');
   const [episodeDraft, setEpisodeDraft] = useState('');
   const [estimatedPages, setEstimatedPages] = useState('4');
@@ -150,15 +147,14 @@ export function StoryScreen(): React.JSX.Element {
   const [jobEnqueued, setJobEnqueued] = useState(false);
   const [staleResource, setStaleResource] = useState<{
     id: string;
-    kind: 'work' | 'chapter' | 'episode';
+    kind: 'episode';
   } | null>(null);
   const [dirtySaveError, setDirtySaveError] = useState<Error | null>(null);
-  const lastSyncedWorkId = useRef<string | null>(null);
-  const lastSyncedChapterId = useRef<string | null>(null);
   const lastSyncedEpisodeId = useRef<string | null>(null);
   const lastSyncedSceneId = useRef<string | null>(null);
   const collaborationAbortRef = useRef<AbortController | null>(null);
   const collaborationRequestIdRef = useRef(0);
+  const workspaceContext = useWorkspaceContextSelection();
 
   const worksQuery = useInfiniteQuery({
     queryKey: worksInfiniteQueryKey(sessionKey, organizationId),
@@ -264,16 +260,6 @@ export function StoryScreen(): React.JSX.Element {
     [sceneId, scenesQuery.data?.scenes]
   );
 
-  const workDirty =
-    selectedWork === null
-      ? workTitle.trim().length > 0
-      : workTitle !== selectedWork.title;
-
-  const chapterDirty =
-    selectedChapter === null
-      ? chapterTitle.trim().length > 0
-      : chapterTitle !== (selectedChapter.title ?? '');
-
   const episodeDirty =
     selectedEpisode === null
       ? [episodeTitle, episodeDraft, estimatedPages].some((value) => value.trim().length > 0 && value !== '4')
@@ -290,32 +276,14 @@ export function StoryScreen(): React.JSX.Element {
         sceneAtmosphere !== (selectedScene.atmosphere ?? '') ||
         !sameStringArray(sceneEntityIds, selectedScene.involved_entity_ids ?? []);
   const storyDirty = storyEditorIsDirty({
-    work: workDirty,
-    chapter: chapterDirty,
+    work: false,
+    chapter: false,
     episode: episodeDirty,
     scene: sceneDirty
   });
 
   const estimatedPagesInvalid = parseIntInRange(estimatedPages, 1, MAX_ESTIMATED_PAGES) === null;
   const sceneOrderInvalid = parseIntInRange(sceneOrder, 1, MAX_STORY_ORDER) === null;
-  useEffect(() => {
-    const nextId = selectedWork?.id ?? null;
-    if (lastSyncedWorkId.current === nextId && workDirty) {
-      return;
-    }
-    lastSyncedWorkId.current = nextId;
-    setWorkTitle(selectedWork?.title ?? '');
-  }, [selectedWork, workDirty]);
-
-  useEffect(() => {
-    const nextId = selectedChapter?.id ?? null;
-    if (lastSyncedChapterId.current === nextId && chapterDirty) {
-      return;
-    }
-    lastSyncedChapterId.current = nextId;
-    setChapterTitle(selectedChapter?.title ?? '');
-  }, [chapterDirty, selectedChapter]);
-
   useEffect(() => {
     const nextId = selectedEpisode?.id ?? null;
     if (lastSyncedEpisodeId.current === nextId && episodeDirty) {
@@ -348,13 +316,7 @@ export function StoryScreen(): React.JSX.Element {
   }, [sceneDirty, scenesQuery.data?.scenes.length, selectedScene]);
 
   const activeStaleResource =
-    staleResource?.kind === 'work' && staleResource.id === selectedWork?.id
-      ? 'work'
-      : staleResource?.kind === 'chapter' && staleResource.id === selectedChapter?.id
-        ? 'chapter'
-        : staleResource?.kind === 'episode' && staleResource.id === selectedEpisode?.id
-          ? 'episode'
-          : null;
+    staleResource?.id === selectedEpisode?.id ? 'episode' : null;
 
   const invalidateWorks = async (): Promise<void> => {
     await queryClient.invalidateQueries({ queryKey: worksQueryKey(sessionKey, organizationId) });
@@ -375,52 +337,6 @@ export function StoryScreen(): React.JSX.Element {
   const invalidateScenes = async (): Promise<void> => {
     await queryClient.invalidateQueries({ queryKey: scenesQueryKey(sessionKey, selectedEpisode?.id ?? null, organizationId) });
   };
-
-  const updateWorkMutation = useMutation({
-    mutationFn: () =>
-      api.updateWork(
-        selectedWork?.id ?? '',
-        {
-          title: workTitle.trim(),
-          expected_updated_at: selectedWork?.updated_at ?? ''
-        },
-        organizationId
-      ),
-    onSuccess: async () => {
-      setStaleResource((current) =>
-        current?.kind === 'work' && current.id === selectedWork?.id ? null : current
-      );
-      await invalidateWorks();
-    },
-    onError: (error) => {
-      if (isResourceStaleError(error)) {
-        setStaleResource({ id: selectedWork?.id ?? '', kind: 'work' });
-      }
-    }
-  });
-
-  const updateChapterMutation = useMutation({
-    mutationFn: () =>
-      api.updateChapter(
-        selectedChapter?.id ?? '',
-        {
-          title: nullable(chapterTitle),
-          expected_updated_at: selectedChapter?.updated_at ?? ''
-        },
-        organizationId
-      ),
-    onSuccess: async () => {
-      setStaleResource((current) =>
-        current?.kind === 'chapter' && current.id === selectedChapter?.id ? null : current
-      );
-      await invalidateChapters();
-    },
-    onError: (error) => {
-      if (isResourceStaleError(error)) {
-        setStaleResource({ id: selectedChapter?.id ?? '', kind: 'chapter' });
-      }
-    }
-  });
 
   const updateEpisodeMutation = useMutation({
     mutationFn: () => {
@@ -495,15 +411,11 @@ export function StoryScreen(): React.JSX.Element {
       await invalidateScenes();
     }
   });
-  const saveWorkMutation = updateWorkMutation.mutateAsync;
-  const saveChapterMutation = updateChapterMutation.mutateAsync;
   const saveEpisodeMutation = updateEpisodeMutation.mutateAsync;
   const saveNewSceneMutation = createSceneMutation.mutateAsync;
   const saveExistingSceneMutation = updateSceneMutation.mutateAsync;
 
   const discardStoryDrafts = useCallback((): void => {
-    setWorkTitle(selectedWork?.title ?? '');
-    setChapterTitle(selectedChapter?.title ?? '');
     setEpisodeTitle(selectedEpisode?.title ?? '');
     setEpisodeDraft(selectedEpisode === null ? '' : episodeMobileDraft(selectedEpisode));
     setEstimatedPages(String(selectedEpisode?.estimated_pages ?? 4));
@@ -520,11 +432,8 @@ export function StoryScreen(): React.JSX.Element {
     setDirtySaveError(null);
   }, [
     scenesQuery.data?.scenes.length,
-    selectedChapter,
     selectedEpisode,
     selectedScene,
-    selectedWork,
-    setChapterTitle,
     setDirtySaveError,
     setEpisodeDraft,
     setEpisodeTitle,
@@ -535,24 +444,11 @@ export function StoryScreen(): React.JSX.Element {
     setSceneLocation,
     setSceneOrder,
     setSceneTime,
-    setWorkTitle
   ]);
 
   const saveStoryDrafts = useCallback(async (): Promise<void> => {
     setDirtySaveError(null);
     try {
-      if (workDirty) {
-        if (selectedWork === null || workTitle.trim().length === 0) {
-          throw new Error(t(language, "generated.screens.StoryScreen.enter.a.work.title.5ddbf102"));
-        }
-        await saveWorkMutation();
-      }
-      if (chapterDirty) {
-        if (selectedChapter === null) {
-          throw new Error(t(language, "generated.screens.StoryScreen.select.a.chapter.to.save.bfd0c165"));
-        }
-        await saveChapterMutation();
-      }
       if (episodeDirty) {
         if (selectedEpisode === null) {
           throw new Error(t(language, "generated.screens.StoryScreen.select.an.episode.to.save.134a75d1"));
@@ -590,24 +486,17 @@ export function StoryScreen(): React.JSX.Element {
       throw error;
     }
   }, [
-    chapterDirty,
     episodeDirty,
     estimatedPagesInvalid,
     language,
     sceneDirty,
     sceneOrderInvalid,
-    saveChapterMutation,
     saveEpisodeMutation,
     saveExistingSceneMutation,
     saveNewSceneMutation,
-    saveWorkMutation,
-    selectedChapter,
     selectedEpisode,
     selectedScene,
-    selectedWork,
     setDirtySaveError,
-    workDirty,
-    workTitle
   ]);
 
   useDirtyEditorRegistration({
@@ -642,20 +531,6 @@ export function StoryScreen(): React.JSX.Element {
   };
 
   const reloadStaleResource = async (): Promise<void> => {
-    if (activeStaleResource === 'work' && selectedWork !== null) {
-      const response = await queryClient.fetchQuery({
-        queryKey: workDetailQueryKey(sessionKey, selectedWork.id, organizationId),
-        queryFn: () => api.getWork(selectedWork.id, organizationId),
-      });
-      setWorkTitle(response.title);
-    }
-    if (activeStaleResource === 'chapter' && selectedChapter !== null && selectedWork !== null) {
-      const response = await queryClient.fetchQuery({
-        queryKey: chaptersQueryKey(sessionKey, selectedWork.id, organizationId),
-        queryFn: () => api.getChapters(selectedWork.id, organizationId),
-      });
-      setChapterTitle(response.chapters.find((chapter) => chapter.id === selectedChapter.id)?.title ?? '');
-    }
     if (activeStaleResource === 'episode' && selectedEpisode !== null && selectedChapter !== null) {
       const response = await queryClient.fetchQuery({
         queryKey: episodesQueryKey(sessionKey, selectedChapter.id, organizationId),
@@ -857,50 +732,6 @@ export function StoryScreen(): React.JSX.Element {
     });
   };
 
-  const switchWork = (workId: string): void => {
-    if (selection.workId === workId) {
-      return;
-    }
-    void updateSelection({ workId, chapterId: null, episodeId: null, pageId: null, entityId: null });
-  };
-
-  const switchChapter = (workId: string, chapterId: string): void => {
-    if (selection.chapterId === chapterId && selection.workId === workId) {
-      return;
-    }
-    void updateSelection({ workId, chapterId, episodeId: null, pageId: null, entityId: null });
-  };
-
-  const switchEpisode = (workId: string, chapterId: string, episodeId: string): void => {
-    void (async () => {
-      const changed = await updateSelection({
-        workId,
-        chapterId,
-        episodeId,
-        pageId: null,
-        entityId: null
-      });
-      if (changed) {
-        setHierarchyVisible(false);
-      }
-    })();
-  };
-
-  const handleChapterDeleted = (chapterId: string): void => {
-    if (selection.chapterId === chapterId) {
-      void updateSelection(
-        { chapterId: null, episodeId: null, pageId: null },
-        { skipDirtyCheck: true }
-      );
-    }
-  };
-
-  const handleEpisodeDeleted = (episodeId: string): void => {
-    if (selection.episodeId === episodeId) {
-      void updateSelection({ episodeId: null, pageId: null }, { skipDirtyCheck: true });
-    }
-  };
-
   const switchScene = (nextSceneId: string): void => {
     if (sceneId === nextSceneId) {
       return;
@@ -972,8 +803,6 @@ export function StoryScreen(): React.JSX.Element {
     episodesQuery.error,
     pagesQuery.error,
     scenesQuery.error,
-    updateWorkMutation.error,
-    updateChapterMutation.error,
     updateEpisodeMutation.error,
     createSceneMutation.error,
     updateSceneMutation.error,
@@ -1065,52 +894,9 @@ export function StoryScreen(): React.JSX.Element {
           />
         </View>
       )}
-      <Pressable
-        accessibilityLabel={t(language, "generated.screens.StoryScreen.open.works.chapters.and.episodes.46661e42")}
-        accessibilityRole="button"
-        onPress={() => setHierarchyVisible(true)}
-        style={({ pressed }) => [styles.hierarchyTrigger, pressed ? styles.hierarchyTriggerPressed : null]}
-      >
-        <View style={styles.hierarchyTriggerText}>
-          <Text style={styles.hierarchyTriggerTitle}>
-            {t(language, "generated.screens.StoryScreen.works.chapters.and.episodes.c73674e6")}
-          </Text>
-          <Text numberOfLines={1} style={styles.hierarchyTriggerCurrent}>
-            {selectedEpisode === null
-              ? t(language, "generated.screens.StoryScreen.select.an.episode.2652c602")
-              : `${selectedWork?.title ?? ''} / ${selectedChapter?.title ?? `第${selectedChapter?.order ?? 1}章`} / ${selectedEpisode.title ?? `第${selectedEpisode.order}話`}`}
-          </Text>
-        </View>
-        <Text style={styles.hierarchyTriggerAction}>{t(language, "generated.screens.StoryScreen.open.3b3a39d5")}</Text>
-      </Pressable>
+      <WorkspaceHierarchyNavigator context={workspaceContext} />
 
-      <Section collapsible defaultCollapsed persistKey="story:work-title" title={t(language, "generated.screens.StoryScreen.work.title.97ab76b4")}>
-        {selectedWork === null ? (
-          <Notice message={t(language, "generated.screens.StoryScreen.select.a.work.from.the.hierarchy.c468f128")} tone="info" />
-        ) : (
-          <>
-            <FormField editable={canEdit} label={t(language, 'title')} maxLength={200} onChangeText={setWorkTitle} value={workTitle} />
-            <View style={styles.buttonRow}>
-              <PrimaryButton disabled={!canEdit || activeStaleResource === 'work' || workTitle.trim().length === 0} label={t(language, 'save')} loading={updateWorkMutation.isPending} onPress={() => updateWorkMutation.mutate()} variant="secondary" />
-            </View>
-          </>
-        )}
-      </Section>
-
-      <Section collapsible defaultCollapsed persistKey="story:chapter-title" title={t(language, "generated.screens.StoryScreen.chapter.title.c7bb5977")}>
-        {selectedChapter === null ? (
-          <Notice message={t(language, "generated.screens.StoryScreen.select.a.chapter.from.the.hierarchy.8698d0de")} tone="info" />
-        ) : (
-          <>
-            <FormField editable={canEdit} label={t(language, 'title')} maxLength={200} onChangeText={setChapterTitle} value={chapterTitle} />
-            <View style={styles.buttonRow}>
-              <PrimaryButton disabled={!canEdit || activeStaleResource === 'chapter' || chapterTitle.trim().length === 0} label={t(language, 'save')} loading={updateChapterMutation.isPending} onPress={() => updateChapterMutation.mutate()} variant="secondary" />
-            </View>
-          </>
-        )}
-      </Section>
-
-      <Section collapsible persistKey="story:episode" subtitle={t(language, "generated.screens.StoryScreen.use.one.full.story.draft.e2ff378b")} title={t(language, "generated.screens.StoryScreen.episode.d3de27bf")}>
+      <Section collapsible persistKey="story:episode:v2" subtitle={t(language, "generated.screens.StoryScreen.use.one.full.story.draft.e2ff378b")} title={t(language, "generated.screens.StoryScreen.episode.d3de27bf")}>
         {selectedEpisode === null ? (
           <Notice message={t(language, "generated.screens.StoryScreen.select.an.episode.from.the.hierarchy.874ba80d")} tone="info" />
         ) : (
@@ -1124,49 +910,6 @@ export function StoryScreen(): React.JSX.Element {
             </View>
           </>
         )}
-      </Section>
-
-      <Section collapsible persistKey="story:scenes" subtitle={t(language, "generated.screens.StoryScreen.use.scenes.to.keep.location.time.and.atm.4de6caa0")} title={t(language, 'scenes')}>
-        <RecordPicker
-          emptyLabel={t(language, 'emptyScenes')}
-          items={scenesQuery.data?.scenes ?? []}
-          language={language}
-          labelForItem={(scene) => `${t(language, 'scene')} ${scene.order}${scene.location === null ? '' : `: ${scene.location}`}`}
-          onSelect={switchScene}
-          selectedId={sceneId}
-        />
-        {selectedScene === null ? (
-          <Notice message={t(language, "generated.screens.StoryScreen.you.are.creating.a.new.scene.fill.the.fi.954a6862")} tone="info" />
-        ) : (
-          <PrimaryButton disabled={!canEdit || createSceneMutation.isPending || updateSceneMutation.isPending} label={t(language, "generated.screens.StoryScreen.create.a.new.scene.5a7af1dc")} onPress={beginNewSceneDraft} variant="ghost" />
-        )}
-        <FormField keyboardType="numeric" label={t(language, "generated.screens.StoryScreen.order.da168b36")} onChangeText={setSceneOrder} value={sceneOrder} />
-        {sceneOrderInvalid ? <Notice message={t(language, "generated.screens.StoryScreen.order.must.be.a.number.from.1.to.1000.c52e4fa8")} tone="warning" /> : null}
-        <FormField label={t(language, 'location')} maxLength={200} onChangeText={setSceneLocation} value={sceneLocation} />
-        <FormField label={t(language, 'time')} maxLength={200} onChangeText={setSceneTime} value={sceneTime} />
-        <FormField label={t(language, 'atmosphere')} maxLength={2000} multiline onChangeText={setSceneAtmosphere} value={sceneAtmosphere} />
-        <Text style={styles.label}>{t(language, "generated.screens.StoryScreen.involved.characters.2790d18b")}</Text>
-        <EntityChips
-          emptyLabel={t(language, "generated.screens.StoryScreen.create.characters.first.to.select.them.h.fb086bcb")}
-          entities={entities}
-          onChange={setSceneEntityIds}
-          selectedIds={sceneEntityIds}
-        />
-        {entitiesQuery.hasNextPage ? (
-          <PrimaryButton
-            label={t(language, "generated.screens.StoryScreen.load.more.characters.0a56bda2")}
-            loading={entitiesQuery.isFetchingNextPage}
-            onPress={() => {
-              void entitiesQuery.fetchNextPage();
-            }}
-            variant="ghost"
-          />
-        ) : null}
-        <View style={styles.buttonRow}>
-          <PrimaryButton disabled={!canEdit || selectedEpisode === null || selectedScene !== null || scenesQuery.isLoading || sceneOrderInvalid || updateSceneMutation.isPending} disabledReason={!canEdit ? t(language, "generated.screens.StoryScreen.editing.permission.is.required.6d3b86ee") : selectedEpisode === null ? t(language, "generated.screens.StoryScreen.select.an.episode.first.437356a6") : selectedScene !== null ? t(language, "generated.screens.StoryScreen.choose.create.a.new.scene.first.754b6b6c") : sceneOrderInvalid ? t(language, "generated.screens.StoryScreen.check.order.2ff9d500") : undefined} label={t(language, 'createScene')} loading={createSceneMutation.isPending} onPress={() => createSceneMutation.mutate()} />
-          <PrimaryButton disabled={!canEdit || selectedScene === null || sceneOrderInvalid || createSceneMutation.isPending} disabledReason={!canEdit ? t(language, "generated.screens.StoryScreen.editing.permission.is.required.6d3b86ee") : selectedScene === null ? t(language, "generated.screens.StoryScreen.select.a.scene.to.save.63d8c002") : sceneOrderInvalid ? t(language, "generated.screens.StoryScreen.check.order.2ff9d500") : undefined} label={t(language, 'saveScene')} loading={updateSceneMutation.isPending} onPress={() => updateSceneMutation.mutate()} variant="secondary" />
-          <PrimaryButton disabled={!canEdit || selectedScene === null} disabledReason={!canEdit ? t(language, "generated.screens.StoryScreen.editing.permission.is.required.6d3b86ee") : selectedScene === null ? t(language, "generated.screens.StoryScreen.select.a.scene.to.delete.ec3b0582") : undefined} label={t(language, "generated.screens.StoryScreen.delete.scene.19681cb7")} loading={deleteSceneMutation.isPending} onPress={confirmDeleteScene} variant="danger" />
-        </View>
       </Section>
 
       <Section collapsible mobileDefaultCollapsed persistKey="story:story-ai" subtitle={t(language, "generated.screens.StoryScreen.improve.the.current.episode.and.apply.it.5fc027c6")} title={t(language, 'storyAi')}>
@@ -1214,6 +957,56 @@ export function StoryScreen(): React.JSX.Element {
         />
       </Section>
 
+      <Section
+        collapsible
+        defaultCollapsed
+        persistKey="story:scenes:v2"
+        showSubtitleWhenCollapsed
+        subtitle={t(language, "generated.screens.StoryScreen.use.scenes.to.keep.location.time.and.atm.4de6caa0")}
+        title={t(language, 'scenes')}
+      >
+        <RecordPicker
+          emptyLabel={t(language, 'emptyScenes')}
+          items={scenesQuery.data?.scenes ?? []}
+          language={language}
+          labelForItem={(scene) => `${t(language, 'scene')} ${scene.order}${scene.location === null ? '' : `: ${scene.location}`}`}
+          onSelect={switchScene}
+          selectedId={sceneId}
+        />
+        {selectedScene === null ? (
+          <Notice message={t(language, "generated.screens.StoryScreen.you.are.creating.a.new.scene.fill.the.fi.954a6862")} tone="info" />
+        ) : (
+          <PrimaryButton disabled={!canEdit || createSceneMutation.isPending || updateSceneMutation.isPending} label={t(language, "generated.screens.StoryScreen.create.a.new.scene.5a7af1dc")} onPress={beginNewSceneDraft} variant="ghost" />
+        )}
+        <FormField keyboardType="numeric" label={t(language, "generated.screens.StoryScreen.order.da168b36")} onChangeText={setSceneOrder} value={sceneOrder} />
+        {sceneOrderInvalid ? <Notice message={t(language, "generated.screens.StoryScreen.order.must.be.a.number.from.1.to.1000.c52e4fa8")} tone="warning" /> : null}
+        <FormField label={t(language, 'location')} maxLength={200} onChangeText={setSceneLocation} value={sceneLocation} />
+        <FormField label={t(language, 'time')} maxLength={200} onChangeText={setSceneTime} value={sceneTime} />
+        <FormField label={t(language, 'atmosphere')} maxLength={2000} multiline onChangeText={setSceneAtmosphere} value={sceneAtmosphere} />
+        <Text style={styles.label}>{t(language, "generated.screens.StoryScreen.involved.characters.2790d18b")}</Text>
+        <EntityChips
+          emptyLabel={t(language, "generated.screens.StoryScreen.create.characters.first.to.select.them.h.fb086bcb")}
+          entities={entities}
+          onChange={setSceneEntityIds}
+          selectedIds={sceneEntityIds}
+        />
+        {entitiesQuery.hasNextPage ? (
+          <PrimaryButton
+            label={t(language, "generated.screens.StoryScreen.load.more.characters.0a56bda2")}
+            loading={entitiesQuery.isFetchingNextPage}
+            onPress={() => {
+              void entitiesQuery.fetchNextPage();
+            }}
+            variant="ghost"
+          />
+        ) : null}
+        <View style={styles.buttonRow}>
+          <PrimaryButton disabled={!canEdit || selectedEpisode === null || selectedScene !== null || scenesQuery.isLoading || sceneOrderInvalid || updateSceneMutation.isPending} disabledReason={!canEdit ? t(language, "generated.screens.StoryScreen.editing.permission.is.required.6d3b86ee") : selectedEpisode === null ? t(language, "generated.screens.StoryScreen.select.an.episode.first.437356a6") : selectedScene !== null ? t(language, "generated.screens.StoryScreen.choose.create.a.new.scene.first.754b6b6c") : sceneOrderInvalid ? t(language, "generated.screens.StoryScreen.check.order.2ff9d500") : undefined} label={t(language, 'createScene')} loading={createSceneMutation.isPending} onPress={() => createSceneMutation.mutate()} />
+          <PrimaryButton disabled={!canEdit || selectedScene === null || sceneOrderInvalid || createSceneMutation.isPending} disabledReason={!canEdit ? t(language, "generated.screens.StoryScreen.editing.permission.is.required.6d3b86ee") : selectedScene === null ? t(language, "generated.screens.StoryScreen.select.a.scene.to.save.63d8c002") : sceneOrderInvalid ? t(language, "generated.screens.StoryScreen.check.order.2ff9d500") : undefined} label={t(language, 'saveScene')} loading={updateSceneMutation.isPending} onPress={() => updateSceneMutation.mutate()} variant="secondary" />
+          <PrimaryButton disabled={!canEdit || selectedScene === null} disabledReason={!canEdit ? t(language, "generated.screens.StoryScreen.editing.permission.is.required.6d3b86ee") : selectedScene === null ? t(language, "generated.screens.StoryScreen.select.a.scene.to.delete.ec3b0582") : undefined} label={t(language, "generated.screens.StoryScreen.delete.scene.19681cb7")} loading={deleteSceneMutation.isPending} onPress={confirmDeleteScene} variant="danger" />
+        </View>
+      </Section>
+
       <Section subtitle={t(language, "generated.screens.StoryScreen.create.pages.frames.panel.slots.then.dis.bd1ff10b")} title={t(language, 'pageSkeleton')} tone="highlight">
         <StoryGenerationControls
           canGenerate={canGenerate}
@@ -1252,46 +1045,6 @@ export function StoryScreen(): React.JSX.Element {
           sessionKey={sessionKey}
         />
       </Section>
-      <StoryHierarchySheet
-        api={api}
-        canCreateWork={canCreateWork}
-        canEdit={canEdit}
-        language={language}
-        hasNextWorks={worksQuery.hasNextPage}
-        isFetchingNextWorks={worksQuery.isFetchingNextPage}
-        onEndReachedWorks={() => {
-          void worksQuery.fetchNextPage();
-        }}
-        onChapterDeleted={handleChapterDeleted}
-        onChapterRenamed={(chapterId, title) => {
-          if (selection.chapterId === chapterId) {
-            setChapterTitle(title);
-          }
-        }}
-        onClose={() => setHierarchyVisible(false)}
-        onEpisodeDeleted={handleEpisodeDeleted}
-        onEpisodeRenamed={(episodeId, title) => {
-          if (selection.episodeId === episodeId) {
-            setEpisodeTitle(title);
-          }
-        }}
-        onSelectChapter={switchChapter}
-        onSelectEpisode={switchEpisode}
-        onSelectWork={switchWork}
-        onWorkRenamed={(workId, title) => {
-          if (selection.workId === workId) {
-            setWorkTitle(title);
-          }
-        }}
-        organizationId={organizationId}
-        selectedChapterId={selection.chapterId}
-        selectedEpisodeId={selection.episodeId}
-        selectedWorkId={selection.workId}
-        sessionKey={sessionKey}
-        userId={session?.user.id ?? sessionKey}
-        visible={hierarchyVisible}
-        works={works}
-      />
     </Screen>
   );
 }
@@ -1338,38 +1091,6 @@ const styles = StyleSheet.create({
   emptySmall: {
     ...textStyles.caption,
     color: colors.muted
-  },
-  hierarchyTrigger: {
-    alignItems: 'center',
-    backgroundColor: colors.surfaceRaised,
-    borderBottomColor: colors.borderStrong,
-    borderBottomWidth: 1,
-    flexDirection: 'row',
-    gap: spacing.md,
-    minHeight: 58,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm
-  },
-  hierarchyTriggerAction: {
-    color: colors.primary,
-    fontSize: 14,
-    fontWeight: '700'
-  },
-  hierarchyTriggerCurrent: {
-    ...textStyles.caption,
-    color: colors.ink
-  },
-  hierarchyTriggerPressed: {
-    backgroundColor: colors.fieldFocus
-  },
-  hierarchyTriggerText: {
-    flex: 1,
-    gap: 2,
-    minWidth: 0
-  },
-  hierarchyTriggerTitle: {
-    ...textStyles.body,
-    fontWeight: '700'
   },
   label: {
     ...textStyles.caption,

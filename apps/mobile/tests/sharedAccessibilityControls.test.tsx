@@ -3,6 +3,7 @@ import { act, create } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
 import { ImagePreviewModal } from '@/components/ImagePreviewModal';
+import { FormField } from '@/components/FormField';
 import { RecordPicker } from '@/components/RecordPicker';
 import { Screen } from '@/components/Screen';
 import { Section } from '@/components/Section';
@@ -77,6 +78,22 @@ vi.mock('@/state/networkStatus', () => ({
 }));
 
 describe('shared mobile accessibility controls', () => {
+  it('gives text inputs a visible border and stronger focused state', () => {
+    let renderer: ReturnType<typeof create>;
+    act(() => {
+      renderer = create(
+        <FormField label="Title" onChangeText={vi.fn()} value="" />
+      );
+    });
+
+    const input = renderer!.root.findByType('text-input');
+    expect(input.props.style[0].borderWidth).toBeGreaterThan(1);
+    act(() => {
+      input.props.onFocus();
+    });
+    expect(renderer!.root.findByType('text-input').props.style[1].borderColor).toBe('#E5C76B');
+  });
+
   it('gives a collapsible section a 44pt labeled expanded-state target', () => {
     let renderer: ReturnType<typeof create>;
     act(() => {
@@ -88,6 +105,26 @@ describe('shared mobile accessibility controls', () => {
     expect(toggle.props.accessibilityState).toEqual({ expanded: true });
     expect(toggle.props.style.minHeight).toBeGreaterThanOrEqual(44);
     expect(renderer!.root.findByProps({ accessibilityRole: 'header' })).toBeDefined();
+  });
+
+  it('keeps requested guidance visible while a section is collapsed', () => {
+    let renderer: ReturnType<typeof create>;
+    act(() => {
+      renderer = create(
+        <Section
+          collapsible
+          defaultCollapsed
+          showSubtitleWhenCollapsed
+          subtitle="Continuity guidance"
+          title="Scenes"
+        >
+          Hidden editor
+        </Section>
+      );
+    });
+
+    expect(JSON.stringify(renderer!.toJSON())).toContain('Continuity guidance');
+    expect(JSON.stringify(renderer!.toJSON())).not.toContain('Hidden editor');
   });
 
   it('gives the record picker a named trigger, modal semantics, and a 44pt close target', () => {

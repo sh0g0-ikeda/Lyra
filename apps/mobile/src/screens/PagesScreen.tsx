@@ -28,7 +28,8 @@ import { RecordPicker } from '@/components/RecordPicker';
 import { Screen } from '@/components/Screen';
 import { Section } from '@/components/Section';
 import { SegmentedControl } from '@/components/SegmentedControl';
-import { WorkspaceContextPicker, useWorkspaceContextSelection } from '@/components/WorkspaceContextPicker';
+import { WorkspaceHierarchyNavigator } from '@/components/WorkspaceHierarchyNavigator';
+import { useWorkspaceContextSelection } from '@/components/WorkspaceContextPicker';
 import {
   angleOptions,
   panelAssignmentDefaults,
@@ -1827,6 +1828,19 @@ export function PagesScreen(): React.JSX.Element {
     });
   };
 
+  const previewPage = (pageId: string): void => {
+    const page = pages.find((candidate) => candidate.id === pageId);
+    if (page === undefined) {
+      return;
+    }
+    const source = pageThumbnailImageSourcesFor(page)[0];
+    if (source === undefined) {
+      return;
+    }
+    setPreviewImageHeaders(source.headers);
+    setPreviewImageUri(source.uri);
+  };
+
   const switchPanel = (nextPanelId: string): void => {
     void resolveDirtyEditors(language).then((canLeave) => {
       if (canLeave) {
@@ -2193,9 +2207,7 @@ export function PagesScreen(): React.JSX.Element {
       subtitle={t(language, "generated.screens.PagesScreen.review.each.page.scene.source.layout.and.ddfabd30")}
       title={t(language, 'pages')}
     >
-      <WorkspaceContextPicker
-        context={workspaceContext}
-      />
+      <WorkspaceHierarchyNavigator context={workspaceContext} />
       {!canEdit ? (
         <Notice
           message={t(language, "generated.screens.PagesScreen.this.workspace.is.read.only.for.your.rol.1b79de19")}
@@ -2237,6 +2249,7 @@ export function PagesScreen(): React.JSX.Element {
           onEndReached={() => {
             void pagesQuery.fetchNextPage();
           }}
+          onPreview={previewPage}
           onSelect={switchPage}
           pages={pages}
           selectedId={selection.pageId}
@@ -2291,7 +2304,7 @@ export function PagesScreen(): React.JSX.Element {
         </Section>
       ) : (
         <>
-      <Section collapsible persistKey="pages:style" title={t(language, 'styleReference')}>
+      <Section collapsible defaultCollapsed persistKey="pages:style:v2" title={t(language, 'styleReference')}>
         <FormField editable={canEdit} label={t(language, 'styleReferenceTitle')} maxLength={200} onChangeText={setStyleReferenceTitle} value={styleReferenceTitle} />
         <FormField editable={canEdit} label={t(language, 'styleReferenceNotes')} maxLength={2000} multiline onChangeText={setStyleReferenceNotes} value={styleReferenceNotes} />
         <PrimaryButton disabled={!canEdit || selectedPage === null} disabledReason={!canEdit ? t(language, "generated.screens.PagesScreen.editing.permission.is.required.6d3b86ee") : selectedPage === null ? t(language, "generated.screens.PagesScreen.select.a.page.first.50276876") : undefined} label={t(language, 'save')} loading={updatePageMutation.isPending} onPress={() => updatePageMutation.mutate()} />

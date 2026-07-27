@@ -36,7 +36,8 @@ vi.mock('expo-image', () => ({
 
 vi.mock('lucide-react-native', () => ({
   Circle: (props: Record<string, unknown>) => React.createElement('circle-icon', props),
-  CircleCheck: (props: Record<string, unknown>) => React.createElement('circle-check-icon', props)
+  CircleCheck: (props: Record<string, unknown>) => React.createElement('circle-check-icon', props),
+  ZoomIn: (props: Record<string, unknown>) => React.createElement('zoom-in-icon', props)
 }));
 
 const page = (id: string, pageNumber: number, generated: boolean): PageRecord => ({
@@ -111,6 +112,33 @@ describe('PageThumbnailPicker', () => {
       renderer!.root.findByProps({ accessibilityLabel: 'Page 1, generated' }).props.onPress();
     });
     expect(onSelect).toHaveBeenCalledWith('page-1');
+  });
+
+  it('拡大ボタンでは選択を変えず対象ページだけをプレビューする', () => {
+    const onPreview = vi.fn();
+    const onSelect = vi.fn();
+    let renderer: ReturnType<typeof create>;
+    act(() => {
+      renderer = create(
+        <PageThumbnailPicker
+          emptyLabel="ページなし"
+          imageSourcesFor={() => [{ uri: 'https://cdn.lyra.test/page.png' }]}
+          language="ja"
+          onPreview={onPreview}
+          onSelect={onSelect}
+          pages={[page('page-1', 1, true)]}
+          selectedId={null}
+          statusLabelFor={(status) => status}
+        />
+      );
+    });
+
+    act(() => {
+      renderer!.root.findByProps({ accessibilityLabel: '1ページを拡大表示' }).props.onPress();
+    });
+
+    expect(onPreview).toHaveBeenCalledWith('page-1');
+    expect(onSelect).not.toHaveBeenCalled();
   });
 
   it('一覧末尾で次のページを一度だけ要求できる', () => {

@@ -40,6 +40,7 @@ export function FormField({
   returnKeyType,
   textContentType
 }: FormFieldProps): React.JSX.Element {
+  const [focused, setFocused] = useState(false);
   const [contentHeight, setContentHeight] = useState(multilineMinHeight);
   const multilineHeight = Math.min(multilineMaxHeight, Math.max(multilineMinHeight, contentHeight));
   const onContentSizeChange = (event: NativeSyntheticEvent<TextInputContentSizeChangeEventData>): void => {
@@ -66,14 +67,17 @@ export function FormField({
         keyboardType={keyboardType}
         maxLength={maxLength}
         multiline={multiline}
+        onBlur={() => setFocused(false)}
         onChangeText={onChangeText}
         onContentSizeChange={onContentSizeChange}
+        onFocus={() => setFocused(true)}
         placeholder={placeholder}
         placeholderTextColor={colors.disabled}
         returnKeyType={returnKeyType ?? (multiline ? 'default' : 'done')}
         scrollEnabled={multiline}
         style={[
           styles.input,
+          focused ? styles.inputFocused : null,
           multiline ? styles.multiline : null,
           multiline ? { height: multilineHeight, maxHeight: multilineMaxHeight } : null,
           editable ? null : styles.disabled
@@ -96,16 +100,20 @@ const styles = StyleSheet.create({
     color: colors.muted
   },
   input: {
-    backgroundColor: colors.field,
-    borderColor: 'rgba(229, 199, 107, 0.22)',
+    backgroundColor: colors.controlSurface,
+    borderColor: colors.controlBorder,
     borderRadius: radius.sm,
-    borderWidth: 1,
+    borderWidth: 1.5,
     color: colors.ink,
     fontSize: 15,
     lineHeight: 20,
     minHeight: 48,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm
+  },
+  inputFocused: {
+    backgroundColor: colors.controlSurfaceFocus,
+    borderColor: colors.primary
   },
   disabled: {
     backgroundColor: colors.surfaceAlt,

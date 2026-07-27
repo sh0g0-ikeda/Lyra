@@ -12,6 +12,7 @@ interface SectionProps extends PropsWithChildren {
   collapsible?: boolean;
   defaultCollapsed?: boolean;
   mobileDefaultCollapsed?: boolean;
+  showSubtitleWhenCollapsed?: boolean;
   persistKey?: string;
 }
 
@@ -23,6 +24,7 @@ export function Section({
   collapsible = false,
   defaultCollapsed = false,
   mobileDefaultCollapsed = false,
+  showSubtitleWhenCollapsed = false,
   persistKey,
   children
 }: SectionProps): React.JSX.Element {
@@ -80,7 +82,9 @@ export function Section({
           >
             <View style={styles.headingCopy}>
               <Text accessibilityRole="header" style={[styles.title, tone === 'highlight' ? styles.highlightTitle : null]}>{title}</Text>
-              {subtitle === undefined || collapsed ? null : <Text style={styles.subtitle}>{subtitle}</Text>}
+              {subtitle === undefined || (collapsed && !showSubtitleWhenCollapsed)
+                ? null
+                : <Text style={styles.subtitle}>{subtitle}</Text>}
             </View>
             <Text style={styles.chevron}>{collapsed ? 'v' : '^'}</Text>
           </Pressable>

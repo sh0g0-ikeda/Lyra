@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { FlatList, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
-import { Circle, CircleCheck } from 'lucide-react-native';
+import { Circle, CircleCheck, ZoomIn } from 'lucide-react-native';
 
 import { ResilientImage } from '@/components/ResilientImage';
 import { colors, radius, spacing, textStyles } from '@/constants/theme';
@@ -22,6 +22,7 @@ interface PageThumbnailPickerProps {
   imageSourcesFor: (page: PageRecord) => readonly RemoteImageSource[];
   statusLabelFor: (status: PageRecord['status']) => string;
   onSelect: (pageId: string) => void;
+  onPreview?: (pageId: string) => void;
   hasNextPage?: boolean;
   isFetchingNextPage?: boolean;
   onEndReached?: () => void;
@@ -38,6 +39,7 @@ export function PageThumbnailPicker({
   isFetchingNextPage = false,
   statusLabelFor,
   onEndReached,
+  onPreview,
   onSelect
 }: PageThumbnailPickerProps): React.JSX.Element {
   if (pages.length === 0) {
@@ -77,34 +79,51 @@ export function PageThumbnailPicker({
           const sources =
             page.generated_image === null ? [] : imageSourcesFor(page);
           return (
-            <Pressable
-              accessibilityLabel={label}
-              accessibilityRole="button"
-              accessibilityState={{ selected }}
-              onPress={() => onSelect(page.id)}
-              style={[styles.item, selected ? styles.itemSelected : null]}
-            >
-              <View
-                accessibilityElementsHidden
-                importantForAccessibility="no-hide-descendants"
-                style={styles.selectionIndicator}
+            <View style={[styles.item, selected ? styles.itemSelected : null]}>
+              <Pressable
+                accessibilityLabel={label}
+                accessibilityRole="button"
+                accessibilityState={{ selected }}
+                onPress={() => onSelect(page.id)}
+                style={styles.selectButton}
               >
-                {selected ? (
-                  <CircleCheck color={colors.primary} size={22} strokeWidth={2.4} />
-                ) : (
-                  <Circle color={colors.muted} size={22} strokeWidth={2} />
-                )}
-              </View>
-              <PageThumbnailImage
-                page={page}
-                priority={selected ? 'normal' : 'low'}
-                sources={sources}
-              />
-              <Text numberOfLines={1} style={[styles.pageNumber, selected ? styles.pageNumberSelected : null]}>
-                {t(language, 'component.pageThumbnailPicker.pageNumber', { pageNumber: page.page_number })}
-              </Text>
-              <Text numberOfLines={1} style={styles.status}>{status}</Text>
-            </Pressable>
+                <View
+                  accessibilityElementsHidden
+                  importantForAccessibility="no-hide-descendants"
+                  style={styles.selectionIndicator}
+                >
+                  {selected ? (
+                    <CircleCheck color={colors.primary} size={22} strokeWidth={2.4} />
+                  ) : (
+                    <Circle color={colors.muted} size={22} strokeWidth={2} />
+                  )}
+                </View>
+                <PageThumbnailImage
+                  page={page}
+                  priority={selected ? 'normal' : 'low'}
+                  sources={sources}
+                />
+                <Text numberOfLines={1} style={[styles.pageNumber, selected ? styles.pageNumberSelected : null]}>
+                  {t(language, 'component.pageThumbnailPicker.pageNumber', { pageNumber: page.page_number })}
+                </Text>
+                <Text numberOfLines={1} style={styles.status}>{status}</Text>
+              </Pressable>
+              {sources.length === 0 || onPreview === undefined ? null : (
+                <Pressable
+                  accessibilityLabel={t(
+                    language,
+                    'component.pageThumbnailPicker.preview',
+                    { pageNumber: page.page_number }
+                  )}
+                  accessibilityRole="button"
+                  hitSlop={4}
+                  onPress={() => onPreview(page.id)}
+                  style={styles.previewButton}
+                >
+                  <ZoomIn color={colors.inkStrong} size={19} strokeWidth={2.2} />
+                </Pressable>
+              )}
+            </View>
           );
         }}
         showsHorizontalScrollIndicator={false}
@@ -197,6 +216,20 @@ const styles = StyleSheet.create({
     fontSize: 24,
     fontWeight: '700'
   },
+  previewButton: {
+    alignItems: 'center',
+    backgroundColor: 'rgba(8, 8, 8, 0.88)',
+    borderColor: colors.controlBorder,
+    borderRadius: 4,
+    borderWidth: 1,
+    bottom: 45,
+    height: 34,
+    justifyContent: 'center',
+    position: 'absolute',
+    right: spacing.xs,
+    width: 34,
+    zIndex: 2
+  },
   selectionIndicator: {
     alignItems: 'center',
     backgroundColor: 'rgba(8, 8, 8, 0.82)',
@@ -208,6 +241,9 @@ const styles = StyleSheet.create({
     top: spacing.xs,
     width: 30,
     zIndex: 1
+  },
+  selectButton: {
+    gap: 3
   },
   status: {
     ...textStyles.caption,

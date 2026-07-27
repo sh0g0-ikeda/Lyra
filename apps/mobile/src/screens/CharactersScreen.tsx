@@ -27,7 +27,8 @@ import { ResilientImage } from '@/components/ResilientImage';
 import { Screen } from '@/components/Screen';
 import { Section } from '@/components/Section';
 import { SegmentedControl } from '@/components/SegmentedControl';
-import { WorkspaceContextPicker, useWorkspaceContextSelection } from '@/components/WorkspaceContextPicker';
+import { WorkspaceHierarchyNavigator } from '@/components/WorkspaceHierarchyNavigator';
+import { useWorkspaceContextSelection } from '@/components/WorkspaceContextPicker';
 import { entityTypes, type LabelOption } from '@/constants/options';
 import { characterContinuityStateUiEnabled } from '@/constants/mobileFeatureVisibility';
 import { colors, spacing, textStyles } from '@/constants/theme';
@@ -2555,7 +2556,7 @@ export function CharactersScreen(): React.JSX.Element {
       subtitle={t(language, "generated.screens.CharactersScreen.create.characters.import.visual.traits.a.bae42b0d")}
       title={t(language, 'characters')}
     >
-      <WorkspaceContextPicker context={workspaceContext} />
+      <WorkspaceHierarchyNavigator context={workspaceContext} />
       {!canEdit ? (
         <Notice
           message={t(language, "generated.screens.CharactersScreen.you.can.view.characters.in.this.workspac.f7a74880")}
@@ -2652,6 +2653,48 @@ export function CharactersScreen(): React.JSX.Element {
         />
         <FormField label={t(language, 'name')} maxLength={100} onChangeText={setName} value={name} />
         <SegmentedControl onChange={setEntityType} options={typeOptions} value={entityType} />
+        <View
+          onLayout={recordSectionOffset('import')}
+          style={styles.inlineImport}
+        >
+          <Text style={styles.groupTitle}>{t(language, 'imageImport')}</Text>
+          <Text style={styles.caption}>
+            {t(language, "generated.screens.CharactersScreen.import.a.character.image.so.its.appearan.ed76afc3")}
+          </Text>
+          <Notice
+            message={t(language, "generated.screens.CharactersScreen.choose.jpeg.png.or.webp.large.images.can.2bf9c35d")}
+            tone="info"
+          />
+          <PrimaryButton
+            disabled={!canGenerate || activeWorkId === null}
+            disabledReason={
+              !canGenerate
+                ? t(language, "generated.screens.CharactersScreen.generation.permission.is.required.1bc5b7af")
+                : activeWorkId === null
+                  ? t(language, "generated.screens.CharactersScreen.select.a.work.first.1219842f")
+                  : undefined
+            }
+            label={t(language, 'imageImport')}
+            loading={importImageMutation.isPending}
+            onPress={() => importImageMutation.mutate('select')}
+          />
+          <EntityReferenceUploadStatus
+            error={
+              importImageMutation.error instanceof DirectEntityUploadError
+                ? importImageMutation.error
+                : null
+            }
+            isPending={importImageMutation.isPending}
+            language={language}
+            onCancel={() => entityReferenceUploadAbortController.current?.abort()}
+            onRetry={() => importImageMutation.mutate('retry')}
+            progress={entityReferenceUploadProgress}
+            stage={entityReferenceUploadStage}
+          />
+          {importResult === null ? null : (
+            <Notice message={t(language, "generated.screens.CharactersScreen.suggested.fields.were.applied.to.the.for.1570bad8")} tone="info" />
+          )}
+        </View>
         <View style={styles.metricsGrid}>
           <View style={styles.metricCard}>
             <Text style={styles.caption}>{t(language, "generated.screens.CharactersScreen.required.64cf5d7a")}</Text>
@@ -2743,44 +2786,6 @@ export function CharactersScreen(): React.JSX.Element {
           <FormField label={t(language, "generated.screens.CharactersScreen.catchphrase.16b47ba7")} onChangeText={(value) => setSpeechValue('catchphrase', value)} value={speechDraft.catchphrase ?? ''} />
           <FormField label={t(language, "generated.screens.CharactersScreen.speech.notes.5a43c77a")} multiline onChangeText={(value) => setSpeechValue('speech_notes', value)} value={speechDraft.speech_notes ?? ''} />
         </CollapsibleGroup>
-        </Section>
-      </View>
-
-      <View onLayout={recordSectionOffset('import')}>
-        <Section collapsible persistKey="characters:image-import" subtitle={t(language, "generated.screens.CharactersScreen.import.a.character.image.so.its.appearan.ed76afc3")} title={t(language, 'imageImport')} tone="highlight">
-        <Notice
-          message={t(language, "generated.screens.CharactersScreen.choose.jpeg.png.or.webp.large.images.can.2bf9c35d")}
-          tone="info"
-        />
-        <PrimaryButton
-          disabled={!canGenerate || activeWorkId === null}
-          disabledReason={
-            !canGenerate
-              ? t(language, "generated.screens.CharactersScreen.generation.permission.is.required.1bc5b7af")
-              : activeWorkId === null
-                ? t(language, "generated.screens.CharactersScreen.select.a.work.first.1219842f")
-                : undefined
-          }
-          label={t(language, 'imageImport')}
-          loading={importImageMutation.isPending}
-          onPress={() => importImageMutation.mutate('select')}
-        />
-        <EntityReferenceUploadStatus
-          error={
-            importImageMutation.error instanceof DirectEntityUploadError
-              ? importImageMutation.error
-              : null
-          }
-          isPending={importImageMutation.isPending}
-          language={language}
-          onCancel={() => entityReferenceUploadAbortController.current?.abort()}
-          onRetry={() => importImageMutation.mutate('retry')}
-          progress={entityReferenceUploadProgress}
-          stage={entityReferenceUploadStage}
-        />
-        {importResult === null ? null : (
-          <Notice message={t(language, "generated.screens.CharactersScreen.suggested.fields.were.applied.to.the.for.1570bad8")} tone="info" />
-        )}
         </Section>
       </View>
 
@@ -3099,7 +3104,7 @@ const styles = StyleSheet.create({
   },
   choiceModalSheet: {
     backgroundColor: colors.surface,
-    borderColor: colors.border,
+    borderColor: colors.controlBorder,
     borderRadius: 8,
     borderWidth: 1,
     gap: spacing.md,
@@ -3113,7 +3118,8 @@ const styles = StyleSheet.create({
   },
   choiceOption: {
     alignItems: 'center',
-    borderColor: colors.border,
+    backgroundColor: colors.controlSurface,
+    borderColor: colors.controlBorder,
     borderRadius: 8,
     borderWidth: 1,
     flexDirection: 'row',
@@ -3157,10 +3163,10 @@ const styles = StyleSheet.create({
   },
   choiceTrigger: {
     alignItems: 'center',
-    backgroundColor: colors.field,
-    borderColor: colors.border,
+    backgroundColor: colors.controlSurface,
+    borderColor: colors.controlBorder,
     borderRadius: 6,
-    borderWidth: 1,
+    borderWidth: 1.5,
     flexDirection: 'row',
     gap: spacing.sm,
     minHeight: 44,
@@ -3228,6 +3234,12 @@ const styles = StyleSheet.create({
     minWidth: 0,
     color: colors.primary,
     fontWeight: '700'
+  },
+  inlineImport: {
+    borderTopColor: colors.controlBorder,
+    borderTopWidth: 1,
+    gap: spacing.sm,
+    paddingTop: spacing.md
   },
   label: {
     ...textStyles.caption,

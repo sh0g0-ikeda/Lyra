@@ -14,7 +14,7 @@ describe('MOB-ENTITY-002 latest character UI contract', () => {
       'persistKey="characters:list"',
       "label={t(language, 'name')}",
       '<SegmentedControl onChange={setEntityType}',
-      'persistKey="characters:image-import"',
+      "onLayout={recordSectionOffset('import')}",
       'persistKey="characters:description-save"',
       'persistKey="characters:reference-set"'
     ];
@@ -39,7 +39,7 @@ describe('MOB-ENTITY-002 latest character UI contract', () => {
     const translations = readSource('src/lib/i18nGenerated.ts');
 
     expect(translations).toContain(
-      '手元のキャラクター画像を取り込むと、その見た目を参考に漫画へ登場させられます'
+      '手元のキャラクター画像をアップロードすると、その見た目を参考にLyraの漫画へ登場させられます。'
     );
     expect(translations).toContain(
       '選択肢にない特徴や、特別に守りたい条件を書いてください'

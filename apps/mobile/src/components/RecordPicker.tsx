@@ -277,8 +277,8 @@ const styles = StyleSheet.create({
   },
   radioOption: {
     alignItems: 'center',
-    backgroundColor: colors.field,
-    borderColor: colors.border,
+    backgroundColor: colors.controlSurface,
+    borderColor: colors.controlBorder,
     borderRadius: radius.sm,
     borderWidth: 1,
     flexDirection: 'row',
@@ -304,10 +304,10 @@ const styles = StyleSheet.create({
     borderColor: colors.primary
   },
   search: {
-    backgroundColor: colors.field,
-    borderColor: colors.border,
+    backgroundColor: colors.controlSurface,
+    borderColor: colors.controlBorder,
     borderRadius: radius.sm,
-    borderWidth: 1,
+    borderWidth: 1.5,
     color: colors.ink,
     fontSize: 14,
     minHeight: 44,
@@ -320,10 +320,10 @@ const styles = StyleSheet.create({
   },
   trigger: {
     alignItems: 'center',
-    backgroundColor: colors.field,
-    borderColor: colors.border,
+    backgroundColor: colors.controlSurface,
+    borderColor: colors.controlBorder,
     borderRadius: radius.sm,
-    borderWidth: 1,
+    borderWidth: 1.5,
     flexDirection: 'row',
     gap: spacing.sm,
     minHeight: 48,
