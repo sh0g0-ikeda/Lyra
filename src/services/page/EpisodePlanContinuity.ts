@@ -15,7 +15,11 @@ import type {
   EpisodePagePlanPageSuggestion,
   EpisodePagePlanSuggestion,
 } from '../../domain/types/page.js';
-import type { EpisodeBeatPlan, EpisodeBeatPlanPage } from './EpisodeBeatPlanCompiler.js';
+import type {
+  EpisodeBeatPlan,
+  EpisodeBeatPlanOutline,
+  EpisodeBeatPlanPage,
+} from './EpisodeBeatPlanCompiler.js';
 import type { EpisodePlanAuditIssue } from './EpisodePlanAuditCompiler.js';
 
 const STORY_BEAT_DUPLICATE_MIN_NORMALIZED_CHARS = 8;
@@ -50,6 +54,97 @@ export function buildEpisodeBeatPlanCompilerBrief(
   context: EpisodePagePlanContext,
   language: AppLanguage,
 ): string {
+  const pageLines = formatEpisodeBeatPlanPageReferences(context.pages);
+
+  return [
+    '[PURPOSE]',
+    'Create a single binding story-beat ledger before page chunks are compiled.',
+    `Output language: ${language === 'en' ? 'English' : 'Japanese'}`,
+    '',
+    ...buildEpisodeBeatPlanSourceSections(context),
+    '',
+    '[CURRENT PAGES]',
+    pageLines.join('\n'),
+    '',
+    '[BINDING RULES]',
+    'Return exactly one plan entry for each CURRENT PAGES reference, preserving its page ID and page number; frame_count is planning capacity and is not an output field.',
+    'Assign each meaningful story event, discovery, reaction, and explanation to one page only.',
+    'Entry state for page N must agree with exit state and handoff from the preceding page.',
+    'Reserve later beats for later pages; do not spend climax or ending information early.',
+  ].join('\n');
+}
+
+export function buildEpisodeBeatPlanOutlineCompilerBrief(
+  context: EpisodePagePlanContext,
+  language: AppLanguage,
+): string {
+  return [
+    '[PURPOSE]',
+    'Create a compact global story outline that reserves one movement for every page before detailed ledgers are compiled.',
+    `Output language: ${language === 'en' ? 'English' : 'Japanese'}`,
+    '',
+    ...buildEpisodeBeatPlanSourceSections(context),
+    '',
+    '[ALL PAGES]',
+    ...formatEpisodeBeatPlanPageReferences(context.pages),
+    '',
+    '[BINDING RULES]',
+    'Return exactly one outline entry for every ALL PAGES reference, preserving its page ID and page number.',
+    'Reserve the story in chronological order and do not use later discoveries, climax, or ending hook early.',
+  ].join('\n');
+}
+
+export function buildEpisodeBeatPlanSegmentCompilerBrief(input: {
+  context: EpisodePagePlanContext;
+  language: AppLanguage;
+  outline: EpisodeBeatPlanOutline;
+  targetPages: EpisodePagePlanContext['pages'];
+  completedPages: EpisodeBeatPlanPage[];
+}): string {
+  const targetPageIds = new Set(input.targetPages.map((page) => page.pageId));
+  const finalTargetPageNumber = Math.max(...input.targetPages.map((page) => page.pageNumber));
+  const previousPages = [...input.completedPages]
+    .sort(compareBeatPlanPages)
+    .slice(-2);
+  const futureOutlinePages = [...input.outline.pages]
+    .sort(compareOutlinePages)
+    .filter(
+      (page) =>
+        !targetPageIds.has(page.pageId) &&
+        page.pageNumber > finalTargetPageNumber,
+    );
+
+  return [
+    '[PURPOSE]',
+    'Create the detailed binding story-beat ledger for TARGET PAGES only.',
+    `Output language: ${input.language === 'en' ? 'English' : 'Japanese'}`,
+    '',
+    ...buildEpisodeBeatPlanSourceSections(input.context),
+    '',
+    '[GLOBAL EPISODE OUTLINE]',
+    ...[...input.outline.pages].sort(compareOutlinePages).map(formatOutlinePage),
+    '',
+    '[ALREADY PLANNED LEDGER]',
+    ...(previousPages.length > 0
+      ? previousPages.map((page) => formatBeatPlanPage(page, LEDGER_FIELD_MAX_CHARS))
+      : ['(none)']),
+    '',
+    '[TARGET PAGES]',
+    ...formatEpisodeBeatPlanPageReferences(input.targetPages),
+    '',
+    '[FUTURE RESERVED PAGES]',
+    ...(futureOutlinePages.length > 0
+      ? futureOutlinePages.map(formatOutlinePage)
+      : ['(none)']),
+    '',
+    '[BINDING RULES]',
+    'Return exactly one detailed ledger entry for each TARGET PAGES reference, preserving its page ID and page number.',
+    'Follow the GLOBAL EPISODE OUTLINE. Do not spend FUTURE RESERVED PAGES early.',
+    'Continue from ALREADY PLANNED LEDGER without restarting, rewinding, or repeating an event.',
+  ].join('\n');
+}
+
+function buildEpisodeBeatPlanSourceSections(context: EpisodePagePlanContext): string[] {
   const entities = buildCanonicalEntityReferences(context);
   const entityNames = new Map(context.entities.map((entity) => [entity.id, entity.name] as const));
   const canonicalize = (
@@ -96,15 +191,8 @@ export function buildEpisodeBeatPlanCompilerBrief(
   if (context.chapter.keyBeats.length > keyBeats.length) {
     keyBeats.push(`... (${context.chapter.keyBeats.length - keyBeats.length} more beats)`);
   }
-  const pageLines = [...context.pages]
-    .sort(compareContextPages)
-    .map((page) => `Page ${page.pageNumber} (${page.pageId}) | frame_count=${page.frameCount}`);
 
   return [
-    '[PURPOSE]',
-    'Create a single binding story-beat ledger before page chunks are compiled.',
-    `Output language: ${language === 'en' ? 'English' : 'Japanese'}`,
-    '',
     '[CHAPTER]',
     `Title: ${canonicalize(context.chapter.title)}`,
     `Purpose: ${canonicalize(context.chapter.purpose, EPISODE_ARC_FIELD_MAX_CHARS)}`,
@@ -126,16 +214,15 @@ export function buildEpisodeBeatPlanCompilerBrief(
     '',
     '[AVAILABLE ENTITIES]',
     availableEntities.join('\n') || '(none)',
-    '',
-    '[CURRENT PAGES]',
-    pageLines.join('\n'),
-    '',
-    '[BINDING RULES]',
-    'Return exactly one plan entry for each CURRENT PAGES reference, preserving its page ID and page number; frame_count is planning capacity and is not an output field.',
-    'Assign each meaningful story event, discovery, reaction, and explanation to one page only.',
-    'Entry state for page N must agree with exit state and handoff from the preceding page.',
-    'Reserve later beats for later pages; do not spend climax or ending information early.',
-  ].join('\n');
+  ];
+}
+
+function formatEpisodeBeatPlanPageReferences(
+  pages: EpisodePagePlanContext['pages'],
+): string[] {
+  return [...pages]
+    .sort(compareContextPages)
+    .map((page) => `Page ${page.pageNumber} (${page.pageId}) | frame_count=${page.frameCount}`);
 }
 
 export function validateEpisodeBeatPlanCoverage(
@@ -178,6 +265,32 @@ export function validateEpisodeBeatPlanCoverage(
       }
       storyBeatOwners.set(normalized, page.pageId);
     }
+  }
+}
+
+export function validateEpisodeBeatPlanOutlineCoverage(
+  context: EpisodePagePlanContext,
+  outline: EpisodeBeatPlanOutline,
+): void {
+  const expected = new Map(
+    context.pages.map((page) => [page.pageId, page.pageNumber] as const),
+  );
+  const seen = new Set<string>();
+
+  for (const page of outline.pages) {
+    const expectedPageNumber = expected.get(page.pageId);
+    if (expectedPageNumber === undefined || expectedPageNumber !== page.pageNumber || seen.has(page.pageId)) {
+      throw new ConfigurationError(
+        'Episode beat plan outline must assign every existing page exactly once with its current page number',
+      );
+    }
+    seen.add(page.pageId);
+  }
+
+  if (seen.size !== expected.size) {
+    throw new ConfigurationError(
+      'Episode beat plan outline must assign every existing page exactly once with its current page number',
+    );
   }
 }
 
@@ -472,6 +585,14 @@ function formatBeatPlanPage(page: EpisodeBeatPlanPage, fieldMaxChars: number): s
   ].join(' | ');
 }
 
+function formatOutlinePage(page: EpisodeBeatPlanOutline['pages'][number]): string {
+  return [
+    `Page ${page.pageNumber} (${page.pageId}):`,
+    `anchor=${truncatePromptText(page.storyAnchor, 45)}`,
+    `transition=${truncatePromptText(page.reservedTransition, 60)}`,
+  ].join(' | ');
+}
+
 // Current ownership is the binding contract for the detail compiler. Keep every
 // schema-valid beat here while retaining compact summaries for global/future pages.
 function formatOwnedBeatPlanPage(page: EpisodeBeatPlanPage): string {
@@ -752,6 +873,13 @@ function compareContextPages(
 }
 
 function compareBeatPlanPages(left: EpisodeBeatPlanPage, right: EpisodeBeatPlanPage): number {
+  return left.pageNumber - right.pageNumber || left.pageId.localeCompare(right.pageId);
+}
+
+function compareOutlinePages(
+  left: EpisodeBeatPlanOutline['pages'][number],
+  right: EpisodeBeatPlanOutline['pages'][number],
+): number {
   return left.pageNumber - right.pageNumber || left.pageId.localeCompare(right.pageId);
 }
 

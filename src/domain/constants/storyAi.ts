@@ -19,6 +19,18 @@ export const STORY_AI_LIMITS = {
   maxStreamingChars: 24000,
 } as const;
 
+// The global episode ledger is an internal planning artifact. Keep its text
+// bounded independently from editable page and panel fields so a large episode
+// cannot exhaust a single structured-output response.
+export const EPISODE_BEAT_PLAN_TEXT_LIMITS = {
+  storyBeatChars: 45,
+  entryExitChars: 60,
+  newInformationChars: 45,
+  maxNewInformationItems: 2,
+  dialogueIntentChars: 60,
+  handoffChars: 60,
+} as const;
+
 export const STORY_COLLABORATION_MAX_TOKENS = 3000;
 export const PAGE_SKELETON_MAX_TOKENS = 12000;
 export const STORY_EPISODE_IMPROVEMENT_WRITER_MAX_TOKENS = 3200;

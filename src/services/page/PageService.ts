@@ -13,7 +13,10 @@ import {
 import type { AppLanguage } from '../../domain/types/language.js';
 import { STORY_PROMPT_CONTEXT_LIMITS } from '../../domain/storyPromptCompaction.js';
 import { STORY_AI_LIMITS } from '../../domain/constants/storyAi.js';
-import { packEpisodePlanPages } from '../../domain/episodePlanPacking.js';
+import {
+  packEpisodeBeatPlanLedgerPages,
+  packEpisodePlanPages,
+} from '../../domain/episodePlanPacking.js';
 import {
   buildPanelFrameTemplateInputs,
   resolveDefaultPanelFrameTemplateId,
@@ -41,7 +44,14 @@ import { resolveStyleReferenceForPersistence } from '../style/styleReferencePers
 import type { PanelEntityAssignmentServicePort } from './PanelEntityAssignmentService.js';
 import type { PageAutofillCompilerPort } from './PageAutofillCompiler.js';
 import type { EpisodePagePlanCompilerPort } from './EpisodePagePlanCompiler.js';
-import type { EpisodeBeatPlanCompilerPort } from './EpisodeBeatPlanCompiler.js';
+import {
+  EpisodeBeatPlanOutputLimitError,
+  type CompiledEpisodeBeatPlan,
+  type EpisodeBeatPlanCompilerPort,
+  type EpisodeBeatPlanOutline,
+  type EpisodeBeatPlanOutlineCompilerPort,
+  type EpisodeBeatPlanPage,
+} from './EpisodeBeatPlanCompiler.js';
 import type {
   EpisodePlanPersistencePort,
   EpisodePlanPersistenceResources,
@@ -57,12 +67,15 @@ import {
 } from './EpisodePlanReviewRepair.js';
 import {
   buildEpisodeBeatPlanCompilerBrief,
+  buildEpisodeBeatPlanOutlineCompilerBrief,
+  buildEpisodeBeatPlanSegmentCompilerBrief,
   buildEpisodeDetailContinuitySupplement,
   buildEpisodePlanAuditBrief,
   detectDeterministicContinuityIssues,
   fingerprintEpisodePlanningContext,
   mergeEpisodePlanAuditIssues,
   validateEpisodeBeatPlanCoverage,
+  validateEpisodeBeatPlanOutlineCoverage,
 } from './EpisodePlanContinuity.js';
 
 export interface PageServicePort {
@@ -153,7 +166,8 @@ export class PageService implements PageServicePort {
     private readonly pageAutofillCompiler?: PageAutofillCompilerPort,
     private readonly episodePagePlanCompiler?: EpisodePagePlanCompilerPort,
     private readonly styleReferenceCompiler?: StyleReferenceCompilerPort,
-    private readonly episodeBeatPlanCompiler?: EpisodeBeatPlanCompilerPort,
+    private readonly episodeBeatPlanCompiler?:
+      EpisodeBeatPlanCompilerPort & Partial<EpisodeBeatPlanOutlineCompilerPort>,
     private readonly episodePlanAuditCompiler?: EpisodePlanAuditCompilerPort,
     private readonly episodePlanContinuityV3Enabled = false,
     private readonly episodePlanReliabilityOptions: EpisodePlanReliabilityOptions = {},
@@ -687,10 +701,11 @@ export class PageService implements PageServicePort {
       currentChunk: null,
       totalChunks: null,
     });
-    const compiledBeatPlan = await this.episodeBeatPlanCompiler.compileBeatPlan({
-      compilerBrief: buildEpisodeBeatPlanCompilerBrief(context, language),
+    const compiledBeatPlan = await this.compileEpisodeBeatPlanWithCapacity(
+      context,
       language,
-    });
+      progressReporter,
+    );
     validateEpisodeBeatPlanCoverage(context, compiledBeatPlan.plan);
 
     const pageChunks = this.buildEpisodePlanPagePacks(context);
@@ -826,6 +841,160 @@ export class PageService implements PageServicePort {
     }
 
     return combined;
+  }
+
+  private async compileEpisodeBeatPlanWithCapacity(
+    context: EpisodePagePlanContext,
+    language: AppLanguage,
+    progressReporter: EpisodePagePlanProgressReporter | undefined,
+  ): Promise<CompiledEpisodeBeatPlan> {
+    const packs = packEpisodeBeatPlanLedgerPages(context.pages);
+    if (packs.length > 1) {
+      return this.compileSegmentedEpisodeBeatPlan(
+        context,
+        language,
+        packs,
+        progressReporter,
+      );
+    }
+
+    try {
+      return await this.episodeBeatPlanCompiler!.compileBeatPlan({
+        compilerBrief: buildEpisodeBeatPlanCompilerBrief(context, language),
+        language,
+      });
+    } catch (error) {
+      if (!(error instanceof EpisodeBeatPlanOutputLimitError) || context.pages.length <= 1) {
+        throw error;
+      }
+
+      console.info('episode_beat_plan_capacity_fallback_started', {
+        episodeId: context.episodeId,
+        pageCount: context.pages.length,
+        reason: 'structured_output_limit',
+      });
+      return this.compileSegmentedEpisodeBeatPlan(
+        context,
+        language,
+        splitEpisodeBeatPlanPages(context.pages),
+        progressReporter,
+      );
+    }
+  }
+
+  private async compileSegmentedEpisodeBeatPlan(
+    context: EpisodePagePlanContext,
+    language: AppLanguage,
+    initialPacks: EpisodePagePlanContext['pages'][],
+    progressReporter: EpisodePagePlanProgressReporter | undefined,
+  ): Promise<CompiledEpisodeBeatPlan> {
+    const outlineCompiler = this.episodeBeatPlanCompiler?.compileOutline;
+    if (outlineCompiler === undefined) {
+      throw new ConfigurationError('Episode beat plan outline compiler is not configured');
+    }
+
+    await reportEpisodePlanProgress(progressReporter, {
+      stage: 'planning_episode',
+      message: 'Planning a compact outline for the full episode. This process can take around 20 minutes.',
+      currentChunk: null,
+      totalChunks: initialPacks.length,
+    });
+    const compiledOutline = await outlineCompiler.call(this.episodeBeatPlanCompiler, {
+      compilerBrief: buildEpisodeBeatPlanOutlineCompilerBrief(context, language),
+      language,
+    });
+    validateEpisodeBeatPlanOutlineCoverage(context, compiledOutline.outline);
+
+    console.info('episode_beat_plan_segmented_started', {
+      episodeId: context.episodeId,
+      pageCount: context.pages.length,
+      packCount: initialPacks.length,
+    });
+
+    const compiledPacks: CompiledEpisodeBeatPlan[] = [];
+    let completedPages: EpisodeBeatPlanPage[] = [];
+    for (const [packIndex, pages] of initialPacks.entries()) {
+      const compiledSegments = await this.compileEpisodeBeatPlanSegmentWithFallback({
+        context,
+        language,
+        outline: compiledOutline.outline,
+        pages,
+        completedPages,
+        progressReporter,
+        currentChunk: packIndex + 1,
+        totalChunks: initialPacks.length,
+      });
+      compiledPacks.push(...compiledSegments);
+      completedPages = compiledPacks.flatMap((compiled) => compiled.plan.pages);
+    }
+
+    return combineCompiledEpisodeBeatPlans(compiledPacks);
+  }
+
+  private async compileEpisodeBeatPlanSegmentWithFallback(input: {
+    context: EpisodePagePlanContext;
+    language: AppLanguage;
+    outline: EpisodeBeatPlanOutline;
+    pages: EpisodePagePlanContext['pages'];
+    completedPages: EpisodeBeatPlanPage[];
+    progressReporter: EpisodePagePlanProgressReporter | undefined;
+    currentChunk: number | null;
+    totalChunks: number | null;
+  }): Promise<CompiledEpisodeBeatPlan[]> {
+    await reportEpisodePlanProgress(input.progressReporter, {
+      stage: 'planning_episode',
+      message: 'Planning story beats across the episode. This process can take around 20 minutes.',
+      currentChunk: input.currentChunk,
+      totalChunks: input.totalChunks,
+    });
+
+    try {
+      const compiled = await this.episodeBeatPlanCompiler!.compileBeatPlan({
+        compilerBrief: buildEpisodeBeatPlanSegmentCompilerBrief({
+          context: input.context,
+          language: input.language,
+          outline: input.outline,
+          targetPages: input.pages,
+          completedPages: input.completedPages,
+        }),
+        language: input.language,
+      });
+      validateEpisodeBeatPlanCoverage(
+        buildEpisodePlanChunkContext(input.context, input.pages),
+        compiled.plan,
+      );
+      return [compiled];
+    } catch (error) {
+      if (!(error instanceof EpisodeBeatPlanOutputLimitError) || input.pages.length <= 1) {
+        throw error;
+      }
+
+      const [firstPages, secondPages] = splitEpisodeBeatPlanPages(input.pages);
+      console.info('episode_beat_plan_segment_split_for_capacity', {
+        episodeId: input.context.episodeId,
+        originalPageCount: input.pages.length,
+        firstPageCount: firstPages.length,
+        secondPageCount: secondPages.length,
+      });
+      const firstSegments = await this.compileEpisodeBeatPlanSegmentWithFallback({
+        ...input,
+        pages: firstPages,
+        currentChunk: null,
+        totalChunks: null,
+      });
+      const firstCompletedPages = [
+        ...input.completedPages,
+        ...firstSegments.flatMap((compiled) => compiled.plan.pages),
+      ];
+      const secondSegments = await this.compileEpisodeBeatPlanSegmentWithFallback({
+        ...input,
+        pages: secondPages,
+        completedPages: firstCompletedPages,
+        currentChunk: null,
+        totalChunks: null,
+      });
+      return [...firstSegments, ...secondSegments];
+    }
   }
 
   private async reviewAndRepairEpisodePlanInline(
@@ -1456,6 +1625,34 @@ function combineEpisodePlanExecutionResults(
     ),
     compilerError: null,
   };
+}
+
+function combineCompiledEpisodeBeatPlans(
+  results: CompiledEpisodeBeatPlan[],
+): CompiledEpisodeBeatPlan {
+  const first = results[0];
+  if (first === undefined) {
+    throw new ConfigurationError('Episode beat plan compiler returned no packs');
+  }
+
+  return {
+    plan: {
+      pages: results.flatMap((result) => result.plan.pages),
+    },
+    compilerProvider: 'openai',
+    compilerModel: mergeCompilerMetadata(results.map((result) => result.compilerModel)) ?? first.compilerModel,
+    compilerPromptVersion:
+      mergeCompilerMetadata(results.map((result) => result.compilerPromptVersion)) ??
+      first.compilerPromptVersion,
+  };
+}
+
+function splitEpisodeBeatPlanPages<TPage>(pages: readonly TPage[]): [TPage[], TPage[]] {
+  if (pages.length < 2) {
+    throw new ConfigurationError('Episode beat plan pack cannot be split');
+  }
+  const midpoint = Math.ceil(pages.length / 2);
+  return [pages.slice(0, midpoint), pages.slice(midpoint)];
 }
 
 function preserveUnreportedRepairPages(
