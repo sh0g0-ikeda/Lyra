@@ -43,7 +43,10 @@ import {
   panelSizeOptions,
   shotTypeOptions
 } from '@/constants/options';
-import { panelCharacterStateOverrideUiEnabled } from '@/constants/mobileFeatureVisibility';
+import {
+  pageLayoutEditingUiEnabled,
+  panelCharacterStateOverrideUiEnabled
+} from '@/constants/mobileFeatureVisibility';
 import { colors, spacing, textStyles } from '@/constants/theme';
 import {
   editorDraftHasUnsavedChanges,
@@ -843,6 +846,7 @@ export function PagesScreen(): React.JSX.Element {
   );
 
   const pageLayoutTemplatesQuery = useQuery({
+    enabled: pageLayoutEditingUiEnabled,
     queryKey: pageLayoutTemplatesQueryKey(sessionKey),
     queryFn: () => api.getPageLayoutTemplates()
   });
@@ -2024,7 +2028,7 @@ export function PagesScreen(): React.JSX.Element {
   });
   const pageLayoutTemplatesError = supportingQueryError({
     data: pageLayoutTemplatesQuery.data,
-    enabled: true,
+    enabled: pageLayoutEditingUiEnabled,
     error: pageLayoutTemplatesQuery.error
   });
   const pageGenerationReadinessError = supportingQueryError({
@@ -2221,7 +2225,7 @@ export function PagesScreen(): React.JSX.Element {
           language={language}
           onAccount={() => navigateAfterDirtyCheck('Account')}
           onCharacters={() => navigateAfterDirtyCheck('Characters')}
-          onLayout={() => setTemplateModalVisible(true)}
+          onLayout={pageLayoutEditingUiEnabled ? () => setTemplateModalVisible(true) : undefined}
           onLogin={() => {
             void resolveDirtyEditors(language).then((canLeave) => {
               if (canLeave) {
@@ -2342,6 +2346,8 @@ export function PagesScreen(): React.JSX.Element {
         />
       </Section>
 
+      {pageLayoutEditingUiEnabled ? (
+        <>
       <Section
         collapsible
         persistKey="pages:template"
@@ -2513,6 +2519,8 @@ export function PagesScreen(): React.JSX.Element {
           </>
         )}
       </Section>
+        </>
+      ) : null}
 
       <Section
         collapsible
@@ -2832,7 +2840,9 @@ export function PagesScreen(): React.JSX.Element {
         {readiness?.blockers.map((blocker, index) => {
           const recoveryTarget = pageGenerationBlockerRecoveryTarget(blocker.code);
           const actionLabel =
-            recoveryTarget === null
+            recoveryTarget === 'layout' && !pageLayoutEditingUiEnabled
+              ? null
+              : recoveryTarget === null
               ? generationBlockerActionLabel(blocker, language)
               : errorRecoveryActionLabel(recoveryTarget, language);
           return (
@@ -2850,12 +2860,20 @@ export function PagesScreen(): React.JSX.Element {
         })}
         {selectedPage !== null && framePanelMismatch ? (
           <Notice
-            actionLabel={errorRecoveryActionLabel('layout', language)}
+            actionLabel={
+              pageLayoutEditingUiEnabled
+                ? errorRecoveryActionLabel('layout', language)
+                : undefined
+            }
             message={t(language, 'screen.pages.framePanelMismatch', {
               frameCount: frameDrafts.length,
               panelCount: panelsQuery.data?.panels.length ?? 0
             })}
-            onAction={() => setTemplateModalVisible(true)}
+            onAction={
+              pageLayoutEditingUiEnabled
+                ? () => setTemplateModalVisible(true)
+                : undefined
+            }
             tone="warning"
           />
         ) : null}

@@ -1,6 +1,6 @@
 import React from 'react';
 import { act, create } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import App from '@/App';
 import { ApiError } from '@/lib/api';
@@ -13,6 +13,10 @@ const mocks = vi.hoisted(() => {
   };
   return {
     refetch: vi.fn().mockResolvedValue({ data: refreshedSession }),
+    logout: vi.fn().mockResolvedValue(undefined),
+    sessionRecoveryProps: null as {
+      onSignInAgain: () => Promise<void>;
+    } | null,
     setSession: vi.fn(),
     refreshedSession,
     useQuery: vi.fn()
@@ -73,8 +77,13 @@ vi.mock('@/components/Screen', () => ({
 }));
 
 vi.mock('@/components/SessionBootstrapRecovery', () => ({
-  SessionBootstrapRecovery: ({ onRetry }: { onRetry: () => Promise<void> }) =>
-    React.createElement('button', { onClick: onRetry }, 'Retry')
+  SessionBootstrapRecovery: (props: {
+    onRetry: () => Promise<void>;
+    onSignInAgain: () => Promise<void>;
+  }) => {
+    mocks.sessionRecoveryProps = props;
+    return React.createElement('button', { onClick: props.onRetry }, 'Retry');
+  }
 }));
 
 vi.mock('@/components/UnsavedChangesResolutionDialog', () => ({
@@ -102,7 +111,7 @@ vi.mock('@/state/appState', () => ({
     api: { getCurrentSession: vi.fn() },
     hydrated: true,
     language: 'en',
-    logout: vi.fn().mockResolvedValue(undefined),
+    logout: mocks.logout,
     sessionKey: 'session-1',
     setSession: mocks.setSession,
     tokens: { accessToken: null, expiresAt: null, idToken: 'token', refreshToken: 'refresh', tokenType: null },
@@ -113,6 +122,33 @@ vi.mock('@/state/appState', () => ({
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 describe('session bootstrap retry', () => {
+  beforeEach(() => {
+    mocks.refetch.mockClear();
+    mocks.logout.mockClear();
+    mocks.sessionRecoveryProps = null;
+    mocks.setSession.mockClear();
+    mocks.useQuery.mockReset();
+  });
+
+  it('取得済みsessionがある場合は再取得の429でもメインタブを維持する', async () => {
+    mocks.useQuery.mockReturnValue({
+      data: mocks.refreshedSession,
+      error: new ApiError('safe error', 429, 'RATE_LIMITED'),
+      isError: true,
+      isFetching: false,
+      isLoading: false,
+      refetch: mocks.refetch
+    });
+
+    let tree: ReturnType<typeof create>;
+    await act(async () => {
+      tree = create(<App />);
+    });
+
+    expect(tree!.root.findAllByType('tabs')).toHaveLength(1);
+    expect(tree!.root.findAllByType('button')).toHaveLength(0);
+  });
+
   it('Retry は /api/me query を再取得し、成功した session を再設定して workspace hydration を起動する', async () => {
     mocks.useQuery.mockReturnValue({
       data: undefined,
@@ -134,5 +170,25 @@ describe('session bootstrap retry', () => {
     expect(mocks.refetch).toHaveBeenCalledOnce();
     expect(mocks.setSession).not.toHaveBeenCalledWith(null);
     expect(mocks.setSession).toHaveBeenCalledWith(mocks.refreshedSession);
+  });
+
+  it('復旧画面のログアウトは画面外editorの未保存確認を省略する', async () => {
+    mocks.useQuery.mockReturnValue({
+      data: undefined,
+      error: new ApiError('safe error', 429, 'RATE_LIMITED'),
+      isError: true,
+      isFetching: false,
+      isLoading: false,
+      refetch: mocks.refetch
+    });
+
+    await act(async () => {
+      create(<App />);
+    });
+    await act(async () => {
+      await mocks.sessionRecoveryProps?.onSignInAgain();
+    });
+
+    expect(mocks.logout).toHaveBeenCalledWith({ skipDirtyCheck: true });
   });
 });

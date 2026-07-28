@@ -110,7 +110,7 @@ function AuthenticatedApp(): React.JSX.Element {
     }
   };
 
-  if (sessionQuery.isLoading || sessionQuery.isError || sessionQuery.data === undefined) {
+  if (sessionQuery.isLoading || sessionQuery.data === undefined) {
     return (
       <Screen title="Lyra Mobile">
         <SessionBootstrapRecovery
@@ -119,7 +119,7 @@ function AuthenticatedApp(): React.JSX.Element {
           isLoading={sessionQuery.isLoading}
           language={language}
           onRetry={retrySessionBootstrap}
-          onSignInAgain={logout}
+          onSignInAgain={() => logout({ skipDirtyCheck: true })}
           session={sessionQuery.data}
         />
       </Screen>

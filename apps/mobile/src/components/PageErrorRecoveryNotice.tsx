@@ -7,7 +7,7 @@ interface PageErrorRecoveryNoticeProps {
   language: UiLanguage;
   onAccount: () => void;
   onCharacters: () => void;
-  onLayout: () => void;
+  onLayout?: (() => void) | undefined;
   onLogin: () => void;
   onReloadStale: () => void;
   onRetry: () => void;
@@ -34,7 +34,7 @@ export function PageErrorRecoveryNotice({
         characters: onCharacters,
         credits: onAccount,
         jobs: onAccount,
-        layout: onLayout,
+        ...(onLayout === undefined ? {} : { layout: onLayout }),
         login: onLogin,
         retry,
         workspace: onAccount

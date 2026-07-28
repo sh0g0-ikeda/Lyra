@@ -112,6 +112,7 @@ interface PendingEntityReferenceUpload {
 }
 
 const MAX_IMPORT_IMAGE_BYTES = 5 * 1024 * 1024;
+const NEW_ENTITY_PICKER_ID = 'new-entity';
 const isResourceStaleError = (error: unknown): boolean =>
   error instanceof ApiError && error.code === 'RESOURCE_STALE';
 const NO_SCENE_OPTION_ID = '__no-scene__';
@@ -2475,6 +2476,14 @@ export function CharactersScreen(): React.JSX.Element {
     })();
   };
 
+  const selectEntityPickerOption = (entityId: string): void => {
+    if (entityId === NEW_ENTITY_PICKER_ID) {
+      beginNewEntityDraft();
+      return;
+    }
+    switchEntity(entityId);
+  };
+
   const reloadStaleEntity = async (): Promise<void> => {
     if (selectedEntity === null || activeWorkId === null) {
       return;
@@ -2618,26 +2627,32 @@ export function CharactersScreen(): React.JSX.Element {
         </View>
       ) : null}
       <Section collapsible persistKey="characters:list" title={t(language, "generated.screens.CharactersScreen.character.list.ea7139da")}>
-        <PrimaryButton
-          disabled={!canEdit || activeWorkId === null}
-          disabledReason={!canEdit ? t(language, "generated.screens.CharactersScreen.editing.permission.is.required.6d3b86ee") : activeWorkId === null ? t(language, "generated.screens.CharactersScreen.select.a.work.first.1219842f") : undefined}
-          label={t(language, "generated.screens.CharactersScreen.new.character.899f7080")}
-          onPress={beginNewEntityDraft}
-          variant="secondary"
-        />
         <RecordPicker
           emptyLabel={t(language, 'emptyCharacters')}
           hasNextPage={entitiesQuery.hasNextPage}
           helperText={t(language, "generated.screens.CharactersScreen.choose.a.character.to.edit.unsaved.edits.c0acfd1a")}
           isFetchingNextPage={entitiesQuery.isFetchingNextPage}
-          items={entities}
+          items={[
+            {
+              id: NEW_ENTITY_PICKER_ID,
+              label: t(language, "generated.screens.CharactersScreen.new.character.899f7080")
+            },
+            ...entities.map((entity) => ({
+              id: entity.id,
+              label: entity.name
+            }))
+          ]}
           language={language}
-          labelForItem={(entity) => entity.name}
+          labelForItem={(option) => option.label}
           onEndReached={() => {
             void entitiesQuery.fetchNextPage();
           }}
-          onSelect={switchEntity}
-          selectedId={selection.entityId}
+          onSelect={selectEntityPickerOption}
+          selectedId={
+            entityEditorMode === 'create'
+              ? NEW_ENTITY_PICKER_ID
+              : selection.entityId
+          }
         />
       </Section>
 

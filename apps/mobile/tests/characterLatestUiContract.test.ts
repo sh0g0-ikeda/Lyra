@@ -7,6 +7,18 @@ const readSource = (relativePath: string): string =>
   readFileSync(resolve(process.cwd(), relativePath), 'utf8');
 
 describe('MOB-ENTITY-002 latest character UI contract', () => {
+  it('新しいキャラクターを独立ボタンではなく選択肢として表示する', () => {
+    const source = readSource('src/screens/CharactersScreen.tsx');
+    const renderSource = source.slice(source.indexOf('  return (\n    <Screen'));
+
+    expect(source).toContain("const NEW_ENTITY_PICKER_ID = 'new-entity'");
+    expect(renderSource).toContain('id: NEW_ENTITY_PICKER_ID');
+    expect(renderSource).toContain('onSelect={selectEntityPickerOption}');
+    expect(renderSource).not.toContain(
+      'label={t(language, "generated.screens.CharactersScreen.new.character.899f7080")}'
+    );
+  });
+
   it('renders list, name, type, import, description/save, and references in order', () => {
     const source = readSource('src/screens/CharactersScreen.tsx');
     const renderSource = source.slice(source.indexOf('  return (\n    <Screen'));

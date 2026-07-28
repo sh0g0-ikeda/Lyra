@@ -179,20 +179,41 @@ export class ApiError extends Error {
   public readonly status: number;
   public readonly code: string | null;
   public readonly requestId: string | null;
+  public readonly retryAfterSeconds: number | null;
+  public readonly retryAtMs: number | null;
 
   public constructor(
     message: string,
     status: number,
     code: string | null,
-    requestId: string | null = null
+    requestId: string | null = null,
+    retryAfterSeconds: number | null = null
   ) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
     this.code = code;
     this.requestId = requestId;
+    this.retryAfterSeconds = retryAfterSeconds;
+    const effectiveRetryAfterSeconds =
+      retryAfterSeconds ?? (status === 429 ? 5 : null);
+    this.retryAtMs =
+      effectiveRetryAfterSeconds === null
+        ? null
+        : Date.now() + effectiveRetryAfterSeconds * 1_000;
   }
 }
+
+const retryAfterSecondsFrom = (response: Response): number | null => {
+  const value = response.headers.get('retry-after')?.trim() ?? '';
+  if (!/^\d{1,4}$/u.test(value)) {
+    return null;
+  }
+  const seconds = Number(value);
+  return Number.isSafeInteger(seconds)
+    ? Math.min(Math.max(seconds, 1), 3_600)
+    : null;
+};
 
 const organizationQuery = (organizationId?: string | null): string => {
   if (organizationId === undefined || organizationId === null || organizationId.trim().length === 0) {
@@ -1550,7 +1571,8 @@ export class LyraMobileApiClient {
       parsed.success ? parsed.data.error?.message ?? `API request failed with status ${response.status}` : `API request failed with status ${response.status}`,
       response.status,
       parsed.success ? parsed.data.error?.code ?? null : null,
-      response.headers.get('x-request-id')
+      response.headers.get('x-request-id'),
+      retryAfterSecondsFrom(response)
     );
     if (error.status === 401) {
       recordOperationalMetric({

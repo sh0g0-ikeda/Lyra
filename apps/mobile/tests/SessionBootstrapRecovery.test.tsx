@@ -1,6 +1,6 @@
 import React from 'react';
 import { act, create } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ApiError } from '@/lib/api';
 import { SessionBootstrapRecovery } from '@/components/SessionBootstrapRecovery';
@@ -20,11 +20,31 @@ vi.mock('@/components/Notice', () => ({
 }));
 
 vi.mock('@/components/PrimaryButton', () => ({
-  PrimaryButton: ({ label, loading, onPress }: { label: string; loading?: boolean; onPress: () => void }) =>
-    React.createElement('button', { label, loading, onClick: onPress }, label)
+  PrimaryButton: ({
+    disabled,
+    disabledReason,
+    label,
+    loading,
+    onPress
+  }: {
+    disabled?: boolean;
+    disabledReason?: string;
+    label: string;
+    loading?: boolean;
+    onPress: () => void;
+  }) =>
+    React.createElement(
+      'button',
+      { disabled, disabledReason, label, loading, onClick: onPress },
+      label
+    )
 }));
 
 describe('SessionBootstrapRecovery', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   const render = async (overrides: Partial<React.ComponentProps<typeof SessionBootstrapRecovery>> = {}) => {
     let tree: ReturnType<typeof create> | null = null;
     await act(async () => {
@@ -94,6 +114,37 @@ describe('SessionBootstrapRecovery', () => {
     const notices = tree.root.findAllByType('notice').map((notice) => notice.props.message).join(' ');
     expect(notices).toContain('permission may have changed');
     expect(tree.root.findAllByType('button').map((button) => button.props.label)).toEqual(['Retry', 'Log out']);
+  });
+
+  it('429はRetry-Afterの期限まで秒数を表示して再試行を無効にする', async () => {
+    vi.useFakeTimers();
+    const error = new ApiError(
+      'raw rate limit detail',
+      429,
+      'RATE_LIMITED',
+      null,
+      2
+    );
+    const tree = await render({
+      error,
+      language: 'ja',
+      session: undefined
+    });
+
+    const retryButton = tree.root.findAllByType('button')[0]!;
+    expect(retryButton.props.disabled).toBe(true);
+    expect(
+      tree.root.findAllByType('notice').map((notice) => notice.props.message).join(' ')
+    ).toContain('あと2秒');
+
+    await act(async () => {
+      vi.advanceTimersByTime(1_000);
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(1_000);
+    });
+
+    expect(tree.root.findAllByType('button')[0]!.props.disabled).toBe(false);
   });
 
   it('empty account は空状態と Retry を表示する', async () => {

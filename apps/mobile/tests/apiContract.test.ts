@@ -24,6 +24,36 @@ const exportJobResponse = {
 } as const;
 
 describe('LyraMobileApiClient API contract', () => {
+  it('429のRetry-After秒数を復旧用ApiErrorへ保持する', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            error: {
+              code: 'RATE_LIMITED',
+              message: 'raw backend detail'
+            }
+          }),
+          {
+            headers: {
+              'Content-Type': 'application/json',
+              'Retry-After': '42'
+            },
+            status: 429
+          }
+        )
+      )
+    );
+    const client = new LyraMobileApiClient(() => 'token');
+
+    await expect(client.getCurrentSession()).rejects.toMatchObject({
+      code: 'RATE_LIMITED',
+      retryAfterSeconds: 42,
+      status: 429
+    });
+  });
+
   afterEach(() => {
     onlineManager.setOnline(true);
     setOperationalEventSinks(null);

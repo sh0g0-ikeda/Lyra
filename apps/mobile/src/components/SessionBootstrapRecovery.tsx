@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 
 import type { CurrentSessionRecord, UiLanguage } from '@/domain/types';
@@ -23,6 +24,13 @@ const isConnectionOrServerFailure = (error: unknown): boolean =>
   (error instanceof ApiError &&
     (error.status === 0 || error.status >= 500 || error.code === 'NETWORK_OFFLINE' || error.code === 'REQUEST_TIMEOUT'));
 
+const rateLimitWaitSeconds = (error: unknown, nowMs: number): number =>
+  error instanceof ApiError &&
+  error.status === 429 &&
+  error.retryAtMs !== null
+    ? Math.max(0, Math.ceil((error.retryAtMs - nowMs) / 1_000))
+    : 0;
+
 export function SessionBootstrapRecovery({
   error,
   isFetching,
@@ -32,6 +40,24 @@ export function SessionBootstrapRecovery({
   onSignInAgain,
   session
 }: SessionBootstrapRecoveryProps): React.JSX.Element | null {
+  const [rateLimitClockMs, setRateLimitClockMs] = useState(() => Date.now());
+  const remainingRateLimitSeconds = rateLimitWaitSeconds(
+    error,
+    rateLimitClockMs
+  );
+
+  useEffect(() => {
+    if (remainingRateLimitSeconds <= 0) {
+      return;
+    }
+    const timeoutId = setTimeout(() => {
+      setRateLimitClockMs(Date.now());
+    }, 1_000);
+    return () => {
+      clearTimeout(timeoutId);
+    };
+  }, [remainingRateLimitSeconds]);
+
   if (isLoading) {
     return <LoadingState label={t(language, 'shared.session.loading')} />;
   }
@@ -39,11 +65,18 @@ export function SessionBootstrapRecovery({
   if (error !== null) {
     const unauthorized = error instanceof ApiError && error.status === 401;
     const permissionDenied = error instanceof ApiError && error.status === 403;
+    const rateLimited = error instanceof ApiError && error.status === 429;
     const connectionOrServerFailure = isConnectionOrServerFailure(error);
+    const retryWaitMessage = t(language, 'shared.session.rateLimitWait', {
+      seconds: remainingRateLimitSeconds
+    });
 
     return (
       <View style={styles.container}>
         <Notice message={userErrorMessage(error, language)} tone="danger" />
+        {rateLimited && remainingRateLimitSeconds > 0 ? (
+          <Notice message={retryWaitMessage} tone="warning" />
+        ) : null}
         {connectionOrServerFailure ? (
           <Notice
             message={t(language, 'shared.session.connectionFailed')}
@@ -65,6 +98,12 @@ export function SessionBootstrapRecovery({
         ) : (
           <>
             <PrimaryButton
+              disabled={rateLimited && remainingRateLimitSeconds > 0}
+              disabledReason={
+                rateLimited && remainingRateLimitSeconds > 0
+                  ? retryWaitMessage
+                  : undefined
+              }
               label={t(language, 'shared.session.retry')}
               loading={isFetching}
               onPress={() => void onRetry()}
