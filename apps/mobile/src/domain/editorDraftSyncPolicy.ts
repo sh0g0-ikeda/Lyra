@@ -12,3 +12,16 @@ export function shouldHydrateEditorDraft(input: {
     !input.hasUnsavedChanges
   );
 }
+
+export function editorDraftHasUnsavedChanges(input: {
+  hasServerSnapshot: boolean;
+  lastResourceId: string | null;
+  resourceId: string | null;
+  valuesDiffer: boolean;
+}): boolean {
+  return (
+    input.hasServerSnapshot &&
+    input.lastResourceId === input.resourceId &&
+    input.valuesDiffer
+  );
+}

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 import { Maximize2 } from 'lucide-react-native';
 import type { ImageProps } from 'expo-image';
@@ -34,6 +34,21 @@ export function PageImageViewer({
     resolvedSource?.sourceIdentity === sourceIdentity
       ? resolvedSource.source
       : sources[0] ?? null;
+  const handleSourceChange = useCallback((source: RemoteImageSource): void => {
+    setResolvedSource((current) => {
+      if (
+        current?.sourceIdentity === sourceIdentity &&
+        imageSourceListIdentity([current.source]) ===
+          imageSourceListIdentity([source])
+      ) {
+        return current;
+      }
+      return {
+        sourceIdentity,
+        source
+      };
+    });
+  }, [sourceIdentity]);
 
   return (
     <View style={styles.container}>
@@ -41,12 +56,7 @@ export function PageImageViewer({
         cachePolicy="memory-disk"
         contentFit="contain"
         onExhausted={onExhausted}
-        onSourceChange={(source) =>
-          setResolvedSource({
-            sourceIdentity,
-            source
-          })
-        }
+        onSourceChange={handleSourceChange}
         priority="high"
         sources={sources}
         style={imageStyle}

@@ -26,4 +26,15 @@ describe('ページ画面の取得エラー回復契約', () => {
     );
     expect(source).toContain('enabled: pageHierarchyReady');
   });
+
+  it('補助APIの404だけでは一覧に存在するページ選択を解除しない', () => {
+    expect(source).not.toContain('selectedPageResourceNotFound');
+    expect(source).not.toMatch(
+      /\[\s*pageGenerationReadinessQuery\.error,\s*panelsQuery\.error,\s*framesQuery\.error\s*\]\.some\(isApiNotFoundError\)/
+    );
+  });
+
+  it('ページ・コマ・枠のdirty判定に同期済みresource IDを使う', () => {
+    expect(source.match(/editorDraftHasUnsavedChanges\(\{/g)).toHaveLength(3);
+  });
 });

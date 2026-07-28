@@ -45,7 +45,10 @@ import {
 } from '@/constants/options';
 import { panelCharacterStateOverrideUiEnabled } from '@/constants/mobileFeatureVisibility';
 import { colors, spacing, textStyles } from '@/constants/theme';
-import { shouldHydrateEditorDraft } from '@/domain/editorDraftSyncPolicy';
+import {
+  editorDraftHasUnsavedChanges,
+  shouldHydrateEditorDraft
+} from '@/domain/editorDraftSyncPolicy';
 import {
   imageSourceListIdentity,
   type RemoteImageSource
@@ -108,7 +111,6 @@ import {
 } from '@/lib/queryKeys';
 import {
   currentQueryError,
-  isApiNotFoundError,
   supportingQueryError
 } from '@/lib/queryErrorPolicy';
 import { userErrorMessage } from '@/lib/userMessages';
@@ -814,9 +816,10 @@ export function PagesScreen(): React.JSX.Element {
   const [previewImageHeaders, setPreviewImageHeaders] = useState<ImageRequestHeaders | undefined>(undefined);
   const [failedPageImageSourceIdentity, setFailedPageImageSourceIdentity] =
     useState<string | null>(null);
-  const lastSyncedPageId = useRef<string | null>(null);
-  const lastSyncedPanelId = useRef<string | null>(null);
-  const lastSyncedFramePageId = useRef<string | null>(null);
+  const [lastSyncedPageId, setLastSyncedPageId] = useState<string | null>(null);
+  const [lastSyncedPanelId, setLastSyncedPanelId] = useState<string | null>(null);
+  const [lastSyncedFramePageId, setLastSyncedFramePageId] =
+    useState<string | null>(null);
   const generationAttemptRef = useRef<PageGenerationAttempt | null>(null);
   const exportAttemptRef = useRef<EpisodeExportAttempt | null>(null);
   const workspaceContext = useWorkspaceContextSelection();
@@ -1031,27 +1034,6 @@ export function PagesScreen(): React.JSX.Element {
     queryKey: framesQueryKey(sessionKey, selectedPage?.id ?? null, organizationId),
     queryFn: () => api.getFrames(selectedPage?.id ?? '', organizationId)
   });
-  const selectedPageResourceNotFound =
-    selectedPage !== null &&
-    [
-      pageGenerationReadinessQuery.error,
-      panelsQuery.error,
-      framesQuery.error
-    ].some(isApiNotFoundError);
-  useEffect(() => {
-    if (!selectedPageResourceNotFound || selection.pageId === null) {
-      return;
-    }
-    void updateSelection(
-      { pageId: null },
-      { skipDirtyCheck: true }
-    );
-  }, [
-    selectedPageResourceNotFound,
-    selection.pageId,
-    updateSelection
-  ]);
-
   const selectedPanel = useMemo(
     () => panelsQuery.data?.panels.find((panel) => panel.id === panelId) ?? null,
     [panelId, panelsQuery.data?.panels]
@@ -1071,7 +1053,7 @@ export function PagesScreen(): React.JSX.Element {
   const assignedEntityIds = assignments.map((assignment) => assignment.entity_id);
   const panelEntities = entities.filter((entity) => assignedEntityIds.includes(entity.id));
 
-  const pageDirty =
+  const pageValuesDiffer =
     selectedPage === null
       ? styleReferenceTitle.trim().length > 0 ||
         styleReferenceNotes.trim().length > 0 ||
@@ -1083,8 +1065,14 @@ export function PagesScreen(): React.JSX.Element {
         JSON.stringify(sourceSceneIds) !== JSON.stringify(selectedPage.story_source_scene_ids ?? []) ||
         pagePurpose !== (selectedPage.story_page_purpose ?? '') ||
         continuityNote !== (selectedPage.story_continuity_note ?? '');
+  const pageDirty = editorDraftHasUnsavedChanges({
+    hasServerSnapshot: selectedPage !== null || selection.pageId === null,
+    lastResourceId: lastSyncedPageId,
+    resourceId: selectedPage?.id ?? null,
+    valuesDiffer: pageValuesDiffer
+  });
 
-  const panelDirty =
+  const panelValuesDiffer =
     selectedPanel === null
       ? situationText.trim().length > 0 ||
         compositionPrompt.trim().length > 0 ||
@@ -1109,6 +1097,12 @@ export function PagesScreen(): React.JSX.Element {
         sfxText !== (selectedPanel.sfx_text ?? '') ||
         backgroundNote !== (selectedPanel.background_note ?? '') ||
         panelNotes !== (selectedPanel.panel_notes ?? '');
+  const panelDirty = editorDraftHasUnsavedChanges({
+    hasServerSnapshot: panelsQuery.data !== undefined,
+    lastResourceId: lastSyncedPanelId,
+    resourceId: selectedPanel?.id ?? null,
+    valuesDiffer: panelValuesDiffer
+  });
 
   const frameDraftsInvalid = frameDrafts.some((frame) =>
     !isIntegerInRangeText(frame.reading_order, 1, 1000) ||
@@ -1133,8 +1127,14 @@ export function PagesScreen(): React.JSX.Element {
       (assignment.action === 'custom' && (assignment.custom_action ?? '').trim().length === 0) ||
       ((assignment.state_id ?? '').trim().length > 0 && !isUuidText(assignment.state_id ?? ''))
     );
-  const framesDirty =
+  const frameValuesDiffer =
     JSON.stringify(frameDrafts.map(toFrameRecord)) !== JSON.stringify((framesQuery.data?.frames ?? []));
+  const framesDirty = editorDraftHasUnsavedChanges({
+    hasServerSnapshot: framesQuery.data !== undefined,
+    lastResourceId: lastSyncedFramePageId,
+    resourceId: selectedPage?.id ?? null,
+    valuesDiffer: frameValuesDiffer
+  });
 
   const discardPageDraft = useCallback((): void => {
     const styleReference = readStyleReference(selectedPage?.layout_config ?? {});
@@ -1181,17 +1181,17 @@ export function PagesScreen(): React.JSX.Element {
 
   useEffect(() => {
     const nextId = selectedPage?.id ?? null;
-    if (lastSyncedPageId.current === nextId && pageDirty) {
+    if (lastSyncedPageId === nextId && pageDirty) {
       return;
     }
-    lastSyncedPageId.current = nextId;
+    setLastSyncedPageId(nextId);
     const styleReference = readStyleReference(selectedPage?.layout_config ?? {});
     setStyleReferenceTitle(styleReference.title);
     setStyleReferenceNotes(styleReference.notes);
     setSourceSceneIds(selectedPage?.story_source_scene_ids ?? []);
     setPagePurpose(selectedPage?.story_page_purpose ?? '');
     setContinuityNote(selectedPage?.story_continuity_note ?? '');
-  }, [pageDirty, selectedPage]);
+  }, [lastSyncedPageId, pageDirty, selectedPage]);
 
   useEffect(() => {
     if (generatedPages.length === 0) {
@@ -1206,10 +1206,10 @@ export function PagesScreen(): React.JSX.Element {
 
   useEffect(() => {
     const nextId = selectedPanel?.id ?? null;
-    if (lastSyncedPanelId.current === nextId && panelDirty) {
+    if (lastSyncedPanelId === nextId && panelDirty) {
       return;
     }
-    lastSyncedPanelId.current = nextId;
+    setLastSyncedPanelId(nextId);
     setPanelRole(selectedPanel?.panel_role ?? 'action');
     setPanelSize(selectedPanel?.panel_size ?? 'standard');
     setSituationText(selectedPanel?.situation_text ?? '');
@@ -1225,7 +1225,7 @@ export function PagesScreen(): React.JSX.Element {
     setSfxText(selectedPanel?.sfx_text ?? '');
     setBackgroundNote(selectedPanel?.background_note ?? '');
     setPanelNotes(selectedPanel?.panel_notes ?? '');
-  }, [panelDirty, selectedPanel]);
+  }, [lastSyncedPanelId, panelDirty, selectedPanel]);
 
   useEffect(() => {
     const nextPageId = selectedPage?.id ?? null;
@@ -1233,17 +1233,17 @@ export function PagesScreen(): React.JSX.Element {
       !shouldHydrateEditorDraft({
         hasServerSnapshot: framesQuery.data !== undefined,
         hasUnsavedChanges: framesDirty,
-        lastResourceId: lastSyncedFramePageId.current,
+        lastResourceId: lastSyncedFramePageId,
         resourceId: nextPageId
       })
     ) {
       return;
     }
-    lastSyncedFramePageId.current = nextPageId;
+    setLastSyncedFramePageId(nextPageId);
     const drafts = (framesQuery.data?.frames ?? []).map(toFrameDraft);
     setFrameDrafts(drafts);
     setFrameId((current) => (current !== null && drafts.some((frame) => frame.id === current) ? current : drafts[0]?.id ?? null));
-  }, [framesDirty, framesQuery.data, selectedPage?.id]);
+  }, [framesDirty, framesQuery.data, lastSyncedFramePageId, selectedPage?.id]);
 
   const invalidatePageReadiness = async (): Promise<void> => {
     await queryClient.invalidateQueries({
@@ -1334,9 +1334,9 @@ export function PagesScreen(): React.JSX.Element {
       return api.autofillPageFromScenes(selectedPage.id, language, organizationId);
     },
     onSuccess: async () => {
-      lastSyncedPageId.current = null;
-      lastSyncedPanelId.current = null;
-      lastSyncedFramePageId.current = null;
+      setLastSyncedPageId(null);
+      setLastSyncedPanelId(null);
+      setLastSyncedFramePageId(null);
       setPageStale(false);
       await Promise.all([
         invalidatePages(),
@@ -1859,9 +1859,9 @@ export function PagesScreen(): React.JSX.Element {
 
   const reloadAfterPageStale = async (): Promise<void> => {
     generationAttemptRef.current = null;
-    lastSyncedPageId.current = null;
-    lastSyncedPanelId.current = null;
-    lastSyncedFramePageId.current = null;
+    setLastSyncedPageId(null);
+    setLastSyncedPanelId(null);
+    setLastSyncedFramePageId(null);
     await Promise.all([invalidatePages(), invalidatePanels(), invalidateFrames()]);
     setPageStale(false);
   };

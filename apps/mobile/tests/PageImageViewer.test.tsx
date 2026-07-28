@@ -32,6 +32,30 @@ vi.mock('@/components/ResilientImage', () => ({
 }));
 
 describe('PageImageViewer', () => {
+  it('画像候補の通知で再描画されても通知callbackを作り直さない', () => {
+    const source = { uri: 'https://cdn.lyra.test/page.png' };
+    let renderer: ReturnType<typeof create>;
+    act(() => {
+      renderer = create(
+        <PageImageViewer
+          expandLabel="ページ画像を拡大"
+          onExpand={vi.fn()}
+          sources={[source]}
+        />
+      );
+    });
+    const firstCallback = renderer!.root.findByType('resilient-image').props
+      .onSourceChange as (nextSource: typeof source) => void;
+
+    act(() => {
+      firstCallback(source);
+    });
+
+    expect(
+      renderer!.root.findByType('resilient-image').props.onSourceChange
+    ).toBe(firstCallback);
+  });
+
   it('画像本体ではなく独立した拡大ボタンだけがプレビューを開く', () => {
     const onExpand = vi.fn();
     const source = { uri: 'https://cdn.lyra.test/page.png' };
