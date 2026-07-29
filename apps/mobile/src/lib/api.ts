@@ -302,11 +302,23 @@ export class LyraMobileApiClient {
     return this.request('/api/me', currentSessionSchema);
   }
 
-  public getEntityReferenceGenerationAvailability(): Promise<EntityReferenceGenerationAvailabilityRecord> {
-    return this.request(
-      '/api/entities/reference-generation-availability',
-      entityReferenceGenerationAvailabilitySchema
-    );
+  public async getEntityReferenceGenerationAvailability(): Promise<EntityReferenceGenerationAvailabilityRecord> {
+    try {
+      return await this.request(
+        '/api/entities/reference-generation-availability',
+        entityReferenceGenerationAvailabilitySchema
+      );
+    } catch (error) {
+      if (
+        error instanceof ApiError &&
+        error.status === 422 &&
+        error.code === 'VALIDATION_ERROR' &&
+        error.message.toLowerCase().includes('id must be a valid uuid')
+      ) {
+        return { enabled: true };
+      }
+      throw error;
+    }
   }
 
   public getMobilePurchaseBinding(): Promise<MobilePurchaseAccountBindingRecord> {

@@ -35,4 +35,25 @@ describe('entity generation availability API', () => {
       code: 'INVALID_API_RESPONSE'
     });
   });
+  it('旧APIが固定パスをIDとして422にした場合は生成APIを利用可能として扱う', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            error: {
+              code: 'VALIDATION_ERROR',
+              message: 'id must be a valid UUID'
+            }
+          }),
+          { status: 422 }
+        )
+      )
+    );
+    const client = new LyraMobileApiClient(() => 'token');
+
+    await expect(client.getEntityReferenceGenerationAvailability()).resolves.toEqual({
+      enabled: true
+    });
+  });
 });

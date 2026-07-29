@@ -33,6 +33,12 @@ import { entityTypes, type LabelOption } from '@/constants/options';
 import { characterContinuityStateUiEnabled } from '@/constants/mobileFeatureVisibility';
 import { colors, spacing, textStyles } from '@/constants/theme';
 import { mergeCharacterClothingDescription } from '@/domain/characterClothing';
+import {
+  buildCreateEntityPayload,
+  buildUpdateEntityPayload,
+  hasEntityUpdateChanges,
+  type EntityVisibleDraft,
+} from '@/domain/entityMutationPayload';
 import { buildEntityReferenceImageSources } from '@/domain/entityImageSources';
 import { entityDirtySaveIntent } from '@/domain/editorDirtyPolicy';
 import {
@@ -216,14 +222,31 @@ const assignOrDelete = (target: Record<string, unknown>, key: string, value: str
   delete target[key];
 };
 
-const assignArrayOrDelete = (target: Record<string, unknown>, key: string, value: string): void => {
-  const entries = splitCsv(value);
+const assignArrayOrDelete = (
+  target: Record<string, unknown>,
+  key: string,
+  value: string,
+  maxEntries: number,
+): void => {
+  const entries = splitCsv(value)
+    .slice(0, maxEntries)
+    .map((entry) => entry.slice(0, 100));
   if (entries.length > 0) {
     target[key] = entries;
     return;
   }
   delete target[key];
 };
+
+const pickKeys = (
+  record: Record<string, unknown>,
+  keys: readonly string[],
+): Record<string, unknown> =>
+  Object.fromEntries(
+    keys
+      .filter((key) => record[key] !== undefined)
+      .map((key) => [key, record[key]]),
+  );
 
 const assignRecordOrDelete = (target: Record<string, unknown>, key: string, value: Record<string, unknown>): void => {
   if (Object.keys(value).length > 0) {
@@ -444,19 +467,6 @@ const generationBlockerMessage = (
     UNSUPPORTED_TYPE: 'screen.characters.referenceBlocker.unsupportedType'
   };
   return t(language, messages[code]);
-};
-
-const toPayloadRecord = (draft: DraftRecord, extras: string): Record<string, unknown> => {
-  const payload: Record<string, unknown> = { ...safeParseRecord(extras) };
-  Object.entries(draft).forEach(([key, value]) => {
-    const trimmed = value.trim();
-    if (trimmed.length > 0) {
-      payload[key] = trimmed;
-    } else {
-      delete payload[key];
-    }
-  });
-  return payload;
 };
 
 const characterFieldKeys = [
@@ -719,18 +729,36 @@ const toCharacterStructuredFieldsPayload = (draft: DraftRecord, extras: string):
   assignRecordOrDelete(structuredFields, 'clothing', clothing);
 
   const characterIdentity = { ...toRecord(structuredFields.character_identity) };
-  assignArrayOrDelete(characterIdentity, 'aliases', draft.aliases ?? '');
+  assignArrayOrDelete(characterIdentity, 'aliases', draft.aliases ?? '', 12);
   assignOrDelete(characterIdentity, 'visual_anchor', draft.visual_anchor ?? '');
   assignOrDelete(characterIdentity, 'signature_feature', draft.signature_feature ?? '');
-  assignArrayOrDelete(characterIdentity, 'silhouette_keywords', draft.silhouette_keywords ?? '');
-  assignRecordOrDelete(structuredFields, 'character_identity', characterIdentity);
+  assignArrayOrDelete(characterIdentity, 'silhouette_keywords', draft.silhouette_keywords ?? '', 6);
+  assignRecordOrDelete(
+    structuredFields,
+    'character_identity',
+    pickKeys(characterIdentity, [
+      'aliases',
+      'visual_anchor',
+      'signature_feature',
+      'silhouette_keywords',
+    ]),
+  );
 
   const proportions = { ...toRecord(structuredFields.proportions) };
   assignOrDelete(proportions, 'head_to_body_ratio', draft.head_to_body_ratio ?? '');
   assignOrDelete(proportions, 'shoulder_width', draft.shoulder_width ?? '');
   assignOrDelete(proportions, 'leg_length', draft.leg_length ?? '');
   assignOrDelete(proportions, 'posture_axis', draft.posture_axis ?? '');
-  assignRecordOrDelete(structuredFields, 'proportions', proportions);
+  assignRecordOrDelete(
+    structuredFields,
+    'proportions',
+    pickKeys(proportions, [
+      'head_to_body_ratio',
+      'shoulder_width',
+      'leg_length',
+      'posture_axis',
+    ]),
+  );
 
   const faceDetail = { ...toRecord(structuredFields.face_detail) };
   assignOrDelete(faceDetail, 'eye_size', draft.eye_size ?? '');
@@ -738,13 +766,27 @@ const toCharacterStructuredFieldsPayload = (draft: DraftRecord, extras: string):
   assignOrDelete(faceDetail, 'pupil_style', draft.pupil_style ?? '');
   assignOrDelete(faceDetail, 'under_eye_detail', draft.under_eye_detail ?? '');
   assignOrDelete(faceDetail, 'mouth_default', draft.mouth_default ?? '');
-  assignRecordOrDelete(structuredFields, 'face_detail', faceDetail);
+  assignRecordOrDelete(
+    structuredFields,
+    'face_detail',
+    pickKeys(faceDetail, [
+      'eye_size',
+      'eye_angle',
+      'pupil_style',
+      'under_eye_detail',
+      'mouth_default',
+    ]),
+  );
 
   const hairDetail = { ...toRecord(structuredFields.hair_detail) };
   assignOrDelete(hairDetail, 'front_shape', draft.hair_front_shape ?? '');
   assignOrDelete(hairDetail, 'side_hair', draft.hair_side_hair ?? '');
   assignOrDelete(hairDetail, 'back_shape', draft.hair_back_shape ?? '');
-  assignRecordOrDelete(structuredFields, 'hair_detail', hairDetail);
+  assignRecordOrDelete(
+    structuredFields,
+    'hair_detail',
+    pickKeys(hairDetail, ['front_shape', 'side_hair', 'back_shape']),
+  );
 
   const outfitDetail = { ...toRecord(structuredFields.outfit_detail) };
   assignOrDelete(outfitDetail, 'collar_shape', draft.collar_shape ?? '');
@@ -752,14 +794,48 @@ const toCharacterStructuredFieldsPayload = (draft: DraftRecord, extras: string):
   assignOrDelete(outfitDetail, 'skirt_or_pants_shape', draft.skirt_or_pants_shape ?? '');
   assignOrDelete(outfitDetail, 'shoes', draft.shoes ?? '');
   assignOrDelete(outfitDetail, 'socks_or_legwear', draft.socks_or_legwear ?? '');
-  assignRecordOrDelete(structuredFields, 'outfit_detail', outfitDetail);
+  assignRecordOrDelete(
+    structuredFields,
+    'outfit_detail',
+    pickKeys(outfitDetail, [
+      'collar_shape',
+      'sleeve_length',
+      'skirt_or_pants_shape',
+      'shoes',
+      'socks_or_legwear',
+    ]),
+  );
 
   const styleReference = styleReferenceFromExtras(extras);
   if (styleReference !== undefined) {
     structuredFields.style_reference = styleReference;
   }
 
-  return structuredFields;
+  return pickKeys(structuredFields, [
+    'gender_expression',
+    'age_range',
+    'skin_tone',
+    'first_impression',
+    'standing_style',
+    'default_expression',
+    'face_shape',
+    'eyebrow_shape',
+    'nose_shape',
+    'mouth_shape',
+    'height',
+    'build',
+    'hair',
+    'eyes',
+    'clothing',
+    'character_identity',
+    'proportions',
+    'face_detail',
+    'hair_detail',
+    'outfit_detail',
+    'style_reference',
+    'distinguishing_features',
+    'art_style',
+  ]);
 };
 
 const toGenericStructuredFieldsPayload = (entityType: EntityType, draft: DraftRecord): Record<string, unknown> => {
@@ -804,7 +880,7 @@ const toGenericStructuredFieldsPayload = (entityType: EntityType, draft: DraftRe
   appendFeature(features, 'visual_anchor', draft.visual_anchor ?? '');
 
   if (features.length > 0) {
-    structuredFields.distinctive_features = features.join('\n');
+    structuredFields.distinctive_features = features.join('\n').slice(0, 500);
   }
 
   return structuredFields;
@@ -814,16 +890,6 @@ const toStructuredFieldsPayload = (entityType: EntityType, draft: DraftRecord, e
   entityType === 'character'
     ? toCharacterStructuredFieldsPayload(draft, extras)
     : toGenericStructuredFieldsPayload(entityType, draft);
-
-const speechFieldKeys = [
-  'first_person',
-  'second_person',
-  'tone',
-  'politeness',
-  'sentence_ending',
-  'catchphrase',
-  'speech_notes'
-];
 
 const japaneseOptionLabels: Record<string, string> = {
   Accessory: 'アクセサリー',
@@ -1560,10 +1626,18 @@ interface ChoiceFieldProps {
   value: string;
   options: LabelOption<string>[];
   language: 'ja' | 'en';
+  maxLength?: number;
   onChange: (value: string) => void;
 }
 
-function ChoiceField({ label, value, options, language, onChange }: ChoiceFieldProps): React.JSX.Element {
+function ChoiceField({
+  label,
+  value,
+  options,
+  language,
+  maxLength = 100,
+  onChange,
+}: ChoiceFieldProps): React.JSX.Element {
   const renderOptions = useMemo(
     () => (options.some((option) => option.value === 'custom') ? options : [...options, { value: 'custom', labelJa: '自由入力', labelEn: 'Custom' }]),
     [options]
@@ -1655,7 +1729,12 @@ function ChoiceField({ label, value, options, language, onChange }: ChoiceFieldP
         </Pressable>
       </Modal>
       {customMode ? (
-        <FormField label={t(language, "generated.screens.CharactersScreen.custom.value.75dadf38")} onChangeText={onChange} value={value} />
+        <FormField
+          label={t(language, "generated.screens.CharactersScreen.custom.value.75dadf38")}
+          maxLength={maxLength}
+          onChangeText={onChange}
+          value={value}
+        />
       ) : null}
     </View>
   );
@@ -1697,8 +1776,6 @@ export function CharactersScreen(): React.JSX.Element {
   const [promptSupplement, setPromptSupplement] = useState('');
   const [structuredDraft, setStructuredDraft] = useState<DraftRecord>(() => draftFromRecord({}, characterFieldKeys));
   const [structuredExtras, setStructuredExtras] = useState('');
-  const [speechDraft, setSpeechDraft] = useState<DraftRecord>(() => draftFromRecord({}, speechFieldKeys));
-  const [speechExtras, setSpeechExtras] = useState('');
   const [candidateToken, setCandidateToken] = useState('');
   const [importResult, setImportResult] = useState<string | null>(null);
   const [lastImportedCandidateToken, setLastImportedCandidateToken] = useState<string | null>(null);
@@ -1786,26 +1863,46 @@ export function CharactersScreen(): React.JSX.Element {
     setEntityReferenceUploadStage(null);
   }, [entityType, organizationId, selectedEntity?.id, sessionKey]);
 
+  const visibleEntityDraft: EntityVisibleDraft = {
+    entityType,
+    freeDescription: nullable(description),
+    name,
+    promptSupplement: nullable(promptSupplement),
+    structuredFields: toStructuredFieldsPayload(entityType, structuredDraft, structuredExtras),
+  };
+  const structuredFieldsChanged =
+    selectedEntity !== null &&
+    (
+      JSON.stringify(structuredDraft) !==
+        JSON.stringify(
+          structuredDraftFromRecord(
+            selectedEntity.structured_fields ?? {},
+            selectedEntity.entity_type,
+          ),
+        ) ||
+      structuredExtras !==
+        extrasFromRecord(
+          selectedEntity.structured_fields ?? {},
+          selectedEntity.entity_type === 'character'
+            ? characterFieldKeys
+            : genericFieldKeys,
+        )
+    );
+  const pendingEntityUpdatePayload =
+    selectedEntity === null
+      ? null
+      : buildUpdateEntityPayload(selectedEntity, visibleEntityDraft, {
+          structuredFieldsChanged,
+        });
   const entityDirty =
     selectedEntity === null
       ? name.trim().length > 0 ||
         description.trim().length > 0 ||
         promptSupplement.trim().length > 0 ||
         structuredExtras.trim().length > 0 ||
-        speechExtras.trim().length > 0 ||
-        Object.values(structuredDraft).some((value) => value.trim().length > 0) ||
-        Object.values(speechDraft).some((value) => value.trim().length > 0)
-      : entityType !== selectedEntity.entity_type ||
-        name !== selectedEntity.name ||
-        description !== (selectedEntity.free_description ?? '') ||
-        promptSupplement !== (selectedEntity.prompt_supplement ?? '') ||
-        JSON.stringify(structuredDraft) !== JSON.stringify(structuredDraftFromRecord(selectedEntity.structured_fields ?? {}, selectedEntity.entity_type)) ||
-        structuredExtras !== extrasFromRecord(
-          selectedEntity.structured_fields ?? {},
-          selectedEntity.entity_type === 'character' ? characterFieldKeys : genericFieldKeys
-        ) ||
-        JSON.stringify(speechDraft) !== JSON.stringify(draftFromRecord(selectedEntity.speech_profile ?? {}, speechFieldKeys)) ||
-        speechExtras !== extrasFromRecord(selectedEntity.speech_profile ?? {}, speechFieldKeys);
+        Object.values(structuredDraft).some((value) => value.trim().length > 0)
+      : pendingEntityUpdatePayload !== null &&
+        hasEntityUpdateChanges(pendingEntityUpdatePayload);
 
   const referenceQuery = useQuery({
     enabled: selectedEntity !== null,
@@ -1928,8 +2025,6 @@ export function CharactersScreen(): React.JSX.Element {
     setPromptSupplement(selectedEntity?.prompt_supplement ?? '');
     setStructuredDraft(structuredDraftFromRecord(selectedEntity?.structured_fields ?? {}, selectedEntity?.entity_type ?? 'character'));
     setStructuredExtras(extrasFromRecord(selectedEntity?.structured_fields ?? {}, selectedEntity?.entity_type === 'character' ? characterFieldKeys : genericFieldKeys));
-    setSpeechDraft(draftFromRecord(selectedEntity?.speech_profile ?? {}, speechFieldKeys));
-    setSpeechExtras(extrasFromRecord(selectedEntity?.speech_profile ?? {}, speechFieldKeys));
     setImportResult(null);
     setLastImportedCandidateToken(null);
     setLastImportedCandidateEntityId(null);
@@ -1968,10 +2063,6 @@ export function CharactersScreen(): React.JSX.Element {
     setStructuredDraft((current) => ({ ...current, [key]: value }));
   };
 
-  const setSpeechValue = (key: string, value: string): void => {
-    setSpeechDraft((current) => ({ ...current, [key]: value }));
-  };
-
   const invalidateEntities = async (): Promise<void> => {
     await queryClient.invalidateQueries({ queryKey: entitiesQueryKey(sessionKey, activeWorkId, organizationId) });
   };
@@ -1996,26 +2087,14 @@ export function CharactersScreen(): React.JSX.Element {
     extra_note: nullable(entityStateDraft.extraNote),
   });
 
-  const toEntityPayload = (): {
-    entity_type: EntityType;
-    name: string;
-    free_description: string | null;
-    prompt_supplement: string | null;
-    structured_fields: Record<string, unknown>;
-    speech_profile: Record<string, unknown>;
-  } => ({
-    entity_type: entityType,
-    name: name.trim(),
-    free_description: nullable(description),
-    prompt_supplement: nullable(promptSupplement),
-    structured_fields: toStructuredFieldsPayload(entityType, structuredDraft, structuredExtras),
-    speech_profile: toPayloadRecord(speechDraft, speechExtras)
-  });
+  const toEntityPayload = () => buildCreateEntityPayload(visibleEntityDraft);
 
-  const toEntityUpdatePayload = () => ({
-    ...toEntityPayload(),
-    expected_updated_at: selectedEntity?.updated_at ?? '',
-  });
+  const toEntityUpdatePayload = () =>
+    selectedEntity === null
+      ? null
+      : buildUpdateEntityPayload(selectedEntity, visibleEntityDraft, {
+          structuredFieldsChanged,
+        });
 
   const createEntityMutation = useMutation({
     mutationFn: () => api.createEntity(activeWorkId ?? '', toEntityPayload(), organizationId),
@@ -2027,7 +2106,13 @@ export function CharactersScreen(): React.JSX.Element {
   });
 
   const updateEntityMutation = useMutation({
-    mutationFn: () => api.updateEntity(selectedEntity?.id ?? '', toEntityUpdatePayload(), organizationId),
+    mutationFn: () => {
+      const payload = toEntityUpdatePayload();
+      if (selectedEntity === null || payload === null || !hasEntityUpdateChanges(payload)) {
+        throw new Error('No character changes to save.');
+      }
+      return api.updateEntity(selectedEntity.id, payload, organizationId);
+    },
     onSuccess: async () => {
       setEntityStale(false);
       await invalidateEntities();
@@ -2068,8 +2153,6 @@ export function CharactersScreen(): React.JSX.Element {
         selectedEntity?.entity_type === 'character' ? characterFieldKeys : genericFieldKeys
       )
     );
-    setSpeechDraft(draftFromRecord(selectedEntity?.speech_profile ?? {}, speechFieldKeys));
-    setSpeechExtras(extrasFromRecord(selectedEntity?.speech_profile ?? {}, speechFieldKeys));
     setCandidateToken('');
     setImportResult(null);
     setLastImportedCandidateToken(null);
@@ -2091,8 +2174,6 @@ export function CharactersScreen(): React.JSX.Element {
     setLocalJob,
     setName,
     setPromptSupplement,
-    setSpeechDraft,
-    setSpeechExtras,
     setStructuredDraft,
     setStructuredExtras
   ]);
@@ -2264,9 +2345,15 @@ export function CharactersScreen(): React.JSX.Element {
 
   const generateReferenceMutation = useMutation({
     mutationFn: async () => {
-      if (selectedEntity !== null && name.trim().length > 0) {
+      const updatePayload = toEntityUpdatePayload();
+      if (
+        selectedEntity !== null &&
+        name.trim().length > 0 &&
+        updatePayload !== null &&
+        hasEntityUpdateChanges(updatePayload)
+      ) {
         try {
-          await api.updateEntity(selectedEntity.id, toEntityUpdatePayload(), organizationId);
+          await api.updateEntity(selectedEntity.id, updatePayload, organizationId);
         } catch (error) {
           if (isResourceStaleError(error)) {
             setEntityStale(true);
@@ -2356,7 +2443,10 @@ export function CharactersScreen(): React.JSX.Element {
     availableCredits,
     canGenerate,
     entityType,
-    featureEnabled: generationAvailabilityQuery.data?.enabled === true,
+    featureEnabled:
+      generationAvailabilityQuery.data === undefined
+        ? null
+        : generationAvailabilityQuery.data.enabled,
     hasActiveJob: hasActivePreviewJob,
     importPending: importImageMutation.isPending,
     name,
@@ -2458,8 +2548,6 @@ export function CharactersScreen(): React.JSX.Element {
       setPromptSupplement('');
       setStructuredDraft(draftFromRecord({}, characterFieldKeys));
       setStructuredExtras('');
-      setSpeechDraft(draftFromRecord({}, speechFieldKeys));
-      setSpeechExtras('');
       setCandidateToken('');
       setImportResult(null);
       setLastImportedCandidateToken(null);
@@ -2517,6 +2605,7 @@ export function CharactersScreen(): React.JSX.Element {
 
   const characterErrors = [
     entitiesQuery.error,
+    generationAvailabilityQuery.error,
     referenceQuery.error,
     entityStatesQuery.error,
     scenesQuery.error,
@@ -2792,15 +2881,6 @@ export function CharactersScreen(): React.JSX.Element {
             ))}
           </>
         )}
-        <CollapsibleGroup defaultCollapsed title={t(language, "generated.screens.CharactersScreen.speech.profile.84432725")}>
-          <FormField label={t(language, "generated.screens.CharactersScreen.first.person.8a934999")} onChangeText={(value) => setSpeechValue('first_person', value)} value={speechDraft.first_person ?? ''} />
-          <FormField label={t(language, "generated.screens.CharactersScreen.second.person.3e7151f4")} onChangeText={(value) => setSpeechValue('second_person', value)} value={speechDraft.second_person ?? ''} />
-          <FormField label={t(language, "generated.screens.CharactersScreen.tone.56847163")} onChangeText={(value) => setSpeechValue('tone', value)} value={speechDraft.tone ?? ''} />
-          <FormField label={t(language, "generated.screens.CharactersScreen.politeness.3b687516")} onChangeText={(value) => setSpeechValue('politeness', value)} value={speechDraft.politeness ?? ''} />
-          <FormField label={t(language, "generated.screens.CharactersScreen.sentence.ending.dacac89c")} onChangeText={(value) => setSpeechValue('sentence_ending', value)} value={speechDraft.sentence_ending ?? ''} />
-          <FormField label={t(language, "generated.screens.CharactersScreen.catchphrase.16b47ba7")} onChangeText={(value) => setSpeechValue('catchphrase', value)} value={speechDraft.catchphrase ?? ''} />
-          <FormField label={t(language, "generated.screens.CharactersScreen.speech.notes.5a43c77a")} multiline onChangeText={(value) => setSpeechValue('speech_notes', value)} value={speechDraft.speech_notes ?? ''} />
-        </CollapsibleGroup>
         </Section>
       </View>
 
@@ -2823,7 +2903,7 @@ export function CharactersScreen(): React.JSX.Element {
             <PrimaryButton disabled={!canEdit || activeWorkId === null || name.trim().length === 0} disabledReason={!canEdit ? t(language, "generated.screens.CharactersScreen.editing.permission.is.required.6d3b86ee") : activeWorkId === null ? t(language, "generated.screens.CharactersScreen.select.a.work.first.1219842f") : name.trim().length === 0 ? t(language, "generated.screens.CharactersScreen.name.is.required.a58dfb87") : undefined} label={t(language, 'create')} loading={createEntityMutation.isPending} onPress={() => createEntityMutation.mutate()} />
           ) : (
             <>
-              <PrimaryButton disabled={!canEdit || entityStale || selectedEntity === null || name.trim().length === 0} disabledReason={!canEdit ? t(language, "generated.screens.CharactersScreen.editing.permission.is.required.6d3b86ee") : entityStale ? t(language, "generated.screens.CharactersScreen.reload.the.latest.state.8874ff96") : selectedEntity === null ? t(language, "generated.screens.CharactersScreen.select.a.character.first.7075de9f") : name.trim().length === 0 ? t(language, "generated.screens.CharactersScreen.name.is.required.a58dfb87") : undefined} label={t(language, 'save')} loading={updateEntityMutation.isPending} onPress={() => updateEntityMutation.mutate()} variant="secondary" />
+              <PrimaryButton disabled={!canEdit || entityStale || selectedEntity === null || name.trim().length === 0 || !entityDirty} disabledReason={!canEdit ? t(language, "generated.screens.CharactersScreen.editing.permission.is.required.6d3b86ee") : entityStale ? t(language, "generated.screens.CharactersScreen.reload.the.latest.state.8874ff96") : selectedEntity === null ? t(language, "generated.screens.CharactersScreen.select.a.character.first.7075de9f") : name.trim().length === 0 ? t(language, "generated.screens.CharactersScreen.name.is.required.a58dfb87") : undefined} label={t(language, 'save')} loading={updateEntityMutation.isPending} onPress={() => updateEntityMutation.mutate()} variant="secondary" />
               <PrimaryButton disabled={!canEdit || selectedEntity === null} disabledReason={!canEdit ? t(language, "generated.screens.CharactersScreen.editing.permission.is.required.6d3b86ee") : selectedEntity === null ? t(language, "generated.screens.CharactersScreen.select.a.character.first.7075de9f") : undefined} label={t(language, "generated.screens.CharactersScreen.delete.8deafb71")} loading={deleteEntityMutation.isPending} onPress={confirmDeleteEntity} variant="danger" />
             </>
           )}

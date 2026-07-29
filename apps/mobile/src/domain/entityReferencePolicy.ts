@@ -59,7 +59,7 @@ export function buildEntityReferenceGenerationBlockers(input: {
   availableCredits: number | null;
   canGenerate: boolean;
   entityType: EntityType;
-  featureEnabled: boolean;
+  featureEnabled: boolean | null;
   hasActiveJob: boolean;
   importPending: boolean;
   name: string;
@@ -69,7 +69,7 @@ export function buildEntityReferenceGenerationBlockers(input: {
   if (!input.canGenerate) {
     blockers.push({ code: 'PERMISSION_REQUIRED' });
   }
-  if (!input.featureEnabled) {
+  if (input.featureEnabled === false) {
     blockers.push({ code: 'FEATURE_DISABLED' });
   }
   if (input.selectedEntityId === null) {

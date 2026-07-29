@@ -73,4 +73,18 @@ describe('entity reference policy', () => {
       })
     ).toEqual([]);
   });
+  it('利用可否が未取得でもサーバー無効とは判定しない', () => {
+    expect(
+      buildEntityReferenceGenerationBlockers({
+        availableCredits: null,
+        canGenerate: true,
+        entityType: 'character',
+        featureEnabled: null,
+        hasActiveJob: false,
+        importPending: false,
+        name: '蓮',
+        selectedEntityId: 'entity-1'
+      })
+    ).toEqual([]);
+  });
 });

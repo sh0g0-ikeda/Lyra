@@ -14,12 +14,14 @@ vi.mock('@/components/FormField', () => ({
   FormField: ({
     help,
     label,
+    maxLength,
     value,
   }: {
     help: string;
     label: string;
+    maxLength: number;
     value: string;
-  }) => React.createElement('field', { help, value }, label),
+  }) => React.createElement('field', { help, maxLength, value }, label),
 }));
 
 describe('CharacterOutfitField', () => {
@@ -36,6 +38,7 @@ describe('CharacterOutfitField', () => {
     });
 
     const rendered = JSON.stringify(renderer!.toJSON());
+    expect(rendered).toContain('"maxLength":500');
     expect(rendered).toContain('服の詳細');
     expect(rendered).toContain('服の形、素材、色、靴などを自然な文章で書いてください');
     expect(rendered).not.toContain('襟の形');

@@ -45,6 +45,9 @@ describe('MOB-ENTITY-002 latest character UI contract', () => {
     expect(renderSource).not.toContain('reappearance_anchor');
     expect(renderSource).not.toContain('silhouette_keywords');
     expect(renderSource).not.toContain('distinguishing_features');
+    expect(renderSource).not.toContain(
+      'generated.screens.CharactersScreen.speech.profile.84432725'
+    );
   });
 
   it('uses the required Japanese import and free-description guidance', () => {
