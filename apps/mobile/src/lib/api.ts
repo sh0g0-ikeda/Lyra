@@ -842,12 +842,15 @@ export class LyraMobileApiClient {
     body: UpdateEntityPayload,
     organizationId?: string | null
   ): Promise<EntityRecord> {
-    const path = `/api/entities/${entityId}${organizationQuery(organizationId)}`;
     try {
-      return await this.request(path, entitySchema, {
-        method: 'PUT',
-        body
-      });
+      return await this.request(
+        `/api/entities/${entityId}${organizationQuery(organizationId)}`,
+        entitySchema,
+        {
+          method: 'PUT',
+          body
+        }
+      );
     } catch (error) {
       if (!isLegacyEntityUpdateContractError(error)) {
         throw error;
@@ -855,10 +858,14 @@ export class LyraMobileApiClient {
 
       const { expected_updated_at: _expectedUpdatedAt, ...legacyBody } = body;
       void _expectedUpdatedAt;
-      return this.request(path, entitySchema, {
-        method: 'PUT',
-        body: legacyBody
-      });
+      return this.request(
+        `/api/entities/${entityId}${organizationQuery(organizationId)}`,
+        entitySchema,
+        {
+          method: 'PUT',
+          body: legacyBody
+        }
+      );
     }
   }
 
