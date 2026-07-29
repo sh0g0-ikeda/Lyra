@@ -215,6 +215,22 @@ const retryAfterSecondsFrom = (response: Response): number | null => {
     : null;
 };
 
+const isLegacyEntityUpdateContractError = (error: unknown): error is ApiError => {
+  if (
+    !(error instanceof ApiError) ||
+    error.status !== 422 ||
+    error.code !== 'VALIDATION_ERROR'
+  ) {
+    return false;
+  }
+
+  const message = error.message.toLowerCase();
+  return (
+    message.includes('unrecognized key') &&
+    message.includes('expected_updated_at')
+  );
+};
+
 const organizationQuery = (organizationId?: string | null): string => {
   if (organizationId === undefined || organizationId === null || organizationId.trim().length === 0) {
     return '';
@@ -821,11 +837,29 @@ export class LyraMobileApiClient {
     });
   }
 
-  public updateEntity(entityId: string, body: UpdateEntityPayload, organizationId?: string | null): Promise<EntityRecord> {
-    return this.request(`/api/entities/${entityId}${organizationQuery(organizationId)}`, entitySchema, {
-      method: 'PUT',
-      body
-    });
+  public async updateEntity(
+    entityId: string,
+    body: UpdateEntityPayload,
+    organizationId?: string | null
+  ): Promise<EntityRecord> {
+    const path = `/api/entities/${entityId}${organizationQuery(organizationId)}`;
+    try {
+      return await this.request(path, entitySchema, {
+        method: 'PUT',
+        body
+      });
+    } catch (error) {
+      if (!isLegacyEntityUpdateContractError(error)) {
+        throw error;
+      }
+
+      const { expected_updated_at: _expectedUpdatedAt, ...legacyBody } = body;
+      void _expectedUpdatedAt;
+      return this.request(path, entitySchema, {
+        method: 'PUT',
+        body: legacyBody
+      });
+    }
   }
 
   public deleteEntity(entityId: string, organizationId?: string | null): Promise<void> {
