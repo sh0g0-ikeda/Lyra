@@ -155,6 +155,10 @@ import type {
   VerifyGoogleMobilePurchasePayload
 } from '@/domain/payloads';
 import type { AtomicSaveAndGeneratePayload } from '@/domain/pageAtomicGeneration';
+import {
+  generationJobCompatibilitySchema,
+  type CompatibleGenerationJobRecord,
+} from '@/domain/generationJobCompatibility';
 import { config } from '@/lib/config';
 import { recordOperationalMetric } from '@/lib/operationalEvents';
 import { requestTimeoutMs, SSE_IDLE_TIMEOUT_MS } from '@/lib/requestPolicy';
@@ -1316,8 +1320,14 @@ export class LyraMobileApiClient {
     };
   }
 
-  public getJob(jobId: string, organizationId?: string | null): Promise<GenerationJobRecord> {
-    return this.request(`/api/jobs/${jobId}${organizationQuery(organizationId)}`, generationJobSchema);
+  public getJob(
+    jobId: string,
+    organizationId?: string | null
+  ): Promise<CompatibleGenerationJobRecord> {
+    return this.request(
+      `/api/jobs/${jobId}${organizationQuery(organizationId)}`,
+      generationJobCompatibilitySchema
+    );
   }
 
   public listJobs(input: ListJobsInput = {}): Promise<GenerationJobsResponseRecord> {

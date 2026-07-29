@@ -54,8 +54,9 @@ import {
   type EntityReferenceCandidate,
   type EntityReferenceGenerationBlockerCode
 } from '@/domain/entityReferencePolicy';
+import type { CompatibleGenerationJobRecord } from '@/domain/generationJobCompatibility';
 import type { EntityReferenceUploadMimeType } from '@/domain/payloads';
-import type { EntityStateRecord, EntityType, GenerationJobRecord, SceneRecord } from '@/domain/types';
+import type { EntityStateRecord, EntityType, SceneRecord } from '@/domain/types';
 import { useActiveResourceJobId } from '@/hooks/useActiveResourceJobId';
 import { config } from '@/lib/config';
 import { confirmAction, confirmDestructiveAction } from '@/lib/confirm';
@@ -256,7 +257,9 @@ const assignRecordOrDelete = (target: Record<string, unknown>, key: string, valu
   delete target[key];
 };
 
-const extractGeneratedReferenceCandidates = (job: GenerationJobRecord | undefined): EntityReferenceCandidate[] => {
+const extractGeneratedReferenceCandidates = (
+  job: CompatibleGenerationJobRecord | undefined,
+): EntityReferenceCandidate[] => {
   if (
     job === undefined ||
     job.job_type !== 'entity_generate' ||

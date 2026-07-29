@@ -3,6 +3,7 @@ import { act, create } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { JobStatusCard } from '@/components/JobStatusCard';
+import type { CompatibleGenerationJobRecord } from '@/domain/generationJobCompatibility';
 import type { GenerationJobRecord } from '@/domain/types';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -250,6 +251,48 @@ describe('JobStatusCard failure observability', () => {
       jobId: failed.id,
       requestId: 'support_123'
     });
+  });
+});
+
+describe('JobStatusCard legacy job compatibility', () => {
+  it('旧APIのジョブでは不明な課金情報と未対応操作を表示しない', async () => {
+    const job: CompatibleGenerationJobRecord = {
+      ...buildProcessingJob({
+        available: false,
+        reason_key: null,
+      }),
+      credit_settlement: null,
+      actions: {
+        cancel: { available: false, reason_key: null },
+        hide: { available: false, reason_key: null },
+      },
+    };
+    let renderer: ReturnType<typeof create>;
+
+    await act(async () => {
+      renderer = create(
+        <JobStatusCard
+          api={{ getJob: vi.fn() } as never}
+          job={job}
+          jobId={job.id}
+          language="ja"
+          onCancel={vi.fn()}
+          onHide={vi.fn()}
+          onRetry={vi.fn()}
+          sessionKey="session-1"
+        />
+      );
+    });
+
+    const text = renderer!.root
+      .findAllByType('text')
+      .map((node) => node.children.join(' '));
+    expect(text).not.toContain('クレジット精算');
+    expect(
+      renderer!.root
+        .findAllByType('button')
+        .some((button) => button.children.includes('生成を停止')),
+    ).toBe(false);
   });
 });
 

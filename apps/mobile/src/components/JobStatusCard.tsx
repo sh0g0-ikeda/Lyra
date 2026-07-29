@@ -5,6 +5,7 @@ import { ActivityIndicator, AppState, Pressable, StyleSheet, Text, View } from '
 import { PrimaryButton } from '@/components/PrimaryButton';
 import { JobCreditSettlement } from '@/components/JobCreditSettlement';
 import { colors, radius, spacing, textStyles } from '@/constants/theme';
+import type { CompatibleGenerationJobRecord } from '@/domain/generationJobCompatibility';
 import type { GenerationJobRecord } from '@/domain/types';
 import type { LyraMobileApiClient } from '@/lib/api';
 import { confirmAction } from '@/lib/confirm';
@@ -18,7 +19,7 @@ interface JobStatusCardProps {
   api: LyraMobileApiClient;
   sessionKey: string;
   jobId: string | null;
-  job?: GenerationJobRecord;
+  job?: CompatibleGenerationJobRecord;
   organizationId?: string | null;
   language: 'ja' | 'en';
   onCompleted?: () => void | Promise<void>;
@@ -48,7 +49,7 @@ export function JobStatusCard({
   retryLoading = false,
 }: JobStatusCardProps): React.JSX.Element | null {
   const notifiedTerminalStateRef = useRef<string | null>(null);
-  const previousStatusRef = useRef<GenerationJobRecord['status'] | null>(null);
+  const previousStatusRef = useRef<CompatibleGenerationJobRecord['status'] | null>(null);
   const [nowMs, setNowMs] = useState(() => Date.now());
   const jobQuery = useQuery({
     enabled: suppliedJob === undefined && jobId !== null,
@@ -61,6 +62,8 @@ export function JobStatusCard({
   });
 
   const job = suppliedJob ?? jobQuery.data;
+  const canonicalJob =
+    job !== undefined && isCanonicalGenerationJob(job) ? job : null;
   const refetchJob = jobQuery.refetch;
   const status = job?.status ?? 'loading';
   const isActive = status === 'queued' || status === 'processing';
@@ -130,7 +133,7 @@ export function JobStatusCard({
   const hideReason = job === undefined ? null : actionReason(job.actions.hide.reason_key, language);
 
   const confirmCancel = (): void => {
-    if (job === undefined || onCancel === undefined || !canCancel) {
+    if (canonicalJob === null || onCancel === undefined || !canCancel) {
       return;
     }
     confirmAction({
@@ -138,18 +141,18 @@ export function JobStatusCard({
       title: t(language, 'component.jobStatusCard.cancel.title'),
       message: t(
         language,
-        job.status === 'processing'
+        canonicalJob.status === 'processing'
           ? 'component.jobStatusCard.cancel.processingMessage'
           : 'component.jobStatusCard.cancel.queuedMessage'
       ),
       confirmLabel: t(language, 'component.jobStatusCard.cancel.confirmLabel'),
       destructive: true,
-      onConfirm: () => void onCancel(job),
+      onConfirm: () => void onCancel(canonicalJob),
     });
   };
 
   const confirmHide = (): void => {
-    if (job === undefined || onHide === undefined || !canHide) {
+    if (canonicalJob === null || onHide === undefined || !canHide) {
       return;
     }
     confirmAction({
@@ -158,7 +161,7 @@ export function JobStatusCard({
       message: t(language, "generated.components.JobStatusCard.the.result.and.audit.history.are.kept.th.46d7dc3b"),
       confirmLabel: t(language, "generated.components.JobStatusCard.hide.4c18a879"),
       destructive: true,
-      onConfirm: () => void onHide(job),
+      onConfirm: () => void onHide(canonicalJob),
     });
   };
 
@@ -211,14 +214,18 @@ export function JobStatusCard({
       {job === undefined || queryFailed ? null : (
         <>
           <Text style={styles.text}>{jobStatusMessage(job, language)}</Text>
-          <JobCreditSettlement
-            language={language}
-            settlement={job.credit_settlement}
-          />
+          {job.credit_settlement === null ? null : (
+            <JobCreditSettlement
+              language={language}
+              settlement={job.credit_settlement}
+            />
+          )}
           {errorMessage === null ? null : <Text style={styles.error}>{errorMessage}</Text>}
           {job.support_id === null ? null : <Text style={styles.supportId}>{t(language, "generated.components.JobStatusCard.support.id.be6bc1b5")}: {job.support_id}</Text>}
           <View style={styles.actionRow}>
-            {onCancel === undefined || (job.status !== 'queued' && job.status !== 'processing') ? null : (
+            {onCancel === undefined ||
+            canonicalJob === null ||
+            (canonicalJob.status !== 'queued' && canonicalJob.status !== 'processing') ? null : (
               <PrimaryButton
                 disabled={!canCancel}
                 disabledReason={cancelReason ?? undefined}
@@ -228,15 +235,20 @@ export function JobStatusCard({
                 variant="danger"
               />
             )}
-            {onRetry === undefined || job.status !== 'failed' || !job.retryable ? null : (
+            {onRetry === undefined ||
+            canonicalJob === null ||
+            canonicalJob.status !== 'failed' ||
+            !canonicalJob.retryable ? null : (
               <PrimaryButton
                 label={t(language, "generated.components.JobStatusCard.try.again.a428737b")}
                 loading={retryLoading}
-                onPress={() => void onRetry(job)}
+                onPress={() => void onRetry(canonicalJob)}
                 variant="secondary"
               />
             )}
-            {onHide === undefined || !isTerminal(job.status) ? null : (
+            {onHide === undefined ||
+            canonicalJob === null ||
+            !isTerminal(canonicalJob.status) ? null : (
               <PrimaryButton
                 disabled={!canHide}
                 disabledReason={hideReason ?? undefined}
@@ -281,10 +293,10 @@ function formatStatus(status: string, queryFailed: boolean, language: 'ja' | 'en
 }
 
 function progressLabel(
-  stage: GenerationJobRecord['progress_stage'],
+  stage: CompatibleGenerationJobRecord['progress_stage'],
   language: 'ja' | 'en',
 ): string {
-  const labels: Record<NonNullable<GenerationJobRecord['progress_stage']>, ComponentTranslationKey> = {
+  const labels: Record<NonNullable<CompatibleGenerationJobRecord['progress_stage']>, ComponentTranslationKey> = {
     queued: 'component.jobStatusCard.progress.queued',
     compiling: 'component.jobStatusCard.progress.compiling',
     preparing_references: 'component.jobStatusCard.progress.preparingReferences',
@@ -296,7 +308,7 @@ function progressLabel(
   return label === undefined ? t(language, "generated.components.JobStatusCard.checking.status.243ad6bb") : t(language, label);
 }
 
-function jobStatusMessage(job: GenerationJobRecord, language: 'ja' | 'en'): string {
+function jobStatusMessage(job: CompatibleGenerationJobRecord, language: 'ja' | 'en'): string {
   if (job.status === 'completed') {
     return t(language, "generated.components.JobStatusCard.generation.completed.related.screens.wil.dc316fe2");
   }
@@ -309,7 +321,7 @@ function jobStatusMessage(job: GenerationJobRecord, language: 'ja' | 'en'): stri
   return t(language, "generated.components.JobStatusCard.status.updates.automatically.until.compl.5431e6ef");
 }
 
-function safeJobErrorMessage(job: GenerationJobRecord, language: 'ja' | 'en'): string | null {
+function safeJobErrorMessage(job: CompatibleGenerationJobRecord, language: 'ja' | 'en'): string | null {
   if (job.message_key === 'job.error.cancelled') {
     return t(language, "generated.components.JobStatusCard.this.generation.was.canceled.e5230588");
   }
@@ -354,6 +366,12 @@ function formatElapsed(startedAt: string, nowMs: number, language: 'ja' | 'en'):
 
 function isTerminal(status: GenerationJobRecord['status']): boolean {
   return status === 'completed' || status === 'failed' || status === 'canceled';
+}
+
+function isCanonicalGenerationJob(
+  job: CompatibleGenerationJobRecord,
+): job is GenerationJobRecord {
+  return job.credit_settlement !== null;
 }
 
 function statusStyle(status: string, queryFailed: boolean): object {

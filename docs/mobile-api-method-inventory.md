@@ -110,7 +110,7 @@ Total public methods: **112**
 | `exportPageImage` | GET | `/api/pages/:pageId/export-image?organization_id` | required | personal or organization | `binary response` |
 | `exportEntityReferenceImage` | GET | `/api/entities/:entityId/reference/:refId/image?organization_id` | required | personal or organization | `binary response` |
 | `exportEntityReferenceCandidateImage` | GET | `/api/entities/:entityId/reference-candidate-image?query` | required | personal or organization | `binary response` |
-| `getJob` | GET | `/api/jobs/:jobId?organization_id` | required | personal or organization | `generationJobSchema` |
+| `getJob` | GET | `/api/jobs/:jobId?organization_id` | required | personal or organization | `generationJobCompatibilitySchema` |
 | `listJobs` | GET | `/api/jobs?filters` | required | personal or organization | `generationJobsResponseSchema` |
 | `cancelJob` | POST | `/api/jobs/:jobId/cancel?organization_id` | required | personal or organization | `generationJobSchema` |
 | `hideJob` | DELETE | `/api/jobs/:jobId?organization_id` | required | personal or organization | `void (204)` |
