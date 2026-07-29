@@ -2711,7 +2711,6 @@ export function PagesScreen(): React.JSX.Element {
         </>
       )}
       <PageCompletionActions
-        confirmed={selectedPage?.status === 'confirmed'}
         exportSection={(
       <Section
         collapsible

@@ -4,12 +4,11 @@ import { describe, expect, it } from 'vitest';
 
 import { PageCompletionActions } from '@/components/PageCompletionActions';
 
-const labels = (confirmed: boolean): string[] => {
+const labels = (): string[] => {
   let renderer: ReturnType<typeof create>;
   act(() => {
     renderer = create(
       <PageCompletionActions
-        confirmed={confirmed}
         exportSection={React.createElement('section', { label: 'export' })}
         generationSection={React.createElement('section', { label: 'generation' })}
       />
@@ -19,11 +18,7 @@ const labels = (confirmed: boolean): string[] => {
 };
 
 describe('PageCompletionActions', () => {
-  it('編集中は生成の後に書き出しを表示する', () => {
-    expect(labels(false)).toEqual(['generation', 'export']);
-  });
-
-  it('確定後は生成を隠して書き出しだけ表示する', () => {
-    expect(labels(true)).toEqual(['export']);
+  it('ページ状態にかかわらず生成の後に書き出しを表示する', () => {
+    expect(labels()).toEqual(['generation', 'export']);
   });
 });

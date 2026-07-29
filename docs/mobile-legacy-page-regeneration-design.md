@@ -46,6 +46,9 @@ because readiness is unavailable or receives 404 from the atomic route.
    limit, or server errors.
 7. Label the action `ページを再生成` when the selected page already has a generated
    image.
+8. Keep the generation section visible after page confirmation. Confirmation
+   enables completion and export workflows; it does not revoke the Spec contract
+   that regeneration creates a new result from the current saved inputs.
 
 ## Security and billing
 
