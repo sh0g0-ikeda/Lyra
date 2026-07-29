@@ -116,6 +116,10 @@ import {
   currentQueryError,
   supportingQueryError
 } from '@/lib/queryErrorPolicy';
+import {
+  isLegacyPageGenerationCapabilityUnavailable,
+  runPageGenerationWithLegacyFallback
+} from '@/lib/pageGenerationCompatibility';
 import { userErrorMessage } from '@/lib/userMessages';
 import type { MobileTabParamList } from '@/navigation/tabs';
 import { useAppState } from '@/state/appState';
@@ -918,6 +922,8 @@ export function PagesScreen(): React.JSX.Element {
     ),
     queryFn: () => api.getPageGenerationReadiness(selectedPage?.id ?? '', organizationId)
   });
+  const legacyPageGenerationReadinessUnavailable =
+    isLegacyPageGenerationCapabilityUnavailable(pageGenerationReadinessQuery.error);
 
   useEffect(() => {
     const templates = pageLayoutTemplatesQuery.data?.templates ?? [];
@@ -1657,12 +1663,17 @@ export function PagesScreen(): React.JSX.Element {
               idempotencyKey: `mobile-page-${selectedPage.id}-${Date.now().toString(36)}`
             };
       generationAttemptRef.current = attempt;
-      return api.saveAndGeneratePage(
-        selectedPage.id,
-        payload,
-        attempt.idempotencyKey,
-        organizationId
-      );
+      return runPageGenerationWithLegacyFallback({
+        saveAndGenerate: () =>
+          api.saveAndGeneratePage(
+            selectedPage.id,
+            payload,
+            attempt.idempotencyKey,
+            organizationId
+          ),
+        saveDrafts: saveAllPageDrafts,
+        generateLegacy: () => api.generatePage(selectedPage.id, organizationId)
+      });
     },
     onSuccess: async (result) => {
       generationAttemptRef.current = null;
@@ -1972,9 +1983,12 @@ export function PagesScreen(): React.JSX.Element {
       language,
       title: t(language, "generated.screens.PagesScreen.generate.page.image.a3a86143"),
       message: t(language, 'screen.pages.generatePageConfirmation', {
-        creditCost: readiness?.estimated_credit_cost ?? '-'
+        creditCost: readiness?.estimated_credit_cost ?? '3+'
       }),
-      confirmLabel: t(language, 'generate'),
+      confirmLabel:
+        selectedPage === null || selectedPage.generated_image === null
+          ? t(language, 'generate')
+          : t(language, 'screen.pages.regenerate'),
       onConfirm: () => generatePageMutation.mutate()
     });
   };
@@ -2034,7 +2048,9 @@ export function PagesScreen(): React.JSX.Element {
   const pageGenerationReadinessError = supportingQueryError({
     data: pageGenerationReadinessQuery.data,
     enabled: canGenerate && selectedPage !== null,
-    error: pageGenerationReadinessQuery.error
+    error: legacyPageGenerationReadinessUnavailable
+      ? null
+      : pageGenerationReadinessQuery.error
   });
   const panelsError = currentQueryError({
     data: panelsQuery.data,
@@ -2162,8 +2178,8 @@ export function PagesScreen(): React.JSX.Element {
   const readiness = pageGenerationReadinessQuery.data ?? null;
   const serverGenerationBlocked =
     pageGenerationReadinessQuery.isLoading ||
-    readiness === null ||
-    !readiness.ready;
+    (!legacyPageGenerationReadinessUnavailable &&
+      (readiness === null || !readiness.ready));
   const refreshPages = (): void => {
     void invalidatePages();
     void invalidatePanels();
@@ -2904,7 +2920,11 @@ export function PagesScreen(): React.JSX.Element {
                           ? t(language, "generated.screens.PagesScreen.check.panel.content.a0d29c4a")
                           : undefined
           }
-          label={t(language, 'generate')}
+          label={
+            selectedPage === null || selectedPage.generated_image === null
+              ? t(language, 'generate')
+              : t(language, 'screen.pages.regenerate')
+          }
           loading={generatePageMutation.isPending}
           onPress={confirmGeneratePage}
         />

@@ -100,7 +100,7 @@ Unclassified routes: **0**
 | `/api/pages/:id/frames` | GET | Mobile UI | api.getFrames -> apps/mobile/src/screens/PagesScreen.tsx |
 | `/api/pages/:id/frames` | PUT | Mobile UI | api.replaceFrames -> apps/mobile/src/screens/PagesScreen.tsx |
 | `/api/pages/:id/frames/apply-template` | POST | Mobile UI | api.applyFrameTemplate -> apps/mobile/src/screens/PagesScreen.tsx |
-| `/api/pages/:id/generate` | POST | Mobile safety replacement | Mobile uses atomic /save-and-generate so unsaved inputs cannot diverge from the queued snapshot. |
+| `/api/pages/:id/generate` | POST | Mobile UI | api.generatePage -> apps/mobile/src/screens/PagesScreen.tsx |
 | `/api/pages/:id/generation-readiness` | GET | Mobile UI | api.getPageGenerationReadiness -> apps/mobile/src/screens/PagesScreen.tsx |
 | `/api/pages/:id/layout-template` | POST | Mobile UI | api.applyPageLayoutTemplate -> apps/mobile/src/screens/PagesScreen.tsx |
 | `/api/pages/:id/panels` | GET | Mobile UI | api.getPanels -> apps/mobile/src/screens/PagesScreen.tsx |
