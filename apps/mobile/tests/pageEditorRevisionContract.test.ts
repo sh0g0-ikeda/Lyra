@@ -27,4 +27,15 @@ describe('page editor revision contract', () => {
     expect(source).toContain('downloadPageMutation.reset');
     expect(source).toContain('setPageImageDownloadError(null)');
   });
+
+  it('ページ確定前に未保存のページ入力を保存する', () => {
+    const source = readFileSync(
+      resolve(process.cwd(), 'src/screens/PagesScreen.tsx'),
+      'utf8'
+    );
+
+    expect(source).toMatch(
+      /const confirmPageMutation = useMutation\(\{\s*mutationFn: async \(\) => \{\s*await saveAllPageDrafts\(\);\s*return api\.confirmPage/
+    );
+  });
 });

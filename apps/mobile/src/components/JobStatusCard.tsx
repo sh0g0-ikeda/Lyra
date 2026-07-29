@@ -49,7 +49,10 @@ export function JobStatusCard({
   retryLoading = false,
 }: JobStatusCardProps): React.JSX.Element | null {
   const notifiedTerminalStateRef = useRef<string | null>(null);
-  const previousStatusRef = useRef<CompatibleGenerationJobRecord['status'] | null>(null);
+  const previousJobStateRef = useRef<{
+    id: string;
+    status: CompatibleGenerationJobRecord['status'];
+  } | null>(null);
   const [nowMs, setNowMs] = useState(() => Date.now());
   const jobQuery = useQuery({
     enabled: suppliedJob === undefined && jobId !== null,
@@ -96,13 +99,9 @@ export function JobStatusCard({
     if (job === undefined) {
       return;
     }
-    const previousStatus = previousStatusRef.current;
-    previousStatusRef.current = job.status;
-    if (
-      previousStatus === null ||
-      previousStatus === job.status ||
-      (job.status !== 'completed' && job.status !== 'failed')
-    ) {
+    const previousJobState = previousJobStateRef.current;
+    previousJobStateRef.current = { id: job.id, status: job.status };
+    if (job.status !== 'completed' && job.status !== 'failed') {
       return;
     }
     const terminalStateKey = `${job.id}:${job.status}`;
@@ -112,6 +111,12 @@ export function JobStatusCard({
     notifiedTerminalStateRef.current = terminalStateKey;
     if (job.status === 'completed') {
       void onCompleted?.();
+      return;
+    }
+    if (
+      previousJobState?.id !== job.id ||
+      previousJobState.status === job.status
+    ) {
       return;
     }
     recordOperationalMetric({

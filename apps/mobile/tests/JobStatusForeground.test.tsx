@@ -154,6 +154,61 @@ describe('JobStatusCard load recovery', () => {
   });
 });
 
+describe('JobStatusCard completion notification', () => {
+  it('初回取得時点ですでに完了していても完了を1回通知する', async () => {
+    const onCompleted = vi.fn();
+    const completed: GenerationJobRecord = {
+      ...buildProcessingJob({
+        available: false,
+        reason_key: 'job.action.cancelOnlyActive'
+      }),
+      status: 'completed',
+      result: { image_url: 'https://cdn.lyra.test/page.png' },
+      progress_stage: 'completed',
+      progress_percent: 100,
+      completed_at: '2026-07-25T00:02:00.000Z',
+      actions: {
+        cancel: {
+          available: false,
+          reason_key: 'job.action.cancelOnlyActive'
+        },
+        hide: {
+          available: true,
+          reason_key: null
+        }
+      }
+    };
+    let renderer: ReturnType<typeof create>;
+
+    await act(async () => {
+      renderer = create(
+        <JobStatusCard
+          api={{ getJob: vi.fn() } as never}
+          job={completed}
+          jobId={completed.id}
+          language="ja"
+          onCompleted={onCompleted}
+          sessionKey="session-1"
+        />
+      );
+    });
+    await act(async () => {
+      renderer!.update(
+        <JobStatusCard
+          api={{ getJob: vi.fn() } as never}
+          job={completed}
+          jobId={completed.id}
+          language="ja"
+          onCompleted={onCompleted}
+          sessionKey="session-1"
+        />
+      );
+    });
+
+    expect(onCompleted).toHaveBeenCalledOnce();
+  });
+});
+
 describe('JobStatusCard processing cancellation', () => {
   it('処理中の停止確認では現在の処理段階後に中止されることを説明する', async () => {
     const job = buildProcessingJob({

@@ -2,11 +2,27 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { ApiError } from '@/lib/api';
 import {
+  hasUnsavedNewPanelDraft,
   isLegacyPageGenerationCapabilityUnavailable,
   runPageGenerationWithLegacyFallback,
 } from '@/lib/pageGenerationCompatibility';
 
 describe('page generation compatibility', () => {
+  it('未保存の新規コマ入力は一括生成前に作成を要求する', () => {
+    expect(hasUnsavedNewPanelDraft({
+      panelDirty: true,
+      selectedPanelId: null,
+    })).toBe(true);
+    expect(hasUnsavedNewPanelDraft({
+      panelDirty: false,
+      selectedPanelId: null,
+    })).toBe(false);
+    expect(hasUnsavedNewPanelDraft({
+      panelDirty: true,
+      selectedPanelId: 'panel-1',
+    })).toBe(false);
+  });
+
   it('現行の一括保存生成が成功した場合は旧APIを呼ばない', async () => {
     const saveAndGenerate = vi.fn().mockResolvedValue({ job_id: 'atomic-job' });
     const saveDrafts = vi.fn();

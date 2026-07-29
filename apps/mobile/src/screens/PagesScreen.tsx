@@ -15,6 +15,7 @@ import { JobStatusCard } from '@/components/JobStatusCard';
 import { LayoutTemplatePreview, type FramePreviewDefinition } from '@/components/LayoutTemplatePreview';
 import { Notice } from '@/components/Notice';
 import { PageCompletionActions } from '@/components/PageCompletionActions';
+import { PageGenerationActions } from '@/components/PageGenerationActions';
 import { PageImageViewer } from '@/components/PageImageViewer';
 import { PageSceneAutofillAction } from '@/components/PageSceneAutofillAction';
 import { PageThumbnailPicker } from '@/components/PageThumbnailPicker';
@@ -117,6 +118,7 @@ import {
   supportingQueryError
 } from '@/lib/queryErrorPolicy';
 import {
+  hasUnsavedNewPanelDraft,
   isLegacyPageGenerationCapabilityUnavailable,
   runPageGenerationWithLegacyFallback
 } from '@/lib/pageGenerationCompatibility';
@@ -1113,6 +1115,10 @@ export function PagesScreen(): React.JSX.Element {
     resourceId: selectedPanel?.id ?? null,
     valuesDiffer: panelValuesDiffer
   });
+  const unsavedNewPanelDraft = hasUnsavedNewPanelDraft({
+    panelDirty,
+    selectedPanelId: selectedPanel?.id ?? null,
+  });
 
   const frameDraftsInvalid = frameDrafts.some((frame) =>
     !isIntegerInRangeText(frame.reading_order, 1, 1000) ||
@@ -1695,8 +1701,13 @@ export function PagesScreen(): React.JSX.Element {
   });
 
   const confirmPageMutation = useMutation({
-    mutationFn: () => api.confirmPage(selectedPage?.id ?? '', organizationId),
-    onSuccess: invalidatePages
+    mutationFn: async () => {
+      await saveAllPageDrafts();
+      return api.confirmPage(selectedPage?.id ?? '', organizationId);
+    },
+    onSuccess: async () => {
+      await Promise.all([invalidatePages(), invalidatePanels(), invalidateFrames()]);
+    }
   });
 
   const reopenPageMutation = useMutation({
@@ -1985,10 +1996,7 @@ export function PagesScreen(): React.JSX.Element {
       message: t(language, 'screen.pages.generatePageConfirmation', {
         creditCost: readiness?.estimated_credit_cost ?? '3+'
       }),
-      confirmLabel:
-        selectedPage === null || selectedPage.generated_image === null
-          ? t(language, 'generate')
-          : t(language, 'screen.pages.regenerate'),
+      confirmLabel: t(language, 'generate'),
       onConfirm: () => generatePageMutation.mutate()
     });
   };
@@ -2176,6 +2184,7 @@ export function PagesScreen(): React.JSX.Element {
   const panelSizeSegments = labelOptions(panelSizeOptions, language);
   const errorMessage = generationErrorMessage(generatePageMutation.error, language);
   const readiness = pageGenerationReadinessQuery.data ?? null;
+  const pageRequiresReopen = selectedPage?.status === 'confirmed';
   const serverGenerationBlocked =
     pageGenerationReadinessQuery.isLoading ||
     (!legacyPageGenerationReadinessUnavailable &&
@@ -2308,8 +2317,6 @@ export function PagesScreen(): React.JSX.Element {
         >
           <ConfirmedPageSummary
             language={language}
-            loading={reopenPageMutation.isPending}
-            onReopen={confirmReopenPage}
             page={selectedPage}
             sourceSceneLabels={selectedPage.story_source_scene_ids.map((sceneId) => {
               const sourceScene = scenes.find((scene) => scene.id === sceneId);
@@ -2819,12 +2826,62 @@ export function PagesScreen(): React.JSX.Element {
 
         generationSection={(
       <Section
-        collapsible
-        persistKey="pages:generation"
         subtitle={t(language, "generated.screens.PagesScreen.the.current.page.including.unsaved.input.17ec50bf")}
         title={t(language, 'generate')}
         tone="highlight"
       >
+        <PageGenerationActions
+          canConfirm={canEdit && selectedPage !== null && !unsavedNewPanelDraft}
+          confirmDisabledReason={
+            !canEdit
+              ? t(language, "generated.screens.PagesScreen.editing.permission.is.required.6d3b86ee")
+              : selectedPage === null
+                ? t(language, "generated.screens.PagesScreen.select.a.page.first.50276876")
+                : unsavedNewPanelDraft
+                  ? t(language, 'screen.pages.unsavedNewPanelDraft')
+                  : undefined
+          }
+          confirmed={pageRequiresReopen}
+          confirmLoading={confirmPageMutation.isPending}
+          generateDisabled={
+            !canGenerate ||
+            selectedPage === null ||
+            pageRequiresReopen ||
+            unsavedNewPanelDraft ||
+            pageStale ||
+            serverGenerationBlocked ||
+            framePanelMismatch ||
+            frameDraftsInvalid ||
+            panelPayloadInvalid
+          }
+          generateDisabledReason={
+            !canGenerate
+              ? t(language, "generated.screens.PagesScreen.generation.permission.is.required.1bc5b7af")
+              : selectedPage === null
+                ? t(language, "generated.screens.PagesScreen.select.a.page.first.50276876")
+                : pageRequiresReopen
+                  ? t(language, 'screen.pages.blocker.pageReopenRequired')
+                  : unsavedNewPanelDraft
+                    ? t(language, 'screen.pages.unsavedNewPanelDraft')
+                    : pageStale
+                      ? t(language, "generated.screens.PagesScreen.reload.the.latest.page.2116abca")
+                      : serverGenerationBlocked
+                        ? t(language, "generated.screens.PagesScreen.resolve.the.generation.blockers.above.cda6ec67")
+                        : framePanelMismatch
+                          ? t(language, "generated.screens.PagesScreen.match.frame.and.panel.counts.62ee8959")
+                          : frameDraftsInvalid
+                            ? t(language, "generated.screens.PagesScreen.check.frame.values.adb62959")
+                            : panelPayloadInvalid
+                              ? t(language, "generated.screens.PagesScreen.check.panel.content.a0d29c4a")
+                              : undefined
+          }
+          generateLoading={generatePageMutation.isPending}
+          language={language}
+          onConfirm={confirmConfirmPage}
+          onGenerate={confirmGeneratePage}
+          onReopen={confirmReopenPage}
+          reopenLoading={reopenPageMutation.isPending}
+        />
         {errorMessage === null ? null : <Notice message={errorMessage} tone="danger" />}
         {pageStale ? (
           <View style={styles.usage}>
@@ -2892,43 +2949,7 @@ export function PagesScreen(): React.JSX.Element {
             tone="warning"
           />
         ) : null}
-        <PrimaryButton
-          disabled={
-            !canGenerate ||
-            selectedPage === null ||
-            pageStale ||
-            serverGenerationBlocked ||
-            framePanelMismatch ||
-            frameDraftsInvalid ||
-            panelPayloadInvalid
-          }
-          disabledReason={
-            !canGenerate
-              ? t(language, "generated.screens.PagesScreen.generation.permission.is.required.1bc5b7af")
-              : selectedPage === null
-                ? t(language, "generated.screens.PagesScreen.select.a.page.first.50276876")
-                : pageStale
-                  ? t(language, "generated.screens.PagesScreen.reload.the.latest.page.2116abca")
-                  : serverGenerationBlocked
-                    ? t(language, "generated.screens.PagesScreen.resolve.the.generation.blockers.above.cda6ec67")
-                    : framePanelMismatch
-                      ? t(language, "generated.screens.PagesScreen.match.frame.and.panel.counts.62ee8959")
-                      : frameDraftsInvalid
-                        ? t(language, "generated.screens.PagesScreen.check.frame.values.adb62959")
-                        : panelPayloadInvalid
-                          ? t(language, "generated.screens.PagesScreen.check.panel.content.a0d29c4a")
-                          : undefined
-          }
-          label={
-            selectedPage === null || selectedPage.generated_image === null
-              ? t(language, 'generate')
-              : t(language, 'screen.pages.regenerate')
-          }
-          loading={generatePageMutation.isPending}
-          onPress={confirmGeneratePage}
-        />
         <View style={styles.buttonRow}>
-          <PrimaryButton disabled={!canEdit || selectedPage === null} disabledReason={!canEdit ? t(language, "generated.screens.PagesScreen.editing.permission.is.required.6d3b86ee") : selectedPage === null ? t(language, "generated.screens.PagesScreen.select.a.page.first.50276876") : undefined} label={t(language, 'confirmPage')} loading={confirmPageMutation.isPending} onPress={confirmConfirmPage} variant="secondary" />
           <PrimaryButton
             disabled={!canExport || selectedPage === null || selectedPage.generated_image === null}
             disabledReason={!canExport ? t(language, "generated.screens.PagesScreen.export.permission.is.required.8c8fb948") : selectedPage === null || selectedPage.generated_image === null ? t(language, "generated.screens.PagesScreen.no.generated.image.590508b9") : undefined}

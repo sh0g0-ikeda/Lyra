@@ -44,11 +44,23 @@ because readiness is unavailable or receives 404 from the atomic route.
    edits.
 6. Do not fall back for validation, stale-resource, conflict, permission, rate
    limit, or server errors.
-7. Label the action `ページを再生成` when the selected page already has a generated
-   image.
-8. Keep the generation section visible after page confirmation. Confirmation
-   enables completion and export workflows; it does not revoke the Spec contract
-   that regeneration creates a new result from the current saved inputs.
+7. Match Web with one stable primary action labelled `ページ生成`. Do not derive
+   its label or visibility from `generated_image`; the backend decides whether the
+   request is an initial generation or an update of the current result.
+8. Keep the generation section expanded, place its actions first, and keep it
+   visible for every selected page.
+9. A confirmed page remains the sole exception: show `再編集` beside the disabled
+   generation action, reopen it to `editing`, then return to the same save-and-
+   generate workflow. This preserves the backend's confirmed-page protection.
+10. After job completion, invalidate page, panel, and frame data so the newest
+    generated image replaces the previous display.
+11. If a user has typed into the unsaved new-panel form, require `作成` before
+    generation. The atomic API updates persisted panel IDs and cannot safely
+    invent the matching frame for a new panel.
+12. Save dirty page, persisted-panel, and frame drafts before page confirmation
+    so confirmation cannot hide or discard pending editor state.
+13. Treat an initially observed completed job as completion and invalidate the
+    displayed resources; fast jobs must not leave the previous image cached.
 
 ## Security and billing
 

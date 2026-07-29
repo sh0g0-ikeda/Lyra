@@ -54,8 +54,6 @@ describe('ConfirmedPageSummary', () => {
       renderer = create(
         <ConfirmedPageSummary
           language="ja"
-          loading={false}
-          onReopen={vi.fn()}
           page={page}
           sourceSceneLabels={['場面1 夜の駅']}
         />
@@ -68,25 +66,7 @@ describe('ConfirmedPageSummary', () => {
     expect(output).toContain('場面1 夜の駅');
     expect(output).toContain('主人公の決意を見せる');
     expect(output).toContain('コマ 4 / 枠 4 / セリフ 2');
-    expect(output).toContain('編集・再生成するには下書きに戻してください');
-  });
-
-  it('明示操作でだけreopenを呼ぶ', () => {
-    const onReopen = vi.fn();
-    let renderer: ReturnType<typeof create>;
-    act(() => {
-      renderer = create(
-        <ConfirmedPageSummary
-          language="en"
-          loading={false}
-          onReopen={onReopen}
-          page={page}
-          sourceSceneLabels={[]}
-        />
-      );
-    });
-
-    act(() => renderer!.root.findByType('button').props.onClick());
-    expect(onReopen).toHaveBeenCalledOnce();
+    expect(output).toContain('編集・ページ生成するには下書きに戻してください');
+    expect(renderer!.root.findAllByType('button')).toHaveLength(0);
   });
 });

@@ -1,22 +1,17 @@
 import { StyleSheet, Text, View } from 'react-native';
 
-import { PrimaryButton } from '@/components/PrimaryButton';
 import { colors, spacing, textStyles } from '@/constants/theme';
 import type { PageRecord, UiLanguage } from '@/domain/types';
 import { t } from '@/lib/i18n';
 
 interface ConfirmedPageSummaryProps {
   language: UiLanguage;
-  loading: boolean;
-  onReopen: () => void;
   page: PageRecord;
   sourceSceneLabels: readonly string[];
 }
 
 export function ConfirmedPageSummary({
   language,
-  loading,
-  onReopen,
   page,
   sourceSceneLabels
 }: ConfirmedPageSummaryProps): React.JSX.Element {
@@ -54,12 +49,6 @@ export function ConfirmedPageSummary({
       <Text style={styles.caption}>
         {t(language, "generated.components.ConfirmedPageSummary.reopen.this.page.before.editing.or.regen.bfaf6ff1")}
       </Text>
-      <PrimaryButton
-        label={t(language, "generated.components.ConfirmedPageSummary.reopen.as.draft.a65e1cdf")}
-        loading={loading}
-        onPress={onReopen}
-        variant="secondary"
-      />
     </View>
   );
 }

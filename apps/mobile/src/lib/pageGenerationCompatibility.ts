@@ -10,6 +10,14 @@ interface PageGenerationFallbackInput {
   generateLegacy: () => Promise<PageGenerationResult>;
 }
 
+export const hasUnsavedNewPanelDraft = ({
+  panelDirty,
+  selectedPanelId,
+}: {
+  panelDirty: boolean;
+  selectedPanelId: string | null;
+}): boolean => panelDirty && selectedPanelId === null;
+
 export const isLegacyPageGenerationCapabilityUnavailable = (
   error: unknown,
 ): error is ApiError =>
