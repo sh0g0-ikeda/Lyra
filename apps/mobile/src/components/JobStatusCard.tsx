@@ -56,6 +56,9 @@ export function JobStatusCard({
     queryKey: jobQueryKey(sessionKey, jobId, organizationId),
     queryFn: () => api.getJob(jobId ?? '', organizationId),
     refetchInterval: (query) => {
+      if (query.state.status === 'error') {
+        return 5000;
+      }
       const status = query.state.data?.status;
       return suppliedJob === undefined && (status === 'queued' || status === 'processing') ? 2500 : false;
     },

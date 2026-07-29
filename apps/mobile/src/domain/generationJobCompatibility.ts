@@ -13,7 +13,6 @@ export type CompatibleGenerationJobRecord = Omit<
 const legacyGenerationJobSchema = generationJobSchema.pick({
   id: true,
   job_type: true,
-  status: true,
   generation_mode: true,
   credit_cost: true,
   params: true,
@@ -24,22 +23,36 @@ const legacyGenerationJobSchema = generationJobSchema.pick({
   started_at: true,
   completed_at: true,
   expires_at: true,
+}).extend({
+  status: z.enum([
+    'queued',
+    'processing',
+    'completed',
+    'failed',
+    'canceled',
+    'cancelled',
+  ]),
+  cancel_requested_at: z.string().nullable().optional(),
+  cancelled_at: z.string().nullable().optional(),
+  commit_started_at: z.string().nullable().optional(),
 }).strict();
 
 const normalizedLegacyGenerationJobSchema = legacyGenerationJobSchema.transform(
   (job): CompatibleGenerationJobRecord => {
+    const status = job.status === 'cancelled' ? 'canceled' : job.status;
     const updatedAt = job.completed_at ?? job.started_at ?? job.created_at;
     const progressStage =
-      job.status === 'queued'
+      status === 'queued'
         ? 'queued'
-        : job.status === 'completed'
+        : status === 'completed'
           ? 'completed'
           : null;
     const progressPercent =
-      job.status === 'queued' ? 0 : job.status === 'completed' ? 100 : null;
+      status === 'queued' ? 0 : status === 'completed' ? 100 : null;
 
     return {
       ...job,
+      status,
       credit_settlement: null,
       error_code: null,
       message_key: null,

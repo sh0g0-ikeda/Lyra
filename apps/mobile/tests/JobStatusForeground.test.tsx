@@ -123,6 +123,37 @@ describe('JobStatusCard foreground refresh', () => {
   });
 });
 
+describe('JobStatusCard load recovery', () => {
+  it('初回のジョブ取得に失敗しても自動再取得を継続する', async () => {
+    await act(async () => {
+      create(
+        <JobStatusCard
+          api={{ getJob: vi.fn() } as never}
+          jobId="job-1"
+          language="ja"
+          sessionKey="session-1"
+        />
+      );
+    });
+
+    const queryOptions = useQueryMock.mock.calls.at(-1)?.[0] as {
+      refetchInterval: (query: {
+        state: {
+          data?: CompatibleGenerationJobRecord;
+          status: 'error' | 'pending' | 'success';
+        };
+      }) => number | false;
+    };
+
+    expect(queryOptions.refetchInterval({
+      state: {
+        data: undefined,
+        status: 'error',
+      },
+    })).toBe(5_000);
+  });
+});
+
 describe('JobStatusCard processing cancellation', () => {
   it('処理中の停止確認では現在の処理段階後に中止されることを説明する', async () => {
     const job = buildProcessingJob({

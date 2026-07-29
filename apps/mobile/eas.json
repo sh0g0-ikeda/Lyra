@@ -6,6 +6,7 @@
     "development": {
       "environment": "development",
       "distribution": "internal",
+      "autoIncrement": true,
       "env": {
         "EXPO_PUBLIC_BUILD_ENVIRONMENT": "development",
         "EXPO_PUBLIC_ORGANIZATION_FEATURES_ENABLED": "true",
