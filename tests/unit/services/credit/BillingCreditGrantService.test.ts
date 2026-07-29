@@ -265,4 +265,21 @@ describe('BillingCreditGrantService', () => {
     ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
     expect(repository.ledger).toHaveLength(0);
   });
+
+  it('passes a mobile store event key to the credit ledger', async () => {
+    const repository = new InMemoryCreditRepository();
+    const service = new BillingCreditGrantService(repository);
+
+    await service.grantPurchasedCredits({
+      userId: 'user-1',
+      amount: 10,
+      description: 'Mobile credit pack purchase',
+      mobileStoreEventKey: 'store-event-1',
+    });
+
+    expect(repository.ledger[0]).toMatchObject({
+      type: 'purchase',
+      mobileStoreEventKey: 'store-event-1',
+    });
+  });
 });

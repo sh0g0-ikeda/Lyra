@@ -3,6 +3,8 @@ import {
   MAX_PRODUCTION_EPISODE_LONG_JOB_ACTIVE_JOB_LIMITS,
   MAX_PRODUCTION_GENERATION_ACTIVE_JOB_LIMITS,
 } from '../domain/constants/generation.js';
+import { assertMobileStoreBillingRuntimeConfig } from '../infrastructure/mobileStore/MobileStoreBillingConfig.js';
+import { resolvePushNotificationRuntimeConfig } from '../infrastructure/push/PushNotificationRuntime.js';
 
 interface RuntimeGuardConfig {
   APP_ENV?: 'development' | 'test' | 'production';
@@ -65,6 +67,39 @@ interface RuntimeGuardConfig {
   STRIPE_CHECKOUT_SUCCESS_URL?: string;
   STRIPE_CHECKOUT_CANCEL_URL?: string;
   STRIPE_PORTAL_RETURN_URL?: string;
+  MOBILE_STORE_BILLING_ENABLED?: boolean;
+  MOBILE_STORE_IDENTIFIER_HASH_SECRET?: string;
+  APPLE_STORE_BUNDLE_ID?: string;
+  APPLE_STORE_APP_APPLE_ID?: number;
+  APPLE_STORE_ROOT_CERTIFICATES_BASE64_JSON?: string;
+  APPLE_STORE_ALLOW_SANDBOX?: boolean;
+  APPLE_STORE_PRODUCT_STANDARD_MONTHLY?: string;
+  APPLE_STORE_PRODUCT_PREMIUM_MONTHLY?: string;
+  APPLE_STORE_PRODUCT_CREDITS_200?: string;
+  APPLE_STORE_PRODUCT_CREDITS_1000?: string;
+  APPLE_STORE_PRODUCT_CREDITS_3000?: string;
+  GOOGLE_PLAY_PACKAGE_NAME?: string;
+  GOOGLE_PLAY_SERVICE_ACCOUNT_JSON_BASE64?: string;
+  GOOGLE_PLAY_PUBSUB_AUDIENCE?: string;
+  GOOGLE_PLAY_PUBSUB_SERVICE_ACCOUNT_EMAIL?: string;
+  GOOGLE_PLAY_ALLOW_TEST_PURCHASES?: boolean;
+  GOOGLE_PLAY_PRODUCT_STANDARD_MONTHLY?: string;
+  GOOGLE_PLAY_PRODUCT_PREMIUM_MONTHLY?: string;
+  GOOGLE_PLAY_PRODUCT_CREDITS_200?: string;
+  GOOGLE_PLAY_PRODUCT_CREDITS_1000?: string;
+  GOOGLE_PLAY_PRODUCT_CREDITS_3000?: string;
+  PUSH_NOTIFICATIONS_ENABLED?: boolean;
+  PUSH_TOKEN_ENCRYPTION_KEY_BASE64?: string;
+  PUSH_TOKEN_HASH_KEY_BASE64?: string;
+  PUSH_TOKEN_ENCRYPTION_KEY_ID?: string;
+  PUSH_APNS_TEAM_ID?: string;
+  PUSH_APNS_KEY_ID?: string;
+  PUSH_APNS_PRIVATE_KEY_BASE64?: string;
+  PUSH_APNS_BUNDLE_ID?: string;
+  PUSH_APNS_ENVIRONMENT?: 'sandbox' | 'production';
+  PUSH_FCM_SERVICE_ACCOUNT_JSON_BASE64?: string;
+  PUSH_PROVIDER_TIMEOUT_MS?: number;
+  PUSH_DELIVERY_INTERVAL_MS?: number;
 }
 
 const MAX_PRODUCTION_DATABASE_POOL_MAX = 10;
@@ -436,6 +471,29 @@ export function assertProductionRuntimeConfig(
     const value = config[key];
     if (value !== undefined && !isSafeProductionHttpsUrl(value)) {
       violations.push(`${key} must use https and a non-local host in production`);
+    }
+  }
+
+  try {
+    assertMobileStoreBillingRuntimeConfig(config, true);
+  } catch (error) {
+    if (error instanceof ConfigurationError) {
+      violations.push(error.message);
+    } else {
+      violations.push('Mobile store billing configuration is invalid');
+    }
+  }
+
+  try {
+    resolvePushNotificationRuntimeConfig({
+      ...config,
+      PUSH_NOTIFICATIONS_ENABLED: config.PUSH_NOTIFICATIONS_ENABLED === true,
+    });
+  } catch (error) {
+    if (error instanceof ConfigurationError) {
+      violations.push(error.message);
+    } else {
+      violations.push('Push notification configuration is invalid');
     }
   }
 

@@ -10,6 +10,7 @@ import type {
   FailedPageGenerationJobMissingRefund,
   PageGenerationRecoveryRepository,
   StalePageGenerationJob,
+  UndispatchedPageGenerationJob,
 } from '../../../../src/repositories/PageGenerationRecoveryRepository.js';
 import type {
   ConsumeCreditsParams,
@@ -17,10 +18,14 @@ import type {
   RefundCreditsParams,
 } from '../../../../src/services/credit/CreditService.js';
 import { PageGenerationRecoveryService } from '../../../../src/services/page/PageGenerationRecoveryService.js';
+import type { PageGenerationQueuePayload } from '../../../../src/domain/types/pageGeneration.js';
+import type { PageGenerationQueuePort } from '../../../../src/services/page/PageGenerationQueue.js';
 
 class FakeRecoveryRepository implements PageGenerationRecoveryRepository {
   public jobs: StalePageGenerationJob[] = [];
   public failedJobsMissingRefund: FailedPageGenerationJobMissingRefund[] = [];
+  public undispatchedJobs: UndispatchedPageGenerationJob[] = [];
+  public attachedQueueMessageIds: Array<{ jobId: string; messageId: string }> = [];
 
   public async listStaleProcessingJobs(): Promise<StalePageGenerationJob[]> {
     return [...this.jobs];
@@ -42,6 +47,28 @@ class FakeRecoveryRepository implements PageGenerationRecoveryRepository {
     pageId: string,
   ): Promise<FailedPageGenerationJobMissingRefund[]> {
     return this.failedJobsMissingRefund.filter((job) => job.userId === userId && job.pageId === pageId);
+  }
+
+  public async listQueuedJobsMissingDispatch(): Promise<UndispatchedPageGenerationJob[]> {
+    return [...this.undispatchedJobs];
+  }
+
+  public async attachQueueMessageId(jobId: string, messageId: string): Promise<boolean> {
+    this.attachedQueueMessageIds.push({ jobId, messageId });
+    return true;
+  }
+}
+
+class FakePageGenerationQueue implements PageGenerationQueuePort {
+  public payloads: PageGenerationQueuePayload[] = [];
+  public shouldFail = false;
+
+  public async enqueue(payload: PageGenerationQueuePayload): Promise<{ messageId: string | null }> {
+    this.payloads.push(payload);
+    if (this.shouldFail) {
+      throw new Error('queue unavailable');
+    }
+    return { messageId: `message-${payload.jobId}` };
   }
 }
 
@@ -117,6 +144,53 @@ class FakeCreditService implements CreditServicePort {
 }
 
 describe('PageGenerationRecoveryService', () => {
+  it('undispatched queued job を outbox recovery で再送し message id を保存する', async () => {
+    const repository = new FakeRecoveryRepository();
+    repository.undispatchedJobs = [{
+      jobId: 'job-outbox-1',
+      userId: 'user-1',
+      pageId: 'page-1',
+      requestKind: 'initial',
+      generationMode: 'standard',
+      quality: 'medium',
+      creditCost: 3,
+      requiresPlanner: false,
+      previousStatus: 'designing',
+      previousGenerationMode: null,
+    }];
+    const queue = new FakePageGenerationQueue();
+    const service = new PageGenerationRecoveryService(
+      repository,
+      new FakeExecutionRepository(),
+      new FakeCreditService(),
+      1,
+      10,
+      undefined,
+      queue,
+    );
+
+    await expect(service.recoverAllStaleJobs()).resolves.toBe(1);
+    expect(queue.payloads).toEqual([expect.objectContaining({ jobId: 'job-outbox-1', pageId: 'page-1' })]);
+    expect(repository.attachedQueueMessageIds).toEqual([{ jobId: 'job-outbox-1', messageId: 'message-job-outbox-1' }]);
+  });
+
+  it('outbox delivery が失敗した job は削除や refund をせず次回 recovery に残す', async () => {
+    const repository = new FakeRecoveryRepository();
+    repository.undispatchedJobs = [{
+      jobId: 'job-outbox-1', userId: 'user-1', pageId: 'page-1', requestKind: 'initial', generationMode: 'standard', quality: 'medium', creditCost: 3, requiresPlanner: false, previousStatus: 'designing', previousGenerationMode: null,
+    }];
+    const queue = new FakePageGenerationQueue();
+    queue.shouldFail = true;
+    const executionRepository = new FakeExecutionRepository();
+    const creditService = new FakeCreditService();
+    const service = new PageGenerationRecoveryService(repository, executionRepository, creditService, 1, 10, undefined, queue);
+
+    await expect(service.recoverAllStaleJobs()).resolves.toBe(0);
+    expect(repository.attachedQueueMessageIds).toEqual([]);
+    expect(executionRepository.failedJobIds).toEqual([]);
+    expect(creditService.refunds).toEqual([]);
+  });
+
   it('stale processing jobs を failed に戻して refund する', async () => {
     const repository = new FakeRecoveryRepository();
     repository.jobs = [

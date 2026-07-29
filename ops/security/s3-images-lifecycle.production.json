@@ -1,0 +1,62 @@
+{
+  "Rules": [
+    {
+      "ID": "abort-incomplete-multipart-uploads-after-1-day",
+      "Filter": {
+        "Prefix": ""
+      },
+      "Status": "Enabled",
+      "AbortIncompleteMultipartUpload": {
+        "DaysAfterInitiation": 1
+      }
+    },
+    {
+      "ID": "expire-lyra-temporary-uploads-after-1-day",
+      "Filter": {
+        "Prefix": "tmp/"
+      },
+      "Status": "Enabled",
+      "Expiration": {
+        "Days": 1
+      },
+      "NoncurrentVersionExpiration": {
+        "NoncurrentDays": 1
+      }
+    },
+    {
+      "ID": "expire-lyra-account-deletion-assets",
+      "Filter": {
+        "Tag": {
+          "Key": "lyra-deletion-state",
+          "Value": "pending"
+        }
+      },
+      "Status": "Enabled",
+      "Expiration": {
+        "Days": 1
+      },
+      "NoncurrentVersionExpiration": {
+        "NoncurrentDays": 1
+      }
+    },
+    {
+      "ID": "manage-noncurrent-image-versions",
+      "Filter": {
+        "Prefix": ""
+      },
+      "Status": "Enabled",
+      "Expiration": {
+        "ExpiredObjectDeleteMarker": true
+      },
+      "NoncurrentVersionTransitions": [
+        {
+          "NoncurrentDays": 7,
+          "StorageClass": "GLACIER_IR"
+        }
+      ],
+      "NoncurrentVersionExpiration": {
+        "NoncurrentDays": 30
+      }
+    }
+  ]
+}

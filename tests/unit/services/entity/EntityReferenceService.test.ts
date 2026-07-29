@@ -313,6 +313,50 @@ describe('EntityReferenceService', () => {
     });
   });
 
+  it('presigned upload 済み画像は再保存せず既存の解析・credit flow へ渡す', async () => {
+    const analyzer = new FakeEntityImportAnalyzer();
+    const storage = new FakeEntityImageStorage();
+    const creditService = new FakeCreditService();
+    const service = buildService({ analyzer, storage, creditService });
+
+    const result = await service.importUploadedImage('user-1', {
+      entityType: 'character',
+      imageData: Buffer.from('iVBORw0KGgo=', 'base64'),
+      mimeType: 'image/png',
+      tmpImageS3Key: 'tmp/user-1/entities/imports/presigned.png',
+      tmpImageCdnUrl: 'https://cdn.lyra.test/tmp/user-1/entities/imports/presigned.png',
+    });
+
+    expect(storage.importedInput).toBeNull();
+    expect(analyzer.input).toMatchObject({
+      entityType: 'character',
+      dataUrl: validPngDataUrl,
+    });
+    expect(creditService.consumed).toMatchObject({
+      userId: 'user-1',
+      cost: 1,
+    });
+    expect(result.tmpImageS3Key).toBe('tmp/user-1/entities/imports/presigned.png');
+  });
+
+  it('presigned upload の magic bytes が MIME と一致しない場合は解析・credit 前に拒否する', async () => {
+    const analyzer = new FakeEntityImportAnalyzer();
+    const creditService = new FakeCreditService();
+    const service = buildService({ analyzer, creditService });
+
+    await expect(
+      service.importUploadedImage('user-1', {
+        entityType: 'character',
+        imageData: Buffer.from('not-a-png'),
+        mimeType: 'image/png',
+        tmpImageS3Key: 'tmp/user-1/entities/imports/presigned.png',
+        tmpImageCdnUrl: 'https://cdn.lyra.test/tmp/user-1/entities/imports/presigned.png',
+      }),
+    ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+    expect(creditService.consumed).toBeNull();
+    expect(analyzer.input).toBeNull();
+  });
+
   it('import-image は MIME と実体が一致しない画像を解析前に拒否する', async () => {
     const analyzer = new FakeEntityImportAnalyzer();
     const storage = new FakeEntityImageStorage();

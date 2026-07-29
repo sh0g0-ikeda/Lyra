@@ -286,6 +286,29 @@ describe('balloon routes', () => {
 
     expect(response.status).toBe(204);
   });
+
+  it('Balloon作成の成功応答がcanonical schemaに違反する場合は500になる', async () => {
+    const balloonService = new FakeBalloonService();
+    balloonService.createBalloon = async (_userId, requestedPageId) =>
+      buildBalloon({ pageId: requestedPageId, fontSize: 0 });
+    const app = createTestApp({ balloonService });
+    const token = await createToken();
+
+    const response = await app.request('/api/pages/33333333-3333-4333-8333-333333333333/balloons', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        balloon_type: 'speech',
+        text: 'hello',
+        position: { x: 0.1, y: 0.2, width: 0.3, height: 0.2 },
+      }),
+    });
+
+    expect(response.status).toBe(500);
+  });
 });
 
 function createTestApp(overrides: {

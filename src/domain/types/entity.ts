@@ -29,6 +29,7 @@ export interface CreateEntityInput {
 }
 
 export interface UpdateEntityInput {
+  expectedUpdatedAt: string;
   entityType?: EntityType;
   name?: string;
   freeDescription?: string | null;

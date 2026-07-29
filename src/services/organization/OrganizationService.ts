@@ -25,8 +25,12 @@ import type {
   OrganizationWorkspaceSummary,
 } from '../../domain/types/organization.js';
 import { roleHasCapability } from '../../domain/types/organization.js';
+import type { ListPage, ListPageRequest } from '../../domain/pagination.js';
 import type { DatabaseClient } from '../../lib/db.js';
-import type { OrganizationRepository } from '../../repositories/OrganizationRepository.js';
+import type {
+  OrganizationRepository,
+  OrganizationUsageSummary,
+} from '../../repositories/OrganizationRepository.js';
 import { InvitationUrlBuilder } from './InvitationUrlBuilder.js';
 import type {
   InvitationEmailDeliveryResult,
@@ -104,6 +108,11 @@ export interface RecordOrganizationAuditEventRequest {
   metadata?: Record<string, unknown>;
 }
 
+export interface OrganizationUsagePageResult {
+  page: ListPage<OrganizationUsageEvent>;
+  summary: OrganizationUsageSummary;
+}
+
 export interface OrganizationServicePort {
   listWorkspaces(userId: string): Promise<OrganizationWorkspaceSummary[]>;
   createOrganization(userId: string, input: CreateOrganizationRequest): Promise<OrganizationWorkspaceSummary>;
@@ -121,7 +130,13 @@ export interface OrganizationServicePort {
     },
   ): Promise<OrganizationCreditBalance>;
   listMembers(userId: string, organizationId: string): Promise<OrganizationMember[]>;
+  listMembersPage(userId: string, organizationId: string, page: ListPageRequest): Promise<ListPage<OrganizationMember>>;
   listInvitations(userId: string, organizationId: string): Promise<OrganizationInvitation[]>;
+  listInvitationsPage(
+    userId: string,
+    organizationId: string,
+    page: ListPageRequest,
+  ): Promise<ListPage<OrganizationInvitation>>;
   inviteMember(
     userId: string,
     organizationId: string,
@@ -163,7 +178,17 @@ export interface OrganizationServicePort {
     client?: DatabaseClient,
   ): Promise<OrganizationCreditBalance>;
   listUsageEvents(userId: string, organizationId: string): Promise<OrganizationUsageEvent[]>;
+  listUsageEventsPage(
+    userId: string,
+    organizationId: string,
+    page: ListPageRequest,
+  ): Promise<OrganizationUsagePageResult>;
   listAuditLogs(userId: string, organizationId: string): Promise<OrganizationAuditLog[]>;
+  listAuditLogsPage(
+    userId: string,
+    organizationId: string,
+    page: ListPageRequest,
+  ): Promise<ListPage<OrganizationAuditLog>>;
   recordGenerationCompleted(input: RecordOrganizationGenerationRequest): Promise<void>;
   recordGenerationFailed(input: RecordOrganizationGenerationRequest & { errorMessage?: string | null }): Promise<void>;
   recordWorkExported(input: RecordOrganizationWorkExportRequest): Promise<void>;
@@ -342,9 +367,27 @@ export class OrganizationService implements OrganizationServicePort {
     return this.organizationRepository.listMembers(organizationId);
   }
 
+  public async listMembersPage(
+    userId: string,
+    organizationId: string,
+    page: ListPageRequest,
+  ): Promise<ListPage<OrganizationMember>> {
+    await this.requireMembership(organizationId, userId, 'manage_members');
+    return this.organizationRepository.listMembersPage(organizationId, page);
+  }
+
   public async listInvitations(userId: string, organizationId: string): Promise<OrganizationInvitation[]> {
     await this.requireMembership(organizationId, userId, 'manage_members');
     return this.organizationRepository.listInvitations(organizationId);
+  }
+
+  public async listInvitationsPage(
+    userId: string,
+    organizationId: string,
+    page: ListPageRequest,
+  ): Promise<ListPage<OrganizationInvitation>> {
+    await this.requireMembership(organizationId, userId, 'manage_members');
+    return this.organizationRepository.listInvitationsPage(organizationId, page);
   }
 
   public async inviteMember(
@@ -1119,6 +1162,19 @@ export class OrganizationService implements OrganizationServicePort {
     return this.organizationRepository.listUsageEvents(organizationId, 200);
   }
 
+  public async listUsageEventsPage(
+    userId: string,
+    organizationId: string,
+    page: ListPageRequest,
+  ): Promise<OrganizationUsagePageResult> {
+    await this.requireMembership(organizationId, userId, 'view_usage');
+    const [pagedEvents, summary] = await Promise.all([
+      this.organizationRepository.listUsageEventsPage(organizationId, page),
+      this.organizationRepository.summarizeUsageEvents(organizationId),
+    ]);
+    return { page: pagedEvents, summary };
+  }
+
   public async listAuditLogs(userId: string, organizationId: string): Promise<OrganizationAuditLog[]> {
     const member = await this.requireMembership(organizationId, userId);
     if (roleHasCapability(member.role, 'view_audit_logs')) {
@@ -1129,6 +1185,25 @@ export class OrganizationService implements OrganizationServicePort {
         organizationId,
         BILLING_AUDIT_ACTION_PREFIXES,
         200,
+      );
+    }
+    throw new ForbiddenError('You do not have permission for this organization action');
+  }
+
+  public async listAuditLogsPage(
+    userId: string,
+    organizationId: string,
+    page: ListPageRequest,
+  ): Promise<ListPage<OrganizationAuditLog>> {
+    const member = await this.requireMembership(organizationId, userId);
+    if (roleHasCapability(member.role, 'view_audit_logs')) {
+      return this.organizationRepository.listAuditLogsPage(organizationId, page);
+    }
+    if (roleHasCapability(member.role, 'view_billing')) {
+      return this.organizationRepository.listAuditLogsByActionPrefixesPage(
+        organizationId,
+        BILLING_AUDIT_ACTION_PREFIXES,
+        page,
       );
     }
     throw new ForbiddenError('You do not have permission for this organization action');

@@ -22,7 +22,9 @@ export interface GeneratedPageImage {
 
 export interface PageGenerationPanelContext {
   panelId: string;
+  order: number;
   entities: PanelEntityAssignment[];
+  dialogue: PanelDialogueLine[];
 }
 
 export interface PageGenerationContext {

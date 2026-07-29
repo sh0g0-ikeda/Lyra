@@ -1,0 +1,85 @@
+:root {
+  color-scheme: dark;
+  font-family: "Noto Sans JP", "Yu Gothic UI", "Hiragino Sans", sans-serif;
+  background: #0b0b0b;
+  color: #f6f4ee;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: #0b0b0b;
+  color: #f6f4ee;
+  line-height: 1.75;
+}
+
+header,
+main,
+footer {
+  width: min(100% - 40px, 800px);
+  margin-inline: auto;
+}
+
+header {
+  padding: 48px 0 24px;
+  border-bottom: 1px solid #45423a;
+}
+
+main {
+  padding: 24px 0 56px;
+}
+
+footer {
+  padding: 24px 0 48px;
+  border-top: 1px solid #45423a;
+}
+
+h1 {
+  margin: 0 0 8px;
+  font-size: clamp(1.75rem, 5vw, 2.5rem);
+}
+
+h2 {
+  margin: 40px 0 12px;
+  font-size: 1.25rem;
+}
+
+h3 {
+  margin: 24px 0 8px;
+  font-size: 1rem;
+}
+
+p,
+li {
+  color: #d8d5ce;
+}
+
+a {
+  color: #f1cf68;
+}
+
+nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+.meta {
+  color: #9f9b92;
+  font-size: 0.9rem;
+}
+
+@media (max-width: 480px) {
+  header,
+  main,
+  footer {
+    width: min(100% - 28px, 800px);
+  }
+
+  header {
+    padding-top: 32px;
+  }
+}

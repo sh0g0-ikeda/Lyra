@@ -1,0 +1,14 @@
+[
+  {
+    "relation": [
+      "delegate_permission/common.handle_all_urls"
+    ],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.lyra.mobile",
+      "sha256_cert_fingerprints": [
+        "DD:DF:94:7C:55:AE:BB:15:82:51:37:92:05:D8:77:47:29:DF:BD:C0:97:90:08:EB:93:47:66:96:B8:78:20:0B"
+      ]
+    }
+  }
+]

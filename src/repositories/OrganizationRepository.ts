@@ -15,6 +15,7 @@ import type {
   OrganizationWorkspaceSummary,
 } from '../domain/types/organization.js';
 import type { EnterprisePlanCode } from '../domain/constants/billing.js';
+import { encodeListCursor, type ListPage, type ListPageRequest } from '../domain/pagination.js';
 import type { DatabaseClient, TransactionRunner } from '../lib/db.js';
 
 interface OrganizationRow extends QueryResultRow {
@@ -186,6 +187,13 @@ export interface OrganizationJobCreditLedgerSummary {
   completeEntryCount: number;
 }
 
+export interface OrganizationUsageSummary {
+  currentMonthTotalCredits: number;
+  byMember: Array<{ key: string; credits: number }>;
+  byWork: Array<{ key: string; credits: number }>;
+  byGenerationType: Array<{ key: string; credits: number }>;
+}
+
 export interface OrganizationRepository {
   transaction<T>(work: (client: DatabaseClient) => Promise<T>): Promise<T>;
   createOrganization(input: CreateOrganizationRecord, client: DatabaseClient): Promise<Organization>;
@@ -226,6 +234,7 @@ export interface OrganizationRepository {
     client?: DatabaseClient,
   ): Promise<OrganizationMember | null>;
   listMembers(organizationId: string): Promise<OrganizationMember[]>;
+  listMembersPage(organizationId: string, page: ListPageRequest): Promise<ListPage<OrganizationMember>>;
   updateMember(
     organizationId: string,
     memberId: string,
@@ -235,6 +244,7 @@ export interface OrganizationRepository {
   countActiveOwners(organizationId: string, client: DatabaseClient): Promise<number>;
   createInvitation(input: CreateOrganizationInvitationRecord, client: DatabaseClient): Promise<OrganizationInvitation>;
   listInvitations(organizationId: string, client?: DatabaseClient): Promise<OrganizationInvitation[]>;
+  listInvitationsPage(organizationId: string, page: ListPageRequest): Promise<ListPage<OrganizationInvitation>>;
   findPendingInvitationByEmail(
     organizationId: string,
     email: string,
@@ -327,12 +337,20 @@ export interface OrganizationRepository {
     client?: DatabaseClient,
   ): Promise<void>;
   listAuditLogs(organizationId: string, limit: number): Promise<OrganizationAuditLog[]>;
+  listAuditLogsPage(organizationId: string, page: ListPageRequest): Promise<ListPage<OrganizationAuditLog>>;
   listAuditLogsByActionPrefixes(
     organizationId: string,
     actionPrefixes: readonly string[],
     limit: number,
   ): Promise<OrganizationAuditLog[]>;
+  listAuditLogsByActionPrefixesPage(
+    organizationId: string,
+    actionPrefixes: readonly string[],
+    page: ListPageRequest,
+  ): Promise<ListPage<OrganizationAuditLog>>;
   listUsageEvents(organizationId: string, limit: number): Promise<OrganizationUsageEvent[]>;
+  listUsageEventsPage(organizationId: string, page: ListPageRequest): Promise<ListPage<OrganizationUsageEvent>>;
+  summarizeUsageEvents(organizationId: string): Promise<OrganizationUsageSummary>;
 }
 
 const INVITATION_RETURNING_COLUMNS = `
@@ -634,6 +652,30 @@ export class PostgresOrganizationRepository implements OrganizationRepository {
     return result.rows.map(mapMemberRow);
   }
 
+  public async listMembersPage(
+    organizationId: string,
+    page: ListPageRequest,
+  ): Promise<ListPage<OrganizationMember>> {
+    const cursor = getCreatedAtCursor(page);
+    const result = await this.client.query<OrganizationMemberRow>(
+      `
+      SELECT organization_members.*, users.email, users.display_name
+      FROM organization_members
+      INNER JOIN users ON users.id = organization_members.user_id
+      WHERE organization_members.organization_id = $1
+        AND organization_members.status <> 'removed'
+        ${cursor === null ? '' : 'AND (organization_members.created_at < $2 OR (organization_members.created_at = $2 AND organization_members.id < $3))'}
+      ORDER BY organization_members.created_at DESC, organization_members.id DESC
+      LIMIT $${cursor === null ? '2' : '4'}
+      `,
+      cursor === null
+        ? [organizationId, page.limit + 1]
+        : [organizationId, cursor.sort, cursor.id, page.limit + 1],
+    );
+
+    return toCreatedAtPage(result.rows, page.limit, 'organization-members', mapMemberRow);
+  }
+
   public async updateMember(
     organizationId: string,
     memberId: string,
@@ -711,6 +753,28 @@ export class PostgresOrganizationRepository implements OrganizationRepository {
     );
 
     return result.rows.map(mapInvitationRow);
+  }
+
+  public async listInvitationsPage(
+    organizationId: string,
+    page: ListPageRequest,
+  ): Promise<ListPage<OrganizationInvitation>> {
+    const cursor = getCreatedAtCursor(page);
+    const result = await this.client.query<OrganizationInvitationRow>(
+      `
+      SELECT ${INVITATION_RETURNING_COLUMNS}
+      FROM organization_invitations
+      WHERE organization_id = $1
+        ${cursor === null ? '' : 'AND (created_at < $2 OR (created_at = $2 AND id < $3))'}
+      ORDER BY created_at DESC, id DESC
+      LIMIT $${cursor === null ? '2' : '4'}
+      `,
+      cursor === null
+        ? [organizationId, page.limit + 1]
+        : [organizationId, cursor.sort, cursor.id, page.limit + 1],
+    );
+
+    return toCreatedAtPage(result.rows, page.limit, 'organization-invitations', mapInvitationRow);
   }
 
   public async findPendingInvitationByEmail(
@@ -1159,6 +1223,13 @@ export class PostgresOrganizationRepository implements OrganizationRepository {
     return result.rows.map(mapAuditLogRow);
   }
 
+  public async listAuditLogsPage(
+    organizationId: string,
+    page: ListPageRequest,
+  ): Promise<ListPage<OrganizationAuditLog>> {
+    return this.listAuditLogsPageWithActionPrefixes(organizationId, null, page);
+  }
+
   public async listAuditLogsByActionPrefixes(
     organizationId: string,
     actionPrefixes: readonly string[],
@@ -1183,6 +1254,18 @@ export class PostgresOrganizationRepository implements OrganizationRepository {
     return result.rows.map(mapAuditLogRow);
   }
 
+  public async listAuditLogsByActionPrefixesPage(
+    organizationId: string,
+    actionPrefixes: readonly string[],
+    page: ListPageRequest,
+  ): Promise<ListPage<OrganizationAuditLog>> {
+    if (actionPrefixes.length === 0) {
+      return { items: [], nextCursor: null };
+    }
+
+    return this.listAuditLogsPageWithActionPrefixes(organizationId, actionPrefixes, page);
+  }
+
   public async listUsageEvents(organizationId: string, limit: number): Promise<OrganizationUsageEvent[]> {
     const result = await this.client.query<OrganizationUsageEventRow>(
       `
@@ -1197,6 +1280,169 @@ export class PostgresOrganizationRepository implements OrganizationRepository {
 
     return result.rows.map(mapUsageEventRow);
   }
+
+  public async listUsageEventsPage(
+    organizationId: string,
+    page: ListPageRequest,
+  ): Promise<ListPage<OrganizationUsageEvent>> {
+    const cursor = getCreatedAtCursor(page);
+    const result = await this.client.query<OrganizationUsageEventRow>(
+      `
+      SELECT *
+      FROM organization_usage_events
+      WHERE organization_id = $1
+        ${cursor === null ? '' : 'AND (created_at < $2 OR (created_at = $2 AND id < $3))'}
+      ORDER BY created_at DESC, id DESC
+      LIMIT $${cursor === null ? '2' : '4'}
+      `,
+      cursor === null
+        ? [organizationId, page.limit + 1]
+        : [organizationId, cursor.sort, cursor.id, page.limit + 1],
+    );
+
+    return toCreatedAtPage(result.rows, page.limit, 'organization-usage', mapUsageEventRow);
+  }
+
+  public async summarizeUsageEvents(organizationId: string): Promise<OrganizationUsageSummary> {
+    const result = await this.client.query<{
+      current_month_total_credits: string;
+      by_member: unknown;
+      by_work: unknown;
+      by_generation_type: unknown;
+    }>(
+      `
+      WITH monthly_events AS (
+        SELECT user_id, work_id, event_type, credit_amount
+        FROM organization_usage_events
+        WHERE organization_id = $1
+          AND created_at >= date_trunc('month', timezone('UTC', NOW())) AT TIME ZONE 'UTC'
+      )
+      SELECT
+        COALESCE((SELECT SUM(credit_amount)::text FROM monthly_events), '0') AS current_month_total_credits,
+        COALESCE((
+          SELECT jsonb_agg(jsonb_build_object('key', key, 'credits', credits) ORDER BY credits DESC, key ASC)
+          FROM (
+            SELECT COALESCE(user_id::text, 'unknown') AS key, SUM(credit_amount)::text AS credits
+            FROM monthly_events
+            GROUP BY COALESCE(user_id::text, 'unknown')
+          ) AS member_totals
+        ), '[]'::jsonb) AS by_member,
+        COALESCE((
+          SELECT jsonb_agg(jsonb_build_object('key', key, 'credits', credits) ORDER BY credits DESC, key ASC)
+          FROM (
+            SELECT COALESCE(work_id::text, 'unknown') AS key, SUM(credit_amount)::text AS credits
+            FROM monthly_events
+            GROUP BY COALESCE(work_id::text, 'unknown')
+          ) AS work_totals
+        ), '[]'::jsonb) AS by_work,
+        COALESCE((
+          SELECT jsonb_agg(jsonb_build_object('key', key, 'credits', credits) ORDER BY credits DESC, key ASC)
+          FROM (
+            SELECT event_type AS key, SUM(credit_amount)::text AS credits
+            FROM monthly_events
+            GROUP BY event_type
+          ) AS generation_type_totals
+        ), '[]'::jsonb) AS by_generation_type
+      `,
+      [organizationId],
+    );
+    const row = result.rows[0];
+    if (row === undefined) {
+      return { currentMonthTotalCredits: 0, byMember: [], byWork: [], byGenerationType: [] };
+    }
+
+    return {
+      currentMonthTotalCredits: Number(row.current_month_total_credits),
+      byMember: mapUsageSummaryItems(row.by_member),
+      byWork: mapUsageSummaryItems(row.by_work),
+      byGenerationType: mapUsageSummaryItems(row.by_generation_type),
+    };
+  }
+
+  private async listAuditLogsPageWithActionPrefixes(
+    organizationId: string,
+    actionPrefixes: readonly string[] | null,
+    page: ListPageRequest,
+  ): Promise<ListPage<OrganizationAuditLog>> {
+    const cursor = getCreatedAtCursor(page);
+    const actionPredicate = actionPrefixes === null ? '' : 'AND action LIKE ANY($2::text[])';
+    const cursorOffset = actionPrefixes === null ? 0 : 1;
+    const cursorPredicate = cursor === null
+      ? ''
+      : `AND (created_at < $${cursorOffset + 2} OR (created_at = $${cursorOffset + 2} AND id < $${cursorOffset + 3}))`;
+    const limitParameter = cursorOffset + (cursor === null ? 2 : 4);
+    const values: unknown[] = [organizationId];
+    if (actionPrefixes !== null) {
+      values.push(actionPrefixes.map((prefix) => `${prefix}%`));
+    }
+    if (cursor !== null) {
+      values.push(cursor.sort, cursor.id);
+    }
+    values.push(page.limit + 1);
+
+    const result = await this.client.query<OrganizationAuditLogRow>(
+      `
+      SELECT *
+      FROM organization_audit_logs
+      WHERE organization_id = $1
+        ${actionPredicate}
+        ${cursorPredicate}
+      ORDER BY created_at DESC, id DESC
+      LIMIT $${limitParameter}
+      `,
+      values,
+    );
+
+    return toCreatedAtPage(result.rows, page.limit, 'organization-audit-logs', mapAuditLogRow);
+  }
+}
+
+function getCreatedAtCursor(page: ListPageRequest): { sort: string; id: string } | null {
+  if (page.cursor === null) {
+    return null;
+  }
+  if (typeof page.cursor.sort !== 'string') {
+    throw new RangeError('Organization cursor must have an ISO timestamp sort value');
+  }
+
+  return { sort: page.cursor.sort, id: page.cursor.id };
+}
+
+function toCreatedAtPage<Row extends { id: string; created_at: Date }, Item>(
+  rows: Row[],
+  limit: number,
+  kind: string,
+  map: (row: Row) => Item,
+): ListPage<Item> {
+  const pageRows = rows.slice(0, limit);
+  const lastRow = pageRows.at(-1);
+  return {
+    items: pageRows.map(map),
+    nextCursor:
+      rows.length > limit && lastRow !== undefined
+        ? encodeListCursor(kind, lastRow.created_at.toISOString(), lastRow.id)
+        : null,
+  };
+}
+
+function mapUsageSummaryItems(value: unknown): Array<{ key: string; credits: number }> {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.flatMap((item) => {
+    if (
+      typeof item !== 'object' ||
+      item === null ||
+      Array.isArray(item) ||
+      typeof item.key !== 'string' ||
+      (typeof item.credits !== 'number' && typeof item.credits !== 'string')
+    ) {
+      return [];
+    }
+    const credits = Number(item.credits);
+    return Number.isFinite(credits) ? [{ key: item.key, credits }] : [];
+  });
 }
 
 function mapOrganizationRow(row: OrganizationRow): Organization {

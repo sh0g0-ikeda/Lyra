@@ -37,6 +37,17 @@ export interface OrganizationSubscriptionSummary {
   cancelAtPeriodEnd: boolean;
 }
 
+/**
+ * Personal subscription fields that are safe to return to an authenticated
+ * account. Provider identifiers stay inside repository/service internals.
+ */
+export interface PersonalSubscriptionSummary {
+  planCode: SubscriptionPlanCode;
+  status: SubscriptionStatus;
+  currentPeriodEnd: Date | null;
+  cancelAtPeriodEnd: boolean;
+}
+
 interface PaymentRecordBase {
   userId: string | null;
   organizationId: string | null;

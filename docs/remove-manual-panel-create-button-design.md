@@ -29,4 +29,3 @@ repositories, credits, jobs, or persistence.
 - Web lint
 - Web production build
 - Backend TypeScript build
-

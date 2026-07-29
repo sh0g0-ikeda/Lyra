@@ -23,6 +23,7 @@ import type {
   StoryEntitySummary,
 } from '../domain/types/storyAi.js';
 import { ConflictError, ValidationError } from '../domain/errors/index.js';
+import { encodeListCursor, type ListPage, type ListPageRequest } from '../domain/pagination.js';
 import { normalizeEpisodeStoryInput } from '../domain/episodeStoryInput.js';
 import type { DatabaseClient, TransactionRunner } from '../lib/db.js';
 import { isUniqueViolation } from '../lib/dbErrors.js';
@@ -159,12 +160,6 @@ interface EpisodeMoveRow extends EpisodeRow {
   chapter_order: number;
 }
 
-interface EpisodeOrderRow extends QueryResultRow {
-  id: string;
-  chapter_id: string;
-  order: number;
-}
-
 interface CollaborationRow extends QueryResultRow {
   work_id: string;
   work_title: string;
@@ -273,6 +268,52 @@ export class PostgresStoryRepository implements StoryRepository {
     );
 
     return result.rows.map(mapWorkRow);
+  }
+
+  public async findWorksPageByUserId(
+    userId: string,
+    request: ListPageRequest,
+    organizationId: string | null = null,
+  ): Promise<ListPage<Work>> {
+    const cursorUpdatedAt = request.cursor?.sort ?? null;
+    const cursorId = request.cursor?.id ?? null;
+    const result = await this.client.query<WorkRow>(
+      `
+      SELECT *
+      FROM works
+      WHERE (
+        ($2::uuid IS NULL AND user_id = $1 AND organization_id IS NULL)
+        OR (
+          $2::uuid IS NOT NULL
+          AND organization_id = $2::uuid
+          AND EXISTS (
+            SELECT 1
+            FROM organization_members
+            WHERE organization_members.organization_id = works.organization_id
+              AND organization_members.user_id = $1
+              AND organization_members.status = 'active'
+          )
+        )
+      )
+        AND (
+          $3::timestamptz IS NULL
+          OR works.updated_at < $3::timestamptz
+          OR (works.updated_at = $3::timestamptz AND works.id < $4::uuid)
+        )
+      ORDER BY works.updated_at DESC, works.id DESC
+      LIMIT $5
+      `,
+      [userId, organizationId, cursorUpdatedAt, cursorId, request.limit + 1],
+    );
+    const rows = result.rows.slice(0, request.limit);
+    const lastRow = rows[rows.length - 1];
+
+    return {
+      items: rows.map(mapWorkRow),
+      nextCursor: result.rows.length > request.limit && lastRow !== undefined
+        ? encodeListCursor('works', lastRow.updated_at.toISOString(), lastRow.id)
+        : null,
+    };
   }
 
   public async createWork(userId: string, input: CreateWorkInput): Promise<Work> {
@@ -387,6 +428,7 @@ export class PostgresStoryRepository implements StoryRepository {
           version = version + 1,
           updated_at = NOW()
       WHERE id = $1
+        AND works.updated_at = $20::timestamptz
         AND (
           ($19::uuid IS NULL AND user_id = $2 AND organization_id IS NULL)
           OR (
@@ -423,6 +465,7 @@ export class PostgresStoryRepository implements StoryRepository {
         normalizeNullableText(input.overallFlow ?? null),
         input.status ?? null,
         organizationId,
+        input.expectedUpdatedAt,
       ],
     );
 
@@ -580,6 +623,7 @@ export class PostgresStoryRepository implements StoryRepository {
         FROM works
         WHERE chapters.id = $1
           AND chapters.work_id = works.id
+          AND chapters.updated_at = $20::timestamptz
           AND (
             ($19::uuid IS NULL AND works.user_id = $2 AND works.organization_id IS NULL)
             OR (
@@ -616,6 +660,7 @@ export class PostgresStoryRepository implements StoryRepository {
           input.keyBeats ?? [],
           input.status ?? null,
           organizationId,
+          input.expectedUpdatedAt,
         ],
       );
 
@@ -913,6 +958,7 @@ export class PostgresStoryRepository implements StoryRepository {
         INNER JOIN works ON works.id = chapters.work_id
         WHERE episodes.id = $1
           AND episodes.chapter_id = chapters.id
+          AND episodes.updated_at = $25::timestamptz
           AND (
             ($24::uuid IS NULL AND works.user_id = $2 AND works.organization_id IS NULL)
             OR (
@@ -954,6 +1000,7 @@ export class PostgresStoryRepository implements StoryRepository {
           input.entitiesInvolved ?? [],
           input.status ?? null,
           organizationId,
+          input.expectedUpdatedAt,
         ],
       );
 
@@ -999,12 +1046,10 @@ export class PostgresStoryRepository implements StoryRepository {
     organizationId: string | null = null,
     crossChapter = false,
   ): Promise<Episode | null> {
-    return runInTransaction(this.client, this.transactionRunner, async (transactionClient) => {
-      const currentResult = await transactionClient.query<EpisodeMoveRow>(
+    return runInTransaction(this.client, resolveTransactionRunner(this.client, this.transactionRunner), async (transactionClient) => {
+      const workLockResult = await transactionClient.query<IdRow>(
         `
-        SELECT episodes.*,
-               chapters.work_id,
-               chapters."order" AS chapter_order
+        SELECT works.id
         FROM episodes
         INNER JOIN chapters ON chapters.id = episodes.chapter_id
         INNER JOIN works ON works.id = chapters.work_id
@@ -1023,13 +1068,29 @@ export class PostgresStoryRepository implements StoryRepository {
             )
           )
           )
-        FOR UPDATE OF episodes, chapters, works
+        FOR UPDATE OF works
         `,
         [id, userId, organizationId],
       );
+      const work = workLockResult.rows[0];
+      if (work === undefined) {
+        return null;
+      }
+
+      const currentResult = await transactionClient.query<EpisodeMoveRow>(
+        `
+        SELECT episodes.*, chapters.work_id, chapters."order" AS chapter_order
+        FROM episodes
+        INNER JOIN chapters ON chapters.id = episodes.chapter_id
+        WHERE episodes.id = $1
+          AND chapters.work_id = $2
+        FOR UPDATE OF episodes, chapters
+        `,
+        [id, work.id],
+      );
       const current = currentResult.rows[0];
       if (current === undefined) {
-        return null;
+        throw new ValidationError('Episode disappeared while moving');
       }
 
       const neighborResult = await transactionClient.query<EpisodeRow>(
@@ -1050,7 +1111,7 @@ export class PostgresStoryRepository implements StoryRepository {
           return mapEpisodeRow(current);
         }
 
-        const destinationResult = await transactionClient.query<ChapterRow>(
+        const adjacentChapterResult = await transactionClient.query<ChapterRow>(
           `
           SELECT chapters.*
           FROM chapters
@@ -1058,17 +1119,21 @@ export class PostgresStoryRepository implements StoryRepository {
             AND chapters."order" ${direction === 'up' ? '<' : '>'} $2
           ORDER BY chapters."order" ${direction === 'up' ? 'DESC' : 'ASC'}
           LIMIT 1
-          FOR UPDATE
           `,
           [current.work_id, current.chapter_order],
         );
-        const destinationChapter = destinationResult.rows[0];
-        if (destinationChapter === undefined) {
+        const adjacentChapter = adjacentChapterResult.rows[0];
+        if (adjacentChapter === undefined) {
           return mapEpisodeRow(current);
         }
 
         try {
-          return await moveEpisodeAcrossChapters(transactionClient, current, destinationChapter.id, direction);
+          return await moveEpisodeAcrossChapterBoundary(
+            transactionClient,
+            current,
+            adjacentChapter,
+            direction,
+          );
         } catch (error) {
           throw mapOrderConflict(error, 'Episode order must be unique within the chapter');
         }
@@ -2134,72 +2199,85 @@ async function swapEpisodeOrders(
   return mapEpisodeRow(movedEpisode);
 }
 
-async function moveEpisodeAcrossChapters(
+async function moveEpisodeAcrossChapterBoundary(
   client: DatabaseClient,
   current: EpisodeMoveRow,
-  destinationChapterId: string,
+  adjacentChapter: ChapterRow,
   direction: StoryItemMoveDirection,
 ): Promise<Episode> {
-  const lockedEpisodesResult = await client.query<EpisodeOrderRow>(
+  const lockedChaptersResult = await client.query<ChapterRow>(
     `
-    SELECT id, chapter_id, "order"
-    FROM episodes
-    WHERE chapter_id = ANY($1::uuid[])
-    ORDER BY chapter_id ASC, "order" ASC, id ASC
+    SELECT chapters.*
+    FROM chapters
+    WHERE chapters.id = ANY($1::uuid[])
+    ORDER BY chapters."order" ASC, chapters.id ASC
     FOR UPDATE
     `,
-    [[current.chapter_id, destinationChapterId]],
+    [[current.chapter_id, adjacentChapter.id]],
   );
-  const sourceEpisodes = lockedEpisodesResult.rows
-    .filter((episode) => episode.chapter_id === current.chapter_id && episode.id !== current.id)
-    .sort((left, right) => left.order - right.order || left.id.localeCompare(right.id));
-  const destinationEpisodes = lockedEpisodesResult.rows
-    .filter((episode) => episode.chapter_id === destinationChapterId)
-    .sort((left, right) => left.order - right.order || left.id.localeCompare(right.id));
+  const lockedChapters = lockedChaptersResult.rows;
+  if (lockedChapters.length !== 2) {
+    throw new ValidationError('Failed to lock source and destination chapters');
+  }
 
-  const temporaryOrder = await nextTemporaryEpisodeOrder(client, current.chapter_id);
-  await client.query(
+  const lockedEpisodesResult = await client.query<EpisodeRow>(
     `
-    UPDATE episodes
-    SET "order" = $2
-    WHERE id = $1
+    SELECT episodes.*
+    FROM episodes
+    INNER JOIN chapters ON chapters.id = episodes.chapter_id
+    WHERE episodes.chapter_id = ANY($1::uuid[])
+    ORDER BY chapters."order" ASC, episodes."order" ASC, episodes.id ASC
+    FOR UPDATE OF episodes
     `,
-    [current.id, temporaryOrder],
+    [[current.chapter_id, adjacentChapter.id]],
+  );
+  const lockedEpisodes = lockedEpisodesResult.rows;
+  const lockedCurrent = lockedEpisodes.find((episode) => episode.id === current.id);
+  if (lockedCurrent === undefined) {
+    throw new ValidationError('Failed to lock current episode');
+  }
+
+  const sourceEpisodes = lockedEpisodes
+    .filter((episode) => episode.chapter_id === current.chapter_id)
+    .sort(compareEpisodesByOrder);
+  const destinationEpisodes = lockedEpisodes
+    .filter((episode) => episode.chapter_id === adjacentChapter.id)
+    .sort(compareEpisodesByOrder);
+  const sourceRemaining = sourceEpisodes.filter((episode) => episode.id !== current.id);
+
+  const sourceFinalOrders = new Map(sourceRemaining.map((episode, index) => [episode.id, index + 1]));
+  const destinationStartOrder = direction === 'down' ? 2 : 1;
+  const destinationFinalOrders = new Map(
+    destinationEpisodes.map((episode, index) => [episode.id, destinationStartOrder + index]),
+  );
+  const sourceChanged = sourceRemaining.filter(
+    (episode) => sourceFinalOrders.get(episode.id) !== episode.order,
+  );
+  const destinationChanged = destinationEpisodes.filter(
+    (episode) => destinationFinalOrders.get(episode.id) !== episode.order,
   );
 
-  for (const sourceEpisode of sourceEpisodes.filter((episode) => episode.order > current.order)) {
-    await client.query(
-      `
-      UPDATE episodes
-      SET "order" = $2,
-          version = version + 1,
-          updated_at = NOW()
-      WHERE id = $1
-      `,
-      [sourceEpisode.id, sourceEpisode.order - 1],
-    );
+  await moveEpisodeToTemporaryOrder(
+    client,
+    lockedCurrent.id,
+    temporaryEpisodeOrder(sourceEpisodes, 0),
+  );
+  for (const [index, episode] of sourceChanged.entries()) {
+    await moveEpisodeToTemporaryOrder(client, episode.id, temporaryEpisodeOrder(sourceEpisodes, index + 1));
+  }
+  for (const [index, episode] of destinationChanged.entries()) {
+    await moveEpisodeToTemporaryOrder(client, episode.id, temporaryEpisodeOrder(destinationEpisodes, index));
   }
 
-  if (direction === 'down') {
-    for (const destinationEpisode of [...destinationEpisodes].sort((left, right) => right.order - left.order)) {
-      await client.query(
-        `
-        UPDATE episodes
-        SET "order" = $2,
-            version = version + 1,
-            updated_at = NOW()
-        WHERE id = $1
-        `,
-        [destinationEpisode.id, destinationEpisode.order + 1],
-      );
-    }
+  for (const episode of sourceChanged) {
+    await finalizeEpisodeOrder(client, episode.id, sourceFinalOrders.get(episode.id) ?? episode.order);
+  }
+  for (const episode of destinationChanged) {
+    await finalizeEpisodeOrder(client, episode.id, destinationFinalOrders.get(episode.id) ?? episode.order);
   }
 
-  const destinationOrder =
-    direction === 'down'
-      ? 1
-      : destinationEpisodes.reduce((maximum, episode) => Math.max(maximum, episode.order), 0) + 1;
-  const result = await client.query<EpisodeRow>(
+  const destinationOrder = direction === 'down' ? 1 : destinationEpisodes.length + 1;
+  const movedResult = await client.query<EpisodeRow>(
     `
     UPDATE episodes
     SET chapter_id = $2,
@@ -2209,14 +2287,47 @@ async function moveEpisodeAcrossChapters(
     WHERE id = $1
     RETURNING *
     `,
-    [current.id, destinationChapterId, destinationOrder],
+    [lockedCurrent.id, adjacentChapter.id, destinationOrder],
   );
-  const movedEpisode = result.rows[0];
+  const movedEpisode = movedResult.rows[0];
   if (movedEpisode === undefined) {
-    throw new ValidationError('Failed to move episode across chapters');
+    throw new ValidationError('Failed to move episode across chapter boundary');
   }
 
   return mapEpisodeRow(movedEpisode);
+}
+
+function compareEpisodesByOrder(left: EpisodeRow, right: EpisodeRow): number {
+  return left.order - right.order || left.id.localeCompare(right.id);
+}
+
+function temporaryEpisodeOrder(episodes: EpisodeRow[], offset: number): number {
+  const maxOrder = episodes.reduce((maximum, episode) => Math.max(maximum, episode.order), 0);
+  return maxOrder + 100000 + offset;
+}
+
+async function moveEpisodeToTemporaryOrder(client: DatabaseClient, episodeId: string, order: number): Promise<void> {
+  await client.query(
+    `
+    UPDATE episodes
+    SET "order" = $2
+    WHERE id = $1
+    `,
+    [episodeId, order],
+  );
+}
+
+async function finalizeEpisodeOrder(client: DatabaseClient, episodeId: string, order: number): Promise<void> {
+  await client.query(
+    `
+    UPDATE episodes
+    SET "order" = $2,
+        version = version + 1,
+        updated_at = NOW()
+    WHERE id = $1
+    `,
+    [episodeId, order],
+  );
 }
 
 async function nextTemporaryChapterOrder(client: DatabaseClient, workId: string): Promise<number> {
@@ -2450,6 +2561,18 @@ async function runInTransaction<T>(
   }
 
   return work(client);
+}
+
+function resolveTransactionRunner(
+  client: DatabaseClient,
+  explicitTransactionRunner: TransactionRunner | undefined,
+): TransactionRunner | undefined {
+  if (explicitTransactionRunner !== undefined) {
+    return explicitTransactionRunner;
+  }
+
+  const candidate = client as Partial<TransactionRunner>;
+  return typeof candidate.transaction === 'function' ? (candidate as TransactionRunner) : undefined;
 }
 
 function mapOrderConflict(error: unknown, message: string): Error {

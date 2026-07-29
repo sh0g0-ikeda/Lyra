@@ -14,6 +14,10 @@ import type {
 } from '../../../../src/repositories/EntityRepository.js';
 import type { PageRepository } from '../../../../src/repositories/PageRepository.js';
 import type {
+  AtomicSaveAndGenerateInput,
+  SaveAndGeneratePageInput,
+} from '../../../../src/services/page/PageSaveAndGenerate.js';
+import type {
   ConsumeCreditsParams,
   CreditServicePort,
   RefundCreditsParams,
@@ -26,6 +30,7 @@ import type { OrganizationServicePort } from '../../../../src/services/organizat
 import { ModeSelector } from '../../../../src/services/page/ModeSelector.js';
 import type { PageGenerationRecoveryServicePort } from '../../../../src/services/page/PageGenerationRecoveryService.js';
 import { PageGenerationService } from '../../../../src/services/page/PageGenerationService.js';
+import { PageGenerationReadinessEvaluator } from '../../../../src/services/page/PageGenerationReadiness.js';
 import { PAGE_GENERATION_INPUT_IMAGE_LIMITS } from '../../../../src/domain/constants/generation.js';
 
 const userId = 'user-1';
@@ -33,15 +38,23 @@ const pageId = '11111111-1111-4111-8111-111111111111';
 
 class FakePageRepository implements PageRepository {
   public context: PageGenerationContext | null = buildPageContext();
+  public summary: PageSummary | null = buildPageSummary();
   public updates: PageGenerationStateUpdate[] = [];
   public shouldRejectUpdate = false;
+  public atomicError: unknown = null;
+  public atomicInput: AtomicSaveAndGenerateInput | null = null;
+  public atomicResult = {
+    jobId: '99999999-9999-4999-8999-999999999999',
+    pageRevision: '2026-07-24T00:00:01.000Z',
+    created: true,
+  };
 
   public async findPagesByEpisodeIdAndUserId(): Promise<[]> {
     return [];
   }
 
   public async findPageByIdAndUserId(): Promise<PageSummary | null> {
-    return null;
+    return this.summary;
   }
 
   public async findGenerationContextByIdAndUserId(
@@ -78,6 +91,14 @@ class FakePageRepository implements PageRepository {
 
   public async updatePageSettings(): Promise<PageSummary | null> {
     throw new Error('not used');
+  }
+
+  public async saveAndCreateGenerationJob(input: AtomicSaveAndGenerateInput) {
+    this.atomicInput = input;
+    if (this.atomicError !== null) {
+      throw this.atomicError;
+    }
+    return this.atomicResult;
   }
 }
 
@@ -216,8 +237,14 @@ class FakeEntityRepository implements EntityRepository {
 
 class FakeOrganizationService {
   public consumed: unknown[] = [];
-  public async requireMembership(): Promise<unknown> {
+  public requiredCapabilities: unknown[] = [];
+  public async requireMembership(_organizationId?: string, _userId?: string, capability?: unknown): Promise<unknown> {
+    this.requiredCapabilities.push(capability);
     return {};
+  }
+
+  public async getCreditBalance(): Promise<{ monthlyCredits: number; purchasedCredits: number }> {
+    return { monthlyCredits: 10, purchasedCredits: 0 };
   }
 
   public async consumeCredits(input: unknown): Promise<unknown> {
@@ -707,6 +734,86 @@ describe('PageGenerationService', () => {
       { status: 'designing', generationMode: null },
     ]);
   });
+
+  it('save-and-generate の queue 送信失敗では commit 済み job を返し compensation しない', async () => {
+    const pageRepository = new FakePageRepository();
+    const jobRepository = new FakeGenerationJobRepository();
+    const creditService = new FakeCreditService();
+    const queue = new FakeQueue();
+    queue.shouldFail = true;
+    const service = new PageGenerationService(
+      pageRepository,
+      new FakeEntityRepository(),
+      jobRepository,
+      creditService,
+      queue,
+      new ModeSelector(),
+    );
+
+    const result = await service.saveAndGenerate(userId, pageId, buildSaveAndGenerateInput());
+
+    expect(result).toEqual(pageRepository.atomicResult);
+    expect(pageRepository.atomicInput).toMatchObject({
+      pageId,
+      userId,
+      inputSnapshot: {
+        pageId,
+        references: [{
+          entityId: 'entity-1',
+          canonicalName: 'Aoi',
+          refId: 'ref-1',
+          s3Key: 'saved/user-1/entities/entity-1/ref-1.png',
+          subjectLabel: 'Aoi',
+          modelInputOrder: 0,
+        }],
+        panels: [{ entityIds: ['entity-1'], entityNames: ['Aoi'] }],
+      },
+    });
+    expect(pageRepository.atomicInput?.inputSnapshot).not.toHaveProperty('generatedImage');
+    expect(JSON.stringify(pageRepository.atomicInput?.inputSnapshot)).not.toContain('generated_image');
+    expect(jobRepository.failedJobId).toBeNull();
+    expect(creditService.refunded).toEqual([]);
+  });
+
+  it('save-and-generate は法人 edit_work と generate の両方を service でも確認する', async () => {
+    const pageRepository = new FakePageRepository();
+    pageRepository.context = buildPageContext({ organizationId: 'org-1' });
+    const organizationService = new FakeOrganizationService();
+    const service = new PageGenerationService(
+      pageRepository,
+      new FakeEntityRepository(),
+      new FakeGenerationJobRepository(),
+      new FakeCreditService(),
+      new FakeQueue(),
+      new ModeSelector(),
+      undefined,
+      undefined,
+      true,
+      organizationService as unknown as OrganizationServicePort,
+    );
+
+    await service.saveAndGenerate(userId, pageId, buildSaveAndGenerateInput(), 'org-1');
+
+    expect(organizationService.requiredCapabilities).toEqual(['edit_work', 'generate']);
+  });
+
+  it('save-and-generate の同時 generation job unique violation は stable conflict に変換する', async () => {
+    const pageRepository = new FakePageRepository();
+    pageRepository.atomicError = Object.assign(new Error('duplicate key'), { code: '23505' });
+    const service = new PageGenerationService(
+      pageRepository,
+      new FakeEntityRepository(),
+      new FakeGenerationJobRepository(),
+      new FakeCreditService(),
+      new FakeQueue(),
+      new ModeSelector(),
+    );
+
+    await expect(service.saveAndGenerate(userId, pageId, buildSaveAndGenerateInput())).rejects.toMatchObject({
+      code: 'CONFLICT',
+      statusCode: 409,
+    });
+  });
 });
 
 it('frame count must be present before generation', async () => {
@@ -722,6 +829,67 @@ it('frame count must be present before generation', async () => {
   );
 
   await expect(service.enqueuePageGeneration(userId, pageId)).rejects.toBeInstanceOf(ValidationError);
+});
+
+it('readiness は panel order・speaker・work 外 assignment を stable blocker として返す', async () => {
+  const entityRepository = new FakeEntityRepository();
+  const first = buildPanelContext('entity-1');
+  first.order = 2;
+  first.dialogue = [
+    { entityId: null, text: 'Who is speaking?', type: 'speech', position: 'top' },
+  ];
+  const second = buildPanelContext('outside-work-entity');
+  second.order = 4;
+  const page = { ...buildPageContext({ frameCount: 2 }), panels: [first, second] };
+
+  const readiness = await new PageGenerationReadinessEvaluator(entityRepository).assess({
+    userId,
+    page,
+    generationEnabled: true,
+    hasActiveGenerationJob: false,
+  });
+
+  expect(readiness.blockers.map((blocker) => blocker.code)).toEqual(
+    expect.arrayContaining(['PANEL_ORDER_INVALID', 'DIALOGUE_SPEAKER_REQUIRED', 'ASSIGNED_ENTITY_INVALID']),
+  );
+});
+
+it('readiness は panel assignment が空でも発話者未指定を blocker として返す', async () => {
+  const panel = buildPanelContext('entity-1');
+  panel.entities = [];
+  panel.dialogue = [
+    { entityId: null, text: 'Who is speaking?', type: 'speech', position: 'top' },
+  ];
+  const readiness = await new PageGenerationReadinessEvaluator(new FakeEntityRepository()).assess({
+    userId,
+    page: buildPageContext({ panels: [panel] }),
+    generationEnabled: true,
+    hasActiveGenerationJob: false,
+  });
+
+  expect(readiness.blockers.map((blocker) => blocker.code)).toContain('DIALOGUE_SPEAKER_REQUIRED');
+});
+
+it('generation readiness は残高不足を stable blocker として返す', async () => {
+  const service = new PageGenerationService(
+    new FakePageRepository(),
+    new FakeEntityRepository(),
+    new FakeGenerationJobRepository(),
+    new FakeCreditService(),
+    new FakeQueue(),
+    new ModeSelector(),
+  );
+
+  const readiness = await service.getGenerationReadiness(userId, pageId);
+
+  expect(readiness.ready).toBe(false);
+  expect(readiness.blockers).toEqual(expect.arrayContaining([
+    expect.objectContaining({
+      code: 'INSUFFICIENT_CREDITS',
+      action: 'none',
+      messageKey: 'page.blocker.insufficientCredits',
+    }),
+  ]));
 });
 
 it('frame count and panel count must match before generation', async () => {
@@ -843,7 +1011,7 @@ it('object reference image count が上限を超える場合もクレジット�
 });
 
 function buildPageContext(overrides: Partial<PageGenerationContext> = {}): PageGenerationContext {
-  return {
+  const context: PageGenerationContext = {
     pageId,
     workId: 'work-1',
     layoutConfig: {},
@@ -854,11 +1022,90 @@ function buildPageContext(overrides: Partial<PageGenerationContext> = {}): PageG
     panels: [buildPanelContext('entity-1')],
     ...overrides,
   };
+  return {
+    ...context,
+    panels: context.panels.map((panel, index) => ({
+      ...panel,
+      order: index + 1,
+      dialogue: panel.dialogue ?? [],
+    })),
+  };
+}
+
+function buildPageSummary(): PageSummary {
+  return {
+    id: pageId,
+    episodeId: 'episode-1',
+    pageNumber: 1,
+    layoutConfig: {},
+    storySourceSceneIds: [],
+    storyPagePurpose: null,
+    storyContinuityNote: null,
+    dialogueMode: 'image_baked',
+    pageDialogueToggle: true,
+    generationMode: null,
+    generatedImage: null,
+    status: 'designing',
+    panelCount: 1,
+    frameCount: 1,
+    balloonCount: 0,
+    createdAt: new Date('2026-07-24T00:00:00.000Z'),
+    updatedAt: new Date('2026-07-24T00:00:00.000Z'),
+  };
+}
+
+function buildSaveAndGenerateInput(): SaveAndGeneratePageInput {
+  return {
+    expectedUpdatedAt: '2026-07-24T00:00:00.000Z',
+    page: {},
+    panels: [
+      {
+        id: 'panel-entity-1',
+        order: 1,
+        panelRole: 'action',
+        panelSize: 'standard',
+        situationText: null,
+        composition: {
+          source: 'custom',
+          galleryItemId: null,
+          compositionPrompt: null,
+          shotType: null,
+          angle: null,
+          customNote: null,
+        },
+        dialogueInPanel: true,
+        dialogue: [],
+        sfxText: null,
+        backgroundNote: null,
+        panelNotes: null,
+        entities: buildPanelContext('entity-1').entities,
+      },
+    ],
+    frames: [
+      {
+        panelId: 'panel-entity-1',
+        vertices: [
+          { x: 0, y: 0 },
+          { x: 1, y: 0 },
+          { x: 1, y: 1 },
+          { x: 0, y: 1 },
+        ],
+        borderStyle: 'solid',
+        borderWidth: 3,
+        borderColor: '#000000',
+        zIndex: 1,
+        readingOrder: 1,
+      },
+    ],
+    language: 'ja',
+    requestId: 'mobile-request-001',
+  };
 }
 
 function buildPanelContext(entityId: string): PageGenerationContext['panels'][number] {
   return {
     panelId: `panel-${entityId}`,
+    order: 1,
     entities: [
       {
         entityId,
@@ -873,6 +1120,7 @@ function buildPanelContext(entityId: string): PageGenerationContext['panels'][nu
         stateId: null,
       },
     ],
+    dialogue: [],
   };
 }
 

@@ -2,11 +2,13 @@ import type { QueryResult, QueryResultRow } from 'pg';
 import { describe, expect, it } from 'vitest';
 import type { DatabaseClient } from '../../../src/lib/db.js';
 import { PostgresPageRepository } from '../../../src/repositories/PageRepository.js';
+import { decodeListCursor } from '../../../src/domain/pagination.js';
 
 class QueryCapturingClient implements DatabaseClient {
   public queries: string[] = [];
   public valueHistory: Array<readonly unknown[] | undefined> = [];
   public values: readonly unknown[] | undefined;
+  public pageRows: Record<string, unknown>[] | null = null;
 
   public async query<T extends QueryResultRow = QueryResultRow>(
     text: string,
@@ -15,6 +17,16 @@ class QueryCapturingClient implements DatabaseClient {
     this.queries.push(text);
     this.values = values;
     this.valueHistory.push(values);
+
+    if (text.includes('ORDER BY pages.page_number ASC, pages.id ASC')) {
+      return {
+        command: 'SELECT',
+        rowCount: this.pageRows?.length ?? 0,
+        oid: 0,
+        fields: [],
+        rows: (this.pageRows ?? []) as T[],
+      };
+    }
 
     if (text.includes('UPDATE pages')) {
       return {
@@ -130,6 +142,9 @@ class QueryCapturingClient implements DatabaseClient {
             story_page_purpose: 'This page escalates the rooftop confrontation.',
             story_continuity_note: 'Keep the mood restrained for the next page.',
           },
+          story_source_scene_ids: ['scene-1'],
+          story_page_purpose: 'Saved page purpose used by the generation prompt.',
+          story_continuity_note: 'Saved continuity note used by the generation prompt.',
           dialogue_mode: 'mixed',
           page_dialogue_toggle: true,
           generated_image: null,
@@ -141,6 +156,7 @@ class QueryCapturingClient implements DatabaseClient {
           panel_entities: [
             {
               panel_id: 'panel-1',
+              order: 1,
               entities: [
                 {
                   entity_id: 'entity-1',
@@ -155,6 +171,7 @@ class QueryCapturingClient implements DatabaseClient {
                   state_id: null,
                 },
               ],
+              dialogue: [],
             },
           ],
           created_at: new Date('2026-05-01T00:00:00.000Z'),
@@ -166,6 +183,48 @@ class QueryCapturingClient implements DatabaseClient {
 }
 
 describe('PostgresPageRepository', () => {
+  it('lists a bounded page summary page with tenant scope and no boundary duplicate', async () => {
+    const client = new QueryCapturingClient();
+    client.pageRows = [
+      pageSummaryRow({ id: '11111111-1111-4111-8111-111111111111', page_number: 1 }),
+      pageSummaryRow({ id: '22222222-2222-4222-8222-222222222222', page_number: 1 }),
+      pageSummaryRow({ id: '33333333-3333-4333-8333-333333333333', page_number: 2 }),
+    ];
+    const repository = new PostgresPageRepository(client);
+
+    const result = await repository.findPagesPageByEpisodeIdAndUserId('episode-1', 'user-1', {
+      limit: 2,
+      cursor: { sort: 0, id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' },
+    }, '99999999-9999-4999-8999-999999999999');
+
+    expect(result.items.map((page) => page.id)).toEqual([
+      '11111111-1111-4111-8111-111111111111',
+      '22222222-2222-4222-8222-222222222222',
+    ]);
+    expect(new Set(result.items.map((page) => page.id)).size).toBe(2);
+    expect(result.nextCursor).toBeTypeOf('string');
+    expect(decodeListCursor(result.nextCursor ?? '', 'pages')).toEqual({
+      sort: 1,
+      id: '22222222-2222-4222-8222-222222222222',
+    });
+    expect(client.queries[0]).toContain('FROM organization_members');
+    expect(client.queries[0]).toContain('pages.page_number > $4::integer');
+    expect(client.queries[0]).toContain('pages.page_number = $4::integer AND pages.id > $5::uuid');
+    expect(client.queries[0]).toContain('ORDER BY pages.page_number ASC, pages.id ASC');
+    expect(client.queries[0]).toContain('LIMIT $6');
+    expect(client.queries[0]).not.toContain('OFFSET');
+    expect(client.queries[0].indexOf("organization_members.status = 'active'")).toBeLessThan(
+      client.queries[0].indexOf('pages.page_number > $4::integer'),
+    );
+    expect(client.valueHistory[0]).toEqual([
+      'episode-1',
+      'user-1',
+      '99999999-9999-4999-8999-999999999999',
+      0,
+      'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      3,
+    ]);
+  });
   it('user_id で generation context を制限する', async () => {
     const client = new QueryCapturingClient();
     const repository = new PostgresPageRepository(client);
@@ -210,8 +269,8 @@ describe('PostgresPageRepository', () => {
       pageNumber: 3,
       episodePurpose: 'The hero confronts the rival.',
       sceneSummaries: ['Scene 1: Rooftop / night / tense'],
-      storyPagePurpose: 'This page escalates the rooftop confrontation.',
-      storyContinuityNote: 'Keep the mood restrained for the next page.',
+      storyPagePurpose: 'Saved page purpose used by the generation prompt.',
+      storyContinuityNote: 'Saved continuity note used by the generation prompt.',
       dialogueMode: 'mixed',
       pageDialogueToggle: true,
     });
@@ -263,8 +322,8 @@ describe('PostgresPageRepository', () => {
       dialogueMode: 'balloon_only',
       pageDialogueToggle: false,
       storySourceSceneIds: ['scene-1'],
-      storyPagePurpose: 'This page escalates the rooftop confrontation.',
-      storyContinuityNote: 'Keep the mood restrained for the next page.',
+      storyPagePurpose: 'Saved page purpose used by the generation prompt.',
+      storyContinuityNote: 'Saved continuity note used by the generation prompt.',
       layoutConfig: {
         type: 'template',
         template_id: 'standard_4',
@@ -288,13 +347,19 @@ describe('PostgresPageRepository', () => {
         story_page_purpose: 'This page escalates the rooftop confrontation.',
         story_continuity_note: 'Keep the mood restrained for the next page.',
       }),
+      true,
+      ['scene-1'],
+      true,
+      'Saved page purpose used by the generation prompt.',
+      true,
+      'Saved continuity note used by the generation prompt.',
       null,
     ]);
     expect(updated).toMatchObject({
       id: 'page-1',
       storySourceSceneIds: ['scene-1'],
-      storyPagePurpose: 'This page escalates the rooftop confrontation.',
-      storyContinuityNote: 'Keep the mood restrained for the next page.',
+      storyPagePurpose: 'Saved page purpose used by the generation prompt.',
+      storyContinuityNote: 'Saved continuity note used by the generation prompt.',
       dialogueMode: 'mixed',
       pageDialogueToggle: true,
     });
@@ -330,3 +395,26 @@ describe('PostgresPageRepository', () => {
     ]);
   });
 });
+
+function pageSummaryRow(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: 'page-1',
+    episode_id: 'episode-1',
+    page_number: 1,
+    layout_config: { type: 'template', template_id: 'standard_4' },
+    story_source_scene_ids: [],
+    story_page_purpose: null,
+    story_continuity_note: null,
+    dialogue_mode: 'mixed',
+    page_dialogue_toggle: true,
+    generation_mode: null,
+    generated_image: null,
+    status: 'designing',
+    panel_count: 4,
+    frame_count: 4,
+    balloon_count: 0,
+    created_at: new Date('2026-05-01T00:00:00.000Z'),
+    updated_at: new Date('2026-05-01T00:00:00.000Z'),
+    ...overrides,
+  };
+}

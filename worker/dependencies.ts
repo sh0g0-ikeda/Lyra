@@ -1,5 +1,6 @@
 import { db } from '../src/lib/db.js';
 import { PostgresCreditRepository } from '../src/repositories/CreditRepository.js';
+import { PostgresGenerationJobRepository } from '../src/repositories/GenerationJobRepository.js';
 import { PostgresEntityGenerationExecutionRepository } from '../src/repositories/EntityGenerationExecutionRepository.js';
 import { PostgresEpisodePageSkeletonExecutionRepository } from '../src/repositories/EpisodePageSkeletonExecutionRepository.js';
 import { PostgresEpisodeStoryAutofillExecutionRepository } from '../src/repositories/EpisodeStoryAutofillExecutionRepository.js';
@@ -65,6 +66,7 @@ import {
   S3PageImageStorage,
 } from '../src/infrastructure/aws/S3PageImageStorage.js';
 import { S3EntityImageStorage, type EntityImageStoragePort } from '../src/infrastructure/aws/S3EntityImageStorage.js';
+import { S3ExportArtifactStorage } from '../src/infrastructure/aws/S3ExportArtifactStorage.js';
 import { S3StoredImageLoader, type StoredImageLoaderPort } from '../src/infrastructure/aws/S3StoredImageLoader.js';
 import { LocalFilePageImageStorage } from '../src/infrastructure/local/LocalFilePageImageStorage.js';
 import { LocalFileEntityImageStorage } from '../src/infrastructure/local/LocalFileEntityImageStorage.js';
@@ -103,6 +105,11 @@ import {
   OrganizationService,
   type OrganizationServicePort,
 } from '../src/services/organization/OrganizationService.js';
+import { PostgresExportJobRepository } from '../src/repositories/ExportJobRepository.js';
+import {
+  EpisodeExportWorkerService,
+  type ProcessExportJobResult,
+} from '../src/services/export/EpisodeExportWorkerService.js';
 
 export interface PageGenerationWorkerPort {
   processJob(jobId: string): Promise<ProcessPageGenerationJobResult>;
@@ -120,11 +127,16 @@ export interface StoryPageSkeletonWorkerPort {
   processJob(jobId: string): Promise<ProcessEpisodePageSkeletonJobResult>;
 }
 
+export interface EpisodeExportWorkerPort {
+  processJob(jobId: string): Promise<ProcessExportJobResult>;
+}
+
 export interface WorkerDependencies {
   pageGenerationWorkerService: PageGenerationWorkerPort;
   entityGenerationWorkerService: EntityGenerationWorkerPort;
   episodeStoryAutofillWorkerService: StoryAutofillWorkerPort;
   episodePageSkeletonWorkerService: StoryPageSkeletonWorkerPort;
+  episodeExportWorkerService: EpisodeExportWorkerPort;
 }
 
 export interface WorkerDependencyOverrides {
@@ -150,6 +162,7 @@ export interface WorkerDependencyOverrides {
   entityGenerationWorkerService?: EntityGenerationWorkerPort;
   episodeStoryAutofillWorkerService?: EpisodeStoryAutofillWorkerPort;
   episodePageSkeletonWorkerService?: EpisodePageSkeletonWorkerPort;
+  episodeExportWorkerService?: EpisodeExportWorkerPort;
 }
 
 export function resolveWorkerDependencies(
@@ -166,6 +179,8 @@ export function resolveWorkerDependencies(
         overrides.episodeStoryAutofillWorkerService ?? new UnconfiguredEpisodeStoryAutofillWorker(),
       episodePageSkeletonWorkerService:
         overrides.episodePageSkeletonWorkerService ?? new UnconfiguredEpisodePageSkeletonWorker(),
+      episodeExportWorkerService:
+        overrides.episodeExportWorkerService ?? new UnconfiguredEpisodeExportWorker(),
     };
   }
 
@@ -178,6 +193,8 @@ export function resolveWorkerDependencies(
         overrides.episodeStoryAutofillWorkerService ?? new UnconfiguredEpisodeStoryAutofillWorker(),
       episodePageSkeletonWorkerService:
         overrides.episodePageSkeletonWorkerService ?? new UnconfiguredEpisodePageSkeletonWorker(),
+      episodeExportWorkerService:
+        overrides.episodeExportWorkerService ?? new UnconfiguredEpisodeExportWorker(),
     };
   }
 
@@ -190,6 +207,8 @@ export function resolveWorkerDependencies(
       episodeStoryAutofillWorkerService: overrides.episodeStoryAutofillWorkerService,
       episodePageSkeletonWorkerService:
         overrides.episodePageSkeletonWorkerService ?? new UnconfiguredEpisodePageSkeletonWorker(),
+      episodeExportWorkerService:
+        overrides.episodeExportWorkerService ?? new UnconfiguredEpisodeExportWorker(),
     };
   }
 
@@ -202,6 +221,18 @@ export function resolveWorkerDependencies(
       episodeStoryAutofillWorkerService:
         overrides.episodeStoryAutofillWorkerService ?? new UnconfiguredEpisodeStoryAutofillWorker(),
       episodePageSkeletonWorkerService: overrides.episodePageSkeletonWorkerService,
+      episodeExportWorkerService:
+        overrides.episodeExportWorkerService ?? new UnconfiguredEpisodeExportWorker(),
+    };
+  }
+
+  if (overrides.episodeExportWorkerService !== undefined) {
+    return {
+      pageGenerationWorkerService: new UnconfiguredPageGenerationWorker(),
+      entityGenerationWorkerService: new UnconfiguredEntityGenerationWorker(),
+      episodeStoryAutofillWorkerService: new UnconfiguredEpisodeStoryAutofillWorker(),
+      episodePageSkeletonWorkerService: new UnconfiguredEpisodePageSkeletonWorker(),
+      episodeExportWorkerService: overrides.episodeExportWorkerService,
     };
   }
 
@@ -234,6 +265,7 @@ export function resolveWorkerDependencies(
     new PostgresEpisodeStoryAutofillExecutionRepository(db);
   const episodePageSkeletonExecutionRepository =
     new PostgresEpisodePageSkeletonExecutionRepository(db);
+  const generationJobCancellationCheckpoint = new PostgresGenerationJobRepository(db);
   const entityReferencePromptBuilder =
     overrides.entityReferencePromptBuilder ?? new EntityReferencePromptBuilder();
   const entityReferencePromptCompiler =
@@ -280,6 +312,7 @@ export function resolveWorkerDependencies(
       creditService,
       env.GENERATION_ENABLED && env.PAGE_GENERATION_ENABLED,
       organizationService,
+      generationJobCancellationCheckpoint,
     ),
     entityGenerationWorkerService: new EntityGenerationWorkerService(
       entityGenerationExecutionRepository,
@@ -293,6 +326,7 @@ export function resolveWorkerDependencies(
       env.OPENAI_IMAGE_MODEL,
       env.GENERATION_ENABLED && env.ENTITY_GENERATION_ENABLED,
       organizationService,
+      generationJobCancellationCheckpoint,
     ),
     episodeStoryAutofillWorkerService: new EpisodeStoryAutofillWorkerService(
       episodeStoryAutofillExecutionRepository,
@@ -303,8 +337,23 @@ export function resolveWorkerDependencies(
       episodePageSkeletonExecutionRepository,
       pageSkeletonService,
       pageService,
+      generationJobCancellationCheckpoint,
     ),
+    episodeExportWorkerService:
+      overrides.episodeExportWorkerService ?? resolveEpisodeExportWorkerService(),
   };
+}
+
+function resolveEpisodeExportWorkerService(): EpisodeExportWorkerPort {
+  if (env.S3_BUCKET_IMAGES === undefined) {
+    return new UnconfiguredEpisodeExportWorker();
+  }
+  return new EpisodeExportWorkerService(
+    new PostgresExportJobRepository(db, db),
+    new S3ExportArtifactStorage(createPageImageStorageClient(env.AWS_REGION), {
+      bucketName: env.S3_BUCKET_IMAGES,
+    }),
+  );
 }
 
 function resolvePagePromptCompiler(): PagePromptCompilerPort {
@@ -575,6 +624,12 @@ class UnconfiguredEpisodeStoryAutofillWorker implements StoryAutofillWorkerPort 
 class UnconfiguredEpisodePageSkeletonWorker implements StoryPageSkeletonWorkerPort {
   public async processJob(): Promise<never> {
     throw new ConfigurationError('Episode page skeleton worker is not configured');
+  }
+}
+
+class UnconfiguredEpisodeExportWorker implements EpisodeExportWorkerPort {
+  public async processJob(): Promise<never> {
+    throw new ConfigurationError('Episode export worker is not configured');
   }
 }
 

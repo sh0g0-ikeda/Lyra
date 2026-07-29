@@ -188,6 +188,11 @@ function buildDependencies(
     entityGenerationWorkerService,
     episodeStoryAutofillWorkerService: new FakeEpisodeStoryAutofillWorkerService(),
     episodePageSkeletonWorkerService: new FakeEpisodePageSkeletonWorkerService(),
+    episodeExportWorkerService: {
+      async processJob() {
+        return { status: 'skipped' as const };
+      },
+    },
   };
 }
 

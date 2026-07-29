@@ -1,0 +1,53 @@
+appId: ${APP_ID}
+name: "E2E-11: offline/retry/no draft loss"
+tags: [staging, resilience, offline]
+---
+- runFlow:
+    file: ../helpers/launch-authenticated.yaml
+- runFlow:
+    file: ../helpers/open-story.yaml
+- tapOn: ${E2E_OFFLINE_DRAFT_INPUT_LABEL}
+- inputText: ${E2E_OFFLINE_DRAFT_TEXT}
+- runFlow:
+    when:
+      platform: android
+    commands:
+      - setAirplaneMode: enabled
+- runFlow:
+    when:
+      platform: ios
+    commands:
+      - runScript:
+          file: ../scripts/set-network-state.js
+          env:
+            E2E_NETWORK_CONTROL_URL: ${E2E_NETWORK_CONTROL_URL}
+            E2E_NETWORK_CONTROL_TOKEN: ${E2E_NETWORK_CONTROL_TOKEN}
+            E2E_NETWORK_DEVICE_ID: ${E2E_NETWORK_DEVICE_ID}
+            E2E_NETWORK_STATE: offline
+            E2E_RUN_ID: ${E2E_RUN_ID}
+- assertVisible: ${E2E_OFFLINE_LABEL}
+- tapOn: ${E2E_OFFLINE_WRITE_LABEL}
+- assertVisible: ${E2E_OFFLINE_WRITE_FAILURE_LABEL}
+- assertVisible: ${E2E_OFFLINE_DRAFT_TEXT}
+- runFlow:
+    when:
+      platform: android
+    commands:
+      - setAirplaneMode: disabled
+- runFlow:
+    when:
+      platform: ios
+    commands:
+      - runScript:
+          file: ../scripts/set-network-state.js
+          env:
+            E2E_NETWORK_CONTROL_URL: ${E2E_NETWORK_CONTROL_URL}
+            E2E_NETWORK_CONTROL_TOKEN: ${E2E_NETWORK_CONTROL_TOKEN}
+            E2E_NETWORK_DEVICE_ID: ${E2E_NETWORK_DEVICE_ID}
+            E2E_NETWORK_STATE: online
+            E2E_RUN_ID: ${E2E_RUN_ID}
+- tapOn: ${E2E_RETRY_LABEL}
+- assertVisible: ${E2E_OFFLINE_WRITE_SUCCESS_LABEL}
+- assertVisible: ${E2E_OFFLINE_DRAFT_TEXT}
+- assertVisible: ${E2E_DRAFT_PRESERVED_LABEL}
+- takeScreenshot: E2E-11-draft-preserved

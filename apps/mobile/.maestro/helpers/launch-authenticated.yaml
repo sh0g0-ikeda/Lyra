@@ -1,0 +1,4 @@
+- runFlow:
+    file: launch-auth.yaml
+- runFlow:
+    file: cognito-login.yaml

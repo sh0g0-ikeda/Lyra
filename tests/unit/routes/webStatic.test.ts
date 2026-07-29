@@ -42,6 +42,30 @@ describe('web static routes', () => {
     }
   });
 
+  it('Mobile association files return JSON and never fall through to the SPA', async () => {
+    const root = await createStaticFixture();
+    try {
+      const app = createApp({ jwtSecret: 'test-web-static-secret', webStaticDir: root });
+
+      const androidResponse = await app.request('/.well-known/assetlinks.json');
+      const appleResponse = await app.request('/.well-known/apple-app-site-association');
+      const missingResponse = await app.request('/.well-known/missing-association');
+
+      expect(androidResponse.status).toBe(200);
+      expect(androidResponse.headers.get('content-type')).toContain('application/json');
+      await expect(androidResponse.json()).resolves.toEqual([{ relation: ['delegate_permission/common.handle_all_urls'] }]);
+      expect(appleResponse.status).toBe(200);
+      expect(appleResponse.headers.get('content-type')).toContain('application/json');
+      await expect(appleResponse.json()).resolves.toEqual({
+        applinks: { details: [{ appID: 'TEAMID.com.lyra.mobile', paths: ['/auth/mobile/*', '/invitations/*'] }] },
+      });
+      expect(missingResponse.status).toBe(404);
+      expect(missingResponse.headers.get('content-type')).not.toContain('text/html');
+    } finally {
+      await rm(root, { force: true, recursive: true });
+    }
+  });
+
   it('API and operational paths are excluded from web fallback', () => {
     expect(isWebStaticFallbackPath('/')).toBe(true);
     expect(isWebStaticFallbackPath('/auth/callback')).toBe(true);
@@ -55,6 +79,21 @@ describe('web static routes', () => {
 async function createStaticFixture(): Promise<string> {
   const root = join(tmpdir(), `lyra-web-static-${crypto.randomUUID()}`);
   await mkdir(root, { recursive: true });
+  await mkdir(join(root, '.well-known'), { recursive: true });
   await writeFile(join(root, 'index.html'), '<!doctype html><div id="root"></div>', 'utf8');
+  await writeFile(
+    join(root, '.well-known', 'assetlinks.json'),
+    JSON.stringify([{ relation: ['delegate_permission/common.handle_all_urls'] }]),
+    'utf8',
+  );
+  await writeFile(
+    join(root, '.well-known', 'apple-app-site-association'),
+    JSON.stringify({
+      applinks: {
+        details: [{ appID: 'TEAMID.com.lyra.mobile', paths: ['/auth/mobile/*', '/invitations/*'] }],
+      },
+    }),
+    'utf8',
+  );
   return root;
 }

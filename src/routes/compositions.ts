@@ -5,6 +5,8 @@ import { compositionGalleryQuerySchema } from '../lib/validators/composition.sch
 import { formatZodValidationError } from '../lib/validationErrorFormatter.js';
 import type { CompositionGalleryServicePort } from '../services/composition/CompositionGalleryService.js';
 import type { AppEnv } from '../types/app.js';
+import { compositionsResponseSchema } from '../../packages/api-contract/src/mobileApiSchemas.js';
+import { assertMobileResponseContract } from './mobileResponseContract.js';
 
 export interface CompositionRouteDependencies {
   authMiddleware: MiddlewareHandler<AppEnv>;
@@ -32,7 +34,8 @@ export function createCompositionRoutes(dependencies: CompositionRouteDependenci
       limit: query.data.limit,
     });
 
-    return c.json({ compositions: compositions.map(toCompositionResponse) });
+    const payload = { compositions: compositions.map(toCompositionResponse) };
+    return c.json(assertMobileResponseContract(compositionsResponseSchema, payload));
   });
 
   return app;

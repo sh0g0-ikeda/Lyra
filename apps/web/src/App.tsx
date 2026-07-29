@@ -35,6 +35,7 @@ import {
   getSubscriptionPlanRank,
 } from './lib/billingContract';
 import { ORGANIZATION_FEATURES_AVAILABLE } from './lib/featureFlags';
+import { readInvitationTokenFromPath } from './lib/invitationPath';
 import { formatUserFacingError, formatUserFacingErrorMessage } from './lib/userFacingErrors';
 import {
   getEntityReferenceGenerationBlockers,
@@ -1615,20 +1616,6 @@ const manualTokenAuthAllowed = shouldAllowManualTokenAuth({
   PROD: import.meta.env.PROD,
 });
 
-function readInviteTokenFromLocation(location: Location): string | null {
-  const match = location.pathname.match(/^\/invite\/([^/]+)\/?$/u);
-  if (match === null) {
-    return null;
-  }
-
-  try {
-    const token = decodeURIComponent(match[1]).trim();
-    return token.length > 0 ? token : null;
-  } catch {
-    return null;
-  }
-}
-
 export default function App() {
   const [manualToken, setManualToken] = useStoredString(window.sessionStorage, manualTokenStorageKey, '');
   const [cognitoSession, setCognitoSession] = useState<CognitoSession | null>(() =>
@@ -1641,7 +1628,7 @@ export default function App() {
   const [showSplash, setShowSplash] = useState(true);
   const [splashExiting, setSplashExiting] = useState(false);
   const publicApi = useMemo(() => new LyraApiClient(() => null), []);
-  const inviteTokenFromPath = readInviteTokenFromLocation(window.location);
+  const inviteTokenFromPath = readInvitationTokenFromPath(window.location.pathname);
 
   useEffect(() => {
     const exitTimeout = window.setTimeout(() => {

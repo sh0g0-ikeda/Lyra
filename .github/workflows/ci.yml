@@ -30,10 +30,10 @@ jobs:
           --health-retries 12
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: '22'
           cache: npm
@@ -49,11 +49,24 @@ jobs:
       - name: Install frontend dependencies
         run: npm --prefix apps/web ci
 
+      - name: Verify generated Mobile API contracts
+        run: bun run mobile:contracts:check
+
+      - name: Verify Mobile API method inventory
+        run: bun run mobile:api-inventory:check
+
+      - name: Verify Mobile Web parity inventory
+        run: bun run mobile:web-parity:check
+
       - name: Run Vitest suite
         run: bun run test
 
       - name: Run Bun test entrypoint
-        run: bun test
+        run: >-
+          bun test
+          tests/unit/lib/migrations.test.ts
+          tests/unit/ops/Dockerfile.test.ts
+          tests/unit/scripts/mobileApiBidirectionalAudit.test.ts
 
       - name: Apply migrations to PostgreSQL
         run: bun run migrate
@@ -63,6 +76,19 @@ jobs:
 
       - name: Build backend
         run: bun run build
+
+      - name: Setup ARM64 emulation
+        uses: docker/setup-qemu-action@v4
+        with:
+          platforms: arm64
+
+      - name: Build migration-only production image
+        run: docker buildx build --platform linux/arm64 --target migration-runtime --tag lyra-migration-ci --load .
+
+      - name: Probe migration-only production image
+        run: |
+          test "$(docker image inspect lyra-migration-ci --format '{{.Architecture}}/{{.Config.User}}')" = 'arm64/65532:65532'
+          docker run --rm --platform linux/arm64 --entrypoint /usr/local/bin/bun lyra-migration-ci -e "import { existsSync } from 'node:fs'; const required = ['dist/scripts/startProductionMigration.js', 'dist/scripts/checkPreMobileMigrationInvariants.js', 'dist/packages/api-contract/src/mobileApiSchemas.js', 'migrations/036_fix_push_notification_cancelled_guard.sql', 'certs/rds-ap-northeast-1-bundle.pem']; if (!required.every(existsSync) || process.getuid?.() !== 65532) process.exit(1); await import('sharp');"
 
       - name: Lint frontend
         run: npm --prefix apps/web run lint
@@ -76,3 +102,49 @@ jobs:
 
       - name: Run browser smoke tests
         run: npm --prefix apps/web run e2e
+
+  mobile-verify:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/mobile
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: apps/mobile/package-lock.json
+
+      - name: Install Mobile dependencies
+        run: npm ci
+
+      - name: Verify Expo dependency compatibility
+        run: npx expo install --check
+
+      - name: Diagnose Expo project
+        run: npx expo-doctor
+
+      - name: Verify generated API contracts
+        run: npm run contracts:check
+
+      - name: Check Mobile types
+        run: npm run typecheck
+
+      - name: Lint Mobile
+        run: npm run lint
+
+      - name: Test Mobile
+        run: npm test
+
+      - name: Check Japanese source encoding
+        run: npm run check:mojibake
+
+      - name: Export Android bundle
+        run: npm run export:android
+
+      - name: Export iOS bundle
+        run: npm run export:ios

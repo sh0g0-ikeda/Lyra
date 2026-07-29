@@ -1,5 +1,6 @@
 import { serveStatic } from '@hono/node-server/serve-static';
 import { Hono, type MiddlewareHandler } from 'hono';
+import { organizationInvitationPreviewSchema } from '../packages/api-contract/src/mobileApiSchemas.js';
 import { ConfigurationError, ValidationError } from './domain/errors/index.js';
 import type { EnterprisePlanCode, PaidPlanCode } from './domain/constants/billing.js';
 import type { SubscriptionPlanCatalogEntry } from './domain/types/billing.js';
@@ -7,16 +8,31 @@ import {
   EPISODE_LONG_JOB_ACTIVE_JOB_TYPES,
   EPISODE_LONG_JOB_STALE_AFTER_MS,
 } from './domain/constants/generation.js';
+import { ENTITY_REFERENCE_UPLOAD_PRESIGN_TTL_SECONDS } from './domain/constants/entityReferenceUpload.js';
 import { createPageImageStorageClient } from './infrastructure/aws/S3PageImageStorage.js';
 import { S3FinalPageImageStorage, type FinalPageImageStoragePort } from './infrastructure/aws/S3FinalPageImageStorage.js';
 import { S3EntityImageStorage, type EntityImageStoragePort } from './infrastructure/aws/S3EntityImageStorage.js';
+import { S3EntityReferenceUploadStorage } from './infrastructure/aws/S3EntityReferenceUploadStorage.js';
 import { createGenerationQueueClient, SqsGenerationQueue } from './infrastructure/aws/SqsGenerationQueue.js';
 import { S3StoredImageLoader, type StoredImageLoaderPort } from './infrastructure/aws/S3StoredImageLoader.js';
+import { SharpPageThumbnailRenderer } from './infrastructure/image/SharpPageThumbnailRenderer.js';
+import {
+  CognitoAccountIdentityDeletion,
+  createCognitoAccountIdentityDeletionClient,
+} from './infrastructure/aws/CognitoAccountIdentityDeletion.js';
+import {
+  S3AccountAssetLifecycle,
+  createS3AccountAssetLifecycleClient,
+} from './infrastructure/aws/S3AccountAssetLifecycle.js';
+import { S3ExportArtifactStorage } from './infrastructure/aws/S3ExportArtifactStorage.js';
+import { AesGcmPushTokenCipher } from './infrastructure/crypto/AesGcmPushTokenCipher.js';
 import { LocalFileFinalPageImageStorage } from './infrastructure/local/LocalFileFinalPageImageStorage.js';
 import { LocalFileEntityImageStorage } from './infrastructure/local/LocalFileEntityImageStorage.js';
 import { LocalFileStoredImageLoader } from './infrastructure/local/LocalFileStoredImageLoader.js';
 import { DetachedWorkerProcessLauncher } from './infrastructure/local/DetachedWorkerProcessLauncher.js';
 import { resolveLocalAssetConfig, type LocalAssetConfig } from './infrastructure/local/LocalAssetFiles.js';
+import type { GooglePubSubPushVerifier } from './infrastructure/google/GooglePubSubPushVerifier.js';
+import { createMobileStoreBillingIntegration } from './infrastructure/mobileStore/createMobileStoreBillingIntegration.js';
 import {
   OpenAIEntityImportAnalyzer,
   type EntityImportAnalyzerPort,
@@ -53,8 +69,10 @@ import { PostgresBillingRepository } from './repositories/BillingRepository.js';
 import { PostgresCompositionGalleryRepository } from './repositories/CompositionGalleryRepository.js';
 import { PostgresCreditRepository } from './repositories/CreditRepository.js';
 import { PostgresEntityRepository } from './repositories/EntityRepository.js';
+import { PostgresEntityReferenceUploadTokenRepository } from './repositories/EntityReferenceUploadTokenRepository.js';
 import { PostgresEntityGenerationExecutionRepository } from './repositories/EntityGenerationExecutionRepository.js';
 import { PostgresEntityGenerationRecoveryRepository } from './repositories/EntityGenerationRecoveryRepository.js';
+import { PostgresExportJobRepository } from './repositories/ExportJobRepository.js';
 import { PostgresEpisodePlanPersistenceRepository } from './repositories/EpisodePlanPersistenceRepository.js';
 import { PostgresGenerationJobRepository } from './repositories/GenerationJobRepository.js';
 import { PostgresOrganizationRepository } from './repositories/OrganizationRepository.js';
@@ -67,22 +85,31 @@ import { PostgresPageGenerationExecutionRepository } from './repositories/PageGe
 import { PostgresPageGenerationRecoveryRepository } from './repositories/PageGenerationRecoveryRepository.js';
 import { PostgresPageRepository } from './repositories/PageRepository.js';
 import { PostgresRateLimitStore } from './repositories/RateLimitStore.js';
+import { PostgresPushTokenRepository } from './repositories/PushTokenRepository.js';
 import { PostgresSceneRepository } from './repositories/SceneRepository.js';
 import { PostgresStoryRepository } from './repositories/StoryRepository.js';
 import { PostgresUserRepository } from './repositories/UserRepository.js';
+import { PostgresAccountDeletionRepository } from './repositories/AccountDeletionRepository.js';
+import { createAccountRoutes } from './routes/account.js';
 import { PostgresWorkRepository } from './repositories/WorkRepository.js';
 import { createBillingRoutes } from './routes/billing.js';
 import { createBalloonRoutes } from './routes/balloons.js';
 import { createCompositionRoutes } from './routes/compositions.js';
 import { createEntityRoutes } from './routes/entities.js';
+import { createEntityReferenceUploadRoutes } from './routes/entityReferenceUploads.js';
+import { createExportRoutes } from './routes/exports.js';
 import { createHealthRoutes, type ReadinessCheck } from './routes/health.js';
 import { createJobRoutes } from './routes/jobs.js';
 import { createLocalAssetRoutes } from './routes/localAssets.js';
 import { createMeRoutes } from './routes/me.js';
+import { createMobilePurchaseWebhookRoutes } from './routes/mobilePurchaseWebhooks.js';
+import { createMobilePurchaseRoutes } from './routes/mobilePurchases.js';
+import { assertMobileResponseContract } from './routes/mobileResponseContract.js';
 import { createPanelRoutes } from './routes/panels.js';
 import { createPanelEntityAssignmentRoutes } from './routes/panelEntityAssignments.js';
 import { createPanelFrameRoutes } from './routes/panelFrames.js';
 import { createPageRoutes } from './routes/pages.js';
+import { createPushTokenRoutes } from './routes/pushTokens.js';
 import { createAdminOrganizationRoutes } from './routes/adminOrganizations.js';
 import { createOrganizationRoutes } from './routes/organizations.js';
 import { createSceneRoutes } from './routes/scenes.js';
@@ -90,10 +117,20 @@ import { createStoryRoutes } from './routes/story.js';
 import { createRootWebhookCompatibilityRoutes, createWebhookRoutes } from './routes/webhooks.js';
 import { UserProvisioningService, type UserProvisioningPort } from './services/auth/UserProvisioningService.js';
 import {
+  AccountDeletionService,
+  createStripeAccountSubscriptionCancellationPort,
+  createUnavailableAccountAssetLifecyclePort,
+  createUnavailableAccountIdentityDeletionPort,
+  type AccountAssetLifecyclePort,
+  type AccountIdentityDeletionPort,
+  type AccountDeletionServicePort,
+} from './services/account/AccountDeletionService.js';
+import {
   BillingService,
   assertBillingConfig,
   type BillingServicePort,
 } from './services/billing/BillingService.js';
+import type { MobileStorePurchaseServicePort } from './services/billing/MobileStorePurchaseService.js';
 import {
   StripeWebhookService,
   type StripeWebhookServicePort,
@@ -109,9 +146,18 @@ import {
 import { CreditService, type CreditServicePort } from './services/credit/CreditService.js';
 import { EntityService, type EntityServicePort } from './services/entity/EntityService.js';
 import {
+  EpisodeExportService,
+  type EpisodeExportServicePort,
+} from './services/export/EpisodeExportService.js';
+import { SqsExportJobQueueAdapter } from './services/export/ExportJobQueue.js';
+import {
   EntityReferenceService,
   type EntityReferenceServicePort,
 } from './services/entity/EntityReferenceService.js';
+import {
+  EntityReferenceUploadService,
+  type EntityReferenceUploadServicePort,
+} from './services/entity/EntityReferenceUploadService.js';
 import {
   EntityReferenceImageExportService,
   type EntityReferenceImageExportServicePort,
@@ -149,6 +195,10 @@ import {
 } from './services/entity/EntityGenerationRecoveryService.js';
 import { JobService, type JobServicePort } from './services/job/JobService.js';
 import {
+  PushTokenRegistryService,
+  type PushTokenRegistryServicePort
+} from './services/notification/PushTokenRegistryService.js';
+import {
   DetachedProcessPageGenerationQueueAdapter,
   SqsPageGenerationQueueAdapter,
   UnconfiguredPageGenerationQueue,
@@ -171,6 +221,10 @@ import {
   PageExportService,
   type PageExportServicePort,
 } from './services/page/PageExportService.js';
+import {
+  PageThumbnailService,
+  type PageThumbnailServicePort,
+} from './services/page/PageThumbnailService.js';
 import { PageService, type PageServicePort } from './services/page/PageService.js';
 import type { PageAutofillCompilerPort } from './services/page/PageAutofillCompiler.js';
 import type { EpisodePagePlanCompilerPort } from './services/page/EpisodePagePlanCompiler.js';
@@ -231,6 +285,7 @@ import type { JWTVerifyGetKey } from 'jose';
 import { resolveWorkerDependencies } from '../worker/dependencies.js';
 
 export interface AppDependencies {
+  accountDeletionService?: AccountDeletionServicePort;
   balloonService?: BalloonServicePort;
   billingCreditGrantService?: BillingCreditGrantServicePort;
   billingService?: BillingServicePort;
@@ -238,17 +293,22 @@ export interface AppDependencies {
   creditService?: CreditServicePort;
   entityService?: EntityServicePort;
   entityReferenceService?: EntityReferenceServicePort;
+  entityReferenceUploadService?: EntityReferenceUploadServicePort;
   entityReferenceImageExportService?: EntityReferenceImageExportServicePort;
   entityGenerationQueue?: EntityGenerationQueuePort;
   episodePageSkeletonQueue?: EpisodePageSkeletonQueuePort | null;
   episodePageSkeletonService?: EpisodePageSkeletonServicePort | null;
   episodeStoryAutofillQueue?: EpisodeStoryAutofillQueuePort;
   episodeStoryAutofillService?: EpisodeStoryAutofillServicePort;
+  episodeExportService?: EpisodeExportServicePort;
   entityGenerationRecoveryService?: EntityGenerationRecoveryServicePort;
   jobService?: JobServicePort;
+  mobileStorePurchaseService?: MobileStorePurchaseServicePort;
+  googlePubSubPushVerifier?: Pick<GooglePubSubPushVerifier, 'verifyAuthorization'>;
   organizationService?: OrganizationServicePort;
   organizationBillingService?: OrganizationBillingServicePort;
   pageExportService?: PageExportServicePort;
+  pageThumbnailService?: PageThumbnailServicePort;
   pageFinalizeService?: PageFinalizeServicePort;
   pageService?: PageServicePort;
   pageQueryService?: PageQueryServicePort;
@@ -257,6 +317,7 @@ export interface AppDependencies {
   pageGenerationService?: PageGenerationServicePort;
   pageGenerationRecoveryService?: PageGenerationRecoveryServicePort;
   pageLayoutService?: PageLayoutServicePort;
+  pushTokenRegistryService?: PushTokenRegistryServicePort;
   panelService?: PanelServicePort;
   panelEntityAssignmentService?: PanelEntityAssignmentServicePort;
   panelFrameService?: PanelFrameServicePort;
@@ -355,12 +416,43 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
     }),
   );
   app.route(
+    '/api',
+    createAccountRoutes({
+      authMiddleware,
+      rateLimitMiddleware,
+      accountDeletionService: resolvedDependencies.accountDeletionService,
+    }),
+  );
+  app.route(
     '/api/webhooks',
     createWebhookRoutes({
       rateLimitMiddleware: webhookRateLimitMiddleware,
       stripeWebhookService: resolvedDependencies.stripeWebhookService,
     }),
   );
+  if (resolvedDependencies.mobileStorePurchaseService !== undefined) {
+    app.route(
+      '/api/mobile-purchases',
+      createMobilePurchaseRoutes({
+        authMiddleware,
+        rateLimitMiddleware,
+        mobileStorePurchaseService: resolvedDependencies.mobileStorePurchaseService,
+      }),
+    );
+  }
+  if (
+    resolvedDependencies.mobileStorePurchaseService !== undefined &&
+    resolvedDependencies.googlePubSubPushVerifier !== undefined
+  ) {
+    app.route(
+      '/api/webhooks/mobile-purchases',
+      createMobilePurchaseWebhookRoutes({
+        rateLimitMiddleware: webhookRateLimitMiddleware,
+        mobileStorePurchaseService: resolvedDependencies.mobileStorePurchaseService,
+        googlePubSubPushVerifier: resolvedDependencies.googlePubSubPushVerifier,
+      }),
+    );
+  }
   if (env.ENTERPRISE_FEATURES_ENABLED) {
     // Keep invitation preview public. It must be registered before authenticated
     // /api sub-apps, whose middleware would otherwise turn the preview into 401.
@@ -372,7 +464,7 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
       }
 
       const preview = await resolvedDependencies.organizationService.previewInvitation(body.data.token);
-      return c.json({
+      const payload = {
         organization: preview.organization,
         invitation: {
           email: preview.invitation.email,
@@ -380,7 +472,8 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
           status: preview.invitation.status,
           expires_at: preview.invitation.expiresAt.toISOString(),
         },
-      });
+      };
+      return c.json(assertMobileResponseContract(organizationInvitationPreviewSchema, payload));
     });
   }
   app.route(
@@ -407,6 +500,7 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
       rateLimitMiddleware,
       entityService: resolvedDependencies.entityService,
       entityReferenceService: resolvedDependencies.entityReferenceService,
+      entityReferenceUploadService: resolvedDependencies.entityReferenceUploadService,
       entityReferenceImageExportService: resolvedDependencies.entityReferenceImageExportService,
       organizationService: resolvedDependencies.organizationService,
     }),
@@ -420,6 +514,38 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
       organizationService: resolvedDependencies.organizationService,
     }),
   );
+  if (resolvedDependencies.pushTokenRegistryService !== undefined) {
+    app.route(
+      '/api',
+      createPushTokenRoutes({
+        authMiddleware,
+        rateLimitMiddleware,
+        pushTokenRegistryService: resolvedDependencies.pushTokenRegistryService,
+      }),
+    );
+  }
+  if (resolvedDependencies.entityReferenceUploadService !== undefined) {
+    app.route(
+      '/api',
+      createEntityReferenceUploadRoutes({
+        authMiddleware,
+        rateLimitMiddleware,
+        entityReferenceUploadService: resolvedDependencies.entityReferenceUploadService,
+        organizationService: resolvedDependencies.organizationService,
+      }),
+    );
+  }
+  if (resolvedDependencies.episodeExportService !== undefined) {
+    app.route(
+      '/api',
+      createExportRoutes({
+        authMiddleware,
+        rateLimitMiddleware,
+        exportService: resolvedDependencies.episodeExportService,
+        organizationService: resolvedDependencies.organizationService,
+      }),
+    );
+  }
   app.route(
     '/api',
     createMeRoutes({
@@ -456,6 +582,7 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
       authMiddleware,
       rateLimitMiddleware,
       pageExportService: resolvedDependencies.pageExportService,
+      pageThumbnailService: resolvedDependencies.pageThumbnailService,
       pageFinalizeService: resolvedDependencies.pageFinalizeService,
       pageService: resolvedDependencies.pageService,
       episodeStoryAutofillService: resolvedDependencies.episodeStoryAutofillService,
@@ -546,6 +673,10 @@ const WEB_STATIC_CONTENT_SECURITY_POLICY = [
   "form-action 'self'",
 ].join('; ');
 
+const isMobileAssociationPath = (path: string): boolean =>
+  path === '/.well-known/assetlinks.json' ||
+  path === '/.well-known/apple-app-site-association';
+
 function mountWebStaticRoutes(app: Hono<AppEnv>, root: string): void {
   const staticFileMiddleware = serveStatic<AppEnv>({
     root,
@@ -567,13 +698,20 @@ function mountWebStaticRoutes(app: Hono<AppEnv>, root: string): void {
       c.req.path.startsWith('/assets/') ? 'public, max-age=31536000, immutable' : 'no-store',
     );
     c.header('Content-Security-Policy', WEB_STATIC_CONTENT_SECURITY_POLICY);
-    return staticFileMiddleware(c, next);
+    const response = await staticFileMiddleware(c, next);
+    if (response !== undefined && isMobileAssociationPath(c.req.path)) {
+      response.headers.set('Content-Type', 'application/json; charset=utf-8');
+    }
+    return response;
   });
 
   app.get('*', async (c, next) => {
     if (!isWebStaticFallbackPath(c.req.path)) {
       await next();
       return;
+    }
+    if (c.req.path.startsWith('/.well-known/')) {
+      return c.notFound();
     }
 
     c.header('Cache-Control', 'no-store');
@@ -596,6 +734,11 @@ function resolveDependencies(
       | 'devAuthBypassClaims'
       | 'episodePageSkeletonQueue'
       | 'episodePageSkeletonService'
+      | 'episodeExportService'
+      | 'entityReferenceUploadService'
+      | 'mobileStorePurchaseService'
+      | 'googlePubSubPushVerifier'
+      | 'pushTokenRegistryService'
       | 'webStaticDir'
       | 'readinessCheck'
     >
@@ -604,9 +747,42 @@ function resolveDependencies(
 > & {
   episodePageSkeletonQueue?: EpisodePageSkeletonQueuePort;
   episodePageSkeletonService?: EpisodePageSkeletonServicePort;
+  episodeExportService?: EpisodeExportServicePort;
+  entityReferenceUploadService?: EntityReferenceUploadServicePort;
+  mobileStorePurchaseService?: MobileStorePurchaseServicePort;
+  googlePubSubPushVerifier?: Pick<GooglePubSubPushVerifier, 'verifyAuthorization'>;
+  pushTokenRegistryService?: PushTokenRegistryServicePort;
   storyEpisodeImprovementPlanner?: StoryEpisodeImprovementPlannerPort;
 } {
   const creditRepository = new PostgresCreditRepository(db, db);
+  const configuredMobileStoreBilling =
+    dependencies.mobileStorePurchaseService !== undefined &&
+    dependencies.googlePubSubPushVerifier !== undefined
+      ? null
+      : createMobileStoreBillingIntegration(
+          env,
+          db,
+          env.APP_ENV === 'production' || process.env.NODE_ENV === 'production',
+        );
+  const mobileStorePurchaseService =
+    dependencies.mobileStorePurchaseService ??
+    configuredMobileStoreBilling?.mobileStorePurchaseService;
+  const googlePubSubPushVerifier =
+    dependencies.googlePubSubPushVerifier ??
+    configuredMobileStoreBilling?.googlePubSubPushVerifier;
+  const pushTokenRegistryService =
+    dependencies.pushTokenRegistryService ?? resolveConfiguredPushTokenRegistryService();
+  const episodeExportService =
+    dependencies.episodeExportService ?? resolveConfiguredEpisodeExportService();
+  const stripeBillingClient = resolveStripeBillingClient();
+  const accountDeletionService =
+    dependencies.accountDeletionService ??
+    new AccountDeletionService(
+      new PostgresAccountDeletionRepository(db, db),
+      createStripeAccountSubscriptionCancellationPort(stripeBillingClient),
+      resolveAccountIdentityDeletion(),
+      resolveAccountAssetLifecycle(),
+    );
   const creditService = dependencies.creditService ?? new CreditService(creditRepository);
   const localAssetConfig = resolveConfiguredLocalAssetConfig();
   const generationQueue = resolveGenerationQueue();
@@ -698,6 +874,10 @@ function resolveDependencies(
       undefined,
       organizationService,
     );
+  const pageGenerationQueue =
+    dependencies.pageGenerationQueue ??
+    resolveConfiguredPageGenerationQueue() ??
+    new UnconfiguredPageGenerationQueue();
   const pageGenerationExecutionRepository = new PostgresPageGenerationExecutionRepository(db);
   const pageGenerationRecoveryService =
     dependencies.pageGenerationRecoveryService ??
@@ -708,17 +888,8 @@ function resolveDependencies(
       undefined,
       undefined,
       organizationService,
+      pageGenerationQueue,
     );
-  const pageGenerationQueue =
-    dependencies.pageGenerationQueue ??
-    (inlineWorkerDependencies !== null
-      ? new DetachedProcessPageGenerationQueueAdapter(
-          new DetachedWorkerProcessLauncher('scripts/runPageWorker.ts'),
-        )
-      : generationQueue !== null
-        ? new SqsPageGenerationQueueAdapter(generationQueue)
-        : new UnconfiguredPageGenerationQueue());
-  const stripeBillingClient = resolveStripeBillingClient();
   const billingService =
     dependencies.billingService ??
     resolveBillingService(billingRepository, stripeBillingClient);
@@ -761,6 +932,27 @@ function resolveDependencies(
       env.GENERATION_ENABLED && env.ENTITY_IMPORT_ANALYSIS_ENABLED,
       organizationService,
     );
+  const entityReferenceUploadService =
+    dependencies.entityReferenceUploadService ??
+    (env.S3_BUCKET_IMAGES === undefined
+      ? undefined
+      : new EntityReferenceUploadService({
+          uploadTokenRepository: new PostgresEntityReferenceUploadTokenRepository(db),
+          uploadStorage: new S3EntityReferenceUploadStorage(
+            createPageImageStorageClient(env.AWS_REGION),
+            {
+              bucketName: env.S3_BUCKET_IMAGES,
+              cdnBaseUrl:
+                env.IMAGE_DELIVERY_MODE === 'cloudfront_signed'
+                  ? env.IMAGES_CDN_BASE_URL
+                  : undefined,
+              uploadUrlTtlSeconds: ENTITY_REFERENCE_UPLOAD_PRESIGN_TTL_SECONDS,
+            },
+          ),
+          entityReferenceRepository: entityRepository,
+          entityReferenceService,
+          organizationService,
+        }));
   const entityReferenceImageExportService =
     dependencies.entityReferenceImageExportService ??
     new EntityReferenceImageExportService(entityRepository, resolveStoredPageImageLoader());
@@ -799,6 +991,13 @@ function resolveDependencies(
   const pageExportService =
     dependencies.pageExportService ??
     new PageExportService(pageRepository, resolveStoredPageImageLoader(), organizationService);
+  const pageThumbnailService =
+    dependencies.pageThumbnailService ??
+    new PageThumbnailService(
+      pageRepository,
+      resolveStoredPageImageLoader(),
+      new SharpPageThumbnailRenderer(),
+    );
   const pageQueryService =
     dependencies.pageQueryService ?? new PageQueryService(pageRepository, new PostgresStoryRepository(db));
   const panelEntityAssignmentService =
@@ -867,6 +1066,7 @@ function resolveDependencies(
   const rateLimitStore = dependencies.rateLimitStore ?? resolveRateLimitStore();
 
   return {
+    accountDeletionService,
     balloonService,
     billingCreditGrantService,
     billingService,
@@ -874,17 +1074,22 @@ function resolveDependencies(
     creditService,
     entityService,
     entityReferenceService,
+    entityReferenceUploadService,
     entityReferenceImageExportService,
     entityGenerationQueue,
     episodePageSkeletonQueue,
     episodePageSkeletonService,
+    episodeExportService,
     episodeStoryAutofillQueue,
     episodeStoryAutofillService,
     entityGenerationRecoveryService,
     jobService,
+    mobileStorePurchaseService,
+    googlePubSubPushVerifier,
     organizationService,
     organizationBillingService,
     pageExportService,
+    pageThumbnailService,
     pageFinalizeService,
     pageService,
     pageQueryService,
@@ -893,6 +1098,7 @@ function resolveDependencies(
     pageGenerationRecoveryService,
     pageGenerationService,
     pageLayoutService,
+    pushTokenRegistryService,
     panelService,
     panelEntityAssignmentService,
     panelFrameService,
@@ -905,6 +1111,49 @@ function resolveDependencies(
     userProvisioningService,
     rateLimitStore,
   };
+}
+
+function resolveConfiguredPushTokenRegistryService(): PushTokenRegistryServicePort | undefined {
+  if (!env.PUSH_NOTIFICATIONS_ENABLED) {
+    return undefined;
+  }
+  const encryptionKeyBase64 = env.PUSH_TOKEN_ENCRYPTION_KEY_BASE64;
+  const hashKeyBase64 = env.PUSH_TOKEN_HASH_KEY_BASE64;
+  const keyId = env.PUSH_TOKEN_ENCRYPTION_KEY_ID;
+  if (
+    encryptionKeyBase64 === undefined ||
+    hashKeyBase64 === undefined ||
+    keyId === undefined
+  ) {
+    throw new ConfigurationError(
+      'Push notifications require encryption key, hash key, and encryption key ID'
+    );
+  }
+  const cipher = new AesGcmPushTokenCipher({
+    encryptionKeyBase64,
+    hashKeyBase64,
+    keyId
+  });
+  return new PushTokenRegistryService(
+    new PostgresPushTokenRepository(db, db),
+    cipher
+  );
+}
+
+function resolveConfiguredEpisodeExportService(): EpisodeExportServicePort | undefined {
+  if (env.S3_BUCKET_IMAGES === undefined || env.SQS_QUEUE_URL_GENERATION === undefined) {
+    return undefined;
+  }
+  const repository = new PostgresExportJobRepository(db, db);
+  const storage = new S3ExportArtifactStorage(
+    createPageImageStorageClient(env.AWS_REGION),
+    { bucketName: env.S3_BUCKET_IMAGES },
+  );
+  const queue = new SqsExportJobQueueAdapter(
+    createGenerationQueueClient(env.AWS_REGION),
+    env.SQS_QUEUE_URL_GENERATION,
+  );
+  return new EpisodeExportService(repository, queue, storage);
 }
 
 function resolveRateLimitStore(): RateLimitStore {
@@ -1008,6 +1257,39 @@ function resolveGenerationQueue(): SqsGenerationQueue | null {
   return new SqsGenerationQueue(
     createGenerationQueueClient(env.AWS_REGION),
     env.SQS_QUEUE_URL_GENERATION,
+  );
+}
+
+export function resolveConfiguredPageGenerationQueue(): PageGenerationQueuePort | null {
+  if (resolveConfiguredLocalAssetConfig() !== null) {
+    return new DetachedProcessPageGenerationQueueAdapter(
+      new DetachedWorkerProcessLauncher('scripts/runPageWorker.ts'),
+    );
+  }
+
+  const generationQueue = resolveGenerationQueue();
+  return generationQueue === null ? null : new SqsPageGenerationQueueAdapter(generationQueue);
+}
+
+function resolveAccountIdentityDeletion(): AccountIdentityDeletionPort {
+  if (env.AWS_REGION === undefined || env.COGNITO_USER_POOL_ID === undefined) {
+    return createUnavailableAccountIdentityDeletionPort();
+  }
+
+  return new CognitoAccountIdentityDeletion(
+    createCognitoAccountIdentityDeletionClient(env.AWS_REGION),
+    { userPoolId: env.COGNITO_USER_POOL_ID },
+  );
+}
+
+function resolveAccountAssetLifecycle(): AccountAssetLifecyclePort {
+  if (env.S3_BUCKET_IMAGES === undefined) {
+    return createUnavailableAccountAssetLifecyclePort();
+  }
+
+  return new S3AccountAssetLifecycle(
+    createS3AccountAssetLifecycleClient(env.AWS_REGION),
+    { bucketName: env.S3_BUCKET_IMAGES },
   );
 }
 
@@ -1297,6 +1579,10 @@ function hasStripeBillingConfig(): boolean {
 }
 
 class BillingServiceStub {
+  public async getPersonalSubscriptionSummary(): Promise<null> {
+    return null;
+  }
+
   public async createSubscriptionCheckoutSession(): Promise<never> {
     throw new ConfigurationError('Stripe billing is not configured');
   }

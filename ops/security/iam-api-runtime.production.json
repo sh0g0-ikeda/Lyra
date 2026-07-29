@@ -1,0 +1,74 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ImageStorageAccess",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:PutObject",
+        "s3:DeleteObject"
+      ],
+      "Resource": [
+        "arn:aws:s3:::lyra-prod-images-452284481392/saved/*",
+        "arn:aws:s3:::lyra-prod-images-452284481392/session/*",
+        "arn:aws:s3:::lyra-prod-images-452284481392/tmp/*"
+      ]
+    },
+    {
+      "Sid": "ImageBucketListAccess",
+      "Effect": "Allow",
+      "Action": "s3:ListBucket",
+      "Resource": "arn:aws:s3:::lyra-prod-images-452284481392",
+      "Condition": {
+        "StringLike": {
+          "s3:prefix": [
+            "saved/*",
+            "session/*",
+            "tmp/*"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "GenerationQueueEnqueueAccess",
+      "Effect": "Allow",
+      "Action": [
+        "sqs:SendMessage",
+        "sqs:GetQueueAttributes",
+        "sqs:GetQueueUrl"
+      ],
+      "Resource": "arn:aws:sqs:ap-northeast-1:452284481392:lyra-prod-generation"
+    },
+    {
+      "Sid": "ReadLyraAppSecret",
+      "Effect": "Allow",
+      "Action": "secretsmanager:GetSecretValue",
+      "Resource": "arn:aws:secretsmanager:ap-northeast-1:452284481392:secret:lyra/prod/app-*"
+    },
+    {
+      "Sid": "SesInvitationEmailAccess",
+      "Effect": "Allow",
+      "Action": "ses:SendEmail",
+      "Resource": "arn:aws:ses:ap-northeast-1:452284481392:identity/lyra-editor.com"
+    },
+    {
+      "Sid": "AccountDeletionAssetTagging",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObjectTagging",
+        "s3:PutObjectTagging"
+      ],
+      "Resource": "arn:aws:s3:::lyra-prod-images-452284481392/saved/*"
+    },
+    {
+      "Sid": "AccountDeletionIdentityRemoval",
+      "Effect": "Allow",
+      "Action": [
+        "cognito-idp:AdminDisableUser",
+        "cognito-idp:AdminDeleteUser"
+      ],
+      "Resource": "arn:aws:cognito-idp:ap-northeast-1:452284481392:userpool/ap-northeast-1_wiZLzlGMM"
+    }
+  ]
+}

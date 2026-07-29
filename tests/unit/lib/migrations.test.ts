@@ -136,6 +136,57 @@ describe('runPendingMigrations', () => {
     expect(db.insertedFilenames).toEqual(['002_second.sql']);
   });
 
+  it('旧Mobile migration名は同一内容だけを補完し変更済みmigrationは再適用する', async () => {
+    const migrationsDir = await createTempMigrations({
+      '024_add_generation_job_cancellation.sql': 'SELECT 24 AS skip_reconciled_cancellation;',
+      '027_add_account_deletion_requests.sql': 'SELECT 27 AS skip_same_account;',
+      '028_add_page_story_metadata_columns.sql': 'SELECT 28 AS skip_same_pages;',
+      '029_add_mobile_store_purchase_ledger.sql': 'SELECT 29 AS skip_same_store;',
+      '030_add_generation_job_management.sql': 'SELECT 30 AS reapply_jobs;',
+      '031_add_entity_reference_upload_tokens.sql': 'SELECT 31 AS skip_same_uploads;',
+      '032_add_episode_export_jobs.sql': 'SELECT 32 AS skip_same_exports;',
+      '033_add_mobile_push_token_registry.sql': 'SELECT 33 AS skip_same_tokens;',
+      '034_add_mobile_push_notification_outbox.sql': 'SELECT 34 AS skip_same_outbox;',
+      '035_add_processing_generation_job_cancellation.sql': 'SELECT 35 AS reapply_cancellation;',
+    });
+    const db = new FakeMigrationDb([
+      '024_add_account_deletion_requests.sql',
+      '025_add_page_story_metadata_columns.sql',
+      '026_add_mobile_store_purchase_ledger.sql',
+      '027_add_generation_job_management.sql',
+      '028_add_entity_reference_upload_tokens.sql',
+      '029_add_episode_export_jobs.sql',
+      '030_add_mobile_push_token_registry.sql',
+      '031_add_mobile_push_notification_outbox.sql',
+      '032_add_processing_generation_job_cancellation.sql',
+    ]);
+
+    const applied = await runPendingMigrations(db, { migrationsDir });
+
+    expect(applied).toEqual([
+      '030_add_generation_job_management.sql',
+      '035_add_processing_generation_job_cancellation.sql',
+    ]);
+    expect(db.insertedFilenames).toEqual(
+      expect.arrayContaining([
+        '024_add_generation_job_cancellation.sql',
+        '027_add_account_deletion_requests.sql',
+        '028_add_page_story_metadata_columns.sql',
+        '029_add_mobile_store_purchase_ledger.sql',
+        '031_add_entity_reference_upload_tokens.sql',
+        '032_add_episode_export_jobs.sql',
+        '033_add_mobile_push_token_registry.sql',
+        '034_add_mobile_push_notification_outbox.sql',
+      ]),
+    );
+    expect(db.executedSql.some((sql) => sql.includes('skip_same_'))).toBe(false);
+    expect(
+      db.executedSql.some((sql) => sql.includes('skip_reconciled_cancellation')),
+    ).toBe(false);
+    expect(db.executedSql.some((sql) => sql.includes('reapply_jobs'))).toBe(true);
+    expect(db.executedSql.some((sql) => sql.includes('reapply_cancellation'))).toBe(true);
+  });
+
   it('migration lock が先に取られている場合は再試行する', async () => {
     const migrationsDir = await createTempMigrations({
       '001_first.sql': 'SELECT 1;',
@@ -369,6 +420,65 @@ describe('runPendingMigrations', () => {
       "CHECK (balloon_type IN ('speech', 'thought', 'narration', 'shout', 'whisper', 'sfx', 'caption'))",
     );
     expect(sql).toContain('VALIDATE CONSTRAINT pages_status_check');
+  });
+
+  it('account deletion request has resumable checkpoints', async () => {
+    const sql = await readFile(
+      join(process.cwd(), 'migrations', '027_add_account_deletion_requests.sql'),
+      'utf8',
+    );
+
+    expect(sql).toContain('CREATE TABLE account_deletion_requests');
+    expect(sql).toContain("CHECK (status IN ('blocked', 'processing', 'pending_external_action', 'completed'))");
+    expect(sql).toContain('cancelled_subscription_ids text[]');
+    expect(sql).toContain('identity_disabled_at timestamptz');
+    expect(sql).toContain('identity_deleted_at timestamptz');
+    expect(sql).toContain('scheduled_asset_keys text[]');
+    expect(sql).toContain('data_anonymized_at timestamptz');
+  });
+
+  it('ジョブ管理 migration は取消状態、論理非表示、遅延消費の返金ガードを定義する', async () => {
+    const sql = await readFile(
+      join(process.cwd(), 'migrations', '030_add_generation_job_management.sql'),
+      'utf8',
+    );
+
+    expect(sql).toContain("CHECK (status IN ('queued', 'processing', 'completed', 'failed', 'cancelled'))");
+    expect(sql).toContain('CREATE TABLE IF NOT EXISTS generation_job_history_hides');
+    expect(sql).toContain('PRIMARY KEY (generation_job_id, user_id)');
+    expect(sql).toContain('CREATE OR REPLACE FUNCTION refund_late_canceled_generation_job_consume()');
+    expect(sql).toContain('FOR UPDATE');
+    expect(sql).toContain('CREATE TRIGGER generation_job_late_consume_refund');
+  });
+
+  it('entity reference upload token は期限・MIME・size・single-use をDB制約で持つ', async () => {
+    const sql = await readFile(
+      join(process.cwd(), 'migrations', '031_add_entity_reference_upload_tokens.sql'),
+      'utf8',
+    );
+
+    expect(sql).toContain('CREATE TABLE entity_reference_upload_tokens');
+    expect(sql).toContain('token_hash TEXT NOT NULL UNIQUE');
+    expect(sql).toContain("purpose IN ('entity_reference_import')");
+    expect(sql).toContain("mime_type IN ('image/jpeg', 'image/png', 'image/webp')");
+    expect(sql).toContain('size_bytes > 0 AND size_bytes <= 5242880');
+    expect(sql).toContain("s3_key LIKE 'tmp/%'");
+    expect(sql).toContain('WHERE consumed_at IS NULL');
+  });
+
+  it('episode export jobs persist bounded artifacts and a durable dispatch outbox', async () => {
+    const sql = await readFile(
+      join(process.cwd(), 'migrations', '032_add_episode_export_jobs.sql'),
+      'utf8',
+    );
+    expect(sql).toContain('CREATE TABLE export_jobs');
+    expect(sql).toContain("format IN ('pdf', 'zip')");
+    expect(sql).toContain("status IN ('queued', 'processing', 'completed', 'failed', 'canceled')");
+    expect(sql).toContain('cardinality(page_ids) BETWEEN 1 AND 100');
+    expect(sql).toContain('CREATE UNIQUE INDEX idx_export_jobs_idempotency_scope');
+    expect(sql).toContain('CREATE TABLE export_job_outbox');
+    expect(sql).toContain('WHERE dispatched_at IS NULL');
+    expect(sql).toContain('artifact_deleted_at TIMESTAMPTZ');
   });
 
   it('旧クレジット消費行は一意に特定できるjob_idだけを補完する', async () => {

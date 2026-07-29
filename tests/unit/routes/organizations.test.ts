@@ -1,6 +1,27 @@
 import { describe, expect, it } from 'vitest';
 import type { MiddlewareHandler } from 'hono';
+import {
+  organizationAuditLogsResponseSchema,
+  organizationBillingSummarySchema,
+  organizationCreditBalanceSchema,
+  organizationCreditCheckoutSchema,
+  organizationCustomerPortalSchema,
+  organizationInvitationActionResponseSchema,
+  organizationInvitationPreviewSchema,
+  organizationInvitationsResponseSchema,
+  organizationInvitationUpdateResponseSchema,
+  organizationInvoicesResponseSchema,
+  organizationMemberUpdateResponseSchema,
+  organizationMembersResponseSchema,
+  organizationPlansResponseSchema,
+  organizationSubscriptionCheckoutSchema,
+  organizationUsageResponseSchema,
+  organizationUpdateResponseSchema,
+  organizationWorkspaceDetailSchema,
+  organizationWorkspaceSchema,
+} from '../../../packages/api-contract/src/mobileApiSchemas.js';
 import { createApp } from '../../../src/app.js';
+import { ValidationError } from '../../../src/domain/errors/index.js';
 import type {
   OrganizationCapability,
   OrganizationAuditLog,
@@ -35,6 +56,211 @@ interface OrganizationsListResponse {
 }
 
 describe('createOrganizationRoutes', () => {
+  it('Mobileが利用する法人JSON応答はcanonical schemaで検証できる', async () => {
+    const routes = createOrganizationRoutes({
+      authMiddleware: buildAuthMiddleware(testUser),
+      rateLimitMiddleware: buildPassThroughMiddleware(),
+      publicRateLimitMiddleware: buildPassThroughMiddleware(),
+      organizationService: new FakeOrganizationService() as unknown as OrganizationServicePort,
+      organizationBillingService: new FakeOrganizationBillingService() as unknown as OrganizationBillingServicePort,
+    });
+    const jsonBody = (body: Record<string, unknown>): RequestInit => ({
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    // CSV, 204, legacy aliases, and Mobile-unused JSON endpoints are outside
+    // this Mobile response-contract table.
+    const cases = [
+      {
+        name: '招待preview',
+        path: '/organization-invitations/raw-token-value-with-enough-length',
+        schema: organizationInvitationPreviewSchema,
+      },
+      {
+        name: '招待accept',
+        path: '/organization-invitations/accept',
+        init: jsonBody({ token: 'raw-token-value-with-enough-length' }),
+        schema: organizationWorkspaceSchema,
+      },
+      {
+        name: '法人作成',
+        path: '/organizations',
+        init: jsonBody({ name: 'Lyra Studio', billing_email: 'billing@example.com' }),
+        expectedStatus: 201,
+        schema: organizationWorkspaceDetailSchema,
+      },
+      {
+        name: '法人詳細',
+        path: `/organizations/${organizationId}`,
+        schema: organizationWorkspaceDetailSchema,
+      },
+      {
+        name: '法人更新',
+        path: `/organizations/${organizationId}`,
+        init: {
+          ...jsonBody({ name: 'Lyra Studio Updated' }),
+          method: 'PATCH',
+        },
+        schema: organizationUpdateResponseSchema,
+      },
+      {
+        name: 'メンバー一覧',
+        path: `/organizations/${organizationId}/members`,
+        schema: organizationMembersResponseSchema,
+      },
+      {
+        name: 'メンバー一覧ページ',
+        path: `/organizations/${organizationId}/members?limit=1`,
+        schema: organizationMembersResponseSchema,
+      },
+      {
+        name: 'メンバー更新',
+        path: `/organizations/${organizationId}/members/550e8400-e29b-41d4-a716-446655440001`,
+        init: {
+          ...jsonBody({ role: 'viewer' }),
+          method: 'PATCH',
+        },
+        schema: organizationMemberUpdateResponseSchema,
+      },
+      {
+        name: '招待一覧',
+        path: `/organizations/${organizationId}/invitations`,
+        schema: organizationInvitationsResponseSchema,
+      },
+      {
+        name: '招待一覧ページ',
+        path: `/organizations/${organizationId}/invitations?limit=1`,
+        schema: organizationInvitationsResponseSchema,
+      },
+      {
+        name: '招待作成',
+        path: `/organizations/${organizationId}/invitations`,
+        init: jsonBody({ email: 'member@example.com', role: 'editor' }),
+        expectedStatus: 201,
+        schema: organizationInvitationActionResponseSchema,
+      },
+      {
+        name: '招待再送',
+        path: `/organizations/${organizationId}/invitations/550e8400-e29b-41d4-a716-446655440010/resend`,
+        init: { method: 'POST' },
+        schema: organizationInvitationActionResponseSchema,
+      },
+      {
+        name: '招待取り消し',
+        path: `/organizations/${organizationId}/invitations/550e8400-e29b-41d4-a716-446655440010/revoke`,
+        init: { method: 'POST' },
+        schema: organizationInvitationUpdateResponseSchema,
+      },
+      {
+        name: 'クレジット残高',
+        path: `/organizations/${organizationId}/credits/balance`,
+        schema: organizationCreditBalanceSchema,
+      },
+      {
+        name: '法人プラン',
+        path: `/organizations/${organizationId}/billing/plans`,
+        schema: organizationPlansResponseSchema,
+      },
+      {
+        name: '法人請求概要',
+        path: `/organizations/${organizationId}/billing`,
+        schema: organizationBillingSummarySchema,
+      },
+      {
+        name: '法人サブスクリプションhandoff',
+        path: `/organizations/${organizationId}/billing/checkout/subscription`,
+        init: jsonBody({ plan_code: 'enterprise_a' }),
+        expectedStatus: 201,
+        schema: organizationSubscriptionCheckoutSchema,
+      },
+      {
+        name: '法人クレジットhandoff',
+        path: `/organizations/${organizationId}/billing/checkout/credits`,
+        init: jsonBody({ package_code: 'credits_200' }),
+        expectedStatus: 201,
+        schema: organizationCreditCheckoutSchema,
+      },
+      {
+        name: '法人請求管理handoff',
+        path: `/organizations/${organizationId}/billing/customer-portal`,
+        init: { method: 'POST' },
+        schema: organizationCustomerPortalSchema,
+      },
+      {
+        name: '法人請求履歴',
+        path: `/organizations/${organizationId}/invoices`,
+        schema: organizationInvoicesResponseSchema,
+      },
+      {
+        name: '利用履歴',
+        path: `/organizations/${organizationId}/usage`,
+        schema: organizationUsageResponseSchema,
+      },
+      {
+        name: '利用履歴ページ',
+        path: `/organizations/${organizationId}/usage?limit=1`,
+        schema: organizationUsageResponseSchema,
+      },
+      {
+        name: '監査ログ',
+        path: `/organizations/${organizationId}/audit-logs`,
+        schema: organizationAuditLogsResponseSchema,
+      },
+      {
+        name: '監査ログページ',
+        path: `/organizations/${organizationId}/audit-logs?limit=1`,
+        schema: organizationAuditLogsResponseSchema,
+      },
+    ];
+
+    for (const contractCase of cases) {
+      const response = await routes.request(contractCase.path, contractCase.init);
+      expect(response.status, contractCase.name).toBe(contractCase.expectedStatus ?? 200);
+      const result = contractCase.schema.safeParse(await response.json());
+      expect(result.success, contractCase.name).toBe(true);
+    }
+  });
+
+  it('法人詳細がcanonical schemaに違反する場合はfail-closedで拒否する', async () => {
+    const routes = createOrganizationRoutes({
+      authMiddleware: buildAuthMiddleware(testUser),
+      rateLimitMiddleware: buildPassThroughMiddleware(),
+      organizationService: new InvalidOrganizationResponseService() as unknown as OrganizationServicePort,
+      organizationBillingService: new FakeOrganizationBillingService() as unknown as OrganizationBillingServicePort,
+    });
+    installTestErrorHandler(routes);
+
+    const response = await routes.request(`/organizations/${organizationId}`);
+
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toEqual({
+      error: { code: 'INTERNAL_ERROR' },
+    });
+  });
+
+  it('法人請求handoffが安全でないURLを返す場合はfail-closedで拒否する', async () => {
+    const billingService = new FakeOrganizationBillingService();
+    billingService.portalUrl = 'http://billing.example.com/portal';
+    const routes = createOrganizationRoutes({
+      authMiddleware: buildAuthMiddleware(testUser),
+      rateLimitMiddleware: buildPassThroughMiddleware(),
+      organizationService: new FakeOrganizationService() as unknown as OrganizationServicePort,
+      organizationBillingService: billingService as unknown as OrganizationBillingServicePort,
+    });
+    installTestErrorHandler(routes);
+
+    const response = await routes.request(
+      `/organizations/${organizationId}/billing/customer-portal`,
+      { method: 'POST' },
+    );
+
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toEqual({
+      error: { code: 'INTERNAL_ERROR' },
+    });
+  });
+
   it('法人Workspace一覧ではStripe内部IDを返さない', async () => {
     const organizationService = new FakeOrganizationService();
     const routes = createOrganizationRoutes({
@@ -59,6 +285,42 @@ describe('createOrganizationRoutes', () => {
     expect(body.organizations[0].organization).not.toHaveProperty('stripe_subscription_id');
   });
 
+  it('法人Workspace一覧のservice応答が契約外ならfail-closedにする', async () => {
+    const organizationService = new FakeOrganizationService();
+    organizationService.listWorkspaces = async () =>
+      [{ organization: { id: 42 } }] as unknown as OrganizationWorkspaceSummary[];
+    const routes = createOrganizationRoutes({
+      authMiddleware: buildAuthMiddleware(testUser),
+      rateLimitMiddleware: buildPassThroughMiddleware(),
+      organizationService: organizationService as unknown as OrganizationServicePort,
+      organizationBillingService: new FakeOrganizationBillingService() as unknown as OrganizationBillingServicePort,
+    });
+    installTestErrorHandler(routes);
+
+    const response = await routes.request('/organizations');
+
+    expect(response.status).toBe(500);
+  });
+
+  it('旧招待accept aliasのservice応答が契約外ならfail-closedにする', async () => {
+    const organizationService = new FakeOrganizationService();
+    organizationService.acceptInvitation = async () =>
+      ({ organization: { id: 42 } }) as unknown as OrganizationWorkspaceSummary;
+    const routes = createOrganizationRoutes({
+      authMiddleware: buildAuthMiddleware(testUser),
+      rateLimitMiddleware: buildPassThroughMiddleware(),
+      organizationService: organizationService as unknown as OrganizationServicePort,
+      organizationBillingService: new FakeOrganizationBillingService() as unknown as OrganizationBillingServicePort,
+    });
+    installTestErrorHandler(routes);
+
+    const response = await routes.request('/invitations/raw-token-value-with-enough-length/accept', {
+      method: 'POST',
+    });
+
+    expect(response.status).toBe(500);
+  });
+
   it('利用履歴取得ではview_usage権限をService境界で要求する', async () => {
     const organizationService = new FakeOrganizationService();
     const routes = createOrganizationRoutes({
@@ -72,6 +334,117 @@ describe('createOrganizationRoutes', () => {
 
     expect(response.status).toBe(200);
     expect(organizationService.requiredCapabilities).toContain('view_usage');
+  });
+
+  it('ページング指定がない既存の組織一覧レスポンスはnext_cursorを含まない', async () => {
+    const routes = createOrganizationRoutes({
+      authMiddleware: buildAuthMiddleware(testUser),
+      rateLimitMiddleware: buildPassThroughMiddleware(),
+      organizationService: new FakeOrganizationService() as unknown as OrganizationServicePort,
+      organizationBillingService: new FakeOrganizationBillingService() as unknown as OrganizationBillingServicePort,
+    });
+
+    const response = await routes.request(`/organizations/${organizationId}/invitations`);
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.not.toHaveProperty('next_cursor');
+  });
+
+  it.each([
+    ['members', 'organization-members'],
+    ['invitations', 'organization-invitations'],
+    ['usage', 'organization-usage'],
+    ['audit-logs', 'organization-audit-logs'],
+  ])('ページング一覧%sは不正なlimitまたはcursorを422で拒否する', async (endpoint) => {
+    const service = new FakeOrganizationService();
+    const routes = createOrganizationRoutes({
+      authMiddleware: buildAuthMiddleware(testUser),
+      rateLimitMiddleware: buildPassThroughMiddleware(),
+      organizationService: service as unknown as OrganizationServicePort,
+      organizationBillingService: new FakeOrganizationBillingService() as unknown as OrganizationBillingServicePort,
+    });
+    installTestErrorHandler(routes);
+
+    const invalidLimit = await routes.request(`/organizations/${organizationId}/${endpoint}?limit=101`);
+    const zeroLimit = await routes.request(`/organizations/${organizationId}/${endpoint}?limit=0`);
+    const fractionalLimit = await routes.request(`/organizations/${organizationId}/${endpoint}?limit=1.5`);
+    const invalidCursor = await routes.request(`/organizations/${organizationId}/${endpoint}?limit=1&cursor=bad`);
+    const missingLimit = await routes.request(`/organizations/${organizationId}/${endpoint}?cursor=bad`);
+
+    expect(invalidLimit.status).toBe(422);
+    expect(zeroLimit.status).toBe(422);
+    expect(fractionalLimit.status).toBe(422);
+    expect(invalidCursor.status).toBe(422);
+    expect(missingLimit.status).toBe(422);
+    expect(service.pageRequests).toHaveLength(0);
+  });
+
+  it.each([
+    ['members', 'members', 'next-members-cursor'],
+    ['invitations', 'invitations', 'next-invitations-cursor'],
+    ['usage', 'usage_events', 'next-usage-cursor'],
+    ['audit-logs', 'audit_logs', 'next-audit-cursor'],
+  ])('ページング一覧%sは既存のcollection keyとnext_cursorを返す', async (endpoint, collectionKey, nextCursor) => {
+    const service = new FakeOrganizationService();
+    const routes = createOrganizationRoutes({
+      authMiddleware: buildAuthMiddleware(testUser),
+      rateLimitMiddleware: buildPassThroughMiddleware(),
+      organizationService: service as unknown as OrganizationServicePort,
+      organizationBillingService: new FakeOrganizationBillingService() as unknown as OrganizationBillingServicePort,
+    });
+
+    const response = await routes.request(`/organizations/${organizationId}/${endpoint}?limit=1`);
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as Record<string, unknown>;
+    expect(body).toHaveProperty(collectionKey);
+    expect(body).toMatchObject({ next_cursor: nextCursor });
+  });
+
+  it('ページング一覧はendpoint固有でないcursorを422で拒否する', async () => {
+    const service = new FakeOrganizationService();
+    const routes = createOrganizationRoutes({
+      authMiddleware: buildAuthMiddleware(testUser),
+      rateLimitMiddleware: buildPassThroughMiddleware(),
+      organizationService: service as unknown as OrganizationServicePort,
+      organizationBillingService: new FakeOrganizationBillingService() as unknown as OrganizationBillingServicePort,
+    });
+    installTestErrorHandler(routes);
+    const foreignCursor = Buffer.from(
+      JSON.stringify({
+        v: 1,
+        k: 'organization-members',
+        sort: '2026-07-10T00:00:00.000Z',
+        id: '550e8400-e29b-41d4-a716-446655440001',
+      }),
+    ).toString('base64url');
+
+    const response = await routes.request(
+      `/organizations/${organizationId}/invitations?limit=1&cursor=${foreignCursor}`,
+    );
+
+    expect(response.status).toBe(422);
+    expect(service.pageRequests).toHaveLength(0);
+  });
+
+  it('ページング使用量は1ページ目でも完全なスコープのsummaryを返す', async () => {
+    const service = new FakeOrganizationService();
+    const routes = createOrganizationRoutes({
+      authMiddleware: buildAuthMiddleware(testUser),
+      rateLimitMiddleware: buildPassThroughMiddleware(),
+      organizationService: service as unknown as OrganizationServicePort,
+      organizationBillingService: new FakeOrganizationBillingService() as unknown as OrganizationBillingServicePort,
+    });
+
+    const response = await routes.request(`/organizations/${organizationId}/usage?limit=1`);
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      usage_events: [{ id: 'usage-1' }],
+      next_cursor: 'next-usage-cursor',
+      summary: { current_month_total_credits: 99 },
+    });
+    expect(service.pageRequests).toEqual([{ kind: 'usage', limit: 1 }]);
   });
 
   it('利用履歴CSVでは外部サービスIDとプロンプト系メタデータを出力しない', async () => {
@@ -118,6 +491,7 @@ describe('createOrganizationRoutes', () => {
     });
     expect(body.invoices[0]).not.toHaveProperty('stripe_checkout_session_id');
     expect(body.invoices[0]).not.toHaveProperty('stripe_invoice_id');
+    expect(body.invoices[0]).not.toHaveProperty('user_id');
   });
 
   it('法人請求概要ではサブスク状態と次回請求日だけを返しStripe内部IDを返さない', async () => {
@@ -154,7 +528,7 @@ describe('createOrganizationRoutes', () => {
     const response = await routes.request(`/organizations/${organizationId}/usage`);
 
     expect(response.status).toBe(200);
-    const body = (await response.json()) as { usage_events: Array<{ metadata: Record<string, unknown> }> };
+    const body = organizationUsageResponseSchema.parse(await response.json());
     expect(body.usage_events[0].metadata).toEqual({
       generation_type: 'page_generate',
       page_id: 'page-1',
@@ -172,7 +546,7 @@ describe('createOrganizationRoutes', () => {
     const response = await routes.request(`/organizations/${organizationId}/audit-logs`);
 
     expect(response.status).toBe(200);
-    const body = (await response.json()) as { audit_logs: Array<{ metadata: Record<string, unknown> }> };
+    const body = organizationAuditLogsResponseSchema.parse(await response.json());
     expect(body.audit_logs[0].metadata).toEqual({
       plan_key: 'enterprise_a',
       credits: 600,
@@ -328,6 +702,21 @@ describe('createOrganizationRoutes', () => {
     });
   });
 
+  it('アプリ直結の招待プレビュー応答がcanonical schemaに違反する場合は500になる', async () => {
+    const app = createApp({
+      enableDevAuthBypass: false,
+      jwtSecret: 'unit-test-secret',
+      userProvisioningService: new FakeUserProvisioningService(),
+      rateLimitStore: new AllowingRateLimitStore(),
+      organizationService: new InvalidInvitationPreviewService() as unknown as OrganizationServicePort,
+      organizationBillingService: new FakeOrganizationBillingService() as unknown as OrganizationBillingServicePort,
+    });
+
+    const response = await app.request('/api/organization-invitations/raw-token-value-with-enough-length');
+
+    expect(response.status).toBe(500);
+  });
+
   it('招待一覧APIは送信状態と再送回数を返す', async () => {
     const routes = createOrganizationRoutes({
       authMiddleware: buildAuthMiddleware(testUser),
@@ -404,6 +793,15 @@ function buildAuthMiddleware(user: AuthenticatedUser): MiddlewareHandler<AppEnv>
   };
 }
 
+function installTestErrorHandler(routes: ReturnType<typeof createOrganizationRoutes>): void {
+  routes.onError((error, c) => {
+    if (error instanceof ValidationError) {
+      return c.json({ error: { code: error.code, message: error.message } }, error.statusCode);
+    }
+    return c.json({ error: { code: 'INTERNAL_ERROR' } }, 500);
+  });
+}
+
 function buildPassThroughMiddleware(): MiddlewareHandler<AppEnv> {
   return async (_c, next) => {
     await next();
@@ -411,6 +809,34 @@ function buildPassThroughMiddleware(): MiddlewareHandler<AppEnv> {
 }
 
 class FakeOrganizationBillingService {
+  public portalUrl = 'https://billing.stripe.com/portal/test';
+
+  public async createSubscriptionCheckoutSession(): Promise<{
+    sessionId: string;
+    url: string;
+  }> {
+    return {
+      sessionId: 'cs_subscription_test',
+      url: 'https://checkout.stripe.com/subscription/test',
+    };
+  }
+
+  public async createCreditCheckoutSession(): Promise<{
+    sessionId: string;
+    url: string;
+    packageCode: 'credits_200';
+  }> {
+    return {
+      sessionId: 'cs_credit_test',
+      url: 'https://checkout.stripe.com/credits/test',
+      packageCode: 'credits_200',
+    };
+  }
+
+  public async createCustomerPortalSession(): Promise<{ url: string }> {
+    return { url: this.portalUrl };
+  }
+
   public getEnterprisePlanCatalog(): unknown[] {
     return [];
   }
@@ -453,6 +879,7 @@ class FakeOrganizationBillingService {
 
 class FakeOrganizationService {
   public requiredCapabilities: Array<OrganizationCapability | undefined> = [];
+  public pageRequests: Array<{ kind: string; limit: number }> = [];
   public createdOrganizations: Array<Record<string, unknown>> = [];
   public updatedOrganizations: Array<Record<string, unknown>> = [];
 
@@ -461,6 +888,10 @@ class FakeOrganizationService {
   }
 
   public async getOrganization(_userId: string, _organizationId: string): Promise<OrganizationWorkspaceSummary> {
+    return buildWorkspace();
+  }
+
+  public async acceptInvitation(): Promise<OrganizationWorkspaceSummary> {
     return buildWorkspace();
   }
 
@@ -503,6 +934,57 @@ class FakeOrganizationService {
         createdAt: new Date('2026-07-01T00:00:00.000Z'),
       },
     ] satisfies OrganizationUsageEvent[];
+  }
+
+  public async listMembersPage(_userId: string, _organizationId: string, page: { limit: number }): Promise<unknown> {
+    this.pageRequests.push({ kind: 'members', limit: page.limit });
+    return { items: [], nextCursor: 'next-members-cursor' };
+  }
+
+  public async listMembers(): Promise<OrganizationWorkspaceSummary['membership'][]> {
+    return [buildWorkspace().membership];
+  }
+
+  public async updateMember(): Promise<OrganizationWorkspaceSummary['membership']> {
+    return buildWorkspace().membership;
+  }
+
+  public async listInvitationsPage(_userId: string, _organizationId: string, page: { limit: number }): Promise<unknown> {
+    this.pageRequests.push({ kind: 'invitations', limit: page.limit });
+    return { items: [buildInvitation()], nextCursor: 'next-invitations-cursor' };
+  }
+
+  public async listUsageEventsPage(_userId: string, _organizationId: string, page: { limit: number }): Promise<unknown> {
+    this.pageRequests.push({ kind: 'usage', limit: page.limit });
+    return {
+      page: {
+        items: [
+          {
+            id: 'usage-1',
+            organizationId,
+            userId: 'user-1',
+            workId: 'work-1',
+            generationJobId: null,
+            eventType: 'page_generate',
+            creditAmount: -3,
+            metadata: {},
+            createdAt: new Date('2026-07-01T00:00:00.000Z'),
+          },
+        ],
+        nextCursor: 'next-usage-cursor',
+      },
+      summary: {
+        currentMonthTotalCredits: 99,
+        byMember: [],
+        byWork: [],
+        byGenerationType: [],
+      },
+    };
+  }
+
+  public async listAuditLogsPage(_userId: string, _organizationId: string, page: { limit: number }): Promise<unknown> {
+    this.pageRequests.push({ kind: 'audit-logs', limit: page.limit });
+    return { items: [], nextCursor: 'next-audit-cursor' };
   }
 
   public async listAuditLogs(userId: string, organizationId: string): Promise<unknown[]> {
@@ -605,6 +1087,30 @@ class FakeOrganizationService {
         role: invitation.role,
         status: invitation.status,
         expiresAt: invitation.expiresAt,
+      },
+    };
+  }
+}
+
+class InvalidOrganizationResponseService extends FakeOrganizationService {
+  public override async getOrganization(): Promise<OrganizationWorkspaceSummary> {
+    const workspace = buildWorkspace();
+    workspace.organization.billingEmail = 'not-an-email';
+    return workspace;
+  }
+}
+
+class InvalidInvitationPreviewService extends FakeOrganizationService {
+  public override async previewInvitation(): Promise<{
+    organization: { id: string; name: string };
+    invitation: Pick<OrganizationInvitation, 'email' | 'role' | 'status' | 'expiresAt'>;
+  }> {
+    const preview = await super.previewInvitation();
+    return {
+      ...preview,
+      invitation: {
+        ...preview.invitation,
+        email: 'not-an-email',
       },
     };
   }

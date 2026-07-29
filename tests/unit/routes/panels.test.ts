@@ -323,6 +323,19 @@ describe('panel routes', () => {
       ],
     });
   });
+
+  it('Panel一覧の成功応答がcanonical schemaに違反する場合は500になる', async () => {
+    const panelService = new FakePanelService();
+    panelService.listPanels = async () => [buildPanel({ order: 0 })];
+    const app = createTestApp(panelService);
+    const token = await createToken();
+
+    const response = await app.request(`/api/pages/${pageId}/panels`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    expect(response.status).toBe(500);
+  });
 });
 
 function createTestApp(panelService: PanelServicePort): ReturnType<typeof createApp> {

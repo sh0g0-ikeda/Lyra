@@ -120,6 +120,25 @@ class FakePageService implements PageServicePort {
 }
 
 describe('EpisodePageSkeletonWorkerService', () => {
+  it('claim直後に取消が確定していれば skeleton 保存を開始せず canceled として完了する', async () => {
+    const repository = new FakeEpisodePageSkeletonRepository();
+    const pageSkeletonService = new FakePageSkeletonService();
+    const worker = new EpisodePageSkeletonWorkerService(
+      repository,
+      pageSkeletonService,
+      new FakePageService(),
+      { finalizeCancellationIfRequested: async () => true },
+    );
+
+    await expect(worker.processJob('55555555-5555-4555-8555-555555555555')).resolves.toEqual({
+      status: 'processed',
+      jobStatus: 'cancelled',
+    });
+    expect(pageSkeletonService.lastOptions).toBeUndefined();
+    expect(repository.completed).toBeNull();
+    expect(repository.failed).toBeNull();
+  });
+
   it('disables compiler fallback before saving queued page skeletons', async () => {
     const repository = new FakeEpisodePageSkeletonRepository();
     const pageSkeletonService = new FakePageSkeletonService();

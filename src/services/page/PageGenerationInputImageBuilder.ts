@@ -99,10 +99,10 @@ function buildLayoutGuideImage(
 }
 
 function collectEntityIds(
-  panels: Array<{ entities: Array<{ entityId: string }> }>,
+  panels: Array<{ order: number; entities: Array<{ entityId: string }> }>,
 ): string[] {
   const orderedEntityIds = new Set<string>();
-  for (const panel of panels) {
+  for (const panel of [...panels].sort((left, right) => left.order - right.order)) {
     for (const assignment of panel.entities) {
       orderedEntityIds.add(assignment.entityId);
     }

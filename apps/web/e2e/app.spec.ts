@@ -822,7 +822,13 @@ test('keeps the story hierarchy usable on a mobile viewport', async ({ page }) =
   await workMenuTrigger.click();
   await expect(page.getByRole('menuitem', { name: 'Rename work', exact: true })).toBeVisible();
   await expect(page.getByRole('menuitem', { name: 'Add chapter', exact: true })).toBeVisible();
+  const workMenu = page.getByRole('menu', {
+    name: 'Actions for work “Moonlit Regiment”',
+    exact: true,
+  });
   await page.keyboard.press('Escape');
+  await expect(workMenu).toHaveCount(0);
+  await expect(workMenuTrigger).toBeFocused();
 
   const episodeMenuTrigger = page.getByRole('button', { name: 'Actions for episode “Arrival”', exact: true });
   await expect(episodeMenuTrigger).toBeVisible();
@@ -840,7 +846,8 @@ test('keeps the story hierarchy usable on a mobile viewport', async ({ page }) =
   expect(titleAndTriggerDoNotOverlap).toBe(true);
 
   await episodeMenuTrigger.focus();
-  await page.keyboard.press('ArrowDown');
+  await expect(episodeMenuTrigger).toBeFocused();
+  await episodeMenuTrigger.press('ArrowDown');
   await expect(episodeMenuTrigger).toHaveAttribute('aria-expanded', 'true');
   const episodeMenu = page.getByRole('menu', { name: 'Actions for episode “Arrival”', exact: true });
   await expect(episodeMenu).toBeVisible();

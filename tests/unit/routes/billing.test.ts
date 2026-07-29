@@ -5,6 +5,7 @@ import type { CreditPackageCode, PaidPlanCode } from '../../../src/domain/consta
 import type {
   CreditCheckoutResult,
   CustomerPortalResult,
+  PersonalSubscriptionSummary,
   SubscriptionCheckoutResult,
   SubscriptionPlanCatalogEntry,
 } from '../../../src/domain/types/billing.js';
@@ -22,6 +23,7 @@ import type {
   CreditServicePort,
   RefundCreditsParams,
 } from '../../../src/services/credit/CreditService.js';
+import { billingBalanceSchema } from '../../../packages/api-contract/src/mobileApiSchemas.js';
 
 const jwtSecret = 'unit-test-secret';
 const testUser: AuthenticatedUser = {
@@ -46,12 +48,15 @@ class FakeUserProvisioningService implements UserProvisioningPort {
 }
 
 class FakeCreditService implements CreditServicePort {
+  public constructor(private readonly balanceOverride: Partial<CreditBalanceSnapshot> = {}) {}
+
   public async getBalance(_userId: string): Promise<CreditBalanceSnapshot> {
     return {
       monthlyCredits: 25,
       purchasedCredits: 15,
       totalCredits: 40,
       monthlyExpiresAt: null,
+      ...this.balanceOverride,
     };
   }
 
@@ -72,6 +77,10 @@ class FakeBillingService implements BillingServicePort {
   public subscriptionPlanCode: PaidPlanCode | null = null;
   public creditPackageCode: CreditPackageCode | null = null;
   public portalUserId: string | null = null;
+  public personalSubscription: PersonalSubscriptionSummary | null = null;
+  public subscriptionCheckoutUrl = 'https://checkout.stripe.test/subscription';
+  public creditCheckoutUrl = 'https://checkout.stripe.test/credits';
+  public portalUrl = 'https://billing.stripe.test/portal';
 
   public async createSubscriptionCheckoutSession(
     _user: AuthenticatedUser,
@@ -80,7 +89,7 @@ class FakeBillingService implements BillingServicePort {
     this.subscriptionPlanCode = planCode;
     return {
       sessionId: 'cs_sub_123',
-      url: 'https://checkout.stripe.test/subscription',
+      url: this.subscriptionCheckoutUrl,
     };
   }
 
@@ -92,15 +101,19 @@ class FakeBillingService implements BillingServicePort {
     return {
       sessionId: 'cs_pay_123',
       packageCode,
-      url: 'https://checkout.stripe.test/credits',
+      url: this.creditCheckoutUrl,
     };
   }
 
   public async createCustomerPortalSession(userId: string): Promise<CustomerPortalResult> {
     this.portalUserId = userId;
     return {
-      url: 'https://billing.stripe.test/portal',
+      url: this.portalUrl,
     };
+  }
+
+  public async getPersonalSubscriptionSummary(_userId: string): Promise<PersonalSubscriptionSummary | null> {
+    return this.personalSubscription;
   }
 
   public getSubscriptionPlanCatalog(): SubscriptionPlanCatalogEntry[] {
@@ -191,12 +204,16 @@ describe('billing routes', () => {
     });
 
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({
+    const payload = await response.json();
+    expect(billingBalanceSchema.safeParse(payload).success).toBe(true);
+    expect(payload).toEqual({
       monthly_credits: 25,
       purchased_credits: 15,
       total_credits: 40,
       monthly_expires_at: null,
       plan_code: 'free',
+      current_period_end: null,
+      cancel_at_period_end: false,
       subscription_plans: [
         {
           plan_code: 'standard',
@@ -221,6 +238,48 @@ describe('billing routes', () => {
           configured: true,
         },
       ],
+    });
+  });
+
+  it('returns persisted personal renewal and cancellation state without Stripe identifiers', async () => {
+    const billingService = new FakeBillingService();
+    billingService.personalSubscription = {
+      planCode: 'standard',
+      status: 'active',
+      currentPeriodEnd: new Date('2026-08-01T00:00:00.000Z'),
+      cancelAtPeriodEnd: true,
+    };
+    const app = createTestApp(billingService, new FakeStripeWebhookService());
+    const token = await createToken();
+
+    const response = await app.request('/api/billing/balance', {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body).toMatchObject({
+      plan_code: 'free',
+      current_period_end: '2026-08-01T00:00:00.000Z',
+      cancel_at_period_end: true,
+    });
+    expect(JSON.stringify(body)).not.toContain('sub_');
+    expect(JSON.stringify(body)).not.toContain('cus_');
+  });
+
+  it('does not present a free credit expiry as a paid subscription renewal', async () => {
+    const app = createTestApp(new FakeBillingService(), new FakeStripeWebhookService(), undefined, {
+      monthlyExpiresAt: new Date('2026-08-01T00:00:00.000Z'),
+    });
+    const token = await createToken();
+
+    const response = await app.request('/api/billing/balance', {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    await expect(response.json()).resolves.toMatchObject({
+      current_period_end: null,
+      cancel_at_period_end: false,
     });
   });
 
@@ -322,6 +381,49 @@ describe('billing routes', () => {
       url: 'https://billing.stripe.test/portal',
     });
     expect(billingService.portalUserId).toBe(testUser.id);
+  });
+
+  it.each([
+    {
+      kind: 'subscription',
+      configure: (service: FakeBillingService) => {
+        service.subscriptionCheckoutUrl = 'http://unsafe.example.test/subscription';
+      },
+      path: '/api/billing/checkout/subscription',
+      body: { plan_code: 'standard' },
+    },
+    {
+      kind: 'credits',
+      configure: (service: FakeBillingService) => {
+        service.creditCheckoutUrl = 'http://unsafe.example.test/credits';
+      },
+      path: '/api/billing/checkout/credits',
+      body: { package_code: 'credits_200' },
+    },
+    {
+      kind: 'portal',
+      configure: (service: FakeBillingService) => {
+        service.portalUrl = 'http://unsafe.example.test/portal';
+      },
+      path: '/api/billing/customer-portal',
+      body: null,
+    },
+  ])('$kind handoffがHTTPSでない場合は応答をfail-closedにする', async ({ configure, path, body }) => {
+    const billingService = new FakeBillingService();
+    configure(billingService);
+    const app = createTestApp(billingService, new FakeStripeWebhookService());
+    const token = await createToken();
+
+    const response = await app.request(path, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        ...(body === null ? {} : { 'Content-Type': 'application/json' }),
+      },
+      body: body === null ? undefined : JSON.stringify(body),
+    });
+
+    expect(response.status).toBe(500);
   });
 
   it('accepts signed Stripe webhooks without user authentication', async () => {
@@ -443,10 +545,11 @@ function createTestApp(
   billingService: BillingServicePort,
   stripeWebhookService: StripeWebhookServicePort,
   rateLimitStore?: RateLimitStore,
+  creditBalanceOverride?: Partial<CreditBalanceSnapshot>,
 ): ReturnType<typeof createApp> {
   return createApp({
     billingService,
-    creditService: new FakeCreditService(),
+    creditService: new FakeCreditService(creditBalanceOverride),
     rateLimitStore,
     stripeWebhookService,
     userProvisioningService: new FakeUserProvisioningService(),

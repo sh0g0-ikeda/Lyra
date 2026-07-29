@@ -1,0 +1,31 @@
+appId: ${APP_ID}
+name: "E2E-08: org invitation/new account"
+tags: [staging, organization, invitation]
+---
+- runFlow:
+    file: ../helpers/launch-auth.yaml
+- openLink: ${E2E_INVITATION_URL}
+- tapOn:
+    id: auth-login-button
+- extendedWaitUntil:
+    visible: ${E2E_AUTH_SIGN_UP_LABEL}
+    timeout: 30000
+- tapOn: ${E2E_AUTH_SIGN_UP_LABEL}
+- tapOn: ${E2E_AUTH_EMAIL_LABEL}
+- inputText: ${E2E_INVITEE_EMAIL}
+- tapOn: ${E2E_AUTH_PASSWORD_LABEL}
+- inputText: ${E2E_INVITEE_PASSWORD}
+- tapOn: ${E2E_AUTH_SUBMIT_LABEL}
+- extendedWaitUntil:
+    visible: ${E2E_AUTH_CONFIRMATION_LABEL}
+    timeout: 30000
+- tapOn: ${E2E_AUTH_CONFIRMATION_LABEL}
+- inputText: ${E2E_INVITEE_CONFIRMATION_CODE}
+- tapOn: ${E2E_AUTH_CONFIRM_LABEL}
+- extendedWaitUntil:
+    visible: ${E2E_INVITATION_ORGANIZATION_LABEL}
+    timeout: 45000
+- tapOn: ${E2E_INVITATION_ACCEPT_LABEL}
+- assertVisible:
+    id: tab-account
+- takeScreenshot: E2E-08-invitation-accepted

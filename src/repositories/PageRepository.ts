@@ -18,9 +18,22 @@ import type {
 } from '../domain/types/page.js';
 import type { PageGenerationMode } from '../domain/types/pageGeneration.js';
 import { readStyleReferenceMetadata } from '../domain/types/styleReference.js';
-import type { DatabaseClient } from '../lib/db.js';
+import type { DatabaseClient, TransactionRunner } from '../lib/db.js';
+import { encodeListCursor, type ListPage, type ListPageRequest } from '../domain/pagination.js';
 import type { PanelEntityAssignment } from '../domain/types/panelEntityAssignment.js';
 import { normalizeNullableText, normalizePossiblyMojibake } from '../lib/textEncoding.js';
+import {
+  ConfigurationError,
+  ConflictError,
+  InsufficientCreditsError,
+  PageStaleError,
+  ValidationError,
+} from '../domain/errors/index.js';
+import type {
+  AtomicSaveAndGenerateInput,
+  AtomicSaveAndGenerateResult,
+  PageAtomicGenerationRepository,
+} from '../services/page/PageSaveAndGenerate.js';
 
 export type { PageGenerationContext, PageGenerationStateUpdate };
 
@@ -81,6 +94,9 @@ interface PromptContextRow extends QueryResultRow {
   episode_purpose: string | null;
   scene_summaries: unknown;
   layout_config: unknown;
+  story_source_scene_ids: unknown;
+  story_page_purpose: string | null;
+  story_continuity_note: string | null;
   dialogue_mode: string;
   page_dialogue_toggle: boolean;
 }
@@ -137,6 +153,9 @@ interface PageSummaryRow extends QueryResultRow {
   episode_id: string;
   page_number: number;
   layout_config: unknown;
+  story_source_scene_ids: unknown;
+  story_page_purpose: string | null;
+  story_continuity_note: string | null;
   dialogue_mode: string;
   page_dialogue_toggle: boolean;
   generation_mode: string | null;
@@ -153,8 +172,17 @@ interface UpdateRow extends QueryResultRow {
   id: string;
 }
 
-export class PostgresPageRepository implements PageRepository {
-  public constructor(private readonly client: DatabaseClient) {}
+export class PostgresPageRepository implements PageRepository, PageAtomicGenerationRepository {
+  public constructor(private readonly client: DatabaseClient & Partial<TransactionRunner>) {}
+
+  public async saveAndCreateGenerationJob(
+    input: AtomicSaveAndGenerateInput,
+  ): Promise<AtomicSaveAndGenerateResult> {
+    if (typeof this.client.transaction !== 'function') {
+      throw new ConfigurationError('Atomic page save-and-generate requires a transaction-capable database client');
+    }
+    return this.client.transaction((transactionClient) => saveAndCreateGenerationJob(transactionClient, input));
+  }
 
   public async findPagesByEpisodeIdAndUserId(
     episodeId: string,
@@ -167,6 +195,9 @@ export class PostgresPageRepository implements PageRepository {
              pages.episode_id,
              pages.page_number,
              pages.layout_config,
+             pages.story_source_scene_ids,
+             pages.story_page_purpose,
+             pages.story_continuity_note,
              pages.dialogue_mode,
              pages.page_dialogue_toggle,
              pages.generation_mode,
@@ -205,28 +236,78 @@ export class PostgresPageRepository implements PageRepository {
       [episodeId, userId, organizationId],
     );
 
-    return result.rows.map((row) => {
-      const layoutConfig = toJsonObject(row.layout_config);
-      return {
-        id: row.id,
-        episodeId: row.episode_id,
-        pageNumber: row.page_number,
-        layoutConfig,
-        storySourceSceneIds: readStorySourceSceneIds(layoutConfig),
-        storyPagePurpose: readStoryPagePurpose(layoutConfig),
-        storyContinuityNote: readStoryContinuityNote(layoutConfig),
-        dialogueMode: toPageDialogueMode(row.dialogue_mode),
-        pageDialogueToggle: row.page_dialogue_toggle,
-        generationMode: toPageGenerationMode(row.generation_mode),
-        generatedImage: toGeneratedPageImage(row.generated_image),
-        status: row.status,
-        panelCount: row.panel_count,
-        frameCount: row.frame_count,
-        balloonCount: row.balloon_count,
-        createdAt: row.created_at,
-        updatedAt: row.updated_at,
-      };
-    });
+    return result.rows.map(mapPageSummaryRow);
+  }
+
+  public async findPagesPageByEpisodeIdAndUserId(
+    episodeId: string,
+    userId: string,
+    request: ListPageRequest,
+    organizationId: string | null = null,
+  ): Promise<ListPage<PageSummary>> {
+    const cursorPageNumber = request.cursor?.sort ?? null;
+    const cursorId = request.cursor?.id ?? null;
+    const result = await this.client.query<PageSummaryRow>(
+      `
+      SELECT pages.id,
+             pages.episode_id,
+             pages.page_number,
+             pages.layout_config,
+             pages.story_source_scene_ids,
+             pages.story_page_purpose,
+             pages.story_continuity_note,
+             pages.dialogue_mode,
+             pages.page_dialogue_toggle,
+             pages.generation_mode,
+             pages.generated_image,
+             pages.status,
+             COUNT(DISTINCT panels.id)::int AS panel_count,
+             COUNT(DISTINCT panel_frames.id)::int AS frame_count,
+             COUNT(DISTINCT balloons.id)::int AS balloon_count,
+             pages.created_at,
+             pages.updated_at
+      FROM pages
+      INNER JOIN episodes ON episodes.id = pages.episode_id
+      INNER JOIN chapters ON chapters.id = episodes.chapter_id
+      INNER JOIN works ON works.id = chapters.work_id
+      LEFT JOIN panels ON panels.page_id = pages.id
+      LEFT JOIN panel_frames ON panel_frames.page_id = pages.id
+      LEFT JOIN balloons ON balloons.page_id = pages.id
+      WHERE pages.episode_id = $1
+        AND (
+          ($3::uuid IS NULL AND works.user_id = $2 AND works.organization_id IS NULL)
+          OR (
+            $3::uuid IS NOT NULL
+            AND works.organization_id = $3::uuid
+            AND EXISTS (
+              SELECT 1
+              FROM organization_members
+              WHERE organization_members.organization_id = works.organization_id
+                AND organization_members.user_id = $2
+                AND organization_members.status = 'active'
+            )
+          )
+        )
+        AND (
+          $4::integer IS NULL
+          OR pages.page_number > $4::integer
+          OR (pages.page_number = $4::integer AND pages.id > $5::uuid)
+        )
+      GROUP BY pages.id
+      ORDER BY pages.page_number ASC, pages.id ASC
+      LIMIT $6
+      `,
+      [episodeId, userId, organizationId, cursorPageNumber, cursorId, request.limit + 1],
+    );
+    const rows = result.rows.slice(0, request.limit);
+    const lastRow = rows[rows.length - 1];
+
+    return {
+      items: rows.map(mapPageSummaryRow),
+      nextCursor: result.rows.length > request.limit && lastRow !== undefined
+        ? encodeListCursor('pages', lastRow.page_number, lastRow.id)
+        : null,
+    };
   }
 
   public async findPageByIdAndUserId(
@@ -240,6 +321,9 @@ export class PostgresPageRepository implements PageRepository {
              pages.episode_id,
              pages.page_number,
              pages.layout_config,
+             pages.story_source_scene_ids,
+             pages.story_page_purpose,
+             pages.story_continuity_note,
              pages.dialogue_mode,
              pages.page_dialogue_toggle,
              pages.generation_mode,
@@ -288,9 +372,9 @@ export class PostgresPageRepository implements PageRepository {
           episodeId: row.episode_id,
           pageNumber: row.page_number,
           layoutConfig,
-          storySourceSceneIds: readStorySourceSceneIds(layoutConfig),
-          storyPagePurpose: readStoryPagePurpose(layoutConfig),
-          storyContinuityNote: readStoryContinuityNote(layoutConfig),
+          storySourceSceneIds: readStorySourceSceneIds(row.story_source_scene_ids, layoutConfig),
+          storyPagePurpose: readStoryPagePurpose(row.story_page_purpose, layoutConfig),
+          storyContinuityNote: readStoryContinuityNote(row.story_continuity_note, layoutConfig),
           dialogueMode: toPageDialogueMode(row.dialogue_mode),
           pageDialogueToggle: row.page_dialogue_toggle,
           generationMode: toPageGenerationMode(row.generation_mode),
@@ -327,7 +411,9 @@ export class PostgresPageRepository implements PageRepository {
                jsonb_agg(
                  jsonb_build_object(
                    'panel_id', panels.id,
-                   'entities', COALESCE(panels.entities, '[]'::jsonb)
+                   'order', panels."order",
+                   'entities', COALESCE(panels.entities, '[]'::jsonb),
+                   'dialogue', COALESCE(panels.dialogue, '[]'::jsonb)
                  )
                  ORDER BY panels."order"
                ) FILTER (WHERE panels.id IS NOT NULL),
@@ -413,6 +499,9 @@ export class PostgresPageRepository implements PageRepository {
                WHERE scenes.episode_id = episodes.id
              ) AS scene_summaries,
              pages.layout_config,
+             pages.story_source_scene_ids,
+             pages.story_page_purpose,
+             pages.story_continuity_note,
              pages.dialogue_mode,
              pages.page_dialogue_toggle
       FROM pages
@@ -450,8 +539,8 @@ export class PostgresPageRepository implements PageRepository {
           pageNumber: row.page_number,
           episodePurpose: normalizeNullableText(row.episode_purpose),
           sceneSummaries: toStringArray(row.scene_summaries),
-          storyPagePurpose: readStoryPagePurpose(layoutConfig),
-          storyContinuityNote: readStoryContinuityNote(layoutConfig),
+          storyPagePurpose: readStoryPagePurpose(row.story_page_purpose, layoutConfig),
+          storyContinuityNote: readStoryContinuityNote(row.story_continuity_note, layoutConfig),
           layoutConfig,
           styleReference: readStyleReferenceMetadata(layoutConfig.style_reference),
           dialogueMode: toPageDialogueMode(row.dialogue_mode),
@@ -861,6 +950,9 @@ export class PostgresPageRepository implements PageRepository {
             WHEN $5::boolean = false THEN pages.layout_config
             ELSE $6::jsonb
           END,
+          story_source_scene_ids = CASE WHEN $7::boolean THEN $8::uuid[] ELSE pages.story_source_scene_ids END,
+          story_page_purpose = CASE WHEN $9::boolean THEN $10::text ELSE pages.story_page_purpose END,
+          story_continuity_note = CASE WHEN $11::boolean THEN $12::text ELSE pages.story_continuity_note END,
           updated_at = NOW()
       FROM episodes
       INNER JOIN chapters ON chapters.id = episodes.chapter_id
@@ -868,10 +960,10 @@ export class PostgresPageRepository implements PageRepository {
       WHERE pages.id = $1
         AND pages.episode_id = episodes.id
         AND (
-          ($7::uuid IS NULL AND works.user_id = $2 AND works.organization_id IS NULL)
+          ($13::uuid IS NULL AND works.user_id = $2 AND works.organization_id IS NULL)
           OR (
-            $7::uuid IS NOT NULL
-            AND works.organization_id = $7::uuid
+            $13::uuid IS NOT NULL
+            AND works.organization_id = $13::uuid
             AND EXISTS (
               SELECT 1
               FROM organization_members
@@ -889,6 +981,12 @@ export class PostgresPageRepository implements PageRepository {
         input.pageDialogueToggle ?? null,
         input.layoutConfig !== undefined,
         input.layoutConfig === undefined ? null : JSON.stringify(input.layoutConfig),
+        input.storySourceSceneIds !== undefined,
+        input.storySourceSceneIds ?? null,
+        input.storyPagePurpose !== undefined,
+        input.storyPagePurpose ?? null,
+        input.storyContinuityNote !== undefined,
+        input.storyContinuityNote ?? null,
         organizationId,
       ],
     );
@@ -1029,14 +1127,16 @@ function toPageGenerationPanels(value: unknown): PageGenerationPanelContext[] {
   }
 
   return value.flatMap((entry) => {
-    if (!isJsonObject(entry) || typeof entry.panel_id !== 'string') {
+    if (!isJsonObject(entry) || typeof entry.panel_id !== 'string' || typeof entry.order !== 'number') {
       return [];
     }
 
     return [
       {
         panelId: entry.panel_id,
+        order: entry.order,
         entities: toPanelEntityAssignments(entry.entities),
+        dialogue: toPanelDialogues(entry.dialogue),
       },
     ];
   });
@@ -1335,16 +1435,45 @@ function toJsonObject(value: unknown): Record<string, unknown> {
   return isJsonObject(value) ? value : {};
 }
 
-function readStorySourceSceneIds(layoutConfig: Record<string, unknown>): string[] {
-  return toStringArray(layoutConfig[STORY_SOURCE_SCENE_IDS_KEY]);
+function mapPageSummaryRow(row: PageSummaryRow): PageSummary {
+  const layoutConfig = toJsonObject(row.layout_config);
+  return {
+    id: row.id,
+    episodeId: row.episode_id,
+    pageNumber: row.page_number,
+    layoutConfig,
+    storySourceSceneIds: readStorySourceSceneIds(row.story_source_scene_ids, layoutConfig),
+    storyPagePurpose: readStoryPagePurpose(row.story_page_purpose, layoutConfig),
+    storyContinuityNote: readStoryContinuityNote(row.story_continuity_note, layoutConfig),
+    dialogueMode: toPageDialogueMode(row.dialogue_mode),
+    pageDialogueToggle: row.page_dialogue_toggle,
+    generationMode: toPageGenerationMode(row.generation_mode),
+    generatedImage: toGeneratedPageImage(row.generated_image),
+    status: row.status,
+    panelCount: row.panel_count,
+    frameCount: row.frame_count,
+    balloonCount: row.balloon_count,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
 }
 
-function readStoryPagePurpose(layoutConfig: Record<string, unknown>): string | null {
-  return normalizeNullableText(readNullableString(layoutConfig[STORY_PAGE_PURPOSE_KEY]));
+function readStorySourceSceneIds(value: unknown, layoutConfig: Record<string, unknown>): string[] {
+  return Array.isArray(value)
+    ? toStringArray(value)
+    : toStringArray(layoutConfig[STORY_SOURCE_SCENE_IDS_KEY]);
 }
 
-function readStoryContinuityNote(layoutConfig: Record<string, unknown>): string | null {
-  return normalizeNullableText(readNullableString(layoutConfig[STORY_CONTINUITY_NOTE_KEY]));
+function readStoryPagePurpose(value: unknown, layoutConfig: Record<string, unknown>): string | null {
+  return value === undefined
+    ? normalizeNullableText(readNullableString(layoutConfig[STORY_PAGE_PURPOSE_KEY]))
+    : normalizeNullableText(readNullableString(value));
+}
+
+function readStoryContinuityNote(value: unknown, layoutConfig: Record<string, unknown>): string | null {
+  return value === undefined
+    ? normalizeNullableText(readNullableString(layoutConfig[STORY_CONTINUITY_NOTE_KEY]))
+    : normalizeNullableText(readNullableString(value));
 }
 
 function toPageGenerationMode(value: string | null): PageGenerationMode | null {
@@ -1486,4 +1615,460 @@ function isJsonObject(value: unknown): value is Record<string, unknown> {
 
 function readNullableString(value: unknown): string | null {
   return typeof value === 'string' ? value : null;
+}
+
+interface AtomicPageRow extends QueryResultRow {
+  id: string;
+  work_id: string;
+  organization_id: string | null;
+  status: PageStatus;
+  generation_mode: string | null;
+  generated_image: unknown;
+  updated_at: Date;
+}
+
+interface AtomicJobRow extends QueryResultRow {
+  id: string;
+  params: unknown;
+}
+
+interface AtomicBalanceRow extends QueryResultRow {
+  monthly_credits: number;
+  purchased_credits: number;
+  monthly_expires_at: Date | null;
+}
+
+async function saveAndCreateGenerationJob(
+  client: DatabaseClient,
+  input: AtomicSaveAndGenerateInput,
+): Promise<AtomicSaveAndGenerateResult> {
+  const page = await lockOwnedPage(client, input);
+  const existing = await findIdempotentSaveAndGenerateJob(client, input);
+  if (existing !== null) {
+    return { jobId: existing.id, pageRevision: readPageRevision(existing.params), created: false };
+  }
+  if (!isExpectedPageRevision(page.updated_at, input.expectedUpdatedAt)) {
+    throw new PageStaleError();
+  }
+  if (page.status === 'confirmed') {
+    throw new ConflictError('Confirmed pages must be reopened before regeneration');
+  }
+  if (page.status === 'generating') {
+    throw new ConflictError('Page is already generating');
+  }
+
+  await assertAtomicPanelSet(client, input.pageId, input.panels.map((panel) => panel.id));
+  await assertAtomicGenerationCapacity(client, input);
+
+  const pageRevision = await saveAtomicPageAndPanels(client, input);
+  const jobId = await insertAtomicGenerationJob(client, input, page, pageRevision);
+  await consumeAtomicGenerationCredits(client, input, page.work_id, jobId);
+  return { jobId, pageRevision, created: true };
+}
+
+async function lockOwnedPage(client: DatabaseClient, input: AtomicSaveAndGenerateInput): Promise<AtomicPageRow> {
+  const result = await client.query<AtomicPageRow>(
+    `
+    SELECT pages.id,
+           chapters.work_id,
+           works.organization_id,
+           pages.status,
+           pages.generation_mode,
+           pages.generated_image,
+           pages.updated_at
+    FROM pages
+    INNER JOIN episodes ON episodes.id = pages.episode_id
+    INNER JOIN chapters ON chapters.id = episodes.chapter_id
+    INNER JOIN works ON works.id = chapters.work_id
+    WHERE pages.id = $1
+      AND (
+        ($3::uuid IS NULL AND works.user_id = $2 AND works.organization_id IS NULL)
+        OR (
+          $3::uuid IS NOT NULL
+          AND works.organization_id = $3::uuid
+          AND EXISTS (
+            SELECT 1 FROM organization_members
+            WHERE organization_members.organization_id = works.organization_id
+              AND organization_members.user_id = $2
+              AND organization_members.status = 'active'
+          )
+        )
+      )
+    FOR UPDATE OF pages
+    `,
+    [input.pageId, input.userId, input.organizationId],
+  );
+  const page = result.rows[0];
+  if (page === undefined) {
+    throw new ValidationError('Page not found');
+  }
+  return page;
+}
+
+async function findIdempotentSaveAndGenerateJob(
+  client: DatabaseClient,
+  input: AtomicSaveAndGenerateInput,
+): Promise<AtomicJobRow | null> {
+  const result = await client.query<AtomicJobRow>(
+    `
+    SELECT id, params
+    FROM generation_jobs
+    WHERE user_id = $1
+      AND organization_id IS NOT DISTINCT FROM $2::uuid
+      AND job_type = 'page_generate'
+      AND params->>'page_id' = $3
+      AND params->>'save_and_generate_request_id' = $4
+      AND params->>'expected_page_revision' = $5
+    ORDER BY created_at DESC
+    LIMIT 1
+    `,
+    [input.userId, input.organizationId, input.pageId, input.requestId, input.expectedUpdatedAt],
+  );
+  return result.rows[0] ?? null;
+}
+
+function isExpectedPageRevision(updatedAt: Date, expectedUpdatedAt: string): boolean {
+  const expected = new Date(expectedUpdatedAt);
+  return Number.isFinite(expected.getTime()) && updatedAt.getTime() === expected.getTime();
+}
+
+async function assertAtomicPanelSet(client: DatabaseClient, pageId: string, inputPanelIds: string[]): Promise<void> {
+  const result = await client.query<{ id: string }>(
+    `SELECT id FROM panels WHERE page_id = $1 ORDER BY id FOR UPDATE`,
+    [pageId],
+  );
+  const existingIds = result.rows.map((row) => row.id).sort();
+  const requestedIds = [...inputPanelIds].sort();
+  if (
+    existingIds.length !== requestedIds.length ||
+    existingIds.some((id, index) => id !== requestedIds[index])
+  ) {
+    throw new ValidationError('Save and generate must include every current panel exactly once');
+  }
+}
+
+async function assertAtomicGenerationCapacity(client: DatabaseClient, input: AtomicSaveAndGenerateInput): Promise<void> {
+  const scopeKey = input.organizationId === null
+    ? `generation_jobs:user:${input.userId}`
+    : `generation_jobs:organization:${input.organizationId}`;
+  await client.query('SELECT pg_advisory_xact_lock($1::int, hashtext($2)::int)', [81_527, 'generation_jobs:global']);
+  await client.query('SELECT pg_advisory_xact_lock($1::int, hashtext($2)::int)', [81_527, scopeKey]);
+  const perScope = await client.query<{ count: string }>(
+    `
+    SELECT COUNT(*)::text AS count
+    FROM generation_jobs
+    WHERE (
+      ($1::uuid IS NULL AND user_id = $2 AND organization_id IS NULL)
+      OR ($1::uuid IS NOT NULL AND organization_id = $1::uuid)
+    )
+      AND job_type = ANY($3::text[])
+      AND status IN ('queued', 'processing')
+    `,
+    [input.organizationId, input.userId, ['page_generate', 'entity_generate']],
+  );
+  if (Number(perScope.rows[0]?.count ?? '0') >= input.capacityLimits.perUser) {
+    throw new ConflictError('Generation scope has too many active generation jobs');
+  }
+  const globally = await client.query<{ count: string }>(
+    `SELECT COUNT(*)::text AS count FROM generation_jobs WHERE job_type = ANY($1::text[]) AND status IN ('queued', 'processing')`,
+    [['page_generate', 'entity_generate']],
+  );
+  if (Number(globally.rows[0]?.count ?? '0') >= input.capacityLimits.global) {
+    throw new ConflictError('Generation queue is temporarily full');
+  }
+}
+
+async function saveAtomicPageAndPanels(
+  client: DatabaseClient,
+  input: AtomicSaveAndGenerateInput,
+): Promise<string> {
+  await client.query(
+    `UPDATE panels SET "order" = -"order", updated_at = NOW() WHERE page_id = $1`,
+    [input.pageId],
+  );
+  for (const panel of input.panels) {
+    const saved = await client.query<{ id: string }>(
+      `
+      UPDATE panels
+      SET "order" = $3,
+          panel_role = $4,
+          panel_size = $5,
+          situation_text = $6,
+          entities = $7::jsonb,
+          composition = $8::jsonb,
+          dialogue_in_panel = $9,
+          dialogue = $10::jsonb,
+          sfx_text = $11,
+          background_note = $12,
+          panel_notes = $13,
+          updated_at = NOW()
+      WHERE id = $1 AND page_id = $2
+      RETURNING id
+      `,
+      [
+        panel.id,
+        input.pageId,
+        panel.order,
+        panel.panelRole,
+        panel.panelSize,
+        panel.situationText,
+        JSON.stringify(panel.entities.map(toPanelEntityJson)),
+        JSON.stringify(toPanelCompositionJson(panel.composition)),
+        panel.dialogueInPanel,
+        JSON.stringify(panel.dialogue.map(toPanelDialogueJson)),
+        panel.sfxText,
+        panel.backgroundNote,
+        panel.panelNotes,
+      ],
+    );
+    if ((saved.rowCount ?? 0) !== 1) {
+      throw new ValidationError('Panel does not belong to page');
+    }
+  }
+
+  await client.query('DELETE FROM panel_frames WHERE page_id = $1', [input.pageId]);
+  for (const frame of input.frames) {
+    await client.query(
+      `
+      INSERT INTO panel_frames (page_id, panel_id, vertices, border_style, border_width, border_color, z_index, reading_order)
+      VALUES ($1, $2, $3::jsonb, $4, $5, $6, $7, $8)
+      `,
+      [
+        input.pageId,
+        frame.panelId,
+        JSON.stringify(frame.vertices),
+        frame.borderStyle,
+        frame.borderWidth,
+        frame.borderColor,
+        frame.zIndex,
+        frame.readingOrder,
+      ],
+    );
+  }
+
+  const page = await client.query<{ updated_at: Date }>(
+    `
+    UPDATE pages
+    SET dialogue_mode = COALESCE($2::text, dialogue_mode),
+        page_dialogue_toggle = COALESCE($3::boolean, page_dialogue_toggle),
+        layout_config = $4::jsonb,
+        status = 'generating',
+        generation_mode = $5::text,
+        story_source_scene_ids = CASE WHEN $6::boolean THEN $7::uuid[] ELSE story_source_scene_ids END,
+        story_page_purpose = CASE WHEN $8::boolean THEN $9::text ELSE story_page_purpose END,
+        story_continuity_note = CASE WHEN $10::boolean THEN $11::text ELSE story_continuity_note END,
+        updated_at = NOW()
+    WHERE id = $1
+    RETURNING updated_at
+    `,
+    [
+      input.pageId,
+      input.page.dialogueMode ?? null,
+      input.page.pageDialogueToggle ?? null,
+      JSON.stringify(input.layoutConfig),
+      input.selection.mode,
+      input.page.storySourceSceneIds !== undefined,
+      input.page.storySourceSceneIds ?? null,
+      input.page.storyPagePurpose !== undefined,
+      input.page.storyPagePurpose ?? null,
+      input.page.storyContinuityNote !== undefined,
+      input.page.storyContinuityNote ?? null,
+    ],
+  );
+  const updatedAt = page.rows[0]?.updated_at;
+  if (updatedAt === undefined) {
+    throw new ValidationError('Page could not be saved');
+  }
+  return updatedAt.toISOString();
+}
+
+async function insertAtomicGenerationJob(
+  client: DatabaseClient,
+  input: AtomicSaveAndGenerateInput,
+  page: AtomicPageRow,
+  pageRevision: string,
+): Promise<string> {
+  const result = await client.query<{ id: string }>(
+    `
+    INSERT INTO generation_jobs (user_id, organization_id, job_type, generation_mode, credit_cost, params, result, expires_at)
+    VALUES ($1, $2, 'page_generate', $3, $4, $5::jsonb, $6::jsonb, NOW() + INTERVAL '7 days')
+    RETURNING id
+    `,
+    [
+      input.userId,
+      input.organizationId,
+      input.selection.mode,
+      input.selection.creditCost,
+      JSON.stringify({
+        page_id: input.pageId,
+        work_id: page.work_id,
+        request_kind: input.selection.requestKind,
+        generation_mode: input.selection.mode,
+        quality: input.selection.quality,
+        requires_planner: input.selection.requiresPlanner,
+        previous_page_status: page.status,
+        previous_generation_mode: toPageGenerationMode(page.generation_mode),
+        save_and_generate_request_id: input.requestId,
+        expected_page_revision: input.expectedUpdatedAt,
+        page_revision: pageRevision,
+        language: input.language,
+        input_snapshot: input.inputSnapshot,
+      }),
+      JSON.stringify({
+        input_snapshot: input.inputSnapshot,
+        input_snapshot_saved_at: new Date().toISOString(),
+      }),
+    ],
+  );
+  const job = result.rows[0];
+  if (job === undefined) {
+    throw new ValidationError('Generation job could not be created');
+  }
+  return job.id;
+}
+
+async function consumeAtomicGenerationCredits(
+  client: DatabaseClient,
+  input: AtomicSaveAndGenerateInput,
+  workId: string,
+  jobId: string,
+): Promise<void> {
+  if (input.selection.creditCost === 0) {
+    return;
+  }
+  if (input.organizationId === null) {
+    await client.query(
+      `INSERT INTO credit_balances (user_id, monthly_credits, purchased_credits) VALUES ($1, 0, 0) ON CONFLICT (user_id) DO NOTHING`,
+      [input.userId],
+    );
+    const balance = await client.query<AtomicBalanceRow>(
+      `SELECT monthly_credits, purchased_credits, monthly_expires_at FROM credit_balances WHERE user_id = $1 FOR UPDATE`,
+      [input.userId],
+    );
+    const current = balance.rows[0];
+    if (current === undefined) {
+      throw new ConfigurationError('Personal credit balance could not be locked');
+    }
+    const monthly = current.monthly_expires_at !== null && current.monthly_expires_at.getTime() <= Date.now() ? 0 : current.monthly_credits;
+    const purchased = current.purchased_credits;
+    if (monthly + purchased < input.selection.creditCost) {
+      throw new InsufficientCreditsError();
+    }
+    const monthlyDeduct = Math.min(monthly, input.selection.creditCost);
+    const purchasedDeduct = input.selection.creditCost - monthlyDeduct;
+    await client.query(
+      `UPDATE credit_balances SET monthly_credits = $2, purchased_credits = $3, updated_at = NOW() WHERE user_id = $1`,
+      [input.userId, monthly - monthlyDeduct, purchased - purchasedDeduct],
+    );
+    await client.query(
+      `
+      INSERT INTO credit_ledger (user_id, organization_id, type, amount, monthly_delta, purchased_delta, monthly_after, purchased_after, description, job_id)
+      VALUES ($1, NULL, 'consume', $2, $3, $4, $5, $6, $7, $8)
+      `,
+      [
+        input.userId,
+        -input.selection.creditCost,
+        -monthlyDeduct,
+        -purchasedDeduct,
+        monthly - monthlyDeduct,
+        purchased - purchasedDeduct,
+        describeAtomicGeneration(input.selection.requestKind, input.selection.mode),
+        jobId,
+      ],
+    );
+    return;
+  }
+
+  await client.query(
+    `INSERT INTO organization_credit_balances (organization_id) VALUES ($1) ON CONFLICT (organization_id) DO NOTHING`,
+    [input.organizationId],
+  );
+  const balance = await client.query<AtomicBalanceRow>(
+    `SELECT monthly_credits, purchased_credits, monthly_expires_at FROM organization_credit_balances WHERE organization_id = $1 FOR UPDATE`,
+    [input.organizationId],
+  );
+  const current = balance.rows[0];
+  if (current === undefined) {
+    throw new ConfigurationError('Organization credit balance could not be locked');
+  }
+  const monthly = current.monthly_expires_at !== null && current.monthly_expires_at.getTime() <= Date.now() ? 0 : current.monthly_credits;
+  const purchased = current.purchased_credits;
+  if (monthly + purchased < input.selection.creditCost) {
+    throw new InsufficientCreditsError();
+  }
+  const monthlyDeduct = Math.min(monthly, input.selection.creditCost);
+  const purchasedDeduct = input.selection.creditCost - monthlyDeduct;
+  await client.query(
+    `UPDATE organization_credit_balances SET monthly_credits = $2, purchased_credits = $3, updated_at = NOW() WHERE organization_id = $1`,
+    [input.organizationId, monthly - monthlyDeduct, purchased - purchasedDeduct],
+  );
+  await client.query(
+    `
+    INSERT INTO credit_ledger (user_id, organization_id, type, amount, monthly_delta, purchased_delta, monthly_after, purchased_after, description, job_id)
+    VALUES ($1, $2, 'consume', $3, $4, $5, $6, $7, $8, $9)
+    `,
+    [
+      input.userId,
+      input.organizationId,
+      -input.selection.creditCost,
+      -monthlyDeduct,
+      -purchasedDeduct,
+      monthly - monthlyDeduct,
+      purchased - purchasedDeduct,
+      describeAtomicGeneration(input.selection.requestKind, input.selection.mode),
+      jobId,
+    ],
+  );
+  await client.query(
+    `
+    INSERT INTO organization_usage_events (organization_id, user_id, work_id, generation_job_id, event_type, credit_amount, metadata)
+    VALUES ($1, $2, $3, $4, 'generation.started', $5, $6::jsonb)
+    `,
+    [input.organizationId, input.userId, workId, jobId, input.selection.creditCost, JSON.stringify({ status: 'started' })],
+  );
+}
+
+function readPageRevision(params: unknown): string {
+  if (isJsonObject(params) && typeof params.page_revision === 'string') {
+    return params.page_revision;
+  }
+  throw new ValidationError('Idempotent generation job is missing its page revision');
+}
+
+function toPanelEntityJson(value: PanelEntityAssignment): Record<string, unknown> {
+  return {
+    entity_id: value.entityId,
+    role: value.role,
+    expression: value.expression,
+    custom_expression: value.customExpression,
+    action: value.action,
+    custom_action: value.customAction,
+    position: value.position,
+    facing_direction: value.facingDirection,
+    effect_note: value.effectNote,
+    state_id: value.stateId,
+  };
+}
+
+function toPanelCompositionJson(value: import('../domain/types/panel.js').PanelComposition): Record<string, unknown> {
+  return {
+    source: value.source,
+    gallery_item_id: value.galleryItemId,
+    composition_prompt: value.compositionPrompt,
+    shot_type: value.shotType,
+    angle: value.angle,
+    custom_note: value.customNote,
+  };
+}
+
+function toPanelDialogueJson(value: import('../domain/types/panel.js').PanelDialogueLine): Record<string, unknown> {
+  return { entity_id: value.entityId, text: value.text, type: value.type, position: value.position };
+}
+
+function describeAtomicGeneration(requestKind: 'initial' | 'regenerate', mode: PageGenerationMode): string {
+  return requestKind === 'regenerate'
+    ? 'Page regeneration'
+    : mode === 'thinking'
+      ? 'Page generation (thinking)'
+      : 'Page generation (standard)';
 }

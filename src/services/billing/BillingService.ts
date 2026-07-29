@@ -12,6 +12,7 @@ import type {
   BillingUserProfile,
   CreditCheckoutResult,
   CustomerPortalResult,
+  PersonalSubscriptionSummary,
   SubscriptionCheckoutResult,
   SubscriptionPlanCatalogEntry,
 } from '../../domain/types/billing.js';
@@ -34,6 +35,7 @@ export interface BillingServicePort {
   ): Promise<SubscriptionCheckoutResult>;
   createCreditCheckoutSession(user: AuthenticatedUser, packageCode: CreditPackageCode): Promise<CreditCheckoutResult>;
   createCustomerPortalSession(userId: string): Promise<CustomerPortalResult>;
+  getPersonalSubscriptionSummary(userId: string): Promise<PersonalSubscriptionSummary | null>;
   getSubscriptionPlanCatalog(): SubscriptionPlanCatalogEntry[];
 }
 
@@ -168,6 +170,10 @@ export class BillingService implements BillingServicePort {
     return {
       url: session.url,
     };
+  }
+
+  public async getPersonalSubscriptionSummary(userId: string): Promise<PersonalSubscriptionSummary | null> {
+    return this.billingRepository.findLatestSubscriptionSummaryForUser(userId);
   }
 
   public getSubscriptionPlanCatalog(): SubscriptionPlanCatalogEntry[] {

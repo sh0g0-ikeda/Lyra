@@ -1,0 +1,19 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AllowLyraAppCloudFrontReadMobilePublicStatic",
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "cloudfront.amazonaws.com"
+      },
+      "Action": "s3:GetObject",
+      "Resource": "arn:aws:s3:::lyra-prod-images-452284481392/public/mobile/*",
+      "Condition": {
+        "StringEquals": {
+          "AWS:SourceArn": "arn:aws:cloudfront::452284481392:distribution/E3B8V7G1NPTTMS"
+        }
+      }
+    }
+  ]
+}

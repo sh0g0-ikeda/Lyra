@@ -108,6 +108,7 @@ export class PostgresEntityGenerationExecutionRepository implements EntityGenera
         AND user_id = $2
         AND job_type = 'entity_generate'
         AND status = 'processing'
+        AND cancel_requested_at IS NULL
       RETURNING *
       `,
       [input.jobId, input.userId, input.message, input.updatedAt],
@@ -124,10 +125,11 @@ export class PostgresEntityGenerationExecutionRepository implements EntityGenera
           result = $3::jsonb,
           openai_request_id = $4,
           completed_at = NOW()
-      WHERE id = $1
-        AND user_id = $2
-        AND status = 'processing'
-      RETURNING *
+        WHERE id = $1
+          AND user_id = $2
+          AND status = 'processing'
+          AND cancel_requested_at IS NULL
+        RETURNING *
       `,
       [
         input.jobId,
@@ -165,10 +167,11 @@ export class PostgresEntityGenerationExecutionRepository implements EntityGenera
       SET status = 'failed',
           error_message = $3,
           completed_at = NOW()
-      WHERE id = $1
-        AND user_id = $2
-        AND status IN ('queued', 'processing')
-        AND (
+        WHERE id = $1
+          AND user_id = $2
+          AND status IN ('queued', 'processing')
+          AND cancel_requested_at IS NULL
+          AND (
           $4::timestamptz IS NULL
           OR (
             status = 'queued'

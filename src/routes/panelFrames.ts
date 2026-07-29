@@ -1,4 +1,8 @@
 import { Hono, type Context, type MiddlewareHandler } from 'hono';
+import {
+  framesResponseSchema,
+  frameTemplateResponseSchema,
+} from '../../packages/api-contract/src/mobileApiSchemas.js';
 import { ValidationError } from '../domain/errors/index.js';
 import type { PanelFrame, PanelFrameTemplateApplication } from '../domain/types/panelFrame.js';
 import {
@@ -15,6 +19,7 @@ import {
   recordOrganizationAudit,
   requireOrganizationCapability,
 } from './organizationRouteHelpers.js';
+import { assertMobileResponseContract } from './mobileResponseContract.js';
 import { readJsonBody } from './requestBody.js';
 
 export interface PanelFrameRouteDependencies {
@@ -37,7 +42,8 @@ export function createPanelFrameRoutes(dependencies: PanelFrameRouteDependencies
     await requireOrganizationCapability(c, dependencies, organizationId, 'view_work');
     const frames = await dependencies.panelFrameService.listPageFrames(user.id, pageId, organizationId);
 
-    return c.json({ frames: frames.map(toPanelFrameResponse) });
+    const payload = { frames: frames.map(toPanelFrameResponse) };
+    return c.json(assertMobileResponseContract(framesResponseSchema, payload));
   });
 
   app.post('/pages/:id/frames/apply-template', async (c) => {
@@ -63,7 +69,12 @@ export function createPanelFrameRoutes(dependencies: PanelFrameRouteDependencies
       frame_count: application.frames.length,
     });
 
-    return c.json(toPanelFrameTemplateApplicationResponse(application));
+    return c.json(
+      assertMobileResponseContract(
+        frameTemplateResponseSchema,
+        toPanelFrameTemplateApplicationResponse(application),
+      ),
+    );
   });
 
   app.put('/pages/:id/frames', async (c) => {
@@ -96,7 +107,8 @@ export function createPanelFrameRoutes(dependencies: PanelFrameRouteDependencies
       frame_count: frames.length,
     });
 
-    return c.json({ frames: frames.map(toPanelFrameResponse) });
+    const payload = { frames: frames.map(toPanelFrameResponse) };
+    return c.json(assertMobileResponseContract(framesResponseSchema, payload));
   });
 
   return app;

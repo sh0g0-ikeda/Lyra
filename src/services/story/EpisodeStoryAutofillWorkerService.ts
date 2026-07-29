@@ -62,6 +62,7 @@ export class EpisodeStoryAutofillWorkerService implements EpisodeStoryAutofillWo
       });
 
       const executionControl = this.createExecutionControl(job.id, job.userId);
+      await executionControl.checkpoint();
 
       const result = await this.pageService.autofillEpisodeFromStory(
         job.userId,

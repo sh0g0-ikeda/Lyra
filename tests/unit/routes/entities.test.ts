@@ -1,5 +1,13 @@
 import { SignJWT } from 'jose';
 import { describe, expect, it } from 'vitest';
+import {
+  entitiesResponseSchema,
+  entityImportResponseSchema,
+  entityReferenceGenerationAvailabilitySchema,
+  entityReferenceSetSchema,
+  entitySchema,
+  jobAcceptedSchema,
+} from '../../../packages/api-contract/src/mobileApiSchemas.js';
 import { createApp } from '../../../src/app.js';
 import { REQUEST_BODY_LIMITS } from '../../../src/routes/requestBody.js';
 import { env } from '../../../src/lib/env.js';
@@ -70,6 +78,8 @@ class FakeCreditService implements CreditServicePort {
 }
 
 class FakeEntityService implements EntityServicePort {
+  public lastUpdateInput: Parameters<EntityServicePort['updateEntity']>[2] | null = null;
+  public listEntitiesPageRequest: { limit: number; cursor: { sort: string | number; id: string } | null } | null = null;
   public async createEntity(
     userId: string,
     requestedWorkId: string,
@@ -110,6 +120,18 @@ class FakeEntityService implements EntityServicePort {
     ];
   }
 
+  public async listEntitiesPage(
+    userId: string,
+    requestedWorkId: string,
+    request: { limit: number; cursor: { sort: string | number; id: string } | null },
+  ): Promise<{ items: Entity[]; nextCursor: string | null }> {
+    this.listEntitiesPageRequest = request;
+    return {
+      items: await this.listEntities(userId, requestedWorkId),
+      nextCursor: 'eyJ2IjoxLCJrIjoiZW50aXRpZXMiLCJzb3J0IjoiMjAyNi0wNC0yMlQwMDowMDowMC4wMDBaIiwiaWQiOiIyMjIyMjIyMi0yMjIyLTQyMjItODIyMi0yMjIyMjIyMjIyMjIifQ',
+    };
+  }
+
   public async getEntity(_userId: string, requestedEntityId: string): Promise<Entity> {
     return {
       id: requestedEntityId,
@@ -132,6 +154,7 @@ class FakeEntityService implements EntityServicePort {
     requestedEntityId: string,
     input: Parameters<EntityServicePort['updateEntity']>[2],
   ): Promise<Entity> {
+    this.lastUpdateInput = input;
     return {
       id: requestedEntityId,
       workId,
@@ -151,10 +174,25 @@ class FakeEntityService implements EntityServicePort {
   public async deleteEntity(_userId: string, _requestedEntityId: string): Promise<void> {}
 }
 
+class InvalidEntityResponseService extends FakeEntityService {
+  public override async getEntity(userId: string, requestedEntityId: string): Promise<Entity> {
+    const entity = await super.getEntity(userId, requestedEntityId);
+    return {
+      ...entity,
+      name: 42 as unknown as string,
+    };
+  }
+}
+
 class FakeEntityReferenceService implements EntityReferenceServicePort {
+  public generationEnabled = true;
   public lastImportRequest: Record<string, unknown> | null = null;
   public lastConfirmRequest: ConfirmEntityReferencesRequest | null = null;
   public lastGenerateReferenceRequest: { userId: string; entityId: string; sourceS3Key?: string | null } | null = null;
+
+  public isReferenceGenerationEnabled(): boolean {
+    return this.generationEnabled;
+  }
 
   public async getReferenceSet(): Promise<EntityReferenceSet> {
     return buildReferenceSet();
@@ -176,6 +214,36 @@ class FakeEntityReferenceService implements EntityReferenceServicePort {
       promptSupplement: 'anime heroine, full body, military uniform',
       tmpImageS3Key: 'tmp/user-1/entities/imports/source.png',
       tmpImageCdnUrl: 'https://cdn.lyra.test/tmp/user-1/entities/imports/source.png',
+    };
+  }
+
+  public async importUploadedImage(
+    userId: string,
+    input: {
+      entityType: 'character' | 'nonhuman' | 'object';
+      imageData: Buffer;
+      mimeType: 'image/png' | 'image/jpeg' | 'image/webp';
+      tmpImageS3Key: string;
+      tmpImageCdnUrl: string;
+    },
+  ): Promise<{
+    suggestedFields: Record<string, unknown>;
+    promptSupplement: string;
+    tmpImageS3Key: string;
+    tmpImageCdnUrl: string;
+  }> {
+    this.lastImportRequest = {
+      userId,
+      entityType: input.entityType,
+      uploadedImageBytes: input.imageData.length,
+      mimeType: input.mimeType,
+    };
+
+    return {
+      suggestedFields: { art_style: 'anime' },
+      promptSupplement: 'anime heroine, full body, military uniform',
+      tmpImageS3Key: input.tmpImageS3Key,
+      tmpImageCdnUrl: input.tmpImageCdnUrl,
     };
   }
 
@@ -295,6 +363,7 @@ describe('entity routes', () => {
       status: 'draft',
     });
     expect(payload).not.toHaveProperty('user_id');
+    expect(entitySchema.parse(payload)).toMatchObject(payload);
   });
 
   it('entity read responses do not expose internal user ids', async () => {
@@ -314,8 +383,11 @@ describe('entity routes', () => {
     expect(listResponse.status).toBe(200);
     expect(getResponse.status).toBe(200);
 
-    const listPayload = (await listResponse.json()) as { entities: Array<Record<string, unknown>> };
-    const getPayload = (await getResponse.json()) as Record<string, unknown>;
+    const rawListPayload = await listResponse.json();
+    expect(rawListPayload).not.toHaveProperty('next_cursor');
+    const listPayload = entitiesResponseSchema.parse(rawListPayload);
+    const rawGetPayload = await getResponse.json();
+    const getPayload = entitySchema.parse(rawGetPayload);
 
     expect(listPayload.entities[0]).not.toHaveProperty('user_id');
     expect(getPayload).not.toHaveProperty('user_id');
@@ -366,6 +438,7 @@ describe('entity routes', () => {
     });
     expect(typeof payload.tmp_image_token).toBe('string');
     expect(payload).not.toHaveProperty('tmp_image_s3_key');
+    expect(entityImportResponseSchema.parse(payload)).toMatchObject(payload);
     expect(referenceService.lastImportRequest).toMatchObject({
       userId: user.id,
       entityType: 'character',
@@ -411,6 +484,49 @@ describe('entity routes', () => {
     expect(referenceService.lastImportRequest).toBeNull();
   });
 
+  it('reference generation availability はサーバー設定を返す', async () => {
+    const referenceService = new FakeEntityReferenceService();
+    referenceService.generationEnabled = false;
+    const app = createTestApp(referenceService);
+    const token = await createToken();
+
+    const response = await app.request('/api/entities/reference-generation-availability', {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    expect(response.status).toBe(200);
+    const payload = await response.json();
+    expect(entityReferenceGenerationAvailabilitySchema.parse(payload)).toEqual({ enabled: false });
+  });
+
+  it('returns a bounded entity page only when limit is supplied', async () => {
+    const entityService = new FakeEntityService();
+    const app = createTestApp(new FakeEntityReferenceService(), new FakeEntityReferenceImageExportService(), entityService);
+    const token = await createToken();
+
+    const response = await app.request(`/api/works/${workId}/entities?limit=2`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ entities: [expect.any(Object)], next_cursor: expect.any(String) });
+    expect(entityService.listEntitiesPageRequest).toEqual({ limit: 2, cursor: null });
+  });
+
+  it('rejects invalid entity page limits and cursors before the service call', async () => {
+    const entityService = new FakeEntityService();
+    const app = createTestApp(new FakeEntityReferenceService(), new FakeEntityReferenceImageExportService(), entityService);
+    const token = await createToken();
+    const headers = { Authorization: `Bearer ${token}` };
+    const workCursor = 'eyJ2IjoxLCJrIjoid29ya3MiLCJzb3J0IjoiMjAyNi0wNC0yMlQwMDowMDowMC4wMDBaIiwiaWQiOiIxMTExMTExMS0xMTExLTQxMTEtODExMS0xMTExMTExMTExMTEifQ';
+
+    for (const query of ['?limit=0', '?limit=101', '?limit=1.5', '?cursor=bad', `?cursor=${workCursor}`, `?limit=1&cursor=${workCursor}`, `?limit=1&cursor=${'a'.repeat(1025)}`]) {
+      const response = await app.request(`/api/works/${workId}/entities${query}`, { headers });
+      expect(response.status).toBe(422);
+    }
+    expect(entityService.listEntitiesPageRequest).toBeNull();
+  });
+
   it('generate-reference は 202 と job_id を返す', async () => {
     const app = createTestApp();
     const token = await createToken();
@@ -423,7 +539,8 @@ describe('entity routes', () => {
     });
 
     expect(response.status).toBe(202);
-    await expect(response.json()).resolves.toEqual({
+    const payload = await response.json();
+    expect(jobAcceptedSchema.parse(payload)).toEqual({
       job_id: '33333333-3333-4333-8333-333333333333',
     });
   });
@@ -502,6 +619,7 @@ describe('entity routes', () => {
     });
     expect(referenceImages[0]).not.toHaveProperty('s3_key');
     expect(referenceImages[0]).not.toHaveProperty('cdn_url');
+    expect(entityReferenceSetSchema.parse(payload)).toMatchObject(payload);
     expect(referenceService.lastConfirmRequest).toEqual({
       selectedS3Keys: ['tmp/user-1/entities/imports/source.png'],
       primaryS3Key: undefined,
@@ -575,7 +693,8 @@ describe('entity routes', () => {
     });
 
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toMatchObject({
+    const payload = await response.json();
+    expect(entityReferenceSetSchema.parse(payload)).toMatchObject({
       entity_id: entityId,
       primary_ref_id: null,
       status: 'empty',
@@ -588,6 +707,46 @@ describe('entity routes', () => {
     const response = await app.request(`/api/entities/${entityId}`);
 
     expect(response.status).toBe(401);
+  });
+  it('entity update は expected_updated_at を必須として service へ渡す', async () => {
+    const entityService = new FakeEntityService();
+    const app = createTestApp(new FakeEntityReferenceService(), new FakeEntityReferenceImageExportService(), entityService);
+    const token = await createToken();
+    const headers = {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    };
+    const revision = '2026-04-22T00:00:00.000Z';
+
+    const missingRevision = await app.request(`/api/entities/${entityId}`, {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify({ name: 'Ren' }),
+    });
+    expect(missingRevision.status).toBe(422);
+
+    const response = await app.request(`/api/entities/${entityId}`, {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify({ name: 'Ren', expected_updated_at: revision }),
+    });
+    expect(response.status).toBe(200);
+    expect(entitySchema.parse(await response.json())).toMatchObject({ id: entityId, name: 'Ren' });
+    expect(entityService.lastUpdateInput?.expectedUpdatedAt).toBe(revision);
+  });
+  it('entity response が canonical schema に違反する場合は fail-closed になる', async () => {
+    const app = createTestApp(
+      new FakeEntityReferenceService(),
+      new FakeEntityReferenceImageExportService(),
+      new InvalidEntityResponseService(),
+    );
+    const token = await createToken();
+
+    const response = await app.request(`/api/entities/${entityId}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    expect(response.status).toBe(500);
   });
   it('reference image export returns an authenticated image', async () => {
     const exportService = new FakeEntityReferenceImageExportService();
@@ -651,12 +810,13 @@ describe('entity routes', () => {
 function createTestApp(
   entityReferenceService: EntityReferenceServicePort = new FakeEntityReferenceService(),
   entityReferenceImageExportService: EntityReferenceImageExportServicePort = new FakeEntityReferenceImageExportService(),
+  entityService: EntityServicePort = new FakeEntityService(),
 ): ReturnType<typeof createApp> {
   return createApp({
     creditService: new FakeCreditService(),
     entityReferenceService,
     entityReferenceImageExportService,
-    entityService: new FakeEntityService(),
+    entityService,
     enableDevAuthBypass: false,
     userProvisioningService: new FakeUserProvisioningService(),
     jwtSecret,

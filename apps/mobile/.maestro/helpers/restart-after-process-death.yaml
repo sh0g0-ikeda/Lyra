@@ -1,0 +1,4 @@
+- pressKey: Home
+- killApp
+- launchApp:
+    stopApp: false

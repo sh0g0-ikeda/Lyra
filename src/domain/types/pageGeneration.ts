@@ -71,11 +71,21 @@ export interface PageGenerationInputSnapshotImage {
   label: string;
 }
 
+export interface PageGenerationInputSnapshotReference {
+  entityId: string;
+  canonicalName: string;
+  refId: string;
+  s3Key: string;
+  subjectLabel: string;
+  modelInputOrder: number;
+}
+
 export interface PageGenerationInputSnapshot {
   pageId: string;
   requestKind: PageGenerationRequestKind;
   generationMode: PageGenerationMode;
   panelCount: number;
   panels: PageGenerationInputSnapshotPanel[];
+  references?: PageGenerationInputSnapshotReference[];
   inputImages?: PageGenerationInputSnapshotImage[];
 }

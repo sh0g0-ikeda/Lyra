@@ -59,6 +59,48 @@ describe('parseEnv', () => {
     expect(parsed.DATABASE_QUERY_TIMEOUT_MS).toBe(30_000);
   });
 
+  it('parses opt-in mobile store billing controls', () => {
+    const disabled = parseEnv({});
+    const enabled = parseEnv({
+      MOBILE_STORE_BILLING_ENABLED: 'true',
+      APPLE_STORE_ALLOW_SANDBOX: 'false',
+      GOOGLE_PLAY_ALLOW_TEST_PURCHASES: 'true',
+    });
+
+    expect(disabled.MOBILE_STORE_BILLING_ENABLED).toBe(false);
+    expect(enabled.MOBILE_STORE_BILLING_ENABLED).toBe(true);
+    expect(enabled.APPLE_STORE_ALLOW_SANDBOX).toBe(false);
+    expect(enabled.GOOGLE_PLAY_ALLOW_TEST_PURCHASES).toBe(true);
+  });
+
+  it('push notificationは既定で無効、明示時だけ鍵設定を読み込む', () => {
+    const disabled = parseEnv({});
+    const enabled = parseEnv({
+      PUSH_NOTIFICATIONS_ENABLED: 'true',
+      PUSH_TOKEN_ENCRYPTION_KEY_BASE64: encryptionKey,
+      PUSH_TOKEN_HASH_KEY_BASE64: hashKey,
+      PUSH_TOKEN_ENCRYPTION_KEY_ID: 'push-key-2026-07',
+      PUSH_APNS_TEAM_ID: 'TEAM123456',
+      PUSH_APNS_KEY_ID: 'KEY1234567',
+      PUSH_APNS_PRIVATE_KEY_BASE64: 'YXBucy1rZXk=',
+      PUSH_APNS_BUNDLE_ID: 'jp.lyra.mobile',
+      PUSH_APNS_ENVIRONMENT: 'production',
+      PUSH_FCM_SERVICE_ACCOUNT_JSON_BASE64: 'e30=',
+      PUSH_PROVIDER_TIMEOUT_MS: '8000',
+      PUSH_DELIVERY_INTERVAL_MS: '20000'
+    });
+
+    expect(disabled.PUSH_NOTIFICATIONS_ENABLED).toBe(false);
+    expect(enabled.PUSH_NOTIFICATIONS_ENABLED).toBe(true);
+    expect(enabled.PUSH_TOKEN_ENCRYPTION_KEY_BASE64).toBe(encryptionKey);
+    expect(enabled.PUSH_TOKEN_HASH_KEY_BASE64).toBe(hashKey);
+    expect(enabled.PUSH_TOKEN_ENCRYPTION_KEY_ID).toBe('push-key-2026-07');
+    expect(enabled.PUSH_APNS_TEAM_ID).toBe('TEAM123456');
+    expect(enabled.PUSH_APNS_ENVIRONMENT).toBe('production');
+    expect(enabled.PUSH_PROVIDER_TIMEOUT_MS).toBe(8000);
+    expect(enabled.PUSH_DELIVERY_INTERVAL_MS).toBe(20000);
+  });
+
   it('episode continuity v3 は未設定時に有効になる', () => {
     const parsed = parseEnv({});
 
@@ -71,3 +113,6 @@ describe('parseEnv', () => {
     expect(parsed.EPISODE_PAGE_PLAN_CONTINUITY_V3_ENABLED).toBe(false);
   });
 });
+
+const encryptionKey = Buffer.alloc(32, 7).toString('base64');
+const hashKey = Buffer.alloc(32, 11).toString('base64');

@@ -1,0 +1,15 @@
+appId: ${APP_ID}
+name: "E2E-16: save-and-generate atomicity/409 conflict"
+tags: [staging, page, conflict]
+---
+- runFlow:
+    file: ../helpers/launch-authenticated.yaml
+- runFlow:
+    file: ../helpers/open-pages.yaml
+- tapOn: ${E2E_CONFLICT_PAGE_LABEL}
+- tapOn: ${E2E_SAVE_AND_GENERATE_LABEL}
+- extendedWaitUntil:
+    visible: ${E2E_CONFLICT_LABEL}
+    timeout: 45000
+- tapOn: ${E2E_CONFLICT_RESOLUTION_LABEL}
+- takeScreenshot: E2E-16-conflict-recovery

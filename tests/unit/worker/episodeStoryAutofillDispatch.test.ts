@@ -52,6 +52,11 @@ describe('episode story autofill worker dispatch', () => {
       entityGenerationWorkerService,
       episodeStoryAutofillWorkerService,
       episodePageSkeletonWorkerService,
+      episodeExportWorkerService: {
+        async processJob() {
+          return { status: 'skipped' as const };
+        },
+      },
     };
 
     const result = await handleGenerationQueue(
@@ -91,6 +96,11 @@ describe('episode story autofill worker dispatch', () => {
       entityGenerationWorkerService,
       episodeStoryAutofillWorkerService,
       episodePageSkeletonWorkerService,
+      episodeExportWorkerService: {
+        async processJob() {
+          return { status: 'skipped' as const };
+        },
+      },
     };
 
     const result = await handleGenerationQueue(

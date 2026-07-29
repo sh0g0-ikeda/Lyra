@@ -1,5 +1,9 @@
 import { SignJWT } from 'jose';
 import { describe, expect, it } from 'vitest';
+import {
+  layoutTemplateResponseSchema,
+  pageLayoutTemplatesResponseSchema,
+} from '../../../packages/api-contract/src/mobileApiSchemas.js';
 import { createApp } from '../../../src/app.js';
 import type { CreditBalanceSnapshot } from '../../../src/domain/types/credit.js';
 import type { PageLayoutTemplateApplication } from '../../../src/domain/types/panelFrame.js';
@@ -73,7 +77,7 @@ class FakePageLayoutService implements PageLayoutServicePort {
       templateId: input.templateId,
       panelCount: 3,
       createdPanelCount: 0,
-      deletedPanelCount: input.allowPanelTruncation ? 1 : 0,
+      deletedPanelCount: 0,
       frames: [
         {
           id: '22222222-2222-4222-8222-222222222222',
@@ -97,7 +101,52 @@ class FakePageLayoutService implements PageLayoutServicePort {
 }
 
 describe('page layout routes', () => {
-  it('テンプレート適用時にパネル同期フラグをServiceへ渡す', async () => {
+  it('認証済みユーザーへdomain正本のコマ割りテンプレートを返す', async () => {
+    const app = createTestApp(new FakePageLayoutService());
+    const token = await createToken();
+
+    const response = await app.request('/api/page-layout-templates', {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    expect(response.status).toBe(200);
+    const payload = pageLayoutTemplatesResponseSchema.parse(await response.json());
+    expect(payload).toEqual({
+      templates: expect.arrayContaining([
+        expect.objectContaining({
+          id: 'standard_4',
+          label_key: 'page.layoutTemplate.standard_4',
+          panel_count: 4,
+          reading_direction: 'right_to_left_top_to_bottom',
+          preview_aspect_ratio: 0.7,
+          supported_page_sizes: ['normalized_portrait'],
+          frames: expect.arrayContaining([
+            expect.objectContaining({
+              reading_order: 1,
+              vertices: [
+                { x: 0.5, y: 0 },
+                { x: 1, y: 0 },
+                { x: 1, y: 0.5 },
+                { x: 0.5, y: 0.5 },
+              ],
+            }),
+          ]),
+        }),
+      ]),
+    });
+  });
+
+  it('コマ割りテンプレート一覧は未認証では取得できない', async () => {
+    const app = createTestApp(new FakePageLayoutService());
+
+    const response = await app.request('/api/page-layout-templates');
+
+    expect(response.status).toBe(401);
+  });
+
+  it('暗黙のパネル削除を要求するテンプレート適用は拒否する', async () => {
     const pageLayoutService = new FakePageLayoutService();
     const app = createTestApp(pageLayoutService);
     const token = await createToken();
@@ -114,22 +163,34 @@ describe('page layout routes', () => {
       }),
     });
 
-    expect(response.status).toBe(200);
-    expect(pageLayoutService.lastRequest).toEqual({
-      templateId: 'top_wide_3',
-      allowPanelTruncation: true,
+    expect(response.status).toBe(422);
+    expect(pageLayoutService.lastRequest).toBeNull();
+  });
+
+  it('暗黙削除なしのテンプレート適用だけをServiceへ渡す', async () => {
+    const pageLayoutService = new FakePageLayoutService();
+    const app = createTestApp(pageLayoutService);
+    const token = await createToken();
+
+    const response = await app.request(`/api/pages/${pageId}/layout-template`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        template_id: 'top_wide_3',
+        allow_panel_truncation: false,
+      }),
     });
-    await expect(response.json()).resolves.toMatchObject({
+
+    expect(response.status).toBe(200);
+    expect(layoutTemplateResponseSchema.parse(await response.json())).toMatchObject({
       template_id: 'top_wide_3',
       panel_count: 3,
-      deleted_panel_count: 1,
-      frames: [
-        {
-          page_id: pageId,
-          panel_id: '33333333-3333-4333-8333-333333333333',
-          reading_order: 1,
-        },
-      ],
+    });
+    expect(pageLayoutService.lastRequest).toEqual({
+      templateId: 'top_wide_3',
     });
   });
 

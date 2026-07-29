@@ -40,6 +40,7 @@ export interface StripeBillingClientPort {
   ): Promise<{ id: string; url: string }>;
   constructWebhookEvent(payload: Buffer, signature: string): Promise<Stripe.Event>;
   retrieveSubscription(subscriptionId: string): Promise<Stripe.Subscription>;
+  cancelSubscription?(subscriptionId: string): Promise<void>;
 }
 
 export class StripeBillingClient implements StripeBillingClientPort {
@@ -171,6 +172,14 @@ export class StripeBillingClient implements StripeBillingClientPort {
 
   public async retrieveSubscription(subscriptionId: string): Promise<Stripe.Subscription> {
     return this.stripe.subscriptions.retrieve(subscriptionId);
+  }
+
+  public async cancelSubscription(subscriptionId: string): Promise<void> {
+    await this.stripe.subscriptions.cancel(
+      subscriptionId,
+      {},
+      { idempotencyKey: `lyra-account-deletion-cancel-${subscriptionId}` },
+    );
   }
 }
 

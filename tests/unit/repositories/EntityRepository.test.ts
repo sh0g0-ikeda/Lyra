@@ -2,10 +2,12 @@ import type { QueryResult, QueryResultRow } from 'pg';
 import { describe, expect, it } from 'vitest';
 import type { DatabaseClient, TransactionRunner } from '../../../src/lib/db.js';
 import { PostgresEntityRepository } from '../../../src/repositories/EntityRepository.js';
+import { decodeListCursor } from '../../../src/domain/pagination.js';
 
 class QueryCapturingClient implements DatabaseClient, TransactionRunner {
   public queries: string[] = [];
   public valuesList: Array<readonly unknown[] | undefined> = [];
+  public pageRows: Record<string, unknown>[] | null = null;
 
   public async query<T extends QueryResultRow = QueryResultRow>(
     text: string,
@@ -13,6 +15,16 @@ class QueryCapturingClient implements DatabaseClient, TransactionRunner {
   ): Promise<QueryResult<T>> {
     this.queries.push(text);
     this.valuesList.push(values);
+
+    if (text.includes('ORDER BY entities.created_at DESC, entities.id DESC')) {
+      return {
+        command: 'SELECT',
+        rowCount: this.pageRows?.length ?? 0,
+        oid: 0,
+        fields: [],
+        rows: (this.pageRows ?? []) as T[],
+      };
+    }
 
     return {
       command: 'SELECT',
@@ -112,11 +124,16 @@ describe('PostgresEntityRepository', () => {
     const client = new QueryCapturingClient();
     const repository = new PostgresEntityRepository(client);
 
-    await repository.update('entity-1', 'user-1', { name: 'Updated' });
+    await repository.update('entity-1', 'user-1', {
+      name: 'Updated',
+      expectedUpdatedAt: '2026-04-25T00:00:00.000Z',
+    });
 
     expect(client.queries[0]).toContain('UPDATE entities');
+    expect(client.queries[0]).toContain('entities.updated_at = $14::timestamptz');
     expect(client.queries[0]).toContain('organization_id IS NULL');
     expect(client.valuesList[0]?.[12]).toBeNull();
+    expect(client.valuesList[0]?.[13]).toBe('2026-04-25T00:00:00.000Z');
   });
 
   it('delete は個人スコープで法人Workspace内キャラを削除しない', async () => {
@@ -139,9 +156,50 @@ describe('PostgresEntityRepository', () => {
     expect(client.queries[0]).toContain('entities.user_id = $2');
     expect(client.valuesList[0]).toEqual(['entity-1', 'user-1', 'ref-1', null]);
   });
+  it('lists a bounded entity page with tenant scope and a created_at keyset cursor', async () => {
+    const client = new QueryCapturingClient();
+    client.pageRows = [
+      row({ id: '11111111-1111-4111-8111-111111111111', created_at: new Date('2026-04-24T00:00:00.000Z') }),
+      row({ id: '22222222-2222-4222-8222-222222222222', created_at: new Date('2026-04-24T00:00:00.000Z') }),
+      row({ id: '33333333-3333-4333-8333-333333333333', created_at: new Date('2026-04-23T00:00:00.000Z') }),
+    ];
+    const repository = new PostgresEntityRepository(client);
+
+    const result = await repository.findEntitiesPageByWorkIdAndUserId('work-1', 'user-1', {
+      limit: 2,
+      cursor: { sort: '2026-04-25T00:00:00.000Z', id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' },
+    }, '99999999-9999-4999-8999-999999999999');
+
+    expect(result.items.map((entity) => entity.id)).toEqual([
+      '11111111-1111-4111-8111-111111111111',
+      '22222222-2222-4222-8222-222222222222',
+    ]);
+    expect(result.nextCursor).toBeTypeOf('string');
+    expect(decodeListCursor(result.nextCursor ?? '', 'entities')).toEqual({
+      sort: '2026-04-24T00:00:00.000Z',
+      id: '22222222-2222-4222-8222-222222222222',
+    });
+    expect(client.queries[0]).toContain('FROM organization_members');
+    expect(client.queries[0]).toContain('entities.created_at < $4::timestamptz');
+    expect(client.queries[0]).toContain('entities.created_at = $4::timestamptz AND entities.id < $5::uuid');
+    expect(client.queries[0]).toContain('ORDER BY entities.created_at DESC, entities.id DESC');
+    expect(client.queries[0]).toContain('LIMIT $6');
+    expect(client.queries[0]).not.toContain('OFFSET');
+    expect(client.queries[0].indexOf("organization_members.status = 'active'")).toBeLessThan(
+      client.queries[0].indexOf('entities.created_at < $4::timestamptz'),
+    );
+    expect(client.valuesList[0]).toEqual([
+      'work-1',
+      'user-1',
+      '99999999-9999-4999-8999-999999999999',
+      '2026-04-25T00:00:00.000Z',
+      'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      3,
+    ]);
+  });
 });
 
-function row(): Record<string, unknown> {
+function row(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     id: 'entity-1',
     entity_id: 'entity-1',
@@ -168,5 +226,6 @@ function row(): Record<string, unknown> {
     created_at: new Date('2026-04-25T00:00:00.000Z'),
     updated_at: new Date('2026-04-25T00:00:00.000Z'),
     count: 1,
+    ...overrides,
   };
 }

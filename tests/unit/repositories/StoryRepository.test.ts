@@ -2,10 +2,12 @@ import type { QueryResult, QueryResultRow } from 'pg';
 import { describe, expect, it } from 'vitest';
 import type { DatabaseClient, TransactionRunner } from '../../../src/lib/db.js';
 import { PostgresStoryRepository } from '../../../src/repositories/StoryRepository.js';
+import { decodeListCursor } from '../../../src/domain/pagination.js';
 
 class QueryCapturingClient implements DatabaseClient, TransactionRunner {
   public queries: string[] = [];
   public values: readonly unknown[] | undefined;
+  public pageRows: Record<string, unknown>[] | null = null;
   public lockRow: Record<string, unknown> = {
     id: '33333333-3333-4333-8333-333333333333',
     page_skeleton_generated: false,
@@ -19,6 +21,16 @@ class QueryCapturingClient implements DatabaseClient, TransactionRunner {
   ): Promise<QueryResult<T>> {
     this.queries.push(text);
     this.values = values;
+
+    if (text.includes('ORDER BY works.updated_at DESC, works.id DESC')) {
+      return {
+        command: 'SELECT',
+        rowCount: this.pageRows?.length ?? 0,
+        oid: 0,
+        fields: [],
+        rows: (this.pageRows ?? []) as T[],
+      };
+    }
 
     if (text.includes('FOR UPDATE')) {
       return {
@@ -98,6 +110,7 @@ class ExistingSkeletonClient implements DatabaseClient, TransactionRunner {
 
 class EpisodeUpdateCapturingClient implements DatabaseClient {
   public updateValues: readonly unknown[] | null = null;
+  public updateQuery: string | null = null;
 
   public constructor(private readonly currentEpisodeRow: Record<string, unknown> = episodeRow()) {}
 
@@ -116,6 +129,7 @@ class EpisodeUpdateCapturingClient implements DatabaseClient {
     }
 
     if (text.includes('UPDATE episodes')) {
+      this.updateQuery = text;
       this.updateValues = values ?? [];
       return {
         command: 'UPDATE',
@@ -148,30 +162,34 @@ class EpisodeUpdateCapturingClient implements DatabaseClient {
 }
 
 class CrossChapterEpisodeMoveClient implements DatabaseClient, TransactionRunner {
-  public readonly queries: string[] = [];
-  public readonly queryValues: Array<readonly unknown[] | undefined> = [];
+  public queries: string[] = [];
+  public inputs: Array<{ text: string; values: readonly unknown[] | undefined }> = [];
+  public transactionCount = 0;
 
   public async query<T extends QueryResultRow = QueryResultRow>(
     text: string,
     values?: readonly unknown[],
   ): Promise<QueryResult<T>> {
     this.queries.push(text);
-    this.queryValues.push(values);
+    this.inputs.push({ text, values });
 
-    if (text.includes('INNER JOIN chapters') && text.includes('FOR UPDATE OF episodes')) {
-      return resultRows([
+    if (text.includes('FOR UPDATE OF works')) {
+      return queryResult([{ id: '11111111-1111-4111-8111-111111111111' }] as unknown as T[]);
+    }
+    if (text.includes('AS chapter_order')) {
+      return queryResult([
         {
           ...episodeRow(),
           work_id: '11111111-1111-4111-8111-111111111111',
           chapter_order: 1,
         },
-      ]);
+      ] as unknown as T[]);
     }
-    if (text.includes('WHERE episodes.chapter_id') && text.includes('LIMIT 1')) {
-      return resultRows([]);
+    if (text.includes('episodes.chapter_id = $1')) {
+      return queryResult([] as unknown as T[]);
     }
-    if (text.includes('FROM chapters') && text.includes('chapters.work_id')) {
-      return resultRows([
+    if (text.includes('chapters.work_id = $1')) {
+      return queryResult([
         {
           id: '44444444-4444-4444-8444-444444444444',
           work_id: '11111111-1111-4111-8111-111111111111',
@@ -189,36 +207,46 @@ class CrossChapterEpisodeMoveClient implements DatabaseClient, TransactionRunner
           created_at: new Date('2026-04-22T00:00:00.000Z'),
           updated_at: new Date('2026-04-22T00:00:00.000Z'),
         },
-      ]);
+      ] as unknown as T[]);
     }
-    if (text.includes('chapter_id = ANY')) {
-      return resultRows([
+    if (text.includes('chapters.id = ANY')) {
+      return queryResult([
+        { id: '22222222-2222-4222-8222-222222222222' },
+        { id: '44444444-4444-4444-8444-444444444444' },
+      ] as unknown as T[]);
+    }
+    if (text.includes('episodes.chapter_id = ANY')) {
+      return queryResult([
         episodeRow(),
         {
+          ...episodeRow(),
+          id: '66666666-6666-4666-8666-666666666666',
+          order: 2,
+        },
+        {
+          ...episodeRow(),
           id: '55555555-5555-4555-8555-555555555555',
           chapter_id: '44444444-4444-4444-8444-444444444444',
           order: 1,
         },
-      ]);
-    }
-    if (text.includes('MAX("order")') && text.includes('FROM episodes')) {
-      return resultRows([{ maximum_order: 1, temporary_order: 100001 }]);
+      ] as unknown as T[]);
     }
     if (text.includes('SET chapter_id = $2')) {
-      return resultRows([
+      return queryResult([
         {
           ...episodeRow(),
           chapter_id: '44444444-4444-4444-8444-444444444444',
           order: 1,
           version: 2,
         },
-      ], 'UPDATE');
+      ] as unknown as T[]);
     }
 
-    return resultRows([], text.trimStart().startsWith('SELECT') ? 'SELECT' : 'UPDATE');
+    return queryResult([] as unknown as T[]);
   }
 
   public async transaction<T>(work: (client: DatabaseClient) => Promise<T>): Promise<T> {
+    this.transactionCount += 1;
     return work(this);
   }
 }
@@ -230,9 +258,12 @@ describe('PostgresStoryRepository', () => {
 
     await repository.updateWork('11111111-1111-4111-8111-111111111111', 'user-1', {
       title: 'Lyra Revised',
+      expectedUpdatedAt: '2026-04-22T00:00:00.000Z',
     });
 
     expect(client.queries[0]).toContain('edit_history');
+    expect(client.queries[0]).toContain('works.updated_at = $20::timestamptz');
+    expect(client.values?.[19]).toBe('2026-04-22T00:00:00.000Z');
     expect(client.queries[0]).toContain('jsonb_build_object');
     expect(client.queries[0]).toContain('LIMIT 5');
   });
@@ -276,7 +307,7 @@ describe('PostgresStoryRepository', () => {
     await repository.updateWork(
       '22222222-2222-4222-8222-222222222222',
       'user-1',
-      { title: 'Enterprise Work' },
+      { title: 'Enterprise Work', expectedUpdatedAt: '2026-04-22T00:00:00.000Z' },
       '11111111-1111-4111-8111-111111111111',
     );
 
@@ -477,6 +508,7 @@ describe('PostgresStoryRepository', () => {
       '33333333-3333-4333-8333-333333333333',
       'user-1',
       {
+        expectedUpdatedAt: '2026-04-22T00:00:00.000Z',
         purpose: null,
         introduction: null,
         middle: null,
@@ -515,6 +547,7 @@ describe('PostgresStoryRepository', () => {
       '33333333-3333-4333-8333-333333333333',
       'user-1',
       {
+        expectedUpdatedAt: '2026-04-22T00:00:00.000Z',
         storyFullDraft: null,
       },
     );
@@ -532,17 +565,60 @@ describe('PostgresStoryRepository', () => {
     expect(client.updateValues?.[14]).toBeNull();
     expect(client.updateValues?.[16]).toBeNull();
     expect(client.updateValues?.[18]).toBeNull();
+    expect(client.updateQuery).toContain('episodes.updated_at = $25::timestamptz');
+    expect(client.updateValues?.[24]).toBe('2026-04-22T00:00:00.000Z');
   });
 
-  it('章境界移動では同一作品の隣接章を解決して話IDを維持する', async () => {
+  it('lists a bounded work page with tenant scope, stable keyset ordering, and a cursor from the last returned row', async () => {
+    const client = new QueryCapturingClient();
+    client.pageRows = [
+      workRow({ id: '11111111-1111-4111-8111-111111111111', updated_at: new Date('2026-04-24T00:00:00.000Z') }),
+      workRow({ id: '22222222-2222-4222-8222-222222222222', updated_at: new Date('2026-04-24T00:00:00.000Z') }),
+      workRow({ id: '33333333-3333-4333-8333-333333333333', updated_at: new Date('2026-04-23T00:00:00.000Z') }),
+    ];
+    const repository = new PostgresStoryRepository(client);
+
+    const result = await repository.findWorksPageByUserId('user-1', {
+      limit: 2,
+      cursor: { sort: '2026-04-25T00:00:00.000Z', id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' },
+    }, '99999999-9999-4999-8999-999999999999');
+
+    expect(result.items.map((work) => work.id)).toEqual([
+      '11111111-1111-4111-8111-111111111111',
+      '22222222-2222-4222-8222-222222222222',
+    ]);
+    expect(result.nextCursor).toBeTypeOf('string');
+    expect(decodeListCursor(result.nextCursor ?? '', 'works')).toEqual({
+      sort: '2026-04-24T00:00:00.000Z',
+      id: '22222222-2222-4222-8222-222222222222',
+    });
+    expect(client.queries[0]).toContain('FROM organization_members');
+    expect(client.queries[0]).toContain('works.updated_at < $3::timestamptz');
+    expect(client.queries[0]).toContain('works.updated_at = $3::timestamptz AND works.id < $4::uuid');
+    expect(client.queries[0]).toContain('ORDER BY works.updated_at DESC, works.id DESC');
+    expect(client.queries[0]).toContain('LIMIT $5');
+    expect(client.queries[0]).not.toContain('OFFSET');
+    expect(client.queries[0].indexOf("organization_members.status = 'active'")).toBeLessThan(
+      client.queries[0].indexOf('works.updated_at < $3::timestamptz'),
+    );
+    expect(client.values).toEqual([
+      'user-1',
+      '99999999-9999-4999-8999-999999999999',
+      '2026-04-25T00:00:00.000Z',
+      'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      3,
+    ]);
+  });
+
+  it('locks the work and both chapter episode sets before moving a boundary episode', async () => {
     const client = new CrossChapterEpisodeMoveClient();
-    const repository = new PostgresStoryRepository(client, client);
+    const repository = new PostgresStoryRepository(client);
 
     const moved = await repository.moveEpisode(
       '33333333-3333-4333-8333-333333333333',
       'user-1',
       'down',
-      null,
+      '77777777-7777-4777-8777-777777777777',
       true,
     );
 
@@ -551,29 +627,45 @@ describe('PostgresStoryRepository', () => {
       chapterId: '44444444-4444-4444-8444-444444444444',
       order: 1,
     });
-    expect(client.queries.some((query) => query.includes('chapters.work_id = $1'))).toBe(true);
+    expect(client.transactionCount).toBe(1);
+    expect(client.queries[0]).toContain('FOR UPDATE OF works');
+    expect(client.queries[0]).toContain('organization_members.status = \'active\'');
+    expect(client.queries.some((query) => query.includes('chapters.id = ANY'))).toBe(true);
+    expect(client.queries.some((query) => query.includes('episodes.chapter_id = ANY'))).toBe(true);
     expect(client.queries.some((query) => query.includes('SET chapter_id = $2'))).toBe(true);
-    expect(client.queryValues).toContainEqual([
-      '55555555-5555-4555-8555-555555555555',
-      2,
-    ]);
+    expect(client.queries.some((query) => query.includes('DELETE FROM episodes'))).toBe(false);
+    expect(client.queries.some((query) => query.includes('INSERT INTO episodes'))).toBe(false);
+    expect(
+      client.inputs.some(
+        (input) =>
+          input.text.includes('SET "order" = $2') &&
+          input.values?.[0] === '66666666-6666-4666-8666-666666666666' &&
+          input.values?.[1] === 1,
+      ),
+    ).toBe(true);
+    expect(
+      client.inputs.some(
+        (input) =>
+          input.text.includes('SET "order" = $2') &&
+          input.values?.[0] === '55555555-5555-4555-8555-555555555555' &&
+          input.values?.[1] === 2,
+      ),
+    ).toBe(true);
   });
+
 });
 
-function resultRows<T extends QueryResultRow = QueryResultRow>(
-  rows: QueryResultRow[],
-  command: 'SELECT' | 'UPDATE' = 'SELECT',
-): QueryResult<T> {
+function queryResult<T extends QueryResultRow>(rows: T[]): QueryResult<T> {
   return {
-    command,
+    command: 'SELECT',
     rowCount: rows.length,
     oid: 0,
     fields: [],
-    rows: rows as T[],
+    rows,
   };
 }
 
-function workRow(): Record<string, unknown> {
+function workRow(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     id: '11111111-1111-4111-8111-111111111111',
     user_id: 'user-1',
@@ -590,6 +682,7 @@ function workRow(): Record<string, unknown> {
     status: 'draft',
     created_at: new Date('2026-04-22T00:00:00.000Z'),
     updated_at: new Date('2026-04-22T00:00:00.000Z'),
+    ...overrides,
   };
 }
 

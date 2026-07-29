@@ -1,0 +1,69 @@
+{
+  "configVersion": 0,
+  "apple": {
+    "copyright": "2026 Edge of Vision",
+    "advisory": {
+      "alcoholTobaccoOrDrugUseOrReferences": "INFREQUENT_OR_MILD",
+      "contests": "NONE",
+      "gamblingSimulated": "NONE",
+      "horrorOrFearThemes": "INFREQUENT_OR_MILD",
+      "matureOrSuggestiveThemes": "INFREQUENT_OR_MILD",
+      "medicalOrTreatmentInformation": "NONE",
+      "profanityOrCrudeHumor": "INFREQUENT_OR_MILD",
+      "sexualContentGraphicAndNudity": "NONE",
+      "sexualContentOrNudity": "INFREQUENT_OR_MILD",
+      "violenceCartoonOrFantasy": "INFREQUENT_OR_MILD",
+      "violenceRealistic": "INFREQUENT_OR_MILD",
+      "violenceRealisticProlongedGraphicOrSadistic": "NONE",
+      "gambling": false,
+      "unrestrictedWebAccess": false,
+      "kidsAgeBand": null,
+      "ageRatingOverride": "SEVENTEEN_PLUS",
+      "koreaAgeRatingOverride": "NONE"
+    },
+    "info": {
+      "ja": {
+        "title": "Lyra Mobile",
+        "subtitle": "物語から漫画制作までを一つに",
+        "description": "Lyra Mobile は、物語、登場人物、章・話・シーン、ページ構成、コマ、セリフを一つの流れで整理し、AI を使った漫画制作を支援する編集アプリです。Web 版 Lyra と同じワークスペースを利用し、個人作品と法人作品を明確に分けて管理できます。生成前の入力確認、参照画像の選択、ジョブ進捗、ページ書き出しまで、スマートフォンから制作工程を進められます。AI の提案は確定前に確認・編集でき、意図しない変更や削除には確認画面を表示します。",
+        "keywords": [
+          "漫画",
+          "マンガ",
+          "物語",
+          "AI",
+          "キャラクター",
+          "ネーム",
+          "コマ割り"
+        ],
+        "promoText": "あなたの頭の中にある物語を、Lyra で漫画に。",
+        "marketingUrl": "https://app.lyra-editor.com/",
+        "supportUrl": "https://app.lyra-editor.com/support.html",
+        "privacyPolicyUrl": "https://app.lyra-editor.com/privacy.html",
+        "privacyChoicesUrl": "https://app.lyra-editor.com/privacy.html#account-deletion"
+      },
+      "en-US": {
+        "title": "Lyra Mobile",
+        "subtitle": "From story planning to manga",
+        "description": "Lyra Mobile is a focused manga creation editor for organizing stories, characters, chapters, episodes, scenes, pages, panels, and dialogue in one workflow. It connects to the same workspace as Lyra on the web and keeps personal and organization work clearly separated. Review inputs before generation, choose character references, follow job progress, refine page layouts, and export finished pages from your phone. AI suggestions remain editable and destructive changes require explicit confirmation.",
+        "keywords": [
+          "manga",
+          "comics",
+          "story",
+          "AI",
+          "character",
+          "storyboard",
+          "panels"
+        ],
+        "promoText": "Turn the story in your head into manga with Lyra.",
+        "marketingUrl": "https://app.lyra-editor.com/",
+        "supportUrl": "https://app.lyra-editor.com/support.html",
+        "privacyPolicyUrl": "https://app.lyra-editor.com/privacy.html",
+        "privacyChoicesUrl": "https://app.lyra-editor.com/privacy.html#account-deletion"
+      }
+    },
+    "release": {
+      "automaticRelease": false,
+      "phasedRelease": false
+    }
+  }
+}

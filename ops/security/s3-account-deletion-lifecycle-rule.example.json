@@ -1,0 +1,16 @@
+{
+  "ID": "expire-lyra-account-deletion-assets",
+  "Status": "Enabled",
+  "Filter": {
+    "Tag": {
+      "Key": "lyra-deletion-state",
+      "Value": "pending"
+    }
+  },
+  "Expiration": {
+    "Days": 1
+  },
+  "NoncurrentVersionExpiration": {
+    "NoncurrentDays": 1
+  }
+}

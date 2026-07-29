@@ -14,6 +14,7 @@ import type {
   EntityReferenceSetStatus,
 } from '../domain/types/entityReference.js';
 import type { DatabaseClient, TransactionRunner } from '../lib/db.js';
+import { encodeListCursor, type ListPage, type ListPageRequest } from '../domain/pagination.js';
 
 export type { CreateEntityInput, Entity, UpdateEntityInput };
 
@@ -218,6 +219,55 @@ export class PostgresEntityRepository implements EntityRepository, EntityReferen
     );
 
     return result.rows.map(mapEntityRow);
+  }
+
+  public async findEntitiesPageByWorkIdAndUserId(
+    workId: string,
+    userId: string,
+    request: ListPageRequest,
+    organizationId: string | null = null,
+  ): Promise<ListPage<Entity>> {
+    const cursorCreatedAt = request.cursor?.sort ?? null;
+    const cursorId = request.cursor?.id ?? null;
+    const result = await this.client.query<EntityRow>(
+      `
+      SELECT entities.*
+      FROM entities
+      INNER JOIN works ON works.id = entities.work_id
+      WHERE entities.work_id = $1
+        AND (
+          ($3::uuid IS NULL AND works.organization_id IS NULL AND entities.user_id = $2)
+          OR (
+            $3::uuid IS NOT NULL
+            AND works.organization_id = $3::uuid
+            AND EXISTS (
+              SELECT 1
+              FROM organization_members
+              WHERE organization_members.organization_id = works.organization_id
+                AND organization_members.user_id = $2
+                AND organization_members.status = 'active'
+            )
+          )
+        )
+        AND (
+          $4::timestamptz IS NULL
+          OR entities.created_at < $4::timestamptz
+          OR (entities.created_at = $4::timestamptz AND entities.id < $5::uuid)
+        )
+      ORDER BY entities.created_at DESC, entities.id DESC
+      LIMIT $6
+      `,
+      [workId, userId, organizationId, cursorCreatedAt, cursorId, request.limit + 1],
+    );
+    const rows = result.rows.slice(0, request.limit);
+    const lastRow = rows[rows.length - 1];
+
+    return {
+      items: rows.map(mapEntityRow),
+      nextCursor: result.rows.length > request.limit && lastRow !== undefined
+        ? encodeListCursor('entities', lastRow.created_at.toISOString(), lastRow.id)
+        : null,
+    };
   }
 
   public async findReferenceContextByIdAndUserId(
@@ -708,6 +758,7 @@ export class PostgresEntityRepository implements EntityRepository, EntityReferen
           speech_profile = CASE WHEN $11::boolean THEN $12::jsonb ELSE speech_profile END,
           updated_at = NOW()
       WHERE id = $1
+        AND entities.updated_at = $14::timestamptz
         AND (
           ($13::uuid IS NULL AND user_id = $2 AND work_id IN (
               SELECT id
@@ -743,6 +794,7 @@ export class PostgresEntityRepository implements EntityRepository, EntityReferen
         input.speechProfile !== undefined,
         JSON.stringify(input.speechProfile ?? {}),
         organizationId,
+        input.expectedUpdatedAt,
       ],
     );
 

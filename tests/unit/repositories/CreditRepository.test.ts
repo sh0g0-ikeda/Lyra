@@ -168,6 +168,7 @@ describe('PostgresCreditRepository', () => {
         monthlyAfter: 12,
         purchasedAfter: 20,
         description: 'refund',
+        mobileStoreEventKey: 'store-event-1',
         jobId: 'job-1',
       },
       client,
@@ -175,6 +176,18 @@ describe('PostgresCreditRepository', () => {
 
     expect(client.queries[0]).toContain('monthly_delta');
     expect(client.queries[0]).toContain('purchased_delta');
-    expect(client.valuesList[0]).toEqual(['user-1', 'refund', 10, 4, 6, 12, 20, 'refund', null, 'job-1']);
+    expect(client.valuesList[0]).toEqual([
+      'user-1',
+      'refund',
+      10,
+      4,
+      6,
+      12,
+      20,
+      'refund',
+      null,
+      'store-event-1',
+      'job-1',
+    ]);
   });
 });

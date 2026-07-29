@@ -10,7 +10,6 @@ import type { PageLayoutRepository } from '../../repositories/PageLayoutReposito
 
 export interface ApplyPageLayoutTemplateRequest {
   templateId: PanelFrameTemplateId;
-  allowPanelTruncation: boolean;
 }
 
 export interface PageLayoutServicePort {
@@ -44,7 +43,6 @@ export class PageLayoutService implements PageLayoutServicePort {
         templateId: input.templateId,
         targetPanelCount: template.panelCount,
         frameDefinitions: buildPanelFrameTemplateInputs(input.templateId),
-        allowPanelTruncation: input.allowPanelTruncation,
       },
       organizationId,
     );

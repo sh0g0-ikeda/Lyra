@@ -5,6 +5,7 @@ import type {
   OrganizationSubscriptionSummary,
   PaymentRecord,
   PaymentRecordInput,
+  PersonalSubscriptionSummary,
   SubscriptionRecord,
 } from '../domain/types/billing.js';
 import type { DatabaseClient, TransactionRunner } from '../lib/db.js';
@@ -27,6 +28,13 @@ interface SubscriptionRow extends QueryResultRow {
   plan_code: string;
   status: string;
   current_period_start: Date | null;
+  current_period_end: Date | null;
+  cancel_at_period_end: boolean;
+}
+
+interface PersonalSubscriptionSummaryRow extends QueryResultRow {
+  plan_code: string;
+  status: string;
   current_period_end: Date | null;
   cancel_at_period_end: boolean;
 }
@@ -57,6 +65,10 @@ export interface BillingRepository {
     userId: string,
     client?: DatabaseClient,
   ): Promise<ActiveSubscriptionRecord | null>;
+  findLatestSubscriptionSummaryForUser(
+    userId: string,
+    client?: DatabaseClient,
+  ): Promise<PersonalSubscriptionSummary | null>;
   findLatestSubscriptionForOrganization(
     organizationId: string,
     client?: DatabaseClient,
@@ -189,6 +201,76 @@ export class PostgresBillingRepository implements BillingRepository {
     );
 
     return result.rows[0] === undefined ? null : mapSubscriptionRow(result.rows[0]);
+  }
+
+  public async findLatestSubscriptionSummaryForUser(
+    userId: string,
+    client: DatabaseClient = this.client,
+  ): Promise<PersonalSubscriptionSummary | null> {
+    const result = await client.query<PersonalSubscriptionSummaryRow>(
+      `
+      WITH personal_subscription_candidates AS (
+        SELECT
+          plan_code,
+          status,
+          current_period_end,
+          cancel_at_period_end,
+          updated_at,
+          2 AS provider_priority
+        FROM subscriptions
+        WHERE user_id = $1
+          AND organization_id IS NULL
+          AND status IN ('active', 'trialing')
+
+        UNION ALL
+
+        SELECT
+          plan_code,
+          CASE WHEN state = 'active' THEN 'active' ELSE 'canceled' END AS status,
+          expires_at AS current_period_end,
+          state = 'cancelled' OR auto_renew_enabled = FALSE AS cancel_at_period_end,
+          updated_at,
+          1 AS provider_priority
+        FROM mobile_store_purchases
+        WHERE user_id = $1
+          AND kind = 'subscription'
+          AND plan_code IN ('standard', 'premium')
+          AND (
+            state = 'active'
+            OR (state = 'cancelled' AND expires_at IS NOT NULL AND expires_at > NOW())
+          )
+      )
+      SELECT
+        plan_code,
+        status,
+        current_period_end,
+        cancel_at_period_end
+      FROM personal_subscription_candidates
+      ORDER BY
+        provider_priority DESC,
+        CASE plan_code
+          WHEN 'premium' THEN 2
+          WHEN 'standard' THEN 1
+          ELSE 0
+        END DESC,
+        current_period_end DESC NULLS LAST,
+        updated_at DESC
+      LIMIT 1
+      `,
+      [userId],
+    );
+
+    const row = result.rows[0];
+    if (row === undefined) {
+      return null;
+    }
+
+    return {
+      planCode: row.plan_code as PersonalSubscriptionSummary['planCode'],
+      status: row.status as PersonalSubscriptionSummary['status'],
+      currentPeriodEnd: row.current_period_end,
+      cancelAtPeriodEnd: row.cancel_at_period_end,
+    };
   }
 
   public async findLatestSubscriptionForOrganization(
