@@ -134,8 +134,8 @@ describe('production app metadata', () => {
     });
   });
 
-  it('preview、smoke、productionで法人受入導線を有効にする', () => {
-    for (const profile of ['preview', 'smoke', 'production']) {
+  it('development、preview、smoke、productionで法人受入導線を有効にする', () => {
+    for (const profile of ['development', 'preview', 'smoke', 'production']) {
       expect(
         easConfig.build?.[profile]?.env?.EXPO_PUBLIC_ORGANIZATION_FEATURES_ENABLED
       ).toBe('true');
