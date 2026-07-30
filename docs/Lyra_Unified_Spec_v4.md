@@ -68,6 +68,11 @@ Images are stored by opaque S3 keys. User input is not interpolated into storage
 paths. Database responses may contain stable image metadata, while production image
 delivery uses authenticated export or short-lived CloudFront signed URLs.
 
+Episode export artifacts are asynchronous, owner-scoped records with a bounded
+lifetime. Their storage keys are derived from authenticated scope, episode, and job
+identifiers rather than filenames. Applying their persistence migration alone does
+not enable queue dispatch, artifact creation, or download routes.
+
 ## 6. Generation jobs
 
 Long-running page, entity, page-skeleton, and story-autofill work is represented by

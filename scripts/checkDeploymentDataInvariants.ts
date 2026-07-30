@@ -235,6 +235,14 @@ const DEPLOYMENT_DATA_INVARIANT_QUERIES: InvariantQuery[] = [
     name: 'entity_reference_upload_tokens.entity_scope',
     sql: 'SELECT upload_tokens.id::text AS id FROM entity_reference_upload_tokens AS upload_tokens INNER JOIN entities ON entities.id = upload_tokens.entity_id INNER JOIN works ON works.id = entities.work_id WHERE /* entity_reference_upload_tokens.entity_scope */ upload_tokens.entity_id IS NOT NULL AND ((upload_tokens.organization_id IS NULL AND (works.organization_id IS NOT NULL OR works.user_id <> upload_tokens.user_id)) OR (upload_tokens.organization_id IS NOT NULL AND works.organization_id IS DISTINCT FROM upload_tokens.organization_id)) ORDER BY upload_tokens.id LIMIT $1',
   },
+  {
+    name: 'episode_export_jobs.contract',
+    sql: "SELECT id::text AS id FROM episode_export_jobs WHERE /* episode_export_jobs.contract */ request_fingerprint !~ '^[0-9a-f]{64}$' OR cardinality(page_ids) NOT BETWEEN 1 AND 100 OR array_position(page_ids, NULL) IS NOT NULL OR NOT (CASE WHEN jsonb_typeof(page_snapshot) = 'array' THEN jsonb_array_length(page_snapshot) = cardinality(page_ids) ELSE FALSE END) OR expires_at <= created_at OR expires_at > created_at + INTERVAL '24 hours' OR artifact_size_bytes > 134217728 OR (status = 'completed' AND (artifact_s3_key IS DISTINCT FROM ('exports/' || COALESCE(organization_id::text, user_id::text) || '/episodes/' || episode_id::text || '/' || id::text || '.' || format) OR artifact_mime_type IS DISTINCT FROM CASE format WHEN 'pdf' THEN 'application/pdf' WHEN 'zip' THEN 'application/zip' END OR artifact_size_bytes IS NULL OR artifact_size_bytes <= 0 OR completed_at IS NULL OR completed_at >= expires_at)) OR (status <> 'completed' AND (artifact_s3_key IS NOT NULL OR artifact_mime_type IS NOT NULL OR artifact_size_bytes IS NOT NULL OR artifact_deleted_at IS NOT NULL)) OR artifact_deleted_at < expires_at ORDER BY id LIMIT $1",
+  },
+  {
+    name: 'episode_export_jobs.scope',
+    sql: 'SELECT export_jobs.id::text AS id FROM episode_export_jobs AS export_jobs INNER JOIN episodes ON episodes.id = export_jobs.episode_id INNER JOIN chapters ON chapters.id = episodes.chapter_id INNER JOIN works ON works.id = chapters.work_id WHERE /* episode_export_jobs.scope */ (export_jobs.organization_id IS NULL AND (works.organization_id IS NOT NULL OR works.user_id <> export_jobs.user_id)) OR (export_jobs.organization_id IS NOT NULL AND works.organization_id IS DISTINCT FROM export_jobs.organization_id) ORDER BY export_jobs.id LIMIT $1',
+  },
 ];
 
 export async function checkDeploymentDataInvariants(
