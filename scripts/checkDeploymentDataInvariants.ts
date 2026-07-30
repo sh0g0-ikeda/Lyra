@@ -227,6 +227,14 @@ const DEPLOYMENT_DATA_INVARIANT_QUERIES: InvariantQuery[] = [
     name: 'credit_ledger.mobile_store_event_key',
     sql: 'SELECT id::text AS id FROM credit_ledger WHERE /* credit_ledger.mobile_store_event_key */ mobile_store_event_key IS NOT NULL AND char_length(mobile_store_event_key) <> 43 ORDER BY id LIMIT $1',
   },
+  {
+    name: 'entity_reference_upload_tokens.contract',
+    sql: "SELECT id::text AS id FROM entity_reference_upload_tokens WHERE /* entity_reference_upload_tokens.contract */ token_hash !~ '^[0-9a-f]{64}$' OR purpose <> 'entity_reference_import' OR mime_type NOT IN ('image/jpeg', 'image/png', 'image/webp') OR size_bytes <= 0 OR size_bytes > 5242880 OR s3_key NOT LIKE ('tmp/' || user_id::text || '/entities/imports/%') OR char_length(s3_key) > 1024 OR expires_at <= created_at OR expires_at > created_at + INTERVAL '10 minutes' OR consumed_at < created_at OR consumed_at > expires_at OR NOT ((mime_type = 'image/jpeg' AND s3_key LIKE '%.jpeg') OR (mime_type = 'image/png' AND s3_key LIKE '%.png') OR (mime_type = 'image/webp' AND s3_key LIKE '%.webp')) ORDER BY id LIMIT $1",
+  },
+  {
+    name: 'entity_reference_upload_tokens.entity_scope',
+    sql: 'SELECT upload_tokens.id::text AS id FROM entity_reference_upload_tokens AS upload_tokens INNER JOIN entities ON entities.id = upload_tokens.entity_id INNER JOIN works ON works.id = entities.work_id WHERE /* entity_reference_upload_tokens.entity_scope */ upload_tokens.entity_id IS NOT NULL AND ((upload_tokens.organization_id IS NULL AND (works.organization_id IS NOT NULL OR works.user_id <> upload_tokens.user_id)) OR (upload_tokens.organization_id IS NOT NULL AND works.organization_id IS DISTINCT FROM upload_tokens.organization_id)) ORDER BY upload_tokens.id LIMIT $1',
+  },
 ];
 
 export async function checkDeploymentDataInvariants(

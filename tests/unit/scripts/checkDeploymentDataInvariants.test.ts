@@ -288,6 +288,19 @@ describe('checkDeploymentDataInvariants', () => {
         query.includes('char_length(mobile_store_event_key) <> 43'),
       ),
     ).toBe(true);
+    expect(
+      database.queries.some((query) =>
+        query.includes('FROM entity_reference_upload_tokens') &&
+        query.includes("token_hash !~ '^[0-9a-f]{64}$'") &&
+        query.includes("expires_at > created_at + INTERVAL '10 minutes'"),
+      ),
+    ).toBe(true);
+    expect(
+      database.queries.some((query) =>
+        query.includes('entity_reference_upload_tokens AS upload_tokens') &&
+        query.includes('works.organization_id IS DISTINCT FROM upload_tokens.organization_id'),
+      ),
+    ).toBe(true);
   });
 
   it('違反行があればチェック名とサンプル ID を返す', async () => {
@@ -329,6 +342,8 @@ describe('checkDeploymentDataInvariants', () => {
     'mobile_store_purchases.credit_totals',
     'mobile_store_purchase_events.contract',
     'credit_ledger.mobile_store_event_key',
+    'entity_reference_upload_tokens.contract',
+    'entity_reference_upload_tokens.entity_scope',
   ])('%s を検出する', async (checkName) => {
     const database = new FakeDatabase(checkName);
 
