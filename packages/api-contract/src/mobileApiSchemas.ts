@@ -26,6 +26,29 @@ const creditBalanceSchema = z.object({
   monthly_expires_at: nullableStringSchema,
 });
 
+const subscriptionPlanSchema = z.object({
+  plan_code: z.enum(['standard', 'premium', 'enterprise_a', 'enterprise_b', 'enterprise_c']),
+  display_name_ja: z.string(),
+  display_name_en: z.string(),
+  monthly_credits: z.number().int().nonnegative(),
+  amount_jpy: z.number().int().nonnegative(),
+  minimum_contract_months: z.number().int().nonnegative(),
+  trial_days: z.number().int().nonnegative(),
+  is_enterprise: z.boolean(),
+  configured: z.boolean(),
+});
+
+export const billingBalanceSchema = z.object({
+  monthly_credits: z.number().int().nonnegative(),
+  purchased_credits: z.number().int().nonnegative(),
+  total_credits: z.number().int().nonnegative(),
+  monthly_expires_at: nullableStringSchema,
+  plan_code: z.enum(['free', 'standard', 'premium', 'enterprise_a', 'enterprise_b', 'enterprise_c']),
+  current_period_end: nullableStringSchema,
+  cancel_at_period_end: z.boolean(),
+  subscription_plans: z.array(subscriptionPlanSchema),
+});
+
 export const currentSessionSchema = z.object({
   user: z.object({
     id: idSchema,

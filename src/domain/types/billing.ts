@@ -28,6 +28,13 @@ export interface SubscriptionRecord {
 
 export interface ActiveSubscriptionRecord extends SubscriptionRecord {}
 
+export interface PersonalSubscriptionSummary {
+  planCode: SubscriptionPlanCode;
+  status: SubscriptionStatus;
+  currentPeriodEnd: Date | null;
+  cancelAtPeriodEnd: boolean;
+}
+
 export interface OrganizationSubscriptionSummary {
   organizationId: string;
   planCode: SubscriptionPlanCode;
