@@ -276,9 +276,9 @@ export function getPageSkeletonBlockers(input: PageSkeletonReadinessInput): Gene
     blockers.push(blocker({
       code: 'skeleton.job_active',
       title: text('Story generation is already running', 'ストーリー系の生成が実行中です'),
-      detail: text('Wait for the current page planning or story application job to finish.', '現在のページ骨格生成または話全体反映が終わってから実行してください。'),
+      detail: text('Wait for the current page planning or story settings autofill job to finish.', '現在のページ骨格生成またはストーリーからの設定自動入力が終わってから実行してください。'),
       actionLabel: text('Check jobs', 'ジョブを確認'),
-      target: 'story',
+      target: 'pages',
     }));
   }
 
@@ -291,7 +291,7 @@ export function getStoryApplyBlockers(input: StoryApplyReadinessInput): Generati
     blockers.push(blocker({
       code: 'story.episode_missing',
       title: text('No episode selected', '話が選択されていません'),
-      detail: text('Select or create an episode before applying the story to pages.', '話全体を反映する前に、話を選択または作成してください。'),
+      detail: text('Select or create an episode before autofilling page settings from the story.', 'ストーリーから設定を自動入力する前に、話を選択または作成してください。'),
       actionLabel: text('Open story', 'ストーリーを開く'),
       target: 'story',
     }));
@@ -301,10 +301,10 @@ export function getStoryApplyBlockers(input: StoryApplyReadinessInput): Generati
   if (isActiveJob(input.activeStoryJob) || isActiveJob(input.activeSkeletonJob)) {
     blockers.push(blocker({
       code: 'story.job_active',
-      title: text('Story application is already running', '話全体の反映が実行中です'),
-      detail: text('Wait for the current page planning or story application job to finish.', '現在のページ骨格生成または話全体反映が終わってから実行してください。'),
+      title: text('Story settings autofill is already running', 'ストーリーからの設定自動入力が実行中です'),
+      detail: text('Wait for the current page planning or story settings autofill job to finish.', '現在のページ骨格生成またはストーリーからの設定自動入力が終わってから実行してください。'),
       actionLabel: text('Check jobs', 'ジョブを確認'),
-      target: 'story',
+      target: 'pages',
     }));
   }
 
@@ -312,9 +312,9 @@ export function getStoryApplyBlockers(input: StoryApplyReadinessInput): Generati
     blockers.push(blocker({
       code: 'story.pages_missing',
       title: text('Page plan is missing', 'ページ骨格がありません'),
-      detail: text('Generate the page plan first, then apply the story to panels.', '先にページ骨格を生成してから、話全体をコマへ反映してください。'),
+      detail: text('Generate the page plan first, then autofill page settings from the story.', '先にページ骨格を生成してから、ストーリーから設定を自動入力してください。'),
       actionLabel: text('Generate page plan', 'ページ骨格を生成'),
-      target: 'story',
+      target: 'pages',
     }));
   }
 
@@ -324,8 +324,8 @@ export function getStoryApplyBlockers(input: StoryApplyReadinessInput): Generati
       code: 'story.confirmed_pages',
       title: text('Some pages are confirmed', '確定済みページがあります'),
       detail: text(
-        'Reopen confirmed pages before applying the story, so their panel data can be updated.',
-        '話全体を反映する前に、確定済みページを再オープンしてください。確定中のページはコマ情報を上書きできません。',
+        'Reopen confirmed pages before autofilling page settings from the story, so their panel data can be updated.',
+        'ストーリーから設定を自動入力する前に、確定済みページを再オープンしてください。確定中のページはコマ情報を上書きできません。',
       ),
       actionLabel: text('Open pages', 'ページを開く'),
       target: 'pages',
