@@ -6,9 +6,9 @@
 
 対象PR: [#67 feat(mobile): production-ready Lyra mobile workflow](https://github.com/sh0g0-ikeda/Lyra/pull/67)
 
-進捗: 32件完了 / 404件未完了
+進捗: 33件完了 / 403件未完了
 
-実装監査基準: `5f63aa8`（PR #107統合後、全CI成功）
+実装監査基準: `09a1413`（PR #108統合後、全CI成功）
 
 ## 1. 設計ブリーフ
 
@@ -80,7 +80,7 @@ PR #67の分割とmain同期
 |---|---|---|
 | BLOCK-01 | Blocked | PR #67はDraftかつmainと競合している |
 | BLOCK-02 | Blocked | PR #67は644ファイル、43コミット、99,879 additions / 2,864 deletionsを含む |
-| BLOCK-03 | Blocked | PR #67のheadはmainより43コミット先行する一方、19コミット遅延している |
+| BLOCK-03 | Blocked | PR #67のheadはmainより43コミット先行する一方、graph上45コミット遅延している |
 | BLOCK-04 | Blocked | 現在のmainにはMobile課金Route、Apple/Google検証、購入台帳migrationがない |
 | BLOCK-05 | Blocked | 本番DBはmainのmigration 026までで、Mobile用027〜036は未適用 |
 | BLOCK-06 | Blocked | 本番SecretにMobile store billingの必須設定がなく、課金は無効 |
@@ -107,7 +107,7 @@ PR #67の分割とmain同期
 | P1 | Mobile表示 | アカウント画面の正常状態・ジョブ0件で表示される2種類のfalse-positive errorを解消する | Codexで実行可能。実エラー表示は維持する |
 | P1 | PR-A継続 | `/api/billing/balance`のsubscription summaryをServiceまで監査し、残るRouteを1つずつ契約接続する | Codexで実行可能。各Routeを別PRで扱う |
 | P1 | 契約生成 | shared API contractの生成元・生成物・drift check・pagination・API inventoryを監査する | Codexで実行可能 |
-| P1 | 差分監査 | PR #67に未取込のmain側19コミットについて影響箇所を列挙する | Codexで実行可能 |
+| P1 | 差分監査 | PR #67に未取込のmain側45 graph commitについて影響箇所を列挙する | 完了。patch等価を除く44件を分類済み |
 | P2 | Backend分割 | account deletion / upload / export、store billing、job / pushをmigration単位で設計・TDDする | Codexで実行可能。課金は既定OFFを維持 |
 | P2 | Mobile分割 | Mobile基盤、Story / Characters / Pages、organization / billing UIを依存順に分割する | Codexで実行可能。Backend契約確定後 |
 | P3 | 商品判断 | 対象国、価格、同日公開、Push、offer、upgrade方針を確定する | プロダクトオーナー判断が必要 |
@@ -164,8 +164,8 @@ Codex単独で進める次の順序は、`CI安定化 → PR-A継続 → 契約�
   - 証跡: PR #76、PR #77、PR #79をそれぞれ最新`origin/main`から作成
 - [x] PR #67の変更を機能群ごとに分類する
   - 証跡: この文書の「5.2 実差分の規模」と「5.3〜5.10」
-- [ ] main側の未取込19コミットの影響箇所を列挙する
-  - 現状: `git rev-list --left-right --count origin/main...origin/feature/mobile-completion`は`19 43`
+- [x] main側の未取込45 graph commitの影響箇所を列挙する
+  - 証跡: `git rev-list --left-right --count origin/main...origin/feature/mobile-completion`は`45 43`。patch等価を除くmain-only 44件を`docs/mobile-pr67-main-divergence-audit-2026-07-30.md`へ分類
 - [x] 既存のユーザー未コミット変更を別worktreeから隔離する
   - 証跡: `Lyra-mobile-response-contract` worktreeで分割統合を実施
 - [x] migration番号027〜036が現在のmainと衝突しないことを確認する
@@ -1020,7 +1020,7 @@ Backend:
 ### 5.10 PR #67の主なリスク
 
 1. 1つのPRへMobile、Backend、DB、Web、Worker、CI、Opsが同居している。
-2. mainと競合し、19コミット分の本番変更を取り込めていない。
+2. mainと競合し、graph上45コミット分の本番変更を取り込めていない。
 3. ~~PR説明欄が実差分と一致しない。~~ 2026-07-30に監査警告と実差分を追記済み。
 4. migration 10本を一度に導入するため、レビューとrollback判断が難しい。
 5. 既存Web/API互換fallbackが多く、Backend更新後も不要な分岐が残り得る。
