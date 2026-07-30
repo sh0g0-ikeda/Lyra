@@ -609,6 +609,33 @@ describe('page generation routes', () => {
     expect(payload).not.toHaveProperty('sqs_message_id');
   });
 
+  it('job取得と停止は契約外Service値を500にする', async () => {
+    const jobService = new FakeJobService();
+    jobService.job = { ...buildJob(), id: '' };
+    const app = createTestApp(
+      new FakePageGenerationService(),
+      new FakePageFinalizeService(),
+      jobService,
+    );
+    const token = await createToken();
+    const headers = { Authorization: `Bearer ${token}` };
+
+    const responses = await Promise.all([
+      app.request('/api/jobs/22222222-2222-4222-8222-222222222222', { headers }),
+      app.request('/api/jobs/22222222-2222-4222-8222-222222222222/cancel', {
+        method: 'POST',
+        headers,
+      }),
+    ]);
+
+    for (const response of responses) {
+      expect(response.status).toBe(500);
+      await expect(response.json()).resolves.toMatchObject({
+        error: { code: 'CONFIGURATION_ERROR' },
+      });
+    }
+  });
+
   it('話全体反映 job の停止要求を認証ユーザーで受け付ける', async () => {
     const jobService = new FakeJobService();
     jobService.job = buildJob();

@@ -1,5 +1,6 @@
 import { Hono, type Context, type MiddlewareHandler } from 'hono';
 import { z } from 'zod';
+import { generationJobResponseSchema } from '../../packages/api-contract/src/mobileApiSchemas.js';
 import { ValidationError } from '../domain/errors/index.js';
 import type { GenerationJob } from '../domain/types/job.js';
 import { signImageCdnUrl } from '../infrastructure/aws/CloudFrontImageUrlSigner.js';
@@ -12,6 +13,7 @@ import {
   requireOrganizationCapability,
   type OrganizationRouteDependencies,
 } from './organizationRouteHelpers.js';
+import { assertMobileResponseContract } from './mobileResponseContract.js';
 
 const uuidParamSchema = z.string().uuid();
 
@@ -34,7 +36,8 @@ export function createJobRoutes(dependencies: JobRouteDependencies): Hono<AppEnv
     await requireOrganizationCapability(c, dependencies, organizationId, 'view_work');
     const job = await dependencies.jobService.getJob(user.id, jobId, organizationId);
 
-    return c.json(await toJobResponse(job));
+    const payload = await toJobResponse(job);
+    return c.json(assertMobileResponseContract(generationJobResponseSchema, payload));
   });
 
   app.post('/jobs/:id/cancel', async (c) => {
@@ -44,7 +47,8 @@ export function createJobRoutes(dependencies: JobRouteDependencies): Hono<AppEnv
     await requireOrganizationCapability(c, dependencies, organizationId, 'edit_work');
     const job = await dependencies.jobService.cancelJob(user.id, jobId, organizationId);
 
-    return c.json(await toJobResponse(job));
+    const payload = await toJobResponse(job);
+    return c.json(assertMobileResponseContract(generationJobResponseSchema, payload));
   });
 
   return app;

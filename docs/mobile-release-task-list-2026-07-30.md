@@ -6,9 +6,9 @@
 
 対象PR: [#67 feat(mobile): production-ready Lyra mobile workflow](https://github.com/sh0g0-ikeda/Lyra/pull/67)
 
-進捗: 24件完了 / 412件未完了
+進捗: 25件完了 / 411件未完了
 
-実装監査基準: `6f8f184`（PR #101統合後、全CI成功）
+実装監査基準: `bd71a7a`（PR #102統合後、全CI成功）
 
 ## 1. 設計ブリーフ
 
@@ -179,7 +179,7 @@ Codex単独で進める次の順序は、`CI安定化 → PR-A継続 → 契約�
 - [ ] PR-A: Mobile API contract / response validation / pagination
   - 主な所有: `packages/api-contract`, Mobile schema生成、inventory scripts
   - 完了条件: API inventoryとcontract drift checkが単独でgreen
-  - 進捗: 16個目の分割単位をPR #102で検証中。残Route、Mobile生成物、pagination / inventoryが残る
+  - 進捗: 17個目の分割単位をPR #103で検証中。残Route、Mobile生成物、pagination / inventoryが残る
   - [x] response contract guardを本番挙動へ未接続の状態で分離統合
     - 証跡: [PR #76](https://github.com/sh0g0-ikeda/Lyra/pull/76)
   - [x] `/api/me`の現行wire互換性と不正payload拒否を検証して分離統合
@@ -214,6 +214,8 @@ Codex単独で進める次の順序は、`CI安定化 → PR-A継続 → 契約�
       - 証跡: [PR #101](https://github.com/sh0g0-ikeda/Lyra/pull/101)。空scene・null画像・署名URL省略を維持し、生成画像S3 keyをstrict contractで非公開
     - [x] Page job受付・layout同期・Story autofillの既存4成功応答を共有contractへ接続
       - 証跡: [PR #102](https://github.com/sh0g0-ikeda/Lyra/pull/102)。queue・課金・永続化を変えず、全layout template IDとの同期と契約外Service値拒否を検証
+    - [x] Generation job取得・停止の4 job type応答を共有contractへ接続
+      - 証跡: [PR #103](https://github.com/sh0g0-ikeda/Lyra/pull/103)。部分resultを維持し、root・params・result・候補・story plan resultをstrict検証
   - [ ] Mobile側生成物とcontract drift checkを統合
   - [ ] paginationとAPI inventoryを独立監査
 - [ ] PR-B: account deletion / upload token / export基盤
