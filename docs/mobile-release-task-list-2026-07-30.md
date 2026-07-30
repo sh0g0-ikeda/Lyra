@@ -202,6 +202,9 @@ PR #67の分割とmain同期
 - [ ] Mobile Expo dependency check / doctorを通す
 - [ ] Mobile typecheck / lint / Vitestを通す
 - [ ] Mobile Android/iOS exportを通す
+- [ ] mainのbranch protectionでCI `verify`をrequired status checkにする
+  - 現状: GitHub APIは`Branch not protected`を返し、PR #81はCI pending中でもmergeされた
+  - 完了条件: `verify`がpendingまたはfailedのPRをUI/CLIからmainへmergeできない
 - [ ] GitHub ActionsのNode.js 20非推奨警告を解消する
   - 完了条件: CIでNode.js 24対応済みActionを使用し、非推奨annotationが0件
 - [ ] 分割PR統合後にPR #67を置換済みとして閉じる
