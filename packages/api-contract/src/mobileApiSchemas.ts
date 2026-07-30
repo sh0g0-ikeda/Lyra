@@ -187,6 +187,10 @@ export const organizationCustomerPortalResponseSchema = z
   })
   .strict();
 
+export const billingSubscriptionCheckoutResponseSchema = organizationSubscriptionCheckoutResponseSchema;
+export const billingCreditCheckoutResponseSchema = organizationCreditCheckoutResponseSchema;
+export const billingCustomerPortalResponseSchema = organizationCustomerPortalResponseSchema;
+
 export const organizationSubscriptionSummarySchema = z
   .object({
     organization_id: idSchema,
