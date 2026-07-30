@@ -1,6 +1,9 @@
 import { Hono, type Context, type MiddlewareHandler } from 'hono';
 import { z } from 'zod';
 import {
+  pageAutofillResponseSchema,
+  pageJobAcceptedResponseSchema,
+  pageLayoutTemplateResponseSchema,
   pageSchema,
   pagesResponseSchema,
 } from '../../packages/api-contract/src/mobileApiSchemas.js';
@@ -95,7 +98,8 @@ export function createPageRoutes(dependencies: PageRouteDependencies): Hono<AppE
       job_id: result.jobId,
       language: body.data.language,
     });
-    return c.json({ job_id: result.jobId }, 202);
+    const payload = { job_id: result.jobId };
+    return c.json(assertMobileResponseContract(pageJobAcceptedResponseSchema, payload), 202);
   });
 
   app.put('/pages/:id', async (c) => {
@@ -165,13 +169,14 @@ export function createPageRoutes(dependencies: PageRouteDependencies): Hono<AppE
       deleted_panel_count: result.deletedPanelCount,
     });
 
-    return c.json({
+    const payload = {
       template_id: result.templateId,
       panel_count: result.panelCount,
       created_panel_count: result.createdPanelCount,
       deleted_panel_count: result.deletedPanelCount,
       frames: result.frames.map(toPanelFrameResponse),
-    });
+    };
+    return c.json(assertMobileResponseContract(pageLayoutTemplateResponseSchema, payload));
   });
 
   app.post('/pages/:id/autofill-from-scenes', async (c) => {
@@ -203,7 +208,7 @@ export function createPageRoutes(dependencies: PageRouteDependencies): Hono<AppE
       compiler_used: result.compilerUsed,
     });
 
-    return c.json({
+    const payload = {
       updated_panel_count: result.updatedPanelCount,
       filled_field_count: result.filledFieldCount,
       compiler_used: result.compilerUsed,
@@ -211,7 +216,8 @@ export function createPageRoutes(dependencies: PageRouteDependencies): Hono<AppE
       compiler_model: result.compilerModel,
       compiler_prompt_version: result.compilerPromptVersion,
       compiler_error: result.compilerError,
-    });
+    };
+    return c.json(assertMobileResponseContract(pageAutofillResponseSchema, payload));
   });
 
   app.post('/pages/:id/generate', async (c) => {
@@ -224,7 +230,8 @@ export function createPageRoutes(dependencies: PageRouteDependencies): Hono<AppE
       job_id: result.jobId,
     });
 
-    return c.json({ job_id: result.jobId }, 202);
+    const payload = { job_id: result.jobId };
+    return c.json(assertMobileResponseContract(pageJobAcceptedResponseSchema, payload), 202);
   });
 
   app.get('/pages/:id/export-image', async (c) => {

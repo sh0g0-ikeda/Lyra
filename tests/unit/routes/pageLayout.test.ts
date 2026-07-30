@@ -150,6 +150,35 @@ describe('page layout routes', () => {
 
     expect(response.status).toBe(422);
   });
+
+  it('契約外のlayout集計は500にする', async () => {
+    const pageLayoutService = new FakePageLayoutService();
+    pageLayoutService.applyTemplate = async (_userId, _pageId, input) => ({
+      templateId: input.templateId,
+      panelCount: -1,
+      createdPanelCount: 0,
+      deletedPanelCount: 0,
+      frames: [],
+    });
+    const app = createTestApp(pageLayoutService);
+    const token = await createToken();
+
+    const response = await app.request(`/api/pages/${pageId}/layout-template`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        template_id: 'standard_4',
+      }),
+    });
+
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: 'CONFIGURATION_ERROR' },
+    });
+  });
 });
 
 function createTestApp(pageLayoutService: PageLayoutServicePort): ReturnType<typeof createApp> {
