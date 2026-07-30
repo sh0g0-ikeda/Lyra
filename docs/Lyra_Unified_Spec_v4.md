@@ -73,6 +73,12 @@ lifetime. Their storage keys are derived from authenticated scope, episode, and 
 identifiers rather than filenames. Applying their persistence migration alone does
 not enable queue dispatch, artifact creation, or download routes.
 
+Native push device tokens are encrypted with authenticated encryption before
+persistence and are located by a separately keyed deterministic digest. Registration
+is unique per user installation, and logout removal is scoped by both user and
+installation. Persistence and internal services alone do not enable registration
+routes, device permission prompts, or APNs / FCM delivery.
+
 ## 6. Generation jobs
 
 Long-running page, entity, page-skeleton, and story-autofill work is represented by
