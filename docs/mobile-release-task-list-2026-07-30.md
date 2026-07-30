@@ -6,9 +6,9 @@
 
 対象PR: [#67 feat(mobile): production-ready Lyra mobile workflow](https://github.com/sh0g0-ikeda/Lyra/pull/67)
 
-進捗: 16件完了 / 419件未完了
+進捗: 17件完了 / 419件未完了
 
-実装監査基準: `4a1d9bc`（PR #93統合後、全CI成功）
+実装監査基準: `f366f9b`（PR #94統合後、全CI成功）
 
 ## 1. 設計ブリーフ
 
@@ -179,7 +179,7 @@ Codex単独で進める次の順序は、`CI安定化 → PR-A継続 → 契約�
 - [ ] PR-A: Mobile API contract / response validation / pagination
   - 主な所有: `packages/api-contract`, Mobile schema生成、inventory scripts
   - 完了条件: API inventoryとcontract drift checkが単独でgreen
-  - 進捗: 8つの分割単位をmainへ統合済み。残Route、Mobile生成物、pagination / inventoryが残る
+  - 進捗: 9つの分割単位をmainへ統合済み。残Route、Mobile生成物、pagination / inventoryが残る
   - [x] response contract guardを本番挙動へ未接続の状態で分離統合
     - 証跡: [PR #76](https://github.com/sh0g0-ikeda/Lyra/pull/76)
   - [x] `/api/me`の現行wire互換性と不正payload拒否を検証して分離統合
@@ -198,6 +198,10 @@ Codex単独で進める次の順序は、`CI安定化 → PR-A継続 → 契約�
       - 証跡: [PR #93](https://github.com/sh0g0-ikeda/Lyra/pull/93)。request限定の4頂点・座標範囲をresponseへ遡及せず、3 endpointを同一item schemaで保護
     - [x] Panel作成・一覧・並べ替え・更新のresponse contractを入れ子構造まで接続
       - 証跡: [PR #94](https://github.com/sh0g0-ikeda/Lyra/pull/94)。assignment schemaを再利用し、Web wire互換と4 endpointの同一item契約を維持
+    - [x] 現行Scene・Entity state作成更新のresponse contractをempty state互換で接続
+      - 証跡: [PR #95](https://github.com/sh0g0-ikeda/Lyra/pull/95)。空の任意配列とscene未選択を正常値として維持し、既存5 endpointを保護
+    - [ ] Entity state一覧GETをService / Repository / SQL / 認可まで独立監査して追加
+      - 境界: PR #95のresponse-only変更へ混ぜず、personal/org tenancyと0件の正常empty stateを別PRで検証
   - [ ] Mobile側生成物とcontract drift checkを統合
   - [ ] paginationとAPI inventoryを独立監査
 - [ ] PR-B: account deletion / upload token / export基盤

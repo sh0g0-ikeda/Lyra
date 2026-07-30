@@ -1,4 +1,9 @@
 import { Hono, type Context, type MiddlewareHandler } from 'hono';
+import {
+  entityStateSchema,
+  sceneSchema,
+  scenesResponseSchema,
+} from '../../packages/api-contract/src/mobileApiSchemas.js';
 import { ValidationError } from '../domain/errors/index.js';
 import type { EntityState, Scene } from '../domain/types/scene.js';
 import {
@@ -17,6 +22,7 @@ import {
   recordOrganizationAudit,
   requireOrganizationCapability,
 } from './organizationRouteHelpers.js';
+import { assertMobileResponseContract } from './mobileResponseContract.js';
 import { readJsonBody } from './requestBody.js';
 
 export interface SceneRouteDependencies {
@@ -54,7 +60,7 @@ export function createSceneRoutes(dependencies: SceneRouteDependencies): Hono<Ap
       episode_id: episodeId,
     });
 
-    return c.json(toSceneResponse(scene), 201);
+    return c.json(assertMobileResponseContract(sceneSchema, toSceneResponse(scene)), 201);
   });
 
   app.get('/episodes/:id/scenes', async (c) => {
@@ -64,7 +70,8 @@ export function createSceneRoutes(dependencies: SceneRouteDependencies): Hono<Ap
     await requireOrganizationCapability(c, dependencies, organizationId, 'view_work');
     const scenes = await dependencies.sceneService.listScenes(user.id, episodeId, organizationId);
 
-    return c.json({ scenes: scenes.map(toSceneResponse) });
+    const payload = { scenes: scenes.map(toSceneResponse) };
+    return c.json(assertMobileResponseContract(scenesResponseSchema, payload));
   });
 
   app.put('/scenes/:id', async (c) => {
@@ -90,7 +97,7 @@ export function createSceneRoutes(dependencies: SceneRouteDependencies): Hono<Ap
       fields: Object.keys(body.data),
     });
 
-    return c.json(toSceneResponse(scene));
+    return c.json(assertMobileResponseContract(sceneSchema, toSceneResponse(scene)));
   });
 
   app.delete('/scenes/:id', async (c) => {
@@ -129,7 +136,10 @@ export function createSceneRoutes(dependencies: SceneRouteDependencies): Hono<Ap
       scene_id: body.data.scene_id ?? null,
     });
 
-    return c.json(toEntityStateResponse(entityState), 201);
+    return c.json(
+      assertMobileResponseContract(entityStateSchema, toEntityStateResponse(entityState)),
+      201,
+    );
   });
 
   app.put('/entities/:id/states/:state_id', async (c) => {
@@ -158,7 +168,7 @@ export function createSceneRoutes(dependencies: SceneRouteDependencies): Hono<Ap
       fields: Object.keys(body.data),
     });
 
-    return c.json(toEntityStateResponse(entityState));
+    return c.json(assertMobileResponseContract(entityStateSchema, toEntityStateResponse(entityState)));
   });
 
   return app;

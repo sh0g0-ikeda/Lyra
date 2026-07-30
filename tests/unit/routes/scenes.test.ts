@@ -207,12 +207,112 @@ describe('scene routes', () => {
 
     expect(response.status).toBe(401);
   });
+
+  it('作成Serviceが契約外のSceneを返す場合は500にする', async () => {
+    const sceneService = new FakeSceneService();
+    sceneService.createScene = async () => buildScene({ order: 0 });
+    const app = createTestApp(sceneService);
+    const token = await createToken();
+
+    const response = await app.request(`/api/episodes/${episodeId}/scenes`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ order: 1 }),
+    });
+
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: 'CONFIGURATION_ERROR' },
+    });
+  });
+
+  it('一覧Serviceが契約外のSceneを返す場合は500にする', async () => {
+    const sceneService = new FakeSceneService();
+    sceneService.listScenes = async () => [buildScene({ order: 0 })];
+    const app = createTestApp(sceneService);
+    const token = await createToken();
+
+    const response = await app.request(`/api/episodes/${episodeId}/scenes`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: 'CONFIGURATION_ERROR' },
+    });
+  });
+
+  it('更新Serviceが契約外のSceneを返す場合は500にする', async () => {
+    const sceneService = new FakeSceneService();
+    sceneService.updateScene = async () => buildScene({ order: 0 });
+    const app = createTestApp(sceneService);
+    const token = await createToken();
+
+    const response = await app.request(`/api/scenes/${sceneId}`, {
+      method: 'PUT',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ status: 'ready' }),
+    });
+
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: 'CONFIGURATION_ERROR' },
+    });
+  });
+
+  it('作成Serviceが契約外のEntity stateを返す場合は500にする', async () => {
+    const sceneService = new FakeSceneService();
+    sceneService.createEntityState = async () => buildEntityState({ expressionDefault: '' });
+    const app = createTestApp(sceneService);
+    const token = await createToken();
+
+    const response = await app.request(`/api/entities/${entityId}/states`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ expression_default: 'neutral' }),
+    });
+
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: 'CONFIGURATION_ERROR' },
+    });
+  });
+
+  it('更新Serviceが契約外のEntity stateを返す場合は500にする', async () => {
+    const sceneService = new FakeSceneService();
+    sceneService.updateEntityState = async () => buildEntityState({ expressionDefault: '' });
+    const app = createTestApp(sceneService);
+    const token = await createToken();
+
+    const response = await app.request(`/api/entities/${entityId}/states/${stateId}`, {
+      method: 'PUT',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ expression_default: 'calm' }),
+    });
+
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: 'CONFIGURATION_ERROR' },
+    });
+  });
 });
 
-function createTestApp(): ReturnType<typeof createApp> {
+function createTestApp(sceneService: SceneServicePort = new FakeSceneService()): ReturnType<typeof createApp> {
   return createApp({
     creditService: new FakeCreditService(),
-    sceneService: new FakeSceneService(),
+    sceneService,
     userProvisioningService: new FakeUserProvisioningService(),
     jwtSecret,
   });
