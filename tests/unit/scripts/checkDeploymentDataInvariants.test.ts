@@ -314,6 +314,13 @@ describe('checkDeploymentDataInvariants', () => {
         query.includes('works.organization_id IS DISTINCT FROM export_jobs.organization_id'),
       ),
     ).toBe(true);
+    expect(
+      database.queries.some((query) =>
+        query.includes('FROM mobile_push_tokens') &&
+        query.includes("token_hash !~ '^[0-9a-f]{64}$'") &&
+        query.includes('updated_at < created_at'),
+      ),
+    ).toBe(true);
   });
 
   it('違反行があればチェック名とサンプル ID を返す', async () => {
@@ -359,6 +366,7 @@ describe('checkDeploymentDataInvariants', () => {
     'entity_reference_upload_tokens.entity_scope',
     'episode_export_jobs.contract',
     'episode_export_jobs.scope',
+    'mobile_push_tokens.protection',
   ])('%s を検出する', async (checkName) => {
     const database = new FakeDatabase(checkName);
 

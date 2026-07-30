@@ -243,6 +243,10 @@ const DEPLOYMENT_DATA_INVARIANT_QUERIES: InvariantQuery[] = [
     name: 'episode_export_jobs.scope',
     sql: 'SELECT export_jobs.id::text AS id FROM episode_export_jobs AS export_jobs INNER JOIN episodes ON episodes.id = export_jobs.episode_id INNER JOIN chapters ON chapters.id = episodes.chapter_id INNER JOIN works ON works.id = chapters.work_id WHERE /* episode_export_jobs.scope */ (export_jobs.organization_id IS NULL AND (works.organization_id IS NOT NULL OR works.user_id <> export_jobs.user_id)) OR (export_jobs.organization_id IS NOT NULL AND works.organization_id IS DISTINCT FROM export_jobs.organization_id) ORDER BY export_jobs.id LIMIT $1',
   },
+  {
+    name: 'mobile_push_tokens.protection',
+    sql: "SELECT id::text AS id FROM mobile_push_tokens WHERE /* mobile_push_tokens.protection */ platform NOT IN ('ios', 'android') OR locale NOT IN ('ja', 'en') OR token_hash !~ '^[0-9a-f]{64}$' OR char_length(token_ciphertext) NOT BETWEEN 64 AND 16384 OR token_ciphertext !~ '^v1\\.[A-Za-z0-9_-]{16}\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]{22}$' OR encryption_key_id !~ '^[A-Za-z0-9._:-]{1,64}$' OR updated_at < created_at ORDER BY id LIMIT $1",
+  },
 ];
 
 export async function checkDeploymentDataInvariants(
