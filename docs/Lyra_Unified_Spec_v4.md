@@ -120,6 +120,14 @@ determines which balance is displayed and charged. Stripe webhook events, after
 signature verification, are the authority for subscription and purchased-credit
 grants. Browser return URLs never grant credits.
 
+Mobile store billing remains disabled unless its server verifier, product allowlist,
+credentials, and explicit feature flag are configured. When enabled, verified Apple
+or Google evidence is authoritative and may affect only personal credits. Raw
+StoreKit JWS values and Google Play purchase tokens are never persisted; keyed
+digests identify purchases, provider events, and credit-ledger mutations behind
+independent uniqueness barriers. Applying the persistence migration alone does not
+enable a purchase route or grant credits.
+
 ## 8. Input and output safety
 
 - Request bodies use bounded Zod schemas.

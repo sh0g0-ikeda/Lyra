@@ -6,9 +6,9 @@
 
 対象PR: [#67 feat(mobile): production-ready Lyra mobile workflow](https://github.com/sh0g0-ikeda/Lyra/pull/67)
 
-進捗: 36件完了 / 400件未完了
+進捗: 38件完了 / 398件未完了
 
-実装監査基準: `6d70c23`（PR #110統合後、全CI成功）
+実装監査基準: `e9c7f2e`（PR #111統合後、全CI成功）
 
 ## 1. 設計ブリーフ
 
@@ -239,6 +239,9 @@ Codex単独で進める次の順序は、`CI安定化 → PR-A継続 → 契約�
 - [ ] PR-C: Mobile store billing Backend
   - 主な所有: migration 029、Apple/Google verifier、purchase service、webhook、ledger
   - 完了条件: 課金OFFで既存Webの挙動を変えず、focused testsがgreen
+  - [x] 課金機能を有効化せず、個人Mobile購入・event・credit冪等性のDB契約を先行統合
+    - 証跡: [PR #112](https://github.com/sh0g0-ikeda/Lyra/pull/112)。fresh DB 001〜029、49 invariant / 0 violationsを確認し、raw token/JWSを保存しないkey形状とpersonal-only境界を固定
+    - 境界: verifier、Service、Repository、Route、Webhook、Mobile SDK、product mappingは未接続。外部console / secret / sandbox証跡が揃うまで課金OFFを維持する
   - `/api/billing/balance`の購読summaryをApple / Googleの検証済み購入まで拡張し、StripeとStoreで同じwire fieldを返す
 - [ ] PR-D: generation job management / cancellation / push outbox
   - 主な所有: migrations 030, 033〜036、Worker、job services
@@ -344,8 +347,9 @@ Codex単独で進める次の順序は、`CI安定化 → PR-A継続 → 契約�
 - [x] 028 page story metadata compatibility checkpoint
   - 完了条件: 既存pageの読み書きと生成promptが後方互換
   - 証跡: [PR #111](https://github.com/sh0g0-ikeda/Lyra/pull/111)。現mainで3項目が既に`pages.layout_config`へ保存・読込・prompt連携されることを確認し、重複列・backfill・二重書込みを追加しないcomment-only migrationとして番号順を確定
-- [ ] 029 mobile store purchase ledger
+- [x] 029 mobile store purchase ledger
   - 完了条件: store/external keyとledger eventのunique制約が有効
+  - 証跡: [PR #112](https://github.com/sh0g0-ikeda/Lyra/pull/112)。purchase / provider event / credit ledgerの三段冪等性、HMAC key形状、個人user FK、credit反転上限をmigration contractとfresh DBで確認
 - [ ] 030 generation job management
   - 完了条件: job一覧、hide、cancel状態が既存jobと互換
 - [ ] 031 entity reference upload tokens
