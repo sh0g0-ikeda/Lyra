@@ -6,7 +6,7 @@
 
 対象PR: [#67 feat(mobile): production-ready Lyra mobile workflow](https://github.com/sh0g0-ikeda/Lyra/pull/67)
 
-進捗: 8件完了 / 423件未完了
+進捗: 9件完了 / 422件未完了
 
 実装監査基準: `d152183`（PR #82統合後、全CI成功。以後のmain変更はタスクリスト文書のみ）
 
@@ -246,8 +246,9 @@ Codex単独で進める次の順序は、`CI安定化 → アカウント画面�
 - [ ] mainのbranch protectionでCI `verify`をrequired status checkにする
   - 現状: GitHub APIは`Branch not protected`を返し、PR #81はCI pending中でもmergeされた
   - 完了条件: `verify`がpendingまたはfailedのPRをUI/CLIからmainへmergeできない
-- [ ] GitHub ActionsのNode.js 20非推奨警告を解消する
+- [x] GitHub ActionsのNode.js 20非推奨警告を解消する
   - 完了条件: CIでNode.js 24対応済みActionを使用し、非推奨annotationが0件
+  - 証跡: [PR #86](https://github.com/sh0g0-ikeda/Lyra/pull/86)で`actions/checkout@v5`と`actions/setup-node@v5`へ更新し、CI run `30525389957`の全gate成功とannotation 0件を確認
 - [ ] 分割PR統合後にPR #67を置換済みとして閉じる
 
 ### Phase 2: 独立したstaging環境
