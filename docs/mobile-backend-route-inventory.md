@@ -43,10 +43,10 @@ Unclassified routes: **0**
 | `/api/episodes/:episodeId/exports` | POST | Mobile UI | api.createEpisodeExport -> apps/mobile/src/screens/PagesScreen.tsx |
 | `/api/episodes/:id` | DELETE | Mobile UI | api.deleteEpisode -> apps/mobile/src/components/StoryHierarchySheet.tsx |
 | `/api/episodes/:id` | PUT | Mobile UI | api.updateEpisode -> apps/mobile/src/components/StoryHierarchySheet.tsx, apps/mobile/src/screens/StoryScreen.tsx |
-| `/api/episodes/:id/autofill-pages-from-story` | POST | Mobile UI | api.autofillEpisodePagesFromStory -> apps/mobile/src/screens/AccountScreen.tsx, apps/mobile/src/screens/StoryScreen.tsx |
-| `/api/episodes/:id/generate-page-skeleton` | POST | Mobile UI | api.generatePageSkeleton -> apps/mobile/src/screens/AccountScreen.tsx, apps/mobile/src/screens/StoryScreen.tsx |
+| `/api/episodes/:id/autofill-pages-from-story` | POST | Mobile UI | api.autofillEpisodePagesFromStory -> apps/mobile/src/screens/AccountScreen.tsx, apps/mobile/src/screens/PagesScreen.tsx |
+| `/api/episodes/:id/generate-page-skeleton` | POST | Mobile UI | api.generatePageSkeleton -> apps/mobile/src/screens/AccountScreen.tsx, apps/mobile/src/screens/PagesScreen.tsx |
 | `/api/episodes/:id/move` | POST | Mobile UI | api.moveEpisode -> apps/mobile/src/components/StoryHierarchySheet.tsx |
-| `/api/episodes/:id/pages` | GET | Mobile UI | api.getPages, api.getPagesPage -> apps/mobile/src/screens/PagesScreen.tsx, apps/mobile/src/screens/StoryScreen.tsx |
+| `/api/episodes/:id/pages` | GET | Mobile UI | api.getPages, api.getPagesPage -> apps/mobile/src/screens/PagesScreen.tsx |
 | `/api/episodes/:id/scenes` | GET | Mobile UI | api.getScenes -> apps/mobile/src/screens/CharactersScreen.tsx, apps/mobile/src/screens/PagesScreen.tsx, apps/mobile/src/screens/StoryScreen.tsx |
 | `/api/episodes/:id/scenes` | POST | Mobile UI | api.createScene -> apps/mobile/src/screens/StoryScreen.tsx |
 | `/api/exports/:jobId` | GET | Mobile UI | api.getExportJob -> apps/mobile/src/components/ExportJobCard.tsx |
@@ -55,7 +55,7 @@ Unclassified routes: **0**
 | `/api/jobs` | GET | Mobile UI | api.listJobs -> apps/mobile/src/hooks/useActiveResourceJobId.ts, apps/mobile/src/screens/AccountScreen.tsx |
 | `/api/jobs/:id` | DELETE | Mobile UI | api.hideJob -> apps/mobile/src/screens/AccountScreen.tsx |
 | `/api/jobs/:id` | GET | Mobile UI | api.getJob -> apps/mobile/src/components/JobStatusCard.tsx, apps/mobile/src/components/PushNotificationCoordinator.tsx, apps/mobile/src/lib/pushNavigation.ts, apps/mobile/src/screens/CharactersScreen.tsx |
-| `/api/jobs/:id/cancel` | POST | Mobile UI | api.cancelJob -> apps/mobile/src/screens/AccountScreen.tsx, apps/mobile/src/screens/StoryScreen.tsx |
+| `/api/jobs/:id/cancel` | POST | Mobile UI | api.cancelJob -> apps/mobile/src/screens/AccountScreen.tsx, apps/mobile/src/screens/PagesScreen.tsx |
 | `/api/me` | GET | Mobile UI | api.getCurrentSession -> apps/mobile/src/App.tsx, apps/mobile/src/lib/mobileStoreBillingBridge.ts, apps/mobile/src/screens/AccountScreen.tsx |
 | `/api/mobile-purchases/apple/verify` | POST | Mobile UI | api.verifyAppleMobilePurchase -> apps/mobile/src/lib/mobileStoreBillingBridge.ts |
 | `/api/mobile-purchases/binding` | GET | Mobile UI | api.getMobilePurchaseBinding -> apps/mobile/src/lib/mobileStoreBillingBridge.ts |
