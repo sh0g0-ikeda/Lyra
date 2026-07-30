@@ -109,6 +109,11 @@ transaction locks the authorized episode planning graph, rechecks the input
 fingerprint, and applies page, panel, and entity assignment changes together so a
 concurrent edit is not silently overwritten and a partial plan cannot be exposed.
 
+Generation-job history hiding is a per-user display preference. It never deletes a
+job, changes its status, cancels work, or mutates credits. Any future history write
+must first authorize the job through personal ownership or active organization
+membership.
+
 ## 7. Credits and billing
 
 Text AI operations are free. Entity preview/import analysis and page generation use

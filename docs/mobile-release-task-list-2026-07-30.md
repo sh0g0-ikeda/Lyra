@@ -6,9 +6,9 @@
 
 対象PR: [#67 feat(mobile): production-ready Lyra mobile workflow](https://github.com/sh0g0-ikeda/Lyra/pull/67)
 
-進捗: 38件完了 / 398件未完了
+進捗: 39件完了 / 397件未完了
 
-実装監査基準: `e9c7f2e`（PR #111統合後、全CI成功）
+実装監査基準: `4b7f879`（PR #112統合後、全CI成功）
 
 ## 1. 設計ブリーフ
 
@@ -246,6 +246,9 @@ Codex単独で進める次の順序は、`CI安定化 → PR-A継続 → 契約�
 - [ ] PR-D: generation job management / cancellation / push outbox
   - 主な所有: migrations 030, 033〜036、Worker、job services
   - 完了条件: cancel/refund/outbox競合テストがgreen
+  - [x] job履歴非表示tableとscope / cursor用indexを既存cancel/refund非変更で先行統合
+    - 証跡: [PR #113](https://github.com/sh0g0-ikeda/Lyra/pull/113)。旧030のlate-consume自動返金triggerを除外し、API未接続の加算schemaだけをfresh DBで確認
+    - 境界: 一覧・非表示API、汎用cancel、credit settlement、Worker checkpoint、late consume返金は未接続。lock順とrefund unique barrierを同時検証する後続PRで扱う
 - [ ] PR-E: Mobileアプリ基盤
   - 主な所有: Expo設定、認証、navigation、API client、i18n、error policy
   - 完了条件: clean install、typecheck、lint、test、両OS exportがgreen
@@ -352,6 +355,7 @@ Codex単独で進める次の順序は、`CI安定化 → PR-A継続 → 契約�
   - 証跡: [PR #112](https://github.com/sh0g0-ikeda/Lyra/pull/112)。purchase / provider event / credit ledgerの三段冪等性、HMAC key形状、個人user FK、credit反転上限をmigration contractとfresh DBで確認
 - [ ] 030 generation job management
   - 完了条件: job一覧、hide、cancel状態が既存jobと互換
+  - 進捗: [PR #113](https://github.com/sh0g0-ikeda/Lyra/pull/113)で履歴非表示tableと一覧indexのみ完了。既存cancel/refundへ即時影響する旧triggerは未統合
 - [ ] 031 entity reference upload tokens
   - 完了条件: single-use、期限、MIME/size、user/org bindingが有効
 - [ ] 032 episode export jobs
