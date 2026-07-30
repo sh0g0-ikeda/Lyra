@@ -73,6 +73,42 @@ export const currentSessionSchema = z.object({
   ),
 });
 
+export const sceneSchema = z.object({
+  id: idSchema,
+  episode_id: idSchema,
+  order: z.number().int().positive(),
+  location: nullableStringSchema,
+  time: nullableStringSchema,
+  atmosphere: nullableStringSchema,
+  involved_entity_ids: z.array(idSchema),
+  entity_states: z.array(
+    z.object({
+      entity_id: idSchema,
+      state_id: idSchema,
+    }),
+  ),
+  status: z.enum(['draft', 'reviewing', 'ready']),
+  created_at: timestampSchema,
+  updated_at: timestampSchema,
+});
+
+export const scenesResponseSchema = z.object({
+  scenes: z.array(sceneSchema),
+});
+
+export const entityStateSchema = z.object({
+  id: idSchema,
+  entity_id: idSchema,
+  scene_id: nullableStringSchema,
+  costume_note: nullableStringSchema,
+  costume_ref_id: nullableStringSchema,
+  condition_note: nullableStringSchema,
+  hair_note: nullableStringSchema,
+  expression_default: z.string().min(1).max(100),
+  extra_note: nullableStringSchema,
+  created_at: timestampSchema,
+});
+
 export const compositionSchema = z.object({
   id: idSchema,
   name: z.string(),
