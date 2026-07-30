@@ -1,4 +1,5 @@
 import { Hono, type Context, type MiddlewareHandler } from 'hono';
+import { panelAssignmentsResponseSchema } from '../../packages/api-contract/src/mobileApiSchemas.js';
 import { ValidationError } from '../domain/errors/index.js';
 import type { PanelEntityAssignment } from '../domain/types/panelEntityAssignment.js';
 import {
@@ -13,6 +14,7 @@ import {
   parseOptionalOrganizationId,
   requireOrganizationCapability,
 } from './organizationRouteHelpers.js';
+import { assertMobileResponseContract } from './mobileResponseContract.js';
 import { readJsonBody } from './requestBody.js';
 
 export interface PanelEntityAssignmentRouteDependencies {
@@ -60,7 +62,8 @@ export function createPanelEntityAssignmentRoutes(
       organizationId,
     );
 
-    return c.json({ entities: assignments.map(toPanelEntityAssignmentResponse) });
+    const payload = { entities: assignments.map(toPanelEntityAssignmentResponse) };
+    return c.json(assertMobileResponseContract(panelAssignmentsResponseSchema, payload));
   });
 
   return app;

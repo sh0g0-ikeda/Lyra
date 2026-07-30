@@ -73,6 +73,19 @@ class FakePanelEntityAssignmentService implements PanelEntityAssignmentServicePo
   }
 }
 
+class InvalidPanelEntityAssignmentService implements PanelEntityAssignmentServicePort {
+  public async replacePanelEntityAssignments(
+    _userId: string,
+    _panelId: string,
+    assignments: PanelEntityAssignment[],
+  ): Promise<PanelEntityAssignment[]> {
+    return assignments.map((assignment) => ({
+      ...assignment,
+      role: 'lead',
+    })) as unknown as PanelEntityAssignment[];
+  }
+}
+
 describe('panel entity assignment routes', () => {
   it('JWTが正しい場合にPanelへエンティティ割当を保存できる', async () => {
     const panelEntityAssignmentService = new FakePanelEntityAssignmentService();
@@ -252,6 +265,37 @@ describe('panel entity assignment routes', () => {
     });
 
     expect(response.status).toBe(401);
+  });
+
+  it('Serviceが契約外の割り当てを返す場合は500にする', async () => {
+    const app = createTestApp(new InvalidPanelEntityAssignmentService());
+    const token = await createToken();
+
+    const response = await app.request(`/api/panels/${panelId}/entities`, {
+      method: 'PUT',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        entities: [
+          {
+            entity_id: entityId,
+            role: 'primary',
+            expression: 'calm',
+            action: 'running',
+            position: 'center',
+          },
+        ],
+      }),
+    });
+
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toMatchObject({
+      error: {
+        code: 'CONFIGURATION_ERROR',
+      },
+    });
   });
 });
 
