@@ -342,6 +342,28 @@ a {
   line-height: 1.3;
 }
 
+.sidebar-works-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.sidebar-works-content {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.sidebar-works-content[hidden] {
+  display: none;
+}
+
+.icon-button.mobile-works-toggle,
+.episode-save-mobile,
+.secondary-button.mobile-character-editor-new-action {
+  display: none;
+}
+
 .organization-coming-soon-sidebar {
   border: 1px solid rgba(229, 199, 107, 0.18);
   background: rgba(229, 199, 107, 0.08);
@@ -3743,6 +3765,22 @@ details.stack summary {
     gap: 8px;
   }
 
+  .sidebar-workspace-switcher {
+    display: none;
+  }
+
+  .icon-button.mobile-works-toggle {
+    display: inline-flex;
+  }
+
+  .mobile-works-toggle svg {
+    transition: transform 0.16s ease;
+  }
+
+  .mobile-works-toggle svg.open {
+    transform: rotate(180deg);
+  }
+
   .sidebar-work-list {
     max-height: min(34dvh, 220px);
     overflow: auto;
@@ -3991,6 +4029,27 @@ details.stack summary {
   .toolbar > input {
     width: 100%;
     min-width: 0 !important;
+  }
+
+  .episode-save-desktop,
+  .desktop-character-list-new-action {
+    display: none;
+  }
+
+  .episode-save-mobile {
+    display: flex;
+  }
+
+  .episode-save-mobile .secondary-button {
+    width: 100%;
+  }
+
+  .secondary-button.mobile-character-editor-new-action {
+    display: inline-flex;
+  }
+
+  .character-editor-actions {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
   .panel-save-actions {
