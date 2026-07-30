@@ -1,5 +1,9 @@
 import { Hono, type Context, type MiddlewareHandler } from 'hono';
 import { z } from 'zod';
+import {
+  pageSchema,
+  pagesResponseSchema,
+} from '../../packages/api-contract/src/mobileApiSchemas.js';
 import { ValidationError } from '../domain/errors/index.js';
 import { APP_LANGUAGES } from '../domain/types/language.js';
 import type { PageSummary } from '../domain/types/page.js';
@@ -24,6 +28,7 @@ import {
   recordOrganizationAudit,
   requireOrganizationCapability,
 } from './organizationRouteHelpers.js';
+import { assertMobileResponseContract } from './mobileResponseContract.js';
 import { readJsonBody, readOptionalJsonBody, REQUEST_BODY_LIMITS } from './requestBody.js';
 
 const uuidParamSchema = z.string().uuid();
@@ -59,7 +64,8 @@ export function createPageRoutes(dependencies: PageRouteDependencies): Hono<AppE
     await requireOrganizationCapability(c, dependencies, organizationId, 'view_work');
     const pages = await dependencies.pageQueryService.listEpisodePages(user.id, episodeId, organizationId);
 
-    return c.json({ pages: await Promise.all(pages.map(toPageSummaryResponse)) });
+    const payload = { pages: await Promise.all(pages.map(toPageSummaryResponse)) };
+    return c.json(assertMobileResponseContract(pagesResponseSchema, payload));
   });
 
   app.post('/episodes/:id/autofill-pages-from-story', async (c) => {
@@ -124,7 +130,8 @@ export function createPageRoutes(dependencies: PageRouteDependencies): Hono<AppE
       fields: Object.keys(body.data),
     });
 
-    return c.json(await toPageSummaryResponse(page));
+    const payload = await toPageSummaryResponse(page);
+    return c.json(assertMobileResponseContract(pageSchema, payload));
   });
 
   app.post('/pages/:id/layout-template', async (c) => {

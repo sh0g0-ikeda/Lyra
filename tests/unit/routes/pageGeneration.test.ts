@@ -275,6 +275,45 @@ describe('page generation routes', () => {
     expect(pageService.updatedPageId).toBe('33333333-3333-4333-8333-333333333333');
   });
 
+  it('page一覧とsettings更新は契約外Service値を500にする', async () => {
+    const pageQueryService = new FakePageQueryService();
+    pageQueryService.listEpisodePages = async () => [buildPageSummary('')];
+    const pageService = new FakePageService();
+    pageService.updatePageSettings = async () => buildPageSummary('');
+    const app = createTestApp(
+      new FakePageGenerationService(),
+      new FakePageFinalizeService(),
+      new FakeJobService(),
+      pageQueryService,
+      pageService,
+    );
+    const token = await createToken();
+
+    const responses = await Promise.all([
+      app.request('/api/episodes/44444444-4444-4444-8444-444444444444/pages', {
+        headers: { Authorization: `Bearer ${token}` },
+      }),
+      app.request('/api/pages/33333333-3333-4333-8333-333333333333', {
+        method: 'PUT',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          dialogue_mode: 'mixed',
+          page_dialogue_toggle: true,
+        }),
+      }),
+    ]);
+
+    for (const response of responses) {
+      expect(response.status).toBe(500);
+      await expect(response.json()).resolves.toMatchObject({
+        error: { code: 'CONFIGURATION_ERROR' },
+      });
+    }
+  });
+
   it('page settings は巨大な JSON body を service 呼び出し前に 413 にする', async () => {
     const pageService = new FakePageService();
     const app = createTestApp(
