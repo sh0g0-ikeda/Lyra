@@ -11,6 +11,8 @@ interface GenerationJobNotificationRow extends QueryResultRow {
   user_id: string;
   organization_id: string | null;
   status: string;
+  cancel_requested_at: Date | null;
+  cancelled_at: Date | null;
 }
 
 interface PushNotificationOutboxRow extends QueryResultRow {
@@ -33,7 +35,7 @@ implements PushNotificationOutboxRepository {
   ): Promise<PushNotificationOutboxEnqueueResult | null> {
     return this.transactionRunner.transaction(async (transaction) => {
       const job = await lockGenerationJob(transaction, jobId);
-      if (job === null || !isNotifiableTerminalStatus(job.status)) {
+      if (job === null || !isNotifiableTerminalJob(job)) {
         return null;
       }
 
@@ -94,7 +96,13 @@ async function lockGenerationJob(
 ): Promise<GenerationJobNotificationRow | null> {
   const result = await client.query<GenerationJobNotificationRow>(
     `
-    SELECT id, user_id, organization_id, status
+    SELECT
+      id,
+      user_id,
+      organization_id,
+      status,
+      cancel_requested_at,
+      cancelled_at
     FROM generation_jobs
     WHERE id = $1::uuid
     FOR UPDATE
@@ -130,10 +138,14 @@ async function findOutbox(
   return result.rows[0] ?? null;
 }
 
-function isNotifiableTerminalStatus(
-  value: string,
-): value is PushNotificationTerminalStatus {
-  return value === 'completed' || value === 'failed';
+function isNotifiableTerminalJob(
+  job: GenerationJobNotificationRow,
+): job is GenerationJobNotificationRow & { status: PushNotificationTerminalStatus } {
+  return (
+    (job.status === 'completed' || job.status === 'failed')
+    && job.cancel_requested_at === null
+    && job.cancelled_at === null
+  );
 }
 
 function toEnqueueResult(
