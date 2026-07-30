@@ -48,3 +48,27 @@ array identity change.
 
 No delegation. Active collaboration policy disallows sub-agents unless explicitly
 requested. The bounded Web focus repair and release validation are executed locally.
+
+## Follow-up: Escape before initial menu focus
+
+### Reproduction and root cause
+
+The work menu can be present in the DOM while its first menu item is still waiting
+for the scheduled animation-frame focus. During that interval, keyboard focus
+remains on the trigger. Because the menu is rendered through a portal, an Escape
+event from the trigger does not bubble through the menu's key handler and the open
+menu remains visible.
+
+The Playwright regression makes this state deterministic by opening the menu,
+focusing its trigger, and pressing Escape. The pre-fix implementation leaves the
+menu mounted and fails the existing closed-menu assertion.
+
+### Minimal repair and acceptance criteria
+
+- Handle Escape on the trigger only when that menu is open.
+- Reuse the existing `closeMenu(true)` path so state cleanup and focus restoration
+  remain identical to Escape from a menu item.
+- Do not add a document-wide keyboard listener or change click, arrow-key, action,
+  placement, API, or persistence behavior.
+- Confirm the deterministic regression, repeated focused Playwright runs, Web
+  lint/build, the full Playwright suite, and the complete CI gate.
