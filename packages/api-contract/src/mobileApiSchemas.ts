@@ -86,6 +86,35 @@ export const compositionSchema = z.object({
   created_at: timestampSchema,
 });
 
+export const balloonSchema = z.object({
+  id: idSchema,
+  page_id: idSchema,
+  speaker_entity_id: nullableStringSchema,
+  balloon_type: z.enum(['speech', 'thought', 'narration', 'shout', 'whisper', 'sfx', 'caption']),
+  writing_mode: z.enum(['horizontal', 'vertical']),
+  text: z.string(),
+  position: z.object({
+    x: z.number(),
+    y: z.number(),
+    width: z.number().positive(),
+    height: z.number().positive(),
+  }),
+  tail: z.object({
+    base_x: z.number(),
+    base_y: z.number(),
+    tip_x: z.number(),
+    tip_y: z.number(),
+  }).nullable(),
+  font_size: z.number().int().positive(),
+  font_family: z.enum(['manga_gothic', 'mincho', 'rounded', 'bold']),
+  panel_order_reference: z.number().int().nullable(),
+  z_index: z.number().int(),
+});
+
+export const balloonsResponseSchema = z.object({
+  balloons: z.array(balloonSchema),
+});
+
 export const compositionsResponseSchema = z.object({
   compositions: z.array(compositionSchema),
 });
