@@ -1,5 +1,10 @@
 import { Hono, type MiddlewareHandler } from 'hono';
-import { billingBalanceSchema } from '../../packages/api-contract/src/mobileApiSchemas.js';
+import {
+  billingBalanceSchema,
+  billingCreditCheckoutResponseSchema,
+  billingCustomerPortalResponseSchema,
+  billingSubscriptionCheckoutResponseSchema,
+} from '../../packages/api-contract/src/mobileApiSchemas.js';
 import { ValidationError } from '../domain/errors/index.js';
 import {
   createCreditCheckoutBodySchema,
@@ -71,13 +76,11 @@ export function createBillingRoutes(dependencies: BillingRouteDependencies): Hon
     }
 
     const result = await dependencies.billingService.createSubscriptionCheckoutSession(user, body.data.plan_code);
-    return c.json(
-      {
-        session_id: result.sessionId,
-        url: result.url,
-      },
-      201,
-    );
+    const payload = {
+      session_id: result.sessionId,
+      url: result.url,
+    };
+    return c.json(assertMobileResponseContract(billingSubscriptionCheckoutResponseSchema, payload), 201);
   });
 
   app.post('/checkout/credits', async (c) => {
@@ -93,23 +96,20 @@ export function createBillingRoutes(dependencies: BillingRouteDependencies): Hon
     }
 
     const result = await dependencies.billingService.createCreditCheckoutSession(user, body.data.package_code);
-    return c.json(
-      {
-        session_id: result.sessionId,
-        package_code: result.packageCode,
-        url: result.url,
-      },
-      201,
-    );
+    const payload = {
+      session_id: result.sessionId,
+      package_code: result.packageCode,
+      url: result.url,
+    };
+    return c.json(assertMobileResponseContract(billingCreditCheckoutResponseSchema, payload), 201);
   });
 
   app.post('/customer-portal', async (c) => {
     const user = c.get('user');
     const result = await dependencies.billingService.createCustomerPortalSession(user.id);
 
-    return c.json({
-      url: result.url,
-    });
+    const payload = { url: result.url };
+    return c.json(assertMobileResponseContract(billingCustomerPortalResponseSchema, payload));
   });
 
   return app;

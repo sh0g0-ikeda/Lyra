@@ -78,16 +78,25 @@ class FakeBillingService implements BillingServicePort {
   public personalSubscriptionSummary: PersonalSubscriptionSummary | null = null;
   public personalSubscriptionSummaryUserId: string | null = null;
   public standardPlanMonthlyCredits = 50;
+  public subscriptionCheckoutResult: SubscriptionCheckoutResult = {
+    sessionId: 'cs_sub_123',
+    url: 'https://checkout.stripe.test/subscription',
+  };
+  public creditCheckoutResult: CreditCheckoutResult = {
+    sessionId: 'cs_pay_123',
+    packageCode: 'credits_1000',
+    url: 'https://checkout.stripe.test/credits',
+  };
+  public customerPortalResult: CustomerPortalResult = {
+    url: 'https://billing.stripe.test/portal',
+  };
 
   public async createSubscriptionCheckoutSession(
     _user: AuthenticatedUser,
     planCode: PaidPlanCode,
   ): Promise<SubscriptionCheckoutResult> {
     this.subscriptionPlanCode = planCode;
-    return {
-      sessionId: 'cs_sub_123',
-      url: 'https://checkout.stripe.test/subscription',
-    };
+    return this.subscriptionCheckoutResult;
   }
 
   public async createCreditCheckoutSession(
@@ -96,17 +105,14 @@ class FakeBillingService implements BillingServicePort {
   ): Promise<CreditCheckoutResult> {
     this.creditPackageCode = packageCode;
     return {
-      sessionId: 'cs_pay_123',
+      ...this.creditCheckoutResult,
       packageCode,
-      url: 'https://checkout.stripe.test/credits',
     };
   }
 
   public async createCustomerPortalSession(userId: string): Promise<CustomerPortalResult> {
     this.portalUserId = userId;
-    return {
-      url: 'https://billing.stripe.test/portal',
-    };
+    return this.customerPortalResult;
   }
 
   public async getPersonalSubscriptionSummary(userId: string): Promise<PersonalSubscriptionSummary | null> {
@@ -396,6 +402,47 @@ describe('billing routes', () => {
       url: 'https://billing.stripe.test/portal',
     });
     expect(billingService.portalUserId).toBe(testUser.id);
+  });
+
+  it('個人課金の3成功JSONは契約外Service値を500にする', async () => {
+    const billingService = new FakeBillingService();
+    billingService.subscriptionCheckoutResult = {
+      sessionId: '',
+      url: 'https://checkout.stripe.test/subscription',
+    };
+    billingService.creditCheckoutResult = {
+      sessionId: '',
+      packageCode: 'credits_1000',
+      url: 'https://checkout.stripe.test/credits',
+    };
+    billingService.customerPortalResult = { url: '' };
+    const app = createTestApp(billingService, new FakeStripeWebhookService());
+    const token = await createToken();
+    const headers = {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    };
+
+    const responses = await Promise.all([
+      app.request('/api/billing/checkout/subscription', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ plan_code: 'standard' }),
+      }),
+      app.request('/api/billing/checkout/credits', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ package_code: 'credits_1000' }),
+      }),
+      app.request('/api/billing/customer-portal', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      }),
+    ]);
+
+    for (const response of responses) {
+      expect(response.status).toBe(500);
+    }
   });
 
   it('accepts signed Stripe webhooks without user authentication', async () => {
