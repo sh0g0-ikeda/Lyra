@@ -583,6 +583,50 @@ describe('createOrganizationRoutes', () => {
       expect(response.status).toBe(500);
     }
   });
+
+  it('法人usage・auditの2成功JSONは契約外Service値を500にする', async () => {
+    const organizationService = new FakeOrganizationService();
+    organizationService.listUsageEvents = async () => [
+      {
+        id: '',
+        organizationId,
+        userId: null,
+        workId: null,
+        generationJobId: null,
+        eventType: 'page_generate',
+        creditAmount: -3,
+        metadata: {},
+        createdAt: new Date('2026-07-30T00:00:00.000Z'),
+      },
+    ];
+    organizationService.listAuditLogs = async () => [
+      {
+        id: '',
+        organizationId,
+        actorUserId: null,
+        action: 'subscription.paid',
+        targetType: 'organization',
+        targetId: null,
+        metadata: {},
+        createdAt: new Date('2026-07-30T00:00:00.000Z'),
+      },
+    ];
+    const routes = createOrganizationRoutes({
+      authMiddleware: buildAuthMiddleware(testUser),
+      rateLimitMiddleware: buildPassThroughMiddleware(),
+      organizationService: organizationService as unknown as OrganizationServicePort,
+      organizationBillingService: new FakeOrganizationBillingService() as unknown as OrganizationBillingServicePort,
+    });
+
+    const responses = await Promise.all([
+      routes.request(`/organizations/${organizationId}/usage`),
+      routes.request(`/organizations/${organizationId}/audit-logs`),
+    ]);
+
+    for (const response of responses) {
+      expect(response.status).toBe(500);
+    }
+  });
 });
 
 function buildAuthMiddleware(user: AuthenticatedUser): MiddlewareHandler<AppEnv> {
