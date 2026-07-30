@@ -134,6 +134,42 @@ export const panelAssignmentsResponseSchema = z.object({
   entities: z.array(panelEntityAssignmentSchema),
 });
 
+const panelDialogueSchema = z.object({
+  entity_id: nullableStringSchema,
+  text: z.string(),
+  type: z.enum(['speech', 'thought', 'narration', 'shout', 'whisper', 'sfx']),
+  position: z.enum(['top', 'bottom', 'left', 'right', 'center']),
+});
+
+export const panelSchema = z.object({
+  id: idSchema,
+  page_id: idSchema,
+  order: z.number().int().positive(),
+  panel_role: z.enum(['establish', 'action', 'reaction', 'emphasis', 'transition', 'pause', 'impact']),
+  panel_size: z.enum(['standard', 'large', 'wide', 'narrow', 'splash']),
+  situation_text: nullableStringSchema,
+  entities: z.array(panelEntityAssignmentSchema),
+  composition: z.object({
+    source: z.enum(['gallery', 'custom', 'ai_auto']),
+    gallery_item_id: nullableStringSchema,
+    composition_prompt: nullableStringSchema,
+    shot_type: nullableStringSchema,
+    angle: nullableStringSchema,
+    custom_note: nullableStringSchema,
+  }),
+  dialogue_in_panel: z.boolean(),
+  dialogue: z.array(panelDialogueSchema),
+  sfx_text: nullableStringSchema,
+  background_note: nullableStringSchema,
+  panel_notes: nullableStringSchema,
+  created_at: timestampSchema,
+  updated_at: timestampSchema,
+});
+
+export const panelsResponseSchema = z.object({
+  panels: z.array(panelSchema),
+});
+
 export const panelFrameSchema = z.object({
   id: idSchema,
   page_id: idSchema,

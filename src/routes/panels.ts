@@ -1,4 +1,8 @@
 import { Hono, type Context, type MiddlewareHandler } from 'hono';
+import {
+  panelSchema,
+  panelsResponseSchema,
+} from '../../packages/api-contract/src/mobileApiSchemas.js';
 import { ValidationError } from '../domain/errors/index.js';
 import type { Panel, PanelDialogueLine } from '../domain/types/panel.js';
 import {
@@ -16,6 +20,7 @@ import {
   recordOrganizationAudit,
   requireOrganizationCapability,
 } from './organizationRouteHelpers.js';
+import { assertMobileResponseContract } from './mobileResponseContract.js';
 import { readJsonBody } from './requestBody.js';
 
 export interface PanelRouteDependencies {
@@ -64,7 +69,7 @@ export function createPanelRoutes(dependencies: PanelRouteDependencies): Hono<Ap
       order: body.data.order,
     });
 
-    return c.json(toPanelResponse(panel), 201);
+    return c.json(assertMobileResponseContract(panelSchema, toPanelResponse(panel)), 201);
   });
 
   app.get('/pages/:id/panels', async (c) => {
@@ -74,7 +79,8 @@ export function createPanelRoutes(dependencies: PanelRouteDependencies): Hono<Ap
     await requireOrganizationCapability(c, dependencies, organizationId, 'view_work');
     const panels = await dependencies.panelService.listPanels(user.id, pageId, organizationId);
 
-    return c.json({ panels: panels.map(toPanelResponse) });
+    const payload = { panels: panels.map(toPanelResponse) };
+    return c.json(assertMobileResponseContract(panelsResponseSchema, payload));
   });
 
   app.put('/pages/:id/panels/order', async (c) => {
@@ -93,7 +99,8 @@ export function createPanelRoutes(dependencies: PanelRouteDependencies): Hono<Ap
       panel_count: body.data.panel_ids.length,
     });
 
-    return c.json({ panels: panels.map(toPanelResponse) });
+    const payload = { panels: panels.map(toPanelResponse) };
+    return c.json(assertMobileResponseContract(panelsResponseSchema, payload));
   });
 
   app.put('/panels/:id', async (c) => {
@@ -130,7 +137,7 @@ export function createPanelRoutes(dependencies: PanelRouteDependencies): Hono<Ap
       fields: Object.keys(body.data),
     });
 
-    return c.json(toPanelResponse(panel));
+    return c.json(assertMobileResponseContract(panelSchema, toPanelResponse(panel)));
   });
 
   app.delete('/panels/:id', async (c) => {

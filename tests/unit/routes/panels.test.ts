@@ -323,6 +323,85 @@ describe('panel routes', () => {
       ],
     });
   });
+
+  it('作成Serviceが契約外のPanelを返す場合は500にする', async () => {
+    const panelService = new FakePanelService();
+    panelService.createPanel = async () => buildPanel({ order: 0 });
+    const app = createTestApp(panelService);
+    const token = await createToken();
+
+    const response = await app.request(`/api/pages/${pageId}/panels`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ order: 1 }),
+    });
+
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: 'CONFIGURATION_ERROR' },
+    });
+  });
+
+  it('一覧Serviceが契約外のPanelを返す場合は500にする', async () => {
+    const panelService = new FakePanelService();
+    panelService.listPanels = async () => [buildPanel({ order: 0 })];
+    const app = createTestApp(panelService);
+    const token = await createToken();
+
+    const response = await app.request(`/api/pages/${pageId}/panels`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: 'CONFIGURATION_ERROR' },
+    });
+  });
+
+  it('並べ替えServiceが契約外のPanelを返す場合は500にする', async () => {
+    const panelService = new FakePanelService();
+    panelService.reorderPanels = async () => [buildPanel({ order: 0 })];
+    const app = createTestApp(panelService);
+    const token = await createToken();
+
+    const response = await app.request(`/api/pages/${pageId}/panels/order`, {
+      method: 'PUT',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ panel_ids: [panelId] }),
+    });
+
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: 'CONFIGURATION_ERROR' },
+    });
+  });
+
+  it('更新Serviceが契約外のPanelを返す場合は500にする', async () => {
+    const panelService = new FakePanelService();
+    panelService.updatePanel = async () => buildPanel({ order: 0 });
+    const app = createTestApp(panelService);
+    const token = await createToken();
+
+    const response = await app.request(`/api/panels/${panelId}`, {
+      method: 'PUT',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ panel_size: 'wide' }),
+    });
+
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: 'CONFIGURATION_ERROR' },
+    });
+  });
 });
 
 function createTestApp(panelService: PanelServicePort): ReturnType<typeof createApp> {
