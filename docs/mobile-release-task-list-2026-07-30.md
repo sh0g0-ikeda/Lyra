@@ -6,7 +6,7 @@
 
 対象PR: [#67 feat(mobile): production-ready Lyra mobile workflow](https://github.com/sh0g0-ikeda/Lyra/pull/67)
 
-進捗: 9件完了 / 422件未完了
+進捗: 10件完了 / 421件未完了
 
 実装監査基準: `d152183`（PR #82統合後、全CI成功。以後のmain変更はタスクリスト文書のみ）
 
@@ -95,7 +95,7 @@ PR #67の分割とmain同期
 | BLOCK-15 | Partial | Android FCMは準備済みだが、APNs未設定のためPush全体は無効 |
 | BLOCK-16 | Partial | Sentryコードはあるが、本番DSN、source map、alert証跡がない |
 | BLOCK-17 | Blocked | mainのbranch protectionが未設定で、CIがpendingまたはfailedでもmergeを防止できない |
-| BLOCK-18 | Partial | Mobile viewportの階層メニューE2Eで、Escape後の閉鎖待ちが断続的に失敗する |
+| BLOCK-18 | Resolved | PR #87で階層メニュートリガーに残ったフォーカスからのEscape閉鎖を決定化し、反復テストと全CIが成功 |
 | BLOCK-19 | Partial | Mobileのアカウント画面で、正常状態やジョブ0件をエラーとして表示するfalse positiveがある |
 
 ### 2.2 残タスクの実行区分と優先順
@@ -236,9 +236,10 @@ Codex単独で進める次の順序は、`CI安定化 → アカウント画面�
 - [ ] Backend buildを通す
 - [ ] Web lint/buildを通す
 - [ ] Playwright smokeを通す
-  - [ ] Mobile viewportの階層メニューでEscape後の閉鎖待ちを安定化する
+  - [x] Mobile viewportの階層メニューでEscape後の閉鎖待ちを安定化する
     - 現状: PR #82の初回CIで13件中1件が失敗し、再実行と統合後mainでは13件すべて成功
     - 完了条件: 同テストの反復実行でflaky failureが再発しない
+    - 証跡: [PR #87](https://github.com/sh0g0-ikeda/Lyra/pull/87)で修正前の決定的失敗、修正後1/1、反復5/5、全Playwright 13/13、CI run `30526596364`の全gate成功を確認
 - [ ] Mobile `npm ci`を通す
 - [ ] Mobile Expo dependency check / doctorを通す
 - [ ] Mobile typecheck / lint / Vitestを通す

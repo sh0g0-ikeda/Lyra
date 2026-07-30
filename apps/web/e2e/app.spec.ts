@@ -837,6 +837,8 @@ test('keeps the story hierarchy usable on a mobile viewport', async ({ page }) =
   await workMenuTrigger.click();
   await expect(page.getByRole('menuitem', { name: 'Rename work', exact: true })).toBeVisible();
   await expect(page.getByRole('menuitem', { name: 'Add chapter', exact: true })).toBeVisible();
+  await workMenuTrigger.focus();
+  await expect(workMenuTrigger).toBeFocused();
   await page.keyboard.press('Escape');
   await expect(page.getByRole('menu', { name: 'Actions for work “Moonlit Regiment”', exact: true })).toHaveCount(0);
   await expect(workMenuTrigger).toBeFocused();

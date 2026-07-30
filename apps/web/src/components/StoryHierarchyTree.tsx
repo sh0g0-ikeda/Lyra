@@ -930,6 +930,12 @@ function HierarchyActionMenu(props: {
   };
 
   const handleTriggerKeyDown = (event: KeyboardEvent<HTMLButtonElement>): void => {
+    if (event.key === 'Escape' && open) {
+      event.preventDefault();
+      event.stopPropagation();
+      closeMenu(true);
+      return;
+    }
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
       event.preventDefault();
       openMenu(event.key === 'ArrowUp' ? 'last' : 'first');
