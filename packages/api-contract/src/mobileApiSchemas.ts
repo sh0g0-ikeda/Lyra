@@ -290,6 +290,39 @@ export const entityStatesResponseSchema = z.object({
   entity_states: z.array(entityStateSchema),
 });
 
+const pageGenerationModeSchema = z.enum(['standard', 'thinking']);
+const generatedPageImageSchema = z
+  .object({
+    cdn_url: z.string().min(1).nullable().optional(),
+    generation_mode: pageGenerationModeSchema.nullable(),
+    generated_at: timestampSchema.nullable(),
+  })
+  .strict();
+
+export const pageSchema = z.object({
+  id: idSchema,
+  episode_id: idSchema,
+  page_number: z.number().int().positive(),
+  layout_config: unknownRecordSchema,
+  story_source_scene_ids: z.array(idSchema),
+  story_page_purpose: nullableStringSchema,
+  story_continuity_note: nullableStringSchema,
+  dialogue_mode: z.enum(['image_baked', 'balloon_only', 'mixed']),
+  page_dialogue_toggle: z.boolean(),
+  generation_mode: pageGenerationModeSchema.nullable(),
+  generated_image: generatedPageImageSchema.nullable(),
+  status: z.enum(['designing', 'generating', 'generated', 'editing', 'confirmed']),
+  panel_count: z.number().int().nonnegative(),
+  frame_count: z.number().int().nonnegative(),
+  balloon_count: z.number().int().nonnegative(),
+  created_at: timestampSchema,
+  updated_at: timestampSchema,
+});
+
+export const pagesResponseSchema = z.object({
+  pages: z.array(pageSchema),
+});
+
 export const compositionSchema = z.object({
   id: idSchema,
   name: z.string(),
