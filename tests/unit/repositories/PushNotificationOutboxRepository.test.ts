@@ -51,6 +51,33 @@ describe('PostgresPushNotificationOutboxRepository', () => {
     },
   );
 
+  it.each([
+    [
+      'cancel request',
+      {
+        cancel_requested_at: new Date('2026-07-31T00:01:00.000Z'),
+        cancelled_at: null,
+      },
+    ],
+    [
+      'cancelled timestamp',
+      {
+        cancel_requested_at: null,
+        cancelled_at: new Date('2026-07-31T00:02:00.000Z'),
+      },
+    ],
+  ])('%sがあるfailed jobはoutboxを作らない', async (_label, cancellationMetadata) => {
+    const database = new RecordingTransactionDatabase();
+    database.responses.push([jobRow('failed', cancellationMetadata)]);
+    const repository = new PostgresPushNotificationOutboxRepository(database);
+
+    await expect(repository.enqueueForTerminalJob(jobId)).resolves.toBeNull();
+
+    expect(database.queries).toHaveLength(1);
+    expect(database.queries[0]?.text).toContain('cancel_requested_at');
+    expect(database.queries[0]?.text).toContain('cancelled_at');
+  });
+
   it('同じterminal eventの再実行は既存outboxを返してdeliveryを増やさない', async () => {
     const database = new RecordingTransactionDatabase();
     database.responses.push(
@@ -113,12 +140,16 @@ class RecordingTransactionDatabase implements DatabaseClient, TransactionRunner 
 
 function jobRow(
   status: 'queued' | 'processing' | 'completed' | 'failed' | 'cancelled',
+  overrides: QueryResultRow = {},
 ): QueryResultRow {
   return {
     id: jobId,
     user_id: userId,
     organization_id: organizationId,
     status,
+    cancel_requested_at: null,
+    cancelled_at: null,
+    ...overrides,
   };
 }
 

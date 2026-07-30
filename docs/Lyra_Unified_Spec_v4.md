@@ -80,7 +80,9 @@ installation. Persistence and internal services alone do not enable registration
 routes, device permission prompts, or APNs / FCM delivery.
 
 Push notification outbox rows snapshot only completed or failed generation-job
-events and reference same-user token registrations without copying ciphertext.
+events with no cancellation request or cancellation timestamp, and reference
+same-user token registrations without copying ciphertext. A failed state never
+overrides cancellation evidence for notification eligibility.
 Migrations never attach triggers to current generation-job transitions. Explicit
 enqueue, retry invalidation, lease-based delivery, and provider dispatch must be
 wired and verified together before push delivery is enabled.
