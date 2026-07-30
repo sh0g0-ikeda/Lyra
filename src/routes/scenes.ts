@@ -1,6 +1,7 @@
 import { Hono, type Context, type MiddlewareHandler } from 'hono';
 import {
   entityStateSchema,
+  entityStatesResponseSchema,
   sceneSchema,
   scenesResponseSchema,
 } from '../../packages/api-contract/src/mobileApiSchemas.js';
@@ -109,6 +110,21 @@ export function createSceneRoutes(dependencies: SceneRouteDependencies): Hono<Ap
     await recordOrganizationAudit(dependencies, organizationId, user.id, 'scene.deleted', 'scene', sceneId);
 
     return c.body(null, 204);
+  });
+
+  app.get('/entities/:id/states', async (c) => {
+    const user = c.get('user');
+    const entityId = parseUuidParam(c, 'id');
+    const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'view_work');
+    const entityStates = await dependencies.sceneService.listEntityStates(
+      user.id,
+      entityId,
+      organizationId,
+    );
+
+    const payload = { entity_states: entityStates.map(toEntityStateResponse) };
+    return c.json(assertMobileResponseContract(entityStatesResponseSchema, payload));
   });
 
   app.post('/entities/:id/states', async (c) => {

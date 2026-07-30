@@ -109,6 +109,10 @@ export const entityStateSchema = z.object({
   created_at: timestampSchema,
 });
 
+export const entityStatesResponseSchema = z.object({
+  entity_states: z.array(entityStateSchema),
+});
+
 export const compositionSchema = z.object({
   id: idSchema,
   name: z.string(),

@@ -58,6 +58,11 @@ export interface SceneRepository {
     organizationId?: string | null,
   ): Promise<Scene | null>;
   deleteScene(sceneId: string, userId: string, organizationId?: string | null): Promise<boolean>;
+  findEntityStatesByEntityIdAndUserId(
+    entityId: string,
+    userId: string,
+    organizationId?: string | null,
+  ): Promise<EntityState[]>;
   createEntityState(entityId: string, input: CreateEntityStateInput): Promise<EntityState>;
   updateEntityState(
     entityId: string,
@@ -408,6 +413,40 @@ export class PostgresSceneRepository implements SceneRepository {
     );
 
     return mapEntityStateRow(result.rows[0]);
+  }
+
+  public async findEntityStatesByEntityIdAndUserId(
+    entityId: string,
+    userId: string,
+    organizationId: string | null = null,
+  ): Promise<EntityState[]> {
+    const result = await this.client.query<EntityStateRow>(
+      `
+      SELECT entity_states.*
+      FROM entity_states
+      INNER JOIN entities ON entities.id = entity_states.entity_id
+      INNER JOIN works ON works.id = entities.work_id
+      WHERE entity_states.entity_id = $1
+        AND (
+          ($3::uuid IS NULL AND works.organization_id IS NULL AND entities.user_id = $2)
+          OR (
+            $3::uuid IS NOT NULL
+            AND works.organization_id = $3::uuid
+            AND EXISTS (
+              SELECT 1
+              FROM organization_members
+              WHERE organization_members.organization_id = works.organization_id
+                AND organization_members.user_id = $2
+                AND organization_members.status = 'active'
+            )
+          )
+        )
+      ORDER BY entity_states.created_at ASC, entity_states.id ASC
+      `,
+      [entityId, userId, organizationId],
+    );
+
+    return result.rows.map(mapEntityStateRow);
   }
 
   public async updateEntityState(

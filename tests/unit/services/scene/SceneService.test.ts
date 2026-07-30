@@ -113,6 +113,10 @@ class FakeSceneRepository implements SceneRepository {
     return sceneContext === null ? false : this.scenes.delete(sceneId);
   }
 
+  public async findEntityStatesByEntityIdAndUserId(entityId: string): Promise<EntityState[]> {
+    return [...this.entityStates.values()].filter((entityState) => entityState.entityId === entityId);
+  }
+
   public async createEntityState(entityId: string, input: CreateEntityStateInput): Promise<EntityState> {
     const entityState: EntityState = {
       id: `state-${this.entityStates.size + 1}`,
@@ -271,6 +275,20 @@ describe('SceneService', () => {
         extraNote: null,
       }),
     ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' } satisfies Partial<AppError>);
+  });
+  it('所有Entityにstateが0件の場合は空一覧を返す', async () => {
+    const { service, entityReader } = createService();
+    entityReader.addEntity(buildEntity({ id: 'entity-1', workId: 'work-1' }));
+
+    await expect(service.listEntityStates('user-1', 'entity-1')).resolves.toEqual([]);
+  });
+
+  it('所有していないEntityのstate一覧はNOT_FOUNDにする', async () => {
+    const { service } = createService();
+
+    await expect(service.listEntityStates('user-1', 'entity-1')).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+    } satisfies Partial<AppError>);
   });
 });
 

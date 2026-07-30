@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   entityStateSchema,
+  entityStatesResponseSchema,
   sceneSchema,
   scenesResponseSchema,
 } from '../../../packages/api-contract/src/mobileApiSchemas.js';
@@ -40,6 +41,10 @@ describe('Scene response contract', () => {
 
   it('scene未選択とnullable noteを持つEntity stateを受理する', () => {
     expect(entityStateSchema.safeParse(validEntityState).success).toBe(true);
+  });
+
+  it('Entity stateが0件の一覧wrapperを受理する', () => {
+    expect(entityStatesResponseSchema.safeParse({ entity_states: [] }).success).toBe(true);
   });
 
   it('非正order・不正status・不完全なstate referenceを拒否する', () => {

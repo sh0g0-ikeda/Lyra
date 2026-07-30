@@ -73,6 +73,21 @@ describe('PostgresSceneRepository', () => {
       }),
     ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
   });
+  it('Entity state一覧をpersonalとactive organization membershipでscopeして安定順に返す', async () => {
+    const client = new QueryCapturingClient(entityStateRow());
+    const repository = new PostgresSceneRepository(client);
+
+    const states = await repository.findEntityStatesByEntityIdAndUserId(
+      '55555555-5555-4555-8555-555555555555',
+      'user-1',
+      '77777777-7777-4777-8777-777777777777',
+    );
+
+    expect(states).toHaveLength(1);
+    expect(client.queries[0]).toContain('works.organization_id IS NULL AND entities.user_id = $2');
+    expect(client.queries[0]).toContain("organization_members.status = 'active'");
+    expect(client.queries[0]).toContain('ORDER BY entity_states.created_at ASC, entity_states.id ASC');
+  });
 });
 
 function sceneRow(): Record<string, unknown> {
