@@ -600,7 +600,8 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   'Add episode': '話を追加',
   'Generate page plan': 'ページ骨格生成',
   'Regenerate page plan': 'ページ骨格を上書き再生成',
-  'Apply story plan': '話全体を反映',
+  'Apply story plan': 'ストーリーから設定を自動入力',
+  'Autofill page settings from story': 'ストーリーから設定を自動入力',
   'Improve draft': '改善する',
   'Apply all': 'すべて反映',
   'Apply to title': 'タイトルへ反映',
@@ -654,7 +655,7 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   'Billing portal': '請求管理',
   page_generate: 'ページ生成',
   entity_generate: 'キャラ生成',
-  episode_story_autofill: '話全体を反映',
+  episode_story_autofill: 'ストーリーから設定を自動入力',
   'Switch story context for page editing.': 'ページ編集対象の作品・章・話を選択します。',
   'Double-click image to enlarge': '画像をダブルクリックで拡大',
   'Loading current page plan.': '現在のページ骨格を読み込んでいます。',
@@ -671,9 +672,9 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   Stop: '\u505c\u6b62',
   'Stopping...': '\u505c\u6b62\u4e2d...',
   Remove: '\u524a\u9664',
-  'Stop this story apply job?': '\u8a71\u5168\u4f53\u306e\u53cd\u6620\u3092\u505c\u6b62\u3057\u307e\u3059\u304b\uff1f',
+  'Stop this story apply job?': 'ストーリーからの設定自動入力を停止しますか？',
   'Stop requested. The current safe step will finish before stopping.': '\u505c\u6b62\u3092\u53d7\u3051\u4ed8\u3051\u307e\u3057\u305f\u3002\u73fe\u5728\u306e\u5b89\u5168\u306a\u51e6\u7406\u5358\u4f4d\u304c\u7d42\u308f\u308a\u6b21\u7b2c\u3001\u505c\u6b62\u3057\u307e\u3059\u3002',
-  'Story plan autofill was stopped.': '\u8a71\u5168\u4f53\u306e\u53cd\u6620\u3092\u505c\u6b62\u3057\u307e\u3057\u305f\u3002',
+  'Story plan autofill was stopped.': 'ストーリーからの設定自動入力を停止しました。',
   'Saving changes. Stop is no longer available.': '\u4fdd\u5b58\u4e2d\u306e\u305f\u3081\u3001\u505c\u6b62\u3067\u304d\u307e\u305b\u3093\u3002',
   'Remove from job history': '\u30b8\u30e7\u30d6\u5c65\u6b74\u304b\u3089\u524a\u9664',
   'Only PNG, JPEG, and WebP are allowed.': 'PNG/JPEG/WebPのみ対応しています。',
@@ -798,7 +799,7 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   'Magic link sent.': 'ログインリンクを送信しました。',
   'Manual bearer token': '手動トークン',
   'Supabase client is not configured.': 'ログイン設定がまだ完了していません。',
-  'Applying story plan to pages and panels. This process can take around 20 minutes.': 'ページとコマへ反映中です。この処理は20分程度かかる場合があります。',
+  'Applying story plan to pages and panels. This process can take around 20 minutes.': 'ストーリーからページとコマの設定を自動入力しています。この処理は20分程度かかる場合があります。',
   'Planning story beats across the full episode. This process can take around 20 minutes.':
     '\u8a71\u5168\u4f53\u306e\u6d41\u308c\u3092\u30da\u30fc\u30b8\u3054\u3068\u306b\u6574\u7406\u3057\u3066\u3044\u307e\u3059\u3002\u3053\u306e\u51e6\u7406\u306f20\u5206\u7a0b\u5ea6\u304b\u304b\u308b\u5834\u5408\u304c\u3042\u308a\u307e\u3059\u3002',
   'Compiling story plan chunks. This process can take around 20 minutes.':
@@ -810,11 +811,11 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   'Applying targeted continuity repairs. This process can take around 20 minutes.':
     '\u554f\u984c\u306e\u3042\u308b\u30da\u30fc\u30b8\u3068\u30b3\u30de\u3060\u3051\u3092\u4fee\u6b63\u3057\u3066\u3044\u307e\u3059\u3002\u3053\u306e\u51e6\u7406\u306f20\u5206\u7a0b\u5ea6\u304b\u304b\u308b\u5834\u5408\u304c\u3042\u308a\u307e\u3059\u3002',
   'Saving story plan to pages and panels. This process can take around 20 minutes.':
-    '\u30da\u30fc\u30b8\u3068\u30b3\u30de\u3078\u53cd\u6620\u3057\u3066\u3044\u307e\u3059\u3002\u3053\u306e\u51e6\u7406\u306f20\u5206\u7a0b\u5ea6\u304b\u304b\u308b\u5834\u5408\u304c\u3042\u308a\u307e\u3059\u3002',
+    'ストーリーからの設定自動入力を保存しています。この処理は20分程度かかる場合があります。',
   'Story plan applied to pages and panels.':
-    '\u30da\u30fc\u30b8\u3068\u30b3\u30de\u3078\u306e\u53cd\u6620\u304c\u5b8c\u4e86\u3057\u307e\u3057\u305f\u3002',
+    'ストーリーからページとコマの設定を自動入力しました。',
   'Story plan autofill failed.':
-    '\u30da\u30fc\u30b8\u3068\u30b3\u30de\u3078\u306e\u53cd\u6620\u306b\u5931\u6557\u3057\u307e\u3057\u305f\u3002\u5165\u529b\u5185\u5bb9\u3092\u4fdd\u5b58\u3057\u3001\u5c11\u3057\u5f85\u3063\u3066\u304b\u3089\u3082\u3046\u4e00\u5ea6\u304a\u8a66\u3057\u304f\u3060\u3055\u3044\u3002',
+    'ストーリーからの設定自動入力に失敗しました。入力内容を保存し、少し待ってからもう一度お試しください。',
 };
 
 const UI_JA_OPTION_DICTIONARY: Record<string, string> = {
@@ -1432,7 +1433,7 @@ function formatAuditAction(language: UiLanguage, log: OrganizationAuditLogRecord
     'episode.moved': { en: 'Episode moved', ja: '話並び替え' },
     'episode.page_skeleton_queued': { en: 'Page skeleton queued', ja: 'ページ骨格生成開始' },
     'episode.page_skeleton_generated': { en: 'Page skeleton generated', ja: 'ページ骨格生成' },
-    'episode.story_autofill_queued': { en: 'Story applied to pages', ja: '話全体を反映開始' },
+    'episode.story_autofill_queued': { en: 'Story settings autofill started', ja: 'ストーリーから設定を自動入力開始' },
     'entity.created': { en: 'Character created', ja: 'キャラ作成' },
     'entity.updated': { en: 'Character updated', ja: 'キャラ更新' },
     'entity.deleted': { en: 'Character deleted', ja: 'キャラ削除' },
@@ -1566,10 +1567,10 @@ const tutorialSteps: Array<{
   {
     title: { en: 'Pages And Export', ja: 'ページ生成と保存' },
     steps: [
-      { en: 'After creating the needed characters, return to Story and press Generate page plan.', ja: '必要なキャラを作成したら、ストーリーに戻ってページ骨格を生成します。' },
+      { en: 'After creating the needed characters, open Pages and press Generate page plan.', ja: '必要なキャラを作成したら、ページを開いてページ骨格を生成します。' },
       { en: 'Page plan generation creates pages, frames, and panel slots. It can take a few minutes.', ja: 'ページ骨格生成ではページ、枠、コマ欄を作ります。数分かかる場合があります。' },
-      { en: 'Use Apply story plan when you want the story distributed into panel details, characters, camera, background, and dialogue.', ja: '話をコマごとの状況、登場人物、カメラ、背景、セリフへ分配したい時は、話全体を反映します。' },
-      { en: 'Apply story plan can take up to about 20 minutes. Keep the screen open while it is running.', ja: '話全体を反映は20分程度かかる場合があります。処理中は画面を開いたまま待ってください。' },
+      { en: 'Use Autofill page settings from story to distribute the story into panel details, characters, camera, background, and dialogue.', ja: '話をコマごとの状況、登場人物、カメラ、背景、セリフへ分配したい時は、ストーリーから設定を自動入力します。' },
+      { en: 'Autofill page settings from story can take up to about 20 minutes. Keep the screen open while it is running.', ja: 'ストーリーから設定を自動入力は20分程度かかる場合があります。処理中は画面を開いたまま待ってください。' },
       { en: 'Open Pages, review each page, and adjust panel content, frame template, panel order, or panel count.', ja: 'ページを開き、各ページのコマ内容、コマ割り、コマ順、コマ数を調整します。' },
       { en: 'When ready, press Generate page. The image is created from the current saved page inputs.', ja: '調整できたらページ生成を押します。現在保存されているページ入力から画像を作ります。' },
       { en: 'If the image is not right, edit the panel inputs, save, and generate the page again.', ja: '結果が合わない場合は、コマ入力を修正して保存し、もう一度ページ生成します。' },
@@ -4948,148 +4949,6 @@ function StudioShell(props: {
             <section className="main-column">
               {activeTab === 'story' ? (
                 <>
-                  <PanelSection
-                    title="Page planning"
-                    collapsible
-                    actions={
-                      <div className="toolbar">
-                        <button
-                          className="primary-button skeleton-plan-button"
-                          disabled={skeletonActionDisabled || selectedEpisodePageSkeletonJob !== null || pageSkeletonBlocked}
-                          onClick={() => {
-                            if (selectedEpisode === null) {
-                              return;
-                            }
-                            const overwriteExisting = episodeHasExistingPagePlan;
-                            if (
-                              overwriteExisting &&
-                              !window.confirm(
-                                translateUiString(
-                                  uiLanguage,
-                                  'Regenerating the page plan will replace the current pages for this episode.',
-                                ),
-                              )
-                            ) {
-                              return;
-                            }
-                            void runAction('Generate page skeleton', async () => {
-                              await saveCurrentEpisodeContext();
-                              setSelectedPageId('');
-                              setSelectedPanelId('');
-                              const result = await api.generatePageSkeleton(
-                                selectedEpisode.id,
-                                {
-                                  overwrite_existing: overwriteExisting,
-                                  apply_story_plan: false,
-                                  language: uiLanguage,
-                                },
-                                activeOrganizationId,
-                              );
-                              if ('job_id' in result) {
-                                trackJob(result.job_id);
-                              } else {
-                                await invalidateScopedQuery(['episodes', selectedChapter?.id ?? '']);
-                                await invalidateScopedQuery(['scenes', selectedEpisode.id]);
-                                await invalidateScopedQuery(['pages', selectedEpisode.id]);
-                              }
-                              setActiveTab('pages');
-                            });
-                          }}
-                          type="button"
-                        >
-                          {busyAction === 'Generate page skeleton' || selectedEpisodePageSkeletonJob !== null ? (
-                            <LoaderCircle className="spin" size={16} />
-                          ) : (
-                            <Sparkles size={16} />
-                          )}
-                          {translateUiString(uiLanguage, skeletonActionLabel)}
-                        </button>
-                        <button
-                          className="secondary-button story-plan-button"
-                          disabled={
-                            selectedEpisode === null ||
-                            busyAction === 'Apply story plan' ||
-                            selectedEpisodeStoryAutofillJob !== null ||
-                            selectedEpisodePageSkeletonJob !== null ||
-                            storyApplyBlocked
-                          }
-                          onClick={() => {
-                            if (selectedEpisode === null) {
-                              return;
-                            }
-                            void runAction('Apply story plan', async () => {
-                              await saveCurrentEpisodeContext();
-                              const result = await api.autofillEpisodePagesFromStory(
-                                selectedEpisode.id,
-                                uiLanguage,
-                                activeOrganizationId,
-                              );
-                              trackJob(result.job_id);
-                              setActiveTab('pages');
-                            });
-                          }}
-                          type="button"
-                        >
-                          <Wand2 size={16} />
-                          {translateUiString(uiLanguage, 'Apply story plan')}
-                        </button>
-                      </div>
-                    }
-                  >
-                    <div className="feature-guidance">
-                      <p>{translateUiString(uiLanguage, 'Use these two steps to turn the episode story into panel details.')}</p>
-                      <p>
-                        <strong>{`1. ${translateUiString(uiLanguage, skeletonActionLabel)}`}</strong>
-                        <span>{translateUiString(uiLanguage, 'Builds the page and panel allocation and the overall story flow.')}</span>
-                      </p>
-                      <p>
-                        <strong>{`2. ${translateUiString(uiLanguage, 'Apply story plan')}`}</strong>
-                        <span>
-                          {translateUiString(
-                            uiLanguage,
-                            'Fills each panel with characters, situation, composition, and dialogue based on that plan.',
-                          )}
-                        </span>
-                      </p>
-                    </div>
-                    <GenerationReadinessNotice
-                      blockers={pageSkeletonBlockers}
-                      language={uiLanguage}
-                      onAction={navigateToReadinessTarget}
-                    />
-                    <GenerationReadinessNotice
-                      blockers={storyApplyBlockers}
-                      language={uiLanguage}
-                      onAction={navigateToReadinessTarget}
-                    />
-                    {skeletonActionMessage !== null ? (
-                      <div className="muted small">{translateUiString(uiLanguage, skeletonActionMessage)}</div>
-                    ) : null}
-                    {skeletonGenerationMessage !== null ? (
-                      <ProcessingHint
-                        message={translateUiString(uiLanguage, skeletonGenerationMessage)}
-                        progressPercent={
-                          selectedEpisodePageSkeletonJob === null ? null : getJobProgressPercent(selectedEpisodePageSkeletonJob)
-                        }
-                        showProgress
-                      />
-                    ) : null}
-                    {storyPlanProcessingMessage !== null ? (
-                      <ProcessingHint
-                        message={translateUiString(uiLanguage, storyPlanProcessingMessage)}
-                        progressPercent={
-                          selectedEpisodeStoryAutofillJob === null ? null : getJobProgressPercent(selectedEpisodeStoryAutofillJob)
-                        }
-                        showProgress
-                      />
-                    ) : null}
-                    {selectedEpisode !== null ? (
-                      <div className="state-pill-row">
-                        <span className="state-pill state-pill-neutral">
-                          {translateUiString(uiLanguage, 'Text AI actions use no credits.')}
-                        </span>
-                      </div>
-                    ) : null}
                     {SHOW_LEGACY_STORY_HIERARCHY ? (
                     <div className="story-tree">
                       <div className="tree-column">
@@ -5302,7 +5161,6 @@ function StudioShell(props: {
                       </div>
                     </div>
                     ) : null}
-                  </PanelSection>
                 </>
               ) : null}
 
@@ -6055,52 +5913,141 @@ function StudioShell(props: {
               {activeTab === 'pages' && selectedEpisode !== null ? (
                 <>
                   <div className="page-sections-stack">
-                  {selectedPage !== null ? (
-                    <PanelSection
-                      title="Page art direction"
-                      subtitle="Keep generated pages visually consistent by adding an art reference and the desired linework, color, or mood."
-                      className="page-section-style-constraints"
-                      compact
-                      collapsible
-                      actions={
+                  <PanelSection
+                    title="Page planning"
+                    className="page-section-planning"
+                    collapsible
+                    actions={
+                      <div className="toolbar">
                         <button
-                          className="secondary-button"
-                          onClick={() =>
-                            void runAction('Save page settings', async () => {
-                              await api.updatePage(
-                                selectedPage.id,
-                                toPageSettingsPayload(pageSettingsDraft),
+                          className="primary-button skeleton-plan-button"
+                          disabled={skeletonActionDisabled || selectedEpisodePageSkeletonJob !== null || pageSkeletonBlocked}
+                          onClick={() => {
+                            const overwriteExisting = episodeHasExistingPagePlan;
+                            if (
+                              overwriteExisting &&
+                              !window.confirm(
+                                translateUiString(
+                                  uiLanguage,
+                                  'Regenerating the page plan will replace the current pages for this episode.',
+                                ),
+                              )
+                            ) {
+                              return;
+                            }
+                            void runAction('Generate page skeleton', async () => {
+                              await saveCurrentEpisodeContext();
+                              setSelectedPageId('');
+                              setSelectedPanelId('');
+                              const result = await api.generatePageSkeleton(
+                                selectedEpisode.id,
+                                {
+                                  overwrite_existing: overwriteExisting,
+                                  apply_story_plan: false,
+                                  language: uiLanguage,
+                                },
                                 activeOrganizationId,
                               );
-                              await invalidateScopedQuery(['pages', selectedEpisode.id]);
-                            })
-                          }
+                              if ('job_id' in result) {
+                                trackJob(result.job_id);
+                              } else {
+                                await invalidateScopedQuery(['episodes', selectedChapter?.id ?? '']);
+                                await invalidateScopedQuery(['scenes', selectedEpisode.id]);
+                                await invalidateScopedQuery(['pages', selectedEpisode.id]);
+                              }
+                              setActiveTab('pages');
+                            });
+                          }}
                           type="button"
                         >
-                          <Save size={16} />
-                          {translateUiString(uiLanguage, 'Save')}
+                          {busyAction === 'Generate page skeleton' || selectedEpisodePageSkeletonJob !== null ? (
+                            <LoaderCircle className="spin" size={16} />
+                          ) : (
+                            <Sparkles size={16} />
+                          )}
+                          {translateUiString(uiLanguage, skeletonActionLabel)}
                         </button>
-                      }
-                    >
-                      <div className="form-grid two">
-                        <InputField
-                          label="Art style reference"
-                          value={pageSettingsDraft.style_reference_title}
-                          onChange={(value) =>
-                            setPageSettingsDraft((current) => ({ ...current, style_reference_title: value }))
+                        <button
+                          className="secondary-button story-plan-button"
+                          disabled={
+                            busyAction === 'Apply story plan' ||
+                            selectedEpisodeStoryAutofillJob !== null ||
+                            selectedEpisodePageSkeletonJob !== null ||
+                            storyApplyBlocked
                           }
-                        />
-                        <InputField
-                          label="Visual direction notes"
-                          value={pageSettingsDraft.style_reference_notes}
-                          onChange={(value) =>
-                            setPageSettingsDraft((current) => ({ ...current, style_reference_notes: value }))
-                          }
-                        />
+                          onClick={() => {
+                            void runAction('Apply story plan', async () => {
+                              await saveCurrentEpisodeContext();
+                              const result = await api.autofillEpisodePagesFromStory(
+                                selectedEpisode.id,
+                                uiLanguage,
+                                activeOrganizationId,
+                              );
+                              trackJob(result.job_id);
+                              setActiveTab('pages');
+                            });
+                          }}
+                          type="button"
+                        >
+                          <Wand2 size={16} />
+                          {translateUiString(uiLanguage, 'Autofill page settings from story')}
+                        </button>
                       </div>
-                    </PanelSection>
-                  ) : null}
-
+                    }
+                  >
+                    <div className="feature-guidance">
+                      <p>{translateUiString(uiLanguage, 'Use these two steps to turn the episode story into panel details.')}</p>
+                      <p>
+                        <strong>{`1. ${translateUiString(uiLanguage, skeletonActionLabel)}`}</strong>
+                        <span>{translateUiString(uiLanguage, 'Builds the page and panel allocation and the overall story flow.')}</span>
+                      </p>
+                      <p>
+                        <strong>{`2. ${translateUiString(uiLanguage, 'Autofill page settings from story')}`}</strong>
+                        <span>
+                          {translateUiString(
+                            uiLanguage,
+                            'Fills each panel with characters, situation, composition, and dialogue based on that plan.',
+                          )}
+                        </span>
+                      </p>
+                    </div>
+                    <GenerationReadinessNotice
+                      blockers={pageSkeletonBlockers}
+                      language={uiLanguage}
+                      onAction={navigateToReadinessTarget}
+                    />
+                    <GenerationReadinessNotice
+                      blockers={storyApplyBlockers}
+                      language={uiLanguage}
+                      onAction={navigateToReadinessTarget}
+                    />
+                    {skeletonActionMessage !== null ? (
+                      <div className="muted small">{translateUiString(uiLanguage, skeletonActionMessage)}</div>
+                    ) : null}
+                    {skeletonGenerationMessage !== null ? (
+                      <ProcessingHint
+                        message={translateUiString(uiLanguage, skeletonGenerationMessage)}
+                        progressPercent={
+                          selectedEpisodePageSkeletonJob === null ? null : getJobProgressPercent(selectedEpisodePageSkeletonJob)
+                        }
+                        showProgress
+                      />
+                    ) : null}
+                    {storyPlanProcessingMessage !== null ? (
+                      <ProcessingHint
+                        message={translateUiString(uiLanguage, storyPlanProcessingMessage)}
+                        progressPercent={
+                          selectedEpisodeStoryAutofillJob === null ? null : getJobProgressPercent(selectedEpisodeStoryAutofillJob)
+                        }
+                        showProgress
+                      />
+                    ) : null}
+                    <div className="state-pill-row">
+                      <span className="state-pill state-pill-neutral">
+                        {translateUiString(uiLanguage, 'Text AI actions use no credits.')}
+                      </span>
+                    </div>
+                  </PanelSection>
                   <PanelSection title="Pages" className="page-section-pages" collapsible>
                     <div className="page-grid">
                       {pages.map((page) => (
@@ -6202,98 +6149,6 @@ function StudioShell(props: {
                             }
                           />
                         </div>
-                      </PanelSection>
-
-                      <PanelSection
-                        title={`Page ${selectedPage.page_number}`}
-                        subtitle={
-                          uiLanguage === 'ja'
-                            ? `セリフ ${translateUiString(uiLanguage, selectedPage.dialogue_mode === 'image_baked' ? 'Image baked' : selectedPage.dialogue_mode === 'balloon_only' ? 'Balloon only' : 'Mixed')}`
-                            : `dialogue ${selectedPage.dialogue_mode}`
-                        }
-                        className="page-section-generate"
-                        collapsible
-                        actions={
-                          <div className="toolbar">
-                            <button
-                              className="primary-button"
-                              disabled={generatePageDisabled}
-                              onClick={() =>
-                                void runAction('Generate page', async () => {
-                                  if (selectedPageHasFramePanelMismatch) {
-                                    throw new Error(translateUiString(uiLanguage, 'Frame count and panel count do not match. Adjust frames or panels before generating.'));
-                                  }
-                                  await saveCurrentPageGenerationContext();
-                                  const result = await api.generatePage(selectedPage.id, activeOrganizationId);
-                                  trackJob(result.job_id);
-                                })
-                              }
-                              type="button"
-                            >
-                              <Play size={16} />
-                              {translateUiString(uiLanguage, 'Generate page')}
-                            </button>
-                            <button
-                              className="ghost-button"
-                              onClick={() =>
-                                void runAction('Confirm page', async () => {
-                                  await api.confirmPage(selectedPage.id, activeOrganizationId);
-                                  await invalidateScopedQuery(['pages', selectedEpisode.id]);
-                                })
-                              }
-                              type="button"
-                            >
-                              <Check size={16} />
-                              {translateUiString(uiLanguage, 'Confirm page')}
-                            </button>
-                            <button
-                              className="ghost-button"
-                              onClick={() =>
-                                void runAction('Reopen page', async () => {
-                                  await api.reopenPage(selectedPage.id, activeOrganizationId);
-                                  await invalidateScopedQuery(['pages', selectedEpisode.id]);
-                                })
-                              }
-                              type="button"
-                            >
-                              <RefreshCw size={16} />
-                              {translateUiString(uiLanguage, 'Reopen page')}
-                            </button>
-                          </div>
-                        }
-                      >
-                        {pageImageGenerationMessage !== null ? (
-                          <ProcessingHint
-                            message={translateUiString(uiLanguage, pageImageGenerationMessage)}
-                            queued={selectedPageGenerationJob?.status === 'queued'}
-                            progressPercent={
-                              selectedPageGenerationJob === null ? null : getJobProgressPercent(selectedPageGenerationJob)
-                            }
-                            showProgress
-                          />
-                        ) : null}
-                        <div className="state-pill-row">
-                          <span className="state-pill state-pill-neutral">
-                            {translateUiString(uiLanguage, 'Page generation starts at 3 credits.')}
-                          </span>
-                        </div>
-                        <GenerationReadinessNotice
-                          blockers={pageGenerationBlockers}
-                          language={uiLanguage}
-                          onAction={navigateToReadinessTarget}
-                        />
-                        {selectedPage.generated_image !== null ? (
-                          <div className="generated-image-wrap">
-                            <AuthenticatedImage
-                              className="generated-image"
-                              loadImage={() => api.exportPageImage(selectedPage.id, activeOrganizationId)}
-                              loading="eager"
-                              onDoubleClick={(url) => openImageLightbox(url, `${translateUiString(uiLanguage, 'Page')} ${selectedPage.page_number}`)}
-                              placeholderClassName="page-placeholder generated-image"
-                              queryKey={scopedQueryKey(['page-image', selectedPage.id, selectedPage.generated_image.generated_at])}
-                            />
-                          </div>
-                        ) : null}
                       </PanelSection>
 
                       <div className="page-editing-cluster page-section-frames-panels">
@@ -6709,6 +6564,142 @@ function StudioShell(props: {
                         ) : null}
                       </PanelSection>
                       </div>
+
+                      <PanelSection
+                        title={`Page ${selectedPage.page_number}`}
+                        subtitle={
+                          uiLanguage === 'ja'
+                            ? `セリフ ${translateUiString(uiLanguage, selectedPage.dialogue_mode === 'image_baked' ? 'Image baked' : selectedPage.dialogue_mode === 'balloon_only' ? 'Balloon only' : 'Mixed')}`
+                            : `dialogue ${selectedPage.dialogue_mode}`
+                        }
+                        className="page-section-generate"
+                        collapsible
+                        actions={
+                          <div className="toolbar">
+                            <button
+                              className="primary-button"
+                              disabled={generatePageDisabled}
+                              onClick={() =>
+                                void runAction('Generate page', async () => {
+                                  if (selectedPageHasFramePanelMismatch) {
+                                    throw new Error(translateUiString(uiLanguage, 'Frame count and panel count do not match. Adjust frames or panels before generating.'));
+                                  }
+                                  await saveCurrentPageGenerationContext();
+                                  const result = await api.generatePage(selectedPage.id, activeOrganizationId);
+                                  trackJob(result.job_id);
+                                })
+                              }
+                              type="button"
+                            >
+                              <Play size={16} />
+                              {translateUiString(uiLanguage, 'Generate page')}
+                            </button>
+                            <button
+                              className="ghost-button"
+                              onClick={() =>
+                                void runAction('Confirm page', async () => {
+                                  await api.confirmPage(selectedPage.id, activeOrganizationId);
+                                  await invalidateScopedQuery(['pages', selectedEpisode.id]);
+                                })
+                              }
+                              type="button"
+                            >
+                              <Check size={16} />
+                              {translateUiString(uiLanguage, 'Confirm page')}
+                            </button>
+                            <button
+                              className="ghost-button"
+                              onClick={() =>
+                                void runAction('Reopen page', async () => {
+                                  await api.reopenPage(selectedPage.id, activeOrganizationId);
+                                  await invalidateScopedQuery(['pages', selectedEpisode.id]);
+                                })
+                              }
+                              type="button"
+                            >
+                              <RefreshCw size={16} />
+                              {translateUiString(uiLanguage, 'Reopen page')}
+                            </button>
+                          </div>
+                        }
+                      >
+                        {pageImageGenerationMessage !== null ? (
+                          <ProcessingHint
+                            message={translateUiString(uiLanguage, pageImageGenerationMessage)}
+                            queued={selectedPageGenerationJob?.status === 'queued'}
+                            progressPercent={
+                              selectedPageGenerationJob === null ? null : getJobProgressPercent(selectedPageGenerationJob)
+                            }
+                            showProgress
+                          />
+                        ) : null}
+                        <div className="state-pill-row">
+                          <span className="state-pill state-pill-neutral">
+                            {translateUiString(uiLanguage, 'Page generation starts at 3 credits.')}
+                          </span>
+                        </div>
+                        <GenerationReadinessNotice
+                          blockers={pageGenerationBlockers}
+                          language={uiLanguage}
+                          onAction={navigateToReadinessTarget}
+                        />
+                        {selectedPage.generated_image !== null ? (
+                          <div className="generated-image-wrap">
+                            <AuthenticatedImage
+                              className="generated-image"
+                              loadImage={() => api.exportPageImage(selectedPage.id, activeOrganizationId)}
+                              loading="eager"
+                              onDoubleClick={(url) => openImageLightbox(url, `${translateUiString(uiLanguage, 'Page')} ${selectedPage.page_number}`)}
+                              placeholderClassName="page-placeholder generated-image"
+                              queryKey={scopedQueryKey(['page-image', selectedPage.id, selectedPage.generated_image.generated_at])}
+                            />
+                          </div>
+                        ) : null}
+                      </PanelSection>
+
+                      <PanelSection
+                        title="Page art direction"
+                        subtitle="Keep generated pages visually consistent by adding an art reference and the desired linework, color, or mood."
+                        className="page-section-style-constraints"
+                        compact
+                        collapsible
+                        actions={
+                          <button
+                            className="secondary-button"
+                            onClick={() =>
+                              void runAction('Save page settings', async () => {
+                                await api.updatePage(
+                                  selectedPage.id,
+                                  toPageSettingsPayload(pageSettingsDraft),
+                                  activeOrganizationId,
+                                );
+                                await invalidateScopedQuery(['pages', selectedEpisode.id]);
+                              })
+                            }
+                            type="button"
+                          >
+                            <Save size={16} />
+                            {translateUiString(uiLanguage, 'Save')}
+                          </button>
+                        }
+                      >
+                        <div className="form-grid two">
+                          <InputField
+                            label="Art style reference"
+                            value={pageSettingsDraft.style_reference_title}
+                            onChange={(value) =>
+                              setPageSettingsDraft((current) => ({ ...current, style_reference_title: value }))
+                            }
+                          />
+                          <InputField
+                            label="Visual direction notes"
+                            value={pageSettingsDraft.style_reference_notes}
+                            onChange={(value) =>
+                              setPageSettingsDraft((current) => ({ ...current, style_reference_notes: value }))
+                            }
+                          />
+                        </div>
+                      </PanelSection>
 
                       <PanelSection title="Export" className="page-section-export" collapsible mobileDefaultCollapsed>
                         <div className="form-grid three">

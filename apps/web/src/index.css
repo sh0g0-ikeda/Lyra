@@ -2829,8 +2829,12 @@ a {
   order: 1;
 }
 
-.page-section-style-constraints {
+.page-section-planning {
   order: 0;
+}
+
+.page-section-style-constraints {
+  order: 5;
   border-color: rgba(229, 199, 107, 0.24);
   background: rgba(229, 199, 107, 0.035);
 }
@@ -2840,15 +2844,15 @@ a {
 }
 
 .page-section-story-sources {
-  order: 4;
+  order: 2;
 }
 
 .page-section-frames-panels {
-  order: 5;
+  order: 3;
 }
 
 .page-section-generate {
-  order: 3;
+  order: 4;
 }
 
 .page-section-export {
