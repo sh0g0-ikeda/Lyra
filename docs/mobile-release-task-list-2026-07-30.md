@@ -6,9 +6,9 @@
 
 対象PR: [#67 feat(mobile): production-ready Lyra mobile workflow](https://github.com/sh0g0-ikeda/Lyra/pull/67)
 
-進捗: 33件完了 / 403件未完了
+進捗: 35件完了 / 401件未完了
 
-実装監査基準: `09a1413`（PR #108統合後、全CI成功）
+実装監査基準: `43aa559`（PR #109統合後、全CI成功）
 
 ## 1. 設計ブリーフ
 
@@ -169,7 +169,7 @@ Codex単独で進める次の順序は、`CI安定化 → PR-A継続 → 契約�
 - [x] 既存のユーザー未コミット変更を別worktreeから隔離する
   - 証跡: `Lyra-mobile-response-contract` worktreeで分割統合を実施
 - [x] migration番号027〜036が現在のmainと衝突しないことを確認する
-  - 証跡: 2026-07-30時点のmainはmigration 026まで
+  - 証跡: 2026-07-30時点のmainはmigration 026まで。migration 027はPR #110でaccount deletion checkpointとして予約し、PR #67側の028〜036は各分割PRで現mainへの必要性と番号を再検証する
 - [x] 共有API契約の生成元と生成物を確認する
   - 証跡: PR #67の`generateMobileApiContract.mjs`は`packages/api-contract/src`のschema/type/payloadを`apps/mobile/src/domain`へbyte-stable copyする。現mainにはMobile appとcanonical type/payloadがないため、生成・drift checkはPR-EのMobile基盤と同時に統合する
 - [x] PR #67説明欄と実差分の不一致を修正する
@@ -233,6 +233,9 @@ Codex単独で進める次の順序は、`CI安定化 → PR-A継続 → 契約�
 - [ ] PR-B: account deletion / upload token / export基盤
   - 主な所有: migrations 027, 031, 032と対応Route/Service/Repository
   - 完了条件: personal/org tenancy、S3 ownership、削除冪等性がgreen
+  - [x] account deletion requestの永続化checkpointをAPI未接続で先行統合
+    - 証跡: [PR #110](https://github.com/sh0g0-ikeda/Lyra/pull/110)。migration 027をfresh DBへ適用し、44 invariant / 0 violationsを確認
+    - 境界: PR #67側の削除Repositoryは未導入の`mobile_store_purchases`へ依存するため、削除API・Cognito・Stripe・S3処理はmigration 029の導入と監査が完了するまで接続しない
 - [ ] PR-C: Mobile store billing Backend
   - 主な所有: migration 029、Apple/Google verifier、purchase service、webhook、ledger
   - 完了条件: 課金OFFで既存Webの挙動を変えず、focused testsがgreen
@@ -335,8 +338,9 @@ Codex単独で進める次の順序は、`CI安定化 → PR-A継続 → 契約�
 
 #### DB-300 migration単位の受入確認
 
-- [ ] 027 account deletion requests
+- [x] 027 account deletion requests
   - 完了条件: 冪等な削除状態と唯一ownerの保護を確認
+  - 証跡: [PR #110](https://github.com/sh0g0-ikeda/Lyra/pull/110)。user単位の主キー、状態enum、processing claim pair、retry/blocker制約をmigration contract testとfresh DB invariantで確認
 - [ ] 028 page story metadata columns
   - 完了条件: 既存pageの読み書きと生成promptが後方互換
 - [ ] 029 mobile store purchase ledger
