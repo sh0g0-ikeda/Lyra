@@ -126,6 +126,12 @@ transaction locks the authorized episode planning graph, rechecks the input
 fingerprint, and applies page, panel, and entity assignment changes together so a
 concurrent edit is not silently overwritten and a partial plan cannot be exposed.
 
+Cancellation request metadata is paired, cancellation and commit start are mutually
+exclusive, and a cancelled job carries ordered request, cancellation, and completion
+timestamps. New writes are protected before legacy rows are validated. Production
+invariants must report zero legacy violations before a later migration validates the
+constraints or cancellation is generalized to additional job types.
+
 Generation-job history hiding is a per-user display preference. It never deletes a
 job, changes its status, cancels work, or mutates credits. Any future history write
 must first authorize the job through personal ownership or active organization

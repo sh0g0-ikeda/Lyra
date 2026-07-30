@@ -255,6 +255,10 @@ const DEPLOYMENT_DATA_INVARIANT_QUERIES: InvariantQuery[] = [
     name: 'mobile_push_notification_deliveries.token_scope',
     sql: 'SELECT deliveries.id::text AS id FROM mobile_push_notification_deliveries AS deliveries INNER JOIN mobile_push_notification_outbox AS outbox ON outbox.id = deliveries.outbox_id INNER JOIN mobile_push_tokens ON mobile_push_tokens.id = deliveries.push_token_id WHERE /* mobile_push_notification_deliveries.token_scope */ deliveries.push_token_id IS NOT NULL AND mobile_push_tokens.user_id <> outbox.user_id ORDER BY deliveries.id LIMIT $1',
   },
+  {
+    name: 'generation_jobs.cancellation_contract',
+    sql: "SELECT id::text AS id FROM generation_jobs WHERE /* generation_jobs.cancellation_contract */ (cancel_requested_at IS NULL) <> (cancel_requested_by IS NULL) OR cancel_requested_at < created_at OR commit_started_at < created_at OR (cancel_requested_at IS NOT NULL AND commit_started_at IS NOT NULL) OR (status = 'cancelled' AND (cancel_requested_at IS NULL OR cancel_requested_by IS NULL OR cancelled_at IS NULL OR completed_at IS NULL OR commit_started_at IS NOT NULL OR cancelled_at < cancel_requested_at OR completed_at < cancelled_at)) OR (status <> 'cancelled' AND cancelled_at IS NOT NULL) ORDER BY id LIMIT $1",
+  },
 ];
 
 export async function checkDeploymentDataInvariants(

@@ -333,6 +333,13 @@ describe('checkDeploymentDataInvariants', () => {
         query.includes('mobile_push_tokens.user_id <> outbox.user_id'),
       ),
     ).toBe(true);
+    expect(
+      database.queries.some((query) =>
+        query.includes('FROM generation_jobs') &&
+        query.includes('generation_jobs.cancellation_contract') &&
+        query.includes("status = 'cancelled'"),
+      ),
+    ).toBe(true);
   });
 
   it('違反行があればチェック名とサンプル ID を返す', async () => {
@@ -381,6 +388,7 @@ describe('checkDeploymentDataInvariants', () => {
     'mobile_push_tokens.protection',
     'mobile_push_notification_outbox.job_scope',
     'mobile_push_notification_deliveries.token_scope',
+    'generation_jobs.cancellation_contract',
   ])('%s を検出する', async (checkName) => {
     const database = new FakeDatabase(checkName);
 
