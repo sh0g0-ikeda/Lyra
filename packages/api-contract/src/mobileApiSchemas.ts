@@ -115,6 +115,25 @@ export const balloonsResponseSchema = z.object({
   balloons: z.array(balloonSchema),
 });
 
+export const panelEntityAssignmentSchema = z.object({
+  entity_id: idSchema,
+  role: z.enum(['primary', 'secondary', 'background']),
+  expression: z.enum(['determined', 'calm', 'angry', 'sad', 'surprised', 'custom']),
+  custom_expression: nullableStringSchema,
+  action: z.enum(['standing_firm', 'attacking', 'defending', 'running', 'custom']),
+  custom_action: nullableStringSchema,
+  position: z.enum(['left', 'center', 'right', 'background']),
+  facing_direction: z
+    .enum(['front', 'left', 'right', 'away', 'three_quarter_left', 'three_quarter_right'])
+    .nullable(),
+  effect_note: nullableStringSchema,
+  state_id: nullableStringSchema,
+});
+
+export const panelAssignmentsResponseSchema = z.object({
+  entities: z.array(panelEntityAssignmentSchema),
+});
+
 export const compositionsResponseSchema = z.object({
   compositions: z.array(compositionSchema),
 });
