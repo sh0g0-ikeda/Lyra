@@ -6,7 +6,7 @@
 
 対象PR: [#67 feat(mobile): production-ready Lyra mobile workflow](https://github.com/sh0g0-ikeda/Lyra/pull/67)
 
-進捗: 8件完了 / 421件未完了
+進捗: 8件完了 / 423件未完了
 
 実装監査基準: `d152183`（PR #82統合後、全CI成功。以後のmain変更はタスクリスト文書のみ）
 
@@ -96,6 +96,7 @@ PR #67の分割とmain同期
 | BLOCK-16 | Partial | Sentryコードはあるが、本番DSN、source map、alert証跡がない |
 | BLOCK-17 | Blocked | mainのbranch protectionが未設定で、CIがpendingまたはfailedでもmergeを防止できない |
 | BLOCK-18 | Partial | Mobile viewportの階層メニューE2Eで、Escape後の閉鎖待ちが断続的に失敗する |
+| BLOCK-19 | Partial | Mobileのアカウント画面で、正常状態やジョブ0件をエラーとして表示するfalse positiveがある |
 
 ### 2.2 残タスクの実行区分と優先順
 
@@ -103,6 +104,7 @@ PR #67の分割とmain同期
 |---|---|---|---|
 | P0 | GitHub安全ゲート | mainのbranch protectionでCI `verify`をrequired checkにする | Repository設定変更の承認 |
 | P0 | CI安定化 | 階層メニューE2EのEscape後閉鎖を決定的にし、GitHub ActionsのNode.js 20非推奨警告を解消する | Codexで実行可能 |
+| P1 | Mobile表示 | アカウント画面の正常状態・ジョブ0件で表示される2種類のfalse-positive errorを解消する | Codexで実行可能。実エラー表示は維持する |
 | P1 | PR-A継続 | `/api/billing/balance`のsubscription summaryをServiceまで監査し、残るRouteを1つずつ契約接続する | Codexで実行可能。各Routeを別PRで扱う |
 | P1 | 契約生成 | shared API contractの生成元・生成物・drift check・pagination・API inventoryを監査する | Codexで実行可能 |
 | P1 | 差分監査 | PR #67に未取込のmain側19コミットについて影響箇所を列挙する | Codexで実行可能 |
@@ -112,7 +114,7 @@ PR #67の分割とmain同期
 | P3 | 外部設定 | staging、Apple / Google商品、署名、通知、AASA / App Linksを設定する | AWS / Apple / Google / EASへの権限と値が必要 |
 | P4 | 実機・審査 | Sandbox / license-test、両OS実機E2E、スクリーンショット、ストア提出を行う | 実機、ストアアカウント、審査対応が必要 |
 
-Codex単独で進める次の順序は、`CI安定化 → PR-A継続 → 契約生成 → main差分監査 → Backend分割 → Mobile分割`とする。外部設定や本番変更は、必要な権限と明示的な実行承認を得てから行う。
+Codex単独で進める次の順序は、`CI安定化 → アカウント画面のfalse-positive error解消 → PR-A継続 → 契約生成 → main差分監査 → Backend分割 → Mobile分割`とする。外部設定や本番変更は、必要な権限と明示的な実行承認を得てから行う。
 
 ## 3. リリース全体タスクリスト
 
@@ -207,6 +209,14 @@ Codex単独で進める次の順序は、`CI安定化 → PR-A継続 → 契約�
 - [ ] PR-G: organization / billing UI / store adapter
   - 主な所有: Account、organization管理、`expo-iap` adapter
   - 完了条件: personal/org分離とstore unavailable状態がgreen
+  - [ ] 正常状態で「一時的に処理できません。入力は保持されています。少し待って再試行してください。」を表示しない
+    - 再現条件: プロフィールと個人ワークスペースが正常に表示され、ユーザー操作上の問題がない状態でも赤い再試行bannerが表示される
+    - 完了条件: 正常応答、空データ、未選択の任意データを失敗として集約せず、必須データの取得失敗など実際に再試行が必要な場合だけbannerを表示する
+    - 回帰条件: 成功した再取得またはworkspace切替後に古いerror stateを残さず、実際の通信・認証・server errorでは適切な再試行導線を維持する
+  - [ ] ジョブ0件で「対象データが見つかりませんでした。画面を更新して選び直してください。」を表示しない
+    - 再現条件: 「表示できるジョブはありません。」という正常なempty stateと同時にnot-found errorが表示される
+    - 完了条件: ジョブ0件ではempty stateだけを表示し、選択済みジョブが実際に削除された場合など対象消失時だけnot-found errorを表示する
+    - テスト条件: ジョブ0件、対象消失、通信失敗、再取得成功の各状態をMobile UI testで区別する
 - [ ] PR-H: release / EAS / store metadata / ops docs
   - 主な所有: `eas.json`, `app.json`, store metadata, runbook
   - 完了条件: secretsを含まず、production config guardがgreen
