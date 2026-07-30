@@ -195,6 +195,18 @@ const DEPLOYMENT_DATA_INVARIANT_QUERIES: InvariantQuery[] = [
     name: 'payment_records.invoice_kind_status_unique',
     sql: 'SELECT MIN(id::text) AS id FROM payment_records WHERE stripe_invoice_id IS NOT NULL GROUP BY stripe_invoice_id, kind, status HAVING COUNT(*) > 1 ORDER BY MIN(id::text) LIMIT $1',
   },
+  {
+    name: 'account_deletion_requests.status',
+    sql: "SELECT user_id::text AS id FROM account_deletion_requests WHERE account_deletion_requests.status NOT IN ('blocked', 'processing', 'pending_external_action', 'completed') ORDER BY user_id LIMIT $1",
+  },
+  {
+    name: 'account_deletion_requests.retry_count',
+    sql: 'SELECT user_id::text AS id FROM account_deletion_requests WHERE account_deletion_requests.retry_count < 0 ORDER BY user_id LIMIT $1',
+  },
+  {
+    name: 'account_deletion_requests.processing_claim',
+    sql: 'SELECT user_id::text AS id FROM account_deletion_requests WHERE (processing_token IS NULL) <> (processing_started_at IS NULL) ORDER BY user_id LIMIT $1',
+  },
 ];
 
 export async function checkDeploymentDataInvariants(
