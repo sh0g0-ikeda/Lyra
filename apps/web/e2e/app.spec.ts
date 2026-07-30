@@ -868,6 +868,10 @@ test('keeps the story hierarchy usable on a mobile viewport', async ({ page }) =
   await expect(renameEpisode).toBeFocused();
   await page.keyboard.press('End');
   await expect(deleteEpisode).toBeFocused();
+  await page.setViewportSize({ width: 761, height: 844 });
+  await expect(deleteEpisode).toBeFocused();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(deleteEpisode).toBeFocused();
   await page.keyboard.press('Home');
   await expect(renameEpisode).toBeFocused();
 

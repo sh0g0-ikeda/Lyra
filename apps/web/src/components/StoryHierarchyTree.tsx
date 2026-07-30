@@ -837,10 +837,16 @@ function HierarchyActionMenu(props: {
   const focusEdgeRef = useRef<'first' | 'last'>('first');
   const menuId = useId();
 
-  const enabledItemIndexes = useMemo(
-    () => props.actions.flatMap((action, index) => (action.disabled === true ? [] : [index])),
-    [props.actions],
+  const enabledItemIndexes = props.actions.flatMap(
+    (action, index) => (action.disabled === true ? [] : [index]),
   );
+  const enabledItemIndexesRef = useRef(enabledItemIndexes);
+  const actionCount = props.actions.length;
+  const separatorCount = props.actions.filter((action) => action.separatorBefore === true).length;
+
+  useLayoutEffect(() => {
+    enabledItemIndexesRef.current = enabledItemIndexes;
+  }, [enabledItemIndexes]);
 
   const closeMenu = useCallback((restoreFocus: boolean): void => {
     setOpen(false);
@@ -856,9 +862,8 @@ function HierarchyActionMenu(props: {
       return;
     }
     const rect = trigger.getBoundingClientRect();
-    const separators = props.actions.filter((action) => action.separatorBefore === true).length;
     const itemHeight = window.matchMedia('(max-width: 760px)').matches ? 42 : 36;
-    const estimatedHeight = props.actions.length * itemHeight + separators * 5 + 8;
+    const estimatedHeight = actionCount * itemHeight + separatorCount * 5 + 8;
     const spaceBelow = window.innerHeight - rect.bottom - HIERARCHY_MENU_TRIGGER_GAP;
     const openAbove = spaceBelow < estimatedHeight && rect.top >= estimatedHeight + HIERARCHY_MENU_TRIGGER_GAP;
     const unclampedTop = openAbove
@@ -873,7 +878,7 @@ function HierarchyActionMenu(props: {
       Math.max(HIERARCHY_MENU_EDGE_GAP, window.innerWidth - HIERARCHY_MENU_WIDTH - HIERARCHY_MENU_EDGE_GAP),
     );
     setPosition({ left, top });
-  }, [props.actions]);
+  }, [actionCount, separatorCount]);
 
   useEffect(() => {
     if (props.disabled && open) {
@@ -887,9 +892,10 @@ function HierarchyActionMenu(props: {
     }
     placeMenu();
     const focusFrame = window.requestAnimationFrame(() => {
+      const currentEnabledItemIndexes = enabledItemIndexesRef.current;
       const targetIndex = focusEdgeRef.current === 'last'
-        ? enabledItemIndexes.at(-1)
-        : enabledItemIndexes[0];
+        ? currentEnabledItemIndexes.at(-1)
+        : currentEnabledItemIndexes[0];
       if (targetIndex !== undefined) {
         itemRefs.current[targetIndex]?.focus();
       }
@@ -916,7 +922,7 @@ function HierarchyActionMenu(props: {
       window.removeEventListener('resize', handleViewportChange);
       window.removeEventListener('scroll', handleViewportChange, true);
     };
-  }, [closeMenu, enabledItemIndexes, open, placeMenu]);
+  }, [closeMenu, open, placeMenu]);
 
   const openMenu = (focusEdge: 'first' | 'last'): void => {
     focusEdgeRef.current = focusEdge;
