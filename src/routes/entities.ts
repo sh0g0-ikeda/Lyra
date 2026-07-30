@@ -1,5 +1,9 @@
 import { Hono, type Context, type MiddlewareHandler } from 'hono';
 import { z } from 'zod';
+import {
+  entitiesResponseSchema,
+  entitySchema,
+} from '../../packages/api-contract/src/mobileApiSchemas.js';
 import { ValidationError } from '../domain/errors/index.js';
 import type { Entity } from '../domain/types/entity.js';
 import type { EntityReferenceSet } from '../domain/types/entityReference.js';
@@ -29,6 +33,7 @@ import {
   recordOrganizationAudit,
   requireOrganizationCapability,
 } from './organizationRouteHelpers.js';
+import { assertMobileResponseContract } from './mobileResponseContract.js';
 import { readJsonBody, readOptionalJsonBody, REQUEST_BODY_LIMITS } from './requestBody.js';
 
 const referenceCandidateImageQuerySchema = z
@@ -80,7 +85,8 @@ export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<
       entity_type: body.data.entity_type,
     });
 
-    return c.json(toEntityResponse(entity), 201);
+    const payload = toEntityResponse(entity);
+    return c.json(assertMobileResponseContract(entitySchema, payload), 201);
   });
 
   app.get('/works/:work_id/entities', async (c) => {
@@ -90,9 +96,10 @@ export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<
     await requireOrganizationCapability(c, dependencies, organizationId, 'view_work');
     const entities = await dependencies.entityService.listEntities(user.id, workId, organizationId);
 
-    return c.json({
+    const payload = {
       entities: entities.map(toEntityResponse),
-    });
+    };
+    return c.json(assertMobileResponseContract(entitiesResponseSchema, payload));
   });
 
   app.get('/entities/:id', async (c) => {
@@ -102,7 +109,8 @@ export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<
     await requireOrganizationCapability(c, dependencies, organizationId, 'view_work');
     const entity = await dependencies.entityService.getEntity(user.id, entityId, organizationId);
 
-    return c.json(toEntityResponse(entity));
+    const payload = toEntityResponse(entity);
+    return c.json(assertMobileResponseContract(entitySchema, payload));
   });
 
   app.get('/entities/:id/reference-set', async (c) => {
@@ -198,7 +206,8 @@ export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<
       fields: Object.keys(body.data),
     });
 
-    return c.json(toEntityResponse(entity));
+    const payload = toEntityResponse(entity);
+    return c.json(assertMobileResponseContract(entitySchema, payload));
   });
 
   app.delete('/entities/:id', async (c) => {

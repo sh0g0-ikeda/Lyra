@@ -3,6 +3,7 @@ import { z } from 'zod';
 const idSchema = z.string().min(1);
 const nullableStringSchema = z.string().nullable();
 const timestampSchema = z.string().min(1);
+const unknownRecordSchema = z.record(z.string(), z.unknown());
 const storyStatusSchema = z.enum(['draft', 'reviewing', 'ready']);
 const organizationRoleSchema = z.enum(['owner', 'admin', 'billing', 'editor', 'viewer']);
 const organizationStatusSchema = z.enum([
@@ -197,6 +198,24 @@ export const storyCollaborationEventSchema = z.discriminatedUnion('event', [
     })
     .strict(),
 ]);
+
+export const entitySchema = z.object({
+  id: idSchema,
+  work_id: idSchema,
+  entity_type: z.enum(['character', 'nonhuman', 'object']),
+  name: z.string(),
+  free_description: nullableStringSchema,
+  structured_fields: unknownRecordSchema,
+  prompt_supplement: nullableStringSchema,
+  speech_profile: unknownRecordSchema,
+  status: z.enum(['draft', 'ready']),
+  created_at: timestampSchema,
+  updated_at: timestampSchema,
+});
+
+export const entitiesResponseSchema = z.object({
+  entities: z.array(entitySchema),
+});
 
 export const sceneSchema = z.object({
   id: idSchema,
