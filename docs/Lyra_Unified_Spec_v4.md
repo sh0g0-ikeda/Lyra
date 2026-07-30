@@ -79,6 +79,12 @@ is unique per user installation, and logout removal is scoped by both user and
 installation. Persistence and internal services alone do not enable registration
 routes, device permission prompts, or APNs / FCM delivery.
 
+Push notification outbox rows snapshot only completed or failed generation-job
+events and reference same-user token registrations without copying ciphertext.
+Migrations never attach triggers to current generation-job transitions. Explicit
+enqueue, retry invalidation, lease-based delivery, and provider dispatch must be
+wired and verified together before push delivery is enabled.
+
 ## 6. Generation jobs
 
 Long-running page, entity, page-skeleton, and story-autofill work is represented by

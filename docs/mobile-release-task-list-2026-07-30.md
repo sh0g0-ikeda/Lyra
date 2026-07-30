@@ -6,9 +6,9 @@
 
 対象PR: [#67 feat(mobile): production-ready Lyra mobile workflow](https://github.com/sh0g0-ikeda/Lyra/pull/67)
 
-進捗: 43件完了 / 393件未完了
+進捗: 44件完了 / 392件未完了
 
-実装監査基準: `40ae0f7`（PR #115統合後、全CI成功）
+実装監査基準: `a7c0237`（PR #116統合後、全CI成功）
 
 ## 1. 設計ブリーフ
 
@@ -258,6 +258,9 @@ Codex単独で進める次の順序は、`CI安定化 → PR-A継続 → 契約�
   - [x] native push tokenの暗号化・hash lookup・logout解除基盤をRoute未接続で先行統合
     - 証跡: [PR #116](https://github.com/sh0g0-ikeda/Lyra/pull/116)。AES-256-GCM、別key HMAC、transactional upsert、user + installation scoped delete、migration 033を確認
     - 境界: Route、runtime secret配線、Mobile通知権限、APNs / FCM、notification outboxは未接続。migration / module導入だけではPushを送信しない
+  - [x] push outbox / delivery schemaと明示的terminal enqueue Repositoryをtrigger未接続で先行統合
+    - 証跡: [PR #117](https://github.com/sh0g0-ikeda/Lyra/pull/117)。completed / failed限定、job/status冪等性、same-user token snapshot、lease状態、token row identityを確認
+    - 境界: generation terminal処理、retry invalidation、delivery claim、APNs / FCM、Mobile navigationは未接続。migration 034全体は未完了
 - [ ] PR-E: Mobileアプリ基盤
   - 主な所有: Expo設定、認証、navigation、API client、i18n、error policy
   - 完了条件: clean install、typecheck、lint、test、両OS exportがgreen
@@ -376,6 +379,7 @@ Codex単独で進める次の順序は、`CI安定化 → PR-A継続 → 契約�
   - 証跡: [PR #116](https://github.com/sh0g0-ikeda/Lyra/pull/116)。平文を永続化・応答せず、端末間token移動もregistry advisory lock付きupsertで直列化し、logout DELETEをuser + installationへscope
 - [ ] 034 mobile push notification outbox
   - 完了条件: terminal jobだけが正しくoutboxへ入る
+  - 進捗: [PR #117](https://github.com/sh0g0-ikeda/Lyra/pull/117)でtriggerなしschemaと明示的enqueue Repositoryまで完了。自動retry枯渇判定・retry時invalidate・terminal settlement接続は未完了
 - [ ] 035 processing generation job cancellation
   - 完了条件: Worker checkpointと返金競合がロックで保護される
 - [ ] 036 push notification cancelled guard

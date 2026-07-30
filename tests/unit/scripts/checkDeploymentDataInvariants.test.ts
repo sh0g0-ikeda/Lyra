@@ -321,6 +321,18 @@ describe('checkDeploymentDataInvariants', () => {
         query.includes('updated_at < created_at'),
       ),
     ).toBe(true);
+    expect(
+      database.queries.some((query) =>
+        query.includes('mobile_push_notification_outbox AS outbox') &&
+        query.includes('outbox.organization_id IS DISTINCT FROM generation_jobs.organization_id'),
+      ),
+    ).toBe(true);
+    expect(
+      database.queries.some((query) =>
+        query.includes('mobile_push_notification_deliveries AS deliveries') &&
+        query.includes('mobile_push_tokens.user_id <> outbox.user_id'),
+      ),
+    ).toBe(true);
   });
 
   it('違反行があればチェック名とサンプル ID を返す', async () => {
@@ -367,6 +379,8 @@ describe('checkDeploymentDataInvariants', () => {
     'episode_export_jobs.contract',
     'episode_export_jobs.scope',
     'mobile_push_tokens.protection',
+    'mobile_push_notification_outbox.job_scope',
+    'mobile_push_notification_deliveries.token_scope',
   ])('%s を検出する', async (checkName) => {
     const database = new FakeDatabase(checkName);
 

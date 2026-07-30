@@ -1,5 +1,6 @@
 export const MOBILE_PUSH_PLATFORMS = ['ios', 'android'] as const;
 export const MOBILE_PUSH_LOCALES = ['ja', 'en'] as const;
+export const MOBILE_PUSH_TOKEN_REGISTRY_LOCK_KEY = 'mobile-push-token-registry:v1';
 
 export const MOBILE_PUSH_TOKEN_LIMITS = {
   DEVICE_TOKEN_MIN_LENGTH: 16,

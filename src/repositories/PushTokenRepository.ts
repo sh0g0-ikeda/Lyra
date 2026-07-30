@@ -3,6 +3,7 @@ import type {
   MobilePushLocale,
   MobilePushPlatform,
 } from '../domain/constants/mobilePush.js';
+import { MOBILE_PUSH_TOKEN_REGISTRY_LOCK_KEY } from '../domain/constants/mobilePush.js';
 import { ConfigurationError } from '../domain/errors/index.js';
 import type { PushTokenRegistration } from '../domain/types/mobilePush.js';
 import type { DatabaseClient, TransactionRunner } from '../lib/db.js';
@@ -41,10 +42,14 @@ export class PostgresPushTokenRepository implements PushTokenRepository {
       await transaction.query(
         `
         DELETE FROM mobile_push_tokens
-        WHERE installation_id = $1::uuid
+        WHERE (
+            installation_id = $1::uuid
+            OR token_hash = $3
+          )
           AND (
-            user_id <> $2::uuid
-            OR token_hash <> $3
+            user_id IS DISTINCT FROM $2::uuid
+            OR installation_id IS DISTINCT FROM $1::uuid
+            OR token_hash IS DISTINCT FROM $3
           )
         `,
         [input.installationId, input.userId, input.tokenHash],
@@ -64,18 +69,10 @@ export class PostgresPushTokenRepository implements PushTokenRepository {
         VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7)
         ON CONFLICT (token_hash)
         DO UPDATE SET
-          user_id = EXCLUDED.user_id,
-          installation_id = EXCLUDED.installation_id,
           platform = EXCLUDED.platform,
           locale = EXCLUDED.locale,
           token_ciphertext = EXCLUDED.token_ciphertext,
           encryption_key_id = EXCLUDED.encryption_key_id,
-          created_at = CASE
-            WHEN mobile_push_tokens.user_id IS DISTINCT FROM EXCLUDED.user_id
-              OR mobile_push_tokens.installation_id IS DISTINCT FROM EXCLUDED.installation_id
-              THEN NOW()
-            ELSE mobile_push_tokens.created_at
-          END,
           updated_at = NOW()
         RETURNING
           user_id,
@@ -124,9 +121,10 @@ async function lockPushTokenRegistry(client: DatabaseClient): Promise<void> {
   await client.query(
     `
     SELECT pg_advisory_xact_lock(
-      hashtextextended('mobile-push-token-registry:v1', 0)
+      hashtextextended($1, 0)
     )
     `,
+    [MOBILE_PUSH_TOKEN_REGISTRY_LOCK_KEY],
   );
 }
 
