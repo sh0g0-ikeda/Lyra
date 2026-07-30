@@ -1,5 +1,6 @@
 import { Hono, type Context, type MiddlewareHandler } from 'hono';
 import {
+  organizationAuditLogsResponseSchema,
   organizationBillingPlansResponseSchema,
   organizationBillingSummaryResponseSchema,
   organizationCreditBalanceResponseSchema,
@@ -14,6 +15,7 @@ import {
   organizationMembersResponseSchema,
   organizationResponseSchema,
   organizationSubscriptionCheckoutResponseSchema,
+  organizationUsageResponseSchema,
   organizationWorkspaceSchema,
   organizationsResponseSchema,
 } from '../../packages/api-contract/src/mobileApiSchemas.js';
@@ -346,10 +348,11 @@ export function createOrganizationRoutes(dependencies: OrganizationRouteDependen
     const user = c.get('user');
     const organizationId = parseOrganizationId(c);
     const events = await dependencies.organizationService.listUsageEvents(user.id, organizationId);
-    return c.json({
+    const payload = {
       usage_events: events.map(toUsageEventResponse),
       summary: summarizeUsageEvents(events),
-    });
+    };
+    return c.json(assertMobileResponseContract(organizationUsageResponseSchema, payload));
   });
 
   app.get('/organizations/:organizationId/usage.csv', async (c) => {
@@ -366,7 +369,8 @@ export function createOrganizationRoutes(dependencies: OrganizationRouteDependen
     const user = c.get('user');
     const organizationId = parseOrganizationId(c);
     const logs = await dependencies.organizationService.listAuditLogs(user.id, organizationId);
-    return c.json({ audit_logs: logs.map(toAuditLogResponse) });
+    const payload = { audit_logs: logs.map(toAuditLogResponse) };
+    return c.json(assertMobileResponseContract(organizationAuditLogsResponseSchema, payload));
   });
 
   return app;

@@ -225,6 +225,62 @@ export const organizationInvoicesResponseSchema = z
   })
   .strict();
 
+export const organizationUsageEventSchema = z
+  .object({
+    id: idSchema,
+    organization_id: idSchema,
+    user_id: idSchema.nullable(),
+    work_id: idSchema.nullable(),
+    generation_job_id: idSchema.nullable(),
+    event_type: z.string().min(1),
+    credit_amount: z.number().int(),
+    metadata: unknownRecordSchema,
+    created_at: timestampSchema,
+  })
+  .strict();
+
+const organizationUsageCreditGroupSchema = z
+  .object({
+    key: z.string().min(1),
+    credits: z.number().int(),
+  })
+  .strict();
+
+export const organizationUsageSummarySchema = z
+  .object({
+    current_month_total_credits: z.number().int(),
+    by_member: z.array(organizationUsageCreditGroupSchema),
+    by_work: z.array(organizationUsageCreditGroupSchema),
+    by_generation_type: z.array(organizationUsageCreditGroupSchema),
+  })
+  .strict();
+
+export const organizationUsageResponseSchema = z
+  .object({
+    usage_events: z.array(organizationUsageEventSchema),
+    summary: organizationUsageSummarySchema,
+  })
+  .strict();
+
+export const organizationAuditLogSchema = z
+  .object({
+    id: idSchema,
+    organization_id: idSchema,
+    actor_user_id: idSchema.nullable(),
+    action: z.string().min(1),
+    target_type: z.string().min(1),
+    target_id: idSchema.nullable(),
+    metadata: unknownRecordSchema,
+    created_at: timestampSchema,
+  })
+  .strict();
+
+export const organizationAuditLogsResponseSchema = z
+  .object({
+    audit_logs: z.array(organizationAuditLogSchema),
+  })
+  .strict();
+
 export const organizationsResponseSchema = z
   .object({
     organizations: z.array(organizationWorkspaceSchema),
