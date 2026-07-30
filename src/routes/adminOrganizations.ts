@@ -1,4 +1,8 @@
 import { Hono, type Context, type MiddlewareHandler } from 'hono';
+import {
+  adminOrganizationContractResponseSchema,
+  organizationCreditBalanceResponseSchema,
+} from '../../packages/api-contract/src/mobileApiSchemas.js';
 import { ForbiddenError, ValidationError } from '../domain/errors/index.js';
 import type { OrganizationCreditBalance } from '../domain/types/organization.js';
 import {
@@ -10,6 +14,7 @@ import { formatZodValidationError } from '../lib/validationErrorFormatter.js';
 import { buildOrganizationUsageCsv } from '../services/organization/OrganizationUsageCsv.js';
 import type { OrganizationServicePort } from '../services/organization/OrganizationService.js';
 import type { AppEnv } from '../types/app.js';
+import { assertMobileResponseContract } from './mobileResponseContract.js';
 import { readJsonBody, REQUEST_BODY_LIMITS } from './requestBody.js';
 
 export interface AdminOrganizationRouteDependencies {
@@ -50,7 +55,7 @@ export function createAdminOrganizationRoutes(dependencies: AdminOrganizationRou
       },
     );
 
-    return c.json({
+    const payload = {
       organization: {
         id: organization.id,
         name: organization.name,
@@ -59,7 +64,8 @@ export function createAdminOrganizationRoutes(dependencies: AdminOrganizationRou
         billing_email: organization.billingEmail,
         updated_at: organization.updatedAt.toISOString(),
       },
-    });
+    };
+    return c.json(assertMobileResponseContract(adminOrganizationContractResponseSchema, payload));
   });
 
   app.post('/admin/organizations/:organizationId/credits/grants', async (c) => {
@@ -80,7 +86,10 @@ export function createAdminOrganizationRoutes(dependencies: AdminOrganizationRou
       stripeEventId: null,
     });
 
-    return c.json(toCreditBalanceResponse(balance), 201);
+    return c.json(
+      assertMobileResponseContract(organizationCreditBalanceResponseSchema, toCreditBalanceResponse(balance)),
+      201,
+    );
   });
 
   return app;

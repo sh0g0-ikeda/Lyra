@@ -6,9 +6,9 @@
 
 対象PR: [#67 feat(mobile): production-ready Lyra mobile workflow](https://github.com/sh0g0-ikeda/Lyra/pull/67)
 
-進捗: 29件完了 / 407件未完了
+進捗: 32件完了 / 404件未完了
 
-実装監査基準: `366fb61`（PR #106統合後、全CI成功）
+実装監査基準: `5f63aa8`（PR #107統合後、全CI成功）
 
 ## 1. 設計ブリーフ
 
@@ -170,7 +170,8 @@ Codex単独で進める次の順序は、`CI安定化 → PR-A継続 → 契約�
   - 証跡: `Lyra-mobile-response-contract` worktreeで分割統合を実施
 - [x] migration番号027〜036が現在のmainと衝突しないことを確認する
   - 証跡: 2026-07-30時点のmainはmigration 026まで
-- [ ] 共有API契約の生成元と生成物を確認する
+- [x] 共有API契約の生成元と生成物を確認する
+  - 証跡: PR #67の`generateMobileApiContract.mjs`は`packages/api-contract/src`のschema/type/payloadを`apps/mobile/src/domain`へbyte-stable copyする。現mainにはMobile appとcanonical type/payloadがないため、生成・drift checkはPR-EのMobile基盤と同時に統合する
 - [x] PR #67説明欄と実差分の不一致を修正する
   - 証跡: [PR #67](https://github.com/sh0g0-ikeda/Lyra/pull/67)へ監査警告、実差分、分割状況を追記
 
@@ -179,7 +180,7 @@ Codex単独で進める次の順序は、`CI安定化 → PR-A継続 → 契約�
 - [ ] PR-A: Mobile API contract / response validation / pagination
   - 主な所有: `packages/api-contract`, Mobile schema生成、inventory scripts
   - 完了条件: API inventoryとcontract drift checkが単独でgreen
-  - 進捗: 21個目の分割単位をPR #107で検証中。残Route、Mobile生成物、pagination / inventoryが残る
+  - 進捗: 22個目の分割単位をPR #108で検証中。既存業務JSON Routeの接続を完了し、Mobile生成物、pagination / inventoryが残る
   - [x] response contract guardを本番挙動へ未接続の状態で分離統合
     - 証跡: [PR #76](https://github.com/sh0g0-ikeda/Lyra/pull/76)
   - [x] `/api/me`の現行wire互換性と不正payload拒否を検証して分離統合
@@ -189,7 +190,7 @@ Codex単独で進める次の順序は、`CI安定化 → PR-A継続 → 契約�
   - [x] `/api/billing/balance`のsubscription summaryと追加wire fieldを先に監査する
     - 証跡: [PR #88](https://github.com/sh0g0-ikeda/Lyra/pull/88)。既存Stripe購読から更新日と解約予定だけを安全に追加し、共通response contractへ接続
     - 境界: Apple / Google Store購読を含む統合summaryはmigration 029適用後のPR-Cで扱い、未導入テーブルへの依存をPR-Aへ持ち込まない
-  - [ ] `/api/me`と`/api/compositions`以外のRouteを1つずつ監査して接続
+  - [x] `/api/me`と`/api/compositions`以外のRouteを1つずつ監査して接続
     - [x] Balloon作成・一覧・自動生成・更新のresponse contractを現行7 typeと照合して接続
       - 証跡: [PR #89](https://github.com/sh0g0-ikeda/Lyra/pull/89)。PR #67案に欠けていた`sfx` / `caption`を補正し、既存wireを維持
     - [x] Panel entity assignments保存のresponse contractを現行Domain・入力validator・Web型と照合して接続
@@ -224,7 +225,10 @@ Codex単独で進める次の順序は、`CI安定化 → PR-A継続 → 契約�
       - 証跡: [PR #106](https://github.com/sh0g0-ikeda/Lyra/pull/106)。空履歴・null ID・正負creditを維持し、既存sanitizer後のpayloadをstrict contractで検証
     - [x] Personal billing checkout・credit checkout・portalの既存3成功応答を共有contractへ接続
       - 証跡: [PR #107](https://github.com/sh0g0-ikeda/Lyra/pull/107)。個人/法人の処理境界を維持し、同一公開wire schemaで空session・URLと未知fieldを拒否
+    - [x] Admin organization contract・credit grantの既存2成功応答を共有contractへ接続
+      - 証跡: [PR #108](https://github.com/sh0g0-ikeda/Lyra/pull/108)。operator-only認可とcredit transactionを維持し、部分summaryとbalanceをstrict contractで検証
   - [ ] Mobile側生成物とcontract drift checkを統合
+    - 依存監査: PR #67のgeneratorはMobile appとcanonical type/payloadの存在を前提とするため、PR-EのMobile基盤と同時に統合する
   - [ ] paginationとAPI inventoryを独立監査
 - [ ] PR-B: account deletion / upload token / export基盤
   - 主な所有: migrations 027, 031, 032と対応Route/Service/Repository

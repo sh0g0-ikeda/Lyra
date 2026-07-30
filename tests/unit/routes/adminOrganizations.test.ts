@@ -126,6 +126,62 @@ describe('createAdminOrganizationRoutes', () => {
       total_credits: 640,
     });
   });
+
+  it('管理者向け2成功JSONは契約外Service値を500にする', async () => {
+    const organizationService = new FakeAdminOrganizationService();
+    organizationService.adminUpdateOrganizationContract = async (
+      _actorUserId,
+      _targetOrganizationId,
+      input,
+    ) => ({
+      id: '',
+      type: 'business' as const,
+      name: 'Lyra Enterprise',
+      legalName: 'Lyra Enterprise Inc.',
+      status: input.status ?? ('active' as OrganizationStatus),
+      planKey: input.planKey ?? ('enterprise_a' as EnterprisePlanCode),
+      billingEmail: input.billingEmail ?? null,
+      stripeCustomerId: null,
+      stripeSubscriptionId: null,
+      createdByUserId: 'owner-user',
+      createdAt: new Date('2026-07-01T00:00:00.000Z'),
+      updatedAt: new Date('2026-07-02T00:00:00.000Z'),
+    });
+    organizationService.adminGrantCredits = async () => ({
+      organizationId: '',
+      monthlyCredits: 600,
+      purchasedCredits: 40,
+      monthlyExpiresAt: null,
+      updatedAt: new Date('2026-07-02T00:00:00.000Z'),
+    });
+    const routes = createRoutes({
+      user: adminUser,
+      organizationService,
+      adminEmails: ['admin@example.com'],
+    });
+    const headers = { 'content-type': 'application/json' };
+
+    const responses = await Promise.all([
+      routes.request(`/admin/organizations/${organizationId}/contract`, {
+        method: 'PATCH',
+        headers,
+        body: JSON.stringify({ plan_key: 'enterprise_c' }),
+      }),
+      routes.request(`/admin/organizations/${organizationId}/credits/grants`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          bucket: 'monthly',
+          amount: 600,
+          description: 'manual contract adjustment',
+        }),
+      }),
+    ]);
+
+    for (const response of responses) {
+      expect(response.status).toBe(500);
+    }
+  });
 });
 
 function createRoutes(input: {

@@ -285,6 +285,21 @@ export const organizationAuditLogsResponseSchema = z
   })
   .strict();
 
+export const adminOrganizationContractResponseSchema = z
+  .object({
+    organization: z
+      .object({
+        id: idSchema,
+        name: z.string().min(1),
+        status: organizationStatusSchema,
+        plan_key: organizationPlanSchema,
+        billing_email: nullableStringSchema,
+        updated_at: timestampSchema,
+      })
+      .strict(),
+  })
+  .strict();
+
 export const organizationsResponseSchema = z
   .object({
     organizations: z.array(organizationWorkspaceSchema),
