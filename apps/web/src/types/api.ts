@@ -201,7 +201,7 @@ export interface BalloonRecord {
   id: string;
   page_id: string;
   speaker_entity_id: string | null;
-  balloon_type: 'speech' | 'thought' | 'narration' | 'shout' | 'whisper';
+  balloon_type: 'speech' | 'thought' | 'narration' | 'shout' | 'whisper' | 'sfx' | 'caption';
   writing_mode: 'horizontal' | 'vertical';
   text: string;
   position: { x: number; y: number; width: number; height: number };

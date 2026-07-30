@@ -6,9 +6,9 @@
 
 対象PR: [#67 feat(mobile): production-ready Lyra mobile workflow](https://github.com/sh0g0-ikeda/Lyra/pull/67)
 
-進捗: 11件完了 / 420件未完了
+進捗: 12件完了 / 420件未完了
 
-実装監査基準: `96cdaf2`（PR #87統合後、全CI成功。PR #88はこのcommitから分離）
+実装監査基準: `b87e1ab`（PR #88統合後、全CI成功。PR #89はこのcommitから分離）
 
 ## 1. 設計ブリーフ
 
@@ -190,6 +190,8 @@ Codex単独で進める次の順序は、`CI安定化 → PR-A継続 → 契約�
     - 証跡: [PR #88](https://github.com/sh0g0-ikeda/Lyra/pull/88)。既存Stripe購読から更新日と解約予定だけを安全に追加し、共通response contractへ接続
     - 境界: Apple / Google Store購読を含む統合summaryはmigration 029適用後のPR-Cで扱い、未導入テーブルへの依存をPR-Aへ持ち込まない
   - [ ] `/api/me`と`/api/compositions`以外のRouteを1つずつ監査して接続
+    - [x] Balloon作成・一覧・自動生成・更新のresponse contractを現行7 typeと照合して接続
+      - 証跡: [PR #89](https://github.com/sh0g0-ikeda/Lyra/pull/89)。PR #67案に欠けていた`sfx` / `caption`を補正し、既存wireを維持
   - [ ] Mobile側生成物とcontract drift checkを統合
   - [ ] paginationとAPI inventoryを独立監査
 - [ ] PR-B: account deletion / upload token / export基盤

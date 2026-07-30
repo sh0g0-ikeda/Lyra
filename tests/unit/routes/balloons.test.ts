@@ -286,6 +286,88 @@ describe('balloon routes', () => {
 
     expect(response.status).toBe(204);
   });
+
+  it('作成Serviceが不正Balloonを返した場合は201で返さない', async () => {
+    const balloonService = new FakeBalloonService();
+    balloonService.createBalloon = async (_userId, pageId) =>
+      buildBalloon({ pageId, fontSize: 0 });
+    const app = createTestApp({ balloonService });
+    const token = await createToken();
+
+    const response = await app.request('/api/pages/33333333-3333-4333-8333-333333333333/balloons', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        balloon_type: 'speech',
+        text: 'hello',
+        position: {
+          x: 0.1,
+          y: 0.2,
+          width: 0.3,
+          height: 0.2,
+        },
+      }),
+    });
+
+    await expectContractFailure(response);
+  });
+
+  it('一覧Serviceが不正Balloonを返した場合は200で返さない', async () => {
+    const balloonService = new FakeBalloonService();
+    balloonService.listBalloons = async (_userId, pageId) =>
+      [buildBalloon({ pageId, fontSize: 0 })];
+    const app = createTestApp({ balloonService });
+    const token = await createToken();
+
+    const response = await app.request('/api/pages/33333333-3333-4333-8333-333333333333/balloons', {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    await expectContractFailure(response);
+  });
+
+  it('自動生成Serviceが不正Balloonを返した場合は200で返さない', async () => {
+    const balloonService = new FakeBalloonService();
+    balloonService.autoGenerateBalloons = async (_userId, pageId) =>
+      [buildBalloon({ pageId, fontSize: 0 })];
+    const app = createTestApp({ balloonService });
+    const token = await createToken();
+
+    const response = await app.request('/api/pages/33333333-3333-4333-8333-333333333333/auto-balloons', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    await expectContractFailure(response);
+  });
+
+  it('更新Serviceが不正Balloonを返した場合は200で返さない', async () => {
+    const balloonService = new FakeBalloonService();
+    balloonService.updateBalloon = async (_userId, balloonId) =>
+      buildBalloon({ id: balloonId, fontSize: 0 });
+    const app = createTestApp({ balloonService });
+    const token = await createToken();
+
+    const response = await app.request('/api/balloons/11111111-1111-4111-8111-111111111111', {
+      method: 'PUT',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        text: 'updated',
+      }),
+    });
+
+    await expectContractFailure(response);
+  });
 });
 
 function createTestApp(overrides: {
@@ -336,4 +418,14 @@ async function createToken(): Promise<string> {
     .setIssuedAt()
     .setExpirationTime('1h')
     .sign(new TextEncoder().encode(jwtSecret));
+}
+
+async function expectContractFailure(response: Response): Promise<void> {
+  expect(response.status).toBe(500);
+  await expect(response.json()).resolves.toEqual({
+    error: {
+      code: 'CONFIGURATION_ERROR',
+      message: 'Mobile response contract validation failed',
+    },
+  });
 }
