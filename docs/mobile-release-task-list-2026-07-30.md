@@ -8,7 +8,7 @@
 
 進捗: 12件完了 / 420件未完了
 
-実装監査基準: `b87e1ab`（PR #88統合後、全CI成功。PR #89はこのcommitから分離）
+実装監査基準: `f2913b2`（PR #89統合後、全CI成功）
 
 ## 1. 設計ブリーフ
 
@@ -179,7 +179,7 @@ Codex単独で進める次の順序は、`CI安定化 → PR-A継続 → 契約�
 - [ ] PR-A: Mobile API contract / response validation / pagination
   - 主な所有: `packages/api-contract`, Mobile schema生成、inventory scripts
   - 完了条件: API inventoryとcontract drift checkが単独でgreen
-  - 進捗: 3つの分割単位をmainへ統合済み。billing、残Route、Mobile生成物、pagination / inventoryが残る
+  - 進捗: 5つの分割単位をmainへ統合済み。残Route、Mobile生成物、pagination / inventoryが残る
   - [x] response contract guardを本番挙動へ未接続の状態で分離統合
     - 証跡: [PR #76](https://github.com/sh0g0-ikeda/Lyra/pull/76)
   - [x] `/api/me`の現行wire互換性と不正payload拒否を検証して分離統合
