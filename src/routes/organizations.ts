@@ -1,4 +1,15 @@
 import { Hono, type Context, type MiddlewareHandler } from 'hono';
+import {
+  organizationInvitationPreviewResponseSchema,
+  organizationInvitationResponseSchema,
+  organizationInvitationResultResponseSchema,
+  organizationInvitationsResponseSchema,
+  organizationMemberResponseSchema,
+  organizationMembersResponseSchema,
+  organizationResponseSchema,
+  organizationWorkspaceSchema,
+  organizationsResponseSchema,
+} from '../../packages/api-contract/src/mobileApiSchemas.js';
 import { ValidationError } from '../domain/errors/index.js';
 import type { PaymentRecord } from '../domain/types/billing.js';
 import type {
@@ -25,6 +36,7 @@ import type { OrganizationBillingServicePort } from '../services/organization/Or
 import { buildOrganizationUsageCsv } from '../services/organization/OrganizationUsageCsv.js';
 import type { OrganizationServicePort } from '../services/organization/OrganizationService.js';
 import type { AppEnv } from '../types/app.js';
+import { assertMobileResponseContract } from './mobileResponseContract.js';
 import { readJsonBody, REQUEST_BODY_LIMITS } from './requestBody.js';
 
 export interface OrganizationRouteDependencies {
@@ -45,7 +57,7 @@ export function createOrganizationRoutes(dependencies: OrganizationRouteDependen
       throw new ValidationError(formatZodValidationError(body.error));
     }
     const preview = await dependencies.organizationService.previewInvitation(body.data.token);
-    return c.json({
+    const payload = {
       organization: preview.organization,
       invitation: {
         email: preview.invitation.email,
@@ -53,7 +65,8 @@ export function createOrganizationRoutes(dependencies: OrganizationRouteDependen
         status: preview.invitation.status,
         expires_at: preview.invitation.expiresAt.toISOString(),
       },
-    });
+    };
+    return c.json(assertMobileResponseContract(organizationInvitationPreviewResponseSchema, payload));
   });
 
   app.use('*', dependencies.authMiddleware);
@@ -62,7 +75,8 @@ export function createOrganizationRoutes(dependencies: OrganizationRouteDependen
   app.get('/organizations', async (c) => {
     const user = c.get('user');
     const workspaces = await dependencies.organizationService.listWorkspaces(user.id);
-    return c.json({ organizations: workspaces.map(toWorkspaceResponse) });
+    const payload = { organizations: workspaces.map(toWorkspaceResponse) };
+    return c.json(assertMobileResponseContract(organizationsResponseSchema, payload));
   });
 
   app.post('/organizations', async (c) => {
@@ -78,14 +92,16 @@ export function createOrganizationRoutes(dependencies: OrganizationRouteDependen
       billingEmail: body.data.billing_email ?? null,
     });
 
-    return c.json(toWorkspaceResponse(workspace), 201);
+    const payload = toWorkspaceResponse(workspace);
+    return c.json(assertMobileResponseContract(organizationWorkspaceSchema, payload), 201);
   });
 
   app.get('/organizations/:organizationId', async (c) => {
     const user = c.get('user');
     const organizationId = parseOrganizationId(c);
     const workspace = await dependencies.organizationService.getOrganization(user.id, organizationId);
-    return c.json(toWorkspaceResponse(workspace));
+    const payload = toWorkspaceResponse(workspace);
+    return c.json(assertMobileResponseContract(organizationWorkspaceSchema, payload));
   });
 
   app.patch('/organizations/:organizationId', async (c) => {
@@ -102,14 +118,16 @@ export function createOrganizationRoutes(dependencies: OrganizationRouteDependen
       billingEmail: body.data.billing_email,
     });
 
-    return c.json({ organization: toOrganizationResponse(organization) });
+    const payload = { organization: toOrganizationResponse(organization) };
+    return c.json(assertMobileResponseContract(organizationResponseSchema, payload));
   });
 
   app.get('/organizations/:organizationId/members', async (c) => {
     const user = c.get('user');
     const organizationId = parseOrganizationId(c);
     const members = await dependencies.organizationService.listMembers(user.id, organizationId);
-    return c.json({ members: members.map(toMemberResponse) });
+    const payload = { members: members.map(toMemberResponse) };
+    return c.json(assertMobileResponseContract(organizationMembersResponseSchema, payload));
   });
 
   app.post('/organizations/:organizationId/invitations', async (c) => {
@@ -125,12 +143,13 @@ export function createOrganizationRoutes(dependencies: OrganizationRouteDependen
       role: body.data.role,
     });
 
+    const payload = {
+      invitation: toInvitationResponse(result.invitation),
+      invitation_url: result.invitationUrl,
+      email_delivery: result.emailDelivery,
+    };
     return c.json(
-      {
-        invitation: toInvitationResponse(result.invitation),
-        invitation_url: result.invitationUrl,
-        email_delivery: result.emailDelivery,
-      },
+      assertMobileResponseContract(organizationInvitationResultResponseSchema, payload),
       201,
     );
   });
@@ -139,7 +158,8 @@ export function createOrganizationRoutes(dependencies: OrganizationRouteDependen
     const user = c.get('user');
     const organizationId = parseOrganizationId(c);
     const invitations = await dependencies.organizationService.listInvitations(user.id, organizationId);
-    return c.json({ invitations: invitations.map(toInvitationResponse) });
+    const payload = { invitations: invitations.map(toInvitationResponse) };
+    return c.json(assertMobileResponseContract(organizationInvitationsResponseSchema, payload));
   });
 
   app.post('/organizations/:organizationId/invitations/:invitationId/resend', async (c) => {
@@ -147,11 +167,12 @@ export function createOrganizationRoutes(dependencies: OrganizationRouteDependen
     const organizationId = parseOrganizationId(c);
     const invitationId = parseUuidParam(c, 'invitationId');
     const result = await dependencies.organizationService.resendInvitation(user.id, organizationId, invitationId);
-    return c.json({
+    const payload = {
       invitation: toInvitationResponse(result.invitation),
       invitation_url: result.invitationUrl,
       email_delivery: result.emailDelivery,
-    });
+    };
+    return c.json(assertMobileResponseContract(organizationInvitationResultResponseSchema, payload));
   });
 
   app.post('/organizations/:organizationId/invitations/:invitationId/revoke', async (c) => {
@@ -159,7 +180,8 @@ export function createOrganizationRoutes(dependencies: OrganizationRouteDependen
     const organizationId = parseOrganizationId(c);
     const invitationId = parseUuidParam(c, 'invitationId');
     const invitation = await dependencies.organizationService.revokeInvitation(user.id, organizationId, invitationId);
-    return c.json({ invitation: toInvitationResponse(invitation) });
+    const payload = { invitation: toInvitationResponse(invitation) };
+    return c.json(assertMobileResponseContract(organizationInvitationResponseSchema, payload));
   });
 
   app.post('/organization-invitations/accept', async (c) => {
@@ -170,7 +192,8 @@ export function createOrganizationRoutes(dependencies: OrganizationRouteDependen
     }
 
     const workspace = await dependencies.organizationService.acceptInvitation(user.id, user.email, body.data.token);
-    return c.json(toWorkspaceResponse(workspace));
+    const payload = toWorkspaceResponse(workspace);
+    return c.json(assertMobileResponseContract(organizationWorkspaceSchema, payload));
   });
 
   app.post('/invitations/:token/accept', async (c) => {
@@ -182,7 +205,8 @@ export function createOrganizationRoutes(dependencies: OrganizationRouteDependen
     }
 
     const workspace = await dependencies.organizationService.acceptInvitation(user.id, user.email, body.data.token);
-    return c.json(toWorkspaceResponse(workspace));
+    const payload = toWorkspaceResponse(workspace);
+    return c.json(assertMobileResponseContract(organizationWorkspaceSchema, payload));
   });
 
   app.patch('/organizations/:organizationId/members/:memberId', async (c) => {
@@ -199,7 +223,8 @@ export function createOrganizationRoutes(dependencies: OrganizationRouteDependen
       status: body.data.status,
     });
 
-    return c.json({ member: toMemberResponse(member) });
+    const payload = { member: toMemberResponse(member) };
+    return c.json(assertMobileResponseContract(organizationMemberResponseSchema, payload));
   });
 
   app.delete('/organizations/:organizationId/members/:memberId', async (c) => {
