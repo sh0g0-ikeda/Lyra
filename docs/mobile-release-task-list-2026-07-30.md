@@ -6,9 +6,9 @@
 
 対象PR: [#67 feat(mobile): production-ready Lyra mobile workflow](https://github.com/sh0g0-ikeda/Lyra/pull/67)
 
-進捗: 39件完了 / 397件未完了
+進捗: 41件完了 / 395件未完了
 
-実装監査基準: `4b7f879`（PR #112統合後、全CI成功）
+実装監査基準: `624ae8b`（PR #113統合後、全CI成功）
 
 ## 1. 設計ブリーフ
 
@@ -235,7 +235,10 @@ Codex単独で進める次の順序は、`CI安定化 → PR-A継続 → 契約�
   - 完了条件: personal/org tenancy、S3 ownership、削除冪等性がgreen
   - [x] account deletion requestの永続化checkpointをAPI未接続で先行統合
     - 証跡: [PR #110](https://github.com/sh0g0-ikeda/Lyra/pull/110)。migration 027をfresh DBへ適用し、44 invariant / 0 violationsを確認
-    - 境界: PR #67側の削除Repositoryは未導入の`mobile_store_purchases`へ依存するため、削除API・Cognito・Stripe・S3処理はmigration 029の導入と監査が完了するまで接続しない
+    - 境界: migration 029はPR #112で統合済み。ただしMobile購読の解約・entitlement終期・identity削除方針とCognito / Stripe / S3外部処理が未完了のため削除APIは接続しない
+  - [x] entity reference upload tokenのDB契約とatomic consume RepositoryをAPI未接続で先行統合
+    - 証跡: [PR #114](https://github.com/sh0g0-ikeda/Lyra/pull/114)。hash-only、single-use、TTL、MIME/size、user/org/entity、owner S3 prefixをmigration・Repository・invariantで確認
+    - 境界: presigned URL、S3 HEAD/GET、画像解析、credit、Route、Web / Mobile clientは未接続。既存base64 importは変更しない
 - [ ] PR-C: Mobile store billing Backend
   - 主な所有: migration 029、Apple/Google verifier、purchase service、webhook、ledger
   - 完了条件: 課金OFFで既存Webの挙動を変えず、focused testsがgreen
@@ -356,8 +359,9 @@ Codex単独で進める次の順序は、`CI安定化 → PR-A継続 → 契約�
 - [ ] 030 generation job management
   - 完了条件: job一覧、hide、cancel状態が既存jobと互換
   - 進捗: [PR #113](https://github.com/sh0g0-ikeda/Lyra/pull/113)で履歴非表示tableと一覧indexのみ完了。既存cancel/refundへ即時影響する旧triggerは未統合
-- [ ] 031 entity reference upload tokens
+- [x] 031 entity reference upload tokens
   - 完了条件: single-use、期限、MIME/size、user/org bindingが有効
+  - 証跡: [PR #114](https://github.com/sh0g0-ikeda/Lyra/pull/114)。conditional `UPDATE ... RETURNING`で同時consumeを1件に限定し、personal/org/entity scopeと5 MiB・最大10分をDBで固定
 - [ ] 032 episode export jobs
   - 完了条件: export artifactのownershipと期限が有効
 - [ ] 033 mobile push token registry

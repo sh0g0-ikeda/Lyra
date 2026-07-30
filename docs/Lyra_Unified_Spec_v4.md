@@ -138,6 +138,9 @@ enable a purchase route or grant credits.
 - Request bodies use bounded Zod schemas.
 - SQL uses parameter binding.
 - Uploaded images are restricted by MIME type and size.
+- Direct image uploads use short-lived, single-use records bound to the user,
+  optional organization and entity, MIME type, size, and a server-generated
+  temporary storage key. Only a token hash is persisted.
 - LLM structured output is schema-validated and quality-gated before persistence.
 - Raw provider errors, credentials, connection strings, and stack traces are not
   returned to end users.
