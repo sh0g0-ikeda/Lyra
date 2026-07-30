@@ -7,6 +7,7 @@ import type { AppEnv } from '../../../src/types/app.js';
 import { createMeRoutes } from '../../../src/routes/me.js';
 import type { CreditServicePort } from '../../../src/services/credit/CreditService.js';
 import type { OrganizationServicePort } from '../../../src/services/organization/OrganizationService.js';
+import { currentSessionSchema } from '../../../packages/api-contract/src/mobileApiSchemas.js';
 
 const testUser: AuthenticatedUser = {
   id: 'user-1',
@@ -29,7 +30,9 @@ describe('createMeRoutes', () => {
     const response = await routes.request('/me');
 
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({
+    const payload = await response.json();
+    expect(currentSessionSchema.safeParse(payload).success).toBe(true);
+    expect(payload).toEqual({
       user: {
         id: 'user-1',
         email: 'owner@example.com',
@@ -58,6 +61,58 @@ describe('createMeRoutes', () => {
       ],
     });
     expect(organizationService.userIds).toEqual(['user-1']);
+  });
+
+  it('optional serviceが未設定でも現行のnullと空配列contractを返す', async () => {
+    const routes = createMeRoutes({
+      authMiddleware: buildAuthMiddleware(testUser),
+      rateLimitMiddleware: buildPassThroughMiddleware(),
+    });
+
+    const response = await routes.request('/me');
+    const payload = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(currentSessionSchema.safeParse(payload).success).toBe(true);
+    expect(payload).toEqual({
+      user: {
+        id: 'user-1',
+        email: 'owner@example.com',
+        display_name: 'Owner',
+        plan_code: 'standard',
+      },
+      personal_credits: null,
+      organizations: [],
+    });
+  });
+
+  it('内部で負数creditが生成された場合は成功payloadとして返さない', async () => {
+    const routes = createMeRoutes({
+      authMiddleware: buildAuthMiddleware(testUser),
+      rateLimitMiddleware: buildPassThroughMiddleware(),
+      creditService: new NegativeCreditService(),
+    });
+    routes.onError((error, c) =>
+      c.json(
+        {
+          error: {
+            code: 'code' in error ? error.code : 'INTERNAL_ERROR',
+            message: error.message,
+          },
+        },
+        'statusCode' in error ? (error.statusCode as 500) : 500,
+      ),
+    );
+
+    const response = await routes.request('/me');
+
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toEqual({
+      error: {
+        code: 'CONFIGURATION_ERROR',
+        message: 'Mobile response contract validation failed',
+      },
+    });
   });
 });
 
@@ -94,6 +149,17 @@ class FakeCreditService implements CreditServicePort {
 
   public async refundCredits(): Promise<CreditBalanceSnapshot> {
     return this.getBalance('user-1');
+  }
+}
+
+class NegativeCreditService extends FakeCreditService {
+  public override async getBalance(_userId: string): Promise<CreditBalanceSnapshot> {
+    return {
+      monthlyCredits: -1,
+      purchasedCredits: 0,
+      totalCredits: -1,
+      monthlyExpiresAt: null,
+    };
   }
 }
 

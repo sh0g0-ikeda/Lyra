@@ -4,6 +4,8 @@ import type { AuthenticatedUser } from '../domain/types/user.js';
 import type { CreditServicePort } from '../services/credit/CreditService.js';
 import type { OrganizationServicePort } from '../services/organization/OrganizationService.js';
 import type { AppEnv } from '../types/app.js';
+import { currentSessionSchema } from '../../packages/api-contract/src/mobileApiSchemas.js';
+import { assertMobileResponseContract } from './mobileResponseContract.js';
 
 export interface MeRouteDependencies {
   authMiddleware: MiddlewareHandler<AppEnv>;
@@ -34,7 +36,7 @@ export function createMeRoutes(dependencies: MeRouteDependencies): Hono<AppEnv> 
         ? null
         : await dependencies.creditService.getBalance(user.id);
 
-    return c.json({
+    const payload = {
       user: toUserResponse(user),
       personal_credits:
         personalCredits === null
@@ -46,7 +48,9 @@ export function createMeRoutes(dependencies: MeRouteDependencies): Hono<AppEnv> 
               monthly_expires_at: personalCredits.monthlyExpiresAt?.toISOString() ?? null,
             },
       organizations: organizations.map(toWorkspaceResponse),
-    });
+    };
+
+    return c.json(assertMobileResponseContract(currentSessionSchema, payload));
   });
 
   return app;

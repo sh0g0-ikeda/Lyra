@@ -6,6 +6,7 @@ RUN bun install --frozen-lockfile
 FROM deps AS build
 COPY tsconfig.json ./
 COPY src ./src
+COPY packages ./packages
 COPY scripts ./scripts
 COPY worker ./worker
 RUN bun run build
