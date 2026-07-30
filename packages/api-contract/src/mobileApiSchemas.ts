@@ -323,6 +323,22 @@ export const pagesResponseSchema = z.object({
   pages: z.array(pageSchema),
 });
 
+export const pageJobAcceptedResponseSchema = z
+  .object({
+    job_id: idSchema,
+  })
+  .strict();
+
+export const pageAutofillResponseSchema = z.object({
+  updated_panel_count: z.number().int().nonnegative(),
+  filled_field_count: z.number().int().nonnegative(),
+  compiler_used: z.boolean(),
+  compiler_provider: z.enum(['openai', 'fallback']),
+  compiler_model: nullableStringSchema,
+  compiler_prompt_version: nullableStringSchema,
+  compiler_error: nullableStringSchema,
+});
+
 export const compositionSchema = z.object({
   id: idSchema,
   name: z.string(),
@@ -439,6 +455,36 @@ export const framesResponseSchema = z.object({
 export const frameTemplateResponseSchema = z.object({
   template_id: idSchema,
   panel_count: z.number().int().nonnegative(),
+  frames: z.array(panelFrameSchema),
+});
+
+const pageLayoutTemplateIdSchema = z.enum([
+  'standard_4',
+  'stacked_wide_4',
+  'top_wide_3',
+  'standard_6',
+  'dense_8',
+  'climax_2',
+  'splash_1',
+  'action_5',
+  'battle_7',
+  'vertical_2',
+  'bottom_wide_3',
+  'wide_top_4',
+  'wide_bottom_4',
+  'tall_left_4',
+  'right_tall_4',
+  'balanced_5',
+  'middle_wide_5',
+  'top_wide_5',
+  'split_6',
+]);
+
+export const pageLayoutTemplateResponseSchema = z.object({
+  template_id: pageLayoutTemplateIdSchema,
+  panel_count: z.number().int().nonnegative(),
+  created_panel_count: z.number().int().nonnegative(),
+  deleted_panel_count: z.number().int().nonnegative(),
   frames: z.array(panelFrameSchema),
 });
 

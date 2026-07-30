@@ -491,6 +491,56 @@ describe('page generation routes', () => {
     expect(pageGenerationService.lastPageId).toBe('33333333-3333-4333-8333-333333333333');
   });
 
+  it('page job受付とautofill成功JSONは契約外Service値を500にする', async () => {
+    const pageGenerationService = new FakePageGenerationService();
+    pageGenerationService.enqueuePageGeneration = async () => ({ jobId: '' });
+    const pageService: PageServicePort = new FakePageService();
+    pageService.autofillFromScenes = async () => ({
+      updatedPanelCount: 0,
+      filledFieldCount: 0,
+      compilerUsed: false,
+      compilerProvider: 'legacy' as 'openai',
+      compilerModel: null,
+      compilerPromptVersion: null,
+      compilerError: null,
+    });
+    const episodeStoryAutofillService = new FakeEpisodeStoryAutofillService();
+    episodeStoryAutofillService.enqueueEpisodeStoryAutofill = async () => ({ jobId: '' });
+    const app = createTestApp(
+      pageGenerationService,
+      new FakePageFinalizeService(),
+      new FakeJobService(),
+      new FakePageQueryService(),
+      pageService,
+      new FakePageExportService(),
+      episodeStoryAutofillService,
+    );
+    const token = await createToken();
+    const headers = { Authorization: `Bearer ${token}` };
+
+    const responses = await Promise.all([
+      app.request('/api/episodes/33333333-3333-4333-8333-333333333333/autofill-pages-from-story', {
+        method: 'POST',
+        headers,
+      }),
+      app.request('/api/pages/33333333-3333-4333-8333-333333333333/autofill-from-scenes', {
+        method: 'POST',
+        headers,
+      }),
+      app.request('/api/pages/33333333-3333-4333-8333-333333333333/generate', {
+        method: 'POST',
+        headers,
+      }),
+    ]);
+
+    for (const response of responses) {
+      expect(response.status).toBe(500);
+      await expect(response.json()).resolves.toMatchObject({
+        error: { code: 'CONFIGURATION_ERROR' },
+      });
+    }
+  });
+
   it('ページ画像エクスポートは画像 bytes を返す', async () => {
     const pageExportService = new FakePageExportService();
     const app = createTestApp(
