@@ -384,6 +384,8 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   Chapter: '章',
   Episode: '話',
   Works: '作品一覧',
+  'Collapse works': '作品一覧を折りたたむ',
+  'Expand works': '作品一覧を開く',
   'New work': '新しい作品',
   'Create work': '作品を作成',
   'Loading works...': '作品一覧を読み込み中...',
@@ -1546,10 +1548,21 @@ const tutorialSteps: Array<{
   {
     title: { en: 'Story', ja: 'ストーリー' },
     steps: [
-      { en: 'Create a work from New work after entering at least a title.', ja: 'まずタイトルを入れて、新しい作品を作成します。' },
+      {
+        en: 'On desktop, change workspace in the left sidebar. On mobile, open Account to change workspace.',
+        ja: 'PCでは左サイドバー、スマホでは「アカウント」からワークスペースを変更します。',
+      },
+      {
+        en: 'On desktop, choose or create a work in the left sidebar. On mobile, expand Works at the top, then choose or create it.',
+        ja: 'PCでは左サイドバー、スマホでは上部の「作品一覧」を開いて、作品を選択または作成します。',
+      },
       { en: 'The work overview is optional. Add world setting or overall flow only when it helps.', ja: '作品の概要は任意です。世界観や全体の流れは、必要な範囲だけ書けば十分です。' },
       { en: 'Add a chapter, then add episodes inside that chapter.', ja: '章を追加し、その章の中に話を追加します。' },
       { en: 'Write the episode in the full story field. This is the main source for page planning.', ja: '話は全体入力欄にまとめて書きます。ここがページ骨格やコマ内容の主な材料になります。' },
+      {
+        en: 'On mobile, Save is directly before Story AI. On desktop, Save remains in the episode header.',
+        ja: 'スマホでは「保存」はストーリーAIの直前、PCでは話の入力欄の見出し部分にあります。',
+      },
       { en: 'Story AI can improve the current episode and apply the result back into the fields.', ja: 'ストーリーAIを使うと、現在の話を改善して入力欄へ反映できます。' },
       { en: 'Scenes are optional. Add location, time, and atmosphere when you want more control over page planning.', ja: 'シーンは任意です。場所・時間帯・雰囲気を細かく指定したい時だけ使います。' },
     ],
@@ -1557,7 +1570,10 @@ const tutorialSteps: Array<{
   {
     title: { en: 'Characters', ja: 'キャラクター' },
     steps: [
-      { en: 'Press New character and fill the fields you already know.', ja: '新規キャラを押し、分かっている項目から入力します。' },
+      {
+        en: 'On desktop, use New character in Character list. On mobile, use New character beside Reset draft and Delete in Character editor.',
+        ja: 'PCでは「キャラ一覧」、スマホでは「キャラ編集」の「下書きを戻す」「削除」の隣にある「新規キャラ」を使います。',
+      },
       { en: 'You do not need to fill every blank field. Save the selected character before generation.', ja: 'すべての空欄を埋める必要はありません。生成前に、選択中のキャラを保存してください。' },
       { en: 'Generate a full-body preview, then confirm the image you want to use as the reference.', ja: '全身プレビューを生成し、使いたい画像をレファレンスとして確定します。' },
       { en: 'Confirmed references are what page generation uses for character consistency.', ja: 'ページ生成では、確定済みレファレンスを使ってキャラの一貫性を保ちます。' },
@@ -1567,7 +1583,10 @@ const tutorialSteps: Array<{
   {
     title: { en: 'Pages And Export', ja: 'ページ生成と保存' },
     steps: [
-      { en: 'After creating the needed characters, open Pages and press Generate page plan.', ja: '必要なキャラを作成したら、ページを開いてページ骨格を生成します。' },
+      {
+        en: 'After creating the needed characters, open Page planning at the top of Pages and use Generate page plan.',
+        ja: '必要なキャラを作成したら、ページ画面上部の「ページ設計」を開き、「ページ骨格生成」を押します。',
+      },
       { en: 'Page plan generation creates pages, frames, and panel slots. It can take a few minutes.', ja: 'ページ骨格生成ではページ、枠、コマ欄を作ります。数分かかる場合があります。' },
       { en: 'Use Autofill page settings from story to distribute the story into panel details, characters, camera, background, and dialogue.', ja: '話をコマごとの状況、登場人物、カメラ、背景、セリフへ分配したい時は、ストーリーから設定を自動入力します。' },
       { en: 'Autofill page settings from story can take up to about 20 minutes. Keep the screen open while it is running.', ja: 'ストーリーから設定を自動入力は20分程度かかる場合があります。処理中は画面を開いたまま待ってください。' },
@@ -2293,6 +2312,7 @@ function StudioShell(props: {
     '',
   );
   const [activeTab, setActiveTab] = useState<WorkspaceTab>('story');
+  const [mobileWorksCollapsed, setMobileWorksCollapsed] = useState(false);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const accountMenuRef = useRef<HTMLDivElement | null>(null);
   const accountMenuTriggerRef = useRef<HTMLButtonElement | null>(null);
@@ -3681,6 +3701,21 @@ function StudioShell(props: {
     );
   };
 
+  const saveSelectedEpisode = (): void => {
+    if (selectedEpisode === null) {
+      return;
+    }
+
+    void runAction('Save episode', async () => {
+      await api.updateEpisode(
+        selectedEpisode.id,
+        toEpisodePayload(episodeDraft, loadedSelectedWorkEntityIds),
+        activeOrganizationId,
+      );
+      await invalidateScopedQuery(['episodes', selectedChapter?.id ?? '']);
+    });
+  };
+
   const workspacePanel = (
     <PanelSection
       title={pickUiText(uiLanguage, 'Workspace', 'ワークスペース')}
@@ -4740,12 +4775,32 @@ function StudioShell(props: {
           <section className="sidebar-section">
             <div className="section-header">
               <h2>{translateUiString(uiLanguage, 'Works')}</h2>
-              <span className={`badge ${worksQuery.isFetching ? 'loading' : ''}`}>
-                {worksQuery.isFetching && works.length === 0 ? <LoaderCircle className="spin" size={12} /> : works.length}
-              </span>
+              <div className="sidebar-works-header-actions">
+                <span className={`badge ${worksQuery.isFetching ? 'loading' : ''}`}>
+                  {worksQuery.isFetching && works.length === 0 ? <LoaderCircle className="spin" size={12} /> : works.length}
+                </span>
+                <button
+                  aria-controls="sidebar-works-content"
+                  aria-expanded={!mobileWorksCollapsed}
+                  aria-label={translateUiString(
+                    uiLanguage,
+                    mobileWorksCollapsed ? 'Expand works' : 'Collapse works',
+                  )}
+                  className="icon-button mobile-works-toggle"
+                  onClick={() => setMobileWorksCollapsed((current) => !current)}
+                  type="button"
+                >
+                  <ChevronDown className={mobileWorksCollapsed ? '' : 'open'} size={16} />
+                </button>
+              </div>
             </div>
-            {sidebarCreateWorkPanel}
-            <div className="stack gap-xs sidebar-work-list">
+            <div
+              className="sidebar-works-content"
+              hidden={isMobileViewport && mobileWorksCollapsed}
+              id="sidebar-works-content"
+            >
+              {sidebarCreateWorkPanel}
+              <div className="stack gap-xs sidebar-work-list">
               {works.length > 0 ? (
                 <StoryHierarchyTree
                   api={api}
@@ -4828,6 +4883,7 @@ function StudioShell(props: {
                   <span>{translateUiString(uiLanguage, 'No works yet.')}</span>
                 </div>
               ) : null}
+              </div>
             </div>
           </section>
         ) : (
@@ -5168,21 +5224,13 @@ function StudioShell(props: {
                 <>
                   <PanelSection
                     title="Episode draft"
+                    className="episode-draft-section"
                     actions={
                       <div className="toolbar">
                         <button
-                          className="secondary-button"
+                          className="secondary-button episode-save-desktop"
                           disabled={busyAction === 'Save episode'}
-                          onClick={() =>
-                            void runAction('Save episode', async () => {
-                              await api.updateEpisode(
-                                selectedEpisode.id,
-                                toEpisodePayload(episodeDraft, loadedSelectedWorkEntityIds),
-                                activeOrganizationId,
-                              );
-                              await invalidateScopedQuery(['episodes', selectedChapter?.id ?? '']);
-                            })
-                          }
+                          onClick={saveSelectedEpisode}
                           type="button"
                         >
                           {busyAction === 'Save episode' ? <LoaderCircle className="spin" size={16} /> : <Save size={16} />}
@@ -5229,10 +5277,22 @@ function StudioShell(props: {
                       value={episodeDraft.story_full_draft}
                       onChange={(value) => setEpisodeDraft({ ...episodeDraft, story_input_mode: 'full', story_full_draft: value })}
                     />
+                    <div className="episode-save-mobile">
+                      <button
+                        className="secondary-button"
+                        disabled={busyAction === 'Save episode'}
+                        onClick={saveSelectedEpisode}
+                        type="button"
+                      >
+                        {busyAction === 'Save episode' ? <LoaderCircle className="spin" size={16} /> : <Save size={16} />}
+                        {translateUiString(uiLanguage, 'Save')}
+                      </button>
+                    </div>
                   </PanelSection>
 
                   <PanelSection
                     title="Story AI"
+                    className="story-ai-section"
                     subtitle="Story AI follows your instruction to improve the episode and rewrites it for reliable page and panel planning. Recommended before planning pages."
                     collapsible
                     mobileDefaultCollapsed
@@ -5490,7 +5550,7 @@ function StudioShell(props: {
                     collapsible
                     actions={
                       <button
-                        className="secondary-button"
+                        className="secondary-button desktop-character-list-new-action"
                         onClick={beginNewEntityDraft}
                         type="button"
                       >
@@ -5519,7 +5579,15 @@ function StudioShell(props: {
                     className="character-editor-section"
                     collapsible
                     actions={
-                      <div className="toolbar">
+                      <div className="toolbar character-editor-actions">
+                        <button
+                          className="secondary-button mobile-character-editor-new-action"
+                          onClick={beginNewEntityDraft}
+                          type="button"
+                        >
+                          <Plus size={16} />
+                          {translateUiString(uiLanguage, 'New character')}
+                        </button>
                         <button
                           className="ghost-button"
                           onClick={beginNewEntityDraft}
@@ -5530,6 +5598,7 @@ function StudioShell(props: {
                         </button>
                         {selectedEntity !== null ? (
                           <button
+                            aria-label={translateUiString(uiLanguage, 'Delete')}
                             className="ghost-button danger"
                             onClick={() => {
                               if (!confirmUiAction('Delete this character? This cannot be undone.')) {

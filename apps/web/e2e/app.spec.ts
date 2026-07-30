@@ -895,6 +895,102 @@ test('keeps the story hierarchy usable on a mobile viewport', async ({ page }) =
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
 });
 
+test('スマホWebで作品一覧と編集操作を作業導線に合わせて配置する', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await seedEnglishUi(page);
+  await seedAuthenticatedSession(page);
+  await page.route('**/api/**', mockApi);
+
+  await page.goto('/');
+
+  const sidebar = page.locator('aside.sidebar');
+  await expect(sidebar.locator('.sidebar-workspace-switcher')).toBeHidden();
+
+  const worksToggle = sidebar.getByRole('button', { name: 'Collapse works', exact: true });
+  const worksContent = sidebar.locator('.sidebar-works-content');
+  await expect(worksToggle).toHaveAttribute('aria-expanded', 'true');
+  await expect(worksContent).toBeVisible();
+  await worksToggle.click();
+  await expect(sidebar.getByRole('button', { name: 'Expand works', exact: true })).toHaveAttribute(
+    'aria-expanded',
+    'false',
+  );
+  await expect(worksContent).toBeHidden();
+
+  const mobileNavigation = page.getByRole('navigation', { name: 'Mobile navigation' });
+  await mobileNavigation.getByRole('button', { name: 'Account', exact: true }).click();
+  const accountWorkspace = page
+    .getByRole('heading', { name: 'Workspace', exact: true })
+    .locator('xpath=ancestor::section[1]');
+  await expect(accountWorkspace).toBeVisible();
+  await expect(accountWorkspace).toContainText('Personal use is available now.');
+
+  await mobileNavigation.getByRole('button', { name: 'Story', exact: true }).click();
+  const episodeSection = page
+    .getByRole('heading', { name: 'Episode draft', exact: true })
+    .locator('xpath=ancestor::section[1]');
+  const storyAiSection = page
+    .getByRole('heading', { name: 'Story AI', exact: true })
+    .locator('xpath=ancestor::section[1]');
+  const mobileEpisodeSave = episodeSection.locator('.episode-save-mobile');
+  await expect(storyAiSection).toBeVisible();
+  await expect(episodeSection.locator('.episode-save-desktop')).toBeHidden();
+  await expect(mobileEpisodeSave).toBeVisible();
+  expect(
+    await mobileEpisodeSave.evaluate((save) => {
+      const storyAi = document.querySelector('.story-ai-section');
+      return storyAi !== null && Boolean(save.compareDocumentPosition(storyAi) & Node.DOCUMENT_POSITION_FOLLOWING);
+    }),
+  ).toBe(true);
+
+  await mobileNavigation.getByRole('button', { name: 'Entities', exact: true }).click();
+  const characterList = page
+    .getByRole('heading', { name: 'Character list', exact: true })
+    .locator('xpath=ancestor::section[1]');
+  const characterEditor = page
+    .getByRole('heading', { name: 'Character editor', exact: true })
+    .locator('xpath=ancestor::section[1]');
+  await expect(characterList.locator('.desktop-character-list-new-action')).toBeHidden();
+  await expect(
+    characterEditor.locator('.mobile-character-editor-new-action').getByText('New character', { exact: true }),
+  ).toBeVisible();
+  await expect(characterEditor.getByRole('button', { name: 'Reset draft', exact: true })).toBeVisible();
+  await expect(characterEditor.getByRole('button', { name: 'Delete', exact: true })).toBeVisible();
+
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await expect(sidebar.locator('.sidebar-workspace-switcher')).toBeVisible();
+  await expect(sidebar.locator('.mobile-works-toggle')).toBeHidden();
+  await expect(characterList.locator('.desktop-character-list-new-action')).toBeVisible();
+  await expect(characterEditor.locator('.mobile-character-editor-new-action')).toBeHidden();
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await mobileNavigation.getByRole('button', { name: 'Guide', exact: true }).click();
+  await expect(
+    page.getByText(
+      'On desktop, change workspace in the left sidebar. On mobile, open Account to change workspace.',
+      { exact: true },
+    ),
+  ).toBeVisible();
+  await expect(
+    page.getByText(
+      'On mobile, Save is directly before Story AI. On desktop, Save remains in the episode header.',
+      { exact: true },
+    ),
+  ).toBeVisible();
+  await expect(
+    page.getByText(
+      'On desktop, use New character in Character list. On mobile, use New character beside Reset draft and Delete in Character editor.',
+      { exact: true },
+    ),
+  ).toBeVisible();
+  await expect(
+    page.getByText(
+      'After creating the needed characters, open Page planning at the top of Pages and use Generate page plan.',
+      { exact: true },
+    ),
+  ).toBeVisible();
+});
+
 test('stops a queued story apply job and removes it from local history', async ({ page }) => {
   await seedEnglishUi(page);
   await seedAuthenticatedSession(page);
