@@ -489,6 +489,100 @@ describe('createOrganizationRoutes', () => {
       expect(response.status).toBe(500);
     }
   });
+
+  it('法人課金の10成功JSONは契約外Service値を500にする', async () => {
+    const organizationService = new FakeOrganizationService();
+    organizationService.getCreditBalance = async () => ({
+      ...(buildWorkspace().balance as OrganizationCreditBalance),
+      organizationId: '',
+    });
+    const billingService = new FakeOrganizationBillingService();
+    billingService.getEnterprisePlanCatalog = () => [
+      {
+        planCode: 'enterprise_a',
+        displayNameJa: 'エンタープライズ A',
+        displayNameEn: 'Enterprise A',
+        monthlyCredits: -1,
+        amountJpy: 10_000,
+        minimumContractMonths: 1,
+        trialDays: 0,
+        isEnterprise: true,
+        configured: true,
+      },
+    ];
+    billingService.createSubscriptionCheckoutSession = async () => ({
+      sessionId: '',
+      url: 'https://checkout.stripe.com/session',
+    });
+    billingService.createCreditCheckoutSession = async () => ({
+      sessionId: 'cs_test',
+      url: 'https://checkout.stripe.com/session',
+      packageCode: 'credits_unknown',
+    });
+    billingService.createCustomerPortalSession = async () => ({ url: '' });
+    billingService.getOrganizationSubscriptionSummary = async () => ({
+      organizationId: '',
+      planCode: 'enterprise_a',
+      status: 'active',
+      currentPeriodStart: new Date('2026-07-01T00:00:00.000Z'),
+      currentPeriodEnd: new Date('2026-08-01T00:00:00.000Z'),
+      cancelAtPeriodEnd: false,
+    });
+    billingService.listOrganizationInvoices = async () => [
+      {
+        id: '',
+        userId: null,
+        organizationId,
+        stripeCheckoutSessionId: null,
+        stripeInvoiceId: 'in_test',
+        invoiceUrl: null,
+        kind: 'subscription',
+        amountJpy: 10_000,
+        status: 'paid',
+        createdAt: new Date('2026-07-01T00:00:00.000Z'),
+      },
+    ];
+    const routes = createOrganizationRoutes({
+      authMiddleware: buildAuthMiddleware(testUser),
+      rateLimitMiddleware: buildPassThroughMiddleware(),
+      organizationService: organizationService as unknown as OrganizationServicePort,
+      organizationBillingService: billingService as unknown as OrganizationBillingServicePort,
+    });
+    const jsonHeaders = { 'content-type': 'application/json' };
+
+    const responses = await Promise.all([
+      routes.request(`/organizations/${organizationId}/credits/balance`),
+      routes.request(`/organizations/${organizationId}/billing/plans`),
+      routes.request(`/organizations/${organizationId}/billing/checkout/subscription`, {
+        method: 'POST',
+        headers: jsonHeaders,
+        body: JSON.stringify({ plan_code: 'enterprise_a' }),
+      }),
+      routes.request(`/organizations/${organizationId}/billing/subscription-checkout-session`, {
+        method: 'POST',
+        headers: jsonHeaders,
+        body: JSON.stringify({ plan_code: 'enterprise_a' }),
+      }),
+      routes.request(`/organizations/${organizationId}/billing/checkout/credits`, {
+        method: 'POST',
+        headers: jsonHeaders,
+        body: JSON.stringify({ package_code: 'credits_200' }),
+      }),
+      routes.request(`/organizations/${organizationId}/billing/credit-pack-checkout-session`, {
+        method: 'POST',
+        headers: jsonHeaders,
+        body: JSON.stringify({ package_code: 'credits_200' }),
+      }),
+      routes.request(`/organizations/${organizationId}/billing/customer-portal`, { method: 'POST' }),
+      routes.request(`/organizations/${organizationId}/billing/customer-portal-session`, { method: 'POST' }),
+      routes.request(`/organizations/${organizationId}/billing`),
+      routes.request(`/organizations/${organizationId}/invoices`),
+    ]);
+
+    for (const response of responses) {
+      expect(response.status).toBe(500);
+    }
+  });
 });
 
 function buildAuthMiddleware(user: AuthenticatedUser): MiddlewareHandler<AppEnv> {
@@ -542,6 +636,29 @@ class FakeOrganizationBillingService {
         createdAt: new Date('2026-07-01T00:00:00.000Z'),
       },
     ];
+  }
+
+  public async createSubscriptionCheckoutSession(): Promise<{ sessionId: string; url: string }> {
+    return {
+      sessionId: 'cs_subscription',
+      url: 'https://checkout.stripe.com/subscription',
+    };
+  }
+
+  public async createCreditCheckoutSession(): Promise<{
+    sessionId: string;
+    url: string;
+    packageCode: string;
+  }> {
+    return {
+      sessionId: 'cs_credits',
+      url: 'https://checkout.stripe.com/credits',
+      packageCode: 'credits_200',
+    };
+  }
+
+  public async createCustomerPortalSession(): Promise<{ url: string }> {
+    return { url: 'https://billing.stripe.com/session' };
   }
 }
 

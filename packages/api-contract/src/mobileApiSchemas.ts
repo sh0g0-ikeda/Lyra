@@ -14,6 +14,25 @@ const organizationStatusSchema = z.enum([
   'canceled',
 ]);
 const organizationPlanSchema = z.enum(['enterprise_a', 'enterprise_b', 'enterprise_c']);
+const subscriptionPlanCodeSchema = z.enum([
+  'free',
+  'standard',
+  'premium',
+  'enterprise_a',
+  'enterprise_b',
+  'enterprise_c',
+]);
+const subscriptionStatusSchema = z.enum([
+  'active',
+  'canceled',
+  'incomplete',
+  'incomplete_expired',
+  'past_due',
+  'paused',
+  'trialing',
+  'unpaid',
+]);
+const creditPackageCodeSchema = z.enum(['credits_200', 'credits_1000', 'credits_3000']);
 const organizationMembershipStatusSchema = z.enum([
   'invited',
   'active',
@@ -122,6 +141,87 @@ export const organizationWorkspaceSchema = z
     organization: organizationSchema,
     membership: organizationMemberSchema,
     balance: organizationCreditBalanceSchema.nullable(),
+  })
+  .strict();
+
+export const organizationCreditBalanceResponseSchema = organizationCreditBalanceSchema;
+
+export const organizationBillingPlanSchema = z
+  .object({
+    plan_code: organizationPlanSchema,
+    display_name_ja: z.string(),
+    display_name_en: z.string(),
+    monthly_credits: z.number().int().nonnegative(),
+    amount_jpy: z.number().int().nonnegative(),
+    minimum_contract_months: z.number().int().nonnegative(),
+    trial_days: z.number().int().nonnegative(),
+    is_enterprise: z.literal(true),
+    configured: z.boolean(),
+  })
+  .strict();
+
+export const organizationBillingPlansResponseSchema = z
+  .object({
+    subscription_plans: z.array(organizationBillingPlanSchema),
+  })
+  .strict();
+
+export const organizationSubscriptionCheckoutResponseSchema = z
+  .object({
+    session_id: idSchema,
+    url: z.string().min(1),
+  })
+  .strict();
+
+export const organizationCreditCheckoutResponseSchema = z
+  .object({
+    session_id: idSchema,
+    package_code: creditPackageCodeSchema,
+    url: z.string().min(1),
+  })
+  .strict();
+
+export const organizationCustomerPortalResponseSchema = z
+  .object({
+    url: z.string().min(1),
+  })
+  .strict();
+
+export const organizationSubscriptionSummarySchema = z
+  .object({
+    organization_id: idSchema,
+    plan_code: subscriptionPlanCodeSchema,
+    status: subscriptionStatusSchema,
+    current_period_start: timestampSchema.nullable(),
+    current_period_end: timestampSchema.nullable(),
+    cancel_at_period_end: z.boolean(),
+  })
+  .strict();
+
+export const organizationBillingSummaryResponseSchema = z
+  .object({
+    workspace: organizationWorkspaceSchema,
+    subscription: organizationSubscriptionSummarySchema.nullable(),
+    subscription_plans: z.array(organizationBillingPlanSchema),
+  })
+  .strict();
+
+export const organizationInvoiceSchema = z
+  .object({
+    id: idSchema,
+    user_id: idSchema.nullable(),
+    organization_id: idSchema,
+    kind: z.enum(['subscription', 'credit_purchase']),
+    amount_jpy: z.number().int().nonnegative(),
+    status: z.enum(['paid', 'failed']),
+    invoice_url: z.string().min(1).nullable(),
+    created_at: timestampSchema,
+  })
+  .strict();
+
+export const organizationInvoicesResponseSchema = z
+  .object({
+    invoices: z.array(organizationInvoiceSchema),
   })
   .strict();
 
