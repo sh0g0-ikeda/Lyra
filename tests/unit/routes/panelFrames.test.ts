@@ -268,6 +268,80 @@ describe('panel frame routes', () => {
 
     expect(response.status).toBe(401);
   });
+
+  it('一覧Serviceが契約外のframeを返す場合は500にする', async () => {
+    const panelFrameService = new FakePanelFrameService();
+    panelFrameService.listPageFrames = async () => [buildFrame({ borderWidth: -1 })];
+    const app = createTestApp(panelFrameService);
+    const token = await createToken();
+
+    const response = await app.request(`/api/pages/${pageId}/frames`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: 'CONFIGURATION_ERROR' },
+    });
+  });
+
+  it('保存Serviceが契約外のframeを返す場合は500にする', async () => {
+    const panelFrameService = new FakePanelFrameService();
+    panelFrameService.replacePageFrames = async () => [buildFrame({ borderWidth: -1 })];
+    const app = createTestApp(panelFrameService);
+    const token = await createToken();
+
+    const response = await app.request(`/api/pages/${pageId}/frames`, {
+      method: 'PUT',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        frames: [
+          {
+            vertices: [
+              { x: 0, y: 0 },
+              { x: 1, y: 0 },
+              { x: 1, y: 0.5 },
+              { x: 0, y: 0.5 },
+            ],
+            reading_order: 1,
+          },
+        ],
+      }),
+    });
+
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: 'CONFIGURATION_ERROR' },
+    });
+  });
+
+  it('テンプレートServiceが契約外のframeを返す場合は500にする', async () => {
+    const panelFrameService = new FakePanelFrameService();
+    panelFrameService.applyTemplate = async () => ({
+      templateId: 'standard_4',
+      panelCount: 1,
+      frames: [buildFrame({ borderWidth: -1 })],
+    });
+    const app = createTestApp(panelFrameService);
+    const token = await createToken();
+
+    const response = await app.request(`/api/pages/${pageId}/frames/apply-template`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ template_id: 'standard_4' }),
+    });
+
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: 'CONFIGURATION_ERROR' },
+    });
+  });
 });
 
 function createTestApp(panelFrameService: PanelFrameServicePort): ReturnType<typeof createApp> {

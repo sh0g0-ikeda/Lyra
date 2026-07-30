@@ -134,6 +134,28 @@ export const panelAssignmentsResponseSchema = z.object({
   entities: z.array(panelEntityAssignmentSchema),
 });
 
+export const panelFrameSchema = z.object({
+  id: idSchema,
+  page_id: idSchema,
+  panel_id: nullableStringSchema,
+  vertices: z.array(z.object({ x: z.number(), y: z.number() })).min(3),
+  border_style: z.enum(['solid', 'dashed', 'none']),
+  border_width: z.number().nonnegative(),
+  border_color: z.string(),
+  z_index: z.number().int(),
+  reading_order: z.number().int().nonnegative(),
+});
+
+export const framesResponseSchema = z.object({
+  frames: z.array(panelFrameSchema),
+});
+
+export const frameTemplateResponseSchema = z.object({
+  template_id: idSchema,
+  panel_count: z.number().int().nonnegative(),
+  frames: z.array(panelFrameSchema),
+});
+
 export const compositionsResponseSchema = z.object({
   compositions: z.array(compositionSchema),
 });
