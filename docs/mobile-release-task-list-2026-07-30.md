@@ -6,9 +6,9 @@
 
 対象PR: [#67 feat(mobile): production-ready Lyra mobile workflow](https://github.com/sh0g0-ikeda/Lyra/pull/67)
 
-進捗: 35件完了 / 401件未完了
+進捗: 36件完了 / 400件未完了
 
-実装監査基準: `43aa559`（PR #109統合後、全CI成功）
+実装監査基準: `6d70c23`（PR #110統合後、全CI成功）
 
 ## 1. 設計ブリーフ
 
@@ -341,8 +341,9 @@ Codex単独で進める次の順序は、`CI安定化 → PR-A継続 → 契約�
 - [x] 027 account deletion requests
   - 完了条件: 冪等な削除状態と唯一ownerの保護を確認
   - 証跡: [PR #110](https://github.com/sh0g0-ikeda/Lyra/pull/110)。user単位の主キー、状態enum、processing claim pair、retry/blocker制約をmigration contract testとfresh DB invariantで確認
-- [ ] 028 page story metadata columns
+- [x] 028 page story metadata compatibility checkpoint
   - 完了条件: 既存pageの読み書きと生成promptが後方互換
+  - 証跡: [PR #111](https://github.com/sh0g0-ikeda/Lyra/pull/111)。現mainで3項目が既に`pages.layout_config`へ保存・読込・prompt連携されることを確認し、重複列・backfill・二重書込みを追加しないcomment-only migrationとして番号順を確定
 - [ ] 029 mobile store purchase ledger
   - 完了条件: store/external keyとledger eventのunique制約が有効
 - [ ] 030 generation job management
@@ -994,7 +995,7 @@ Backend:
 | Migration | 内容 |
 |---|---|
 | 027 | account deletion requests |
-| 028 | page story metadata |
+| 028 | page story metadataの既存`layout_config`契約を維持するcompatibility checkpoint |
 | 029 | mobile store purchase ledger |
 | 030 | generation job management |
 | 031 | entity reference upload tokens |
