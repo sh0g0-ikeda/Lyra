@@ -153,11 +153,11 @@ const DEPLOYMENT_DATA_INVARIANT_QUERIES: InvariantQuery[] = [
   },
   {
     name: 'credit_ledger.type',
-    sql: "SELECT id::text AS id FROM credit_ledger WHERE type NOT IN ('signup_bonus', 'monthly_grant', 'purchase', 'consume', 'refund') ORDER BY id LIMIT $1",
+    sql: "SELECT id::text AS id FROM credit_ledger WHERE type NOT IN ('signup_bonus', 'monthly_grant', 'purchase', 'purchase_reversal', 'consume', 'refund') ORDER BY id LIMIT $1",
   },
   {
     name: 'credit_ledger.amount_sign',
-    sql: "SELECT id::text AS id FROM credit_ledger WHERE NOT ((type = 'consume' AND amount < 0) OR (type IN ('signup_bonus', 'monthly_grant', 'purchase', 'refund') AND amount > 0)) ORDER BY id LIMIT $1",
+    sql: "SELECT id::text AS id FROM credit_ledger WHERE NOT ((type IN ('consume', 'purchase_reversal') AND amount < 0) OR (type IN ('signup_bonus', 'monthly_grant', 'purchase', 'refund') AND amount > 0)) ORDER BY id LIMIT $1",
   },
   {
     name: 'credit_ledger.bucket_delta_pair',
@@ -206,6 +206,26 @@ const DEPLOYMENT_DATA_INVARIANT_QUERIES: InvariantQuery[] = [
   {
     name: 'account_deletion_requests.processing_claim',
     sql: 'SELECT user_id::text AS id FROM account_deletion_requests WHERE (processing_token IS NULL) <> (processing_started_at IS NULL) ORDER BY user_id LIMIT $1',
+  },
+  {
+    name: 'mobile_store_purchases.enum_contract',
+    sql: "SELECT id::text AS id FROM mobile_store_purchases WHERE /* mobile_store_purchases.enum_contract */ store NOT IN ('apple', 'google') OR environment NOT IN ('sandbox', 'production') OR kind NOT IN ('subscription', 'credit_pack') OR state NOT IN ('pending', 'active', 'cancelled', 'expired', 'refunded', 'revoked', 'failed') OR (kind = 'subscription' AND (plan_code IS NULL OR plan_code NOT IN ('standard', 'premium') OR credit_package_code IS NOT NULL)) OR (kind = 'credit_pack' AND (plan_code IS NOT NULL OR credit_package_code IS NULL OR credit_package_code NOT IN ('credits_200', 'credits_1000', 'credits_3000'))) ORDER BY id LIMIT $1",
+  },
+  {
+    name: 'mobile_store_purchases.key_shape',
+    sql: 'SELECT id::text AS id FROM mobile_store_purchases WHERE /* mobile_store_purchases.key_shape */ char_length(external_purchase_key) <> 43 OR (transaction_key IS NOT NULL AND char_length(transaction_key) <> 43) ORDER BY id LIMIT $1',
+  },
+  {
+    name: 'mobile_store_purchases.credit_totals',
+    sql: 'SELECT id::text AS id FROM mobile_store_purchases WHERE /* mobile_store_purchases.credit_totals */ granted_credits < 0 OR reversed_credits < 0 OR reversed_credits > granted_credits ORDER BY id LIMIT $1',
+  },
+  {
+    name: 'mobile_store_purchase_events.contract',
+    sql: "SELECT id::text AS id FROM mobile_store_purchase_events WHERE /* mobile_store_purchase_events.contract */ store NOT IN ('apple', 'google') OR operation NOT IN ('observe', 'grant', 'reverse') OR state NOT IN ('pending', 'active', 'cancelled', 'expired', 'refunded', 'revoked', 'failed') OR char_length(event_key) <> 43 OR (transaction_key IS NOT NULL AND char_length(transaction_key) <> 43) OR char_length(provider_event_type) NOT BETWEEN 1 AND 255 OR jsonb_typeof(metadata) <> 'object' ORDER BY id LIMIT $1",
+  },
+  {
+    name: 'credit_ledger.mobile_store_event_key',
+    sql: 'SELECT id::text AS id FROM credit_ledger WHERE /* credit_ledger.mobile_store_event_key */ mobile_store_event_key IS NOT NULL AND char_length(mobile_store_event_key) <> 43 ORDER BY id LIMIT $1',
   },
 ];
 

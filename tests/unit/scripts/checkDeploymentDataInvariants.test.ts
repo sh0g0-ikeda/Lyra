@@ -137,7 +137,11 @@ describe('checkDeploymentDataInvariants', () => {
     expect(report.checkedCount).toBeGreaterThan(20);
     expect(database.queries.some((query) => query.includes('generation_jobs'))).toBe(true);
     expect(database.queries.some((query) => query.includes('credit_ledger'))).toBe(true);
-    expect(database.queries.some((query) => query.includes("type = 'consume' AND amount < 0"))).toBe(true);
+    expect(
+      database.queries.some((query) =>
+        query.includes("type IN ('consume', 'purchase_reversal') AND amount < 0"),
+      ),
+    ).toBe(true);
     expect(database.queries.some((query) => query.includes('incomplete_expired'))).toBe(true);
     expect(
       database.queries.some((query) =>
@@ -258,6 +262,32 @@ describe('checkDeploymentDataInvariants', () => {
     expect(refundOverConsumedQuery).toContain('organization_id IS NOT NULL');
     expect(refundOverConsumedQuery).toContain('GROUP BY organization_id, job_id');
     expect(database.queries.some((query) => query.includes('FROM pg_index'))).toBe(true);
+    expect(
+      database.queries.some((query) =>
+        query.includes('FROM mobile_store_purchases') &&
+        query.includes("state NOT IN ('pending', 'active', 'cancelled', 'expired', 'refunded', 'revoked', 'failed')"),
+      ),
+    ).toBe(true);
+    expect(
+      database.queries.some((query) =>
+        query.includes('FROM mobile_store_purchases') &&
+        query.includes("kind = 'subscription'") &&
+        query.includes("kind = 'credit_pack'"),
+      ),
+    ).toBe(true);
+    expect(
+      database.queries.some((query) =>
+        query.includes('FROM mobile_store_purchase_events') &&
+        query.includes("operation NOT IN ('observe', 'grant', 'reverse')"),
+      ),
+    ).toBe(true);
+    expect(
+      database.queries.some((query) =>
+        query.includes('FROM credit_ledger') &&
+        query.includes('mobile_store_event_key IS NOT NULL') &&
+        query.includes('char_length(mobile_store_event_key) <> 43'),
+      ),
+    ).toBe(true);
   });
 
   it('違反行があればチェック名とサンプル ID を返す', async () => {
@@ -294,6 +324,11 @@ describe('checkDeploymentDataInvariants', () => {
     'credit_ledger.job_refund_over_consumed',
     'generation_jobs.active_episode_story_autofill_resource_unique',
     'generation_jobs.active_episode_page_skeleton_resource_unique',
+    'mobile_store_purchases.enum_contract',
+    'mobile_store_purchases.key_shape',
+    'mobile_store_purchases.credit_totals',
+    'mobile_store_purchase_events.contract',
+    'credit_ledger.mobile_store_event_key',
   ])('%s を検出する', async (checkName) => {
     const database = new FakeDatabase(checkName);
 
