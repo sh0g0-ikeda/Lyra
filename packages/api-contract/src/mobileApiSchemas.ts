@@ -217,6 +217,39 @@ export const entitiesResponseSchema = z.object({
   entities: z.array(entitySchema),
 });
 
+export const entityReferenceSetSchema = z
+  .object({
+    entity_id: idSchema,
+    primary_ref_id: nullableStringSchema,
+    status: z.enum(['empty', 'partial', 'ready']),
+    updated_at: timestampSchema,
+    reference_images: z.array(
+      z
+        .object({
+          ref_id: idSchema,
+          cdn_url: z.string().min(1).optional(),
+          source: z.enum(['upload', 'generated']),
+          created_at: timestampSchema,
+        })
+        .strict(),
+    ),
+  })
+  .strict();
+
+export const entityImportResponseSchema = z
+  .object({
+    suggested_fields: unknownRecordSchema,
+    prompt_supplement: z.string(),
+    tmp_image_token: z.string().min(1),
+  })
+  .strict();
+
+export const entityReferenceGenerationResponseSchema = z
+  .object({
+    job_id: idSchema,
+  })
+  .strict();
+
 export const sceneSchema = z.object({
   id: idSchema,
   episode_id: idSchema,

@@ -1,6 +1,9 @@
 import { Hono, type Context, type MiddlewareHandler } from 'hono';
 import { z } from 'zod';
 import {
+  entityImportResponseSchema,
+  entityReferenceGenerationResponseSchema,
+  entityReferenceSetSchema,
   entitiesResponseSchema,
   entitySchema,
 } from '../../packages/api-contract/src/mobileApiSchemas.js';
@@ -120,7 +123,8 @@ export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<
     await requireOrganizationCapability(c, dependencies, organizationId, 'view_work');
     const referenceSet = await dependencies.entityReferenceService.getReferenceSet(user.id, entityId, organizationId);
 
-    return c.json(await toReferenceSetResponse(referenceSet));
+    const payload = await toReferenceSetResponse(referenceSet);
+    return c.json(assertMobileResponseContract(entityReferenceSetSchema, payload));
   });
 
   app.get('/entities/:id/reference/:ref_id/image', async (c) => {
@@ -241,7 +245,7 @@ export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<
       imageBase64: body.data.image_base64,
     }, organizationId);
 
-    return c.json({
+    const payload = {
       suggested_fields: result.suggestedFields,
       prompt_supplement: result.promptSupplement,
       tmp_image_token: createReferenceCandidateToken({
@@ -251,7 +255,8 @@ export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<
       }, {
         secret: getReferenceCandidateTokenSecret(),
       }),
-    });
+    };
+    return c.json(assertMobileResponseContract(entityImportResponseSchema, payload));
   });
 
   app.post('/entities/:id/generate-reference', async (c) => {
@@ -285,7 +290,8 @@ export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<
       source_image_attached: body.data.source_candidate_token !== undefined || body.data.source_s3_key !== undefined,
     });
 
-    return c.json({ job_id: result.jobId }, 202);
+    const payload = { job_id: result.jobId };
+    return c.json(assertMobileResponseContract(entityReferenceGenerationResponseSchema, payload), 202);
   });
 
   app.post('/entities/:id/reference/confirm', async (c) => {
@@ -328,7 +334,8 @@ export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<
       primary_selected: primaryS3Key !== undefined,
     });
 
-    return c.json(await toReferenceSetResponse(referenceSet));
+    const payload = await toReferenceSetResponse(referenceSet);
+    return c.json(assertMobileResponseContract(entityReferenceSetSchema, payload));
   });
 
   app.delete('/entities/:id/reference/:ref_id', async (c) => {
@@ -352,7 +359,8 @@ export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<
       ref_id: refIdResult.data,
     });
 
-    return c.json(await toReferenceSetResponse(referenceSet));
+    const payload = await toReferenceSetResponse(referenceSet);
+    return c.json(assertMobileResponseContract(entityReferenceSetSchema, payload));
   });
 
   return app;
