@@ -6,9 +6,9 @@
 
 対象PR: [#67 feat(mobile): production-ready Lyra mobile workflow](https://github.com/sh0g0-ikeda/Lyra/pull/67)
 
-進捗: 41件完了 / 395件未完了
+進捗: 42件完了 / 394件未完了
 
-実装監査基準: `624ae8b`（PR #113統合後、全CI成功）
+実装監査基準: `317252a`（PR #114統合後、全CI成功）
 
 ## 1. 設計ブリーフ
 
@@ -239,6 +239,9 @@ Codex単独で進める次の順序は、`CI安定化 → PR-A継続 → 契約�
   - [x] entity reference upload tokenのDB契約とatomic consume RepositoryをAPI未接続で先行統合
     - 証跡: [PR #114](https://github.com/sh0g0-ikeda/Lyra/pull/114)。hash-only、single-use、TTL、MIME/size、user/org/entity、owner S3 prefixをmigration・Repository・invariantで確認
     - 境界: presigned URL、S3 HEAD/GET、画像解析、credit、Route、Web / Mobile clientは未接続。既存base64 importは変更しない
+  - [x] episode export jobとdispatch outboxのDB契約をAPI未接続で先行統合
+    - 証跡: [PR #115](https://github.com/sh0g0-ikeda/Lyra/pull/115)。owner-bound artifact key、PDF/ZIP MIME、128 MiB、最大24時間、status/timestamp、idempotencyをmigration・invariantで確認
+    - 境界: Repository、Service、SQS、artifact builder、S3、download Route、Web / Mobile clientは未接続。既存1ページexportは変更しない
 - [ ] PR-C: Mobile store billing Backend
   - 主な所有: migration 029、Apple/Google verifier、purchase service、webhook、ledger
   - 完了条件: 課金OFFで既存Webの挙動を変えず、focused testsがgreen
@@ -362,8 +365,9 @@ Codex単独で進める次の順序は、`CI安定化 → PR-A継続 → 契約�
 - [x] 031 entity reference upload tokens
   - 完了条件: single-use、期限、MIME/size、user/org bindingが有効
   - 証跡: [PR #114](https://github.com/sh0g0-ikeda/Lyra/pull/114)。conditional `UPDATE ... RETURNING`で同時consumeを1件に限定し、personal/org/entity scopeと5 MiB・最大10分をDBで固定
-- [ ] 032 episode export jobs
+- [x] 032 episode export jobs
   - 完了条件: export artifactのownershipと期限が有効
+  - 証跡: [PR #115](https://github.com/sh0g0-ikeda/Lyra/pull/115)。artifact keyをuser/org・episode・jobへbindingし、最大24時間と期限後cleanup markerをDBで固定
 - [ ] 033 mobile push token registry
   - 完了条件: token暗号化、hash lookup、logout unregisterが有効
 - [ ] 034 mobile push notification outbox

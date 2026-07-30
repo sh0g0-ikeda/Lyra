@@ -301,6 +301,19 @@ describe('checkDeploymentDataInvariants', () => {
         query.includes('works.organization_id IS DISTINCT FROM upload_tokens.organization_id'),
       ),
     ).toBe(true);
+    expect(
+      database.queries.some((query) =>
+        query.includes('FROM episode_export_jobs') &&
+        query.includes("expires_at > created_at + INTERVAL '24 hours'") &&
+        query.includes("artifact_mime_type IS DISTINCT FROM CASE format"),
+      ),
+    ).toBe(true);
+    expect(
+      database.queries.some((query) =>
+        query.includes('episode_export_jobs AS export_jobs') &&
+        query.includes('works.organization_id IS DISTINCT FROM export_jobs.organization_id'),
+      ),
+    ).toBe(true);
   });
 
   it('違反行があればチェック名とサンプル ID を返す', async () => {
@@ -344,6 +357,8 @@ describe('checkDeploymentDataInvariants', () => {
     'credit_ledger.mobile_store_event_key',
     'entity_reference_upload_tokens.contract',
     'entity_reference_upload_tokens.entity_scope',
+    'episode_export_jobs.contract',
+    'episode_export_jobs.scope',
   ])('%s を検出する', async (checkName) => {
     const database = new FakeDatabase(checkName);
 
