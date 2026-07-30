@@ -141,6 +141,63 @@ export const episodesResponseSchema = z.object({
   episodes: z.array(episodeSchema),
 });
 
+export const storyEpisodeImprovementSchema = z.object({
+  draft: z.object({
+    title: nullableStringSchema,
+    purpose: nullableStringSchema,
+    story_input_mode: z.enum(['structured', 'full']),
+    story_full_draft: nullableStringSchema,
+    introduction: nullableStringSchema,
+    middle: nullableStringSchema,
+    climax: nullableStringSchema,
+    ending_hook: nullableStringSchema,
+  }),
+  compiler_provider: z.enum(['openai', 'fallback']),
+  compiler_model: nullableStringSchema,
+  compiler_prompt_version: nullableStringSchema,
+  compiler_error: nullableStringSchema,
+});
+
+export const pageSkeletonResponseSchema = z.union([
+  z
+    .object({
+      job_id: idSchema,
+      queued: z.literal(true),
+      story_plan_applied: z.boolean(),
+    })
+    .strict(),
+  z
+    .object({
+      pages_created: z.number().int().nonnegative(),
+      panels_created: z.number().int().nonnegative(),
+      replaced_existing: z.boolean(),
+      story_plan_applied: z.boolean(),
+      story_plan_job_id: nullableStringSchema,
+    })
+    .strict(),
+]);
+
+export const storyCollaborationEventSchema = z.discriminatedUnion('event', [
+  z
+    .object({
+      event: z.literal('chunk'),
+      data: z.object({ text: z.string().max(25_000) }).strict(),
+    })
+    .strict(),
+  z
+    .object({
+      event: z.literal('done'),
+      data: z.object({}).strict(),
+    })
+    .strict(),
+  z
+    .object({
+      event: z.literal('error'),
+      data: z.object({ message: z.string().min(1).max(500) }).strict(),
+    })
+    .strict(),
+]);
+
 export const sceneSchema = z.object({
   id: idSchema,
   episode_id: idSchema,
