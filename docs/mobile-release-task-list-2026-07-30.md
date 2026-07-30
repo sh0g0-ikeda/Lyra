@@ -76,7 +76,7 @@ PR #67の分割とmain同期
 |---|---|---|
 | BLOCK-01 | Blocked | PR #67はDraftかつmainと競合している |
 | BLOCK-02 | Blocked | PR #67は644ファイル、43コミット、99,879 additions / 2,864 deletionsを含む |
-| BLOCK-03 | Blocked | PR #67のheadはmainより43コミット先行、16コミット遅延している |
+| BLOCK-03 | Blocked | PR #67のheadはmainより43コミット先行する一方、少なくとも16コミット遅延している。behind数は分割PRの統合ごとに増加する |
 | BLOCK-04 | Blocked | 現在のmainにはMobile課金Route、Apple/Google検証、購入台帳migrationがない |
 | BLOCK-05 | Blocked | 本番DBはmainのmigration 026までで、Mobile用027〜036は未適用 |
 | BLOCK-06 | Blocked | 本番SecretにMobile store billingの必須設定がなく、課金は無効 |
@@ -139,7 +139,7 @@ PR #67の分割とmain同期
   - 証跡: PR #76、PR #77、PR #79をそれぞれ最新`origin/main`から作成
 - [x] PR #67の変更を機能群ごとに分類する
   - 証跡: この文書の「5.2 実差分の規模」と「5.3〜5.10」
-- [ ] main側16コミットの影響箇所を列挙する
+- [ ] main側の未取込コミット（監査開始時16件、以後増加）の影響箇所を列挙する
 - [x] 既存のユーザー未コミット変更を別worktreeから隔離する
   - 証跡: `Lyra-mobile-response-contract` worktreeで分割統合を実施
 - [x] migration番号027〜036が現在のmainと衝突しないことを確認する
@@ -761,7 +761,7 @@ PR #67の分割とmain同期
 | 変更ファイル | 644 |
 | 追加 | 99,879行 |
 | 削除 | 2,864行 |
-| mainとの差 | 43 ahead / 16 behind |
+| mainとの差 | 43 ahead / 少なくとも16 behind。分割PRの統合ごとにbehind数は増加 |
 
 PR説明欄には当初「既存Web版とバックエンドには変更を加えていません」と記載されていた。しかし実差分にはBackend、Web、Worker、migration、CI、Dockerfileが含まれるため、2026-07-30に監査警告、実差分、分割統合状況を追記して訂正した。
 
@@ -934,7 +934,7 @@ Backend:
 ### 5.10 PR #67の主なリスク
 
 1. 1つのPRへMobile、Backend、DB、Web、Worker、CI、Opsが同居している。
-2. mainと競合し、16コミット分の本番変更を取り込めていない。
+2. mainと競合し、少なくとも16コミット分の本番変更を取り込めていない。behind数は分割PRの統合ごとに増加する。
 3. ~~PR説明欄が実差分と一致しない。~~ 2026-07-30に監査警告と実差分を追記済み。
 4. migration 10本を一度に導入するため、レビューとrollback判断が難しい。
 5. 既存Web/API互換fallbackが多く、Backend更新後も不要な分岐が残り得る。
