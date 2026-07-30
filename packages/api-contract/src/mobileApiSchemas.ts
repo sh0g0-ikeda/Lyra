@@ -3,6 +3,7 @@ import { z } from 'zod';
 const idSchema = z.string().min(1);
 const nullableStringSchema = z.string().nullable();
 const timestampSchema = z.string().min(1);
+const storyStatusSchema = z.enum(['draft', 'reviewing', 'ready']);
 const organizationRoleSchema = z.enum(['owner', 'admin', 'billing', 'editor', 'viewer']);
 const organizationStatusSchema = z.enum([
   'active',
@@ -71,6 +72,73 @@ export const currentSessionSchema = z.object({
       monthly_expires_at: nullableStringSchema,
     }),
   ),
+});
+
+export const workSchema = z.object({
+  id: idSchema,
+  organization_id: nullableStringSchema,
+  title: z.string(),
+  genre: nullableStringSchema,
+  world_setting: nullableStringSchema,
+  theme: nullableStringSchema,
+  main_entity_ids: z.array(idSchema),
+  starting_point: nullableStringSchema,
+  ending_point: nullableStringSchema,
+  overall_flow: nullableStringSchema,
+  version: z.number().int().nonnegative(),
+  status: storyStatusSchema,
+  created_at: timestampSchema,
+  updated_at: timestampSchema,
+});
+
+export const worksResponseSchema = z.object({
+  works: z.array(workSchema),
+});
+
+export const chapterSchema = z.object({
+  id: idSchema,
+  work_id: idSchema,
+  order: z.number().int().positive(),
+  title: nullableStringSchema,
+  purpose: nullableStringSchema,
+  starting_state: nullableStringSchema,
+  ending_state: nullableStringSchema,
+  emotion_curve: nullableStringSchema,
+  entities_involved: z.array(idSchema),
+  key_beats: z.array(z.string()),
+  version: z.number().int().nonnegative(),
+  status: storyStatusSchema,
+  created_at: timestampSchema,
+  updated_at: timestampSchema,
+});
+
+export const chaptersResponseSchema = z.object({
+  chapters: z.array(chapterSchema),
+});
+
+export const episodeSchema = z.object({
+  id: idSchema,
+  chapter_id: idSchema,
+  order: z.number().int().positive(),
+  title: nullableStringSchema,
+  purpose: nullableStringSchema,
+  story_input_mode: z.enum(['structured', 'full']),
+  story_full_draft: nullableStringSchema,
+  introduction: nullableStringSchema,
+  middle: nullableStringSchema,
+  climax: nullableStringSchema,
+  ending_hook: nullableStringSchema,
+  estimated_pages: z.number().int().positive(),
+  entities_involved: z.array(idSchema),
+  page_skeleton_generated: z.boolean(),
+  version: z.number().int().nonnegative(),
+  status: storyStatusSchema,
+  created_at: timestampSchema,
+  updated_at: timestampSchema,
+});
+
+export const episodesResponseSchema = z.object({
+  episodes: z.array(episodeSchema),
 });
 
 export const sceneSchema = z.object({

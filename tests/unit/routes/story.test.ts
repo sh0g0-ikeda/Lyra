@@ -870,6 +870,125 @@ describe('story routes', () => {
     expect(pageSkeletonService.requestedEpisodeId).toBeNull();
   });
 
+  it('Work成功JSONを返す4 endpointは契約外Service値を500にする', async () => {
+    const storyService = new FakeStoryService();
+    const invalidWork = buildWork({ version: -1 });
+    storyService.createWork = async () => invalidWork;
+    storyService.listWorks = async () => [invalidWork];
+    storyService.getWork = async () => invalidWork;
+    storyService.updateWork = async () => invalidWork;
+    const app = createTestApp({ storyService });
+    const token = await createToken();
+    const headers = {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    };
+
+    const responses = await Promise.all([
+      app.request('/api/works', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ title: '作品' }),
+      }),
+      app.request('/api/works', { headers }),
+      app.request(`/api/works/${workId}`, { headers }),
+      app.request(`/api/works/${workId}`, {
+        method: 'PUT',
+        headers,
+        body: JSON.stringify({ title: '更新' }),
+      }),
+    ]);
+
+    for (const response of responses) {
+      expect(response.status).toBe(500);
+      await expect(response.json()).resolves.toMatchObject({
+        error: { code: 'CONFIGURATION_ERROR' },
+      });
+    }
+  });
+
+  it('Chapter成功JSONを返す4 endpointは契約外Service値を500にする', async () => {
+    const storyService = new FakeStoryService();
+    const invalidChapter = buildChapter({ order: 0 });
+    storyService.createChapter = async () => invalidChapter;
+    storyService.listChapters = async () => [invalidChapter];
+    storyService.updateChapter = async () => invalidChapter;
+    storyService.moveChapter = async () => invalidChapter;
+    const app = createTestApp({ storyService });
+    const token = await createToken();
+    const headers = {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    };
+
+    const responses = await Promise.all([
+      app.request(`/api/works/${workId}/chapters`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ order: 1 }),
+      }),
+      app.request(`/api/works/${workId}/chapters`, { headers }),
+      app.request(`/api/chapters/${chapterId}`, {
+        method: 'PUT',
+        headers,
+        body: JSON.stringify({ title: '更新' }),
+      }),
+      app.request(`/api/chapters/${chapterId}/move`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ direction: 'up' }),
+      }),
+    ]);
+
+    for (const response of responses) {
+      expect(response.status).toBe(500);
+      await expect(response.json()).resolves.toMatchObject({
+        error: { code: 'CONFIGURATION_ERROR' },
+      });
+    }
+  });
+
+  it('Episode成功JSONを返す4 endpointは契約外Service値を500にする', async () => {
+    const storyService = new FakeStoryService();
+    const invalidEpisode = buildEpisode({ estimatedPages: 0 });
+    storyService.createEpisode = async () => invalidEpisode;
+    storyService.listEpisodes = async () => [invalidEpisode];
+    storyService.updateEpisode = async () => invalidEpisode;
+    storyService.moveEpisode = async () => invalidEpisode;
+    const app = createTestApp({ storyService });
+    const token = await createToken();
+    const headers = {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    };
+
+    const responses = await Promise.all([
+      app.request(`/api/chapters/${chapterId}/episodes`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ order: 1, estimated_pages: 16 }),
+      }),
+      app.request(`/api/chapters/${chapterId}/episodes`, { headers }),
+      app.request(`/api/episodes/${episodeId}`, {
+        method: 'PUT',
+        headers,
+        body: JSON.stringify({ title: '更新' }),
+      }),
+      app.request(`/api/episodes/${episodeId}/move`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ direction: 'up' }),
+      }),
+    ]);
+
+    for (const response of responses) {
+      expect(response.status).toBe(500);
+      await expect(response.json()).resolves.toMatchObject({
+        error: { code: 'CONFIGURATION_ERROR' },
+      });
+    }
+  });
+
   it('returns 422 for unknown keys in story CRUD', async () => {
     const app = createTestApp();
     const token = await createToken();

@@ -1,4 +1,12 @@
 import { Hono, type Context, type MiddlewareHandler } from 'hono';
+import {
+  chapterSchema,
+  chaptersResponseSchema,
+  episodeSchema,
+  episodesResponseSchema,
+  workSchema,
+  worksResponseSchema,
+} from '../../packages/api-contract/src/mobileApiSchemas.js';
 import { ValidationError } from '../domain/errors/index.js';
 import type { Chapter, Episode, Work } from '../domain/types/story.js';
 import {
@@ -32,6 +40,7 @@ import {
   recordOrganizationAudit,
   requireOrganizationCapability,
 } from './organizationRouteHelpers.js';
+import { assertMobileResponseContract } from './mobileResponseContract.js';
 import { readJsonBody, readOptionalJsonBody, REQUEST_BODY_LIMITS } from './requestBody.js';
 
 export interface StoryRouteDependencies {
@@ -149,7 +158,8 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
     });
     await recordOrganizationAudit(dependencies, organizationId, user.id, 'work.created', 'work', work.id);
 
-    return c.json(toWorkResponse(work), 201);
+    const payload = toWorkResponse(work);
+    return c.json(assertMobileResponseContract(workSchema, payload), 201);
   });
 
   app.get('/works', async (c) => {
@@ -158,7 +168,8 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
     await requireOrganizationCapability(c, dependencies, organizationId, 'view_work');
     const works = await dependencies.storyService.listWorks(user.id, organizationId);
 
-    return c.json({ works: works.map(toWorkResponse) });
+    const payload = { works: works.map(toWorkResponse) };
+    return c.json(assertMobileResponseContract(worksResponseSchema, payload));
   });
 
   app.get('/works/:id', async (c) => {
@@ -168,7 +179,8 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
     await requireOrganizationCapability(c, dependencies, organizationId, 'view_work');
     const work = await dependencies.storyService.getWork(user.id, workId, organizationId);
 
-    return c.json(toWorkResponse(work));
+    const payload = toWorkResponse(work);
+    return c.json(assertMobileResponseContract(workSchema, payload));
   });
 
   app.put('/works/:id', async (c) => {
@@ -195,7 +207,8 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
     }, organizationId);
     await recordOrganizationAudit(dependencies, organizationId, user.id, 'work.updated', 'work', workId);
 
-    return c.json(toWorkResponse(work));
+    const payload = toWorkResponse(work);
+    return c.json(assertMobileResponseContract(workSchema, payload));
   });
 
   app.post('/works/:id/chapters', async (c) => {
@@ -223,7 +236,8 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
       work_id: workId,
     });
 
-    return c.json(toChapterResponse(chapter), 201);
+    const payload = toChapterResponse(chapter);
+    return c.json(assertMobileResponseContract(chapterSchema, payload), 201);
   });
 
   app.get('/works/:id/chapters', async (c) => {
@@ -233,7 +247,8 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
     await requireOrganizationCapability(c, dependencies, organizationId, 'view_work');
     const chapters = await dependencies.storyService.listChapters(user.id, workId, organizationId);
 
-    return c.json({ chapters: chapters.map(toChapterResponse) });
+    const payload = { chapters: chapters.map(toChapterResponse) };
+    return c.json(assertMobileResponseContract(chaptersResponseSchema, payload));
   });
 
   app.put('/chapters/:id', async (c) => {
@@ -260,7 +275,8 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
     }, organizationId);
     await recordOrganizationAudit(dependencies, organizationId, user.id, 'chapter.updated', 'chapter', chapterId);
 
-    return c.json(toChapterResponse(chapter));
+    const payload = toChapterResponse(chapter);
+    return c.json(assertMobileResponseContract(chapterSchema, payload));
   });
 
   app.delete('/chapters/:id', async (c) => {
@@ -290,7 +306,8 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
       direction: body.data.direction,
     });
 
-    return c.json(toChapterResponse(chapter));
+    const payload = toChapterResponse(chapter);
+    return c.json(assertMobileResponseContract(chapterSchema, payload));
   });
 
   app.post('/chapters/:id/episodes', async (c) => {
@@ -321,7 +338,8 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
       chapter_id: chapterId,
     });
 
-    return c.json(toEpisodeResponse(episode), 201);
+    const payload = toEpisodeResponse(episode);
+    return c.json(assertMobileResponseContract(episodeSchema, payload), 201);
   });
 
   app.get('/chapters/:id/episodes', async (c) => {
@@ -331,7 +349,8 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
     await requireOrganizationCapability(c, dependencies, organizationId, 'view_work');
     const episodes = await dependencies.storyService.listEpisodes(user.id, chapterId, organizationId);
 
-    return c.json({ episodes: episodes.map(toEpisodeResponse) });
+    const payload = { episodes: episodes.map(toEpisodeResponse) };
+    return c.json(assertMobileResponseContract(episodesResponseSchema, payload));
   });
 
   app.put('/episodes/:id', async (c) => {
@@ -361,7 +380,8 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
     }, organizationId);
     await recordOrganizationAudit(dependencies, organizationId, user.id, 'episode.updated', 'episode', episodeId);
 
-    return c.json(toEpisodeResponse(episode));
+    const payload = toEpisodeResponse(episode);
+    return c.json(assertMobileResponseContract(episodeSchema, payload));
   });
 
   app.delete('/episodes/:id', async (c) => {
@@ -399,7 +419,8 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
       destination_chapter_id: episode.chapterId,
     });
 
-    return c.json(toEpisodeResponse(episode));
+    const payload = toEpisodeResponse(episode);
+    return c.json(assertMobileResponseContract(episodeSchema, payload));
   });
 
   app.post('/episodes/:id/generate-page-skeleton', async (c) => {
