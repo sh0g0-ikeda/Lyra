@@ -1,12 +1,19 @@
 import { Hono, type Context, type MiddlewareHandler } from 'hono';
 import {
+  organizationBillingPlansResponseSchema,
+  organizationBillingSummaryResponseSchema,
+  organizationCreditBalanceResponseSchema,
+  organizationCreditCheckoutResponseSchema,
+  organizationCustomerPortalResponseSchema,
   organizationInvitationPreviewResponseSchema,
   organizationInvitationResponseSchema,
   organizationInvitationResultResponseSchema,
   organizationInvitationsResponseSchema,
+  organizationInvoicesResponseSchema,
   organizationMemberResponseSchema,
   organizationMembersResponseSchema,
   organizationResponseSchema,
+  organizationSubscriptionCheckoutResponseSchema,
   organizationWorkspaceSchema,
   organizationsResponseSchema,
 } from '../../packages/api-contract/src/mobileApiSchemas.js';
@@ -239,16 +246,19 @@ export function createOrganizationRoutes(dependencies: OrganizationRouteDependen
     const user = c.get('user');
     const organizationId = parseOrganizationId(c);
     const balance = await dependencies.organizationService.getCreditBalance(user.id, organizationId);
-    return c.json(toCreditBalanceResponse(balance));
+    return c.json(
+      assertMobileResponseContract(organizationCreditBalanceResponseSchema, toCreditBalanceResponse(balance)),
+    );
   });
 
   app.get('/organizations/:organizationId/billing/plans', async (c) => {
     const user = c.get('user');
     const organizationId = parseOrganizationId(c);
     await dependencies.organizationService.requireMembership(organizationId, user.id, 'view_billing');
-    return c.json({
+    const payload = {
       subscription_plans: dependencies.organizationBillingService.getEnterprisePlanCatalog().map(toPlanResponse),
-    });
+    };
+    return c.json(assertMobileResponseContract(organizationBillingPlansResponseSchema, payload));
   });
 
   const createSubscriptionCheckout = async (c: Context<AppEnv>) => {
@@ -264,13 +274,11 @@ export function createOrganizationRoutes(dependencies: OrganizationRouteDependen
       organizationId,
       body.data.plan_code,
     );
-    return c.json(
-      {
-        session_id: result.sessionId,
-        url: result.url,
-      },
-      201,
-    );
+    const payload = {
+      session_id: result.sessionId,
+      url: result.url,
+    };
+    return c.json(assertMobileResponseContract(organizationSubscriptionCheckoutResponseSchema, payload), 201);
   };
 
   app.post('/organizations/:organizationId/billing/checkout/subscription', createSubscriptionCheckout);
@@ -289,14 +297,12 @@ export function createOrganizationRoutes(dependencies: OrganizationRouteDependen
       organizationId,
       body.data.package_code,
     );
-    return c.json(
-      {
-        session_id: result.sessionId,
-        package_code: result.packageCode,
-        url: result.url,
-      },
-      201,
-    );
+    const payload = {
+      session_id: result.sessionId,
+      package_code: result.packageCode,
+      url: result.url,
+    };
+    return c.json(assertMobileResponseContract(organizationCreditCheckoutResponseSchema, payload), 201);
   };
 
   app.post('/organizations/:organizationId/billing/checkout/credits', createCreditCheckout);
@@ -306,7 +312,8 @@ export function createOrganizationRoutes(dependencies: OrganizationRouteDependen
     const user = c.get('user');
     const organizationId = parseOrganizationId(c);
     const result = await dependencies.organizationBillingService.createCustomerPortalSession(user.id, organizationId);
-    return c.json({ url: result.url });
+    const payload = { url: result.url };
+    return c.json(assertMobileResponseContract(organizationCustomerPortalResponseSchema, payload));
   };
 
   app.post('/organizations/:organizationId/billing/customer-portal', createCustomerPortal);
@@ -319,18 +326,20 @@ export function createOrganizationRoutes(dependencies: OrganizationRouteDependen
     const workspace = await dependencies.organizationService.getOrganization(user.id, organizationId);
     const subscription =
       await dependencies.organizationBillingService.getOrganizationSubscriptionSummary(user.id, organizationId);
-    return c.json({
+    const payload = {
       workspace: toWorkspaceResponse(workspace),
       subscription: subscription === null ? null : toSubscriptionSummaryResponse(subscription),
       subscription_plans: dependencies.organizationBillingService.getEnterprisePlanCatalog().map(toPlanResponse),
-    });
+    };
+    return c.json(assertMobileResponseContract(organizationBillingSummaryResponseSchema, payload));
   });
 
   app.get('/organizations/:organizationId/invoices', async (c) => {
     const user = c.get('user');
     const organizationId = parseOrganizationId(c);
     const invoices = await dependencies.organizationBillingService.listOrganizationInvoices(user.id, organizationId);
-    return c.json({ invoices: invoices.map(toInvoiceResponse) });
+    const payload = { invoices: invoices.map(toInvoiceResponse) };
+    return c.json(assertMobileResponseContract(organizationInvoicesResponseSchema, payload));
   });
 
   app.get('/organizations/:organizationId/usage', async (c) => {
