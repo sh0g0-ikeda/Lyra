@@ -20,6 +20,7 @@ import type {
   CreditServicePort,
   RefundCreditsParams,
 } from '../../../src/services/credit/CreditService.js';
+import type { OrganizationServicePort } from '../../../src/services/organization/OrganizationService.js';
 
 const jwtSecret = 'unit-test-secret';
 const user: AuthenticatedUser = {
@@ -100,6 +101,13 @@ class FakeSceneService implements SceneServicePort {
 
   public async deleteScene(_userId: string, _requestedSceneId: string): Promise<void> {}
 
+  public async listEntityStates(
+    _userId: string,
+    requestedEntityId: string,
+  ): Promise<EntityState[]> {
+    return [buildEntityState({ entityId: requestedEntityId })];
+  }
+
   public async createEntityState(
     _userId: string,
     requestedEntityId: string,
@@ -125,6 +133,22 @@ class FakeSceneService implements SceneServicePort {
       sceneId: input.sceneId === undefined ? sceneId : input.sceneId,
       costumeNote: input.costumeNote ?? '黒のタクティカルスーツ',
     });
+  }
+}
+
+class FakeOrganizationService {
+  public readonly requiredMemberships: Array<{
+    organizationId: string;
+    userId: string;
+    capability: string | undefined;
+  }> = [];
+
+  public async requireMembership(
+    organizationId: string,
+    userId: string,
+    capability?: string,
+  ): Promise<void> {
+    this.requiredMemberships.push({ organizationId, userId, capability });
   }
 }
 
@@ -307,11 +331,79 @@ describe('scene routes', () => {
       error: { code: 'CONFIGURATION_ERROR' },
     });
   });
+
+  it('所有Entityのstate一覧をwrapperで返す', async () => {
+    const app = createTestApp();
+    const token = await createToken();
+
+    const response = await app.request(`/api/entities/${entityId}/states`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      entity_states: [{ entity_id: entityId }],
+    });
+  });
+
+  it('Entity stateが0件の場合は正常な空一覧を返す', async () => {
+    const sceneService = new FakeSceneService();
+    sceneService.listEntityStates = async () => [];
+    const app = createTestApp(sceneService);
+    const token = await createToken();
+
+    const response = await app.request(`/api/entities/${entityId}/states`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ entity_states: [] });
+  });
+
+  it('法人workspaceのEntity state一覧はview_work membershipを確認する', async () => {
+    const organizationService = new FakeOrganizationService();
+    const app = createTestApp(
+      new FakeSceneService(),
+      organizationService as unknown as OrganizationServicePort,
+    );
+    const token = await createToken();
+    const organizationId = '77777777-7777-4777-8777-777777777777';
+
+    const response = await app.request(
+      `/api/entities/${entityId}/states?organization_id=${organizationId}`,
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+
+    expect(response.status).toBe(200);
+    expect(organizationService.requiredMemberships).toEqual([
+      { organizationId, userId: user.id, capability: 'view_work' },
+    ]);
+  });
+
+  it('一覧Serviceが契約外のEntity stateを返す場合は500にする', async () => {
+    const sceneService = new FakeSceneService();
+    sceneService.listEntityStates = async () => [buildEntityState({ expressionDefault: '' })];
+    const app = createTestApp(sceneService);
+    const token = await createToken();
+
+    const response = await app.request(`/api/entities/${entityId}/states`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: 'CONFIGURATION_ERROR' },
+    });
+  });
 });
 
-function createTestApp(sceneService: SceneServicePort = new FakeSceneService()): ReturnType<typeof createApp> {
+function createTestApp(
+  sceneService: SceneServicePort = new FakeSceneService(),
+  organizationService?: OrganizationServicePort,
+): ReturnType<typeof createApp> {
   return createApp({
     creditService: new FakeCreditService(),
+    organizationService,
     sceneService,
     userProvisioningService: new FakeUserProvisioningService(),
     jwtSecret,

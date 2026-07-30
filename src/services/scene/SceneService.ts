@@ -29,6 +29,11 @@ export interface SceneServicePort {
   listScenes(userId: string, episodeId: string, organizationId?: string | null): Promise<Scene[]>;
   updateScene(userId: string, sceneId: string, input: UpdateSceneInput, organizationId?: string | null): Promise<Scene>;
   deleteScene(userId: string, sceneId: string, organizationId?: string | null): Promise<void>;
+  listEntityStates(
+    userId: string,
+    entityId: string,
+    organizationId?: string | null,
+  ): Promise<EntityState[]>;
   createEntityState(
     userId: string,
     entityId: string,
@@ -130,6 +135,20 @@ export class SceneService implements SceneServicePort {
     await this.ensureSceneMatchesEntityWork(userId, entity.workId, input.sceneId, organizationId);
 
     return this.sceneRepository.createEntityState(entityId, input);
+  }
+
+  public async listEntityStates(
+    userId: string,
+    entityId: string,
+    organizationId: string | null = null,
+  ): Promise<EntityState[]> {
+    await this.ensureEntityOwnedByUser(userId, entityId, organizationId);
+
+    return this.sceneRepository.findEntityStatesByEntityIdAndUserId(
+      entityId,
+      userId,
+      organizationId,
+    );
   }
 
   public async updateEntityState(
