@@ -6,6 +6,7 @@ import type {
   OrganizationAuditLog,
   OrganizationCreditBalance,
   OrganizationInvitation,
+  OrganizationMember,
   OrganizationUsageEvent,
   OrganizationWorkspaceSummary,
 } from '../../../src/domain/types/organization.js';
@@ -395,6 +396,99 @@ describe('createOrganizationRoutes', () => {
       revoked_by_user_id: 'user-1',
     });
   });
+
+  it('workspace・member・invitationの13成功JSONは契約外Service値を500にする', async () => {
+    const organizationService = new FakeOrganizationService();
+    const invalidWorkspace = {
+      ...buildWorkspace(),
+      organization: { ...buildWorkspace().organization, id: '' },
+    };
+    const invalidOrganization = invalidWorkspace.organization;
+    const invalidMember = { ...buildWorkspace().membership, id: '' };
+    const invalidInvitation = buildInvitation({ id: '' });
+    organizationService.listWorkspaces = async () => [invalidWorkspace];
+    organizationService.createOrganization = async () => invalidWorkspace;
+    organizationService.getOrganization = async () => invalidWorkspace;
+    organizationService.updateOrganization = async () => invalidOrganization;
+    organizationService.listMembers = async () => [invalidMember];
+    organizationService.updateMember = async () => invalidMember;
+    organizationService.listInvitations = async () => [invalidInvitation];
+    organizationService.inviteMember = async () => ({
+      invitation: invalidInvitation,
+      invitationUrl: 'https://app.lyra-editor.com/invite/new-token',
+      emailDelivery: { status: 'sent' },
+    });
+    organizationService.resendInvitation = async () => ({
+      invitation: invalidInvitation,
+      invitationUrl: 'https://app.lyra-editor.com/invite/new-token',
+      emailDelivery: { status: 'sent' },
+    });
+    organizationService.revokeInvitation = async () => invalidInvitation;
+    organizationService.acceptInvitation = async () => invalidWorkspace;
+    organizationService.previewInvitation = async () => ({
+      organization: { id: '', name: 'Lyra Studio' },
+      invitation: {
+        email: invalidInvitation.email,
+        role: invalidInvitation.role,
+        status: invalidInvitation.status,
+        expiresAt: invalidInvitation.expiresAt,
+      },
+    });
+    const routes = createOrganizationRoutes({
+      authMiddleware: buildAuthMiddleware(testUser),
+      rateLimitMiddleware: buildPassThroughMiddleware(),
+      publicRateLimitMiddleware: buildPassThroughMiddleware(),
+      organizationService: organizationService as unknown as OrganizationServicePort,
+      organizationBillingService: new FakeOrganizationBillingService() as unknown as OrganizationBillingServicePort,
+    });
+    const jsonHeaders = { 'content-type': 'application/json' };
+    const invitationId = '550e8400-e29b-41d4-a716-446655440010';
+    const token = 'raw-token-value-with-enough-length';
+
+    const responses = await Promise.all([
+      routes.request(`/organization-invitations/${token}`),
+      routes.request('/organizations'),
+      routes.request('/organizations', {
+        method: 'POST',
+        headers: jsonHeaders,
+        body: JSON.stringify({ name: 'Lyra Studio' }),
+      }),
+      routes.request(`/organizations/${organizationId}`),
+      routes.request(`/organizations/${organizationId}`, {
+        method: 'PATCH',
+        headers: jsonHeaders,
+        body: JSON.stringify({ name: 'Updated Studio' }),
+      }),
+      routes.request(`/organizations/${organizationId}/members`),
+      routes.request(`/organizations/${organizationId}/invitations`, {
+        method: 'POST',
+        headers: jsonHeaders,
+        body: JSON.stringify({ email: 'member@example.com', role: 'editor' }),
+      }),
+      routes.request(`/organizations/${organizationId}/invitations`),
+      routes.request(`/organizations/${organizationId}/invitations/${invitationId}/resend`, {
+        method: 'POST',
+      }),
+      routes.request(`/organizations/${organizationId}/invitations/${invitationId}/revoke`, {
+        method: 'POST',
+      }),
+      routes.request('/organization-invitations/accept', {
+        method: 'POST',
+        headers: jsonHeaders,
+        body: JSON.stringify({ token }),
+      }),
+      routes.request(`/invitations/${token}/accept`, { method: 'POST' }),
+      routes.request(`/organizations/${organizationId}/members/550e8400-e29b-41d4-a716-446655440020`, {
+        method: 'PATCH',
+        headers: jsonHeaders,
+        body: JSON.stringify({ role: 'viewer' }),
+      }),
+    ]);
+
+    for (const response of responses) {
+      expect(response.status).toBe(500);
+    }
+  });
 });
 
 function buildAuthMiddleware(user: AuthenticatedUser): MiddlewareHandler<AppEnv> {
@@ -479,6 +573,18 @@ class FakeOrganizationService {
   ): Promise<OrganizationWorkspaceSummary['organization']> {
     this.updatedOrganizations.push(input);
     return buildWorkspace().organization;
+  }
+
+  public async listMembers(): Promise<OrganizationMember[]> {
+    return [buildWorkspace().membership];
+  }
+
+  public async updateMember(): Promise<OrganizationMember> {
+    return buildWorkspace().membership;
+  }
+
+  public async acceptInvitation(): Promise<OrganizationWorkspaceSummary> {
+    return buildWorkspace();
   }
 
   public async listUsageEvents(userId: string, organizationId: string): Promise<unknown[]> {

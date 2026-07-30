@@ -75,6 +75,150 @@ export const currentSessionSchema = z.object({
   ),
 });
 
+export const organizationSchema = z
+  .object({
+    id: idSchema,
+    type: z.enum(['business', 'internal']),
+    name: z.string().min(1),
+    legal_name: nullableStringSchema,
+    status: organizationStatusSchema,
+    plan_key: organizationPlanSchema,
+    billing_email: nullableStringSchema,
+    created_by_user_id: idSchema,
+    created_at: timestampSchema,
+    updated_at: timestampSchema,
+  })
+  .strict();
+
+export const organizationMemberSchema = z
+  .object({
+    id: idSchema,
+    organization_id: idSchema,
+    user_id: idSchema,
+    email: z.string().min(1),
+    display_name: nullableStringSchema,
+    role: organizationRoleSchema,
+    status: organizationMembershipStatusSchema,
+    invited_by_user_id: nullableStringSchema,
+    joined_at: timestampSchema.nullable(),
+    created_at: timestampSchema,
+    updated_at: timestampSchema,
+  })
+  .strict();
+
+export const organizationCreditBalanceSchema = z
+  .object({
+    organization_id: idSchema,
+    monthly_credits: z.number().int().nonnegative(),
+    purchased_credits: z.number().int().nonnegative(),
+    total_credits: z.number().int().nonnegative(),
+    monthly_expires_at: timestampSchema.nullable(),
+    updated_at: timestampSchema,
+  })
+  .strict();
+
+export const organizationWorkspaceSchema = z
+  .object({
+    organization: organizationSchema,
+    membership: organizationMemberSchema,
+    balance: organizationCreditBalanceSchema.nullable(),
+  })
+  .strict();
+
+export const organizationsResponseSchema = z
+  .object({
+    organizations: z.array(organizationWorkspaceSchema),
+  })
+  .strict();
+
+export const organizationResponseSchema = z
+  .object({
+    organization: organizationSchema,
+  })
+  .strict();
+
+export const organizationMembersResponseSchema = z
+  .object({
+    members: z.array(organizationMemberSchema),
+  })
+  .strict();
+
+export const organizationMemberResponseSchema = z
+  .object({
+    member: organizationMemberSchema,
+  })
+  .strict();
+
+export const organizationInvitationSchema = z
+  .object({
+    id: idSchema,
+    organization_id: idSchema,
+    email: z.string().min(1),
+    role: organizationRoleSchema,
+    status: z.enum(['pending', 'accepted', 'revoked', 'expired']),
+    send_status: z.enum(['not_sent', 'sending', 'sent', 'failed']),
+    send_error_code: nullableStringSchema,
+    send_error_message: nullableStringSchema,
+    sent_at: timestampSchema.nullable(),
+    last_sent_at: timestampSchema.nullable(),
+    resend_count: z.number().int().nonnegative(),
+    invited_by_user_id: idSchema,
+    accepted_by_user_id: nullableStringSchema,
+    expires_at: timestampSchema,
+    accepted_at: timestampSchema.nullable(),
+    revoked_at: timestampSchema.nullable(),
+    revoked_by_user_id: nullableStringSchema,
+    created_at: timestampSchema,
+    updated_at: timestampSchema,
+  })
+  .strict();
+
+export const organizationInvitationsResponseSchema = z
+  .object({
+    invitations: z.array(organizationInvitationSchema),
+  })
+  .strict();
+
+export const organizationInvitationResponseSchema = z
+  .object({
+    invitation: organizationInvitationSchema,
+  })
+  .strict();
+
+const invitationEmailDeliverySchema = z
+  .object({
+    status: z.enum(['disabled', 'sent', 'failed']),
+    errorMessage: z.string().optional(),
+  })
+  .strict();
+
+export const organizationInvitationResultResponseSchema = z
+  .object({
+    invitation: organizationInvitationSchema,
+    invitation_url: z.string().min(1),
+    email_delivery: invitationEmailDeliverySchema,
+  })
+  .strict();
+
+export const organizationInvitationPreviewResponseSchema = z
+  .object({
+    organization: z
+      .object({
+        id: idSchema,
+        name: z.string().min(1),
+      })
+      .strict(),
+    invitation: z
+      .object({
+        email: z.string().min(1),
+        role: organizationRoleSchema,
+        status: z.enum(['pending', 'accepted', 'revoked', 'expired']),
+        expires_at: timestampSchema,
+      })
+      .strict(),
+  })
+  .strict();
+
 export const workSchema = z.object({
   id: idSchema,
   organization_id: nullableStringSchema,
