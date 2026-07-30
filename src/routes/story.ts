@@ -4,10 +4,13 @@ import {
   chaptersResponseSchema,
   episodeSchema,
   episodesResponseSchema,
+  pageSkeletonResponseSchema,
+  storyCollaborationEventSchema,
+  storyEpisodeImprovementSchema,
   workSchema,
   worksResponseSchema,
 } from '../../packages/api-contract/src/mobileApiSchemas.js';
-import { ValidationError } from '../domain/errors/index.js';
+import { ConfigurationError, ValidationError } from '../domain/errors/index.js';
 import type { Chapter, Episode, Work } from '../domain/types/story.js';
 import {
   collaborateStoryBodySchema,
@@ -116,7 +119,7 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
       },
     }, organizationId);
 
-    return c.json({
+    const payload = {
       draft: {
         title: result.draft.title,
         purpose: result.draft.purpose,
@@ -131,7 +134,8 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
       compiler_model: result.compilerModel,
       compiler_prompt_version: result.compilerPromptVersion,
       compiler_error: result.compilerError,
-    });
+    };
+    return c.json(assertMobileResponseContract(storyEpisodeImprovementSchema, payload));
   });
 
   app.post('/works', async (c) => {
@@ -470,14 +474,12 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
         },
       );
 
-      return c.json(
-        {
-          job_id: queued.jobId,
-          queued: true,
-          story_plan_applied: body.data.apply_story_plan,
-        },
-        202,
-      );
+      const payload = {
+        job_id: queued.jobId,
+        queued: true as const,
+        story_plan_applied: body.data.apply_story_plan,
+      };
+      return c.json(assertMobileResponseContract(pageSkeletonResponseSchema, payload), 202);
     }
 
     const result = await dependencies.pageSkeletonService.generateForEpisode(user.id, parsedEpisodeId.data, {
@@ -517,16 +519,14 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
       },
     );
 
-    return c.json(
-      {
-        pages_created: result.pagesCreated,
-        panels_created: result.panelsCreated,
-        replaced_existing: result.replacedExisting,
-        story_plan_applied: storyPlanApplied,
-        story_plan_job_id: storyPlanJobId,
-      },
-      201,
-    );
+    const payload = {
+      pages_created: result.pagesCreated,
+      panels_created: result.panelsCreated,
+      replaced_existing: result.replacedExisting,
+      story_plan_applied: storyPlanApplied,
+      story_plan_job_id: storyPlanJobId,
+    };
+    return c.json(assertMobileResponseContract(pageSkeletonResponseSchema, payload), 201);
   });
 
   return app;
@@ -617,18 +617,20 @@ function createSseResponse(stream: AsyncIterable<string>): Response {
       async start(controller) {
         try {
           for await (const chunk of stream) {
-            controller.enqueue(
-              encoder.encode(`event: chunk\ndata: ${JSON.stringify({ text: chunk })}\n\n`),
-            );
+            controller.enqueue(encodeSseEvent(encoder, 'chunk', { text: chunk }));
           }
-          controller.enqueue(encoder.encode('event: done\ndata: {}\n\n'));
-        } catch {
+          controller.enqueue(encodeSseEvent(encoder, 'done', {}));
+          controller.close();
+        } catch (error) {
+          if (error instanceof ConfigurationError) {
+            controller.error(error);
+            return;
+          }
           controller.enqueue(
-            encoder.encode(
-              `event: error\ndata: ${JSON.stringify({ message: 'Story collaboration stream failed' })}\n\n`,
-            ),
+            encodeSseEvent(encoder, 'error', {
+              message: 'Story collaboration stream failed',
+            }),
           );
-        } finally {
           controller.close();
         }
       },
@@ -642,4 +644,13 @@ function createSseResponse(stream: AsyncIterable<string>): Response {
       },
     },
   );
+}
+
+function encodeSseEvent(
+  encoder: { encode(input?: string): Uint8Array },
+  event: 'chunk' | 'done' | 'error',
+  data: Record<string, unknown>,
+): Uint8Array {
+  assertMobileResponseContract(storyCollaborationEventSchema, { event, data });
+  return encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
 }

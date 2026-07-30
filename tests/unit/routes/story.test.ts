@@ -15,6 +15,7 @@ import type {
   RefundCreditsParams,
 } from '../../../src/services/credit/CreditService.js';
 import type { PageSkeletonServicePort } from '../../../src/services/story/PageSkeletonService.js';
+import type { EpisodePageSkeletonServicePort } from '../../../src/services/story/EpisodePageSkeletonService.js';
 import type { StoryCollaborationServicePort } from '../../../src/services/story/StoryCollaborationService.js';
 import type { PageServicePort } from '../../../src/services/page/PageService.js';
 import type {
@@ -279,6 +280,14 @@ class FakePageSkeletonService implements PageSkeletonServicePort {
 
   public async rollbackFreshSkeleton(): Promise<boolean> {
     return false;
+  }
+}
+
+class FakeEpisodePageSkeletonService implements EpisodePageSkeletonServicePort {
+  public jobId = '55555555-5555-4555-8555-555555555555';
+
+  public async enqueueEpisodePageSkeleton(): Promise<{ jobId: string }> {
+    return { jobId: this.jobId };
   }
 }
 
@@ -870,6 +879,118 @@ describe('story routes', () => {
     expect(pageSkeletonService.requestedEpisodeId).toBeNull();
   });
 
+  it('Story改善Serviceが契約外providerを返す場合は500にする', async () => {
+    const collaborationService = new FakeStoryCollaborationService();
+    collaborationService.improveEpisodeDraft = async () => ({
+      draft: {
+        title: null,
+        purpose: null,
+        storyInputMode: 'structured',
+        storyFullDraft: null,
+        introduction: null,
+        middle: null,
+        climax: null,
+        endingHook: null,
+      },
+      compilerProvider: 'legacy' as unknown as 'openai',
+      compilerModel: null,
+      compilerPromptVersion: null,
+      compilerError: null,
+    });
+    const app = createTestApp({ storyCollaborationService: collaborationService });
+    const token = await createToken();
+
+    const response = await app.request('/api/story/improve-episode-draft', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        episode_id: episodeId,
+        instruction: '改善して',
+        language: 'ja',
+        base_draft: {
+          story_input_mode: 'structured',
+        },
+      }),
+    });
+
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: 'CONFIGURATION_ERROR' },
+    });
+  });
+
+  it('同期page skeleton Serviceが負の件数を返す場合は500にする', async () => {
+    const pageSkeletonService = new FakePageSkeletonService();
+    pageSkeletonService.generateForEpisode = async () => ({
+      pagesCreated: -1,
+      panelsCreated: 0,
+      replacedExisting: false,
+    });
+    const app = createTestApp({ pageSkeletonService });
+    const token = await createToken();
+
+    const response = await app.request(`/api/episodes/${episodeId}/generate-page-skeleton`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ apply_story_plan: false }),
+    });
+
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: 'CONFIGURATION_ERROR' },
+    });
+  });
+
+  it('queue page skeleton Serviceが空job IDを返す場合は500にする', async () => {
+    const episodePageSkeletonService = new FakeEpisodePageSkeletonService();
+    episodePageSkeletonService.jobId = '';
+    const app = createTestApp({ episodePageSkeletonService });
+    const token = await createToken();
+
+    const response = await app.request(`/api/episodes/${episodeId}/generate-page-skeleton`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: 'CONFIGURATION_ERROR' },
+    });
+  });
+
+  it('契約上限を超えるStory collaboration chunkをstreamへ流さない', async () => {
+    const collaborationService = new FakeStoryCollaborationService();
+    collaborationService.collaborate = async () =>
+      (async function* oversizedStream(): AsyncGenerator<string, void, void> {
+        yield 'a'.repeat(25_001);
+      })();
+    const app = createTestApp({ storyCollaborationService: collaborationService });
+    const token = await createToken();
+
+    const response = await app.request('/api/story/collaborate', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        layer: 'episode',
+        target_id: episodeId,
+        instruction: '改善して',
+        language: 'ja',
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.text()).rejects.toBeDefined();
+  });
+
   it('Work成功JSONを返す4 endpointは契約外Service値を500にする', async () => {
     const storyService = new FakeStoryService();
     const invalidWork = buildWork({ version: -1 });
@@ -1014,6 +1135,7 @@ interface CreateStoryTestAppOptions {
   pageSkeletonService?: PageSkeletonServicePort;
   pageService?: PageServicePort;
   episodeStoryAutofillService?: EpisodeStoryAutofillServicePort;
+  episodePageSkeletonService?: EpisodePageSkeletonServicePort;
   storyService?: StoryServicePort;
   organizationService?: OrganizationServicePort;
 }
@@ -1036,7 +1158,7 @@ function createTestApp(
   return createApp({
     creditService: new FakeCreditService(),
     episodePageSkeletonQueue: null,
-    episodePageSkeletonService: null,
+    episodePageSkeletonService: options.episodePageSkeletonService ?? null,
     episodeStoryAutofillService: options.episodeStoryAutofillService ?? new FakeEpisodeStoryAutofillService(),
     organizationService: options.organizationService,
     pageService: options.pageService ?? new FakePageService(),
