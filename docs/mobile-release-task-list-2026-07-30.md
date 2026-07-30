@@ -6,7 +6,7 @@
 
 対象PR: [#67 feat(mobile): production-ready Lyra mobile workflow](https://github.com/sh0g0-ikeda/Lyra/pull/67)
 
-進捗: 12件完了 / 420件未完了
+進捗: 13件完了 / 419件未完了
 
 実装監査基準: `f2913b2`（PR #89統合後、全CI成功）
 
@@ -94,7 +94,7 @@ PR #67の分割とmain同期
 | BLOCK-14 | Blocked | App Store / Google Play用スクリーンショットとconsole申告証跡がない |
 | BLOCK-15 | Partial | Android FCMは準備済みだが、APNs未設定のためPush全体は無効 |
 | BLOCK-16 | Partial | Sentryコードはあるが、本番DSN、source map、alert証跡がない |
-| BLOCK-17 | Blocked | mainのbranch protectionが未設定で、CIがpendingまたはfailedでもmergeを防止できない |
+| BLOCK-17 | Resolved | mainへ`verify`のstrict required checkを管理者にも適用し、CI pending中のPR #91が`BLOCKED`になることを確認 |
 | BLOCK-18 | Resolved | PR #87で階層メニュートリガーに残ったフォーカスからのEscape閉鎖を決定化し、反復テストと全CIが成功 |
 | BLOCK-19 | Partial | Mobileのアカウント画面で、正常状態やジョブ0件をエラーとして表示するfalse positiveがある |
 
@@ -248,9 +248,9 @@ Codex単独で進める次の順序は、`CI安定化 → PR-A継続 → 契約�
 - [ ] Mobile Expo dependency check / doctorを通す
 - [ ] Mobile typecheck / lint / Vitestを通す
 - [ ] Mobile Android/iOS exportを通す
-- [ ] mainのbranch protectionでCI `verify`をrequired status checkにする
-  - 現状: GitHub APIは`Branch not protected`を返し、PR #81はCI pending中でもmergeされた
+- [x] mainのbranch protectionでCI `verify`をrequired status checkにする
   - 完了条件: `verify`がpendingまたはfailedのPRをUI/CLIからmainへmergeできない
+  - 証跡: [PR #91](https://github.com/sh0g0-ikeda/Lyra/pull/91)のCI pending中に`mergeStateStatus=BLOCKED`を確認。API readbackは`verify`、`strict=true`、`enforce_admins=true`
 - [x] GitHub ActionsのNode.js 20非推奨警告を解消する
   - 完了条件: CIでNode.js 24対応済みActionを使用し、非推奨annotationが0件
   - 証跡: [PR #86](https://github.com/sh0g0-ikeda/Lyra/pull/86)で`actions/checkout@v5`と`actions/setup-node@v5`へ更新し、CI run `30525389957`の全gate成功とannotation 0件を確認
