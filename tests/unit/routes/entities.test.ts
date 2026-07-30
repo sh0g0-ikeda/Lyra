@@ -590,6 +590,61 @@ describe('entity routes', () => {
     expect(response.status).toBe(401);
   });
 
+  it('Entity reference成功JSONを返す5 endpointは契約外Service値を500にする', async () => {
+    const referenceService = new FakeEntityReferenceService();
+    const invalidReferenceSet = buildReferenceSet({ entityId: '' });
+    referenceService.getReferenceSet = async () => invalidReferenceSet;
+    referenceService.confirmReferences = async () => invalidReferenceSet;
+    referenceService.deleteReference = async () => invalidReferenceSet;
+    referenceService.importImage = async () => ({
+      suggestedFields: [] as unknown as Record<string, unknown>,
+      promptSupplement: '',
+      tmpImageS3Key: 'tmp/user-1/entities/imports/source.png',
+      tmpImageCdnUrl: 'https://cdn.lyra.test/tmp/user-1/entities/imports/source.png',
+    });
+    referenceService.enqueueReferenceGeneration = async () => ({ jobId: '' });
+    const app = createTestApp(referenceService);
+    const token = await createToken();
+    const headers = {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    };
+
+    const responses = await Promise.all([
+      app.request(`/api/entities/${entityId}/reference-set`, { headers }),
+      app.request('/api/entities/import-image', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          entity_type: 'character',
+          image_base64: 'data:image/png;base64,YWJj',
+        }),
+      }),
+      app.request(`/api/entities/${entityId}/generate-reference`, {
+        method: 'POST',
+        headers,
+      }),
+      app.request(`/api/entities/${entityId}/reference/confirm`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          selected_s3_keys: ['tmp/user-1/entities/imports/source.png'],
+        }),
+      }),
+      app.request(`/api/entities/${entityId}/reference/ref-1`, {
+        method: 'DELETE',
+        headers,
+      }),
+    ]);
+
+    for (const response of responses) {
+      expect(response.status).toBe(500);
+      await expect(response.json()).resolves.toMatchObject({
+        error: { code: 'CONFIGURATION_ERROR' },
+      });
+    }
+  });
+
   it('Entity成功JSONを返す4 endpointは契約外Service値を500にする', async () => {
     const entityService = new FakeEntityService();
     const invalidEntity = await entityService.getEntity(user.id, '');
