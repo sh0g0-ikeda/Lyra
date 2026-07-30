@@ -6,9 +6,9 @@
 
 対象PR: [#67 feat(mobile): production-ready Lyra mobile workflow](https://github.com/sh0g0-ikeda/Lyra/pull/67)
 
-進捗: 21件完了 / 415件未完了
+進捗: 22件完了 / 414件未完了
 
-実装監査基準: `89c2e5d`（PR #98統合後、全CI成功）
+実装監査基準: `207d217`（PR #99統合後、全CI成功）
 
 ## 1. 設計ブリーフ
 
@@ -179,7 +179,7 @@ Codex単独で進める次の順序は、`CI安定化 → PR-A継続 → 契約�
 - [ ] PR-A: Mobile API contract / response validation / pagination
   - 主な所有: `packages/api-contract`, Mobile schema生成、inventory scripts
   - 完了条件: API inventoryとcontract drift checkが単独でgreen
-  - 進捗: 13個目の分割単位をPR #99で検証中。残Route、Mobile生成物、pagination / inventoryが残る
+  - 進捗: 14個目の分割単位をPR #100で検証中。残Route、Mobile生成物、pagination / inventoryが残る
   - [x] response contract guardを本番挙動へ未接続の状態で分離統合
     - 証跡: [PR #76](https://github.com/sh0g0-ikeda/Lyra/pull/76)
   - [x] `/api/me`の現行wire互換性と不正payload拒否を検証して分離統合
@@ -208,6 +208,8 @@ Codex単独で進める次の順序は、`CI安定化 → PR-A継続 → 契約�
       - 証跡: [PR #98](https://github.com/sh0g0-ikeda/Lyra/pull/98)。prompt・保存・queue・wireを変えず、契約外AI/Service値をencode前に遮断
     - [x] Entity作成・一覧・単体取得・更新の既存4成功応答を共有contractへ接続
       - 証跡: [PR #99](https://github.com/sh0g0-ikeda/Lyra/pull/99)。3 entity typeと任意object fieldを維持し、内部user IDを公開せず全4 endpointを保護
+    - [x] Entity参照セット・画像import・生成受付の既存5成功応答を共有contractへ接続
+      - 証跡: [PR #100](https://github.com/sh0g0-ikeda/Lyra/pull/100)。署名URL省略と空参照セットを維持し、S3 keyをstrict contractで非公開
   - [ ] Mobile側生成物とcontract drift checkを統合
   - [ ] paginationとAPI inventoryを独立監査
 - [ ] PR-B: account deletion / upload token / export基盤
