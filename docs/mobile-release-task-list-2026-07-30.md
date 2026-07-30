@@ -76,7 +76,7 @@ PR #67の分割とmain同期
 |---|---|---|
 | BLOCK-01 | Blocked | PR #67はDraftかつmainと競合している |
 | BLOCK-02 | Blocked | PR #67は644ファイル、43コミット、99,879 additions / 2,864 deletionsを含む |
-| BLOCK-03 | Blocked | PR #67のheadはmainより43コミット先行、14コミット遅延している |
+| BLOCK-03 | Blocked | PR #67のheadはmainより43コミット先行、16コミット遅延している |
 | BLOCK-04 | Blocked | 現在のmainにはMobile課金Route、Apple/Google検証、購入台帳migrationがない |
 | BLOCK-05 | Blocked | 本番DBはmainのmigration 026までで、Mobile用027〜036は未適用 |
 | BLOCK-06 | Blocked | 本番SecretにMobile store billingの必須設定がなく、課金は無効 |
@@ -136,10 +136,10 @@ PR #67の分割とmain同期
 #### GIT-100 安全なベースライン
 
 - [x] `origin/main`から新しい統合作業ブランチを作る
-  - 証跡: PR #76とPR #77をそれぞれ最新`origin/main`から作成
+  - 証跡: PR #76、PR #77、PR #79をそれぞれ最新`origin/main`から作成
 - [x] PR #67の変更を機能群ごとに分類する
   - 証跡: この文書の「5.2 実差分の規模」と「5.3〜5.10」
-- [ ] main側14コミットの影響箇所を列挙する
+- [ ] main側16コミットの影響箇所を列挙する
 - [x] 既存のユーザー未コミット変更を別worktreeから隔離する
   - 証跡: `Lyra-mobile-response-contract` worktreeで分割統合を実施
 - [x] migration番号027〜036が現在のmainと衝突しないことを確認する
@@ -157,7 +157,11 @@ PR #67の分割とmain同期
     - 証跡: [PR #76](https://github.com/sh0g0-ikeda/Lyra/pull/76)
   - [x] `/api/me`の現行wire互換性と不正payload拒否を検証して分離統合
     - 証跡: [PR #77](https://github.com/sh0g0-ikeda/Lyra/pull/77)
-  - [ ] `/api/me`以外のRouteを1つずつ監査して接続
+  - [x] `/api/compositions`の現行wire互換性、S3 key非開示、不正item拒否を検証して分離統合
+    - 証跡: [PR #79](https://github.com/sh0g0-ikeda/Lyra/pull/79)
+  - [ ] `/api/billing/balance`のsubscription summaryと追加wire fieldを先に監査する
+    - 現状: 単純なschema接続だけではMobile側の必要条件を満たさないため見送り
+  - [ ] `/api/me`と`/api/compositions`以外のRouteを1つずつ監査して接続
   - [ ] Mobile側生成物とcontract drift checkを統合
   - [ ] paginationとAPI inventoryを独立監査
 - [ ] PR-B: account deletion / upload token / export基盤
@@ -757,7 +761,7 @@ PR #67の分割とmain同期
 | 変更ファイル | 644 |
 | 追加 | 99,879行 |
 | 削除 | 2,864行 |
-| mainとの差 | 43 ahead / 14 behind |
+| mainとの差 | 43 ahead / 16 behind |
 
 PR説明欄には当初「既存Web版とバックエンドには変更を加えていません」と記載されていた。しかし実差分にはBackend、Web、Worker、migration、CI、Dockerfileが含まれるため、2026-07-30に監査警告、実差分、分割統合状況を追記して訂正した。
 
@@ -930,7 +934,7 @@ Backend:
 ### 5.10 PR #67の主なリスク
 
 1. 1つのPRへMobile、Backend、DB、Web、Worker、CI、Opsが同居している。
-2. mainと競合し、14コミット分の本番変更を取り込めていない。
+2. mainと競合し、16コミット分の本番変更を取り込めていない。
 3. ~~PR説明欄が実差分と一致しない。~~ 2026-07-30に監査警告と実差分を追記済み。
 4. migration 10本を一度に導入するため、レビューとrollback判断が難しい。
 5. 既存Web/API互換fallbackが多く、Backend更新後も不要な分岐が残り得る。
