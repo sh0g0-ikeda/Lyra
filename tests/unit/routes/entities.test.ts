@@ -589,6 +589,48 @@ describe('entity routes', () => {
 
     expect(response.status).toBe(401);
   });
+
+  it('Entity成功JSONを返す4 endpointは契約外Service値を500にする', async () => {
+    const entityService = new FakeEntityService();
+    const invalidEntity = await entityService.getEntity(user.id, '');
+    entityService.createEntity = async () => invalidEntity;
+    entityService.listEntities = async () => [invalidEntity];
+    entityService.getEntity = async () => invalidEntity;
+    entityService.updateEntity = async () => invalidEntity;
+    const app = createTestApp(
+      new FakeEntityReferenceService(),
+      new FakeEntityReferenceImageExportService(),
+      entityService,
+    );
+    const token = await createToken();
+    const headers = {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    };
+
+    const responses = await Promise.all([
+      app.request(`/api/works/${workId}/entities`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ entity_type: 'character', name: 'ミヅキ' }),
+      }),
+      app.request(`/api/works/${workId}/entities`, { headers }),
+      app.request(`/api/entities/${entityId}`, { headers }),
+      app.request(`/api/entities/${entityId}`, {
+        method: 'PUT',
+        headers,
+        body: JSON.stringify({ name: '更新' }),
+      }),
+    ]);
+
+    for (const response of responses) {
+      expect(response.status).toBe(500);
+      await expect(response.json()).resolves.toMatchObject({
+        error: { code: 'CONFIGURATION_ERROR' },
+      });
+    }
+  });
+
   it('reference image export returns an authenticated image', async () => {
     const exportService = new FakeEntityReferenceImageExportService();
     const app = createTestApp(new FakeEntityReferenceService(), exportService);
@@ -651,12 +693,13 @@ describe('entity routes', () => {
 function createTestApp(
   entityReferenceService: EntityReferenceServicePort = new FakeEntityReferenceService(),
   entityReferenceImageExportService: EntityReferenceImageExportServicePort = new FakeEntityReferenceImageExportService(),
+  entityService: EntityServicePort = new FakeEntityService(),
 ): ReturnType<typeof createApp> {
   return createApp({
     creditService: new FakeCreditService(),
     entityReferenceService,
     entityReferenceImageExportService,
-    entityService: new FakeEntityService(),
+    entityService,
     enableDevAuthBypass: false,
     userProvisioningService: new FakeUserProvisioningService(),
     jwtSecret,
