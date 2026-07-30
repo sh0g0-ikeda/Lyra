@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 const idSchema = z.string().min(1);
 const nullableStringSchema = z.string().nullable();
+const timestampSchema = z.string().min(1);
 const organizationRoleSchema = z.enum(['owner', 'admin', 'billing', 'editor', 'viewer']);
 const organizationStatusSchema = z.enum([
   'active',
@@ -47,4 +48,21 @@ export const currentSessionSchema = z.object({
       monthly_expires_at: nullableStringSchema,
     }),
   ),
+});
+
+export const compositionSchema = z.object({
+  id: idSchema,
+  name: z.string(),
+  category: z.string(),
+  entity_count: z.number().int().nonnegative(),
+  preview_cdn_url: nullableStringSchema,
+  composition_prompt: z.string(),
+  shot_type: nullableStringSchema,
+  angle: nullableStringSchema,
+  tags: z.array(z.string()),
+  created_at: timestampSchema,
+});
+
+export const compositionsResponseSchema = z.object({
+  compositions: z.array(compositionSchema),
 });

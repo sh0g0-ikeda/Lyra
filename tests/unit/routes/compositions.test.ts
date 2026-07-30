@@ -17,6 +17,7 @@ import type {
   CreditServicePort,
   RefundCreditsParams,
 } from '../../../src/services/credit/CreditService.js';
+import { compositionsResponseSchema } from '../../../packages/api-contract/src/mobileApiSchemas.js';
 
 const jwtSecret = 'unit-test-secret';
 const user: AuthenticatedUser = {
@@ -68,6 +69,12 @@ class FakeCompositionGalleryService implements CompositionGalleryServicePort {
   }
 }
 
+class InvalidCompositionGalleryService implements CompositionGalleryServicePort {
+  public async listCompositions(_query: CompositionGalleryQuery): Promise<CompositionGalleryItem[]> {
+    return [buildComposition({ entityCount: -1 })];
+  }
+}
+
 describe('composition routes', () => {
   it('JWTが正しい場合に構図ギャラリーを取得できる', async () => {
     const compositionGalleryService = new FakeCompositionGalleryService();
@@ -88,6 +95,7 @@ describe('composition routes', () => {
       limit: 100,
     });
     const payload = (await response.json()) as Record<string, unknown>;
+    expect(compositionsResponseSchema.safeParse(payload).success).toBe(true);
     expect(payload).toMatchObject({
       compositions: [
         {
@@ -101,6 +109,25 @@ describe('composition routes', () => {
     });
     const compositions = payload.compositions as Array<Record<string, unknown>>;
     expect(compositions[0]).not.toHaveProperty('preview_s3_key');
+  });
+
+  it('serviceが負数entity countを返した場合は成功payloadとして返さない', async () => {
+    const app = createTestApp(new InvalidCompositionGalleryService());
+    const token = await createToken();
+
+    const response = await app.request('/api/compositions', {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toEqual({
+      error: {
+        code: 'CONFIGURATION_ERROR',
+        message: 'Mobile response contract validation failed',
+      },
+    });
   });
 
   it('entity_countが0の場合にVALIDATION_ERRORになる', async () => {
