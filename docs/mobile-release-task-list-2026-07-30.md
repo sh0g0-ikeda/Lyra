@@ -6,6 +6,10 @@
 
 対象PR: [#67 feat(mobile): production-ready Lyra mobile workflow](https://github.com/sh0g0-ikeda/Lyra/pull/67)
 
+進捗: 8件完了 / 421件未完了
+
+現在のmain基準: `d152183`（PR #82統合後、全CI成功）
+
 ## 1. 設計ブリーフ
 
 ### 1.1 目的と範囲
@@ -76,7 +80,7 @@ PR #67の分割とmain同期
 |---|---|---|
 | BLOCK-01 | Blocked | PR #67はDraftかつmainと競合している |
 | BLOCK-02 | Blocked | PR #67は644ファイル、43コミット、99,879 additions / 2,864 deletionsを含む |
-| BLOCK-03 | Blocked | PR #67のheadはmainより43コミット先行する一方、少なくとも16コミット遅延している。behind数は分割PRの統合ごとに増加する |
+| BLOCK-03 | Blocked | PR #67のheadはmainより43コミット先行する一方、19コミット遅延している |
 | BLOCK-04 | Blocked | 現在のmainにはMobile課金Route、Apple/Google検証、購入台帳migrationがない |
 | BLOCK-05 | Blocked | 本番DBはmainのmigration 026までで、Mobile用027〜036は未適用 |
 | BLOCK-06 | Blocked | 本番SecretにMobile store billingの必須設定がなく、課金は無効 |
@@ -90,6 +94,25 @@ PR #67の分割とmain同期
 | BLOCK-14 | Blocked | App Store / Google Play用スクリーンショットとconsole申告証跡がない |
 | BLOCK-15 | Partial | Android FCMは準備済みだが、APNs未設定のためPush全体は無効 |
 | BLOCK-16 | Partial | Sentryコードはあるが、本番DSN、source map、alert証跡がない |
+| BLOCK-17 | Blocked | mainのbranch protectionが未設定で、CIがpendingまたはfailedでもmergeを防止できない |
+| BLOCK-18 | Partial | Mobile viewportの階層メニューE2Eで、Escape後の閉鎖待ちが断続的に失敗する |
+
+### 2.2 残タスクの実行区分と優先順
+
+| 優先 | 区分 | 次に進める内容 | 実行条件 |
+|---|---|---|---|
+| P0 | GitHub安全ゲート | mainのbranch protectionでCI `verify`をrequired checkにする | Repository設定変更の承認 |
+| P0 | CI安定化 | 階層メニューE2EのEscape後閉鎖を決定的にし、GitHub ActionsのNode.js 20非推奨警告を解消する | Codexで実行可能 |
+| P1 | PR-A継続 | `/api/billing/balance`のsubscription summaryをServiceまで監査し、残るRouteを1つずつ契約接続する | Codexで実行可能。各Routeを別PRで扱う |
+| P1 | 契約生成 | shared API contractの生成元・生成物・drift check・pagination・API inventoryを監査する | Codexで実行可能 |
+| P1 | 差分監査 | PR #67に未取込のmain側19コミットについて影響箇所を列挙する | Codexで実行可能 |
+| P2 | Backend分割 | account deletion / upload / export、store billing、job / pushをmigration単位で設計・TDDする | Codexで実行可能。課金は既定OFFを維持 |
+| P2 | Mobile分割 | Mobile基盤、Story / Characters / Pages、organization / billing UIを依存順に分割する | Codexで実行可能。Backend契約確定後 |
+| P3 | 商品判断 | 対象国、価格、同日公開、Push、offer、upgrade方針を確定する | プロダクトオーナー判断が必要 |
+| P3 | 外部設定 | staging、Apple / Google商品、署名、通知、AASA / App Linksを設定する | AWS / Apple / Google / EASへの権限と値が必要 |
+| P4 | 実機・審査 | Sandbox / license-test、両OS実機E2E、スクリーンショット、ストア提出を行う | 実機、ストアアカウント、審査対応が必要 |
+
+Codex単独で進める次の順序は、`CI安定化 → PR-A継続 → 契約生成 → main差分監査 → Backend分割 → Mobile分割`とする。外部設定や本番変更は、必要な権限と明示的な実行承認を得てから行う。
 
 ## 3. リリース全体タスクリスト
 
@@ -139,7 +162,8 @@ PR #67の分割とmain同期
   - 証跡: PR #76、PR #77、PR #79をそれぞれ最新`origin/main`から作成
 - [x] PR #67の変更を機能群ごとに分類する
   - 証跡: この文書の「5.2 実差分の規模」と「5.3〜5.10」
-- [ ] main側の未取込コミット（監査開始時16件、以後増加）の影響箇所を列挙する
+- [ ] main側の未取込19コミットの影響箇所を列挙する
+  - 現状: `git rev-list --left-right --count origin/main...origin/feature/mobile-completion`は`19 43`
 - [x] 既存のユーザー未コミット変更を別worktreeから隔離する
   - 証跡: `Lyra-mobile-response-contract` worktreeで分割統合を実施
 - [x] migration番号027〜036が現在のmainと衝突しないことを確認する
@@ -153,6 +177,7 @@ PR #67の分割とmain同期
 - [ ] PR-A: Mobile API contract / response validation / pagination
   - 主な所有: `packages/api-contract`, Mobile schema生成、inventory scripts
   - 完了条件: API inventoryとcontract drift checkが単独でgreen
+  - 進捗: 3つの分割単位をmainへ統合済み。billing、残Route、Mobile生成物、pagination / inventoryが残る
   - [x] response contract guardを本番挙動へ未接続の状態で分離統合
     - 証跡: [PR #76](https://github.com/sh0g0-ikeda/Lyra/pull/76)
   - [x] `/api/me`の現行wire互換性と不正payload拒否を検証して分離統合
@@ -188,7 +213,10 @@ PR #67の分割とmain同期
 
 #### GIT-120 統合検証
 
-- [ ] 各分割PRをmainから作り直す
+現在の証跡として、PR #76、#77、#79とmain `d152183`では、Vitest、Bun、PostgreSQL migration / invariant、Backend build、Web lint / build、Playwrightが成功している。ただし最終リリース対象commitは今後変わるため、リリースゲート自体は未完了のままとし、exact commitで再実行する。
+
+- [ ] 残る各分割PRを最新mainから作り直す
+  - 完了済み証跡: PR #76、PR #77、PR #79
 - [ ] PR間の依存関係をPR本文へ記載する
 - [ ] 1PRへ無関係なWeb変更を混ぜない
 - [ ] 既存migrationを編集せず、必要な修正は新migrationで行う
@@ -198,6 +226,9 @@ PR #67の分割とmain同期
 - [ ] Backend buildを通す
 - [ ] Web lint/buildを通す
 - [ ] Playwright smokeを通す
+  - [ ] Mobile viewportの階層メニューでEscape後の閉鎖待ちを安定化する
+    - 現状: PR #82の初回CIで13件中1件が失敗し、再実行と統合後mainでは13件すべて成功
+    - 完了条件: 同テストの反復実行でflaky failureが再発しない
 - [ ] Mobile `npm ci`を通す
 - [ ] Mobile Expo dependency check / doctorを通す
 - [ ] Mobile typecheck / lint / Vitestを通す
@@ -764,7 +795,7 @@ PR #67の分割とmain同期
 | 変更ファイル | 644 |
 | 追加 | 99,879行 |
 | 削除 | 2,864行 |
-| mainとの差 | 43 ahead / 少なくとも16 behind。分割PRの統合ごとにbehind数は増加 |
+| mainとの差 | 43 ahead / 19 behind |
 
 PR説明欄には当初「既存Web版とバックエンドには変更を加えていません」と記載されていた。しかし実差分にはBackend、Web、Worker、migration、CI、Dockerfileが含まれるため、2026-07-30に監査警告、実差分、分割統合状況を追記して訂正した。
 
@@ -937,7 +968,7 @@ Backend:
 ### 5.10 PR #67の主なリスク
 
 1. 1つのPRへMobile、Backend、DB、Web、Worker、CI、Opsが同居している。
-2. mainと競合し、少なくとも16コミット分の本番変更を取り込めていない。behind数は分割PRの統合ごとに増加する。
+2. mainと競合し、19コミット分の本番変更を取り込めていない。
 3. ~~PR説明欄が実差分と一致しない。~~ 2026-07-30に監査警告と実差分を追記済み。
 4. migration 10本を一度に導入するため、レビューとrollback判断が難しい。
 5. 既存Web/API互換fallbackが多く、Backend更新後も不要な分岐が残り得る。
