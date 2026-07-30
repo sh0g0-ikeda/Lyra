@@ -255,6 +255,8 @@ export interface BillingBalanceRecord {
   total_credits: number;
   monthly_expires_at: string | null;
   plan_code: 'free' | 'standard' | 'premium' | 'enterprise_a' | 'enterprise_b' | 'enterprise_c';
+  current_period_end: string | null;
+  cancel_at_period_end: boolean;
   subscription_plans: Array<{
     plan_code: 'standard' | 'premium' | 'enterprise_a' | 'enterprise_b' | 'enterprise_c';
     display_name_ja: string;

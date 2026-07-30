@@ -6,9 +6,9 @@
 
 対象PR: [#67 feat(mobile): production-ready Lyra mobile workflow](https://github.com/sh0g0-ikeda/Lyra/pull/67)
 
-進捗: 10件完了 / 421件未完了
+進捗: 11件完了 / 420件未完了
 
-実装監査基準: `d152183`（PR #82統合後、全CI成功。以後のmain変更はタスクリスト文書のみ）
+実装監査基準: `96cdaf2`（PR #87統合後、全CI成功。PR #88はこのcommitから分離）
 
 ## 1. 設計ブリーフ
 
@@ -114,7 +114,7 @@ PR #67の分割とmain同期
 | P3 | 外部設定 | staging、Apple / Google商品、署名、通知、AASA / App Linksを設定する | AWS / Apple / Google / EASへの権限と値が必要 |
 | P4 | 実機・審査 | Sandbox / license-test、両OS実機E2E、スクリーンショット、ストア提出を行う | 実機、ストアアカウント、審査対応が必要 |
 
-Codex単独で進める次の順序は、`CI安定化 → アカウント画面のfalse-positive error解消 → PR-A継続 → 契約生成 → main差分監査 → Backend分割 → Mobile分割`とする。外部設定や本番変更は、必要な権限と明示的な実行承認を得てから行う。
+Codex単独で進める次の順序は、`CI安定化 → PR-A継続 → 契約生成 → main差分監査 → Backend分割 → Mobileアプリ基盤 → アカウント画面のfalse-positive error解消 → Mobile機能分割`とする。アカウント画面の実装はPR #67にだけ存在し、mainへ安全に単独適用できないため、Mobileアプリ基盤の統合後に修正する。外部設定や本番変更は、必要な権限と明示的な実行承認を得てから行う。
 
 ## 3. リリース全体タスクリスト
 
@@ -186,8 +186,9 @@ Codex単独で進める次の順序は、`CI安定化 → アカウント画面�
     - 証跡: [PR #77](https://github.com/sh0g0-ikeda/Lyra/pull/77)
   - [x] `/api/compositions`の現行wire互換性、S3 key非開示、不正item拒否を検証して分離統合
     - 証跡: [PR #79](https://github.com/sh0g0-ikeda/Lyra/pull/79)
-  - [ ] `/api/billing/balance`のsubscription summaryと追加wire fieldを先に監査する
-    - 現状: 単純なschema接続だけではMobile側の必要条件を満たさないため見送り
+  - [x] `/api/billing/balance`のsubscription summaryと追加wire fieldを先に監査する
+    - 証跡: [PR #88](https://github.com/sh0g0-ikeda/Lyra/pull/88)。既存Stripe購読から更新日と解約予定だけを安全に追加し、共通response contractへ接続
+    - 境界: Apple / Google Store購読を含む統合summaryはmigration 029適用後のPR-Cで扱い、未導入テーブルへの依存をPR-Aへ持ち込まない
   - [ ] `/api/me`と`/api/compositions`以外のRouteを1つずつ監査して接続
   - [ ] Mobile側生成物とcontract drift checkを統合
   - [ ] paginationとAPI inventoryを独立監査
@@ -197,6 +198,7 @@ Codex単独で進める次の順序は、`CI安定化 → アカウント画面�
 - [ ] PR-C: Mobile store billing Backend
   - 主な所有: migration 029、Apple/Google verifier、purchase service、webhook、ledger
   - 完了条件: 課金OFFで既存Webの挙動を変えず、focused testsがgreen
+  - `/api/billing/balance`の購読summaryをApple / Googleの検証済み購入まで拡張し、StripeとStoreで同じwire fieldを返す
 - [ ] PR-D: generation job management / cancellation / push outbox
   - 主な所有: migrations 030, 033〜036、Worker、job services
   - 完了条件: cancel/refund/outbox競合テストがgreen

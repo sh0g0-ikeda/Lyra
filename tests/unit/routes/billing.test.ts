@@ -5,6 +5,7 @@ import type { CreditPackageCode, PaidPlanCode } from '../../../src/domain/consta
 import type {
   CreditCheckoutResult,
   CustomerPortalResult,
+  PersonalSubscriptionSummary,
   SubscriptionCheckoutResult,
   SubscriptionPlanCatalogEntry,
 } from '../../../src/domain/types/billing.js';
@@ -33,10 +34,12 @@ const testUser: AuthenticatedUser = {
 };
 
 class FakeUserProvisioningService implements UserProvisioningPort {
+  public constructor(private readonly authenticatedUser: AuthenticatedUser = testUser) {}
+
   public async provisionFromSupabaseClaims(claims: SupabaseJwtClaims): Promise<ProvisionedUser> {
     return {
       user: {
-        ...testUser,
+        ...this.authenticatedUser,
         supabaseId: claims.sub,
         email: claims.email,
       },
@@ -72,6 +75,9 @@ class FakeBillingService implements BillingServicePort {
   public subscriptionPlanCode: PaidPlanCode | null = null;
   public creditPackageCode: CreditPackageCode | null = null;
   public portalUserId: string | null = null;
+  public personalSubscriptionSummary: PersonalSubscriptionSummary | null = null;
+  public personalSubscriptionSummaryUserId: string | null = null;
+  public standardPlanMonthlyCredits = 50;
 
   public async createSubscriptionCheckoutSession(
     _user: AuthenticatedUser,
@@ -103,13 +109,18 @@ class FakeBillingService implements BillingServicePort {
     };
   }
 
+  public async getPersonalSubscriptionSummary(userId: string): Promise<PersonalSubscriptionSummary | null> {
+    this.personalSubscriptionSummaryUserId = userId;
+    return this.personalSubscriptionSummary;
+  }
+
   public getSubscriptionPlanCatalog(): SubscriptionPlanCatalogEntry[] {
     return [
       {
         planCode: 'standard',
         displayNameJa: 'スタンダード',
         displayNameEn: 'Standard',
-        monthlyCredits: 50,
+        monthlyCredits: this.standardPlanMonthlyCredits,
         amountJpy: 1000,
         minimumContractMonths: 1,
         trialDays: 0,
@@ -181,7 +192,8 @@ describe('billing routes', () => {
   });
 
   it('returns the credit balance when the JWT is valid', async () => {
-    const app = createTestApp(new FakeBillingService(), new FakeStripeWebhookService());
+    const billingService = new FakeBillingService();
+    const app = createTestApp(billingService, new FakeStripeWebhookService());
     const token = await createToken();
 
     const response = await app.request('/api/billing/balance', {
@@ -197,6 +209,8 @@ describe('billing routes', () => {
       total_credits: 40,
       monthly_expires_at: null,
       plan_code: 'free',
+      current_period_end: null,
+      cancel_at_period_end: false,
       subscription_plans: [
         {
           plan_code: 'standard',
@@ -221,6 +235,66 @@ describe('billing routes', () => {
           configured: true,
         },
       ],
+    });
+    expect(billingService.personalSubscriptionSummaryUserId).toBeNull();
+  });
+
+  it('保存済み購読の更新日と解約予定をcredit期限とは別に返す', async () => {
+    const billingService = new FakeBillingService();
+    billingService.personalSubscriptionSummary = {
+      planCode: 'standard',
+      status: 'active',
+      currentPeriodEnd: new Date('2026-08-01T00:00:00.000Z'),
+      cancelAtPeriodEnd: true,
+    };
+    const paidUser: AuthenticatedUser = {
+      ...testUser,
+      planCode: 'standard',
+    };
+    const app = createTestApp(
+      billingService,
+      new FakeStripeWebhookService(),
+      undefined,
+      paidUser,
+    );
+    const token = await createToken();
+
+    const response = await app.request('/api/billing/balance', {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual(
+      expect.objectContaining({
+        monthly_expires_at: null,
+        plan_code: 'standard',
+        current_period_end: '2026-08-01T00:00:00.000Z',
+        cancel_at_period_end: true,
+      }),
+    );
+    expect(billingService.personalSubscriptionSummaryUserId).toBe(testUser.id);
+  });
+
+  it('billing response contractに違反するplanを成功payloadとして返さない', async () => {
+    const billingService = new FakeBillingService();
+    billingService.standardPlanMonthlyCredits = -1;
+    const app = createTestApp(billingService, new FakeStripeWebhookService());
+    const token = await createToken();
+
+    const response = await app.request('/api/billing/balance', {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toEqual({
+      error: {
+        code: 'CONFIGURATION_ERROR',
+        message: 'Mobile response contract validation failed',
+      },
     });
   });
 
@@ -443,13 +517,14 @@ function createTestApp(
   billingService: BillingServicePort,
   stripeWebhookService: StripeWebhookServicePort,
   rateLimitStore?: RateLimitStore,
+  authenticatedUser: AuthenticatedUser = testUser,
 ): ReturnType<typeof createApp> {
   return createApp({
     billingService,
     creditService: new FakeCreditService(),
     rateLimitStore,
     stripeWebhookService,
-    userProvisioningService: new FakeUserProvisioningService(),
+    userProvisioningService: new FakeUserProvisioningService(authenticatedUser),
     jwtSecret,
   });
 }

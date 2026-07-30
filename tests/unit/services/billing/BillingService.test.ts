@@ -108,6 +108,7 @@ class FakeStripeBillingClient implements StripeBillingClientPort {
   public portalUpdateSubscriptionId: string | null = null;
   public portalUpdateSubscriptionItemId: string | null = null;
   public portalUpdatePriceId: string | null = null;
+  public retrieveSubscriptionCalls = 0;
   public subscription: Stripe.Subscription = buildStripeSubscription();
 
   public async createCustomer(input: { userId: string }): Promise<{ id: string }> {
@@ -157,11 +158,36 @@ class FakeStripeBillingClient implements StripeBillingClientPort {
   }
 
   public async retrieveSubscription(): Promise<Stripe.Subscription> {
+    this.retrieveSubscriptionCalls += 1;
     return this.subscription;
   }
 }
 
 describe('BillingService', () => {
+  it('保存済みの個人購読をprovider IDなしのsummaryに変換しStripe APIを呼ばない', async () => {
+    const repository = new InMemoryBillingRepository();
+    repository.activeSubscription = buildActiveSubscription();
+    const stripeClient = new FakeStripeBillingClient();
+    const service = buildService(repository, stripeClient);
+
+    await expect(service.getPersonalSubscriptionSummary(freeUser.id)).resolves.toEqual({
+      planCode: 'standard',
+      status: 'active',
+      currentPeriodEnd: new Date('2026-07-01T00:00:00.000Z'),
+      cancelAtPeriodEnd: true,
+    });
+    expect(stripeClient.retrieveSubscriptionCalls).toBe(0);
+  });
+
+  it('有効な個人購読がない場合にsummaryをnullで返す', async () => {
+    const repository = new InMemoryBillingRepository();
+    const stripeClient = new FakeStripeBillingClient();
+    const service = buildService(repository, stripeClient);
+
+    await expect(service.getPersonalSubscriptionSummary(freeUser.id)).resolves.toBeNull();
+    expect(stripeClient.retrieveSubscriptionCalls).toBe(0);
+  });
+
   it('free user subscription checkout creates Stripe customer and session', async () => {
     const repository = new InMemoryBillingRepository();
     const stripeClient = new FakeStripeBillingClient();

@@ -1309,6 +1309,10 @@ class BillingServiceStub {
     throw new ConfigurationError('Stripe billing is not configured');
   }
 
+  public async getPersonalSubscriptionSummary(): Promise<null> {
+    return null;
+  }
+
   public getSubscriptionPlanCatalog(): SubscriptionPlanCatalogEntry[] {
     return [];
   }
