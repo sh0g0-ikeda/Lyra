@@ -339,6 +339,165 @@ export const pageAutofillResponseSchema = z.object({
   compiler_error: nullableStringSchema,
 });
 
+const jobProgressFields = {
+  progress_stage: z.string().nullable().optional(),
+  progress_message: z.string().nullable().optional(),
+  progress_current_chunk: z.number().int().nonnegative().nullable().optional(),
+  progress_total_chunks: z.number().int().nonnegative().nullable().optional(),
+  progress_started_at: timestampSchema.nullable().optional(),
+  progress_updated_at: timestampSchema.nullable().optional(),
+};
+
+const jobCompilerResultFields = {
+  updated_page_count: z.number().int().nonnegative().nullable().optional(),
+  updated_panel_count: z.number().int().nonnegative().nullable().optional(),
+  updated_assignment_count: z.number().int().nonnegative().nullable().optional(),
+  filled_field_count: z.number().int().nonnegative().nullable().optional(),
+  compiler_used: z.boolean().nullable().optional(),
+  compiler_provider: z.enum(['openai', 'fallback']).nullable().optional(),
+  compiler_model: nullableStringSchema.optional(),
+  compiler_prompt_version: nullableStringSchema.optional(),
+  compiler_error: nullableStringSchema.optional(),
+};
+
+const pageGenerationJobResultSchema = z
+  .object({
+    generation_mode: pageGenerationModeSchema.nullable().optional(),
+    request_kind: z.enum(['initial', 'regenerate']).optional(),
+    generated_image: z
+      .object({
+        generation_mode: pageGenerationModeSchema.nullable().optional(),
+        generated_at: timestampSchema.nullable().optional(),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict();
+
+const entityGenerationJobResultSchema = z
+  .object({
+    provider_result: z.boolean(),
+    candidates: z
+      .array(
+        z
+          .object({
+            candidate_token: idSchema,
+            cdn_url: z.string().min(1).optional(),
+          })
+          .strict(),
+      )
+      .optional(),
+  })
+  .strict();
+
+const episodeStoryAutofillJobResultSchema = z
+  .object({
+    ...jobCompilerResultFields,
+    ...jobProgressFields,
+  })
+  .strict();
+
+const storyPlanJobResultSchema = z
+  .object({
+    ...jobCompilerResultFields,
+  })
+  .strict();
+
+const episodePageSkeletonJobResultSchema = z
+  .object({
+    pages_created: z.number().int().nonnegative().nullable().optional(),
+    panels_created: z.number().int().nonnegative().nullable().optional(),
+    replaced_existing: z.boolean().nullable().optional(),
+    story_plan_applied: z.boolean().nullable().optional(),
+    story_plan_result: storyPlanJobResultSchema.nullable().optional(),
+    ...jobProgressFields,
+  })
+  .strict();
+
+const generationJobCommonFields = {
+  id: idSchema,
+  status: z.enum(['queued', 'processing', 'completed', 'failed', 'cancelled']),
+  generation_mode: pageGenerationModeSchema.nullable(),
+  credit_cost: z.number().int().nonnegative(),
+  error_message: nullableStringSchema,
+  retry_count: z.number().int().nonnegative(),
+  created_at: timestampSchema,
+  started_at: timestampSchema.nullable(),
+  completed_at: timestampSchema.nullable(),
+  expires_at: timestampSchema.nullable(),
+  cancel_requested_at: timestampSchema.nullable(),
+  cancelled_at: timestampSchema.nullable(),
+  commit_started_at: timestampSchema.nullable(),
+};
+
+const pageGenerationJobResponseSchema = z
+  .object({
+    ...generationJobCommonFields,
+    job_type: z.literal('page_generate'),
+    params: z
+      .object({
+        page_id: idSchema.optional(),
+        request_kind: z.enum(['initial', 'regenerate']).optional(),
+        generation_mode: pageGenerationModeSchema.optional(),
+        quality: z.enum(['medium', 'high']).optional(),
+        requires_planner: z.boolean().optional(),
+      })
+      .strict(),
+    result: pageGenerationJobResultSchema.nullable(),
+  })
+  .strict();
+
+const entityGenerationJobResponseSchema = z
+  .object({
+    ...generationJobCommonFields,
+    job_type: z.literal('entity_generate'),
+    params: z
+      .object({
+        entity_id: idSchema.optional(),
+        entity_type: z.enum(['character', 'nonhuman', 'object']).optional(),
+      })
+      .strict(),
+    result: entityGenerationJobResultSchema.nullable(),
+  })
+  .strict();
+
+const episodeStoryAutofillJobResponseSchema = z
+  .object({
+    ...generationJobCommonFields,
+    job_type: z.literal('episode_story_autofill'),
+    params: z
+      .object({
+        episode_id: idSchema.optional(),
+        language: z.enum(['ja', 'en']).optional(),
+      })
+      .strict(),
+    result: episodeStoryAutofillJobResultSchema.nullable(),
+  })
+  .strict();
+
+const episodePageSkeletonJobResponseSchema = z
+  .object({
+    ...generationJobCommonFields,
+    job_type: z.literal('episode_page_skeleton'),
+    params: z
+      .object({
+        episode_id: idSchema.optional(),
+        overwrite_existing: z.boolean().optional(),
+        apply_story_plan: z.boolean().optional(),
+        language: z.enum(['ja', 'en']).optional(),
+      })
+      .strict(),
+    result: episodePageSkeletonJobResultSchema.nullable(),
+  })
+  .strict();
+
+export const generationJobResponseSchema = z.discriminatedUnion('job_type', [
+  pageGenerationJobResponseSchema,
+  entityGenerationJobResponseSchema,
+  episodeStoryAutofillJobResponseSchema,
+  episodePageSkeletonJobResponseSchema,
+]);
+
 export const compositionSchema = z.object({
   id: idSchema,
   name: z.string(),
