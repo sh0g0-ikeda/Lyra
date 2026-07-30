@@ -247,6 +247,14 @@ const DEPLOYMENT_DATA_INVARIANT_QUERIES: InvariantQuery[] = [
     name: 'mobile_push_tokens.protection',
     sql: "SELECT id::text AS id FROM mobile_push_tokens WHERE /* mobile_push_tokens.protection */ platform NOT IN ('ios', 'android') OR locale NOT IN ('ja', 'en') OR token_hash !~ '^[0-9a-f]{64}$' OR char_length(token_ciphertext) NOT BETWEEN 64 AND 16384 OR token_ciphertext !~ '^v1\\.[A-Za-z0-9_-]{16}\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]{22}$' OR encryption_key_id !~ '^[A-Za-z0-9._:-]{1,64}$' OR updated_at < created_at ORDER BY id LIMIT $1",
   },
+  {
+    name: 'mobile_push_notification_outbox.job_scope',
+    sql: 'SELECT outbox.id::text AS id FROM mobile_push_notification_outbox AS outbox INNER JOIN generation_jobs ON generation_jobs.id = outbox.generation_job_id WHERE /* mobile_push_notification_outbox.job_scope */ outbox.user_id <> generation_jobs.user_id OR outbox.organization_id IS DISTINCT FROM generation_jobs.organization_id ORDER BY outbox.id LIMIT $1',
+  },
+  {
+    name: 'mobile_push_notification_deliveries.token_scope',
+    sql: 'SELECT deliveries.id::text AS id FROM mobile_push_notification_deliveries AS deliveries INNER JOIN mobile_push_notification_outbox AS outbox ON outbox.id = deliveries.outbox_id INNER JOIN mobile_push_tokens ON mobile_push_tokens.id = deliveries.push_token_id WHERE /* mobile_push_notification_deliveries.token_scope */ deliveries.push_token_id IS NOT NULL AND mobile_push_tokens.user_id <> outbox.user_id ORDER BY deliveries.id LIMIT $1',
+  },
 ];
 
 export async function checkDeploymentDataInvariants(

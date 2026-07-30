@@ -24,11 +24,14 @@ describe('PostgresPushTokenRepository', () => {
     expect(database.transactionCount).toBe(1);
     expect(database.queries).toHaveLength(3);
     expect(database.queries[0]?.text).toContain('pg_advisory_xact_lock');
-    expect(database.queries[0]?.text).toContain('mobile-push-token-registry:v1');
-    expect(database.queries[0]?.values).toBeUndefined();
+    expect(database.queries[0]?.values).toEqual(['mobile-push-token-registry:v1']);
     expect(database.queries[1]?.text).toContain('DELETE FROM mobile_push_tokens');
-    expect(database.queries[1]?.text).toContain('user_id <> $2::uuid');
+    expect(database.queries[1]?.text).toContain('installation_id = $1::uuid');
+    expect(database.queries[1]?.text).toContain('OR token_hash = $3');
+    expect(database.queries[1]?.text).toContain('user_id IS DISTINCT FROM $2::uuid');
     expect(database.queries[2]?.text).toContain('ON CONFLICT (token_hash)');
+    expect(database.queries[2]?.text).not.toContain('user_id = EXCLUDED.user_id');
+    expect(database.queries[2]?.text).not.toContain('installation_id = EXCLUDED.installation_id');
     expect(database.queries[2]?.values).toEqual([
       input.userId,
       input.installationId,
@@ -56,7 +59,7 @@ describe('PostgresPushTokenRepository', () => {
     await expect(repository.deleteForUser(input.userId, input.installationId)).resolves.toBe(true);
 
     expect(database.transactionCount).toBe(1);
-    expect(database.queries[0]?.text).toContain('mobile-push-token-registry:v1');
+    expect(database.queries[0]?.values).toEqual(['mobile-push-token-registry:v1']);
     expect(database.queries[1]?.text).toContain('WHERE user_id = $1::uuid');
     expect(database.queries[1]?.text).toContain('AND installation_id = $2::uuid');
     expect(database.queries[1]?.values).toEqual([input.userId, input.installationId]);
