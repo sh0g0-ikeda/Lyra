@@ -5,29 +5,23 @@ import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tansta
 import { ActionableErrorNotice } from '@/components/ActionableErrorNotice';
 import { EpisodeImprovementPanel } from '@/components/EpisodeImprovementPanel';
 import { FormField } from '@/components/FormField';
-import { JobStatusCard } from '@/components/JobStatusCard';
 import { Notice } from '@/components/Notice';
 import { PrimaryButton } from '@/components/PrimaryButton';
 import { RecordPicker } from '@/components/RecordPicker';
 import { Screen } from '@/components/Screen';
 import { Section } from '@/components/Section';
 import { StoryCollaborationPanel } from '@/components/StoryCollaborationPanel';
-import { StoryGenerationControls } from '@/components/StoryGenerationControls';
 import { WorkspaceHierarchyNavigator } from '@/components/WorkspaceHierarchyNavigator';
 import { useWorkspaceContextSelection } from '@/components/WorkspaceContextPicker';
 import { colors, spacing, textStyles } from '@/constants/theme';
-import {
-  extractImprovedFullStory,
-  shouldOverwritePageSkeleton
-} from '@/domain/storyWorkflow';
+import { extractImprovedFullStory } from '@/domain/storyWorkflow';
 import { storyEditorIsDirty } from '@/domain/editorDirtyPolicy';
 import {
   buildEpisodeMobileUpdatePayload,
   episodeMobileDraft
 } from '@/domain/episodeMobileDraft';
-import type { EntityRecord, GenerationJobRecord, StoryEpisodeImprovementRecord } from '@/domain/types';
-import { useActiveResourceJobId } from '@/hooks/useActiveResourceJobId';
-import { confirmAction, confirmDestructiveAction } from '@/lib/confirm';
+import type { EntityRecord, StoryEpisodeImprovementRecord } from '@/domain/types';
+import { confirmDestructiveAction } from '@/lib/confirm';
 import {
   flattenUniqueRecords,
   MOBILE_LIST_PAGE_SIZE,
@@ -38,8 +32,6 @@ import {
   entitiesInfiniteQueryKey,
   entitiesQueryKey,
   episodesQueryKey,
-  pagesInfiniteQueryKey,
-  pagesQueryKey,
   scenesQueryKey,
   workDetailQueryKey,
   worksInfiniteQueryKey,
@@ -62,11 +54,6 @@ const toggleId = (ids: string[], id: string): string[] =>
 
 const MAX_ESTIMATED_PAGES = 32;
 const MAX_STORY_ORDER = 1000;
-const STORY_GENERATION_JOB_TYPES = [
-  'episode_story_autofill',
-  'episode_page_skeleton',
-] as const;
-
 const sameStringArray = (a: string[], b: string[]): boolean =>
   a.length === b.length && a.every((entry, index) => entry === b[index]);
 
@@ -121,11 +108,10 @@ function EntityChips({ entities, selectedIds, onChange, emptyLabel }: EntityChip
 
 export function StoryScreen(): React.JSX.Element {
   const queryClient = useQueryClient();
-  const { api, hasCapability, language, logout, selection, sessionKey, trackJob } = useAppState();
+  const { api, hasCapability, language, logout, selection, sessionKey } = useAppState();
   const { resolveDirtyEditors } = useDirtyState();
   const organizationId = selection.organizationId;
   const canEdit = hasCapability('edit_work');
-  const canGenerate = hasCapability('generate');
   const [episodeTitle, setEpisodeTitle] = useState('');
   const [episodeDraft, setEpisodeDraft] = useState('');
   const [estimatedPages, setEstimatedPages] = useState('4');
@@ -140,11 +126,6 @@ export function StoryScreen(): React.JSX.Element {
   const [collaborationInstruction, setCollaborationInstruction] = useState('');
   const [collaborationProposal, setCollaborationProposal] = useState('');
   const [collaborationError, setCollaborationError] = useState<string | null>(null);
-  const [localJob, setLocalJob] = useState<{
-    id: string;
-    resourceId: string;
-  } | null>(null);
-  const [jobEnqueued, setJobEnqueued] = useState(false);
   const [staleResource, setStaleResource] = useState<{
     id: string;
     kind: 'episode';
@@ -218,35 +199,6 @@ export function StoryScreen(): React.JSX.Element {
   const selectedEpisode = useMemo(
     () => episodesQuery.data?.episodes.find((episode) => episode.id === selection.episodeId) ?? null,
     [selection.episodeId, episodesQuery.data?.episodes]
-  );
-  const activeServerJobId = useActiveResourceJobId({
-    api,
-    jobTypes: STORY_GENERATION_JOB_TYPES,
-    organizationId,
-    resourceId: selectedEpisode?.id ?? null,
-    resourceParam: 'episode_id',
-    sessionKey,
-  });
-  const localJobMatchesSelection =
-    localJob !== null && localJob.resourceId === selectedEpisode?.id;
-  const displayedJobId = localJobMatchesSelection
-    ? localJob.id
-    : activeServerJobId;
-
-  const pagesQuery = useInfiniteQuery({
-    enabled: selectedEpisode !== null,
-    queryKey: pagesInfiniteQueryKey(sessionKey, selectedEpisode?.id ?? null, organizationId),
-    initialPageParam: null as string | null,
-    queryFn: ({ pageParam }) => api.getPagesPage(selectedEpisode?.id ?? '', {
-      organizationId,
-      limit: MOBILE_LIST_PAGE_SIZE,
-      cursor: pageParam,
-    }),
-    getNextPageParam: nextCursorFromPage,
-  });
-  const pages = useMemo(
-    () => flattenUniqueRecords(pagesQuery.data?.pages.map((page) => page.pages) ?? []),
-    [pagesQuery.data?.pages],
   );
 
   const scenesQuery = useQuery({
@@ -649,74 +601,6 @@ export function StoryScreen(): React.JSX.Element {
     collaborationAbortRef.current?.abort();
   };
 
-  const skeletonMutation = useMutation({
-    onMutate: () => {
-      setJobEnqueued(false);
-    },
-    mutationFn: async () => {
-      await saveCurrentEpisodeIfSelected();
-      return api.generatePageSkeleton(
-        selectedEpisode?.id ?? '',
-        {
-          overwrite_existing: shouldOverwritePageSkeleton(pages.length),
-          apply_story_plan: true,
-          language
-        },
-        organizationId
-      );
-    },
-    onSuccess: async (result) => {
-      if ('job_id' in result) {
-        setLocalJob({
-          id: result.job_id,
-          resourceId: selectedEpisode?.id ?? '',
-        });
-        setJobEnqueued(true);
-        await trackJob(result.job_id);
-      }
-      await invalidateEpisodes();
-      await queryClient.invalidateQueries({ queryKey: pagesQueryKey(sessionKey, selectedEpisode?.id ?? null, organizationId) });
-    },
-    onError: () => {
-      setJobEnqueued(false);
-    }
-  });
-
-  const autofillMutation = useMutation({
-    onMutate: () => {
-      setJobEnqueued(false);
-    },
-    mutationFn: async () => {
-      await saveCurrentEpisodeIfSelected();
-      return api.autofillEpisodePagesFromStory(selectedEpisode?.id ?? '', language, organizationId);
-    },
-    onSuccess: async (result) => {
-      setLocalJob({
-        id: result.job_id,
-        resourceId: selectedEpisode?.id ?? '',
-      });
-      setJobEnqueued(true);
-      await trackJob(result.job_id);
-      await invalidateEpisodes();
-      await queryClient.invalidateQueries({ queryKey: pagesQueryKey(sessionKey, selectedEpisode?.id ?? null, organizationId) });
-    },
-    onError: () => {
-      setJobEnqueued(false);
-    }
-  });
-
-  const cancelJobMutation = useMutation({
-    mutationFn: (job: GenerationJobRecord) => api.cancelJob(job.id, organizationId),
-    onSuccess: async () => {
-      setJobEnqueued(false);
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['job', sessionKey] }),
-        queryClient.invalidateQueries({ queryKey: ['jobs', sessionKey] }),
-        queryClient.invalidateQueries({ queryKey: ['balance', sessionKey] })
-      ]);
-    }
-  });
-
   const confirmDeleteScene = (): void => {
     if (selectedScene === null) {
       return;
@@ -759,59 +643,18 @@ export function StoryScreen(): React.JSX.Element {
     })();
   };
 
-  const existingPageCount = pages.length;
-  const existingPanelCount = pages.reduce(
-    (total, page) => total + page.panel_count,
-    0
-  );
-  const overwritePageSkeleton = shouldOverwritePageSkeleton(existingPageCount);
-
-  const confirmSkeletonGeneration = (): void => {
-    confirmAction({
-      language,
-      title: overwritePageSkeleton
-        ? t(language, "generated.screens.StoryScreen.regenerate.and.replace.page.plan.f11f5d2d")
-        : t(language, "generated.screens.StoryScreen.generate.page.plan.2bf7c88e"),
-      message: overwritePageSkeleton
-        ? t(language, 'screen.story.replacePagePlan', {
-            pageCount: existingPageCount,
-            panelCount: existingPanelCount
-          })
-        : t(language, "generated.screens.StoryScreen.the.current.episode.will.be.saved.before.1d685898"),
-      confirmLabel: overwritePageSkeleton
-        ? t(language, "generated.screens.StoryScreen.replace.and.regenerate.6303262c")
-        : t(language, 'pageSkeleton'),
-      destructive: overwritePageSkeleton,
-      onConfirm: () => skeletonMutation.mutate()
-    });
-  };
-
-  const confirmAutofill = (): void => {
-    confirmAction({
-      language,
-      title: t(language, "generated.screens.StoryScreen.apply.story.plan.cf36a906"),
-      message: t(language, "generated.screens.StoryScreen.the.current.episode.will.be.saved.and.ap.e9b104df"),
-      confirmLabel: t(language, 'applyStoryPlan'),
-      onConfirm: () => autofillMutation.mutate()
-    });
-  };
-
   const storyErrors = [
     worksQuery.error,
     entitiesQuery.error,
     chaptersQuery.error,
     episodesQuery.error,
-    pagesQuery.error,
     scenesQuery.error,
     updateEpisodeMutation.error,
     createSceneMutation.error,
     updateSceneMutation.error,
     deleteSceneMutation.error,
     dirtySaveError,
-    improveEpisodeMutation.error,
-    skeletonMutation.error,
-    autofillMutation.error,
-    cancelJobMutation.error
+    improveEpisodeMutation.error
   ].filter((error): error is Error => error instanceof Error);
 
   const refreshing =
@@ -819,7 +662,6 @@ export function StoryScreen(): React.JSX.Element {
     entitiesQuery.isFetching ||
     chaptersQuery.isFetching ||
     episodesQuery.isFetching ||
-    pagesQuery.isFetching ||
     scenesQuery.isFetching;
   const refreshStory = (): void => {
     void invalidateWorks();
@@ -1007,44 +849,6 @@ export function StoryScreen(): React.JSX.Element {
         </View>
       </Section>
 
-      <Section subtitle={t(language, "generated.screens.StoryScreen.create.pages.frames.panel.slots.then.dis.bd1ff10b")} title={t(language, 'pageSkeleton')} tone="highlight">
-        <StoryGenerationControls
-          canGenerate={canGenerate}
-          estimatedPagesInvalid={estimatedPagesInvalid}
-          jobEnqueued={jobEnqueued && localJobMatchesSelection}
-          language={language}
-          onApplyStory={confirmAutofill}
-          onGenerateSkeleton={confirmSkeletonGeneration}
-          overwrite={overwritePageSkeleton}
-          pagesLoading={pagesQuery.isLoading}
-          selectedEpisode={selectedEpisode !== null}
-          skeletonLoading={skeletonMutation.isPending}
-          storyApplyLoading={autofillMutation.isPending}
-        />
-        <JobStatusCard
-          api={api}
-          cancelLoading={cancelJobMutation.isPending}
-          jobId={displayedJobId}
-          language={language}
-          organizationId={organizationId}
-          onCompleted={async () => {
-            setJobEnqueued(false);
-            await Promise.all([
-              queryClient.invalidateQueries({ queryKey: ['episodes', sessionKey] }),
-              queryClient.invalidateQueries({ queryKey: ['pages', sessionKey] }),
-              queryClient.invalidateQueries({ queryKey: ['panels', sessionKey] }),
-              queryClient.invalidateQueries({ queryKey: ['frames', sessionKey] })
-            ]);
-          }}
-          onFailed={() => {
-            setJobEnqueued(false);
-          }}
-          onCancel={async (job) => {
-            await cancelJobMutation.mutateAsync(job);
-          }}
-          sessionKey={sessionKey}
-        />
-      </Section>
     </Screen>
   );
 }

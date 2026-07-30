@@ -59,6 +59,64 @@ describe('mobile workspace navigation and editor UX contract', () => {
     expect(source.slice(Math.max(0, style - 120), style)).toContain('defaultCollapsed');
   });
 
+  it('共通ナビゲータを作品・章・話を選択と表示する', () => {
+    const translations = readSource('src/lib/i18nComponentMessages.ts');
+
+    expect(translations).toContain(
+      "'component.workspaceHierarchy.title': '作品・章・話を選択'"
+    );
+  });
+
+  it('ページ設計をページ一覧より前に置き、話単位の既存APIを使う', () => {
+    const pageScreen = readSource('src/screens/PagesScreen.tsx');
+    const source = renderSource('PagesScreen');
+    const pageDesign = source.indexOf('persistKey="pages:design"');
+    const pageList = source.indexOf('persistKey="pages:list"');
+    const skeletonMutation = pageScreen.slice(
+      pageScreen.indexOf('const pageSkeletonMutation'),
+      pageScreen.indexOf('const pageStoryAutofillMutation')
+    );
+    const autofillMutation = pageScreen.slice(
+      pageScreen.indexOf('const pageStoryAutofillMutation'),
+      pageScreen.indexOf('const cancelPageDesignJobMutation')
+    );
+
+    expect(pageDesign).toBeGreaterThanOrEqual(0);
+    expect(pageList).toBeGreaterThan(pageDesign);
+    expect(skeletonMutation.indexOf('await saveAllPageDrafts()')).toBeLessThan(
+      skeletonMutation.indexOf('api.generatePageSkeleton(')
+    );
+    expect(autofillMutation.indexOf('await saveAllPageDrafts()')).toBeLessThan(
+      autofillMutation.indexOf('api.autofillEpisodePagesFromStory(')
+    );
+    expect(pageScreen).toContain('displayedPageDesignJobId');
+    expect(pageScreen).toContain('displayedJobId');
+    expect(pageScreen).toContain('hasActiveJob={pageDesignOperationActive}');
+    expect(pageScreen).toContain('pageDesignJobEnqueued ||');
+  });
+
+  it('ページ設計の操作場所をページ画面に一本化する', () => {
+    expect(renderSource('StoryScreen')).not.toContain(
+      '<StoryGenerationControls'
+    );
+    expect(renderSource('PagesScreen')).toContain('<StoryGenerationControls');
+  });
+
+  it('選択中ページ画像をページ生成操作と画像保存の間に置く', () => {
+    const source = renderSource('PagesScreen');
+    const pageList = source.indexOf('persistKey="pages:list"');
+    const pageListEnd = source.indexOf('</Section>', pageList);
+    const generate = source.indexOf('<PageGenerationActions');
+    const image = source.indexOf('<View style={styles.pageImageFrame}>');
+    const saveImage = source.indexOf(
+      'generated.screens.PagesScreen.save.image.dd680bcb'
+    );
+
+    expect(source.slice(pageList, pageListEnd)).not.toContain('pageImageFrame');
+    expect(image).toBeGreaterThan(generate);
+    expect(image).toBeLessThan(saveImage);
+  });
+
   it('指定された日本語説明を文字化けなく保持する', () => {
     const translations = readSource('src/lib/i18nGenerated.ts');
 
