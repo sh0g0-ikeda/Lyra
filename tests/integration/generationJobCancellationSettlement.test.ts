@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { Pool, type PoolClient, type QueryResult, type QueryResultRow } from 'pg';
-import { describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { DatabaseClient, TransactionRunner } from '../../src/lib/db.js';
+import { runPendingMigrations } from '../../src/lib/migrations.js';
 import { PostgresGenerationJobRepository } from '../../src/repositories/GenerationJobRepository.js';
 
 const databaseUrl = process.env.DATABASE_URL;
@@ -9,8 +10,36 @@ const shouldRunPostgresTest = process.env.APP_ENV === 'test' && databaseUrl !== 
 const describePostgres = shouldRunPostgresTest ? describe : describe.skip;
 
 describePostgres('generation job cancellation settlement', () => {
+  let adminPool: Pool;
+  let pool: Pool;
+  let schemaName: string;
+
+  beforeAll(async () => {
+    adminPool = createPool();
+    schemaName = `generation_cancel_${process.pid}_${Date.now()}`;
+    assertSafeSchemaName(schemaName);
+    await adminPool.query(`CREATE SCHEMA ${schemaName}`);
+
+    pool = createPool(schemaName);
+    const applied = await runPendingMigrations(new PoolTransactionDatabase(pool), {
+      migrationLockPollMs: 1,
+      migrationLockMaxAttempts: 10,
+    });
+    expect(applied.at(-1)).toBe('038_connect_generation_job_cancellation.sql');
+  }, 120_000);
+
+  afterAll(async () => {
+    if (pool !== undefined) {
+      await pool.end();
+    }
+    if (adminPool !== undefined && schemaName !== undefined) {
+      assertSafeSchemaName(schemaName);
+      await adminPool.query(`DROP SCHEMA ${schemaName} CASCADE`);
+      await adminPool.end();
+    }
+  });
+
   it('queued page jobを取消すると同じtransactionでpageを戻し未返金creditだけを返す', async () => {
-    const pool = createPool();
     const database = new PoolTransactionDatabase(pool);
     const ids = createFixtureIds();
 
@@ -56,12 +85,10 @@ describePostgres('generation job cancellation settlement', () => {
       });
     } finally {
       await removeFixture(pool, ids);
-      await pool.end();
     }
   });
 
   it('取消が先に確定したjobへの遅延consumeをDB guardが拒否する', async () => {
-    const pool = createPool();
     const ids = createFixtureIds();
     const cancellationClient = await pool.connect();
     const consumeClient = await pool.connect();
@@ -92,14 +119,19 @@ describePostgres('generation job cancellation settlement', () => {
       await cancellationClient.query('COMMIT');
       await balanceLock;
 
-      const consume = consumeClient.query(
-        `INSERT INTO credit_ledger (
+      let consumeError: unknown = null;
+      try {
+        await consumeClient.query(
+          `INSERT INTO credit_ledger (
            user_id, type, amount, monthly_delta, purchased_delta,
            monthly_after, purchased_after, description, job_id
          ) VALUES ($1::uuid, 'consume', -3, -1, -2, 4, 6, 'late consume', $2::uuid)`,
-        [ids.userId, ids.jobId],
-      );
-      await expect(consume).rejects.toMatchObject({
+          [ids.userId, ids.jobId],
+        );
+      } catch (error) {
+        consumeError = error;
+      }
+      expect(consumeError).toMatchObject({
         code: 'P0001',
         constraint: 'generation_job_credit_consume_active',
       });
@@ -116,12 +148,10 @@ describePostgres('generation job cancellation settlement', () => {
       cancellationClient.release();
       consumeClient.release();
       await removeFixture(pool, ids);
-      await pool.end();
     }
   });
 
   it('processing jobでは取消要求とcommit開始のうち先にlockした側だけが成功する', async () => {
-    const pool = createPool();
     const ids = createFixtureIds();
     const cancellationClient = await pool.connect();
     const commitClient = await pool.connect();
@@ -223,7 +253,6 @@ describePostgres('generation job cancellation settlement', () => {
       cancellationClient.release();
       commitClient.release();
       await removeFixture(pool, ids);
-      await pool.end();
     }
   });
 });
@@ -248,11 +277,21 @@ function createFixtureIds(): FixtureIds {
   };
 }
 
-function createPool(): Pool {
+function createPool(schemaName?: string): Pool {
   if (databaseUrl === undefined) {
     throw new Error('DATABASE_URL is required for the PostgreSQL cancellation test');
   }
-  return new Pool({ connectionString: databaseUrl, max: 4 });
+  return new Pool({
+    connectionString: databaseUrl,
+    max: 4,
+    ...(schemaName === undefined ? {} : { options: `-c search_path=${schemaName},public` }),
+  });
+}
+
+function assertSafeSchemaName(schemaName: string): void {
+  if (!/^generation_cancel_[0-9]+_[0-9]+$/u.test(schemaName)) {
+    throw new Error('Unsafe PostgreSQL test schema name');
+  }
 }
 
 async function insertPersonalPageJobFixture(
