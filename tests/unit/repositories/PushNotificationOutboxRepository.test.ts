@@ -12,8 +12,8 @@ describe('PostgresPushNotificationOutboxRepository', () => {
   it('terminal jobをlockしtoken snapshotまで同一transactionでenqueueする', async () => {
     const database = new RecordingTransactionDatabase();
     database.responses.push(
-      [jobRow('completed')],
       [],
+      [jobRow('completed')],
       [outboxRow('completed')],
       [],
     );
@@ -23,11 +23,12 @@ describe('PostgresPushNotificationOutboxRepository', () => {
     const result = await repository.enqueueForTerminalJob(jobId);
 
     expect(database.transactionCount).toBe(1);
-    expect(database.queries[0]?.text).toContain('FROM generation_jobs');
-    expect(database.queries[0]?.text).toContain('FOR UPDATE');
-    expect(database.queries[1]?.values).toEqual(['mobile-push-token-registry:v1']);
+    expect(database.queries[0]?.values).toEqual(['mobile-push-token-registry:v1']);
+    expect(database.queries[1]?.text).toContain('FROM generation_jobs');
+    expect(database.queries[1]?.text).toContain('FOR UPDATE');
     expect(database.queries[2]?.text).toContain('INSERT INTO mobile_push_notification_outbox');
-    expect(database.queries[2]?.text).toContain('ON CONFLICT (generation_job_id, terminal_status)');
+    expect(database.queries[2]?.text).toContain('ON CONFLICT');
+    expect(database.queries[2]?.text).toContain('generation_retry_count');
     expect(database.queries[3]?.text).toContain('INSERT INTO mobile_push_notification_deliveries');
     expect(database.queries[3]?.text).toContain('mobile_push_tokens.user_id = $2::uuid');
     expect(result).toEqual({
@@ -42,12 +43,12 @@ describe('PostgresPushNotificationOutboxRepository', () => {
     '%s jobはoutboxを作らない',
     async (status) => {
       const database = new RecordingTransactionDatabase();
-      database.responses.push([jobRow(status)]);
+      database.responses.push([], [jobRow(status)]);
       const repository = new PostgresPushNotificationOutboxRepository(database);
 
       await expect(repository.enqueueForTerminalJob(jobId)).resolves.toBeNull();
 
-      expect(database.queries).toHaveLength(1);
+      expect(database.queries).toHaveLength(2);
     },
   );
 
@@ -68,21 +69,21 @@ describe('PostgresPushNotificationOutboxRepository', () => {
     ],
   ])('%sがあるfailed jobはoutboxを作らない', async (_label, cancellationMetadata) => {
     const database = new RecordingTransactionDatabase();
-    database.responses.push([jobRow('failed', cancellationMetadata)]);
+    database.responses.push([], [jobRow('failed', cancellationMetadata)]);
     const repository = new PostgresPushNotificationOutboxRepository(database);
 
     await expect(repository.enqueueForTerminalJob(jobId)).resolves.toBeNull();
 
-    expect(database.queries).toHaveLength(1);
-    expect(database.queries[0]?.text).toContain('cancel_requested_at');
-    expect(database.queries[0]?.text).toContain('cancelled_at');
+    expect(database.queries).toHaveLength(2);
+    expect(database.queries[1]?.text).toContain('cancel_requested_at');
+    expect(database.queries[1]?.text).toContain('cancelled_at');
   });
 
   it('同じterminal eventの再実行は既存outboxを返してdeliveryを増やさない', async () => {
     const database = new RecordingTransactionDatabase();
     database.responses.push(
-      [jobRow('failed')],
       [],
+      [jobRow('failed')],
       [],
       [outboxRow('failed')],
     );
@@ -92,6 +93,8 @@ describe('PostgresPushNotificationOutboxRepository', () => {
 
     expect(database.queries).toHaveLength(4);
     expect(database.queries[3]?.text).toContain('SELECT id, terminal_status');
+    expect(database.queries[3]?.text).toContain('generation_retry_count');
+    expect(database.queries[3]?.values).toEqual([jobId, 'failed', 0]);
     expect(database.queries[3]?.text).not.toContain('mobile_push_notification_deliveries');
     expect(result).toEqual({
       outboxId,
@@ -103,7 +106,7 @@ describe('PostgresPushNotificationOutboxRepository', () => {
 
   it('unknown jobはoutboxを作らない', async () => {
     const database = new RecordingTransactionDatabase();
-    database.responses.push([]);
+    database.responses.push([], []);
     const repository = new PostgresPushNotificationOutboxRepository(database);
 
     await expect(repository.enqueueForTerminalJob(jobId)).resolves.toBeNull();
@@ -149,6 +152,7 @@ function jobRow(
     status,
     cancel_requested_at: null,
     cancelled_at: null,
+    retry_count: 0,
     ...overrides,
   };
 }

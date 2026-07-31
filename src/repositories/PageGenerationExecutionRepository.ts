@@ -5,6 +5,10 @@ import type { PageGenerationInputSnapshot, PageGenerationMode } from '../domain/
 import type { DatabaseClient, TransactionRunner } from '../lib/db.js';
 import { sanitizePersistedErrorMessage } from '../lib/errorSanitizer.js';
 import { buildPersistedPromptDiagnostics } from '../lib/promptDiagnostics.js';
+import {
+  enqueueTerminalGenerationJobNotificationAfterRegistryLock,
+  lockMobilePushTokenRegistryForTerminalSettlement,
+} from './PushNotificationOutboxRepository.js';
 import type {
   PageGenerationStageTimingsMs,
   PagePromptCompilationMetadata,
@@ -168,6 +172,7 @@ export class PostgresPageGenerationExecutionRepository implements PageGeneration
 
   public async completePageGeneration(input: CompletePageGenerationInput): Promise<boolean> {
     return this.client.transaction(async (transactionClient) => {
+      await lockMobilePushTokenRegistryForTerminalSettlement(transactionClient);
       const pageUpdate = await transactionClient.query<PageUpdateRow>(
         `
         UPDATE pages
@@ -227,6 +232,7 @@ export class PostgresPageGenerationExecutionRepository implements PageGeneration
           AND user_id = $2
           AND status = 'processing'
           AND cancel_requested_at IS NULL
+          AND cancelled_at IS NULL
           AND commit_started_at IS NOT NULL
         RETURNING *
         `,
@@ -251,9 +257,16 @@ export class PostgresPageGenerationExecutionRepository implements PageGeneration
         ],
       );
 
-      if ((jobUpdate.rowCount ?? 0) === 0) {
+      const completedJob = jobUpdate.rows[0];
+      if (completedJob === undefined) {
         throw new Error('Failed to update generation job completion state');
       }
+
+      await enqueueTerminalGenerationJobNotificationAfterRegistryLock(
+        transactionClient,
+        completedJob,
+        'completed',
+      );
 
       return true;
     });
@@ -262,6 +275,7 @@ export class PostgresPageGenerationExecutionRepository implements PageGeneration
   public async failPageGeneration(input: FailPageGenerationInput): Promise<boolean> {
     const persistedErrorMessage = sanitizePersistedErrorMessage(input.errorMessage, 'Page generation failed');
     return this.client.transaction(async (transactionClient) => {
+      await lockMobilePushTokenRegistryForTerminalSettlement(transactionClient);
       const jobUpdate = await transactionClient.query<GenerationJobRow>(
         `
         UPDATE generation_jobs
@@ -272,6 +286,7 @@ export class PostgresPageGenerationExecutionRepository implements PageGeneration
           AND user_id = $2
           AND status IN ('queued', 'processing')
           AND cancel_requested_at IS NULL
+          AND cancelled_at IS NULL
           AND (
             $4::timestamptz IS NULL
             OR (
@@ -296,7 +311,8 @@ export class PostgresPageGenerationExecutionRepository implements PageGeneration
         [input.jobId, input.userId, persistedErrorMessage, input.staleBefore?.toISOString() ?? null],
       );
 
-      if ((jobUpdate.rowCount ?? 0) === 0) {
+      const failedJob = jobUpdate.rows[0];
+      if (failedJob === undefined) {
         return false;
       }
 
@@ -341,6 +357,12 @@ export class PostgresPageGenerationExecutionRepository implements PageGeneration
           ],
         );
       }
+
+      await enqueueTerminalGenerationJobNotificationAfterRegistryLock(
+        transactionClient,
+        failedJob,
+        'failed',
+      );
 
       return true;
     });

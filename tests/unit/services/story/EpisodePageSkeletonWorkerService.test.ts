@@ -45,6 +45,7 @@ class FakeEpisodePageSkeletonRepository implements EpisodePageSkeletonExecutionR
   public completed: unknown = null;
   public failed: unknown = null;
   public progressUpdates: unknown[] = [];
+  public completeResult = true;
 
   public async claimQueuedEpisodePageSkeletonJob(): Promise<GenerationJob | null> {
     return this.job;
@@ -57,7 +58,7 @@ class FakeEpisodePageSkeletonRepository implements EpisodePageSkeletonExecutionR
 
   public async completeEpisodePageSkeleton(input: unknown): Promise<boolean> {
     this.completed = input;
-    return true;
+    return this.completeResult;
   }
 
   public async failEpisodePageSkeleton(input: unknown): Promise<boolean> {
@@ -258,6 +259,22 @@ describe('EpisodePageSkeletonWorkerService', () => {
 
     expect(result).toEqual({ status: 'processed', jobStatus: 'failed' });
     expect(pageSkeletonService.rollbackCalls).toEqual([]);
+  });
+
+  it('DBのterminal更新が成立しない場合はcompletedを返さない', async () => {
+    const repository = new FakeEpisodePageSkeletonRepository();
+    repository.completeResult = false;
+    const worker = new EpisodePageSkeletonWorkerService(
+      repository,
+      new FakePageSkeletonService(),
+      new FakePageService(),
+    );
+
+    const result = await worker.processJob('55555555-5555-4555-8555-555555555555');
+
+    expect(result).toEqual({ status: 'processed', jobStatus: 'failed' });
+    expect(repository.completed).not.toBeNull();
+    expect(repository.failed).not.toBeNull();
   });
 
   it('AI準備中の停止要求はpage skeletonを保存せずcancelledへ確定する', async () => {

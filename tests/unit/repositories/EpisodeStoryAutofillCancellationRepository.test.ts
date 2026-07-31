@@ -1,9 +1,9 @@
 import type { QueryResult, QueryResultRow } from 'pg';
 import { describe, expect, it } from 'vitest';
-import type { DatabaseClient } from '../../../src/lib/db.js';
+import type { DatabaseClient, TransactionRunner } from '../../../src/lib/db.js';
 import { PostgresEpisodeStoryAutofillExecutionRepository } from '../../../src/repositories/EpisodeStoryAutofillExecutionRepository.js';
 
-class QueryCapturingClient implements DatabaseClient {
+class QueryCapturingClient implements DatabaseClient, TransactionRunner {
   public queries: string[] = [];
   public values: Array<readonly unknown[] | undefined> = [];
   public nextRowCount = 1;
@@ -21,6 +21,10 @@ class QueryCapturingClient implements DatabaseClient {
       fields: [],
       rows: [],
     };
+  }
+
+  public async transaction<T>(work: (client: DatabaseClient) => Promise<T>): Promise<T> {
+    return work(this);
   }
 }
 

@@ -114,13 +114,16 @@ export class EpisodePageSkeletonWorkerService implements EpisodePageSkeletonWork
         storyPlanCompleted = true;
       }
 
-      await this.repository.completeEpisodePageSkeleton({
+      const completed = await this.repository.completeEpisodePageSkeleton({
         jobId: job.id,
         userId: job.userId,
         result,
         storyPlanApplied: applyStoryPlan,
         storyPlanResult,
       });
+      if (!completed) {
+        throw new ConfigurationError('Page skeleton terminal state could not be committed');
+      }
       console.info('episode_page_skeleton_completed', {
         jobId: job.id,
         userId: job.userId,

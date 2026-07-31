@@ -116,8 +116,11 @@ overrides cancellation evidence for notification eligibility. Account deletion
 serializes with the token registry and cancels unsent deliveries before removing
 tokens. Its write guard allows a previously active job to reach a terminal state
 but rejects reactivating a terminal personal job after deletion starts. Explicit
-enqueue, retry invalidation, lease-based delivery, and provider dispatch must be
-wired and verified together before push delivery is enabled.
+terminal settlement takes the token-registry lock before the job-row lock, then
+commits the terminal state, retry-count event snapshot, outbox, and deliveries in
+one transaction. Retrying a failed job invalidates its unsent failed deliveries
+in the same statement. Lease-based delivery and provider dispatch must still be
+wired and verified before push delivery is enabled.
 
 Account deletion is independently gated by `ACCOUNT_DELETION_ENABLED`, which
 defaults to false. The authenticated API accepts no user, identity, subscription,

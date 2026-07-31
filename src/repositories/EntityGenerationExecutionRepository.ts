@@ -1,8 +1,12 @@
 import type { QueryResultRow } from 'pg';
 import type { GenerationJob } from '../domain/types/job.js';
-import type { DatabaseClient } from '../lib/db.js';
+import type { DatabaseClient, TransactionRunner } from '../lib/db.js';
 import { sanitizePersistedErrorMessage } from '../lib/errorSanitizer.js';
 import { buildPersistedPromptDiagnostics } from '../lib/promptDiagnostics.js';
+import {
+  enqueueTerminalGenerationJobNotificationAfterRegistryLock,
+  lockMobilePushTokenRegistryForTerminalSettlement,
+} from './PushNotificationOutboxRepository.js';
 
 export interface CompleteEntityGenerationInput {
   jobId: string;
@@ -76,7 +80,7 @@ interface GenerationJobRow extends QueryResultRow {
 }
 
 export class PostgresEntityGenerationExecutionRepository implements EntityGenerationExecutionRepository {
-  public constructor(private readonly client: DatabaseClient) {}
+  public constructor(private readonly client: DatabaseClient & TransactionRunner) {}
 
   public async claimQueuedEntityGenerationJob(jobId: string): Promise<GenerationJob | null> {
     const result = await this.client.query<GenerationJobRow>(
@@ -119,85 +123,111 @@ export class PostgresEntityGenerationExecutionRepository implements EntityGenera
   }
 
   public async completeEntityGeneration(input: CompleteEntityGenerationInput): Promise<boolean> {
-    const result = await this.client.query<GenerationJobRow>(
-      `
-      UPDATE generation_jobs
-      SET status = 'completed',
-          result = $3::jsonb,
-          openai_request_id = $4,
-          completed_at = NOW()
-      WHERE id = $1
-        AND user_id = $2
-        AND status = 'processing'
-        AND cancel_requested_at IS NULL
-        AND commit_started_at IS NOT NULL
-      RETURNING *
-      `,
-      [
-        input.jobId,
-        input.userId,
-        JSON.stringify({
-          structured_fields: input.structuredFields,
-          candidates: input.candidates.map((candidate) => ({
-            ref_id: candidate.refId,
-            s3_key: candidate.s3Key,
-            cdn_url: candidate.cdnUrl,
-          })),
-          ...buildPromptDiagnostics(input),
-          cost_usd: input.costUsd,
-          compiled_prompt_used: input.compiledPromptUsed,
-          prompt_compiler_provider: input.promptCompilerProvider,
-          compiler_model: input.compilerModel,
-          compiler_prompt_version: input.compilerPromptVersion,
-          compiler_error: input.compilerError,
-          image_model: input.imageModel,
-          image_params: input.imageParams,
-          created_at: input.createdAt,
-        }),
-        input.openaiRequestId,
-      ],
-    );
+    return this.client.transaction(async (transactionClient) => {
+      await lockMobilePushTokenRegistryForTerminalSettlement(transactionClient);
+      const result = await transactionClient.query<GenerationJobRow>(
+        `
+        UPDATE generation_jobs
+        SET status = 'completed',
+            result = $3::jsonb,
+            openai_request_id = $4,
+            completed_at = NOW()
+        WHERE id = $1
+          AND user_id = $2
+          AND status = 'processing'
+          AND cancel_requested_at IS NULL
+          AND cancelled_at IS NULL
+          AND commit_started_at IS NOT NULL
+        RETURNING *
+        `,
+        [
+          input.jobId,
+          input.userId,
+          JSON.stringify({
+            structured_fields: input.structuredFields,
+            candidates: input.candidates.map((candidate) => ({
+              ref_id: candidate.refId,
+              s3_key: candidate.s3Key,
+              cdn_url: candidate.cdnUrl,
+            })),
+            ...buildPromptDiagnostics(input),
+            cost_usd: input.costUsd,
+            compiled_prompt_used: input.compiledPromptUsed,
+            prompt_compiler_provider: input.promptCompilerProvider,
+            compiler_model: input.compilerModel,
+            compiler_prompt_version: input.compilerPromptVersion,
+            compiler_error: input.compilerError,
+            image_model: input.imageModel,
+            image_params: input.imageParams,
+            created_at: input.createdAt,
+          }),
+          input.openaiRequestId,
+        ],
+      );
+      const completedJob = result.rows[0];
+      if (completedJob === undefined) {
+        return false;
+      }
 
-    return (result.rowCount ?? 0) > 0;
+      await enqueueTerminalGenerationJobNotificationAfterRegistryLock(
+        transactionClient,
+        completedJob,
+        'completed',
+      );
+      return true;
+    });
   }
 
   public async failEntityGeneration(input: FailEntityGenerationInput): Promise<boolean> {
     const persistedErrorMessage = sanitizePersistedErrorMessage(input.errorMessage, 'Entity generation failed');
-    const result = await this.client.query<GenerationJobRow>(
-      `
-      UPDATE generation_jobs
-      SET status = 'failed',
-          error_message = $3,
-          completed_at = NOW()
-      WHERE id = $1
-        AND user_id = $2
-        AND status IN ('queued', 'processing')
-        AND cancel_requested_at IS NULL
-        AND (
-          $4::timestamptz IS NULL
-          OR (
-            status = 'queued'
-            AND created_at < $4::timestamptz
+    return this.client.transaction(async (transactionClient) => {
+      await lockMobilePushTokenRegistryForTerminalSettlement(transactionClient);
+      const result = await transactionClient.query<GenerationJobRow>(
+        `
+        UPDATE generation_jobs
+        SET status = 'failed',
+            error_message = $3,
+            completed_at = NOW()
+        WHERE id = $1
+          AND user_id = $2
+          AND status IN ('queued', 'processing')
+          AND cancel_requested_at IS NULL
+          AND cancelled_at IS NULL
+          AND (
+            $4::timestamptz IS NULL
+            OR (
+              status = 'queued'
+              AND created_at < $4::timestamptz
+            )
+            OR (
+              status = 'processing'
+              AND COALESCE(
+                CASE
+                  WHEN result->>'progress_updated_at' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$'
+                  THEN (result->>'progress_updated_at')::timestamptz
+                  ELSE NULL
+                END,
+                started_at,
+                created_at
+              ) < $4::timestamptz
+            )
           )
-          OR (
-            status = 'processing'
-            AND COALESCE(
-              CASE
-                WHEN result->>'progress_updated_at' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$'
-                THEN (result->>'progress_updated_at')::timestamptz
-                ELSE NULL
-              END,
-              started_at,
-              created_at
-            ) < $4::timestamptz
-          )
-        )
-      RETURNING *
-      `,
-      [input.jobId, input.userId, persistedErrorMessage, input.staleBefore?.toISOString() ?? null],
-    );
+        RETURNING *
+        `,
+        [input.jobId, input.userId, persistedErrorMessage, input.staleBefore?.toISOString() ?? null],
+      );
+      const failedJob = result.rows[0];
+      if (failedJob === undefined) {
+        return false;
+      }
 
-    return (result.rowCount ?? 0) > 0;
+      await enqueueTerminalGenerationJobNotificationAfterRegistryLock(
+        transactionClient,
+        failedJob,
+        'failed',
+      );
+      return true;
+    });
   }
 }
 

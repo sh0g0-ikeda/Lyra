@@ -2,8 +2,12 @@ import type { QueryResultRow } from 'pg';
 import type { PageSkeletonPersistResult } from '../domain/types/storyAi.js';
 import type { EpisodePagePlanApplyResult } from '../domain/types/page.js';
 import type { GenerationJob } from '../domain/types/job.js';
-import type { DatabaseClient } from '../lib/db.js';
+import type { DatabaseClient, TransactionRunner } from '../lib/db.js';
 import { sanitizePersistedErrorMessage } from '../lib/errorSanitizer.js';
+import {
+  enqueueTerminalGenerationJobNotificationAfterRegistryLock,
+  lockMobilePushTokenRegistryForTerminalSettlement,
+} from './PushNotificationOutboxRepository.js';
 
 export interface CompleteEpisodePageSkeletonInput {
   jobId: string;
@@ -60,7 +64,7 @@ interface GenerationJobRow extends QueryResultRow {
 export class PostgresEpisodePageSkeletonExecutionRepository
   implements EpisodePageSkeletonExecutionRepository
 {
-  public constructor(private readonly client: DatabaseClient) {}
+  public constructor(private readonly client: DatabaseClient & TransactionRunner) {}
 
   public async claimQueuedEpisodePageSkeletonJob(jobId: string): Promise<GenerationJob | null> {
     const result = await this.client.query<GenerationJobRow>(
@@ -122,46 +126,59 @@ export class PostgresEpisodePageSkeletonExecutionRepository
   }
 
   public async completeEpisodePageSkeleton(input: CompleteEpisodePageSkeletonInput): Promise<boolean> {
-    const result = await this.client.query<GenerationJobRow>(
-      `
-      UPDATE generation_jobs
-      SET status = 'completed',
-          result = $3::jsonb,
-          completed_at = NOW()
-      WHERE id = $1
-        AND user_id = $2
-        AND status = 'processing'
-        AND cancel_requested_at IS NULL
-        AND commit_started_at IS NOT NULL
-      RETURNING *
-      `,
-      [
-        input.jobId,
-        input.userId,
-        JSON.stringify({
-          pages_created: input.result.pagesCreated,
-          panels_created: input.result.panelsCreated,
-          replaced_existing: input.result.replacedExisting,
-          story_plan_applied: input.storyPlanApplied,
-          story_plan_result: input.storyPlanResult === null ? null : {
-            updated_page_count: input.storyPlanResult.updatedPageCount,
-            updated_panel_count: input.storyPlanResult.updatedPanelCount,
-            updated_assignment_count: input.storyPlanResult.updatedAssignmentCount,
-            filled_field_count: input.storyPlanResult.filledFieldCount,
-            compiler_used: input.storyPlanResult.compilerUsed,
-            compiler_provider: input.storyPlanResult.compilerProvider,
-            compiler_model: input.storyPlanResult.compilerModel,
-            compiler_prompt_version: input.storyPlanResult.compilerPromptVersion,
-            compiler_error: input.storyPlanResult.compilerError,
-          },
-          progress_stage: 'completed',
-          progress_message: 'Page skeleton generation completed.',
-          progress_updated_at: new Date().toISOString(),
-        }),
-      ],
-    );
+    return this.client.transaction(async (transactionClient) => {
+      await lockMobilePushTokenRegistryForTerminalSettlement(transactionClient);
+      const result = await transactionClient.query<GenerationJobRow>(
+        `
+        UPDATE generation_jobs
+        SET status = 'completed',
+            result = $3::jsonb,
+            completed_at = NOW()
+        WHERE id = $1
+          AND user_id = $2
+          AND status = 'processing'
+          AND cancel_requested_at IS NULL
+          AND cancelled_at IS NULL
+          AND commit_started_at IS NOT NULL
+        RETURNING *
+        `,
+        [
+          input.jobId,
+          input.userId,
+          JSON.stringify({
+            pages_created: input.result.pagesCreated,
+            panels_created: input.result.panelsCreated,
+            replaced_existing: input.result.replacedExisting,
+            story_plan_applied: input.storyPlanApplied,
+            story_plan_result: input.storyPlanResult === null ? null : {
+              updated_page_count: input.storyPlanResult.updatedPageCount,
+              updated_panel_count: input.storyPlanResult.updatedPanelCount,
+              updated_assignment_count: input.storyPlanResult.updatedAssignmentCount,
+              filled_field_count: input.storyPlanResult.filledFieldCount,
+              compiler_used: input.storyPlanResult.compilerUsed,
+              compiler_provider: input.storyPlanResult.compilerProvider,
+              compiler_model: input.storyPlanResult.compilerModel,
+              compiler_prompt_version: input.storyPlanResult.compilerPromptVersion,
+              compiler_error: input.storyPlanResult.compilerError,
+            },
+            progress_stage: 'completed',
+            progress_message: 'Page skeleton generation completed.',
+            progress_updated_at: new Date().toISOString(),
+          }),
+        ],
+      );
+      const completedJob = result.rows[0];
+      if (completedJob === undefined) {
+        return false;
+      }
 
-    return (result.rowCount ?? 0) > 0;
+      await enqueueTerminalGenerationJobNotificationAfterRegistryLock(
+        transactionClient,
+        completedJob,
+        'completed',
+      );
+      return true;
+    });
   }
 
   public async failEpisodePageSkeleton(input: {
@@ -173,32 +190,45 @@ export class PostgresEpisodePageSkeletonExecutionRepository
       input.errorMessage,
       'Page skeleton generation failed',
     );
-    const result = await this.client.query<GenerationJobRow>(
-      `
-      UPDATE generation_jobs
-      SET status = 'failed',
-          error_message = $3,
-          result = COALESCE(result, '{}'::jsonb) || $4::jsonb,
-          completed_at = NOW()
-      WHERE id = $1
-        AND user_id = $2
-        AND status IN ('queued', 'processing')
-        AND cancel_requested_at IS NULL
-      RETURNING *
-      `,
-      [
-        input.jobId,
-        input.userId,
-        persistedErrorMessage,
-        JSON.stringify({
-          progress_stage: 'failed',
-          progress_message: 'Page skeleton generation failed.',
-          progress_updated_at: new Date().toISOString(),
-        }),
-      ],
-    );
+    return this.client.transaction(async (transactionClient) => {
+      await lockMobilePushTokenRegistryForTerminalSettlement(transactionClient);
+      const result = await transactionClient.query<GenerationJobRow>(
+        `
+        UPDATE generation_jobs
+        SET status = 'failed',
+            error_message = $3,
+            result = COALESCE(result, '{}'::jsonb) || $4::jsonb,
+            completed_at = NOW()
+        WHERE id = $1
+          AND user_id = $2
+          AND status IN ('queued', 'processing')
+          AND cancel_requested_at IS NULL
+          AND cancelled_at IS NULL
+        RETURNING *
+        `,
+        [
+          input.jobId,
+          input.userId,
+          persistedErrorMessage,
+          JSON.stringify({
+            progress_stage: 'failed',
+            progress_message: 'Page skeleton generation failed.',
+            progress_updated_at: new Date().toISOString(),
+          }),
+        ],
+      );
+      const failedJob = result.rows[0];
+      if (failedJob === undefined) {
+        return false;
+      }
 
-    return (result.rowCount ?? 0) > 0;
+      await enqueueTerminalGenerationJobNotificationAfterRegistryLock(
+        transactionClient,
+        failedJob,
+        'failed',
+      );
+      return true;
+    });
   }
 }
 

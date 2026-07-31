@@ -276,8 +276,16 @@ const DEPLOYMENT_DATA_INVARIANT_QUERIES: InvariantQuery[] = [
     sql: 'SELECT outbox.id::text AS id FROM mobile_push_notification_outbox AS outbox INNER JOIN generation_jobs ON generation_jobs.id = outbox.generation_job_id WHERE /* mobile_push_notification_outbox.job_scope */ outbox.user_id <> generation_jobs.user_id OR outbox.organization_id IS DISTINCT FROM generation_jobs.organization_id ORDER BY outbox.id LIMIT $1',
   },
   {
+    name: 'mobile_push_notification_outbox.retry_snapshot',
+    sql: 'SELECT outbox.id::text AS id FROM mobile_push_notification_outbox AS outbox INNER JOIN generation_jobs ON generation_jobs.id = outbox.generation_job_id WHERE /* mobile_push_notification_outbox.retry_snapshot */ outbox.generation_retry_count < 0 OR outbox.generation_retry_count > generation_jobs.retry_count ORDER BY outbox.id LIMIT $1',
+  },
+  {
     name: 'mobile_push_notification_deliveries.token_scope',
     sql: 'SELECT deliveries.id::text AS id FROM mobile_push_notification_deliveries AS deliveries INNER JOIN mobile_push_notification_outbox AS outbox ON outbox.id = deliveries.outbox_id INNER JOIN mobile_push_tokens ON mobile_push_tokens.id = deliveries.push_token_id WHERE /* mobile_push_notification_deliveries.token_scope */ deliveries.push_token_id IS NOT NULL AND mobile_push_tokens.user_id <> outbox.user_id ORDER BY deliveries.id LIMIT $1',
+  },
+  {
+    name: 'mobile_push_notification_deliveries.terminal_snapshot',
+    sql: "SELECT deliveries.id::text AS id FROM mobile_push_notification_deliveries AS deliveries INNER JOIN mobile_push_notification_outbox AS outbox ON outbox.id = deliveries.outbox_id INNER JOIN generation_jobs ON generation_jobs.id = outbox.generation_job_id WHERE /* mobile_push_notification_deliveries.terminal_snapshot */ deliveries.status IN ('pending', 'processing') AND (generation_jobs.status IS DISTINCT FROM outbox.terminal_status OR generation_jobs.retry_count IS DISTINCT FROM outbox.generation_retry_count OR generation_jobs.cancel_requested_at IS NOT NULL OR generation_jobs.cancelled_at IS NOT NULL) ORDER BY deliveries.id LIMIT $1",
   },
   {
     name: 'generation_jobs.cancellation_contract',

@@ -152,12 +152,16 @@ describe('PostgresPageGenerationExecutionRepository', () => {
     });
 
     expect(completed).toBe(true);
-    expect(client.queries[0]).toContain('UPDATE pages');
-    expect(client.queries[1]).toContain("SET status = 'completed'");
-    expect(client.queries[1]).toContain('cancel_requested_at IS NULL');
-    expect(client.queries[1]).toContain('commit_started_at IS NOT NULL');
-    expect(client.queries[1]).toContain("COALESCE(result, '{}'::jsonb) || $3::jsonb");
-    expect(client.values[0]).toEqual([
+    expect(client.queries[0]).toContain('pg_advisory_xact_lock');
+    expect(client.queries[1]).toContain('UPDATE pages');
+    expect(client.queries[2]).toContain("SET status = 'completed'");
+    expect(client.queries[2]).toContain('cancel_requested_at IS NULL');
+    expect(client.queries[2]).toContain('commit_started_at IS NOT NULL');
+    expect(client.queries[2]).toContain("COALESCE(result, '{}'::jsonb) || $3::jsonb");
+    expect(client.queries.some((sql) =>
+      sql.includes('INSERT INTO mobile_push_notification_outbox')
+    )).toBe(true);
+    expect(client.values[1]).toEqual([
       'page-1',
       'user-1',
       'session/user-1/pages/page-1/result.png',
@@ -166,7 +170,7 @@ describe('PostgresPageGenerationExecutionRepository', () => {
       '2026-04-24T00:00:00.000Z',
       null,
     ]);
-    expect(client.values[1]).toEqual([
+    expect(client.values[2]).toEqual([
       'job-1',
       'user-1',
       JSON.stringify({
@@ -207,19 +211,23 @@ describe('PostgresPageGenerationExecutionRepository', () => {
     });
 
     expect(failed).toBe(true);
-    expect(client.queries[0]).toContain("SET status = 'failed'");
-    expect(client.queries[0]).toContain("status IN ('queued', 'processing')");
-    expect(client.queries[0]).toContain('cancel_requested_at IS NULL');
-    expect(client.queries[1]).toContain('UPDATE pages');
-    const persistedMessage = String(client.values[0]?.[2]);
+    expect(client.queries[0]).toContain('pg_advisory_xact_lock');
+    expect(client.queries[1]).toContain("SET status = 'failed'");
+    expect(client.queries[1]).toContain("status IN ('queued', 'processing')");
+    expect(client.queries[1]).toContain('cancel_requested_at IS NULL');
+    expect(client.queries[2]).toContain('UPDATE pages');
+    expect(client.queries.some((sql) =>
+      sql.includes('INSERT INTO mobile_push_notification_outbox')
+    )).toBe(true);
+    const persistedMessage = String(client.values[1]?.[2]);
     expect(persistedMessage).toContain('Bearer [redacted]');
     expect(persistedMessage).not.toContain(fakeApiKey);
     expect(persistedMessage.length).toBeLessThanOrEqual(300);
-    expect(client.values[1]).toEqual(['page-1', 'user-1', 'editing', 'standard', null]);
+    expect(client.values[2]).toEqual(['page-1', 'user-1', 'editing', 'standard', null]);
   });
   it('job completion更新に失敗した場合はtransactionを失敗させる', async () => {
     const client = new QueryCapturingClient();
-    client.rowCounts = [1, 0];
+    client.rowCounts = [1, 1, 0];
     const repository = new PostgresPageGenerationExecutionRepository(client);
 
     await expect(
@@ -250,7 +258,7 @@ describe('PostgresPageGenerationExecutionRepository', () => {
 
   it('page restoreできなくてもjob failedは成立させる', async () => {
     const client = new QueryCapturingClient();
-    client.rowCounts = [1, 0];
+    client.rowCounts = [1, 1, 0];
     const repository = new PostgresPageGenerationExecutionRepository(client);
 
     const failed = await repository.failPageGeneration({
@@ -270,6 +278,7 @@ function jobRow(): Record<string, unknown> {
   return {
     id: 'job-1',
     user_id: 'user-1',
+    organization_id: null,
     job_type: 'page_generate',
     status: 'processing',
     generation_mode: 'standard',
@@ -292,5 +301,9 @@ function jobRow(): Record<string, unknown> {
     started_at: null,
     completed_at: null,
     expires_at: new Date('2026-05-01T00:00:00.000Z'),
+    cancel_requested_at: null,
+    cancel_requested_by: null,
+    cancelled_at: null,
+    commit_started_at: new Date('2026-04-24T00:00:02.000Z'),
   };
 }
