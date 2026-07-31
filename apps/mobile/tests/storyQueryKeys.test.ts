@@ -33,6 +33,21 @@ describe('story query keys', () => {
       'pages',
       'episode-1',
     ]);
+    expect(organization.panelLists()).toEqual([
+      'mobile-story',
+      'session-a',
+      'organization:99999999-9999-4999-8999-999999999999',
+      'panels',
+    ]);
+    expect(organization.panels('page-1')).toEqual([
+      'mobile-story',
+      'session-a',
+      'organization:99999999-9999-4999-8999-999999999999',
+      'panels',
+      'page-1',
+    ]);
+    expect(personal.panels('page-1')).not.toEqual(organization.panels('page-1'));
+    expect(personal.panels('page-1')).not.toEqual(personal.panels('page-2'));
     expect(organization.entities('work-1')).toEqual([
       'mobile-story',
       'session-a',

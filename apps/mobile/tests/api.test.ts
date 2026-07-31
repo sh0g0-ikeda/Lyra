@@ -769,6 +769,77 @@ describe('LyraMobileApiClient', () => {
       status: 502,
     });
   });
+
+  it('Panel一覧と変更fieldだけの更新を同じorganization scopeで扱う', async () => {
+    const organizationId = '55555555-5555-4555-8555-555555555555';
+    const panel = buildPanel();
+    const updated = { ...panel, situation_text: 'ワトスが振り返る' };
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(jsonResponse({ panels: [panel] }))
+      .mockResolvedValueOnce(jsonResponse(updated));
+    const api = new LyraMobileApiClient({
+      apiBaseUrl: 'https://api.example.com',
+      auth: new FakeAuthSession(),
+      fetcher,
+    });
+
+    await expect(api.getPanels(buildPage().id, organizationId)).resolves.toEqual({
+      panels: [panel],
+    });
+    await expect(api.updatePanel(panel.id, {
+      situation_text: 'ワトスが振り返る',
+    }, organizationId)).resolves.toEqual(updated);
+
+    expect(fetcher.mock.calls).toEqual([
+      [
+        `https://api.example.com/api/pages/${buildPage().id}/panels?organization_id=${organizationId}`,
+        expect.objectContaining({ method: 'GET' }),
+      ],
+      [
+        `https://api.example.com/api/panels/${panel.id}?organization_id=${organizationId}`,
+        expect.objectContaining({
+          body: JSON.stringify({ situation_text: 'ワトスが振り返る' }),
+          method: 'PUT',
+        }),
+      ],
+    ]);
+  });
+
+  it('Panel APIは別Page・別Panelのsuccess responseと空更新を採用しない', async () => {
+    const panel = buildPanel();
+    const differentPagePanel = {
+      ...panel,
+      page_id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    };
+    const differentPanel = {
+      ...panel,
+      id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+    };
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(jsonResponse({ panels: [differentPagePanel] }))
+      .mockResolvedValueOnce(jsonResponse(differentPanel));
+    const api = new LyraMobileApiClient({
+      apiBaseUrl: 'https://api.example.com',
+      auth: new FakeAuthSession(),
+      fetcher,
+    });
+
+    await expect(api.getPanels(buildPage().id)).rejects.toMatchObject({
+      code: 'INVALID_API_RESPONSE',
+      status: 502,
+    });
+    await expect(api.updatePanel(panel.id, { panel_notes: '更新' })).rejects.toMatchObject({
+      code: 'INVALID_API_RESPONSE',
+      status: 502,
+    });
+    await expect(api.updatePanel(panel.id, {})).rejects.toMatchObject({
+      code: 'INVALID_REQUEST',
+      status: 422,
+    });
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
 });
 
 class FakeAuthSession implements MobileAuthSessionPort {
@@ -933,6 +1004,53 @@ function buildEntity(): Record<string, unknown> & { id: string } {
     status: 'ready',
     created_at: '2026-07-31T00:00:00.000Z',
     updated_at: '2026-07-31T00:00:00.000Z',
+  };
+}
+
+function buildPanel(): Record<string, unknown> & { id: string } {
+  return {
+    id: '99999999-9999-4999-8999-999999999999',
+    page_id: buildPage().id,
+    order: 1,
+    panel_role: 'action',
+    panel_size: 'standard',
+    situation_text: 'ホームズが扉を指す',
+    entities: [
+      {
+        entity_id: buildEntity().id,
+        role: 'primary',
+        expression: 'calm',
+        custom_expression: null,
+        action: 'standing_firm',
+        custom_action: null,
+        position: 'center',
+        facing_direction: null,
+        effect_note: null,
+        state_id: null,
+      },
+    ],
+    composition: {
+      source: 'custom',
+      gallery_item_id: null,
+      composition_prompt: 'ホームズの上半身',
+      shot_type: 'close_up',
+      angle: 'front',
+      custom_note: null,
+    },
+    dialogue_in_panel: true,
+    dialogue: [
+      {
+        entity_id: buildEntity().id,
+        text: 'ここを見てください。',
+        type: 'speech',
+        position: 'top',
+      },
+    ],
+    sfx_text: null,
+    background_note: null,
+    panel_notes: null,
+    created_at: '2026-08-01T00:00:00.000Z',
+    updated_at: '2026-08-01T00:00:00.000Z',
   };
 }
 

@@ -7,6 +7,7 @@ import {
   type PagesScreenHandle,
 } from '../src/screens/PagesScreen';
 import { ApiError } from '../src/lib/api';
+import { storyQueryKeys } from '../src/lib/storyQueryKeys';
 
 vi.mock('react-native', () => ({
   Alert: { alert: vi.fn() },
@@ -156,6 +157,31 @@ const page = {
   updated_at: timestamp,
 };
 
+const panel = {
+  id: 'panel-1',
+  page_id: page.id,
+  order: 1,
+  panel_role: 'action' as const,
+  panel_size: 'standard' as const,
+  situation_text: 'ホームズが手掛かりを見る',
+  entities: [],
+  composition: {
+    source: 'custom' as const,
+    gallery_item_id: null,
+    composition_prompt: null,
+    shot_type: 'close_up' as const,
+    angle: 'front' as const,
+    custom_note: null,
+  },
+  dialogue_in_panel: true,
+  dialogue: [],
+  sfx_text: null,
+  background_note: null,
+  panel_notes: null,
+  created_at: timestamp,
+  updated_at: timestamp,
+};
+
 const pageSkeletonJob = (
   status: 'queued' | 'processing' | 'completed' | 'failed' | 'cancelled',
 ) => ({
@@ -212,6 +238,7 @@ const flushQueries = async (): Promise<void> => {
 
 describe('PagesScreen', () => {
   const mountedRenderers: ReactTestRenderer[] = [];
+  let currentQueryClient: QueryClient;
   const api = {
     autofillEpisodePagesFromStory: vi.fn(),
     createScene: vi.fn(),
@@ -221,8 +248,10 @@ describe('PagesScreen', () => {
     getJob: vi.fn(),
     getJobs: vi.fn(),
     getPages: vi.fn(),
+    getPanels: vi.fn(),
     getScenes: vi.fn(),
     getWorksPage: vi.fn(),
+    updatePanel: vi.fn(),
     updateScene: vi.fn(),
   };
 
@@ -232,6 +261,7 @@ describe('PagesScreen', () => {
     api.getChapters.mockResolvedValue({ chapters: [chapter] });
     api.getEpisodes.mockResolvedValue({ episodes: [episode] });
     api.getPages.mockResolvedValue({ pages: [] });
+    api.getPanels.mockResolvedValue({ panels: [panel] });
     api.getJobs.mockResolvedValue({ jobs: [], next_cursor: null });
     api.getJob.mockResolvedValue(pageSkeletonJob('processing'));
     api.getScenes.mockResolvedValue({ scenes: [scene('scene-1', 1, 'ローリストン・ガーデン')] });
@@ -246,6 +276,11 @@ describe('PagesScreen', () => {
     api.createScene.mockResolvedValue(scene('scene-2', 2, null));
     api.updateScene.mockImplementation(async (id: string, body: Record<string, unknown>) => ({
       ...scene(id, 1, 'ローリストン・ガーデン'),
+      ...body,
+    }));
+    api.updatePanel.mockImplementation(async (id: string, body: Record<string, unknown>) => ({
+      ...panel,
+      id,
       ...body,
     }));
   });
@@ -265,6 +300,7 @@ describe('PagesScreen', () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false } },
     });
+    currentQueryClient = queryClient;
     let renderer: ReactTestRenderer;
     await act(async () => {
       renderer = create(
@@ -307,6 +343,20 @@ describe('PagesScreen', () => {
     });
     await act(async () => {
       await flushQueries();
+    });
+  };
+
+  const selectPanel = async (renderer: ReactTestRenderer): Promise<void> => {
+    await act(async () => {
+      renderer.root.findByProps({ accessibilityLabel: 'ページ 1を選択' }).props.onPress();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      await flushQueries();
+    });
+    await act(async () => {
+      renderer.root.findByProps({ accessibilityLabel: 'コマ 1を選択' }).props.onPress();
+      await Promise.resolve();
     });
   };
 
@@ -449,6 +499,184 @@ describe('PagesScreen', () => {
 
     expect(api.updateScene).toHaveBeenCalledTimes(2);
     expect(api.autofillEpisodePagesFromStory).toHaveBeenCalledTimes(1);
+  });
+
+  it('dirty Panelは中止時に保持し保存成功後だけStory自動入力へ進む', async () => {
+    api.getPages.mockResolvedValue({ pages: [page] });
+    api.getJob.mockResolvedValue(storyAutofillJob('processing'));
+    const resolveDirtyAction = vi.fn()
+      .mockResolvedValueOnce('cancel')
+      .mockResolvedValueOnce('save');
+    const renderer = await renderScreen({ resolveDirtyAction });
+    await selectEpisode(renderer);
+    await selectPanel(renderer);
+    await act(async () => {
+      renderer.root.findByProps({ accessibilityLabel: '状況' }).props.onChangeText('未保存のコマ内容');
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      renderer.root.findByProps({ label: 'ストーリーから設定を自動入力' }).props.onPress();
+      await flushQueries();
+    });
+    expect(api.updatePanel).not.toHaveBeenCalled();
+    expect(api.autofillEpisodePagesFromStory).not.toHaveBeenCalled();
+    expect(renderer.root.findByProps({ accessibilityLabel: '状況' }).props.value)
+      .toBe('未保存のコマ内容');
+
+    await act(async () => {
+      renderer.root.findByProps({ label: 'ストーリーから設定を自動入力' }).props.onPress();
+      await flushQueries();
+    });
+    expect(api.updatePanel).toHaveBeenCalledWith(
+      panel.id,
+      { situation_text: '未保存のコマ内容' },
+      null,
+    );
+    expect(api.autofillEpisodePagesFromStory).toHaveBeenCalledOnce();
+    expect(api.updatePanel.mock.invocationCallOrder[0])
+      .toBeLessThan(api.autofillEpisodePagesFromStory.mock.invocationCallOrder[0]!);
+  });
+
+  it('dirty Panelの保存失敗ではStory自動入力と画面離脱を止めdraftを保持する', async () => {
+    api.getPages.mockResolvedValue({ pages: [page] });
+    api.updatePanel.mockRejectedValue(new Error('raw network detail'));
+    const resolveDirtyAction = vi.fn().mockResolvedValue('save' as const);
+    const ref = createRef<PagesScreenHandle>();
+    const renderer = await renderScreen({ ref, resolveDirtyAction });
+    await selectEpisode(renderer);
+    await selectPanel(renderer);
+    await act(async () => {
+      renderer.root.findByProps({ accessibilityLabel: 'メモ' }).props.onChangeText('離脱させない');
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      renderer.root.findByProps({ label: 'ストーリーから設定を自動入力' }).props.onPress();
+      await flushQueries();
+    });
+    expect(api.updatePanel).toHaveBeenCalledOnce();
+    expect(api.autofillEpisodePagesFromStory).not.toHaveBeenCalled();
+    expect(renderer.root.findByProps({ accessibilityLabel: 'メモ' }).props.value)
+      .toBe('離脱させない');
+
+    let canLeave: boolean | undefined;
+    await act(async () => {
+      canLeave = await ref.current?.prepareToLeave();
+      await flushQueries();
+    });
+    expect(canLeave).toBe(false);
+    expect(api.updatePanel).toHaveBeenCalledTimes(2);
+    expect(renderer.root.findByProps({ accessibilityLabel: 'メモ' }).props.value)
+      .toBe('離脱させない');
+  });
+
+  it('Story自動入力job完了時は表示中Panelを既存APIから再取得する', async () => {
+    api.getPages.mockResolvedValue({ pages: [page] });
+    api.getJob.mockResolvedValue(storyAutofillJob('completed'));
+    const renderer = await renderScreen();
+    await selectEpisode(renderer);
+    await selectPanel(renderer);
+    expect(api.getPanels).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      renderer.root.findByProps({ label: 'ストーリーから設定を自動入力' }).props.onPress();
+      await flushQueries();
+    });
+
+    expect(api.getPanels).toHaveBeenCalledTimes(2);
+  });
+
+  it('job状態の確認中はPanel保存を止め確認後にだけ編集可能にする', async () => {
+    api.getPages.mockResolvedValue({ pages: [page] });
+    let resolveJobs: ((value: { jobs: never[]; next_cursor: null }) => void) | undefined;
+    api.getJobs.mockReturnValue(new Promise((resolve) => {
+      resolveJobs = resolve;
+    }));
+    const renderer = await renderScreen();
+    await selectEpisode(renderer);
+    await selectPanel(renderer);
+
+    expect(renderer.root.findByProps({ accessibilityLabel: '状況' }).props.editable).toBe(false);
+    expect(renderer.root.findByProps({ label: 'コマを保存' }).props.disabled).toBe(true);
+
+    await act(async () => {
+      resolveJobs?.({ jobs: [], next_cursor: null });
+      await flushQueries();
+    });
+    expect(renderer.root.findByProps({ accessibilityLabel: '状況' }).props.editable).toBe(true);
+  });
+
+  it('Page再取得失敗と再試行をまたいでdirty Panelを保持し成功後だけ保存する', async () => {
+    api.getPages
+      .mockResolvedValueOnce({ pages: [page] })
+      .mockRejectedValueOnce(new Error('temporary page failure'))
+      .mockResolvedValue({ pages: [page] });
+    const renderer = await renderScreen();
+    await selectEpisode(renderer);
+    await selectPanel(renderer);
+    await act(async () => {
+      renderer.root.findByProps({ accessibilityLabel: '状況' }).props.onChangeText('失わない下書き');
+      await currentQueryClient.invalidateQueries({
+        exact: true,
+        queryKey: storyQueryKeys('session-1', null).pages(episode.id),
+      });
+      await flushQueries();
+    });
+
+    expect(JSON.stringify(renderer.toJSON())).toContain('ページを読み込めませんでした');
+    expect(renderer.root.findByProps({ accessibilityLabel: '状況' }).props.value)
+      .toBe('失わない下書き');
+    expect(renderer.root.findByProps({ label: 'コマを保存' }).props.disabled).toBe(true);
+    expect(api.updatePanel).not.toHaveBeenCalled();
+
+    await act(async () => {
+      renderer.root.findByProps({ label: 'ページ一覧を再試行' }).props.onPress();
+      await flushQueries();
+    });
+    expect(renderer.root.findByProps({ accessibilityLabel: '状況' }).props.value)
+      .toBe('失わない下書き');
+    expect(renderer.root.findByProps({ label: 'コマを保存' }).props.disabled).toBe(false);
+    await act(async () => {
+      renderer.root.findByProps({ label: 'コマを保存' }).props.onPress();
+      await flushQueries();
+    });
+    expect(api.updatePanel).toHaveBeenCalledWith(
+      panel.id,
+      { situation_text: '失わない下書き' },
+      null,
+    );
+  });
+
+  it('dirty Panelの元Pageが消失した場合は保存扱いで離脱せずdraftを保持する', async () => {
+    api.getPages
+      .mockResolvedValueOnce({ pages: [page] })
+      .mockResolvedValue({ pages: [] });
+    const ref = createRef<PagesScreenHandle>();
+    const renderer = await renderScreen({
+      ref,
+      resolveDirtyAction: vi.fn().mockResolvedValue('save' as const),
+    });
+    await selectEpisode(renderer);
+    await selectPanel(renderer);
+    await act(async () => {
+      renderer.root.findByProps({ accessibilityLabel: '状況' }).props.onChangeText('消さない下書き');
+      await currentQueryClient.invalidateQueries({
+        exact: true,
+        queryKey: storyQueryKeys('session-1', null).pages(episode.id),
+      });
+      await flushQueries();
+    });
+
+    let canLeave: boolean | undefined;
+    await act(async () => {
+      canLeave = await ref.current?.prepareToLeave();
+      await flushQueries();
+    });
+    expect(canLeave).toBe(false);
+    expect(api.updatePanel).not.toHaveBeenCalled();
+    expect(renderer.root.findByProps({ accessibilityLabel: '状況' }).props.value)
+      .toBe('消さない下書き');
   });
 
   it.each([
