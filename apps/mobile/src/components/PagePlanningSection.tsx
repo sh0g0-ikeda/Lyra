@@ -18,6 +18,7 @@ interface PagePlanningSectionProps {
   loading: boolean;
   loadError: boolean;
   pages: readonly PageRecord[];
+  onAutofill(): void;
   onGenerate(): void;
   onRetryJob(): void;
   onRetryPages(): void;
@@ -35,11 +36,25 @@ export function PagePlanningSection({
   loading,
   loadError,
   pages,
+  onAutofill,
   onGenerate,
   onRetryJob,
   onRetryPages,
 }: PagePlanningSectionProps): React.JSX.Element {
   const protectedFromOverwrite = pages.length > 0 || episodeGenerated;
+  const confirmedPageExists = pages.some((page) => page.status === 'confirmed');
+  const generatingPageExists = pages.some((page) => page.status === 'generating');
+  const pageLimitExceeded = pages.length > 32;
+  const invalidPageStructureExists = pages.some(
+    (page) => page.frame_count === 0 || page.panel_count !== page.frame_count,
+  );
+  const storyAutofillBlocked = loading
+    || loadError
+    || generationBusy
+    || confirmedPageExists
+    || generatingPageExists
+    || pageLimitExceeded
+    || invalidPageStructureExists;
   const progress = activeJob === null ? null : readJobProgress(activeJob);
 
   return (
@@ -79,6 +94,26 @@ export function PagePlanningSection({
           loading={generationBusy && !generationActive}
           onPress={onGenerate}
         />
+      )}
+      {pages.length === 0 ? null : (
+        <View style={styles.noticeGroup}>
+          <Text style={styles.muted}>{t(language, 'pageStoryAutofillHelp')}</Text>
+          {confirmedPageExists ? (
+            <Notice message={t(language, 'pageStoryAutofillConfirmedBlocked')} />
+          ) : generatingPageExists ? (
+            <Notice message={t(language, 'pageStoryAutofillGeneratingBlocked')} />
+          ) : pageLimitExceeded ? (
+            <Notice message={t(language, 'pageStoryAutofillPageLimitBlocked')} />
+          ) : invalidPageStructureExists ? (
+            <Notice message={t(language, 'pageStoryAutofillStructureBlocked')} />
+          ) : null}
+          <PrimaryButton
+            disabled={storyAutofillBlocked}
+            label={t(language, 'pageStoryAutofill')}
+            loading={generationBusy && !generationActive}
+            onPress={onAutofill}
+          />
+        </View>
       )}
       {!generationActive ? null : (
         <View style={styles.noticeGroup}>
