@@ -111,6 +111,88 @@ export const billingBalanceSchema = z.object({
   subscription_plans: z.array(subscriptionPlanSchema),
 });
 
+const mobileStoreSchema = z.enum(['apple', 'google']);
+const mobileStorePurchaseStateSchema = z.enum([
+  'pending',
+  'active',
+  'cancelled',
+  'expired',
+  'refunded',
+  'revoked',
+  'failed',
+]);
+const mobileStoreProductKindSchema = z.enum(['subscription', 'credit_pack']);
+
+export const mobileStoreProductCatalogSchema = z
+  .object({
+    store: mobileStoreSchema,
+    products: z
+      .array(
+        z
+          .object({
+            product_id: z.string().min(1).max(255),
+            kind: mobileStoreProductKindSchema,
+            plan_code: z.enum(['standard', 'premium']).nullable(),
+            credit_package_code: creditPackageCodeSchema.nullable(),
+          })
+          .strict()
+          .superRefine((value, context) => {
+            if (
+              (value.kind === 'subscription' &&
+                (value.plan_code === null || value.credit_package_code !== null)) ||
+              (value.kind === 'credit_pack' &&
+                (value.plan_code !== null || value.credit_package_code === null))
+            ) {
+              context.addIssue({
+                code: 'custom',
+                message: 'Mobile store product mapping is inconsistent',
+              });
+            }
+          }),
+      )
+      .max(20),
+  })
+  .strict();
+
+export const mobilePurchaseAccountBindingSchema = z
+  .object({
+    apple_app_account_token: z.string().uuid(),
+    google_obfuscated_account_id: z.string().min(32).max(64),
+    subscription_purchase_allowed: z.boolean(),
+  })
+  .strict();
+
+export const mobileStorePurchaseResultSchema = z
+  .object({
+    store: mobileStoreSchema,
+    state: mobileStorePurchaseStateSchema,
+    product_kind: mobileStoreProductKindSchema,
+    plan_code: z.enum(['standard', 'premium']).nullable(),
+    credit_package_code: creditPackageCodeSchema.nullable(),
+    credits_changed: z.number().int(),
+    is_duplicate: z.boolean(),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    if (
+      (value.product_kind === 'subscription' &&
+        (value.plan_code === null || value.credit_package_code !== null)) ||
+      (value.product_kind === 'credit_pack' &&
+        (value.plan_code !== null || value.credit_package_code === null))
+    ) {
+      context.addIssue({
+        code: 'custom',
+        message: 'Mobile store purchase result is inconsistent',
+      });
+    }
+  });
+
+export const mobileStoreRestoreResultSchema = z
+  .object({
+    purchases: z.array(mobileStorePurchaseResultSchema).max(100),
+  })
+  .strict();
+
 export const currentSessionSchema = z.object({
   user: z.object({
     id: idSchema,

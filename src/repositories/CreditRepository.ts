@@ -233,9 +233,10 @@ export class PostgresCreditRepository implements CreditRepository {
         purchased_after,
         description,
         stripe_event_id,
+        mobile_store_event_key,
         job_id
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
       `,
       [
         entry.userId,
@@ -247,6 +248,7 @@ export class PostgresCreditRepository implements CreditRepository {
         entry.purchasedAfter,
         entry.description,
         entry.stripeEventId ?? null,
+        entry.mobileStoreEventKey ?? null,
         entry.jobId ?? null,
       ],
     );

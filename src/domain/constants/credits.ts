@@ -12,5 +12,6 @@ export type CreditLedgerType =
   | 'signup_bonus'
   | 'monthly_grant'
   | 'purchase'
+  | 'purchase_reversal'
   | 'consume'
   | 'refund';

@@ -139,6 +139,42 @@ const envSchema = z.object({
   STRIPE_CHECKOUT_SUCCESS_URL: z.string().url().optional(),
   STRIPE_CHECKOUT_CANCEL_URL: z.string().url().optional(),
   STRIPE_PORTAL_RETURN_URL: z.string().url().optional(),
+  MOBILE_STORE_BILLING_ENABLED: z
+    .string()
+    .optional()
+    .transform((value) => value === 'true'),
+  MOBILE_STORE_IDENTIFIER_HASH_SECRET: z.string().min(1).optional(),
+  MOBILE_STORE_PROVIDER_TIMEOUT_MS: z.coerce
+    .number()
+    .int()
+    .min(1_000)
+    .max(60_000)
+    .default(15_000),
+  APPLE_STORE_BUNDLE_ID: z.string().min(1).optional(),
+  APPLE_STORE_APP_APPLE_ID: z.coerce.number().int().positive().optional(),
+  APPLE_STORE_ROOT_CERTIFICATES_BASE64_JSON: z.string().min(1).optional(),
+  APPLE_STORE_ALLOW_SANDBOX: z
+    .string()
+    .optional()
+    .transform((value) => value === 'true'),
+  APPLE_STORE_PRODUCT_STANDARD_MONTHLY: z.string().min(1).max(255).optional(),
+  APPLE_STORE_PRODUCT_PREMIUM_MONTHLY: z.string().min(1).max(255).optional(),
+  APPLE_STORE_PRODUCT_CREDITS_200: z.string().min(1).max(255).optional(),
+  APPLE_STORE_PRODUCT_CREDITS_1000: z.string().min(1).max(255).optional(),
+  APPLE_STORE_PRODUCT_CREDITS_3000: z.string().min(1).max(255).optional(),
+  GOOGLE_PLAY_PACKAGE_NAME: z.string().min(1).max(255).optional(),
+  GOOGLE_PLAY_SERVICE_ACCOUNT_JSON_BASE64: z.string().min(1).optional(),
+  GOOGLE_PLAY_PUBSUB_AUDIENCE: z.string().url().optional(),
+  GOOGLE_PLAY_PUBSUB_SERVICE_ACCOUNT_EMAIL: z.string().email().optional(),
+  GOOGLE_PLAY_ALLOW_TEST_PURCHASES: z
+    .string()
+    .optional()
+    .transform((value) => value === 'true'),
+  GOOGLE_PLAY_PRODUCT_STANDARD_MONTHLY: z.string().min(1).max(255).optional(),
+  GOOGLE_PLAY_PRODUCT_PREMIUM_MONTHLY: z.string().min(1).max(255).optional(),
+  GOOGLE_PLAY_PRODUCT_CREDITS_200: z.string().min(1).max(255).optional(),
+  GOOGLE_PLAY_PRODUCT_CREDITS_1000: z.string().min(1).max(255).optional(),
+  GOOGLE_PLAY_PRODUCT_CREDITS_3000: z.string().min(1).max(255).optional(),
   AUTH_PROVIDER: z.enum(['supabase', 'cognito']).default('supabase'),
   SUPABASE_JWT_SECRET: z.string().min(1).optional(),
   COGNITO_USER_POOL_ID: z.string().min(1).optional(),

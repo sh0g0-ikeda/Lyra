@@ -24,5 +24,6 @@ export interface CreditLedgerEntry {
   purchasedAfter: number;
   description: string;
   stripeEventId?: string;
+  mobileStoreEventKey?: string;
   jobId?: string;
 }

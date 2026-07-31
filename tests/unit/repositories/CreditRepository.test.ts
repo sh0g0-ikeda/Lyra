@@ -175,6 +175,18 @@ describe('PostgresCreditRepository', () => {
 
     expect(client.queries[0]).toContain('monthly_delta');
     expect(client.queries[0]).toContain('purchased_delta');
-    expect(client.valuesList[0]).toEqual(['user-1', 'refund', 10, 4, 6, 12, 20, 'refund', null, 'job-1']);
+    expect(client.valuesList[0]).toEqual([
+      'user-1',
+      'refund',
+      10,
+      4,
+      6,
+      12,
+      20,
+      'refund',
+      null,
+      null,
+      'job-1',
+    ]);
   });
 });

@@ -4,6 +4,15 @@ import { parseEnv } from '../../../src/lib/env.js';
 const originalNodeEnv = process.env.NODE_ENV;
 
 describe('parseEnv', () => {
+  it('mobile store billingは明示しない限り無効でprovider timeoutだけ安全な既定値を持つ', () => {
+    const parsed = parseEnv({});
+
+    expect(parsed.MOBILE_STORE_BILLING_ENABLED).toBe(false);
+    expect(parsed.MOBILE_STORE_PROVIDER_TIMEOUT_MS).toBe(15_000);
+    expect(parsed.APPLE_STORE_BUNDLE_ID).toBeUndefined();
+    expect(parsed.GOOGLE_PLAY_PACKAGE_NAME).toBeUndefined();
+  });
+
   it('episode exportは明示しない限り無効で専用queue設定を持たない', () => {
     const parsed = parseEnv({});
 

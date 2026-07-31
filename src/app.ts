@@ -47,6 +47,10 @@ import {
   StripeBillingClient,
   type StripeBillingClientPort,
 } from './infrastructure/stripe/StripeBillingClient.js';
+import {
+  createMobileStoreBillingIntegration,
+} from './infrastructure/mobileStore/createMobileStoreBillingIntegration.js';
+import type { GooglePubSubPushVerifier } from './infrastructure/google/GooglePubSubPushVerifier.js';
 import { db } from './lib/db.js';
 import { env } from './lib/env.js';
 import { assertProductionRuntimeConfig, isDevAuthBypassRuntimeAllowed } from './lib/runtimeGuards.js';
@@ -99,6 +103,8 @@ import { createHealthRoutes, type ReadinessCheck } from './routes/health.js';
 import { createJobRoutes } from './routes/jobs.js';
 import { createLocalAssetRoutes } from './routes/localAssets.js';
 import { createMeRoutes } from './routes/me.js';
+import { createMobilePurchaseRoutes } from './routes/mobilePurchases.js';
+import { createMobilePurchaseWebhookRoutes } from './routes/mobilePurchaseWebhooks.js';
 import { createPanelRoutes } from './routes/panels.js';
 import { createPanelEntityAssignmentRoutes } from './routes/panelEntityAssignments.js';
 import { createPanelFrameRoutes } from './routes/panelFrames.js';
@@ -119,6 +125,7 @@ import {
   StripeWebhookService,
   type StripeWebhookServicePort,
 } from './services/billing/StripeWebhookService.js';
+import type { MobileStorePurchaseServicePort } from './services/billing/MobileStorePurchaseService.js';
 import {
   CompositionGalleryService,
   type CompositionGalleryServicePort,
@@ -280,6 +287,8 @@ export interface AppDependencies {
   episodeStoryAutofillService?: EpisodeStoryAutofillServicePort;
   entityGenerationRecoveryService?: EntityGenerationRecoveryServicePort;
   jobService?: JobServicePort;
+  mobileStorePurchaseService?: MobileStorePurchaseServicePort;
+  googlePubSubPushVerifier?: Pick<GooglePubSubPushVerifier, 'verifyAuthorization'>;
   organizationService?: OrganizationServicePort;
   organizationBillingService?: OrganizationBillingServicePort;
   pageExportService?: PageExportServicePort;
@@ -386,6 +395,7 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
       rateLimitMiddleware,
       billingService: resolvedDependencies.billingService,
       creditService: resolvedDependencies.creditService,
+      mobileStorePurchaseService: resolvedDependencies.mobileStorePurchaseService,
     }),
   );
   app.route(
@@ -395,6 +405,30 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
       stripeWebhookService: resolvedDependencies.stripeWebhookService,
     }),
   );
+  if (
+    resolvedDependencies.mobileStorePurchaseService !== undefined &&
+    resolvedDependencies.googlePubSubPushVerifier !== undefined
+  ) {
+    app.route(
+      '/api/mobile-purchases',
+      createMobilePurchaseRoutes({
+        authMiddleware,
+        rateLimitMiddleware,
+        mobileStorePurchaseService:
+          resolvedDependencies.mobileStorePurchaseService,
+      }),
+    );
+    app.route(
+      '/api/webhooks/mobile-purchases',
+      createMobilePurchaseWebhookRoutes({
+        rateLimitMiddleware: webhookRateLimitMiddleware,
+        mobileStorePurchaseService:
+          resolvedDependencies.mobileStorePurchaseService,
+        googlePubSubPushVerifier:
+          resolvedDependencies.googlePubSubPushVerifier,
+      }),
+    );
+  }
   if (env.ENTERPRISE_FEATURES_ENABLED) {
     // Keep invitation preview public. It must be registered before authenticated
     // /api sub-apps, whose middleware would otherwise turn the preview into 401.
@@ -661,6 +695,8 @@ function resolveDependencies(
       | 'episodePageSkeletonService'
       | 'entityReferenceUploadService'
       | 'episodeExportService'
+      | 'mobileStorePurchaseService'
+      | 'googlePubSubPushVerifier'
       | 'webStaticDir'
       | 'readinessCheck'
     >
@@ -671,6 +707,8 @@ function resolveDependencies(
   episodePageSkeletonService?: EpisodePageSkeletonServicePort;
   entityReferenceUploadService?: EntityReferenceUploadServicePort;
   episodeExportService?: EpisodeExportServicePort;
+  mobileStorePurchaseService?: MobileStorePurchaseServicePort;
+  googlePubSubPushVerifier?: Pick<GooglePubSubPushVerifier, 'verifyAuthorization'>;
   storyEpisodeImprovementPlanner?: StoryEpisodeImprovementPlannerPort;
 } {
   const creditRepository = new PostgresCreditRepository(db, db);
@@ -693,6 +731,28 @@ function resolveDependencies(
         ? new SqsEntityGenerationQueueAdapter(generationQueue)
         : new UnconfiguredEntityGenerationQueue());
   const billingRepository = new PostgresBillingRepository(db, db);
+  if (
+    (dependencies.mobileStorePurchaseService === undefined) !==
+    (dependencies.googlePubSubPushVerifier === undefined)
+  ) {
+    throw new ConfigurationError(
+      'Mobile store billing service and Pub/Sub verifier must be configured together',
+    );
+  }
+  const configuredMobileStoreBilling =
+    dependencies.mobileStorePurchaseService === undefined
+      ? createMobileStoreBillingIntegration(
+          env,
+          db,
+          process.env.NODE_ENV === 'production' || env.APP_ENV === 'production',
+        )
+      : null;
+  const mobileStorePurchaseService =
+    dependencies.mobileStorePurchaseService ??
+    configuredMobileStoreBilling?.mobileStorePurchaseService;
+  const googlePubSubPushVerifier =
+    dependencies.googlePubSubPushVerifier ??
+    configuredMobileStoreBilling?.googlePubSubPushVerifier;
   const organizationRepository = new PostgresOrganizationRepository(db, db);
   const organizationInvitationEmailService = resolveOrganizationInvitationEmailService(organizationRepository);
   const organizationService =
@@ -960,6 +1020,8 @@ function resolveDependencies(
     episodeStoryAutofillService,
     entityGenerationRecoveryService,
     jobService,
+    mobileStorePurchaseService,
+    googlePubSubPushVerifier,
     organizationService,
     organizationBillingService,
     pageExportService,

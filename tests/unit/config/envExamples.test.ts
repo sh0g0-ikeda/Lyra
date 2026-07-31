@@ -41,6 +41,15 @@ describe('environment examples', () => {
     expect(rootEnvExample).toMatch(/^SQS_EXPORT_VISIBILITY_TIMEOUT_SECONDS=1800$/mu);
   });
 
+  it('root env example keeps mobile store billing disabled and documents both providers', () => {
+    const rootEnvExample = readText('.env.example');
+
+    expect(rootEnvExample).toMatch(/^MOBILE_STORE_BILLING_ENABLED=false$/mu);
+    expect(rootEnvExample).toMatch(/^APPLE_STORE_BUNDLE_ID=/mu);
+    expect(rootEnvExample).toMatch(/^GOOGLE_PLAY_PACKAGE_NAME=/mu);
+    expect(rootEnvExample).toMatch(/^GOOGLE_PLAY_PUBSUB_AUDIENCE=/mu);
+  });
+
   it('root env example uses the repository standard migration command', () => {
     const rootEnvExample = readText('.env.example');
 

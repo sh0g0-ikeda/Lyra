@@ -14,6 +14,7 @@ export interface GrantMonthlyCreditsParams {
   description: string;
   expiresAt: Date | null;
   stripeEventId?: string;
+  mobileStoreEventKey?: string;
 }
 
 export interface GrantPurchasedCreditsParams {
@@ -21,6 +22,7 @@ export interface GrantPurchasedCreditsParams {
   amount: number;
   description: string;
   stripeEventId?: string;
+  mobileStoreEventKey?: string;
 }
 
 export interface BillingCreditGrantServicePort {
@@ -72,6 +74,7 @@ export class BillingCreditGrantService implements BillingCreditGrantServicePort 
           balance: savedBalance,
           description: params.description,
           stripeEventId: params.stripeEventId,
+          mobileStoreEventKey: params.mobileStoreEventKey,
         }),
         transactionClient,
       );
@@ -108,6 +111,7 @@ export class BillingCreditGrantService implements BillingCreditGrantServicePort 
           balance: savedBalance,
           description: params.description,
           stripeEventId: params.stripeEventId,
+          mobileStoreEventKey: params.mobileStoreEventKey,
         }),
         transactionClient,
       );
@@ -165,6 +169,7 @@ function createLedgerEntry(input: {
   balance: CreditBalance;
   description: string;
   stripeEventId?: string;
+  mobileStoreEventKey?: string;
 }): CreditLedgerEntry {
   return {
     userId: input.userId,
@@ -176,6 +181,7 @@ function createLedgerEntry(input: {
     purchasedAfter: input.balance.purchasedCredits,
     description: input.description,
     stripeEventId: input.stripeEventId,
+    mobileStoreEventKey: input.mobileStoreEventKey,
   };
 }
 
