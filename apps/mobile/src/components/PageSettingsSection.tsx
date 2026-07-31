@@ -8,7 +8,7 @@ import {
   useState,
 } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { colors, radius, spacing } from '../constants/theme';
 import {
   buildPageSettingsUpdate,
@@ -16,8 +16,9 @@ import {
   hasRemotePageSettingsChanged,
   isPageSettingsDraftDirty,
   type PageSettingsDraft,
+  type PageSettingsDraftValidationReason,
 } from '../domain/pageSettingsDraft';
-import type { PageRecord, UpdatePageSettingsInput } from '../lib/api';
+import type { PageRecord, SceneRecord, UpdatePageSettingsInput } from '../lib/api';
 import { showDirtyStoryPrompt, type DirtyStoryAction } from '../lib/dirtyStoryPrompt';
 import { t, type MessageKey, type UiLanguage } from '../lib/i18n';
 import { storyQueryKeys } from '../lib/storyQueryKeys';
@@ -47,6 +48,7 @@ interface PageSettingsSectionProps {
   pages: readonly PageRecord[];
   refreshPages(): Promise<readonly PageRecord[]>;
   resolveDirtyAction?: () => Promise<DirtyStoryAction>;
+  scenes: readonly SceneRecord[];
   sessionKey: string;
 }
 
@@ -77,6 +79,7 @@ export const PageSettingsSection = forwardRef<
   pages,
   refreshPages,
   resolveDirtyAction,
+  scenes,
   sessionKey,
 }, ref): React.JSX.Element {
   const queryClient = useQueryClient();
@@ -168,7 +171,13 @@ export const PageSettingsSection = forwardRef<
       setErrorMessage(t(language, 'pageSettingsRemoteChanged'));
       return Promise.resolve(false);
     }
-    const payload = buildPageSettingsUpdate(savedDraft, draft);
+    const update = buildPageSettingsUpdate(savedDraft, draft);
+    if (!update.ok) {
+      setNoticeMessage(null);
+      setErrorMessage(pageSettingsValidationMessage(language, update.reason));
+      return Promise.resolve(false);
+    }
+    const payload = update.payload;
     if (Object.keys(payload).length === 0) {
       setSavedDraft(draft);
       return Promise.resolve(true);
@@ -355,7 +364,9 @@ export const PageSettingsSection = forwardRef<
                 disabled={readOnly || busy}
                 key={mode.value}
                 onPress={() => {
-                  setDraft({ ...draft, dialogue_mode: mode.value });
+                  setDraft((current) => current === null
+                    ? current
+                    : { ...current, dialogue_mode: mode.value });
                   setErrorMessage(null);
                   setNoticeMessage(null);
                 }}
@@ -384,10 +395,12 @@ export const PageSettingsSection = forwardRef<
             }}
             disabled={readOnly || busy}
             onPress={() => {
-              setDraft({
-                ...draft,
-                page_dialogue_toggle: !draft.page_dialogue_toggle,
-              });
+              setDraft((current) => current === null
+                ? current
+                : {
+                    ...current,
+                    page_dialogue_toggle: !current.page_dialogue_toggle,
+                  });
               setErrorMessage(null);
               setNoticeMessage(null);
             }}
@@ -407,6 +420,95 @@ export const PageSettingsSection = forwardRef<
               )}
             </Text>
           </Pressable>
+          <Text style={styles.subheading}>{t(language, 'pageSettingsStyleReference')}</Text>
+          <Text style={styles.muted}>{t(language, 'pageSettingsStyleHelp')}</Text>
+          <Text style={styles.label}>{t(language, 'pageSettingsStyleTitle')}</Text>
+          <TextInput
+            accessibilityLabel={t(language, 'pageSettingsStyleTitle')}
+            editable={!readOnly && !busy}
+            maxLength={201}
+            onChangeText={(styleReferenceTitle) => {
+              setDraft((current) => current === null
+                ? current
+                : { ...current, style_reference_title: styleReferenceTitle });
+              setErrorMessage(null);
+              setNoticeMessage(null);
+            }}
+            style={styles.input}
+            value={draft.style_reference_title}
+          />
+          <Text style={styles.label}>{t(language, 'pageSettingsStyleNotes')}</Text>
+          <TextInput
+            accessibilityLabel={t(language, 'pageSettingsStyleNotes')}
+            editable={!readOnly && !busy}
+            maxLength={2_001}
+            multiline
+            onChangeText={(styleReferenceNotes) => {
+              setDraft((current) => current === null
+                ? current
+                : { ...current, style_reference_notes: styleReferenceNotes });
+              setErrorMessage(null);
+              setNoticeMessage(null);
+            }}
+            style={[styles.input, styles.multilineInput]}
+            textAlignVertical="top"
+            value={draft.style_reference_notes}
+          />
+          <Text style={styles.subheading}>{t(language, 'pageSettingsStoryContext')}</Text>
+          <Text style={styles.label}>{t(language, 'pageSettingsSourceScenes')}</Text>
+          <Text style={styles.muted}>{t(language, 'pageSettingsSourceScenesHelp')}</Text>
+          <View style={styles.sourceScenes}>
+            {selectedPage === null || selectedPage.story_source_scene_ids.length === 0 ? (
+              <Text style={styles.muted}>{t(language, 'pageSettingsNoSourceScenes')}</Text>
+            ) : selectedPage.story_source_scene_ids.map((sceneId) => {
+              const scene = scenes.find((candidate) => (
+                candidate.id === sceneId && candidate.episode_id === episodeId
+              ));
+              return (
+                <View key={sceneId} style={styles.sourceSceneChip}>
+                  <Text style={styles.sourceSceneText}>
+                    {scene === undefined
+                      ? t(language, 'pageSettingsSourceSceneMissing')
+                      : pageSettingsSceneLabel(scene, language)}
+                  </Text>
+                </View>
+              );
+            })}
+          </View>
+          <Text style={styles.label}>{t(language, 'pageSettingsPagePurpose')}</Text>
+          <TextInput
+            accessibilityLabel={t(language, 'pageSettingsPagePurpose')}
+            editable={!readOnly && !busy}
+            maxLength={501}
+            multiline
+            onChangeText={(storyPagePurpose) => {
+              setDraft((current) => current === null
+                ? current
+                : { ...current, story_page_purpose: storyPagePurpose });
+              setErrorMessage(null);
+              setNoticeMessage(null);
+            }}
+            style={[styles.input, styles.multilineInput]}
+            textAlignVertical="top"
+            value={draft.story_page_purpose}
+          />
+          <Text style={styles.label}>{t(language, 'pageSettingsContinuityNote')}</Text>
+          <TextInput
+            accessibilityLabel={t(language, 'pageSettingsContinuityNote')}
+            editable={!readOnly && !busy}
+            maxLength={1_001}
+            multiline
+            onChangeText={(storyContinuityNote) => {
+              setDraft((current) => current === null
+                ? current
+                : { ...current, story_continuity_note: storyContinuityNote });
+              setErrorMessage(null);
+              setNoticeMessage(null);
+            }}
+            style={[styles.input, styles.multilineInput]}
+            textAlignVertical="top"
+            value={draft.story_continuity_note}
+          />
           {selectedPage?.status === 'confirmed' || selectedPage?.status === 'generating' ? (
             <Notice message={t(language, 'pageSettingsReadOnly')} tone="danger" />
           ) : null}
@@ -431,6 +533,30 @@ function upsertPage(pages: readonly PageRecord[], page: PageRecord): PageRecord[
   return pages.some((candidate) => candidate.id === page.id)
     ? pages.map((candidate) => candidate.id === page.id ? page : candidate)
     : [...pages, page];
+}
+
+function pageSettingsSceneLabel(scene: SceneRecord, language: UiLanguage): string {
+  const location = scene.location?.trim() ?? '';
+  return location.length === 0
+    ? t(language, 'pageSettingsSourceSceneLabel', { number: String(scene.order) })
+    : t(language, 'pageSettingsSourceSceneLocationLabel', {
+        location,
+        number: String(scene.order),
+      });
+}
+
+function pageSettingsValidationMessage(
+  language: UiLanguage,
+  reason: PageSettingsDraftValidationReason,
+): string {
+  const keys: Record<PageSettingsDraftValidationReason, MessageKey> = {
+    continuity_note_too_long: 'pageSettingsContinuityTooLong',
+    page_purpose_too_long: 'pageSettingsPurposeTooLong',
+    style_notes_too_long: 'pageSettingsStyleNotesTooLong',
+    style_title_required: 'pageSettingsStyleTitleRequired',
+    style_title_too_long: 'pageSettingsStyleTitleTooLong',
+  };
+  return t(language, keys[reason]);
 }
 
 const styles = StyleSheet.create({
@@ -459,6 +585,21 @@ const styles = StyleSheet.create({
   editor: {
     gap: spacing.sm,
   },
+  input: {
+    backgroundColor: colors.surfaceAlt,
+    borderColor: colors.border,
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    color: colors.ink,
+    fontSize: 16,
+    minHeight: 48,
+    padding: spacing.sm,
+  },
+  label: {
+    color: colors.ink,
+    fontSize: 14,
+    fontWeight: '700',
+  },
   heading: {
     color: colors.ink,
     fontSize: 20,
@@ -469,11 +610,32 @@ const styles = StyleSheet.create({
     fontSize: 14,
     lineHeight: 21,
   },
+  multilineInput: {
+    minHeight: 88,
+  },
   pressed: {
     opacity: 0.75,
   },
   section: {
     gap: spacing.md,
+  },
+  sourceSceneChip: {
+    backgroundColor: colors.surfaceAlt,
+    borderColor: colors.border,
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+  },
+  sourceScenes: {
+    alignItems: 'flex-start',
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.xs,
+  },
+  sourceSceneText: {
+    color: colors.ink,
+    fontSize: 14,
   },
   subheading: {
     color: colors.ink,

@@ -84,6 +84,12 @@ export interface GeneratePageSkeletonInput {
 export interface UpdatePageSettingsInput {
   dialogue_mode?: PageRecord['dialogue_mode'];
   page_dialogue_toggle?: boolean;
+  style_reference?: {
+    title: string;
+    notes: string | null;
+  } | null;
+  story_page_purpose?: string | null;
+  story_continuity_note?: string | null;
 }
 
 export interface CreateStoryItemInput {
