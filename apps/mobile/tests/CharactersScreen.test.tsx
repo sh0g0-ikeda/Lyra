@@ -165,16 +165,22 @@ describe('CharactersScreen', () => {
   const api = {
     confirmEntityReference: vi.fn(),
     createEntity: vi.fn(),
+    createEntityState: vi.fn(),
     generateEntityReference: vi.fn(),
+    getChapters: vi.fn(),
     getEntitiesPage: vi.fn(),
     getEntityReferenceSet: vi.fn(),
+    getEntityStates: vi.fn(),
+    getEpisodes: vi.fn(),
     getJob: vi.fn(),
     getJobs: vi.fn(),
+    getScenes: vi.fn(),
     getWorksPage: vi.fn(),
     importEntityReferenceImage: vi.fn(),
     refreshImageAuthorizationHeader: vi.fn(),
     updateEntity: vi.fn(),
     updateEntityGenerationContext: vi.fn(),
+    updateEntityState: vi.fn(),
   };
 
   beforeEach(() => {
@@ -196,6 +202,55 @@ describe('CharactersScreen', () => {
       status: 'empty',
       updated_at: timestamp,
       reference_images: [],
+    }));
+    api.getEntityStates.mockImplementation(async (entityId: string) => ({
+      entity_states: [{
+        id: `state-${entityId}`,
+        entity_id: entityId,
+        scene_id: null,
+        costume_note: '黒い外套',
+        costume_ref_id: null,
+        condition_note: null,
+        hair_note: '雨で濡れている',
+        expression_default: 'determined',
+        extra_note: null,
+        created_at: timestamp,
+      }],
+    }));
+    api.getChapters.mockResolvedValue({ chapters: [] });
+    api.getEpisodes.mockResolvedValue({ episodes: [] });
+    api.getScenes.mockResolvedValue({ scenes: [] });
+    api.createEntityState.mockImplementation(async (entityId: string, input: {
+      scene_id?: string | null;
+      costume_note?: string | null;
+      condition_note?: string | null;
+      hair_note?: string | null;
+      expression_default: string;
+      extra_note?: string | null;
+    }) => ({
+      id: `created-state-${entityId}`,
+      entity_id: entityId,
+      scene_id: input.scene_id ?? null,
+      costume_note: input.costume_note ?? null,
+      costume_ref_id: null,
+      condition_note: input.condition_note ?? null,
+      hair_note: input.hair_note ?? null,
+      expression_default: input.expression_default,
+      extra_note: input.extra_note ?? null,
+      created_at: timestamp,
+    }));
+    api.updateEntityState.mockImplementation(async (entityId: string, stateId: string, input: Record<string, unknown>) => ({
+      id: stateId,
+      entity_id: entityId,
+      scene_id: null,
+      costume_note: '黒い外套',
+      costume_ref_id: null,
+      condition_note: null,
+      hair_note: '雨で濡れている',
+      expression_default: 'determined',
+      extra_note: null,
+      created_at: timestamp,
+      ...input,
     }));
     api.refreshImageAuthorizationHeader.mockResolvedValue('Bearer refreshed-token');
     api.importEntityReferenceImage.mockResolvedValue({
@@ -562,6 +617,48 @@ describe('CharactersScreen', () => {
 
     await expect(ref.current?.prepareToLeave()).resolves.toBe(false);
     expect(resolveDirtyAction).toHaveBeenCalledOnce();
+  });
+
+  it('保存済みキャラに服装・状態を表示しstate dirtyの取消でキャラ切替を止める', async () => {
+    const resolveDirtyAction = vi.fn().mockResolvedValue('cancel');
+    const { renderer } = await renderScreen({ resolveDirtyAction });
+    await selectWork(renderer);
+    await selectEntity(renderer);
+
+    expect(textOf(renderer)).toContain('服装・状態');
+    expect(api.getEntityStates).toHaveBeenCalledWith('entity-1', null);
+    await act(async () => {
+      renderer.root.findByProps({ accessibilityLabel: '状態1: 黒い外套を選択' })
+        .props.onPress();
+      await flushQueries();
+    });
+    await changeInput(renderer, '髪の状態', '乾いた短髪');
+    await selectEntity(renderer, 'ワトスンを選択');
+
+    expect(resolveDirtyAction).toHaveBeenCalledOnce();
+    expect(renderer.root.findByProps({ accessibilityLabel: 'ホームズを選択' })
+      .props.accessibilityState).toEqual({ selected: true });
+    expect(renderer.root.findByProps({ accessibilityLabel: '髪の状態' }).props.value)
+      .toBe('乾いた短髪');
+  });
+
+  it('tab離脱ではキャラ本体より先にstate dirtyを解決する', async () => {
+    const resolveDirtyAction = vi.fn().mockResolvedValue('cancel');
+    const screenRef = createRef<CharactersScreenHandle>();
+    const { renderer, ref } = await renderScreen({ resolveDirtyAction }, screenRef);
+    await selectWork(renderer);
+    await selectEntity(renderer);
+    await act(async () => {
+      renderer.root.findByProps({ accessibilityLabel: '状態1: 黒い外套を選択' })
+        .props.onPress();
+      await flushQueries();
+    });
+    await changeInput(renderer, '髪の状態', '乾いた短髪');
+
+    await expect(ref.current?.prepareToLeave()).resolves.toBe(false);
+    expect(resolveDirtyAction).toHaveBeenCalledOnce();
+    expect(api.updateEntity).not.toHaveBeenCalled();
+    expect(api.updateEntityState).not.toHaveBeenCalled();
   });
 
   it('作成ボタンを連打してもPOSTを1回だけ実行する', async () => {

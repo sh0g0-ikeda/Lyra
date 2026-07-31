@@ -20,6 +20,11 @@ import {
   EntityReferenceSection,
   type EntityReferenceApiPort,
 } from '../components/EntityReferenceSection';
+import {
+  EntityStateSection,
+  type EntityStateApiPort,
+  type EntityStateSectionHandle,
+} from '../components/EntityStateSection';
 import { StorySelectionSection } from '../components/StorySelectionSection';
 import { colors, radius, spacing } from '../constants/theme';
 import {
@@ -60,7 +65,7 @@ export interface CharactersScreenHandle {
   prepareToLeave(): Promise<boolean>;
 }
 
-export interface CharactersApiPort extends EntityReferenceApiPort {
+export interface CharactersApiPort extends EntityReferenceApiPort, EntityStateApiPort {
   createEntity(
     workId: string,
     body: CreateEntityInput,
@@ -126,7 +131,7 @@ export const CharactersScreen = forwardRef<
   const [draft, setDraft] = useState<EntityDraft>(emptyEntityDraft);
   const [saving, setSaving] = useState(false);
   const [transitioning, setTransitioning] = useState(false);
-  const [activeReferenceOperationIds, setActiveReferenceOperationIds] = useState<
+  const [activeChildOperationIds, setActiveChildOperationIds] = useState<
     ReadonlySet<string>
   >(() => new Set());
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -134,12 +139,13 @@ export const CharactersScreen = forwardRef<
   const savedEntityRef = useRef<EntityRecord | null>(null);
   const saveOperation = useRef<Promise<boolean> | null>(null);
   const transitionOperation = useRef<Promise<boolean> | null>(null);
-  const referenceOperationActive = activeReferenceOperationIds.size > 0;
-  const trackReferenceOperation = useCallback((
+  const entityStateRef = useRef<EntityStateSectionHandle>(null);
+  const childOperationActive = activeChildOperationIds.size > 0;
+  const trackChildOperation = useCallback((
     operationId: string,
     active: boolean,
   ): void => {
-    setActiveReferenceOperationIds((current) => {
+    setActiveChildOperationIds((current) => {
       if (active ? current.has(operationId) : !current.has(operationId)) {
         return current;
       }
@@ -350,11 +356,14 @@ export const CharactersScreen = forwardRef<
   ]);
 
   const resolvePendingChanges = useCallback(async (): Promise<boolean> => {
-    if (referenceOperationActive) {
+    if (childOperationActive) {
       return false;
     }
     if (saveOperation.current !== null) {
       return saveOperation.current;
+    }
+    if (!(await entityStateRef.current?.prepareToLeave() ?? true)) {
+      return false;
     }
     if (!dirty) {
       return true;
@@ -377,7 +386,7 @@ export const CharactersScreen = forwardRef<
   }, [
     dirty,
     language,
-    referenceOperationActive,
+    childOperationActive,
     resolveDirtyAction,
     saveCurrentDraft,
     savedEntity,
@@ -388,7 +397,7 @@ export const CharactersScreen = forwardRef<
   }), [resolvePendingChanges]);
 
   const transition = useCallback((changeSelection: () => void): Promise<boolean> => {
-    if (referenceOperationActive) {
+    if (childOperationActive) {
       return Promise.resolve(false);
     }
     if (transitionOperation.current !== null) {
@@ -410,7 +419,7 @@ export const CharactersScreen = forwardRef<
       setTransitioning(false);
     });
     return operation;
-  }, [referenceOperationActive, resolvePendingChanges]);
+  }, [childOperationActive, resolvePendingChanges]);
 
   const selectWork = useCallback((workId: string): Promise<boolean> => {
     if (workId === selectedWorkId) {
@@ -443,7 +452,7 @@ export const CharactersScreen = forwardRef<
     setSaveNotice(null);
   }, [savedEntity]);
 
-  const operationActive = saving || transitioning || referenceOperationActive;
+  const operationActive = saving || transitioning || childOperationActive;
   const initialEntitiesError = entitiesQuery.isError
     && entitiesQuery.data === undefined;
 
@@ -581,6 +590,20 @@ export const CharactersScreen = forwardRef<
               onPress={() => void saveCurrentDraft()}
             />
             {savedEntity === null ? null : (
+              <EntityStateSection
+                api={api}
+                editingBlocked={saving || childOperationActive}
+                entity={savedEntity}
+                key={`state:${sessionKey}:${organizationId ?? 'personal'}:${savedEntity.id}`}
+                language={language}
+                onOperationActiveChange={trackChildOperation}
+                organizationId={organizationId}
+                ref={entityStateRef}
+                resolveDirtyAction={resolveDirtyAction}
+                sessionKey={sessionKey}
+              />
+            )}
+            {savedEntity === null ? null : (
               <EntityReferenceSection
                 api={api}
                 apiBaseUrl={imageApiBaseUrl}
@@ -590,7 +613,7 @@ export const CharactersScreen = forwardRef<
                 imagePicker={referenceImagePicker}
                 key={`${sessionKey}:${organizationId ?? 'personal'}:${savedEntity.id}`}
                 language={language}
-                onOperationActiveChange={trackReferenceOperation}
+                onOperationActiveChange={trackChildOperation}
                 organizationId={organizationId}
                 prepareEntityForGeneration={prepareEntityForGeneration}
                 queryKeys={queryKeys}

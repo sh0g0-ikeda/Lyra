@@ -589,6 +589,115 @@ describe('LyraMobileApiClient', () => {
     });
   });
 
+  it('Entity state一覧・作成・部分更新をorganization scopeとcanonical contractで扱う', async () => {
+    const organizationId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+    const entity = buildEntity();
+    const state = buildEntityState();
+    const updated = { ...state, hair_note: '乾いた短髪' };
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(jsonResponse({ entity_states: [state] }))
+      .mockResolvedValueOnce(jsonResponse(state))
+      .mockResolvedValueOnce(jsonResponse(updated));
+    const api = new LyraMobileApiClient({
+      apiBaseUrl: 'https://api.example.com',
+      auth: new FakeAuthSession(),
+      fetcher,
+    });
+
+    await expect(api.getEntityStates(entity.id, organizationId)).resolves.toEqual({
+      entity_states: [state],
+    });
+    await expect(api.createEntityState(entity.id, {
+      scene_id: state.scene_id,
+      costume_note: '黒い外套',
+      condition_note: null,
+      hair_note: null,
+      expression_default: 'determined',
+      extra_note: null,
+    }, organizationId)).resolves.toEqual(state);
+    await expect(api.updateEntityState(entity.id, state.id, {
+      hair_note: '乾いた短髪',
+    }, organizationId)).resolves.toEqual(updated);
+
+    expect(fetcher.mock.calls[0]?.[0]).toBe(
+      `https://api.example.com/api/entities/${entity.id}/states?organization_id=${organizationId}`,
+    );
+    expect(fetcher.mock.calls[1]).toEqual([
+      `https://api.example.com/api/entities/${entity.id}/states?organization_id=${organizationId}`,
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({
+          scene_id: state.scene_id,
+          costume_note: '黒い外套',
+          condition_note: null,
+          hair_note: null,
+          expression_default: 'determined',
+          extra_note: null,
+        }),
+      }),
+    ]);
+    expect(fetcher.mock.calls[2]).toEqual([
+      `https://api.example.com/api/entities/${entity.id}/states/${state.id}?organization_id=${organizationId}`,
+      expect.objectContaining({
+        method: 'PUT',
+        body: JSON.stringify({ hair_note: '乾いた短髪' }),
+      }),
+    ]);
+  });
+
+  it('Entity stateの別Entity・別state・要求field・意図しないcostume refを拒否する', async () => {
+    const entity = buildEntity();
+    const state = buildEntityState();
+    const anotherEntityId = '77777777-7777-4777-8777-777777777777';
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(jsonResponse({
+        entity_states: [{ ...state, entity_id: anotherEntityId }],
+      }))
+      .mockResolvedValueOnce(jsonResponse({ ...state, entity_id: anotherEntityId }))
+      .mockResolvedValueOnce(jsonResponse({ ...state, costume_ref_id: 'unexpected-reference' }))
+      .mockResolvedValueOnce(jsonResponse({ ...state, id: anotherEntityId }))
+      .mockResolvedValueOnce(jsonResponse({ ...state, hair_note: 'remote value' }));
+    const api = new LyraMobileApiClient({
+      apiBaseUrl: 'https://api.example.com',
+      auth: new FakeAuthSession(),
+      fetcher,
+    });
+
+    await expect(api.getEntityStates(entity.id)).rejects.toMatchObject({
+      code: 'INVALID_API_RESPONSE',
+    });
+    await expect(api.createEntityState(entity.id, {
+      expression_default: 'determined',
+    })).rejects.toMatchObject({ code: 'INVALID_API_RESPONSE' });
+    await expect(api.createEntityState(entity.id, {
+      expression_default: 'determined',
+    })).rejects.toMatchObject({ code: 'INVALID_API_RESPONSE' });
+    await expect(api.updateEntityState(entity.id, state.id, {
+      hair_note: '乾いた短髪',
+    })).rejects.toMatchObject({ code: 'INVALID_API_RESPONSE' });
+    await expect(api.updateEntityState(entity.id, state.id, {
+      hair_note: '乾いた短髪',
+    })).rejects.toMatchObject({ code: 'INVALID_API_RESPONSE' });
+  });
+
+  it('Entity stateの空更新payloadをnetwork前に拒否する', async () => {
+    const fetcher = vi.fn<typeof fetch>();
+    const api = new LyraMobileApiClient({
+      apiBaseUrl: 'https://api.example.com',
+      auth: new FakeAuthSession(),
+      fetcher,
+    });
+
+    await expect(api.updateEntityState(
+      buildEntity().id,
+      buildEntityState().id,
+      {},
+    )).rejects.toMatchObject({ code: 'INVALID_REQUEST', status: 422 });
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
   it('Page一覧・初回骨格生成・job履歴を同じorganization scopeで扱う', async () => {
     const organizationId = '55555555-5555-4555-8555-555555555555';
     const page = buildPage();
@@ -1340,6 +1449,21 @@ function buildScene(): Record<string, unknown> & { id: string } {
     status: 'draft',
     created_at: '2026-07-31T00:00:00.000Z',
     updated_at: '2026-07-31T00:00:00.000Z',
+  };
+}
+
+function buildEntityState(): Record<string, unknown> & { id: string; scene_id: string } {
+  return {
+    id: '88888888-8888-4888-8888-888888888888',
+    entity_id: buildEntity().id,
+    scene_id: buildScene().id,
+    costume_note: '黒い外套',
+    costume_ref_id: null,
+    condition_note: null,
+    hair_note: null,
+    expression_default: 'determined',
+    extra_note: null,
+    created_at: '2026-08-01T00:00:00.000Z',
   };
 }
 
