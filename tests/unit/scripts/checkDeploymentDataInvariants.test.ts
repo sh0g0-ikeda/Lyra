@@ -385,6 +385,7 @@ describe('checkDeploymentDataInvariants', () => {
     'entity_reference_upload_tokens.entity_scope',
     'episode_export_jobs.contract',
     'episode_export_jobs.scope',
+    'episode_export_jobs.processing_lease',
     'mobile_push_tokens.protection',
     'mobile_push_notification_outbox.job_scope',
     'mobile_push_notification_deliveries.token_scope',
