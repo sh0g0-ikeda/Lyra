@@ -5,6 +5,10 @@ import {
   ENTITY_REFERENCE_LIMITS,
 } from '../../domain/constants/entityReference.js';
 import {
+  imageDataMatchesEntityReferenceUploadMimeType,
+  type EntityReferenceUploadMimeType,
+} from '../../domain/constants/entityReferenceUpload.js';
+import {
   ConfigurationError,
   ConflictError,
   NotFoundError,
@@ -48,6 +52,17 @@ export interface EntityReferenceServicePort {
     input: {
       entityType: EntityType;
       imageBase64: string;
+    },
+    organizationId?: string | null,
+  ): Promise<EntityImportAnalysis>;
+  importUploadedImage(
+    userId: string,
+    input: {
+      entityType: EntityType;
+      imageData: Buffer;
+      mimeType: EntityReferenceUploadMimeType;
+      tmpImageS3Key: string;
+      tmpImageCdnUrl: string;
     },
     organizationId?: string | null,
   ): Promise<EntityImportAnalysis>;
@@ -120,72 +135,44 @@ export class EntityReferenceService implements EntityReferenceServicePort {
     if (!imageDataMatchesDeclaredMimeType(uploadedImage)) {
       throw new ValidationError('image_base64 content does not match declared image type');
     }
-    if (!this.importAnalysisEnabled) {
-      throw new ConflictError('Entity import analysis is temporarily disabled');
+
+    return this.analyzeImportedImage(userId, {
+      entityType: input.entityType,
+      imageData: uploadedImage.imageData,
+      mimeType: uploadedImage.mimeType,
+      dataUrl: input.imageBase64,
+      storedImage: null,
+    }, organizationId);
+  }
+
+  public async importUploadedImage(
+    userId: string,
+    input: {
+      entityType: EntityType;
+      imageData: Buffer;
+      mimeType: EntityReferenceUploadMimeType;
+      tmpImageS3Key: string;
+      tmpImageCdnUrl: string;
+    },
+    organizationId: string | null = null,
+  ): Promise<EntityImportAnalysis> {
+    if (
+      input.imageData.length > ENTITY_IMPORT_MAX_FILE_SIZE_BYTES
+      || !imageDataMatchesEntityReferenceUploadMimeType(input.imageData, input.mimeType)
+    ) {
+      throw new ValidationError('Uploaded image does not match the approved upload');
     }
 
-    let creditsConsumed = false;
-    try {
-      if (organizationId === null) {
-        await this.creditService.consumeCredits({
-          userId,
-          cost: CREDIT_COSTS.ENTITY_IMPORT_ANALYSIS,
-          description: 'Entity import analysis',
-        });
-      } else {
-        await this.getOrganizationService().consumeCredits({
-          userId,
-          organizationId,
-          cost: CREDIT_COSTS.ENTITY_IMPORT_ANALYSIS,
-          description: 'Entity import analysis',
-          eventType: 'entity_import.started',
-        });
-      }
-      creditsConsumed = true;
-
-      const storedImage = await this.imageStorage.storeImportedImage({
-        userId,
-        imageData: uploadedImage.imageData,
-        mimeType: uploadedImage.mimeType,
-      });
-      const analysis = await this.imageAnalyzer.analyze({
-        entityType: input.entityType,
-        dataUrl: input.imageBase64,
-      });
-
-      return {
-        suggestedFields: parseStructuredFields(input.entityType, analysis.suggestedFields),
-        promptSupplement: analysis.promptSupplement.slice(0, ENTITY_REFERENCE_LIMITS.MAX_PROMPT_SUPPLEMENT_LENGTH),
-        tmpImageS3Key: storedImage.s3Key,
-        tmpImageCdnUrl: storedImage.cdnUrl,
-      };
-    } catch (error) {
-      if (creditsConsumed) {
-        try {
-          if (organizationId === null) {
-            await this.creditService.refundCredits({
-              userId,
-              amount: CREDIT_COSTS.ENTITY_IMPORT_ANALYSIS,
-              description: 'Refund for failed entity import analysis',
-            });
-          } else {
-            await this.getOrganizationService().refundCredits({
-              organizationId,
-              actorUserId: userId,
-              amount: CREDIT_COSTS.ENTITY_IMPORT_ANALYSIS,
-              description: 'Refund for failed entity import analysis',
-            });
-          }
-        } catch (refundError) {
-          logEntityReferenceCompensationFailure('entity_import_refund_failed', refundError, {
-            user_id: userId,
-            organization_id: organizationId,
-          });
-        }
-      }
-
-      throw error;
-    }
+    return this.analyzeImportedImage(userId, {
+      entityType: input.entityType,
+      imageData: input.imageData,
+      mimeType: input.mimeType,
+      dataUrl: `data:${input.mimeType};base64,${input.imageData.toString('base64')}`,
+      storedImage: {
+        s3Key: input.tmpImageS3Key,
+        cdnUrl: input.tmpImageCdnUrl,
+      },
+    }, organizationId);
   }
 
   public async enqueueReferenceGeneration(
@@ -419,6 +406,92 @@ export class EntityReferenceService implements EntityReferenceServicePort {
     }
 
     return updated;
+  }
+
+  private async analyzeImportedImage(
+    userId: string,
+    input: {
+      entityType: EntityType;
+      imageData: Buffer;
+      mimeType: EntityReferenceUploadMimeType;
+      dataUrl: string;
+      storedImage: {
+        s3Key: string;
+        cdnUrl: string;
+      } | null;
+    },
+    organizationId: string | null,
+  ): Promise<EntityImportAnalysis> {
+    if (!this.importAnalysisEnabled) {
+      throw new ConflictError('Entity import analysis is temporarily disabled');
+    }
+
+    let creditsConsumed = false;
+    try {
+      if (organizationId === null) {
+        await this.creditService.consumeCredits({
+          userId,
+          cost: CREDIT_COSTS.ENTITY_IMPORT_ANALYSIS,
+          description: 'Entity import analysis',
+        });
+      } else {
+        await this.getOrganizationService().consumeCredits({
+          userId,
+          organizationId,
+          cost: CREDIT_COSTS.ENTITY_IMPORT_ANALYSIS,
+          description: 'Entity import analysis',
+          eventType: 'entity_import.started',
+        });
+      }
+      creditsConsumed = true;
+
+      const storedImage = input.storedImage
+        ?? await this.imageStorage.storeImportedImage({
+          userId,
+          imageData: input.imageData,
+          mimeType: input.mimeType,
+        });
+      const analysis = await this.imageAnalyzer.analyze({
+        entityType: input.entityType,
+        dataUrl: input.dataUrl,
+      });
+
+      return {
+        suggestedFields: parseStructuredFields(input.entityType, analysis.suggestedFields),
+        promptSupplement: analysis.promptSupplement.slice(
+          0,
+          ENTITY_REFERENCE_LIMITS.MAX_PROMPT_SUPPLEMENT_LENGTH,
+        ),
+        tmpImageS3Key: storedImage.s3Key,
+        tmpImageCdnUrl: storedImage.cdnUrl,
+      };
+    } catch (error) {
+      if (creditsConsumed) {
+        try {
+          if (organizationId === null) {
+            await this.creditService.refundCredits({
+              userId,
+              amount: CREDIT_COSTS.ENTITY_IMPORT_ANALYSIS,
+              description: 'Refund for failed entity import analysis',
+            });
+          } else {
+            await this.getOrganizationService().refundCredits({
+              organizationId,
+              actorUserId: userId,
+              amount: CREDIT_COSTS.ENTITY_IMPORT_ANALYSIS,
+              description: 'Refund for failed entity import analysis',
+            });
+          }
+        } catch (refundError) {
+          logEntityReferenceCompensationFailure('entity_import_refund_failed', refundError, {
+            user_id: userId,
+            organization_id: organizationId,
+          });
+        }
+      }
+
+      throw error;
+    }
   }
 
   private async persistQueueMessageId(jobId: string, messageId: string): Promise<void> {

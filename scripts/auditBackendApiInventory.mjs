@@ -30,6 +30,7 @@ const routeMountPrefixes = new Map([
   ['billing.ts', '/api/billing'],
   ['compositions.ts', '/api'],
   ['entities.ts', '/api'],
+  ['entityReferenceUploads.ts', '/api'],
   ['health.ts', ''],
   ['jobs.ts', '/api'],
   ['localAssets.ts', ''],
