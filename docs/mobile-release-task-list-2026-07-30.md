@@ -263,6 +263,9 @@ Codex単独で進める次の順序は、`CI安定化 → PR-A継続 → 契約�
   - [x] episode exportのbounded PDF/ZIP builder・source loader・artifact storage・lease-aware WorkerをAPI未接続で統合
     - 証跡: [PR #130](https://github.com/sh0g0-ikeda/Lyra/pull/130)。TDDでPDF/ZIP決定性、WebP変換、pixel/byte上限、S3 HEAD→If-Match Range GET、MIME/ETag/range/magic検証、network/429/5xx限定retry、local traversal防止、stale lease、retryable release、attempt枯渇を確認
     - 安全境界: 専用SQS / poller / Route / download URL / cleanup runner / Web・Mobile client / runtime設定は未接続。既存1ページexport、generation queue、credit処理は変更しない
+  - [x] episode exportの認証API・専用SQS・outbox recovery・短命download・期限切れcleanupを既定OFFで接続
+    - 証跡: [PR #131](https://github.com/sh0g0-ikeda/Lyra/pull/131)。strict create/status contract、organization export権限、commit後dispatch、version付き専用payload、partial batch retry、5分以下のHTTPS署名、delete後mark、fresh DB 58 invariant / 0 violationsを確認
+    - 安全境界: `EPISODE_EXPORT_ENABLED=false`を維持し、queue / IAM / lifecycle / task definition / Mobile clientは未設定。既存1ページexport、generation queue、`generation_jobs`、credit処理は変更しない
 - [ ] PR-C: Mobile store billing Backend
   - 主な所有: migration 029、Apple/Google verifier、purchase service、webhook、ledger
   - 完了条件: 課金OFFで既存Webの挙動を変えず、focused testsがgreen
