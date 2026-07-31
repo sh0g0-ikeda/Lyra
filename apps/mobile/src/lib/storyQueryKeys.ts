@@ -7,6 +7,8 @@ export function storyQueryKeys(
   episodes(chapterId: string): readonly string[];
   scenes(episodeId: string): readonly string[];
   pages(episodeId: string): readonly string[];
+  panelLists(): readonly string[];
+  panels(pageId: string): readonly string[];
   entities(workId: string): readonly string[];
   jobs(): readonly string[];
   job(jobId: string): readonly string[];
@@ -22,6 +24,8 @@ export function storyQueryKeys(
     episodes: (chapterId: string) => [...root, 'episodes', chapterId] as const,
     scenes: (episodeId: string) => [...root, 'scenes', episodeId] as const,
     pages: (episodeId: string) => [...root, 'pages', episodeId] as const,
+    panelLists: () => [...root, 'panels'] as const,
+    panels: (pageId: string) => [...root, 'panels', pageId] as const,
     entities: (workId: string) => [...root, 'entities', workId] as const,
     jobs: () => [...root, 'jobs'] as const,
     job: (jobId: string) => [...root, 'job', jobId] as const,

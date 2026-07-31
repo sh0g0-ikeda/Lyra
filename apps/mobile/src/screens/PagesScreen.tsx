@@ -11,6 +11,11 @@ import { focusManager, useQuery, useQueryClient } from '@tanstack/react-query';
 import { StyleSheet, Text, View } from 'react-native';
 import { PrimaryButton } from '../components/PrimaryButton';
 import { PagePlanningSection } from '../components/PagePlanningSection';
+import {
+  PanelEditingSection,
+  type PanelEditingApiPort,
+  type PanelEditingSectionHandle,
+} from '../components/PanelEditingSection';
 import { SceneEditor } from '../components/SceneEditor';
 import { StorySelectionSection } from '../components/StorySelectionSection';
 import { colors, spacing } from '../constants/theme';
@@ -56,7 +61,7 @@ export interface PagesScreenHandle {
   prepareToLeave(): Promise<boolean>;
 }
 
-export interface PagesApiPort {
+export interface PagesApiPort extends PanelEditingApiPort {
   autofillEpisodePagesFromStory(
     episodeId: string,
     language: UiLanguage,
@@ -149,6 +154,7 @@ export const PagesScreen = forwardRef<PagesScreenHandle, PagesScreenProps>(
     const [jobStatusCheckFailed, setJobStatusCheckFailed] = useState(false);
     const pageOperation = useRef<Promise<boolean> | null>(null);
     const transitionOperation = useRef<Promise<boolean> | null>(null);
+    const panelEditingRef = useRef<PanelEditingSectionHandle>(null);
     const handledTerminalJobIds = useRef(new Set<string>());
     const jobsPollInFlight = useRef(false);
     const jobPollInFlight = useRef(false);
@@ -243,6 +249,13 @@ export const PagesScreen = forwardRef<PagesScreenHandle, PagesScreenProps>(
           && isEpisodePlanningJob(jobQuery.data, selectedEpisode.id)
         )
       ));
+    const panelEditingBlocked = generationActive
+      || jobsQuery.isLoading
+      || jobsQuery.isFetching
+      || jobsQuery.isError
+      || pagesQuery.isLoading
+      || pagesQuery.isFetching
+      || pagesQuery.isError;
     const normalizedJobPollIntervalMs = Math.max(1, Math.trunc(jobPollIntervalMs));
     const sceneDirty = savedSceneDraft !== null
       && sceneDraft !== null
@@ -413,6 +426,9 @@ export const PagesScreen = forwardRef<PagesScreenHandle, PagesScreenProps>(
         queryKey: queryKeys.pages(selectedEpisode.id),
       });
       void queryClient.invalidateQueries({
+        queryKey: queryKeys.panelLists(),
+      });
+      void queryClient.invalidateQueries({
         exact: true,
         queryKey: queryKeys.episodes(selectedEpisode.chapter_id),
       });
@@ -440,6 +456,9 @@ export const PagesScreen = forwardRef<PagesScreenHandle, PagesScreenProps>(
       void queryClient.invalidateQueries({
         exact: true,
         queryKey: queryKeys.pages(selectedEpisode.id),
+      });
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.panelLists(),
       });
       void queryClient.invalidateQueries({
         exact: true,
@@ -552,18 +571,33 @@ export const PagesScreen = forwardRef<PagesScreenHandle, PagesScreenProps>(
       return saveCurrentScene();
     }, [language, resolveDirtyAction, saveCurrentScene, savedSceneDraft, sceneDirty]);
 
+    const resolvePendingPanel = useCallback(async (): Promise<boolean> => (
+      panelEditingRef.current?.prepareToLeave() ?? true
+    ), []);
+
+    const resolvePendingChanges = useCallback(async (): Promise<boolean> => {
+      if (!(await resolvePendingScene())) {
+        return false;
+      }
+      return resolvePendingPanel();
+    }, [resolvePendingPanel, resolvePendingScene]);
+
     useImperativeHandle(ref, () => ({
-      prepareToLeave: resolvePendingScene,
-    }), [resolvePendingScene]);
+      prepareToLeave: resolvePendingChanges,
+    }), [resolvePendingChanges]);
 
     const transition = useCallback((
       changeSelection: () => void | boolean | Promise<void | boolean>,
+      includePanel = true,
     ): Promise<boolean> => {
       if (transitionOperation.current !== null) {
         return transitionOperation.current;
       }
       const operation = (async (): Promise<boolean> => {
         if (!(await resolvePendingScene())) {
+          return false;
+        }
+        if (includePanel && !(await resolvePendingPanel())) {
           return false;
         }
         setSceneError(null);
@@ -577,7 +611,7 @@ export const PagesScreen = forwardRef<PagesScreenHandle, PagesScreenProps>(
         }
       });
       return operation;
-    }, [resolvePendingScene]);
+    }, [resolvePendingPanel, resolvePendingScene]);
 
     const createScene = useCallback((): Promise<boolean> => transition(async () => {
       if (
@@ -630,7 +664,7 @@ export const PagesScreen = forwardRef<PagesScreenHandle, PagesScreenProps>(
           return false;
         }
       });
-    }), [
+    }, false), [
       api,
       applySelectedScene,
       language,
@@ -695,6 +729,7 @@ export const PagesScreen = forwardRef<PagesScreenHandle, PagesScreenProps>(
           pagesQuery.refetch(),
           episodesQuery.refetch(),
           refetchJobs(),
+          queryClient.invalidateQueries({ queryKey: queryKeys.panelLists() }),
         ]);
       } catch (error: unknown) {
         if (error instanceof ApiError && error.status === 404) {
@@ -706,6 +741,7 @@ export const PagesScreen = forwardRef<PagesScreenHandle, PagesScreenProps>(
             pagesQuery.refetch(),
             episodesQuery.refetch(),
             refetchJobs(),
+            queryClient.invalidateQueries({ queryKey: queryKeys.panelLists() }),
           ]);
           return;
         }
@@ -1005,6 +1041,19 @@ export const PagesScreen = forwardRef<PagesScreenHandle, PagesScreenProps>(
           />
         )}
         {selectedEpisode === null ? null : (
+          <PanelEditingSection
+            api={api}
+            generationActive={panelEditingBlocked}
+            language={language}
+            organizationId={organizationId}
+            pageListReady={pagesQuery.data !== undefined}
+            pages={pages}
+            ref={panelEditingRef}
+            resolveDirtyAction={resolveDirtyAction}
+            sessionKey={sessionKey}
+          />
+        )}
+        {selectedEpisode === null ? null : (
           <View style={styles.sceneSection}>
             <Text style={styles.subheading}>{t(language, 'scenes')}</Text>
             <Text style={styles.muted}>{t(language, 'sceneHelp')}</Text>
@@ -1023,7 +1072,7 @@ export const PagesScreen = forwardRef<PagesScreenHandle, PagesScreenProps>(
               onSelect={(sceneId) => {
                 const scene = scenes.find((candidate) => candidate.id === sceneId);
                 if (scene !== undefined && scene.id !== selectedSceneId) {
-                  void transition(() => applySelectedScene(scene));
+                  void transition(() => applySelectedScene(scene), false);
                 }
               }}
               retryLabel={t(language, 'retry')}

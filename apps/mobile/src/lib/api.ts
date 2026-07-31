@@ -10,6 +10,8 @@ import {
   generationJobHistoryResponseSchema,
   generationJobResponseSchema,
   pageSchema,
+  panelSchema,
+  panelsResponseSchema,
   pageJobAcceptedResponseSchema,
   pagesResponseSchema,
   pageSkeletonResponseSchema,
@@ -29,6 +31,7 @@ export type EpisodeRecord = ReturnType<typeof episodeSchema.parse>;
 export type EntityRecord = ReturnType<typeof entitySchema.parse>;
 export type SceneRecord = ReturnType<typeof sceneSchema.parse>;
 export type PageRecord = ReturnType<typeof pageSchema.parse>;
+export type PanelRecord = ReturnType<typeof panelSchema.parse>;
 export type GenerationJobRecord = ReturnType<typeof generationJobResponseSchema.parse>;
 export type PageSkeletonResponse = ReturnType<typeof pageSkeletonResponseSchema.parse>;
 export type PageJobAcceptedResponse = ReturnType<typeof pageJobAcceptedResponseSchema.parse>;
@@ -74,6 +77,30 @@ export interface CreateSceneInput {
   location?: string | null;
   time?: string | null;
   atmosphere?: string | null;
+}
+
+export interface UpdatePanelInput {
+  panel_role?: PanelRecord['panel_role'];
+  panel_size?: PanelRecord['panel_size'];
+  situation_text?: string | null;
+  composition?: {
+    source: PanelRecord['composition']['source'];
+    gallery_item_id: string | null;
+    composition_prompt: string | null;
+    shot_type: 'full_body' | 'half_body' | 'close_up' | 'wide' | 'extreme_close_up' | null;
+    angle: 'front' | 'side' | 'three_quarter' | 'bird_eye' | 'worm_eye' | 'dutch_angle' | null;
+    custom_note: string | null;
+  };
+  dialogue_in_panel?: boolean;
+  dialogue?: {
+    entity_id: string | null;
+    text: string;
+    type: PanelRecord['dialogue'][number]['type'];
+    position: PanelRecord['dialogue'][number]['position'];
+  }[];
+  sfx_text?: string | null;
+  background_note?: string | null;
+  panel_notes?: string | null;
 }
 
 export type UpdateSceneInput = Partial<Omit<CreateSceneInput, 'order'>>;
@@ -423,6 +450,42 @@ export class LyraMobileApiClient {
       ),
       pagesResponseSchema,
     );
+  }
+
+  public async getPanels(
+    pageId: string,
+    organizationId: string | null = null,
+  ): Promise<{ panels: PanelRecord[] }> {
+    const response = await this.requestJson(
+      withOrganizationQuery(
+        `/api/pages/${encodeURIComponent(pageId)}/panels`,
+        organizationId,
+      ),
+      panelsResponseSchema,
+    );
+    if (response.panels.some((panel) => panel.page_id !== pageId)) {
+      throw invalidApiResponse();
+    }
+    return response;
+  }
+
+  public async updatePanel(
+    panelId: string,
+    body: UpdatePanelInput,
+    organizationId: string | null = null,
+  ): Promise<PanelRecord> {
+    if (Object.keys(body).length === 0) {
+      throw new ApiError('INVALID_REQUEST', 422, 'The request is invalid.');
+    }
+    const panel = await this.requestJson(
+      withOrganizationQuery(`/api/panels/${encodeURIComponent(panelId)}`, organizationId),
+      panelSchema,
+      { method: 'PUT', body },
+    );
+    if (panel.id !== panelId) {
+      throw invalidApiResponse();
+    }
+    return panel;
   }
 
   public generatePageSkeleton(
