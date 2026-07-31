@@ -48,24 +48,64 @@ vi.mock('../src/components/PrimaryButton', () => ({
 }));
 
 vi.mock('../src/screens/StoryScreen', () => ({
-  StoryScreen: forwardRef(function MockStoryScreen(_props, ref) {
+  StoryScreen: forwardRef(function MockStoryScreen(
+    props: { organizationId: string | null },
+    ref,
+  ) {
     useImperativeHandle(ref, () => ({ prepareToLeave }));
-    return React.createElement('story-screen', null, 'Story editor');
+    return React.createElement(
+      'story-screen',
+      { organizationId: props.organizationId },
+      'Story editor',
+    );
   }),
 }));
 
 vi.mock('../src/screens/PagesScreen', () => ({
-  PagesScreen: forwardRef(function MockPagesScreen(_props, ref) {
+  PagesScreen: forwardRef(function MockPagesScreen(
+    props: { organizationId: string | null },
+    ref,
+  ) {
     useImperativeHandle(ref, () => ({ prepareToLeave: pagesPrepareToLeave }));
-    return React.createElement('pages-screen', null, 'Pages editor');
+    return React.createElement(
+      'pages-screen',
+      { organizationId: props.organizationId },
+      'Pages editor',
+    );
   }),
 }));
 
 vi.mock('../src/screens/CharactersScreen', () => ({
-  CharactersScreen: forwardRef(function MockCharactersScreen(_props, ref) {
+  CharactersScreen: forwardRef(function MockCharactersScreen(
+    props: { organizationId: string | null },
+    ref,
+  ) {
     useImperativeHandle(ref, () => ({ prepareToLeave: charactersPrepareToLeave }));
-    return React.createElement('characters-screen', null, 'Characters editor');
+    return React.createElement(
+      'characters-screen',
+      { organizationId: props.organizationId },
+      'Characters editor',
+    );
   }),
+}));
+
+vi.mock('../src/screens/AccountScreen', () => ({
+  AccountScreen: ({
+    onOrganizationChange,
+    session,
+  }: {
+    onOrganizationChange(organizationId: string | null): void;
+    session: { user: { email: string } };
+  }) => React.createElement(
+    'account-screen',
+    null,
+    session.user.email,
+    React.createElement(
+      'button',
+      { accessibilityLabel: 'テスト法人へ切り替え', onClick: () => onOrganizationChange('organization-1') },
+      'Switch workspace',
+    ),
+  ),
 }));
 
 vi.mock('../src/state/AuthSessionProvider', () => ({
@@ -85,6 +125,34 @@ const session = {
   },
   personal_credits: null,
   organizations: [],
+};
+
+const sessionWithOrganization = {
+  ...session,
+  organizations: [
+    {
+      id: 'organization-1',
+      name: 'ベーカー街編集部',
+      status: 'active' as const,
+      plan_key: 'enterprise_a' as const,
+      role: 'owner' as const,
+      membership_status: 'active' as const,
+      monthly_credits: 100,
+      purchased_credits: 20,
+      total_credits: 120,
+      monthly_expires_at: null,
+    },
+  ],
+};
+
+const sessionWithInactiveOrganization = {
+  ...session,
+  organizations: [
+    {
+      ...sessionWithOrganization.organizations[0],
+      membership_status: 'invited' as const,
+    },
+  ],
 };
 
 describe('FoundationHomeScreen', () => {
@@ -125,7 +193,9 @@ describe('FoundationHomeScreen', () => {
     });
 
     expect(renderer!.root.findByType('story-screen')).toBeDefined();
+    expect(renderer!.root.findByType('story-screen').props.organizationId).toBeNull();
     expect(JSON.stringify(renderer!.toJSON())).not.toContain('user@example.com');
+    expect(renderer!.root.findAllByProps({ accessibilityLabel: 'テスト法人へ切り替え' })).toHaveLength(0);
   });
 
   it('Accountを連打しても未保存変更の確認を重複起動しない', async () => {
@@ -203,5 +273,76 @@ describe('FoundationHomeScreen', () => {
     });
     expect(charactersPrepareToLeave).toHaveBeenCalledOnce();
     expect(renderer!.root.findByType('characters-screen')).toBeDefined();
+  });
+
+  it('Accountで選んだactive organizationを次に開くStoryのscopeへ渡す', async () => {
+    let renderer: ReturnType<typeof create>;
+    await act(async () => {
+      renderer = create(<FoundationHomeScreen session={sessionWithOrganization} />);
+    });
+
+    await act(async () => {
+      renderer!.root.findByProps({ accessibilityLabel: 'アカウントを開く' }).props.onPress();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      renderer!.root.findByProps({ accessibilityLabel: 'テスト法人へ切り替え' }).props.onClick();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      renderer!.root.findByProps({ accessibilityLabel: 'ストーリーを開く' }).props.onPress();
+      await Promise.resolve();
+    });
+
+    expect(renderer!.root.findByType('story-screen').props.organizationId).toBe('organization-1');
+  });
+
+  it('Accountで選んだactive organizationをCharactersとPagesにも渡す', async () => {
+    let renderer: ReturnType<typeof create>;
+    await act(async () => {
+      renderer = create(<FoundationHomeScreen session={sessionWithOrganization} />);
+    });
+
+    await act(async () => {
+      renderer!.root.findByProps({ accessibilityLabel: 'アカウントを開く' }).props.onPress();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      renderer!.root.findByProps({ accessibilityLabel: 'テスト法人へ切り替え' }).props.onClick();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      renderer!.root.findByProps({ accessibilityLabel: 'キャラを開く' }).props.onPress();
+      await Promise.resolve();
+    });
+    expect(renderer!.root.findByType('characters-screen').props.organizationId).toBe('organization-1');
+
+    await act(async () => {
+      renderer!.root.findByProps({ accessibilityLabel: 'ページを開く' }).props.onPress();
+      await Promise.resolve();
+    });
+    expect(renderer!.root.findByType('pages-screen').props.organizationId).toBe('organization-1');
+  });
+
+  it('inactive membershipのorganization選択をpersonal scopeへ正規化する', async () => {
+    let renderer: ReturnType<typeof create>;
+    await act(async () => {
+      renderer = create(<FoundationHomeScreen session={sessionWithInactiveOrganization} />);
+    });
+
+    await act(async () => {
+      renderer!.root.findByProps({ accessibilityLabel: 'アカウントを開く' }).props.onPress();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      renderer!.root.findByProps({ accessibilityLabel: 'テスト法人へ切り替え' }).props.onClick();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      renderer!.root.findByProps({ accessibilityLabel: 'ストーリーを開く' }).props.onPress();
+      await Promise.resolve();
+    });
+
+    expect(renderer!.root.findByType('story-screen').props.organizationId).toBeNull();
   });
 });
