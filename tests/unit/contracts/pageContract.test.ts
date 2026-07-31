@@ -51,6 +51,18 @@ describe('Page summary response contract', () => {
         ],
       }).success,
     ).toBe(true);
+    expect(
+      pagesResponseSchema.safeParse({
+        pages: [],
+        next_cursor: 'opaque-cursor',
+      }).success,
+    ).toBe(true);
+    expect(
+      pagesResponseSchema.safeParse({
+        pages: [],
+        next_cursor: 'a'.repeat(513),
+      }).success,
+    ).toBe(false);
   });
 
   it('内部S3 key・未知enum・不正なpage番号と負数countを拒否する', () => {

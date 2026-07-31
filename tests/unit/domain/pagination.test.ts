@@ -2,9 +2,11 @@ import { describe, expect, it } from 'vitest';
 import {
   decodeEntityListCursor,
   decodeGenerationJobHistoryCursor,
+  decodePageListCursor,
   decodeWorkListCursor,
   encodeEntityListCursor,
   encodeGenerationJobHistoryCursor,
+  encodePageListCursor,
   encodeWorkListCursor,
 } from '../../../src/domain/pagination.js';
 
@@ -102,5 +104,31 @@ describe('entity list cursor', () => {
     const encoded = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
 
     expect(() => decodeEntityListCursor(encoded)).toThrow('cursor is invalid');
+  });
+});
+
+describe('page list cursor', () => {
+  const pageCursor = {
+    pageNumber: 12,
+    id: '66666666-6666-4666-8666-666666666666',
+  };
+
+  it('ページ番号・IDをcanonical base64urlで往復する', () => {
+    const encoded = encodePageListCursor(pageCursor);
+
+    expect(encoded).toMatch(/^[A-Za-z0-9_-]+$/u);
+    expect(decodePageListCursor(encoded)).toEqual(pageCursor);
+  });
+
+  it.each([
+    ['別endpoint kind', { v: 1, k: 'entities', n: pageCursor.pageNumber, i: pageCursor.id }],
+    ['version不一致', { v: 2, k: 'pages', n: pageCursor.pageNumber, i: pageCursor.id }],
+    ['ページ番号0', { v: 1, k: 'pages', n: 0, i: pageCursor.id }],
+    ['小数ページ番号', { v: 1, k: 'pages', n: 1.5, i: pageCursor.id }],
+    ['不正UUID', { v: 1, k: 'pages', n: pageCursor.pageNumber, i: 'page-1' }],
+  ])('%sを拒否する', (_name, payload) => {
+    const encoded = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
+
+    expect(() => decodePageListCursor(encoded)).toThrow('cursor is invalid');
   });
 });

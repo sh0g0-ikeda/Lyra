@@ -28,6 +28,14 @@ const entityListCursorWireSchema = z
     i: z.string().uuid(),
   })
   .strict();
+const pageListCursorWireSchema = z
+  .object({
+    v: z.literal(1),
+    k: z.literal('pages'),
+    n: z.number().int().positive().max(2_147_483_647),
+    i: z.string().uuid(),
+  })
+  .strict();
 
 export interface GenerationJobHistoryCursor {
   activeRank: 0 | 1;
@@ -43,6 +51,11 @@ export interface WorkListCursor {
 
 export interface EntityListCursor {
   createdAt: Date;
+  id: string;
+}
+
+export interface PageListCursor {
+  pageNumber: number;
   id: string;
 }
 
@@ -179,6 +192,47 @@ export function decodeEntityListCursor(encoded: string): EntityListCursor {
 
     return {
       createdAt: parseCanonicalCursorDate(parsed.c),
+      id: parsed.i,
+    };
+  } catch {
+    throwInvalidCursor();
+  }
+}
+
+export function encodePageListCursor(cursor: PageListCursor): string {
+  const payload = pageListCursorWireSchema.parse({
+    v: 1,
+    k: 'pages',
+    n: cursor.pageNumber,
+    i: cursor.id,
+  });
+
+  return Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
+}
+
+export function decodePageListCursor(encoded: string): PageListCursor {
+  if (
+    encoded.length === 0
+    || encoded.length > MAX_CURSOR_LENGTH
+    || !/^[A-Za-z0-9_-]+$/u.test(encoded)
+  ) {
+    throwInvalidCursor();
+  }
+
+  try {
+    const decoded = Buffer.from(encoded, 'base64url').toString('utf8');
+    if (Buffer.from(decoded, 'utf8').toString('base64url') !== encoded) {
+      throwInvalidCursor();
+    }
+
+    const parsedJson: unknown = JSON.parse(decoded);
+    const parsed = pageListCursorWireSchema.parse(parsedJson);
+    if (JSON.stringify(parsed) !== decoded) {
+      throwInvalidCursor();
+    }
+
+    return {
+      pageNumber: parsed.n,
       id: parsed.i,
     };
   } catch {

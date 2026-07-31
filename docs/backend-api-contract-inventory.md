@@ -41,7 +41,7 @@ Endpoint count: 105
 | `/api/episodes/:id/autofill-pages-from-story` | POST | Authenticated | Strict JSON | `pageJobAcceptedResponseSchema` | Complete collection | `src/routes/pages.ts` |
 | `/api/episodes/:id/generate-page-skeleton` | POST | Authenticated | Strict JSON | `pageSkeletonResponseSchema` | Complete collection | `src/routes/story.ts` |
 | `/api/episodes/:id/move` | POST | Authenticated | Strict JSON | `episodeSchema` | Complete collection | `src/routes/story.ts` |
-| `/api/episodes/:id/pages` | GET | Authenticated | Strict JSON | `pagesResponseSchema` | Complete collection | `src/routes/pages.ts` |
+| `/api/episodes/:id/pages` | GET | Authenticated | Strict JSON | `pagesResponseSchema` | Optional opaque cursor (1-100; max 512 chars) | `src/routes/pages.ts` |
 | `/api/episodes/:id/scenes` | GET | Authenticated | Strict JSON | `scenesResponseSchema` | Complete collection | `src/routes/scenes.ts` |
 | `/api/episodes/:id/scenes` | POST | Authenticated | Strict JSON | `sceneSchema` | Complete collection | `src/routes/scenes.ts` |
 | `/api/invitations/:token/accept` | POST | Authenticated | Strict JSON | `organizationWorkspaceSchema` | Complete collection | `src/routes/organizations.ts` |

@@ -17,12 +17,15 @@ import type {
   UpdatePageSettingsInput,
 } from '../domain/types/page.js';
 import type { PageGenerationMode } from '../domain/types/pageGeneration.js';
+import { ConfigurationError } from '../domain/errors/index.js';
+import type { PageListCursor } from '../domain/pagination.js';
 import { readStyleReferenceMetadata } from '../domain/types/styleReference.js';
 import type { DatabaseClient } from '../lib/db.js';
 import type { PanelEntityAssignment } from '../domain/types/panelEntityAssignment.js';
 import { normalizeNullableText, normalizePossiblyMojibake } from '../lib/textEncoding.js';
 
 export type { PageGenerationContext, PageGenerationStateUpdate };
+export type { PageListCursor } from '../domain/pagination.js';
 
 const STORY_SOURCE_SCENE_IDS_KEY = 'story_source_scene_ids';
 const STORY_PAGE_PURPOSE_KEY = 'story_page_purpose';
@@ -60,6 +63,25 @@ export interface PageRepository {
     },
     organizationId?: string | null,
   ): Promise<boolean>;
+}
+
+export interface PageListPageRequest {
+  limit: number;
+  cursor: PageListCursor | null;
+}
+
+export interface PageListPage {
+  pages: PageSummary[];
+  nextCursor: PageListCursor | null;
+}
+
+export interface PageListPaginationRepository {
+  findPagesPageByEpisodeIdAndUserId(
+    episodeId: string,
+    userId: string,
+    request: PageListPageRequest,
+    organizationId?: string | null,
+  ): Promise<PageListPage>;
 }
 
 interface GenerationContextRow extends QueryResultRow {
@@ -153,7 +175,9 @@ interface UpdateRow extends QueryResultRow {
   id: string;
 }
 
-export class PostgresPageRepository implements PageRepository {
+export class PostgresPageRepository
+  implements PageRepository, PageListPaginationRepository
+{
   public constructor(private readonly client: DatabaseClient) {}
 
   public async findPagesByEpisodeIdAndUserId(
@@ -227,6 +251,118 @@ export class PostgresPageRepository implements PageRepository {
         updatedAt: row.updated_at,
       };
     });
+  }
+
+  public async findPagesPageByEpisodeIdAndUserId(
+    episodeId: string,
+    userId: string,
+    request: PageListPageRequest,
+    organizationId: string | null = null,
+  ): Promise<PageListPage> {
+    if (
+      !Number.isSafeInteger(request.limit)
+      || request.limit < 1
+      || request.limit > 100
+    ) {
+      throw new ConfigurationError('Page list page limit is invalid');
+    }
+
+    const result = await this.client.query<PageSummaryRow>(
+      `
+      SELECT pages.id,
+             pages.episode_id,
+             pages.page_number,
+             pages.layout_config,
+             pages.dialogue_mode,
+             pages.page_dialogue_toggle,
+             pages.generation_mode,
+             pages.generated_image,
+             pages.status,
+             COUNT(DISTINCT panels.id)::int AS panel_count,
+             COUNT(DISTINCT panel_frames.id)::int AS frame_count,
+             COUNT(DISTINCT balloons.id)::int AS balloon_count,
+             pages.created_at,
+             pages.updated_at
+      FROM pages
+      INNER JOIN episodes ON episodes.id = pages.episode_id
+      INNER JOIN chapters ON chapters.id = episodes.chapter_id
+      INNER JOIN works ON works.id = chapters.work_id
+      LEFT JOIN panels ON panels.page_id = pages.id
+      LEFT JOIN panel_frames ON panel_frames.page_id = pages.id
+      LEFT JOIN balloons ON balloons.page_id = pages.id
+      WHERE pages.episode_id = $1::uuid
+        AND (
+          ($3::uuid IS NULL
+            AND works.user_id = $2::uuid
+            AND works.organization_id IS NULL)
+          OR (
+            $3::uuid IS NOT NULL
+            AND works.organization_id = $3::uuid
+            AND EXISTS (
+              SELECT 1
+              FROM organization_members
+              WHERE organization_members.organization_id = works.organization_id
+                AND organization_members.user_id = $2::uuid
+                AND organization_members.status = 'active'
+            )
+          )
+        )
+        AND (
+          $4::integer IS NULL
+          OR pages.page_number > $4::integer
+          OR (
+            pages.page_number = $4::integer
+            AND pages.id > $5::uuid
+          )
+        )
+      GROUP BY pages.id
+      ORDER BY pages.page_number ASC, pages.id ASC
+      LIMIT $6
+      `,
+      [
+        episodeId,
+        userId,
+        organizationId,
+        request.cursor?.pageNumber ?? null,
+        request.cursor?.id ?? null,
+        request.limit + 1,
+      ],
+    );
+
+    const rows = result.rows.slice(0, request.limit);
+    const pages = rows.map((row) => {
+      const layoutConfig = toJsonObject(row.layout_config);
+      return {
+        id: row.id,
+        episodeId: row.episode_id,
+        pageNumber: row.page_number,
+        layoutConfig,
+        storySourceSceneIds: readStorySourceSceneIds(layoutConfig),
+        storyPagePurpose: readStoryPagePurpose(layoutConfig),
+        storyContinuityNote: readStoryContinuityNote(layoutConfig),
+        dialogueMode: toPageDialogueMode(row.dialogue_mode),
+        pageDialogueToggle: row.page_dialogue_toggle,
+        generationMode: toPageGenerationMode(row.generation_mode),
+        generatedImage: toGeneratedPageImage(row.generated_image),
+        status: row.status,
+        panelCount: row.panel_count,
+        frameCount: row.frame_count,
+        balloonCount: row.balloon_count,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+      };
+    });
+    const lastPage = pages.at(-1);
+    return {
+      pages,
+      nextCursor:
+        result.rows.length > request.limit && lastPage !== undefined
+          ? {
+              pageNumber: lastPage.pageNumber,
+              id: lastPage.id,
+            }
+          : null,
+    };
   }
 
   public async findPageByIdAndUserId(
