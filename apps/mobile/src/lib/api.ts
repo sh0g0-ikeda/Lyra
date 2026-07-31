@@ -6,6 +6,7 @@ import {
   episodeSchema,
   episodesResponseSchema,
   entitiesResponseSchema,
+  entityImportResponseSchema,
   entityReferenceSetSchema,
   entitySchema,
   generationJobHistoryResponseSchema,
@@ -30,6 +31,7 @@ export type WorkRecord = ReturnType<typeof workSchema.parse>;
 export type ChapterRecord = ReturnType<typeof chapterSchema.parse>;
 export type EpisodeRecord = ReturnType<typeof episodeSchema.parse>;
 export type EntityRecord = ReturnType<typeof entitySchema.parse>;
+export type EntityImportResponseRecord = ReturnType<typeof entityImportResponseSchema.parse>;
 export type EntityReferenceSetRecord = ReturnType<typeof entityReferenceSetSchema.parse>;
 export type SceneRecord = ReturnType<typeof sceneSchema.parse>;
 export type PageRecord = ReturnType<typeof pageSchema.parse>;
@@ -57,6 +59,12 @@ export interface CreateEntityInput {
   entity_type: 'character' | 'nonhuman' | 'object';
   name: string;
   free_description: string | null;
+}
+
+export interface ConfirmEntityReferenceInput {
+  selected_candidate_tokens: [string, ...string[]];
+  primary_candidate_token: string;
+  prompt_supplement: string | null;
 }
 
 export type UpdateEntityInput =
@@ -115,6 +123,7 @@ export interface MobileAuthSessionPort {
 interface ApiRequestOptions {
   method?: 'GET' | 'POST' | 'PUT' | 'DELETE';
   body?: unknown;
+  timeoutMs?: number;
 }
 
 export class ApiError extends Error {
@@ -137,6 +146,7 @@ interface LyraMobileApiClientOptions {
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
 const MAX_REQUEST_TIMEOUT_MS = 60_000;
+const ENTITY_IMPORT_REQUEST_TIMEOUT_MS = 60_000;
 
 export class LyraMobileApiClient {
   private readonly apiBaseUrl: string;
@@ -262,6 +272,46 @@ export class LyraMobileApiClient {
         organizationId,
       ),
       entityReferenceSetSchema,
+    );
+    if (referenceSet.entity_id !== entityId) {
+      throw invalidApiResponse();
+    }
+    return referenceSet;
+  }
+
+  public importEntityReferenceImage(
+    entityId: string,
+    entityType: EntityRecord['entity_type'],
+    imageDataUrl: string,
+    organizationId: string | null = null,
+  ): Promise<EntityImportResponseRecord> {
+    return this.requestJson(
+      withOrganizationQuery('/api/entities/import-image', organizationId),
+      entityImportResponseSchema,
+      {
+        method: 'POST',
+        body: {
+          entity_type: entityType,
+          entity_id: entityId,
+          image_base64: imageDataUrl,
+        },
+        timeoutMs: ENTITY_IMPORT_REQUEST_TIMEOUT_MS,
+      },
+    );
+  }
+
+  public async confirmEntityReference(
+    entityId: string,
+    body: ConfirmEntityReferenceInput,
+    organizationId: string | null = null,
+  ): Promise<EntityReferenceSetRecord> {
+    const referenceSet = await this.requestJson(
+      withOrganizationQuery(
+        `/api/entities/${encodeURIComponent(entityId)}/reference/confirm`,
+        organizationId,
+      ),
+      entityReferenceSetSchema,
+      { method: 'POST', body },
     );
     if (referenceSet.entity_id !== entityId) {
       throw invalidApiResponse();
@@ -682,7 +732,7 @@ export class LyraMobileApiClient {
     const controller = new AbortController();
     const timeoutId = setTimeout(
       () => controller.abort(),
-      this.requestTimeoutMs,
+      normalizeRequestTimeout(options.timeoutMs ?? this.requestTimeoutMs),
     );
     try {
       const headers: Record<string, string> = {

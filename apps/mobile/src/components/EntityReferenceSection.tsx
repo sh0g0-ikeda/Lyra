@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { StyleSheet, Text, View } from 'react-native';
 import { colors, radius, spacing } from '../constants/theme';
 import {
@@ -7,14 +7,20 @@ import {
   refreshProtectedImageSource,
   type RemoteImageSource,
 } from '../domain/entityReferenceImageSources';
-import type { EntityReferenceSetRecord } from '../lib/api';
+import type { EntityRecord, EntityReferenceSetRecord } from '../lib/api';
 import { t, type UiLanguage } from '../lib/i18n';
 import type { storyQueryKeys } from '../lib/storyQueryKeys';
+import {
+  EntityReferenceImportControls,
+  type EntityReferenceMutationApiPort,
+} from './EntityReferenceImportControls';
+import type { EntityReferenceImagePickerPort } from '../infrastructure/entityReferenceImagePicker';
+import type { EntityReferenceConfirmPromptInput } from '../lib/entityReferenceConfirmPrompt';
 import { Notice } from './Notice';
 import { PrimaryButton } from './PrimaryButton';
 import { ResilientAuthenticatedImage } from './ResilientAuthenticatedImage';
 
-export interface EntityReferenceApiPort {
+export interface EntityReferenceApiPort extends EntityReferenceMutationApiPort {
   getEntityReferenceSet(
     entityId: string,
     organizationId?: string | null,
@@ -28,7 +34,13 @@ interface EntityReferenceSectionProps {
   authorizationHeader: string | null;
   entityId: string;
   entityName: string;
+  entityType: EntityRecord['entity_type'];
+  confirmReferenceCandidate?: (
+    input: EntityReferenceConfirmPromptInput,
+  ) => Promise<boolean>;
+  imagePicker?: EntityReferenceImagePickerPort;
   language: UiLanguage;
+  onOperationActiveChange?(operationId: string, active: boolean): void;
   organizationId: string | null;
   queryKeys: ReturnType<typeof storyQueryKeys>;
   sessionKey: string;
@@ -40,11 +52,16 @@ export function EntityReferenceSection({
   authorizationHeader,
   entityId,
   entityName,
+  entityType,
+  confirmReferenceCandidate,
+  imagePicker,
   language,
+  onOperationActiveChange,
   organizationId,
   queryKeys,
   sessionKey,
 }: EntityReferenceSectionProps): React.JSX.Element {
+  const queryClient = useQueryClient();
   const refreshScope = `${sessionKey}:${organizationId ?? 'personal'}:${entityId}`;
   const imageAuthorizationRefresh = useRef<{
     header: string | null;
@@ -55,6 +72,7 @@ export function EntityReferenceSection({
     queryKey: queryKeys.entityReferenceSet(entityId),
     queryFn: () => api.getEntityReferenceSet(entityId, organizationId),
   });
+  const referenceQueryKey = queryKeys.entityReferenceSet(entityId);
   const refreshImageAuthorizationHeader = useCallback((): Promise<string> => {
     const current = imageAuthorizationRefresh.current;
     if (current.scope !== refreshScope) {
@@ -90,6 +108,19 @@ export function EntityReferenceSection({
     const result = await referenceQuery.refetch();
     return !result.isError;
   }, [referenceQuery, refreshScope]);
+  const resetImageAuthorization = useCallback((): void => {
+    if (imageAuthorizationRefresh.current.scope === refreshScope) {
+      imageAuthorizationRefresh.current.header = null;
+      imageAuthorizationRefresh.current.operation = null;
+    }
+  }, [refreshScope]);
+  const refreshReferenceSet = useCallback(async (): Promise<EntityReferenceSetRecord | null> => {
+    const result = await referenceQuery.refetch();
+    return result.isError || result.data === undefined ? null : result.data;
+  }, [referenceQuery]);
+  const acceptReferenceSet = useCallback((referenceSet: EntityReferenceSetRecord): void => {
+    queryClient.setQueryData(referenceQueryKey, referenceSet);
+  }, [queryClient, referenceQueryKey]);
 
   return (
     <View style={styles.section}>
@@ -169,6 +200,26 @@ export function EntityReferenceSection({
               ))}
             </View>
           )}
+          <EntityReferenceImportControls
+            acceptReferenceSet={acceptReferenceSet}
+            api={api}
+            apiBaseUrl={apiBaseUrl}
+            authorizationHeader={authorizationHeader}
+            confirmReferenceCandidate={confirmReferenceCandidate}
+            entityId={entityId}
+            entityName={entityName}
+            entityType={entityType}
+            imagePicker={imagePicker}
+            language={language}
+            onOperationActiveChange={onOperationActiveChange}
+            organizationId={organizationId}
+            referenceSet={referenceQuery.data}
+            referenceSetError={referenceQuery.isError}
+            refreshAuthorizationHeader={refreshImageAuthorizationHeader}
+            refreshReferenceSet={refreshReferenceSet}
+            resetImageAuthorization={resetImageAuthorization}
+            sessionKey={sessionKey}
+          />
         </>
       )}
     </View>

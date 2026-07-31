@@ -46,6 +46,8 @@ import {
 } from '../lib/dirtyStoryPrompt';
 import { t, type MessageKey, type UiLanguage } from '../lib/i18n';
 import { storyQueryKeys } from '../lib/storyQueryKeys';
+import type { EntityReferenceImagePickerPort } from '../infrastructure/entityReferenceImagePicker';
+import type { EntityReferenceConfirmPromptInput } from '../lib/entityReferenceConfirmPrompt';
 
 const ENTITY_PAGE_LIMIT = 50;
 
@@ -86,6 +88,10 @@ interface CharactersScreenProps {
   imageAuthorizationHeader: string | null;
   language: UiLanguage;
   organizationId: string | null;
+  confirmReferenceCandidate?: (
+    input: EntityReferenceConfirmPromptInput,
+  ) => Promise<boolean>;
+  referenceImagePicker?: EntityReferenceImagePickerPort;
   resolveDirtyAction?: () => Promise<DirtyStoryAction>;
   sessionKey: string;
 }
@@ -99,6 +105,8 @@ export const CharactersScreen = forwardRef<
   imageAuthorizationHeader,
   language,
   organizationId,
+  confirmReferenceCandidate,
+  referenceImagePicker,
   resolveDirtyAction,
   sessionKey,
 }, ref): React.JSX.Element {
@@ -113,10 +121,31 @@ export const CharactersScreen = forwardRef<
   const [draft, setDraft] = useState<EntityDraft>(emptyEntityDraft);
   const [saving, setSaving] = useState(false);
   const [transitioning, setTransitioning] = useState(false);
+  const [activeReferenceOperationIds, setActiveReferenceOperationIds] = useState<
+    ReadonlySet<string>
+  >(() => new Set());
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveNotice, setSaveNotice] = useState<string | null>(null);
   const saveOperation = useRef<Promise<boolean> | null>(null);
   const transitionOperation = useRef<Promise<boolean> | null>(null);
+  const referenceOperationActive = activeReferenceOperationIds.size > 0;
+  const trackReferenceOperation = useCallback((
+    operationId: string,
+    active: boolean,
+  ): void => {
+    setActiveReferenceOperationIds((current) => {
+      if (active ? current.has(operationId) : !current.has(operationId)) {
+        return current;
+      }
+      const next = new Set(current);
+      if (active) {
+        next.add(operationId);
+      } else {
+        next.delete(operationId);
+      }
+      return next;
+    });
+  }, []);
 
   const worksQuery = useQuery({
     queryKey: queryKeys.works(),
@@ -264,6 +293,9 @@ export const CharactersScreen = forwardRef<
   ]);
 
   const resolvePendingChanges = useCallback(async (): Promise<boolean> => {
+    if (referenceOperationActive) {
+      return false;
+    }
     if (saveOperation.current !== null) {
       return saveOperation.current;
     }
@@ -285,13 +317,23 @@ export const CharactersScreen = forwardRef<
       return true;
     }
     return saveCurrentDraft();
-  }, [dirty, language, resolveDirtyAction, saveCurrentDraft, savedEntity]);
+  }, [
+    dirty,
+    language,
+    referenceOperationActive,
+    resolveDirtyAction,
+    saveCurrentDraft,
+    savedEntity,
+  ]);
 
   useImperativeHandle(ref, () => ({
     prepareToLeave: resolvePendingChanges,
   }), [resolvePendingChanges]);
 
   const transition = useCallback((changeSelection: () => void): Promise<boolean> => {
+    if (referenceOperationActive) {
+      return Promise.resolve(false);
+    }
     if (transitionOperation.current !== null) {
       return transitionOperation.current;
     }
@@ -311,7 +353,7 @@ export const CharactersScreen = forwardRef<
       setTransitioning(false);
     });
     return operation;
-  }, [resolvePendingChanges]);
+  }, [referenceOperationActive, resolvePendingChanges]);
 
   const selectWork = useCallback((workId: string): Promise<boolean> => {
     if (workId === selectedWorkId) {
@@ -344,7 +386,7 @@ export const CharactersScreen = forwardRef<
     setSaveNotice(null);
   }, [savedEntity]);
 
-  const operationActive = saving || transitioning;
+  const operationActive = saving || transitioning || referenceOperationActive;
   const initialEntitiesError = entitiesQuery.isError
     && entitiesQuery.data === undefined;
 
@@ -486,9 +528,14 @@ export const CharactersScreen = forwardRef<
                 api={api}
                 apiBaseUrl={imageApiBaseUrl}
                 authorizationHeader={imageAuthorizationHeader}
+                confirmReferenceCandidate={confirmReferenceCandidate}
                 entityId={savedEntity.id}
                 entityName={savedEntity.name}
+                entityType={savedEntity.entity_type}
+                imagePicker={referenceImagePicker}
+                key={`${sessionKey}:${organizationId ?? 'personal'}:${savedEntity.id}`}
                 language={language}
+                onOperationActiveChange={trackReferenceOperation}
                 organizationId={organizationId}
                 queryKeys={queryKeys}
                 sessionKey={sessionKey}

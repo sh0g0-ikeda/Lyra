@@ -886,6 +886,123 @@ describe('LyraMobileApiClient', () => {
     });
   });
 
+  it('Entity画像importを保存済みEntityとorganizationへscopeしてstrict responseを返す', async () => {
+    const entityId = '77777777-7777-4777-8777-777777777777';
+    const organizationId = '55555555-5555-4555-8555-555555555555';
+    const response = {
+      suggested_fields: { art_style: 'manga' },
+      prompt_supplement: '黒髪、長身、鋭い目つき',
+      tmp_image_token: 'opaque-candidate-token',
+    };
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(response));
+    const api = new LyraMobileApiClient({
+      apiBaseUrl: 'https://api.example.com',
+      auth: new FakeAuthSession(),
+      fetcher,
+    });
+
+    await expect(api.importEntityReferenceImage(
+      entityId,
+      'character',
+      'data:image/jpeg;base64,/9j/AA==',
+      organizationId,
+    )).resolves.toEqual(response);
+    expect(fetcher).toHaveBeenCalledWith(
+      `https://api.example.com/api/entities/import-image?organization_id=${organizationId}`,
+      expect.objectContaining({
+        body: JSON.stringify({
+          entity_type: 'character',
+          entity_id: entityId,
+          image_base64: 'data:image/jpeg;base64,/9j/AA==',
+        }),
+        method: 'POST',
+      }),
+    );
+  });
+
+  it('Entity画像importの契約外success payloadを候補として採用しない', async () => {
+    const api = new LyraMobileApiClient({
+      apiBaseUrl: 'https://api.example.com',
+      auth: new FakeAuthSession(),
+      fetcher: vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({
+        suggested_fields: {},
+        prompt_supplement: '補足',
+        tmp_image_token: '',
+      })),
+    });
+
+    await expect(api.importEntityReferenceImage(
+      '77777777-7777-4777-8777-777777777777',
+      'character',
+      'data:image/jpeg;base64,/9j/AA==',
+    )).rejects.toMatchObject({ code: 'INVALID_API_RESPONSE', status: 502 });
+  });
+
+  it('Entity画像importだけはAI解析のため60秒timeoutを使う', async () => {
+    vi.useFakeTimers();
+    try {
+      let capturedSignal: AbortSignal | null = null;
+      const fetcher = vi.fn<typeof fetch>().mockImplementation((_, init) => {
+        capturedSignal = init?.signal as AbortSignal;
+        return new Promise<Response>((_resolve, reject) => {
+          capturedSignal?.addEventListener('abort', () => reject(new Error('aborted')));
+        });
+      });
+      const api = new LyraMobileApiClient({
+        apiBaseUrl: 'https://api.example.com',
+        auth: new FakeAuthSession(),
+        fetcher,
+      });
+
+      const operation = api.importEntityReferenceImage(
+        '77777777-7777-4777-8777-777777777777',
+        'character',
+        'data:image/jpeg;base64,/9j/AA==',
+      );
+      const rejection = expect(operation).rejects.toMatchObject({ code: 'NETWORK_ERROR' });
+      await Promise.resolve();
+      await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(59_999);
+      expect(capturedSignal?.aborted).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      await rejection;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('候補tokenだけでEntity referenceを確定しresponseのEntity一致を検証する', async () => {
+    const entityId = '77777777-7777-4777-8777-777777777777';
+    const organizationId = '55555555-5555-4555-8555-555555555555';
+    const referenceSet = buildEntityReferenceSet(entityId);
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(jsonResponse(referenceSet))
+      .mockResolvedValueOnce(jsonResponse(buildEntityReferenceSet(
+        '88888888-8888-4888-8888-888888888888',
+      )));
+    const api = new LyraMobileApiClient({
+      apiBaseUrl: 'https://api.example.com',
+      auth: new FakeAuthSession(),
+      fetcher,
+    });
+    const body = {
+      selected_candidate_tokens: ['opaque-candidate-token'],
+      primary_candidate_token: 'opaque-candidate-token',
+      prompt_supplement: '黒髪、長身、鋭い目つき',
+    } as const;
+
+    await expect(api.confirmEntityReference(entityId, body, organizationId))
+      .resolves.toEqual(referenceSet);
+    expect(fetcher).toHaveBeenNthCalledWith(
+      1,
+      `https://api.example.com/api/entities/${entityId}/reference/confirm?organization_id=${organizationId}`,
+      expect.objectContaining({ body: JSON.stringify(body), method: 'POST' }),
+    );
+    await expect(api.confirmEntityReference(entityId, body, organizationId))
+      .rejects.toMatchObject({ code: 'INVALID_API_RESPONSE', status: 502 });
+  });
+
   it('画像用認証更新を同時実行してもrefreshは1回だけにする', async () => {
     let resolveRefresh: ((tokens: AuthTokens) => void) | undefined;
     const auth: MobileAuthSessionPort = {

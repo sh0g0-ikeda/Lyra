@@ -6,9 +6,9 @@
 
 対象PR: [#67 feat(mobile): production-ready Lyra mobile workflow](https://github.com/sh0g0-ikeda/Lyra/pull/67)
 
-進捗: 97件完了 / 380件未完了
+進捗: 98件完了 / 380件未完了
 
-実装監査基準: `8c6f497`（Mobile確定済みキャラ参照画像閲覧 feature code head、local full gate成功。GitHub CIは統合前にexact headで再確認）
+実装監査基準: [PR #147](https://github.com/sh0g0-ikeda/Lyra/pull/147) / `2a25fd7`（Mobileキャラ参照画像import / candidate preview / confirm feature code head。local full gateとGitHub CI run `30658764910` が成功し、証跡追記後の最終headも統合前に再確認）
 
 ## 1. 設計ブリーフ
 
@@ -327,7 +327,10 @@ Accountのfalse-positive error解消は、Mobile基盤の統合後にPR #144と�
   - [x] Mobile確定済みキャラ参照画像の閲覧sliceを既存Entity APIだけで接続
     - 証跡: [PR #146](https://github.com/sh0g0-ikeda/Lyra/pull/146)、feature code head `8c6f497`。保存済みEntityのreference set状態、primary有無、確定画像数、source、作成日時、画像を読み取り専用表示する。既存schemaでEntity一致を検証し、HTTPS signed URLから認証付きexportへfallbackする。session / workspace / Entity / reference / revisionでmemory cacheを分離し、protected image失敗時の認証更新と再試行を各1回に制限する
     - 安全境界: Backend / DB / migration / Worker / Web / shared API contract、保存・更新・import・生成・candidate・confirm・delete・credit・jobを変更しない。Mobile 29 files / 217 tests、typecheck、lint、Expo dependency check、expo-doctor 20/20、両OS export、Backend Vitest 1707 tests、Bun 1707 tests、fresh DB 001〜039・65 invariant / 0 violations・実DB17 tests、Web lint / build・Playwright 13 tests、独立read-only監査P0 / P1なしを確認
-  - 残り: 生成fileを削除可能にするdurable asset cleanup、Backend endpointがない作品削除・並べ替え、Scene削除Backend安全境界、Charactersの削除Backend安全境界・参照画像import / candidate preview / confirm・画像生成・服装/状態、Page設定、Panel作成・削除・並べ替え・entity assignment・frame / balloon、Page画像生成、organization workspace UI。PR-F全体は未完了のまま維持する
+  - [x] Mobileキャラ参照画像のbase64 import / candidate preview / confirmを既存Entity APIだけで接続
+    - 証跡: [PR #147](https://github.com/sh0g0-ikeda/Lyra/pull/147)、feature code head `2a25fd7`、GitHub CI run `30658764910`。保存済みEntityで端末画像を1枚選び、JPEG / PNG / WebPの実signatureと5 MiB上限を端末側でも検証し、1 creditを明示して既存import APIへ送る。候補tokenはcomponent memoryだけに保持し、認証付き・token非cache-keyでpreviewする。明示確認後だけ既存confirm APIへtokenと解析済みprompt supplementを送り、既存参照画像を残して新画像をprimaryにする
+    - 安全境界: Backend / DB / migration / Worker / Web / shared API contract、既存request / response、1回あたり最大3候補、確定済み画像の総数、credit / refund、generation jobを変更しない。import / confirmはsingle-flight、response loss時は自動再送せず、旧scopeの遅延完了が新scopeの操作blockを解除しない。Mobile 33 files / 245 tests、typecheck、lint、Expo dependency check、expo-doctor 20/20、両OS export、Backend Vitest / Bun各1707 tests、fresh DB 001〜039・65 invariant / 0 violations・実DB17 tests、Web lint / build・Playwright 13 tests、独立read-only再監査P0 / P1なしを確認
+  - 残り: 生成fileを削除可能にするdurable asset cleanup、Backend endpointがない作品削除・並べ替え、Scene削除Backend安全境界、Charactersの削除Backend安全境界・参照画像direct upload client / 本番設定・画像生成・服装/状態、Page設定、Panel作成・削除・並べ替え・entity assignment・frame / balloon、Page画像生成、organization workspace UI。PR-F全体は未完了のまま維持する
 - [ ] PR-G: organization / billing UI / store adapter
   - 主な所有: Account、organization管理、`expo-iap` adapter
   - 完了条件: personal/org分離とstore unavailable状態がgreen
