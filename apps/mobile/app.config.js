@@ -1,0 +1,27 @@
+const omitNativeReleaseSettings = (value, keys) => {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  return Object.fromEntries(
+    Object.entries(value).filter(([key]) => !keys.includes(key))
+  );
+};
+
+module.exports = ({ config }) => {
+  const ios = omitNativeReleaseSettings(config.ios, [
+    'associatedDomains',
+    'bundleIdentifier'
+  ]);
+  const android = omitNativeReleaseSettings(config.android, [
+    'googleServicesFile',
+    'intentFilters',
+    'package'
+  ]);
+
+  return {
+    ...config,
+    ...(ios === undefined ? {} : { ios }),
+    ...(android === undefined ? {} : { android })
+  };
+};
