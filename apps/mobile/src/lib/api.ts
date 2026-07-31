@@ -7,6 +7,7 @@ import {
   episodesResponseSchema,
   entitiesResponseSchema,
   entityImportResponseSchema,
+  entityReferenceGenerationResponseSchema,
   entityReferenceSetSchema,
   entitySchema,
   generationJobHistoryResponseSchema,
@@ -32,6 +33,9 @@ export type ChapterRecord = ReturnType<typeof chapterSchema.parse>;
 export type EpisodeRecord = ReturnType<typeof episodeSchema.parse>;
 export type EntityRecord = ReturnType<typeof entitySchema.parse>;
 export type EntityImportResponseRecord = ReturnType<typeof entityImportResponseSchema.parse>;
+export type EntityReferenceGenerationResponse = ReturnType<
+  typeof entityReferenceGenerationResponseSchema.parse
+>;
 export type EntityReferenceSetRecord = ReturnType<typeof entityReferenceSetSchema.parse>;
 export type SceneRecord = ReturnType<typeof sceneSchema.parse>;
 export type PageRecord = ReturnType<typeof pageSchema.parse>;
@@ -147,6 +151,7 @@ interface LyraMobileApiClientOptions {
 const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
 const MAX_REQUEST_TIMEOUT_MS = 60_000;
 const ENTITY_IMPORT_REQUEST_TIMEOUT_MS = 60_000;
+const MAX_ENTITY_PROMPT_SUPPLEMENT_LENGTH = 2_000;
 
 export class LyraMobileApiClient {
   private readonly apiBaseUrl: string;
@@ -262,6 +267,28 @@ export class LyraMobileApiClient {
     return entity;
   }
 
+  public async updateEntityGenerationContext(
+    entityId: string,
+    promptSupplement: string | null,
+    organizationId: string | null = null,
+  ): Promise<EntityRecord> {
+    if (
+      promptSupplement !== null
+      && promptSupplement.length > MAX_ENTITY_PROMPT_SUPPLEMENT_LENGTH
+    ) {
+      throw new ApiError('INVALID_REQUEST', 422, 'The request is invalid.');
+    }
+    const entity = await this.requestJson(
+      withOrganizationQuery(`/api/entities/${encodeURIComponent(entityId)}`, organizationId),
+      entitySchema,
+      { method: 'PUT', body: { prompt_supplement: promptSupplement } },
+    );
+    if (entity.id !== entityId) {
+      throw invalidApiResponse();
+    }
+    return entity;
+  }
+
   public async getEntityReferenceSet(
     entityId: string,
     organizationId: string | null = null,
@@ -296,6 +323,26 @@ export class LyraMobileApiClient {
           image_base64: imageDataUrl,
         },
         timeoutMs: ENTITY_IMPORT_REQUEST_TIMEOUT_MS,
+      },
+    );
+  }
+
+  public generateEntityReference(
+    entityId: string,
+    sourceCandidateToken: string | null = null,
+    organizationId: string | null = null,
+  ): Promise<EntityReferenceGenerationResponse> {
+    return this.requestJson(
+      withOrganizationQuery(
+        `/api/entities/${encodeURIComponent(entityId)}/generate-reference`,
+        organizationId,
+      ),
+      entityReferenceGenerationResponseSchema,
+      {
+        method: 'POST',
+        ...(sourceCandidateToken === null
+          ? {}
+          : { body: { source_candidate_token: sourceCandidateToken } }),
       },
     );
   }

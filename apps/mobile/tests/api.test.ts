@@ -971,6 +971,83 @@ describe('LyraMobileApiClient', () => {
     }
   });
 
+  it('Entity参照生成をsourceなし・source候補ありで既存202契約へ送る', async () => {
+    const entityId = '77777777-7777-4777-8777-777777777777';
+    const organizationId = '55555555-5555-4555-8555-555555555555';
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(jsonResponse({ job_id: 'job-without-source' }, 202))
+      .mockResolvedValueOnce(jsonResponse({ job_id: 'job-with-source' }, 202));
+    const api = new LyraMobileApiClient({
+      apiBaseUrl: 'https://api.example.com',
+      auth: new FakeAuthSession(),
+      fetcher,
+    });
+
+    await expect(api.generateEntityReference(entityId, null, organizationId))
+      .resolves.toEqual({ job_id: 'job-without-source' });
+    await expect(api.generateEntityReference(
+      entityId,
+      'opaque-source-candidate',
+      organizationId,
+    )).resolves.toEqual({ job_id: 'job-with-source' });
+
+    expect(fetcher).toHaveBeenNthCalledWith(
+      1,
+      `https://api.example.com/api/entities/${entityId}/generate-reference?organization_id=${organizationId}`,
+      expect.objectContaining({ method: 'POST', body: undefined }),
+    );
+    expect(fetcher).toHaveBeenNthCalledWith(
+      2,
+      `https://api.example.com/api/entities/${entityId}/generate-reference?organization_id=${organizationId}`,
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ source_candidate_token: 'opaque-source-candidate' }),
+      }),
+    );
+  });
+
+  it('Entity参照生成の契約外202 payloadをjobとして採用しない', async () => {
+    const api = new LyraMobileApiClient({
+      apiBaseUrl: 'https://api.example.com',
+      auth: new FakeAuthSession(),
+      fetcher: vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({ job_id: '' }, 202)),
+    });
+
+    await expect(api.generateEntityReference(
+      '77777777-7777-4777-8777-777777777777',
+    )).rejects.toMatchObject({ code: 'INVALID_API_RESPONSE', status: 502 });
+  });
+
+  it('source生成前のprompt supplementだけをchanged-field-onlyで保存する', async () => {
+    const entityId = '77777777-7777-4777-8777-777777777777';
+    const organizationId = '55555555-5555-4555-8555-555555555555';
+    const updatedEntity = {
+      ...buildEntity(),
+      id: entityId,
+      prompt_supplement: '黒髪、長身、鋭い目つき',
+    };
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(updatedEntity));
+    const api = new LyraMobileApiClient({
+      apiBaseUrl: 'https://api.example.com',
+      auth: new FakeAuthSession(),
+      fetcher,
+    });
+
+    await expect(api.updateEntityGenerationContext(
+      entityId,
+      '黒髪、長身、鋭い目つき',
+      organizationId,
+    )).resolves.toEqual(updatedEntity);
+    expect(fetcher).toHaveBeenCalledWith(
+      `https://api.example.com/api/entities/${entityId}?organization_id=${organizationId}`,
+      expect.objectContaining({
+        method: 'PUT',
+        body: JSON.stringify({ prompt_supplement: '黒髪、長身、鋭い目つき' }),
+      }),
+    );
+  });
+
   it('候補tokenだけでEntity referenceを確定しresponseのEntity一致を検証する', async () => {
     const entityId = '77777777-7777-4777-8777-777777777777';
     const organizationId = '55555555-5555-4555-8555-555555555555';
@@ -1054,9 +1131,9 @@ function buildTokens(idToken: string): AuthTokens {
   };
 }
 
-function jsonResponse(value: unknown): Response {
+function jsonResponse(value: unknown, status = 200): Response {
   return new Response(JSON.stringify(value), {
-    status: 200,
+    status,
     headers: { 'Content-Type': 'application/json' },
   });
 }

@@ -80,6 +80,11 @@ export interface CharactersApiPort extends EntityReferenceApiPort {
     body: UpdateEntityInput,
     organizationId?: string | null,
   ): Promise<EntityRecord>;
+  updateEntityGenerationContext(
+    entityId: string,
+    promptSupplement: string | null,
+    organizationId?: string | null,
+  ): Promise<EntityRecord>;
 }
 
 interface CharactersScreenProps {
@@ -126,6 +131,7 @@ export const CharactersScreen = forwardRef<
   >(() => new Set());
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveNotice, setSaveNotice] = useState<string | null>(null);
+  const savedEntityRef = useRef<EntityRecord | null>(null);
   const saveOperation = useRef<Promise<boolean> | null>(null);
   const transitionOperation = useRef<Promise<boolean> | null>(null);
   const referenceOperationActive = activeReferenceOperationIds.size > 0;
@@ -178,6 +184,7 @@ export const CharactersScreen = forwardRef<
   const dirty = isEntityDraftDirty(savedEntity, draft);
 
   const applyEntity = useCallback((entity: EntityRecord | null): void => {
+    savedEntityRef.current = entity;
     setSelectedEntityId(entity?.id ?? null);
     setSavedEntity(entity);
     setDraft(entity === null ? emptyEntityDraft() : createEntityDraft(entity));
@@ -259,6 +266,7 @@ export const CharactersScreen = forwardRef<
           throw new Error('Entity response work does not match the selected work');
         }
         await updateEntityCache(saved).catch(() => undefined);
+        savedEntityRef.current = saved;
         setSelectedEntityId(saved.id);
         setSavedEntity(saved);
         setDraft(createEntityDraft(saved));
@@ -288,6 +296,55 @@ export const CharactersScreen = forwardRef<
     language,
     organizationId,
     savedEntity,
+    selectedWorkId,
+    updateEntityCache,
+  ]);
+
+  const prepareEntityForGeneration = useCallback(async (
+    sourcePromptSupplement?: string,
+  ): Promise<EntityRecord | null> => {
+    if (savedEntityRef.current === null || !(await saveCurrentDraft())) {
+      return null;
+    }
+    const current = savedEntityRef.current;
+    if (
+      current === null
+      || current.id !== selectedEntityId
+      || current.work_id !== selectedWorkId
+    ) {
+      return null;
+    }
+    if (
+      sourcePromptSupplement === undefined
+      || sourcePromptSupplement === current.prompt_supplement
+    ) {
+      return current;
+    }
+    try {
+      const updated = await api.updateEntityGenerationContext(
+        current.id,
+        sourcePromptSupplement,
+        organizationId,
+      );
+      if (updated.id !== current.id || updated.work_id !== selectedWorkId) {
+        throw new Error('Entity response does not match the generation context');
+      }
+      await updateEntityCache(updated).catch(() => undefined);
+      savedEntityRef.current = updated;
+      setSavedEntity(updated);
+      setDraft(createEntityDraft(updated));
+      return updated;
+    } catch {
+      setSaveNotice(null);
+      setSaveError(t(language, 'characterSaveError'));
+      return null;
+    }
+  }, [
+    api,
+    language,
+    organizationId,
+    saveCurrentDraft,
+    selectedEntityId,
     selectedWorkId,
     updateEntityCache,
   ]);
@@ -529,14 +586,13 @@ export const CharactersScreen = forwardRef<
                 apiBaseUrl={imageApiBaseUrl}
                 authorizationHeader={imageAuthorizationHeader}
                 confirmReferenceCandidate={confirmReferenceCandidate}
-                entityId={savedEntity.id}
-                entityName={savedEntity.name}
-                entityType={savedEntity.entity_type}
+                entity={savedEntity}
                 imagePicker={referenceImagePicker}
                 key={`${sessionKey}:${organizationId ?? 'personal'}:${savedEntity.id}`}
                 language={language}
                 onOperationActiveChange={trackReferenceOperation}
                 organizationId={organizationId}
+                prepareEntityForGeneration={prepareEntityForGeneration}
                 queryKeys={queryKeys}
                 sessionKey={sessionKey}
               />
