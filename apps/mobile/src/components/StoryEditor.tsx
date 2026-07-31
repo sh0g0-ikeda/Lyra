@@ -11,6 +11,7 @@ interface StoryEditorProps {
   errorMessage: string | null;
   language: UiLanguage;
   noticeMessage: string | null;
+  operationActive?: boolean;
   onChangeEstimatedPages(value: string): void;
   onChangeStory(value: string): void;
   onChangeTitle(value: string): void;
@@ -24,6 +25,7 @@ export function StoryEditor({
   errorMessage,
   language,
   noticeMessage,
+  operationActive = false,
   onChangeEstimatedPages,
   onChangeStory,
   onChangeTitle,
@@ -62,7 +64,7 @@ export function StoryEditor({
       {errorMessage === null ? null : <Notice message={errorMessage} tone="danger" />}
       {noticeMessage === null ? null : <Notice message={noticeMessage} />}
       <PrimaryButton
-        disabled={!dirty}
+        disabled={!dirty || operationActive}
         label={t(language, 'save')}
         loading={saving}
         onPress={onSave}
