@@ -6,9 +6,9 @@
 
 対象PR: [#67 feat(mobile): production-ready Lyra mobile workflow](https://github.com/sh0g0-ikeda/Lyra/pull/67)
 
-進捗: 101件完了 / 380件未完了
+進捗: 102件完了 / 380件未完了
 
-実装監査基準: [PR #150](https://github.com/sh0g0-ikeda/Lyra/pull/150) / `0f6655c`（Mobile Page style / provenance設定 feature code head。local full gate成功。証跡追記後の最終headもGitHub CIで統合前に再確認）
+実装監査基準: [PR #151](https://github.com/sh0g0-ikeda/Lyra/pull/151) / `bc783f2`（Mobileキャラ服装・状態管理 feature code head。local full gate成功。証跡追記後の最終headもGitHub CIで統合前に再確認）
 
 ## 1. 設計ブリーフ
 
@@ -339,7 +339,10 @@ Accountのfalse-positive error解消は、Mobile基盤の統合後にPR #144と�
   - [x] Mobile Page style reference / source scene / purpose / continuityを既存Page APIだけで接続
     - 証跡: [PR #150](https://github.com/sh0g0-ikeda/Lyra/pull/150)、feature code head `0f6655c`。画風リファレンス名・補足、ページ目的、連続性メモを既存`PUT /api/pages/:id`へchanged-field-onlyで保存し、保存済みsource sceneはepisode内Sceneと照合して読み取り専用表示する。不明・削除済みIDも黙って除外せず表示し、semantic fieldまたはsource sceneのremote変更時は古いdraftの保存をfail closedとする
     - 安全境界: Backend / DB / migration / Worker / Web / shared API contract、既存request / response、Page / Panel / Scene / Entity構造、SQS message、generation job、credit / refundを変更しない。source scene ID、`layout_config`、compiled style metadataは送信せず、style title / notesだけを既存server compilerへ渡す。Mobile 36 files / 293 tests、typecheck、lint、contract drift、API inventory、Expo dependency check、expo-doctor 20/20、両OS export、Backend Vitest / Bun各1707 tests、fresh DB 001〜039・65 invariant / 0 violations・実DB17 tests、Web lint / build・Playwright 13 tests、独立read-only監査P0 / P1なしを確認
-  - 残り: 生成fileを削除可能にするdurable asset cleanup、Backend endpointがない作品削除・並べ替え、Scene削除Backend安全境界、Charactersの削除Backend安全境界・参照画像direct upload client / 本番設定・服装/状態、Panel作成・削除・並べ替え・entity assignment・frame / balloon、Page画像生成、organization workspace UI。PR-F全体は未完了のまま維持する
+  - [x] Mobileキャラ服装・状態管理を既存Entity state APIだけで接続
+    - 証跡: [PR #151](https://github.com/sh0g0-ikeda/Lyra/pull/151)、feature code head `bc783f2`。保存済みEntityの状態一覧、同一作品Sceneまたは共通状態の作成、服装・体調/負傷・髪・通常表情・補足のchanged-field-only更新を追加。dirty保存/破棄/取消、single-flight、保存前remote snapshot照合、別resource response拒否、POST結果不明時の自動再送停止を確認する
+    - 安全境界: Backend / DB / migration / Worker / Web / shared API contract、既存request / response、Scene / Entity / Page / Panel構造、SQS message、generation job、credit / refundを変更しない。`costume_ref_id`は作成時未設定、更新時非送信として既存値を保持し、Scene関連が変わった場合だけ同一scopeのScene cacheを非同期更新する。Mobile 38 files / 322 tests、typecheck、lint、contract drift、API inventory、Expo dependency check、expo-doctor 20/20、両OS export、Backend Vitest / Bun各1707 tests、fresh DB 001〜039・65 invariant / 0 violations・実DB17 tests、Web lint / build・Playwright 13 tests、独立read-only監査P0 / P1なしを確認
+  - 残り: 生成fileを削除可能にするdurable asset cleanup、Backend endpointがない作品削除・並べ替え、Scene削除Backend安全境界、Charactersの削除Backend安全境界・参照画像direct upload client / 本番設定・`costume_ref_id`のBackend整合性付き選択/変更、Panel作成・削除・並べ替え・entity assignment・frame / balloon、Page画像生成、organization workspace UI。PR-F全体は未完了のまま維持する
 - [ ] PR-G: organization / billing UI / store adapter
   - 主な所有: Account、organization管理、`expo-iap` adapter
   - 完了条件: personal/org分離とstore unavailable状態がgreen
