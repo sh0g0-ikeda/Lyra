@@ -250,7 +250,10 @@ Codex単独で進める次の順序は、`CI安定化 → PR-A継続 → 契約�
     - 境界: migration 029はPR #112で統合済み。ただしMobile購読の解約・entitlement終期・identity削除方針とCognito / Stripe / S3外部処理が未完了のため削除APIは接続しない
   - [x] entity reference upload tokenのDB契約とatomic consume RepositoryをAPI未接続で先行統合
     - 証跡: [PR #114](https://github.com/sh0g0-ikeda/Lyra/pull/114)。hash-only、single-use、TTL、MIME/size、user/org/entity、owner S3 prefixをmigration・Repository・invariantで確認
-    - 境界: presigned URL、S3 HEAD/GET、画像解析、credit、Route、Web / Mobile clientは未接続。既存base64 importは変更しない
+    - 境界: PR #114時点ではDB/Repositoryのみを統合し、APIとclientは未接続
+  - [x] entity reference direct upload Backendを既存base64 import互換・既定OFFで接続
+    - 証跡: [PR #127](https://github.com/sh0g0-ikeda/Lyra/pull/127)。認証・organization generate権限、server-owned key、5分hash-only token、signed MIME/size/SSE、bounded HEAD/Range GET、ETag条件付きS3内コピー、atomic consume、既存credit/refund再利用を確認
+    - 安全境界: IAM/CORS/lifecycleの本番readbackとMobile clientは未完了。`ENTITY_REFERENCE_DIRECT_UPLOAD_ENABLED=false`を維持し、既存base64 importのwire/動作は変更しない
   - [x] episode export jobとdispatch outboxのDB契約をAPI未接続で先行統合
     - 証跡: [PR #115](https://github.com/sh0g0-ikeda/Lyra/pull/115)。owner-bound artifact key、PDF/ZIP MIME、128 MiB、最大24時間、status/timestamp、idempotencyをmigration・invariantで確認
     - 境界: Repository、Service、SQS、artifact builder、S3、download Route、Web / Mobile clientは未接続。既存1ページexportは変更しない
