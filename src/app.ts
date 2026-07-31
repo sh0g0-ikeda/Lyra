@@ -1,5 +1,6 @@
 import { serveStatic } from '@hono/node-server/serve-static';
 import { Hono, type MiddlewareHandler } from 'hono';
+import { organizationInvitationPreviewResponseSchema } from '../packages/api-contract/src/mobileApiSchemas.js';
 import { ConfigurationError, ValidationError } from './domain/errors/index.js';
 import type { EnterprisePlanCode, PaidPlanCode } from './domain/constants/billing.js';
 import type { SubscriptionPlanCatalogEntry } from './domain/types/billing.js';
@@ -88,6 +89,7 @@ import { createOrganizationRoutes } from './routes/organizations.js';
 import { createSceneRoutes } from './routes/scenes.js';
 import { createStoryRoutes } from './routes/story.js';
 import { createRootWebhookCompatibilityRoutes, createWebhookRoutes } from './routes/webhooks.js';
+import { assertMobileResponseContract } from './routes/mobileResponseContract.js';
 import { UserProvisioningService, type UserProvisioningPort } from './services/auth/UserProvisioningService.js';
 import {
   BillingService,
@@ -372,7 +374,7 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
       }
 
       const preview = await resolvedDependencies.organizationService.previewInvitation(body.data.token);
-      return c.json({
+      const payload = {
         organization: preview.organization,
         invitation: {
           email: preview.invitation.email,
@@ -380,7 +382,13 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
           status: preview.invitation.status,
           expires_at: preview.invitation.expiresAt.toISOString(),
         },
-      });
+      };
+      return c.json(
+        assertMobileResponseContract(
+          organizationInvitationPreviewResponseSchema,
+          payload,
+        ),
+      );
     });
   }
   app.route(
