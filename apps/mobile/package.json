@@ -38,6 +38,7 @@
     "eslint-config-expo": "~57.0.1",
     "eslint-import-resolver-typescript": "^3.10.1",
     "expo-doctor": "^1.20.1",
+    "react-test-renderer": "^19.2.3",
     "typescript": "~6.0.3",
     "vitest": "^4.1.10"
   }

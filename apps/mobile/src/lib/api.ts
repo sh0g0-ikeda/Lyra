@@ -1,7 +1,25 @@
-import { currentSessionSchema } from '../domain/apiSchemas';
+import type { ZodType } from 'zod';
+import {
+  chapterSchema,
+  chaptersResponseSchema,
+  currentSessionSchema,
+  episodeSchema,
+  episodesResponseSchema,
+  workSchema,
+  worksResponseSchema,
+} from '../domain/apiSchemas';
+import type { EpisodeStoryUpdatePayload } from '../domain/episodeStoryDraft';
 import type { AuthTokens } from '../domain/auth';
 
 export type CurrentSession = ReturnType<typeof currentSessionSchema.parse>;
+export type WorkRecord = ReturnType<typeof workSchema.parse>;
+export type ChapterRecord = ReturnType<typeof chapterSchema.parse>;
+export type EpisodeRecord = ReturnType<typeof episodeSchema.parse>;
+
+export interface ListWorksPageInput {
+  limit: number;
+  cursor?: string | null;
+}
 
 export interface MobileAuthSessionPort {
   getTokens(): Promise<AuthTokens | null>;
@@ -43,15 +61,74 @@ export class LyraMobileApiClient {
   }
 
   public async getCurrentSession(): Promise<CurrentSession> {
-    const tokens = await this.requireTokens();
-    let response = await this.request('/api/me', tokens.idToken);
+    return this.requestJson('/api/me', currentSessionSchema);
+  }
 
-    if (response.status === 401) {
-      const refreshed = await this.auth.refreshTokens();
-      response = await this.request('/api/me', refreshed.idToken);
+  public async getWorksPage(
+    input: ListWorksPageInput,
+    organizationId: string | null = null,
+  ): Promise<{ works: WorkRecord[]; next_cursor: string | null }> {
+    if (!Number.isSafeInteger(input.limit) || input.limit < 1 || input.limit > 100) {
+      throw new ApiError('INVALID_REQUEST', 422, 'The request is invalid.');
     }
+    const query = new URLSearchParams({ limit: String(input.limit) });
+    const cursor = input.cursor?.trim();
+    if (cursor !== undefined && cursor.length > 0) {
+      if (cursor.length > 512) {
+        throw new ApiError('INVALID_REQUEST', 422, 'The request is invalid.');
+      }
+      query.set('cursor', cursor);
+    }
+    appendOrganizationQuery(query, organizationId);
+    const response = await this.requestJson(
+      `/api/works?${query.toString()}`,
+      worksResponseSchema,
+    );
+    return {
+      works: response.works,
+      next_cursor: response.next_cursor ?? null,
+    };
+  }
 
-    return await this.parseCurrentSession(response);
+  public getChapters(
+    workId: string,
+    organizationId: string | null = null,
+  ): Promise<{ chapters: ChapterRecord[] }> {
+    return this.requestJson(
+      withOrganizationQuery(
+        `/api/works/${encodeURIComponent(workId)}/chapters`,
+        organizationId,
+      ),
+      chaptersResponseSchema,
+    );
+  }
+
+  public getEpisodes(
+    chapterId: string,
+    organizationId: string | null = null,
+  ): Promise<{ episodes: EpisodeRecord[] }> {
+    return this.requestJson(
+      withOrganizationQuery(
+        `/api/chapters/${encodeURIComponent(chapterId)}/episodes`,
+        organizationId,
+      ),
+      episodesResponseSchema,
+    );
+  }
+
+  public updateEpisode(
+    episodeId: string,
+    body: EpisodeStoryUpdatePayload,
+    organizationId: string | null = null,
+  ): Promise<EpisodeRecord> {
+    return this.requestJson(
+      withOrganizationQuery(
+        `/api/episodes/${encodeURIComponent(episodeId)}`,
+        organizationId,
+      ),
+      episodeSchema,
+      { method: 'PUT', body },
+    );
   }
 
   private async requireTokens(): Promise<AuthTokens> {
@@ -62,34 +139,17 @@ export class LyraMobileApiClient {
     return tokens;
   }
 
-  private async request(path: string, idToken: string): Promise<Response> {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(
-      () => controller.abort(),
-      this.requestTimeoutMs,
-    );
-    try {
-      return await this.fetcher(`${this.apiBaseUrl}${path}`, {
-        headers: {
-          Accept: 'application/json',
-          Authorization: `Bearer ${idToken}`,
-        },
-        signal: controller.signal,
-      });
-    } catch {
-      throw new ApiError(
-        'NETWORK_ERROR',
-        0,
-        'The server could not be reached.',
-      );
-    } finally {
-      clearTimeout(timeoutId);
+  private async requestJson<T>(
+    path: string,
+    schema: ZodType<T>,
+    options: { method?: 'GET' | 'PUT'; body?: unknown } = {},
+  ): Promise<T> {
+    const tokens = await this.requireTokens();
+    let response = await this.request(path, tokens.idToken, options);
+    if (response.status === 401) {
+      const refreshed = await this.auth.refreshTokens();
+      response = await this.request(path, refreshed.idToken, options);
     }
-  }
-
-  private async parseCurrentSession(
-    response: Response,
-  ): Promise<CurrentSession> {
     if (!response.ok) {
       throw new ApiError(
         response.status >= 500 ? 'SERVER_ERROR' : 'REQUEST_FAILED',
@@ -109,7 +169,7 @@ export class LyraMobileApiClient {
       );
     }
 
-    const parsed = currentSessionSchema.safeParse(payload);
+    const parsed = schema.safeParse(payload);
     if (!parsed.success) {
       throw new ApiError(
         'INVALID_API_RESPONSE',
@@ -119,6 +179,41 @@ export class LyraMobileApiClient {
     }
     return parsed.data;
   }
+
+  private async request(
+    path: string,
+    idToken: string,
+    options: { method?: 'GET' | 'PUT'; body?: unknown },
+  ): Promise<Response> {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(
+      () => controller.abort(),
+      this.requestTimeoutMs,
+    );
+    try {
+      const headers: Record<string, string> = {
+        Accept: 'application/json',
+        Authorization: `Bearer ${idToken}`,
+      };
+      if (options.body !== undefined) {
+        headers['Content-Type'] = 'application/json';
+      }
+      return await this.fetcher(`${this.apiBaseUrl}${path}`, {
+        body: options.body === undefined ? undefined : JSON.stringify(options.body),
+        headers,
+        method: options.method ?? 'GET',
+        signal: controller.signal,
+      });
+    } catch {
+      throw new ApiError(
+        'NETWORK_ERROR',
+        0,
+        'The server could not be reached.',
+      );
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
 }
 
 function normalizeRequestTimeout(value: number | undefined): number {
@@ -126,4 +221,21 @@ function normalizeRequestTimeout(value: number | undefined): number {
     return DEFAULT_REQUEST_TIMEOUT_MS;
   }
   return Math.min(Math.max(Math.trunc(value), 1), MAX_REQUEST_TIMEOUT_MS);
+}
+
+function appendOrganizationQuery(
+  query: URLSearchParams,
+  organizationId: string | null,
+): void {
+  if (organizationId !== null) {
+    query.set('organization_id', organizationId);
+  }
+}
+
+function withOrganizationQuery(path: string, organizationId: string | null): string {
+  if (organizationId === null) {
+    return path;
+  }
+  const query = new URLSearchParams({ organization_id: organizationId });
+  return `${path}?${query.toString()}`;
 }

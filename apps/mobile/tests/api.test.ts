@@ -110,6 +110,110 @@ describe('LyraMobileApiClient', () => {
     expect(receivedSignal?.aborted).toBe(true);
     vi.useRealTimers();
   });
+
+  it('Story階層をcanonical schemaで取得しepisodeの最小更新を送る', async () => {
+    const auth = new FakeAuthSession();
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(jsonResponse({ works: [buildWork()], next_cursor: null }))
+      .mockResolvedValueOnce(jsonResponse({ chapters: [buildChapter()] }))
+      .mockResolvedValueOnce(jsonResponse({ episodes: [buildEpisode()] }))
+      .mockResolvedValueOnce(jsonResponse({
+        ...buildEpisode(),
+        title: '更新後',
+        story_full_draft: '更新後の本文',
+      }));
+    const api = new LyraMobileApiClient({
+      apiBaseUrl: 'https://api.example.com',
+      auth,
+      fetcher,
+    });
+
+    await expect(api.getWorksPage({ limit: 50 })).resolves.toEqual({
+      works: [buildWork()],
+      next_cursor: null,
+    });
+    await expect(api.getChapters(buildWork().id)).resolves.toEqual({
+      chapters: [buildChapter()],
+    });
+    await expect(api.getEpisodes(buildChapter().id)).resolves.toEqual({
+      episodes: [buildEpisode()],
+    });
+    await expect(api.updateEpisode(buildEpisode().id, {
+      title: '更新後',
+      story_input_mode: 'full',
+      story_full_draft: '更新後の本文',
+      estimated_pages: 4,
+    })).resolves.toMatchObject({
+      title: '更新後',
+      story_full_draft: '更新後の本文',
+    });
+
+    expect(fetcher.mock.calls[0]?.[0]).toBe('https://api.example.com/api/works?limit=50');
+    expect(fetcher.mock.calls[1]?.[0]).toBe(
+      `https://api.example.com/api/works/${buildWork().id}/chapters`,
+    );
+    expect(fetcher.mock.calls[2]?.[0]).toBe(
+      `https://api.example.com/api/chapters/${buildChapter().id}/episodes`,
+    );
+    expect(fetcher.mock.calls[3]).toEqual([
+      `https://api.example.com/api/episodes/${buildEpisode().id}`,
+      expect.objectContaining({
+        body: JSON.stringify({
+          title: '更新後',
+          story_input_mode: 'full',
+          story_full_draft: '更新後の本文',
+          estimated_pages: 4,
+        }),
+        method: 'PUT',
+      }),
+    ]);
+  });
+
+  it('Story階層の契約外success payloadを保存可能データとして返さない', async () => {
+    const api = new LyraMobileApiClient({
+      apiBaseUrl: 'https://api.example.com',
+      auth: new FakeAuthSession(),
+      fetcher: vi.fn<typeof fetch>().mockResolvedValue(
+        jsonResponse({ episodes: [{ id: buildEpisode().id }] }),
+      ),
+    });
+
+    await expect(api.getEpisodes(buildChapter().id)).rejects.toMatchObject({
+      code: 'INVALID_API_RESPONSE',
+      status: 502,
+    });
+  });
+
+  it('organization Storyのread/writeで同じorganization scopeを送る', async () => {
+    const organizationId = '99999999-9999-4999-8999-999999999999';
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(jsonResponse({ works: [], next_cursor: null }))
+      .mockResolvedValueOnce(jsonResponse({ chapters: [] }))
+      .mockResolvedValueOnce(jsonResponse({ episodes: [] }))
+      .mockResolvedValueOnce(jsonResponse(buildEpisode()));
+    const api = new LyraMobileApiClient({
+      apiBaseUrl: 'https://api.example.com',
+      auth: new FakeAuthSession(),
+      fetcher,
+    });
+
+    await api.getWorksPage({ limit: 50 }, organizationId);
+    await api.getChapters(buildWork().id, organizationId);
+    await api.getEpisodes(buildChapter().id, organizationId);
+    await api.updateEpisode(buildEpisode().id, {
+      title: buildEpisode().title as string,
+      estimated_pages: 4,
+    }, organizationId);
+
+    expect(fetcher.mock.calls.map((call) => call[0])).toEqual([
+      `https://api.example.com/api/works?limit=50&organization_id=${organizationId}`,
+      `https://api.example.com/api/works/${buildWork().id}/chapters?organization_id=${organizationId}`,
+      `https://api.example.com/api/chapters/${buildChapter().id}/episodes?organization_id=${organizationId}`,
+      `https://api.example.com/api/episodes/${buildEpisode().id}?organization_id=${organizationId}`,
+    ]);
+  });
 });
 
 class FakeAuthSession implements MobileAuthSessionPort {
@@ -159,5 +263,66 @@ function buildCurrentSession(): Record<string, unknown> {
       monthly_expires_at: null,
     },
     organizations: [],
+  };
+}
+
+function buildWork(): Record<string, unknown> & { id: string } {
+  return {
+    id: '22222222-2222-4222-8222-222222222222',
+    organization_id: null,
+    title: '緋色の研究',
+    genre: 'mystery',
+    world_setting: null,
+    theme: null,
+    main_entity_ids: [],
+    starting_point: null,
+    ending_point: null,
+    overall_flow: null,
+    version: 1,
+    status: 'draft',
+    created_at: '2026-07-31T00:00:00.000Z',
+    updated_at: '2026-07-31T00:00:00.000Z',
+  };
+}
+
+function buildChapter(): Record<string, unknown> & { id: string } {
+  return {
+    id: '33333333-3333-4333-8333-333333333333',
+    work_id: buildWork().id,
+    order: 1,
+    title: '第一章',
+    purpose: null,
+    starting_state: null,
+    ending_state: null,
+    emotion_curve: null,
+    entities_involved: [],
+    key_beats: [],
+    version: 1,
+    status: 'draft',
+    created_at: '2026-07-31T00:00:00.000Z',
+    updated_at: '2026-07-31T00:00:00.000Z',
+  };
+}
+
+function buildEpisode(): Record<string, unknown> & { id: string } {
+  return {
+    id: '44444444-4444-4444-8444-444444444444',
+    chapter_id: buildChapter().id,
+    order: 1,
+    title: 'ローリストン・ガーデン',
+    purpose: null,
+    story_input_mode: 'full',
+    story_full_draft: 'ホームズとワトスが現場へ向かう。',
+    introduction: null,
+    middle: null,
+    climax: null,
+    ending_hook: null,
+    estimated_pages: 4,
+    entities_involved: [],
+    page_skeleton_generated: false,
+    version: 1,
+    status: 'draft',
+    created_at: '2026-07-31T00:00:00.000Z',
+    updated_at: '2026-07-31T00:00:00.000Z',
   };
 }
