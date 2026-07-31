@@ -22,6 +22,34 @@ describe('account deletion request migration 027', () => {
     expect(sql).toContain("WHERE status IN ('processing', 'pending_external_action')");
   });
 
+  it('migration 037はidentity tombstone・retry・削除開始後のwrite guardを追加する', async () => {
+    const sql = await readFile(
+      join(process.cwd(), 'migrations', '037_connect_account_deletion.sql'),
+      'utf8',
+    );
+
+    expect(sql).toContain('ADD COLUMN IF NOT EXISTS account_deletion_started_at');
+    expect(sql).toContain('ADD COLUMN IF NOT EXISTS account_deleted_at');
+    expect(sql).toContain('ADD COLUMN IF NOT EXISTS identity_key');
+    expect(sql).toContain('ADD COLUMN IF NOT EXISTS next_retry_at');
+    expect(sql).toContain('char_length(identity_key) = 43');
+    expect(sql).toContain('idx_account_deletion_requests_identity_key');
+    expect(sql).toContain('reject_write_after_account_deletion');
+    for (const table of [
+      'works',
+      'entities',
+      'generation_jobs',
+      'entity_reference_upload_tokens',
+      'episode_export_jobs',
+      'mobile_push_tokens',
+    ]) {
+      expect(sql).toContain(`ON ${table}`);
+    }
+    expect(sql).toContain(
+      'BEFORE INSERT OR UPDATE ON generation_jobs',
+    );
+  });
+
   it('deployment invariantはstatus・retry・claim pairを検査する', async () => {
     const database = new RecordingDatabase();
 
@@ -33,6 +61,22 @@ describe('account deletion request migration 027', () => {
     expect(
       database.queries.some((sql) =>
         sql.includes('(processing_token IS NULL) <> (processing_started_at IS NULL)'),
+      ),
+    ).toBe(true);
+    expect(
+      database.queries.some((sql) => sql.includes('account_deletion_requests.identity_key')),
+    ).toBe(true);
+    expect(
+      database.queries.some((sql) => sql.includes('users.account_deletion_timestamps')),
+    ).toBe(true);
+    expect(
+      database.queries.some((sql) =>
+        sql.includes('account_deletion_requests.completed_scrub'),
+      ),
+    ).toBe(true);
+    expect(
+      database.queries.some((sql) =>
+        sql.includes('account_deletion_requests.user_anchor'),
       ),
     ).toBe(true);
   });

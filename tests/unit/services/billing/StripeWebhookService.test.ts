@@ -356,6 +356,36 @@ describe('StripeWebhookService', () => {
     });
   });
 
+  it('削除済みaccountのpaid checkoutはeventを完了扱いにして権利を復活させない', async () => {
+    const repository = seedRepository();
+    const current = repository.userById.get('user-1');
+    if (current === undefined) {
+      throw new Error('billing user fixture missing');
+    }
+    const deletedUser = {
+      ...current,
+      accountDeleted: true,
+    } as BillingUserProfile;
+    repository.userById.set('user-1', deletedUser);
+    repository.userByCustomerId.set('cus_123', deletedUser);
+    const creditGrantService = new FakeBillingCreditGrantService();
+    const stripeClient = new FakeStripeBillingClient();
+    const service = buildService(
+      repository,
+      creditGrantService,
+      stripeClient,
+    );
+
+    await service.handleWebhook(Buffer.from('{}'), 'sig');
+
+    expect(repository.processedEvents.has('evt_checkout_sub')).toBe(true);
+    expect(repository.insertedCustomerIds).toEqual([]);
+    expect(repository.subscriptions).toEqual([]);
+    expect(repository.updatedPlans).toEqual([]);
+    expect(repository.paymentRecords).toEqual([]);
+    expect(creditGrantService.monthlyGrants).toEqual([]);
+  });
+
   it('checkout.session.completed grants enterprise monthly credits to the organization workspace', async () => {
     const repository = seedRepository();
     const creditGrantService = new FakeBillingCreditGrantService();

@@ -14,6 +14,8 @@ interface BillingUserProfileRow extends QueryResultRow {
   email: string;
   stripe_customer_id: string | null;
   plan_code: string;
+  account_deletion_started_at: Date | null;
+  account_deleted_at: Date | null;
 }
 
 interface StripeCustomerIdRow extends QueryResultRow {
@@ -46,10 +48,15 @@ interface PaymentRecordRow extends QueryResultRow {
 
 export interface BillingRepository {
   transaction<T>(work: (client: DatabaseClient) => Promise<T>): Promise<T>;
-  findBillingUserProfile(userId: string, client?: DatabaseClient): Promise<BillingUserProfile | null>;
+  findBillingUserProfile(
+    userId: string,
+    client?: DatabaseClient,
+    forUpdate?: boolean,
+  ): Promise<BillingUserProfile | null>;
   findBillingUserProfileByStripeCustomerId(
     stripeCustomerId: string,
     client?: DatabaseClient,
+    forUpdate?: boolean,
   ): Promise<BillingUserProfile | null>;
   setStripeCustomerId(userId: string, stripeCustomerId: string, client?: DatabaseClient): Promise<string | null>;
   updateUserPlanCode(userId: string, planCode: string, client: DatabaseClient): Promise<boolean>;
@@ -91,12 +98,20 @@ export class PostgresBillingRepository implements BillingRepository {
   public async findBillingUserProfile(
     userId: string,
     client: DatabaseClient = this.client,
+    forUpdate = false,
   ): Promise<BillingUserProfile | null> {
     const result = await client.query<BillingUserProfileRow>(
       `
-      SELECT id, email, stripe_customer_id, plan_code
+      SELECT
+        id,
+        email,
+        stripe_customer_id,
+        plan_code,
+        account_deletion_started_at,
+        account_deleted_at
       FROM users
       WHERE id = $1
+      ${forUpdate ? 'FOR UPDATE' : ''}
       `,
       [userId],
     );
@@ -107,12 +122,20 @@ export class PostgresBillingRepository implements BillingRepository {
   public async findBillingUserProfileByStripeCustomerId(
     stripeCustomerId: string,
     client: DatabaseClient = this.client,
+    forUpdate = false,
   ): Promise<BillingUserProfile | null> {
     const result = await client.query<BillingUserProfileRow>(
       `
-      SELECT id, email, stripe_customer_id, plan_code
+      SELECT
+        id,
+        email,
+        stripe_customer_id,
+        plan_code,
+        account_deletion_started_at,
+        account_deleted_at
       FROM users
       WHERE stripe_customer_id = $1
+      ${forUpdate ? 'FOR UPDATE' : ''}
       `,
       [stripeCustomerId],
     );
@@ -131,6 +154,8 @@ export class PostgresBillingRepository implements BillingRepository {
       SET stripe_customer_id = COALESCE(stripe_customer_id, $2),
           updated_at = NOW()
       WHERE id = $1
+        AND account_deletion_started_at IS NULL
+        AND account_deleted_at IS NULL
       RETURNING stripe_customer_id
       `,
       [userId, stripeCustomerId],
@@ -146,6 +171,8 @@ export class PostgresBillingRepository implements BillingRepository {
       SET plan_code = $2,
           updated_at = NOW()
       WHERE id = $1
+        AND account_deletion_started_at IS NULL
+        AND account_deleted_at IS NULL
       `,
       [userId, planCode],
     );
@@ -421,6 +448,12 @@ function mapBillingUserProfileRow(row: BillingUserProfileRow): BillingUserProfil
     email: row.email,
     stripeCustomerId: row.stripe_customer_id,
     planCode: row.plan_code as BillingUserProfile['planCode'],
+    ...(
+      row.account_deletion_started_at == null
+      && row.account_deleted_at == null
+        ? {}
+        : { accountDeleted: true }
+    ),
   };
 }
 

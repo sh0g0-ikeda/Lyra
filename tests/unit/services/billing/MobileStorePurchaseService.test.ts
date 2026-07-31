@@ -58,6 +58,30 @@ describe('MobileStorePurchaseService', () => {
     expect(repository.purchases[0]?.externalPurchaseKey).not.toContain('raw-original-id');
   });
 
+  it('削除済みaccountのprovider eventは台帳化してもcreditとplanを復活させない', async () => {
+    const repository = new FakeStorePurchaseRepository([userId]);
+    repository.deletedUsers.add(userId);
+    const credits = new FakeCreditRepository();
+    const service = createService(
+      repository,
+      credits,
+      new FakeAppleVerifier(applePurchase()),
+      new FakeGoogleVerifier(),
+    );
+
+    const result = await service.verifyApplePurchase({
+      userId,
+      signedTransaction: 'post-deletion-event',
+      environment: 'sandbox',
+    });
+
+    expect(result.creditsChanged).toBe(0);
+    expect(repository.purchases).toHaveLength(1);
+    expect(repository.events).toHaveLength(1);
+    expect(repository.users.get(userId)?.planCode).toBe('free');
+    expect(credits.ledger).toHaveLength(0);
+  });
+
   it('pendingとcancelledでは新しいcreditを付与しない', async () => {
     const repository = new FakeStorePurchaseRepository([userId]);
     const credits = new FakeCreditRepository();
@@ -544,6 +568,7 @@ class FakeGoogleVerifier implements GooglePlayPurchaseVerifierPort {
 
 class FakeStorePurchaseRepository implements StorePurchaseRepository {
   public readonly users = new Map<string, StorePurchaseUserRecord>();
+  public readonly deletedUsers = new Set<string>();
   public readonly activeStripeUsers = new Set<string>();
   public readonly purchases: StorePurchaseRecord[] = [];
   public readonly events: StorePurchaseEventInput[] = [];
@@ -551,7 +576,7 @@ class FakeStorePurchaseRepository implements StorePurchaseRepository {
 
   public constructor(userIds: string[]) {
     for (const id of userIds) {
-      this.users.set(id, { id, planCode: 'free' });
+      this.users.set(id, { id, planCode: 'free', accountDeleted: false });
     }
   }
 
@@ -562,7 +587,13 @@ class FakeStorePurchaseRepository implements StorePurchaseRepository {
   public async lockPurchaseKey(): Promise<void> {}
 
   public async findUserForUpdate(userId: string): Promise<StorePurchaseUserRecord | null> {
-    return this.users.get(userId) ?? null;
+    const user = this.users.get(userId);
+    return user === undefined
+      ? null
+      : ({
+          ...user,
+          accountDeleted: this.deletedUsers.has(userId),
+        } as StorePurchaseUserRecord);
   }
 
   public async findPurchaseForUpdate(

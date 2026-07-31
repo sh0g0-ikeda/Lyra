@@ -216,6 +216,127 @@ export const currentSessionSchema = z.object({
   ),
 });
 
+const accountDeletionPersonalDataSchema = z
+  .object({
+    account: z.literal('anonymized'),
+    personal_works: z.literal('deleted'),
+    organization_memberships: z.literal('removed'),
+    billing_records: z.literal('retained_for_legal_and_security'),
+  })
+  .strict();
+
+export const accountDeletionPreviewResponseSchema = z
+  .object({
+    personal_data: accountDeletionPersonalDataSchema,
+    unique_owner_organizations: z
+      .array(
+        z
+          .object({
+            id: idSchema,
+            name: z.string().min(1).max(120),
+          })
+          .strict(),
+      )
+      .max(25),
+    active_personal_stripe_subscription_count: z.number().int().nonnegative(),
+    active_store_subscriptions: z
+      .array(
+        z
+          .object({
+            store: mobileStoreSchema,
+            expires_at: timestampSchema.nullable(),
+            auto_renew_enabled: z.boolean().nullable(),
+            manage_url: z.string().url(),
+          })
+          .strict(),
+      )
+      .max(20),
+    personal_asset_count: z.number().int().nonnegative(),
+    active_personal_job_count: z.number().int().nonnegative(),
+  })
+  .strict();
+
+const accountDeletionBlockerSchema = z.discriminatedUnion('code', [
+  z
+    .object({
+      code: z.literal('UNIQUE_ORGANIZATION_OWNER'),
+      organizations: z
+        .array(
+          z
+            .object({
+              id: idSchema,
+              name: z.string().min(1).max(120),
+            })
+            .strict(),
+        )
+        .max(25),
+    })
+    .strict(),
+  z
+    .object({
+      code: z.literal('ACTIVE_PERSONAL_JOB'),
+      job_count: z.number().int().positive(),
+    })
+    .strict(),
+  z
+    .object({
+      code: z.literal('ACTIVE_PERSONAL_SUBSCRIPTION'),
+      subscription_count: z.number().int().positive(),
+    })
+    .strict(),
+  z
+    .object({
+      code: z.literal('ACTIVE_STORE_SUBSCRIPTION'),
+      subscription_count: z.number().int().positive(),
+    })
+    .strict(),
+  z
+    .object({
+      code: z.literal('PERSONAL_ASSETS'),
+      asset_count: z.number().int().positive(),
+    })
+    .strict(),
+]);
+
+const accountDeletionEmptyBlockersSchema = z.array(z.never()).max(0);
+
+export const accountDeletionResultResponseSchema = z.discriminatedUnion(
+  'status',
+  [
+    z
+      .object({
+        status: z.literal('blocked'),
+        blockers: z.array(accountDeletionBlockerSchema).min(1).max(16),
+      })
+      .strict(),
+    z
+      .object({
+        status: z.literal('in_progress'),
+        blockers: accountDeletionEmptyBlockersSchema,
+      })
+      .strict(),
+    z
+      .object({
+        status: z.literal('pending_external_action'),
+        blockers: accountDeletionEmptyBlockersSchema,
+        next_action: z.enum([
+          'cancel_personal_subscriptions',
+          'delete_personal_assets',
+          'anonymize_personal_data',
+          'disable_identity',
+          'delete_identity',
+        ]),
+      })
+      .strict(),
+    z
+      .object({
+        status: z.literal('completed'),
+        blockers: accountDeletionEmptyBlockersSchema,
+      })
+      .strict(),
+  ],
+);
+
 export const organizationSchema = z
   .object({
     id: idSchema,

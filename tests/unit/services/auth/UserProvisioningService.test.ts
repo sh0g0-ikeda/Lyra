@@ -3,6 +3,7 @@ import type { CreditBalanceSnapshot } from '../../../../src/domain/types/credit.
 import type { AuthenticatedUser } from '../../../../src/domain/types/user.js';
 import type { UserRepository } from '../../../../src/repositories/UserRepository.js';
 import { UserProvisioningService } from '../../../../src/services/auth/UserProvisioningService.js';
+import type { AccountDeletionIdentityGuardPort } from '../../../../src/services/account/AccountDeletionIdentityGuard.js';
 import type {
   ConsumeCreditsParams,
   CreditServicePort,
@@ -73,6 +74,16 @@ class FakeCreditService implements CreditServicePort {
       totalCredits: 0,
       monthlyExpiresAt: null,
     };
+  }
+}
+
+class FakeAccountDeletionIdentityGuard implements AccountDeletionIdentityGuardPort {
+  public blocked = false;
+  public checkedIdentities: string[] = [];
+
+  public async isBlockedIdentity(identityId: string): Promise<boolean> {
+    this.checkedIdentities.push(identityId);
+    return this.blocked;
   }
 }
 
@@ -171,6 +182,40 @@ describe('UserProvisioningService', () => {
       isNewUser: false,
     });
     expect(creditService.signupBonusUserIds).toEqual([]);
+  });
+
+  it('subject lookupで見つからない削除開始済みidentityは再作成しない', async () => {
+    const repository = new FakeUserRepository();
+    const creditService = new FakeCreditService();
+    const guard = new FakeAccountDeletionIdentityGuard();
+    guard.blocked = true;
+    const service = new UserProvisioningService(repository, creditService, guard);
+
+    await expect(
+      service.provisionFromSupabaseClaims({
+        sub: 'deleted-cognito-sub',
+        email: 'user@example.com',
+      }),
+    ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+
+    expect(guard.checkedIdentities).toEqual(['deleted-cognito-sub']);
+    expect(creditService.signupBonusUserIds).toEqual([]);
+  });
+
+  it('既存identityは追加guard queryなしで従来どおり返す', async () => {
+    const repository = new FakeUserRepository();
+    repository.existingUserBySupabaseId = buildUser();
+    const guard = new FakeAccountDeletionIdentityGuard();
+    const service = new UserProvisioningService(repository, new FakeCreditService(), guard);
+
+    await expect(
+      service.provisionFromSupabaseClaims({
+        sub: 'supabase-1',
+        email: 'user@example.com',
+      }),
+    ).resolves.toMatchObject({ isNewUser: false });
+
+    expect(guard.checkedIdentities).toEqual([]);
   });
 });
 

@@ -13,6 +13,7 @@ export interface BillingUserProfile {
   email: string;
   stripeCustomerId: string | null;
   planCode: SubscriptionPlanCode;
+  accountDeleted?: boolean;
 }
 
 export interface SubscriptionRecord {

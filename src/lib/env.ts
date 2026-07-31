@@ -143,6 +143,26 @@ const envSchema = z.object({
     .string()
     .optional()
     .transform((value) => value === 'true'),
+  ACCOUNT_DELETION_ENABLED: z
+    .string()
+    .optional()
+    .transform((value) => value === 'true'),
+  ACCOUNT_DELETION_IDENTITY_HASH_SECRET: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.string().min(32).optional(),
+  ),
+  ACCOUNT_DELETION_RECOVERY_INTERVAL_MS: z.coerce
+    .number()
+    .int()
+    .min(5_000)
+    .max(3_600_000)
+    .default(30_000),
+  ACCOUNT_DELETION_RECOVERY_BATCH_SIZE: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .max(100)
+    .default(10),
   MOBILE_STORE_IDENTIFIER_HASH_SECRET: z.string().min(1).optional(),
   MOBILE_STORE_PROVIDER_TIMEOUT_MS: z.coerce
     .number()

@@ -33,6 +33,7 @@ export interface StorePurchaseRecord {
 export interface StorePurchaseUserRecord {
   id: string;
   planCode: string;
+  accountDeleted: boolean;
 }
 
 export interface StoreSubscriptionSummaryRecord {
@@ -185,9 +186,18 @@ export class PostgresStorePurchaseRepository implements StorePurchaseRepository 
     userId: string,
     client: DatabaseClient,
   ): Promise<StorePurchaseUserRecord | null> {
-    const result = await client.query<{ id: string; plan_code: string }>(
+    const result = await client.query<{
+      id: string;
+      plan_code: string;
+      account_deletion_started_at: Date | null;
+      account_deleted_at: Date | null;
+    }>(
       `
-      SELECT id, plan_code
+      SELECT
+        id,
+        plan_code,
+        account_deletion_started_at,
+        account_deleted_at
       FROM users
       WHERE id = $1
       FOR UPDATE
@@ -195,7 +205,15 @@ export class PostgresStorePurchaseRepository implements StorePurchaseRepository 
       [userId],
     );
     const row = result.rows[0];
-    return row === undefined ? null : { id: row.id, planCode: row.plan_code };
+    return row === undefined
+      ? null
+      : {
+          id: row.id,
+          planCode: row.plan_code,
+          accountDeleted:
+            row.account_deletion_started_at !== null
+            || row.account_deleted_at !== null,
+        };
   }
 
   public async findPurchaseForUpdate(

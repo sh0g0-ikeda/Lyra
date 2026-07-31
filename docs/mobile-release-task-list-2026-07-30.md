@@ -242,8 +242,8 @@ Codex単独で進める次の順序は、`CI安定化 → PR-A継続 → 契約�
     - [x] Organization Workspace一覧へ既存wire互換のoptional bounded opaque cursorを接続
       - 証跡: [PR #126](https://github.com/sh0g0-ikeda/Lyra/pull/126)。queryなしの従来経路と`{ organizations: [...] }`を維持し、`limit`指定時だけactive membership scope付きkeyset pageと`next_cursor`を返す
     - 現状: job履歴、works、entities、pages、organizationsはbounded opaque cursor、compositionはbounded limitとしてinventoryとrequired CIで固定
-- [ ] PR-B: account deletion / upload token / export基盤
-  - 主な所有: migrations 027, 031, 032, 036と対応Route/Service/Repository
+- [x] PR-B: account deletion / upload token / export基盤
+  - 主な所有: migrations 027, 031, 032, 036, 037と対応Route/Service/Repository
   - 完了条件: personal/org tenancy、S3 ownership、削除冪等性がgreen
   - [x] account deletion requestの永続化checkpointをAPI未接続で先行統合
     - 証跡: [PR #110](https://github.com/sh0g0-ikeda/Lyra/pull/110)。migration 027をfresh DBへ適用し、44 invariant / 0 violationsを確認
@@ -266,6 +266,9 @@ Codex単独で進める次の順序は、`CI安定化 → PR-A継続 → 契約�
   - [x] episode exportの認証API・専用SQS・outbox recovery・短命download・期限切れcleanupを既定OFFで接続
     - 証跡: [PR #131](https://github.com/sh0g0-ikeda/Lyra/pull/131)。strict create/status contract、organization export権限、commit後dispatch、version付き専用payload、partial batch retry、5分以下のHTTPS署名、delete後mark、fresh DB 58 invariant / 0 violationsを確認
     - 安全境界: `EPISODE_EXPORT_ENABLED=false`を維持し、queue / IAM / lifecycle / task definition / Mobile clientは未設定。既存1ページexport、generation queue、`generation_jobs`、credit処理は変更しない
+  - [x] 課金安全なaccount deletion API・identity tombstone・外部処理checkpoint・recoveryを既定OFFで接続
+    - 証跡: [PR #133](https://github.com/sh0g0-ikeda/Lyra/pull/133)。全Vitest / Bun各1662件成功・1件skip、fresh DB 001〜037と62 invariant / 0 violations、実DBでpast_due Stripe・pending Store・4 assets・組織作品・Push deliveryを含む削除E2Eを確認
+    - 安全境界: `ACCOUNT_DELETION_ENABLED=false`を維持。本人ID・subscription ID・S3 keyをclientから受け取らず、組織作品と課金台帳を保持し、完了時はHMAC tombstone以外のcheckpoint識別子を消去。本番IAM / secret / recovery worker / Mobile UIは未設定
 - [x] PR-C: Mobile store billing Backend
   - 主な所有: migration 029、Apple/Google verifier、purchase service、webhook、ledger
   - 完了条件: 課金OFFで既存Webの挙動を変えず、focused testsがgreen
@@ -426,6 +429,9 @@ Codex単独で進める次の順序は、`CI安定化 → PR-A継続 → 契約�
 - [x] 036 episode export processing lease
   - 完了条件: expired leaseを再claimでき、古いWorkerがprogressまたはterminal stateを上書きしない
   - 証跡: [PR #128](https://github.com/sh0g0-ikeda/Lyra/pull/128)。lease token / heartbeat / attempt制約、atomic claim、expired reclaim、stale token拒否、outbox / cleanup Repositoryを確認してmainへ統合
+- [x] 037 account deletion runtime guard
+  - 完了条件: identity再作成、削除中の個人root作成、完了checkpoint残存、組織owner競合を防ぐ
+  - 証跡: [PR #133](https://github.com/sh0g0-ikeda/Lyra/pull/133)。HMAC identity tombstone、started/deleted時系列、personal write guard、62 deployment invariant、組織row lockと実PostgreSQL削除E2Eを確認
 
 #### DB-310 本番migration計画
 
