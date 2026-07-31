@@ -81,6 +81,11 @@ export interface GeneratePageSkeletonInput {
   language: 'ja' | 'en';
 }
 
+export interface UpdatePageSettingsInput {
+  dialogue_mode?: PageRecord['dialogue_mode'];
+  page_dialogue_toggle?: boolean;
+}
+
 export interface CreateStoryItemInput {
   order: number;
   title: string;
@@ -607,6 +612,25 @@ export class LyraMobileApiClient {
       throw invalidApiResponse();
     }
     return response;
+  }
+
+  public async updatePageSettings(
+    pageId: string,
+    body: UpdatePageSettingsInput,
+    organizationId: string | null = null,
+  ): Promise<PageRecord> {
+    if (Object.keys(body).length === 0) {
+      throw new ApiError('INVALID_REQUEST', 422, 'The request is invalid.');
+    }
+    const page = await this.requestJson(
+      withOrganizationQuery(`/api/pages/${encodeURIComponent(pageId)}`, organizationId),
+      pageSchema,
+      { method: 'PUT', body },
+    );
+    if (page.id !== pageId) {
+      throw invalidApiResponse();
+    }
+    return page;
   }
 
   public async updatePanel(
