@@ -6,7 +6,7 @@ import {
   PageSettingsSection,
   type PageSettingsSectionHandle,
 } from '../src/components/PageSettingsSection';
-import type { PageRecord, UpdatePageSettingsInput } from '../src/lib/api';
+import type { PageRecord, SceneRecord, UpdatePageSettingsInput } from '../src/lib/api';
 import { storyQueryKeys } from '../src/lib/storyQueryKeys';
 
 vi.mock('react-native', () => ({
@@ -25,6 +25,7 @@ vi.mock('react-native', () => ({
   ),
   StyleSheet: { create: <T,>(styles: T): T => styles },
   Text: 'text',
+  TextInput: 'text-input',
   View: 'view',
 }));
 
@@ -90,11 +91,13 @@ describe('PageSettingsSection', () => {
     pages = [buildPage()],
     ref = createRef<PageSettingsSectionHandle>(),
     resolveDirtyAction,
+    scenes = [buildScene()],
   }: {
     editingBlocked?: boolean;
     pages?: PageRecord[];
     ref?: React.RefObject<PageSettingsSectionHandle | null>;
     resolveDirtyAction?: () => Promise<'save' | 'discard' | 'cancel'>;
+    scenes?: SceneRecord[];
   } = {}): Promise<{
     queryClient: QueryClient;
     ref: React.RefObject<PageSettingsSectionHandle | null>;
@@ -122,6 +125,7 @@ describe('PageSettingsSection', () => {
             ref={ref}
             refreshPages={refreshPages}
             resolveDirtyAction={resolveDirtyAction}
+            scenes={scenes}
             sessionKey="session-1"
           />
         </QueryClientProvider>,
@@ -180,6 +184,100 @@ describe('PageSettingsSection', () => {
     expect(JSON.stringify(renderer.toJSON())).toContain('ページ設定を保存しました');
   });
 
+  it('styleとprovenanceの変更fieldだけを保存しserver compiled styleをcacheへ採用する', async () => {
+    api.updatePageSettings.mockResolvedValue({
+      ...buildPage(),
+      layout_config: {
+        style_reference: {
+          title: '水彩調',
+          notes: '淡い背景',
+          compiled_brief: 'server compiled brief',
+          compiler_provider: 'openai',
+        },
+      },
+      story_page_purpose: '静かな転換を示す',
+      updated_at: '2026-08-01T00:00:04.000Z',
+    });
+    const { queryClient, renderer } = await renderSection();
+    await selectFirstPage(renderer);
+
+    await act(async () => {
+      renderer.root.findByProps({ accessibilityLabel: '画風リファレンス名' })
+        .props.onChangeText('  水彩調  ');
+      renderer.root.findByProps({ accessibilityLabel: '画風リファレンスの補足' })
+        .props.onChangeText('  淡い背景  ');
+      renderer.root.findByProps({ accessibilityLabel: 'このページの目的' })
+        .props.onChangeText('  静かな転換を示す  ');
+      await Promise.resolve();
+    });
+    await act(async () => {
+      renderer.root.findByProps({ label: 'ページ設定を保存' }).props.onPress();
+      await flushQueries();
+    });
+
+    expect(api.updatePageSettings).toHaveBeenCalledWith(
+      buildPage().id,
+      {
+        story_page_purpose: '静かな転換を示す',
+        style_reference: {
+          notes: '淡い背景',
+          title: '水彩調',
+        },
+      },
+      organizationId,
+    );
+    expect(queryClient.getQueryData<{ pages: PageRecord[] }>(
+      storyQueryKeys('session-1', organizationId).pages(episodeId),
+    )?.pages[0]?.layout_config).toMatchObject({
+      style_reference: {
+        compiled_brief: 'server compiled brief',
+        title: '水彩調',
+      },
+    });
+  });
+
+  it('source sceneは保存ID順で表示し不明IDも黙って捨てない', async () => {
+    const knownScene = buildScene();
+    const missingSceneId = '77777777-7777-4777-8777-777777777777';
+    const { renderer } = await renderSection({
+      pages: [{
+        ...buildPage(),
+        story_source_scene_ids: [knownScene.id, missingSceneId],
+      }],
+      scenes: [knownScene, {
+        ...knownScene,
+        id: missingSceneId,
+        episode_id: '88888888-8888-4888-8888-888888888888',
+      }],
+    });
+    await selectFirstPage(renderer);
+
+    const rendered = JSON.stringify(renderer.toJSON());
+    expect(rendered).toContain('シーン 2: 屋上');
+    expect(rendered).toContain('不明または削除済みのシーン');
+  });
+
+  it('style titleなしでnotesだけある場合は再取得もPUTもせずdraftを保持する', async () => {
+    const pageWithoutStyle = { ...buildPage(), layout_config: {} };
+    const { renderer } = await renderSection({ pages: [pageWithoutStyle] });
+    await selectFirstPage(renderer);
+    await act(async () => {
+      renderer.root.findByProps({ accessibilityLabel: '画風リファレンスの補足' })
+        .props.onChangeText('補足だけ');
+      await Promise.resolve();
+    });
+    await act(async () => {
+      renderer.root.findByProps({ label: 'ページ設定を保存' }).props.onPress();
+      await flushQueries();
+    });
+
+    expect(refreshPages).not.toHaveBeenCalled();
+    expect(api.updatePageSettings).not.toHaveBeenCalled();
+    expect(renderer.root.findByProps({ accessibilityLabel: '画風リファレンスの補足' }).props.value)
+      .toBe('補足だけ');
+    expect(JSON.stringify(renderer.toJSON())).toContain('補足を保存するには画風リファレンス名が必要です');
+  });
+
   it('対象設定がremote変更された場合はstale保存を拒否してdraftを保持する', async () => {
     refreshPages.mockResolvedValue([{
       ...buildPage(),
@@ -203,6 +301,30 @@ describe('PageSettingsSection', () => {
     expect(renderer.root.findByProps({
       accessibilityLabel: 'セリフを吹き出しだけにする',
     }).props.accessibilityState).toMatchObject({ selected: true });
+    expect(JSON.stringify(renderer.toJSON())).toContain('別の処理でページ設定が更新されました');
+  });
+
+  it('source sceneがremote変更された場合は古いpurposeの保存を拒否してdraftを保持する', async () => {
+    refreshPages.mockResolvedValue([{
+      ...buildPage(),
+      story_source_scene_ids: ['77777777-7777-4777-8777-777777777777'],
+      updated_at: '2026-08-01T00:00:02.000Z',
+    }]);
+    const { renderer } = await renderSection();
+    await selectFirstPage(renderer);
+    await act(async () => {
+      renderer.root.findByProps({ accessibilityLabel: 'このページの目的' })
+        .props.onChangeText('未保存の新しい目的');
+      await Promise.resolve();
+    });
+    await act(async () => {
+      renderer.root.findByProps({ label: 'ページ設定を保存' }).props.onPress();
+      await flushQueries();
+    });
+
+    expect(api.updatePageSettings).not.toHaveBeenCalled();
+    expect(renderer.root.findByProps({ accessibilityLabel: 'このページの目的' }).props.value)
+      .toBe('未保存の新しい目的');
     expect(JSON.stringify(renderer.toJSON())).toContain('別の処理でページ設定が更新されました');
   });
 
@@ -236,6 +358,12 @@ describe('PageSettingsSection', () => {
     const { renderer } = await renderSection({ pages: [{ ...buildPage(), status }] });
     await selectFirstPage(renderer);
 
+    expect(renderer.root.findByProps({ accessibilityLabel: '画風リファレンス名' }).props.editable)
+      .toBe(false);
+    expect(renderer.root.findByProps({ accessibilityLabel: 'このページの目的' }).props.editable)
+      .toBe(false);
+    expect(renderer.root.findByProps({ accessibilityLabel: '次ページへ引き継ぐ連続性メモ' }).props.editable)
+      .toBe(false);
     expect(renderer.root.findByProps({ label: 'ページ設定を保存' }).props.disabled).toBe(true);
     expect(JSON.stringify(renderer.toJSON())).toContain('このページは現在編集できません');
     expect(api.updatePageSettings).not.toHaveBeenCalled();
@@ -248,6 +376,10 @@ describe('PageSettingsSection', () => {
     expect(renderer.root.findByProps({
       accessibilityLabel: 'セリフを吹き出しだけにする',
     }).props.accessibilityState).toMatchObject({ disabled: true });
+    expect(renderer.root.findByProps({ accessibilityLabel: '画風リファレンス名' }).props.editable)
+      .toBe(false);
+    expect(renderer.root.findByProps({ accessibilityLabel: 'このページの目的' }).props.editable)
+      .toBe(false);
     expect(renderer.root.findByProps({ label: 'ページ設定を保存' }).props.disabled).toBe(true);
     expect(api.updatePageSettings).not.toHaveBeenCalled();
   });
@@ -377,6 +509,7 @@ describe('PageSettingsSection', () => {
             pageListReady
             pages={[nextPage]}
             refreshPages={refreshPages}
+            scenes={[buildScene()]}
             sessionKey={nextSessionKey}
           />
         </QueryClientProvider>,
@@ -414,10 +547,15 @@ function buildPage(): PageRecord {
     id: '11111111-1111-4111-8111-111111111111',
     episode_id: episodeId,
     page_number: 1,
-    layout_config: {},
+    layout_config: {
+      style_reference: {
+        title: '劇画調',
+        notes: '硬質な都市背景',
+      },
+    },
     story_source_scene_ids: [],
-    story_page_purpose: null,
-    story_continuity_note: null,
+    story_page_purpose: '屋上の危機を示す',
+    story_continuity_note: '雨は次のページまで続く',
     dialogue_mode: 'image_baked',
     page_dialogue_toggle: true,
     generation_mode: null,
@@ -426,6 +564,21 @@ function buildPage(): PageRecord {
     panel_count: 2,
     frame_count: 2,
     balloon_count: 0,
+    created_at: '2026-08-01T00:00:00.000Z',
+    updated_at: '2026-08-01T00:00:00.000Z',
+  };
+}
+
+function buildScene(): SceneRecord {
+  return {
+    id: '33333333-3333-4333-8333-333333333333',
+    episode_id: episodeId,
+    order: 2,
+    location: '屋上',
+    time: null,
+    atmosphere: null,
+    involved_entity_ids: [],
+    entity_states: [],
     created_at: '2026-08-01T00:00:00.000Z',
     updated_at: '2026-08-01T00:00:00.000Z',
   };

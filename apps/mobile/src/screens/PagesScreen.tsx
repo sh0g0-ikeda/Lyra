@@ -1079,6 +1079,7 @@ export const PagesScreen = forwardRef<PagesScreenHandle, PagesScreenProps>(
             ref={pageSettingsRef}
             refreshPages={refreshPagesForSettings}
             resolveDirtyAction={resolveDirtyAction}
+            scenes={scenes}
             sessionKey={sessionKey}
           />
         )}

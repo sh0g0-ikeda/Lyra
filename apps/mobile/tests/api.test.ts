@@ -675,6 +675,53 @@ describe('LyraMobileApiClient', () => {
     );
   });
 
+  it('Page styleとprovenance設定を既存endpointへ同じorganization scopeで保存する', async () => {
+    const organizationId = '55555555-5555-4555-8555-555555555555';
+    const page = buildPage();
+    const updated = {
+      ...page,
+      layout_config: {
+        style_reference: {
+          title: '水彩調',
+          notes: '淡い背景',
+          compiled_brief: 'server compiled',
+        },
+      },
+      story_continuity_note: '傘を持たせる',
+      story_page_purpose: '静かな転換を示す',
+    };
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(updated));
+    const api = new LyraMobileApiClient({
+      apiBaseUrl: 'https://api.example.com',
+      auth: new FakeAuthSession(),
+      fetcher,
+    });
+
+    await expect(api.updatePageSettings(page.id, {
+      story_continuity_note: '傘を持たせる',
+      story_page_purpose: '静かな転換を示す',
+      style_reference: {
+        notes: '淡い背景',
+        title: '水彩調',
+      },
+    }, organizationId)).resolves.toEqual(updated);
+
+    expect(fetcher).toHaveBeenCalledWith(
+      `https://api.example.com/api/pages/${page.id}?organization_id=${organizationId}`,
+      expect.objectContaining({
+        body: JSON.stringify({
+          story_continuity_note: '傘を持たせる',
+          story_page_purpose: '静かな転換を示す',
+          style_reference: {
+            notes: '淡い背景',
+            title: '水彩調',
+          },
+        }),
+        method: 'PUT',
+      }),
+    );
+  });
+
   it('Page台詞設定APIは別Pageのsuccess responseと空更新を採用しない', async () => {
     const page = buildPage();
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({
