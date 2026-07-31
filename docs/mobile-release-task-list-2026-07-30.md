@@ -6,7 +6,7 @@
 
 対象PR: [#67 feat(mobile): production-ready Lyra mobile workflow](https://github.com/sh0g0-ikeda/Lyra/pull/67)
 
-進捗: 50件完了 / 408件未完了
+進捗: 52件完了 / 407件未完了
 
 実装監査基準: `39187f9`（PR #120 head、`verify` / `mobile-verify`成功）
 
@@ -227,8 +227,8 @@ Codex単独で進める次の順序は、`CI安定化 → PR-A継続 → 契約�
       - 証跡: [PR #107](https://github.com/sh0g0-ikeda/Lyra/pull/107)。個人/法人の処理境界を維持し、同一公開wire schemaで空session・URLと未知fieldを拒否
     - [x] Admin organization contract・credit grantの既存2成功応答を共有contractへ接続
       - 証跡: [PR #108](https://github.com/sh0g0-ikeda/Lyra/pull/108)。operator-only認可とcredit transactionを維持し、部分summaryとbalanceをstrict contractで検証
-  - [ ] Mobile側生成物とcontract drift checkを統合
-    - 依存監査: PR #67のgeneratorはMobile appとcanonical type/payloadの存在を前提とするため、PR-EのMobile基盤と同時に統合する
+  - [x] Mobile側生成物とcontract drift checkを統合
+    - 証跡: [PR #120](https://github.com/sh0g0-ikeda/Lyra/pull/120)。canonical schemaからMobile生成物をbyte-stable生成し、`mobile:contracts:check`をrequired `mobile-verify`へ接続
   - [ ] paginationとAPI inventoryを独立監査
 - [ ] PR-B: account deletion / upload token / export基盤
   - 主な所有: migrations 027, 031, 032と対応Route/Service/Repository
@@ -254,7 +254,10 @@ Codex単独で進める次の順序は、`CI安定化 → PR-A継続 → 契約�
   - 完了条件: cancel/refund/outbox競合テストがgreen
   - [x] job履歴非表示tableとscope / cursor用indexを既存cancel/refund非変更で先行統合
     - 証跡: [PR #113](https://github.com/sh0g0-ikeda/Lyra/pull/113)。旧030のlate-consume自動返金triggerを除外し、API未接続の加算schemaだけをfresh DBで確認
-    - 境界: 一覧・非表示API、汎用cancel、credit settlement、Worker checkpoint、late consume返金は未接続。lock順とrefund unique barrierを同時検証する後続PRで扱う
+    - 境界: 汎用cancel、credit settlement、Worker checkpoint、late consume返金は未接続。lock順とrefund unique barrierを同時検証する後続PRで扱う
+  - [x] scoped job履歴一覧とterminal-only非表示APIを既存job処理非変更で接続
+    - 証跡: [PR #121](https://github.com/sh0g0-ikeda/Lyra/pull/121)。personal owner / active organization memberの二重scope、active-first bounded cursor、terminal row lock、冪等hide、direct GET維持を確認
+    - 安全境界: generic cancel、refund、credit、queue、Worker、push outbox、migrationは変更せず、active jobはhide rowが存在しても常に一覧へ戻す
   - [x] native push tokenの暗号化・hash lookup・logout解除基盤をRoute未接続で先行統合
     - 証跡: [PR #116](https://github.com/sh0g0-ikeda/Lyra/pull/116)。AES-256-GCM、別key HMAC、transactional upsert、user + installation scoped delete、migration 033を確認
     - 境界: Route、runtime secret配線、Mobile通知権限、APNs / FCM、notification outboxは未接続。migration / module導入だけではPushを送信しない
@@ -376,7 +379,7 @@ Codex単独で進める次の順序は、`CI安定化 → PR-A継続 → 契約�
   - 証跡: [PR #112](https://github.com/sh0g0-ikeda/Lyra/pull/112)。purchase / provider event / credit ledgerの三段冪等性、HMAC key形状、個人user FK、credit反転上限をmigration contractとfresh DBで確認
 - [ ] 030 generation job management
   - 完了条件: job一覧、hide、cancel状態が既存jobと互換
-  - 進捗: [PR #113](https://github.com/sh0g0-ikeda/Lyra/pull/113)で履歴非表示tableと一覧indexのみ完了。既存cancel/refundへ即時影響する旧triggerは未統合
+  - 進捗: [PR #113](https://github.com/sh0g0-ikeda/Lyra/pull/113)でtable/index、[PR #121](https://github.com/sh0g0-ikeda/Lyra/pull/121)でscoped一覧・terminal-only hide APIまで完了。generic cancel / refund競合は未完了
 - [x] 031 entity reference upload tokens
   - 完了条件: single-use、期限、MIME/size、user/org bindingが有効
   - 証跡: [PR #114](https://github.com/sh0g0-ikeda/Lyra/pull/114)。conditional `UPDATE ... RETURNING`で同時consumeを1件に限定し、personal/org/entity scopeと5 MiB・最大10分をDBで固定
