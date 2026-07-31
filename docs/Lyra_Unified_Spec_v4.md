@@ -71,7 +71,10 @@ delivery uses authenticated export or short-lived CloudFront signed URLs.
 Episode export artifacts are asynchronous, owner-scoped records with a bounded
 lifetime. Their storage keys are derived from authenticated scope, episode, and job
 identifiers rather than filenames. Applying their persistence migration alone does
-not enable queue dispatch, artifact creation, or download routes.
+not enable queue dispatch, artifact creation, or download routes. Processing uses a
+bounded lease token and heartbeat; only the current lease may update progress or
+write a terminal state, and an expired lease may be reclaimed without allowing the
+older worker to overwrite its replacement.
 
 Native push device tokens are encrypted with authenticated encryption before
 persistence and are located by a separately keyed deterministic digest. Registration
