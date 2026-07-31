@@ -5,12 +5,15 @@ export function storyQueryKeys(
   works(): readonly string[];
   chapters(workId: string): readonly string[];
   episodes(chapterId: string): readonly string[];
+  sceneLists(): readonly string[];
   scenes(episodeId: string): readonly string[];
   pages(episodeId: string): readonly string[];
   panelLists(): readonly string[];
   panels(pageId: string): readonly string[];
   entities(workId: string): readonly string[];
   entityReferenceSet(entityId: string): readonly string[];
+  entityStates(entityId: string): readonly string[];
+  entityStateSceneCatalog(workId: string): readonly string[];
   jobs(): readonly string[];
   job(jobId: string): readonly string[];
 } {
@@ -23,6 +26,7 @@ export function storyQueryKeys(
     works: () => [...root, 'works'] as const,
     chapters: (workId: string) => [...root, 'chapters', workId] as const,
     episodes: (chapterId: string) => [...root, 'episodes', chapterId] as const,
+    sceneLists: () => [...root, 'scenes'] as const,
     scenes: (episodeId: string) => [...root, 'scenes', episodeId] as const,
     pages: (episodeId: string) => [...root, 'pages', episodeId] as const,
     panelLists: () => [...root, 'panels'] as const,
@@ -32,6 +36,12 @@ export function storyQueryKeys(
       ...root,
       'entity-reference-set',
       entityId,
+    ] as const,
+    entityStates: (entityId: string) => [...root, 'entity-states', entityId] as const,
+    entityStateSceneCatalog: (workId: string) => [
+      ...root,
+      'entity-state-scenes',
+      workId,
     ] as const,
     jobs: () => [...root, 'jobs'] as const,
     job: (jobId: string) => [...root, 'job', jobId] as const,

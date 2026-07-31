@@ -9,6 +9,8 @@ import {
   entityImportResponseSchema,
   entityReferenceGenerationResponseSchema,
   entityReferenceSetSchema,
+  entityStateSchema,
+  entityStatesResponseSchema,
   entitySchema,
   generationJobHistoryResponseSchema,
   generationJobResponseSchema,
@@ -37,6 +39,7 @@ export type EntityReferenceGenerationResponse = ReturnType<
   typeof entityReferenceGenerationResponseSchema.parse
 >;
 export type EntityReferenceSetRecord = ReturnType<typeof entityReferenceSetSchema.parse>;
+export type EntityStateRecord = ReturnType<typeof entityStateSchema.parse>;
 export type SceneRecord = ReturnType<typeof sceneSchema.parse>;
 export type PageRecord = ReturnType<typeof pageSchema.parse>;
 export type PanelRecord = ReturnType<typeof panelSchema.parse>;
@@ -74,6 +77,24 @@ export interface ConfirmEntityReferenceInput {
 export type UpdateEntityInput =
   | { name: string; free_description?: string | null }
   | { name?: never; free_description: string | null };
+
+export interface CreateEntityStateInput {
+  scene_id?: string | null;
+  costume_note?: string | null;
+  condition_note?: string | null;
+  hair_note?: string | null;
+  expression_default: string;
+  extra_note?: string | null;
+}
+
+export interface UpdateEntityStateInput {
+  scene_id?: string | null;
+  costume_note?: string | null;
+  condition_note?: string | null;
+  hair_note?: string | null;
+  expression_default?: string;
+  extra_note?: string | null;
+}
 
 export interface GeneratePageSkeletonInput {
   overwrite_existing: false;
@@ -563,6 +584,73 @@ export class LyraMobileApiClient {
     );
   }
 
+  public async getEntityStates(
+    entityId: string,
+    organizationId: string | null = null,
+  ): Promise<{ entity_states: EntityStateRecord[] }> {
+    const response = await this.requestJson(
+      withOrganizationQuery(
+        `/api/entities/${encodeURIComponent(entityId)}/states`,
+        organizationId,
+      ),
+      entityStatesResponseSchema,
+    );
+    if (response.entity_states.some((state) => state.entity_id !== entityId)) {
+      throw invalidApiResponse();
+    }
+    return response;
+  }
+
+  public async createEntityState(
+    entityId: string,
+    body: CreateEntityStateInput,
+    organizationId: string | null = null,
+  ): Promise<EntityStateRecord> {
+    const state = await this.requestJson(
+      withOrganizationQuery(
+        `/api/entities/${encodeURIComponent(entityId)}/states`,
+        organizationId,
+      ),
+      entityStateSchema,
+      { method: 'POST', body },
+    );
+    if (
+      state.entity_id !== entityId
+      || state.costume_ref_id !== null
+      || !entityStateMatchesRequestedFields(state, body)
+    ) {
+      throw invalidApiResponse();
+    }
+    return state;
+  }
+
+  public async updateEntityState(
+    entityId: string,
+    stateId: string,
+    body: UpdateEntityStateInput,
+    organizationId: string | null = null,
+  ): Promise<EntityStateRecord> {
+    if (Object.keys(body).length === 0) {
+      throw new ApiError('INVALID_REQUEST', 422, 'The request is invalid.');
+    }
+    const state = await this.requestJson(
+      withOrganizationQuery(
+        `/api/entities/${encodeURIComponent(entityId)}/states/${encodeURIComponent(stateId)}`,
+        organizationId,
+      ),
+      entityStateSchema,
+      { method: 'PUT', body },
+    );
+    if (
+      state.id !== stateId
+      || state.entity_id !== entityId
+      || !entityStateMatchesRequestedFields(state, body)
+    ) {
+      throw invalidApiResponse();
+    }
+    return state;
+  }
+
   public createScene(
     episodeId: string,
     body: CreateSceneInput,
@@ -878,6 +966,40 @@ function invalidApiResponse(): ApiError {
     502,
     'The server returned an invalid response.',
   );
+}
+
+function entityStateMatchesRequestedFields(
+  state: EntityStateRecord,
+  body: CreateEntityStateInput | UpdateEntityStateInput,
+): boolean {
+  if (body.scene_id !== undefined && state.scene_id !== body.scene_id) return false;
+  if (
+    body.costume_note !== undefined
+    && state.costume_note !== normalizeRequestedNullableText(body.costume_note)
+  ) return false;
+  if (
+    body.condition_note !== undefined
+    && state.condition_note !== normalizeRequestedNullableText(body.condition_note)
+  ) return false;
+  if (
+    body.hair_note !== undefined
+    && state.hair_note !== normalizeRequestedNullableText(body.hair_note)
+  ) return false;
+  if (
+    body.expression_default !== undefined
+    && state.expression_default !== body.expression_default.trim()
+  ) return false;
+  if (
+    body.extra_note !== undefined
+    && state.extra_note !== normalizeRequestedNullableText(body.extra_note)
+  ) return false;
+  return true;
+}
+
+function normalizeRequestedNullableText(value: string | null): string | null {
+  if (value === null) return null;
+  const normalized = value.trim();
+  return normalized.length === 0 ? null : normalized;
 }
 
 function withOrganizationQuery(path: string, organizationId: string | null): string {

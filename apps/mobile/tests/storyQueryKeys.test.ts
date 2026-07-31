@@ -74,6 +74,29 @@ describe('story query keys', () => {
     expect(personal.entityReferenceSet('entity-1')).not.toEqual(
       personal.entityReferenceSet('entity-2'),
     );
+    expect(organization.entityStates('entity-1')).toEqual([
+      'mobile-story',
+      'session-a',
+      'organization:99999999-9999-4999-8999-999999999999',
+      'entity-states',
+      'entity-1',
+    ]);
+    expect(personal.entityStates('entity-1')).not.toEqual(
+      organization.entityStates('entity-1'),
+    );
+    expect(personal.entityStates('entity-1')).not.toEqual(
+      personal.entityStates('entity-2'),
+    );
+    expect(organization.entityStateSceneCatalog('work-1')).toEqual([
+      'mobile-story',
+      'session-a',
+      'organization:99999999-9999-4999-8999-999999999999',
+      'entity-state-scenes',
+      'work-1',
+    ]);
+    expect(personal.entityStateSceneCatalog('work-1')).not.toEqual(
+      organization.entityStateSceneCatalog('work-1'),
+    );
     expect(organization.jobs()).toEqual([
       'mobile-story',
       'session-a',
