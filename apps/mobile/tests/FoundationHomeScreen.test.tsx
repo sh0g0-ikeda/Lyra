@@ -3,7 +3,8 @@ import { act, create } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { FoundationHomeScreen } from '../src/screens/FoundationHomeScreen';
 
-const { prepareToLeave, signOut } = vi.hoisted(() => ({
+const { pagesPrepareToLeave, prepareToLeave, signOut } = vi.hoisted(() => ({
+  pagesPrepareToLeave: vi.fn(),
   prepareToLeave: vi.fn(),
   signOut: vi.fn(),
 }));
@@ -47,6 +48,13 @@ vi.mock('../src/screens/StoryScreen', () => ({
   }),
 }));
 
+vi.mock('../src/screens/PagesScreen', () => ({
+  PagesScreen: forwardRef(function MockPagesScreen(_props, ref) {
+    useImperativeHandle(ref, () => ({ prepareToLeave: pagesPrepareToLeave }));
+    return React.createElement('pages-screen', null, 'Pages editor');
+  }),
+}));
+
 vi.mock('../src/state/AuthSessionProvider', () => ({
   useAuthSession: () => ({
     api: {},
@@ -69,6 +77,7 @@ const session = {
 describe('FoundationHomeScreen', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    pagesPrepareToLeave.mockResolvedValue(true);
     prepareToLeave.mockResolvedValue(true);
     signOut.mockResolvedValue(undefined);
   });
@@ -128,5 +137,27 @@ describe('FoundationHomeScreen', () => {
       await Promise.resolve();
     });
     expect(JSON.stringify(renderer!.toJSON())).toContain('user@example.com');
+  });
+
+  it('StoryからPage、PageからAccountへ移る前に各画面の未保存変更を解決する', async () => {
+    let renderer: ReturnType<typeof create>;
+    await act(async () => {
+      renderer = create(<FoundationHomeScreen session={session} />);
+    });
+
+    await act(async () => {
+      renderer!.root.findByProps({ accessibilityLabel: 'ページを開く' }).props.onPress();
+      await Promise.resolve();
+    });
+    expect(prepareToLeave).toHaveBeenCalledOnce();
+    expect(renderer!.root.findByType('pages-screen')).toBeDefined();
+
+    pagesPrepareToLeave.mockResolvedValue(false);
+    await act(async () => {
+      renderer!.root.findByProps({ accessibilityLabel: 'アカウントを開く' }).props.onPress();
+      await Promise.resolve();
+    });
+    expect(pagesPrepareToLeave).toHaveBeenCalledOnce();
+    expect(renderer!.root.findByType('pages-screen')).toBeDefined();
   });
 });

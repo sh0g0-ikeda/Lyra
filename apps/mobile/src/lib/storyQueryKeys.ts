@@ -5,6 +5,7 @@ export function storyQueryKeys(
   works(): readonly string[];
   chapters(workId: string): readonly string[];
   episodes(chapterId: string): readonly string[];
+  scenes(episodeId: string): readonly string[];
 } {
   const scope = organizationId === null
     ? 'personal'
@@ -15,5 +16,6 @@ export function storyQueryKeys(
     works: () => [...root, 'works'] as const,
     chapters: (workId: string) => [...root, 'chapters', workId] as const,
     episodes: (chapterId: string) => [...root, 'episodes', chapterId] as const,
+    scenes: (episodeId: string) => [...root, 'scenes', episodeId] as const,
   };
 }

@@ -5,6 +5,8 @@ import {
   currentSessionSchema,
   episodeSchema,
   episodesResponseSchema,
+  sceneSchema,
+  scenesResponseSchema,
   workSchema,
   worksResponseSchema,
 } from '../domain/apiSchemas';
@@ -16,6 +18,7 @@ export type CurrentSession = ReturnType<typeof currentSessionSchema.parse>;
 export type WorkRecord = ReturnType<typeof workSchema.parse>;
 export type ChapterRecord = ReturnType<typeof chapterSchema.parse>;
 export type EpisodeRecord = ReturnType<typeof episodeSchema.parse>;
+export type SceneRecord = ReturnType<typeof sceneSchema.parse>;
 
 export interface ListWorksPageInput {
   limit: number;
@@ -26,6 +29,15 @@ export interface CreateStoryItemInput {
   order: number;
   title: string;
 }
+
+export interface CreateSceneInput {
+  order: number;
+  location?: string | null;
+  time?: string | null;
+  atmosphere?: string | null;
+}
+
+export type UpdateSceneInput = Partial<Omit<CreateSceneInput, 'order'>>;
 
 export interface MobileAuthSessionPort {
   getTokens(): Promise<AuthTokens | null>;
@@ -261,6 +273,46 @@ export class LyraMobileApiClient {
   ): Promise<void> {
     return this.requestNoContent(
       withOrganizationQuery(`/api/episodes/${encodeURIComponent(episodeId)}`, organizationId),
+    );
+  }
+
+  public getScenes(
+    episodeId: string,
+    organizationId: string | null = null,
+  ): Promise<{ scenes: SceneRecord[] }> {
+    return this.requestJson(
+      withOrganizationQuery(
+        `/api/episodes/${encodeURIComponent(episodeId)}/scenes`,
+        organizationId,
+      ),
+      scenesResponseSchema,
+    );
+  }
+
+  public createScene(
+    episodeId: string,
+    body: CreateSceneInput,
+    organizationId: string | null = null,
+  ): Promise<SceneRecord> {
+    return this.requestJson(
+      withOrganizationQuery(
+        `/api/episodes/${encodeURIComponent(episodeId)}/scenes`,
+        organizationId,
+      ),
+      sceneSchema,
+      { method: 'POST', body },
+    );
+  }
+
+  public updateScene(
+    sceneId: string,
+    body: UpdateSceneInput,
+    organizationId: string | null = null,
+  ): Promise<SceneRecord> {
+    return this.requestJson(
+      withOrganizationQuery(`/api/scenes/${encodeURIComponent(sceneId)}`, organizationId),
+      sceneSchema,
+      { method: 'PUT', body },
     );
   }
 
