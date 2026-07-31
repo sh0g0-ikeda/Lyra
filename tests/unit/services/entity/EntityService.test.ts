@@ -5,6 +5,9 @@ import type {
   Entity,
   EntityPrimaryReferenceImage,
   EntityRepository,
+  EntityListPage,
+  EntityListPageRequest,
+  EntityListPaginationRepository,
   UpdateEntityInput,
 } from '../../../../src/repositories/EntityRepository.js';
 import type { WorkReader } from '../../../../src/repositories/WorkRepository.js';
@@ -30,8 +33,17 @@ class FakeWorkReader implements WorkReader {
   }
 }
 
-class FakeEntityRepository implements EntityRepository {
+class FakeEntityRepository
+  implements EntityRepository, EntityListPaginationRepository
+{
   private readonly entities = new Map<string, Entity>();
+  public entityPage: EntityListPage = { entities: [], nextCursor: null };
+  public pageRequests: Array<{
+    workId: string;
+    userId: string;
+    request: EntityListPageRequest;
+    organizationId: string | null;
+  }> = [];
 
   public async create(input: CreateEntityInput): Promise<Entity> {
     const entity: Entity = {
@@ -61,6 +73,16 @@ class FakeEntityRepository implements EntityRepository {
     return [...this.entities.values()].filter(
       (entity) => entity.workId === workId && entity.userId === userId,
     );
+  }
+
+  public async findPageByWorkIdAndUserId(
+    workId: string,
+    userId: string,
+    request: EntityListPageRequest,
+    organizationId: string | null = null,
+  ): Promise<EntityListPage> {
+    this.pageRequests.push({ workId, userId, request, organizationId });
+    return this.entityPage;
   }
 
   public async countByIdsAndWorkIdAndUserId(
@@ -138,6 +160,33 @@ class FakeStyleReferenceCompiler implements StyleReferenceCompilerPort {
 }
 
 describe('EntityService', () => {
+  it('アクセス可能な作品のEntity pageをscope・cursor付きで委譲する', async () => {
+    const workReader = new FakeWorkReader();
+    const repository = new FakeEntityRepository();
+    workReader.ownedWorkIds.add('user-1:work-1');
+    const service = new EntityService(repository, workReader);
+    const cursor = {
+      createdAt: now,
+      id: '11111111-1111-4111-8111-111111111111',
+    };
+
+    await service.listEntitiesPage(
+      'user-1',
+      'work-1',
+      { limit: 25, cursor },
+      '22222222-2222-4222-8222-222222222222',
+    );
+
+    expect(repository.pageRequests).toEqual([
+      {
+        workId: 'work-1',
+        userId: 'user-1',
+        request: { limit: 25, cursor },
+        organizationId: '22222222-2222-4222-8222-222222222222',
+      },
+    ]);
+  });
+
   it('所有している作品の場合にエンティティを作成できる', async () => {
     const workReader = new FakeWorkReader();
     workReader.ownedWorkIds.add('user-1:work-1');

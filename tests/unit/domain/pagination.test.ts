@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
+  decodeEntityListCursor,
   decodeGenerationJobHistoryCursor,
   decodeWorkListCursor,
+  encodeEntityListCursor,
   encodeGenerationJobHistoryCursor,
   encodeWorkListCursor,
 } from '../../../src/domain/pagination.js';
@@ -75,5 +77,30 @@ describe('work list cursor', () => {
     const encoded = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
 
     expect(() => decodeWorkListCursor(encoded)).toThrow('cursor is invalid');
+  });
+});
+
+describe('entity list cursor', () => {
+  const entityCursor = {
+    createdAt: new Date('2026-07-31T00:00:00.000Z'),
+    id: '55555555-5555-4555-8555-555555555555',
+  };
+
+  it('作成日時・IDをcanonical base64urlで往復する', () => {
+    const encoded = encodeEntityListCursor(entityCursor);
+
+    expect(encoded).toMatch(/^[A-Za-z0-9_-]+$/u);
+    expect(decodeEntityListCursor(encoded)).toEqual(entityCursor);
+  });
+
+  it.each([
+    ['別endpoint kind', { v: 1, k: 'works', c: entityCursor.createdAt.toISOString(), i: entityCursor.id }],
+    ['version不一致', { v: 2, k: 'entities', c: entityCursor.createdAt.toISOString(), i: entityCursor.id }],
+    ['非canonical日時', { v: 1, k: 'entities', c: '2026-07-31T09:00:00+09:00', i: entityCursor.id }],
+    ['不正UUID', { v: 1, k: 'entities', c: entityCursor.createdAt.toISOString(), i: 'entity-1' }],
+  ])('%sを拒否する', (_name, payload) => {
+    const encoded = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
+
+    expect(() => decodeEntityListCursor(encoded)).toThrow('cursor is invalid');
   });
 });
