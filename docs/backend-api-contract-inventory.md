@@ -106,7 +106,7 @@ Endpoint count: 105
 | `/api/works/:id` | PUT | Authenticated | Strict JSON | `workSchema` | Complete collection | `src/routes/story.ts` |
 | `/api/works/:id/chapters` | GET | Authenticated | Strict JSON | `chaptersResponseSchema` | Complete collection | `src/routes/story.ts` |
 | `/api/works/:id/chapters` | POST | Authenticated | Strict JSON | `chapterSchema` | Complete collection | `src/routes/story.ts` |
-| `/api/works/:work_id/entities` | GET | Authenticated | Strict JSON | `entitiesResponseSchema` | Complete collection | `src/routes/entities.ts` |
+| `/api/works/:work_id/entities` | GET | Authenticated | Strict JSON | `entitiesResponseSchema` | Optional opaque cursor (1-100; max 512 chars) | `src/routes/entities.ts` |
 | `/api/works/:work_id/entities` | POST | Authenticated | Strict JSON | `entitySchema` | Complete collection | `src/routes/entities.ts` |
 | `/healthz` | GET | Public | Operational JSON | Fixed liveness response | Complete collection | `src/routes/health.ts` |
 | `/local-assets/*` | GET | Local only | Binary | Development-only image bytes | Complete collection | `src/routes/localAssets.ts` |

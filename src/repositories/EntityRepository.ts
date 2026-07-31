@@ -13,9 +13,12 @@ import type {
   EntityReferenceSet,
   EntityReferenceSetStatus,
 } from '../domain/types/entityReference.js';
+import { ConfigurationError } from '../domain/errors/index.js';
+import type { EntityListCursor } from '../domain/pagination.js';
 import type { DatabaseClient, TransactionRunner } from '../lib/db.js';
 
 export type { CreateEntityInput, Entity, UpdateEntityInput };
+export type { EntityListCursor } from '../domain/pagination.js';
 
 export interface EntityPrimaryReferenceImage {
   entityId: string;
@@ -43,6 +46,25 @@ export interface EntityRepository {
   ): Promise<EntityPrimaryReferenceImage[]>;
   update(id: string, userId: string, input: UpdateEntityInput, organizationId?: string | null): Promise<Entity | null>;
   delete(id: string, userId: string, organizationId?: string | null): Promise<boolean>;
+}
+
+export interface EntityListPageRequest {
+  limit: number;
+  cursor: EntityListCursor | null;
+}
+
+export interface EntityListPage {
+  entities: Entity[];
+  nextCursor: EntityListCursor | null;
+}
+
+export interface EntityListPaginationRepository {
+  findPageByWorkIdAndUserId(
+    workId: string,
+    userId: string,
+    request: EntityListPageRequest,
+    organizationId?: string | null,
+  ): Promise<EntityListPage>;
 }
 
 export interface EntityReferenceReader {
@@ -111,7 +133,12 @@ interface EntityReferenceSetRow extends QueryResultRow {
  * Owns entity persistence plus reference_set mutations so the confirm/delete
  * flow stays transactional and user-scoped.
  */
-export class PostgresEntityRepository implements EntityRepository, EntityReferenceRepository {
+export class PostgresEntityRepository
+  implements
+    EntityRepository,
+    EntityReferenceRepository,
+    EntityListPaginationRepository
+{
   public constructor(private readonly client: DatabaseClient & Partial<TransactionRunner>) {}
 
   public async create(input: CreateEntityInput): Promise<Entity> {
@@ -218,6 +245,77 @@ export class PostgresEntityRepository implements EntityRepository, EntityReferen
     );
 
     return result.rows.map(mapEntityRow);
+  }
+
+  public async findPageByWorkIdAndUserId(
+    workId: string,
+    userId: string,
+    request: EntityListPageRequest,
+    organizationId: string | null = null,
+  ): Promise<EntityListPage> {
+    if (
+      !Number.isSafeInteger(request.limit)
+      || request.limit < 1
+      || request.limit > 100
+    ) {
+      throw new ConfigurationError('Entity list page limit is invalid');
+    }
+
+    const result = await this.client.query<EntityRow>(
+      `
+      SELECT entities.*
+      FROM entities
+      INNER JOIN works ON works.id = entities.work_id
+      WHERE entities.work_id = $1::uuid
+        AND (
+          ($3::uuid IS NULL
+            AND works.organization_id IS NULL
+            AND entities.user_id = $2::uuid)
+          OR (
+            $3::uuid IS NOT NULL
+            AND works.organization_id = $3::uuid
+            AND EXISTS (
+              SELECT 1
+              FROM organization_members
+              WHERE organization_members.organization_id = works.organization_id
+                AND organization_members.user_id = $2::uuid
+                AND organization_members.status = 'active'
+            )
+          )
+        )
+        AND (
+          $4::timestamptz IS NULL
+          OR entities.created_at < $4::timestamptz
+          OR (
+            entities.created_at = $4::timestamptz
+            AND entities.id < $5::uuid
+          )
+        )
+      ORDER BY entities.created_at DESC, entities.id DESC
+      LIMIT $6
+      `,
+      [
+        workId,
+        userId,
+        organizationId,
+        request.cursor?.createdAt ?? null,
+        request.cursor?.id ?? null,
+        request.limit + 1,
+      ],
+    );
+
+    const rows = result.rows.slice(0, request.limit);
+    const lastRow = rows.at(-1);
+    return {
+      entities: rows.map(mapEntityRow),
+      nextCursor:
+        result.rows.length > request.limit && lastRow !== undefined
+          ? {
+              createdAt: lastRow.created_at,
+              id: lastRow.id,
+            }
+          : null,
+    };
   }
 
   public async findReferenceContextByIdAndUserId(

@@ -36,5 +36,8 @@ describe('Backend API contract inventory', () => {
     expect(inventory).toContain(
       '| `/api/works` | GET | Authenticated | Strict JSON | `worksResponseSchema` | Optional opaque cursor (1-100; max 512 chars) | `src/routes/story.ts` |',
     );
+    expect(inventory).toContain(
+      '| `/api/works/:work_id/entities` | GET | Authenticated | Strict JSON | `entitiesResponseSchema` | Optional opaque cursor (1-100; max 512 chars) | `src/routes/entities.ts` |',
+    );
   });
 });

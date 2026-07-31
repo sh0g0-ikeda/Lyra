@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { createApp } from '../../../src/app.js';
 import { REQUEST_BODY_LIMITS } from '../../../src/routes/requestBody.js';
 import { env } from '../../../src/lib/env.js';
+import { decodeEntityListCursor } from '../../../src/domain/pagination.js';
 import type { CreditBalanceSnapshot } from '../../../src/domain/types/credit.js';
 import type { EntityReferenceSet } from '../../../src/domain/types/entityReference.js';
 import type { AuthenticatedUser, SupabaseJwtClaims } from '../../../src/domain/types/user.js';
@@ -15,6 +16,10 @@ import type {
   EntityReferenceImageExportServicePort,
   ExportedEntityReferenceImage,
 } from '../../../src/services/entity/EntityReferenceImageExportService.js';
+import type {
+  EntityListCursor,
+  EntityListPage,
+} from '../../../src/repositories/EntityRepository.js';
 import type {
   ProvisionedUser,
   UserProvisioningPort,
@@ -70,6 +75,15 @@ class FakeCreditService implements CreditServicePort {
 }
 
 class FakeEntityService implements EntityServicePort {
+  public entityPage: EntityListPage = { entities: [], nextCursor: null };
+  public pageCalls: Array<{
+    userId: string;
+    workId: string;
+    limit: number;
+    cursor: EntityListCursor | null;
+    organizationId: string | null;
+  }> = [];
+
   public async createEntity(
     userId: string,
     requestedWorkId: string,
@@ -108,6 +122,21 @@ class FakeEntityService implements EntityServicePort {
         updatedAt: now,
       },
     ];
+  }
+
+  public async listEntitiesPage(
+    userId: string,
+    requestedWorkId: string,
+    input: { limit: number; cursor: EntityListCursor | null },
+    organizationId: string | null = null,
+  ): Promise<EntityListPage> {
+    this.pageCalls.push({
+      userId,
+      workId: requestedWorkId,
+      ...input,
+      organizationId,
+    });
+    return this.entityPage;
   }
 
   public async getEntity(_userId: string, requestedEntityId: string): Promise<Entity> {
@@ -318,7 +347,75 @@ describe('entity routes', () => {
     const getPayload = (await getResponse.json()) as Record<string, unknown>;
 
     expect(listPayload.entities[0]).not.toHaveProperty('user_id');
+    expect(listPayload).not.toHaveProperty('next_cursor');
     expect(getPayload).not.toHaveProperty('user_id');
+  });
+
+  it('Entity一覧をopaque cursorでpage取得する', async () => {
+    const entityService = new FakeEntityService();
+    const nextCursor: EntityListCursor = {
+      createdAt: now,
+      id: entityId,
+    };
+    entityService.entityPage = {
+      entities: await entityService.listEntities(user.id, workId),
+      nextCursor,
+    };
+    const app = createTestApp(
+      new FakeEntityReferenceService(),
+      new FakeEntityReferenceImageExportService(),
+      entityService,
+    );
+    const token = await createToken();
+    const headers = { Authorization: `Bearer ${token}` };
+
+    const first = await app.request(
+      `/api/works/${workId}/entities?limit=40`,
+      { headers },
+    );
+    const firstPayload = (await first.json()) as { next_cursor: string };
+    const second = await app.request(
+      `/api/works/${workId}/entities?limit=10&cursor=${encodeURIComponent(firstPayload.next_cursor)}`,
+      { headers },
+    );
+
+    expect(first.status).toBe(200);
+    expect(decodeEntityListCursor(firstPayload.next_cursor)).toEqual(nextCursor);
+    expect(second.status).toBe(200);
+    expect(entityService.pageCalls).toEqual([
+      {
+        userId: user.id,
+        workId,
+        limit: 40,
+        cursor: null,
+        organizationId: null,
+      },
+      {
+        userId: user.id,
+        workId,
+        limit: 10,
+        cursor: nextCursor,
+        organizationId: null,
+      },
+    ]);
+  });
+
+  it('Entity一覧の不正limit・cursorを422にする', async () => {
+    const app = createTestApp();
+    const token = await createToken();
+    const headers = { Authorization: `Bearer ${token}` };
+
+    const responses = await Promise.all([
+      app.request(`/api/works/${workId}/entities?limit=0`, { headers }),
+      app.request(`/api/works/${workId}/entities?limit=101`, { headers }),
+      app.request(`/api/works/${workId}/entities?limit=1.5`, { headers }),
+      app.request(`/api/works/${workId}/entities?cursor=opaque`, { headers }),
+      app.request(`/api/works/${workId}/entities?limit=10&cursor=invalid`, { headers }),
+    ]);
+
+    expect(responses.map((response) => response.status)).toEqual([
+      422, 422, 422, 422, 422,
+    ]);
   });
 
   it('未知のキー付き create body は 422 になる', async () => {

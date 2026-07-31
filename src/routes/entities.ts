@@ -8,6 +8,11 @@ import {
   entitySchema,
 } from '../../packages/api-contract/src/mobileApiSchemas.js';
 import { ValidationError } from '../domain/errors/index.js';
+import {
+  decodeEntityListCursor,
+  encodeEntityListCursor,
+  type EntityListCursor,
+} from '../domain/pagination.js';
 import type { Entity } from '../domain/types/entity.js';
 import type { EntityReferenceSet } from '../domain/types/entityReference.js';
 import {
@@ -48,6 +53,7 @@ const referenceCandidateImageQuerySchema = z
   .refine((query) => query.candidate_token !== undefined || query.s3_key !== undefined, {
     message: 'candidate_token is required',
   });
+const MAX_ENTITY_LIST_PAGE_LIMIT = 100;
 
 export interface EntityRouteDependencies {
   authMiddleware: MiddlewareHandler<AppEnv>;
@@ -97,6 +103,26 @@ export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<
     const workId = parseUuidParam(c, 'work_id');
     const organizationId = parseOptionalOrganizationId(c);
     await requireOrganizationCapability(c, dependencies, organizationId, 'view_work');
+    const pageRequest = parseEntityListPageRequest(c);
+    if (pageRequest !== null) {
+      const page = await dependencies.entityService.listEntitiesPage(
+        user.id,
+        workId,
+        pageRequest,
+        organizationId,
+      );
+      const payload = {
+        entities: page.entities.map(toEntityResponse),
+        next_cursor:
+          page.nextCursor === null
+            ? null
+            : encodeEntityListCursor(page.nextCursor),
+      };
+      return c.json(
+        assertMobileResponseContract(entitiesResponseSchema, payload),
+      );
+    }
+
     const entities = await dependencies.entityService.listEntities(user.id, workId, organizationId);
 
     const payload = {
@@ -373,6 +399,38 @@ function parseUuidParam(c: Context<AppEnv>, name: string): string {
   }
 
   return result.data;
+}
+
+function parseEntityListPageRequest(
+  c: Context<AppEnv>,
+): { limit: number; cursor: EntityListCursor | null } | null {
+  const rawLimit = c.req.query('limit');
+  const rawCursor = c.req.query('cursor');
+  if (rawLimit === undefined && rawCursor === undefined) {
+    return null;
+  }
+  if (rawLimit === undefined || !/^[0-9]+$/u.test(rawLimit)) {
+    throw new ValidationError(
+      'limit must be an integer from 1 to 100 and is required with cursor',
+    );
+  }
+
+  const limit = Number(rawLimit);
+  if (
+    !Number.isSafeInteger(limit)
+    || limit < 1
+    || limit > MAX_ENTITY_LIST_PAGE_LIMIT
+  ) {
+    throw new ValidationError('limit must be an integer from 1 to 100');
+  }
+
+  return {
+    limit,
+    cursor:
+      rawCursor === undefined
+        ? null
+        : decodeEntityListCursor(rawCursor),
+  };
 }
 
 function getReferenceCandidateTokenSecret(): string {

@@ -536,6 +536,7 @@ export const entitySchema = z.object({
 
 export const entitiesResponseSchema = z.object({
   entities: z.array(entitySchema),
+  next_cursor: z.string().min(1).max(512).nullable().optional(),
 });
 
 export const entityReferenceSetSchema = z

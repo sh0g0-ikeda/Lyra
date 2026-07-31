@@ -26,6 +26,18 @@ describe('Entity response contract', () => {
     ).toBe(true);
     expect(entitySchema.safeParse({ ...validEntity, entity_type: 'object' }).success).toBe(true);
     expect(entitiesResponseSchema.safeParse({ entities: [] }).success).toBe(true);
+    expect(
+      entitiesResponseSchema.safeParse({
+        entities: [],
+        next_cursor: 'opaque-cursor',
+      }).success,
+    ).toBe(true);
+    expect(
+      entitiesResponseSchema.safeParse({
+        entities: [],
+        next_cursor: 'a'.repeat(513),
+      }).success,
+    ).toBe(false);
   });
 
   it('空ID・未知type/status・objectでないstructured fieldsを拒否する', () => {

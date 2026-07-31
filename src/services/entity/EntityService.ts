@@ -1,4 +1,4 @@
-import { NotFoundError } from '../../domain/errors/index.js';
+import { ConfigurationError, NotFoundError } from '../../domain/errors/index.js';
 import type {
   CreateEntityInput,
   Entity,
@@ -6,7 +6,12 @@ import type {
   UpdateEntityInput,
 } from '../../domain/types/entity.js';
 import { parseStructuredFields } from '../../lib/validators/entity.schema.js';
-import type { EntityRepository } from '../../repositories/EntityRepository.js';
+import type {
+  EntityListCursor,
+  EntityListPage,
+  EntityListPaginationRepository,
+  EntityRepository,
+} from '../../repositories/EntityRepository.js';
 import type { WorkReader } from '../../repositories/WorkRepository.js';
 import type { StyleReferenceCompilerPort } from '../style/StyleReferenceCompiler.js';
 import { resolveStyleReferenceForPersistence } from '../style/styleReferencePersistence.js';
@@ -39,6 +44,12 @@ export interface EntityServicePort {
     organizationId?: string | null,
   ): Promise<Entity>;
   listEntities(userId: string, workId: string, organizationId?: string | null): Promise<Entity[]>;
+  listEntitiesPage(
+    userId: string,
+    workId: string,
+    input: { limit: number; cursor: EntityListCursor | null },
+    organizationId?: string | null,
+  ): Promise<EntityListPage>;
   getEntity(userId: string, entityId: string, organizationId?: string | null): Promise<Entity>;
   updateEntity(
     userId: string,
@@ -51,7 +62,8 @@ export interface EntityServicePort {
 
 export class EntityService implements EntityServicePort {
   public constructor(
-    private readonly entityRepository: EntityRepository,
+    private readonly entityRepository:
+      EntityRepository & Partial<EntityListPaginationRepository>,
     private readonly workReader: WorkReader,
     private readonly styleReferenceCompiler?: StyleReferenceCompilerPort,
   ) {}
@@ -86,6 +98,24 @@ export class EntityService implements EntityServicePort {
   public async listEntities(userId: string, workId: string, organizationId: string | null = null): Promise<Entity[]> {
     await this.ensureWorkAccessible(workId, userId, organizationId);
     return this.entityRepository.findByWorkIdAndUserId(workId, userId, organizationId);
+  }
+
+  public async listEntitiesPage(
+    userId: string,
+    workId: string,
+    input: { limit: number; cursor: EntityListCursor | null },
+    organizationId: string | null = null,
+  ): Promise<EntityListPage> {
+    await this.ensureWorkAccessible(workId, userId, organizationId);
+    const paginationRepository = requireEntityListPaginationRepository(
+      this.entityRepository,
+    );
+    return paginationRepository.findPageByWorkIdAndUserId(
+      workId,
+      userId,
+      input,
+      organizationId,
+    );
   }
 
   public async getEntity(userId: string, entityId: string, organizationId: string | null = null): Promise<Entity> {
@@ -185,6 +215,18 @@ export class EntityService implements EntityServicePort {
       style_reference: resolvedStyleReference,
     };
   }
+}
+
+function requireEntityListPaginationRepository(
+  repository: EntityRepository & Partial<EntityListPaginationRepository>,
+): EntityListPaginationRepository {
+  if (typeof repository.findPageByWorkIdAndUserId !== 'function') {
+    throw new ConfigurationError(
+      'Entity list pagination repository is not configured',
+    );
+  }
+
+  return repository as EntityListPaginationRepository;
 }
 
 function normalizeSpeechProfile(
