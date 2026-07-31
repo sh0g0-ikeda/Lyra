@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { NotFoundError, ValidationError } from '../../../../src/domain/errors/index.js';
+import { ConflictError, NotFoundError, ValidationError } from '../../../../src/domain/errors/index.js';
 import type {
   PanelEntityAssignment,
   PanelEntityStateReference,
@@ -18,11 +18,29 @@ const entityId = '44444444-4444-4444-8444-444444444444';
 const anotherEntityId = '66666666-6666-4666-8666-666666666666';
 const stateId = '55555555-5555-4555-8555-555555555555';
 
+type ConditionalResult =
+  | { status: 'saved'; assignments: PanelEntityAssignment[] }
+  | {
+      status:
+        | 'not_found'
+        | 'stale'
+        | 'page_not_editable'
+        | 'dialogue_speaker_not_assigned'
+        | 'entity_not_in_work'
+        | 'state_not_in_entity';
+    };
+
 class FakePanelEntityAssignmentRepository implements PanelEntityAssignmentRepository {
   public panelContext: PanelContext | null = { panelId, pageId, workId };
   public matchedEntityCount = 1;
   public matchedStatePairCount = 1;
   public savedAssignments: PanelEntityAssignment[] | null = null;
+  public conditionalExpectedAssignments: PanelEntityAssignment[] | null = null;
+  public conditionalOrganizationId: string | null = null;
+  public conditionalResult: ConditionalResult = {
+    status: 'saved',
+    assignments: [buildAssignment()],
+  };
 
   public async findPanelContextByIdAndUserId(
     requestedPanelId: string,
@@ -54,6 +72,18 @@ class FakePanelEntityAssignmentRepository implements PanelEntityAssignmentReposi
   ): Promise<PanelEntityAssignment[] | null> {
     this.savedAssignments = assignments;
     return assignments;
+  }
+
+  public async replacePanelEntityAssignmentsConditionally(
+    _requestedPanelId: string,
+    _userId: string,
+    expectedAssignments: PanelEntityAssignment[],
+    _assignments: PanelEntityAssignment[],
+    organizationId: string | null = null,
+  ): Promise<ConditionalResult> {
+    this.conditionalExpectedAssignments = expectedAssignments;
+    this.conditionalOrganizationId = organizationId;
+    return this.conditionalResult;
   }
 }
 
@@ -195,6 +225,95 @@ describe('PanelEntityAssignmentService', () => {
 
     expect(assignments).toHaveLength(2);
     expect(repository.savedAssignments).toHaveLength(2);
+  });
+
+  it('expected snapshotがある場合は正規化してorganization scope付き条件保存を使う', async () => {
+    const repository = new FakePanelEntityAssignmentRepository();
+    const service = new PanelEntityAssignmentService(repository);
+    const expected = [buildAssignment({
+      expression: 'calm',
+      customExpression: 'stale custom expression',
+      action: 'running',
+      customAction: 'stale custom action',
+      effectNote: '  before  ',
+    })];
+
+    const assignments = await service.replacePanelEntityAssignments(
+      userId,
+      panelId,
+      [buildAssignment({ effectNote: 'after' })],
+      '77777777-7777-4777-8777-777777777777',
+      expected,
+    );
+
+    expect(repository.savedAssignments).toBeNull();
+    expect(repository.conditionalOrganizationId).toBe('77777777-7777-4777-8777-777777777777');
+    expect(repository.conditionalExpectedAssignments).toEqual([
+      buildAssignment({
+        expression: 'calm',
+        customExpression: null,
+        action: 'running',
+        customAction: null,
+        effectNote: 'before',
+      }),
+    ]);
+    expect(assignments).toEqual([buildAssignment()]);
+  });
+
+  it.each(['stale', 'page_not_editable'] as const)(
+    '条件付き保存が%sの場合はCONFLICTになりlegacy更新しない',
+    async (status) => {
+      const repository = new FakePanelEntityAssignmentRepository();
+      repository.conditionalResult = { status };
+      const service = new PanelEntityAssignmentService(repository);
+
+      await expect(
+        service.replacePanelEntityAssignments(
+          userId,
+          panelId,
+          [buildAssignment()],
+          null,
+          [buildAssignment()],
+        ),
+      ).rejects.toBeInstanceOf(ConflictError);
+      expect(repository.savedAssignments).toBeNull();
+    },
+  );
+
+  it.each([
+    'dialogue_speaker_not_assigned',
+    'entity_not_in_work',
+    'state_not_in_entity',
+  ] as const)('条件付き保存が%sの場合はVALIDATION_ERRORになる', async (status) => {
+    const repository = new FakePanelEntityAssignmentRepository();
+    repository.conditionalResult = { status };
+    const service = new PanelEntityAssignmentService(repository);
+
+    await expect(
+      service.replacePanelEntityAssignments(
+        userId,
+        panelId,
+        [buildAssignment()],
+        null,
+        [buildAssignment()],
+      ),
+    ).rejects.toBeInstanceOf(ValidationError);
+  });
+
+  it('条件付き保存中にPanelが消失した場合はNOT_FOUNDになる', async () => {
+    const repository = new FakePanelEntityAssignmentRepository();
+    repository.conditionalResult = { status: 'not_found' };
+    const service = new PanelEntityAssignmentService(repository);
+
+    await expect(
+      service.replacePanelEntityAssignments(
+        userId,
+        panelId,
+        [buildAssignment()],
+        null,
+        [buildAssignment()],
+      ),
+    ).rejects.toBeInstanceOf(NotFoundError);
   });
 });
 

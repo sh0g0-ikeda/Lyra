@@ -46,20 +46,9 @@ export function createPanelEntityAssignmentRoutes(
     const assignments = await dependencies.panelEntityAssignmentService.replacePanelEntityAssignments(
       user.id,
       panelId,
-      body.data.entities.map((assignment) => ({
-        entityId: assignment.entity_id,
-        role: assignment.role,
-        expression: assignment.expression,
-        customExpression:
-          assignment.expression === 'custom' ? assignment.custom_expression : null,
-        action: assignment.action,
-        customAction: assignment.action === 'custom' ? assignment.custom_action : null,
-        position: assignment.position,
-        facingDirection: assignment.facing_direction,
-        effectNote: assignment.effect_note,
-        stateId: assignment.state_id,
-      })),
+      body.data.entities.map(toPanelEntityAssignmentRequest),
       organizationId,
+      body.data.expected_entities?.map(toPanelEntityAssignmentRequest),
     );
 
     const payload = { entities: assignments.map(toPanelEntityAssignmentResponse) };
@@ -67,6 +56,23 @@ export function createPanelEntityAssignmentRoutes(
   });
 
   return app;
+}
+
+function toPanelEntityAssignmentRequest(
+  assignment: ReturnType<typeof replacePanelEntityAssignmentsBodySchema.parse>['entities'][number],
+): PanelEntityAssignment {
+  return {
+    entityId: assignment.entity_id,
+    role: assignment.role,
+    expression: assignment.expression,
+    customExpression: assignment.expression === 'custom' ? assignment.custom_expression : null,
+    action: assignment.action,
+    customAction: assignment.action === 'custom' ? assignment.custom_action : null,
+    position: assignment.position,
+    facingDirection: assignment.facing_direction,
+    effectNote: assignment.effect_note,
+    stateId: assignment.state_id,
+  };
 }
 
 function parseUuidParam(c: Context<AppEnv>, name: string): string {

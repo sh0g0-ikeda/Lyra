@@ -37,7 +37,7 @@ export class PostgresEpisodePlanPersistenceRepository implements EpisodePlanPers
       const pageRepository = new PostgresPageRepository(transactionClient);
       const panelRepository = new PostgresPanelRepository(transactionRunner);
       const panelEntityAssignmentService = new PanelEntityAssignmentService(
-        new PostgresPanelEntityAssignmentRepository(transactionClient),
+        new PostgresPanelEntityAssignmentRepository(transactionRunner),
       );
       const context = await pageRepository.findEpisodePlanningContextByIdAndUserId(
         input.episodeId,

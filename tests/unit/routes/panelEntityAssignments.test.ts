@@ -61,14 +61,18 @@ class FakeCreditService implements CreditServicePort {
 class FakePanelEntityAssignmentService implements PanelEntityAssignmentServicePort {
   public lastPanelId: string | null = null;
   public lastAssignments: PanelEntityAssignment[] | null = null;
+  public lastExpectedAssignments: PanelEntityAssignment[] | null | undefined;
 
   public async replacePanelEntityAssignments(
     _userId: string,
     requestedPanelId: string,
     assignments: PanelEntityAssignment[],
+    _organizationId?: string | null,
+    expectedAssignments?: PanelEntityAssignment[] | null,
   ): Promise<PanelEntityAssignment[]> {
     this.lastPanelId = requestedPanelId;
     this.lastAssignments = assignments;
+    this.lastExpectedAssignments = expectedAssignments;
     return assignments;
   }
 }
@@ -117,6 +121,7 @@ describe('panel entity assignment routes', () => {
 
     expect(response.status).toBe(200);
     expect(panelEntityAssignmentService.lastPanelId).toBe(panelId);
+    expect(panelEntityAssignmentService.lastExpectedAssignments).toBeUndefined();
     expect(panelEntityAssignmentService.lastAssignments?.[0]).toMatchObject({
       entityId,
       role: 'primary',
@@ -197,6 +202,69 @@ describe('panel entity assignment routes', () => {
     });
   });
 
+  it('expected_entitiesを正規化して条件付き保存へ渡す', async () => {
+    const panelEntityAssignmentService = new FakePanelEntityAssignmentService();
+    const app = createTestApp(panelEntityAssignmentService);
+    const token = await createToken();
+
+    const response = await app.request(`/api/panels/${panelId}/entities`, {
+      method: 'PUT',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        expected_entities: [
+          {
+            entity_id: entityId,
+            role: 'secondary',
+            expression: 'calm',
+            custom_expression: 'discarded legacy value',
+            action: 'running',
+            custom_action: 'discarded legacy action',
+            position: 'left',
+          },
+        ],
+        entities: [
+          {
+            entity_id: entityId,
+            role: 'primary',
+            expression: 'custom',
+            custom_expression: 'thin smile',
+            action: 'custom',
+            custom_action: 'draws a sword',
+            position: 'center',
+            facing_direction: 'front',
+            effect_note: 'speed lines',
+            state_id: stateId,
+          },
+        ],
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(panelEntityAssignmentService.lastExpectedAssignments).toEqual([
+      {
+        entityId,
+        role: 'secondary',
+        expression: 'calm',
+        customExpression: null,
+        action: 'running',
+        customAction: null,
+        position: 'left',
+        facingDirection: null,
+        effectNote: null,
+        stateId: null,
+      },
+    ]);
+    expect(panelEntityAssignmentService.lastAssignments?.[0]).toMatchObject({
+      entityId,
+      customExpression: 'thin smile',
+      customAction: 'draws a sword',
+      stateId,
+    });
+  });
+
   it('custom表情でcustom_expressionがない場合にVALIDATION_ERRORになる', async () => {
     const app = createTestApp(new FakePanelEntityAssignmentService());
     const token = await createToken();
@@ -250,6 +318,58 @@ describe('panel entity assignment routes', () => {
             position: 'right',
           },
         ],
+      }),
+    });
+
+    expect(response.status).toBe(422);
+  });
+
+  it('expected_entitiesのentity_id重複もVALIDATION_ERRORになる', async () => {
+    const app = createTestApp(new FakePanelEntityAssignmentService());
+    const token = await createToken();
+    const expected = {
+      entity_id: entityId,
+      role: 'primary',
+      expression: 'calm',
+      action: 'running',
+      position: 'center',
+    };
+
+    const response = await app.request(`/api/panels/${panelId}/entities`, {
+      method: 'PUT',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        expected_entities: [expected, expected],
+        entities: [],
+      }),
+    });
+
+    expect(response.status).toBe(422);
+  });
+
+  it('expected_entitiesが20件を超える場合はVALIDATION_ERRORになる', async () => {
+    const app = createTestApp(new FakePanelEntityAssignmentService());
+    const token = await createToken();
+    const expectedEntities = Array.from({ length: 21 }, (_, index) => ({
+      entity_id: `00000000-0000-4000-8000-${String(index).padStart(12, '0')}`,
+      role: 'background',
+      expression: 'calm',
+      action: 'standing_firm',
+      position: 'background',
+    }));
+
+    const response = await app.request(`/api/panels/${panelId}/entities`, {
+      method: 'PUT',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        expected_entities: expectedEntities,
+        entities: [],
       }),
     });
 

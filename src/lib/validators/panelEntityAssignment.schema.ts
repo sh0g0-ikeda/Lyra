@@ -41,26 +41,39 @@ const panelEntityAssignmentSchema = z
 
 export const panelEntityAssignmentUuidParamSchema = z.string().uuid();
 
+const panelEntityAssignmentsArraySchema = z.array(panelEntityAssignmentSchema).max(20);
+
 export const replacePanelEntityAssignmentsBodySchema = z
   .object({
-    entities: z.array(panelEntityAssignmentSchema).max(20),
+    expected_entities: panelEntityAssignmentsArraySchema.optional(),
+    entities: panelEntityAssignmentsArraySchema,
   })
   .strict()
   .superRefine((body, context) => {
-    // A panel should contain at most one assignment for each entity.
-    const entityIndexes = new Map<string, number>();
-
-    body.entities.forEach((assignment, index) => {
-      const firstIndex = entityIndexes.get(assignment.entity_id);
-      if (firstIndex !== undefined) {
-        context.addIssue({
-          code: 'custom',
-          message: 'entity_id must be unique within entities',
-          path: ['entities', index, 'entity_id'],
-        });
-        return;
-      }
-
-      entityIndexes.set(assignment.entity_id, index);
-    });
+    addDuplicateEntityIssues(body.entities, 'entities', context);
+    if (body.expected_entities !== undefined) {
+      addDuplicateEntityIssues(body.expected_entities, 'expected_entities', context);
+    }
   });
+
+function addDuplicateEntityIssues(
+  assignments: readonly z.infer<typeof panelEntityAssignmentSchema>[],
+  field: 'entities' | 'expected_entities',
+  context: z.RefinementCtx,
+): void {
+  const entityIndexes = new Map<string, number>();
+
+  assignments.forEach((assignment, index) => {
+    const firstIndex = entityIndexes.get(assignment.entity_id);
+    if (firstIndex !== undefined) {
+      context.addIssue({
+        code: 'custom',
+        message: `entity_id must be unique within ${field}`,
+        path: [field, index, 'entity_id'],
+      });
+      return;
+    }
+
+    entityIndexes.set(assignment.entity_id, index);
+  });
+}
