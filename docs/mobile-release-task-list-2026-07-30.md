@@ -6,9 +6,9 @@
 
 対象PR: [#67 feat(mobile): production-ready Lyra mobile workflow](https://github.com/sh0g0-ikeda/Lyra/pull/67)
 
-進捗: 93件完了 / 382件未完了
+進捗: 95件完了 / 380件未完了
 
-実装監査基準: `bc4a187`（PR #143 feature code head、local full gate成功。GitHub CIは統合前にexact headで再確認）
+実装監査基準: `cec20c2`（PR #144 feature code head、local full gate成功。GitHub CIは統合前にexact headで再確認）
 
 ## 1. 設計ブリーフ
 
@@ -96,7 +96,7 @@ PR #67の分割とmain同期
 | BLOCK-16 | Partial | Sentryコードはあるが、本番DSN、source map、alert証跡がない |
 | BLOCK-17 | Resolved | mainへ`verify`のstrict required checkを管理者にも適用し、CI pending中のPR #91が`BLOCKED`になることを確認 |
 | BLOCK-18 | Resolved | PR #87で階層メニュートリガーに残ったフォーカスからのEscape閉鎖を決定化し、反復テストと全CIが成功 |
-| BLOCK-19 | Partial | Mobileのアカウント画面で、正常状態やジョブ0件をエラーとして表示するfalse positiveがある |
+| BLOCK-19 | Resolved | PR #144でAccountを現行main基盤へ追加。残高は認証済みsession snapshotから表示し、job emptyをquery success時だけに限定して2種類のfalse positiveを解消 |
 
 ### 2.2 残タスクの実行区分と優先順
 
@@ -104,7 +104,7 @@ PR #67の分割とmain同期
 |---|---|---|---|
 | P0 | GitHub安全ゲート | mainのbranch protectionでCI `verify`をrequired checkにする | Repository設定変更の承認 |
 | P0 | CI安定化 | 階層メニューE2EのEscape後閉鎖を決定的にし、GitHub ActionsのNode.js 20非推奨警告を解消する | Codexで実行可能 |
-| P1 | Mobile表示 | アカウント画面の正常状態・ジョブ0件で表示される2種類のfalse-positive errorを解消する | Codexで実行可能。実エラー表示は維持する |
+| P1 | Mobile表示 | 完了。PR #144で正常状態・ジョブ0件の2種類のfalse-positive errorを解消し、実エラーの再試行を維持 | local full gate成功。GitHub CIを統合前に確認 |
 | P1 | PR-A継続 | `/api/billing/balance`のsubscription summaryをServiceまで監査し、残るRouteを1つずつ契約接続する | Codexで実行可能。各Routeを別PRで扱う |
 | P1 | 契約生成 | shared API contractの生成元・生成物・drift check・pagination・API inventoryを監査する | Codexで実行可能 |
 | P1 | 差分監査 | PR #67に未取込のmain側45 graph commitについて影響箇所を列挙する | 完了。patch等価を除く44件を分類済み |
@@ -114,7 +114,7 @@ PR #67の分割とmain同期
 | P3 | 外部設定 | staging、Apple / Google商品、署名、通知、AASA / App Linksを設定する | AWS / Apple / Google / EASへの権限と値が必要 |
 | P4 | 実機・審査 | Sandbox / license-test、両OS実機E2E、スクリーンショット、ストア提出を行う | 実機、ストアアカウント、審査対応が必要 |
 
-Codex単独で進める次の順序は、`CI安定化 → PR-A継続 → 契約生成 → main差分監査 → Backend分割 → Mobileアプリ基盤 → アカウント画面のfalse-positive error解消 → Mobile機能分割`とする。アカウント画面の実装はPR #67にだけ存在し、mainへ安全に単独適用できないため、Mobileアプリ基盤の統合後に修正する。外部設定や本番変更は、必要な権限と明示的な実行承認を得てから行う。
+Accountのfalse-positive error解消は、Mobile基盤の統合後にPR #144として安全に分離した。Codex単独で進める次の順序は、`PR-A継続 → 契約生成 → Backend分割 → 残るMobile機能分割`とする。外部設定や本番変更は、必要な権限と明示的な実行承認を得てから行う。
 
 ## 3. リリース全体タスクリスト
 
@@ -325,14 +325,16 @@ Codex単独で進める次の順序は、`CI安定化 → PR-A継続 → 契約�
 - [ ] PR-G: organization / billing UI / store adapter
   - 主な所有: Account、organization管理、`expo-iap` adapter
   - 完了条件: personal/org分離とstore unavailable状態がgreen
-  - [ ] 正常状態で「一時的に処理できません。入力は保持されています。少し待って再試行してください。」を表示しない
+  - [x] 正常状態で「一時的に処理できません。入力は保持されています。少し待って再試行してください。」を表示しない
     - 再現条件: プロフィールと個人ワークスペースが正常に表示され、ユーザー操作上の問題がない状態でも赤い再試行bannerが表示される
     - 完了条件: 正常応答、空データ、未選択の任意データを失敗として集約せず、必須データの取得失敗など実際に再試行が必要な場合だけbannerを表示する
     - 回帰条件: 成功した再取得またはworkspace切替後に古いerror stateを残さず、実際の通信・認証・server errorでは適切な再試行導線を維持する
-  - [ ] ジョブ0件で「対象データが見つかりませんでした。画面を更新して選び直してください。」を表示しない
+    - 証跡: [PR #144](https://github.com/sh0g0-ikeda/Lyra/pull/144)。Account初期表示は`GET /api/me`の認証済み残高snapshotを使い、任意のbilling request失敗をpage-level errorへ集約しない。active membershipだけをworkspace候補にし、personal / organization query keyを分離。再取得中・成功後・workspace切替後に古いerrorを残さない
+  - [x] ジョブ0件で「対象データが見つかりませんでした。画面を更新して選び直してください。」を表示しない
     - 再現条件: 「表示できるジョブはありません。」という正常なempty stateと同時にnot-found errorが表示される
     - 完了条件: ジョブ0件ではempty stateだけを表示し、選択済みジョブが実際に削除された場合など対象消失時だけnot-found errorを表示する
     - テスト条件: ジョブ0件、対象消失、通信失敗、再取得成功の各状態をMobile UI testで区別する
+    - 証跡: [PR #144](https://github.com/sh0g0-ikeda/Lyra/pull/144)。`200 { jobs: [], next_cursor: null }`かつquery successの場合だけempty stateを表示し、404 / 5xxではempty・not-foundへ読み替えず安定文言と再試行だけを表示。Mobile 23 files / 167 tests、両OS export、Backend 1707 tests、fresh DB 001〜039・65 invariant / 0 violations、実DB17 tests、Web smoke 13/13を確認
 - [ ] PR-H: release / EAS / store metadata / ops docs
   - 主な所有: `eas.json`, `app.json`, store metadata, runbook
   - 完了条件: secretsを含まず、production config guardがgreen
