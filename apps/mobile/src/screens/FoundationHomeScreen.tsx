@@ -5,6 +5,7 @@ import { PrimaryButton } from '../components/PrimaryButton';
 import { Screen } from '../components/Screen';
 import { colors, radius, spacing } from '../constants/theme';
 import type { CurrentSession } from '../lib/api';
+import { t } from '../lib/i18n';
 import { userErrorMessage } from '../lib/userMessages';
 import { useAuthSession } from '../state/AuthSessionProvider';
 
@@ -15,7 +16,7 @@ interface FoundationHomeScreenProps {
 export function FoundationHomeScreen({
   session,
 }: FoundationHomeScreenProps): React.JSX.Element {
-  const { signOut } = useAuthSession();
+  const { language, signOut } = useAuthSession();
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -25,7 +26,7 @@ export function FoundationHomeScreen({
     try {
       await signOut();
     } catch (error: unknown) {
-      setErrorMessage(userErrorMessage(error));
+      setErrorMessage(userErrorMessage(error, language));
     } finally {
       setLoading(false);
     }
@@ -33,18 +34,18 @@ export function FoundationHomeScreen({
 
   return (
     <Screen title="Lyra Mobile">
-      <Notice message="Mobile基盤との接続を確認できました。編集機能は安全な単位で順次追加します。" />
+      <Notice message={t(language, 'foundationConnected')} />
       <View style={styles.card}>
-        <Text style={styles.label}>アカウント</Text>
+        <Text style={styles.label}>{t(language, 'account')}</Text>
         <Text style={styles.value}>{session.user.email}</Text>
-        <Text style={styles.label}>プラン</Text>
+        <Text style={styles.label}>{t(language, 'plan')}</Text>
         <Text style={styles.value}>{session.user.plan_code}</Text>
       </View>
       {errorMessage === null ? null : (
         <Notice message={errorMessage} tone="danger" />
       )}
       <PrimaryButton
-        label="ログアウト"
+        label={t(language, 'logout')}
         loading={loading}
         onPress={() => void handleSignOut()}
       />

@@ -2,11 +2,12 @@ import { useState } from 'react';
 import { Notice } from '../components/Notice';
 import { PrimaryButton } from '../components/PrimaryButton';
 import { Screen } from '../components/Screen';
+import { t } from '../lib/i18n';
 import { userErrorMessage } from '../lib/userMessages';
 import { useAuthSession } from '../state/AuthSessionProvider';
 
 export function AuthScreen(): React.JSX.Element {
-  const { signIn } = useAuthSession();
+  const { language, signIn } = useAuthSession();
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
@@ -16,7 +17,7 @@ export function AuthScreen(): React.JSX.Element {
     try {
       await signIn();
     } catch (error: unknown) {
-      setErrorMessage(userErrorMessage(error));
+      setErrorMessage(userErrorMessage(error, language));
     } finally {
       setLoading(false);
     }
@@ -24,12 +25,12 @@ export function AuthScreen(): React.JSX.Element {
 
   return (
     <Screen title="Lyra">
-      <Notice message="安全なログイン画面を開きます。認証情報は端末の保護領域へ保存されます。" />
+      <Notice message={t(language, 'authNotice')} />
       {errorMessage === null ? null : (
         <Notice message={errorMessage} tone="danger" />
       )}
       <PrimaryButton
-        label="ログイン"
+        label={t(language, 'login')}
         loading={loading}
         onPress={() => void handleSignIn()}
       />

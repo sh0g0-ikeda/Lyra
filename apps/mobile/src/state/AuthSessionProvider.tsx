@@ -14,6 +14,7 @@ import { CognitoAuthService } from '../lib/auth';
 import { AuthSessionCoordinator } from '../lib/authSessionCoordinator';
 import { config } from '../lib/config';
 import { createExpoCognitoDependencies } from '../lib/expoCognito';
+import { detectUiLanguage, type UiLanguage } from '../lib/i18n';
 import {
   clearAuthTokens,
   loadAuthTokens,
@@ -23,6 +24,7 @@ import {
 interface AuthSessionContextValue {
   api: LyraMobileApiClient;
   hydrated: boolean;
+  language: UiLanguage;
   tokens: AuthTokens | null;
   signIn(): Promise<void>;
   signOut(): Promise<void>;
@@ -35,6 +37,7 @@ export function AuthSessionProvider({
 }: PropsWithChildren): React.JSX.Element {
   const queryClient = useQueryClient();
   const [hydrated, setHydrated] = useState(false);
+  const [language] = useState(detectUiLanguage);
   const [tokens, setTokens] = useState<AuthTokens | null>(null);
   const service = useMemo(
     () => new CognitoAuthService(config, createExpoCognitoDependencies(config)),
@@ -95,8 +98,8 @@ export function AuthSessionProvider({
     [coordinator],
   );
   const value = useMemo<AuthSessionContextValue>(
-    () => ({ api, hydrated, signIn, signOut, tokens }),
-    [api, hydrated, signIn, signOut, tokens],
+    () => ({ api, hydrated, language, signIn, signOut, tokens }),
+    [api, hydrated, language, signIn, signOut, tokens],
   );
 
   return (

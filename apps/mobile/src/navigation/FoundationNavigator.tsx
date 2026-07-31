@@ -4,13 +4,14 @@ import { Notice } from '../components/Notice';
 import { PrimaryButton } from '../components/PrimaryButton';
 import { Screen } from '../components/Screen';
 import { configValidation } from '../lib/config';
+import { t } from '../lib/i18n';
 import { resolveFoundationRoute } from './foundationRoute';
 import { AuthScreen } from '../screens/AuthScreen';
 import { FoundationHomeScreen } from '../screens/FoundationHomeScreen';
 import { useAuthSession } from '../state/AuthSessionProvider';
 
 export function FoundationNavigator(): React.JSX.Element {
-  const { api, hydrated, tokens } = useAuthSession();
+  const { api, hydrated, language, tokens } = useAuthSession();
   const sessionQuery = useQuery({
     enabled: hydrated && tokens !== null && configValidation.valid,
     queryKey: ['current-session'],
@@ -29,16 +30,20 @@ export function FoundationNavigator(): React.JSX.Element {
       return (
         <Screen title="Lyra Mobile">
           <Notice
-            message="アプリの接続設定が不足しています。配布元へお問い合わせください。"
+            message={t(language, 'configurationError')}
             tone="danger"
           />
-          <Notice message={`サポートコード: ${configValidation.supportCode}`} />
+          <Notice
+            message={t(language, 'supportCode', {
+              code: configValidation.supportCode,
+            })}
+          />
         </Screen>
       );
     case 'booting':
       return (
         <Screen title="Lyra Mobile">
-          <LoadingState label="安全な保存領域を確認しています…" />
+          <LoadingState label={t(language, 'booting')} />
         </Screen>
       );
     case 'sign-in':
@@ -46,18 +51,18 @@ export function FoundationNavigator(): React.JSX.Element {
     case 'loading-session':
       return (
         <Screen title="Lyra Mobile">
-          <LoadingState label="アカウント情報を確認しています…" />
+          <LoadingState label={t(language, 'sessionLoading')} />
         </Screen>
       );
     case 'session-error':
       return (
         <Screen title="Lyra Mobile">
           <Notice
-            message="アカウント情報を確認できませんでした。入力内容や既存データは変更されていません。"
+            message={t(language, 'sessionError')}
             tone="danger"
           />
           <PrimaryButton
-            label="再試行"
+            label={t(language, 'retry')}
             loading={sessionQuery.isFetching}
             onPress={() => {
               void sessionQuery.refetch();
@@ -69,7 +74,7 @@ export function FoundationNavigator(): React.JSX.Element {
       if (sessionQuery.data === undefined) {
         return (
           <Screen title="Lyra Mobile">
-            <LoadingState label="アカウント情報を確認しています…" />
+            <LoadingState label={t(language, 'sessionLoading')} />
           </Screen>
         );
       }

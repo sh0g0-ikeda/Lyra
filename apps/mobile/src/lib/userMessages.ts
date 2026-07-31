@@ -1,18 +1,22 @@
 import { ApiError } from './api';
 import { AuthError } from './auth';
+import { t, type UiLanguage } from './i18n';
 
-export function userErrorMessage(error: unknown): string {
+export function userErrorMessage(
+  error: unknown,
+  language: UiLanguage,
+): string {
   if (error instanceof AuthError) {
     if (error.code === 'AUTHORIZATION_CANCELLED') {
-      return 'ログインがキャンセルされました。もう一度お試しください。';
+      return t(language, 'authCancelled');
     }
-    return 'ログイン処理を完了できませんでした。通信環境を確認してください。';
+    return t(language, 'authFailed');
   }
   if (error instanceof ApiError && error.status === 401) {
-    return 'ログインの有効期限が切れました。もう一度ログインしてください。';
+    return t(language, 'sessionExpired');
   }
   if (error instanceof ApiError && error.status === 0) {
-    return 'サーバーに接続できません。通信環境を確認してください。';
+    return t(language, 'networkError');
   }
-  return '一時的に処理できませんでした。少し待って再試行してください。';
+  return t(language, 'temporaryError');
 }
