@@ -2,18 +2,19 @@ import { createRequire } from 'node:module';
 import { describe, expect, it } from 'vitest';
 
 const require = createRequire(import.meta.url);
+type ExpoPlugin = string | [string, Record<string, unknown>];
 const createExpoConfig = require('../app.config.js') as (input: {
   config: {
     name: string;
     ios?: Record<string, unknown>;
     android?: Record<string, unknown>;
-    plugins?: string[];
+    plugins?: ExpoPlugin[];
   };
 }) => {
   name: string;
   ios?: Record<string, unknown>;
   android?: Record<string, unknown>;
-  plugins?: string[];
+  plugins?: ExpoPlugin[];
 };
 
 describe('Expo app config', () => {
@@ -40,17 +41,31 @@ describe('Expo app config', () => {
     expect(config.android).not.toHaveProperty('googleServicesFile');
     expect(config.android).not.toHaveProperty('intentFilters');
     expect(config.android).not.toHaveProperty('package');
-    expect(config.plugins).toEqual(['expo-secure-store', 'expo-image']);
+    expect(config.plugins).toEqual([
+      'expo-secure-store',
+      'expo-image',
+      ['expo-image-picker', {
+        cameraPermission: false,
+        microphonePermission: false,
+        photosPermission: 'Lyraがキャラ参照画像として選んだ写真を読み取ることを許可してください。',
+      }],
+    ]);
   });
 
-  it('expo-image pluginを重複登録しない', () => {
+  it('画像pluginの既存設定を保持して重複登録しない', () => {
     const config = createExpoConfig({
       config: {
         name: 'Lyra Mobile',
-        plugins: ['expo-image'],
+        plugins: [
+          'expo-image',
+          ['expo-image-picker', { photosPermission: '既存の説明' }],
+        ],
       },
     });
 
-    expect(config.plugins).toEqual(['expo-image']);
+    expect(config.plugins).toEqual([
+      'expo-image',
+      ['expo-image-picker', { photosPermission: '既存の説明' }],
+    ]);
   });
 });

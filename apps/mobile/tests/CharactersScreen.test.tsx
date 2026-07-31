@@ -6,6 +6,7 @@ import {
   CharactersScreen,
   type CharactersScreenHandle,
 } from '../src/screens/CharactersScreen';
+import { ApiError } from '../src/lib/api';
 
 vi.mock('react-native', () => ({
   Alert: { alert: vi.fn() },
@@ -41,6 +42,13 @@ vi.mock('react-native', () => ({
 
 vi.mock('expo-image', () => ({
   Image: (props: Record<string, unknown>) => React.createElement('expo-image', props),
+}));
+
+vi.mock('expo-image-picker', () => ({
+  UIImagePickerPreferredAssetRepresentationMode: {
+    Compatible: 'compatible',
+  },
+  launchImageLibraryAsync: vi.fn(),
 }));
 
 vi.mock('../src/components/LoadingState', () => ({
@@ -122,10 +130,12 @@ function textOf(renderer: ReactTestRenderer): string {
 
 describe('CharactersScreen', () => {
   const api = {
+    confirmEntityReference: vi.fn(),
     createEntity: vi.fn(),
     getEntitiesPage: vi.fn(),
     getEntityReferenceSet: vi.fn(),
     getWorksPage: vi.fn(),
+    importEntityReferenceImage: vi.fn(),
     refreshImageAuthorizationHeader: vi.fn(),
     updateEntity: vi.fn(),
   };
@@ -151,6 +161,22 @@ describe('CharactersScreen', () => {
       reference_images: [],
     }));
     api.refreshImageAuthorizationHeader.mockResolvedValue('Bearer refreshed-token');
+    api.importEntityReferenceImage.mockResolvedValue({
+      suggested_fields: { art_style: 'manga' },
+      prompt_supplement: '黒髪、長身、鋭い目つき',
+      tmp_image_token: 'opaque-candidate-token',
+    });
+    api.confirmEntityReference.mockImplementation(async (entityId: string) => ({
+      entity_id: entityId,
+      primary_ref_id: 'uploaded-reference',
+      status: 'partial',
+      updated_at: '2026-08-01T01:00:00.000Z',
+      reference_images: [{
+        ref_id: 'uploaded-reference',
+        source: 'upload',
+        created_at: '2026-08-01T01:00:00.000Z',
+      }],
+    }));
     api.createEntity.mockImplementation(async (
       workId: string,
       input: { entity_type: 'character' | 'nonhuman' | 'object'; name: string; free_description: string | null },
@@ -175,31 +201,49 @@ describe('CharactersScreen', () => {
   const renderScreen = async (
     overrides: Partial<React.ComponentProps<typeof CharactersScreen>> = {},
     ref = createRef<CharactersScreenHandle>(),
-  ): Promise<{ renderer: ReactTestRenderer; ref: React.RefObject<CharactersScreenHandle | null> }> => {
+  ): Promise<{
+    renderer: ReactTestRenderer;
+    ref: React.RefObject<CharactersScreenHandle | null>;
+    rerender(nextOverrides: Partial<React.ComponentProps<typeof CharactersScreen>>): Promise<void>;
+  }> => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false } },
     });
+    const renderTree = (
+      nextOverrides: Partial<React.ComponentProps<typeof CharactersScreen>>,
+    ): React.JSX.Element => (
+      <QueryClientProvider client={queryClient}>
+        <CharactersScreen
+          api={api}
+          imageApiBaseUrl="https://api.example.com"
+          imageAuthorizationHeader="Bearer id-token"
+          language="ja"
+          organizationId={null}
+          ref={ref}
+          sessionKey="session-1"
+          {...nextOverrides}
+        />
+      </QueryClientProvider>
+    );
     let renderer: ReactTestRenderer;
     await act(async () => {
-      renderer = create(
-        <QueryClientProvider client={queryClient}>
-          <CharactersScreen
-            api={api}
-            imageApiBaseUrl="https://api.example.com"
-            imageAuthorizationHeader="Bearer id-token"
-            language="ja"
-            organizationId={null}
-            ref={ref}
-            sessionKey="session-1"
-            {...overrides}
-          />
-        </QueryClientProvider>,
-      );
+      renderer = create(renderTree(overrides));
     });
     await act(async () => {
       await flushQueries();
     });
-    return { renderer: renderer!, ref };
+    return {
+      renderer: renderer!,
+      ref,
+      rerender: async (nextOverrides): Promise<void> => {
+        await act(async () => {
+          renderer.update(renderTree({ ...overrides, ...nextOverrides }));
+        });
+        await act(async () => {
+          await flushQueries();
+        });
+      },
+    };
   };
 
   const press = async (renderer: ReactTestRenderer, label: string): Promise<void> => {
@@ -744,5 +788,393 @@ describe('CharactersScreen', () => {
     });
 
     expect(api.refreshImageAuthorizationHeader).toHaveBeenCalledTimes(2);
+  });
+
+  it('保存済みキャラへ画像1枚を取り込みpreview成功後だけ明示確定する', async () => {
+    const referenceImagePicker = {
+      pick: vi.fn().mockResolvedValue({
+        dataUrl: 'data:image/jpeg;base64,/9j/AA==',
+        sizeBytes: 4,
+      }),
+    };
+    const confirmReferenceCandidate = vi.fn().mockResolvedValue(true);
+    const { renderer } = await renderScreen({
+      confirmReferenceCandidate,
+      referenceImagePicker,
+    });
+    await selectWork(renderer);
+    await selectEntity(renderer);
+
+    expect(textOf(renderer)).toContain('画像を取り込む（1クレジット）');
+    await press(renderer, '画像を取り込む（1クレジット）');
+
+    expect(api.importEntityReferenceImage).toHaveBeenCalledWith(
+      'entity-1',
+      'character',
+      'data:image/jpeg;base64,/9j/AA==',
+      null,
+    );
+    expect(textOf(renderer)).toContain('黒髪、長身、鋭い目つき');
+    let confirmButton = renderer.root.findAllByType('button').find(
+      (candidate) => candidate.children.join('') === '取り込み候補を確定',
+    );
+    expect(confirmButton?.props.disabled).toBe(true);
+
+    await act(async () => {
+      renderer.root.findByProps({
+        accessibilityLabel: 'ホームズの取り込み候補',
+      }).props.onLoad();
+    });
+    confirmButton = renderer.root.findAllByType('button').find(
+      (candidate) => candidate.children.join('') === '取り込み候補を確定',
+    );
+    expect(confirmButton?.props.disabled).toBe(false);
+    await press(renderer, '取り込み候補を確定');
+
+    expect(confirmReferenceCandidate).toHaveBeenCalledWith({
+      existingCount: 0,
+      language: 'ja',
+    });
+    expect(api.confirmEntityReference).toHaveBeenCalledWith(
+      'entity-1',
+      {
+        selected_candidate_tokens: ['opaque-candidate-token'],
+        primary_candidate_token: 'opaque-candidate-token',
+        prompt_supplement: '黒髪、長身、鋭い目つき',
+      },
+      null,
+    );
+    expect(textOf(renderer)).toContain('確定画像: 1枚');
+    expect(textOf(renderer)).not.toContain('黒髪、長身、鋭い目つき');
+  });
+
+  it('確定画像が3枚あってもBackendの総数ルールを変えず1枚importできる', async () => {
+    api.getEntityReferenceSet.mockImplementation(async (entityId: string) => ({
+      entity_id: entityId,
+      primary_ref_id: 'reference-1',
+      status: 'ready',
+      updated_at: timestamp,
+      reference_images: [1, 2, 3].map((index) => ({
+        ref_id: `reference-${index}`,
+        source: 'upload' as const,
+        created_at: timestamp,
+      })),
+    }));
+    const referenceImagePicker = {
+      pick: vi.fn().mockResolvedValue({
+        dataUrl: 'data:image/jpeg;base64,/9j/AA==',
+        sizeBytes: 4,
+      }),
+    };
+    const { renderer } = await renderScreen({ referenceImagePicker });
+    await selectWork(renderer);
+    await selectEntity(renderer);
+
+    const importButton = renderer.root.findAllByType('button').find(
+      (candidate) => candidate.children.join('') === '画像を取り込む（1クレジット）',
+    );
+    expect(importButton?.props.disabled).toBe(false);
+    await press(renderer, '画像を取り込む（1クレジット）');
+    expect(api.importEntityReferenceImage).toHaveBeenCalledOnce();
+    expect(textOf(renderer)).not.toContain('確定画像は3枚までです');
+  });
+
+  it('import中は多重課金とEntity・tab移動を止める', async () => {
+    let resolveImport: ((value: {
+      suggested_fields: Record<string, unknown>;
+      prompt_supplement: string;
+      tmp_image_token: string;
+    }) => void) | undefined;
+    api.importEntityReferenceImage.mockReturnValue(new Promise((resolve) => {
+      resolveImport = resolve;
+    }));
+    const referenceImagePicker = {
+      pick: vi.fn().mockResolvedValue({
+        dataUrl: 'data:image/jpeg;base64,/9j/AA==',
+        sizeBytes: 4,
+      }),
+    };
+    const screenRef = createRef<CharactersScreenHandle>();
+    const { renderer, ref } = await renderScreen({ referenceImagePicker }, screenRef);
+    await selectWork(renderer);
+    await selectEntity(renderer);
+    const importButton = renderer.root.findAllByType('button').find(
+      (candidate) => candidate.children.join('') === '画像を取り込む（1クレジット）',
+    );
+
+    await act(async () => {
+      importButton?.props.onClick();
+      importButton?.props.onClick();
+      await flushQueries();
+    });
+    expect(api.importEntityReferenceImage).toHaveBeenCalledOnce();
+    await expect(ref.current?.prepareToLeave()).resolves.toBe(false);
+    await selectEntity(renderer, 'ワトスンを選択');
+    expect(renderer.root.findByProps({ accessibilityLabel: 'ホームズを選択' })
+      .props.accessibilityState).toEqual({ selected: true });
+
+    await act(async () => {
+      resolveImport?.({
+        suggested_fields: {},
+        prompt_supplement: '補足',
+        tmp_image_token: 'candidate-token',
+      });
+      await flushQueries();
+    });
+  });
+
+  it('参照setがimport後に変わった場合は初回confirmを送らず再確認させる', async () => {
+    let remoteUpdated = false;
+    api.getEntityReferenceSet.mockImplementation(async (entityId: string) => ({
+      entity_id: entityId,
+      primary_ref_id: remoteUpdated ? 'remote-reference' : null,
+      status: remoteUpdated ? 'partial' : 'empty',
+      updated_at: remoteUpdated ? '2026-08-01T02:00:00.000Z' : timestamp,
+      reference_images: remoteUpdated ? [{
+        ref_id: 'remote-reference',
+        source: 'generated' as const,
+        created_at: '2026-08-01T02:00:00.000Z',
+      }] : [],
+    }));
+    const referenceImagePicker = {
+      pick: vi.fn().mockResolvedValue({
+        dataUrl: 'data:image/jpeg;base64,/9j/AA==',
+        sizeBytes: 4,
+      }),
+    };
+    const confirmReferenceCandidate = vi.fn().mockResolvedValue(true);
+    const { renderer } = await renderScreen({
+      confirmReferenceCandidate,
+      referenceImagePicker,
+    });
+    await selectWork(renderer);
+    await selectEntity(renderer);
+    await press(renderer, '画像を取り込む（1クレジット）');
+    await act(async () => {
+      renderer.root.findByProps({
+        accessibilityLabel: 'ホームズの取り込み候補',
+      }).props.onLoad();
+    });
+
+    remoteUpdated = true;
+    await press(renderer, '取り込み候補を確定');
+    expect(api.confirmEntityReference).not.toHaveBeenCalled();
+    expect(textOf(renderer)).toContain('別の処理で参照画像が更新されました');
+
+    await press(renderer, '取り込み候補を確定');
+    expect(api.confirmEntityReference).toHaveBeenCalledOnce();
+    expect(confirmReferenceCandidate).toHaveBeenCalledWith({
+      existingCount: 1,
+      language: 'ja',
+    });
+  });
+
+  it('confirm応答を失った場合は自動再送せず候補をambiguousにする', async () => {
+    api.confirmEntityReference.mockRejectedValue(new Error('response lost'));
+    const referenceImagePicker = {
+      pick: vi.fn().mockResolvedValue({
+        dataUrl: 'data:image/jpeg;base64,/9j/AA==',
+        sizeBytes: 4,
+      }),
+    };
+    const { renderer } = await renderScreen({
+      confirmReferenceCandidate: vi.fn().mockResolvedValue(true),
+      referenceImagePicker,
+    });
+    await selectWork(renderer);
+    await selectEntity(renderer);
+    await press(renderer, '画像を取り込む（1クレジット）');
+    await act(async () => {
+      renderer.root.findByProps({
+        accessibilityLabel: 'ホームズの取り込み候補',
+      }).props.onLoad();
+    });
+    await press(renderer, '取り込み候補を確定');
+
+    const confirmButton = renderer.root.findAllByType('button').find(
+      (candidate) => candidate.children.join('') === '取り込み候補を確定',
+    );
+    expect(api.confirmEntityReference).toHaveBeenCalledOnce();
+    expect(confirmButton?.props.disabled).toBe(true);
+    expect(textOf(renderer)).toContain('確定処理の結果を確認できませんでした');
+  });
+
+  it.each([
+    [402, 'クレジットが不足しているため画像を解析できませんでした'],
+    [413, '画像は5MB以下にしてください'],
+    [422, '選択した画像を安全に読み取れませんでした'],
+    [429, '画像解析が混み合っています'],
+  ])('importのHTTP %i拒否を通信断と混同しない', async (status, message) => {
+    api.importEntityReferenceImage.mockRejectedValue(
+      new ApiError('REQUEST_FAILED', status, 'private error'),
+    );
+    const referenceImagePicker = {
+      pick: vi.fn().mockResolvedValue({
+        dataUrl: 'data:image/jpeg;base64,/9j/AA==',
+        sizeBytes: 4,
+      }),
+    };
+    const { renderer } = await renderScreen({ referenceImagePicker });
+    await selectWork(renderer);
+    await selectEntity(renderer);
+
+    await press(renderer, '画像を取り込む（1クレジット）');
+
+    expect(textOf(renderer)).toContain(message);
+    expect(textOf(renderer)).not.toContain('private error');
+  });
+
+  it('confirmの明確なHTTP拒否は結果不明にせず候補を再確認可能にする', async () => {
+    api.confirmEntityReference.mockRejectedValue(
+      new ApiError('REQUEST_FAILED', 422, 'private error'),
+    );
+    const referenceImagePicker = {
+      pick: vi.fn().mockResolvedValue({
+        dataUrl: 'data:image/jpeg;base64,/9j/AA==',
+        sizeBytes: 4,
+      }),
+    };
+    const { renderer } = await renderScreen({
+      confirmReferenceCandidate: vi.fn().mockResolvedValue(true),
+      referenceImagePicker,
+    });
+    await selectWork(renderer);
+    await selectEntity(renderer);
+    await press(renderer, '画像を取り込む（1クレジット）');
+    await act(async () => {
+      renderer.root.findByProps({
+        accessibilityLabel: 'ホームズの取り込み候補',
+      }).props.onLoad();
+    });
+
+    await press(renderer, '取り込み候補を確定');
+
+    const confirmButton = renderer.root.findAllByType('button').find(
+      (candidate) => candidate.children.join('') === '取り込み候補を確定',
+    );
+    expect(confirmButton?.props.disabled).toBe(false);
+    expect(textOf(renderer)).toContain('候補を確定できませんでした');
+    expect(textOf(renderer)).not.toContain('private error');
+    expect(textOf(renderer)).not.toContain('確定処理の結果を確認できませんでした');
+  });
+
+  it('confirm中は多重送信とEntity・tab移動を止める', async () => {
+    let resolveConfirm: ((value: {
+      entity_id: string;
+      primary_ref_id: string;
+      status: 'partial';
+      updated_at: string;
+      reference_images: {
+        ref_id: string;
+        source: 'upload';
+        created_at: string;
+      }[];
+    }) => void) | undefined;
+    api.confirmEntityReference.mockReturnValue(new Promise((resolve) => {
+      resolveConfirm = resolve;
+    }));
+    const referenceImagePicker = {
+      pick: vi.fn().mockResolvedValue({
+        dataUrl: 'data:image/jpeg;base64,/9j/AA==',
+        sizeBytes: 4,
+      }),
+    };
+    const screenRef = createRef<CharactersScreenHandle>();
+    const { renderer, ref } = await renderScreen({
+      confirmReferenceCandidate: vi.fn().mockResolvedValue(true),
+      referenceImagePicker,
+    }, screenRef);
+    await selectWork(renderer);
+    await selectEntity(renderer);
+    await press(renderer, '画像を取り込む（1クレジット）');
+    await act(async () => {
+      renderer.root.findByProps({
+        accessibilityLabel: 'ホームズの取り込み候補',
+      }).props.onLoad();
+    });
+    const confirmButton = renderer.root.findAllByType('button').find(
+      (candidate) => candidate.children.join('') === '取り込み候補を確定',
+    );
+
+    await act(async () => {
+      confirmButton?.props.onClick();
+      confirmButton?.props.onClick();
+      await flushQueries();
+    });
+    expect(api.confirmEntityReference).toHaveBeenCalledOnce();
+    await expect(ref.current?.prepareToLeave()).resolves.toBe(false);
+    await selectEntity(renderer, 'ワトスンを選択');
+    expect(renderer.root.findByProps({ accessibilityLabel: 'ホームズを選択' })
+      .props.accessibilityState).toEqual({ selected: true });
+
+    await act(async () => {
+      resolveConfirm?.({
+        entity_id: 'entity-1',
+        primary_ref_id: 'uploaded-reference',
+        status: 'partial',
+        updated_at: '2026-08-01T01:00:00.000Z',
+        reference_images: [{
+          ref_id: 'uploaded-reference',
+          source: 'upload',
+          created_at: '2026-08-01T01:00:00.000Z',
+        }],
+      });
+      await flushQueries();
+    });
+  });
+
+  it('旧scopeの遅延完了で新scopeのimport離脱ブロックを解除しない', async () => {
+    type ImportResponse = {
+      suggested_fields: Record<string, unknown>;
+      prompt_supplement: string;
+      tmp_image_token: string;
+    };
+    const resolvers: ((value: ImportResponse) => void)[] = [];
+    api.importEntityReferenceImage.mockImplementation(() => new Promise((resolve) => {
+      resolvers.push(resolve);
+    }));
+    const referenceImagePicker = {
+      pick: vi.fn().mockResolvedValue({
+        dataUrl: 'data:image/jpeg;base64,/9j/AA==',
+        sizeBytes: 4,
+      }),
+    };
+    const screenRef = createRef<CharactersScreenHandle>();
+    const { renderer, ref, rerender } = await renderScreen({
+      referenceImagePicker,
+    }, screenRef);
+    await selectWork(renderer);
+    await selectEntity(renderer);
+    await press(renderer, '画像を取り込む（1クレジット）');
+
+    await rerender({ organizationId: 'organization-1' });
+    await press(renderer, '画像を取り込む（1クレジット）');
+    expect(api.importEntityReferenceImage).toHaveBeenNthCalledWith(
+      2,
+      'entity-1',
+      'character',
+      'data:image/jpeg;base64,/9j/AA==',
+      'organization-1',
+    );
+
+    await act(async () => {
+      resolvers[0]?.({
+        suggested_fields: {},
+        prompt_supplement: '旧scope',
+        tmp_image_token: 'old-candidate-token',
+      });
+      await flushQueries();
+    });
+
+    await expect(ref.current?.prepareToLeave()).resolves.toBe(false);
+
+    await act(async () => {
+      resolvers[1]?.({
+        suggested_fields: {},
+        prompt_supplement: '新scope',
+        tmp_image_token: 'new-candidate-token',
+      });
+      await flushQueries();
+    });
   });
 });

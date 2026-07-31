@@ -16,6 +16,7 @@ interface ResilientAuthenticatedImageProps {
   accessibilityLabel: string;
   identity: string;
   onExhausted(): void;
+  onLoad?(): void;
   protectedSource: RemoteImageSource | null;
   publicSource: RemoteImageSource | null;
   refreshProtectedSource(): Promise<RemoteImageSource>;
@@ -26,6 +27,7 @@ export function ResilientAuthenticatedImage({
   accessibilityLabel,
   identity,
   onExhausted,
+  onLoad,
   protectedSource,
   publicSource,
   refreshProtectedSource,
@@ -113,6 +115,7 @@ export function ResilientAuthenticatedImage({
       cachePolicy="memory"
       contentFit="cover"
       onError={onError}
+      onLoad={onLoad}
       recyclingKey={`${identity}:${current.stage}`}
       source={source}
       style={style}
