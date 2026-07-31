@@ -2,10 +2,12 @@ import type { QueryResultRow } from 'pg';
 import type { GenerationJob, GenerationJobType } from '../domain/types/job.js';
 import type { PageGenerationMode } from '../domain/types/pageGeneration.js';
 import { ConfigurationError, ConflictError } from '../domain/errors/index.js';
+import type { GenerationJobHistoryCursor } from '../domain/pagination.js';
 import type { DatabaseClient, TransactionRunner } from '../lib/db.js';
 import { sanitizePersistedErrorMessage } from '../lib/errorSanitizer.js';
 
 export type { GenerationJob };
+export type { GenerationJobHistoryCursor };
 
 export interface GenerationJobCapacityLimits {
   perUser: number;
@@ -88,6 +90,32 @@ export interface GenerationJobCancellationRepository {
   finalizeCancellation(jobId: string): Promise<boolean>;
 }
 
+export interface ListGenerationJobHistoryInput {
+  userId: string;
+  organizationId?: string | null;
+  limit: number;
+  cursor: GenerationJobHistoryCursor | null;
+}
+
+export interface GenerationJobHistoryPage {
+  jobs: GenerationJob[];
+  nextCursor: GenerationJobHistoryCursor | null;
+}
+
+export type HideGenerationJobHistoryResult =
+  | { kind: 'not_found' }
+  | { kind: 'active' }
+  | { kind: 'hidden' };
+
+export interface GenerationJobHistoryRepository {
+  listHistory(input: ListGenerationJobHistoryInput): Promise<GenerationJobHistoryPage>;
+  hideFromHistory(
+    userId: string,
+    jobId: string,
+    organizationId?: string | null,
+  ): Promise<HideGenerationJobHistoryResult>;
+}
+
 interface GenerationJobRow extends QueryResultRow {
   id: string;
   user_id: string;
@@ -112,13 +140,24 @@ interface GenerationJobRow extends QueryResultRow {
   commit_started_at: Date | null;
 }
 
+interface GenerationJobHistoryRow extends GenerationJobRow {
+  active_rank: number;
+}
+
+interface GenerationJobStatusRow extends QueryResultRow {
+  status: GenerationJob['status'];
+}
+
 const DEFAULT_CAPACITY_JOB_TYPES: readonly GenerationJobType[] = [
   'page_generate',
   'entity_generate',
 ];
 
 export class PostgresGenerationJobRepository
-  implements GenerationJobRepository, GenerationJobCancellationRepository
+  implements
+    GenerationJobRepository,
+    GenerationJobCancellationRepository,
+    GenerationJobHistoryRepository
 {
   private static readonly advisoryLockNamespace = 81_527;
 
@@ -235,6 +274,151 @@ export class PostgresGenerationJobRepository
     );
 
     return result.rows[0] === undefined ? null : mapGenerationJobRow(result.rows[0]);
+  }
+
+  public async listHistory(
+    input: ListGenerationJobHistoryInput,
+  ): Promise<GenerationJobHistoryPage> {
+    if (
+      !Number.isSafeInteger(input.limit)
+      || input.limit < 1
+      || input.limit > 100
+    ) {
+      throw new ConfigurationError('Generation job history limit is invalid');
+    }
+
+    const organizationId = input.organizationId ?? null;
+    const result = await this.client.query<GenerationJobHistoryRow>(
+      `
+      WITH visible_jobs AS (
+        SELECT
+          generation_jobs.*,
+          CASE
+            WHEN generation_jobs.status IN ('queued', 'processing') THEN 0
+            ELSE 1
+          END AS active_rank
+        FROM generation_jobs
+        WHERE (
+          ($2::uuid IS NULL
+            AND generation_jobs.user_id = $1::uuid
+            AND generation_jobs.organization_id IS NULL)
+          OR (
+            $2::uuid IS NOT NULL
+            AND generation_jobs.organization_id = $2::uuid
+            AND EXISTS (
+              SELECT 1
+              FROM organization_members
+              WHERE organization_members.organization_id = generation_jobs.organization_id
+                AND organization_members.user_id = $1::uuid
+                AND organization_members.status = 'active'
+            )
+          )
+        )
+        AND (
+          generation_jobs.status IN ('queued', 'processing')
+          OR NOT EXISTS (
+            SELECT 1
+            FROM generation_job_history_hides
+            WHERE generation_job_history_hides.generation_job_id = generation_jobs.id
+              AND generation_job_history_hides.user_id = $1::uuid
+          )
+        )
+      )
+      SELECT *
+      FROM visible_jobs
+      WHERE (
+        $3::int IS NULL
+        OR active_rank > $3::int
+        OR (
+          active_rank = $3::int
+          AND (
+            created_at < $4::timestamptz
+            OR (created_at = $4::timestamptz AND id < $5::uuid)
+          )
+        )
+      )
+      ORDER BY active_rank ASC, created_at DESC, id DESC
+      LIMIT $6
+      `,
+      [
+        input.userId,
+        organizationId,
+        input.cursor?.activeRank ?? null,
+        input.cursor?.createdAt ?? null,
+        input.cursor?.id ?? null,
+        input.limit + 1,
+      ],
+    );
+
+    const rows = result.rows.slice(0, input.limit);
+    const lastRow = rows.at(-1);
+    return {
+      jobs: rows.map(mapGenerationJobRow),
+      nextCursor:
+        result.rows.length > input.limit && lastRow !== undefined
+          ? {
+              activeRank: toGenerationJobHistoryActiveRank(lastRow.active_rank),
+              createdAt: lastRow.created_at,
+              id: lastRow.id,
+            }
+          : null,
+    };
+  }
+
+  public async hideFromHistory(
+    userId: string,
+    jobId: string,
+    organizationId: string | null = null,
+  ): Promise<HideGenerationJobHistoryResult> {
+    const transactionRunner = this.requireTransactionRunnerForHistory();
+    return transactionRunner.transaction(async (transactionClient) => {
+      const result = await transactionClient.query<GenerationJobStatusRow>(
+        `
+        SELECT generation_jobs.status
+        FROM generation_jobs
+        WHERE generation_jobs.id = $1::uuid
+          AND (
+            ($3::uuid IS NULL
+              AND generation_jobs.user_id = $2::uuid
+              AND generation_jobs.organization_id IS NULL)
+            OR (
+              $3::uuid IS NOT NULL
+              AND generation_jobs.organization_id = $3::uuid
+              AND EXISTS (
+                SELECT 1
+                FROM organization_members
+                WHERE organization_members.organization_id = generation_jobs.organization_id
+                  AND organization_members.user_id = $2::uuid
+                  AND organization_members.status = 'active'
+              )
+            )
+          )
+        FOR UPDATE
+        `,
+        [jobId, userId, organizationId],
+      );
+
+      const job = result.rows[0];
+      if (job === undefined) {
+        return { kind: 'not_found' };
+      }
+      if (job.status === 'queued' || job.status === 'processing') {
+        return { kind: 'active' };
+      }
+
+      await transactionClient.query(
+        `
+        INSERT INTO generation_job_history_hides (
+          generation_job_id,
+          user_id
+        )
+        VALUES ($1::uuid, $2::uuid)
+        ON CONFLICT (generation_job_id, user_id) DO NOTHING
+        `,
+        [jobId, userId],
+      );
+      return { kind: 'hidden' };
+    });
   }
 
   public async findActivePageGenerationJob(
@@ -480,6 +664,16 @@ export class PostgresGenerationJobRepository
     return this.client;
   }
 
+  private requireTransactionRunnerForHistory(): DatabaseClient & TransactionRunner {
+    if (!isTransactionRunner(this.client)) {
+      throw new ConfigurationError(
+        'Generation job history management requires a transaction-capable database client',
+      );
+    }
+
+    return this.client;
+  }
+
   private async prepareRetryWithClient(
     client: DatabaseClient,
     jobId: string,
@@ -669,4 +863,12 @@ function toJsonObject(value: unknown): Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
+}
+
+function toGenerationJobHistoryActiveRank(value: number): 0 | 1 {
+  if (value === 0 || value === 1) {
+    return value;
+  }
+
+  throw new ConfigurationError('Generation job history active rank is invalid');
 }

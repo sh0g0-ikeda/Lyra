@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { generationJobResponseSchema } from '../../../packages/api-contract/src/mobileApiSchemas.js';
+import {
+  generationJobHistoryResponseSchema,
+  generationJobResponseSchema,
+} from '../../../packages/api-contract/src/mobileApiSchemas.js';
 
 const baseJob = {
   id: 'job-1',
@@ -18,6 +21,41 @@ const baseJob = {
 };
 
 describe('Generation job response contract', () => {
+  it('strictな履歴一覧とnullable next cursorを受理する', () => {
+    const pageJob = {
+      ...baseJob,
+      job_type: 'page_generate',
+      params: { page_id: 'page-1' },
+      result: null,
+    };
+
+    expect(
+      generationJobHistoryResponseSchema.safeParse({
+        jobs: [pageJob],
+        next_cursor: null,
+      }).success,
+    ).toBe(true);
+    expect(
+      generationJobHistoryResponseSchema.safeParse({
+        jobs: [pageJob],
+        next_cursor: 'a'.repeat(513),
+      }).success,
+    ).toBe(false);
+    expect(
+      generationJobHistoryResponseSchema.safeParse({
+        jobs: [{ ...pageJob, provider_secret: 'internal' }],
+        next_cursor: null,
+      }).success,
+    ).toBe(false);
+    expect(
+      generationJobHistoryResponseSchema.safeParse({
+        jobs: [],
+        next_cursor: null,
+        internal_count: 1,
+      }).success,
+    ).toBe(false);
+  });
+
   it('4 job typeのnull・部分・完了resultを受理する', () => {
     expect(
       generationJobResponseSchema.safeParse({

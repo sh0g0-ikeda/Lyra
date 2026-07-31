@@ -1,12 +1,17 @@
 ﻿import { SignJWT } from 'jose';
 import { describe, expect, it } from 'vitest';
 import { createApp } from '../../../src/app.js';
+import { decodeGenerationJobHistoryCursor } from '../../../src/domain/pagination.js';
 import { NotFoundError } from '../../../src/domain/errors/index.js';
 import type { CreditBalanceSnapshot } from '../../../src/domain/types/credit.js';
 import type { GenerationJob } from '../../../src/domain/types/job.js';
 import type { PageSummary } from '../../../src/domain/types/page.js';
 import type { AuthenticatedUser, SupabaseJwtClaims } from '../../../src/domain/types/user.js';
 import { REQUEST_BODY_LIMITS } from '../../../src/routes/requestBody.js';
+import type {
+  GenerationJobHistoryCursor,
+  GenerationJobHistoryPage,
+} from '../../../src/repositories/GenerationJobRepository.js';
 import type {
   ConsumeCreditsParams,
   CreditServicePort,
@@ -177,6 +182,21 @@ class FakePageQueryService implements PageQueryServicePort {
 
 class FakeJobService implements JobServicePort {
   public job: GenerationJob | null = buildJob();
+  public historyPage: GenerationJobHistoryPage = {
+    jobs: [],
+    nextCursor: null,
+  };
+  public historyCalls: Array<{
+    userId: string;
+    organizationId: string | null;
+    limit: number;
+    cursor: GenerationJobHistoryCursor | null;
+  }> = [];
+  public hiddenJobs: Array<{
+    userId: string;
+    jobId: string;
+    organizationId: string | null;
+  }> = [];
   public cancelledJob: {
     userId: string;
     jobId: string;
@@ -206,6 +226,31 @@ class FakeJobService implements JobServicePort {
 
     this.cancelledJob = { userId, jobId, organizationId };
     return this.job;
+  }
+
+  public async listJobHistory(
+    userId: string,
+    input: {
+      organizationId?: string | null;
+      limit: number;
+      cursor: GenerationJobHistoryCursor | null;
+    },
+  ): Promise<GenerationJobHistoryPage> {
+    this.historyCalls.push({
+      userId,
+      organizationId: input.organizationId ?? null,
+      limit: input.limit,
+      cursor: input.cursor,
+    });
+    return this.historyPage;
+  }
+
+  public async hideJobFromHistory(
+    userId: string,
+    jobId: string,
+    organizationId: string | null = null,
+  ): Promise<void> {
+    this.hiddenJobs.push({ userId, jobId, organizationId });
   }
 }
 
@@ -607,6 +652,165 @@ describe('page generation routes', () => {
     expect(params).not.toHaveProperty('draft_prompt');
     expect(payload).not.toHaveProperty('user_id');
     expect(payload).not.toHaveProperty('sqs_message_id');
+  });
+
+  it('job履歴0件を正常なempty stateとして返す', async () => {
+    const jobService = new FakeJobService();
+    const app = createTestApp(
+      new FakePageGenerationService(),
+      new FakePageFinalizeService(),
+      jobService,
+    );
+    const token = await createToken();
+
+    const response = await app.request('/api/jobs?limit=25', {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      jobs: [],
+      next_cursor: null,
+    });
+    expect(jobService.historyCalls).toEqual([
+      {
+        userId: user.id,
+        organizationId: null,
+        limit: 25,
+        cursor: null,
+      },
+    ]);
+  });
+
+  it('job履歴のnext cursorをopaque値で返し次page入力を復号する', async () => {
+    const jobService = new FakeJobService();
+    const cursor = {
+      activeRank: 1 as const,
+      createdAt: new Date('2026-05-01T00:00:00.000Z'),
+      id: '22222222-2222-4222-8222-222222222222',
+    };
+    jobService.historyPage = {
+      jobs: [buildJob()],
+      nextCursor: cursor,
+    };
+    const app = createTestApp(
+      new FakePageGenerationService(),
+      new FakePageFinalizeService(),
+      jobService,
+    );
+    const token = await createToken();
+
+    const first = await app.request('/api/jobs', {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const firstPayload = (await first.json()) as {
+      next_cursor: string;
+    };
+    const second = await app.request(
+      `/api/jobs?limit=10&cursor=${encodeURIComponent(firstPayload.next_cursor)}`,
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+
+    expect(first.status).toBe(200);
+    expect(decodeGenerationJobHistoryCursor(firstPayload.next_cursor)).toEqual(
+      cursor,
+    );
+    expect(second.status).toBe(200);
+    expect(jobService.historyCalls[1]).toEqual({
+      userId: user.id,
+      organizationId: null,
+      limit: 10,
+      cursor,
+    });
+  });
+
+  it('job履歴の不正limit・cursorを422にする', async () => {
+    const app = createTestApp(
+      new FakePageGenerationService(),
+      new FakePageFinalizeService(),
+      new FakeJobService(),
+    );
+    const token = await createToken();
+    const headers = { Authorization: `Bearer ${token}` };
+
+    const responses = await Promise.all([
+      app.request('/api/jobs?limit=0', { headers }),
+      app.request('/api/jobs?limit=101', { headers }),
+      app.request('/api/jobs?limit=1.5', { headers }),
+      app.request('/api/jobs?cursor=not-a-cursor', { headers }),
+    ]);
+
+    expect(responses.map((response) => response.status)).toEqual([
+      422, 422, 422, 422,
+    ]);
+  });
+
+  it('terminal jobを履歴から非表示にしてもdirect GETを維持する', async () => {
+    const jobService = new FakeJobService();
+    const app = createTestApp(
+      new FakePageGenerationService(),
+      new FakePageFinalizeService(),
+      jobService,
+    );
+    const token = await createToken();
+    const headers = { Authorization: `Bearer ${token}` };
+    const jobId = '22222222-2222-4222-8222-222222222222';
+
+    const hidden = await app.request(`/api/jobs/${jobId}`, {
+      method: 'DELETE',
+      headers,
+    });
+    const direct = await app.request(`/api/jobs/${jobId}`, { headers });
+
+    expect(hidden.status).toBe(204);
+    expect(direct.status).toBe(200);
+    expect(jobService.hiddenJobs).toEqual([
+      { userId: user.id, jobId, organizationId: null },
+    ]);
+  });
+
+  it('organization job履歴と非表示はview_work確認後に同じscopeを渡す', async () => {
+    const organizationId = '11111111-1111-4111-8111-111111111111';
+    const requiredCapabilities: string[] = [];
+    const organizationService = {
+      requireMembership: async (
+        _organizationId: string,
+        _userId: string,
+        capability: string,
+      ) => {
+        requiredCapabilities.push(capability);
+        return {};
+      },
+    } as unknown as OrganizationServicePort;
+    const jobService = new FakeJobService();
+    const app = createTestApp(
+      new FakePageGenerationService(),
+      new FakePageFinalizeService(),
+      jobService,
+      new FakePageQueryService(),
+      new FakePageService(),
+      new FakePageExportService(),
+      new FakeEpisodeStoryAutofillService(),
+      organizationService,
+    );
+    const token = await createToken();
+    const headers = { Authorization: `Bearer ${token}` };
+    const jobId = '22222222-2222-4222-8222-222222222222';
+
+    const list = await app.request(
+      `/api/jobs?organization_id=${organizationId}`,
+      { headers },
+    );
+    const hidden = await app.request(
+      `/api/jobs/${jobId}?organization_id=${organizationId}`,
+      { method: 'DELETE', headers },
+    );
+
+    expect(list.status).toBe(200);
+    expect(hidden.status).toBe(204);
+    expect(requiredCapabilities).toEqual(['view_work', 'view_work']);
+    expect(jobService.historyCalls[0]?.organizationId).toBe(organizationId);
+    expect(jobService.hiddenJobs[0]?.organizationId).toBe(organizationId);
   });
 
   it('job取得と停止は契約外Service値を500にする', async () => {
