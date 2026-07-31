@@ -19,5 +19,12 @@ describe('story query keys', () => {
       'episodes',
       'chapter-1',
     ]);
+    expect(organization.scenes('episode-1')).toEqual([
+      'mobile-story',
+      'session-a',
+      'organization:99999999-9999-4999-8999-999999999999',
+      'scenes',
+      'episode-1',
+    ]);
   });
 });

@@ -9,12 +9,13 @@ import { t } from '../lib/i18n';
 import { userErrorMessage } from '../lib/userMessages';
 import { useAuthSession } from '../state/AuthSessionProvider';
 import { StoryScreen, type StoryScreenHandle } from './StoryScreen';
+import { PagesScreen, type PagesScreenHandle } from './PagesScreen';
 
 interface FoundationHomeScreenProps {
   session: CurrentSession;
 }
 
-type HomeTab = 'story' | 'account';
+type HomeTab = 'story' | 'pages' | 'account';
 
 export function FoundationHomeScreen({
   session,
@@ -23,23 +24,31 @@ export function FoundationHomeScreen({
   const [activeTab, setActiveTab] = useState<HomeTab>('story');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const accountTransition = useRef<Promise<void> | null>(null);
+  const tabTransition = useRef<Promise<void> | null>(null);
+  const pagesRef = useRef<PagesScreenHandle>(null);
   const storyRef = useRef<StoryScreenHandle>(null);
 
-  const openAccount = (): Promise<void> => {
-    if (accountTransition.current !== null) {
-      return accountTransition.current;
+  const openTab = (nextTab: HomeTab): Promise<void> => {
+    if (nextTab === activeTab) {
+      return Promise.resolve();
+    }
+    if (tabTransition.current !== null) {
+      return tabTransition.current;
     }
     const transition = (async (): Promise<void> => {
-      const canLeave = await storyRef.current?.prepareToLeave() ?? true;
+      const canLeave = activeTab === 'story'
+        ? await storyRef.current?.prepareToLeave() ?? true
+        : activeTab === 'pages'
+          ? await pagesRef.current?.prepareToLeave() ?? true
+          : true;
       if (canLeave) {
-        setActiveTab('account');
+        setActiveTab(nextTab);
       }
     })();
-    accountTransition.current = transition;
+    tabTransition.current = transition;
     void transition.finally(() => {
-      if (accountTransition.current === transition) {
-        accountTransition.current = null;
+      if (tabTransition.current === transition) {
+        tabTransition.current = null;
       }
     });
     return transition;
@@ -64,13 +73,19 @@ export function FoundationHomeScreen({
           accessibilityLabel={language === 'ja' ? 'ストーリーを開く' : 'Open Story'}
           active={activeTab === 'story'}
           label={t(language, 'story')}
-          onPress={() => setActiveTab('story')}
+          onPress={() => void openTab('story')}
+        />
+        <TabButton
+          accessibilityLabel={language === 'ja' ? 'ページを開く' : 'Open Pages'}
+          active={activeTab === 'pages'}
+          label={t(language, 'pages')}
+          onPress={() => void openTab('pages')}
         />
         <TabButton
           accessibilityLabel={language === 'ja' ? 'アカウントを開く' : 'Open Account'}
           active={activeTab === 'account'}
           label={t(language, 'account')}
-          onPress={() => void openAccount()}
+          onPress={() => void openTab('account')}
         />
       </View>
 
@@ -80,6 +95,14 @@ export function FoundationHomeScreen({
           language={language}
           organizationId={null}
           ref={storyRef}
+          sessionKey={session.user.id}
+        />
+      ) : activeTab === 'pages' ? (
+        <PagesScreen
+          api={api}
+          language={language}
+          organizationId={null}
+          ref={pagesRef}
           sessionKey={session.user.id}
         />
       ) : (

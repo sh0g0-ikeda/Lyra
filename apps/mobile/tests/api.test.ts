@@ -401,6 +401,76 @@ describe('LyraMobileApiClient', () => {
       `https://api.example.com/api/episodes/${buildEpisode().id}?organization_id=${organizationId}`,
     ]);
   });
+
+  it('Scene一覧・作成・更新をorganization scopeとcanonical contractで扱う', async () => {
+    const organizationId = '55555555-5555-4555-8555-555555555555';
+    const scene = buildScene();
+    const updatedScene = { ...scene, location: 'ベーカー街' };
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(jsonResponse({ scenes: [scene] }))
+      .mockResolvedValueOnce(jsonResponse(scene))
+      .mockResolvedValueOnce(jsonResponse(updatedScene));
+    const api = new LyraMobileApiClient({
+      apiBaseUrl: 'https://api.example.com',
+      auth: new FakeAuthSession(),
+      fetcher,
+    });
+
+    await expect(api.getScenes(buildEpisode().id, organizationId)).resolves.toEqual({
+      scenes: [scene],
+    });
+    await expect(api.createScene(buildEpisode().id, {
+      order: 1,
+      location: null,
+      time: null,
+      atmosphere: null,
+    }, organizationId)).resolves.toEqual(scene);
+    await expect(api.updateScene(scene.id, {
+      location: 'ベーカー街',
+    }, organizationId)).resolves.toEqual(updatedScene);
+
+    expect(fetcher.mock.calls).toEqual([
+      [
+        `https://api.example.com/api/episodes/${buildEpisode().id}/scenes?organization_id=${organizationId}`,
+        expect.objectContaining({ method: 'GET' }),
+      ],
+      [
+        `https://api.example.com/api/episodes/${buildEpisode().id}/scenes?organization_id=${organizationId}`,
+        expect.objectContaining({
+          body: JSON.stringify({
+            order: 1,
+            location: null,
+            time: null,
+            atmosphere: null,
+          }),
+          method: 'POST',
+        }),
+      ],
+      [
+        `https://api.example.com/api/scenes/${scene.id}?organization_id=${organizationId}`,
+        expect.objectContaining({
+          body: JSON.stringify({ location: 'ベーカー街' }),
+          method: 'PUT',
+        }),
+      ],
+    ]);
+  });
+
+  it('Sceneの契約外payloadをlocal stateへ入れない', async () => {
+    const api = new LyraMobileApiClient({
+      apiBaseUrl: 'https://api.example.com',
+      auth: new FakeAuthSession(),
+      fetcher: vi.fn<typeof fetch>().mockResolvedValue(
+        jsonResponse({ scenes: [{ ...buildScene(), order: 0 }] }),
+      ),
+    });
+
+    await expect(api.getScenes(buildEpisode().id)).rejects.toMatchObject({
+      code: 'INVALID_API_RESPONSE',
+      status: 502,
+    });
+  });
 });
 
 class FakeAuthSession implements MobileAuthSessionPort {
@@ -508,6 +578,22 @@ function buildEpisode(): Record<string, unknown> & { id: string } {
     entities_involved: [],
     page_skeleton_generated: false,
     version: 1,
+    status: 'draft',
+    created_at: '2026-07-31T00:00:00.000Z',
+    updated_at: '2026-07-31T00:00:00.000Z',
+  };
+}
+
+function buildScene(): Record<string, unknown> & { id: string } {
+  return {
+    id: '66666666-6666-4666-8666-666666666666',
+    episode_id: buildEpisode().id,
+    order: 1,
+    location: null,
+    time: null,
+    atmosphere: null,
+    involved_entity_ids: [],
+    entity_states: [],
     status: 'draft',
     created_at: '2026-07-31T00:00:00.000Z',
     updated_at: '2026-07-31T00:00:00.000Z',

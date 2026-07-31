@@ -57,6 +57,7 @@ export function StorySelectionSection({
             <Pressable
               accessibilityLabel={`${item.label}${selectSuffix}`}
               accessibilityRole="button"
+              accessibilityState={{ selected: item.id === selectedId }}
               key={item.id}
               onPress={() => onSelect(item.id)}
               style={({ pressed }) => [
