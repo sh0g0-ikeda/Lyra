@@ -16,6 +16,10 @@ import {
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Notice } from '../components/Notice';
 import { PrimaryButton } from '../components/PrimaryButton';
+import {
+  EntityReferenceSection,
+  type EntityReferenceApiPort,
+} from '../components/EntityReferenceSection';
 import { StorySelectionSection } from '../components/StorySelectionSection';
 import { colors, radius, spacing } from '../constants/theme';
 import {
@@ -54,7 +58,7 @@ export interface CharactersScreenHandle {
   prepareToLeave(): Promise<boolean>;
 }
 
-export interface CharactersApiPort {
+export interface CharactersApiPort extends EntityReferenceApiPort {
   createEntity(
     workId: string,
     body: CreateEntityInput,
@@ -78,6 +82,8 @@ export interface CharactersApiPort {
 
 interface CharactersScreenProps {
   api: CharactersApiPort;
+  imageApiBaseUrl: string;
+  imageAuthorizationHeader: string | null;
   language: UiLanguage;
   organizationId: string | null;
   resolveDirtyAction?: () => Promise<DirtyStoryAction>;
@@ -89,6 +95,8 @@ export const CharactersScreen = forwardRef<
   CharactersScreenProps
 >(function CharactersScreen({
   api,
+  imageApiBaseUrl,
+  imageAuthorizationHeader,
   language,
   organizationId,
   resolveDirtyAction,
@@ -473,6 +481,19 @@ export const CharactersScreen = forwardRef<
               loading={saving}
               onPress={() => void saveCurrentDraft()}
             />
+            {savedEntity === null ? null : (
+              <EntityReferenceSection
+                api={api}
+                apiBaseUrl={imageApiBaseUrl}
+                authorizationHeader={imageAuthorizationHeader}
+                entityId={savedEntity.id}
+                entityName={savedEntity.name}
+                language={language}
+                organizationId={organizationId}
+                queryKeys={queryKeys}
+                sessionKey={sessionKey}
+              />
+            )}
           </View>
         </View>
       )}

@@ -10,6 +10,7 @@ export function storyQueryKeys(
   panelLists(): readonly string[];
   panels(pageId: string): readonly string[];
   entities(workId: string): readonly string[];
+  entityReferenceSet(entityId: string): readonly string[];
   jobs(): readonly string[];
   job(jobId: string): readonly string[];
 } {
@@ -27,6 +28,11 @@ export function storyQueryKeys(
     panelLists: () => [...root, 'panels'] as const,
     panels: (pageId: string) => [...root, 'panels', pageId] as const,
     entities: (workId: string) => [...root, 'entities', workId] as const,
+    entityReferenceSet: (entityId: string) => [
+      ...root,
+      'entity-reference-set',
+      entityId,
+    ] as const,
     jobs: () => [...root, 'jobs'] as const,
     job: (jobId: string) => [...root, 'job', jobId] as const,
   };
