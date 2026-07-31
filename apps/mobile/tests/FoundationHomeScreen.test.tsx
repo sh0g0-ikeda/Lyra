@@ -3,7 +3,13 @@ import { act, create } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { FoundationHomeScreen } from '../src/screens/FoundationHomeScreen';
 
-const { pagesPrepareToLeave, prepareToLeave, signOut } = vi.hoisted(() => ({
+const {
+  charactersPrepareToLeave,
+  pagesPrepareToLeave,
+  prepareToLeave,
+  signOut,
+} = vi.hoisted(() => ({
+  charactersPrepareToLeave: vi.fn(),
   pagesPrepareToLeave: vi.fn(),
   prepareToLeave: vi.fn(),
   signOut: vi.fn(),
@@ -55,6 +61,13 @@ vi.mock('../src/screens/PagesScreen', () => ({
   }),
 }));
 
+vi.mock('../src/screens/CharactersScreen', () => ({
+  CharactersScreen: forwardRef(function MockCharactersScreen(_props, ref) {
+    useImperativeHandle(ref, () => ({ prepareToLeave: charactersPrepareToLeave }));
+    return React.createElement('characters-screen', null, 'Characters editor');
+  }),
+}));
+
 vi.mock('../src/state/AuthSessionProvider', () => ({
   useAuthSession: () => ({
     api: {},
@@ -77,6 +90,7 @@ const session = {
 describe('FoundationHomeScreen', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    charactersPrepareToLeave.mockResolvedValue(true);
     pagesPrepareToLeave.mockResolvedValue(true);
     prepareToLeave.mockResolvedValue(true);
     signOut.mockResolvedValue(undefined);
@@ -159,5 +173,35 @@ describe('FoundationHomeScreen', () => {
     });
     expect(pagesPrepareToLeave).toHaveBeenCalledOnce();
     expect(renderer!.root.findByType('pages-screen')).toBeDefined();
+  });
+
+  it('StoryとPagesの間にCharactersを表示し、離脱前に未保存変更を解決する', async () => {
+    let renderer: ReturnType<typeof create>;
+    await act(async () => {
+      renderer = create(<FoundationHomeScreen session={session} />);
+    });
+    expect(renderer!.root.findAllByType('button').map(
+      (tab) => tab.props.accessibilityLabel,
+    ).filter((label): label is string => label !== undefined)).toEqual([
+      'ストーリーを開く',
+      'キャラを開く',
+      'ページを開く',
+      'アカウントを開く',
+    ]);
+
+    await act(async () => {
+      renderer!.root.findByProps({ accessibilityLabel: 'キャラを開く' }).props.onPress();
+      await Promise.resolve();
+    });
+    expect(prepareToLeave).toHaveBeenCalledOnce();
+    expect(renderer!.root.findByType('characters-screen')).toBeDefined();
+
+    charactersPrepareToLeave.mockResolvedValue(false);
+    await act(async () => {
+      renderer!.root.findByProps({ accessibilityLabel: 'ページを開く' }).props.onPress();
+      await Promise.resolve();
+    });
+    expect(charactersPrepareToLeave).toHaveBeenCalledOnce();
+    expect(renderer!.root.findByType('characters-screen')).toBeDefined();
   });
 });
