@@ -15,6 +15,7 @@ import { AuthSessionCoordinator } from '../lib/authSessionCoordinator';
 import { config } from '../lib/config';
 import { createExpoCognitoDependencies } from '../lib/expoCognito';
 import { detectUiLanguage, type UiLanguage } from '../lib/i18n';
+import { clearPrivateImageMemoryCache } from '../lib/privateImageCache';
 import {
   clearAuthTokens,
   loadAuthTokens,
@@ -39,6 +40,10 @@ export function AuthSessionProvider({
   const [hydrated, setHydrated] = useState(false);
   const [language] = useState(detectUiLanguage);
   const [tokens, setTokens] = useState<AuthTokens | null>(null);
+  const clearPrivateClientState = useCallback((): void => {
+    queryClient.clear();
+    void clearPrivateImageMemoryCache();
+  }, [queryClient]);
   const service = useMemo(
     () => new CognitoAuthService(config, createExpoCognitoDependencies(config)),
     [],
@@ -50,7 +55,12 @@ export function AuthSessionProvider({
         save: saveAuthTokens,
         clear: clearAuthTokens,
       },
-      setTokens,
+      (nextTokens) => {
+        setTokens(nextTokens);
+        if (nextTokens === null) {
+          void clearPrivateClientState();
+        }
+      },
     ),
   );
 
@@ -81,14 +91,8 @@ export function AuthSessionProvider({
   }, [coordinator]);
 
   const signOut = useCallback(async (): Promise<void> => {
-    try {
-      await coordinator.signOut();
-    } finally {
-      if ((await coordinator.getTokens()) === null) {
-        queryClient.clear();
-      }
-    }
-  }, [coordinator, queryClient]);
+    await coordinator.signOut();
+  }, [coordinator]);
 
   const api = useMemo(
     () => new LyraMobileApiClient({

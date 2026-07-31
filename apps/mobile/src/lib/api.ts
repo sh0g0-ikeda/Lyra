@@ -6,6 +6,7 @@ import {
   episodeSchema,
   episodesResponseSchema,
   entitiesResponseSchema,
+  entityReferenceSetSchema,
   entitySchema,
   generationJobHistoryResponseSchema,
   generationJobResponseSchema,
@@ -29,6 +30,7 @@ export type WorkRecord = ReturnType<typeof workSchema.parse>;
 export type ChapterRecord = ReturnType<typeof chapterSchema.parse>;
 export type EpisodeRecord = ReturnType<typeof episodeSchema.parse>;
 export type EntityRecord = ReturnType<typeof entitySchema.parse>;
+export type EntityReferenceSetRecord = ReturnType<typeof entityReferenceSetSchema.parse>;
 export type SceneRecord = ReturnType<typeof sceneSchema.parse>;
 export type PageRecord = ReturnType<typeof pageSchema.parse>;
 export type PanelRecord = ReturnType<typeof panelSchema.parse>;
@@ -141,6 +143,7 @@ export class LyraMobileApiClient {
   private readonly auth: MobileAuthSessionPort;
   private readonly fetcher: typeof fetch;
   private readonly requestTimeoutMs: number;
+  private imageAuthorizationRefresh: Promise<string> | null = null;
 
   public constructor(options: LyraMobileApiClientOptions) {
     this.apiBaseUrl = options.apiBaseUrl.replace(/\/+$/, '');
@@ -247,6 +250,46 @@ export class LyraMobileApiClient {
       throw invalidApiResponse();
     }
     return entity;
+  }
+
+  public async getEntityReferenceSet(
+    entityId: string,
+    organizationId: string | null = null,
+  ): Promise<EntityReferenceSetRecord> {
+    const referenceSet = await this.requestJson(
+      withOrganizationQuery(
+        `/api/entities/${encodeURIComponent(entityId)}/reference-set`,
+        organizationId,
+      ),
+      entityReferenceSetSchema,
+    );
+    if (referenceSet.entity_id !== entityId) {
+      throw invalidApiResponse();
+    }
+    return referenceSet;
+  }
+
+  public refreshImageAuthorizationHeader(): Promise<string> {
+    if (this.imageAuthorizationRefresh !== null) {
+      return this.imageAuthorizationRefresh;
+    }
+    const operation = this.auth.refreshTokens().then(
+      (tokens) => `Bearer ${tokens.idToken}`,
+    );
+    this.imageAuthorizationRefresh = operation;
+    void operation.then(
+      () => {
+        if (this.imageAuthorizationRefresh === operation) {
+          this.imageAuthorizationRefresh = null;
+        }
+      },
+      () => {
+        if (this.imageAuthorizationRefresh === operation) {
+          this.imageAuthorizationRefresh = null;
+        }
+      },
+    );
+    return operation;
   }
 
   public createWork(

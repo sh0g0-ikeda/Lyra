@@ -77,13 +77,21 @@ vi.mock('../src/screens/PagesScreen', () => ({
 
 vi.mock('../src/screens/CharactersScreen', () => ({
   CharactersScreen: forwardRef(function MockCharactersScreen(
-    props: { organizationId: string | null },
+    props: {
+      imageApiBaseUrl: string;
+      imageAuthorizationHeader: string | null;
+      organizationId: string | null;
+    },
     ref,
   ) {
     useImperativeHandle(ref, () => ({ prepareToLeave: charactersPrepareToLeave }));
     return React.createElement(
       'characters-screen',
-      { organizationId: props.organizationId },
+      {
+        imageApiBaseUrl: props.imageApiBaseUrl,
+        imageAuthorizationHeader: props.imageAuthorizationHeader,
+        organizationId: props.organizationId,
+      },
       'Characters editor',
     );
   }),
@@ -113,6 +121,13 @@ vi.mock('../src/state/AuthSessionProvider', () => ({
     api: {},
     language: 'ja',
     signOut,
+    tokens: {
+      idToken: 'id-token',
+      accessToken: null,
+      refreshToken: 'refresh-token',
+      expiresAt: 1_800_000_000_000,
+      tokenType: 'Bearer',
+    },
   }),
 }));
 
@@ -264,7 +279,10 @@ describe('FoundationHomeScreen', () => {
       await Promise.resolve();
     });
     expect(prepareToLeave).toHaveBeenCalledOnce();
-    expect(renderer!.root.findByType('characters-screen')).toBeDefined();
+    expect(renderer!.root.findByType('characters-screen').props).toEqual(expect.objectContaining({
+      imageApiBaseUrl: expect.any(String),
+      imageAuthorizationHeader: 'Bearer id-token',
+    }));
 
     charactersPrepareToLeave.mockResolvedValue(false);
     await act(async () => {

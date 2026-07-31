@@ -39,6 +39,10 @@ vi.mock('react-native', () => ({
   View: 'view',
 }));
 
+vi.mock('expo-image', () => ({
+  Image: (props: Record<string, unknown>) => React.createElement('expo-image', props),
+}));
+
 vi.mock('../src/components/LoadingState', () => ({
   LoadingState: ({ label }: { label: string }) => React.createElement('loading', null, label),
 }));
@@ -120,7 +124,9 @@ describe('CharactersScreen', () => {
   const api = {
     createEntity: vi.fn(),
     getEntitiesPage: vi.fn(),
+    getEntityReferenceSet: vi.fn(),
     getWorksPage: vi.fn(),
+    refreshImageAuthorizationHeader: vi.fn(),
     updateEntity: vi.fn(),
   };
 
@@ -137,6 +143,14 @@ describe('CharactersScreen', () => {
       ],
       next_cursor: null,
     });
+    api.getEntityReferenceSet.mockImplementation(async (entityId: string) => ({
+      entity_id: entityId,
+      primary_ref_id: null,
+      status: 'empty',
+      updated_at: timestamp,
+      reference_images: [],
+    }));
+    api.refreshImageAuthorizationHeader.mockResolvedValue('Bearer refreshed-token');
     api.createEntity.mockImplementation(async (
       workId: string,
       input: { entity_type: 'character' | 'nonhuman' | 'object'; name: string; free_description: string | null },
@@ -171,6 +185,8 @@ describe('CharactersScreen', () => {
         <QueryClientProvider client={queryClient}>
           <CharactersScreen
             api={api}
+            imageApiBaseUrl="https://api.example.com"
+            imageAuthorizationHeader="Bearer id-token"
             language="ja"
             organizationId={null}
             ref={ref}
@@ -570,5 +586,163 @@ describe('CharactersScreen', () => {
     expect(textOf(renderer)).toContain('キャラ一覧を読み込めませんでした');
     expect(textOf(renderer)).not.toContain('キャラはまだありません');
     expect(textOf(renderer)).toContain('再試行');
+  });
+
+  it('未選択と新規draftではreference setを取得しない', async () => {
+    const { renderer } = await renderScreen();
+    await selectWork(renderer);
+
+    expect(api.getEntityReferenceSet).not.toHaveBeenCalled();
+    await changeInput(renderer, 'キャラ名', '新規キャラ');
+    expect(api.getEntityReferenceSet).not.toHaveBeenCalled();
+  });
+
+  it('保存済みキャラのreference状態・primary・確定画像metadataを表示する', async () => {
+    api.getEntityReferenceSet.mockResolvedValue({
+      entity_id: 'entity-1',
+      primary_ref_id: 'reference-1',
+      status: 'ready',
+      updated_at: timestamp,
+      reference_images: [
+        {
+          ref_id: 'reference-1',
+          cdn_url: 'https://cdn.example.com/reference.png?Signature=signed',
+          source: 'generated',
+          created_at: timestamp,
+        },
+      ],
+    });
+    const { renderer } = await renderScreen();
+    await selectWork(renderer);
+    await selectEntity(renderer);
+
+    expect(api.getEntityReferenceSet).toHaveBeenCalledWith('entity-1', null);
+    expect(textOf(renderer)).toContain('準備完了');
+    expect(textOf(renderer)).toContain('メイン画像: 設定済み');
+    expect(textOf(renderer)).toContain('確定画像: 1枚');
+    expect(textOf(renderer)).toContain('AI生成');
+    expect(textOf(renderer)).toContain('2026-08-01');
+    expect(renderer.root.findByType('expo-image').props.cachePolicy).toBe('memory');
+  });
+
+  it('reference 0件は正常emptyとして表示しerrorにしない', async () => {
+    const { renderer } = await renderScreen();
+    await selectWork(renderer);
+    await selectEntity(renderer);
+
+    expect(textOf(renderer)).toContain('参照画像はまだ確定されていません');
+    expect(textOf(renderer)).not.toContain('参照画像を読み込めませんでした');
+  });
+
+  it('reference取得失敗をemptyと混同せず再試行する', async () => {
+    api.getEntityReferenceSet
+      .mockRejectedValueOnce(new Error('private provider detail'))
+      .mockResolvedValueOnce({
+        entity_id: 'entity-1',
+        primary_ref_id: null,
+        status: 'empty',
+        updated_at: timestamp,
+        reference_images: [],
+      });
+    const { renderer } = await renderScreen();
+    await selectWork(renderer);
+    await selectEntity(renderer);
+
+    expect(textOf(renderer)).toContain('参照画像を読み込めませんでした');
+    expect(textOf(renderer)).not.toContain('private provider detail');
+    expect(textOf(renderer)).not.toContain('参照画像はまだ確定されていません');
+    await press(renderer, '参照画像を再試行');
+    expect(textOf(renderer)).toContain('参照画像はまだ確定されていません');
+  });
+
+  it('reference取得と画像fallbackへorganization scopeを渡す', async () => {
+    api.getEntityReferenceSet.mockResolvedValue({
+      entity_id: 'entity-1',
+      primary_ref_id: 'reference-1',
+      status: 'partial',
+      updated_at: timestamp,
+      reference_images: [{
+        ref_id: 'reference-1',
+        source: 'upload',
+        created_at: timestamp,
+      }],
+    });
+    const { renderer } = await renderScreen({ organizationId: 'organization-1' });
+    await selectWork(renderer);
+    await selectEntity(renderer);
+
+    expect(api.getEntityReferenceSet).toHaveBeenCalledWith('entity-1', 'organization-1');
+    expect(renderer.root.findByType('expo-image').props.source.uri).toContain(
+      'organization_id=organization-1',
+    );
+  });
+
+  it('複数のprotected画像が失敗しても同じ表示中の認証更新は1回に束ねる', async () => {
+    api.getEntityReferenceSet.mockResolvedValue({
+      entity_id: 'entity-1',
+      primary_ref_id: 'reference-1',
+      status: 'ready',
+      updated_at: timestamp,
+      reference_images: [
+        { ref_id: 'reference-1', source: 'upload', created_at: timestamp },
+        { ref_id: 'reference-2', source: 'generated', created_at: timestamp },
+      ],
+    });
+    const { renderer } = await renderScreen();
+    await selectWork(renderer);
+    await selectEntity(renderer);
+    const images = renderer.root.findAllByType('expo-image');
+
+    await act(async () => {
+      images[0]?.props.onError();
+      images[1]?.props.onError();
+      await Promise.resolve();
+    });
+
+    expect(api.refreshImageAuthorizationHeader).toHaveBeenCalledOnce();
+  });
+
+  it('逐次画像失敗でも更新済みheaderを再利用し手動再試行後だけ再更新する', async () => {
+    api.getEntityReferenceSet.mockResolvedValue({
+      entity_id: 'entity-1',
+      primary_ref_id: 'reference-1',
+      status: 'ready',
+      updated_at: timestamp,
+      reference_images: [
+        { ref_id: 'reference-1', source: 'upload', created_at: timestamp },
+        { ref_id: 'reference-2', source: 'generated', created_at: timestamp },
+      ],
+    });
+    const { renderer } = await renderScreen();
+    await selectWork(renderer);
+    await selectEntity(renderer);
+    const failImage = (label: string): void => {
+      const image = renderer.root.findAllByType('expo-image').find(
+        (candidate) => candidate.props.accessibilityLabel === label,
+      );
+      expect(image).toBeDefined();
+      image?.props.onError();
+    };
+
+    await act(async () => {
+      failImage('ホームズの参照画像 1');
+      await Promise.resolve();
+    });
+    await act(async () => {
+      failImage('ホームズの参照画像 2');
+      await Promise.resolve();
+    });
+    expect(api.refreshImageAuthorizationHeader).toHaveBeenCalledOnce();
+
+    await act(async () => {
+      failImage('ホームズの参照画像 1');
+    });
+    await press(renderer, '画像を再試行');
+    await act(async () => {
+      failImage('ホームズの参照画像 1');
+      await Promise.resolve();
+    });
+
+    expect(api.refreshImageAuthorizationHeader).toHaveBeenCalledTimes(2);
   });
 });

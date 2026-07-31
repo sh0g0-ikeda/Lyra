@@ -18,9 +18,13 @@ module.exports = ({ config }) => {
     'intentFilters',
     'package'
   ]);
+  const plugins = Array.isArray(config.plugins) ? config.plugins : [];
 
   return {
     ...config,
+    plugins: plugins.includes('expo-image')
+      ? plugins
+      : [...plugins, 'expo-image'],
     ...(ios === undefined ? {} : { ios }),
     ...(android === undefined ? {} : { android })
   };

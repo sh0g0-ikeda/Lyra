@@ -7,11 +7,13 @@ const createExpoConfig = require('../app.config.js') as (input: {
     name: string;
     ios?: Record<string, unknown>;
     android?: Record<string, unknown>;
+    plugins?: string[];
   };
 }) => {
   name: string;
   ios?: Record<string, unknown>;
   android?: Record<string, unknown>;
+  plugins?: string[];
 };
 
 describe('Expo app config', () => {
@@ -27,7 +29,8 @@ describe('Expo app config', () => {
           googleServicesFile: '/eas/secrets/google-services.json',
           intentFilters: [{ action: 'VIEW' }],
           package: 'com.lyra.mobile'
-        }
+        },
+        plugins: ['expo-secure-store'],
       }
     });
 
@@ -37,5 +40,17 @@ describe('Expo app config', () => {
     expect(config.android).not.toHaveProperty('googleServicesFile');
     expect(config.android).not.toHaveProperty('intentFilters');
     expect(config.android).not.toHaveProperty('package');
+    expect(config.plugins).toEqual(['expo-secure-store', 'expo-image']);
+  });
+
+  it('expo-image pluginを重複登録しない', () => {
+    const config = createExpoConfig({
+      config: {
+        name: 'Lyra Mobile',
+        plugins: ['expo-image'],
+      },
+    });
+
+    expect(config.plugins).toEqual(['expo-image']);
   });
 });

@@ -3,6 +3,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Screen } from '../components/Screen';
 import { colors, spacing } from '../constants/theme';
 import type { CurrentSession } from '../lib/api';
+import { config } from '../lib/config';
 import { t } from '../lib/i18n';
 import { useAuthSession } from '../state/AuthSessionProvider';
 import { AccountScreen } from './AccountScreen';
@@ -19,7 +20,7 @@ type HomeTab = 'story' | 'characters' | 'pages' | 'account';
 export function FoundationHomeScreen({
   session,
 }: FoundationHomeScreenProps): React.JSX.Element {
-  const { api, language, signOut } = useAuthSession();
+  const { api, language, signOut, tokens } = useAuthSession();
   const [activeTab, setActiveTab] = useState<HomeTab>('story');
   const [selectedOrganizationId, setSelectedOrganizationId] = useState<string | null>(null);
   const organizationId = selectedOrganizationId !== null
@@ -102,6 +103,8 @@ export function FoundationHomeScreen({
       ) : activeTab === 'characters' ? (
         <CharactersScreen
           api={api}
+          imageApiBaseUrl={config.apiBaseUrl}
+          imageAuthorizationHeader={tokens === null ? null : `Bearer ${tokens.idToken}`}
           language={language}
           organizationId={organizationId}
           ref={charactersRef}

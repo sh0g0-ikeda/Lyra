@@ -840,6 +840,76 @@ describe('LyraMobileApiClient', () => {
     });
     expect(fetcher).toHaveBeenCalledTimes(2);
   });
+
+  it('Entity reference setを同じorganization scopeで取得する', async () => {
+    const entityId = '77777777-7777-4777-8777-777777777777';
+    const organizationId = '55555555-5555-4555-8555-555555555555';
+    const referenceSet = buildEntityReferenceSet(entityId);
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(referenceSet));
+    const api = new LyraMobileApiClient({
+      apiBaseUrl: 'https://api.example.com',
+      auth: new FakeAuthSession(),
+      fetcher,
+    });
+
+    await expect(api.getEntityReferenceSet(entityId, organizationId)).resolves.toEqual(referenceSet);
+    expect(fetcher).toHaveBeenCalledWith(
+      `https://api.example.com/api/entities/${entityId}/reference-set?organization_id=${organizationId}`,
+      expect.objectContaining({ method: 'GET' }),
+    );
+  });
+
+  it('Entity reference setが別Entityまたは契約外payloadなら拒否する', async () => {
+    const entityId = '77777777-7777-4777-8777-777777777777';
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(jsonResponse(buildEntityReferenceSet(
+        '88888888-8888-4888-8888-888888888888',
+      )))
+      .mockResolvedValueOnce(jsonResponse({
+        ...buildEntityReferenceSet(entityId),
+        s3_key: 'private/key.png',
+      }));
+    const api = new LyraMobileApiClient({
+      apiBaseUrl: 'https://api.example.com',
+      auth: new FakeAuthSession(),
+      fetcher,
+    });
+
+    await expect(api.getEntityReferenceSet(entityId)).rejects.toMatchObject({
+      code: 'INVALID_API_RESPONSE',
+      status: 502,
+    });
+    await expect(api.getEntityReferenceSet(entityId)).rejects.toMatchObject({
+      code: 'INVALID_API_RESPONSE',
+      status: 502,
+    });
+  });
+
+  it('画像用認証更新を同時実行してもrefreshは1回だけにする', async () => {
+    let resolveRefresh: ((tokens: AuthTokens) => void) | undefined;
+    const auth: MobileAuthSessionPort = {
+      getTokens: vi.fn().mockResolvedValue(buildTokens('id-token')),
+      refreshTokens: vi.fn().mockReturnValue(new Promise<AuthTokens>((resolve) => {
+        resolveRefresh = resolve;
+      })),
+    };
+    const api = new LyraMobileApiClient({
+      apiBaseUrl: 'https://api.example.com',
+      auth,
+      fetcher: vi.fn<typeof fetch>(),
+    });
+
+    const first = api.refreshImageAuthorizationHeader();
+    const second = api.refreshImageAuthorizationHeader();
+    expect(auth.refreshTokens).toHaveBeenCalledOnce();
+    resolveRefresh?.(buildTokens('refreshed-id-token'));
+
+    await expect(Promise.all([first, second])).resolves.toEqual([
+      'Bearer refreshed-id-token',
+      'Bearer refreshed-id-token',
+    ]);
+  });
 });
 
 class FakeAuthSession implements MobileAuthSessionPort {
@@ -889,6 +959,23 @@ function buildCurrentSession(): Record<string, unknown> {
       monthly_expires_at: null,
     },
     organizations: [],
+  };
+}
+
+function buildEntityReferenceSet(entityId: string): Record<string, unknown> {
+  return {
+    entity_id: entityId,
+    primary_ref_id: 'reference-1',
+    status: 'ready',
+    updated_at: '2026-08-01T00:00:00.000Z',
+    reference_images: [
+      {
+        ref_id: 'reference-1',
+        cdn_url: 'https://cdn.example.com/reference.png?Signature=signed',
+        source: 'generated',
+        created_at: '2026-08-01T00:00:00.000Z',
+      },
+    ],
   };
 }
 
