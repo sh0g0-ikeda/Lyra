@@ -72,6 +72,7 @@ export class PostgresEpisodePageSkeletonExecutionRepository
       WHERE id = $1
         AND job_type = 'episode_page_skeleton'
         AND status = 'queued'
+        AND cancel_requested_at IS NULL
       RETURNING *
       `,
       [jobId],
@@ -107,6 +108,7 @@ export class PostgresEpisodePageSkeletonExecutionRepository
         AND user_id = $2
         AND job_type = 'episode_page_skeleton'
         AND status = 'processing'
+        AND cancel_requested_at IS NULL
       RETURNING *
       `,
       [
@@ -129,6 +131,8 @@ export class PostgresEpisodePageSkeletonExecutionRepository
       WHERE id = $1
         AND user_id = $2
         AND status = 'processing'
+        AND cancel_requested_at IS NULL
+        AND commit_started_at IS NOT NULL
       RETURNING *
       `,
       [
@@ -179,6 +183,7 @@ export class PostgresEpisodePageSkeletonExecutionRepository
       WHERE id = $1
         AND user_id = $2
         AND status IN ('queued', 'processing')
+        AND cancel_requested_at IS NULL
       RETURNING *
       `,
       [

@@ -28,6 +28,15 @@ export interface PageSkeletonServicePort {
     options?: PageSkeletonGenerationOptions,
     organizationId?: string | null,
   ): Promise<PageSkeletonPersistResult>;
+  prepareForEpisode(
+    userId: string,
+    episodeId: string,
+    options?: PageSkeletonGenerationOptions,
+    organizationId?: string | null,
+  ): Promise<PageSkeletonPreparation>;
+  persistPreparedForEpisode(
+    preparation: PageSkeletonPreparation,
+  ): Promise<PageSkeletonPersistResult>;
   rollbackFreshSkeleton(
     userId: string,
     episodeId: string,
@@ -47,6 +56,14 @@ export interface PageSkeletonGenerationOptions {
   allowCompilerFallback?: boolean;
 }
 
+export interface PageSkeletonPreparation {
+  userId: string;
+  episodeId: string;
+  organizationId: string | null;
+  overwriteExisting: boolean;
+  pages: PageSkeletonPageDraft[];
+}
+
 export class PageSkeletonService implements PageSkeletonServicePort {
   public constructor(
     private readonly storyRepository: StoryRepository,
@@ -59,6 +76,21 @@ export class PageSkeletonService implements PageSkeletonServicePort {
     options?: PageSkeletonGenerationOptions,
     organizationId: string | null = null,
   ): Promise<PageSkeletonPersistResult> {
+    const preparation = await this.prepareForEpisode(
+      userId,
+      episodeId,
+      options,
+      organizationId,
+    );
+    return this.persistPreparedForEpisode(preparation);
+  }
+
+  public async prepareForEpisode(
+    userId: string,
+    episodeId: string,
+    options?: PageSkeletonGenerationOptions,
+    organizationId: string | null = null,
+  ): Promise<PageSkeletonPreparation> {
     const overwriteExisting = options?.overwriteExisting === true;
     const language = options?.language ?? 'ja';
     const allowCompilerFallback = options?.allowCompilerFallback !== false;
@@ -131,9 +163,25 @@ export class PageSkeletonService implements PageSkeletonServicePort {
       validatePageSkeleton(context.estimatedPages, allowedEntityIds, pages);
     }
 
-    const result = await this.storyRepository.createPageSkeleton(episodeId, userId, pages, {
+    return {
+      userId,
+      episodeId,
+      organizationId,
       overwriteExisting,
-    }, organizationId);
+      pages,
+    };
+  }
+
+  public async persistPreparedForEpisode(
+    preparation: PageSkeletonPreparation,
+  ): Promise<PageSkeletonPersistResult> {
+    const result = await this.storyRepository.createPageSkeleton(
+      preparation.episodeId,
+      preparation.userId,
+      preparation.pages,
+      { overwriteExisting: preparation.overwriteExisting },
+      preparation.organizationId,
+    );
     if (result === null) {
       throw new NotFoundError('Episode not found');
     }

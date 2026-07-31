@@ -20,6 +20,7 @@ import {
 
 export interface EpisodePageSkeletonJobRepository
   extends Pick<GenerationJobRepository, 'create' | 'attachQueueMessageId' | 'markFailed'> {
+  finalizeCancellation(jobId: string): Promise<boolean>;
   findActiveEpisodePageSkeletonJob(
     userId: string,
     episodeId: string,
@@ -130,6 +131,12 @@ export class EpisodePageSkeletonService implements EpisodePageSkeletonServicePor
     }
 
     if (isStaleEpisodeLongJob(activeJob, this.now(), this.episodeLongJobStaleAfterMs)) {
+      if (activeJob.cancelRequestedAt !== null && activeJob.commitStartedAt === null) {
+        const cancelled = await this.generationJobRepository.finalizeCancellation(activeJob.id);
+        if (cancelled) {
+          return;
+        }
+      }
       const recovered = await this.generationJobRepository.markFailed(
         activeJob.id,
         EPISODE_LONG_JOB_STALE_ERROR_MESSAGE,

@@ -14,6 +14,9 @@ import type {
   TouchPageGenerationProgressInput,
 } from '../../../../src/repositories/PageGenerationExecutionRepository.js';
 import type {
+  GenerationJobCancellationControlRepository,
+} from '../../../../src/repositories/GenerationJobRepository.js';
+import type {
   ConsumeCreditsParams,
   CreditServicePort,
   RefundCreditsParams,
@@ -143,9 +146,11 @@ class FakeRenderer implements PageImageRendererPort {
   public shouldFail = false;
   public imageData = Buffer.from('image-bytes');
   public mimeType = 'image/png';
+  public onRender: () => void = () => undefined;
 
   public async render(input: RenderPageImageInput): Promise<RenderPageImageResult> {
     this.calls.push(input);
+    this.onRender();
     if (this.shouldFail) {
       throw new Error('renderer unavailable');
     }
@@ -156,6 +161,26 @@ class FakeRenderer implements PageImageRendererPort {
       openaiRequestId: 'openai-1',
       costUsd: 0.07,
     };
+  }
+}
+
+class FakeCancellationControl implements GenerationJobCancellationControlRepository {
+  public cancellationRequested = false;
+  public finalizeCalls = 0;
+  public beginCommitCalls = 0;
+
+  public async requestCancellation(): Promise<GenerationJob | null> {
+    throw new Error('not used');
+  }
+
+  public async finalizeCancellation(): Promise<boolean> {
+    this.finalizeCalls += 1;
+    return this.cancellationRequested;
+  }
+
+  public async beginCommit(): Promise<boolean> {
+    this.beginCommitCalls += 1;
+    return !this.cancellationRequested;
   }
 }
 
@@ -917,6 +942,63 @@ describe('PageGenerationWorkerService', () => {
         }),
       }),
     ]);
+  });
+
+  it('render中の停止要求はstorage前にcancelledへ確定し、failed/refundを重ねない', async () => {
+    const executionRepository = new FakeExecutionRepository();
+    const renderer = new FakeRenderer();
+    const storage = new FakeStorage();
+    const creditService = new FakeCreditService();
+    const cancellationControl = new FakeCancellationControl();
+    renderer.onRender = () => {
+      cancellationControl.cancellationRequested = true;
+    };
+    const service = new PageGenerationWorkerService(
+      executionRepository,
+      new FakePromptBuilder(),
+      new FakePromptCompiler(),
+      new FakeInputImageBuilder(),
+      new FakePlanner(),
+      renderer,
+      storage,
+      creditService,
+      true,
+      undefined,
+      cancellationControl,
+    );
+
+    const result = await service.processJob('job-1');
+
+    expect(result).toEqual({ status: 'processed', jobStatus: 'cancelled' });
+    expect(storage.calls).toEqual([]);
+    expect(executionRepository.failureInput).toBeNull();
+    expect(creditService.refunds).toEqual([]);
+  });
+
+  it('停止要求なしではcommit gateを先に確定してからstorageと完了保存を行う', async () => {
+    const cancellationControl = new FakeCancellationControl();
+    const storage = new FakeStorage();
+    const executionRepository = new FakeExecutionRepository();
+    const service = new PageGenerationWorkerService(
+      executionRepository,
+      new FakePromptBuilder(),
+      new FakePromptCompiler(),
+      new FakeInputImageBuilder(),
+      new FakePlanner(),
+      new FakeRenderer(),
+      storage,
+      new FakeCreditService(),
+      true,
+      undefined,
+      cancellationControl,
+    );
+
+    const result = await service.processJob('job-1');
+
+    expect(result.jobStatus).toBe('completed');
+    expect(cancellationControl.beginCommitCalls).toBe(1);
+    expect(storage.calls).toHaveLength(1);
+    expect(executionRepository.completionInput).not.toBeNull();
   });
 });
 

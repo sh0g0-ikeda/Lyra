@@ -8,6 +8,7 @@ export interface StaleEntityGenerationJob {
   creditCost: number;
   entityId: string;
   staleAt: Date;
+  cancellationRequested?: boolean;
 }
 
 export interface FailedEntityGenerationJobMissingRefund {
@@ -44,6 +45,7 @@ interface StaleEntityGenerationJobRow extends QueryResultRow {
   credit_cost: number;
   entity_id: string | null;
   stale_at: Date;
+  cancellation_requested: boolean;
 }
 
 interface FailedEntityGenerationJobMissingRefundRow extends QueryResultRow {
@@ -160,6 +162,7 @@ function buildStaleJobsQuery(extraConditions: string, limitPlaceholder: string):
         generation_jobs.organization_id,
         generation_jobs.credit_cost,
         generation_jobs.params->>'entity_id' AS entity_id,
+        generation_jobs.cancel_requested_at IS NOT NULL AS cancellation_requested,
         COALESCE(
           CASE
             WHEN generation_jobs.result->>'progress_updated_at' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$'
@@ -252,6 +255,7 @@ function mapStaleEntityGenerationJobRow(
       creditCost: row.credit_cost,
       entityId: row.entity_id,
       staleAt: row.stale_at,
+      cancellationRequested: row.cancellation_requested,
     },
   ];
 }

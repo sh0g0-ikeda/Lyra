@@ -6,9 +6,13 @@ import type { PageSkeletonPersistResult } from '../../../../src/domain/types/sto
 import { EpisodePageSkeletonWorkerService } from '../../../../src/services/story/EpisodePageSkeletonWorkerService.js';
 import type {
   PageSkeletonGenerationOptions,
+  PageSkeletonPreparation,
   PageSkeletonServicePort,
 } from '../../../../src/services/story/PageSkeletonService.js';
 import type { PageServicePort } from '../../../../src/services/page/PageService.js';
+import type {
+  GenerationJobCancellationControlRepository,
+} from '../../../../src/repositories/GenerationJobRepository.js';
 
 class FakeEpisodePageSkeletonRepository implements EpisodePageSkeletonExecutionRepository {
   public job: GenerationJob | null = {
@@ -65,6 +69,8 @@ class FakeEpisodePageSkeletonRepository implements EpisodePageSkeletonExecutionR
 class FakePageSkeletonService implements PageSkeletonServicePort {
   public lastOptions: PageSkeletonGenerationOptions | undefined;
   public rollbackCalls: Array<{ userId: string; episodeId: string; expectedPageCount: number }> = [];
+  public persistCalls: PageSkeletonPreparation[] = [];
+  public onPrepare: () => void = () => undefined;
   public persistResult: PageSkeletonPersistResult = {
     pagesCreated: 2,
     panelsCreated: 8,
@@ -72,14 +78,37 @@ class FakePageSkeletonService implements PageSkeletonServicePort {
   };
 
   public async generateForEpisode(
-    _userId: string,
-    _episodeId: string,
+    userId: string,
+    episodeId: string,
     options?: PageSkeletonGenerationOptions,
   ): Promise<PageSkeletonPersistResult> {
+    const preparation = await this.prepareForEpisode(userId, episodeId, options);
+    return this.persistPreparedForEpisode(preparation);
+  }
+
+  public async prepareForEpisode(
+    userId: string,
+    episodeId: string,
+    options?: PageSkeletonGenerationOptions,
+  ): Promise<PageSkeletonPreparation> {
     this.lastOptions = options;
+    this.onPrepare();
+    return {
+      userId,
+      episodeId,
+      organizationId: null,
+      overwriteExisting: options?.overwriteExisting === true,
+      pages: [],
+    };
+  }
+
+  public async persistPreparedForEpisode(
+    preparation: PageSkeletonPreparation,
+  ): Promise<PageSkeletonPersistResult> {
+    this.persistCalls.push(preparation);
     return {
       ...this.persistResult,
-      replacedExisting: this.persistResult.replacedExisting || options?.overwriteExisting === true,
+      replacedExisting: this.persistResult.replacedExisting || preparation.overwriteExisting,
     };
   }
 
@@ -90,6 +119,26 @@ class FakePageSkeletonService implements PageSkeletonServicePort {
   ): Promise<boolean> {
     this.rollbackCalls.push({ userId, episodeId, expectedPageCount });
     return true;
+  }
+}
+
+class FakeCancellationControl implements GenerationJobCancellationControlRepository {
+  public cancellationRequested = false;
+  public finalizeCalls = 0;
+  public beginCommitCalls = 0;
+
+  public async requestCancellation(): Promise<GenerationJob | null> {
+    throw new Error('not used');
+  }
+
+  public async finalizeCancellation(): Promise<boolean> {
+    this.finalizeCalls += 1;
+    return this.cancellationRequested;
+  }
+
+  public async beginCommit(): Promise<boolean> {
+    this.beginCommitCalls += 1;
+    return !this.cancellationRequested;
   }
 }
 
@@ -209,5 +258,46 @@ describe('EpisodePageSkeletonWorkerService', () => {
 
     expect(result).toEqual({ status: 'processed', jobStatus: 'failed' });
     expect(pageSkeletonService.rollbackCalls).toEqual([]);
+  });
+
+  it('AI準備中の停止要求はpage skeletonを保存せずcancelledへ確定する', async () => {
+    const repository = new FakeEpisodePageSkeletonRepository();
+    const pageSkeletonService = new FakePageSkeletonService();
+    const cancellationControl = new FakeCancellationControl();
+    pageSkeletonService.onPrepare = () => {
+      cancellationControl.cancellationRequested = true;
+    };
+    const worker = new EpisodePageSkeletonWorkerService(
+      repository,
+      pageSkeletonService,
+      new FakePageService(),
+      cancellationControl,
+    );
+
+    const result = await worker.processJob('55555555-5555-4555-8555-555555555555');
+
+    expect(result).toEqual({ status: 'processed', jobStatus: 'cancelled' });
+    expect(pageSkeletonService.persistCalls).toEqual([]);
+    expect(repository.completed).toBeNull();
+    expect(repository.failed).toBeNull();
+  });
+
+  it('停止要求なしではcommit gateを確定してからpage skeletonを保存する', async () => {
+    const repository = new FakeEpisodePageSkeletonRepository();
+    const pageSkeletonService = new FakePageSkeletonService();
+    const cancellationControl = new FakeCancellationControl();
+    const worker = new EpisodePageSkeletonWorkerService(
+      repository,
+      pageSkeletonService,
+      new FakePageService(),
+      cancellationControl,
+    );
+
+    const result = await worker.processJob('55555555-5555-4555-8555-555555555555');
+
+    expect(result).toEqual({ status: 'processed', jobStatus: 'completed' });
+    expect(cancellationControl.beginCommitCalls).toBe(1);
+    expect(pageSkeletonService.persistCalls).toHaveLength(1);
+    expect(repository.completed).not.toBeNull();
   });
 });

@@ -53,7 +53,8 @@ export class JobService implements JobServicePort {
     private readonly entityGenerationRecoveryService: EntityGenerationRecoveryServicePort = new NoopEntityGenerationRecoveryService(),
     private readonly episodeLongJobStaleAfterMs: number = EPISODE_LONG_JOB_STALE_AFTER_MS,
     private readonly now: () => number = () => Date.now(),
-    private readonly cancellationEnabled = true,
+    private readonly storyCancellationEnabled = true,
+    private readonly genericCancellationEnabled = false,
   ) {}
 
   public async listJobHistory(
@@ -125,15 +126,14 @@ export class JobService implements JobServicePort {
     jobId: string,
     organizationId: string | null = null,
   ): Promise<GenerationJob> {
-    if (!this.cancellationEnabled) {
-      throw new ConflictError('Job cancellation is temporarily unavailable');
-    }
-
     const job = await this.generationJobRepository.findByIdAndUserId(jobId, userId, organizationId);
     if (job === null) {
       throw new NotFoundError('Job not found');
     }
-    if (job.jobType !== 'episode_story_autofill') {
+    if (job.jobType === 'episode_story_autofill' && !this.storyCancellationEnabled) {
+      throw new ConflictError('Job cancellation is temporarily unavailable');
+    }
+    if (job.jobType !== 'episode_story_autofill' && !this.genericCancellationEnabled) {
       throw new ConflictError('This job cannot be stopped');
     }
     if (job.status === 'cancelled') {
@@ -209,7 +209,6 @@ export class JobService implements JobServicePort {
     }
 
     if (
-      job.jobType === 'episode_story_autofill' &&
       job.cancelRequestedAt !== null &&
       job.commitStartedAt === null
     ) {

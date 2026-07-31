@@ -258,6 +258,27 @@ describe('PageSkeletonService', () => {
     vi.restoreAllMocks();
   });
 
+  it('AIで準備したpage skeletonは明示的なpersistまで保存しない', async () => {
+    const repository = new FakeStoryRepository();
+    const service = new PageSkeletonService(repository, new FakeStoryAiClient());
+
+    const preparation = await service.prepareForEpisode(
+      'user-1',
+      '33333333-3333-4333-8333-333333333333',
+    );
+
+    expect(repository.createdPages).toEqual([]);
+
+    const result = await service.persistPreparedForEpisode(preparation);
+
+    expect(repository.createdPages).toHaveLength(2);
+    expect(result).toEqual({
+      pagesCreated: 2,
+      panelsCreated: 7,
+      replacedExisting: false,
+    });
+  });
+
   it('persists a generated page skeleton and includes scene context in the prompt', async () => {
     const repository = new FakeStoryRepository();
     const client = new FakeStoryAiClient();

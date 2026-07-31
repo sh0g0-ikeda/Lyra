@@ -101,6 +101,7 @@ export class PostgresPageGenerationExecutionRepository implements PageGeneration
       WHERE id = $1
         AND job_type = 'page_generate'
         AND status = 'queued'
+        AND cancel_requested_at IS NULL
       RETURNING *
       `,
       [jobId],
@@ -135,6 +136,7 @@ export class PostgresPageGenerationExecutionRepository implements PageGeneration
         AND user_id = $2
         AND job_type = 'page_generate'
         AND status = 'processing'
+        AND cancel_requested_at IS NULL
       RETURNING *
       `,
       [input.jobId, input.userId, input.message, input.updatedAt],
@@ -155,6 +157,7 @@ export class PostgresPageGenerationExecutionRepository implements PageGeneration
         AND user_id = $2
         AND job_type = 'page_generate'
         AND status = 'processing'
+        AND cancel_requested_at IS NULL
       RETURNING *
       `,
       [input.jobId, input.userId, JSON.stringify(input.snapshot), input.savedAt],
@@ -223,6 +226,8 @@ export class PostgresPageGenerationExecutionRepository implements PageGeneration
         WHERE id = $1
           AND user_id = $2
           AND status = 'processing'
+          AND cancel_requested_at IS NULL
+          AND commit_started_at IS NOT NULL
         RETURNING *
         `,
         [
@@ -266,6 +271,7 @@ export class PostgresPageGenerationExecutionRepository implements PageGeneration
         WHERE id = $1
           AND user_id = $2
           AND status IN ('queued', 'processing')
+          AND cancel_requested_at IS NULL
           AND (
             $4::timestamptz IS NULL
             OR (

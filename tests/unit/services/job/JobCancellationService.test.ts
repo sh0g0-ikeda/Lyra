@@ -191,6 +191,39 @@ describe('JobService cancellation', () => {
       },
     ]);
   });
+
+  it.each(['page_generate', 'entity_generate', 'episode_page_skeleton'] as const)(
+    'generic cancellation有効時は%sも停止できる',
+    async (jobType) => {
+      const repository = new FakeCancellationRepository();
+      repository.job = buildJob({ jobType, status: 'queued' });
+      const service = new JobService(
+        repository,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        true,
+        true,
+      );
+
+      const job = await service.cancelJob('user-1', 'job-1');
+
+      expect(job.status).toBe('cancelled');
+      expect(repository.cancellationRequests).toHaveLength(1);
+    },
+  );
+
+  it('generic cancellation無効時はpage jobを変更せず拒否する', async () => {
+    const repository = new FakeCancellationRepository();
+    repository.job = buildJob({ jobType: 'page_generate', status: 'queued' });
+    const service = new JobService(repository);
+
+    await expect(service.cancelJob('user-1', 'job-1')).rejects.toMatchObject({
+      code: 'CONFLICT',
+    });
+    expect(repository.cancellationRequests).toEqual([]);
+  });
 });
 
 function buildJob(overrides: Partial<GenerationJob> = {}): GenerationJob {

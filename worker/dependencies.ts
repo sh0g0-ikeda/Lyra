@@ -5,6 +5,7 @@ import { PostgresEpisodePageSkeletonExecutionRepository } from '../src/repositor
 import { PostgresEpisodeStoryAutofillExecutionRepository } from '../src/repositories/EpisodeStoryAutofillExecutionRepository.js';
 import { PostgresEpisodePlanPersistenceRepository } from '../src/repositories/EpisodePlanPersistenceRepository.js';
 import { PostgresPageGenerationExecutionRepository } from '../src/repositories/PageGenerationExecutionRepository.js';
+import { PostgresGenerationJobRepository } from '../src/repositories/GenerationJobRepository.js';
 import { PostgresOrganizationRepository } from '../src/repositories/OrganizationRepository.js';
 import { CreditService, type CreditServicePort } from '../src/services/credit/CreditService.js';
 import {
@@ -234,6 +235,7 @@ export function resolveWorkerDependencies(
     new PostgresEpisodeStoryAutofillExecutionRepository(db);
   const episodePageSkeletonExecutionRepository =
     new PostgresEpisodePageSkeletonExecutionRepository(db);
+  const generationJobCancellationControl = new PostgresGenerationJobRepository(db);
   const entityReferencePromptBuilder =
     overrides.entityReferencePromptBuilder ?? new EntityReferencePromptBuilder();
   const entityReferencePromptCompiler =
@@ -280,6 +282,7 @@ export function resolveWorkerDependencies(
       creditService,
       env.GENERATION_ENABLED && env.PAGE_GENERATION_ENABLED,
       organizationService,
+      generationJobCancellationControl,
     ),
     entityGenerationWorkerService: new EntityGenerationWorkerService(
       entityGenerationExecutionRepository,
@@ -293,6 +296,7 @@ export function resolveWorkerDependencies(
       env.OPENAI_IMAGE_MODEL,
       env.GENERATION_ENABLED && env.ENTITY_GENERATION_ENABLED,
       organizationService,
+      generationJobCancellationControl,
     ),
     episodeStoryAutofillWorkerService: new EpisodeStoryAutofillWorkerService(
       episodeStoryAutofillExecutionRepository,
@@ -303,6 +307,7 @@ export function resolveWorkerDependencies(
       episodePageSkeletonExecutionRepository,
       pageSkeletonService,
       pageService,
+      generationJobCancellationControl,
     ),
   };
 }

@@ -39,6 +39,7 @@ describe('PostgresPageGenerationExecutionRepository', () => {
 
     expect(client.queries[0]).toContain("SET status = 'processing'");
     expect(client.queries[0]).toContain("status = 'queued'");
+    expect(client.queries[0]).toContain('cancel_requested_at IS NULL');
     expect(client.values[0]).toEqual(['job-1']);
     expect(job?.status).toBe('processing');
   });
@@ -68,6 +69,7 @@ describe('PostgresPageGenerationExecutionRepository', () => {
 
     expect(touched).toBe(true);
     expect(client.queries[0]).toContain("status = 'processing'");
+    expect(client.queries[0]).toContain('cancel_requested_at IS NULL');
     expect(client.queries[0]).toContain('progress_message');
     expect(client.queries[0]).toContain('progress_updated_at');
     expect(client.values[0]).toEqual([
@@ -113,6 +115,7 @@ describe('PostgresPageGenerationExecutionRepository', () => {
 
     expect(saved).toBe(true);
     expect(client.queries[0]).toContain("status = 'processing'");
+    expect(client.queries[0]).toContain('cancel_requested_at IS NULL');
     expect(client.queries[0]).toContain('input_snapshot');
     expect(client.queries[0]).toContain('input_snapshot_saved_at');
     expect(client.values[0]?.[0]).toBe('job-1');
@@ -151,6 +154,8 @@ describe('PostgresPageGenerationExecutionRepository', () => {
     expect(completed).toBe(true);
     expect(client.queries[0]).toContain('UPDATE pages');
     expect(client.queries[1]).toContain("SET status = 'completed'");
+    expect(client.queries[1]).toContain('cancel_requested_at IS NULL');
+    expect(client.queries[1]).toContain('commit_started_at IS NOT NULL');
     expect(client.queries[1]).toContain("COALESCE(result, '{}'::jsonb) || $3::jsonb");
     expect(client.values[0]).toEqual([
       'page-1',
@@ -204,6 +209,7 @@ describe('PostgresPageGenerationExecutionRepository', () => {
     expect(failed).toBe(true);
     expect(client.queries[0]).toContain("SET status = 'failed'");
     expect(client.queries[0]).toContain("status IN ('queued', 'processing')");
+    expect(client.queries[0]).toContain('cancel_requested_at IS NULL');
     expect(client.queries[1]).toContain('UPDATE pages');
     const persistedMessage = String(client.values[0]?.[2]);
     expect(persistedMessage).toContain('Bearer [redacted]');

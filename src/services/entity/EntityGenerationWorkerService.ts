@@ -12,6 +12,9 @@ import type { OrganizationServicePort } from '../organization/OrganizationServic
 import type { EntityReferenceRepository } from '../../repositories/EntityRepository.js';
 import type { EntityGenerationExecutionRepository } from '../../repositories/EntityGenerationExecutionRepository.js';
 import type {
+  GenerationJobCancellationControlRepository,
+} from '../../repositories/GenerationJobRepository.js';
+import type {
   EntityReferenceGeneratorPort,
 } from '../../infrastructure/openai/OpenAIEntityReferenceGenerator.js';
 import type {
@@ -27,7 +30,7 @@ import { ensureAllowedReferenceSourceKey } from './EntityReferenceSourceKeyPolic
 
 export interface ProcessEntityGenerationJobResult {
   status: 'processed' | 'skipped';
-  jobStatus?: 'completed' | 'failed';
+  jobStatus?: 'completed' | 'failed' | 'cancelled';
 }
 
 const ENTITY_GENERATION_HEARTBEAT_INTERVAL_MS = 60_000;
@@ -45,6 +48,7 @@ export class EntityGenerationWorkerService {
     private readonly imageModel: string = ENTITY_REFERENCE_GENERATION.MODEL,
     private readonly generationEnabled = true,
     private readonly organizationService?: OrganizationServicePort,
+    private readonly cancellationControl?: GenerationJobCancellationControlRepository,
   ) {}
 
   public async processJob(jobId: string): Promise<ProcessEntityGenerationJobResult> {
@@ -55,6 +59,9 @@ export class EntityGenerationWorkerService {
     const job = await this.executionRepository.claimQueuedEntityGenerationJob(jobId);
     if (job === null) {
       return { status: 'skipped' };
+    }
+    if (await this.finalizeCancellationIfRequested(job.id)) {
+      return { status: 'processed', jobStatus: 'cancelled' };
     }
 
     const heartbeatTimer = await this.startProgressHeartbeat(job);
@@ -88,6 +95,13 @@ export class EntityGenerationWorkerService {
       );
       const generated = await this.generator.generateCandidates({ prompt: generationPrompt, inputImages });
       assertGeneratedCandidates(generated.candidates);
+
+      if (await this.finalizeCancellationIfRequested(job.id)) {
+        return { status: 'processed', jobStatus: 'cancelled' };
+      }
+      if (!(await this.beginCommit(job.id))) {
+        return { status: 'processed', jobStatus: 'cancelled' };
+      }
 
       const storedCandidates = [];
 
@@ -138,12 +152,32 @@ export class EntityGenerationWorkerService {
         await this.recordGenerationCompleted(job, entity, generated);
         return { status: 'processed', jobStatus: 'completed' };
       } catch (error) {
+        if (await this.finalizeCancellationIfRequested(job.id)) {
+          return { status: 'processed', jobStatus: 'cancelled' };
+        }
         await this.failJob(job, sanitizePersistedErrorMessage(error, 'Entity generation failed'), workIdForAudit);
         return { status: 'processed', jobStatus: 'failed' };
       }
     } finally {
       clearInterval(heartbeatTimer);
     }
+  }
+
+  private async finalizeCancellationIfRequested(jobId: string): Promise<boolean> {
+    return this.cancellationControl?.finalizeCancellation(jobId) ?? false;
+  }
+
+  private async beginCommit(jobId: string): Promise<boolean> {
+    if (this.cancellationControl === undefined) {
+      return true;
+    }
+    if (await this.cancellationControl.beginCommit(jobId)) {
+      return true;
+    }
+    if (await this.cancellationControl.finalizeCancellation(jobId)) {
+      return false;
+    }
+    throw new ConfigurationError('Entity generation commit gate could not be acquired');
   }
 
   private async startProgressHeartbeat(job: GenerationJob): Promise<ReturnType<typeof setInterval>> {

@@ -15,7 +15,10 @@ import type {
   CreditServicePort,
   RefundCreditsParams,
 } from '../../../src/services/credit/CreditService.js';
-import type { PageSkeletonServicePort } from '../../../src/services/story/PageSkeletonService.js';
+import type {
+  PageSkeletonPreparation,
+  PageSkeletonServicePort,
+} from '../../../src/services/story/PageSkeletonService.js';
 import type { EpisodePageSkeletonServicePort } from '../../../src/services/story/EpisodePageSkeletonService.js';
 import type { StoryCollaborationServicePort } from '../../../src/services/story/StoryCollaborationService.js';
 import type { PageServicePort } from '../../../src/services/page/PageService.js';
@@ -281,7 +284,7 @@ class FakePageSkeletonService implements PageSkeletonServicePort {
   public overwriteExisting = false;
 
   public async generateForEpisode(
-    _userId: string,
+    userId: string,
     requestedEpisodeId: string,
     options?: { overwriteExisting?: boolean },
   ): Promise<{
@@ -289,13 +292,33 @@ class FakePageSkeletonService implements PageSkeletonServicePort {
     panelsCreated: number;
     replacedExisting: boolean;
   }> {
+    const preparation = await this.prepareForEpisode(userId, requestedEpisodeId, options);
+    return this.persistPreparedForEpisode(preparation);
+  }
+
+  public async prepareForEpisode(
+    userId: string,
+    requestedEpisodeId: string,
+    options?: { overwriteExisting?: boolean },
+  ): Promise<PageSkeletonPreparation> {
     this.requestedEpisodeId = requestedEpisodeId;
     this.overwriteExisting = options?.overwriteExisting === true;
+    return {
+      userId,
+      episodeId: requestedEpisodeId,
+      organizationId: null,
+      overwriteExisting: this.overwriteExisting,
+      pages: [],
+    };
+  }
 
+  public async persistPreparedForEpisode(
+    preparation: PageSkeletonPreparation,
+  ): Promise<{ pagesCreated: number; panelsCreated: number; replacedExisting: boolean }> {
     return {
       pagesCreated: 16,
       panelsCreated: 80,
-      replacedExisting: this.overwriteExisting,
+      replacedExisting: preparation.overwriteExisting,
     };
   }
 

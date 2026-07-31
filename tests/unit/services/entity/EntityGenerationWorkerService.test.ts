@@ -31,6 +31,9 @@ import type {
   OrganizationServicePort,
   RecordOrganizationGenerationRequest,
 } from '../../../../src/services/organization/OrganizationService.js';
+import type {
+  GenerationJobCancellationControlRepository,
+} from '../../../../src/repositories/GenerationJobRepository.js';
 
 const now = new Date('2026-04-25T00:00:00.000Z');
 
@@ -165,6 +168,7 @@ class FakePromptCompiler implements EntityReferencePromptCompilerPort {
 class FakeReferenceGenerator implements EntityReferenceGeneratorPort {
   public input: GenerateEntityReferenceCandidatesInput | null = null;
   public shouldThrow = false;
+  public onGenerate: () => void = () => undefined;
   public candidates: Array<{ imageData: Buffer; mimeType: string }> = [
     { imageData: Buffer.from('a'), mimeType: 'image/png' },
   ];
@@ -175,6 +179,7 @@ class FakeReferenceGenerator implements EntityReferenceGeneratorPort {
     costUsd: number | null;
   }> {
     this.input = input;
+    this.onGenerate();
 
     if (this.shouldThrow) {
       throw new Error('generation failed');
@@ -203,6 +208,15 @@ class FakeStoredImageLoader implements StoredImageLoaderPort {
 }
 
 class FakeEntityImageStorage implements EntityImageStoragePort {
+  public generatedCandidateCalls: Array<{
+    userId: string;
+    entityId: string;
+    jobId: string;
+    candidateIndex: number;
+    imageData: Buffer;
+    mimeType: string;
+  }> = [];
+
   public async storeImportedImage(): Promise<never> {
     throw new Error('not used');
   }
@@ -215,6 +229,7 @@ class FakeEntityImageStorage implements EntityImageStoragePort {
     imageData: Buffer;
     mimeType: string;
   }): Promise<StoredEntityImage> {
+    this.generatedCandidateCalls.push(input);
     return {
       s3Key: `session/${input.userId}/entities/${input.entityId}/${input.jobId}-${input.candidateIndex}.png`,
       cdnUrl: `https://cdn.lyra.test/session/${input.userId}/entities/${input.entityId}/${input.jobId}-${input.candidateIndex}.png`,
@@ -223,6 +238,26 @@ class FakeEntityImageStorage implements EntityImageStoragePort {
 
   public async finalizeReferenceImage(): Promise<never> {
     throw new Error('not used');
+  }
+}
+
+class FakeCancellationControl implements GenerationJobCancellationControlRepository {
+  public cancellationRequested = false;
+  public finalizeCalls = 0;
+  public beginCommitCalls = 0;
+
+  public async requestCancellation(): Promise<GenerationJob | null> {
+    throw new Error('not used');
+  }
+
+  public async finalizeCancellation(): Promise<boolean> {
+    this.finalizeCalls += 1;
+    return this.cancellationRequested;
+  }
+
+  public async beginCommit(): Promise<boolean> {
+    this.beginCommitCalls += 1;
+    return !this.cancellationRequested;
   }
 }
 
@@ -736,6 +771,50 @@ describe('EntityGenerationWorkerService', () => {
       }),
     ]);
   });
+
+  it('generator中の停止要求はcandidate保存前にcancelledへ確定し、failed/refundを重ねない', async () => {
+    const executionRepository = new FakeExecutionRepository();
+    const referenceGenerator = new FakeReferenceGenerator();
+    const imageStorage = new FakeEntityImageStorage();
+    const creditService = new FakeCreditService();
+    const cancellationControl = new FakeCancellationControl();
+    referenceGenerator.onGenerate = () => {
+      cancellationControl.cancellationRequested = true;
+    };
+    const service = buildService({
+      executionRepository,
+      referenceGenerator,
+      imageStorage,
+      creditService,
+      cancellationControl,
+    });
+
+    const result = await service.processJob('job-1');
+
+    expect(result).toEqual({ status: 'processed', jobStatus: 'cancelled' });
+    expect(imageStorage.generatedCandidateCalls).toEqual([]);
+    expect(executionRepository.completed).toBeNull();
+    expect(executionRepository.failed).toBeNull();
+    expect(creditService.refunded).toBeNull();
+  });
+
+  it('停止要求なしではcommit gateを確定してからcandidateを保存する', async () => {
+    const executionRepository = new FakeExecutionRepository();
+    const imageStorage = new FakeEntityImageStorage();
+    const cancellationControl = new FakeCancellationControl();
+    const service = buildService({
+      executionRepository,
+      imageStorage,
+      cancellationControl,
+    });
+
+    const result = await service.processJob('job-1');
+
+    expect(result).toEqual({ status: 'processed', jobStatus: 'completed' });
+    expect(cancellationControl.beginCommitCalls).toBe(1);
+    expect(imageStorage.generatedCandidateCalls).toHaveLength(1);
+    expect(executionRepository.completed).not.toBeNull();
+  });
 });
 
 function buildService(overrides: {
@@ -749,6 +828,7 @@ function buildService(overrides: {
   storedImageLoader?: FakeStoredImageLoader;
   imageModel?: string;
   organizationService?: FakeOrganizationService;
+  cancellationControl?: FakeCancellationControl;
 } = {}): EntityGenerationWorkerService {
   return new EntityGenerationWorkerService(
     overrides.executionRepository ?? new FakeExecutionRepository(),
@@ -762,6 +842,7 @@ function buildService(overrides: {
     overrides.imageModel,
     true,
     overrides.organizationService as unknown as OrganizationServicePort | undefined,
+    overrides.cancellationControl,
   );
 }
 

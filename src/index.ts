@@ -6,6 +6,7 @@ import { PostgresEntityGenerationRecoveryRepository } from './repositories/Entit
 import { PostgresPageGenerationExecutionRepository } from './repositories/PageGenerationExecutionRepository.js';
 import { PostgresPageGenerationRecoveryRepository } from './repositories/PageGenerationRecoveryRepository.js';
 import { PostgresOrganizationRepository } from './repositories/OrganizationRepository.js';
+import { PostgresGenerationJobRepository } from './repositories/GenerationJobRepository.js';
 import { CreditService } from './services/credit/CreditService.js';
 import { EntityGenerationRecoveryService } from './services/entity/EntityGenerationRecoveryService.js';
 import { PageGenerationRecoveryService } from './services/page/PageGenerationRecoveryService.js';
@@ -29,6 +30,7 @@ async function main(): Promise<void> {
   }
 
   const organizationService = new OrganizationService(new PostgresOrganizationRepository(db, db));
+  const generationJobCancellationControl = new PostgresGenerationJobRepository(db);
 
   try {
     const creditService = new CreditService(new PostgresCreditRepository(db, db));
@@ -39,6 +41,7 @@ async function main(): Promise<void> {
       undefined,
       undefined,
       organizationService,
+      generationJobCancellationControl,
     ).recoverAllStaleJobs();
 
     if (recoveredCount > 0) {
@@ -59,6 +62,7 @@ async function main(): Promise<void> {
       undefined,
       undefined,
       organizationService,
+      generationJobCancellationControl,
     ).recoverAllStaleJobs();
 
     if (recoveredCount > 0) {

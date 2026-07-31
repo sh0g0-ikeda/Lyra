@@ -83,6 +83,10 @@ const envSchema = z.object({
     .string()
     .optional()
     .transform((value) => value === 'true'),
+  GENERATION_JOB_CANCELLATION_ENABLED: z
+    .string()
+    .optional()
+    .transform((value) => value === 'true'),
   GENERATION_USER_ACTIVE_JOB_LIMIT: z.coerce
     .number()
     .int()
