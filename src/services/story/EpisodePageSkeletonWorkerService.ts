@@ -1,4 +1,4 @@
-import { ValidationError } from '../../domain/errors/index.js';
+import { ConfigurationError, ValidationError } from '../../domain/errors/index.js';
 import type { AppLanguage } from '../../domain/types/language.js';
 import type { EpisodePagePlanApplyResult } from '../../domain/types/page.js';
 import type {
@@ -10,10 +10,13 @@ import type {
   PageServicePort,
 } from '../page/PageService.js';
 import type { PageSkeletonServicePort } from './PageSkeletonService.js';
+import type {
+  GenerationJobCancellationControlRepository,
+} from '../../repositories/GenerationJobRepository.js';
 
 export interface ProcessEpisodePageSkeletonJobResult {
   status: 'processed' | 'skipped';
-  jobStatus?: 'completed' | 'failed';
+  jobStatus?: 'completed' | 'failed' | 'cancelled';
 }
 
 export interface EpisodePageSkeletonWorkerPort {
@@ -25,12 +28,16 @@ export class EpisodePageSkeletonWorkerService implements EpisodePageSkeletonWork
     private readonly repository: EpisodePageSkeletonExecutionRepository,
     private readonly pageSkeletonService: PageSkeletonServicePort,
     private readonly pageService?: PageServicePort,
+    private readonly cancellationControl?: GenerationJobCancellationControlRepository,
   ) {}
 
   public async processJob(jobId: string): Promise<ProcessEpisodePageSkeletonJobResult> {
     const job = await this.repository.claimQueuedEpisodePageSkeletonJob(jobId);
     if (job === null) {
       return { status: 'skipped' };
+    }
+    if (await this.finalizeCancellationIfRequested(job.id)) {
+      return { status: 'processed', jobStatus: 'cancelled' };
     }
 
     const episodeId = readStringParam(job.params, 'episode_id');
@@ -65,11 +72,18 @@ export class EpisodePageSkeletonWorkerService implements EpisodePageSkeletonWork
         episodeId,
       });
 
-      const result = await this.pageSkeletonService.generateForEpisode(job.userId, episodeId, {
+      const preparation = await this.pageSkeletonService.prepareForEpisode(job.userId, episodeId, {
         overwriteExisting,
         language,
         allowCompilerFallback: false,
       }, job.organizationId);
+      if (await this.finalizeCancellationIfRequested(job.id)) {
+        return { status: 'processed', jobStatus: 'cancelled' };
+      }
+      if (!(await this.beginCommit(job.id))) {
+        return { status: 'processed', jobStatus: 'cancelled' };
+      }
+      const result = await this.pageSkeletonService.persistPreparedForEpisode(preparation);
       skeletonResult = result;
 
       let storyPlanResult: EpisodePagePlanApplyResult | null = null;
@@ -117,6 +131,9 @@ export class EpisodePageSkeletonWorkerService implements EpisodePageSkeletonWork
       });
       return { status: 'processed', jobStatus: 'completed' };
     } catch (error) {
+      if (await this.finalizeCancellationIfRequested(job.id)) {
+        return { status: 'processed', jobStatus: 'cancelled' };
+      }
       console.warn('episode_page_skeleton_failed', {
         jobId: job.id,
         userId: job.userId,
@@ -139,6 +156,23 @@ export class EpisodePageSkeletonWorkerService implements EpisodePageSkeletonWork
       });
       return { status: 'processed', jobStatus: 'failed' };
     }
+  }
+
+  private async finalizeCancellationIfRequested(jobId: string): Promise<boolean> {
+    return this.cancellationControl?.finalizeCancellation(jobId) ?? false;
+  }
+
+  private async beginCommit(jobId: string): Promise<boolean> {
+    if (this.cancellationControl === undefined) {
+      return true;
+    }
+    if (await this.cancellationControl.beginCommit(jobId)) {
+      return true;
+    }
+    if (await this.cancellationControl.finalizeCancellation(jobId)) {
+      return false;
+    }
+    throw new ConfigurationError('Page skeleton commit gate could not be acquired');
   }
 
   private async recordProgress(

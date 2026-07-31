@@ -10,6 +10,9 @@ import type {
 } from '../../repositories/EntityGenerationRecoveryRepository.js';
 import type { CreditServicePort } from '../credit/CreditService.js';
 import type { OrganizationServicePort } from '../organization/OrganizationService.js';
+import type {
+  GenerationJobCancellationControlRepository,
+} from '../../repositories/GenerationJobRepository.js';
 
 export interface EntityGenerationRecoveryServicePort {
   recoverAllStaleJobs(): Promise<number>;
@@ -38,6 +41,7 @@ export class EntityGenerationRecoveryService implements EntityGenerationRecovery
     private readonly staleAfterMs: number = ENTITY_GENERATION_STALE_AFTER_MS,
     private readonly batchLimit: number = GENERATION_RECOVERY_BATCH_LIMIT,
     private readonly organizationService?: OrganizationServicePort,
+    private readonly cancellationControl?: GenerationJobCancellationControlRepository,
   ) {}
 
   public async recoverAllStaleJobs(): Promise<number> {
@@ -83,6 +87,17 @@ export class EntityGenerationRecoveryService implements EntityGenerationRecovery
     let recoveredCount = 0;
 
     for (const job of jobs) {
+      if (job.cancellationRequested === true && this.cancellationControl !== undefined) {
+        try {
+          if (await this.cancellationControl.finalizeCancellation(job.jobId)) {
+            recoveredCount += 1;
+          }
+        } catch (error) {
+          console.error(`[entity-generation-recovery] failed to settle cancelled job ${job.jobId}`, error);
+        }
+        continue;
+      }
+
       let recovered = false;
       try {
         recovered = await this.executionRepository.failEntityGeneration({

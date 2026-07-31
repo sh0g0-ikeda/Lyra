@@ -35,6 +35,7 @@ class FakePageRepository implements PageRepository {
   public context: PageGenerationContext | null = buildPageContext();
   public updates: PageGenerationStateUpdate[] = [];
   public shouldRejectUpdate = false;
+  public eventLog: string[] | null = null;
 
   public async findPagesByEpisodeIdAndUserId(): Promise<[]> {
     return [];
@@ -56,6 +57,7 @@ class FakePageRepository implements PageRepository {
     _userId: string,
     input: PageGenerationStateUpdate,
   ): Promise<boolean> {
+    this.eventLog?.push(`page:${input.status}`);
     this.updates.push(input);
     return !this.shouldRejectUpdate;
   }
@@ -230,6 +232,8 @@ class FakeCreditService implements CreditServicePort {
   public consumed: ConsumeCreditsParams[] = [];
   public refunded: RefundCreditsParams[] = [];
   public shouldFailRefund = false;
+  public consumeError: unknown = null;
+  public eventLog: string[] | null = null;
 
   public async getBalance(): Promise<CreditBalanceSnapshot> {
     return { monthlyCredits: 0, purchasedCredits: 0, totalCredits: 0, monthlyExpiresAt: null };
@@ -240,6 +244,10 @@ class FakeCreditService implements CreditServicePort {
   }
 
   public async consumeCredits(params: ConsumeCreditsParams): Promise<CreditBalanceSnapshot> {
+    this.eventLog?.push('credit:consume');
+    if (this.consumeError !== null) {
+      throw this.consumeError;
+    }
     this.consumed.push(params);
     return this.getBalance();
   }
@@ -349,6 +357,26 @@ describe('PageGenerationService', () => {
       previousPageStatus: 'designing',
       previousGenerationMode: null,
     });
+  });
+
+  it('pageをgeneratingへ予約してからcreditを消費する', async () => {
+    const eventLog: string[] = [];
+    const pageRepository = new FakePageRepository();
+    pageRepository.eventLog = eventLog;
+    const creditService = new FakeCreditService();
+    creditService.eventLog = eventLog;
+    const service = new PageGenerationService(
+      pageRepository,
+      new FakeEntityRepository(),
+      new FakeGenerationJobRepository(),
+      creditService,
+      new FakeQueue(),
+      new ModeSelector(),
+    );
+
+    await service.enqueuePageGeneration(userId, pageId);
+
+    expect(eventLog).toEqual(['page:generating', 'credit:consume']);
   });
 
   it('4体目以降の参照画像を加算してenqueueする', async () => {
@@ -629,7 +657,7 @@ describe('PageGenerationService', () => {
       jobId: jobRepository.created?.id,
     });
   });
-  it('page state updateに失敗した場合はjob failedとrefundで補償する', async () => {
+  it('page state updateに失敗した場合はcreditを消費せずjobだけfailedで補償する', async () => {
     const pageRepository = new FakePageRepository();
     pageRepository.shouldRejectUpdate = true;
     const jobRepository = new FakeGenerationJobRepository();
@@ -649,10 +677,39 @@ describe('PageGenerationService', () => {
     });
 
     expect(jobRepository.failedJobId).toBe(jobRepository.created?.id);
-    expect(creditService.refunded[0]).toMatchObject({
-      amount: 3,
-      jobId: jobRepository.created?.id,
+    expect(creditService.consumed).toEqual([]);
+    expect(creditService.refunded).toEqual([]);
+  });
+
+  it('停止要求がcredit consumeに勝った場合はpageを復元して再課金しない', async () => {
+    const pageRepository = new FakePageRepository();
+    const jobRepository = new FakeGenerationJobRepository();
+    const creditService = new FakeCreditService();
+    creditService.consumeError = Object.assign(new Error('cancelled'), {
+      code: 'P0001',
+      constraint: 'generation_job_credit_consume_active',
     });
+    const service = new PageGenerationService(
+      pageRepository,
+      new FakeEntityRepository(),
+      jobRepository,
+      creditService,
+      new FakeQueue(),
+      new ModeSelector(),
+    );
+
+    await expect(service.enqueuePageGeneration(userId, pageId)).rejects.toMatchObject({
+      code: 'CONFLICT',
+      message: 'Page generation was stopped before it entered the queue',
+    });
+
+    expect(jobRepository.failedJobId).toBe(jobRepository.created?.id);
+    expect(pageRepository.updates).toEqual([
+      { status: 'generating', generationMode: 'standard', expectedStatus: 'designing' },
+      { status: 'designing', generationMode: null },
+    ]);
+    expect(creditService.consumed).toEqual([]);
+    expect(creditService.refunded).toEqual([]);
   });
 
   it('queue message idの保存失敗ではenqueue済みジョブを失敗扱いしない', async () => {

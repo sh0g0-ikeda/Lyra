@@ -21,6 +21,9 @@ import type {
   SavePageGenerationInputSnapshotInput,
   TouchPageGenerationProgressInput,
 } from '../../repositories/PageGenerationExecutionRepository.js';
+import type {
+  GenerationJobCancellationControlRepository,
+} from '../../repositories/GenerationJobRepository.js';
 
 export interface PageGenerationPlanInput {
   jobId: string;
@@ -99,7 +102,7 @@ export interface PageImageStoragePort {
 
 export interface ProcessPageGenerationJobResult {
   status: 'processed' | 'skipped' | 'retry';
-  jobStatus?: 'completed' | 'failed';
+  jobStatus?: 'completed' | 'failed' | 'cancelled';
   reason?: string;
 }
 
@@ -125,6 +128,7 @@ export class PageGenerationWorkerService {
     private readonly creditService: CreditServicePort,
     private readonly generationEnabled = true,
     private readonly organizationService?: OrganizationServicePort,
+    private readonly cancellationControl?: GenerationJobCancellationControlRepository,
   ) {}
 
   public async processJob(jobId: string): Promise<ProcessPageGenerationJobResult> {
@@ -135,6 +139,9 @@ export class PageGenerationWorkerService {
     const job = await this.executionRepository.claimQueuedPageGenerationJob(jobId);
     if (job === null) {
       return this.resolveUnclaimedJobResult(jobId);
+    }
+    if (await this.finalizeCancellationIfRequested(job.id)) {
+      return { status: 'processed', jobStatus: 'cancelled' };
     }
 
     const params = parsePersistedParams(job.params);
@@ -191,6 +198,10 @@ export class PageGenerationWorkerService {
           )
         : null;
 
+      if (await this.finalizeCancellationIfRequested(job.id)) {
+        return { status: 'processed', jobStatus: 'cancelled' };
+      }
+
       const renderResult = await measurePageGenerationStage(stageTimingsMs, 'rendering', () =>
         this.withProgressHeartbeat(job, 'Requesting page image from image model.', () =>
           this.renderer.render({
@@ -208,6 +219,13 @@ export class PageGenerationWorkerService {
         ),
       );
       assertRenderedPageImage(renderResult);
+
+      if (await this.finalizeCancellationIfRequested(job.id)) {
+        return { status: 'processed', jobStatus: 'cancelled' };
+      }
+      if (!(await this.beginCommit(job.id))) {
+        return { status: 'processed', jobStatus: 'cancelled' };
+      }
 
       const storedImage = await measurePageGenerationStage(stageTimingsMs, 'storage', () =>
         this.withProgressHeartbeat(job, 'Storing generated page image.', () =>
@@ -244,9 +262,29 @@ export class PageGenerationWorkerService {
       await this.recordGenerationCompleted(job, params, builtPrompt.workId, renderResult, stageTimingsMs);
       return { status: 'processed', jobStatus: 'completed' };
     } catch (error) {
+      if (await this.finalizeCancellationIfRequested(job.id)) {
+        return { status: 'processed', jobStatus: 'cancelled' };
+      }
       await this.failJob(job, toFailureCompensation(params), toErrorMessage(error));
       return { status: 'processed', jobStatus: 'failed' };
     }
+  }
+
+  private async finalizeCancellationIfRequested(jobId: string): Promise<boolean> {
+    return this.cancellationControl?.finalizeCancellation(jobId) ?? false;
+  }
+
+  private async beginCommit(jobId: string): Promise<boolean> {
+    if (this.cancellationControl === undefined) {
+      return true;
+    }
+    if (await this.cancellationControl.beginCommit(jobId)) {
+      return true;
+    }
+    if (await this.cancellationControl.finalizeCancellation(jobId)) {
+      return false;
+    }
+    throw new ConfigurationError('Page generation commit gate could not be acquired');
   }
 
   private async resolveUnclaimedJobResult(jobId: string): Promise<ProcessPageGenerationJobResult> {

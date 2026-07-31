@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import type { CreditBalanceSnapshot } from '../../../../src/domain/types/credit.js';
 import type { GenerationJob } from '../../../../src/domain/types/job.js';
+import type {
+  GenerationJobCancellationControlRepository,
+} from '../../../../src/repositories/GenerationJobRepository.js';
 import type { EntityGenerationExecutionRepository } from '../../../../src/repositories/EntityGenerationExecutionRepository.js';
 import type {
   EntityGenerationRecoveryRepository,
@@ -135,7 +138,54 @@ class FakeOrganizationService {
   }
 }
 
+class FakeCancellationControl implements GenerationJobCancellationControlRepository {
+  public finalizedJobIds: string[] = [];
+
+  public async requestCancellation(): Promise<GenerationJob | null> {
+    throw new Error('not used');
+  }
+
+  public async finalizeCancellation(jobId: string): Promise<boolean> {
+    this.finalizedJobIds.push(jobId);
+    return true;
+  }
+
+  public async beginCommit(): Promise<boolean> {
+    throw new Error('not used');
+  }
+}
+
 describe('EntityGenerationRecoveryService', () => {
+  it('停止要求済みのstale jobはfailed/refundを重ねずcancelledへ確定する', async () => {
+    const repository = new FakeRecoveryRepository();
+    repository.jobs = [{
+      jobId: 'job-1',
+      userId: 'user-1',
+      creditCost: 1,
+      entityId: 'entity-1',
+      staleAt: new Date('2026-06-03T00:00:00.000Z'),
+      cancellationRequested: true,
+    }];
+    const executionRepository = new FakeExecutionRepository();
+    const creditService = new FakeCreditService();
+    const cancellationControl = new FakeCancellationControl();
+    const service = new EntityGenerationRecoveryService(
+      repository,
+      executionRepository,
+      creditService,
+      1,
+      100,
+      undefined,
+      cancellationControl,
+    );
+
+    await expect(service.recoverAllStaleJobs()).resolves.toBe(1);
+
+    expect(cancellationControl.finalizedJobIds).toEqual(['job-1']);
+    expect(executionRepository.failedJobIds).toEqual([]);
+    expect(creditService.refunds).toEqual([]);
+  });
+
   it('stale processing jobs を failed に戻して refund する', async () => {
     const repository = new FakeRecoveryRepository();
     repository.jobs = [

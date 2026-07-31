@@ -395,4 +395,22 @@ describe('runPendingMigrations', () => {
     expect(sql).not.toContain('UPDATE organization_credit_balances');
     expect(sql).not.toMatch(/\bDELETE\s+FROM\b/iu);
   });
+
+  it('キャンセル要求後の遅延credit consumeを残高→jobのlock順で拒否する', async () => {
+    const sql = await readFile(
+      join(process.cwd(), 'migrations', '038_connect_generation_job_cancellation.sql'),
+      'utf8',
+    );
+
+    expect(sql).toContain('CREATE OR REPLACE FUNCTION guard_generation_job_credit_consume()');
+    expect(sql).toContain("IF NEW.type <> 'consume' OR NEW.job_id IS NULL");
+    expect(sql).toContain('FROM generation_jobs');
+    expect(sql).toContain('FOR UPDATE');
+    expect(sql).toContain("locked_job.status = 'cancelled'");
+    expect(sql).toContain('locked_job.cancel_requested_at IS NOT NULL');
+    expect(sql).toContain("ERRCODE = 'P0001'");
+    expect(sql).toContain('BEFORE INSERT ON credit_ledger');
+    expect(sql).not.toContain('UPDATE credit_balances');
+    expect(sql).not.toContain('UPDATE organization_credit_balances');
+  });
 });

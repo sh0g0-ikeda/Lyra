@@ -9,6 +9,7 @@ import {
 class QueryCapturingClient implements DatabaseClient {
   public queries: string[] = [];
   public values: readonly unknown[] | undefined;
+  public valuesList: Array<readonly unknown[] | undefined> = [];
 
   public async query<T extends QueryResultRow = QueryResultRow>(
     text: string,
@@ -16,6 +17,7 @@ class QueryCapturingClient implements DatabaseClient {
   ): Promise<QueryResult<T>> {
     this.queries.push(text);
     this.values = values;
+    this.valuesList.push(values);
 
     return {
       command: 'SELECT',
@@ -24,6 +26,10 @@ class QueryCapturingClient implements DatabaseClient {
       fields: [],
       rows: [jobRow()] as unknown as T[],
     };
+  }
+
+  public async transaction<T>(work: (client: DatabaseClient) => Promise<T>): Promise<T> {
+    return work(this);
   }
 }
 
@@ -219,7 +225,7 @@ describe('PostgresGenerationJobRepository', () => {
     expect(client.queries[0]).toContain('generation_jobs.organization_id = $3::uuid');
     expect(client.queries[0]).toContain('FROM organization_members');
     expect(client.queries[0]).toContain("organization_members.status = 'active'");
-    expect(client.values).toEqual([
+    expect(client.valuesList[0]).toEqual([
       'job-1',
       'user-1',
       '11111111-1111-4111-8111-111111111111',
@@ -239,7 +245,7 @@ describe('PostgresGenerationJobRepository', () => {
     expect(client.queries[0]).toContain('generation_jobs.organization_id = $3::uuid');
     expect(client.queries[0]).toContain('FROM organization_members');
     expect(client.queries[0]).toContain("organization_members.status = 'active'");
-    expect(client.values).toEqual([
+    expect(client.valuesList[0]).toEqual([
       'job-1',
       'user-1',
       '11111111-1111-4111-8111-111111111111',

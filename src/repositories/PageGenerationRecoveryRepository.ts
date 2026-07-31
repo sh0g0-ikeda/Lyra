@@ -12,6 +12,7 @@ export interface StalePageGenerationJob {
   previousStatus: PageStatus;
   previousGenerationMode: PageGenerationMode | null;
   staleAt: Date;
+  cancellationRequested?: boolean;
 }
 
 export interface FailedPageGenerationJobMissingRefund {
@@ -50,6 +51,7 @@ interface StalePageGenerationJobRow extends QueryResultRow {
   previous_page_status: string | null;
   previous_generation_mode: string | null;
   stale_at: Date;
+  cancellation_requested: boolean;
 }
 
 interface FailedPageGenerationJobMissingRefundRow extends QueryResultRow {
@@ -170,6 +172,7 @@ function buildStaleJobsQuery(extraConditions: string, limitPlaceholder: string):
           generation_jobs.params->>'previous_page_status' AS previous_page_status,
           generation_jobs.params->>'previous_generation_mode' AS previous_generation_mode,
           generation_jobs.status,
+          generation_jobs.cancel_requested_at IS NOT NULL AS cancellation_requested,
           generation_jobs.created_at,
           CASE
             WHEN generation_jobs.status = 'processing'
@@ -190,6 +193,7 @@ function buildStaleJobsQuery(extraConditions: string, limitPlaceholder: string):
         page_id,
         previous_page_status,
         previous_generation_mode,
+        cancellation_requested,
         stale_at
       FROM candidate_jobs
       WHERE (
@@ -265,6 +269,7 @@ function mapStalePageGenerationJobRow(row: StalePageGenerationJobRow): StalePage
       previousStatus,
       previousGenerationMode: toPageGenerationMode(row.previous_generation_mode),
       staleAt: row.stale_at,
+      cancellationRequested: row.cancellation_requested,
     },
   ];
 }

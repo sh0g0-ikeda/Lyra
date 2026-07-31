@@ -33,6 +33,7 @@ describe('PostgresEntityGenerationExecutionRepository', () => {
 
     expect(client.queries[0]).toContain("job_type = 'entity_generate'");
     expect(client.queries[0]).toContain("status = 'queued'");
+    expect(client.queries[0]).toContain('cancel_requested_at IS NULL');
     expect(client.values).toEqual(['job-1']);
     expect(job?.status).toBe('processing');
   });
@@ -73,6 +74,8 @@ describe('PostgresEntityGenerationExecutionRepository', () => {
 
     expect(completed).toBe(true);
     expect(client.queries[0]).toContain("status = 'completed'");
+    expect(client.queries[0]).toContain('cancel_requested_at IS NULL');
+    expect(client.queries[0]).toContain('commit_started_at IS NOT NULL');
     expect(client.values?.[2]).toBe(
       JSON.stringify({
         structured_fields: {
@@ -118,6 +121,7 @@ describe('PostgresEntityGenerationExecutionRepository', () => {
     expect(touched).toBe(true);
     expect(client.queries[0]).toContain('progress_updated_at');
     expect(client.queries[0]).toContain("status = 'processing'");
+    expect(client.queries[0]).toContain('cancel_requested_at IS NULL');
   });
 
   it('failEntityGeneration は queued と processing の job を failed にできる', async () => {
@@ -134,6 +138,7 @@ describe('PostgresEntityGenerationExecutionRepository', () => {
     expect(failed).toBe(true);
     expect(client.queries[0]).toContain("SET status = 'failed'");
     expect(client.queries[0]).toContain("status IN ('queued', 'processing')");
+    expect(client.queries[0]).toContain('cancel_requested_at IS NULL');
     expect(client.queries[0]).toContain("result->>'progress_updated_at'");
     const persistedMessage = String(client.values?.[2]);
     expect(persistedMessage).toContain('Bearer [redacted]');

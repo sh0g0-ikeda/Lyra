@@ -22,6 +22,7 @@ class FakeEpisodeStoryAutofillRepository {
   public createdJobs: CreateGenerationJobInput[] = [];
   public failedJobs: Array<{ jobId: string; errorMessage: string }> = [];
   public attachedMessages: Array<{ jobId: string; messageId: string }> = [];
+  public cancelledJobIds: string[] = [];
 
   public async create(input: CreateGenerationJobInput): Promise<GenerationJob> {
     this.createdJobs.push(input);
@@ -51,6 +52,14 @@ class FakeEpisodeStoryAutofillRepository {
   public async findActiveEpisodeStoryAutofillJob(): Promise<GenerationJob | null> {
     return this.activeJob;
   }
+
+  public async finalizeCancellation(jobId: string): Promise<boolean> {
+    this.cancelledJobIds.push(jobId);
+    if (this.activeJob?.id === jobId) {
+      this.activeJob = { ...this.activeJob, status: 'cancelled', completedAt: now, cancelledAt: now };
+    }
+    return true;
+  }
 }
 
 class FakeEpisodePageSkeletonRepository {
@@ -58,6 +67,7 @@ class FakeEpisodePageSkeletonRepository {
   public createdJobs: CreateGenerationJobInput[] = [];
   public failedJobs: Array<{ jobId: string; errorMessage: string }> = [];
   public attachedMessages: Array<{ jobId: string; messageId: string }> = [];
+  public cancelledJobIds: string[] = [];
 
   public async create(input: CreateGenerationJobInput): Promise<GenerationJob> {
     this.createdJobs.push(input);
@@ -86,6 +96,14 @@ class FakeEpisodePageSkeletonRepository {
 
   public async findActiveEpisodePageSkeletonJob(): Promise<GenerationJob | null> {
     return this.activeJob;
+  }
+
+  public async finalizeCancellation(jobId: string): Promise<boolean> {
+    this.cancelledJobIds.push(jobId);
+    if (this.activeJob?.id === jobId) {
+      this.activeJob = { ...this.activeJob, status: 'cancelled', completedAt: now, cancelledAt: now };
+    }
+    return true;
   }
 }
 
@@ -182,6 +200,31 @@ describe('Episode long job enqueue services', () => {
     expect(repository.createdJobs).toEqual([]);
   });
 
+  it('story autofill enqueueはstale停止要求をfailedにせずcancelledへ確定する', async () => {
+    const repository = new FakeEpisodeStoryAutofillRepository();
+    repository.activeJob = buildJob({
+      id: 'cancelled-story-job',
+      jobType: 'episode_story_autofill',
+      status: 'processing',
+      params: { episode_id: 'episode-1' },
+      cancelRequestedAt: new Date('2026-06-07T22:59:00.000Z'),
+      cancelRequestedBy: 'user-1',
+      startedAt: new Date('2026-06-07T23:00:00.000Z'),
+    });
+    const service = new EpisodeStoryAutofillService(
+      repository,
+      new FakeStoryQueue(),
+      45 * 60 * 1000,
+      () => now.getTime(),
+    );
+
+    await service.enqueueEpisodeStoryAutofill('user-1', 'episode-1', 'ja');
+
+    expect(repository.cancelledJobIds).toEqual(['cancelled-story-job']);
+    expect(repository.failedJobs).toEqual([]);
+    expect(repository.createdJobs).toHaveLength(1);
+  });
+
   it('page skeleton enqueue recovers stale active job before creating a new job', async () => {
     const repository = new FakeEpisodePageSkeletonRepository();
     repository.activeJob = buildJob({
@@ -254,6 +297,35 @@ describe('Episode long job enqueue services', () => {
     });
     expect(repository.failedJobs).toEqual([]);
     expect(repository.createdJobs).toEqual([]);
+  });
+
+  it('page skeleton enqueueはstale停止要求をfailedにせずcancelledへ確定する', async () => {
+    const repository = new FakeEpisodePageSkeletonRepository();
+    repository.activeJob = buildJob({
+      id: 'cancelled-skeleton-job',
+      jobType: 'episode_page_skeleton',
+      status: 'processing',
+      params: { episode_id: 'episode-1' },
+      cancelRequestedAt: new Date('2026-06-07T22:59:00.000Z'),
+      cancelRequestedBy: 'user-1',
+      startedAt: new Date('2026-06-07T23:00:00.000Z'),
+    });
+    const service = new EpisodePageSkeletonService(
+      repository,
+      new FakeSkeletonQueue(),
+      45 * 60 * 1000,
+      () => now.getTime(),
+    );
+
+    await service.enqueueEpisodePageSkeleton('user-1', 'episode-1', {
+      overwriteExisting: true,
+      applyStoryPlan: false,
+      language: 'ja',
+    });
+
+    expect(repository.cancelledJobIds).toEqual(['cancelled-skeleton-job']);
+    expect(repository.failedJobs).toEqual([]);
+    expect(repository.createdJobs).toHaveLength(1);
   });
 });
 

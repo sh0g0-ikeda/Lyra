@@ -6,9 +6,9 @@
 
 対象PR: [#67 feat(mobile): production-ready Lyra mobile workflow](https://github.com/sh0g0-ikeda/Lyra/pull/67)
 
-進捗: 59件完了 / 405件未完了
+進捗: 91件完了 / 384件未完了
 
-実装監査基準: `1a9cb37`（PR #125 head、`verify` / `mobile-verify`成功）
+実装監査基準: `3b8e5cd`（PR #134 code head、local full gate成功。GitHub CIは統合前にexact headで再確認）
 
 ## 1. 設計ブリーフ
 
@@ -285,7 +285,7 @@ Codex単独で進める次の順序は、`CI安定化 → PR-A継続 → 契約�
   - 完了条件: cancel/refund/outbox競合テストがgreen
   - [x] job履歴非表示tableとscope / cursor用indexを既存cancel/refund非変更で先行統合
     - 証跡: [PR #113](https://github.com/sh0g0-ikeda/Lyra/pull/113)。旧030のlate-consume自動返金triggerを除外し、API未接続の加算schemaだけをfresh DBで確認
-    - 境界: 汎用cancel、credit settlement、Worker checkpoint、late consume返金は未接続。lock順とrefund unique barrierを同時検証する後続PRで扱う
+    - 後続: 汎用cancel、credit settlement、Worker checkpoint、late consume拒否はPR #134で接続
   - [x] scoped job履歴一覧とterminal-only非表示APIを既存job処理非変更で接続
     - 証跡: [PR #121](https://github.com/sh0g0-ikeda/Lyra/pull/121)。personal owner / active organization memberの二重scope、active-first bounded cursor、terminal row lock、冪等hide、direct GET維持を確認
     - 安全境界: generic cancel、refund、credit、queue、Worker、push outbox、migrationは変更せず、active jobはhide rowが存在しても常に一覧へ戻す
@@ -297,10 +297,12 @@ Codex単独で進める次の順序は、`CI安定化 → PR-A継続 → 契約�
     - 境界: generation terminal処理、retry invalidation、delivery claim、APNs / FCM、Mobile navigationは未接続。migration 034全体は未完了
   - [x] cancellation metadata / stateの新規write契約を既存行未検証で先行統合
     - 証跡: [PR #118](https://github.com/sh0g0-ikeda/Lyra/pull/118)。requester pair、cancel/commit排他、cancelled timestamp順を`NOT VALID` constraintとinvariantで確認
-    - 境界: production既存行の0違反確認、constraint VALIDATE、episode story以外のprocessing cancel、refund / push接続は未完了
+    - 後続: episode story以外のprocessing cancelとrefund競合はPR #134で接続。production既存行の0違反確認、constraint VALIDATE、push接続は未完了
   - [x] push outboxのcancelled guardをterminal処理未接続のまま先行統合
     - 証跡: [PR #119](https://github.com/sh0g0-ikeda/Lyra/pull/119)。job lock内でcancel request / cancelled timestampを確認し、failedへ誤遷移したrowも通知候補から除外
     - 境界: generation terminal処理、retry invalidation、delivery claim、APNs / FCM、Mobile navigationは未接続
+  - 汎用cancel / refund / Worker commit barrierの証跡: [PR #134](https://github.com/sh0g0-ikeda/Lyra/pull/134)。balance→job lock、page復元、cancel/commit排他、late consume拒否を実PostgreSQLで確認。全Vitest / Bun各1697件、fresh DB 001〜038、63 invariant / 0 violations、Web / Mobile / Playwright / 両OS exportも成功
+  - 安全境界: `GENERATION_JOB_CANCELLATION_ENABLED=false`を維持。production preflight / constraint VALIDATEと、migration 034のterminal outbox / retry invalidation / deliveryは別PRで扱う
 - [x] PR-E: Mobileアプリ基盤
   - 主な所有: Expo設定、認証、navigation、API client、i18n、error policy
   - 完了条件: clean install、typecheck、lint、test、両OS exportがgreen
@@ -408,9 +410,9 @@ Codex単独で進める次の順序は、`CI安定化 → PR-A継続 → 契約�
 - [x] 029 mobile store purchase ledger
   - 完了条件: store/external keyとledger eventのunique制約が有効
   - 証跡: [PR #112](https://github.com/sh0g0-ikeda/Lyra/pull/112)。purchase / provider event / credit ledgerの三段冪等性、HMAC key形状、個人user FK、credit反転上限をmigration contractとfresh DBで確認
-- [ ] 030 generation job management
+- [x] 030 generation job management
   - 完了条件: job一覧、hide、cancel状態が既存jobと互換
-  - 進捗: [PR #113](https://github.com/sh0g0-ikeda/Lyra/pull/113)でtable/index、[PR #121](https://github.com/sh0g0-ikeda/Lyra/pull/121)でscoped一覧・terminal-only hide APIまで完了。generic cancel / refund競合は未完了
+  - 証跡: [PR #113](https://github.com/sh0g0-ikeda/Lyra/pull/113)でtable/index、[PR #121](https://github.com/sh0g0-ikeda/Lyra/pull/121)でscoped一覧・terminal-only hide API、[PR #134](https://github.com/sh0g0-ikeda/Lyra/pull/134)で汎用cancel / refund競合と既存job互換を確認
 - [x] 031 entity reference upload tokens
   - 完了条件: single-use、期限、MIME/size、user/org bindingが有効
   - 証跡: [PR #114](https://github.com/sh0g0-ikeda/Lyra/pull/114)。conditional `UPDATE ... RETURNING`で同時consumeを1件に限定し、personal/org/entity scopeと5 MiB・最大10分をDBで固定
@@ -423,9 +425,10 @@ Codex単独で進める次の順序は、`CI安定化 → PR-A継続 → 契約�
 - [ ] 034 mobile push notification outbox
   - 完了条件: terminal jobだけが正しくoutboxへ入る
   - 進捗: [PR #117](https://github.com/sh0g0-ikeda/Lyra/pull/117)でtriggerなしschemaと明示的enqueue Repositoryまで完了。自動retry枯渇判定・retry時invalidate・terminal settlement接続は未完了
-- [ ] 035 processing generation job cancellation
+- [x] 035 processing generation job cancellation
   - 完了条件: Worker checkpointと返金競合がロックで保護される
-  - 進捗: [PR #118](https://github.com/sh0g0-ikeda/Lyra/pull/118)で現行episode story write path互換の新規write contractまで完了。既存行VALIDATE・汎用Worker checkpoint・refund競合は未完了
+  - 証跡: [PR #118](https://github.com/sh0g0-ikeda/Lyra/pull/118)で新規write contract、[PR #134](https://github.com/sh0g0-ikeda/Lyra/pull/134)で汎用Worker checkpoint、commit barrier、transactional refund、実DB競合を確認
+  - 本番境界: 既存行preflightと`NOT VALID` constraintのVALIDATEは未完了。汎用feature flagはOFFを維持
 - [x] 036 episode export processing lease
   - 完了条件: expired leaseを再claimでき、古いWorkerがprogressまたはterminal stateを上書きしない
   - 証跡: [PR #128](https://github.com/sh0g0-ikeda/Lyra/pull/128)。lease token / heartbeat / attempt制約、atomic claim、expired reclaim、stale token拒否、outbox / cleanup Repositoryを確認してmainへ統合

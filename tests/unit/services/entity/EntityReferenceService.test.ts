@@ -155,6 +155,7 @@ class FakeCreditService implements CreditServicePort {
   public consumed: ConsumeCreditsParams | null = null;
   public refunded: RefundCreditsParams | null = null;
   public shouldFailRefund = false;
+  public consumeError: unknown = null;
 
   public async getBalance(): Promise<CreditBalanceSnapshot> {
     return { monthlyCredits: 0, purchasedCredits: 0, totalCredits: 0, monthlyExpiresAt: null };
@@ -165,6 +166,9 @@ class FakeCreditService implements CreditServicePort {
   }
 
   public async consumeCredits(params: ConsumeCreditsParams): Promise<CreditBalanceSnapshot> {
+    if (this.consumeError !== null) {
+      throw this.consumeError;
+    }
     this.consumed = params;
     return this.getBalance();
   }
@@ -479,6 +483,31 @@ describe('EntityReferenceService', () => {
       entity_id: 'entity-1',
       source_s3_key: 'tmp/user-1/entities/imports/source.png',
     });
+  });
+
+  it('停止要求がcredit consumeに勝った場合はqueueへ送らず再課金しない', async () => {
+    const jobs = new FakeGenerationJobRepository();
+    const creditService = new FakeCreditService();
+    creditService.consumeError = Object.assign(new Error('cancelled'), {
+      code: 'P0001',
+      constraint: 'generation_job_credit_consume_active',
+    });
+    const queue = new FakeEntityGenerationQueue();
+    const service = buildService({
+      generationJobRepository: jobs,
+      creditService,
+      queue,
+    });
+
+    await expect(service.enqueueReferenceGeneration('user-1', 'entity-1')).rejects.toMatchObject({
+      code: 'CONFLICT',
+      message: 'Entity reference generation was stopped before it entered the queue',
+    });
+
+    expect(jobs.failedJobId).toBe(jobs.createdInput?.id);
+    expect(queue.payload).toBeNull();
+    expect(creditService.consumed).toBeNull();
+    expect(creditService.refunded).toBeNull();
   });
 
   it('active entity generation job が残っている場合はクレジット消費前にCONFLICTになる', async () => {

@@ -879,6 +879,7 @@ function resolveDependencies(
       undefined,
       undefined,
       organizationService,
+      generationJobRepository,
     );
   const pageGenerationExecutionRepository = new PostgresPageGenerationExecutionRepository(db);
   const pageGenerationRecoveryService =
@@ -890,6 +891,7 @@ function resolveDependencies(
       undefined,
       undefined,
       organizationService,
+      generationJobRepository,
     );
   const pageGenerationQueue =
     dependencies.pageGenerationQueue ??
@@ -1024,6 +1026,7 @@ function resolveDependencies(
       EPISODE_LONG_JOB_STALE_AFTER_MS,
       () => Date.now(),
       env.EPISODE_STORY_AUTOFILL_CANCELLATION_ENABLED,
+      env.GENERATION_JOB_CANCELLATION_ENABLED,
     );
   const storyCollaborationService =
     dependencies.storyCollaborationService ??

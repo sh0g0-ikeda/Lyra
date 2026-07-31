@@ -5,6 +5,7 @@ import type { PageGenerationRequestKind } from '../../domain/types/pageGeneratio
 import type { CreditServicePort } from '../credit/CreditService.js';
 import type { OrganizationServicePort } from '../organization/OrganizationService.js';
 import {
+  isGenerationJobCancellationRace,
   isUniqueViolation,
   type GenerationJobRepository,
 } from '../../repositories/GenerationJobRepository.js';
@@ -112,16 +113,6 @@ export class PageGenerationService implements PageGenerationServicePort {
       });
       createdJobId = job.id;
 
-      await this.consumeCredits({
-        userId,
-        organizationId: pageOrganizationId,
-        workId: page.workId,
-        cost: selection.creditCost,
-        description: describeGeneration(selection.requestKind, selection.mode),
-        jobId: job.id,
-      });
-      creditsConsumed = true;
-
       const pageUpdated = await this.pageRepository.updateGenerationState(
         page.pageId,
         userId,
@@ -136,6 +127,16 @@ export class PageGenerationService implements PageGenerationServicePort {
         throw new ConflictError('Page generation state changed before enqueue');
       }
       pageStateUpdated = true;
+
+      await this.consumeCredits({
+        userId,
+        organizationId: pageOrganizationId,
+        workId: page.workId,
+        cost: selection.creditCost,
+        description: describeGeneration(selection.requestKind, selection.mode),
+        jobId: job.id,
+      });
+      creditsConsumed = true;
 
       const enqueueResult = await this.pageGenerationQueue.enqueue({
         jobId: job.id,
@@ -205,6 +206,10 @@ export class PageGenerationService implements PageGenerationServicePort {
 
       if (error instanceof AppError) {
         throw error;
+      }
+
+      if (isGenerationJobCancellationRace(error)) {
+        throw new ConflictError('Page generation was stopped before it entered the queue');
       }
 
       if (isUniqueViolation(error)) {

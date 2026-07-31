@@ -22,7 +22,10 @@ import type {
 } from '../../domain/types/entityReference.js';
 import { parseStructuredFields } from '../../lib/validators/entity.schema.js';
 import type { GenerationJobRepository } from '../../repositories/GenerationJobRepository.js';
-import { isUniqueViolation } from '../../repositories/GenerationJobRepository.js';
+import {
+  isGenerationJobCancellationRace,
+  isUniqueViolation,
+} from '../../repositories/GenerationJobRepository.js';
 import type { EntityReferenceRepository } from '../../repositories/EntityRepository.js';
 import type { CreditServicePort } from '../credit/CreditService.js';
 import type { OrganizationServicePort } from '../organization/OrganizationService.js';
@@ -295,6 +298,9 @@ export class EntityReferenceService implements EntityReferenceServicePort {
       }
 
       if (error instanceof Error) {
+        if (isGenerationJobCancellationRace(error)) {
+          throw new ConflictError('Entity reference generation was stopped before it entered the queue');
+        }
         if (isUniqueViolation(error)) {
           throw new ConflictError('Entity reference generation is already queued or processing');
         }

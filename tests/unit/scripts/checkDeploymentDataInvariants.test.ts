@@ -85,6 +85,17 @@ class FakeDatabase implements DatabaseClient {
       );
     }
 
+    if (this.violatedCheckName === 'generation_jobs.cancelled_chargeable_under_refunded') {
+      return (
+        text.includes('FROM generation_jobs') &&
+        text.includes("generation_jobs.status = 'cancelled'") &&
+        text.includes('generation_jobs.credit_cost > 0') &&
+        text.includes("FILTER (WHERE credit_ledger.type = 'consume')") &&
+        text.includes("FILTER (WHERE credit_ledger.type = 'refund'") &&
+        text.includes('ABS(ledger.consumed_amount) > ledger.refunded_amount')
+      );
+    }
+
     if (this.violatedCheckName === 'credit_ledger.job_refund_over_consumed') {
       return (
         text.includes('FROM credit_ledger') &&
@@ -140,6 +151,15 @@ describe('checkDeploymentDataInvariants', () => {
     expect(
       database.queries.some((query) =>
         query.includes("type IN ('consume', 'purchase_reversal') AND amount < 0"),
+      ),
+    ).toBe(true);
+    expect(
+      database.queries.some((query) =>
+        query.includes("generation_jobs.status = 'cancelled'") &&
+        query.includes('generation_jobs.credit_cost > 0') &&
+        query.includes("FILTER (WHERE credit_ledger.type = 'consume')") &&
+        query.includes("FILTER (WHERE credit_ledger.type = 'refund'") &&
+        query.includes('ABS(ledger.consumed_amount) > ledger.refunded_amount'),
       ),
     ).toBe(true);
     expect(database.queries.some((query) => query.includes('incomplete_expired'))).toBe(true);
@@ -373,6 +393,7 @@ describe('checkDeploymentDataInvariants', () => {
     'generation_jobs.failed_entity_missing_refund',
     'generation_jobs.failed_page_under_refunded',
     'generation_jobs.failed_entity_under_refunded',
+    'generation_jobs.cancelled_chargeable_under_refunded',
     'credit_ledger.job_refund_over_consumed',
     'generation_jobs.active_episode_story_autofill_resource_unique',
     'generation_jobs.active_episode_page_skeleton_resource_unique',
