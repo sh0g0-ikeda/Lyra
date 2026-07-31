@@ -329,6 +329,38 @@ describe('createOrganizationRoutes', () => {
     });
   });
 
+  it('アプリ全体の招待プレビューは契約外Service値を500にする', async () => {
+    const organizationService = new FakeOrganizationService();
+    organizationService.previewInvitation = async () => ({
+      organization: { id: '', name: 'Lyra Studio' },
+      invitation: {
+        email: 'member@example.com',
+        role: 'editor',
+        status: 'pending',
+        expiresAt: new Date('2026-07-08T00:00:00.000Z'),
+      },
+    });
+    const app = createApp({
+      enableDevAuthBypass: false,
+      jwtSecret: 'unit-test-secret',
+      userProvisioningService: new FakeUserProvisioningService(),
+      rateLimitStore: new AllowingRateLimitStore(),
+      organizationService:
+        organizationService as unknown as OrganizationServicePort,
+      organizationBillingService:
+        new FakeOrganizationBillingService() as unknown as OrganizationBillingServicePort,
+    });
+
+    const response = await app.request(
+      '/api/organization-invitations/raw-token-value-with-enough-length',
+    );
+
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: 'CONFIGURATION_ERROR' },
+    });
+  });
+
   it('招待一覧APIは送信状態と再送回数を返す', async () => {
     const routes = createOrganizationRoutes({
       authMiddleware: buildAuthMiddleware(testUser),

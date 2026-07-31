@@ -55,6 +55,9 @@ jobs:
       - name: Run Bun test entrypoint
         run: bun test
 
+      - name: Verify Backend API inventory
+        run: npm run api:inventory:check
+
       - name: Apply migrations to PostgreSQL
         run: bun run migrate
 
