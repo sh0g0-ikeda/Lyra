@@ -1,7 +1,14 @@
 import { Hono, type Context, type MiddlewareHandler } from 'hono';
 import { z } from 'zod';
-import { generationJobResponseSchema } from '../../packages/api-contract/src/mobileApiSchemas.js';
+import {
+  generationJobHistoryResponseSchema,
+  generationJobResponseSchema,
+} from '../../packages/api-contract/src/mobileApiSchemas.js';
 import { ValidationError } from '../domain/errors/index.js';
+import {
+  decodeGenerationJobHistoryCursor,
+  encodeGenerationJobHistoryCursor,
+} from '../domain/pagination.js';
 import type { GenerationJob } from '../domain/types/job.js';
 import { signImageCdnUrl } from '../infrastructure/aws/CloudFrontImageUrlSigner.js';
 import { env } from '../lib/env.js';
@@ -16,6 +23,8 @@ import {
 import { assertMobileResponseContract } from './mobileResponseContract.js';
 
 const uuidParamSchema = z.string().uuid();
+const DEFAULT_JOB_HISTORY_LIMIT = 25;
+const MAX_JOB_HISTORY_LIMIT = 100;
 
 export interface JobRouteDependencies extends OrganizationRouteDependencies {
   authMiddleware: MiddlewareHandler<AppEnv>;
@@ -29,6 +38,33 @@ export function createJobRoutes(dependencies: JobRouteDependencies): Hono<AppEnv
   app.use('*', dependencies.authMiddleware);
   app.use('*', dependencies.rateLimitMiddleware);
 
+  app.get('/jobs', async (c) => {
+    const user = c.get('user');
+    const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'view_work');
+    const limit = parseJobHistoryLimit(c.req.query('limit'));
+    const encodedCursor = c.req.query('cursor');
+    const cursor = encodedCursor === undefined
+      ? null
+      : decodeGenerationJobHistoryCursor(encodedCursor);
+    const page = await dependencies.jobService.listJobHistory(user.id, {
+      organizationId,
+      limit,
+      cursor,
+    });
+
+    const payload = {
+      jobs: await Promise.all(page.jobs.map(toJobResponse)),
+      next_cursor:
+        page.nextCursor === null
+          ? null
+          : encodeGenerationJobHistoryCursor(page.nextCursor),
+    };
+    return c.json(
+      assertMobileResponseContract(generationJobHistoryResponseSchema, payload),
+    );
+  });
+
   app.get('/jobs/:id', async (c) => {
     const user = c.get('user');
     const jobId = parseUuidParam(c, 'id');
@@ -38,6 +74,15 @@ export function createJobRoutes(dependencies: JobRouteDependencies): Hono<AppEnv
 
     const payload = await toJobResponse(job);
     return c.json(assertMobileResponseContract(generationJobResponseSchema, payload));
+  });
+
+  app.delete('/jobs/:id', async (c) => {
+    const user = c.get('user');
+    const jobId = parseUuidParam(c, 'id');
+    const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'view_work');
+    await dependencies.jobService.hideJobFromHistory(user.id, jobId, organizationId);
+    return c.body(null, 204);
   });
 
   app.post('/jobs/:id/cancel', async (c) => {
@@ -52,6 +97,27 @@ export function createJobRoutes(dependencies: JobRouteDependencies): Hono<AppEnv
   });
 
   return app;
+}
+
+function parseJobHistoryLimit(rawLimit: string | undefined): number {
+  if (rawLimit === undefined) {
+    return DEFAULT_JOB_HISTORY_LIMIT;
+  }
+
+  if (!/^[0-9]+$/u.test(rawLimit)) {
+    throw new ValidationError('limit must be an integer from 1 to 100');
+  }
+
+  const limit = Number(rawLimit);
+  if (
+    !Number.isSafeInteger(limit)
+    || limit < 1
+    || limit > MAX_JOB_HISTORY_LIMIT
+  ) {
+    throw new ValidationError('limit must be an integer from 1 to 100');
+  }
+
+  return limit;
 }
 
 function parseUuidParam(c: Context<AppEnv>, name: string): string {

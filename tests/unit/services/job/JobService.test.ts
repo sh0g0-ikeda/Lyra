@@ -2,7 +2,11 @@ import { describe, expect, it } from 'vitest';
 import type { GenerationJob } from '../../../../src/domain/types/job.js';
 import type {
   CreateGenerationJobInput,
+  GenerationJobHistoryPage,
+  GenerationJobHistoryRepository,
+  HideGenerationJobHistoryResult,
   GenerationJobRepository,
+  ListGenerationJobHistoryInput,
 } from '../../../../src/repositories/GenerationJobRepository.js';
 import type { EntityGenerationRecoveryServicePort } from '../../../../src/services/entity/EntityGenerationRecoveryService.js';
 import { JobService } from '../../../../src/services/job/JobService.js';
@@ -10,10 +14,18 @@ import type { PageGenerationRecoveryServicePort } from '../../../../src/services
 
 const now = new Date('2026-06-08T00:00:00.000Z');
 
-class FakeGenerationJobRepository implements GenerationJobRepository {
+class FakeGenerationJobRepository
+  implements GenerationJobRepository, GenerationJobHistoryRepository
+{
   public job: GenerationJob | null = null;
   public reads = 0;
   public finalizedCancellations: string[] = [];
+  public historyPage: GenerationJobHistoryPage = {
+    jobs: [],
+    nextCursor: null,
+  };
+  public historyInputs: ListGenerationJobHistoryInput[] = [];
+  public hideResult: HideGenerationJobHistoryResult = { kind: 'hidden' };
 
   public async create(_input: CreateGenerationJobInput): Promise<GenerationJob> {
     throw new Error('not used');
@@ -60,6 +72,17 @@ class FakeGenerationJobRepository implements GenerationJobRepository {
 
   public async prepareRetry(): Promise<boolean> {
     throw new Error('not used');
+  }
+
+  public async listHistory(
+    input: ListGenerationJobHistoryInput,
+  ): Promise<GenerationJobHistoryPage> {
+    this.historyInputs.push(input);
+    return this.historyPage;
+  }
+
+  public async hideFromHistory(): Promise<HideGenerationJobHistoryResult> {
+    return this.hideResult;
   }
 
   public async requestCancellation(): Promise<GenerationJob | null> {
@@ -127,6 +150,54 @@ class FakePageGenerationRecoveryService implements PageGenerationRecoveryService
 }
 
 describe('JobService', () => {
+  it('履歴一覧をscope・limit・cursor付きで取得しstale recoveryを実行しない', async () => {
+    const repository = new FakeGenerationJobRepository();
+    const pageRecovery = new FakePageGenerationRecoveryService();
+    const entityRecovery = new FakeEntityGenerationRecoveryService();
+    const service = new JobService(repository, pageRecovery, entityRecovery);
+    const cursor = {
+      activeRank: 1 as const,
+      createdAt: now,
+      id: '33333333-3333-4333-8333-333333333333',
+    };
+
+    await service.listJobHistory('user-1', {
+      organizationId: '44444444-4444-4444-8444-444444444444',
+      limit: 25,
+      cursor,
+    });
+
+    expect(repository.historyInputs).toEqual([
+      {
+        userId: 'user-1',
+        organizationId: '44444444-4444-4444-8444-444444444444',
+        limit: 25,
+        cursor,
+      },
+    ]);
+    expect(pageRecovery.recoveredPages).toEqual([]);
+    expect(entityRecovery.recoveredEntities).toEqual([]);
+  });
+
+  it('terminal jobの非表示を成功・active競合・scope外で区別する', async () => {
+    const repository = new FakeGenerationJobRepository();
+    const service = new JobService(repository);
+
+    await expect(
+      service.hideJobFromHistory('user-1', 'job-1'),
+    ).resolves.toBeUndefined();
+
+    repository.hideResult = { kind: 'active' };
+    await expect(
+      service.hideJobFromHistory('user-1', 'job-1'),
+    ).rejects.toMatchObject({ code: 'CONFLICT' });
+
+    repository.hideResult = { kind: 'not_found' };
+    await expect(
+      service.hideJobFromHistory('user-1', 'job-1'),
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+
   it('processing entity job は stale recovery 後の再読込結果を返す', async () => {
     const repository = new FakeGenerationJobRepository();
     repository.job = buildJob({

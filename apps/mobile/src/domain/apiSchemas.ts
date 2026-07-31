@@ -818,6 +818,13 @@ export const generationJobResponseSchema = z.discriminatedUnion('job_type', [
   episodePageSkeletonJobResponseSchema,
 ]);
 
+export const generationJobHistoryResponseSchema = z
+  .object({
+    jobs: z.array(generationJobResponseSchema),
+    next_cursor: z.string().min(1).max(512).nullable(),
+  })
+  .strict();
+
 export const compositionSchema = z.object({
   id: idSchema,
   name: z.string(),

@@ -1,8 +1,15 @@
 import { EPISODE_LONG_JOB_STALE_AFTER_MS } from '../../domain/constants/generation.js';
-import { ConflictError, NotFoundError } from '../../domain/errors/index.js';
+import {
+  ConfigurationError,
+  ConflictError,
+  NotFoundError,
+} from '../../domain/errors/index.js';
 import type { GenerationJob } from '../../domain/types/job.js';
 import type {
   GenerationJobCancellationRepository,
+  GenerationJobHistoryCursor,
+  GenerationJobHistoryPage,
+  GenerationJobHistoryRepository,
   GenerationJobRepository,
 } from '../../repositories/GenerationJobRepository.js';
 import {
@@ -21,17 +28,73 @@ import {
 export interface JobServicePort {
   getJob(userId: string, jobId: string, organizationId?: string | null): Promise<GenerationJob>;
   cancelJob(userId: string, jobId: string, organizationId?: string | null): Promise<GenerationJob>;
+  listJobHistory(
+    userId: string,
+    input: {
+      organizationId?: string | null;
+      limit: number;
+      cursor: GenerationJobHistoryCursor | null;
+    },
+  ): Promise<GenerationJobHistoryPage>;
+  hideJobFromHistory(
+    userId: string,
+    jobId: string,
+    organizationId?: string | null,
+  ): Promise<void>;
 }
 
 export class JobService implements JobServicePort {
   public constructor(
-    private readonly generationJobRepository: GenerationJobRepository & GenerationJobCancellationRepository,
+    private readonly generationJobRepository:
+      GenerationJobRepository
+      & GenerationJobCancellationRepository
+      & Partial<GenerationJobHistoryRepository>,
     private readonly pageGenerationRecoveryService: PageGenerationRecoveryServicePort = new NoopPageGenerationRecoveryService(),
     private readonly entityGenerationRecoveryService: EntityGenerationRecoveryServicePort = new NoopEntityGenerationRecoveryService(),
     private readonly episodeLongJobStaleAfterMs: number = EPISODE_LONG_JOB_STALE_AFTER_MS,
     private readonly now: () => number = () => Date.now(),
     private readonly cancellationEnabled = true,
   ) {}
+
+  public async listJobHistory(
+    userId: string,
+    input: {
+      organizationId?: string | null;
+      limit: number;
+      cursor: GenerationJobHistoryCursor | null;
+    },
+  ): Promise<GenerationJobHistoryPage> {
+    const historyRepository = requireGenerationJobHistoryRepository(
+      this.generationJobRepository,
+    );
+    return historyRepository.listHistory({
+      userId,
+      organizationId: input.organizationId ?? null,
+      limit: input.limit,
+      cursor: input.cursor,
+    });
+  }
+
+  public async hideJobFromHistory(
+    userId: string,
+    jobId: string,
+    organizationId: string | null = null,
+  ): Promise<void> {
+    const historyRepository = requireGenerationJobHistoryRepository(
+      this.generationJobRepository,
+    );
+    const result = await historyRepository.hideFromHistory(
+      userId,
+      jobId,
+      organizationId,
+    );
+    if (result.kind === 'active') {
+      throw new ConflictError('Active jobs cannot be hidden from history');
+    }
+    if (result.kind === 'not_found') {
+      throw new NotFoundError('Job not found');
+    }
+  }
 
   public async getJob(
     userId: string,
@@ -163,4 +226,22 @@ export class JobService implements JobServicePort {
 function readStringParam(params: Record<string, unknown>, key: string): string | null {
   const value = params[key];
   return typeof value === 'string' && value.length > 0 ? value : null;
+}
+
+function requireGenerationJobHistoryRepository(
+  repository:
+    GenerationJobRepository
+    & GenerationJobCancellationRepository
+    & Partial<GenerationJobHistoryRepository>,
+): GenerationJobHistoryRepository {
+  if (
+    typeof repository.listHistory !== 'function'
+    || typeof repository.hideFromHistory !== 'function'
+  ) {
+    throw new ConfigurationError(
+      'Generation job history repository is not configured',
+    );
+  }
+
+  return repository as GenerationJobHistoryRepository;
 }
