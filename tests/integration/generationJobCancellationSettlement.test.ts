@@ -4,6 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { DatabaseClient, TransactionRunner } from '../../src/lib/db.js';
 import { runPendingMigrations } from '../../src/lib/migrations.js';
 import { PostgresGenerationJobRepository } from '../../src/repositories/GenerationJobRepository.js';
+import { withPostgresTestMigrationLock } from './postgresTestMigrationLock.js';
 
 const databaseUrl = process.env.DATABASE_URL;
 const shouldRunPostgresTest = process.env.APP_ENV === 'test' && databaseUrl !== undefined;
@@ -21,11 +22,14 @@ describePostgres('generation job cancellation settlement', () => {
     await adminPool.query(`CREATE SCHEMA ${schemaName}`);
 
     pool = createPool(schemaName);
-    const applied = await runPendingMigrations(new PoolTransactionDatabase(pool), {
-      migrationLockPollMs: 1,
-      migrationLockMaxAttempts: 10,
-    });
-    expect(applied.at(-1)).toBe('038_connect_generation_job_cancellation.sql');
+    const applied = await withPostgresTestMigrationLock(adminPool, () => runPendingMigrations(
+      new PoolTransactionDatabase(pool),
+      {
+        migrationLockPollMs: 1,
+        migrationLockMaxAttempts: 10,
+      },
+    ));
+    expect(applied.at(-1)).toBe('039_connect_generation_terminal_push_outbox.sql');
   }, 120_000);
 
   afterAll(async () => {

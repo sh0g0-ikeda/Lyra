@@ -358,6 +358,8 @@ describe('PostgresGenerationJobRepository', () => {
     expect(prepared).toBe(true);
     expect(client.queries[0]).toContain("SET status = 'queued'");
     expect(client.queries[0]).toContain('retry_count = retry_count + 1');
+    expect(client.queries[0]).toContain('mobile_push_notification_deliveries');
+    expect(client.queries[0]).toContain("terminal_status = 'failed'");
     expect(client.values).toEqual(['job-1', 3]);
   });
 
@@ -372,11 +374,16 @@ describe('PostgresGenerationJobRepository', () => {
     );
 
     expect(marked).toBe(true);
-    const persistedMessage = String(client.values?.[1]);
+    expect(client.queries[0]).toContain('pg_advisory_xact_lock');
+    expect(client.queries[1]).toContain('UPDATE generation_jobs');
+    const persistedMessage = String(client.valuesList[1]?.[1]);
     expect(persistedMessage).toContain('Bearer [redacted]');
     expect(persistedMessage).not.toContain(fakeApiKey);
     expect(persistedMessage.length).toBeLessThanOrEqual(300);
-    expect(client.queries[0]).toContain("status IN ('queued', 'processing')");
+    expect(client.queries[1]).toContain("status IN ('queued', 'processing')");
+    expect(client.queries.some((sql) =>
+      sql.includes('INSERT INTO mobile_push_notification_outbox')
+    )).toBe(true);
   });
 
   it('dry-runでは期限切れの完了済みジョブを削除せず候補として返す', async () => {
@@ -455,6 +462,7 @@ function jobRow(): Record<string, unknown> {
   return {
     id: 'job-1',
     user_id: 'user-1',
+    organization_id: null,
     job_type: 'page_generate',
     status: 'queued',
     generation_mode: 'standard',
@@ -475,6 +483,10 @@ function jobRow(): Record<string, unknown> {
     started_at: null,
     completed_at: null,
     expires_at: new Date('2026-05-01T00:00:00.000Z'),
+    cancel_requested_at: null,
+    cancel_requested_by: null,
+    cancelled_at: null,
+    commit_started_at: null,
   };
 }
 

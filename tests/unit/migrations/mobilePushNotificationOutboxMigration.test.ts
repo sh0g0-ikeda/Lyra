@@ -33,14 +33,22 @@ describe('mobile push notification outbox migration 034', () => {
     expect(sql).not.toContain('CREATE OR REPLACE FUNCTION');
   });
 
-  it('deployment invariantはjob snapshotとtoken user scopeを検査する', async () => {
+  it('deployment invariantはjob・retry snapshotとtoken user scopeを検査する', async () => {
     const database = new RecordingDatabase();
 
     const report = await checkDeploymentDataInvariants(database);
 
     expect(report.ok).toBe(true);
     expect(database.queries.some((sql) => sql.includes('mobile_push_notification_outbox.job_scope'))).toBe(true);
+    expect(database.queries.some((sql) =>
+      sql.includes('mobile_push_notification_outbox.retry_snapshot')
+      && sql.includes('generation_retry_count > generation_jobs.retry_count')
+    )).toBe(true);
     expect(database.queries.some((sql) => sql.includes('mobile_push_notification_deliveries.token_scope'))).toBe(true);
+    expect(database.queries.some((sql) =>
+      sql.includes('mobile_push_notification_deliveries.terminal_snapshot')
+      && sql.includes("deliveries.status IN ('pending', 'processing')")
+    )).toBe(true);
   });
 });
 

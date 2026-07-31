@@ -1,11 +1,12 @@
 import type { QueryResult, QueryResultRow } from 'pg';
 import { describe, expect, it } from 'vitest';
-import type { DatabaseClient } from '../../../src/lib/db.js';
+import type { DatabaseClient, TransactionRunner } from '../../../src/lib/db.js';
 import { PostgresEntityGenerationExecutionRepository } from '../../../src/repositories/EntityGenerationExecutionRepository.js';
 
-class QueryCapturingClient implements DatabaseClient {
+class QueryCapturingClient implements DatabaseClient, TransactionRunner {
   public queries: string[] = [];
   public values: readonly unknown[] | undefined;
+  public valuesList: Array<readonly unknown[] | undefined> = [];
 
   public async query<T extends QueryResultRow = QueryResultRow>(
     text: string,
@@ -13,6 +14,7 @@ class QueryCapturingClient implements DatabaseClient {
   ): Promise<QueryResult<T>> {
     this.queries.push(text);
     this.values = values;
+    this.valuesList.push(values);
 
     return {
       command: 'SELECT',
@@ -21,6 +23,10 @@ class QueryCapturingClient implements DatabaseClient {
       fields: [],
       rows: [jobRow()] as unknown as T[],
     };
+  }
+
+  public async transaction<T>(work: (client: DatabaseClient) => Promise<T>): Promise<T> {
+    return work(this);
   }
 }
 
@@ -73,10 +79,14 @@ describe('PostgresEntityGenerationExecutionRepository', () => {
     });
 
     expect(completed).toBe(true);
-    expect(client.queries[0]).toContain("status = 'completed'");
-    expect(client.queries[0]).toContain('cancel_requested_at IS NULL');
-    expect(client.queries[0]).toContain('commit_started_at IS NOT NULL');
-    expect(client.values?.[2]).toBe(
+    expect(client.queries[0]).toContain('pg_advisory_xact_lock');
+    expect(client.queries[1]).toContain("status = 'completed'");
+    expect(client.queries[1]).toContain('cancel_requested_at IS NULL');
+    expect(client.queries[1]).toContain('commit_started_at IS NOT NULL');
+    expect(client.queries.some((sql) =>
+      sql.includes('INSERT INTO mobile_push_notification_outbox')
+    )).toBe(true);
+    expect(client.valuesList[1]?.[2]).toBe(
       JSON.stringify({
         structured_fields: {
           first_impression: 'quiet_neat',
@@ -136,11 +146,15 @@ describe('PostgresEntityGenerationExecutionRepository', () => {
     });
 
     expect(failed).toBe(true);
-    expect(client.queries[0]).toContain("SET status = 'failed'");
-    expect(client.queries[0]).toContain("status IN ('queued', 'processing')");
-    expect(client.queries[0]).toContain('cancel_requested_at IS NULL');
-    expect(client.queries[0]).toContain("result->>'progress_updated_at'");
-    const persistedMessage = String(client.values?.[2]);
+    expect(client.queries[0]).toContain('pg_advisory_xact_lock');
+    expect(client.queries[1]).toContain("SET status = 'failed'");
+    expect(client.queries[1]).toContain("status IN ('queued', 'processing')");
+    expect(client.queries[1]).toContain('cancel_requested_at IS NULL');
+    expect(client.queries[1]).toContain("result->>'progress_updated_at'");
+    expect(client.queries.some((sql) =>
+      sql.includes('INSERT INTO mobile_push_notification_outbox')
+    )).toBe(true);
+    const persistedMessage = String(client.valuesList[1]?.[2]);
     expect(persistedMessage).toContain('Bearer [redacted]');
     expect(persistedMessage).not.toContain(fakeApiKey);
     expect(persistedMessage.length).toBeLessThanOrEqual(300);
@@ -151,6 +165,7 @@ function jobRow(): Record<string, unknown> {
   return {
     id: 'job-1',
     user_id: 'user-1',
+    organization_id: null,
     job_type: 'entity_generate',
     status: 'processing',
     generation_mode: null,
@@ -169,5 +184,9 @@ function jobRow(): Record<string, unknown> {
     started_at: new Date('2026-04-25T00:00:01.000Z'),
     completed_at: null,
     expires_at: null,
+    cancel_requested_at: null,
+    cancel_requested_by: null,
+    cancelled_at: null,
+    commit_started_at: new Date('2026-04-25T00:00:02.000Z'),
   };
 }

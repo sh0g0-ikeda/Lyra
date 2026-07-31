@@ -1,9 +1,9 @@
 import type { QueryResult, QueryResultRow } from 'pg';
 import { describe, expect, it } from 'vitest';
-import type { DatabaseClient } from '../../../src/lib/db.js';
+import type { DatabaseClient, TransactionRunner } from '../../../src/lib/db.js';
 import { PostgresEpisodePageSkeletonExecutionRepository } from '../../../src/repositories/EpisodePageSkeletonExecutionRepository.js';
 
-class QueryCapturingClient implements DatabaseClient {
+class QueryCapturingClient implements DatabaseClient, TransactionRunner {
   public queries: string[] = [];
 
   public async query<T extends QueryResultRow = QueryResultRow>(
@@ -18,6 +18,10 @@ class QueryCapturingClient implements DatabaseClient {
       fields: [],
       rows: [jobRow()] as unknown as T[],
     };
+  }
+
+  public async transaction<T>(work: (client: DatabaseClient) => Promise<T>): Promise<T> {
+    return work(this);
   }
 }
 
@@ -57,8 +61,12 @@ describe('PostgresEpisodePageSkeletonExecutionRepository cancellation barrier', 
       storyPlanResult: null,
     });
 
-    expect(client.queries[0]).toContain('cancel_requested_at IS NULL');
-    expect(client.queries[0]).toContain('commit_started_at IS NOT NULL');
+    expect(client.queries[0]).toContain('pg_advisory_xact_lock');
+    expect(client.queries[1]).toContain('cancel_requested_at IS NULL');
+    expect(client.queries[1]).toContain('commit_started_at IS NOT NULL');
+    expect(client.queries.some((sql) =>
+      sql.includes('INSERT INTO mobile_push_notification_outbox')
+    )).toBe(true);
   });
 
   it('停止要求済みのjobをfailedへ上書きしない', async () => {
@@ -71,7 +79,11 @@ describe('PostgresEpisodePageSkeletonExecutionRepository cancellation barrier', 
       errorMessage: 'generator unavailable',
     });
 
-    expect(client.queries[0]).toContain('cancel_requested_at IS NULL');
+    expect(client.queries[0]).toContain('pg_advisory_xact_lock');
+    expect(client.queries[1]).toContain('cancel_requested_at IS NULL');
+    expect(client.queries.some((sql) =>
+      sql.includes('INSERT INTO mobile_push_notification_outbox')
+    )).toBe(true);
   });
 });
 

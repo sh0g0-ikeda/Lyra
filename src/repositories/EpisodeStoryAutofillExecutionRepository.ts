@@ -1,8 +1,12 @@
 import type { QueryResultRow } from 'pg';
 import type { EpisodePagePlanApplyResult } from '../domain/types/page.js';
 import type { GenerationJob } from '../domain/types/job.js';
-import type { DatabaseClient } from '../lib/db.js';
+import type { DatabaseClient, TransactionRunner } from '../lib/db.js';
 import { sanitizePersistedErrorMessage } from '../lib/errorSanitizer.js';
+import {
+  enqueueTerminalGenerationJobNotificationAfterRegistryLock,
+  lockMobilePushTokenRegistryForTerminalSettlement,
+} from './PushNotificationOutboxRepository.js';
 
 export interface CompleteEpisodeStoryAutofillInput {
   jobId: string;
@@ -60,7 +64,7 @@ interface GenerationJobRow extends QueryResultRow {
 export class PostgresEpisodeStoryAutofillExecutionRepository
   implements EpisodeStoryAutofillExecutionRepository
 {
-  public constructor(private readonly client: DatabaseClient) {}
+  public constructor(private readonly client: DatabaseClient & TransactionRunner) {}
 
   public async claimQueuedEpisodeStoryAutofillJob(jobId: string): Promise<GenerationJob | null> {
     const result = await this.client.query<GenerationJobRow>(
@@ -184,40 +188,53 @@ export class PostgresEpisodeStoryAutofillExecutionRepository
   public async completeEpisodeStoryAutofill(
     input: CompleteEpisodeStoryAutofillInput,
   ): Promise<boolean> {
-    const result = await this.client.query<GenerationJobRow>(
-      `
-      UPDATE generation_jobs
-      SET status = 'completed',
-          result = $3::jsonb,
-          completed_at = NOW()
-      WHERE id = $1
-        AND user_id = $2
-        AND status = 'processing'
-        AND cancel_requested_at IS NULL
-        AND commit_started_at IS NOT NULL
-      RETURNING *
-      `,
-      [
-        input.jobId,
-        input.userId,
-        JSON.stringify({
-          updated_page_count: input.result.updatedPageCount,
-          updated_panel_count: input.result.updatedPanelCount,
-          updated_assignment_count: input.result.updatedAssignmentCount,
-          filled_field_count: input.result.filledFieldCount,
-          compiler_used: input.result.compilerUsed,
-          compiler_provider: input.result.compilerProvider,
-          compiler_model: input.result.compilerModel,
-          compiler_prompt_version: input.result.compilerPromptVersion,
-          compiler_error: input.result.compilerError,
-          progress_stage: 'completed',
-          progress_message: 'Story plan applied to pages and panels.',
-          progress_updated_at: new Date().toISOString(),
-        }),
-      ],
-    );
+    return this.client.transaction(async (transactionClient) => {
+      await lockMobilePushTokenRegistryForTerminalSettlement(transactionClient);
+      const result = await transactionClient.query<GenerationJobRow>(
+        `
+        UPDATE generation_jobs
+        SET status = 'completed',
+            result = $3::jsonb,
+            completed_at = NOW()
+        WHERE id = $1
+          AND user_id = $2
+          AND status = 'processing'
+          AND cancel_requested_at IS NULL
+          AND cancelled_at IS NULL
+          AND commit_started_at IS NOT NULL
+        RETURNING *
+        `,
+        [
+          input.jobId,
+          input.userId,
+          JSON.stringify({
+            updated_page_count: input.result.updatedPageCount,
+            updated_panel_count: input.result.updatedPanelCount,
+            updated_assignment_count: input.result.updatedAssignmentCount,
+            filled_field_count: input.result.filledFieldCount,
+            compiler_used: input.result.compilerUsed,
+            compiler_provider: input.result.compilerProvider,
+            compiler_model: input.result.compilerModel,
+            compiler_prompt_version: input.result.compilerPromptVersion,
+            compiler_error: input.result.compilerError,
+            progress_stage: 'completed',
+            progress_message: 'Story plan applied to pages and panels.',
+            progress_updated_at: new Date().toISOString(),
+          }),
+        ],
+      );
+      const completedJob = result.rows[0];
+      if (completedJob === undefined) {
+        return false;
+      }
 
-    return (result.rowCount ?? 0) > 0;
+      await enqueueTerminalGenerationJobNotificationAfterRegistryLock(
+        transactionClient,
+        completedJob,
+        'completed',
+      );
+      return true;
+    });
   }
 
   public async failEpisodeStoryAutofill(input: {
@@ -229,32 +246,45 @@ export class PostgresEpisodeStoryAutofillExecutionRepository
       input.errorMessage,
       'Episode story autofill failed',
     );
-    const result = await this.client.query<GenerationJobRow>(
-      `
-      UPDATE generation_jobs
-      SET status = 'failed',
-          error_message = $3,
-          result = COALESCE(result, '{}'::jsonb) || $4::jsonb,
-          completed_at = NOW()
-      WHERE id = $1
-        AND user_id = $2
-        AND status IN ('queued', 'processing')
-        AND cancel_requested_at IS NULL
-      RETURNING *
-      `,
-      [
-        input.jobId,
-        input.userId,
-        persistedErrorMessage,
-        JSON.stringify({
-          progress_stage: 'failed',
-          progress_message: 'Story plan autofill failed.',
-          progress_updated_at: new Date().toISOString(),
-        }),
-      ],
-    );
+    return this.client.transaction(async (transactionClient) => {
+      await lockMobilePushTokenRegistryForTerminalSettlement(transactionClient);
+      const result = await transactionClient.query<GenerationJobRow>(
+        `
+        UPDATE generation_jobs
+        SET status = 'failed',
+            error_message = $3,
+            result = COALESCE(result, '{}'::jsonb) || $4::jsonb,
+            completed_at = NOW()
+        WHERE id = $1
+          AND user_id = $2
+          AND status IN ('queued', 'processing')
+          AND cancel_requested_at IS NULL
+          AND cancelled_at IS NULL
+        RETURNING *
+        `,
+        [
+          input.jobId,
+          input.userId,
+          persistedErrorMessage,
+          JSON.stringify({
+            progress_stage: 'failed',
+            progress_message: 'Story plan autofill failed.',
+            progress_updated_at: new Date().toISOString(),
+          }),
+        ],
+      );
+      const failedJob = result.rows[0];
+      if (failedJob === undefined) {
+        return false;
+      }
 
-    return (result.rowCount ?? 0) > 0;
+      await enqueueTerminalGenerationJobNotificationAfterRegistryLock(
+        transactionClient,
+        failedJob,
+        'failed',
+      );
+      return true;
+    });
   }
 }
 

@@ -349,8 +349,20 @@ describe('checkDeploymentDataInvariants', () => {
     ).toBe(true);
     expect(
       database.queries.some((query) =>
+        query.includes('mobile_push_notification_outbox.retry_snapshot') &&
+        query.includes('generation_retry_count > generation_jobs.retry_count'),
+      ),
+    ).toBe(true);
+    expect(
+      database.queries.some((query) =>
         query.includes('mobile_push_notification_deliveries AS deliveries') &&
         query.includes('mobile_push_tokens.user_id <> outbox.user_id'),
+      ),
+    ).toBe(true);
+    expect(
+      database.queries.some((query) =>
+        query.includes('mobile_push_notification_deliveries.terminal_snapshot') &&
+        query.includes("deliveries.status IN ('pending', 'processing')"),
       ),
     ).toBe(true);
     expect(
@@ -409,7 +421,9 @@ describe('checkDeploymentDataInvariants', () => {
     'episode_export_jobs.processing_lease',
     'mobile_push_tokens.protection',
     'mobile_push_notification_outbox.job_scope',
+    'mobile_push_notification_outbox.retry_snapshot',
     'mobile_push_notification_deliveries.token_scope',
+    'mobile_push_notification_deliveries.terminal_snapshot',
     'generation_jobs.cancellation_contract',
   ])('%s を検出する', async (checkName) => {
     const database = new FakeDatabase(checkName);

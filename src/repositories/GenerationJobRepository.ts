@@ -5,6 +5,10 @@ import { ConfigurationError, ConflictError } from '../domain/errors/index.js';
 import type { GenerationJobHistoryCursor } from '../domain/pagination.js';
 import type { DatabaseClient, TransactionRunner } from '../lib/db.js';
 import { sanitizePersistedErrorMessage } from '../lib/errorSanitizer.js';
+import {
+  enqueueTerminalGenerationJobNotificationAfterRegistryLock,
+  lockMobilePushTokenRegistryForTerminalSettlement,
+} from './PushNotificationOutboxRepository.js';
 
 export type { GenerationJob };
 export type { GenerationJobHistoryCursor };
@@ -143,6 +147,12 @@ interface GenerationJobRow extends QueryResultRow {
   cancel_requested_by: string | null;
   cancelled_at: Date | null;
   commit_started_at: Date | null;
+}
+
+interface PreparedRetryRow extends QueryResultRow {
+  id: string;
+  retry_count: number;
+  canceled_delivery_count: string;
 }
 
 interface GenerationJobHistoryRow extends GenerationJobRow {
@@ -1089,21 +1099,35 @@ export class PostgresGenerationJobRepository
 
   public async markFailed(jobId: string, errorMessage: string): Promise<boolean> {
     const persistedErrorMessage = sanitizePersistedErrorMessage(errorMessage, 'Generation job failed');
-    const result = await this.client.query<GenerationJobRow>(
-      `
-      UPDATE generation_jobs
-      SET status = 'failed',
-          error_message = $2,
-          completed_at = NOW()
-      WHERE id = $1
-        AND status IN ('queued', 'processing')
-        AND cancel_requested_at IS NULL
-      RETURNING *
-      `,
-      [jobId, persistedErrorMessage],
-    );
+    const transactionRunner = this.requireTransactionRunnerForTerminalSettlement();
+    return transactionRunner.transaction(async (transactionClient) => {
+      await lockMobilePushTokenRegistryForTerminalSettlement(transactionClient);
+      const result = await transactionClient.query<GenerationJobRow>(
+        `
+        UPDATE generation_jobs
+        SET status = 'failed',
+            error_message = $2,
+            completed_at = NOW()
+        WHERE id = $1
+          AND status IN ('queued', 'processing')
+          AND cancel_requested_at IS NULL
+          AND cancelled_at IS NULL
+        RETURNING *
+        `,
+        [jobId, persistedErrorMessage],
+      );
+      const failedJob = result.rows[0];
+      if (failedJob === undefined) {
+        return false;
+      }
 
-    return (result.rowCount ?? 0) > 0;
+      await enqueueTerminalGenerationJobNotificationAfterRegistryLock(
+        transactionClient,
+        failedJob,
+        'failed',
+      );
+      return true;
+    });
   }
 
   public async prepareRetry(
@@ -1158,29 +1182,62 @@ export class PostgresGenerationJobRepository
     return this.client;
   }
 
+  private requireTransactionRunnerForTerminalSettlement(): DatabaseClient & TransactionRunner {
+    if (!isTransactionRunner(this.client)) {
+      throw new ConfigurationError(
+        'Generation job terminal settlement requires a transaction-capable database client',
+      );
+    }
+
+    return this.client;
+  }
+
   private async prepareRetryWithClient(
     client: DatabaseClient,
     jobId: string,
     maxRetryCount: number,
   ): Promise<boolean> {
-    const result = await client.query<GenerationJobRow>(
+    const result = await client.query<PreparedRetryRow>(
       `
-      UPDATE generation_jobs
-      SET status = 'queued',
-          retry_count = retry_count + 1,
-          started_at = NULL,
-          completed_at = NULL,
-          error_message = NULL,
-          openai_request_id = NULL,
-          sqs_message_id = NULL,
-          cancel_requested_at = NULL,
-          cancel_requested_by = NULL,
-          cancelled_at = NULL,
-          commit_started_at = NULL
-      WHERE id = $1
-        AND status = 'failed'
-        AND retry_count < $2
-      RETURNING *
+      WITH retried_job AS (
+        UPDATE generation_jobs
+        SET status = 'queued',
+            retry_count = retry_count + 1,
+            started_at = NULL,
+            completed_at = NULL,
+            error_message = NULL,
+            openai_request_id = NULL,
+            sqs_message_id = NULL,
+            cancel_requested_at = NULL,
+            cancel_requested_by = NULL,
+            cancelled_at = NULL,
+            commit_started_at = NULL
+        WHERE id = $1
+          AND status = 'failed'
+          AND retry_count < $2
+        RETURNING id, retry_count
+      ),
+      canceled_deliveries AS (
+        UPDATE mobile_push_notification_deliveries AS deliveries
+        SET status = 'canceled',
+            locked_at = NULL,
+            lease_token = NULL,
+            sent_at = NULL,
+            error_code = NULL,
+            updated_at = NOW()
+        FROM mobile_push_notification_outbox AS outbox,
+             retried_job
+        WHERE deliveries.outbox_id = outbox.id
+          AND outbox.generation_job_id = retried_job.id
+          AND outbox.terminal_status = 'failed'
+          AND outbox.generation_retry_count < retried_job.retry_count
+          AND deliveries.status IN ('pending', 'processing')
+        RETURNING deliveries.id
+      )
+      SELECT retried_job.id,
+             retried_job.retry_count,
+             (SELECT COUNT(*) FROM canceled_deliveries) AS canceled_delivery_count
+      FROM retried_job
       `,
       [jobId, maxRetryCount],
     );
