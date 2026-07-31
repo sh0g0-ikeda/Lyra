@@ -1,13 +1,11 @@
 import { useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { Notice } from '../components/Notice';
-import { PrimaryButton } from '../components/PrimaryButton';
 import { Screen } from '../components/Screen';
-import { colors, radius, spacing } from '../constants/theme';
+import { colors, spacing } from '../constants/theme';
 import type { CurrentSession } from '../lib/api';
 import { t } from '../lib/i18n';
-import { userErrorMessage } from '../lib/userMessages';
 import { useAuthSession } from '../state/AuthSessionProvider';
+import { AccountScreen } from './AccountScreen';
 import { StoryScreen, type StoryScreenHandle } from './StoryScreen';
 import { PagesScreen, type PagesScreenHandle } from './PagesScreen';
 import { CharactersScreen, type CharactersScreenHandle } from './CharactersScreen';
@@ -23,8 +21,14 @@ export function FoundationHomeScreen({
 }: FoundationHomeScreenProps): React.JSX.Element {
   const { api, language, signOut } = useAuthSession();
   const [activeTab, setActiveTab] = useState<HomeTab>('story');
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [selectedOrganizationId, setSelectedOrganizationId] = useState<string | null>(null);
+  const organizationId = selectedOrganizationId !== null
+    && session.organizations.some(
+      (organization) => organization.id === selectedOrganizationId
+        && organization.membership_status === 'active',
+    )
+    ? selectedOrganizationId
+    : null;
   const tabTransition = useRef<Promise<void> | null>(null);
   const pagesRef = useRef<PagesScreenHandle>(null);
   const charactersRef = useRef<CharactersScreenHandle>(null);
@@ -56,18 +60,6 @@ export function FoundationHomeScreen({
       }
     });
     return transition;
-  };
-
-  const handleSignOut = async (): Promise<void> => {
-    setLoading(true);
-    setErrorMessage(null);
-    try {
-      await signOut();
-    } catch (error: unknown) {
-      setErrorMessage(userErrorMessage(error, language));
-    } finally {
-      setLoading(false);
-    }
   };
 
   return (
@@ -103,7 +95,7 @@ export function FoundationHomeScreen({
         <StoryScreen
           api={api}
           language={language}
-          organizationId={null}
+          organizationId={organizationId}
           ref={storyRef}
           sessionKey={session.user.id}
         />
@@ -111,7 +103,7 @@ export function FoundationHomeScreen({
         <CharactersScreen
           api={api}
           language={language}
-          organizationId={null}
+          organizationId={organizationId}
           ref={charactersRef}
           sessionKey={session.user.id}
         />
@@ -119,28 +111,19 @@ export function FoundationHomeScreen({
         <PagesScreen
           api={api}
           language={language}
-          organizationId={null}
+          organizationId={organizationId}
           ref={pagesRef}
           sessionKey={session.user.id}
         />
       ) : (
-        <View style={styles.accountContent}>
-          <Notice message={t(language, 'foundationConnected')} />
-          <View style={styles.card}>
-            <Text style={styles.label}>{t(language, 'account')}</Text>
-            <Text style={styles.value}>{session.user.email}</Text>
-            <Text style={styles.label}>{t(language, 'plan')}</Text>
-            <Text style={styles.value}>{session.user.plan_code}</Text>
-          </View>
-          {errorMessage === null ? null : (
-            <Notice message={errorMessage} tone="danger" />
-          )}
-          <PrimaryButton
-            label={t(language, 'logout')}
-            loading={loading}
-            onPress={() => void handleSignOut()}
-          />
-        </View>
+        <AccountScreen
+          api={api}
+          language={language}
+          onOrganizationChange={setSelectedOrganizationId}
+          onSignOut={signOut}
+          organizationId={organizationId}
+          session={session}
+        />
       )}
     </Screen>
   );
@@ -175,21 +158,6 @@ function TabButton({
 }
 
 const styles = StyleSheet.create({
-  accountContent: {
-    gap: spacing.md,
-  },
-  card: {
-    backgroundColor: colors.surface,
-    borderColor: colors.border,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    gap: spacing.xs,
-    padding: spacing.md,
-  },
-  label: {
-    color: colors.muted,
-    fontSize: 13,
-  },
   pressed: {
     opacity: 0.75,
   },
@@ -213,10 +181,5 @@ const styles = StyleSheet.create({
   },
   tabs: {
     flexDirection: 'row',
-  },
-  value: {
-    color: colors.ink,
-    fontSize: 17,
-    marginBottom: spacing.sm,
   },
 });
