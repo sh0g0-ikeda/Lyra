@@ -643,6 +643,7 @@ export const pageSchema = z.object({
 
 export const pagesResponseSchema = z.object({
   pages: z.array(pageSchema),
+  next_cursor: z.string().min(1).max(512).nullable().optional(),
 });
 
 export const pageJobAcceptedResponseSchema = z

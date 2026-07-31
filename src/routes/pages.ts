@@ -8,6 +8,11 @@ import {
   pagesResponseSchema,
 } from '../../packages/api-contract/src/mobileApiSchemas.js';
 import { ValidationError } from '../domain/errors/index.js';
+import {
+  decodePageListCursor,
+  encodePageListCursor,
+  type PageListCursor,
+} from '../domain/pagination.js';
 import { APP_LANGUAGES } from '../domain/types/language.js';
 import type { PageSummary } from '../domain/types/page.js';
 import type { PanelFrame } from '../domain/types/panelFrame.js';
@@ -35,6 +40,7 @@ import { assertMobileResponseContract } from './mobileResponseContract.js';
 import { readJsonBody, readOptionalJsonBody, REQUEST_BODY_LIMITS } from './requestBody.js';
 
 const uuidParamSchema = z.string().uuid();
+const MAX_PAGE_LIST_PAGE_LIMIT = 100;
 const languageBodySchema = z
   .object({
     language: z.enum(APP_LANGUAGES).optional().default('ja'),
@@ -65,6 +71,26 @@ export function createPageRoutes(dependencies: PageRouteDependencies): Hono<AppE
     const episodeId = parseUuidParam(c, 'id');
     const organizationId = parseOptionalOrganizationId(c);
     await requireOrganizationCapability(c, dependencies, organizationId, 'view_work');
+    const pageRequest = parsePageListPageRequest(c);
+    if (pageRequest !== null) {
+      const page = await dependencies.pageQueryService.listEpisodePagesPage(
+        user.id,
+        episodeId,
+        pageRequest,
+        organizationId,
+      );
+      const payload = {
+        pages: await Promise.all(page.pages.map(toPageSummaryResponse)),
+        next_cursor:
+          page.nextCursor === null
+            ? null
+            : encodePageListCursor(page.nextCursor),
+      };
+      return c.json(
+        assertMobileResponseContract(pagesResponseSchema, payload),
+      );
+    }
+
     const pages = await dependencies.pageQueryService.listEpisodePages(user.id, episodeId, organizationId);
 
     const payload = { pages: await Promise.all(pages.map(toPageSummaryResponse)) };
@@ -317,6 +343,38 @@ function toPanelFrameResponse(frame: PanelFrame): Record<string, unknown> {
     border_color: frame.borderColor,
     z_index: frame.zIndex,
     reading_order: frame.readingOrder,
+  };
+}
+
+function parsePageListPageRequest(
+  c: Context<AppEnv>,
+): { limit: number; cursor: PageListCursor | null } | null {
+  const rawLimit = c.req.query('limit');
+  const rawCursor = c.req.query('cursor');
+  if (rawLimit === undefined && rawCursor === undefined) {
+    return null;
+  }
+  if (rawLimit === undefined || !/^[0-9]+$/u.test(rawLimit)) {
+    throw new ValidationError(
+      'limit must be an integer from 1 to 100 and is required with cursor',
+    );
+  }
+
+  const limit = Number(rawLimit);
+  if (
+    !Number.isSafeInteger(limit)
+    || limit < 1
+    || limit > MAX_PAGE_LIST_PAGE_LIMIT
+  ) {
+    throw new ValidationError('limit must be an integer from 1 to 100');
+  }
+
+  return {
+    limit,
+    cursor:
+      rawCursor === undefined
+        ? null
+        : decodePageListCursor(rawCursor),
   };
 }
 

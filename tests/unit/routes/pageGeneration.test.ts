@@ -1,7 +1,10 @@
 ﻿import { SignJWT } from 'jose';
 import { describe, expect, it } from 'vitest';
 import { createApp } from '../../../src/app.js';
-import { decodeGenerationJobHistoryCursor } from '../../../src/domain/pagination.js';
+import {
+  decodeGenerationJobHistoryCursor,
+  decodePageListCursor,
+} from '../../../src/domain/pagination.js';
 import { NotFoundError } from '../../../src/domain/errors/index.js';
 import type { CreditBalanceSnapshot } from '../../../src/domain/types/credit.js';
 import type { GenerationJob } from '../../../src/domain/types/job.js';
@@ -12,6 +15,10 @@ import type {
   GenerationJobHistoryCursor,
   GenerationJobHistoryPage,
 } from '../../../src/repositories/GenerationJobRepository.js';
+import type {
+  PageListCursor,
+  PageListPage,
+} from '../../../src/repositories/PageRepository.js';
 import type {
   ConsumeCreditsParams,
   CreditServicePort,
@@ -175,8 +182,35 @@ class FakeEpisodeStoryAutofillService implements EpisodeStoryAutofillServicePort
 }
 
 class FakePageQueryService implements PageQueryServicePort {
+  public page: PageListPage = {
+    pages: [buildPageSummary('33333333-3333-4333-8333-333333333333')],
+    nextCursor: null,
+  };
+  public pageCalls: Array<{
+    userId: string;
+    episodeId: string;
+    limit: number;
+    cursor: PageListCursor | null;
+    organizationId: string | null;
+  }> = [];
+
   public async listEpisodePages(): Promise<PageSummary[]> {
     return [buildPageSummary('33333333-3333-4333-8333-333333333333')];
+  }
+
+  public async listEpisodePagesPage(
+    userId: string,
+    episodeId: string,
+    input: { limit: number; cursor: PageListCursor | null },
+    organizationId: string | null = null,
+  ): Promise<PageListPage> {
+    this.pageCalls.push({
+      userId,
+      episodeId,
+      ...input,
+      organizationId,
+    });
+    return this.page;
   }
 }
 
@@ -269,7 +303,8 @@ describe('page generation routes', () => {
     });
 
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({
+    const payload = await response.json();
+    expect(payload).toEqual({
       pages: [
         expect.objectContaining({
           id: '33333333-3333-4333-8333-333333333333',
@@ -285,6 +320,79 @@ describe('page generation routes', () => {
         }),
       ],
     });
+    expect(payload).not.toHaveProperty('next_cursor');
+  });
+
+  it('episode pages一覧をopaque cursorでpage取得する', async () => {
+    const pageQueryService = new FakePageQueryService();
+    const nextCursor: PageListCursor = {
+      pageNumber: 1,
+      id: '33333333-3333-4333-8333-333333333333',
+    };
+    pageQueryService.page.nextCursor = nextCursor;
+    const app = createTestApp(
+      new FakePageGenerationService(),
+      new FakePageFinalizeService(),
+      new FakeJobService(),
+      pageQueryService,
+    );
+    const token = await createToken();
+    const headers = { Authorization: `Bearer ${token}` };
+    const episodeId = '44444444-4444-4444-8444-444444444444';
+
+    const first = await app.request(
+      `/api/episodes/${episodeId}/pages?limit=40`,
+      { headers },
+    );
+    const firstPayload = (await first.json()) as { next_cursor: string };
+    const second = await app.request(
+      `/api/episodes/${episodeId}/pages?limit=10&cursor=${encodeURIComponent(firstPayload.next_cursor)}`,
+      { headers },
+    );
+
+    expect(first.status).toBe(200);
+    expect(decodePageListCursor(firstPayload.next_cursor)).toEqual(nextCursor);
+    expect(second.status).toBe(200);
+    expect(pageQueryService.pageCalls).toEqual([
+      {
+        userId: user.id,
+        episodeId,
+        limit: 40,
+        cursor: null,
+        organizationId: null,
+      },
+      {
+        userId: user.id,
+        episodeId,
+        limit: 10,
+        cursor: nextCursor,
+        organizationId: null,
+      },
+    ]);
+  });
+
+  it('episode pages一覧の不正limit・cursorを422にする', async () => {
+    const app = createTestApp(
+      new FakePageGenerationService(),
+      new FakePageFinalizeService(),
+      new FakeJobService(),
+    );
+    const token = await createToken();
+    const headers = { Authorization: `Bearer ${token}` };
+    const basePath =
+      '/api/episodes/44444444-4444-4444-8444-444444444444/pages';
+
+    const responses = await Promise.all([
+      app.request(`${basePath}?limit=0`, { headers }),
+      app.request(`${basePath}?limit=101`, { headers }),
+      app.request(`${basePath}?limit=1.5`, { headers }),
+      app.request(`${basePath}?cursor=opaque`, { headers }),
+      app.request(`${basePath}?limit=10&cursor=invalid`, { headers }),
+    ]);
+
+    expect(responses.map((response) => response.status)).toEqual([
+      422, 422, 422, 422, 422,
+    ]);
   });
 
   it('page settings を更新する', async () => {
