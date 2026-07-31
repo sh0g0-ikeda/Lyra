@@ -12,6 +12,7 @@ interface SceneEditorProps {
   errorMessage: string | null;
   language: UiLanguage;
   noticeMessage: string | null;
+  saveDisabled?: boolean;
   onChangeAtmosphere(value: string): void;
   onChangeLocation(value: string): void;
   onChangeTime(value: string): void;
@@ -25,6 +26,7 @@ export function SceneEditor({
   errorMessage,
   language,
   noticeMessage,
+  saveDisabled = false,
   onChangeAtmosphere,
   onChangeLocation,
   onChangeTime,
@@ -62,7 +64,7 @@ export function SceneEditor({
       {errorMessage === null ? null : <Notice message={errorMessage} tone="danger" />}
       {noticeMessage === null ? null : <Notice message={noticeMessage} />}
       <PrimaryButton
-        disabled={!dirty}
+        disabled={!dirty || saveDisabled}
         label={t(language, 'sceneSave')}
         loading={busy}
         onPress={onSave}

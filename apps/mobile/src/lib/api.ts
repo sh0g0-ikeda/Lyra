@@ -5,6 +5,11 @@ import {
   currentSessionSchema,
   episodeSchema,
   episodesResponseSchema,
+  generationJobHistoryResponseSchema,
+  generationJobResponseSchema,
+  pageSchema,
+  pagesResponseSchema,
+  pageSkeletonResponseSchema,
   sceneSchema,
   scenesResponseSchema,
   workSchema,
@@ -19,10 +24,24 @@ export type WorkRecord = ReturnType<typeof workSchema.parse>;
 export type ChapterRecord = ReturnType<typeof chapterSchema.parse>;
 export type EpisodeRecord = ReturnType<typeof episodeSchema.parse>;
 export type SceneRecord = ReturnType<typeof sceneSchema.parse>;
+export type PageRecord = ReturnType<typeof pageSchema.parse>;
+export type GenerationJobRecord = ReturnType<typeof generationJobResponseSchema.parse>;
+export type PageSkeletonResponse = ReturnType<typeof pageSkeletonResponseSchema.parse>;
 
 export interface ListWorksPageInput {
   limit: number;
   cursor?: string | null;
+}
+
+export interface ListJobsPageInput {
+  limit: number;
+  cursor?: string | null;
+}
+
+export interface GeneratePageSkeletonInput {
+  overwrite_existing: false;
+  apply_story_plan: false;
+  language: 'ja' | 'en';
 }
 
 export interface CreateStoryItemInput {
@@ -314,6 +333,74 @@ export class LyraMobileApiClient {
       sceneSchema,
       { method: 'PUT', body },
     );
+  }
+
+  public getPages(
+    episodeId: string,
+    organizationId: string | null = null,
+  ): Promise<{ pages: PageRecord[]; next_cursor?: string | null }> {
+    return this.requestJson(
+      withOrganizationQuery(
+        `/api/episodes/${encodeURIComponent(episodeId)}/pages`,
+        organizationId,
+      ),
+      pagesResponseSchema,
+    );
+  }
+
+  public generatePageSkeleton(
+    episodeId: string,
+    body: GeneratePageSkeletonInput,
+    organizationId: string | null = null,
+  ): Promise<PageSkeletonResponse> {
+    return this.requestJson(
+      withOrganizationQuery(
+        `/api/episodes/${encodeURIComponent(episodeId)}/generate-page-skeleton`,
+        organizationId,
+      ),
+      pageSkeletonResponseSchema,
+      { method: 'POST', body },
+    );
+  }
+
+  public async getJobs(
+    input: ListJobsPageInput,
+    organizationId: string | null = null,
+  ): Promise<{ jobs: GenerationJobRecord[]; next_cursor: string | null }> {
+    if (!Number.isSafeInteger(input.limit) || input.limit < 1 || input.limit > 100) {
+      throw new ApiError('INVALID_REQUEST', 422, 'The request is invalid.');
+    }
+    const query = new URLSearchParams({ limit: String(input.limit) });
+    const cursor = input.cursor?.trim();
+    if (cursor !== undefined && cursor.length > 0) {
+      if (cursor.length > 512) {
+        throw new ApiError('INVALID_REQUEST', 422, 'The request is invalid.');
+      }
+      query.set('cursor', cursor);
+    }
+    appendOrganizationQuery(query, organizationId);
+    return this.requestJson(
+      `/api/jobs?${query.toString()}`,
+      generationJobHistoryResponseSchema,
+    );
+  }
+
+  public async getJob(
+    jobId: string,
+    organizationId: string | null = null,
+  ): Promise<GenerationJobRecord> {
+    const job = await this.requestJson(
+      withOrganizationQuery(`/api/jobs/${encodeURIComponent(jobId)}`, organizationId),
+      generationJobResponseSchema,
+    );
+    if (job.id !== jobId) {
+      throw new ApiError(
+        'INVALID_API_RESPONSE',
+        502,
+        'The server returned an invalid response.',
+      );
+    }
+    return job;
   }
 
   private async requireTokens(): Promise<AuthTokens> {

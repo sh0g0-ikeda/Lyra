@@ -471,6 +471,143 @@ describe('LyraMobileApiClient', () => {
       status: 502,
     });
   });
+
+  it('Page一覧・初回骨格生成・job履歴を同じorganization scopeで扱う', async () => {
+    const organizationId = '55555555-5555-4555-8555-555555555555';
+    const page = buildPage();
+    const job = buildPageSkeletonJob();
+    const queued = {
+      job_id: job.id,
+      queued: true as const,
+      story_plan_applied: false,
+    };
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(jsonResponse({ pages: [page] }))
+      .mockResolvedValueOnce(jsonResponse(queued))
+      .mockResolvedValueOnce(jsonResponse({ jobs: [job], next_cursor: null }))
+      .mockResolvedValueOnce(jsonResponse(job));
+    const api = new LyraMobileApiClient({
+      apiBaseUrl: 'https://api.example.com',
+      auth: new FakeAuthSession(),
+      fetcher,
+    });
+
+    await expect(api.getPages(buildEpisode().id, organizationId)).resolves.toEqual({
+      pages: [page],
+    });
+    await expect(api.generatePageSkeleton(buildEpisode().id, {
+      overwrite_existing: false,
+      apply_story_plan: false,
+      language: 'ja',
+    }, organizationId)).resolves.toEqual(queued);
+    await expect(api.getJobs({ limit: 50 }, organizationId)).resolves.toEqual({
+      jobs: [job],
+      next_cursor: null,
+    });
+    await expect(api.getJob(job.id, organizationId)).resolves.toEqual(job);
+
+    expect(fetcher.mock.calls).toEqual([
+      [
+        `https://api.example.com/api/episodes/${buildEpisode().id}/pages?organization_id=${organizationId}`,
+        expect.objectContaining({ method: 'GET' }),
+      ],
+      [
+        `https://api.example.com/api/episodes/${buildEpisode().id}/generate-page-skeleton?organization_id=${organizationId}`,
+        expect.objectContaining({
+          body: JSON.stringify({
+            overwrite_existing: false,
+            apply_story_plan: false,
+            language: 'ja',
+          }),
+          method: 'POST',
+        }),
+      ],
+      [
+        `https://api.example.com/api/jobs?limit=50&organization_id=${organizationId}`,
+        expect.objectContaining({ method: 'GET' }),
+      ],
+      [
+        `https://api.example.com/api/jobs/${job.id}?organization_id=${organizationId}`,
+        expect.objectContaining({ method: 'GET' }),
+      ],
+    ]);
+  });
+
+  it('Page骨格とjobの契約外success payloadを拒否する', async () => {
+    const invalidPageApi = new LyraMobileApiClient({
+      apiBaseUrl: 'https://api.example.com',
+      auth: new FakeAuthSession(),
+      fetcher: vi.fn<typeof fetch>().mockResolvedValue(
+        jsonResponse({ pages: [{ ...buildPage(), page_number: 0 }] }),
+      ),
+    });
+    const invalidJobApi = new LyraMobileApiClient({
+      apiBaseUrl: 'https://api.example.com',
+      auth: new FakeAuthSession(),
+      fetcher: vi.fn<typeof fetch>().mockResolvedValue(
+        jsonResponse({ jobs: [{ ...buildPageSkeletonJob(), credit_cost: -1 }], next_cursor: null }),
+      ),
+    });
+
+    await expect(invalidPageApi.getPages(buildEpisode().id)).rejects.toMatchObject({
+      code: 'INVALID_API_RESPONSE',
+      status: 502,
+    });
+    await expect(invalidJobApi.getJobs({ limit: 50 })).rejects.toMatchObject({
+      code: 'INVALID_API_RESPONSE',
+      status: 502,
+    });
+  });
+
+  it('骨格生成responseと単一jobの契約外success payloadを拒否する', async () => {
+    const invalidSkeletonApi = new LyraMobileApiClient({
+      apiBaseUrl: 'https://api.example.com',
+      auth: new FakeAuthSession(),
+      fetcher: vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({
+        job_id: buildPageSkeletonJob().id,
+        queued: false,
+        story_plan_applied: false,
+      })),
+    });
+    const invalidJobApi = new LyraMobileApiClient({
+      apiBaseUrl: 'https://api.example.com',
+      auth: new FakeAuthSession(),
+      fetcher: vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({
+        ...buildPageSkeletonJob(),
+        credit_cost: -1,
+      })),
+    });
+
+    await expect(invalidSkeletonApi.generatePageSkeleton(buildEpisode().id, {
+      overwrite_existing: false,
+      apply_story_plan: false,
+      language: 'ja',
+    })).rejects.toMatchObject({
+      code: 'INVALID_API_RESPONSE',
+      status: 502,
+    });
+    await expect(invalidJobApi.getJob(buildPageSkeletonJob().id)).rejects.toMatchObject({
+      code: 'INVALID_API_RESPONSE',
+      status: 502,
+    });
+  });
+
+  it('単一job endpointが要求と異なるjob IDを返した場合は拒否する', async () => {
+    const api = new LyraMobileApiClient({
+      apiBaseUrl: 'https://api.example.com',
+      auth: new FakeAuthSession(),
+      fetcher: vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({
+        ...buildPageSkeletonJob(),
+        id: '99999999-9999-4999-8999-999999999999',
+      })),
+    });
+
+    await expect(api.getJob(buildPageSkeletonJob().id)).rejects.toMatchObject({
+      code: 'INVALID_API_RESPONSE',
+      status: 502,
+    });
+  });
 });
 
 class FakeAuthSession implements MobileAuthSessionPort {
@@ -597,5 +734,60 @@ function buildScene(): Record<string, unknown> & { id: string } {
     status: 'draft',
     created_at: '2026-07-31T00:00:00.000Z',
     updated_at: '2026-07-31T00:00:00.000Z',
+  };
+}
+
+function buildPage(): Record<string, unknown> & { id: string } {
+  return {
+    id: '77777777-7777-4777-8777-777777777777',
+    episode_id: buildEpisode().id,
+    page_number: 1,
+    layout_config: {},
+    story_source_scene_ids: [],
+    story_page_purpose: null,
+    story_continuity_note: null,
+    dialogue_mode: 'image_baked',
+    page_dialogue_toggle: true,
+    generation_mode: null,
+    generated_image: null,
+    status: 'designing',
+    panel_count: 4,
+    frame_count: 4,
+    balloon_count: 0,
+    created_at: '2026-07-31T00:00:00.000Z',
+    updated_at: '2026-07-31T00:00:00.000Z',
+  };
+}
+
+function buildPageSkeletonJob(): Record<string, unknown> & { id: string } {
+  return {
+    id: '88888888-8888-4888-8888-888888888888',
+    job_type: 'episode_page_skeleton',
+    status: 'processing',
+    params: {
+      episode_id: buildEpisode().id,
+      overwrite_existing: false,
+      apply_story_plan: false,
+      language: 'ja',
+    },
+    result: {
+      progress_stage: 'compiling',
+      progress_message: 'provider internal detail',
+      progress_current_chunk: 1,
+      progress_total_chunks: 4,
+      progress_started_at: '2026-07-31T00:00:00.000Z',
+      progress_updated_at: '2026-07-31T00:00:01.000Z',
+    },
+    generation_mode: null,
+    credit_cost: 0,
+    error_message: null,
+    retry_count: 0,
+    created_at: '2026-07-31T00:00:00.000Z',
+    started_at: '2026-07-31T00:00:00.000Z',
+    completed_at: null,
+    expires_at: null,
+    cancel_requested_at: null,
+    cancelled_at: null,
+    commit_started_at: null,
   };
 }

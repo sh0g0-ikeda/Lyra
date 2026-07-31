@@ -26,5 +26,25 @@ describe('story query keys', () => {
       'scenes',
       'episode-1',
     ]);
+    expect(organization.pages('episode-1')).toEqual([
+      'mobile-story',
+      'session-a',
+      'organization:99999999-9999-4999-8999-999999999999',
+      'pages',
+      'episode-1',
+    ]);
+    expect(organization.jobs()).toEqual([
+      'mobile-story',
+      'session-a',
+      'organization:99999999-9999-4999-8999-999999999999',
+      'jobs',
+    ]);
+    expect(organization.job('job-1')).toEqual([
+      'mobile-story',
+      'session-a',
+      'organization:99999999-9999-4999-8999-999999999999',
+      'job',
+      'job-1',
+    ]);
   });
 });

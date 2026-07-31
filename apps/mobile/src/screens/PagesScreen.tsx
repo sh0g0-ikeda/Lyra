@@ -7,9 +7,10 @@ import {
   useRef,
   useState,
 } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { focusManager, useQuery, useQueryClient } from '@tanstack/react-query';
 import { StyleSheet, Text, View } from 'react-native';
 import { PrimaryButton } from '../components/PrimaryButton';
+import { PagePlanningSection } from '../components/PagePlanningSection';
 import { SceneEditor } from '../components/SceneEditor';
 import { StorySelectionSection } from '../components/StorySelectionSection';
 import { colors, spacing } from '../constants/theme';
@@ -25,7 +26,12 @@ import {
   type ChapterRecord,
   type CreateSceneInput,
   type EpisodeRecord,
+  type GeneratePageSkeletonInput,
+  type GenerationJobRecord,
+  type ListJobsPageInput,
   type ListWorksPageInput,
+  type PageRecord,
+  type PageSkeletonResponse,
   type SceneRecord,
   type UpdateSceneInput,
   type WorkRecord,
@@ -46,6 +52,11 @@ export interface PagesApiPort {
     body: CreateSceneInput,
     organizationId?: string | null,
   ): Promise<SceneRecord>;
+  generatePageSkeleton(
+    episodeId: string,
+    body: GeneratePageSkeletonInput,
+    organizationId?: string | null,
+  ): Promise<PageSkeletonResponse>;
   getChapters(
     workId: string,
     organizationId?: string | null,
@@ -54,6 +65,18 @@ export interface PagesApiPort {
     chapterId: string,
     organizationId?: string | null,
   ): Promise<{ episodes: EpisodeRecord[] }>;
+  getJob(
+    jobId: string,
+    organizationId?: string | null,
+  ): Promise<GenerationJobRecord>;
+  getJobs(
+    input: ListJobsPageInput,
+    organizationId?: string | null,
+  ): Promise<{ jobs: GenerationJobRecord[]; next_cursor: string | null }>;
+  getPages(
+    episodeId: string,
+    organizationId?: string | null,
+  ): Promise<{ pages: PageRecord[]; next_cursor?: string | null }>;
   getScenes(
     episodeId: string,
     organizationId?: string | null,
@@ -71,6 +94,7 @@ export interface PagesApiPort {
 
 interface PagesScreenProps {
   api: PagesApiPort;
+  jobPollIntervalMs?: number;
   language: UiLanguage;
   organizationId: string | null;
   resolveDirtyAction?: () => Promise<DirtyStoryAction>;
@@ -80,6 +104,7 @@ interface PagesScreenProps {
 export const PagesScreen = forwardRef<PagesScreenHandle, PagesScreenProps>(
   function PagesScreen({
     api,
+    jobPollIntervalMs = 8_000,
     language,
     organizationId,
     resolveDirtyAction,
@@ -99,8 +124,18 @@ export const PagesScreen = forwardRef<PagesScreenHandle, PagesScreenProps>(
     const [sceneBusy, setSceneBusy] = useState(false);
     const [sceneError, setSceneError] = useState<string | null>(null);
     const [sceneNotice, setSceneNotice] = useState<string | null>(null);
-    const sceneOperation = useRef<Promise<boolean> | null>(null);
+    const [trackedJob, setTrackedJob] = useState<{
+      episodeId: string;
+      jobId: string;
+    } | null>(null);
+    const [generationError, setGenerationError] = useState<string | null>(null);
+    const [generationNotice, setGenerationNotice] = useState<string | null>(null);
+    const [jobStatusCheckFailed, setJobStatusCheckFailed] = useState(false);
+    const pageOperation = useRef<Promise<boolean> | null>(null);
     const transitionOperation = useRef<Promise<boolean> | null>(null);
+    const handledTerminalJobIds = useRef(new Set<string>());
+    const jobsPollInFlight = useRef(false);
+    const jobPollInFlight = useRef(false);
 
     const worksQuery = useQuery({
       queryKey: queryKeys.works(),
@@ -127,17 +162,128 @@ export const PagesScreen = forwardRef<PagesScreenHandle, PagesScreenProps>(
         : queryKeys.scenes(selectedEpisode.id),
       queryFn: () => api.getScenes(selectedEpisode!.id, organizationId),
     });
+    const pagesQuery = useQuery({
+      enabled: selectedEpisode !== null,
+      queryKey: selectedEpisode === null
+        ? [...queryKeys.works(), 'page-list-disabled']
+        : queryKeys.pages(selectedEpisode.id),
+      queryFn: () => api.getPages(selectedEpisode!.id, organizationId),
+    });
+    const trackedJobMatchesSelection = trackedJob !== null
+      && trackedJob.episodeId === selectedEpisode?.id;
+    const jobsQuery = useQuery({
+      enabled: selectedEpisode !== null,
+      queryKey: selectedEpisode === null
+        ? [...queryKeys.works(), 'page-jobs-disabled']
+        : [...queryKeys.jobs(), selectedEpisode.id],
+      queryFn: () => api.getJobs({ limit: 50 }, organizationId),
+      staleTime: 0,
+    });
+    const jobQuery = useQuery({
+      enabled: trackedJobMatchesSelection,
+      queryKey: trackedJobMatchesSelection
+        ? queryKeys.job(trackedJob.jobId)
+        : [...queryKeys.works(), 'page-job-disabled'],
+      queryFn: () => api.getJob(trackedJob!.jobId, organizationId),
+      staleTime: 0,
+    });
+    const refetchJobs = jobsQuery.refetch;
+    const refetchJob = jobQuery.refetch;
 
     const works = worksQuery.data?.works ?? [];
     const chapters = chaptersQuery.data?.chapters ?? [];
-    const episodes = episodesQuery.data?.episodes ?? [];
+    const episodes = useMemo(
+      () => episodesQuery.data?.episodes ?? [],
+      [episodesQuery.data?.episodes],
+    );
     const scenes = useMemo(
       () => sortScenes(scenesQuery.data?.scenes ?? []),
       [scenesQuery.data?.scenes],
     );
+    const pages = useMemo(
+      () => sortPages(pagesQuery.data?.pages ?? []),
+      [pagesQuery.data?.pages],
+    );
+    const historyActiveJob = selectedEpisode === null
+      ? undefined
+      : jobsQuery.data?.jobs.find(
+        (job) => isActiveJob(job)
+          && isEpisodePlanningJob(job, selectedEpisode.id)
+          && !handledTerminalJobIds.current.has(job.id),
+      );
+    const exactActiveJob = trackedJobMatchesSelection
+      && selectedEpisode !== null
+      && isActiveJob(jobQuery.data)
+      && isEpisodePlanningJob(jobQuery.data, selectedEpisode.id)
+      ? jobQuery.data ?? null
+      : null;
+    const activeJob = exactActiveJob ?? historyActiveJob ?? null;
+    const generationActive = historyActiveJob !== undefined || (trackedJobMatchesSelection
+      && (
+        jobQuery.data === undefined
+        || (
+          selectedEpisode !== null
+          && isActiveJob(jobQuery.data)
+          && isEpisodePlanningJob(jobQuery.data, selectedEpisode.id)
+        )
+      ));
+    const normalizedJobPollIntervalMs = Math.max(1, Math.trunc(jobPollIntervalMs));
     const sceneDirty = savedSceneDraft !== null
       && sceneDraft !== null
       && isSceneDraftDirty(savedSceneDraft, sceneDraft);
+
+    useEffect(() => {
+      if (
+        selectedEpisode === null
+        || trackedJobMatchesSelection
+      ) {
+        return;
+      }
+      const intervalId = setInterval(() => {
+        if (
+          focusManager.isFocused()
+          && !jobsQuery.isFetching
+          && !jobsPollInFlight.current
+        ) {
+          jobsPollInFlight.current = true;
+          void refetchJobs().finally(() => {
+            jobsPollInFlight.current = false;
+          });
+        }
+      }, normalizedJobPollIntervalMs);
+      return () => clearInterval(intervalId);
+    }, [
+      jobsQuery.isFetching,
+      normalizedJobPollIntervalMs,
+      refetchJobs,
+      selectedEpisode,
+      trackedJobMatchesSelection,
+    ]);
+
+    useEffect(() => {
+      if (!generationActive || !trackedJobMatchesSelection) {
+        return;
+      }
+      const intervalId = setInterval(() => {
+        if (
+          focusManager.isFocused()
+          && !jobQuery.isFetching
+          && !jobPollInFlight.current
+        ) {
+          jobPollInFlight.current = true;
+          void refetchJob().finally(() => {
+            jobPollInFlight.current = false;
+          });
+        }
+      }, normalizedJobPollIntervalMs);
+      return () => clearInterval(intervalId);
+    }, [
+      generationActive,
+      jobQuery.isFetching,
+      normalizedJobPollIntervalMs,
+      refetchJob,
+      trackedJobMatchesSelection,
+    ]);
 
     const applySelectedScene = useCallback((scene: SceneRecord | null): void => {
       setSelectedSceneId(scene?.id ?? null);
@@ -169,26 +315,144 @@ export const PagesScreen = forwardRef<PagesScreenHandle, PagesScreenProps>(
       selectedSceneId,
     ]);
 
-    const runSceneOperation = useCallback((task: () => Promise<boolean>): Promise<boolean> => {
-      if (sceneOperation.current !== null) {
-        return sceneOperation.current;
+    useEffect(() => {
+      if (selectedEpisode === null) {
+        return;
+      }
+      const refreshedEpisode = episodes.find(
+        (candidate) => candidate.id === selectedEpisode.id,
+      );
+      if (refreshedEpisode !== undefined && refreshedEpisode !== selectedEpisode) {
+        setSelectedEpisode(refreshedEpisode);
+      }
+    }, [episodes, selectedEpisode]);
+
+    useEffect(() => {
+      if (selectedEpisode === null || jobsQuery.data === undefined) {
+        return;
+      }
+      setTrackedJob((current) => {
+        if (current?.episodeId === selectedEpisode.id) {
+          return current;
+        }
+        const recovered = jobsQuery.data.jobs.find(
+          (job) => isActiveJob(job)
+            && isEpisodePlanningJob(job, selectedEpisode.id)
+            && !handledTerminalJobIds.current.has(job.id),
+        );
+        return recovered === undefined
+          ? null
+          : { episodeId: selectedEpisode.id, jobId: recovered.id };
+      });
+    }, [jobsQuery.data, selectedEpisode]);
+
+    useEffect(() => {
+      const job = jobQuery.data;
+      if (
+        selectedEpisode === null
+        || trackedJob === null
+        || trackedJob.episodeId !== selectedEpisode.id
+        || job === undefined
+      ) {
+        return;
+      }
+      if (!isEpisodePlanningJob(job, selectedEpisode.id)) {
+        handledTerminalJobIds.current.add(job.id);
+        setGenerationNotice(null);
+        setGenerationError(t(language, 'pageJobStatusError'));
+        setTrackedJob(null);
+        return;
+      }
+      if (isActiveJob(job)) {
+        setJobStatusCheckFailed(false);
+        setGenerationError(null);
+        return;
+      }
+      if (handledTerminalJobIds.current.has(job.id)) {
+        return;
+      }
+      handledTerminalJobIds.current.add(job.id);
+      setGenerationError(
+        job.status === 'failed' ? t(language, 'pageGenerationFailed') : null,
+      );
+      setGenerationNotice(
+        job.status === 'completed'
+          ? t(language, 'pageGenerationCompleted')
+          : job.status === 'cancelled'
+            ? t(language, 'pageGenerationCancelled')
+            : null,
+      );
+      setTrackedJob(null);
+      void queryClient.invalidateQueries({
+        exact: true,
+        queryKey: queryKeys.pages(selectedEpisode.id),
+      });
+      void queryClient.invalidateQueries({
+        exact: true,
+        queryKey: queryKeys.episodes(selectedEpisode.chapter_id),
+      });
+      void queryClient.invalidateQueries({
+        exact: true,
+        queryKey: [...queryKeys.jobs(), selectedEpisode.id],
+      });
+    }, [jobQuery.data, language, queryClient, queryKeys, selectedEpisode, trackedJob]);
+
+    useEffect(() => {
+      if (
+        !jobQuery.isError
+        || !(jobQuery.error instanceof ApiError)
+        || jobQuery.error.status !== 404
+        || selectedEpisode === null
+        || trackedJob === null
+      ) {
+        return;
+      }
+      setGenerationNotice(null);
+      setJobStatusCheckFailed(false);
+      setGenerationError(t(language, 'pageJobStatusError'));
+      handledTerminalJobIds.current.add(trackedJob.jobId);
+      setTrackedJob(null);
+      void queryClient.invalidateQueries({
+        exact: true,
+        queryKey: queryKeys.pages(selectedEpisode.id),
+      });
+      void queryClient.invalidateQueries({
+        exact: true,
+        queryKey: queryKeys.episodes(selectedEpisode.chapter_id),
+      });
+    }, [jobQuery.error, jobQuery.isError, language, queryClient, queryKeys, selectedEpisode, trackedJob]);
+
+    const runPageOperation = useCallback((task: () => Promise<boolean>): Promise<boolean> => {
+      if (pageOperation.current !== null) {
+        return pageOperation.current;
       }
       setSceneBusy(true);
-      const operation = task().finally(() => {
-        setSceneBusy(false);
-      });
-      sceneOperation.current = operation;
-      void operation.finally(() => {
-        if (sceneOperation.current === operation) {
-          sceneOperation.current = null;
+      let operation: Promise<boolean> | null = null;
+      operation = (async (): Promise<boolean> => {
+        try {
+          return await Promise.resolve().then(task);
+        } finally {
+          setSceneBusy(false);
+          if (operation !== null && pageOperation.current === operation) {
+            pageOperation.current = null;
+          }
         }
-      });
+      })();
+      pageOperation.current = operation;
       return operation;
     }, []);
 
     const saveCurrentScene = useCallback((): Promise<boolean> => {
-      if (sceneOperation.current !== null) {
-        return sceneOperation.current;
+      if (pageOperation.current !== null) {
+        return pageOperation.current;
+      }
+      if (
+        generationActive
+        || jobsQuery.isLoading
+        || jobsQuery.isFetching
+        || jobsQuery.isError
+      ) {
+        return Promise.resolve(false);
       }
       if (
         selectedSceneId === null
@@ -205,7 +469,7 @@ export const PagesScreen = forwardRef<PagesScreenHandle, PagesScreenProps>(
         setSceneError(sceneValidationMessage(language, update.reason));
         return Promise.resolve(false);
       }
-      return runSceneOperation(async () => {
+      return runPageOperation(async () => {
         setSceneError(null);
         setSceneNotice(null);
         try {
@@ -228,10 +492,14 @@ export const PagesScreen = forwardRef<PagesScreenHandle, PagesScreenProps>(
       api,
       applySelectedScene,
       language,
+      generationActive,
+      jobsQuery.isError,
+      jobsQuery.isFetching,
+      jobsQuery.isLoading,
       organizationId,
       queryClient,
       queryKeys,
-      runSceneOperation,
+      runPageOperation,
       savedSceneDraft,
       sceneDraft,
       sceneDirty,
@@ -240,8 +508,8 @@ export const PagesScreen = forwardRef<PagesScreenHandle, PagesScreenProps>(
     ]);
 
     const resolvePendingScene = useCallback(async (): Promise<boolean> => {
-      if (sceneOperation.current !== null) {
-        return sceneOperation.current;
+      if (pageOperation.current !== null) {
+        return pageOperation.current;
       }
       if (!sceneDirty) {
         return true;
@@ -253,10 +521,11 @@ export const PagesScreen = forwardRef<PagesScreenHandle, PagesScreenProps>(
         return false;
       }
       if (action === 'discard') {
+        setSceneDraft(savedSceneDraft);
         return true;
       }
       return saveCurrentScene();
-    }, [language, resolveDirtyAction, saveCurrentScene, sceneDirty]);
+    }, [language, resolveDirtyAction, saveCurrentScene, savedSceneDraft, sceneDirty]);
 
     useImperativeHandle(ref, () => ({
       prepareToLeave: resolvePendingScene,
@@ -286,7 +555,13 @@ export const PagesScreen = forwardRef<PagesScreenHandle, PagesScreenProps>(
     }, [resolvePendingScene]);
 
     const createScene = useCallback((): Promise<boolean> => transition(async () => {
-      if (selectedEpisode === null) {
+      if (
+        selectedEpisode === null
+        || generationActive
+        || jobsQuery.isLoading
+        || jobsQuery.isFetching
+        || jobsQuery.isError
+      ) {
         return false;
       }
       const initialOrder = nextSceneOrder(scenes);
@@ -294,7 +569,7 @@ export const PagesScreen = forwardRef<PagesScreenHandle, PagesScreenProps>(
         setSceneError(t(language, 'sceneOrderLimit'));
         return false;
       }
-      return runSceneOperation(async () => {
+      return runPageOperation(async () => {
         setSceneError(null);
         setSceneNotice(null);
         const createAtOrder = (order: number): Promise<SceneRecord> => api.createScene(
@@ -334,15 +609,137 @@ export const PagesScreen = forwardRef<PagesScreenHandle, PagesScreenProps>(
       api,
       applySelectedScene,
       language,
+      generationActive,
+      jobsQuery.isError,
+      jobsQuery.isFetching,
+      jobsQuery.isLoading,
       organizationId,
       queryClient,
       queryKeys,
-      runSceneOperation,
+      runPageOperation,
       scenes,
       scenesQuery,
       selectedEpisode,
       transition,
     ]);
+
+    const generatePageSkeleton = useCallback((): Promise<boolean> => transition(async () => {
+      if (
+        selectedEpisode === null
+        || pagesQuery.isLoading
+        || pagesQuery.isError
+        || jobsQuery.isLoading
+        || jobsQuery.isFetching
+        || jobsQuery.isError
+        || generationActive
+        || pages.length > 0
+        || selectedEpisode.page_skeleton_generated
+      ) {
+        return false;
+      }
+      return runPageOperation(async () => {
+        setGenerationError(null);
+        setGenerationNotice(null);
+        try {
+          const response = await api.generatePageSkeleton(selectedEpisode.id, {
+            apply_story_plan: false,
+            language,
+            overwrite_existing: false,
+          }, organizationId);
+          if ('job_id' in response) {
+            handledTerminalJobIds.current.delete(response.job_id);
+            setTrackedJob({
+              episodeId: selectedEpisode.id,
+              jobId: response.job_id,
+            });
+            setGenerationNotice(t(language, 'pageGenerationQueued'));
+            try {
+              const initialJob = await queryClient.fetchQuery({
+                queryFn: () => api.getJob(response.job_id, organizationId),
+                queryKey: queryKeys.job(response.job_id),
+              });
+              setJobStatusCheckFailed(false);
+              if (!isEpisodePlanningJob(initialJob, selectedEpisode.id)) {
+                handledTerminalJobIds.current.add(initialJob.id);
+                setTrackedJob(null);
+                setGenerationNotice(null);
+                setGenerationError(t(language, 'pageJobStatusError'));
+                return true;
+              }
+              if (!isActiveJob(initialJob)) {
+                handledTerminalJobIds.current.add(initialJob.id);
+                setTrackedJob(null);
+                setGenerationError(
+                  initialJob.status === 'failed'
+                    ? t(language, 'pageGenerationFailed')
+                    : null,
+                );
+                setGenerationNotice(
+                  initialJob.status === 'completed'
+                    ? t(language, 'pageGenerationCompleted')
+                    : initialJob.status === 'cancelled'
+                      ? t(language, 'pageGenerationCancelled')
+                      : null,
+                );
+                await Promise.all([
+                  pagesQuery.refetch(),
+                  episodesQuery.refetch(),
+                  refetchJobs(),
+                ]);
+              }
+            } catch (error: unknown) {
+              if (error instanceof ApiError && error.status === 404) {
+                handledTerminalJobIds.current.add(response.job_id);
+                setTrackedJob(null);
+                setGenerationNotice(null);
+                setGenerationError(t(language, 'pageJobStatusError'));
+                await Promise.all([
+                  pagesQuery.refetch(),
+                  episodesQuery.refetch(),
+                  refetchJobs(),
+                ]);
+              } else {
+                setJobStatusCheckFailed(true);
+              }
+            }
+            return true;
+          }
+          await Promise.all([
+            pagesQuery.refetch(),
+            episodesQuery.refetch(),
+          ]);
+          setGenerationNotice(t(language, 'pageGenerationCompleted'));
+          return true;
+        } catch {
+          setGenerationError(t(language, 'pageGenerationError'));
+          return false;
+        }
+      });
+    }), [
+      api,
+      episodesQuery,
+      generationActive,
+      jobsQuery.isError,
+      jobsQuery.isFetching,
+      jobsQuery.isLoading,
+      language,
+      organizationId,
+      pages,
+      pagesQuery,
+      queryClient,
+      queryKeys,
+      refetchJobs,
+      runPageOperation,
+      selectedEpisode,
+      transition,
+    ]);
+
+    const clearGenerationSelection = (): void => {
+      setTrackedJob(null);
+      setGenerationError(null);
+      setGenerationNotice(null);
+      setJobStatusCheckFailed(false);
+    };
 
     const clearSceneSelection = (): void => {
       applySelectedScene(null);
@@ -366,6 +763,7 @@ export const PagesScreen = forwardRef<PagesScreenHandle, PagesScreenProps>(
                 setSelectedWorkId(workId);
                 setSelectedChapterId(null);
                 setSelectedEpisode(null);
+                clearGenerationSelection();
                 clearSceneSelection();
               });
             }
@@ -392,6 +790,7 @@ export const PagesScreen = forwardRef<PagesScreenHandle, PagesScreenProps>(
                 void transition(() => {
                   setSelectedChapterId(chapterId);
                   setSelectedEpisode(null);
+                  clearGenerationSelection();
                   clearSceneSelection();
                 });
               }
@@ -419,6 +818,7 @@ export const PagesScreen = forwardRef<PagesScreenHandle, PagesScreenProps>(
               if (episode !== undefined && episode.id !== selectedEpisode?.id) {
                 void transition(() => {
                   setSelectedEpisode(episode);
+                  clearGenerationSelection();
                   clearSceneSelection();
                 });
               }
@@ -426,6 +826,41 @@ export const PagesScreen = forwardRef<PagesScreenHandle, PagesScreenProps>(
             retryLabel={t(language, 'retry')}
             selectedId={selectedEpisode?.id ?? null}
             selectSuffix={t(language, 'storySelectSuffix')}
+          />
+        )}
+        {selectedEpisode === null ? null : (
+          <PagePlanningSection
+            activeJob={activeJob}
+            episodeGenerated={selectedEpisode.page_skeleton_generated}
+            generationActive={generationActive}
+            generationBusy={
+              sceneBusy
+              || generationActive
+              || jobsQuery.isLoading
+              || jobsQuery.isFetching
+              || jobsQuery.isError
+            }
+            generationError={generationError}
+            generationNotice={generationNotice}
+            jobStatusError={
+              jobsQuery.isError
+              || jobQuery.isError
+              || jobStatusCheckFailed
+            }
+            language={language}
+            loading={pagesQuery.isLoading}
+            loadError={pagesQuery.isError}
+            onGenerate={() => void generatePageSkeleton()}
+            onRetryJob={() => {
+              if (trackedJobMatchesSelection) {
+                setJobStatusCheckFailed(false);
+                void jobQuery.refetch();
+                return;
+              }
+              void jobsQuery.refetch();
+            }}
+            onRetryPages={() => void pagesQuery.refetch()}
+            pages={pages}
           />
         )}
         {selectedEpisode === null ? null : (
@@ -455,7 +890,14 @@ export const PagesScreen = forwardRef<PagesScreenHandle, PagesScreenProps>(
               selectSuffix={t(language, 'storySelectSuffix')}
             />
             <PrimaryButton
-              disabled={sceneBusy || scenesQuery.isFetching}
+              disabled={
+                sceneBusy
+                || generationActive
+                || jobsQuery.isLoading
+                || jobsQuery.isFetching
+                || jobsQuery.isError
+                || scenesQuery.isFetching
+              }
               label={t(language, 'sceneAdd')}
               onPress={() => void createScene()}
             />
@@ -463,12 +905,17 @@ export const PagesScreen = forwardRef<PagesScreenHandle, PagesScreenProps>(
               sceneError === null ? null : <Text style={styles.error}>{sceneError}</Text>
             ) : (
               <SceneEditor
-                busy={sceneBusy}
+                busy={sceneBusy || generationActive}
                 dirty={sceneDirty}
                 draft={sceneDraft}
                 errorMessage={sceneError}
                 language={language}
                 noticeMessage={sceneNotice}
+                saveDisabled={
+                  jobsQuery.isLoading
+                  || jobsQuery.isFetching
+                  || jobsQuery.isError
+                }
                 onChangeAtmosphere={(atmosphere) => setSceneDraft((current) =>
                   current === null ? current : { ...current, atmosphere })}
                 onChangeLocation={(location) => setSceneDraft((current) =>
@@ -489,6 +936,28 @@ function sortScenes(scenes: readonly SceneRecord[]): SceneRecord[] {
   return [...scenes].sort(
     (left, right) => left.order - right.order || left.id.localeCompare(right.id),
   );
+}
+
+function sortPages(pages: readonly PageRecord[]): PageRecord[] {
+  return [...pages].sort(
+    (left, right) => left.page_number - right.page_number || left.id.localeCompare(right.id),
+  );
+}
+
+function isActiveJob(
+  job: GenerationJobRecord | undefined,
+): job is GenerationJobRecord & { status: 'queued' | 'processing' } {
+  return job?.status === 'queued' || job?.status === 'processing';
+}
+
+function isEpisodePlanningJob(
+  job: GenerationJobRecord,
+  episodeId: string,
+): boolean {
+  return (
+    job.job_type === 'episode_page_skeleton'
+    || job.job_type === 'episode_story_autofill'
+  ) && job.params.episode_id === episodeId;
 }
 
 function upsertScene(scenes: readonly SceneRecord[], scene: SceneRecord): SceneRecord[] {
