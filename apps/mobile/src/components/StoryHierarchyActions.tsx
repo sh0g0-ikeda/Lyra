@@ -18,6 +18,8 @@ interface StoryHierarchyActionsProps {
   onCreateChapter(title: string): Promise<boolean>;
   onCreateEpisode(title: string): Promise<boolean>;
   onCreateWork(title: string): Promise<boolean>;
+  onDeleteChapter(): Promise<boolean>;
+  onDeleteEpisode(): Promise<boolean>;
   onMoveChapter(direction: 'up' | 'down'): Promise<boolean>;
   onMoveEpisode(direction: 'up' | 'down'): Promise<boolean>;
   onRenameChapter(title: string): Promise<boolean>;
@@ -39,6 +41,8 @@ export function StoryHierarchyActions({
   onCreateChapter,
   onCreateEpisode,
   onCreateWork,
+  onDeleteChapter,
+  onDeleteEpisode,
   onMoveChapter,
   onMoveEpisode,
   onRenameChapter,
@@ -150,6 +154,12 @@ export function StoryHierarchyActions({
                 label={t(language, 'storyMoveChapterDown')}
                 onPress={() => void onMoveChapter('down')}
               />
+              <PrimaryButton
+                disabled={busy}
+                label={t(language, 'storyDeleteChapter')}
+                onPress={() => void onDeleteChapter()}
+                tone="danger"
+              />
               <ActionForm
                 accessibilityLabel={t(language, 'storyNewEpisodeTitle')}
                 busy={busy}
@@ -177,6 +187,12 @@ export function StoryHierarchyActions({
                 disabled={busy || !canMoveEpisodeDown}
                 label={t(language, 'storyMoveEpisodeDown')}
                 onPress={() => void onMoveEpisode('down')}
+              />
+              <PrimaryButton
+                disabled={busy}
+                label={t(language, 'storyDeleteEpisode')}
+                onPress={() => void onDeleteEpisode()}
+                tone="danger"
               />
             </>
           )}

@@ -240,6 +240,73 @@ describe('LyraMobileApiClient', () => {
     ]);
   });
 
+  it('章と話の削除はorganization scopeをqueryで送り204だけを受理する', async () => {
+    const organizationId = '99999999-9999-4999-8999-999999999999';
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+    const api = new LyraMobileApiClient({
+      apiBaseUrl: 'https://api.example.com',
+      auth: new FakeAuthSession(),
+      fetcher,
+    });
+
+    await expect(api.deleteChapter(buildChapter().id, organizationId)).resolves.toBeUndefined();
+    await expect(api.deleteEpisode(buildEpisode().id, organizationId)).resolves.toBeUndefined();
+
+    expect(fetcher.mock.calls).toEqual([
+      [
+        `https://api.example.com/api/chapters/${buildChapter().id}?organization_id=${organizationId}`,
+        expect.objectContaining({ body: undefined, method: 'DELETE' }),
+      ],
+      [
+        `https://api.example.com/api/episodes/${buildEpisode().id}?organization_id=${organizationId}`,
+        expect.objectContaining({ body: undefined, method: 'DELETE' }),
+      ],
+    ]);
+  });
+
+  it('削除APIの204以外のsuccess responseを契約違反として扱う', async () => {
+    const api = new LyraMobileApiClient({
+      apiBaseUrl: 'https://api.example.com',
+      auth: new FakeAuthSession(),
+      fetcher: vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({ deleted: true })),
+    });
+
+    await expect(api.deleteEpisode(buildEpisode().id)).rejects.toMatchObject({
+      code: 'INVALID_API_RESPONSE',
+      status: 502,
+    });
+  });
+
+  it('削除APIも401時にtokenを一度更新し、409 statusを保持する', async () => {
+    const auth = new FakeAuthSession();
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(null, { status: 401 }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+      .mockResolvedValueOnce(new Response(null, { status: 409 }));
+    const api = new LyraMobileApiClient({
+      apiBaseUrl: 'https://api.example.com',
+      auth,
+      fetcher,
+    });
+
+    await expect(api.deleteEpisode(buildEpisode().id)).resolves.toBeUndefined();
+    await expect(api.deleteChapter(buildChapter().id)).rejects.toMatchObject({
+      code: 'REQUEST_FAILED',
+      status: 409,
+    });
+    expect(auth.refreshCalls).toBe(1);
+    expect(fetcher.mock.calls[0]?.[1]?.headers).toMatchObject({
+      Authorization: 'Bearer id-token',
+    });
+    expect(fetcher.mock.calls[1]?.[1]?.headers).toMatchObject({
+      Authorization: 'Bearer refreshed-id-token',
+    });
+  });
+
   it('organization作品作成だけorganization_idをbodyへ入れ、他のmutationはqueryへ入れる', async () => {
     const organizationId = '99999999-9999-4999-8999-999999999999';
     const fetcher = vi

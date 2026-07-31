@@ -32,6 +32,11 @@ export interface MobileAuthSessionPort {
   refreshTokens(): Promise<AuthTokens>;
 }
 
+interface ApiRequestOptions {
+  method?: 'GET' | 'POST' | 'PUT' | 'DELETE';
+  body?: unknown;
+}
+
 export class ApiError extends Error {
   public constructor(
     public readonly code: string,
@@ -177,6 +182,15 @@ export class LyraMobileApiClient {
     );
   }
 
+  public deleteChapter(
+    chapterId: string,
+    organizationId: string | null = null,
+  ): Promise<void> {
+    return this.requestNoContent(
+      withOrganizationQuery(`/api/chapters/${encodeURIComponent(chapterId)}`, organizationId),
+    );
+  }
+
   public getEpisodes(
     chapterId: string,
     organizationId: string | null = null,
@@ -241,6 +255,15 @@ export class LyraMobileApiClient {
     );
   }
 
+  public deleteEpisode(
+    episodeId: string,
+    organizationId: string | null = null,
+  ): Promise<void> {
+    return this.requestNoContent(
+      withOrganizationQuery(`/api/episodes/${encodeURIComponent(episodeId)}`, organizationId),
+    );
+  }
+
   private async requireTokens(): Promise<AuthTokens> {
     const tokens = await this.auth.getTokens();
     if (tokens === null) {
@@ -252,7 +275,7 @@ export class LyraMobileApiClient {
   private async requestJson<T>(
     path: string,
     schema: ZodType<T>,
-    options: { method?: 'GET' | 'POST' | 'PUT'; body?: unknown } = {},
+    options: ApiRequestOptions = {},
   ): Promise<T> {
     const tokens = await this.requireTokens();
     let response = await this.request(path, tokens.idToken, options);
@@ -290,10 +313,34 @@ export class LyraMobileApiClient {
     return parsed.data;
   }
 
+  private async requestNoContent(path: string): Promise<void> {
+    const options: ApiRequestOptions = { method: 'DELETE' };
+    const tokens = await this.requireTokens();
+    let response = await this.request(path, tokens.idToken, options);
+    if (response.status === 401) {
+      const refreshed = await this.auth.refreshTokens();
+      response = await this.request(path, refreshed.idToken, options);
+    }
+    if (!response.ok) {
+      throw new ApiError(
+        response.status >= 500 ? 'SERVER_ERROR' : 'REQUEST_FAILED',
+        response.status,
+        'The request could not be completed.',
+      );
+    }
+    if (response.status !== 204) {
+      throw new ApiError(
+        'INVALID_API_RESPONSE',
+        502,
+        'The server returned an invalid response.',
+      );
+    }
+  }
+
   private async request(
     path: string,
     idToken: string,
-    options: { method?: 'GET' | 'POST' | 'PUT'; body?: unknown },
+    options: ApiRequestOptions,
   ): Promise<Response> {
     const controller = new AbortController();
     const timeoutId = setTimeout(

@@ -53,14 +53,16 @@ vi.mock('../src/components/PrimaryButton', () => ({
     label,
     loading,
     onPress,
+    tone,
   }: {
     disabled?: boolean;
     label: string;
     loading?: boolean;
     onPress: () => void;
+    tone?: string;
   }) => React.createElement(
     'button',
-    { disabled: disabled || loading, onClick: onPress },
+    { disabled: disabled || loading, onClick: onPress, tone },
     label,
   ),
 }));
@@ -138,6 +140,8 @@ describe('StoryScreen', () => {
     createChapter: vi.fn(),
     createEpisode: vi.fn(),
     createWork: vi.fn(),
+    deleteChapter: vi.fn(),
+    deleteEpisode: vi.fn(),
     getWorksPage: vi.fn(),
     getChapters: vi.fn(),
     getEpisodes: vi.fn(),
@@ -163,6 +167,8 @@ describe('StoryScreen', () => {
         episode('episode-2', 'chapter-1', '第二話', '別の本文'),
       ],
     });
+    api.deleteChapter.mockResolvedValue(undefined);
+    api.deleteEpisode.mockResolvedValue(undefined);
     api.updateEpisode.mockImplementation(async (_id: string, body: Record<string, unknown>) => ({
       ...episode('episode-1', 'chapter-1', String(body.title ?? '第一話')),
       story_full_draft: body.story_full_draft ?? '本文',
@@ -695,6 +701,229 @@ describe('StoryScreen', () => {
     await act(async () => {
       await flushQueries();
     });
+  });
+
+  it('話削除の確認を取り消した場合はdirty確認もDELETEも実行しない', async () => {
+    const resolveDeleteConfirmation = vi.fn().mockResolvedValue(false);
+    const resolveDirtyAction = vi.fn().mockResolvedValue('discard');
+    const renderer = await renderScreen({
+      resolveDeleteConfirmation,
+      resolveDirtyAction,
+    });
+    await selectEpisode(renderer);
+    await act(async () => {
+      renderer.root
+        .findByProps({ accessibilityLabel: 'ストーリー本文' })
+        .props.onChangeText('未保存の本文');
+    });
+    await openHierarchyEditor(renderer);
+    await pressButton(renderer, '話を削除');
+
+    expect(resolveDeleteConfirmation).toHaveBeenCalledWith('episode', '第一話');
+    expect(resolveDirtyAction).not.toHaveBeenCalled();
+    expect(api.deleteEpisode).not.toHaveBeenCalled();
+    expect(renderer.root.findByProps({ accessibilityLabel: 'ストーリー本文' }).props.value)
+      .toBe('未保存の本文');
+  });
+
+  it('dirtyな話は保存成功後だけ削除し、次の話を選択する', async () => {
+    const resolveDeleteConfirmation = vi.fn().mockResolvedValue(true);
+    const resolveDirtyAction = vi.fn().mockResolvedValue('save');
+    const renderer = await renderScreen({
+      resolveDeleteConfirmation,
+      resolveDirtyAction,
+    });
+    await selectEpisode(renderer);
+    await act(async () => {
+      renderer.root
+        .findByProps({ accessibilityLabel: 'ストーリー本文' })
+        .props.onChangeText('保存してから削除する本文');
+    });
+    await openHierarchyEditor(renderer);
+    await pressButton(renderer, '話を削除');
+
+    expect(api.updateEpisode).toHaveBeenCalledOnce();
+    expect(api.deleteEpisode).toHaveBeenCalledWith('episode-1', null);
+    expect(api.updateEpisode.mock.invocationCallOrder[0])
+      .toBeLessThan(api.deleteEpisode.mock.invocationCallOrder[0] ?? 0);
+    expect(renderer.root.findByProps({ accessibilityLabel: 'ストーリー本文' }).props.value)
+      .toBe('別の本文');
+    expect(resolveSelectedText(renderer, '第二話')).toBe(true);
+  });
+
+  it('dirty確認を取り消した場合は話を削除しない', async () => {
+    const renderer = await renderScreen({
+      resolveDeleteConfirmation: vi.fn().mockResolvedValue(true),
+      resolveDirtyAction: vi.fn().mockResolvedValue('cancel'),
+    });
+    await selectEpisode(renderer);
+    await act(async () => {
+      renderer.root
+        .findByProps({ accessibilityLabel: 'ストーリー本文' })
+        .props.onChangeText('保持する本文');
+    });
+    await openHierarchyEditor(renderer);
+    await pressButton(renderer, '話を削除');
+
+    expect(api.deleteEpisode).not.toHaveBeenCalled();
+    expect(renderer.root.findByProps({ accessibilityLabel: 'ストーリー本文' }).props.value)
+      .toBe('保持する本文');
+  });
+
+  it('dirty保存に失敗した場合は話を削除せず入力を保持する', async () => {
+    api.updateEpisode.mockRejectedValue(new Error('save detail'));
+    const renderer = await renderScreen({
+      resolveDeleteConfirmation: vi.fn().mockResolvedValue(true),
+      resolveDirtyAction: vi.fn().mockResolvedValue('save'),
+    });
+    await selectEpisode(renderer);
+    await act(async () => {
+      renderer.root
+        .findByProps({ accessibilityLabel: 'ストーリー本文' })
+        .props.onChangeText('保存に失敗しても保持する本文');
+    });
+    await openHierarchyEditor(renderer);
+    await pressButton(renderer, '話を削除');
+
+    expect(api.updateEpisode).toHaveBeenCalledOnce();
+    expect(api.deleteEpisode).not.toHaveBeenCalled();
+    expect(renderer.root.findByProps({ accessibilityLabel: 'ストーリー本文' }).props.value)
+      .toBe('保存に失敗しても保持する本文');
+  });
+
+  it('409では話とdraftを保持し、生成fileを含む安全な案内だけを表示する', async () => {
+    api.deleteEpisode.mockRejectedValue(
+      new ApiError('REQUEST_FAILED', 409, 'raw job and s3 detail'),
+    );
+    const renderer = await renderScreen({
+      resolveDeleteConfirmation: vi.fn().mockResolvedValue(true),
+      resolveDirtyAction: vi.fn().mockResolvedValue('discard'),
+    });
+    await selectEpisode(renderer);
+    await act(async () => {
+      renderer.root
+        .findByProps({ accessibilityLabel: 'ストーリー本文' })
+        .props.onChangeText('失ってはいけない本文');
+    });
+    await openHierarchyEditor(renderer);
+    await pressButton(renderer, '話を削除');
+
+    expect(renderer.root.findByProps({ accessibilityLabel: 'ストーリー本文' }).props.value)
+      .toBe('失ってはいけない本文');
+    expect(resolveSelectedText(renderer, '第一話')).toBe(true);
+    expect(textOf(renderer)).toContain('生成中の処理');
+    expect(textOf(renderer)).not.toContain('raw job and s3 detail');
+  });
+
+  it('章削除成功後は次の章を選び、削除した章の話editorを閉じる', async () => {
+    api.getChapters.mockResolvedValue({
+      chapters: [
+        chapter('chapter-1', 'work-1', '第一章'),
+        { ...chapter('chapter-2', 'work-1', '第二章'), order: 2 },
+      ],
+    });
+    const renderer = await renderScreen({
+      resolveDeleteConfirmation: vi.fn().mockResolvedValue(true),
+    });
+    await selectEpisode(renderer);
+    await openHierarchyEditor(renderer);
+    await pressButton(renderer, '章を削除');
+
+    expect(api.deleteChapter).toHaveBeenCalledWith('chapter-1', null);
+    expect(resolveSelectedText(renderer, '第二章')).toBe(true);
+    expect(renderer.root.findAllByProps({ accessibilityLabel: 'ストーリー本文' })).toHaveLength(0);
+  });
+
+  it('404後の再取得で話の消滅を確認した場合だけ次の話へ移る', async () => {
+    api.getEpisodes
+      .mockResolvedValueOnce({
+        episodes: [
+          episode('episode-1', 'chapter-1', '第一話'),
+          episode('episode-2', 'chapter-1', '第二話', '別の本文'),
+        ],
+      })
+      .mockResolvedValueOnce({
+        episodes: [episode('episode-2', 'chapter-1', '第二話', '別の本文')],
+      });
+    api.deleteEpisode.mockRejectedValue(
+      new ApiError('REQUEST_FAILED', 404, 'raw tenant detail'),
+    );
+    const renderer = await renderScreen({
+      resolveDeleteConfirmation: vi.fn().mockResolvedValue(true),
+    });
+    await selectEpisode(renderer);
+    await openHierarchyEditor(renderer);
+    await pressButton(renderer, '話を削除');
+
+    expect(api.getEpisodes).toHaveBeenCalledTimes(2);
+    expect(resolveSelectedText(renderer, '第二話')).toBe(true);
+    expect(renderer.root.findByProps({ accessibilityLabel: 'ストーリー本文' }).props.value)
+      .toBe('別の本文');
+    expect(textOf(renderer)).toContain('一覧を更新して選び直してください');
+    expect(textOf(renderer)).not.toContain('raw tenant detail');
+  });
+
+  it('章と話の削除ボタンは選択時だけdanger操作として表示する', async () => {
+    const renderer = await renderScreen();
+    await selectEpisode(renderer);
+    await openHierarchyEditor(renderer);
+
+    const chapterDelete = renderer.root
+      .findAllByType('button')
+      .find((candidate) => candidate.children.join('') === '章を削除');
+    const episodeDelete = renderer.root
+      .findAllByType('button')
+      .find((candidate) => candidate.children.join('') === '話を削除');
+    expect(chapterDelete?.props.tone).toBe('danger');
+    expect(episodeDelete?.props.tone).toBe('danger');
+  });
+
+  it('話削除を連打しても確認とDELETEは一度だけ実行する', async () => {
+    let resolveDelete: (() => void) | undefined;
+    api.deleteEpisode.mockReturnValue(new Promise<void>((resolve) => {
+      resolveDelete = resolve;
+    }));
+    const resolveDeleteConfirmation = vi.fn().mockResolvedValue(true);
+    const renderer = await renderScreen({ resolveDeleteConfirmation });
+    await selectEpisode(renderer);
+    await openHierarchyEditor(renderer);
+    const deleteButton = renderer.root
+      .findAllByType('button')
+      .find((candidate) => candidate.children.join('') === '話を削除');
+    await act(async () => {
+      deleteButton?.props.onClick();
+      deleteButton?.props.onClick();
+      await Promise.resolve();
+    });
+
+    expect(resolveDeleteConfirmation).toHaveBeenCalledOnce();
+    expect(api.deleteEpisode).toHaveBeenCalledOnce();
+    resolveDelete?.();
+    await act(async () => {
+      await flushQueries();
+    });
+  });
+
+  it('通信失敗では話とdraftを保持し、同じ削除を再試行できる', async () => {
+    api.deleteEpisode
+      .mockRejectedValueOnce(new ApiError('NETWORK_ERROR', 0, 'raw network detail'))
+      .mockResolvedValueOnce(undefined);
+    const resolveDeleteConfirmation = vi.fn().mockResolvedValue(true);
+    const renderer = await renderScreen({ resolveDeleteConfirmation });
+    await selectEpisode(renderer);
+    await openHierarchyEditor(renderer);
+
+    await pressButton(renderer, '話を削除');
+    expect(resolveSelectedText(renderer, '第一話')).toBe(true);
+    expect(renderer.root.findByProps({ accessibilityLabel: 'ストーリー本文' }).props.value)
+      .toBe('本文');
+    expect(textOf(renderer)).toContain('削除できませんでした');
+    expect(textOf(renderer)).not.toContain('raw network detail');
+
+    await pressButton(renderer, '話を削除');
+    expect(api.deleteEpisode).toHaveBeenCalledTimes(2);
+    expect(resolveDeleteConfirmation).toHaveBeenCalledTimes(2);
+    expect(resolveSelectedText(renderer, '第二話')).toBe(true);
   });
 });
 

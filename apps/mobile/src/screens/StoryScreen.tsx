@@ -40,6 +40,10 @@ import {
   type DirtyStoryAction,
 } from '../lib/dirtyStoryPrompt';
 import { t, type UiLanguage } from '../lib/i18n';
+import {
+  showStoryDeletionPrompt,
+  type StoryDeletionTarget,
+} from '../lib/storyDeletionPrompt';
 import { storyQueryKeys } from '../lib/storyQueryKeys';
 
 export interface StoryScreenHandle {
@@ -48,6 +52,8 @@ export interface StoryScreenHandle {
 
 export interface StoryApiPort {
   createWork(title: string, organizationId?: string | null): Promise<WorkRecord>;
+  deleteChapter(chapterId: string, organizationId?: string | null): Promise<void>;
+  deleteEpisode(episodeId: string, organizationId?: string | null): Promise<void>;
   updateWork(
     workId: string,
     title: string,
@@ -102,6 +108,10 @@ interface StoryScreenProps {
   api: StoryApiPort;
   language: UiLanguage;
   organizationId: string | null;
+  resolveDeleteConfirmation?: (
+    target: StoryDeletionTarget,
+    targetTitle: string,
+  ) => Promise<boolean>;
   resolveDirtyAction?: () => Promise<DirtyStoryAction>;
   sessionKey: string;
 }
@@ -112,6 +122,7 @@ export const StoryScreen = forwardRef<StoryScreenHandle, StoryScreenProps>(
       api,
       language,
       organizationId,
+      resolveDeleteConfirmation,
       resolveDirtyAction,
       sessionKey,
     },
@@ -177,8 +188,10 @@ export const StoryScreen = forwardRef<StoryScreenHandle, StoryScreenProps>(
       && draft !== null
       && isEpisodeStoryDraftDirty(savedDraft, draft);
 
-    const saveCurrentDraft = useCallback((): Promise<boolean> => {
-      if (hierarchyOperation.current !== null) {
+    const saveCurrentDraft = useCallback((
+      allowHierarchyOperation = false,
+    ): Promise<boolean> => {
+      if (!allowHierarchyOperation && hierarchyOperation.current !== null) {
         return Promise.resolve(false);
       }
       if (saveOperation.current !== null) {
@@ -245,8 +258,10 @@ export const StoryScreen = forwardRef<StoryScreenHandle, StoryScreenProps>(
       selectedEpisode,
     ]);
 
-    const resolvePendingChanges = useCallback(async (): Promise<boolean> => {
-      if (hierarchyOperation.current !== null) {
+    const resolvePendingChanges = useCallback(async (
+      allowHierarchyOperation = false,
+    ): Promise<boolean> => {
+      if (!allowHierarchyOperation && hierarchyOperation.current !== null) {
         return false;
       }
       if (saveOperation.current !== null) {
@@ -264,11 +279,11 @@ export const StoryScreen = forwardRef<StoryScreenHandle, StoryScreenProps>(
       if (action === 'discard') {
         return true;
       }
-      return saveCurrentDraft();
+      return saveCurrentDraft(allowHierarchyOperation);
     }, [dirty, language, resolveDirtyAction, saveCurrentDraft]);
 
     useImperativeHandle(ref, () => ({
-      prepareToLeave: resolvePendingChanges,
+      prepareToLeave: () => resolvePendingChanges(),
     }), [resolvePendingChanges]);
 
     const transition = useCallback(async (
@@ -343,6 +358,7 @@ export const StoryScreen = forwardRef<StoryScreenHandle, StoryScreenProps>(
 
     const runHierarchyMutation = useCallback((
       mutation: () => Promise<boolean>,
+      successMessage = t(language, 'storyHierarchyUpdated'),
     ): Promise<boolean> => {
       if (hierarchyOperation.current !== null) {
         return hierarchyOperation.current;
@@ -358,7 +374,7 @@ export const StoryScreen = forwardRef<StoryScreenHandle, StoryScreenProps>(
           }
           const changed = await mutation();
           if (changed) {
-            setHierarchyNotice(t(language, 'storyHierarchyUpdated'));
+            setHierarchyNotice(successMessage);
           }
           return changed;
         } catch {
@@ -725,6 +741,230 @@ export const StoryScreen = forwardRef<StoryScreenHandle, StoryScreenProps>(
       selectedEpisode,
     ]);
 
+    const deleteEpisode = useCallback((): Promise<boolean> => {
+      if (selectedChapterId === null || selectedEpisode === null) {
+        return Promise.resolve(false);
+      }
+      const targetEpisode = selectedEpisode;
+      const chapterId = selectedChapterId;
+      return runHierarchyMutation(async () => {
+        const confirmed = resolveDeleteConfirmation === undefined
+          ? await showStoryDeletionPrompt(
+              language,
+              'episode',
+              targetEpisode.title ?? `${t(language, 'episode')} ${targetEpisode.order}`,
+            )
+          : await resolveDeleteConfirmation(
+              'episode',
+              targetEpisode.title ?? `${t(language, 'episode')} ${targetEpisode.order}`,
+            );
+        if (!confirmed || !(await resolvePendingChanges(true))) {
+          return false;
+        }
+        setSaveError(null);
+        setSaveNotice(null);
+
+        const episodesKey = queryKeys.episodes(chapterId);
+        await queryClient.cancelQueries({ exact: true, queryKey: episodesKey });
+        const snapshot = queryClient.getQueryData<{ episodes: EpisodeRecord[] }>(
+          episodesKey,
+        )?.episodes ?? episodes;
+        try {
+          await api.deleteEpisode(targetEpisode.id, organizationId);
+        } catch (error) {
+          if (error instanceof ApiError && error.status === 404) {
+            const refreshed = await episodesQuery.refetch();
+            const latest = refreshed.data?.episodes ?? [];
+            if (
+              !refreshed.isError
+              && !latest.some((episode) => episode.id === targetEpisode.id)
+            ) {
+              const replacement = resolveReplacementAfterRemoval(
+                snapshot,
+                latest,
+                targetEpisode.id,
+              );
+              applySelectedEpisode(
+                replacement,
+                setSelectedEpisode,
+                setSavedDraft,
+                setDraft,
+              );
+            }
+            setHierarchyError(t(language, 'storyDeleteMissing'));
+            return false;
+          }
+          setHierarchyError(t(
+            language,
+            error instanceof ApiError && error.status === 409
+              ? 'storyDeleteConflict'
+              : 'storyDeleteError',
+          ));
+          return false;
+        }
+
+        queryClient.setQueryData<{ episodes: EpisodeRecord[] }>(
+          episodesKey,
+          (current) => current === undefined
+            ? current
+            : {
+                episodes: current.episodes.filter(
+                  (episode) => episode.id !== targetEpisode.id,
+                ),
+              },
+        );
+        const remaining = snapshot.filter(
+          (episode) => episode.id !== targetEpisode.id,
+        );
+        const replacement = resolveReplacementAfterRemoval(
+          snapshot,
+          remaining,
+          targetEpisode.id,
+        );
+        applySelectedEpisode(
+          replacement,
+          setSelectedEpisode,
+          setSavedDraft,
+          setDraft,
+        );
+        await queryClient.invalidateQueries({
+          exact: true,
+          queryKey: episodesKey,
+          refetchType: 'none',
+        });
+        return true;
+      }, t(language, 'storyDeleted'));
+    }, [
+      api,
+      episodes,
+      episodesQuery,
+      language,
+      organizationId,
+      queryClient,
+      queryKeys,
+      resolveDeleteConfirmation,
+      resolvePendingChanges,
+      runHierarchyMutation,
+      selectedChapterId,
+      selectedEpisode,
+    ]);
+
+    const deleteChapter = useCallback((): Promise<boolean> => {
+      if (selectedChapter === null || selectedWorkId === null) {
+        return Promise.resolve(false);
+      }
+      const targetChapter = selectedChapter;
+      const workId = selectedWorkId;
+      return runHierarchyMutation(async () => {
+        const confirmed = resolveDeleteConfirmation === undefined
+          ? await showStoryDeletionPrompt(
+              language,
+              'chapter',
+              targetChapter.title ?? `${t(language, 'chapter')} ${targetChapter.order}`,
+            )
+          : await resolveDeleteConfirmation(
+              'chapter',
+              targetChapter.title ?? `${t(language, 'chapter')} ${targetChapter.order}`,
+            );
+        if (!confirmed || !(await resolvePendingChanges(true))) {
+          return false;
+        }
+        setSaveError(null);
+        setSaveNotice(null);
+
+        const chaptersKey = queryKeys.chapters(workId);
+        const targetEpisodesKey = queryKeys.episodes(targetChapter.id);
+        await Promise.all([
+          queryClient.cancelQueries({ exact: true, queryKey: chaptersKey }),
+          queryClient.cancelQueries({ exact: true, queryKey: targetEpisodesKey }),
+        ]);
+        const snapshot = queryClient.getQueryData<{ chapters: ChapterRecord[] }>(
+          chaptersKey,
+        )?.chapters ?? chapters;
+        try {
+          await api.deleteChapter(targetChapter.id, organizationId);
+        } catch (error) {
+          if (error instanceof ApiError && error.status === 404) {
+            const refreshed = await chaptersQuery.refetch();
+            const latest = refreshed.data?.chapters ?? [];
+            if (
+              !refreshed.isError
+              && !latest.some((chapter) => chapter.id === targetChapter.id)
+            ) {
+              const replacement = resolveReplacementAfterRemoval(
+                snapshot,
+                latest,
+                targetChapter.id,
+              );
+              queryClient.removeQueries({ exact: true, queryKey: targetEpisodesKey });
+              setSelectedChapterId(replacement?.id ?? null);
+              applySelectedEpisode(
+                null,
+                setSelectedEpisode,
+                setSavedDraft,
+                setDraft,
+              );
+            }
+            setHierarchyError(t(language, 'storyDeleteMissing'));
+            return false;
+          }
+          setHierarchyError(t(
+            language,
+            error instanceof ApiError && error.status === 409
+              ? 'storyDeleteConflict'
+              : 'storyDeleteError',
+          ));
+          return false;
+        }
+
+        queryClient.setQueryData<{ chapters: ChapterRecord[] }>(
+          chaptersKey,
+          (current) => current === undefined
+            ? current
+            : {
+                chapters: current.chapters.filter(
+                  (chapter) => chapter.id !== targetChapter.id,
+                ),
+              },
+        );
+        queryClient.removeQueries({ exact: true, queryKey: targetEpisodesKey });
+        const remaining = snapshot.filter(
+          (chapter) => chapter.id !== targetChapter.id,
+        );
+        const replacement = resolveReplacementAfterRemoval(
+          snapshot,
+          remaining,
+          targetChapter.id,
+        );
+        setSelectedChapterId(replacement?.id ?? null);
+        applySelectedEpisode(
+          null,
+          setSelectedEpisode,
+          setSavedDraft,
+          setDraft,
+        );
+        await queryClient.invalidateQueries({
+          exact: true,
+          queryKey: chaptersKey,
+          refetchType: 'none',
+        });
+        return true;
+      }, t(language, 'storyDeleted'));
+    }, [
+      api,
+      chapters,
+      chaptersQuery,
+      language,
+      organizationId,
+      queryClient,
+      queryKeys,
+      resolveDeleteConfirmation,
+      resolvePendingChanges,
+      runHierarchyMutation,
+      selectedChapter,
+      selectedWorkId,
+    ]);
+
     const episodeMoveUp = selectedChapterId === null || selectedEpisode === null
       ? { allowed: false }
       : resolveEpisodeMove(
@@ -830,6 +1070,8 @@ export const StoryScreen = forwardRef<StoryScreenHandle, StoryScreenProps>(
           onCreateChapter={createChapter}
           onCreateEpisode={createEpisode}
           onCreateWork={createWork}
+          onDeleteChapter={deleteChapter}
+          onDeleteEpisode={deleteEpisode}
           onMoveChapter={moveChapter}
           onMoveEpisode={moveEpisode}
           onRenameChapter={renameChapter}
@@ -892,6 +1134,33 @@ function sortByOrder<T extends { id: string; order: number }>(items: readonly T[
   return [...items].sort(
     (left, right) => left.order - right.order || left.id.localeCompare(right.id),
   );
+}
+
+function resolveReplacementAfterRemoval<T extends { id: string }>(
+  originalItems: readonly T[],
+  remainingItems: readonly T[],
+  removedId: string,
+): T | null {
+  if (remainingItems.length === 0) {
+    return null;
+  }
+  const removedIndex = originalItems.findIndex((item) => item.id === removedId);
+  if (removedIndex < 0) {
+    return remainingItems[0] ?? null;
+  }
+  return remainingItems[Math.min(removedIndex, remainingItems.length - 1)] ?? null;
+}
+
+function applySelectedEpisode(
+  episode: EpisodeRecord | null,
+  setSelectedEpisode: (value: EpisodeRecord | null) => void,
+  setSavedDraft: (value: EpisodeStoryDraft | null) => void,
+  setDraft: (value: EpisodeStoryDraft | null) => void,
+): void {
+  setSelectedEpisode(episode);
+  const nextDraft = episode === null ? null : createEpisodeStoryDraft(episode);
+  setSavedDraft(nextDraft);
+  setDraft(nextDraft);
 }
 
 const styles = StyleSheet.create({
