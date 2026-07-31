@@ -2,6 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import { createApp } from '../../../src/app.js';
 import { ValidationError } from '../../../src/domain/errors/index.js';
+import { decodeWorkListCursor } from '../../../src/domain/pagination.js';
 import type { CreditBalanceSnapshot } from '../../../src/domain/types/credit.js';
 import type { AuthenticatedUser, SupabaseJwtClaims } from '../../../src/domain/types/user.js';
 import { REQUEST_BODY_LIMITS } from '../../../src/routes/requestBody.js';
@@ -34,6 +35,10 @@ import type {
   UpdateWorkRequest,
   Work,
 } from '../../../src/services/story/StoryService.js';
+import type {
+  WorkListCursor,
+  WorkListPage,
+} from '../../../src/repositories/StoryRepository.js';
 import type {
   OrganizationCapability,
   OrganizationWorkspaceSummary,
@@ -88,10 +93,26 @@ class FakeStoryService implements StoryServicePort {
   public listWorksOrganizationId: string | null | undefined = undefined;
   public createWorkOrganizationId: string | null | undefined = undefined;
   public moveEpisodeCrossChapter: boolean | undefined = undefined;
+  public workPage: WorkListPage = { works: [], nextCursor: null };
+  public workPageCalls: Array<{
+    userId: string;
+    limit: number;
+    cursor: WorkListCursor | null;
+    organizationId: string | null;
+  }> = [];
 
   public async listWorks(userId: string, organizationId?: string | null): Promise<Work[]> {
     this.listWorksOrganizationId = organizationId;
     return [buildWork({ userId, organizationId: organizationId ?? null })];
+  }
+
+  public async listWorksPage(
+    userId: string,
+    input: { limit: number; cursor: WorkListCursor | null },
+    organizationId: string | null = null,
+  ): Promise<WorkListPage> {
+    this.workPageCalls.push({ userId, ...input, organizationId });
+    return this.workPage;
   }
 
   public async createWork(userId: string, input: CreateWorkRequest): Promise<Work> {
@@ -281,6 +302,7 @@ class FakePageSkeletonService implements PageSkeletonServicePort {
   public async rollbackFreshSkeleton(): Promise<boolean> {
     return false;
   }
+
 }
 
 class FakeEpisodePageSkeletonService implements EpisodePageSkeletonServicePort {
@@ -364,6 +386,69 @@ describe('story routes', () => {
       ],
     });
     expect(payload.works[0]).not.toHaveProperty('user_id');
+    expect(payload).not.toHaveProperty('next_cursor');
+  });
+
+  it('作品一覧をopaque cursorでpage取得する', async () => {
+    const storyService = new FakeStoryService();
+    const nextCursor: WorkListCursor = {
+      updatedAt: new Date('2026-07-31T00:00:00.000Z'),
+      createdAt: new Date('2026-07-30T00:00:00.000Z'),
+      id: workId,
+    };
+    storyService.workPage = {
+      works: [buildWork()],
+      nextCursor,
+    };
+    const app = createTestApp({ storyService });
+    const token = await createToken();
+
+    const first = await app.request('/api/works?limit=40', {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const firstPayload = (await first.json()) as {
+      next_cursor: string;
+    };
+    const second = await app.request(
+      `/api/works?limit=10&cursor=${encodeURIComponent(firstPayload.next_cursor)}`,
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+
+    expect(first.status).toBe(200);
+    expect(decodeWorkListCursor(firstPayload.next_cursor)).toEqual(nextCursor);
+    expect(second.status).toBe(200);
+    expect(storyService.workPageCalls).toEqual([
+      {
+        userId: user.id,
+        organizationId: null,
+        limit: 40,
+        cursor: null,
+      },
+      {
+        userId: user.id,
+        organizationId: null,
+        limit: 10,
+        cursor: nextCursor,
+      },
+    ]);
+  });
+
+  it('作品一覧の不正limit・cursorを422にする', async () => {
+    const app = createTestApp();
+    const token = await createToken();
+    const headers = { Authorization: `Bearer ${token}` };
+
+    const responses = await Promise.all([
+      app.request('/api/works?limit=0', { headers }),
+      app.request('/api/works?limit=101', { headers }),
+      app.request('/api/works?limit=1.5', { headers }),
+      app.request('/api/works?cursor=opaque', { headers }),
+      app.request('/api/works?limit=10&cursor=invalid', { headers }),
+    ]);
+
+    expect(responses.map((response) => response.status)).toEqual([
+      422, 422, 422, 422, 422,
+    ]);
   });
 
   it('creates a work when JWT is valid', async () => {

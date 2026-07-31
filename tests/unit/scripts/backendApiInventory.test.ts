@@ -33,5 +33,8 @@ describe('Backend API contract inventory', () => {
     expect(inventory).toContain(
       '`src/app.ts`, `src/routes/organizations.ts`',
     );
+    expect(inventory).toContain(
+      '| `/api/works` | GET | Authenticated | Strict JSON | `worksResponseSchema` | Optional opaque cursor (1-100; max 512 chars) | `src/routes/story.ts` |',
+    );
   });
 });

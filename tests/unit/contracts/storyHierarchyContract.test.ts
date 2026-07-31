@@ -71,6 +71,18 @@ describe('Story hierarchy response contract', () => {
     expect(chapterSchema.safeParse(validChapter).success).toBe(true);
     expect(episodeSchema.safeParse(validEpisode).success).toBe(true);
     expect(worksResponseSchema.safeParse({ works: [] }).success).toBe(true);
+    expect(
+      worksResponseSchema.safeParse({
+        works: [],
+        next_cursor: 'opaque-cursor',
+      }).success,
+    ).toBe(true);
+    expect(
+      worksResponseSchema.safeParse({
+        works: [],
+        next_cursor: 'a'.repeat(513),
+      }).success,
+    ).toBe(false);
     expect(chaptersResponseSchema.safeParse({ chapters: [] }).success).toBe(true);
     expect(episodesResponseSchema.safeParse({ episodes: [] }).success).toBe(true);
   });

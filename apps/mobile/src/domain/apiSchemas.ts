@@ -414,6 +414,7 @@ export const workSchema = z.object({
 
 export const worksResponseSchema = z.object({
   works: z.array(workSchema),
+  next_cursor: z.string().min(1).max(512).nullable().optional(),
 });
 
 export const chapterSchema = z.object({

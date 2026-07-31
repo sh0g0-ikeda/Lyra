@@ -119,6 +119,10 @@ const paginationClassifications = new Map([
     'GET /api/compositions',
     'Bounded limit (1-250)',
   ],
+  [
+    'GET /api/works',
+    'Optional opaque cursor (1-100; max 512 chars)',
+  ],
 ]);
 
 const sourcePaths = [

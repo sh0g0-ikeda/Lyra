@@ -6,9 +6,9 @@
 
 対象PR: [#67 feat(mobile): production-ready Lyra mobile workflow](https://github.com/sh0g0-ikeda/Lyra/pull/67)
 
-進捗: 53件完了 / 407件未完了
+進捗: 54件完了 / 407件未完了
 
-実装監査基準: `fe601d7`（PR #121 head、`verify` / `mobile-verify`成功）
+実装監査基準: `5d89b9b`（PR #122 head、`verify` / `mobile-verify`成功）
 
 ## 1. 設計ブリーフ
 
@@ -180,7 +180,7 @@ Codex単独で進める次の順序は、`CI安定化 → PR-A継続 → 契約�
 - [ ] PR-A: Mobile API contract / response validation / pagination
   - 主な所有: `packages/api-contract`, Mobile schema生成、inventory scripts
   - 完了条件: API inventoryとcontract drift checkが単独でgreen
-  - 進捗: 23個目の分割単位をPR #122で検証中。既存業務JSON Route、Mobile生成物、Backend inventoryを完了し、list paginationの個別接続が残る
+  - 進捗: 24個目の分割単位をPR #123で検証中。既存業務JSON Route、Mobile生成物、Backend inventory、works paginationを完了し、残るlist paginationの個別接続が残る
   - [x] response contract guardを本番挙動へ未接続の状態で分離統合
     - 証跡: [PR #76](https://github.com/sh0g0-ikeda/Lyra/pull/76)
   - [x] `/api/me`の現行wire互換性と不正payload拒否を検証して分離統合
@@ -233,7 +233,9 @@ Codex単独で進める次の順序は、`CI安定化 → PR-A継続 → 契約�
     - 証跡: [PR #122](https://github.com/sh0g0-ikeda/Lyra/pull/122)。実mount 105 endpointのauth、response contract、pagination、sourceを全件分類し、未分類0件をrequired `verify`で固定
     - 修正: 実アプリが先行登録する公開招待previewだけがshared contractを通っていないことを検出し、既存wireを維持したまま同一schemaへ接続
   - [ ] works / entities / pages / organization一覧のcursor paginationを個別監査・接続
-    - 現状: job履歴はbounded opaque cursor、compositionはbounded limit、それ以外はcomplete collectionとしてinventoryへ明示
+    - [x] works一覧へ既存wire互換のoptional bounded opaque cursorを接続
+      - 証跡: [PR #123](https://github.com/sh0g0-ikeda/Lyra/pull/123)。queryなしの従来経路と`{ works: [...] }`を維持し、`limit`指定時だけpersonal / active organization scope付きkeyset pageと`next_cursor`を返す
+    - 現状: job履歴とworksはbounded opaque cursor、compositionはbounded limit。entities / pages / organization一覧はcomplete collectionとしてinventoryへ明示
 - [ ] PR-B: account deletion / upload token / export基盤
   - 主な所有: migrations 027, 031, 032と対応Route/Service/Repository
   - 完了条件: personal/org tenancy、S3 ownership、削除冪等性がgreen

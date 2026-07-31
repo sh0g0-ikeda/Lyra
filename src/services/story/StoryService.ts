@@ -1,4 +1,8 @@
-import { NotFoundError, ValidationError } from '../../domain/errors/index.js';
+import {
+  ConfigurationError,
+  NotFoundError,
+  ValidationError,
+} from '../../domain/errors/index.js';
 import type {
   Chapter,
   CreateChapterInput,
@@ -11,7 +15,12 @@ import type {
   UpdateWorkInput,
   Work,
 } from '../../domain/types/story.js';
-import type { StoryRepository } from '../../repositories/StoryRepository.js';
+import type {
+  StoryRepository,
+  WorkListCursor,
+  WorkListPage,
+  WorkListPaginationRepository,
+} from '../../repositories/StoryRepository.js';
 import type { EntityReferenceReader } from '../../repositories/EntityRepository.js';
 
 export type {
@@ -28,6 +37,11 @@ export type {
 
 export interface StoryServicePort {
   listWorks(userId: string, organizationId?: string | null): Promise<Work[]>;
+  listWorksPage(
+    userId: string,
+    input: { limit: number; cursor: WorkListCursor | null },
+    organizationId?: string | null,
+  ): Promise<WorkListPage>;
   createWork(userId: string, input: CreateWorkInput): Promise<Work>;
   getWork(userId: string, workId: string, organizationId?: string | null): Promise<Work>;
   updateWork(userId: string, workId: string, input: UpdateWorkInput, organizationId?: string | null): Promise<Work>;
@@ -51,7 +65,8 @@ export interface StoryServicePort {
 
 export class StoryService implements StoryServicePort {
   public constructor(
-    private readonly storyRepository: StoryRepository,
+    private readonly storyRepository:
+      StoryRepository & Partial<WorkListPaginationRepository>,
     private readonly entityReferenceReader: EntityReferenceReader,
   ) {}
 
@@ -65,6 +80,21 @@ export class StoryService implements StoryServicePort {
 
   public async listWorks(userId: string, organizationId: string | null = null): Promise<Work[]> {
     return this.storyRepository.findWorksByUserId(userId, organizationId);
+  }
+
+  public async listWorksPage(
+    userId: string,
+    input: { limit: number; cursor: WorkListCursor | null },
+    organizationId: string | null = null,
+  ): Promise<WorkListPage> {
+    const paginationRepository = requireWorkListPaginationRepository(
+      this.storyRepository,
+    );
+    return paginationRepository.findWorksPageByUserId(
+      userId,
+      input,
+      organizationId,
+    );
   }
 
   public async getWork(userId: string, workId: string, organizationId: string | null = null): Promise<Work> {
@@ -258,4 +288,16 @@ export class StoryService implements StoryServicePort {
       throw new ValidationError('All referenced entities must belong to the work');
     }
   }
+}
+
+function requireWorkListPaginationRepository(
+  repository: StoryRepository & Partial<WorkListPaginationRepository>,
+): WorkListPaginationRepository {
+  if (typeof repository.findWorksPageByUserId !== 'function') {
+    throw new ConfigurationError(
+      'Work list pagination repository is not configured',
+    );
+  }
+
+  return repository as WorkListPaginationRepository;
 }
