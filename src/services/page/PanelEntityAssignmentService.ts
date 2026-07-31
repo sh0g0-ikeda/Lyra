@@ -1,4 +1,4 @@
-import { NotFoundError, ValidationError } from '../../domain/errors/index.js';
+import { ConflictError, NotFoundError, ValidationError } from '../../domain/errors/index.js';
 import type {
   PanelEntityAssignment,
   PanelEntityStateReference,
@@ -13,6 +13,7 @@ export interface PanelEntityAssignmentServicePort {
     panelId: string,
     assignments: PanelEntityAssignment[],
     organizationId?: string | null,
+    expectedAssignments?: PanelEntityAssignment[] | null,
   ): Promise<PanelEntityAssignment[]>;
 }
 
@@ -28,8 +29,43 @@ export class PanelEntityAssignmentService implements PanelEntityAssignmentServic
     panelId: string,
     assignments: PanelEntityAssignment[],
     organizationId: string | null = null,
+    expectedAssignments?: PanelEntityAssignment[] | null,
   ): Promise<PanelEntityAssignment[]> {
     const normalizedAssignments = normalizeAssignments(assignments);
+
+    if (expectedAssignments !== undefined && expectedAssignments !== null) {
+      const normalizedExpectedAssignments = normalizeAssignments(expectedAssignments);
+      ensureUniqueEntityAssignments(normalizedAssignments);
+      ensureUniqueEntityAssignments(normalizedExpectedAssignments);
+
+      const result =
+        await this.panelEntityAssignmentRepository.replacePanelEntityAssignmentsConditionally(
+          panelId,
+          userId,
+          normalizedExpectedAssignments,
+          normalizedAssignments,
+          organizationId,
+        );
+
+      switch (result.status) {
+        case 'saved':
+          return normalizeAssignments(result.assignments);
+        case 'not_found':
+          throw new NotFoundError('Panel not found');
+        case 'stale':
+          throw new ConflictError('Panel entity assignments changed while editing');
+        case 'page_not_editable':
+          throw new ConflictError(
+            'Panel entity assignments cannot be edited while the page is confirmed or generating',
+          );
+        case 'dialogue_speaker_not_assigned':
+          throw new ValidationError('All dialogue speakers must remain assigned to the panel');
+        case 'entity_not_in_work':
+          throw new ValidationError('All assigned entities must belong to the panel work');
+        case 'state_not_in_entity':
+          throw new ValidationError('All state_id values must belong to their assigned entity');
+      }
+    }
 
     const panelContext = await this.panelEntityAssignmentRepository.findPanelContextByIdAndUserId(
       panelId,
