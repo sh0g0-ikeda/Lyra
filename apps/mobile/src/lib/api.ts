@@ -8,6 +8,7 @@ import {
   generationJobHistoryResponseSchema,
   generationJobResponseSchema,
   pageSchema,
+  pageJobAcceptedResponseSchema,
   pagesResponseSchema,
   pageSkeletonResponseSchema,
   sceneSchema,
@@ -27,6 +28,7 @@ export type SceneRecord = ReturnType<typeof sceneSchema.parse>;
 export type PageRecord = ReturnType<typeof pageSchema.parse>;
 export type GenerationJobRecord = ReturnType<typeof generationJobResponseSchema.parse>;
 export type PageSkeletonResponse = ReturnType<typeof pageSkeletonResponseSchema.parse>;
+export type PageJobAcceptedResponse = ReturnType<typeof pageJobAcceptedResponseSchema.parse>;
 
 export interface ListWorksPageInput {
   limit: number;
@@ -360,6 +362,21 @@ export class LyraMobileApiClient {
       ),
       pageSkeletonResponseSchema,
       { method: 'POST', body },
+    );
+  }
+
+  public autofillEpisodePagesFromStory(
+    episodeId: string,
+    language: 'ja' | 'en',
+    organizationId: string | null = null,
+  ): Promise<PageJobAcceptedResponse> {
+    return this.requestJson(
+      withOrganizationQuery(
+        `/api/episodes/${encodeURIComponent(episodeId)}/autofill-pages-from-story`,
+        organizationId,
+      ),
+      pageJobAcceptedResponseSchema,
+      { method: 'POST', body: { language } },
     );
   }
 

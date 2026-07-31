@@ -31,22 +31,37 @@ import {
   type ListJobsPageInput,
   type ListWorksPageInput,
   type PageRecord,
+  type PageJobAcceptedResponse,
   type PageSkeletonResponse,
   type SceneRecord,
   type UpdateSceneInput,
   type WorkRecord,
 } from '../lib/api';
 import { showDirtyStoryPrompt, type DirtyStoryAction } from '../lib/dirtyStoryPrompt';
-import { t, type UiLanguage } from '../lib/i18n';
+import { t, type MessageKey, type UiLanguage } from '../lib/i18n';
 import { storyQueryKeys } from '../lib/storyQueryKeys';
 
 const MAX_SCENE_ORDER = 1000;
+
+type EpisodePlanningJobType = 'episode_page_skeleton' | 'episode_story_autofill';
+type EpisodePlanningJobRecord = Extract<
+  GenerationJobRecord,
+  { job_type: 'episode_page_skeleton' }
+> | Extract<
+  GenerationJobRecord,
+  { job_type: 'episode_story_autofill' }
+>;
 
 export interface PagesScreenHandle {
   prepareToLeave(): Promise<boolean>;
 }
 
 export interface PagesApiPort {
+  autofillEpisodePagesFromStory(
+    episodeId: string,
+    language: UiLanguage,
+    organizationId?: string | null,
+  ): Promise<PageJobAcceptedResponse>;
   createScene(
     episodeId: string,
     body: CreateSceneInput,
@@ -127,6 +142,7 @@ export const PagesScreen = forwardRef<PagesScreenHandle, PagesScreenProps>(
     const [trackedJob, setTrackedJob] = useState<{
       episodeId: string;
       jobId: string;
+      jobType: EpisodePlanningJobType;
     } | null>(null);
     const [generationError, setGenerationError] = useState<string | null>(null);
     const [generationNotice, setGenerationNotice] = useState<string | null>(null);
@@ -340,9 +356,16 @@ export const PagesScreen = forwardRef<PagesScreenHandle, PagesScreenProps>(
             && isEpisodePlanningJob(job, selectedEpisode.id)
             && !handledTerminalJobIds.current.has(job.id),
         );
-        return recovered === undefined
+        const recoveredJobType = recovered === undefined
           ? null
-          : { episodeId: selectedEpisode.id, jobId: recovered.id };
+          : readEpisodePlanningJobType(recovered);
+        return recovered === undefined || recoveredJobType === null
+          ? null
+          : {
+              episodeId: selectedEpisode.id,
+              jobId: recovered.id,
+              jobType: recoveredJobType,
+            };
       });
     }, [jobsQuery.data, selectedEpisode]);
 
@@ -356,7 +379,7 @@ export const PagesScreen = forwardRef<PagesScreenHandle, PagesScreenProps>(
       ) {
         return;
       }
-      if (!isEpisodePlanningJob(job, selectedEpisode.id)) {
+      if (!matchesTrackedPlanningJob(job, trackedJob)) {
         handledTerminalJobIds.current.add(job.id);
         setGenerationNotice(null);
         setGenerationError(t(language, 'pageJobStatusError'));
@@ -373,13 +396,15 @@ export const PagesScreen = forwardRef<PagesScreenHandle, PagesScreenProps>(
       }
       handledTerminalJobIds.current.add(job.id);
       setGenerationError(
-        job.status === 'failed' ? t(language, 'pageGenerationFailed') : null,
+        job.status === 'failed'
+          ? t(language, planningJobMessageKey(job.job_type, 'failed'))
+          : null,
       );
       setGenerationNotice(
         job.status === 'completed'
-          ? t(language, 'pageGenerationCompleted')
+          ? t(language, planningJobMessageKey(job.job_type, 'completed'))
           : job.status === 'cancelled'
-            ? t(language, 'pageGenerationCancelled')
+            ? t(language, planningJobMessageKey(job.job_type, 'cancelled'))
             : null,
       );
       setTrackedJob(null);
@@ -623,6 +648,113 @@ export const PagesScreen = forwardRef<PagesScreenHandle, PagesScreenProps>(
       transition,
     ]);
 
+    const trackQueuedPlanningJob = useCallback(async (
+      episodeRecord: EpisodeRecord,
+      accepted: PageJobAcceptedResponse,
+      jobType: EpisodePlanningJobType,
+    ): Promise<void> => {
+      const nextTrackedJob = {
+        episodeId: episodeRecord.id,
+        jobId: accepted.job_id,
+        jobType,
+      };
+      handledTerminalJobIds.current.delete(accepted.job_id);
+      setTrackedJob(nextTrackedJob);
+      setGenerationNotice(t(language, planningJobMessageKey(jobType, 'queued')));
+      try {
+        const initialJob = await queryClient.fetchQuery({
+          queryFn: () => api.getJob(accepted.job_id, organizationId),
+          queryKey: queryKeys.job(accepted.job_id),
+        });
+        setJobStatusCheckFailed(false);
+        if (!matchesTrackedPlanningJob(initialJob, nextTrackedJob)) {
+          handledTerminalJobIds.current.add(initialJob.id);
+          setTrackedJob(null);
+          setGenerationNotice(null);
+          setGenerationError(t(language, 'pageJobStatusError'));
+          return;
+        }
+        if (isActiveJob(initialJob)) {
+          return;
+        }
+        handledTerminalJobIds.current.add(initialJob.id);
+        setTrackedJob(null);
+        setGenerationError(
+          initialJob.status === 'failed'
+            ? t(language, planningJobMessageKey(jobType, 'failed'))
+            : null,
+        );
+        setGenerationNotice(
+          initialJob.status === 'completed'
+            ? t(language, planningJobMessageKey(jobType, 'completed'))
+            : initialJob.status === 'cancelled'
+              ? t(language, planningJobMessageKey(jobType, 'cancelled'))
+              : null,
+        );
+        await Promise.all([
+          pagesQuery.refetch(),
+          episodesQuery.refetch(),
+          refetchJobs(),
+        ]);
+      } catch (error: unknown) {
+        if (error instanceof ApiError && error.status === 404) {
+          handledTerminalJobIds.current.add(accepted.job_id);
+          setTrackedJob(null);
+          setGenerationNotice(null);
+          setGenerationError(t(language, 'pageJobStatusError'));
+          await Promise.all([
+            pagesQuery.refetch(),
+            episodesQuery.refetch(),
+            refetchJobs(),
+          ]);
+          return;
+        }
+        setJobStatusCheckFailed(true);
+      }
+    }, [
+      api,
+      episodesQuery,
+      language,
+      organizationId,
+      pagesQuery,
+      queryClient,
+      queryKeys,
+      refetchJobs,
+    ]);
+
+    const recoverPlanningJobFromHistory = useCallback(async (
+      episodeId: string,
+    ): Promise<boolean> => {
+      try {
+        const refreshed = await refetchJobs();
+        const recovered = refreshed.data?.jobs.find(
+          (job) => isActiveJob(job)
+            && isEpisodePlanningJob(job, episodeId)
+            && !handledTerminalJobIds.current.has(job.id),
+        );
+        if (recovered === undefined) {
+          return false;
+        }
+        const recoveredJobType = readEpisodePlanningJobType(recovered);
+        if (recoveredJobType === null) {
+          return false;
+        }
+        setTrackedJob({
+          episodeId,
+          jobId: recovered.id,
+          jobType: recoveredJobType,
+        });
+        setGenerationNotice(
+          t(language, planningJobMessageKey(recoveredJobType, 'queued')),
+        );
+        setGenerationError(null);
+        setJobStatusCheckFailed(false);
+        return true;
+      } catch {
+        return false;
+      }
+    }, [language, refetchJobs]);
+
     const generatePageSkeleton = useCallback((): Promise<boolean> => transition(async () => {
       if (
         selectedEpisode === null
@@ -647,61 +779,11 @@ export const PagesScreen = forwardRef<PagesScreenHandle, PagesScreenProps>(
             overwrite_existing: false,
           }, organizationId);
           if ('job_id' in response) {
-            handledTerminalJobIds.current.delete(response.job_id);
-            setTrackedJob({
-              episodeId: selectedEpisode.id,
-              jobId: response.job_id,
-            });
-            setGenerationNotice(t(language, 'pageGenerationQueued'));
-            try {
-              const initialJob = await queryClient.fetchQuery({
-                queryFn: () => api.getJob(response.job_id, organizationId),
-                queryKey: queryKeys.job(response.job_id),
-              });
-              setJobStatusCheckFailed(false);
-              if (!isEpisodePlanningJob(initialJob, selectedEpisode.id)) {
-                handledTerminalJobIds.current.add(initialJob.id);
-                setTrackedJob(null);
-                setGenerationNotice(null);
-                setGenerationError(t(language, 'pageJobStatusError'));
-                return true;
-              }
-              if (!isActiveJob(initialJob)) {
-                handledTerminalJobIds.current.add(initialJob.id);
-                setTrackedJob(null);
-                setGenerationError(
-                  initialJob.status === 'failed'
-                    ? t(language, 'pageGenerationFailed')
-                    : null,
-                );
-                setGenerationNotice(
-                  initialJob.status === 'completed'
-                    ? t(language, 'pageGenerationCompleted')
-                    : initialJob.status === 'cancelled'
-                      ? t(language, 'pageGenerationCancelled')
-                      : null,
-                );
-                await Promise.all([
-                  pagesQuery.refetch(),
-                  episodesQuery.refetch(),
-                  refetchJobs(),
-                ]);
-              }
-            } catch (error: unknown) {
-              if (error instanceof ApiError && error.status === 404) {
-                handledTerminalJobIds.current.add(response.job_id);
-                setTrackedJob(null);
-                setGenerationNotice(null);
-                setGenerationError(t(language, 'pageJobStatusError'));
-                await Promise.all([
-                  pagesQuery.refetch(),
-                  episodesQuery.refetch(),
-                  refetchJobs(),
-                ]);
-              } else {
-                setJobStatusCheckFailed(true);
-              }
-            }
+            await trackQueuedPlanningJob(
+              selectedEpisode,
+              response,
+              'episode_page_skeleton',
+            );
             return true;
           }
           await Promise.all([
@@ -726,11 +808,69 @@ export const PagesScreen = forwardRef<PagesScreenHandle, PagesScreenProps>(
       organizationId,
       pages,
       pagesQuery,
-      queryClient,
-      queryKeys,
-      refetchJobs,
       runPageOperation,
       selectedEpisode,
+      trackQueuedPlanningJob,
+      transition,
+    ]);
+
+    const autofillPagesFromStory = useCallback((): Promise<boolean> => transition(async () => {
+      const storyAutofillBlocked = selectedEpisode === null
+        || pagesQuery.isLoading
+        || pagesQuery.isError
+        || jobsQuery.isLoading
+        || jobsQuery.isFetching
+        || jobsQuery.isError
+        || generationActive
+        || pages.length === 0
+        || pages.length > 32
+        || pages.some((pageRecord) => (
+          pageRecord.status === 'confirmed'
+          || pageRecord.status === 'generating'
+          || pageRecord.frame_count === 0
+          || pageRecord.panel_count !== pageRecord.frame_count
+        ));
+      if (storyAutofillBlocked || selectedEpisode === null) {
+        return false;
+      }
+      return runPageOperation(async () => {
+        setGenerationError(null);
+        setGenerationNotice(null);
+        try {
+          const accepted = await api.autofillEpisodePagesFromStory(
+            selectedEpisode.id,
+            language,
+            organizationId,
+          );
+          await trackQueuedPlanningJob(
+            selectedEpisode,
+            accepted,
+            'episode_story_autofill',
+          );
+          return true;
+        } catch {
+          if (await recoverPlanningJobFromHistory(selectedEpisode.id)) {
+            return true;
+          }
+          setGenerationError(t(language, 'pageStoryAutofillError'));
+          return false;
+        }
+      });
+    }), [
+      api,
+      generationActive,
+      jobsQuery.isError,
+      jobsQuery.isFetching,
+      jobsQuery.isLoading,
+      language,
+      organizationId,
+      pages,
+      pagesQuery.isError,
+      pagesQuery.isLoading,
+      recoverPlanningJobFromHistory,
+      runPageOperation,
+      selectedEpisode,
+      trackQueuedPlanningJob,
       transition,
     ]);
 
@@ -850,6 +990,7 @@ export const PagesScreen = forwardRef<PagesScreenHandle, PagesScreenProps>(
             language={language}
             loading={pagesQuery.isLoading}
             loadError={pagesQuery.isError}
+            onAutofill={() => void autofillPagesFromStory()}
             onGenerate={() => void generatePageSkeleton()}
             onRetryJob={() => {
               if (trackedJobMatchesSelection) {
@@ -953,11 +1094,57 @@ function isActiveJob(
 function isEpisodePlanningJob(
   job: GenerationJobRecord,
   episodeId: string,
-): boolean {
+): job is EpisodePlanningJobRecord {
   return (
     job.job_type === 'episode_page_skeleton'
     || job.job_type === 'episode_story_autofill'
   ) && job.params.episode_id === episodeId;
+}
+
+function readEpisodePlanningJobType(
+  job: GenerationJobRecord,
+): EpisodePlanningJobType | null {
+  if (
+    job.job_type === 'episode_page_skeleton'
+    || job.job_type === 'episode_story_autofill'
+  ) {
+    return job.job_type;
+  }
+  return null;
+}
+
+function matchesTrackedPlanningJob(
+  job: GenerationJobRecord,
+  trackedJob: {
+    episodeId: string;
+    jobId: string;
+    jobType: EpisodePlanningJobType;
+  },
+): job is EpisodePlanningJobRecord {
+  return job.id === trackedJob.jobId
+    && job.job_type === trackedJob.jobType
+    && isEpisodePlanningJob(job, trackedJob.episodeId);
+}
+
+function planningJobMessageKey(
+  jobType: EpisodePlanningJobType,
+  state: 'queued' | 'completed' | 'failed' | 'cancelled',
+): MessageKey {
+  const skeletonKeys: Record<typeof state, MessageKey> = {
+    cancelled: 'pageGenerationCancelled',
+    completed: 'pageGenerationCompleted',
+    failed: 'pageGenerationFailed',
+    queued: 'pageGenerationQueued',
+  };
+  const storyAutofillKeys: Record<typeof state, MessageKey> = {
+    cancelled: 'pageStoryAutofillCancelled',
+    completed: 'pageStoryAutofillCompleted',
+    failed: 'pageStoryAutofillFailed',
+    queued: 'pageStoryAutofillQueued',
+  };
+  return jobType === 'episode_page_skeleton'
+    ? skeletonKeys[state]
+    : storyAutofillKeys[state];
 }
 
 function upsertScene(scenes: readonly SceneRecord[], scene: SceneRecord): SceneRecord[] {

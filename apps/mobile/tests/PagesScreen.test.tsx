@@ -187,6 +187,18 @@ const pageSkeletonJob = (
   commit_started_at: null,
 });
 
+const storyAutofillJob = (
+  status: 'queued' | 'processing' | 'completed' | 'failed' | 'cancelled',
+) => ({
+  ...pageSkeletonJob(status),
+  id: 'job-story-autofill-1',
+  job_type: 'episode_story_autofill' as const,
+  params: {
+    episode_id: episode.id,
+    language: 'ja' as const,
+  },
+});
+
 const flushQueries = async (): Promise<void> => {
   for (let index = 0; index < 5; index += 1) {
     await Promise.resolve();
@@ -201,6 +213,7 @@ const flushQueries = async (): Promise<void> => {
 describe('PagesScreen', () => {
   const mountedRenderers: ReactTestRenderer[] = [];
   const api = {
+    autofillEpisodePagesFromStory: vi.fn(),
     createScene: vi.fn(),
     generatePageSkeleton: vi.fn(),
     getChapters: vi.fn(),
@@ -226,6 +239,9 @@ describe('PagesScreen', () => {
       job_id: pageSkeletonJob('queued').id,
       queued: true,
       story_plan_applied: false,
+    });
+    api.autofillEpisodePagesFromStory.mockResolvedValue({
+      job_id: storyAutofillJob('queued').id,
     });
     api.createScene.mockResolvedValue(scene('scene-2', 2, null));
     api.updateScene.mockImplementation(async (id: string, body: Record<string, unknown>) => ({
@@ -321,7 +337,164 @@ describe('PagesScreen', () => {
     expect(tree).toContain('4コマ');
     expect(tree).toContain('既存ページを保護');
     expect(renderer.root.findAllByProps({ label: 'ページ骨格を生成' })).toHaveLength(0);
+    expect(renderer.root.findByProps({ label: 'ストーリーから設定を自動入力' }).props.disabled).toBe(false);
     expect(api.generatePageSkeleton).not.toHaveBeenCalled();
+  });
+
+  it('Story自動入力は保存済みPageへ明示的に開始し正確なjob IDだけを監視する', async () => {
+    api.getPages.mockResolvedValue({ pages: [page] });
+    api.getJob.mockResolvedValue(storyAutofillJob('processing'));
+    const renderer = await renderScreen();
+    await selectEpisode(renderer);
+
+    await act(async () => {
+      const button = renderer.root.findByProps({ label: 'ストーリーから設定を自動入力' });
+      button.props.onPress();
+      button.props.onPress();
+      await flushQueries();
+    });
+
+    expect(api.autofillEpisodePagesFromStory).toHaveBeenCalledTimes(1);
+    expect(api.autofillEpisodePagesFromStory).toHaveBeenCalledWith(episode.id, 'ja', null);
+    expect(api.getJob).toHaveBeenCalledWith(storyAutofillJob('processing').id, null);
+    expect(JSON.stringify(renderer.toJSON())).toContain('ストーリーからの自動入力を受け付けました');
+    expect(renderer.root.findByProps({ accessibilityLabel: '場所' }).props.editable).toBe(false);
+  });
+
+  it('Story自動入力のjob IDに別種類のjobが返った場合は監視を解除する', async () => {
+    api.getPages.mockResolvedValue({ pages: [page] });
+    api.getJob.mockResolvedValue({
+      ...pageSkeletonJob('processing'),
+      id: storyAutofillJob('processing').id,
+    });
+    const renderer = await renderScreen();
+    await selectEpisode(renderer);
+
+    await act(async () => {
+      renderer.root.findByProps({ label: 'ストーリーから設定を自動入力' }).props.onPress();
+      await flushQueries();
+    });
+
+    expect(JSON.stringify(renderer.toJSON())).toContain('生成状況を確認できませんでした');
+    expect(renderer.root.findByProps({ accessibilityLabel: '場所' }).props.editable).toBe(true);
+  });
+
+  it.each([
+    ['確定済み', { ...page, status: 'confirmed' as const }, '確定済みページを再オープン'],
+    ['画像生成中', { ...page, status: 'generating' as const }, '画像生成中のページがあるため'],
+    ['枠なし', { ...page, frame_count: 0, panel_count: 0 }, 'ページとコマの骨格を整えて'],
+    ['コマ数不一致', { ...page, frame_count: 4, panel_count: 3 }, 'ページとコマの骨格を整えて'],
+  ])('%sのPageがある場合はStory自動入力を開始しない', async (_label, blockedPage, message) => {
+    api.getPages.mockResolvedValue({ pages: [blockedPage] });
+    const renderer = await renderScreen();
+    await selectEpisode(renderer);
+
+    const button = renderer.root.findByProps({ label: 'ストーリーから設定を自動入力' });
+    expect(button.props.disabled).toBe(true);
+    expect(JSON.stringify(renderer.toJSON())).toContain(message);
+    await act(async () => {
+      button.props.onPress();
+      await flushQueries();
+    });
+    expect(api.autofillEpisodePagesFromStory).not.toHaveBeenCalled();
+  });
+
+  it('33ページ以上ある場合は上限を明示してStory自動入力を開始しない', async () => {
+    api.getPages.mockResolvedValue({
+      pages: Array.from({ length: 33 }, (_, index) => ({
+        ...page,
+        id: `page-${index + 1}`,
+        page_number: index + 1,
+      })),
+    });
+    const renderer = await renderScreen();
+    await selectEpisode(renderer);
+
+    const button = renderer.root.findByProps({ label: 'ストーリーから設定を自動入力' });
+    expect(button.props.disabled).toBe(true);
+    expect(JSON.stringify(renderer.toJSON())).toContain('自動入力できるのは32ページ以内です');
+    expect(api.autofillEpisodePagesFromStory).not.toHaveBeenCalled();
+  });
+
+  it('dirty Sceneは保存に成功した後だけStory自動入力へ進み中止と保存失敗では送信しない', async () => {
+    api.getPages.mockResolvedValue({ pages: [page] });
+    const resolveDirtyAction = vi.fn()
+      .mockResolvedValueOnce('cancel')
+      .mockResolvedValueOnce('save')
+      .mockResolvedValueOnce('save');
+    let saveAttempts = 0;
+    api.updateScene.mockImplementation(async (id: string, body: Record<string, unknown>) => {
+      saveAttempts += 1;
+      if (saveAttempts === 1) {
+        throw new Error('network');
+      }
+      return {
+        ...scene(id, 1, 'ローリストン・ガーデン'),
+        ...body,
+      };
+    });
+    api.getJob.mockResolvedValue(storyAutofillJob('processing'));
+    const renderer = await renderScreen({ resolveDirtyAction });
+    await selectEpisode(renderer);
+    await act(async () => {
+      renderer.root.findByProps({ accessibilityLabel: '場所' }).props.onChangeText('保存対象');
+    });
+
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      await act(async () => {
+        renderer.root.findByProps({ label: 'ストーリーから設定を自動入力' }).props.onPress();
+        await flushQueries();
+      });
+    }
+
+    expect(api.updateScene).toHaveBeenCalledTimes(2);
+    expect(api.autofillEpisodePagesFromStory).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['completed', 'ストーリーからページ設定を自動入力しました'],
+    ['failed', 'ストーリーから設定を自動入力できませんでした'],
+    ['cancelled', 'ストーリーからの自動入力はキャンセルされました'],
+  ] as const)('Story自動入力jobが%sの場合は専用の安定文言だけを表示する', async (status, message) => {
+    api.getPages.mockResolvedValue({ pages: [page] });
+    api.getJob.mockResolvedValue({
+      ...storyAutofillJob(status),
+      error_message: 'raw provider story detail',
+    });
+    const renderer = await renderScreen();
+    await selectEpisode(renderer);
+
+    await act(async () => {
+      renderer.root.findByProps({ label: 'ストーリーから設定を自動入力' }).props.onPress();
+      await flushQueries();
+    });
+
+    const tree = JSON.stringify(renderer.toJSON());
+    expect(tree).toContain(message);
+    expect(tree).not.toContain('raw provider story detail');
+    expect(tree).not.toContain('ページ骨格を生成しました');
+  });
+
+  it('Story自動入力POSTの通信失敗後にactive jobを履歴から復元する', async () => {
+    api.getPages.mockResolvedValue({ pages: [page] });
+    api.autofillEpisodePagesFromStory.mockRejectedValue(
+      new ApiError('NETWORK_ERROR', 0, 'raw network'),
+    );
+    api.getJobs
+      .mockResolvedValueOnce({ jobs: [], next_cursor: null })
+      .mockResolvedValueOnce({ jobs: [storyAutofillJob('processing')], next_cursor: null });
+    api.getJob.mockResolvedValue(storyAutofillJob('processing'));
+    const renderer = await renderScreen();
+    await selectEpisode(renderer);
+
+    await act(async () => {
+      renderer.root.findByProps({ label: 'ストーリーから設定を自動入力' }).props.onPress();
+      await flushQueries();
+    });
+
+    expect(api.getJobs).toHaveBeenCalledTimes(2);
+    expect(api.getJob).toHaveBeenCalledWith(storyAutofillJob('processing').id, null);
+    expect(JSON.stringify(renderer.toJSON())).not.toContain('raw network');
   });
 
   it('Page一覧を取得できない場合は生成を止め再試行できる', async () => {
@@ -414,20 +587,23 @@ describe('PagesScreen', () => {
     expect(JSON.stringify(renderer.toJSON())).toContain('生成処理を実行しています');
   });
 
-  it('Story AIのactive jobも同じ話のPage編集と骨格生成を止める', async () => {
+  it('Story AIのactive jobも同じ話のPage編集と自動入力を止める', async () => {
     const storyJob = {
       ...pageSkeletonJob('processing'),
       job_type: 'episode_story_autofill' as const,
       params: { episode_id: episode.id, language: 'ja' as const },
     };
+    api.getPages.mockResolvedValue({ pages: [page] });
     api.getJobs.mockResolvedValue({ jobs: [storyJob], next_cursor: null });
     api.getJob.mockResolvedValue(storyJob);
     const renderer = await renderScreen();
     await selectEpisode(renderer);
 
     expect(renderer.root.findByProps({ accessibilityLabel: '場所' }).props.editable).toBe(false);
-    expect(renderer.root.findByProps({ label: 'ページ骨格を生成' }).props.disabled).toBe(true);
+    expect(renderer.root.findByProps({ label: 'ストーリーから設定を自動入力' }).props.disabled).toBe(true);
+    expect(renderer.root.findAllByProps({ label: 'ページ骨格を生成' })).toHaveLength(0);
     expect(api.generatePageSkeleton).not.toHaveBeenCalled();
+    expect(api.autofillEpisodePagesFromStory).not.toHaveBeenCalled();
   });
 
   it('表示後に他端末で開始されたactive jobを定期履歴更新で検出する', async () => {
@@ -618,6 +794,33 @@ describe('PagesScreen', () => {
     });
 
     expect(JSON.stringify(renderer.toJSON())).toContain('ページ骨格を生成しました');
+    expect(api.getJob).toHaveBeenCalledTimes(terminalCalls);
+  });
+
+  it('Story自動入力もpoll途中のterminal到達を専用文言で反映して監視を停止する', async () => {
+    let terminal = false;
+    api.getPages.mockResolvedValue({ pages: [page] });
+    api.getJob.mockImplementation(async () => storyAutofillJob(
+      terminal ? 'completed' : 'processing',
+    ));
+    const renderer = await renderScreen({ jobPollIntervalMs: 10 });
+    await selectEpisode(renderer);
+    await act(async () => {
+      renderer.root.findByProps({ label: 'ストーリーから設定を自動入力' }).props.onPress();
+      await flushQueries();
+    });
+    terminal = true;
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      await flushQueries();
+    });
+    const terminalCalls = api.getJob.mock.calls.length;
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      await flushQueries();
+    });
+
+    expect(JSON.stringify(renderer.toJSON())).toContain('ストーリーからページ設定を自動入力しました');
     expect(api.getJob).toHaveBeenCalledTimes(terminalCalls);
   });
 

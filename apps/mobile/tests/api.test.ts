@@ -534,6 +534,50 @@ describe('LyraMobileApiClient', () => {
     ]);
   });
 
+  it('Story自動入力をlanguageだけのbodyと同じorganization scopeで開始する', async () => {
+    const organizationId = '55555555-5555-4555-8555-555555555555';
+    const accepted = { job_id: buildPageSkeletonJob().id };
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(accepted));
+    const api = new LyraMobileApiClient({
+      apiBaseUrl: 'https://api.example.com',
+      auth: new FakeAuthSession(),
+      fetcher,
+    });
+
+    await expect(api.autofillEpisodePagesFromStory(
+      buildEpisode().id,
+      'ja',
+      organizationId,
+    )).resolves.toEqual(accepted);
+
+    expect(fetcher).toHaveBeenCalledWith(
+      `https://api.example.com/api/episodes/${buildEpisode().id}/autofill-pages-from-story?organization_id=${organizationId}`,
+      expect.objectContaining({
+        body: JSON.stringify({ language: 'ja' }),
+        method: 'POST',
+      }),
+    );
+  });
+
+  it('Story自動入力の契約外success payloadを拒否する', async () => {
+    const api = new LyraMobileApiClient({
+      apiBaseUrl: 'https://api.example.com',
+      auth: new FakeAuthSession(),
+      fetcher: vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({
+        job_id: buildPageSkeletonJob().id,
+        queued: true,
+      })),
+    });
+
+    await expect(api.autofillEpisodePagesFromStory(
+      buildEpisode().id,
+      'en',
+    )).rejects.toMatchObject({
+      code: 'INVALID_API_RESPONSE',
+      status: 502,
+    });
+  });
+
   it('Page骨格とjobの契約外success payloadを拒否する', async () => {
     const invalidPageApi = new LyraMobileApiClient({
       apiBaseUrl: 'https://api.example.com',
