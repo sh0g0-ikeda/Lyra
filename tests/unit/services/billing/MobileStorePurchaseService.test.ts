@@ -313,6 +313,39 @@ describe('MobileStorePurchaseService', () => {
     });
   });
 
+  it('client verify後に同じApple notificationが重複してもcreditを二重付与しない', async () => {
+    const repository = new FakeStorePurchaseRepository([userId]);
+    const credits = new FakeCreditRepository();
+    const transaction = applePurchase({ eventId: null });
+    const notification = applePurchase({ eventId: 'apple-notification-1' });
+    const apple: AppleStorePurchaseVerifierPort = {
+      async verifyTransaction() {
+        return transaction;
+      },
+      async verifyNotification() {
+        return notification;
+      },
+    };
+    const service = createService(
+      repository,
+      credits,
+      apple,
+      new FakeGoogleVerifier(),
+    );
+
+    await service.verifyApplePurchase({
+      userId,
+      signedTransaction: 'client-verify',
+      environment: 'sandbox',
+    });
+    await service.handleAppleNotification('signed-notification');
+    await service.handleAppleNotification('signed-notification');
+
+    expect(credits.balance.purchasedCredits).toBe(10);
+    expect(credits.ledger).toHaveLength(1);
+    expect(repository.purchases[0]?.grantedCredits).toBe(10);
+  });
+
   it('Google linked purchaseを同じuserの旧subscription失効後に切り替える', async () => {
     const repository = new FakeStorePurchaseRepository([userId]);
     const google = new FakeGoogleVerifier(
@@ -343,7 +376,7 @@ describe('MobileStorePurchaseService', () => {
 function createService(
   storePurchaseRepository: FakeStorePurchaseRepository,
   creditRepository: FakeCreditRepository,
-  appleVerifier: FakeAppleVerifier,
+  appleVerifier: AppleStorePurchaseVerifierPort,
   googleVerifier: FakeGoogleVerifier,
 ): MobileStorePurchaseService {
   return new MobileStorePurchaseService({
