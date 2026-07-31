@@ -11,9 +11,24 @@ const generationJobHistoryCursorWireSchema = z
     i: z.string().uuid(),
   })
   .strict();
+const workListCursorWireSchema = z
+  .object({
+    v: z.literal(1),
+    k: z.literal('works'),
+    u: z.string().min(1),
+    c: z.string().min(1),
+    i: z.string().uuid(),
+  })
+  .strict();
 
 export interface GenerationJobHistoryCursor {
   activeRank: 0 | 1;
+  createdAt: Date;
+  id: string;
+}
+
+export interface WorkListCursor {
+  updatedAt: Date;
   createdAt: Date;
   id: string;
 }
@@ -74,6 +89,58 @@ export function decodeGenerationJobHistoryCursor(
   }
 }
 
+export function encodeWorkListCursor(cursor: WorkListCursor): string {
+  const payload = workListCursorWireSchema.parse({
+    v: 1,
+    k: 'works',
+    u: cursor.updatedAt.toISOString(),
+    c: cursor.createdAt.toISOString(),
+    i: cursor.id,
+  });
+
+  return Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
+}
+
+export function decodeWorkListCursor(encoded: string): WorkListCursor {
+  if (
+    encoded.length === 0
+    || encoded.length > MAX_CURSOR_LENGTH
+    || !/^[A-Za-z0-9_-]+$/u.test(encoded)
+  ) {
+    throwInvalidCursor();
+  }
+
+  try {
+    const decoded = Buffer.from(encoded, 'base64url').toString('utf8');
+    if (Buffer.from(decoded, 'utf8').toString('base64url') !== encoded) {
+      throwInvalidCursor();
+    }
+
+    const parsedJson: unknown = JSON.parse(decoded);
+    const parsed = workListCursorWireSchema.parse(parsedJson);
+    if (JSON.stringify(parsed) !== decoded) {
+      throwInvalidCursor();
+    }
+
+    return {
+      updatedAt: parseCanonicalCursorDate(parsed.u),
+      createdAt: parseCanonicalCursorDate(parsed.c),
+      id: parsed.i,
+    };
+  } catch {
+    throwInvalidCursor();
+  }
+}
+
 function throwInvalidCursor(): never {
   throw new ValidationError('cursor is invalid');
+}
+
+function parseCanonicalCursorDate(value: string): Date {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime()) || date.toISOString() !== value) {
+    throwInvalidCursor();
+  }
+
+  return date;
 }

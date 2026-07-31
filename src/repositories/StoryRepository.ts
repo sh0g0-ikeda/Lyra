@@ -22,7 +22,12 @@ import type {
   StoryCollaborationTarget,
   StoryEntitySummary,
 } from '../domain/types/storyAi.js';
-import { ConflictError, ValidationError } from '../domain/errors/index.js';
+import {
+  ConfigurationError,
+  ConflictError,
+  ValidationError,
+} from '../domain/errors/index.js';
+import type { WorkListCursor } from '../domain/pagination.js';
 import { normalizeEpisodeStoryInput } from '../domain/episodeStoryInput.js';
 import type { DatabaseClient, TransactionRunner } from '../lib/db.js';
 import { isUniqueViolation } from '../lib/dbErrors.js';
@@ -40,6 +45,7 @@ export type {
   UpdateWorkInput,
   Work,
 };
+export type { WorkListCursor } from '../domain/pagination.js';
 
 export interface StoryRepository {
   findWorksByUserId(userId: string, organizationId?: string | null): Promise<Work[]>;
@@ -93,6 +99,24 @@ export interface StoryRepository {
     expectedPageCount: number,
     organizationId?: string | null,
   ): Promise<boolean>;
+}
+
+export interface WorkListPageRequest {
+  limit: number;
+  cursor: WorkListCursor | null;
+}
+
+export interface WorkListPage {
+  works: Work[];
+  nextCursor: WorkListCursor | null;
+}
+
+export interface WorkListPaginationRepository {
+  findWorksPageByUserId(
+    userId: string,
+    request: WorkListPageRequest,
+    organizationId?: string | null,
+  ): Promise<WorkListPage>;
 }
 
 interface WorkRow extends QueryResultRow {
@@ -242,7 +266,9 @@ interface SkeletonLockRow extends QueryResultRow {
   rollback_safe_page_count?: number;
 }
 
-export class PostgresStoryRepository implements StoryRepository {
+export class PostgresStoryRepository
+  implements StoryRepository, WorkListPaginationRepository
+{
   public constructor(
     private readonly client: DatabaseClient,
     private readonly transactionRunner?: TransactionRunner,
@@ -273,6 +299,81 @@ export class PostgresStoryRepository implements StoryRepository {
     );
 
     return result.rows.map(mapWorkRow);
+  }
+
+  public async findWorksPageByUserId(
+    userId: string,
+    request: WorkListPageRequest,
+    organizationId: string | null = null,
+  ): Promise<WorkListPage> {
+    if (
+      !Number.isSafeInteger(request.limit)
+      || request.limit < 1
+      || request.limit > 100
+    ) {
+      throw new ConfigurationError('Work list page limit is invalid');
+    }
+
+    const result = await this.client.query<WorkRow>(
+      `
+      SELECT works.*
+      FROM works
+      WHERE (
+        ($2::uuid IS NULL
+          AND works.user_id = $1::uuid
+          AND works.organization_id IS NULL)
+        OR (
+          $2::uuid IS NOT NULL
+          AND works.organization_id = $2::uuid
+          AND EXISTS (
+            SELECT 1
+            FROM organization_members
+            WHERE organization_members.organization_id = works.organization_id
+              AND organization_members.user_id = $1::uuid
+              AND organization_members.status = 'active'
+          )
+        )
+      )
+      AND (
+        $3::timestamptz IS NULL
+        OR works.updated_at < $3::timestamptz
+        OR (
+          works.updated_at = $3::timestamptz
+          AND (
+            works.created_at < $4::timestamptz
+            OR (
+              works.created_at = $4::timestamptz
+              AND works.id < $5::uuid
+            )
+          )
+        )
+      )
+      ORDER BY works.updated_at DESC, works.created_at DESC, works.id DESC
+      LIMIT $6
+      `,
+      [
+        userId,
+        organizationId,
+        request.cursor?.updatedAt ?? null,
+        request.cursor?.createdAt ?? null,
+        request.cursor?.id ?? null,
+        request.limit + 1,
+      ],
+    );
+
+    const rows = result.rows.slice(0, request.limit);
+    const lastRow = rows.at(-1);
+    return {
+      works: rows.map(mapWorkRow),
+      nextCursor:
+        result.rows.length > request.limit && lastRow !== undefined
+          ? {
+              updatedAt: lastRow.updated_at,
+              createdAt: lastRow.created_at,
+              id: lastRow.id,
+            }
+          : null,
+    };
   }
 
   public async createWork(userId: string, input: CreateWorkInput): Promise<Work> {

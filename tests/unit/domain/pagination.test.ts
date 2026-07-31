@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   decodeGenerationJobHistoryCursor,
+  decodeWorkListCursor,
   encodeGenerationJobHistoryCursor,
+  encodeWorkListCursor,
 } from '../../../src/domain/pagination.js';
 
 const cursor = {
@@ -46,5 +48,32 @@ describe('generation job history cursor', () => {
     expect(() => decodeGenerationJobHistoryCursor('a'.repeat(513))).toThrow(
       'cursor is invalid',
     );
+  });
+});
+
+describe('work list cursor', () => {
+  const workCursor = {
+    updatedAt: new Date('2026-07-31T00:00:00.000Z'),
+    createdAt: new Date('2026-07-30T00:00:00.000Z'),
+    id: '44444444-4444-4444-8444-444444444444',
+  };
+
+  it('更新日時・作成日時・IDをcanonical base64urlで往復する', () => {
+    const encoded = encodeWorkListCursor(workCursor);
+
+    expect(encoded).toMatch(/^[A-Za-z0-9_-]+$/u);
+    expect(decodeWorkListCursor(encoded)).toEqual(workCursor);
+  });
+
+  it.each([
+    ['別endpoint kind', { v: 1, k: 'entities', u: workCursor.updatedAt.toISOString(), c: workCursor.createdAt.toISOString(), i: workCursor.id }],
+    ['version不一致', { v: 2, k: 'works', u: workCursor.updatedAt.toISOString(), c: workCursor.createdAt.toISOString(), i: workCursor.id }],
+    ['不正更新日時', { v: 1, k: 'works', u: 'invalid', c: workCursor.createdAt.toISOString(), i: workCursor.id }],
+    ['非canonical作成日時', { v: 1, k: 'works', u: workCursor.updatedAt.toISOString(), c: '2026-07-30T09:00:00+09:00', i: workCursor.id }],
+    ['不正UUID', { v: 1, k: 'works', u: workCursor.updatedAt.toISOString(), c: workCursor.createdAt.toISOString(), i: 'work-1' }],
+  ])('%sを拒否する', (_name, payload) => {
+    const encoded = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
+
+    expect(() => decodeWorkListCursor(encoded)).toThrow('cursor is invalid');
   });
 });

@@ -100,7 +100,7 @@ Endpoint count: 105
 | `/api/story/collaborate` | POST | Authenticated | Contracted SSE | storyCollaborationEventSchema | Complete collection | `src/routes/story.ts` |
 | `/api/story/improve-episode-draft` | POST | Authenticated | Strict JSON | `storyEpisodeImprovementSchema` | Complete collection | `src/routes/story.ts` |
 | `/api/webhooks/stripe` | POST | Provider signed | Provider JSON ACK | Stripe signature-verified acknowledgement | Complete collection | `src/routes/webhooks.ts` |
-| `/api/works` | GET | Authenticated | Strict JSON | `worksResponseSchema` | Complete collection | `src/routes/story.ts` |
+| `/api/works` | GET | Authenticated | Strict JSON | `worksResponseSchema` | Optional opaque cursor (1-100; max 512 chars) | `src/routes/story.ts` |
 | `/api/works` | POST | Authenticated | Strict JSON | `workSchema` | Complete collection | `src/routes/story.ts` |
 | `/api/works/:id` | GET | Authenticated | Strict JSON | `workSchema` | Complete collection | `src/routes/story.ts` |
 | `/api/works/:id` | PUT | Authenticated | Strict JSON | `workSchema` | Complete collection | `src/routes/story.ts` |

@@ -15,6 +15,9 @@ import type {
   CreateWorkInput,
   Episode,
   StoryRepository,
+  WorkListPage,
+  WorkListPaginationRepository,
+  WorkListPageRequest,
   UpdateChapterInput,
   UpdateEpisodeInput,
   UpdateWorkInput,
@@ -25,13 +28,28 @@ import type { EntityReferenceReader } from '../../../../src/repositories/EntityR
 
 const now = new Date('2026-04-22T00:00:00.000Z');
 
-class FakeStoryRepository implements StoryRepository {
+class FakeStoryRepository implements StoryRepository, WorkListPaginationRepository {
   private readonly works = new Map<string, Work>();
   private readonly chapters = new Map<string, Chapter>();
   private readonly episodes = new Map<string, Episode>();
+  public workPage: WorkListPage = { works: [], nextCursor: null };
+  public workPageRequests: Array<{
+    userId: string;
+    request: WorkListPageRequest;
+    organizationId: string | null;
+  }> = [];
 
   public async findWorksByUserId(userId: string): Promise<Work[]> {
     return [...this.works.values()].filter((work) => work.userId === userId);
+  }
+
+  public async findWorksPageByUserId(
+    userId: string,
+    request: WorkListPageRequest,
+    organizationId: string | null = null,
+  ): Promise<WorkListPage> {
+    this.workPageRequests.push({ userId, request, organizationId });
+    return this.workPage;
   }
 
   public async createWork(userId: string, input: CreateWorkInput): Promise<Work> {
@@ -370,6 +388,30 @@ class FakeEntityReferenceReader implements EntityReferenceReader {
 }
 
 describe('StoryService', () => {
+  it('作品pageをscope・limit・cursor付きでRepositoryへ委譲する', async () => {
+    const repository = new FakeStoryRepository();
+    const service = new StoryService(repository, new FakeEntityReferenceReader());
+    const cursor = {
+      updatedAt: now,
+      createdAt: now,
+      id: '11111111-1111-4111-8111-111111111111',
+    };
+
+    await service.listWorksPage(
+      'user-1',
+      { limit: 25, cursor },
+      '22222222-2222-4222-8222-222222222222',
+    );
+
+    expect(repository.workPageRequests).toEqual([
+      {
+        userId: 'user-1',
+        request: { limit: 25, cursor },
+        organizationId: '22222222-2222-4222-8222-222222222222',
+      },
+    ]);
+  });
+
   it('creates a work', async () => {
     const service = createService();
 

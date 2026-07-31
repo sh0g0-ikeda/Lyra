@@ -11,6 +11,11 @@ import {
   worksResponseSchema,
 } from '../../packages/api-contract/src/mobileApiSchemas.js';
 import { ConfigurationError, ValidationError } from '../domain/errors/index.js';
+import {
+  decodeWorkListCursor,
+  encodeWorkListCursor,
+  type WorkListCursor,
+} from '../domain/pagination.js';
 import type { Chapter, Episode, Work } from '../domain/types/story.js';
 import {
   collaborateStoryBodySchema,
@@ -57,6 +62,8 @@ export interface StoryRouteDependencies {
   storyCollaborationService: StoryCollaborationServicePort;
   storyService: StoryServicePort;
 }
+
+const MAX_WORK_LIST_PAGE_LIMIT = 100;
 
 export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<AppEnv> {
   const app = new Hono<AppEnv>();
@@ -170,6 +177,25 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
     const user = c.get('user');
     const organizationId = parseOptionalOrganizationId(c);
     await requireOrganizationCapability(c, dependencies, organizationId, 'view_work');
+    const pageRequest = parseWorkListPageRequest(c);
+    if (pageRequest !== null) {
+      const page = await dependencies.storyService.listWorksPage(
+        user.id,
+        pageRequest,
+        organizationId,
+      );
+      const payload = {
+        works: page.works.map(toWorkResponse),
+        next_cursor:
+          page.nextCursor === null
+            ? null
+            : encodeWorkListCursor(page.nextCursor),
+      };
+      return c.json(
+        assertMobileResponseContract(worksResponseSchema, payload),
+      );
+    }
+
     const works = await dependencies.storyService.listWorks(user.id, organizationId);
 
     const payload = { works: works.map(toWorkResponse) };
@@ -546,6 +572,38 @@ function parseUuidParam(c: Context<AppEnv>, name: string): string {
   }
 
   return result.data;
+}
+
+function parseWorkListPageRequest(
+  c: Context<AppEnv>,
+): { limit: number; cursor: WorkListCursor | null } | null {
+  const rawLimit = c.req.query('limit');
+  const rawCursor = c.req.query('cursor');
+  if (rawLimit === undefined && rawCursor === undefined) {
+    return null;
+  }
+  if (rawLimit === undefined || !/^[0-9]+$/u.test(rawLimit)) {
+    throw new ValidationError(
+      'limit must be an integer from 1 to 100 and is required with cursor',
+    );
+  }
+
+  const limit = Number(rawLimit);
+  if (
+    !Number.isSafeInteger(limit)
+    || limit < 1
+    || limit > MAX_WORK_LIST_PAGE_LIMIT
+  ) {
+    throw new ValidationError('limit must be an integer from 1 to 100');
+  }
+
+  return {
+    limit,
+    cursor:
+      rawCursor === undefined
+        ? null
+        : decodeWorkListCursor(rawCursor),
+  };
 }
 
 function toWorkResponse(work: Work): Record<string, unknown> {
