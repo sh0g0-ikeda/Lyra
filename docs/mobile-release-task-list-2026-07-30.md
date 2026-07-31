@@ -260,8 +260,8 @@ Codex単独で進める次の順序は、`CI安定化 → PR-A継続 → 契約�
   - [x] episode exportのprocessing lease・Domain・RepositoryをAPI未接続で統合
     - 証跡: [PR #128](https://github.com/sh0g0-ikeda/Lyra/pull/128)。fresh DB 001〜036、58 invariant / 0 violations、実DBのcreate→冪等再送→claim→stale token拒否→release→reclaim→completeを確認してmainへ統合
     - 安全境界: 専用Worker / Storage / SQS / Route / downloadは未接続。migration適用だけでは機能を有効化せず、既存1ページexport、generation job、credit処理を変更しない
-  - [ ] episode exportのbounded PDF/ZIP builder・source loader・artifact storage・lease-aware WorkerをAPI未接続で統合
-    - 進捗: TDDでPDF/ZIP決定性、WebP変換、pixel/byte上限、S3 HEAD→If-Match Range GET、MIME/ETag/range/magic検証、network/429/5xx限定retry、local traversal防止、stale lease、retryable release、attempt枯渇を確認
+  - [x] episode exportのbounded PDF/ZIP builder・source loader・artifact storage・lease-aware WorkerをAPI未接続で統合
+    - 証跡: [PR #130](https://github.com/sh0g0-ikeda/Lyra/pull/130)。TDDでPDF/ZIP決定性、WebP変換、pixel/byte上限、S3 HEAD→If-Match Range GET、MIME/ETag/range/magic検証、network/429/5xx限定retry、local traversal防止、stale lease、retryable release、attempt枯渇を確認
     - 安全境界: 専用SQS / poller / Route / download URL / cleanup runner / Web・Mobile client / runtime設定は未接続。既存1ページexport、generation queue、credit処理は変更しない
 - [ ] PR-C: Mobile store billing Backend
   - 主な所有: migration 029、Apple/Google verifier、purchase service、webhook、ledger
