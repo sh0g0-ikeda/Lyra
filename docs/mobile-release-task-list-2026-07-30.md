@@ -8,7 +8,7 @@
 
 進捗: 93件完了 / 382件未完了
 
-実装監査基準: `158a96c`（PR #136 initial code head、local full gate成功。GitHub CIは統合前にexact headで再確認）
+実装監査基準: `1d71d38`（PR #142 feature code head、local full gate成功。GitHub CIは統合前にexact headで再確認）
 
 ## 1. 設計ブリーフ
 
@@ -319,7 +319,8 @@ Codex単独で進める次の順序は、`CI安定化 → PR-A継続 → 契約�
   - Mobile章・話削除UI sliceの証跡: [PR #139](https://github.com/sh0g0-ikeda/Lyra/pull/139)。削除確認後にdirty draftの保存・破棄・取消を解決し、成功後だけcacheと選択をsibling / emptyへ更新する。409 / network failureではdraftを保持し、404は再取得で対象消滅を確認後だけstale selectionを除く。Mobile 17 files / 82 tests、両OS export、全Backend / Web gate、fresh DB 001〜039・65 invariant / 0 violations・実DB17 testsを確認
   - Mobile Page / Scene編集sliceの証跡: [PR #140](https://github.com/sh0g0-ikeda/Lyra/pull/140)。既存UI方針どおりSceneをStoryではなくPage tabへ置き、任意Sceneの一覧、最大order + 1作成、場所・時間・雰囲気のchanged-field-only更新、dirty解決、tab離脱、single-flightを追加。422は再取得後に最大orderが増えた場合だけ1回再試行し、page参照と生成競合を安全化するまでScene削除UIは公開しない。Mobile 19 files / 95 tests、両OS export、全Backend / Web gate、fresh DB 001〜039・65 invariant / 0 violations・実DB17 testsを確認
   - Mobile 初回ページ骨格生成sliceの証跡: [PR #141](https://github.com/sh0g0-ikeda/Lyra/pull/141)。Page一覧と初回骨格生成をPage tabへ追加し、`overwrite_existing: false` / `apply_story_plan: false`を型とrequestで固定。dirty Scene解決、別端末のactive job検出、正確なjob ID監視、foreground復帰、terminal / 404 / 一時通信失敗、重複poll防止を追加し、既存Page上書き・Story AI反映・credit変更・Backend変更は未接続のまま維持。Mobile 20 files / 116 tests、両OS export、全Backend / Web gate、fresh DB 001〜039・65 invariant / 0 violations・実DB17 testsを確認
-  - 残り: 生成fileを削除可能にするdurable asset cleanup、Backend endpointがない作品削除・並べ替え、Scene削除Backend安全境界、Story AI自動入力、Characters、Page・コマ編集と画像生成、organization workspace UI。PR-F全体は未完了のまま維持する
+  - Mobile Story自動入力sliceの証跡: [PR #142](https://github.com/sh0g0-ikeda/Lyra/pull/142)。既存Backend契約を使い「ストーリーから設定を自動入力」をPage tabへ追加。confirmed / generating / frame・panel不整合 / 32ページ超を事前拒否し、dirty Scene解決、single-flight、正確なjob ID + type監視、POST応答消失後の履歴復元、専用terminal文言を接続。optimistic update、骨格との自動連鎖、Backend / DB / Worker / credit / cancel UIは変更しない。Mobile 20 files / 131 tests、両OS export、全Backend / Web gate、fresh DB 001〜039・65 invariant / 0 violations・実DB17 testsを確認
+  - 残り: 生成fileを削除可能にするdurable asset cleanup、Backend endpointがない作品削除・並べ替え、Scene削除Backend安全境界、Characters、Page・コマ編集と画像生成、organization workspace UI。PR-F全体は未完了のまま維持する
 - [ ] PR-G: organization / billing UI / store adapter
   - 主な所有: Account、organization管理、`expo-iap` adapter
   - 完了条件: personal/org分離とstore unavailable状態がgreen
