@@ -10,12 +10,13 @@ import { userErrorMessage } from '../lib/userMessages';
 import { useAuthSession } from '../state/AuthSessionProvider';
 import { StoryScreen, type StoryScreenHandle } from './StoryScreen';
 import { PagesScreen, type PagesScreenHandle } from './PagesScreen';
+import { CharactersScreen, type CharactersScreenHandle } from './CharactersScreen';
 
 interface FoundationHomeScreenProps {
   session: CurrentSession;
 }
 
-type HomeTab = 'story' | 'pages' | 'account';
+type HomeTab = 'story' | 'characters' | 'pages' | 'account';
 
 export function FoundationHomeScreen({
   session,
@@ -26,6 +27,7 @@ export function FoundationHomeScreen({
   const [loading, setLoading] = useState(false);
   const tabTransition = useRef<Promise<void> | null>(null);
   const pagesRef = useRef<PagesScreenHandle>(null);
+  const charactersRef = useRef<CharactersScreenHandle>(null);
   const storyRef = useRef<StoryScreenHandle>(null);
 
   const openTab = (nextTab: HomeTab): Promise<void> => {
@@ -38,6 +40,8 @@ export function FoundationHomeScreen({
     const transition = (async (): Promise<void> => {
       const canLeave = activeTab === 'story'
         ? await storyRef.current?.prepareToLeave() ?? true
+        : activeTab === 'characters'
+          ? await charactersRef.current?.prepareToLeave() ?? true
         : activeTab === 'pages'
           ? await pagesRef.current?.prepareToLeave() ?? true
           : true;
@@ -76,6 +80,12 @@ export function FoundationHomeScreen({
           onPress={() => void openTab('story')}
         />
         <TabButton
+          accessibilityLabel={language === 'ja' ? 'キャラを開く' : 'Open Characters'}
+          active={activeTab === 'characters'}
+          label={t(language, 'characters')}
+          onPress={() => void openTab('characters')}
+        />
+        <TabButton
           accessibilityLabel={language === 'ja' ? 'ページを開く' : 'Open Pages'}
           active={activeTab === 'pages'}
           label={t(language, 'pages')}
@@ -95,6 +105,14 @@ export function FoundationHomeScreen({
           language={language}
           organizationId={null}
           ref={storyRef}
+          sessionKey={session.user.id}
+        />
+      ) : activeTab === 'characters' ? (
+        <CharactersScreen
+          api={api}
+          language={language}
+          organizationId={null}
+          ref={charactersRef}
           sessionKey={session.user.id}
         />
       ) : activeTab === 'pages' ? (

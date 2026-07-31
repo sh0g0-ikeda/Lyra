@@ -33,6 +33,19 @@ describe('story query keys', () => {
       'pages',
       'episode-1',
     ]);
+    expect(organization.entities('work-1')).toEqual([
+      'mobile-story',
+      'session-a',
+      'organization:99999999-9999-4999-8999-999999999999',
+      'entities',
+      'work-1',
+    ]);
+    expect(personal.entities('work-1')).not.toEqual(
+      organization.entities('work-1'),
+    );
+    expect(personal.entities('work-1')).not.toEqual(
+      personal.entities('work-2'),
+    );
     expect(organization.jobs()).toEqual([
       'mobile-story',
       'session-a',

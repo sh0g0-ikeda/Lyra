@@ -357,6 +357,123 @@ describe('LyraMobileApiClient', () => {
     });
   });
 
+  it('キャラ一覧をpaginationとorganization scope付きで取得する', async () => {
+    const organizationId = '99999999-9999-4999-8999-999999999999';
+    const entity = buildEntity();
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
+      jsonResponse({ entities: [entity], next_cursor: 'next-page' }),
+    );
+    const api = new LyraMobileApiClient({
+      apiBaseUrl: 'https://api.example.com',
+      auth: new FakeAuthSession(),
+      fetcher,
+    });
+
+    await expect(api.getEntitiesPage(
+      buildWork().id,
+      { limit: 50, cursor: 'cursor value' },
+      organizationId,
+    )).resolves.toEqual({ entities: [entity], next_cursor: 'next-page' });
+    expect(fetcher.mock.calls[0]?.[0]).toBe(
+      `https://api.example.com/api/works/${buildWork().id}/entities?limit=50&cursor=cursor+value&organization_id=${organizationId}`,
+    );
+  });
+
+  it('キャラ作成と更新はhidden fieldsや種類を含めない最小payloadを送る', async () => {
+    const created = buildEntity();
+    const updated = { ...created, name: 'シャーロック・ホームズ' };
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(jsonResponse(created, 201))
+      .mockResolvedValueOnce(jsonResponse(updated));
+    const api = new LyraMobileApiClient({
+      apiBaseUrl: 'https://api.example.com',
+      auth: new FakeAuthSession(),
+      fetcher,
+    });
+
+    await expect(api.createEntity(buildWork().id, {
+      entity_type: 'character',
+      name: 'ホームズ',
+      free_description: null,
+    })).resolves.toEqual(created);
+    await expect(api.updateEntity(created.id, {
+      name: 'シャーロック・ホームズ',
+    })).resolves.toEqual(updated);
+
+    expect(fetcher.mock.calls.map((call) => ({
+      url: call[0],
+      method: call[1]?.method,
+      body: call[1]?.body,
+    }))).toEqual([
+      {
+        url: `https://api.example.com/api/works/${buildWork().id}/entities`,
+        method: 'POST',
+        body: JSON.stringify({
+          entity_type: 'character',
+          name: 'ホームズ',
+          free_description: null,
+        }),
+      },
+      {
+        url: `https://api.example.com/api/entities/${created.id}`,
+        method: 'PUT',
+        body: JSON.stringify({ name: 'シャーロック・ホームズ' }),
+      },
+    ]);
+  });
+
+  it('別作品の一覧・作成responseと別IDの更新responseを採用しない', async () => {
+    const differentWorkEntity = {
+      ...buildEntity(),
+      work_id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    };
+    const differentIdEntity = {
+      ...buildEntity(),
+      id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+    };
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(jsonResponse({
+        entities: [differentWorkEntity],
+        next_cursor: null,
+      }))
+      .mockResolvedValueOnce(jsonResponse(differentWorkEntity, 201))
+      .mockResolvedValueOnce(jsonResponse(differentIdEntity));
+    const api = new LyraMobileApiClient({
+      apiBaseUrl: 'https://api.example.com',
+      auth: new FakeAuthSession(),
+      fetcher,
+    });
+
+    await expect(api.getEntitiesPage(buildWork().id, { limit: 50 }))
+      .rejects.toMatchObject({ code: 'INVALID_API_RESPONSE', status: 502 });
+    await expect(api.createEntity(buildWork().id, {
+      entity_type: 'character',
+      name: 'ホームズ',
+      free_description: null,
+    })).rejects.toMatchObject({ code: 'INVALID_API_RESPONSE', status: 502 });
+    await expect(api.updateEntity(buildEntity().id, { name: '更新' }))
+      .rejects.toMatchObject({ code: 'INVALID_API_RESPONSE', status: 502 });
+  });
+
+  it('キャラ一覧のlimitとcursorを送信前に検証する', async () => {
+    const fetcher = vi.fn<typeof fetch>();
+    const api = new LyraMobileApiClient({
+      apiBaseUrl: 'https://api.example.com',
+      auth: new FakeAuthSession(),
+      fetcher,
+    });
+
+    await expect(api.getEntitiesPage(buildWork().id, { limit: 101 }))
+      .rejects.toMatchObject({ code: 'INVALID_REQUEST', status: 422 });
+    await expect(api.getEntitiesPage(buildWork().id, {
+      limit: 50,
+      cursor: 'x'.repeat(513),
+    })).rejects.toMatchObject({ code: 'INVALID_REQUEST', status: 422 });
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
   it('Story階層の契約外success payloadを保存可能データとして返さない', async () => {
     const api = new LyraMobileApiClient({
       apiBaseUrl: 'https://api.example.com',
@@ -798,6 +915,22 @@ function buildPage(): Record<string, unknown> & { id: string } {
     panel_count: 4,
     frame_count: 4,
     balloon_count: 0,
+    created_at: '2026-07-31T00:00:00.000Z',
+    updated_at: '2026-07-31T00:00:00.000Z',
+  };
+}
+
+function buildEntity(): Record<string, unknown> & { id: string } {
+  return {
+    id: '55555555-5555-4555-8555-555555555555',
+    work_id: buildWork().id,
+    entity_type: 'character',
+    name: 'ホームズ',
+    free_description: null,
+    structured_fields: { age_range: '成人' },
+    prompt_supplement: 'hidden prompt',
+    speech_profile: { tone: 'calm' },
+    status: 'ready',
     created_at: '2026-07-31T00:00:00.000Z',
     updated_at: '2026-07-31T00:00:00.000Z',
   };

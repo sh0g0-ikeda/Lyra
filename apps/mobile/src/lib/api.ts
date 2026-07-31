@@ -5,6 +5,8 @@ import {
   currentSessionSchema,
   episodeSchema,
   episodesResponseSchema,
+  entitiesResponseSchema,
+  entitySchema,
   generationJobHistoryResponseSchema,
   generationJobResponseSchema,
   pageSchema,
@@ -24,6 +26,7 @@ export type CurrentSession = ReturnType<typeof currentSessionSchema.parse>;
 export type WorkRecord = ReturnType<typeof workSchema.parse>;
 export type ChapterRecord = ReturnType<typeof chapterSchema.parse>;
 export type EpisodeRecord = ReturnType<typeof episodeSchema.parse>;
+export type EntityRecord = ReturnType<typeof entitySchema.parse>;
 export type SceneRecord = ReturnType<typeof sceneSchema.parse>;
 export type PageRecord = ReturnType<typeof pageSchema.parse>;
 export type GenerationJobRecord = ReturnType<typeof generationJobResponseSchema.parse>;
@@ -39,6 +42,21 @@ export interface ListJobsPageInput {
   limit: number;
   cursor?: string | null;
 }
+
+export interface ListEntitiesPageInput {
+  limit: number;
+  cursor?: string | null;
+}
+
+export interface CreateEntityInput {
+  entity_type: 'character' | 'nonhuman' | 'object';
+  name: string;
+  free_description: string | null;
+}
+
+export type UpdateEntityInput =
+  | { name: string; free_description?: string | null }
+  | { name?: never; free_description: string | null };
 
 export interface GeneratePageSkeletonInput {
   overwrite_existing: false;
@@ -145,6 +163,63 @@ export class LyraMobileApiClient {
       ),
       chaptersResponseSchema,
     );
+  }
+
+  public async getEntitiesPage(
+    workId: string,
+    input: ListEntitiesPageInput,
+    organizationId: string | null = null,
+  ): Promise<{ entities: EntityRecord[]; next_cursor: string | null }> {
+    const query = buildBoundedPageQuery(input, organizationId);
+    const response = await this.requestJson(
+      `/api/works/${encodeURIComponent(workId)}/entities?${query.toString()}`,
+      entitiesResponseSchema,
+    );
+    if (response.entities.some((entity) => entity.work_id !== workId)) {
+      throw invalidApiResponse();
+    }
+    return {
+      entities: response.entities,
+      next_cursor: response.next_cursor ?? null,
+    };
+  }
+
+  public async createEntity(
+    workId: string,
+    body: CreateEntityInput,
+    organizationId: string | null = null,
+  ): Promise<EntityRecord> {
+    const entity = await this.requestJson(
+      withOrganizationQuery(
+        `/api/works/${encodeURIComponent(workId)}/entities`,
+        organizationId,
+      ),
+      entitySchema,
+      { method: 'POST', body },
+    );
+    if (entity.work_id !== workId) {
+      throw invalidApiResponse();
+    }
+    return entity;
+  }
+
+  public async updateEntity(
+    entityId: string,
+    body: UpdateEntityInput,
+    organizationId: string | null = null,
+  ): Promise<EntityRecord> {
+    if (Object.keys(body).length === 0) {
+      throw new ApiError('INVALID_REQUEST', 422, 'The request is invalid.');
+    }
+    const entity = await this.requestJson(
+      withOrganizationQuery(`/api/entities/${encodeURIComponent(entityId)}`, organizationId),
+      entitySchema,
+      { method: 'PUT', body },
+    );
+    if (entity.id !== entityId) {
+      throw invalidApiResponse();
+    }
+    return entity;
   }
 
   public createWork(
@@ -543,6 +618,33 @@ function appendOrganizationQuery(
   if (organizationId !== null) {
     query.set('organization_id', organizationId);
   }
+}
+
+function buildBoundedPageQuery(
+  input: { limit: number; cursor?: string | null },
+  organizationId: string | null,
+): URLSearchParams {
+  if (!Number.isSafeInteger(input.limit) || input.limit < 1 || input.limit > 100) {
+    throw new ApiError('INVALID_REQUEST', 422, 'The request is invalid.');
+  }
+  const query = new URLSearchParams({ limit: String(input.limit) });
+  const cursor = input.cursor?.trim();
+  if (cursor !== undefined && cursor.length > 0) {
+    if (cursor.length > 512) {
+      throw new ApiError('INVALID_REQUEST', 422, 'The request is invalid.');
+    }
+    query.set('cursor', cursor);
+  }
+  appendOrganizationQuery(query, organizationId);
+  return query;
+}
+
+function invalidApiResponse(): ApiError {
+  return new ApiError(
+    'INVALID_API_RESPONSE',
+    502,
+    'The server returned an invalid response.',
+  );
 }
 
 function withOrganizationQuery(path: string, organizationId: string | null): string {
