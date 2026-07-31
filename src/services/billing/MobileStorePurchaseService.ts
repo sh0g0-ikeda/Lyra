@@ -487,6 +487,7 @@ export class MobileStorePurchaseService implements MobileStorePurchaseServicePor
             transactionKey,
             eventKey,
             client,
+            accountDeleted: user.accountDeleted,
           });
         }
 
@@ -560,14 +561,22 @@ export class MobileStorePurchaseService implements MobileStorePurchaseServicePor
           );
 
         let creditsChanged = 0;
-        if (eventRecorded && operation === 'grant') {
+        if (
+          !user.accountDeleted
+          && eventRecorded
+          && operation === 'grant'
+        ) {
           creditsChanged = await this.grantCredits(
             purchase,
             product,
             effectiveTransactionKey,
             client,
           );
-        } else if (eventRecorded && operation === 'reverse') {
+        } else if (
+          !user.accountDeleted
+          && eventRecorded
+          && operation === 'reverse'
+        ) {
           creditsChanged = await this.reverseCredits(
             purchase,
             product,
@@ -576,7 +585,11 @@ export class MobileStorePurchaseService implements MobileStorePurchaseServicePor
           );
         }
 
-        if (purchase.kind === 'subscription' && !transition.ignoredAsStale) {
+        if (
+          !user.accountDeleted
+          && purchase.kind === 'subscription'
+          && !transition.ignoredAsStale
+        ) {
           await this.refreshPersonalPlan(user.id, client);
         }
 
@@ -647,6 +660,7 @@ export class MobileStorePurchaseService implements MobileStorePurchaseServicePor
     transactionKey: string | null;
     eventKey: string;
     client: DatabaseClient;
+    accountDeleted: boolean;
   }): Promise<MobileStorePurchaseResult> {
     const eventRecorded =
       await this.dependencies.storePurchaseRepository.recordEventIfNew(
@@ -662,7 +676,7 @@ export class MobileStorePurchaseService implements MobileStorePurchaseServicePor
         },
         input.client,
       );
-    const creditsChanged = eventRecorded
+    const creditsChanged = eventRecorded && !input.accountDeleted
       ? await this.reverseCredits(
           { ...input.existing, expiresAt: input.verified.expiresAt },
           input.product,
@@ -838,6 +852,14 @@ export class MobileStorePurchaseService implements MobileStorePurchaseServicePor
       if (product === null) {
         return;
       }
+      const user =
+        await this.dependencies.storePurchaseRepository.findUserForUpdate(
+          existing.userId,
+          client,
+        );
+      if (user === null) {
+        return;
+      }
       if (
         existing.kind === 'subscription' &&
         transactionKey !== null &&
@@ -858,7 +880,7 @@ export class MobileStorePurchaseService implements MobileStorePurchaseServicePor
             },
             client,
           );
-        if (eventRecorded) {
+        if (eventRecorded && !user.accountDeleted) {
           await this.reverseCredits(existing, product, transactionKey, client);
         }
         return;
@@ -897,7 +919,7 @@ export class MobileStorePurchaseService implements MobileStorePurchaseServicePor
           },
           client,
         );
-      if (eventRecorded) {
+      if (eventRecorded && !user.accountDeleted) {
         await this.reverseCredits(
           purchase,
           product,
@@ -905,7 +927,11 @@ export class MobileStorePurchaseService implements MobileStorePurchaseServicePor
           client,
         );
       }
-      if (purchase.kind === 'subscription' && !transition.ignoredAsStale) {
+      if (
+        !user.accountDeleted
+        && purchase.kind === 'subscription'
+        && !transition.ignoredAsStale
+      ) {
         await this.refreshPersonalPlan(purchase.userId, client);
       }
     });

@@ -218,7 +218,11 @@ export interface OrganizationRepository {
     client: DatabaseClient,
   ): Promise<OrganizationMember>;
   listWorkspacesByUserId(userId: string): Promise<OrganizationWorkspaceSummary[]>;
-  findOrganizationById(organizationId: string, client?: DatabaseClient): Promise<Organization | null>;
+  findOrganizationById(
+    organizationId: string,
+    client?: DatabaseClient,
+    forUpdate?: boolean,
+  ): Promise<Organization | null>;
   findMemberByOrganizationAndUser(
     organizationId: string,
     userId: string,
@@ -718,12 +722,14 @@ export class PostgresOrganizationRepository
   public async findOrganizationById(
     organizationId: string,
     client: DatabaseClient = this.client,
+    forUpdate = false,
   ): Promise<Organization | null> {
     const result = await client.query<OrganizationRow>(
       `
       SELECT *
       FROM organizations
       WHERE id = $1
+      ${forUpdate ? 'FOR UPDATE' : ''}
       `,
       [organizationId],
     );

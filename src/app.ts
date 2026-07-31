@@ -25,6 +25,12 @@ import {
 import {
   S3EpisodeExportDownloadSigner,
 } from './infrastructure/aws/S3EpisodeExportDownloadSigner.js';
+import {
+  createCognitoAccountIdentityDeletion,
+} from './infrastructure/aws/CognitoAccountIdentityDeletion.js';
+import {
+  createS3AccountAssetDeletion,
+} from './infrastructure/aws/S3AccountAssetDeletion.js';
 import { S3StoredImageLoader, type StoredImageLoaderPort } from './infrastructure/aws/S3StoredImageLoader.js';
 import { LocalFileFinalPageImageStorage } from './infrastructure/local/LocalFileFinalPageImageStorage.js';
 import { LocalFileEntityImageStorage } from './infrastructure/local/LocalFileEntityImageStorage.js';
@@ -48,6 +54,12 @@ import {
   type StripeBillingClientPort,
 } from './infrastructure/stripe/StripeBillingClient.js';
 import {
+  createStripeAccountSubscriptionCancellation,
+} from './infrastructure/stripe/StripeAccountSubscriptionCancellation.js';
+import {
+  resolveAccountDeletionConfig,
+} from './infrastructure/account/AccountDeletionConfig.js';
+import {
   createMobileStoreBillingIntegration,
 } from './infrastructure/mobileStore/createMobileStoreBillingIntegration.js';
 import type { GooglePubSubPushVerifier } from './infrastructure/google/GooglePubSubPushVerifier.js';
@@ -68,6 +80,7 @@ import {
 import { createRequestContextMiddleware } from './middleware/requestContext.js';
 import { createSecurityHeadersMiddleware } from './middleware/securityHeaders.js';
 import { PostgresBillingRepository } from './repositories/BillingRepository.js';
+import { PostgresAccountDeletionRepository } from './repositories/AccountDeletionRepository.js';
 import { PostgresCompositionGalleryRepository } from './repositories/CompositionGalleryRepository.js';
 import { PostgresCreditRepository } from './repositories/CreditRepository.js';
 import { PostgresEntityRepository } from './repositories/EntityRepository.js';
@@ -94,6 +107,7 @@ import { PostgresStoryRepository } from './repositories/StoryRepository.js';
 import { PostgresUserRepository } from './repositories/UserRepository.js';
 import { PostgresWorkRepository } from './repositories/WorkRepository.js';
 import { createBillingRoutes } from './routes/billing.js';
+import { createAccountDeletionRoutes } from './routes/accountDeletion.js';
 import { createBalloonRoutes } from './routes/balloons.js';
 import { createCompositionRoutes } from './routes/compositions.js';
 import { createEntityRoutes } from './routes/entities.js';
@@ -116,6 +130,13 @@ import { createStoryRoutes } from './routes/story.js';
 import { createRootWebhookCompatibilityRoutes, createWebhookRoutes } from './routes/webhooks.js';
 import { assertMobileResponseContract } from './routes/mobileResponseContract.js';
 import { UserProvisioningService, type UserProvisioningPort } from './services/auth/UserProvisioningService.js';
+import {
+  AccountDeletionService,
+  type AccountDeletionServicePort,
+} from './services/account/AccountDeletionService.js';
+import {
+  AccountDeletionIdentityGuard,
+} from './services/account/AccountDeletionIdentityGuard.js';
 import {
   BillingService,
   assertBillingConfig,
@@ -270,6 +291,7 @@ import type { JWTVerifyGetKey } from 'jose';
 import { resolveWorkerDependencies } from '../worker/dependencies.js';
 
 export interface AppDependencies {
+  accountDeletionService?: AccountDeletionServicePort;
   balloonService?: BalloonServicePort;
   billingCreditGrantService?: BillingCreditGrantServicePort;
   billingService?: BillingServicePort;
@@ -508,6 +530,16 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
       }),
     );
   }
+  if (resolvedDependencies.accountDeletionService !== undefined) {
+    app.route(
+      '/api',
+      createAccountDeletionRoutes({
+        authMiddleware,
+        rateLimitMiddleware,
+        accountDeletionService: resolvedDependencies.accountDeletionService,
+      }),
+    );
+  }
   app.route(
     '/api',
     createJobRoutes({
@@ -695,6 +727,7 @@ function resolveDependencies(
       | 'episodePageSkeletonService'
       | 'entityReferenceUploadService'
       | 'episodeExportService'
+      | 'accountDeletionService'
       | 'mobileStorePurchaseService'
       | 'googlePubSubPushVerifier'
       | 'webStaticDir'
@@ -707,11 +740,33 @@ function resolveDependencies(
   episodePageSkeletonService?: EpisodePageSkeletonServicePort;
   entityReferenceUploadService?: EntityReferenceUploadServicePort;
   episodeExportService?: EpisodeExportServicePort;
+  accountDeletionService?: AccountDeletionServicePort;
   mobileStorePurchaseService?: MobileStorePurchaseServicePort;
   googlePubSubPushVerifier?: Pick<GooglePubSubPushVerifier, 'verifyAuthorization'>;
   storyEpisodeImprovementPlanner?: StoryEpisodeImprovementPlannerPort;
 } {
   const creditRepository = new PostgresCreditRepository(db, db);
+  const accountDeletionRepository = new PostgresAccountDeletionRepository(db, db);
+  const accountDeletionConfig = resolveAccountDeletionConfig(env);
+  const accountDeletionService =
+    dependencies.accountDeletionService
+    ?? (accountDeletionConfig === null
+      ? undefined
+      : new AccountDeletionService(
+          accountDeletionRepository,
+          createStripeAccountSubscriptionCancellation(
+            accountDeletionConfig.stripeSecretKey,
+          ),
+          createCognitoAccountIdentityDeletion({
+            region: accountDeletionConfig.region,
+            userPoolId: accountDeletionConfig.userPoolId,
+          }),
+          createS3AccountAssetDeletion({
+            region: accountDeletionConfig.region,
+            bucket: accountDeletionConfig.bucket,
+          }),
+          accountDeletionConfig.identityHashSecret,
+        ));
   const creditService = dependencies.creditService ?? new CreditService(creditRepository);
   const localAssetConfig = resolveConfiguredLocalAssetConfig();
   const generationQueue = resolveGenerationQueue();
@@ -999,10 +1054,20 @@ function resolveDependencies(
     dependencies.sceneService ?? new SceneService(new PostgresSceneRepository(db), entityRepository);
   const userProvisioningService =
     dependencies.userProvisioningService ??
-    new UserProvisioningService(new PostgresUserRepository(db), creditService);
+    new UserProvisioningService(
+      new PostgresUserRepository(db),
+      creditService,
+      env.ACCOUNT_DELETION_IDENTITY_HASH_SECRET === undefined
+        ? undefined
+        : new AccountDeletionIdentityGuard(
+            accountDeletionRepository,
+            env.ACCOUNT_DELETION_IDENTITY_HASH_SECRET,
+          ),
+    );
   const rateLimitStore = dependencies.rateLimitStore ?? resolveRateLimitStore();
 
   return {
+    accountDeletionService,
     balloonService,
     billingCreditGrantService,
     billingService,

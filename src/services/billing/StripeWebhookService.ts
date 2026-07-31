@@ -107,6 +107,9 @@ export class StripeWebhookService implements StripeWebhookServicePort {
     if (userId === null) {
       throw new ValidationError('Checkout session is missing user_id');
     }
+    if (await this.markPersonalEventProcessedIfDeleted(event, userId)) {
+      return;
+    }
 
     if (session.payment_status !== 'paid') {
       await this.markEventProcessedOnly(event);
@@ -414,6 +417,14 @@ export class StripeWebhookService implements StripeWebhookServicePort {
       if (organizationId !== null) {
         await this.requireStripeOrganizationBinding(organizationId, stripeCustomerId, client);
       } else if (userId !== null) {
+        const billingUser = await this.billingRepository.findBillingUserProfile(
+          userId,
+          client,
+          true,
+        );
+        if (billingUser?.accountDeleted === true) {
+          return;
+        }
         await this.requireStripeCustomerBinding(userId, stripeCustomerId, client);
       }
 
@@ -509,6 +520,28 @@ export class StripeWebhookService implements StripeWebhookServicePort {
     });
   }
 
+  private async markPersonalEventProcessedIfDeleted(
+    event: Stripe.Event,
+    userId: string,
+  ): Promise<boolean> {
+    return this.billingRepository.transaction(async (client) => {
+      const billingUser = await this.billingRepository.findBillingUserProfile(
+        userId,
+        client,
+        true,
+      );
+      if (billingUser?.accountDeleted !== true) {
+        return false;
+      }
+      await this.billingRepository.markStripeEventProcessed(
+        event.id,
+        event.type,
+        client,
+      );
+      return true;
+    });
+  }
+
   private async handleInvoicePaid(event: Stripe.Event): Promise<void> {
     const invoice = event.data.object as Stripe.Invoice;
     const stripeCustomerId = getStringIdentifier(invoice.customer);
@@ -541,6 +574,10 @@ export class StripeWebhookService implements StripeWebhookServicePort {
     if (billingUser === null) {
       throw new NotFoundError('Billing user not found for Stripe customer');
     }
+    if (billingUser.accountDeleted === true) {
+      await this.markEventProcessedOnly(event);
+      return;
+    }
 
     const paidAmountJpy = invoice.amount_paid;
     const minimumAmountJpy = getBillingPlanAmountJpy(planCode);
@@ -556,6 +593,15 @@ export class StripeWebhookService implements StripeWebhookServicePort {
 
     await this.billingRepository.transaction(async (client) => {
       if (!(await this.billingRepository.markStripeEventProcessed(event.id, event.type, client))) {
+        return;
+      }
+      const lockedBillingUser =
+        await this.billingRepository.findBillingUserProfile(
+          billingUser.userId,
+          client,
+          true,
+        );
+      if (lockedBillingUser?.accountDeleted === true) {
         return;
       }
 
@@ -760,8 +806,15 @@ export class StripeWebhookService implements StripeWebhookServicePort {
         return;
       }
 
-      const billingUser = await this.billingRepository.findBillingUserProfileByStripeCustomerId(stripeCustomerId, client);
+      const billingUser = await this.billingRepository.findBillingUserProfileByStripeCustomerId(
+        stripeCustomerId,
+        client,
+        true,
+      );
       if (billingUser === null) {
+        return;
+      }
+      if (billingUser.accountDeleted === true) {
         return;
       }
 
@@ -811,11 +864,24 @@ export class StripeWebhookService implements StripeWebhookServicePort {
     if (billingUser === null) {
       throw new NotFoundError('Billing user not found for Stripe customer');
     }
+    if (billingUser.accountDeleted === true) {
+      await this.markEventProcessedOnly(event);
+      return;
+    }
 
     const planCode = requireConsumerPaidPlanCode(this.resolvePlanCodeFromSubscription(subscription));
 
     await this.billingRepository.transaction(async (client) => {
       if (!(await this.billingRepository.markStripeEventProcessed(event.id, event.type, client))) {
+        return;
+      }
+      const lockedBillingUser =
+        await this.billingRepository.findBillingUserProfile(
+          billingUser.userId,
+          client,
+          true,
+        );
+      if (lockedBillingUser?.accountDeleted === true) {
         return;
       }
 
@@ -866,8 +932,15 @@ export class StripeWebhookService implements StripeWebhookServicePort {
         return;
       }
 
-      const billingUser = await this.billingRepository.findBillingUserProfileByStripeCustomerId(stripeCustomerId, client);
+      const billingUser = await this.billingRepository.findBillingUserProfileByStripeCustomerId(
+        stripeCustomerId,
+        client,
+        true,
+      );
       if (billingUser === null) {
+        return;
+      }
+      if (billingUser.accountDeleted === true) {
         return;
       }
 

@@ -326,6 +326,24 @@ describe('OrganizationService', () => {
     expect(repository.insertedAuditLogs).toHaveLength(0);
   });
 
+  it('member権限変更はorganization rowをlockしてからowner invariantを判定する', async () => {
+    const repository = new InMemoryOrganizationRepository();
+    repository.activeOwnerCount = 2;
+    repository.setMember(
+      buildMember({ id: 'member-owner', userId: 'owner-user', role: 'owner' }),
+    );
+    repository.setMember(
+      buildMember({ id: 'member-other', userId: 'other-owner', role: 'owner' }),
+    );
+    const service = buildService(repository);
+
+    await service.updateMember('owner-user', 'org-1', 'member-other', {
+      role: 'admin',
+    });
+
+    expect(repository.organizationForUpdateCalls).toEqual(['org-1']);
+  });
+
   it('admin cannot demote or remove an owner', async () => {
     const repository = new InMemoryOrganizationRepository();
     repository.activeOwnerCount = 2;
@@ -871,6 +889,7 @@ class FakeInvitationEmailService implements OrganizationInvitationEmailServicePo
 }
 
 class InMemoryOrganizationRepository {
+  public readonly organizationForUpdateCalls: string[] = [];
   public readonly members = new Map<string, OrganizationMember>();
   public organization: Organization = buildOrganization();
   public auditLogs: OrganizationAuditLog[] = [];
@@ -978,7 +997,14 @@ class InMemoryOrganizationRepository {
     return this.members.get(memberKey(organizationId, userId)) ?? null;
   }
 
-  public async findOrganizationById(organizationId: string): Promise<Organization | null> {
+  public async findOrganizationById(
+    organizationId: string,
+    _client?: DatabaseClient,
+    forUpdate = false,
+  ): Promise<Organization | null> {
+    if (forUpdate) {
+      this.organizationForUpdateCalls.push(organizationId);
+    }
     return this.organization.id === organizationId ? this.organization : null;
   }
 

@@ -55,6 +55,27 @@ describe('PostgresBillingRepository', () => {
     });
   });
 
+  it('account deletion開始済みuserは外部課金eventから変更できないprofileになる', async () => {
+    const client = new QueryCapturingClient();
+    client.rows = [
+      {
+        id: 'user-1',
+        email: 'user@example.com',
+        stripe_customer_id: 'cus_123',
+        plan_code: 'free',
+        account_deletion_started_at: new Date('2026-07-31T00:00:00.000Z'),
+        account_deleted_at: null,
+      },
+    ];
+    const repository = new PostgresBillingRepository(client, client);
+
+    const result = await repository.findBillingUserProfile('user-1', client, true);
+
+    expect(client.queries[0]).toContain('account_deletion_started_at');
+    expect(client.queries[0]).toContain('FOR UPDATE');
+    expect(result).toMatchObject({ accountDeleted: true });
+  });
+
   it('processed event は ON CONFLICT DO NOTHING で冪等化する', async () => {
     const client = new QueryCapturingClient();
     const repository = new PostgresBillingRepository(client, client);

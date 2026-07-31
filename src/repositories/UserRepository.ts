@@ -27,6 +27,7 @@ export class PostgresUserRepository implements UserRepository {
       SELECT id, supabase_id, email, display_name, plan_code
       FROM users
       WHERE supabase_id = $1
+        AND account_deletion_started_at IS NULL
       `,
       [supabaseId],
     );
@@ -40,6 +41,7 @@ export class PostgresUserRepository implements UserRepository {
       SELECT id, supabase_id, email, display_name, plan_code
       FROM users
       WHERE lower(email) = lower($1)
+        AND account_deletion_started_at IS NULL
       `,
       [email],
     );
@@ -67,6 +69,7 @@ export class PostgresUserRepository implements UserRepository {
       SET email = $2,
           updated_at = NOW()
       WHERE supabase_id = $1
+        AND account_deletion_started_at IS NULL
       RETURNING id, supabase_id, email, display_name, plan_code
       `,
       [supabaseId, email],
@@ -83,6 +86,7 @@ export class PostgresUserRepository implements UserRepository {
           email = $1,
           updated_at = NOW()
       WHERE lower(email) = lower($1)
+        AND account_deletion_started_at IS NULL
       RETURNING id, supabase_id, email, display_name, plan_code
       `,
       [email, supabaseId],

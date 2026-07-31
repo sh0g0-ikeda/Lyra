@@ -208,6 +208,22 @@ const DEPLOYMENT_DATA_INVARIANT_QUERIES: InvariantQuery[] = [
     sql: 'SELECT user_id::text AS id FROM account_deletion_requests WHERE (processing_token IS NULL) <> (processing_started_at IS NULL) ORDER BY user_id LIMIT $1',
   },
   {
+    name: 'account_deletion_requests.identity_key',
+    sql: 'SELECT user_id::text AS id FROM account_deletion_requests WHERE /* account_deletion_requests.identity_key */ identity_key IS NOT NULL AND char_length(identity_key) <> 43 ORDER BY user_id LIMIT $1',
+  },
+  {
+    name: 'users.account_deletion_timestamps',
+    sql: 'SELECT id::text AS id FROM users WHERE /* users.account_deletion_timestamps */ account_deleted_at IS NOT NULL AND (account_deletion_started_at IS NULL OR account_deleted_at < account_deletion_started_at) ORDER BY id LIMIT $1',
+  },
+  {
+    name: 'account_deletion_requests.completed_scrub',
+    sql: "SELECT user_id::text AS id FROM account_deletion_requests WHERE /* account_deletion_requests.completed_scrub */ status = 'completed' AND (identity_key IS NULL OR identity_id <> 'deleted:' || user_id::text OR cardinality(cancelled_subscription_ids) <> 0 OR cardinality(scheduled_asset_keys) <> 0 OR data_anonymized_at IS NULL OR identity_deleted_at IS NULL OR completed_at IS NULL OR processing_token IS NOT NULL OR processing_started_at IS NOT NULL) ORDER BY user_id LIMIT $1",
+  },
+  {
+    name: 'account_deletion_requests.user_anchor',
+    sql: "SELECT requests.user_id::text AS id FROM account_deletion_requests AS requests INNER JOIN users ON users.id = requests.user_id WHERE /* account_deletion_requests.user_anchor */ (requests.status IN ('processing', 'pending_external_action', 'completed') AND users.account_deletion_started_at IS NULL) OR (requests.status = 'completed' AND users.account_deleted_at IS NULL) ORDER BY requests.user_id LIMIT $1",
+  },
+  {
     name: 'mobile_store_purchases.enum_contract',
     sql: "SELECT id::text AS id FROM mobile_store_purchases WHERE /* mobile_store_purchases.enum_contract */ store NOT IN ('apple', 'google') OR environment NOT IN ('sandbox', 'production') OR kind NOT IN ('subscription', 'credit_pack') OR state NOT IN ('pending', 'active', 'cancelled', 'expired', 'refunded', 'revoked', 'failed') OR (kind = 'subscription' AND (plan_code IS NULL OR plan_code NOT IN ('standard', 'premium') OR credit_package_code IS NOT NULL)) OR (kind = 'credit_pack' AND (plan_code IS NOT NULL OR credit_package_code IS NULL OR credit_package_code NOT IN ('credits_200', 'credits_1000', 'credits_3000'))) ORDER BY id LIMIT $1",
   },

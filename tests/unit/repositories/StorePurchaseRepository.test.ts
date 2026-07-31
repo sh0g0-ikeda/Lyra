@@ -34,6 +34,24 @@ describe('PostgresStorePurchaseRepository', () => {
     expect(client.valuesList[0]).toEqual(['apple', 'keyed-purchase-id']);
   });
 
+  it('account deletion開始済みuserはstore entitlementを変更不可として返す', async () => {
+    const client = new QueryCapturingClient();
+    client.accountDeletionStarted = true;
+    const repository = new PostgresStorePurchaseRepository(
+      new PassthroughTransactionRunner(),
+    );
+
+    const user = await repository.findUserForUpdate('user-1', client);
+
+    expect(client.queries[0]).toContain('account_deletion_started_at');
+    expect(client.queries[0]).toContain('FOR UPDATE');
+    expect(user).toEqual({
+      id: 'user-1',
+      planCode: 'free',
+      accountDeleted: true,
+    });
+  });
+
   it('provider eventとtransaction operationをDB conflict barrierで冪等化する', async () => {
     const client = new QueryCapturingClient();
     const repository = new PostgresStorePurchaseRepository(new PassthroughTransactionRunner());
@@ -97,6 +115,7 @@ describe('PostgresStorePurchaseRepository', () => {
 class QueryCapturingClient implements DatabaseClient {
   public readonly queries: string[] = [];
   public readonly valuesList: Array<readonly unknown[] | undefined> = [];
+  public accountDeletionStarted = false;
 
   public async query<T extends QueryResultRow = QueryResultRow>(
     text: string,
@@ -104,6 +123,18 @@ class QueryCapturingClient implements DatabaseClient {
   ): Promise<QueryResult<T>> {
     this.queries.push(text);
     this.valuesList.push(values);
+    if (text.includes('FROM users')) {
+      return result([
+        {
+          id: 'user-1',
+          plan_code: 'free',
+          account_deletion_started_at: this.accountDeletionStarted
+            ? new Date('2026-07-31T00:00:00.000Z')
+            : null,
+          account_deleted_at: null,
+        },
+      ] as unknown as T[]);
+    }
     if (text.includes('SELECT') && text.includes('mobile_store_purchases')) {
       return result([
         {

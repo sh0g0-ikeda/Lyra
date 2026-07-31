@@ -45,6 +45,10 @@ describe('environment examples', () => {
     const rootEnvExample = readText('.env.example');
 
     expect(rootEnvExample).toMatch(/^MOBILE_STORE_BILLING_ENABLED=false$/mu);
+    expect(rootEnvExample).toMatch(/^ACCOUNT_DELETION_ENABLED=false$/mu);
+    expect(rootEnvExample).toMatch(
+      /^ACCOUNT_DELETION_IDENTITY_HASH_SECRET=$/mu,
+    );
     expect(rootEnvExample).toMatch(/^APPLE_STORE_BUNDLE_ID=/mu);
     expect(rootEnvExample).toMatch(/^GOOGLE_PLAY_PACKAGE_NAME=/mu);
     expect(rootEnvExample).toMatch(/^GOOGLE_PLAY_PUBSUB_AUDIENCE=/mu);

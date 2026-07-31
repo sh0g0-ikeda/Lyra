@@ -53,6 +53,12 @@ authentication and resource authorization. A resource lookup must be scoped thro
 the requesting user's personal ownership or active organization membership; knowing
 an ID is never sufficient authorization.
 
+Account deletion stores a keyed one-way identity tombstone before anonymizing the
+Cognito subject. Provisioning must reject a subject whose deletion is processing,
+pending recovery, or completed, so an unexpired token cannot recreate the Lyra user.
+After deletion starts, database guards reject new personal content roots while the
+durable deletion workflow finishes.
+
 Organization roles are `owner`, `admin`, `billing`, `editor`, and `viewer`.
 Billing authority is separate from editing authority. Public routes are explicitly
 limited to health/readiness, verified Stripe webhooks, static web assets, and the
@@ -106,10 +112,35 @@ routes, device permission prompts, or APNs / FCM delivery.
 Push notification outbox rows snapshot only completed or failed generation-job
 events with no cancellation request or cancellation timestamp, and reference
 same-user token registrations without copying ciphertext. A failed state never
-overrides cancellation evidence for notification eligibility.
-Migrations never attach triggers to current generation-job transitions. Explicit
+overrides cancellation evidence for notification eligibility. Account deletion
+serializes with the token registry and cancels unsent deliveries before removing
+tokens. Its write guard allows a previously active job to reach a terminal state
+but rejects reactivating a terminal personal job after deletion starts. Explicit
 enqueue, retry invalidation, lease-based delivery, and provider dispatch must be
 wired and verified together before push delivery is enabled.
+
+Account deletion is independently gated by `ACCOUNT_DELETION_ENABLED`, which
+defaults to false. The authenticated API accepts no user, identity, subscription,
+or storage identifier from the client. It blocks a sole active organization owner
+and active personal generation/export jobs, requires explicit acknowledgement for
+personal subscriptions, store billing, and assets, then checkpoints exact Stripe
+subscription cancellation, exact personal S3 object deletion, personal-data
+anonymization, and Cognito disable/delete. A dedicated bounded recovery runner
+reclaims stale or retryable requests with a fencing token and backoff.
+The claim transaction rechecks acknowledgements against subscriptions, store
+billing, and assets that may have appeared after preview. Completion removes raw
+subscription and object-key checkpoints while retaining only the keyed identity
+tombstone required to prevent reprovisioning.
+Each attempt starts at most 25 external steps and stops scheduling new external
+work after 15 seconds; a normal continuation releases its claim without increasing
+the failure backoff. Cognito and S3 commands also have a 30-second abort timeout.
+
+Personal works, personal upload records, push tokens, balances, and direct
+identifiers are removed. Organization works, organization billing, organization
+audit/usage data, and statutory or anti-fraud billing ledgers remain attached only
+to an anonymized user anchor. Store and Stripe events received after deletion
+starts are deduplicated as provider records but cannot restore personal credits or
+plan entitlements.
 
 ## 6. Generation jobs
 

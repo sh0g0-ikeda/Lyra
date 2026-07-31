@@ -737,6 +737,21 @@ export class OrganizationService implements OrganizationServicePort {
   ): Promise<OrganizationMember> {
     await this.requireMembership(organizationId, userId, 'manage_members');
     return this.organizationRepository.transaction(async (client) => {
+      const lockedOrganization =
+        await this.organizationRepository.findOrganizationById(
+          organizationId,
+          client,
+          true,
+        );
+      if (lockedOrganization === null) {
+        throw new NotFoundError('Organization not found');
+      }
+      await this.requireMembership(
+        organizationId,
+        userId,
+        'manage_members',
+        client,
+      );
       const current = await this.organizationRepository.findMemberById(organizationId, memberId, client);
       if (current === null) {
         throw new NotFoundError('Member not found');

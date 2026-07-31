@@ -2,6 +2,10 @@ import { UnauthorizedError } from '../../domain/errors/index.js';
 import type { AuthenticatedUser, SupabaseJwtClaims } from '../../domain/types/user.js';
 import { isUniqueViolation, type UserRepository } from '../../repositories/UserRepository.js';
 import type { CreditServicePort } from '../credit/CreditService.js';
+import {
+  assertAccountIdentityIsProvisionable,
+  type AccountDeletionIdentityGuardPort,
+} from '../account/AccountDeletionIdentityGuard.js';
 
 export interface ProvisionedUser {
   user: AuthenticatedUser;
@@ -16,6 +20,7 @@ export class UserProvisioningService implements UserProvisioningPort {
   public constructor(
     private readonly userRepository: UserRepository,
     private readonly creditService: CreditServicePort,
+    private readonly accountDeletionIdentityGuard?: AccountDeletionIdentityGuardPort,
   ) {}
 
   public async provisionFromSupabaseClaims(claims: SupabaseJwtClaims): Promise<ProvisionedUser> {
@@ -32,6 +37,11 @@ export class UserProvisioningService implements UserProvisioningPort {
         isNewUser: false,
       };
     }
+
+    await assertAccountIdentityIsProvisionable(
+      this.accountDeletionIdentityGuard,
+      supabaseId,
+    );
 
     const userByEmail = await this.userRepository.findByEmail(email);
     if (userByEmail !== null) {
