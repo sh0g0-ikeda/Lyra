@@ -3,6 +3,7 @@ import {
   entityImportResponseSchema,
   entityReferenceGenerationResponseSchema,
   entityReferenceSetSchema,
+  entityReferenceUploadPresignResponseSchema,
 } from '../../../packages/api-contract/src/mobileApiSchemas.js';
 
 const validReferenceSet = {
@@ -70,5 +71,34 @@ describe('Entity reference response contract', () => {
       }).success,
     ).toBe(false);
     expect(entityReferenceGenerationResponseSchema.safeParse({ job_id: '' }).success).toBe(false);
+  });
+
+  it('direct upload responseはHTTPS・固定header・opaque tokenだけを許可する', () => {
+    const valid = {
+      upload_url: 'https://uploads.lyra.test/presigned',
+      upload_token: 'opaque-token',
+      expires_at: '2026-07-31T00:05:00.000Z',
+      upload_headers: {
+        'Content-Type': 'image/png',
+        'x-amz-server-side-encryption': 'AES256',
+      },
+    };
+
+    expect(entityReferenceUploadPresignResponseSchema.safeParse(valid).success).toBe(true);
+    expect(entityReferenceUploadPresignResponseSchema.safeParse({
+      ...valid,
+      upload_url: 'http://uploads.lyra.test/unsafe',
+    }).success).toBe(false);
+    expect(entityReferenceUploadPresignResponseSchema.safeParse({
+      ...valid,
+      s3_key: 'tmp/private.png',
+    }).success).toBe(false);
+    expect(entityReferenceUploadPresignResponseSchema.safeParse({
+      ...valid,
+      upload_headers: {
+        ...valid.upload_headers,
+        'x-amz-meta-user-input': 'not-allowed',
+      },
+    }).success).toBe(false);
   });
 });

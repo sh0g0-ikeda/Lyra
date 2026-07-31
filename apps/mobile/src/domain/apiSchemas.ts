@@ -567,6 +567,30 @@ export const entityImportResponseSchema = z
   })
   .strict();
 
+const entityReferenceUploadMimeTypeSchema = z.enum([
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+]);
+
+export const entityReferenceUploadPresignResponseSchema = z
+  .object({
+    upload_url: z
+      .string()
+      .url()
+      .max(4096)
+      .refine((value) => value.startsWith('https://'), 'upload_url must use HTTPS'),
+    upload_token: z.string().min(1).max(512),
+    expires_at: timestampSchema,
+    upload_headers: z
+      .object({
+        'Content-Type': entityReferenceUploadMimeTypeSchema,
+        'x-amz-server-side-encryption': z.literal('AES256'),
+      })
+      .strict(),
+  })
+  .strict();
+
 export const entityReferenceGenerationResponseSchema = z
   .object({
     job_id: idSchema,

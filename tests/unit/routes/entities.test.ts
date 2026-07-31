@@ -208,6 +208,30 @@ class FakeEntityReferenceService implements EntityReferenceServicePort {
     };
   }
 
+  public async importUploadedImage(
+    userId: string,
+    input: {
+      entityType: 'character' | 'nonhuman' | 'object';
+      imageData: Buffer;
+      mimeType: 'image/jpeg' | 'image/png' | 'image/webp';
+      tmpImageS3Key: string;
+      tmpImageCdnUrl: string;
+    },
+  ): Promise<{
+    suggestedFields: Record<string, unknown>;
+    promptSupplement: string;
+    tmpImageS3Key: string;
+    tmpImageCdnUrl: string;
+  }> {
+    this.lastImportRequest = { userId, ...input };
+    return {
+      suggestedFields: { art_style: 'anime' },
+      promptSupplement: 'uploaded image',
+      tmpImageS3Key: input.tmpImageS3Key,
+      tmpImageCdnUrl: input.tmpImageCdnUrl,
+    };
+  }
+
   public async enqueueReferenceGeneration(
     userId: string,
     entityId: string,

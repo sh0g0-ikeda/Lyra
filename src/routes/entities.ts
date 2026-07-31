@@ -7,14 +7,17 @@ import {
   entitiesResponseSchema,
   entitySchema,
 } from '../../packages/api-contract/src/mobileApiSchemas.js';
-import { ValidationError } from '../domain/errors/index.js';
+import { ConfigurationError, ValidationError } from '../domain/errors/index.js';
 import {
   decodeEntityListCursor,
   encodeEntityListCursor,
   type EntityListCursor,
 } from '../domain/pagination.js';
 import type { Entity } from '../domain/types/entity.js';
-import type { EntityReferenceSet } from '../domain/types/entityReference.js';
+import type {
+  EntityImportAnalysis,
+  EntityReferenceSet,
+} from '../domain/types/entityReference.js';
 import {
   confirmEntityReferenceBodySchema,
   createEntityBodySchema,
@@ -29,6 +32,10 @@ import { signImageCdnUrl } from '../infrastructure/aws/CloudFrontImageUrlSigner.
 import { env } from '../lib/env.js';
 import type { EntityServicePort } from '../services/entity/EntityService.js';
 import type { EntityReferenceServicePort } from '../services/entity/EntityReferenceService.js';
+import type {
+  EntityReferenceUploadImportResult,
+  EntityReferenceUploadServicePort,
+} from '../services/entity/EntityReferenceUploadService.js';
 import type { EntityReferenceImageExportServicePort } from '../services/entity/EntityReferenceImageExportService.js';
 import {
   createReferenceCandidateToken,
@@ -60,6 +67,7 @@ export interface EntityRouteDependencies {
   rateLimitMiddleware: MiddlewareHandler<AppEnv>;
   entityService: EntityServicePort;
   entityReferenceService: EntityReferenceServicePort;
+  entityReferenceUploadService?: EntityReferenceUploadServicePort;
   entityReferenceImageExportService: EntityReferenceImageExportServicePort;
   organizationService?: OrganizationServicePort;
 }
@@ -266,17 +274,34 @@ export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<
       throw new ValidationError(formatZodValidationError(body.error));
     }
 
-    const result = await dependencies.entityReferenceService.importImage(user.id, {
-      entityType: body.data.entity_type,
-      imageBase64: body.data.image_base64,
-    }, organizationId);
+    let candidateEntityId = body.data.entity_id ?? '';
+    let result: EntityImportAnalysis;
+    if ('upload_token' in body.data) {
+      const uploadedResult = await importUploadedEntityImage(
+        dependencies,
+        user.id,
+        {
+          uploadToken: body.data.upload_token,
+          entityType: body.data.entity_type,
+          entityId: body.data.entity_id,
+        },
+        organizationId,
+      );
+      candidateEntityId = uploadedResult.entityId ?? '';
+      result = uploadedResult;
+    } else {
+      result = await dependencies.entityReferenceService.importImage(user.id, {
+        entityType: body.data.entity_type,
+        imageBase64: body.data.image_base64,
+      }, organizationId);
+    }
 
     const payload = {
       suggested_fields: result.suggestedFields,
       prompt_supplement: result.promptSupplement,
       tmp_image_token: createReferenceCandidateToken({
         userId: user.id,
-        entityId: body.data.entity_id ?? '',
+        entityId: candidateEntityId,
         s3Key: result.tmpImageS3Key,
       }, {
         secret: getReferenceCandidateTokenSecret(),
@@ -390,6 +415,26 @@ export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<
   });
 
   return app;
+}
+
+async function importUploadedEntityImage(
+  dependencies: EntityRouteDependencies,
+  userId: string,
+  input: {
+    uploadToken: string;
+    entityType: 'character' | 'nonhuman' | 'object';
+    entityId?: string;
+  },
+  organizationId: string | null,
+): Promise<EntityReferenceUploadImportResult> {
+  if (dependencies.entityReferenceUploadService === undefined) {
+    throw new ConfigurationError('Entity reference upload is not configured');
+  }
+  return dependencies.entityReferenceUploadService.importUploadedImage(
+    userId,
+    input,
+    organizationId,
+  );
 }
 
 function parseUuidParam(c: Context<AppEnv>, name: string): string {

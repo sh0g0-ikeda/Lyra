@@ -313,6 +313,42 @@ describe('EntityReferenceService', () => {
     });
   });
 
+  it('direct upload済み画像はS3へ再保存せず既存credit・解析経路を使う', async () => {
+    const analyzer = new FakeEntityImportAnalyzer();
+    const storage = new FakeEntityImageStorage();
+    const creditService = new FakeCreditService();
+    const service = buildService({
+      analyzer,
+      storage,
+      creditService,
+    });
+    const imageData = Buffer.from([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+    ]);
+
+    const result = await service.importUploadedImage('user-1', {
+      entityType: 'character',
+      imageData,
+      mimeType: 'image/png',
+      tmpImageS3Key: 'tmp/user-1/entities/imports/presigned.png',
+      tmpImageCdnUrl: 's3://lyra-images/tmp/user-1/entities/imports/presigned.png',
+    });
+
+    expect(storage.importedInput).toBeNull();
+    expect(analyzer.input).toEqual({
+      entityType: 'character',
+      dataUrl: `data:image/png;base64,${imageData.toString('base64')}`,
+    });
+    expect(creditService.consumed).toMatchObject({
+      userId: 'user-1',
+      cost: 1,
+    });
+    expect(result).toMatchObject({
+      tmpImageS3Key: 'tmp/user-1/entities/imports/presigned.png',
+      tmpImageCdnUrl: 's3://lyra-images/tmp/user-1/entities/imports/presigned.png',
+    });
+  });
+
   it('import-image は MIME と実体が一致しない画像を解析前に拒否する', async () => {
     const analyzer = new FakeEntityImportAnalyzer();
     const storage = new FakeEntityImageStorage();

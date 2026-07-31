@@ -102,6 +102,10 @@ const envSchema = z.object({
     .string()
     .optional()
     .transform((value) => (value === undefined ? true : value === 'true')),
+  ENTITY_REFERENCE_DIRECT_UPLOAD_ENABLED: z
+    .string()
+    .optional()
+    .transform((value) => value === 'true'),
   STRIPE_SECRET_KEY: z.string().min(1).optional(),
   STRIPE_WEBHOOK_SECRET: z.string().min(1).optional(),
   STRIPE_PRICE_STANDARD_MONTHLY: z.string().min(1).optional(),

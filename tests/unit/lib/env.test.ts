@@ -38,6 +38,7 @@ describe('parseEnv', () => {
     expect(parsed.PAGE_GENERATION_ENABLED).toBe(true);
     expect(parsed.ENTITY_GENERATION_ENABLED).toBe(true);
     expect(parsed.ENTITY_IMPORT_ANALYSIS_ENABLED).toBe(true);
+    expect(parsed.ENTITY_REFERENCE_DIRECT_UPLOAD_ENABLED).toBe(false);
   });
 
   it('個別 generation kill switch は false を明示できる', () => {
@@ -45,11 +46,13 @@ describe('parseEnv', () => {
       PAGE_GENERATION_ENABLED: 'false',
       ENTITY_GENERATION_ENABLED: 'false',
       ENTITY_IMPORT_ANALYSIS_ENABLED: 'false',
+      ENTITY_REFERENCE_DIRECT_UPLOAD_ENABLED: 'true',
     });
 
     expect(parsed.PAGE_GENERATION_ENABLED).toBe(false);
     expect(parsed.ENTITY_GENERATION_ENABLED).toBe(false);
     expect(parsed.ENTITY_IMPORT_ANALYSIS_ENABLED).toBe(false);
+    expect(parsed.ENTITY_REFERENCE_DIRECT_UPLOAD_ENABLED).toBe(true);
   });
 
   it('database timeout は安全な既定値を持つ', () => {

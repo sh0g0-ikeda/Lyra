@@ -8,9 +8,15 @@ import {
   EPISODE_LONG_JOB_ACTIVE_JOB_TYPES,
   EPISODE_LONG_JOB_STALE_AFTER_MS,
 } from './domain/constants/generation.js';
+import {
+  ENTITY_REFERENCE_UPLOAD_PRESIGN_TTL_SECONDS,
+} from './domain/constants/entityReferenceUpload.js';
 import { createPageImageStorageClient } from './infrastructure/aws/S3PageImageStorage.js';
 import { S3FinalPageImageStorage, type FinalPageImageStoragePort } from './infrastructure/aws/S3FinalPageImageStorage.js';
 import { S3EntityImageStorage, type EntityImageStoragePort } from './infrastructure/aws/S3EntityImageStorage.js';
+import {
+  S3EntityReferenceUploadStorage,
+} from './infrastructure/aws/S3EntityReferenceUploadStorage.js';
 import { createGenerationQueueClient, SqsGenerationQueue } from './infrastructure/aws/SqsGenerationQueue.js';
 import { S3StoredImageLoader, type StoredImageLoaderPort } from './infrastructure/aws/S3StoredImageLoader.js';
 import { LocalFileFinalPageImageStorage } from './infrastructure/local/LocalFileFinalPageImageStorage.js';
@@ -54,6 +60,9 @@ import { PostgresBillingRepository } from './repositories/BillingRepository.js';
 import { PostgresCompositionGalleryRepository } from './repositories/CompositionGalleryRepository.js';
 import { PostgresCreditRepository } from './repositories/CreditRepository.js';
 import { PostgresEntityRepository } from './repositories/EntityRepository.js';
+import {
+  PostgresEntityReferenceUploadTokenRepository,
+} from './repositories/EntityReferenceUploadTokenRepository.js';
 import { PostgresEntityGenerationExecutionRepository } from './repositories/EntityGenerationExecutionRepository.js';
 import { PostgresEntityGenerationRecoveryRepository } from './repositories/EntityGenerationRecoveryRepository.js';
 import { PostgresEpisodePlanPersistenceRepository } from './repositories/EpisodePlanPersistenceRepository.js';
@@ -76,6 +85,7 @@ import { createBillingRoutes } from './routes/billing.js';
 import { createBalloonRoutes } from './routes/balloons.js';
 import { createCompositionRoutes } from './routes/compositions.js';
 import { createEntityRoutes } from './routes/entities.js';
+import { createEntityReferenceUploadRoutes } from './routes/entityReferenceUploads.js';
 import { createHealthRoutes, type ReadinessCheck } from './routes/health.js';
 import { createJobRoutes } from './routes/jobs.js';
 import { createLocalAssetRoutes } from './routes/localAssets.js';
@@ -114,6 +124,10 @@ import {
   EntityReferenceService,
   type EntityReferenceServicePort,
 } from './services/entity/EntityReferenceService.js';
+import {
+  EntityReferenceUploadService,
+  type EntityReferenceUploadServicePort,
+} from './services/entity/EntityReferenceUploadService.js';
 import {
   EntityReferenceImageExportService,
   type EntityReferenceImageExportServicePort,
@@ -240,6 +254,7 @@ export interface AppDependencies {
   creditService?: CreditServicePort;
   entityService?: EntityServicePort;
   entityReferenceService?: EntityReferenceServicePort;
+  entityReferenceUploadService?: EntityReferenceUploadServicePort;
   entityReferenceImageExportService?: EntityReferenceImageExportServicePort;
   entityGenerationQueue?: EntityGenerationQueuePort;
   episodePageSkeletonQueue?: EpisodePageSkeletonQueuePort | null;
@@ -415,10 +430,22 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
       rateLimitMiddleware,
       entityService: resolvedDependencies.entityService,
       entityReferenceService: resolvedDependencies.entityReferenceService,
+      entityReferenceUploadService: resolvedDependencies.entityReferenceUploadService,
       entityReferenceImageExportService: resolvedDependencies.entityReferenceImageExportService,
       organizationService: resolvedDependencies.organizationService,
     }),
   );
+  if (resolvedDependencies.entityReferenceUploadService !== undefined) {
+    app.route(
+      '/api',
+      createEntityReferenceUploadRoutes({
+        authMiddleware,
+        rateLimitMiddleware,
+        entityReferenceUploadService: resolvedDependencies.entityReferenceUploadService,
+        organizationService: resolvedDependencies.organizationService,
+      }),
+    );
+  }
   app.route(
     '/api',
     createJobRoutes({
@@ -604,6 +631,7 @@ function resolveDependencies(
       | 'devAuthBypassClaims'
       | 'episodePageSkeletonQueue'
       | 'episodePageSkeletonService'
+      | 'entityReferenceUploadService'
       | 'webStaticDir'
       | 'readinessCheck'
     >
@@ -612,6 +640,7 @@ function resolveDependencies(
 > & {
   episodePageSkeletonQueue?: EpisodePageSkeletonQueuePort;
   episodePageSkeletonService?: EpisodePageSkeletonServicePort;
+  entityReferenceUploadService?: EntityReferenceUploadServicePort;
   storyEpisodeImprovementPlanner?: StoryEpisodeImprovementPlannerPort;
 } {
   const creditRepository = new PostgresCreditRepository(db, db);
@@ -769,6 +798,13 @@ function resolveDependencies(
       env.GENERATION_ENABLED && env.ENTITY_IMPORT_ANALYSIS_ENABLED,
       organizationService,
     );
+  const entityReferenceUploadService =
+    dependencies.entityReferenceUploadService
+    ?? resolveConfiguredEntityReferenceUploadService(
+      entityRepository,
+      entityReferenceService,
+      organizationService,
+    );
   const entityReferenceImageExportService =
     dependencies.entityReferenceImageExportService ??
     new EntityReferenceImageExportService(entityRepository, resolveStoredPageImageLoader());
@@ -882,6 +918,7 @@ function resolveDependencies(
     creditService,
     entityService,
     entityReferenceService,
+    entityReferenceUploadService,
     entityReferenceImageExportService,
     entityGenerationQueue,
     episodePageSkeletonQueue,
@@ -1032,6 +1069,36 @@ function resolveEntityImageStorage(): EntityImageStoragePort {
   return new S3EntityImageStorage(createPageImageStorageClient(env.AWS_REGION), {
     bucketName: env.S3_BUCKET_IMAGES,
     cdnBaseUrl: resolveS3ImageStorageCdnBaseUrl(),
+  });
+}
+
+function resolveConfiguredEntityReferenceUploadService(
+  entityRepository: PostgresEntityRepository,
+  entityReferenceService: EntityReferenceServicePort,
+  organizationService: OrganizationServicePort,
+): EntityReferenceUploadServicePort | undefined {
+  if (!env.ENTITY_REFERENCE_DIRECT_UPLOAD_ENABLED) {
+    return undefined;
+  }
+  if (env.S3_BUCKET_IMAGES === undefined) {
+    throw new ConfigurationError(
+      'ENTITY_REFERENCE_DIRECT_UPLOAD_ENABLED=true requires S3_BUCKET_IMAGES',
+    );
+  }
+
+  return new EntityReferenceUploadService({
+    uploadTokenRepository: new PostgresEntityReferenceUploadTokenRepository(db),
+    uploadStorage: new S3EntityReferenceUploadStorage(
+      createPageImageStorageClient(env.AWS_REGION),
+      {
+        bucketName: env.S3_BUCKET_IMAGES,
+        cdnBaseUrl: resolveS3ImageStorageCdnBaseUrl(),
+        uploadUrlTtlSeconds: ENTITY_REFERENCE_UPLOAD_PRESIGN_TTL_SECONDS,
+      },
+    ),
+    entityReferenceRepository: entityRepository,
+    entityReferenceService,
+    organizationService,
   });
 }
 

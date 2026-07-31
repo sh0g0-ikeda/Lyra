@@ -3,6 +3,10 @@ import {
   ENTITY_IMPORT_MAX_FILE_SIZE_BYTES,
   ENTITY_REFERENCE_LIMITS,
 } from '../../domain/constants/entityReference.js';
+import {
+  ENTITY_REFERENCE_UPLOAD_MAX_TOKEN_LENGTH,
+  ENTITY_REFERENCE_UPLOAD_MIME_TYPES,
+} from '../../domain/constants/entityReferenceUpload.js';
 import type { EntityType } from '../../domain/types/entity.js';
 import { ValidationError } from '../../domain/errors/index.js';
 import { formatZodValidationError } from '../validationErrorFormatter.js';
@@ -182,10 +186,31 @@ export const updateEntityBodySchema = z
     message: 'At least one field is required',
   });
 
-export const importEntityImageBodySchema = z
+const importEntityImageBase64BodySchema = z
   .object({
     image_base64: z.string().min(1).max(Math.ceil((ENTITY_IMPORT_MAX_FILE_SIZE_BYTES * 4) / 3) + 1024),
     entity_type: entityTypeSchema,
+    entity_id: uuidParamSchema.optional(),
+  })
+  .strict();
+
+const importEntityImageUploadTokenBodySchema = z
+  .object({
+    upload_token: z.string().trim().min(1).max(ENTITY_REFERENCE_UPLOAD_MAX_TOKEN_LENGTH),
+    entity_type: entityTypeSchema,
+    entity_id: uuidParamSchema.optional(),
+  })
+  .strict();
+
+export const importEntityImageBodySchema = z.union([
+  importEntityImageBase64BodySchema,
+  importEntityImageUploadTokenBodySchema,
+]);
+
+export const entityReferenceUploadPresignBodySchema = z
+  .object({
+    mime_type: z.enum(ENTITY_REFERENCE_UPLOAD_MIME_TYPES),
+    size_bytes: z.number().int().min(1).max(ENTITY_IMPORT_MAX_FILE_SIZE_BYTES),
     entity_id: uuidParamSchema.optional(),
   })
   .strict();
