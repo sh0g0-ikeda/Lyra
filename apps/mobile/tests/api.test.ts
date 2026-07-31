@@ -651,6 +651,52 @@ describe('LyraMobileApiClient', () => {
     ]);
   });
 
+  it('Page台詞設定の変更fieldだけを同じorganization scopeで保存する', async () => {
+    const organizationId = '55555555-5555-4555-8555-555555555555';
+    const page = buildPage();
+    const updated = { ...page, dialogue_mode: 'balloon_only' };
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(updated));
+    const api = new LyraMobileApiClient({
+      apiBaseUrl: 'https://api.example.com',
+      auth: new FakeAuthSession(),
+      fetcher,
+    });
+
+    await expect(api.updatePageSettings(page.id, {
+      dialogue_mode: 'balloon_only',
+    }, organizationId)).resolves.toEqual(updated);
+
+    expect(fetcher).toHaveBeenCalledWith(
+      `https://api.example.com/api/pages/${page.id}?organization_id=${organizationId}`,
+      expect.objectContaining({
+        body: JSON.stringify({ dialogue_mode: 'balloon_only' }),
+        method: 'PUT',
+      }),
+    );
+  });
+
+  it('Page台詞設定APIは別Pageのsuccess responseと空更新を採用しない', async () => {
+    const page = buildPage();
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({
+      ...page,
+      id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    }));
+    const api = new LyraMobileApiClient({
+      apiBaseUrl: 'https://api.example.com',
+      auth: new FakeAuthSession(),
+      fetcher,
+    });
+
+    await expect(api.updatePageSettings(page.id, {
+      page_dialogue_toggle: false,
+    })).rejects.toMatchObject({ code: 'INVALID_API_RESPONSE', status: 502 });
+    await expect(api.updatePageSettings(page.id, {})).rejects.toMatchObject({
+      code: 'INVALID_REQUEST',
+      status: 422,
+    });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
   it('Story自動入力をlanguageだけのbodyと同じorganization scopeで開始する', async () => {
     const organizationId = '55555555-5555-4555-8555-555555555555';
     const accepted = { job_id: buildPageSkeletonJob().id };

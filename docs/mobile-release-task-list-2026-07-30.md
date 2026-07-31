@@ -6,9 +6,9 @@
 
 対象PR: [#67 feat(mobile): production-ready Lyra mobile workflow](https://github.com/sh0g0-ikeda/Lyra/pull/67)
 
-進捗: 99件完了 / 380件未完了
+進捗: 100件完了 / 380件未完了
 
-実装監査基準: [PR #148](https://github.com/sh0g0-ikeda/Lyra/pull/148) / `8d175c3`（Mobileキャラ参照画像生成 / job監視 / candidate確定 feature code head。local full gateとGitHub CI run `30662549018` が成功し、証跡追記後の最終headも統合前に再確認）
+実装監査基準: [PR #149](https://github.com/sh0g0-ikeda/Lyra/pull/149) / `50dac8f`（Mobile Page台詞表示設定 feature code head。local full gateとGitHub CI run `30664667522` が成功し、証跡追記後の最終headも統合前に再確認）
 
 ## 1. 設計ブリーフ
 
@@ -333,7 +333,10 @@ Accountのfalse-positive error解消は、Mobile基盤の統合後にPR #144と�
   - [x] Mobileキャラ参照画像生成 / job監視 / candidate確定を既存Entity APIだけで接続
     - 証跡: [PR #148](https://github.com/sh0g0-ikeda/Lyra/pull/148)、feature code head `8d175c3`、GitHub CI run `30662549018`。dirtyキャラを既存保存フローで確定後、既存`entity_generate`へ現在の保存内容または明示したimport候補を渡し、exact job ID / type / Entityを照合する。1〜3候補を認証付きでpreviewし、選択・primary・明示確認後だけ既存confirm APIで確定する
     - 安全境界: Backend / DB / migration / Worker / Web / shared API contract、既存request / response、SQS message、job state、credit / refund、確定済み画像の総数を変更しない。import / generation / confirmを相互single-flightにし、POST応答消失は履歴の一意なjobだけをexact再取得する。履歴不明、exact 404 / mismatch、remote reference変更、confirm応答消失はfail closedとし、自動再送や候補自動確定を行わない。candidate tokenはcomponent memoryだけに置きcache identityへ含めない。Mobile 34 files / 264 tests、typecheck、lint、contract drift、Expo dependency check、expo-doctor 20/20、両OS export、Backend Vitest / Bun各1707 tests、fresh DB 001〜039・65 invariant / 0 violations・実DB17 tests、Web lint / build・Playwright 13 tests、独立read-only監査のP1 2件を修正後に再監査P0 / P1なしを確認
-  - 残り: 生成fileを削除可能にするdurable asset cleanup、Backend endpointがない作品削除・並べ替え、Scene削除Backend安全境界、Charactersの削除Backend安全境界・参照画像direct upload client / 本番設定・服装/状態、Page設定、Panel作成・削除・並べ替え・entity assignment・frame / balloon、Page画像生成、organization workspace UI。PR-F全体は未完了のまま維持する
+  - [x] Mobile Page台詞表示設定を既存Page APIだけで接続
+    - 証跡: [PR #149](https://github.com/sh0g0-ikeda/Lyra/pull/149)、feature code head `50dac8f`、GitHub CI run `30664667522`。保存済みPageを選び、既存`dialogue_mode`と`page_dialogue_toggle`だけをchanged-field-onlyで保存する。保存前にPageを再取得し、対象設定のremote変更、Page消失、episode不一致、confirmed / generatingをPUT前にfail closedとする。Story自動入力などの生成開始前にはdirty Page設定を保存・破棄・取消で解決する
+    - 安全境界: Backend / DB / migration / Worker / Web / shared API contract、既存request / response、Page / Panel / Scene / Entity構造、SQS message、generation job、credit / refundを変更しない。personal / organization queryとsession / workspace / episode / Page cacheを分離し、single-flight、response ID / episode照合、旧scope遅延応答の非反映を確認。Mobile 36 files / 281 tests、typecheck、lint、contract drift、Expo dependency check、expo-doctor 20/20、両OS export、Backend Vitest / Bun各1707 tests、fresh DB 001〜039・65 invariant / 0 violations・実DB17 tests、Web lint / build・Playwright 13 tests、独立read-only監査P0 / P1なしを確認
+  - 残り: 生成fileを削除可能にするdurable asset cleanup、Backend endpointがない作品削除・並べ替え、Scene削除Backend安全境界、Charactersの削除Backend安全境界・参照画像direct upload client / 本番設定・服装/状態、Pageのstyle reference / source scene / purpose / continuity設定、Panel作成・削除・並べ替え・entity assignment・frame / balloon、Page画像生成、organization workspace UI。PR-F全体は未完了のまま維持する
 - [ ] PR-G: organization / billing UI / store adapter
   - 主な所有: Account、organization管理、`expo-iap` adapter
   - 完了条件: personal/org分離とstore unavailable状態がgreen

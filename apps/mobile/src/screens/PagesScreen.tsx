@@ -12,6 +12,11 @@ import { StyleSheet, Text, View } from 'react-native';
 import { PrimaryButton } from '../components/PrimaryButton';
 import { PagePlanningSection } from '../components/PagePlanningSection';
 import {
+  PageSettingsSection,
+  type PageSettingsApiPort,
+  type PageSettingsSectionHandle,
+} from '../components/PageSettingsSection';
+import {
   PanelEditingSection,
   type PanelEditingApiPort,
   type PanelEditingSectionHandle,
@@ -61,7 +66,7 @@ export interface PagesScreenHandle {
   prepareToLeave(): Promise<boolean>;
 }
 
-export interface PagesApiPort extends PanelEditingApiPort {
+export interface PagesApiPort extends PanelEditingApiPort, PageSettingsApiPort {
   autofillEpisodePagesFromStory(
     episodeId: string,
     language: UiLanguage,
@@ -154,6 +159,7 @@ export const PagesScreen = forwardRef<PagesScreenHandle, PagesScreenProps>(
     const [jobStatusCheckFailed, setJobStatusCheckFailed] = useState(false);
     const pageOperation = useRef<Promise<boolean> | null>(null);
     const transitionOperation = useRef<Promise<boolean> | null>(null);
+    const pageSettingsRef = useRef<PageSettingsSectionHandle>(null);
     const panelEditingRef = useRef<PanelEditingSectionHandle>(null);
     const handledTerminalJobIds = useRef(new Set<string>());
     const jobsPollInFlight = useRef(false);
@@ -211,6 +217,7 @@ export const PagesScreen = forwardRef<PagesScreenHandle, PagesScreenProps>(
     });
     const refetchJobs = jobsQuery.refetch;
     const refetchJob = jobQuery.refetch;
+    const refetchPages = pagesQuery.refetch;
 
     const works = worksQuery.data?.works ?? [];
     const chapters = chaptersQuery.data?.chapters ?? [];
@@ -575,12 +582,19 @@ export const PagesScreen = forwardRef<PagesScreenHandle, PagesScreenProps>(
       panelEditingRef.current?.prepareToLeave() ?? true
     ), []);
 
+    const resolvePendingPageSettings = useCallback(async (): Promise<boolean> => (
+      pageSettingsRef.current?.prepareToLeave() ?? true
+    ), []);
+
     const resolvePendingChanges = useCallback(async (): Promise<boolean> => {
       if (!(await resolvePendingScene())) {
         return false;
       }
+      if (!(await resolvePendingPageSettings())) {
+        return false;
+      }
       return resolvePendingPanel();
-    }, [resolvePendingPanel, resolvePendingScene]);
+    }, [resolvePendingPageSettings, resolvePendingPanel, resolvePendingScene]);
 
     useImperativeHandle(ref, () => ({
       prepareToLeave: resolvePendingChanges,
@@ -588,7 +602,7 @@ export const PagesScreen = forwardRef<PagesScreenHandle, PagesScreenProps>(
 
     const transition = useCallback((
       changeSelection: () => void | boolean | Promise<void | boolean>,
-      includePanel = true,
+      includePageAndPanel = true,
     ): Promise<boolean> => {
       if (transitionOperation.current !== null) {
         return transitionOperation.current;
@@ -597,8 +611,13 @@ export const PagesScreen = forwardRef<PagesScreenHandle, PagesScreenProps>(
         if (!(await resolvePendingScene())) {
           return false;
         }
-        if (includePanel && !(await resolvePendingPanel())) {
-          return false;
+        if (includePageAndPanel) {
+          if (!(await resolvePendingPageSettings())) {
+            return false;
+          }
+          if (!(await resolvePendingPanel())) {
+            return false;
+          }
         }
         setSceneError(null);
         setSceneNotice(null);
@@ -611,7 +630,15 @@ export const PagesScreen = forwardRef<PagesScreenHandle, PagesScreenProps>(
         }
       });
       return operation;
-    }, [resolvePendingPanel, resolvePendingScene]);
+    }, [resolvePendingPageSettings, resolvePendingPanel, resolvePendingScene]);
+
+    const refreshPagesForSettings = useCallback(async (): Promise<readonly PageRecord[]> => {
+      const result = await refetchPages();
+      if (result.isError || result.data === undefined) {
+        throw new Error('PAGE_REFRESH_FAILED');
+      }
+      return sortPages(result.data.pages);
+    }, [refetchPages]);
 
     const createScene = useCallback((): Promise<boolean> => transition(async () => {
       if (
@@ -1038,6 +1065,21 @@ export const PagesScreen = forwardRef<PagesScreenHandle, PagesScreenProps>(
             }}
             onRetryPages={() => void pagesQuery.refetch()}
             pages={pages}
+          />
+        )}
+        {selectedEpisode === null ? null : (
+          <PageSettingsSection
+            api={api}
+            editingBlocked={panelEditingBlocked}
+            episodeId={selectedEpisode.id}
+            language={language}
+            organizationId={organizationId}
+            pageListReady={pagesQuery.data !== undefined}
+            pages={pages}
+            ref={pageSettingsRef}
+            refreshPages={refreshPagesForSettings}
+            resolveDirtyAction={resolveDirtyAction}
+            sessionKey={sessionKey}
           />
         )}
         {selectedEpisode === null ? null : (

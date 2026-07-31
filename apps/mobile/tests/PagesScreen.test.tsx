@@ -251,6 +251,7 @@ describe('PagesScreen', () => {
     getPanels: vi.fn(),
     getScenes: vi.fn(),
     getWorksPage: vi.fn(),
+    updatePageSettings: vi.fn(),
     updatePanel: vi.fn(),
     updateScene: vi.fn(),
   };
@@ -282,6 +283,15 @@ describe('PagesScreen', () => {
       ...panel,
       id,
       ...body,
+    }));
+    api.updatePageSettings.mockImplementation(async (
+      id: string,
+      body: Record<string, unknown>,
+    ) => ({
+      ...page,
+      id,
+      ...body,
+      updated_at: '2026-07-31T00:00:01.000Z',
     }));
   });
 
@@ -535,6 +545,48 @@ describe('PagesScreen', () => {
     );
     expect(api.autofillEpisodePagesFromStory).toHaveBeenCalledOnce();
     expect(api.updatePanel.mock.invocationCallOrder[0])
+      .toBeLessThan(api.autofillEpisodePagesFromStory.mock.invocationCallOrder[0]!);
+  });
+
+  it('dirty Page設定は中止時に保持し保存成功後だけStory自動入力へ進む', async () => {
+    api.getPages.mockResolvedValue({ pages: [page] });
+    api.getJob.mockResolvedValue(storyAutofillJob('processing'));
+    const resolveDirtyAction = vi.fn()
+      .mockResolvedValueOnce('cancel')
+      .mockResolvedValueOnce('save');
+    const renderer = await renderScreen({ resolveDirtyAction });
+    await selectEpisode(renderer);
+    await act(async () => {
+      renderer.root.findByProps({
+        accessibilityLabel: 'ページ設定のページ 1を選択',
+      }).props.onPress();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      renderer.root.findByProps({
+        accessibilityLabel: 'セリフを吹き出しだけにする',
+      }).props.onPress();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      renderer.root.findByProps({ label: 'ストーリーから設定を自動入力' }).props.onPress();
+      await flushQueries();
+    });
+    expect(api.updatePageSettings).not.toHaveBeenCalled();
+    expect(api.autofillEpisodePagesFromStory).not.toHaveBeenCalled();
+
+    await act(async () => {
+      renderer.root.findByProps({ label: 'ストーリーから設定を自動入力' }).props.onPress();
+      await flushQueries();
+    });
+    expect(api.updatePageSettings).toHaveBeenCalledWith(
+      page.id,
+      { dialogue_mode: 'balloon_only' },
+      null,
+    );
+    expect(api.autofillEpisodePagesFromStory).toHaveBeenCalledOnce();
+    expect(api.updatePageSettings.mock.invocationCallOrder[0])
       .toBeLessThan(api.autofillEpisodePagesFromStory.mock.invocationCallOrder[0]!);
   });
 
