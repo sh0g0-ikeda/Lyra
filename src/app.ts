@@ -18,6 +18,13 @@ import {
   S3EntityReferenceUploadStorage,
 } from './infrastructure/aws/S3EntityReferenceUploadStorage.js';
 import { createGenerationQueueClient, SqsGenerationQueue } from './infrastructure/aws/SqsGenerationQueue.js';
+import {
+  createEpisodeExportQueueClient,
+  SqsEpisodeExportQueue,
+} from './infrastructure/aws/SqsEpisodeExportQueue.js';
+import {
+  S3EpisodeExportDownloadSigner,
+} from './infrastructure/aws/S3EpisodeExportDownloadSigner.js';
 import { S3StoredImageLoader, type StoredImageLoaderPort } from './infrastructure/aws/S3StoredImageLoader.js';
 import { LocalFileFinalPageImageStorage } from './infrastructure/local/LocalFileFinalPageImageStorage.js';
 import { LocalFileEntityImageStorage } from './infrastructure/local/LocalFileEntityImageStorage.js';
@@ -66,6 +73,7 @@ import {
 import { PostgresEntityGenerationExecutionRepository } from './repositories/EntityGenerationExecutionRepository.js';
 import { PostgresEntityGenerationRecoveryRepository } from './repositories/EntityGenerationRecoveryRepository.js';
 import { PostgresEpisodePlanPersistenceRepository } from './repositories/EpisodePlanPersistenceRepository.js';
+import { PostgresEpisodeExportJobRepository } from './repositories/EpisodeExportJobRepository.js';
 import { PostgresGenerationJobRepository } from './repositories/GenerationJobRepository.js';
 import { PostgresOrganizationRepository } from './repositories/OrganizationRepository.js';
 import { PostgresBalloonRepository } from './repositories/BalloonRepository.js';
@@ -86,6 +94,7 @@ import { createBalloonRoutes } from './routes/balloons.js';
 import { createCompositionRoutes } from './routes/compositions.js';
 import { createEntityRoutes } from './routes/entities.js';
 import { createEntityReferenceUploadRoutes } from './routes/entityReferenceUploads.js';
+import { createEpisodeExportRoutes } from './routes/episodeExports.js';
 import { createHealthRoutes, type ReadinessCheck } from './routes/health.js';
 import { createJobRoutes } from './routes/jobs.js';
 import { createLocalAssetRoutes } from './routes/localAssets.js';
@@ -132,6 +141,13 @@ import {
   EntityReferenceImageExportService,
   type EntityReferenceImageExportServicePort,
 } from './services/entity/EntityReferenceImageExportService.js';
+import {
+  EpisodeExportDispatchService,
+} from './services/export/EpisodeExportDispatchService.js';
+import {
+  EpisodeExportService,
+  type EpisodeExportServicePort,
+} from './services/export/EpisodeExportService.js';
 import {
   InlineEntityGenerationQueueAdapter,
   SqsEntityGenerationQueueAdapter,
@@ -257,6 +273,7 @@ export interface AppDependencies {
   entityReferenceUploadService?: EntityReferenceUploadServicePort;
   entityReferenceImageExportService?: EntityReferenceImageExportServicePort;
   entityGenerationQueue?: EntityGenerationQueuePort;
+  episodeExportService?: EpisodeExportServicePort;
   episodePageSkeletonQueue?: EpisodePageSkeletonQueuePort | null;
   episodePageSkeletonService?: EpisodePageSkeletonServicePort | null;
   episodeStoryAutofillQueue?: EpisodeStoryAutofillQueuePort;
@@ -442,6 +459,17 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
         authMiddleware,
         rateLimitMiddleware,
         entityReferenceUploadService: resolvedDependencies.entityReferenceUploadService,
+        organizationService: resolvedDependencies.organizationService,
+      }),
+    );
+  }
+  if (resolvedDependencies.episodeExportService !== undefined) {
+    app.route(
+      '/api',
+      createEpisodeExportRoutes({
+        authMiddleware,
+        rateLimitMiddleware,
+        episodeExportService: resolvedDependencies.episodeExportService,
         organizationService: resolvedDependencies.organizationService,
       }),
     );
@@ -632,6 +660,7 @@ function resolveDependencies(
       | 'episodePageSkeletonQueue'
       | 'episodePageSkeletonService'
       | 'entityReferenceUploadService'
+      | 'episodeExportService'
       | 'webStaticDir'
       | 'readinessCheck'
     >
@@ -641,6 +670,7 @@ function resolveDependencies(
   episodePageSkeletonQueue?: EpisodePageSkeletonQueuePort;
   episodePageSkeletonService?: EpisodePageSkeletonServicePort;
   entityReferenceUploadService?: EntityReferenceUploadServicePort;
+  episodeExportService?: EpisodeExportServicePort;
   storyEpisodeImprovementPlanner?: StoryEpisodeImprovementPlannerPort;
 } {
   const creditRepository = new PostgresCreditRepository(db, db);
@@ -805,6 +835,8 @@ function resolveDependencies(
       entityReferenceService,
       organizationService,
     );
+  const episodeExportService =
+    dependencies.episodeExportService ?? resolveConfiguredEpisodeExportService();
   const entityReferenceImageExportService =
     dependencies.entityReferenceImageExportService ??
     new EntityReferenceImageExportService(entityRepository, resolveStoredPageImageLoader());
@@ -919,6 +951,7 @@ function resolveDependencies(
     entityService,
     entityReferenceService,
     entityReferenceUploadService,
+    episodeExportService,
     entityReferenceImageExportService,
     entityGenerationQueue,
     episodePageSkeletonQueue,
@@ -1100,6 +1133,39 @@ function resolveConfiguredEntityReferenceUploadService(
     entityReferenceService,
     organizationService,
   });
+}
+
+function resolveConfiguredEpisodeExportService():
+  | EpisodeExportServicePort
+  | undefined {
+  if (!env.EPISODE_EXPORT_ENABLED) {
+    return undefined;
+  }
+  if (
+    env.SQS_QUEUE_URL_EXPORT === undefined
+    || env.S3_BUCKET_IMAGES === undefined
+  ) {
+    throw new ConfigurationError(
+      'EPISODE_EXPORT_ENABLED=true requires SQS_QUEUE_URL_EXPORT and S3_BUCKET_IMAGES',
+    );
+  }
+
+  const repository = new PostgresEpisodeExportJobRepository(db, db);
+  const dispatcher = new EpisodeExportDispatchService(
+    repository,
+    new SqsEpisodeExportQueue(
+      createEpisodeExportQueueClient(env.AWS_REGION),
+      env.SQS_QUEUE_URL_EXPORT,
+    ),
+  );
+  return new EpisodeExportService(
+    repository,
+    dispatcher,
+    new S3EpisodeExportDownloadSigner(
+      createPageImageStorageClient(env.AWS_REGION),
+      { bucketName: env.S3_BUCKET_IMAGES },
+    ),
+  );
 }
 
 function resolveS3ImageStorageCdnBaseUrl(): string | undefined {

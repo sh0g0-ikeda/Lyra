@@ -29,6 +29,23 @@ const envSchema = z.object({
   SQS_QUEUE_URL_GENERATION: z.string().url().optional(),
   SQS_GENERATION_VISIBILITY_TIMEOUT_SECONDS: z.coerce.number().int().min(1).max(43_200).optional(),
   SQS_GENERATION_MAX_NUMBER_OF_MESSAGES: z.coerce.number().int().min(1).max(10).default(1),
+  EPISODE_EXPORT_ENABLED: z
+    .string()
+    .optional()
+    .transform((value) => value === 'true'),
+  SQS_QUEUE_URL_EXPORT: z.string().url().optional(),
+  SQS_EXPORT_VISIBILITY_TIMEOUT_SECONDS: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .max(43_200)
+    .optional(),
+  SQS_EXPORT_MAX_NUMBER_OF_MESSAGES: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .max(10)
+    .default(1),
   S3_BUCKET_IMAGES: z.string().min(1).optional(),
   IMAGE_DELIVERY_MODE: z.enum(['cloudfront_signed', 's3_presigned']).default('cloudfront_signed'),
   IMAGES_CDN_BASE_URL: z.string().optional(),

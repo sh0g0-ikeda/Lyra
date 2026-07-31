@@ -86,6 +86,17 @@ for the same persisted snapshot, and artifacts are private, encrypted, and writt
 only to the server-derived job key. These worker and storage contracts do not by
 themselves enable queue polling, API routes, or downloads.
 
+Episode export runtime wiring is independently gated by
+`EPISODE_EXPORT_ENABLED`, which defaults to false. When enabled, authenticated
+create/status/download routes require personal ownership or active organization
+membership with export capability. Creation commits the job and outbox before a
+best-effort dispatch to `SQS_QUEUE_URL_EXPORT`; status reads and a bounded periodic
+runner recover undispatched rows. Export messages carry only a version and export
+job ID, and a dedicated poller never shares the generation queue or credit path.
+Completed, unexpired artifacts are delivered only through an HTTPS URL lasting no
+longer than five minutes or the remaining artifact lifetime. Expiry cleanup deletes
+the exact server-derived key before marking it deleted and is safe to retry.
+
 Native push device tokens are encrypted with authenticated encryption before
 persistence and are located by a separately keyed deterministic digest. Registration
 is unique per user installation, and logout removal is scoped by both user and
@@ -193,6 +204,9 @@ failure returns a generic HTTP 503 response without infrastructure details.
 The API must remain responsive while generation work is queued. Workers can scale
 independently of the API. Queue depth, oldest message age, job duration, failure
 rate, credit refunds, database capacity, and provider errors are operational signals.
+Episode export has a separate queue, worker process, visibility timeout, outbox
+recovery, and artifact-cleanup loop so document assembly cannot consume image
+generation capacity.
 
 ## 10. Verification gate
 

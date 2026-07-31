@@ -235,6 +235,7 @@ class FakeRepository {
         return this.failUnclaimableResult;
       },
       findUndispatchedForJob: async () => null,
+      listUndispatched: async () => [],
       markDispatched: async () => false,
       markDispatchFailure: async () => false,
       listExpiredArtifacts: async () => [],

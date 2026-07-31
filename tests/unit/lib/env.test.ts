@@ -4,6 +4,27 @@ import { parseEnv } from '../../../src/lib/env.js';
 const originalNodeEnv = process.env.NODE_ENV;
 
 describe('parseEnv', () => {
+  it('episode exportは明示しない限り無効で専用queue設定を持たない', () => {
+    const parsed = parseEnv({});
+
+    expect(parsed.EPISODE_EXPORT_ENABLED).toBe(false);
+    expect(parsed.SQS_QUEUE_URL_EXPORT).toBeUndefined();
+    expect(parsed.SQS_EXPORT_MAX_NUMBER_OF_MESSAGES).toBe(1);
+  });
+
+  it('episode exportの専用queue値をboundedに解釈する', () => {
+    const parsed = parseEnv({
+      EPISODE_EXPORT_ENABLED: 'true',
+      SQS_QUEUE_URL_EXPORT:
+        'https://sqs.ap-northeast-1.amazonaws.com/123456789012/lyra-export',
+      SQS_EXPORT_VISIBILITY_TIMEOUT_SECONDS: '1800',
+      SQS_EXPORT_MAX_NUMBER_OF_MESSAGES: '2',
+    });
+
+    expect(parsed.EPISODE_EXPORT_ENABLED).toBe(true);
+    expect(parsed.SQS_EXPORT_VISIBILITY_TIMEOUT_SECONDS).toBe(1800);
+    expect(parsed.SQS_EXPORT_MAX_NUMBER_OF_MESSAGES).toBe(2);
+  });
   afterEach(() => {
     process.env.NODE_ENV = originalNodeEnv;
   });

@@ -37,6 +37,9 @@ interface RuntimeGuardConfig {
   OPENAI_TIMEOUT_MS?: number;
   SQS_QUEUE_URL_GENERATION?: string;
   SQS_GENERATION_VISIBILITY_TIMEOUT_SECONDS?: number;
+  EPISODE_EXPORT_ENABLED?: boolean;
+  SQS_QUEUE_URL_EXPORT?: string;
+  SQS_EXPORT_VISIBILITY_TIMEOUT_SECONDS?: number;
   S3_BUCKET_IMAGES?: string;
   IMAGE_DELIVERY_MODE?: 'cloudfront_signed' | 's3_presigned';
   IMAGES_CDN_BASE_URL?: string;
@@ -71,6 +74,7 @@ const MAX_PRODUCTION_DATABASE_POOL_MAX = 10;
 const MAX_PRODUCTION_DATABASE_TIMEOUT_MS = 60_000;
 const SQS_VISIBILITY_TIMEOUT_BUFFER_SECONDS = 120;
 const MIN_PRODUCTION_SQS_GENERATION_VISIBILITY_TIMEOUT_SECONDS = 1800;
+const MIN_PRODUCTION_SQS_EXPORT_VISIBILITY_TIMEOUT_SECONDS = 1800;
 
 const REQUIRED_PRODUCTION_GENERATION_KEYS = [
   'AWS_REGION',
@@ -289,6 +293,37 @@ export function assertProductionRuntimeConfig(
       if (config.SQS_GENERATION_VISIBILITY_TIMEOUT_SECONDS < minimumVisibilityTimeoutSeconds) {
         violations.push(`SQS_GENERATION_VISIBILITY_TIMEOUT_SECONDS must be >= ${minimumVisibilityTimeoutSeconds}`);
       }
+    }
+  }
+
+  if (config.EPISODE_EXPORT_ENABLED === true) {
+    if (isMissingConfigValue(config.SQS_QUEUE_URL_EXPORT)) {
+      violations.push('SQS_QUEUE_URL_EXPORT is required when episode export is enabled');
+    } else {
+      const queueUrl = config.SQS_QUEUE_URL_EXPORT;
+      if (queueUrl !== undefined && !isSafeProductionHttpsUrl(queueUrl)) {
+        violations.push(
+          'SQS_QUEUE_URL_EXPORT must use https and a non-local host in production',
+        );
+      }
+      if (hasPlaceholderConfigValue(queueUrl)) {
+        violations.push('SQS_QUEUE_URL_EXPORT must not use a placeholder value');
+      }
+    }
+    if (
+      config.SQS_EXPORT_VISIBILITY_TIMEOUT_SECONDS === undefined
+      || config.SQS_EXPORT_VISIBILITY_TIMEOUT_SECONDS
+        < MIN_PRODUCTION_SQS_EXPORT_VISIBILITY_TIMEOUT_SECONDS
+    ) {
+      violations.push(
+        `SQS_EXPORT_VISIBILITY_TIMEOUT_SECONDS must be at least ${MIN_PRODUCTION_SQS_EXPORT_VISIBILITY_TIMEOUT_SECONDS}`,
+      );
+    }
+    if (isMissingConfigValue(config.AWS_REGION)) {
+      violations.push('AWS_REGION is required when episode export is enabled');
+    }
+    if (isMissingConfigValue(config.S3_BUCKET_IMAGES)) {
+      violations.push('S3_BUCKET_IMAGES is required when episode export is enabled');
     }
   }
 

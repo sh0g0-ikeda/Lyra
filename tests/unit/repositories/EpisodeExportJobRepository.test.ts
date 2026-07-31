@@ -131,6 +131,35 @@ describe('PostgresEpisodeExportJobRepository', () => {
     expect(database.queries[0]).toContain("organization_members.status = 'active'");
   });
 
+  it('未dispatchかつqueued・未期限切れoutboxだけを古い順のbounded batchで返す', async () => {
+    const database = new ScriptedDatabase([[
+      {
+        export_job_id: jobId,
+        created_at: new Date('2026-07-31T00:00:00.000Z'),
+        dispatched_at: null,
+        sqs_message_id: null,
+        dispatch_attempts: 0,
+        last_dispatch_error: null,
+      },
+    ]]);
+    const repository = new PostgresEpisodeExportJobRepository(database, database);
+
+    await expect(repository.listUndispatched(50)).resolves.toEqual([{
+      exportJobId: jobId,
+      createdAt: new Date('2026-07-31T00:00:00.000Z'),
+      dispatchedAt: null,
+      sqsMessageId: null,
+      dispatchAttempts: 0,
+      lastDispatchError: null,
+    }]);
+
+    expect(database.queries[0]).toContain('episode_export_job_outbox.dispatched_at IS NULL');
+    expect(database.queries[0]).toContain("episode_export_jobs.status = 'queued'");
+    expect(database.queries[0]).toContain('episode_export_jobs.expires_at > NOW()');
+    expect(database.queries[0]).toContain('ORDER BY episode_export_job_outbox.created_at ASC');
+    expect(database.queries[0]).toContain('LIMIT $1::int');
+  });
+
   it('queuedまたは期限切れprocessingだけを新lease tokenで原子的claimする', async () => {
     const database = new ScriptedDatabase([[jobRow({
       status: 'processing',

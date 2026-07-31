@@ -31,6 +31,7 @@ const routeMountPrefixes = new Map([
   ['compositions.ts', '/api'],
   ['entities.ts', '/api'],
   ['entityReferenceUploads.ts', '/api'],
+  ['episodeExports.ts', '/api'],
   ['health.ts', ''],
   ['jobs.ts', '/api'],
   ['localAssets.ts', ''],
@@ -100,6 +101,13 @@ const explicitResponseClassifications = new Map([
     {
       response: 'CSV',
       detail: 'Sanitized organization usage columns',
+    },
+  ],
+  [
+    'GET /api/exports/:jobId/download',
+    {
+      response: 'Redirect',
+      detail: 'Authenticated short-lived HTTPS artifact URL',
     },
   ],
   [
