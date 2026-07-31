@@ -170,6 +170,126 @@ describe('LyraMobileApiClient', () => {
     ]);
   });
 
+  it('Story階層の作成・名称変更・移動を最小payloadで送る', async () => {
+    const createdWork = { ...buildWork(), title: '新しい作品' };
+    const createdChapter = { ...buildChapter(), title: '第二章', order: 2 };
+    const createdEpisode = { ...buildEpisode(), title: '第二話', order: 2 };
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(jsonResponse(createdWork))
+      .mockResolvedValueOnce(jsonResponse(createdWork))
+      .mockResolvedValueOnce(jsonResponse(createdChapter))
+      .mockResolvedValueOnce(jsonResponse(createdChapter))
+      .mockResolvedValueOnce(jsonResponse(createdChapter))
+      .mockResolvedValueOnce(jsonResponse(createdEpisode))
+      .mockResolvedValueOnce(jsonResponse(createdEpisode));
+    const api = new LyraMobileApiClient({
+      apiBaseUrl: 'https://api.example.com',
+      auth: new FakeAuthSession(),
+      fetcher,
+    });
+
+    await api.createWork('新しい作品');
+    await api.updateWork(buildWork().id, '新しい作品');
+    await api.createChapter(buildWork().id, { order: 2, title: '第二章' });
+    await api.updateChapter(buildChapter().id, '第二章');
+    await api.moveChapter(buildChapter().id, 'down');
+    await api.createEpisode(buildChapter().id, { order: 2, title: '第二話' });
+    await api.moveEpisode(buildEpisode().id, 'down', true);
+
+    expect(fetcher.mock.calls.map((call) => ({
+      url: call[0],
+      method: call[1]?.method,
+      body: call[1]?.body,
+    }))).toEqual([
+      {
+        url: 'https://api.example.com/api/works',
+        method: 'POST',
+        body: JSON.stringify({ title: '新しい作品' }),
+      },
+      {
+        url: `https://api.example.com/api/works/${buildWork().id}`,
+        method: 'PUT',
+        body: JSON.stringify({ title: '新しい作品' }),
+      },
+      {
+        url: `https://api.example.com/api/works/${buildWork().id}/chapters`,
+        method: 'POST',
+        body: JSON.stringify({ order: 2, title: '第二章' }),
+      },
+      {
+        url: `https://api.example.com/api/chapters/${buildChapter().id}`,
+        method: 'PUT',
+        body: JSON.stringify({ title: '第二章' }),
+      },
+      {
+        url: `https://api.example.com/api/chapters/${buildChapter().id}/move`,
+        method: 'POST',
+        body: JSON.stringify({ direction: 'down' }),
+      },
+      {
+        url: `https://api.example.com/api/chapters/${buildChapter().id}/episodes`,
+        method: 'POST',
+        body: JSON.stringify({ order: 2, title: '第二話' }),
+      },
+      {
+        url: `https://api.example.com/api/episodes/${buildEpisode().id}/move`,
+        method: 'POST',
+        body: JSON.stringify({ direction: 'down', cross_chapter: true }),
+      },
+    ]);
+  });
+
+  it('organization作品作成だけorganization_idをbodyへ入れ、他のmutationはqueryへ入れる', async () => {
+    const organizationId = '99999999-9999-4999-8999-999999999999';
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(jsonResponse({ ...buildWork(), organization_id: organizationId }))
+      .mockResolvedValueOnce(jsonResponse(buildChapter()))
+      .mockResolvedValueOnce(jsonResponse(buildEpisode()));
+    const api = new LyraMobileApiClient({
+      apiBaseUrl: 'https://api.example.com',
+      auth: new FakeAuthSession(),
+      fetcher,
+    });
+
+    await api.createWork('法人作品', organizationId);
+    await api.createChapter(buildWork().id, { order: 1, title: '第一章' }, organizationId);
+    await api.createEpisode(buildChapter().id, { order: 1, title: '第一話' }, organizationId);
+
+    expect(fetcher.mock.calls[0]).toEqual([
+      'https://api.example.com/api/works',
+      expect.objectContaining({
+        body: JSON.stringify({ title: '法人作品', organization_id: organizationId }),
+      }),
+    ]);
+    expect(fetcher.mock.calls[1]?.[0]).toBe(
+      `https://api.example.com/api/works/${buildWork().id}/chapters?organization_id=${organizationId}`,
+    );
+    expect(fetcher.mock.calls[2]?.[0]).toBe(
+      `https://api.example.com/api/chapters/${buildChapter().id}/episodes?organization_id=${organizationId}`,
+    );
+  });
+
+  it('order競合の409 statusを呼び出し側へ保持する', async () => {
+    const api = new LyraMobileApiClient({
+      apiBaseUrl: 'https://api.example.com',
+      auth: new FakeAuthSession(),
+      fetcher: vi.fn<typeof fetch>().mockResolvedValue(
+        new Response('{"error":"conflict detail"}', { status: 409 }),
+      ),
+    });
+
+    await expect(api.createChapter(buildWork().id, {
+      order: 2,
+      title: '第二章',
+    })).rejects.toMatchObject({
+      code: 'REQUEST_FAILED',
+      status: 409,
+      message: 'The request could not be completed.',
+    });
+  });
+
   it('Story階層の契約外success payloadを保存可能データとして返さない', async () => {
     const api = new LyraMobileApiClient({
       apiBaseUrl: 'https://api.example.com',

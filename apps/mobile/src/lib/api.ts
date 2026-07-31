@@ -9,6 +9,7 @@ import {
   worksResponseSchema,
 } from '../domain/apiSchemas';
 import type { EpisodeStoryUpdatePayload } from '../domain/episodeStoryDraft';
+import type { StoryItemMoveDirection } from '../domain/storyHierarchyPolicy';
 import type { AuthTokens } from '../domain/auth';
 
 export type CurrentSession = ReturnType<typeof currentSessionSchema.parse>;
@@ -19,6 +20,11 @@ export type EpisodeRecord = ReturnType<typeof episodeSchema.parse>;
 export interface ListWorksPageInput {
   limit: number;
   cursor?: string | null;
+}
+
+export interface CreateStoryItemInput {
+  order: number;
+  title: string;
 }
 
 export interface MobileAuthSessionPort {
@@ -103,6 +109,74 @@ export class LyraMobileApiClient {
     );
   }
 
+  public createWork(
+    title: string,
+    organizationId: string | null = null,
+  ): Promise<WorkRecord> {
+    const body: { title: string; organization_id?: string } = { title };
+    if (organizationId !== null) {
+      body.organization_id = organizationId;
+    }
+    return this.requestJson('/api/works', workSchema, {
+      method: 'POST',
+      body,
+    });
+  }
+
+  public updateWork(
+    workId: string,
+    title: string,
+    organizationId: string | null = null,
+  ): Promise<WorkRecord> {
+    return this.requestJson(
+      withOrganizationQuery(`/api/works/${encodeURIComponent(workId)}`, organizationId),
+      workSchema,
+      { method: 'PUT', body: { title } },
+    );
+  }
+
+  public createChapter(
+    workId: string,
+    body: CreateStoryItemInput,
+    organizationId: string | null = null,
+  ): Promise<ChapterRecord> {
+    return this.requestJson(
+      withOrganizationQuery(
+        `/api/works/${encodeURIComponent(workId)}/chapters`,
+        organizationId,
+      ),
+      chapterSchema,
+      { method: 'POST', body },
+    );
+  }
+
+  public updateChapter(
+    chapterId: string,
+    title: string,
+    organizationId: string | null = null,
+  ): Promise<ChapterRecord> {
+    return this.requestJson(
+      withOrganizationQuery(`/api/chapters/${encodeURIComponent(chapterId)}`, organizationId),
+      chapterSchema,
+      { method: 'PUT', body: { title } },
+    );
+  }
+
+  public moveChapter(
+    chapterId: string,
+    direction: StoryItemMoveDirection,
+    organizationId: string | null = null,
+  ): Promise<ChapterRecord> {
+    return this.requestJson(
+      withOrganizationQuery(
+        `/api/chapters/${encodeURIComponent(chapterId)}/move`,
+        organizationId,
+      ),
+      chapterSchema,
+      { method: 'POST', body: { direction } },
+    );
+  }
+
   public getEpisodes(
     chapterId: string,
     organizationId: string | null = null,
@@ -113,6 +187,42 @@ export class LyraMobileApiClient {
         organizationId,
       ),
       episodesResponseSchema,
+    );
+  }
+
+  public createEpisode(
+    chapterId: string,
+    body: CreateStoryItemInput,
+    organizationId: string | null = null,
+  ): Promise<EpisodeRecord> {
+    return this.requestJson(
+      withOrganizationQuery(
+        `/api/chapters/${encodeURIComponent(chapterId)}/episodes`,
+        organizationId,
+      ),
+      episodeSchema,
+      { method: 'POST', body },
+    );
+  }
+
+  public moveEpisode(
+    episodeId: string,
+    direction: StoryItemMoveDirection,
+    crossChapter = false,
+    organizationId: string | null = null,
+  ): Promise<EpisodeRecord> {
+    return this.requestJson(
+      withOrganizationQuery(
+        `/api/episodes/${encodeURIComponent(episodeId)}/move`,
+        organizationId,
+      ),
+      episodeSchema,
+      {
+        method: 'POST',
+        body: crossChapter
+          ? { direction, cross_chapter: true }
+          : { direction },
+      },
     );
   }
 
@@ -142,7 +252,7 @@ export class LyraMobileApiClient {
   private async requestJson<T>(
     path: string,
     schema: ZodType<T>,
-    options: { method?: 'GET' | 'PUT'; body?: unknown } = {},
+    options: { method?: 'GET' | 'POST' | 'PUT'; body?: unknown } = {},
   ): Promise<T> {
     const tokens = await this.requireTokens();
     let response = await this.request(path, tokens.idToken, options);
@@ -183,7 +293,7 @@ export class LyraMobileApiClient {
   private async request(
     path: string,
     idToken: string,
-    options: { method?: 'GET' | 'PUT'; body?: unknown },
+    options: { method?: 'GET' | 'POST' | 'PUT'; body?: unknown },
   ): Promise<Response> {
     const controller = new AbortController();
     const timeoutId = setTimeout(
