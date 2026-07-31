@@ -17,6 +17,10 @@ import type {
   UserProvisioningPort,
 } from '../../../src/services/auth/UserProvisioningService.js';
 import type { BillingServicePort } from '../../../src/services/billing/BillingService.js';
+import type {
+  MobileStorePurchaseResult,
+  MobileStorePurchaseServicePort,
+} from '../../../src/services/billing/MobileStorePurchaseService.js';
 import type { StripeWebhookServicePort } from '../../../src/services/billing/StripeWebhookService.js';
 import type {
   ConsumeCreditsParams,
@@ -281,6 +285,37 @@ describe('billing routes', () => {
       }),
     );
     expect(billingService.personalSubscriptionSummaryUserId).toBe(testUser.id);
+  });
+
+  it('Stripe summaryがない場合に検証済みstore購読を同じwire fieldへ返す', async () => {
+    const billingService = new FakeBillingService();
+    const mobileStoreService = new FakeMobileStoreSubscriptionService({
+      planCode: 'premium',
+      status: 'active',
+      currentPeriodEnd: new Date('2026-09-01T00:00:00.000Z'),
+      cancelAtPeriodEnd: false,
+    });
+    const paidUser: AuthenticatedUser = { ...testUser, planCode: 'premium' };
+    const app = createTestApp(
+      billingService,
+      new FakeStripeWebhookService(),
+      undefined,
+      paidUser,
+      mobileStoreService,
+    );
+    const token = await createToken();
+
+    const response = await app.request('/api/billing/balance', {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      plan_code: 'premium',
+      current_period_end: '2026-09-01T00:00:00.000Z',
+      cancel_at_period_end: false,
+    });
+    expect(mobileStoreService.summaryUserIds).toEqual([testUser.id]);
   });
 
   it('billing response contractに違反するplanを成功payloadとして返さない', async () => {
@@ -565,6 +600,7 @@ function createTestApp(
   stripeWebhookService: StripeWebhookServicePort,
   rateLimitStore?: RateLimitStore,
   authenticatedUser: AuthenticatedUser = testUser,
+  mobileStorePurchaseService?: MobileStorePurchaseServicePort,
 ): ReturnType<typeof createApp> {
   return createApp({
     billingService,
@@ -573,7 +609,57 @@ function createTestApp(
     stripeWebhookService,
     userProvisioningService: new FakeUserProvisioningService(authenticatedUser),
     jwtSecret,
+    mobileStorePurchaseService,
+    googlePubSubPushVerifier:
+      mobileStorePurchaseService === undefined
+        ? undefined
+        : { verifyAuthorization: async () => undefined },
   });
+}
+
+class FakeMobileStoreSubscriptionService implements MobileStorePurchaseServicePort {
+  public readonly summaryUserIds: string[] = [];
+
+  public constructor(private readonly summary: PersonalSubscriptionSummary | null) {}
+
+  public listProducts(): readonly [] {
+    return [];
+  }
+
+  public async getAccountBinding() {
+    return {
+      appleAppAccountToken: '11111111-1111-4111-8111-111111111111',
+      googleObfuscatedAccountId: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      subscriptionPurchaseAllowed: true,
+    };
+  }
+
+  public async getPersonalSubscriptionSummary(
+    userId: string,
+  ): Promise<PersonalSubscriptionSummary | null> {
+    this.summaryUserIds.push(userId);
+    return this.summary;
+  }
+
+  public async verifyApplePurchase(): Promise<MobileStorePurchaseResult> {
+    throw new Error('not used');
+  }
+
+  public async verifyGooglePurchase(): Promise<MobileStorePurchaseResult> {
+    throw new Error('not used');
+  }
+
+  public async restorePurchases(): Promise<MobileStorePurchaseResult[]> {
+    throw new Error('not used');
+  }
+
+  public async handleAppleNotification(): Promise<void> {
+    throw new Error('not used');
+  }
+
+  public async handleGoogleRtdn(): Promise<void> {
+    throw new Error('not used');
+  }
 }
 
 async function createToken(): Promise<string> {

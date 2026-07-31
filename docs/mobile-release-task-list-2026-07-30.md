@@ -266,13 +266,17 @@ Codex単独で進める次の順序は、`CI安定化 → PR-A継続 → 契約�
   - [x] episode exportの認証API・専用SQS・outbox recovery・短命download・期限切れcleanupを既定OFFで接続
     - 証跡: [PR #131](https://github.com/sh0g0-ikeda/Lyra/pull/131)。strict create/status contract、organization export権限、commit後dispatch、version付き専用payload、partial batch retry、5分以下のHTTPS署名、delete後mark、fresh DB 58 invariant / 0 violationsを確認
     - 安全境界: `EPISODE_EXPORT_ENABLED=false`を維持し、queue / IAM / lifecycle / task definition / Mobile clientは未設定。既存1ページexport、generation queue、`generation_jobs`、credit処理は変更しない
-- [ ] PR-C: Mobile store billing Backend
+- [x] PR-C: Mobile store billing Backend
   - 主な所有: migration 029、Apple/Google verifier、purchase service、webhook、ledger
   - 完了条件: 課金OFFで既存Webの挙動を変えず、focused testsがgreen
   - [x] 課金機能を有効化せず、個人Mobile購入・event・credit冪等性のDB契約を先行統合
     - 証跡: [PR #112](https://github.com/sh0g0-ikeda/Lyra/pull/112)。fresh DB 001〜029、49 invariant / 0 violationsを確認し、raw token/JWSを保存しないkey形状とpersonal-only境界を固定
     - 境界: verifier、Service、Repository、Route、Webhook、Mobile SDK、product mappingは未接続。外部console / secret / sandbox証跡が揃うまで課金OFFを維持する
-  - `/api/billing/balance`の購読summaryをApple / Googleの検証済み購入まで拡張し、StripeとStoreで同じwire fieldを返す
+  - [x] Apple公式JWS、Google Developer API、Pub/Sub OIDCの検証経路を既定OFFで接続
+  - [x] purchase / event / credit ledger / personal planを同一transactionと3段のunique barrierで更新
+  - [x] `/api/billing/balance`の購読summaryをApple / Googleの検証済み購入まで拡張し、StripeとStoreで同じwire fieldを返す
+  - 証跡: [PR #132](https://github.com/sh0g0-ikeda/Lyra/pull/132)。focused 89 tests、全Vitest / Bun各1618件中1617件成功・1件skip、fresh DB 001〜036と58 invariant / 0 violations、Web / Mobile / production imageの全gateを確認
+  - 安全境界: `MOBILE_STORE_BILLING_ENABLED=false`を維持。App Store Connect / Play Console、実product ID、credential / secret、native billing SDK、sandbox / license testは未設定
 - [ ] PR-D: generation job management / cancellation / push outbox
   - 主な所有: migrations 030, 033〜035、Worker、job services
   - 完了条件: cancel/refund/outbox競合テストがgreen
@@ -606,11 +610,13 @@ Codex単独で進める次の順序は、`CI安定化 → PR-A継続 → 契約�
 - [ ] Appleの3 consumable product IDをserver catalogへ設定する
 - [ ] Googleの2 subscription product IDをserver catalogへ設定する
 - [ ] Googleの3 one-time product IDをserver catalogへ設定する
-- [ ] 同一store内にproduct IDの重複がない
+- [x] Backend起動時に同一store内のproduct ID重複を拒否する
+- [ ] staging / productionへ登録した実product IDに重複がないことをreadbackする
 - [ ] Mobile bundleへ価格をhard-codeしない
 - [ ] Mobileはstoreから取得したdisplay priceだけを表示する
-- [ ] 未知product IDをBackendが拒否する
-- [ ] Mobile account bindingとstore account bindingを照合する
+- [x] 未知product IDをBackendが拒否する
+- [x] Mobile account bindingとstore account bindingを照合する
+  - 証跡: PR #132のserver-owned 10商品catalog、duplicate / unknown product拒否、Apple UUID / Google HMAC account bindingテスト
 
 #### BILL-610 staging設定
 
@@ -621,6 +627,8 @@ Codex単独で進める次の順序は、`CI安定化 → PR-A継続 → 契約�
 - [ ] staging APIの起動時config validationを通す
 - [ ] staging catalog endpointが10商品の正しいIDを返す
 - [ ] store未反映商品をMobileでdisabled表示する
+  - [x] Backendに必須key、secret長、URL/email、credential形状、重複、sandbox/test環境の起動時validationを実装
+    - 境界: staging環境への実値登録と起動確認は未実施
 
 #### BILL-620 production設定
 
@@ -634,24 +642,27 @@ Codex単独で進める次の順序は、`CI安定化 → PR-A継続 → 契約�
 - [ ] Apple App ID、bundle ID、root certificatesを本番secretへ登録する
 - [ ] secretの値を出さず、必須keyの存在だけをreadbackする
 - [ ] 課金有効化前にAPI taskをdry-runする
-- [ ] 最終承認までは`MOBILE_STORE_BILLING_ENABLED=false`を維持する
+- [x] 最終承認までは`MOBILE_STORE_BILLING_ENABLED=false`を維持する
+  - 証跡: PR #132のenv既定値、無効時route非mount、production sandbox / test拒否テスト
 
 #### BILL-630 ledger / entitlement
 
-- [ ] active subscriptionでmonthly creditsを一度だけ付与する
-- [ ] renewalで次期間分を一度だけ付与する
-- [ ] duplicate client verifyで二重付与しない
-- [ ] duplicate Apple notificationで二重付与しない
-- [ ] duplicate Google RTDNで二重付与しない
-- [ ] pendingではクレジットを付与しない
-- [ ] cancelledで新規付与しない
-- [ ] expiredでentitlementを失効する
-- [ ] refunded credit packを一度だけ取り消す
-- [ ] 残高不足時のreversal方針を確認する
-- [ ] transaction ID、purchase tokenをDBへ平文保存しない
-- [ ] store purchaseとcredit ledgerを同一transactionで更新する
-- [ ] Stripe consumer subscriptionとstore subscriptionの重複契約を防ぐ
-- [ ] organization残高へpersonal store purchaseを付与しない
+- [x] active subscriptionでmonthly creditsを一度だけ付与する
+- [x] renewalで次期間分を一度だけ付与する
+- [x] duplicate client verifyで二重付与しない
+- [x] duplicate Apple notificationで二重付与しない
+- [x] duplicate Google RTDNで二重付与しない
+- [x] pendingではクレジットを付与しない
+- [x] cancelledで新規付与しない
+- [x] expiredでentitlementを失効する
+- [x] refunded credit packを一度だけ取り消す
+- [x] 残高不足時のreversal方針を確認する
+- [x] transaction ID、purchase tokenをDBへ平文保存しない
+- [x] store purchaseとcredit ledgerを同一transactionで更新する
+- [x] Stripe consumer subscriptionとstore subscriptionの重複契約を防ぐ
+- [x] organization残高へpersonal store purchaseを付与しない
+  - 証跡: PR #132。transaction単位のevent/ledger key、user / purchase lock、重複通知、更新、pending / cancelled / expired、refund、account横取り、Stripe重複をテスト
+  - reversal方針: 対象購入に紐づく未消費のpersonal bucketだけを0未満にせず取り消す。消費済み分は負債化せず、organization残高や無関係なcreditへ波及させない
 
 ### Phase 7: 課金実機E2E
 

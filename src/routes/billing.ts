@@ -10,8 +10,10 @@ import {
   createCreditCheckoutBodySchema,
   createSubscriptionCheckoutBodySchema,
 } from '../lib/validators/billing.schema.js';
+import type { PersonalSubscriptionSummary } from '../domain/types/billing.js';
 import { formatZodValidationError } from '../lib/validationErrorFormatter.js';
 import type { BillingServicePort } from '../services/billing/BillingService.js';
+import type { MobileStorePurchaseServicePort } from '../services/billing/MobileStorePurchaseService.js';
 import type { CreditServicePort } from '../services/credit/CreditService.js';
 import type { AppEnv } from '../types/app.js';
 import { assertMobileResponseContract } from './mobileResponseContract.js';
@@ -22,6 +24,10 @@ export interface BillingRouteDependencies {
   rateLimitMiddleware: MiddlewareHandler<AppEnv>;
   billingService: BillingServicePort;
   creditService: CreditServicePort;
+  mobileStorePurchaseService?: Pick<
+    MobileStorePurchaseServicePort,
+    'getPersonalSubscriptionSummary'
+  >;
 }
 
 export function createBillingRoutes(dependencies: BillingRouteDependencies): Hono<AppEnv> {
@@ -36,7 +42,7 @@ export function createBillingRoutes(dependencies: BillingRouteDependencies): Hon
       dependencies.creditService.getBalance(user.id),
       user.planCode === 'free'
         ? Promise.resolve(null)
-        : dependencies.billingService.getPersonalSubscriptionSummary(user.id),
+        : resolvePersonalSubscriptionSummary(dependencies, user.id),
     ]);
 
     const payload = {
@@ -113,4 +119,20 @@ export function createBillingRoutes(dependencies: BillingRouteDependencies): Hon
   });
 
   return app;
+}
+
+async function resolvePersonalSubscriptionSummary(
+  dependencies: BillingRouteDependencies,
+  userId: string,
+): Promise<PersonalSubscriptionSummary | null> {
+  const stripeSummary =
+    await dependencies.billingService.getPersonalSubscriptionSummary(userId);
+  if (stripeSummary !== null) {
+    return stripeSummary;
+  }
+  return (
+    (await dependencies.mobileStorePurchaseService?.getPersonalSubscriptionSummary(
+      userId,
+    )) ?? null
+  );
 }

@@ -36,6 +36,8 @@ const routeMountPrefixes = new Map([
   ['jobs.ts', '/api'],
   ['localAssets.ts', ''],
   ['me.ts', '/api'],
+  ['mobilePurchaseWebhooks.ts', '/api/webhooks/mobile-purchases'],
+  ['mobilePurchases.ts', '/api/mobile-purchases'],
   ['organizations.ts', '/api'],
   ['pages.ts', '/api'],
   ['panelEntityAssignments.ts', '/api'],
@@ -80,6 +82,20 @@ const explicitResponseClassifications = new Map([
     {
       response: 'Provider JSON ACK',
       detail: 'Stripe signature-verified acknowledgement',
+    },
+  ],
+  [
+    'POST /api/webhooks/mobile-purchases/apple',
+    {
+      response: 'Provider JSON ACK',
+      detail: 'Apple signed JWS notification acknowledgement',
+    },
+  ],
+  [
+    'POST /api/webhooks/mobile-purchases/google',
+    {
+      response: 'Provider JSON ACK',
+      detail: 'Google Pub/Sub OIDC and RTDN acknowledgement',
     },
   ],
   [
@@ -347,7 +363,12 @@ function classifyAuth(key) {
   if (key.startsWith('OPTIONS /local-assets/') || key.startsWith('GET /local-assets/')) {
     return 'Local only';
   }
-  if (key === 'POST /api/webhooks/stripe' || key === 'POST /') {
+  if (
+    key === 'POST /api/webhooks/stripe'
+    || key === 'POST /api/webhooks/mobile-purchases/apple'
+    || key === 'POST /api/webhooks/mobile-purchases/google'
+    || key === 'POST /'
+  ) {
     return 'Provider signed';
   }
   if (key === 'GET /api/organization-invitations/:token') {
