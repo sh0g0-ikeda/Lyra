@@ -103,6 +103,16 @@ Completed, unexpired artifacts are delivered only through an HTTPS URL lasting n
 longer than five minutes or the remaining artifact lifetime. Expiry cleanup deletes
 the exact server-derived key before marking it deleted and is safe to retry.
 
+Chapter and episode deletion is serialized with generation and episode-export
+admission at the episode boundary. The authorized target, descendant episodes, and
+pages are locked and blockers are rechecked in the deletion transaction. Queued or
+processing generation/export work, a completed export artifact that has not been
+deleted, or a persisted generated page image blocks deletion with a sanitized
+conflict. Scope-external targets remain not found. This fail-closed boundary prevents
+workers, retries, credits, job history, and opaque S3 objects from being orphaned by
+the story foreign-key cascade. A future durable asset-deletion workflow may replace
+the generated-file blocker, but a database cascade alone must never imply S3 deletion.
+
 Native push device tokens are encrypted with authenticated encryption before
 persistence and are located by a separately keyed deterministic digest. Registration
 is unique per user installation, and logout removal is scoped by both user and
@@ -153,6 +163,9 @@ Long-running page, entity, page-skeleton, and story-autofill work is represented
 for the same resource. SQS visibility, provider timeout, retry classification,
 recovery, cancellation, and credit refund must remain coordinated. Job lookup and
 cancellation are scoped to personal ownership or active organization membership.
+New episode/page generation jobs and failed-job retries acquire the same
+transaction-scoped episode admission lock used by story deletion, then revalidate
+the authorized target before entering an active state.
 
 Generation and regeneration both create a new result from the current saved inputs.
 A previous generated page image is not an implicit image reference. Confirmed entity

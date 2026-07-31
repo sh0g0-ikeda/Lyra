@@ -21,6 +21,8 @@ const fingerprint = 'a'.repeat(64);
 describe('PostgresEpisodeExportJobRepository', () => {
   it('認可済みpage snapshot・job・outboxを同じtransactionへ保存する', async () => {
     const database = new ScriptedDatabase([
+      [{ authorized_episode_id: episodeId }],
+      [],
       [],
       [snapshotRow()],
       [jobRow()],
@@ -34,18 +36,25 @@ describe('PostgresEpisodeExportJobRepository', () => {
     });
 
     expect(database.transactionCalls).toBe(1);
-    expect(database.queries[1]).toContain('FROM pages');
-    expect(database.queries[1]).toContain('pages.episode_id = $2::uuid');
-    expect(database.queries[1]).toContain('works.user_id = $4::uuid');
-    expect(database.queries[1]).toContain("organization_members.status = 'active'");
-    expect(database.queries[1]).toContain('FOR SHARE OF pages');
-    expect(database.queries[2]).toContain('INSERT INTO episode_export_jobs');
-    expect(database.queries[2]).toContain('ON CONFLICT DO NOTHING');
-    expect(database.queries[3]).toContain('INSERT INTO episode_export_job_outbox');
+    expect(database.queries[0]).toContain('authorized_episode_id');
+    expect(database.queries[1]).toContain('pg_advisory_xact_lock');
+    expect(database.values[1]?.[1]).toBe(`story:episode:${episodeId}`);
+    expect(database.queries[3]).toContain('FROM pages');
+    expect(database.queries[3]).toContain('pages.episode_id = $2::uuid');
+    expect(database.queries[3]).toContain('works.user_id = $4::uuid');
+    expect(database.queries[3]).toContain("organization_members.status = 'active'");
+    expect(database.queries[3]).toContain('FOR SHARE OF pages');
+    expect(database.queries[4]).toContain('INSERT INTO episode_export_jobs');
+    expect(database.queries[4]).toContain('ON CONFLICT DO NOTHING');
+    expect(database.queries[5]).toContain('INSERT INTO episode_export_job_outbox');
   });
 
   it('同じscope・idempotency key・fingerprintは既存jobを返しoutboxを増やさない', async () => {
-    const database = new ScriptedDatabase([[jobRow()]]);
+    const database = new ScriptedDatabase([
+      [{ authorized_episode_id: episodeId }],
+      [],
+      [jobRow()],
+    ]);
     const repository = new PostgresEpisodeExportJobRepository(database, database);
 
     await expect(repository.createOrGet(createInput())).resolves.toMatchObject({
@@ -53,13 +62,15 @@ describe('PostgresEpisodeExportJobRepository', () => {
       job: { id: jobId },
     });
 
-    expect(database.queries).toHaveLength(1);
-    expect(database.queries[0]).toContain('idempotency_key = $3');
+    expect(database.queries).toHaveLength(3);
+    expect(database.queries[2]).toContain('idempotency_key = $3');
     expect(database.queries.some((sql) => sql.includes('INSERT INTO'))).toBe(false);
   });
 
   it('同じidempotency keyを異なるrequestに再利用すると拒否する', async () => {
     const database = new ScriptedDatabase([
+      [{ authorized_episode_id: episodeId }],
+      [],
       [jobRow({ request_fingerprint: 'b'.repeat(64) })],
     ]);
     const repository = new PostgresEpisodeExportJobRepository(database, database);
