@@ -314,7 +314,8 @@ Codex単独で進める次の順序は、`CI安定化 → PR-A継続 → 契約�
   - 主な所有: 各screen、component、dirty state、生成ジョブUI
   - 完了条件: user flow component testsとAPI契約がgreen
   - Story閲覧・編集sliceの証跡: [PR #136](https://github.com/sh0g0-ikeda/Lyra/pull/136)。作品→章→話の選択、title / story / 想定ページ数の保存、正常empty state、保存 / 破棄 / cancel、保存失敗時のdraft保持、保存中single-flight、personal / organization cache分離を追加。Mobile 15 files / 52 tests、両OS export、全Backend / Web gate、fresh DB 001〜039と65 invariant / 0 violationsを確認
-  - 残り: 階層作成・削除・並べ替え、scene / Story AI / page skeleton、Characters、Pages、organization workspace UI。PR-F全体は未完了のまま維持する
+  - Story階層authoring sliceの証跡: [PR #137](https://github.com/sh0g0-ikeda/Lyra/pull/137)。作品作成・名称変更、章作成・名称変更・上下移動、話作成・章内/章間移動を追加。最大order + 1、409時1回だけ再試行、dirty作成遷移、保存/mutation相互single-flight、章間移動時のdraft保持を確認。Mobile 16 files / 67 tests、両OS export、全Backend / Web gate、fresh DB 001〜039・65 invariant / 0 violations・実DB11 testsを確認
+  - 残り: active generation / export job保護を設計した章・話削除、Backend endpointがない作品削除・並べ替え、scene / Story AI / page skeleton、Characters、Pages、organization workspace UI。PR-F全体は未完了のまま維持する
 - [ ] PR-G: organization / billing UI / store adapter
   - 主な所有: Account、organization管理、`expo-iap` adapter
   - 完了条件: personal/org分離とstore unavailable状態がgreen
