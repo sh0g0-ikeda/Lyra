@@ -1,14 +1,14 @@
 # Android / iPhone リリース残タスクリストと PR #67 監査
 
-最終更新: 2026-07-30
+最終更新: 2026-07-31
 
 対象リポジトリ: `sh0g0-ikeda/Lyra`
 
 対象PR: [#67 feat(mobile): production-ready Lyra mobile workflow](https://github.com/sh0g0-ikeda/Lyra/pull/67)
 
-進捗: 46件完了 / 390件未完了
+進捗: 50件完了 / 408件未完了
 
-実装監査基準: `3ee4e6a`（PR #118統合後、全CI成功）
+実装監査基準: `39187f9`（PR #120 head、`verify` / `mobile-verify`成功）
 
 ## 1. 設計ブリーフ
 
@@ -267,9 +267,12 @@ Codex単独で進める次の順序は、`CI安定化 → PR-A継続 → 契約�
   - [x] push outboxのcancelled guardをterminal処理未接続のまま先行統合
     - 証跡: [PR #119](https://github.com/sh0g0-ikeda/Lyra/pull/119)。job lock内でcancel request / cancelled timestampを確認し、failedへ誤遷移したrowも通知候補から除外
     - 境界: generation terminal処理、retry invalidation、delivery claim、APNs / FCM、Mobile navigationは未接続
-- [ ] PR-E: Mobileアプリ基盤
+- [x] PR-E: Mobileアプリ基盤
   - 主な所有: Expo設定、認証、navigation、API client、i18n、error policy
   - 完了条件: clean install、typecheck、lint、test、両OS exportがgreen
+  - 証跡: [PR #120](https://github.com/sh0g0-ikeda/Lyra/pull/120)。Expo SDK 57 dependency check、expo-doctor 20/20、typecheck、lint、Mobile Vitest 11 files / 31 tests、Android / iOS export、既存`verify`をすべてexact head `39187f9`で確認し、annotation 0件
+  - 安全境界: 初回は`GET /api/me`だけを接続し、Story / Characters / Pages、organization、課金、upload / export、Push、Sentry、EAS / Store metadataを未接続のまま分離
+  - 本番境界: bundle / package identifierとuniversal link未導入中はproduction configをfail closedとし、PR-Hの設定・実機検証前に本番ログインを有効化しない
 - [ ] PR-F: Story / Characters / PagesのMobile UI
   - 主な所有: 各screen、component、dirty state、生成ジョブUI
   - 完了条件: user flow component testsとAPI契約がgreen

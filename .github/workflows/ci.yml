@@ -76,3 +76,43 @@ jobs:
 
       - name: Run browser smoke tests
         run: npm --prefix apps/web run e2e
+
+  mobile-verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: apps/mobile/package-lock.json
+
+      - name: Install Mobile dependencies
+        run: npm --prefix apps/mobile ci
+
+      - name: Verify generated API contract
+        run: npm run mobile:contracts:check
+
+      - name: Verify Expo dependencies
+        run: npm --prefix apps/mobile run expo:check
+
+      - name: Diagnose Expo project
+        run: npm --prefix apps/mobile run doctor
+
+      - name: Typecheck Mobile
+        run: npm run mobile:typecheck
+
+      - name: Lint Mobile
+        run: npm run mobile:lint
+
+      - name: Test Mobile
+        run: npm run mobile:test
+
+      - name: Export Android bundle
+        run: npm run mobile:export:android
+
+      - name: Export iOS bundle
+        run: npm run mobile:export:ios
