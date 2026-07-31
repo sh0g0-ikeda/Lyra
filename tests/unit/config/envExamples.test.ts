@@ -33,6 +33,14 @@ describe('environment examples', () => {
     expect(rootEnvExample).toMatch(/^GENERATION_ENABLED=false$/mu);
   });
 
+  it('root env example keeps episode export disabled and uses a dedicated queue', () => {
+    const rootEnvExample = readText('.env.example');
+
+    expect(rootEnvExample).toMatch(/^EPISODE_EXPORT_ENABLED=false$/mu);
+    expect(rootEnvExample).toMatch(/^SQS_QUEUE_URL_EXPORT=/mu);
+    expect(rootEnvExample).toMatch(/^SQS_EXPORT_VISIBILITY_TIMEOUT_SECONDS=1800$/mu);
+  });
+
   it('root env example uses the repository standard migration command', () => {
     const rootEnvExample = readText('.env.example');
 

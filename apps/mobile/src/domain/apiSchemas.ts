@@ -41,6 +41,46 @@ const organizationMembershipStatusSchema = z.enum([
   'removed',
 ]);
 
+const episodeExportStatusSchema = z.enum([
+  'queued',
+  'processing',
+  'completed',
+  'failed',
+  'canceled',
+]);
+
+export const episodeExportAcceptedResponseSchema = z
+  .object({
+    job_id: idSchema,
+    status: episodeExportStatusSchema,
+  })
+  .strict();
+
+export const episodeExportStatusResponseSchema = z
+  .object({
+    job_id: idSchema,
+    status: episodeExportStatusSchema,
+    progress: z
+      .object({
+        stage: z.string().min(1).max(80),
+        percent: z.number().int().min(0).max(100),
+      })
+      .strict(),
+    error: z
+      .object({
+        code: z.string().min(1).max(80),
+        message: z.string().min(1).max(512),
+      })
+      .strict()
+      .nullable(),
+    created_at: timestampSchema,
+    started_at: timestampSchema.nullable(),
+    completed_at: timestampSchema.nullable(),
+    expires_at: timestampSchema,
+    download_ready: z.boolean(),
+  })
+  .strict();
+
 const creditBalanceSchema = z.object({
   monthly_credits: z.number().int().nonnegative(),
   purchased_credits: z.number().int().nonnegative(),

@@ -118,6 +118,7 @@ export interface EpisodeExportJobRepository {
   fail(input: FailEpisodeExportJobInput): Promise<boolean>;
   failUnclaimable(input: FailUnclaimableEpisodeExportJobInput): Promise<boolean>;
   findUndispatchedForJob(jobId: string): Promise<EpisodeExportJobOutboxRecord | null>;
+  listUndispatched(limit: number): Promise<EpisodeExportJobOutboxRecord[]>;
   markDispatched(jobId: string, sqsMessageId: string): Promise<boolean>;
   markDispatchFailure(jobId: string, errorMessage: string): Promise<boolean>;
   listExpiredArtifacts(limit: number): Promise<ExpiredEpisodeExportArtifact[]>;
@@ -576,6 +577,34 @@ export class PostgresEpisodeExportJobRepository implements EpisodeExportJobRepos
     return result.rows[0] === undefined
       ? null
       : toEpisodeExportJobOutboxRecord(result.rows[0]);
+  }
+
+  public async listUndispatched(
+    limit: number,
+  ): Promise<EpisodeExportJobOutboxRecord[]> {
+    assertBoundedInteger(
+      limit,
+      1,
+      100,
+      'Episode export dispatch batch limit is invalid',
+    );
+    const result = await this.client.query<EpisodeExportJobOutboxRow>(
+      `
+      SELECT episode_export_job_outbox.*
+      FROM episode_export_job_outbox
+      INNER JOIN episode_export_jobs
+        ON episode_export_jobs.id =
+           episode_export_job_outbox.export_job_id
+      WHERE episode_export_job_outbox.dispatched_at IS NULL
+        AND episode_export_jobs.status = 'queued'
+        AND episode_export_jobs.expires_at > NOW()
+      ORDER BY episode_export_job_outbox.created_at ASC,
+               episode_export_job_outbox.export_job_id ASC
+      LIMIT $1::int
+      `,
+      [limit],
+    );
+    return result.rows.map(toEpisodeExportJobOutboxRecord);
   }
 
   public async markDispatched(
