@@ -1119,15 +1119,6 @@ describe('CharactersScreen', () => {
     expect(api.confirmEntityReference).toHaveBeenCalledOnce();
     expect(confirmButton?.props.disabled).toBe(true);
     expect(textOf(renderer)).toContain('確定処理の結果を確認できませんでした');
-    await act(async () => {
-      renderer.root.findByProps({ accessibilityLabel: 'ホームズの取り込み候補' })
-        .props.onLoad();
-    });
-    const afterLatePreview = renderer.root.findAllByType('button').find(
-      (candidate) => candidate.children.join('') === '取り込み候補を確定',
-    );
-    expect(afterLatePreview?.props.disabled).toBe(true);
-    expect(api.confirmEntityReference).toHaveBeenCalledOnce();
   });
 
   it('import候補をsourceにする場合は解析補足だけを保存して同じtokenで生成する', async () => {
@@ -1419,6 +1410,15 @@ describe('CharactersScreen', () => {
     expect(api.confirmEntityReference).toHaveBeenCalledOnce();
     expect(confirmButton?.props.disabled).toBe(true);
     expect(textOf(renderer)).toContain('確定処理の結果を確認できませんでした');
+    await act(async () => {
+      renderer.root.findByProps({ accessibilityLabel: 'ホームズの取り込み候補' })
+        .props.onLoad();
+    });
+    const afterLatePreview = renderer.root.findAllByType('button').find(
+      (candidate) => candidate.children.join('') === '取り込み候補を確定',
+    );
+    expect(afterLatePreview?.props.disabled).toBe(true);
+    expect(api.confirmEntityReference).toHaveBeenCalledOnce();
   });
 
   it.each([
