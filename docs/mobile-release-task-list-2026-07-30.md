@@ -243,7 +243,7 @@ Codex単独で進める次の順序は、`CI安定化 → PR-A継続 → 契約�
       - 証跡: [PR #126](https://github.com/sh0g0-ikeda/Lyra/pull/126)。queryなしの従来経路と`{ organizations: [...] }`を維持し、`limit`指定時だけactive membership scope付きkeyset pageと`next_cursor`を返す
     - 現状: job履歴、works、entities、pages、organizationsはbounded opaque cursor、compositionはbounded limitとしてinventoryとrequired CIで固定
 - [ ] PR-B: account deletion / upload token / export基盤
-  - 主な所有: migrations 027, 031, 032と対応Route/Service/Repository
+  - 主な所有: migrations 027, 031, 032, 036と対応Route/Service/Repository
   - 完了条件: personal/org tenancy、S3 ownership、削除冪等性がgreen
   - [x] account deletion requestの永続化checkpointをAPI未接続で先行統合
     - 証跡: [PR #110](https://github.com/sh0g0-ikeda/Lyra/pull/110)。migration 027をfresh DBへ適用し、44 invariant / 0 violationsを確認
@@ -257,6 +257,9 @@ Codex単独で進める次の順序は、`CI安定化 → PR-A継続 → 契約�
   - [x] episode export jobとdispatch outboxのDB契約をAPI未接続で先行統合
     - 証跡: [PR #115](https://github.com/sh0g0-ikeda/Lyra/pull/115)。owner-bound artifact key、PDF/ZIP MIME、128 MiB、最大24時間、status/timestamp、idempotencyをmigration・invariantで確認
     - 境界: Repository、Service、SQS、artifact builder、S3、download Route、Web / Mobile clientは未接続。既存1ページexportは変更しない
+  - [ ] episode exportのprocessing lease・Domain・RepositoryをAPI未接続で統合
+    - 進捗: [PR #128](https://github.com/sh0g0-ikeda/Lyra/pull/128)をdraft作成。fresh DB 001〜036、58 invariant / 0 violations、実DBのcreate→冪等再送→claim→stale token拒否→release→reclaim→completeを確認
+    - 安全境界: 専用Worker / Storage / SQS / Route / downloadは未接続。migration適用だけでは機能を有効化せず、既存1ページexport、generation job、credit処理を変更しない
 - [ ] PR-C: Mobile store billing Backend
   - 主な所有: migration 029、Apple/Google verifier、purchase service、webhook、ledger
   - 完了条件: 課金OFFで既存Webの挙動を変えず、focused testsがgreen
@@ -265,7 +268,7 @@ Codex単独で進める次の順序は、`CI安定化 → PR-A継続 → 契約�
     - 境界: verifier、Service、Repository、Route、Webhook、Mobile SDK、product mappingは未接続。外部console / secret / sandbox証跡が揃うまで課金OFFを維持する
   - `/api/billing/balance`の購読summaryをApple / Googleの検証済み購入まで拡張し、StripeとStoreで同じwire fieldを返す
 - [ ] PR-D: generation job management / cancellation / push outbox
-  - 主な所有: migrations 030, 033〜036、Worker、job services
+  - 主な所有: migrations 030, 033〜035、Worker、job services
   - 完了条件: cancel/refund/outbox競合テストがgreen
   - [x] job履歴非表示tableとscope / cursor用indexを既存cancel/refund非変更で先行統合
     - 証跡: [PR #113](https://github.com/sh0g0-ikeda/Lyra/pull/113)。旧030のlate-consume自動返金triggerを除外し、API未接続の加算schemaだけをfresh DBで確認
@@ -410,9 +413,9 @@ Codex単独で進める次の順序は、`CI安定化 → PR-A継続 → 契約�
 - [ ] 035 processing generation job cancellation
   - 完了条件: Worker checkpointと返金競合がロックで保護される
   - 進捗: [PR #118](https://github.com/sh0g0-ikeda/Lyra/pull/118)で現行episode story write path互換の新規write contractまで完了。既存行VALIDATE・汎用Worker checkpoint・refund競合は未完了
-- [x] 036 push notification cancelled guard
-  - 完了条件: `cancelled -> failed`が通知を生成しない
-  - 証跡: [PR #119](https://github.com/sh0g0-ikeda/Lyra/pull/119)。`failed`でもcancel requestまたはcancelled timestampがあるjobはoutbox insert前に除外
+- [ ] 036 episode export processing lease
+  - 完了条件: expired leaseを再claimでき、古いWorkerがprogressまたはterminal stateを上書きしない
+  - 進捗: [PR #128](https://github.com/sh0g0-ikeda/Lyra/pull/128)をdraft作成。lease token / heartbeat / attempt制約、atomic claim、stale token拒否、outbox / cleanup Repositoryを確認
 
 #### DB-310 本番migration計画
 
