@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type Dispatch,
+  type SetStateAction,
+} from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { colors, radius, spacing } from '../constants/theme';
 import { buildEntityReferenceCandidateImageSource } from '../domain/entityReferenceCandidateImageSources';
@@ -43,6 +51,8 @@ interface EntityReferenceImportControlsProps {
   api: EntityReferenceMutationApiPort;
   apiBaseUrl: string;
   authorizationHeader: string | null;
+  candidate: EntityReferenceImportCandidate | null;
+  changeCandidate: Dispatch<SetStateAction<EntityReferenceImportCandidate | null>>;
   confirmReferenceCandidate?: (
     input: EntityReferenceConfirmPromptInput,
   ) => Promise<boolean>;
@@ -52,6 +62,8 @@ interface EntityReferenceImportControlsProps {
   imagePicker?: EntityReferenceImagePickerPort;
   language: UiLanguage;
   onOperationActiveChange?(operationId: string, active: boolean): void;
+  operationBlocked?(): boolean;
+  externalOperationActive?: boolean;
   organizationId: string | null;
   referenceSet: EntityReferenceSetRecord | undefined;
   referenceSetError: boolean;
@@ -61,7 +73,7 @@ interface EntityReferenceImportControlsProps {
   sessionKey: string;
 }
 
-interface ImportCandidate {
+export interface EntityReferenceImportCandidate {
   ambiguous: boolean;
   baselineFingerprint: string;
   previewLoaded: boolean;
@@ -87,6 +99,8 @@ export function EntityReferenceImportControls({
   api,
   apiBaseUrl,
   authorizationHeader,
+  candidate,
+  changeCandidate,
   confirmReferenceCandidate = showEntityReferenceConfirmPrompt,
   entityId,
   entityName,
@@ -94,6 +108,8 @@ export function EntityReferenceImportControls({
   imagePicker = entityReferenceImagePicker,
   language,
   onOperationActiveChange,
+  operationBlocked,
+  externalOperationActive = false,
   organizationId,
   referenceSet,
   referenceSetError,
@@ -102,7 +118,6 @@ export function EntityReferenceImportControls({
   resetImageAuthorization,
   sessionKey,
 }: EntityReferenceImportControlsProps): React.JSX.Element {
-  const [candidate, setCandidate] = useState<ImportCandidate | null>(null);
   const [feedback, setFeedback] = useState<Feedback | null>(null);
   const [operation, setOperation] = useState<'confirming' | 'idle' | 'importing'>('idle');
   const operationRef = useRef<ActiveReferenceOperation | null>(null);
@@ -130,7 +145,7 @@ export function EntityReferenceImportControls({
     nextOperation: 'confirming' | 'importing',
     work: () => Promise<void>,
   ): void => {
-    if (operationRef.current !== null) {
+    if (operationRef.current !== null || operationBlocked?.() === true) {
       return;
     }
     setOperation(nextOperation);
@@ -156,7 +171,7 @@ export function EntityReferenceImportControls({
       }
     };
     void current.promise.then(settle, settle);
-  }, [entityId, organizationId, sessionKey]);
+  }, [entityId, operationBlocked, organizationId, sessionKey]);
 
   const importImage = useCallback((): void => {
     if (
@@ -192,7 +207,7 @@ export function EntityReferenceImportControls({
           return;
         }
         candidateRevision.current += 1;
-        setCandidate({
+        changeCandidate({
           ambiguous: false,
           baselineFingerprint: referenceSetFingerprint(latest),
           previewLoaded: false,
@@ -214,6 +229,7 @@ export function EntityReferenceImportControls({
     acceptReferenceSet,
     api,
     candidate,
+    changeCandidate,
     entityId,
     entityType,
     imagePicker,
@@ -243,7 +259,7 @@ export function EntityReferenceImportControls({
         acceptReferenceSet(latest);
         const latestFingerprint = referenceSetFingerprint(latest);
         if (latestFingerprint !== candidate.baselineFingerprint) {
-          setCandidate((current) => current === null ? null : {
+          changeCandidate((current) => current === null ? null : {
             ...current,
             baselineFingerprint: latestFingerprint,
           });
@@ -271,7 +287,7 @@ export function EntityReferenceImportControls({
           return;
         }
         acceptReferenceSet(confirmed);
-        setCandidate(null);
+        changeCandidate(null);
         setFeedback({ key: 'characterReferenceConfirmed' });
         const refreshed = await refreshReferenceSet().catch(() => null);
         if (!mounted.current) {
@@ -301,7 +317,7 @@ export function EntityReferenceImportControls({
         if (refreshed !== null) {
           acceptReferenceSet(refreshed);
         }
-        setCandidate((current) => current === null ? null : {
+        changeCandidate((current) => current === null ? null : {
           ...current,
           ambiguous: true,
         });
@@ -312,6 +328,7 @@ export function EntityReferenceImportControls({
     acceptReferenceSet,
     api,
     candidate,
+    changeCandidate,
     confirmReferenceCandidate,
     entityId,
     language,
@@ -321,6 +338,7 @@ export function EntityReferenceImportControls({
   ]);
 
   const importDisabled = operation !== 'idle'
+    || externalOperationActive
     || candidate !== null
     || referenceSet === undefined
     || referenceSetError;
@@ -351,21 +369,21 @@ export function EntityReferenceImportControls({
           language={language}
           onConfirm={confirmCandidate}
           onDiscard={() => {
-            if (operationRef.current !== null) {
+            if (operationRef.current !== null || operationBlocked?.() === true) {
               return;
             }
-            setCandidate(null);
+            changeCandidate(null);
             setFeedback(null);
           }}
-          onPreviewFailed={() => setCandidate((current) => current === null ? null : {
+          onPreviewFailed={() => changeCandidate((current) => current === null ? null : {
             ...current,
             previewLoaded: false,
           })}
-          onPreviewLoaded={() => setCandidate((current) => current === null ? null : {
+          onPreviewLoaded={() => changeCandidate((current) => current === null ? null : {
             ...current,
             previewLoaded: true,
           })}
-          operationActive={operation !== 'idle'}
+          operationActive={operation !== 'idle' || externalOperationActive}
           organizationId={organizationId}
           previewLoaded={candidate.previewLoaded}
           promptSupplement={candidate.promptSupplement}
@@ -552,7 +570,7 @@ function createReferenceOperationId(input: {
   ].map(encodeURIComponent).join(':');
 }
 
-function referenceSetFingerprint(referenceSet: EntityReferenceSetRecord): string {
+export function referenceSetFingerprint(referenceSet: EntityReferenceSetRecord): string {
   return JSON.stringify({
     images: referenceSet.reference_images.map((image) => ({
       createdAt: image.created_at,

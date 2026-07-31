@@ -12,15 +12,19 @@ import { t, type UiLanguage } from '../lib/i18n';
 import type { storyQueryKeys } from '../lib/storyQueryKeys';
 import {
   EntityReferenceImportControls,
-  type EntityReferenceMutationApiPort,
+  type EntityReferenceImportCandidate,
 } from './EntityReferenceImportControls';
+import {
+  EntityReferenceGenerationControls,
+  type EntityReferenceGenerationApiPort,
+} from './EntityReferenceGenerationControls';
 import type { EntityReferenceImagePickerPort } from '../infrastructure/entityReferenceImagePicker';
 import type { EntityReferenceConfirmPromptInput } from '../lib/entityReferenceConfirmPrompt';
 import { Notice } from './Notice';
 import { PrimaryButton } from './PrimaryButton';
 import { ResilientAuthenticatedImage } from './ResilientAuthenticatedImage';
 
-export interface EntityReferenceApiPort extends EntityReferenceMutationApiPort {
+export interface EntityReferenceApiPort extends EntityReferenceGenerationApiPort {
   getEntityReferenceSet(
     entityId: string,
     organizationId?: string | null,
@@ -32,9 +36,7 @@ interface EntityReferenceSectionProps {
   api: EntityReferenceApiPort;
   apiBaseUrl: string;
   authorizationHeader: string | null;
-  entityId: string;
-  entityName: string;
-  entityType: EntityRecord['entity_type'];
+  entity: EntityRecord;
   confirmReferenceCandidate?: (
     input: EntityReferenceConfirmPromptInput,
   ) => Promise<boolean>;
@@ -42,6 +44,9 @@ interface EntityReferenceSectionProps {
   language: UiLanguage;
   onOperationActiveChange?(operationId: string, active: boolean): void;
   organizationId: string | null;
+  prepareEntityForGeneration(
+    sourcePromptSupplement?: string,
+  ): Promise<EntityRecord | null>;
   queryKeys: ReturnType<typeof storyQueryKeys>;
   sessionKey: string;
 }
@@ -50,18 +55,23 @@ export function EntityReferenceSection({
   api,
   apiBaseUrl,
   authorizationHeader,
-  entityId,
-  entityName,
-  entityType,
+  entity,
   confirmReferenceCandidate,
   imagePicker,
   language,
   onOperationActiveChange,
   organizationId,
+  prepareEntityForGeneration,
   queryKeys,
   sessionKey,
 }: EntityReferenceSectionProps): React.JSX.Element {
+  const entityId = entity.id;
   const queryClient = useQueryClient();
+  const [importCandidate, setImportCandidate] = useState<
+    EntityReferenceImportCandidate | null
+  >(null);
+  const [activeOperationCount, setActiveOperationCount] = useState(0);
+  const activeOperationIds = useRef<Set<string>>(new Set());
   const refreshScope = `${sessionKey}:${organizationId ?? 'personal'}:${entityId}`;
   const imageAuthorizationRefresh = useRef<{
     header: string | null;
@@ -121,6 +131,23 @@ export function EntityReferenceSection({
   const acceptReferenceSet = useCallback((referenceSet: EntityReferenceSetRecord): void => {
     queryClient.setQueryData(referenceQueryKey, referenceSet);
   }, [queryClient, referenceQueryKey]);
+  const trackOperation = useCallback((operationId: string, active: boolean): void => {
+    const operations = activeOperationIds.current;
+    if (active ? operations.has(operationId) : !operations.has(operationId)) {
+      return;
+    }
+    if (active) {
+      operations.add(operationId);
+    } else {
+      operations.delete(operationId);
+    }
+    setActiveOperationCount(operations.size);
+    onOperationActiveChange?.(operationId, active);
+  }, [onOperationActiveChange]);
+  const operationBlocked = useCallback(
+    (): boolean => activeOperationIds.current.size > 0,
+    [],
+  );
 
   return (
     <View style={styles.section}>
@@ -181,7 +208,7 @@ export function EntityReferenceSection({
                   authorizationHeader={authorizationHeader}
                   createdAt={reference.created_at}
                   entityId={entityId}
-                  entityName={entityName}
+                  entityName={entity.name}
                   index={index}
                   isPrimary={reference.ref_id === referenceQuery.data.primary_ref_id}
                   key={reference.ref_id}
@@ -205,14 +232,41 @@ export function EntityReferenceSection({
             api={api}
             apiBaseUrl={apiBaseUrl}
             authorizationHeader={authorizationHeader}
+            candidate={importCandidate}
+            changeCandidate={setImportCandidate}
             confirmReferenceCandidate={confirmReferenceCandidate}
             entityId={entityId}
-            entityName={entityName}
-            entityType={entityType}
+            entityName={entity.name}
+            entityType={entity.entity_type}
             imagePicker={imagePicker}
             language={language}
-            onOperationActiveChange={onOperationActiveChange}
+            externalOperationActive={activeOperationCount > 0}
+            onOperationActiveChange={trackOperation}
+            operationBlocked={operationBlocked}
             organizationId={organizationId}
+            referenceSet={referenceQuery.data}
+            referenceSetError={referenceQuery.isError}
+            refreshAuthorizationHeader={refreshImageAuthorizationHeader}
+            refreshReferenceSet={refreshReferenceSet}
+            resetImageAuthorization={resetImageAuthorization}
+            sessionKey={sessionKey}
+          />
+          <EntityReferenceGenerationControls
+            acceptReferenceSet={acceptReferenceSet}
+            api={api}
+            apiBaseUrl={apiBaseUrl}
+            authorizationHeader={authorizationHeader}
+            confirmReferenceCandidate={confirmReferenceCandidate}
+            entity={entity}
+            importCandidate={importCandidate}
+            language={language}
+            onImportCandidateChange={setImportCandidate}
+            externalOperationActive={activeOperationCount > 0}
+            onOperationActiveChange={trackOperation}
+            operationBlocked={operationBlocked}
+            organizationId={organizationId}
+            prepareEntityForGeneration={prepareEntityForGeneration}
+            queryKeys={queryKeys}
             referenceSet={referenceQuery.data}
             referenceSetError={referenceQuery.isError}
             refreshAuthorizationHeader={refreshImageAuthorizationHeader}
