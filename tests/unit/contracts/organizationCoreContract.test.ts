@@ -69,6 +69,18 @@ describe('Organization core response contract', () => {
     };
     expect(organizationWorkspaceSchema.safeParse(workspace).success).toBe(true);
     expect(organizationsResponseSchema.safeParse({ organizations: [] }).success).toBe(true);
+    expect(
+      organizationsResponseSchema.safeParse({
+        organizations: [],
+        next_cursor: 'opaque-cursor',
+      }).success,
+    ).toBe(true);
+    expect(
+      organizationsResponseSchema.safeParse({
+        organizations: [],
+        next_cursor: 'a'.repeat(513),
+      }).success,
+    ).toBe(false);
     expect(organizationResponseSchema.safeParse({ organization }).success).toBe(true);
     expect(organizationMembersResponseSchema.safeParse({ members: [] }).success).toBe(true);
     expect(organizationMemberResponseSchema.safeParse({ member }).success).toBe(true);

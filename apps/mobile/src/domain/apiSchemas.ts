@@ -304,6 +304,7 @@ export const adminOrganizationContractResponseSchema = z
 export const organizationsResponseSchema = z
   .object({
     organizations: z.array(organizationWorkspaceSchema),
+    next_cursor: z.string().min(1).max(512).nullable().optional(),
   })
   .strict();
 

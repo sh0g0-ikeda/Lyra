@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { MiddlewareHandler } from 'hono';
 import { createApp } from '../../../src/app.js';
+import { decodeOrganizationListCursor } from '../../../src/domain/pagination.js';
 import type {
   OrganizationCapability,
   OrganizationAuditLog,
@@ -18,6 +19,10 @@ import { createOrganizationRoutes } from '../../../src/routes/organizations.js';
 import type { ProvisionedUser, UserProvisioningPort } from '../../../src/services/auth/UserProvisioningService.js';
 import type { OrganizationBillingServicePort } from '../../../src/services/organization/OrganizationBillingService.js';
 import type { OrganizationServicePort } from '../../../src/services/organization/OrganizationService.js';
+import type {
+  OrganizationListCursor,
+  OrganizationWorkspacePage,
+} from '../../../src/repositories/OrganizationRepository.js';
 
 const testUser: AuthenticatedUser = {
   id: 'user-1',
@@ -58,6 +63,77 @@ describe('createOrganizationRoutes', () => {
     });
     expect(body.organizations[0].organization).not.toHaveProperty('stripe_customer_id');
     expect(body.organizations[0].organization).not.toHaveProperty('stripe_subscription_id');
+    expect(body).not.toHaveProperty('next_cursor');
+  });
+
+  it('法人Workspace一覧をopaque cursorでpage取得する', async () => {
+    const organizationService = new FakeOrganizationService();
+    const nextCursor: OrganizationListCursor = {
+      updatedAt: new Date('2026-07-31T00:00:00.000Z'),
+      createdAt: new Date('2026-07-30T00:00:00.000Z'),
+      id: organizationId,
+    };
+    organizationService.workspacePage = {
+      organizations: [buildWorkspace()],
+      nextCursor,
+    };
+    const routes = createOrganizationRoutes({
+      authMiddleware: buildAuthMiddleware(testUser),
+      rateLimitMiddleware: buildPassThroughMiddleware(),
+      organizationService: organizationService as unknown as OrganizationServicePort,
+      organizationBillingService:
+        new FakeOrganizationBillingService() as unknown as OrganizationBillingServicePort,
+    });
+
+    const first = await routes.request('/organizations?limit=40');
+    const firstPayload = (await first.json()) as { next_cursor: string };
+    const second = await routes.request(
+      `/organizations?limit=10&cursor=${encodeURIComponent(firstPayload.next_cursor)}`,
+    );
+
+    expect(first.status).toBe(200);
+    expect(decodeOrganizationListCursor(firstPayload.next_cursor)).toEqual(
+      nextCursor,
+    );
+    expect(second.status).toBe(200);
+    expect(organizationService.workspacePageCalls).toEqual([
+      { userId: testUser.id, limit: 40, cursor: null },
+      { userId: testUser.id, limit: 10, cursor: nextCursor },
+    ]);
+  });
+
+  it('法人Workspace一覧の不正limit・cursorを422にする', async () => {
+    const routes = createOrganizationRoutes({
+      authMiddleware: buildAuthMiddleware(testUser),
+      rateLimitMiddleware: buildPassThroughMiddleware(),
+      organizationService:
+        new FakeOrganizationService() as unknown as OrganizationServicePort,
+      organizationBillingService:
+        new FakeOrganizationBillingService() as unknown as OrganizationBillingServicePort,
+    });
+    routes.onError((err, c) =>
+      c.json(
+        {
+          error: {
+            code: 'code' in err ? err.code : 'INTERNAL_ERROR',
+            message: err.message,
+          },
+        },
+        'statusCode' in err ? (err.statusCode as 422) : 500,
+      ),
+    );
+
+    const responses = await Promise.all([
+      routes.request('/organizations?limit=0'),
+      routes.request('/organizations?limit=101'),
+      routes.request('/organizations?limit=1.5'),
+      routes.request('/organizations?cursor=opaque'),
+      routes.request('/organizations?limit=10&cursor=invalid'),
+    ]);
+
+    expect(responses.map((response) => response.status)).toEqual([
+      422, 422, 422, 422, 422,
+    ]);
   });
 
   it('利用履歴取得ではview_usage権限をService境界で要求する', async () => {
@@ -742,9 +818,26 @@ class FakeOrganizationService {
   public requiredCapabilities: Array<OrganizationCapability | undefined> = [];
   public createdOrganizations: Array<Record<string, unknown>> = [];
   public updatedOrganizations: Array<Record<string, unknown>> = [];
+  public workspacePage: OrganizationWorkspacePage = {
+    organizations: [],
+    nextCursor: null,
+  };
+  public workspacePageCalls: Array<{
+    userId: string;
+    limit: number;
+    cursor: OrganizationListCursor | null;
+  }> = [];
 
   public async listWorkspaces(_userId: string): Promise<OrganizationWorkspaceSummary[]> {
     return [buildWorkspace()];
+  }
+
+  public async listWorkspacesPage(
+    userId: string,
+    input: { limit: number; cursor: OrganizationListCursor | null },
+  ): Promise<OrganizationWorkspacePage> {
+    this.workspacePageCalls.push({ userId, ...input });
+    return this.workspacePage;
   }
 
   public async getOrganization(_userId: string, _organizationId: string): Promise<OrganizationWorkspaceSummary> {

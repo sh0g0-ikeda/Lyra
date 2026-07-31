@@ -2,10 +2,12 @@ import { describe, expect, it } from 'vitest';
 import {
   decodeEntityListCursor,
   decodeGenerationJobHistoryCursor,
+  decodeOrganizationListCursor,
   decodePageListCursor,
   decodeWorkListCursor,
   encodeEntityListCursor,
   encodeGenerationJobHistoryCursor,
+  encodeOrganizationListCursor,
   encodePageListCursor,
   encodeWorkListCursor,
 } from '../../../src/domain/pagination.js';
@@ -130,5 +132,34 @@ describe('page list cursor', () => {
     const encoded = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
 
     expect(() => decodePageListCursor(encoded)).toThrow('cursor is invalid');
+  });
+});
+
+describe('organization list cursor', () => {
+  const organizationCursor = {
+    updatedAt: new Date('2026-07-31T00:00:00.000Z'),
+    createdAt: new Date('2026-07-30T00:00:00.000Z'),
+    id: '77777777-7777-4777-8777-777777777777',
+  };
+
+  it('更新日時・作成日時・IDをcanonical base64urlで往復する', () => {
+    const encoded = encodeOrganizationListCursor(organizationCursor);
+
+    expect(encoded).toMatch(/^[A-Za-z0-9_-]+$/u);
+    expect(decodeOrganizationListCursor(encoded)).toEqual(organizationCursor);
+  });
+
+  it.each([
+    ['別endpoint kind', { v: 1, k: 'works', u: organizationCursor.updatedAt.toISOString(), c: organizationCursor.createdAt.toISOString(), i: organizationCursor.id }],
+    ['version不一致', { v: 2, k: 'organizations', u: organizationCursor.updatedAt.toISOString(), c: organizationCursor.createdAt.toISOString(), i: organizationCursor.id }],
+    ['不正更新日時', { v: 1, k: 'organizations', u: 'invalid', c: organizationCursor.createdAt.toISOString(), i: organizationCursor.id }],
+    ['非canonical作成日時', { v: 1, k: 'organizations', u: organizationCursor.updatedAt.toISOString(), c: '2026-07-30T09:00:00+09:00', i: organizationCursor.id }],
+    ['不正UUID', { v: 1, k: 'organizations', u: organizationCursor.updatedAt.toISOString(), c: organizationCursor.createdAt.toISOString(), i: 'org-1' }],
+  ])('%sを拒否する', (_name, payload) => {
+    const encoded = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
+
+    expect(() => decodeOrganizationListCursor(encoded)).toThrow(
+      'cursor is invalid',
+    );
   });
 });

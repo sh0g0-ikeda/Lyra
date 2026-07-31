@@ -52,7 +52,7 @@ Endpoint count: 105
 | `/api/me` | GET | Authenticated | Strict JSON | `currentSessionSchema` | Complete collection | `src/routes/me.ts` |
 | `/api/organization-invitations/:token` | GET | Public token | Strict JSON | `organizationInvitationPreviewResponseSchema` | Complete collection | `src/app.ts`, `src/routes/organizations.ts` |
 | `/api/organization-invitations/accept` | POST | Authenticated | Strict JSON | `organizationWorkspaceSchema` | Complete collection | `src/routes/organizations.ts` |
-| `/api/organizations` | GET | Authenticated | Strict JSON | `organizationsResponseSchema` | Complete collection | `src/routes/organizations.ts` |
+| `/api/organizations` | GET | Authenticated | Strict JSON | `organizationsResponseSchema` | Optional opaque cursor (1-100; max 512 chars) | `src/routes/organizations.ts` |
 | `/api/organizations` | POST | Authenticated | Strict JSON | `organizationWorkspaceSchema` | Complete collection | `src/routes/organizations.ts` |
 | `/api/organizations/:organizationId` | GET | Authenticated | Strict JSON | `organizationWorkspaceSchema` | Complete collection | `src/routes/organizations.ts` |
 | `/api/organizations/:organizationId` | PATCH | Authenticated | Strict JSON | `organizationResponseSchema` | Complete collection | `src/routes/organizations.ts` |

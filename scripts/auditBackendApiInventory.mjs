@@ -131,6 +131,10 @@ const paginationClassifications = new Map([
     'GET /api/episodes/:id/pages',
     'Optional opaque cursor (1-100; max 512 chars)',
   ],
+  [
+    'GET /api/organizations',
+    'Optional opaque cursor (1-100; max 512 chars)',
+  ],
 ]);
 
 const sourcePaths = [

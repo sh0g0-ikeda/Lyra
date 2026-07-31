@@ -13,7 +13,10 @@ import type {
 import type { DatabaseClient } from '../../../../src/lib/db.js';
 import type {
   CreateOrganizationRecord,
+  OrganizationListCursor,
   OrganizationRepository,
+  OrganizationWorkspacePage,
+  OrganizationWorkspacePageRequest,
 } from '../../../../src/repositories/OrganizationRepository.js';
 import { OrganizationService } from '../../../../src/services/organization/OrganizationService.js';
 import type {
@@ -59,6 +62,22 @@ const fakeClient = {
 } as unknown as DatabaseClient;
 
 describe('OrganizationService', () => {
+  it('Workspace pageをviewer・cursor付きでRepositoryへ委譲する', async () => {
+    const repository = new InMemoryOrganizationRepository();
+    const service = buildService(repository);
+    const cursor: OrganizationListCursor = {
+      updatedAt: new Date('2026-07-31T00:00:00.000Z'),
+      createdAt: new Date('2026-07-30T00:00:00.000Z'),
+      id: '11111111-1111-4111-8111-111111111111',
+    };
+
+    await service.listWorkspacesPage('user-1', { limit: 25, cursor });
+
+    expect(repository.workspacePageRequests).toEqual([
+      { userId: 'user-1', request: { limit: 25, cursor } },
+    ]);
+  });
+
   it('法人Workspace作成時は契約プランを初期値に固定する', async () => {
     const repository = new InMemoryOrganizationRepository();
     const service = buildService(repository);
@@ -866,6 +885,14 @@ class InMemoryOrganizationRepository {
   public activeOwnerCount = 1;
   public balance: OrganizationCreditBalance = buildBalance();
   public creditLedger: OrganizationCreditLedgerTestEntry[] = [];
+  public workspacePage: OrganizationWorkspacePage = {
+    organizations: [],
+    nextCursor: null,
+  };
+  public workspacePageRequests: Array<{
+    userId: string;
+    request: OrganizationWorkspacePageRequest;
+  }> = [];
 
   public setMember(member: OrganizationMember): void {
     this.members.set(memberKey(member.organizationId, member.userId), member);
@@ -873,6 +900,18 @@ class InMemoryOrganizationRepository {
 
   public async transaction<T>(work: (client: DatabaseClient) => Promise<T>): Promise<T> {
     return work(fakeClient);
+  }
+
+  public async listWorkspacesByUserId(): Promise<[]> {
+    return [];
+  }
+
+  public async listWorkspacesPageByUserId(
+    userId: string,
+    request: OrganizationWorkspacePageRequest,
+  ): Promise<OrganizationWorkspacePage> {
+    this.workspacePageRequests.push({ userId, request });
+    return this.workspacePage;
   }
 
   public async createOrganization(input: CreateOrganizationRecord): Promise<Organization> {

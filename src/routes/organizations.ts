@@ -20,6 +20,11 @@ import {
   organizationsResponseSchema,
 } from '../../packages/api-contract/src/mobileApiSchemas.js';
 import { ValidationError } from '../domain/errors/index.js';
+import {
+  decodeOrganizationListCursor,
+  encodeOrganizationListCursor,
+  type OrganizationListCursor,
+} from '../domain/pagination.js';
 import type { PaymentRecord } from '../domain/types/billing.js';
 import type {
   Organization,
@@ -47,6 +52,8 @@ import type { OrganizationServicePort } from '../services/organization/Organizat
 import type { AppEnv } from '../types/app.js';
 import { assertMobileResponseContract } from './mobileResponseContract.js';
 import { readJsonBody, REQUEST_BODY_LIMITS } from './requestBody.js';
+
+const MAX_ORGANIZATION_LIST_PAGE_LIMIT = 100;
 
 export interface OrganizationRouteDependencies {
   authMiddleware: MiddlewareHandler<AppEnv>;
@@ -83,6 +90,24 @@ export function createOrganizationRoutes(dependencies: OrganizationRouteDependen
 
   app.get('/organizations', async (c) => {
     const user = c.get('user');
+    const pageRequest = parseOrganizationListPageRequest(c);
+    if (pageRequest !== null) {
+      const page = await dependencies.organizationService.listWorkspacesPage(
+        user.id,
+        pageRequest,
+      );
+      const payload = {
+        organizations: page.organizations.map(toWorkspaceResponse),
+        next_cursor:
+          page.nextCursor === null
+            ? null
+            : encodeOrganizationListCursor(page.nextCursor),
+      };
+      return c.json(
+        assertMobileResponseContract(organizationsResponseSchema, payload),
+      );
+    }
+
     const workspaces = await dependencies.organizationService.listWorkspaces(user.id);
     const payload = { organizations: workspaces.map(toWorkspaceResponse) };
     return c.json(assertMobileResponseContract(organizationsResponseSchema, payload));
@@ -401,6 +426,38 @@ async function readSmallJsonBody(c: Context<AppEnv>): Promise<unknown> {
     maxBytes: REQUEST_BODY_LIMITS.SMALL_JSON_BYTES,
     description: 'Organization request',
   });
+}
+
+function parseOrganizationListPageRequest(
+  c: Context<AppEnv>,
+): { limit: number; cursor: OrganizationListCursor | null } | null {
+  const rawLimit = c.req.query('limit');
+  const rawCursor = c.req.query('cursor');
+  if (rawLimit === undefined && rawCursor === undefined) {
+    return null;
+  }
+  if (rawLimit === undefined || !/^[0-9]+$/u.test(rawLimit)) {
+    throw new ValidationError(
+      'limit must be an integer from 1 to 100 and is required with cursor',
+    );
+  }
+
+  const limit = Number(rawLimit);
+  if (
+    !Number.isSafeInteger(limit)
+    || limit < 1
+    || limit > MAX_ORGANIZATION_LIST_PAGE_LIMIT
+  ) {
+    throw new ValidationError('limit must be an integer from 1 to 100');
+  }
+
+  return {
+    limit,
+    cursor:
+      rawCursor === undefined
+        ? null
+        : decodeOrganizationListCursor(rawCursor),
+  };
 }
 
 function parseOrganizationId(c: Context<AppEnv>): string {

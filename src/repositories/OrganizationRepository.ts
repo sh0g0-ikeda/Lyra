@@ -15,7 +15,11 @@ import type {
   OrganizationWorkspaceSummary,
 } from '../domain/types/organization.js';
 import type { EnterprisePlanCode } from '../domain/constants/billing.js';
+import { ConfigurationError } from '../domain/errors/index.js';
+import type { OrganizationListCursor } from '../domain/pagination.js';
 import type { DatabaseClient, TransactionRunner } from '../lib/db.js';
+
+export type { OrganizationListCursor } from '../domain/pagination.js';
 
 interface OrganizationRow extends QueryResultRow {
   id: string;
@@ -335,6 +339,23 @@ export interface OrganizationRepository {
   listUsageEvents(organizationId: string, limit: number): Promise<OrganizationUsageEvent[]>;
 }
 
+export interface OrganizationWorkspacePageRequest {
+  limit: number;
+  cursor: OrganizationListCursor | null;
+}
+
+export interface OrganizationWorkspacePage {
+  organizations: OrganizationWorkspaceSummary[];
+  nextCursor: OrganizationListCursor | null;
+}
+
+export interface OrganizationWorkspacePaginationRepository {
+  listWorkspacesPageByUserId(
+    userId: string,
+    request: OrganizationWorkspacePageRequest,
+  ): Promise<OrganizationWorkspacePage>;
+}
+
 const INVITATION_RETURNING_COLUMNS = `
   id,
   organization_id,
@@ -357,7 +378,9 @@ const INVITATION_RETURNING_COLUMNS = `
   updated_at
 `;
 
-export class PostgresOrganizationRepository implements OrganizationRepository {
+export class PostgresOrganizationRepository
+  implements OrganizationRepository, OrganizationWorkspacePaginationRepository
+{
   public constructor(
     private readonly client: DatabaseClient,
     private readonly transactionRunner: TransactionRunner,
@@ -554,6 +577,142 @@ export class PostgresOrganizationRepository implements OrganizationRepository {
             });
       return { organization, membership, balance };
     });
+  }
+
+  public async listWorkspacesPageByUserId(
+    userId: string,
+    request: OrganizationWorkspacePageRequest,
+  ): Promise<OrganizationWorkspacePage> {
+    if (
+      !Number.isSafeInteger(request.limit)
+      || request.limit < 1
+      || request.limit > 100
+    ) {
+      throw new ConfigurationError(
+        'Organization workspace page limit is invalid',
+      );
+    }
+
+    const result = await this.client.query<OrganizationWorkspaceRow>(
+      `
+      SELECT
+        organizations.id AS org_id,
+        organizations.type AS org_type,
+        organizations.name AS org_name,
+        organizations.legal_name AS org_legal_name,
+        organizations.status AS org_status,
+        organizations.plan_key AS org_plan_key,
+        organizations.billing_email AS org_billing_email,
+        organizations.stripe_customer_id AS org_stripe_customer_id,
+        organizations.stripe_subscription_id AS org_stripe_subscription_id,
+        organizations.created_by_user_id AS org_created_by_user_id,
+        organizations.created_at AS org_created_at,
+        organizations.updated_at AS org_updated_at,
+        organization_members.id AS member_id,
+        organization_members.organization_id AS member_organization_id,
+        organization_members.user_id AS member_user_id,
+        organization_members.role AS member_role,
+        organization_members.status AS member_status,
+        organization_members.invited_by_user_id AS member_invited_by_user_id,
+        organization_members.joined_at AS member_joined_at,
+        organization_members.created_at AS member_created_at,
+        organization_members.updated_at AS member_updated_at,
+        users.email AS member_email,
+        users.display_name AS member_display_name,
+        organization_credit_balances.organization_id AS balance_organization_id,
+        organization_credit_balances.monthly_credits AS balance_monthly_credits,
+        organization_credit_balances.purchased_credits AS balance_purchased_credits,
+        organization_credit_balances.monthly_expires_at AS balance_monthly_expires_at,
+        organization_credit_balances.updated_at AS balance_updated_at
+      FROM organization_members
+      INNER JOIN organizations ON organizations.id = organization_members.organization_id
+      INNER JOIN users ON users.id = organization_members.user_id
+      LEFT JOIN organization_credit_balances
+        ON organization_credit_balances.organization_id = organizations.id
+      WHERE organization_members.user_id = $1::uuid
+        AND organization_members.status = 'active'
+        AND (
+          $2::timestamptz IS NULL
+          OR organizations.updated_at < $2::timestamptz
+          OR (
+            organizations.updated_at = $2::timestamptz
+            AND (
+              organizations.created_at < $3::timestamptz
+              OR (
+                organizations.created_at = $3::timestamptz
+                AND organizations.id < $4::uuid
+              )
+            )
+          )
+        )
+      ORDER BY organizations.updated_at DESC,
+               organizations.created_at DESC,
+               organizations.id DESC
+      LIMIT $5
+      `,
+      [
+        userId,
+        request.cursor?.updatedAt ?? null,
+        request.cursor?.createdAt ?? null,
+        request.cursor?.id ?? null,
+        request.limit + 1,
+      ],
+    );
+
+    const rows = result.rows.slice(0, request.limit);
+    const organizations = rows.map((row) => {
+      const organization = mapOrganizationRow({
+        id: row.org_id,
+        type: row.org_type,
+        name: row.org_name,
+        legal_name: row.org_legal_name,
+        status: row.org_status,
+        plan_key: row.org_plan_key,
+        billing_email: row.org_billing_email,
+        stripe_customer_id: row.org_stripe_customer_id,
+        stripe_subscription_id: row.org_stripe_subscription_id,
+        created_by_user_id: row.org_created_by_user_id,
+        created_at: row.org_created_at,
+        updated_at: row.org_updated_at,
+      });
+      const membership = mapMemberRow({
+        id: row.member_id,
+        organization_id: row.member_organization_id,
+        user_id: row.member_user_id,
+        email: row.member_email,
+        display_name: row.member_display_name,
+        role: row.member_role,
+        status: row.member_status,
+        invited_by_user_id: row.member_invited_by_user_id,
+        joined_at: row.member_joined_at,
+        created_at: row.member_created_at,
+        updated_at: row.member_updated_at,
+      });
+      const balance =
+        row.balance_organization_id === null
+        || row.balance_organization_id === undefined
+          ? null
+          : mapBalanceRow({
+              organization_id: row.balance_organization_id,
+              monthly_credits: row.balance_monthly_credits ?? 0,
+              purchased_credits: row.balance_purchased_credits ?? 0,
+              monthly_expires_at: row.balance_monthly_expires_at,
+              updated_at: row.balance_updated_at ?? new Date(0),
+            });
+      return { organization, membership, balance };
+    });
+    const lastWorkspace = organizations.at(-1);
+    return {
+      organizations,
+      nextCursor:
+        result.rows.length > request.limit && lastWorkspace !== undefined
+          ? {
+              updatedAt: lastWorkspace.organization.updatedAt,
+              createdAt: lastWorkspace.organization.createdAt,
+              id: lastWorkspace.organization.id,
+            }
+          : null,
+    };
   }
 
   public async findOrganizationById(

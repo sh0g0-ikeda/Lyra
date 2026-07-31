@@ -6,6 +6,7 @@ import {
   type EnterprisePlanCode,
 } from '../../domain/constants/billing.js';
 import {
+  ConfigurationError,
   ConflictError,
   ForbiddenError,
   InsufficientCreditsError,
@@ -26,7 +27,12 @@ import type {
 } from '../../domain/types/organization.js';
 import { roleHasCapability } from '../../domain/types/organization.js';
 import type { DatabaseClient } from '../../lib/db.js';
-import type { OrganizationRepository } from '../../repositories/OrganizationRepository.js';
+import type {
+  OrganizationListCursor,
+  OrganizationRepository,
+  OrganizationWorkspacePage,
+  OrganizationWorkspacePaginationRepository,
+} from '../../repositories/OrganizationRepository.js';
 import { InvitationUrlBuilder } from './InvitationUrlBuilder.js';
 import type {
   InvitationEmailDeliveryResult,
@@ -106,6 +112,10 @@ export interface RecordOrganizationAuditEventRequest {
 
 export interface OrganizationServicePort {
   listWorkspaces(userId: string): Promise<OrganizationWorkspaceSummary[]>;
+  listWorkspacesPage(
+    userId: string,
+    input: { limit: number; cursor: OrganizationListCursor | null },
+  ): Promise<OrganizationWorkspacePage>;
   createOrganization(userId: string, input: CreateOrganizationRequest): Promise<OrganizationWorkspaceSummary>;
   getOrganization(userId: string, organizationId: string): Promise<OrganizationWorkspaceSummary>;
   updateOrganization(userId: string, organizationId: string, input: UpdateOrganizationRequest): Promise<Organization>;
@@ -178,13 +188,24 @@ export interface OrganizationServicePort {
  */
 export class OrganizationService implements OrganizationServicePort {
   public constructor(
-    private readonly organizationRepository: OrganizationRepository,
+    private readonly organizationRepository:
+      OrganizationRepository & Partial<OrganizationWorkspacePaginationRepository>,
     private readonly invitationEmailService?: OrganizationInvitationEmailServicePort,
     private readonly invitationUrlBuilder: InvitationUrlBuilder = new InvitationUrlBuilder('http://localhost:5173'),
   ) {}
 
   public async listWorkspaces(userId: string): Promise<OrganizationWorkspaceSummary[]> {
     return this.organizationRepository.listWorkspacesByUserId(userId);
+  }
+
+  public async listWorkspacesPage(
+    userId: string,
+    input: { limit: number; cursor: OrganizationListCursor | null },
+  ): Promise<OrganizationWorkspacePage> {
+    const paginationRepository = requireWorkspacePaginationRepository(
+      this.organizationRepository,
+    );
+    return paginationRepository.listWorkspacesPageByUserId(userId, input);
   }
 
   public async createOrganization(
@@ -1261,6 +1282,19 @@ export class OrganizationService implements OrganizationServicePort {
       throw new ConflictError('Organization must keep at least one active owner');
     }
   }
+}
+
+function requireWorkspacePaginationRepository(
+  repository:
+    OrganizationRepository & Partial<OrganizationWorkspacePaginationRepository>,
+): OrganizationWorkspacePaginationRepository {
+  if (typeof repository.listWorkspacesPageByUserId !== 'function') {
+    throw new ConfigurationError(
+      'Organization workspace pagination repository is not configured',
+    );
+  }
+
+  return repository as OrganizationWorkspacePaginationRepository;
 }
 
 function memberAuditEntries(
