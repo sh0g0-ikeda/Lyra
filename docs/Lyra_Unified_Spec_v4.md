@@ -31,7 +31,7 @@ The primary user flows are:
 4. Generate a page skeleton, then apply the story to editable panel fields.
 5. Review entities, situation, composition, camera, background, and dialogue.
 6. Generate a page image from the current saved inputs.
-7. Export selected pages as images or PDF.
+7. Export selected pages as images, PDF, or ZIP.
 
 ## 3. Architecture
 
@@ -75,6 +75,16 @@ not enable queue dispatch, artifact creation, or download routes. Processing use
 bounded lease token and heartbeat; only the current lease may update progress or
 write a terminal state, and an expired lease may be reclaimed without allowing the
 older worker to overwrite its replacement.
+
+The export worker reads only the immutable page snapshot stored with the job. Each
+source image is limited to 20 MiB, all sources together to 64 MiB, and the produced
+artifact to 128 MiB. Production object reads use bounded HEAD plus ETag-conditioned
+Range GET validation for MIME, size, range, and image signature. Network failures,
+HTTP 429, and provider 5xx responses are retryable; invalid keys, images, or
+artifacts fail with stable sanitized errors. PDF and ZIP bytes are deterministic
+for the same persisted snapshot, and artifacts are private, encrypted, and written
+only to the server-derived job key. These worker and storage contracts do not by
+themselves enable queue polling, API routes, or downloads.
 
 Native push device tokens are encrypted with authenticated encryption before
 persistence and are located by a separately keyed deterministic digest. Registration
