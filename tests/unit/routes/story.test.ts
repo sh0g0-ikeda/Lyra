@@ -1,7 +1,7 @@
 ﻿import { SignJWT } from 'jose';
 import { describe, expect, it } from 'vitest';
 import { createApp } from '../../../src/app.js';
-import { ValidationError } from '../../../src/domain/errors/index.js';
+import { ConflictError, ValidationError } from '../../../src/domain/errors/index.js';
 import { decodeWorkListCursor } from '../../../src/domain/pagination.js';
 import type { CreditBalanceSnapshot } from '../../../src/domain/types/credit.js';
 import type { AuthenticatedUser, SupabaseJwtClaims } from '../../../src/domain/types/user.js';
@@ -97,6 +97,7 @@ class FakeStoryService implements StoryServicePort {
   public createWorkOrganizationId: string | null | undefined = undefined;
   public moveEpisodeCrossChapter: boolean | undefined = undefined;
   public workPage: WorkListPage = { works: [], nextCursor: null };
+  public deleteEpisodeError: Error | null = null;
   public workPageCalls: Array<{
     userId: string;
     limit: number;
@@ -185,7 +186,11 @@ class FakeStoryService implements StoryServicePort {
     return buildEpisode({ id: requestedEpisodeId, title: input.title ?? '第一話', version: 2 });
   }
 
-  public async deleteEpisode(_userId: string, _requestedEpisodeId: string): Promise<void> {}
+  public async deleteEpisode(_userId: string, _requestedEpisodeId: string): Promise<void> {
+    if (this.deleteEpisodeError !== null) {
+      throw this.deleteEpisodeError;
+    }
+  }
 
   public async moveEpisode(
     _userId: string,
@@ -1027,6 +1032,28 @@ describe('story routes', () => {
     expect(response.status).toBe(500);
     await expect(response.json()).resolves.toMatchObject({
       error: { code: 'CONFIGURATION_ERROR' },
+    });
+  });
+
+  it('関連jobまたは生成fileがある話の削除は安全な409を返す', async () => {
+    const storyService = new FakeStoryService();
+    storyService.deleteEpisodeError = new ConflictError(
+      'Story content cannot be deleted while related jobs or generated files still exist',
+    );
+    const app = createTestApp({ storyService });
+    const token = await createToken();
+
+    const response = await app.request(`/api/episodes/${episodeId}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({
+      error: {
+        code: 'CONFLICT',
+        message: 'Story content cannot be deleted while related jobs or generated files still exist',
+      },
     });
   });
 

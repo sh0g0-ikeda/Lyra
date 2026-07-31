@@ -9,6 +9,7 @@ import {
   enqueueTerminalGenerationJobNotificationAfterRegistryLock,
   lockMobilePushTokenRegistryForTerminalSettlement,
 } from './PushNotificationOutboxRepository.js';
+import { lockStoryEpisodeAdmission } from './StoryEpisodeAdmissionLock.js';
 
 export type { GenerationJob };
 export type { GenerationJobHistoryCursor };
@@ -155,6 +156,18 @@ interface PreparedRetryRow extends QueryResultRow {
   canceled_delivery_count: string;
 }
 
+interface StoryEpisodeTargetRow extends QueryResultRow {
+  story_episode_id: string;
+}
+
+interface RetryStoryTargetRow extends QueryResultRow {
+  id: string;
+  user_id: string;
+  organization_id: string | null;
+  job_type: GenerationJobType;
+  params: unknown;
+}
+
 interface GenerationJobHistoryRow extends GenerationJobRow {
   active_rank: number;
 }
@@ -200,12 +213,18 @@ export class PostgresGenerationJobRepository
 
   public async create(input: CreateGenerationJobInput): Promise<GenerationJob> {
     const capacityLimits = input.capacityLimits;
-    if (capacityLimits !== undefined) {
-      const transactionRunner = this.requireTransactionRunnerForCapacity();
+    const storyTargetRequired = isStoryEpisodeGenerationJobType(input.jobType);
+    if (capacityLimits !== undefined || storyTargetRequired) {
+      const transactionRunner = capacityLimits === undefined
+        ? this.requireTransactionRunnerForStoryAdmission()
+        : this.requireTransactionRunnerForCapacity();
       return transactionRunner.transaction(async (transactionClient) => {
-        const scope = getGenerationCapacityScope(input.userId, input.organizationId ?? null);
-        await this.lockGenerationCapacity(transactionClient, scope);
-        await this.assertCapacityWithinTransaction(transactionClient, scope, capacityLimits);
+        if (capacityLimits !== undefined) {
+          const scope = getGenerationCapacityScope(input.userId, input.organizationId ?? null);
+          await this.lockGenerationCapacity(transactionClient, scope);
+          await this.assertCapacityWithinTransaction(transactionClient, scope, capacityLimits);
+        }
+        await this.lockStoryTargetForGenerationCreate(transactionClient, input);
         return this.insertJob(transactionClient, input);
       });
     }
@@ -1135,9 +1154,11 @@ export class PostgresGenerationJobRepository
     maxRetryCount: number,
     options?: PrepareGenerationJobRetryOptions,
   ): Promise<boolean> {
-    if (options !== undefined) {
-      const transactionRunner = this.requireTransactionRunnerForCapacity();
-      return transactionRunner.transaction(async (transactionClient) => {
+    const transactionRunner = options === undefined
+      ? this.requireTransactionRunnerForRetry()
+      : this.requireTransactionRunnerForCapacity();
+    return transactionRunner.transaction(async (transactionClient) => {
+      if (options !== undefined) {
         const scope = getGenerationCapacityScope(options.userId, options.organizationId ?? null);
         await this.lockGenerationCapacity(transactionClient, scope);
         await this.assertCapacityWithinTransaction(
@@ -1145,11 +1166,17 @@ export class PostgresGenerationJobRepository
           scope,
           options.capacityLimits,
         );
-        return this.prepareRetryWithClient(transactionClient, jobId, maxRetryCount);
-      });
-    }
-
-    return this.prepareRetryWithClient(this.client, jobId, maxRetryCount);
+      }
+      const retryTargetAvailable = await this.lockStoryTargetForGenerationRetry(
+        transactionClient,
+        jobId,
+        options,
+      );
+      if (!retryTargetAvailable) {
+        return false;
+      }
+      return this.prepareRetryWithClient(transactionClient, jobId, maxRetryCount);
+    });
   }
 
   private requireTransactionRunnerForCapacity(): DatabaseClient & TransactionRunner {
@@ -1160,6 +1187,217 @@ export class PostgresGenerationJobRepository
     }
 
     return this.client;
+  }
+
+  private requireTransactionRunnerForStoryAdmission(): DatabaseClient & TransactionRunner {
+    if (!isTransactionRunner(this.client)) {
+      throw new ConfigurationError(
+        'Story generation admission requires a transaction-capable database client',
+      );
+    }
+    return this.client;
+  }
+
+  private requireTransactionRunnerForRetry(): DatabaseClient & TransactionRunner {
+    if (!isTransactionRunner(this.client)) {
+      throw new ConfigurationError(
+        'Generation job retry requires a transaction-capable database client',
+      );
+    }
+    return this.client;
+  }
+
+  private async lockStoryTargetForGenerationCreate(
+    client: DatabaseClient,
+    input: CreateGenerationJobInput,
+  ): Promise<void> {
+    if (!isStoryEpisodeGenerationJobType(input.jobType)) {
+      return;
+    }
+    const organizationId = input.organizationId ?? null;
+    const initialEpisodeId = await this.resolveStoryEpisodeTarget(
+      client,
+      input.jobType,
+      input.params,
+      input.userId,
+      organizationId,
+      false,
+    );
+    if (initialEpisodeId === null) {
+      throw new ConflictError('Generation target is no longer available');
+    }
+
+    await lockStoryEpisodeAdmission(client, initialEpisodeId);
+    const lockedEpisodeId = await this.resolveStoryEpisodeTarget(
+      client,
+      input.jobType,
+      input.params,
+      input.userId,
+      organizationId,
+      true,
+    );
+    if (lockedEpisodeId !== initialEpisodeId) {
+      throw new ConflictError('Generation target is no longer available');
+    }
+  }
+
+  private async lockStoryTargetForGenerationRetry(
+    client: DatabaseClient,
+    jobId: string,
+    options: PrepareGenerationJobRetryOptions | undefined,
+  ): Promise<boolean> {
+    const requesterUserId = options?.userId ?? null;
+    const requesterOrganizationId = options?.organizationId ?? null;
+    const result = await client.query<RetryStoryTargetRow>(
+      `
+      SELECT generation_jobs.id,
+             generation_jobs.user_id,
+             generation_jobs.organization_id,
+             generation_jobs.job_type,
+             generation_jobs.params
+      FROM generation_jobs
+      WHERE generation_jobs.id = $1::uuid
+        AND generation_jobs.status = 'failed'
+        AND (
+          $2::uuid IS NULL
+          OR (
+            $3::uuid IS NULL
+            AND generation_jobs.user_id = $2::uuid
+            AND generation_jobs.organization_id IS NULL
+          )
+          OR (
+            $3::uuid IS NOT NULL
+            AND generation_jobs.organization_id = $3::uuid
+            AND EXISTS (
+              SELECT 1
+              FROM organization_members
+              WHERE organization_members.organization_id = generation_jobs.organization_id
+                AND organization_members.user_id = $2::uuid
+                AND organization_members.status = 'active'
+            )
+          )
+        )
+      `,
+      [jobId, requesterUserId, requesterOrganizationId],
+    );
+    const job = result.rows[0];
+    if (job === undefined) {
+      return false;
+    }
+    if (!isStoryEpisodeGenerationJobType(job.job_type)) {
+      return true;
+    }
+
+    const scopeUserId = options?.userId ?? job.user_id;
+    const scopeOrganizationId = job.organization_id;
+    const params = toJsonObject(job.params);
+    const resourceParamKey = job.job_type === 'page_generate' ? 'page_id' : 'episode_id';
+    if (readUuidParam(params, resourceParamKey) === null) {
+      return true;
+    }
+    const initialEpisodeId = await this.resolveStoryEpisodeTarget(
+      client,
+      job.job_type,
+      params,
+      scopeUserId,
+      scopeOrganizationId,
+      false,
+    );
+    if (initialEpisodeId === null) {
+      throw new ConflictError('Generation target is no longer available');
+    }
+
+    await lockStoryEpisodeAdmission(client, initialEpisodeId);
+    const lockedEpisodeId = await this.resolveStoryEpisodeTarget(
+      client,
+      job.job_type,
+      params,
+      scopeUserId,
+      scopeOrganizationId,
+      true,
+    );
+    if (lockedEpisodeId !== initialEpisodeId) {
+      throw new ConflictError('Generation target is no longer available');
+    }
+    return true;
+  }
+
+  private async resolveStoryEpisodeTarget(
+    client: DatabaseClient,
+    jobType: GenerationJobType,
+    params: Record<string, unknown>,
+    userId: string,
+    organizationId: string | null,
+    lock: boolean,
+  ): Promise<string | null> {
+    if (jobType === 'page_generate') {
+      const pageId = readUuidParam(params, 'page_id');
+      if (pageId === null) {
+        return null;
+      }
+      const result = await client.query<StoryEpisodeTargetRow>(
+        `
+        SELECT pages.episode_id AS story_episode_id
+        FROM pages
+        INNER JOIN episodes ON episodes.id = pages.episode_id
+        INNER JOIN chapters ON chapters.id = episodes.chapter_id
+        INNER JOIN works ON works.id = chapters.work_id
+        WHERE pages.id = $1::uuid
+          AND (
+            ($3::uuid IS NULL
+              AND works.user_id = $2::uuid
+              AND works.organization_id IS NULL)
+            OR (
+              $3::uuid IS NOT NULL
+              AND works.organization_id = $3::uuid
+              AND EXISTS (
+                SELECT 1
+                FROM organization_members
+                WHERE organization_members.organization_id = works.organization_id
+                  AND organization_members.user_id = $2::uuid
+                  AND organization_members.status = 'active'
+              )
+            )
+          )
+        ${lock ? 'FOR KEY SHARE OF pages, episodes' : ''}
+        `,
+        [pageId, userId, organizationId],
+      );
+      return result.rows[0]?.story_episode_id ?? null;
+    }
+
+    const episodeId = readUuidParam(params, 'episode_id');
+    if (episodeId === null) {
+      return null;
+    }
+    const result = await client.query<StoryEpisodeTargetRow>(
+      `
+      SELECT episodes.id AS story_episode_id
+      FROM episodes
+      INNER JOIN chapters ON chapters.id = episodes.chapter_id
+      INNER JOIN works ON works.id = chapters.work_id
+      WHERE episodes.id = $1::uuid
+        AND (
+          ($3::uuid IS NULL
+            AND works.user_id = $2::uuid
+            AND works.organization_id IS NULL)
+          OR (
+            $3::uuid IS NOT NULL
+            AND works.organization_id = $3::uuid
+            AND EXISTS (
+              SELECT 1
+              FROM organization_members
+              WHERE organization_members.organization_id = works.organization_id
+                AND organization_members.user_id = $2::uuid
+                AND organization_members.status = 'active'
+            )
+          )
+        )
+      ${lock ? 'FOR KEY SHARE OF episodes' : ''}
+      `,
+      [episodeId, userId, organizationId],
+    );
+    return result.rows[0]?.story_episode_id ?? null;
   }
 
   private requireTransactionRunnerForHistory(): DatabaseClient & TransactionRunner {
@@ -1359,6 +1597,20 @@ function formatGenerationCapacityScopeKey(scope: GenerationCapacityScope): strin
   return scope.organizationId === null
     ? `generation_jobs:user:${scope.userId}`
     : `generation_jobs:organization:${scope.organizationId}`;
+}
+
+function isStoryEpisodeGenerationJobType(jobType: GenerationJobType): boolean {
+  return jobType === 'page_generate'
+    || jobType === 'episode_story_autofill'
+    || jobType === 'episode_page_skeleton';
+}
+
+function readUuidParam(params: Record<string, unknown>, key: string): string | null {
+  const value = params[key];
+  return typeof value === 'string'
+    && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu.test(value)
+    ? value
+    : null;
 }
 
 export function isUniqueViolation(error: unknown): boolean {

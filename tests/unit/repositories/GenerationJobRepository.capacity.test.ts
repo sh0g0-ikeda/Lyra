@@ -36,7 +36,7 @@ describe('PostgresGenerationJobRepository capacity configuration', () => {
         creditCost: 1,
         capacityLimits: { perUser: 3, global: 5 },
         params: {
-          page_id: 'page-1',
+          page_id: '77777777-7777-4777-8777-777777777777',
         },
       }),
     ).rejects.toMatchObject({
@@ -135,6 +135,25 @@ class CapacityTransactionClient implements DatabaseClient {
         oid: 0,
         fields: [],
         rows: [{ count: this.counts.activeGlobally }] as unknown as T[],
+      };
+    }
+
+    if (
+      text.includes('generation_jobs.params')
+      && text.includes("generation_jobs.status = 'failed'")
+    ) {
+      return {
+        command: 'SELECT',
+        rowCount: 1,
+        oid: 0,
+        fields: [],
+        rows: [{
+          id: 'job-1',
+          user_id: 'user-1',
+          organization_id: null,
+          job_type: 'entity_generate',
+          params: { entity_id: 'entity-1' },
+        }] as unknown as T[],
       };
     }
 

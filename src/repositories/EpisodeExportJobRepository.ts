@@ -18,6 +18,7 @@ import {
   ValidationError,
 } from '../domain/errors/index.js';
 import type { DatabaseClient, TransactionRunner } from '../lib/db.js';
+import { lockStoryEpisodeAdmission } from './StoryEpisodeAdmissionLock.js';
 
 const MAX_PROCESSING_LEASE_SECONDS = 30 * 60;
 const MAX_PROCESSING_ATTEMPTS = 100;
@@ -180,6 +181,10 @@ interface UpdatedRow extends QueryResultRow {
   updated: boolean;
 }
 
+interface AuthorizedEpisodeIdRow extends QueryResultRow {
+  authorized_episode_id: string;
+}
+
 export class PostgresEpisodeExportJobRepository implements EpisodeExportJobRepository {
   public constructor(
     private readonly client: DatabaseClient,
@@ -193,6 +198,10 @@ export class PostgresEpisodeExportJobRepository implements EpisodeExportJobRepos
     assertCreateInput(input);
 
     return transactionRunner.transaction(async (client) => {
+      if (!(await this.isEpisodeAuthorized(client, input))) {
+        throw new ValidationError('One or more export pages are unavailable');
+      }
+      await lockStoryEpisodeAdmission(client, input.episodeId);
       const existing = await this.findByIdempotencyKey(client, input);
       if (existing !== null) {
         assertMatchingFingerprint(existing, input.requestFingerprint);
@@ -748,6 +757,41 @@ export class PostgresEpisodeExportJobRepository implements EpisodeExportJobRepos
     return result.rows[0] === undefined
       ? null
       : toEpisodeExportJob(result.rows[0]);
+  }
+
+  private async isEpisodeAuthorized(
+    client: DatabaseClient,
+    input: CreateEpisodeExportJobInput,
+  ): Promise<boolean> {
+    const result = await client.query<AuthorizedEpisodeIdRow>(
+      `
+      SELECT episodes.id AS authorized_episode_id
+      FROM episodes
+      INNER JOIN chapters ON chapters.id = episodes.chapter_id
+      INNER JOIN works ON works.id = chapters.work_id
+      WHERE episodes.id = $1::uuid
+        AND (
+          (
+            $2::uuid IS NULL
+            AND works.user_id = $3::uuid
+            AND works.organization_id IS NULL
+          )
+          OR (
+            $2::uuid IS NOT NULL
+            AND works.organization_id = $2::uuid
+            AND EXISTS (
+              SELECT 1
+              FROM organization_members
+              WHERE organization_members.organization_id = works.organization_id
+                AND organization_members.user_id = $3::uuid
+                AND organization_members.status = 'active'
+            )
+          )
+        )
+      `,
+      [input.episodeId, input.organizationId, input.userId],
+    );
+    return result.rows[0]?.authorized_episode_id === input.episodeId;
   }
 
   private async lockPageSnapshot(

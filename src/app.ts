@@ -1039,7 +1039,7 @@ function resolveDependencies(
     dependencies.pageSkeletonService ??
     new PageSkeletonService(new PostgresStoryRepository(db, db), storyAiClient);
   const storyService =
-    dependencies.storyService ?? new StoryService(new PostgresStoryRepository(db), entityRepository);
+    dependencies.storyService ?? new StoryService(new PostgresStoryRepository(db, db), entityRepository);
   const panelService =
     dependencies.panelService ??
     new PanelService(

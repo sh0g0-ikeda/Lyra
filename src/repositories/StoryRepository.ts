@@ -33,6 +33,10 @@ import type { DatabaseClient, TransactionRunner } from '../lib/db.js';
 import { isUniqueViolation } from '../lib/dbErrors.js';
 import { normalizeNullableText, normalizePossiblyMojibake } from '../lib/textEncoding.js';
 import { extractEntityAliases } from '../domain/entityAliases.js';
+import {
+  lockStoryEpisodeAdmission,
+  lockStoryEpisodeAdmissions,
+} from './StoryEpisodeAdmissionLock.js';
 
 export type {
   Chapter,
@@ -253,6 +257,22 @@ interface EpisodeImprovementContextRow extends QueryResultRow {
 
 interface IdRow extends QueryResultRow {
   id: string;
+}
+
+interface AuthorizedChapterIdRow extends QueryResultRow {
+  authorized_chapter_id: string;
+}
+
+interface AuthorizedEpisodeIdRow extends QueryResultRow {
+  authorized_episode_id: string;
+}
+
+interface ChildEpisodeIdRow extends QueryResultRow {
+  child_episode_id: string;
+}
+
+interface StoryDeletionBlockerRow extends QueryResultRow {
+  deletion_blocked: boolean;
 }
 
 interface TemporaryOrderRow extends QueryResultRow {
@@ -727,31 +747,78 @@ export class PostgresStoryRepository
   }
 
   public async deleteChapter(id: string, userId: string, organizationId: string | null = null): Promise<boolean> {
-    const result = await this.client.query(
-      `
-      DELETE FROM chapters
-      USING works
-      WHERE chapters.id = $1
-        AND chapters.work_id = works.id
-        AND (
-          ($3::uuid IS NULL AND works.user_id = $2 AND works.organization_id IS NULL)
-          OR (
-            $3::uuid IS NOT NULL
-            AND works.organization_id = $3::uuid
-            AND EXISTS (
-              SELECT 1
-              FROM organization_members
-              WHERE organization_members.organization_id = works.organization_id
-                AND organization_members.user_id = $2
-                AND organization_members.status = 'active'
+    const transactionRunner = this.requireTransactionRunnerForStoryDeletion();
+    return transactionRunner.transaction(async (transactionClient) => {
+      const authorized = await transactionClient.query<AuthorizedChapterIdRow>(
+        `
+        SELECT chapters.id AS authorized_chapter_id
+        FROM chapters
+        INNER JOIN works ON works.id = chapters.work_id
+        WHERE chapters.id = $1::uuid
+          AND (
+            ($3::uuid IS NULL
+              AND works.user_id = $2::uuid
+              AND works.organization_id IS NULL)
+            OR (
+              $3::uuid IS NOT NULL
+              AND works.organization_id = $3::uuid
+              AND EXISTS (
+                SELECT 1
+                FROM organization_members
+                WHERE organization_members.organization_id = works.organization_id
+                  AND organization_members.user_id = $2::uuid
+                  AND organization_members.status = 'active'
+              )
             )
           )
-        )
-      `,
-      [id, userId, organizationId],
-    );
+        FOR UPDATE OF chapters
+        `,
+        [id, userId, organizationId],
+      );
+      if (authorized.rows[0] === undefined) {
+        return false;
+      }
 
-    return (result.rowCount ?? 0) > 0;
+      const initialChildren = await this.findChildEpisodeIds(transactionClient, id, false);
+      await lockStoryEpisodeAdmissions(transactionClient, initialChildren);
+
+      const lockedChildren = await this.findChildEpisodeIds(transactionClient, id, true);
+      await this.lockStoryDeletionPages(transactionClient, lockedChildren);
+      await this.assertStoryDeletionAllowed(
+        transactionClient,
+        lockedChildren,
+        userId,
+        organizationId,
+      );
+
+      const deleted = await transactionClient.query<IdRow>(
+        `
+        DELETE FROM chapters
+        USING works
+        WHERE chapters.id = $1::uuid
+          AND chapters.work_id = works.id
+          AND (
+            ($3::uuid IS NULL
+              AND works.user_id = $2::uuid
+              AND works.organization_id IS NULL)
+            OR (
+              $3::uuid IS NOT NULL
+              AND works.organization_id = $3::uuid
+              AND EXISTS (
+                SELECT 1
+                FROM organization_members
+                WHERE organization_members.organization_id = works.organization_id
+                  AND organization_members.user_id = $2::uuid
+                  AND organization_members.status = 'active'
+              )
+            )
+          )
+        RETURNING chapters.id
+        `,
+        [id, userId, organizationId],
+      );
+      return (deleted.rowCount ?? 0) > 0;
+    });
   }
 
   public async moveChapter(
@@ -1065,15 +1132,96 @@ export class PostgresStoryRepository
   }
 
   public async deleteEpisode(id: string, userId: string, organizationId: string | null = null): Promise<boolean> {
-    const result = await this.client.query(
+    const transactionRunner = this.requireTransactionRunnerForStoryDeletion();
+    return transactionRunner.transaction(async (transactionClient) => {
+      const initialTarget = await this.findAuthorizedEpisodeForDeletion(
+        transactionClient,
+        id,
+        userId,
+        organizationId,
+        false,
+      );
+      if (initialTarget === null) {
+        return false;
+      }
+
+      await lockStoryEpisodeAdmission(transactionClient, initialTarget);
+      const lockedTarget = await this.findAuthorizedEpisodeForDeletion(
+        transactionClient,
+        id,
+        userId,
+        organizationId,
+        true,
+      );
+      if (lockedTarget === null) {
+        return false;
+      }
+
+      const episodeIds = [lockedTarget];
+      await this.lockStoryDeletionPages(transactionClient, episodeIds);
+      await this.assertStoryDeletionAllowed(
+        transactionClient,
+        episodeIds,
+        userId,
+        organizationId,
+      );
+
+      const deleted = await transactionClient.query<IdRow>(
+        `
+        DELETE FROM episodes
+        USING chapters, works
+        WHERE episodes.id = $1::uuid
+          AND episodes.chapter_id = chapters.id
+          AND chapters.work_id = works.id
+          AND (
+            ($3::uuid IS NULL
+              AND works.user_id = $2::uuid
+              AND works.organization_id IS NULL)
+            OR (
+              $3::uuid IS NOT NULL
+              AND works.organization_id = $3::uuid
+              AND EXISTS (
+                SELECT 1
+                FROM organization_members
+                WHERE organization_members.organization_id = works.organization_id
+                  AND organization_members.user_id = $2::uuid
+                  AND organization_members.status = 'active'
+              )
+            )
+          )
+        RETURNING episodes.id
+        `,
+        [id, userId, organizationId],
+      );
+      return (deleted.rowCount ?? 0) > 0;
+    });
+  }
+
+  private requireTransactionRunnerForStoryDeletion(): TransactionRunner {
+    if (this.transactionRunner === undefined) {
+      throw new ConfigurationError('Story deletion requires transaction support');
+    }
+    return this.transactionRunner;
+  }
+
+  private async findAuthorizedEpisodeForDeletion(
+    client: DatabaseClient,
+    episodeId: string,
+    userId: string,
+    organizationId: string | null,
+    lock: boolean,
+  ): Promise<string | null> {
+    const result = await client.query<AuthorizedEpisodeIdRow>(
       `
-      DELETE FROM episodes
-      USING chapters, works
-      WHERE episodes.id = $1
-        AND episodes.chapter_id = chapters.id
-        AND chapters.work_id = works.id
+      SELECT episodes.id AS authorized_episode_id
+      FROM episodes
+      INNER JOIN chapters ON chapters.id = episodes.chapter_id
+      INNER JOIN works ON works.id = chapters.work_id
+      WHERE episodes.id = $1::uuid
         AND (
-          ($3::uuid IS NULL AND works.user_id = $2 AND works.organization_id IS NULL)
+          ($3::uuid IS NULL
+            AND works.user_id = $2::uuid
+            AND works.organization_id IS NULL)
           OR (
             $3::uuid IS NOT NULL
             AND works.organization_id = $3::uuid
@@ -1081,16 +1229,137 @@ export class PostgresStoryRepository
               SELECT 1
               FROM organization_members
               WHERE organization_members.organization_id = works.organization_id
-                AND organization_members.user_id = $2
+                AND organization_members.user_id = $2::uuid
                 AND organization_members.status = 'active'
             )
           )
         )
+      ${lock ? 'FOR UPDATE OF episodes' : ''}
       `,
-      [id, userId, organizationId],
+      [episodeId, userId, organizationId],
     );
+    return result.rows[0]?.authorized_episode_id ?? null;
+  }
 
-    return (result.rowCount ?? 0) > 0;
+  private async findChildEpisodeIds(
+    client: DatabaseClient,
+    chapterId: string,
+    lock: boolean,
+  ): Promise<string[]> {
+    const result = await client.query<ChildEpisodeIdRow>(
+      `
+      SELECT episodes.id AS child_episode_id
+      FROM episodes
+      WHERE episodes.chapter_id = $1::uuid
+      ORDER BY episodes.id ASC
+      ${lock ? 'FOR UPDATE OF episodes' : ''}
+      `,
+      [chapterId],
+    );
+    return result.rows.map((row) => row.child_episode_id);
+  }
+
+  private async lockStoryDeletionPages(
+    client: DatabaseClient,
+    episodeIds: string[],
+  ): Promise<void> {
+    if (episodeIds.length === 0) {
+      return;
+    }
+    await client.query(
+      `
+      SELECT pages.id
+      FROM pages
+      WHERE pages.episode_id = ANY($1::uuid[])
+      ORDER BY pages.id ASC
+      FOR UPDATE OF pages
+      `,
+      [episodeIds],
+    );
+  }
+
+  private async assertStoryDeletionAllowed(
+    client: DatabaseClient,
+    episodeIds: string[],
+    userId: string,
+    organizationId: string | null,
+  ): Promise<void> {
+    if (episodeIds.length === 0) {
+      return;
+    }
+    const episodeIdTexts = episodeIds;
+    const result = await client.query<StoryDeletionBlockerRow>(
+      `
+      SELECT (
+        EXISTS (
+          SELECT 1
+          FROM pages
+          WHERE pages.episode_id = ANY($1::uuid[])
+            AND pages.generated_image IS NOT NULL
+        )
+        OR EXISTS (
+          SELECT 1
+          FROM generation_jobs
+          WHERE generation_jobs.status IN ('queued', 'processing')
+            AND (
+              (
+                generation_jobs.job_type IN (
+                  'episode_story_autofill',
+                  'episode_page_skeleton'
+                )
+                AND generation_jobs.params ->> 'episode_id' = ANY($2::text[])
+              )
+              OR (
+                generation_jobs.job_type = 'page_generate'
+                AND EXISTS (
+                  SELECT 1
+                  FROM pages AS job_pages
+                  WHERE job_pages.id::text = generation_jobs.params ->> 'page_id'
+                    AND job_pages.episode_id = ANY($1::uuid[])
+                )
+              )
+            )
+            AND (
+              ($4::uuid IS NULL
+                AND generation_jobs.user_id = $3::uuid
+                AND generation_jobs.organization_id IS NULL)
+              OR (
+                $4::uuid IS NOT NULL
+                AND generation_jobs.organization_id = $4::uuid
+              )
+            )
+        )
+        OR EXISTS (
+          SELECT 1
+          FROM episode_export_jobs
+          WHERE episode_export_jobs.episode_id = ANY($1::uuid[])
+            AND (
+              episode_export_jobs.status IN ('queued', 'processing')
+              OR (
+                episode_export_jobs.status = 'completed'
+                AND episode_export_jobs.artifact_s3_key IS NOT NULL
+                AND episode_export_jobs.artifact_deleted_at IS NULL
+              )
+            )
+            AND (
+              ($4::uuid IS NULL
+                AND episode_export_jobs.user_id = $3::uuid
+                AND episode_export_jobs.organization_id IS NULL)
+              OR (
+                $4::uuid IS NOT NULL
+                AND episode_export_jobs.organization_id = $4::uuid
+              )
+            )
+        )
+      ) AS deletion_blocked
+      `,
+      [episodeIds, episodeIdTexts, userId, organizationId],
+    );
+    if (result.rows[0]?.deletion_blocked === true) {
+      throw new ConflictError(
+        'Story content cannot be deleted while related jobs or generated files still exist',
+      );
+    }
   }
 
   public async moveEpisode(

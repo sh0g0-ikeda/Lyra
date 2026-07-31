@@ -44,7 +44,7 @@ describe('PostgresGenerationJobRepository', () => {
       generationMode: 'standard',
       creditCost: 10,
       params: {
-        page_id: 'page-1',
+        page_id: '77777777-7777-4777-8777-777777777777',
         request_kind: 'initial',
         generation_mode: 'standard',
         quality: 'medium',
@@ -52,8 +52,9 @@ describe('PostgresGenerationJobRepository', () => {
       },
     });
 
-    expect(client.queries[0]).toContain('INSERT INTO generation_jobs');
-    expect(client.values).toEqual([
+    const insertIndex = client.queries.findIndex((query) => query.includes('INSERT INTO generation_jobs'));
+    expect(insertIndex).toBeGreaterThanOrEqual(0);
+    expect(client.valuesList[insertIndex]).toEqual([
       null,
       'user-1',
       null,
@@ -61,7 +62,7 @@ describe('PostgresGenerationJobRepository', () => {
       'standard',
       10,
       JSON.stringify({
-        page_id: 'page-1',
+        page_id: '77777777-7777-4777-8777-777777777777',
         request_kind: 'initial',
         generation_mode: 'standard',
         quality: 'medium',
@@ -112,12 +113,12 @@ describe('PostgresGenerationJobRepository', () => {
       creditCost: 1,
       capacityLimits: { perUser: 3, global: 5 },
       params: {
-        page_id: 'page-1',
+        page_id: '77777777-7777-4777-8777-777777777777',
       },
     });
 
     expect(client.transactionCalls).toBe(1);
-    expect(client.queries.filter((query) => query.includes('pg_advisory_xact_lock'))).toHaveLength(2);
+    expect(client.queries.filter((query) => query.includes('pg_advisory_xact_lock'))).toHaveLength(3);
     expect(client.queries.some((query) => query.includes('INSERT INTO generation_jobs'))).toBe(true);
     expect(client.valuesList[0]).toEqual([81527, 'generation_jobs:global']);
     expect(client.valuesList[1]).toEqual([81527, 'generation_jobs:user:user-1']);
@@ -138,7 +139,7 @@ describe('PostgresGenerationJobRepository', () => {
       creditCost: 1,
       capacityLimits: { perUser: 3, global: 5 },
       params: {
-        page_id: 'page-1',
+        page_id: '77777777-7777-4777-8777-777777777777',
       },
     });
 
@@ -166,7 +167,7 @@ describe('PostgresGenerationJobRepository', () => {
         creditCost: 1,
         capacityLimits: { perUser: 3, global: 5 },
         params: {
-          page_id: 'page-1',
+          page_id: '77777777-7777-4777-8777-777777777777',
         },
       }),
     ).rejects.toMatchObject({
@@ -256,11 +257,11 @@ describe('PostgresGenerationJobRepository', () => {
     const client = new QueryCapturingClient();
     const repository = new PostgresGenerationJobRepository(client);
 
-    const job = await repository.findActivePageGenerationJob('user-1', 'page-1');
+    const job = await repository.findActivePageGenerationJob('user-1', '77777777-7777-4777-8777-777777777777');
 
     expect(client.queries[0]).toContain("status IN ('queued', 'processing')");
     expect(client.queries[0]).toContain('params->>$3 = $4');
-    expect(client.values).toEqual(['user-1', 'page_generate', 'page_id', 'page-1', null]);
+    expect(client.values).toEqual(['user-1', 'page_generate', 'page_id', '77777777-7777-4777-8777-777777777777', null]);
     expect(job?.id).toBe('job-1');
   });
 
@@ -270,7 +271,7 @@ describe('PostgresGenerationJobRepository', () => {
 
     await repository.findActivePageGenerationJob(
       'user-1',
-      'page-1',
+      '77777777-7777-4777-8777-777777777777',
       '11111111-1111-4111-8111-111111111111',
     );
 
@@ -281,7 +282,7 @@ describe('PostgresGenerationJobRepository', () => {
       'user-1',
       'page_generate',
       'page_id',
-      'page-1',
+      '77777777-7777-4777-8777-777777777777',
       '11111111-1111-4111-8111-111111111111',
     ]);
   });
@@ -335,7 +336,7 @@ describe('PostgresGenerationJobRepository', () => {
         jobTypes: ['episode_story_autofill', 'episode_page_skeleton'],
       },
       params: {
-        episode_id: 'episode-1',
+        episode_id: '88888888-8888-4888-8888-888888888888',
       },
     });
 
@@ -356,11 +357,13 @@ describe('PostgresGenerationJobRepository', () => {
     const prepared = await repository.prepareRetry('job-1', 3);
 
     expect(prepared).toBe(true);
-    expect(client.queries[0]).toContain("SET status = 'queued'");
-    expect(client.queries[0]).toContain('retry_count = retry_count + 1');
-    expect(client.queries[0]).toContain('mobile_push_notification_deliveries');
-    expect(client.queries[0]).toContain("terminal_status = 'failed'");
-    expect(client.values).toEqual(['job-1', 3]);
+    const retryIndex = client.queries.findIndex((query) => query.includes('WITH retried_job'));
+    expect(retryIndex).toBeGreaterThanOrEqual(0);
+    expect(client.queries[retryIndex]).toContain("SET status = 'queued'");
+    expect(client.queries[retryIndex]).toContain('retry_count = retry_count + 1');
+    expect(client.queries[retryIndex]).toContain('mobile_push_notification_deliveries');
+    expect(client.queries[retryIndex]).toContain("terminal_status = 'failed'");
+    expect(client.valuesList[retryIndex]).toEqual(['job-1', 3]);
   });
 
   it('markFailed は保存する error_message からシークレットを伏せて短くする', async () => {
@@ -460,6 +463,8 @@ describe('PostgresGenerationJobRepository', () => {
 
 function jobRow(): Record<string, unknown> {
   return {
+    retry_story_target: true,
+    story_episode_id: '88888888-8888-4888-8888-888888888888',
     id: 'job-1',
     user_id: 'user-1',
     organization_id: null,
@@ -468,7 +473,7 @@ function jobRow(): Record<string, unknown> {
     generation_mode: 'standard',
     credit_cost: 10,
     params: {
-      page_id: 'page-1',
+      page_id: '77777777-7777-4777-8777-777777777777',
       request_kind: 'initial',
       generation_mode: 'standard',
       quality: 'medium',
@@ -556,6 +561,16 @@ class CapacityTransactionClient implements DatabaseClient {
         oid: 0,
         fields: [],
         rows: [jobRow()] as unknown as T[],
+      };
+    }
+
+    if (text.includes('story_episode_id')) {
+      return {
+        command: 'SELECT',
+        rowCount: 1,
+        oid: 0,
+        fields: [],
+        rows: [{ story_episode_id: '88888888-8888-4888-8888-888888888888' }] as unknown as T[],
       };
     }
 
