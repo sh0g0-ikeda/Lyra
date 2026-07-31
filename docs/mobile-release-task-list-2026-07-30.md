@@ -257,9 +257,12 @@ Codex単独で進める次の順序は、`CI安定化 → PR-A継続 → 契約�
   - [x] episode export jobとdispatch outboxのDB契約をAPI未接続で先行統合
     - 証跡: [PR #115](https://github.com/sh0g0-ikeda/Lyra/pull/115)。owner-bound artifact key、PDF/ZIP MIME、128 MiB、最大24時間、status/timestamp、idempotencyをmigration・invariantで確認
     - 境界: Repository、Service、SQS、artifact builder、S3、download Route、Web / Mobile clientは未接続。既存1ページexportは変更しない
-  - [ ] episode exportのprocessing lease・Domain・RepositoryをAPI未接続で統合
-    - 進捗: [PR #128](https://github.com/sh0g0-ikeda/Lyra/pull/128)をdraft作成。fresh DB 001〜036、58 invariant / 0 violations、実DBのcreate→冪等再送→claim→stale token拒否→release→reclaim→completeを確認
+  - [x] episode exportのprocessing lease・Domain・RepositoryをAPI未接続で統合
+    - 証跡: [PR #128](https://github.com/sh0g0-ikeda/Lyra/pull/128)。fresh DB 001〜036、58 invariant / 0 violations、実DBのcreate→冪等再送→claim→stale token拒否→release→reclaim→completeを確認してmainへ統合
     - 安全境界: 専用Worker / Storage / SQS / Route / downloadは未接続。migration適用だけでは機能を有効化せず、既存1ページexport、generation job、credit処理を変更しない
+  - [ ] episode exportのbounded PDF/ZIP builder・source loader・artifact storage・lease-aware WorkerをAPI未接続で統合
+    - 進捗: TDDでPDF/ZIP決定性、WebP変換、pixel/byte上限、S3 HEAD→If-Match Range GET、MIME/ETag/range/magic検証、network/429/5xx限定retry、local traversal防止、stale lease、retryable release、attempt枯渇を確認
+    - 安全境界: 専用SQS / poller / Route / download URL / cleanup runner / Web・Mobile client / runtime設定は未接続。既存1ページexport、generation queue、credit処理は変更しない
 - [ ] PR-C: Mobile store billing Backend
   - 主な所有: migration 029、Apple/Google verifier、purchase service、webhook、ledger
   - 完了条件: 課金OFFで既存Webの挙動を変えず、focused testsがgreen
@@ -413,9 +416,9 @@ Codex単独で進める次の順序は、`CI安定化 → PR-A継続 → 契約�
 - [ ] 035 processing generation job cancellation
   - 完了条件: Worker checkpointと返金競合がロックで保護される
   - 進捗: [PR #118](https://github.com/sh0g0-ikeda/Lyra/pull/118)で現行episode story write path互換の新規write contractまで完了。既存行VALIDATE・汎用Worker checkpoint・refund競合は未完了
-- [ ] 036 episode export processing lease
+- [x] 036 episode export processing lease
   - 完了条件: expired leaseを再claimでき、古いWorkerがprogressまたはterminal stateを上書きしない
-  - 進捗: [PR #128](https://github.com/sh0g0-ikeda/Lyra/pull/128)をdraft作成。lease token / heartbeat / attempt制約、atomic claim、stale token拒否、outbox / cleanup Repositoryを確認
+  - 証跡: [PR #128](https://github.com/sh0g0-ikeda/Lyra/pull/128)。lease token / heartbeat / attempt制約、atomic claim、expired reclaim、stale token拒否、outbox / cleanup Repositoryを確認してmainへ統合
 
 #### DB-310 本番migration計画
 
