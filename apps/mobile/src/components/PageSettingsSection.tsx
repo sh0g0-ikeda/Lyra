@@ -42,6 +42,7 @@ interface PageSettingsSectionProps {
   api: PageSettingsApiPort;
   editingBlocked: boolean;
   episodeId: string;
+  generationPreparationActive?: boolean;
   language: UiLanguage;
   organizationId: string | null;
   pageListReady: boolean;
@@ -73,6 +74,7 @@ export const PageSettingsSection = forwardRef<
   api,
   editingBlocked,
   episodeId,
+  generationPreparationActive = false,
   language,
   organizationId,
   pageListReady,
@@ -111,10 +113,13 @@ export const PageSettingsSection = forwardRef<
       selectedPage === null
       || hasRemotePageSettingsChanged(savedPage, selectedPage)
     );
-  const readOnly = selectedPage === null
+  const writeBlocked = selectedPage === null
     || selectedPage.status === 'confirmed'
     || selectedPage.status === 'generating'
     || editingBlocked;
+  const readOnly = writeBlocked || generationPreparationActive;
+  const selectionBlocked = (editingBlocked || generationPreparationActive)
+    && selectedPageId !== null;
 
   const applySelectedPage = useCallback((page: PageRecord | null): void => {
     setSelectedPageId(page?.id ?? null);
@@ -161,7 +166,7 @@ export const PageSettingsSection = forwardRef<
       setErrorMessage(t(language, 'pageSettingsSaveError'));
       return Promise.resolve(false);
     }
-    if (readOnly) {
+    if (writeBlocked) {
       setNoticeMessage(null);
       setErrorMessage(t(language, 'pageSettingsSaveBlocked'));
       return Promise.resolve(false);
@@ -256,7 +261,7 @@ export const PageSettingsSection = forwardRef<
     organizationId,
     queryClient,
     queryKeys,
-    readOnly,
+    writeBlocked,
     refreshPages,
     remoteChanged,
     savedDraft,
@@ -293,6 +298,9 @@ export const PageSettingsSection = forwardRef<
   }), [resolvePendingPage]);
 
   const transition = useCallback((changeSelection: () => void): Promise<boolean> => {
+    if (selectionBlocked) {
+      return Promise.resolve(false);
+    }
     if (transitionOperation.current !== null) {
       return transitionOperation.current;
     }
@@ -310,7 +318,7 @@ export const PageSettingsSection = forwardRef<
       }
     });
     return operation;
-  }, [resolvePendingPage]);
+  }, [resolvePendingPage, selectionBlocked]);
 
   return (
     <View style={styles.section}>
@@ -318,6 +326,7 @@ export const PageSettingsSection = forwardRef<
       <Text style={styles.muted}>{t(language, 'pageSettingsHelp')}</Text>
       {pageListReady ? (
         <StorySelectionSection
+          disabled={selectionBlocked}
           emptyMessage={t(language, 'pageEmpty')}
           error={false}
           errorMessage={t(language, 'pageLoadError')}

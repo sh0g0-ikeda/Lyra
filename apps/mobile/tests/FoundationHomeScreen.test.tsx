@@ -63,13 +63,21 @@ vi.mock('../src/screens/StoryScreen', () => ({
 
 vi.mock('../src/screens/PagesScreen', () => ({
   PagesScreen: forwardRef(function MockPagesScreen(
-    props: { organizationId: string | null },
+    props: {
+      imageApiBaseUrl: string;
+      imageAuthorizationHeader: string | null;
+      organizationId: string | null;
+    },
     ref,
   ) {
     useImperativeHandle(ref, () => ({ prepareToLeave: pagesPrepareToLeave }));
     return React.createElement(
       'pages-screen',
-      { organizationId: props.organizationId },
+      {
+        imageApiBaseUrl: props.imageApiBaseUrl,
+        imageAuthorizationHeader: props.imageAuthorizationHeader,
+        organizationId: props.organizationId,
+      },
       'Pages editor',
     );
   }),
@@ -291,6 +299,23 @@ describe('FoundationHomeScreen', () => {
     });
     expect(charactersPrepareToLeave).toHaveBeenCalledOnce();
     expect(renderer!.root.findByType('characters-screen')).toBeDefined();
+  });
+
+  it('Pagesへ画像API base URLと現在の認証headerを渡す', async () => {
+    let renderer: ReturnType<typeof create>;
+    await act(async () => {
+      renderer = create(<FoundationHomeScreen session={session} />);
+    });
+
+    await act(async () => {
+      renderer!.root.findByProps({ accessibilityLabel: 'ページを開く' }).props.onPress();
+      await Promise.resolve();
+    });
+
+    expect(renderer!.root.findByType('pages-screen').props).toEqual(expect.objectContaining({
+      imageApiBaseUrl: expect.any(String),
+      imageAuthorizationHeader: 'Bearer id-token',
+    }));
   });
 
   it('Accountで選んだactive organizationを次に開くStoryのscopeへ渡す', async () => {

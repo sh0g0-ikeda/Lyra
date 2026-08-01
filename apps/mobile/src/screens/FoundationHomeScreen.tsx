@@ -113,6 +113,8 @@ export function FoundationHomeScreen({
       ) : activeTab === 'pages' ? (
         <PagesScreen
           api={api}
+          imageApiBaseUrl={config.apiBaseUrl}
+          imageAuthorizationHeader={tokens === null ? null : `Bearer ${tokens.idToken}`}
           language={language}
           organizationId={organizationId}
           ref={pagesRef}
