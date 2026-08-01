@@ -40,4 +40,31 @@ describe('production migration entrypoint', () => {
       },
     ]);
   });
+
+  it('ECS事前検査taskはmigrationとは別の読み取り専用entrypointを使う', async () => {
+    const packageJson = JSON.parse(
+      await readFile(join(process.cwd(), 'package.json'), 'utf8'),
+    ) as { scripts?: Record<string, string> };
+    const overrides = JSON.parse(
+      await readFile(join(process.cwd(), 'ecs-pre-migration-check-overrides.json'), 'utf8'),
+    ) as {
+      containerOverrides?: Array<{ name?: string; command?: string[] }>;
+    };
+
+    expect(packageJson.scripts?.['db:check-pre-migration']).toBe(
+      'tsx scripts/checkPreProductionMigrationInvariants.ts',
+    );
+    expect(packageJson.scripts?.['db:check-pre-migration:prod']).toBe(
+      'bun dist/scripts/checkPreProductionMigrationInvariants.js',
+    );
+    expect(overrides.containerOverrides).toEqual([
+      {
+        name: 'api',
+        command: [
+          '/usr/local/bin/bun',
+          'dist/scripts/checkPreProductionMigrationInvariants.js',
+        ],
+      },
+    ]);
+  });
 });

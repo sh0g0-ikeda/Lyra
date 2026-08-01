@@ -2,7 +2,7 @@ import { pathToFileURL } from 'node:url';
 import { sanitizePersistedErrorMessage } from '../src/lib/errorSanitizer.js';
 import type { DatabaseClient } from '../src/lib/db.js';
 
-interface InvariantQuery {
+export interface DeploymentDataInvariantQuery {
   name: string;
   sql: string;
 }
@@ -30,7 +30,7 @@ const GENERATION_JOB_LEDGER_SCOPE_SQL =
   '((generation_jobs.organization_id IS NULL AND credit_ledger.organization_id IS NULL AND credit_ledger.user_id = generation_jobs.user_id) OR (generation_jobs.organization_id IS NOT NULL AND credit_ledger.organization_id = generation_jobs.organization_id))';
 const GENERATION_JOB_CONSUME_LEDGER_EXISTS_SQL = `EXISTS (SELECT 1 FROM credit_ledger WHERE credit_ledger.job_id = generation_jobs.id AND credit_ledger.type = 'consume' AND ${GENERATION_JOB_LEDGER_SCOPE_SQL})`;
 
-const DEPLOYMENT_DATA_INVARIANT_QUERIES: InvariantQuery[] = [
+export const SCHEMA_026_DEPLOYMENT_DATA_INVARIANT_QUERIES: readonly DeploymentDataInvariantQuery[] = [
   {
     name: 'database.invalid_indexes',
     sql: "SELECT pg_class.relname::text AS id FROM pg_index JOIN pg_class ON pg_class.oid = pg_index.indexrelid JOIN pg_namespace ON pg_namespace.oid = pg_class.relnamespace WHERE NOT pg_index.indisvalid AND pg_namespace.nspname NOT IN ('pg_catalog', 'information_schema') ORDER BY pg_class.relname LIMIT $1",
@@ -145,11 +145,11 @@ const DEPLOYMENT_DATA_INVARIANT_QUERIES: InvariantQuery[] = [
   },
   {
     name: 'users.plan_code',
-    sql: "SELECT id::text AS id FROM users WHERE plan_code NOT IN ('free', 'standard', 'premium') ORDER BY id LIMIT $1",
+    sql: "SELECT id::text AS id FROM users WHERE plan_code NOT IN ('free', 'standard', 'premium', 'enterprise_a', 'enterprise_b', 'enterprise_c') ORDER BY id LIMIT $1",
   },
   {
     name: 'subscriptions.plan_code',
-    sql: "SELECT id::text AS id FROM subscriptions WHERE plan_code NOT IN ('free', 'standard', 'premium') ORDER BY id LIMIT $1",
+    sql: "SELECT id::text AS id FROM subscriptions WHERE plan_code NOT IN ('free', 'standard', 'premium', 'enterprise_a', 'enterprise_b', 'enterprise_c') ORDER BY id LIMIT $1",
   },
   {
     name: 'subscriptions.status',
@@ -157,11 +157,11 @@ const DEPLOYMENT_DATA_INVARIANT_QUERIES: InvariantQuery[] = [
   },
   {
     name: 'credit_ledger.type',
-    sql: "SELECT id::text AS id FROM credit_ledger WHERE type NOT IN ('signup_bonus', 'monthly_grant', 'purchase', 'purchase_reversal', 'consume', 'refund') ORDER BY id LIMIT $1",
+    sql: "SELECT id::text AS id FROM credit_ledger WHERE type NOT IN ('signup_bonus', 'monthly_grant', 'purchase', 'consume', 'refund') ORDER BY id LIMIT $1",
   },
   {
     name: 'credit_ledger.amount_sign',
-    sql: "SELECT id::text AS id FROM credit_ledger WHERE NOT ((type IN ('consume', 'purchase_reversal') AND amount < 0) OR (type IN ('signup_bonus', 'monthly_grant', 'purchase', 'refund') AND amount > 0)) ORDER BY id LIMIT $1",
+    sql: "SELECT id::text AS id FROM credit_ledger WHERE NOT ((type = 'consume' AND amount < 0) OR (type IN ('signup_bonus', 'monthly_grant', 'purchase', 'refund') AND amount > 0)) ORDER BY id LIMIT $1",
   },
   {
     name: 'credit_ledger.bucket_delta_pair',
@@ -198,6 +198,20 @@ const DEPLOYMENT_DATA_INVARIANT_QUERIES: InvariantQuery[] = [
   {
     name: 'payment_records.invoice_kind_status_unique',
     sql: 'SELECT MIN(id::text) AS id FROM payment_records WHERE stripe_invoice_id IS NOT NULL GROUP BY stripe_invoice_id, kind, status HAVING COUNT(*) > 1 ORDER BY MIN(id::text) LIMIT $1',
+  },
+];
+
+export const DEPLOYMENT_DATA_INVARIANT_QUERIES: readonly DeploymentDataInvariantQuery[] = [
+  ...SCHEMA_026_DEPLOYMENT_DATA_INVARIANT_QUERIES.filter(
+    (query) => !['credit_ledger.type', 'credit_ledger.amount_sign'].includes(query.name),
+  ),
+  {
+    name: 'credit_ledger.type',
+    sql: "SELECT id::text AS id FROM credit_ledger WHERE type NOT IN ('signup_bonus', 'monthly_grant', 'purchase', 'purchase_reversal', 'consume', 'refund') ORDER BY id LIMIT $1",
+  },
+  {
+    name: 'credit_ledger.amount_sign',
+    sql: "SELECT id::text AS id FROM credit_ledger WHERE NOT ((type IN ('consume', 'purchase_reversal') AND amount < 0) OR (type IN ('signup_bonus', 'monthly_grant', 'purchase', 'refund') AND amount > 0)) ORDER BY id LIMIT $1",
   },
   {
     name: 'account_deletion_requests.status',
