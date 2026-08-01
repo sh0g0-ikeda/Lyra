@@ -1,7 +1,7 @@
 import React, { createRef } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   CharactersScreen,
   type CharactersScreenHandle,
@@ -184,6 +184,8 @@ describe('CharactersScreen', () => {
   };
 
   beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(timestamp));
     vi.clearAllMocks();
     api.getWorksPage.mockResolvedValue({
       works: [work('work-1', '緋色の研究'), work('work-2', '四つの署名')],
@@ -299,6 +301,10 @@ describe('CharactersScreen', () => {
       id: string,
       promptSupplement: string | null,
     ) => entity(id, 'ホームズ', { prompt_supplement: promptSupplement }));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   const renderScreen = async (
