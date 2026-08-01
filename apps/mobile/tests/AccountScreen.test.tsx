@@ -1,11 +1,13 @@
 import React, { useState } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { Platform } from 'react-native';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AccountScreen } from '../src/screens/AccountScreen';
 import { ApiError } from '../src/lib/api';
 
 vi.mock('react-native', () => ({
+  Platform: { OS: 'web' },
   Pressable: ({
     children,
     onPress,
@@ -42,6 +44,10 @@ vi.mock('../src/components/PrimaryButton', () => ({
     loading?: boolean;
     onPress: () => void;
   }) => React.createElement('button', { disabled: loading, onClick: onPress }, label),
+}));
+
+vi.mock('../src/lib/expoIapSdk', () => ({
+  createExpoIapSdk: vi.fn(),
 }));
 
 const session = {
@@ -107,11 +113,18 @@ const flushQueries = async (): Promise<void> => {
 describe('AccountScreen', () => {
   const mountedRenderers: ReactTestRenderer[] = [];
   const api = {
+    getCurrentSession: vi.fn(),
     getJobs: vi.fn(),
+    getMobilePurchaseBinding: vi.fn(),
+    getMobileStoreProductCatalog: vi.fn(),
+    restoreMobilePurchases: vi.fn(),
+    verifyAppleMobilePurchase: vi.fn(),
+    verifyGoogleMobilePurchase: vi.fn(),
   };
 
   beforeEach(() => {
     vi.clearAllMocks();
+    (Platform as unknown as { OS: string }).OS = 'web';
     api.getJobs.mockResolvedValue({ jobs: [], next_cursor: null });
   });
 
@@ -139,6 +152,7 @@ describe('AccountScreen', () => {
       <AccountScreen
         api={api}
         language="ja"
+        mobileStoreBillingEnabled
         onOrganizationChange={vi.fn()}
         organizationId={initialOrganizationId}
         session={session}
@@ -169,6 +183,7 @@ describe('AccountScreen', () => {
       <AccountScreen
         api={api}
         language="ja"
+        mobileStoreBillingEnabled
         onOrganizationChange={setOrganizationId}
         organizationId={organizationId}
         session={session}
@@ -264,6 +279,45 @@ describe('AccountScreen', () => {
     expect(api.getJobs).toHaveBeenLastCalledWith({ limit: 25 }, 'organization-1');
     expect(rendered).toContain('表示できるジョブはありません。');
     expect(rendered).not.toContain('ジョブ履歴を読み込めませんでした。');
+  });
+
+  it('購入入口は個人workspaceだけに表示する', async () => {
+    const personal = await renderScreen();
+    expect(JSON.stringify(personal.toJSON())).toContain('App Store / Google Play 購入');
+
+    const organization = await renderScreen({ initialOrganizationId: 'organization-1' });
+    expect(JSON.stringify(organization.toJSON())).not.toContain('App Store / Google Play 購入');
+  });
+
+  it('store catalogのloading・empty・errorを購入開始せず安全に表示する', async () => {
+    (Platform as unknown as { OS: string }).OS = 'ios';
+    api.getMobileStoreProductCatalog.mockImplementationOnce(
+      async () => await new Promise(() => undefined),
+    );
+    const loading = await renderScreen();
+    expect(JSON.stringify(loading.toJSON())).toContain('ストアの商品を確認しています');
+
+    api.getMobileStoreProductCatalog.mockResolvedValueOnce({
+      products: [],
+      store: 'apple',
+    });
+    const empty = await renderScreen();
+    expect(JSON.stringify(empty.toJSON())).toContain('ストアで購入できる商品はまだありません');
+
+    api.getMobileStoreProductCatalog.mockRejectedValueOnce(new Error('raw provider detail'));
+    const failed = await renderScreen();
+    const failedText = JSON.stringify(failed.toJSON());
+    expect(failedText).toContain('購入機能は現在利用できません');
+    expect(failedText).toContain('商品を再読み込み');
+    expect(failedText).not.toContain('raw provider detail');
+  });
+
+  it('organization workspaceではcatalog requestも購入UIも生成しない', async () => {
+    (Platform as unknown as { OS: string }).OS = 'android';
+    const organization = await renderScreen({ initialOrganizationId: 'organization-1' });
+
+    expect(api.getMobileStoreProductCatalog).not.toHaveBeenCalled();
+    expect(JSON.stringify(organization.toJSON())).not.toContain('App Store / Google Play 購入');
   });
 
 });

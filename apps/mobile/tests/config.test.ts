@@ -9,10 +9,19 @@ const productionConfig = {
   cognitoRedirectUri: 'https://app.lyra-editor.com/auth/mobile/callback',
   cognitoLogoutRedirectUri: 'https://app.lyra-editor.com/auth/mobile/logout',
   cognitoScopes: ['openid', 'email'],
-  buildEnvironment: 'production' as const
+  buildEnvironment: 'production' as const,
+  mobileStoreBillingEnabled: false,
 };
 
 describe('mobile configuration validation', () => {
+  it('store billingは公開設定で明示された場合だけ有効にする', () => {
+    expect(productionConfig.mobileStoreBillingEnabled).toBe(false);
+    expect(validateMobileConfig({
+      ...productionConfig,
+      mobileStoreBillingEnabled: true,
+    }).issues).toContain('PRODUCTION_NATIVE_LINKING');
+  });
+
   it('native release linking未導入の本番設定をfail closedにする', () => {
     expect(validateMobileConfig(productionConfig)).toMatchObject({
       valid: false,

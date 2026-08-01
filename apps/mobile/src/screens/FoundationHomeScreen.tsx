@@ -12,12 +12,14 @@ import { PagesScreen, type PagesScreenHandle } from './PagesScreen';
 import { CharactersScreen, type CharactersScreenHandle } from './CharactersScreen';
 
 interface FoundationHomeScreenProps {
+  onSessionRefresh?(): Promise<void>;
   session: CurrentSession;
 }
 
 type HomeTab = 'story' | 'characters' | 'pages' | 'account';
 
 export function FoundationHomeScreen({
+  onSessionRefresh,
   session,
 }: FoundationHomeScreenProps): React.JSX.Element {
   const { api, language, signOut, tokens } = useAuthSession();
@@ -125,6 +127,7 @@ export function FoundationHomeScreen({
           api={api}
           language={language}
           onOrganizationChange={setSelectedOrganizationId}
+          onSessionRefresh={onSessionRefresh}
           onSignOut={signOut}
           organizationId={organizationId}
           session={session}
