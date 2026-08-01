@@ -76,6 +76,7 @@ describe('actionable error screen integration', () => {
 
     expect(source).toContain('const selectPersonalWorkspace = (): void => {');
     expect(source).toContain('workspace: selectPersonalWorkspace');
+    expect(source).toContain('jobsQuery.isError && !isApiNotFoundError(jobsQuery.error)');
   });
 
   it('reloads the authoritative page draft when PAGE_STALE is the primary error', () => {

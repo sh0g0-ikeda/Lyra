@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   classifyFileTransferFailure,
@@ -7,16 +7,39 @@ import {
   normalizeDownloadFilename
 } from '@/lib/download';
 
-const { downloadAsyncMock, isAvailableAsyncMock, shareAsyncMock } = vi.hoisted(() => ({
+const {
+  createFileAsyncMock,
+  downloadAsyncMock,
+  isAvailableAsyncMock,
+  platformMock,
+  readAsStringAsyncMock,
+  requestDirectoryPermissionsAsyncMock,
+  shareAsyncMock,
+  writeAsStringAsyncMock
+} = vi.hoisted(() => ({
+  createFileAsyncMock: vi.fn(),
   downloadAsyncMock: vi.fn(),
   isAvailableAsyncMock: vi.fn(),
-  shareAsyncMock: vi.fn()
+  platformMock: { OS: 'ios' },
+  readAsStringAsyncMock: vi.fn(),
+  requestDirectoryPermissionsAsyncMock: vi.fn(),
+  shareAsyncMock: vi.fn(),
+  writeAsStringAsyncMock: vi.fn()
 }));
 
+vi.mock('react-native', () => ({ Platform: platformMock }));
+
 vi.mock('expo-file-system/legacy', () => ({
+  EncodingType: { Base64: 'base64' },
+  StorageAccessFramework: {
+    createFileAsync: createFileAsyncMock,
+    requestDirectoryPermissionsAsync: requestDirectoryPermissionsAsyncMock
+  },
   cacheDirectory: 'file:///cache/',
   documentDirectory: 'file:///documents/',
-  downloadAsync: downloadAsyncMock
+  downloadAsync: downloadAsyncMock,
+  readAsStringAsync: readAsStringAsyncMock,
+  writeAsStringAsync: writeAsStringAsyncMock
 }));
 
 vi.mock('expo-sharing', () => ({
@@ -27,6 +50,11 @@ vi.mock('expo-sharing', () => ({
 vi.mock('@/lib/config', () => ({
   config: { apiBaseUrl: 'https://api.example.test' }
 }));
+
+beforeEach(() => {
+  platformMock.OS = 'ios';
+  vi.clearAllMocks();
+});
 
 describe('mobile download filenames', () => {
   it('ユーザー指定名からパストラバーサルと予約文字を除去しPNG拡張子を維持する', async () => {
@@ -80,6 +108,37 @@ describe('mobile download filenames', () => {
       { mimeType: 'text/csv' }
     );
   });
+
+  it('Androidでは選択したフォルダへ画像を実ファイルとして保存する', async () => {
+    platformMock.OS = 'android';
+    downloadAsyncMock.mockResolvedValue({ status: 200, uri: 'file:///cache/page.png' });
+    requestDirectoryPermissionsAsyncMock.mockResolvedValue({
+      directoryUri: 'content://downloads/tree',
+      granted: true
+    });
+    createFileAsyncMock.mockResolvedValue('content://downloads/page.png');
+    readAsStringAsyncMock.mockResolvedValue('base64-image');
+    writeAsStringAsyncMock.mockResolvedValue(undefined);
+
+    await expect(downloadAuthenticatedFile({
+      path: '/api/pages/page-1/export-image',
+      filename: 'page.png',
+      mimeType: 'image/png',
+      tokens: null
+    })).resolves.toBe('content://downloads/page.png');
+
+    expect(createFileAsyncMock).toHaveBeenCalledWith(
+      'content://downloads/tree',
+      'page.png',
+      'image/png'
+    );
+    expect(writeAsStringAsyncMock).toHaveBeenCalledWith(
+      'content://downloads/page.png',
+      'base64-image',
+      { encoding: 'base64' }
+    );
+    expect(shareAsyncMock).not.toHaveBeenCalled();
+  });
 });
 
 describe('mobile download failure classification', () => {
@@ -107,6 +166,11 @@ describe('mobile download failure classification', () => {
         url: 'https://downloads.example.test/export.pdf?signature=safe'
       })
     ).rejects.toMatchObject({ code: expectedCode });
+    expect(downloadAsyncMock).toHaveBeenCalledWith(
+      'https://downloads.example.test/export.pdf?signature=safe',
+      'file:///cache/export.pdf',
+      { headers: undefined }
+    );
   });
 
   it('共有先がない端末を共有不可として返す', async () => {

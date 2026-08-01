@@ -24,7 +24,7 @@ export function ActionableErrorNotice({
   error,
   language,
   target,
-  tone = 'danger'
+  tone = 'warning'
 }: ActionableErrorNoticeProps): React.JSX.Element {
   const resolvedTarget = target ?? errorRecoveryTarget(error);
   const onAction =

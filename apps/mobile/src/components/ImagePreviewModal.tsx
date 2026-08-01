@@ -1,10 +1,9 @@
 import { useEffect, useRef, useState, type RefObject } from 'react';
-import * as FileSystem from 'expo-file-system/legacy';
-import * as Sharing from 'expo-sharing';
 import { AccessibilityInfo, ActivityIndicator, findNodeHandle, Image, Modal, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { colors, spacing, textStyles } from '@/constants/theme';
+import { downloadExternalFile } from '@/lib/download';
 import { t } from '@/lib/i18n';
 
 interface ImagePreviewModalProps {
@@ -40,31 +39,17 @@ export function ImagePreviewModal({ uri, headers, language, onClose, restoreFocu
 
     setSharing(true);
     setErrorMessage(null);
-    let temporaryFileUri: string | null = null;
     try {
-      const available = await Sharing.isAvailableAsync();
-      if (!available || FileSystem.cacheDirectory === null) {
-        setErrorMessage(t(language, "generated.components.ImagePreviewModal.sharing.is.not.available.on.this.device.d6d5d6ff"));
-        return;
-      }
-
       const extension = uri.toLowerCase().includes('.jpg') || uri.toLowerCase().includes('.jpeg') ? 'jpg' : 'png';
-      const fileUri = `${FileSystem.cacheDirectory}lyra-preview-${Date.now()}.${extension}`;
-      const downloaded = await FileSystem.downloadAsync(uri, fileUri, { headers });
-      temporaryFileUri = downloaded.uri;
-      if (downloaded.status < 200 || downloaded.status >= 300) {
-        throw new Error(`Image download failed with status ${downloaded.status}.`);
-      }
-      await Sharing.shareAsync(downloaded.uri, {
-        dialogTitle: t(language, "generated.components.ImagePreviewModal.share.or.save.image.469fc004"),
-        mimeType: extension === 'jpg' ? 'image/jpeg' : 'image/png'
+      await downloadExternalFile({
+        filename: `lyra-preview-${Date.now()}.${extension}`,
+        headers,
+        mimeType: extension === 'jpg' ? 'image/jpeg' : 'image/png',
+        url: uri
       });
     } catch {
       setErrorMessage(t(language, "generated.components.ImagePreviewModal.failed.to.share.or.save.the.image.752f4863"));
     } finally {
-      if (temporaryFileUri !== null) {
-        await FileSystem.deleteAsync(temporaryFileUri, { idempotent: true }).catch(() => undefined);
-      }
       setSharing(false);
     }
   };
@@ -159,7 +144,7 @@ const styles = StyleSheet.create({
   },
   error: {
     ...textStyles.caption,
-    color: colors.danger
+    color: '#FFD56A'
   },
   footer: {
     gap: spacing.sm

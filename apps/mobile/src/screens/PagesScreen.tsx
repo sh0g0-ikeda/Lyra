@@ -86,7 +86,7 @@ import { useActiveResourceJobId } from '@/hooks/useActiveResourceJobId';
 import { useResetOnScopeChange } from '@/hooks/useResetOnScopeChange';
 import { confirmAction, confirmDestructiveAction } from '@/lib/confirm';
 import { config } from '@/lib/config';
-import { appendOrganizationQuery, downloadAuthenticatedFile, downloadExternalFile } from '@/lib/download';
+import { appendOrganizationQuery, downloadAuthenticatedFile } from '@/lib/download';
 import { fileTransferErrorMessage } from '@/lib/fileTransferError';
 import {
   errorRecoveryActionLabel,
@@ -824,6 +824,10 @@ export function PagesScreen(): React.JSX.Element {
   const [exportFilename, setExportFilename] = useState('lyra-pages');
   const [exportSelectedPageIds, setExportSelectedPageIds] = useState<string[]>([]);
   const [exportJobId, setExportJobId] = useState<string | null>(null);
+  const [exportDownloadMetadata, setExportDownloadMetadata] = useState<{
+    filename: string;
+    format: ExportFormat;
+  } | null>(null);
   const [pageImageDownloadError, setPageImageDownloadError] = useState<string | null>(null);
   const [localJob, setLocalJob] = useState<{
     id: string;
@@ -979,6 +983,7 @@ export function PagesScreen(): React.JSX.Element {
   useEffect(() => {
     exportAttemptRef.current = null;
     setExportJobId(null);
+    setExportDownloadMetadata(null);
     setExportSelectedPageIds([]);
   }, [activeEpisodeId, organizationId, sessionKey]);
 
@@ -1909,19 +1914,30 @@ export function PagesScreen(): React.JSX.Element {
         payload,
         attempt.idempotencyKey,
         organizationId
-      );
+      ).then((result) => ({
+        result,
+        metadata: {
+          filename: payload.filename ?? exportFilename,
+          format: payload.format
+        }
+      }));
     },
-    onSuccess: (result) => {
+    onSuccess: ({ result, metadata }) => {
       setExportJobId(result.job_id);
+      setExportDownloadMetadata(metadata);
     }
   });
 
   const downloadExportMutation = useMutation({
-    mutationFn: (input: { downloadUrl: string; filename: string; format: ExportFormat }) =>
-      downloadExternalFile({
-        url: input.downloadUrl,
+    mutationFn: (input: { jobId: string; filename: string; format: ExportFormat }) =>
+      downloadAuthenticatedFile({
+        path: appendOrganizationQuery(
+          `/api/exports/${encodeURIComponent(input.jobId)}/download`,
+          organizationId
+        ),
         filename: input.filename,
-        mimeType: input.format === 'pdf' ? 'application/pdf' : 'application/zip'
+        mimeType: input.format === 'pdf' ? 'application/pdf' : 'application/zip',
+        tokens
       })
   });
 
@@ -3052,13 +3068,15 @@ export function PagesScreen(): React.JSX.Element {
         </View>
         <ExportJobCard
           api={api}
+          filename={exportDownloadMetadata?.filename ?? exportFilename}
+          format={exportDownloadMetadata?.format ?? exportFormat}
           jobId={exportJobId}
           language={language}
-          onDownload={async (downloadUrl, job) => {
+          onDownload={async (jobId) => {
             await downloadExportMutation.mutateAsync({
-              downloadUrl,
-              filename: job.filename,
-              format: job.format
+              jobId,
+              filename: exportDownloadMetadata?.filename ?? exportFilename,
+              format: exportDownloadMetadata?.format ?? exportFormat
             });
           }}
           organizationId={organizationId}

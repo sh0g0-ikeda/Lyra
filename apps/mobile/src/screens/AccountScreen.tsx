@@ -30,6 +30,7 @@ import { downloadAuthenticatedFile } from '@/lib/download';
 import { t } from '@/lib/i18n';
 import type { ScreenTranslationKey } from '@/lib/i18nScreenMessages';
 import { balanceQueryKey, jobsQueryKey, sessionQueryKey } from '@/lib/queryKeys';
+import { isApiNotFoundError } from '@/lib/queryErrorPolicy';
 import { userErrorMessage } from '@/lib/userMessages';
 import {
   createMobileStoreBillingBackend,
@@ -660,7 +661,7 @@ export function AccountScreen(): React.JSX.Element {
             />
           ))
         )}
-        {jobsQuery.isError ? (
+        {jobsQuery.isError && !isApiNotFoundError(jobsQuery.error) ? (
           <ActionableErrorNotice
             actions={{
               login: () => {

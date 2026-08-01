@@ -7,20 +7,15 @@ import { setOperationalEventSinks } from '@/lib/operationalEvents';
 import { exportJobQueryKey } from '@/lib/queryKeys';
 
 const exportJobResponse = {
-  id: 'export-job-1',
-  episode_id: 'episode-1',
-  format: 'pdf',
-  filename: 'lyra-export.pdf',
+  job_id: 'export-job-1',
   status: 'completed',
-  progress_stage: 'completed',
-  progress_percent: 100,
-  error_code: null,
-  message_key: null,
+  progress: { stage: 'completed', percent: 100 },
+  error: null,
+  created_at: '2026-07-25T00:00:00.000Z',
+  started_at: '2026-07-25T00:01:00.000Z',
   expires_at: '2026-07-25T01:00:00.000Z',
   completed_at: '2026-07-25T00:30:00.000Z',
-  cancel_supported: false,
-  cancel_reason_code: null,
-  download_url: 'https://downloads.example.test/lyra-export.pdf?signature=safe'
+  download_ready: true
 } as const;
 
 describe('LyraMobileApiClient API contract', () => {
@@ -690,7 +685,7 @@ describe('LyraMobileApiClient API contract', () => {
     });
   });
 
-  it('export status permits download_url only when completed', async () => {
+  it('export status accepts the canonical download-ready response', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(JSON.stringify(exportJobResponse), {
         headers: { 'Content-Type': 'application/json' },
@@ -705,13 +700,20 @@ describe('LyraMobileApiClient API contract', () => {
 
     fetchMock.mockResolvedValueOnce(
       new Response(
-        JSON.stringify({ ...exportJobResponse, status: 'processing', progress_stage: 'building', progress_percent: 50 }),
+        JSON.stringify({
+          ...exportJobResponse,
+          status: 'processing',
+          progress: { stage: 'building', percent: 50 },
+          completed_at: null,
+          download_ready: false
+        }),
         { headers: { 'Content-Type': 'application/json' }, status: 200 }
       )
     );
-    await expect(client.getExportJob('export-job-1')).rejects.toMatchObject({
-      code: 'INVALID_API_RESPONSE',
-      status: 502
+    await expect(client.getExportJob('export-job-1')).resolves.toMatchObject({
+      status: 'processing',
+      progress: { stage: 'building', percent: 50 },
+      download_ready: false
     });
   });
 
@@ -721,12 +723,10 @@ describe('LyraMobileApiClient API contract', () => {
         JSON.stringify({
           ...exportJobResponse,
           status: 'failed',
-          progress_stage: 'failed',
-          progress_percent: 0,
+          progress: { stage: 'failed', percent: 0 },
           completed_at: null,
-          download_url: undefined,
-          error_code: 'EXPORT_FAILED',
-          message_key: 'export.error.failed',
+          download_ready: false,
+          error: { code: 'EXPORT_FAILED', message: 'Export failed.' },
           error_message: 'provider credential secret must not reach the UI'
         }),
         { headers: { 'Content-Type': 'application/json' }, status: 200 }
@@ -735,8 +735,10 @@ describe('LyraMobileApiClient API contract', () => {
     vi.stubGlobal('fetch', fetchMock);
     const client = new LyraMobileApiClient(() => 'token');
 
-    const job = await client.getExportJob('export-job-1');
-    expect(job).not.toHaveProperty('error_message');
+    await expect(client.getExportJob('export-job-1')).rejects.toMatchObject({
+      code: 'INVALID_API_RESPONSE',
+      status: 502
+    });
     expect(exportJobQueryKey('session-a', 'export-job-1', null)).not.toEqual(
       exportJobQueryKey('session-a', 'export-job-1', 'organization-1')
     );

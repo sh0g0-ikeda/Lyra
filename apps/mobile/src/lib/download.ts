@@ -1,5 +1,6 @@
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
+import { Platform } from 'react-native';
 
 import type { AuthTokens } from '@/domain/types';
 import { config } from '@/lib/config';
@@ -16,6 +17,7 @@ interface DownloadExternalFileParams {
   url: string;
   filename: string;
   mimeType: string;
+  headers?: Record<string, string>;
 }
 
 const extensionFromMimeType = (mimeType: string): string => {
@@ -49,6 +51,37 @@ const assertSuccessfulDownload = (status: number): void => {
   if (status < 200 || status >= 300) {
     throw new Error(`File download failed with status ${status}.`);
   }
+};
+
+const saveDownloadedFile = async (
+  sourceUri: string,
+  filename: string,
+  mimeType: string
+): Promise<string> => {
+  if (Platform.OS === 'android') {
+    const permission = await FileSystem.StorageAccessFramework.requestDirectoryPermissionsAsync();
+    if (!permission.granted || permission.directoryUri.length === 0) {
+      throw new MobileFileTransferError('DOWNLOAD_CANCELED');
+    }
+    const destinationUri = await FileSystem.StorageAccessFramework.createFileAsync(
+      permission.directoryUri,
+      filename,
+      mimeType
+    );
+    const content = await FileSystem.readAsStringAsync(sourceUri, {
+      encoding: FileSystem.EncodingType.Base64
+    });
+    await FileSystem.writeAsStringAsync(destinationUri, content, {
+      encoding: FileSystem.EncodingType.Base64
+    });
+    return destinationUri;
+  }
+
+  if (!(await Sharing.isAvailableAsync())) {
+    throw new MobileFileTransferError('SHARING_UNAVAILABLE');
+  }
+  await Sharing.shareAsync(sourceUri, { mimeType });
+  return sourceUri;
 };
 
 export const classifyFileTransferFailure = (error: unknown): MobileFileTransferError => {
@@ -91,11 +124,7 @@ export async function downloadAuthenticatedFile({
   try {
     const result = await FileSystem.downloadAsync(`${baseUrl}${path}`, fileUri, { headers });
     assertSuccessfulDownload(result.status);
-    if (!(await Sharing.isAvailableAsync())) {
-      throw new MobileFileTransferError('SHARING_UNAVAILABLE');
-    }
-    await Sharing.shareAsync(result.uri, { mimeType });
-    return result.uri;
+    return await saveDownloadedFile(result.uri, safeFilename, mimeType);
   } catch (error) {
     throw classifyFileTransferFailure(error);
   }
@@ -104,7 +133,8 @@ export async function downloadAuthenticatedFile({
 export async function downloadExternalFile({
   url,
   filename,
-  mimeType
+  mimeType,
+  headers
 }: DownloadExternalFileParams): Promise<string> {
   if (!url.startsWith('https://')) {
     throw new MobileFileTransferError('DOWNLOAD_INTERRUPTED');
@@ -118,21 +148,17 @@ export async function downloadExternalFile({
   const fileUri = `${directory}${safeFilename}`;
   let result: FileSystem.FileSystemDownloadResult;
   try {
-    result = await FileSystem.downloadAsync(url, fileUri);
+    result = await FileSystem.downloadAsync(url, fileUri, { headers });
     assertSuccessfulDownload(result.status);
   } catch (error) {
     throw classifyFileTransferFailure(error);
   }
 
   try {
-    if (!(await Sharing.isAvailableAsync())) {
-      throw new MobileFileTransferError('SHARING_UNAVAILABLE');
-    }
-    await Sharing.shareAsync(result.uri, { mimeType });
+    return await saveDownloadedFile(result.uri, safeFilename, mimeType);
   } catch (error) {
     throw classifyFileTransferFailure(error);
   }
-  return result.uri;
 }
 
 export const appendOrganizationQuery = (path: string, organizationId: string | null): string => {

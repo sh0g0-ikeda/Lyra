@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { JobStatusCard } from '@/components/JobStatusCard';
 import type { CompatibleGenerationJobRecord } from '@/domain/generationJobCompatibility';
 import type { GenerationJobRecord } from '@/domain/types';
+import { ApiError } from '@/lib/api';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -151,6 +152,29 @@ describe('JobStatusCard load recovery', () => {
         status: 'error',
       },
     })).toBe(5_000);
+  });
+
+  it('削除済みまたは期限切れのジョブはエラー表示を残さない', async () => {
+    useQueryMock.mockReturnValue({
+      data: undefined,
+      error: new ApiError('not found', 404, 'NOT_FOUND'),
+      isError: true,
+      refetch: refetchMock
+    });
+    let renderer: ReturnType<typeof create>;
+
+    await act(async () => {
+      renderer = create(
+        <JobStatusCard
+          api={{ getJob: vi.fn() } as never}
+          jobId="stale-job"
+          language="ja"
+          sessionKey="session-1"
+        />
+      );
+    });
+
+    expect(renderer!.toJSON()).toBeNull();
   });
 });
 
