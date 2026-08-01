@@ -26,6 +26,9 @@ class FakeBalloonRepository implements BalloonRepository {
   private readonly balloonContexts = new Map<string, BalloonContext>();
   private readonly balloons = new Map<string, Balloon>();
   public replacedInputs: CreateBalloonInput[] | null = null;
+  public createExpectedPanelIds: readonly string[] | undefined;
+  public replaceExpectedPanelIds: readonly string[] | undefined;
+  public updateExpectedPanelIds: readonly string[] | undefined;
 
   public addPageContext(userId: string, context: PageBalloonContext): void {
     this.pageContexts.set(`${userId}:${context.pageId}`, context);
@@ -60,7 +63,9 @@ class FakeBalloonRepository implements BalloonRepository {
     _userId: string,
     input: CreateBalloonInput,
     _organizationId?: string | null,
+    expectedPanelIds?: readonly string[],
   ): Promise<Balloon | null> {
+    this.createExpectedPanelIds = expectedPanelIds;
     const balloon = buildBalloon({
       id: `balloon-${this.balloons.size + 1}`,
       pageId,
@@ -88,8 +93,10 @@ class FakeBalloonRepository implements BalloonRepository {
     _userId: string,
     inputs: CreateBalloonInput[],
     _organizationId?: string | null,
+    expectedPanelIds?: readonly string[],
   ): Promise<Balloon[]> {
     this.replacedInputs = inputs;
+    this.replaceExpectedPanelIds = expectedPanelIds;
     this.balloons.clear();
     return inputs.map((input, index) => {
       const balloon = buildBalloon({
@@ -107,7 +114,9 @@ class FakeBalloonRepository implements BalloonRepository {
     _userId: string,
     input: UpdateBalloonInput,
     _organizationId?: string | null,
+    expectedPanelIds?: readonly string[],
   ): Promise<Balloon | null> {
+    this.updateExpectedPanelIds = expectedPanelIds;
     const balloon = this.balloons.get(balloonId);
     if (balloon === undefined) {
       return null;
@@ -189,6 +198,7 @@ describe('BalloonService', () => {
 
     expect(balloon.pageId).toBe('page-1');
     expect(balloon.text).toBe('hello');
+    expect(repository.createExpectedPanelIds).toEqual(['panel-1', 'panel-2', 'panel-3']);
   });
 
   it('image_baked ページでは作成できない', async () => {
@@ -296,6 +306,7 @@ describe('BalloonService', () => {
       panelOrderReference: 1,
       balloonType: 'speech',
     });
+    expect(repository.replaceExpectedPanelIds).toEqual(['panel-1', 'panel-2']);
   });
 
   it('auto-balloons は balloon_only ページで全ての台詞を対象にする', async () => {
@@ -439,7 +450,7 @@ describe('BalloonService', () => {
   });
 
   it('更新時も存在しない panel_order_reference を弾く', async () => {
-    const { service, repository } = createService();
+    const { service, repository, panelReader } = createService();
     repository.addBalloonContext('user-1', {
       balloonId: 'balloon-1',
       pageId: 'page-1',
@@ -450,12 +461,39 @@ describe('BalloonService', () => {
       panelCount: 2,
     });
     repository.seedBalloon(buildBalloon({ id: 'balloon-1' }));
+    panelReader.panels = [
+      buildPanel({ id: 'panel-1', order: 1 }),
+      buildPanel({ id: 'panel-2', order: 2 }),
+    ];
 
     await expect(
       service.updateBalloon('user-1', 'balloon-1', { panelOrderReference: 3 }),
     ).rejects.toMatchObject({
       code: 'VALIDATION_ERROR',
     } satisfies Partial<AppError>);
+  });
+
+  it('更新時に保存前のPanel ID順をRepositoryへ渡す', async () => {
+    const { service, repository, panelReader } = createService();
+    repository.addBalloonContext('user-1', {
+      balloonId: 'balloon-1',
+      pageId: 'page-1',
+      workId: 'work-1',
+      status: 'editing',
+      dialogueMode: 'mixed',
+      hasGeneratedImage: true,
+      panelCount: 3,
+    });
+    repository.seedBalloon(buildBalloon({ id: 'balloon-1' }));
+    panelReader.panels = [
+      buildPanel({ id: 'panel-2', order: 1 }),
+      buildPanel({ id: 'panel-1', order: 2 }),
+      buildPanel({ id: 'panel-3', order: 3 }),
+    ];
+
+    await service.updateBalloon('user-1', 'balloon-1', { panelOrderReference: 2 });
+
+    expect(repository.updateExpectedPanelIds).toEqual(['panel-2', 'panel-1', 'panel-3']);
   });
 
   it('Balloon が存在しなければ削除で NOT_FOUND になる', async () => {
@@ -477,6 +515,11 @@ function createService(): {
   const repository = new FakeBalloonRepository();
   const entityReader = new FakeEntityReader();
   const panelReader = new FakePanelReader();
+  panelReader.panels = [
+    buildPanel({ id: 'panel-1', order: 1 }),
+    buildPanel({ id: 'panel-2', order: 2 }),
+    buildPanel({ id: 'panel-3', order: 3 }),
+  ];
   const frameReader = new FakeFrameReader();
 
   return {

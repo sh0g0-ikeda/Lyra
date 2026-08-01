@@ -70,6 +70,18 @@ PostgreSQL is the system of record. Works are either personal or associated with
 organization workspace. Organization-scoped API requests carry an organization ID,
 which is validated against membership before data access.
 
+Mobile panel append, delete, and reorder use an additive Page-scoped structure
+command. The command conditionally compares the client's complete ordered Panel-ID
+snapshot, shares the Episode generation-admission lock, and updates Panels, Frames,
+Balloon order references, and structural layout metadata in one transaction. A Page
+retains 1–8 Panels after deletion, while append may repair an empty draft Page. Count
+changes select the deterministic default Frame template; reorder preserves Frame
+geometry and style. Existing low-level Panel routes and persisted Panel, Frame,
+Balloon, prompt, job, queue, worker, and credit contracts remain unchanged.
+Balloon create, update, and automatic replacement share the Page row lock and
+recheck the complete ordered Panel-ID snapshot plus order-reference bounds before
+writing, so they cannot recreate a stale reference during a structure command.
+
 Images are stored by opaque S3 keys. User input is not interpolated into storage
 paths. Database responses may contain stable image metadata, while production image
 delivery uses authenticated export or short-lived CloudFront signed URLs.
