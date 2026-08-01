@@ -68,6 +68,12 @@ vi.mock('@/components/Notice', () => ({
   Notice: ({ message }: { message: string }) => React.createElement('notice', null, message)
 }));
 
+vi.mock('@/components/AiContentReportButton', () => ({
+  AiContentReportButton: () => React.createElement('report-button', {
+    accessibilityLabel: 'Report AI-generated content'
+  })
+}));
+
 vi.mock('@/lib/storage', () => ({
   loadSectionCollapsed: vi.fn().mockResolvedValue(null),
   saveSectionCollapsed: vi.fn().mockResolvedValue(undefined)

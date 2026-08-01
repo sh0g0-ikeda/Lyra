@@ -85,6 +85,7 @@ import { shouldOverwritePageSkeleton } from '@/domain/storyWorkflow';
 import { useActiveResourceJobId } from '@/hooks/useActiveResourceJobId';
 import { useResetOnScopeChange } from '@/hooks/useResetOnScopeChange';
 import { confirmAction, confirmDestructiveAction } from '@/lib/confirm';
+import { appendAiProviderDisclosure } from '@/lib/aiProviderDisclosure';
 import { config } from '@/lib/config';
 import { appendOrganizationQuery, downloadAuthenticatedFile } from '@/lib/download';
 import { fileTransferErrorMessage } from '@/lib/fileTransferError';
@@ -2147,12 +2148,16 @@ export function PagesScreen(): React.JSX.Element {
         title: overwritePageSkeleton
           ? t(language, "generated.screens.StoryScreen.regenerate.and.replace.page.plan.f11f5d2d")
           : t(language, "generated.screens.StoryScreen.generate.page.plan.2bf7c88e"),
-        message: overwritePageSkeleton
-          ? t(language, 'screen.story.replacePagePlan', {
-              pageCount: existingEpisodePageCount,
-              panelCount: existingEpisodePanelCount
-            })
-          : t(language, 'screen.pages.design.generateConfirmation'),
+        message: appendAiProviderDisclosure(
+          overwritePageSkeleton
+            ? t(language, 'screen.story.replacePagePlan', {
+                pageCount: existingEpisodePageCount,
+                panelCount: existingEpisodePanelCount
+              })
+            : t(language, 'screen.pages.design.generateConfirmation'),
+          language,
+          'text'
+        ),
         confirmLabel: overwritePageSkeleton
           ? t(language, "generated.screens.StoryScreen.replace.and.regenerate.6303262c")
           : t(language, 'pageSkeleton'),
@@ -2177,7 +2182,11 @@ export function PagesScreen(): React.JSX.Element {
       confirmAction({
         language,
         title: t(language, 'component.storyGenerationControls.autofillAction'),
-        message: t(language, 'screen.pages.design.autofillConfirmation'),
+        message: appendAiProviderDisclosure(
+          t(language, 'screen.pages.design.autofillConfirmation'),
+          language,
+          'text'
+        ),
         confirmLabel: t(language, 'component.storyGenerationControls.autofillAction'),
         destructive: true,
         onConfirm: () => pageStoryAutofillMutation.mutate()
@@ -2220,7 +2229,11 @@ export function PagesScreen(): React.JSX.Element {
       confirmAction({
         language,
         title: t(language, 'component.pageSceneAutofill.apply'),
-        message: t(language, 'component.pageSceneAutofill.confirmation'),
+        message: appendAiProviderDisclosure(
+          t(language, 'component.pageSceneAutofill.confirmation'),
+          language,
+          'text'
+        ),
         confirmLabel: t(language, 'component.pageSceneAutofill.apply'),
         destructive: true,
         onConfirm: () => autofillPageFromScenesMutation.mutate()
@@ -2232,9 +2245,13 @@ export function PagesScreen(): React.JSX.Element {
     confirmAction({
       language,
       title: t(language, "generated.screens.PagesScreen.generate.page.image.a3a86143"),
-      message: t(language, 'screen.pages.generatePageConfirmation', {
-        creditCost: readiness?.estimated_credit_cost ?? '3+'
-      }),
+      message: appendAiProviderDisclosure(
+        t(language, 'screen.pages.generatePageConfirmation', {
+          creditCost: readiness?.estimated_credit_cost ?? '3+'
+        }),
+        language,
+        'text'
+      ),
       confirmLabel: t(language, 'generate'),
       onConfirm: () => generatePageMutation.mutate()
     });
@@ -3269,6 +3286,7 @@ export function PagesScreen(): React.JSX.Element {
         )}
       />
       <ImagePreviewModal
+        contentId={selectedPage?.id}
         headers={previewImageHeaders}
         language={language}
         onClose={() => {

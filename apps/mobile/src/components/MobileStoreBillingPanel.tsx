@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Linking, StyleSheet, Text, View } from 'react-native';
 
 import { Notice } from '@/components/Notice';
 import { PrimaryButton } from '@/components/PrimaryButton';
@@ -13,6 +13,17 @@ import type {
 import type { ComponentTranslationKey } from '@/lib/i18nComponentMessages';
 import { t } from '@/lib/i18n';
 import { useNetworkStatus } from '@/state/networkStatus';
+
+const legalUrls = {
+  ja: {
+    privacy: 'https://app.lyra-editor.com/privacy.html',
+    terms: 'https://app.lyra-editor.com/terms.html'
+  },
+  en: {
+    privacy: 'https://app.lyra-editor.com/privacy-en.html',
+    terms: 'https://app.lyra-editor.com/terms-en.html'
+  }
+} as const;
 
 interface MobileStoreBillingPanelProps {
   adapter: NativeStoreBillingAdapter;
@@ -97,6 +108,25 @@ export function MobileStoreBillingPanel({ adapter, language, onVerified }: Mobil
         onPress={() => void restore()}
         variant="secondary"
       />
+      <Text style={styles.caption}>
+        {t(language, 'component.mobileStoreBilling.renewalDisclosure')}
+      </Text>
+      <View style={styles.legalLinks}>
+        <Text
+          accessibilityRole="link"
+          onPress={() => void Linking.openURL(legalUrls[language].terms)}
+          style={styles.legalLink}
+        >
+          {t(language, 'component.mobileStoreBilling.terms')}
+        </Text>
+        <Text
+          accessibilityRole="link"
+          onPress={() => void Linking.openURL(legalUrls[language].privacy)}
+          style={styles.legalLink}
+        >
+          {t(language, 'component.mobileStoreBilling.privacy')}
+        </Text>
+      </View>
     </View>
   );
 }
@@ -147,6 +177,8 @@ const styles = StyleSheet.create({
     padding: spacing.md
   },
   header: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' },
+  legalLink: { ...textStyles.caption, color: colors.accent, textDecorationLine: 'underline' },
+  legalLinks: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.md },
   price: { ...textStyles.body, color: colors.primary, fontWeight: '700' },
   product: {
     alignItems: 'center',

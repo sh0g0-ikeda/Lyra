@@ -230,6 +230,36 @@ describe('AccountScreen organization feature guard', () => {
     }, { skipDirtyCheck: true });
   });
 
+  it('organization管理ではnative外部決済actionを必ず無効化する', async () => {
+    mocks.useAppState.mockReturnValue({
+      api: {},
+      language: 'ja',
+      logout: vi.fn(),
+      selection: { organizationId: organization.id },
+      session: { ...refreshedSession, organizations: [organization] },
+      sessionKey: 'user-1',
+      setLanguage: vi.fn(),
+      setSession: vi.fn(),
+      tokens: null,
+      updateSelection: mocks.updateSelection,
+    });
+
+    let renderer: ReturnType<typeof create>;
+    await act(async () => {
+      renderer = create(React.createElement(AccountScreen));
+    });
+    const openManagement = renderer!.root
+      .findAllByType('button')
+      .find((button) => button.children.includes(
+        'generated.screens.AccountScreen.open.organization.management.ea1b51b0'
+      ));
+    act(() => openManagement?.props.onClick());
+
+    expect(mocks.organizationPanel).toHaveBeenCalledWith(
+      expect.objectContaining({ allowExternalBillingActions: false })
+    );
+  });
+
   it('課金とアカウント削除のflagがOFFならcatalogを取得せず削除UIを露出しない', async () => {
     mocks.config.mobileStoreBillingEnabled = false;
     mocks.config.accountDeletionEnabled = false;

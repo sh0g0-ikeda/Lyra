@@ -53,8 +53,9 @@
     "OpenAI",
     "Stripe",
     "Apple",
-    "Google"
+    "Google",
+    "Sentry"
   ],
   "policyUrl": "https://app.lyra-editor.com/privacy.html",
-  "deletionUrl": "https://app.lyra-editor.com/privacy.html#account-deletion"
+  "deletionUrl": "https://app.lyra-editor.com/account-deletion.html"
 }

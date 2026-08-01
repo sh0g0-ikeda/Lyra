@@ -60,6 +60,7 @@ import type { EntityStateRecord, EntityType, SceneRecord } from '@/domain/types'
 import { useActiveResourceJobId } from '@/hooks/useActiveResourceJobId';
 import { config } from '@/lib/config';
 import { confirmAction, confirmDestructiveAction } from '@/lib/confirm';
+import { appendAiProviderDisclosure } from '@/lib/aiProviderDisclosure';
 import {
   DirectEntityUploadError,
   uploadAndImportEntityReference,
@@ -2600,9 +2601,27 @@ export function CharactersScreen(): React.JSX.Element {
     confirmAction({
       language,
       title: t(language, "generated.screens.CharactersScreen.generate.reference.preview.dddf055c"),
-      message: t(language, "generated.screens.CharactersScreen.character.details.will.be.saved.before.g.119135cb"),
+      message: appendAiProviderDisclosure(
+        t(language, "generated.screens.CharactersScreen.character.details.will.be.saved.before.g.119135cb"),
+        language,
+        'text'
+      ),
       confirmLabel: t(language, 'generateReference'),
       onConfirm: () => generateReferenceMutation.mutate()
+    });
+  };
+
+  const confirmImportImage = (): void => {
+    confirmAction({
+      language,
+      title: t(language, 'imageImport'),
+      message: appendAiProviderDisclosure(
+        t(language, 'component.aiProvider.imageImportDescription'),
+        language,
+        'image'
+      ),
+      confirmLabel: t(language, 'imageImport'),
+      onConfirm: () => importImageMutation.mutate('select')
     });
   };
 
@@ -2783,7 +2802,7 @@ export function CharactersScreen(): React.JSX.Element {
             }
             label={t(language, 'imageImport')}
             loading={importImageMutation.isPending}
-            onPress={() => importImageMutation.mutate('select')}
+            onPress={confirmImportImage}
           />
           <EntityReferenceUploadStatus
             error={
@@ -3145,7 +3164,7 @@ export function CharactersScreen(): React.JSX.Element {
         )}
         </Section>
       ) : null}
-      <ImagePreviewModal headers={previewImageHeaders} language={language} onClose={closeImagePreview} uri={previewImageUri} />
+      <ImagePreviewModal contentId={selectedEntity?.id} headers={previewImageHeaders} language={language} onClose={closeImagePreview} uri={previewImageUri} />
     </Screen>
   );
 }

@@ -216,6 +216,58 @@ describe('OrganizationManagementPanel', () => {
     expect(downloadUsageCsv).toHaveBeenCalledOnce();
   });
 
+  it('native review用設定では外部checkoutとbilling portalを表示しない', () => {
+    useQueryMock.mockImplementation((options: { queryKey: unknown[] }) => {
+      const name = String(options.queryKey[0]);
+      if (name === 'organization-workspace') return { data: workspace, isLoading: false, isError: false, error: null };
+      if (name === 'organization-billing') {
+        return {
+          data: {
+            workspace,
+            subscription: null,
+            subscription_plans: [{
+              plan_code: 'enterprise_b',
+              display_name_ja: '法人 B',
+              display_name_en: 'Enterprise B',
+              monthly_credits: 500,
+              amount_jpy: 50_000,
+              minimum_contract_months: 1,
+              trial_days: 0,
+              is_enterprise: true,
+              configured: true,
+            }],
+          },
+          isLoading: false,
+          isError: false,
+          error: null,
+        };
+      }
+      return { data: { invitations: [], invoices: [], usage_events: [], summary: { current_month_total_credits: 0, by_member: [], by_work: [], by_generation_type: [] }, audit_logs: [], members: [] }, isLoading: false, isError: false, error: null };
+    });
+    useMutationMock.mockReturnValue({ isPending: false, isError: false, mutateAsync: vi.fn() });
+    let renderer: ReturnType<typeof create>;
+    act(() => {
+      renderer = create(
+        React.createElement(OrganizationManagementPanel, {
+          allowExternalBillingActions: false,
+          api: {} as never,
+          language: 'ja',
+          onConfirmRemoveMember: vi.fn(),
+          onDownloadUsageCsv: vi.fn(),
+          onOpenBillingUrl: vi.fn(),
+          organization,
+          sessionKey: 'session-a',
+        })
+      );
+    });
+
+    const rendered = JSON.stringify(renderer!.toJSON());
+    expect(rendered).toContain('請求管理');
+    expect(rendered).not.toContain('手続きを開く');
+    expect(rendered).not.toContain('請求ポータルを開く');
+    expect(rendered).not.toContain('追加クレジット');
+  });
+
   it('viewerには権限不足の固定理由を表示し、請求・メンバー操作を表示しない', () => {
     useQueryMock.mockReturnValue({ data: workspace, isLoading: false, isError: false, error: null });
     useMutationMock.mockReturnValue({ isPending: false, isError: false, mutateAsync: vi.fn() });

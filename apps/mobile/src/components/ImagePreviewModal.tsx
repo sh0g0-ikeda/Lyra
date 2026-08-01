@@ -3,10 +3,12 @@ import { AccessibilityInfo, ActivityIndicator, findNodeHandle, Image, Modal, Pre
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { colors, spacing, textStyles } from '@/constants/theme';
+import { AiContentReportButton } from '@/components/AiContentReportButton';
 import { downloadExternalFile } from '@/lib/download';
 import { t } from '@/lib/i18n';
 
 interface ImagePreviewModalProps {
+  contentId?: string | null;
   uri: string | null;
   headers?: Record<string, string>;
   language: 'ja' | 'en';
@@ -14,7 +16,7 @@ interface ImagePreviewModalProps {
   restoreFocusRef?: RefObject<View | null>;
 }
 
-export function ImagePreviewModal({ uri, headers, language, onClose, restoreFocusRef }: ImagePreviewModalProps): React.JSX.Element {
+export function ImagePreviewModal({ contentId, uri, headers, language, onClose, restoreFocusRef }: ImagePreviewModalProps): React.JSX.Element {
   const [sharing, setSharing] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const { height: windowHeight, width: windowWidth } = useWindowDimensions();
@@ -110,6 +112,7 @@ export function ImagePreviewModal({ uri, headers, language, onClose, restoreFocu
               {sharing ? <ActivityIndicator color={colors.primaryText} size="small" /> : null}
               <Text style={styles.shareText}>{t(language, "generated.components.ImagePreviewModal.share.save.9cc82713")}</Text>
             </Pressable>
+            <AiContentReportButton contentId={contentId} contentKind="generated_image" language={language} />
           </View>
           </View>
         </View>

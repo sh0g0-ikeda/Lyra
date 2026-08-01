@@ -193,18 +193,53 @@ describe('production app metadata', () => {
     expect(storeConfig.configVersion).toBe(0);
     expect(storeConfig.apple?.copyright).toMatch(/^2026 /);
     expect(storeConfig.apple?.advisory?.ageRatingOverride).toBe('SEVENTEEN_PLUS');
+    expect(storeConfig.apple?.info?.ja).toMatchObject({
+      title: 'Lyra Mobile',
+      privacyPolicyUrl: 'https://app.lyra-editor.com/privacy.html',
+      privacyChoicesUrl: 'https://app.lyra-editor.com/account-deletion.html',
+      supportUrl: 'https://app.lyra-editor.com/support.html',
+    });
+    expect(storeConfig.apple?.info?.['en-US']).toMatchObject({
+      title: 'Lyra Mobile',
+      privacyPolicyUrl: 'https://app.lyra-editor.com/privacy-en.html',
+      privacyChoicesUrl: 'https://app.lyra-editor.com/account-deletion-en.html',
+      supportUrl: 'https://app.lyra-editor.com/support-en.html',
+    });
     for (const language of ['ja', 'en-US']) {
-      expect(storeConfig.apple?.info?.[language]).toMatchObject({
-        title: 'Lyra Mobile',
-        privacyPolicyUrl: 'https://app.lyra-editor.com/privacy.html',
-        privacyChoicesUrl: 'https://app.lyra-editor.com/privacy.html#account-deletion',
-        supportUrl: 'https://app.lyra-editor.com/support.html',
-      });
       expect(storeConfig.apple?.info?.[language]?.description?.length).toBeGreaterThan(100);
       expect(storeConfig.apple?.info?.[language]?.keywords?.length).toBeGreaterThan(2);
     }
     expect(easConfig.submit?.production?.ios).toMatchObject({
       metadataPath: './store.config.json',
     });
+  });
+
+  it('production buildで既存のアカウント削除UIを有効にする', () => {
+    expect(
+      easConfig.build?.production?.env?.EXPO_PUBLIC_ACCOUNT_DELETION_ENABLED
+    ).toBe('true');
+  });
+
+  it('日英の法務ページと専用削除申請ページをbundleへ含める', () => {
+    const webPublic = resolve(mobileRoot, '..', 'web', 'public');
+    for (const filename of [
+      'privacy.html',
+      'privacy-en.html',
+      'terms.html',
+      'terms-en.html',
+      'support.html',
+      'support-en.html',
+      'account-deletion.html',
+      'account-deletion-en.html',
+    ]) {
+      expect(existsSync(resolve(webPublic, filename)), filename).toBe(true);
+    }
+    const privacy = readFileSync(resolve(webPublic, 'privacy-en.html'), 'utf8');
+    const deletion = readFileSync(resolve(webPublic, 'account-deletion-en.html'), 'utf8');
+    expect(privacy).toContain('OpenAI');
+    expect(privacy).toContain('Sentry');
+    expect(privacy).toContain('international');
+    expect(deletion).toContain('mailto:');
+    expect(deletion).toContain('Delete your Lyra account');
   });
 });

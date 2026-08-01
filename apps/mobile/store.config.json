@@ -39,7 +39,7 @@
         "marketingUrl": "https://app.lyra-editor.com/",
         "supportUrl": "https://app.lyra-editor.com/support.html",
         "privacyPolicyUrl": "https://app.lyra-editor.com/privacy.html",
-        "privacyChoicesUrl": "https://app.lyra-editor.com/privacy.html#account-deletion"
+        "privacyChoicesUrl": "https://app.lyra-editor.com/account-deletion.html"
       },
       "en-US": {
         "title": "Lyra Mobile",
@@ -56,9 +56,9 @@
         ],
         "promoText": "Turn the story in your head into manga with Lyra.",
         "marketingUrl": "https://app.lyra-editor.com/",
-        "supportUrl": "https://app.lyra-editor.com/support.html",
-        "privacyPolicyUrl": "https://app.lyra-editor.com/privacy.html",
-        "privacyChoicesUrl": "https://app.lyra-editor.com/privacy.html#account-deletion"
+        "supportUrl": "https://app.lyra-editor.com/support-en.html",
+        "privacyPolicyUrl": "https://app.lyra-editor.com/privacy-en.html",
+        "privacyChoicesUrl": "https://app.lyra-editor.com/account-deletion-en.html"
       }
     },
     "release": {
