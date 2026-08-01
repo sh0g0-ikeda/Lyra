@@ -1,4 +1,5 @@
 import type { QueryResultRow } from 'pg';
+import { ConflictError, ValidationError } from '../domain/errors/index.js';
 import type {
   Balloon,
   BalloonFontFamily,
@@ -47,6 +48,7 @@ export interface BalloonRepository {
     userId: string,
     input: CreateBalloonInput,
     organizationId?: string | null,
+    expectedPanelIds?: readonly string[],
   ): Promise<Balloon | null>;
   findBalloonsByPageIdAndUserId(pageId: string, userId: string, organizationId?: string | null): Promise<Balloon[]>;
   replaceBalloonsByPageIdAndUserId(
@@ -54,12 +56,14 @@ export interface BalloonRepository {
     userId: string,
     inputs: CreateBalloonInput[],
     organizationId?: string | null,
+    expectedPanelIds?: readonly string[],
   ): Promise<Balloon[]>;
   updateBalloon(
     balloonId: string,
     userId: string,
     input: UpdateBalloonInput,
     organizationId?: string | null,
+    expectedPanelIds?: readonly string[],
   ): Promise<Balloon | null>;
   deleteBalloon(balloonId: string, userId: string, organizationId?: string | null): Promise<boolean>;
 }
@@ -96,6 +100,21 @@ interface BalloonRow extends QueryResultRow {
   font_family: string;
   panel_order_reference: number | null;
   z_index: number;
+}
+
+interface LockedBalloonPageRow extends QueryResultRow {
+  page_id: string;
+  status: PageStatus;
+  dialogue_mode: string;
+  generated_image: unknown;
+}
+
+interface PanelIdRow extends QueryResultRow {
+  id: string;
+}
+
+interface BalloonPageIdRow extends QueryResultRow {
+  page_id: string;
 }
 
 export class PostgresBalloonRepository implements BalloonRepository {
@@ -211,8 +230,22 @@ export class PostgresBalloonRepository implements BalloonRepository {
     userId: string,
     input: CreateBalloonInput,
     organizationId: string | null = null,
+    expectedPanelIds?: readonly string[],
   ): Promise<Balloon | null> {
-    const result = await this.client.query<BalloonRow>(
+    return this.client.transaction(async (transactionClient) => {
+      const panelIds = await lockEditablePageAndPanels(
+        transactionClient,
+        pageId,
+        userId,
+        organizationId,
+      );
+      if (panelIds === null) {
+        return null;
+      }
+      ensureExpectedPanelIds(panelIds, expectedPanelIds);
+      ensurePanelOrderReferenceWithinBounds(input.panelOrderReference, panelIds.length);
+
+      const result = await transactionClient.query<BalloonRow>(
       `
       INSERT INTO balloons (
         page_id,
@@ -277,7 +310,8 @@ export class PostgresBalloonRepository implements BalloonRepository {
       ],
     );
 
-    return result.rows[0] === undefined ? null : mapBalloonRow(result.rows[0]);
+      return result.rows[0] === undefined ? null : mapBalloonRow(result.rows[0]);
+    });
   }
 
   public async findBalloonsByPageIdAndUserId(
@@ -321,8 +355,23 @@ export class PostgresBalloonRepository implements BalloonRepository {
     userId: string,
     inputs: CreateBalloonInput[],
     organizationId: string | null = null,
+    expectedPanelIds?: readonly string[],
   ): Promise<Balloon[]> {
     return this.client.transaction(async (transactionClient) => {
+      const panelIds = await lockEditablePageAndPanels(
+        transactionClient,
+        pageId,
+        userId,
+        organizationId,
+      );
+      if (panelIds === null) {
+        return [];
+      }
+      ensureExpectedPanelIds(panelIds, expectedPanelIds);
+      for (const input of inputs) {
+        ensurePanelOrderReferenceWithinBounds(input.panelOrderReference, panelIds.length);
+      }
+
       await transactionClient.query(
         `
         DELETE FROM balloons
@@ -432,8 +481,31 @@ export class PostgresBalloonRepository implements BalloonRepository {
     userId: string,
     input: UpdateBalloonInput,
     organizationId: string | null = null,
+    expectedPanelIds?: readonly string[],
   ): Promise<Balloon | null> {
-    const result = await this.client.query<BalloonRow>(
+    return this.client.transaction(async (transactionClient) => {
+      const pageId = await findAuthorizedBalloonPageId(
+        transactionClient,
+        balloonId,
+        userId,
+        organizationId,
+      );
+      if (pageId === null) {
+        return null;
+      }
+      const panelIds = await lockEditablePageAndPanels(
+        transactionClient,
+        pageId,
+        userId,
+        organizationId,
+      );
+      if (panelIds === null) {
+        return null;
+      }
+      ensureExpectedPanelIds(panelIds, expectedPanelIds);
+      ensurePanelOrderReferenceWithinBounds(input.panelOrderReference, panelIds.length);
+
+      const result = await transactionClient.query<BalloonRow>(
       `
       UPDATE balloons
       SET speaker_entity_id = CASE WHEN $3::boolean THEN $4 ELSE balloons.speaker_entity_id END,
@@ -489,7 +561,8 @@ export class PostgresBalloonRepository implements BalloonRepository {
       ],
     );
 
-    return result.rows[0] === undefined ? null : mapBalloonRow(result.rows[0]);
+      return result.rows[0] === undefined ? null : mapBalloonRow(result.rows[0]);
+    });
   }
 
   public async deleteBalloon(
@@ -525,6 +598,135 @@ export class PostgresBalloonRepository implements BalloonRepository {
     );
 
     return (result.rowCount ?? 0) > 0;
+  }
+}
+
+async function findAuthorizedBalloonPageId(
+  client: DatabaseClient,
+  balloonId: string,
+  userId: string,
+  organizationId: string | null,
+): Promise<string | null> {
+  const result = await client.query<BalloonPageIdRow>(
+    `
+    SELECT balloons.page_id AS page_id
+    FROM balloons
+    INNER JOIN pages ON pages.id = balloons.page_id
+    INNER JOIN episodes ON episodes.id = pages.episode_id
+    INNER JOIN chapters ON chapters.id = episodes.chapter_id
+    INNER JOIN works ON works.id = chapters.work_id
+    WHERE balloons.id = $1::uuid
+      AND (
+        ($3::uuid IS NULL AND works.user_id = $2::uuid AND works.organization_id IS NULL)
+        OR (
+          $3::uuid IS NOT NULL
+          AND works.organization_id = $3::uuid
+          AND EXISTS (
+            SELECT 1
+            FROM organization_members
+            WHERE organization_members.organization_id = works.organization_id
+              AND organization_members.user_id = $2::uuid
+              AND organization_members.status = 'active'
+          )
+        )
+      )
+    `,
+    [balloonId, userId, organizationId],
+  );
+  return result.rows[0]?.page_id ?? null;
+}
+
+async function lockEditablePageAndPanels(
+  client: DatabaseClient,
+  pageId: string,
+  userId: string,
+  organizationId: string | null,
+): Promise<string[] | null> {
+  const pageResult = await client.query<LockedBalloonPageRow>(
+    `
+    SELECT pages.id AS page_id,
+           pages.status,
+           pages.dialogue_mode,
+           pages.generated_image
+    FROM pages
+    INNER JOIN episodes ON episodes.id = pages.episode_id
+    INNER JOIN chapters ON chapters.id = episodes.chapter_id
+    INNER JOIN works ON works.id = chapters.work_id
+    WHERE pages.id = $1::uuid
+      AND (
+        ($3::uuid IS NULL AND works.user_id = $2::uuid AND works.organization_id IS NULL)
+        OR (
+          $3::uuid IS NOT NULL
+          AND works.organization_id = $3::uuid
+          AND EXISTS (
+            SELECT 1
+            FROM organization_members
+            WHERE organization_members.organization_id = works.organization_id
+              AND organization_members.user_id = $2::uuid
+              AND organization_members.status = 'active'
+          )
+        )
+      )
+    FOR UPDATE OF pages
+    `,
+    [pageId, userId, organizationId],
+  );
+  const page = pageResult.rows[0];
+  if (page === undefined) {
+    return null;
+  }
+  ensureBalloonWriteEnabled(page);
+
+  const panelResult = await client.query<PanelIdRow>(
+    `
+    SELECT panels.id
+    FROM panels
+    WHERE panels.page_id = $1::uuid
+    ORDER BY panels."order" ASC
+    FOR KEY SHARE
+    `,
+    [pageId],
+  );
+  return panelResult.rows.map((panel) => panel.id);
+}
+
+function ensureExpectedPanelIds(currentPanelIds: string[], expectedPanelIds: readonly string[] | undefined): void {
+  if (expectedPanelIds === undefined) {
+    return;
+  }
+  const matches = currentPanelIds.length === expectedPanelIds.length
+    && currentPanelIds.every((panelId, index) => panelId === expectedPanelIds[index]);
+  if (!matches) {
+    throw new ConflictError('Page panels changed before balloons could be saved');
+  }
+}
+
+function ensurePanelOrderReferenceWithinBounds(
+  panelOrderReference: number | null | undefined,
+  panelCount: number,
+): void {
+  if (panelOrderReference === undefined || panelOrderReference === null) {
+    return;
+  }
+  if (panelOrderReference < 1 || panelOrderReference > panelCount) {
+    throw new ValidationError('panel_order_reference must refer to an existing panel');
+  }
+}
+
+function ensureBalloonWriteEnabled(
+  page: Pick<LockedBalloonPageRow, 'status' | 'dialogue_mode' | 'generated_image'>,
+): void {
+  if (page.status === 'confirmed') {
+    throw new ConflictError('Confirmed pages must be reopened before editing balloons');
+  }
+  if (page.status === 'generating') {
+    throw new ConflictError('Balloons cannot change while page generation is in progress');
+  }
+  if (toDialogueMode(page.dialogue_mode) === 'image_baked') {
+    throw new ConflictError('Balloon editing is disabled for image_baked pages');
+  }
+  if (!isJsonObject(page.generated_image)) {
+    throw new ConflictError('Page must have a generated image before editing balloons');
   }
 }
 

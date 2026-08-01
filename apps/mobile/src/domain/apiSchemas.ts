@@ -1245,6 +1245,17 @@ export const pageLayoutTemplateResponseSchema = z.object({
   frames: z.array(panelFrameSchema),
 });
 
+export const pagePanelStructureResponseSchema = z
+  .object({
+    panel_ids: z.array(idSchema).max(8),
+    created_panel_id: idSchema.nullable(),
+    layout_template_id: pageLayoutTemplateIdSchema.nullable(),
+    frames: z.array(panelFrameSchema).max(8),
+    balloon_reference_updated_count: z.number().int().nonnegative(),
+    balloon_reference_cleared_count: z.number().int().nonnegative(),
+  })
+  .strict();
+
 export const compositionsResponseSchema = z.object({
   compositions: z.array(compositionSchema),
 });

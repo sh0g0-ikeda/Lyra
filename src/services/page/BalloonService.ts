@@ -79,7 +79,13 @@ export class BalloonService implements BalloonServicePort {
       }
     }
 
-    return this.balloonRepository.replaceBalloonsByPageIdAndUserId(pageId, userId, inputs, organizationId);
+    return this.balloonRepository.replaceBalloonsByPageIdAndUserId(
+      pageId,
+      userId,
+      inputs,
+      organizationId,
+      panels.map((panel) => panel.id),
+    );
   }
 
   public async createBalloon(
@@ -94,10 +100,17 @@ export class BalloonService implements BalloonServicePort {
     }
 
     this.ensureBalloonEditingEnabled(pageContext);
-    this.ensurePanelOrderReferenceWithinBounds(input.panelOrderReference, pageContext.panelCount);
+    const panels = await this.panelReader.findPanelsByPageIdAndUserId(pageId, userId, organizationId);
+    this.ensurePanelOrderReferenceWithinBounds(input.panelOrderReference, panels.length);
     await this.ensureSpeakerBelongsToWork(input.speakerEntityId, pageContext.workId, userId, organizationId);
 
-    const balloon = await this.balloonRepository.createBalloon(pageId, userId, input, organizationId);
+    const balloon = await this.balloonRepository.createBalloon(
+      pageId,
+      userId,
+      input,
+      organizationId,
+      panels.map((panel) => panel.id),
+    );
     if (balloon === null) {
       throw new NotFoundError('Page not found');
     }
@@ -135,10 +148,21 @@ export class BalloonService implements BalloonServicePort {
     }
 
     this.ensureBalloonEditingEnabled(balloonContext);
-    this.ensurePanelOrderReferenceWithinBounds(input.panelOrderReference, balloonContext.panelCount);
+    const panels = await this.panelReader.findPanelsByPageIdAndUserId(
+      balloonContext.pageId,
+      userId,
+      organizationId,
+    );
+    this.ensurePanelOrderReferenceWithinBounds(input.panelOrderReference, panels.length);
     await this.ensureSpeakerBelongsToWork(input.speakerEntityId, balloonContext.workId, userId, organizationId);
 
-    const balloon = await this.balloonRepository.updateBalloon(balloonId, userId, input, organizationId);
+    const balloon = await this.balloonRepository.updateBalloon(
+      balloonId,
+      userId,
+      input,
+      organizationId,
+      panels.map((panel) => panel.id),
+    );
     if (balloon === null) {
       throw new NotFoundError('Balloon not found');
     }

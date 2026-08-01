@@ -98,6 +98,7 @@ import { PostgresPanelEntityAssignmentRepository } from './repositories/PanelEnt
 import { PostgresPanelFrameRepository } from './repositories/PanelFrameRepository.js';
 import { PostgresPanelRepository } from './repositories/PanelRepository.js';
 import { PostgresPageLayoutRepository } from './repositories/PageLayoutRepository.js';
+import { PostgresPagePanelStructureRepository } from './repositories/PagePanelStructureRepository.js';
 import { PostgresPageGenerationExecutionRepository } from './repositories/PageGenerationExecutionRepository.js';
 import { PostgresPageGenerationRecoveryRepository } from './repositories/PageGenerationRecoveryRepository.js';
 import { PostgresPageRepository } from './repositories/PageRepository.js';
@@ -122,6 +123,7 @@ import { createMobilePurchaseWebhookRoutes } from './routes/mobilePurchaseWebhoo
 import { createPanelRoutes } from './routes/panels.js';
 import { createPanelEntityAssignmentRoutes } from './routes/panelEntityAssignments.js';
 import { createPanelFrameRoutes } from './routes/panelFrames.js';
+import { createPagePanelStructureRoutes } from './routes/pagePanelStructure.js';
 import { createPageRoutes } from './routes/pages.js';
 import { createAdminOrganizationRoutes } from './routes/adminOrganizations.js';
 import { createOrganizationRoutes } from './routes/organizations.js';
@@ -252,6 +254,10 @@ import {
   type PageLayoutServicePort,
 } from './services/page/PageLayoutService.js';
 import {
+  PagePanelStructureService,
+  type PagePanelStructureServicePort,
+} from './services/page/PagePanelStructureService.js';
+import {
   PanelEntityAssignmentService,
   type PanelEntityAssignmentServicePort,
 } from './services/page/PanelEntityAssignmentService.js';
@@ -322,6 +328,7 @@ export interface AppDependencies {
   pageGenerationService?: PageGenerationServicePort;
   pageGenerationRecoveryService?: PageGenerationRecoveryServicePort;
   pageLayoutService?: PageLayoutServicePort;
+  pagePanelStructureService?: PagePanelStructureServicePort;
   panelService?: PanelServicePort;
   panelEntityAssignmentService?: PanelEntityAssignmentServicePort;
   panelFrameService?: PanelFrameServicePort;
@@ -614,6 +621,15 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
       authMiddleware,
       rateLimitMiddleware,
       panelService: resolvedDependencies.panelService,
+      organizationService: resolvedDependencies.organizationService,
+    }),
+  );
+  app.route(
+    '/api',
+    createPagePanelStructureRoutes({
+      authMiddleware,
+      rateLimitMiddleware,
+      pagePanelStructureService: resolvedDependencies.pagePanelStructureService,
       organizationService: resolvedDependencies.organizationService,
     }),
   );
@@ -1053,6 +1069,9 @@ function resolveDependencies(
   const pageLayoutService =
     dependencies.pageLayoutService ??
     new PageLayoutService(new PostgresPageLayoutRepository(db));
+  const pagePanelStructureService =
+    dependencies.pagePanelStructureService ??
+    new PagePanelStructureService(new PostgresPagePanelStructureRepository(db));
   const sceneService =
     dependencies.sceneService ?? new SceneService(new PostgresSceneRepository(db), entityRepository);
   const userProvisioningService =
@@ -1101,6 +1120,7 @@ function resolveDependencies(
     pageGenerationRecoveryService,
     pageGenerationService,
     pageLayoutService,
+    pagePanelStructureService,
     panelService,
     panelEntityAssignmentService,
     panelFrameService,
