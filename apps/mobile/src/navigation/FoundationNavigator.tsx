@@ -78,6 +78,13 @@ export function FoundationNavigator(): React.JSX.Element {
           </Screen>
         );
       }
-      return <FoundationHomeScreen session={sessionQuery.data} />;
+      return (
+        <FoundationHomeScreen
+          onSessionRefresh={async () => {
+            await sessionQuery.refetch();
+          }}
+          session={sessionQuery.data}
+        />
+      );
   }
 }

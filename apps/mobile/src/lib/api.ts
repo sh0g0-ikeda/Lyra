@@ -14,6 +14,10 @@ import {
   entitySchema,
   generationJobHistoryResponseSchema,
   generationJobResponseSchema,
+  mobilePurchaseAccountBindingSchema,
+  mobileStoreProductCatalogSchema,
+  mobileStorePurchaseResultSchema,
+  mobileStoreRestoreResultSchema,
   pageSchema,
   panelAssignmentsResponseSchema,
   pagePanelStructureResponseSchema,
@@ -50,6 +54,32 @@ export type PagePanelStructureResponse = ReturnType<typeof pagePanelStructureRes
 export type GenerationJobRecord = ReturnType<typeof generationJobResponseSchema.parse>;
 export type PageSkeletonResponse = ReturnType<typeof pageSkeletonResponseSchema.parse>;
 export type PageJobAcceptedResponse = ReturnType<typeof pageJobAcceptedResponseSchema.parse>;
+export type MobileStoreProductCatalogRecord = ReturnType<
+  typeof mobileStoreProductCatalogSchema.parse
+>;
+export type MobilePurchaseAccountBindingRecord = ReturnType<
+  typeof mobilePurchaseAccountBindingSchema.parse
+>;
+export type MobileStorePurchaseResultRecord = ReturnType<
+  typeof mobileStorePurchaseResultSchema.parse
+>;
+export type MobileStoreRestoreResultRecord = ReturnType<
+  typeof mobileStoreRestoreResultSchema.parse
+>;
+
+export interface VerifyAppleMobilePurchaseInput {
+  environment: 'sandbox' | 'production';
+  signed_transaction: string;
+}
+
+export interface VerifyGoogleMobilePurchaseInput {
+  purchase_token: string;
+}
+
+export interface RestoreMobilePurchasesInput {
+  apple_signed_transactions: string[];
+  google_purchase_tokens: string[];
+}
 
 export interface ListWorksPageInput {
   limit: number;
@@ -201,6 +231,10 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
 const MAX_REQUEST_TIMEOUT_MS = 60_000;
 const ENTITY_IMPORT_REQUEST_TIMEOUT_MS = 60_000;
 const MAX_ENTITY_PROMPT_SUPPLEMENT_LENGTH = 2_000;
+const MAX_APPLE_SIGNED_TRANSACTION_LENGTH = 32_768;
+const MIN_GOOGLE_PURCHASE_TOKEN_LENGTH = 8;
+const MAX_GOOGLE_PURCHASE_TOKEN_LENGTH = 8_192;
+const MAX_RESTORE_PURCHASE_COUNT = 50;
 
 export class LyraMobileApiClient {
   private readonly apiBaseUrl: string;
@@ -884,6 +918,93 @@ export class LyraMobileApiClient {
     return job;
   }
 
+  public async getMobileStoreProductCatalog(
+    store: 'apple' | 'google',
+  ): Promise<MobileStoreProductCatalogRecord> {
+    const catalog = await this.requestJson(
+      `/api/mobile-purchases/catalog/${store}`,
+      mobileStoreProductCatalogSchema,
+    );
+    if (catalog.store !== store) {
+      throw invalidApiResponse();
+    }
+    return catalog;
+  }
+
+  public getMobilePurchaseBinding(): Promise<MobilePurchaseAccountBindingRecord> {
+    return this.requestJson(
+      '/api/mobile-purchases/binding',
+      mobilePurchaseAccountBindingSchema,
+    );
+  }
+
+  public verifyAppleMobilePurchase(
+    input: VerifyAppleMobilePurchaseInput,
+  ): Promise<MobileStorePurchaseResultRecord> {
+    const proof = input.signed_transaction.trim();
+    if (proof.length < 1 || proof.length > MAX_APPLE_SIGNED_TRANSACTION_LENGTH) {
+      throw invalidRequest();
+    }
+    return this.requestJson(
+      '/api/mobile-purchases/apple/verify',
+      mobileStorePurchaseResultSchema,
+      {
+        body: { ...input, signed_transaction: proof },
+        method: 'POST',
+      },
+    );
+  }
+
+  public verifyGoogleMobilePurchase(
+    input: VerifyGoogleMobilePurchaseInput,
+  ): Promise<MobileStorePurchaseResultRecord> {
+    const proof = input.purchase_token.trim();
+    if (
+      proof.length < MIN_GOOGLE_PURCHASE_TOKEN_LENGTH
+      || proof.length > MAX_GOOGLE_PURCHASE_TOKEN_LENGTH
+    ) {
+      throw invalidRequest();
+    }
+    return this.requestJson(
+      '/api/mobile-purchases/google/verify',
+      mobileStorePurchaseResultSchema,
+      { body: { purchase_token: proof }, method: 'POST' },
+    );
+  }
+
+  public restoreMobilePurchases(
+    input: RestoreMobilePurchasesInput,
+  ): Promise<MobileStoreRestoreResultRecord> {
+    const appleProofs = normalizeRestoreProofs(
+      input.apple_signed_transactions,
+      1,
+      MAX_APPLE_SIGNED_TRANSACTION_LENGTH,
+    );
+    const googleProofs = normalizeRestoreProofs(
+      input.google_purchase_tokens,
+      MIN_GOOGLE_PURCHASE_TOKEN_LENGTH,
+      MAX_GOOGLE_PURCHASE_TOKEN_LENGTH,
+    );
+    if (
+      appleProofs.length + googleProofs.length < 1
+      || appleProofs.length > MAX_RESTORE_PURCHASE_COUNT
+      || googleProofs.length > MAX_RESTORE_PURCHASE_COUNT
+    ) {
+      throw invalidRequest();
+    }
+    return this.requestJson(
+      '/api/mobile-purchases/restore',
+      mobileStoreRestoreResultSchema,
+      {
+        body: {
+          apple_signed_transactions: appleProofs,
+          google_purchase_tokens: googleProofs,
+        },
+        method: 'POST',
+      },
+    );
+  }
+
   private async requireTokens(): Promise<AuthTokens> {
     const tokens = await this.auth.getTokens();
     if (tokens === null) {
@@ -991,6 +1112,25 @@ export class LyraMobileApiClient {
       clearTimeout(timeoutId);
     }
   }
+}
+
+function normalizeRestoreProofs(
+  values: string[],
+  minLength: number,
+  maxLength: number,
+): string[] {
+  if (values.length > MAX_RESTORE_PURCHASE_COUNT) {
+    throw invalidRequest();
+  }
+  const normalized = values.map((value) => value.trim());
+  if (normalized.some((value) => value.length < minLength || value.length > maxLength)) {
+    throw invalidRequest();
+  }
+  return normalized;
+}
+
+function invalidRequest(): ApiError {
+  return new ApiError('INVALID_REQUEST', 422, 'The request is invalid.');
 }
 
 function normalizeRequestTimeout(value: number | undefined): number {

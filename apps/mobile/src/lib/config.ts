@@ -10,6 +10,7 @@ export interface MobileConfig {
   cognitoLogoutRedirectUri: string;
   cognitoScopes: string[];
   buildEnvironment: MobileBuildEnvironment;
+  mobileStoreBillingEnabled: boolean;
 }
 
 export type MobileConfigIssue =
@@ -44,12 +45,16 @@ const mobileConfigSchema = z
     cognitoRedirectUri: z.string().min(1).max(500),
     cognitoLogoutRedirectUri: z.string().min(1).max(500),
     cognitoScopes: z.array(z.string().min(1).max(100)).min(1).max(20),
-    buildEnvironment: z.enum(['development', 'preview', 'production'])
+    buildEnvironment: z.enum(['development', 'preview', 'production']),
+    mobileStoreBillingEnabled: z.boolean(),
   })
   .strict();
 
 const readPublicEnv = (value: string | undefined): string =>
   typeof value === 'string' ? value.trim() : '';
+
+const readPublicBoolean = (value: string | undefined): boolean =>
+  readPublicEnv(value).toLowerCase() === 'true';
 
 const parseUrl = (value: string): URL | null => {
   try {
@@ -187,7 +192,10 @@ export const config: MobileConfig = {
     .filter((scope) => scope.length > 0),
   buildEnvironment: readPublicEnv(
     process.env.EXPO_PUBLIC_BUILD_ENVIRONMENT
-  ) as MobileBuildEnvironment
+  ) as MobileBuildEnvironment,
+  mobileStoreBillingEnabled: readPublicBoolean(
+    process.env.EXPO_PUBLIC_MOBILE_STORE_BILLING_ENABLED
+  )
 };
 
 export const configValidation = validateMobileConfig(config);

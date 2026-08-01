@@ -1,7 +1,8 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { LoadingState } from '../components/LoadingState';
+import { MobileStoreBillingPanel } from '../components/MobileStoreBillingPanel';
 import { Notice } from '../components/Notice';
 import { PrimaryButton } from '../components/PrimaryButton';
 import { colors, radius, spacing } from '../constants/theme';
@@ -9,8 +10,26 @@ import type {
   CurrentSession,
   GenerationJobRecord,
   ListJobsPageInput,
+  MobilePurchaseAccountBindingRecord,
+  MobileStoreProductCatalogRecord,
+  MobileStorePurchaseResultRecord,
+  MobileStoreRestoreResultRecord,
+  RestoreMobilePurchasesInput,
+  VerifyAppleMobilePurchaseInput,
+  VerifyGoogleMobilePurchaseInput,
 } from '../lib/api';
+import { config } from '../lib/config';
+import { createExpoIapSdk } from '../lib/expoIapSdk';
 import { t, type UiLanguage } from '../lib/i18n';
+import {
+  createMobileStoreBillingBackend,
+  toNativeStoreProductDefinitions,
+} from '../lib/mobileStoreBillingBridge';
+import {
+  createNativeStoreBillingAdapter,
+  type NativeStoreBillingAdapter,
+  type NativeStoreName,
+} from '../lib/nativeStoreBilling';
 import { storyQueryKeys } from '../lib/storyQueryKeys';
 import { userErrorMessage } from '../lib/userMessages';
 
@@ -26,21 +45,37 @@ export interface AccountScreenApiPort {
     input: ListJobsPageInput,
     organizationId?: string | null,
   ): Promise<AccountJobsPage>;
+  getCurrentSession(): Promise<CurrentSession>;
+  getMobilePurchaseBinding(): Promise<MobilePurchaseAccountBindingRecord>;
+  getMobileStoreProductCatalog(store: NativeStoreName): Promise<MobileStoreProductCatalogRecord>;
+  restoreMobilePurchases(
+    input: RestoreMobilePurchasesInput,
+  ): Promise<MobileStoreRestoreResultRecord>;
+  verifyAppleMobilePurchase(
+    input: VerifyAppleMobilePurchaseInput,
+  ): Promise<MobileStorePurchaseResultRecord>;
+  verifyGoogleMobilePurchase(
+    input: VerifyGoogleMobilePurchaseInput,
+  ): Promise<MobileStorePurchaseResultRecord>;
 }
 
 interface AccountScreenProps {
   api: AccountScreenApiPort;
   language: UiLanguage;
   onOrganizationChange(organizationId: string | null): void;
+  onSessionRefresh?(): Promise<void>;
   onSignOut?(): Promise<void>;
   organizationId: string | null;
   session: CurrentSession;
+  mobileStoreBillingEnabled?: boolean;
 }
 
 export function AccountScreen({
   api,
   language,
+  mobileStoreBillingEnabled = config.mobileStoreBillingEnabled,
   onOrganizationChange,
+  onSessionRefresh,
   onSignOut,
   organizationId,
   session,
@@ -60,6 +95,32 @@ export function AccountScreen({
     queryFn: () => api.getJobs({ limit: JOB_PAGE_LIMIT }, organizationId),
     queryKey: queryKeys.jobs(),
   });
+  const nativeStore = storeForPlatform();
+  const purchaseEnabled = mobileStoreBillingEnabled
+    && organizationId === null
+    && nativeStore !== null;
+  const catalogQuery = useQuery({
+    enabled: purchaseEnabled,
+    queryFn: async () => {
+      if (nativeStore === null) throw new Error('Store unavailable');
+      return api.getMobileStoreProductCatalog(nativeStore);
+    },
+    queryKey: ['mobile-store-product-catalog', session.user.id, nativeStore],
+  });
+  const billingAdapter = useMemo<NativeStoreBillingAdapter | null>(() => {
+    if (!purchaseEnabled || catalogQuery.data === undefined) return null;
+    try {
+      const products = toNativeStoreProductDefinitions(catalogQuery.data, language);
+      if (products.length === 0) return null;
+      return createNativeStoreBillingAdapter({
+        backend: createMobileStoreBillingBackend(api),
+        products,
+        sdk: createExpoIapSdk(),
+      });
+    } catch {
+      return null;
+    }
+  }, [api, catalogQuery.data, language, purchaseEnabled]);
   const [signOutError, setSignOutError] = useState<string | null>(null);
   const [signingOut, setSigningOut] = useState(false);
   const displayedCredits = organizationId === null
@@ -118,6 +179,18 @@ export function AccountScreen({
         <Text style={styles.metric}>
           {t(language, 'accountCredits', { count: String(displayedCredits) })}
         </Text>
+        {organizationId === null && mobileStoreBillingEnabled ? (
+          <PurchaseContent
+            adapter={billingAdapter}
+            catalog={catalogQuery.data}
+            catalogError={catalogQuery.isError}
+            catalogLoading={catalogQuery.isLoading}
+            language={language}
+            nativeStore={nativeStore}
+            onRetryCatalog={() => void catalogQuery.refetch()}
+            onVerified={onSessionRefresh}
+          />
+        ) : null}
       </AccountSection>
 
       <AccountSection title={t(language, 'accountJobs')}>
@@ -157,6 +230,64 @@ export function AccountScreen({
       )}
     </View>
   );
+}
+
+function PurchaseContent({
+  adapter,
+  catalog,
+  catalogError,
+  catalogLoading,
+  language,
+  nativeStore,
+  onRetryCatalog,
+  onVerified,
+}: {
+  adapter: NativeStoreBillingAdapter | null;
+  catalog: MobileStoreProductCatalogRecord | undefined;
+  catalogError: boolean;
+  catalogLoading: boolean;
+  language: UiLanguage;
+  nativeStore: NativeStoreName | null;
+  onRetryCatalog(): void;
+  onVerified?(): Promise<void>;
+}): React.JSX.Element {
+  let content: React.ReactNode;
+  if (nativeStore === null) {
+    content = <Notice message={t(language, 'purchaseUnavailablePlatform')} />;
+  } else if (catalogLoading) {
+    content = <LoadingState label={t(language, 'purchaseLoading')} />;
+  } else if (catalogError) {
+    content = (
+      <View style={styles.errorBlock}>
+        <Notice message={t(language, 'purchaseDisabled')} tone="danger" />
+        <RetryButton label={t(language, 'purchaseRetryCatalog')} onPress={onRetryCatalog} />
+      </View>
+    );
+  } else if (catalog?.products.length === 0) {
+    content = <Notice message={t(language, 'purchaseEmpty')} />;
+  } else if (adapter === null) {
+    content = <Notice message={t(language, 'purchaseDisabled')} tone="danger" />;
+  } else {
+    content = (
+      <MobileStoreBillingPanel
+        adapter={adapter}
+        language={language}
+        onVerified={onVerified === undefined ? undefined : async () => onVerified()}
+      />
+    );
+  }
+  return (
+    <View style={styles.purchaseSection}>
+      <Text style={styles.subsectionTitle}>{t(language, 'purchaseSection')}</Text>
+      {content}
+    </View>
+  );
+}
+
+function storeForPlatform(): NativeStoreName | null {
+  if (Platform.OS === 'ios') return 'apple';
+  if (Platform.OS === 'android') return 'google';
+  return null;
 }
 
 function AccountSection({
@@ -257,6 +388,9 @@ const styles = StyleSheet.create({
   pressed: {
     opacity: 0.75,
   },
+  purchaseSection: {
+    gap: spacing.sm,
+  },
   retryButton: {
     alignSelf: 'flex-start',
     borderColor: colors.accent,
@@ -281,6 +415,11 @@ const styles = StyleSheet.create({
   sectionTitle: {
     color: colors.ink,
     fontSize: 20,
+    fontWeight: '800',
+  },
+  subsectionTitle: {
+    color: colors.ink,
+    fontSize: 17,
     fontWeight: '800',
   },
   workspaceButton: {
