@@ -800,6 +800,20 @@ export class LyraMobileApiClient {
     );
   }
 
+  public generatePage(
+    pageId: string,
+    organizationId: string | null = null,
+  ): Promise<PageJobAcceptedResponse> {
+    return this.requestJson(
+      withOrganizationQuery(
+        `/api/pages/${encodeURIComponent(pageId)}/generate`,
+        organizationId,
+      ),
+      pageJobAcceptedResponseSchema,
+      { method: 'POST' },
+    );
+  }
+
   public generatePageSkeleton(
     episodeId: string,
     body: GeneratePageSkeletonInput,

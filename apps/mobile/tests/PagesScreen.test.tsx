@@ -8,6 +8,8 @@ import {
 } from '../src/screens/PagesScreen';
 import { ApiError } from '../src/lib/api';
 import { storyQueryKeys } from '../src/lib/storyQueryKeys';
+import { PageSettingsSection } from '../src/components/PageSettingsSection';
+import { PanelEditingSection } from '../src/components/PanelEditingSection';
 
 vi.mock('react-native', () => ({
   Alert: { alert: vi.fn() },
@@ -64,6 +66,11 @@ vi.mock('../src/components/PrimaryButton', () => ({
     { disabled: disabled || loading, onClick: onPress },
     label,
   ),
+}));
+
+vi.mock('../src/components/ResilientAuthenticatedImage', () => ({
+  ResilientAuthenticatedImage: (props: Record<string, unknown>) =>
+    React.createElement('page-image', props),
 }));
 
 const timestamp = '2026-07-31T00:00:00.000Z';
@@ -194,6 +201,14 @@ const buildPanelFrame = (panelId: string, readingOrder: number) => ({
   reading_order: readingOrder,
 });
 
+function deferred<T>(): { promise: Promise<T>; resolve(value: T): void } {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
+
 const pageSkeletonJob = (
   status: 'queued' | 'processing' | 'completed' | 'failed' | 'cancelled',
 ) => ({
@@ -237,6 +252,24 @@ const storyAutofillJob = (
   },
 });
 
+const pageImageJob = (
+  status: 'queued' | 'processing' | 'completed' | 'failed' | 'cancelled',
+) => ({
+  ...pageSkeletonJob(status),
+  id: 'job-page-image-1',
+  job_type: 'page_generate' as const,
+  params: {
+    page_id: page.id,
+    request_kind: 'initial' as const,
+    generation_mode: 'standard' as const,
+    quality: 'medium' as const,
+    requires_planner: false,
+  },
+  result: null,
+  generation_mode: 'standard' as const,
+  credit_cost: 3,
+});
+
 const flushQueries = async (): Promise<void> => {
   for (let index = 0; index < 5; index += 1) {
     await Promise.resolve();
@@ -255,6 +288,7 @@ describe('PagesScreen', () => {
     applyPagePanelStructure: vi.fn(),
     autofillEpisodePagesFromStory: vi.fn(),
     createScene: vi.fn(),
+    generatePage: vi.fn(),
     generatePageSkeleton: vi.fn(),
     getChapters: vi.fn(),
     getEntitiesPage: vi.fn(),
@@ -267,6 +301,7 @@ describe('PagesScreen', () => {
     getScenes: vi.fn(),
     getWorksPage: vi.fn(),
     replacePanelEntityAssignments: vi.fn(),
+    refreshImageAuthorizationHeader: vi.fn(),
     updatePageSettings: vi.fn(),
     updatePanel: vi.fn(),
     updateScene: vi.fn(),
@@ -304,6 +339,8 @@ describe('PagesScreen', () => {
     api.autofillEpisodePagesFromStory.mockResolvedValue({
       job_id: storyAutofillJob('queued').id,
     });
+    api.generatePage.mockResolvedValue({ job_id: pageImageJob('queued').id });
+    api.refreshImageAuthorizationHeader.mockResolvedValue('Bearer refreshed-token');
     api.createScene.mockResolvedValue(scene('scene-2', 2, null));
     api.updateScene.mockImplementation(async (id: string, body: Record<string, unknown>) => ({
       ...scene(id, 1, 'ローリストン・ガーデン'),
@@ -347,6 +384,8 @@ describe('PagesScreen', () => {
         <QueryClientProvider client={queryClient}>
           <PagesScreen
             api={api}
+            imageApiBaseUrl="https://api.example.com"
+            imageAuthorizationHeader="Bearer id-token"
             language="ja"
             organizationId={null}
             sessionKey="session-1"
@@ -618,6 +657,159 @@ describe('PagesScreen', () => {
     expect(api.autofillEpisodePagesFromStory).toHaveBeenCalledOnce();
     expect(api.updatePageSettings.mock.invocationCallOrder[0])
       .toBeLessThan(api.autofillEpisodePagesFromStory.mock.invocationCallOrder[0]!);
+  });
+
+  it('Page画像生成前にdirty Scene・Page設定・Panelをこの順で保存する', async () => {
+    api.getPages.mockResolvedValue({ pages: [page] });
+    api.getJob.mockResolvedValue(pageImageJob('processing'));
+    const resolveDirtyAction = vi.fn().mockResolvedValue('save' as const);
+    const renderer = await renderScreen({ resolveDirtyAction });
+    await selectEpisode(renderer);
+    await act(async () => {
+      renderer.root.findByProps({
+        accessibilityLabel: 'ページ設定のページ 1を選択',
+      }).props.onPress();
+      await Promise.resolve();
+    });
+    await selectPanel(renderer);
+    await act(async () => {
+      renderer.root.findByProps({ accessibilityLabel: '場所' }).props.onChangeText('生成前に保存する場所');
+      renderer.root.findByProps({
+        accessibilityLabel: 'セリフを吹き出しだけにする',
+      }).props.onPress();
+      renderer.root.findByProps({ accessibilityLabel: '状況' }).props.onChangeText('生成前に保存するコマ');
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      renderer.root.findByProps({ label: 'ページ画像を生成（3クレジット以上）' }).props.onPress();
+      await flushQueries();
+    });
+
+    expect(api.updateScene).toHaveBeenCalledOnce();
+    expect(api.updatePageSettings).toHaveBeenCalledOnce();
+    expect(api.updatePanel).toHaveBeenCalledOnce();
+    expect(api.generatePage).toHaveBeenCalledWith(page.id, null);
+    expect(api.updateScene.mock.invocationCallOrder[0])
+      .toBeLessThan(api.updatePageSettings.mock.invocationCallOrder[0]!);
+    expect(api.updatePageSettings.mock.invocationCallOrder[0])
+      .toBeLessThan(api.updatePanel.mock.invocationCallOrder[0]!);
+    expect(api.updatePanel.mock.invocationCallOrder[0])
+      .toBeLessThan(api.generatePage.mock.invocationCallOrder[0]!);
+  });
+
+  it('Page画像生成のdirty確認待ちから他のScene・Page・Panel操作を止める', async () => {
+    api.getPages.mockResolvedValue({ pages: [page] });
+    const decision = deferred<'cancel' | 'discard' | 'save'>();
+    const renderer = await renderScreen({
+      resolveDirtyAction: vi.fn().mockReturnValue(decision.promise),
+    });
+    await selectEpisode(renderer);
+    await act(async () => {
+      renderer.root.findByProps({ accessibilityLabel: '場所' }).props.onChangeText('確認待ちの変更');
+      await Promise.resolve();
+    });
+    await act(async () => {
+      renderer.root.findByProps({ label: 'ページ画像を生成（3クレジット以上）' }).props.onPress();
+      await Promise.resolve();
+    });
+
+    expect(renderer.root.findByProps({ label: 'ストーリーから設定を自動入力' }).props.disabled)
+      .toBe(true);
+    expect(renderer.root.findByProps({ label: 'シーンを追加' }).props.disabled).toBe(true);
+    expect(renderer.root.findByType(PageSettingsSection).props.editingBlocked).toBe(false);
+    expect(renderer.root.findByType(PageSettingsSection).props.generationPreparationActive).toBe(true);
+    expect(renderer.root.findByType(PanelEditingSection).props.generationActive).toBe(false);
+    expect(renderer.root.findByType(PanelEditingSection).props.generationPreparationActive).toBe(true);
+    expect(renderer.root.findByProps({ accessibilityLabel: '第一話を選択' }).props.disabled)
+      .toBe(true);
+    expect(renderer.root.findByProps({
+      accessibilityLabel: 'シーン 1 - ローリストン・ガーデンを選択',
+    }).props.disabled).toBe(true);
+    expect(api.generatePage).not.toHaveBeenCalled();
+
+    await act(async () => {
+      decision.resolve('cancel');
+      await flushQueries();
+    });
+    expect(api.generatePage).not.toHaveBeenCalled();
+  });
+
+  it('Page画像準備lock中も既存dirty Page設定とPanelの明示保存だけは順に完了できる', async () => {
+    api.getPages.mockResolvedValue({ pages: [page] });
+    api.getJob.mockResolvedValue(pageImageJob('processing'));
+    const pageDecision = deferred<'cancel' | 'discard' | 'save'>();
+    const panelDecision = deferred<'cancel' | 'discard' | 'save'>();
+    const resolveDirtyAction = vi.fn()
+      .mockImplementationOnce(() => pageDecision.promise)
+      .mockImplementationOnce(() => panelDecision.promise);
+    const renderer = await renderScreen({ resolveDirtyAction });
+    await selectEpisode(renderer);
+    await act(async () => {
+      renderer.root.findByProps({
+        accessibilityLabel: 'ページ設定のページ 1を選択',
+      }).props.onPress();
+      await Promise.resolve();
+    });
+    await selectPanel(renderer);
+    await act(async () => {
+      renderer.root.findByProps({
+        accessibilityLabel: 'セリフを吹き出しだけにする',
+      }).props.onPress();
+      renderer.root.findByProps({ accessibilityLabel: '状況' }).props.onChangeText('準備lock中に保存するコマ');
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      renderer.root.findByProps({ label: 'ページ画像を生成（3クレジット以上）' }).props.onPress();
+      await Promise.resolve();
+    });
+    expect(renderer.root.findByType(PageSettingsSection).props.editingBlocked).toBe(false);
+    expect(renderer.root.findByType(PageSettingsSection).props.generationPreparationActive).toBe(true);
+    expect(renderer.root.findByType(PanelEditingSection).props.generationActive).toBe(false);
+    expect(renderer.root.findByType(PanelEditingSection).props.generationPreparationActive).toBe(true);
+    expect(renderer.root.findByType(PageSettingsSection).findByProps({
+      accessibilityLabel: 'ページ設定のページ 1を選択',
+    }).props.disabled).toBe(true);
+    expect(renderer.root.findByType(PanelEditingSection).findByProps({
+      accessibilityLabel: 'コマ 1を選択',
+    }).props.disabled).toBe(true);
+
+    await act(async () => {
+      pageDecision.resolve('save');
+      await flushQueries();
+    });
+    expect(api.updatePageSettings).toHaveBeenCalledOnce();
+    expect(resolveDirtyAction).toHaveBeenCalledTimes(2);
+    expect(api.generatePage).not.toHaveBeenCalled();
+
+    await act(async () => {
+      panelDecision.resolve('save');
+      await flushQueries();
+    });
+    expect(api.updatePanel).toHaveBeenCalledOnce();
+    expect(api.generatePage).toHaveBeenCalledOnce();
+    expect(api.updatePageSettings.mock.invocationCallOrder[0])
+      .toBeLessThan(api.updatePanel.mock.invocationCallOrder[0]!);
+    expect(api.updatePanel.mock.invocationCallOrder[0])
+      .toBeLessThan(api.generatePage.mock.invocationCallOrder[0]!);
+  });
+
+  it('同じEpisodeのPage画像job中はStory・Scene・Page設定・Panel操作を止める', async () => {
+    api.getPages.mockResolvedValue({ pages: [page] });
+    api.getJobs.mockResolvedValue({ jobs: [pageImageJob('processing')], next_cursor: null });
+    api.getJob.mockResolvedValue(pageImageJob('processing'));
+    const renderer = await renderScreen();
+    await selectEpisode(renderer);
+    await act(async () => {
+      await flushQueries();
+    });
+
+    expect(renderer.root.findByProps({ label: 'ストーリーから設定を自動入力' }).props.disabled)
+      .toBe(true);
+    expect(renderer.root.findByProps({ label: 'シーンを追加' }).props.disabled).toBe(true);
+    expect(renderer.root.findByType(PageSettingsSection).props.editingBlocked).toBe(true);
+    expect(renderer.root.findByType(PanelEditingSection).props.generationActive).toBe(true);
   });
 
   it('Panel構造変更はdirty Page設定を先に保存してからPage metadataを再取得する', async () => {

@@ -12,6 +12,11 @@ import { StyleSheet, Text, View } from 'react-native';
 import { PrimaryButton } from '../components/PrimaryButton';
 import { PagePlanningSection } from '../components/PagePlanningSection';
 import {
+  hasActivePageImageJobForPages,
+  PageImageGenerationSection,
+  type PageImageGenerationApiPort,
+} from '../components/PageImageGenerationSection';
+import {
   PageSettingsSection,
   type PageSettingsApiPort,
   type PageSettingsSectionHandle,
@@ -66,7 +71,10 @@ export interface PagesScreenHandle {
   prepareToLeave(): Promise<boolean>;
 }
 
-export interface PagesApiPort extends PanelEditingApiPort, PageSettingsApiPort {
+export interface PagesApiPort extends
+  PageImageGenerationApiPort,
+  PanelEditingApiPort,
+  PageSettingsApiPort {
   autofillEpisodePagesFromStory(
     episodeId: string,
     language: UiLanguage,
@@ -119,6 +127,8 @@ export interface PagesApiPort extends PanelEditingApiPort, PageSettingsApiPort {
 
 interface PagesScreenProps {
   api: PagesApiPort;
+  imageApiBaseUrl: string;
+  imageAuthorizationHeader: string | null;
   jobPollIntervalMs?: number;
   language: UiLanguage;
   organizationId: string | null;
@@ -129,6 +139,8 @@ interface PagesScreenProps {
 export const PagesScreen = forwardRef<PagesScreenHandle, PagesScreenProps>(
   function PagesScreen({
     api,
+    imageApiBaseUrl,
+    imageAuthorizationHeader,
     jobPollIntervalMs = 8_000,
     language,
     organizationId,
@@ -158,6 +170,10 @@ export const PagesScreen = forwardRef<PagesScreenHandle, PagesScreenProps>(
     const [generationNotice, setGenerationNotice] = useState<string | null>(null);
     const [jobStatusCheckFailed, setJobStatusCheckFailed] = useState(false);
     const [panelStructureActive, setPanelStructureActive] = useState(false);
+    const [pageImageOperationState, setPageImageOperationState] = useState({
+      activeCount: 0,
+      preparationCount: 0,
+    });
     const pageOperation = useRef<Promise<boolean> | null>(null);
     const transitionOperation = useRef<Promise<boolean> | null>(null);
     const pageSettingsRef = useRef<PageSettingsSectionHandle>(null);
@@ -165,6 +181,7 @@ export const PagesScreen = forwardRef<PagesScreenHandle, PagesScreenProps>(
     const handledTerminalJobIds = useRef(new Set<string>());
     const jobsPollInFlight = useRef(false);
     const jobPollInFlight = useRef(false);
+    const pageImageOperationIds = useRef(new Set<string>());
 
     const worksQuery = useQuery({
       queryKey: queryKeys.works(),
@@ -248,7 +265,7 @@ export const PagesScreen = forwardRef<PagesScreenHandle, PagesScreenProps>(
       ? jobQuery.data ?? null
       : null;
     const activeJob = exactActiveJob ?? historyActiveJob ?? null;
-    const generationActive = historyActiveJob !== undefined || (trackedJobMatchesSelection
+    const planningGenerationActive = historyActiveJob !== undefined || (trackedJobMatchesSelection
       && (
         jobQuery.data === undefined
         || (
@@ -257,6 +274,16 @@ export const PagesScreen = forwardRef<PagesScreenHandle, PagesScreenProps>(
           && isEpisodePlanningJob(jobQuery.data, selectedEpisode.id)
         )
       ));
+    const pageImageHistoryActive = hasActivePageImageJobForPages(
+      jobsQuery.data?.jobs ?? [],
+      pages,
+    );
+    const pageImagePreparationActive = pageImageOperationState.preparationCount > 0;
+    const pageImageTrackedOperationActive = pageImageOperationState.activeCount
+      > pageImageOperationState.preparationCount;
+    const pageImageGenerationActive = pageImageTrackedOperationActive || pageImageHistoryActive;
+    const generationActive = planningGenerationActive || pageImageGenerationActive;
+    const pageInteractionBlocked = generationActive || pageImagePreparationActive;
     const panelEditingBlocked = generationActive
       || jobsQuery.isLoading
       || jobsQuery.isFetching
@@ -605,6 +632,9 @@ export const PagesScreen = forwardRef<PagesScreenHandle, PagesScreenProps>(
       changeSelection: () => void | boolean | Promise<void | boolean>,
       includePageAndPanel = true,
     ): Promise<boolean> => {
+      if (pageInteractionBlocked) {
+        return Promise.resolve(false);
+      }
       if (transitionOperation.current !== null) {
         return transitionOperation.current;
       }
@@ -631,7 +661,12 @@ export const PagesScreen = forwardRef<PagesScreenHandle, PagesScreenProps>(
         }
       });
       return operation;
-    }, [resolvePendingPageSettings, resolvePendingPanel, resolvePendingScene]);
+    }, [
+      pageInteractionBlocked,
+      resolvePendingPageSettings,
+      resolvePendingPanel,
+      resolvePendingScene,
+    ]);
 
     const refreshPagesForSettings = useCallback(async (): Promise<readonly PageRecord[]> => {
       const result = await refetchPages();
@@ -641,10 +676,46 @@ export const PagesScreen = forwardRef<PagesScreenHandle, PagesScreenProps>(
       return sortPages(result.data.pages);
     }, [refetchPages]);
 
+    const prepareForPageImageGeneration = useCallback(async (
+      pageId: string,
+    ): Promise<PageRecord | null> => {
+      if (!(await resolvePendingChanges())) {
+        return null;
+      }
+      try {
+        const refreshedPages = await refreshPagesForSettings();
+        return refreshedPages.find(
+          (pageRecord) => pageRecord.id === pageId
+            && pageRecord.episode_id === selectedEpisode?.id,
+        ) ?? null;
+      } catch {
+        return null;
+      }
+    }, [refreshPagesForSettings, resolvePendingChanges, selectedEpisode?.id]);
+
+    const handlePageImageOperationActiveChange = useCallback((
+      operationId: string,
+      active: boolean,
+    ): void => {
+      const operations = pageImageOperationIds.current;
+      if (active ? operations.has(operationId) : !operations.has(operationId)) {
+        return;
+      }
+      if (active) {
+        operations.add(operationId);
+      } else {
+        operations.delete(operationId);
+      }
+      setPageImageOperationState({
+        activeCount: operations.size,
+        preparationCount: [...operations].filter(isPageImagePreparationOperationId).length,
+      });
+    }, []);
+
     const createScene = useCallback((): Promise<boolean> => transition(async () => {
       if (
         selectedEpisode === null
-        || generationActive
+        || pageInteractionBlocked
         || jobsQuery.isLoading
         || jobsQuery.isFetching
         || jobsQuery.isError
@@ -696,7 +767,7 @@ export const PagesScreen = forwardRef<PagesScreenHandle, PagesScreenProps>(
       api,
       applySelectedScene,
       language,
-      generationActive,
+      pageInteractionBlocked,
       jobsQuery.isError,
       jobsQuery.isFetching,
       jobsQuery.isLoading,
@@ -827,7 +898,7 @@ export const PagesScreen = forwardRef<PagesScreenHandle, PagesScreenProps>(
         || jobsQuery.isLoading
         || jobsQuery.isFetching
         || jobsQuery.isError
-        || generationActive
+        || pageInteractionBlocked
         || pages.length > 0
         || selectedEpisode.page_skeleton_generated
       ) {
@@ -864,7 +935,7 @@ export const PagesScreen = forwardRef<PagesScreenHandle, PagesScreenProps>(
     }), [
       api,
       episodesQuery,
-      generationActive,
+      pageInteractionBlocked,
       jobsQuery.isError,
       jobsQuery.isFetching,
       jobsQuery.isLoading,
@@ -885,7 +956,7 @@ export const PagesScreen = forwardRef<PagesScreenHandle, PagesScreenProps>(
         || jobsQuery.isLoading
         || jobsQuery.isFetching
         || jobsQuery.isError
-        || generationActive
+        || pageInteractionBlocked
         || pages.length === 0
         || pages.length > 32
         || pages.some((pageRecord) => (
@@ -922,7 +993,7 @@ export const PagesScreen = forwardRef<PagesScreenHandle, PagesScreenProps>(
       });
     }), [
       api,
-      generationActive,
+      pageInteractionBlocked,
       jobsQuery.isError,
       jobsQuery.isFetching,
       jobsQuery.isLoading,
@@ -953,6 +1024,7 @@ export const PagesScreen = forwardRef<PagesScreenHandle, PagesScreenProps>(
       <View style={styles.container}>
         <Text style={styles.heading}>{t(language, 'pages')}</Text>
         <StorySelectionSection
+          disabled={pageInteractionBlocked}
           emptyMessage={t(language, 'storyNoWorks')}
           error={worksQuery.isError}
           errorMessage={t(language, 'storyWorksError')}
@@ -978,6 +1050,7 @@ export const PagesScreen = forwardRef<PagesScreenHandle, PagesScreenProps>(
         />
         {selectedWorkId === null ? null : (
           <StorySelectionSection
+            disabled={pageInteractionBlocked}
             emptyMessage={t(language, 'storyNoChapters')}
             error={chaptersQuery.isError}
             errorMessage={t(language, 'storyChaptersError')}
@@ -1006,6 +1079,7 @@ export const PagesScreen = forwardRef<PagesScreenHandle, PagesScreenProps>(
         )}
         {selectedChapterId === null ? null : (
           <StorySelectionSection
+            disabled={pageInteractionBlocked}
             emptyMessage={t(language, 'storyNoEpisodes')}
             error={episodesQuery.isError}
             errorMessage={t(language, 'storyEpisodesError')}
@@ -1036,10 +1110,10 @@ export const PagesScreen = forwardRef<PagesScreenHandle, PagesScreenProps>(
           <PagePlanningSection
             activeJob={activeJob}
             episodeGenerated={selectedEpisode.page_skeleton_generated}
-            generationActive={generationActive}
+            generationActive={pageInteractionBlocked}
             generationBusy={
               sceneBusy
-              || generationActive
+              || pageInteractionBlocked
               || jobsQuery.isLoading
               || jobsQuery.isFetching
               || jobsQuery.isError
@@ -1073,6 +1147,7 @@ export const PagesScreen = forwardRef<PagesScreenHandle, PagesScreenProps>(
             api={api}
             editingBlocked={panelEditingBlocked || panelStructureActive}
             episodeId={selectedEpisode.id}
+            generationPreparationActive={pageImagePreparationActive}
             language={language}
             organizationId={organizationId}
             pageListReady={pagesQuery.data !== undefined}
@@ -1088,6 +1163,7 @@ export const PagesScreen = forwardRef<PagesScreenHandle, PagesScreenProps>(
           <PanelEditingSection
             api={api}
             generationActive={panelEditingBlocked}
+            generationPreparationActive={pageImagePreparationActive}
             language={language}
             organizationId={organizationId}
             onStructureActiveChange={setPanelStructureActive}
@@ -1102,10 +1178,39 @@ export const PagesScreen = forwardRef<PagesScreenHandle, PagesScreenProps>(
           />
         )}
         {selectedEpisode === null ? null : (
+          <PageImageGenerationSection
+            api={api}
+            episodeId={selectedEpisode.id}
+            externalOperationActive={
+              planningGenerationActive
+              || panelStructureActive
+              || sceneBusy
+            }
+            imageApiBaseUrl={imageApiBaseUrl}
+            imageAuthorizationHeader={imageAuthorizationHeader}
+            jobPollIntervalMs={jobPollIntervalMs}
+            key={[
+              'page-image-generation',
+              sessionKey,
+              organizationId ?? 'personal',
+              selectedEpisode.id,
+            ].join(':')}
+            language={language}
+            onOperationActiveChange={handlePageImageOperationActiveChange}
+            organizationId={organizationId}
+            pageListReady={pagesQuery.data !== undefined}
+            pages={pages}
+            prepareForGeneration={prepareForPageImageGeneration}
+            refreshPages={refreshPagesForSettings}
+            sessionKey={sessionKey}
+          />
+        )}
+        {selectedEpisode === null ? null : (
           <View style={styles.sceneSection}>
             <Text style={styles.subheading}>{t(language, 'scenes')}</Text>
             <Text style={styles.muted}>{t(language, 'sceneHelp')}</Text>
             <StorySelectionSection
+              disabled={pageInteractionBlocked}
               emptyMessage={t(language, 'sceneNoScenes')}
               error={scenesQuery.isError}
               errorMessage={t(language, 'sceneScenesError')}
@@ -1130,7 +1235,7 @@ export const PagesScreen = forwardRef<PagesScreenHandle, PagesScreenProps>(
             <PrimaryButton
               disabled={
                 sceneBusy
-                || generationActive
+                || pageInteractionBlocked
                 || jobsQuery.isLoading
                 || jobsQuery.isFetching
                 || jobsQuery.isError
@@ -1143,7 +1248,7 @@ export const PagesScreen = forwardRef<PagesScreenHandle, PagesScreenProps>(
               sceneError === null ? null : <Text style={styles.error}>{sceneError}</Text>
             ) : (
               <SceneEditor
-                busy={sceneBusy || generationActive}
+                busy={sceneBusy || pageInteractionBlocked}
                 dirty={sceneDirty}
                 draft={sceneDraft}
                 errorMessage={sceneError}
@@ -1186,6 +1291,10 @@ function isActiveJob(
   job: GenerationJobRecord | undefined,
 ): job is GenerationJobRecord & { status: 'queued' | 'processing' } {
   return job?.status === 'queued' || job?.status === 'processing';
+}
+
+function isPageImagePreparationOperationId(operationId: string): boolean {
+  return operationId.startsWith('page-image-start:');
 }
 
 function isEpisodePlanningJob(

@@ -10,6 +10,7 @@ export interface StorySelectionItem {
 }
 
 interface StorySelectionSectionProps {
+  disabled?: boolean;
   emptyMessage: string;
   error: boolean;
   errorMessage: string;
@@ -25,6 +26,7 @@ interface StorySelectionSectionProps {
 }
 
 export function StorySelectionSection({
+  disabled = false,
   emptyMessage,
   error,
   errorMessage,
@@ -57,13 +59,17 @@ export function StorySelectionSection({
             <Pressable
               accessibilityLabel={`${item.label}${selectSuffix}`}
               accessibilityRole="button"
-              accessibilityState={{ selected: item.id === selectedId }}
+              accessibilityState={disabled
+                ? { disabled: true, selected: item.id === selectedId }
+                : { selected: item.id === selectedId }}
+              disabled={disabled}
               key={item.id}
               onPress={() => onSelect(item.id)}
               style={({ pressed }) => [
                 styles.selectionButton,
                 item.id === selectedId && styles.selectionButtonSelected,
-                pressed && styles.pressed,
+                disabled && styles.disabled,
+                pressed && !disabled && styles.pressed,
               ]}
             >
               <Text
@@ -83,6 +89,9 @@ export function StorySelectionSection({
 }
 
 const styles = StyleSheet.create({
+  disabled: {
+    opacity: 0.5,
+  },
   muted: {
     color: colors.muted,
     fontSize: 14,

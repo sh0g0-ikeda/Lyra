@@ -112,6 +112,7 @@ export interface PanelEditingApiPort {
 interface PanelEditingSectionProps {
   api: PanelEditingApiPort;
   generationActive: boolean;
+  generationPreparationActive?: boolean;
   language: UiLanguage;
   organizationId: string | null;
   onStructureActiveChange(active: boolean): void;
@@ -131,6 +132,7 @@ export const PanelEditingSection = forwardRef<
 >(function PanelEditingSection({
   api,
   generationActive,
+  generationPreparationActive = false,
   language,
   organizationId,
   onStructureActiveChange,
@@ -259,10 +261,14 @@ export const PanelEditingSection = forwardRef<
     () => panelSpeakerEntityIds(draft?.dialogue ?? []),
     [draft?.dialogue],
   );
-  const readOnly = selectedPage === null
+  const writeBlocked = selectedPage === null
     || selectedPage.status === 'confirmed'
     || selectedPage.status === 'generating'
     || generationActive;
+  const readOnly = writeBlocked || generationPreparationActive;
+  const selectionLockActive = generationActive || generationPreparationActive;
+  const pageSelectionBlocked = selectionLockActive && selectedPageId !== null;
+  const panelSelectionBlocked = selectionLockActive && selectedPanelId !== null;
   const editorReadOnly = readOnly || structureBusy || structureReconcileRequired;
   const currentScope = [
     sessionKey,
@@ -359,7 +365,7 @@ export const PanelEditingSection = forwardRef<
       return Promise.resolve(false);
     }
     if (
-      readOnly
+      writeBlocked
       || panelsQuery.isFetching
       || panelsQuery.isError
       || assignmentDirty
@@ -453,7 +459,6 @@ export const PanelEditingSection = forwardRef<
     panelsQuery.isFetching,
     queryClient,
     queryKeys,
-    readOnly,
     remoteChanged,
     savedDraft,
     savedPanel,
@@ -461,6 +466,7 @@ export const PanelEditingSection = forwardRef<
     selectedPanelId,
     structureBusy,
     structureReconcileRequired,
+    writeBlocked,
   ]);
 
   const saveCurrentAssignments = useCallback((): Promise<boolean> => {
@@ -482,7 +488,7 @@ export const PanelEditingSection = forwardRef<
       return Promise.resolve(false);
     }
     if (
-      readOnly
+      writeBlocked
       || panelDirty
       || panelsQuery.isFetching
       || panelsQuery.isError
@@ -616,13 +622,13 @@ export const PanelEditingSection = forwardRef<
     panelsQuery.isFetching,
     queryClient,
     queryKeys,
-    readOnly,
     requiredSpeakerEntityIds,
     savedAssignments,
     selectedPage,
     selectedPanelId,
     structureBusy,
     structureReconcileRequired,
+    writeBlocked,
   ]);
 
   const reconcileAssignments = useCallback((): Promise<boolean> => {
@@ -1122,6 +1128,7 @@ export const PanelEditingSection = forwardRef<
       <Text style={styles.muted}>{t(language, 'panelEditingHelp')}</Text>
       {pageListReady ? (
         <StorySelectionSection
+          disabled={pageSelectionBlocked}
           emptyMessage={t(language, 'pageEmpty')}
           error={false}
           errorMessage={t(language, 'pageLoadError')}
@@ -1134,7 +1141,7 @@ export const PanelEditingSection = forwardRef<
           loadingMessage={t(language, 'pageLoading')}
           onRetry={() => undefined}
           onSelect={(pageId) => {
-            if (pageId !== selectedPageId) {
+            if (!pageSelectionBlocked && pageId !== selectedPageId) {
               void transition(() => {
                 setSelectedPageId(pageId);
                 applySelectedPanel(null);
@@ -1156,6 +1163,7 @@ export const PanelEditingSection = forwardRef<
       ) : null}
       {selectedPage === null ? null : (
         <StorySelectionSection
+          disabled={panelSelectionBlocked}
           emptyMessage={t(language, 'panelNoPanels')}
           error={panelsQuery.isError}
           errorMessage={t(language, 'panelLoadError')}
@@ -1169,7 +1177,11 @@ export const PanelEditingSection = forwardRef<
           onRetry={() => void panelsQuery.refetch()}
           onSelect={(panelId) => {
             const panel = panels.find((candidate) => candidate.id === panelId);
-            if (panel !== undefined && panel.id !== selectedPanelId) {
+            if (
+              !panelSelectionBlocked
+              && panel !== undefined
+              && panel.id !== selectedPanelId
+            ) {
               void transition(() => {
                 applySelectedPanel(panel);
                 setErrorMessage(null);

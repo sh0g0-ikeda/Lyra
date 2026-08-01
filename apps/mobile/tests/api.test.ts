@@ -1079,6 +1079,62 @@ describe('LyraMobileApiClient', () => {
     );
   });
 
+  it('Page画像生成を既存endpointへorganization scope付きで1回だけ送る', async () => {
+    const pageId = buildPage().id;
+    const organizationId = '55555555-5555-4555-8555-555555555555';
+    const accepted = { job_id: '99999999-9999-4999-8999-999999999999' };
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(accepted, 202));
+    const api = new LyraMobileApiClient({
+      apiBaseUrl: 'https://api.example.com',
+      auth: new FakeAuthSession(),
+      fetcher,
+    });
+
+    await expect(api.generatePage(pageId, organizationId)).resolves.toEqual(accepted);
+
+    expect(fetcher).toHaveBeenCalledOnce();
+    expect(fetcher).toHaveBeenCalledWith(
+      `https://api.example.com/api/pages/${pageId}/generate?organization_id=${organizationId}`,
+      expect.objectContaining({
+        body: undefined,
+        method: 'POST',
+      }),
+    );
+  });
+
+  it('Page画像生成の不正responseを採用せずPOSTを自動再送しない', async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({ job_id: '' }, 202));
+    const api = new LyraMobileApiClient({
+      apiBaseUrl: 'https://api.example.com',
+      auth: new FakeAuthSession(),
+      fetcher,
+    });
+
+    await expect(api.generatePage(buildPage().id)).rejects.toMatchObject({
+      code: 'INVALID_API_RESPONSE',
+      status: 502,
+    });
+    expect(fetcher).toHaveBeenCalledOnce();
+  });
+
+  it('Page画像生成のserver errorをPOSTで自動再送しない', async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response('raw provider detail', { status: 503 }),
+    );
+    const api = new LyraMobileApiClient({
+      apiBaseUrl: 'https://api.example.com',
+      auth: new FakeAuthSession(),
+      fetcher,
+    });
+
+    await expect(api.generatePage(buildPage().id)).rejects.toSatisfy(
+      (error: unknown) => error instanceof ApiError
+        && error.code === 'SERVER_ERROR'
+        && !error.message.includes('raw provider detail'),
+    );
+    expect(fetcher).toHaveBeenCalledOnce();
+  });
+
   it('Panel構造変更の401は認証成立前としてtoken更新後に同じbodyを1度だけ送る', async () => {
     const firstPanelId = buildPanel().id;
     const createdPanelId = '88888888-8888-4888-8888-888888888888';
