@@ -1,5 +1,7 @@
 import type { ZodType } from 'zod';
 import {
+  accountDeletionPreviewResponseSchema,
+  accountDeletionResultResponseSchema,
   chapterSchema,
   chaptersResponseSchema,
   currentSessionSchema,
@@ -54,6 +56,12 @@ export type PagePanelStructureResponse = ReturnType<typeof pagePanelStructureRes
 export type GenerationJobRecord = ReturnType<typeof generationJobResponseSchema.parse>;
 export type PageSkeletonResponse = ReturnType<typeof pageSkeletonResponseSchema.parse>;
 export type PageJobAcceptedResponse = ReturnType<typeof pageJobAcceptedResponseSchema.parse>;
+export type AccountDeletionPreviewRecord = ReturnType<
+  typeof accountDeletionPreviewResponseSchema.parse
+>;
+export type AccountDeletionResultRecord = ReturnType<
+  typeof accountDeletionResultResponseSchema.parse
+>;
 export type MobileStoreProductCatalogRecord = ReturnType<
   typeof mobileStoreProductCatalogSchema.parse
 >;
@@ -79,6 +87,13 @@ export interface VerifyGoogleMobilePurchaseInput {
 export interface RestoreMobilePurchasesInput {
   apple_signed_transactions: string[];
   google_purchase_tokens: string[];
+}
+
+export interface AccountDeletionRequestInput {
+  confirmation: 'DELETE';
+  acknowledge_personal_subscriptions: boolean;
+  acknowledge_store_billing: boolean;
+  acknowledge_personal_assets: boolean;
 }
 
 export interface ListWorksPageInput {
@@ -918,6 +933,63 @@ export class LyraMobileApiClient {
     return job;
   }
 
+  public getAccountDeletionPreview(): Promise<AccountDeletionPreviewRecord> {
+    return this.requestJson(
+      '/api/account/deletion',
+      accountDeletionPreviewResponseSchema,
+    );
+  }
+
+  public async requestAccountDeletion(
+    input: AccountDeletionRequestInput,
+  ): Promise<AccountDeletionResultRecord> {
+    if (
+      input.confirmation !== 'DELETE'
+      || typeof input.acknowledge_personal_subscriptions !== 'boolean'
+      || typeof input.acknowledge_store_billing !== 'boolean'
+      || typeof input.acknowledge_personal_assets !== 'boolean'
+    ) {
+      throw invalidRequest();
+    }
+    const options: ApiRequestOptions = {
+      body: {
+        confirmation: input.confirmation,
+        acknowledge_personal_subscriptions:
+          input.acknowledge_personal_subscriptions,
+        acknowledge_store_billing: input.acknowledge_store_billing,
+        acknowledge_personal_assets: input.acknowledge_personal_assets,
+      },
+      method: 'POST',
+    };
+    const tokens = await this.requireTokens();
+    let response = await this.request('/api/account/deletion', tokens.idToken, options);
+    if (response.status === 401) {
+      const refreshed = await this.auth.refreshTokens();
+      response = await this.request('/api/account/deletion', refreshed.idToken, options);
+    }
+    if (!response.ok && response.status !== 409) {
+      throw new ApiError(
+        response.status >= 500 ? 'SERVER_ERROR' : 'REQUEST_FAILED',
+        response.status,
+        'The request could not be completed.',
+      );
+    }
+    if (response.status !== 200 && response.status !== 202 && response.status !== 409) {
+      throw invalidApiResponse();
+    }
+    let payload: unknown;
+    try {
+      payload = await response.json();
+    } catch {
+      throw invalidApiResponse();
+    }
+    const parsed = accountDeletionResultResponseSchema.safeParse(payload);
+    if (!parsed.success || !accountDeletionStatusMatchesHttp(parsed.data, response.status)) {
+      throw invalidApiResponse();
+    }
+    return parsed.data;
+  }
+
   public async getMobileStoreProductCatalog(
     store: 'apple' | 'google',
   ): Promise<MobileStoreProductCatalogRecord> {
@@ -1131,6 +1203,15 @@ function normalizeRestoreProofs(
 
 function invalidRequest(): ApiError {
   return new ApiError('INVALID_REQUEST', 422, 'The request is invalid.');
+}
+
+function accountDeletionStatusMatchesHttp(
+  result: AccountDeletionResultRecord,
+  httpStatus: number,
+): boolean {
+  if (result.status === 'blocked') return httpStatus === 409;
+  if (result.status === 'completed') return httpStatus === 200;
+  return httpStatus === 202;
 }
 
 function normalizeRequestTimeout(value: number | undefined): number {

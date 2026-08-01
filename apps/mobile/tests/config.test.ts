@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { validateMobileConfig } from '@/lib/config';
 
 const productionConfig = {
+  accountDeletionEnabled: false,
   apiBaseUrl: 'https://app.lyra-editor.com',
   cognitoDomain: 'https://example.auth.ap-northeast-1.amazoncognito.com',
   cognitoClientId: 'abc123456789',
@@ -14,6 +15,14 @@ const productionConfig = {
 };
 
 describe('mobile configuration validation', () => {
+  it('アカウント削除は公開設定で明示された場合だけ有効にする', () => {
+    expect(productionConfig.accountDeletionEnabled).toBe(false);
+    expect(validateMobileConfig({
+      ...productionConfig,
+      accountDeletionEnabled: true,
+    }).issues).toContain('PRODUCTION_NATIVE_LINKING');
+  });
+
   it('store billingは公開設定で明示された場合だけ有効にする', () => {
     expect(productionConfig.mobileStoreBillingEnabled).toBe(false);
     expect(validateMobileConfig({
