@@ -829,6 +829,7 @@ export function PagesScreen(): React.JSX.Element {
     format: ExportFormat;
   } | null>(null);
   const [pageImageDownloadError, setPageImageDownloadError] = useState<string | null>(null);
+  const [pageImageDownloadSuccess, setPageImageDownloadSuccess] = useState(false);
   const [localJob, setLocalJob] = useState<{
     id: string;
     resourceId: string;
@@ -1872,10 +1873,15 @@ export function PagesScreen(): React.JSX.Element {
         mimeType: 'image/png'
       }),
     onError: (error) => {
+      setPageImageDownloadSuccess(false);
       setPageImageDownloadError(fileTransferErrorMessage(error, language));
     },
     onMutate: () => {
+      setPageImageDownloadSuccess(false);
       setPageImageDownloadError(null);
+    },
+    onSuccess: () => {
+      setPageImageDownloadSuccess(true);
     }
   });
 
@@ -1972,6 +1978,7 @@ export function PagesScreen(): React.JSX.Element {
     exportPagesMutation.reset,
     downloadPageMutation.reset,
     () => setPageImageDownloadError(null),
+    () => setPageImageDownloadSuccess(false),
     openWebEditorMutation.reset
   ]);
 
@@ -3245,6 +3252,9 @@ export function PagesScreen(): React.JSX.Element {
           />
         </View>
         {pageImageDownloadError === null ? null : <Notice message={pageImageDownloadError} tone="warning" />}
+        {pageImageDownloadSuccess ? (
+          <Notice message={t(language, 'shared.fileTransfer.saved')} tone="success" />
+        ) : null}
         <JobStatusCard
           api={api}
           jobId={displayedJobId}
