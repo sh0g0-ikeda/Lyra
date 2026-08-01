@@ -6,7 +6,7 @@
 
 対象PR: [#67 feat(mobile): production-ready Lyra mobile workflow](https://github.com/sh0g0-ikeda/Lyra/pull/67)
 
-進捗: 103件完了 / 379件未完了
+進捗: 104件完了 / 378件未完了
 
 実装監査基準: [PR #151](https://github.com/sh0g0-ikeda/Lyra/pull/151) / `bc783f2`（Mobileキャラ服装・状態管理 feature code head。local full gate成功。証跡追記後の最終headもGitHub CIで統合前に再確認）
 
@@ -351,7 +351,10 @@ Accountのfalse-positive error解消は、Mobile基盤の統合後にPR #144と�
   - [x] Panel作成・削除・並べ替えのBackend安全境界を追加
     - 証跡: [PR #155](https://github.com/sh0g0-ikeda/Lyra/pull/155)、feature code head `3f9bbf4`。ordered Panel ID snapshotを条件に、Panels・Frames・Balloon参照・`layout_config`の構造キーをPage単位の同一transactionで更新する追加APIを実装。Episode生成受付lock、active generation、confirmed / generating、1〜8 Panel、Frame不整合、stale Balloon writeを保存前に拒否する
     - 安全境界: 既存Panel / Balloon request・response、Panel / Frame / Balloon永続化shape、DB schema / migration、Prompt、SQS message、generation job、Worker、credit / refund、Webを変更しない。append / deleteは既存の決定的Frame templateを使い、reorderはFrame形状を維持する。Vitest 250 files passed / 6 skipped・1743 passed / 38 skipped、Bun 1743 passed / 48 skipped、実PostgreSQL 9 tests、fresh DB 001〜039・65 invariant / 0 violations、Backend build、API inventory / Mobile contract、Web lint / build・Playwright 13 tests、Mobile 39 files / 356 tests・両OS export、独立read-only再監査P0 / P1 / P2なしを確認
-  - 残り: 生成fileを削除可能にするdurable asset cleanup、Backend endpointがない作品削除・並べ替え、Scene削除Backend安全境界、Charactersの削除Backend安全境界・参照画像direct upload client / 本番設定・`costume_ref_id`のBackend整合性付き選択/変更、Mobile Panel作成・削除・並べ替えUI（新安全API接続）・frame / balloon編集UI、Page画像生成、organization workspace UI。PR-F全体は未完了のまま維持する
+  - [x] Mobile Panel作成・削除・並べ替えUIを新安全APIだけで接続
+    - 証跡: [PR #156](https://github.com/sh0g0-ikeda/Lyra/pull/156)、feature code head `beb0700`。Page設定 → Panel内容/登場要素のdirty解決後に全ordered Panel ID snapshotを送り、応答からPanelを合成せず既存Page / Panel GETの権威データだけを採用する。操作受付直後から編集を固定し、追加8件上限、削除1件下限・確認、隣接移動、選択復元を追加
+    - 安全境界: Backend / DB / migration / Prompt / SQS / generation job / Worker / credit / refund / Web、既存PanelRecord・Page / Panel API shapeを変更しない。409 / 4xx / network / 5xx / invalid responseでmutationを自動再送せず、GET再照合だけを行う（401の認証成立前token refresh後1回を除く）。Mobile 39 files / 380 tests、typecheck、lint、contract drift、Expo dependency check、expo-doctor 20/20、両OS export、Backend Vitest 1743 tests、Bun 1743 tests、fresh DB 001〜039・65 invariant / 0 violations・実DB 9 tests、Web lint / build・Playwright 13 tests、独立read-only再監査P0 / P1 / P2なしを確認
+  - 残り: 生成fileを削除可能にするdurable asset cleanup、Backend endpointがない作品削除・並べ替え、Scene削除Backend安全境界、Charactersの削除Backend安全境界・参照画像direct upload client / 本番設定・`costume_ref_id`のBackend整合性付き選択/変更、frame / balloon編集UI、Page画像生成、organization workspace UI。PR-F全体は未完了のまま維持する
 - [ ] PR-G: organization / billing UI / store adapter
   - 主な所有: Account、organization管理、`expo-iap` adapter
   - 完了条件: personal/org分離とstore unavailable状態がgreen
