@@ -63,6 +63,10 @@ describe('MobileStoreBillingPanel', () => {
       await buttons[0].props.onClick();
     });
     expect(adapter.purchase).toHaveBeenCalledWith('lyra.credits.200');
+    const rendered = JSON.stringify(renderer!.toJSON());
+    expect(rendered).toContain('定期購入は表示された期間ごとに自動更新');
+    expect(rendered).toContain('利用規約');
+    expect(rendered).toContain('プライバシー');
   });
 
   it('安全なprovider errorを日英固定メッセージで表示し生の値を漏らさない', async () => {

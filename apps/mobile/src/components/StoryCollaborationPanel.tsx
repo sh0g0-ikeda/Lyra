@@ -1,6 +1,7 @@
 import { StyleSheet, Text, View } from 'react-native';
 
 import { FormField } from '@/components/FormField';
+import { AiContentReportButton } from '@/components/AiContentReportButton';
 import { Notice } from '@/components/Notice';
 import { PrimaryButton } from '@/components/PrimaryButton';
 import { colors, spacing, textStyles } from '@/constants/theme';
@@ -19,8 +20,10 @@ interface StoryCollaborationPanelProps {
   onApply: () => void;
   onCancel: () => void;
   onInstructionChange: (value: string) => void;
+  onReport?: () => void;
   onRequest: () => void;
   proposal: string;
+  reportContentId?: string | null;
   selectedEpisode: boolean;
 }
 
@@ -33,8 +36,10 @@ export function StoryCollaborationPanel({
   onApply,
   onCancel,
   onInstructionChange,
+  onReport,
   onRequest,
   proposal,
+  reportContentId,
   selectedEpisode
 }: StoryCollaborationPanelProps): React.JSX.Element {
   const proposalTooLong = proposal.length > MAX_APPLYABLE_DRAFT_LENGTH;
@@ -96,6 +101,12 @@ export function StoryCollaborationPanel({
             label={t(language, 'component.storyCollaboration.apply')}
             onPress={onApply}
             variant="secondary"
+          />
+          <AiContentReportButton
+            contentId={reportContentId}
+            contentKind="story_proposal"
+            language={language}
+            onReport={onReport}
           />
         </View>
       )}

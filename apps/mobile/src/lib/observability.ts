@@ -8,8 +8,10 @@ import * as Sentry from '@sentry/react-native';
 import { config, configValidation } from '@/lib/config';
 import {
   buildOperationalMetric,
+  buildAiContentFeedback,
   sanitizeCrashEvent,
   shouldEnableObservability,
+  type AiContentReportKind,
   type CrashEventLike,
   type ObservabilityBuildMetadata,
   type OperationalMetric
@@ -100,3 +102,23 @@ export const withObservability = (
         component as unknown as ComponentType<Record<string, unknown>>
       ) as unknown as ComponentType)
     : component;
+
+export const submitAiContentReport = async (
+  contentKind: AiContentReportKind,
+  contentId?: string | null
+): Promise<void> => {
+  if (!enabled) {
+    throw new Error('AI content reporting is unavailable.');
+  }
+  Sentry.captureFeedback(
+    buildAiContentFeedback({
+      contentKind,
+      contentId,
+      reason: 'unsafe_or_inappropriate'
+    })
+  );
+  const flushed = await Sentry.flush();
+  if (!flushed) {
+    throw new Error('AI content report could not be delivered.');
+  }
+};

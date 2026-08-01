@@ -1,19 +1,20 @@
 # Lyra Mobile 初回リリース タスクリスト
 
-最終更新: 2026-08-01
+最終更新: 2026-08-02
 
 対象: Android / iPhone の初回ストア公開
 
-進捗: 73件中28件完了 / 45件未完了
+進捗: 94件中38件完了 / 56件未完了
 
-未完了の担当内訳: AI単独0件 / AI準備＋外部確認28件 / 人間・外部必須17件
+未完了の担当内訳: AI単独0件 / AI準備＋外部確認33件 / 人間・外部必須23件
 
 ## 0. このリストの範囲
 
-初回リリースは、現在Mobileに表示されている4タブ（物語、キャラ、ページ、アカウント）と、追加が必要な次の2つのUIだけを対象とする。
+初回リリースは、現在Mobileに表示されている制作・アカウント・ガイドUIを対象とする。審査対応以外の新規機能は追加しない。
 
 - 個人ユーザー向けのApp Store / Google Play購入UI
 - アカウント削除UI
+- AI送信前同意とAI生成物のアプリ内通報（ストア審査で必要な最小UI）
 
 それ以外の新規UI・Backend機能は初回リリースへ追加しない。既にmainに存在するBackend、migration、DB fieldは、Web・保存済みデータ・内部整合性が依存する可能性があるため削除しない。未使用機能は既定OFFまたはMobile未接続のまま維持する。
 
@@ -29,7 +30,7 @@
 
 - [x] `[AI]` 現行Mobileの可視UIと実際に呼ぶAPIを4タブ単位で棚卸しする。
 - [x] `[AI]` 新規UIを個人向け購入とアカウント削除の2つだけに固定する。
-- [x] `[AI]` Balloon編集UIとFrame編集UIが現行Mobileに存在しないことを確認する。
+- [x] `[AI]` 現行mainに表示されるPanel / Frame / Balloon / 画像・PDF・ZIP出力を審査対象に含め、審査対応で配置や色を変更しない。
 - [x] `[AI]` ページ設定から`balloon_only` / `mixed`の選択UIを除去する。
 - [x] `[AI]` 保存済み`dialogue_mode`、API schema、DB fieldを維持し、別設定の保存時に未変更値を送らないことをテストする。
 - [x] `[AI]` 旧タスクリストを履歴化し、active checklistから将来機能を外す。
@@ -39,11 +40,10 @@
 ### 初回リリースから外すもの
 
 - Work削除・並べ替え、Scene削除、Character削除。
-- Balloon / Frame編集、ページlayout template、scene単位autofill、Page confirm / reopen。
 - entity referenceのpresigned direct-upload client、`costume_ref_id`選択、reference削除。
-- PDF / ZIP export、外部dialogue handoff、composition gallery。
+- 外部dialogue handoff、composition galleryなど現行UIにない新規導線。
 - job cancel / hide、Push通知、APNs / FCM、push outbox。
-- organization作成・招待・権限管理・organization billing UI。既存workspace切替だけは維持する。
+- organization向けStripe checkout / plan変更 / billing portalのMobile導線。既存workspace・メンバー・請求状態・invoice表示は維持する。
 - dormant機能専用の本番設定、実機E2E、監視、新規Backend開発。
 
 ## 2. Mobile UI実装
@@ -143,7 +143,33 @@
 - readiness: API / Workerとも1/1、ALB healthy、generation queue / DLQとも0
 - flags: `AUTO_RUN_MIGRATIONS=false`、`MOBILE_STORE_BILLING_ENABLED=false`、`ACCOUNT_DELETION_ENABLED=false`、`EPISODE_EXPORT_ENABLED=false`
 
-## 9. 完了条件
+## 9. Apple / Google リジェクト要因監査と是正
+
+根拠: Apple App Review Guidelines 1.2 / 3.1.1 / 3.1.3 / 5.1.1 / 5.1.2、Google Play AI-Generated Content / Payments / User Data / Account Deletion policy。
+
+- [x] `[AI]` Apple / Googleの現行審査要件、公開法務URL、Mobile metadata、build設定、可視UIを監査する。
+- [x] `[AI]` 監査設計を`docs/mobile-store-review-rejection-remediation-design-2026-08-02.md`へ記録し、Backend変更なし・UI位置/色維持を境界にする。
+- [x] `[AI]` StoryAI、ページ生成、参照生成、画像importの直前にOpenAIへの送信対象と同意を表示する。
+- [x] `[AI]` StoryAI提案と生成画像previewへ、アプリを離れないAI生成物通報を追加する。
+- [x] `[AI]` 通報payloadを固定カテゴリ・理由・不透明な作品記録IDだけにし、本文、prompt、画像、token、email、user IDを送らないテストを追加する。
+- [x] `[AI]` Mobileのorganization管理からStripe checkout、plan変更、credit購入、billing portalを非表示にし、状態・invoice閲覧は維持する。
+- [x] `[AI]` 個人store購入UIへ自動更新・解約方法・日英の利用規約/プライバシー導線を追加する。
+- [x] `[AI]` production client profileで既存アカウント削除UIを有効化する。
+- [x] `[AI]` 日英のprivacy、terms、support、専用account-deletionページをversion管理し、OpenAI / AWS / Apple / Google / Stripe / Sentryと国際処理を開示する。
+- [x] `[AI]` App Store / Playの言語別metadata、Data Safety draft、review notesを法務URL・削除URL・AI通報・外部決済非表示と一致させる。
+- [ ] `[共同]` 日英法務ページを`app.lyra-editor.com`へ公開し、全URLがHTTPS 200かつHTMLとして表示できることを確認する。
+- [ ] `[共同]` production EASへ有効な`EXPO_PUBLIC_SENTRY_DSN`をsecretとして設定し、AI通報とprivacy-limited crash送信を実機確認する。
+- [ ] `[共同]` production Backendの`ACCOUNT_DELETION_ENABLED`、IAM、recovery runnerを有効化し、previewから完了まで実機確認する。
+- [ ] `[共同]` Apple Team ID確定後に正しいAASAを`/.well-known/apple-app-site-association`へJSONで公開する（現状はHTML応答のため未完了）。
+- [ ] `[共同]` release AABのtargetSdk、権限、署名、assetlinksと、IPAのentitlement、privacy manifest、AASAを最終artifactから検査する。
+- [ ] `[人間]` 「Lyra Japan / Edge of Vision」の正式な販売者・個人情報取扱事業者表記、準拠法、住所等を確定し、日英法務文面を専門家と承認する。
+- [ ] `[人間]` 審査用アカウント、十分なcredit、再現手順をApp Store Connect / Play Consoleの保護欄へ登録する。
+- [ ] `[人間]` App Privacy、Data Safety、content rating、輸出コンプライアンス、広告ID、暗号利用の回答を最終artifactと一致させて申告する。
+- [ ] `[人間]` App Store / Playの商品、価格、販売国、subscription group / base planと契約・税務・銀行設定を承認する。
+- [ ] `[人間]` 日本語・英語screenshotsと審査説明を実機の最終buildから承認する。
+- [ ] `[人間]` SentryのAI生成物通報を担当者が確認し、必要なコンテンツ対応・利用者対応・記録を行う運用を開始する。
+
+## 10. 完了条件
 
 初回リリース完了は、上記active checklistがすべて完了し、購入がserver verification前に付与されず、personal / organizationの境界が守られ、アカウント削除と現行4タブが両OSで動作し、署名済みartifactが両ストアから公開された状態とする。
 

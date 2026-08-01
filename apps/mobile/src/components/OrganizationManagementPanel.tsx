@@ -49,6 +49,8 @@ import {
 import { userErrorMessage } from '@/lib/userMessages';
 
 interface OrganizationManagementPanelProps {
+  /** Native store clients disable external checkout and portal actions. */
+  allowExternalBillingActions?: boolean;
   /** The currently selected organization, resolved from the authenticated session. */
   organization: CurrentUserOrganizationRecord;
   api: LyraMobileApiClient;
@@ -71,6 +73,7 @@ interface OrganizationManagementPanelProps {
 }
 
 export function OrganizationManagementPanel({
+  allowExternalBillingActions = true,
   organization,
   api,
   sessionKey,
@@ -591,7 +594,7 @@ export function OrganizationManagementPanel({
             </>
           )}
           {billingQuery.isError || invoicesQuery.isError ? <Notice message={organizationLoadError(language)} tone="danger" /> : null}
-          {canManageBilling ? (
+          {canManageBilling && allowExternalBillingActions ? (
             <>
               <Text style={styles.label}>{t(language, "generated.components.OrganizationManagementPanel.change.plan.9392d13e")}</Text>
               {subscriptionPlans.filter((plan) => plan.configured).map((plan) => (
@@ -639,7 +642,7 @@ export function OrganizationManagementPanel({
               />
               {subscriptionCheckoutMutation.isError || creditCheckoutMutation.isError || portalMutation.isError ? <Notice message={organizationActionError(language)} tone="danger" /> : null}
             </>
-          ) : <Notice message={billingManagementDeniedMessage(language)} tone="info" />}
+          ) : canManageBilling ? null : <Notice message={billingManagementDeniedMessage(language)} tone="info" />}
           <Text style={styles.label}>{t(language, "generated.components.OrganizationManagementPanel.invoices.389b3076")}</Text>
           {(invoicesQuery.data?.invoices ?? []).map((invoice) => (
             <View key={invoice.id} style={styles.compactRow}>

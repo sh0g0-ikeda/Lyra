@@ -23,9 +23,16 @@ import { useAppState } from '@/state/appState';
 
 const heroImage = require('../../assets/start_lyra.jpg') as ImageSourcePropType;
 const legalLinks = {
-  privacy: 'https://app.lyra-editor.com/privacy.html',
-  support: 'https://app.lyra-editor.com/support.html',
-  terms: 'https://app.lyra-editor.com/terms.html'
+  ja: {
+    privacy: 'https://app.lyra-editor.com/privacy.html',
+    support: 'https://app.lyra-editor.com/support.html',
+    terms: 'https://app.lyra-editor.com/terms.html'
+  },
+  en: {
+    privacy: 'https://app.lyra-editor.com/privacy-en.html',
+    support: 'https://app.lyra-editor.com/support-en.html',
+    terms: 'https://app.lyra-editor.com/terms-en.html'
+  }
 } as const;
 
 interface AuthScreenProps {
@@ -111,7 +118,7 @@ export function AuthScreen({ pendingInvitation = false }: AuthScreenProps): Reac
         <Pressable
           accessibilityRole="link"
           hitSlop={8}
-          onPress={() => void openLegalLink(legalLinks.terms)}
+          onPress={() => void openLegalLink(legalLinks[language].terms)}
           style={styles.legalLink}
         >
           <Text style={styles.legalLinkText}>{t(language, "generated.screens.AuthScreen.terms.63800dba")}</Text>
@@ -119,7 +126,7 @@ export function AuthScreen({ pendingInvitation = false }: AuthScreenProps): Reac
         <Pressable
           accessibilityRole="link"
           hitSlop={8}
-          onPress={() => void openLegalLink(legalLinks.privacy)}
+          onPress={() => void openLegalLink(legalLinks[language].privacy)}
           style={styles.legalLink}
         >
           <Text style={styles.legalLinkText}>{t(language, "generated.screens.AuthScreen.privacy.4437e12a")}</Text>
@@ -127,7 +134,7 @@ export function AuthScreen({ pendingInvitation = false }: AuthScreenProps): Reac
         <Pressable
           accessibilityRole="link"
           hitSlop={8}
-          onPress={() => void openLegalLink(legalLinks.support)}
+          onPress={() => void openLegalLink(legalLinks[language].support)}
           style={styles.legalLink}
         >
           <Text style={styles.legalLinkText}>{t(language, "generated.screens.AuthScreen.support.36269dd8")}</Text>

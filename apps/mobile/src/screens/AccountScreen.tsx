@@ -512,6 +512,7 @@ export function AccountScreen(): React.JSX.Element {
       >
         {activeOrganization === null ? null : (
           <OrganizationManagementPanel
+            allowExternalBillingActions={false}
             api={api}
             key={activeOrganization.id}
             language={language}

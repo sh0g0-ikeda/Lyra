@@ -15,6 +15,11 @@ vi.mock('@/components/FormField', () => ({
     React.createElement('field', { editable, value }, label)
 }));
 
+vi.mock('@/components/AiContentReportButton', () => ({
+  AiContentReportButton: ({ onReport }: { onReport?: () => void }) =>
+    React.createElement('button', { onClick: onReport }, 'AI生成内容を通報')
+}));
+
 vi.mock('@/components/Notice', () => ({
   Notice: ({ message }: { message: string }) => React.createElement('notice', null, message)
 }));
@@ -46,6 +51,7 @@ const renderPanel = (
         onApply={vi.fn()}
         onCancel={vi.fn()}
         onInstructionChange={vi.fn()}
+        onReport={vi.fn()}
         onRequest={vi.fn()}
         proposal="改善案の本文"
         selectedEpisode
@@ -90,5 +96,19 @@ describe('StoryCollaborationPanel', () => {
     const rendered = renderPanel({ canEdit: false, instruction: '', selectedEpisode: false });
     const requestButton = rendered.root.findAllByType('button').find((button) => button.children.includes('相談案を作成'));
     expect(requestButton?.props.disabled).toBe(true);
+  });
+
+  it('相談案がある場合だけアプリ内通報を表示する', () => {
+    const onReport = vi.fn();
+    const rendered = renderPanel({ onReport });
+    const reportButton = rendered.root
+      .findAllByType('button')
+      .find((button) => button.children.includes('AI生成内容を通報'));
+    expect(reportButton).toBeDefined();
+    act(() => reportButton?.props.onClick());
+    expect(onReport).toHaveBeenCalledOnce();
+
+    const withoutProposal = renderPanel({ proposal: '', onReport });
+    expect(JSON.stringify(withoutProposal.toJSON())).not.toContain('AI生成内容を通報');
   });
 });

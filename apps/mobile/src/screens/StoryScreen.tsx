@@ -31,7 +31,8 @@ import type {
   SceneRecord,
   StoryEpisodeImprovementRecord
 } from '@/domain/types';
-import { confirmDestructiveAction } from '@/lib/confirm';
+import { confirmAction, confirmDestructiveAction } from '@/lib/confirm';
+import { appendAiProviderDisclosure } from '@/lib/aiProviderDisclosure';
 import {
   flattenUniqueRecords,
   MOBILE_LIST_PAGE_SIZE,
@@ -568,6 +569,20 @@ export function StoryScreen(): React.JSX.Element {
     }
   };
 
+  const confirmEpisodeImprovement = (): void => {
+    confirmAction({
+      language,
+      title: t(language, 'storyAi'),
+      message: appendAiProviderDisclosure(
+        t(language, "generated.screens.StoryScreen.improve.the.current.episode.and.apply.it.5fc027c6"),
+        language,
+        'text'
+      ),
+      confirmLabel: t(language, 'storyAi'),
+      onConfirm: () => improveEpisodeMutation.mutate()
+    });
+  };
+
   const collaborationMutation = useMutation({
     mutationFn: async () => {
       if (selectedEpisode === null) {
@@ -625,6 +640,20 @@ export function StoryScreen(): React.JSX.Element {
       }
     }
   });
+
+  const confirmStoryCollaboration = (): void => {
+    confirmAction({
+      language,
+      title: t(language, 'component.storyCollaboration.request'),
+      message: appendAiProviderDisclosure(
+        t(language, 'component.storyCollaboration.description'),
+        language,
+        'text'
+      ),
+      confirmLabel: t(language, 'component.storyCollaboration.request'),
+      onConfirm: () => collaborationMutation.mutate()
+    });
+  };
 
   const applyCollaborationProposalToDraft = (): void => {
     if (collaborationProposal.trim().length === 0 || collaborationProposal.length > 8000) {
@@ -798,7 +827,7 @@ export function StoryScreen(): React.JSX.Element {
           instruction={storyInstruction}
           language={language}
           onApply={applyImprovementToDraft}
-          onImprove={() => improveEpisodeMutation.mutate()}
+          onImprove={confirmEpisodeImprovement}
           onImprovementChange={(value) =>
             setImprovement((current) =>
               current === null
@@ -829,8 +858,9 @@ export function StoryScreen(): React.JSX.Element {
           onApply={applyCollaborationProposalToDraft}
           onCancel={cancelCollaboration}
           onInstructionChange={setCollaborationInstruction}
-          onRequest={() => collaborationMutation.mutate()}
+          onRequest={confirmStoryCollaboration}
           proposal={collaborationProposal}
+          reportContentId={selectedEpisode?.id}
           selectedEpisode={selectedEpisode !== null}
         />
       </Section>
