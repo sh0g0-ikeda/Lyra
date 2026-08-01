@@ -65,6 +65,11 @@ vi.mock('react-native', () => ({
   View: 'view'
 }));
 
+vi.mock('react-native-safe-area-context', () => ({
+  SafeAreaView: ({ children, ...props }: { children: React.ReactNode }) =>
+    React.createElement('safe-area-view', props, children)
+}));
+
 vi.mock('lucide-react-native', () => {
   const icon = (name: string) => {
     const Icon = (props: Record<string, unknown>) => React.createElement(name, props);
@@ -346,6 +351,37 @@ describe('StoryHierarchySheet', () => {
     for (const label of ['話名を変更', '話を上へ移動', '話を下へ移動', '話を削除']) {
       expect(renderer.root.findByProps({ accessibilityLabel: label })).toBeDefined();
     }
+  });
+
+  it('階層画面と下部メニューを端末のSafe Area内に表示する', async () => {
+    const renderer = await renderSheet();
+
+    expect(renderer.root.findAllByType('safe-area-view')).toHaveLength(1);
+    expect(renderer.root.findByType('safe-area-view').props.edges).toEqual(['top', 'bottom']);
+
+    await act(async () => {
+      renderer.root.findByProps({ accessibilityLabel: '1. 第一章の操作' }).props.onPress();
+    });
+
+    const safeAreas = renderer.root.findAllByType('safe-area-view');
+    expect(safeAreas).toHaveLength(2);
+    expect(safeAreas[1]?.props.edges).toEqual(['bottom']);
+  });
+
+  it('話追加ダイアログをAndroidの下部Safe Areaより上に表示する', async () => {
+    const renderer = await renderSheet();
+
+    await act(async () => {
+      renderer.root.findByProps({ accessibilityLabel: '1. 第一章の操作' }).props.onPress();
+    });
+    await act(async () => {
+      renderer.root.findByProps({ accessibilityLabel: '話を追加' }).props.onPress();
+    });
+
+    const safeAreas = renderer.root.findAllByType('safe-area-view');
+    expect(safeAreas).toHaveLength(2);
+    expect(safeAreas[1]?.props.edges).toEqual(['bottom']);
+    expect(renderer.root.findByProps({ accessibilityLabel: '話を追加' })).toBeDefined();
   });
 
   it('話の削除は確認ダイアログを経由する', async () => {
