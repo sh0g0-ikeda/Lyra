@@ -1,3 +1,5 @@
+import * as ExpoIap from 'expo-iap';
+
 export type NativeStoreProductKind = 'subscription' | 'credit_pack';
 export type NativeStoreName = 'apple' | 'google';
 export type NativeStorePurchaseState = 'pending' | 'purchased' | 'unknown';
@@ -57,8 +59,8 @@ export interface NativeStoreProduct {
   title: string;
   description?: string | null;
   displayPrice: string;
-  type: 'in-app' | 'subs';
   subscriptionOffers?: { offerToken: string; sku: string }[];
+  type: 'in-app' | 'subs';
 }
 
 export interface NativeStoreSubscription {
@@ -67,22 +69,12 @@ export interface NativeStoreSubscription {
 
 export interface NativeStoreBillingSdk {
   endConnection(): Promise<void>;
-  fetchProducts(input: {
-    skus: string[];
-    type: 'in-app' | 'subs';
-  }): Promise<readonly NativeStoreProduct[] | null>;
-  finishTransaction(input: {
-    isConsumable: boolean;
-    purchase: NativeStorePurchase;
-  }): Promise<void>;
+  fetchProducts(input: { skus: string[]; type: 'in-app' | 'subs' }): Promise<readonly NativeStoreProduct[] | null>;
+  finishTransaction(input: { isConsumable: boolean; purchase: NativeStorePurchase }): Promise<void>;
   getAvailablePurchases(): Promise<readonly NativeStorePurchase[]>;
   initConnection(): Promise<boolean>;
-  purchaseErrorListener(
-    listener: (error: { code: string }) => void,
-  ): NativeStoreSubscription;
-  purchaseUpdatedListener(
-    listener: (purchase: NativeStorePurchase) => void | Promise<void>,
-  ): NativeStoreSubscription;
+  purchaseErrorListener(listener: (error: { code: string }) => void): NativeStoreSubscription;
+  purchaseUpdatedListener(listener: (purchase: NativeStorePurchase) => void | Promise<void>): NativeStoreSubscription;
   requestPurchase(input: NativeStorePurchaseRequest): Promise<unknown>;
   restorePurchases(): Promise<void>;
 }
@@ -155,8 +147,6 @@ interface NativeStoreBillingAdapterDependencies {
   sdk: NativeStoreBillingSdk;
 }
 
-const MAX_RESTORE_PURCHASES = 50;
-
 export function createNativeStoreBillingAdapter(
   dependencies: NativeStoreBillingAdapterDependencies,
 ): NativeStoreBillingAdapter {
@@ -178,12 +168,10 @@ class NativeStoreBillingAdapterImplementation implements NativeStoreBillingAdapt
     loading: false,
     products: [],
     restoring: false,
-    submittingProductId: null,
+    submittingProductId: null
   };
 
-  public constructor(
-    private readonly dependencies: NativeStoreBillingAdapterDependencies,
-  ) {}
+  public constructor(private readonly dependencies: NativeStoreBillingAdapterDependencies) {}
 
   public getState(): NativeStoreBillingState {
     return this.state;
@@ -196,8 +184,12 @@ class NativeStoreBillingAdapterImplementation implements NativeStoreBillingAdapt
   }
 
   public async connect(): Promise<void> {
-    if (this.state.connected) return;
-    if (this.connecting !== null) return this.connecting;
+    if (this.state.connected) {
+      return;
+    }
+    if (this.connecting !== null) {
+      return this.connecting;
+    }
     this.connecting = this.connectInternal().finally(() => {
       this.connecting = null;
     });
@@ -205,30 +197,37 @@ class NativeStoreBillingAdapterImplementation implements NativeStoreBillingAdapt
   }
 
   public async disconnect(): Promise<void> {
-    this.disposeSubscriptions();
+    this.purchaseSubscription?.remove();
+    this.errorSubscription?.remove();
+    this.purchaseSubscription = null;
+    this.errorSubscription = null;
     this.processedPurchaseIds.clear();
     this.processingPurchaseIds.clear();
     this.restoring = false;
     try {
       await this.dependencies.sdk.endConnection();
     } catch {
-      // Disposal must still clear local purchase state if the provider close fails.
+      // The connection is being disposed. A provider-side close error is not actionable here.
     }
     this.updateState({
       connected: false,
       loading: false,
       restoring: false,
-      submittingProductId: null,
+      submittingProductId: null
     });
   }
 
   public async purchase(productId: string): Promise<void> {
-    if (!this.state.connected) throw this.fail('NOT_CONNECTED', false);
+    if (!this.state.connected) {
+      throw this.fail('NOT_CONNECTED', false);
+    }
     if (this.state.submittingProductId !== null || this.restoring) {
       throw this.fail('DUPLICATE_SUBMIT', false);
     }
     const product = this.dependencies.products.find((candidate) => candidate.id === productId);
-    if (product === undefined) throw this.fail('PRODUCT_NOT_FOUND', false);
+    if (product === undefined) {
+      throw this.fail('PRODUCT_NOT_FOUND', false);
+    }
     if (!this.state.products.some((candidate) => candidate.id === productId && candidate.available)) {
       throw this.fail('PRODUCT_UNAVAILABLE', false);
     }
@@ -243,17 +242,17 @@ class NativeStoreBillingAdapterImplementation implements NativeStoreBillingAdapt
       await this.dependencies.sdk.requestPurchase(
         buildPurchaseRequest(product, binding, nativeProduct),
       );
-    } catch (error: unknown) {
-      const normalized = error instanceof NativeStoreBillingError
-        ? error
-        : normalizeProviderError(error);
+    } catch (error) {
+      const normalized = error instanceof NativeStoreBillingError ? error : normalizeProviderError(error);
       this.updateState({ error: normalized, submittingProductId: null });
       throw normalized;
     }
   }
 
   public async restore(): Promise<NativeStoreServerState[]> {
-    if (!this.state.connected) throw this.fail('NOT_CONNECTED', false);
+    if (!this.state.connected) {
+      throw this.fail('NOT_CONNECTED', false);
+    }
     if (this.restoring || this.state.submittingProductId !== null) {
       throw this.fail('DUPLICATE_SUBMIT', false);
     }
@@ -266,10 +265,12 @@ class NativeStoreBillingAdapterImplementation implements NativeStoreBillingAdapt
       if (proofBundle.overflowed) {
         throw new NativeStoreBillingError('RESTORE_FAILED', false);
       }
-      if (proofBundle.purchases.length === 0) return [];
+      if (proofBundle.appleSignedTransactions.length + proofBundle.googlePurchaseTokens.length === 0) {
+        return [];
+      }
       const verified = await this.dependencies.backend.restorePurchases({
         appleSignedTransactions: proofBundle.appleSignedTransactions,
-        googlePurchaseTokens: proofBundle.googlePurchaseTokens,
+        googlePurchaseTokens: proofBundle.googlePurchaseTokens
       });
       assertServerState(verified);
       for (const purchase of proofBundle.purchases) {
@@ -278,7 +279,7 @@ class NativeStoreBillingAdapterImplementation implements NativeStoreBillingAdapt
       }
       this.updateState({ error: null, lastVerified: verified });
       return [verified];
-    } catch (error: unknown) {
+    } catch (error) {
       const normalized = error instanceof NativeStoreBillingError
         ? error
         : new NativeStoreBillingError('RESTORE_FAILED', true);
@@ -292,23 +293,25 @@ class NativeStoreBillingAdapterImplementation implements NativeStoreBillingAdapt
 
   private async connectInternal(): Promise<void> {
     this.updateState({ error: null, loading: true });
-    this.disposeSubscriptions();
-    this.purchaseSubscription = this.dependencies.sdk.purchaseUpdatedListener(
-      (purchase) => this.handlePurchaseUpdate(purchase),
+    this.purchaseSubscription = this.dependencies.sdk.purchaseUpdatedListener((purchase) =>
+      this.handlePurchaseUpdate(purchase),
     );
     this.errorSubscription = this.dependencies.sdk.purchaseErrorListener((error) => {
-      this.updateState({
-        error: normalizeProviderError(error),
-        submittingProductId: null,
-      });
+      const normalized = normalizeProviderError(error);
+      this.updateState({ error: normalized, submittingProductId: null });
     });
     try {
       const connected = await this.dependencies.sdk.initConnection();
-      if (!connected) throw new NativeStoreBillingError('STORE_UNAVAILABLE', true);
+      if (!connected) {
+        throw new NativeStoreBillingError('STORE_UNAVAILABLE', true);
+      }
       const products = await this.loadProducts();
       this.updateState({ connected: true, error: null, loading: false, products });
-    } catch (error: unknown) {
-      this.disposeSubscriptions();
+    } catch (error) {
+      this.purchaseSubscription?.remove();
+      this.errorSubscription?.remove();
+      this.purchaseSubscription = null;
+      this.errorSubscription = null;
       try {
         await this.dependencies.sdk.endConnection();
       } catch {
@@ -317,21 +320,9 @@ class NativeStoreBillingAdapterImplementation implements NativeStoreBillingAdapt
       const normalized = error instanceof NativeStoreBillingError
         ? error
         : new NativeStoreBillingError('CONNECTION_FAILED', true);
-      this.updateState({
-        connected: false,
-        error: normalized,
-        loading: false,
-        products: [],
-      });
+      this.updateState({ connected: false, error: normalized, loading: false, products: [] });
       throw normalized;
     }
-  }
-
-  private disposeSubscriptions(): void {
-    this.purchaseSubscription?.remove();
-    this.errorSubscription?.remove();
-    this.purchaseSubscription = null;
-    this.errorSubscription = null;
   }
 
   private async loadProducts(): Promise<NativeStoreCatalogProduct[]> {
@@ -341,61 +332,59 @@ class NativeStoreBillingAdapterImplementation implements NativeStoreBillingAdapt
     const subscriptionSkus = this.dependencies.products
       .filter((product) => product.kind === 'subscription')
       .map((product) => product.id);
-    const [inAppProducts, subscriptionProducts] = await Promise.all([
-      inAppSkus.length === 0
-        ? Promise.resolve([])
-        : this.dependencies.sdk.fetchProducts({ skus: inAppSkus, type: 'in-app' }),
-      subscriptionSkus.length === 0
-        ? Promise.resolve([])
-        : this.dependencies.sdk.fetchProducts({ skus: subscriptionSkus, type: 'subs' }),
+    const responses = await Promise.all([
+      inAppSkus.length === 0 ? Promise.resolve([]) : this.dependencies.sdk.fetchProducts({ skus: inAppSkus, type: 'in-app' }),
+      subscriptionSkus.length === 0 ? Promise.resolve([]) : this.dependencies.sdk.fetchProducts({ skus: subscriptionSkus, type: 'subs' })
     ]);
-    const nativeProducts = new Map<string, NativeStoreProduct>();
-    for (const product of [...(inAppProducts ?? []), ...(subscriptionProducts ?? [])]) {
-      nativeProducts.set(product.id, product);
+    const storeProducts = new Map<string, NativeStoreProduct>();
+    for (const response of responses) {
+      for (const product of response ?? []) {
+        storeProducts.set(product.id, product);
+      }
     }
     return this.dependencies.products.map((product) => {
-      const nativeProduct = nativeProducts.get(product.id);
+      const storeProduct = storeProducts.get(product.id);
       return {
         ...product,
-        available: nativeProduct !== undefined,
-        description: nativeProduct?.description ?? product.description,
-        displayPrice: nativeProduct?.displayPrice ?? null,
-        subscriptionOffers: nativeProduct?.subscriptionOffers,
-        title: nativeProduct?.title || product.title,
+        available: storeProduct !== undefined,
+        displayPrice: storeProduct?.displayPrice ?? null,
+        subscriptionOffers: storeProduct?.subscriptionOffers,
+        title: storeProduct?.title || product.title,
+        description: storeProduct?.description ?? product.description
       };
     });
   }
 
   private async handlePurchaseUpdate(purchase: NativeStorePurchase): Promise<void> {
-    if (this.restoring) return;
+    if (this.restoring) {
+      return;
+    }
     if (purchase.purchaseState === 'pending') {
       this.updateState({
         error: new NativeStoreBillingError('PURCHASE_PENDING', false),
-        submittingProductId: null,
+        submittingProductId: null
       });
       return;
     }
     if (purchase.purchaseState !== 'purchased') {
       this.updateState({
         error: new NativeStoreBillingError('PURCHASE_FAILED', true),
-        submittingProductId: null,
+        submittingProductId: null
       });
       return;
     }
 
     const key = purchaseKey(purchase);
-    if (this.processedPurchaseIds.has(key) || this.processingPurchaseIds.has(key)) return;
+    if (this.processedPurchaseIds.has(key) || this.processingPurchaseIds.has(key)) {
+      return;
+    }
     this.processingPurchaseIds.add(key);
     try {
       const verified = await this.verifyPurchase(purchase);
       await this.finishVerifiedPurchase(purchase);
       this.processedPurchaseIds.add(key);
-      this.updateState({
-        error: null,
-        lastVerified: verified,
-        submittingProductId: null,
-      });
-    } catch (error: unknown) {
+      this.updateState({ error: null, lastVerified: verified, submittingProductId: null });
+    } catch (error) {
       const normalized = error instanceof NativeStoreBillingError
         ? error
         : new NativeStoreBillingError('VERIFICATION_FAILED', true);
@@ -406,11 +395,8 @@ class NativeStoreBillingAdapterImplementation implements NativeStoreBillingAdapt
   }
 
   private async verifyPurchase(purchase: NativeStorePurchase): Promise<NativeStoreServerState> {
-    const product = this.dependencies.products.find(
-      (candidate) => candidate.id === purchase.productId,
-    );
-    const proof = purchase.purchaseToken;
-    if (product === undefined || proof === null || proof === undefined || proof.length === 0) {
+    const product = this.dependencies.products.find((candidate) => candidate.id === purchase.productId);
+    if (product === undefined || purchase.purchaseToken == null || purchase.purchaseToken.length === 0) {
       throw new NativeStoreBillingError('VERIFICATION_FAILED', true);
     }
     let verified: NativeStoreServerState;
@@ -420,10 +406,10 @@ class NativeStoreBillingAdapterImplementation implements NativeStoreBillingAdapt
       }
       verified = await this.dependencies.backend.verifyApplePurchase({
         environment: purchase.environmentIOS,
-        signedTransaction: proof,
+        signedTransaction: purchase.purchaseToken
       });
     } else if (purchase.store === 'google') {
-      verified = await this.dependencies.backend.verifyGooglePurchase({ purchaseToken: proof });
+      verified = await this.dependencies.backend.verifyGooglePurchase({ purchaseToken: purchase.purchaseToken });
     } else {
       throw new NativeStoreBillingError('VERIFICATION_FAILED', false);
     }
@@ -432,26 +418,21 @@ class NativeStoreBillingAdapterImplementation implements NativeStoreBillingAdapt
   }
 
   private async finishVerifiedPurchase(purchase: NativeStorePurchase): Promise<void> {
-    const product = this.dependencies.products.find(
-      (candidate) => candidate.id === purchase.productId,
-    );
+    const product = this.dependencies.products.find((candidate) => candidate.id === purchase.productId);
     if (product === undefined) {
       throw new NativeStoreBillingError('PRODUCT_NOT_FOUND', false);
     }
     try {
       await this.dependencies.sdk.finishTransaction({
         isConsumable: product.kind === 'credit_pack',
-        purchase,
+        purchase
       });
     } catch {
       throw new NativeStoreBillingError('FINISH_FAILED', true);
     }
   }
 
-  private fail(
-    code: NativeStoreBillingErrorCode,
-    retryable: boolean,
-  ): NativeStoreBillingError {
+  private fail(code: NativeStoreBillingErrorCode, retryable: boolean): NativeStoreBillingError {
     const error = new NativeStoreBillingError(code, retryable);
     this.updateState({ error });
     return error;
@@ -459,7 +440,9 @@ class NativeStoreBillingAdapterImplementation implements NativeStoreBillingAdapt
 
   private updateState(patch: Partial<NativeStoreBillingState>): void {
     this.state = { ...this.state, ...patch };
-    for (const listener of this.listeners) listener(this.state);
+    for (const listener of this.listeners) {
+      listener(this.state);
+    }
   }
 }
 
@@ -477,10 +460,10 @@ function buildPurchaseRequest(
       google: {
         obfuscatedAccountId: binding.googleObfuscatedAccountId,
         skus: [product.id],
-        ...(subscriptionOffers === undefined ? {} : { subscriptionOffers }),
-      },
+        ...(subscriptionOffers === undefined ? {} : { subscriptionOffers })
+      }
     },
-    type: product.kind === 'subscription' ? 'subs' : 'in-app',
+    type: product.kind === 'subscription' ? 'subs' : 'in-app'
   };
 }
 
@@ -503,29 +486,28 @@ function collectRestoreProofs(
     if (purchase.purchaseState !== 'purchased' || !knownProductIds.has(purchase.productId)) {
       continue;
     }
-    const proof = purchase.purchaseToken;
-    if (proof === null || proof === undefined || proof.length === 0) continue;
-    const key = `${purchase.store}:${proof}`;
-    if (seenProofs.has(key)) continue;
-    if (verifiedPurchases.length >= MAX_RESTORE_PURCHASES) {
+    const token = purchase.purchaseToken;
+    if (token == null || token.length === 0) {
+      continue;
+    }
+    const key = `${purchase.store}:${token}`;
+    if (seenProofs.has(key)) {
+      continue;
+    }
+    if (verifiedPurchases.length >= 50) {
       overflowed = true;
       break;
     }
     seenProofs.add(key);
     if (purchase.store === 'apple') {
-      appleSignedTransactions.push(proof);
+      appleSignedTransactions.push(token);
       verifiedPurchases.push(purchase);
     } else if (purchase.store === 'google') {
-      googlePurchaseTokens.push(proof);
+      googlePurchaseTokens.push(token);
       verifiedPurchases.push(purchase);
     }
   }
-  return {
-    appleSignedTransactions,
-    googlePurchaseTokens,
-    overflowed,
-    purchases: verifiedPurchases,
-  };
+  return { appleSignedTransactions, googlePurchaseTokens, overflowed, purchases: verifiedPurchases };
 }
 
 function purchaseKey(purchase: NativeStorePurchase): string {
@@ -547,30 +529,71 @@ function isPlan(value: unknown): value is NativeStoreServerEntitlement['plan'] {
 }
 
 function normalizeProviderError(error: unknown): NativeStoreBillingError {
-  const code = typeof error === 'object'
-    && error !== null
-    && 'code' in error
-    && typeof error.code === 'string'
+  const code = typeof error === 'object' && error !== null && 'code' in error && typeof error.code === 'string'
     ? error.code
     : 'unknown';
-  if (code === 'user-cancelled') {
-    return new NativeStoreBillingError('PURCHASE_CANCELLED', false);
-  }
+  if (code === 'user-cancelled') return new NativeStoreBillingError('PURCHASE_CANCELLED', false);
   if (code === 'already-owned') return new NativeStoreBillingError('ALREADY_OWNED', false);
   if (code === 'pending') return new NativeStoreBillingError('PURCHASE_PENDING', false);
-  if (
-    code === 'network-error'
-    || code === 'connection-closed'
-    || code === 'service-disconnected'
-    || code === 'service-timeout'
-  ) {
+  if (code === 'network-error' || code === 'connection-closed' || code === 'service-disconnected' || code === 'service-timeout') {
     return new NativeStoreBillingError('NETWORK', true);
   }
-  if (code === 'item-unavailable' || code === 'sku-not-found') {
-    return new NativeStoreBillingError('PRODUCT_UNAVAILABLE', false);
-  }
-  if (code === 'billing-unavailable' || code === 'iap-not-available') {
-    return new NativeStoreBillingError('STORE_UNAVAILABLE', true);
-  }
+  if (code === 'item-unavailable' || code === 'sku-not-found') return new NativeStoreBillingError('PRODUCT_UNAVAILABLE', false);
+  if (code === 'billing-unavailable' || code === 'iap-not-available') return new NativeStoreBillingError('STORE_UNAVAILABLE', true);
   return new NativeStoreBillingError('PURCHASE_FAILED', true);
+}
+
+export function createExpoIapSdk(): NativeStoreBillingSdk {
+  return {
+    endConnection: async () => {
+      await ExpoIap.endConnection();
+    },
+    fetchProducts: async (input) => {
+      const products = await ExpoIap.fetchProducts(input);
+      return (products ?? []).map((product) => ({
+        description: product.description,
+        displayPrice: product.displayPrice,
+        id: product.id,
+        subscriptionOffers: product.type === 'subs' && product.platform === 'android'
+          ? (product.subscriptionOfferDetailsAndroid ?? []).map((offer) => ({
+              offerToken: offer.offerToken,
+              sku: product.id
+            }))
+          : undefined,
+        title: product.title,
+        type: product.type
+      }));
+    },
+    finishTransaction: async ({ isConsumable, purchase }) => {
+      if (purchase.nativePurchase === undefined) {
+        throw new Error('Native purchase is unavailable');
+      }
+      await ExpoIap.finishTransaction({
+        isConsumable,
+        purchase: purchase.nativePurchase as ExpoIap.Purchase
+      });
+    },
+    getAvailablePurchases: async () => (await ExpoIap.getAvailablePurchases()).map(normalizeExpoPurchase),
+    initConnection: () => ExpoIap.initConnection(),
+    purchaseErrorListener: (listener) => ExpoIap.purchaseErrorListener((error) => listener({ code: error.code ?? 'unknown' })),
+    purchaseUpdatedListener: (listener) => ExpoIap.purchaseUpdatedListener((purchase) => listener(normalizeExpoPurchase(purchase))),
+    requestPurchase: (input) => ExpoIap.requestPurchase(input),
+    restorePurchases: () => ExpoIap.restorePurchases()
+  };
+}
+
+function normalizeExpoPurchase(purchase: ExpoIap.Purchase): NativeStorePurchase {
+  const environmentIOS = 'environmentIOS' in purchase
+    && (purchase.environmentIOS === 'sandbox' || purchase.environmentIOS === 'production')
+    ? purchase.environmentIOS
+    : null;
+  return {
+    environmentIOS,
+    id: purchase.id,
+    nativePurchase: purchase,
+    productId: purchase.productId,
+    purchaseState: purchase.purchaseState,
+    purchaseToken: purchase.purchaseToken,
+    store: purchase.store === 'apple' || purchase.store === 'google' ? purchase.store : 'unknown'
+  };
 }

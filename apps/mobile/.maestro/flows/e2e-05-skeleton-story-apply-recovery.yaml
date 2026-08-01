@@ -1,0 +1,18 @@
+appId: ${APP_ID}
+name: "E2E-05: skeleton/story apply/recovery"
+tags: [staging, story, recovery]
+---
+- runFlow:
+    file: ../helpers/launch-authenticated.yaml
+- runFlow:
+    file: ../helpers/open-story.yaml
+- assertVisible: ${E2E_FIXTURE_EPISODE_TITLE}
+- tapOn: ${E2E_FIXTURE_EPISODE_TITLE}
+- tapOn: ${E2E_STORY_GENERATE_LABEL}
+- extendedWaitUntil:
+    visible: ${E2E_STORY_APPLY_LABEL}
+    timeout: 90000
+- tapOn: ${E2E_STORY_APPLY_LABEL}
+- tapOn: ${E2E_STORY_RECOVERY_LABEL}
+- assertVisible: ${E2E_STORY_RECOVERED_LABEL}
+- takeScreenshot: E2E-05-story-recovered

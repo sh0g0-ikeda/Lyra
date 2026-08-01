@@ -1,0 +1,4 @@
+- tapOn:
+    id: tab-pages
+- assertVisible:
+    id: tab-pages

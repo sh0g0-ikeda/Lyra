@@ -1,42 +1,33 @@
-import { describe, expect, it } from 'vitest';
-import { createSingleFlight } from '../src/lib/singleFlight';
+import { describe, expect, it, vi } from 'vitest';
+
+import { createSingleFlight } from '@/lib/singleFlight';
 
 describe('createSingleFlight', () => {
-  it('同時呼出しを1回の処理へ集約し完了後は次の処理を開始する', async () => {
-    let resolveTask: ((value: string) => void) | undefined;
-    let calls = 0;
-    const task = createSingleFlight(async (): Promise<string> => {
-      calls += 1;
-      return await new Promise<string>((resolve) => {
-        resolveTask = resolve;
-      });
-    });
+  it('同時に開始した認証更新を一度だけ実行する', async () => {
+    let resolveTask: ((value: string) => void) | null = null;
+    const task = vi.fn(
+      () =>
+        new Promise<string>((resolve) => {
+          resolveTask = resolve;
+        })
+    );
+    const run = createSingleFlight(task);
 
-    const first = task();
-    const second = task();
+    const first = run();
+    const second = run();
+    resolveTask?.('refreshed');
 
-    expect(first).toBe(second);
-    expect(calls).toBe(1);
-    resolveTask?.('done');
-    await expect(first).resolves.toBe('done');
-
-    const third = task();
-    expect(calls).toBe(2);
-    resolveTask?.('again');
-    await expect(third).resolves.toBe('again');
+    await expect(Promise.all([first, second])).resolves.toEqual(['refreshed', 'refreshed']);
+    expect(task).toHaveBeenCalledTimes(1);
   });
 
-  it('失敗後も次の呼出しを開始できる', async () => {
-    let calls = 0;
-    const task = createSingleFlight(async (): Promise<number> => {
-      calls += 1;
-      if (calls === 1) {
-        throw new Error('temporary');
-      }
-      return calls;
-    });
+  it('完了後の認証更新は新しく実行する', async () => {
+    const task = vi.fn().mockResolvedValue('refreshed');
+    const run = createSingleFlight(task);
 
-    await expect(task()).rejects.toThrow('temporary');
-    await expect(task()).resolves.toBe(2);
+    await run();
+    await run();
+
+    expect(task).toHaveBeenCalledTimes(2);
   });
 });

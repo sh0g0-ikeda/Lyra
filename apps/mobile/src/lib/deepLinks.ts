@@ -1,24 +1,56 @@
 export type MobileLink =
   | { type: 'auth-callback' }
-  | { type: 'auth-logout' };
+  | { type: 'auth-logout' }
+  | { type: 'invitation'; token: string };
 
-const MOBILE_SCHEME = 'lyra-mobile:';
-const AUTH_HOST = 'auth';
+const productionOrigin = 'https://app.lyra-editor.com';
+const maxInvitationTokenLength = 2048;
 
 export const parseMobileLink = (rawUrl: string): MobileLink | null => {
+  let url: URL;
   try {
-    const url = new URL(rawUrl);
-    if (url.protocol !== MOBILE_SCHEME || url.hostname !== AUTH_HOST) {
-      return null;
-    }
-    if (url.pathname === '/callback') {
-      return { type: 'auth-callback' };
-    }
-    if (url.pathname === '/logout') {
-      return { type: 'auth-logout' };
-    }
-    return null;
+    url = new URL(rawUrl);
   } catch {
     return null;
   }
+
+  if (
+    url.protocol === 'lyra-mobile:' &&
+    url.hostname === 'auth' &&
+    (url.pathname === '/callback' || url.pathname === '/logout')
+  ) {
+    return { type: url.pathname === '/callback' ? 'auth-callback' : 'auth-logout' };
+  }
+
+  if (url.origin !== productionOrigin) {
+    return null;
+  }
+
+  if (url.pathname === '/auth/mobile/callback') {
+    return { type: 'auth-callback' };
+  }
+  if (url.pathname === '/auth/mobile/logout') {
+    return { type: 'auth-logout' };
+  }
+
+  const invitationMatch = /^\/invitations\/([^/]+)$/u.exec(url.pathname);
+  if (invitationMatch === null) {
+    return null;
+  }
+
+  let token: string;
+  try {
+    token = decodeURIComponent(invitationMatch[1] ?? '').trim();
+  } catch {
+    return null;
+  }
+  if (
+    token.length === 0 ||
+    token.length > maxInvitationTokenLength ||
+    token.includes('/')
+  ) {
+    return null;
+  }
+
+  return { type: 'invitation', token };
 };

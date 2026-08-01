@@ -1,16 +1,15 @@
 import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
-import { colors, spacing } from '../constants/theme';
+
+import { colors, spacing, textStyles } from '@/constants/theme';
 
 interface LoadingStateProps {
   label: string;
 }
 
-export function LoadingState({
-  label,
-}: LoadingStateProps): React.JSX.Element {
+export function LoadingState({ label }: LoadingStateProps): React.JSX.Element {
   return (
-    <View accessibilityLabel={label} style={styles.container}>
-      <ActivityIndicator color={colors.accent} />
+    <View style={styles.container}>
+      <ActivityIndicator color={colors.primary} />
       <Text style={styles.label}>{label}</Text>
     </View>
   );
@@ -19,11 +18,17 @@ export function LoadingState({
 const styles = StyleSheet.create({
   container: {
     alignItems: 'center',
+    backgroundColor: colors.surfaceAlt,
+    borderColor: colors.border,
+    borderRadius: 8,
+    borderWidth: 1,
+    flexDirection: 'row',
     gap: spacing.sm,
-    paddingVertical: spacing.lg,
+    justifyContent: 'center',
+    padding: spacing.md
   },
   label: {
-    color: colors.muted,
-    fontSize: 15,
-  },
+    ...textStyles.body,
+    color: colors.muted
+  }
 });

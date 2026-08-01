@@ -4,6 +4,36 @@ import { fileURLToPath } from 'node:url';
 
 const generatedHeader =
   '// GENERATED FILE. Run `npm run mobile:contracts:generate`; do not edit directly.\n';
+const compatibilityExport =
+  `export {
+  accountDeletionPreviewSchema,
+  accountDeletionResultSchema,
+  apiErrorBodySchema,
+  createEpisodeExportResponseSchema,
+  entityReferenceGenerationAvailabilitySchema,
+  exportJobSchema,
+  generationJobSchema,
+  generationJobsResponseSchema,
+  jobAcceptedSchema,
+  layoutTemplateResponseSchema,
+  organizationBillingSummarySchema,
+  organizationCreditCheckoutSchema,
+  organizationCustomerPortalSchema,
+  organizationInvitationActionResponseSchema,
+  organizationInvitationPreviewSchema,
+  organizationInvitationUpdateResponseSchema,
+  organizationMemberUpdateResponseSchema,
+  organizationPlansResponseSchema,
+  organizationSubscriptionCheckoutSchema,
+  organizationUpdateResponseSchema,
+  organizationWorkspaceDetailSchema,
+  organizationWorkspacesResponseSchema,
+  pageGenerationReadinessSchema,
+  pageLayoutTemplatesResponseSchema,
+  pushTokenRegistrationSchema,
+  saveAndGeneratePageResponseSchema,
+} from './mobileCompatibilitySchemas';
+`;
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const canonicalPath = resolve(
   projectRoot,
@@ -16,7 +46,7 @@ const generatedPath = resolve(
 const checkOnly = process.argv.slice(2).includes('--check');
 
 const canonical = normalizeNewlines(await readFile(canonicalPath, 'utf8'));
-const expected = `${generatedHeader}${canonical}`;
+const expected = `${generatedHeader}${canonical}\n${compatibilityExport}`;
 
 if (checkOnly) {
   await checkGeneratedContract(expected);

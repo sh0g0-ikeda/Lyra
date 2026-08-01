@@ -1,0 +1,13 @@
+appId: ${APP_ID}
+name: "E2E-18: external dialogue is unavailable until balloon flow is complete"
+tags: [staging, dialogue, balloon]
+---
+- runFlow:
+    file: ../helpers/launch-authenticated.yaml
+- runFlow:
+    file: ../helpers/open-pages.yaml
+- tapOn: ${E2E_EXTERNAL_DIALOGUE_LABEL}
+- assertVisible: ${E2E_BALLOON_REQUIRED_LABEL}
+- tapOn: ${E2E_BALLOON_COMPLETE_LABEL}
+- assertVisible: ${E2E_EXTERNAL_DIALOGUE_AVAILABLE_LABEL}
+- takeScreenshot: E2E-18-balloon-gate

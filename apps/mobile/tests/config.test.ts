@@ -1,44 +1,60 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { validateMobileConfig } from '@/lib/config';
 
 const productionConfig = {
   accountDeletionEnabled: false,
   apiBaseUrl: 'https://app.lyra-editor.com',
-  cognitoDomain: 'https://example.auth.ap-northeast-1.amazoncognito.com',
-  cognitoClientId: 'abc123456789',
+  cognitoDomain: 'https://ap-northeast-1example.auth.ap-northeast-1.amazoncognito.com',
+  cognitoClientId: '6b2h941o888u2l7ejhv5jog94',
   cognitoRedirectUri: 'https://app.lyra-editor.com/auth/mobile/callback',
   cognitoLogoutRedirectUri: 'https://app.lyra-editor.com/auth/mobile/logout',
   cognitoScopes: ['openid', 'email'],
-  buildEnvironment: 'production' as const,
+  apiTokenUse: 'id_token' as const,
+  organizationFeaturesEnabled: true,
   mobileStoreBillingEnabled: false,
+  sentryDsn: 'https://public@example.ingest.sentry.io/123456',
+  buildEnvironment: 'production' as const
 };
 
+afterEach(() => {
+  vi.unstubAllEnvs();
+  vi.resetModules();
+});
+
 describe('mobile configuration validation', () => {
-  it('アカウント削除は公開設定で明示された場合だけ有効にする', () => {
-    expect(productionConfig.accountDeletionEnabled).toBe(false);
-    expect(validateMobileConfig({
-      ...productionConfig,
-      accountDeletionEnabled: true,
-    }).issues).toContain('PRODUCTION_NATIVE_LINKING');
+  it('store billing flagは未設定ならfalseとして読み込む', async () => {
+    vi.stubEnv('EXPO_PUBLIC_MOBILE_STORE_BILLING_ENABLED', '');
+    vi.resetModules();
+
+    const { config } = await import('@/lib/config');
+
+    expect(config.mobileStoreBillingEnabled).toBe(false);
   });
 
-  it('store billingは公開設定で明示された場合だけ有効にする', () => {
-    expect(productionConfig.mobileStoreBillingEnabled).toBe(false);
-    expect(validateMobileConfig({
-      ...productionConfig,
-      mobileStoreBillingEnabled: true,
-    }).issues).toContain('PRODUCTION_NATIVE_LINKING');
+  it('store billing flagはtrueだけを有効として読み込む', async () => {
+    vi.stubEnv('EXPO_PUBLIC_MOBILE_STORE_BILLING_ENABLED', 'true');
+    vi.resetModules();
+
+    const { config } = await import('@/lib/config');
+
+    expect(config.mobileStoreBillingEnabled).toBe(true);
   });
 
-  it('native release linking未導入の本番設定をfail closedにする', () => {
-    expect(validateMobileConfig(productionConfig)).toMatchObject({
-      valid: false,
-      issues: ['PRODUCTION_NATIVE_LINKING'],
-    });
+  it('account deletion flagは未設定ならfalseとして読み込む', async () => {
+    vi.stubEnv('EXPO_PUBLIC_ACCOUNT_DELETION_ENABLED', '');
+    vi.resetModules();
+
+    const { config } = await import('@/lib/config');
+
+    expect(config.accountDeletionEnabled).toBe(false);
   });
 
-  it('本番のHTTP、任意origin、開発callbackを拒否する', () => {
+  it('固定された本番HTTPS設定を受け入れる', () => {
+    expect(validateMobileConfig(productionConfig)).toMatchObject({ valid: true, issues: [] });
+  });
+
+  it('本番のHTTP、localhost、任意origin、開発callbackを拒否する', () => {
     const result = validateMobileConfig({
       ...productionConfig,
       apiBaseUrl: 'http://localhost:3000',
@@ -63,13 +79,47 @@ describe('mobile configuration validation', () => {
     expect(result.issues).toEqual(expect.arrayContaining(['API_BASE_URL', 'COGNITO_CLIENT_ID']));
   });
 
-  it('開発環境だけはlocalhost HTTPとcustom schemeを許可する', () => {
+  it('開発環境だけはlocalhostとcustom schemeを許可する', () => {
+    const result = validateMobileConfig({
+      ...productionConfig,
+      apiBaseUrl: 'http://localhost:3000',
+      cognitoRedirectUri: 'lyra-mobile://auth/callback',
+      cognitoLogoutRedirectUri: 'lyra-mobile://auth/logout',
+      buildEnvironment: 'development'
+    });
+
+    expect(result.valid).toBe(true);
+  });
+
+  it('productionでは有効なHTTPS Sentry DSNを必須にする', () => {
+    expect(
+      validateMobileConfig({
+        ...productionConfig,
+        sentryDsn: ''
+      })
+    ).toMatchObject({
+      valid: false,
+      issues: expect.arrayContaining(['SENTRY_DSN'])
+    });
+    expect(
+      validateMobileConfig({
+        ...productionConfig,
+        sentryDsn: 'http://public@example.ingest.sentry.io/123456'
+      })
+    ).toMatchObject({
+      valid: false,
+      issues: expect.arrayContaining(['SENTRY_DSN'])
+    });
+  });
+
+  it('developmentとpreviewではSentry DSNを設定しなくても送信を無効化できる', () => {
     expect(
       validateMobileConfig({
         ...productionConfig,
         apiBaseUrl: 'http://localhost:3000',
         cognitoRedirectUri: 'lyra-mobile://auth/callback',
         cognitoLogoutRedirectUri: 'lyra-mobile://auth/logout',
+        sentryDsn: '',
         buildEnvironment: 'development'
       })
     ).toMatchObject({ valid: true, issues: [] });

@@ -1,0 +1,60 @@
+{
+  "schemaVersion": 1,
+  "dataEncryptedInTransit": true,
+  "dataDeletionAvailableInApp": true,
+  "accountCreationAvailable": true,
+  "independentSecurityReview": false,
+  "tracking": false,
+  "advertising": false,
+  "collectedData": [
+    {
+      "category": "PERSONAL_INFO",
+      "types": ["EMAIL_ADDRESS", "USER_IDS"],
+      "required": true,
+      "linkedToUser": true,
+      "ephemeral": false,
+      "purposes": ["APP_FUNCTIONALITY", "ACCOUNT_MANAGEMENT", "FRAUD_PREVENTION_SECURITY"]
+    },
+    {
+      "category": "APP_ACTIVITY",
+      "types": ["OTHER_USER_GENERATED_CONTENT"],
+      "required": false,
+      "linkedToUser": true,
+      "ephemeral": false,
+      "purposes": ["APP_FUNCTIONALITY"]
+    },
+    {
+      "category": "PHOTOS_AND_VIDEOS",
+      "types": ["PHOTOS"],
+      "required": false,
+      "linkedToUser": true,
+      "ephemeral": false,
+      "purposes": ["APP_FUNCTIONALITY"]
+    },
+    {
+      "category": "FINANCIAL_INFO",
+      "types": ["PURCHASE_HISTORY"],
+      "required": false,
+      "linkedToUser": true,
+      "ephemeral": false,
+      "purposes": ["APP_FUNCTIONALITY", "ACCOUNT_MANAGEMENT", "FRAUD_PREVENTION_SECURITY"]
+    },
+    {
+      "category": "APP_INFO_AND_PERFORMANCE",
+      "types": ["CRASH_LOGS", "DIAGNOSTICS"],
+      "required": true,
+      "linkedToUser": false,
+      "ephemeral": false,
+      "purposes": ["APP_FUNCTIONALITY", "ANALYTICS"]
+    }
+  ],
+  "sharedWithServiceProviders": [
+    "Amazon Web Services",
+    "OpenAI",
+    "Stripe",
+    "Apple",
+    "Google"
+  ],
+  "policyUrl": "https://app.lyra-editor.com/privacy.html",
+  "deletionUrl": "https://app.lyra-editor.com/privacy.html#account-deletion"
+}
