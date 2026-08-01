@@ -36,7 +36,8 @@ export function ExportJobCard({
   onDownload
 }: ExportJobCardProps): React.JSX.Element | null {
   const [downloadLoading, setDownloadLoading] = useState(false);
-  const [downloadError, setDownloadError] = useState<string | null>(null);
+  const [downloadError, setDownloadError] = useState<{ jobId: string; message: string } | null>(null);
+  const [downloadSucceededJobId, setDownloadSucceededJobId] = useState<string | null>(null);
   const jobQuery = useQuery({
     enabled: suppliedJob === undefined && jobId !== null,
     queryKey: exportJobQueryKey(sessionKey, jobId, organizationId),
@@ -78,10 +79,15 @@ export function ExportJobCard({
     }
     setDownloadLoading(true);
     setDownloadError(null);
+    setDownloadSucceededJobId(null);
     try {
       await onDownload(job.job_id);
+      setDownloadSucceededJobId(job.job_id);
     } catch (error) {
-      setDownloadError(fileTransferErrorMessage(error, language));
+      setDownloadError({
+        jobId: job.job_id,
+        message: fileTransferErrorMessage(error, language)
+      });
     } finally {
       setDownloadLoading(false);
     }
@@ -107,7 +113,10 @@ export function ExportJobCard({
       {isCompleted && !job.download_ready ? (
         <Text style={styles.text}>{t(language, "generated.components.ExportJobCard.export.finished.but.its.download.link.is.8471ea4b")}</Text>
       ) : null}
-      {downloadError === null ? null : <Text style={styles.error}>{downloadError}</Text>}
+      {downloadError?.jobId === job.job_id ? <Text style={styles.error}>{downloadError.message}</Text> : null}
+      {downloadSucceededJobId === job.job_id ? (
+        <Text style={styles.success}>{t(language, 'shared.fileTransfer.saved')}</Text>
+      ) : null}
       {canDownload ? (
         <PrimaryButton
           label={downloadLabel(format, language)}
@@ -190,6 +199,7 @@ const styles = StyleSheet.create({
   statusGood: { backgroundColor: colors.successSurface, color: '#78D77B' },
   statusInfo: { backgroundColor: colors.infoSurface, color: '#7CE2F0' },
   statusWarn: { backgroundColor: colors.warningSurface, color: '#FFD56A' },
+  success: { ...textStyles.body, color: '#88D989' },
   text: { ...textStyles.caption },
   title: { ...textStyles.body, flex: 1, fontWeight: '700', minWidth: 0 }
 });

@@ -123,6 +123,53 @@ describe('ExportJobCard', () => {
     expect(rendered).not.toContain('NETWORK_UNAVAILABLE');
   });
 
+  it('端末の保存または共有処理が完了したことを表示する', async () => {
+    const onDownload = vi.fn().mockResolvedValue(undefined);
+    useQueryMock.mockReturnValue({ data: completedJob, error: null, isLoading: false });
+    let renderer: ReturnType<typeof create>;
+    await act(async () => {
+      renderer = create(
+        React.createElement(ExportJobCard, {
+          api: { getExportJob: vi.fn() } as never,
+          filename: 'lyra-export.pdf',
+          format: 'pdf',
+          jobId: 'export-job-1',
+          language: 'ja',
+          onDownload,
+          sessionKey: 'session-a'
+        })
+      );
+    });
+
+    const button = renderer!.root.findByType('button');
+    await act(async () => {
+      await button.props.onClick();
+    });
+
+    expect(JSON.stringify(renderer!.toJSON())).toContain(
+      '保存または共有の処理が完了しました。端末で選択した保存先をご確認ください。'
+    );
+
+    await act(async () => {
+      renderer!.update(
+        React.createElement(ExportJobCard, {
+          api: { getExportJob: vi.fn() } as never,
+          filename: 'next-export.pdf',
+          format: 'pdf',
+          job: { ...completedJob, job_id: 'export-job-2' },
+          jobId: 'export-job-2',
+          language: 'ja',
+          onDownload,
+          sessionKey: 'session-a'
+        })
+      );
+    });
+
+    expect(JSON.stringify(renderer!.toJSON())).not.toContain(
+      '保存または共有の処理が完了しました。端末で選択した保存先をご確認ください。'
+    );
+  });
+
   it('does not render a stale export job when the API returns not found', () => {
     useQueryMock.mockReturnValue({
       data: undefined,

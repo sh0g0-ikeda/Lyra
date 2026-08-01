@@ -673,7 +673,12 @@ export class LyraMobileApiClient {
   }
 
   public updateWork(workId: string, body: UpdateWorkPayload, organizationId?: string | null): Promise<WorkRecord> {
-    return this.request(`/api/works/${workId}${organizationQuery(organizationId)}`, workSchema, { method: 'PUT', body });
+    const { expected_updated_at: _expectedUpdatedAt, ...requestBody } = body;
+    void _expectedUpdatedAt;
+    return this.request(`/api/works/${workId}${organizationQuery(organizationId)}`, workSchema, {
+      method: 'PUT',
+      body: requestBody
+    });
   }
 
   public getChapters(workId: string, organizationId?: string | null): Promise<{ chapters: ChapterRecord[] }> {
@@ -696,9 +701,11 @@ export class LyraMobileApiClient {
     body: UpdateChapterPayload,
     organizationId?: string | null
   ): Promise<ChapterRecord> {
+    const { expected_updated_at: _expectedUpdatedAt, ...requestBody } = body;
+    void _expectedUpdatedAt;
     return this.request(`/api/chapters/${chapterId}${organizationQuery(organizationId)}`, chapterSchema, {
       method: 'PUT',
-      body
+      body: requestBody
     });
   }
 
@@ -733,9 +740,11 @@ export class LyraMobileApiClient {
     body: UpdateEpisodePayload,
     organizationId?: string | null
   ): Promise<EpisodeRecord> {
+    const { expected_updated_at: _expectedUpdatedAt, ...requestBody } = body;
+    void _expectedUpdatedAt;
     return this.request(`/api/episodes/${episodeId}${organizationQuery(organizationId)}`, episodeSchema, {
       method: 'PUT',
-      body
+      body: requestBody
     });
   }
 

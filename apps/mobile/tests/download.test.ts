@@ -10,6 +10,7 @@ import {
 const {
   createFileAsyncMock,
   downloadAsyncMock,
+  fileDeleteMock,
   fileCopyMock,
   isAvailableAsyncMock,
   platformMock,
@@ -18,6 +19,7 @@ const {
 } = vi.hoisted(() => ({
   createFileAsyncMock: vi.fn(),
   downloadAsyncMock: vi.fn(),
+  fileDeleteMock: vi.fn(),
   fileCopyMock: vi.fn(),
   isAvailableAsyncMock: vi.fn(),
   platformMock: { OS: 'ios' },
@@ -40,6 +42,10 @@ vi.mock('expo-file-system/legacy', () => ({
 vi.mock('expo-file-system', () => ({
   File: class MockFile {
     public constructor(public readonly uri: string) {}
+
+    public delete(): void {
+      fileDeleteMock(this.uri);
+    }
 
     public copy(destination: MockFile, options: { overwrite: boolean }): Promise<void> {
       return fileCopyMock(this.uri, destination.uri, options);
@@ -179,6 +185,31 @@ describe('mobile download filenames', () => {
     );
   });
 
+  it('Androidの保存先providerがcopyを拒否した場合は取得済みPDFを共有して保存できる', async () => {
+    platformMock.OS = 'android';
+    downloadAsyncMock.mockResolvedValue({ status: 200, uri: 'file:///cache/chapter.pdf' });
+    requestDirectoryPermissionsAsyncMock.mockResolvedValue({
+      directoryUri: 'content://downloads/tree',
+      granted: true
+    });
+    createFileAsyncMock.mockResolvedValue('content://downloads/chapter.pdf');
+    fileCopyMock.mockRejectedValue(new Error('Document provider rejected copy'));
+    isAvailableAsyncMock.mockResolvedValue(true);
+    shareAsyncMock.mockResolvedValue(undefined);
+
+    await expect(downloadAuthenticatedFile({
+      path: '/api/exports/export-job-1/download',
+      filename: 'chapter.pdf',
+      mimeType: 'application/pdf',
+      tokens: null
+    })).resolves.toBe('file:///cache/chapter.pdf');
+
+    expect(shareAsyncMock).toHaveBeenCalledWith(
+      'file:///cache/chapter.pdf',
+      { mimeType: 'application/pdf' }
+    );
+  });
+
   it('Androidで保存先フォルダを選ばなかった場合は取消として扱う', async () => {
     platformMock.OS = 'android';
     downloadAsyncMock.mockResolvedValue({ status: 200, uri: 'file:///cache/chapter.pdf' });
@@ -196,6 +227,53 @@ describe('mobile download filenames', () => {
 
     expect(createFileAsyncMock).not.toHaveBeenCalled();
     expect(fileCopyMock).not.toHaveBeenCalled();
+    expect(shareAsyncMock).not.toHaveBeenCalled();
+  });
+
+  it('AndroidではAPIが返した実際の画像MIMEに合う拡張子で保存する', async () => {
+    platformMock.OS = 'android';
+    downloadAsyncMock.mockResolvedValue({
+      status: 200,
+      uri: 'file:///cache/page.png',
+      mimeType: 'image/jpeg'
+    });
+    requestDirectoryPermissionsAsyncMock.mockResolvedValue({
+      directoryUri: 'content://downloads/tree',
+      granted: true
+    });
+    createFileAsyncMock.mockResolvedValue('content://downloads/page.jpg');
+    fileCopyMock.mockResolvedValue(undefined);
+
+    await downloadAuthenticatedFile({
+      path: '/api/pages/page-1/export-image',
+      filename: 'page',
+      mimeType: 'image/png',
+      tokens: null
+    });
+
+    expect(createFileAsyncMock).toHaveBeenCalledWith(
+      'content://downloads/tree',
+      'page',
+      'image/jpeg'
+    );
+  });
+
+  it('Androidのフォルダ選択が取消例外を返した場合も共有画面を開かない', async () => {
+    platformMock.OS = 'android';
+    downloadAsyncMock.mockResolvedValue({ status: 200, uri: 'file:///cache/chapter.pdf' });
+    requestDirectoryPermissionsAsyncMock.mockRejectedValue(
+      new Error('User cancelled directory picker')
+    );
+    isAvailableAsyncMock.mockResolvedValue(true);
+
+    await expect(downloadAuthenticatedFile({
+      path: '/api/exports/export-job-1/download',
+      filename: 'chapter.pdf',
+      mimeType: 'application/pdf',
+      tokens: null
+    })).rejects.toMatchObject({ code: 'DOWNLOAD_CANCELED' });
+
+    expect(shareAsyncMock).not.toHaveBeenCalled();
   });
 });
 

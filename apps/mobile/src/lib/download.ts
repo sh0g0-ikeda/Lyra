@@ -23,6 +23,7 @@ interface DownloadExternalFileParams {
 const extensionFromMimeType = (mimeType: string): string => {
   if (mimeType === 'image/png') return 'png';
   if (mimeType === 'image/jpeg') return 'jpg';
+  if (mimeType === 'image/webp') return 'webp';
   if (mimeType === 'application/pdf') return 'pdf';
   if (mimeType === 'application/zip') return 'zip';
   if (mimeType === 'text/csv') return 'csv';
@@ -56,33 +57,73 @@ const assertSuccessfulDownload = (status: number): void => {
 const storageAccessFrameworkDisplayName = (filename: string): string =>
   filename.replace(/\.[A-Za-z0-9]{1,10}$/u, '') || 'lyra-download';
 
+const shareDownloadedFile = async (
+  sourceUri: string,
+  mimeType: string
+): Promise<string> => {
+  if (!(await Sharing.isAvailableAsync())) {
+    throw new MobileFileTransferError('SHARING_UNAVAILABLE');
+  }
+  await Sharing.shareAsync(sourceUri, { mimeType });
+  return sourceUri;
+};
+
+const downloadedMimeType = (
+  requestedMimeType: string,
+  responseMimeType: string | null | undefined
+): string => {
+  if (
+    requestedMimeType.startsWith('image/') &&
+    (responseMimeType === 'image/png' ||
+      responseMimeType === 'image/jpeg' ||
+      responseMimeType === 'image/webp')
+  ) {
+    return responseMimeType;
+  }
+  return requestedMimeType;
+};
+
 const saveDownloadedFile = async (
   sourceUri: string,
   filename: string,
   mimeType: string
 ): Promise<string> => {
   if (Platform.OS === 'android') {
-    const permission = await FileSystem.StorageAccessFramework.requestDirectoryPermissionsAsync();
+    let permission: FileSystem.FileSystemRequestDirectoryPermissionsResult;
+    try {
+      permission = await FileSystem.StorageAccessFramework.requestDirectoryPermissionsAsync();
+    } catch (error) {
+      const classified = classifyFileTransferFailure(error);
+      if (classified.code === 'DOWNLOAD_CANCELED') {
+        throw classified;
+      }
+      return shareDownloadedFile(sourceUri, mimeType);
+    }
     if (!permission.granted || permission.directoryUri.length === 0) {
       throw new MobileFileTransferError('DOWNLOAD_CANCELED');
     }
-    const destinationUri = await FileSystem.StorageAccessFramework.createFileAsync(
-      permission.directoryUri,
-      storageAccessFrameworkDisplayName(filename),
-      mimeType
-    );
-    const { File } = await import('expo-file-system');
-    const source = new File(sourceUri);
-    const destination = new File(destinationUri);
-    await source.copy(destination, { overwrite: true });
-    return destinationUri;
+    let destination: InstanceType<typeof import('expo-file-system').File> | null = null;
+    try {
+      const destinationUri = await FileSystem.StorageAccessFramework.createFileAsync(
+        permission.directoryUri,
+        storageAccessFrameworkDisplayName(filename),
+        mimeType
+      );
+      const { File } = await import('expo-file-system');
+      const source = new File(sourceUri);
+      destination = new File(destinationUri);
+      await source.copy(destination, { overwrite: true });
+      return destinationUri;
+    } catch {
+      try {
+        destination?.delete();
+      } catch {
+        // The provider may already have removed or invalidated the empty destination.
+      }
+      return shareDownloadedFile(sourceUri, mimeType);
+    }
   }
-
-  if (!(await Sharing.isAvailableAsync())) {
-    throw new MobileFileTransferError('SHARING_UNAVAILABLE');
-  }
-  await Sharing.shareAsync(sourceUri, { mimeType });
-  return sourceUri;
+  return shareDownloadedFile(sourceUri, mimeType);
 };
 
 export const classifyFileTransferFailure = (error: unknown): MobileFileTransferError => {
@@ -118,14 +159,20 @@ export async function downloadAuthenticatedFile({
     throw new MobileFileTransferError('STORAGE_FULL');
   }
 
-  const safeFilename = normalizeDownloadFilename(filename, extensionFromMimeType(mimeType), 'lyra-download');
-  const fileUri = `${directory}${safeFilename}`;
+  const cacheFilename = normalizeDownloadFilename(filename, extensionFromMimeType(mimeType), 'lyra-download');
+  const fileUri = `${directory}${cacheFilename}`;
   const baseUrl = config.apiBaseUrl.replace(/\/+$/, '');
   const headers = tokens === null ? undefined : { Authorization: `Bearer ${tokens.idToken}` };
   try {
     const result = await FileSystem.downloadAsync(`${baseUrl}${path}`, fileUri, { headers });
     assertSuccessfulDownload(result.status);
-    return await saveDownloadedFile(result.uri, safeFilename, mimeType);
+    const effectiveMimeType = downloadedMimeType(mimeType, result.mimeType);
+    const savedFilename = normalizeDownloadFilename(
+      filename,
+      extensionFromMimeType(effectiveMimeType),
+      'lyra-download'
+    );
+    return await saveDownloadedFile(result.uri, savedFilename, effectiveMimeType);
   } catch (error) {
     throw classifyFileTransferFailure(error);
   }
