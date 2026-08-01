@@ -1044,6 +1044,116 @@ describe('LyraMobileApiClient', () => {
     expect(fetcher).toHaveBeenCalledTimes(2);
   });
 
+  it('Panel構造変更を全ID snapshotとorganization scope付きで送る', async () => {
+    const organizationId = '55555555-5555-4555-8555-555555555555';
+    const firstPanelId = buildPanel().id;
+    const secondPanelId = '88888888-8888-4888-8888-888888888888';
+    const response = buildPanelStructureResponse([secondPanelId, firstPanelId], {
+      layout_template_id: null,
+    });
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(response));
+    const api = new LyraMobileApiClient({
+      apiBaseUrl: 'https://api.example.com',
+      auth: new FakeAuthSession(),
+      fetcher,
+    });
+
+    await expect(api.applyPagePanelStructure(
+      buildPage().id,
+      {
+        expected_panel_ids: [firstPanelId, secondPanelId],
+        operation: { type: 'reorder', panel_ids: [secondPanelId, firstPanelId] },
+      },
+      organizationId,
+    )).resolves.toEqual(response);
+
+    expect(fetcher).toHaveBeenCalledWith(
+      `https://api.example.com/api/pages/${buildPage().id}/panel-structure?organization_id=${organizationId}`,
+      expect.objectContaining({
+        body: JSON.stringify({
+          expected_panel_ids: [firstPanelId, secondPanelId],
+          operation: { type: 'reorder', panel_ids: [secondPanelId, firstPanelId] },
+        }),
+        method: 'PUT',
+      }),
+    );
+  });
+
+  it('Panel構造変更の401は認証成立前としてtoken更新後に同じbodyを1度だけ送る', async () => {
+    const firstPanelId = buildPanel().id;
+    const createdPanelId = '88888888-8888-4888-8888-888888888888';
+    const response = buildPanelStructureResponse([firstPanelId, createdPanelId], {
+      created_panel_id: createdPanelId,
+    });
+    const auth = new FakeAuthSession();
+    const fetcher = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(null, { status: 401 }))
+      .mockResolvedValueOnce(jsonResponse(response));
+    const api = new LyraMobileApiClient({
+      apiBaseUrl: 'https://api.example.com',
+      auth,
+      fetcher,
+    });
+    const request = {
+      expected_panel_ids: [firstPanelId],
+      operation: { type: 'append' } as const,
+    };
+
+    await expect(api.applyPagePanelStructure(buildPage().id, request)).resolves.toEqual(response);
+
+    expect(auth.refreshCalls).toBe(1);
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(fetcher.mock.calls.map((call) => call[1])).toEqual([
+      expect.objectContaining({
+        body: JSON.stringify(request),
+        headers: expect.objectContaining({ Authorization: 'Bearer id-token' }),
+        method: 'PUT',
+      }),
+      expect.objectContaining({
+        body: JSON.stringify(request),
+        headers: expect.objectContaining({ Authorization: 'Bearer refreshed-id-token' }),
+        method: 'PUT',
+      }),
+    ]);
+  });
+
+  it.each([
+    [
+      '重複Panel ID',
+      buildPanelStructureResponse([buildPanel().id, buildPanel().id]),
+      { type: 'reorder', panel_ids: [buildPanel().id] } as const,
+    ],
+    [
+      '別PageのFrame',
+      buildPanelStructureResponse([buildPanel().id], {
+        frames: [{
+          ...buildPanelStructureResponse([buildPanel().id]).frames[0],
+          page_id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+        }],
+      }),
+      { type: 'reorder', panel_ids: [buildPanel().id] } as const,
+    ],
+    [
+      'appendのcreated Panel欠落',
+      buildPanelStructureResponse([buildPanel().id], { created_panel_id: null }),
+      { type: 'append' } as const,
+    ],
+  ])('Panel構造変更の%sを成功として採用しない', async (_label, response, operation) => {
+    const api = new LyraMobileApiClient({
+      apiBaseUrl: 'https://api.example.com',
+      auth: new FakeAuthSession(),
+      fetcher: vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(response)),
+    });
+
+    await expect(api.applyPagePanelStructure(
+      buildPage().id,
+      { expected_panel_ids: [buildPanel().id], operation },
+    )).rejects.toMatchObject({
+      code: 'INVALID_API_RESPONSE',
+      status: 502,
+    });
+  });
+
   it('Panel assignmentをexpected snapshot付きで同じorganization scopeへ保存する', async () => {
     const organizationId = '55555555-5555-4555-8555-555555555555';
     const panel = buildPanel();
@@ -1598,6 +1708,31 @@ function buildPanel(): Record<string, unknown> & { id: string } {
     panel_notes: null,
     created_at: '2026-08-01T00:00:00.000Z',
     updated_at: '2026-08-01T00:00:00.000Z',
+  };
+}
+
+function buildPanelStructureResponse(
+  panelIds: string[],
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> & { frames: Record<string, unknown>[] } {
+  return {
+    panel_ids: panelIds,
+    created_panel_id: null,
+    layout_template_id: 'splash_1',
+    frames: panelIds.map((panelId, index) => ({
+      id: `${String(index + 1).padStart(8, '0')}-1111-4111-8111-111111111111`,
+      page_id: buildPage().id,
+      panel_id: panelId,
+      vertices: [{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 100 }],
+      border_style: 'solid',
+      border_width: 1,
+      border_color: '#000000',
+      z_index: index,
+      reading_order: index + 1,
+    })),
+    balloon_reference_updated_count: 0,
+    balloon_reference_cleared_count: 0,
+    ...overrides,
   };
 }
 

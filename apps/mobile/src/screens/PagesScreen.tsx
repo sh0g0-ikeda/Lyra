@@ -157,6 +157,7 @@ export const PagesScreen = forwardRef<PagesScreenHandle, PagesScreenProps>(
     const [generationError, setGenerationError] = useState<string | null>(null);
     const [generationNotice, setGenerationNotice] = useState<string | null>(null);
     const [jobStatusCheckFailed, setJobStatusCheckFailed] = useState(false);
+    const [panelStructureActive, setPanelStructureActive] = useState(false);
     const pageOperation = useRef<Promise<boolean> | null>(null);
     const transitionOperation = useRef<Promise<boolean> | null>(null);
     const pageSettingsRef = useRef<PageSettingsSectionHandle>(null);
@@ -1070,7 +1071,7 @@ export const PagesScreen = forwardRef<PagesScreenHandle, PagesScreenProps>(
         {selectedEpisode === null ? null : (
           <PageSettingsSection
             api={api}
-            editingBlocked={panelEditingBlocked}
+            editingBlocked={panelEditingBlocked || panelStructureActive}
             episodeId={selectedEpisode.id}
             language={language}
             organizationId={organizationId}
@@ -1089,9 +1090,12 @@ export const PagesScreen = forwardRef<PagesScreenHandle, PagesScreenProps>(
             generationActive={panelEditingBlocked}
             language={language}
             organizationId={organizationId}
+            onStructureActiveChange={setPanelStructureActive}
             pageListReady={pagesQuery.data !== undefined}
             pages={pages}
+            preparePageSettings={resolvePendingPageSettings}
             ref={panelEditingRef}
+            refreshPages={refreshPagesForSettings}
             resolveDirtyAction={resolveDirtyAction}
             sessionKey={sessionKey}
             workId={selectedWorkId!}

@@ -16,6 +16,7 @@ import {
   generationJobResponseSchema,
   pageSchema,
   panelAssignmentsResponseSchema,
+  pagePanelStructureResponseSchema,
   panelSchema,
   panelsResponseSchema,
   pageJobAcceptedResponseSchema,
@@ -45,6 +46,7 @@ export type SceneRecord = ReturnType<typeof sceneSchema.parse>;
 export type PageRecord = ReturnType<typeof pageSchema.parse>;
 export type PanelRecord = ReturnType<typeof panelSchema.parse>;
 export type PanelEntityAssignmentRecord = PanelRecord['entities'][number];
+export type PagePanelStructureResponse = ReturnType<typeof pagePanelStructureResponseSchema.parse>;
 export type GenerationJobRecord = ReturnType<typeof generationJobResponseSchema.parse>;
 export type PageSkeletonResponse = ReturnType<typeof pageSkeletonResponseSchema.parse>;
 export type PageJobAcceptedResponse = ReturnType<typeof pageJobAcceptedResponseSchema.parse>;
@@ -101,6 +103,14 @@ export interface UpdateEntityStateInput {
 export interface ReplacePanelEntityAssignmentsInput {
   entities: PanelEntityAssignmentRecord[];
   expected_entities: PanelEntityAssignmentRecord[];
+}
+
+export interface ApplyPagePanelStructureInput {
+  expected_panel_ids: string[];
+  operation:
+    | { type: 'append' }
+    | { type: 'delete'; panel_id: string }
+    | { type: 'reorder'; panel_ids: string[] };
 }
 
 export interface GeneratePageSkeletonInput {
@@ -715,6 +725,28 @@ export class LyraMobileApiClient {
     return response;
   }
 
+  public async applyPagePanelStructure(
+    pageId: string,
+    body: ApplyPagePanelStructureInput,
+    organizationId: string | null = null,
+  ): Promise<PagePanelStructureResponse> {
+    if (!isValidPanelStructureRequest(body)) {
+      throw new ApiError('INVALID_REQUEST', 422, 'The request is invalid.');
+    }
+    const response = await this.requestJson(
+      withOrganizationQuery(
+        `/api/pages/${encodeURIComponent(pageId)}/panel-structure`,
+        organizationId,
+      ),
+      pagePanelStructureResponseSchema,
+      { method: 'PUT', body },
+    );
+    if (!isValidPanelStructureResponse(pageId, body, response)) {
+      throw invalidApiResponse();
+    }
+    return response;
+  }
+
   public async updatePageSettings(
     pageId: string,
     body: UpdatePageSettingsInput,
@@ -988,6 +1020,73 @@ function invalidApiResponse(): ApiError {
     502,
     'The server returned an invalid response.',
   );
+}
+
+function isValidPanelStructureRequest(body: ApplyPagePanelStructureInput): boolean {
+  const expected = body.expected_panel_ids;
+  if (expected.length > 8 || new Set(expected).size !== expected.length) {
+    return false;
+  }
+  if (body.operation.type === 'append') {
+    return expected.length < 8;
+  }
+  if (body.operation.type === 'delete') {
+    return expected.length > 1 && expected.includes(body.operation.panel_id);
+  }
+  return body.operation.panel_ids.length > 0
+    && orderedIdSetMatches(expected, body.operation.panel_ids);
+}
+
+function isValidPanelStructureResponse(
+  pageId: string,
+  body: ApplyPagePanelStructureInput,
+  response: PagePanelStructureResponse,
+): boolean {
+  const panelIds = response.panel_ids;
+  if (new Set(panelIds).size !== panelIds.length || response.frames.length !== panelIds.length) {
+    return false;
+  }
+  const orderedFrames = [...response.frames].sort(
+    (left, right) => left.reading_order - right.reading_order,
+  );
+  if (orderedFrames.some((frame, index) => (
+    frame.page_id !== pageId
+    || frame.panel_id !== panelIds[index]
+    || frame.reading_order !== index + 1
+  ))) {
+    return false;
+  }
+
+  if (body.operation.type === 'append') {
+    return response.created_panel_id !== null
+      && response.layout_template_id !== null
+      && panelIds.length === body.expected_panel_ids.length + 1
+      && body.expected_panel_ids.every((panelId, index) => panelIds[index] === panelId)
+      && panelIds.at(-1) === response.created_panel_id;
+  }
+  if (body.operation.type === 'delete') {
+    const deletedPanelId = body.operation.panel_id;
+    return response.created_panel_id === null
+      && response.layout_template_id !== null
+      && orderedIdsEqual(
+        panelIds,
+        body.expected_panel_ids.filter((panelId) => panelId !== deletedPanelId),
+      );
+  }
+  return response.created_panel_id === null
+    && response.layout_template_id === null
+    && orderedIdsEqual(panelIds, body.operation.panel_ids);
+}
+
+function orderedIdSetMatches(expected: readonly string[], requested: readonly string[]): boolean {
+  return expected.length === requested.length
+    && new Set(requested).size === requested.length
+    && requested.every((panelId) => expected.includes(panelId));
+}
+
+function orderedIdsEqual(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length
+    && left.every((panelId, index) => panelId === right[index]);
 }
 
 function entityStateMatchesRequestedFields(

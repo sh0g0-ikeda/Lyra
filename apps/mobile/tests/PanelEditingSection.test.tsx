@@ -83,6 +83,7 @@ const timestamp = '2026-08-01T00:00:00.000Z';
 describe('PanelEditingSection', () => {
   const mountedRenderers: ReactTestRenderer[] = [];
   const api = {
+    applyPagePanelStructure: vi.fn(),
     getEntitiesPage: vi.fn(),
     getEntityStates: vi.fn(),
     getPanels: vi.fn(),
@@ -95,6 +96,9 @@ describe('PanelEditingSection', () => {
     api.getEntitiesPage.mockResolvedValue({ entities: [buildEntity()], next_cursor: null });
     api.getEntityStates.mockResolvedValue({ entity_states: [buildEntityState()] });
     api.getPanels.mockResolvedValue({ panels: [buildPanel('panel-1', 1)] });
+    api.applyPagePanelStructure.mockResolvedValue(
+      buildPanelStructureResponse(['panel-1'], null),
+    );
     api.replacePanelEntityAssignments.mockImplementation(async (
       _panelId: string,
       body: ReplacePanelEntityAssignmentsInput,
@@ -115,15 +119,23 @@ describe('PanelEditingSection', () => {
 
   const renderSection = async ({
     organizationIdValue = organizationId,
+    onStructureActiveChange = vi.fn(),
     pages = [buildPage()],
+    preparePageSettings = vi.fn().mockResolvedValue(true),
     ref = createRef<PanelEditingSectionHandle>(),
+    refreshPages = vi.fn().mockResolvedValue(pages),
+    resolvePanelDeleteConfirmation = vi.fn().mockResolvedValue(true),
     resolveDirtyAction,
     sessionKey = 'session-1',
     workIdValue = workId,
   }: {
     organizationIdValue?: string | null;
+    onStructureActiveChange?: (active: boolean) => void;
     pages?: PageRecord[];
+    preparePageSettings?: () => Promise<boolean>;
     ref?: React.RefObject<PanelEditingSectionHandle | null>;
+    refreshPages?: () => Promise<readonly PageRecord[]>;
+    resolvePanelDeleteConfirmation?: (panelOrder: number) => Promise<boolean>;
     resolveDirtyAction?: () => Promise<'save' | 'discard' | 'cancel'>;
     sessionKey?: string;
     workIdValue?: string;
@@ -150,9 +162,13 @@ describe('PanelEditingSection', () => {
             generationActive={false}
             language="ja"
             organizationId={organizationIdValue}
+            onStructureActiveChange={onStructureActiveChange}
             pageListReady
             pages={pages}
+            preparePageSettings={preparePageSettings}
             ref={ref}
+            refreshPages={refreshPages}
+            resolvePanelDeleteConfirmation={resolvePanelDeleteConfirmation}
             resolveDirtyAction={resolveDirtyAction}
             sessionKey={sessionKey}
             workId={workIdValue}
@@ -179,9 +195,13 @@ describe('PanelEditingSection', () => {
               generationActive={false}
               language="ja"
               organizationId={nextOrganizationId}
+              onStructureActiveChange={onStructureActiveChange}
               pageListReady
               pages={pages}
+              preparePageSettings={preparePageSettings}
               ref={ref}
+              refreshPages={refreshPages}
+              resolvePanelDeleteConfirmation={resolvePanelDeleteConfirmation}
               resolveDirtyAction={resolveDirtyAction}
               sessionKey={nextSessionKey}
               workId={nextWorkId}
@@ -422,9 +442,528 @@ describe('PanelEditingSection', () => {
     expect(renderer.root.findByProps({ accessibilityLabel: '状況' }).props.editable).toBe(false);
     expect(renderer.root.findByProps({ label: 'コマを保存' }).props.disabled).toBe(true);
     expect(renderer.root.findByProps({ label: '登場要素を保存' }).props.disabled).toBe(true);
+    expect(renderer.root.findByProps({ label: 'コマを追加' }).props.disabled).toBe(true);
+    expect(renderer.root.findByProps({ label: '前へ移動' }).props.disabled).toBe(true);
+    expect(renderer.root.findByProps({ label: '後ろへ移動' }).props.disabled).toBe(true);
+    expect(renderer.root.findByProps({ label: '選択中のコマを削除' }).props.disabled).toBe(true);
     expect(JSON.stringify(renderer.toJSON())).toContain('このページは現在編集できません');
     expect(api.updatePanel).not.toHaveBeenCalled();
     expect(api.replacePanelEntityAssignments).not.toHaveBeenCalled();
+  });
+
+  it('Page設定を先に解決してから全Panel ID snapshotでappendし権威データだけを採用する', async () => {
+    const first = buildPanel('panel-1', 1);
+    const second = buildPanel('panel-2', 2);
+    const created = buildPanel('panel-3', 3);
+    api.getPanels
+      .mockResolvedValueOnce({ panels: [first, second] })
+      .mockResolvedValueOnce({ panels: [first, second, created] });
+    api.applyPagePanelStructure.mockResolvedValue(
+      buildPanelStructureResponse(['panel-1', 'panel-2', 'panel-3'], 'panel-3'),
+    );
+    const preparePageSettings = vi.fn().mockResolvedValue(true);
+    const refreshPages = vi.fn().mockResolvedValue([{
+      ...buildPage(),
+      panel_count: 3,
+      frame_count: 3,
+      updated_at: '2026-08-01T00:00:02.000Z',
+    }]);
+    const { renderer } = await renderSection({ preparePageSettings, refreshPages });
+    await selectPanel(renderer);
+
+    await act(async () => {
+      const append = renderer.root.findByProps({ label: 'コマを追加' });
+      append.props.onPress();
+      append.props.onPress();
+      await flushQueries();
+    });
+
+    expect(preparePageSettings).toHaveBeenCalledTimes(1);
+    expect(api.applyPagePanelStructure).toHaveBeenCalledTimes(1);
+    expect(api.applyPagePanelStructure).toHaveBeenCalledWith(
+      buildPage().id,
+      {
+        expected_panel_ids: ['panel-1', 'panel-2'],
+        operation: { type: 'append' },
+      },
+      organizationId,
+    );
+    expect(preparePageSettings.mock.invocationCallOrder[0])
+      .toBeLessThan(api.applyPagePanelStructure.mock.invocationCallOrder[0]!);
+    expect(api.getPanels).toHaveBeenCalledTimes(2);
+    expect(refreshPages).toHaveBeenCalledOnce();
+    expect(renderer.root.findByProps({ accessibilityLabel: 'コマ 3を選択' }).props.accessibilityState)
+      .toEqual({ selected: true });
+    expect(JSON.stringify(renderer.toJSON())).toContain('コマを追加しました');
+  });
+
+  it('0 PanelのPageは空snapshotでappendし新しいPanelを選択する', async () => {
+    const created = buildPanel('panel-1', 1);
+    api.getPanels
+      .mockResolvedValueOnce({ panels: [] })
+      .mockResolvedValueOnce({ panels: [created] });
+    api.applyPagePanelStructure.mockResolvedValue(
+      buildPanelStructureResponse(['panel-1'], 'panel-1'),
+    );
+    const emptyPage = { ...buildPage(), panel_count: 0, frame_count: 0 };
+    const refreshPages = vi.fn().mockResolvedValue([{
+      ...emptyPage,
+      panel_count: 1,
+      frame_count: 1,
+    }]);
+    const { renderer } = await renderSection({ pages: [emptyPage], refreshPages });
+    await act(async () => {
+      renderer.root.findByProps({ accessibilityLabel: 'ページ 1を選択' }).props.onPress();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      await flushQueries();
+    });
+    expect(renderer.root.findByProps({ label: 'コマを追加' }).props.disabled).toBe(false);
+
+    await act(async () => {
+      renderer.root.findByProps({ label: 'コマを追加' }).props.onPress();
+      await flushQueries();
+    });
+
+    expect(api.applyPagePanelStructure).toHaveBeenCalledWith(
+      emptyPage.id,
+      { expected_panel_ids: [], operation: { type: 'append' } },
+      organizationId,
+    );
+    expect(renderer.root.findByProps({ accessibilityLabel: 'コマ 1を選択' }).props.accessibilityState)
+      .toEqual({ selected: true });
+  });
+
+  it('選択Panelを隣接移動し全IDを送って選択をIDで維持する', async () => {
+    const first = buildPanel('panel-1', 1);
+    const second = buildPanel('panel-2', 2);
+    api.getPanels
+      .mockResolvedValueOnce({ panels: [first, second] })
+      .mockResolvedValueOnce({
+        panels: [{ ...second, order: 1 }, { ...first, order: 2 }],
+      });
+    api.applyPagePanelStructure.mockResolvedValue(
+      buildPanelStructureResponse(['panel-2', 'panel-1'], null, null),
+    );
+    const refreshPages = vi.fn().mockResolvedValue([buildPage()]);
+    const { renderer } = await renderSection({ refreshPages });
+    await selectPanel(renderer);
+
+    await act(async () => {
+      renderer.root.findByProps({ label: '後ろへ移動' }).props.onPress();
+      await flushQueries();
+    });
+
+    expect(api.applyPagePanelStructure).toHaveBeenCalledWith(
+      buildPage().id,
+      {
+        expected_panel_ids: ['panel-1', 'panel-2'],
+        operation: { type: 'reorder', panel_ids: ['panel-2', 'panel-1'] },
+      },
+      organizationId,
+    );
+    expect(renderer.root.findByProps({ accessibilityLabel: 'コマ 2を選択' }).props.accessibilityState)
+      .toEqual({ selected: true });
+    expect(JSON.stringify(renderer.toJSON())).toContain('コマを移動しました');
+  });
+
+  it('削除確認後だけ削除し同じ位置の次Panelを選び最後の1件は削除しない', async () => {
+    const first = buildPanel('panel-1', 1);
+    const second = buildPanel('panel-2', 2);
+    api.getPanels
+      .mockResolvedValueOnce({ panels: [first, second] })
+      .mockResolvedValueOnce({ panels: [{ ...second, order: 1 }] });
+    api.applyPagePanelStructure.mockResolvedValue(
+      buildPanelStructureResponse(['panel-2'], null),
+    );
+    const resolvePanelDeleteConfirmation = vi.fn()
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true);
+    const refreshPages = vi.fn().mockResolvedValue([{
+      ...buildPage(),
+      panel_count: 1,
+      frame_count: 1,
+    }]);
+    const { renderer } = await renderSection({
+      refreshPages,
+      resolvePanelDeleteConfirmation,
+    });
+    await selectPanel(renderer);
+
+    await act(async () => {
+      renderer.root.findByProps({ label: '選択中のコマを削除' }).props.onPress();
+      await flushQueries();
+    });
+    expect(api.applyPagePanelStructure).not.toHaveBeenCalled();
+
+    await act(async () => {
+      renderer.root.findByProps({ label: '選択中のコマを削除' }).props.onPress();
+      await flushQueries();
+    });
+
+    expect(resolvePanelDeleteConfirmation).toHaveBeenNthCalledWith(2, 1);
+    expect(api.applyPagePanelStructure).toHaveBeenCalledWith(
+      buildPage().id,
+      {
+        expected_panel_ids: ['panel-1', 'panel-2'],
+        operation: { type: 'delete', panel_id: 'panel-1' },
+      },
+      organizationId,
+    );
+    expect(renderer.root.findByProps({ accessibilityLabel: 'コマ 1を選択' }).props.accessibilityState)
+      .toEqual({ selected: true });
+    expect(renderer.root.findByProps({ label: '選択中のコマを削除' }).props.disabled).toBe(true);
+  });
+
+  it('Page設定またはPanel dirtyの解決失敗時は構造変更を送信しない', async () => {
+    const first = buildPanel('panel-1', 1);
+    const second = buildPanel('panel-2', 2);
+    api.getPanels.mockResolvedValue({ panels: [first, second] });
+    const preparePageSettings = vi.fn()
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true);
+    const resolveDirtyAction = vi.fn().mockResolvedValue('cancel' as const);
+    const { renderer } = await renderSection({ preparePageSettings, resolveDirtyAction });
+    await selectPanel(renderer);
+    await act(async () => {
+      renderer.root.findByProps({ accessibilityLabel: '状況' }).props.onChangeText('未保存');
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      renderer.root.findByProps({ label: 'コマを追加' }).props.onPress();
+      await flushQueries();
+    });
+    await act(async () => {
+      renderer.root.findByProps({ label: 'コマを追加' }).props.onPress();
+      await flushQueries();
+    });
+
+    expect(preparePageSettings).toHaveBeenCalledTimes(2);
+    expect(resolveDirtyAction).toHaveBeenCalledOnce();
+    expect(api.applyPagePanelStructure).not.toHaveBeenCalled();
+    expect(renderer.root.findByProps({ accessibilityLabel: '状況' }).props.value).toBe('未保存');
+  });
+
+  it('受付直後に編集を固定しても受付前のPanel dirtyは保存してから構造変更する', async () => {
+    const first = buildPanel('panel-1', 1);
+    const saved = {
+      ...first,
+      situation_text: '受付前の未保存内容',
+      updated_at: '2026-08-01T00:00:01.000Z',
+    };
+    const created = buildPanel('panel-2', 2);
+    api.getPanels
+      .mockResolvedValueOnce({ panels: [first] })
+      .mockResolvedValueOnce({ panels: [saved, created] });
+    api.updatePanel.mockResolvedValue(saved);
+    api.applyPagePanelStructure.mockResolvedValue(
+      buildPanelStructureResponse(['panel-1', 'panel-2'], 'panel-2'),
+    );
+    const refreshPages = vi.fn().mockResolvedValue([{
+      ...buildPage(),
+      panel_count: 2,
+      frame_count: 2,
+    }]);
+    const resolveDirtyAction = vi.fn().mockResolvedValue('save' as const);
+    const { renderer } = await renderSection({ refreshPages, resolveDirtyAction });
+    await selectPanel(renderer);
+    await act(async () => {
+      renderer.root.findByProps({ accessibilityLabel: '状況' })
+        .props.onChangeText('受付前の未保存内容');
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      renderer.root.findByProps({ label: 'コマを追加' }).props.onPress();
+      await flushQueries();
+    });
+
+    expect(api.updatePanel).toHaveBeenCalledOnce();
+    expect(api.applyPagePanelStructure).toHaveBeenCalledOnce();
+    expect(api.updatePanel.mock.invocationCallOrder[0])
+      .toBeLessThan(api.applyPagePanelStructure.mock.invocationCallOrder[0]!);
+    expect(api.getPanels).toHaveBeenCalledTimes(2);
+    expect(JSON.stringify(renderer.toJSON())).toContain('コマを追加しました');
+  });
+
+  it('appendの応答喪失は再送せず権威一覧で適用済みと確認する', async () => {
+    const first = buildPanel('panel-1', 1);
+    const created = buildPanel('panel-2', 2);
+    api.getPanels
+      .mockResolvedValueOnce({ panels: [first] })
+      .mockResolvedValueOnce({ panels: [first, created] });
+    api.applyPagePanelStructure.mockRejectedValue(new ApiError(
+      'NETWORK_ERROR',
+      0,
+      'private network detail',
+    ));
+    const refreshPages = vi.fn().mockResolvedValue([{
+      ...buildPage(),
+      panel_count: 2,
+      frame_count: 2,
+    }]);
+    const { renderer } = await renderSection({ refreshPages });
+    await selectPanel(renderer);
+
+    await act(async () => {
+      renderer.root.findByProps({ label: 'コマを追加' }).props.onPress();
+      await flushQueries();
+    });
+
+    expect(api.applyPagePanelStructure).toHaveBeenCalledTimes(1);
+    expect(api.getPanels).toHaveBeenCalledTimes(2);
+    expect(JSON.stringify(renderer.toJSON())).toContain('コマを追加しました');
+    expect(JSON.stringify(renderer.toJSON())).not.toContain('private network detail');
+  });
+
+  it.each([
+    ['5xx', new ApiError('SERVER_ERROR', 503, 'private server detail')],
+    ['invalid response', new ApiError('INVALID_API_RESPONSE', 502, 'private payload detail')],
+  ])('%sでもmutationは再送せず権威一覧だけで適用済みを確認する', async (_label, failure) => {
+    const first = buildPanel('panel-1', 1);
+    const created = buildPanel('panel-2', 2);
+    api.getPanels
+      .mockResolvedValueOnce({ panels: [first] })
+      .mockResolvedValueOnce({ panels: [first, created] });
+    api.applyPagePanelStructure.mockRejectedValue(failure);
+    const refreshPages = vi.fn().mockResolvedValue([{
+      ...buildPage(),
+      panel_count: 2,
+      frame_count: 2,
+    }]);
+    const { renderer } = await renderSection({ refreshPages });
+    await selectPanel(renderer);
+
+    await act(async () => {
+      renderer.root.findByProps({ label: 'コマを追加' }).props.onPress();
+      await flushQueries();
+    });
+
+    expect(api.applyPagePanelStructure).toHaveBeenCalledTimes(1);
+    expect(refreshPages).toHaveBeenCalledOnce();
+    expect(api.getPanels).toHaveBeenCalledTimes(2);
+    expect(JSON.stringify(renderer.toJSON())).toContain('コマを追加しました');
+    expect(JSON.stringify(renderer.toJSON())).not.toContain(failure.message);
+  });
+
+  it('構造変更中の画面離脱は権威再取得の完了まで待つ', async () => {
+    const first = buildPanel('panel-1', 1);
+    const created = buildPanel('panel-2', 2);
+    let resolveStructure: ((value: ReturnType<typeof buildPanelStructureResponse>) => void)
+      | undefined;
+    api.getPanels
+      .mockResolvedValueOnce({ panels: [first] })
+      .mockResolvedValueOnce({ panels: [first, created] });
+    api.applyPagePanelStructure.mockReturnValue(new Promise((resolve) => {
+      resolveStructure = resolve;
+    }));
+    const refreshPages = vi.fn().mockResolvedValue([{
+      ...buildPage(),
+      panel_count: 2,
+      frame_count: 2,
+    }]);
+    const { ref, renderer } = await renderSection({ refreshPages });
+    await selectPanel(renderer);
+    await act(async () => {
+      renderer.root.findByProps({ label: 'コマを追加' }).props.onPress();
+      await flushQueries();
+    });
+    expect(api.applyPagePanelStructure).toHaveBeenCalledOnce();
+
+    let leaveSettled = false;
+    const leavePromise = ref.current!.prepareToLeave().then((result) => {
+      leaveSettled = true;
+      return result;
+    });
+    await Promise.resolve();
+    expect(leaveSettled).toBe(false);
+
+    let canLeave = false;
+    await act(async () => {
+      resolveStructure?.(buildPanelStructureResponse(['panel-1', 'panel-2'], 'panel-2'));
+      canLeave = await leavePromise;
+      await flushQueries();
+    });
+    expect(canLeave).toBe(true);
+    expect(refreshPages).toHaveBeenCalledOnce();
+    expect(api.getPanels).toHaveBeenCalledTimes(2);
+  });
+
+  it('definitive failure後に別操作が要求順へ変更しても自分の成功とは表示しない', async () => {
+    const first = buildPanel('panel-1', 1);
+    const second = buildPanel('panel-2', 2);
+    api.getPanels
+      .mockResolvedValueOnce({ panels: [first, second] })
+      .mockResolvedValueOnce({
+        panels: [{ ...second, order: 1 }, { ...first, order: 2 }],
+      });
+    api.applyPagePanelStructure.mockRejectedValue(
+      new ApiError('INVALID_REQUEST', 422, 'private validation detail'),
+    );
+    const refreshPages = vi.fn().mockResolvedValue([buildPage()]);
+    const { renderer } = await renderSection({ refreshPages });
+    await selectPanel(renderer);
+
+    await act(async () => {
+      renderer.root.findByProps({ label: '後ろへ移動' }).props.onPress();
+      await flushQueries();
+    });
+
+    expect(api.applyPagePanelStructure).toHaveBeenCalledTimes(1);
+    expect(renderer.root.findByProps({ accessibilityLabel: 'コマ 2を選択' }).props.accessibilityState)
+      .toEqual({ selected: true });
+    expect(JSON.stringify(renderer.toJSON())).toContain('コマ構造を変更できませんでした');
+    expect(JSON.stringify(renderer.toJSON())).not.toContain('コマを移動しました');
+    expect(JSON.stringify(renderer.toJSON())).not.toContain('private validation detail');
+  });
+
+  it('結果不明で再取得できない場合は自動再送せず手動確認だけを行う', async () => {
+    const first = buildPanel('panel-1', 1);
+    const created = buildPanel('panel-2', 2);
+    api.getPanels
+      .mockResolvedValueOnce({ panels: [first] })
+      .mockRejectedValueOnce(new Error('temporary read failure'))
+      .mockResolvedValueOnce({ panels: [first, created] });
+    api.applyPagePanelStructure.mockRejectedValue(new ApiError('NETWORK_ERROR', 0, 'network'));
+    const refreshPages = vi.fn().mockResolvedValue([{
+      ...buildPage(),
+      panel_count: 2,
+      frame_count: 2,
+    }]);
+    const { ref, renderer } = await renderSection({ refreshPages });
+    await selectPanel(renderer);
+
+    await act(async () => {
+      renderer.root.findByProps({ label: 'コマを追加' }).props.onPress();
+      await flushQueries();
+    });
+    expect(renderer.root.findByProps({ label: 'コマを追加' }).props.disabled).toBe(true);
+    expect(JSON.stringify(renderer.toJSON())).toContain('変更結果を確認できません');
+
+    expect(await ref.current?.prepareToLeave()).toBe(false);
+    expect(api.applyPagePanelStructure).toHaveBeenCalledTimes(1);
+    expect(api.getPanels).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      renderer.root.findByProps({ label: '最新のコマ構造を確認' }).props.onPress();
+      await flushQueries();
+    });
+
+    expect(api.applyPagePanelStructure).toHaveBeenCalledTimes(1);
+    expect(api.getPanels).toHaveBeenCalledTimes(3);
+    expect(JSON.stringify(renderer.toJSON())).toContain('コマを追加しました');
+  });
+
+  it('409ではmutationを再送せずremoteの権威順へ更新する', async () => {
+    const first = buildPanel('panel-1', 1);
+    const second = buildPanel('panel-2', 2);
+    api.getPanels
+      .mockResolvedValueOnce({ panels: [first, second] })
+      .mockResolvedValueOnce({
+        panels: [{ ...second, order: 1 }, { ...first, order: 2 }],
+      });
+    api.applyPagePanelStructure.mockRejectedValue(
+      new ApiError('CONFLICT', 409, 'private conflict detail'),
+    );
+    const refreshPages = vi.fn().mockResolvedValue([buildPage()]);
+    const { renderer } = await renderSection({ refreshPages });
+    await selectPanel(renderer);
+
+    await act(async () => {
+      renderer.root.findByProps({ label: '後ろへ移動' }).props.onPress();
+      await flushQueries();
+    });
+
+    expect(api.applyPagePanelStructure).toHaveBeenCalledTimes(1);
+    expect(api.getPanels).toHaveBeenCalledTimes(2);
+    expect(renderer.root.findByProps({ accessibilityLabel: 'コマ 2を選択' }).props.accessibilityState)
+      .toEqual({ selected: true });
+    expect(JSON.stringify(renderer.toJSON())).toContain('別の処理でコマ構造が変更されました');
+    expect(JSON.stringify(renderer.toJSON())).not.toContain('private conflict detail');
+  });
+
+  it('旧sessionで失敗した構造変更は新sessionで再取得も表示更新もしない', async () => {
+    let rejectStructure: ((error: unknown) => void) | undefined;
+    api.applyPagePanelStructure.mockReturnValue(new Promise((_resolve, reject) => {
+      rejectStructure = reject;
+    }));
+    const refreshPages = vi.fn().mockResolvedValue([buildPage()]);
+    const { renderer, rerenderSession } = await renderSection({ refreshPages });
+    await selectPanel(renderer);
+    await act(async () => {
+      renderer.root.findByProps({ label: 'コマを追加' }).props.onPress();
+      await Promise.resolve();
+    });
+    expect(api.applyPagePanelStructure).toHaveBeenCalledOnce();
+
+    await rerenderSession('session-2');
+    const panelReadsAfterScopeChange = api.getPanels.mock.calls.length;
+    const pageReadsAfterScopeChange = refreshPages.mock.calls.length;
+    await act(async () => {
+      rejectStructure?.(new ApiError('NETWORK_ERROR', 0, 'old scope failure'));
+      await flushQueries();
+    });
+
+    expect(refreshPages).toHaveBeenCalledTimes(pageReadsAfterScopeChange);
+    expect(api.getPanels).toHaveBeenCalledTimes(panelReadsAfterScopeChange);
+    expect(JSON.stringify(renderer.toJSON())).not.toContain('変更結果を確認できません');
+    expect(JSON.stringify(renderer.toJSON())).not.toContain('old scope failure');
+  });
+
+  it.each([
+    [
+      'organization',
+      { organizationIdValue: '99999999-9999-4999-8999-999999999999' },
+    ],
+    [
+      'work',
+      { workIdValue: '77777777-7777-4777-8777-777777777777' },
+    ],
+  ])('旧%s scopeの遅延成功を新scopeのcache・表示・再取得に混ぜない', async (_label, nextScope) => {
+    let resolveStructure: ((value: ReturnType<typeof buildPanelStructureResponse>) => void)
+      | undefined;
+    api.applyPagePanelStructure.mockReturnValue(new Promise((resolve) => {
+      resolveStructure = resolve;
+    }));
+    const refreshPages = vi.fn().mockResolvedValue([buildPage()]);
+    const { renderer, rerenderResource } = await renderSection({ refreshPages });
+    await selectPanel(renderer);
+    await act(async () => {
+      renderer.root.findByProps({ label: 'コマを追加' }).props.onPress();
+      await Promise.resolve();
+    });
+    expect(api.applyPagePanelStructure).toHaveBeenCalledOnce();
+
+    await rerenderResource(nextScope);
+    const panelReadsAfterScopeChange = api.getPanels.mock.calls.length;
+    const pageReadsAfterScopeChange = refreshPages.mock.calls.length;
+    await act(async () => {
+      resolveStructure?.(buildPanelStructureResponse(['panel-1', 'panel-2'], 'panel-2'));
+      await flushQueries();
+    });
+
+    expect(api.getPanels).toHaveBeenCalledTimes(panelReadsAfterScopeChange);
+    expect(refreshPages).toHaveBeenCalledTimes(pageReadsAfterScopeChange);
+    expect(JSON.stringify(renderer.toJSON())).not.toContain('コマを追加しました');
+  });
+
+  it('8件上限と未選択・端の移動をUIでも送信前に無効化する', async () => {
+    api.getPanels.mockResolvedValue({
+      panels: Array.from({ length: 8 }, (_, index) => buildPanel(`panel-${index + 1}`, index + 1)),
+    });
+    const { renderer } = await renderSection();
+    await act(async () => {
+      renderer.root.findByProps({ accessibilityLabel: 'ページ 1を選択' }).props.onPress();
+      await flushQueries();
+    });
+
+    expect(renderer.root.findByProps({ label: 'コマを追加' }).props.disabled).toBe(true);
+    expect(renderer.root.findByProps({ label: '前へ移動' }).props.disabled).toBe(true);
+    expect(renderer.root.findByProps({ label: '後ろへ移動' }).props.disabled).toBe(true);
+    expect(renderer.root.findByProps({ label: '選択中のコマを削除' }).props.disabled).toBe(true);
+    expect(api.applyPagePanelStructure).not.toHaveBeenCalled();
   });
 
   it('assignmentはexpected snapshotで保存しauthoritative再取得後だけ採用する', async () => {
@@ -1164,6 +1703,31 @@ function buildPanel(
     panel_notes: null,
     created_at: timestamp,
     updated_at: timestamp,
+  };
+}
+
+function buildPanelStructureResponse(
+  panelIds: string[],
+  createdPanelId: string | null,
+  layoutTemplateId: 'splash_1' | null = 'splash_1',
+) {
+  return {
+    panel_ids: panelIds,
+    created_panel_id: createdPanelId,
+    layout_template_id: layoutTemplateId,
+    frames: panelIds.map((panelId, index) => ({
+      id: `frame-${index + 1}`,
+      page_id: buildPage().id,
+      panel_id: panelId,
+      vertices: [{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 100 }],
+      border_style: 'solid' as const,
+      border_width: 1,
+      border_color: '#000000',
+      z_index: index,
+      reading_order: index + 1,
+    })),
+    balloon_reference_updated_count: 0,
+    balloon_reference_cleared_count: 0,
   };
 }
 

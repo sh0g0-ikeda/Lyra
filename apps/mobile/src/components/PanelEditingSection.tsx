@@ -31,10 +31,12 @@ import {
 } from '../domain/panelDraft';
 import {
   ApiError,
+  type ApplyPagePanelStructureInput,
   type EntityRecord,
   type EntityStateRecord,
   type ListEntitiesPageInput,
   type PageRecord,
+  type PagePanelStructureResponse,
   type PanelEntityAssignmentRecord,
   type PanelRecord,
   type ReplacePanelEntityAssignmentsInput,
@@ -42,22 +44,46 @@ import {
 } from '../lib/api';
 import { showDirtyStoryPrompt, type DirtyStoryAction } from '../lib/dirtyStoryPrompt';
 import { t, type UiLanguage } from '../lib/i18n';
+import { showPanelDeletionPrompt } from '../lib/panelStructurePrompt';
 import { storyQueryKeys } from '../lib/storyQueryKeys';
 import { colors, spacing } from '../constants/theme';
 import { PanelEditor } from './PanelEditor';
+import { Notice } from './Notice';
 import {
   PanelEntityAssignmentEditor,
   type PanelAssignmentStateCatalog,
 } from './PanelEntityAssignmentEditor';
 import { StorySelectionSection } from './StorySelectionSection';
+import { PrimaryButton } from './PrimaryButton';
 
 const ENTITY_PAGE_LIMIT = 50;
+
+type PanelStructureOperation = ApplyPagePanelStructureInput['operation'];
+
+interface PendingPanelStructureReconciliation {
+  acceptedCreatedPanelId: string | null;
+  acceptedFrameCount: number | null;
+  acceptedPanelIds: string[] | null;
+  expectedPanelIds: string[];
+  operationScope: string;
+  operation: PanelStructureOperation;
+  organizationId: string | null;
+  pageId: string;
+  episodeId: string;
+  previousSelectedPanelId: string | null;
+  requestFailure: 'ambiguous' | 'conflict' | 'definitive' | null;
+}
 
 export interface PanelEditingSectionHandle {
   prepareToLeave(): Promise<boolean>;
 }
 
 export interface PanelEditingApiPort {
+  applyPagePanelStructure(
+    pageId: string,
+    body: ApplyPagePanelStructureInput,
+    organizationId?: string | null,
+  ): Promise<PagePanelStructureResponse>;
   getEntitiesPage(
     workId: string,
     input: ListEntitiesPageInput,
@@ -88,8 +114,12 @@ interface PanelEditingSectionProps {
   generationActive: boolean;
   language: UiLanguage;
   organizationId: string | null;
+  onStructureActiveChange(active: boolean): void;
   pageListReady: boolean;
   pages: readonly PageRecord[];
+  preparePageSettings: () => Promise<boolean>;
+  refreshPages: () => Promise<readonly PageRecord[]>;
+  resolvePanelDeleteConfirmation?: (panelOrder: number) => Promise<boolean>;
   resolveDirtyAction?: () => Promise<DirtyStoryAction>;
   sessionKey: string;
   workId: string;
@@ -103,8 +133,12 @@ export const PanelEditingSection = forwardRef<
   generationActive,
   language,
   organizationId,
+  onStructureActiveChange,
   pageListReady,
   pages,
+  preparePageSettings,
+  refreshPages,
+  resolvePanelDeleteConfirmation = (panelOrder) => showPanelDeletionPrompt(language, panelOrder),
   resolveDirtyAction,
   sessionKey,
   workId,
@@ -138,8 +172,14 @@ export const PanelEditingSection = forwardRef<
     useState<PanelEntityAssignmentValidationReason | null>(null);
   const [assignmentReconcileRequired, setAssignmentReconcileRequired] = useState(false);
   const [assignmentConflict, setAssignmentConflict] = useState(false);
+  const [structureBusy, setStructureBusy] = useState(false);
+  const [structureErrorMessage, setStructureErrorMessage] = useState<string | null>(null);
+  const [structureNoticeMessage, setStructureNoticeMessage] = useState<string | null>(null);
+  const [structureReconcileRequired, setStructureReconcileRequired] = useState(false);
   const saveOperation = useRef<Promise<boolean> | null>(null);
   const assignmentSaveOperation = useRef<Promise<boolean> | null>(null);
+  const structureOperation = useRef<Promise<boolean> | null>(null);
+  const pendingStructureReconciliation = useRef<PendingPanelStructureReconciliation | null>(null);
   const transitionOperation = useRef<Promise<boolean> | null>(null);
   const currentScopeRef = useRef('');
 
@@ -223,6 +263,7 @@ export const PanelEditingSection = forwardRef<
     || selectedPage.status === 'confirmed'
     || selectedPage.status === 'generating'
     || generationActive;
+  const editorReadOnly = readOnly || structureBusy || structureReconcileRequired;
   const currentScope = [
     sessionKey,
     organizationId ?? 'personal',
@@ -262,6 +303,10 @@ export const PanelEditingSection = forwardRef<
     setAssignmentValidationReason(null);
     setAssignmentReconcileRequired(false);
     setAssignmentConflict(false);
+    setStructureErrorMessage(null);
+    setStructureNoticeMessage(null);
+    setStructureReconcileRequired(false);
+    pendingStructureReconciliation.current = null;
   }, [applySelectedPanel, resourceScope]);
 
   useEffect(() => {
@@ -320,6 +365,8 @@ export const PanelEditingSection = forwardRef<
       || assignmentDirty
       || assignmentReconcileRequired
       || assignmentConflict
+      || structureBusy
+      || structureReconcileRequired
     ) {
       setNoticeMessage(null);
       setErrorMessage(t(language, 'panelSaveBlocked'));
@@ -412,6 +459,8 @@ export const PanelEditingSection = forwardRef<
     savedPanel,
     selectedPage,
     selectedPanelId,
+    structureBusy,
+    structureReconcileRequired,
   ]);
 
   const saveCurrentAssignments = useCallback((): Promise<boolean> => {
@@ -439,6 +488,8 @@ export const PanelEditingSection = forwardRef<
       || panelsQuery.isError
       || entitiesQuery.data === undefined
       || assignmentReconcileRequired
+      || structureBusy
+      || structureReconcileRequired
     ) {
       setAssignmentNoticeMessage(null);
       setAssignmentErrorMessage(t(language, 'panelAssignmentSaveBlocked'));
@@ -570,6 +621,8 @@ export const PanelEditingSection = forwardRef<
     savedAssignments,
     selectedPage,
     selectedPanelId,
+    structureBusy,
+    structureReconcileRequired,
   ]);
 
   const reconcileAssignments = useCallback((): Promise<boolean> => {
@@ -673,7 +726,7 @@ export const PanelEditingSection = forwardRef<
     selectedPanelId,
   ]);
 
-  const resolvePendingPanel = useCallback(async (): Promise<boolean> => {
+  const resolvePendingPanelDrafts = useCallback(async (): Promise<boolean> => {
     if (saveOperation.current !== null) {
       return saveOperation.current;
     }
@@ -721,11 +774,301 @@ export const PanelEditingSection = forwardRef<
     savedDraft,
   ]);
 
+  const reconcilePanelStructure = useCallback(async (
+    pending: PendingPanelStructureReconciliation,
+  ): Promise<boolean> => {
+    const refreshedPages = await refreshPages();
+    if (currentScopeRef.current !== pending.operationScope) {
+      return false;
+    }
+    const refreshedPage = refreshedPages.find((page) => page.id === pending.pageId);
+    if (refreshedPage === undefined || refreshedPage.episode_id !== pending.episodeId) {
+      pendingStructureReconciliation.current = null;
+      setStructureReconcileRequired(false);
+      setStructureNoticeMessage(null);
+      setStructureErrorMessage(t(language, 'panelStructureConflict'));
+      applySelectedPanel(null);
+      return false;
+    }
+
+    const refreshed = await api.getPanels(pending.pageId, pending.organizationId);
+    if (currentScopeRef.current !== pending.operationScope) {
+      return false;
+    }
+    const authoritativePanels = sortPanels(refreshed.panels);
+    const authoritativePanelIds = authoritativePanels.map((panel) => panel.id);
+    if (
+      refreshedPage.panel_count !== authoritativePanelIds.length
+      || refreshedPage.frame_count !== authoritativePanelIds.length
+      || (
+        pending.acceptedFrameCount !== null
+        && pending.acceptedPanelIds !== null
+        && orderedIdsEqual(authoritativePanelIds, pending.acceptedPanelIds)
+        && refreshedPage.frame_count !== pending.acceptedFrameCount
+      )
+    ) {
+      throw new Error('PANEL_STRUCTURE_METADATA_MISMATCH');
+    }
+
+    const outcome = classifyPanelStructureSnapshot(pending, authoritativePanelIds);
+    queryClient.setQueryData<{ panels: PanelRecord[] }>(
+      queryKeys.panels(pending.pageId),
+      { panels: authoritativePanels },
+    );
+    const nextSelectedId = resolvePanelSelectionAfterStructure(
+      pending,
+      authoritativePanelIds,
+      outcome,
+    );
+    applySelectedPanel(
+      authoritativePanels.find((panel) => panel.id === nextSelectedId) ?? null,
+    );
+    pendingStructureReconciliation.current = null;
+    setStructureReconcileRequired(false);
+    setStructureNoticeMessage(null);
+
+    if (pending.requestFailure === 'conflict') {
+      setStructureErrorMessage(t(language, 'panelStructureConflict'));
+      return false;
+    }
+    if (pending.requestFailure === 'definitive') {
+      setStructureErrorMessage(t(language, 'panelStructureError'));
+      return false;
+    }
+    if (outcome === 'applied') {
+      setStructureErrorMessage(null);
+      setStructureNoticeMessage(t(language, structureSuccessMessageKey(pending.operation)));
+      return true;
+    }
+    if (outcome === 'unchanged') {
+      setStructureErrorMessage(t(
+        language,
+        'panelStructureNotApplied',
+      ));
+      return false;
+    }
+    setStructureErrorMessage(t(language, 'panelStructureConflict'));
+    return false;
+  }, [api, applySelectedPanel, language, queryClient, queryKeys, refreshPages]);
+
+  const reconcilePendingPanelStructure = useCallback((): Promise<boolean> => {
+    if (structureOperation.current !== null) {
+      return structureOperation.current;
+    }
+    const pending = pendingStructureReconciliation.current;
+    if (pending === null || currentScopeRef.current !== pending.operationScope) {
+      return Promise.resolve(false);
+    }
+    setStructureBusy(true);
+    onStructureActiveChange(true);
+    setStructureErrorMessage(null);
+    setStructureNoticeMessage(null);
+    let operation: Promise<boolean> | null = null;
+    operation = (async (): Promise<boolean> => {
+      try {
+        return await reconcilePanelStructure(pending);
+      } catch {
+        if (currentScopeRef.current === pending.operationScope) {
+          setStructureReconcileRequired(true);
+          setStructureErrorMessage(t(language, 'panelStructureOutcomeUnknown'));
+        }
+        return false;
+      } finally {
+        setStructureBusy(false);
+        onStructureActiveChange(false);
+        if (structureOperation.current === operation) {
+          structureOperation.current = null;
+        }
+      }
+    })();
+    structureOperation.current = operation;
+    return operation;
+  }, [language, onStructureActiveChange, reconcilePanelStructure]);
+
+  const runPanelStructureOperation = useCallback((
+    requestedOperation: PanelStructureOperation,
+  ): Promise<boolean> => {
+    if (structureOperation.current !== null) {
+      return structureOperation.current;
+    }
+    if (
+      selectedPage === null
+      || readOnly
+      || panelsQuery.isLoading
+      || panelsQuery.isFetching
+      || panelsQuery.isError
+      || structureReconcileRequired
+      || assignmentReconcileRequired
+      || assignmentConflict
+    ) {
+      setStructureNoticeMessage(null);
+      setStructureErrorMessage(t(language, 'panelStructureBlocked'));
+      return Promise.resolve(false);
+    }
+
+    const expectedPanelIds = panels.map((panel) => panel.id);
+    const selectedPanel = panels.find((panel) => panel.id === selectedPanelId) ?? null;
+    if (requestedOperation.type === 'append' && expectedPanelIds.length >= 8) {
+      setStructureNoticeMessage(null);
+      setStructureErrorMessage(t(language, 'panelStructureAppendLimit'));
+      return Promise.resolve(false);
+    }
+    if (requestedOperation.type === 'delete') {
+      if (expectedPanelIds.length <= 1) {
+        setStructureNoticeMessage(null);
+        setStructureErrorMessage(t(language, 'panelStructureDeleteLast'));
+        return Promise.resolve(false);
+      }
+      if (selectedPanel === null || requestedOperation.panel_id !== selectedPanel.id) {
+        setStructureNoticeMessage(null);
+        setStructureErrorMessage(t(language, 'panelStructureBlocked'));
+        return Promise.resolve(false);
+      }
+    }
+    if (
+      requestedOperation.type === 'reorder'
+      && !samePanelIdSet(expectedPanelIds, requestedOperation.panel_ids)
+    ) {
+      setStructureNoticeMessage(null);
+      setStructureErrorMessage(t(language, 'panelStructureBlocked'));
+      return Promise.resolve(false);
+    }
+
+    setStructureBusy(true);
+    onStructureActiveChange(true);
+    setStructureErrorMessage(null);
+    setStructureNoticeMessage(null);
+
+    const pending: PendingPanelStructureReconciliation = {
+      acceptedCreatedPanelId: null,
+      acceptedFrameCount: null,
+      acceptedPanelIds: null,
+      episodeId: selectedPage.episode_id,
+      expectedPanelIds,
+      operation: clonePanelStructureOperation(requestedOperation),
+      operationScope: currentScope,
+      organizationId,
+      pageId: selectedPage.id,
+      previousSelectedPanelId: selectedPanelId,
+      requestFailure: null,
+    };
+    let operation: Promise<boolean> | null = null;
+    operation = (async (): Promise<boolean> => {
+      try {
+        if (
+          pending.operation.type === 'delete'
+          && selectedPanel !== null
+          && !(await resolvePanelDeleteConfirmation(selectedPanel.order))
+        ) {
+          return false;
+        }
+        if (currentScopeRef.current !== pending.operationScope) {
+          return false;
+        }
+        if (!(await preparePageSettings())) {
+          return false;
+        }
+        if (
+          currentScopeRef.current !== pending.operationScope
+          || !(await resolvePendingPanelDrafts())
+          || currentScopeRef.current !== pending.operationScope
+        ) {
+          return false;
+        }
+
+        let response: PagePanelStructureResponse;
+        try {
+          response = await api.applyPagePanelStructure(
+            pending.pageId,
+            {
+              expected_panel_ids: [...pending.expectedPanelIds],
+              operation: clonePanelStructureOperation(pending.operation),
+            },
+            pending.organizationId,
+          );
+        } catch (error) {
+          if (currentScopeRef.current !== pending.operationScope) {
+            return false;
+          }
+          pending.requestFailure = classifyPanelStructureRequestFailure(error);
+          pendingStructureReconciliation.current = pending;
+          try {
+            return await reconcilePanelStructure(pending);
+          } catch {
+            if (currentScopeRef.current === pending.operationScope) {
+              setStructureReconcileRequired(true);
+              setStructureErrorMessage(t(language, 'panelStructureOutcomeUnknown'));
+            }
+            return false;
+          }
+        }
+
+        if (currentScopeRef.current !== pending.operationScope) {
+          return false;
+        }
+        pending.acceptedCreatedPanelId = response.created_panel_id;
+        pending.acceptedFrameCount = response.frames.length;
+        pending.acceptedPanelIds = [...response.panel_ids];
+        pendingStructureReconciliation.current = pending;
+        try {
+          return await reconcilePanelStructure(pending);
+        } catch {
+          if (currentScopeRef.current === pending.operationScope) {
+            setStructureReconcileRequired(true);
+            setStructureErrorMessage(t(language, 'panelStructureOutcomeUnknown'));
+          }
+          return false;
+        }
+      } finally {
+        setStructureBusy(false);
+        onStructureActiveChange(false);
+        if (structureOperation.current === operation) {
+          structureOperation.current = null;
+        }
+      }
+    })();
+    structureOperation.current = operation;
+    return operation;
+  }, [
+    api,
+    assignmentConflict,
+    assignmentReconcileRequired,
+    currentScope,
+    language,
+    organizationId,
+    onStructureActiveChange,
+    panels,
+    panelsQuery.isError,
+    panelsQuery.isFetching,
+    panelsQuery.isLoading,
+    preparePageSettings,
+    readOnly,
+    reconcilePanelStructure,
+    resolvePanelDeleteConfirmation,
+    resolvePendingPanelDrafts,
+    selectedPage,
+    selectedPanelId,
+    structureReconcileRequired,
+  ]);
+
+  const resolvePendingPanel = useCallback(async (): Promise<boolean> => {
+    if (structureOperation.current !== null) {
+      return structureOperation.current;
+    }
+    if (structureReconcileRequired) {
+      return false;
+    }
+    return resolvePendingPanelDrafts();
+  }, [resolvePendingPanelDrafts, structureReconcileRequired]);
+
   useImperativeHandle(ref, () => ({
     prepareToLeave: resolvePendingPanel,
   }), [resolvePendingPanel]);
 
   const transition = useCallback((changeSelection: () => void): Promise<boolean> => {
+    if (structureOperation.current !== null || structureReconcileRequired) {
+      return Promise.resolve(false);
+    }
     if (transitionOperation.current !== null) {
       return transitionOperation.current;
     }
@@ -743,7 +1086,35 @@ export const PanelEditingSection = forwardRef<
       }
     });
     return operation;
-  }, [resolvePendingPanel]);
+  }, [resolvePendingPanel, structureReconcileRequired]);
+
+  const selectedPanelIndex = panels.findIndex((panel) => panel.id === selectedPanelId);
+  const structureControlsUnavailable = readOnly
+    || panelsQuery.isLoading
+    || panelsQuery.isFetching
+    || panelsQuery.isError
+    || structureBusy
+    || structureReconcileRequired
+    || assignmentReconcileRequired
+    || assignmentConflict;
+  const moveSelectedPanel = (offset: -1 | 1): void => {
+    if (selectedPanelIndex < 0) {
+      return;
+    }
+    const targetIndex = selectedPanelIndex + offset;
+    if (targetIndex < 0 || targetIndex >= panels.length) {
+      return;
+    }
+    const reorderedPanelIds = panels.map((panel) => panel.id);
+    const selectedId = reorderedPanelIds[selectedPanelIndex];
+    const targetId = reorderedPanelIds[targetIndex];
+    if (selectedId === undefined || targetId === undefined) {
+      return;
+    }
+    reorderedPanelIds[selectedPanelIndex] = targetId;
+    reorderedPanelIds[targetIndex] = selectedId;
+    void runPanelStructureOperation({ type: 'reorder', panel_ids: reorderedPanelIds });
+  };
 
   return (
     <View style={styles.section}>
@@ -817,11 +1188,79 @@ export const PanelEditingSection = forwardRef<
           selectSuffix={t(language, 'storySelectSuffix')}
         />
       )}
+      {selectedPage === null ? null : (
+        <View style={styles.structureControls}>
+          <Text style={styles.subheading}>{t(language, 'panelStructureControls')}</Text>
+          <Text style={styles.muted}>{t(language, 'panelStructureHelp')}</Text>
+          {structureErrorMessage === null ? null : (
+            <Notice message={structureErrorMessage} tone="danger" />
+          )}
+          {structureNoticeMessage === null ? null : (
+            <Notice message={structureNoticeMessage} />
+          )}
+          <PrimaryButton
+            disabled={structureControlsUnavailable || panels.length >= 8}
+            label={t(language, 'panelStructureAppend')}
+            onPress={() => void runPanelStructureOperation({ type: 'append' })}
+          />
+          <View style={styles.structureMoveControls}>
+            <View style={styles.structureMoveControl}>
+              <PrimaryButton
+                disabled={structureControlsUnavailable || selectedPanelIndex <= 0}
+                label={t(language, 'panelStructureMoveEarlier')}
+                onPress={() => moveSelectedPanel(-1)}
+              />
+            </View>
+            <View style={styles.structureMoveControl}>
+              <PrimaryButton
+                disabled={
+                  structureControlsUnavailable
+                  || selectedPanelIndex < 0
+                  || selectedPanelIndex >= panels.length - 1
+                }
+                label={t(language, 'panelStructureMoveLater')}
+                onPress={() => moveSelectedPanel(1)}
+              />
+            </View>
+          </View>
+          <PrimaryButton
+            disabled={
+              structureControlsUnavailable
+              || selectedPanelIndex < 0
+              || panels.length <= 1
+            }
+            label={t(language, 'panelStructureDelete')}
+            onPress={() => {
+              const selectedPanel = panels[selectedPanelIndex];
+              if (selectedPanel !== undefined) {
+                void runPanelStructureOperation({
+                  type: 'delete',
+                  panel_id: selectedPanel.id,
+                });
+              }
+            }}
+            tone="danger"
+          />
+          {structureReconcileRequired ? (
+            <PrimaryButton
+              disabled={structureBusy}
+              label={t(language, 'panelStructureReconcile')}
+              onPress={() => void reconcilePendingPanelStructure()}
+            />
+          ) : null}
+          {panels.length >= 8 ? (
+            <Text style={styles.muted}>{t(language, 'panelStructureAppendLimit')}</Text>
+          ) : null}
+          {panels.length === 1 ? (
+            <Text style={styles.muted}>{t(language, 'panelStructureDeleteLast')}</Text>
+          ) : null}
+        </View>
+      )}
       {draft === null || savedPanel === null ? null : (
         <PanelEditor
           assignedEntityIds={(assignmentDraft ?? savedPanel.entities)
             .map((assignment) => assignment.entity_id)}
-          busy={busy}
+          busy={busy || structureBusy}
           dirty={panelDirty}
           draft={draft}
           draftBlocked={assignmentDirty || assignmentReconcileRequired || assignmentConflict}
@@ -829,13 +1268,16 @@ export const PanelEditingSection = forwardRef<
           language={language}
           noticeMessage={noticeMessage}
           onChange={(nextDraft) => {
+            if (editorReadOnly) {
+              return;
+            }
             setDraft(nextDraft);
             setErrorMessage(null);
             setNoticeMessage(null);
             setValidationReason(null);
           }}
           onSave={() => void saveCurrentPanel()}
-          readOnly={readOnly}
+          readOnly={editorReadOnly}
           remoteChanged={remoteChanged}
           validationReason={validationReason}
         />
@@ -844,7 +1286,7 @@ export const PanelEditingSection = forwardRef<
         <PanelEntityAssignmentEditor
           assignments={assignmentDraft}
           blockedByContentDraft={panelDirty}
-          busy={assignmentBusy}
+          busy={assignmentBusy || structureBusy}
           canLoadMoreEntities={entitiesQuery.hasNextPage === true}
           dirty={assignmentDirty}
           entities={entities}
@@ -855,7 +1297,12 @@ export const PanelEditingSection = forwardRef<
           loadingMoreEntities={entitiesQuery.isFetchingNextPage}
           noticeMessage={assignmentNoticeMessage}
           onChange={(nextAssignments) => {
-            if (panelDirty || readOnly || assignmentReconcileRequired || assignmentConflict) {
+            if (
+              panelDirty
+              || editorReadOnly
+              || assignmentReconcileRequired
+              || assignmentConflict
+            ) {
               return;
             }
             setAssignmentDraft(nextAssignments);
@@ -867,7 +1314,7 @@ export const PanelEditingSection = forwardRef<
           onReconcile={() => void reconcileAssignments()}
           onRetryEntities={() => void entitiesQuery.refetch()}
           onSave={() => void saveCurrentAssignments()}
-          readOnly={readOnly}
+          readOnly={editorReadOnly}
           reconcileRequired={assignmentReconcileRequired}
           remoteChanged={assignmentRemoteChanged || assignmentConflict}
           requiredSpeakerEntityIds={requiredSpeakerEntityIds}
@@ -920,6 +1367,111 @@ function panelSpeakerEntityIds(
   return [...speakerEntityIds];
 }
 
+function classifyPanelStructureSnapshot(
+  pending: PendingPanelStructureReconciliation,
+  currentPanelIds: string[],
+): 'applied' | 'conflict' | 'unchanged' {
+  if (pending.acceptedPanelIds !== null) {
+    return orderedIdsEqual(currentPanelIds, pending.acceptedPanelIds)
+      ? 'applied'
+      : 'conflict';
+  }
+  if (orderedIdsEqual(currentPanelIds, pending.expectedPanelIds)) {
+    return 'unchanged';
+  }
+  if (pending.operation.type === 'append') {
+    return currentPanelIds.length === pending.expectedPanelIds.length + 1
+      && pending.expectedPanelIds.every((panelId, index) => currentPanelIds[index] === panelId)
+      ? 'applied'
+      : 'conflict';
+  }
+  if (pending.operation.type === 'delete') {
+    const deletedPanelId = pending.operation.panel_id;
+    return orderedIdsEqual(
+      currentPanelIds,
+      pending.expectedPanelIds.filter((panelId) => panelId !== deletedPanelId),
+    ) ? 'applied' : 'conflict';
+  }
+  return orderedIdsEqual(currentPanelIds, pending.operation.panel_ids)
+    ? 'applied'
+    : 'conflict';
+}
+
+function resolvePanelSelectionAfterStructure(
+  pending: PendingPanelStructureReconciliation,
+  currentPanelIds: string[],
+  outcome: 'applied' | 'conflict' | 'unchanged',
+): string | null {
+  if (outcome === 'applied' && pending.operation.type === 'append') {
+    return pending.acceptedCreatedPanelId
+      ?? currentPanelIds.find((panelId) => !pending.expectedPanelIds.includes(panelId))
+      ?? null;
+  }
+  if (
+    outcome === 'applied'
+    && pending.operation.type === 'delete'
+    && pending.previousSelectedPanelId === pending.operation.panel_id
+  ) {
+    const deletedIndex = pending.expectedPanelIds.indexOf(pending.operation.panel_id);
+    return currentPanelIds[Math.min(deletedIndex, currentPanelIds.length - 1)] ?? null;
+  }
+  if (
+    pending.previousSelectedPanelId !== null
+    && currentPanelIds.includes(pending.previousSelectedPanelId)
+  ) {
+    return pending.previousSelectedPanelId;
+  }
+  const previousIndex = pending.previousSelectedPanelId === null
+    ? -1
+    : pending.expectedPanelIds.indexOf(pending.previousSelectedPanelId);
+  return previousIndex < 0
+    ? null
+    : currentPanelIds[Math.min(previousIndex, currentPanelIds.length - 1)] ?? null;
+}
+
+function classifyPanelStructureRequestFailure(
+  error: unknown,
+): PendingPanelStructureReconciliation['requestFailure'] {
+  if (!(error instanceof ApiError)) {
+    return 'ambiguous';
+  }
+  if (error.status === 409) {
+    return 'conflict';
+  }
+  if (error.code === 'INVALID_API_RESPONSE' || error.status === 0 || error.status >= 500) {
+    return 'ambiguous';
+  }
+  return 'definitive';
+}
+
+function structureSuccessMessageKey(
+  operation: PanelStructureOperation,
+): 'panelStructureAppended' | 'panelStructureDeleted' | 'panelStructureMoved' {
+  if (operation.type === 'append') {
+    return 'panelStructureAppended';
+  }
+  return operation.type === 'delete' ? 'panelStructureDeleted' : 'panelStructureMoved';
+}
+
+function clonePanelStructureOperation(operation: PanelStructureOperation): PanelStructureOperation {
+  if (operation.type === 'reorder') {
+    return { type: 'reorder', panel_ids: [...operation.panel_ids] };
+  }
+  return { ...operation };
+}
+
+function samePanelIdSet(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length
+    && new Set(left).size === left.length
+    && new Set(right).size === right.length
+    && right.every((panelId) => left.includes(panelId));
+}
+
+function orderedIdsEqual(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length
+    && left.every((panelId, index) => panelId === right[index]);
+}
+
 function isAmbiguousAssignmentFailure(error: unknown): boolean {
   if (!(error instanceof ApiError)) {
     return true;
@@ -937,6 +1489,21 @@ const styles = StyleSheet.create({
     color: colors.muted,
     fontSize: 14,
     lineHeight: 21,
+  },
+  structureControls: {
+    gap: spacing.sm,
+  },
+  structureMoveControl: {
+    flex: 1,
+  },
+  structureMoveControls: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+  },
+  subheading: {
+    color: colors.ink,
+    fontSize: 17,
+    fontWeight: '700',
   },
   section: {
     gap: spacing.md,
