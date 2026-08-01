@@ -53,6 +53,9 @@ const assertSuccessfulDownload = (status: number): void => {
   }
 };
 
+const storageAccessFrameworkDisplayName = (filename: string): string =>
+  filename.replace(/\.[A-Za-z0-9]{1,10}$/u, '') || 'lyra-download';
+
 const saveDownloadedFile = async (
   sourceUri: string,
   filename: string,
@@ -65,15 +68,13 @@ const saveDownloadedFile = async (
     }
     const destinationUri = await FileSystem.StorageAccessFramework.createFileAsync(
       permission.directoryUri,
-      filename,
+      storageAccessFrameworkDisplayName(filename),
       mimeType
     );
-    const content = await FileSystem.readAsStringAsync(sourceUri, {
-      encoding: FileSystem.EncodingType.Base64
-    });
-    await FileSystem.writeAsStringAsync(destinationUri, content, {
-      encoding: FileSystem.EncodingType.Base64
-    });
+    const { File } = await import('expo-file-system');
+    const source = new File(sourceUri);
+    const destination = new File(destinationUri);
+    await source.copy(destination, { overwrite: true });
     return destinationUri;
   }
 

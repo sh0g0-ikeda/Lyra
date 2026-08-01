@@ -56,7 +56,7 @@ describe('ExportJobCard', () => {
     });
 
     const button = renderer!.root.findByType('button');
-    expect(button.children).toEqual(['Download export']);
+    expect(button.children).toEqual(['Save PDF to device']);
     act(() => button.props.onClick());
 
     expect(onDownload).toHaveBeenCalledWith('export-job-1');
