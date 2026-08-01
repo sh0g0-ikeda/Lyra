@@ -6,9 +6,11 @@
 
 対象PR: [#67 feat(mobile): production-ready Lyra mobile workflow](https://github.com/sh0g0-ikeda/Lyra/pull/67)
 
-進捗: 104件完了 / 378件未完了
+進捗: 107件完了 / 380件未完了
 
-実装監査基準: [PR #151](https://github.com/sh0g0-ikeda/Lyra/pull/151) / `bc783f2`（Mobileキャラ服装・状態管理 feature code head。local full gate成功。証跡追記後の最終headもGitHub CIで統合前に再確認）
+AI担当再分類: AI単独 48件 / AI準備＋人間・外部確認 235件 / 人間・外部必須 97件
+
+実装監査基準: [PR #157](https://github.com/sh0g0-ikeda/Lyra/pull/157) / main `254b717` / [CI run 30681272369](https://github.com/sh0g0-ikeda/Lyra/actions/runs/30681272369)（Backend、PostgreSQL migration / invariant、Web、Playwright、Mobile、Android / iOS exportが統合後mainで成功）
 
 ## 1. 設計ブリーフ
 
@@ -55,7 +57,17 @@
 
 このセッションではサブエージェント委譲が禁止されているため、Sol単独でPR差分、仕様、運用状態を照合した。
 
-## 2. 2026-07-30時点の結論
+### 1.7 2026-08-01 AI担当再分類監査の設計
+
+- 目的と範囲: 最新`origin/main`のチェック項目を再集計し、未完了項目を「AI単独」「AI実装後に人間確認」「人間・外部サービス必須」に分類する。コード、DB、AWS、EAS、Apple / Google Console、本番環境は変更しない。
+- Spec根拠: `docs/Lyra_Unified_Spec_v4.md` sections 5–10。特に課金のserver verification、feature flag既定OFF、release verification gateを分類境界とする。
+- 影響レイヤー: Documentationのみ。Route / Service / Repository / Domain / Infrastructure / Worker / Web / Mobile / Migrationの契約とデータ構造は変更しない。
+- インターフェース: Markdown checkboxを集計単位とし、完了数と未完了数の和が全checkbox数に一致すること、AI担当区分の和が未完了数に一致することを機械検証する。
+- セキュリティ: secret値、購入証跡、個人情報を取得・記録しない。外部Consoleや本番設定のreadbackが必要な項目は、コードが存在しても完了扱いにしない。
+- テスト方針: ドキュメントのみのためTDD対象外。PowerShellによるcheckbox集計、分類表の算術整合、`git diff --check`、差分目視レビューを行う。
+- Terra委譲方針: Phase 0–5とPhase 6–11をread-onlyで独立分類し、Solが分類基準、重複、前提関係、最終件数を再確認する。編集と統合判断はSolだけが行う。
+
+## 2. 2026-08-01時点の結論
 
 課金コードとMobile UIの骨格は存在するが、Android・iPhoneとも本番ストアへ提出できる状態ではない。
 
@@ -80,20 +92,20 @@ PR #67の分割とmain同期
 |---|---|---|
 | BLOCK-01 | Blocked | PR #67はDraftかつmainと競合している |
 | BLOCK-02 | Blocked | PR #67は644ファイル、43コミット、99,879 additions / 2,864 deletionsを含む |
-| BLOCK-03 | Blocked | PR #67のheadはmainより43コミット先行する一方、graph上45コミット遅延している |
-| BLOCK-04 | Blocked | 現在のmainにはMobile課金Route、Apple/Google検証、購入台帳migrationがない |
-| BLOCK-05 | Blocked | 本番DBはmainのmigration 026までで、Mobile用027〜036は未適用 |
-| BLOCK-06 | Blocked | 本番SecretにMobile store billingの必須設定がなく、課金は無効 |
-| BLOCK-07 | Blocked | EAS production buildはAndroid、iOSとも0件 |
-| BLOCK-08 | Blocked | 最新Androidはinternal development APKで、production AABではない |
-| BLOCK-09 | Blocked | 最新iOSはSimulator buildで、署名済み実機buildではない |
+| BLOCK-03 | Blocked | PR #67のheadはmainより43コミット先行する一方、graph上176コミット遅延している（2026-08-01 readback） |
+| BLOCK-04 | Resolved | Mobile課金Route、Apple / Google検証、購入台帳migration 029はPR #112 / #132でmainへ統合済み。課金は既定OFFのまま |
+| BLOCK-05 | Needs readback | mainのmigrationは039まで統合済み。本番DBの適用履歴は最新readbackがないため、026と断定せずPhase 3のpreflight対象とする |
+| BLOCK-06 | Needs readback | 課金はコード上既定OFF。本番Secretの必須key存在は値を出さない最新readbackが必要 |
+| BLOCK-07 | Needs readback | 2026-07-30時点ではEAS production buildが両OS 0件。最新EAS readbackが必要 |
+| BLOCK-08 | Needs readback | GitHub上の既知Android artifactはdevelopment APK。production AABの有無はEAS / Play readbackが必要 |
+| BLOCK-09 | Needs readback | 既知iOS artifactはSimulator build。署名済み実機buildの有無はEAS / App Store readbackが必要 |
 | BLOCK-10 | Blocked | EAS previewが本番API/Cognitoを参照し、独立したstagingになっていない |
-| BLOCK-11 | Blocked | Apple AASA URLはHTTP 200だがJSONではなくWeb SPA HTMLを返している |
+| BLOCK-11 | Blocked | 2026-08-01 readbackでもApple AASA URLはHTTP 200 / `text/html`でWeb SPA HTMLを返す |
 | BLOCK-12 | Blocked | StoreKit Sandbox / Play license testerの購入ライフサイクル証跡がない |
 | BLOCK-13 | Blocked | Maestro E2E-01〜18を両方の実機で完走した証跡がない |
 | BLOCK-14 | Blocked | App Store / Google Play用スクリーンショットとconsole申告証跡がない |
 | BLOCK-15 | Partial | Android FCMは準備済みだが、APNs未設定のためPush全体は無効 |
-| BLOCK-16 | Partial | Sentryコードはあるが、本番DSN、source map、alert証跡がない |
+| BLOCK-16 | Blocked | 現在のmainにはMobile Sentry SDK配線がなく、本番DSN、source map、alert証跡もない |
 | BLOCK-17 | Resolved | mainへ`verify`のstrict required checkを管理者にも適用し、CI pending中のPR #91が`BLOCKED`になることを確認 |
 | BLOCK-18 | Resolved | PR #87で階層メニュートリガーに残ったフォーカスからのEscape閉鎖を決定化し、反復テストと全CIが成功 |
 | BLOCK-19 | Resolved | PR #144でAccountを現行main基盤へ追加。残高は認証済みsession snapshotから表示し、job emptyをquery success時だけに限定して2種類のfalse positiveを解消 |
@@ -102,19 +114,59 @@ PR #67の分割とmain同期
 
 | 優先 | 区分 | 次に進める内容 | 実行条件 |
 |---|---|---|---|
-| P0 | GitHub安全ゲート | mainのbranch protectionでCI `verify`をrequired checkにする | Repository設定変更の承認 |
-| P0 | CI安定化 | 階層メニューE2EのEscape後閉鎖を決定的にし、GitHub ActionsのNode.js 20非推奨警告を解消する | Codexで実行可能 |
-| P1 | Mobile表示 | 完了。PR #144で正常状態・ジョブ0件の2種類のfalse-positive errorを解消し、実エラーの再試行を維持 | local full gate成功。GitHub CIを統合前に確認 |
-| P1 | PR-A継続 | `/api/billing/balance`のsubscription summaryをServiceまで監査し、残るRouteを1つずつ契約接続する | Codexで実行可能。各Routeを別PRで扱う |
-| P1 | 契約生成 | shared API contractの生成元・生成物・drift check・pagination・API inventoryを監査する | Codexで実行可能 |
-| P1 | 差分監査 | PR #67に未取込のmain側45 graph commitについて影響箇所を列挙する | 完了。patch等価を除く44件を分類済み |
-| P2 | Backend分割 | account deletion / upload / export、store billing、job / pushをmigration単位で設計・TDDする | Codexで実行可能。課金は既定OFFを維持 |
-| P2 | Mobile分割 | Mobile基盤、Story / Characters / Pages、organization / billing UIを依存順に分割する | Codexで実行可能。Backend契約確定後 |
+| P0 | GitHub / CI安全ゲート | 完了。required `verify`、Node.js Action更新、階層メニューE2E安定化をmainへ統合済み | 維持監視のみ |
+| P0 | Backend基盤 | 完了。shared contract、account deletion / upload / export、store billing、job / push基盤を既定OFFまたは外部配送OFFでmainへ統合済み | 本番feature flagを有効化しない |
+| P1 | Mobile PR-F残り | durable asset cleanup、作品 / Scene / Character削除安全境界、作品並べ替え、direct upload client、`costume_ref_id`、frame / balloon編集を分割する | AI単独。1機能1PR、Backend変更時はTDDと全gate必須 |
+| P1 | Mobile PR-G | organization / billing UIとstore adapterを分割する | AI実装可能。実store確認は商品・外部設定後 |
+| P1 | Release PR-H | non-secret EAS guard、store metadata、runbookを分割する | AIで準備可能。署名・secret・console操作は人間確認あり |
+| P2 | 差分監査 | PR #67はmainより176 graph commit遅延している | 残sliceごとに最新mainから作り直し、PR #67を直接mergeしない |
 | P3 | 商品判断 | 対象国、価格、同日公開、Push、offer、upgrade方針を確定する | プロダクトオーナー判断が必要 |
 | P3 | 外部設定 | staging、Apple / Google商品、署名、通知、AASA / App Linksを設定する | AWS / Apple / Google / EASへの権限と値が必要 |
 | P4 | 実機・審査 | Sandbox / license-test、両OS実機E2E、スクリーンショット、ストア提出を行う | 実機、ストアアカウント、審査対応が必要 |
 
-Accountのfalse-positive error解消は、Mobile基盤の統合後にPR #144として安全に分離した。Codex単独で進める次の順序は、`PR-A継続 → 契約生成 → Backend分割 → 残るMobile機能分割`とする。外部設定や本番変更は、必要な権限と明示的な実行承認を得てから行う。
+Accountのfalse-positive error解消とPR-A〜E相当の基盤はmainへ統合済みである。Codex単独で進める次の順序は、`PR-FのBackend不要slice → PR-FのBackend安全境界slice → PR-Gのstore非依存UI → PR-Hのnon-secret設定とrunbook`とする。外部設定や本番変更は、必要な権限と明示的な実行承認を得てから行う。
+
+### 2.3 AI担当件数の再分類
+
+集計単位はMarkdown task checkbox（`- [ ]` / `- [x]`）とする。Phase 8のE2E表内にある36個の`[ ]`セルは、親となる実機受入タスクの証跡欄であり、独立件数へ重複計上しない。
+
+| 区分 | 件数 | 完了主体 |
+|---|---:|---|
+| AI単独 | 48 | repository、テスト、文書、公開情報のread-only確認、GitHub PR操作だけで完了証跡まで作れる |
+| AI準備＋人間・外部確認 | 235 | AIが実装・設定案・runbookを作れるが、secret、外部Console、本番readback / deploy、署名、実機証跡のいずれかが必要 |
+| 人間・外部必須 | 97 | 商品・法務・公開判断、本人確認、金融手続、実機操作、store審査・公開監視が完了条件 |
+| **未完了合計** | **380** | 上記3区分の合計 |
+
+| 範囲 | AI単独 | 共同 | 人間・外部 | 未完了 |
+|---|---:|---:|---:|---:|
+| Phase 0 | 0 | 0 | 14 | 14 |
+| Phase 1 | 18 | 0 | 0 | 18 |
+| Phase 2 | 5 | 23 | 0 | 28 |
+| Phase 3 | 7 | 19 | 1 | 27 |
+| Phase 4 | 3 | 49 | 4 | 56 |
+| Phase 5 | 2 | 43 | 2 | 47 |
+| Phase 6 | 3 | 21 | 0 | 24 |
+| Phase 7 | 1 | 1 | 40 | 42 |
+| Phase 8 | 0 | 0 | 12 | 12 |
+| Phase 9 | 2 | 19 | 12 | 33 |
+| Phase 10 | 3 | 40 | 7 | 50 |
+| Phase 11 | 3 | 15 | 0 | 18 |
+| リリース完了条件 | 1 | 5 | 5 | 11 |
+| **合計** | **48** | **235** | **97** | **380** |
+
+AI単独48件の内訳は次のとおり。
+
+- Phase 1（18件）: PR-F / G / H、残る分割PRの再作成・依存記載・差分境界・migration非破壊、Backend / PostgreSQL / Web / Playwright / Mobileの全gate、PR #67の置換close。
+- Phase 2（5件）: E2E seed / reset、purchase transaction / webhook event digest、credit ledgerの秘密情報なし証跡、raw proof / token非記録テスト。
+- Phase 3（7件）: 課金OFF起動、disabled route、Web Stripe / credit balance非退行、未検証webhook拒否、OFF時secret欠落耐性、ON時fail closed。
+- Phase 4（3件）: Apple公式root certificate取得・変換、Sandbox / production受理ポリシー分離。
+- Phase 5（2件）: Pub/Sub OIDCのaudience / email / issuer / 署名検証、raw RTDN / purchase token非記録。
+- Phase 6（3件）: Mobile価格hard-code禁止、store由来display price表示、未反映商品disabled表示。
+- Phase 7（1件）: E2E run ID発行。
+- Phase 9（2件）: AI生成物の確認責任説明、Play feature graphic作成。support / privacy / terms候補URLは2026-08-01にHTTP 200だったが、トップページと同一HTMLのSPA fallbackだったため完了にもAI単独にも数えない。
+- Phase 10（3件）: 全分割PR統合、exact release commit記録、公開停止手順。
+- Phase 11（3件）: 購入調査手順2件、OTA / native rebuild境界文書。
+- リリース完了条件（1件）: PR #67の内容をレビュー可能な単位でmainへ統合。
 
 ## 3. リリース全体タスクリスト
 
@@ -166,6 +218,7 @@ Accountのfalse-positive error解消は、Mobile基盤の統合後にPR #144と�
   - 証跡: この文書の「5.2 実差分の規模」と「5.3〜5.10」
 - [x] main側の未取込45 graph commitの影響箇所を列挙する
   - 証跡: `git rev-list --left-right --count origin/main...origin/feature/mobile-completion`は`45 43`。patch等価を除くmain-only 44件を`docs/mobile-pr67-main-divergence-audit-2026-07-30.md`へ分類
+  - 現在値: 2026-08-01の再readbackは`176 43`。旧PR全体は再baseせず、残sliceを最新mainから作る
 - [x] 既存のユーザー未コミット変更を別worktreeから隔離する
   - 証跡: `Lyra-mobile-response-contract` worktreeで分割統合を実施
 - [x] migration番号027〜036が現在のmainと衝突しないことを確認する
@@ -377,7 +430,7 @@ Accountのfalse-positive error解消は、Mobile基盤の統合後にPR #144と�
 
 #### GIT-120 統合検証
 
-現在の証跡として、PR #76、#77、#79とmain `d152183`では、Vitest、Bun、PostgreSQL migration / invariant、Backend build、Web lint / build、Playwrightが成功している。ただし最終リリース対象commitは今後変わるため、リリースゲート自体は未完了のままとし、exact commitで再実行する。
+現在の証跡として、PR #157統合後のmain `254b717` / CI run `30681272369`では、Vitest、Bun、PostgreSQL migration / invariant、Backend build、Web lint / build、Playwright、Mobile test / exportが成功している。ただし最終リリース対象commitは今後変わるため、リリースゲート自体は未完了のままとし、exact release commitで再実行する。
 
 - [ ] 残る各分割PRを最新mainから作り直す
   - 完了済み証跡: PR #76、PR #77、PR #79
@@ -983,7 +1036,7 @@ Accountのfalse-positive error解消は、Mobile基盤の統合後にPR #144と�
 | 変更ファイル | 644 |
 | 追加 | 99,879行 |
 | 削除 | 2,864行 |
-| mainとの差 | 43 ahead / 19 behind |
+| mainとの差 | 43 ahead / 176 behind（2026-08-01 readback） |
 
 PR説明欄には当初「既存Web版とバックエンドには変更を加えていません」と記載されていた。しかし実差分にはBackend、Web、Worker、migration、CI、Dockerfileが含まれるため、2026-07-30に監査警告、実差分、分割統合状況を追記して訂正した。
 
