@@ -10,36 +10,41 @@ import {
 const {
   createFileAsyncMock,
   downloadAsyncMock,
+  fileCopyMock,
   isAvailableAsyncMock,
   platformMock,
-  readAsStringAsyncMock,
   requestDirectoryPermissionsAsyncMock,
-  shareAsyncMock,
-  writeAsStringAsyncMock
+  shareAsyncMock
 } = vi.hoisted(() => ({
   createFileAsyncMock: vi.fn(),
   downloadAsyncMock: vi.fn(),
+  fileCopyMock: vi.fn(),
   isAvailableAsyncMock: vi.fn(),
   platformMock: { OS: 'ios' },
-  readAsStringAsyncMock: vi.fn(),
   requestDirectoryPermissionsAsyncMock: vi.fn(),
-  shareAsyncMock: vi.fn(),
-  writeAsStringAsyncMock: vi.fn()
+  shareAsyncMock: vi.fn()
 }));
 
 vi.mock('react-native', () => ({ Platform: platformMock }));
 
 vi.mock('expo-file-system/legacy', () => ({
-  EncodingType: { Base64: 'base64' },
   StorageAccessFramework: {
     createFileAsync: createFileAsyncMock,
     requestDirectoryPermissionsAsync: requestDirectoryPermissionsAsyncMock
   },
   cacheDirectory: 'file:///cache/',
   documentDirectory: 'file:///documents/',
-  downloadAsync: downloadAsyncMock,
-  readAsStringAsync: readAsStringAsyncMock,
-  writeAsStringAsync: writeAsStringAsyncMock
+  downloadAsync: downloadAsyncMock
+}));
+
+vi.mock('expo-file-system', () => ({
+  File: class MockFile {
+    public constructor(public readonly uri: string) {}
+
+    public copy(destination: MockFile, options: { overwrite: boolean }): Promise<void> {
+      return fileCopyMock(this.uri, destination.uri, options);
+    }
+  }
 }));
 
 vi.mock('expo-sharing', () => ({
@@ -117,8 +122,7 @@ describe('mobile download filenames', () => {
       granted: true
     });
     createFileAsyncMock.mockResolvedValue('content://downloads/page.png');
-    readAsStringAsyncMock.mockResolvedValue('base64-image');
-    writeAsStringAsyncMock.mockResolvedValue(undefined);
+    fileCopyMock.mockResolvedValue(undefined);
 
     await expect(downloadAuthenticatedFile({
       path: '/api/pages/page-1/export-image',
@@ -129,15 +133,69 @@ describe('mobile download filenames', () => {
 
     expect(createFileAsyncMock).toHaveBeenCalledWith(
       'content://downloads/tree',
-      'page.png',
+      'page',
       'image/png'
     );
-    expect(writeAsStringAsyncMock).toHaveBeenCalledWith(
+    expect(fileCopyMock).toHaveBeenCalledWith(
+      'file:///cache/page.png',
       'content://downloads/page.png',
-      'base64-image',
-      { encoding: 'base64' }
+      { overwrite: true }
     );
     expect(shareAsyncMock).not.toHaveBeenCalled();
+  });
+
+  it('AndroidではPDF全体をJavaScriptへ展開せず選択フォルダへ保存する', async () => {
+    platformMock.OS = 'android';
+    downloadAsyncMock.mockResolvedValue({ status: 200, uri: 'file:///cache/chapter.pdf' });
+    requestDirectoryPermissionsAsyncMock.mockResolvedValue({
+      directoryUri: 'content://downloads/tree',
+      granted: true
+    });
+    createFileAsyncMock.mockResolvedValue('content://downloads/chapter.pdf');
+    fileCopyMock.mockResolvedValue(undefined);
+
+    await expect(downloadAuthenticatedFile({
+      path: '/api/exports/export-job-1/download',
+      filename: 'chapter.pdf',
+      mimeType: 'application/pdf',
+      tokens: {
+        accessToken: null,
+        expiresAt: null,
+        idToken: 'id-token',
+        refreshToken: null,
+        tokenType: null
+      }
+    })).resolves.toBe('content://downloads/chapter.pdf');
+
+    expect(createFileAsyncMock).toHaveBeenCalledWith(
+      'content://downloads/tree',
+      'chapter',
+      'application/pdf'
+    );
+    expect(fileCopyMock).toHaveBeenCalledWith(
+      'file:///cache/chapter.pdf',
+      'content://downloads/chapter.pdf',
+      { overwrite: true }
+    );
+  });
+
+  it('Androidで保存先フォルダを選ばなかった場合は取消として扱う', async () => {
+    platformMock.OS = 'android';
+    downloadAsyncMock.mockResolvedValue({ status: 200, uri: 'file:///cache/chapter.pdf' });
+    requestDirectoryPermissionsAsyncMock.mockResolvedValue({
+      directoryUri: '',
+      granted: false
+    });
+
+    await expect(downloadAuthenticatedFile({
+      path: '/api/exports/export-job-1/download',
+      filename: 'chapter.pdf',
+      mimeType: 'application/pdf',
+      tokens: null
+    })).rejects.toMatchObject({ code: 'DOWNLOAD_CANCELED' });
+
+    expect(createFileAsyncMock).not.toHaveBeenCalled();
+    expect(fileCopyMock).not.toHaveBeenCalled();
   });
 });
 

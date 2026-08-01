@@ -110,13 +110,20 @@ export function ExportJobCard({
       {downloadError === null ? null : <Text style={styles.error}>{downloadError}</Text>}
       {canDownload ? (
         <PrimaryButton
-          label={t(language, "generated.components.ExportJobCard.download.export.baacb267")}
+          label={downloadLabel(format, language)}
           loading={downloadLoading}
           onPress={() => void startDownload()}
           variant="secondary"
         />
       ) : null}
     </View>
+  );
+}
+
+function downloadLabel(format: ExportFormat, language: 'ja' | 'en'): string {
+  return t(
+    language,
+    format === 'pdf' ? 'component.exportJobCard.savePdf' : 'component.exportJobCard.saveZip'
   );
 }
 
