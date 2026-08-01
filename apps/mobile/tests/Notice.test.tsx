@@ -48,4 +48,17 @@ describe('Notice', () => {
 
     expect(tree!.root.findAllByType('pressable')).toHaveLength(0);
   });
+
+  it('renders danger messages with the review-safe warning palette', async () => {
+    let tree: ReturnType<typeof create> | null = null;
+
+    await act(async () => {
+      tree = create(<Notice message="Unable to connect." tone="danger" />);
+    });
+
+    const container = tree!.root.findByType('view');
+    const message = tree!.root.findByType('text');
+    expect(JSON.stringify(container.props.style)).not.toContain('244, 67, 54');
+    expect(JSON.stringify(message.props.style)).not.toContain('FF9E96');
+  });
 });

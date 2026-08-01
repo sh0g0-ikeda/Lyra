@@ -23,7 +23,7 @@ import {
   entitySchema,
   episodeSchema,
   episodesResponseSchema,
-  exportJobSchema,
+  episodeExportStatusResponseSchema,
   frameTemplateResponseSchema,
   framesResponseSchema,
   generationJobSchema,
@@ -1063,7 +1063,10 @@ export class LyraMobileApiClient {
   }
 
   public getExportJob(jobId: string, organizationId?: string | null): Promise<ExportJobRecord> {
-    return this.request(`/api/exports/${jobId}${organizationQuery(organizationId)}`, exportJobSchema);
+    return this.request(
+      `/api/exports/${jobId}${organizationQuery(organizationId)}`,
+      episodeExportStatusResponseSchema
+    );
   }
 
   public updatePage(pageId: string, body: UpdatePagePayload, organizationId?: string | null): Promise<PageRecord> {

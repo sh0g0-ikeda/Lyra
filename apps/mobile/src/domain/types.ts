@@ -358,21 +358,21 @@ export interface CreateEpisodeExportResultRecord {
 }
 
 export interface ExportJobRecord {
-  id: string;
-  episode_id: string;
-  format: ExportFormat;
-  filename: string;
+  job_id: string;
   status: ExportJobStatus;
-  progress_stage: string;
-  progress_percent: number;
-  error_code: string | null;
-  message_key: string | null;
+  progress: {
+    stage: string;
+    percent: number;
+  };
+  error: {
+    code: string;
+    message: string;
+  } | null;
+  created_at: string;
+  started_at: string | null;
   expires_at: string;
   completed_at: string | null;
-  cancel_supported: false;
-  cancel_reason_code: 'EXPORT_CANCEL_UNSUPPORTED' | null;
-  /** Present only for a completed, non-expired export artifact. */
-  download_url?: string;
+  download_ready: boolean;
 }
 
 export interface CompositionRecord {

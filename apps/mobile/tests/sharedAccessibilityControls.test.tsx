@@ -73,8 +73,10 @@ vi.mock('@/lib/storage', () => ({
   saveSectionCollapsed: vi.fn().mockResolvedValue(undefined)
 }));
 
+const setLanguageMock = vi.fn();
+
 vi.mock('@/state/networkStatus', () => ({
-  useNetworkStatus: () => ({ language: 'en', online: true })
+  useNetworkStatus: () => ({ language: 'en', online: true, setLanguage: setLanguageMock })
 }));
 
 describe('shared mobile accessibility controls', () => {
@@ -193,5 +195,20 @@ describe('shared mobile accessibility controls', () => {
     expect(renderer!.root.findByType('keyboard-avoiding-view').props.behavior).toBe('height');
     const scrollView = renderer!.root.findByType('scroll-view');
     expect(scrollView.props.automaticallyAdjustKeyboardInsets).toBe(true);
+  });
+
+  it('shows an accessible compact language switch even when the screen header is hidden', () => {
+    let renderer: ReturnType<typeof create>;
+    act(() => {
+      renderer = create(<Screen showHeader={false} title="Sign in">Content</Screen>);
+    });
+
+    const japanese = renderer!.root.findByProps({ accessibilityLabel: '日本語' });
+    const english = renderer!.root.findByProps({ accessibilityLabel: 'English' });
+    expect(japanese.props.accessibilityRole).toBe('radio');
+    expect(english.props.accessibilityState).toEqual({ checked: true });
+    expect(japanese.props.style.minHeight).toBeGreaterThanOrEqual(44);
+    act(() => japanese.props.onPress());
+    expect(setLanguageMock).toHaveBeenCalledWith('ja');
   });
 });

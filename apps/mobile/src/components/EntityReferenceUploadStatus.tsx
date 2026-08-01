@@ -106,7 +106,7 @@ const styles = StyleSheet.create({
   },
   error: {
     ...textStyles.body,
-    color: colors.danger
+    color: '#FFD56A'
   },
   progressFill: {
     backgroundColor: colors.primary,

@@ -17,12 +17,11 @@ export function Notice({
   onAction,
   tone = 'info'
 }: NoticeProps): React.JSX.Element {
+  const visualTone = tone === 'danger' ? 'warning' : tone;
   const textToneStyle =
-    tone === 'warning'
+    visualTone === 'warning'
       ? styles.warningText
-      : tone === 'danger'
-        ? styles.dangerText
-        : tone === 'success'
+      : visualTone === 'success'
           ? styles.successText
           : styles.infoText;
 
@@ -30,9 +29,8 @@ export function Notice({
     <View
       style={[
         styles.notice,
-        tone === 'warning' ? styles.warning : null,
-        tone === 'danger' ? styles.danger : null,
-        tone === 'success' ? styles.success : null
+        visualTone === 'warning' ? styles.warning : null,
+        visualTone === 'success' ? styles.success : null
       ]}
     >
       <Text style={[styles.text, textToneStyle]}>{message}</Text>
@@ -74,13 +72,6 @@ const styles = StyleSheet.create({
   },
   actionPressed: {
     opacity: 0.72
-  },
-  danger: {
-    backgroundColor: colors.dangerSurface,
-    borderColor: 'rgba(244, 67, 54, 0.28)'
-  },
-  dangerText: {
-    color: '#FF9E96'
   },
   infoText: {
     color: '#E4D08A'

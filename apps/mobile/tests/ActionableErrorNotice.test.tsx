@@ -34,6 +34,7 @@ describe('ActionableErrorNotice', () => {
     expect(notice.props.message).toBe('Credit balance is insufficient. Review the required amount and your balance.');
     expect(notice.props.actionLabel).toBe('Review credits');
     expect(notice.props.onAction).toBe(onCredits);
+    expect(notice.props.tone).toBe('warning');
   });
 
   it('keeps an unknown error generic and does not invent a navigation action', async () => {

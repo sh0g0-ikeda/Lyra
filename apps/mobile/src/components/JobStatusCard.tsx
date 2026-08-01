@@ -13,6 +13,7 @@ import type { ComponentTranslationKey } from '@/lib/i18nComponentMessages';
 import { t } from '@/lib/i18n';
 import { recordOperationalMetric } from '@/lib/operationalEvents';
 import { jobQueryKey } from '@/lib/queryKeys';
+import { isApiNotFoundError } from '@/lib/queryErrorPolicy';
 import { userErrorMessage } from '@/lib/userMessages';
 
 interface JobStatusCardProps {
@@ -130,6 +131,9 @@ export function JobStatusCard({
   if (jobId === null && suppliedJob === undefined) {
     return null;
   }
+  if (queryFailed && isApiNotFoundError(jobQuery.error)) {
+    return null;
+  }
 
   const displayJobId = job?.id ?? jobId ?? '';
   const progressPercent = job?.progress_percent ?? null;
@@ -177,7 +181,7 @@ export function JobStatusCard({
     <View style={[
       styles.card,
       status === 'completed' ? styles.completedCard : null,
-      status === 'failed' || queryFailed ? styles.failedCard : null,
+      status === 'failed' || queryFailed ? styles.warningCard : null,
       status === 'canceled' ? styles.canceledCard : null,
     ]}>
       <View style={styles.header}>
@@ -216,7 +220,7 @@ export function JobStatusCard({
           )}
         </>
       ) : (
-        <View style={[styles.stateBar, status === 'failed' ? styles.stateBarDanger : status === 'canceled' ? styles.stateBarWarn : styles.stateBarGood]} />
+        <View style={[styles.stateBar, status === 'failed' ? styles.stateBarWarn : status === 'canceled' ? styles.stateBarWarn : styles.stateBarGood]} />
       )}
 
       {job === undefined || queryFailed ? null : (
@@ -384,7 +388,7 @@ function isCanonicalGenerationJob(
 
 function statusStyle(status: string, queryFailed: boolean): object {
   if (queryFailed || status === 'failed') {
-    return styles.statusDanger;
+    return styles.statusWarn;
   }
   if (status === 'completed') {
     return styles.statusGood;
@@ -421,10 +425,7 @@ const styles = StyleSheet.create({
   },
   error: {
     ...textStyles.body,
-    color: colors.danger,
-  },
-  failedCard: {
-    borderColor: 'rgba(244, 67, 54, 0.54)',
+    color: '#FFD56A',
   },
   failedLoad: {
     alignItems: 'flex-start',
@@ -489,9 +490,6 @@ const styles = StyleSheet.create({
     height: 5,
     width: '100%',
   },
-  stateBarDanger: {
-    backgroundColor: colors.danger,
-  },
   stateBarGood: {
     backgroundColor: colors.success,
   },
@@ -505,10 +503,6 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     paddingHorizontal: spacing.sm,
     paddingVertical: 3,
-  },
-  statusDanger: {
-    backgroundColor: colors.dangerSurface,
-    color: '#F77E75',
   },
   statusGood: {
     backgroundColor: colors.successSurface,
@@ -536,5 +530,8 @@ const styles = StyleSheet.create({
   titleGroup: {
     flex: 1,
     minWidth: 0,
+  },
+  warningCard: {
+    borderColor: 'rgba(255, 193, 7, 0.44)',
   },
 });
