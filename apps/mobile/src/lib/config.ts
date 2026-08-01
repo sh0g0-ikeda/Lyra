@@ -3,6 +3,7 @@ import { z } from 'zod';
 export type MobileBuildEnvironment = 'development' | 'preview' | 'production';
 
 export interface MobileConfig {
+  accountDeletionEnabled: boolean;
   apiBaseUrl: string;
   cognitoDomain: string;
   cognitoClientId: string;
@@ -39,6 +40,7 @@ const PRODUCTION_LOGOUT_REDIRECT_URI = 'https://app.lyra-editor.com/auth/mobile/
 
 const mobileConfigSchema = z
   .object({
+    accountDeletionEnabled: z.boolean(),
     apiBaseUrl: z.string().min(1).max(2_048),
     cognitoDomain: z.string().min(1).max(2_048),
     cognitoClientId: z.string().regex(/^[a-z0-9]{10,128}$/iu),
@@ -181,6 +183,9 @@ export const validateMobileConfig = (input: MobileConfig): MobileConfigValidatio
 };
 
 export const config: MobileConfig = {
+  accountDeletionEnabled: readPublicBoolean(
+    process.env.EXPO_PUBLIC_ACCOUNT_DELETION_ENABLED
+  ),
   apiBaseUrl: readPublicEnv(process.env.EXPO_PUBLIC_API_BASE_URL),
   cognitoDomain: readPublicEnv(process.env.EXPO_PUBLIC_COGNITO_DOMAIN),
   cognitoClientId: readPublicEnv(process.env.EXPO_PUBLIC_COGNITO_CLIENT_ID),

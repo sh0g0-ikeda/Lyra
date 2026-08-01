@@ -1,12 +1,16 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { AccountDeletionPanel } from '../components/AccountDeletionPanel';
 import { LoadingState } from '../components/LoadingState';
 import { MobileStoreBillingPanel } from '../components/MobileStoreBillingPanel';
 import { Notice } from '../components/Notice';
 import { PrimaryButton } from '../components/PrimaryButton';
 import { colors, radius, spacing } from '../constants/theme';
 import type {
+  AccountDeletionPreviewRecord,
+  AccountDeletionRequestInput,
+  AccountDeletionResultRecord,
   CurrentSession,
   GenerationJobRecord,
   ListJobsPageInput,
@@ -41,6 +45,7 @@ interface AccountJobsPage {
 }
 
 export interface AccountScreenApiPort {
+  getAccountDeletionPreview(): Promise<AccountDeletionPreviewRecord>;
   getJobs(
     input: ListJobsPageInput,
     organizationId?: string | null,
@@ -51,6 +56,9 @@ export interface AccountScreenApiPort {
   restoreMobilePurchases(
     input: RestoreMobilePurchasesInput,
   ): Promise<MobileStoreRestoreResultRecord>;
+  requestAccountDeletion(
+    input: AccountDeletionRequestInput,
+  ): Promise<AccountDeletionResultRecord>;
   verifyAppleMobilePurchase(
     input: VerifyAppleMobilePurchaseInput,
   ): Promise<MobileStorePurchaseResultRecord>;
@@ -60,6 +68,7 @@ export interface AccountScreenApiPort {
 }
 
 interface AccountScreenProps {
+  accountDeletionEnabled?: boolean;
   api: AccountScreenApiPort;
   language: UiLanguage;
   onOrganizationChange(organizationId: string | null): void;
@@ -71,6 +80,7 @@ interface AccountScreenProps {
 }
 
 export function AccountScreen({
+  accountDeletionEnabled = config.accountDeletionEnabled,
   api,
   language,
   mobileStoreBillingEnabled = config.mobileStoreBillingEnabled,
@@ -80,6 +90,7 @@ export function AccountScreen({
   organizationId,
   session,
 }: AccountScreenProps): React.JSX.Element {
+  const [deletionOpen, setDeletionOpen] = useState(false);
   const queryKeys = useMemo(
     () => storyQueryKeys(session.user.id, organizationId),
     [organizationId, session.user.id],
@@ -106,6 +117,12 @@ export function AccountScreen({
       return api.getMobileStoreProductCatalog(nativeStore);
     },
     queryKey: ['mobile-store-product-catalog', session.user.id, nativeStore],
+  });
+  const deletionAvailable = accountDeletionEnabled && onSignOut !== undefined;
+  const deletionQuery = useQuery({
+    enabled: deletionAvailable && deletionOpen,
+    queryFn: () => api.getAccountDeletionPreview(),
+    queryKey: ['account-deletion-preview', session.user.id],
   });
   const billingAdapter = useMemo<NativeStoreBillingAdapter | null>(() => {
     if (!purchaseEnabled || catalogQuery.data === undefined) return null;
@@ -217,6 +234,31 @@ export function AccountScreen({
         ) : null}
       </AccountSection>
 
+      {deletionAvailable ? (
+        <AccountSection title={t(language, 'accountDeletionSection')}>
+          <RetryButton
+            label={deletionOpen
+              ? t(language, 'accountDeletionClose')
+              : t(language, 'accountDeletionOpen')}
+            onPress={() => setDeletionOpen((current) => !current)}
+          />
+          {deletionOpen ? (
+            <AccountDeletionContent
+              api={api}
+              language={language}
+              onCompleted={onSignOut}
+              preview={deletionQuery.data}
+              previewError={deletionQuery.isError}
+              previewLoading={deletionQuery.isLoading}
+              reloadPreview={async () => {
+                const refreshed = await deletionQuery.refetch();
+                if (refreshed.error !== null) throw refreshed.error;
+              }}
+            />
+          ) : null}
+        </AccountSection>
+      ) : null}
+
       {signOutError === null ? null : (
         <Notice message={signOutError} tone="danger" />
       )}
@@ -229,6 +271,48 @@ export function AccountScreen({
         />
       )}
     </View>
+  );
+}
+
+function AccountDeletionContent({
+  api,
+  language,
+  onCompleted,
+  preview,
+  previewError,
+  previewLoading,
+  reloadPreview,
+}: {
+  api: AccountScreenApiPort;
+  language: UiLanguage;
+  onCompleted(): Promise<void>;
+  preview: AccountDeletionPreviewRecord | undefined;
+  previewError: boolean;
+  previewLoading: boolean;
+  reloadPreview(): Promise<void>;
+}): React.JSX.Element {
+  if (previewLoading) {
+    return <LoadingState label={t(language, 'accountDeletionReloadPreview')} />;
+  }
+  if (previewError || preview === undefined) {
+    return (
+      <View style={styles.errorBlock}>
+        <Notice message={t(language, 'accountDeletionUnavailable')} tone="danger" />
+        <RetryButton
+          label={t(language, 'accountDeletionReloadPreview')}
+          onPress={() => void reloadPreview().catch(() => undefined)}
+        />
+      </View>
+    );
+  }
+  return (
+    <AccountDeletionPanel
+      api={api}
+      language={language}
+      onCompleted={onCompleted}
+      onReloadPreview={reloadPreview}
+      preview={preview}
+    />
   );
 }
 

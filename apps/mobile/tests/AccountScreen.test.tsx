@@ -22,6 +22,7 @@ vi.mock('react-native', () => ({
   ),
   StyleSheet: { create: <T,>(styles: T): T => styles },
   Text: 'text',
+  TextInput: 'input',
   View: 'view',
 }));
 
@@ -114,10 +115,12 @@ describe('AccountScreen', () => {
   const mountedRenderers: ReactTestRenderer[] = [];
   const api = {
     getCurrentSession: vi.fn(),
+    getAccountDeletionPreview: vi.fn(),
     getJobs: vi.fn(),
     getMobilePurchaseBinding: vi.fn(),
     getMobileStoreProductCatalog: vi.fn(),
     restoreMobilePurchases: vi.fn(),
+    requestAccountDeletion: vi.fn(),
     verifyAppleMobilePurchase: vi.fn(),
     verifyGoogleMobilePurchase: vi.fn(),
   };
@@ -287,6 +290,51 @@ describe('AccountScreen', () => {
 
     const organization = await renderScreen({ initialOrganizationId: 'organization-1' });
     expect(JSON.stringify(organization.toJSON())).not.toContain('App Store / Google Play 購入');
+  });
+
+  it('アカウント削除入口は明示flag時だけ表示し開くまでpreviewを取得しない', async () => {
+    api.getAccountDeletionPreview.mockResolvedValue({
+      active_personal_job_count: 0,
+      active_personal_stripe_subscription_count: 0,
+      active_store_subscriptions: [],
+      personal_asset_count: 0,
+      personal_data: {
+        account: 'anonymized',
+        billing_records: 'retained_for_legal_and_security',
+        organization_memberships: 'removed',
+        personal_works: 'deleted',
+      },
+      unique_owner_organizations: [],
+    });
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    let renderer: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(
+        <QueryClientProvider client={queryClient}>
+          <AccountScreen
+            accountDeletionEnabled
+            api={api}
+            language="ja"
+            mobileStoreBillingEnabled={false}
+            onOrganizationChange={vi.fn()}
+            onSignOut={vi.fn().mockResolvedValue(undefined)}
+            organizationId={null}
+            session={session}
+          />
+        </QueryClientProvider>,
+      );
+    });
+    mountedRenderers.push(renderer!);
+
+    expect(JSON.stringify(renderer!.toJSON())).toContain('アカウントを削除');
+    expect(api.getAccountDeletionPreview).not.toHaveBeenCalled();
+    await act(async () => {
+      renderer!.root.findByProps({ accessibilityLabel: 'アカウント削除を開く' }).props.onPress();
+      await flushQueries();
+    });
+    expect(api.getAccountDeletionPreview).toHaveBeenCalledOnce();
   });
 
   it('store catalogのloading・empty・errorを購入開始せず安全に表示する', async () => {
