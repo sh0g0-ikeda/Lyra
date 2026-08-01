@@ -1,1231 +1,139 @@
-# Android / iPhone リリース残タスクリストと PR #67 監査
+# Lyra Mobile 初回リリース タスクリスト
 
 最終更新: 2026-08-01
 
-対象リポジトリ: `sh0g0-ikeda/Lyra`
-
-対象PR: [#67 feat(mobile): production-ready Lyra mobile workflow](https://github.com/sh0g0-ikeda/Lyra/pull/67)
-
-進捗: 107件完了 / 380件未完了
-
-AI担当再分類: AI単独 48件 / AI準備＋人間・外部確認 235件 / 人間・外部必須 97件
-
-実装監査基準: [PR #157](https://github.com/sh0g0-ikeda/Lyra/pull/157) / main `254b717` / [CI run 30681272369](https://github.com/sh0g0-ikeda/Lyra/actions/runs/30681272369)（Backend、PostgreSQL migration / invariant、Web、Playwright、Mobile、Android / iOS exportが統合後mainで成功）
-
-## 1. 設計ブリーフ
-
-### 1.1 目的と範囲
-
-この文書は、Lyra MobileをAndroidおよびiPhoneで公開するために残っている作業を、実行可能な単位まで分解したチェックリストである。個人向けのApp Store / Google Play課金、BackendとDBの先行反映、実機E2E、ストア申請、公開後監視を含む。
-
-併せて、PR #67の説明欄だけでは分からない実際の変更範囲、統合リスク、推奨分割単位を記録する。
-
-この文書の作成では、コード、DB、本番AWS、App Store Connect、Google Play Consoleを変更しない。
-
-### 1.2 Spec根拠
-
-- `docs/Lyra_Unified_Spec_v4.md` sections 3–10
-- PR #67上の `docs/mobile_completion_gap_spec.md`
-- PR #67上の `docs/mobile-completion-requirement-ledger.md`
-- PR #67上の `docs/mobile-environment-matrix.md`
-- PR #67上の `docs/mobile-store-billing-server-design.md`
-- PR #67上の `docs/mobile-native-store-billing-design.md`
-- PR #67上の `docs/mobile-production-migration-rollout-design.md`
-- PR #67上の `docs/mobile-maestro-e2e-operations.md`
-
-### 1.3 影響レイヤー
-
-- Route / Service / Repository / Domain / Infrastructure
-- Worker / Migration / Mobile / Web / Ops
-- Cognito / S3 / EAS / App Store Connect / Google Play Console
-- App Store Server Notifications / Google Play RTDN
-
-### 1.4 セキュリティ上の前提
-
-- 購入完了は端末の表示ではなく、AppleまたはGoogleによるサーバー検証後だけ確定する。
-- クレジット付与、取消、返金はDB transactionと冪等なledgerで処理する。
-- Appleのsigned transaction、Googleのpurchase token、サービスアカウント、APNs鍵をログ、証跡、PR本文へ出さない。
-- `EXPO_PUBLIC_*` には公開可能なURLとCognito識別子だけを置く。
-- Sandbox購入とPlayテスト購入を本番ユーザーの残高へ混入させない。
-- personalとorganizationの残高、課金権限、購入導線を混同しない。
-
-### 1.5 テスト方針
-
-この変更自体はドキュメントのみのためTDD対象外とする。実装時は各タスクの「完了条件」に対応する失敗テストを先に追加し、対象テスト、全CI、実機証跡の順で検証する。
-
-### 1.6 委譲方針
-
-このセッションではサブエージェント委譲が禁止されているため、Sol単独でPR差分、仕様、運用状態を照合した。
-
-### 1.7 2026-08-01 AI担当再分類監査の設計
-
-- 目的と範囲: 最新`origin/main`のチェック項目を再集計し、未完了項目を「AI単独」「AI実装後に人間確認」「人間・外部サービス必須」に分類する。コード、DB、AWS、EAS、Apple / Google Console、本番環境は変更しない。
-- Spec根拠: `docs/Lyra_Unified_Spec_v4.md` sections 5–10。特に課金のserver verification、feature flag既定OFF、release verification gateを分類境界とする。
-- 影響レイヤー: Documentationのみ。Route / Service / Repository / Domain / Infrastructure / Worker / Web / Mobile / Migrationの契約とデータ構造は変更しない。
-- インターフェース: Markdown checkboxを集計単位とし、完了数と未完了数の和が全checkbox数に一致すること、AI担当区分の和が未完了数に一致することを機械検証する。
-- セキュリティ: secret値、購入証跡、個人情報を取得・記録しない。外部Consoleや本番設定のreadbackが必要な項目は、コードが存在しても完了扱いにしない。
-- テスト方針: ドキュメントのみのためTDD対象外。PowerShellによるcheckbox集計、分類表の算術整合、`git diff --check`、差分目視レビューを行う。
-- Terra委譲方針: Phase 0–5とPhase 6–11をread-onlyで独立分類し、Solが分類基準、重複、前提関係、最終件数を再確認する。編集と統合判断はSolだけが行う。
-
-## 2. 2026-08-01時点の結論
-
-課金コードとMobile UIの骨格は存在するが、Android・iPhoneとも本番ストアへ提出できる状態ではない。
-
-クリティカルパスは次の順序とする。
-
-```text
-PR #67の分割とmain同期
-  → 独立したステージング環境
-  → Backend / migrationを課金OFFで先行反映
-  → Apple / Googleの商品と通知設定
-  → Sandbox / license-test購入E2E
-  → 全Mobile実機E2E
-  → production build
-  → TestFlight / Play internal
-  → ストア審査
-  → 段階公開と監視
-```
-
-### 2.1 現在のリリース阻害要因
-
-| ID | 状態 | 内容 |
-|---|---|---|
-| BLOCK-01 | Blocked | PR #67はDraftかつmainと競合している |
-| BLOCK-02 | Blocked | PR #67は644ファイル、43コミット、99,879 additions / 2,864 deletionsを含む |
-| BLOCK-03 | Blocked | PR #67のheadはmainより43コミット先行する一方、graph上176コミット遅延している（2026-08-01 readback） |
-| BLOCK-04 | Resolved | Mobile課金Route、Apple / Google検証、購入台帳migration 029はPR #112 / #132でmainへ統合済み。課金は既定OFFのまま |
-| BLOCK-05 | Needs readback | mainのmigrationは039まで統合済み。本番DBの適用履歴は最新readbackがないため、026と断定せずPhase 3のpreflight対象とする |
-| BLOCK-06 | Needs readback | 課金はコード上既定OFF。本番Secretの必須key存在は値を出さない最新readbackが必要 |
-| BLOCK-07 | Needs readback | 2026-07-30時点ではEAS production buildが両OS 0件。最新EAS readbackが必要 |
-| BLOCK-08 | Needs readback | GitHub上の既知Android artifactはdevelopment APK。production AABの有無はEAS / Play readbackが必要 |
-| BLOCK-09 | Needs readback | 既知iOS artifactはSimulator build。署名済み実機buildの有無はEAS / App Store readbackが必要 |
-| BLOCK-10 | Blocked | EAS previewが本番API/Cognitoを参照し、独立したstagingになっていない |
-| BLOCK-11 | Blocked | 2026-08-01 readbackでもApple AASA URLはHTTP 200 / `text/html`でWeb SPA HTMLを返す |
-| BLOCK-12 | Blocked | StoreKit Sandbox / Play license testerの購入ライフサイクル証跡がない |
-| BLOCK-13 | Blocked | Maestro E2E-01〜18を両方の実機で完走した証跡がない |
-| BLOCK-14 | Blocked | App Store / Google Play用スクリーンショットとconsole申告証跡がない |
-| BLOCK-15 | Partial | Android FCMは準備済みだが、APNs未設定のためPush全体は無効 |
-| BLOCK-16 | Blocked | 現在のmainにはMobile Sentry SDK配線がなく、本番DSN、source map、alert証跡もない |
-| BLOCK-17 | Resolved | mainへ`verify`のstrict required checkを管理者にも適用し、CI pending中のPR #91が`BLOCKED`になることを確認 |
-| BLOCK-18 | Resolved | PR #87で階層メニュートリガーに残ったフォーカスからのEscape閉鎖を決定化し、反復テストと全CIが成功 |
-| BLOCK-19 | Resolved | PR #144でAccountを現行main基盤へ追加。残高は認証済みsession snapshotから表示し、job emptyをquery success時だけに限定して2種類のfalse positiveを解消 |
-
-### 2.2 残タスクの実行区分と優先順
-
-| 優先 | 区分 | 次に進める内容 | 実行条件 |
-|---|---|---|---|
-| P0 | GitHub / CI安全ゲート | 完了。required `verify`、Node.js Action更新、階層メニューE2E安定化をmainへ統合済み | 維持監視のみ |
-| P0 | Backend基盤 | 完了。shared contract、account deletion / upload / export、store billing、job / push基盤を既定OFFまたは外部配送OFFでmainへ統合済み | 本番feature flagを有効化しない |
-| P1 | Mobile PR-F残り | durable asset cleanup、作品 / Scene / Character削除安全境界、作品並べ替え、direct upload client、`costume_ref_id`、frame / balloon編集を分割する | AI単独。1機能1PR、Backend変更時はTDDと全gate必須 |
-| P1 | Mobile PR-G | organization / billing UIとstore adapterを分割する | AI実装可能。実store確認は商品・外部設定後 |
-| P1 | Release PR-H | non-secret EAS guard、store metadata、runbookを分割する | AIで準備可能。署名・secret・console操作は人間確認あり |
-| P2 | 差分監査 | PR #67はmainより176 graph commit遅延している | 残sliceごとに最新mainから作り直し、PR #67を直接mergeしない |
-| P3 | 商品判断 | 対象国、価格、同日公開、Push、offer、upgrade方針を確定する | プロダクトオーナー判断が必要 |
-| P3 | 外部設定 | staging、Apple / Google商品、署名、通知、AASA / App Linksを設定する | AWS / Apple / Google / EASへの権限と値が必要 |
-| P4 | 実機・審査 | Sandbox / license-test、両OS実機E2E、スクリーンショット、ストア提出を行う | 実機、ストアアカウント、審査対応が必要 |
-
-Accountのfalse-positive error解消とPR-A〜E相当の基盤はmainへ統合済みである。Codex単独で進める次の順序は、`PR-FのBackend不要slice → PR-FのBackend安全境界slice → PR-Gのstore非依存UI → PR-Hのnon-secret設定とrunbook`とする。外部設定や本番変更は、必要な権限と明示的な実行承認を得てから行う。
-
-### 2.3 AI担当件数の再分類
-
-集計単位はMarkdown task checkbox（`- [ ]` / `- [x]`）とする。Phase 8のE2E表内にある36個の`[ ]`セルは、親となる実機受入タスクの証跡欄であり、独立件数へ重複計上しない。
-
-| 区分 | 件数 | 完了主体 |
-|---|---:|---|
-| AI単独 | 48 | repository、テスト、文書、公開情報のread-only確認、GitHub PR操作だけで完了証跡まで作れる |
-| AI準備＋人間・外部確認 | 235 | AIが実装・設定案・runbookを作れるが、secret、外部Console、本番readback / deploy、署名、実機証跡のいずれかが必要 |
-| 人間・外部必須 | 97 | 商品・法務・公開判断、本人確認、金融手続、実機操作、store審査・公開監視が完了条件 |
-| **未完了合計** | **380** | 上記3区分の合計 |
-
-| 範囲 | AI単独 | 共同 | 人間・外部 | 未完了 |
-|---|---:|---:|---:|---:|
-| Phase 0 | 0 | 0 | 14 | 14 |
-| Phase 1 | 18 | 0 | 0 | 18 |
-| Phase 2 | 5 | 23 | 0 | 28 |
-| Phase 3 | 7 | 19 | 1 | 27 |
-| Phase 4 | 3 | 49 | 4 | 56 |
-| Phase 5 | 2 | 43 | 2 | 47 |
-| Phase 6 | 3 | 21 | 0 | 24 |
-| Phase 7 | 1 | 1 | 40 | 42 |
-| Phase 8 | 0 | 0 | 12 | 12 |
-| Phase 9 | 2 | 19 | 12 | 33 |
-| Phase 10 | 3 | 40 | 7 | 50 |
-| Phase 11 | 3 | 15 | 0 | 18 |
-| リリース完了条件 | 1 | 5 | 5 | 11 |
-| **合計** | **48** | **235** | **97** | **380** |
-
-AI単独48件の内訳は次のとおり。
-
-- Phase 1（18件）: PR-F / G / H、残る分割PRの再作成・依存記載・差分境界・migration非破壊、Backend / PostgreSQL / Web / Playwright / Mobileの全gate、PR #67の置換close。
-- Phase 2（5件）: E2E seed / reset、purchase transaction / webhook event digest、credit ledgerの秘密情報なし証跡、raw proof / token非記録テスト。
-- Phase 3（7件）: 課金OFF起動、disabled route、Web Stripe / credit balance非退行、未検証webhook拒否、OFF時secret欠落耐性、ON時fail closed。
-- Phase 4（3件）: Apple公式root certificate取得・変換、Sandbox / production受理ポリシー分離。
-- Phase 5（2件）: Pub/Sub OIDCのaudience / email / issuer / 署名検証、raw RTDN / purchase token非記録。
-- Phase 6（3件）: Mobile価格hard-code禁止、store由来display price表示、未反映商品disabled表示。
-- Phase 7（1件）: E2E run ID発行。
-- Phase 9（2件）: AI生成物の確認責任説明、Play feature graphic作成。support / privacy / terms候補URLは2026-08-01にHTTP 200だったが、トップページと同一HTMLのSPA fallbackだったため完了にもAI単独にも数えない。
-- Phase 10（3件）: 全分割PR統合、exact release commit記録、公開停止手順。
-- Phase 11（3件）: 購入調査手順2件、OTA / native rebuild境界文書。
-- リリース完了条件（1件）: PR #67の内容をレビュー可能な単位でmainへ統合。
-
-## 3. リリース全体タスクリスト
-
-チェックを付ける際は、コードが存在するだけで完了としない。テスト結果、外部consoleのreadback、実機証跡のいずれかを必ず残す。
-
-### Phase 0: リリース方針と商品仕様の確定
-
-#### REL-000 リリース対象
-
-- [ ] 初回リリース対象国・地域を決める
-  - 完了条件: App Store / Play Consoleの販売地域と文書上の対象地域が一致する
-- [ ] iPhoneとAndroidを同日公開するか、片方を先行するか決める
-  - 完了条件: リリース順とロールバック判断者が記録されている
-- [ ] 初回リリースでPush通知を提供するか決める
-  - 完了条件: 提供しない場合は機能をOFFにし、ストア説明で通知を約束しない
-- [ ] organization課金はWeb管理だけとする方針を再確認する
-  - 完了条件: Mobile内のorganization画面に個人向けIAPが表示されない
-- [ ] personal向けデジタル購入は各プラットフォームのstore billingだけを使う方針を確定する
-  - 完了条件: Mobile内にStripe checkoutへの個人向け購入リンクがない
-
-#### REL-010 商品と価格
-
-- [ ] Standardの月額価格、月間クレジット、更新条件を承認する
-  - 現行コード: 1,000円 / 月50クレジット
-- [ ] Premiumの月額価格、月間クレジット、更新条件を承認する
-  - 現行コード: 3,500円 / 月175クレジット
-- [ ] 追加10クレジット商品の価格を承認する
-  - 現行コード: 220円
-- [ ] 追加50クレジット商品の価格を承認する
-  - 現行コード: 1,100円
-- [ ] 追加150クレジット商品の価格を承認する
-  - 現行コード: 3,300円
-- [ ] `credits_200` / `credits_1000` / `credits_3000`という内部名と実価格の不一致を許容するか決める
-  - 完了条件: App Store / Play Console登録前に恒久的なproduct IDが確定している
-- [ ] 日本円以外の価格設定方針を決める
-  - 完了条件: 自動換算または地域別価格表のどちらを使うか記録されている
-- [ ] 無料トライアル、introductory offer、Play offerの有無を決める
-  - 完了条件: Backend付与ルールとconsoleのoffer条件が一致する
-- [ ] サブスクのアップグレード・ダウングレード・重複契約方針を決める
-  - 完了条件: StandardとPremiumを同時に有効化しないルールがテストされている
-
-### Phase 1: PR #67の分割とmain同期
-
-#### GIT-100 安全なベースライン
-
-- [x] `origin/main`から新しい統合作業ブランチを作る
-  - 証跡: PR #76、PR #77、PR #79をそれぞれ最新`origin/main`から作成
-- [x] PR #67の変更を機能群ごとに分類する
-  - 証跡: この文書の「5.2 実差分の規模」と「5.3〜5.10」
-- [x] main側の未取込45 graph commitの影響箇所を列挙する
-  - 証跡: `git rev-list --left-right --count origin/main...origin/feature/mobile-completion`は`45 43`。patch等価を除くmain-only 44件を`docs/mobile-pr67-main-divergence-audit-2026-07-30.md`へ分類
-  - 現在値: 2026-08-01の再readbackは`176 43`。旧PR全体は再baseせず、残sliceを最新mainから作る
-- [x] 既存のユーザー未コミット変更を別worktreeから隔離する
-  - 証跡: `Lyra-mobile-response-contract` worktreeで分割統合を実施
-- [x] migration番号027〜036が現在のmainと衝突しないことを確認する
-  - 証跡: 2026-07-30時点のmainはmigration 026まで。migration 027はPR #110でaccount deletion checkpointとして予約し、PR #67側の028〜036は各分割PRで現mainへの必要性と番号を再検証する
-- [x] 共有API契約の生成元と生成物を確認する
-  - 証跡: PR #67の`generateMobileApiContract.mjs`は`packages/api-contract/src`のschema/type/payloadを`apps/mobile/src/domain`へbyte-stable copyする。現mainにはMobile appとcanonical type/payloadがないため、生成・drift checkはPR-EのMobile基盤と同時に統合する
-- [x] PR #67説明欄と実差分の不一致を修正する
-  - 証跡: [PR #67](https://github.com/sh0g0-ikeda/Lyra/pull/67)へ監査警告、実差分、分割状況を追記
-
-#### GIT-110 推奨分割PR
-
-- [x] PR-A: Mobile API contract / response validation / pagination
-  - 主な所有: `packages/api-contract`, Mobile schema生成、inventory scripts
-  - 完了条件: API inventoryとcontract drift checkが単独でgreen
-  - 進捗: 27個目の分割単位をPR #126で検証中。既存業務JSON Route、Mobile生成物、Backend inventory、works / entities / pages / organizations paginationをすべて分離実装
-  - [x] response contract guardを本番挙動へ未接続の状態で分離統合
-    - 証跡: [PR #76](https://github.com/sh0g0-ikeda/Lyra/pull/76)
-  - [x] `/api/me`の現行wire互換性と不正payload拒否を検証して分離統合
-    - 証跡: [PR #77](https://github.com/sh0g0-ikeda/Lyra/pull/77)
-  - [x] `/api/compositions`の現行wire互換性、S3 key非開示、不正item拒否を検証して分離統合
-    - 証跡: [PR #79](https://github.com/sh0g0-ikeda/Lyra/pull/79)
-  - [x] `/api/billing/balance`のsubscription summaryと追加wire fieldを先に監査する
-    - 証跡: [PR #88](https://github.com/sh0g0-ikeda/Lyra/pull/88)。既存Stripe購読から更新日と解約予定だけを安全に追加し、共通response contractへ接続
-    - 境界: Apple / Google Store購読を含む統合summaryはmigration 029適用後のPR-Cで扱い、未導入テーブルへの依存をPR-Aへ持ち込まない
-  - [x] `/api/me`と`/api/compositions`以外のRouteを1つずつ監査して接続
-    - [x] Balloon作成・一覧・自動生成・更新のresponse contractを現行7 typeと照合して接続
-      - 証跡: [PR #89](https://github.com/sh0g0-ikeda/Lyra/pull/89)。PR #67案に欠けていた`sfx` / `caption`を補正し、既存wireを維持
-    - [x] Panel entity assignments保存のresponse contractを現行Domain・入力validator・Web型と照合して接続
-      - 証跡: [PR #92](https://github.com/sh0g0-ikeda/Lyra/pull/92)。既存wire、認可、Service、DBを変えず契約外の成功payloadだけをfail closed
-    - [x] Panel frame一覧・保存・テンプレート適用のresponse contractを既存DB互換境界で接続
-      - 証跡: [PR #93](https://github.com/sh0g0-ikeda/Lyra/pull/93)。request限定の4頂点・座標範囲をresponseへ遡及せず、3 endpointを同一item schemaで保護
-    - [x] Panel作成・一覧・並べ替え・更新のresponse contractを入れ子構造まで接続
-      - 証跡: [PR #94](https://github.com/sh0g0-ikeda/Lyra/pull/94)。assignment schemaを再利用し、Web wire互換と4 endpointの同一item契約を維持
-    - [x] 現行Scene・Entity state作成更新のresponse contractをempty state互換で接続
-      - 証跡: [PR #95](https://github.com/sh0g0-ikeda/Lyra/pull/95)。空の任意配列とscene未選択を正常値として維持し、既存5 endpointを保護
-    - [x] Entity state一覧GETをService / Repository / SQL / 認可まで独立監査して追加
-      - 証跡: [PR #96](https://github.com/sh0g0-ikeda/Lyra/pull/96)。personal/org tenancyを三層で確認し、0件を正常なempty stateとして維持
-    - [x] Work・Chapter・Episodeの既存12成功応答を共有contractへ接続
-      - 証跡: [PR #97](https://github.com/sh0g0-ikeda/Lyra/pull/97)。既存wireと認証・組織認可を変えず、全12 endpointの契約外Service値をfail closed
-    - [x] Story AI改善・page skeleton・collaboration SSE応答を共有contractへ接続
-      - 証跡: [PR #98](https://github.com/sh0g0-ikeda/Lyra/pull/98)。prompt・保存・queue・wireを変えず、契約外AI/Service値をencode前に遮断
-    - [x] Entity作成・一覧・単体取得・更新の既存4成功応答を共有contractへ接続
-      - 証跡: [PR #99](https://github.com/sh0g0-ikeda/Lyra/pull/99)。3 entity typeと任意object fieldを維持し、内部user IDを公開せず全4 endpointを保護
-    - [x] Entity参照セット・画像import・生成受付の既存5成功応答を共有contractへ接続
-      - 証跡: [PR #100](https://github.com/sh0g0-ikeda/Lyra/pull/100)。署名URL省略と空参照セットを維持し、S3 keyをstrict contractで非公開
-    - [x] Page一覧・設定更新の既存2成功応答を共有contractへ接続
-      - 証跡: [PR #101](https://github.com/sh0g0-ikeda/Lyra/pull/101)。空scene・null画像・署名URL省略を維持し、生成画像S3 keyをstrict contractで非公開
-    - [x] Page job受付・layout同期・Story autofillの既存4成功応答を共有contractへ接続
-      - 証跡: [PR #102](https://github.com/sh0g0-ikeda/Lyra/pull/102)。queue・課金・永続化を変えず、全layout template IDとの同期と契約外Service値拒否を検証
-    - [x] Generation job取得・停止の4 job type応答を共有contractへ接続
-      - 証跡: [PR #103](https://github.com/sh0g0-ikeda/Lyra/pull/103)。部分resultを維持し、root・params・result・候補・story plan resultをstrict検証
-    - [x] Organization workspace・member・invitationの既存13成功応答を共有contractへ接続
-      - 証跡: [PR #104](https://github.com/sh0g0-ikeda/Lyra/pull/104)。公開previewを最小情報に限定し、Stripe内部ID・生招待tokenをstrict contractで拒否
-    - [x] Organization credit balance・billing・invoiceの既存10成功応答を共有contractへ接続
-      - 証跡: [PR #105](https://github.com/sh0g0-ikeda/Lyra/pull/105)。0件・null・既存aliasを維持し、Stripe内部field・未知enum・負数をstrict contractで拒否
-    - [x] Organization usage・audit logの既存2成功JSON応答を共有contractへ接続
-      - 証跡: [PR #106](https://github.com/sh0g0-ikeda/Lyra/pull/106)。空履歴・null ID・正負creditを維持し、既存sanitizer後のpayloadをstrict contractで検証
-    - [x] Personal billing checkout・credit checkout・portalの既存3成功応答を共有contractへ接続
-      - 証跡: [PR #107](https://github.com/sh0g0-ikeda/Lyra/pull/107)。個人/法人の処理境界を維持し、同一公開wire schemaで空session・URLと未知fieldを拒否
-    - [x] Admin organization contract・credit grantの既存2成功応答を共有contractへ接続
-      - 証跡: [PR #108](https://github.com/sh0g0-ikeda/Lyra/pull/108)。operator-only認可とcredit transactionを維持し、部分summaryとbalanceをstrict contractで検証
-  - [x] Mobile側生成物とcontract drift checkを統合
-    - 証跡: [PR #120](https://github.com/sh0g0-ikeda/Lyra/pull/120)。canonical schemaからMobile生成物をbyte-stable生成し、`mobile:contracts:check`をrequired `mobile-verify`へ接続
-  - [x] Backend API inventoryを独立監査しCI drift checkへ接続
-    - 証跡: [PR #122](https://github.com/sh0g0-ikeda/Lyra/pull/122)。実mount 105 endpointのauth、response contract、pagination、sourceを全件分類し、未分類0件をrequired `verify`で固定
-    - 修正: 実アプリが先行登録する公開招待previewだけがshared contractを通っていないことを検出し、既存wireを維持したまま同一schemaへ接続
-  - [x] works / entities / pages / organization一覧のcursor paginationを個別監査・接続
-    - [x] works一覧へ既存wire互換のoptional bounded opaque cursorを接続
-      - 証跡: [PR #123](https://github.com/sh0g0-ikeda/Lyra/pull/123)。queryなしの従来経路と`{ works: [...] }`を維持し、`limit`指定時だけpersonal / active organization scope付きkeyset pageと`next_cursor`を返す
-    - [x] Entity一覧へ既存wire互換のoptional bounded opaque cursorを接続
-      - 証跡: [PR #124](https://github.com/sh0g0-ikeda/Lyra/pull/124)。queryなしの従来経路と`{ entities: [...] }`を維持し、`limit`指定時だけwork / personal / active organization scope付きkeyset pageと`next_cursor`を返す
-    - [x] Page一覧へ既存wire互換のoptional bounded opaque cursorを接続
-      - 証跡: [PR #125](https://github.com/sh0g0-ikeda/Lyra/pull/125)。queryなしの従来経路と`{ pages: [...] }`を維持し、`limit`指定時だけepisode / personal / active organization scope付きkeyset pageと`next_cursor`を返す
-    - [x] Organization Workspace一覧へ既存wire互換のoptional bounded opaque cursorを接続
-      - 証跡: [PR #126](https://github.com/sh0g0-ikeda/Lyra/pull/126)。queryなしの従来経路と`{ organizations: [...] }`を維持し、`limit`指定時だけactive membership scope付きkeyset pageと`next_cursor`を返す
-    - 現状: job履歴、works、entities、pages、organizationsはbounded opaque cursor、compositionはbounded limitとしてinventoryとrequired CIで固定
-- [x] PR-B: account deletion / upload token / export基盤
-  - 主な所有: migrations 027, 031, 032, 036, 037と対応Route/Service/Repository
-  - 完了条件: personal/org tenancy、S3 ownership、削除冪等性がgreen
-  - [x] account deletion requestの永続化checkpointをAPI未接続で先行統合
-    - 証跡: [PR #110](https://github.com/sh0g0-ikeda/Lyra/pull/110)。migration 027をfresh DBへ適用し、44 invariant / 0 violationsを確認
-    - 境界: migration 029はPR #112で統合済み。ただしMobile購読の解約・entitlement終期・identity削除方針とCognito / Stripe / S3外部処理が未完了のため削除APIは接続しない
-  - [x] entity reference upload tokenのDB契約とatomic consume RepositoryをAPI未接続で先行統合
-    - 証跡: [PR #114](https://github.com/sh0g0-ikeda/Lyra/pull/114)。hash-only、single-use、TTL、MIME/size、user/org/entity、owner S3 prefixをmigration・Repository・invariantで確認
-    - 境界: PR #114時点ではDB/Repositoryのみを統合し、APIとclientは未接続
-  - [x] entity reference direct upload Backendを既存base64 import互換・既定OFFで接続
-    - 証跡: [PR #127](https://github.com/sh0g0-ikeda/Lyra/pull/127)。認証・organization generate権限、server-owned key、5分hash-only token、signed MIME/size/SSE、bounded HEAD/Range GET、ETag条件付きS3内コピー、atomic consume、既存credit/refund再利用を確認
-    - 安全境界: IAM/CORS/lifecycleの本番readbackとMobile clientは未完了。`ENTITY_REFERENCE_DIRECT_UPLOAD_ENABLED=false`を維持し、既存base64 importのwire/動作は変更しない
-  - [x] episode export jobとdispatch outboxのDB契約をAPI未接続で先行統合
-    - 証跡: [PR #115](https://github.com/sh0g0-ikeda/Lyra/pull/115)。owner-bound artifact key、PDF/ZIP MIME、128 MiB、最大24時間、status/timestamp、idempotencyをmigration・invariantで確認
-    - 境界: Repository、Service、SQS、artifact builder、S3、download Route、Web / Mobile clientは未接続。既存1ページexportは変更しない
-  - [x] episode exportのprocessing lease・Domain・RepositoryをAPI未接続で統合
-    - 証跡: [PR #128](https://github.com/sh0g0-ikeda/Lyra/pull/128)。fresh DB 001〜036、58 invariant / 0 violations、実DBのcreate→冪等再送→claim→stale token拒否→release→reclaim→completeを確認してmainへ統合
-    - 安全境界: 専用Worker / Storage / SQS / Route / downloadは未接続。migration適用だけでは機能を有効化せず、既存1ページexport、generation job、credit処理を変更しない
-  - [x] episode exportのbounded PDF/ZIP builder・source loader・artifact storage・lease-aware WorkerをAPI未接続で統合
-    - 証跡: [PR #130](https://github.com/sh0g0-ikeda/Lyra/pull/130)。TDDでPDF/ZIP決定性、WebP変換、pixel/byte上限、S3 HEAD→If-Match Range GET、MIME/ETag/range/magic検証、network/429/5xx限定retry、local traversal防止、stale lease、retryable release、attempt枯渇を確認
-    - 安全境界: 専用SQS / poller / Route / download URL / cleanup runner / Web・Mobile client / runtime設定は未接続。既存1ページexport、generation queue、credit処理は変更しない
-  - [x] episode exportの認証API・専用SQS・outbox recovery・短命download・期限切れcleanupを既定OFFで接続
-    - 証跡: [PR #131](https://github.com/sh0g0-ikeda/Lyra/pull/131)。strict create/status contract、organization export権限、commit後dispatch、version付き専用payload、partial batch retry、5分以下のHTTPS署名、delete後mark、fresh DB 58 invariant / 0 violationsを確認
-    - 安全境界: `EPISODE_EXPORT_ENABLED=false`を維持し、queue / IAM / lifecycle / task definition / Mobile clientは未設定。既存1ページexport、generation queue、`generation_jobs`、credit処理は変更しない
-  - [x] 課金安全なaccount deletion API・identity tombstone・外部処理checkpoint・recoveryを既定OFFで接続
-    - 証跡: [PR #133](https://github.com/sh0g0-ikeda/Lyra/pull/133)。全Vitest / Bun各1662件成功・1件skip、fresh DB 001〜037と62 invariant / 0 violations、実DBでpast_due Stripe・pending Store・4 assets・組織作品・Push deliveryを含む削除E2Eを確認
-    - 安全境界: `ACCOUNT_DELETION_ENABLED=false`を維持。本人ID・subscription ID・S3 keyをclientから受け取らず、組織作品と課金台帳を保持し、完了時はHMAC tombstone以外のcheckpoint識別子を消去。本番IAM / secret / recovery worker / Mobile UIは未設定
-- [x] PR-C: Mobile store billing Backend
-  - 主な所有: migration 029、Apple/Google verifier、purchase service、webhook、ledger
-  - 完了条件: 課金OFFで既存Webの挙動を変えず、focused testsがgreen
-  - [x] 課金機能を有効化せず、個人Mobile購入・event・credit冪等性のDB契約を先行統合
-    - 証跡: [PR #112](https://github.com/sh0g0-ikeda/Lyra/pull/112)。fresh DB 001〜029、49 invariant / 0 violationsを確認し、raw token/JWSを保存しないkey形状とpersonal-only境界を固定
-    - 境界: verifier、Service、Repository、Route、Webhook、Mobile SDK、product mappingは未接続。外部console / secret / sandbox証跡が揃うまで課金OFFを維持する
-  - [x] Apple公式JWS、Google Developer API、Pub/Sub OIDCの検証経路を既定OFFで接続
-  - [x] purchase / event / credit ledger / personal planを同一transactionと3段のunique barrierで更新
-  - [x] `/api/billing/balance`の購読summaryをApple / Googleの検証済み購入まで拡張し、StripeとStoreで同じwire fieldを返す
-  - 証跡: [PR #132](https://github.com/sh0g0-ikeda/Lyra/pull/132)。focused 89 tests、全Vitest / Bun各1618件中1617件成功・1件skip、fresh DB 001〜036と58 invariant / 0 violations、Web / Mobile / production imageの全gateを確認
-  - 安全境界: `MOBILE_STORE_BILLING_ENABLED=false`を維持。App Store Connect / Play Console、実product ID、credential / secret、native billing SDK、sandbox / license testは未設定
-- [x] PR-D: generation job management / cancellation / push outbox
-  - 主な所有: migrations 030, 033〜035、Worker、job services
-  - 完了条件: cancel/refund/outbox競合テストがgreen
-  - [x] job履歴非表示tableとscope / cursor用indexを既存cancel/refund非変更で先行統合
-    - 証跡: [PR #113](https://github.com/sh0g0-ikeda/Lyra/pull/113)。旧030のlate-consume自動返金triggerを除外し、API未接続の加算schemaだけをfresh DBで確認
-    - 後続: 汎用cancel、credit settlement、Worker checkpoint、late consume拒否はPR #134で接続
-  - [x] scoped job履歴一覧とterminal-only非表示APIを既存job処理非変更で接続
-    - 証跡: [PR #121](https://github.com/sh0g0-ikeda/Lyra/pull/121)。personal owner / active organization memberの二重scope、active-first bounded cursor、terminal row lock、冪等hide、direct GET維持を確認
-    - 安全境界: generic cancel、refund、credit、queue、Worker、push outbox、migrationは変更せず、active jobはhide rowが存在しても常に一覧へ戻す
-  - [x] native push tokenの暗号化・hash lookup・logout解除基盤をRoute未接続で先行統合
-    - 証跡: [PR #116](https://github.com/sh0g0-ikeda/Lyra/pull/116)。AES-256-GCM、別key HMAC、transactional upsert、user + installation scoped delete、migration 033を確認
-    - 境界: Route、runtime secret配線、Mobile通知権限、APNs / FCM、notification outboxは未接続。migration / module導入だけではPushを送信しない
-  - [x] push outbox / delivery schemaと明示的terminal enqueue Repositoryをtrigger未接続で先行統合
-    - 証跡: [PR #117](https://github.com/sh0g0-ikeda/Lyra/pull/117)。completed / failed限定、job/status冪等性、same-user token snapshot、lease状態、token row identityを確認
-    - 境界: generation terminal処理、retry invalidation、delivery claim、APNs / FCM、Mobile navigationは未接続。migration 034全体は未完了
-  - [x] cancellation metadata / stateの新規write契約を既存行未検証で先行統合
-    - 証跡: [PR #118](https://github.com/sh0g0-ikeda/Lyra/pull/118)。requester pair、cancel/commit排他、cancelled timestamp順を`NOT VALID` constraintとinvariantで確認
-    - 後続: episode story以外のprocessing cancelとrefund競合はPR #134で接続。production既存行の0違反確認、constraint VALIDATE、push接続は未完了
-  - [x] push outboxのcancelled guardをterminal処理未接続のまま先行統合
-    - 証跡: [PR #119](https://github.com/sh0g0-ikeda/Lyra/pull/119)。job lock内でcancel request / cancelled timestampを確認し、failedへ誤遷移したrowも通知候補から除外
-    - 境界: generation terminal処理、retry invalidation、delivery claim、APNs / FCM、Mobile navigationは未接続
-  - 汎用cancel / refund / Worker commit barrierの証跡: [PR #134](https://github.com/sh0g0-ikeda/Lyra/pull/134)。balance→job lock、page復元、cancel/commit排他、late consume拒否を実PostgreSQLで確認。全Vitest / Bun各1697件、fresh DB 001〜038、63 invariant / 0 violations、Web / Mobile / Playwright / 両OS exportも成功
-  - terminal settlement / push outboxの証跡: [PR #135](https://github.com/sh0g0-ikeda/Lyra/pull/135)。9個のgeneration terminal writer、retry event identity、未送信failed delivery無効化、account deletionとのregistry-first lock順、rollback / stale lease競合を実PostgreSQLで確認。全Vitest 1710件、Bun 1699件、fresh DB 001〜039、65 invariant / 0 violations、Web / Mobile / Playwright / 両OS exportも成功
-  - 安全境界: `GENERATION_JOB_CANCELLATION_ENABLED=false`を維持。production preflight / constraint VALIDATE、token登録Route、delivery claim、APNs / FCM、Mobile通知権限とnavigationは未接続で、Push外部配送は引き続き無効
-- [x] PR-E: Mobileアプリ基盤
-  - 主な所有: Expo設定、認証、navigation、API client、i18n、error policy
-  - 完了条件: clean install、typecheck、lint、test、両OS exportがgreen
-  - 証跡: [PR #120](https://github.com/sh0g0-ikeda/Lyra/pull/120)。Expo SDK 57 dependency check、expo-doctor 20/20、typecheck、lint、Mobile Vitest 11 files / 31 tests、Android / iOS export、既存`verify`をすべてexact head `39187f9`で確認し、annotation 0件
-  - 安全境界: 初回は`GET /api/me`だけを接続し、Story / Characters / Pages、organization、課金、upload / export、Push、Sentry、EAS / Store metadataを未接続のまま分離
-  - 本番境界: bundle / package identifierとuniversal link未導入中はproduction configをfail closedとし、PR-Hの設定・実機検証前に本番ログインを有効化しない
-- [ ] PR-F: Story / Characters / PagesのMobile UI
-  - 主な所有: 各screen、component、dirty state、生成ジョブUI
-  - 完了条件: user flow component testsとAPI契約がgreen
-  - Story閲覧・編集sliceの証跡: [PR #136](https://github.com/sh0g0-ikeda/Lyra/pull/136)。作品→章→話の選択、title / story / 想定ページ数の保存、正常empty state、保存 / 破棄 / cancel、保存失敗時のdraft保持、保存中single-flight、personal / organization cache分離を追加。Mobile 15 files / 52 tests、両OS export、全Backend / Web gate、fresh DB 001〜039と65 invariant / 0 violationsを確認
-  - Story階層authoring sliceの証跡: [PR #137](https://github.com/sh0g0-ikeda/Lyra/pull/137)。作品作成・名称変更、章作成・名称変更・上下移動、話作成・章内/章間移動を追加。最大order + 1、409時1回だけ再試行、dirty作成遷移、保存/mutation相互single-flight、章間移動時のdraft保持を確認。Mobile 16 files / 67 tests、両OS export、全Backend / Web gate、fresh DB 001〜039・65 invariant / 0 violations・実DB11 testsを確認
-  - Story削除Backend安全境界sliceの証跡: [PR #138](https://github.com/sh0g0-ikeda/Lyra/pull/138)。章・話削除と新規生成、failed retry、episode exportをepisode単位で直列化し、active job、未削除export artifact、保存済みpage画像がある場合は安全な409で削除を止める。scope外targetはnot foundを維持し、DB schema・既存request / response・credit / Worker状態遷移は変更しない。全Vitest / Bun各1707件、Backend build、実PostgreSQL競合6 testsを確認
-  - Mobile章・話削除UI sliceの証跡: [PR #139](https://github.com/sh0g0-ikeda/Lyra/pull/139)。削除確認後にdirty draftの保存・破棄・取消を解決し、成功後だけcacheと選択をsibling / emptyへ更新する。409 / network failureではdraftを保持し、404は再取得で対象消滅を確認後だけstale selectionを除く。Mobile 17 files / 82 tests、両OS export、全Backend / Web gate、fresh DB 001〜039・65 invariant / 0 violations・実DB17 testsを確認
-  - Mobile Page / Scene編集sliceの証跡: [PR #140](https://github.com/sh0g0-ikeda/Lyra/pull/140)。既存UI方針どおりSceneをStoryではなくPage tabへ置き、任意Sceneの一覧、最大order + 1作成、場所・時間・雰囲気のchanged-field-only更新、dirty解決、tab離脱、single-flightを追加。422は再取得後に最大orderが増えた場合だけ1回再試行し、page参照と生成競合を安全化するまでScene削除UIは公開しない。Mobile 19 files / 95 tests、両OS export、全Backend / Web gate、fresh DB 001〜039・65 invariant / 0 violations・実DB17 testsを確認
-  - Mobile 初回ページ骨格生成sliceの証跡: [PR #141](https://github.com/sh0g0-ikeda/Lyra/pull/141)。Page一覧と初回骨格生成をPage tabへ追加し、`overwrite_existing: false` / `apply_story_plan: false`を型とrequestで固定。dirty Scene解決、別端末のactive job検出、正確なjob ID監視、foreground復帰、terminal / 404 / 一時通信失敗、重複poll防止を追加し、既存Page上書き・Story AI反映・credit変更・Backend変更は未接続のまま維持。Mobile 20 files / 116 tests、両OS export、全Backend / Web gate、fresh DB 001〜039・65 invariant / 0 violations・実DB17 testsを確認
-  - Mobile Story自動入力sliceの証跡: [PR #142](https://github.com/sh0g0-ikeda/Lyra/pull/142)。既存Backend契約を使い「ストーリーから設定を自動入力」をPage tabへ追加。confirmed / generating / frame・panel不整合 / 32ページ超を事前拒否し、dirty Scene解決、single-flight、正確なjob ID + type監視、POST応答消失後の履歴復元、専用terminal文言を接続。optimistic update、骨格との自動連鎖、Backend / DB / Worker / credit / cancel UIは変更しない。Mobile 20 files / 131 tests、両OS export、全Backend / Web gate、fresh DB 001〜039・65 invariant / 0 violations・実DB17 testsを確認
-  - Mobile Characters基本編集sliceの証跡: [PR #143](https://github.com/sh0g0-ikeda/Lyra/pull/143)。作品単位の一覧・cursor pagination、character / nonhuman / objectの新規作成、既存の名前・説明編集、dirty解決、single-flight、personal / organization cache分離、mutation / 一覧取得競合の解消を追加。既存種別と非表示fieldを保護し、別作品・別entityのAPI応答を拒否する。削除・参照画像・画像生成・服装/状態とBackend / DB / Worker / Webは変更しない。Mobile 22 files / 159 tests、両OS export、全Backend / Web gate、fresh DB 001〜039・65 invariant / 0 violations・実DB17 testsを確認
-  - [x] Mobile既存コマ内容編集sliceを既存Panel APIだけで接続
-    - 証跡: [PR #145](https://github.com/sh0g0-ikeda/Lyra/pull/145)。Page / Panel選択、role・size・状況・構図記述・会話・効果音・背景・メモのchanged-field-only保存、speaker assignment制約、dirty解決、single-flight、job完了後再取得を追加。Page / Panel再取得失敗・remote更新・削除・元Page消失でもdraftを保持し、stale PUTと離脱をfail closedにする
-    - 安全境界: Backend / DB / Worker / Web / shared API contract、order、entity assignment、frame、Page status、生成情報は変更しない。Mobile 25 files / 194 tests、両OS export、全Backend / Web / Playwright gate、fresh DB 001〜039・65 invariant / 0 violations・実DB17 tests、独立read-only監査P0 / P1なしを確認
-  - [x] Mobile確定済みキャラ参照画像の閲覧sliceを既存Entity APIだけで接続
-    - 証跡: [PR #146](https://github.com/sh0g0-ikeda/Lyra/pull/146)、feature code head `8c6f497`。保存済みEntityのreference set状態、primary有無、確定画像数、source、作成日時、画像を読み取り専用表示する。既存schemaでEntity一致を検証し、HTTPS signed URLから認証付きexportへfallbackする。session / workspace / Entity / reference / revisionでmemory cacheを分離し、protected image失敗時の認証更新と再試行を各1回に制限する
-    - 安全境界: Backend / DB / migration / Worker / Web / shared API contract、保存・更新・import・生成・candidate・confirm・delete・credit・jobを変更しない。Mobile 29 files / 217 tests、typecheck、lint、Expo dependency check、expo-doctor 20/20、両OS export、Backend Vitest 1707 tests、Bun 1707 tests、fresh DB 001〜039・65 invariant / 0 violations・実DB17 tests、Web lint / build・Playwright 13 tests、独立read-only監査P0 / P1なしを確認
-  - [x] Mobileキャラ参照画像のbase64 import / candidate preview / confirmを既存Entity APIだけで接続
-    - 証跡: [PR #147](https://github.com/sh0g0-ikeda/Lyra/pull/147)、feature code head `2a25fd7`、GitHub CI run `30658764910`。保存済みEntityで端末画像を1枚選び、JPEG / PNG / WebPの実signatureと5 MiB上限を端末側でも検証し、1 creditを明示して既存import APIへ送る。候補tokenはcomponent memoryだけに保持し、認証付き・token非cache-keyでpreviewする。明示確認後だけ既存confirm APIへtokenと解析済みprompt supplementを送り、既存参照画像を残して新画像をprimaryにする
-    - 安全境界: Backend / DB / migration / Worker / Web / shared API contract、既存request / response、1回あたり最大3候補、確定済み画像の総数、credit / refund、generation jobを変更しない。import / confirmはsingle-flight、response loss時は自動再送せず、旧scopeの遅延完了が新scopeの操作blockを解除しない。Mobile 33 files / 245 tests、typecheck、lint、Expo dependency check、expo-doctor 20/20、両OS export、Backend Vitest / Bun各1707 tests、fresh DB 001〜039・65 invariant / 0 violations・実DB17 tests、Web lint / build・Playwright 13 tests、独立read-only再監査P0 / P1なしを確認
-  - [x] Mobileキャラ参照画像生成 / job監視 / candidate確定を既存Entity APIだけで接続
-    - 証跡: [PR #148](https://github.com/sh0g0-ikeda/Lyra/pull/148)、feature code head `8d175c3`、GitHub CI run `30662549018`。dirtyキャラを既存保存フローで確定後、既存`entity_generate`へ現在の保存内容または明示したimport候補を渡し、exact job ID / type / Entityを照合する。1〜3候補を認証付きでpreviewし、選択・primary・明示確認後だけ既存confirm APIで確定する
-    - 安全境界: Backend / DB / migration / Worker / Web / shared API contract、既存request / response、SQS message、job state、credit / refund、確定済み画像の総数を変更しない。import / generation / confirmを相互single-flightにし、POST応答消失は履歴の一意なjobだけをexact再取得する。履歴不明、exact 404 / mismatch、remote reference変更、confirm応答消失はfail closedとし、自動再送や候補自動確定を行わない。candidate tokenはcomponent memoryだけに置きcache identityへ含めない。Mobile 34 files / 264 tests、typecheck、lint、contract drift、Expo dependency check、expo-doctor 20/20、両OS export、Backend Vitest / Bun各1707 tests、fresh DB 001〜039・65 invariant / 0 violations・実DB17 tests、Web lint / build・Playwright 13 tests、独立read-only監査のP1 2件を修正後に再監査P0 / P1なしを確認
-  - [x] Mobile Page台詞表示設定を既存Page APIだけで接続
-    - 証跡: [PR #149](https://github.com/sh0g0-ikeda/Lyra/pull/149)、feature code head `50dac8f`、GitHub CI run `30664667522`。保存済みPageを選び、既存`dialogue_mode`と`page_dialogue_toggle`だけをchanged-field-onlyで保存する。保存前にPageを再取得し、対象設定のremote変更、Page消失、episode不一致、confirmed / generatingをPUT前にfail closedとする。Story自動入力などの生成開始前にはdirty Page設定を保存・破棄・取消で解決する
-    - 安全境界: Backend / DB / migration / Worker / Web / shared API contract、既存request / response、Page / Panel / Scene / Entity構造、SQS message、generation job、credit / refundを変更しない。personal / organization queryとsession / workspace / episode / Page cacheを分離し、single-flight、response ID / episode照合、旧scope遅延応答の非反映を確認。Mobile 36 files / 281 tests、typecheck、lint、contract drift、Expo dependency check、expo-doctor 20/20、両OS export、Backend Vitest / Bun各1707 tests、fresh DB 001〜039・65 invariant / 0 violations・実DB17 tests、Web lint / build・Playwright 13 tests、独立read-only監査P0 / P1なしを確認
-  - [x] Mobile Page style reference / source scene / purpose / continuityを既存Page APIだけで接続
-    - 証跡: [PR #150](https://github.com/sh0g0-ikeda/Lyra/pull/150)、feature code head `0f6655c`。画風リファレンス名・補足、ページ目的、連続性メモを既存`PUT /api/pages/:id`へchanged-field-onlyで保存し、保存済みsource sceneはepisode内Sceneと照合して読み取り専用表示する。不明・削除済みIDも黙って除外せず表示し、semantic fieldまたはsource sceneのremote変更時は古いdraftの保存をfail closedとする
-    - 安全境界: Backend / DB / migration / Worker / Web / shared API contract、既存request / response、Page / Panel / Scene / Entity構造、SQS message、generation job、credit / refundを変更しない。source scene ID、`layout_config`、compiled style metadataは送信せず、style title / notesだけを既存server compilerへ渡す。Mobile 36 files / 293 tests、typecheck、lint、contract drift、API inventory、Expo dependency check、expo-doctor 20/20、両OS export、Backend Vitest / Bun各1707 tests、fresh DB 001〜039・65 invariant / 0 violations・実DB17 tests、Web lint / build・Playwright 13 tests、独立read-only監査P0 / P1なしを確認
-  - [x] Mobileキャラ服装・状態管理を既存Entity state APIだけで接続
-    - 証跡: [PR #151](https://github.com/sh0g0-ikeda/Lyra/pull/151)、feature code head `bc783f2`。保存済みEntityの状態一覧、同一作品Sceneまたは共通状態の作成、服装・体調/負傷・髪・通常表情・補足のchanged-field-only更新を追加。dirty保存/破棄/取消、single-flight、保存前remote snapshot照合、別resource response拒否、POST結果不明時の自動再送停止を確認する
-    - 安全境界: Backend / DB / migration / Worker / Web / shared API contract、既存request / response、Scene / Entity / Page / Panel構造、SQS message、generation job、credit / refundを変更しない。`costume_ref_id`は作成時未設定、更新時非送信として既存値を保持し、Scene関連が変わった場合だけ同一scopeのScene cacheを非同期更新する。Mobile 38 files / 322 tests、typecheck、lint、contract drift、API inventory、Expo dependency check、expo-doctor 20/20、両OS export、Backend Vitest / Bun各1707 tests、fresh DB 001〜039・65 invariant / 0 violations・実DB17 tests、Web lint / build・Playwright 13 tests、独立read-only監査P0 / P1なしを確認
-  - [x] Panel entity assignmentの条件付き保存Backend安全境界を追加
-    - 証跡: [PR #152](https://github.com/sh0g0-ikeda/Lyra/pull/152)、feature code head `d2a4f4e`。任意の`expected_entities`指定時だけPage → Panel → Entity → Entity stateを同一transactionでlockし、Story自動入力相当の競合、confirmed / generating、会話speaker除去、別work Entity / state、inactive / 別organizationを更新前に拒否する。過去JSONのnullable欠損・stale custom値・メモ空白もrequestと同じ意味値で比較する
-    - 安全境界: 既存`{ entities }` request / response、`panels.entities` JSON、DB schema / migration、Prompt、SQS message、generation job、Worker、credit / refundは変更しない。Vitest 252 files / 1752 tests、Bun Unit 247 files / 1723 tests、実PostgreSQL 12 tests、fresh DB 001〜039・65 invariant / 0 violations、Backend build、API inventory / Mobile contract、Web / Mobile / Playwright / 両OS export、独立read-only監査P0 / P1 / P2なしを確認
-  - [x] Mobile Panel登場要素割当編集を既存の条件付き保存APIだけで接続
-    - 証跡: [PR #154](https://github.com/sh0g0-ikeda/Lyra/pull/154)、feature code head `900a2de`。作品Entityのcursor pagination、最大8件の追加・削除、役割・表情・動作・配置・向き・効果メモ・Entity state編集を追加する。コマ内容と割当を別draft / 別保存にし、`expected_entities`付きPUT後に同一scopeのauthoritative GETがdesiredと一致した場合だけcacheへ採用する
-    - 安全境界: Backend / DB / migration / Prompt / SQS / generation job / Worker / credit / refund / Webと既存10-field assignment shapeを変更しない。409 / 422 / response loss / remote競合ではdraftを保持し自動再送しない。保存済み話者と未知または削除済み`state_id`を保護する。Mobile 39 files / 356 tests、typecheck、lint、contract drift、Expo dependency check、expo-doctor 20/20、両OS export、Backend Vitest 1752 tests、Bun 1723 passed / 37 skipped、fresh DB 001〜039・65 invariant / 0 violations・実DB12 tests、Web lint / build・Playwright 13 tests、独立read-only監査P0 / P1なしを確認
-  - [x] Panel作成・削除・並べ替えのBackend安全境界を追加
-    - 証跡: [PR #155](https://github.com/sh0g0-ikeda/Lyra/pull/155)、feature code head `3f9bbf4`。ordered Panel ID snapshotを条件に、Panels・Frames・Balloon参照・`layout_config`の構造キーをPage単位の同一transactionで更新する追加APIを実装。Episode生成受付lock、active generation、confirmed / generating、1〜8 Panel、Frame不整合、stale Balloon writeを保存前に拒否する
-    - 安全境界: 既存Panel / Balloon request・response、Panel / Frame / Balloon永続化shape、DB schema / migration、Prompt、SQS message、generation job、Worker、credit / refund、Webを変更しない。append / deleteは既存の決定的Frame templateを使い、reorderはFrame形状を維持する。Vitest 250 files passed / 6 skipped・1743 passed / 38 skipped、Bun 1743 passed / 48 skipped、実PostgreSQL 9 tests、fresh DB 001〜039・65 invariant / 0 violations、Backend build、API inventory / Mobile contract、Web lint / build・Playwright 13 tests、Mobile 39 files / 356 tests・両OS export、独立read-only再監査P0 / P1 / P2なしを確認
-  - [x] Mobile Panel作成・削除・並べ替えUIを新安全APIだけで接続
-    - 証跡: [PR #156](https://github.com/sh0g0-ikeda/Lyra/pull/156)、feature code head `beb0700`。Page設定 → Panel内容/登場要素のdirty解決後に全ordered Panel ID snapshotを送り、応答からPanelを合成せず既存Page / Panel GETの権威データだけを採用する。操作受付直後から編集を固定し、追加8件上限、削除1件下限・確認、隣接移動、選択復元を追加
-    - 安全境界: Backend / DB / migration / Prompt / SQS / generation job / Worker / credit / refund / Web、既存PanelRecord・Page / Panel API shapeを変更しない。409 / 4xx / network / 5xx / invalid responseでmutationを自動再送せず、GET再照合だけを行う（401の認証成立前token refresh後1回を除く）。Mobile 39 files / 380 tests、typecheck、lint、contract drift、Expo dependency check、expo-doctor 20/20、両OS export、Backend Vitest 1743 tests、Bun 1743 tests、fresh DB 001〜039・65 invariant / 0 violations・実DB 9 tests、Web lint / build・Playwright 13 tests、独立read-only再監査P0 / P1 / P2なしを確認
-  - [x] Mobile Page画像生成を既存Page生成APIだけで接続
-    - 証跡: [PR #157](https://github.com/sh0g0-ikeda/Lyra/pull/157)、feature code head `7db7fe6`。保存済みPageを選び、Scene → Page設定 → Panelのdirty解決後だけ既存`page_generate`を開始する。準備開始から新規編集と対象切替を固定しつつ、準備処理自身が明示確認したdirty保存だけを許可する。accepted / recovered job ID、job type、Page ID、Episode、session / workspaceを照合し、完了後は再取得した`PageRecord.generated_image`だけを表示する
-    - 安全境界: Backend / DB / migration / shared API contract / Prompt / SQS / generation job / Worker / credit / refund / Webと既存Page / job / image shapeを変更しない。POST応答消失、exact 404 / mismatch、複数候補では生成POSTを自動再送せずGET再照合だけを行う。署名HTTPS URL → 認証付きexport route → token refresh 1回の順で表示し、Bearer tokenをcache / query keyへ含めない。Mobile 41 files / 406 tests、typecheck、lint、contract drift、Expo dependency check、expo-doctor 20/20、両OS export、Backend Vitest / Bun各1743 tests、fresh DB 001〜039・65 invariant / 0 violations・実DB38 tests、Web lint / build・Playwright 13 tests、独立read-only再監査P0 / P1 / P2なしを確認
-  - 残り: 生成fileを削除可能にするdurable asset cleanup、Backend endpointがない作品削除・並べ替え、Scene削除Backend安全境界、Charactersの削除Backend安全境界・参照画像direct upload client / 本番設定・`costume_ref_id`のBackend整合性付き選択/変更、frame / balloon編集UI、organization workspace UI。PR-F全体は未完了のまま維持する
-- [ ] PR-G: organization / billing UI / store adapter
-  - 主な所有: Account、organization管理、`expo-iap` adapter
-  - 完了条件: personal/org分離とstore unavailable状態がgreen
-  - [x] 正常状態で「一時的に処理できません。入力は保持されています。少し待って再試行してください。」を表示しない
-    - 再現条件: プロフィールと個人ワークスペースが正常に表示され、ユーザー操作上の問題がない状態でも赤い再試行bannerが表示される
-    - 完了条件: 正常応答、空データ、未選択の任意データを失敗として集約せず、必須データの取得失敗など実際に再試行が必要な場合だけbannerを表示する
-    - 回帰条件: 成功した再取得またはworkspace切替後に古いerror stateを残さず、実際の通信・認証・server errorでは適切な再試行導線を維持する
-    - 証跡: [PR #144](https://github.com/sh0g0-ikeda/Lyra/pull/144)。Account初期表示は`GET /api/me`の認証済み残高snapshotを使い、任意のbilling request失敗をpage-level errorへ集約しない。active membershipだけをworkspace候補にし、personal / organization query keyを分離。再取得中・成功後・workspace切替後に古いerrorを残さない
-  - [x] ジョブ0件で「対象データが見つかりませんでした。画面を更新して選び直してください。」を表示しない
-    - 再現条件: 「表示できるジョブはありません。」という正常なempty stateと同時にnot-found errorが表示される
-    - 完了条件: ジョブ0件ではempty stateだけを表示し、選択済みジョブが実際に削除された場合など対象消失時だけnot-found errorを表示する
-    - テスト条件: ジョブ0件、対象消失、通信失敗、再取得成功の各状態をMobile UI testで区別する
-    - 証跡: [PR #144](https://github.com/sh0g0-ikeda/Lyra/pull/144)。`200 { jobs: [], next_cursor: null }`かつquery successの場合だけempty stateを表示し、404 / 5xxではempty・not-foundへ読み替えず安定文言と再試行だけを表示。Mobile 23 files / 167 tests、両OS export、Backend 1707 tests、fresh DB 001〜039・65 invariant / 0 violations、実DB17 tests、Web smoke 13/13を確認
-- [ ] PR-H: release / EAS / store metadata / ops docs
-  - 主な所有: `eas.json`, `app.json`, store metadata, runbook
-  - 完了条件: secretsを含まず、production config guardがgreen
-
-#### GIT-120 統合検証
-
-現在の証跡として、PR #157統合後のmain `254b717` / CI run `30681272369`では、Vitest、Bun、PostgreSQL migration / invariant、Backend build、Web lint / build、Playwright、Mobile test / exportが成功している。ただし最終リリース対象commitは今後変わるため、リリースゲート自体は未完了のままとし、exact release commitで再実行する。
-
-- [ ] 残る各分割PRを最新mainから作り直す
-  - 完了済み証跡: PR #76、PR #77、PR #79
-- [ ] PR間の依存関係をPR本文へ記載する
-- [ ] 1PRへ無関係なWeb変更を混ぜない
-- [ ] 既存migrationを編集せず、必要な修正は新migrationで行う
-- [ ] Backend全Vitestを通す
-- [ ] Bun test entrypointを通す
-- [ ] migration/invariantをPostgreSQLで通す
-- [ ] Backend buildを通す
-- [ ] Web lint/buildを通す
-- [ ] Playwright smokeを通す
-  - [x] Mobile viewportの階層メニューでEscape後の閉鎖待ちを安定化する
-    - 現状: PR #82の初回CIで13件中1件が失敗し、再実行と統合後mainでは13件すべて成功
-    - 完了条件: 同テストの反復実行でflaky failureが再発しない
-    - 証跡: [PR #87](https://github.com/sh0g0-ikeda/Lyra/pull/87)で修正前の決定的失敗、修正後1/1、反復5/5、全Playwright 13/13、CI run `30526596364`の全gate成功を確認
-- [ ] Mobile `npm ci`を通す
-- [ ] Mobile Expo dependency check / doctorを通す
-- [ ] Mobile typecheck / lint / Vitestを通す
-- [ ] Mobile Android/iOS exportを通す
-- [x] mainのbranch protectionでCI `verify`をrequired status checkにする
-  - 完了条件: `verify`がpendingまたはfailedのPRをUI/CLIからmainへmergeできない
-  - 証跡: [PR #91](https://github.com/sh0g0-ikeda/Lyra/pull/91)のCI pending中に`mergeStateStatus=BLOCKED`を確認。API readbackは`verify`、`strict=true`、`enforce_admins=true`
-- [x] GitHub ActionsのNode.js 20非推奨警告を解消する
-  - 完了条件: CIでNode.js 24対応済みActionを使用し、非推奨annotationが0件
-  - 証跡: [PR #86](https://github.com/sh0g0-ikeda/Lyra/pull/86)で`actions/checkout@v5`と`actions/setup-node@v5`へ更新し、CI run `30525389957`の全gate成功とannotation 0件を確認
-- [ ] 分割PR統合後にPR #67を置換済みとして閉じる
-
-### Phase 2: 独立したstaging環境
-
-#### STG-200 Backendとデータ
-
-- [ ] staging用API環境を用意する
-- [ ] staging用PostgreSQLを本番から分離する
-- [ ] staging用S3 prefixまたはbucketを本番から分離する
-- [ ] staging用SQS queueとDLQを本番から分離する
-- [ ] staging用CloudWatch log groupを本番から分離する
-- [ ] staging用Secrets Manager secretを用意する
-- [ ] stagingで本番ユーザーのID/tokenを受け付けないことを確認する
-- [ ] stagingデータの定期削除方針を設定する
-- [ ] E2E seed/reset処理を実装する
-- [ ] E2E用のpersonalユーザーを作る
-- [ ] E2E用のowner/admin/billing/editor/viewerを作る
-- [ ] E2E用のorganizationと招待fixtureを作る
-- [ ] E2E用の作品、キャラ、ページ、ジョブfixtureを作る
-- [ ] E2E用クレジット付与を監査可能な管理処理に限定する
-
-#### STG-210 CognitoとEAS
-
-- [ ] staging専用Cognito app clientを作る
-- [ ] staging callback/logout URLを登録する
-- [ ] staging招待リンクをproductionと識別できるようにする
-- [ ] EAS `preview`のAPI URLをproductionからstagingへ変更する
-- [ ] EAS `preview`のCognito clientをstagingへ変更する
-- [ ] EAS `preview`にApple Sandbox用の公開設定を入れる
-- [ ] EAS `preview`にGoogle license-test用の公開設定を入れる
-- [ ] preview buildがproduction originへ接続しないことを通信ログで確認する
-
-#### STG-220 証跡収集
-
-- [ ] request correlation IDをstagingログで検索できるようにする
-- [ ] purchase transactionをdigest化して相関できるようにする
-- [ ] webhook eventをdigest化して相関できるようにする
-- [ ] credit ledgerのbefore/afterを秘密情報なしで証跡化する
-- [ ] E2E証跡用HMAC secretをsecret storeへ登録する
-- [ ] 証跡にraw transaction、purchase token、認証tokenを含めないテストを追加する
-
-### Phase 3: Backendとmigrationの先行反映
-
-#### DB-300 migration単位の受入確認
-
-- [x] 027 account deletion requests
-  - 完了条件: 冪等な削除状態と唯一ownerの保護を確認
-  - 証跡: [PR #110](https://github.com/sh0g0-ikeda/Lyra/pull/110)。user単位の主キー、状態enum、processing claim pair、retry/blocker制約をmigration contract testとfresh DB invariantで確認
-- [x] 028 page story metadata compatibility checkpoint
-  - 完了条件: 既存pageの読み書きと生成promptが後方互換
-  - 証跡: [PR #111](https://github.com/sh0g0-ikeda/Lyra/pull/111)。現mainで3項目が既に`pages.layout_config`へ保存・読込・prompt連携されることを確認し、重複列・backfill・二重書込みを追加しないcomment-only migrationとして番号順を確定
-- [x] 029 mobile store purchase ledger
-  - 完了条件: store/external keyとledger eventのunique制約が有効
-  - 証跡: [PR #112](https://github.com/sh0g0-ikeda/Lyra/pull/112)。purchase / provider event / credit ledgerの三段冪等性、HMAC key形状、個人user FK、credit反転上限をmigration contractとfresh DBで確認
-- [x] 030 generation job management
-  - 完了条件: job一覧、hide、cancel状態が既存jobと互換
-  - 証跡: [PR #113](https://github.com/sh0g0-ikeda/Lyra/pull/113)でtable/index、[PR #121](https://github.com/sh0g0-ikeda/Lyra/pull/121)でscoped一覧・terminal-only hide API、[PR #134](https://github.com/sh0g0-ikeda/Lyra/pull/134)で汎用cancel / refund競合と既存job互換を確認
-- [x] 031 entity reference upload tokens
-  - 完了条件: single-use、期限、MIME/size、user/org bindingが有効
-  - 証跡: [PR #114](https://github.com/sh0g0-ikeda/Lyra/pull/114)。conditional `UPDATE ... RETURNING`で同時consumeを1件に限定し、personal/org/entity scopeと5 MiB・最大10分をDBで固定
-- [x] 032 episode export jobs
-  - 完了条件: export artifactのownershipと期限が有効
-  - 証跡: [PR #115](https://github.com/sh0g0-ikeda/Lyra/pull/115)。artifact keyをuser/org・episode・jobへbindingし、最大24時間と期限後cleanup markerをDBで固定
-- [x] 033 mobile push token registry
-  - 完了条件: token暗号化、hash lookup、logout unregisterが有効
-  - 証跡: [PR #116](https://github.com/sh0g0-ikeda/Lyra/pull/116)。平文を永続化・応答せず、端末間token移動もregistry advisory lock付きupsertで直列化し、logout DELETEをuser + installationへscope
-- [x] 034 mobile push notification outbox
-  - 完了条件: terminal jobだけが正しくoutboxへ入る
-  - 証跡: [PR #117](https://github.com/sh0g0-ikeda/Lyra/pull/117)でtriggerなしschemaと明示的enqueue Repository、[PR #135](https://github.com/sh0g0-ikeda/Lyra/pull/135)でcompleted / failed限定のterminal settlement、retry時invalidate、retry count event identity、cancel / account deletion競合を確認
-  - 境界: delivery claim、APNs / FCM provider、Mobile notification permission / navigationは別タスクで、外部配送は未接続
-- [x] 035 processing generation job cancellation
-  - 完了条件: Worker checkpointと返金競合がロックで保護される
-  - 証跡: [PR #118](https://github.com/sh0g0-ikeda/Lyra/pull/118)で新規write contract、[PR #134](https://github.com/sh0g0-ikeda/Lyra/pull/134)で汎用Worker checkpoint、commit barrier、transactional refund、実DB競合を確認
-  - 本番境界: 既存行preflightと`NOT VALID` constraintのVALIDATEは未完了。汎用feature flagはOFFを維持
-- [x] 036 episode export processing lease
-  - 完了条件: expired leaseを再claimでき、古いWorkerがprogressまたはterminal stateを上書きしない
-  - 証跡: [PR #128](https://github.com/sh0g0-ikeda/Lyra/pull/128)。lease token / heartbeat / attempt制約、atomic claim、expired reclaim、stale token拒否、outbox / cleanup Repositoryを確認してmainへ統合
-- [x] 037 account deletion runtime guard
-  - 完了条件: identity再作成、削除中の個人root作成、完了checkpoint残存、組織owner競合を防ぐ
-  - 証跡: [PR #133](https://github.com/sh0g0-ikeda/Lyra/pull/133)。HMAC identity tombstone、started/deleted時系列、personal write guard、62 deployment invariant、組織row lockと実PostgreSQL削除E2Eを確認
-
-#### DB-310 本番migration計画
-
-- [ ] 現在の本番migration履歴が001〜026であることをreadbackする
-- [ ] invalid indexがないことを確認する
-- [ ] legacy credit linkageをpreflightする
-- [ ] cancellation metadataの不整合をpreflightする
-- [ ] migration 029制約へ抵触する既存行がないことを確認する
-- [ ] RDS backup retentionを確認する
-- [ ] PITR可能時刻を記録する
-- [ ] API/Workerのロールバックtask definitionを記録する
-- [ ] メンテナンス開始・終了の判断者を決める
-- [ ] API書き込み停止手順を確認する
-- [ ] Workerを0へscaleする手順を確認する
-- [ ] inflight generationとDB transactionが0であることを確認する
-- [ ] schema-026 preflightをone-off taskで実行する
-- [ ] migration 027〜036をone-off taskで実行する
-- [ ] deployment invariantsをone-off taskで実行する
-- [ ] APIを新task definitionへ更新する
-- [ ] Workerを新task definitionへ更新する
-- [ ] readiness、queue、DLQ、alarm、ログを確認する
-- [ ] ingressとWorkerを再開する
-- [ ] migration後のrollback制約を運用記録へ残す
-
-#### API-320 課金OFFでの先行配備
-
-- [ ] `MOBILE_STORE_BILLING_ENABLED=false`でAPIが起動する
-- [ ] Mobile purchase routeがdisabled状態を安全に返す
-- [ ] 既存WebのStripe課金に変更がない
-- [ ] personal/org credit balanceに変更がない
-- [ ] Webhook URLへ未検証payloadを送ってもledgerが変化しない
-- [ ] 課金無効時に秘密設定の欠落でAPI全体が停止しない
-- [ ] 課金有効時は必須設定欠落でfail closedする
-
-### Phase 4: App Store Connect
-
-#### IOS-400 Developer accountとApp record
-
-- [ ] Apple Developer Programの契約状態を確認する
-- [ ] Paid Applications Agreementを有効化する
-- [ ] 税務情報を完了する
-- [ ] 入金口座を完了する
-- [ ] Bundle ID `com.lyra.mobile`を登録する
-- [ ] In-App Purchase capabilityを有効化する
-- [ ] Associated Domains capabilityを有効化する
-- [ ] Push Notifications capabilityを有効化するか、初回releaseでは明示的に除外する
-- [ ] App Store Connectでアプリrecordを作る
-- [ ] numeric Apple App IDを記録する
-
-#### IOS-410 Subscription
-
-- [ ] StandardとPremiumを同じsubscription groupへ作る
-- [ ] Standard product IDを確定する
-- [ ] Premium product IDを確定する
-- [ ] 各商品の日本語表示名を登録する
-- [ ] 各商品の英語表示名を登録する
-- [ ] 月額期間を設定する
-- [ ] 日本円価格を設定する
-- [ ] 販売地域を設定する
-- [ ] group内のlevel/orderを設定する
-- [ ] upgrade/downgrade時の挙動を確認する
-- [ ] review screenshotと説明を登録する
-
-#### IOS-420 Consumable credit packs
-
-- [ ] 10クレジットの商品をConsumableとして作る
-- [ ] 50クレジットの商品をConsumableとして作る
-- [ ] 150クレジットの商品をConsumableとして作る
-- [ ] 各product IDを確定する
-- [ ] 各商品の日本語・英語名を登録する
-- [ ] 各商品の価格と販売地域を設定する
-- [ ] 付与クレジット数とBackend catalogの一致を確認する
-
-#### IOS-430 Server Notificationsと検証
-
-- [ ] Sandbox Server Notifications V2 URLを登録する
-  - `POST https://app.lyra-editor.com/api/webhooks/mobile-purchases/apple`を本番へ使う場合は、本番でSandboxを許可しない設計との整合を確認する
-- [ ] Production Server Notifications V2 URLを登録する
-- [ ] Apple test notificationを送信する
-- [ ] Backendがtest notificationへ成功応答することを確認する
-- [ ] Apple root certificatesを公式配布元から取得する
-- [ ] root certificatesを要求形式へ変換する
-- [ ] `APPLE_STORE_ROOT_CERTIFICATES_BASE64_JSON`をsecretへ登録する
-- [ ] `APPLE_STORE_APP_APPLE_ID`をsecretへ登録する
-- [ ] `APPLE_STORE_BUNDLE_ID=com.lyra.mobile`をsecretへ登録する
-- [ ] Sandbox用とproduction用の受理ポリシーを分離する
-
-#### IOS-440 Universal Links / AASA
-
-- [ ] Apple Team IDを確定する
-- [ ] `APPLE_DEVELOPER_TEAM_ID`をWeb build環境へ設定する
-- [ ] AASAをTeam ID + `com.lyra.mobile`で生成する
-- [ ] AASAがJSONとして配信される
-- [ ] AASAのContent-TypeがJSON互換である
-- [ ] AASAがredirectせずHTTP 200を返す
-- [ ] callback/logout/invitation以外のpathを許可しない
-- [ ] iPhone実機でcold start linkを確認する
-- [ ] iPhone実機でwarm start linkを確認する
-- [ ] Cognito callback/logoutを実機確認する
-
-#### IOS-450 Signing / APNs
-
-- [ ] iOS distribution certificateを用意する
-- [ ] App Store provisioning profileを用意する
-- [ ] EASへiOS credentialsを登録する
-- [ ] signed device buildを成功させる
-- [ ] Pushを提供する場合はAPNs Auth Keyを作る
-- [ ] APNs Team ID / Key ID / `.p8`をserver secretへ登録する
-- [ ] production push entitlementをbinaryから確認する
-- [ ] APNs実配送とtap routingを実機確認する
-
-### Phase 5: Google Play Console
-
-#### AND-500 Developer / app / merchant
-
-- [ ] Play Console developer accountの本人確認を完了する
-- [ ] `com.lyra.mobile`でアプリを作る
-- [ ] Google payments profileを確認する
-- [ ] monetization用merchant設定を完了する
-- [ ] app signing keyとupload keyを確認する
-- [ ] EASの署名鍵とPlay Consoleのupload keyが一致することを確認する
-- [ ] internal testing trackを作る
-- [ ] tester listを作る
-- [ ] license testerを登録する
-
-#### AND-510 Subscription
-
-- [ ] Standard subscriptionを作る
-- [ ] Premium subscriptionを作る
-- [ ] 各product IDを確定する
-- [ ] 月額auto-renewing base planを作る
-- [ ] 日本円価格を設定する
-- [ ] 販売地域を設定する
-- [ ] grace periodを決める
-- [ ] account holdを決める
-- [ ] pause / resubscribeの有無を決める
-- [ ] Standard/Premium変更時のreplacement modeを確認する
-- [ ] 日本語・英語の商品説明を登録する
-
-#### AND-520 One-time consumable products
-
-- [ ] 10クレジット商品を作る
-- [ ] 50クレジット商品を作る
-- [ ] 150クレジット商品を作る
-- [ ] 各product IDを確定する
-- [ ] consumableとして再購入できることを確認する
-- [ ] 各商品の価格と地域を設定する
-- [ ] 付与クレジット数とBackend catalogの一致を確認する
-
-#### AND-530 Play Developer API / RTDN
-
-- [ ] Google Play Developer APIを有効化する
-- [ ] 専用service accountを作る
-- [ ] service accountへ必要最小限のPlay Console権限を付ける
-- [ ] service account JSONをbase64化してsecretへ登録する
-- [ ] RTDN用Pub/Sub topicを作る
-- [ ] Google Playへtopicを設定する
-- [ ] push subscriptionを作る
-- [ ] push endpointを設定する
-  - `POST https://app.lyra-editor.com/api/webhooks/mobile-purchases/google`
-- [ ] Pub/Sub push用OIDC service accountを作る
-- [ ] OIDC audienceをendpoint URLと完全一致させる
-- [ ] Backendでaudience、email、issuer、署名を検証する
-- [ ] Play test notificationを送る
-- [ ] RTDN受信後にDeveloper APIで最新状態を取得できることを確認する
-- [ ] raw RTDN dataとpurchase tokenをログへ出さないことを確認する
-
-#### AND-540 Android App Links / Firebase
-
-- [ ] production AABの署名fingerprintをreadbackする
-- [ ] assetlinks.jsonのpackage/fingerprintと照合する
-- [ ] Google Digital Asset Links APIで関連を確認する
-- [ ] callback/logout/invitationを実機確認する
-- [ ] Firebase client fileがproduction EAS file secretから入ることを確認する
-- [ ] 不要なCAMERA / RECORD_AUDIO / SYSTEM_ALERT_WINDOW権限がないことをbinaryで確認する
-
-### Phase 6: Store billingのserver設定
-
-#### BILL-600 Product mapping
-
-- [ ] Appleの2 subscription product IDをserver catalogへ設定する
-- [ ] Appleの3 consumable product IDをserver catalogへ設定する
-- [ ] Googleの2 subscription product IDをserver catalogへ設定する
-- [ ] Googleの3 one-time product IDをserver catalogへ設定する
-- [x] Backend起動時に同一store内のproduct ID重複を拒否する
-- [ ] staging / productionへ登録した実product IDに重複がないことをreadbackする
-- [ ] Mobile bundleへ価格をhard-codeしない
-- [ ] Mobileはstoreから取得したdisplay priceだけを表示する
-- [x] 未知product IDをBackendが拒否する
-- [x] Mobile account bindingとstore account bindingを照合する
-  - 証跡: PR #132のserver-owned 10商品catalog、duplicate / unknown product拒否、Apple UUID / Google HMAC account bindingテスト
-
-#### BILL-610 staging設定
-
-- [ ] stagingだけでApple Sandboxを許可する
-- [ ] stagingだけでGoogle test purchaseを許可する
-- [ ] staging identifier hash secretを32文字以上で生成する
-- [ ] Apple/Google検証credentialをstaging secretへ登録する
-- [ ] staging APIの起動時config validationを通す
-- [ ] staging catalog endpointが10商品の正しいIDを返す
-- [ ] store未反映商品をMobileでdisabled表示する
-  - [x] Backendに必須key、secret長、URL/email、credential形状、重複、sandbox/test環境の起動時validationを実装
-    - 境界: staging環境への実値登録と起動確認は未実施
-
-#### BILL-620 production設定
-
-- [ ] production identifier hash secretをstagingと分離する
-- [ ] Apple production product IDを本番secretへ登録する
-- [ ] Google production product IDを本番secretへ登録する
-- [ ] Apple Sandbox許可をfalseにする
-- [ ] Google test purchase許可をfalseにする
-- [ ] Google service accountを本番secretへ登録する
-- [ ] Google Pub/Sub audienceとservice account emailを本番secretへ登録する
-- [ ] Apple App ID、bundle ID、root certificatesを本番secretへ登録する
-- [ ] secretの値を出さず、必須keyの存在だけをreadbackする
-- [ ] 課金有効化前にAPI taskをdry-runする
-- [x] 最終承認までは`MOBILE_STORE_BILLING_ENABLED=false`を維持する
-  - 証跡: PR #132のenv既定値、無効時route非mount、production sandbox / test拒否テスト
-
-#### BILL-630 ledger / entitlement
-
-- [x] active subscriptionでmonthly creditsを一度だけ付与する
-- [x] renewalで次期間分を一度だけ付与する
-- [x] duplicate client verifyで二重付与しない
-- [x] duplicate Apple notificationで二重付与しない
-- [x] duplicate Google RTDNで二重付与しない
-- [x] pendingではクレジットを付与しない
-- [x] cancelledで新規付与しない
-- [x] expiredでentitlementを失効する
-- [x] refunded credit packを一度だけ取り消す
-- [x] 残高不足時のreversal方針を確認する
-- [x] transaction ID、purchase tokenをDBへ平文保存しない
-- [x] store purchaseとcredit ledgerを同一transactionで更新する
-- [x] Stripe consumer subscriptionとstore subscriptionの重複契約を防ぐ
-- [x] organization残高へpersonal store purchaseを付与しない
-  - 証跡: PR #132。transaction単位のevent/ledger key、user / purchase lock、重複通知、更新、pending / cancelled / expired、refund、account横取り、Stripe重複をテスト
-  - reversal方針: 対象購入に紐づく未消費のpersonal bucketだけを0未満にせず取り消す。消費済み分は負債化せず、organization残高や無関係なcreditへ波及させない
-
-### Phase 7: 課金実機E2E
-
-#### BILL-E2E-700 共通準備
-
-- [ ] 端末へrelease-like standalone buildを入れる
-- [ ] iOS Sandbox testerを秘密管理する
-- [ ] Android license testerを秘密管理する
-- [ ] tester accountをshell history、YAML、証跡へ書かない
-- [ ] E2E run IDを発行する
-- [ ] provider、webhook、ledgerの相関証跡を収集する
-- [ ] 証跡JSONへHMAC署名する
-- [ ] purchase proofをSHA-256 digestだけで記録する
-
-#### BILL-E2E-710 iPhone / StoreKit Sandbox
-
-- [ ] Standard新規購入
-- [ ] Premium新規購入
-- [ ] StandardからPremiumへの変更
-- [ ] ユーザーキャンセル
-- [ ] pending / interrupted purchase
-- [ ] 購入復元
-- [ ] subscription renewal
-- [ ] subscription cancellation
-- [ ] subscription expiration
-- [ ] credit pack購入
-- [ ] 同じcredit packの再購入
-- [ ] refund
-- [ ] client verifyとnotificationの順序反転
-- [ ] app強制終了後の購入復旧
-- [ ] 別Lyraアカウントへのpurchase横取り拒否
-- [ ] finish失敗後の安全な再試行
-
-#### BILL-E2E-720 Android / Play license test
-
-- [ ] Standard新規購入
-- [ ] Premium新規購入
-- [ ] StandardからPremiumへの変更
-- [ ] ユーザーキャンセル
-- [ ] pending purchase
-- [ ] decline / grace period
-- [ ] account hold
-- [ ] 購入復元
-- [ ] subscription renewal
-- [ ] subscription cancellation
-- [ ] subscription expiration
-- [ ] credit pack購入
-- [ ] 同じcredit packの再購入
-- [ ] refund / revoke
-- [ ] client verifyとRTDNの順序反転
-- [ ] app強制終了後の購入復旧
-- [ ] 別Lyraアカウントへのpurchase横取り拒否
-- [ ] acknowledge/consume失敗後の安全な再試行
-
-### Phase 8: Mobile全体の実機受入
-
-各行についてAndroidとiPhoneの両方を完了する。
-
-| E2E | シナリオ | Android | iPhone |
-|---|---|---|---|
-| E2E-01 | signup / confirm / login / logout | [ ] | [ ] |
-| E2E-02 | token refresh / background | [ ] | [ ] |
-| E2E-03 | personal full creation flow | [ ] | [ ] |
-| E2E-04 | entity import / generate / confirm | [ ] | [ ] |
-| E2E-05 | skeleton / story apply / recovery | [ ] | [ ] |
-| E2E-06 | page edit / generate / confirm / export | [ ] | [ ] |
-| E2E-07 | insufficient credit / action | [ ] | [ ] |
-| E2E-08 | organization invitation / new account | [ ] | [ ] |
-| E2E-09 | organization role permissions | [ ] | [ ] |
-| E2E-10 | organization credit / billing handoff | [ ] | [ ] |
-| E2E-11 | offline / retry / no draft loss | [ ] | [ ] |
-| E2E-12 | Japanese / English switch | [ ] | [ ] |
-| E2E-13 | deep link cold / warm start | [ ] | [ ] |
-| E2E-14 | account deletion | [ ] | [ ] |
-| E2E-15 | purchase / pending / restore / refund | [ ] | [ ] |
-| E2E-16 | save-and-generate atomicity / 409 | [ ] | [ ] |
-| E2E-17 | active job recovery after restart | [ ] | [ ] |
-| E2E-18 | external dialogue Web handoff | [ ] | [ ] |
-
-#### QA-800 連続実行
-
-- [ ] Androidで主要フローを連続3回完走する
-- [ ] iPhoneで主要フローを連続3回完走する
-- [ ] 日本語で全画面の文字化けがない
-- [ ] 英語で未翻訳キーが表示されない
-- [ ] 200% text sizeで操作不能にならない
-- [ ] VoiceOverで主要操作を完走できる
-- [ ] TalkBackで主要操作を完走できる
-- [ ] safe areaに操作ボタンが隠れない
-- [ ] 4G相当でthumbnail、full image、uploadを計測する
-- [ ] 長時間利用時のmemory pressureを計測する
-- [ ] app background/foregroundでdraftとjob追跡を失わない
-- [ ] account/workspace切替で画像cacheとquery cacheが混ざらない
-
-### Phase 9: ストア提出資料
-
-#### STORE-900 共通
-
-- [ ] アプリアイコンを最終承認する
-- [ ] splashを最終承認する
-- [ ] 日本語アプリ名・説明を最終承認する
-- [ ] 英語アプリ名・説明を最終承認する
-- [ ] support URLがHTTP 200を返す
-- [ ] privacy URLがHTTP 200を返す
-- [ ] terms URLがHTTP 200を返す
-- [ ] account deletion URLが削除方法を説明する
-- [ ] AI生成物の確認責任を説明する
-- [ ] personal IAPとorganization Web billingの違いをreview notesへ書く
-- [ ] review用アカウントをstoreの保護フィールドだけへ登録する
-- [ ] review用fixtureを削除されないように管理する
-- [ ] スクリーンショットに個人情報、token、support IDを含めない
-
-#### STORE-910 App Store
-
-- [ ] 必要なiPhoneサイズのスクリーンショットを作る
-- [ ] iPad対応を維持するならiPadスクリーンショットを作る
-- [ ] App Privacy questionnaireを回答する
-- [ ] age ratingを回答する
-- [ ] export complianceを回答する
-- [ ] account deletionの場所をreview notesへ書く
-- [ ] subscriptionとcredit packの確認手順を書く
-- [ ] IAP商品をアプリversionと一緒に審査へ出す
-- [ ] reviewerが生成機能を確認できるクレジットを用意する
-
-#### STORE-920 Google Play
-
-- [ ] phone screenshotsを作る
-- [ ] feature graphicを作る
-- [ ] short / full descriptionを登録する
-- [ ] Data safety formを回答する
-- [ ] account deletion URLを登録する
-- [ ] content rating questionnaireを回答する
-- [ ] ads declarationを回答する
-- [ ] target audienceを回答する
-- [ ] financial features declarationの対象外を確認する
-- [ ] app accessへreview accountを登録する
-- [ ] Play billingを使うことをlistingとアプリ内表示で一致させる
-
-### Phase 10: production buildと段階公開
-
-#### BUILD-1000 共通
-
-- [ ] 全分割PRをmainへ統合する
-- [ ] exact release commitを記録する
-- [ ] app versionを確定する
-- [ ] Android versionCodeを確定する
-- [ ] iOS buildNumberを確定する
-- [ ] production EAS環境変数をreadbackする
-- [ ] production buildへlocalhost / HTTP / test identifierがない
-- [ ] Sentry DSNをproduction EASへ設定する
-- [ ] Sentry auth token / org / projectをsensitive secretへ設定する
-- [ ] source map uploadを確認する
-- [ ] sanitized test eventを確認する
-
-#### BUILD-1010 Android
-
-- [ ] `eas build --platform android --profile production`を実行する
-- [ ] AABのpackage nameを確認する
-- [ ] AABの署名を確認する
-- [ ] merged manifestを確認する
-- [ ] App Linksを確認する
-- [ ] Google Play Billing permission/libraryを確認する
-- [ ] internal trackへsubmitする
-- [ ] internal testerでinstall/updateを確認する
-- [ ] Play pre-launch reportを確認する
-- [ ] crash / ANR / permission warningを解消する
-
-#### BUILD-1020 iPhone
-
-- [ ] `eas build --platform ios --profile production`を実行する
-- [ ] IPAのbundle IDを確認する
-- [ ] signing identityとprovisioningを確認する
-- [ ] Associated Domains entitlementを確認する
-- [ ] IAP capabilityを確認する
-- [ ] Pushを提供する場合はAPNs entitlementを確認する
-- [ ] TestFlightへsubmitする
-- [ ] internal testerでinstall/updateを確認する
-- [ ] TestFlight buildでlogin、IAP、restore、deep linkを確認する
-
-#### RELEASE-1030 課金有効化
-
-- [ ] production product catalogをreadbackする
-- [ ] Apple production notificationの到達確認をする
-- [ ] Google production RTDNの到達確認をする
-- [ ] production verifier credentialの疎通を確認する
-- [ ] `MOBILE_STORE_BILLING_ENABLED=true`を設定する
-- [ ] API taskを新revisionへ更新する
-- [ ] catalog endpointが各storeの5商品を返す
-- [ ] 既存Web Stripe課金が正常である
-- [ ] organization billingがWebへ限定されている
-- [ ] 課金有効化時刻とrollback task definitionを記録する
-
-#### RELEASE-1040 段階公開
-
-- [ ] App Storeをmanual releaseにする
-- [ ] Google Playをinternalからclosed testingへ進める
-- [ ] closed testingでproduction billing smokeを行う
-- [ ] 審査提出直前に全URLとreview accountを再確認する
-- [ ] App Storeへ審査提出する
-- [ ] Google Playへ審査提出する
-- [ ] rejection質問への回答担当者を決める
-- [ ] 承認後の公開日時を決める
-- [ ] 段階公開率を決める
-- [ ] incident時の公開停止手順を確認する
-
-### Phase 11: 公開後監視
-
-#### OPS-1100 課金監視
-
-- [ ] Apple notificationの成功率を監視する
-- [ ] Google RTDNの成功率を監視する
-- [ ] provider verification失敗率を監視する
-- [ ] duplicate purchase event件数を監視する
-- [ ] pending滞留件数を監視する
-- [ ] purchase reversal失敗件数を監視する
-- [ ] store purchaseとcredit ledgerの不整合を日次確認する
-- [ ] refund/revoke時の残高不足を監視する
-- [ ] support用の購入調査手順を用意する
-- [ ] raw proofを要求せずstore order情報で調査する手順を用意する
-
-#### OPS-1110 Mobile品質
-
-- [ ] crash-free usersを監視する
-- [ ] ANRを監視する
-- [ ] auth callback失敗率を監視する
-- [ ] upload/export失敗率を監視する
-- [ ] generation job失敗率とrefundを監視する
-- [ ] push token登録失敗率を監視する
-- [ ] store reviewとsupport問い合わせを日次確認する
-- [ ] 緊急OTAで変更できる範囲とnative rebuild必須範囲を明確にする
-
-## 4. リリース完了条件
-
-以下をすべて満たすまで、Mobileを「本番公開完了」としない。
-
-- [ ] PR #67の内容がレビュー可能な単位でmainへ統合済み
-- [ ] 本番migration 027〜036とinvariantが成功
-- [ ] API / Worker rolloutがhealthy
-- [ ] Apple/Google product mappingが一致
-- [ ] StoreKit SandboxとPlay license testの課金ライフサイクルがgreen
-- [ ] E2E-01〜18がAndroid/iPhoneの両実機でgreen
-- [ ] signed production AAB/IPAがexact main commitから作成済み
-- [ ] App Store / Play Consoleのprivacy、deletion、rating、billing申告が完了
-- [ ] TestFlight / Play internalでrelease buildを確認済み
-- [ ] 課金、auth、queue、ledger、crashの監視とrollback手順が準備済み
-- [ ] ストア審査承認後、段階公開と初動監視を完了
-
-## 5. PR #67の内容
-
-### 5.1 PR概要
-
-| 項目 | 値 |
-|---|---|
-| タイトル | `feat(mobile): production-ready Lyra mobile workflow` |
-| 状態 | Open / Draft / Conflicting |
-| Base | `main` |
-| Head | `feature/mobile-completion` |
-| Head commit | `4ca174fcef20ef9a7bc638a5d4b444214c1bf06c` |
-| コミット数 | 43 |
-| 変更ファイル | 644 |
-| 追加 | 99,879行 |
-| 削除 | 2,864行 |
-| mainとの差 | 43 ahead / 176 behind（2026-08-01 readback） |
-
-PR説明欄には当初「既存Web版とバックエンドには変更を加えていません」と記載されていた。しかし実差分にはBackend、Web、Worker、migration、CI、Dockerfileが含まれるため、2026-07-30に監査警告、実差分、分割統合状況を追記して訂正した。
-
-### 5.2 実差分の規模
-
-| 領域 | ファイル数 | 追加 | 削除 | 主な内容 |
-|---|---:|---:|---:|---|
-| `apps/mobile` | 304 | 58,873 | 0 | Expoアプリ、UI、API client、IAP、E2E、store metadata |
-| `tests` | 123 | 11,877 | 344 | Backend、migration、Mobile関連テスト |
-| `docs` | 42 | 9,128 | 46 | Mobile仕様、監査台帳、runbook |
-| `src/services` | 34 | 3,180 | 138 | 課金、削除、upload、export、job、push、page |
-| `src/routes` | 21 | 1,602 | 181 | Mobile purchase、webhook、account、upload、export、push |
-| `src/repositories` | 19 | 4,006 | 152 | purchase ledger、削除、job、upload、export、push |
-| `src/infrastructure` | 17 | 2,623 | 0 | Apple、Google、APNs、FCM、S3、暗号 |
-| `src/domain` | 17 | 759 | 4 | store purchase、pagination、push、export型 |
-| `migrations` | 10 | 531 | 0 | migration 027〜036 |
-| `apps/web` | 10 | 368 | 16 | Mobile association、legal/static対応など |
-| `packages/api-contract` | 3 | 1,952 | 0 | Mobile API schema/type/payload |
-| `worker` | 2 | 62 | 3 | cancellation、export、push連携 |
-| `.github` | 1 | 75 | 3 | Mobile CI gate |
-
-### 5.3 Mobileアプリ本体
-
-PR #67はExpo 57 / React Native 0.86ベースの新しいMobileアプリを追加する。
-
-主な画面:
-
-- Story
-- Characters
-- Pages
-- Account
-- Guide
-- Invitation
-- organization management modal
-
-主な共通機能:
-
-- Cognito authorization code + PKCE
-- SecureStoreによるtokenと選択状態の保存
-- personal / organization workspace切替
-- 日本語 / 英語
-- offline表示とretry
-- dirty stateの保存 / 破棄 / cancel
-- background / foreground復旧
-- error boundaryとuser-facing error mapping
-- deep link / universal link / app link
-- Sentry連携
-
-### 5.4 Story / Characters / Pages
-
-Story:
-
-- 作品、章、話、シーンの選択・作成・更新・削除
-- 階層sheetとコンテキストメニュー
-- Story AI
-- ページ骨格生成とストーリー自動入力
-- sceneはoptionalとして扱う
-- 長時間job、cancel、retry、foreground復旧
-
-Characters:
-
-- キャラ作成・更新・削除
-- 参照画像のimport、preview、confirm
-- direct upload token方式
-- 生成blockerと解決action
-- active candidate管理
-- 服装と状態管理
-
-Pages:
-
-- ページ、コマ、frame、セリフ編集
-- layout templateとframe preview
-- page generation readiness
-- transactional save-and-generate
-- page image confirm / reopen / regenerate
-- thumbnail/full image分離
-- PDF/ZIP export job
-- external dialogueのWeb handoff
-- ページ設計UIのPages上部への移動
-
-### 5.5 Account / organization
-
-- personal balanceとplan表示
-- organization balanceとbillingの分離
-- owner/admin/billing/editor/viewer capability
-- organization作成・編集
-- member、invitation、role、remove
-- usage、audit、invoice、CSV
-- billing checkout / portalのWeb handoff
-- webhook反映後だけ成功とする確認polling
-- account deletion preview / execute
-- active store subscriptionの外部解約案内
-
-### 5.6 Mobile store billing
-
-Mobile:
-
-- `expo-iap`
-- store product取得
-- Apple `appAccountToken`
-- Google `obfuscatedAccountId`
-- purchase listener / error listener
-- server verify後の`finishTransaction`
-- consumable / subscriptionの区別
-- purchase restore
-- pending / cancelled / retryable error表示
-
-Backend:
-
-- Apple signed transaction検証
-- App Store Server Notifications V2検証
-- Google Play Developer API検証
-- Google Pub/Sub OIDC検証
-- Google RTDN処理
-- server-owned product allowlist
-- store purchase repository
-- credit ledgerとのtransaction
-- duplicate eventの冪等化
-- pending / active / cancelled / expired / refunded / revoked
-- Stripe subscriptionとの重複防止
-
-### 5.7 Backend追加機能
-
-- account deletion orchestration
-- entity reference direct upload
-- cursor pagination
-- page thumbnail
-- async episode export
-- generation job list / hide / cancellation
-- processing中jobの協調cancel
-- mobile push token registration
-- APNs / FCM delivery
-- push outbox
-- shared Mobile API response contract
-- page save-and-generate atomicity
-- page generation readiness
-
-### 5.8 migration 027〜036
-
-| Migration | 内容 |
-|---|---|
-| 027 | account deletion requests |
-| 028 | page story metadataの既存`layout_config`契約を維持するcompatibility checkpoint |
-| 029 | mobile store purchase ledger |
-| 030 | generation job management |
-| 031 | entity reference upload tokens |
-| 032 | episode export jobs |
-| 033 | mobile push token registry |
-| 034 | mobile push notification outbox |
-| 035 | processing job cancellation |
-| 036 | cancelled job push guard |
-
-### 5.9 CI / release / ops
-
-- Mobile `npm ci`
-- Expo dependency check / doctor
-- Mobile typecheck / lint / Vitest
-- mojibake guard
-- Android/iOS Expo export
-- Mobile API inventory
-- Backend route inventory
-- Web/Mobile parity inventory
-- EAS development / preview / production profiles
-- Android Firebase file secret
-- App Store metadata
-- Google Play listing / Data Safety
-- Maestro E2E-01〜18
-- production migration imageとrunbook
-
-### 5.10 PR #67の主なリスク
-
-1. 1つのPRへMobile、Backend、DB、Web、Worker、CI、Opsが同居している。
-2. mainと競合し、graph上45コミット分の本番変更を取り込めていない。
-3. ~~PR説明欄が実差分と一致しない。~~ 2026-07-30に監査警告と実差分を追記済み。
-4. migration 10本を一度に導入するため、レビューとrollback判断が難しい。
-5. 既存Web/API互換fallbackが多く、Backend更新後も不要な分岐が残り得る。
-6. 最新headそのものにはPR check rollupがない。
-7. production AAB/IPAとストア課金実機証跡がない。
-8. previewがproductionを参照しているため、Sandbox E2Eの安全な実行先がない。
-9. Apple Team ID、AASA、iOS署名、APNsが未完了。
-10. 課金Backendをmainへ出す前にstore商品を公開すると、購入後の検証不能が起こり得る。
-
-## 6. 公式リファレンス
-
-- [Apple App Review Guidelines](https://developer.apple.com/app-store/review/guidelines/)
-- [Apple: Overview of testing in sandbox](https://developer.apple.com/help/app-store-connect/test-in-app-purchases/overview-of-testing-in-sandbox)
-- [Apple: Enabling App Store Server Notifications](https://developer.apple.com/documentation/appstoreservernotifications/enabling-app-store-server-notifications)
-- [Apple: Offering account deletion in your app](https://developer.apple.com/support/offering-account-deletion-in-your-app/)
-- [Google Play Payments policy](https://support.google.com/googleplay/android-developer/answer/9858738)
-- [Google Play Billing testing](https://developer.android.com/google/play/billing/test)
-- [Google Play RTDN reference](https://developer.android.com/google/play/billing/rtdn-reference)
-- [Google Play account deletion requirements](https://support.google.com/googleplay/android-developer/answer/13327111)
+対象: Android / iPhone の初回ストア公開
+
+進捗: 73件中11件完了 / 62件未完了
+
+未完了の担当内訳: AI単独16件 / AI準備＋外部確認29件 / 人間・外部必須17件
+
+## 0. このリストの範囲
+
+初回リリースは、現在Mobileに表示されている4タブ（物語、キャラ、ページ、アカウント）と、追加が必要な次の2つのUIだけを対象とする。
+
+- 個人ユーザー向けのApp Store / Google Play購入UI
+- アカウント削除UI
+
+それ以外の新規UI・Backend機能は初回リリースへ追加しない。既にmainに存在するBackend、migration、DB fieldは、Web・保存済みデータ・内部整合性が依存する可能性があるため削除しない。未使用機能は既定OFFまたはMobile未接続のまま維持する。
+
+旧487件の詳細監査は[履歴文書](./mobile-release-task-list-full-audit-2026-08-01.md)へ移した。履歴文書のcheckboxは現在の残件数へ算入しない。
+
+### 担当区分
+
+- `[AI]`: リポジトリ内の実装・テスト・文書だけで完了できる。
+- `[共同]`: AIが準備・検証できるが、外部Console、秘密情報、署名、実機などが必要。
+- `[人間]`: 商品・法務・公開判断、本人確認、金融契約、実機操作が完了条件。
+
+## 1. 範囲固定と不要機能の整理
+
+- [x] `[AI]` 現行Mobileの可視UIと実際に呼ぶAPIを4タブ単位で棚卸しする。
+- [x] `[AI]` 新規UIを個人向け購入とアカウント削除の2つだけに固定する。
+- [x] `[AI]` Balloon編集UIとFrame編集UIが現行Mobileに存在しないことを確認する。
+- [x] `[AI]` ページ設定から`balloon_only` / `mixed`の選択UIを除去する。
+- [x] `[AI]` 保存済み`dialogue_mode`、API schema、DB fieldを維持し、別設定の保存時に未変更値を送らないことをテストする。
+- [x] `[AI]` 旧タスクリストを履歴化し、active checklistから将来機能を外す。
+- [ ] `[人間]` Standard / Premium subscriptionと10 / 50 / 150 credit商品の価格・付与量・販売国を承認する。
+- [ ] `[人間]` iOS / Androidの公開順、公開日、段階公開率、初動監視責任者を決める。
+
+### 初回リリースから外すもの
+
+- Work削除・並べ替え、Scene削除、Character削除。
+- Balloon / Frame編集、ページlayout template、scene単位autofill、Page confirm / reopen。
+- entity referenceのpresigned direct-upload client、`costume_ref_id`選択、reference削除。
+- PDF / ZIP export、外部dialogue handoff、composition gallery。
+- job cancel / hide、Push通知、APNs / FCM、push outbox。
+- organization作成・招待・権限管理・organization billing UI。既存workspace切替だけは維持する。
+- dormant機能専用の本番設定、実機E2E、監視、新規Backend開発。
+
+## 2. Mobile UI実装
+
+- [ ] `[AI]` 個人workspaceのアカウント画面へ購入セクションを追加する失敗テストを書く。
+- [ ] `[AI]` store catalog取得中・取得失敗・商品なしを安全に表示する。
+- [ ] `[AI]` store提供のdisplay priceだけを表示し、価格をコードへ固定しない。
+- [ ] `[AI]` store未反映商品をdisabled表示し、購入開始を拒否する。
+- [ ] `[AI]` organization workspaceでは個人購入UIを表示しない。
+- [ ] `[AI]` iOS native purchase adapterを追加し、購入proofを画面やログへ出さない。
+- [ ] `[AI]` Android native purchase adapterを追加し、purchase tokenを画面やログへ出さない。
+- [ ] `[AI]` server verification成功後だけ完了表示と残高更新を行う。
+- [ ] `[AI]` cancel、pending、通信失敗、検証失敗、再試行を区別して表示する。
+- [ ] `[AI]` 購入復元を冪等に実行し、二重付与しないUIフローを作る。
+- [ ] `[AI]` アカウント画面へアカウント削除入口と失敗テストを追加する。
+- [ ] `[AI]` 削除preview、blocker、影響範囲を表示する。
+- [ ] `[AI]` 明示acknowledgement後だけ削除を開始できるようにする。
+- [ ] `[AI]` 削除処理中・失敗・再試行・完了を表示し、完了後にsessionとlocal cacheを消す。
+- [ ] `[AI]` 購入・復元・削除のcomponent / domain / API contract testを通す。
+- [x] `[AI]` Mobile Vitest、typecheck、lint、contract drift checkを通す。
+- [x] `[AI]` Android / iOSのExpo exportを両方通す。
+
+## 3. 既存Backendの出荷安全確認（新規機能開発なし）
+
+- [x] `[AI]` 今回のUI整理差分にRoute / Service / Repository / Domain / migration変更がないことを確認する。
+- [x] `[AI]` 既存のmobile purchase APIがflag OFF時にmountされず、ON時も設定不足でfail closedになるテストを通す。
+- [x] `[AI]` 既存のaccount deletion APIがflag OFF時に無効で、ownership・blocker・acknowledgementを検証するテストを通す。
+- [ ] `[共同]` stagingで連番migrationとDB invariantを実行し、既存Web・Worker・Mobile用データを壊さないことを確認する。
+- [ ] `[共同]` Apple / Googleの実product ID allowlistとverifier credentialをsecret storeへ設定し、値を出さずにreadbackする。
+- [ ] `[共同]` account deletion workerのIAM、queue、secret、recoveryをstagingで確認する。
+- [ ] `[共同]` provider event、verification、ledger、refund / reversalを相関でき、raw proofやsecretがログへ残らないことを確認する。
+
+## 4. Apple外部設定
+
+- [ ] `[人間]` Apple Developer / Paid Applications契約と税務・銀行情報を完了する。
+- [ ] `[人間]` production Bundle IDとApp Store Connect app recordを確定する。
+- [ ] `[人間]` Standard / Premium subscriptionを同一subscription groupへ登録する。
+- [ ] `[人間]` 10 / 50 / 150 credit商品をConsumableとして登録する。
+- [ ] `[共同]` App Store Server Notificationsとserver verifier credentialを設定する。
+- [ ] `[共同]` Associated Domains、AASA、Cognito callback / logout URLを本番値で確認する。
+- [ ] `[共同]` distribution certificate、provisioning profile、EAS production credentialを設定する。
+
+## 5. Google Play外部設定
+
+- [ ] `[人間]` Play Console developer / merchant設定とapp recordを完了する。
+- [ ] `[人間]` production package名、Play App Signing、公開国を確定する。
+- [ ] `[人間]` Standard / Premium subscriptionを登録する。
+- [ ] `[人間]` 10 / 50 / 150 credit商品を再購入可能なone-time productとして登録する。
+- [ ] `[共同]` Google Play Developer API service accountとRTDNを設定する。
+- [ ] `[共同]` App Links、assetlinks、production signing fingerprint、Cognito URLを確認する。
+- [ ] `[共同]` Android signing keyとEAS production credentialを設定する。
+
+## 6. 購入・削除の実機受入
+
+- [ ] `[共同]` iPhone Sandboxで商品名・store価格・購入可否を確認する。
+- [ ] `[共同]` Android license testで商品名・store価格・購入可否を確認する。
+- [ ] `[共同]` 両OSでsubscriptionとconsumable購入がserver verification後だけ反映されることを確認する。
+- [ ] `[共同]` 両OSでcancel、pending、通信断、再試行、復元を確認する。
+- [ ] `[共同]` 同じtransaction / purchase tokenの再送で二重付与されないことを確認する。
+- [ ] `[共同]` notification再送、取消、refund / reversalがledgerと残高へ一度だけ反映されることを確認する。
+- [ ] `[共同]` organization workspaceへ個人購入が付与されないことを確認する。
+- [ ] `[共同]` 両OSでアカウント削除のblocker、acknowledgement、処理中、完了後sign-outを確認する。
+
+## 7. 現在表示されているUIの最小実機スモーク
+
+- [ ] `[共同]` sign-up、login、token refresh、logout、cold / warm callbackを両OSで確認する。
+- [ ] `[共同]` 物語でWork選択、Chapter / Episode作成・改名・移動・削除、Episode本文保存を確認する。
+- [ ] `[共同]` キャラで作成・編集、state編集、端末画像import、reference生成・確認を確認する。
+- [ ] `[共同]` ページでScene / Page設定、story自動入力、Panel追加・削除・並べ替え・編集を確認する。
+- [ ] `[共同]` ページ画像の生成・再生成・表示、dirty保存、失敗retry、background復帰を確認する。
+- [ ] `[共同]` アカウントでprofile、残高、job履歴、既存workspace切替、logoutを確認する。
+- [ ] `[人間]` 日本語 / 英語、safe area、文字拡大、VoiceOver / TalkBackの最終表示を確認する。
+
+## 8. 署名build・ストア提出・公開
+
+- [ ] `[AI]` release候補commitでBackend、DB、Web、Playwright、Mobileのrequired CIを通す。
+- [ ] `[共同]` 本番migration / invariant、API / Worker readiness、billing / deletion flagの初期OFFを確認する。
+- [ ] `[共同]` release候補commitから署名済みAndroid AABをbuildし、package / signing / App Linksを検査する。
+- [ ] `[共同]` release候補commitから署名済みiOS IPAをbuildし、Bundle ID / entitlement / Associated Domainsを検査する。
+- [ ] `[人間]` Play internal trackとTestFlightでinstall / updateを確認する。
+- [ ] `[人間]` privacy policy、terms、support、account deletion説明の公開URLと法務内容を承認する。
+- [ ] `[人間]` App Store privacy、削除、年齢、輸出、IAP review情報を申告する。
+- [ ] `[人間]` Play Data Safety、削除、content rating、listingを申告する。
+- [ ] `[共同]` screenshots、review account、review notes、再現手順をsecretなしで準備する。
+- [ ] `[人間]` App StoreとGoogle Playへ提出し、審査結果へ対応する。
+- [ ] `[人間]` 段階公開を開始し、停止・rollback判断を行う。
+- [ ] `[共同]` 公開後に認証、購入検証、ledger、account deletion、生成job、crashを初動監視する。
+
+## 9. 完了条件
+
+初回リリース完了は、上記active checklistがすべて完了し、購入がserver verification前に付与されず、personal / organizationの境界が守られ、アカウント削除と現行4タブが両OSで動作し、署名済みartifactが両ストアから公開された状態とする。
+
+将来機能はこの文書へ戻さない。実装を決めた時点で別Issue / 設計文書として起票する。

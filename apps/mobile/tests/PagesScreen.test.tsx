@@ -633,7 +633,7 @@ describe('PagesScreen', () => {
     });
     await act(async () => {
       renderer.root.findByProps({
-        accessibilityLabel: 'セリフを吹き出しだけにする',
+        accessibilityLabel: 'ページのセリフを非表示にする',
       }).props.onPress();
       await Promise.resolve();
     });
@@ -651,7 +651,7 @@ describe('PagesScreen', () => {
     });
     expect(api.updatePageSettings).toHaveBeenCalledWith(
       page.id,
-      { dialogue_mode: 'balloon_only' },
+      { page_dialogue_toggle: false },
       null,
     );
     expect(api.autofillEpisodePagesFromStory).toHaveBeenCalledOnce();
@@ -675,7 +675,7 @@ describe('PagesScreen', () => {
     await act(async () => {
       renderer.root.findByProps({ accessibilityLabel: '場所' }).props.onChangeText('生成前に保存する場所');
       renderer.root.findByProps({
-        accessibilityLabel: 'セリフを吹き出しだけにする',
+        accessibilityLabel: 'ページのセリフを非表示にする',
       }).props.onPress();
       renderer.root.findByProps({ accessibilityLabel: '状況' }).props.onChangeText('生成前に保存するコマ');
       await Promise.resolve();
@@ -754,7 +754,7 @@ describe('PagesScreen', () => {
     await selectPanel(renderer);
     await act(async () => {
       renderer.root.findByProps({
-        accessibilityLabel: 'セリフを吹き出しだけにする',
+        accessibilityLabel: 'ページのセリフを非表示にする',
       }).props.onPress();
       renderer.root.findByProps({ accessibilityLabel: '状況' }).props.onChangeText('準備lock中に保存するコマ');
       await Promise.resolve();
@@ -850,7 +850,7 @@ describe('PagesScreen', () => {
     });
     await act(async () => {
       renderer.root.findByProps({
-        accessibilityLabel: 'セリフを吹き出しだけにする',
+        accessibilityLabel: 'ページのセリフを非表示にする',
       }).props.onPress();
       await Promise.resolve();
     });
@@ -866,7 +866,7 @@ describe('PagesScreen', () => {
     expect(resolveDirtyAction).toHaveBeenCalledOnce();
     expect(api.updatePageSettings).toHaveBeenCalledWith(
       page.id,
-      { dialogue_mode: 'balloon_only' },
+      { page_dialogue_toggle: false },
       null,
     );
     expect(api.applyPagePanelStructure).toHaveBeenCalledWith(

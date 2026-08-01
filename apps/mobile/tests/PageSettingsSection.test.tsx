@@ -144,6 +144,38 @@ describe('PageSettingsSection', () => {
     });
   };
 
+  it('既存の吹き出し設定値は受け入れるが選択UIを表示しない', async () => {
+    const legacyPage = { ...buildPage(), dialogue_mode: 'balloon_only' as const };
+    refreshPages.mockResolvedValue([legacyPage]);
+    const { renderer } = await renderSection({
+      pages: [legacyPage],
+    });
+    await selectFirstPage(renderer);
+
+    expect(renderer.root.findAllByProps({
+      accessibilityLabel: 'セリフを吹き出しだけにする',
+    })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({
+      accessibilityLabel: 'セリフを画像と吹き出しに表示する',
+    })).toHaveLength(0);
+    expect(JSON.stringify(renderer.toJSON())).not.toContain('セリフの表示方法');
+
+    await act(async () => {
+      renderer.root.findByProps({ accessibilityLabel: 'このページの目的' })
+        .props.onChangeText('既存設定を保った新しい目的');
+      await Promise.resolve();
+    });
+    await act(async () => {
+      renderer.root.findByProps({ label: 'ページ設定を保存' }).props.onPress();
+      await flushQueries();
+    });
+    expect(api.updatePageSettings).toHaveBeenCalledWith(
+      legacyPage.id,
+      { story_page_purpose: '既存設定を保った新しい目的' },
+      organizationId,
+    );
+  });
+
   it('変更fieldだけをorganization scope付きでsingle-flight保存する', async () => {
     let resolveUpdate: ((page: PageRecord) => void) | undefined;
     api.updatePageSettings.mockReturnValue(new Promise<PageRecord>((resolve) => {
@@ -154,7 +186,7 @@ describe('PageSettingsSection', () => {
 
     await act(async () => {
       renderer.root.findByProps({
-        accessibilityLabel: 'セリフを吹き出しだけにする',
+        accessibilityLabel: 'ページのセリフを非表示にする',
       }).props.onPress();
       await Promise.resolve();
     });
@@ -169,14 +201,14 @@ describe('PageSettingsSection', () => {
     expect(api.updatePageSettings).toHaveBeenCalledTimes(1);
     expect(api.updatePageSettings).toHaveBeenCalledWith(
       buildPage().id,
-      { dialogue_mode: 'balloon_only' },
+      { page_dialogue_toggle: false },
       organizationId,
     );
 
     await act(async () => {
       resolveUpdate?.({
         ...buildPage(),
-        dialogue_mode: 'balloon_only',
+        page_dialogue_toggle: false,
         updated_at: '2026-08-01T00:00:01.000Z',
       });
       await flushQueries();
@@ -288,7 +320,7 @@ describe('PageSettingsSection', () => {
     await selectFirstPage(renderer);
     await act(async () => {
       renderer.root.findByProps({
-        accessibilityLabel: 'セリフを吹き出しだけにする',
+        accessibilityLabel: 'ページのセリフを非表示にする',
       }).props.onPress();
       await Promise.resolve();
     });
@@ -299,8 +331,8 @@ describe('PageSettingsSection', () => {
 
     expect(api.updatePageSettings).not.toHaveBeenCalled();
     expect(renderer.root.findByProps({
-      accessibilityLabel: 'セリフを吹き出しだけにする',
-    }).props.accessibilityState).toMatchObject({ selected: true });
+      accessibilityLabel: 'ページのセリフを表示する',
+    }).props.accessibilityState).toMatchObject({ selected: false });
     expect(JSON.stringify(renderer.toJSON())).toContain('別の処理でページ設定が更新されました');
   });
 
@@ -374,7 +406,7 @@ describe('PageSettingsSection', () => {
     await selectFirstPage(renderer);
 
     expect(renderer.root.findByProps({
-      accessibilityLabel: 'セリフを吹き出しだけにする',
+      accessibilityLabel: 'ページのセリフを非表示にする',
     }).props.accessibilityState).toMatchObject({ disabled: true });
     expect(renderer.root.findByProps({ accessibilityLabel: '画風リファレンス名' }).props.editable)
       .toBe(false);
@@ -396,7 +428,7 @@ describe('PageSettingsSection', () => {
     await selectFirstPage(renderer);
     await act(async () => {
       renderer.root.findByProps({
-        accessibilityLabel: 'セリフを吹き出しだけにする',
+        accessibilityLabel: 'ページのセリフを非表示にする',
       }).props.onPress();
       await Promise.resolve();
     });
@@ -433,7 +465,7 @@ describe('PageSettingsSection', () => {
     await selectFirstPage(renderer);
     await act(async () => {
       renderer.root.findByProps({
-        accessibilityLabel: 'セリフを吹き出しだけにする',
+        accessibilityLabel: 'ページのセリフを非表示にする',
       }).props.onPress();
       await Promise.resolve();
     });
@@ -445,8 +477,8 @@ describe('PageSettingsSection', () => {
     });
     expect(canLeave).toBe(false);
     expect(renderer.root.findByProps({
-      accessibilityLabel: 'セリフを吹き出しだけにする',
-    }).props.accessibilityState).toMatchObject({ selected: true });
+      accessibilityLabel: 'ページのセリフを表示する',
+    }).props.accessibilityState).toMatchObject({ selected: false });
     expect(JSON.stringify(renderer.toJSON())).toContain('ページ設定を保存できませんでした');
   });
 
@@ -482,7 +514,7 @@ describe('PageSettingsSection', () => {
     await selectFirstPage(renderer);
     await act(async () => {
       renderer.root.findByProps({
-        accessibilityLabel: 'セリフを吹き出しだけにする',
+        accessibilityLabel: 'ページのセリフを非表示にする',
       }).props.onPress();
       await Promise.resolve();
     });

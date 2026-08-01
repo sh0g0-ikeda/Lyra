@@ -58,15 +58,6 @@ interface PageListCache {
   next_cursor?: string | null;
 }
 
-const DIALOGUE_MODES: readonly {
-  labelKey: MessageKey;
-  value: PageRecord['dialogue_mode'];
-}[] = [
-  { labelKey: 'pageSettingsModeImageBaked', value: 'image_baked' },
-  { labelKey: 'pageSettingsModeBalloonOnly', value: 'balloon_only' },
-  { labelKey: 'pageSettingsModeMixed', value: 'mixed' },
-];
-
 export const PageSettingsSection = forwardRef<
   PageSettingsSectionHandle,
   PageSettingsSectionProps
@@ -360,36 +351,6 @@ export const PageSettingsSection = forwardRef<
       ) : null}
       {draft === null ? null : (
         <View style={styles.editor}>
-          <Text style={styles.subheading}>{t(language, 'pageSettingsDialogueMode')}</Text>
-          <View style={styles.choices}>
-            {DIALOGUE_MODES.map((mode) => (
-              <Pressable
-                accessibilityLabel={t(language, mode.labelKey)}
-                accessibilityRole="button"
-                accessibilityState={{
-                  disabled: readOnly || busy,
-                  selected: draft.dialogue_mode === mode.value,
-                }}
-                disabled={readOnly || busy}
-                key={mode.value}
-                onPress={() => {
-                  setDraft((current) => current === null
-                    ? current
-                    : { ...current, dialogue_mode: mode.value });
-                  setErrorMessage(null);
-                  setNoticeMessage(null);
-                }}
-                style={({ pressed }) => [
-                  styles.choice,
-                  draft.dialogue_mode === mode.value && styles.choiceSelected,
-                  (readOnly || busy) && styles.disabled,
-                  pressed && !readOnly && !busy && styles.pressed,
-                ]}
-              >
-                <Text style={styles.choiceText}>{t(language, mode.labelKey)}</Text>
-              </Pressable>
-            ))}
-          </View>
           <Pressable
             accessibilityLabel={t(
               language,
@@ -584,9 +545,6 @@ const styles = StyleSheet.create({
   choiceText: {
     color: colors.ink,
     fontSize: 15,
-  },
-  choices: {
-    gap: spacing.xs,
   },
   disabled: {
     opacity: 0.5,
