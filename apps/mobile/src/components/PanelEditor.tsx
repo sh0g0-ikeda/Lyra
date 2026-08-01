@@ -65,6 +65,7 @@ interface PanelEditorProps {
   busy: boolean;
   dirty: boolean;
   draft: PanelDraft;
+  draftBlocked: boolean;
   errorMessage: string | null;
   language: UiLanguage;
   noticeMessage: string | null;
@@ -80,6 +81,7 @@ export function PanelEditor({
   busy,
   dirty,
   draft,
+  draftBlocked,
   errorMessage,
   language,
   noticeMessage,
@@ -89,7 +91,7 @@ export function PanelEditor({
   remoteChanged,
   validationReason,
 }: PanelEditorProps): React.JSX.Element {
-  const unavailable = busy || readOnly;
+  const unavailable = busy || readOnly || draftBlocked;
   const updateDraft = (patch: Partial<PanelDraft>): void => {
     onChange({ ...draft, ...patch });
   };
@@ -306,7 +308,7 @@ export function PanelEditor({
       {errorMessage === null ? null : <Notice message={errorMessage} tone="danger" />}
       {noticeMessage === null ? null : <Notice message={noticeMessage} />}
       <PrimaryButton
-        disabled={readOnly || remoteChanged || !dirty}
+        disabled={readOnly || draftBlocked || remoteChanged || !dirty}
         label={t(language, 'panelSave')}
         loading={busy}
         onPress={onSave}

@@ -1094,6 +1094,7 @@ export const PagesScreen = forwardRef<PagesScreenHandle, PagesScreenProps>(
             ref={panelEditingRef}
             resolveDirtyAction={resolveDirtyAction}
             sessionKey={sessionKey}
+            workId={selectedWorkId!}
           />
         )}
         {selectedEpisode === null ? null : (

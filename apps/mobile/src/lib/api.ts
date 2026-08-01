@@ -15,6 +15,7 @@ import {
   generationJobHistoryResponseSchema,
   generationJobResponseSchema,
   pageSchema,
+  panelAssignmentsResponseSchema,
   panelSchema,
   panelsResponseSchema,
   pageJobAcceptedResponseSchema,
@@ -43,6 +44,7 @@ export type EntityStateRecord = ReturnType<typeof entityStateSchema.parse>;
 export type SceneRecord = ReturnType<typeof sceneSchema.parse>;
 export type PageRecord = ReturnType<typeof pageSchema.parse>;
 export type PanelRecord = ReturnType<typeof panelSchema.parse>;
+export type PanelEntityAssignmentRecord = PanelRecord['entities'][number];
 export type GenerationJobRecord = ReturnType<typeof generationJobResponseSchema.parse>;
 export type PageSkeletonResponse = ReturnType<typeof pageSkeletonResponseSchema.parse>;
 export type PageJobAcceptedResponse = ReturnType<typeof pageJobAcceptedResponseSchema.parse>;
@@ -94,6 +96,11 @@ export interface UpdateEntityStateInput {
   hair_note?: string | null;
   expression_default?: string;
   extra_note?: string | null;
+}
+
+export interface ReplacePanelEntityAssignmentsInput {
+  entities: PanelEntityAssignmentRecord[];
+  expected_entities: PanelEntityAssignmentRecord[];
 }
 
 export interface GeneratePageSkeletonInput {
@@ -744,6 +751,21 @@ export class LyraMobileApiClient {
       throw invalidApiResponse();
     }
     return panel;
+  }
+
+  public replacePanelEntityAssignments(
+    panelId: string,
+    body: ReplacePanelEntityAssignmentsInput,
+    organizationId: string | null = null,
+  ): Promise<{ entities: PanelEntityAssignmentRecord[] }> {
+    return this.requestJson(
+      withOrganizationQuery(
+        `/api/panels/${encodeURIComponent(panelId)}/entities`,
+        organizationId,
+      ),
+      panelAssignmentsResponseSchema,
+      { method: 'PUT', body },
+    );
   }
 
   public generatePageSkeleton(

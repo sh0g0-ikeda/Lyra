@@ -4,6 +4,7 @@ import {
   ApiError,
   LyraMobileApiClient,
   type MobileAuthSessionPort,
+  type PanelEntityAssignmentRecord,
 } from '../src/lib/api';
 
 describe('LyraMobileApiClient', () => {
@@ -1041,6 +1042,54 @@ describe('LyraMobileApiClient', () => {
       status: 422,
     });
     expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
+  it('Panel assignmentをexpected snapshot付きで同じorganization scopeへ保存する', async () => {
+    const organizationId = '55555555-5555-4555-8555-555555555555';
+    const panel = buildPanel();
+    const expected = panel.entities as PanelEntityAssignmentRecord[];
+    const entities = expected.map((assignment) => ({ ...assignment, role: 'secondary' }));
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
+      jsonResponse({ entities }),
+    );
+    const api = new LyraMobileApiClient({
+      apiBaseUrl: 'https://api.example.com',
+      auth: new FakeAuthSession(),
+      fetcher,
+    });
+
+    await expect(api.replacePanelEntityAssignments(
+      panel.id,
+      { entities, expected_entities: expected },
+      organizationId,
+    )).resolves.toEqual({ entities });
+
+    expect(fetcher).toHaveBeenCalledWith(
+      `https://api.example.com/api/panels/${panel.id}/entities?organization_id=${organizationId}`,
+      expect.objectContaining({
+        body: JSON.stringify({ entities, expected_entities: expected }),
+        method: 'PUT',
+      }),
+    );
+  });
+
+  it('Panel assignmentの契約外success responseを採用しない', async () => {
+    const panel = buildPanel();
+    const expected = panel.entities as PanelEntityAssignmentRecord[];
+    const invalid = expected.map(({ role: _role, ...assignment }) => assignment);
+    const api = new LyraMobileApiClient({
+      apiBaseUrl: 'https://api.example.com',
+      auth: new FakeAuthSession(),
+      fetcher: vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({ entities: invalid })),
+    });
+
+    await expect(api.replacePanelEntityAssignments(
+      panel.id,
+      { entities: expected, expected_entities: expected },
+    )).rejects.toMatchObject({
+      code: 'INVALID_API_RESPONSE',
+      status: 502,
+    });
   });
 
   it('Entity reference setを同じorganization scopeで取得する', async () => {

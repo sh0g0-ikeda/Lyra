@@ -244,6 +244,8 @@ describe('PagesScreen', () => {
     createScene: vi.fn(),
     generatePageSkeleton: vi.fn(),
     getChapters: vi.fn(),
+    getEntitiesPage: vi.fn(),
+    getEntityStates: vi.fn(),
     getEpisodes: vi.fn(),
     getJob: vi.fn(),
     getJobs: vi.fn(),
@@ -251,6 +253,7 @@ describe('PagesScreen', () => {
     getPanels: vi.fn(),
     getScenes: vi.fn(),
     getWorksPage: vi.fn(),
+    replacePanelEntityAssignments: vi.fn(),
     updatePageSettings: vi.fn(),
     updatePanel: vi.fn(),
     updateScene: vi.fn(),
@@ -260,12 +263,18 @@ describe('PagesScreen', () => {
     vi.clearAllMocks();
     api.getWorksPage.mockResolvedValue({ works: [work], next_cursor: null });
     api.getChapters.mockResolvedValue({ chapters: [chapter] });
+    api.getEntitiesPage.mockResolvedValue({ entities: [], next_cursor: null });
+    api.getEntityStates.mockResolvedValue({ entity_states: [] });
     api.getEpisodes.mockResolvedValue({ episodes: [episode] });
     api.getPages.mockResolvedValue({ pages: [] });
     api.getPanels.mockResolvedValue({ panels: [panel] });
     api.getJobs.mockResolvedValue({ jobs: [], next_cursor: null });
     api.getJob.mockResolvedValue(pageSkeletonJob('processing'));
     api.getScenes.mockResolvedValue({ scenes: [scene('scene-1', 1, 'ローリストン・ガーデン')] });
+    api.replacePanelEntityAssignments.mockImplementation(async (
+      _id: string,
+      body: { entities: unknown[] },
+    ) => ({ entities: body.entities }));
     api.generatePageSkeleton.mockResolvedValue({
       job_id: pageSkeletonJob('queued').id,
       queued: true,
