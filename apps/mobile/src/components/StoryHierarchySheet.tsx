@@ -10,6 +10,7 @@ import {
   View
 } from 'react-native';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   ArrowDown,
   ArrowUp,
@@ -947,9 +948,10 @@ export function StoryHierarchySheet({
   return (
     <>
       <Modal animationType="slide" onRequestClose={onClose} presentationStyle="fullScreen" visible={visible}>
-        <View
+        <SafeAreaView
           accessibilityLabel={t(language, "generated.components.StoryHierarchySheet.story.hierarchy.28f3f754")}
           accessibilityViewIsModal
+          edges={['top', 'bottom']}
           onAccessibilityEscape={onClose}
           style={styles.sheet}
         >
@@ -1042,7 +1044,7 @@ export function StoryHierarchySheet({
               <Text style={styles.pendingLabel}>{t(language, "generated.components.StoryHierarchySheet.updating.246dcabf")}</Text>
             </View>
           ) : null}
-        </View>
+        </SafeAreaView>
       </Modal>
 
       <Modal
@@ -1057,24 +1059,26 @@ export function StoryHierarchySheet({
           onPress={() => setMenuTarget(null)}
           style={styles.backdrop}
         >
-          <View
-            accessibilityLabel={t(language, "generated.components.StoryHierarchySheet.story.hierarchy.28f3f754")}
-            accessibilityViewIsModal
-            onAccessibilityEscape={() => setMenuTarget(null)}
-            onStartShouldSetResponder={() => true}
-            style={styles.menuSheet}
-          >
-            <Text numberOfLines={2} style={styles.menuTitle}>
-              {menuTarget?.kind === 'work'
-                ? menuTarget.work.title
-                : menuTarget?.kind === 'chapter'
-                  ? titleForChapter(menuTarget.chapter, language)
-                  : menuTarget?.kind === 'episode'
-                    ? titleForEpisode(menuTarget.episode, language)
-                    : ''}
-            </Text>
-            {renderMenuItems()}
-          </View>
+          <SafeAreaView edges={['bottom']} style={styles.bottomModalSafeArea}>
+            <View
+              accessibilityLabel={t(language, "generated.components.StoryHierarchySheet.story.hierarchy.28f3f754")}
+              accessibilityViewIsModal
+              onAccessibilityEscape={() => setMenuTarget(null)}
+              onStartShouldSetResponder={() => true}
+              style={styles.menuSheet}
+            >
+              <Text numberOfLines={2} style={styles.menuTitle}>
+                {menuTarget?.kind === 'work'
+                  ? menuTarget.work.title
+                  : menuTarget?.kind === 'chapter'
+                    ? titleForChapter(menuTarget.chapter, language)
+                    : menuTarget?.kind === 'episode'
+                      ? titleForEpisode(menuTarget.episode, language)
+                      : ''}
+              </Text>
+              {renderMenuItems()}
+            </View>
+          </SafeAreaView>
         </Pressable>
       </Modal>
 
@@ -1090,58 +1094,60 @@ export function StoryHierarchySheet({
           onPress={() => setTitleIntent(null)}
           style={styles.backdrop}
         >
-          <View
-            accessibilityLabel={titleDialogHeading}
-            accessibilityViewIsModal
-            onAccessibilityEscape={() => setTitleIntent(null)}
-            onStartShouldSetResponder={() => true}
-            style={styles.titleDialog}
-          >
-            <Text style={styles.dialogTitle}>{titleDialogHeading}</Text>
-            <TextInput
-              accessibilityLabel={t(language, "generated.components.StoryHierarchySheet.title.d8135461")}
-              autoCapitalize="sentences"
-              autoCorrect={false}
-              autoFocus
-              maxLength={200}
-              onChangeText={setTitleValue}
-              onSubmitEditing={() => void submitTitle()}
-              placeholder={t(language, "generated.components.StoryHierarchySheet.enter.a.title.d4d3374f")}
-              placeholderTextColor={colors.disabled}
-              returnKeyType="done"
-              style={styles.titleInput}
-              value={titleValue}
-            />
-            {!titleValid && titleValue.length > 0 ? (
-              <Text style={styles.validation}>
-                {t(language, "generated.components.StoryHierarchySheet.enter.a.title.from.1.to.200.characters.6b024aa4")}
-              </Text>
-            ) : null}
-            {titleHasStaleConflict ? (
-              <PrimaryButton
-                disabled={pending}
-                label={t(language, "generated.components.StoryHierarchySheet.reload.latest.state.327b1d0e")}
-                onPress={() => void reloadTitleFromIntent()}
-                variant="secondary"
+          <SafeAreaView edges={['bottom']} style={styles.bottomModalSafeArea}>
+            <View
+              accessibilityLabel={titleDialogHeading}
+              accessibilityViewIsModal
+              onAccessibilityEscape={() => setTitleIntent(null)}
+              onStartShouldSetResponder={() => true}
+              style={styles.titleDialog}
+            >
+              <Text style={styles.dialogTitle}>{titleDialogHeading}</Text>
+              <TextInput
+                accessibilityLabel={t(language, "generated.components.StoryHierarchySheet.title.d8135461")}
+                autoCapitalize="sentences"
+                autoCorrect={false}
+                autoFocus
+                maxLength={200}
+                onChangeText={setTitleValue}
+                onSubmitEditing={() => void submitTitle()}
+                placeholder={t(language, "generated.components.StoryHierarchySheet.enter.a.title.d4d3374f")}
+                placeholderTextColor={colors.disabled}
+                returnKeyType="done"
+                style={styles.titleInput}
+                value={titleValue}
               />
-            ) : null}
-            <View style={styles.dialogButtons}>
-              <PrimaryButton
-                disabled={pending}
-                label={t(language, "generated.components.StoryHierarchySheet.cancel.3672b0b9")}
-                onPress={() => setTitleIntent(null)}
-                variant="ghost"
-              />
-              <PrimaryButton
-                disabled={!titleValid || titleHasStaleConflict}
-                label={titleIntent?.kind.startsWith('create-')
-                  ? t(language, "generated.components.StoryHierarchySheet.add.8b69f421")
-                  : t(language, "generated.components.StoryHierarchySheet.save.80b89d5e")}
-                loading={pending}
-                onPress={() => void submitTitle()}
-              />
+              {!titleValid && titleValue.length > 0 ? (
+                <Text style={styles.validation}>
+                  {t(language, "generated.components.StoryHierarchySheet.enter.a.title.from.1.to.200.characters.6b024aa4")}
+                </Text>
+              ) : null}
+              {titleHasStaleConflict ? (
+                <PrimaryButton
+                  disabled={pending}
+                  label={t(language, "generated.components.StoryHierarchySheet.reload.latest.state.327b1d0e")}
+                  onPress={() => void reloadTitleFromIntent()}
+                  variant="secondary"
+                />
+              ) : null}
+              <View style={styles.dialogButtons}>
+                <PrimaryButton
+                  disabled={pending}
+                  label={t(language, "generated.components.StoryHierarchySheet.cancel.3672b0b9")}
+                  onPress={() => setTitleIntent(null)}
+                  variant="ghost"
+                />
+                <PrimaryButton
+                  disabled={!titleValid || titleHasStaleConflict}
+                  label={titleIntent?.kind.startsWith('create-')
+                    ? t(language, "generated.components.StoryHierarchySheet.add.8b69f421")
+                    : t(language, "generated.components.StoryHierarchySheet.save.80b89d5e")}
+                  loading={pending}
+                  onPress={() => void submitTitle()}
+                />
+              </View>
             </View>
-          </View>
+          </SafeAreaView>
         </Pressable>
       </Modal>
     </>
@@ -1155,6 +1161,12 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'flex-end',
     padding: spacing.md
+  },
+  bottomModalSafeArea: {
+    alignItems: 'center',
+    flex: 1,
+    justifyContent: 'flex-end',
+    width: '100%'
   },
   branch: {
     flex: 1
