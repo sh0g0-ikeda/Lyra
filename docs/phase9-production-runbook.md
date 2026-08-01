@@ -8,8 +8,13 @@
 - failed page-generation retry flow
 
 ## Migrations
-- Run `bun run db:check-invariants` locally before production migrations, or
-  `bun run db:check-invariants:prod` inside a built production container.
+- When production is still on migration 026, do not run the ordinary deployment
+  invariant command first: it references relations introduced by 027-039.
+- Follow `docs/production-migrations-027-039-runbook-2026-08-01.md` and run
+  `bun run db:check-pre-migration:prod` inside the exact release image before
+  applying 027-039.
+- Run `bun run db:check-invariants:prod` only after all pending migrations have
+  completed.
 - Keep CloudFront's default behavior uncached for HTML and authenticated API
   routes. Only `/assets/*` should use the managed caching-optimized policy
   because those filenames are build-hashed.
