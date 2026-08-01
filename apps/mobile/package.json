@@ -10,6 +10,7 @@
     "web": "expo start --web",
     "start:dev-client": "expo start --dev-client",
     "expo:check": "expo install --check",
+    "doctor": "expo-doctor",
     "typecheck": "tsc --noEmit",
     "lint": "eslint . --max-warnings=0",
     "contracts:check": "node ../../scripts/generateMobileApiContract.mjs --check",
@@ -59,6 +60,7 @@
     "babel-preset-expo": "~57.0.0",
     "eslint": "^9.39.5",
     "eslint-config-expo": "~57.0.1",
+    "expo-doctor": "^1.20.1",
     "react-test-renderer": "^19.2.3",
     "typescript": "~6.0.3",
     "vitest": "^4.1.10"
