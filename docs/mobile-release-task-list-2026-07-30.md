@@ -4,9 +4,9 @@
 
 対象: Android / iPhone の初回ストア公開
 
-進捗: 73件中11件完了 / 62件未完了
+進捗: 73件中28件完了 / 45件未完了
 
-未完了の担当内訳: AI単独16件 / AI準備＋外部確認29件 / 人間・外部必須17件
+未完了の担当内訳: AI単独0件 / AI準備＋外部確認28件 / 人間・外部必須17件
 
 ## 0. このリストの範囲
 
@@ -48,21 +48,21 @@
 
 ## 2. Mobile UI実装
 
-- [ ] `[AI]` 個人workspaceのアカウント画面へ購入セクションを追加する失敗テストを書く。
-- [ ] `[AI]` store catalog取得中・取得失敗・商品なしを安全に表示する。
-- [ ] `[AI]` store提供のdisplay priceだけを表示し、価格をコードへ固定しない。
-- [ ] `[AI]` store未反映商品をdisabled表示し、購入開始を拒否する。
-- [ ] `[AI]` organization workspaceでは個人購入UIを表示しない。
-- [ ] `[AI]` iOS native purchase adapterを追加し、購入proofを画面やログへ出さない。
-- [ ] `[AI]` Android native purchase adapterを追加し、purchase tokenを画面やログへ出さない。
-- [ ] `[AI]` server verification成功後だけ完了表示と残高更新を行う。
-- [ ] `[AI]` cancel、pending、通信失敗、検証失敗、再試行を区別して表示する。
-- [ ] `[AI]` 購入復元を冪等に実行し、二重付与しないUIフローを作る。
-- [ ] `[AI]` アカウント画面へアカウント削除入口と失敗テストを追加する。
-- [ ] `[AI]` 削除preview、blocker、影響範囲を表示する。
-- [ ] `[AI]` 明示acknowledgement後だけ削除を開始できるようにする。
-- [ ] `[AI]` 削除処理中・失敗・再試行・完了を表示し、完了後にsessionとlocal cacheを消す。
-- [ ] `[AI]` 購入・復元・削除のcomponent / domain / API contract testを通す。
+- [x] `[AI]` 個人workspaceのアカウント画面へ購入セクションを追加する失敗テストを書く。
+- [x] `[AI]` store catalog取得中・取得失敗・商品なしを安全に表示する。
+- [x] `[AI]` store提供のdisplay priceだけを表示し、価格をコードへ固定しない。
+- [x] `[AI]` store未反映商品をdisabled表示し、購入開始を拒否する。
+- [x] `[AI]` organization workspaceでは個人購入UIを表示しない。
+- [x] `[AI]` iOS native purchase adapterを追加し、購入proofを画面やログへ出さない。
+- [x] `[AI]` Android native purchase adapterを追加し、purchase tokenを画面やログへ出さない。
+- [x] `[AI]` server verification成功後だけ完了表示と残高更新を行う。
+- [x] `[AI]` cancel、pending、通信失敗、検証失敗、再試行を区別して表示する。
+- [x] `[AI]` 購入復元を冪等に実行し、二重付与しないUIフローを作る。
+- [x] `[AI]` アカウント画面へアカウント削除入口と失敗テストを追加する。
+- [x] `[AI]` 削除preview、blocker、影響範囲を表示する。
+- [x] `[AI]` 明示acknowledgement後だけ削除を開始できるようにする。
+- [x] `[AI]` 削除処理中・失敗・再試行・完了を表示し、完了後にsessionとlocal cacheを消す。
+- [x] `[AI]` 購入・復元・削除のcomponent / domain / API contract testを通す。
 - [x] `[AI]` Mobile Vitest、typecheck、lint、contract drift checkを通す。
 - [x] `[AI]` Android / iOSのExpo exportを両方通す。
 
@@ -119,8 +119,8 @@
 
 ## 8. 署名build・ストア提出・公開
 
-- [ ] `[AI]` release候補commitでBackend、DB、Web、Playwright、Mobileのrequired CIを通す。
-- [ ] `[共同]` 本番migration / invariant、API / Worker readiness、billing / deletion flagの初期OFFを確認する。
+- [x] `[AI]` release候補commitでBackend、DB、Web、Playwright、Mobileのrequired CIを通す。
+- [x] `[共同]` 本番migration / invariant、API / Worker readiness、billing / deletion flagの初期OFFを確認する。
 - [ ] `[共同]` release候補commitから署名済みAndroid AABをbuildし、package / signing / App Linksを検査する。
 - [ ] `[共同]` release候補commitから署名済みiOS IPAをbuildし、Bundle ID / entitlement / Associated Domainsを検査する。
 - [ ] `[人間]` Play internal trackとTestFlightでinstall / updateを確認する。
@@ -131,6 +131,17 @@
 - [ ] `[人間]` App StoreとGoogle Playへ提出し、審査結果へ対応する。
 - [ ] `[人間]` 段階公開を開始し、停止・rollback判断を行う。
 - [ ] `[共同]` 公開後に認証、購入検証、ledger、account deletion、生成job、crashを初動監視する。
+
+### 2026-08-01 本番反映記録
+
+- release merge commit: `16586686340cd4c1401c510e5302d10d8843b458`
+- ECR image: linux/arm64、`sha256:42fe1259b8933eec1ec06770dfa883d31edee7d8e0efb1dd9fd6386c0093a03a`
+- rollback task definition: API `103`、generation worker `63`
+- active task definition: API `104`、generation worker `64`
+- manual snapshot: `lyra-prod-pre-027-039-20260801-1522` (`available`、encrypted)
+- migration: 027-039を順番どおり適用、移行前46項目・移行後65項目・稼働再開後65項目はいずれも違反0
+- readiness: API / Workerとも1/1、ALB healthy、generation queue / DLQとも0
+- flags: `AUTO_RUN_MIGRATIONS=false`、`MOBILE_STORE_BILLING_ENABLED=false`、`ACCOUNT_DELETION_ENABLED=false`、`EPISODE_EXPORT_ENABLED=false`
 
 ## 9. 完了条件
 
