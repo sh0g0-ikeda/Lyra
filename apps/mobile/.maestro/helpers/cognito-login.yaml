@@ -1,0 +1,15 @@
+- tapOn:
+    id: auth-login-button
+- extendedWaitUntil:
+    visible: ${E2E_AUTH_EMAIL_LABEL}
+    timeout: 30000
+- tapOn: ${E2E_AUTH_EMAIL_LABEL}
+- inputText: ${E2E_LOGIN_EMAIL}
+- tapOn: ${E2E_AUTH_PASSWORD_LABEL}
+- inputText: ${E2E_LOGIN_PASSWORD}
+- hideKeyboard
+- tapOn: ${E2E_AUTH_SUBMIT_LABEL}
+- extendedWaitUntil:
+    visible:
+      id: tab-account
+    timeout: 45000

@@ -1,25 +1,21 @@
-export function createSingleFlight<T>(
-  task: () => Promise<T>,
-): () => Promise<T> {
-  let current: Promise<T> | null = null;
+export function createSingleFlight<Args extends unknown[], Result>(
+  task: (...args: Args) => Promise<Result>
+): (...args: Args) => Promise<Result> {
+  let inFlight: Promise<Result> | null = null;
 
-  return (): Promise<T> => {
-    if (current !== null) {
-      return current;
+  return (...args: Args): Promise<Result> => {
+    if (inFlight !== null) {
+      return inFlight;
     }
 
-    let started: Promise<T>;
-    try {
-      started = task();
-    } catch (error: unknown) {
-      started = Promise.reject(error);
-    }
-    const tracked = started.finally(() => {
-      if (current === tracked) {
-        current = null;
+    const current = task(...args);
+    inFlight = current;
+    const clear = (): void => {
+      if (inFlight === current) {
+        inFlight = null;
       }
-    });
-    current = tracked;
-    return tracked;
+    };
+    void current.then(clear, clear);
+    return current;
   };
 }

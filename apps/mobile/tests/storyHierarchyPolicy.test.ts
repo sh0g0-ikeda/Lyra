@@ -1,94 +1,65 @@
 import { describe, expect, it } from 'vitest';
+
 import {
-  nextStoryOrder,
-  resolveEpisodeMove,
-  validateStoryHierarchyTitle,
-} from '../src/domain/storyHierarchyPolicy';
+  buildNewChapterPayload,
+  buildNewEpisodePayload,
+  canMoveEpisodeInHierarchy,
+  nextStoryOrder
+} from '@/domain/storyHierarchyPolicy';
 
-describe('storyHierarchyPolicy', () => {
-  it('タイトルは前後空白を除去し、1〜200文字だけを許可する', () => {
-    expect(validateStoryHierarchyTitle('  新しい作品  ')).toEqual({
-      ok: true,
-      value: '新しい作品',
+describe('story hierarchy policy', () => {
+  it('既存の最大orderの次を新規orderにする', () => {
+    expect(nextStoryOrder([{ order: 5 }, { order: 2 }])).toBe(6);
+    expect(nextStoryOrder([])).toBe(1);
+  });
+
+  it('章と話の新規payloadは非表示項目を安全な初期値で作る', () => {
+    expect(buildNewChapterPayload('第一章', [{ order: 3 }])).toEqual({
+      order: 4,
+      title: '第一章',
+      purpose: null,
+      starting_state: null,
+      ending_state: null,
+      emotion_curve: null,
+      entities_involved: [],
+      key_beats: []
     });
-    expect(validateStoryHierarchyTitle('   ')).toEqual({
-      ok: false,
-      reason: 'required',
-    });
-    expect(validateStoryHierarchyTitle('あ'.repeat(201))).toEqual({
-      ok: false,
-      reason: 'too_long',
+    expect(buildNewEpisodePayload('第一話', [])).toEqual({
+      order: 1,
+      title: '第一話',
+      purpose: null,
+      story_input_mode: 'full',
+      story_full_draft: null,
+      introduction: null,
+      middle: null,
+      climax: null,
+      ending_hook: null,
+      estimated_pages: 4,
+      entities_involved: []
     });
   });
 
-  it('欠番があっても件数ではなく最大orderの次を返す', () => {
-    expect(nextStoryOrder([{ order: 1 }, { order: 4 }])).toEqual({
-      ok: true,
-      order: 5,
-    });
-    expect(nextStoryOrder([])).toEqual({ ok: true, order: 1 });
-  });
-
-  it('最大orderが1000の場合は作成可能なorderを返さない', () => {
-    expect(nextStoryOrder([{ order: 1000 }])).toEqual({
-      ok: false,
-      reason: 'limit_reached',
-    });
-  });
-
-  it('話の章内移動と章境界移動を区別する', () => {
-    const chapters = [
-      { id: 'chapter-1', order: 1 },
-      { id: 'chapter-2', order: 2 },
-    ];
-    const episodes = [
-      { id: 'episode-1', order: 1 },
-      { id: 'episode-2', order: 2 },
-    ];
-
-    expect(resolveEpisodeMove(
-      chapters,
-      'chapter-1',
-      episodes,
-      'episode-1',
-      'down',
-    )).toEqual({
-      allowed: true,
-      crossChapter: false,
-      destinationChapterId: 'chapter-1',
-    });
-    expect(resolveEpisodeMove(
-      chapters,
-      'chapter-1',
-      episodes,
-      'episode-2',
-      'down',
-    )).toEqual({
-      allowed: true,
-      crossChapter: true,
-      destinationChapterId: 'chapter-2',
-    });
-    expect(resolveEpisodeMove(
-      chapters,
-      'chapter-1',
-      episodes,
-      'episode-1',
-      'up',
-    )).toEqual({
-      allowed: false,
-      crossChapter: false,
-      destinationChapterId: null,
-    });
-    expect(resolveEpisodeMove(
-      chapters,
-      'chapter-1',
-      [],
-      'episode-missing',
-      'down',
-    )).toEqual({
-      allowed: false,
-      crossChapter: false,
-      destinationChapterId: null,
-    });
+  it('章境界を含む全体の先頭と末尾だけ話移動不可にする', () => {
+    expect(canMoveEpisodeInHierarchy({
+      chapterIndex: 0,
+      chapterCount: 2,
+      episodeIndex: 0,
+      episodeCount: 1,
+      direction: 'up'
+    })).toBe(false);
+    expect(canMoveEpisodeInHierarchy({
+      chapterIndex: 0,
+      chapterCount: 2,
+      episodeIndex: 0,
+      episodeCount: 1,
+      direction: 'down'
+    })).toBe(true);
+    expect(canMoveEpisodeInHierarchy({
+      chapterIndex: 1,
+      chapterCount: 2,
+      episodeIndex: 0,
+      episodeCount: 1,
+      direction: 'down'
+    })).toBe(false);
   });
 });

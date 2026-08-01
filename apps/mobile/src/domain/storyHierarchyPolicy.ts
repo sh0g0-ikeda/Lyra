@@ -1,122 +1,65 @@
-export const STORY_HIERARCHY_TITLE_MAX_LENGTH = 200;
-export const STORY_HIERARCHY_ORDER_MAX = 1000;
+import type { CreateChapterPayload, CreateEpisodePayload } from '@/domain/payloads';
 
-export type StoryItemMoveDirection = 'up' | 'down';
-
-export type StoryHierarchyTitleValidation =
-  | { ok: true; value: string }
-  | { ok: false; reason: 'required' | 'too_long' };
-
-export type NextStoryOrderResult =
-  | { ok: true; order: number }
-  | { ok: false; reason: 'limit_reached' };
-
-interface OrderedItem {
-  id: string;
+interface OrderedRecord {
   order: number;
 }
 
-export interface EpisodeMoveResolution {
-  allowed: boolean;
-  crossChapter: boolean;
-  destinationChapterId: string | null;
+interface EpisodeMovePosition {
+  chapterIndex: number;
+  chapterCount: number;
+  episodeIndex: number;
+  episodeCount: number;
+  direction: 'up' | 'down';
 }
 
-export function validateStoryHierarchyTitle(
-  input: string,
-): StoryHierarchyTitleValidation {
-  const value = input.trim();
-  if (value.length === 0) {
-    return { ok: false, reason: 'required' };
-  }
-  if (value.length > STORY_HIERARCHY_TITLE_MAX_LENGTH) {
-    return { ok: false, reason: 'too_long' };
-  }
-  return { ok: true, value };
+export function nextStoryOrder(records: readonly OrderedRecord[]): number {
+  return records.reduce((maximum, record) => Math.max(maximum, record.order), 0) + 1;
 }
 
-export function nextStoryOrder(
-  items: readonly Pick<OrderedItem, 'order'>[],
-): NextStoryOrderResult {
-  const maximum = items.reduce(
-    (current, item) => Math.max(current, item.order),
-    0,
-  );
-  if (maximum >= STORY_HIERARCHY_ORDER_MAX) {
-    return { ok: false, reason: 'limit_reached' };
-  }
-  return { ok: true, order: maximum + 1 };
+export function buildNewChapterPayload(
+  title: string,
+  chapters: readonly OrderedRecord[]
+): CreateChapterPayload {
+  return {
+    order: nextStoryOrder(chapters),
+    title: title.trim(),
+    purpose: null,
+    starting_state: null,
+    ending_state: null,
+    emotion_curve: null,
+    entities_involved: [],
+    key_beats: []
+  };
 }
 
-export function canMoveOrderedItem(
-  items: readonly OrderedItem[],
-  itemId: string,
-  direction: StoryItemMoveDirection,
-): boolean {
-  const ordered = [...items].sort(compareOrderedItems);
-  const itemIndex = ordered.findIndex((item) => item.id === itemId);
-  if (itemIndex < 0) {
+export function buildNewEpisodePayload(
+  title: string,
+  episodes: readonly OrderedRecord[]
+): CreateEpisodePayload {
+  return {
+    order: nextStoryOrder(episodes),
+    title: title.trim(),
+    purpose: null,
+    story_input_mode: 'full',
+    story_full_draft: null,
+    introduction: null,
+    middle: null,
+    climax: null,
+    ending_hook: null,
+    estimated_pages: 4,
+    entities_involved: []
+  };
+}
+
+export function canMoveEpisodeInHierarchy(position: EpisodeMovePosition): boolean {
+  if (position.episodeCount <= 0 || position.chapterCount <= 0) {
     return false;
   }
-  return direction === 'up'
-    ? itemIndex > 0
-    : itemIndex < ordered.length - 1;
-}
-
-export function resolveEpisodeMove(
-  chapters: readonly OrderedItem[],
-  chapterId: string,
-  episodes: readonly OrderedItem[],
-  episodeId: string,
-  direction: StoryItemMoveDirection,
-): EpisodeMoveResolution {
-  if (canMoveOrderedItem(episodes, episodeId, direction)) {
-    return {
-      allowed: true,
-      crossChapter: false,
-      destinationChapterId: chapterId,
-    };
+  if (position.direction === 'up') {
+    return position.episodeIndex > 0 || position.chapterIndex > 0;
   }
-
-  const orderedEpisodes = [...episodes].sort(compareOrderedItems);
-  const episodeIndex = orderedEpisodes.findIndex((item) => item.id === episodeId);
-  if (episodeIndex < 0) {
-    return unavailableEpisodeMove();
-  }
-  const atBoundary = direction === 'up'
-    ? episodeIndex === 0
-    : episodeIndex === orderedEpisodes.length - 1;
-  if (!atBoundary) {
-    return unavailableEpisodeMove();
-  }
-
-  const orderedChapters = [...chapters].sort(compareOrderedItems);
-  const chapterIndex = orderedChapters.findIndex((item) => item.id === chapterId);
-  if (chapterIndex < 0) {
-    return unavailableEpisodeMove();
-  }
-  const destinationIndex = direction === 'up'
-    ? chapterIndex - 1
-    : chapterIndex + 1;
-  const destinationChapter = orderedChapters[destinationIndex];
-  if (destinationChapter === undefined) {
-    return unavailableEpisodeMove();
-  }
-  return {
-    allowed: true,
-    crossChapter: true,
-    destinationChapterId: destinationChapter.id,
-  };
-}
-
-function compareOrderedItems(left: OrderedItem, right: OrderedItem): number {
-  return left.order - right.order || left.id.localeCompare(right.id);
-}
-
-function unavailableEpisodeMove(): EpisodeMoveResolution {
-  return {
-    allowed: false,
-    crossChapter: false,
-    destinationChapterId: null,
-  };
+  return (
+    position.episodeIndex < position.episodeCount - 1 ||
+    position.chapterIndex < position.chapterCount - 1
+  );
 }

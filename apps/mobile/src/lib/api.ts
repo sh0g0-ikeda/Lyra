@@ -1,1367 +1,1663 @@
 import type { ZodType } from 'zod';
+import { onlineManager } from '@tanstack/react-query';
+
 import {
-  accountDeletionPreviewResponseSchema,
-  accountDeletionResultResponseSchema,
+  accountDeletionPreviewSchema,
+  accountDeletionResultSchema,
+  apiErrorBodySchema,
+  balloonSchema,
+  balloonsResponseSchema,
+  billingBalanceSchema,
   chapterSchema,
   chaptersResponseSchema,
+  compositionsResponseSchema,
   currentSessionSchema,
-  episodeSchema,
-  episodesResponseSchema,
+  createEpisodeExportResponseSchema,
   entitiesResponseSchema,
-  entityImportResponseSchema,
-  entityReferenceGenerationResponseSchema,
-  entityReferenceSetSchema,
   entityStateSchema,
   entityStatesResponseSchema,
+  entityImportResponseSchema,
+  entityReferenceUploadPresignResponseSchema,
+  entityReferenceGenerationAvailabilitySchema,
+  entityReferenceSetSchema,
   entitySchema,
-  generationJobHistoryResponseSchema,
-  generationJobResponseSchema,
+  episodeSchema,
+  episodesResponseSchema,
+  exportJobSchema,
+  frameTemplateResponseSchema,
+  framesResponseSchema,
+  generationJobSchema,
+  generationJobsResponseSchema,
+  jobAcceptedSchema,
+  layoutTemplateResponseSchema,
   mobilePurchaseAccountBindingSchema,
   mobileStoreProductCatalogSchema,
   mobileStorePurchaseResultSchema,
   mobileStoreRestoreResultSchema,
+  organizationAuditLogsResponseSchema,
+  organizationBillingSummarySchema,
+  organizationCreditBalanceSchema,
+  organizationCreditCheckoutSchema,
+  organizationCustomerPortalSchema,
+  organizationInvitationPreviewSchema,
+  organizationInvitationActionResponseSchema,
+  organizationInvitationsResponseSchema,
+  organizationInvitationUpdateResponseSchema,
+  organizationInvoicesResponseSchema,
+  organizationMembersResponseSchema,
+  organizationMemberUpdateResponseSchema,
+  organizationPlansResponseSchema,
+  organizationSubscriptionCheckoutSchema,
+  organizationUsageResponseSchema,
+  organizationUpdateResponseSchema,
+  organizationWorkspaceDetailSchema,
+  organizationWorkspaceSchema,
+  pageAutofillResponseSchema,
+  pageGenerationReadinessSchema,
+  pageLayoutTemplatesResponseSchema,
   pageSchema,
+  pageSkeletonResponseSchema,
+  pagesResponseSchema,
   panelAssignmentsResponseSchema,
-  pagePanelStructureResponseSchema,
   panelSchema,
   panelsResponseSchema,
-  pageJobAcceptedResponseSchema,
-  pagesResponseSchema,
-  pageSkeletonResponseSchema,
   sceneSchema,
   scenesResponseSchema,
+  saveAndGeneratePageResponseSchema,
+  pushTokenRegistrationSchema,
+  storyCollaborationEventSchema,
+  storyEpisodeImprovementSchema,
   workSchema,
-  worksResponseSchema,
-} from '../domain/apiSchemas';
-import type { EpisodeStoryUpdatePayload } from '../domain/episodeStoryDraft';
-import type { StoryItemMoveDirection } from '../domain/storyHierarchyPolicy';
-import type { AuthTokens } from '../domain/auth';
+  worksResponseSchema
+} from '@/domain/apiSchemas';
+import type {
+  AccountDeletionPreviewRecord,
+  AccountDeletionResultRecord,
+  BalloonRecord,
+  BillingBalanceRecord,
+  ChapterRecord,
+  CompositionRecord,
+  CurrentSessionRecord,
+  CreateEpisodeExportPayload,
+  CreateEpisodeExportResultRecord,
+  EntityRecord,
+  EntityReferenceGenerationAvailabilityRecord,
+  EntityStateRecord,
+  EntityReferenceSetRecord,
+  EpisodeRecord,
+  ExportJobRecord,
+  GenerationJobRecord,
+  GenerationJobsResponseRecord,
+  GenerationJobStatus,
+  GenerationJobType,
+  MobilePurchaseAccountBindingRecord,
+  MobileStoreProductCatalogRecord,
+  MobileStorePurchaseResultRecord,
+  MobileStoreRestoreResultRecord,
+  OrganizationInvitationPreviewRecord,
+  OrganizationAuditLogRecord,
+  OrganizationBillingSummaryRecord,
+  OrganizationCheckoutRecord,
+  OrganizationCreditBalanceRecord,
+  OrganizationInvitationRecord,
+  OrganizationInvoiceRecord,
+  OrganizationMemberRecord,
+  OrganizationSubscriptionPlanRecord,
+  OrganizationUsageEventRecord,
+  OrganizationUsageSummaryRecord,
+  OrganizationWorkspaceDetailRecord,
+  OrganizationWorkspaceRecord,
+  PageGenerationReadinessRecord,
+  PageLayoutTemplateRecord,
+  PageRecord,
+  PageSkeletonResultRecord,
+  PanelFrameRecord,
+  PushTokenRegistrationRecord,
+  PanelRecord,
+  SaveAndGeneratePageResultRecord,
+  SceneRecord,
+  StoryCollaborationInput,
+  StoryEpisodeImprovementRecord,
+  UiLanguage,
+  WorkRecord
+} from '@/domain/types';
+import type {
+  ApplyPageLayoutTemplatePayload,
+  ConfirmEntityReferencePayload,
+  CreateChapterPayload,
+  CreateEntityPayload,
+  CreateEntityReferenceUploadPayload,
+  CreateEntityStatePayload,
+  CreateOrganizationPayload,
+  CreateOrganizationCreditCheckoutPayload,
+  CreateOrganizationInvitationPayload,
+  CreateOrganizationSubscriptionCheckoutPayload,
+  CreateEpisodePayload,
+  CreatePanelPayload,
+  CreateScenePayload,
+  CreateWorkPayload,
+  GeneratePageSkeletonPayload,
+  ImportEntityImagePayload,
+  PushTokenRegistrationPayload,
+  RestoreMobilePurchasesPayload,
+  ReplacePanelAssignmentsPayload,
+  UpdateChapterPayload,
+  UpdateEntityPayload,
+  UpdateEntityStatePayload,
+  UpdateOrganizationMemberPayload,
+  UpdateOrganizationPayload,
+  UpdateEpisodePayload,
+  UpdatePagePayload,
+  UpdatePanelPayload,
+  UpdateScenePayload,
+  UpdateWorkPayload,
+  VerifyAppleMobilePurchasePayload,
+  VerifyGoogleMobilePurchasePayload
+} from '@/domain/payloads';
+import type { AtomicSaveAndGeneratePayload } from '@/domain/pageAtomicGeneration';
+import {
+  generationJobCompatibilitySchema,
+  type CompatibleGenerationJobRecord,
+} from '@/domain/generationJobCompatibility';
+import { config } from '@/lib/config';
+import { recordOperationalMetric } from '@/lib/operationalEvents';
+import { requestTimeoutMs, SSE_IDLE_TIMEOUT_MS } from '@/lib/requestPolicy';
 
-export type CurrentSession = ReturnType<typeof currentSessionSchema.parse>;
-export type WorkRecord = ReturnType<typeof workSchema.parse>;
-export type ChapterRecord = ReturnType<typeof chapterSchema.parse>;
-export type EpisodeRecord = ReturnType<typeof episodeSchema.parse>;
-export type EntityRecord = ReturnType<typeof entitySchema.parse>;
-export type EntityImportResponseRecord = ReturnType<typeof entityImportResponseSchema.parse>;
-export type EntityReferenceGenerationResponse = ReturnType<
-  typeof entityReferenceGenerationResponseSchema.parse
->;
-export type EntityReferenceSetRecord = ReturnType<typeof entityReferenceSetSchema.parse>;
-export type EntityStateRecord = ReturnType<typeof entityStateSchema.parse>;
-export type SceneRecord = ReturnType<typeof sceneSchema.parse>;
-export type PageRecord = ReturnType<typeof pageSchema.parse>;
-export type PanelRecord = ReturnType<typeof panelSchema.parse>;
-export type PanelEntityAssignmentRecord = PanelRecord['entities'][number];
-export type PagePanelStructureResponse = ReturnType<typeof pagePanelStructureResponseSchema.parse>;
-export type GenerationJobRecord = ReturnType<typeof generationJobResponseSchema.parse>;
-export type PageSkeletonResponse = ReturnType<typeof pageSkeletonResponseSchema.parse>;
-export type PageJobAcceptedResponse = ReturnType<typeof pageJobAcceptedResponseSchema.parse>;
-export type AccountDeletionPreviewRecord = ReturnType<
-  typeof accountDeletionPreviewResponseSchema.parse
->;
-export type AccountDeletionResultRecord = ReturnType<
-  typeof accountDeletionResultResponseSchema.parse
->;
-export type MobileStoreProductCatalogRecord = ReturnType<
-  typeof mobileStoreProductCatalogSchema.parse
->;
-export type MobilePurchaseAccountBindingRecord = ReturnType<
-  typeof mobilePurchaseAccountBindingSchema.parse
->;
-export type MobileStorePurchaseResultRecord = ReturnType<
-  typeof mobileStorePurchaseResultSchema.parse
->;
-export type MobileStoreRestoreResultRecord = ReturnType<
-  typeof mobileStoreRestoreResultSchema.parse
->;
+type JsonRequestInit = Omit<RequestInit, 'body'> & { body?: unknown; timeoutMs?: number };
 
-export interface VerifyAppleMobilePurchaseInput {
-  environment: 'sandbox' | 'production';
-  signed_transaction: string;
+type StoryCollaborationRequest = StoryCollaborationInput & { language: UiLanguage };
+
+export interface BlobResponse {
+  blob: Blob;
+  contentType: string | null;
 }
 
-export interface VerifyGoogleMobilePurchaseInput {
-  purchase_token: string;
-}
-
-export interface RestoreMobilePurchasesInput {
-  apple_signed_transactions: string[];
-  google_purchase_tokens: string[];
-}
-
-export interface AccountDeletionRequestInput {
-  confirmation: 'DELETE';
-  acknowledge_personal_subscriptions: boolean;
-  acknowledge_store_billing: boolean;
-  acknowledge_personal_assets: boolean;
-}
-
-export interface ListWorksPageInput {
-  limit: number;
-  cursor?: string | null;
-}
-
-export interface ListJobsPageInput {
-  limit: number;
-  cursor?: string | null;
-}
-
-export interface ListEntitiesPageInput {
-  limit: number;
-  cursor?: string | null;
-}
-
-export interface CreateEntityInput {
-  entity_type: 'character' | 'nonhuman' | 'object';
-  name: string;
-  free_description: string | null;
-}
-
-export interface ConfirmEntityReferenceInput {
-  selected_candidate_tokens: [string, ...string[]];
-  primary_candidate_token: string;
-  prompt_supplement: string | null;
-}
-
-export type UpdateEntityInput =
-  | { name: string; free_description?: string | null }
-  | { name?: never; free_description: string | null };
-
-export interface CreateEntityStateInput {
-  scene_id?: string | null;
-  costume_note?: string | null;
-  condition_note?: string | null;
-  hair_note?: string | null;
-  expression_default: string;
-  extra_note?: string | null;
-}
-
-export interface UpdateEntityStateInput {
-  scene_id?: string | null;
-  costume_note?: string | null;
-  condition_note?: string | null;
-  hair_note?: string | null;
-  expression_default?: string;
-  extra_note?: string | null;
-}
-
-export interface ReplacePanelEntityAssignmentsInput {
-  entities: PanelEntityAssignmentRecord[];
-  expected_entities: PanelEntityAssignmentRecord[];
-}
-
-export interface ApplyPagePanelStructureInput {
-  expected_panel_ids: string[];
-  operation:
-    | { type: 'append' }
-    | { type: 'delete'; panel_id: string }
-    | { type: 'reorder'; panel_ids: string[] };
-}
-
-export interface GeneratePageSkeletonInput {
-  overwrite_existing: false;
-  apply_story_plan: false;
-  language: 'ja' | 'en';
-}
-
-export interface UpdatePageSettingsInput {
-  dialogue_mode?: PageRecord['dialogue_mode'];
-  page_dialogue_toggle?: boolean;
-  style_reference?: {
-    title: string;
-    notes: string | null;
-  } | null;
-  story_page_purpose?: string | null;
-  story_continuity_note?: string | null;
-}
-
-export interface CreateStoryItemInput {
-  order: number;
-  title: string;
-}
-
-export interface CreateSceneInput {
-  order: number;
-  location?: string | null;
-  time?: string | null;
-  atmosphere?: string | null;
-}
-
-export interface UpdatePanelInput {
-  panel_role?: PanelRecord['panel_role'];
-  panel_size?: PanelRecord['panel_size'];
-  situation_text?: string | null;
-  composition?: {
-    source: PanelRecord['composition']['source'];
-    gallery_item_id: string | null;
-    composition_prompt: string | null;
-    shot_type: 'full_body' | 'half_body' | 'close_up' | 'wide' | 'extreme_close_up' | null;
-    angle: 'front' | 'side' | 'three_quarter' | 'bird_eye' | 'worm_eye' | 'dutch_angle' | null;
-    custom_note: string | null;
-  };
-  dialogue_in_panel?: boolean;
-  dialogue?: {
-    entity_id: string | null;
-    text: string;
-    type: PanelRecord['dialogue'][number]['type'];
-    position: PanelRecord['dialogue'][number]['position'];
-  }[];
-  sfx_text?: string | null;
-  background_note?: string | null;
-  panel_notes?: string | null;
-}
-
-export type UpdateSceneInput = Partial<Omit<CreateSceneInput, 'order'>>;
-
-export interface MobileAuthSessionPort {
-  getTokens(): Promise<AuthTokens | null>;
-  refreshTokens(): Promise<AuthTokens>;
-}
-
-interface ApiRequestOptions {
-  method?: 'GET' | 'POST' | 'PUT' | 'DELETE';
-  body?: unknown;
-  timeoutMs?: number;
+export interface SseHandlers {
+  onMessage: (data: unknown) => void;
+  onError?: (error: unknown) => void;
+  onDone?: () => void;
+  signal?: AbortSignal;
 }
 
 export class ApiError extends Error {
+  public readonly status: number;
+  public readonly code: string | null;
+  public readonly requestId: string | null;
+  public readonly retryAfterSeconds: number | null;
+  public readonly retryAtMs: number | null;
+
   public constructor(
-    public readonly code: string,
-    public readonly status: number,
     message: string,
+    status: number,
+    code: string | null,
+    requestId: string | null = null,
+    retryAfterSeconds: number | null = null
   ) {
     super(message);
     this.name = 'ApiError';
+    this.status = status;
+    this.code = code;
+    this.requestId = requestId;
+    this.retryAfterSeconds = retryAfterSeconds;
+    const effectiveRetryAfterSeconds =
+      retryAfterSeconds ?? (status === 429 ? 5 : null);
+    this.retryAtMs =
+      effectiveRetryAfterSeconds === null
+        ? null
+        : Date.now() + effectiveRetryAfterSeconds * 1_000;
   }
 }
 
-interface LyraMobileApiClientOptions {
-  apiBaseUrl: string;
-  auth: MobileAuthSessionPort;
-  fetcher?: typeof fetch;
-  requestTimeoutMs?: number;
+const retryAfterSecondsFrom = (response: Response): number | null => {
+  const value = response.headers.get('retry-after')?.trim() ?? '';
+  if (!/^\d{1,4}$/u.test(value)) {
+    return null;
+  }
+  const seconds = Number(value);
+  return Number.isSafeInteger(seconds)
+    ? Math.min(Math.max(seconds, 1), 3_600)
+    : null;
+};
+
+const isLegacyEntityUpdateContractError = (error: unknown): error is ApiError => {
+  if (
+    !(error instanceof ApiError) ||
+    error.status !== 422 ||
+    error.code !== 'VALIDATION_ERROR'
+  ) {
+    return false;
+  }
+
+  const message = error.message.toLowerCase();
+  return (
+    message.includes('unrecognized key') &&
+    message.includes('expected_updated_at')
+  );
+};
+
+const organizationQuery = (organizationId?: string | null): string => {
+  if (organizationId === undefined || organizationId === null || organizationId.trim().length === 0) {
+    return '';
+  }
+  return `?organization_id=${encodeURIComponent(organizationId)}`;
+};
+
+export interface ListPageInput {
+  organizationId?: string | null;
+  limit: number;
+  cursor?: string | null;
 }
 
-const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
-const MAX_REQUEST_TIMEOUT_MS = 60_000;
-const ENTITY_IMPORT_REQUEST_TIMEOUT_MS = 60_000;
-const MAX_ENTITY_PROMPT_SUPPLEMENT_LENGTH = 2_000;
-const MAX_APPLE_SIGNED_TRANSACTION_LENGTH = 32_768;
-const MIN_GOOGLE_PURCHASE_TOKEN_LENGTH = 8;
-const MAX_GOOGLE_PURCHASE_TOKEN_LENGTH = 8_192;
-const MAX_RESTORE_PURCHASE_COUNT = 50;
+const listPageQuery = (input: ListPageInput): string => {
+  if (!Number.isInteger(input.limit) || input.limit < 1 || input.limit > 100) {
+    throw new RangeError('List page limit must be an integer from 1 to 100');
+  }
+  if (
+    input.cursor !== undefined &&
+    input.cursor !== null &&
+    (input.cursor.length === 0 || input.cursor.length > 1024)
+  ) {
+    throw new RangeError('List page cursor must contain 1 to 1024 characters');
+  }
+
+  const params = new URLSearchParams();
+  if (
+    input.organizationId !== undefined &&
+    input.organizationId !== null &&
+    input.organizationId.trim().length > 0
+  ) {
+    params.set('organization_id', input.organizationId);
+  }
+  params.set('limit', String(input.limit));
+  if (input.cursor !== undefined && input.cursor !== null) {
+    params.set('cursor', input.cursor);
+  }
+  return `?${params.toString()}`;
+};
+
+export interface ListJobsInput {
+  organizationId?: string | null;
+  limit?: number;
+  cursor?: string | null;
+  statuses?: readonly GenerationJobStatus[];
+  jobTypes?: readonly GenerationJobType[];
+}
+
+const jobListQuery = (input: ListJobsInput): string => {
+  const params = new URLSearchParams();
+  if (input.organizationId !== undefined && input.organizationId !== null && input.organizationId.trim().length > 0) {
+    params.set('organization_id', input.organizationId);
+  }
+  if (input.limit !== undefined) {
+    params.set('limit', String(input.limit));
+  }
+  if (input.cursor !== undefined && input.cursor !== null && input.cursor.length > 0) {
+    params.set('cursor', input.cursor);
+  }
+  if (input.statuses !== undefined && input.statuses.length > 0) {
+    params.set('status', input.statuses.join(','));
+  }
+  if (input.jobTypes !== undefined && input.jobTypes.length > 0) {
+    params.set('type', input.jobTypes.join(','));
+  }
+  const query = params.toString();
+  return query.length === 0 ? '' : `?${query}`;
+};
 
 export class LyraMobileApiClient {
-  private readonly apiBaseUrl: string;
-  private readonly auth: MobileAuthSessionPort;
-  private readonly fetcher: typeof fetch;
-  private readonly requestTimeoutMs: number;
-  private imageAuthorizationRefresh: Promise<string> | null = null;
+  private readonly tokenProvider: () => string | null;
+  private readonly tokenRefreshProvider: (() => Promise<string | null>) | null;
+  private readonly baseUrl: string;
 
-  public constructor(options: LyraMobileApiClientOptions) {
-    this.apiBaseUrl = options.apiBaseUrl.replace(/\/+$/, '');
-    this.auth = options.auth;
-    this.fetcher = options.fetcher ?? fetch;
-    this.requestTimeoutMs = normalizeRequestTimeout(options.requestTimeoutMs);
+  public constructor(
+    tokenProvider: () => string | null,
+    tokenRefreshProvider: (() => Promise<string | null>) | null = null
+  ) {
+    this.tokenProvider = tokenProvider;
+    this.tokenRefreshProvider = tokenRefreshProvider;
+    this.baseUrl = config.apiBaseUrl;
   }
 
-  public async getCurrentSession(): Promise<CurrentSession> {
-    return this.requestJson('/api/me', currentSessionSchema);
+  public getCurrentSession(): Promise<CurrentSessionRecord> {
+    return this.request('/api/me', currentSessionSchema);
   }
 
-  public async getWorksPage(
-    input: ListWorksPageInput,
-    organizationId: string | null = null,
-  ): Promise<{ works: WorkRecord[]; next_cursor: string | null }> {
-    if (!Number.isSafeInteger(input.limit) || input.limit < 1 || input.limit > 100) {
-      throw new ApiError('INVALID_REQUEST', 422, 'The request is invalid.');
-    }
-    const query = new URLSearchParams({ limit: String(input.limit) });
-    const cursor = input.cursor?.trim();
-    if (cursor !== undefined && cursor.length > 0) {
-      if (cursor.length > 512) {
-        throw new ApiError('INVALID_REQUEST', 422, 'The request is invalid.');
+  public async getEntityReferenceGenerationAvailability(): Promise<EntityReferenceGenerationAvailabilityRecord> {
+    try {
+      return await this.request(
+        '/api/entities/reference-generation-availability',
+        entityReferenceGenerationAvailabilitySchema
+      );
+    } catch (error) {
+      if (
+        error instanceof ApiError &&
+        error.status === 422 &&
+        error.code === 'VALIDATION_ERROR' &&
+        error.message.toLowerCase().includes('id must be a valid uuid')
+      ) {
+        return { enabled: true };
       }
-      query.set('cursor', cursor);
+      throw error;
     }
-    appendOrganizationQuery(query, organizationId);
-    const response = await this.requestJson(
-      `/api/works?${query.toString()}`,
-      worksResponseSchema,
+  }
+
+  public getMobilePurchaseBinding(): Promise<MobilePurchaseAccountBindingRecord> {
+    return this.request('/api/mobile-purchases/binding', mobilePurchaseAccountBindingSchema);
+  }
+
+  public async getMobileStoreProductCatalog(
+    store: MobileStoreProductCatalogRecord['store']
+  ): Promise<MobileStoreProductCatalogRecord> {
+    const catalog = await this.request(
+      `/api/mobile-purchases/catalog/${encodeURIComponent(store)}`,
+      mobileStoreProductCatalogSchema
+    );
+    if (catalog.store !== store) {
+      throw new ApiError(
+        'API response did not match the expected contract.',
+        502,
+        'INVALID_API_RESPONSE'
+      );
+    }
+    return catalog;
+  }
+
+  public verifyAppleMobilePurchase(
+    body: VerifyAppleMobilePurchasePayload
+  ): Promise<MobileStorePurchaseResultRecord> {
+    return this.request('/api/mobile-purchases/apple/verify', mobileStorePurchaseResultSchema, {
+      method: 'POST',
+      body
+    });
+  }
+
+  public verifyGoogleMobilePurchase(
+    body: VerifyGoogleMobilePurchasePayload
+  ): Promise<MobileStorePurchaseResultRecord> {
+    return this.request('/api/mobile-purchases/google/verify', mobileStorePurchaseResultSchema, {
+      method: 'POST',
+      body
+    });
+  }
+
+  public restoreMobilePurchases(
+    body: RestoreMobilePurchasesPayload
+  ): Promise<MobileStoreRestoreResultRecord> {
+    return this.request('/api/mobile-purchases/restore', mobileStoreRestoreResultSchema, {
+      method: 'POST',
+      body
+    });
+  }
+
+  public previewOrganizationInvitation(token: string): Promise<OrganizationInvitationPreviewRecord> {
+    return this.request(
+      `/api/organization-invitations/${encodeURIComponent(token)}`,
+      organizationInvitationPreviewSchema
+    );
+  }
+
+  public acceptOrganizationInvitation(token: string): Promise<OrganizationWorkspaceRecord> {
+    return this.request('/api/organization-invitations/accept', organizationWorkspaceSchema, {
+      method: 'POST',
+      body: { token }
+    });
+  }
+
+  public createOrganization(body: CreateOrganizationPayload): Promise<OrganizationWorkspaceDetailRecord> {
+    return this.request('/api/organizations', organizationWorkspaceDetailSchema, {
+      method: 'POST',
+      body
+    });
+  }
+
+  /**
+   * The caller must pass the organization selected from the authenticated
+   * session. Backend membership checks remain the authorization boundary.
+   */
+  public getOrganizationWorkspace(organizationId: string): Promise<OrganizationWorkspaceDetailRecord> {
+    return this.request(`/api/organizations/${encodeURIComponent(organizationId)}`, organizationWorkspaceDetailSchema);
+  }
+
+  public updateOrganization(
+    organizationId: string,
+    body: UpdateOrganizationPayload
+  ): Promise<OrganizationWorkspaceDetailRecord['organization']> {
+    return this.request(
+      `/api/organizations/${encodeURIComponent(organizationId)}`,
+      organizationUpdateResponseSchema,
+      { method: 'PATCH', body }
+    );
+  }
+
+  public async getOrganizationMembers(organizationId: string): Promise<{ members: OrganizationMemberRecord[] }> {
+    const response = await this.request(
+      `/api/organizations/${encodeURIComponent(organizationId)}/members`,
+      organizationMembersResponseSchema
+    );
+    return { members: response.members };
+  }
+
+  public async getOrganizationMembersPage(
+    organizationId: string,
+    input: ListPageInput
+  ): Promise<{ members: OrganizationMemberRecord[]; next_cursor: string | null }> {
+    const response = await this.request(
+      `/api/organizations/${encodeURIComponent(organizationId)}/members${listPageQuery(input)}`,
+      organizationMembersResponseSchema
+    );
+    return { members: response.members, next_cursor: null };
+  }
+
+  public updateOrganizationMember(
+    organizationId: string,
+    memberId: string,
+    body: UpdateOrganizationMemberPayload
+  ): Promise<OrganizationMemberRecord> {
+    return this.request(
+      `/api/organizations/${encodeURIComponent(organizationId)}/members/${encodeURIComponent(memberId)}`,
+      organizationMemberUpdateResponseSchema,
+      { method: 'PATCH', body }
+    );
+  }
+
+  public removeOrganizationMember(organizationId: string, memberId: string): Promise<void> {
+    return this.requestVoid(
+      `/api/organizations/${encodeURIComponent(organizationId)}/members/${encodeURIComponent(memberId)}`,
+      { method: 'DELETE' }
+    );
+  }
+
+  public async getOrganizationInvitations(organizationId: string): Promise<{ invitations: OrganizationInvitationRecord[] }> {
+    const response = await this.request(
+      `/api/organizations/${encodeURIComponent(organizationId)}/invitations`,
+      organizationInvitationsResponseSchema
+    );
+    return { invitations: response.invitations };
+  }
+
+  public async getOrganizationInvitationsPage(
+    organizationId: string,
+    input: ListPageInput
+  ): Promise<{ invitations: OrganizationInvitationRecord[]; next_cursor: string | null }> {
+    const response = await this.request(
+      `/api/organizations/${encodeURIComponent(organizationId)}/invitations${listPageQuery(input)}`,
+      organizationInvitationsResponseSchema
+    );
+    return { invitations: response.invitations, next_cursor: null };
+  }
+
+  public async createOrganizationInvitation(
+    organizationId: string,
+    body: CreateOrganizationInvitationPayload
+  ): Promise<OrganizationInvitationRecord> {
+    const response = await this.request(
+      `/api/organizations/${encodeURIComponent(organizationId)}/invitations`,
+      organizationInvitationActionResponseSchema,
+      { method: 'POST', body }
+    );
+    return response.invitation;
+  }
+
+  public async resendOrganizationInvitation(
+    organizationId: string,
+    invitationId: string
+  ): Promise<OrganizationInvitationRecord> {
+    const response = await this.request(
+      `/api/organizations/${encodeURIComponent(organizationId)}/invitations/${encodeURIComponent(invitationId)}/resend`,
+      organizationInvitationActionResponseSchema,
+      { method: 'POST' }
+    );
+    return response.invitation;
+  }
+
+  public async revokeOrganizationInvitation(
+    organizationId: string,
+    invitationId: string
+  ): Promise<OrganizationInvitationRecord> {
+    const response = await this.request(
+      `/api/organizations/${encodeURIComponent(organizationId)}/invitations/${encodeURIComponent(invitationId)}/revoke`,
+      organizationInvitationUpdateResponseSchema,
+      { method: 'POST' }
+    );
+    return response.invitation;
+  }
+
+  public getOrganizationCreditBalance(organizationId: string): Promise<OrganizationCreditBalanceRecord> {
+    return this.request(
+      `/api/organizations/${encodeURIComponent(organizationId)}/credits/balance`,
+      organizationCreditBalanceSchema
+    );
+  }
+
+  public getOrganizationPlans(organizationId: string): Promise<{ subscription_plans: OrganizationSubscriptionPlanRecord[] }> {
+    return this.request(
+      `/api/organizations/${encodeURIComponent(organizationId)}/billing/plans`,
+      organizationPlansResponseSchema
+    );
+  }
+
+  public getOrganizationBillingSummary(organizationId: string): Promise<OrganizationBillingSummaryRecord> {
+    return this.request(
+      `/api/organizations/${encodeURIComponent(organizationId)}/billing`,
+      organizationBillingSummarySchema
+    );
+  }
+
+  public createOrganizationSubscriptionCheckout(
+    organizationId: string,
+    body: CreateOrganizationSubscriptionCheckoutPayload
+  ): Promise<OrganizationCheckoutRecord> {
+    return this.request(
+      `/api/organizations/${encodeURIComponent(organizationId)}/billing/checkout/subscription`,
+      organizationSubscriptionCheckoutSchema,
+      { method: 'POST', body }
+    );
+  }
+
+  public createOrganizationCreditCheckout(
+    organizationId: string,
+    body: CreateOrganizationCreditCheckoutPayload
+  ): Promise<OrganizationCheckoutRecord> {
+    return this.request(
+      `/api/organizations/${encodeURIComponent(organizationId)}/billing/checkout/credits`,
+      organizationCreditCheckoutSchema,
+      { method: 'POST', body }
+    );
+  }
+
+  public createOrganizationCustomerPortal(organizationId: string): Promise<OrganizationCheckoutRecord> {
+    return this.request(
+      `/api/organizations/${encodeURIComponent(organizationId)}/billing/customer-portal`,
+      organizationCustomerPortalSchema,
+      { method: 'POST' }
+    );
+  }
+
+  public getOrganizationInvoices(organizationId: string): Promise<{ invoices: OrganizationInvoiceRecord[] }> {
+    return this.request(
+      `/api/organizations/${encodeURIComponent(organizationId)}/invoices`,
+      organizationInvoicesResponseSchema,
+      { method: 'GET' }
+    );
+  }
+
+  public async getOrganizationUsage(organizationId: string): Promise<{
+    usage_events: OrganizationUsageEventRecord[];
+    summary: OrganizationUsageSummaryRecord;
+  }> {
+    const response = await this.request(
+      `/api/organizations/${encodeURIComponent(organizationId)}/usage`,
+      organizationUsageResponseSchema
     );
     return {
-      works: response.works,
-      next_cursor: response.next_cursor ?? null,
+      usage_events: response.usage_events.map(({ generation_job_id: _generationJobId, metadata: _metadata, ...event }) => event),
+      summary: response.summary
     };
   }
 
-  public getChapters(
-    workId: string,
-    organizationId: string | null = null,
-  ): Promise<{ chapters: ChapterRecord[] }> {
-    return this.requestJson(
-      withOrganizationQuery(
-        `/api/works/${encodeURIComponent(workId)}/chapters`,
-        organizationId,
-      ),
-      chaptersResponseSchema,
+  public async getOrganizationUsagePage(
+    organizationId: string,
+    input: ListPageInput
+  ): Promise<{
+    usage_events: OrganizationUsageEventRecord[];
+    summary: OrganizationUsageSummaryRecord;
+    next_cursor: string | null;
+  }> {
+    const response = await this.request(
+      `/api/organizations/${encodeURIComponent(organizationId)}/usage${listPageQuery(input)}`,
+      organizationUsageResponseSchema
     );
+    return {
+      usage_events: response.usage_events.map(
+        ({ generation_job_id: _generationJobId, metadata: _metadata, ...event }) => event
+      ),
+      summary: response.summary,
+      next_cursor: null
+    };
+  }
+
+  public async getOrganizationAuditLogs(organizationId: string): Promise<{ audit_logs: OrganizationAuditLogRecord[] }> {
+    const response = await this.request(
+      `/api/organizations/${encodeURIComponent(organizationId)}/audit-logs`,
+      organizationAuditLogsResponseSchema
+    );
+    return {
+      audit_logs: response.audit_logs.map(({ actor_user_id: _actorUserId, target_id: _targetId, metadata: _metadata, ...log }) => log)
+    };
+  }
+
+  public async getOrganizationAuditLogsPage(
+    organizationId: string,
+    input: ListPageInput
+  ): Promise<{ audit_logs: OrganizationAuditLogRecord[]; next_cursor: string | null }> {
+    const response = await this.request(
+      `/api/organizations/${encodeURIComponent(organizationId)}/audit-logs${listPageQuery(input)}`,
+      organizationAuditLogsResponseSchema
+    );
+    return {
+      audit_logs: response.audit_logs.map(
+        ({ actor_user_id: _actorUserId, target_id: _targetId, metadata: _metadata, ...log }) => log
+      ),
+      next_cursor: null
+    };
+  }
+
+  public async getWorks(organizationId?: string | null): Promise<{ works: WorkRecord[] }> {
+    const response = await this.request(
+      `/api/works${organizationQuery(organizationId)}`,
+      worksResponseSchema
+    );
+    return { works: response.works };
+  }
+
+  public async getWorksPage(
+    input: ListPageInput
+  ): Promise<{ works: WorkRecord[]; next_cursor: string | null }> {
+    const response = await this.request(`/api/works${listPageQuery(input)}`, worksResponseSchema);
+    return { works: response.works, next_cursor: response.next_cursor ?? null };
+  }
+
+  public getWork(workId: string, organizationId?: string | null): Promise<WorkRecord> {
+    return this.request(
+      `/api/works/${encodeURIComponent(workId)}${organizationQuery(organizationId)}`,
+      workSchema
+    );
+  }
+
+  public createWork(body: CreateWorkPayload, organizationId?: string | null): Promise<WorkRecord> {
+    const requestBody =
+      organizationId === undefined || organizationId === null || organizationId.trim().length === 0
+        ? body
+        : { ...body, organization_id: organizationId };
+    return this.request('/api/works', workSchema, { method: 'POST', body: requestBody });
+  }
+
+  public updateWork(workId: string, body: UpdateWorkPayload, organizationId?: string | null): Promise<WorkRecord> {
+    return this.request(`/api/works/${workId}${organizationQuery(organizationId)}`, workSchema, { method: 'PUT', body });
+  }
+
+  public getChapters(workId: string, organizationId?: string | null): Promise<{ chapters: ChapterRecord[] }> {
+    return this.request(`/api/works/${workId}/chapters${organizationQuery(organizationId)}`, chaptersResponseSchema);
+  }
+
+  public createChapter(
+    workId: string,
+    body: CreateChapterPayload,
+    organizationId?: string | null
+  ): Promise<ChapterRecord> {
+    return this.request(`/api/works/${workId}/chapters${organizationQuery(organizationId)}`, chapterSchema, {
+      method: 'POST',
+      body
+    });
+  }
+
+  public updateChapter(
+    chapterId: string,
+    body: UpdateChapterPayload,
+    organizationId?: string | null
+  ): Promise<ChapterRecord> {
+    return this.request(`/api/chapters/${chapterId}${organizationQuery(organizationId)}`, chapterSchema, {
+      method: 'PUT',
+      body
+    });
+  }
+
+  public moveChapter(chapterId: string, direction: 'up' | 'down', organizationId?: string | null): Promise<ChapterRecord> {
+    return this.request(`/api/chapters/${chapterId}/move${organizationQuery(organizationId)}`, chapterSchema, {
+      method: 'POST',
+      body: { direction }
+    });
+  }
+
+  public deleteChapter(chapterId: string, organizationId?: string | null): Promise<void> {
+    return this.requestVoid(`/api/chapters/${chapterId}${organizationQuery(organizationId)}`, { method: 'DELETE' });
+  }
+
+  public getEpisodes(chapterId: string, organizationId?: string | null): Promise<{ episodes: EpisodeRecord[] }> {
+    return this.request(`/api/chapters/${chapterId}/episodes${organizationQuery(organizationId)}`, episodesResponseSchema);
+  }
+
+  public createEpisode(
+    chapterId: string,
+    body: CreateEpisodePayload,
+    organizationId?: string | null
+  ): Promise<EpisodeRecord> {
+    return this.request(`/api/chapters/${chapterId}/episodes${organizationQuery(organizationId)}`, episodeSchema, {
+      method: 'POST',
+      body
+    });
+  }
+
+  public updateEpisode(
+    episodeId: string,
+    body: UpdateEpisodePayload,
+    organizationId?: string | null
+  ): Promise<EpisodeRecord> {
+    return this.request(`/api/episodes/${episodeId}${organizationQuery(organizationId)}`, episodeSchema, {
+      method: 'PUT',
+      body
+    });
+  }
+
+  public moveEpisode(
+    episodeId: string,
+    direction: 'up' | 'down',
+    organizationId?: string | null,
+    crossChapter = false
+  ): Promise<EpisodeRecord> {
+    return this.request(`/api/episodes/${episodeId}/move${organizationQuery(organizationId)}`, episodeSchema, {
+      method: 'POST',
+      body: crossChapter ? { direction, cross_chapter: true } : { direction }
+    });
+  }
+
+  public deleteEpisode(episodeId: string, organizationId?: string | null): Promise<void> {
+    return this.requestVoid(`/api/episodes/${episodeId}${organizationQuery(organizationId)}`, { method: 'DELETE' });
+  }
+
+  public generatePageSkeleton(
+    episodeId: string,
+    body: GeneratePageSkeletonPayload,
+    organizationId?: string | null
+  ): Promise<PageSkeletonResultRecord> {
+    return this.request(`/api/episodes/${episodeId}/generate-page-skeleton${organizationQuery(organizationId)}`, pageSkeletonResponseSchema, {
+      method: 'POST',
+      body
+    });
+  }
+
+  public improveEpisodeDraft(
+    body: {
+      episode_id: string;
+      instruction: string;
+      language: 'ja' | 'en';
+      base_draft: {
+        title: string | null;
+        purpose: string | null;
+        story_input_mode: 'structured' | 'full';
+        story_full_draft: string | null;
+        introduction: string | null;
+        middle: string | null;
+        climax: string | null;
+        ending_hook: string | null;
+      };
+    },
+    organizationId?: string | null
+  ): Promise<StoryEpisodeImprovementRecord> {
+    return this.request(
+      `/api/story/improve-episode-draft${organizationQuery(organizationId)}`,
+      storyEpisodeImprovementSchema,
+      { method: 'POST', body }
+    );
+  }
+
+  public collaborateStory(
+    input: StoryCollaborationRequest,
+    organizationId?: string | null
+  ): Promise<Record<string, unknown>> {
+    let text = '';
+    return this.streamStoryCollaboration(
+      input,
+      {
+        onMessage: (data) => {
+          if (typeof data === 'object' && data !== null && !Array.isArray(data)) {
+            const chunk = (data as { text?: unknown }).text;
+            if (typeof chunk === 'string') {
+              text += chunk;
+            }
+          }
+        }
+      },
+      organizationId
+    ).then(() => ({ text }));
+  }
+
+  public async streamStoryCollaboration(
+    input: StoryCollaborationRequest,
+    handlers: SseHandlers,
+    organizationId?: string | null
+  ): Promise<void> {
+    return this.stream(`/api/story/collaborate${organizationQuery(organizationId)}`, input, handlers);
+  }
+
+  public async getEntities(workId: string, organizationId?: string | null): Promise<{ entities: EntityRecord[] }> {
+    const response = await this.request(
+      `/api/works/${workId}/entities${organizationQuery(organizationId)}`,
+      entitiesResponseSchema
+    );
+    return { entities: response.entities };
   }
 
   public async getEntitiesPage(
     workId: string,
-    input: ListEntitiesPageInput,
-    organizationId: string | null = null,
+    input: ListPageInput
   ): Promise<{ entities: EntityRecord[]; next_cursor: string | null }> {
-    const query = buildBoundedPageQuery(input, organizationId);
-    const response = await this.requestJson(
-      `/api/works/${encodeURIComponent(workId)}/entities?${query.toString()}`,
-      entitiesResponseSchema,
+    const response = await this.request(
+      `/api/works/${encodeURIComponent(workId)}/entities${listPageQuery(input)}`,
+      entitiesResponseSchema
     );
-    if (response.entities.some((entity) => entity.work_id !== workId)) {
-      throw invalidApiResponse();
-    }
-    return {
-      entities: response.entities,
-      next_cursor: response.next_cursor ?? null,
-    };
+    return { entities: response.entities, next_cursor: response.next_cursor ?? null };
   }
 
-  public async createEntity(
-    workId: string,
-    body: CreateEntityInput,
-    organizationId: string | null = null,
-  ): Promise<EntityRecord> {
-    const entity = await this.requestJson(
-      withOrganizationQuery(
-        `/api/works/${encodeURIComponent(workId)}/entities`,
-        organizationId,
-      ),
-      entitySchema,
-      { method: 'POST', body },
+  public getEntity(entityId: string, organizationId?: string | null): Promise<EntityRecord> {
+    return this.request(
+      `/api/entities/${encodeURIComponent(entityId)}${organizationQuery(organizationId)}`,
+      entitySchema
     );
-    if (entity.work_id !== workId) {
-      throw invalidApiResponse();
-    }
-    return entity;
+  }
+
+  public createEntity(workId: string, body: CreateEntityPayload, organizationId?: string | null): Promise<EntityRecord> {
+    return this.request(`/api/works/${workId}/entities${organizationQuery(organizationId)}`, entitySchema, {
+      method: 'POST',
+      body
+    });
   }
 
   public async updateEntity(
     entityId: string,
-    body: UpdateEntityInput,
-    organizationId: string | null = null,
+    body: UpdateEntityPayload,
+    organizationId?: string | null
   ): Promise<EntityRecord> {
-    if (Object.keys(body).length === 0) {
-      throw new ApiError('INVALID_REQUEST', 422, 'The request is invalid.');
+    try {
+      return await this.request(
+        `/api/entities/${entityId}${organizationQuery(organizationId)}`,
+        entitySchema,
+        {
+          method: 'PUT',
+          body
+        }
+      );
+    } catch (error) {
+      if (!isLegacyEntityUpdateContractError(error)) {
+        throw error;
+      }
+
+      const { expected_updated_at: _expectedUpdatedAt, ...legacyBody } = body;
+      void _expectedUpdatedAt;
+      return this.request(
+        `/api/entities/${entityId}${organizationQuery(organizationId)}`,
+        entitySchema,
+        {
+          method: 'PUT',
+          body: legacyBody
+        }
+      );
     }
-    const entity = await this.requestJson(
-      withOrganizationQuery(`/api/entities/${encodeURIComponent(entityId)}`, organizationId),
-      entitySchema,
-      { method: 'PUT', body },
-    );
-    if (entity.id !== entityId) {
-      throw invalidApiResponse();
-    }
-    return entity;
   }
 
-  public async updateEntityGenerationContext(
-    entityId: string,
-    promptSupplement: string | null,
-    organizationId: string | null = null,
-  ): Promise<EntityRecord> {
-    if (
-      promptSupplement !== null
-      && promptSupplement.length > MAX_ENTITY_PROMPT_SUPPLEMENT_LENGTH
-    ) {
-      throw new ApiError('INVALID_REQUEST', 422, 'The request is invalid.');
-    }
-    const entity = await this.requestJson(
-      withOrganizationQuery(`/api/entities/${encodeURIComponent(entityId)}`, organizationId),
-      entitySchema,
-      { method: 'PUT', body: { prompt_supplement: promptSupplement } },
-    );
-    if (entity.id !== entityId) {
-      throw invalidApiResponse();
-    }
-    return entity;
+  public deleteEntity(entityId: string, organizationId?: string | null): Promise<void> {
+    return this.requestVoid(`/api/entities/${entityId}${organizationQuery(organizationId)}`, { method: 'DELETE' });
   }
 
-  public async getEntityReferenceSet(
-    entityId: string,
-    organizationId: string | null = null,
-  ): Promise<EntityReferenceSetRecord> {
-    const referenceSet = await this.requestJson(
-      withOrganizationQuery(
-        `/api/entities/${encodeURIComponent(entityId)}/reference-set`,
-        organizationId,
-      ),
-      entityReferenceSetSchema,
-    );
-    if (referenceSet.entity_id !== entityId) {
-      throw invalidApiResponse();
-    }
-    return referenceSet;
+  public importEntityImage(body: ImportEntityImagePayload, organizationId?: string | null): Promise<{
+    suggested_fields: Record<string, unknown>;
+    prompt_supplement: string;
+    tmp_image_token: string;
+  }> {
+    return this.request(`/api/entities/import-image${organizationQuery(organizationId)}`, entityImportResponseSchema, {
+      method: 'POST',
+      body
+    });
   }
 
-  public importEntityReferenceImage(
-    entityId: string,
-    entityType: EntityRecord['entity_type'],
-    imageDataUrl: string,
-    organizationId: string | null = null,
-  ): Promise<EntityImportResponseRecord> {
-    return this.requestJson(
-      withOrganizationQuery('/api/entities/import-image', organizationId),
-      entityImportResponseSchema,
-      {
-        method: 'POST',
-        body: {
-          entity_type: entityType,
-          entity_id: entityId,
-          image_base64: imageDataUrl,
-        },
-        timeoutMs: ENTITY_IMPORT_REQUEST_TIMEOUT_MS,
-      },
+  public createEntityReferenceUpload(
+    body: CreateEntityReferenceUploadPayload,
+    organizationId?: string | null
+  ): Promise<{
+    upload_url: string;
+    upload_token: string;
+    expires_at: string;
+    upload_headers: {
+      'Content-Type': CreateEntityReferenceUploadPayload['mime_type'];
+      'x-amz-server-side-encryption': 'AES256';
+    };
+  }> {
+    return this.request(
+      `/api/uploads/entity-reference/presign${organizationQuery(organizationId)}`,
+      entityReferenceUploadPresignResponseSchema,
+      { method: 'POST', body }
     );
   }
 
   public generateEntityReference(
     entityId: string,
-    sourceCandidateToken: string | null = null,
-    organizationId: string | null = null,
-  ): Promise<EntityReferenceGenerationResponse> {
-    return this.requestJson(
-      withOrganizationQuery(
-        `/api/entities/${encodeURIComponent(entityId)}/generate-reference`,
-        organizationId,
-      ),
-      entityReferenceGenerationResponseSchema,
+    body: Record<string, unknown> = {},
+    organizationId?: string | null
+  ): Promise<{ job_id: string }> {
+    return this.request(`/api/entities/${entityId}/generate-reference${organizationQuery(organizationId)}`, jobAcceptedSchema, {
+      method: 'POST',
+      body
+    });
+  }
+
+  public getEntityReferenceSet(entityId: string, organizationId?: string | null): Promise<EntityReferenceSetRecord> {
+    return this.request(
+      `/api/entities/${entityId}/reference-set${organizationQuery(organizationId)}`,
+      entityReferenceSetSchema
+    );
+  }
+
+  public confirmEntityReference(
+    entityId: string,
+    body: ConfirmEntityReferencePayload,
+    organizationId?: string | null
+  ): Promise<EntityReferenceSetRecord> {
+    return this.request(
+      `/api/entities/${entityId}/reference/confirm${organizationQuery(organizationId)}`,
+      entityReferenceSetSchema,
       {
         method: 'POST',
-        ...(sourceCandidateToken === null
-          ? {}
-          : { body: { source_candidate_token: sourceCandidateToken } }),
-      },
+        body
+      }
     );
   }
 
-  public async confirmEntityReference(
-    entityId: string,
-    body: ConfirmEntityReferenceInput,
-    organizationId: string | null = null,
-  ): Promise<EntityReferenceSetRecord> {
-    const referenceSet = await this.requestJson(
-      withOrganizationQuery(
-        `/api/entities/${encodeURIComponent(entityId)}/reference/confirm`,
-        organizationId,
-      ),
+  public deleteEntityReference(entityId: string, refId: string, organizationId?: string | null): Promise<EntityReferenceSetRecord> {
+    return this.request(
+      `/api/entities/${entityId}/reference/${encodeURIComponent(refId)}${organizationQuery(organizationId)}`,
       entityReferenceSetSchema,
-      { method: 'POST', body },
+      { method: 'DELETE' }
     );
-    if (referenceSet.entity_id !== entityId) {
-      throw invalidApiResponse();
-    }
-    return referenceSet;
   }
 
-  public refreshImageAuthorizationHeader(): Promise<string> {
-    if (this.imageAuthorizationRefresh !== null) {
-      return this.imageAuthorizationRefresh;
-    }
-    const operation = this.auth.refreshTokens().then(
-      (tokens) => `Bearer ${tokens.idToken}`,
-    );
-    this.imageAuthorizationRefresh = operation;
-    void operation.then(
-      () => {
-        if (this.imageAuthorizationRefresh === operation) {
-          this.imageAuthorizationRefresh = null;
-        }
-      },
-      () => {
-        if (this.imageAuthorizationRefresh === operation) {
-          this.imageAuthorizationRefresh = null;
-        }
-      },
-    );
-    return operation;
+  public getEntityStates(
+    entityId: string,
+    organizationId?: string | null,
+  ): Promise<{ entity_states: EntityStateRecord[] }> {
+    return this.request(`/api/entities/${entityId}/states${organizationQuery(organizationId)}`, entityStatesResponseSchema);
   }
 
-  public createWork(
-    title: string,
-    organizationId: string | null = null,
-  ): Promise<WorkRecord> {
-    const body: { title: string; organization_id?: string } = { title };
-    if (organizationId !== null) {
-      body.organization_id = organizationId;
-    }
-    return this.requestJson('/api/works', workSchema, {
+  public createEntityState(
+    entityId: string,
+    body: CreateEntityStatePayload,
+    organizationId?: string | null,
+  ): Promise<EntityStateRecord> {
+    return this.request(`/api/entities/${entityId}/states${organizationQuery(organizationId)}`, entityStateSchema, {
       method: 'POST',
       body,
     });
   }
 
-  public updateWork(
-    workId: string,
-    title: string,
-    organizationId: string | null = null,
-  ): Promise<WorkRecord> {
-    return this.requestJson(
-      withOrganizationQuery(`/api/works/${encodeURIComponent(workId)}`, organizationId),
-      workSchema,
-      { method: 'PUT', body: { title } },
-    );
-  }
-
-  public createChapter(
-    workId: string,
-    body: CreateStoryItemInput,
-    organizationId: string | null = null,
-  ): Promise<ChapterRecord> {
-    return this.requestJson(
-      withOrganizationQuery(
-        `/api/works/${encodeURIComponent(workId)}/chapters`,
-        organizationId,
-      ),
-      chapterSchema,
-      { method: 'POST', body },
-    );
-  }
-
-  public updateChapter(
-    chapterId: string,
-    title: string,
-    organizationId: string | null = null,
-  ): Promise<ChapterRecord> {
-    return this.requestJson(
-      withOrganizationQuery(`/api/chapters/${encodeURIComponent(chapterId)}`, organizationId),
-      chapterSchema,
-      { method: 'PUT', body: { title } },
-    );
-  }
-
-  public moveChapter(
-    chapterId: string,
-    direction: StoryItemMoveDirection,
-    organizationId: string | null = null,
-  ): Promise<ChapterRecord> {
-    return this.requestJson(
-      withOrganizationQuery(
-        `/api/chapters/${encodeURIComponent(chapterId)}/move`,
-        organizationId,
-      ),
-      chapterSchema,
-      { method: 'POST', body: { direction } },
-    );
-  }
-
-  public deleteChapter(
-    chapterId: string,
-    organizationId: string | null = null,
-  ): Promise<void> {
-    return this.requestNoContent(
-      withOrganizationQuery(`/api/chapters/${encodeURIComponent(chapterId)}`, organizationId),
-    );
-  }
-
-  public getEpisodes(
-    chapterId: string,
-    organizationId: string | null = null,
-  ): Promise<{ episodes: EpisodeRecord[] }> {
-    return this.requestJson(
-      withOrganizationQuery(
-        `/api/chapters/${encodeURIComponent(chapterId)}/episodes`,
-        organizationId,
-      ),
-      episodesResponseSchema,
-    );
-  }
-
-  public createEpisode(
-    chapterId: string,
-    body: CreateStoryItemInput,
-    organizationId: string | null = null,
-  ): Promise<EpisodeRecord> {
-    return this.requestJson(
-      withOrganizationQuery(
-        `/api/chapters/${encodeURIComponent(chapterId)}/episodes`,
-        organizationId,
-      ),
-      episodeSchema,
-      { method: 'POST', body },
-    );
-  }
-
-  public moveEpisode(
-    episodeId: string,
-    direction: StoryItemMoveDirection,
-    crossChapter = false,
-    organizationId: string | null = null,
-  ): Promise<EpisodeRecord> {
-    return this.requestJson(
-      withOrganizationQuery(
-        `/api/episodes/${encodeURIComponent(episodeId)}/move`,
-        organizationId,
-      ),
-      episodeSchema,
-      {
-        method: 'POST',
-        body: crossChapter
-          ? { direction, cross_chapter: true }
-          : { direction },
-      },
-    );
-  }
-
-  public updateEpisode(
-    episodeId: string,
-    body: EpisodeStoryUpdatePayload,
-    organizationId: string | null = null,
-  ): Promise<EpisodeRecord> {
-    return this.requestJson(
-      withOrganizationQuery(
-        `/api/episodes/${encodeURIComponent(episodeId)}`,
-        organizationId,
-      ),
-      episodeSchema,
-      { method: 'PUT', body },
-    );
-  }
-
-  public deleteEpisode(
-    episodeId: string,
-    organizationId: string | null = null,
-  ): Promise<void> {
-    return this.requestNoContent(
-      withOrganizationQuery(`/api/episodes/${encodeURIComponent(episodeId)}`, organizationId),
-    );
-  }
-
-  public getScenes(
-    episodeId: string,
-    organizationId: string | null = null,
-  ): Promise<{ scenes: SceneRecord[] }> {
-    return this.requestJson(
-      withOrganizationQuery(
-        `/api/episodes/${encodeURIComponent(episodeId)}/scenes`,
-        organizationId,
-      ),
-      scenesResponseSchema,
-    );
-  }
-
-  public async getEntityStates(
-    entityId: string,
-    organizationId: string | null = null,
-  ): Promise<{ entity_states: EntityStateRecord[] }> {
-    const response = await this.requestJson(
-      withOrganizationQuery(
-        `/api/entities/${encodeURIComponent(entityId)}/states`,
-        organizationId,
-      ),
-      entityStatesResponseSchema,
-    );
-    if (response.entity_states.some((state) => state.entity_id !== entityId)) {
-      throw invalidApiResponse();
-    }
-    return response;
-  }
-
-  public async createEntityState(
-    entityId: string,
-    body: CreateEntityStateInput,
-    organizationId: string | null = null,
-  ): Promise<EntityStateRecord> {
-    const state = await this.requestJson(
-      withOrganizationQuery(
-        `/api/entities/${encodeURIComponent(entityId)}/states`,
-        organizationId,
-      ),
-      entityStateSchema,
-      { method: 'POST', body },
-    );
-    if (
-      state.entity_id !== entityId
-      || state.costume_ref_id !== null
-      || !entityStateMatchesRequestedFields(state, body)
-    ) {
-      throw invalidApiResponse();
-    }
-    return state;
-  }
-
-  public async updateEntityState(
+  public updateEntityState(
     entityId: string,
     stateId: string,
-    body: UpdateEntityStateInput,
-    organizationId: string | null = null,
+    body: UpdateEntityStatePayload,
+    organizationId?: string | null,
   ): Promise<EntityStateRecord> {
-    if (Object.keys(body).length === 0) {
-      throw new ApiError('INVALID_REQUEST', 422, 'The request is invalid.');
-    }
-    const state = await this.requestJson(
-      withOrganizationQuery(
-        `/api/entities/${encodeURIComponent(entityId)}/states/${encodeURIComponent(stateId)}`,
-        organizationId,
-      ),
+    return this.request(
+      `/api/entities/${entityId}/states/${stateId}${organizationQuery(organizationId)}`,
       entityStateSchema,
       { method: 'PUT', body },
     );
-    if (
-      state.id !== stateId
-      || state.entity_id !== entityId
-      || !entityStateMatchesRequestedFields(state, body)
-    ) {
-      throw invalidApiResponse();
-    }
-    return state;
+  }
+
+  public getScenes(episodeId: string, organizationId?: string | null): Promise<{ scenes: SceneRecord[] }> {
+    return this.request(`/api/episodes/${episodeId}/scenes${organizationQuery(organizationId)}`, scenesResponseSchema);
   }
 
   public createScene(
     episodeId: string,
-    body: CreateSceneInput,
-    organizationId: string | null = null,
+    body: CreateScenePayload,
+    organizationId?: string | null
   ): Promise<SceneRecord> {
-    return this.requestJson(
-      withOrganizationQuery(
-        `/api/episodes/${encodeURIComponent(episodeId)}/scenes`,
-        organizationId,
-      ),
-      sceneSchema,
-      { method: 'POST', body },
-    );
+    return this.request(`/api/episodes/${episodeId}/scenes${organizationQuery(organizationId)}`, sceneSchema, {
+      method: 'POST',
+      body
+    });
   }
 
-  public updateScene(
-    sceneId: string,
-    body: UpdateSceneInput,
-    organizationId: string | null = null,
-  ): Promise<SceneRecord> {
-    return this.requestJson(
-      withOrganizationQuery(`/api/scenes/${encodeURIComponent(sceneId)}`, organizationId),
-      sceneSchema,
-      { method: 'PUT', body },
-    );
+  public updateScene(sceneId: string, body: UpdateScenePayload, organizationId?: string | null): Promise<SceneRecord> {
+    return this.request(`/api/scenes/${sceneId}${organizationQuery(organizationId)}`, sceneSchema, {
+      method: 'PUT',
+      body
+    });
   }
 
-  public getPages(
+  public deleteScene(sceneId: string, organizationId?: string | null): Promise<void> {
+    return this.requestVoid(`/api/scenes/${sceneId}${organizationQuery(organizationId)}`, {
+      method: 'DELETE'
+    });
+  }
+
+  public async getPages(episodeId: string, organizationId?: string | null): Promise<{ pages: PageRecord[] }> {
+    const response = await this.request(
+      `/api/episodes/${episodeId}/pages${organizationQuery(organizationId)}`,
+      pagesResponseSchema
+    );
+    return { pages: response.pages };
+  }
+
+  public async getPagesPage(
     episodeId: string,
-    organizationId: string | null = null,
-  ): Promise<{ pages: PageRecord[]; next_cursor?: string | null }> {
-    return this.requestJson(
-      withOrganizationQuery(
-        `/api/episodes/${encodeURIComponent(episodeId)}/pages`,
-        organizationId,
-      ),
-      pagesResponseSchema,
+    input: ListPageInput
+  ): Promise<{ pages: PageRecord[]; next_cursor: string | null }> {
+    const response = await this.request(
+      `/api/episodes/${encodeURIComponent(episodeId)}/pages${listPageQuery(input)}`,
+      pagesResponseSchema
+    );
+    return { pages: response.pages, next_cursor: response.next_cursor ?? null };
+  }
+
+  public getPage(pageId: string, organizationId?: string | null): Promise<PageRecord> {
+    return this.request(
+      `/api/pages/${encodeURIComponent(pageId)}${organizationQuery(organizationId)}`,
+      pageSchema
     );
   }
 
-  public async getPanels(
-    pageId: string,
-    organizationId: string | null = null,
-  ): Promise<{ panels: PanelRecord[] }> {
-    const response = await this.requestJson(
-      withOrganizationQuery(
-        `/api/pages/${encodeURIComponent(pageId)}/panels`,
-        organizationId,
-      ),
-      panelsResponseSchema,
-    );
-    if (response.panels.some((panel) => panel.page_id !== pageId)) {
-      throw invalidApiResponse();
-    }
-    return response;
-  }
-
-  public async applyPagePanelStructure(
-    pageId: string,
-    body: ApplyPagePanelStructureInput,
-    organizationId: string | null = null,
-  ): Promise<PagePanelStructureResponse> {
-    if (!isValidPanelStructureRequest(body)) {
-      throw new ApiError('INVALID_REQUEST', 422, 'The request is invalid.');
-    }
-    const response = await this.requestJson(
-      withOrganizationQuery(
-        `/api/pages/${encodeURIComponent(pageId)}/panel-structure`,
-        organizationId,
-      ),
-      pagePanelStructureResponseSchema,
-      { method: 'PUT', body },
-    );
-    if (!isValidPanelStructureResponse(pageId, body, response)) {
-      throw invalidApiResponse();
-    }
-    return response;
-  }
-
-  public async updatePageSettings(
-    pageId: string,
-    body: UpdatePageSettingsInput,
-    organizationId: string | null = null,
-  ): Promise<PageRecord> {
-    if (Object.keys(body).length === 0) {
-      throw new ApiError('INVALID_REQUEST', 422, 'The request is invalid.');
-    }
-    const page = await this.requestJson(
-      withOrganizationQuery(`/api/pages/${encodeURIComponent(pageId)}`, organizationId),
-      pageSchema,
-      { method: 'PUT', body },
-    );
-    if (page.id !== pageId) {
-      throw invalidApiResponse();
-    }
-    return page;
-  }
-
-  public async updatePanel(
-    panelId: string,
-    body: UpdatePanelInput,
-    organizationId: string | null = null,
-  ): Promise<PanelRecord> {
-    if (Object.keys(body).length === 0) {
-      throw new ApiError('INVALID_REQUEST', 422, 'The request is invalid.');
-    }
-    const panel = await this.requestJson(
-      withOrganizationQuery(`/api/panels/${encodeURIComponent(panelId)}`, organizationId),
-      panelSchema,
-      { method: 'PUT', body },
-    );
-    if (panel.id !== panelId) {
-      throw invalidApiResponse();
-    }
-    return panel;
-  }
-
-  public replacePanelEntityAssignments(
-    panelId: string,
-    body: ReplacePanelEntityAssignmentsInput,
-    organizationId: string | null = null,
-  ): Promise<{ entities: PanelEntityAssignmentRecord[] }> {
-    return this.requestJson(
-      withOrganizationQuery(
-        `/api/panels/${encodeURIComponent(panelId)}/entities`,
-        organizationId,
-      ),
-      panelAssignmentsResponseSchema,
-      { method: 'PUT', body },
-    );
-  }
-
-  public generatePage(
-    pageId: string,
-    organizationId: string | null = null,
-  ): Promise<PageJobAcceptedResponse> {
-    return this.requestJson(
-      withOrganizationQuery(
-        `/api/pages/${encodeURIComponent(pageId)}/generate`,
-        organizationId,
-      ),
-      pageJobAcceptedResponseSchema,
-      { method: 'POST' },
-    );
-  }
-
-  public generatePageSkeleton(
+  public createEpisodeExport(
     episodeId: string,
-    body: GeneratePageSkeletonInput,
-    organizationId: string | null = null,
-  ): Promise<PageSkeletonResponse> {
-    return this.requestJson(
-      withOrganizationQuery(
-        `/api/episodes/${encodeURIComponent(episodeId)}/generate-page-skeleton`,
-        organizationId,
-      ),
-      pageSkeletonResponseSchema,
-      { method: 'POST', body },
+    body: CreateEpisodeExportPayload,
+    idempotencyKey: string,
+    organizationId?: string | null
+  ): Promise<CreateEpisodeExportResultRecord> {
+    return this.request(
+      `/api/episodes/${episodeId}/exports${organizationQuery(organizationId)}`,
+      createEpisodeExportResponseSchema,
+      {
+        method: 'POST',
+        headers: { 'Idempotency-Key': idempotencyKey },
+        body
+      }
     );
+  }
+
+  public getExportJob(jobId: string, organizationId?: string | null): Promise<ExportJobRecord> {
+    return this.request(`/api/exports/${jobId}${organizationQuery(organizationId)}`, exportJobSchema);
+  }
+
+  public updatePage(pageId: string, body: UpdatePagePayload, organizationId?: string | null): Promise<PageRecord> {
+    return this.request(`/api/pages/${pageId}${organizationQuery(organizationId)}`, pageSchema, { method: 'PUT', body });
+  }
+
+  public getPageGenerationReadiness(
+    pageId: string,
+    organizationId?: string | null
+  ): Promise<PageGenerationReadinessRecord> {
+    return this.request(
+      `/api/pages/${pageId}/generation-readiness${organizationQuery(organizationId)}`,
+      pageGenerationReadinessSchema
+    );
+  }
+
+  public saveAndGeneratePage(
+    pageId: string,
+    body: AtomicSaveAndGeneratePayload,
+    idempotencyKey: string,
+    organizationId?: string | null
+  ): Promise<SaveAndGeneratePageResultRecord> {
+    return this.request(
+      `/api/pages/${pageId}/save-and-generate${organizationQuery(organizationId)}`,
+      saveAndGeneratePageResponseSchema,
+      {
+        method: 'POST',
+        headers: { 'Idempotency-Key': idempotencyKey },
+        body
+      }
+    );
+  }
+
+  public getPageLayoutTemplates(): Promise<{ templates: PageLayoutTemplateRecord[] }> {
+    return this.request('/api/page-layout-templates', pageLayoutTemplatesResponseSchema);
   }
 
   public autofillEpisodePagesFromStory(
     episodeId: string,
     language: 'ja' | 'en',
-    organizationId: string | null = null,
-  ): Promise<PageJobAcceptedResponse> {
-    return this.requestJson(
-      withOrganizationQuery(
-        `/api/episodes/${encodeURIComponent(episodeId)}/autofill-pages-from-story`,
-        organizationId,
-      ),
-      pageJobAcceptedResponseSchema,
-      { method: 'POST', body: { language } },
-    );
-  }
-
-  public async getJobs(
-    input: ListJobsPageInput,
-    organizationId: string | null = null,
-  ): Promise<{ jobs: GenerationJobRecord[]; next_cursor: string | null }> {
-    if (!Number.isSafeInteger(input.limit) || input.limit < 1 || input.limit > 100) {
-      throw new ApiError('INVALID_REQUEST', 422, 'The request is invalid.');
-    }
-    const query = new URLSearchParams({ limit: String(input.limit) });
-    const cursor = input.cursor?.trim();
-    if (cursor !== undefined && cursor.length > 0) {
-      if (cursor.length > 512) {
-        throw new ApiError('INVALID_REQUEST', 422, 'The request is invalid.');
-      }
-      query.set('cursor', cursor);
-    }
-    appendOrganizationQuery(query, organizationId);
-    return this.requestJson(
-      `/api/jobs?${query.toString()}`,
-      generationJobHistoryResponseSchema,
-    );
-  }
-
-  public async getJob(
-    jobId: string,
-    organizationId: string | null = null,
-  ): Promise<GenerationJobRecord> {
-    const job = await this.requestJson(
-      withOrganizationQuery(`/api/jobs/${encodeURIComponent(jobId)}`, organizationId),
-      generationJobResponseSchema,
-    );
-    if (job.id !== jobId) {
-      throw new ApiError(
-        'INVALID_API_RESPONSE',
-        502,
-        'The server returned an invalid response.',
-      );
-    }
-    return job;
-  }
-
-  public getAccountDeletionPreview(): Promise<AccountDeletionPreviewRecord> {
-    return this.requestJson(
-      '/api/account/deletion',
-      accountDeletionPreviewResponseSchema,
-    );
-  }
-
-  public async requestAccountDeletion(
-    input: AccountDeletionRequestInput,
-  ): Promise<AccountDeletionResultRecord> {
-    if (
-      input.confirmation !== 'DELETE'
-      || typeof input.acknowledge_personal_subscriptions !== 'boolean'
-      || typeof input.acknowledge_store_billing !== 'boolean'
-      || typeof input.acknowledge_personal_assets !== 'boolean'
-    ) {
-      throw invalidRequest();
-    }
-    const options: ApiRequestOptions = {
-      body: {
-        confirmation: input.confirmation,
-        acknowledge_personal_subscriptions:
-          input.acknowledge_personal_subscriptions,
-        acknowledge_store_billing: input.acknowledge_store_billing,
-        acknowledge_personal_assets: input.acknowledge_personal_assets,
-      },
+    organizationId?: string | null
+  ): Promise<{ job_id: string }> {
+    return this.request(
+      `/api/episodes/${episodeId}/autofill-pages-from-story${organizationQuery(organizationId)}`,
+      jobAcceptedSchema,
+      {
       method: 'POST',
+      body: { language }
+      }
+    );
+  }
+
+  public autofillPageFromScenes(
+    pageId: string,
+    language: 'ja' | 'en',
+    organizationId?: string | null
+  ): Promise<{
+    updated_panel_count: number;
+    filled_field_count: number;
+    compiler_used: boolean;
+    compiler_provider: 'openai' | 'fallback';
+    compiler_model: string | null;
+    compiler_prompt_version: string | null;
+    compiler_error: string | null;
+  }> {
+    return this.request(`/api/pages/${pageId}/autofill-from-scenes${organizationQuery(organizationId)}`, pageAutofillResponseSchema, {
+      method: 'POST',
+      body: { language }
+    });
+  }
+
+  public generatePage(pageId: string, organizationId?: string | null): Promise<{ job_id: string }> {
+    return this.request(`/api/pages/${pageId}/generate${organizationQuery(organizationId)}`, jobAcceptedSchema, {
+      method: 'POST'
+    });
+  }
+
+  public confirmPage(pageId: string, organizationId?: string | null): Promise<void> {
+    return this.requestVoid(`/api/pages/${pageId}/confirm${organizationQuery(organizationId)}`, { method: 'POST' });
+  }
+
+  public reopenPage(pageId: string, organizationId?: string | null): Promise<void> {
+    return this.requestVoid(`/api/pages/${pageId}/reopen${organizationQuery(organizationId)}`, { method: 'POST' });
+  }
+
+  public getPanels(pageId: string, organizationId?: string | null): Promise<{ panels: PanelRecord[] }> {
+    return this.request(`/api/pages/${pageId}/panels${organizationQuery(organizationId)}`, panelsResponseSchema);
+  }
+
+  public createPanel(pageId: string, body: CreatePanelPayload, organizationId?: string | null): Promise<PanelRecord> {
+    return this.request(`/api/pages/${pageId}/panels${organizationQuery(organizationId)}`, panelSchema, {
+      method: 'POST',
+      body
+    });
+  }
+
+  public updatePanel(panelId: string, body: UpdatePanelPayload, organizationId?: string | null): Promise<PanelRecord> {
+    return this.request(`/api/panels/${panelId}${organizationQuery(organizationId)}`, panelSchema, {
+      method: 'PUT',
+      body
+    });
+  }
+
+  public deletePanel(panelId: string, organizationId?: string | null): Promise<void> {
+    return this.requestVoid(`/api/panels/${panelId}${organizationQuery(organizationId)}`, { method: 'DELETE' });
+  }
+
+  public reorderPanels(
+    pageId: string,
+    panelIds: string[],
+    organizationId?: string | null
+  ): Promise<{ panels: PanelRecord[] }> {
+    return this.request(`/api/pages/${pageId}/panels/order${organizationQuery(organizationId)}`, panelsResponseSchema, {
+      method: 'PUT',
+      body: { panel_ids: panelIds }
+    });
+  }
+
+  public replacePanelAssignments(
+    panelId: string,
+    body: ReplacePanelAssignmentsPayload,
+    organizationId?: string | null
+  ): Promise<{ entities: PanelRecord['entities'] }> {
+    return this.request(
+      `/api/panels/${panelId}/entities${organizationQuery(organizationId)}`,
+      panelAssignmentsResponseSchema,
+      { method: 'PUT', body }
+    );
+  }
+
+  public getFrames(pageId: string, organizationId?: string | null): Promise<{ frames: PanelFrameRecord[] }> {
+    return this.request(`/api/pages/${pageId}/frames${organizationQuery(organizationId)}`, framesResponseSchema);
+  }
+
+  public applyPageLayoutTemplate(
+    pageId: string,
+    body: ApplyPageLayoutTemplatePayload,
+    organizationId?: string | null
+  ): Promise<{ template_id: string; panel_count: number; created_panel_count: number; deleted_panel_count: number; frames: PanelFrameRecord[] }> {
+    return this.request(`/api/pages/${pageId}/layout-template${organizationQuery(organizationId)}`, layoutTemplateResponseSchema, {
+      method: 'POST',
+      body
+    });
+  }
+
+  public applyFrameTemplate(
+    pageId: string,
+    templateId: string,
+    organizationId?: string | null
+  ): Promise<{ template_id: string; panel_count: number; frames: PanelFrameRecord[] }> {
+    return this.request(`/api/pages/${pageId}/frames/apply-template${organizationQuery(organizationId)}`, frameTemplateResponseSchema, {
+      method: 'POST',
+      body: { template_id: templateId }
+    });
+  }
+
+  public replaceFrames(
+    pageId: string,
+    body: { frames: PanelFrameRecord[] },
+    organizationId?: string | null
+  ): Promise<{ frames: PanelFrameRecord[] }> {
+    return this.request(`/api/pages/${pageId}/frames${organizationQuery(organizationId)}`, framesResponseSchema, {
+      method: 'PUT',
+      body
+    });
+  }
+
+  public getBalloons(
+    pageId: string,
+    organizationId?: string | null
+  ): Promise<{ balloons: BalloonRecord[] }> {
+    return this.request(`/api/pages/${pageId}/balloons${organizationQuery(organizationId)}`, balloonsResponseSchema);
+  }
+
+  public createBalloon(
+    pageId: string,
+    body: Record<string, unknown>,
+    organizationId?: string | null
+  ): Promise<BalloonRecord> {
+    return this.request(`/api/pages/${pageId}/balloons${organizationQuery(organizationId)}`, balloonSchema, {
+      method: 'POST',
+      body
+    });
+  }
+
+  public updateBalloon(
+    balloonId: string,
+    body: Record<string, unknown>,
+    organizationId?: string | null
+  ): Promise<BalloonRecord> {
+    return this.request(`/api/balloons/${balloonId}${organizationQuery(organizationId)}`, balloonSchema, {
+      method: 'PUT',
+      body
+    });
+  }
+
+  public deleteBalloon(balloonId: string, organizationId?: string | null): Promise<void> {
+    return this.requestVoid(`/api/balloons/${balloonId}${organizationQuery(organizationId)}`, {
+      method: 'DELETE'
+    });
+  }
+
+  public autoBalloons(
+    pageId: string,
+    organizationId?: string | null
+  ): Promise<{ balloons: BalloonRecord[] }> {
+    return this.request(`/api/pages/${pageId}/auto-balloons${organizationQuery(organizationId)}`, balloonsResponseSchema, {
+      method: 'POST'
+    });
+  }
+
+  public getCompositions(): Promise<{ compositions: CompositionRecord[] }> {
+    return this.request('/api/compositions', compositionsResponseSchema);
+  }
+
+  public async exportPageImage(pageId: string, organizationId?: string | null): Promise<BlobResponse> {
+    const response = await this.fetchWithAuthRetry(
+      `/api/pages/${pageId}/export-image${organizationQuery(organizationId)}`,
+      { method: 'GET' }
+    );
+    if (!response.ok) {
+      throw await this.toApiError(response);
+    }
+    return {
+      blob: await response.blob(),
+      contentType: response.headers.get('Content-Type')
     };
-    const tokens = await this.requireTokens();
-    let response = await this.request('/api/account/deletion', tokens.idToken, options);
-    if (response.status === 401) {
-      const refreshed = await this.auth.refreshTokens();
-      response = await this.request('/api/account/deletion', refreshed.idToken, options);
+  }
+
+  public async exportEntityReferenceImage(
+    entityId: string,
+    refId: string,
+    organizationId?: string | null
+  ): Promise<BlobResponse> {
+    const response = await this.fetchWithAuthRetry(
+      `/api/entities/${entityId}/reference/${encodeURIComponent(refId)}/image${organizationQuery(organizationId)}`,
+      { method: 'GET' }
+    );
+    if (!response.ok) {
+      throw await this.toApiError(response);
     }
-    if (!response.ok && response.status !== 409) {
-      throw new ApiError(
-        response.status >= 500 ? 'SERVER_ERROR' : 'REQUEST_FAILED',
-        response.status,
-        'The request could not be completed.',
-      );
+    return {
+      blob: await response.blob(),
+      contentType: response.headers.get('Content-Type')
+    };
+  }
+
+  public async exportEntityReferenceCandidateImage(
+    entityId: string,
+    candidateToken: string,
+    organizationId?: string | null
+  ): Promise<BlobResponse> {
+    const params = new URLSearchParams({ candidate_token: candidateToken });
+    if (organizationId !== undefined && organizationId !== null && organizationId.trim().length > 0) {
+      params.set('organization_id', organizationId);
     }
+    const response = await this.fetchWithAuthRetry(
+      `/api/entities/${entityId}/reference-candidate-image?${params.toString()}`,
+      { method: 'GET' }
+    );
+    if (!response.ok) {
+      throw await this.toApiError(response);
+    }
+    return {
+      blob: await response.blob(),
+      contentType: response.headers.get('Content-Type')
+    };
+  }
+
+  public getJob(
+    jobId: string,
+    organizationId?: string | null
+  ): Promise<CompatibleGenerationJobRecord> {
+    return this.request(
+      `/api/jobs/${jobId}${organizationQuery(organizationId)}`,
+      generationJobCompatibilitySchema
+    );
+  }
+
+  public listJobs(input: ListJobsInput = {}): Promise<GenerationJobsResponseRecord> {
+    return this.request(`/api/jobs${jobListQuery(input)}`, generationJobsResponseSchema);
+  }
+
+  public cancelJob(jobId: string, organizationId?: string | null): Promise<GenerationJobRecord> {
+    return this.request(`/api/jobs/${jobId}/cancel${organizationQuery(organizationId)}`, generationJobSchema, {
+      method: 'POST'
+    });
+  }
+
+  public hideJob(jobId: string, organizationId?: string | null): Promise<void> {
+    return this.requestVoid(`/api/jobs/${jobId}${organizationQuery(organizationId)}`, { method: 'DELETE' });
+  }
+
+  public registerPushToken(
+    payload: PushTokenRegistrationPayload
+  ): Promise<PushTokenRegistrationRecord> {
+    return this.request('/api/push-tokens', pushTokenRegistrationSchema, {
+      method: 'POST',
+      body: payload
+    });
+  }
+
+  public removePushToken(installationId: string): Promise<void> {
+    return this.requestVoid(
+      `/api/push-tokens/${encodeURIComponent(installationId)}`,
+      { method: 'DELETE' }
+    );
+  }
+
+  /** Account deletion is always personal. Do not attach organization_id to these endpoints. */
+  public getAccountDeletionPreview(): Promise<AccountDeletionPreviewRecord> {
+    return this.request('/api/account/deletion', accountDeletionPreviewSchema);
+  }
+
+  /** A 409 response is an expected blocked result, not a transport failure. */
+  public async requestAccountDeletion(input: {
+    confirmation: 'DELETE';
+    acknowledge_personal_subscriptions: boolean;
+    acknowledge_store_billing: boolean;
+    acknowledge_personal_assets: boolean;
+  }): Promise<AccountDeletionResultRecord> {
+    const response = await this.fetchWithAuthRetry('/api/account/deletion', {
+      method: 'POST',
+      body: input
+    });
     if (response.status !== 200 && response.status !== 202 && response.status !== 409) {
-      throw invalidApiResponse();
+      throw await this.toApiError(response);
     }
-    let payload: unknown;
+
+    let body: unknown;
     try {
-      payload = await response.json();
+      body = (await response.json()) as unknown;
     } catch {
-      throw invalidApiResponse();
+      throw new ApiError('API response did not match the expected contract.', 502, 'INVALID_API_RESPONSE');
     }
-    const parsed = accountDeletionResultResponseSchema.safeParse(payload);
-    if (!parsed.success || !accountDeletionStatusMatchesHttp(parsed.data, response.status)) {
-      throw invalidApiResponse();
-    }
-    return parsed.data;
-  }
-
-  public async getMobileStoreProductCatalog(
-    store: 'apple' | 'google',
-  ): Promise<MobileStoreProductCatalogRecord> {
-    const catalog = await this.requestJson(
-      `/api/mobile-purchases/catalog/${store}`,
-      mobileStoreProductCatalogSchema,
-    );
-    if (catalog.store !== store) {
-      throw invalidApiResponse();
-    }
-    return catalog;
-  }
-
-  public getMobilePurchaseBinding(): Promise<MobilePurchaseAccountBindingRecord> {
-    return this.requestJson(
-      '/api/mobile-purchases/binding',
-      mobilePurchaseAccountBindingSchema,
-    );
-  }
-
-  public verifyAppleMobilePurchase(
-    input: VerifyAppleMobilePurchaseInput,
-  ): Promise<MobileStorePurchaseResultRecord> {
-    const proof = input.signed_transaction.trim();
-    if (proof.length < 1 || proof.length > MAX_APPLE_SIGNED_TRANSACTION_LENGTH) {
-      throw invalidRequest();
-    }
-    return this.requestJson(
-      '/api/mobile-purchases/apple/verify',
-      mobileStorePurchaseResultSchema,
-      {
-        body: { ...input, signed_transaction: proof },
-        method: 'POST',
-      },
-    );
-  }
-
-  public verifyGoogleMobilePurchase(
-    input: VerifyGoogleMobilePurchaseInput,
-  ): Promise<MobileStorePurchaseResultRecord> {
-    const proof = input.purchase_token.trim();
-    if (
-      proof.length < MIN_GOOGLE_PURCHASE_TOKEN_LENGTH
-      || proof.length > MAX_GOOGLE_PURCHASE_TOKEN_LENGTH
-    ) {
-      throw invalidRequest();
-    }
-    return this.requestJson(
-      '/api/mobile-purchases/google/verify',
-      mobileStorePurchaseResultSchema,
-      { body: { purchase_token: proof }, method: 'POST' },
-    );
-  }
-
-  public restoreMobilePurchases(
-    input: RestoreMobilePurchasesInput,
-  ): Promise<MobileStoreRestoreResultRecord> {
-    const appleProofs = normalizeRestoreProofs(
-      input.apple_signed_transactions,
-      1,
-      MAX_APPLE_SIGNED_TRANSACTION_LENGTH,
-    );
-    const googleProofs = normalizeRestoreProofs(
-      input.google_purchase_tokens,
-      MIN_GOOGLE_PURCHASE_TOKEN_LENGTH,
-      MAX_GOOGLE_PURCHASE_TOKEN_LENGTH,
-    );
-    if (
-      appleProofs.length + googleProofs.length < 1
-      || appleProofs.length > MAX_RESTORE_PURCHASE_COUNT
-      || googleProofs.length > MAX_RESTORE_PURCHASE_COUNT
-    ) {
-      throw invalidRequest();
-    }
-    return this.requestJson(
-      '/api/mobile-purchases/restore',
-      mobileStoreRestoreResultSchema,
-      {
-        body: {
-          apple_signed_transactions: appleProofs,
-          google_purchase_tokens: googleProofs,
-        },
-        method: 'POST',
-      },
-    );
-  }
-
-  private async requireTokens(): Promise<AuthTokens> {
-    const tokens = await this.auth.getTokens();
-    if (tokens === null) {
-      throw new ApiError('AUTH_REQUIRED', 401, 'Authentication is required.');
-    }
-    return tokens;
-  }
-
-  private async requestJson<T>(
-    path: string,
-    schema: ZodType<T>,
-    options: ApiRequestOptions = {},
-  ): Promise<T> {
-    const tokens = await this.requireTokens();
-    let response = await this.request(path, tokens.idToken, options);
-    if (response.status === 401) {
-      const refreshed = await this.auth.refreshTokens();
-      response = await this.request(path, refreshed.idToken, options);
-    }
-    if (!response.ok) {
-      throw new ApiError(
-        response.status >= 500 ? 'SERVER_ERROR' : 'REQUEST_FAILED',
-        response.status,
-        'The request could not be completed.',
-      );
-    }
-
-    let payload: unknown;
-    try {
-      payload = await response.json();
-    } catch {
-      throw new ApiError(
-        'INVALID_API_RESPONSE',
-        502,
-        'The server returned an invalid response.',
-      );
-    }
-
-    const parsed = schema.safeParse(payload);
+    const parsed = accountDeletionResultSchema.safeParse(body);
     if (!parsed.success) {
-      throw new ApiError(
-        'INVALID_API_RESPONSE',
-        502,
-        'The server returned an invalid response.',
-      );
+      throw new ApiError('API response did not match the expected contract.', 502, 'INVALID_API_RESPONSE');
     }
     return parsed.data;
   }
 
-  private async requestNoContent(path: string): Promise<void> {
-    const options: ApiRequestOptions = { method: 'DELETE' };
-    const tokens = await this.requireTokens();
-    let response = await this.request(path, tokens.idToken, options);
-    if (response.status === 401) {
-      const refreshed = await this.auth.refreshTokens();
-      response = await this.request(path, refreshed.idToken, options);
-    }
+  public getBalance(): Promise<BillingBalanceRecord> {
+    return this.request('/api/billing/balance', billingBalanceSchema);
+  }
+
+  private async request<T>(path: string, schema: ZodType<T>, init: JsonRequestInit = {}): Promise<T> {
+    const response = await this.fetchWithAuthRetry(path, init);
     if (!response.ok) {
-      throw new ApiError(
-        response.status >= 500 ? 'SERVER_ERROR' : 'REQUEST_FAILED',
-        response.status,
-        'The request could not be completed.',
-      );
+      throw await this.toApiError(response);
     }
-    if (response.status !== 204) {
-      throw new ApiError(
-        'INVALID_API_RESPONSE',
-        502,
-        'The server returned an invalid response.',
-      );
+    let body: unknown;
+    try {
+      body = (await response.json()) as unknown;
+    } catch {
+      throw new ApiError('API response did not match the expected contract.', 502, 'INVALID_API_RESPONSE');
+    }
+    const parsed = schema.safeParse(body);
+    if (!parsed.success) {
+      throw new ApiError('API response did not match the expected contract.', 502, 'INVALID_API_RESPONSE');
+    }
+    return parsed.data;
+  }
+
+  private async stream(path: string, body: unknown, handlers: SseHandlers): Promise<void> {
+    try {
+      const response = await this.fetchWithAuthRetry(path, {
+        method: 'POST',
+        body,
+        signal: handlers.signal
+      });
+      if (!response.ok) {
+        throw await this.toApiError(response);
+      }
+
+      const bodyWithReader = response.body as ReadableStream<Uint8Array> | null;
+      if (bodyWithReader === null || typeof bodyWithReader.getReader !== 'function') {
+        this.parseSseText(await response.text(), handlers);
+        handlers.onDone?.();
+        return;
+      }
+
+      const reader = bodyWithReader.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await this.readStreamChunk(reader, handlers.signal);
+        if (done) {
+          if (buffer.trim().length > 0) {
+            this.parseSseText(buffer, handlers);
+          }
+          break;
+        }
+
+        buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, '\n');
+        let boundaryIndex = buffer.indexOf('\n\n');
+        while (boundaryIndex >= 0) {
+          const message = buffer.slice(0, boundaryIndex);
+          buffer = buffer.slice(boundaryIndex + 2);
+          this.parseSseText(message, handlers);
+          boundaryIndex = buffer.indexOf('\n\n');
+        }
+      }
+
+      handlers.onDone?.();
+    } catch (error) {
+      handlers.onError?.(error);
+      throw error;
     }
   }
 
-  private async request(
+  private parseSseText(text: string, handlers: SseHandlers): void {
+    const normalized = text.replace(/\r\n/g, '\n');
+    const messages = normalized.includes('\n\n') ? normalized.split('\n\n') : [normalized];
+
+    messages.forEach((message) => {
+      let eventName = 'message';
+      const dataLines: string[] = [];
+
+      message.split('\n').forEach((line) => {
+        if (line.startsWith('event:')) {
+          eventName = line.slice(6).trim();
+        }
+        if (line.startsWith('data:')) {
+          dataLines.push(line.slice(5).trim());
+        }
+      });
+
+      if (dataLines.length === 0) {
+        return;
+      }
+
+      const rawData = dataLines.join('\n');
+      const data = this.parseSseJson(rawData);
+      const parsed = storyCollaborationEventSchema.safeParse({
+        event: eventName,
+        data
+      });
+      if (!parsed.success) {
+        throw new ApiError('API response did not match the expected contract.', 502, 'INVALID_API_RESPONSE');
+      }
+      if (parsed.data.event === 'error') {
+        throw new ApiError(parsed.data.data.message, 500, 'SSE_ERROR');
+      }
+      if (parsed.data.event === 'done') {
+        return;
+      }
+      handlers.onMessage(parsed.data.data);
+    });
+  }
+
+  private parseSseJson(data: string): unknown {
+    try {
+      return JSON.parse(data) as unknown;
+    } catch {
+      return { text: data };
+    }
+  }
+
+  private async requestVoid(path: string, init: JsonRequestInit = {}): Promise<void> {
+    const response = await this.fetchWithAuthRetry(path, init);
+    if (!response.ok) {
+      throw await this.toApiError(response);
+    }
+  }
+
+  private async fetchWithAuthRetry(path: string, init: JsonRequestInit): Promise<Response> {
+    const method = (init.method ?? 'GET').toUpperCase();
+    if (method !== 'GET' && method !== 'HEAD' && !onlineManager.isOnline()) {
+      throw new ApiError('The device is offline.', 0, 'NETWORK_OFFLINE');
+    }
+    const response = await this.fetchWithTimeout(path, init);
+    if (response.status !== 401 || this.tokenRefreshProvider === null) {
+      return response;
+    }
+
+    let refreshedToken: string | null;
+    try {
+      refreshedToken = await this.tokenRefreshProvider();
+    } catch {
+      return response;
+    }
+    if (refreshedToken === null) {
+      return response;
+    }
+    return this.fetchWithTimeout(path, init, refreshedToken);
+  }
+
+  private async fetchWithTimeout(
     path: string,
-    idToken: string,
-    options: ApiRequestOptions,
+    init: JsonRequestInit,
+    tokenOverride?: string | null
   ): Promise<Response> {
     const controller = new AbortController();
+    const externalSignal = init.signal;
+    const abortFromExternalSignal = (): void => controller.abort();
+    if (externalSignal?.aborted) {
+      controller.abort();
+    } else {
+      externalSignal?.addEventListener('abort', abortFromExternalSignal, { once: true });
+    }
     const timeoutId = setTimeout(
       () => controller.abort(),
-      normalizeRequestTimeout(options.timeoutMs ?? this.requestTimeoutMs),
+      init.timeoutMs ?? requestTimeoutMs(init.method)
     );
     try {
-      const headers: Record<string, string> = {
-        Accept: 'application/json',
-        Authorization: `Bearer ${idToken}`,
-      };
-      if (options.body !== undefined) {
-        headers['Content-Type'] = 'application/json';
-      }
-      return await this.fetcher(`${this.apiBaseUrl}${path}`, {
-        body: options.body === undefined ? undefined : JSON.stringify(options.body),
-        headers,
-        method: options.method ?? 'GET',
-        signal: controller.signal,
-      });
-    } catch {
-      throw new ApiError(
-        'NETWORK_ERROR',
-        0,
-        'The server could not be reached.',
+      return await fetch(
+        this.toUrl(path),
+        this.buildRequest({ ...init, signal: controller.signal }, tokenOverride)
       );
     } finally {
       clearTimeout(timeoutId);
+      externalSignal?.removeEventListener('abort', abortFromExternalSignal);
     }
   }
-}
 
-function normalizeRestoreProofs(
-  values: string[],
-  minLength: number,
-  maxLength: number,
-): string[] {
-  if (values.length > MAX_RESTORE_PURCHASE_COUNT) {
-    throw invalidRequest();
-  }
-  const normalized = values.map((value) => value.trim());
-  if (normalized.some((value) => value.length < minLength || value.length > maxLength)) {
-    throw invalidRequest();
-  }
-  return normalized;
-}
-
-function invalidRequest(): ApiError {
-  return new ApiError('INVALID_REQUEST', 422, 'The request is invalid.');
-}
-
-function accountDeletionStatusMatchesHttp(
-  result: AccountDeletionResultRecord,
-  httpStatus: number,
-): boolean {
-  if (result.status === 'blocked') return httpStatus === 409;
-  if (result.status === 'completed') return httpStatus === 200;
-  return httpStatus === 202;
-}
-
-function normalizeRequestTimeout(value: number | undefined): number {
-  if (value === undefined || !Number.isFinite(value)) {
-    return DEFAULT_REQUEST_TIMEOUT_MS;
-  }
-  return Math.min(Math.max(Math.trunc(value), 1), MAX_REQUEST_TIMEOUT_MS);
-}
-
-function appendOrganizationQuery(
-  query: URLSearchParams,
-  organizationId: string | null,
-): void {
-  if (organizationId !== null) {
-    query.set('organization_id', organizationId);
-  }
-}
-
-function buildBoundedPageQuery(
-  input: { limit: number; cursor?: string | null },
-  organizationId: string | null,
-): URLSearchParams {
-  if (!Number.isSafeInteger(input.limit) || input.limit < 1 || input.limit > 100) {
-    throw new ApiError('INVALID_REQUEST', 422, 'The request is invalid.');
-  }
-  const query = new URLSearchParams({ limit: String(input.limit) });
-  const cursor = input.cursor?.trim();
-  if (cursor !== undefined && cursor.length > 0) {
-    if (cursor.length > 512) {
-      throw new ApiError('INVALID_REQUEST', 422, 'The request is invalid.');
+  private async readStreamChunk(
+    reader: ReadableStreamDefaultReader<Uint8Array>,
+    signal: AbortSignal | undefined
+  ): Promise<ReadableStreamReadResult<Uint8Array>> {
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    let abortListener: (() => void) | null = null;
+    const timeout = new Promise<never>((_, reject) => {
+      timeoutId = setTimeout(() => {
+        void reader.cancel();
+        reject(new DOMException('SSE stream was idle for too long.', 'AbortError'));
+      }, SSE_IDLE_TIMEOUT_MS);
+      if (signal !== undefined) {
+        abortListener = () => {
+          void reader.cancel();
+          reject(new DOMException('SSE stream was cancelled.', 'AbortError'));
+        };
+        signal.addEventListener('abort', abortListener, { once: true });
+      }
+    });
+    try {
+      return await Promise.race([reader.read(), timeout]);
+    } finally {
+      if (timeoutId !== null) {
+        clearTimeout(timeoutId);
+      }
+      if (abortListener !== null) {
+        signal?.removeEventListener('abort', abortListener);
+      }
     }
-    query.set('cursor', cursor);
-  }
-  appendOrganizationQuery(query, organizationId);
-  return query;
-}
-
-function invalidApiResponse(): ApiError {
-  return new ApiError(
-    'INVALID_API_RESPONSE',
-    502,
-    'The server returned an invalid response.',
-  );
-}
-
-function isValidPanelStructureRequest(body: ApplyPagePanelStructureInput): boolean {
-  const expected = body.expected_panel_ids;
-  if (expected.length > 8 || new Set(expected).size !== expected.length) {
-    return false;
-  }
-  if (body.operation.type === 'append') {
-    return expected.length < 8;
-  }
-  if (body.operation.type === 'delete') {
-    return expected.length > 1 && expected.includes(body.operation.panel_id);
-  }
-  return body.operation.panel_ids.length > 0
-    && orderedIdSetMatches(expected, body.operation.panel_ids);
-}
-
-function isValidPanelStructureResponse(
-  pageId: string,
-  body: ApplyPagePanelStructureInput,
-  response: PagePanelStructureResponse,
-): boolean {
-  const panelIds = response.panel_ids;
-  if (new Set(panelIds).size !== panelIds.length || response.frames.length !== panelIds.length) {
-    return false;
-  }
-  const orderedFrames = [...response.frames].sort(
-    (left, right) => left.reading_order - right.reading_order,
-  );
-  if (orderedFrames.some((frame, index) => (
-    frame.page_id !== pageId
-    || frame.panel_id !== panelIds[index]
-    || frame.reading_order !== index + 1
-  ))) {
-    return false;
   }
 
-  if (body.operation.type === 'append') {
-    return response.created_panel_id !== null
-      && response.layout_template_id !== null
-      && panelIds.length === body.expected_panel_ids.length + 1
-      && body.expected_panel_ids.every((panelId, index) => panelIds[index] === panelId)
-      && panelIds.at(-1) === response.created_panel_id;
+  private buildRequest(init: JsonRequestInit, tokenOverride?: string | null): RequestInit {
+    const headers = new Headers(init.headers);
+    const token = tokenOverride === undefined ? this.tokenProvider() : tokenOverride;
+    if (token !== null) {
+      headers.set('Authorization', `Bearer ${token}`);
+    }
+    if (init.body !== undefined && !headers.has('Content-Type')) {
+      headers.set('Content-Type', 'application/json');
+    }
+
+    const { timeoutMs: _timeoutMs, ...requestInit } = init;
+    void _timeoutMs;
+    return {
+      ...requestInit,
+      headers,
+      body: init.body === undefined ? undefined : JSON.stringify(init.body)
+    };
   }
-  if (body.operation.type === 'delete') {
-    const deletedPanelId = body.operation.panel_id;
-    return response.created_panel_id === null
-      && response.layout_template_id !== null
-      && orderedIdsEqual(
-        panelIds,
-        body.expected_panel_ids.filter((panelId) => panelId !== deletedPanelId),
-      );
+
+  private toUrl(path: string): string {
+    const trimmedBaseUrl = this.baseUrl.replace(/\/+$/, '');
+    return `${trimmedBaseUrl}${path}`;
   }
-  return response.created_panel_id === null
-    && response.layout_template_id === null
-    && orderedIdsEqual(panelIds, body.operation.panel_ids);
-}
 
-function orderedIdSetMatches(expected: readonly string[], requested: readonly string[]): boolean {
-  return expected.length === requested.length
-    && new Set(requested).size === requested.length
-    && requested.every((panelId) => expected.includes(panelId));
-}
-
-function orderedIdsEqual(left: readonly string[], right: readonly string[]): boolean {
-  return left.length === right.length
-    && left.every((panelId, index) => panelId === right[index]);
-}
-
-function entityStateMatchesRequestedFields(
-  state: EntityStateRecord,
-  body: CreateEntityStateInput | UpdateEntityStateInput,
-): boolean {
-  if (body.scene_id !== undefined && state.scene_id !== body.scene_id) return false;
-  if (
-    body.costume_note !== undefined
-    && state.costume_note !== normalizeRequestedNullableText(body.costume_note)
-  ) return false;
-  if (
-    body.condition_note !== undefined
-    && state.condition_note !== normalizeRequestedNullableText(body.condition_note)
-  ) return false;
-  if (
-    body.hair_note !== undefined
-    && state.hair_note !== normalizeRequestedNullableText(body.hair_note)
-  ) return false;
-  if (
-    body.expression_default !== undefined
-    && state.expression_default !== body.expression_default.trim()
-  ) return false;
-  if (
-    body.extra_note !== undefined
-    && state.extra_note !== normalizeRequestedNullableText(body.extra_note)
-  ) return false;
-  return true;
-}
-
-function normalizeRequestedNullableText(value: string | null): string | null {
-  if (value === null) return null;
-  const normalized = value.trim();
-  return normalized.length === 0 ? null : normalized;
-}
-
-function withOrganizationQuery(path: string, organizationId: string | null): string {
-  if (organizationId === null) {
-    return path;
+  private async toApiError(response: Response): Promise<ApiError> {
+    let body: unknown = null;
+    try {
+      body = (await response.json()) as unknown;
+    } catch {
+      body = null;
+    }
+    const parsed = apiErrorBodySchema.safeParse(body);
+    const error = new ApiError(
+      parsed.success ? parsed.data.error?.message ?? `API request failed with status ${response.status}` : `API request failed with status ${response.status}`,
+      response.status,
+      parsed.success ? parsed.data.error?.code ?? null : null,
+      response.headers.get('x-request-id'),
+      retryAfterSecondsFrom(response)
+    );
+    if (error.status === 401) {
+      recordOperationalMetric({
+        name: 'auth_failure',
+        requestId: error.requestId,
+        status: 401
+      });
+    }
+    return error;
   }
-  const query = new URLSearchParams({ organization_id: organizationId });
-  return `${path}?${query.toString()}`;
 }

@@ -10,8 +10,11 @@ export interface MobileConfig {
   cognitoRedirectUri: string;
   cognitoLogoutRedirectUri: string;
   cognitoScopes: string[];
-  buildEnvironment: MobileBuildEnvironment;
+  apiTokenUse: 'id_token';
   mobileStoreBillingEnabled: boolean;
+  organizationFeaturesEnabled: boolean;
+  sentryDsn: string;
+  buildEnvironment: MobileBuildEnvironment;
 }
 
 export type MobileConfigIssue =
@@ -25,8 +28,8 @@ export type MobileConfigIssue =
   | 'PRODUCTION_API_ORIGIN'
   | 'PRODUCTION_COGNITO_DOMAIN'
   | 'PRODUCTION_LOGOUT_REDIRECT_URI'
-  | 'PRODUCTION_NATIVE_LINKING'
-  | 'PRODUCTION_REDIRECT_URI';
+  | 'PRODUCTION_REDIRECT_URI'
+  | 'SENTRY_DSN';
 
 export interface MobileConfigValidation {
   valid: boolean;
@@ -38,25 +41,32 @@ const PRODUCTION_API_ORIGIN = 'https://app.lyra-editor.com';
 const PRODUCTION_REDIRECT_URI = 'https://app.lyra-editor.com/auth/mobile/callback';
 const PRODUCTION_LOGOUT_REDIRECT_URI = 'https://app.lyra-editor.com/auth/mobile/logout';
 
-const mobileConfigSchema = z
-  .object({
-    accountDeletionEnabled: z.boolean(),
-    apiBaseUrl: z.string().min(1).max(2_048),
-    cognitoDomain: z.string().min(1).max(2_048),
-    cognitoClientId: z.string().regex(/^[a-z0-9]{10,128}$/iu),
-    cognitoRedirectUri: z.string().min(1).max(500),
-    cognitoLogoutRedirectUri: z.string().min(1).max(500),
-    cognitoScopes: z.array(z.string().min(1).max(100)).min(1).max(20),
-    buildEnvironment: z.enum(['development', 'preview', 'production']),
-    mobileStoreBillingEnabled: z.boolean(),
-  })
-  .strict();
+const mobileConfigSchema = z.object({
+  accountDeletionEnabled: z.boolean(),
+  apiBaseUrl: z.string().min(1),
+  cognitoDomain: z.string().url(),
+  cognitoClientId: z.string().regex(/^[a-z0-9]{10,128}$/i),
+  cognitoRedirectUri: z.string().min(1).max(500),
+  cognitoLogoutRedirectUri: z.string().min(1).max(500),
+  cognitoScopes: z.array(z.string().min(1).max(100)).min(1).max(20),
+  apiTokenUse: z.literal('id_token'),
+  mobileStoreBillingEnabled: z.boolean(),
+  organizationFeaturesEnabled: z.boolean(),
+  sentryDsn: z.string().max(2_048),
+  buildEnvironment: z.enum(['development', 'preview', 'production'])
+}).strict();
 
 const readPublicEnv = (value: string | undefined): string =>
   typeof value === 'string' ? value.trim() : '';
 
-const readPublicBoolean = (value: string | undefined): boolean =>
-  readPublicEnv(value).toLowerCase() === 'true';
+const readPublicBooleanEnv = (value: string | undefined): boolean => {
+  const normalized = readPublicEnv(value).toLowerCase();
+  return normalized === '1' || normalized === 'true' || normalized === 'yes';
+};
+
+const readBuildEnvironment = (value: string | undefined): MobileBuildEnvironment => {
+  return readPublicEnv(value) as MobileBuildEnvironment;
+};
 
 const parseUrl = (value: string): URL | null => {
   try {
@@ -72,12 +82,15 @@ const addIssue = (issues: MobileConfigIssue[], issue: MobileConfigIssue): void =
   }
 };
 
-const isDevelopmentLocalhostUrl = (url: URL): boolean =>
-  url.protocol === 'http:' && url.hostname === 'localhost';
-
-const isCustomCallback = (value: string, expectedPath: string): boolean => {
-  const url = parseUrl(value);
-  return url?.protocol === 'lyra-mobile:' && url.hostname === 'auth' && url.pathname === expectedPath;
+const isValidSentryDsn = (value: string): boolean => {
+  const parsed = parseUrl(value);
+  return (
+    parsed !== null &&
+    parsed.protocol === 'https:' &&
+    parsed.username.length > 0 &&
+    parsed.password.length === 0 &&
+    parsed.pathname.length > 1
+  );
 };
 
 const supportCodeFor = (issues: MobileConfigIssue[]): string => {
@@ -94,8 +107,9 @@ export const validateMobileConfig = (input: MobileConfig): MobileConfigValidatio
   const issues: MobileConfigIssue[] = [];
   const parsed = mobileConfigSchema.safeParse(input);
   if (!parsed.success) {
-    for (const issue of parsed.error.issues) {
-      switch (issue.path[0]) {
+    parsed.error.issues.forEach((issue) => {
+      const field = issue.path[0];
+      switch (field) {
         case 'apiBaseUrl':
           addIssue(issues, 'API_BASE_URL');
           break;
@@ -117,10 +131,13 @@ export const validateMobileConfig = (input: MobileConfig): MobileConfigValidatio
         case 'buildEnvironment':
           addIssue(issues, 'BUILD_ENVIRONMENT');
           break;
+        case 'sentryDsn':
+          addIssue(issues, 'SENTRY_DSN');
+          break;
         default:
           break;
       }
-    }
+    });
   }
 
   const apiUrl = parseUrl(input.apiBaseUrl);
@@ -128,7 +145,7 @@ export const validateMobileConfig = (input: MobileConfig): MobileConfigValidatio
     addIssue(issues, 'API_BASE_URL');
   } else if (
     apiUrl.protocol !== 'https:' &&
-    !(input.buildEnvironment === 'development' && isDevelopmentLocalhostUrl(apiUrl))
+    !(input.buildEnvironment === 'development' && apiUrl.protocol === 'http:' && apiUrl.hostname === 'localhost')
   ) {
     addIssue(issues, 'API_BASE_URL');
   }
@@ -137,15 +154,14 @@ export const validateMobileConfig = (input: MobileConfig): MobileConfigValidatio
   if (cognitoUrl === null || cognitoUrl.protocol !== 'https:') {
     addIssue(issues, 'COGNITO_DOMAIN');
   }
-  if (/placeholder|your_|test_client/iu.test(input.cognitoClientId)) {
+  if (/placeholder|your_|test_client/i.test(input.cognitoClientId)) {
     addIssue(issues, 'COGNITO_CLIENT_ID');
+  }
+  if (input.sentryDsn.length > 0 && !isValidSentryDsn(input.sentryDsn)) {
+    addIssue(issues, 'SENTRY_DSN');
   }
 
   if (input.buildEnvironment === 'production') {
-    // PR-E intentionally has no bundle/package identifiers or universal-link
-    // association. Keep production sign-in closed until PR-H adds and verifies
-    // both native release targets.
-    addIssue(issues, 'PRODUCTION_NATIVE_LINKING');
     if (apiUrl?.origin !== PRODUCTION_API_ORIGIN || apiUrl.pathname !== '/') {
       addIssue(issues, 'PRODUCTION_API_ORIGIN');
     }
@@ -158,18 +174,19 @@ export const validateMobileConfig = (input: MobileConfig): MobileConfigValidatio
     if (input.cognitoLogoutRedirectUri !== PRODUCTION_LOGOUT_REDIRECT_URI) {
       addIssue(issues, 'PRODUCTION_LOGOUT_REDIRECT_URI');
     }
+    if (!isValidSentryDsn(input.sentryDsn)) {
+      addIssue(issues, 'SENTRY_DSN');
+    }
   } else {
-    const redirectUrl = parseUrl(input.cognitoRedirectUri);
-    const logoutUrl = parseUrl(input.cognitoLogoutRedirectUri);
     if (
-      !isCustomCallback(input.cognitoRedirectUri, '/callback') &&
-      redirectUrl?.protocol !== 'https:'
+      !input.cognitoRedirectUri.startsWith('lyra-mobile://') &&
+      parseUrl(input.cognitoRedirectUri)?.protocol !== 'https:'
     ) {
       addIssue(issues, 'COGNITO_REDIRECT_URI');
     }
     if (
-      !isCustomCallback(input.cognitoLogoutRedirectUri, '/logout') &&
-      logoutUrl?.protocol !== 'https:'
+      !input.cognitoLogoutRedirectUri.startsWith('lyra-mobile://') &&
+      parseUrl(input.cognitoLogoutRedirectUri)?.protocol !== 'https:'
     ) {
       addIssue(issues, 'COGNITO_LOGOUT_REDIRECT_URI');
     }
@@ -183,8 +200,8 @@ export const validateMobileConfig = (input: MobileConfig): MobileConfigValidatio
 };
 
 export const config: MobileConfig = {
-  accountDeletionEnabled: readPublicBoolean(
-    process.env.EXPO_PUBLIC_ACCOUNT_DELETION_ENABLED
+  accountDeletionEnabled: readPublicBooleanEnv(
+    process.env.EXPO_PUBLIC_ACCOUNT_DELETION_ENABLED,
   ),
   apiBaseUrl: readPublicEnv(process.env.EXPO_PUBLIC_API_BASE_URL),
   cognitoDomain: readPublicEnv(process.env.EXPO_PUBLIC_COGNITO_DOMAIN),
@@ -195,12 +212,15 @@ export const config: MobileConfig = {
     .split(',')
     .map((scope) => scope.trim())
     .filter((scope) => scope.length > 0),
-  buildEnvironment: readPublicEnv(
-    process.env.EXPO_PUBLIC_BUILD_ENVIRONMENT
-  ) as MobileBuildEnvironment,
-  mobileStoreBillingEnabled: readPublicBoolean(
-    process.env.EXPO_PUBLIC_MOBILE_STORE_BILLING_ENABLED
-  )
+  apiTokenUse: 'id_token',
+  mobileStoreBillingEnabled: readPublicBooleanEnv(
+    process.env.EXPO_PUBLIC_MOBILE_STORE_BILLING_ENABLED,
+  ),
+  organizationFeaturesEnabled: readPublicBooleanEnv(process.env.EXPO_PUBLIC_ORGANIZATION_FEATURES_ENABLED),
+  sentryDsn: readPublicEnv(process.env.EXPO_PUBLIC_SENTRY_DSN),
+  buildEnvironment: readBuildEnvironment(process.env.EXPO_PUBLIC_BUILD_ENVIRONMENT)
 };
 
 export const configValidation = validateMobileConfig(config);
+
+export const isAuthConfigured = (): boolean => configValidation.valid;

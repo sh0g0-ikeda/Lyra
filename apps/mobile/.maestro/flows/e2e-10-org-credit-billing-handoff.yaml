@@ -1,0 +1,12 @@
+appId: ${APP_ID}
+name: "E2E-10: org credit/billing handoff"
+tags: [staging, organization, billing]
+---
+- runFlow:
+    file: ../helpers/launch-authenticated.yaml
+- runFlow:
+    file: ../helpers/open-account.yaml
+- assertVisible: ${E2E_ORG_BILLING_LABEL}
+- assertVisible: ${E2E_ORG_CREDIT_LABEL}
+- tapOn: ${E2E_ORG_BILLING_HANDOFF_LABEL}
+- takeScreenshot: E2E-10-billing-handoff

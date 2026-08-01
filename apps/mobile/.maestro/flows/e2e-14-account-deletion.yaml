@@ -1,0 +1,16 @@
+appId: ${APP_ID}
+name: "E2E-14: account deletion"
+tags: [staging, account, destructive]
+---
+- runFlow:
+    file: ../helpers/launch-authenticated.yaml
+- runFlow:
+    file: ../helpers/open-account.yaml
+- tapOn: ${E2E_ACCOUNT_DELETION_LABEL}
+- tapOn: ${E2E_ACCOUNT_DELETION_CONFIRMATION_LABEL}
+- inputText: ${E2E_ACCOUNT_DELETION_CONFIRMATION}
+- tapOn: ${E2E_ACCOUNT_DELETION_SUBMIT_LABEL}
+- extendedWaitUntil:
+    visible: ${E2E_ACCOUNT_DELETION_RESULT_LABEL}
+    timeout: 45000
+- takeScreenshot: E2E-14-deletion-requested

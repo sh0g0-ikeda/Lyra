@@ -1,0 +1,17 @@
+appId: ${APP_ID}
+name: "E2E-02: token refresh/background"
+tags: [staging, auth]
+---
+- runFlow:
+    file: ../helpers/launch-authenticated.yaml
+- runFlow:
+    file: ../helpers/open-account.yaml
+- assertVisible: ${E2E_SESSION_READY_LABEL}
+- runFlow:
+    file: ../helpers/background-and-foreground.yaml
+- extendedWaitUntil:
+    visible:
+      id: tab-account
+    timeout: 30000
+- assertVisible: ${E2E_SESSION_READY_LABEL}
+- takeScreenshot: E2E-02-refreshed-session

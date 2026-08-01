@@ -1,0 +1,4 @@
+- tapOn:
+    id: tab-characters
+- assertVisible:
+    id: tab-characters

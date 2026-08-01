@@ -1,0 +1,16 @@
+appId: ${APP_ID}
+name: "E2E-07: insufficient credit/action"
+tags: [staging, credit, recovery]
+---
+- runFlow:
+    file: ../helpers/launch-authenticated.yaml
+- runFlow:
+    file: ../helpers/open-pages.yaml
+- tapOn: ${E2E_CREDIT_TRIGGER_LABEL}
+- extendedWaitUntil:
+    visible: ${E2E_INSUFFICIENT_CREDIT_LABEL}
+    timeout: 30000
+- tapOn: ${E2E_CREDIT_ACTION_LABEL}
+- runFlow:
+    file: ../helpers/open-account.yaml
+- takeScreenshot: E2E-07-credit-action

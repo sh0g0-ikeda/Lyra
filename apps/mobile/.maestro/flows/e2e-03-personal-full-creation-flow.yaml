@@ -1,0 +1,28 @@
+appId: ${APP_ID}
+name: "E2E-03: personal full creation flow"
+tags: [staging, personal, creation]
+---
+- runFlow:
+    file: ../helpers/launch-authenticated.yaml
+- runFlow:
+    file: ../helpers/open-story.yaml
+- tapOn: ${E2E_CREATE_WORK_LABEL}
+- tapOn: ${E2E_WORK_TITLE_INPUT_LABEL}
+- inputText: ${E2E_NEW_WORK_TITLE}
+- tapOn: ${E2E_SAVE_WORK_LABEL}
+- assertVisible: ${E2E_NEW_WORK_TITLE}
+- tapOn: ${E2E_CREATE_CHAPTER_LABEL}
+- tapOn: ${E2E_CHAPTER_TITLE_INPUT_LABEL}
+- inputText: ${E2E_NEW_CHAPTER_TITLE}
+- tapOn: ${E2E_SAVE_CHAPTER_LABEL}
+- assertVisible: ${E2E_NEW_CHAPTER_TITLE}
+- tapOn: ${E2E_CREATE_EPISODE_LABEL}
+- tapOn: ${E2E_EPISODE_TITLE_INPUT_LABEL}
+- inputText: ${E2E_NEW_EPISODE_TITLE}
+- tapOn: ${E2E_SAVE_EPISODE_LABEL}
+- assertVisible: ${E2E_NEW_EPISODE_TITLE}
+- runFlow:
+    file: ../helpers/open-pages.yaml
+- tapOn: ${E2E_CREATE_PAGE_LABEL}
+- assertVisible: ${E2E_NEW_PAGE_LABEL}
+- takeScreenshot: E2E-03-personal-creation

@@ -1,29 +1,28 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
-import { colors, radius, spacing } from '../constants/theme';
-import { t, type UiLanguage } from '../lib/i18n';
+
+import { Notice } from '@/components/Notice';
+import { PrimaryButton } from '@/components/PrimaryButton';
+import { colors, radius, spacing, textStyles } from '@/constants/theme';
 import type {
   NativeStoreBillingAdapter,
   NativeStoreBillingErrorCode,
   NativeStoreBillingState,
-  NativeStoreServerState,
-} from '../lib/nativeStoreBilling';
-import { Notice } from './Notice';
-import { PrimaryButton } from './PrimaryButton';
+  NativeStoreServerState
+} from '@/lib/nativeStoreBilling';
+import type { ComponentTranslationKey } from '@/lib/i18nComponentMessages';
+import { t } from '@/lib/i18n';
+import { useNetworkStatus } from '@/state/networkStatus';
 
 interface MobileStoreBillingPanelProps {
   adapter: NativeStoreBillingAdapter;
-  language: UiLanguage;
-  onVerified?(state: NativeStoreServerState): void | Promise<void>;
+  language: 'ja' | 'en';
+  onVerified?: (state: NativeStoreServerState) => void | Promise<void>;
 }
 
-export function MobileStoreBillingPanel({
-  adapter,
-  language,
-  onVerified,
-}: MobileStoreBillingPanelProps): React.JSX.Element {
+export function MobileStoreBillingPanel({ adapter, language, onVerified }: MobileStoreBillingPanelProps): React.JSX.Element {
+  const { online } = useNetworkStatus();
   const [state, setState] = useState<NativeStoreBillingState>(() => adapter.getState());
-  const notifiedVerifiedState = useRef<NativeStoreServerState | null>(null);
 
   useEffect(() => {
     const unsubscribe = adapter.subscribe(setState);
@@ -35,152 +34,120 @@ export function MobileStoreBillingPanel({
   }, [adapter]);
 
   useEffect(() => {
-    if (
-      state.lastVerified !== null
-      && state.lastVerified !== notifiedVerifiedState.current
-      && onVerified !== undefined
-    ) {
-      notifiedVerifiedState.current = state.lastVerified;
+    if (state.lastVerified !== null && onVerified !== undefined) {
       void onVerified(state.lastVerified);
     }
   }, [onVerified, state.lastVerified]);
 
   const isBusy = state.loading || state.restoring || state.submittingProductId !== null;
-  const reconnect = async (): Promise<void> => {
-    try {
-      await adapter.connect();
-    } catch {
-      // The adapter exposes only a stable error code through state.
-    }
-  };
   const restore = async (): Promise<void> => {
     try {
       await adapter.restore();
     } catch {
-      // The adapter exposes only a stable error code through state.
+      // The adapter provides a safe, localizable error state.
     }
   };
 
   return (
-    <View accessibilityLabel={t(language, 'purchaseSection')} style={styles.container}>
+    <View accessibilityLabel={t(language, "generated.components.MobileStoreBillingPanel.mobile.purchases.73712c97")} style={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.title}>{t(language, 'purchaseSection')}</Text>
-        {state.loading ? <ActivityIndicator color={colors.accent} /> : null}
+        <Text style={styles.title}>{t(language, "generated.components.MobileStoreBillingPanel.in.app.purchases.da6e1910")}</Text>
+        {state.loading ? <ActivityIndicator color={colors.primary} size="small" /> : null}
       </View>
-      <Text style={styles.caption}>{t(language, 'purchaseVerificationHelp')}</Text>
-
-      {state.error === null ? null : (
+      <Text style={styles.caption}>
+        {t(language, "generated.components.MobileStoreBillingPanel.your.account.changes.only.after.the.serv.3d1d385e")}
+      </Text>
+      {online ? null : (
         <Notice
-          message={purchaseErrorMessage(state.error.code, language)}
-          tone={errorTone(state.error.code)}
+          message={t(language, "generated.components.MobileStoreBillingPanel.purchases.and.restores.are.available.aft.a694c001")}
+          tone="warning"
         />
       )}
-      {!state.connected && state.error?.retryable === true ? (
-        <PrimaryButton
-          label={t(language, 'purchaseReconnect')}
-          loading={state.loading}
-          onPress={() => void reconnect()}
-        />
-      ) : null}
-
+      {state.error !== null ? <Notice message={errorMessage(state.error.code, language)} tone={errorTone(state.error.code)} /> : null}
       {state.products.map((product) => {
+        const disabledReason = product.available
+          ? undefined
+          : t(language, "generated.components.MobileStoreBillingPanel.this.product.is.unavailable.right.now.bd7334b4");
         const productBusy = state.submittingProductId === product.id;
-        const disabled = !state.connected || !product.available || isBusy;
         return (
           <View key={product.id} style={styles.product}>
             <View style={styles.productText}>
               <Text style={styles.productTitle}>{product.title}</Text>
-              {product.description === undefined ? null : (
-                <Text style={styles.caption}>{product.description}</Text>
-              )}
-              {product.displayPrice === null ? (
-                <Text style={styles.unavailable}>{t(language, 'purchaseProductUnavailable')}</Text>
-              ) : (
-                <Text style={styles.price}>{product.displayPrice}</Text>
-              )}
+              {product.description === undefined ? null : <Text style={styles.caption}>{product.description}</Text>}
+              {product.displayPrice === null ? null : <Text style={styles.price}>{product.displayPrice}</Text>}
             </View>
             <PrimaryButton
-              disabled={disabled}
-              label={t(language, 'purchaseBuy')}
+              disabled={!online || !state.connected || !product.available || isBusy}
+              disabledReason={!online ? offlineMessage(language) : disabledReason ?? (isBusy ? busyMessage(language) : undefined)}
+              label={t(language, "generated.components.MobileStoreBillingPanel.purchase.8ff82e16")}
               loading={productBusy}
               onPress={() => {
                 void adapter.purchase(product.id).catch(() => undefined);
               }}
+              variant="primary"
             />
           </View>
         );
       })}
-
       <PrimaryButton
-        disabled={!state.connected || isBusy}
-        label={t(language, 'purchaseRestore')}
+        disabled={!online || !state.connected || isBusy}
+        disabledReason={!online ? offlineMessage(language) : isBusy ? busyMessage(language) : undefined}
+        label={t(language, "generated.components.MobileStoreBillingPanel.restore.purchases.17980d3f")}
         loading={state.restoring}
         onPress={() => void restore()}
+        variant="secondary"
       />
     </View>
   );
 }
 
-function purchaseErrorMessage(
-  code: NativeStoreBillingErrorCode,
-  language: UiLanguage,
-): string {
-  switch (code) {
-    case 'PURCHASE_CANCELLED':
-      return t(language, 'purchaseCancelled');
-    case 'PURCHASE_PENDING':
-      return t(language, 'purchasePending');
-    case 'ALREADY_OWNED':
-      return t(language, 'purchaseAlreadyOwned');
-    case 'PRODUCT_NOT_FOUND':
-    case 'PRODUCT_UNAVAILABLE':
-      return t(language, 'purchaseProductUnavailable');
-    case 'DUPLICATE_SUBMIT':
-      return t(language, 'purchaseBusy');
-    case 'VERIFICATION_FAILED':
-    case 'FINISH_FAILED':
-      return t(language, 'purchaseVerificationFailed');
-    case 'NETWORK':
-    case 'CONNECTION_FAILED':
-    case 'NOT_CONNECTED':
-    case 'STORE_UNAVAILABLE':
-      return t(language, 'purchaseNetworkError');
-    case 'PURCHASE_FAILED':
-    case 'RESTORE_FAILED':
-      return t(language, 'purchaseFailed');
-  }
+function busyMessage(language: 'ja' | 'en'): string {
+  return t(language, "generated.components.MobileStoreBillingPanel.wait.for.the.current.purchase.to.finish.1fd8e89d");
 }
 
-function errorTone(
-  code: NativeStoreBillingErrorCode,
-): 'danger' | 'info' {
-  return code === 'PURCHASE_CANCELLED'
-    || code === 'PURCHASE_PENDING'
-    || code === 'ALREADY_OWNED'
-    || code === 'DUPLICATE_SUBMIT'
-    ? 'info'
-    : 'danger';
+function offlineMessage(language: 'ja' | 'en'): string {
+  return t(language, "generated.components.MobileStoreBillingPanel.reconnect.before.continuing.e8fc7657");
+}
+
+function errorMessage(code: NativeStoreBillingErrorCode, language: 'ja' | 'en'): string {
+  const messages: Record<NativeStoreBillingErrorCode, ComponentTranslationKey> = {
+    ALREADY_OWNED: 'component.mobileStoreBilling.alreadyOwned',
+    CONNECTION_FAILED: 'component.mobileStoreBilling.connectionFailed',
+    DUPLICATE_SUBMIT: 'component.mobileStoreBilling.duplicateSubmit',
+    FINISH_FAILED: 'component.mobileStoreBilling.finishFailed',
+    NETWORK: 'component.mobileStoreBilling.network',
+    NOT_CONNECTED: 'component.mobileStoreBilling.notConnected',
+    PRODUCT_NOT_FOUND: 'component.mobileStoreBilling.productNotFound',
+    PRODUCT_UNAVAILABLE: 'component.mobileStoreBilling.productUnavailable',
+    PURCHASE_CANCELLED: 'component.mobileStoreBilling.purchaseCancelled',
+    PURCHASE_FAILED: 'component.mobileStoreBilling.purchaseFailed',
+    PURCHASE_PENDING: 'component.mobileStoreBilling.purchasePending',
+    RESTORE_FAILED: 'component.mobileStoreBilling.restoreFailed',
+    STORE_UNAVAILABLE: 'component.mobileStoreBilling.storeUnavailable',
+    VERIFICATION_FAILED: 'component.mobileStoreBilling.verificationFailed'
+  };
+  const message = messages[code];
+  return t(language, message);
+}
+
+function errorTone(code: NativeStoreBillingErrorCode): 'danger' | 'warning' | 'info' {
+  if (code === 'PURCHASE_CANCELLED' || code === 'PURCHASE_PENDING' || code === 'DUPLICATE_SUBMIT') return 'info';
+  if (code === 'ALREADY_OWNED' || code === 'FINISH_FAILED') return 'warning';
+  return 'danger';
 }
 
 const styles = StyleSheet.create({
-  caption: {
-    color: colors.muted,
-    fontSize: 14,
-    lineHeight: 21,
-  },
+  caption: { ...textStyles.caption },
   container: {
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    borderWidth: 1,
     gap: spacing.md,
+    padding: spacing.md
   },
-  header: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  price: {
-    color: colors.accent,
-    fontSize: 17,
-    fontWeight: '800',
-  },
+  header: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' },
+  price: { ...textStyles.body, color: colors.primary, fontWeight: '700' },
   product: {
     alignItems: 'center',
     borderColor: colors.border,
@@ -189,24 +156,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: spacing.sm,
     justifyContent: 'space-between',
-    padding: spacing.sm,
+    padding: spacing.sm
   },
-  productText: {
-    flex: 1,
-    gap: spacing.xs,
-  },
-  productTitle: {
-    color: colors.ink,
-    fontSize: 16,
-    fontWeight: '700',
-  },
-  title: {
-    color: colors.ink,
-    fontSize: 18,
-    fontWeight: '800',
-  },
-  unavailable: {
-    color: colors.muted,
-    fontSize: 14,
-  },
+  productText: { flex: 1, gap: spacing.xs, minWidth: 0 },
+  productTitle: { ...textStyles.body, color: colors.inkStrong, fontWeight: '700' },
+  title: { ...textStyles.sectionTitle }
 });

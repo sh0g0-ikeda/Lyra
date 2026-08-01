@@ -1,0 +1,15 @@
+appId: ${APP_ID}
+name: "E2E-13: deep link cold/warm start"
+tags: [staging, deep-link]
+---
+- runFlow:
+    file: ../helpers/launch-authenticated.yaml
+- stopApp
+- openLink: ${E2E_DEEP_LINK_URL}
+- extendedWaitUntil:
+    visible: ${E2E_DEEP_LINK_DESTINATION_LABEL}
+    timeout: 30000
+- pressKey: Home
+- openLink: ${E2E_DEEP_LINK_URL}
+- assertVisible: ${E2E_DEEP_LINK_DESTINATION_LABEL}
+- takeScreenshot: E2E-13-deep-link

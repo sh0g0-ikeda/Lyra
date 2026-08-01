@@ -1,43 +1,63 @@
-import { Component, type ErrorInfo, type PropsWithChildren } from 'react';
-import { Text, View } from 'react-native';
-import { colors, spacing } from '../constants/theme';
+import { Component, type PropsWithChildren } from 'react';
+import { StyleSheet, Text, View } from 'react-native';
 
-interface ErrorBoundaryState {
-  failed: boolean;
+import { colors, spacing, textStyles } from '@/constants/theme';
+import type { UiLanguage } from '@/domain/types';
+import { t } from '@/lib/i18n';
+import { captureHandledException } from '@/lib/operationalEvents';
+
+interface ErrorBoundaryProps extends PropsWithChildren {
+  language?: UiLanguage;
 }
 
-export class ErrorBoundary extends Component<
-  PropsWithChildren,
-  ErrorBoundaryState
-> {
-  public state: ErrorBoundaryState = { failed: false };
+interface ErrorBoundaryState {
+  hasError: boolean;
+}
+
+export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
+  public state: ErrorBoundaryState = {
+    hasError: false
+  };
 
   public static getDerivedStateFromError(): ErrorBoundaryState {
-    return { failed: true };
+    return {
+      hasError: true
+    };
   }
 
-  public componentDidCatch(_error: Error, _info: ErrorInfo): void {
-    // Provider details are intentionally not rendered or logged here.
+  public componentDidCatch(error: unknown): void {
+    captureHandledException(error);
+    console.error('Lyra Mobile render error boundary triggered');
   }
 
   public render(): React.ReactNode {
-    if (this.state.failed) {
+    if (this.state.hasError) {
       return (
-        <View
-          accessibilityRole="alert"
-          style={{
-            backgroundColor: colors.canvas,
-            flex: 1,
-            justifyContent: 'center',
-            padding: spacing.md,
-          }}
-        >
-          <Text style={{ color: colors.danger, fontSize: 16 }}>
-            画面を表示できませんでした。アプリを再起動してください。
+        <View style={styles.container}>
+          <Text style={styles.title}>Lyra Mobile</Text>
+          <Text style={styles.message}>
+            {t(this.props.language ?? 'ja', 'shared.errorBoundary.startup')}
           </Text>
         </View>
       );
     }
+
     return this.props.children;
   }
 }
+
+const styles = StyleSheet.create({
+  container: {
+    backgroundColor: colors.canvas,
+    flex: 1,
+    gap: spacing.md,
+    justifyContent: 'center',
+    padding: spacing.lg
+  },
+  message: {
+    ...textStyles.body
+  },
+  title: {
+    ...textStyles.title
+  }
+});
