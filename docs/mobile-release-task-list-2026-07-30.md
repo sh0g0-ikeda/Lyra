@@ -6,7 +6,7 @@
 
 対象PR: [#67 feat(mobile): production-ready Lyra mobile workflow](https://github.com/sh0g0-ikeda/Lyra/pull/67)
 
-進捗: 102件完了 / 380件未完了
+進捗: 103件完了 / 379件未完了
 
 実装監査基準: [PR #151](https://github.com/sh0g0-ikeda/Lyra/pull/151) / `bc783f2`（Mobileキャラ服装・状態管理 feature code head。local full gate成功。証跡追記後の最終headもGitHub CIで統合前に再確認）
 
@@ -348,7 +348,10 @@ Accountのfalse-positive error解消は、Mobile基盤の統合後にPR #144と�
   - [x] Mobile Panel登場要素割当編集を既存の条件付き保存APIだけで接続
     - 証跡: [PR #154](https://github.com/sh0g0-ikeda/Lyra/pull/154)、feature code head `900a2de`。作品Entityのcursor pagination、最大8件の追加・削除、役割・表情・動作・配置・向き・効果メモ・Entity state編集を追加する。コマ内容と割当を別draft / 別保存にし、`expected_entities`付きPUT後に同一scopeのauthoritative GETがdesiredと一致した場合だけcacheへ採用する
     - 安全境界: Backend / DB / migration / Prompt / SQS / generation job / Worker / credit / refund / Webと既存10-field assignment shapeを変更しない。409 / 422 / response loss / remote競合ではdraftを保持し自動再送しない。保存済み話者と未知または削除済み`state_id`を保護する。Mobile 39 files / 356 tests、typecheck、lint、contract drift、Expo dependency check、expo-doctor 20/20、両OS export、Backend Vitest 1752 tests、Bun 1723 passed / 37 skipped、fresh DB 001〜039・65 invariant / 0 violations・実DB12 tests、Web lint / build・Playwright 13 tests、独立read-only監査P0 / P1なしを確認
-  - 残り: 生成fileを削除可能にするdurable asset cleanup、Backend endpointがない作品削除・並べ替え、Scene削除Backend安全境界、Charactersの削除Backend安全境界・参照画像direct upload client / 本番設定・`costume_ref_id`のBackend整合性付き選択/変更、Panel作成・削除・並べ替え・frame / balloon、Page画像生成、organization workspace UI。PR-F全体は未完了のまま維持する
+  - [x] Panel作成・削除・並べ替えのBackend安全境界を追加
+    - 証跡: [PR #155](https://github.com/sh0g0-ikeda/Lyra/pull/155)、feature code head `3f9bbf4`。ordered Panel ID snapshotを条件に、Panels・Frames・Balloon参照・`layout_config`の構造キーをPage単位の同一transactionで更新する追加APIを実装。Episode生成受付lock、active generation、confirmed / generating、1〜8 Panel、Frame不整合、stale Balloon writeを保存前に拒否する
+    - 安全境界: 既存Panel / Balloon request・response、Panel / Frame / Balloon永続化shape、DB schema / migration、Prompt、SQS message、generation job、Worker、credit / refund、Webを変更しない。append / deleteは既存の決定的Frame templateを使い、reorderはFrame形状を維持する。Vitest 250 files passed / 6 skipped・1743 passed / 38 skipped、Bun 1743 passed / 48 skipped、実PostgreSQL 9 tests、fresh DB 001〜039・65 invariant / 0 violations、Backend build、API inventory / Mobile contract、Web lint / build・Playwright 13 tests、Mobile 39 files / 356 tests・両OS export、独立read-only再監査P0 / P1 / P2なしを確認
+  - 残り: 生成fileを削除可能にするdurable asset cleanup、Backend endpointがない作品削除・並べ替え、Scene削除Backend安全境界、Charactersの削除Backend安全境界・参照画像direct upload client / 本番設定・`costume_ref_id`のBackend整合性付き選択/変更、Mobile Panel作成・削除・並べ替えUI（新安全API接続）・frame / balloon編集UI、Page画像生成、organization workspace UI。PR-F全体は未完了のまま維持する
 - [ ] PR-G: organization / billing UI / store adapter
   - 主な所有: Account、organization管理、`expo-iap` adapter
   - 完了条件: personal/org分離とstore unavailable状態がgreen
