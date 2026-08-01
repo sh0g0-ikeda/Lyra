@@ -9,6 +9,7 @@
     "ios": "expo start --ios",
     "web": "expo start --web",
     "start:dev-client": "expo start --dev-client",
+    "expo:check": "expo install --check",
     "typecheck": "tsc --noEmit",
     "lint": "eslint . --max-warnings=0",
     "contracts:check": "node ../../scripts/generateMobileApiContract.mjs --check",
