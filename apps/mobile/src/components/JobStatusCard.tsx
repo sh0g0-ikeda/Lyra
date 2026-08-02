@@ -172,6 +172,9 @@ export function JobStatusCard({
   const cancelReason = job === undefined ? null : actionReason(job.actions.cancel.reason_key, language);
   const canHide = job?.actions.hide.available ?? false;
   const hideReason = job === undefined ? null : actionReason(job.actions.hide.reason_key, language);
+  const durationEstimate = isActive
+    ? jobDurationEstimate(job?.job_type, language)
+    : null;
 
   const confirmCancel = (): void => {
     if (canonicalJob === null || onCancel === undefined || !canCancel) {
@@ -237,6 +240,9 @@ export function JobStatusCard({
               {elapsed === null ? null : <Text style={styles.elapsed}>{elapsed}</Text>}
             </View>
           </View>
+          {durationEstimate === null ? null : (
+            <Text style={styles.estimate}>{durationEstimate}</Text>
+          )}
           {progressPercent === null ? (
             <Text style={styles.indeterminate}>{t(language, "generated.components.JobStatusCard.checking.progress.8749129a")}</Text>
           ) : (
@@ -315,6 +321,19 @@ function formatJobType(jobType: string | undefined, language: 'ja' | 'en'): stri
   };
   const label = jobType === undefined ? undefined : labels[jobType];
   return label === undefined ? jobType ?? t(language, "generated.components.JobStatusCard.job.a047f3b5") : t(language, label);
+}
+
+function jobDurationEstimate(
+  jobType: string | undefined,
+  language: 'ja' | 'en'
+): string | null {
+  if (jobType === 'page_generate' || jobType === 'entity_generate') {
+    return t(language, 'component.jobStatusCard.imageDurationEstimate');
+  }
+  if (jobType === 'episode_story_autofill') {
+    return t(language, 'component.jobStatusCard.storyAutofillDurationEstimate');
+  }
+  return null;
 }
 
 function formatStatus(status: string, queryFailed: boolean, language: 'ja' | 'en'): string {
@@ -458,6 +477,10 @@ const styles = StyleSheet.create({
   },
   completedCard: {
     borderColor: 'rgba(120, 215, 123, 0.44)',
+  },
+  estimate: {
+    ...textStyles.caption,
+    color: colors.primary,
   },
   elapsed: {
     ...textStyles.caption,

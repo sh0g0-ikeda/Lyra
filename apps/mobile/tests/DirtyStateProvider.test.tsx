@@ -27,17 +27,20 @@ vi.mock('@/components/UnsavedChangesResolutionDialog', () => ({
 
 interface ProbeValue {
   hasDirtyEditors: boolean;
+  hasNavigationBlockingEditors: boolean;
   resolve: () => Promise<boolean>;
   saveWithoutPrompt: () => Promise<boolean>;
 }
 
 function Probe({
+  blocksNavigation,
   dirty,
   onValue,
   revision,
   save,
   discard
 }: {
+  blocksNavigation?: boolean;
   dirty: boolean;
   onValue: (value: ProbeValue) => void;
   revision?: string;
@@ -47,6 +50,7 @@ function Probe({
   const dirtyState = useDirtyState();
   useDirtyEditorRegistration({
     id: 'editor-1',
+    blocksNavigation,
     dirty,
     revision,
     save,
@@ -56,6 +60,7 @@ function Probe({
   useEffect(() => {
     onValue({
       hasDirtyEditors: dirtyState.hasDirtyEditors,
+      hasNavigationBlockingEditors: dirtyState.hasNavigationBlockingEditors,
       resolve: () => dirtyState.resolveDirtyEditors('ja'),
       saveWithoutPrompt: dirtyState.saveDirtyEditors
     });
@@ -65,6 +70,34 @@ function Probe({
 }
 
 describe('DirtyStateProvider', () => {
+  it('非blocking editorはbackground保存対象に残し画面遷移確認だけ省略する', async () => {
+    const save = vi.fn().mockResolvedValue(undefined);
+    let value: ProbeValue | null = null;
+
+    await act(async () => {
+      create(
+        <DirtyStateProvider>
+          <Probe
+            blocksNavigation={false}
+            dirty
+            discard={vi.fn()}
+            onValue={(nextValue) => {
+              value = nextValue;
+            }}
+            save={save}
+          />
+        </DirtyStateProvider>
+      );
+    });
+
+    expect(value?.hasDirtyEditors).toBe(true);
+    expect(value?.hasNavigationBlockingEditors).toBe(false);
+    await expect(value?.resolve()).resolves.toBe(true);
+    expect(save).not.toHaveBeenCalled();
+    await expect(value?.saveWithoutPrompt()).resolves.toBe(true);
+    expect(save).toHaveBeenCalledOnce();
+  });
+
   it('保存成功後に同じrevisionでcallbackが更新されても再登録しない', async () => {
     const firstSave = vi.fn().mockResolvedValue(undefined);
     const secondSave = vi.fn().mockResolvedValue(undefined);

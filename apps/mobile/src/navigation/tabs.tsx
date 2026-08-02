@@ -27,7 +27,7 @@ const tabIcon = (Icon: LucideIcon, color: string): React.JSX.Element => (
 
 export function MainTabs(): React.JSX.Element {
   const { hasCapability, language } = useAppState();
-  const { hasDirtyEditors, resolveDirtyEditors } = useDirtyState();
+  const { hasNavigationBlockingEditors, resolveDirtyEditors } = useDirtyState();
   const canViewWork = hasCapability('view_work');
 
   return (
@@ -36,7 +36,7 @@ export function MainTabs(): React.JSX.Element {
         tabPress: (event) => {
           const navigationState = navigation.getState();
           const activeRoute = navigationState.routes[navigationState.index];
-          if (!hasDirtyEditors || activeRoute?.key === route.key) {
+          if (!hasNavigationBlockingEditors || activeRoute?.key === route.key) {
             return;
           }
           event.preventDefault();

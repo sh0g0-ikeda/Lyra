@@ -2602,7 +2602,7 @@ export function CharactersScreen(): React.JSX.Element {
       language,
       title: t(language, "generated.screens.CharactersScreen.generate.reference.preview.dddf055c"),
       message: appendAiProviderDisclosure(
-        t(language, "generated.screens.CharactersScreen.character.details.will.be.saved.before.g.119135cb"),
+        `${t(language, "generated.screens.CharactersScreen.character.details.will.be.saved.before.g.119135cb")}\n\n${t(language, 'component.jobStatusCard.imageDurationEstimate')}`,
         language,
         'text'
       ),

@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   applyDirtyStateChoice,
   hasSelectionChange,
+  navigationBlockingRegistrations,
   type DirtyEditorRegistration
 } from '@/domain/dirtyStatePolicy';
 
@@ -64,5 +65,15 @@ describe('dirty state policy', () => {
     expect(hasSelectionChange(current, {})).toBe(false);
     expect(hasSelectionChange(current, { chapterId: 'chapter-2' })).toBe(true);
     expect(hasSelectionChange(current, { organizationId: undefined })).toBe(false);
+  });
+
+  it('画面遷移を止めないeditorを保存確認対象からだけ除外する', () => {
+    const story = registration('story');
+    const page = {
+      ...registration('page'),
+      blocksNavigation: false
+    };
+
+    expect(navigationBlockingRegistrations([story, page])).toEqual([story]);
   });
 });

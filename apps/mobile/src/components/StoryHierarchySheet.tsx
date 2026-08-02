@@ -2,7 +2,9 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
+  KeyboardAvoidingView,
   Modal,
+  Platform,
   Pressable,
   StyleSheet,
   Text,
@@ -1088,67 +1090,72 @@ export function StoryHierarchySheet({
         transparent
         visible={titleIntent !== null}
       >
-        <Pressable
-          accessibilityLabel={t(language, "generated.components.StoryHierarchySheet.close.603bc62f")}
-          accessibilityRole="button"
-          onPress={() => setTitleIntent(null)}
-          style={styles.backdrop}
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={styles.titleKeyboardAvoider}
         >
-          <SafeAreaView edges={['bottom']} style={styles.bottomModalSafeArea}>
-            <View
-              accessibilityLabel={titleDialogHeading}
-              accessibilityViewIsModal
-              onAccessibilityEscape={() => setTitleIntent(null)}
-              onStartShouldSetResponder={() => true}
-              style={styles.titleDialog}
-            >
-              <Text style={styles.dialogTitle}>{titleDialogHeading}</Text>
-              <TextInput
-                accessibilityLabel={t(language, "generated.components.StoryHierarchySheet.title.d8135461")}
-                autoCapitalize="sentences"
-                autoCorrect={false}
-                autoFocus
-                maxLength={200}
-                onChangeText={setTitleValue}
-                onSubmitEditing={() => void submitTitle()}
-                placeholder={t(language, "generated.components.StoryHierarchySheet.enter.a.title.d4d3374f")}
-                placeholderTextColor={colors.disabled}
-                returnKeyType="done"
-                style={styles.titleInput}
-                value={titleValue}
-              />
-              {!titleValid && titleValue.length > 0 ? (
-                <Text style={styles.validation}>
-                  {t(language, "generated.components.StoryHierarchySheet.enter.a.title.from.1.to.200.characters.6b024aa4")}
-                </Text>
-              ) : null}
-              {titleHasStaleConflict ? (
-                <PrimaryButton
-                  disabled={pending}
-                  label={t(language, "generated.components.StoryHierarchySheet.reload.latest.state.327b1d0e")}
-                  onPress={() => void reloadTitleFromIntent()}
-                  variant="secondary"
+          <Pressable
+            accessibilityLabel={t(language, "generated.components.StoryHierarchySheet.close.603bc62f")}
+            accessibilityRole="button"
+            onPress={() => setTitleIntent(null)}
+            style={styles.titleBackdrop}
+          >
+            <SafeAreaView edges={['top', 'bottom']} style={styles.titleModalSafeArea}>
+              <View
+                accessibilityLabel={titleDialogHeading}
+                accessibilityViewIsModal
+                onAccessibilityEscape={() => setTitleIntent(null)}
+                onStartShouldSetResponder={() => true}
+                style={styles.titleDialog}
+              >
+                <Text style={styles.dialogTitle}>{titleDialogHeading}</Text>
+                <TextInput
+                  accessibilityLabel={t(language, "generated.components.StoryHierarchySheet.title.d8135461")}
+                  autoCapitalize="sentences"
+                  autoCorrect={false}
+                  autoFocus
+                  maxLength={200}
+                  onChangeText={setTitleValue}
+                  onSubmitEditing={() => void submitTitle()}
+                  placeholder={t(language, "generated.components.StoryHierarchySheet.enter.a.title.d4d3374f")}
+                  placeholderTextColor={colors.disabled}
+                  returnKeyType="done"
+                  style={styles.titleInput}
+                  value={titleValue}
                 />
-              ) : null}
-              <View style={styles.dialogButtons}>
-                <PrimaryButton
-                  disabled={pending}
-                  label={t(language, "generated.components.StoryHierarchySheet.cancel.3672b0b9")}
-                  onPress={() => setTitleIntent(null)}
-                  variant="ghost"
-                />
-                <PrimaryButton
-                  disabled={!titleValid || titleHasStaleConflict}
-                  label={titleIntent?.kind.startsWith('create-')
-                    ? t(language, "generated.components.StoryHierarchySheet.add.8b69f421")
-                    : t(language, "generated.components.StoryHierarchySheet.save.80b89d5e")}
-                  loading={pending}
-                  onPress={() => void submitTitle()}
-                />
+                {!titleValid && titleValue.length > 0 ? (
+                  <Text style={styles.validation}>
+                    {t(language, "generated.components.StoryHierarchySheet.enter.a.title.from.1.to.200.characters.6b024aa4")}
+                  </Text>
+                ) : null}
+                {titleHasStaleConflict ? (
+                  <PrimaryButton
+                    disabled={pending}
+                    label={t(language, "generated.components.StoryHierarchySheet.reload.latest.state.327b1d0e")}
+                    onPress={() => void reloadTitleFromIntent()}
+                    variant="secondary"
+                  />
+                ) : null}
+                <View style={styles.dialogButtons}>
+                  <PrimaryButton
+                    disabled={pending}
+                    label={t(language, "generated.components.StoryHierarchySheet.cancel.3672b0b9")}
+                    onPress={() => setTitleIntent(null)}
+                    variant="ghost"
+                  />
+                  <PrimaryButton
+                    disabled={!titleValid || titleHasStaleConflict}
+                    label={titleIntent?.kind.startsWith('create-')
+                      ? t(language, "generated.components.StoryHierarchySheet.add.8b69f421")
+                      : t(language, "generated.components.StoryHierarchySheet.save.80b89d5e")}
+                    loading={pending}
+                    onPress={() => void submitTitle()}
+                  />
+                </View>
               </View>
-            </View>
-          </SafeAreaView>
-        </Pressable>
+            </SafeAreaView>
+          </Pressable>
+        </KeyboardAvoidingView>
       </Modal>
     </>
   );
@@ -1322,6 +1329,22 @@ const styles = StyleSheet.create({
     gap: spacing.md,
     maxWidth: 560,
     padding: spacing.lg,
+    width: '100%'
+  },
+  titleBackdrop: {
+    alignItems: 'center',
+    backgroundColor: 'rgba(0, 0, 0, 0.82)',
+    flex: 1,
+    padding: spacing.md
+  },
+  titleKeyboardAvoider: {
+    flex: 1
+  },
+  titleModalSafeArea: {
+    alignItems: 'center',
+    flex: 1,
+    justifyContent: 'flex-start',
+    paddingTop: spacing.xxl * 2,
     width: '100%'
   },
   titleInput: {

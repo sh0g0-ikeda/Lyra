@@ -117,6 +117,49 @@ describe('mobile workspace navigation and editor UX contract', () => {
     expect(renderSource('PagesScreen')).toContain('<StoryGenerationControls');
   });
 
+  it('ページ・コマ・枠の未保存差分は画面遷移を止めず生成前保存だけ維持する', () => {
+    const pageScreen = readSource('src/screens/PagesScreen.tsx');
+    const registration = pageScreen.slice(
+      pageScreen.indexOf("id: 'pages-editor'"),
+      pageScreen.indexOf('const clearPageSelectionAfterSkeleton')
+    );
+
+    expect(registration).toContain('blocksNavigation: false');
+    expect(pageScreen).toContain('await saveAllPageDrafts();');
+  });
+
+  it('画像生成の確認時点でも5分程度の目安を表示する', () => {
+    const pages = readSource('src/screens/PagesScreen.tsx');
+    const characters = readSource('src/screens/CharactersScreen.tsx');
+
+    expect(pages.slice(pages.indexOf('const confirmGeneratePage'))).toContain(
+      "component.jobStatusCard.imageDurationEstimate"
+    );
+    expect(characters.slice(characters.indexOf('const confirmGenerateReference'))).toContain(
+      "component.jobStatusCard.imageDurationEstimate"
+    );
+  });
+
+  it('ページ設計ジョブは画面遷移で取消さず戻った時にserver jobを再検出する', () => {
+    const pageScreen = readSource('src/screens/PagesScreen.tsx');
+    const activeJobLookup = pageScreen.slice(
+      pageScreen.indexOf('const activePageDesignServerJobId'),
+      pageScreen.indexOf('const displayedPageDesignJobId')
+    );
+
+    expect(activeJobLookup).toContain("jobTypes: ['episode_page_skeleton', 'episode_story_autofill']");
+    expect(pageScreen).not.toMatch(/useEffect\(\(\) => \(\) => \{[^}]*cancelPageDesignJobMutation/su);
+  });
+
+  it('名称変更ダイアログをkeyboard avoidance内の画面中上部に置く', () => {
+    const hierarchy = readSource('src/components/StoryHierarchySheet.tsx');
+
+    expect(hierarchy).toContain('<KeyboardAvoidingView');
+    expect(hierarchy).toContain('style={styles.titleModalSafeArea}');
+    expect(hierarchy).toContain("justifyContent: 'flex-start'");
+    expect(hierarchy).toContain('paddingTop:');
+  });
+
   it('選択中ページ画像をページ生成操作と画像保存の間に置く', () => {
     const source = renderSource('PagesScreen');
     const pageList = source.indexOf('persistKey="pages:list"');

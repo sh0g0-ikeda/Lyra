@@ -69,6 +69,7 @@ vi.mock('@/state/appState', () => ({
 vi.mock('@/state/dirtyState', () => ({
   useDirtyState: () => ({
     hasDirtyEditors,
+    hasNavigationBlockingEditors: hasDirtyEditors,
     resolveDirtyEditors
   })
 }));
