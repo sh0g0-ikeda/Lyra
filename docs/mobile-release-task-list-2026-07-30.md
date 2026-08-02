@@ -4,9 +4,9 @@
 
 対象: Android / iPhone の初回ストア公開
 
-進捗: 105件中47件完了 / 58件未完了
+進捗: 105件中48件完了 / 57件未完了
 
-未完了の担当内訳: AI単独0件 / AI準備＋外部確認35件 / 人間・外部必須23件
+未完了の担当内訳: AI単独0件 / AI準備＋外部確認34件 / 人間・外部必須23件
 
 ## 0. このリストの範囲
 
@@ -165,7 +165,7 @@
 - [x] `[AI]` production client profileで既存アカウント削除UIを有効化する。
 - [x] `[AI]` 日英のprivacy、terms、support、専用account-deletionページをversion管理し、OpenAI / AWS / Apple / Google / Stripe / Sentryと国際処理を開示する。
 - [x] `[AI]` App Store / Playの言語別metadata、Data Safety draft、review notesを法務URL・削除URL・AI通報・外部決済非表示と一致させる。
-- [ ] `[共同]` 日英法務ページを`app.lyra-editor.com`へ公開し、全URLがHTTPS 200かつHTMLとして表示できることを確認する。
+- [x] `[共同]` 日英法務ページを`app.lyra-editor.com`へ公開し、全URLがHTTPS 200かつHTMLとして表示できることを確認する。
 - [x] `[AI]` EAS production / previewのAPI URL・Google Services fileを維持し、Cognito callback / logout環境変数をcustom schemeへ統一してreadbackする。
 - [ ] `[共同]` 任意でSentry crash診断を有効にする場合だけ有効なDSNをsecret設定し、privacy-limited crash eventを実機確認する。AI通報はSentryを使用しない。
 - [ ] `[共同]` production Backendの`ACCOUNT_DELETION_ENABLED`、IAM、recovery runnerを有効化し、previewから完了まで実機確認する。
@@ -179,6 +179,18 @@
 - [ ] `[人間]` App Store / Playの商品、価格、販売国、subscription group / base planと契約・税務・銀行設定を承認する。
 - [ ] `[人間]` 日本語・英語screenshotsと審査説明を実機の最終buildから承認する。
 - [ ] `[人間]` Lyra APIログのAI生成物・organization安全通報を担当者が営業日ごとに確認し、必要なコンテンツ対応・利用者対応・記録を行う運用を開始する。
+
+### 2026-08-02 審査是正の本番反映記録
+
+- release merge commit: `3023850c3836f314890d44a0c798ad74f5283939` ([PR #171](https://github.com/sh0g0-ikeda/Lyra/pull/171))
+- active API task definition: `lyra-prod-api:108`、rollback: `lyra-prod-api:107`
+- ECR image: linux/arm64、`sha256:3917ec8b9beb5becbccea49c9a05aa72b5ad8274568b845cd3a37a130f8fb055`、basic scan findings 0
+- readiness: API 1/1、ALB healthy、`/healthz` / `/readyz` 200、更新後20分のerror-like log 0
+- public pages: privacy / terms / supportの日英6 URLがHTTPS 200、更新済み通報説明の配信を確認
+- moderation API: AI生成物通報とorganization安全通報が本番mount済みで、未認証requestを401で拒否
+- Cognito: 既存URLを維持したまま`lyra-mobile://auth/mobile/callback` / `logout`を追加。実機login / logoutは未確認
+- account deletion: API flag有効、未認証requestは401、専用recovery service 1/1、現行streamのrecovery error 0
+- EAS: Android実機確認用APK build 42完了・署名検証済み。Google Play提出用AAB build 43とiOS署名buildの結果はartifact確認後に追記する
 
 ## 10. 完了条件
 
