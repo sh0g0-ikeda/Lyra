@@ -154,7 +154,7 @@ describe('production app metadata', () => {
     }
   });
 
-  it('未使用のcamera、microphone、overlay権限を最終Manifestから除外する', () => {
+  it('未使用のcamera、microphone、overlay、push、legacy storage権限を最終Manifestから除外する', () => {
     const imagePickerPlugin = config.expo.plugins?.find(
       (plugin): plugin is [
         string,
@@ -172,8 +172,31 @@ describe('production app metadata', () => {
     expect(config.expo.android?.blockedPermissions).toEqual(
       expect.arrayContaining([
         'android.permission.CAMERA',
+        'android.permission.POST_NOTIFICATIONS',
+        'android.permission.READ_APP_BADGE',
+        'android.permission.READ_EXTERNAL_STORAGE',
         'android.permission.RECORD_AUDIO',
+        'android.permission.RECEIVE_BOOT_COMPLETED',
         'android.permission.SYSTEM_ALERT_WINDOW',
+        'android.permission.VIBRATE',
+        'android.permission.WAKE_LOCK',
+        'android.permission.WRITE_EXTERNAL_STORAGE',
+        'com.anddoes.launcher.permission.UPDATE_COUNT',
+        'com.google.android.c2dm.permission.RECEIVE',
+        'com.htc.launcher.permission.READ_SETTINGS',
+        'com.htc.launcher.permission.UPDATE_SHORTCUT',
+        'com.huawei.android.launcher.permission.CHANGE_BADGE',
+        'com.huawei.android.launcher.permission.READ_SETTINGS',
+        'com.huawei.android.launcher.permission.WRITE_SETTINGS',
+        'com.majeur.launcher.permission.UPDATE_BADGE',
+        'com.oppo.launcher.permission.READ_SETTINGS',
+        'com.oppo.launcher.permission.WRITE_SETTINGS',
+        'com.sec.android.provider.badge.permission.READ',
+        'com.sec.android.provider.badge.permission.WRITE',
+        'com.sonyericsson.home.permission.BROADCAST_BADGE',
+        'com.sonymobile.home.permission.PROVIDER_INSERT_BADGE',
+        'me.everything.badger.permission.BADGE_COUNT_READ',
+        'me.everything.badger.permission.BADGE_COUNT_WRITE',
       ]),
     );
   });
