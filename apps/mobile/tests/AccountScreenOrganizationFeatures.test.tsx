@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
     organizationFeaturesEnabled: true
   },
   organizationPanel: vi.fn(),
+  openUrl: vi.fn(),
   setSession: vi.fn(),
   updateSelection: vi.fn().mockResolvedValue(undefined),
   useAppState: vi.fn(),
@@ -33,7 +34,7 @@ vi.mock('@tanstack/react-query', () => ({
 
 vi.mock('react-native', () => ({
   AppState: { addEventListener: vi.fn(() => ({ remove: vi.fn() })) },
-  Linking: { canOpenURL: vi.fn(), openURL: vi.fn() },
+  Linking: { canOpenURL: vi.fn().mockResolvedValue(true), openURL: mocks.openUrl },
   Modal: ({ children, visible }: { children: React.ReactNode; visible: boolean }) =>
     visible ? React.createElement('modal', null, children) : null,
   Platform: { OS: 'android' },
@@ -347,5 +348,64 @@ describe('AccountScreen organization feature guard', () => {
       pageId: null,
       entityId: null
     });
+  });
+
+  it('唯一のorganization ownerはWebではなくアプリ内管理画面へ移動する', async () => {
+    mocks.useQuery.mockImplementation((options: { queryKey: readonly string[] }) => {
+      if (options.queryKey[0] === 'balance') {
+        return { data: null, isError: false, isFetching: false, isLoading: false };
+      }
+      if (options.queryKey[0] === 'account') {
+        return {
+          data: {
+            active_personal_job_count: 0,
+            active_personal_stripe_subscription_count: 0,
+            active_store_subscriptions: [],
+            personal_asset_count: 0,
+            unique_owner_organizations: [{ id: organization.id, name: organization.name }]
+          },
+          isError: false,
+          isFetching: false,
+          isLoading: false,
+          refetch: vi.fn()
+        };
+      }
+      return { data: undefined, isError: false, isFetching: false, isLoading: false, refetch: vi.fn() };
+    });
+    mocks.useAppState.mockReturnValue({
+      api: {},
+      language: 'en',
+      logout: vi.fn(),
+      selection: { organizationId: null },
+      session: { ...refreshedSession, organizations: [organization] },
+      sessionKey: 'user-1',
+      setLanguage: vi.fn(),
+      setSession: vi.fn(),
+      tokens: null,
+      updateSelection: mocks.updateSelection
+    });
+
+    let renderer: ReturnType<typeof create>;
+    await act(async () => {
+      renderer = create(React.createElement(AccountScreen));
+    });
+    const openManagement = renderer!.root
+      .findAllByType('button')
+      .find((button) => button.children.includes(
+        'generated.screens.AccountScreen.open.organization.management.55d03f28'
+      ));
+    await act(async () => {
+      await openManagement?.props.onClick();
+    });
+
+    expect(mocks.updateSelection).toHaveBeenCalledWith({
+      organizationId: organization.id,
+      workId: null,
+      chapterId: null,
+      episodeId: null,
+      pageId: null,
+      entityId: null
+    });
+    expect(mocks.openUrl).not.toHaveBeenCalled();
   });
 });

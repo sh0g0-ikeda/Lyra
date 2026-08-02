@@ -72,6 +72,12 @@ const storeConfig = JSON.parse(
     }>;
   };
 };
+const googlePlayListings = ['listing-en-US.json', 'listing-ja-JP.json'].map((filename) =>
+  JSON.parse(readFileSync(resolve(mobileRoot, 'store', 'google-play', filename), 'utf8')) as {
+    fullDescription?: string;
+    shortDescription?: string;
+  }
+);
 
 function assertBundledAsset(assetPath: string | undefined): void {
   expect(assetPath).toMatch(/^\.\/assets\//);
@@ -142,11 +148,10 @@ describe('production app metadata', () => {
     }
   });
 
-  it('Sentry資格情報がない非本番ビルドではsource map uploadを無効にする', () => {
-    for (const profile of ['development', 'preview', 'smoke']) {
+  it('Sentry資格情報に依存せず全buildでsource map uploadを無効にする', () => {
+    for (const profile of ['development', 'preview', 'ios-simulator', 'smoke', 'production']) {
       expect(easConfig.build?.[profile]?.env?.SENTRY_DISABLE_AUTO_UPLOAD).toBe('true');
     }
-    expect(easConfig.build?.production?.env?.SENTRY_DISABLE_AUTO_UPLOAD).toBeUndefined();
   });
 
   it('未使用のcamera、microphone、overlay権限を最終Manifestから除外する', () => {
@@ -218,6 +223,32 @@ describe('production app metadata', () => {
     expect(
       easConfig.build?.production?.env?.EXPO_PUBLIC_ACCOUNT_DELETION_ENABLED
     ).toBe('true');
+  });
+
+  it('previewとproductionのstore buildは登録済みcustom schemeの認証callbackを使う', () => {
+    for (const profile of ['preview', 'ios-simulator', 'smoke', 'production']) {
+      const environment = easConfig.build?.[profile]?.env;
+      expect(environment?.EXPO_PUBLIC_COGNITO_REDIRECT_URI).toBe(
+        'lyra-mobile://auth/mobile/callback'
+      );
+      expect(environment?.EXPO_PUBLIC_COGNITO_LOGOUT_REDIRECT_URI).toBe(
+        'lyra-mobile://auth/mobile/logout'
+      );
+    }
+  });
+
+  it('静的設定とストアコピーは未公開のPDF、ZIP、購入を約束しない', () => {
+    expect(config.expo.ios).not.toHaveProperty('associatedDomains');
+    const descriptions = [
+      storeConfig.apple?.info?.ja?.description,
+      storeConfig.apple?.info?.['en-US']?.description,
+      ...googlePlayListings.flatMap((listing) => [listing.shortDescription, listing.fullDescription]),
+    ].filter((description): description is string => description !== undefined);
+
+    for (const description of descriptions) {
+      expect(description).not.toMatch(/PDF|ZIP|purchase|購入|課金/u);
+    }
+    expect(descriptions.join('\n')).toMatch(/generated page images|生成済みページ画像/u);
   });
 
   it('日英の法務ページと専用削除申請ページをbundleへ含める', () => {

@@ -30,19 +30,6 @@ interface OperationalMetricEvent {
   tags: Record<string, string>;
 }
 
-export type AiContentReportKind = 'generated_image' | 'story_proposal';
-export type AiContentReportReason = 'unsafe_or_inappropriate';
-
-export interface AiContentFeedback {
-  message: string;
-  source: string;
-  tags: {
-    content_kind: AiContentReportKind;
-    content_id?: string;
-    reason: AiContentReportReason;
-  };
-}
-
 export interface CrashEventLike {
   breadcrumbs?: unknown;
   contexts?: Record<string, unknown>;
@@ -85,11 +72,6 @@ const SAFE_EVENT_PLATFORMS = new Set([
   'node',
   'react-native'
 ]);
-const AI_CONTENT_REPORT_KINDS = new Set<AiContentReportKind>([
-  'generated_image',
-  'story_proposal'
-]);
-
 const safeMetadataValue = (value: string): string | null =>
   METADATA_VALUE_PATTERN.test(value) ? value : null;
 
@@ -104,26 +86,6 @@ export const shouldEnableObservability = (input: {
   input.configValid &&
   input.buildEnvironment === 'production' &&
   input.sentryDsn.length > 0;
-
-export const buildAiContentFeedback = (input: {
-  contentKind: AiContentReportKind;
-  contentId?: string | null;
-  reason: AiContentReportReason;
-}): AiContentFeedback => {
-  if (!AI_CONTENT_REPORT_KINDS.has(input.contentKind)) {
-    throw new Error('Unsupported AI content report category.');
-  }
-  const contentId = safeOpaqueId(input.contentId ?? null);
-  return {
-    message: 'AI-generated content was reported in Lyra Mobile.',
-    source: 'lyra_mobile_ai_content_report',
-    tags: {
-      content_kind: input.contentKind,
-      ...(contentId === null ? {} : { content_id: contentId }),
-      reason: input.reason
-    }
-  };
-};
 
 const buildMetadataTags = (
   metadata: ObservabilityBuildMetadata

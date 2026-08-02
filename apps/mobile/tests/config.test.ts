@@ -7,12 +7,13 @@ const productionConfig = {
   apiBaseUrl: 'https://app.lyra-editor.com',
   cognitoDomain: 'https://ap-northeast-1example.auth.ap-northeast-1.amazoncognito.com',
   cognitoClientId: '6b2h941o888u2l7ejhv5jog94',
-  cognitoRedirectUri: 'https://app.lyra-editor.com/auth/mobile/callback',
-  cognitoLogoutRedirectUri: 'https://app.lyra-editor.com/auth/mobile/logout',
+  cognitoRedirectUri: 'lyra-mobile://auth/mobile/callback',
+  cognitoLogoutRedirectUri: 'lyra-mobile://auth/mobile/logout',
   cognitoScopes: ['openid', 'email'],
   apiTokenUse: 'id_token' as const,
   organizationFeaturesEnabled: true,
   mobileStoreBillingEnabled: false,
+  episodeExportEnabled: false,
   sentryDsn: 'https://public@example.ingest.sentry.io/123456',
   buildEnvironment: 'production' as const
 };
@@ -48,6 +49,24 @@ describe('mobile configuration validation', () => {
     const { config } = await import('@/lib/config');
 
     expect(config.accountDeletionEnabled).toBe(false);
+  });
+
+  it('episode export flagは未設定ならfalseとして読み込む', async () => {
+    vi.stubEnv('EXPO_PUBLIC_EPISODE_EXPORT_ENABLED', '');
+    vi.resetModules();
+
+    const { config } = await import('@/lib/config');
+
+    expect(config.episodeExportEnabled).toBe(false);
+  });
+
+  it('episode export flagはtrueだけを有効として読み込む', async () => {
+    vi.stubEnv('EXPO_PUBLIC_EPISODE_EXPORT_ENABLED', 'true');
+    vi.resetModules();
+
+    const { config } = await import('@/lib/config');
+
+    expect(config.episodeExportEnabled).toBe(true);
   });
 
   it('固定された本番HTTPS設定を受け入れる', () => {
@@ -91,16 +110,19 @@ describe('mobile configuration validation', () => {
     expect(result.valid).toBe(true);
   });
 
-  it('productionでは有効なHTTPS Sentry DSNを必須にする', () => {
+  it('productionではSentry DSNが空でもアプリ設定を有効に保つ', () => {
     expect(
       validateMobileConfig({
         ...productionConfig,
         sentryDsn: ''
       })
     ).toMatchObject({
-      valid: false,
-      issues: expect.arrayContaining(['SENTRY_DSN'])
+      valid: true,
+      issues: []
     });
+  });
+
+  it('nonemptyかつ不正なSentry DSNはproductionで拒否する', () => {
     expect(
       validateMobileConfig({
         ...productionConfig,

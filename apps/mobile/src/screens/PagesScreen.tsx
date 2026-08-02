@@ -3001,7 +3001,7 @@ export function PagesScreen(): React.JSX.Element {
         </>
       )}
       <PageCompletionActions
-        exportSection={(
+        exportSection={config.episodeExportEnabled ? (
       <Section
         collapsible
         mobileDefaultCollapsed
@@ -3107,7 +3107,7 @@ export function PagesScreen(): React.JSX.Element {
           sessionKey={sessionKey}
         />
       </Section>
-        )}
+        ) : null}
 
         generationSection={(
       <Section

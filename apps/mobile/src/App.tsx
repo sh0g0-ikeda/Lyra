@@ -14,6 +14,7 @@ import { Screen } from '@/components/Screen';
 import { SessionBootstrapRecovery } from '@/components/SessionBootstrapRecovery';
 import { AuthScreen } from '@/screens/AuthScreen';
 import { InvitationScreen } from '@/screens/InvitationScreen';
+import { TermsAcceptanceScreen } from '@/screens/TermsAcceptanceScreen';
 import { MainTabs } from '@/navigation/tabs';
 import { navigationRef } from '@/navigation/navigationRef';
 import type { OrganizationWorkspaceRecord } from '@/domain/types';
@@ -25,7 +26,9 @@ import { sessionQueryKey } from '@/lib/queryKeys';
 import {
   clearPendingInvitationToken,
   loadPendingInvitationToken,
-  savePendingInvitationToken
+  loadTermsAcceptance,
+  savePendingInvitationToken,
+  saveTermsAcceptance
 } from '@/lib/storage';
 import { AppStateProvider, useAppState } from '@/state/appState';
 import { DirtyStateProvider } from '@/state/dirtyState';
@@ -46,6 +49,10 @@ function AuthenticatedApp(): React.JSX.Element {
     updateSelection
   } = useAppState();
   const [pendingInvitationToken, setPendingInvitationToken] = useState<string | null>(null);
+  const [termsAcceptance, setTermsAcceptance] = useState<{
+    accepted: boolean;
+    userId: string;
+  } | null>(null);
 
   useEffect(() => {
     let mounted = true;
@@ -92,6 +99,22 @@ function AuthenticatedApp(): React.JSX.Element {
     }
   }, [sessionQuery.data, setSession]);
 
+  useEffect(() => {
+    const userId = sessionQuery.data?.user.id;
+    if (userId === undefined) {
+      return;
+    }
+    let mounted = true;
+    void loadTermsAcceptance(userId).then((accepted) => {
+      if (mounted) {
+        setTermsAcceptance({ accepted, userId });
+      }
+    });
+    return () => {
+      mounted = false;
+    };
+  }, [sessionQuery.data?.user.id]);
+
   if (!hydrated) {
     return (
       <Screen title="Lyra Mobile">
@@ -124,6 +147,28 @@ function AuthenticatedApp(): React.JSX.Element {
           session={sessionQuery.data}
         />
       </Screen>
+    );
+  }
+
+  const currentUserId = sessionQuery.data.user.id;
+  if (termsAcceptance === null || termsAcceptance.userId !== currentUserId) {
+    return (
+      <Screen title="Lyra Mobile">
+        <LoadingState label={t(language, 'shared.app.loading')} />
+      </Screen>
+    );
+  }
+
+  if (!termsAcceptance.accepted) {
+    return (
+      <TermsAcceptanceScreen
+        language={language}
+        onAccept={async () => {
+          await saveTermsAcceptance(currentUserId);
+          setTermsAcceptance({ accepted: true, userId: currentUserId });
+        }}
+        onSignOut={() => logout({ skipDirtyCheck: true })}
+      />
     );
   }
 

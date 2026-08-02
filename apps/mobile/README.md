@@ -36,16 +36,16 @@ npm run start:dev-client
 
 Required Cognito Hosted UI URLs:
 
-- Callback URL: `lyra-mobile://auth/callback`
-- Sign-out URL: `lyra-mobile://auth/logout`
+- Callback URL: `lyra-mobile://auth/mobile/callback`
+- Sign-out URL: `lyra-mobile://auth/mobile/logout`
 
 Required `.env` values:
 
 - `EXPO_PUBLIC_API_BASE_URL`
 - `EXPO_PUBLIC_COGNITO_DOMAIN`
 - `EXPO_PUBLIC_COGNITO_CLIENT_ID`
-- `EXPO_PUBLIC_COGNITO_REDIRECT_URI=lyra-mobile://auth/callback`
-- `EXPO_PUBLIC_COGNITO_LOGOUT_REDIRECT_URI=lyra-mobile://auth/logout`
+- `EXPO_PUBLIC_COGNITO_REDIRECT_URI=lyra-mobile://auth/mobile/callback`
+- `EXPO_PUBLIC_COGNITO_LOGOUT_REDIRECT_URI=lyra-mobile://auth/mobile/logout`
 - `EXPO_PUBLIC_COGNITO_API_TOKEN_USE=id_token`
 
 ## Native Push

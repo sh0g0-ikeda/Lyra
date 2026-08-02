@@ -38,6 +38,13 @@ describe('mobile observability privacy policy', () => {
         sentryDsn: 'https://public@example.ingest.sentry.io/123456'
       })
     ).toBe(false);
+    expect(
+      shouldEnableObservability({
+        buildEnvironment: 'production',
+        configValid: true,
+        sentryDsn: ''
+      })
+    ).toBe(false);
   });
 
   it('許可したbuild情報とopaque support IDだけでmetricを構成する', () => {

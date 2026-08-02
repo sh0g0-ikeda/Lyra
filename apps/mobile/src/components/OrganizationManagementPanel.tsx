@@ -28,7 +28,12 @@ import type {
   OrganizationUsageEventRecord,
   UiLanguage
 } from '@/domain/types';
-import { ApiError, type LyraMobileApiClient } from '@/lib/api';
+import {
+  ApiError,
+  type LyraMobileApiClient,
+  type OrganizationSafetyReportTargetKind
+} from '@/lib/api';
+import { confirmAction } from '@/lib/confirm';
 import type { ComponentTranslationKey } from '@/lib/i18nComponentMessages';
 import { t } from '@/lib/i18n';
 import { recordOperationalMetric } from '@/lib/operationalEvents';
@@ -102,6 +107,8 @@ export function OrganizationManagementPanel({
   const [inviteRole, setInviteRole] = useState<OrganizationRole>('editor');
   const [usageCsvError, setUsageCsvError] = useState<unknown | null>(null);
   const [usageCsvLoading, setUsageCsvLoading] = useState(false);
+  const [safetyReportStatus, setSafetyReportStatus] = useState<'idle' | 'sending' | 'sent' | 'failed'>('idle');
+  const [safetyReportTarget, setSafetyReportTarget] = useState<OrganizationSafetyReportTargetKind | null>(null);
   const [activeCollection, setActiveCollection] = useState<
     'members' | 'invitations' | 'usage' | 'audit' | null
   >(null);
@@ -424,6 +431,28 @@ export function OrganizationManagementPanel({
       await removeMemberMutation.mutateAsync(member);
     });
   };
+  const requestOrganizationSafetyReport = (
+    targetKind: OrganizationSafetyReportTargetKind
+  ): void => {
+    if (safetyReportStatus === 'sending') {
+      return;
+    }
+    confirmAction({
+      language,
+      title: t(language, 'component.organizationSafetyReport.confirmTitle'),
+      message: t(language, 'component.organizationSafetyReport.confirmMessage'),
+      confirmLabel: t(language, 'component.organizationSafetyReport.confirmAction'),
+      onConfirm: () => {
+        setSafetyReportStatus('sending');
+        setSafetyReportTarget(targetKind);
+        void api
+          .submitOrganizationSafetyReport(organizationId, targetKind)
+          .then(() => setSafetyReportStatus('sent'))
+          .catch(() => setSafetyReportStatus('failed'))
+          .finally(() => setSafetyReportTarget(null));
+      }
+    });
+  };
   const downloadUsageCsv = async (): Promise<void> => {
     if (usageCsvLoading) {
       return;
@@ -472,6 +501,37 @@ export function OrganizationManagementPanel({
         {!initialWorkspaceReady ? <Text style={styles.caption}>{t(language, "generated.components.OrganizationManagementPanel.loading.workspace.information.f50b393d")}</Text> : null}
         {!canManageOrganization ? <Notice message={workspaceManagementDeniedMessage(role, language)} tone="info" /> : null}
         {role !== 'owner' ? <Notice message={roleAccessSummaryMessage(role, language)} tone="info" /> : null}
+      </Section>
+
+      <Section
+        collapsible
+        defaultCollapsed
+        persistKey={`organization:${organizationId}:safety-report`}
+        subtitle={t(language, 'component.organizationSafetyReport.subtitle')}
+        title={t(language, 'component.organizationSafetyReport.title')}
+      >
+        <View style={styles.actions}>
+          <PrimaryButton
+            disabled={safetyReportStatus === 'sending'}
+            label={t(language, 'component.organizationSafetyReport.workspaceContentAction')}
+            loading={safetyReportTarget === 'workspace_content'}
+            onPress={() => requestOrganizationSafetyReport('workspace_content')}
+            variant="ghost"
+          />
+          <PrimaryButton
+            disabled={safetyReportStatus === 'sending'}
+            label={t(language, 'component.organizationSafetyReport.memberAction')}
+            loading={safetyReportTarget === 'member'}
+            onPress={() => requestOrganizationSafetyReport('member')}
+            variant="ghost"
+          />
+        </View>
+        {safetyReportStatus === 'sent' ? (
+          <Notice message={t(language, 'component.organizationSafetyReport.sent')} tone="info" />
+        ) : null}
+        {safetyReportStatus === 'failed' ? (
+          <Notice message={t(language, 'component.organizationSafetyReport.failed')} tone="info" />
+        ) : null}
       </Section>
 
       {canManageOrganization ? (
@@ -648,7 +708,7 @@ export function OrganizationManagementPanel({
             <View key={invoice.id} style={styles.compactRow}>
               <Text style={styles.value}>{invoiceKindLabel(invoice.kind, language)}</Text>
               <Text style={styles.caption}>{formatYen(invoice.amount_jpy, language)} · {invoiceStatusLabel(invoice.status, language)} · {formatDate(invoice.created_at, language)}</Text>
-              {invoice.invoice_url === null ? null : <PrimaryButton label={t(language, "generated.components.OrganizationManagementPanel.open.invoice.a10f954b")} onPress={() => void onOpenBillingUrl(invoice.invoice_url ?? '')} variant="ghost" />}
+              {invoice.invoice_url === null || !allowExternalBillingActions ? null : <PrimaryButton label={t(language, "generated.components.OrganizationManagementPanel.open.invoice.a10f954b")} onPress={() => void onOpenBillingUrl(invoice.invoice_url ?? '')} variant="ghost" />}
             </View>
           ))}
         </Section>

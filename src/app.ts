@@ -126,6 +126,8 @@ import { createPanelFrameRoutes } from './routes/panelFrames.js';
 import { createPagePanelStructureRoutes } from './routes/pagePanelStructure.js';
 import { createPageRoutes } from './routes/pages.js';
 import { createAdminOrganizationRoutes } from './routes/adminOrganizations.js';
+import { createAiContentReportRoutes } from './routes/aiContentReports.js';
+import { createOrganizationSafetyReportRoutes } from './routes/organizationSafetyReports.js';
 import { createOrganizationRoutes } from './routes/organizations.js';
 import { createSceneRoutes } from './routes/scenes.js';
 import { createStoryRoutes } from './routes/story.js';
@@ -291,12 +293,24 @@ import {
 import type { StoryAiClientPort } from './services/story/StoryAiClientPort.js';
 import type { StoryEpisodeImprovementPlannerPort } from './services/story/StoryEpisodeImprovementPlanner.js';
 import { StoryService, type StoryServicePort } from './services/story/StoryService.js';
+import {
+  AiContentReportService,
+  type AiContentReportServicePort,
+} from './services/moderation/AiContentReportService.js';
+import { StructuredLogAiContentReportSink } from './infrastructure/moderation/StructuredLogAiContentReportSink.js';
+import { StructuredLogOrganizationSafetyReportSink } from './infrastructure/moderation/StructuredLogOrganizationSafetyReportSink.js';
+import {
+  OrganizationSafetyReportService,
+  type OrganizationSafetyReportServicePort,
+} from './services/moderation/OrganizationSafetyReportService.js';
 import type { AppEnv } from './types/app.js';
 import type { SupabaseJwtClaims } from './domain/types/user.js';
 import type { JWTVerifyGetKey } from 'jose';
 import { resolveWorkerDependencies } from '../worker/dependencies.js';
 
 export interface AppDependencies {
+  aiContentReportService?: AiContentReportServicePort;
+  organizationSafetyReportService?: OrganizationSafetyReportServicePort;
   accountDeletionService?: AccountDeletionServicePort;
   balloonService?: BalloonServicePort;
   billingCreditGrantService?: BillingCreditGrantServicePort;
@@ -486,6 +500,23 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
       );
     });
   }
+  app.route(
+    '/api',
+    createAiContentReportRoutes({
+      authMiddleware,
+      rateLimitMiddleware,
+      aiContentReportService: resolvedDependencies.aiContentReportService,
+    }),
+  );
+  app.route(
+    '/api',
+    createOrganizationSafetyReportRoutes({
+      authMiddleware,
+      rateLimitMiddleware,
+      organizationService: resolvedDependencies.organizationService,
+      organizationSafetyReportService: resolvedDependencies.organizationSafetyReportService,
+    }),
+  );
   app.route(
     '/api',
     createBalloonRoutes({
@@ -762,6 +793,11 @@ function resolveDependencies(
   storyEpisodeImprovementPlanner?: StoryEpisodeImprovementPlannerPort;
 } {
   const creditRepository = new PostgresCreditRepository(db, db);
+  const aiContentReportService =
+    dependencies.aiContentReportService ?? new AiContentReportService(new StructuredLogAiContentReportSink());
+  const organizationSafetyReportService =
+    dependencies.organizationSafetyReportService ??
+    new OrganizationSafetyReportService(new StructuredLogOrganizationSafetyReportSink());
   const accountDeletionRepository = new PostgresAccountDeletionRepository(db, db);
   const accountDeletionConfig = resolveAccountDeletionConfig(env);
   const accountDeletionService =
@@ -1089,6 +1125,8 @@ function resolveDependencies(
   const rateLimitStore = dependencies.rateLimitStore ?? resolveRateLimitStore();
 
   return {
+    aiContentReportService,
+    organizationSafetyReportService,
     accountDeletionService,
     balloonService,
     billingCreditGrantService,

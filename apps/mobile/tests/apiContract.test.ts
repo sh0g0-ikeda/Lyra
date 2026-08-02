@@ -19,6 +19,147 @@ const exportJobResponse = {
 } as const;
 
 describe('LyraMobileApiClient API contract', () => {
+  it('organization safety reportは認証付きの固定payloadを202で受領する', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          report_id: '22222222-2222-4222-8222-222222222222',
+          status: 'received'
+        }),
+        { headers: { 'Content-Type': 'application/json' }, status: 202 }
+      )
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const client = new LyraMobileApiClient(() => 'token');
+
+    await expect(
+      client.submitOrganizationSafetyReport(
+        '11111111-1111-4111-8111-111111111111',
+        'workspace_content'
+      )
+    ).resolves.toEqual({
+      report_id: '22222222-2222-4222-8222-222222222222',
+      status: 'received'
+    });
+
+    const request = fetchMock.mock.calls[0];
+    expect(request?.[0]).toContain('/api/organization-safety-reports');
+    expect(new Headers(request?.[1]?.headers).get('Authorization')).toBe('Bearer token');
+    expect(JSON.parse(String(request?.[1]?.body))).toEqual({
+      organization_id: '11111111-1111-4111-8111-111111111111',
+      target_kind: 'workspace_content',
+      reason: 'unsafe_or_inappropriate'
+    });
+  });
+
+  it('organization safety reportは202以外の成功statusを受領として扱わない', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            report_id: '22222222-2222-4222-8222-222222222222',
+            status: 'received'
+          }),
+          { headers: { 'Content-Type': 'application/json' }, status: 200 }
+        )
+      )
+    );
+    const client = new LyraMobileApiClient(() => 'token');
+
+    await expect(
+      client.submitOrganizationSafetyReport(
+        '11111111-1111-4111-8111-111111111111',
+        'member'
+      )
+    ).rejects.toMatchObject({
+      code: 'INVALID_API_RESPONSE',
+      status: 502
+    });
+  });
+
+  it('AI内容の通報は更新後のBearer tokenと固定payloadだけを送る', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(null, { status: 401 }))
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            report_id: '11111111-1111-4111-8111-111111111111',
+            status: 'received'
+          }),
+          { headers: { 'Content-Type': 'application/json' }, status: 202 }
+        )
+      );
+    vi.stubGlobal('fetch', fetchMock);
+    const refresh = vi.fn().mockResolvedValue('refreshed-token');
+    const client = new LyraMobileApiClient(() => 'expired-token', refresh);
+
+    await expect(
+      client.submitAiContentReport(
+        'generated_image',
+        '11111111-1111-4111-8111-111111111111'
+      )
+    ).resolves.toEqual({
+      report_id: '11111111-1111-4111-8111-111111111111',
+      status: 'received'
+    });
+
+    expect(refresh).toHaveBeenCalledOnce();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const retriedRequest = fetchMock.mock.calls[1];
+    expect(retriedRequest?.[0]).toContain('/api/ai-content-reports');
+    expect(retriedRequest?.[1]).toMatchObject({ method: 'POST' });
+    expect(new Headers(retriedRequest?.[1]?.headers).get('Authorization')).toBe('Bearer refreshed-token');
+    expect(JSON.parse(String(retriedRequest?.[1]?.body))).toEqual({
+      content_kind: 'generated_image',
+      content_id: '11111111-1111-4111-8111-111111111111',
+      reason: 'unsafe_or_inappropriate'
+    });
+  });
+
+  it('AI内容の通報で不正な応答を成功として扱わない', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            report_id: 'not-a-uuid',
+            status: 'accepted'
+          }),
+          { headers: { 'Content-Type': 'application/json' }, status: 202 }
+        )
+      )
+    );
+    const client = new LyraMobileApiClient(() => 'token');
+
+    await expect(client.submitAiContentReport('story_proposal')).rejects.toMatchObject({
+      code: 'INVALID_API_RESPONSE',
+      status: 502
+    });
+  });
+
+  it('AI内容の通報は202以外の成功statusを受領として扱わない', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            report_id: '11111111-1111-4111-8111-111111111111',
+            status: 'received'
+          }),
+          { headers: { 'Content-Type': 'application/json' }, status: 200 }
+        )
+      )
+    );
+    const client = new LyraMobileApiClient(() => 'token');
+
+    await expect(client.submitAiContentReport('story_proposal')).rejects.toMatchObject({
+      code: 'INVALID_API_RESPONSE',
+      status: 502
+    });
+  });
+
   it('429のRetry-After秒数を復旧用ApiErrorへ保持する', async () => {
     vi.stubGlobal(
       'fetch',
