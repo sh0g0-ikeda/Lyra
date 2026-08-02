@@ -941,10 +941,14 @@ export function PagesScreen(): React.JSX.Element {
     sessionKey,
   });
   const displayedPageDesignJobId =
-    localPageDesignJob !== null &&
-    localPageDesignJob.resourceId === activeEpisodeId
+    pageDesignJobEnqueued &&
+    localPageDesignJob?.resourceId === activeEpisodeId
       ? localPageDesignJob.id
-      : activePageDesignServerJobId;
+      : activePageDesignServerJobId ?? (
+          localPageDesignJob?.resourceId === activeEpisodeId
+            ? localPageDesignJob.id
+            : null
+        );
 
   const pageGenerationReadinessQuery = useQuery({
     enabled: canGenerate && selectedPage !== null,
@@ -1696,6 +1700,7 @@ export function PagesScreen(): React.JSX.Element {
 
   const pageSkeletonMutation = useMutation({
     onMutate: () => {
+      setLocalPageDesignJob(null);
       setPageDesignJobEnqueued(false);
     },
     mutationFn: async () => {
@@ -1704,13 +1709,14 @@ export function PagesScreen(): React.JSX.Element {
         activeEpisodeId ?? '',
         {
           overwrite_existing: shouldOverwritePageSkeleton(pages.length),
-          apply_story_plan: true,
+          apply_story_plan: false,
           language
         },
         organizationId
       );
     },
     onSuccess: async (result) => {
+      const followUps: Promise<unknown>[] = [invalidatePageDesignResources()];
       if ('job_id' in result) {
         setLocalPageDesignJob({
           id: result.job_id,
@@ -1718,9 +1724,9 @@ export function PagesScreen(): React.JSX.Element {
           resourceId: activeEpisodeId ?? ''
         });
         setPageDesignJobEnqueued(true);
-        await trackJob(result.job_id);
+        followUps.push(trackJob(result.job_id));
       } else {
-        await clearPageSelectionAfterSkeleton();
+        followUps.push(clearPageSelectionAfterSkeleton());
         if (result.story_plan_job_id !== null) {
           setLocalPageDesignJob({
             id: result.story_plan_job_id,
@@ -1728,10 +1734,10 @@ export function PagesScreen(): React.JSX.Element {
             resourceId: activeEpisodeId ?? ''
           });
           setPageDesignJobEnqueued(true);
-          await trackJob(result.story_plan_job_id);
+          followUps.push(trackJob(result.story_plan_job_id));
         }
       }
-      await invalidatePageDesignResources();
+      await Promise.allSettled(followUps);
     },
     onError: () => {
       setPageDesignJobEnqueued(false);
@@ -1740,6 +1746,7 @@ export function PagesScreen(): React.JSX.Element {
 
   const pageStoryAutofillMutation = useMutation({
     onMutate: () => {
+      setLocalPageDesignJob(null);
       setPageDesignJobEnqueued(false);
     },
     mutationFn: async () => {
@@ -1757,8 +1764,10 @@ export function PagesScreen(): React.JSX.Element {
         resourceId: activeEpisodeId ?? ''
       });
       setPageDesignJobEnqueued(true);
-      await trackJob(result.job_id);
-      await invalidatePageDesignResources();
+      await Promise.allSettled([
+        trackJob(result.job_id),
+        invalidatePageDesignResources()
+      ]);
     },
     onError: () => {
       setPageDesignJobEnqueued(false);
@@ -2535,7 +2544,6 @@ export function PagesScreen(): React.JSX.Element {
               localPageDesignJob?.id === displayedPageDesignJobId &&
               localPageDesignJob.kind === 'skeleton';
             setPageDesignJobEnqueued(false);
-            setLocalPageDesignJob(null);
             if (completedSkeleton) {
               await clearPageSelectionAfterSkeleton();
             }
@@ -2543,16 +2551,10 @@ export function PagesScreen(): React.JSX.Element {
           }}
           onFailed={async () => {
             setPageDesignJobEnqueued(false);
-            setLocalPageDesignJob((current) =>
-              current?.id === displayedPageDesignJobId ? null : current
-            );
             await invalidatePageDesignResources();
           }}
           onCanceled={async () => {
             setPageDesignJobEnqueued(false);
-            setLocalPageDesignJob((current) =>
-              current?.id === displayedPageDesignJobId ? null : current
-            );
             await invalidatePageDesignResources();
           }}
           onMissing={async () => {

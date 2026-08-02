@@ -17,10 +17,7 @@ import {
   packEpisodeBeatPlanLedgerPages,
   packEpisodePlanPages,
 } from '../../domain/episodePlanPacking.js';
-import {
-  buildPanelFrameTemplateInputs,
-  resolveDefaultPanelFrameTemplateId,
-} from '../../domain/constants/panelFrameTemplates.js';
+import { resolveDefaultPanelFrameTemplateId } from '../../domain/constants/panelFrameTemplates.js';
 import type {
   EpisodePagePlanApplyResult,
   EpisodePagePlanContext,
@@ -429,12 +426,7 @@ export class PageService implements PageServicePort {
       deferLayoutPersistence
         ? fingerprintEpisodePlanningContext(context)
         : null;
-    const deferredLayouts = await this.repairEpisodePlanLayoutMetadataBeforeCompile(
-      userId,
-      context,
-      organizationId,
-      deferLayoutPersistence,
-    );
+    this.validateEpisodePlanStructureBeforeCompile(context);
 
     if (this.episodePagePlanCompiler === undefined) {
       return buildSkippedEpisodePlanApplyResult('Episode page plan compiler is not configured');
@@ -468,7 +460,6 @@ export class PageService implements PageServicePort {
             );
           }
 
-          applyDeferredEpisodePlanLayouts(lockedContext, deferredLayouts);
           await executionControl?.beginCommit();
           await reportEpisodePlanProgress(progressReporter, {
             stage: 'applying',
@@ -482,7 +473,6 @@ export class PageService implements PageServicePort {
             compiled,
             language,
             organizationId,
-            deferredLayouts,
             resources,
           );
         },
@@ -499,8 +489,6 @@ export class PageService implements PageServicePort {
             contextFingerprint,
           );
     await executionControl?.checkpoint();
-    applyDeferredEpisodePlanLayouts(contextForApply, deferredLayouts);
-
     await executionControl?.beginCommit();
 
     await reportEpisodePlanProgress(progressReporter, {
@@ -516,7 +504,6 @@ export class PageService implements PageServicePort {
       compiled,
       language,
       organizationId,
-      deferredLayouts,
     );
   }
 
@@ -543,13 +530,9 @@ export class PageService implements PageServicePort {
     return currentContext;
   }
 
-  private async repairEpisodePlanLayoutMetadataBeforeCompile(
-    userId: string,
+  private validateEpisodePlanStructureBeforeCompile(
     context: EpisodePagePlanContext,
-    organizationId: string | null,
-    deferPersistence = false,
-  ): Promise<ReadonlyMap<string, UpdatePageSettingsInput['layoutConfig']>> {
-    const deferredLayouts = new Map<string, UpdatePageSettingsInput['layoutConfig']>();
+  ): void {
     for (const page of context.pages) {
       ensurePageEditable(page.status, 'story autofill');
       if (page.frameCount === 0) {
@@ -558,30 +541,11 @@ export class PageService implements PageServicePort {
       if (page.panels.length !== page.frameCount) {
         throw new ValidationError('コマ割りを先に合わせてください');
       }
-
-      const repairedLayoutConfig = buildRepairedEpisodePageLayoutConfig(
-        page.layoutConfig,
-        page.panels.length,
-        page.frameCount,
-      );
-      if (repairedLayoutConfig !== null) {
-        if (deferPersistence) {
-          deferredLayouts.set(page.pageId, repairedLayoutConfig);
-        } else {
-          await this.updatePageSettings(userId, page.pageId, {
-            layoutConfig: repairedLayoutConfig,
-          }, organizationId);
-        }
-        page.layoutConfig = repairedLayoutConfig;
-        continue;
-      }
-
       if (!isEpisodePageLayoutMetadataConsistent(page.layoutConfig, page.panels.length)) {
         throw new ValidationError('コマ割りを先に合わせてください');
       }
     }
 
-    return deferredLayouts;
   }
 
   private async compileEpisodePlanForContextSafely(
@@ -1317,7 +1281,6 @@ export class PageService implements PageServicePort {
     compiled: EpisodePlanExecutionResult,
     language: AppLanguage,
     organizationId: string | null,
-    deferredLayouts: ReadonlyMap<string, UpdatePageSettingsInput['layoutConfig']> = new Map(),
     resources?: EpisodePlanPersistenceResources,
   ): Promise<EpisodePagePlanApplyResult> {
     const pageRepository = resources?.pageRepository ?? this.pageRepository;
@@ -1366,13 +1329,7 @@ export class PageService implements PageServicePort {
         storyPagePurpose: pageSuggestion.pagePurpose,
         storyContinuityNote: pageSuggestion.continuityNote,
       });
-      const deferredLayout = deferredLayouts.get(page.pageId);
-      const nextPageSettings = deferredLayout === undefined
-        ? mergedPageSettings
-        : {
-            ...(mergedPageSettings ?? {}),
-            layoutConfig: deferredLayout,
-          };
+      const nextPageSettings = mergedPageSettings;
       if (nextPageSettings !== null) {
         await this.updatePageSettingsWithRepository(
           pageRepository,
@@ -1526,24 +1483,6 @@ function chunkEpisodePlanPages(
     chunks.push(pages.slice(index, index + chunkSize));
   }
   return chunks;
-}
-
-function applyDeferredEpisodePlanLayouts(
-  context: EpisodePagePlanContext,
-  deferredLayouts: ReadonlyMap<string, UpdatePageSettingsInput['layoutConfig']>,
-): void {
-  if (deferredLayouts.size === 0) {
-    return;
-  }
-
-  const pagesById = new Map(context.pages.map((page) => [page.pageId, page] as const));
-  for (const [pageId, layoutConfig] of deferredLayouts) {
-    const page = pagesById.get(pageId);
-    if (page === undefined || layoutConfig === undefined) {
-      throw new ConflictError('The episode layout changed while the story plan was being compiled');
-    }
-    page.layoutConfig = layoutConfig;
-  }
 }
 
 function logEpisodePlanAuditSummary(
@@ -1746,62 +1685,17 @@ function buildNextPageLayoutConfig(
   return nextLayoutConfig;
 }
 
-function buildRepairedEpisodePageLayoutConfig(
-  layoutConfig: Record<string, unknown>,
-  panelCount: number,
-  frameCount: number,
-): Record<string, unknown> | null {
-  if (panelCount !== frameCount) {
-    return null;
-  }
-
-  const nextLayoutConfig = { ...layoutConfig };
-  let changed = false;
-  let shouldRefreshTemplateFrames = false;
-
-  if (nextLayoutConfig.panel_count !== panelCount) {
-    nextLayoutConfig.panel_count = panelCount;
-    changed = true;
-  }
-
-  const expectedTemplateId = resolveDefaultPanelFrameTemplateId(panelCount);
-  const layoutType = typeof nextLayoutConfig.type === 'string' ? nextLayoutConfig.type : null;
-
-  if (expectedTemplateId !== null && (layoutType === null || layoutType === 'template')) {
-    if (nextLayoutConfig.type !== 'template') {
-      nextLayoutConfig.type = 'template';
-      changed = true;
-      shouldRefreshTemplateFrames = true;
-    }
-    if (nextLayoutConfig.template_id !== expectedTemplateId) {
-      nextLayoutConfig.template_id = expectedTemplateId;
-      changed = true;
-      shouldRefreshTemplateFrames = true;
-    }
-    if (
-      Array.isArray(nextLayoutConfig.frame_definitions) &&
-      nextLayoutConfig.frame_definitions.length !== panelCount
-    ) {
-      changed = true;
-      shouldRefreshTemplateFrames = true;
-    }
-    if (shouldRefreshTemplateFrames) {
-      nextLayoutConfig.frame_definitions = buildPanelFrameTemplateInputs(expectedTemplateId);
-    }
-  } else if (layoutType === 'template') {
-    nextLayoutConfig.type = 'custom';
-    delete nextLayoutConfig.template_id;
-    changed = true;
-  }
-
-  return changed ? nextLayoutConfig : null;
-}
-
 function isEpisodePageLayoutMetadataConsistent(
   layoutConfig: Record<string, unknown>,
   panelCount: number,
 ): boolean {
   if (layoutConfig.panel_count !== panelCount) {
+    return false;
+  }
+  if (
+    Array.isArray(layoutConfig.frame_definitions) &&
+    layoutConfig.frame_definitions.length !== panelCount
+  ) {
     return false;
   }
 
@@ -1810,7 +1704,9 @@ function isEpisodePageLayoutMetadataConsistent(
     return true;
   }
 
-  const templateId = typeof layoutConfig.template_id === 'string' ? layoutConfig.template_id : null;
+  const templateId = typeof layoutConfig.template_id === 'string'
+    ? layoutConfig.template_id
+    : null;
   if (templateId === null) {
     return false;
   }

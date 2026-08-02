@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
     mobileStoreBillingEnabled: true,
     organizationFeaturesEnabled: true
   },
+  canOpenUrl: vi.fn().mockResolvedValue(true),
   organizationPanel: vi.fn(),
   openUrl: vi.fn(),
   setSession: vi.fn(),
@@ -34,7 +35,7 @@ vi.mock('@tanstack/react-query', () => ({
 
 vi.mock('react-native', () => ({
   AppState: { addEventListener: vi.fn(() => ({ remove: vi.fn() })) },
-  Linking: { canOpenURL: vi.fn().mockResolvedValue(true), openURL: mocks.openUrl },
+  Linking: { canOpenURL: mocks.canOpenUrl, openURL: mocks.openUrl },
   Modal: ({ children, visible }: { children: React.ReactNode; visible: boolean }) =>
     visible ? React.createElement('modal', null, children) : null,
   Platform: { OS: 'android' },
@@ -121,6 +122,8 @@ const refreshedSession = {
 describe('AccountScreen organization feature guard', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.canOpenUrl.mockResolvedValue(true);
+    mocks.openUrl.mockResolvedValue(undefined);
     mocks.config.accountDeletionEnabled = true;
     mocks.config.mobileStoreBillingEnabled = true;
     mocks.config.organizationFeaturesEnabled = true;
@@ -399,5 +402,37 @@ describe('AccountScreen organization feature guard', () => {
       entityId: null
     });
     expect(mocks.openUrl).not.toHaveBeenCalled();
+  });
+
+  it('Androidのpackage visibility判定に依存せず法務ページを開く', async () => {
+    mocks.canOpenUrl.mockResolvedValue(false);
+    mocks.useAppState.mockReturnValue({
+      api: {},
+      language: 'en',
+      logout: vi.fn(),
+      selection: { organizationId: null },
+      session: refreshedSession,
+      sessionKey: 'user-1',
+      setLanguage: vi.fn(),
+      setSession: vi.fn(),
+      tokens: null,
+      updateSelection: mocks.updateSelection
+    });
+
+    let renderer: ReturnType<typeof create>;
+    await act(async () => {
+      renderer = create(React.createElement(AccountScreen));
+    });
+    const supportLink = renderer!.root
+      .findAllByType('button')
+      .find((button) => button.children.includes('screen.terms.supportLink'));
+
+    await act(async () => {
+      supportLink?.props.onClick();
+      await Promise.resolve();
+    });
+
+    expect(mocks.canOpenUrl).not.toHaveBeenCalled();
+    expect(mocks.openUrl).toHaveBeenCalledWith('https://app.lyra-editor.com/support.html');
   });
 });

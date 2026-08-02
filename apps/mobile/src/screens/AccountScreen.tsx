@@ -327,10 +327,6 @@ export function AccountScreen(): React.JSX.Element {
       if (parsed.protocol !== 'https:') {
         throw new Error('External URL must use HTTPS.');
       }
-      const supported = await Linking.canOpenURL(parsed.toString());
-      if (!supported) {
-        throw new Error('External URL is not supported.');
-      }
       await Linking.openURL(parsed.toString());
       return true;
     } catch {

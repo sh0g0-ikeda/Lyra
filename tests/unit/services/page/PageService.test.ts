@@ -1105,8 +1105,21 @@ describe('PageService', () => {
     });
   });
 
-  it('episode story plan は compiler 実行前に page layout metadata を panel 数へ修復する', async () => {
+  it('episode story plan は既存の page layout metadata を変更せず内容だけを反映する', async () => {
     const pageRepository = new FakePageRepository();
+    const originalLayoutConfig = {
+      type: 'custom',
+      panel_count: 5,
+      frame_definitions: Array.from({ length: 5 }, (_value, index) => ({
+        frame_id: `custom-frame-${index + 1}`,
+      })),
+    };
+    pageRepository.page = {
+      ...buildPageSummary(),
+      panelCount: 5,
+      frameCount: 5,
+      layoutConfig: originalLayoutConfig,
+    };
     pageRepository.episodePlanningContext = {
       ...buildEpisodePlanningContext(),
       pages: [
@@ -1114,7 +1127,7 @@ describe('PageService', () => {
           pageId: 'page-1',
           pageNumber: 1,
           frameCount: 5,
-          layoutConfig: { type: 'template', template_id: 'standard_4', panel_count: 4 },
+          layoutConfig: originalLayoutConfig,
           status: 'editing',
           dialogueMode: 'mixed',
           pageDialogueToggle: true,
@@ -1140,15 +1153,45 @@ describe('PageService', () => {
     await service.autofillEpisodeFromStory('user-1', 'episode-1', 'ja');
 
     expect(episodeCompiler.lastInput).not.toBeNull();
-    expect(pageRepository.updatedInputs[0]).toMatchObject({
-      layoutConfig: {
-        type: 'template',
-        template_id: 'action_5',
-        panel_count: 5,
-      },
-    });
-    const frameDefinitions = pageRepository.updatedInputs[0]?.layoutConfig?.frame_definitions;
-    expect(Array.isArray(frameDefinitions) ? frameDefinitions : []).toHaveLength(5);
+    expect(pageRepository.updatedInput?.layoutConfig).toMatchObject(originalLayoutConfig);
+    expect(pageRepository.episodePlanningContext.pages[0]?.layoutConfig).toEqual(originalLayoutConfig);
+  });
+
+  it('episode story plan は不整合な page layout metadata を変更せず compiler 実行前に拒否する', async () => {
+    const pageRepository = new FakePageRepository();
+    pageRepository.episodePlanningContext = {
+      ...buildEpisodePlanningContext(),
+      pages: [
+        {
+          pageId: 'page-1',
+          pageNumber: 1,
+          frameCount: 5,
+          layoutConfig: { type: 'template', template_id: 'standard_4', panel_count: 4 },
+          status: 'editing',
+          dialogueMode: 'mixed',
+          pageDialogueToggle: true,
+          panels: Array.from({ length: 5 }, (_value, index) => ({
+            ...buildAutofillPanelContext(),
+            id: `panel-${index + 1}`,
+            order: index + 1,
+          })),
+        },
+      ],
+    };
+    const episodeCompiler = new FakeEpisodePagePlanCompiler();
+    const service = new PageService(
+      pageRepository,
+      new FakePanelRepository(),
+      new FakePanelEntityAssignmentService(),
+      new FakePageAutofillCompiler(),
+      episodeCompiler,
+    );
+
+    await expect(service.autofillEpisodeFromStory('user-1', 'episode-1', 'ja')).rejects.toThrow(
+      'コマ割りを先に合わせてください',
+    );
+    expect(episodeCompiler.lastInput).toBeNull();
+    expect(pageRepository.updatedInputs).toHaveLength(0);
   });
 
   it('episode story plan は frame 数と panel 数がずれていると compiler を呼ばず拒否する', async () => {
@@ -3149,6 +3192,7 @@ describe('PageService', () => {
         {
           ...buildEpisodePlanningContext().pages[0],
           frameCount: 2,
+          layoutConfig: { type: 'template', template_id: 'climax_2', panel_count: 2 },
           panels: [
             { ...buildAutofillPanelContext(), id: 'panel-1', order: 1 },
             { ...buildAutofillPanelContext(), id: 'panel-2', order: 2 },
