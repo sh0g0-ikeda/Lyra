@@ -1,6 +1,7 @@
 import { z, type ZodType } from 'zod';
 
 import { generationJobSchema } from '@/domain/apiSchemas';
+import { generationJobProgressStageSchema } from '@/domain/mobileCompatibilitySchemas';
 import type { GenerationJobRecord } from '@/domain/types';
 
 export type CompatibleGenerationJobRecord = Omit<
@@ -41,12 +42,25 @@ const normalizedLegacyGenerationJobSchema = legacyGenerationJobSchema.transform(
   (job): CompatibleGenerationJobRecord => {
     const status = job.status === 'cancelled' ? 'canceled' : job.status;
     const updatedAt = job.completed_at ?? job.started_at ?? job.created_at;
-    const progressStage =
-      status === 'queued'
+    const resultProgressStage = generationJobProgressStageSchema.safeParse(
+      job.result?.progress_stage,
+    );
+    const progressStage = resultProgressStage.success
+      ? resultProgressStage.data
+      : status === 'queued'
         ? 'queued'
         : status === 'completed'
           ? 'completed'
-          : null;
+          : status === 'failed'
+            ? 'failed'
+            : status === 'canceled'
+              ? 'canceled'
+              : null;
+    const resultProgressUpdatedAt =
+      typeof job.result?.progress_updated_at === 'string' &&
+      job.result.progress_updated_at.trim().length > 0
+        ? job.result.progress_updated_at
+        : null;
     const progressPercent =
       status === 'queued' ? 0 : status === 'completed' ? 100 : null;
 
@@ -60,7 +74,7 @@ const normalizedLegacyGenerationJobSchema = legacyGenerationJobSchema.transform(
       support_id: null,
       progress_stage: progressStage,
       progress_percent: progressPercent,
-      progress_updated_at: updatedAt,
+      progress_updated_at: resultProgressUpdatedAt ?? updatedAt,
       updated_at: updatedAt,
       actions: {
         cancel: { available: false, reason_key: null },

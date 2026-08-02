@@ -4,6 +4,7 @@ import {
   apiRetryDelay,
   isRetryableRequestError,
   requestTimeoutMs,
+  STORY_AI_WRITE_TIMEOUT_MS,
   shouldRetryApiQuery
 } from '@/lib/requestPolicy';
 import { ApiError } from '@/lib/api';
@@ -15,6 +16,12 @@ describe('request policy', () => {
     expect(requestTimeoutMs('POST')).toBe(30_000);
     expect(requestTimeoutMs('PUT')).toBe(30_000);
     expect(requestTimeoutMs('DELETE')).toBe(30_000);
+  });
+
+  it('StoryAIはCloudFront上限未満で通常の書き込みより長く待つ', () => {
+    expect(STORY_AI_WRITE_TIMEOUT_MS).toBe(55_000);
+    expect(STORY_AI_WRITE_TIMEOUT_MS).toBeGreaterThan(requestTimeoutMs('POST'));
+    expect(STORY_AI_WRITE_TIMEOUT_MS).toBeLessThan(60_000);
   });
 
   it('一時的な通信失敗だけを再試行する', () => {

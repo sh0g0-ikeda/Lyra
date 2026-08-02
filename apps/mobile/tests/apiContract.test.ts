@@ -193,7 +193,58 @@ describe('LyraMobileApiClient API contract', () => {
   afterEach(() => {
     onlineManager.setOnline(true);
     setOperationalEventSinks(null);
+    vi.useRealTimers();
     vi.unstubAllGlobals();
+  });
+
+  it('StoryAIは30秒を超えて待ち、55秒で明示的なタイムアウトになる', async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn().mockImplementation(
+      (_url: string, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener(
+            'abort',
+            () => reject(new DOMException('aborted', 'AbortError')),
+            { once: true }
+          );
+        })
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const client = new LyraMobileApiClient(() => 'token');
+    let settled = false;
+    const request = client.improveEpisodeDraft({
+        episode_id: '11111111-1111-4111-8111-111111111111',
+        instruction: '読みやすくする',
+        language: 'ja',
+        base_draft: {
+          title: '第1話',
+          purpose: null,
+          story_input_mode: 'full',
+          story_full_draft: '本文',
+          introduction: null,
+          middle: null,
+          climax: null,
+          ending_hook: null,
+        },
+      });
+    void request.then(
+      () => {
+        settled = true;
+      },
+      () => {
+        settled = true;
+      }
+    );
+
+    await vi.advanceTimersByTimeAsync(30_001);
+    expect(settled).toBe(false);
+
+    const timeoutExpectation = expect(request).rejects.toMatchObject({
+      code: 'REQUEST_TIMEOUT',
+      status: 0,
+    });
+    await vi.advanceTimersByTimeAsync(24_999);
+    await timeoutExpectation;
   });
 
   it('オフラインの書き込みは送信せずユーザー再試行が必要なエラーにする', async () => {

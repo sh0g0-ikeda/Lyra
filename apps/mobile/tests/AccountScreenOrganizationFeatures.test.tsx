@@ -295,7 +295,7 @@ describe('AccountScreen organization feature guard', () => {
     );
   });
 
-  it('balanceの権限エラーから個人ワークスペースへ戻るアクションを実行する', async () => {
+  it('一時的なbalance取得エラーを赤いアクション通知として表示しない', async () => {
     const balanceError = new ApiError('provider detail', 403, 'FORBIDDEN');
     mocks.useQuery.mockImplementation((options: { queryKey: readonly string[] }) => {
       if (options.queryKey[0] === 'balance') {
@@ -334,20 +334,12 @@ describe('AccountScreen organization feature guard', () => {
     await act(async () => {
       renderer = create(React.createElement(AccountScreen));
     });
-    const actionable = renderer!.root
+    const actionableNotices = renderer!.root
       .findAllByType('notice')
-      .find((notice) => typeof notice.props.onAction === 'function');
+      .filter((notice) => typeof notice.props.onAction === 'function');
 
-    act(() => actionable?.props.onAction());
-
-    expect(mocks.updateSelection).toHaveBeenCalledWith({
-      organizationId: null,
-      workId: null,
-      chapterId: null,
-      episodeId: null,
-      pageId: null,
-      entityId: null
-    });
+    expect(actionableNotices).toHaveLength(0);
+    expect(mocks.updateSelection).not.toHaveBeenCalled();
   });
 
   it('唯一のorganization ownerはWebではなくアプリ内管理画面へ移動する', async () => {
