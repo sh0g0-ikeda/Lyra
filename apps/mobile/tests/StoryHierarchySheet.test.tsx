@@ -34,8 +34,11 @@ vi.mock('react-native', () => ({
           ListFooterComponent,
         ],
   ),
+  KeyboardAvoidingView: ({ children, ...props }: { children: React.ReactNode }) =>
+    React.createElement('keyboard-avoiding-view', props, children),
   Modal: ({ children, visible }: { children: React.ReactNode; visible: boolean }) =>
     visible ? React.createElement('modal', null, children) : null,
+  Platform: { OS: 'android' },
   Pressable: ({
     children,
     onPress,
@@ -368,7 +371,7 @@ describe('StoryHierarchySheet', () => {
     expect(safeAreas[1]?.props.edges).toEqual(['bottom']);
   });
 
-  it('話追加ダイアログをAndroidの下部Safe Areaより上に表示する', async () => {
+  it('話追加ダイアログをAndroidのSafe Area内の中上部に表示する', async () => {
     const renderer = await renderSheet();
 
     await act(async () => {
@@ -380,7 +383,11 @@ describe('StoryHierarchySheet', () => {
 
     const safeAreas = renderer.root.findAllByType('safe-area-view');
     expect(safeAreas).toHaveLength(2);
-    expect(safeAreas[1]?.props.edges).toEqual(['bottom']);
+    expect(safeAreas[1]?.props.edges).toEqual(['top', 'bottom']);
+    expect(safeAreas[1]?.props.style).toMatchObject({
+      justifyContent: 'flex-start'
+    });
+    expect(renderer.root.findByType('keyboard-avoiding-view').props.behavior).toBe('height');
     expect(renderer.root.findByProps({ accessibilityLabel: '話を追加' })).toBeDefined();
   });
 

@@ -11,6 +11,7 @@ import {
 
 import {
   applyDirtyStateChoice,
+  navigationBlockingRegistrations,
   type DirtyEditorRegistration,
   type DirtyStateChoice
 } from '@/domain/dirtyStatePolicy';
@@ -20,6 +21,7 @@ import { UnsavedChangesResolutionDialog } from '@/components/UnsavedChangesResol
 interface DirtyStateContextValue {
   clearResolvedRevision: (id: string) => void;
   hasDirtyEditors: boolean;
+  hasNavigationBlockingEditors: boolean;
   register: (registration: DirtyEditorRegistration) => () => void;
   resolveDirtyEditors: (language: UiLanguage) => Promise<boolean>;
   saveDirtyEditors: () => Promise<boolean>;
@@ -40,8 +42,16 @@ export function DirtyStateProvider({ children }: PropsWithChildren): React.JSX.E
   const backgroundSaveRef = useRef<Promise<boolean> | null>(null);
   const pendingResolutionRef = useRef<PendingDirtyResolution | null>(null);
   const [registrationCount, setRegistrationCount] = useState(0);
+  const [navigationBlockingCount, setNavigationBlockingCount] = useState(0);
   const [pendingResolution, setPendingResolution] =
     useState<PendingDirtyResolution | null>(null);
+
+  const updateRegistrationCounts = useCallback((): void => {
+    setRegistrationCount(registrationsRef.current.size);
+    setNavigationBlockingCount(
+      navigationBlockingRegistrations([...registrationsRef.current.values()]).length
+    );
+  }, []);
 
   const register = useCallback((registration: DirtyEditorRegistration): (() => void) => {
     if (
@@ -52,15 +62,15 @@ export function DirtyStateProvider({ children }: PropsWithChildren): React.JSX.E
     }
     resolvedRevisionsRef.current.delete(registration.id);
     registrationsRef.current.set(registration.id, registration);
-    setRegistrationCount(registrationsRef.current.size);
+    updateRegistrationCounts();
     return () => {
       const current = registrationsRef.current.get(registration.id);
       if (current === registration) {
         registrationsRef.current.delete(registration.id);
-        setRegistrationCount(registrationsRef.current.size);
+        updateRegistrationCounts();
       }
     };
-  }, []);
+  }, [updateRegistrationCounts]);
 
   const clearResolvedRevision = useCallback((id: string): void => {
     resolvedRevisionsRef.current.delete(id);
@@ -89,10 +99,10 @@ export function DirtyStateProvider({ children }: PropsWithChildren): React.JSX.E
         }
       });
       if (removed) {
-        setRegistrationCount(registrationsRef.current.size);
+        updateRegistrationCounts();
       }
     },
-    []
+    [updateRegistrationCounts]
   );
 
   const settlePendingResolution = useCallback((choice: DirtyStateChoice): void => {
@@ -117,7 +127,12 @@ export function DirtyStateProvider({ children }: PropsWithChildren): React.JSX.E
     if (resolutionRef.current !== null) {
       return resolutionRef.current;
     }
-    const registrations = [...registrationsRef.current.values()];
+    const registrations = navigationBlockingRegistrations([
+      ...registrationsRef.current.values()
+    ]);
+    if (registrations.length === 0) {
+      return Promise.resolve(true);
+    }
     const resolution = new Promise<boolean>((resolve) => {
       const pending = { language, registrations, resolve };
       pendingResolutionRef.current = pending;
@@ -169,6 +184,7 @@ export function DirtyStateProvider({ children }: PropsWithChildren): React.JSX.E
     () => ({
       clearResolvedRevision,
       hasDirtyEditors: registrationCount > 0,
+      hasNavigationBlockingEditors: navigationBlockingCount > 0,
       register,
       resolveDirtyEditors,
       saveDirtyEditors
@@ -176,6 +192,7 @@ export function DirtyStateProvider({ children }: PropsWithChildren): React.JSX.E
     [
       clearResolvedRevision,
       register,
+      navigationBlockingCount,
       registrationCount,
       resolveDirtyEditors,
       saveDirtyEditors
@@ -205,6 +222,7 @@ export function useDirtyState(): DirtyStateContextValue {
 export function useDirtyEditorRegistration(input: {
   id: string;
   revision?: string;
+  blocksNavigation?: boolean;
   dirty: boolean;
   discard: () => void;
   save: () => Promise<void>;
@@ -218,12 +236,14 @@ export function useDirtyEditorRegistration(input: {
     return register({
       id: input.id,
       revision: input.revision,
+      blocksNavigation: input.blocksNavigation,
       discard: input.discard,
       save: input.save
     });
   }, [
     clearResolvedRevision,
     input.dirty,
+    input.blocksNavigation,
     input.discard,
     input.id,
     input.revision,

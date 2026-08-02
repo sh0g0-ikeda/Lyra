@@ -70,6 +70,9 @@ export function StoryGenerationControls({
           </Text>
           {t(language, 'component.storyGenerationControls.step2Description')}
         </Text>
+        <Text style={styles.estimate}>
+          {t(language, 'component.storyGenerationControls.autofillEstimate')}
+        </Text>
       </View>
       {overwrite ? (
         <Text style={styles.warning}>
@@ -120,6 +123,10 @@ const styles = StyleSheet.create({
   description: {
     ...textStyles.body,
     color: colors.ink
+  },
+  estimate: {
+    ...textStyles.caption,
+    color: colors.primary
   },
   root: {
     gap: spacing.md

@@ -64,6 +64,7 @@ describe('StoryGenerationControls', () => {
     expect(rendered).toContain('各コマの登場人物・状況・構図・セリフを自動入力します。');
     expect(rendered).toContain('ページ骨格を生成');
     expect(rendered).toContain('ストーリーから設定を自動入力');
+    expect(rendered).toContain('20分程度かかる可能性があります');
   });
 
   it('enqueue直後は開始だけを表示しauthoritative完了前に完了と表示しない', () => {

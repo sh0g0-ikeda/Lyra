@@ -5,8 +5,15 @@ export type DirtyStateChoice = 'save' | 'discard' | 'cancel';
 export interface DirtyEditorRegistration {
   id: string;
   revision?: string;
+  blocksNavigation?: boolean;
   discard: () => void;
   save: () => Promise<void>;
+}
+
+export function navigationBlockingRegistrations(
+  registrations: readonly DirtyEditorRegistration[]
+): DirtyEditorRegistration[] {
+  return registrations.filter((registration) => registration.blocksNavigation !== false);
 }
 
 export async function applyDirtyStateChoice(

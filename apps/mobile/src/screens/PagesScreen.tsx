@@ -1685,6 +1685,7 @@ export function PagesScreen(): React.JSX.Element {
   useDirtyEditorRegistration({
     id: 'pages-editor',
     revision: pageEditorRevision,
+    blocksNavigation: false,
     dirty: pageDirty || panelDirty || framesDirty,
     discard: discardAllPageDrafts,
     save: saveAllPageDrafts
@@ -2255,9 +2256,9 @@ export function PagesScreen(): React.JSX.Element {
       language,
       title: t(language, "generated.screens.PagesScreen.generate.page.image.a3a86143"),
       message: appendAiProviderDisclosure(
-        t(language, 'screen.pages.generatePageConfirmation', {
+        `${t(language, 'screen.pages.generatePageConfirmation', {
           creditCost: readiness?.estimated_credit_cost ?? '3+'
-        }),
+        })}\n\n${t(language, 'component.jobStatusCard.imageDurationEstimate')}`,
         language,
         'text'
       ),

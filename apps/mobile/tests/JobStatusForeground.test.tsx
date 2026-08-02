@@ -340,6 +340,51 @@ describe('JobStatusCard completion notification', () => {
       'ページへストーリー内容を反映中です。ページが表示されても、完了になるまで処理は続きます。'
     );
   });
+
+  it('画像生成中は5分程度かかる可能性を表示する', async () => {
+    const job = buildProcessingJob({ available: false, reason_key: null });
+    let renderer: ReturnType<typeof create>;
+
+    await act(async () => {
+      renderer = create(
+        <JobStatusCard
+          api={{ getJob: vi.fn() } as never}
+          job={job}
+          jobId={job.id}
+          language="ja"
+          sessionKey="session-1"
+        />
+      );
+    });
+
+    expect(renderer!.root.findAllByType('text').map((node) => node.children.join(' '))).toContain(
+      '完了まで5分程度かかる可能性があります。別の画面へ移動しても処理は続きます。'
+    );
+  });
+
+  it('ストーリー自動入力中は20分程度かかる可能性を表示する', async () => {
+    const job: GenerationJobRecord = {
+      ...buildProcessingJob({ available: false, reason_key: null }),
+      job_type: 'episode_story_autofill'
+    };
+    let renderer: ReturnType<typeof create>;
+
+    await act(async () => {
+      renderer = create(
+        <JobStatusCard
+          api={{ getJob: vi.fn() } as never}
+          job={job}
+          jobId={job.id}
+          language="ja"
+          sessionKey="session-1"
+        />
+      );
+    });
+
+    expect(renderer!.root.findAllByType('text').map((node) => node.children.join(' '))).toContain(
+      '完了まで20分程度かかる可能性があります。別の画面へ移動しても処理は続きます。'
+    );
+  });
 });
 
 describe('JobStatusCard processing cancellation', () => {
