@@ -310,7 +310,7 @@ implements AccountDeletionRepository, AccountDeletionIdentityLookupRepository {
             updated_at = NOW()
         FROM candidate
         WHERE requests.user_id = candidate.user_id
-        RETURNING ${REQUEST_FIELDS}
+        RETURNING ${QUALIFIED_REQUEST_FIELDS}
         `,
         [processingToken],
       );
@@ -811,6 +811,18 @@ const REQUEST_FIELDS = `
   data_anonymized_at,
   identity_disabled_at,
   identity_deleted_at
+`;
+
+const QUALIFIED_REQUEST_FIELDS = `
+  requests.user_id,
+  requests.identity_id,
+  requests.status,
+  requests.processing_token,
+  requests.cancelled_subscription_ids,
+  requests.scheduled_asset_keys,
+  requests.data_anonymized_at,
+  requests.identity_disabled_at,
+  requests.identity_deleted_at
 `;
 
 const PERSONAL_ASSET_KEYS_SQL = `

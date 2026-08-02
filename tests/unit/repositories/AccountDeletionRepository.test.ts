@@ -150,6 +150,23 @@ describe('PostgresAccountDeletionRepository', () => {
     ]);
   });
 
+  it('recovery claimはUPDATE対象aliasからrequest fieldsを返してCTEとの曖昧性を避ける', async () => {
+    const database = new RecordingDatabase();
+    const repository = new PostgresAccountDeletionRepository(database, database);
+
+    await repository.claimNextRecoverable(
+      '00000000-0000-4000-8000-000000000001',
+    );
+
+    const call = database.calls.at(-1);
+    expect(call?.sql).toContain('requests.user_id');
+    expect(call?.sql).toContain('requests.identity_id');
+    expect(call?.sql).toContain('requests.processing_token');
+    expect(call?.values).toEqual([
+      '00000000-0000-4000-8000-000000000001',
+    ]);
+  });
+
   it('identity guard lookupはHMAC keyだけをparameter bindingする', async () => {
     const database = new RecordingDatabase();
     const repository = new PostgresAccountDeletionRepository(database, database);
