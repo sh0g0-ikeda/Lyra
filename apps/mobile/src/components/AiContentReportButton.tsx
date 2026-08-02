@@ -5,8 +5,8 @@ import { PrimaryButton } from '@/components/PrimaryButton';
 import type { UiLanguage } from '@/domain/types';
 import { confirmAction } from '@/lib/confirm';
 import { t } from '@/lib/i18n';
-import { submitAiContentReport } from '@/lib/observability';
-import type { AiContentReportKind } from '@/lib/observabilityPolicy';
+import type { AiContentReportKind } from '@/lib/api';
+import { useAppState } from '@/state/appState';
 
 interface AiContentReportButtonProps {
   contentId?: string | null;
@@ -21,6 +21,7 @@ export function AiContentReportButton({
   language,
   onReport
 }: AiContentReportButtonProps): React.JSX.Element {
+  const { api } = useAppState();
   const [status, setStatus] = useState<'idle' | 'sending' | 'sent' | 'failed'>('idle');
 
   const report = (): void => {
@@ -32,7 +33,7 @@ export function AiContentReportButton({
       onConfirm: () => {
         onReport?.();
         setStatus('sending');
-        void submitAiContentReport(contentKind, contentId)
+        void api.submitAiContentReport(contentKind, contentId)
           .then(() => setStatus('sent'))
           .catch(() => setStatus('failed'));
       }

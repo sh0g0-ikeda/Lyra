@@ -27,6 +27,8 @@ const routeMethods = new Set([
 const routeMountPrefixes = new Map([
   ['accountDeletion.ts', '/api'],
   ['adminOrganizations.ts', '/api'],
+  ['aiContentReports.ts', '/api'],
+  ['organizationSafetyReports.ts', '/api'],
   ['balloons.ts', '/api'],
   ['billing.ts', '/api/billing'],
   ['compositions.ts', '/api'],

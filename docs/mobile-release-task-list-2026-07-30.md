@@ -4,9 +4,9 @@
 
 対象: Android / iPhone の初回ストア公開
 
-進捗: 94件中38件完了 / 56件未完了
+進捗: 105件中47件完了 / 58件未完了
 
-未完了の担当内訳: AI単独0件 / AI準備＋外部確認33件 / 人間・外部必須23件
+未完了の担当内訳: AI単独0件 / AI準備＋外部確認35件 / 人間・外部必須23件
 
 ## 0. このリストの範囲
 
@@ -83,7 +83,7 @@
 - [ ] `[人間]` Standard / Premium subscriptionを同一subscription groupへ登録する。
 - [ ] `[人間]` 10 / 50 / 150 credit商品をConsumableとして登録する。
 - [ ] `[共同]` App Store Server Notificationsとserver verifier credentialを設定する。
-- [ ] `[共同]` Associated Domains、AASA、Cognito callback / logout URLを本番値で確認する。
+- [ ] `[共同]` Cognito callback / logout URLに`lyra-mobile://auth/mobile/*`が登録済みで、実機のlogin / logoutが完了することを確認する。iOS Associated Domainsは初回buildから除外済みで、AASA公開までは再追加しない。
 - [ ] `[共同]` distribution certificate、provisioning profile、EAS production credentialを設定する。
 
 ## 5. Google Play外部設定
@@ -151,23 +151,34 @@
 - [x] `[AI]` 監査設計を`docs/mobile-store-review-rejection-remediation-design-2026-08-02.md`へ記録し、Backend変更なし・UI位置/色維持を境界にする。
 - [x] `[AI]` StoryAI、ページ生成、参照生成、画像importの直前にOpenAIへの送信対象と同意を表示する。
 - [x] `[AI]` StoryAI提案と生成画像previewへ、アプリを離れないAI生成物通報を追加する。
-- [x] `[AI]` 通報payloadを固定カテゴリ・理由・不透明な作品記録IDだけにし、本文、prompt、画像、token、email、user IDを送らないテストを追加する。
+- [x] `[AI]` 通報payloadを固定カテゴリ・理由・不透明な作品記録IDだけにし、本文、prompt、画像、token、emailをclientから送らないテストを追加する。APIは認証済みの不透明なuser IDだけを運用ログへ付与する。
+- [x] `[AI]` AI生成物通報をSentry依存の見せかけ処理から、認証・rate limit・202 receiptを備えたLyra APIと日次確認runbookへ置き換える。
+- [x] `[AI]` private organizationの全active memberへ、ワークスペース内容とメンバーの2種類を通報できる実API/UIを追加し、通報者への安全なfollow-up手順を定める。
+- [x] `[AI]` 認証済みMobile UIの前に、user ID・規約版ごとの明示同意gateと「同意せずログアウト」を追加する。
+- [x] `[AI]` 唯一のorganization ownerによる削除blockerからWeb rootを開かず、アプリ内organization管理へ移動する。
+- [x] `[AI]` Sentry DSN未設定でも本番アプリを設定エラー画面にせず、任意のcrash診断だけを無効化する。
+- [x] `[AI]` 未完成のPDF / ZIP出力を初回buildでは既定OFFにし、既存の単一ページ画像保存だけを維持する。
+- [x] `[AI]` iOSの未検証Associated Domains entitlementを初回buildから除外し、Android App LinksとCognito custom schemeを分離する。
+- [x] `[AI]` Android / iOS共通のAI安全性・通報・safe-failure実機release checklistをversion管理する。
 - [x] `[AI]` Mobileのorganization管理からStripe checkout、plan変更、credit購入、billing portalを非表示にし、状態・invoice閲覧は維持する。
 - [x] `[AI]` 個人store購入UIへ自動更新・解約方法・日英の利用規約/プライバシー導線を追加する。
 - [x] `[AI]` production client profileで既存アカウント削除UIを有効化する。
 - [x] `[AI]` 日英のprivacy、terms、support、専用account-deletionページをversion管理し、OpenAI / AWS / Apple / Google / Stripe / Sentryと国際処理を開示する。
 - [x] `[AI]` App Store / Playの言語別metadata、Data Safety draft、review notesを法務URL・削除URL・AI通報・外部決済非表示と一致させる。
 - [ ] `[共同]` 日英法務ページを`app.lyra-editor.com`へ公開し、全URLがHTTPS 200かつHTMLとして表示できることを確認する。
-- [ ] `[共同]` production EASへ有効な`EXPO_PUBLIC_SENTRY_DSN`をsecretとして設定し、AI通報とprivacy-limited crash送信を実機確認する。
+- [x] `[AI]` EAS production / previewのAPI URL・Google Services fileを維持し、Cognito callback / logout環境変数をcustom schemeへ統一してreadbackする。
+- [ ] `[共同]` 任意でSentry crash診断を有効にする場合だけ有効なDSNをsecret設定し、privacy-limited crash eventを実機確認する。AI通報はSentryを使用しない。
 - [ ] `[共同]` production Backendの`ACCOUNT_DELETION_ENABLED`、IAM、recovery runnerを有効化し、previewから完了まで実機確認する。
-- [ ] `[共同]` Apple Team ID確定後に正しいAASAを`/.well-known/apple-app-site-association`へJSONで公開する（現状はHTML応答のため未完了）。
-- [ ] `[共同]` release AABのtargetSdk、権限、署名、assetlinksと、IPAのentitlement、privacy manifest、AASAを最終artifactから検査する。
+- [ ] `[共同]` 将来iOS Universal Linksを有効にする場合に限り、Apple Team ID確定後に正しいAASAを公開してからAssociated Domainsを再追加する（初回提出の必須条件ではない）。
+- [ ] `[共同]` release AABのtargetSdk、権限、署名、assetlinksと、IPAのentitlement、privacy manifest、未検証Associated Domainsがないことを最終artifactから検査する。
+- [ ] `[共同]` 両OS release候補でAI生成物2種とorganization通報2種を実送し、202表示とprivacy-minimized production log receiptを確認する。
+- [ ] `[共同]` `docs/mobile-ai-safety-release-checklist.md`を両OSの同一release候補で実行し、全AI経路の拒否またはsafe failureを記録する。
 - [ ] `[人間]` 「Lyra Japan / Edge of Vision」の正式な販売者・個人情報取扱事業者表記、準拠法、住所等を確定し、日英法務文面を専門家と承認する。
 - [ ] `[人間]` 審査用アカウント、十分なcredit、再現手順をApp Store Connect / Play Consoleの保護欄へ登録する。
 - [ ] `[人間]` App Privacy、Data Safety、content rating、輸出コンプライアンス、広告ID、暗号利用の回答を最終artifactと一致させて申告する。
 - [ ] `[人間]` App Store / Playの商品、価格、販売国、subscription group / base planと契約・税務・銀行設定を承認する。
 - [ ] `[人間]` 日本語・英語screenshotsと審査説明を実機の最終buildから承認する。
-- [ ] `[人間]` SentryのAI生成物通報を担当者が確認し、必要なコンテンツ対応・利用者対応・記録を行う運用を開始する。
+- [ ] `[人間]` Lyra APIログのAI生成物・organization安全通報を担当者が営業日ごとに確認し、必要なコンテンツ対応・利用者対応・記録を行う運用を開始する。
 
 ## 10. 完了条件
 

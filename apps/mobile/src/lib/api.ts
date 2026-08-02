@@ -1,4 +1,4 @@
-import type { ZodType } from 'zod';
+import { z, type ZodType } from 'zod';
 import { onlineManager } from '@tanstack/react-query';
 
 import {
@@ -167,6 +167,37 @@ type JsonRequestInit = Omit<RequestInit, 'body'> & { body?: unknown; timeoutMs?:
 
 type StoryCollaborationRequest = StoryCollaborationInput & { language: UiLanguage };
 
+export type AiContentReportKind = 'generated_image' | 'story_proposal';
+export type OrganizationSafetyReportTargetKind = 'workspace_content' | 'member';
+
+export interface AiContentReportReceipt {
+  report_id: string;
+  status: 'received';
+}
+
+const aiContentReportRequestSchema = z
+  .object({
+    content_kind: z.enum(['generated_image', 'story_proposal']),
+    content_id: z.string().uuid().optional(),
+    reason: z.literal('unsafe_or_inappropriate')
+  })
+  .strict();
+
+const aiContentReportReceiptSchema = z
+  .object({
+    report_id: z.string().uuid(),
+    status: z.literal('received')
+  })
+  .strict();
+
+const organizationSafetyReportRequestSchema = z
+  .object({
+    organization_id: z.string().uuid(),
+    target_kind: z.enum(['workspace_content', 'member']),
+    reason: z.literal('unsafe_or_inappropriate')
+  })
+  .strict();
+
 export interface BlobResponse {
   blob: Blob;
   contentType: string | null;
@@ -320,6 +351,44 @@ export class LyraMobileApiClient {
 
   public getCurrentSession(): Promise<CurrentSessionRecord> {
     return this.request('/api/me', currentSessionSchema);
+  }
+
+  public submitAiContentReport(
+    contentKind: AiContentReportKind,
+    contentId?: string | null
+  ): Promise<AiContentReportReceipt> {
+    const parsed = aiContentReportRequestSchema.safeParse({
+      content_kind: contentKind,
+      ...(contentId === undefined || contentId === null ? {} : { content_id: contentId }),
+      reason: 'unsafe_or_inappropriate'
+    });
+    if (!parsed.success) {
+      throw new RangeError('AI content report must contain a supported category and optional UUID.');
+    }
+    return this.request('/api/ai-content-reports', aiContentReportReceiptSchema, {
+      method: 'POST',
+      body: parsed.data
+    }, 202);
+  }
+
+  public submitOrganizationSafetyReport(
+    organizationId: string,
+    targetKind: OrganizationSafetyReportTargetKind
+  ): Promise<AiContentReportReceipt> {
+    const parsed = organizationSafetyReportRequestSchema.safeParse({
+      organization_id: organizationId,
+      target_kind: targetKind,
+      reason: 'unsafe_or_inappropriate'
+    });
+    if (!parsed.success) {
+      throw new RangeError('Organization safety report must contain a valid organization and supported target.');
+    }
+    return this.request(
+      '/api/organization-safety-reports',
+      aiContentReportReceiptSchema,
+      { method: 'POST', body: parsed.data },
+      202
+    );
   }
 
   public async getEntityReferenceGenerationAvailability(): Promise<EntityReferenceGenerationAvailabilityRecord> {
@@ -1422,10 +1491,18 @@ export class LyraMobileApiClient {
     return this.request('/api/billing/balance', billingBalanceSchema);
   }
 
-  private async request<T>(path: string, schema: ZodType<T>, init: JsonRequestInit = {}): Promise<T> {
+  private async request<T>(
+    path: string,
+    schema: ZodType<T>,
+    init: JsonRequestInit = {},
+    expectedStatus?: number
+  ): Promise<T> {
     const response = await this.fetchWithAuthRetry(path, init);
     if (!response.ok) {
       throw await this.toApiError(response);
+    }
+    if (expectedStatus !== undefined && response.status !== expectedStatus) {
+      throw new ApiError('API response did not match the expected contract.', 502, 'INVALID_API_RESPONSE');
     }
     let body: unknown;
     try {

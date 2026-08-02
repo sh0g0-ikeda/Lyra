@@ -6,6 +6,7 @@ import { OrganizationManagementPanel } from '@/components/OrganizationManagement
 
 const {
   appStateAddEventListenerMock,
+  confirmActionMock,
   organizationCollectionModalMock,
   queryClientMock,
   recordOperationalMetricMock,
@@ -14,6 +15,7 @@ const {
   useMutationMock
 } = vi.hoisted(() => ({
   appStateAddEventListenerMock: vi.fn(),
+  confirmActionMock: vi.fn(),
   organizationCollectionModalMock: vi.fn(),
   queryClientMock: {
     invalidateQueries: vi.fn(),
@@ -51,8 +53,19 @@ vi.mock('@/components/Section', () => ({
 }));
 
 vi.mock('@/components/PrimaryButton', () => ({
-  PrimaryButton: ({ label, onPress, disabledReason }: { label: string; onPress: () => void; disabledReason?: string }) =>
-    React.createElement('button', { disabledReason, onClick: onPress }, label)
+  PrimaryButton: ({
+    disabled,
+    disabledReason,
+    label,
+    loading,
+    onPress
+  }: {
+    disabled?: boolean;
+    disabledReason?: string;
+    label: string;
+    loading?: boolean;
+    onPress: () => void;
+  }) => React.createElement('button', { disabled, disabledReason, loading, onClick: onPress }, label)
 }));
 
 vi.mock('@/components/FormField', () => ({
@@ -88,6 +101,10 @@ vi.mock('@/components/OrganizationCollectionModal', () => ({
 
 vi.mock('@/lib/operationalEvents', () => ({
   recordOperationalMetric: recordOperationalMetricMock
+}));
+
+vi.mock('@/lib/confirm', () => ({
+  confirmAction: confirmActionMock
 }));
 
 const organization = {
@@ -242,7 +259,25 @@ describe('OrganizationManagementPanel', () => {
           error: null,
         };
       }
-      return { data: { invitations: [], invoices: [], usage_events: [], summary: { current_month_total_credits: 0, by_member: [], by_work: [], by_generation_type: [] }, audit_logs: [], members: [] }, isLoading: false, isError: false, error: null };
+      if (name === 'organization-invoices') {
+        return {
+          data: {
+            invoices: [{
+              id: 'invoice-1',
+              organization_id: organization.id,
+              kind: 'subscription',
+              amount_jpy: 10_000,
+              status: 'paid',
+              invoice_url: 'https://billing.example.test/invoice-1',
+              created_at: '2026-08-02T00:00:00.000Z',
+            }],
+          },
+          isLoading: false,
+          isError: false,
+          error: null,
+        };
+      }
+      return { data: { invitations: [], usage_events: [], summary: { current_month_total_credits: 0, by_member: [], by_work: [], by_generation_type: [] }, audit_logs: [], members: [] }, isLoading: false, isError: false, error: null };
     });
     useMutationMock.mockReturnValue({ isPending: false, isError: false, mutateAsync: vi.fn() });
     let renderer: ReturnType<typeof create>;
@@ -265,7 +300,36 @@ describe('OrganizationManagementPanel', () => {
     expect(rendered).toContain('請求管理');
     expect(rendered).not.toContain('手続きを開く');
     expect(rendered).not.toContain('請求ポータルを開く');
+    expect(rendered).not.toContain('請求書を開く');
     expect(rendered).not.toContain('追加クレジット');
+  });
+
+  it('外部請求操作が許可される場合は請求書リンクを表示する', () => {
+    useQueryMock.mockImplementation((options: { queryKey: unknown[] }) => {
+      const name = String(options.queryKey[0]);
+      if (name === 'organization-workspace') return { data: workspace, isLoading: false, isError: false, error: null };
+      if (name === 'organization-invoices') {
+        return {
+          data: {
+            invoices: [{
+              id: 'invoice-1', organization_id: organization.id, kind: 'subscription', amount_jpy: 10_000,
+              status: 'paid', invoice_url: 'https://billing.example.test/invoice-1', created_at: '2026-08-02T00:00:00.000Z',
+            }],
+          }, isLoading: false, isError: false, error: null,
+        };
+      }
+      return { data: { invitations: [], invoices: [], usage_events: [], summary: { current_month_total_credits: 0, by_member: [], by_work: [], by_generation_type: [] }, audit_logs: [], members: [] }, isLoading: false, isError: false, error: null };
+    });
+    useMutationMock.mockReturnValue({ isPending: false, isError: false, mutateAsync: vi.fn() });
+    let renderer: ReturnType<typeof create>;
+    act(() => {
+      renderer = create(React.createElement(OrganizationManagementPanel, {
+        api: {} as never, language: 'ja', onConfirmRemoveMember: vi.fn(), onDownloadUsageCsv: vi.fn(),
+        onOpenBillingUrl: vi.fn(), organization, sessionKey: 'session-a',
+      }));
+    });
+
+    expect(JSON.stringify(renderer!.toJSON())).toContain('請求書を開く');
   });
 
   it('viewerには権限不足の固定理由を表示し、請求・メンバー操作を表示しない', () => {
@@ -290,6 +354,83 @@ describe('OrganizationManagementPanel', () => {
     expect(rendered).toContain('Your role can view this workspace but cannot manage members, billing, usage, or audit history.');
     expect(rendered).not.toContain('Members');
     expect(rendered).not.toContain('Billing management');
+  });
+
+  it('active memberは管理権限なしでもworkspace contentとmemberを通報できる', async () => {
+    let resolveWorkspaceReport: ((receipt: { report_id: string; status: string }) => void) | undefined;
+    const submitOrganizationSafetyReport = vi
+      .fn()
+      .mockImplementationOnce(
+        () => new Promise((resolve) => {
+          resolveWorkspaceReport = resolve;
+        })
+      )
+      .mockRejectedValueOnce(new Error('raw backend detail'));
+    useQueryMock.mockReturnValue({ data: workspace, isLoading: false, isError: false, error: null });
+    useMutationMock.mockReturnValue({ isPending: false, isError: false, mutateAsync: vi.fn() });
+    let renderer: ReturnType<typeof create>;
+    act(() => {
+      renderer = create(
+        React.createElement(OrganizationManagementPanel, {
+          api: { submitOrganizationSafetyReport } as never,
+          language: 'ja',
+          onConfirmRemoveMember: vi.fn(),
+          onDownloadUsageCsv: vi.fn(),
+          onOpenBillingUrl: vi.fn(),
+          organization: { ...organization, role: 'viewer' },
+          sessionKey: 'session-a'
+        })
+      );
+    });
+
+    const workspaceReport = renderer!.root
+      .findAllByType('button')
+      .find((node) => node.children.includes('ワークスペース内容を通報'));
+    const memberReport = renderer!.root
+      .findAllByType('button')
+      .find((node) => node.children.includes('メンバーを通報'));
+    expect(workspaceReport).toBeDefined();
+    expect(memberReport).toBeDefined();
+
+    act(() => workspaceReport?.props.onClick());
+    const workspaceConfirmation = confirmActionMock.mock.calls[0]?.[0] as { onConfirm: () => void };
+    act(() => {
+      workspaceConfirmation.onConfirm();
+    });
+    expect(submitOrganizationSafetyReport).toHaveBeenCalledWith(
+      organization.id,
+      'workspace_content'
+    );
+    const reportingButtons = renderer!.root.findAllByType('button').filter((node) =>
+      node.children.includes('ワークスペース内容を通報') || node.children.includes('メンバーを通報')
+    );
+    expect(reportingButtons).toHaveLength(2);
+    expect(reportingButtons).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ props: expect.objectContaining({ disabled: true }) })
+      ])
+    );
+    await act(async () => {
+      resolveWorkspaceReport?.({
+        report_id: '22222222-2222-4222-8222-222222222222',
+        status: 'received'
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(JSON.stringify(renderer!.toJSON())).toContain('通報を送信しました。');
+
+    act(() => memberReport?.props.onClick());
+    const memberConfirmation = confirmActionMock.mock.calls[1]?.[0] as { onConfirm: () => void };
+    await act(async () => {
+      memberConfirmation.onConfirm();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const rendered = JSON.stringify(renderer!.toJSON());
+    expect(submitOrganizationSafetyReport).toHaveBeenLastCalledWith(organization.id, 'member');
+    expect(rendered).toContain('通報を送信できませんでした。');
+    expect(rendered).not.toContain('raw backend detail');
   });
 
   it('system browserを開けない場合はcheckout return failureをPIIなしで記録する', async () => {

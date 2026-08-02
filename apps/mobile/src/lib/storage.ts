@@ -5,7 +5,8 @@ import { defaultSelection } from '@/lib/queryKeys';
 import {
   activeOrganizationStorageKey,
   selectionStorageKey,
-  storyHierarchyExpansionStorageKey
+  storyHierarchyExpansionStorageKey,
+  termsAcceptanceStorageKey
 } from '@/lib/storageKeys';
 
 const authTokensKey = 'lyra.mobile.auth.tokens';
@@ -14,6 +15,7 @@ const pendingInvitationTokenKey = 'lyra.mobile.pending-invitation-token';
 const pushInstallationIdKey = 'lyra.mobile.push.installation-id';
 const sectionCollapsedKey = (key: string): string => `lyra.mobile.section.${key}`;
 const trackedJobIdsKey = (userId: string): string => `lyra.mobile.tracked-jobs.${userId}`;
+const currentMobileTermsVersion = '2026-08-02';
 
 const readJson = async <T>(key: string): Promise<T | null> => {
   const raw = await readItem(key);
@@ -117,6 +119,15 @@ export const loadTrackedJobIds = async (userId: string): Promise<string[]> => {
 
 export const saveTrackedJobIds = (userId: string, jobIds: string[]): Promise<void> =>
   writeJson(trackedJobIdsKey(userId), jobIds);
+
+export const loadTermsAcceptance = async (userId: string): Promise<boolean> =>
+  (await readItem(termsAcceptanceStorageKey(userId, currentMobileTermsVersion))) === 'accepted';
+
+export const saveTermsAcceptance = (userId: string): Promise<void> =>
+  SecureStore.setItemAsync(
+    termsAcceptanceStorageKey(userId, currentMobileTermsVersion),
+    'accepted'
+  );
 
 export interface StoryHierarchyExpansionState {
   workIds: string[];

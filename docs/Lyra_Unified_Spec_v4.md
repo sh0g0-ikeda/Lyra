@@ -250,6 +250,14 @@ enable a purchase route or grant credits.
   optional organization and entity, MIME type, size, and a server-generated
   temporary storage key. Only a token hash is persisted.
 - LLM structured output is schema-validated and quality-gated before persistence.
+- Authenticated AI-generated content reports use a fixed kind and reason vocabulary,
+  accept only an optional opaque UUID for correlation, and emit a privacy-minimized
+  operational receipt without attaching prompts, generated content, images, email,
+  tokens, or provider responses.
+- Authenticated organization safety reports require active `view_work` membership,
+  accept only the organization UUID plus a fixed target kind and reason, and emit a
+  privacy-minimized receipt without accepting workspace content, target-user IDs,
+  email, prompts, URLs, or other tenant data.
 - Raw provider errors, credentials, connection strings, and stack traces are not
   returned to end users.
 - External calls have bounded timeouts and retry only retryable failures.

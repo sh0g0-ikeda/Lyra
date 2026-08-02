@@ -17,6 +17,7 @@ const originalEnvironment = {
   googleServicesJson: process.env.GOOGLE_SERVICES_JSON,
   buildEnvironment: process.env.EXPO_PUBLIC_BUILD_ENVIRONMENT,
   appLinkHost: process.env.EXPO_PUBLIC_APP_LINK_HOST,
+  iosAssociatedDomainsEnabled: process.env.EXPO_PUBLIC_IOS_ASSOCIATED_DOMAINS_ENABLED,
 };
 
 const baseConfig = {
@@ -37,6 +38,7 @@ describe('Expo app config', () => {
       GOOGLE_SERVICES_JSON: originalEnvironment.googleServicesJson,
       EXPO_PUBLIC_BUILD_ENVIRONMENT: originalEnvironment.buildEnvironment,
       EXPO_PUBLIC_APP_LINK_HOST: originalEnvironment.appLinkHost,
+      EXPO_PUBLIC_IOS_ASSOCIATED_DOMAINS_ENABLED: originalEnvironment.iosAssociatedDomainsEnabled,
     })) {
       if (value === undefined) {
         delete process.env[key];
@@ -78,21 +80,30 @@ describe('Expo app config', () => {
     expect(config.android).not.toHaveProperty('intentFilters');
   });
 
-  it('previewでは検証済みhostをiOSとAndroidの全app linkに一貫して設定する', () => {
+  it('previewではiOS関連ドメインを明示的に有効化しない限り出力せず、Android App Linksを維持する', () => {
     process.env.EXPO_PUBLIC_BUILD_ENVIRONMENT = 'preview';
     process.env.EXPO_PUBLIC_APP_LINK_HOST = 'preview.lyra-editor.com';
+    delete process.env.EXPO_PUBLIC_IOS_ASSOCIATED_DOMAINS_ENABLED;
 
     const config = createExpoConfig({ config: baseConfig });
 
-    expect(config.ios).toMatchObject({
-      associatedDomains: ['applinks:preview.lyra-editor.com'],
-    });
+    expect(config.ios).not.toHaveProperty('associatedDomains');
     expect(config.android).toMatchObject({
       intentFilters: [
         { data: [{ scheme: 'https', host: 'preview.lyra-editor.com', pathPrefix: '/auth/mobile/callback' }] },
         { data: [{ scheme: 'https', host: 'preview.lyra-editor.com', pathPrefix: '/auth/mobile/logout' }] },
         { data: [{ scheme: 'https', host: 'preview.lyra-editor.com', pathPrefix: '/invitations/' }] },
       ],
+    });
+  });
+
+  it('明示的なiOS関連ドメイン有効化時だけ検証済みhostを出力する', () => {
+    process.env.EXPO_PUBLIC_BUILD_ENVIRONMENT = 'preview';
+    process.env.EXPO_PUBLIC_APP_LINK_HOST = 'preview.lyra-editor.com';
+    process.env.EXPO_PUBLIC_IOS_ASSOCIATED_DOMAINS_ENABLED = 'true';
+
+    expect(createExpoConfig({ config: baseConfig }).ios).toMatchObject({
+      associatedDomains: ['applinks:preview.lyra-editor.com'],
     });
   });
 

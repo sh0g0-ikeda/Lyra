@@ -7,6 +7,9 @@ export const selectionStorageKey = (userId: string, organizationId: string | nul
 export const activeOrganizationStorageKey = (userId: string): string =>
   `lyra.mobile.active-organization.${userId}`;
 
+export const termsAcceptanceStorageKey = (userId: string, termsVersion: string): string =>
+  `lyra.mobile.terms-acceptance.${userId}.${termsVersion}`;
+
 export const storyHierarchyExpansionStorageKey = (
   userId: string,
   organizationId: string | null

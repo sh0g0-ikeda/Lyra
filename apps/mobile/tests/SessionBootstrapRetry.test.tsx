@@ -19,7 +19,13 @@ const mocks = vi.hoisted(() => {
     } | null,
     setSession: vi.fn(),
     refreshedSession,
-    useQuery: vi.fn()
+    useQuery: vi.fn(),
+    loadTermsAcceptance: vi.fn().mockResolvedValue(true),
+    saveTermsAcceptance: vi.fn().mockResolvedValue(undefined),
+    termsAcceptanceProps: null as {
+      onAccept: () => Promise<void>;
+      onSignOut: () => Promise<void>;
+    } | null
   };
 });
 
@@ -92,13 +98,21 @@ vi.mock('@/components/UnsavedChangesResolutionDialog', () => ({
 
 vi.mock('@/screens/AuthScreen', () => ({ AuthScreen: () => React.createElement('auth') }));
 vi.mock('@/screens/InvitationScreen', () => ({ InvitationScreen: () => React.createElement('invitation') }));
+vi.mock('@/screens/TermsAcceptanceScreen', () => ({
+  TermsAcceptanceScreen: (props: { onAccept: () => Promise<void>; onSignOut: () => Promise<void> }) => {
+    mocks.termsAcceptanceProps = props;
+    return React.createElement('terms-acceptance');
+  }
+}));
 vi.mock('@/navigation/tabs', () => ({ MainTabs: () => React.createElement('tabs') }));
 vi.mock('@/lib/config', () => ({ configValidation: { valid: true } }));
 vi.mock('@/lib/deepLinks', () => ({ parseMobileLink: () => null }));
 vi.mock('@/lib/storage', () => ({
   clearPendingInvitationToken: vi.fn(),
   loadPendingInvitationToken: vi.fn().mockResolvedValue(null),
-  savePendingInvitationToken: vi.fn()
+  savePendingInvitationToken: vi.fn(),
+  loadTermsAcceptance: mocks.loadTermsAcceptance,
+  saveTermsAcceptance: mocks.saveTermsAcceptance
 }));
 vi.mock('@/lib/queryKeys', () => ({ sessionQueryKey: () => ['session'] }));
 vi.mock('@/lib/requestPolicy', () => ({ apiRetryDelay: () => 0, shouldRetryApiQuery: () => false }));
@@ -127,6 +141,9 @@ describe('session bootstrap retry', () => {
     mocks.logout.mockClear();
     mocks.sessionRecoveryProps = null;
     mocks.setSession.mockClear();
+    mocks.loadTermsAcceptance.mockReset().mockResolvedValue(true);
+    mocks.saveTermsAcceptance.mockReset().mockResolvedValue(undefined);
+    mocks.termsAcceptanceProps = null;
     mocks.useQuery.mockReset();
   });
 
@@ -187,6 +204,56 @@ describe('session bootstrap retry', () => {
     });
     await act(async () => {
       await mocks.sessionRecoveryProps?.onSignInAgain();
+    });
+
+    expect(mocks.logout).toHaveBeenCalledWith({ skipDirtyCheck: true });
+  });
+
+  it('現行規約への同意がない利用者はメイン機能より先に明示同意画面を表示する', async () => {
+    mocks.loadTermsAcceptance.mockResolvedValue(false);
+    mocks.useQuery.mockReturnValue({
+      data: mocks.refreshedSession,
+      error: null,
+      isError: false,
+      isFetching: false,
+      isLoading: false,
+      refetch: mocks.refetch
+    });
+
+    let tree: ReturnType<typeof create>;
+    await act(async () => {
+      tree = create(<App />);
+      await Promise.resolve();
+    });
+
+    expect(tree!.root.findAllByType('terms-acceptance')).toHaveLength(1);
+    expect(tree!.root.findAllByType('tabs')).toHaveLength(0);
+
+    await act(async () => {
+      await mocks.termsAcceptanceProps?.onAccept();
+    });
+
+    expect(mocks.saveTermsAcceptance).toHaveBeenCalledWith('user-1');
+    expect(tree!.root.findAllByType('tabs')).toHaveLength(1);
+  });
+
+  it('規約に同意しない利用者は認証情報を消して戻れる', async () => {
+    mocks.loadTermsAcceptance.mockResolvedValue(false);
+    mocks.useQuery.mockReturnValue({
+      data: mocks.refreshedSession,
+      error: null,
+      isError: false,
+      isFetching: false,
+      isLoading: false,
+      refetch: mocks.refetch
+    });
+
+    await act(async () => {
+      create(<App />);
+      await Promise.resolve();
+    });
+    await act(async () => {
+      await mocks.termsAcceptanceProps?.onSignOut();
     });
 
     expect(mocks.logout).toHaveBeenCalledWith({ skipDirtyCheck: true });

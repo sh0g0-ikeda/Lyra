@@ -47,6 +47,7 @@ module.exports = ({ config }) => {
   const environment = getBuildEnvironment();
   const appLinkHost = getAppLinkHost(environment);
   const googleServicesFile = process.env.GOOGLE_SERVICES_JSON?.trim();
+  const iOSAssociatedDomainsEnabled = process.env.EXPO_PUBLIC_IOS_ASSOCIATED_DOMAINS_ENABLED === 'true';
   const { associatedDomains: _associatedDomains, ...ios } = config.ios ?? {};
   const { intentFilters: _intentFilters, ...android } = config.android ?? {};
 
@@ -54,7 +55,7 @@ module.exports = ({ config }) => {
     ...config,
     ios: {
       ...ios,
-      ...(appLinkHost ? { associatedDomains: [`applinks:${appLinkHost}`] } : {}),
+      ...(appLinkHost && iOSAssociatedDomainsEnabled ? { associatedDomains: [`applinks:${appLinkHost}`] } : {}),
     },
     android: {
       ...android,

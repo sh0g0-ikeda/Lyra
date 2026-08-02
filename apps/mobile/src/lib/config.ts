@@ -11,6 +11,7 @@ export interface MobileConfig {
   cognitoLogoutRedirectUri: string;
   cognitoScopes: string[];
   apiTokenUse: 'id_token';
+  episodeExportEnabled: boolean;
   mobileStoreBillingEnabled: boolean;
   organizationFeaturesEnabled: boolean;
   sentryDsn: string;
@@ -38,8 +39,8 @@ export interface MobileConfigValidation {
 }
 
 const PRODUCTION_API_ORIGIN = 'https://app.lyra-editor.com';
-const PRODUCTION_REDIRECT_URI = 'https://app.lyra-editor.com/auth/mobile/callback';
-const PRODUCTION_LOGOUT_REDIRECT_URI = 'https://app.lyra-editor.com/auth/mobile/logout';
+const PRODUCTION_REDIRECT_URI = 'lyra-mobile://auth/mobile/callback';
+const PRODUCTION_LOGOUT_REDIRECT_URI = 'lyra-mobile://auth/mobile/logout';
 
 const mobileConfigSchema = z.object({
   accountDeletionEnabled: z.boolean(),
@@ -50,6 +51,7 @@ const mobileConfigSchema = z.object({
   cognitoLogoutRedirectUri: z.string().min(1).max(500),
   cognitoScopes: z.array(z.string().min(1).max(100)).min(1).max(20),
   apiTokenUse: z.literal('id_token'),
+  episodeExportEnabled: z.boolean(),
   mobileStoreBillingEnabled: z.boolean(),
   organizationFeaturesEnabled: z.boolean(),
   sentryDsn: z.string().max(2_048),
@@ -174,9 +176,6 @@ export const validateMobileConfig = (input: MobileConfig): MobileConfigValidatio
     if (input.cognitoLogoutRedirectUri !== PRODUCTION_LOGOUT_REDIRECT_URI) {
       addIssue(issues, 'PRODUCTION_LOGOUT_REDIRECT_URI');
     }
-    if (!isValidSentryDsn(input.sentryDsn)) {
-      addIssue(issues, 'SENTRY_DSN');
-    }
   } else {
     if (
       !input.cognitoRedirectUri.startsWith('lyra-mobile://') &&
@@ -213,6 +212,9 @@ export const config: MobileConfig = {
     .map((scope) => scope.trim())
     .filter((scope) => scope.length > 0),
   apiTokenUse: 'id_token',
+  episodeExportEnabled: readPublicBooleanEnv(
+    process.env.EXPO_PUBLIC_EPISODE_EXPORT_ENABLED,
+  ),
   mobileStoreBillingEnabled: readPublicBooleanEnv(
     process.env.EXPO_PUBLIC_MOBILE_STORE_BILLING_ENABLED,
   ),

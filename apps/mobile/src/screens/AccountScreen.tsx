@@ -48,7 +48,6 @@ import type {
   OrganizationMemberRecord
 } from '@/domain/types';
 
-const webBillingUrl = 'https://app.lyra-editor.com/';
 const nativeMobileStore: 'apple' | 'google' | null =
   Platform.OS === 'ios' ? 'apple' : Platform.OS === 'android' ? 'google' : null;
 const nativeSubscriptionManagementUrl =
@@ -336,8 +335,18 @@ export function AccountScreen(): React.JSX.Element {
       return false;
     }
   };
-  const openWebBilling = async (): Promise<void> => {
-    await openExternalHttpsUrl(webBillingUrl);
+  const openOrganizationManagement = async (targetOrganizationId: string): Promise<void> => {
+    const selectionChanged = await updateSelection({
+      organizationId: targetOrganizationId,
+      workId: null,
+      chapterId: null,
+      episodeId: null,
+      pageId: null,
+      entityId: null
+    });
+    if (selectionChanged) {
+      setOrganizationManagementId(targetOrganizationId);
+    }
   };
   const confirmOrganizationMemberRemoval = (
     member: OrganizationMemberRecord,
@@ -741,7 +750,12 @@ export function AccountScreen(): React.JSX.Element {
             onAcknowledgeStoreBilling={setAcknowledgeStoreBilling}
             onConfirmDeletion={confirmAccountDeletion}
             onConfirmationChange={setDeletionConfirmation}
-            onOpenOrganizationManagement={() => void openWebBilling()}
+            onOpenOrganizationManagement={() => {
+              const target = deletionPreviewQuery.data?.unique_owner_organizations[0];
+              if (target !== undefined) {
+                void openOrganizationManagement(target.id);
+              }
+            }}
             onRefreshPreview={() => void loadDeletionPreview()}
             preview={deletionPreviewQuery.data}
             submitting={deletionMutation.isPending}

@@ -1,7 +1,7 @@
 {
   "title": "Lyra Mobile",
   "shortDescription": "物語、キャラクター、コマ割り、AI画像生成を一つの制作フローで。",
-  "fullDescription": "Lyra Mobile は、物語、登場人物、章・話・シーン、ページ構成、コマ、セリフを一つの流れで整理し、AI を使った漫画制作を支援する編集アプリです。\n\nWeb 版 Lyra と同じワークスペースを利用し、個人作品と法人作品を明確に分けて管理できます。生成前の入力確認、参照画像の選択、ジョブ進捗、ページ書き出しまで、スマートフォンから制作工程を進められます。\n\nAI の提案は確定前に確認・編集でき、意図しない変更や削除には確認画面を表示します。",
+  "fullDescription": "Lyra Mobile は、物語、登場人物、章・話・シーン、ページ構成、コマ、セリフを一つの流れで整理し、AI を使った漫画制作を支援する編集アプリです。\n\nWeb 版 Lyra と同じワークスペースを利用し、個人作品と法人作品を明確に分けて管理できます。生成前の入力確認、参照画像の選択、ジョブ進捗、生成済みページ画像の保存まで、スマートフォンから制作工程を進められます。\n\nAI の提案は確定前に確認・編集でき、意図しない変更や削除には確認画面を表示します。",
   "privacyPolicyUrl": "https://app.lyra-editor.com/privacy.html",
   "termsUrl": "https://app.lyra-editor.com/terms.html",
   "supportUrl": "https://app.lyra-editor.com/support.html",
