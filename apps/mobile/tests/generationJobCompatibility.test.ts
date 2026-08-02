@@ -54,6 +54,28 @@ describe('generation job compatibility', () => {
     });
   });
 
+  it('旧APIのresultにあるストーリー反映進捗を表示用に引き継ぐ', () => {
+    const skeletonJob = {
+      ...transitionalJob,
+      job_type: 'episode_page_skeleton' as const,
+      params: {
+        episode_id: '22222222-2222-4222-8222-222222222222',
+        overwrite_existing: true,
+        apply_story_plan: true,
+        language: 'ja',
+      },
+      result: {
+        progress_stage: 'applying_story_plan',
+        progress_updated_at: '2026-07-29T02:05:00.000Z',
+      },
+    };
+
+    expect(generationJobCompatibilitySchema.parse(skeletonJob)).toMatchObject({
+      progress_stage: 'applying_story_plan',
+      progress_updated_at: '2026-07-29T02:05:00.000Z',
+    });
+  });
+
   it('認識済みの現行項目が壊れている応答を旧形式として受理しない', () => {
     expect(() =>
       generationJobCompatibilitySchema.parse({

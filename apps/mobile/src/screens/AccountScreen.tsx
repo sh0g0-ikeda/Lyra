@@ -3,7 +3,6 @@ import { AppState, Linking, Platform, StyleSheet, Switch, Text, View } from 'rea
 import { useFocusEffect } from '@react-navigation/native';
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
-import { ActionableErrorNotice } from '@/components/ActionableErrorNotice';
 import { FormField } from '@/components/FormField';
 import { JobStatusCard } from '@/components/JobStatusCard';
 import { MobileStoreBillingPanel } from '@/components/MobileStoreBillingPanel';
@@ -30,7 +29,6 @@ import { downloadAuthenticatedFile } from '@/lib/download';
 import { t } from '@/lib/i18n';
 import type { ScreenTranslationKey } from '@/lib/i18nScreenMessages';
 import { balanceQueryKey, jobsQueryKey, sessionQueryKey } from '@/lib/queryKeys';
-import { isApiNotFoundError } from '@/lib/queryErrorPolicy';
 import { userErrorMessage } from '@/lib/userMessages';
 import {
   createMobileStoreBillingBackend,
@@ -56,6 +54,11 @@ const nativeSubscriptionManagementUrl =
     : Platform.OS === 'android'
       ? 'https://play.google.com/store/account/subscriptions'
       : null;
+const legalUrls = {
+  terms: 'https://app.lyra-editor.com/terms.html',
+  privacy: 'https://app.lyra-editor.com/privacy.html',
+  support: 'https://app.lyra-editor.com/support.html'
+} as const;
 
 const formatPlanLabel = (planCode: string, language: 'ja' | 'en'): string => {
   const labels: Record<string, ScreenTranslationKey> = {
@@ -387,18 +390,6 @@ export function AccountScreen(): React.JSX.Element {
     }
   }, [organizationFeaturesEnabled, selection.organizationId, updateSelection]);
 
-  const selectPersonalWorkspace = (): void => {
-    setOrganizationManagementId(null);
-    void updateSelection({
-      organizationId: null,
-      workId: null,
-      chapterId: null,
-      episodeId: null,
-      pageId: null,
-      entityId: null
-    });
-  };
-
   return (
     <Screen
       onRefresh={() => void refresh()}
@@ -410,22 +401,6 @@ export function AccountScreen(): React.JSX.Element {
         <Text style={styles.metric}>{session?.user.email ?? '-'}</Text>
         <Text style={styles.caption}>{session?.user.display_name ?? session?.user.id ?? '-'}</Text>
       </Section>
-
-      {balanceQuery.isError ? (
-        <ActionableErrorNotice
-          actions={{
-            login: () => {
-              void logout();
-            },
-            retry: () => {
-              void balanceQuery.refetch();
-            },
-            workspace: selectPersonalWorkspace
-          }}
-          error={balanceQuery.error}
-          language={language}
-        />
-      ) : null}
 
       {organizationFeaturesEnabled ? (
         <Section
@@ -645,7 +620,7 @@ export function AccountScreen(): React.JSX.Element {
         subtitle={t(language, "generated.screens.AccountScreen.review.generation.jobs.in.this.workspace.69eab3a5")}
         title={t(language, "generated.screens.AccountScreen.jobs.3e4ac854")}
       >
-        {jobs.length === 0 && !jobsQuery.isLoading ? (
+        {jobs.length === 0 && jobsQuery.isSuccess ? (
           <Text style={styles.caption}>{t(language, "generated.screens.AccountScreen.no.jobs.to.show.c491ecfe")}</Text>
         ) : (
           jobs.map((job) => (
@@ -671,22 +646,6 @@ export function AccountScreen(): React.JSX.Element {
             />
           ))
         )}
-        {jobsQuery.isError && !isApiNotFoundError(jobsQuery.error) ? (
-          <ActionableErrorNotice
-            actions={{
-              login: () => {
-                void logout();
-              },
-              retry: () => {
-                void jobsQuery.refetch();
-              },
-              workspace: selectPersonalWorkspace
-            }}
-            error={jobsQuery.error}
-            language={language}
-            tone={jobs.length === 0 ? 'danger' : 'warning'}
-          />
-        ) : null}
         {cancelJobMutation.isError ? <Notice message={userErrorMessage(cancelJobMutation.error, language)} tone="danger" /> : null}
         {hideJobMutation.isError ? <Notice message={userErrorMessage(hideJobMutation.error, language)} tone="danger" /> : null}
         {retryJobMutation.isError ? <Notice message={userErrorMessage(retryJobMutation.error, language)} tone="danger" /> : null}
@@ -708,6 +667,29 @@ export function AccountScreen(): React.JSX.Element {
             { value: 'en', label: 'English' }
           ]}
           value={language}
+        />
+      </Section>
+
+      <Section
+        collapsible
+        defaultCollapsed
+        persistKey="account:legal-support"
+        title={t(language, 'screen.account.legalSupport')}
+      >
+        <PrimaryButton
+          label={t(language, 'screen.terms.termsLink')}
+          onPress={() => void openExternalHttpsUrl(legalUrls.terms)}
+          variant="ghost"
+        />
+        <PrimaryButton
+          label={t(language, 'screen.terms.privacyLink')}
+          onPress={() => void openExternalHttpsUrl(legalUrls.privacy)}
+          variant="ghost"
+        />
+        <PrimaryButton
+          label={t(language, 'screen.terms.supportLink')}
+          onPress={() => void openExternalHttpsUrl(legalUrls.support)}
+          variant="ghost"
         />
       </Section>
 

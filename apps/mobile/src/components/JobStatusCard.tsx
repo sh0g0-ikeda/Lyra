@@ -25,6 +25,8 @@ interface JobStatusCardProps {
   language: 'ja' | 'en';
   onCompleted?: () => void | Promise<void>;
   onFailed?: () => void | Promise<void>;
+  onCanceled?: () => void | Promise<void>;
+  onMissing?: () => void | Promise<void>;
   onCancel?: (job: GenerationJobRecord) => void | Promise<void>;
   onHide?: (job: GenerationJobRecord) => void | Promise<void>;
   onRetry?: (job: GenerationJobRecord) => void | Promise<void>;
@@ -42,6 +44,8 @@ export function JobStatusCard({
   language,
   onCompleted,
   onFailed,
+  onCanceled,
+  onMissing,
   onCancel,
   onHide,
   onRetry,
@@ -75,6 +79,7 @@ export function JobStatusCard({
   const status = job?.status ?? 'loading';
   const isActive = status === 'queued' || status === 'processing';
   const queryFailed = suppliedJob === undefined && jobQuery.isError;
+  const jobMissing = queryFailed && isApiNotFoundError(jobQuery.error);
 
   useEffect(() => {
     if (suppliedJob !== undefined || jobId === null) {
@@ -97,12 +102,28 @@ export function JobStatusCard({
   }, [isActive]);
 
   useEffect(() => {
+    if (!jobMissing || jobId === null) {
+      return;
+    }
+    const missingStateKey = `${jobId}:missing`;
+    if (notifiedTerminalStateRef.current === missingStateKey) {
+      return;
+    }
+    notifiedTerminalStateRef.current = missingStateKey;
+    void onMissing?.();
+  }, [jobId, jobMissing, onMissing]);
+
+  useEffect(() => {
     if (job === undefined) {
       return;
     }
     const previousJobState = previousJobStateRef.current;
     previousJobStateRef.current = { id: job.id, status: job.status };
-    if (job.status !== 'completed' && job.status !== 'failed') {
+    if (
+      job.status !== 'completed' &&
+      job.status !== 'failed' &&
+      job.status !== 'canceled'
+    ) {
       return;
     }
     const terminalStateKey = `${job.id}:${job.status}`;
@@ -114,24 +135,27 @@ export function JobStatusCard({
       void onCompleted?.();
       return;
     }
-    if (
-      previousJobState?.id !== job.id ||
-      previousJobState.status === job.status
-    ) {
+    if (job.status === 'canceled') {
+      void onCanceled?.();
       return;
     }
-    recordOperationalMetric({
-      name: 'job_failure',
-      jobId: job.id,
-      requestId: job.support_id
-    });
+    if (
+      previousJobState?.id === job.id &&
+      (previousJobState.status === 'queued' || previousJobState.status === 'processing')
+    ) {
+      recordOperationalMetric({
+        name: 'job_failure',
+        jobId: job.id,
+        requestId: job.support_id
+      });
+    }
     void onFailed?.();
-  }, [job, onCompleted, onFailed]);
+  }, [job, onCanceled, onCompleted, onFailed]);
 
   if (jobId === null && suppliedJob === undefined) {
     return null;
   }
-  if (queryFailed && isApiNotFoundError(jobQuery.error)) {
+  if (jobMissing) {
     return null;
   }
 
@@ -310,11 +334,22 @@ function progressLabel(
 ): string {
   const labels: Record<NonNullable<CompatibleGenerationJobRecord['progress_stage']>, ComponentTranslationKey> = {
     queued: 'component.jobStatusCard.progress.queued',
+    started: 'component.jobStatusCard.progress.started',
     compiling: 'component.jobStatusCard.progress.compiling',
     preparing_references: 'component.jobStatusCard.progress.preparingReferences',
     generating: 'component.jobStatusCard.progress.generating',
     saving: 'component.jobStatusCard.progress.saving',
-    completed: 'component.jobStatusCard.progress.completed'
+    applying_story_plan: 'component.jobStatusCard.progress.applyingStoryPlan',
+    planning_episode: 'component.jobStatusCard.progress.planningEpisode',
+    compiling_chunk: 'component.jobStatusCard.progress.compilingChunk',
+    compiled_chunk: 'component.jobStatusCard.progress.compiledChunk',
+    auditing_episode: 'component.jobStatusCard.progress.auditingEpisode',
+    repairing_chunk: 'component.jobStatusCard.progress.repairingChunk',
+    applying: 'component.jobStatusCard.progress.applying',
+    cancellation_requested: 'component.jobStatusCard.progress.cancellationRequested',
+    completed: 'component.jobStatusCard.progress.completed',
+    failed: 'component.jobStatusCard.status.failed',
+    canceled: 'component.jobStatusCard.status.canceled'
   };
   const label = stage === null ? undefined : labels[stage];
   return label === undefined ? t(language, "generated.components.JobStatusCard.checking.status.243ad6bb") : t(language, label);

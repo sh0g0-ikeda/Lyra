@@ -311,7 +311,25 @@ export interface GenerationJobRecord {
   message_key: string | null;
   retryable: boolean;
   support_id: string | null;
-  progress_stage: 'queued' | 'compiling' | 'preparing_references' | 'generating' | 'saving' | 'completed' | null;
+  progress_stage:
+    | 'queued'
+    | 'started'
+    | 'compiling'
+    | 'preparing_references'
+    | 'generating'
+    | 'saving'
+    | 'applying_story_plan'
+    | 'planning_episode'
+    | 'compiling_chunk'
+    | 'compiled_chunk'
+    | 'auditing_episode'
+    | 'repairing_chunk'
+    | 'applying'
+    | 'cancellation_requested'
+    | 'completed'
+    | 'failed'
+    | 'canceled'
+    | null;
   progress_percent: number | null;
   progress_updated_at: string | null;
   updated_at: string;

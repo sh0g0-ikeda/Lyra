@@ -161,7 +161,11 @@ import {
 } from '@/domain/generationJobCompatibility';
 import { config } from '@/lib/config';
 import { recordOperationalMetric } from '@/lib/operationalEvents';
-import { requestTimeoutMs, SSE_IDLE_TIMEOUT_MS } from '@/lib/requestPolicy';
+import {
+  requestTimeoutMs,
+  SSE_IDLE_TIMEOUT_MS,
+  STORY_AI_WRITE_TIMEOUT_MS,
+} from '@/lib/requestPolicy';
 
 type JsonRequestInit = Omit<RequestInit, 'body'> & { body?: unknown; timeoutMs?: number };
 
@@ -865,7 +869,7 @@ export class LyraMobileApiClient {
     return this.request(
       `/api/story/improve-episode-draft${organizationQuery(organizationId)}`,
       storyEpisodeImprovementSchema,
-      { method: 'POST', body }
+      { method: 'POST', body, timeoutMs: STORY_AI_WRITE_TIMEOUT_MS }
     );
   }
 
@@ -1648,6 +1652,7 @@ export class LyraMobileApiClient {
     tokenOverride?: string | null
   ): Promise<Response> {
     const controller = new AbortController();
+    let timedOut = false;
     const externalSignal = init.signal;
     const abortFromExternalSignal = (): void => controller.abort();
     if (externalSignal?.aborted) {
@@ -1656,7 +1661,10 @@ export class LyraMobileApiClient {
       externalSignal?.addEventListener('abort', abortFromExternalSignal, { once: true });
     }
     const timeoutId = setTimeout(
-      () => controller.abort(),
+      () => {
+        timedOut = true;
+        controller.abort();
+      },
       init.timeoutMs ?? requestTimeoutMs(init.method)
     );
     try {
@@ -1664,6 +1672,11 @@ export class LyraMobileApiClient {
         this.toUrl(path),
         this.buildRequest({ ...init, signal: controller.signal }, tokenOverride)
       );
+    } catch (error) {
+      if (timedOut && !externalSignal?.aborted) {
+        throw new ApiError('Request timed out.', 0, 'REQUEST_TIMEOUT');
+      }
+      throw error;
     } finally {
       clearTimeout(timeoutId);
       externalSignal?.removeEventListener('abort', abortFromExternalSignal);

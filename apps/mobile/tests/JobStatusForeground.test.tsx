@@ -161,6 +161,7 @@ describe('JobStatusCard load recovery', () => {
       isError: true,
       refetch: refetchMock
     });
+    const onMissing = vi.fn();
     let renderer: ReturnType<typeof create>;
 
     await act(async () => {
@@ -169,12 +170,14 @@ describe('JobStatusCard load recovery', () => {
           api={{ getJob: vi.fn() } as never}
           jobId="stale-job"
           language="ja"
+          onMissing={onMissing}
           sessionKey="session-1"
         />
       );
     });
 
     expect(renderer!.toJSON()).toBeNull();
+    expect(onMissing).toHaveBeenCalledOnce();
   });
 });
 
@@ -230,6 +233,83 @@ describe('JobStatusCard completion notification', () => {
     });
 
     expect(onCompleted).toHaveBeenCalledOnce();
+  });
+
+  it('初回取得時点ですでに失敗していても失敗を1回通知する', async () => {
+    const onFailed = vi.fn();
+    const failed: GenerationJobRecord = {
+      ...buildProcessingJob({ available: false, reason_key: null }),
+      status: 'failed',
+      progress_stage: 'failed',
+      progress_percent: 100,
+      completed_at: '2026-07-25T00:02:00.000Z',
+    };
+
+    await act(async () => {
+      create(
+        <JobStatusCard
+          api={{ getJob: vi.fn() } as never}
+          job={failed}
+          jobId={failed.id}
+          language="ja"
+          onFailed={onFailed}
+          sessionKey="session-1"
+        />
+      );
+    });
+
+    expect(onFailed).toHaveBeenCalledOnce();
+  });
+
+  it('初回取得時点ですでに中止されていても中止を1回通知する', async () => {
+    const onCanceled = vi.fn();
+    const canceled: GenerationJobRecord = {
+      ...buildProcessingJob({ available: false, reason_key: null }),
+      status: 'canceled',
+      progress_stage: 'canceled',
+      progress_percent: 100,
+      completed_at: '2026-07-25T00:02:00.000Z',
+    };
+
+    await act(async () => {
+      create(
+        <JobStatusCard
+          api={{ getJob: vi.fn() } as never}
+          job={canceled}
+          jobId={canceled.id}
+          language="ja"
+          onCanceled={onCanceled}
+          sessionKey="session-1"
+        />
+      );
+    });
+
+    expect(onCanceled).toHaveBeenCalledOnce();
+  });
+
+  it('ページ表示後も続くストーリー反映段階を明示する', async () => {
+    const job: GenerationJobRecord = {
+      ...buildProcessingJob({ available: false, reason_key: null }),
+      job_type: 'episode_page_skeleton',
+      progress_stage: 'applying_story_plan',
+    };
+    let renderer: ReturnType<typeof create>;
+
+    await act(async () => {
+      renderer = create(
+        <JobStatusCard
+          api={{ getJob: vi.fn() } as never}
+          job={job}
+          jobId={job.id}
+          language="ja"
+          sessionKey="session-1"
+        />
+      );
+    });
+
+    expect(renderer!.root.findAllByType('text').map((node) => node.children.join(' '))).toContain(
+      'ページへストーリー内容を反映中です。ページが表示されても、完了になるまで処理は続きます。'
+    );
   });
 });
 

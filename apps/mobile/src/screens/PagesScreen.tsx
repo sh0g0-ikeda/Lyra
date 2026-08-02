@@ -2543,6 +2543,23 @@ export function PagesScreen(): React.JSX.Element {
           }}
           onFailed={async () => {
             setPageDesignJobEnqueued(false);
+            setLocalPageDesignJob((current) =>
+              current?.id === displayedPageDesignJobId ? null : current
+            );
+            await invalidatePageDesignResources();
+          }}
+          onCanceled={async () => {
+            setPageDesignJobEnqueued(false);
+            setLocalPageDesignJob((current) =>
+              current?.id === displayedPageDesignJobId ? null : current
+            );
+            await invalidatePageDesignResources();
+          }}
+          onMissing={async () => {
+            setPageDesignJobEnqueued(false);
+            setLocalPageDesignJob((current) =>
+              current?.id === displayedPageDesignJobId ? null : current
+            );
             await invalidatePageDesignResources();
           }}
           onCancel={async (job) => {
@@ -3278,6 +3295,27 @@ export function PagesScreen(): React.JSX.Element {
           language={language}
           organizationId={organizationId}
           onCompleted={async () => {
+            setLocalJob((current) =>
+              current?.id === displayedJobId ? null : current
+            );
+            await Promise.all([invalidatePages(), invalidatePanels(), invalidateFrames()]);
+          }}
+          onFailed={async () => {
+            setLocalJob((current) =>
+              current?.id === displayedJobId ? null : current
+            );
+            await Promise.all([invalidatePages(), invalidatePanels(), invalidateFrames()]);
+          }}
+          onCanceled={async () => {
+            setLocalJob((current) =>
+              current?.id === displayedJobId ? null : current
+            );
+            await Promise.all([invalidatePages(), invalidatePanels(), invalidateFrames()]);
+          }}
+          onMissing={async () => {
+            setLocalJob((current) =>
+              current?.id === displayedJobId ? null : current
+            );
             await Promise.all([invalidatePages(), invalidatePanels(), invalidateFrames()]);
           }}
           sessionKey={sessionKey}

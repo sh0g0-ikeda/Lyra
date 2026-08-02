@@ -346,6 +346,26 @@ export const compositionSchema = z.object({
   created_at: timestamp
 });
 
+export const generationJobProgressStageSchema = z.enum([
+  'queued',
+  'started',
+  'compiling',
+  'preparing_references',
+  'generating',
+  'saving',
+  'applying_story_plan',
+  'planning_episode',
+  'compiling_chunk',
+  'compiled_chunk',
+  'auditing_episode',
+  'repairing_chunk',
+  'applying',
+  'cancellation_requested',
+  'completed',
+  'failed',
+  'canceled'
+]);
+
 export const generationJobSchema = z.object({
   id,
   job_type: z.enum(['page_generate', 'entity_generate', 'episode_story_autofill', 'episode_page_skeleton']),
@@ -371,7 +391,7 @@ export const generationJobSchema = z.object({
   message_key: nullableString,
   retryable: z.boolean(),
   support_id: nullableString,
-  progress_stage: z.enum(['queued', 'compiling', 'preparing_references', 'generating', 'saving', 'completed']).nullable(),
+  progress_stage: generationJobProgressStageSchema.nullable(),
   progress_percent: z.number().min(0).max(100).nullable(),
   progress_updated_at: nullableString,
   updated_at: timestamp,

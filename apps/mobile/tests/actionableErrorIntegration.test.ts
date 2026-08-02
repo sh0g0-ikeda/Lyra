@@ -9,8 +9,7 @@ const readMobileSource = (relativePath: string): string =>
 describe('actionable error screen integration', () => {
   it.each([
     'src/screens/StoryScreen.tsx',
-    'src/screens/CharactersScreen.tsx',
-    'src/screens/AccountScreen.tsx'
+    'src/screens/CharactersScreen.tsx'
   ])('%s renders shared actionable API errors', (relativePath) => {
     const source = readMobileSource(relativePath);
 
@@ -25,6 +24,16 @@ describe('actionable error screen integration', () => {
       "from '@/components/PageErrorRecoveryNotice'"
     );
     expect(source).toContain('<PageErrorRecoveryNotice');
+  });
+
+  it('Pagesは取得不能・失敗・中止になったローカルジョブを解除する', () => {
+    const source = readMobileSource('src/screens/PagesScreen.tsx');
+
+    expect(source).toContain('onMissing={async () => {');
+    expect(source).toContain('onFailed={async () => {');
+    expect(source).toContain('onCanceled={async () => {');
+    expect(source).toContain('setLocalPageDesignJob((current) =>');
+    expect(source).toContain('setLocalJob((current) =>');
   });
 
   it('uses React Navigation in Characters instead of a browser global', () => {
@@ -71,12 +80,23 @@ describe('actionable error screen integration', () => {
     expect(source).toContain('workspace: () => {');
   });
 
-  it('lets account errors return to the personal workspace', () => {
+  it('Accountは一時的な残高・ジョブ履歴取得失敗を赤いエラーとして表示しない', () => {
     const source = readMobileSource('src/screens/AccountScreen.tsx');
 
-    expect(source).toContain('const selectPersonalWorkspace = (): void => {');
-    expect(source).toContain('workspace: selectPersonalWorkspace');
-    expect(source).toContain('jobsQuery.isError && !isApiNotFoundError(jobsQuery.error)');
+    expect(source).not.toContain('balanceQuery.isError ? (');
+    expect(source).not.toContain('jobsQuery.isError &&');
+    expect(source).toContain('jobs.length === 0 && jobsQuery.isSuccess');
+  });
+
+  it('Accountから利用規約・プライバシー・問い合わせへ移動できる', () => {
+    const source = readMobileSource('src/screens/AccountScreen.tsx');
+
+    expect(source).toContain("terms: 'https://app.lyra-editor.com/terms.html'");
+    expect(source).toContain("privacy: 'https://app.lyra-editor.com/privacy.html'");
+    expect(source).toContain("support: 'https://app.lyra-editor.com/support.html'");
+    expect(source).toContain("t(language, 'screen.terms.termsLink')");
+    expect(source).toContain("t(language, 'screen.terms.privacyLink')");
+    expect(source).toContain("t(language, 'screen.terms.supportLink')");
   });
 
   it('reloads the authoritative page draft when PAGE_STALE is the primary error', () => {
