@@ -125,6 +125,35 @@ describe('JobStatusCard foreground refresh', () => {
 });
 
 describe('JobStatusCard load recovery', () => {
+  it('初回取得中もジョブ監視を止めない', async () => {
+    await act(async () => {
+      create(
+        <JobStatusCard
+          api={{ getJob: vi.fn() } as never}
+          jobId="job-1"
+          language="ja"
+          sessionKey="session-1"
+        />
+      );
+    });
+
+    const queryOptions = useQueryMock.mock.calls.at(-1)?.[0] as {
+      refetchInterval: (query: {
+        state: {
+          data?: CompatibleGenerationJobRecord;
+          status: 'error' | 'pending' | 'success';
+        };
+      }) => number | false;
+    };
+
+    expect(queryOptions.refetchInterval({
+      state: {
+        data: undefined,
+        status: 'pending',
+      },
+    })).toBe(2_500);
+  });
+
   it('初回のジョブ取得に失敗しても自動再取得を継続する', async () => {
     await act(async () => {
       create(

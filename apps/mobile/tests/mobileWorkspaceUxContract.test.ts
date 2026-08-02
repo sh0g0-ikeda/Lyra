@@ -86,13 +86,28 @@ describe('mobile workspace navigation and editor UX contract', () => {
     expect(skeletonMutation.indexOf('await saveAllPageDrafts()')).toBeLessThan(
       skeletonMutation.indexOf('api.generatePageSkeleton(')
     );
+    expect(skeletonMutation).toContain('apply_story_plan: false');
+    expect(skeletonMutation).toContain('await Promise.allSettled(');
     expect(autofillMutation.indexOf('await saveAllPageDrafts()')).toBeLessThan(
       autofillMutation.indexOf('api.autofillEpisodePagesFromStory(')
     );
+    expect(autofillMutation).toContain('await Promise.allSettled(');
     expect(pageScreen).toContain('displayedPageDesignJobId');
+    expect(pageScreen).toContain('activePageDesignServerJobId ?? (');
     expect(pageScreen).toContain('displayedJobId');
     expect(pageScreen).toContain('hasActiveJob={pageDesignOperationActive}');
     expect(pageScreen).toContain('pageDesignJobEnqueued ||');
+  });
+
+  it('ページ設計の完了結果を残し、次の操作または対象話の変更まで確認できる', () => {
+    const pageScreen = readSource('src/screens/PagesScreen.tsx');
+    const completionHandler = pageScreen.slice(
+      pageScreen.indexOf('onCompleted={async () => {'),
+      pageScreen.indexOf('onFailed={async () => {')
+    );
+
+    expect(completionHandler).toContain('setPageDesignJobEnqueued(false)');
+    expect(completionHandler).not.toContain('setLocalPageDesignJob(null)');
   });
 
   it('ページ設計の操作場所をページ画面に一本化する', () => {
