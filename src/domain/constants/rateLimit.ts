@@ -4,7 +4,7 @@ export const RATE_LIMIT_RULES = {
     windowSeconds: 60,
   },
   storyAi: {
-    maxRequests: 20,
+    maxRequests: 30,
     windowSeconds: 60,
   },
   story: {
