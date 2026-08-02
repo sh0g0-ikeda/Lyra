@@ -34,6 +34,13 @@ class RecordingRateLimitStore implements RateLimitStore {
 }
 
 describe('createRateLimitMiddleware', () => {
+  it('StoryAIの操作上限は60秒あたり30回である', () => {
+    expect(RATE_LIMIT_RULES.storyAi).toEqual({
+      maxRequests: 30,
+      windowSeconds: 60,
+    });
+  });
+
   it.each([
     ['/api/pages/page-1/generate'],
     ['/api/entities/import-image'],
