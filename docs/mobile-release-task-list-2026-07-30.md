@@ -183,6 +183,7 @@
 ### 2026-08-02 審査是正の本番反映記録
 
 - release merge commit: `3023850c3836f314890d44a0c798ad74f5283939` ([PR #171](https://github.com/sh0g0-ikeda/Lyra/pull/171))
+- Android permission hardening merge commit: `507c99bfce326762abed652e2630c129fae9df5d` ([PR #172](https://github.com/sh0g0-ikeda/Lyra/pull/172))
 - active API task definition: `lyra-prod-api:108`、rollback: `lyra-prod-api:107`
 - ECR image: linux/arm64、`sha256:3917ec8b9beb5becbccea49c9a05aa72b5ad8274568b845cd3a37a130f8fb055`、basic scan findings 0
 - readiness: API 1/1、ALB healthy、`/healthz` / `/readyz` 200、更新後20分のerror-like log 0
@@ -190,7 +191,10 @@
 - moderation API: AI生成物通報とorganization安全通報が本番mount済みで、未認証requestを401で拒否
 - Cognito: 既存URLを維持したまま`lyra-mobile://auth/mobile/callback` / `logout`を追加。実機login / logoutは未確認
 - account deletion: API flag有効、未認証requestは401、専用recovery service 1/1、現行streamのrecovery error 0
-- EAS: Android実機確認用APK build 42完了・署名検証済み。Google Play提出用AAB build 43とiOS署名buildの結果はartifact確認後に追記する
+- EAS Android APK: [build 45](https://expo.dev/accounts/sh0g0/projects/lyra-mobile/builds/583b558f-4672-4f11-a881-753803b366bb)完了。必須ZIP構造と署名を検証、SHA-256 `6FA8F54BB681431130FF91A386A642B3389FE200E0BBF70AEBA3594722543D6D`
+- EAS Android AAB: 提出候補[build 46](https://expo.dev/accounts/sh0g0/projects/lyra-mobile/builds/68dfdfb7-2d94-46cc-b5ed-93a93ac7e207)完了。`bundletool validate`成功、package `com.lyra.mobile`、versionCode 46、targetSdk 36、署名あり、範囲外権限0、SHA-256 `22D7B7AEA42C8EC2F2619E20110B1605C9CC10190DB01AA7CED2DEF42342F327`
+- EAS iOS Simulator: [build 20](https://expo.dev/accounts/sh0g0/projects/lyra-mobile/builds/f376fb06-74c4-4da4-a3cf-139e6efb0c49)完了。bundle ID `com.lyra.mobile`、native executable、Privacy Manifest、未検証Associated Domainsなしを確認
+- iOS production IPA: Apple distribution certificate / provisioning profileの対話設定が必要なため未build。コード・Expo export・クラウドMacのSimulator native buildは完了
 
 ## 10. 完了条件
 
