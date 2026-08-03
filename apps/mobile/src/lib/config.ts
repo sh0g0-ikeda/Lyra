@@ -170,9 +170,6 @@ export const validateMobileConfig = (input: MobileConfig): MobileConfigValidatio
     if (input.cognitoLogoutRedirectUri !== PRODUCTION_LOGOUT_REDIRECT_URI) {
       addIssue(issues, 'PRODUCTION_LOGOUT_REDIRECT_URI');
     }
-    if (!isValidSentryDsn(input.sentryDsn)) {
-      addIssue(issues, 'SENTRY_DSN');
-    }
   } else {
     if (
       !input.cognitoRedirectUri.startsWith('lyra-mobile://') &&

@@ -57,16 +57,19 @@ describe('mobile configuration validation', () => {
     expect(result.valid).toBe(true);
   });
 
-  it('productionでは有効なHTTPS Sentry DSNを必須にする', () => {
+  it('productionではSentry DSNが未設定でも接続設定を有効にする', () => {
     expect(
       validateMobileConfig({
         ...productionConfig,
         sentryDsn: ''
       })
     ).toMatchObject({
-      valid: false,
-      issues: expect.arrayContaining(['SENTRY_DSN'])
+      valid: true,
+      issues: []
     });
+  });
+
+  it('設定されているSentry DSNが不正ならproductionでも拒否する', () => {
     expect(
       validateMobileConfig({
         ...productionConfig,
