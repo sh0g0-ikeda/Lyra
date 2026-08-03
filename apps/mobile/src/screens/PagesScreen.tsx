@@ -35,7 +35,6 @@ import { useWorkspaceContextSelection } from '@/components/WorkspaceContextPicke
 import {
   angleOptions,
   panelAssignmentDefaults,
-  panelCompositionSourceOptions,
   panelEntityActionOptions,
   panelEntityExpressionOptions,
   panelEntityFacingOptions,
@@ -69,7 +68,6 @@ import {
   buildPageThumbnailImageSources
 } from '@/domain/pageImageSources';
 import type {
-  CompositionRecord,
   EntityRecord,
   ExportFormat,
   GenerationJobRecord,
@@ -105,7 +103,6 @@ import {
   activeResourceJobQueryKey,
   entitiesInfiniteQueryKey,
   entitiesQueryKey,
-  compositionsQueryKey,
   entityStatesQueryKey,
   framesQueryKey,
   pageDetailQueryKey,
@@ -211,15 +208,6 @@ const isHexColorText = (value: string): boolean => /^#[0-9A-Fa-f]{6}$/.test(valu
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const isUuidText = (value: string): boolean => uuidPattern.test(value.trim());
-
-const defaultComposition: PanelRecord['composition'] = {
-  source: 'ai_auto',
-  gallery_item_id: null,
-  composition_prompt: null,
-  shot_type: null,
-  angle: null,
-  custom_note: null
-};
 
 const readRecordString = (record: Record<string, unknown>, key: string): string =>
   typeof record[key] === 'string' ? record[key] : '';
@@ -427,50 +415,6 @@ const toFramePreviewDefinition = (draft: FrameDraft): FramePreviewDefinition => 
     y: clampPreviewCoordinate(numeric(vertex.y, 0))
   }))
 });
-
-function CompositionPicker(props: {
-  compositions: CompositionRecord[];
-  language: 'ja' | 'en';
-  onSelect: (composition: CompositionRecord) => void;
-  selectedId: string;
-  disabled?: boolean;
-}): React.JSX.Element {
-  if (props.compositions.length === 0) {
-    return <Text style={styles.emptySmall}>{t(props.language, "generated.screens.PagesScreen.no.compositions.available.8247a317")}</Text>;
-  }
-
-  return (
-    <ScrollView horizontal contentContainerStyle={styles.compositionStrip} showsHorizontalScrollIndicator={false}>
-      {props.compositions.slice(0, 10).map((composition) => {
-        const selected = composition.id === props.selectedId;
-        return (
-          <Pressable
-            accessibilityRole="button"
-            accessibilityState={{ disabled: props.disabled, selected }}
-            disabled={props.disabled}
-            key={composition.id}
-            onPress={() => props.onSelect(composition)}
-            style={[styles.compositionCard, selected ? styles.compositionCardSelected : null]}
-          >
-            {composition.preview_cdn_url === null ? (
-              <View style={styles.compositionImagePlaceholder} />
-            ) : (
-              <ExpoImage
-                cachePolicy="memory-disk"
-                contentFit="cover"
-                source={{ uri: composition.preview_cdn_url }}
-                style={styles.compositionImage}
-              />
-            )}
-            <Text numberOfLines={2} style={[styles.compositionLabel, selected ? styles.compositionLabelSelected : null]}>
-              {composition.name}
-            </Text>
-          </Pressable>
-        );
-      })}
-    </ScrollView>
-  );
-}
 
 function EntityStatePicker(props: {
   disabled?: boolean;
@@ -807,8 +751,6 @@ export function PagesScreen(): React.JSX.Element {
   const [panelRole, setPanelRole] = useState<PanelRecord['panel_role']>('action');
   const [panelSize, setPanelSize] = useState<PanelRecord['panel_size']>('standard');
   const [situationText, setSituationText] = useState('');
-  const [compositionSource, setCompositionSource] = useState<PanelRecord['composition']['source']>('ai_auto');
-  const [compositionGalleryItemId, setCompositionGalleryItemId] = useState('');
   const [compositionPrompt, setCompositionPrompt] = useState('');
   const [shotType, setShotType] = useState('');
   const [angle, setAngle] = useState('');
@@ -1072,12 +1014,6 @@ export function PagesScreen(): React.JSX.Element {
     getNextPageParam: nextCursorFromPage,
   });
 
-  const compositionsQuery = useQuery({
-    enabled: selectedPage !== null,
-    queryKey: compositionsQueryKey(sessionKey),
-    queryFn: () => api.getCompositions()
-  });
-
   const panelsQuery = useQuery({
     enabled: selectedPage !== null,
     queryKey: panelsQueryKey(sessionKey, selectedPage?.id ?? null, organizationId),
@@ -1104,7 +1040,6 @@ export function PagesScreen(): React.JSX.Element {
     [entitiesQuery.data?.pages],
   );
   const scenes = scenesQuery.data?.scenes ?? [];
-  const compositions = compositionsQuery.data?.compositions ?? [];
   const assignedEntityIds = assignments.map((assignment) => assignment.entity_id);
   const panelEntities = entities.filter((entity) => assignedEntityIds.includes(entity.id));
 
@@ -1140,8 +1075,6 @@ export function PagesScreen(): React.JSX.Element {
       : panelRole !== selectedPanel.panel_role ||
         panelSize !== selectedPanel.panel_size ||
         situationText !== (selectedPanel.situation_text ?? '') ||
-        compositionSource !== selectedPanel.composition.source ||
-        compositionGalleryItemId !== (selectedPanel.composition.gallery_item_id ?? '') ||
         compositionPrompt !== (selectedPanel.composition.composition_prompt ?? '') ||
         shotType !== (selectedPanel.composition.shot_type ?? '') ||
         angle !== (selectedPanel.composition.angle ?? '') ||
@@ -1173,7 +1106,6 @@ export function PagesScreen(): React.JSX.Element {
   );
   const framePanelMismatch = frameDrafts.length !== (panelsQuery.data?.panels.length ?? 0);
   const panelPayloadInvalid =
-    (compositionSource === 'gallery' && compositionGalleryItemId.trim().length === 0) ||
     dialogues.filter((dialogue) => dialogue.text.trim().length > 0).length > 20 ||
     dialogues.some(
       (dialogue) =>
@@ -1208,8 +1140,6 @@ export function PagesScreen(): React.JSX.Element {
     setPanelRole(selectedPanel?.panel_role ?? 'action');
     setPanelSize(selectedPanel?.panel_size ?? 'standard');
     setSituationText(selectedPanel?.situation_text ?? '');
-    setCompositionSource(selectedPanel?.composition.source ?? defaultComposition.source);
-    setCompositionGalleryItemId(selectedPanel?.composition.gallery_item_id ?? '');
     setCompositionPrompt(selectedPanel?.composition.composition_prompt ?? '');
     setShotType(selectedPanel?.composition.shot_type ?? '');
     setAngle(selectedPanel?.composition.angle ?? '');
@@ -1272,8 +1202,6 @@ export function PagesScreen(): React.JSX.Element {
     setPanelRole(selectedPanel?.panel_role ?? 'action');
     setPanelSize(selectedPanel?.panel_size ?? 'standard');
     setSituationText(selectedPanel?.situation_text ?? '');
-    setCompositionSource(selectedPanel?.composition.source ?? defaultComposition.source);
-    setCompositionGalleryItemId(selectedPanel?.composition.gallery_item_id ?? '');
     setCompositionPrompt(selectedPanel?.composition.composition_prompt ?? '');
     setShotType(selectedPanel?.composition.shot_type ?? '');
     setAngle(selectedPanel?.composition.angle ?? '');
@@ -1368,10 +1296,6 @@ export function PagesScreen(): React.JSX.Element {
 
   const invalidateEntities = async (): Promise<void> => {
     await queryClient.invalidateQueries({ queryKey: entitiesQueryKey(sessionKey, activeWorkId, organizationId) });
-  };
-
-  const invalidateCompositions = async (): Promise<void> => {
-    await queryClient.invalidateQueries({ queryKey: compositionsQueryKey(sessionKey) });
   };
 
   const invalidatePageLayoutTemplates = async (): Promise<void> => {
@@ -1469,8 +1393,8 @@ export function PagesScreen(): React.JSX.Element {
     panel_size: panelSize,
     situation_text: nullable(situationText),
     composition: {
-      source: compositionSource,
-      gallery_item_id: compositionSource === 'gallery' ? nullable(compositionGalleryItemId) : null,
+      source: 'ai_auto',
+      gallery_item_id: null,
       composition_prompt: nullable(compositionPrompt),
       shot_type: emptyToNull(shotType),
       angle: emptyToNull(angle),
@@ -2019,13 +1943,6 @@ export function PagesScreen(): React.JSX.Element {
     });
   };
 
-  const selectComposition = (composition: CompositionRecord): void => {
-    setCompositionGalleryItemId(composition.id);
-    setCompositionPrompt(composition.composition_prompt);
-    setShotType(composition.shot_type ?? '');
-    setAngle(composition.angle ?? '');
-  };
-
   const switchPage = (pageId: string): void => {
     void updateSelection({ pageId }).then((changed) => {
       if (changed) {
@@ -2349,11 +2266,6 @@ export function PagesScreen(): React.JSX.Element {
     enabled: pageHierarchyReady && activeWorkId !== null,
     error: entitiesQuery.error
   });
-  const compositionsError = supportingQueryError({
-    data: compositionsQuery.data,
-    enabled: selectedPage !== null,
-    error: compositionsQuery.error
-  });
   const queryFailures = [
     {
       error: pagesError,
@@ -2403,12 +2315,6 @@ export function PagesScreen(): React.JSX.Element {
         void entitiesQuery.refetch();
       }
     },
-    {
-      error: compositionsError,
-      retry: () => {
-        void compositionsQuery.refetch();
-      }
-    }
   ].filter(
     (failure): failure is { error: Error; retry: () => void } =>
       failure.error instanceof Error
@@ -2464,7 +2370,6 @@ export function PagesScreen(): React.JSX.Element {
     void invalidateFrames();
     void invalidateScenes();
     void invalidateEntities();
-    void invalidateCompositions();
     void invalidatePageLayoutTemplates();
     void invalidatePageReadiness();
   };
@@ -2499,8 +2404,7 @@ export function PagesScreen(): React.JSX.Element {
         panelsQuery.isFetching ||
         framesQuery.isFetching ||
         scenesQuery.isFetching ||
-        entitiesQuery.isFetching ||
-        compositionsQuery.isFetching
+        entitiesQuery.isFetching
       }
       subtitle={t(language, "generated.screens.PagesScreen.review.each.page.scene.source.layout.and.ddfabd30")}
       title={t(language, 'pages')}
@@ -2913,22 +2817,6 @@ export function PagesScreen(): React.JSX.Element {
             ),
             compositionAndCamera: (
               <>
-                <Text style={styles.label}>{t(language, "generated.screens.PagesScreen.composition.source.1a1a1e08")}</Text>
-                <SegmentedControl
-                  disabled={!canEdit}
-                  onChange={setCompositionSource}
-                  options={labelOptions(panelCompositionSourceOptions, language)}
-                  value={compositionSource}
-                />
-                {compositionSource === 'gallery' ? (
-                  <CompositionPicker
-                    compositions={compositions}
-                    disabled={!canEdit}
-                    language={language}
-                    onSelect={selectComposition}
-                    selectedId={compositionGalleryItemId}
-                  />
-                ) : null}
                 <FormField
                   editable={canEdit}
                   label={t(language, "generated.screens.PagesScreen.composition.prompt.bb3e0496")}
@@ -3349,44 +3237,6 @@ const styles = StyleSheet.create({
   caption: {
     ...textStyles.caption,
     color: colors.muted
-  },
-  compositionCard: {
-    backgroundColor: colors.surfaceAlt,
-    borderColor: colors.border,
-    borderRadius: 8,
-    borderWidth: 1,
-    gap: spacing.xs,
-    padding: spacing.xs,
-    width: 132
-  },
-  compositionCardSelected: {
-    borderColor: colors.primary,
-    borderWidth: 2
-  },
-  compositionImage: {
-    aspectRatio: 1,
-    backgroundColor: colors.field,
-    borderRadius: 5,
-    width: '100%'
-  },
-  compositionImagePlaceholder: {
-    aspectRatio: 1,
-    backgroundColor: colors.field,
-    borderRadius: 5,
-    width: '100%'
-  },
-  compositionLabel: {
-    ...textStyles.caption,
-    color: colors.ink,
-    minHeight: 34
-  },
-  compositionLabelSelected: {
-    color: colors.primary,
-    fontWeight: '700'
-  },
-  compositionStrip: {
-    gap: spacing.sm,
-    paddingVertical: spacing.xs
   },
   chip: {
     backgroundColor: 'rgba(255, 255, 255, 0.03)',
