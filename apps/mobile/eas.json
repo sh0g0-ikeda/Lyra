@@ -73,7 +73,8 @@
         "EXPO_PUBLIC_COGNITO_REDIRECT_URI": "https://app.lyra-editor.com/auth/mobile/callback",
         "EXPO_PUBLIC_COGNITO_LOGOUT_REDIRECT_URI": "https://app.lyra-editor.com/auth/mobile/logout",
         "EXPO_PUBLIC_COGNITO_SCOPES": "openid,email",
-        "EXPO_PUBLIC_ORGANIZATION_FEATURES_ENABLED": "true"
+        "EXPO_PUBLIC_ORGANIZATION_FEATURES_ENABLED": "true",
+        "SENTRY_DISABLE_AUTO_UPLOAD": "true"
       }
     }
   },

@@ -122,12 +122,24 @@ GOOGLE_PLAY_PRODUCT_CREDITS_3000
 | --- | --- |
 | Apple Developer Team ID | `8DX32AC6XQ` |
 | iOS bundle ID | `jp.lyra.mobile` |
-| App Store Connect アプリ | 未作成（TestFlight 配布前に作成） |
+| App Store Connect アプリ | `Lyra - AI漫画制作` を作成済み |
 
 `com.lyra.mobile` は Apple の他チームで既に使用されており、この Team では
 登録できなかった。iOS の bundle ID は Android package name と一致させる必要は
 ないため、Apple Developer で登録済みの `jp.lyra.mobile` を iOS のみで使用する。
 Android の `com.lyra.mobile`、API contract、DB schema は変更しない。
+
+## iOS EAS build safeguard (2026-08-04)
+
+### 設計メモ
+
+- 目的: iOS production build の Sentry source-map upload が組織未設定で失敗する問題を止める。
+- 範囲: `apps/mobile/eas.json` の production build 環境変数のみ。
+- Spec 根拠: `docs/Lyra_Unified_Spec_v4.md` §8（外部プロバイダーの安全な失敗）および §10（リリース検証）。
+- 影響: Mobile/EAS build config のみ。API、永続化、認証、課金、アプリ UI は変更しない。
+- セキュリティ: Sentry の送信を有効化する設定を追加せず、ビルド時の source-map 自動送信だけを明示的に無効化する。秘密情報は追加しない。
+- テスト例外: EAS の環境変数配線は単体テスト化しない。`expo config`、typecheck、lint、EAS iOS build 成否で検証する。
+- Terra 委譲: なし。外部ビルド再実行の直前を塞ぐ単一設定変更であり、委譲による遅延が大きい。
 
 ## 本番課金を有効化する前の必須事項
 
