@@ -141,6 +141,11 @@ Android の `com.lyra.mobile`、API contract、DB schema は変更しない。
 - テスト例外: EAS の環境変数配線は単体テスト化しない。`expo config`、typecheck、lint、EAS iOS build 成否で検証する。
 - Terra 委譲: なし。外部ビルド再実行の直前を塞ぐ単一設定変更であり、委譲による遅延が大きい。
 
+### App Store Connect submission target
+
+- `apps/mobile/eas.json` の iOS production submit profile には、App Store Connect の Lyra アプリID `6797564060` を `ascAppId` として固定する。
+- これにより EAS Submit は、対話入力なしでも正しい TestFlight 提出先を選べる。秘密情報や課金設定は追加しない。
+
 ## 本番課金を有効化する前の必須事項
 
 現在のサーバー実装は Apple と Google の両方が完全に設定済みの場合だけ

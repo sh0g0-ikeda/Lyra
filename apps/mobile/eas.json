@@ -85,6 +85,7 @@
         "releaseStatus": "completed"
       },
       "ios": {
+        "ascAppId": "6797564060",
         "metadataPath": "./store.config.json"
       }
     }
