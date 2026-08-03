@@ -116,6 +116,19 @@ GOOGLE_PLAY_PRODUCT_CREDITS_1000
 GOOGLE_PLAY_PRODUCT_CREDITS_3000
 ```
 
+## iOS 配布識別子
+
+| 項目 | 値 |
+| --- | --- |
+| Apple Developer Team ID | `8DX32AC6XQ` |
+| iOS bundle ID | `jp.lyra.mobile` |
+| App Store Connect アプリ | 未作成（TestFlight 配布前に作成） |
+
+`com.lyra.mobile` は Apple の他チームで既に使用されており、この Team では
+登録できなかった。iOS の bundle ID は Android package name と一致させる必要は
+ないため、Apple Developer で登録済みの `jp.lyra.mobile` を iOS のみで使用する。
+Android の `com.lyra.mobile`、API contract、DB schema は変更しない。
+
 ## 本番課金を有効化する前の必須事項
 
 現在のサーバー実装は Apple と Google の両方が完全に設定済みの場合だけ
@@ -146,10 +159,9 @@ GOOGLE_PLAY_PRODUCT_CREDITS_3000
 
 ## 設計・検証メモ
 
-- 目的: 次回担当者がサービスアカウント、topic、product ID、通知先を取り違えずに
-  Apple 設定と最終有効化を進められるようにする。
+- 目的: 次回担当者がサービスアカウント、topic、product ID、通知先、iOS bundle
+  ID を取り違えずに Apple 設定と最終有効化を進められるようにする。
 - 非対象: アプリコード、DB、既存 API 入出力、クレジット台帳の変更。
 - セキュリティ: 識別子・公開 URL のみを記録し、シークレット実値は記録しない。
-- テスト: 文書のみの変更のため自動テストは不要。記載済みの実環境 readback を
-  運用上の検証根拠とする。
-- 委譲: 単一文書の運用記録であり、委譲コストが大きいため Sol 単独で作成した。
+- テスト: iOS bundle ID の宣言設定変更は、Expo config の実効値を確認する。
+- 委譲: 単一設定の変更であり、委譲コストが大きいため Sol 単独で確認する。
