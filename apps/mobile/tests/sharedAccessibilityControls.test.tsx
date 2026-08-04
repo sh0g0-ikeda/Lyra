@@ -58,6 +58,10 @@ vi.mock('expo-file-system/legacy', () => ({
   downloadAsync: vi.fn()
 }));
 
+vi.mock('expo-image', () => ({
+  Image: (props: Record<string, unknown>) => React.createElement('expo-image', props)
+}));
+
 vi.mock('expo-sharing', () => ({
   default: { isAvailableAsync: vi.fn(), shareAsync: vi.fn() },
   isAvailableAsync: vi.fn(),
@@ -162,7 +166,7 @@ describe('shared mobile accessibility controls', () => {
     expect(setAccessibilityFocus).toHaveBeenCalledWith(42);
   });
 
-  it('makes the image preview dismissible from its backdrop and exposes modal and button semantics', () => {
+  it('makes the image preview dismissible from its backdrop without a duplicate save action', () => {
     const onClose = vi.fn();
     let renderer: ReturnType<typeof create>;
     act(() => {
@@ -170,6 +174,7 @@ describe('shared mobile accessibility controls', () => {
     });
 
     expect(renderer!.root.findByProps({ accessibilityViewIsModal: true })).toBeDefined();
+    expect(renderer!.root.findByType('modal').props.presentationStyle).toBe('overFullScreen');
     const backdrop = renderer!.root.findByProps({ accessibilityLabel: 'Close image preview' });
     act(() => {
       backdrop.props.onPress();
@@ -178,8 +183,7 @@ describe('shared mobile accessibility controls', () => {
 
     const close = renderer!.root.findByProps({ accessibilityLabel: 'Close image preview dialog' });
     expect(close.props.style.minHeight).toBeGreaterThanOrEqual(44);
-    const share = renderer!.root.findByProps({ accessibilityLabel: 'Share or save image' });
-    expect(share.props.style.minHeight).toBeGreaterThanOrEqual(44);
+    expect(renderer!.root.findAllByProps({ accessibilityLabel: 'Share or save image' })).toHaveLength(0);
   });
 
   it('keeps screen content in safe areas and resizes for the Android keyboard', () => {

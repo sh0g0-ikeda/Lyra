@@ -86,7 +86,11 @@ import { useActiveResourceJobId } from '@/hooks/useActiveResourceJobId';
 import { useResetOnScopeChange } from '@/hooks/useResetOnScopeChange';
 import { confirmAction, confirmDestructiveAction } from '@/lib/confirm';
 import { config } from '@/lib/config';
-import { appendOrganizationQuery, downloadAuthenticatedFile, downloadExternalFile } from '@/lib/download';
+import {
+  appendOrganizationQuery,
+  downloadExternalFile,
+  saveAuthenticatedImageToPhotoLibrary
+} from '@/lib/download';
 import { fileTransferErrorMessage } from '@/lib/fileTransferError';
 import {
   errorRecoveryActionLabel,
@@ -129,8 +133,6 @@ import { userErrorMessage } from '@/lib/userMessages';
 import type { MobileTabParamList } from '@/navigation/tabs';
 import { useAppState } from '@/state/appState';
 import { useDirtyEditorRegistration, useDirtyState } from '@/state/dirtyState';
-
-type ImageRequestHeaders = Record<string, string>;
 
 interface PageGenerationAttempt {
   pageId: string;
@@ -833,8 +835,8 @@ export function PagesScreen(): React.JSX.Element {
     useState<PageDesignJob | null>(null);
   const [pageDesignJobEnqueued, setPageDesignJobEnqueued] = useState(false);
   const [pageStale, setPageStale] = useState(false);
-  const [previewImageUri, setPreviewImageUri] = useState<string | null>(null);
-  const [previewImageHeaders, setPreviewImageHeaders] = useState<ImageRequestHeaders | undefined>(undefined);
+  const [previewImageSources, setPreviewImageSources] =
+    useState<readonly RemoteImageSource[]>([]);
   const [failedPageImageSourceIdentity, setFailedPageImageSourceIdentity] =
     useState<string | null>(null);
   const [lastSyncedPageId, setLastSyncedPageId] = useState<string | null>(null);
@@ -1860,7 +1862,7 @@ export function PagesScreen(): React.JSX.Element {
 
   const downloadPageMutation = useMutation({
     mutationFn: () =>
-      downloadAuthenticatedFile({
+      saveAuthenticatedImageToPhotoLibrary({
         path: appendOrganizationQuery(`/api/pages/${encodeURIComponent(selectedPage?.id ?? '')}/export-image`, organizationId),
         filename: exportFilename,
         tokens,
@@ -2000,9 +2002,8 @@ export function PagesScreen(): React.JSX.Element {
     });
   };
 
-  const previewPage = (source: RemoteImageSource): void => {
-    setPreviewImageHeaders(source.headers);
-    setPreviewImageUri(source.uri);
+  const previewPage = (sources: readonly RemoteImageSource[]): void => {
+    setPreviewImageSources(sources);
   };
 
   const switchPanel = (nextPanelId: string): void => {
@@ -2538,6 +2539,7 @@ export function PagesScreen(): React.JSX.Element {
             void pagesQuery.fetchNextPage();
           }}
           onPreview={previewPage}
+          previewImageSourcesFor={fullPageImageSourcesFor}
           onSelect={switchPage}
           pages={pages}
           selectedId={selection.pageId}
@@ -3129,10 +3131,7 @@ export function PagesScreen(): React.JSX.Element {
                   selectedPageImageSourceIdentity
                 )
               }
-              onExpand={(source) => {
-                setPreviewImageHeaders(source.headers);
-                setPreviewImageUri(source.uri);
-              }}
+              onExpand={() => setPreviewImageSources(selectedPageImageSources)}
               sources={selectedPageImageSources}
             />
           )}
@@ -3229,13 +3228,10 @@ export function PagesScreen(): React.JSX.Element {
         )}
       />
       <ImagePreviewModal
-        headers={previewImageHeaders}
         language={language}
-        onClose={() => {
-          setPreviewImageHeaders(undefined);
-          setPreviewImageUri(null);
-        }}
-        uri={previewImageUri}
+        onClose={() => setPreviewImageSources([])}
+        sources={previewImageSources}
+        uri={previewImageSources[0]?.uri ?? null}
       />
     </Screen>
   );

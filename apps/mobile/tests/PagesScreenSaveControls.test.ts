@@ -12,4 +12,14 @@ describe('PagesScreen manual save controls', () => {
 
     expect(source).not.toContain("label={t(language, 'save')}");
   });
+
+  it('ページ画像の保存は写真ライブラリ保存を使い、専用UIを残す', () => {
+    const source = readFileSync(
+      resolve(process.cwd(), 'src/screens/PagesScreen.tsx'),
+      'utf8'
+    );
+
+    expect(source).toContain('saveAuthenticatedImageToPhotoLibrary');
+    expect(source).toContain('generated.screens.PagesScreen.save.image.dd680bcb');
+  });
 });
