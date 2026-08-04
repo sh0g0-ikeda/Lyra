@@ -195,6 +195,29 @@ describe('JobStatusCard load recovery', () => {
       }
     })).toBe(false);
   });
+
+  it('一時的なジョブ取得失敗を履歴カードとして表示しない', async () => {
+    useQueryMock.mockReturnValue({
+      data: undefined,
+      error: new ApiError('The request temporarily failed.', 503, 'TEMPORARY_FAILURE'),
+      isError: true,
+      refetch: refetchMock
+    });
+
+    let renderer: ReturnType<typeof create>;
+    await act(async () => {
+      renderer = create(
+        <JobStatusCard
+          api={{ getJob: vi.fn() } as never}
+          jobId="temporary-failure-job-id"
+          language="ja"
+          sessionKey="session-1"
+        />
+      );
+    });
+
+    expect(renderer!.toJSON()).toBeNull();
+  });
 });
 
 describe('JobStatusCard completion notification', () => {

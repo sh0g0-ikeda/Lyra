@@ -16,7 +16,7 @@ const {
   fileWriteMock,
   isAvailableAsyncMock,
   requestMediaLibraryPermissionsMock,
-  createAssetMock,
+  createAssetAsyncMock,
   shareAsyncMock,
   writeAsStringAsyncMock
 } = vi.hoisted(() => ({
@@ -25,7 +25,7 @@ const {
   fileWriteMock: vi.fn(),
   isAvailableAsyncMock: vi.fn(),
   requestMediaLibraryPermissionsMock: vi.fn(),
-  createAssetMock: vi.fn(),
+  createAssetAsyncMock: vi.fn(),
   shareAsyncMock: vi.fn(),
   writeAsStringAsyncMock: vi.fn()
 }));
@@ -60,7 +60,7 @@ vi.mock('expo-sharing', () => ({
 }));
 
 vi.mock('expo-media-library', () => ({
-  Asset: { create: createAssetMock },
+  createAssetAsync: createAssetAsyncMock,
   requestPermissionsAsync: requestMediaLibraryPermissionsMock,
 }));
 
@@ -128,7 +128,7 @@ describe('mobile download filenames', () => {
   it('認証済みのページ画像を写真ライブラリへ保存し、共有シートを開かない', async () => {
     downloadAsyncMock.mockResolvedValue({ status: 200, uri: 'file:///cache/lyra-page-1.png' });
     requestMediaLibraryPermissionsMock.mockResolvedValue({ granted: true });
-    createAssetMock.mockResolvedValue(undefined);
+    createAssetAsyncMock.mockResolvedValue(undefined);
 
     await saveAuthenticatedImageToPhotoLibrary({
       path: '/api/pages/page-1/export-image',
@@ -148,13 +148,13 @@ describe('mobile download filenames', () => {
       'file:///cache/lyra-page-1.png',
       { headers: { Authorization: 'Bearer id-token' } }
     );
-    expect(createAssetMock).toHaveBeenCalledWith('file:///cache/lyra-page-1.png');
+    expect(createAssetAsyncMock).toHaveBeenCalledWith('file:///cache/lyra-page-1.png');
     expect(shareAsyncMock).not.toHaveBeenCalled();
   });
 
   it('認証更新済みAPIレスポンスの画像バイト列をネイティブキャッシュ経由で写真ライブラリへ保存する', async () => {
     requestMediaLibraryPermissionsMock.mockResolvedValue({ granted: true });
-    createAssetMock.mockResolvedValue(undefined);
+    createAssetAsyncMock.mockResolvedValue(undefined);
 
     await saveImageBlobToPhotoLibrary({
       blob: new Blob(['png-bytes'], { type: 'image/png' }),
@@ -171,7 +171,7 @@ describe('mobile download filenames', () => {
       })
     );
     expect(writeAsStringAsyncMock).not.toHaveBeenCalled();
-    expect(createAssetMock).toHaveBeenCalledWith('file:///cache/lyra-page-1.png');
+    expect(createAssetAsyncMock).toHaveBeenCalledWith('file:///cache/lyra-page-1.png');
     expect(downloadAsyncMock).not.toHaveBeenCalled();
   });
 
@@ -194,7 +194,7 @@ describe('mobile download filenames', () => {
       .mockResolvedValueOnce({ status: 403, uri: 'file:///cache/signed-page.png' })
       .mockResolvedValueOnce({ status: 200, uri: 'file:///cache/authenticated-page.png' });
     requestMediaLibraryPermissionsMock.mockResolvedValue({ granted: true });
-    createAssetMock.mockResolvedValue(undefined);
+    createAssetAsyncMock.mockResolvedValue(undefined);
 
     await saveImageToPhotoLibrary({
       filename: 'lyra-page-1',
@@ -220,7 +220,7 @@ describe('mobile download filenames', () => {
       'file:///cache/lyra-page-1-candidate-2.png',
       { headers: { Authorization: 'Bearer id-token' } }
     );
-    expect(createAssetMock).toHaveBeenCalledWith('file:///cache/authenticated-page.png');
+    expect(createAssetAsyncMock).toHaveBeenCalledWith('file:///cache/authenticated-page.png');
   });
 
   it('写真ライブラリの権限が拒否された場合は専用エラーを返す', async () => {
@@ -235,13 +235,13 @@ describe('mobile download filenames', () => {
         tokens: null
       })
     ).rejects.toMatchObject({ code: 'PHOTO_LIBRARY_PERMISSION_DENIED' });
-    expect(createAssetMock).not.toHaveBeenCalled();
+    expect(createAssetAsyncMock).not.toHaveBeenCalled();
   });
 
   it('写真ライブラリへの登録失敗をダウンロード中断と誤表示しない', async () => {
     downloadAsyncMock.mockResolvedValue({ status: 200, uri: 'file:///cache/lyra-page-1.png' });
     requestMediaLibraryPermissionsMock.mockResolvedValue({ granted: true });
-    createAssetMock.mockRejectedValueOnce(new Error('Native media library registration failed'));
+    createAssetAsyncMock.mockRejectedValueOnce(new Error('Native media library registration failed'));
 
     await expect(
       saveAuthenticatedImageToPhotoLibrary({

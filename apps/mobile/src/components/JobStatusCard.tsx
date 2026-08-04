@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, AppState, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, AppState, StyleSheet, Text, View } from 'react-native';
 
 import { PrimaryButton } from '@/components/PrimaryButton';
 import { JobCreditSettlement } from '@/components/JobCreditSettlement';
@@ -13,7 +13,6 @@ import type { ComponentTranslationKey } from '@/lib/i18nComponentMessages';
 import { t } from '@/lib/i18n';
 import { recordOperationalMetric } from '@/lib/operationalEvents';
 import { jobQueryKey } from '@/lib/queryKeys';
-import { userErrorMessage } from '@/lib/userMessages';
 
 interface JobStatusCardProps {
   api: LyraMobileApiClient;
@@ -80,11 +79,10 @@ export function JobStatusCard({
   const refetchJob = jobQuery.refetch;
   const status = job?.status ?? 'loading';
   const isActive = status === 'queued' || status === 'processing';
-  const staleJobLookup = suppliedJob === undefined && isMissingJobLookupError(jobQuery.error);
-  const queryFailed = suppliedJob === undefined && jobQuery.isError && !staleJobLookup;
+  const jobLookupFailed = suppliedJob === undefined && jobQuery.isError;
 
   useEffect(() => {
-    if (suppliedJob !== undefined || jobId === null || staleJobLookup) {
+    if (suppliedJob !== undefined || jobId === null || jobLookupFailed) {
       return;
     }
     const subscription = AppState.addEventListener('change', (nextState) => {
@@ -93,7 +91,7 @@ export function JobStatusCard({
       }
     });
     return () => subscription.remove();
-  }, [jobId, refetchJob, staleJobLookup, suppliedJob]);
+  }, [jobId, jobLookupFailed, refetchJob, suppliedJob]);
 
   useEffect(() => {
     if (!isActive) {
@@ -135,7 +133,7 @@ export function JobStatusCard({
     void onFailed?.();
   }, [job, onCompleted, onFailed]);
 
-  if ((jobId === null && suppliedJob === undefined) || staleJobLookup) {
+  if ((jobId === null && suppliedJob === undefined) || jobLookupFailed) {
     return null;
   }
 
@@ -186,7 +184,7 @@ export function JobStatusCard({
     <View style={[
       styles.card,
       status === 'completed' ? styles.completedCard : null,
-      status === 'failed' || queryFailed ? styles.failedCard : null,
+      status === 'failed' ? styles.failedCard : null,
       status === 'canceled' ? styles.canceledCard : null,
     ]}>
       <View style={styles.header}>
@@ -194,17 +192,10 @@ export function JobStatusCard({
           <Text style={styles.title}>{formatJobType(job?.job_type, language)}</Text>
           <Text style={styles.idText}>#{displayJobId.slice(0, 8)}</Text>
         </View>
-        <Text style={[styles.status, statusStyle(status, queryFailed)]}>{formatStatus(status, queryFailed, language)}</Text>
+        <Text style={[styles.status, statusStyle(status)]}>{formatStatus(status, language)}</Text>
       </View>
 
-      {queryFailed ? (
-        <View style={styles.failedLoad}>
-          <Text style={styles.error}>{userErrorMessage(jobQuery.error, language)}</Text>
-          <Pressable accessibilityRole="button" onPress={() => void jobQuery.refetch()} style={styles.retryButton}>
-            <Text style={styles.retryText}>{t(language, "generated.components.JobStatusCard.retry.8d32b958")}</Text>
-          </Pressable>
-        </View>
-      ) : isActive || status === 'loading' ? (
+      {isActive || status === 'loading' ? (
         <>
           <View style={styles.runningRow}>
             <ActivityIndicator color={colors.primary} size="small" />
@@ -228,7 +219,7 @@ export function JobStatusCard({
         <View style={[styles.stateBar, status === 'failed' ? styles.stateBarDanger : status === 'canceled' ? styles.stateBarWarn : styles.stateBarGood]} />
       )}
 
-      {job === undefined || queryFailed ? null : (
+      {job === undefined ? null : (
         <>
           {statusMessage === null ? null : <Text style={styles.text}>{statusMessage}</Text>}
           {job.credit_settlement === null ? null : (
@@ -293,10 +284,7 @@ function formatJobType(jobType: string | undefined, language: 'ja' | 'en'): stri
   return label === undefined ? jobType ?? t(language, "generated.components.JobStatusCard.job.a047f3b5") : t(language, label);
 }
 
-function formatStatus(status: string, queryFailed: boolean, language: 'ja' | 'en'): string {
-  if (queryFailed) {
-    return t(language, "generated.components.JobStatusCard.load.failed.94fa0ba4");
-  }
+function formatStatus(status: string, language: 'ja' | 'en'): string {
   const labels: Record<string, ComponentTranslationKey> = {
     loading: 'component.jobStatusCard.status.loading',
     queued: 'component.jobStatusCard.status.queued',
@@ -394,8 +382,8 @@ function isCanonicalGenerationJob(
   return job.credit_settlement !== null;
 }
 
-function statusStyle(status: string, queryFailed: boolean): object {
-  if (queryFailed || status === 'failed') {
+function statusStyle(status: string): object {
+  if (status === 'failed') {
     return styles.statusDanger;
   }
   if (status === 'completed') {
@@ -438,10 +426,6 @@ const styles = StyleSheet.create({
   failedCard: {
     borderColor: 'rgba(244, 67, 54, 0.54)',
   },
-  failedLoad: {
-    alignItems: 'flex-start',
-    gap: spacing.sm,
-  },
   header: {
     alignItems: 'center',
     flexDirection: 'row',
@@ -472,20 +456,6 @@ const styles = StyleSheet.create({
     height: 6,
     overflow: 'hidden',
     width: '100%',
-  },
-  retryButton: {
-    backgroundColor: colors.field,
-    borderColor: colors.border,
-    borderRadius: radius.sm,
-    borderWidth: 1,
-    minHeight: 44,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-  },
-  retryText: {
-    ...textStyles.body,
-    color: colors.ink,
-    fontWeight: '700',
   },
   runningRow: {
     alignItems: 'center',

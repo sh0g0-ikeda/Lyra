@@ -80,8 +80,11 @@ describe('mobile accessibility semantic closure', () => {
   });
 
   it('すべての既知の小型操作に44pt以上のタップ領域を持たせる', () => {
+    const jobStatusCard = readMobileSource('src/components/JobStatusCard.tsx');
+    expect(jobStatusCard).toContain('<PrimaryButton');
+
     const assertions = [
-      ['src/components/JobStatusCard.tsx', 'retryButton', 'minHeight'],
+      ['src/components/PrimaryButton.tsx', 'button', 'minHeight'],
       ['src/components/SegmentedControl.tsx', 'segment', 'minHeight'],
       ['src/screens/StoryScreen.tsx', 'chip', 'minHeight'],
       ['src/screens/PagesScreen.tsx', 'chip', 'minHeight'],

@@ -61,4 +61,16 @@ describe('MOB-ENTITY-002 latest character UI contract', () => {
     );
     expect(translations).toContain('すべての空欄を埋める必要はありません');
   });
+
+  it('個別のキャラクター画像は共有シートではなく写真ライブラリへ保存する', () => {
+    const source = readSource('src/screens/CharactersScreen.tsx');
+
+    expect(source).toContain(
+      "import { appendOrganizationQuery, saveAuthenticatedImageToPhotoLibrary } from '@/lib/download';"
+    );
+    expect(source).toContain('saveAuthenticatedImageToPhotoLibrary({');
+    expect(source).toContain('filename: `lyra-character-reference-${refId}.png`');
+    expect(source).toContain('filename: `lyra-character-candidate-${candidateToken.trim()}.png`');
+    expect(source).not.toContain('downloadAuthenticatedFile({');
+  });
 });

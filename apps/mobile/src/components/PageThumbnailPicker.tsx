@@ -229,6 +229,7 @@ const styles = StyleSheet.create({
     borderRadius: 4,
     borderWidth: 1,
     bottom: 45,
+    elevation: 3,
     height: 34,
     justifyContent: 'center',
     position: 'absolute',

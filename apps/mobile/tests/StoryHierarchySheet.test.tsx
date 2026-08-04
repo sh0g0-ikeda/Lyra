@@ -34,8 +34,14 @@ vi.mock('react-native', () => ({
           ListFooterComponent,
         ],
   ),
-  Modal: ({ children, visible }: { children: React.ReactNode; visible: boolean }) =>
-    visible ? React.createElement('modal', null, children) : null,
+  KeyboardAvoidingView: ({
+    children,
+    ...props
+  }: React.PropsWithChildren<Record<string, unknown>>) =>
+    React.createElement('keyboard-avoiding-view', props, children),
+  Modal: ({ children, visible, ...props }: React.PropsWithChildren<Record<string, unknown>>) =>
+    visible ? React.createElement('modal', props, children) : null,
+  Platform: { OS: 'ios' },
   Pressable: ({
     children,
     onPress,
@@ -266,7 +272,7 @@ describe('StoryHierarchySheet', () => {
     const renderer = await renderSheet();
     const safeArea = renderer.root.findByType('safe-area-view');
 
-    expect(safeArea.props.edges).toEqual(['top']);
+    expect(safeArea.props.edges).toEqual(['top', 'bottom']);
   });
 
   it('選択中の枝だけ取得し、折りたたまれた別作品の章は取得しない', async () => {
@@ -315,6 +321,12 @@ describe('StoryHierarchySheet', () => {
     await act(async () => {
       rename.props.onPress();
     });
+    expect(renderer.root.findAllByType('modal')).toHaveLength(1);
+    const nativeModal = renderer.root.findByType('modal');
+    expect(nativeModal.props.presentationStyle).toBe('fullScreen');
+    expect(nativeModal.props.transparent).not.toBe(true);
+    const keyboardAvoider = renderer.root.findByType('keyboard-avoiding-view');
+    expect(keyboardAvoider.props.behavior).toBe('padding');
     const input = renderer.root.findByProps({ accessibilityLabel: 'タイトル' });
     await act(async () => {
       input.props.onChangeText('変更後の作品');

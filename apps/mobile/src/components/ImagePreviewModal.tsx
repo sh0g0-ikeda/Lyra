@@ -38,7 +38,13 @@ export function ImagePreviewModal({ uri, headers, sources, language, onClose, re
   }, [restoreFocusRef, visible]);
 
   return (
-    <Modal animationType="fade" presentationStyle="overFullScreen" transparent visible={visible} onRequestClose={onClose}>
+    <Modal
+      animationType="fade"
+      presentationStyle="fullScreen"
+      transparent={false}
+      visible={visible}
+      onRequestClose={onClose}
+    >
       <SafeAreaView edges={['top', 'bottom']} style={styles.safeArea}>
         <View style={styles.backdrop}>
           <Pressable

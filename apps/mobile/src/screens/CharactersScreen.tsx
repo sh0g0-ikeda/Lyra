@@ -80,7 +80,7 @@ import type { ScreenTranslationKey } from '@/lib/i18nScreenMessages';
 import {
   entityGenerationBlockerRecoveryTarget
 } from '@/lib/errorRecovery';
-import { appendOrganizationQuery, downloadAuthenticatedFile } from '@/lib/download';
+import { appendOrganizationQuery, saveAuthenticatedImageToPhotoLibrary } from '@/lib/download';
 import { createExpoBinaryUploadFile } from '@/lib/expoBinaryUpload';
 import { ApiError } from '@/lib/api';
 import {
@@ -2413,12 +2413,12 @@ export function CharactersScreen(): React.JSX.Element {
 
   const downloadReferenceMutation = useMutation({
     mutationFn: (refId: string) =>
-      downloadAuthenticatedFile({
+      saveAuthenticatedImageToPhotoLibrary({
         path: appendOrganizationQuery(
           `/api/entities/${encodeURIComponent(selectedEntity?.id ?? '')}/reference/${encodeURIComponent(refId)}/image`,
           organizationId
         ),
-        filename: `lyra-reference-${refId}.png`,
+        filename: `lyra-character-reference-${refId}.png`,
         tokens,
         mimeType: 'image/png'
       })
@@ -2433,9 +2433,9 @@ export function CharactersScreen(): React.JSX.Element {
       if (organizationId !== null && organizationId.trim().length > 0) {
         params.set('organization_id', organizationId);
       }
-      return downloadAuthenticatedFile({
+      return saveAuthenticatedImageToPhotoLibrary({
         path: `/api/entities/${encodeURIComponent(selectedEntity?.id ?? '')}/reference-candidate-image?${params.toString()}`,
-        filename: `lyra-candidate-${selectedEntity?.id ?? 'image'}.png`,
+        filename: `lyra-character-candidate-${candidateToken.trim()}.png`,
         tokens,
         mimeType: 'image/png'
       });

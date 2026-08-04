@@ -174,7 +174,9 @@ describe('shared mobile accessibility controls', () => {
     });
 
     expect(renderer!.root.findByProps({ accessibilityViewIsModal: true })).toBeDefined();
-    expect(renderer!.root.findByType('modal').props.presentationStyle).toBe('overFullScreen');
+    const previewModal = renderer!.root.findByType('modal');
+    expect(previewModal.props.presentationStyle).toBe('fullScreen');
+    expect(previewModal.props.transparent).toBe(false);
     const backdrop = renderer!.root.findByProps({ accessibilityLabel: 'Close image preview' });
     act(() => {
       backdrop.props.onPress();

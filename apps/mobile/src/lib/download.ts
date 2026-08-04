@@ -190,22 +190,14 @@ export async function saveImageToPhotoLibrary({
   }
 
   try {
-    const permission = await MediaLibrary.requestPermissionsAsync(true);
-    if (!permission.granted) {
-      throw new MobileFileTransferError('PHOTO_LIBRARY_PERMISSION_DENIED');
-    }
-    try {
-      await MediaLibrary.Asset.create(downloadedUri);
-    } catch (error) {
-      const failure = classifyFileTransferFailure(error);
-      if (failure.code === 'DOWNLOAD_INTERRUPTED') {
-        throw new MobileFileTransferError('IMAGE_SAVE_FAILED');
-      }
-      throw failure;
-    }
+    await createPhotoLibraryAsset(downloadedUri);
     return downloadedUri;
   } catch (error) {
-    throw classifyFileTransferFailure(error);
+    const failure = classifyFileTransferFailure(error);
+    if (failure.code === 'DOWNLOAD_INTERRUPTED') {
+      throw new MobileFileTransferError('IMAGE_SAVE_FAILED');
+    }
+    throw failure;
   }
 }
 
@@ -231,11 +223,7 @@ export async function saveImageBlobToPhotoLibrary({
     }
     file.write(new Uint8Array(await blob.arrayBuffer()));
 
-    const permission = await MediaLibrary.requestPermissionsAsync(true);
-    if (!permission.granted) {
-      throw new MobileFileTransferError('PHOTO_LIBRARY_PERMISSION_DENIED');
-    }
-    await MediaLibrary.Asset.create(file.uri);
+    await createPhotoLibraryAsset(file.uri);
     return file.uri;
   } catch (error) {
     const failure = classifyFileTransferFailure(error);
@@ -244,6 +232,15 @@ export async function saveImageBlobToPhotoLibrary({
     }
     throw failure;
   }
+}
+
+async function createPhotoLibraryAsset(localUri: string): Promise<void> {
+  const permission = await MediaLibrary.requestPermissionsAsync(true);
+  if (!permission.granted) {
+    throw new MobileFileTransferError('PHOTO_LIBRARY_PERMISSION_DENIED');
+  }
+
+  await MediaLibrary.createAssetAsync(localUri);
 }
 
 export async function downloadExternalFile({
