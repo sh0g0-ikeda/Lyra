@@ -46,13 +46,13 @@ bun run worker:generation:prod
   - `user_id`
 
 ## Rate limits
-- generation-cost routes: `10 req/min/user`
+- generation-cost routes: `60 req/min/user`
   - page generation
   - page/page-story autofill
   - page skeleton generation
   - entity image import/reference generation
   - StoryAI collaborate / episode draft improvement
-- ordinary story editing routes: `20 req/min/user`
+- ordinary story editing routes: `60 req/min/user`
 - default authenticated API: `100 req/min/user`
 - Stripe webhook: `120 req/min/IP`
 

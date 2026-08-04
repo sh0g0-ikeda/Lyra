@@ -66,6 +66,7 @@ import { createSafeLayoutTemplatePayload, selectExcessPanels } from '@/domain/pa
 import { selectPageForEpisode } from '@/domain/pageSelection';
 import {
   buildFullPageImageSources,
+  buildPageImageDownloadSources,
   buildPageThumbnailImageSources
 } from '@/domain/pageImageSources';
 import type {
@@ -87,9 +88,8 @@ import { useResetOnScopeChange } from '@/hooks/useResetOnScopeChange';
 import { confirmAction, confirmDestructiveAction } from '@/lib/confirm';
 import { config } from '@/lib/config';
 import {
-  appendOrganizationQuery,
   downloadExternalFile,
-  saveAuthenticatedImageToPhotoLibrary
+  saveImageToPhotoLibrary
 } from '@/lib/download';
 import { fileTransferErrorMessage } from '@/lib/fileTransferError';
 import {
@@ -1001,6 +1001,15 @@ export function PagesScreen(): React.JSX.Element {
       sessionKey,
     }),
   [imageAuthorizationHeader, organizationId, sessionKey]);
+  const pageImageDownloadSourcesFor = useCallback((page: PageRecord) =>
+    buildPageImageDownloadSources({
+      apiBaseUrl: config.apiBaseUrl,
+      authorizationHeader: imageAuthorizationHeader,
+      organizationId,
+      page,
+      sessionKey,
+    }),
+  [imageAuthorizationHeader, organizationId, sessionKey]);
   const pageThumbnailImageSourcesFor = useCallback((page: PageRecord) =>
     buildPageThumbnailImageSources({
       apiBaseUrl: config.apiBaseUrl,
@@ -1861,13 +1870,19 @@ export function PagesScreen(): React.JSX.Element {
   });
 
   const downloadPageMutation = useMutation({
-    mutationFn: () =>
-      saveAuthenticatedImageToPhotoLibrary({
-        path: appendOrganizationQuery(`/api/pages/${encodeURIComponent(selectedPage?.id ?? '')}/export-image`, organizationId),
+    mutationFn: () => {
+      if (selectedPage === null) {
+        throw new Error('A page must be selected before saving an image.');
+      }
+      return saveImageToPhotoLibrary({
         filename: exportFilename,
-        tokens,
-        mimeType: 'image/png'
-      }),
+        mimeType: 'image/png',
+        sources: pageImageDownloadSourcesFor(selectedPage).map((source) => ({
+          url: source.uri,
+          headers: source.headers
+        }))
+      });
+    },
     onError: (error) => {
       setPageImageDownloadError(fileTransferErrorMessage(error, language));
     },

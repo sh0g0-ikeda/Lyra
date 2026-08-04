@@ -92,6 +92,37 @@ export function buildFullPageImageSources(
   ]);
 }
 
+export function buildPageImageDownloadSources(
+  input: PageImageSourceInput,
+): RemoteImageSource[] {
+  const revision =
+    input.page.generated_image?.generated_at ?? input.page.updated_at;
+  const fullCacheKey = buildPageImageCacheKey({
+    sessionKey: input.sessionKey,
+    organizationId: input.organizationId,
+    pageId: input.page.id,
+    revision,
+    variant: 'full',
+  });
+  const authenticatedFullUrl = buildAuthenticatedImageUrl(
+    input.apiBaseUrl,
+    input.page.id,
+    'export-image',
+    input.organizationId,
+  );
+  return deduplicateImageSources([
+    {
+      uri: withPageImageRevision(
+        authenticatedFullUrl,
+        revision,
+        fullCacheKey,
+      ),
+      cacheKey: fullCacheKey,
+      ...authorizationHeaders(input.authorizationHeader),
+    },
+  ]);
+}
+
 export function buildPageThumbnailImageSource(
   input: PageImageSourceInput,
 ): PageImageSource {
