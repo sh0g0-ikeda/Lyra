@@ -86,7 +86,10 @@ import { useActiveResourceJobId } from '@/hooks/useActiveResourceJobId';
 import { useResetOnScopeChange } from '@/hooks/useResetOnScopeChange';
 import { confirmAction, confirmDestructiveAction } from '@/lib/confirm';
 import { config } from '@/lib/config';
-import { appendOrganizationQuery, downloadAuthenticatedFile, downloadExternalFile } from '@/lib/download';
+import {
+  downloadExternalFile,
+  saveImageBlobToPhotoLibrary
+} from '@/lib/download';
 import { fileTransferErrorMessage } from '@/lib/fileTransferError';
 import {
   errorRecoveryActionLabel,
@@ -129,8 +132,6 @@ import { userErrorMessage } from '@/lib/userMessages';
 import type { MobileTabParamList } from '@/navigation/tabs';
 import { useAppState } from '@/state/appState';
 import { useDirtyEditorRegistration, useDirtyState } from '@/state/dirtyState';
-
-type ImageRequestHeaders = Record<string, string>;
 
 interface PageGenerationAttempt {
   pageId: string;
@@ -833,8 +834,8 @@ export function PagesScreen(): React.JSX.Element {
     useState<PageDesignJob | null>(null);
   const [pageDesignJobEnqueued, setPageDesignJobEnqueued] = useState(false);
   const [pageStale, setPageStale] = useState(false);
-  const [previewImageUri, setPreviewImageUri] = useState<string | null>(null);
-  const [previewImageHeaders, setPreviewImageHeaders] = useState<ImageRequestHeaders | undefined>(undefined);
+  const [previewImageSources, setPreviewImageSources] =
+    useState<readonly RemoteImageSource[]>([]);
   const [failedPageImageSourceIdentity, setFailedPageImageSourceIdentity] =
     useState<string | null>(null);
   const [lastSyncedPageId, setLastSyncedPageId] = useState<string | null>(null);
@@ -1859,13 +1860,18 @@ export function PagesScreen(): React.JSX.Element {
   });
 
   const downloadPageMutation = useMutation({
-    mutationFn: () =>
-      downloadAuthenticatedFile({
-        path: appendOrganizationQuery(`/api/pages/${encodeURIComponent(selectedPage?.id ?? '')}/export-image`, organizationId),
+    mutationFn: async () => {
+      if (selectedPage === null) {
+        throw new Error('A page must be selected before saving an image.');
+      }
+      const { blob, contentType } = await api.exportPageImage(selectedPage.id, organizationId);
+      const mimeType = contentType?.split(';', 1).at(0)?.trim() || 'image/png';
+      return saveImageBlobToPhotoLibrary({
+        blob,
         filename: exportFilename,
-        tokens,
-        mimeType: 'image/png'
-      }),
+        mimeType
+      });
+    },
     onError: (error) => {
       setPageImageDownloadError(fileTransferErrorMessage(error, language));
     },
@@ -2000,17 +2006,8 @@ export function PagesScreen(): React.JSX.Element {
     });
   };
 
-  const previewPage = (pageId: string): void => {
-    const page = pages.find((candidate) => candidate.id === pageId);
-    if (page === undefined) {
-      return;
-    }
-    const source = pageThumbnailImageSourcesFor(page)[0];
-    if (source === undefined) {
-      return;
-    }
-    setPreviewImageHeaders(source.headers);
-    setPreviewImageUri(source.uri);
+  const previewPage = (sources: readonly RemoteImageSource[]): void => {
+    setPreviewImageSources(sources);
   };
 
   const switchPanel = (nextPanelId: string): void => {
@@ -2546,6 +2543,7 @@ export function PagesScreen(): React.JSX.Element {
             void pagesQuery.fetchNextPage();
           }}
           onPreview={previewPage}
+          previewImageSourcesFor={fullPageImageSourcesFor}
           onSelect={switchPage}
           pages={pages}
           selectedId={selection.pageId}
@@ -2577,7 +2575,6 @@ export function PagesScreen(): React.JSX.Element {
       <Section collapsible defaultCollapsed persistKey="pages:style" title={t(language, 'styleReference')}>
         <FormField editable={canEdit} label={t(language, 'styleReferenceTitle')} maxLength={200} onChangeText={setStyleReferenceTitle} value={styleReferenceTitle} />
         <FormField editable={canEdit} label={t(language, 'styleReferenceNotes')} maxLength={2000} multiline onChangeText={setStyleReferenceNotes} value={styleReferenceNotes} />
-        <PrimaryButton disabled={!canEdit || selectedPage === null} disabledReason={!canEdit ? t(language, "generated.screens.PagesScreen.editing.permission.is.required.6d3b86ee") : selectedPage === null ? t(language, "generated.screens.PagesScreen.select.a.page.first.50276876") : undefined} label={t(language, 'save')} loading={updatePageMutation.isPending} onPress={() => updatePageMutation.mutate()} />
       </Section>
 
       <Section collapsible defaultCollapsed persistKey="pages:story-sources" title={t(language, "generated.screens.PagesScreen.story.sources.82e34b3e")}>
@@ -2591,7 +2588,6 @@ export function PagesScreen(): React.JSX.Element {
           scenes={scenes}
           sourceSceneIds={sourceSceneIds}
         />
-        <PrimaryButton disabled={!canEdit || selectedPage === null} disabledReason={!canEdit ? t(language, "generated.screens.PagesScreen.editing.permission.is.required.6d3b86ee") : selectedPage === null ? t(language, "generated.screens.PagesScreen.select.a.page.first.50276876") : undefined} label={t(language, 'save')} loading={updatePageMutation.isPending} onPress={() => updatePageMutation.mutate()} />
       </Section>
 
       <Section
@@ -2781,7 +2777,6 @@ export function PagesScreen(): React.JSX.Element {
               />
             ) : null}
             {frameDraftsInvalid ? <Notice message={t(language, "generated.screens.PagesScreen.frames.require.four.vertices.coordinates.25a49784")} tone="warning" /> : null}
-            <PrimaryButton disabled={!canEdit || selectedPage === null || frameDrafts.length === 0 || frameDraftsInvalid} disabledReason={!canEdit ? t(language, "generated.screens.PagesScreen.editing.permission.is.required.6d3b86ee") : selectedPage === null ? t(language, "generated.screens.PagesScreen.select.a.page.first.50276876") : frameDrafts.length === 0 ? t(language, "generated.screens.PagesScreen.no.frames.b75c13aa") : frameDraftsInvalid ? t(language, "generated.screens.PagesScreen.check.frame.values.adb62959") : undefined} label={t(language, 'save')} loading={replaceFramesMutation.isPending} onPress={() => replaceFramesMutation.mutate()} variant="secondary" />
           </>
         )}
       </Section>
@@ -2955,7 +2950,6 @@ export function PagesScreen(): React.JSX.Element {
         ) : null}
         <View style={styles.buttonRow}>
           <PrimaryButton disabled={!canEdit || selectedPage === null || panelPayloadInvalid} disabledReason={!canEdit ? t(language, "generated.screens.PagesScreen.editing.permission.is.required.6d3b86ee") : selectedPage === null ? t(language, "generated.screens.PagesScreen.select.a.page.first.50276876") : panelPayloadInvalid ? t(language, "generated.screens.PagesScreen.check.panel.content.a0d29c4a") : undefined} label={t(language, 'create')} loading={createPanelMutation.isPending} onPress={() => createPanelMutation.mutate()} />
-          <PrimaryButton disabled={!canEdit || selectedPanel === null || panelPayloadInvalid} disabledReason={!canEdit ? t(language, "generated.screens.PagesScreen.editing.permission.is.required.6d3b86ee") : selectedPanel === null ? t(language, "generated.screens.PagesScreen.select.a.panel.first.4b816ba0") : panelPayloadInvalid ? t(language, "generated.screens.PagesScreen.check.panel.content.a0d29c4a") : undefined} label={t(language, 'save')} loading={updatePanelMutation.isPending} onPress={() => updatePanelMutation.mutate()} variant="secondary" />
         </View>
       </Section>
         </>
@@ -3141,10 +3135,7 @@ export function PagesScreen(): React.JSX.Element {
                   selectedPageImageSourceIdentity
                 )
               }
-              onExpand={(source) => {
-                setPreviewImageHeaders(source.headers);
-                setPreviewImageUri(source.uri);
-              }}
+              onExpand={() => setPreviewImageSources(selectedPageImageSources)}
               sources={selectedPageImageSources}
             />
           )}
@@ -3241,13 +3232,10 @@ export function PagesScreen(): React.JSX.Element {
         )}
       />
       <ImagePreviewModal
-        headers={previewImageHeaders}
         language={language}
-        onClose={() => {
-          setPreviewImageHeaders(undefined);
-          setPreviewImageUri(null);
-        }}
-        uri={previewImageUri}
+        onClose={() => setPreviewImageSources([])}
+        sources={previewImageSources}
+        uri={previewImageSources[0]?.uri ?? null}
       />
     </Screen>
   );

@@ -3,7 +3,7 @@
     "name": "Lyra Mobile",
     "slug": "lyra-mobile",
     "scheme": "lyra-mobile",
-    "version": "0.1.18",
+    "version": "0.1.20",
     "icon": "./assets/icon.png",
     "orientation": "portrait",
     "userInterfaceStyle": "dark",
@@ -38,6 +38,14 @@
           "photosPermission": "キャラクター参照情報を読み込むため、あなたが選択した画像だけを使用します。"
         }
       ],
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "キャラクター参照情報を読み込むため、あなたが選択した画像だけを使用します。",
+          "savePhotosPermission": "生成したページ画像を写真ライブラリに保存するために使用します。",
+          "granularPermissions": ["photo"]
+        }
+      ],
       "expo-sharing",
       "expo-web-browser",
       "expo-image",
@@ -51,13 +59,14 @@
     ],
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.lyra.mobile",
+      "bundleIdentifier": "jp.lyra.mobile",
       "associatedDomains": [
         "applinks:app.lyra-editor.com"
       ],
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
-        "NSPhotoLibraryUsageDescription": "キャラクター参照情報を読み込むため、あなたが選択した画像だけを使用します。"
+        "NSPhotoLibraryUsageDescription": "キャラクター参照情報を読み込むため、あなたが選択した画像だけを使用します。",
+        "NSPhotoLibraryAddUsageDescription": "生成したページ画像を写真ライブラリに保存するために使用します。"
       },
       "privacyManifests": {
         "NSPrivacyTracking": false,

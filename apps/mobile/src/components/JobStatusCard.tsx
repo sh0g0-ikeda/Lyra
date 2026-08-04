@@ -134,6 +134,7 @@ export function JobStatusCard({
   const displayJobId = job?.id ?? jobId ?? '';
   const progressPercent = job?.progress_percent ?? null;
   const elapsed = job === undefined ? null : formatElapsed(job.started_at ?? job.created_at, nowMs, language);
+  const statusMessage = job === undefined ? null : jobStatusMessage(job, language);
   const errorMessage = job === undefined ? null : safeJobErrorMessage(job, language);
   const canCancel = job?.actions.cancel.available ?? false;
   const cancelReason = job === undefined ? null : actionReason(job.actions.cancel.reason_key, language);
@@ -221,7 +222,7 @@ export function JobStatusCard({
 
       {job === undefined || queryFailed ? null : (
         <>
-          <Text style={styles.text}>{jobStatusMessage(job, language)}</Text>
+          {statusMessage === null ? null : <Text style={styles.text}>{statusMessage}</Text>}
           {job.credit_settlement === null ? null : (
             <JobCreditSettlement
               language={language}
@@ -316,7 +317,7 @@ function progressLabel(
   return label === undefined ? t(language, "generated.components.JobStatusCard.checking.status.243ad6bb") : t(language, label);
 }
 
-function jobStatusMessage(job: CompatibleGenerationJobRecord, language: 'ja' | 'en'): string {
+function jobStatusMessage(job: CompatibleGenerationJobRecord, language: 'ja' | 'en'): string | null {
   if (job.status === 'completed') {
     return t(language, "generated.components.JobStatusCard.generation.completed.related.screens.wil.dc316fe2");
   }
@@ -324,6 +325,9 @@ function jobStatusMessage(job: CompatibleGenerationJobRecord, language: 'ja' | '
     return t(language, 'component.jobStatusCard.canceledMessage');
   }
   if (job.status === 'failed') {
+    if (job.message_key === 'job.error.temporarilyUnavailable') {
+      return null;
+    }
     return safeJobErrorMessage(job, language) ?? t(language, "generated.components.JobStatusCard.generation.failed.cbed2f2e");
   }
   return t(language, "generated.components.JobStatusCard.status.updates.automatically.until.compl.5431e6ef");
@@ -337,7 +341,7 @@ function safeJobErrorMessage(job: CompatibleGenerationJobRecord, language: 'ja' 
     return t(language, "generated.components.JobStatusCard.review.the.inputs.before.trying.again.90b37195");
   }
   if (job.message_key === 'job.error.temporarilyUnavailable') {
-    return t(language, "generated.components.JobStatusCard.generation.is.temporarily.unavailable.tr.46a7ef24");
+    return null;
   }
   if (job.message_key === 'job.error.failed') {
     return t(language, "generated.components.JobStatusCard.generation.failed.try.again.shortly.d9c487aa");

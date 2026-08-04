@@ -9,6 +9,7 @@ import {
   TextInput,
   View
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ArrowDown,
@@ -947,7 +948,8 @@ export function StoryHierarchySheet({
   return (
     <>
       <Modal animationType="slide" onRequestClose={onClose} presentationStyle="fullScreen" visible={visible}>
-        <View
+        <SafeAreaView
+          edges={['top']}
           accessibilityLabel={t(language, "generated.components.StoryHierarchySheet.story.hierarchy.28f3f754")}
           accessibilityViewIsModal
           onAccessibilityEscape={onClose}
@@ -1042,7 +1044,7 @@ export function StoryHierarchySheet({
               <Text style={styles.pendingLabel}>{t(language, "generated.components.StoryHierarchySheet.updating.246dcabf")}</Text>
             </View>
           ) : null}
-        </View>
+        </SafeAreaView>
       </Modal>
 
       <Modal

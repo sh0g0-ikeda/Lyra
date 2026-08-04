@@ -651,22 +651,6 @@ export function AccountScreen(): React.JSX.Element {
             />
           ))
         )}
-        {jobsQuery.isError ? (
-          <ActionableErrorNotice
-            actions={{
-              login: () => {
-                void logout();
-              },
-              retry: () => {
-                void jobsQuery.refetch();
-              },
-              workspace: selectPersonalWorkspace
-            }}
-            error={jobsQuery.error}
-            language={language}
-            tone={jobs.length === 0 ? 'danger' : 'warning'}
-          />
-        ) : null}
         {cancelJobMutation.isError ? <Notice message={userErrorMessage(cancelJobMutation.error, language)} tone="danger" /> : null}
         {hideJobMutation.isError ? <Notice message={userErrorMessage(hideJobMutation.error, language)} tone="danger" /> : null}
         {retryJobMutation.isError ? <Notice message={userErrorMessage(retryJobMutation.error, language)} tone="danger" /> : null}

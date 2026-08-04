@@ -54,7 +54,7 @@ describe('Mobile association generator', () => {
         apps: [],
         details: [
           {
-            appID: 'A1B2C3D4E5.com.lyra.mobile',
+            appID: 'A1B2C3D4E5.jp.lyra.mobile',
             paths: ['/auth/mobile/*', '/invitations/*'],
           },
         ],

@@ -34,6 +34,11 @@ class RecordingRateLimitStore implements RateLimitStore {
 }
 
 describe('createRateLimitMiddleware', () => {
+  it('生成操作は通常の連続操作を妨げない上限を使用する', () => {
+    expect(RATE_LIMIT_RULES.generation).toEqual({ maxRequests: 60, windowSeconds: 60 });
+    expect(RATE_LIMIT_RULES.storyAi).toEqual({ maxRequests: 60, windowSeconds: 60 });
+  });
+
   it.each([
     ['/api/pages/page-1/generate'],
     ['/api/entities/import-image'],

@@ -20,9 +20,10 @@ interface PageThumbnailPickerProps {
   helperText?: string;
   language: 'ja' | 'en';
   imageSourcesFor: (page: PageRecord) => readonly RemoteImageSource[];
+  previewImageSourcesFor?: (page: PageRecord) => readonly RemoteImageSource[];
   statusLabelFor: (status: PageRecord['status']) => string;
   onSelect: (pageId: string) => void;
-  onPreview?: (pageId: string) => void;
+  onPreview?: (sources: readonly RemoteImageSource[]) => void;
   hasNextPage?: boolean;
   isFetchingNextPage?: boolean;
   onEndReached?: () => void;
@@ -35,6 +36,7 @@ export function PageThumbnailPicker({
   helperText,
   language,
   imageSourcesFor,
+  previewImageSourcesFor,
   hasNextPage = false,
   isFetchingNextPage = false,
   statusLabelFor,
@@ -78,6 +80,10 @@ export function PageThumbnailPicker({
           });
           const sources =
             page.generated_image === null ? [] : imageSourcesFor(page);
+          const previewSources =
+            page.generated_image === null
+              ? []
+              : (previewImageSourcesFor?.(page) ?? sources);
           return (
             <View style={[styles.item, selected ? styles.itemSelected : null]}>
               <Pressable
@@ -108,7 +114,7 @@ export function PageThumbnailPicker({
                 </Text>
                 <Text numberOfLines={1} style={styles.status}>{status}</Text>
               </Pressable>
-              {sources.length === 0 || onPreview === undefined ? null : (
+              {previewSources.length === 0 || onPreview === undefined ? null : (
                 <Pressable
                   accessibilityLabel={t(
                     language,
@@ -117,7 +123,7 @@ export function PageThumbnailPicker({
                   )}
                   accessibilityRole="button"
                   hitSlop={4}
-                  onPress={() => onPreview(page.id)}
+                  onPress={() => onPreview(previewSources)}
                   style={styles.previewButton}
                 >
                   <ZoomIn color={colors.inkStrong} size={19} strokeWidth={2.2} />

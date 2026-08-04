@@ -116,7 +116,7 @@ describe('production app metadata', () => {
     expect(easConfig.build?.preview).toMatchObject({
       autoIncrement: true,
     });
-    expect(easConfig.submit?.production?.android?.track).toBe('internal');
+    expect(easConfig.submit?.production?.android?.track).toBe('alpha');
     expect(easConfig.submit?.production?.ios).toBeDefined();
   });
 
@@ -142,11 +142,10 @@ describe('production app metadata', () => {
     }
   });
 
-  it('Sentry資格情報がない非本番ビルドではsource map uploadを無効にする', () => {
-    for (const profile of ['development', 'preview', 'smoke']) {
+  it('Sentry資格情報を含めない全ビルドでsource map uploadを無効にする', () => {
+    for (const profile of ['development', 'preview', 'smoke', 'production']) {
       expect(easConfig.build?.[profile]?.env?.SENTRY_DISABLE_AUTO_UPLOAD).toBe('true');
     }
-    expect(easConfig.build?.production?.env?.SENTRY_DISABLE_AUTO_UPLOAD).toBeUndefined();
   });
 
   it('未使用のcamera、microphone、overlay権限を最終Manifestから除外する', () => {

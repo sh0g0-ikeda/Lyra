@@ -65,6 +65,11 @@ vi.mock('react-native', () => ({
   View: 'view'
 }));
 
+vi.mock('react-native-safe-area-context', () => ({
+  SafeAreaView: ({ children, ...props }: React.PropsWithChildren<Record<string, unknown>>) =>
+    React.createElement('safe-area-view', props, children)
+}));
+
 vi.mock('lucide-react-native', () => {
   const icon = (name: string) => {
     const Icon = (props: Record<string, unknown>) => React.createElement(name, props);
@@ -256,6 +261,13 @@ describe('StoryHierarchySheet', () => {
     }
     return renderer!;
   };
+
+  it('フルスクリーン階層シートの見出しをiPhoneの安全領域より下に表示する', async () => {
+    const renderer = await renderSheet();
+    const safeArea = renderer.root.findByType('safe-area-view');
+
+    expect(safeArea.props.edges).toEqual(['top']);
+  });
 
   it('選択中の枝だけ取得し、折りたたまれた別作品の章は取得しない', async () => {
     const renderer = await renderSheet();

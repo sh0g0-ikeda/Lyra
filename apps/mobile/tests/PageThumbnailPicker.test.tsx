@@ -114,19 +114,24 @@ describe('PageThumbnailPicker', () => {
     expect(onSelect).toHaveBeenCalledWith('page-1');
   });
 
-  it('拡大ボタンでは選択を変えず対象ページだけをプレビューする', () => {
+  it('拡大ボタンでは選択を変えず原寸の画像候補を直接プレビューする', () => {
     const onPreview = vi.fn();
     const onSelect = vi.fn();
+    const fullImageSources = [
+      { headers: { Authorization: 'Bearer token' }, uri: 'https://api.lyra.test/page.png' },
+      { uri: 'https://cdn.lyra.test/page.png' }
+    ];
     let renderer: ReturnType<typeof create>;
     act(() => {
       renderer = create(
         <PageThumbnailPicker
           emptyLabel="ページなし"
-          imageSourcesFor={() => [{ uri: 'https://cdn.lyra.test/page.png' }]}
+          imageSourcesFor={() => [{ uri: 'https://cdn.lyra.test/page-thumbnail.png' }]}
           language="ja"
           onPreview={onPreview}
           onSelect={onSelect}
           pages={[page('page-1', 1, true)]}
+          previewImageSourcesFor={() => fullImageSources}
           selectedId={null}
           statusLabelFor={(status) => status}
         />
@@ -137,7 +142,7 @@ describe('PageThumbnailPicker', () => {
       renderer!.root.findByProps({ accessibilityLabel: '1ページを拡大表示' }).props.onPress();
     });
 
-    expect(onPreview).toHaveBeenCalledWith('page-1');
+    expect(onPreview).toHaveBeenCalledWith(fullImageSources);
     expect(onSelect).not.toHaveBeenCalled();
   });
 

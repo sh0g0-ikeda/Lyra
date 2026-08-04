@@ -4,6 +4,7 @@ import type { PageRecord } from '@/domain/types';
 import {
   buildFullPageImageSource,
   buildFullPageImageSources,
+  buildPageImageDownloadSources,
   buildPageThumbnailImageSource,
   buildPageThumbnailImageSources,
 } from '@/domain/pageImageSources';
@@ -124,5 +125,21 @@ describe('page image sources', () => {
 
     expect(source.uri).toContain('/api/pages/page-1/export-image?image_revision=');
     expect(source.headers).toEqual({ Authorization: 'Bearer token' });
+  });
+
+  it('画像保存は期限切れのCDN URLを使わず認証済み原寸エンドポイントだけを返す', () => {
+    const sources = buildPageImageDownloadSources({
+      apiBaseUrl: 'https://app.lyra-editor.com',
+      authorizationHeader: 'Bearer token',
+      organizationId: 'organization-1',
+      page,
+      sessionKey: 'user-1',
+    });
+
+    expect(sources).toHaveLength(1);
+    expect(sources[0]?.uri).toContain('/api/pages/page-1/export-image?organization_id=organization-1');
+    expect(sources[0]?.headers).toEqual({ Authorization: 'Bearer token' });
+    expect(sources[0]?.uri).not.toContain('full-page.png');
+    expect(sources.some((source) => source.uri.includes('/thumbnail'))).toBe(false);
   });
 });
