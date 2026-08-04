@@ -7,11 +7,11 @@ stored here or in the Mobile bundle.
 | Item | Development | Preview | Production |
 |---|---|---|---|
 | Build environment | `development` | `preview` | `production` |
-| iOS bundle ID | `com.lyra.mobile` | `com.lyra.mobile` | `com.lyra.mobile` |
+| iOS bundle ID | `jp.lyra.mobile` | `jp.lyra.mobile` | `jp.lyra.mobile` |
 | Android application ID | `com.lyra.mobile` | `com.lyra.mobile` | `com.lyra.mobile` |
 | API origin | Local developer URL | EAS `preview` environment | `https://app.lyra-editor.com` |
-| Cognito callback | `lyra-mobile://auth/callback` | `lyra-mobile://auth/callback` | `https://app.lyra-editor.com/auth/mobile/callback` |
-| Cognito logout callback | `lyra-mobile://auth/logout` | `lyra-mobile://auth/logout` | `https://app.lyra-editor.com/auth/mobile/logout` |
+| Cognito callback | `lyra-mobile://auth/callback` | `lyra-mobile://auth/callback` | `lyra-mobile://auth/callback` |
+| Cognito logout callback | `lyra-mobile://auth/logout` | `lyra-mobile://auth/logout` | `lyra-mobile://auth/logout` |
 | Apple association | Not generated | `https://app.lyra-editor.com/.well-known/apple-app-site-association` | `https://app.lyra-editor.com/.well-known/apple-app-site-association`, generated from `APPLE_DEVELOPER_TEAM_ID` |
 | Android association | Not required | `app.lyra-editor.com` / EAS APK certificate | `app.lyra-editor.com` / `com.lyra.mobile` / `DD:DF:94:7C:55:AE:BB:15:82:51:37:92:05:D8:77:47:29:DF:BD:C0:97:90:08:EB:93:47:66:96:B8:78:20:0B` |
 | Store product mapping | None | Sandbox values from EAS environment | Production values from the server-owned product catalog |
@@ -21,7 +21,7 @@ stored here or in the Mobile bundle.
 | Crash reporting | Disabled | Disabled | Sentry DSN from EAS `production` environment |
 | Source map upload | Disabled | Disabled | EAS sensitive secrets `SENTRY_AUTH_TOKEN`, `SENTRY_ORG`, and `SENTRY_PROJECT` |
 
-Production configuration is accepted only when the API origin and HTTPS
+Production configuration is accepted only when the API origin and native-app
 callbacks match this table. Public Cognito identifiers may be embedded; Cognito
 client secrets, AWS credentials, Stripe secrets, and store credentials must not
 use any `EXPO_PUBLIC_*` variable.
@@ -34,11 +34,11 @@ deployed `app.lyra-editor.com`. Production rejects every other host during Expo
 config evaluation. The same validated host is used for the iOS association and
 the Android callback, logout, and invitation intent filters.
 
-`EXPO_PUBLIC_SENTRY_DSN` is a public ingestion identifier and is required by the
-production runtime validator. Crash events are scrubbed in the client before
-delivery. Sentry's source-map upload token is a credential and must use EAS
-sensitive visibility; it must never use an `EXPO_PUBLIC_*` name or appear in this
-repository.
+`EXPO_PUBLIC_SENTRY_DSN` is an optional public ingestion identifier. When it is
+unset, crash-event delivery is disabled; when it is set, the value must be a
+valid HTTPS Sentry DSN. Sentry's source-map upload token is a credential and
+must use EAS sensitive visibility; it must never use an `EXPO_PUBLIC_*` name or
+appear in this repository.
 
 Native push requires two independent configuration surfaces:
 
@@ -53,14 +53,14 @@ keys are installed. `PUSH_NOTIFICATIONS_ENABLED` remains `false` until APNs is
 also installed, the application revision containing the push implementation is
 deployed, and real-device delivery passes on both platforms. iOS signing must
 enable the Push Notifications entitlement and APNs key access for
-`com.lyra.mobile`.
+`jp.lyra.mobile`.
 
 The Android fingerprint above was extracted from and signature-verified against
 EAS build `60107a7c-6b9a-4eed-a834-d80353bb4d94` (build 20). The downloaded APK
 also contains the registered Firebase project, App ID, and sender ID. It must be
 updated if the upload/signing key changes. The production Web image fails its
 build unless `APPLE_DEVELOPER_TEAM_ID` is a valid ten-character Team ID. The
-checked-in generator combines it with `com.lyra.mobile` and authorizes only
+checked-in generator combines it with `jp.lyra.mobile` and authorizes only
 Mobile auth and invitation paths. The real value, deployed HTTPS response, and
 device association cannot be finalized until an Apple Developer account and
 signed iOS build exist.

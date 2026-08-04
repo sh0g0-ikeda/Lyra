@@ -70,8 +70,8 @@
         "EXPO_PUBLIC_API_BASE_URL": "https://app.lyra-editor.com",
         "EXPO_PUBLIC_COGNITO_DOMAIN": "https://ap-northeast-1wizlzlgmm.auth.ap-northeast-1.amazoncognito.com",
         "EXPO_PUBLIC_COGNITO_CLIENT_ID": "6b2h941o888u2l7ejhv5jog94",
-        "EXPO_PUBLIC_COGNITO_REDIRECT_URI": "https://app.lyra-editor.com/auth/mobile/callback",
-        "EXPO_PUBLIC_COGNITO_LOGOUT_REDIRECT_URI": "https://app.lyra-editor.com/auth/mobile/logout",
+        "EXPO_PUBLIC_COGNITO_REDIRECT_URI": "lyra-mobile://auth/callback",
+        "EXPO_PUBLIC_COGNITO_LOGOUT_REDIRECT_URI": "lyra-mobile://auth/logout",
         "EXPO_PUBLIC_COGNITO_SCOPES": "openid,email",
         "EXPO_PUBLIC_ORGANIZATION_FEATURES_ENABLED": "true",
         "SENTRY_DISABLE_AUTO_UPLOAD": "true"
