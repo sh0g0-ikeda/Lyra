@@ -36,8 +36,10 @@ export interface MobileConfigValidation {
 }
 
 const PRODUCTION_API_ORIGIN = 'https://app.lyra-editor.com';
-const PRODUCTION_REDIRECT_URI = 'https://app.lyra-editor.com/auth/mobile/callback';
-const PRODUCTION_LOGOUT_REDIRECT_URI = 'https://app.lyra-editor.com/auth/mobile/logout';
+// Cognito must return to the native app, not to the web application's HTML
+// fallback. The custom scheme is claimed by both production app binaries.
+const PRODUCTION_REDIRECT_URI = 'lyra-mobile://auth/callback';
+const PRODUCTION_LOGOUT_REDIRECT_URI = 'lyra-mobile://auth/logout';
 
 const mobileConfigSchema = z.object({
   apiBaseUrl: z.string().min(1),

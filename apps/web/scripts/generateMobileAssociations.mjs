@@ -7,7 +7,7 @@ import {
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const IOS_BUNDLE_IDENTIFIER = 'com.lyra.mobile';
+const IOS_BUNDLE_IDENTIFIER = 'jp.lyra.mobile';
 const APPLE_TEAM_ID_PATTERN = /^[A-Z0-9]{10}$/u;
 const ALLOWED_UNIVERSAL_LINK_PATHS = [
   '/auth/mobile/*',

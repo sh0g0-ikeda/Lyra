@@ -6,8 +6,8 @@ const productionConfig = {
   apiBaseUrl: 'https://app.lyra-editor.com',
   cognitoDomain: 'https://ap-northeast-1example.auth.ap-northeast-1.amazoncognito.com',
   cognitoClientId: '6b2h941o888u2l7ejhv5jog94',
-  cognitoRedirectUri: 'https://app.lyra-editor.com/auth/mobile/callback',
-  cognitoLogoutRedirectUri: 'https://app.lyra-editor.com/auth/mobile/logout',
+  cognitoRedirectUri: 'lyra-mobile://auth/callback',
+  cognitoLogoutRedirectUri: 'lyra-mobile://auth/logout',
   cognitoScopes: ['openid', 'email'],
   apiTokenUse: 'id_token' as const,
   organizationFeaturesEnabled: true,
@@ -16,15 +16,15 @@ const productionConfig = {
 };
 
 describe('mobile configuration validation', () => {
-  it('固定された本番HTTPS設定を受け入れる', () => {
+  it('固定された本番アプリcallback設定を受け入れる', () => {
     expect(validateMobileConfig(productionConfig)).toMatchObject({ valid: true, issues: [] });
   });
 
-  it('本番のHTTP、localhost、任意origin、開発callbackを拒否する', () => {
+  it('本番のHTTP、localhost、任意origin、旧HTTPS callbackを拒否する', () => {
     const result = validateMobileConfig({
       ...productionConfig,
       apiBaseUrl: 'http://localhost:3000',
-      cognitoRedirectUri: 'lyra-mobile://auth/callback'
+      cognitoRedirectUri: 'https://app.lyra-editor.com/auth/mobile/callback'
     });
 
     expect(result.valid).toBe(false);
