@@ -38,6 +38,14 @@
           "photosPermission": "キャラクター参照情報を読み込むため、あなたが選択した画像だけを使用します。"
         }
       ],
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "キャラクター参照情報を読み込むため、あなたが選択した画像だけを使用します。",
+          "savePhotosPermission": "生成したページ画像を写真ライブラリに保存するために使用します。",
+          "granularPermissions": ["photo"]
+        }
+      ],
       "expo-sharing",
       "expo-web-browser",
       "expo-image",

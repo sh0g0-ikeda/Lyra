@@ -1,4 +1,5 @@
 import * as FileSystem from 'expo-file-system/legacy';
+import * as MediaLibrary from 'expo-media-library';
 import * as Sharing from 'expo-sharing';
 
 import type { AuthTokens } from '@/domain/types';
@@ -95,6 +96,35 @@ export async function downloadAuthenticatedFile({
       throw new MobileFileTransferError('SHARING_UNAVAILABLE');
     }
     await Sharing.shareAsync(result.uri, { mimeType });
+    return result.uri;
+  } catch (error) {
+    throw classifyFileTransferFailure(error);
+  }
+}
+
+export async function saveAuthenticatedImageToPhotoLibrary({
+  path,
+  filename,
+  tokens,
+  mimeType
+}: DownloadAuthenticatedFileParams): Promise<string> {
+  const directory = FileSystem.cacheDirectory ?? FileSystem.documentDirectory;
+  if (directory === null) {
+    throw new MobileFileTransferError('STORAGE_FULL');
+  }
+
+  const safeFilename = normalizeDownloadFilename(filename, extensionFromMimeType(mimeType), 'lyra-image');
+  const fileUri = `${directory}${safeFilename}`;
+  const baseUrl = config.apiBaseUrl.replace(/\/+$/, '');
+  const headers = tokens === null ? undefined : { Authorization: `Bearer ${tokens.idToken}` };
+  try {
+    const result = await FileSystem.downloadAsync(`${baseUrl}${path}`, fileUri, { headers });
+    assertSuccessfulDownload(result.status);
+    const permission = await MediaLibrary.requestPermissionsAsync(true);
+    if (!permission.granted) {
+      throw new MobileFileTransferError('PHOTO_LIBRARY_PERMISSION_DENIED');
+    }
+    await MediaLibrary.saveToLibraryAsync(result.uri);
     return result.uri;
   } catch (error) {
     throw classifyFileTransferFailure(error);
