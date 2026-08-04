@@ -1,10 +1,10 @@
 export const RATE_LIMIT_RULES = {
   generation: {
-    maxRequests: 10,
+    maxRequests: 60,
     windowSeconds: 60,
   },
   storyAi: {
-    maxRequests: 20,
+    maxRequests: 60,
     windowSeconds: 60,
   },
   story: {

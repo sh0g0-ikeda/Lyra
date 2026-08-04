@@ -5,6 +5,7 @@ import {
   downloadAuthenticatedFile,
   downloadExternalFile,
   normalizeDownloadFilename,
+  saveImageToPhotoLibrary,
   saveAuthenticatedImageToPhotoLibrary
 } from '@/lib/download';
 
@@ -124,6 +125,40 @@ describe('mobile download filenames', () => {
     );
     expect(saveToLibraryAsyncMock).toHaveBeenCalledWith('file:///cache/lyra-page-1.png');
     expect(shareAsyncMock).not.toHaveBeenCalled();
+  });
+
+  it('署名付き画像URLが拒否された場合に認証済み画像へフォールバックして保存する', async () => {
+    downloadAsyncMock
+      .mockResolvedValueOnce({ status: 403, uri: 'file:///cache/signed-page.png' })
+      .mockResolvedValueOnce({ status: 200, uri: 'file:///cache/authenticated-page.png' });
+    requestMediaLibraryPermissionsMock.mockResolvedValue({ granted: true });
+    saveToLibraryAsyncMock.mockResolvedValue(undefined);
+
+    await saveImageToPhotoLibrary({
+      filename: 'lyra-page-1',
+      mimeType: 'image/png',
+      sources: [
+        { url: 'https://cdn.lyra.test/page-1.png?Signature=expired' },
+        {
+          url: 'https://api.example.test/api/pages/page-1/export-image',
+          headers: { Authorization: 'Bearer id-token' }
+        }
+      ]
+    });
+
+    expect(downloadAsyncMock).toHaveBeenNthCalledWith(
+      1,
+      'https://cdn.lyra.test/page-1.png?Signature=expired',
+      'file:///cache/lyra-page-1-candidate-1.png',
+      { headers: undefined }
+    );
+    expect(downloadAsyncMock).toHaveBeenNthCalledWith(
+      2,
+      'https://api.example.test/api/pages/page-1/export-image',
+      'file:///cache/lyra-page-1-candidate-2.png',
+      { headers: { Authorization: 'Bearer id-token' } }
+    );
+    expect(saveToLibraryAsyncMock).toHaveBeenCalledWith('file:///cache/authenticated-page.png');
   });
 
   it('写真ライブラリの権限が拒否された場合は専用エラーを返す', async () => {

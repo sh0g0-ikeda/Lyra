@@ -116,7 +116,7 @@ describe('production app metadata', () => {
     expect(easConfig.build?.preview).toMatchObject({
       autoIncrement: true,
     });
-    expect(easConfig.submit?.production?.android?.track).toBe('internal');
+    expect(easConfig.submit?.production?.android?.track).toBe('alpha');
     expect(easConfig.submit?.production?.ios).toBeDefined();
   });
 

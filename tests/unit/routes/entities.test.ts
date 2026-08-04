@@ -9,6 +9,7 @@ import {
   jobAcceptedSchema,
 } from '../../../packages/api-contract/src/mobileApiSchemas.js';
 import { createApp } from '../../../src/app.js';
+import { RATE_LIMIT_RULES } from '../../../src/domain/constants/rateLimit.js';
 import { REQUEST_BODY_LIMITS } from '../../../src/routes/requestBody.js';
 import { env } from '../../../src/lib/env.js';
 import type { CreditBalanceSnapshot } from '../../../src/domain/types/credit.js';
@@ -462,7 +463,9 @@ describe('entity routes', () => {
     });
 
     expect(response.status).toBe(200);
-    expect(response.headers.get('x-ratelimit-limit')).toBe('10');
+    expect(response.headers.get('x-ratelimit-limit')).toBe(
+      String(RATE_LIMIT_RULES.generation.maxRequests),
+    );
   });
 
   it('import-image は巨大な JSON body を service 呼び出し前に 413 にする', async () => {

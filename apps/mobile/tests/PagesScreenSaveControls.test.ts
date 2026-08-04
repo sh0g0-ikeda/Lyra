@@ -19,7 +19,8 @@ describe('PagesScreen manual save controls', () => {
       'utf8'
     );
 
-    expect(source).toContain('saveAuthenticatedImageToPhotoLibrary');
+    expect(source).toContain('saveImageToPhotoLibrary');
+    expect(source).toContain('buildPageImageDownloadSources');
     expect(source).toContain('generated.screens.PagesScreen.save.image.dd680bcb');
   });
 });

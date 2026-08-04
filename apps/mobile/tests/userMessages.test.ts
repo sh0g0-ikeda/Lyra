@@ -40,4 +40,11 @@ describe('userErrorMessage', () => {
     expect(userErrorMessage(new ApiError('raw', 409, 'RESOURCE_STALE'), 'ja')).toContain('入力内容は保持');
     expect(userErrorMessage(new ApiError('raw', 409, 'RESOURCE_STALE'), 'en')).toContain('draft is preserved');
   });
+
+  it('過剰な操作集中エラーをユーザーへ直接表示しない', () => {
+    const message = userErrorMessage(new ApiError('raw', 429, 'RATE_LIMITED'), 'ja');
+
+    expect(message).toBe('操作に失敗しました。もう一度お試しください。');
+    expect(message).not.toContain('短時間に操作が集中');
+  });
 });

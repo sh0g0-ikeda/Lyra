@@ -76,12 +76,19 @@
         "EXPO_PUBLIC_ORGANIZATION_FEATURES_ENABLED": "true",
         "SENTRY_DISABLE_AUTO_UPLOAD": "true"
       }
+    },
+    "production-apk": {
+      "extends": "production",
+      "distribution": "internal",
+      "android": {
+        "buildType": "apk"
+      }
     }
   },
   "submit": {
     "production": {
       "android": {
-        "track": "internal",
+        "track": "alpha",
         "releaseStatus": "completed"
       },
       "ios": {

@@ -85,7 +85,7 @@ export const userErrorMessage = (error: unknown, language: UiLanguage): string =
       return t(language, "generated.lib.userMessages.some.input.is.incomplete.or.inconsistent.40e2b25c");
     }
     if (error.status === 429) {
-      return t(language, "generated.lib.userMessages.requests.are.being.sent.too.quickly.wait.1acbb5d3");
+      return t(language, "generated.lib.userMessages.the.action.failed.try.again.d935b0f9");
     }
     if (error.status >= 500) {
       return t(language, 'shared.error.server');
