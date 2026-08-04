@@ -237,6 +237,21 @@ describe('mobile download filenames', () => {
     ).rejects.toMatchObject({ code: 'PHOTO_LIBRARY_PERMISSION_DENIED' });
     expect(createAssetMock).not.toHaveBeenCalled();
   });
+
+  it('写真ライブラリへの登録失敗をダウンロード中断と誤表示しない', async () => {
+    downloadAsyncMock.mockResolvedValue({ status: 200, uri: 'file:///cache/lyra-page-1.png' });
+    requestMediaLibraryPermissionsMock.mockResolvedValue({ granted: true });
+    createAssetMock.mockRejectedValueOnce(new Error('Native media library registration failed'));
+
+    await expect(
+      saveAuthenticatedImageToPhotoLibrary({
+        path: '/api/pages/page-1/export-image',
+        filename: 'lyra-page-1',
+        mimeType: 'image/png',
+        tokens: null
+      })
+    ).rejects.toMatchObject({ code: 'IMAGE_SAVE_FAILED' });
+  });
 });
 
 describe('mobile download failure classification', () => {

@@ -194,7 +194,15 @@ export async function saveImageToPhotoLibrary({
     if (!permission.granted) {
       throw new MobileFileTransferError('PHOTO_LIBRARY_PERMISSION_DENIED');
     }
-    await MediaLibrary.Asset.create(downloadedUri);
+    try {
+      await MediaLibrary.Asset.create(downloadedUri);
+    } catch (error) {
+      const failure = classifyFileTransferFailure(error);
+      if (failure.code === 'DOWNLOAD_INTERRUPTED') {
+        throw new MobileFileTransferError('IMAGE_SAVE_FAILED');
+      }
+      throw failure;
+    }
     return downloadedUri;
   } catch (error) {
     throw classifyFileTransferFailure(error);
