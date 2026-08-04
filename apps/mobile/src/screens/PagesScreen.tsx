@@ -2000,15 +2000,7 @@ export function PagesScreen(): React.JSX.Element {
     });
   };
 
-  const previewPage = (pageId: string): void => {
-    const page = pages.find((candidate) => candidate.id === pageId);
-    if (page === undefined) {
-      return;
-    }
-    const source = pageThumbnailImageSourcesFor(page)[0];
-    if (source === undefined) {
-      return;
-    }
+  const previewPage = (source: RemoteImageSource): void => {
     setPreviewImageHeaders(source.headers);
     setPreviewImageUri(source.uri);
   };
@@ -2577,7 +2569,6 @@ export function PagesScreen(): React.JSX.Element {
       <Section collapsible defaultCollapsed persistKey="pages:style" title={t(language, 'styleReference')}>
         <FormField editable={canEdit} label={t(language, 'styleReferenceTitle')} maxLength={200} onChangeText={setStyleReferenceTitle} value={styleReferenceTitle} />
         <FormField editable={canEdit} label={t(language, 'styleReferenceNotes')} maxLength={2000} multiline onChangeText={setStyleReferenceNotes} value={styleReferenceNotes} />
-        <PrimaryButton disabled={!canEdit || selectedPage === null} disabledReason={!canEdit ? t(language, "generated.screens.PagesScreen.editing.permission.is.required.6d3b86ee") : selectedPage === null ? t(language, "generated.screens.PagesScreen.select.a.page.first.50276876") : undefined} label={t(language, 'save')} loading={updatePageMutation.isPending} onPress={() => updatePageMutation.mutate()} />
       </Section>
 
       <Section collapsible defaultCollapsed persistKey="pages:story-sources" title={t(language, "generated.screens.PagesScreen.story.sources.82e34b3e")}>
@@ -2591,7 +2582,6 @@ export function PagesScreen(): React.JSX.Element {
           scenes={scenes}
           sourceSceneIds={sourceSceneIds}
         />
-        <PrimaryButton disabled={!canEdit || selectedPage === null} disabledReason={!canEdit ? t(language, "generated.screens.PagesScreen.editing.permission.is.required.6d3b86ee") : selectedPage === null ? t(language, "generated.screens.PagesScreen.select.a.page.first.50276876") : undefined} label={t(language, 'save')} loading={updatePageMutation.isPending} onPress={() => updatePageMutation.mutate()} />
       </Section>
 
       <Section
@@ -2781,7 +2771,6 @@ export function PagesScreen(): React.JSX.Element {
               />
             ) : null}
             {frameDraftsInvalid ? <Notice message={t(language, "generated.screens.PagesScreen.frames.require.four.vertices.coordinates.25a49784")} tone="warning" /> : null}
-            <PrimaryButton disabled={!canEdit || selectedPage === null || frameDrafts.length === 0 || frameDraftsInvalid} disabledReason={!canEdit ? t(language, "generated.screens.PagesScreen.editing.permission.is.required.6d3b86ee") : selectedPage === null ? t(language, "generated.screens.PagesScreen.select.a.page.first.50276876") : frameDrafts.length === 0 ? t(language, "generated.screens.PagesScreen.no.frames.b75c13aa") : frameDraftsInvalid ? t(language, "generated.screens.PagesScreen.check.frame.values.adb62959") : undefined} label={t(language, 'save')} loading={replaceFramesMutation.isPending} onPress={() => replaceFramesMutation.mutate()} variant="secondary" />
           </>
         )}
       </Section>
@@ -2955,7 +2944,6 @@ export function PagesScreen(): React.JSX.Element {
         ) : null}
         <View style={styles.buttonRow}>
           <PrimaryButton disabled={!canEdit || selectedPage === null || panelPayloadInvalid} disabledReason={!canEdit ? t(language, "generated.screens.PagesScreen.editing.permission.is.required.6d3b86ee") : selectedPage === null ? t(language, "generated.screens.PagesScreen.select.a.page.first.50276876") : panelPayloadInvalid ? t(language, "generated.screens.PagesScreen.check.panel.content.a0d29c4a") : undefined} label={t(language, 'create')} loading={createPanelMutation.isPending} onPress={() => createPanelMutation.mutate()} />
-          <PrimaryButton disabled={!canEdit || selectedPanel === null || panelPayloadInvalid} disabledReason={!canEdit ? t(language, "generated.screens.PagesScreen.editing.permission.is.required.6d3b86ee") : selectedPanel === null ? t(language, "generated.screens.PagesScreen.select.a.panel.first.4b816ba0") : panelPayloadInvalid ? t(language, "generated.screens.PagesScreen.check.panel.content.a0d29c4a") : undefined} label={t(language, 'save')} loading={updatePanelMutation.isPending} onPress={() => updatePanelMutation.mutate()} variant="secondary" />
         </View>
       </Section>
         </>
