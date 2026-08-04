@@ -6,6 +6,7 @@ export type MobileFileTransferErrorCode =
   | 'DOWNLOAD_INTERRUPTED'
   | 'NETWORK_UNAVAILABLE'
   | 'PHOTO_LIBRARY_PERMISSION_DENIED'
+  | 'IMAGE_SAVE_FAILED'
   | 'STORAGE_FULL'
   | 'SHARING_UNAVAILABLE';
 
@@ -29,6 +30,7 @@ export function fileTransferErrorMessage(
     DOWNLOAD_INTERRUPTED: 'shared.fileTransfer.downloadInterrupted',
     NETWORK_UNAVAILABLE: 'shared.fileTransfer.networkUnavailable',
     PHOTO_LIBRARY_PERMISSION_DENIED: 'shared.fileTransfer.photoLibraryPermissionDenied',
+    IMAGE_SAVE_FAILED: 'shared.fileTransfer.imageSaveFailed',
     STORAGE_FULL: 'shared.fileTransfer.storageFull',
     SHARING_UNAVAILABLE: 'shared.fileTransfer.sharingUnavailable'
   };

@@ -1,5 +1,5 @@
-import * as FileSystem from 'expo-file-system/legacy';
 import { File, Paths } from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import * as MediaLibrary from 'expo-media-library';
 import * as Sharing from 'expo-sharing';
 
@@ -194,7 +194,7 @@ export async function saveImageToPhotoLibrary({
     if (!permission.granted) {
       throw new MobileFileTransferError('PHOTO_LIBRARY_PERMISSION_DENIED');
     }
-    await MediaLibrary.saveToLibraryAsync(downloadedUri);
+    await MediaLibrary.Asset.create(downloadedUri);
     return downloadedUri;
   } catch (error) {
     throw classifyFileTransferFailure(error);
@@ -215,9 +215,9 @@ export async function saveImageBlobToPhotoLibrary({
   blob
 }: SaveImageBlobToPhotoLibraryParams): Promise<string> {
   const safeFilename = normalizeDownloadFilename(filename, extensionFromMimeType(mimeType), 'lyra-image');
-  const file = new File(Paths.cache, safeFilename);
 
   try {
+    const file = new File(Paths.cache, safeFilename);
     if (file.exists) {
       file.delete();
     }
@@ -227,10 +227,14 @@ export async function saveImageBlobToPhotoLibrary({
     if (!permission.granted) {
       throw new MobileFileTransferError('PHOTO_LIBRARY_PERMISSION_DENIED');
     }
-    await MediaLibrary.saveToLibraryAsync(file.uri);
+    await MediaLibrary.Asset.create(file.uri);
     return file.uri;
   } catch (error) {
-    throw classifyFileTransferFailure(error);
+    const failure = classifyFileTransferFailure(error);
+    if (failure.code === 'DOWNLOAD_INTERRUPTED') {
+      throw new MobileFileTransferError('IMAGE_SAVE_FAILED');
+    }
+    throw failure;
   }
 }
 

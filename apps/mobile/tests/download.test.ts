@@ -12,44 +12,46 @@ import {
 
 const {
   downloadAsyncMock,
+  fileDeleteMock,
+  fileWriteMock,
   isAvailableAsyncMock,
   requestMediaLibraryPermissionsMock,
-  saveToLibraryAsyncMock,
+  createAssetMock,
   shareAsyncMock,
-  writeBlobToFileMock
+  writeAsStringAsyncMock
 } = vi.hoisted(() => ({
   downloadAsyncMock: vi.fn(),
+  fileDeleteMock: vi.fn(),
+  fileWriteMock: vi.fn(),
   isAvailableAsyncMock: vi.fn(),
   requestMediaLibraryPermissionsMock: vi.fn(),
-  saveToLibraryAsyncMock: vi.fn(),
+  createAssetMock: vi.fn(),
   shareAsyncMock: vi.fn(),
-  writeBlobToFileMock: vi.fn()
+  writeAsStringAsyncMock: vi.fn()
 }));
 
+const FileMock = vi.hoisted(() =>
+  vi.fn(function TestFile(directory: string, filename: string) {
+    return {
+      delete: fileDeleteMock,
+      exists: false,
+      uri: `${directory}${filename}`,
+      write: fileWriteMock
+    };
+  })
+);
+
 vi.mock('expo-file-system', () => ({
-  Paths: { cache: 'file:///cache/' },
-  File: class {
-    public readonly uri: string;
-    public readonly exists = false;
-
-    public constructor(directory: string, filename: string) {
-      this.uri = `${directory}${filename}`;
-    }
-
-    public write(content: Uint8Array): void {
-      writeBlobToFileMock(this.uri, content);
-    }
-
-    public delete(): void {
-      return undefined;
-    }
-  }
+  File: FileMock,
+  Paths: { cache: 'file:///cache/' }
 }));
 
 vi.mock('expo-file-system/legacy', () => ({
   cacheDirectory: 'file:///cache/',
   documentDirectory: 'file:///documents/',
-  downloadAsync: downloadAsyncMock
+  downloadAsync: downloadAsyncMock,
+  writeAsStringAsync: writeAsStringAsyncMock,
+  EncodingType: { Base64: 'base64' }
 }));
 
 vi.mock('expo-sharing', () => ({
@@ -58,8 +60,8 @@ vi.mock('expo-sharing', () => ({
 }));
 
 vi.mock('expo-media-library', () => ({
+  Asset: { create: createAssetMock },
   requestPermissionsAsync: requestMediaLibraryPermissionsMock,
-  saveToLibraryAsync: saveToLibraryAsyncMock
 }));
 
 vi.mock('@/lib/config', () => ({
@@ -126,7 +128,7 @@ describe('mobile download filenames', () => {
   it('認証済みのページ画像を写真ライブラリへ保存し、共有シートを開かない', async () => {
     downloadAsyncMock.mockResolvedValue({ status: 200, uri: 'file:///cache/lyra-page-1.png' });
     requestMediaLibraryPermissionsMock.mockResolvedValue({ granted: true });
-    saveToLibraryAsyncMock.mockResolvedValue(undefined);
+    createAssetMock.mockResolvedValue(undefined);
 
     await saveAuthenticatedImageToPhotoLibrary({
       path: '/api/pages/page-1/export-image',
@@ -146,13 +148,13 @@ describe('mobile download filenames', () => {
       'file:///cache/lyra-page-1.png',
       { headers: { Authorization: 'Bearer id-token' } }
     );
-    expect(saveToLibraryAsyncMock).toHaveBeenCalledWith('file:///cache/lyra-page-1.png');
+    expect(createAssetMock).toHaveBeenCalledWith('file:///cache/lyra-page-1.png');
     expect(shareAsyncMock).not.toHaveBeenCalled();
   });
 
-  it('認証更新済みAPIレスポンスの画像バイト列を写真ライブラリへ保存する', async () => {
+  it('認証更新済みAPIレスポンスの画像バイト列をネイティブキャッシュ経由で写真ライブラリへ保存する', async () => {
     requestMediaLibraryPermissionsMock.mockResolvedValue({ granted: true });
-    saveToLibraryAsyncMock.mockResolvedValue(undefined);
+    createAssetMock.mockResolvedValue(undefined);
 
     await saveImageBlobToPhotoLibrary({
       blob: new Blob(['png-bytes'], { type: 'image/png' }),
@@ -160,12 +162,31 @@ describe('mobile download filenames', () => {
       mimeType: 'image/png'
     });
 
-    expect(writeBlobToFileMock).toHaveBeenCalledWith(
-      'file:///cache/lyra-page-1.png',
-      expect.any(Uint8Array)
+    expect(FileMock).toHaveBeenCalledWith('file:///cache/', 'lyra-page-1.png');
+    expect(fileWriteMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        0: 'p'.charCodeAt(0),
+        1: 'n'.charCodeAt(0),
+        2: 'g'.charCodeAt(0)
+      })
     );
-    expect(saveToLibraryAsyncMock).toHaveBeenCalledWith('file:///cache/lyra-page-1.png');
+    expect(writeAsStringAsyncMock).not.toHaveBeenCalled();
+    expect(createAssetMock).toHaveBeenCalledWith('file:///cache/lyra-page-1.png');
     expect(downloadAsyncMock).not.toHaveBeenCalled();
+  });
+
+  it('ネイティブ画像書き込みの予期しない失敗をダウンロード中断と誤表示しない', async () => {
+    fileWriteMock.mockImplementationOnce(() => {
+      throw new Error('Native file write failed');
+    });
+
+    await expect(
+      saveImageBlobToPhotoLibrary({
+        blob: new Blob(['png-bytes'], { type: 'image/png' }),
+        filename: 'lyra-page-1',
+        mimeType: 'image/png'
+      })
+    ).rejects.toMatchObject({ code: 'IMAGE_SAVE_FAILED' });
   });
 
   it('署名付き画像URLが拒否された場合に認証済み画像へフォールバックして保存する', async () => {
@@ -173,7 +194,7 @@ describe('mobile download filenames', () => {
       .mockResolvedValueOnce({ status: 403, uri: 'file:///cache/signed-page.png' })
       .mockResolvedValueOnce({ status: 200, uri: 'file:///cache/authenticated-page.png' });
     requestMediaLibraryPermissionsMock.mockResolvedValue({ granted: true });
-    saveToLibraryAsyncMock.mockResolvedValue(undefined);
+    createAssetMock.mockResolvedValue(undefined);
 
     await saveImageToPhotoLibrary({
       filename: 'lyra-page-1',
@@ -199,7 +220,7 @@ describe('mobile download filenames', () => {
       'file:///cache/lyra-page-1-candidate-2.png',
       { headers: { Authorization: 'Bearer id-token' } }
     );
-    expect(saveToLibraryAsyncMock).toHaveBeenCalledWith('file:///cache/authenticated-page.png');
+    expect(createAssetMock).toHaveBeenCalledWith('file:///cache/authenticated-page.png');
   });
 
   it('写真ライブラリの権限が拒否された場合は専用エラーを返す', async () => {
@@ -214,7 +235,7 @@ describe('mobile download filenames', () => {
         tokens: null
       })
     ).rejects.toMatchObject({ code: 'PHOTO_LIBRARY_PERMISSION_DENIED' });
-    expect(saveToLibraryAsyncMock).not.toHaveBeenCalled();
+    expect(createAssetMock).not.toHaveBeenCalled();
   });
 });
 
