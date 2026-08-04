@@ -57,7 +57,7 @@ describe('web static routes', () => {
       expect(appleResponse.status).toBe(200);
       expect(appleResponse.headers.get('content-type')).toContain('application/json');
       await expect(appleResponse.json()).resolves.toEqual({
-        applinks: { details: [{ appID: 'TEAMID.com.lyra.mobile', paths: ['/auth/mobile/*', '/invitations/*'] }] },
+        applinks: { details: [{ appID: 'TEAMID.jp.lyra.mobile', paths: ['/auth/mobile/*', '/invitations/*'] }] },
       });
       expect(missingResponse.status).toBe(404);
       expect(missingResponse.headers.get('content-type')).not.toContain('text/html');
@@ -90,7 +90,7 @@ async function createStaticFixture(): Promise<string> {
     join(root, '.well-known', 'apple-app-site-association'),
     JSON.stringify({
       applinks: {
-        details: [{ appID: 'TEAMID.com.lyra.mobile', paths: ['/auth/mobile/*', '/invitations/*'] }],
+        details: [{ appID: 'TEAMID.jp.lyra.mobile', paths: ['/auth/mobile/*', '/invitations/*'] }],
       },
     }),
     'utf8',

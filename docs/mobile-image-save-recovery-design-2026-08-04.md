@@ -44,3 +44,10 @@ library denial and storage failure stay distinct from network/download errors.
   user-visible save-image control.
 - Release checks: mobile tests, typecheck, lint, contract check, platform
   exports, then Android and iOS store builds.
+
+## Integration ownership
+
+No Terra delegation is used for this release fix.  The affected screen, mobile
+download helper, Expo dependency baseline, and store build are a single
+authentication-sensitive delivery path, so splitting ownership would add
+integration risk without creating a safely independent sidecar.
