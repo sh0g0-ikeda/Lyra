@@ -5,6 +5,7 @@ import {
   downloadAuthenticatedFile,
   downloadExternalFile,
   normalizeDownloadFilename,
+  saveImageBlobToPhotoLibrary,
   saveImageToPhotoLibrary,
   saveAuthenticatedImageToPhotoLibrary
 } from '@/lib/download';
@@ -14,19 +15,23 @@ const {
   isAvailableAsyncMock,
   requestMediaLibraryPermissionsMock,
   saveToLibraryAsyncMock,
-  shareAsyncMock
+  shareAsyncMock,
+  writeAsStringAsyncMock
 } = vi.hoisted(() => ({
   downloadAsyncMock: vi.fn(),
   isAvailableAsyncMock: vi.fn(),
   requestMediaLibraryPermissionsMock: vi.fn(),
   saveToLibraryAsyncMock: vi.fn(),
-  shareAsyncMock: vi.fn()
+  shareAsyncMock: vi.fn(),
+  writeAsStringAsyncMock: vi.fn()
 }));
 
 vi.mock('expo-file-system/legacy', () => ({
   cacheDirectory: 'file:///cache/',
   documentDirectory: 'file:///documents/',
-  downloadAsync: downloadAsyncMock
+  downloadAsync: downloadAsyncMock,
+  writeAsStringAsync: writeAsStringAsyncMock,
+  EncodingType: { Base64: 'base64' }
 }));
 
 vi.mock('expo-sharing', () => ({
@@ -125,6 +130,26 @@ describe('mobile download filenames', () => {
     );
     expect(saveToLibraryAsyncMock).toHaveBeenCalledWith('file:///cache/lyra-page-1.png');
     expect(shareAsyncMock).not.toHaveBeenCalled();
+  });
+
+  it('認証済みAPIから取得した画像バイナリを写真ライブラリへ保存する', async () => {
+    requestMediaLibraryPermissionsMock.mockResolvedValue({ granted: true });
+    saveToLibraryAsyncMock.mockResolvedValue(undefined);
+    writeAsStringAsyncMock.mockResolvedValue(undefined);
+
+    await saveImageBlobToPhotoLibrary({
+      blob: new Blob([new Uint8Array([1, 2, 3])], { type: 'image/png' }),
+      filename: 'lyra-page-1',
+      mimeType: 'image/png'
+    });
+
+    expect(writeAsStringAsyncMock).toHaveBeenCalledWith(
+      'file:///cache/lyra-page-1.png',
+      'AQID',
+      { encoding: 'base64' }
+    );
+    expect(saveToLibraryAsyncMock).toHaveBeenCalledWith('file:///cache/lyra-page-1.png');
+    expect(downloadAsyncMock).not.toHaveBeenCalled();
   });
 
   it('署名付き画像URLが拒否された場合に認証済み画像へフォールバックして保存する', async () => {

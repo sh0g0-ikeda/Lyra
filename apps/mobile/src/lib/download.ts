@@ -30,13 +30,55 @@ interface SaveImageToPhotoLibraryParams {
   sources: readonly ImageDownloadSource[];
 }
 
+interface SaveImageBlobToPhotoLibraryParams {
+  blob: Blob;
+  filename: string;
+  mimeType: string;
+}
+
 const extensionFromMimeType = (mimeType: string): string => {
   if (mimeType === 'image/png') return 'png';
   if (mimeType === 'image/jpeg') return 'jpg';
+  if (mimeType === 'image/webp') return 'webp';
   if (mimeType === 'application/pdf') return 'pdf';
   if (mimeType === 'application/zip') return 'zip';
   if (mimeType === 'text/csv') return 'csv';
   return 'bin';
+};
+
+const base64FromBlob = async (blob: Blob): Promise<string> => {
+  if (blob.size <= 0) {
+    throw new MobileFileTransferError('DOWNLOAD_INTERRUPTED');
+  }
+  if (typeof globalThis.btoa !== 'function') {
+    throw new MobileFileTransferError('DOWNLOAD_INTERRUPTED');
+  }
+
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  const chunks: string[] = [];
+  const chunkSize = 0x8000;
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    const chunk = bytes.subarray(offset, offset + chunkSize);
+    let binary = '';
+    for (let index = 0; index < chunk.length; index += 1) {
+      binary += String.fromCharCode(chunk[index]);
+    }
+    chunks.push(binary);
+  }
+  return globalThis.btoa(chunks.join(''));
+};
+
+const saveImageUriToPhotoLibrary = async (fileUri: string): Promise<string> => {
+  try {
+    const permission = await MediaLibrary.requestPermissionsAsync(true);
+    if (!permission.granted) {
+      throw new MobileFileTransferError('PHOTO_LIBRARY_PERMISSION_DENIED');
+    }
+    await MediaLibrary.saveToLibraryAsync(fileUri);
+    return fileUri;
+  } catch (error) {
+    throw classifyFileTransferFailure(error);
+  }
 };
 
 export const normalizeDownloadFilename = (
@@ -182,16 +224,35 @@ export async function saveImageToPhotoLibrary({
     throw classifyFileTransferFailure(lastFailure);
   }
 
+  return saveImageUriToPhotoLibrary(downloadedUri);
+}
+
+/**
+ * Persists an image obtained through MobileApiClient.  Keeping the authenticated
+ * fetch in the API client is essential: it can refresh Cognito credentials before
+ * the binary is requested, unlike FileSystem.downloadAsync with a stale header.
+ */
+export async function saveImageBlobToPhotoLibrary({
+  blob,
+  filename,
+  mimeType
+}: SaveImageBlobToPhotoLibraryParams): Promise<string> {
+  const directory = FileSystem.cacheDirectory ?? FileSystem.documentDirectory;
+  if (directory === null) {
+    throw new MobileFileTransferError('STORAGE_FULL');
+  }
+
+  const safeFilename = normalizeDownloadFilename(filename, extensionFromMimeType(mimeType), 'lyra-image');
+  const fileUri = `${directory}${safeFilename}`;
   try {
-    const permission = await MediaLibrary.requestPermissionsAsync(true);
-    if (!permission.granted) {
-      throw new MobileFileTransferError('PHOTO_LIBRARY_PERMISSION_DENIED');
-    }
-    await MediaLibrary.saveToLibraryAsync(downloadedUri);
-    return downloadedUri;
+    await FileSystem.writeAsStringAsync(fileUri, await base64FromBlob(blob), {
+      encoding: FileSystem.EncodingType.Base64
+    });
   } catch (error) {
     throw classifyFileTransferFailure(error);
   }
+
+  return saveImageUriToPhotoLibrary(fileUri);
 }
 
 export async function downloadExternalFile({
