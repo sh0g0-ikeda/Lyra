@@ -7,7 +7,7 @@ import { JobCreditSettlement } from '@/components/JobCreditSettlement';
 import { colors, radius, spacing, textStyles } from '@/constants/theme';
 import type { CompatibleGenerationJobRecord } from '@/domain/generationJobCompatibility';
 import type { GenerationJobRecord } from '@/domain/types';
-import type { LyraMobileApiClient } from '@/lib/api';
+import { ApiError, type LyraMobileApiClient } from '@/lib/api';
 import { confirmAction } from '@/lib/confirm';
 import type { ComponentTranslationKey } from '@/lib/i18nComponentMessages';
 import { t } from '@/lib/i18n';
@@ -31,6 +31,9 @@ interface JobStatusCardProps {
   hideLoading?: boolean;
   retryLoading?: boolean;
 }
+
+const isMissingJobLookupError = (error: unknown): boolean =>
+  error instanceof ApiError && error.status === 404;
 
 export function JobStatusCard({
   api,
@@ -58,7 +61,11 @@ export function JobStatusCard({
     enabled: suppliedJob === undefined && jobId !== null,
     queryKey: jobQueryKey(sessionKey, jobId, organizationId),
     queryFn: () => api.getJob(jobId ?? '', organizationId),
+    retry: (failureCount, error) => !isMissingJobLookupError(error) && failureCount < 3,
     refetchInterval: (query) => {
+      if (isMissingJobLookupError(query.state.error)) {
+        return false;
+      }
       if (query.state.status === 'error') {
         return 5000;
       }
@@ -73,10 +80,11 @@ export function JobStatusCard({
   const refetchJob = jobQuery.refetch;
   const status = job?.status ?? 'loading';
   const isActive = status === 'queued' || status === 'processing';
-  const queryFailed = suppliedJob === undefined && jobQuery.isError;
+  const staleJobLookup = suppliedJob === undefined && isMissingJobLookupError(jobQuery.error);
+  const queryFailed = suppliedJob === undefined && jobQuery.isError && !staleJobLookup;
 
   useEffect(() => {
-    if (suppliedJob !== undefined || jobId === null) {
+    if (suppliedJob !== undefined || jobId === null || staleJobLookup) {
       return;
     }
     const subscription = AppState.addEventListener('change', (nextState) => {
@@ -85,7 +93,7 @@ export function JobStatusCard({
       }
     });
     return () => subscription.remove();
-  }, [jobId, refetchJob, suppliedJob]);
+  }, [jobId, refetchJob, staleJobLookup, suppliedJob]);
 
   useEffect(() => {
     if (!isActive) {
@@ -127,7 +135,7 @@ export function JobStatusCard({
     void onFailed?.();
   }, [job, onCompleted, onFailed]);
 
-  if (jobId === null && suppliedJob === undefined) {
+  if ((jobId === null && suppliedJob === undefined) || staleJobLookup) {
     return null;
   }
 

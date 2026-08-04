@@ -5,6 +5,7 @@ import {
   downloadAuthenticatedFile,
   downloadExternalFile,
   normalizeDownloadFilename,
+  saveImageBlobToPhotoLibrary,
   saveImageToPhotoLibrary,
   saveAuthenticatedImageToPhotoLibrary
 } from '@/lib/download';
@@ -14,13 +15,35 @@ const {
   isAvailableAsyncMock,
   requestMediaLibraryPermissionsMock,
   saveToLibraryAsyncMock,
-  shareAsyncMock
+  shareAsyncMock,
+  writeBlobToFileMock
 } = vi.hoisted(() => ({
   downloadAsyncMock: vi.fn(),
   isAvailableAsyncMock: vi.fn(),
   requestMediaLibraryPermissionsMock: vi.fn(),
   saveToLibraryAsyncMock: vi.fn(),
-  shareAsyncMock: vi.fn()
+  shareAsyncMock: vi.fn(),
+  writeBlobToFileMock: vi.fn()
+}));
+
+vi.mock('expo-file-system', () => ({
+  Paths: { cache: 'file:///cache/' },
+  File: class {
+    public readonly uri: string;
+    public readonly exists = false;
+
+    public constructor(directory: string, filename: string) {
+      this.uri = `${directory}${filename}`;
+    }
+
+    public write(content: Uint8Array): void {
+      writeBlobToFileMock(this.uri, content);
+    }
+
+    public delete(): void {
+      return undefined;
+    }
+  }
 }));
 
 vi.mock('expo-file-system/legacy', () => ({
@@ -125,6 +148,24 @@ describe('mobile download filenames', () => {
     );
     expect(saveToLibraryAsyncMock).toHaveBeenCalledWith('file:///cache/lyra-page-1.png');
     expect(shareAsyncMock).not.toHaveBeenCalled();
+  });
+
+  it('認証更新済みAPIレスポンスの画像バイト列を写真ライブラリへ保存する', async () => {
+    requestMediaLibraryPermissionsMock.mockResolvedValue({ granted: true });
+    saveToLibraryAsyncMock.mockResolvedValue(undefined);
+
+    await saveImageBlobToPhotoLibrary({
+      blob: new Blob(['png-bytes'], { type: 'image/png' }),
+      filename: 'lyra-page-1',
+      mimeType: 'image/png'
+    });
+
+    expect(writeBlobToFileMock).toHaveBeenCalledWith(
+      'file:///cache/lyra-page-1.png',
+      expect.any(Uint8Array)
+    );
+    expect(saveToLibraryAsyncMock).toHaveBeenCalledWith('file:///cache/lyra-page-1.png');
+    expect(downloadAsyncMock).not.toHaveBeenCalled();
   });
 
   it('署名付き画像URLが拒否された場合に認証済み画像へフォールバックして保存する', async () => {

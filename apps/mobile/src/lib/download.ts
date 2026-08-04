@@ -1,4 +1,5 @@
 import * as FileSystem from 'expo-file-system/legacy';
+import { File, Paths } from 'expo-file-system';
 import * as MediaLibrary from 'expo-media-library';
 import * as Sharing from 'expo-sharing';
 
@@ -28,6 +29,12 @@ interface SaveImageToPhotoLibraryParams {
   filename: string;
   mimeType: string;
   sources: readonly ImageDownloadSource[];
+}
+
+interface SaveImageBlobToPhotoLibraryParams {
+  filename: string;
+  mimeType: string;
+  blob: Blob;
 }
 
 const extensionFromMimeType = (mimeType: string): string => {
@@ -189,6 +196,39 @@ export async function saveImageToPhotoLibrary({
     }
     await MediaLibrary.saveToLibraryAsync(downloadedUri);
     return downloadedUri;
+  } catch (error) {
+    throw classifyFileTransferFailure(error);
+  }
+}
+
+/**
+ * Saves already-authenticated image bytes to the device photo library.
+ *
+ * Page images use the API client's authenticated fetch path before this helper
+ * is invoked. That makes token refresh and image saving follow the same
+ * behavior on Android and iOS instead of handing a possibly-expired token to
+ * a platform-specific downloader.
+ */
+export async function saveImageBlobToPhotoLibrary({
+  filename,
+  mimeType,
+  blob
+}: SaveImageBlobToPhotoLibraryParams): Promise<string> {
+  const safeFilename = normalizeDownloadFilename(filename, extensionFromMimeType(mimeType), 'lyra-image');
+  const file = new File(Paths.cache, safeFilename);
+
+  try {
+    if (file.exists) {
+      file.delete();
+    }
+    file.write(new Uint8Array(await blob.arrayBuffer()));
+
+    const permission = await MediaLibrary.requestPermissionsAsync(true);
+    if (!permission.granted) {
+      throw new MobileFileTransferError('PHOTO_LIBRARY_PERMISSION_DENIED');
+    }
+    await MediaLibrary.saveToLibraryAsync(file.uri);
+    return file.uri;
   } catch (error) {
     throw classifyFileTransferFailure(error);
   }
