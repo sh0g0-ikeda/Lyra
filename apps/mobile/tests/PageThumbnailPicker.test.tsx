@@ -114,7 +114,7 @@ describe('PageThumbnailPicker', () => {
     expect(onSelect).toHaveBeenCalledWith('page-1');
   });
 
-  it('拡大ボタンでは選択を変えず対象ページだけをプレビューする', () => {
+  it('拡大ボタンでは選択を変えず表示中の画像ソースを直接プレビューする', () => {
     const onPreview = vi.fn();
     const onSelect = vi.fn();
     let renderer: ReturnType<typeof create>;
@@ -137,7 +137,7 @@ describe('PageThumbnailPicker', () => {
       renderer!.root.findByProps({ accessibilityLabel: '1ページを拡大表示' }).props.onPress();
     });
 
-    expect(onPreview).toHaveBeenCalledWith('page-1');
+    expect(onPreview).toHaveBeenCalledWith({ uri: 'https://cdn.lyra.test/page.png' });
     expect(onSelect).not.toHaveBeenCalled();
   });
 

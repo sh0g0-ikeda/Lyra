@@ -78,6 +78,19 @@ describe('actionable error screen integration', () => {
     expect(source).toContain('workspace: selectPersonalWorkspace');
   });
 
+  it('ジョブ履歴の読み込み失敗を審査用画面の汎用エラーとして表示しない', () => {
+    const source = readMobileSource('src/screens/AccountScreen.tsx');
+
+    expect(source).not.toContain('{jobsQuery.isError ? (');
+  });
+
+  it('一時的に利用できないジョブ履歴のエラー文言を表示しない', () => {
+    const source = readMobileSource('src/components/JobStatusCard.tsx');
+
+    expect(source).toContain("job.message_key === 'job.error.temporarilyUnavailable'");
+    expect(source).toContain('const statusMessage = job === undefined ? null : jobStatusMessage(job, language);');
+  });
+
   it('reloads the authoritative page draft when PAGE_STALE is the primary error', () => {
     const source = readMobileSource('src/screens/PagesScreen.tsx');
 

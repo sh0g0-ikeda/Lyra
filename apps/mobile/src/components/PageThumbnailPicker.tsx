@@ -22,7 +22,7 @@ interface PageThumbnailPickerProps {
   imageSourcesFor: (page: PageRecord) => readonly RemoteImageSource[];
   statusLabelFor: (status: PageRecord['status']) => string;
   onSelect: (pageId: string) => void;
-  onPreview?: (pageId: string) => void;
+  onPreview?: (source: RemoteImageSource) => void;
   hasNextPage?: boolean;
   isFetchingNextPage?: boolean;
   onEndReached?: () => void;
@@ -117,7 +117,7 @@ export function PageThumbnailPicker({
                   )}
                   accessibilityRole="button"
                   hitSlop={4}
-                  onPress={() => onPreview(page.id)}
+                  onPress={() => onPreview(sources[0]!)}
                   style={styles.previewButton}
                 >
                   <ZoomIn color={colors.inkStrong} size={19} strokeWidth={2.2} />
