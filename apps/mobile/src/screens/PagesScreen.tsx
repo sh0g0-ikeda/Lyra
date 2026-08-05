@@ -152,6 +152,7 @@ interface PageDesignJob {
 }
 
 const WEB_EDITOR_URL = 'https://app.lyra-editor.com/';
+const EPISODE_EXPORT_UI_ENABLED = false;
 
 type AssignmentDraft = Omit<PanelEntityAssignmentRecord, 'facing_direction'> & {
   facing_direction: NonNullable<PanelEntityAssignmentRecord['facing_direction']> | '';
@@ -2970,7 +2971,7 @@ export function PagesScreen(): React.JSX.Element {
         </>
       )}
       <PageCompletionActions
-        exportSection={(
+        exportSection={EPISODE_EXPORT_UI_ENABLED ? (
       <Section
         collapsible
         mobileDefaultCollapsed
@@ -3074,7 +3075,7 @@ export function PagesScreen(): React.JSX.Element {
           sessionKey={sessionKey}
         />
       </Section>
-        )}
+        ) : null}
 
         generationSection={(
       <Section

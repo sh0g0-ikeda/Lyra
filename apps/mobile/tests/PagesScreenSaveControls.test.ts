@@ -27,4 +27,17 @@ describe('PagesScreen manual save controls', () => {
     expect(source).not.toContain('buildPageImageDownloadSources');
     expect(source).toContain('generated.screens.PagesScreen.save.image.dd680bcb');
   });
+
+  it('PDFと画像ZIPのUIは隠し、個別の画像保存UIだけを残す', () => {
+    const source = readFileSync(
+      resolve(process.cwd(), 'src/screens/PagesScreen.tsx'),
+      'utf8'
+    );
+
+    expect(source).toContain('const EPISODE_EXPORT_UI_ENABLED = false;');
+    expect(source).toContain(
+      'exportSection={EPISODE_EXPORT_UI_ENABLED ? ('
+    );
+    expect(source).toContain('generated.screens.PagesScreen.save.image.dd680bcb');
+  });
 });
