@@ -56,6 +56,7 @@ interface AppStateContextValue {
   trackedJobIds: string[];
   sessionKey: string;
   hasCapability: (capability: OrganizationCapability) => boolean;
+  refreshIdToken: () => Promise<string | null>;
   setLanguage: (language: UiLanguage) => Promise<void>;
   setTokens: (tokens: AuthTokens) => Promise<void>;
   setSession: (session: CurrentSessionRecord | null) => void;
@@ -394,6 +395,7 @@ export function AppStateProvider({ children }: PropsWithChildren): React.JSX.Ele
       hydrated,
       hasCapability,
       language: languageState,
+      refreshIdToken: refreshAndPersistTokens,
       tokens,
       session,
       selection,
@@ -412,6 +414,7 @@ export function AppStateProvider({ children }: PropsWithChildren): React.JSX.Ele
       hasCapability,
       languageState,
       logout,
+      refreshAndPersistTokens,
       selection,
       session,
       sessionKey,

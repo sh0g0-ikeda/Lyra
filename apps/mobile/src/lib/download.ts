@@ -1,7 +1,7 @@
-import { File, Paths } from 'expo-file-system';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as MediaLibrary from 'expo-media-library';
 import * as Sharing from 'expo-sharing';
+import { Platform } from 'react-native';
 
 import type { AuthTokens } from '@/domain/types';
 import { config } from '@/lib/config';
@@ -12,6 +12,7 @@ interface DownloadAuthenticatedFileParams {
   filename: string;
   tokens: AuthTokens | null;
   mimeType: string;
+  refreshIdToken?: () => Promise<string | null>;
 }
 
 interface DownloadExternalFileParams {
@@ -23,6 +24,7 @@ interface DownloadExternalFileParams {
 export interface ImageDownloadSource {
   url: string;
   headers?: Record<string, string>;
+  refreshHeaders?: () => Promise<Record<string, string> | undefined>;
 }
 
 interface SaveImageToPhotoLibraryParams {
@@ -31,19 +33,101 @@ interface SaveImageToPhotoLibraryParams {
   sources: readonly ImageDownloadSource[];
 }
 
-interface SaveImageBlobToPhotoLibraryParams {
-  filename: string;
-  mimeType: string;
-  blob: Blob;
-}
-
 const extensionFromMimeType = (mimeType: string): string => {
   if (mimeType === 'image/png') return 'png';
   if (mimeType === 'image/jpeg') return 'jpg';
+  if (mimeType === 'image/webp') return 'webp';
   if (mimeType === 'application/pdf') return 'pdf';
   if (mimeType === 'application/zip') return 'zip';
   if (mimeType === 'text/csv') return 'csv';
   return 'bin';
+};
+
+const supportedImageMimeTypes = new Set(['image/jpeg', 'image/png', 'image/webp']);
+
+type DownloadedFileMimeType = 'application/pdf' | 'image/jpeg' | 'image/png' | 'image/webp';
+
+const decodeBase64Prefix = (value: string): number[] => {
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+  const bytes: number[] = [];
+  let accumulator = 0;
+  let bitCount = 0;
+
+  for (const character of value.replace(/\s+/gu, '').replace(/=+$/u, '')) {
+    const digit = alphabet.indexOf(character);
+    if (digit < 0) {
+      return [];
+    }
+    accumulator = (accumulator << 6) | digit;
+    bitCount += 6;
+    if (bitCount >= 8) {
+      bitCount -= 8;
+      bytes.push((accumulator >> bitCount) & 0xff);
+      accumulator = bitCount === 0 ? 0 : accumulator & ((1 << bitCount) - 1);
+    }
+  }
+
+  return bytes;
+};
+
+const hasBytePrefix = (bytes: readonly number[], signature: readonly number[]): boolean =>
+  bytes.length >= signature.length && signature.every((byte, index) => bytes[index] === byte);
+
+const detectDownloadedFileMimeType = async (uri: string): Promise<DownloadedFileMimeType | null> => {
+  const encodedPrefix = await FileSystem.readAsStringAsync(uri, {
+    encoding: FileSystem.EncodingType.Base64,
+    position: 0,
+    length: 12
+  });
+  const bytes = decodeBase64Prefix(encodedPrefix);
+  if (hasBytePrefix(bytes, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) {
+    return 'image/png';
+  }
+  if (hasBytePrefix(bytes, [0xff, 0xd8, 0xff])) {
+    return 'image/jpeg';
+  }
+  if (
+    hasBytePrefix(bytes, [0x52, 0x49, 0x46, 0x46]) &&
+    bytes.slice(8, 12).every((byte, index) => byte === [0x57, 0x45, 0x42, 0x50][index])
+  ) {
+    return 'image/webp';
+  }
+  if (hasBytePrefix(bytes, [0x25, 0x50, 0x44, 0x46, 0x2d])) {
+    return 'application/pdf';
+  }
+  return null;
+};
+
+const moveDownloadedFileToMimeExtension = async (
+  sourceUri: string,
+  filename: string,
+  directory: string,
+  mimeType: string
+): Promise<string> => {
+  const expectedExtension = extensionFromMimeType(mimeType);
+  const sourceExtension = sourceUri
+    .split(/[?#]/u, 1)[0]
+    .split('.')
+    .at(-1)
+    ?.toLowerCase();
+  if (
+    sourceExtension === expectedExtension ||
+    (expectedExtension === 'jpg' && sourceExtension === 'jpeg')
+  ) {
+    return sourceUri;
+  }
+  const targetFilename = normalizeDownloadFilename(
+    filename,
+    expectedExtension,
+    'lyra-image'
+  );
+  const targetUri = `${directory}${targetFilename}`;
+  if (sourceUri === targetUri) {
+    return sourceUri;
+  }
+  await FileSystem.deleteAsync(targetUri, { idempotent: true });
+  await FileSystem.moveAsync({ from: sourceUri, to: targetUri });
+  return targetUri;
 };
 
 export const normalizeDownloadFilename = (
@@ -69,6 +153,8 @@ const assertSuccessfulDownload = (status: number): void => {
     throw new Error(`File download failed with status ${status}.`);
   }
 };
+
+const isAuthenticationFailureStatus = (status: number): boolean => status === 401 || status === 403;
 
 const filenameForSourceAttempt = (filename: string, attemptIndex: number, sourceCount: number): string => {
   if (sourceCount <= 1) {
@@ -107,7 +193,8 @@ export async function downloadAuthenticatedFile({
   path,
   filename,
   tokens,
-  mimeType
+  mimeType,
+  refreshIdToken
 }: DownloadAuthenticatedFileParams): Promise<string> {
   const directory = FileSystem.cacheDirectory ?? FileSystem.documentDirectory;
   if (directory === null) {
@@ -119,7 +206,16 @@ export async function downloadAuthenticatedFile({
   const baseUrl = config.apiBaseUrl.replace(/\/+$/, '');
   const headers = tokens === null ? undefined : { Authorization: `Bearer ${tokens.idToken}` };
   try {
-    const result = await FileSystem.downloadAsync(`${baseUrl}${path}`, fileUri, { headers });
+    let result = await FileSystem.downloadAsync(`${baseUrl}${path}`, fileUri, { headers });
+    if (isAuthenticationFailureStatus(result.status) && refreshIdToken !== undefined) {
+      const refreshedToken = await refreshIdToken();
+      if (refreshedToken !== null) {
+        await FileSystem.deleteAsync(fileUri, { idempotent: true });
+        result = await FileSystem.downloadAsync(`${baseUrl}${path}`, fileUri, {
+          headers: { Authorization: `Bearer ${refreshedToken}` }
+        });
+      }
+    }
     assertSuccessfulDownload(result.status);
     if (!(await Sharing.isAvailableAsync())) {
       throw new MobileFileTransferError('SHARING_UNAVAILABLE');
@@ -135,7 +231,8 @@ export async function saveAuthenticatedImageToPhotoLibrary({
   path,
   filename,
   tokens,
-  mimeType
+  mimeType,
+  refreshIdToken
 }: DownloadAuthenticatedFileParams): Promise<string> {
   const baseUrl = config.apiBaseUrl.replace(/\/+$/, '');
   const headers = tokens === null ? undefined : { Authorization: `Bearer ${tokens.idToken}` };
@@ -143,7 +240,18 @@ export async function saveAuthenticatedImageToPhotoLibrary({
   return saveImageToPhotoLibrary({
     filename,
     mimeType,
-    sources: [{ url: `${baseUrl}${path}`, headers }]
+    sources: [{
+      url: `${baseUrl}${path}`,
+      headers,
+      refreshHeaders: refreshIdToken === undefined
+        ? undefined
+        : async () => {
+            const refreshedToken = await refreshIdToken();
+            return refreshedToken === null
+              ? undefined
+              : { Authorization: `Bearer ${refreshedToken}` };
+          }
+    }]
   });
 }
 
@@ -172,9 +280,28 @@ export async function saveImageToPhotoLibrary({
     }
     try {
       const fileUri = `${directory}${filenameForSourceAttempt(safeFilename, sourceIndex, sources.length)}`;
-      const result = await FileSystem.downloadAsync(source.url, fileUri, { headers: source.headers });
+      let result = await FileSystem.downloadAsync(source.url, fileUri, { headers: source.headers });
+      if (isAuthenticationFailureStatus(result.status) && source.refreshHeaders !== undefined) {
+        const refreshedHeaders = await source.refreshHeaders();
+        if (refreshedHeaders !== undefined) {
+          await FileSystem.deleteAsync(fileUri, { idempotent: true });
+          result = await FileSystem.downloadAsync(source.url, fileUri, {
+            headers: refreshedHeaders
+          });
+        }
+      }
       assertSuccessfulDownload(result.status);
-      downloadedUri = result.uri;
+      const downloadedMimeType = await detectDownloadedFileMimeType(result.uri);
+      if (downloadedMimeType === null || !supportedImageMimeTypes.has(downloadedMimeType)) {
+        await FileSystem.deleteAsync(result.uri, { idempotent: true });
+        throw new MobileFileTransferError('IMAGE_SAVE_FAILED');
+      }
+      downloadedUri = await moveDownloadedFileToMimeExtension(
+        result.uri,
+        filenameForSourceAttempt(filename, sourceIndex, sources.length),
+        directory,
+        downloadedMimeType
+      );
       break;
     } catch (error) {
       const failure = classifyFileTransferFailure(error);
@@ -201,39 +328,6 @@ export async function saveImageToPhotoLibrary({
   }
 }
 
-/**
- * Saves already-authenticated image bytes to the device photo library.
- *
- * Page images use the API client's authenticated fetch path before this helper
- * is invoked. That makes token refresh and image saving follow the same
- * behavior on Android and iOS instead of handing a possibly-expired token to
- * a platform-specific downloader.
- */
-export async function saveImageBlobToPhotoLibrary({
-  filename,
-  mimeType,
-  blob
-}: SaveImageBlobToPhotoLibraryParams): Promise<string> {
-  const safeFilename = normalizeDownloadFilename(filename, extensionFromMimeType(mimeType), 'lyra-image');
-
-  try {
-    const file = new File(Paths.cache, safeFilename);
-    if (file.exists) {
-      file.delete();
-    }
-    file.write(new Uint8Array(await blob.arrayBuffer()));
-
-    await createPhotoLibraryAsset(file.uri);
-    return file.uri;
-  } catch (error) {
-    const failure = classifyFileTransferFailure(error);
-    if (failure.code === 'DOWNLOAD_INTERRUPTED') {
-      throw new MobileFileTransferError('IMAGE_SAVE_FAILED');
-    }
-    throw failure;
-  }
-}
-
 async function createPhotoLibraryAsset(localUri: string): Promise<void> {
   const permission = await MediaLibrary.requestPermissionsAsync(true);
   if (!permission.granted) {
@@ -241,6 +335,29 @@ async function createPhotoLibraryAsset(localUri: string): Promise<void> {
   }
 
   await MediaLibrary.Asset.create(localUri);
+}
+
+async function savePdfToAndroidDocumentDirectory(
+  localUri: string,
+  filename: string
+): Promise<string> {
+  const permission = await FileSystem.StorageAccessFramework.requestDirectoryPermissionsAsync();
+  if (!permission.granted || permission.directoryUri === null) {
+    throw new MobileFileTransferError('DOWNLOAD_CANCELED');
+  }
+
+  const fileContents = await FileSystem.readAsStringAsync(localUri, {
+    encoding: FileSystem.EncodingType.Base64
+  });
+  const destinationUri = await FileSystem.StorageAccessFramework.createFileAsync(
+    permission.directoryUri,
+    filename.replace(/\.pdf$/iu, ''),
+    'application/pdf'
+  );
+  await FileSystem.writeAsStringAsync(destinationUri, fileContents, {
+    encoding: FileSystem.EncodingType.Base64
+  });
+  return destinationUri;
 }
 
 export async function downloadExternalFile({
@@ -262,11 +379,21 @@ export async function downloadExternalFile({
   try {
     result = await FileSystem.downloadAsync(url, fileUri);
     assertSuccessfulDownload(result.status);
+    const downloadedMimeType = mimeType === 'application/pdf'
+      ? await detectDownloadedFileMimeType(result.uri)
+      : null;
+    if (mimeType === 'application/pdf' && downloadedMimeType !== 'application/pdf') {
+      await FileSystem.deleteAsync(result.uri, { idempotent: true });
+      throw new MobileFileTransferError('DOWNLOAD_INTERRUPTED');
+    }
   } catch (error) {
     throw classifyFileTransferFailure(error);
   }
 
   try {
+    if (mimeType === 'application/pdf' && Platform.OS === 'android') {
+      return await savePdfToAndroidDocumentDirectory(result.uri, safeFilename);
+    }
     if (!(await Sharing.isAvailableAsync())) {
       throw new MobileFileTransferError('SHARING_UNAVAILABLE');
     }

@@ -1766,7 +1766,19 @@ function CollapsibleGroup({ title, defaultCollapsed = false, children }: Collaps
 export function CharactersScreen(): React.JSX.Element {
   const navigation = useNavigation<BottomTabNavigationProp<MobileTabParamList>>();
   const queryClient = useQueryClient();
-  const { api, hasCapability, language, logout, selection, session, sessionKey, tokens, trackJob, updateSelection } = useAppState();
+  const {
+    api,
+    hasCapability,
+    language,
+    logout,
+    refreshIdToken,
+    selection,
+    session,
+    sessionKey,
+    tokens,
+    trackJob,
+    updateSelection
+  } = useAppState();
   const { resolveDirtyEditors } = useDirtyState();
   const organizationId = selection.organizationId;
   const canEdit = hasCapability('edit_work');
@@ -2420,7 +2432,8 @@ export function CharactersScreen(): React.JSX.Element {
         ),
         filename: `lyra-character-reference-${refId}.png`,
         tokens,
-        mimeType: 'image/png'
+        mimeType: 'image/png',
+        refreshIdToken
       })
   });
 
@@ -2437,7 +2450,8 @@ export function CharactersScreen(): React.JSX.Element {
         path: `/api/entities/${encodeURIComponent(selectedEntity?.id ?? '')}/reference-candidate-image?${params.toString()}`,
         filename: `lyra-character-candidate-${candidateToken.trim()}.png`,
         tokens,
-        mimeType: 'image/png'
+        mimeType: 'image/png',
+        refreshIdToken
       });
     }
   });

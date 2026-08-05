@@ -80,6 +80,7 @@ export function AccountScreen(): React.JSX.Element {
     setLanguage,
     setSession,
     tokens,
+    refreshIdToken,
     updateSelection
   } = useAppState();
   const [webBillingError, setWebBillingError] = useState<string | null>(null);
@@ -512,7 +513,8 @@ export function AccountScreen(): React.JSX.Element {
                 path: `/api/organizations/${encodeURIComponent(activeOrganization.id)}/usage.csv`,
                 filename: `lyra-${activeOrganization.name}-usage`,
                 mimeType: 'text/csv',
-                tokens
+                tokens,
+                refreshIdToken
               });
             }}
             onOpenBillingUrl={openExternalHttpsUrl}
