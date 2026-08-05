@@ -3,6 +3,7 @@ import type {
   EntityReferenceUploadMimeType
 } from '@/domain/payloads';
 import type { EntityType } from '@/domain/types';
+import { ApiError } from '@/lib/api';
 
 export type DirectEntityUploadStage = 'presign' | 'upload' | 'finalize';
 export type DirectEntityUploadErrorCode =
@@ -55,6 +56,7 @@ interface UploadAndImportEntityReferenceInput<Result> {
     payload: CreateEntityReferenceUploadPayload
   ) => Promise<EntityReferenceUploadPresignResult>;
   finalizeImport: (uploadToken: string) => Promise<Result>;
+  legacyImport?: () => Promise<Result>;
   onFinalizeTokenReady?: (uploadToken: string) => void;
   onProgress: (percent: number) => void;
   onStageChange: (stage: DirectEntityUploadStage) => void;
@@ -101,6 +103,9 @@ export async function uploadAndImportEntityReference<Result>(
     if (isAbortError(error) || input.signal?.aborted === true) {
       throw canceledError('presign');
     }
+    if (isLegacyPresignUnavailable(error) && input.legacyImport !== undefined) {
+      return finalizeLegacyEntityReference(input);
+    }
     throw new DirectEntityUploadError(
       'PRESIGN_FAILED',
       'presign',
@@ -139,6 +144,9 @@ export async function uploadAndImportEntityReference<Result>(
   try {
     const uploadResult = await task.uploadAsync();
     if (uploadResult.status < 200 || uploadResult.status >= 300) {
+      if (isLegacyUploadFallbackStatus(uploadResult.status) && input.legacyImport !== undefined) {
+        return finalizeLegacyEntityReference(input);
+      }
       throw new DirectEntityUploadError(
         'UPLOAD_FAILED',
         'upload',
@@ -192,6 +200,36 @@ async function finalizeEntityReference<Result>(
   }
 }
 
+async function finalizeLegacyEntityReference<Result>(
+  input: UploadAndImportEntityReferenceInput<Result>,
+): Promise<Result> {
+  const legacyImport = input.legacyImport;
+  if (legacyImport === undefined) {
+    throw new DirectEntityUploadError(
+      'FINALIZE_UNCERTAIN',
+      'finalize',
+      false,
+      'The import result could not be confirmed.',
+    );
+  }
+
+  assertNotCanceled(input.signal, 'finalize');
+  input.onStageChange('finalize');
+  try {
+    return await legacyImport();
+  } catch (error) {
+    if (isAbortError(error) || input.signal?.aborted === true) {
+      throw canceledError('finalize');
+    }
+    throw new DirectEntityUploadError(
+      'FINALIZE_UNCERTAIN',
+      'finalize',
+      isRetryableTransportError(error),
+      'The import result could not be confirmed.',
+    );
+  }
+}
+
 function assertNotCanceled(
   signal: AbortSignal | undefined,
   stage: DirectEntityUploadStage
@@ -231,4 +269,12 @@ function isRetryableTransportError(error: unknown): boolean {
 
 function isRetryableUploadStatus(status: number): boolean {
   return status === 408 || status === 429 || status >= 500;
+}
+
+function isLegacyPresignUnavailable(error: unknown): boolean {
+  return error instanceof ApiError && (error.status === 404 || error.status === 405);
+}
+
+function isLegacyUploadFallbackStatus(status: number): boolean {
+  return status >= 400 && status < 500 && !isRetryableUploadStatus(status);
 }

@@ -40,6 +40,7 @@ import {
   type EntityVisibleDraft,
 } from '@/domain/entityMutationPayload';
 import { buildEntityReferenceImageSources } from '@/domain/entityImageSources';
+import { decodeEntityReferencePickerImage } from '@/domain/entityReferenceImportImage';
 import { entityDirtySaveIntent } from '@/domain/editorDirtyPolicy';
 import {
   deduplicateImageSources,
@@ -115,6 +116,7 @@ interface PendingEntityReferenceUpload {
   mimeType: EntityReferenceUploadMimeType;
   sizeBytes: number;
   source: BinaryUploadSource;
+  legacyImageDataUrl: string | null;
   uploadToken: string | null;
 }
 
@@ -2261,9 +2263,14 @@ export function CharactersScreen(): React.JSX.Element {
         setPendingEntityReferenceUpload(null);
         const result = await ImagePicker.launchImageLibraryAsync({
           allowsEditing: false,
-          base64: false,
+          allowsMultipleSelection: false,
+          base64: true,
+          exif: false,
           mediaTypes: ['images'],
-          quality: 1
+          preferredAssetRepresentationMode:
+            ImagePicker.UIImagePickerPreferredAssetRepresentationMode.Compatible,
+          quality: 0.85,
+          selectionLimit: 1
         });
         if (result.canceled) {
           return null;
@@ -2284,6 +2291,10 @@ export function CharactersScreen(): React.JSX.Element {
         if (uploadFile.sizeBytes > MAX_IMPORT_IMAGE_BYTES) {
           throw new Error(t(language, "generated.screens.CharactersScreen.the.image.must.be.5.mb.or.smaller.f810b162"));
         }
+        const legacyImageDataUrl =
+          typeof asset.base64 === 'string'
+            ? decodeEntityReferencePickerImage(asset.base64).dataUrl
+            : null;
 
         pendingUpload = {
           entityId: selectedEntity?.id ?? null,
@@ -2291,6 +2302,7 @@ export function CharactersScreen(): React.JSX.Element {
           mimeType,
           sizeBytes: uploadFile.sizeBytes,
           source: uploadFile.source,
+          legacyImageDataUrl,
           uploadToken: null
         };
         setPendingEntityReferenceUpload(pendingUpload);
@@ -2300,6 +2312,7 @@ export function CharactersScreen(): React.JSX.Element {
         throw new Error(t(language, "generated.screens.CharactersScreen.there.is.no.image.to.retry.a75c5e5a"));
       }
       const activeUpload = pendingUpload;
+      const legacyImageDataUrl = activeUpload.legacyImageDataUrl;
 
       entityReferenceUploadAbortController.current?.abort();
       const abortController = new AbortController();
@@ -2325,6 +2338,19 @@ export function CharactersScreen(): React.JSX.Element {
               },
               organizationId
             ),
+          ...(legacyImageDataUrl === null
+            ? {}
+            : {
+                legacyImport: () =>
+                  api.importEntityImage(
+                    {
+                      entity_type: activeUpload.entityType,
+                      ...(activeUpload.entityId === null ? {} : { entity_id: activeUpload.entityId }),
+                      image_base64: legacyImageDataUrl
+                    },
+                    organizationId
+                  )
+              }),
           onProgress: setEntityReferenceUploadProgress,
           onFinalizeTokenReady: (uploadToken) => {
             setPendingEntityReferenceUpload({ ...activeUpload, uploadToken });

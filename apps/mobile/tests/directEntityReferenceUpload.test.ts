@@ -6,6 +6,7 @@ import {
   type BinaryUploadSource,
   type BinaryUploadTask
 } from '@/lib/directEntityReferenceUpload';
+import { ApiError } from '@/lib/api';
 
 const presignResult = {
   upload_url: 'https://uploads.example.test/entity-reference?signature=opaque',
@@ -152,6 +153,7 @@ describe('direct entity reference upload', () => {
     const task = createTaskHarness();
     task.uploadAsync.mockResolvedValue({ body: '', headers: {}, status: 503 });
     const finalizeImport = vi.fn();
+    const legacyImport = vi.fn();
 
     await expect(
       uploadAndImportEntityReference({
@@ -159,6 +161,7 @@ describe('direct entity reference upload', () => {
         entityId: null,
         entityType: 'character',
         finalizeImport,
+        legacyImport,
         mimeType: 'image/png',
         onProgress: vi.fn(),
         onStageChange: vi.fn(),
@@ -171,6 +174,60 @@ describe('direct entity reference upload', () => {
       stage: 'upload'
     });
     expect(finalizeImport).not.toHaveBeenCalled();
+    expect(legacyImport).not.toHaveBeenCalled();
+  });
+
+  it('presign APIが未配備なら検証済みのlegacy importだけへ切り替える', async () => {
+    const task = createTaskHarness();
+    const legacyImport = vi.fn().mockResolvedValue({ source: 'legacy' });
+    const stages: string[] = [];
+
+    await expect(
+      uploadAndImportEntityReference({
+        createPresignedUpload: vi.fn().mockRejectedValue(
+          new ApiError('Route was not found', 404, 'NOT_FOUND')
+        ),
+        entityId: null,
+        entityType: 'character',
+        finalizeImport: vi.fn(),
+        legacyImport,
+        mimeType: 'image/png',
+        onProgress: vi.fn(),
+        onStageChange: (stage) => stages.push(stage),
+        sizeBytes: 1024,
+        source: task.source
+      })
+    ).resolves.toEqual({ source: 'legacy' });
+
+    expect(task.source.createUploadTask).not.toHaveBeenCalled();
+    expect(legacyImport).toHaveBeenCalledTimes(1);
+    expect(stages).toEqual(['presign', 'finalize']);
+  });
+
+  it('署名済みPUTが非retryableな4xxならlegacy importへ切り替える', async () => {
+    const task = createTaskHarness();
+    task.uploadAsync.mockResolvedValue({ body: '', headers: {}, status: 403 });
+    const finalizeImport = vi.fn();
+    const legacyImport = vi.fn().mockResolvedValue({ source: 'legacy' });
+
+    await expect(
+      uploadAndImportEntityReference({
+        createPresignedUpload: vi.fn().mockResolvedValue(presignResult),
+        entityId: 'entity-1',
+        entityType: 'character',
+        finalizeImport,
+        legacyImport,
+        mimeType: 'image/png',
+        onProgress: vi.fn(),
+        onStageChange: vi.fn(),
+        sizeBytes: 1024,
+        source: task.source
+      })
+    ).resolves.toEqual({ source: 'legacy' });
+
+    expect(finalizeImport).not.toHaveBeenCalled();
+    expect(legacyImport).toHaveBeenCalledTimes(1);
+    expect(task.release).toHaveBeenCalledTimes(1);
   });
 
   it('cancel signalでnative taskを中止し解析を開始しない', async () => {
