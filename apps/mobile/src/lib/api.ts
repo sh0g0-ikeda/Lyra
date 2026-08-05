@@ -722,9 +722,8 @@ export class LyraMobileApiClient {
     body: UpdateEpisodePayload,
     organizationId?: string | null
   ): Promise<EpisodeRecord> {
-    const path = `/api/episodes/${episodeId}${organizationQuery(organizationId)}`;
     try {
-      return await this.request(path, episodeSchema, {
+      return await this.request(`/api/episodes/${episodeId}${organizationQuery(organizationId)}`, episodeSchema, {
         method: 'PUT',
         body
       });
@@ -735,7 +734,7 @@ export class LyraMobileApiClient {
 
       const { expected_updated_at: _expectedUpdatedAt, ...legacyBody } = body;
       void _expectedUpdatedAt;
-      return this.request(path, episodeSchema, {
+      return this.request(`/api/episodes/${episodeId}${organizationQuery(organizationId)}`, episodeSchema, {
         method: 'PUT',
         body: legacyBody
       });
