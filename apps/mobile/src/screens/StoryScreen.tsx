@@ -768,7 +768,7 @@ export function StoryScreen(): React.JSX.Element {
             <FormField editable={canEdit} keyboardType="numeric" label={t(language, 'estimatedPages')} onChangeText={setEstimatedPages} value={estimatedPages} />
             {estimatedPagesInvalid ? <Notice message={t(language, "generated.screens.StoryScreen.estimated.pages.must.be.a.number.from.1.20301ed5")} tone="warning" /> : null}
             <View style={styles.buttonRow}>
-              <PrimaryButton disabled={!canEdit || activeStaleResource === 'episode' || estimatedPagesInvalid || episodeTitle.trim().length === 0} label={t(language, 'save')} loading={updateEpisodeMutation.isPending || createSceneMutation.isPending || updateSceneMutation.isPending} onPress={() => { void saveStoryDrafts().catch(() => undefined); }} variant="secondary" />
+              <PrimaryButton disabled={!canEdit || activeStaleResource === 'episode' || estimatedPagesInvalid || episodeTitle.trim().length === 0} label={t(language, 'save')} loading={updateEpisodeMutation.isPending} onPress={() => updateEpisodeMutation.mutate()} variant="secondary" />
             </View>
           </>
         )}

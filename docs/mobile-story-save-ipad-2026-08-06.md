@@ -29,3 +29,11 @@ Affected layer: `apps/mobile` only. The dialog receives a selection while a pend
 TDD first: add provider tests showing that the dialog stays open while Save is pending, remains open after a rejected save, and resolves navigation only after a retry succeeds. Run the targeted tests to observe the old lifecycle failure before the implementation change, then cover the existing Save/Discard/Cancel behavior.
 
 Sol retains architecture, integration, and release decisions. Terra is delegated only a read-only inspection of the current lifecycle and StoryScreen wiring; it owns no files and cannot make changes.
+
+## Follow-up: production validation error investigation
+
+After the initial implementation, a device reported the same `VALIDATION_ERROR` for both the confirmation Save action and the normal Story Save action. The prior tests covered dialog lifecycle and source wiring, but did not prove that the registered save path sends a payload accepted by the existing episode API contract.
+
+This follow-up remains limited to the Mobile Story save path, its payload compatibility helpers, and tests. It will trace the stable user-visible validation error to the outbound request and current bounded server schema before changing behavior. The fix must retain `expected_updated_at`, preserve drafts on failure, avoid exposing raw API details, and add a failing regression test using the affected payload shape. No API route, database, authorization, credit, or generated-output contract will be changed unless a verified server/mobile contract mismatch requires it.
+
+The trace found two Mobile-only conditions. First, the production API can reject `expected_updated_at` as an unknown key even though the current repository schema requires it. The client will retry only that explicit legacy-contract 422 once without the revision field; current APIs continue to receive the field, and all other validation errors remain failures. Second, the Episode section's normal Save control must only save the episode. Navigation resolution remains the only path that saves every registered dirty editor, including a Scene draft, so an unrelated Scene validation failure cannot be reported as an Episode Save failure.
