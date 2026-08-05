@@ -17,12 +17,14 @@ vi.mock('@/lib/confirm', () => ({
 vi.mock('@/components/UnsavedChangesResolutionDialog', () => ({
   UnsavedChangesResolutionDialog: ({
     onSelect,
+    saving,
     visible
   }: {
     onSelect: (choice: DirtyStateChoice) => void;
+    saving: boolean;
     visible: boolean;
   }): React.JSX.Element =>
-    React.createElement('dirty-resolution-dialog', { onSelect, visible })
+    React.createElement('dirty-resolution-dialog', { onSelect, saving, visible })
 }));
 
 interface ProbeValue {
@@ -65,6 +67,117 @@ function Probe({
 }
 
 describe('DirtyStateProvider', () => {
+  it('保存中はダイアログを開いたままにして二重保存を防ぐ', async () => {
+    let finishSave: (() => void) | null = null;
+    const save = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finishSave = resolve;
+        })
+    );
+    let value: ProbeValue | null = null;
+    let renderer: ReactTestRenderer | null = null;
+
+    await act(async () => {
+      renderer = create(
+        <DirtyStateProvider>
+          <Probe
+            dirty
+            discard={vi.fn()}
+            onValue={(nextValue) => {
+              value = nextValue;
+            }}
+            save={save}
+          />
+        </DirtyStateProvider>
+      );
+    });
+
+    const resolution = value?.resolve();
+    if (resolution === undefined) {
+      throw new Error('Expected a pending dirty-state resolution.');
+    }
+    act(() => {
+      renderer?.root.findByType('dirty-resolution-dialog').props.onSelect('save');
+    });
+    await vi.waitFor(() => {
+      expect(save).toHaveBeenCalledOnce();
+      expect(
+        renderer?.root.findByType('dirty-resolution-dialog').props.visible
+      ).toBe(true);
+      expect(
+        renderer?.root.findByType('dirty-resolution-dialog').props.saving
+      ).toBe(true);
+    });
+
+    act(() => {
+      renderer?.root.findByType('dirty-resolution-dialog').props.onSelect('save');
+    });
+    expect(save).toHaveBeenCalledOnce();
+
+    await act(async () => {
+      finishSave?.();
+      await expect(resolution).resolves.toBe(true);
+    });
+    expect(
+      renderer?.root.findByType('dirty-resolution-dialog').props.visible
+    ).toBe(false);
+  });
+
+  it('保存失敗後はダイアログとdraftを残し、再試行の成功時だけ離脱を許可する', async () => {
+    const save = vi
+      .fn<() => Promise<void>>()
+      .mockRejectedValueOnce(new Error('save failed'))
+      .mockResolvedValueOnce(undefined);
+    let value: ProbeValue | null = null;
+    let renderer: ReactTestRenderer | null = null;
+
+    await act(async () => {
+      renderer = create(
+        <DirtyStateProvider>
+          <Probe
+            dirty
+            discard={vi.fn()}
+            onValue={(nextValue) => {
+              value = nextValue;
+            }}
+            save={save}
+          />
+        </DirtyStateProvider>
+      );
+    });
+
+    const resolution = value?.resolve();
+    if (resolution === undefined) {
+      throw new Error('Expected a pending dirty-state resolution.');
+    }
+    let resolvedValue: boolean | null = null;
+    void resolution.then((allowed) => {
+      resolvedValue = allowed;
+    });
+
+    await act(async () => {
+      renderer?.root.findByType('dirty-resolution-dialog').props.onSelect('save');
+    });
+    await vi.waitFor(() => {
+      expect(save).toHaveBeenCalledTimes(1);
+      expect(
+        renderer?.root.findByType('dirty-resolution-dialog').props.visible
+      ).toBe(true);
+    });
+    expect(value?.hasDirtyEditors).toBe(true);
+    expect(resolvedValue).toBeNull();
+
+    await act(async () => {
+      renderer?.root.findByType('dirty-resolution-dialog').props.onSelect('save');
+      await expect(resolution).resolves.toBe(true);
+    });
+    expect(save).toHaveBeenCalledTimes(2);
+    expect(
+      renderer?.root.findByType('dirty-resolution-dialog').props.visible
+    ).toBe(false);
+  });
+
   it('保存成功後に同じrevisionでcallbackが更新されても再登録しない', async () => {
     const firstSave = vi.fn().mockResolvedValue(undefined);
     const secondSave = vi.fn().mockResolvedValue(undefined);

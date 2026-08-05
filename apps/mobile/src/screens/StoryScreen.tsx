@@ -133,6 +133,7 @@ export function StoryScreen(): React.JSX.Element {
   const [dirtySaveError, setDirtySaveError] = useState<Error | null>(null);
   const lastSyncedEpisodeId = useRef<string | null>(null);
   const lastSyncedSceneId = useRef<string | null>(null);
+  const storySavePromiseRef = useRef<Promise<void> | null>(null);
   const collaborationAbortRef = useRef<AbortController | null>(null);
   const collaborationRequestIdRef = useRef(0);
   const workspaceContext = useWorkspaceContextSelection();
@@ -398,45 +399,64 @@ export function StoryScreen(): React.JSX.Element {
     setSceneTime,
   ]);
 
-  const saveStoryDrafts = useCallback(async (): Promise<void> => {
-    setDirtySaveError(null);
-    try {
-      if (episodeDirty) {
-        if (selectedEpisode === null) {
-          throw new Error(t(language, "generated.screens.StoryScreen.select.an.episode.to.save.134a75d1"));
-        }
-        if (estimatedPagesInvalid) {
-          throw new Error(
-            t(language, 'screen.story.estimatedPagesOutOfRange', {
-              maximum: MAX_ESTIMATED_PAGES
-            })
-          );
-        }
-        await saveEpisodeMutation();
-      }
-      if (sceneDirty) {
-        if (selectedEpisode === null) {
-          throw new Error(t(language, "generated.screens.StoryScreen.select.an.episode.first.65b38fbb"));
-        }
-        if (sceneOrderInvalid) {
-          throw new Error(
-            t(language, 'screen.story.sceneOrderOutOfRange', { maximum: MAX_STORY_ORDER })
-          );
-        }
-        if (selectedScene === null) {
-          await saveNewSceneMutation();
-        } else {
-          await saveExistingSceneMutation();
-        }
-      }
-    } catch (error) {
-      setDirtySaveError(
-        error instanceof Error
-          ? error
-          : new Error(t(language, "generated.screens.StoryScreen.unsaved.changes.could.not.be.saved.88963a72"))
-      );
-      throw error;
+  const saveStoryDrafts = useCallback((): Promise<void> => {
+    if (storySavePromiseRef.current !== null) {
+      return storySavePromiseRef.current;
     }
+    const save = (async (): Promise<void> => {
+      setDirtySaveError(null);
+      try {
+        if (episodeDirty) {
+          if (selectedEpisode === null) {
+            throw new Error(t(language, "generated.screens.StoryScreen.select.an.episode.to.save.134a75d1"));
+          }
+          if (estimatedPagesInvalid) {
+            throw new Error(
+              t(language, 'screen.story.estimatedPagesOutOfRange', {
+                maximum: MAX_ESTIMATED_PAGES
+              })
+            );
+          }
+          await saveEpisodeMutation();
+        }
+        if (sceneDirty) {
+          if (selectedEpisode === null) {
+            throw new Error(t(language, "generated.screens.StoryScreen.select.an.episode.first.65b38fbb"));
+          }
+          if (sceneOrderInvalid) {
+            throw new Error(
+              t(language, 'screen.story.sceneOrderOutOfRange', { maximum: MAX_STORY_ORDER })
+            );
+          }
+          if (selectedScene === null) {
+            await saveNewSceneMutation();
+          } else {
+            await saveExistingSceneMutation();
+          }
+        }
+      } catch (error) {
+        setDirtySaveError(
+          error instanceof Error
+            ? error
+            : new Error(t(language, "generated.screens.StoryScreen.unsaved.changes.could.not.be.saved.88963a72"))
+        );
+        throw error;
+      }
+    })();
+    storySavePromiseRef.current = save;
+    void save.then(
+      () => {
+        if (storySavePromiseRef.current === save) {
+          storySavePromiseRef.current = null;
+        }
+      },
+      () => {
+        if (storySavePromiseRef.current === save) {
+          storySavePromiseRef.current = null;
+        }
+      }
+    );
+    return save;
   }, [
     episodeDirty,
     estimatedPagesInvalid,
@@ -748,7 +768,7 @@ export function StoryScreen(): React.JSX.Element {
             <FormField editable={canEdit} keyboardType="numeric" label={t(language, 'estimatedPages')} onChangeText={setEstimatedPages} value={estimatedPages} />
             {estimatedPagesInvalid ? <Notice message={t(language, "generated.screens.StoryScreen.estimated.pages.must.be.a.number.from.1.20301ed5")} tone="warning" /> : null}
             <View style={styles.buttonRow}>
-              <PrimaryButton disabled={!canEdit || activeStaleResource === 'episode' || estimatedPagesInvalid || episodeTitle.trim().length === 0} label={t(language, 'save')} loading={updateEpisodeMutation.isPending} onPress={() => updateEpisodeMutation.mutate()} variant="secondary" />
+              <PrimaryButton disabled={!canEdit || activeStaleResource === 'episode' || estimatedPagesInvalid || episodeTitle.trim().length === 0} label={t(language, 'save')} loading={updateEpisodeMutation.isPending || createSceneMutation.isPending || updateSceneMutation.isPending} onPress={() => { void saveStoryDrafts().catch(() => undefined); }} variant="secondary" />
             </View>
           </>
         )}
