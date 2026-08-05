@@ -717,28 +717,31 @@ export class LyraMobileApiClient {
     });
   }
 
-  public async updateEpisode(
+  public updateEpisode(
     episodeId: string,
     body: UpdateEpisodePayload,
     organizationId?: string | null
   ): Promise<EpisodeRecord> {
-    try {
-      return await this.request(`/api/episodes/${episodeId}${organizationQuery(organizationId)}`, episodeSchema, {
+    return this.request(
+      `/api/episodes/${episodeId}${organizationQuery(organizationId)}`,
+      episodeSchema,
+      {
         method: 'PUT',
         body
-      });
-    } catch (error) {
-      if (!isLegacyConcurrencyUpdateContractError(error)) {
-        throw error;
       }
+    )
+      .catch((error: unknown): Promise<EpisodeRecord> => {
+        if (!isLegacyConcurrencyUpdateContractError(error)) {
+          throw error;
+        }
 
-      const { expected_updated_at: _expectedUpdatedAt, ...legacyBody } = body;
-      void _expectedUpdatedAt;
-      return this.request(`/api/episodes/${episodeId}${organizationQuery(organizationId)}`, episodeSchema, {
-        method: 'PUT',
-        body: legacyBody
+        const { expected_updated_at: _expectedUpdatedAt, ...legacyBody } = body;
+        void _expectedUpdatedAt;
+        return this.request(`/api/episodes/${episodeId}${organizationQuery(organizationId)}`, episodeSchema, {
+          method: 'PUT',
+          body: legacyBody
+        });
       });
-    }
   }
 
   public moveEpisode(
