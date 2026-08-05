@@ -96,7 +96,7 @@ Unclassified routes: **0**
 | `/api/pages/:id/balloons` | GET | Mobile-hidden | External dialogue editing remains intentionally unavailable until the complete balloon finalize flow is released. |
 | `/api/pages/:id/balloons` | POST | Mobile-hidden | External dialogue editing remains intentionally unavailable until the complete balloon finalize flow is released. |
 | `/api/pages/:id/confirm` | POST | Mobile UI | api.confirmPage -> apps/mobile/src/screens/PagesScreen.tsx |
-| `/api/pages/:id/export-image` | GET | Mobile UI | api.exportPageImage -> apps/mobile/src/screens/PagesScreen.tsx |
+| `/api/pages/:id/export-image` | GET | Mobile UI | PagesScreen authenticated file download and native share flow. |
 | `/api/pages/:id/frames` | GET | Mobile UI | api.getFrames -> apps/mobile/src/screens/PagesScreen.tsx |
 | `/api/pages/:id/frames` | PUT | Mobile UI | api.replaceFrames -> apps/mobile/src/screens/PagesScreen.tsx |
 | `/api/pages/:id/frames/apply-template` | POST | Mobile UI | api.applyFrameTemplate -> apps/mobile/src/screens/PagesScreen.tsx |
