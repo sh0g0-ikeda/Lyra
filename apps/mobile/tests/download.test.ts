@@ -16,7 +16,7 @@ const {
   fileWriteMock,
   isAvailableAsyncMock,
   requestMediaLibraryPermissionsMock,
-  createAssetAsyncMock,
+  assetCreateMock,
   shareAsyncMock,
   writeAsStringAsyncMock
 } = vi.hoisted(() => ({
@@ -25,7 +25,7 @@ const {
   fileWriteMock: vi.fn(),
   isAvailableAsyncMock: vi.fn(),
   requestMediaLibraryPermissionsMock: vi.fn(),
-  createAssetAsyncMock: vi.fn(),
+  assetCreateMock: vi.fn(),
   shareAsyncMock: vi.fn(),
   writeAsStringAsyncMock: vi.fn()
 }));
@@ -60,7 +60,7 @@ vi.mock('expo-sharing', () => ({
 }));
 
 vi.mock('expo-media-library', () => ({
-  createAssetAsync: createAssetAsyncMock,
+  Asset: { create: assetCreateMock },
   requestPermissionsAsync: requestMediaLibraryPermissionsMock,
 }));
 
@@ -128,7 +128,7 @@ describe('mobile download filenames', () => {
   it('認証済みのページ画像を写真ライブラリへ保存し、共有シートを開かない', async () => {
     downloadAsyncMock.mockResolvedValue({ status: 200, uri: 'file:///cache/lyra-page-1.png' });
     requestMediaLibraryPermissionsMock.mockResolvedValue({ granted: true });
-    createAssetAsyncMock.mockResolvedValue(undefined);
+    assetCreateMock.mockResolvedValue(undefined);
 
     await saveAuthenticatedImageToPhotoLibrary({
       path: '/api/pages/page-1/export-image',
@@ -148,13 +148,13 @@ describe('mobile download filenames', () => {
       'file:///cache/lyra-page-1.png',
       { headers: { Authorization: 'Bearer id-token' } }
     );
-    expect(createAssetAsyncMock).toHaveBeenCalledWith('file:///cache/lyra-page-1.png');
+    expect(assetCreateMock).toHaveBeenCalledWith('file:///cache/lyra-page-1.png');
     expect(shareAsyncMock).not.toHaveBeenCalled();
   });
 
   it('認証更新済みAPIレスポンスの画像バイト列をネイティブキャッシュ経由で写真ライブラリへ保存する', async () => {
     requestMediaLibraryPermissionsMock.mockResolvedValue({ granted: true });
-    createAssetAsyncMock.mockResolvedValue(undefined);
+    assetCreateMock.mockResolvedValue(undefined);
 
     await saveImageBlobToPhotoLibrary({
       blob: new Blob(['png-bytes'], { type: 'image/png' }),
@@ -171,7 +171,7 @@ describe('mobile download filenames', () => {
       })
     );
     expect(writeAsStringAsyncMock).not.toHaveBeenCalled();
-    expect(createAssetAsyncMock).toHaveBeenCalledWith('file:///cache/lyra-page-1.png');
+    expect(assetCreateMock).toHaveBeenCalledWith('file:///cache/lyra-page-1.png');
     expect(downloadAsyncMock).not.toHaveBeenCalled();
   });
 
@@ -194,7 +194,7 @@ describe('mobile download filenames', () => {
       .mockResolvedValueOnce({ status: 403, uri: 'file:///cache/signed-page.png' })
       .mockResolvedValueOnce({ status: 200, uri: 'file:///cache/authenticated-page.png' });
     requestMediaLibraryPermissionsMock.mockResolvedValue({ granted: true });
-    createAssetAsyncMock.mockResolvedValue(undefined);
+    assetCreateMock.mockResolvedValue(undefined);
 
     await saveImageToPhotoLibrary({
       filename: 'lyra-page-1',
@@ -220,7 +220,7 @@ describe('mobile download filenames', () => {
       'file:///cache/lyra-page-1-candidate-2.png',
       { headers: { Authorization: 'Bearer id-token' } }
     );
-    expect(createAssetAsyncMock).toHaveBeenCalledWith('file:///cache/authenticated-page.png');
+    expect(assetCreateMock).toHaveBeenCalledWith('file:///cache/authenticated-page.png');
   });
 
   it('写真ライブラリの権限が拒否された場合は専用エラーを返す', async () => {
@@ -235,13 +235,13 @@ describe('mobile download filenames', () => {
         tokens: null
       })
     ).rejects.toMatchObject({ code: 'PHOTO_LIBRARY_PERMISSION_DENIED' });
-    expect(createAssetAsyncMock).not.toHaveBeenCalled();
+    expect(assetCreateMock).not.toHaveBeenCalled();
   });
 
   it('写真ライブラリへの登録失敗をダウンロード中断と誤表示しない', async () => {
     downloadAsyncMock.mockResolvedValue({ status: 200, uri: 'file:///cache/lyra-page-1.png' });
     requestMediaLibraryPermissionsMock.mockResolvedValue({ granted: true });
-    createAssetAsyncMock.mockRejectedValueOnce(new Error('Native media library registration failed'));
+    assetCreateMock.mockRejectedValueOnce(new Error('Native media library registration failed'));
 
     await expect(
       saveAuthenticatedImageToPhotoLibrary({
@@ -281,8 +281,31 @@ describe('mobile download failure classification', () => {
     ).rejects.toMatchObject({ code: expectedCode });
   });
 
+  it('PDFを永続領域へ取得しPDFとして共有シートへ渡す', async () => {
+    downloadAsyncMock.mockResolvedValueOnce({ status: 200, uri: 'file:///documents/export.pdf' });
+    isAvailableAsyncMock.mockResolvedValueOnce(true);
+
+    await expect(
+      downloadExternalFile({
+        filename: 'export.pdf',
+        mimeType: 'application/pdf',
+        url: 'https://downloads.example.test/export.pdf?signature=safe'
+      })
+    ).resolves.toBe('file:///documents/export.pdf');
+
+    expect(downloadAsyncMock).toHaveBeenCalledWith(
+      'https://downloads.example.test/export.pdf?signature=safe',
+      'file:///documents/export.pdf'
+    );
+    expect(shareAsyncMock).toHaveBeenCalledWith('file:///documents/export.pdf', {
+      UTI: 'com.adobe.pdf',
+      dialogTitle: 'export.pdf',
+      mimeType: 'application/pdf'
+    });
+  });
+
   it('共有先がない端末を共有不可として返す', async () => {
-    downloadAsyncMock.mockResolvedValueOnce({ status: 200, uri: 'file:///cache/export.pdf' });
+    downloadAsyncMock.mockResolvedValueOnce({ status: 200, uri: 'file:///documents/export.pdf' });
     isAvailableAsyncMock.mockResolvedValueOnce(false);
 
     await expect(
@@ -295,7 +318,7 @@ describe('mobile download failure classification', () => {
   });
 
   it('共有シートの取消をダウンロード取消として返す', async () => {
-    downloadAsyncMock.mockResolvedValueOnce({ status: 200, uri: 'file:///cache/export.pdf' });
+    downloadAsyncMock.mockResolvedValueOnce({ status: 200, uri: 'file:///documents/export.pdf' });
     isAvailableAsyncMock.mockResolvedValueOnce(true);
     shareAsyncMock.mockRejectedValueOnce(new Error('User cancelled the share sheet'));
 

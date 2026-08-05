@@ -41,14 +41,19 @@ const completedJob = {
 };
 
 describe('ExportJobCard', () => {
-  it('passes a completed export URL to the user callback only after a button press', () => {
+  it('保存ボタン押下時に最新の短命URLを再取得してから保存処理へ渡す', async () => {
     const onDownload = vi.fn();
+    const refreshedJob = {
+      ...completedJob,
+      download_url: 'https://downloads.example.test/lyra-export.pdf?signature=fresh'
+    };
+    const getExportJob = vi.fn().mockResolvedValue(refreshedJob);
     useQueryMock.mockReturnValue({ data: completedJob, error: null, isLoading: false });
     let renderer: ReturnType<typeof create>;
     act(() => {
       renderer = create(
         React.createElement(ExportJobCard, {
-          api: { getExportJob: vi.fn() } as never,
+          api: { getExportJob } as never,
           jobId: 'export-job-1',
           language: 'en',
           onDownload,
@@ -59,7 +64,36 @@ describe('ExportJobCard', () => {
 
     const button = renderer!.root.findByType('button');
     expect(button.children).toEqual(['Download export']);
-    act(() => button.props.onClick());
+    await act(async () => {
+      await button.props.onClick();
+    });
+
+    expect(getExportJob).toHaveBeenCalledWith('export-job-1', null);
+    expect(onDownload).toHaveBeenCalledWith(refreshedJob.download_url, refreshedJob);
+  });
+
+  it('カード内のURLが欠けていても完了済みジョブは保存時に最新URLを取得できる', async () => {
+    const completedWithoutUrl = { ...completedJob, download_url: undefined };
+    const getExportJob = vi.fn().mockResolvedValue(completedJob);
+    const onDownload = vi.fn();
+    useQueryMock.mockReturnValue({ data: completedWithoutUrl, error: null, isLoading: false });
+    let renderer: ReturnType<typeof create>;
+    act(() => {
+      renderer = create(
+        React.createElement(ExportJobCard, {
+          api: { getExportJob } as never,
+          jobId: 'export-job-1',
+          language: 'ja',
+          onDownload,
+          sessionKey: 'session-a'
+        })
+      );
+    });
+
+    const button = renderer!.root.findByType('button');
+    await act(async () => {
+      await button.props.onClick();
+    });
 
     expect(onDownload).toHaveBeenCalledWith(completedJob.download_url, completedJob);
   });
@@ -104,7 +138,7 @@ describe('ExportJobCard', () => {
     await act(async () => {
       renderer = create(
         React.createElement(ExportJobCard, {
-          api: { getExportJob: vi.fn() } as never,
+          api: { getExportJob: vi.fn().mockResolvedValue(completedJob) } as never,
           jobId: 'export-job-1',
           language: 'en',
           onDownload,

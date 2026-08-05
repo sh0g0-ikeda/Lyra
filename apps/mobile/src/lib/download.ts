@@ -240,7 +240,7 @@ async function createPhotoLibraryAsset(localUri: string): Promise<void> {
     throw new MobileFileTransferError('PHOTO_LIBRARY_PERMISSION_DENIED');
   }
 
-  await MediaLibrary.createAssetAsync(localUri);
+  await MediaLibrary.Asset.create(localUri);
 }
 
 export async function downloadExternalFile({
@@ -251,7 +251,7 @@ export async function downloadExternalFile({
   if (!url.startsWith('https://')) {
     throw new MobileFileTransferError('DOWNLOAD_INTERRUPTED');
   }
-  const directory = FileSystem.cacheDirectory ?? FileSystem.documentDirectory;
+  const directory = FileSystem.documentDirectory ?? FileSystem.cacheDirectory;
   if (directory === null) {
     throw new MobileFileTransferError('STORAGE_FULL');
   }
@@ -270,7 +270,11 @@ export async function downloadExternalFile({
     if (!(await Sharing.isAvailableAsync())) {
       throw new MobileFileTransferError('SHARING_UNAVAILABLE');
     }
-    await Sharing.shareAsync(result.uri, { mimeType });
+    await Sharing.shareAsync(result.uri, {
+      dialogTitle: safeFilename,
+      mimeType,
+      ...(mimeType === 'application/pdf' ? { UTI: 'com.adobe.pdf' } : {})
+    });
   } catch (error) {
     throw classifyFileTransferFailure(error);
   }
