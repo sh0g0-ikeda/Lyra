@@ -69,20 +69,20 @@ Unclassified routes: **0**
 | `/api/organizations/:organizationId` | GET | Mobile UI | api.getOrganizationWorkspace -> apps/mobile/src/components/OrganizationManagementPanel.tsx |
 | `/api/organizations/:organizationId` | PATCH | Mobile UI | api.updateOrganization -> apps/mobile/src/components/OrganizationManagementPanel.tsx |
 | `/api/organizations/:organizationId/audit-logs` | GET | Mobile UI | api.getOrganizationAuditLogs, api.getOrganizationAuditLogsPage -> apps/mobile/src/components/OrganizationManagementPanel.tsx |
-| `/api/organizations/:organizationId/billing` | GET | Mobile UI | api.getOrganizationBillingSummary -> apps/mobile/src/components/OrganizationManagementPanel.tsx |
-| `/api/organizations/:organizationId/billing/checkout/credits` | POST | Mobile UI | api.createOrganizationCreditCheckout -> apps/mobile/src/components/OrganizationManagementPanel.tsx |
-| `/api/organizations/:organizationId/billing/checkout/subscription` | POST | Mobile UI | api.createOrganizationSubscriptionCheckout -> apps/mobile/src/components/OrganizationManagementPanel.tsx |
-| `/api/organizations/:organizationId/billing/credit-pack-checkout-session` | POST | Compatibility | Legacy organization credit alias; Mobile uses the canonical checkout/credits route. |
-| `/api/organizations/:organizationId/billing/customer-portal` | POST | Mobile UI | api.createOrganizationCustomerPortal -> apps/mobile/src/components/OrganizationManagementPanel.tsx |
-| `/api/organizations/:organizationId/billing/customer-portal-session` | POST | Compatibility | Legacy organization portal alias; Mobile uses the canonical customer-portal route. |
-| `/api/organizations/:organizationId/billing/plans` | GET | Mobile aggregate replacement | Mobile uses the organization billing summary, which contains the server-owned plan catalog. |
-| `/api/organizations/:organizationId/billing/subscription-checkout-session` | POST | Compatibility | Legacy organization checkout alias; Mobile uses the canonical checkout/subscription route. |
-| `/api/organizations/:organizationId/credits/balance` | GET | Mobile aggregate replacement | Mobile uses the organization billing summary, which contains the authoritative balance. |
+| `/api/organizations/:organizationId/billing` | GET | Mobile-hidden | Organization Stripe billing details are available only on the Web. |
+| `/api/organizations/:organizationId/billing/checkout/credits` | POST | Mobile-hidden | Organization Stripe credit checkout is available only on the Web. |
+| `/api/organizations/:organizationId/billing/checkout/subscription` | POST | Mobile-hidden | Organization Stripe subscription checkout is available only on the Web. |
+| `/api/organizations/:organizationId/billing/credit-pack-checkout-session` | POST | Mobile-hidden | Legacy organization Stripe credit checkout is available only on the Web. |
+| `/api/organizations/:organizationId/billing/customer-portal` | POST | Mobile-hidden | Organization Stripe customer portal is available only on the Web. |
+| `/api/organizations/:organizationId/billing/customer-portal-session` | POST | Mobile-hidden | Legacy organization Stripe customer portal is available only on the Web. |
+| `/api/organizations/:organizationId/billing/plans` | GET | Mobile-hidden | Organization Stripe billing plans are available only on the Web. |
+| `/api/organizations/:organizationId/billing/subscription-checkout-session` | POST | Mobile-hidden | Legacy organization Stripe checkout is available only on the Web. |
+| `/api/organizations/:organizationId/credits/balance` | GET | Mobile aggregate replacement | Mobile receives the authoritative organization credit balance from the /api/me bootstrap response. |
 | `/api/organizations/:organizationId/invitations` | GET | Mobile UI | api.getOrganizationInvitations, api.getOrganizationInvitationsPage -> apps/mobile/src/components/OrganizationManagementPanel.tsx |
 | `/api/organizations/:organizationId/invitations` | POST | Mobile UI | api.createOrganizationInvitation -> apps/mobile/src/components/OrganizationManagementPanel.tsx |
 | `/api/organizations/:organizationId/invitations/:invitationId/resend` | POST | Mobile UI | api.resendOrganizationInvitation -> apps/mobile/src/components/OrganizationManagementPanel.tsx |
 | `/api/organizations/:organizationId/invitations/:invitationId/revoke` | POST | Mobile UI | api.revokeOrganizationInvitation -> apps/mobile/src/components/OrganizationManagementPanel.tsx |
-| `/api/organizations/:organizationId/invoices` | GET | Mobile UI | api.getOrganizationInvoices -> apps/mobile/src/components/OrganizationManagementPanel.tsx |
+| `/api/organizations/:organizationId/invoices` | GET | Mobile-hidden | Organization Stripe invoices are available only on the Web. |
 | `/api/organizations/:organizationId/members` | GET | Mobile UI | api.getOrganizationMembers, api.getOrganizationMembersPage -> apps/mobile/src/components/OrganizationManagementPanel.tsx |
 | `/api/organizations/:organizationId/members/:memberId` | DELETE | Mobile UI | api.removeOrganizationMember -> apps/mobile/src/components/OrganizationManagementPanel.tsx |
 | `/api/organizations/:organizationId/members/:memberId` | PATCH | Mobile UI | api.updateOrganizationMember -> apps/mobile/src/components/OrganizationManagementPanel.tsx |

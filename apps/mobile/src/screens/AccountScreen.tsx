@@ -221,8 +221,6 @@ export function AccountScreen(): React.JSX.Element {
       queryClient.invalidateQueries({ queryKey: ['organization-workspace', sessionKey] }),
       queryClient.invalidateQueries({ queryKey: ['organization-members', sessionKey] }),
       queryClient.invalidateQueries({ queryKey: ['organization-invitations', sessionKey] }),
-      queryClient.invalidateQueries({ queryKey: ['organization-billing', sessionKey] }),
-      queryClient.invalidateQueries({ queryKey: ['organization-invoices', sessionKey] }),
       queryClient.invalidateQueries({ queryKey: ['organization-usage', sessionKey] }),
       queryClient.invalidateQueries({ queryKey: ['organization-audit-logs', sessionKey] }),
       refreshJobs()
@@ -506,7 +504,6 @@ export function AccountScreen(): React.JSX.Element {
             api={api}
             key={activeOrganization.id}
             language={language}
-            onBillingHandoffComplete={refresh}
             onConfirmRemoveMember={confirmOrganizationMemberRemoval}
             onDownloadUsageCsv={async () => {
               await downloadAuthenticatedFile({
@@ -517,7 +514,6 @@ export function AccountScreen(): React.JSX.Element {
                 refreshIdToken
               });
             }}
-            onOpenBillingUrl={openExternalHttpsUrl}
             organization={activeOrganization}
             sessionKey={sessionKey}
           />
