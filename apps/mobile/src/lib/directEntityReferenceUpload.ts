@@ -144,9 +144,6 @@ export async function uploadAndImportEntityReference<Result>(
   try {
     const uploadResult = await task.uploadAsync();
     if (uploadResult.status < 200 || uploadResult.status >= 300) {
-      if (isLegacyUploadFallbackStatus(uploadResult.status) && input.legacyImport !== undefined) {
-        return finalizeLegacyEntityReference(input);
-      }
       throw new DirectEntityUploadError(
         'UPLOAD_FAILED',
         'upload',
@@ -273,8 +270,4 @@ function isRetryableUploadStatus(status: number): boolean {
 
 function isLegacyPresignUnavailable(error: unknown): boolean {
   return error instanceof ApiError && (error.status === 404 || error.status === 405);
-}
-
-function isLegacyUploadFallbackStatus(status: number): boolean {
-  return status >= 400 && status < 500 && !isRetryableUploadStatus(status);
 }

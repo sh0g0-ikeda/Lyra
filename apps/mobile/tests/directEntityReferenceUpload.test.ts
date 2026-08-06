@@ -204,7 +204,7 @@ describe('direct entity reference upload', () => {
     expect(stages).toEqual(['presign', 'finalize']);
   });
 
-  it('署名済みPUTが非retryableな4xxならlegacy importへ切り替える', async () => {
+  it('署名済みPUTが403の場合はlegacy importへ再送せずアップロード失敗を返す', async () => {
     const task = createTaskHarness();
     task.uploadAsync.mockResolvedValue({ body: '', headers: {}, status: 403 });
     const finalizeImport = vi.fn();
@@ -223,10 +223,14 @@ describe('direct entity reference upload', () => {
         sizeBytes: 1024,
         source: task.source
       })
-    ).resolves.toEqual({ source: 'legacy' });
+    ).rejects.toMatchObject<Partial<DirectEntityUploadError>>({
+      code: 'UPLOAD_FAILED',
+      retryable: false,
+      stage: 'upload'
+    });
 
     expect(finalizeImport).not.toHaveBeenCalled();
-    expect(legacyImport).toHaveBeenCalledTimes(1);
+    expect(legacyImport).not.toHaveBeenCalled();
     expect(task.release).toHaveBeenCalledTimes(1);
   });
 
