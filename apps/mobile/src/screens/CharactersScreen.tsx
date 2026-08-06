@@ -34,6 +34,10 @@ import { characterContinuityStateUiEnabled } from '@/constants/mobileFeatureVisi
 import { colors, spacing, textStyles } from '@/constants/theme';
 import { mergeCharacterClothingDescription } from '@/domain/characterClothing';
 import {
+  editorDraftHasUnsavedChanges,
+  shouldHydrateEditorDraft
+} from '@/domain/editorDraftSyncPolicy';
+import {
   buildCreateEntityPayload,
   buildUpdateEntityPayload,
   hasEntityUpdateChanges,
@@ -1810,7 +1814,7 @@ export function CharactersScreen(): React.JSX.Element {
   const [previewImageHeaders, setPreviewImageHeaders] = useState<ImageRequestHeaders | undefined>(undefined);
   const [selectedEntityStateId, setSelectedEntityStateId] = useState<string | null>(null);
   const [entityStateDraft, setEntityStateDraft] = useState<EntityStateDraft>(emptyEntityStateDraft);
-  const lastSyncedEntityId = useRef<string | null>(null);
+  const [lastSyncedEntityId, setLastSyncedEntityId] = useState<string | null>(null);
   const lastSyncedEntityStateId = useRef<string | null>(null);
   const [entityStale, setEntityStale] = useState(false);
   const [dirtySaveError, setDirtySaveError] = useState<Error | null>(null);
@@ -1911,7 +1915,7 @@ export function CharactersScreen(): React.JSX.Element {
       : buildUpdateEntityPayload(selectedEntity, visibleEntityDraft, {
           structuredFieldsChanged,
         });
-  const entityDirty =
+  const entityValuesDiffer =
     selectedEntity === null
       ? name.trim().length > 0 ||
         description.trim().length > 0 ||
@@ -1920,6 +1924,12 @@ export function CharactersScreen(): React.JSX.Element {
         Object.values(structuredDraft).some((value) => value.trim().length > 0)
       : pendingEntityUpdatePayload !== null &&
         hasEntityUpdateChanges(pendingEntityUpdatePayload);
+  const entityDirty = editorDraftHasUnsavedChanges({
+    hasServerSnapshot: selectedEntity !== null || selection.entityId === null,
+    lastResourceId: lastSyncedEntityId,
+    resourceId: selectedEntity?.id ?? null,
+    valuesDiffer: entityValuesDiffer
+  });
 
   const referenceQuery = useQuery({
     enabled: selectedEntity !== null,
@@ -2029,10 +2039,15 @@ export function CharactersScreen(): React.JSX.Element {
 
   useEffect(() => {
     const nextId = selectedEntity?.id ?? null;
-    if (lastSyncedEntityId.current === nextId && entityDirty) {
+    if (!shouldHydrateEditorDraft({
+      hasServerSnapshot: selectedEntity !== null || selection.entityId === null,
+      hasUnsavedChanges: entityDirty,
+      lastResourceId: lastSyncedEntityId,
+      resourceId: nextId
+    })) {
       return;
     }
-    lastSyncedEntityId.current = nextId;
+    setLastSyncedEntityId(nextId);
     if (selectedEntity !== null) {
       setEntityEditorMode('edit');
     }
@@ -2050,7 +2065,7 @@ export function CharactersScreen(): React.JSX.Element {
     setSelectedEntityStateId(null);
     setEntityStateDraft(emptyEntityStateDraft());
     lastSyncedEntityStateId.current = null;
-  }, [entityDirty, selectedEntity]);
+  }, [entityDirty, lastSyncedEntityId, selectedEntity, selection.entityId]);
 
   useEffect(() => {
     setEntityStale(false);
@@ -2596,7 +2611,7 @@ export function CharactersScreen(): React.JSX.Element {
       setLastImportedCandidateToken(null);
       setLastImportedCandidateEntityId(null);
       setLocalJob(null);
-      lastSyncedEntityId.current = null;
+      setLastSyncedEntityId(null);
     };
     void (async () => {
       if (!(await resolveDirtyEditors(language))) {
@@ -2626,7 +2641,7 @@ export function CharactersScreen(): React.JSX.Element {
     await queryClient.invalidateQueries({
       queryKey: entitiesQueryKey(sessionKey, activeWorkId, organizationId),
     });
-    lastSyncedEntityId.current = null;
+    setLastSyncedEntityId(null);
     setEntityStale(false);
   };
 

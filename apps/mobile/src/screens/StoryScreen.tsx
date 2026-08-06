@@ -14,6 +14,10 @@ import { StoryCollaborationPanel } from '@/components/StoryCollaborationPanel';
 import { WorkspaceHierarchyNavigator } from '@/components/WorkspaceHierarchyNavigator';
 import { useWorkspaceContextSelection } from '@/components/WorkspaceContextPicker';
 import { colors, spacing, textStyles } from '@/constants/theme';
+import {
+  editorDraftHasUnsavedChanges,
+  shouldHydrateEditorDraft
+} from '@/domain/editorDraftSyncPolicy';
 import { extractImprovedFullStory } from '@/domain/storyWorkflow';
 import { storyEditorIsDirty } from '@/domain/editorDirtyPolicy';
 import {
@@ -131,8 +135,8 @@ export function StoryScreen(): React.JSX.Element {
     kind: 'episode';
   } | null>(null);
   const [dirtySaveError, setDirtySaveError] = useState<Error | null>(null);
-  const lastSyncedEpisodeId = useRef<string | null>(null);
-  const lastSyncedSceneId = useRef<string | null>(null);
+  const [lastSyncedEpisodeId, setLastSyncedEpisodeId] = useState<string | null>(null);
+  const [lastSyncedSceneId, setLastSyncedSceneId] = useState<string | null>(null);
   const storySavePromiseRef = useRef<Promise<void> | null>(null);
   const collaborationAbortRef = useRef<AbortController | null>(null);
   const collaborationRequestIdRef = useRef(0);
@@ -213,14 +217,20 @@ export function StoryScreen(): React.JSX.Element {
     [sceneId, scenesQuery.data?.scenes]
   );
 
-  const episodeDirty =
+  const episodeValuesDiffer =
     selectedEpisode === null
       ? [episodeTitle, episodeDraft, estimatedPages].some((value) => value.trim().length > 0 && value !== '4')
       : episodeTitle !== (selectedEpisode.title ?? '') ||
         episodeDraft !== episodeMobileDraft(selectedEpisode) ||
         estimatedPages !== String(selectedEpisode.estimated_pages ?? 4);
+  const episodeDirty = editorDraftHasUnsavedChanges({
+    hasServerSnapshot: selectedEpisode !== null || selection.episodeId === null,
+    lastResourceId: lastSyncedEpisodeId,
+    resourceId: selectedEpisode?.id ?? null,
+    valuesDiffer: episodeValuesDiffer
+  });
 
-  const sceneDirty =
+  const sceneValuesDiffer =
     selectedScene === null
       ? [sceneLocation, sceneTime, sceneAtmosphere].some((value) => value.trim().length > 0) || sceneEntityIds.length > 0
       : sceneOrder !== String(selectedScene.order) ||
@@ -228,6 +238,12 @@ export function StoryScreen(): React.JSX.Element {
         sceneTime !== (selectedScene.time ?? '') ||
         sceneAtmosphere !== (selectedScene.atmosphere ?? '') ||
         !sameStringArray(sceneEntityIds, selectedScene.involved_entity_ids ?? []);
+  const sceneDirty = editorDraftHasUnsavedChanges({
+    hasServerSnapshot: scenesQuery.data !== undefined,
+    lastResourceId: lastSyncedSceneId,
+    resourceId: selectedScene?.id ?? null,
+    valuesDiffer: sceneValuesDiffer
+  });
   const storyDirty = storyEditorIsDirty({
     work: false,
     chapter: false,
@@ -239,10 +255,15 @@ export function StoryScreen(): React.JSX.Element {
   const sceneOrderInvalid = parseIntInRange(sceneOrder, 1, MAX_STORY_ORDER) === null;
   useEffect(() => {
     const nextId = selectedEpisode?.id ?? null;
-    if (lastSyncedEpisodeId.current === nextId && episodeDirty) {
+    if (!shouldHydrateEditorDraft({
+      hasServerSnapshot: selectedEpisode !== null || selection.episodeId === null,
+      hasUnsavedChanges: episodeDirty,
+      lastResourceId: lastSyncedEpisodeId,
+      resourceId: nextId
+    })) {
       return;
     }
-    lastSyncedEpisodeId.current = nextId;
+    setLastSyncedEpisodeId(nextId);
     setEpisodeTitle(selectedEpisode?.title ?? '');
     setEpisodeDraft(selectedEpisode === null ? '' : episodeMobileDraft(selectedEpisode));
     setEstimatedPages(String(selectedEpisode?.estimated_pages ?? 4));
@@ -251,22 +272,27 @@ export function StoryScreen(): React.JSX.Element {
     collaborationRequestIdRef.current += 1;
     setCollaborationProposal('');
     setCollaborationError(null);
-  }, [episodeDirty, selectedEpisode]);
+  }, [episodeDirty, lastSyncedEpisodeId, selectedEpisode, selection.episodeId]);
 
   useEffect(() => () => collaborationAbortRef.current?.abort(), []);
 
   useEffect(() => {
     const nextId = selectedScene?.id ?? null;
-    if (lastSyncedSceneId.current === nextId && sceneDirty) {
+    if (!shouldHydrateEditorDraft({
+      hasServerSnapshot: scenesQuery.data !== undefined,
+      hasUnsavedChanges: sceneDirty,
+      lastResourceId: lastSyncedSceneId,
+      resourceId: nextId
+    })) {
       return;
     }
-    lastSyncedSceneId.current = nextId;
+    setLastSyncedSceneId(nextId);
     setSceneOrder(String(selectedScene?.order ?? (scenesQuery.data?.scenes.length ?? 0) + 1));
     setSceneLocation(selectedScene?.location ?? '');
     setSceneTime(selectedScene?.time ?? '');
     setSceneAtmosphere(selectedScene?.atmosphere ?? '');
     setSceneEntityIds(selectedScene?.involved_entity_ids ?? []);
-  }, [sceneDirty, scenesQuery.data?.scenes.length, selectedScene]);
+  }, [lastSyncedSceneId, sceneDirty, scenesQuery.data, selectedScene]);
 
   const activeStaleResource =
     staleResource?.id === selectedEpisode?.id ? 'episode' : null;
