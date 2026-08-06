@@ -126,7 +126,7 @@ MOBILE_STORE_IDENTIFIER_HASH_SECRET=<at least 32 random characters>
 APPLE_STORE_BUNDLE_ID=<iOS bundle id>
 APPLE_STORE_APP_APPLE_ID=<numeric App Store app id>
 APPLE_STORE_ROOT_CERTIFICATES_BASE64_JSON=<base64(JSON array of base64 DER Apple root certificates)>
-APPLE_STORE_ALLOW_SANDBOX=false
+APPLE_STORE_ALLOW_SANDBOX=true
 APPLE_STORE_PRODUCT_STANDARD_MONTHLY=<App Store product id>
 APPLE_STORE_PRODUCT_PREMIUM_MONTHLY=<App Store product id>
 APPLE_STORE_PRODUCT_CREDITS_200=<App Store product id>
@@ -146,8 +146,11 @@ GOOGLE_PLAY_PRODUCT_CREDITS_3000=<Google Play product id>
 ```
 
 Production runtime validation fails when mobile billing is enabled without the
-required values, when catalog identifiers repeat within a store, or when Apple
-sandbox / Google test purchases are enabled. The Google service account needs
+required values, when catalog identifiers repeat within a store, or when Google
+test purchases are enabled. Apple Sandbox verification remains explicitly enabled
+for TestFlight and App Review; every accepted transaction still requires Apple's
+signature, the configured bundle/product allowlists, and the authenticated account
+binding. The Google service account needs
 Android Publisher API access for the configured package. Configure the Google
 Pub/Sub push subscription to use OIDC with the exact audience and service
 account email above. Configure App Store Server Notifications V2 to POST its

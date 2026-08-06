@@ -46,17 +46,28 @@ describe('mobile store billing configuration', () => {
     });
   });
 
-  it('fails closed in production when sandbox or tester purchases are enabled', () => {
+  it('permits Apple Sandbox verification in production for TestFlight and App Review', () => {
     expect(() =>
       assertMobileStoreBillingRuntimeConfig(
         {
           ...completeConfig,
           APPLE_STORE_ALLOW_SANDBOX: true,
+        },
+        true,
+      ),
+    ).not.toThrow();
+  });
+
+  it('rejects Google tester purchases in production', () => {
+    expect(() =>
+      assertMobileStoreBillingRuntimeConfig(
+        {
+          ...completeConfig,
           GOOGLE_PLAY_ALLOW_TEST_PURCHASES: true,
         },
         true,
       ),
-    ).toThrow(/sandbox and test purchases must be disabled/);
+    ).toThrow(/Google Play test purchases must be disabled/);
   });
 
   it('does not require provider credentials while mobile store billing is disabled', () => {

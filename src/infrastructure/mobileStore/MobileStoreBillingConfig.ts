@@ -181,8 +181,8 @@ export function assertMobileStoreBillingRuntimeConfig(
   if (duplicateProducts.length > 0) {
     violations.push(`Mobile store product mapping contains duplicates: ${duplicateProducts.join(', ')}`);
   }
-  if (isProduction && (source.APPLE_STORE_ALLOW_SANDBOX === true || source.GOOGLE_PLAY_ALLOW_TEST_PURCHASES === true)) {
-    violations.push('Mobile store sandbox and test purchases must be disabled in production');
+  if (isProduction && source.GOOGLE_PLAY_ALLOW_TEST_PURCHASES === true) {
+    violations.push('Google Play test purchases must be disabled in production');
   }
 
   if (violations.length > 0) {
