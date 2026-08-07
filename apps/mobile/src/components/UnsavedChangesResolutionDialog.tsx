@@ -10,15 +10,22 @@ import { t } from '@/lib/i18n';
 interface UnsavedChangesResolutionDialogProps {
   language: UiLanguage;
   onSelect: (choice: DirtyStateChoice) => void;
+  saving: boolean;
   visible: boolean;
 }
 
 export function UnsavedChangesResolutionDialog({
   language,
   onSelect,
+  saving,
   visible
 }: UnsavedChangesResolutionDialogProps): React.JSX.Element {
-  const cancel = (): void => onSelect('cancel');
+  const select = (choice: DirtyStateChoice): void => {
+    if (!saving) {
+      onSelect(choice);
+    }
+  };
+  const cancel = (): void => select('cancel');
 
   return (
     <Modal
@@ -48,17 +55,21 @@ export function UnsavedChangesResolutionDialog({
             </Text>
             <View style={styles.actions}>
               <PrimaryButton
+                disabled={saving}
                 label={t(language, "generated.lib.confirm.save.80b89d5e")}
-                onPress={() => onSelect('save')}
+                loading={saving}
+                onPress={() => select('save')}
                 testID="dirty-resolution-save"
               />
               <PrimaryButton
+                disabled={saving}
                 label={t(language, "generated.lib.confirm.discard.bd94165e")}
-                onPress={() => onSelect('discard')}
+                onPress={() => select('discard')}
                 testID="dirty-resolution-discard"
                 variant="danger"
               />
               <PrimaryButton
+                disabled={saving}
                 label={t(language, "generated.lib.confirm.cancel.3672b0b9")}
                 onPress={cancel}
                 testID="dirty-resolution-cancel"

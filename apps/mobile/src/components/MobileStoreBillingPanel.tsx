@@ -40,6 +40,9 @@ export function MobileStoreBillingPanel({ adapter, language, onVerified }: Mobil
   }, [onVerified, state.lastVerified]);
 
   const isBusy = state.loading || state.restoring || state.submittingProductId !== null;
+  const showDiagnostics = state.diagnostics !== null && (
+    state.error !== null || state.products.some((product) => !product.available)
+  );
   const restore = async (): Promise<void> => {
     try {
       await adapter.restore();
@@ -89,6 +92,14 @@ export function MobileStoreBillingPanel({ adapter, language, onVerified }: Mobil
           </View>
         );
       })}
+      {showDiagnostics && state.diagnostics !== null ? (
+        <View accessibilityLabel={t(language, 'component.mobileStoreBilling.diagnosticsTitle')} style={styles.diagnostics}>
+          <Text style={styles.diagnosticsTitle}>{t(language, 'component.mobileStoreBilling.diagnosticsTitle')}</Text>
+          {diagnosticLines(state.diagnostics, language).map((line, index) => (
+            <Text key={`${index}:${line}`} selectable style={styles.diagnosticLine}>{line}</Text>
+          ))}
+        </View>
+      ) : null}
       <PrimaryButton
         disabled={!online || !state.connected || isBusy}
         disabledReason={!online ? offlineMessage(language) : isBusy ? busyMessage(language) : undefined}
@@ -99,6 +110,72 @@ export function MobileStoreBillingPanel({ adapter, language, onVerified }: Mobil
       />
     </View>
   );
+}
+
+function diagnosticLines(
+  diagnostics: NonNullable<NativeStoreBillingState['diagnostics']>,
+  language: 'ja' | 'en'
+): string[] {
+  const none = t(language, 'component.mobileStoreBilling.diagnosticsNone');
+  const lines = [
+    t(language, 'component.mobileStoreBilling.diagnosticsConnection', {
+      status: t(
+        language,
+        diagnostics.connected
+          ? 'component.mobileStoreBilling.diagnosticsConnected'
+          : 'component.mobileStoreBilling.diagnosticsDisconnected'
+      )
+    }),
+    t(language, 'component.mobileStoreBilling.diagnosticsStorefront', {
+      storefront: diagnostics.storefront ?? none
+    }),
+    t(language, 'component.mobileStoreBilling.diagnosticsInApp', {
+      requested: diagnostics.inApp.requestedProductIds.length,
+      returned: diagnostics.inApp.returnedProductIds.length
+    }),
+    t(language, 'component.mobileStoreBilling.diagnosticsRequested', {
+      productIds: diagnostics.inApp.requestedProductIds.join(', ') || none
+    }),
+    t(language, 'component.mobileStoreBilling.diagnosticsReturned', {
+      productIds: diagnostics.inApp.returnedProductIds.join(', ') || none
+    }),
+    t(language, 'component.mobileStoreBilling.diagnosticsSubscriptions', {
+      requested: diagnostics.subscriptions.requestedProductIds.length,
+      returned: diagnostics.subscriptions.returnedProductIds.length
+    }),
+    t(language, 'component.mobileStoreBilling.diagnosticsRequested', {
+      productIds: diagnostics.subscriptions.requestedProductIds.join(', ') || none
+    }),
+    t(language, 'component.mobileStoreBilling.diagnosticsReturned', {
+      productIds: diagnostics.subscriptions.returnedProductIds.join(', ') || none
+    })
+  ];
+  if (diagnostics.allProducts !== null) {
+    lines.push(
+      t(language, 'component.mobileStoreBilling.diagnosticsAllProducts', {
+        requested: diagnostics.allProducts.requestedProductIds.length,
+        returned: diagnostics.allProducts.returnedProductIds.length
+      }),
+      t(language, 'component.mobileStoreBilling.diagnosticsRequested', {
+        productIds: diagnostics.allProducts.requestedProductIds.join(', ') || none
+      }),
+      t(language, 'component.mobileStoreBilling.diagnosticsReturned', {
+        productIds: diagnostics.allProducts.returnedProductIds.join(', ') || none
+      })
+    );
+  }
+  const errorCodes = [
+    diagnostics.storefrontErrorCode,
+    diagnostics.inApp.errorCode,
+    diagnostics.subscriptions.errorCode,
+    diagnostics.allProducts?.errorCode ?? null
+  ].filter((code): code is string => code !== null);
+  if (errorCodes.length > 0) {
+    lines.push(t(language, 'component.mobileStoreBilling.diagnosticsError', {
+      code: [...new Set(errorCodes)].join(', ')
+    }));
+  }
+  return lines;
 }
 
 function busyMessage(language: 'ja' | 'en'): string {
@@ -147,18 +224,28 @@ const styles = StyleSheet.create({
     padding: spacing.md
   },
   header: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' },
-  price: { ...textStyles.body, color: colors.primary, fontWeight: '700' },
-  product: {
-    alignItems: 'center',
+  diagnosticLine: { ...textStyles.caption, color: colors.inkStrong },
+  diagnostics: {
+    backgroundColor: colors.canvas,
     borderColor: colors.border,
     borderRadius: radius.sm,
     borderWidth: 1,
-    flexDirection: 'row',
+    gap: spacing.xs,
+    padding: spacing.sm
+  },
+  diagnosticsTitle: { ...textStyles.body, color: colors.primary, fontWeight: '700' },
+  price: { ...textStyles.body, color: colors.primary, fontWeight: '700' },
+  product: {
+    alignItems: 'stretch',
+    borderColor: colors.border,
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    flexDirection: 'column',
     gap: spacing.sm,
     justifyContent: 'space-between',
     padding: spacing.sm
   },
-  productText: { flex: 1, gap: spacing.xs, minWidth: 0 },
+  productText: { alignSelf: 'stretch', flex: 1, gap: spacing.xs, minWidth: 0 },
   productTitle: { ...textStyles.body, color: colors.inkStrong, fontWeight: '700' },
   title: { ...textStyles.sectionTitle }
 });

@@ -29,7 +29,7 @@ const CONTENT_EQUIVALENT_LEGACY_MIGRATIONS = [
 ] as const;
 
 describePostgres('legacy Mobile migration history reconciliation', () => {
-  it('旧024から032だけを適用したDBを現行036までforward更新する', async () => {
+  it('旧024から032だけを適用したDBを現行040までforward更新する', async () => {
     if (databaseUrl === undefined) {
       throw new Error('DATABASE_URL is required for the PostgreSQL migration test');
     }
@@ -93,6 +93,7 @@ describePostgres('legacy Mobile migration history reconciliation', () => {
           '030_add_generation_job_management.sql',
           '035_add_processing_generation_job_cancellation.sql',
           '036_fix_push_notification_cancelled_guard.sql',
+          '040_repair_page_story_metadata_columns.sql',
         ]);
 
         const repairedJob = await target.query<{

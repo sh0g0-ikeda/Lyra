@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -17,6 +20,16 @@ const improvement = (
 });
 
 describe('storyWorkflow', () => {
+  it('話の通常保存は話だけを保存し、未保存確認だけが全draftを解決する', () => {
+    const source = readFileSync(resolve(process.cwd(), 'src/screens/StoryScreen.tsx'), 'utf8');
+    const saveButtonStart = source.indexOf("label={t(language, 'save')}");
+    const saveButton = source.slice(saveButtonStart, source.indexOf('/>', saveButtonStart));
+
+    expect(saveButtonStart).toBeGreaterThanOrEqual(0);
+    expect(source).toContain('save: saveStoryDrafts');
+    expect(saveButton).toContain('onPress={() => updateEpisodeMutation.mutate()}');
+  });
+
   it('既存ページが1件以上ある場合だけ骨格を上書き再生成する', () => {
     expect(shouldOverwritePageSkeleton(0)).toBe(false);
     expect(shouldOverwritePageSkeleton(1)).toBe(true);

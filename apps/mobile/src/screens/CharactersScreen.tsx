@@ -34,12 +34,17 @@ import { characterContinuityStateUiEnabled } from '@/constants/mobileFeatureVisi
 import { colors, spacing, textStyles } from '@/constants/theme';
 import { mergeCharacterClothingDescription } from '@/domain/characterClothing';
 import {
+  editorDraftHasUnsavedChanges,
+  shouldHydrateEditorDraft
+} from '@/domain/editorDraftSyncPolicy';
+import {
   buildCreateEntityPayload,
   buildUpdateEntityPayload,
   hasEntityUpdateChanges,
   type EntityVisibleDraft,
 } from '@/domain/entityMutationPayload';
 import { buildEntityReferenceImageSources } from '@/domain/entityImageSources';
+import { decodeEntityReferencePickerImage } from '@/domain/entityReferenceImportImage';
 import { entityDirtySaveIntent } from '@/domain/editorDirtyPolicy';
 import {
   deduplicateImageSources,
@@ -115,6 +120,7 @@ interface PendingEntityReferenceUpload {
   mimeType: EntityReferenceUploadMimeType;
   sizeBytes: number;
   source: BinaryUploadSource;
+  legacyImageDataUrl: string | null;
   uploadToken: string | null;
 }
 
@@ -1766,7 +1772,19 @@ function CollapsibleGroup({ title, defaultCollapsed = false, children }: Collaps
 export function CharactersScreen(): React.JSX.Element {
   const navigation = useNavigation<BottomTabNavigationProp<MobileTabParamList>>();
   const queryClient = useQueryClient();
-  const { api, hasCapability, language, logout, selection, session, sessionKey, tokens, trackJob, updateSelection } = useAppState();
+  const {
+    api,
+    hasCapability,
+    language,
+    logout,
+    refreshIdToken,
+    selection,
+    session,
+    sessionKey,
+    tokens,
+    trackJob,
+    updateSelection
+  } = useAppState();
   const { resolveDirtyEditors } = useDirtyState();
   const organizationId = selection.organizationId;
   const canEdit = hasCapability('edit_work');
@@ -1796,7 +1814,7 @@ export function CharactersScreen(): React.JSX.Element {
   const [previewImageHeaders, setPreviewImageHeaders] = useState<ImageRequestHeaders | undefined>(undefined);
   const [selectedEntityStateId, setSelectedEntityStateId] = useState<string | null>(null);
   const [entityStateDraft, setEntityStateDraft] = useState<EntityStateDraft>(emptyEntityStateDraft);
-  const lastSyncedEntityId = useRef<string | null>(null);
+  const [lastSyncedEntityId, setLastSyncedEntityId] = useState<string | null>(null);
   const lastSyncedEntityStateId = useRef<string | null>(null);
   const [entityStale, setEntityStale] = useState(false);
   const [dirtySaveError, setDirtySaveError] = useState<Error | null>(null);
@@ -1897,7 +1915,7 @@ export function CharactersScreen(): React.JSX.Element {
       : buildUpdateEntityPayload(selectedEntity, visibleEntityDraft, {
           structuredFieldsChanged,
         });
-  const entityDirty =
+  const entityValuesDiffer =
     selectedEntity === null
       ? name.trim().length > 0 ||
         description.trim().length > 0 ||
@@ -1906,6 +1924,12 @@ export function CharactersScreen(): React.JSX.Element {
         Object.values(structuredDraft).some((value) => value.trim().length > 0)
       : pendingEntityUpdatePayload !== null &&
         hasEntityUpdateChanges(pendingEntityUpdatePayload);
+  const entityDirty = editorDraftHasUnsavedChanges({
+    hasServerSnapshot: selectedEntity !== null || selection.entityId === null,
+    lastResourceId: lastSyncedEntityId,
+    resourceId: selectedEntity?.id ?? null,
+    valuesDiffer: entityValuesDiffer
+  });
 
   const referenceQuery = useQuery({
     enabled: selectedEntity !== null,
@@ -2015,10 +2039,15 @@ export function CharactersScreen(): React.JSX.Element {
 
   useEffect(() => {
     const nextId = selectedEntity?.id ?? null;
-    if (lastSyncedEntityId.current === nextId && entityDirty) {
+    if (!shouldHydrateEditorDraft({
+      hasServerSnapshot: selectedEntity !== null || selection.entityId === null,
+      hasUnsavedChanges: entityDirty,
+      lastResourceId: lastSyncedEntityId,
+      resourceId: nextId
+    })) {
       return;
     }
-    lastSyncedEntityId.current = nextId;
+    setLastSyncedEntityId(nextId);
     if (selectedEntity !== null) {
       setEntityEditorMode('edit');
     }
@@ -2036,7 +2065,7 @@ export function CharactersScreen(): React.JSX.Element {
     setSelectedEntityStateId(null);
     setEntityStateDraft(emptyEntityStateDraft());
     lastSyncedEntityStateId.current = null;
-  }, [entityDirty, selectedEntity]);
+  }, [entityDirty, lastSyncedEntityId, selectedEntity, selection.entityId]);
 
   useEffect(() => {
     setEntityStale(false);
@@ -2249,9 +2278,14 @@ export function CharactersScreen(): React.JSX.Element {
         setPendingEntityReferenceUpload(null);
         const result = await ImagePicker.launchImageLibraryAsync({
           allowsEditing: false,
-          base64: false,
+          allowsMultipleSelection: false,
+          base64: true,
+          exif: false,
           mediaTypes: ['images'],
-          quality: 1
+          preferredAssetRepresentationMode:
+            ImagePicker.UIImagePickerPreferredAssetRepresentationMode.Compatible,
+          quality: 0.85,
+          selectionLimit: 1
         });
         if (result.canceled) {
           return null;
@@ -2272,6 +2306,10 @@ export function CharactersScreen(): React.JSX.Element {
         if (uploadFile.sizeBytes > MAX_IMPORT_IMAGE_BYTES) {
           throw new Error(t(language, "generated.screens.CharactersScreen.the.image.must.be.5.mb.or.smaller.f810b162"));
         }
+        const legacyImageDataUrl =
+          typeof asset.base64 === 'string'
+            ? decodeEntityReferencePickerImage(asset.base64).dataUrl
+            : null;
 
         pendingUpload = {
           entityId: selectedEntity?.id ?? null,
@@ -2279,6 +2317,7 @@ export function CharactersScreen(): React.JSX.Element {
           mimeType,
           sizeBytes: uploadFile.sizeBytes,
           source: uploadFile.source,
+          legacyImageDataUrl,
           uploadToken: null
         };
         setPendingEntityReferenceUpload(pendingUpload);
@@ -2288,6 +2327,7 @@ export function CharactersScreen(): React.JSX.Element {
         throw new Error(t(language, "generated.screens.CharactersScreen.there.is.no.image.to.retry.a75c5e5a"));
       }
       const activeUpload = pendingUpload;
+      const legacyImageDataUrl = activeUpload.legacyImageDataUrl;
 
       entityReferenceUploadAbortController.current?.abort();
       const abortController = new AbortController();
@@ -2313,6 +2353,19 @@ export function CharactersScreen(): React.JSX.Element {
               },
               organizationId
             ),
+          ...(legacyImageDataUrl === null
+            ? {}
+            : {
+                legacyImport: () =>
+                  api.importEntityImage(
+                    {
+                      entity_type: activeUpload.entityType,
+                      ...(activeUpload.entityId === null ? {} : { entity_id: activeUpload.entityId }),
+                      image_base64: legacyImageDataUrl
+                    },
+                    organizationId
+                  )
+              }),
           onProgress: setEntityReferenceUploadProgress,
           onFinalizeTokenReady: (uploadToken) => {
             setPendingEntityReferenceUpload({ ...activeUpload, uploadToken });
@@ -2420,7 +2473,8 @@ export function CharactersScreen(): React.JSX.Element {
         ),
         filename: `lyra-character-reference-${refId}.png`,
         tokens,
-        mimeType: 'image/png'
+        mimeType: 'image/png',
+        refreshIdToken
       })
   });
 
@@ -2437,7 +2491,8 @@ export function CharactersScreen(): React.JSX.Element {
         path: `/api/entities/${encodeURIComponent(selectedEntity?.id ?? '')}/reference-candidate-image?${params.toString()}`,
         filename: `lyra-character-candidate-${candidateToken.trim()}.png`,
         tokens,
-        mimeType: 'image/png'
+        mimeType: 'image/png',
+        refreshIdToken
       });
     }
   });
@@ -2556,7 +2611,7 @@ export function CharactersScreen(): React.JSX.Element {
       setLastImportedCandidateToken(null);
       setLastImportedCandidateEntityId(null);
       setLocalJob(null);
-      lastSyncedEntityId.current = null;
+      setLastSyncedEntityId(null);
     };
     void (async () => {
       if (!(await resolveDirtyEditors(language))) {
@@ -2586,7 +2641,7 @@ export function CharactersScreen(): React.JSX.Element {
     await queryClient.invalidateQueries({
       queryKey: entitiesQueryKey(sessionKey, activeWorkId, organizationId),
     });
-    lastSyncedEntityId.current = null;
+    setLastSyncedEntityId(null);
     setEntityStale(false);
   };
 

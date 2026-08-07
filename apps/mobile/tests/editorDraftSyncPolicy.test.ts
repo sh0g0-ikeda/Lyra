@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -6,6 +9,24 @@ import {
 } from '@/domain/editorDraftSyncPolicy';
 
 describe('editor draft synchronization', () => {
+  it('StoryとCharactersは初回取得中の見かけ上の差分を未保存登録しない', () => {
+    const storySource = readFileSync(
+      resolve(process.cwd(), 'src/screens/StoryScreen.tsx'),
+      'utf8'
+    );
+    const characterSource = readFileSync(
+      resolve(process.cwd(), 'src/screens/CharactersScreen.tsx'),
+      'utf8'
+    );
+
+    expect(storySource).toContain("from '@/domain/editorDraftSyncPolicy'");
+    expect(storySource.match(/editorDraftHasUnsavedChanges\(\{/g)).toHaveLength(2);
+    expect(storySource.match(/shouldHydrateEditorDraft\(\{/g)).toHaveLength(2);
+    expect(characterSource).toContain("from '@/domain/editorDraftSyncPolicy'");
+    expect(characterSource.match(/editorDraftHasUnsavedChanges\(\{/g)).toHaveLength(1);
+    expect(characterSource.match(/shouldHydrateEditorDraft\(\{/g)).toHaveLength(1);
+  });
+
   it('サーバー値の取得前は空のdraftを同期済みにしない', () => {
     expect(
       shouldHydrateEditorDraft({

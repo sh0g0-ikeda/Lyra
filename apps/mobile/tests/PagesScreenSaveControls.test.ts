@@ -13,15 +13,31 @@ describe('PagesScreen manual save controls', () => {
     expect(source).not.toContain("label={t(language, 'save')}");
   });
 
-  it('ページ画像の保存は写真ライブラリ保存を使い、専用UIを残す', () => {
+  it('ページ画像の保存はBlob変換を介さず認証済みネイティブ保存を使い、専用UIを残す', () => {
     const source = readFileSync(
       resolve(process.cwd(), 'src/screens/PagesScreen.tsx'),
       'utf8'
     );
 
-    expect(source).toContain('saveImageBlobToPhotoLibrary');
-    expect(source).toContain('api.exportPageImage');
+    expect(source).toContain('saveAuthenticatedImageToPhotoLibrary');
+    expect(source).toContain('refreshIdToken');
+    expect(source).toContain("/api/pages/${encodeURIComponent(selectedPage.id)}/export-image");
+    expect(source).not.toContain('saveImageBlobToPhotoLibrary');
+    expect(source).not.toContain('api.exportPageImage');
     expect(source).not.toContain('buildPageImageDownloadSources');
+    expect(source).toContain('generated.screens.PagesScreen.save.image.dd680bcb');
+  });
+
+  it('PDFと画像ZIPのUIは隠し、個別の画像保存UIだけを残す', () => {
+    const source = readFileSync(
+      resolve(process.cwd(), 'src/screens/PagesScreen.tsx'),
+      'utf8'
+    );
+
+    expect(source).toContain('const EPISODE_EXPORT_UI_ENABLED = false;');
+    expect(source).toContain(
+      'exportSection={EPISODE_EXPORT_UI_ENABLED ? ('
+    );
     expect(source).toContain('generated.screens.PagesScreen.save.image.dd680bcb');
   });
 });

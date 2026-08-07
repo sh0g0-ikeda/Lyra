@@ -14,7 +14,11 @@ module.exports = defineConfig([
     }
   },
   {
-    files: ['src/screens/CharactersScreen.tsx', 'src/screens/PagesScreen.tsx'],
+    files: [
+      'src/screens/CharactersScreen.tsx',
+      'src/screens/PagesScreen.tsx',
+      'src/screens/StoryScreen.tsx'
+    ],
     rules: {
       // These editors synchronize server-selected records into local draft fields.
       'react-hooks/set-state-in-effect': 'off'

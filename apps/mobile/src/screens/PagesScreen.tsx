@@ -87,8 +87,9 @@ import { useResetOnScopeChange } from '@/hooks/useResetOnScopeChange';
 import { confirmAction, confirmDestructiveAction } from '@/lib/confirm';
 import { config } from '@/lib/config';
 import {
+  appendOrganizationQuery,
   downloadExternalFile,
-  saveImageBlobToPhotoLibrary
+  saveAuthenticatedImageToPhotoLibrary
 } from '@/lib/download';
 import { fileTransferErrorMessage } from '@/lib/fileTransferError';
 import {
@@ -151,6 +152,7 @@ interface PageDesignJob {
 }
 
 const WEB_EDITOR_URL = 'https://app.lyra-editor.com/';
+const EPISODE_EXPORT_UI_ENABLED = false;
 
 type AssignmentDraft = Omit<PanelEntityAssignmentRecord, 'facing_direction'> & {
   facing_direction: NonNullable<PanelEntityAssignmentRecord['facing_direction']> | '';
@@ -790,7 +792,18 @@ function TemplatePickerModal({
 export function PagesScreen(): React.JSX.Element {
   const navigation = useNavigation<BottomTabNavigationProp<MobileTabParamList>>();
   const queryClient = useQueryClient();
-  const { api, hasCapability, language, logout, selection, sessionKey, tokens, trackJob, updateSelection } = useAppState();
+  const {
+    api,
+    hasCapability,
+    language,
+    logout,
+    refreshIdToken,
+    selection,
+    sessionKey,
+    tokens,
+    trackJob,
+    updateSelection
+  } = useAppState();
   const { resolveDirtyEditors } = useDirtyState();
   const organizationId = selection.organizationId;
   const canEdit = hasCapability('edit_work');
@@ -1864,11 +1877,15 @@ export function PagesScreen(): React.JSX.Element {
       if (selectedPage === null) {
         throw new Error('A page must be selected before saving an image.');
       }
-      const response = await api.exportPageImage(selectedPage.id, organizationId);
-      return saveImageBlobToPhotoLibrary({
+      return saveAuthenticatedImageToPhotoLibrary({
+        path: appendOrganizationQuery(
+          `/api/pages/${encodeURIComponent(selectedPage.id)}/export-image`,
+          organizationId
+        ),
         filename: exportFilename,
         mimeType: 'image/png',
-        blob: response.blob
+        refreshIdToken,
+        tokens
       });
     },
     onError: (error) => {
@@ -2954,7 +2971,7 @@ export function PagesScreen(): React.JSX.Element {
         </>
       )}
       <PageCompletionActions
-        exportSection={(
+        exportSection={EPISODE_EXPORT_UI_ENABLED ? (
       <Section
         collapsible
         mobileDefaultCollapsed
@@ -3058,7 +3075,7 @@ export function PagesScreen(): React.JSX.Element {
           sessionKey={sessionKey}
         />
       </Section>
-        )}
+        ) : null}
 
         generationSection={(
       <Section

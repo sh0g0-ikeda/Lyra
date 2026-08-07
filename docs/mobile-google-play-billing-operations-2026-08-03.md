@@ -156,8 +156,9 @@ Android の `com.lyra.mobile`、API contract、DB schema は変更しない。
 2. Apple の bundle ID、numeric app Apple ID、Apple root certificates、5 製品 ID を
    production secret へ追加する。
 3. `MOBILE_STORE_IDENTIFIER_HASH_SECRET` を secret manager で新規発行する。
-4. production では `APPLE_STORE_ALLOW_SANDBOX=false` と
-   `GOOGLE_PLAY_ALLOW_TEST_PURCHASES=false` を確認する。
+4. production では App Review と TestFlight の正規 Apple Sandbox transaction を
+   検証できるよう `APPLE_STORE_ALLOW_SANDBOX=true`、Google の license-tester
+   transaction を受け入れないよう `GOOGLE_PLAY_ALLOW_TEST_PURCHASES=false` を確認する。
 5. 上記全値を非表示のまま runtime config validation で検証する。
 6. API task definition の `MOBILE_STORE_BILLING_ENABLED` を `true` に変更し、
    API を再デプロイする。

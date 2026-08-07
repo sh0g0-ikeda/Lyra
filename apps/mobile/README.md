@@ -2,7 +2,7 @@
 
 Expo / React Native / TypeScript implementation for Android and iPhone.
 
-This app is intentionally isolated under `apps/mobile` and calls the existing Lyra API. Personal digital purchases use StoreKit or Google Play through the server-owned product catalog. Organization billing remains server-authoritative and opens the permitted Web management flow.
+This app is intentionally isolated under `apps/mobile` and calls the existing Lyra API. Personal digital purchases use StoreKit or Google Play through the server-owned product catalog. Organization billing remains a server-authoritative, Web-only operation and is not exposed in the mobile UI.
 
 ## Setup
 

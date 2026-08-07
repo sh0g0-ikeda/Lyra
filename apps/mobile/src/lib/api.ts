@@ -219,7 +219,7 @@ const retryAfterSecondsFrom = (response: Response): number | null => {
     : null;
 };
 
-const isLegacyEntityUpdateContractError = (error: unknown): error is ApiError => {
+const isLegacyConcurrencyUpdateContractError = (error: unknown): error is ApiError => {
   if (
     !(error instanceof ApiError) ||
     error.status !== 422 ||
@@ -722,10 +722,26 @@ export class LyraMobileApiClient {
     body: UpdateEpisodePayload,
     organizationId?: string | null
   ): Promise<EpisodeRecord> {
-    return this.request(`/api/episodes/${episodeId}${organizationQuery(organizationId)}`, episodeSchema, {
-      method: 'PUT',
-      body
-    });
+    return this.request(
+      `/api/episodes/${episodeId}${organizationQuery(organizationId)}`,
+      episodeSchema,
+      {
+        method: 'PUT',
+        body
+      }
+    )
+      .catch((error: unknown): Promise<EpisodeRecord> => {
+        if (!isLegacyConcurrencyUpdateContractError(error)) {
+          throw error;
+        }
+
+        const { expected_updated_at: _expectedUpdatedAt, ...legacyBody } = body;
+        void _expectedUpdatedAt;
+        return this.request(`/api/episodes/${episodeId}${organizationQuery(organizationId)}`, episodeSchema, {
+          method: 'PUT',
+          body: legacyBody
+        });
+      });
   }
 
   public moveEpisode(
@@ -856,7 +872,7 @@ export class LyraMobileApiClient {
         }
       );
     } catch (error) {
-      if (!isLegacyEntityUpdateContractError(error)) {
+      if (!isLegacyConcurrencyUpdateContractError(error)) {
         throw error;
       }
 

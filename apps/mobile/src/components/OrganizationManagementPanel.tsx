@@ -1,8 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AppState, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 
-import { BillingHandoffNotice } from '@/components/BillingHandoffNotice';
 import { FormField } from '@/components/FormField';
 import { Notice } from '@/components/Notice';
 import { OrganizationCollectionModal } from '@/components/OrganizationCollectionModal';
@@ -10,28 +9,19 @@ import { PrimaryButton } from '@/components/PrimaryButton';
 import { Section } from '@/components/Section';
 import { SegmentedControl } from '@/components/SegmentedControl';
 import { colors, spacing, textStyles } from '@/constants/theme';
-import {
-  createBillingAuthoritativeSnapshot,
-  pollBillingConfirmation,
-  type BillingAuthoritativeSnapshot,
-  type BillingHandoffIntent,
-  type BillingHandoffPhase
-} from '@/domain/billingHandoffPolicy';
 import { hasWorkspaceCapability } from '@/domain/capabilities';
 import type {
   CurrentUserOrganizationRecord,
   OrganizationAuditLogRecord,
-  OrganizationCheckoutRecord,
   OrganizationInvitationRecord,
   OrganizationMemberRecord,
   OrganizationRole,
   OrganizationUsageEventRecord,
   UiLanguage
 } from '@/domain/types';
-import { ApiError, type LyraMobileApiClient } from '@/lib/api';
+import type { LyraMobileApiClient } from '@/lib/api';
 import type { ComponentTranslationKey } from '@/lib/i18nComponentMessages';
 import { t } from '@/lib/i18n';
-import { recordOperationalMetric } from '@/lib/operationalEvents';
 import {
   flattenUniqueRecords,
   MOBILE_LIST_PAGE_SIZE,
@@ -39,8 +29,6 @@ import {
 } from '@/lib/listPagination';
 import {
   organizationAuditLogsInfiniteQueryKey,
-  organizationBillingQueryKey,
-  organizationInvoicesQueryKey,
   organizationInvitationsInfiniteQueryKey,
   organizationMembersInfiniteQueryKey,
   organizationUsageInfiniteQueryKey,
@@ -54,13 +42,6 @@ interface OrganizationManagementPanelProps {
   api: LyraMobileApiClient;
   sessionKey: string;
   language: UiLanguage;
-  /** The caller owns the native browser / WebView implementation. */
-  onOpenBillingUrl: (url: string) => boolean | void | Promise<boolean | void>;
-  /**
-   * Called after an external billing handoff closes. This is a refresh signal,
-   * never evidence that a payment succeeded.
-   */
-  onBillingHandoffComplete?: () => void | Promise<void>;
   /** The caller owns the authenticated native download and share operation. */
   onDownloadUsageCsv: () => Promise<void>;
   /** The caller must present a destructive confirmation before removal. */
@@ -75,8 +56,6 @@ export function OrganizationManagementPanel({
   api,
   sessionKey,
   language,
-  onOpenBillingUrl,
-  onBillingHandoffComplete,
   onDownloadUsageCsv,
   onConfirmRemoveMember
 }: OrganizationManagementPanelProps): React.JSX.Element {
@@ -86,12 +65,8 @@ export function OrganizationManagementPanel({
   const role = organization.role;
   const canManageOrganization = activeMembership && hasWorkspaceCapability(organizationId, role, 'manage_organization');
   const canManageMembers = activeMembership && hasWorkspaceCapability(organizationId, role, 'manage_members');
-  const canViewBilling = activeMembership && hasWorkspaceCapability(organizationId, role, 'view_billing');
-  const canManageBilling = activeMembership && hasWorkspaceCapability(organizationId, role, 'manage_billing');
   const canViewUsage = activeMembership && hasWorkspaceCapability(organizationId, role, 'view_usage');
-  const canViewAudit = activeMembership && (
-    hasWorkspaceCapability(organizationId, role, 'view_audit_logs') || canViewBilling
-  );
+  const canViewAudit = activeMembership && hasWorkspaceCapability(organizationId, role, 'view_audit_logs');
   const [workspaceName, setWorkspaceName] = useState(organization.name);
   const [legalName, setLegalName] = useState('');
   const [billingEmail, setBillingEmail] = useState('');
@@ -106,13 +81,6 @@ export function OrganizationManagementPanel({
   const invitationsCollectionTriggerRef = useRef<View | null>(null);
   const usageCollectionTriggerRef = useRef<View | null>(null);
   const auditCollectionTriggerRef = useRef<View | null>(null);
-  const [billingHandoff, setBillingHandoff] = useState<{
-    before: BillingAuthoritativeSnapshot;
-    intent: BillingHandoffIntent;
-    phase: Exclude<BillingHandoffPhase, 'idle'>;
-  } | null>(null);
-  const billingHandoffRef = useRef<typeof billingHandoff>(null);
-  const billingConfirmationRunRef = useRef(0);
   const settingsVersionRef = useRef<string | null>(null);
 
   const workspaceQuery = useQuery({
@@ -138,16 +106,6 @@ export function OrganizationManagementPanel({
       cursor: pageParam,
     }),
     getNextPageParam: nextCursorFromPage,
-  });
-  const billingQuery = useQuery({
-    enabled: canViewBilling,
-    queryKey: organizationBillingQueryKey(sessionKey, organizationId),
-    queryFn: () => api.getOrganizationBillingSummary(organizationId)
-  });
-  const invoicesQuery = useQuery({
-    enabled: canViewBilling,
-    queryKey: organizationInvoicesQueryKey(sessionKey, organizationId),
-    queryFn: () => api.getOrganizationInvoices(organizationId)
   });
   const usageQuery = useInfiniteQuery({
     enabled: canViewUsage,
@@ -185,7 +143,7 @@ export function OrganizationManagementPanel({
       billing_email: nullableText(billingEmail)
     }),
     onSuccess: async () => {
-      await invalidate(['organization-workspace', 'organization-billing']);
+      await invalidate(['organization-workspace']);
     }
   });
   const inviteMutation = useMutation({
@@ -225,18 +183,6 @@ export function OrganizationManagementPanel({
       await invalidate(['organization-members', 'organization-workspace', 'organization-audit-logs']);
     }
   });
-  const subscriptionCheckoutMutation = useMutation({
-    mutationFn: (planCode: 'enterprise_a' | 'enterprise_b' | 'enterprise_c') =>
-      api.createOrganizationSubscriptionCheckout(organizationId, { plan_code: planCode })
-  });
-  const creditCheckoutMutation = useMutation({
-    mutationFn: (packageCode: 'credits_200' | 'credits_1000' | 'credits_3000') =>
-      api.createOrganizationCreditCheckout(organizationId, { package_code: packageCode })
-  });
-  const portalMutation = useMutation({
-    mutationFn: () => api.createOrganizationCustomerPortal(organizationId)
-  });
-
   const workspace = workspaceQuery.data;
   const members = useMemo(
     () => flattenUniqueRecords(membersQuery.data?.pages.map((page) => page.members) ?? []),
@@ -261,7 +207,6 @@ export function OrganizationManagementPanel({
     ),
     [auditQuery.data?.pages],
   );
-  const subscriptionPlans = billingQuery.data?.subscription_plans ?? [];
   const memberLabelByUserId = useMemo(
     () => new Map(members.map((member) => [member.user_id, member.display_name ?? member.email])),
     [members]
@@ -310,111 +255,6 @@ export function OrganizationManagementPanel({
     setLegalName(current.legal_name ?? '');
     setBillingEmail(current.billing_email ?? '');
   }, [workspace?.organization]);
-
-  const updateBillingHandoff = useCallback((next: typeof billingHandoff): void => {
-    billingHandoffRef.current = next;
-    setBillingHandoff(next);
-  }, []);
-
-  const fetchAuthoritativeBillingSnapshot = useCallback(async (): Promise<BillingAuthoritativeSnapshot> => {
-    const [billing, invoiceResponse] = await Promise.all([
-      api.getOrganizationBillingSummary(organizationId),
-      api.getOrganizationInvoices(organizationId)
-    ]);
-    queryClient.setQueryData(
-      organizationBillingQueryKey(sessionKey, organizationId),
-      billing
-    );
-    queryClient.setQueryData(
-      organizationInvoicesQueryKey(sessionKey, organizationId),
-      invoiceResponse
-    );
-    return createBillingAuthoritativeSnapshot(billing, invoiceResponse.invoices);
-  }, [api, organizationId, queryClient, sessionKey]);
-
-  const beginBillingConfirmation = useCallback(async (): Promise<void> => {
-    const handoff = billingHandoffRef.current;
-    if (handoff === null || handoff.phase !== 'waiting_for_return') {
-      return;
-    }
-    const run = billingConfirmationRunRef.current + 1;
-    billingConfirmationRunRef.current = run;
-    updateBillingHandoff({ ...handoff, phase: 'confirming' });
-    const result = await pollBillingConfirmation({
-      before: handoff.before,
-      fetchSnapshot: fetchAuthoritativeBillingSnapshot,
-      intent: handoff.intent
-    });
-    if (billingConfirmationRunRef.current !== run) {
-      return;
-    }
-    if (result.status === 'unconfirmed') {
-      recordOperationalMetric({
-        intent: handoff.intent.kind,
-        name: 'checkout_return_failure',
-        outcome: 'unconfirmed',
-        requestId: null
-      });
-    }
-    updateBillingHandoff({
-      ...handoff,
-      phase: result.status === 'confirmed' ? 'confirmed' : 'unconfirmed'
-    });
-    await onBillingHandoffComplete?.();
-  }, [fetchAuthoritativeBillingSnapshot, onBillingHandoffComplete, updateBillingHandoff]);
-
-  useEffect(() => {
-    let previousState = AppState.currentState;
-    const subscription = AppState.addEventListener('change', (nextState) => {
-      const returnedToForeground = previousState !== 'active' && nextState === 'active';
-      previousState = nextState;
-      if (returnedToForeground) {
-        void beginBillingConfirmation();
-      }
-    });
-    return () => subscription.remove();
-  }, [beginBillingConfirmation]);
-
-  const currentBillingSnapshot = async (): Promise<BillingAuthoritativeSnapshot> => {
-    const billing = billingQuery.data;
-    const invoices = invoicesQuery.data?.invoices;
-    if (billing !== undefined && invoices !== undefined) {
-      return createBillingAuthoritativeSnapshot(billing, invoices);
-    }
-    return fetchAuthoritativeBillingSnapshot();
-  };
-
-  const openBillingHandoff = async (
-    checkout: Promise<OrganizationCheckoutRecord>,
-    intent: BillingHandoffIntent
-  ): Promise<void> => {
-    let before: BillingAuthoritativeSnapshot | null = null;
-    try {
-      const result = await checkout;
-      before = await currentBillingSnapshot();
-      updateBillingHandoff({ before, intent, phase: 'waiting_for_return' });
-      const opened = await onOpenBillingUrl(result.url);
-      if (opened === false) {
-        recordOperationalMetric({
-          intent: intent.kind,
-          name: 'checkout_return_failure',
-          outcome: 'error',
-          requestId: null
-        });
-        updateBillingHandoff({ before, intent, phase: 'unconfirmed' });
-      }
-    } catch (error) {
-      recordOperationalMetric({
-        intent: intent.kind,
-        name: 'checkout_return_failure',
-        outcome: 'error',
-        requestId: error instanceof ApiError ? error.requestId : null
-      });
-      if (before !== null) {
-        updateBillingHandoff({ before, intent, phase: 'unconfirmed' });
-      }
-    }
-  };
 
   const requestMemberRemoval = (member: OrganizationMemberRecord): void => {
     onConfirmRemoveMember(member, async () => {
@@ -550,107 +390,6 @@ export function OrganizationManagementPanel({
         </>
       ) : null}
 
-      {canViewBilling ? (
-        <Section
-          collapsible
-          persistKey={`organization:${organizationId}:billing`}
-          subtitle={t(language, "generated.components.OrganizationManagementPanel.returning.from.an.external.billing.page.61fc9497")}
-          title={t(language, "generated.components.OrganizationManagementPanel.billing.management.9567a861")}
-          tone="highlight"
-        >
-          <View style={styles.row}>
-            <Text style={styles.label}>{t(language, "generated.components.OrganizationManagementPanel.current.subscription.9778abf6")}</Text>
-            <Text style={styles.value}>{subscriptionLabel(billingQuery.data?.subscription?.plan_code ?? organization.plan_key, language)}</Text>
-          </View>
-          <View style={styles.row}>
-            <Text style={styles.label}>{t(language, "generated.components.OrganizationManagementPanel.subscription.status.5e48facb")}</Text>
-            <Text style={styles.value}>{billingQuery.data?.subscription === null ? t(language, "generated.components.OrganizationManagementPanel.no.active.subscription.09e49068") : subscriptionStatusLabel(billingQuery.data?.subscription?.status, language)}</Text>
-          </View>
-          <View style={styles.row}>
-            <Text style={styles.label}>{t(language, "generated.components.OrganizationManagementPanel.shared.balance.6c64a00f")}</Text>
-            <Text style={styles.value}>{billingQuery.data?.workspace?.balance?.total_credits ?? workspace?.balance?.total_credits ?? organization.total_credits}</Text>
-          </View>
-          {billingHandoff === null ? null : (
-            <>
-              <BillingHandoffNotice
-                intent={billingHandoff.intent}
-                language={language}
-                phase={billingHandoff.phase}
-              />
-              {billingHandoff.phase !== 'unconfirmed' ? null : (
-                <PrimaryButton
-                  label={t(language, "generated.components.OrganizationManagementPanel.check.billing.again.0f44bd41")}
-                  onPress={() => {
-                    const retry = { ...billingHandoff, phase: 'waiting_for_return' as const };
-                    updateBillingHandoff(retry);
-                    void beginBillingConfirmation();
-                  }}
-                  variant="secondary"
-                />
-              )}
-            </>
-          )}
-          {billingQuery.isError || invoicesQuery.isError ? <Notice message={organizationLoadError(language)} tone="danger" /> : null}
-          {canManageBilling ? (
-            <>
-              <Text style={styles.label}>{t(language, "generated.components.OrganizationManagementPanel.change.plan.9392d13e")}</Text>
-              {subscriptionPlans.filter((plan) => plan.configured).map((plan) => (
-                <View key={plan.plan_code} style={styles.compactRow}>
-                  <Text style={styles.value}>{language === 'ja' ? plan.display_name_ja : plan.display_name_en}</Text>
-                  <Text style={styles.caption}>{formatYen(plan.amount_jpy, language)} / {t(language, "generated.components.OrganizationManagementPanel.month.5d223b95")}</Text>
-                  <PrimaryButton
-                    label={t(language, "generated.components.OrganizationManagementPanel.open.checkout.87735f44")}
-                    loading={subscriptionCheckoutMutation.isPending && subscriptionCheckoutMutation.variables === plan.plan_code}
-                    onPress={() =>
-                      void openBillingHandoff(
-                        subscriptionCheckoutMutation.mutateAsync(plan.plan_code),
-                        { kind: 'subscription', targetPlanCode: plan.plan_code }
-                      )
-                    }
-                    variant="secondary"
-                  />
-                </View>
-              ))}
-              <Text style={styles.label}>{t(language, "generated.components.OrganizationManagementPanel.additional.credits.6f7c531e")}</Text>
-              {(['credits_200', 'credits_1000', 'credits_3000'] as const).map((packageCode) => (
-                <PrimaryButton
-                  key={packageCode}
-                  label={creditPackageLabel(packageCode, language)}
-                  loading={creditCheckoutMutation.isPending && creditCheckoutMutation.variables === packageCode}
-                  onPress={() =>
-                    void openBillingHandoff(
-                      creditCheckoutMutation.mutateAsync(packageCode),
-                      { kind: 'credits' }
-                    )
-                  }
-                  variant="secondary"
-                />
-              ))}
-              <PrimaryButton
-                label={t(language, "generated.components.OrganizationManagementPanel.open.billing.portal.771b67d1")}
-                loading={portalMutation.isPending}
-                onPress={() =>
-                  void openBillingHandoff(
-                    portalMutation.mutateAsync(),
-                    { kind: 'portal' }
-                  )
-                }
-                variant="ghost"
-              />
-              {subscriptionCheckoutMutation.isError || creditCheckoutMutation.isError || portalMutation.isError ? <Notice message={organizationActionError(language)} tone="danger" /> : null}
-            </>
-          ) : <Notice message={billingManagementDeniedMessage(language)} tone="info" />}
-          <Text style={styles.label}>{t(language, "generated.components.OrganizationManagementPanel.invoices.389b3076")}</Text>
-          {(invoicesQuery.data?.invoices ?? []).map((invoice) => (
-            <View key={invoice.id} style={styles.compactRow}>
-              <Text style={styles.value}>{invoiceKindLabel(invoice.kind, language)}</Text>
-              <Text style={styles.caption}>{formatYen(invoice.amount_jpy, language)} · {invoiceStatusLabel(invoice.status, language)} · {formatDate(invoice.created_at, language)}</Text>
-              {invoice.invoice_url === null ? null : <PrimaryButton label={t(language, "generated.components.OrganizationManagementPanel.open.invoice.a10f954b")} onPress={() => void onOpenBillingUrl(invoice.invoice_url ?? '')} variant="ghost" />}
-            </View>
-          ))}
-        </Section>
-      ) : null}
-
       {canViewUsage ? (
         <Section collapsible defaultCollapsed persistKey={`organization:${organizationId}:usage`} title={t(language, "generated.components.OrganizationManagementPanel.usage.5dc28ce4")}>
           {usageQuery.isError ? <Notice message={organizationLoadError(language)} tone="danger" /> : null}
@@ -699,7 +438,7 @@ export function OrganizationManagementPanel({
         </Section>
       ) : null}
 
-      {!canManageMembers && !canViewBilling && !canViewUsage && !canViewAudit ? (
+      {!canManageMembers && !canViewUsage && !canViewAudit ? (
         <Notice message={limitedRoleMessage(language)} tone="info" />
       ) : null}
 
@@ -1008,38 +747,6 @@ function inviteDeliveryLabel(status: OrganizationInvitationRecord['send_status']
   return t(language, labels[status]);
 }
 
-function subscriptionLabel(planCode: string, language: UiLanguage): string {
-  const labels: Record<string, ComponentTranslationKey> = {
-    enterprise_a: 'component.organization.subscription.enterpriseA',
-    enterprise_b: 'component.organization.subscription.enterpriseB',
-    enterprise_c: 'component.organization.subscription.enterpriseC'
-  };
-  const label = labels[planCode];
-  return label === undefined ? t(language, "generated.components.OrganizationManagementPanel.enterprise.plan.8cd8a370") : t(language, label);
-}
-
-function subscriptionStatusLabel(status: string | undefined, language: UiLanguage): string {
-  const labels: Record<string, ComponentTranslationKey> = {
-    trialing: 'component.organization.subscriptionStatus.trialing',
-    active: 'component.organization.subscriptionStatus.active',
-    past_due: 'component.organization.subscriptionStatus.pastDue',
-    canceled: 'component.organization.subscriptionStatus.canceled',
-    unpaid: 'component.organization.subscriptionStatus.unpaid',
-    incomplete: 'component.organization.subscriptionStatus.incomplete',
-    incomplete_expired: 'component.organization.subscriptionStatus.incompleteExpired'
-  };
-  const label = status === undefined ? undefined : labels[status];
-  return label === undefined ? t(language, "generated.components.OrganizationManagementPanel.pending.confirmation.5346df6c") : t(language, label);
-}
-
-function invoiceKindLabel(kind: 'subscription' | 'credit_purchase', language: UiLanguage): string {
-  return kind === 'subscription' ? t(language, "generated.components.OrganizationManagementPanel.subscription.536ebdbb") : t(language, "generated.components.OrganizationManagementPanel.credit.purchase.b8b0452b");
-}
-
-function invoiceStatusLabel(status: 'paid' | 'failed', language: UiLanguage): string {
-  return status === 'paid' ? t(language, "generated.components.OrganizationManagementPanel.paid.7a3edfe7") : t(language, "generated.components.OrganizationManagementPanel.failed.833e5201");
-}
-
 function auditTargetLabel(targetType: string, language: UiLanguage): string {
   const labels: Record<string, ComponentTranslationKey> = {
     organization: 'component.organization.auditTarget.organization',
@@ -1051,15 +758,6 @@ function auditTargetLabel(targetType: string, language: UiLanguage): string {
   };
   const label = labels[targetType];
   return label === undefined ? t(language, "generated.components.OrganizationManagementPanel.operation.target.4f3f41b3") : t(language, label);
-}
-
-function creditPackageLabel(packageCode: 'credits_200' | 'credits_1000' | 'credits_3000', language: UiLanguage): string {
-  const credits = packageCode.replace('credits_', '');
-  return t(language, 'component.organization.creditPackage', { credits });
-}
-
-function formatYen(amount: number, language: UiLanguage): string {
-  return new Intl.NumberFormat(language === 'ja' ? 'ja-JP' : 'en-US', { style: 'currency', currency: 'JPY', maximumFractionDigits: 0 }).format(amount);
 }
 
 function formatDate(value: string, language: UiLanguage): string {
@@ -1078,7 +776,6 @@ function limitedRoleMessage(language: UiLanguage): string {
 
 function workspaceManagementDeniedMessage(role: OrganizationRole, language: UiLanguage): string {
   if (role === 'admin') return t(language, "generated.components.OrganizationManagementPanel.admins.can.manage.members.but.cannot.cha.2b0f726e");
-  if (role === 'billing') return t(language, "generated.components.OrganizationManagementPanel.billing.users.can.view.and.manage.billin.268a7656");
   return limitedRoleMessage(language);
 }
 
@@ -1086,14 +783,7 @@ function roleAccessSummaryMessage(role: OrganizationRole, language: UiLanguage):
   if (role === 'admin') {
     return t(language, "generated.components.OrganizationManagementPanel.admins.can.manage.members.usage.and.audi.b439e033");
   }
-  if (role === 'billing') {
-    return t(language, "generated.components.OrganizationManagementPanel.billing.users.can.manage.billing.and.vie.507a1ba1");
-  }
   return limitedRoleMessage(language);
-}
-
-function billingManagementDeniedMessage(language: UiLanguage): string {
-  return t(language, "generated.components.OrganizationManagementPanel.you.can.view.billing.but.only.billing.us.13d2dc75");
 }
 
 function organizationLoadError(language: UiLanguage): string {

@@ -39,9 +39,11 @@ export function DirtyStateProvider({ children }: PropsWithChildren): React.JSX.E
   const resolutionRef = useRef<Promise<boolean> | null>(null);
   const backgroundSaveRef = useRef<Promise<boolean> | null>(null);
   const pendingResolutionRef = useRef<PendingDirtyResolution | null>(null);
+  const pendingResolutionSavingRef = useRef(false);
   const [registrationCount, setRegistrationCount] = useState(0);
   const [pendingResolution, setPendingResolution] =
     useState<PendingDirtyResolution | null>(null);
+  const [pendingResolutionSaving, setPendingResolutionSaving] = useState(false);
 
   const register = useCallback((registration: DirtyEditorRegistration): (() => void) => {
     if (
@@ -97,11 +99,34 @@ export function DirtyStateProvider({ children }: PropsWithChildren): React.JSX.E
 
   const settlePendingResolution = useCallback((choice: DirtyStateChoice): void => {
     const pending = pendingResolutionRef.current;
-    if (pending === null) {
+    if (pending === null || pendingResolutionSavingRef.current) {
+      return;
+    }
+    if (choice === 'save') {
+      pendingResolutionSavingRef.current = true;
+      setPendingResolutionSaving(true);
+      void applyDirtyStateChoice(pending.registrations, choice).then((allowed) => {
+        if (pendingResolutionRef.current !== pending) {
+          return;
+        }
+        if (!allowed) {
+          pendingResolutionSavingRef.current = false;
+          setPendingResolutionSaving(false);
+          return;
+        }
+        removeResolvedRegistrations(pending.registrations);
+        pendingResolutionRef.current = null;
+        pendingResolutionSavingRef.current = false;
+        setPendingResolution(null);
+        setPendingResolutionSaving(false);
+        pending.resolve(true);
+      });
       return;
     }
     pendingResolutionRef.current = null;
+    pendingResolutionSavingRef.current = false;
     setPendingResolution(null);
+    setPendingResolutionSaving(false);
     void applyDirtyStateChoice(pending.registrations, choice).then((allowed) => {
       if (allowed) {
         removeResolvedRegistrations(pending.registrations);
@@ -121,6 +146,8 @@ export function DirtyStateProvider({ children }: PropsWithChildren): React.JSX.E
     const resolution = new Promise<boolean>((resolve) => {
       const pending = { language, registrations, resolve };
       pendingResolutionRef.current = pending;
+      pendingResolutionSavingRef.current = false;
+      setPendingResolutionSaving(false);
       setPendingResolution(pending);
     });
     resolutionRef.current = resolution;
@@ -159,6 +186,7 @@ export function DirtyStateProvider({ children }: PropsWithChildren): React.JSX.E
     () => () => {
       const pending = pendingResolutionRef.current;
       pendingResolutionRef.current = null;
+      pendingResolutionSavingRef.current = false;
       resolutionRef.current = null;
       pending?.resolve(false);
     },
@@ -188,6 +216,7 @@ export function DirtyStateProvider({ children }: PropsWithChildren): React.JSX.E
       <UnsavedChangesResolutionDialog
         language={pendingResolution?.language ?? 'ja'}
         onSelect={settlePendingResolution}
+        saving={pendingResolutionSaving}
         visible={pendingResolution !== null}
       />
     </DirtyStateContext.Provider>

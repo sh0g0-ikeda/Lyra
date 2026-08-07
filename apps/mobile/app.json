@@ -3,7 +3,7 @@
     "name": "Lyra Mobile",
     "slug": "lyra-mobile",
     "scheme": "lyra-mobile",
-    "version": "0.1.20",
+    "version": "0.1.21",
     "icon": "./assets/icon.png",
     "orientation": "portrait",
     "userInterfaceStyle": "dark",
@@ -58,7 +58,7 @@
       ]
     ],
     "ios": {
-      "supportsTablet": true,
+      "supportsTablet": false,
       "bundleIdentifier": "jp.lyra.mobile",
       "associatedDomains": [
         "applinks:app.lyra-editor.com"

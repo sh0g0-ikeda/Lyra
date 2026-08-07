@@ -45,7 +45,6 @@ import type {
   OrganizationMemberRecord
 } from '@/domain/types';
 
-const webBillingUrl = 'https://app.lyra-editor.com/';
 const nativeMobileStore: 'apple' | 'google' | null =
   Platform.OS === 'ios' ? 'apple' : Platform.OS === 'android' ? 'google' : null;
 const nativeSubscriptionManagementUrl =
@@ -80,9 +79,10 @@ export function AccountScreen(): React.JSX.Element {
     setLanguage,
     setSession,
     tokens,
+    refreshIdToken,
     updateSelection
   } = useAppState();
-  const [webBillingError, setWebBillingError] = useState<string | null>(null);
+  const [externalUrlError, setExternalUrlError] = useState<string | null>(null);
   const [organizationName, setOrganizationName] = useState('');
   const [organizationManagementId, setOrganizationManagementId] = useState<string | null>(null);
   const organizationManagementTriggerRef = useRef<View | null>(null);
@@ -220,8 +220,6 @@ export function AccountScreen(): React.JSX.Element {
       queryClient.invalidateQueries({ queryKey: ['organization-workspace', sessionKey] }),
       queryClient.invalidateQueries({ queryKey: ['organization-members', sessionKey] }),
       queryClient.invalidateQueries({ queryKey: ['organization-invitations', sessionKey] }),
-      queryClient.invalidateQueries({ queryKey: ['organization-billing', sessionKey] }),
-      queryClient.invalidateQueries({ queryKey: ['organization-invoices', sessionKey] }),
       queryClient.invalidateQueries({ queryKey: ['organization-usage', sessionKey] }),
       queryClient.invalidateQueries({ queryKey: ['organization-audit-logs', sessionKey] }),
       refreshJobs()
@@ -309,7 +307,7 @@ export function AccountScreen(): React.JSX.Element {
     session?.personal_credits?.purchased_credits ??
     0;
   const openExternalHttpsUrl = async (url: string): Promise<boolean> => {
-    setWebBillingError(null);
+    setExternalUrlError(null);
     try {
       const parsed = new URL(url);
       if (parsed.protocol !== 'https:') {
@@ -322,12 +320,9 @@ export function AccountScreen(): React.JSX.Element {
       await Linking.openURL(parsed.toString());
       return true;
     } catch {
-      setWebBillingError(t(language, "generated.screens.AccountScreen.could.not.open.the.external.management.p.cf6b7798"));
+      setExternalUrlError(t(language, "generated.screens.AccountScreen.could.not.open.the.external.management.p.cf6b7798"));
       return false;
     }
-  };
-  const openWebBilling = async (): Promise<void> => {
-    await openExternalHttpsUrl(webBillingUrl);
   };
   const confirmOrganizationMemberRemoval = (
     member: OrganizationMemberRecord,
@@ -505,23 +500,22 @@ export function AccountScreen(): React.JSX.Element {
             api={api}
             key={activeOrganization.id}
             language={language}
-            onBillingHandoffComplete={refresh}
             onConfirmRemoveMember={confirmOrganizationMemberRemoval}
             onDownloadUsageCsv={async () => {
               await downloadAuthenticatedFile({
                 path: `/api/organizations/${encodeURIComponent(activeOrganization.id)}/usage.csv`,
                 filename: `lyra-${activeOrganization.name}-usage`,
                 mimeType: 'text/csv',
-                tokens
+                tokens,
+                refreshIdToken
               });
             }}
-            onOpenBillingUrl={openExternalHttpsUrl}
             organization={activeOrganization}
             sessionKey={sessionKey}
           />
         )}
       </OrganizationManagementModal>
-      {webBillingError === null ? null : <Notice message={webBillingError} tone="danger" />}
+      {externalUrlError === null ? null : <Notice message={externalUrlError} tone="danger" />}
 
       {activeOrganization === null ? (
         <Section
@@ -711,7 +705,6 @@ export function AccountScreen(): React.JSX.Element {
             onAcknowledgeSubscription={setAcknowledgeSubscription}
             onConfirmDeletion={confirmAccountDeletion}
             onConfirmationChange={setDeletionConfirmation}
-            onOpenOrganizationManagement={() => void openWebBilling()}
             onRefreshPreview={() => void loadDeletionPreview()}
             preview={deletionPreviewQuery.data}
             submitting={deletionMutation.isPending}
@@ -795,7 +788,6 @@ interface AccountDeletionReviewProps {
   onAcknowledgeSubscription: (value: boolean) => void;
   onConfirmDeletion: () => void;
   onConfirmationChange: (value: string) => void;
-  onOpenOrganizationManagement: () => void;
   onRefreshPreview: () => void;
   preview: AccountDeletionPreviewRecord;
   submitting: boolean;
@@ -812,7 +804,6 @@ function AccountDeletionReview({
   onAcknowledgeSubscription,
   onConfirmDeletion,
   onConfirmationChange,
-  onOpenOrganizationManagement,
   onRefreshPreview,
   preview,
   submitting
@@ -851,11 +842,6 @@ function AccountDeletionReview({
               organizationNames: ownerOrganizationNames.join(language === 'ja' ? '、' : ', ')
             })}
             tone="danger"
-          />
-          <PrimaryButton
-            label={t(language, "generated.screens.AccountScreen.open.organization.management.55d03f28")}
-            onPress={onOpenOrganizationManagement}
-            variant="secondary"
           />
         </>
       ) : null}

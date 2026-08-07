@@ -43,10 +43,10 @@ Unclassified routes: **0**
 | `/api/episodes/:episodeId/exports` | POST | Mobile UI | api.createEpisodeExport -> apps/mobile/src/screens/PagesScreen.tsx |
 | `/api/episodes/:id` | DELETE | Mobile UI | api.deleteEpisode -> apps/mobile/src/components/StoryHierarchySheet.tsx |
 | `/api/episodes/:id` | PUT | Mobile UI | api.updateEpisode -> apps/mobile/src/components/StoryHierarchySheet.tsx, apps/mobile/src/screens/StoryScreen.tsx |
-| `/api/episodes/:id/autofill-pages-from-story` | POST | Mobile UI | api.autofillEpisodePagesFromStory -> apps/mobile/src/screens/AccountScreen.tsx, apps/mobile/src/screens/StoryScreen.tsx |
-| `/api/episodes/:id/generate-page-skeleton` | POST | Mobile UI | api.generatePageSkeleton -> apps/mobile/src/screens/AccountScreen.tsx, apps/mobile/src/screens/StoryScreen.tsx |
+| `/api/episodes/:id/autofill-pages-from-story` | POST | Mobile UI | api.autofillEpisodePagesFromStory -> apps/mobile/src/screens/AccountScreen.tsx, apps/mobile/src/screens/PagesScreen.tsx |
+| `/api/episodes/:id/generate-page-skeleton` | POST | Mobile UI | api.generatePageSkeleton -> apps/mobile/src/screens/AccountScreen.tsx, apps/mobile/src/screens/PagesScreen.tsx |
 | `/api/episodes/:id/move` | POST | Mobile UI | api.moveEpisode -> apps/mobile/src/components/StoryHierarchySheet.tsx |
-| `/api/episodes/:id/pages` | GET | Mobile UI | api.getPages, api.getPagesPage -> apps/mobile/src/screens/PagesScreen.tsx, apps/mobile/src/screens/StoryScreen.tsx |
+| `/api/episodes/:id/pages` | GET | Mobile UI | api.getPages, api.getPagesPage -> apps/mobile/src/screens/PagesScreen.tsx |
 | `/api/episodes/:id/scenes` | GET | Mobile UI | api.getScenes -> apps/mobile/src/screens/CharactersScreen.tsx, apps/mobile/src/screens/PagesScreen.tsx, apps/mobile/src/screens/StoryScreen.tsx |
 | `/api/episodes/:id/scenes` | POST | Mobile UI | api.createScene -> apps/mobile/src/screens/StoryScreen.tsx |
 | `/api/exports/:jobId` | GET | Mobile UI | api.getExportJob -> apps/mobile/src/components/ExportJobCard.tsx |
@@ -55,7 +55,7 @@ Unclassified routes: **0**
 | `/api/jobs` | GET | Mobile UI | api.listJobs -> apps/mobile/src/hooks/useActiveResourceJobId.ts, apps/mobile/src/screens/AccountScreen.tsx |
 | `/api/jobs/:id` | DELETE | Mobile UI | api.hideJob -> apps/mobile/src/screens/AccountScreen.tsx |
 | `/api/jobs/:id` | GET | Mobile UI | api.getJob -> apps/mobile/src/components/JobStatusCard.tsx, apps/mobile/src/components/PushNotificationCoordinator.tsx, apps/mobile/src/lib/pushNavigation.ts, apps/mobile/src/screens/CharactersScreen.tsx |
-| `/api/jobs/:id/cancel` | POST | Mobile UI | api.cancelJob -> apps/mobile/src/screens/AccountScreen.tsx, apps/mobile/src/screens/StoryScreen.tsx |
+| `/api/jobs/:id/cancel` | POST | Mobile UI | api.cancelJob -> apps/mobile/src/screens/AccountScreen.tsx, apps/mobile/src/screens/PagesScreen.tsx |
 | `/api/me` | GET | Mobile UI | api.getCurrentSession -> apps/mobile/src/App.tsx, apps/mobile/src/lib/mobileStoreBillingBridge.ts, apps/mobile/src/screens/AccountScreen.tsx |
 | `/api/mobile-purchases/apple/verify` | POST | Mobile UI | api.verifyAppleMobilePurchase -> apps/mobile/src/lib/mobileStoreBillingBridge.ts |
 | `/api/mobile-purchases/binding` | GET | Mobile UI | api.getMobilePurchaseBinding -> apps/mobile/src/lib/mobileStoreBillingBridge.ts |
@@ -69,20 +69,20 @@ Unclassified routes: **0**
 | `/api/organizations/:organizationId` | GET | Mobile UI | api.getOrganizationWorkspace -> apps/mobile/src/components/OrganizationManagementPanel.tsx |
 | `/api/organizations/:organizationId` | PATCH | Mobile UI | api.updateOrganization -> apps/mobile/src/components/OrganizationManagementPanel.tsx |
 | `/api/organizations/:organizationId/audit-logs` | GET | Mobile UI | api.getOrganizationAuditLogs, api.getOrganizationAuditLogsPage -> apps/mobile/src/components/OrganizationManagementPanel.tsx |
-| `/api/organizations/:organizationId/billing` | GET | Mobile UI | api.getOrganizationBillingSummary -> apps/mobile/src/components/OrganizationManagementPanel.tsx |
-| `/api/organizations/:organizationId/billing/checkout/credits` | POST | Mobile UI | api.createOrganizationCreditCheckout -> apps/mobile/src/components/OrganizationManagementPanel.tsx |
-| `/api/organizations/:organizationId/billing/checkout/subscription` | POST | Mobile UI | api.createOrganizationSubscriptionCheckout -> apps/mobile/src/components/OrganizationManagementPanel.tsx |
-| `/api/organizations/:organizationId/billing/credit-pack-checkout-session` | POST | Compatibility | Legacy organization credit alias; Mobile uses the canonical checkout/credits route. |
-| `/api/organizations/:organizationId/billing/customer-portal` | POST | Mobile UI | api.createOrganizationCustomerPortal -> apps/mobile/src/components/OrganizationManagementPanel.tsx |
-| `/api/organizations/:organizationId/billing/customer-portal-session` | POST | Compatibility | Legacy organization portal alias; Mobile uses the canonical customer-portal route. |
-| `/api/organizations/:organizationId/billing/plans` | GET | Mobile aggregate replacement | Mobile uses the organization billing summary, which contains the server-owned plan catalog. |
-| `/api/organizations/:organizationId/billing/subscription-checkout-session` | POST | Compatibility | Legacy organization checkout alias; Mobile uses the canonical checkout/subscription route. |
-| `/api/organizations/:organizationId/credits/balance` | GET | Mobile aggregate replacement | Mobile uses the organization billing summary, which contains the authoritative balance. |
+| `/api/organizations/:organizationId/billing` | GET | Mobile-hidden | Organization Stripe billing details are available only on the Web. |
+| `/api/organizations/:organizationId/billing/checkout/credits` | POST | Mobile-hidden | Organization Stripe credit checkout is available only on the Web. |
+| `/api/organizations/:organizationId/billing/checkout/subscription` | POST | Mobile-hidden | Organization Stripe subscription checkout is available only on the Web. |
+| `/api/organizations/:organizationId/billing/credit-pack-checkout-session` | POST | Mobile-hidden | Legacy organization Stripe credit checkout is available only on the Web. |
+| `/api/organizations/:organizationId/billing/customer-portal` | POST | Mobile-hidden | Organization Stripe customer portal is available only on the Web. |
+| `/api/organizations/:organizationId/billing/customer-portal-session` | POST | Mobile-hidden | Legacy organization Stripe customer portal is available only on the Web. |
+| `/api/organizations/:organizationId/billing/plans` | GET | Mobile-hidden | Organization Stripe billing plans are available only on the Web. |
+| `/api/organizations/:organizationId/billing/subscription-checkout-session` | POST | Mobile-hidden | Legacy organization Stripe checkout is available only on the Web. |
+| `/api/organizations/:organizationId/credits/balance` | GET | Mobile aggregate replacement | Mobile receives the authoritative organization credit balance from the /api/me bootstrap response. |
 | `/api/organizations/:organizationId/invitations` | GET | Mobile UI | api.getOrganizationInvitations, api.getOrganizationInvitationsPage -> apps/mobile/src/components/OrganizationManagementPanel.tsx |
 | `/api/organizations/:organizationId/invitations` | POST | Mobile UI | api.createOrganizationInvitation -> apps/mobile/src/components/OrganizationManagementPanel.tsx |
 | `/api/organizations/:organizationId/invitations/:invitationId/resend` | POST | Mobile UI | api.resendOrganizationInvitation -> apps/mobile/src/components/OrganizationManagementPanel.tsx |
 | `/api/organizations/:organizationId/invitations/:invitationId/revoke` | POST | Mobile UI | api.revokeOrganizationInvitation -> apps/mobile/src/components/OrganizationManagementPanel.tsx |
-| `/api/organizations/:organizationId/invoices` | GET | Mobile UI | api.getOrganizationInvoices -> apps/mobile/src/components/OrganizationManagementPanel.tsx |
+| `/api/organizations/:organizationId/invoices` | GET | Mobile-hidden | Organization Stripe invoices are available only on the Web. |
 | `/api/organizations/:organizationId/members` | GET | Mobile UI | api.getOrganizationMembers, api.getOrganizationMembersPage -> apps/mobile/src/components/OrganizationManagementPanel.tsx |
 | `/api/organizations/:organizationId/members/:memberId` | DELETE | Mobile UI | api.removeOrganizationMember -> apps/mobile/src/components/OrganizationManagementPanel.tsx |
 | `/api/organizations/:organizationId/members/:memberId` | PATCH | Mobile UI | api.updateOrganizationMember -> apps/mobile/src/components/OrganizationManagementPanel.tsx |

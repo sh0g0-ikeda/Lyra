@@ -6,7 +6,7 @@ import { PrimaryButton } from '@/components/PrimaryButton';
 import { colors, radius, spacing, textStyles } from '@/constants/theme';
 import type { ExportJobRecord } from '@/domain/types';
 import type { LyraMobileApiClient } from '@/lib/api';
-import { fileTransferErrorMessage } from '@/lib/fileTransferError';
+import { fileTransferErrorMessage, MobileFileTransferError } from '@/lib/fileTransferError';
 import type { ComponentTranslationKey } from '@/lib/i18nComponentMessages';
 import { t } from '@/lib/i18n';
 import { exportJobQueryKey } from '@/lib/queryKeys';
@@ -63,15 +63,19 @@ export function ExportJobCard({
   }
 
   const isCompleted = job.status === 'completed';
-  const canDownload = isCompleted && job.download_url !== undefined && onDownload !== undefined;
+  const canDownload = isCompleted && onDownload !== undefined;
   const startDownload = async (): Promise<void> => {
-    if (!canDownload || job.download_url === undefined || onDownload === undefined) {
+    if (!canDownload || onDownload === undefined) {
       return;
     }
     setDownloadLoading(true);
     setDownloadError(null);
     try {
-      await onDownload(job.download_url, job);
+      const refreshedJob = await api.getExportJob(job.id, organizationId);
+      if (refreshedJob.status !== 'completed' || refreshedJob.download_url === undefined) {
+        throw new MobileFileTransferError('DOWNLOAD_INTERRUPTED');
+      }
+      await onDownload(refreshedJob.download_url, refreshedJob);
     } catch (error) {
       setDownloadError(fileTransferErrorMessage(error, language));
     } finally {
@@ -96,7 +100,7 @@ export function ExportJobCard({
         </>
       )}
       {job.status === 'failed' ? <Text style={styles.error}>{failureMessage(job.message_key, language)}</Text> : null}
-      {isCompleted && job.download_url === undefined ? (
+      {isCompleted && job.download_url === undefined && onDownload === undefined ? (
         <Text style={styles.text}>{t(language, "generated.components.ExportJobCard.export.finished.but.its.download.link.is.8471ea4b")}</Text>
       ) : null}
       {downloadError === null ? null : <Text style={styles.error}>{downloadError}</Text>}

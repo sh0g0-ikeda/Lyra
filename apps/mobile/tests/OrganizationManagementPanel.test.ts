@@ -5,21 +5,17 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { OrganizationManagementPanel } from '@/components/OrganizationManagementPanel';
 
 const {
-  appStateAddEventListenerMock,
   organizationCollectionModalMock,
   queryClientMock,
-  recordOperationalMetricMock,
   useInfiniteQueryMock,
   useQueryMock,
   useMutationMock
 } = vi.hoisted(() => ({
-  appStateAddEventListenerMock: vi.fn(),
   organizationCollectionModalMock: vi.fn(),
   queryClientMock: {
     invalidateQueries: vi.fn(),
     setQueryData: vi.fn()
   },
-  recordOperationalMetricMock: vi.fn(),
   useInfiniteQueryMock: vi.fn(),
   useQueryMock: vi.fn(),
   useMutationMock: vi.fn()
@@ -34,10 +30,6 @@ vi.mock('@tanstack/react-query', () => ({
 
 vi.mock('react-native', () => ({
   ActivityIndicator: 'ActivityIndicator',
-  AppState: {
-    addEventListener: appStateAddEventListenerMock,
-    currentState: 'active'
-  },
   Pressable: 'Pressable',
   StyleSheet: { create: <T,>(styles: T): T => styles },
   Text: 'Text',
@@ -86,10 +78,6 @@ vi.mock('@/components/OrganizationCollectionModal', () => ({
   }
 }));
 
-vi.mock('@/lib/operationalEvents', () => ({
-  recordOperationalMetric: recordOperationalMetricMock
-}));
-
 const organization = {
   id: '11111111-1111-4111-8111-111111111111',
   name: 'Lyra Studio',
@@ -135,7 +123,6 @@ const workspace = {
 describe('OrganizationManagementPanel', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    appStateAddEventListenerMock.mockReturnValue({ remove: vi.fn() });
     useInfiniteQueryMock.mockImplementation((options: { enabled?: boolean; queryKey: unknown[] }) => {
       const result = useQueryMock(options) as {
         data?: Record<string, unknown>;
@@ -155,7 +142,7 @@ describe('OrganizationManagementPanel', () => {
     });
   });
 
-  it('ownerにはメンバー管理と請求手続きを表示し、削除確認を呼び出す', async () => {
+  it('ownerにはメンバー管理を表示するがStripe請求UIを表示せず、削除確認を呼び出す', async () => {
     const confirmRemove = vi.fn();
     const downloadUsageCsv = vi.fn().mockResolvedValue(undefined);
     useQueryMock.mockImplementation((options: { queryKey: unknown[] }) => {
@@ -180,7 +167,6 @@ describe('OrganizationManagementPanel', () => {
           language: 'ja',
           onConfirmRemoveMember: confirmRemove,
           onDownloadUsageCsv: downloadUsageCsv,
-          onOpenBillingUrl: vi.fn(),
           organization,
           sessionKey: 'session-a'
         })
@@ -189,7 +175,17 @@ describe('OrganizationManagementPanel', () => {
 
     const rendered = JSON.stringify(renderer!.toJSON());
     expect(rendered).toContain('メンバー');
-    expect(rendered).toContain('請求管理');
+    expect(rendered).not.toContain('請求管理');
+    expect(rendered).not.toContain('手続きを開く');
+    expect(rendered).not.toContain('クレジット購入');
+    expect(rendered).not.toContain('請求ポータルを開く');
+    expect(rendered).not.toContain('請求履歴');
+    expect(rendered).not.toContain('請求書を開く');
+    const requestedResources = useQueryMock.mock.calls.map(
+      ([options]) => String((options as { queryKey: unknown[] }).queryKey[0])
+    );
+    expect(requestedResources).not.toContain('organization-billing');
+    expect(requestedResources).not.toContain('organization-invoices');
     expect(rendered).not.toContain('Editor');
     expect(rendered).not.toContain('member-2');
 
@@ -227,7 +223,6 @@ describe('OrganizationManagementPanel', () => {
           language: 'en',
           onConfirmRemoveMember: vi.fn(),
           onDownloadUsageCsv: vi.fn(),
-          onOpenBillingUrl: vi.fn(),
           organization: { ...organization, role: 'viewer' },
           sessionKey: 'session-a'
         })
@@ -240,223 +235,4 @@ describe('OrganizationManagementPanel', () => {
     expect(rendered).not.toContain('Billing management');
   });
 
-  it('system browserを開けない場合はcheckout return failureをPIIなしで記録する', async () => {
-    const billing = {
-      workspace,
-      subscription: null,
-      subscription_plans: [
-        {
-          plan_code: 'enterprise_b' as const,
-          display_name_ja: '法人 B',
-          display_name_en: 'Enterprise B',
-          monthly_credits: 500,
-          amount_jpy: 50_000,
-          minimum_contract_months: 1,
-          trial_days: 0,
-          is_enterprise: true,
-          configured: true
-        }
-      ]
-    };
-    useQueryMock.mockImplementation((options: { queryKey: unknown[] }) => {
-      const name = String(options.queryKey[0]);
-      if (name === 'organization-workspace') {
-        return { data: workspace, isLoading: false, isError: false, error: null };
-      }
-      if (name === 'organization-billing') {
-        return { data: billing, isLoading: false, isError: false, error: null };
-      }
-      if (name === 'organization-invoices') {
-        return { data: { invoices: [] }, isLoading: false, isError: false, error: null };
-      }
-      return {
-        data: {
-          audit_logs: [],
-          invitations: [],
-          members: [],
-          summary: {
-            by_generation_type: [],
-            by_member: [],
-            by_work: [],
-            current_month_total_credits: 0
-          },
-          usage_events: []
-        },
-        isLoading: false,
-        isError: false,
-        error: null
-      };
-    });
-    useMutationMock.mockReturnValue({
-      isError: false,
-      isPending: false,
-      mutateAsync: vi.fn().mockResolvedValue({
-        session_id: 'checkout-1',
-        url: 'https://billing.example.test/checkout'
-      }),
-      variables: undefined
-    });
-    let renderer: ReturnType<typeof create>;
-    await act(async () => {
-      renderer = create(
-        React.createElement(OrganizationManagementPanel, {
-          api: {} as never,
-          language: 'ja',
-          onConfirmRemoveMember: vi.fn(),
-          onDownloadUsageCsv: vi.fn(),
-          onOpenBillingUrl: vi.fn().mockResolvedValue(false),
-          organization,
-          sessionKey: 'session-a'
-        })
-      );
-    });
-
-    const checkoutButton = renderer!.root
-      .findAllByType('button')
-      .find((node) => node.children.includes('手続きを開く'));
-    await act(async () => {
-      checkoutButton?.props.onClick();
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-
-    expect(recordOperationalMetricMock).toHaveBeenCalledWith({
-      intent: 'subscription',
-      name: 'checkout_return_failure',
-      outcome: 'error',
-      requestId: null
-    });
-  });
-
-  it('請求画面からforeground復帰後にauthoritativeな変更を確認して初めて購入完了を表示する', async () => {
-    let appStateListener: ((state: string) => void) | null = null;
-    appStateAddEventListenerMock.mockImplementation(
-      (_event: string, listener: (state: string) => void) => {
-        appStateListener = listener;
-        return { remove: vi.fn() };
-      }
-    );
-    const billingBefore = {
-      workspace,
-      subscription: {
-        organization_id: organization.id,
-        plan_code: 'enterprise_a' as const,
-        status: 'active' as const,
-        current_period_start: '2026-07-25T00:00:00.000Z',
-        current_period_end: '2026-08-25T00:00:00.000Z',
-        cancel_at_period_end: false
-      },
-      subscription_plans: [
-        {
-          plan_code: 'enterprise_b' as const,
-          display_name_ja: '法人 B',
-          display_name_en: 'Enterprise B',
-          monthly_credits: 500,
-          amount_jpy: 50_000,
-          minimum_contract_months: 1,
-          trial_days: 0,
-          is_enterprise: true,
-          configured: true
-        }
-      ]
-    };
-    const billingAfter = {
-      ...billingBefore,
-      subscription: {
-        ...billingBefore.subscription,
-        plan_code: 'enterprise_b' as const,
-        current_period_end: '2026-09-25T00:00:00.000Z'
-      }
-    };
-    useQueryMock.mockImplementation((options: { queryKey: unknown[] }) => {
-      const name = String(options.queryKey[0]);
-      if (name === 'organization-workspace') {
-        return { data: workspace, isLoading: false, isError: false, error: null };
-      }
-      if (name === 'organization-billing') {
-        return { data: billingBefore, isLoading: false, isError: false, error: null };
-      }
-      if (name === 'organization-invoices') {
-        return {
-          data: { invoices: [] },
-          isLoading: false,
-          isError: false,
-          error: null
-        };
-      }
-      return {
-        data: {
-          audit_logs: [],
-          invitations: [],
-          members: [],
-          summary: {
-            by_generation_type: [],
-            by_member: [],
-            by_work: [],
-            current_month_total_credits: 0
-          },
-          usage_events: []
-        },
-        isLoading: false,
-        isError: false,
-        error: null
-      };
-    });
-    useMutationMock.mockReturnValue({
-      isError: false,
-      isPending: false,
-      mutateAsync: vi.fn().mockResolvedValue({
-        session_id: 'checkout-1',
-        url: 'https://billing.example.test/checkout'
-      }),
-      variables: undefined
-    });
-    const api = {
-      getOrganizationBillingSummary: vi.fn().mockResolvedValue(billingAfter),
-      getOrganizationInvoices: vi.fn().mockResolvedValue({ invoices: [] })
-    };
-    const onOpenBillingUrl = vi.fn().mockResolvedValue(true);
-    let renderer: ReturnType<typeof create>;
-    await act(async () => {
-      renderer = create(
-        React.createElement(OrganizationManagementPanel, {
-          api: api as never,
-          language: 'ja',
-          onConfirmRemoveMember: vi.fn(),
-          onDownloadUsageCsv: vi.fn(),
-          onOpenBillingUrl,
-          organization,
-          sessionKey: 'session-a'
-        })
-      );
-    });
-
-    const checkoutButton = renderer!.root
-      .findAllByType('button')
-      .find((node) => node.children.includes('手続きを開く'));
-    expect(checkoutButton).toBeDefined();
-    await act(async () => {
-      checkoutButton?.props.onClick();
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-    expect(JSON.stringify(renderer!.toJSON())).toContain(
-      '請求画面から戻ると決済情報を確認します'
-    );
-    expect(JSON.stringify(renderer!.toJSON())).not.toContain('購入完了');
-
-    await act(async () => {
-      appStateListener?.('background');
-      appStateListener?.('active');
-      await Promise.resolve();
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-
-    expect(api.getOrganizationBillingSummary).toHaveBeenCalledTimes(1);
-    expect(api.getOrganizationInvoices).toHaveBeenCalledTimes(1);
-    expect(JSON.stringify(renderer!.toJSON())).toContain(
-      '購入完了をサーバーで確認しました'
-    );
-  });
 });

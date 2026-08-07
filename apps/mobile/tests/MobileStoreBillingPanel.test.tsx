@@ -9,6 +9,7 @@ const adapter = {
   disconnect: vi.fn().mockResolvedValue(undefined),
   getState: vi.fn().mockReturnValue({
     connected: true,
+    diagnostics: null,
     error: null,
     lastVerified: null,
     loading: false,
@@ -48,6 +49,77 @@ vi.mock('@/state/networkStatus', () => ({
 }));
 
 describe('MobileStoreBillingPanel', () => {
+  it('商品が返らない場合に秘密情報を含まないStoreKit診断を表示する', async () => {
+    adapter.getState.mockReturnValueOnce({
+      ...adapter.getState(),
+      diagnostics: {
+        allProducts: {
+          errorCode: null,
+          requestedProductIds: ['jp.lyra.credits.200', 'jp.lyra.standard.monthly'],
+          returnedProductIds: []
+        },
+        connected: true,
+        inApp: {
+          errorCode: null,
+          requestedProductIds: ['jp.lyra.credits.200'],
+          returnedProductIds: []
+        },
+        storefront: 'JPN',
+        storefrontErrorCode: null,
+        subscriptions: {
+          errorCode: null,
+          requestedProductIds: ['jp.lyra.standard.monthly'],
+          returnedProductIds: []
+        }
+      },
+      products: [
+        {
+          available: false,
+          displayPrice: null,
+          id: 'jp.lyra.credits.200',
+          kind: 'credit_pack',
+          title: 'Lyra credits 10'
+        }
+      ]
+    });
+
+    let renderer: ReturnType<typeof create>;
+    await act(async () => {
+      renderer = create(React.createElement(MobileStoreBillingPanel, {
+        adapter: adapter as never,
+        language: 'ja'
+      }));
+    });
+
+    const rendered = JSON.stringify(renderer!.toJSON());
+    expect(rendered).toContain('課金診断');
+    expect(rendered).toContain('ストアフロント: JPN');
+    expect(rendered).toContain('クレジット商品: 0/1');
+    expect(rendered).toContain('サブスクリプション: 0/1');
+    expect(rendered).toContain('全商品照会: 0/2');
+    expect(rendered).not.toMatch(/token|receipt|account/i);
+  });
+
+  it('狭い画面でも商品説明と購入操作を縦に配置して日本語を一文字ずつ折り返さない', async () => {
+    let renderer: ReturnType<typeof create>;
+    await act(async () => {
+      renderer = create(React.createElement(MobileStoreBillingPanel, {
+        adapter: adapter as never,
+        language: 'ja'
+      }));
+    });
+
+    const productCard = renderer!.root.findAll((node) => {
+      const style = node.props.style as { borderWidth?: number; justifyContent?: string } | undefined;
+      return style?.borderWidth === 1 && style.justifyContent === 'space-between';
+    })[0];
+
+    expect(productCard?.props.style).toMatchObject({
+      alignItems: 'stretch',
+      flexDirection: 'column'
+    });
+  });
+
   it('日本語で購入と復元を表示し、利用可能な商品だけを購入可能にする', async () => {
     let renderer: ReturnType<typeof create>;
     await act(async () => {

@@ -278,4 +278,67 @@ describe('AccountScreen organization feature guard', () => {
       entityId: null
     });
   });
+
+  it('単独オーナーで削除が停止してもWeb組織管理への課金導線を表示しない', async () => {
+    mocks.useQuery.mockImplementation((options: { queryKey: readonly string[] }) => {
+      if (options.queryKey[0] === 'balance') {
+        return {
+          data: {
+            cancel_at_period_end: false,
+            current_period_end: null,
+            monthly_credits: 0,
+            monthly_expires_at: null,
+            plan_code: 'free',
+            purchased_credits: 0,
+            total_credits: 0
+          },
+          isError: false,
+          isFetching: false,
+          isLoading: false
+        };
+      }
+      if (options.queryKey[0] === 'account') {
+        return {
+          data: {
+            active_mobile_store_subscription_count: 0,
+            active_personal_subscription_count: 0,
+            active_stripe_subscription_count: 0,
+            confirmed_personal_asset_count: 0,
+            unique_owner_organizations: [{ id: organization.id, name: organization.name }]
+          },
+          isError: false,
+          isFetching: false,
+          isLoading: false,
+          refetch: vi.fn()
+        };
+      }
+      return {
+        data: undefined,
+        isError: false,
+        isFetching: false,
+        isLoading: false,
+        refetch: vi.fn()
+      };
+    });
+    mocks.useAppState.mockReturnValue({
+      api: {},
+      language: 'en',
+      logout: vi.fn(),
+      selection: { organizationId: null },
+      session: { ...refreshedSession, organizations: [] },
+      sessionKey: 'user-1',
+      setLanguage: vi.fn(),
+      setSession: vi.fn(),
+      updateSelection: mocks.updateSelection
+    });
+
+    let renderer: ReturnType<typeof create>;
+    await act(async () => {
+      renderer = create(React.createElement(AccountScreen));
+    });
+
+    expect(JSON.stringify(renderer!.toJSON())).not.toContain(
+      'generated.screens.AccountScreen.open.organization.management.55d03f28'
+    );
+  });
 });

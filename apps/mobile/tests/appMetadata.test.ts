@@ -25,6 +25,7 @@ interface ExpoAppConfig {
     updates?: { fallbackToCacheTimeout?: number; url?: string };
     ios?: {
       buildNumber?: string;
+      supportsTablet?: boolean;
       privacyManifests?: {
         NSPrivacyTracking?: boolean;
         NSPrivacyTrackingDomains?: string[];
@@ -186,6 +187,10 @@ describe('production app metadata', () => {
       'NSPrivacyCollectedDataTypePhotosorVideos',
       'NSPrivacyCollectedDataTypePurchaseHistory',
     ]));
+  });
+
+  it('iOS提出をiPhone専用に固定する', () => {
+    expect(config.expo.ios?.supportsTablet).toBe(false);
   });
 
   it('日英の store metadata と公開ポリシー URL を固定する', () => {
