@@ -63,7 +63,7 @@ export interface NativeStoreSubscription {
 
 export interface NativeStoreBillingSdk {
   endConnection(): Promise<void>;
-  fetchProducts(input: { skus: string[]; type: 'in-app' | 'subs' }): Promise<readonly NativeStoreProduct[] | null>;
+  fetchProducts(input: { skus: string[]; type: 'all' | 'in-app' | 'subs' }): Promise<readonly NativeStoreProduct[] | null>;
   finishTransaction(input: { isConsumable: boolean; purchase: NativeStorePurchase }): Promise<void>;
   getAvailablePurchases(): Promise<readonly NativeStorePurchase[]>;
   getStorefront(): Promise<string>;
@@ -124,6 +124,7 @@ export interface NativeStoreProductLookupDiagnostics {
 }
 
 export interface NativeStoreBillingDiagnostics {
+  allProducts: NativeStoreProductLookupDiagnostics | null;
   connected: boolean;
   inApp: NativeStoreProductLookupDiagnostics;
   storefront: string | null;
@@ -349,6 +350,7 @@ class NativeStoreBillingAdapterImplementation implements NativeStoreBillingAdapt
     const subscriptionSkus = this.dependencies.products
       .filter((product) => product.kind === 'subscription')
       .map((product) => product.id);
+    const allSkus = this.dependencies.products.map((product) => product.id);
     const storefront = await readStorefrontDiagnostics(this.dependencies.sdk);
     const inApp = await queryProductsForDiagnostics(
       this.dependencies.sdk,
@@ -360,7 +362,17 @@ class NativeStoreBillingAdapterImplementation implements NativeStoreBillingAdapt
       subscriptionSkus,
       'subs'
     );
+    const typedProductIds = new Set([
+      ...inApp.diagnostics.returnedProductIds,
+      ...subscriptions.diagnostics.returnedProductIds
+    ]);
+    const allProducts = inApp.error === null
+      && subscriptions.error === null
+      && typedProductIds.size < allSkus.length
+      ? await queryProductsForDiagnostics(this.dependencies.sdk, allSkus, 'all')
+      : null;
     const diagnostics: NativeStoreBillingDiagnostics = {
+      allProducts: allProducts?.diagnostics ?? null,
       connected: true,
       inApp: inApp.diagnostics,
       storefront: storefront.value,
@@ -373,7 +385,7 @@ class NativeStoreBillingAdapterImplementation implements NativeStoreBillingAdapt
       throw lookupError;
     }
     const storeProducts = new Map<string, NativeStoreProduct>();
-    for (const response of [inApp.products, subscriptions.products]) {
+    for (const response of [inApp.products, subscriptions.products, allProducts?.products ?? []]) {
       for (const product of response ?? []) {
         storeProducts.set(product.id, product);
       }
@@ -619,7 +631,7 @@ async function readStorefrontDiagnostics(
 async function queryProductsForDiagnostics(
   sdk: NativeStoreBillingSdk,
   requestedProductIds: string[],
-  type: 'in-app' | 'subs',
+  type: 'all' | 'in-app' | 'subs',
 ): Promise<{
   diagnostics: NativeStoreProductLookupDiagnostics;
   error: unknown | null;

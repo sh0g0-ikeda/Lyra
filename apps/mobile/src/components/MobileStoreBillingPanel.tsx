@@ -95,8 +95,8 @@ export function MobileStoreBillingPanel({ adapter, language, onVerified }: Mobil
       {showDiagnostics && state.diagnostics !== null ? (
         <View accessibilityLabel={t(language, 'component.mobileStoreBilling.diagnosticsTitle')} style={styles.diagnostics}>
           <Text style={styles.diagnosticsTitle}>{t(language, 'component.mobileStoreBilling.diagnosticsTitle')}</Text>
-          {diagnosticLines(state.diagnostics, language).map((line) => (
-            <Text key={line} selectable style={styles.diagnosticLine}>{line}</Text>
+          {diagnosticLines(state.diagnostics, language).map((line, index) => (
+            <Text key={`${index}:${line}`} selectable style={styles.diagnosticLine}>{line}</Text>
           ))}
         </View>
       ) : null}
@@ -150,10 +150,25 @@ function diagnosticLines(
       productIds: diagnostics.subscriptions.returnedProductIds.join(', ') || none
     })
   ];
+  if (diagnostics.allProducts !== null) {
+    lines.push(
+      t(language, 'component.mobileStoreBilling.diagnosticsAllProducts', {
+        requested: diagnostics.allProducts.requestedProductIds.length,
+        returned: diagnostics.allProducts.returnedProductIds.length
+      }),
+      t(language, 'component.mobileStoreBilling.diagnosticsRequested', {
+        productIds: diagnostics.allProducts.requestedProductIds.join(', ') || none
+      }),
+      t(language, 'component.mobileStoreBilling.diagnosticsReturned', {
+        productIds: diagnostics.allProducts.returnedProductIds.join(', ') || none
+      })
+    );
+  }
   const errorCodes = [
     diagnostics.storefrontErrorCode,
     diagnostics.inApp.errorCode,
-    diagnostics.subscriptions.errorCode
+    diagnostics.subscriptions.errorCode,
+    diagnostics.allProducts?.errorCode ?? null
   ].filter((code): code is string => code !== null);
   if (errorCodes.length > 0) {
     lines.push(t(language, 'component.mobileStoreBilling.diagnosticsError', {

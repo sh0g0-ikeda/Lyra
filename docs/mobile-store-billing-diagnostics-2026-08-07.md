@@ -43,3 +43,22 @@ Do not create an Android AAB. Existing unrelated dirty files remain untouched.
 
 Terra delegation is omitted because this is a tightly coupled adapter/component
 change whose test and implementation edits share the same small file set.
+
+## Follow-up: untyped catalog fallback (2026-08-08)
+
+The TestFlight diagnostic result connected to StoreKit successfully but returned
+zero of five configured products, without an error, for the USA storefront. To
+separate an `expo-iap` product-type filtering problem from an Apple catalog
+availability problem, the adapter will retry one bounded lookup containing the
+same configured IDs with `type: all` only when the normal credit/subscription
+lookups are incomplete and error-free. Products returned by this fallback become
+the same localized catalog entries used by the existing purchase UI; no product
+ID, purchase request, receipt, verification, or credit-settlement behavior changes.
+
+The diagnostic block will show the all-product request and result separately. A
+zero result there establishes that the native StoreKit catalog itself did not
+return the configured IDs, while a nonzero result identifies the typed wrapper
+path and keeps the purchase UI usable. The new adapter test must fail before the
+implementation by expecting the fallback request and recovered products. The
+component test covers the additional safe diagnostic line. No Terra delegation is
+used because the behavior and tests are confined to the same three Mobile files.

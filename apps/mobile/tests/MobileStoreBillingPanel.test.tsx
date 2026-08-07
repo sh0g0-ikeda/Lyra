@@ -53,6 +53,11 @@ describe('MobileStoreBillingPanel', () => {
     adapter.getState.mockReturnValueOnce({
       ...adapter.getState(),
       diagnostics: {
+        allProducts: {
+          errorCode: null,
+          requestedProductIds: ['jp.lyra.credits.200', 'jp.lyra.standard.monthly'],
+          returnedProductIds: []
+        },
         connected: true,
         inApp: {
           errorCode: null,
@@ -91,6 +96,7 @@ describe('MobileStoreBillingPanel', () => {
     expect(rendered).toContain('ストアフロント: JPN');
     expect(rendered).toContain('クレジット商品: 0/1');
     expect(rendered).toContain('サブスクリプション: 0/1');
+    expect(rendered).toContain('全商品照会: 0/2');
     expect(rendered).not.toMatch(/token|receipt|account/i);
   });
 

@@ -135,6 +135,7 @@ describe('native store billing adapter', () => {
       type: 'subs'
     });
     expect(adapter.getState().diagnostics).toEqual({
+      allProducts: null,
       connected: true,
       inApp: {
         errorCode: null,
@@ -148,6 +149,40 @@ describe('native store billing adapter', () => {
         requestedProductIds: ['lyra.standard.monthly'],
         returnedProductIds: ['lyra.standard.monthly']
       }
+    });
+  });
+
+  it('種別別照会が空の場合に全商品照会で購入可能な商品を復元する', async () => {
+    const harness = createSdkHarness();
+    harness.sdk.fetchProducts = vi.fn(({ type }) => {
+      if (type !== 'all') {
+        return Promise.resolve([]);
+      }
+      return Promise.resolve([
+        { id: 'lyra.credits.200', title: '200 credits', displayPrice: '$2.99', type: 'in-app' },
+        { id: 'lyra.standard.monthly', title: 'Standard', displayPrice: '$4.99', type: 'subs' }
+      ]);
+    });
+    const adapter = createNativeStoreBillingAdapter({
+      backend: createBackend(),
+      products,
+      sdk: harness.sdk
+    });
+
+    await adapter.connect();
+
+    expect(harness.sdk.fetchProducts).toHaveBeenNthCalledWith(3, {
+      skus: ['lyra.credits.200', 'lyra.standard.monthly'],
+      type: 'all'
+    });
+    expect(adapter.getState().products).toEqual([
+      expect.objectContaining({ available: true, id: 'lyra.credits.200' }),
+      expect.objectContaining({ available: true, id: 'lyra.standard.monthly' })
+    ]);
+    expect(adapter.getState().diagnostics?.allProducts).toEqual({
+      errorCode: null,
+      requestedProductIds: ['lyra.credits.200', 'lyra.standard.monthly'],
+      returnedProductIds: ['lyra.credits.200', 'lyra.standard.monthly']
     });
   });
 
