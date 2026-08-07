@@ -251,6 +251,19 @@ describe('runPendingMigrations', () => {
     }
   });
 
+  it('旧本番migrationの記録後もページ物語メタデータ列を前方修復する', async () => {
+    const sql = await readFile(
+      join(process.cwd(), 'migrations', '040_repair_page_story_metadata_columns.sql'),
+      'utf8',
+    );
+
+    expect(sql).toContain('ADD COLUMN IF NOT EXISTS story_source_scene_ids UUID[] NOT NULL DEFAULT ARRAY[]::UUID[]');
+    expect(sql).toContain('ADD COLUMN IF NOT EXISTS story_page_purpose TEXT');
+    expect(sql).toContain('ADD COLUMN IF NOT EXISTS story_continuity_note TEXT');
+    expect(sql).toContain("jsonb_array_elements_text(COALESCE(layout_config->'story_source_scene_ids', '[]'::jsonb))");
+    expect(sql).toContain('WHERE value ~*');
+  });
+
   it('generation_jobs の状態列はDB制約で型契約を守る', async () => {
     const sql = await readFile(
       join(process.cwd(), 'migrations', '009_add_generation_job_state_constraints.sql'),
