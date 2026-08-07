@@ -48,6 +48,26 @@ vi.mock('@/state/networkStatus', () => ({
 }));
 
 describe('MobileStoreBillingPanel', () => {
+  it('狭い画面でも商品説明と購入操作を縦に配置して日本語を一文字ずつ折り返さない', async () => {
+    let renderer: ReturnType<typeof create>;
+    await act(async () => {
+      renderer = create(React.createElement(MobileStoreBillingPanel, {
+        adapter: adapter as never,
+        language: 'ja'
+      }));
+    });
+
+    const productCard = renderer!.root.findAll((node) => {
+      const style = node.props.style as { borderWidth?: number; justifyContent?: string } | undefined;
+      return style?.borderWidth === 1 && style.justifyContent === 'space-between';
+    })[0];
+
+    expect(productCard?.props.style).toMatchObject({
+      alignItems: 'stretch',
+      flexDirection: 'column'
+    });
+  });
+
   it('日本語で購入と復元を表示し、利用可能な商品だけを購入可能にする', async () => {
     let renderer: ReturnType<typeof create>;
     await act(async () => {

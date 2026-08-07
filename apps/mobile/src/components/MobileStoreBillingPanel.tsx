@@ -149,16 +149,16 @@ const styles = StyleSheet.create({
   header: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' },
   price: { ...textStyles.body, color: colors.primary, fontWeight: '700' },
   product: {
-    alignItems: 'center',
+    alignItems: 'stretch',
     borderColor: colors.border,
     borderRadius: radius.sm,
     borderWidth: 1,
-    flexDirection: 'row',
+    flexDirection: 'column',
     gap: spacing.sm,
     justifyContent: 'space-between',
     padding: spacing.sm
   },
-  productText: { flex: 1, gap: spacing.xs, minWidth: 0 },
+  productText: { alignSelf: 'stretch', flex: 1, gap: spacing.xs, minWidth: 0 },
   productTitle: { ...textStyles.body, color: colors.inkStrong, fontWeight: '700' },
   title: { ...textStyles.sectionTitle }
 });
