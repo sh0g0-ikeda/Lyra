@@ -66,6 +66,7 @@ export interface NativeStoreBillingSdk {
   fetchProducts(input: { skus: string[]; type: 'in-app' | 'subs' }): Promise<readonly NativeStoreProduct[] | null>;
   finishTransaction(input: { isConsumable: boolean; purchase: NativeStorePurchase }): Promise<void>;
   getAvailablePurchases(): Promise<readonly NativeStorePurchase[]>;
+  getStorefront(): Promise<string>;
   initConnection(): Promise<boolean>;
   purchaseErrorListener(listener: (error: { code: string }) => void): NativeStoreSubscription;
   purchaseUpdatedListener(listener: (purchase: NativeStorePurchase) => void | Promise<void>): NativeStoreSubscription;
@@ -116,8 +117,23 @@ export class NativeStoreBillingError extends Error {
   }
 }
 
+export interface NativeStoreProductLookupDiagnostics {
+  errorCode: string | null;
+  requestedProductIds: string[];
+  returnedProductIds: string[];
+}
+
+export interface NativeStoreBillingDiagnostics {
+  connected: boolean;
+  inApp: NativeStoreProductLookupDiagnostics;
+  storefront: string | null;
+  storefrontErrorCode: string | null;
+  subscriptions: NativeStoreProductLookupDiagnostics;
+}
+
 export interface NativeStoreBillingState {
   connected: boolean;
+  diagnostics: NativeStoreBillingDiagnostics | null;
   error: NativeStoreBillingError | null;
   lastVerified: NativeStoreServerState | null;
   loading: boolean;
@@ -157,6 +173,7 @@ class NativeStoreBillingAdapterImplementation implements NativeStoreBillingAdapt
   private restoring = false;
   private state: NativeStoreBillingState = {
     connected: false,
+    diagnostics: null,
     error: null,
     lastVerified: null,
     loading: false,
@@ -296,8 +313,14 @@ class NativeStoreBillingAdapterImplementation implements NativeStoreBillingAdapt
       if (!connected) {
         throw new NativeStoreBillingError('STORE_UNAVAILABLE', true);
       }
-      const products = await this.loadProducts();
-      this.updateState({ connected: true, error: null, loading: false, products });
+      const loaded = await this.loadProducts();
+      this.updateState({
+        connected: true,
+        diagnostics: loaded.diagnostics,
+        error: null,
+        loading: false,
+        products: loaded.products
+      });
     } catch (error) {
       this.purchaseSubscription?.remove();
       this.errorSubscription?.remove();
@@ -316,24 +339,46 @@ class NativeStoreBillingAdapterImplementation implements NativeStoreBillingAdapt
     }
   }
 
-  private async loadProducts(): Promise<NativeStoreCatalogProduct[]> {
+  private async loadProducts(): Promise<{
+    diagnostics: NativeStoreBillingDiagnostics;
+    products: NativeStoreCatalogProduct[];
+  }> {
     const inAppSkus = this.dependencies.products
       .filter((product) => product.kind === 'credit_pack')
       .map((product) => product.id);
     const subscriptionSkus = this.dependencies.products
       .filter((product) => product.kind === 'subscription')
       .map((product) => product.id);
-    const responses = await Promise.all([
-      inAppSkus.length === 0 ? Promise.resolve([]) : this.dependencies.sdk.fetchProducts({ skus: inAppSkus, type: 'in-app' }),
-      subscriptionSkus.length === 0 ? Promise.resolve([]) : this.dependencies.sdk.fetchProducts({ skus: subscriptionSkus, type: 'subs' })
-    ]);
+    const storefront = await readStorefrontDiagnostics(this.dependencies.sdk);
+    const inApp = await queryProductsForDiagnostics(
+      this.dependencies.sdk,
+      inAppSkus,
+      'in-app'
+    );
+    const subscriptions = await queryProductsForDiagnostics(
+      this.dependencies.sdk,
+      subscriptionSkus,
+      'subs'
+    );
+    const diagnostics: NativeStoreBillingDiagnostics = {
+      connected: true,
+      inApp: inApp.diagnostics,
+      storefront: storefront.value,
+      storefrontErrorCode: storefront.errorCode,
+      subscriptions: subscriptions.diagnostics
+    };
+    this.updateState({ diagnostics });
+    const lookupError = inApp.error ?? subscriptions.error;
+    if (lookupError !== null) {
+      throw lookupError;
+    }
     const storeProducts = new Map<string, NativeStoreProduct>();
-    for (const response of responses) {
+    for (const response of [inApp.products, subscriptions.products]) {
       for (const product of response ?? []) {
         storeProducts.set(product.id, product);
       }
     }
-    return this.dependencies.products.map((product) => {
+    const products = this.dependencies.products.map((product) => {
       const storeProduct = storeProducts.get(product.id);
       return {
         ...product,
@@ -343,6 +388,7 @@ class NativeStoreBillingAdapterImplementation implements NativeStoreBillingAdapt
         description: storeProduct?.description ?? product.description
       };
     });
+    return { diagnostics, products };
   }
 
   private async handlePurchaseUpdate(purchase: NativeStorePurchase): Promise<void> {
@@ -547,12 +593,80 @@ export function createExpoIapSdk(): NativeStoreBillingSdk {
       });
     },
     getAvailablePurchases: async () => (await ExpoIap.getAvailablePurchases()).map(normalizeExpoPurchase),
+    getStorefront: () => ExpoIap.getStorefront(),
     initConnection: () => ExpoIap.initConnection(),
     purchaseErrorListener: (listener) => ExpoIap.purchaseErrorListener((error) => listener({ code: error.code ?? 'unknown' })),
     purchaseUpdatedListener: (listener) => ExpoIap.purchaseUpdatedListener((purchase) => listener(normalizeExpoPurchase(purchase))),
     requestPurchase: (input) => ExpoIap.requestPurchase(input),
     restorePurchases: () => ExpoIap.restorePurchases()
   };
+}
+
+async function readStorefrontDiagnostics(
+  sdk: NativeStoreBillingSdk,
+): Promise<{ errorCode: string | null; value: string | null }> {
+  try {
+    const storefront = await sdk.getStorefront();
+    return {
+      errorCode: null,
+      value: storefront.trim().length === 0 ? null : storefront.trim().slice(0, 16)
+    };
+  } catch (error) {
+    return { errorCode: safeDiagnosticErrorCode(error), value: null };
+  }
+}
+
+async function queryProductsForDiagnostics(
+  sdk: NativeStoreBillingSdk,
+  requestedProductIds: string[],
+  type: 'in-app' | 'subs',
+): Promise<{
+  diagnostics: NativeStoreProductLookupDiagnostics;
+  error: unknown | null;
+  products: readonly NativeStoreProduct[];
+}> {
+  if (requestedProductIds.length === 0) {
+    return {
+      diagnostics: { errorCode: null, requestedProductIds: [], returnedProductIds: [] },
+      error: null,
+      products: []
+    };
+  }
+  try {
+    const products = (await sdk.fetchProducts({ skus: requestedProductIds, type })) ?? [];
+    return {
+      diagnostics: {
+        errorCode: null,
+        requestedProductIds: [...requestedProductIds],
+        returnedProductIds: products.map((product) => product.id)
+      },
+      error: null,
+      products
+    };
+  } catch (error) {
+    return {
+      diagnostics: {
+        errorCode: safeDiagnosticErrorCode(error),
+        requestedProductIds: [...requestedProductIds],
+        returnedProductIds: []
+      },
+      error,
+      products: []
+    };
+  }
+}
+
+function safeDiagnosticErrorCode(error: unknown): string {
+  if (
+    typeof error === 'object'
+    && error !== null
+    && 'code' in error
+    && typeof error.code === 'string'
+    && /^[A-Za-z0-9_.-]{1,64}$/u.test(error.code)
+  ) {
+    return error.code;
+  }
+  return 'unknown';
 }
 
 function normalizeExpoPurchase(purchase: ExpoIap.Purchase): NativeStorePurchase {

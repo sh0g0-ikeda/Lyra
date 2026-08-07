@@ -9,6 +9,7 @@ const adapter = {
   disconnect: vi.fn().mockResolvedValue(undefined),
   getState: vi.fn().mockReturnValue({
     connected: true,
+    diagnostics: null,
     error: null,
     lastVerified: null,
     loading: false,
@@ -48,6 +49,51 @@ vi.mock('@/state/networkStatus', () => ({
 }));
 
 describe('MobileStoreBillingPanel', () => {
+  it('商品が返らない場合に秘密情報を含まないStoreKit診断を表示する', async () => {
+    adapter.getState.mockReturnValueOnce({
+      ...adapter.getState(),
+      diagnostics: {
+        connected: true,
+        inApp: {
+          errorCode: null,
+          requestedProductIds: ['jp.lyra.credits.200'],
+          returnedProductIds: []
+        },
+        storefront: 'JPN',
+        storefrontErrorCode: null,
+        subscriptions: {
+          errorCode: null,
+          requestedProductIds: ['jp.lyra.standard.monthly'],
+          returnedProductIds: []
+        }
+      },
+      products: [
+        {
+          available: false,
+          displayPrice: null,
+          id: 'jp.lyra.credits.200',
+          kind: 'credit_pack',
+          title: 'Lyra credits 10'
+        }
+      ]
+    });
+
+    let renderer: ReturnType<typeof create>;
+    await act(async () => {
+      renderer = create(React.createElement(MobileStoreBillingPanel, {
+        adapter: adapter as never,
+        language: 'ja'
+      }));
+    });
+
+    const rendered = JSON.stringify(renderer!.toJSON());
+    expect(rendered).toContain('課金診断');
+    expect(rendered).toContain('ストアフロント: JPN');
+    expect(rendered).toContain('クレジット商品: 0/1');
+    expect(rendered).toContain('サブスクリプション: 0/1');
+    expect(rendered).not.toMatch(/token|receipt|account/i);
+  });
+
   it('狭い画面でも商品説明と購入操作を縦に配置して日本語を一文字ずつ折り返さない', async () => {
     let renderer: ReturnType<typeof create>;
     await act(async () => {

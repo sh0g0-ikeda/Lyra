@@ -12,6 +12,7 @@ vi.mock('expo-iap', () => ({
   fetchProducts: vi.fn(),
   finishTransaction: vi.fn(),
   getAvailablePurchases: vi.fn(),
+  getStorefront: vi.fn(),
   initConnection: vi.fn(),
   purchaseErrorListener: vi.fn(),
   purchaseUpdatedListener: vi.fn(),
@@ -52,6 +53,7 @@ function createSdkHarness(): SdkHarness {
     ]),
     finishTransaction,
     getAvailablePurchases: vi.fn().mockResolvedValue([]),
+    getStorefront: vi.fn().mockResolvedValue('JPN'),
     initConnection: vi.fn().mockResolvedValue(true),
     purchaseErrorListener: vi.fn((listener) => {
       onError = listener;
@@ -90,6 +92,65 @@ function createBackend(): Parameters<typeof createNativeStoreBillingAdapter>[0][
 }
 
 describe('native store billing adapter', () => {
+  it('商品取得を順番に実行してStoreKit診断結果を安全に保持する', async () => {
+    const harness = createSdkHarness();
+    let resolveInApp: ((products: readonly {
+      id: string;
+      title: string;
+      displayPrice: string;
+      type: 'in-app';
+    }[]) => void) | undefined;
+    harness.sdk.fetchProducts = vi.fn(({ type }) => {
+      if (type === 'in-app') {
+        return new Promise((resolve) => {
+          resolveInApp = resolve;
+        });
+      }
+      return Promise.resolve([
+        { id: 'lyra.standard.monthly', title: 'Standard', displayPrice: '$4.99', type: 'subs' }
+      ]);
+    });
+    const adapter = createNativeStoreBillingAdapter({
+      backend: createBackend(),
+      products,
+      sdk: harness.sdk
+    });
+
+    const connecting = adapter.connect();
+    await vi.waitFor(() => {
+      expect(harness.sdk.fetchProducts).toHaveBeenCalledTimes(1);
+    });
+    expect(harness.sdk.fetchProducts).toHaveBeenNthCalledWith(1, {
+      skus: ['lyra.credits.200'],
+      type: 'in-app'
+    });
+
+    resolveInApp?.([
+      { id: 'lyra.credits.200', title: '200 credits', displayPrice: '$2.99', type: 'in-app' }
+    ]);
+    await connecting;
+
+    expect(harness.sdk.fetchProducts).toHaveBeenNthCalledWith(2, {
+      skus: ['lyra.standard.monthly'],
+      type: 'subs'
+    });
+    expect(adapter.getState().diagnostics).toEqual({
+      connected: true,
+      inApp: {
+        errorCode: null,
+        requestedProductIds: ['lyra.credits.200'],
+        returnedProductIds: ['lyra.credits.200']
+      },
+      storefront: 'JPN',
+      storefrontErrorCode: null,
+      subscriptions: {
+        errorCode: null,
+        requestedProductIds: ['lyra.standard.monthly'],
+        returnedProductIds: ['lyra.standard.monthly']
+      }
+    });
+  });
+
   it('購入完了をサーバー検証してからだけ消費型取引をfinishする', async () => {
     const harness = createSdkHarness();
     const backend = createBackend();
