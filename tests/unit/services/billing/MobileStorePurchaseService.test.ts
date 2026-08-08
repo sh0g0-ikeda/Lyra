@@ -183,13 +183,102 @@ describe('MobileStorePurchaseService', () => {
     expect(credits.balance.purchasedCredits).toBe(10);
     expect(credits.ledger).toHaveLength(1);
   });
+
+  it('Googleテスト購入は期限内のallowlist利用者だけに反映する', async () => {
+    const allowedRepository = new FakeStorePurchaseRepository([userId]);
+    const allowedCredits = new FakeCreditRepository();
+    const allowedPurchase = googleTestPurchase(userId);
+    const allowedService = createService(
+      allowedRepository,
+      allowedCredits,
+      new FakeAppleVerifier(),
+      new FakeGoogleVerifier(allowedPurchase),
+      {
+        googleTestPurchaseAllowedUserIds: new Set([userId]),
+        googleTestPurchasesExpireAt: new Date('2026-07-26T00:00:00.000Z')
+      }
+    );
+
+    await expect(
+      allowedService.verifyGooglePurchase({ userId, purchaseToken: 'allowed-test-token' })
+    ).resolves.toMatchObject({ creditsChanged: 10, isDuplicate: false });
+
+    const deniedRepository = new FakeStorePurchaseRepository([otherUserId]);
+    const deniedCredits = new FakeCreditRepository();
+    const deniedService = createService(
+      deniedRepository,
+      deniedCredits,
+      new FakeAppleVerifier(),
+      new FakeGoogleVerifier(googleTestPurchase(otherUserId)),
+      {
+        googleTestPurchaseAllowedUserIds: new Set([userId]),
+        googleTestPurchasesExpireAt: new Date('2026-07-26T00:00:00.000Z')
+      }
+    );
+
+    await expect(
+      deniedService.verifyGooglePurchase({ userId: otherUserId, purchaseToken: 'denied-test-token' })
+    ).rejects.toThrow('Store purchase could not be verified');
+    expect(deniedCredits.ledger).toHaveLength(0);
+  });
+
+  it('Googleテスト購入はallowlist利用者でも期限切れなら反映しない', async () => {
+    const credits = new FakeCreditRepository();
+    const service = createService(
+      new FakeStorePurchaseRepository([userId]),
+      credits,
+      new FakeAppleVerifier(),
+      new FakeGoogleVerifier(googleTestPurchase(userId)),
+      {
+        googleTestPurchaseAllowedUserIds: new Set([userId]),
+        googleTestPurchasesExpireAt: observedAt,
+      },
+    );
+
+    await expect(
+      service.verifyGooglePurchase({ userId, purchaseToken: 'expired-test-token' }),
+    ).rejects.toThrow('Store purchase could not be verified');
+    expect(credits.ledger).toHaveLength(0);
+  });
+
+  it('Googleテスト購入のRTDNはallowlist利用者のアカウント紐付けだけ反映する', async () => {
+    const credits = new FakeCreditRepository();
+    const service = createService(
+      new FakeStorePurchaseRepository([otherUserId]),
+      credits,
+      new FakeAppleVerifier(),
+      new FakeGoogleVerifier(googleTestPurchase(otherUserId)),
+      {
+        googleTestPurchaseAllowedUserIds: new Set([userId]),
+        googleTestPurchasesExpireAt: new Date('2026-07-26T00:00:00.000Z'),
+      },
+    );
+    const rtdn = Buffer.from(
+      JSON.stringify({
+        packageName: 'jp.lyra.app',
+        eventTimeMillis: String(observedAt.getTime()),
+        oneTimeProductNotification: { notificationType: 1, purchaseToken: 'denied-rtdn-token' },
+      }),
+      'utf8',
+    ).toString('base64');
+
+    await service.handleGoogleRtdn({ messageId: 'denied-rtdn', data: rtdn, publishTime: observedAt });
+
+    expect(credits.ledger).toHaveLength(0);
+  });
 });
+
+interface TestPurchasePolicyOverrides {
+  googleTestPurchaseAllowedUserIds?: ReadonlySet<string>;
+  googleTestPurchasesExpireAt?: Date;
+}
 
 function createService(
   storePurchaseRepository: FakeStorePurchaseRepository,
   creditRepository: FakeCreditRepository,
   appleVerifier: FakeAppleVerifier,
   googleVerifier: FakeGoogleVerifier,
+  policy: TestPurchasePolicyOverrides = {},
 ): MobileStorePurchaseService {
   return new MobileStorePurchaseService({
     storePurchaseRepository,
@@ -204,9 +293,29 @@ function createService(
     identifierSecret,
     allowAppleSandbox: true,
     allowGoogleTestPurchases: true,
+    googleTestPurchaseAllowedUserIds: policy.googleTestPurchaseAllowedUserIds,
+    googleTestPurchasesExpireAt: policy.googleTestPurchasesExpireAt,
     googlePackageName: 'jp.lyra.app',
     clock: () => observedAt,
   });
+}
+
+function googleTestPurchase(bindingUserId: string): VerifiedStorePurchase {
+  return {
+    store: 'google',
+    environment: 'sandbox',
+    productId: 'jp.lyra.credits.200',
+    externalPurchaseId: `google-test-${bindingUserId}`,
+    transactionId: `GPA.TEST-${bindingUserId}`,
+    eventId: null,
+    state: 'active',
+    observedAt,
+    expiresAt: null,
+    autoRenewEnabled: null,
+    accountBinding: createGooglePlayObfuscatedAccountId(identifierSecret, bindingUserId),
+    isTestPurchase: true,
+    providerEventType: 'google.play.one_time',
+  };
 }
 
 function applePurchase(overrides: Partial<VerifiedStorePurchase>): VerifiedStorePurchase {

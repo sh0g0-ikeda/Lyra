@@ -49,7 +49,13 @@ function createSdkHarness(): SdkHarness {
     endConnection: vi.fn().mockResolvedValue(undefined),
     fetchProducts: vi.fn().mockResolvedValue([
       { id: 'lyra.credits.200', title: '200 credits', displayPrice: '$2.99', type: 'in-app' },
-      { id: 'lyra.standard.monthly', title: 'Standard', displayPrice: '$4.99', type: 'subs' }
+      {
+        id: 'lyra.standard.monthly',
+        title: 'Standard',
+        displayPrice: '$4.99',
+        type: 'subs',
+        subscriptionOfferToken: 'monthly-offer-token'
+      }
     ]),
     finishTransaction,
     getAvailablePurchases: vi.fn().mockResolvedValue([]),
@@ -107,7 +113,13 @@ describe('native store billing adapter', () => {
         });
       }
       return Promise.resolve([
-        { id: 'lyra.standard.monthly', title: 'Standard', displayPrice: '$4.99', type: 'subs' }
+        {
+          id: 'lyra.standard.monthly',
+          title: 'Standard',
+          displayPrice: '$4.99',
+          type: 'subs',
+          subscriptionOfferToken: 'monthly-offer-token'
+        }
       ]);
     });
     const adapter = createNativeStoreBillingAdapter({
@@ -160,7 +172,13 @@ describe('native store billing adapter', () => {
       }
       return Promise.resolve([
         { id: 'lyra.credits.200', title: '200 credits', displayPrice: '$2.99', type: 'in-app' },
-        { id: 'lyra.standard.monthly', title: 'Standard', displayPrice: '$4.99', type: 'subs' }
+        {
+          id: 'lyra.standard.monthly',
+          title: 'Standard',
+          displayPrice: '$4.99',
+          type: 'subs',
+          subscriptionOfferToken: 'monthly-offer-token'
+        }
       ]);
     });
     const adapter = createNativeStoreBillingAdapter({
@@ -292,7 +310,19 @@ describe('native store billing adapter', () => {
     await adapter.connect();
 
     await adapter.purchase('lyra.standard.monthly');
-    expect(harness.requestPurchase).toHaveBeenCalledWith(expect.objectContaining({ type: 'subs' }));
+    expect(harness.requestPurchase).toHaveBeenCalledWith({
+      request: {
+        apple: { appAccountToken: 'apple-account-token', sku: 'lyra.standard.monthly' },
+        google: {
+          obfuscatedAccountId: 'google-account-token',
+          skus: ['lyra.standard.monthly'],
+          subscriptionOffers: [
+            { offerToken: 'monthly-offer-token', sku: 'lyra.standard.monthly' }
+          ]
+        }
+      },
+      type: 'subs'
+    });
     await harness.emitPurchase({
       environmentIOS: 'production',
       id: 'apple-subscription-1',
@@ -307,6 +337,37 @@ describe('native store billing adapter', () => {
       signedTransaction: 'signed-subscription-transaction'
     });
     expect(harness.finishTransaction).toHaveBeenCalledWith(expect.objectContaining({ isConsumable: false }));
+  });
+
+  it('Androidサブスクに有効なoffer tokenがない場合は購入不可として扱う', async () => {
+    const harness = createSdkHarness();
+    harness.sdk.fetchProducts = vi.fn(({ type }) => {
+      if (type === 'in-app') {
+        return Promise.resolve([
+          { id: 'lyra.credits.200', title: '200 credits', displayPrice: '$2.99', type: 'in-app' }
+        ]);
+      }
+      return Promise.resolve([
+        {
+          id: 'lyra.standard.monthly',
+          title: 'Standard',
+          displayPrice: '$4.99',
+          type: 'subs',
+          subscriptionOfferToken: null
+        }
+      ]);
+    });
+    const adapter = createNativeStoreBillingAdapter({ backend: createBackend(), products, sdk: harness.sdk });
+
+    await adapter.connect();
+
+    expect(adapter.getState().products).toContainEqual(
+      expect.objectContaining({ id: 'lyra.standard.monthly', available: false })
+    );
+    await expect(adapter.purchase('lyra.standard.monthly')).rejects.toMatchObject({
+      code: 'PRODUCT_UNAVAILABLE'
+    });
+    expect(harness.requestPurchase).not.toHaveBeenCalled();
   });
 
   it('復元ではnative復元後にproofを一括検証し、確認済みの取引だけfinishする', async () => {

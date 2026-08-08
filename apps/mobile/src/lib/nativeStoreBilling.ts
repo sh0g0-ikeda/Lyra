@@ -29,6 +29,7 @@ export interface NativeStoreBillingProductDefinition {
 export interface NativeStoreCatalogProduct extends NativeStoreBillingProductDefinition {
   available: boolean;
   displayPrice: string | null;
+  subscriptionOfferToken?: string | null;
 }
 
 export interface NativeStorePurchase {
@@ -44,7 +45,11 @@ export interface NativeStorePurchase {
 export interface NativeStorePurchaseRequest {
   request: {
     apple: { appAccountToken: string; sku: string };
-    google: { obfuscatedAccountId: string; skus: string[] };
+    google: {
+      obfuscatedAccountId: string;
+      skus: string[];
+      subscriptionOffers?: { offerToken: string; sku: string }[];
+    };
   };
   type: 'in-app' | 'subs';
 }
@@ -54,6 +59,7 @@ export interface NativeStoreProduct {
   title: string;
   description?: string | null;
   displayPrice: string;
+  subscriptionOfferToken?: string | null;
   type: 'in-app' | 'subs';
 }
 
@@ -236,18 +242,19 @@ class NativeStoreBillingAdapterImplementation implements NativeStoreBillingAdapt
     if (this.state.submittingProductId !== null || this.restoring) {
       throw this.fail('DUPLICATE_SUBMIT', false);
     }
-    const product = this.dependencies.products.find((candidate) => candidate.id === productId);
-    if (product === undefined) {
+    const productDefinition = this.dependencies.products.find((candidate) => candidate.id === productId);
+    if (productDefinition === undefined) {
       throw this.fail('PRODUCT_NOT_FOUND', false);
     }
-    if (!this.state.products.some((candidate) => candidate.id === productId && candidate.available)) {
+    const product = this.state.products.find((candidate) => candidate.id === productId);
+    if (product === undefined || !product.available) {
       throw this.fail('PRODUCT_UNAVAILABLE', false);
     }
 
     this.updateState({ error: null, submittingProductId: productId });
     try {
       const binding = await this.dependencies.backend.getAccountBinding();
-      if (product.kind === 'subscription' && !binding.subscriptionPurchaseAllowed) {
+      if (productDefinition.kind === 'subscription' && !binding.subscriptionPurchaseAllowed) {
         throw this.fail('ALREADY_OWNED', false);
       }
       await this.dependencies.sdk.requestPurchase(buildPurchaseRequest(product, binding));
@@ -392,10 +399,13 @@ class NativeStoreBillingAdapterImplementation implements NativeStoreBillingAdapt
     }
     const products = this.dependencies.products.map((product) => {
       const storeProduct = storeProducts.get(product.id);
+      const hasRequiredSubscriptionOffer = product.kind !== 'subscription'
+        || storeProduct?.subscriptionOfferToken !== null;
       return {
         ...product,
-        available: storeProduct !== undefined,
+        available: storeProduct !== undefined && hasRequiredSubscriptionOffer,
         displayPrice: storeProduct?.displayPrice ?? null,
+        subscriptionOfferToken: storeProduct?.subscriptionOfferToken,
         title: storeProduct?.title || product.title,
         description: storeProduct?.description ?? product.description
       };
@@ -492,13 +502,22 @@ class NativeStoreBillingAdapterImplementation implements NativeStoreBillingAdapt
 }
 
 function buildPurchaseRequest(
-  product: NativeStoreBillingProductDefinition,
+  product: NativeStoreCatalogProduct,
   binding: NativeStoreAccountBinding,
 ): NativeStorePurchaseRequest {
+  const subscriptionOffers = product.kind === 'subscription'
+    && typeof product.subscriptionOfferToken === 'string'
+    && product.subscriptionOfferToken.length > 0
+    ? [{ offerToken: product.subscriptionOfferToken, sku: product.id }]
+    : undefined;
   return {
     request: {
       apple: { appAccountToken: binding.appleAppAccountToken, sku: product.id },
-      google: { obfuscatedAccountId: binding.googleObfuscatedAccountId, skus: [product.id] }
+      google: {
+        obfuscatedAccountId: binding.googleObfuscatedAccountId,
+        skus: [product.id],
+        ...(subscriptionOffers === undefined ? {} : { subscriptionOffers })
+      }
     },
     type: product.kind === 'subscription' ? 'subs' : 'in-app'
   };
@@ -591,6 +610,7 @@ export function createExpoIapSdk(): NativeStoreBillingSdk {
         description: product.description,
         displayPrice: product.displayPrice,
         id: product.id,
+        subscriptionOfferToken: readAndroidSubscriptionOfferToken(product),
         title: product.title,
         type: product.type
       }));
@@ -612,6 +632,25 @@ export function createExpoIapSdk(): NativeStoreBillingSdk {
     requestPurchase: (input) => ExpoIap.requestPurchase(input),
     restorePurchases: () => ExpoIap.restorePurchases()
   };
+}
+
+function readAndroidSubscriptionOfferToken(product: ExpoIap.ProductOrSubscription): string | null | undefined {
+  if (product.type !== 'subs' || product.platform !== 'android') {
+    return undefined;
+  }
+  for (const offer of product.subscriptionOffers ?? []) {
+    const token = offer.offerTokenAndroid?.trim();
+    if (token !== undefined && token.length > 0) {
+      return token;
+    }
+  }
+  for (const offer of product.subscriptionOfferDetailsAndroid ?? []) {
+    const token = offer.offerToken.trim();
+    if (token.length > 0) {
+      return token;
+    }
+  }
+  return null;
 }
 
 async function readStorefrontDiagnostics(

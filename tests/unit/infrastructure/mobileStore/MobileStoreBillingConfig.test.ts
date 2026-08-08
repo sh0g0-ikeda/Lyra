@@ -58,7 +58,7 @@ describe('mobile store billing configuration', () => {
     ).not.toThrow();
   });
 
-  it('rejects Google tester purchases in production', () => {
+  it('本番でGoogleテスト購入を許可する場合は利用者allowlistと期限を必須にする', () => {
     expect(() =>
       assertMobileStoreBillingRuntimeConfig(
         {
@@ -67,7 +67,53 @@ describe('mobile store billing configuration', () => {
         },
         true,
       ),
-    ).toThrow(/Google Play test purchases must be disabled/);
+    ).toThrow(/allowlist.*expiry/);
+  });
+
+  it('本番のGoogleテスト購入を限定利用者かつ期限内だけ許可する', () => {
+    expect(() =>
+      assertMobileStoreBillingRuntimeConfig(
+        {
+          ...completeConfig,
+          GOOGLE_PLAY_ALLOW_TEST_PURCHASES: true,
+          GOOGLE_PLAY_TEST_PURCHASE_USER_IDS: '11111111-1111-4111-8111-111111111111',
+          GOOGLE_PLAY_TEST_PURCHASES_EXPIRE_AT: '2026-08-15T00:00:00.000Z',
+        },
+        true,
+        new Date('2026-08-08T00:00:00.000Z'),
+      ),
+    ).not.toThrow();
+
+    const config = createMobileStoreBillingConfig(
+      {
+        ...completeConfig,
+        GOOGLE_PLAY_ALLOW_TEST_PURCHASES: true,
+        GOOGLE_PLAY_TEST_PURCHASE_USER_IDS: '11111111-1111-4111-8111-111111111111',
+        GOOGLE_PLAY_TEST_PURCHASES_EXPIRE_AT: '2026-08-15T00:00:00.000Z',
+      },
+      true,
+      new Date('2026-08-08T00:00:00.000Z'),
+    );
+
+    expect(config?.google.testPurchaseAllowedUserIds).toEqual([
+      '11111111-1111-4111-8111-111111111111'
+    ]);
+    expect(config?.google.testPurchasesExpireAt?.toISOString()).toBe('2026-08-15T00:00:00.000Z');
+  });
+
+  it('本番のGoogleテスト購入期限が14日を超える場合は拒否する', () => {
+    expect(() =>
+      assertMobileStoreBillingRuntimeConfig(
+        {
+          ...completeConfig,
+          GOOGLE_PLAY_ALLOW_TEST_PURCHASES: true,
+          GOOGLE_PLAY_TEST_PURCHASE_USER_IDS: '11111111-1111-4111-8111-111111111111',
+          GOOGLE_PLAY_TEST_PURCHASES_EXPIRE_AT: '2026-08-23T00:00:00.001Z',
+        },
+        true,
+        new Date('2026-08-08T00:00:00.000Z'),
+      ),
+    ).toThrow(/within 14 days/);
   });
 
   it('does not require provider credentials while mobile store billing is disabled', () => {

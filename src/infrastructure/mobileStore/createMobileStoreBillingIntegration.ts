@@ -41,6 +41,10 @@ export function createMobileStoreBillingIntegration(
       identifierSecret: config.identifierSecret,
       allowAppleSandbox: config.apple.allowSandbox,
       allowGoogleTestPurchases: config.google.allowTestPurchases,
+      googleTestPurchaseAllowedUserIds: config.google.testPurchaseAllowedUserIds === null
+        ? null
+        : new Set(config.google.testPurchaseAllowedUserIds),
+      googleTestPurchasesExpireAt: config.google.testPurchasesExpireAt,
       googlePackageName: config.google.packageName,
     }),
     googlePubSubPushVerifier: new GooglePubSubPushVerifier({

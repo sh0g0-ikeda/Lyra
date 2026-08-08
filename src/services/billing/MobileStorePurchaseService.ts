@@ -83,6 +83,8 @@ export interface MobileStorePurchaseServiceDependencies {
   identifierSecret: string;
   allowAppleSandbox: boolean;
   allowGoogleTestPurchases: boolean;
+  googleTestPurchaseAllowedUserIds?: ReadonlySet<string> | null;
+  googleTestPurchasesExpireAt?: Date | null;
   googlePackageName: string;
   clock?: Clock;
 }
@@ -143,7 +145,7 @@ export class MobileStorePurchaseService implements MobileStorePurchaseServicePor
     purchaseToken: string;
   }): Promise<MobileStorePurchaseResult> {
     const verified = await this.dependencies.googleVerifier.verifyPurchase({ purchaseToken: input.purchaseToken });
-    if (verified.store !== 'google' || (verified.isTestPurchase && !this.dependencies.allowGoogleTestPurchases)) {
+    if (verified.store !== 'google' || !this.isGoogleTestPurchaseAllowed(verified, input.userId)) {
       throw new ValidationError('Store purchase could not be verified');
     }
 
@@ -175,7 +177,7 @@ export class MobileStorePurchaseService implements MobileStorePurchaseServicePor
 
     for (const purchaseToken of input.googlePurchaseTokens) {
       const verified = await this.dependencies.googleVerifier.verifyPurchase({ purchaseToken });
-      if (verified.isTestPurchase && !this.dependencies.allowGoogleTestPurchases) {
+      if (!this.isGoogleTestPurchaseAllowed(verified, input.userId)) {
         continue;
       }
       results.push(await this.applyVerifiedPurchase(verified, input.userId));
@@ -227,7 +229,7 @@ export class MobileStorePurchaseService implements MobileStorePurchaseServicePor
     const verified = await this.dependencies.googleVerifier.verifyPurchase({
       purchaseToken: notification.purchaseToken,
     });
-    if (verified.isTestPurchase && !this.dependencies.allowGoogleTestPurchases) {
+    if (!this.isGoogleTestPurchaseAllowed(verified, null)) {
       return;
     }
 
@@ -241,6 +243,38 @@ export class MobileStorePurchaseService implements MobileStorePurchaseServicePor
       },
       null,
     );
+  }
+
+  private isGoogleTestPurchaseAllowed(
+    verified: VerifiedStorePurchase,
+    requestedUserId: string | null,
+  ): boolean {
+    if (!verified.isTestPurchase) {
+      return true;
+    }
+    if (!this.dependencies.allowGoogleTestPurchases) {
+      return false;
+    }
+    const expiresAt = this.dependencies.googleTestPurchasesExpireAt ?? null;
+    if (expiresAt !== null && this.clock().getTime() >= expiresAt.getTime()) {
+      return false;
+    }
+    const allowedUserIds = this.dependencies.googleTestPurchaseAllowedUserIds ?? null;
+    if (allowedUserIds === null) {
+      return true;
+    }
+    if (requestedUserId !== null) {
+      return allowedUserIds.has(requestedUserId);
+    }
+    if (verified.accountBinding === null) {
+      return false;
+    }
+    for (const userId of allowedUserIds) {
+      if (createGooglePlayObfuscatedAccountId(this.dependencies.identifierSecret, userId) === verified.accountBinding) {
+        return true;
+      }
+    }
+    return false;
   }
 
   private async applyVerifiedPurchase(

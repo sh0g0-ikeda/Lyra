@@ -19,6 +19,8 @@ export interface MobileStoreBillingEnvConfig {
   GOOGLE_PLAY_PUBSUB_AUDIENCE?: string;
   GOOGLE_PLAY_PUBSUB_SERVICE_ACCOUNT_EMAIL?: string;
   GOOGLE_PLAY_ALLOW_TEST_PURCHASES?: boolean;
+  GOOGLE_PLAY_TEST_PURCHASE_USER_IDS?: string;
+  GOOGLE_PLAY_TEST_PURCHASES_EXPIRE_AT?: string;
   GOOGLE_PLAY_PRODUCT_STANDARD_MONTHLY?: string;
   GOOGLE_PLAY_PRODUCT_PREMIUM_MONTHLY?: string;
   GOOGLE_PLAY_PRODUCT_CREDITS_200?: string;
@@ -41,6 +43,8 @@ export interface MobileStoreBillingConfig {
     pubSubAudience: string;
     pubSubServiceAccountEmail: string;
     allowTestPurchases: boolean;
+    testPurchaseAllowedUserIds: string[] | null;
+    testPurchasesExpireAt: Date | null;
   };
   productCatalog: StoreProductCatalog;
 }
@@ -48,11 +52,12 @@ export interface MobileStoreBillingConfig {
 export function createMobileStoreBillingConfig(
   source: MobileStoreBillingEnvConfig,
   isProduction: boolean,
+  now: Date = new Date(),
 ): MobileStoreBillingConfig | null {
   if (source.MOBILE_STORE_BILLING_ENABLED !== true) {
     return null;
   }
-  assertMobileStoreBillingRuntimeConfig(source, isProduction);
+  assertMobileStoreBillingRuntimeConfig(source, isProduction, now);
 
   const rootCertificates = parseRootCertificates(requiredValue(source.APPLE_STORE_ROOT_CERTIFICATES_BASE64_JSON));
   return {
@@ -70,6 +75,8 @@ export function createMobileStoreBillingConfig(
       pubSubAudience: requiredValue(source.GOOGLE_PLAY_PUBSUB_AUDIENCE),
       pubSubServiceAccountEmail: requiredValue(source.GOOGLE_PLAY_PUBSUB_SERVICE_ACCOUNT_EMAIL),
       allowTestPurchases: source.GOOGLE_PLAY_ALLOW_TEST_PURCHASES === true,
+      testPurchaseAllowedUserIds: resolveTestPurchaseAllowedUserIds(source, isProduction),
+      testPurchasesExpireAt: parseOptionalIsoDate(source.GOOGLE_PLAY_TEST_PURCHASES_EXPIRE_AT),
     },
     productCatalog: createStoreProductCatalog([
       {
@@ -139,6 +146,7 @@ export function createMobileStoreBillingConfig(
 export function assertMobileStoreBillingRuntimeConfig(
   source: MobileStoreBillingEnvConfig,
   isProduction: boolean,
+  now: Date = new Date(),
 ): void {
   if (source.MOBILE_STORE_BILLING_ENABLED !== true) {
     return;
@@ -181,13 +189,65 @@ export function assertMobileStoreBillingRuntimeConfig(
   if (duplicateProducts.length > 0) {
     violations.push(`Mobile store product mapping contains duplicates: ${duplicateProducts.join(', ')}`);
   }
+  let testPurchaseAllowedUserIds: string[] = [];
+  try {
+    testPurchaseAllowedUserIds = parseUuidAllowlist(source.GOOGLE_PLAY_TEST_PURCHASE_USER_IDS);
+  } catch {
+    violations.push('GOOGLE_PLAY_TEST_PURCHASE_USER_IDS must be a comma-separated UUID allowlist');
+  }
+  const testPurchasesExpireAt = parseOptionalIsoDate(source.GOOGLE_PLAY_TEST_PURCHASES_EXPIRE_AT);
+  if (
+    source.GOOGLE_PLAY_TEST_PURCHASES_EXPIRE_AT !== undefined
+    && testPurchasesExpireAt === null
+  ) {
+    violations.push('GOOGLE_PLAY_TEST_PURCHASES_EXPIRE_AT must be an ISO date-time');
+  }
   if (isProduction && source.GOOGLE_PLAY_ALLOW_TEST_PURCHASES === true) {
-    violations.push('Google Play test purchases must be disabled in production');
+    if (testPurchaseAllowedUserIds.length === 0 || testPurchasesExpireAt === null) {
+      violations.push('Google Play test purchases require a non-empty allowlist and expiry in production');
+    } else {
+      const windowMs = testPurchasesExpireAt.getTime() - now.getTime();
+      if (windowMs <= 0) {
+        violations.push('Google Play test purchase expiry must be in the future');
+      } else if (windowMs > MAX_GOOGLE_TEST_PURCHASE_WINDOW_MS) {
+        violations.push('Google Play test purchase expiry must be within 14 days');
+      }
+    }
   }
 
   if (violations.length > 0) {
     throw new ConfigurationError(violations.join('; '));
   }
+}
+
+const MAX_GOOGLE_TEST_PURCHASE_WINDOW_MS = 14 * 24 * 60 * 60 * 1000;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
+
+function resolveTestPurchaseAllowedUserIds(
+  source: MobileStoreBillingEnvConfig,
+  isProduction: boolean,
+): string[] | null {
+  const userIds = parseUuidAllowlist(source.GOOGLE_PLAY_TEST_PURCHASE_USER_IDS);
+  return !isProduction && userIds.length === 0 ? null : userIds;
+}
+
+function parseUuidAllowlist(value: string | undefined): string[] {
+  if (value === undefined || value.trim().length === 0) {
+    return [];
+  }
+  const userIds = [...new Set(value.split(',').map((entry) => entry.trim()).filter(Boolean))];
+  if (userIds.length > 20 || userIds.some((userId) => !UUID_PATTERN.test(userId))) {
+    throw new Error('invalid UUID allowlist');
+  }
+  return userIds;
+}
+
+function parseOptionalIsoDate(value: string | undefined): Date | null {
+  if (value === undefined || value.trim().length === 0) {
+    return null;
+  }
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
 const requiredMobileStoreConfigKeys = [

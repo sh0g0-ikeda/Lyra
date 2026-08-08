@@ -140,6 +140,8 @@ const envSchema = z.object({
     .string()
     .optional()
     .transform((value) => (value === undefined ? process.env.NODE_ENV !== 'production' : value === 'true')),
+  GOOGLE_PLAY_TEST_PURCHASE_USER_IDS: z.string().max(4096).optional(),
+  GOOGLE_PLAY_TEST_PURCHASES_EXPIRE_AT: z.string().max(64).optional(),
   GOOGLE_PLAY_PRODUCT_STANDARD_MONTHLY: z.string().min(1).optional(),
   GOOGLE_PLAY_PRODUCT_PREMIUM_MONTHLY: z.string().min(1).optional(),
   GOOGLE_PLAY_PRODUCT_CREDITS_200: z.string().min(1).optional(),
