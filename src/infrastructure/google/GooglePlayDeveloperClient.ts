@@ -47,7 +47,7 @@ export class GooglePlayDeveloperClient implements GooglePlayPurchaseVerifierPort
       const subscription = await this.api.getSubscriptionPurchase(input.purchaseToken);
       return parseSubscriptionPurchase(subscription, input.purchaseToken);
     } catch (error) {
-      if (!isNotFoundError(error)) {
+      if (!isProductTypeMismatchError(error)) {
         throw new ValidationError('Store purchase could not be verified');
       }
     }
@@ -162,10 +162,13 @@ function googleSubscriptionState(value: string): StorePurchaseState {
 
 function googleOneTimeState(value: string): StorePurchaseState {
   switch (value) {
+    case 'PURCHASED':
     case 'PURCHASE_STATE_PURCHASED':
       return 'active';
+    case 'PENDING':
     case 'PURCHASE_STATE_PENDING':
       return 'pending';
+    case 'CANCELLED':
     case 'PURCHASE_STATE_CANCELLED':
       return 'cancelled';
     default:
@@ -214,14 +217,14 @@ function isServiceAccountCredentials(value: unknown): value is GoogleAuthCredent
   );
 }
 
-function isNotFoundError(error: unknown): boolean {
+function isProductTypeMismatchError(error: unknown): boolean {
   if (typeof error !== 'object' || error === null) {
     return false;
   }
   const response = (error as { response?: unknown }).response;
-  return (
-    typeof response === 'object' &&
-    response !== null &&
-    (response as { status?: unknown }).status === 404
-  );
+  if (typeof response !== 'object' || response === null) {
+    return false;
+  }
+  const status = (response as { status?: unknown }).status;
+  return status === 400 || status === 404;
 }

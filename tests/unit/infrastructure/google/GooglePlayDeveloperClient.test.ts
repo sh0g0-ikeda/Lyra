@@ -21,7 +21,52 @@ describe('GooglePlayDeveloperClient', () => {
     });
   });
 
-  it('falls back to the one-time product API only when subscription lookup is not found', async () => {
+  it.each([400, 404])(
+    'subscription lookup が status %i で商品種別不一致の場合に one-time product API へ進む',
+    async (subscriptionStatus) => {
+      const api = new FakeGooglePlayApi({ subscriptionStatus });
+      const client = new GooglePlayDeveloperClient(api);
+
+      const purchase = await client.verifyPurchase({ purchaseToken: 'one-time-token' });
+
+      expect(api.oneTimeTokens).toEqual(['one-time-token']);
+      expect(purchase).toMatchObject({
+        productId: 'jp.lyra.credits.200',
+        transactionId: 'GPA.3333-4444',
+        accountBinding: 'server-obfuscated-account',
+        state: 'active',
+        isTestPurchase: true,
+      });
+    },
+  );
+
+  it('subscription lookup が権限エラーの場合に one-time product API へ進まない', async () => {
+    const api = new FakeGooglePlayApi({ subscriptionStatus: 403 });
+    const client = new GooglePlayDeveloperClient(api);
+
+    await expect(client.verifyPurchase({ purchaseToken: 'forbidden-token' }))
+      .rejects.toThrow('Store purchase could not be verified');
+
+    expect(api.oneTimeTokens).toEqual([]);
+  });
+
+  it.each([
+    ['PURCHASED', 'active'],
+    ['PENDING', 'pending'],
+    ['CANCELLED', 'cancelled'],
+  ] as const)('one-time product の状態 %s を内部状態 %s に変換する', async (purchaseState, expectedState) => {
+    const api = new FakeGooglePlayApi({
+      oneTimePurchaseState: purchaseState,
+      subscriptionStatus: 404,
+    });
+    const client = new GooglePlayDeveloperClient(api);
+
+    const purchase = await client.verifyPurchase({ purchaseToken: 'one-time-token' });
+
+    expect(purchase.state).toBe(expectedState);
+  });
+
+  it('旧形式の one-time product 状態も既存購入の互換性のため受理する', async () => {
     const api = new FakeGooglePlayApi({ subscriptionNotFound: true });
     const client = new GooglePlayDeveloperClient(api);
 
@@ -42,12 +87,18 @@ class FakeGooglePlayApi implements GooglePlayDeveloperApiPort {
   public readonly subscriptionTokens: string[] = [];
   public readonly oneTimeTokens: string[] = [];
 
-  public constructor(private readonly options: { subscriptionNotFound?: boolean } = {}) {}
+  public constructor(private readonly options: {
+    oneTimePurchaseState?: string;
+    subscriptionNotFound?: boolean;
+    subscriptionStatus?: number;
+  } = {}) {}
 
   public async getSubscriptionPurchase(purchaseToken: string): Promise<unknown> {
     this.subscriptionTokens.push(purchaseToken);
-    if (this.options.subscriptionNotFound === true) {
-      throw { response: { status: 404 } };
+    const subscriptionStatus = this.options.subscriptionStatus
+      ?? (this.options.subscriptionNotFound === true ? 404 : null);
+    if (subscriptionStatus !== null) {
+      throw { response: { status: subscriptionStatus } };
     }
 
     return {
@@ -69,7 +120,7 @@ class FakeGooglePlayApi implements GooglePlayDeveloperApiPort {
   public async getOneTimeProductPurchase(purchaseToken: string): Promise<unknown> {
     this.oneTimeTokens.push(purchaseToken);
     return {
-      purchaseStateContext: { purchaseState: 'PURCHASE_STATE_PURCHASED' },
+      purchaseStateContext: { purchaseState: this.options.oneTimePurchaseState ?? 'PURCHASE_STATE_PURCHASED' },
       orderId: 'GPA.3333-4444',
       productLineItem: [{ productId: 'jp.lyra.credits.200' }],
       obfuscatedExternalAccountId: 'server-obfuscated-account',

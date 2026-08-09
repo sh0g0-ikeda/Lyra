@@ -15,16 +15,52 @@ const appleNotificationSchema = z
 
 const googlePushSchema = z
   .object({
+    deliveryAttempt: z.number().int().min(1).max(10_000).optional(),
     message: z
       .object({
-        messageId: z.string().trim().min(1).max(512),
+        attributes: z.record(z.string().max(256), z.string().max(2_048)).optional(),
+        messageId: z.string().trim().min(1).max(512).optional(),
+        message_id: z.string().trim().min(1).max(512).optional(),
         data: z.string().trim().min(1).max(65_536),
+        orderingKey: z.string().max(1_024).optional(),
         publishTime: z.string().datetime({ offset: true }).optional(),
+        publish_time: z.string().datetime({ offset: true }).optional(),
       })
       .strict(),
     subscription: z.string().max(2_048).optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((value, context) => {
+    if (value.message.messageId === undefined && value.message.message_id === undefined) {
+      context.addIssue({
+        code: 'custom',
+        message: 'Pub/Sub message ID is required',
+        path: ['message'],
+      });
+    }
+    if (
+      value.message.messageId !== undefined
+      && value.message.message_id !== undefined
+      && value.message.message_id !== value.message.messageId
+    ) {
+      context.addIssue({
+        code: 'custom',
+        message: 'Pub/Sub message ID aliases must match',
+        path: ['message', 'message_id'],
+      });
+    }
+    if (
+      value.message.publishTime !== undefined
+      && value.message.publish_time !== undefined
+      && value.message.publish_time !== value.message.publishTime
+    ) {
+      context.addIssue({
+        code: 'custom',
+        message: 'Pub/Sub publish time aliases must match',
+        path: ['message', 'publish_time'],
+      });
+    }
+  });
 
 export interface MobilePurchaseWebhookDependencies {
   rateLimitMiddleware: MiddlewareHandler<AppEnv>;
@@ -57,10 +93,15 @@ export function createMobilePurchaseWebhookRoutes(
         description: 'Google Play notification',
       }),
     ));
+    const messageId = body.message.messageId ?? body.message.message_id;
+    if (messageId === undefined) {
+      throw new ValidationError('Store notification could not be verified');
+    }
+    const publishTime = body.message.publishTime ?? body.message.publish_time;
     await dependencies.mobileStorePurchaseService.handleGoogleRtdn({
-      messageId: body.message.messageId,
+      messageId,
       data: body.message.data,
-      publishTime: body.message.publishTime === undefined ? null : new Date(body.message.publishTime),
+      publishTime: publishTime === undefined ? null : new Date(publishTime),
     });
     return c.json({ received: true });
   });

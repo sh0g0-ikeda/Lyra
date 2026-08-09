@@ -64,6 +64,102 @@ describe('mobile purchase webhook routes', () => {
       },
     ]);
   });
+
+  it('Google Pub/Sub が併記する alias と deliveryAttempt を受理する', async () => {
+    const service = new FakeMobileStorePurchaseService();
+    const app = createMobilePurchaseWebhookRoutes({
+      rateLimitMiddleware: passThrough(),
+      mobileStorePurchaseService: service,
+      googlePubSubPushVerifier: new FakeGooglePubSubPushVerifier(),
+    });
+    app.onError(errorHandler);
+
+    const response = await app.request('/google', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: 'Bearer trusted-oidc-token',
+      },
+      body: JSON.stringify({
+        deliveryAttempt: 2,
+        message: {
+          data: 'eyJwYWNrYWdlTmFtZSI6ImNvbS5seXJhLm1vYmlsZSJ9',
+          messageId: 'pubsub-message-2',
+          message_id: 'pubsub-message-2',
+          publishTime: '2026-08-09T04:32:54.000Z',
+          publish_time: '2026-08-09T04:32:54.000Z',
+        },
+        subscription: 'projects/example/subscriptions/google-play-rtdn',
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(service.googleNotifications).toEqual([{
+      messageId: 'pubsub-message-2',
+      data: 'eyJwYWNrYWdlTmFtZSI6ImNvbS5seXJhLm1vYmlsZSJ9',
+      publishTime: new Date('2026-08-09T04:32:54.000Z'),
+    }]);
+  });
+
+  it('Google Pub/Sub alias の値が一致しない場合に拒否する', async () => {
+    const service = new FakeMobileStorePurchaseService();
+    const app = createMobilePurchaseWebhookRoutes({
+      rateLimitMiddleware: passThrough(),
+      mobileStorePurchaseService: service,
+      googlePubSubPushVerifier: new FakeGooglePubSubPushVerifier(),
+    });
+    app.onError(errorHandler);
+
+    const response = await app.request('/google', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: 'Bearer trusted-oidc-token',
+      },
+      body: JSON.stringify({
+        message: {
+          data: 'eyJwYWNrYWdlTmFtZSI6ImNvbS5seXJhLm1vYmlsZSJ9',
+          messageId: 'canonical-message',
+          message_id: 'different-message',
+        },
+      }),
+    });
+
+    expect(response.status).toBe(422);
+    expect(service.googleNotifications).toEqual([]);
+  });
+
+  it('Google Pub/Sub の snake_case alias だけでも正規化して受理する', async () => {
+    const service = new FakeMobileStorePurchaseService();
+    const app = createMobilePurchaseWebhookRoutes({
+      rateLimitMiddleware: passThrough(),
+      mobileStorePurchaseService: service,
+      googlePubSubPushVerifier: new FakeGooglePubSubPushVerifier(),
+    });
+    app.onError(errorHandler);
+
+    const response = await app.request('/google', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: 'Bearer trusted-oidc-token',
+      },
+      body: JSON.stringify({
+        message: {
+          data: 'eyJwYWNrYWdlTmFtZSI6ImNvbS5seXJhLm1vYmlsZSJ9',
+          message_id: 'snake-case-message',
+          publish_time: '2026-08-09T04:32:54.000Z',
+        },
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(service.googleNotifications).toEqual([{
+      messageId: 'snake-case-message',
+      data: 'eyJwYWNrYWdlTmFtZSI6ImNvbS5seXJhLm1vYmlsZSJ9',
+      publishTime: new Date('2026-08-09T04:32:54.000Z'),
+    }]);
+  });
 });
 
 class FakeMobileStorePurchaseService implements MobileStorePurchaseServicePort {
