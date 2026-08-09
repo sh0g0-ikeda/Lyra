@@ -171,9 +171,15 @@ describe('MobileStorePurchaseService', () => {
     await service.verifyGooglePurchase({ userId, purchaseToken: 'google-purchase-token' });
     const rtdn = Buffer.from(
       JSON.stringify({
+        version: '1.0',
         packageName: 'jp.lyra.app',
         eventTimeMillis: String(observedAt.getTime()),
-        oneTimeProductNotification: { notificationType: 1, purchaseToken: 'google-purchase-token' },
+        oneTimeProductNotification: {
+          version: '1.0',
+          notificationType: 1,
+          purchaseToken: 'google-purchase-token',
+          sku: 'jp.lyra.credits.200',
+        },
       }),
       'utf8',
     ).toString('base64');

@@ -763,27 +763,41 @@ function unavailableWebhookResult(
 
 const googleRtdnSchema = z
   .object({
+    version: z.string().trim().min(1).max(32).optional(),
     packageName: z.string().min(1),
     eventTimeMillis: z.string().optional(),
     subscriptionNotification: z
       .object({
+        version: z.string().trim().min(1).max(32).optional(),
         notificationType: z.number().int(),
         purchaseToken: z.string().min(1),
       })
+      .strict()
       .optional(),
     oneTimeProductNotification: z
       .object({
+        version: z.string().trim().min(1).max(32).optional(),
         notificationType: z.number().int(),
         purchaseToken: z.string().min(1),
+        sku: z.string().trim().min(1).max(512).optional(),
       })
+      .strict()
       .optional(),
     voidedPurchaseNotification: z
       .object({
         purchaseToken: z.string().min(1),
         orderId: z.string().min(1).optional(),
+        productType: z.number().int().optional(),
+        refundType: z.number().int().optional(),
       })
+      .strict()
       .optional(),
-    testNotification: z.object({}).optional(),
+    testNotification: z
+      .object({
+        version: z.string().trim().min(1).max(32).optional(),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 

@@ -21,6 +21,7 @@ Stripe、Apple 課金、商品価格、クレジット原価、DB schema、Web �
 3. `purchases.productsv2` の現行状態値は `PURCHASED` / `PENDING` / `CANCELLED` だが、実装は別名だけを判定していた。
 4. 単品購入トークンを subscriptions API で照会した際、404以外の「この種類ではない」応答では products API に進めない。
 5. Pub/Sub は camelCase と snake_case の message ID / publish time を併記するが、webhook の strict schema が正式な wrapper を拒否していた。
+6. base64 decode 後の正式な Google Play RTDN は `version` と単品購入の `sku` を含むが、内部 schema がこれらを拒否していた。
 
 ## 影響レイヤーとインターフェース
 
@@ -48,6 +49,7 @@ Stripe、Apple 課金、商品価格、クレジット原価、DB schema、Web �
 3. `PURCHASED` / `PENDING` / `CANCELLED` を正しい内部状態へ変換する。
 4. Pub/Sub の camelCase / snake_case 併記 wrapper と `deliveryAttempt` を受理する。
 5. alias が不一致の wrapper は拒否する。
+6. `version` / `sku` を含む正式な one-time product RTDN を受理し、既存の idempotency を維持する。
 
 対象テスト後、backend 全テスト、build、mobile 課金テスト、契約監査、production invariant と本番 readiness を確認する。
 
