@@ -19,6 +19,7 @@ import { AuthError, refreshAuthTokens, signOutFromCognito } from '@/lib/auth';
 import { clearAuthenticatedImageCache } from '@/lib/authenticatedImageCache';
 import { config } from '@/lib/config';
 import { defaultSelection } from '@/lib/queryKeys';
+import { getDeviceUiLanguage } from '@/lib/deviceLanguage';
 import {
   loadAuthTokens,
   loadActiveOrganizationId,
@@ -83,7 +84,7 @@ export function AppStateProvider({ children }: PropsWithChildren): React.JSX.Ele
   const { hasDirtyEditors, resolveDirtyEditors, saveDirtyEditors } = useDirtyState();
   const [hydrated, setHydrated] = useState(false);
   const [tokens, setTokensState] = useState<AuthTokens | null>(null);
-  const [languageState, setLanguageState] = useState<UiLanguage>('ja');
+  const [languageState, setLanguageState] = useState<UiLanguage>(getDeviceUiLanguage);
   const [session, setSession] = useState<CurrentSessionRecord | null>(null);
   const [selection, setSelection] = useState<PersistedWorkspaceSelection>(defaultSelection);
   const [trackedJobIds, setTrackedJobIds] = useState<string[]>([]);
@@ -92,6 +93,7 @@ export function AppStateProvider({ children }: PropsWithChildren): React.JSX.Ele
   const tokensRef = useRef<AuthTokens | null>(null);
   const authGenerationRef = useRef(0);
   const backgroundResolutionRequestedRef = useRef(false);
+  const followsDeviceLanguageRef = useRef(true);
 
   const clearLocalAuthentication = useCallback(async (
     options?: { skipNativePushUnregister?: boolean }
@@ -164,7 +166,8 @@ export function AppStateProvider({ children }: PropsWithChildren): React.JSX.Ele
       }
       tokensRef.current = usableTokens;
       setTokensState(usableTokens);
-      setLanguageState(storedLanguage);
+      followsDeviceLanguageRef.current = storedLanguage === null;
+      setLanguageState(storedLanguage ?? getDeviceUiLanguage());
       setHydrated(true);
     };
     void hydrate();
@@ -268,6 +271,15 @@ export function AppStateProvider({ children }: PropsWithChildren): React.JSX.Ele
     return () => subscription.remove();
   }, [hasDirtyEditors, saveDirtyEditors]);
 
+  useEffect(() => {
+    const subscription = NativeAppState.addEventListener('change', (nextState) => {
+      if (nextState === 'active' && followsDeviceLanguageRef.current) {
+        setLanguageState(getDeviceUiLanguage());
+      }
+    });
+    return () => subscription.remove();
+  }, []);
+
   const api = useMemo(
     () =>
       new LyraMobileApiClient(
@@ -293,6 +305,7 @@ export function AppStateProvider({ children }: PropsWithChildren): React.JSX.Ele
   );
 
   const setLanguage = useCallback(async (language: UiLanguage): Promise<void> => {
+    followsDeviceLanguageRef.current = false;
     setLanguageState(language);
     await saveLanguage(language);
   }, []);

@@ -1,7 +1,7 @@
 import * as AuthSession from 'expo-auth-session';
 import * as WebBrowser from 'expo-web-browser';
 
-import type { AuthTokens } from '@/domain/types';
+import type { AuthTokens, UiLanguage } from '@/domain/types';
 import { config } from '@/lib/config';
 import { createSingleFlight } from '@/lib/singleFlight';
 import { clearAuthTokens, saveAuthTokens } from '@/lib/storage';
@@ -102,9 +102,12 @@ const refreshAuthTokensOnce = async (tokens: AuthTokens): Promise<AuthTokens> =>
 
 export const refreshAuthTokens = createSingleFlight(refreshAuthTokensOnce);
 
-export const signInWithCognito = async (): Promise<AuthTokens> => {
+export const signInWithCognito = async (language: UiLanguage): Promise<AuthTokens> => {
   const request = new AuthSession.AuthRequest({
     clientId: config.cognitoClientId,
+    extraParams: {
+      lang: language
+    },
     redirectUri: config.cognitoRedirectUri,
     responseType: AuthSession.ResponseType.Code,
     scopes: config.cognitoScopes,

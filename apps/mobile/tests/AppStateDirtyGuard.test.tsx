@@ -12,11 +12,14 @@ const mocks = vi.hoisted(() => ({
   clearAuthenticatedImageCache: vi.fn().mockResolvedValue(undefined),
   clearAuthTokens: vi.fn().mockResolvedValue(undefined),
   hasDirtyEditors: true,
+  getDeviceUiLanguage: vi.fn<() => 'ja' | 'en'>(),
+  loadLanguage: vi.fn<() => Promise<'ja' | 'en' | null>>(),
   queryClear: vi.fn(),
   queryInvalidate: vi.fn().mockResolvedValue(undefined),
   resolveDirtyEditors: vi.fn<() => Promise<boolean>>(),
   saveDirtyEditors: vi.fn<() => Promise<boolean>>(),
   saveActiveOrganizationId: vi.fn().mockResolvedValue(undefined),
+  saveLanguage: vi.fn().mockResolvedValue(undefined),
   saveSelection: vi.fn().mockResolvedValue(undefined),
   signOutFromCognito: vi.fn().mockResolvedValue(undefined),
   unregisterPushNotifications: vi.fn().mockResolvedValue(undefined)
@@ -70,6 +73,10 @@ vi.mock('@/lib/config', () => ({
   }
 }));
 
+vi.mock('@/lib/deviceLanguage', () => ({
+  getDeviceUiLanguage: mocks.getDeviceUiLanguage
+}));
+
 vi.mock('@/lib/pushNotifications', () => ({
   unregisterNativePushNotifications: vi.fn().mockResolvedValue(undefined),
   unregisterPushNotifications: mocks.unregisterPushNotifications
@@ -79,7 +86,7 @@ vi.mock('@/lib/storage', () => ({
   clearAuthTokens: mocks.clearAuthTokens,
   loadActiveOrganizationId: vi.fn().mockResolvedValue(null),
   loadAuthTokens: vi.fn().mockResolvedValue(null),
-  loadLanguage: vi.fn().mockResolvedValue('ja'),
+  loadLanguage: mocks.loadLanguage,
   loadSelection: vi.fn().mockResolvedValue({
     organizationId: null,
     workId: null,
@@ -91,7 +98,7 @@ vi.mock('@/lib/storage', () => ({
   loadTrackedJobIds: vi.fn().mockResolvedValue([]),
   saveActiveOrganizationId: mocks.saveActiveOrganizationId,
   saveAuthTokens: vi.fn().mockResolvedValue(undefined),
-  saveLanguage: vi.fn().mockResolvedValue(undefined),
+  saveLanguage: mocks.saveLanguage,
   saveSelection: mocks.saveSelection,
   saveTrackedJobIds: vi.fn().mockResolvedValue(undefined)
 }));
@@ -134,14 +141,69 @@ describe('AppStateProvider dirty-state guard', () => {
     mocks.clearAuthenticatedImageCache.mockClear();
     mocks.clearAuthTokens.mockClear();
     mocks.hasDirtyEditors = true;
+    mocks.getDeviceUiLanguage.mockReset();
+    mocks.getDeviceUiLanguage.mockReturnValue('en');
+    mocks.loadLanguage.mockReset();
+    mocks.loadLanguage.mockResolvedValue('ja');
     mocks.queryClear.mockClear();
     mocks.resolveDirtyEditors.mockReset();
     mocks.saveDirtyEditors.mockReset();
     mocks.saveDirtyEditors.mockResolvedValue(true);
     mocks.saveActiveOrganizationId.mockClear();
+    mocks.saveLanguage.mockClear();
     mocks.saveSelection.mockClear();
     mocks.signOutFromCognito.mockClear();
     mocks.unregisterPushNotifications.mockClear();
+  });
+
+  it('保存済み言語がある場合は端末言語より優先する', async () => {
+    mocks.loadLanguage.mockResolvedValue('ja');
+    mocks.getDeviceUiLanguage.mockReturnValue('en');
+    const renderer = await renderProvider();
+
+    expect(latestState?.language).toBe('ja');
+    await act(async () => renderer.unmount());
+  });
+
+  it('保存済み言語がない場合は端末言語を使用する', async () => {
+    mocks.loadLanguage.mockResolvedValue(null);
+    mocks.getDeviceUiLanguage.mockReturnValue('en');
+    const renderer = await renderProvider();
+
+    expect(latestState?.language).toBe('en');
+    await act(async () => renderer.unmount());
+  });
+
+  it('保存済み言語がない場合はforeground復帰時に端末言語へ追従する', async () => {
+    mocks.loadLanguage.mockResolvedValue(null);
+    mocks.getDeviceUiLanguage.mockReturnValue('en');
+    const renderer = await renderProvider();
+
+    mocks.getDeviceUiLanguage.mockReturnValue('ja');
+    await act(async () => {
+      mocks.appStateListeners.forEach((listener) => listener('active'));
+    });
+
+    expect(latestState?.language).toBe('ja');
+    await act(async () => renderer.unmount());
+  });
+
+  it('言語を手動選択した後はforeground復帰時に端末言語で上書きしない', async () => {
+    mocks.loadLanguage.mockResolvedValue(null);
+    mocks.getDeviceUiLanguage.mockReturnValue('en');
+    const renderer = await renderProvider();
+
+    await act(async () => {
+      await latestState?.setLanguage('ja');
+    });
+    mocks.getDeviceUiLanguage.mockReturnValue('en');
+    await act(async () => {
+      mocks.appStateListeners.forEach((listener) => listener('active'));
+    });
+
+    expect(mocks.saveLanguage).toHaveBeenCalledWith('ja');
+    expect(latestState?.language).toBe('ja');
+    await act(async () => renderer.unmount());
   });
 
   it('selection変更をキャンセルした場合は選択状態を変えない', async () => {

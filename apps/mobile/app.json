@@ -31,6 +31,15 @@
       ],
       "expo-secure-store",
       [
+        "expo-localization",
+        {
+          "supportedLocales": {
+            "ios": ["en", "ja"],
+            "android": ["en", "ja"]
+          }
+        }
+      ],
+      [
         "expo-image-picker",
         {
           "cameraPermission": false,

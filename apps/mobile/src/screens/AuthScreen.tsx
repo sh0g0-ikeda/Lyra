@@ -55,7 +55,7 @@ export function AuthScreen({ pendingInvitation = false }: AuthScreenProps): Reac
     setLoading(true);
     setErrorMessage(null);
     try {
-      const tokens = await signInWithCognito();
+      const tokens = await signInWithCognito(language);
       await setTokens(tokens);
     } catch (error) {
       setErrorMessage(userErrorMessage(error, language));

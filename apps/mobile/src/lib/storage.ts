@@ -46,9 +46,9 @@ export const loadAuthTokens = (): Promise<AuthTokens | null> => readJson<AuthTok
 export const saveAuthTokens = (tokens: AuthTokens): Promise<void> => writeJson(authTokensKey, tokens);
 export const clearAuthTokens = (): Promise<void> => SecureStore.deleteItemAsync(authTokensKey);
 
-export const loadLanguage = async (): Promise<UiLanguage> => {
+export const loadLanguage = async (): Promise<UiLanguage | null> => {
   const value = await readItem(languageKey);
-  return value === 'en' ? 'en' : 'ja';
+  return value === 'ja' || value === 'en' ? value : null;
 };
 
 export const saveLanguage = (language: UiLanguage): Promise<void> => SecureStore.setItemAsync(languageKey, language);
