@@ -1,8 +1,11 @@
 import React from 'react';
 import { act, create } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { MobileStoreBillingPanel } from '@/components/MobileStoreBillingPanel';
+
+const openURL = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+const platform = vi.hoisted(() => ({ OS: 'ios' }));
 
 const adapter = {
   connect: vi.fn().mockResolvedValue(undefined),
@@ -28,6 +31,9 @@ const adapter = {
 
 vi.mock('react-native', () => ({
   ActivityIndicator: 'ActivityIndicator',
+  Linking: { openURL },
+  Platform: platform,
+  Pressable: 'Pressable',
   StyleSheet: { create: <T,>(styles: T): T => styles },
   Text: 'Text',
   View: 'View'
@@ -51,6 +57,114 @@ vi.mock('@/state/networkStatus', () => ({
 }));
 
 describe('MobileStoreBillingPanel', () => {
+  beforeEach(() => {
+    openURL.mockReset().mockResolvedValue(undefined);
+    platform.OS = 'ios';
+  });
+
+  it('購入前にApple標準EULAとプライバシーポリシーを日英の固定URLで開ける', async () => {
+    let renderer: ReturnType<typeof create>;
+    await act(async () => {
+      renderer = create(React.createElement(MobileStoreBillingPanel, {
+        adapter: adapter as never,
+        currentPlan: 'free',
+        language: 'ja'
+      }));
+    });
+
+    const links = renderer!.root.findAll((node) => node.props.accessibilityRole === 'link');
+    expect(links.map((link) => link.props.accessibilityLabel)).toEqual([
+      '利用規約（Apple標準EULA）',
+      'プライバシーポリシー'
+    ]);
+
+    await act(async () => {
+      await links[0].props.onPress();
+      await links[1].props.onPress();
+    });
+
+    expect(openURL).toHaveBeenNthCalledWith(
+      1,
+      'https://www.apple.com/legal/internet-services/itunes/dev/stdeula/'
+    );
+    expect(openURL).toHaveBeenNthCalledWith(2, 'https://app.lyra-editor.com/privacy.html');
+  });
+
+  it('AndroidではApple EULAではなくLyra利用規約を開く', async () => {
+    platform.OS = 'android';
+    let renderer: ReturnType<typeof create>;
+    await act(async () => {
+      renderer = create(React.createElement(MobileStoreBillingPanel, {
+        adapter: adapter as never,
+        currentPlan: 'free',
+        language: 'ja'
+      }));
+    });
+
+    const termsLink = renderer!.root.findAll((node) => node.props.accessibilityRole === 'link')[0];
+    expect(termsLink.props.accessibilityLabel).toBe('利用規約');
+    await act(async () => {
+      await termsLink.props.onPress();
+    });
+
+    expect(openURL).toHaveBeenCalledWith('https://app.lyra-editor.com/terms.html');
+    expect(openURL).not.toHaveBeenCalledWith(
+      'https://www.apple.com/legal/internet-services/itunes/dev/stdeula/'
+    );
+  });
+
+  it('法務ページを開けない場合は生の例外を出さず再試行できる案内を表示する', async () => {
+    openURL.mockRejectedValueOnce(new Error('provider-secret-detail'));
+    let renderer: ReturnType<typeof create>;
+    await act(async () => {
+      renderer = create(React.createElement(MobileStoreBillingPanel, {
+        adapter: adapter as never,
+        currentPlan: 'free',
+        language: 'ja'
+      }));
+    });
+
+    const termsLink = renderer!.root.findAll((node) => node.props.accessibilityRole === 'link')[0];
+    await act(async () => {
+      await termsLink.props.onPress();
+    });
+
+    const rendered = JSON.stringify(renderer!.toJSON());
+    expect(rendered).toContain('ページを開けませんでした。通信を確認して再試行してください。');
+    expect(rendered).not.toContain('provider-secret-detail');
+  });
+
+  it('ストア未接続で商品がなくても英語の法務リンクは利用できる', async () => {
+    const disconnectedAdapter = {
+      ...adapter,
+      getState: vi.fn().mockReturnValue({
+        ...adapter.getState(),
+        connected: false,
+        error: { code: 'CONNECTION_FAILED' as const, retryable: true },
+        products: []
+      }),
+      subscribe: vi.fn().mockReturnValue(() => undefined)
+    };
+
+    let renderer: ReturnType<typeof create>;
+    await act(async () => {
+      renderer = create(React.createElement(MobileStoreBillingPanel, {
+        adapter: disconnectedAdapter as never,
+        currentPlan: 'free',
+        language: 'en'
+      }));
+    });
+
+    const links = renderer!.root.findAll((node) => node.props.accessibilityRole === 'link');
+    expect(links.map((link) => link.props.accessibilityLabel)).toEqual([
+      'Terms of Use (Apple Standard EULA)',
+      'Privacy Policy'
+    ]);
+    expect(JSON.stringify(renderer!.toJSON())).toContain(
+      'Store connection failed. Check your connection and try again.'
+    );
+  });
+
   it('商品が返らない場合も一時的なStoreKit診断を画面へ表示しない', async () => {
     adapter.getState.mockReturnValueOnce({
       ...adapter.getState(),

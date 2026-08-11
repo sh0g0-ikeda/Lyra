@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Linking, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { Notice } from '@/components/Notice';
 import { PrimaryButton } from '@/components/PrimaryButton';
@@ -24,6 +24,12 @@ interface MobileStoreBillingPanelProps {
   scheduledPlanEffectiveAt?: string | null;
 }
 
+const LEGAL_URLS = {
+  appleStandardEula: 'https://www.apple.com/legal/internet-services/itunes/dev/stdeula/',
+  lyraPrivacy: 'https://app.lyra-editor.com/privacy.html',
+  lyraTerms: 'https://app.lyra-editor.com/terms.html'
+} as const;
+
 export function MobileStoreBillingPanel({
   adapter,
   currentPlan,
@@ -35,6 +41,7 @@ export function MobileStoreBillingPanel({
   const { online } = useNetworkStatus();
   const [state, setState] = useState<NativeStoreBillingState>(() => adapter.getState());
   const [acknowledgedVerified, setAcknowledgedVerified] = useState<NativeStoreServerState | null>(null);
+  const [legalLinkError, setLegalLinkError] = useState<string | null>(null);
 
   useEffect(() => {
     const unsubscribe = adapter.subscribe(setState);
@@ -68,6 +75,18 @@ export function MobileStoreBillingPanel({
       // The adapter provides a safe, localizable error state.
     }
   };
+  const openLegalLink = async (url: string): Promise<void> => {
+    setLegalLinkError(null);
+    try {
+      await Linking.openURL(url);
+    } catch {
+      setLegalLinkError(t(language, 'component.mobileStoreBilling.legalLinkOpenFailed'));
+    }
+  };
+  const termsUrl = Platform.OS === 'ios' ? LEGAL_URLS.appleStandardEula : LEGAL_URLS.lyraTerms;
+  const termsLabel = Platform.OS === 'ios'
+    ? t(language, 'component.mobileStoreBilling.appleStandardEula')
+    : t(language, 'component.mobileStoreBilling.terms');
   const awaitingAuthoritativeRefresh = state.lastVerified !== null && state.lastVerified !== acknowledgedVerified;
   const effectivePlan = awaitingAuthoritativeRefresh ? state.lastVerified?.entitlement.plan ?? currentPlan : currentPlan;
   const nativeScheduledProduct = state.subscriptionStatus?.scheduledProductId === null
@@ -165,6 +184,32 @@ export function MobileStoreBillingPanel({
         onPress={() => void restore()}
         variant="secondary"
       />
+      <View
+        accessibilityLabel={t(language, 'component.mobileStoreBilling.legalLinks')}
+        style={styles.legalLinks}
+      >
+        <Pressable
+          accessibilityLabel={termsLabel}
+          accessibilityRole="link"
+          hitSlop={8}
+          onPress={() => void openLegalLink(termsUrl)}
+          style={styles.legalLink}
+        >
+          <Text style={styles.legalLinkText}>{termsLabel}</Text>
+        </Pressable>
+        <Pressable
+          accessibilityLabel={t(language, 'component.mobileStoreBilling.privacyPolicy')}
+          accessibilityRole="link"
+          hitSlop={8}
+          onPress={() => void openLegalLink(LEGAL_URLS.lyraPrivacy)}
+          style={styles.legalLink}
+        >
+          <Text style={styles.legalLinkText}>
+            {t(language, 'component.mobileStoreBilling.privacyPolicy')}
+          </Text>
+        </Pressable>
+      </View>
+      {legalLinkError === null ? null : <Notice message={legalLinkError} tone="danger" />}
     </View>
   );
 }
@@ -236,6 +281,24 @@ const styles = StyleSheet.create({
     padding: spacing.md
   },
   header: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' },
+  legalLink: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 44,
+    paddingHorizontal: spacing.xs
+  },
+  legalLinks: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+    justifyContent: 'center'
+  },
+  legalLinkText: {
+    color: colors.primary,
+    fontSize: 14,
+    textDecorationLine: 'underline'
+  },
   price: { ...textStyles.body, color: colors.primary, fontWeight: '700' },
   product: {
     alignItems: 'stretch',
