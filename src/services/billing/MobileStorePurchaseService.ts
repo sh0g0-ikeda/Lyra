@@ -201,49 +201,77 @@ export class MobileStorePurchaseService implements MobileStorePurchaseServicePor
     data: string;
     publishTime: Date | null;
   }): Promise<void> {
-    const notification = parseGoogleRtdn(input.data);
+    let notification: ParsedGoogleRtdn;
+    try {
+      notification = parseGoogleRtdn(input.data);
+    } catch (error) {
+      logGoogleRtdnRejection('invalid_payload');
+      throw error;
+    }
     if (notification.packageName !== this.dependencies.googlePackageName) {
+      logGoogleRtdnRejection('package_mismatch');
       throw new ValidationError('Store notification could not be verified');
     }
 
     const occurredAt = notification.eventTime ?? input.publishTime ?? this.clock();
     if (notification.kind === 'test') {
-      await this.recordUnknownGoogleEvent({
-        eventId: input.messageId,
-        state: 'pending',
-        occurredAt,
-        providerEventType: 'google.test_notification',
-      });
+      try {
+        await this.recordUnknownGoogleEvent({
+          eventId: input.messageId,
+          state: 'pending',
+          occurredAt,
+          providerEventType: 'google.test_notification',
+        });
+      } catch (error) {
+        logGoogleRtdnRejection('processing');
+        throw error;
+      }
       return;
     }
 
     if (notification.kind === 'voided') {
-      await this.applyGoogleVoidedPurchase({
-        purchaseToken: notification.purchaseToken,
-        orderId: notification.orderId,
-        eventId: input.messageId,
-        occurredAt,
-      });
+      try {
+        await this.applyGoogleVoidedPurchase({
+          purchaseToken: notification.purchaseToken,
+          orderId: notification.orderId,
+          eventId: input.messageId,
+          occurredAt,
+        });
+      } catch (error) {
+        logGoogleRtdnRejection('processing');
+        throw error;
+      }
       return;
     }
 
-    const verified = await this.dependencies.googleVerifier.verifyPurchase({
-      purchaseToken: notification.purchaseToken,
-    });
+    let verified: VerifiedStorePurchase;
+    try {
+      verified = await this.dependencies.googleVerifier.verifyPurchase({
+        purchaseToken: notification.purchaseToken,
+      });
+    } catch (error) {
+      logGoogleRtdnRejection('provider_verification');
+      throw error;
+    }
     if (!this.isGoogleTestPurchaseAllowed(verified, null)) {
       return;
     }
 
-    await this.applyVerifiedPurchase(
-      {
-        ...verified,
-        state: notification.overrideState ?? verified.state,
-        eventId: input.messageId,
-        observedAt: occurredAt,
-        providerEventType: notification.providerEventType,
-      },
-      null,
-    );
+    try {
+      await this.applyVerifiedPurchase(
+        {
+          ...verified,
+          state: notification.overrideState ?? verified.state,
+          eventId: input.messageId,
+          observedAt: occurredAt,
+          providerEventType: notification.providerEventType,
+        },
+        null,
+      );
+    } catch (error) {
+      logGoogleRtdnRejection('processing');
+      throw error;
+    }
   }
 
   private isGoogleTestPurchaseAllowed(
@@ -748,6 +776,16 @@ export class MobileStorePurchaseService implements MobileStorePurchaseServicePor
       throw new ForbiddenError('Store purchase account binding does not match');
     }
   }
+}
+
+function logGoogleRtdnRejection(
+  reason: 'invalid_payload' | 'package_mismatch' | 'provider_verification' | 'processing',
+): void {
+  console.warn(JSON.stringify({
+    level: 'warn',
+    event: 'google_play_rtdn_rejected',
+    reason,
+  }));
 }
 
 function operationForPurchase(

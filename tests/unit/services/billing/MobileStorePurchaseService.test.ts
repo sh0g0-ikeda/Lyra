@@ -1,5 +1,5 @@
 import type { QueryResult, QueryResultRow } from 'pg';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   createGooglePlayObfuscatedAccountId,
   createStoreProductCatalog,
@@ -500,6 +500,94 @@ describe('MobileStorePurchaseService', () => {
     await service.handleGoogleRtdn({ messageId: 'denied-rtdn', data: rtdn, publishTime: observedAt });
 
     expect(credits.ledger).toHaveLength(0);
+  });
+
+  it('Googleのテスト通知は購入検証を行わず監査イベントとして受理する', async () => {
+    const repository = new FakeStorePurchaseRepository([userId]);
+    const service = createService(
+      repository,
+      new FakeCreditRepository(),
+      new FakeAppleVerifier(),
+      new FakeGoogleVerifier(),
+    );
+    const rtdn = Buffer.from(
+      JSON.stringify({
+        version: '1.0',
+        packageName: 'jp.lyra.app',
+        testNotification: { version: '1.0' },
+      }),
+      'utf8',
+    ).toString('base64');
+
+    await service.handleGoogleRtdn({ messageId: 'google-test-message', data: rtdn, publishTime: observedAt });
+
+    expect(repository.events).toHaveLength(1);
+    expect(repository.events[0]).toMatchObject({
+      purchaseId: null,
+      store: 'google',
+      operation: 'observe',
+      providerEventType: 'google.test_notification',
+      state: 'pending',
+    });
+  });
+
+  it('Google通知のpayload不正は購入データを含めず失敗理由だけを記録する', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const service = createService(
+      new FakeStorePurchaseRepository([userId]),
+      new FakeCreditRepository(),
+      new FakeAppleVerifier(),
+      new FakeGoogleVerifier(),
+    );
+
+    await expect(service.handleGoogleRtdn({
+      messageId: 'invalid-google-message',
+      data: Buffer.from('sensitive-invalid-payload', 'utf8').toString('base64'),
+      publishTime: observedAt,
+    })).rejects.toThrow('Store notification could not be verified');
+
+    const diagnostic = warn.mock.calls
+      .map(([entry]) => String(entry))
+      .find((entry) => entry.includes('google_play_rtdn_rejected'));
+    expect(JSON.parse(diagnostic ?? '{}')).toMatchObject({
+      event: 'google_play_rtdn_rejected',
+      reason: 'invalid_payload',
+    });
+    expect(diagnostic).not.toContain('sensitive-invalid-payload');
+    warn.mockRestore();
+  });
+
+  it('Google通知のpackage不一致は値を含めず失敗理由だけを記録する', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const service = createService(
+      new FakeStorePurchaseRepository([userId]),
+      new FakeCreditRepository(),
+      new FakeAppleVerifier(),
+      new FakeGoogleVerifier(),
+    );
+    const rtdn = Buffer.from(
+      JSON.stringify({
+        packageName: 'must-not-appear-in-logs',
+        testNotification: { version: '1.0' },
+      }),
+      'utf8',
+    ).toString('base64');
+
+    await expect(service.handleGoogleRtdn({
+      messageId: 'wrong-package-message',
+      data: rtdn,
+      publishTime: observedAt,
+    })).rejects.toThrow('Store notification could not be verified');
+
+    const diagnostic = warn.mock.calls
+      .map(([entry]) => String(entry))
+      .find((entry) => entry.includes('google_play_rtdn_rejected'));
+    expect(JSON.parse(diagnostic ?? '{}')).toMatchObject({
+      event: 'google_play_rtdn_rejected',
+      reason: 'package_mismatch',
+    });
+    expect(diagnostic).not.toContain('must-not-appear-in-logs');
+    warn.mockRestore();
   });
 });
 
