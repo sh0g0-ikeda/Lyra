@@ -63,6 +63,42 @@ describe('PostgresStorePurchaseRepository', () => {
     ]);
   });
 
+  it('購読更新時に商品IDとプランを状態と同じ更新で保存する', async () => {
+    const client = new QueryCapturingClient();
+    const repository = new PostgresStorePurchaseRepository(new PassthroughTransactionRunner());
+
+    await repository.updatePurchase(
+      'purchase-1',
+      {
+        productId: 'jp.lyra.premium.monthly',
+        kind: 'subscription',
+        planCode: 'premium',
+        creditPackageCode: null,
+        state: 'active',
+        transactionKey: 'keyed-premium-transaction',
+        expiresAt: new Date('2026-08-26T00:00:00.000Z'),
+        autoRenewEnabled: true,
+        lastObservedAt: new Date('2026-07-26T00:00:00.000Z'),
+      },
+      client,
+    );
+
+    expect(client.queries[0]).toContain('product_id = $7');
+    expect(client.queries[0]).toContain('plan_code = $9');
+    expect(client.valuesList[0]).toEqual([
+      'purchase-1',
+      'active',
+      'keyed-premium-transaction',
+      new Date('2026-08-26T00:00:00.000Z'),
+      true,
+      new Date('2026-07-26T00:00:00.000Z'),
+      'jp.lyra.premium.monthly',
+      'subscription',
+      'premium',
+      null,
+    ]);
+  });
+
   it('does not overwrite enterprise user plan code while refreshing a personal store entitlement', async () => {
     const client = new QueryCapturingClient();
     const repository = new PostgresStorePurchaseRepository(new PassthroughTransactionRunner());
@@ -103,6 +139,28 @@ class QueryCapturingClient implements DatabaseClient {
           granted_credits: 10,
           reversed_credits: 0,
           last_observed_at: new Date('2026-07-25T00:00:00.000Z'),
+        },
+      ] as unknown as T[]);
+    }
+    if (text.includes('UPDATE mobile_store_purchases')) {
+      return result([
+        {
+          id: 'purchase-1',
+          user_id: '11111111-1111-4111-8111-111111111111',
+          store: 'apple',
+          environment: 'sandbox',
+          external_purchase_key: 'keyed-purchase-id',
+          product_id: values?.[6] ?? 'jp.lyra.credits.200',
+          kind: values?.[7] ?? 'credit_pack',
+          plan_code: values?.[8] ?? null,
+          credit_package_code: values?.[9] ?? 'credits_200',
+          state: values?.[1] ?? 'active',
+          transaction_key: values?.[2] ?? 'keyed-transaction-id',
+          expires_at: values?.[3] ?? null,
+          auto_renew_enabled: values?.[4] ?? null,
+          granted_credits: 10,
+          reversed_credits: 0,
+          last_observed_at: values?.[5] ?? new Date('2026-07-25T00:00:00.000Z'),
         },
       ] as unknown as T[]);
     }

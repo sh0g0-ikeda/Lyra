@@ -45,9 +45,21 @@ describe('MobileStorePurchaseService', () => {
       },
       {
         store: 'apple',
+        productId: 'jp.lyra.credits.1000',
+        kind: 'credit_pack',
+        creditPackageCode: 'credits_1000',
+      },
+      {
+        store: 'apple',
         productId: 'jp.lyra.standard.monthly',
         kind: 'subscription',
         planCode: 'standard',
+      },
+      {
+        store: 'apple',
+        productId: 'jp.lyra.premium.monthly',
+        kind: 'subscription',
+        planCode: 'premium',
       },
     ]);
   });
@@ -177,6 +189,63 @@ describe('MobileStorePurchaseService', () => {
 
     await service.verifyApplePurchase({ userId, signedTransaction: 'expired', environment: 'sandbox' });
     expect(repository.users.get(userId)?.planCode).toBe('free');
+  });
+
+  it('同じApple購読系列の新しいPremium取引へ安全に変更し古いStandard取引では戻さない', async () => {
+    const repository = new FakeStorePurchaseRepository([userId]);
+    const credits = new FakeCreditRepository();
+    const standard = appleSubscription({});
+    const premium = appleSubscription({
+      productId: 'jp.lyra.premium.monthly',
+      transactionId: 'apple-premium-transaction',
+      observedAt: new Date('2026-07-26T00:00:00.000Z'),
+      expiresAt: new Date('2026-08-26T00:00:00.000Z'),
+    });
+    const apple = new FakeAppleVerifier(standard, premium, premium, standard);
+    const service = createService(repository, credits, apple, new FakeGoogleVerifier());
+
+    await service.verifyApplePurchase({ userId, signedTransaction: 'standard', environment: 'sandbox' });
+    const upgraded = await service.verifyApplePurchase({ userId, signedTransaction: 'premium', environment: 'sandbox' });
+    const duplicate = await service.verifyApplePurchase({ userId, signedTransaction: 'premium-replay', environment: 'sandbox' });
+    const stale = await service.verifyApplePurchase({ userId, signedTransaction: 'stale-standard', environment: 'sandbox' });
+
+    expect(upgraded).toMatchObject({ planCode: 'premium', creditsChanged: 175, isDuplicate: false });
+    expect(duplicate).toMatchObject({ planCode: 'premium', creditsChanged: 0, isDuplicate: true });
+    expect(stale).toMatchObject({ planCode: 'premium', creditsChanged: 0, isDuplicate: true });
+    expect(repository.purchases[0]).toMatchObject({
+      productId: 'jp.lyra.premium.monthly',
+      planCode: 'premium',
+      grantedCredits: 225,
+    });
+    expect(repository.users.get(userId)?.planCode).toBe('premium');
+    expect(credits.balance).toMatchObject({ monthlyCredits: 175, purchasedCredits: 0 });
+    expect(credits.ledger).toHaveLength(2);
+    expect(credits.ledger.map((entry) => ({ amount: entry.amount, monthlyDelta: entry.monthlyDelta }))).toEqual([
+      { amount: 50, monthlyDelta: 50 },
+      { amount: 175, monthlyDelta: 125 },
+    ]);
+  });
+
+  it('同じ外部購入IDで単発クレジット商品を差し替えようとした場合は拒否する', async () => {
+    const repository = new FakeStorePurchaseRepository([userId]);
+    const credits = new FakeCreditRepository();
+    const apple = new FakeAppleVerifier(
+      applePurchase({ state: 'active' }),
+      applePurchase({
+        productId: 'jp.lyra.credits.1000',
+        transactionId: 'apple-transaction-2',
+        observedAt: new Date('2026-07-26T00:00:00.000Z'),
+      }),
+    );
+    const service = createService(repository, credits, apple, new FakeGoogleVerifier());
+
+    await service.verifyApplePurchase({ userId, signedTransaction: 'credits-200', environment: 'sandbox' });
+
+    await expect(
+      service.verifyApplePurchase({ userId, signedTransaction: 'credits-1000', environment: 'sandbox' }),
+    ).rejects.toThrow('Store purchase could not be verified');
+    expect(credits.balance.purchasedCredits).toBe(10);
+    expect(credits.ledger).toHaveLength(1);
   });
 
   it('does not grant again when Google RTDN repeats a purchase already submitted by the client', async () => {
@@ -328,7 +397,9 @@ function createService(
     creditRepository,
     productCatalog: createStoreProductCatalog([
       { store: 'apple', productId: 'jp.lyra.credits.200', kind: 'credit_pack', creditPackageCode: 'credits_200' },
+      { store: 'apple', productId: 'jp.lyra.credits.1000', kind: 'credit_pack', creditPackageCode: 'credits_1000' },
       { store: 'apple', productId: 'jp.lyra.standard.monthly', kind: 'subscription', planCode: 'standard' },
+      { store: 'apple', productId: 'jp.lyra.premium.monthly', kind: 'subscription', planCode: 'premium' },
       { store: 'google', productId: 'jp.lyra.credits.200', kind: 'credit_pack', creditPackageCode: 'credits_200' },
     ]),
     appleVerifier,
@@ -478,6 +549,10 @@ class FakeStorePurchaseRepository implements StorePurchaseRepository {
       throw new Error('purchase missing');
     }
     purchase.state = input.state;
+    purchase.productId = input.productId;
+    purchase.kind = input.kind;
+    purchase.planCode = input.planCode;
+    purchase.creditPackageCode = input.creditPackageCode;
     purchase.transactionKey = input.transactionKey ?? purchase.transactionKey;
     purchase.expiresAt = input.expiresAt;
     purchase.autoRenewEnabled = input.autoRenewEnabled;

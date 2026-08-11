@@ -342,10 +342,6 @@ export class MobileStorePurchaseService implements MobileStorePurchaseServicePor
       }
       this.assertAccountBinding(verified, user.id);
 
-      if (existing !== null && !isSameProduct(existing, product, verified.productId)) {
-        throw new ValidationError('Store purchase could not be verified');
-      }
-
       const transition = existing === null
         ? { state: verified.state, observedAt: verified.observedAt, ignoredAsStale: false }
         : transitionStorePurchaseState({
@@ -354,6 +350,9 @@ export class MobileStorePurchaseService implements MobileStorePurchaseServicePor
             incomingState: verified.state,
             incomingObservedAt: verified.observedAt,
           });
+      if (existing !== null && !isCompatibleProduct(existing, product, verified.productId)) {
+        throw new ValidationError('Store purchase could not be verified');
+      }
       const purchase = existing === null
         ? await this.dependencies.storePurchaseRepository.createPurchase(
             {
@@ -378,6 +377,10 @@ export class MobileStorePurchaseService implements MobileStorePurchaseServicePor
           : await this.dependencies.storePurchaseRepository.updatePurchase(
               existing.id,
               {
+                productId: verified.productId,
+                kind: product.kind,
+                planCode: product.kind === 'subscription' ? product.planCode : null,
+                creditPackageCode: product.kind === 'credit_pack' ? product.creditPackageCode : null,
                 state: transition.state,
                 transactionKey,
                 expiresAt: verified.expiresAt,
@@ -386,6 +389,13 @@ export class MobileStorePurchaseService implements MobileStorePurchaseServicePor
               },
               client,
             );
+
+      const effectiveProduct = transition.ignoredAsStale
+        ? this.dependencies.productCatalog.resolve(purchase.store, purchase.productId)
+        : product;
+      if (effectiveProduct === null) {
+        throw new ValidationError('Store purchase could not be verified');
+      }
 
       const effectiveTransactionKey = purchase.transactionKey;
       const operation = operationForPurchase(purchase, effectiveTransactionKey);
@@ -405,9 +415,9 @@ export class MobileStorePurchaseService implements MobileStorePurchaseServicePor
 
       let creditsChanged = 0;
       if (eventRecorded && operation === 'grant') {
-        creditsChanged = await this.grantCredits(purchase, product, effectiveTransactionKey, client);
+        creditsChanged = await this.grantCredits(purchase, effectiveProduct, effectiveTransactionKey, client);
       } else if (eventRecorded && operation === 'reverse') {
-        creditsChanged = await this.reverseCredits(purchase, product, effectiveTransactionKey, client);
+        creditsChanged = await this.reverseCredits(purchase, effectiveProduct, effectiveTransactionKey, client);
       }
 
       if (purchase.kind === 'subscription' && !transition.ignoredAsStale) {
@@ -576,6 +586,10 @@ export class MobileStorePurchaseService implements MobileStorePurchaseServicePor
         : await this.dependencies.storePurchaseRepository.updatePurchase(
             existing.id,
             {
+              productId: existing.productId,
+              kind: existing.kind,
+              planCode: existing.planCode,
+              creditPackageCode: existing.creditPackageCode,
               state: transition.state,
               transactionKey,
               expiresAt: existing.expiresAt,
@@ -676,17 +690,22 @@ function operationForPurchase(
   return 'observe';
 }
 
-function isSameProduct(
+function isCompatibleProduct(
   existing: StorePurchaseRecord,
   product: StoreProductDefinition,
   productId: string,
 ): boolean {
-  return (
+  const isSameProduct = (
     existing.productId === productId &&
     existing.kind === product.kind &&
     existing.planCode === (product.kind === 'subscription' ? product.planCode : null) &&
     existing.creditPackageCode === (product.kind === 'credit_pack' ? product.creditPackageCode : null)
   );
+  if (isSameProduct) {
+    return true;
+  }
+
+  return existing.kind === 'subscription' && product.kind === 'subscription';
 }
 
 function emptyBalance(userId: string): CreditBalance {

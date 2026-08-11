@@ -52,6 +52,10 @@ export interface CreateStorePurchaseInput {
 }
 
 export interface UpdateStorePurchaseInput {
+  productId: string;
+  kind: StorePurchaseKind;
+  planCode: ConsumerPaidPlanCode | null;
+  creditPackageCode: CreditPackageCode | null;
   state: StorePurchaseState;
   transactionKey: string | null;
   expiresAt: Date | null;
@@ -217,6 +221,10 @@ export class PostgresStorePurchaseRepository implements StorePurchaseRepository 
           expires_at = $4,
           auto_renew_enabled = $5,
           last_observed_at = $6,
+          product_id = $7,
+          kind = $8,
+          plan_code = $9,
+          credit_package_code = $10,
           updated_at = NOW()
       WHERE id = $1
       RETURNING ${storePurchaseFields}
@@ -228,6 +236,10 @@ export class PostgresStorePurchaseRepository implements StorePurchaseRepository 
         input.expiresAt,
         input.autoRenewEnabled,
         input.lastObservedAt,
+        input.productId,
+        input.kind,
+        input.planCode,
+        input.creditPackageCode,
       ],
     );
 
