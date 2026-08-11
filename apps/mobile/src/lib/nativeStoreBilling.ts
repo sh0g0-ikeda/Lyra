@@ -721,8 +721,12 @@ function safeDiagnosticErrorCode(error: unknown): string {
 }
 
 function normalizeExpoPurchase(purchase: ExpoIap.Purchase): NativeStorePurchase {
+  const environmentIOS = 'environmentIOS' in purchase && typeof purchase.environmentIOS === 'string'
+    && purchase.environmentIOS.trim().toLowerCase() === 'sandbox'
+    ? 'sandbox'
+    : 'production';
   return {
-    environmentIOS: 'environmentIOS' in purchase && purchase.environmentIOS === 'sandbox' ? 'sandbox' : 'production',
+    environmentIOS,
     id: purchase.id,
     nativePurchase: purchase,
     productId: purchase.productId,

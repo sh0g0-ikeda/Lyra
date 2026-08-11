@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   NativeStoreBillingError,
+  createExpoIapSdk,
   createNativeStoreBillingAdapter,
   type NativeStoreBillingSdk,
   type NativeStorePurchase,
@@ -98,6 +99,28 @@ function createBackend(): Parameters<typeof createNativeStoreBillingAdapter>[0][
 }
 
 describe('native store billing adapter', () => {
+  it('StoreKitのSandbox表記をsandbox環境へ正規化する', async () => {
+    const sdk = createExpoIapSdk();
+    let purchaseListener: ((purchase: Parameters<NativeStoreBillingSdk['purchaseUpdatedListener']>[0] extends (purchase: infer T) => unknown ? T : never) => void | Promise<void>) | undefined;
+    vi.mocked((await import('expo-iap')).purchaseUpdatedListener).mockImplementationOnce((listener) => {
+      purchaseListener = listener as typeof purchaseListener;
+      return { remove: vi.fn() } as never;
+    });
+    const listener = vi.fn();
+    sdk.purchaseUpdatedListener(listener);
+
+    await purchaseListener?.({
+      environmentIOS: 'Sandbox',
+      id: 'apple-testflight-transaction',
+      productId: 'jp.lyra.credits.200',
+      purchaseState: 'purchased',
+      purchaseToken: 'signed-testflight-transaction',
+      store: 'apple'
+    } as never);
+
+    expect(listener).toHaveBeenCalledWith(expect.objectContaining({ environmentIOS: 'sandbox' }));
+  });
+
   it('商品取得を順番に実行してStoreKit診断結果を安全に保持する', async () => {
     const harness = createSdkHarness();
     let resolveInApp: ((products: readonly {

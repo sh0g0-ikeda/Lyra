@@ -125,15 +125,14 @@ export class MobileStorePurchaseService implements MobileStorePurchaseServicePor
     signedTransaction: string;
     environment: StorePurchaseEnvironment;
   }): Promise<MobileStorePurchaseResult> {
-    if (input.environment === 'sandbox' && !this.dependencies.allowAppleSandbox) {
-      throw new ValidationError('Store purchase could not be verified');
-    }
-
     const verified = await this.dependencies.appleVerifier.verifyTransaction({
       signedTransaction: input.signedTransaction,
       environment: input.environment,
     });
-    if (verified.store !== 'apple' || verified.environment !== input.environment) {
+    if (
+      verified.store !== 'apple'
+      || (verified.environment === 'sandbox' && !this.dependencies.allowAppleSandbox)
+    ) {
       throw new ValidationError('Store purchase could not be verified');
     }
 

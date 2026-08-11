@@ -32,6 +32,48 @@ describe('AppStoreServerClient', () => {
     });
   });
 
+  it('クライアントの環境ヒントが誤っていても有効なSandbox署名を検証する', async () => {
+    const factory = new FakeAppleVerifierFactory({ transactionFailureEnvironments: ['production'] });
+    const client = new AppStoreServerClient(
+      {
+        bundleId: 'jp.lyra.app',
+        appAppleId: 123456789,
+        rootCertificates: [Buffer.from('root')],
+        allowSandbox: true,
+        allowProduction: true,
+      },
+      factory,
+    );
+
+    const purchase = await client.verifyTransaction({
+      signedTransaction: 'signed.sandbox.jws.from.testflight',
+      environment: 'production',
+    });
+
+    expect(factory.environments).toEqual(['production', 'sandbox']);
+    expect(purchase.environment).toBe('sandbox');
+  });
+
+  it('Sandboxが無効な場合はSandbox署名検証へフォールバックしない', async () => {
+    const factory = new FakeAppleVerifierFactory({ transactionFailureEnvironments: ['production'] });
+    const client = new AppStoreServerClient(
+      {
+        bundleId: 'jp.lyra.app',
+        appAppleId: 123456789,
+        rootCertificates: [Buffer.from('root')],
+        allowSandbox: false,
+        allowProduction: true,
+      },
+      factory,
+    );
+
+    await expect(client.verifyTransaction({
+      signedTransaction: 'signed.sandbox.jws.from.testflight',
+      environment: 'production',
+    })).rejects.toThrow('Store purchase could not be verified');
+    expect(factory.environments).toEqual(['production']);
+  });
+
   it('maps signed Apple refund and revocation notifications to terminal states', async () => {
     const factory = new FakeAppleVerifierFactory({
       notificationType: 'REVOKE',
@@ -65,13 +107,19 @@ class FakeAppleVerifierFactory implements AppleSignedDataVerifierFactory {
     private readonly options: {
       notificationType?: string;
       revocationType?: string;
+      transactionFailureEnvironments?: Array<'sandbox' | 'production'>;
     } = {},
   ) {}
 
   public create(environment: 'sandbox' | 'production') {
     this.environments.push(environment);
     return {
-      verifyAndDecodeTransaction: async (_signedTransaction: string) => this.transaction(),
+      verifyAndDecodeTransaction: async (_signedTransaction: string) => {
+        if (this.options.transactionFailureEnvironments?.includes(environment) === true) {
+          throw new Error('signature environment mismatch');
+        }
+        return this.transaction();
+      },
       verifyAndDecodeNotification: async (_signedPayload: string) => ({
         notificationType: this.options.notificationType ?? 'DID_RENEW',
         notificationUUID: 'notification-1',

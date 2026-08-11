@@ -49,7 +49,7 @@ vi.mock('@/state/networkStatus', () => ({
 }));
 
 describe('MobileStoreBillingPanel', () => {
-  it('商品が返らない場合に秘密情報を含まないStoreKit診断を表示する', async () => {
+  it('商品が返らない場合も一時的なStoreKit診断を画面へ表示しない', async () => {
     adapter.getState.mockReturnValueOnce({
       ...adapter.getState(),
       diagnostics: {
@@ -92,11 +92,9 @@ describe('MobileStoreBillingPanel', () => {
     });
 
     const rendered = JSON.stringify(renderer!.toJSON());
-    expect(rendered).toContain('課金診断');
-    expect(rendered).toContain('ストアフロント: JPN');
-    expect(rendered).toContain('クレジット商品: 0/1');
-    expect(rendered).toContain('サブスクリプション: 0/1');
-    expect(rendered).toContain('全商品照会: 0/2');
+    expect(rendered).not.toContain('課金診断');
+    expect(rendered).not.toContain('ストアフロント: JPN');
+    expect(rendered).toContain('購入を復元');
     expect(rendered).not.toMatch(/token|receipt|account/i);
   });
 

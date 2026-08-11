@@ -78,6 +78,42 @@ describe('MobileStorePurchaseService', () => {
     expect(repository.events.every((event) => !event.eventKey.includes('apple-transaction-1'))).toBe(true);
   });
 
+  it('Apple検証器が確認した実環境を採用し誤ったクライアント環境ヒントを信用しない', async () => {
+    const repository = new FakeStorePurchaseRepository([userId]);
+    const credits = new FakeCreditRepository();
+    const service = createService(
+      repository,
+      credits,
+      new FakeAppleVerifier(applePurchase({ environment: 'sandbox' })),
+      new FakeGoogleVerifier(),
+    );
+
+    await expect(service.verifyApplePurchase({
+      userId,
+      signedTransaction: 'signed.sandbox.transaction',
+      environment: 'production',
+    })).resolves.toMatchObject({ creditsChanged: 10, isDuplicate: false });
+    expect(credits.balance.purchasedCredits).toBe(10);
+  });
+
+  it('実際のApple環境がSandboxの場合はSandbox無効設定で付与しない', async () => {
+    const credits = new FakeCreditRepository();
+    const service = createService(
+      new FakeStorePurchaseRepository([userId]),
+      credits,
+      new FakeAppleVerifier(applePurchase({ environment: 'sandbox' })),
+      new FakeGoogleVerifier(),
+      { allowAppleSandbox: false },
+    );
+
+    await expect(service.verifyApplePurchase({
+      userId,
+      signedTransaction: 'signed.sandbox.transaction',
+      environment: 'production',
+    })).rejects.toThrow('Store purchase could not be verified');
+    expect(credits.ledger).toHaveLength(0);
+  });
+
   it('reverses only the remaining credited balance once after a newer refund event', async () => {
     const repository = new FakeStorePurchaseRepository([userId]);
     const credits = new FakeCreditRepository();
@@ -275,6 +311,7 @@ describe('MobileStorePurchaseService', () => {
 });
 
 interface TestPurchasePolicyOverrides {
+  allowAppleSandbox?: boolean;
   googleTestPurchaseAllowedUserIds?: ReadonlySet<string>;
   googleTestPurchasesExpireAt?: Date;
 }
@@ -297,7 +334,7 @@ function createService(
     appleVerifier,
     googleVerifier,
     identifierSecret,
-    allowAppleSandbox: true,
+    allowAppleSandbox: policy.allowAppleSandbox ?? true,
     allowGoogleTestPurchases: true,
     googleTestPurchaseAllowedUserIds: policy.googleTestPurchaseAllowedUserIds,
     googleTestPurchasesExpireAt: policy.googleTestPurchasesExpireAt,

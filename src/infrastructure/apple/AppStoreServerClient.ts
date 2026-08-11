@@ -62,21 +62,25 @@ export class AppStoreServerClient implements AppleStorePurchaseVerifierPort {
     signedTransaction: string;
     environment: StorePurchaseEnvironment;
   }): Promise<VerifiedStorePurchase> {
-    this.assertEnvironmentEnabled(input.environment);
-    try {
-      const transaction = await this.verifierFactory
-        .create(input.environment)
-        .verifyAndDecodeTransaction(input.signedTransaction);
-      return toVerifiedPurchase({
-        transaction,
-        environment: input.environment,
-        notificationType: null,
-        notificationId: null,
-        renewal: null,
-      });
-    } catch (error) {
-      throw toSafeVerificationError(error);
+    let lastError: unknown = null;
+    for (const environment of this.orderedEnabledEnvironments(input.environment)) {
+      try {
+        const transaction = await this.verifierFactory
+          .create(environment)
+          .verifyAndDecodeTransaction(input.signedTransaction);
+        return toVerifiedPurchase({
+          transaction,
+          environment,
+          notificationType: null,
+          notificationId: null,
+          renewal: null,
+        });
+      } catch (error) {
+        lastError = error;
+      }
     }
+
+    throw toSafeVerificationError(lastError);
   }
 
   public async verifyNotification(signedPayload: string): Promise<VerifiedStorePurchase | null> {
@@ -126,10 +130,11 @@ export class AppStoreServerClient implements AppleStorePurchaseVerifierPort {
     return environments;
   }
 
-  private assertEnvironmentEnabled(environment: StorePurchaseEnvironment): void {
-    if ((environment === 'sandbox' && !this.config.allowSandbox) || (environment === 'production' && !this.config.allowProduction)) {
-      throw new ValidationError('Store purchase could not be verified');
-    }
+  private orderedEnabledEnvironments(preferred: StorePurchaseEnvironment): StorePurchaseEnvironment[] {
+    const enabled = this.enabledEnvironments();
+    return enabled.includes(preferred)
+      ? [preferred, ...enabled.filter((environment) => environment !== preferred)]
+      : enabled;
   }
 }
 
