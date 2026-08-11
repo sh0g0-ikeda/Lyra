@@ -25,7 +25,7 @@
       "ja": {
         "title": "Lyra Mobile",
         "subtitle": "物語から漫画制作までを一つに",
-        "description": "Lyra Mobile は、物語、登場人物、章・話・シーン、ページ構成、コマ、セリフを一つの流れで整理し、AI を使った漫画制作を支援する編集アプリです。Web 版 Lyra と同じワークスペースを利用し、個人作品と法人作品を明確に分けて管理できます。生成前の入力確認、参照画像の選択、ジョブ進捗、ページ書き出しまで、スマートフォンから制作工程を進められます。AI の提案は確定前に確認・編集でき、意図しない変更や削除には確認画面を表示します。",
+        "description": "Lyra Mobile は、物語、登場人物、章・話・シーン、ページ構成、コマ、セリフを一つの流れで整理し、AI を使った漫画制作を支援する編集アプリです。Web 版 Lyra と同じワークスペースを利用し、個人作品と法人作品を明確に分けて管理できます。生成前の入力確認、参照画像の選択、ジョブ進捗、ページ書き出しまで、スマートフォンから制作工程を進められます。AI の提案は確定前に確認・編集でき、意図しない変更や削除には確認画面を表示します。\n\n利用規約（Apple標準EULA）:\nhttps://www.apple.com/legal/internet-services/itunes/dev/stdeula/",
         "keywords": [
           "漫画",
           "マンガ",
@@ -44,7 +44,7 @@
       "en-US": {
         "title": "Lyra Mobile",
         "subtitle": "From story planning to manga",
-        "description": "Lyra Mobile is a focused manga creation editor for organizing stories, characters, chapters, episodes, scenes, pages, panels, and dialogue in one workflow. It connects to the same workspace as Lyra on the web and keeps personal and organization work clearly separated. Review inputs before generation, choose character references, follow job progress, refine page layouts, and export finished pages from your phone. AI suggestions remain editable and destructive changes require explicit confirmation.",
+        "description": "Lyra Mobile is a focused manga creation editor for organizing stories, characters, chapters, episodes, scenes, pages, panels, and dialogue in one workflow. It connects to the same workspace as Lyra on the web and keeps personal and organization work clearly separated. Review inputs before generation, choose character references, follow job progress, refine page layouts, and export finished pages from your phone. AI suggestions remain editable and destructive changes require explicit confirmation.\n\nTerms of Use (Apple Standard EULA):\nhttps://www.apple.com/legal/internet-services/itunes/dev/stdeula/",
         "keywords": [
           "manga",
           "comics",

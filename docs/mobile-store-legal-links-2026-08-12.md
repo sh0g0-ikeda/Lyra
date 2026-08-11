@@ -2,9 +2,9 @@
 
 ## Purpose and scope
 
-Add functional, localized Terms of Use and Privacy Policy links to the mobile in-app purchase panel so users and App Review can open the applicable legal documents before purchasing or subscribing.
+Add functional, localized Terms of Use and Privacy Policy links to the mobile in-app purchase panel so users and App Review can open the applicable legal documents before purchasing or subscribing. Also include the Apple Standard EULA URL in both App Store description localizations so App Store Connect metadata satisfies the subscription review requirement.
 
-This change is limited to the Mobile purchase UI and its tests. It does not change products, pricing, StoreKit or Google Play purchase flows, server verification, entitlements, credits, persistence, or App Store metadata.
+This change is limited to the Mobile purchase UI, App Store description metadata, and their tests. It does not change products, pricing, StoreKit or Google Play purchase flows, server verification, entitlements, credits, or persistence.
 
 ## Spec basis
 
@@ -14,11 +14,12 @@ This change is limited to the Mobile purchase UI and its tests. It does not chan
 
 ## Interface and affected layers
 
-- Layer: `apps/mobile` only.
+- Layer: `apps/mobile` and its release metadata only.
 - Input: the saved UI language (`ja` or `en`) and a user tap.
 - Output: the operating system opens a fixed HTTPS URL in the external browser.
 - Terms destination: Apple Standard EULA on iOS; Lyra Terms on Android and other platforms.
 - Privacy destination: Lyra Privacy Policy.
+- App Store metadata: Japanese and English descriptions include the exact Apple Standard EULA HTTPS URL.
 - Failure: opening failure remains local to the panel and is shown with a stable localized message.
 - Persistence, API, database, external billing provider calls, and jobs: unchanged.
 
@@ -36,6 +37,7 @@ This change is limited to the Mobile purchase UI and its tests. It does not chan
 2. Add a failing component test that expects a localized safe message when the operating system cannot open a link.
 3. Implement the minimum Mobile UI and translation changes.
 4. Run the targeted component test, Mobile typecheck, lint, mojibake check, and iOS/Android export checks.
+5. Add a metadata contract test that prevents either App Store localization from omitting the Apple Standard EULA URL.
 
 ## Terra delegation
 

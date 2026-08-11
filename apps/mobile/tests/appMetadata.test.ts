@@ -41,6 +41,8 @@ interface ExpoAppConfig {
 }
 
 const mobileRoot = resolve(__dirname, '..');
+const appleStandardEulaUrl =
+  'https://www.apple.com/legal/internet-services/itunes/dev/stdeula/';
 const config = JSON.parse(
   readFileSync(resolve(mobileRoot, 'app.json'), 'utf8'),
 ) as ExpoAppConfig;
@@ -205,6 +207,9 @@ describe('production app metadata', () => {
         supportUrl: 'https://app.lyra-editor.com/support.html',
       });
       expect(storeConfig.apple?.info?.[language]?.description?.length).toBeGreaterThan(100);
+      expect(storeConfig.apple?.info?.[language]?.description).toContain(
+        appleStandardEulaUrl,
+      );
       expect(storeConfig.apple?.info?.[language]?.keywords?.length).toBeGreaterThan(2);
     }
     expect(easConfig.submit?.production?.ios).toMatchObject({
