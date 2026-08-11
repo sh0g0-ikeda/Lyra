@@ -21,6 +21,20 @@ describe('GooglePlayDeveloperClient', () => {
     });
   });
 
+  it('deferredダウングレードの現在商品・次回商品・旧tokenを署名元APIから分離する', async () => {
+    const api = new FakeGooglePlayApi({ deferredDowngrade: true });
+    const client = new GooglePlayDeveloperClient(api);
+
+    const purchase = await client.verifyPurchase({ purchaseToken: 'new-purchase-token' });
+
+    expect(purchase).toMatchObject({
+      productId: 'jp.lyra.premium.monthly',
+      renewalProductId: 'jp.lyra.standard.monthly',
+      linkedExternalPurchaseId: 'old-purchase-token',
+      expiresAt: new Date('2026-08-25T00:00:00.000Z'),
+    });
+  });
+
   it.each([400, 404])(
     'subscription lookup が status %i で商品種別不一致の場合に one-time product API へ進む',
     async (subscriptionStatus) => {
@@ -89,6 +103,7 @@ class FakeGooglePlayApi implements GooglePlayDeveloperApiPort {
 
   public constructor(private readonly options: {
     oneTimePurchaseState?: string;
+    deferredDowngrade?: boolean;
     subscriptionNotFound?: boolean;
     subscriptionStatus?: number;
   } = {}) {}
@@ -99,6 +114,30 @@ class FakeGooglePlayApi implements GooglePlayDeveloperApiPort {
       ?? (this.options.subscriptionNotFound === true ? 404 : null);
     if (subscriptionStatus !== null) {
       throw { response: { status: subscriptionStatus } };
+    }
+
+    if (this.options.deferredDowngrade === true) {
+      return {
+        subscriptionState: 'SUBSCRIPTION_STATE_ACTIVE',
+        linkedPurchaseToken: 'old-purchase-token',
+        lineItems: [
+          {
+            productId: 'jp.lyra.premium.monthly',
+            latestSuccessfulOrderId: 'GPA.1111-2222',
+            expiryTime: '2026-08-25T00:00:00.000Z',
+            autoRenewingPlan: { autoRenewEnabled: false },
+            deferredItemReplacement: { productId: 'jp.lyra.standard.monthly' },
+          },
+          {
+            productId: 'jp.lyra.standard.monthly',
+            expiryTime: '2026-09-25T00:00:00.000Z',
+            autoRenewingPlan: { autoRenewEnabled: true },
+          },
+        ],
+        externalAccountIdentifiers: {
+          obfuscatedExternalAccountId: 'server-obfuscated-account',
+        },
+      };
     }
 
     return {

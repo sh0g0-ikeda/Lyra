@@ -145,6 +145,8 @@ function toResponse(result: MobileStorePurchaseResult): {
   state: MobileStorePurchaseResult['state'];
   product_kind: MobileStorePurchaseResult['productKind'];
   plan_code: MobileStorePurchaseResult['planCode'];
+  scheduled_plan_code: MobileStorePurchaseResult['scheduledPlanCode'];
+  scheduled_plan_effective_at: string | null;
   credit_package_code: MobileStorePurchaseResult['creditPackageCode'];
   credits_changed: number;
   is_duplicate: boolean;
@@ -154,6 +156,8 @@ function toResponse(result: MobileStorePurchaseResult): {
     state: result.state,
     product_kind: result.productKind,
     plan_code: result.planCode,
+    scheduled_plan_code: result.scheduledPlanCode,
+    scheduled_plan_effective_at: result.scheduledPlanEffectiveAt?.toISOString() ?? null,
     credit_package_code: result.creditPackageCode,
     credits_changed: result.creditsChanged,
     is_duplicate: result.isDuplicate,

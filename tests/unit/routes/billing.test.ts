@@ -214,6 +214,9 @@ describe('billing routes', () => {
       plan_code: 'free',
       current_period_end: null,
       cancel_at_period_end: false,
+      subscription_store: null,
+      scheduled_plan_code: null,
+      scheduled_plan_effective_at: null,
       subscription_plans: [
         {
           plan_code: 'standard',
@@ -248,6 +251,9 @@ describe('billing routes', () => {
       status: 'active',
       currentPeriodEnd: new Date('2026-08-01T00:00:00.000Z'),
       cancelAtPeriodEnd: true,
+      store: 'apple',
+      scheduledPlanCode: 'premium',
+      scheduledPlanEffectiveAt: new Date('2026-08-01T00:00:00.000Z'),
     };
     const app = createTestApp(billingService, new FakeStripeWebhookService());
     const token = await createToken();
@@ -262,6 +268,9 @@ describe('billing routes', () => {
       plan_code: 'free',
       current_period_end: '2026-08-01T00:00:00.000Z',
       cancel_at_period_end: true,
+      subscription_store: 'apple',
+      scheduled_plan_code: 'premium',
+      scheduled_plan_effective_at: '2026-08-01T00:00:00.000Z',
     });
     expect(JSON.stringify(body)).not.toContain('sub_');
     expect(JSON.stringify(body)).not.toContain('cus_');

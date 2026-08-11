@@ -78,6 +78,9 @@ describe('PostgresStorePurchaseRepository', () => {
         transactionKey: 'keyed-premium-transaction',
         expiresAt: new Date('2026-08-26T00:00:00.000Z'),
         autoRenewEnabled: true,
+        scheduledProductId: 'jp.lyra.standard.monthly',
+        scheduledPlanCode: 'standard',
+        scheduledEffectiveAt: new Date('2026-08-26T00:00:00.000Z'),
         lastObservedAt: new Date('2026-07-26T00:00:00.000Z'),
       },
       client,
@@ -85,6 +88,7 @@ describe('PostgresStorePurchaseRepository', () => {
 
     expect(client.queries[0]).toContain('product_id = $7');
     expect(client.queries[0]).toContain('plan_code = $9');
+    expect(client.queries[0]).toContain('scheduled_plan_code = $12');
     expect(client.valuesList[0]).toEqual([
       'purchase-1',
       'active',
@@ -96,6 +100,9 @@ describe('PostgresStorePurchaseRepository', () => {
       'subscription',
       'premium',
       null,
+      'jp.lyra.standard.monthly',
+      'standard',
+      new Date('2026-08-26T00:00:00.000Z'),
     ]);
   });
 
@@ -136,6 +143,9 @@ class QueryCapturingClient implements DatabaseClient {
           transaction_key: 'keyed-transaction-id',
           expires_at: null,
           auto_renew_enabled: null,
+          scheduled_product_id: null,
+          scheduled_plan_code: null,
+          scheduled_effective_at: null,
           granted_credits: 10,
           reversed_credits: 0,
           last_observed_at: new Date('2026-07-25T00:00:00.000Z'),
@@ -158,6 +168,9 @@ class QueryCapturingClient implements DatabaseClient {
           transaction_key: values?.[2] ?? 'keyed-transaction-id',
           expires_at: values?.[3] ?? null,
           auto_renew_enabled: values?.[4] ?? null,
+          scheduled_product_id: values?.[10] ?? null,
+          scheduled_plan_code: values?.[11] ?? null,
+          scheduled_effective_at: values?.[12] ?? null,
           granted_credits: 10,
           reversed_credits: 0,
           last_observed_at: values?.[5] ?? new Date('2026-07-25T00:00:00.000Z'),

@@ -64,6 +64,7 @@ export class GooglePlayDeveloperClient implements GooglePlayPurchaseVerifierPort
 const subscriptionPurchaseSchema = z.object({
   subscriptionState: z.string().min(1),
   latestOrderId: z.string().min(1).optional(),
+  linkedPurchaseToken: z.string().min(1).optional(),
   lineItems: z
     .array(
       z.object({
@@ -75,9 +76,11 @@ const subscriptionPurchaseSchema = z.object({
             autoRenewEnabled: z.boolean().optional(),
           })
           .optional(),
+        deferredItemReplacement: z.object({ productId: z.string().min(1) }).optional(),
       }),
     )
-    .length(1),
+    .min(1)
+    .max(10),
   externalAccountIdentifiers: z
     .object({
       obfuscatedExternalAccountId: z.string().min(1).optional(),
@@ -99,7 +102,7 @@ function parseSubscriptionPurchase(value: unknown, purchaseToken: string): Verif
   if (!parsed.success) {
     throw new ValidationError('Store purchase could not be verified');
   }
-  const item = parsed.data.lineItems[0];
+  const item = selectCurrentSubscriptionItem(parsed.data.lineItems);
   const state = googleSubscriptionState(parsed.data.subscriptionState);
   return {
     store: 'google',
@@ -112,6 +115,8 @@ function parseSubscriptionPurchase(value: unknown, purchaseToken: string): Verif
     observedAt: new Date(),
     expiresAt: parseGoogleTimestamp(item.expiryTime),
     autoRenewEnabled: item.autoRenewingPlan?.autoRenewEnabled ?? null,
+    renewalProductId: item.deferredItemReplacement?.productId ?? null,
+    linkedExternalPurchaseId: parsed.data.linkedPurchaseToken ?? null,
     accountBinding: parsed.data.externalAccountIdentifiers?.obfuscatedExternalAccountId ?? null,
     isTestPurchase: parsed.data.testPurchase !== undefined,
     providerEventType: 'google.play.subscription',
@@ -134,10 +139,25 @@ function parseOneTimePurchase(value: unknown, purchaseToken: string): VerifiedSt
     observedAt: new Date(),
     expiresAt: null,
     autoRenewEnabled: null,
+    renewalProductId: null,
+    linkedExternalPurchaseId: null,
     accountBinding: parsed.data.obfuscatedExternalAccountId ?? null,
     isTestPurchase: parsed.data.testPurchaseContext !== undefined,
     providerEventType: 'google.play.one_time',
   };
+}
+
+function selectCurrentSubscriptionItem(
+  items: Array<z.infer<typeof subscriptionPurchaseSchema>['lineItems'][number]>,
+): z.infer<typeof subscriptionPurchaseSchema>['lineItems'][number] {
+  const purchasedItems = items.filter((item) => item.latestSuccessfulOrderId !== undefined);
+  if (purchasedItems.length === 1) {
+    return purchasedItems[0];
+  }
+  if (items.length === 1) {
+    return items[0];
+  }
+  throw new ValidationError('Store purchase could not be verified');
 }
 
 function googleSubscriptionState(value: string): StorePurchaseState {

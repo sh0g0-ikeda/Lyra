@@ -52,6 +52,8 @@ export interface VerifiedStorePurchase {
   observedAt: Date;
   expiresAt: Date | null;
   autoRenewEnabled: boolean | null;
+  renewalProductId: string | null;
+  linkedExternalPurchaseId: string | null;
   accountBinding: string | null;
   isTestPurchase: boolean;
   providerEventType: string;

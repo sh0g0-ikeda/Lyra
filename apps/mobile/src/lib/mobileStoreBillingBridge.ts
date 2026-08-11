@@ -90,7 +90,11 @@ export function createMobileStoreBillingBackend(
         purchasedCredits: balance.purchased_credits
       },
       entitlement: {
-        plan: personalPlan(balance.plan_code)
+        plan: personalPlan(balance.plan_code),
+        currentPeriodEnd: balance.current_period_end,
+        scheduledPlan: nullablePersonalPlan(balance.scheduled_plan_code),
+        scheduledPlanEffectiveAt: balance.scheduled_plan_effective_at,
+        store: balance.subscription_store
       }
     };
   };
@@ -129,6 +133,13 @@ export function createMobileStoreBillingBackend(
 
 function personalPlan(plan: string): NativeStoreServerEntitlement['plan'] {
   if (plan === 'free' || plan === 'standard' || plan === 'premium') {
+    return plan;
+  }
+  throw new NativeStoreBillingError('VERIFICATION_FAILED', true);
+}
+
+function nullablePersonalPlan(plan: string | null): 'standard' | 'premium' | null {
+  if (plan === null || plan === 'standard' || plan === 'premium') {
     return plan;
   }
   throw new NativeStoreBillingError('VERIFICATION_FAILED', true);

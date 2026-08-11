@@ -12,6 +12,9 @@ const balance = {
   plan_code: 'standard' as const,
   current_period_end: '2026-08-01T00:00:00.000Z',
   cancel_at_period_end: false,
+  subscription_store: 'apple' as const,
+  scheduled_plan_code: 'premium' as const,
+  scheduled_plan_effective_at: '2026-08-01T00:00:00.000Z',
   subscription_plans: []
 };
 
@@ -59,7 +62,13 @@ describe('mobile store billing backend bridge', () => {
       backend.verifyGooglePurchase({ purchaseToken: 'google-purchase-token' })
     ).resolves.toEqual({
       balance: { monthlyCredits: 50, purchasedCredits: 10 },
-      entitlement: { plan: 'standard' }
+      entitlement: {
+        plan: 'standard',
+        currentPeriodEnd: '2026-08-01T00:00:00.000Z',
+        scheduledPlan: 'premium',
+        scheduledPlanEffectiveAt: '2026-08-01T00:00:00.000Z',
+        store: 'apple'
+      }
     });
     expect(api.verifyGoogleMobilePurchase).toHaveBeenCalledWith({
       purchase_token: 'google-purchase-token'

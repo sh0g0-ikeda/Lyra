@@ -29,10 +29,12 @@ export interface AppleDecodedTransaction {
 
 export interface AppleDecodedRenewal {
   autoRenewStatus?: number;
+  autoRenewProductId?: string;
 }
 
 export interface AppleDecodedNotification {
   notificationType?: string;
+  subtype?: string;
   notificationUUID?: string;
   signedDate?: number;
   data?: {
@@ -72,6 +74,7 @@ export class AppStoreServerClient implements AppleStorePurchaseVerifierPort {
           transaction,
           environment,
           notificationType: null,
+          notificationSubtype: null,
           notificationId: null,
           renewal: null,
         });
@@ -104,6 +107,7 @@ export class AppStoreServerClient implements AppleStorePurchaseVerifierPort {
           transaction,
           environment,
           notificationType: notification.notificationType ?? null,
+          notificationSubtype: notification.subtype ?? null,
           notificationId: notification.notificationUUID ?? null,
           notificationSignedAt: notification.signedDate,
           renewal,
@@ -158,6 +162,7 @@ function toVerifiedPurchase(input: {
   transaction: AppleDecodedTransaction;
   environment: StorePurchaseEnvironment;
   notificationType: string | null;
+  notificationSubtype: string | null;
   notificationId: string | null;
   notificationSignedAt?: number;
   renewal: AppleDecodedRenewal | null;
@@ -180,9 +185,13 @@ function toVerifiedPurchase(input: {
     observedAt,
     expiresAt: nullableDateFromUnixMilliseconds(input.transaction.expiresDate),
     autoRenewEnabled: input.renewal === null ? null : input.renewal.autoRenewStatus === 1,
+    renewalProductId: nullableNonEmptyString(input.renewal?.autoRenewProductId),
+    linkedExternalPurchaseId: null,
     accountBinding: input.transaction.appAccountToken ?? null,
     isTestPurchase: input.environment === 'sandbox',
-    providerEventType: input.notificationType === null ? 'apple.transaction' : `apple.${input.notificationType}`,
+    providerEventType: input.notificationType === null
+      ? 'apple.transaction'
+      : `apple.${input.notificationType}${input.notificationSubtype === null ? '' : `.${input.notificationSubtype}`}`,
   };
 }
 
@@ -226,6 +235,13 @@ function requireNonEmptyString(value: string | undefined): string {
     throw new ValidationError('Store purchase could not be verified');
   }
   return value;
+}
+
+function nullableNonEmptyString(value: string | undefined): string | null {
+  if (value === undefined || value.trim().length === 0) {
+    return null;
+  }
+  return value.trim();
 }
 
 function dateFromUnixMilliseconds(value: number | undefined): Date {

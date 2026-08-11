@@ -7,6 +7,8 @@ const purchaseResponse = {
   state: 'active',
   product_kind: 'credit_pack',
   plan_code: null,
+  scheduled_plan_code: null,
+  scheduled_plan_effective_at: null,
   credit_package_code: 'credits_200',
   credits_changed: 200,
   is_duplicate: false

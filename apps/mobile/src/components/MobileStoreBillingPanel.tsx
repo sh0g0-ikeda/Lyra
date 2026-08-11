@@ -20,16 +20,21 @@ interface MobileStoreBillingPanelProps {
   currentPlan: NativeStoreServerEntitlement['plan'];
   language: 'ja' | 'en';
   onVerified?: (state: NativeStoreServerState) => void | Promise<void>;
+  scheduledPlan?: 'standard' | 'premium' | null;
+  scheduledPlanEffectiveAt?: string | null;
 }
 
 export function MobileStoreBillingPanel({
   adapter,
   currentPlan,
   language,
-  onVerified
+  onVerified,
+  scheduledPlan = null,
+  scheduledPlanEffectiveAt = null
 }: MobileStoreBillingPanelProps): React.JSX.Element {
   const { online } = useNetworkStatus();
   const [state, setState] = useState<NativeStoreBillingState>(() => adapter.getState());
+  const [acknowledgedVerified, setAcknowledgedVerified] = useState<NativeStoreServerState | null>(null);
 
   useEffect(() => {
     const unsubscribe = adapter.subscribe(setState);
@@ -42,8 +47,17 @@ export function MobileStoreBillingPanel({
 
   useEffect(() => {
     if (state.lastVerified !== null && onVerified !== undefined) {
-      void onVerified(state.lastVerified);
+      let active = true;
+      void Promise.resolve(onVerified(state.lastVerified)).finally(() => {
+        if (active) {
+          setAcknowledgedVerified(state.lastVerified);
+        }
+      });
+      return () => {
+        active = false;
+      };
     }
+    return undefined;
   }, [onVerified, state.lastVerified]);
 
   const isBusy = state.loading || state.restoring || state.submittingProductId !== null;
@@ -54,7 +68,24 @@ export function MobileStoreBillingPanel({
       // The adapter provides a safe, localizable error state.
     }
   };
-  const effectivePlan = state.lastVerified?.entitlement.plan ?? currentPlan;
+  const awaitingAuthoritativeRefresh = state.lastVerified !== null && state.lastVerified !== acknowledgedVerified;
+  const effectivePlan = awaitingAuthoritativeRefresh ? state.lastVerified?.entitlement.plan ?? currentPlan : currentPlan;
+  const nativeScheduledProduct = state.subscriptionStatus?.scheduledProductId === null
+    ? null
+    : state.products.find((product) => product.id === state.subscriptionStatus?.scheduledProductId);
+  const nativeScheduledPlan = nativeScheduledProduct?.kind === 'subscription' ? nativeScheduledProduct.planCode : null;
+  const serverScheduledPlan = awaitingAuthoritativeRefresh
+    ? state.lastVerified?.entitlement.scheduledPlan ?? scheduledPlan
+    : scheduledPlan;
+  const serverScheduledAt = awaitingAuthoritativeRefresh
+    ? state.lastVerified?.entitlement.scheduledPlanEffectiveAt ?? scheduledPlanEffectiveAt
+    : scheduledPlanEffectiveAt;
+  const effectiveScheduledPlan = state.subscriptionStatus?.scheduledStateKnown === true
+    ? nativeScheduledPlan
+    : serverScheduledPlan;
+  const effectiveScheduledAt = state.subscriptionStatus?.scheduledStateKnown === true
+    ? state.subscriptionStatus.scheduledEffectiveAt
+    : serverScheduledAt;
 
   return (
     <View accessibilityLabel={t(language, "generated.components.MobileStoreBillingPanel.mobile.purchases.73712c97")} style={styles.container}>
@@ -72,10 +103,22 @@ export function MobileStoreBillingPanel({
         />
       )}
       {state.error !== null ? <Notice message={errorMessage(state.error.code, language)} tone={errorTone(state.error.code)} /> : null}
+      {effectiveScheduledPlan === null ? null : (
+        <Notice
+          message={t(language, 'component.mobileStoreBilling.scheduledPlanNotice', {
+            plan: planLabel(effectiveScheduledPlan, language)
+          })}
+          tone="info"
+        />
+      )}
       {state.products.map((product) => {
         const isCurrentSubscription =
           product.kind === 'subscription' && product.planCode === effectivePlan;
-        const disabledReason = isCurrentSubscription
+        const isScheduledSubscription =
+          product.kind === 'subscription' && product.planCode === effectiveScheduledPlan;
+        const disabledReason = isScheduledSubscription
+          ? t(language, 'component.mobileStoreBilling.scheduledPlanReason')
+          : isCurrentSubscription
           ? t(language, 'component.mobileStoreBilling.currentPlanReason')
           : product.available
             ? undefined
@@ -83,6 +126,8 @@ export function MobileStoreBillingPanel({
         const productBusy = state.submittingProductId === product.id;
         const label = product.kind === 'credit_pack'
           ? t(language, "generated.components.MobileStoreBillingPanel.purchase.8ff82e16")
+          : isScheduledSubscription
+            ? scheduledPlanLabel(effectiveScheduledAt, language)
           : isCurrentSubscription
             ? t(language, 'component.mobileStoreBilling.currentPlan')
             : effectivePlan === 'free'
@@ -96,7 +141,7 @@ export function MobileStoreBillingPanel({
               {product.displayPrice === null ? null : <Text style={styles.price}>{product.displayPrice}</Text>}
             </View>
             <PrimaryButton
-              disabled={!online || !state.connected || !product.available || isBusy || isCurrentSubscription}
+              disabled={!online || !state.connected || !product.available || isBusy || isCurrentSubscription || isScheduledSubscription}
               disabledReason={!online ? offlineMessage(language) : disabledReason ?? (isBusy ? busyMessage(language) : undefined)}
               label={label}
               loading={productBusy}
@@ -118,6 +163,27 @@ export function MobileStoreBillingPanel({
       />
     </View>
   );
+}
+
+function planLabel(plan: 'standard' | 'premium', language: 'ja' | 'en'): string {
+  return t(language, plan === 'standard'
+    ? 'component.mobileStoreBilling.standardPlan'
+    : 'component.mobileStoreBilling.premiumPlan');
+}
+
+function scheduledPlanLabel(value: string | null, language: 'ja' | 'en'): string {
+  if (value === null) {
+    return t(language, 'component.mobileStoreBilling.scheduledPlan');
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return t(language, 'component.mobileStoreBilling.scheduledPlan');
+  }
+  const formatted = new Intl.DateTimeFormat(language === 'ja' ? 'ja-JP' : 'en-US', {
+    dateStyle: 'long',
+    timeZone: 'UTC'
+  }).format(date);
+  return t(language, 'component.mobileStoreBilling.scheduledPlanAt', { date: formatted });
 }
 
 function busyMessage(language: 'ja' | 'en'): string {

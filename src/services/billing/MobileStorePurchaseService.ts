@@ -33,6 +33,8 @@ export interface MobileStorePurchaseResult {
   state: StorePurchaseState;
   productKind: 'subscription' | 'credit_pack';
   planCode: ConsumerPaidPlanCode | null;
+  scheduledPlanCode: ConsumerPaidPlanCode | null;
+  scheduledPlanEffectiveAt: Date | null;
   creditPackageCode: CreditPackageCode | null;
   creditsChanged: number;
   isDuplicate: boolean;
@@ -284,6 +286,12 @@ export class MobileStorePurchaseService implements MobileStorePurchaseServicePor
     if (product === null) {
       throw new ValidationError('Store purchase could not be verified');
     }
+    const renewalProduct = verified.renewalProductId === null
+      ? null
+      : this.dependencies.productCatalog.resolve(verified.store, verified.renewalProductId);
+    if (verified.renewalProductId !== null && renewalProduct?.kind !== 'subscription') {
+      throw new ValidationError('Store purchase could not be verified');
+    }
 
     const externalPurchaseKey = createStoreIdentifierKey(
       this.dependencies.identifierSecret,
@@ -297,6 +305,13 @@ export class MobileStorePurchaseService implements MobileStorePurchaseServicePor
           `${verified.store}:transaction`,
           verified.transactionId,
         );
+    const linkedExternalPurchaseKey = verified.linkedExternalPurchaseId === null
+      ? null
+      : createStoreIdentifierKey(
+          this.dependencies.identifierSecret,
+          `${verified.store}:external-purchase`,
+          verified.linkedExternalPurchaseId,
+        );
     const eventKey = createStoreIdentifierKey(
       this.dependencies.identifierSecret,
       `${verified.store}:event`,
@@ -304,7 +319,11 @@ export class MobileStorePurchaseService implements MobileStorePurchaseServicePor
     );
 
     const result = await this.dependencies.storePurchaseRepository.transaction(async (client) => {
-      await this.dependencies.storePurchaseRepository.lockPurchaseKey(verified.store, externalPurchaseKey, client);
+      const keysToLock = [...new Set([externalPurchaseKey, linkedExternalPurchaseKey].filter((key): key is string => key !== null))]
+        .sort();
+      for (const key of keysToLock) {
+        await this.dependencies.storePurchaseRepository.lockPurchaseKey(verified.store, key, client);
+      }
       const requestedUser = requestedUserId === null
         ? null
         : await this.dependencies.storePurchaseRepository.findUserForUpdate(requestedUserId, client);
@@ -316,7 +335,14 @@ export class MobileStorePurchaseService implements MobileStorePurchaseServicePor
         externalPurchaseKey,
         client,
       );
-      if (existing === null && requestedUserId === null) {
+      const linkedPurchase = linkedExternalPurchaseKey === null || linkedExternalPurchaseKey === externalPurchaseKey
+        ? null
+        : await this.dependencies.storePurchaseRepository.findPurchaseForUpdate(
+            verified.store,
+            linkedExternalPurchaseKey,
+            client,
+          );
+      if (existing === null && linkedPurchase === null && requestedUserId === null) {
         await this.recordUnknownStoreEvent({
           store: verified.store,
           eventKey,
@@ -328,11 +354,17 @@ export class MobileStorePurchaseService implements MobileStorePurchaseServicePor
         return null;
       }
 
-      const userId = existing?.userId ?? requestedUserId;
+      const userId = existing?.userId ?? linkedPurchase?.userId ?? requestedUserId;
       if (userId === null) {
         return null;
       }
       if (existing !== null && requestedUserId !== null && existing.userId !== requestedUserId) {
+        throw new ForbiddenError('Store purchase belongs to another account');
+      }
+      if (linkedPurchase !== null && requestedUserId !== null && linkedPurchase.userId !== requestedUserId) {
+        throw new ForbiddenError('Store purchase belongs to another account');
+      }
+      if (existing !== null && linkedPurchase !== null && existing.userId !== linkedPurchase.userId) {
         throw new ForbiddenError('Store purchase belongs to another account');
       }
 
@@ -353,6 +385,9 @@ export class MobileStorePurchaseService implements MobileStorePurchaseServicePor
       if (existing !== null && !isCompatibleProduct(existing, product, verified.productId)) {
         throw new ValidationError('Store purchase could not be verified');
       }
+      const scheduled = transition.ignoredAsStale
+        ? scheduledStateFromPurchase(existing)
+        : resolveScheduledState({ existing, product, renewalProduct, verified });
       const purchase = existing === null
         ? await this.dependencies.storePurchaseRepository.createPurchase(
             {
@@ -368,6 +403,9 @@ export class MobileStorePurchaseService implements MobileStorePurchaseServicePor
               transactionKey,
               expiresAt: verified.expiresAt,
               autoRenewEnabled: verified.autoRenewEnabled,
+              scheduledProductId: scheduled.productId,
+              scheduledPlanCode: scheduled.planCode,
+              scheduledEffectiveAt: scheduled.effectiveAt,
               lastObservedAt: transition.observedAt,
             },
             client,
@@ -385,6 +423,9 @@ export class MobileStorePurchaseService implements MobileStorePurchaseServicePor
                 transactionKey,
                 expiresAt: verified.expiresAt,
                 autoRenewEnabled: verified.autoRenewEnabled,
+                scheduledProductId: scheduled.productId,
+                scheduledPlanCode: scheduled.planCode,
+                scheduledEffectiveAt: scheduled.effectiveAt,
                 lastObservedAt: transition.observedAt,
               },
               client,
@@ -418,6 +459,35 @@ export class MobileStorePurchaseService implements MobileStorePurchaseServicePor
         creditsChanged = await this.grantCredits(purchase, effectiveProduct, effectiveTransactionKey, client);
       } else if (eventRecorded && operation === 'reverse') {
         creditsChanged = await this.reverseCredits(purchase, effectiveProduct, effectiveTransactionKey, client);
+      }
+
+      if (linkedPurchase !== null && linkedPurchase.id !== purchase.id) {
+        const linkedTransition = transitionStorePurchaseState({
+          currentState: linkedPurchase.state,
+          currentObservedAt: linkedPurchase.lastObservedAt,
+          incomingState: 'expired',
+          incomingObservedAt: verified.observedAt,
+        });
+        if (!linkedTransition.ignoredAsStale) {
+          await this.dependencies.storePurchaseRepository.updatePurchase(
+            linkedPurchase.id,
+            {
+              productId: linkedPurchase.productId,
+              kind: linkedPurchase.kind,
+              planCode: linkedPurchase.planCode,
+              creditPackageCode: linkedPurchase.creditPackageCode,
+              state: linkedTransition.state,
+              transactionKey: linkedPurchase.transactionKey,
+              expiresAt: linkedPurchase.expiresAt,
+              autoRenewEnabled: false,
+              scheduledProductId: null,
+              scheduledPlanCode: null,
+              scheduledEffectiveAt: null,
+              lastObservedAt: linkedTransition.observedAt,
+            },
+            client,
+          );
+        }
       }
 
       if (purchase.kind === 'subscription' && !transition.ignoredAsStale) {
@@ -594,6 +664,9 @@ export class MobileStorePurchaseService implements MobileStorePurchaseServicePor
               transactionKey,
               expiresAt: existing.expiresAt,
               autoRenewEnabled: existing.autoRenewEnabled,
+              scheduledProductId: existing.scheduledProductId,
+              scheduledPlanCode: existing.scheduledPlanCode,
+              scheduledEffectiveAt: existing.scheduledEffectiveAt,
               lastObservedAt: transition.observedAt,
             },
             client,
@@ -708,6 +781,61 @@ function isCompatibleProduct(
   return existing.kind === 'subscription' && product.kind === 'subscription';
 }
 
+interface ScheduledSubscriptionState {
+  productId: string | null;
+  planCode: ConsumerPaidPlanCode | null;
+  effectiveAt: Date | null;
+}
+
+function resolveScheduledState(input: {
+  existing: StorePurchaseRecord | null;
+  product: StoreProductDefinition;
+  renewalProduct: StoreProductDefinition | null;
+  verified: VerifiedStorePurchase;
+}): ScheduledSubscriptionState {
+  if (input.product.kind !== 'subscription') {
+    return emptyScheduledState();
+  }
+  if (input.renewalProduct?.kind === 'subscription') {
+    if (input.renewalProduct.productId === input.product.productId) {
+      return emptyScheduledState();
+    }
+    return {
+      productId: input.renewalProduct.productId,
+      planCode: input.renewalProduct.planCode,
+      effectiveAt: input.verified.expiresAt,
+    };
+  }
+  if (input.verified.autoRenewEnabled === false) {
+    return emptyScheduledState();
+  }
+  if (
+    input.existing !== null
+    && (
+      input.existing.productId !== input.verified.productId
+      || input.existing.scheduledProductId === input.verified.productId
+    )
+  ) {
+    return emptyScheduledState();
+  }
+  return scheduledStateFromPurchase(input.existing);
+}
+
+function scheduledStateFromPurchase(purchase: StorePurchaseRecord | null): ScheduledSubscriptionState {
+  if (purchase === null) {
+    return emptyScheduledState();
+  }
+  return {
+    productId: purchase.scheduledProductId,
+    planCode: purchase.scheduledPlanCode,
+    effectiveAt: purchase.scheduledEffectiveAt,
+  };
+}
+
+function emptyScheduledState(): ScheduledSubscriptionState {
+  return { productId: null, planCode: null, effectiveAt: null };
+}
+
 function emptyBalance(userId: string): CreditBalance {
   return {
     userId,
@@ -758,6 +886,8 @@ function toResult(
     state: purchase.state,
     productKind: purchase.kind,
     planCode: purchase.planCode,
+    scheduledPlanCode: purchase.scheduledPlanCode,
+    scheduledPlanEffectiveAt: purchase.scheduledEffectiveAt,
     creditPackageCode: purchase.creditPackageCode,
     creditsChanged,
     isDuplicate,
@@ -773,6 +903,8 @@ function unavailableWebhookResult(
     state: 'pending',
     productKind: product.kind,
     planCode: product.kind === 'subscription' ? product.planCode : null,
+    scheduledPlanCode: null,
+    scheduledPlanEffectiveAt: null,
     creditPackageCode: product.kind === 'credit_pack' ? product.creditPackageCode : null,
     creditsChanged: 0,
     isDuplicate: true,

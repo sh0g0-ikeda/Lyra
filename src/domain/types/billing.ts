@@ -1,5 +1,6 @@
 import type {
   CreditPackageCode,
+  ConsumerPaidPlanCode,
   PaidPlanCode,
   SubscriptionPlanCode,
   SubscriptionStatus,
@@ -46,6 +47,9 @@ export interface PersonalSubscriptionSummary {
   status: SubscriptionStatus;
   currentPeriodEnd: Date | null;
   cancelAtPeriodEnd: boolean;
+  store: 'apple' | 'google' | null;
+  scheduledPlanCode: ConsumerPaidPlanCode | null;
+  scheduledPlanEffectiveAt: Date | null;
 }
 
 interface PaymentRecordBase {

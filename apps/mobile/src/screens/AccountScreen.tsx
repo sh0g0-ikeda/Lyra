@@ -198,21 +198,6 @@ export function AccountScreen(): React.JSX.Element {
     await refetchJobs();
   }, [refetchJobs]);
 
-  useFocusEffect(
-    useCallback(() => {
-      void refreshJobs();
-    }, [refreshJobs])
-  );
-
-  useEffect(() => {
-    const subscription = AppState.addEventListener('change', (nextState) => {
-      if (nextState === 'active') {
-        void refreshJobs();
-      }
-    });
-    return () => subscription.remove();
-  }, [refreshJobs]);
-
   const refresh = useCallback(async (): Promise<void> => {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: balanceQueryKey(sessionKey, organizationId) }),
@@ -225,6 +210,23 @@ export function AccountScreen(): React.JSX.Element {
       refreshJobs()
     ]);
   }, [organizationId, queryClient, refreshJobs, sessionKey]);
+
+  useFocusEffect(
+    useCallback(() => {
+      void refresh();
+      void mobileStoreBillingAdapter?.refreshSubscriptionStatus();
+    }, [mobileStoreBillingAdapter, refresh])
+  );
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (nextState) => {
+      if (nextState === 'active') {
+        void refresh();
+        void mobileStoreBillingAdapter?.refreshSubscriptionStatus();
+      }
+    });
+    return () => subscription.remove();
+  }, [mobileStoreBillingAdapter, refresh]);
 
   const invalidateJobResources = useCallback(async (job: GenerationJobRecord): Promise<void> => {
     if (job.job_type === 'entity_generate') {
@@ -610,6 +612,8 @@ export function AccountScreen(): React.JSX.Element {
             currentPlan={personalStorePlan}
             language={language}
             onVerified={refresh}
+            scheduledPlan={balanceQuery.data?.scheduled_plan_code ?? null}
+            scheduledPlanEffectiveAt={balanceQuery.data?.scheduled_plan_effective_at ?? null}
           />
         )}
         </Section>

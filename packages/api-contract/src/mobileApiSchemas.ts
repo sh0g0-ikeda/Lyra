@@ -672,6 +672,9 @@ export const billingBalanceSchema = z.object({
   plan_code: z.enum(['free', 'standard', 'premium', 'enterprise_a', 'enterprise_b', 'enterprise_c']),
   current_period_end: nullableString,
   cancel_at_period_end: z.boolean(),
+  subscription_store: z.enum(['apple', 'google']).nullable(),
+  scheduled_plan_code: z.enum(['standard', 'premium']).nullable(),
+  scheduled_plan_effective_at: nullableString,
   subscription_plans: z.array(subscriptionPlanSchema)
 });
 
@@ -729,6 +732,8 @@ export const mobileStorePurchaseResultSchema = z.object({
   state: z.enum(['pending', 'active', 'cancelled', 'expired', 'refunded', 'revoked', 'failed']),
   product_kind: z.enum(['subscription', 'credit_pack']),
   plan_code: z.enum(['standard', 'premium']).nullable(),
+  scheduled_plan_code: z.enum(['standard', 'premium']).nullable(),
+  scheduled_plan_effective_at: nullableString,
   credit_package_code: z.enum(['credits_200', 'credits_1000', 'credits_3000']).nullable(),
   credits_changed: z.number().int(),
   is_duplicate: z.boolean()

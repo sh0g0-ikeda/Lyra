@@ -181,6 +181,9 @@ describe('BillingService', () => {
       status: 'trialing',
       currentPeriodEnd: new Date('2026-08-01T00:00:00.000Z'),
       cancelAtPeriodEnd: false,
+      store: null,
+      scheduledPlanCode: null,
+      scheduledPlanEffectiveAt: null,
     };
     const stripeClient = new FakeStripeBillingClient();
     const service = buildService(repository, stripeClient);

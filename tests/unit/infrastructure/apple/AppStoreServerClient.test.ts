@@ -98,6 +98,34 @@ describe('AppStoreServerClient', () => {
       providerEventType: 'apple.REVOKE',
     });
   });
+
+  it('PremiumからStandardへの更新予約を署名済みrenewal情報から保持する', async () => {
+    const factory = new FakeAppleVerifierFactory({
+      notificationType: 'DID_CHANGE_RENEWAL_PREF',
+      notificationSubtype: 'DOWNGRADE',
+      transactionProductId: 'jp.lyra.premium.monthly',
+      autoRenewProductId: 'jp.lyra.standard.monthly',
+    });
+    const client = new AppStoreServerClient(
+      {
+        bundleId: 'jp.lyra.app',
+        appAppleId: 123456789,
+        rootCertificates: [Buffer.from('root')],
+        allowSandbox: true,
+        allowProduction: true,
+      },
+      factory,
+    );
+
+    const purchase = await client.verifyNotification('signed.notification.jws');
+
+    expect(purchase).toMatchObject({
+      productId: 'jp.lyra.premium.monthly',
+      renewalProductId: 'jp.lyra.standard.monthly',
+      providerEventType: 'apple.DID_CHANGE_RENEWAL_PREF.DOWNGRADE',
+      state: 'active',
+    });
+  });
 });
 
 class FakeAppleVerifierFactory implements AppleSignedDataVerifierFactory {
@@ -106,7 +134,10 @@ class FakeAppleVerifierFactory implements AppleSignedDataVerifierFactory {
   public constructor(
     private readonly options: {
       notificationType?: string;
+      notificationSubtype?: string;
       revocationType?: string;
+      transactionProductId?: string;
+      autoRenewProductId?: string;
       transactionFailureEnvironments?: Array<'sandbox' | 'production'>;
     } = {},
   ) {}
@@ -122,6 +153,7 @@ class FakeAppleVerifierFactory implements AppleSignedDataVerifierFactory {
       },
       verifyAndDecodeNotification: async (_signedPayload: string) => ({
         notificationType: this.options.notificationType ?? 'DID_RENEW',
+        subtype: this.options.notificationSubtype,
         notificationUUID: 'notification-1',
         signedDate: Date.parse('2026-07-25T00:00:00.000Z'),
         data: {
@@ -130,7 +162,10 @@ class FakeAppleVerifierFactory implements AppleSignedDataVerifierFactory {
           signedRenewalInfo: 'inner.renewal.jws',
         },
       }),
-      verifyAndDecodeRenewalInfo: async (_signedRenewal: string) => ({ autoRenewStatus: 1 }),
+      verifyAndDecodeRenewalInfo: async (_signedRenewal: string) => ({
+        autoRenewStatus: 1,
+        autoRenewProductId: this.options.autoRenewProductId,
+      }),
     };
   }
 
@@ -138,7 +173,7 @@ class FakeAppleVerifierFactory implements AppleSignedDataVerifierFactory {
     return {
       originalTransactionId: 'original-1',
       transactionId: 'transaction-1',
-      productId: 'jp.lyra.credits.200',
+      productId: this.options.transactionProductId ?? 'jp.lyra.credits.200',
       appAccountToken: '11111111-1111-4111-8111-111111111111',
       signedDate: Date.parse('2026-07-25T00:00:00.000Z'),
       revocationType: this.options.revocationType,

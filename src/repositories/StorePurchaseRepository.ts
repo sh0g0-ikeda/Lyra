@@ -25,6 +25,9 @@ export interface StorePurchaseRecord {
   transactionKey: string | null;
   expiresAt: Date | null;
   autoRenewEnabled: boolean | null;
+  scheduledProductId: string | null;
+  scheduledPlanCode: ConsumerPaidPlanCode | null;
+  scheduledEffectiveAt: Date | null;
   grantedCredits: number;
   reversedCredits: number;
   lastObservedAt: Date;
@@ -48,6 +51,9 @@ export interface CreateStorePurchaseInput {
   transactionKey: string | null;
   expiresAt: Date | null;
   autoRenewEnabled: boolean | null;
+  scheduledProductId: string | null;
+  scheduledPlanCode: ConsumerPaidPlanCode | null;
+  scheduledEffectiveAt: Date | null;
   lastObservedAt: Date;
 }
 
@@ -60,6 +66,9 @@ export interface UpdateStorePurchaseInput {
   transactionKey: string | null;
   expiresAt: Date | null;
   autoRenewEnabled: boolean | null;
+  scheduledProductId: string | null;
+  scheduledPlanCode: ConsumerPaidPlanCode | null;
+  scheduledEffectiveAt: Date | null;
   lastObservedAt: Date;
 }
 
@@ -111,6 +120,9 @@ interface StorePurchaseRow extends QueryResultRow {
   transaction_key: string | null;
   expires_at: Date | null;
   auto_renew_enabled: boolean | null;
+  scheduled_product_id: string | null;
+  scheduled_plan_code: ConsumerPaidPlanCode | null;
+  scheduled_effective_at: Date | null;
   granted_credits: number;
   reversed_credits: number;
   last_observed_at: Date;
@@ -183,9 +195,12 @@ export class PostgresStorePurchaseRepository implements StorePurchaseRepository 
         transaction_key,
         expires_at,
         auto_renew_enabled,
+        scheduled_product_id,
+        scheduled_plan_code,
+        scheduled_effective_at,
         last_observed_at
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
       RETURNING ${storePurchaseFields}
       `,
       [
@@ -201,6 +216,9 @@ export class PostgresStorePurchaseRepository implements StorePurchaseRepository 
         input.transactionKey,
         input.expiresAt,
         input.autoRenewEnabled,
+        input.scheduledProductId,
+        input.scheduledPlanCode,
+        input.scheduledEffectiveAt,
         input.lastObservedAt,
       ],
     );
@@ -225,6 +243,9 @@ export class PostgresStorePurchaseRepository implements StorePurchaseRepository 
           kind = $8,
           plan_code = $9,
           credit_package_code = $10,
+          scheduled_product_id = $11,
+          scheduled_plan_code = $12,
+          scheduled_effective_at = $13,
           updated_at = NOW()
       WHERE id = $1
       RETURNING ${storePurchaseFields}
@@ -240,6 +261,9 @@ export class PostgresStorePurchaseRepository implements StorePurchaseRepository 
         input.kind,
         input.planCode,
         input.creditPackageCode,
+        input.scheduledProductId,
+        input.scheduledPlanCode,
+        input.scheduledEffectiveAt,
       ],
     );
 
@@ -392,6 +416,9 @@ const storePurchaseFields = `
   transaction_key,
   expires_at,
   auto_renew_enabled,
+  scheduled_product_id,
+  scheduled_plan_code,
+  scheduled_effective_at,
   granted_credits,
   reversed_credits,
   last_observed_at
@@ -425,6 +452,9 @@ function mapStorePurchaseRow(row: StorePurchaseRow): StorePurchaseRecord {
     transactionKey: row.transaction_key,
     expiresAt: row.expires_at,
     autoRenewEnabled: row.auto_renew_enabled,
+    scheduledProductId: row.scheduled_product_id,
+    scheduledPlanCode: row.scheduled_plan_code,
+    scheduledEffectiveAt: row.scheduled_effective_at,
     grantedCredits: row.granted_credits,
     reversedCredits: row.reversed_credits,
     lastObservedAt: row.last_observed_at,

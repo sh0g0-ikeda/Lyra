@@ -395,6 +395,9 @@ export interface BillingBalanceRecord {
   plan_code: 'free' | 'standard' | 'premium' | 'enterprise_a' | 'enterprise_b' | 'enterprise_c';
   current_period_end: string | null;
   cancel_at_period_end: boolean;
+  subscription_store: 'apple' | 'google' | null;
+  scheduled_plan_code: 'standard' | 'premium' | null;
+  scheduled_plan_effective_at: string | null;
   subscription_plans: {
     plan_code: 'standard' | 'premium' | 'enterprise_a' | 'enterprise_b' | 'enterprise_c';
     display_name_ja: string;

@@ -17,9 +17,11 @@ const adapter = {
       { id: 'lyra.credits.200', kind: 'credit_pack', title: '200 credits', displayPrice: '$2.99', available: true }
     ],
     restoring: false,
+    subscriptionStatus: null,
     submittingProductId: null
   }),
   purchase: vi.fn().mockResolvedValue(undefined),
+  refreshSubscriptionStatus: vi.fn().mockResolvedValue(undefined),
   restore: vi.fn().mockResolvedValue([]),
   subscribe: vi.fn().mockReturnValue(() => undefined)
 };
@@ -163,7 +165,13 @@ describe('MobileStoreBillingPanel', () => {
       ...adapter.getState(),
       lastVerified: {
         balance: { monthlyCredits: 100, purchasedCredits: 200 },
-        entitlement: { plan: 'standard' as const }
+        entitlement: {
+          plan: 'standard' as const,
+          currentPeriodEnd: null,
+          scheduledPlan: null,
+          scheduledPlanEffectiveAt: null,
+          store: null
+        }
       }
     };
     const verifiedAdapter = {
@@ -245,7 +253,13 @@ describe('MobileStoreBillingPanel', () => {
       ...adapter.getState(),
       lastVerified: {
         balance: { monthlyCredits: 50, purchasedCredits: 0 },
-        entitlement: { plan: 'standard' as const }
+        entitlement: {
+          plan: 'standard' as const,
+          currentPeriodEnd: null,
+          scheduledPlan: null,
+          scheduledPlanEffectiveAt: null,
+          store: null
+        }
       },
       products: [
         {
@@ -276,5 +290,112 @@ describe('MobileStoreBillingPanel', () => {
     const purchaseButton = renderer!.root.findAllByType('button')[0];
     expect(purchaseButton.children.join('')).toBe('登録済み');
     expect(purchaseButton.props.disabled).toBe(true);
+  });
+
+  it('Premium利用中のStandard予約を適用日付きで表示し重複変更を無効にする', async () => {
+    const scheduledState = {
+      ...adapter.getState(),
+      subscriptionStatus: {
+        currentProductId: 'jp.lyra.premium.monthly',
+        scheduledStateKnown: true,
+        scheduledProductId: 'jp.lyra.standard.monthly',
+        scheduledEffectiveAt: '2026-08-26T00:00:00.000Z'
+      },
+      products: [
+        {
+          available: true,
+          displayPrice: '¥980',
+          id: 'jp.lyra.standard.monthly',
+          kind: 'subscription' as const,
+          planCode: 'standard' as const,
+          title: 'スタンダードプラン'
+        },
+        {
+          available: true,
+          displayPrice: '¥1,980',
+          id: 'jp.lyra.premium.monthly',
+          kind: 'subscription' as const,
+          planCode: 'premium' as const,
+          title: 'プレミアムプラン'
+        }
+      ]
+    };
+    const scheduledAdapter = {
+      ...adapter,
+      getState: vi.fn().mockReturnValue(scheduledState),
+      subscribe: vi.fn().mockReturnValue(() => undefined)
+    };
+
+    let renderer: ReturnType<typeof create>;
+    await act(async () => {
+      renderer = create(React.createElement(MobileStoreBillingPanel, {
+        adapter: scheduledAdapter as never,
+        currentPlan: 'premium',
+        language: 'ja'
+      }));
+    });
+
+    const buttons = renderer!.root.findAllByType('button');
+    expect(buttons.map((button) => button.children.join(''))).toEqual([
+      '2026年8月26日から変更予定',
+      '登録済み',
+      '購入を復元'
+    ]);
+    expect(buttons[0].props.disabled).toBe(true);
+    expect(JSON.stringify(renderer!.toJSON())).toContain('次回更新からスタンダードプランに変更されます。');
+  });
+
+  it('StoreKitで変更予約が取り消された場合は古いserver予約表示を残さない', async () => {
+    const currentState = {
+      ...adapter.getState(),
+      subscriptionStatus: {
+        currentProductId: 'jp.lyra.premium.monthly',
+        scheduledStateKnown: true,
+        scheduledProductId: null,
+        scheduledEffectiveAt: null
+      },
+      products: [
+        {
+          available: true,
+          displayPrice: '¥980',
+          id: 'jp.lyra.standard.monthly',
+          kind: 'subscription' as const,
+          planCode: 'standard' as const,
+          title: 'スタンダードプラン'
+        },
+        {
+          available: true,
+          displayPrice: '¥1,980',
+          id: 'jp.lyra.premium.monthly',
+          kind: 'subscription' as const,
+          planCode: 'premium' as const,
+          title: 'プレミアムプラン'
+        }
+      ]
+    };
+    const currentAdapter = {
+      ...adapter,
+      getState: vi.fn().mockReturnValue(currentState),
+      subscribe: vi.fn().mockReturnValue(() => undefined)
+    };
+
+    let renderer: ReturnType<typeof create>;
+    await act(async () => {
+      renderer = create(React.createElement(MobileStoreBillingPanel, {
+        adapter: currentAdapter as never,
+        currentPlan: 'premium',
+        language: 'ja',
+        scheduledPlan: 'standard',
+        scheduledPlanEffectiveAt: '2026-08-26T00:00:00.000Z'
+      }));
+    });
+
+    const buttons = renderer!.root.findAllByType('button');
+    expect(buttons.map((button) => button.children.join(''))).toEqual([
+      'プランを変更',
+      '登録済み',
+      '購入を復元'
+    ]);
+    expect(JSON.stringify(renderer!.toJSON())).not.toContain('次回更新からスタンダードプランに変更されます。');
   });
 });

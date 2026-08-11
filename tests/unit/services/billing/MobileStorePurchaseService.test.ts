@@ -226,6 +226,128 @@ describe('MobileStorePurchaseService', () => {
     ]);
   });
 
+  it('PremiumからStandardの予約では現在権利を維持し更新取引でだけ切り替える', async () => {
+    const repository = new FakeStorePurchaseRepository([userId]);
+    const credits = new FakeCreditRepository();
+    const premium = appleSubscription({
+      productId: 'jp.lyra.premium.monthly',
+      transactionId: 'apple-premium-current',
+      observedAt: new Date('2026-07-26T00:00:00.000Z'),
+      expiresAt: new Date('2026-08-26T00:00:00.000Z'),
+    });
+    const scheduledDowngrade = appleSubscription({
+      productId: 'jp.lyra.premium.monthly',
+      transactionId: 'apple-premium-current',
+      eventId: 'apple-downgrade-notification',
+      observedAt: new Date('2026-07-27T00:00:00.000Z'),
+      expiresAt: new Date('2026-08-26T00:00:00.000Z'),
+      renewalProductId: 'jp.lyra.standard.monthly',
+      providerEventType: 'apple.DID_CHANGE_RENEWAL_PREF.DOWNGRADE',
+    });
+    const renewedStandard = appleSubscription({
+      productId: 'jp.lyra.standard.monthly',
+      transactionId: 'apple-standard-renewal',
+      observedAt: new Date('2026-08-26T00:00:00.000Z'),
+      expiresAt: new Date('2026-09-26T00:00:00.000Z'),
+      renewalProductId: 'jp.lyra.standard.monthly',
+      providerEventType: 'apple.DID_RENEW',
+    });
+    const apple = new FakeAppleVerifier(premium, scheduledDowngrade, renewedStandard);
+    const service = createService(repository, credits, apple, new FakeGoogleVerifier());
+
+    await service.verifyApplePurchase({ userId, signedTransaction: 'premium', environment: 'sandbox' });
+    const scheduled = await service.verifyApplePurchase({ userId, signedTransaction: 'downgrade', environment: 'sandbox' });
+
+    expect(scheduled).toMatchObject({ planCode: 'premium', scheduledPlanCode: 'standard', creditsChanged: 0 });
+    expect(repository.purchases[0]).toMatchObject({
+      planCode: 'premium',
+      scheduledPlanCode: 'standard',
+      scheduledProductId: 'jp.lyra.standard.monthly',
+      scheduledEffectiveAt: new Date('2026-08-26T00:00:00.000Z'),
+    });
+    expect(repository.users.get(userId)?.planCode).toBe('premium');
+    expect(credits.balance.monthlyCredits).toBe(175);
+
+    const renewed = await service.verifyApplePurchase({ userId, signedTransaction: 'renewal', environment: 'sandbox' });
+
+    expect(renewed).toMatchObject({ planCode: 'standard', scheduledPlanCode: null, creditsChanged: 50 });
+    expect(repository.purchases[0]).toMatchObject({
+      planCode: 'standard',
+      scheduledPlanCode: null,
+      scheduledProductId: null,
+      scheduledEffectiveAt: null,
+    });
+    expect(repository.users.get(userId)?.planCode).toBe('standard');
+    expect(credits.balance.monthlyCredits).toBe(50);
+  });
+
+  it('Googleの遅延ダウングレードでは旧購入を失効させ現在Premiumと次回Standardを一つの権利として扱う', async () => {
+    const repository = new FakeStorePurchaseRepository([userId]);
+    const credits = new FakeCreditRepository();
+    const accountBinding = createGooglePlayObfuscatedAccountId(identifierSecret, userId);
+    const currentPremium: VerifiedStorePurchase = {
+      store: 'google',
+      environment: 'sandbox',
+      productId: 'jp.lyra.premium.monthly',
+      externalPurchaseId: 'google-premium-token',
+      transactionId: 'GPA.PREMIUM-1',
+      eventId: null,
+      state: 'active',
+      observedAt: new Date('2026-07-26T00:00:00.000Z'),
+      expiresAt: new Date('2026-08-26T00:00:00.000Z'),
+      autoRenewEnabled: true,
+      renewalProductId: null,
+      linkedExternalPurchaseId: null,
+      accountBinding,
+      isTestPurchase: true,
+      providerEventType: 'google.play.subscription',
+    };
+    const deferredStandard: VerifiedStorePurchase = {
+      ...currentPremium,
+      externalPurchaseId: 'google-deferred-token',
+      eventId: 'google-deferred-downgrade',
+      observedAt: new Date('2026-07-27T00:00:00.000Z'),
+      autoRenewEnabled: false,
+      renewalProductId: 'jp.lyra.standard.monthly',
+      linkedExternalPurchaseId: 'google-premium-token',
+    };
+
+    const initialService = createService(
+      repository,
+      credits,
+      new FakeAppleVerifier(),
+      new FakeGoogleVerifier(currentPremium),
+    );
+    await initialService.verifyGooglePurchase({ userId, purchaseToken: 'google-premium-token' });
+
+    const replacementService = createService(
+      repository,
+      credits,
+      new FakeAppleVerifier(),
+      new FakeGoogleVerifier(deferredStandard),
+    );
+    const changed = await replacementService.verifyGooglePurchase({ userId, purchaseToken: 'google-deferred-token' });
+
+    expect(changed).toMatchObject({
+      planCode: 'premium',
+      scheduledPlanCode: 'standard',
+      creditsChanged: 0,
+      isDuplicate: true,
+    });
+    expect(repository.purchases).toHaveLength(2);
+    expect(repository.purchases[0]).toMatchObject({ state: 'expired', autoRenewEnabled: false });
+    expect(repository.purchases[1]).toMatchObject({
+      state: 'active',
+      planCode: 'premium',
+      scheduledPlanCode: 'standard',
+      scheduledProductId: 'jp.lyra.standard.monthly',
+      scheduledEffectiveAt: new Date('2026-08-26T00:00:00.000Z'),
+    });
+    expect(repository.users.get(userId)?.planCode).toBe('premium');
+    expect(credits.balance.monthlyCredits).toBe(175);
+    expect(credits.ledger).toHaveLength(1);
+  });
+
   it('同じ外部購入IDで単発クレジット商品を差し替えようとした場合は拒否する', async () => {
     const repository = new FakeStorePurchaseRepository([userId]);
     const credits = new FakeCreditRepository();
@@ -262,6 +384,8 @@ describe('MobileStorePurchaseService', () => {
       observedAt,
       expiresAt: null,
       autoRenewEnabled: null,
+      renewalProductId: null,
+      linkedExternalPurchaseId: null,
       accountBinding: createGooglePlayObfuscatedAccountId(identifierSecret, userId),
       isTestPurchase: true,
       providerEventType: 'google.play.one_time',
@@ -401,6 +525,8 @@ function createService(
       { store: 'apple', productId: 'jp.lyra.standard.monthly', kind: 'subscription', planCode: 'standard' },
       { store: 'apple', productId: 'jp.lyra.premium.monthly', kind: 'subscription', planCode: 'premium' },
       { store: 'google', productId: 'jp.lyra.credits.200', kind: 'credit_pack', creditPackageCode: 'credits_200' },
+      { store: 'google', productId: 'jp.lyra.standard.monthly', kind: 'subscription', planCode: 'standard' },
+      { store: 'google', productId: 'jp.lyra.premium.monthly', kind: 'subscription', planCode: 'premium' },
     ]),
     appleVerifier,
     googleVerifier,
@@ -426,6 +552,8 @@ function googleTestPurchase(bindingUserId: string): VerifiedStorePurchase {
     observedAt,
     expiresAt: null,
     autoRenewEnabled: null,
+    renewalProductId: null,
+    linkedExternalPurchaseId: null,
     accountBinding: createGooglePlayObfuscatedAccountId(identifierSecret, bindingUserId),
     isTestPurchase: true,
     providerEventType: 'google.play.one_time',
@@ -444,6 +572,8 @@ function applePurchase(overrides: Partial<VerifiedStorePurchase>): VerifiedStore
     observedAt,
     expiresAt: null,
     autoRenewEnabled: null,
+    renewalProductId: null,
+    linkedExternalPurchaseId: null,
     accountBinding: userId,
     isTestPurchase: true,
     providerEventType: 'apple.transaction',
@@ -556,6 +686,9 @@ class FakeStorePurchaseRepository implements StorePurchaseRepository {
     purchase.transactionKey = input.transactionKey ?? purchase.transactionKey;
     purchase.expiresAt = input.expiresAt;
     purchase.autoRenewEnabled = input.autoRenewEnabled;
+    purchase.scheduledProductId = input.scheduledProductId;
+    purchase.scheduledPlanCode = input.scheduledPlanCode;
+    purchase.scheduledEffectiveAt = input.scheduledEffectiveAt;
     purchase.lastObservedAt = input.lastObservedAt;
     return purchase;
   }

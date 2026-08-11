@@ -37,6 +37,9 @@ interface PersonalSubscriptionSummaryRow extends QueryResultRow {
   status: string;
   current_period_end: Date | null;
   cancel_at_period_end: boolean;
+  store: 'apple' | 'google' | null;
+  scheduled_plan_code: 'standard' | 'premium' | null;
+  scheduled_plan_effective_at: Date | null;
 }
 
 interface PaymentRecordRow extends QueryResultRow {
@@ -215,6 +218,9 @@ export class PostgresBillingRepository implements BillingRepository {
           status,
           current_period_end,
           cancel_at_period_end,
+          NULL::text AS store,
+          NULL::text AS scheduled_plan_code,
+          NULL::timestamptz AS scheduled_plan_effective_at,
           updated_at,
           2 AS provider_priority
         FROM subscriptions
@@ -229,6 +235,9 @@ export class PostgresBillingRepository implements BillingRepository {
           CASE WHEN state = 'active' THEN 'active' ELSE 'canceled' END AS status,
           expires_at AS current_period_end,
           state = 'cancelled' OR auto_renew_enabled = FALSE AS cancel_at_period_end,
+          store,
+          scheduled_plan_code,
+          scheduled_effective_at AS scheduled_plan_effective_at,
           updated_at,
           1 AS provider_priority
         FROM mobile_store_purchases
@@ -244,7 +253,10 @@ export class PostgresBillingRepository implements BillingRepository {
         plan_code,
         status,
         current_period_end,
-        cancel_at_period_end
+        cancel_at_period_end,
+        store,
+        scheduled_plan_code,
+        scheduled_plan_effective_at
       FROM personal_subscription_candidates
       ORDER BY
         provider_priority DESC,
@@ -270,6 +282,9 @@ export class PostgresBillingRepository implements BillingRepository {
       status: row.status as PersonalSubscriptionSummary['status'],
       currentPeriodEnd: row.current_period_end,
       cancelAtPeriodEnd: row.cancel_at_period_end,
+      store: row.store,
+      scheduledPlanCode: row.scheduled_plan_code,
+      scheduledPlanEffectiveAt: row.scheduled_plan_effective_at,
     };
   }
 

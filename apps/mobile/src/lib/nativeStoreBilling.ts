@@ -57,6 +57,11 @@ export interface NativeStorePurchaseRequest {
       obfuscatedAccountId: string;
       skus: string[];
       subscriptionOffers?: { offerToken: string; sku: string }[];
+      purchaseToken?: string;
+      subscriptionProductReplacementParams?: {
+        oldProductId: string;
+        replacementMode: 'charge-prorated-price' | 'deferred';
+      };
     };
   };
   type: 'in-app' | 'subs';
@@ -75,10 +80,33 @@ export interface NativeStoreSubscription {
   remove(): void;
 }
 
+export interface NativeStoreActiveSubscription {
+  expirationDateIOS?: number | null;
+  isActive: boolean;
+  productId: string;
+  purchaseTokenAndroid?: string | null;
+  renewalInfoIOS?: {
+    autoRenewPreference?: string | null;
+    pendingUpgradeProductId?: string | null;
+    renewalDate?: number | null;
+    willAutoRenew: boolean;
+  } | null;
+  transactionDate: number;
+  transactionId: string;
+}
+
+export interface NativeStoreSubscriptionStatus {
+  currentProductId: string;
+  scheduledStateKnown: boolean;
+  scheduledProductId: string | null;
+  scheduledEffectiveAt: string | null;
+}
+
 export interface NativeStoreBillingSdk {
   endConnection(): Promise<void>;
   fetchProducts(input: { skus: string[]; type: 'all' | 'in-app' | 'subs' }): Promise<readonly NativeStoreProduct[] | null>;
   finishTransaction(input: { isConsumable: boolean; purchase: NativeStorePurchase }): Promise<void>;
+  getActiveSubscriptions(productIds?: string[]): Promise<readonly NativeStoreActiveSubscription[]>;
   getAvailablePurchases(): Promise<readonly NativeStorePurchase[]>;
   getStorefront(): Promise<string>;
   initConnection(): Promise<boolean>;
@@ -101,6 +129,10 @@ export interface NativeStoreServerBalance {
 
 export interface NativeStoreServerEntitlement {
   plan: 'free' | 'standard' | 'premium';
+  currentPeriodEnd: string | null;
+  scheduledPlan: 'standard' | 'premium' | null;
+  scheduledPlanEffectiveAt: string | null;
+  store: NativeStoreName | null;
 }
 
 export interface NativeStoreServerState {
@@ -154,6 +186,7 @@ export interface NativeStoreBillingState {
   loading: boolean;
   products: NativeStoreCatalogProduct[];
   restoring: boolean;
+  subscriptionStatus: NativeStoreSubscriptionStatus | null;
   submittingProductId: string | null;
 }
 
@@ -162,6 +195,7 @@ export interface NativeStoreBillingAdapter {
   disconnect(): Promise<void>;
   getState(): NativeStoreBillingState;
   purchase(productId: string): Promise<void>;
+  refreshSubscriptionStatus(): Promise<void>;
   restore(): Promise<NativeStoreServerState[]>;
   subscribe(listener: (state: NativeStoreBillingState) => void): () => void;
 }
@@ -185,6 +219,7 @@ class NativeStoreBillingAdapterImplementation implements NativeStoreBillingAdapt
   private purchaseSubscription: NativeStoreSubscription | null = null;
   private errorSubscription: NativeStoreSubscription | null = null;
   private connecting: Promise<void> | null = null;
+  private activeSubscriptions: readonly NativeStoreActiveSubscription[] = [];
   private restoring = false;
   private state: NativeStoreBillingState = {
     connected: false,
@@ -194,6 +229,7 @@ class NativeStoreBillingAdapterImplementation implements NativeStoreBillingAdapt
     loading: false,
     products: [],
     restoring: false,
+    subscriptionStatus: null,
     submittingProductId: null
   };
 
@@ -229,6 +265,7 @@ class NativeStoreBillingAdapterImplementation implements NativeStoreBillingAdapt
     this.errorSubscription = null;
     this.processedPurchaseIds.clear();
     this.processingPurchaseIds.clear();
+    this.activeSubscriptions = [];
     this.restoring = false;
     try {
       await this.dependencies.sdk.endConnection();
@@ -239,6 +276,7 @@ class NativeStoreBillingAdapterImplementation implements NativeStoreBillingAdapt
       connected: false,
       loading: false,
       restoring: false,
+      subscriptionStatus: null,
       submittingProductId: null
     });
   }
@@ -265,12 +303,32 @@ class NativeStoreBillingAdapterImplementation implements NativeStoreBillingAdapt
       if (productDefinition.kind === 'subscription' && !binding.subscriptionPurchaseAllowed) {
         throw this.fail('ALREADY_OWNED', false);
       }
-      await this.dependencies.sdk.requestPurchase(buildPurchaseRequest(product, binding));
+      const activeSubscription = selectActiveSubscription(this.activeSubscriptions, this.dependencies.products);
+      const isPlanChange = productDefinition.kind === 'subscription'
+        && activeSubscription !== undefined
+        && activeSubscription.productId !== productDefinition.id;
+      await this.dependencies.sdk.requestPurchase(buildPurchaseRequest(
+        product,
+        binding,
+        activeSubscription,
+        this.dependencies.products,
+      ));
+      if (isPlanChange) {
+        await this.refreshSubscriptionStatusInternal();
+        this.updateState({ submittingProductId: null });
+      }
     } catch (error) {
       const normalized = error instanceof NativeStoreBillingError ? error : normalizeProviderError(error);
       this.updateState({ error: normalized, submittingProductId: null });
       throw normalized;
     }
+  }
+
+  public async refreshSubscriptionStatus(): Promise<void> {
+    if (!this.state.connected) {
+      return;
+    }
+    await this.refreshSubscriptionStatusInternal();
   }
 
   public async restore(): Promise<NativeStoreServerState[]> {
@@ -330,12 +388,14 @@ class NativeStoreBillingAdapterImplementation implements NativeStoreBillingAdapt
         throw new NativeStoreBillingError('STORE_UNAVAILABLE', true);
       }
       const loaded = await this.loadProducts();
+      const subscriptionStatus = await this.readSubscriptionStatus();
       this.updateState({
         connected: true,
         diagnostics: loaded.diagnostics,
         error: null,
         loading: false,
-        products: loaded.products
+        products: loaded.products,
+        subscriptionStatus
       });
     } catch (error) {
       this.purchaseSubscription?.remove();
@@ -353,6 +413,41 @@ class NativeStoreBillingAdapterImplementation implements NativeStoreBillingAdapt
       this.updateState({ connected: false, error: normalized, loading: false, products: [] });
       throw normalized;
     }
+  }
+
+  private async refreshSubscriptionStatusInternal(): Promise<void> {
+    const subscriptionStatus = await this.readSubscriptionStatus();
+    this.updateState({ subscriptionStatus });
+  }
+
+  private async readSubscriptionStatus(): Promise<NativeStoreSubscriptionStatus | null> {
+    const productIds = this.dependencies.products
+      .filter((product) => product.kind === 'subscription')
+      .map((product) => product.id);
+    try {
+      this.activeSubscriptions = await this.dependencies.sdk.getActiveSubscriptions(productIds);
+    } catch {
+      return this.state.subscriptionStatus;
+    }
+    const active = selectActiveSubscription(this.activeSubscriptions, this.dependencies.products);
+    if (active === undefined || !productIds.includes(active.productId)) {
+      return null;
+    }
+    const renewal = active.renewalInfoIOS;
+    const scheduledCandidate = renewal?.pendingUpgradeProductId ?? renewal?.autoRenewPreference ?? null;
+    const scheduledProductId = scheduledCandidate !== null
+      && scheduledCandidate !== active.productId
+      && productIds.includes(scheduledCandidate)
+      ? scheduledCandidate
+      : null;
+    return {
+      currentProductId: active.productId,
+      scheduledStateKnown: renewal !== undefined && renewal !== null,
+      scheduledProductId,
+      scheduledEffectiveAt: scheduledProductId === null
+        ? null
+        : toIsoTimestamp(renewal?.renewalDate ?? active.expirationDateIOS ?? null),
+    };
   }
 
   private async loadProducts(): Promise<{
@@ -512,23 +607,86 @@ class NativeStoreBillingAdapterImplementation implements NativeStoreBillingAdapt
 function buildPurchaseRequest(
   product: NativeStoreCatalogProduct,
   binding: NativeStoreAccountBinding,
+  activeSubscription: NativeStoreActiveSubscription | undefined,
+  productDefinitions: readonly NativeStoreBillingProductDefinition[],
 ): NativeStorePurchaseRequest {
   const subscriptionOffers = product.kind === 'subscription'
     && typeof product.subscriptionOfferToken === 'string'
     && product.subscriptionOfferToken.length > 0
     ? [{ offerToken: product.subscriptionOfferToken, sku: product.id }]
     : undefined;
+  const replacement = product.kind === 'subscription'
+    ? googleSubscriptionReplacement(product, activeSubscription, productDefinitions)
+    : null;
   return {
     request: {
       apple: { appAccountToken: binding.appleAppAccountToken, sku: product.id },
       google: {
         obfuscatedAccountId: binding.googleObfuscatedAccountId,
         skus: [product.id],
-        ...(subscriptionOffers === undefined ? {} : { subscriptionOffers })
+        ...(subscriptionOffers === undefined ? {} : { subscriptionOffers }),
+        ...(replacement === null ? {} : replacement)
       }
     },
     type: product.kind === 'subscription' ? 'subs' : 'in-app'
   };
+}
+
+function googleSubscriptionReplacement(
+  product: NativeStoreCatalogProduct & { kind: 'subscription' },
+  active: NativeStoreActiveSubscription | undefined,
+  definitions: readonly NativeStoreBillingProductDefinition[],
+): {
+  purchaseToken: string;
+  subscriptionProductReplacementParams: {
+    oldProductId: string;
+    replacementMode: 'charge-prorated-price' | 'deferred';
+  };
+} | null {
+  const purchaseToken = active?.purchaseTokenAndroid?.trim();
+  if (active === undefined || active.productId === product.id || purchaseToken === undefined || purchaseToken.length === 0) {
+    return null;
+  }
+  const current = definitions.find((definition) => definition.kind === 'subscription' && definition.id === active.productId);
+  if (current?.kind !== 'subscription') {
+    return null;
+  }
+  const replacementMode = planRank(product.planCode) > planRank(current.planCode)
+    ? 'charge-prorated-price'
+    : 'deferred';
+  return {
+    purchaseToken,
+    subscriptionProductReplacementParams: {
+      oldProductId: current.id,
+      replacementMode,
+    },
+  };
+}
+
+function selectActiveSubscription(
+  subscriptions: readonly NativeStoreActiveSubscription[],
+  definitions: readonly NativeStoreBillingProductDefinition[],
+): NativeStoreActiveSubscription | undefined {
+  const knownProductIds = new Set(
+    definitions.filter((definition) => definition.kind === 'subscription').map((definition) => definition.id),
+  );
+  return subscriptions
+    .filter((subscription) => subscription.isActive && knownProductIds.has(subscription.productId))
+    .reduce<NativeStoreActiveSubscription | undefined>((latest, subscription) => (
+      latest === undefined || subscription.transactionDate > latest.transactionDate ? subscription : latest
+    ), undefined);
+}
+
+function planRank(plan: 'standard' | 'premium'): number {
+  return plan === 'premium' ? 2 : 1;
+}
+
+function toIsoTimestamp(value: number | null): string | null {
+  if (value === null || !Number.isFinite(value)) {
+    return null;
+  }
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
 }
 
 function collectRestoreProofs(
@@ -632,6 +790,7 @@ export function createExpoIapSdk(): NativeStoreBillingSdk {
         purchase: purchase.nativePurchase as ExpoIap.Purchase
       });
     },
+    getActiveSubscriptions: (productIds) => ExpoIap.getActiveSubscriptions(productIds),
     getAvailablePurchases: async () => (await ExpoIap.getAvailablePurchases()).map(normalizeExpoPurchase),
     getStorefront: () => ExpoIap.getStorefront(),
     initConnection: () => ExpoIap.initConnection(),
