@@ -959,6 +959,7 @@ const googleRtdnSchema = z
         version: z.string().trim().min(1).max(32).optional(),
         notificationType: z.number().int(),
         purchaseToken: z.string().min(1),
+        subscriptionId: z.string().trim().min(1).max(512).optional(),
       })
       .strict()
       .optional(),

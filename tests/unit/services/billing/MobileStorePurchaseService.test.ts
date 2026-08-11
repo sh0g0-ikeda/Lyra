@@ -531,6 +531,65 @@ describe('MobileStorePurchaseService', () => {
     });
   });
 
+  it('Google購読通知のsubscriptionIdを含む実際のRTDN形式を受理する', async () => {
+    const repository = new FakeStorePurchaseRepository([userId]);
+    const googleSubscription: VerifiedStorePurchase = {
+      store: 'google',
+      environment: 'sandbox',
+      productId: 'jp.lyra.standard.monthly',
+      externalPurchaseId: 'google-subscription-token',
+      transactionId: 'GPA.SUBSCRIPTION-1',
+      eventId: null,
+      state: 'active',
+      observedAt,
+      expiresAt: new Date('2026-08-25T00:00:00.000Z'),
+      autoRenewEnabled: true,
+      renewalProductId: 'jp.lyra.standard.monthly',
+      linkedExternalPurchaseId: null,
+      accountBinding: createGooglePlayObfuscatedAccountId(identifierSecret, userId),
+      isTestPurchase: true,
+      providerEventType: 'google.play.subscription',
+    };
+    const service = createService(
+      repository,
+      new FakeCreditRepository(),
+      new FakeAppleVerifier(),
+      new FakeGoogleVerifier(googleSubscription),
+      {
+        googleTestPurchaseAllowedUserIds: new Set([userId]),
+        googleTestPurchasesExpireAt: new Date('2026-07-26T00:00:00.000Z'),
+      },
+    );
+    const rtdn = Buffer.from(
+      JSON.stringify({
+        version: '1.0',
+        packageName: 'jp.lyra.app',
+        eventTimeMillis: String(observedAt.getTime()),
+        subscriptionNotification: {
+          version: '1.0',
+          notificationType: 2,
+          purchaseToken: 'google-subscription-token',
+          subscriptionId: 'jp.lyra.standard.monthly',
+        },
+      }),
+      'utf8',
+    ).toString('base64');
+
+    await expect(service.handleGoogleRtdn({
+      messageId: 'google-subscription-renewed',
+      data: rtdn,
+      publishTime: observedAt,
+    })).resolves.toBeUndefined();
+
+    expect(repository.events).toHaveLength(1);
+    expect(repository.events[0]).toMatchObject({
+      store: 'google',
+      operation: 'observe',
+      providerEventType: 'google.subscription.2',
+      state: 'active',
+    });
+  });
+
   it('Google通知のpayload不正は購入データを含めず失敗理由だけを記録する', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const service = createService(
