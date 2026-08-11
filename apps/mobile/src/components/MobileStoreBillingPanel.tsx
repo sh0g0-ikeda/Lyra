@@ -80,12 +80,16 @@ export function MobileStoreBillingPanel({
   const serverScheduledAt = awaitingAuthoritativeRefresh
     ? state.lastVerified?.entitlement.scheduledPlanEffectiveAt ?? scheduledPlanEffectiveAt
     : scheduledPlanEffectiveAt;
-  const effectiveScheduledPlan = state.subscriptionStatus?.scheduledStateKnown === true
-    ? nativeScheduledPlan
-    : serverScheduledPlan;
-  const effectiveScheduledAt = state.subscriptionStatus?.scheduledStateKnown === true
-    ? state.subscriptionStatus.scheduledEffectiveAt
-    : serverScheduledAt;
+  const effectiveScheduledPlan = effectivePlan === 'free'
+    ? null
+    : state.subscriptionStatus?.scheduledStateKnown === true
+      ? nativeScheduledPlan
+      : serverScheduledPlan;
+  const effectiveScheduledAt = effectivePlan === 'free'
+    ? null
+    : state.subscriptionStatus?.scheduledStateKnown === true
+      ? state.subscriptionStatus.scheduledEffectiveAt
+      : serverScheduledAt;
 
   return (
     <View accessibilityLabel={t(language, "generated.components.MobileStoreBillingPanel.mobile.purchases.73712c97")} style={styles.container}>

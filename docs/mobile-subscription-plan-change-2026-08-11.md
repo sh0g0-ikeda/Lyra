@@ -25,6 +25,8 @@ For an Apple Premium to Standard downgrade, Premium remains current until the ex
 
 The mobile client also reads StoreKit active-subscription renewal information after connecting and after a purchase request returns. This closes the notification propagation gap for display only. It never changes credits or the server entitlement.
 
+StoreKit renewal information is advisory only while the server-authoritative current entitlement is paid. If support or sandbox reset has already returned the account to `free`, stale StoreKit transaction history must not keep a scheduled plan notice visible or disable that plan's purchase button. A real paid entitlement continues to show its verified native downgrade schedule.
+
 For Google Play, a plan change includes the active purchase token and an explicit replacement mode. Upgrades use prorated charging and downgrades are deferred. The backend continues to verify the resulting Play purchase token before changing any entitlement.
 
 ## Layers and interfaces
@@ -51,6 +53,7 @@ For Google Play, a plan change includes the active purchase token and an explici
 - Clear a fulfilled or cancelled schedule and reject unknown renewal products.
 - Persist and return scheduled fields through repository and billing API contracts.
 - Refresh StoreKit renewal state on connect and after a deferred request; show the scheduled plan immediately and avoid a stuck spinner.
+- Ignore a stale native scheduled plan when the server-authoritative current plan is `free`, while preserving the schedule for a paid current plan.
 - Supply Google Play replacement token/mode for upgrades and downgrades.
 - Run focused backend/mobile tests first, then backend build, mobile lint/typecheck, migration checks, and release gates.
 

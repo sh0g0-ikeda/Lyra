@@ -345,6 +345,59 @@ describe('MobileStoreBillingPanel', () => {
     expect(JSON.stringify(renderer!.toJSON())).toContain('次回更新からスタンダードプランに変更されます。');
   });
 
+  it('serverがFreeへ戻った後はStoreKitに残る古いStandard予約を表示しない', async () => {
+    const staleScheduledState = {
+      ...adapter.getState(),
+      subscriptionStatus: {
+        currentProductId: 'jp.lyra.premium.monthly',
+        scheduledStateKnown: true,
+        scheduledProductId: 'jp.lyra.standard.monthly',
+        scheduledEffectiveAt: '2026-08-26T00:00:00.000Z'
+      },
+      products: [
+        {
+          available: true,
+          displayPrice: '¥980',
+          id: 'jp.lyra.standard.monthly',
+          kind: 'subscription' as const,
+          planCode: 'standard' as const,
+          title: 'スタンダードプラン'
+        },
+        {
+          available: true,
+          displayPrice: '¥1,980',
+          id: 'jp.lyra.premium.monthly',
+          kind: 'subscription' as const,
+          planCode: 'premium' as const,
+          title: 'プレミアムプラン'
+        }
+      ]
+    };
+    const staleScheduledAdapter = {
+      ...adapter,
+      getState: vi.fn().mockReturnValue(staleScheduledState),
+      subscribe: vi.fn().mockReturnValue(() => undefined)
+    };
+
+    let renderer: ReturnType<typeof create>;
+    await act(async () => {
+      renderer = create(React.createElement(MobileStoreBillingPanel, {
+        adapter: staleScheduledAdapter as never,
+        currentPlan: 'free',
+        language: 'ja'
+      }));
+    });
+
+    const buttons = renderer!.root.findAllByType('button');
+    expect(buttons.map((button) => button.children.join(''))).toEqual([
+      '登録する',
+      '登録する',
+      '購入を復元'
+    ]);
+    expect(buttons[0].props.disabled).toBe(false);
+    expect(JSON.stringify(renderer!.toJSON())).not.toContain('次回更新からスタンダードプランに変更されます。');
+  });
+
   it('StoreKitで変更予約が取り消された場合は古いserver予約表示を残さない', async () => {
     const currentState = {
       ...adapter.getState(),
