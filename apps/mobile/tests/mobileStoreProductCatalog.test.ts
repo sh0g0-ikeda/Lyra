@@ -28,6 +28,7 @@ describe('mobile store product catalog', () => {
       expect.objectContaining({
         id: 'apple.standard',
         kind: 'subscription',
+        planCode: 'standard',
       }),
       expect.objectContaining({
         id: 'apple.credits.200',

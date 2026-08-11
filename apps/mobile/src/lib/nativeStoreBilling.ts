@@ -19,18 +19,26 @@ export type NativeStoreBillingErrorCode =
   | 'STORE_UNAVAILABLE'
   | 'VERIFICATION_FAILED';
 
-export interface NativeStoreBillingProductDefinition {
+interface NativeStoreBillingProductBase {
   id: string;
-  kind: NativeStoreProductKind;
   title: string;
   description?: string;
 }
 
-export interface NativeStoreCatalogProduct extends NativeStoreBillingProductDefinition {
+export type NativeStoreBillingProductDefinition =
+  | (NativeStoreBillingProductBase & {
+      kind: 'subscription';
+      planCode: 'standard' | 'premium';
+    })
+  | (NativeStoreBillingProductBase & {
+      kind: 'credit_pack';
+    });
+
+export type NativeStoreCatalogProduct = NativeStoreBillingProductDefinition & {
   available: boolean;
   displayPrice: string | null;
   subscriptionOfferToken?: string | null;
-}
+};
 
 export interface NativeStorePurchase {
   id: string;

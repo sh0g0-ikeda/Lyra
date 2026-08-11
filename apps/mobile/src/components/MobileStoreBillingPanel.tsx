@@ -8,6 +8,7 @@ import type {
   NativeStoreBillingAdapter,
   NativeStoreBillingErrorCode,
   NativeStoreBillingState,
+  NativeStoreServerEntitlement,
   NativeStoreServerState
 } from '@/lib/nativeStoreBilling';
 import type { ComponentTranslationKey } from '@/lib/i18nComponentMessages';
@@ -16,11 +17,17 @@ import { useNetworkStatus } from '@/state/networkStatus';
 
 interface MobileStoreBillingPanelProps {
   adapter: NativeStoreBillingAdapter;
+  currentPlan: NativeStoreServerEntitlement['plan'];
   language: 'ja' | 'en';
   onVerified?: (state: NativeStoreServerState) => void | Promise<void>;
 }
 
-export function MobileStoreBillingPanel({ adapter, language, onVerified }: MobileStoreBillingPanelProps): React.JSX.Element {
+export function MobileStoreBillingPanel({
+  adapter,
+  currentPlan,
+  language,
+  onVerified
+}: MobileStoreBillingPanelProps): React.JSX.Element {
   const { online } = useNetworkStatus();
   const [state, setState] = useState<NativeStoreBillingState>(() => adapter.getState());
 
@@ -47,6 +54,7 @@ export function MobileStoreBillingPanel({ adapter, language, onVerified }: Mobil
       // The adapter provides a safe, localizable error state.
     }
   };
+  const effectivePlan = state.lastVerified?.entitlement.plan ?? currentPlan;
 
   return (
     <View accessibilityLabel={t(language, "generated.components.MobileStoreBillingPanel.mobile.purchases.73712c97")} style={styles.container}>
@@ -65,10 +73,21 @@ export function MobileStoreBillingPanel({ adapter, language, onVerified }: Mobil
       )}
       {state.error !== null ? <Notice message={errorMessage(state.error.code, language)} tone={errorTone(state.error.code)} /> : null}
       {state.products.map((product) => {
-        const disabledReason = product.available
-          ? undefined
-          : t(language, "generated.components.MobileStoreBillingPanel.this.product.is.unavailable.right.now.bd7334b4");
+        const isCurrentSubscription =
+          product.kind === 'subscription' && product.planCode === effectivePlan;
+        const disabledReason = isCurrentSubscription
+          ? t(language, 'component.mobileStoreBilling.currentPlanReason')
+          : product.available
+            ? undefined
+            : t(language, "generated.components.MobileStoreBillingPanel.this.product.is.unavailable.right.now.bd7334b4");
         const productBusy = state.submittingProductId === product.id;
+        const label = product.kind === 'credit_pack'
+          ? t(language, "generated.components.MobileStoreBillingPanel.purchase.8ff82e16")
+          : isCurrentSubscription
+            ? t(language, 'component.mobileStoreBilling.currentPlan')
+            : effectivePlan === 'free'
+              ? t(language, 'component.mobileStoreBilling.subscribe')
+              : t(language, 'component.mobileStoreBilling.changePlan');
         return (
           <View key={product.id} style={styles.product}>
             <View style={styles.productText}>
@@ -77,9 +96,9 @@ export function MobileStoreBillingPanel({ adapter, language, onVerified }: Mobil
               {product.displayPrice === null ? null : <Text style={styles.price}>{product.displayPrice}</Text>}
             </View>
             <PrimaryButton
-              disabled={!online || !state.connected || !product.available || isBusy}
+              disabled={!online || !state.connected || !product.available || isBusy || isCurrentSubscription}
               disabledReason={!online ? offlineMessage(language) : disabledReason ?? (isBusy ? busyMessage(language) : undefined)}
-              label={t(language, "generated.components.MobileStoreBillingPanel.purchase.8ff82e16")}
+              label={label}
               loading={productBusy}
               onPress={() => {
                 void adapter.purchase(product.id).catch(() => undefined);

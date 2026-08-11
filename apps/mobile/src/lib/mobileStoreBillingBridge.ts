@@ -38,6 +38,7 @@ export function toNativeStoreProductDefinitions(
       return {
         id: product.product_id,
         kind: product.kind,
+        planCode: product.plan_code,
         title: t(language, label.title),
         description: t(language, label.description)
       };

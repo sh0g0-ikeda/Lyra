@@ -87,6 +87,7 @@ describe('MobileStoreBillingPanel', () => {
     await act(async () => {
       renderer = create(React.createElement(MobileStoreBillingPanel, {
         adapter: adapter as never,
+        currentPlan: 'free',
         language: 'ja'
       }));
     });
@@ -103,6 +104,7 @@ describe('MobileStoreBillingPanel', () => {
     await act(async () => {
       renderer = create(React.createElement(MobileStoreBillingPanel, {
         adapter: adapter as never,
+        currentPlan: 'free',
         language: 'ja'
       }));
     });
@@ -123,6 +125,7 @@ describe('MobileStoreBillingPanel', () => {
     await act(async () => {
       renderer = create(React.createElement(MobileStoreBillingPanel, {
         adapter: adapter as never,
+        currentPlan: 'free',
         language: 'ja'
       }));
     });
@@ -145,6 +148,7 @@ describe('MobileStoreBillingPanel', () => {
     await act(async () => {
       renderer = create(React.createElement(MobileStoreBillingPanel, {
         adapter: adapter as never,
+        currentPlan: 'free',
         language: 'en'
       }));
     });
@@ -173,11 +177,104 @@ describe('MobileStoreBillingPanel', () => {
     await act(async () => {
       create(React.createElement(MobileStoreBillingPanel, {
         adapter: verifiedAdapter as never,
+        currentPlan: 'free',
         language: 'en',
         onVerified
       }));
     });
 
     expect(onVerified).toHaveBeenCalledWith(verifiedState.lastVerified);
+  });
+
+  it('現在契約中のサブスクは登録済みにして再購入させず単発購入は維持する', async () => {
+    const subscriptionAdapter = {
+      ...adapter,
+      getState: vi.fn().mockReturnValue({
+        ...adapter.getState(),
+        products: [
+          {
+            available: true,
+            displayPrice: '¥980',
+            id: 'jp.lyra.standard.monthly',
+            kind: 'subscription',
+            planCode: 'standard',
+            title: 'スタンダードプラン'
+          },
+          {
+            available: true,
+            displayPrice: '¥1,980',
+            id: 'jp.lyra.premium.monthly',
+            kind: 'subscription',
+            planCode: 'premium',
+            title: 'プレミアムプラン'
+          },
+          {
+            available: true,
+            displayPrice: '¥220',
+            id: 'jp.lyra.credits.200',
+            kind: 'credit_pack',
+            title: '10クレジット追加'
+          }
+        ]
+      })
+    };
+
+    let renderer: ReturnType<typeof create>;
+    await act(async () => {
+      renderer = create(React.createElement(MobileStoreBillingPanel, {
+        adapter: subscriptionAdapter as never,
+        currentPlan: 'standard',
+        language: 'ja'
+      }));
+    });
+
+    const buttons = renderer!.root.findAllByType('button');
+    expect(buttons.map((button) => button.children.join(''))).toEqual([
+      '登録済み',
+      'プランを変更',
+      '購入する',
+      '購入を復元'
+    ]);
+    expect(buttons[0].props.disabled).toBe(true);
+    expect(buttons[1].props.disabled).toBe(false);
+    expect(buttons[2].props.disabled).toBe(false);
+  });
+
+  it('購入直後は画面再取得前でもserver確認済みプランを優先する', async () => {
+    const verifiedState = {
+      ...adapter.getState(),
+      lastVerified: {
+        balance: { monthlyCredits: 50, purchasedCredits: 0 },
+        entitlement: { plan: 'standard' as const }
+      },
+      products: [
+        {
+          available: true,
+          displayPrice: '¥980',
+          id: 'jp.lyra.standard.monthly',
+          kind: 'subscription' as const,
+          planCode: 'standard' as const,
+          title: 'スタンダードプラン'
+        }
+      ]
+    };
+    const verifiedAdapter = {
+      ...adapter,
+      getState: vi.fn().mockReturnValue(verifiedState),
+      subscribe: vi.fn().mockReturnValue(() => undefined)
+    };
+
+    let renderer: ReturnType<typeof create>;
+    await act(async () => {
+      renderer = create(React.createElement(MobileStoreBillingPanel, {
+        adapter: verifiedAdapter as never,
+        currentPlan: 'free',
+        language: 'ja'
+      }));
+    });
+
+    const purchaseButton = renderer!.root.findAllByType('button')[0];
+    expect(purchaseButton.children.join('')).toBe('登録済み');
+    expect(purchaseButton.props.disabled).toBe(true);
   });
 });

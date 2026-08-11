@@ -291,6 +291,7 @@ export function AccountScreen(): React.JSX.Element {
     balanceQuery.data?.plan_code ??
     session?.user.plan_code ??
     '-';
+  const personalStorePlan = planCode === 'standard' || planCode === 'premium' ? planCode : 'free';
   const totalCredits =
     activeOrganization?.total_credits ??
     balanceQuery.data?.total_credits ??
@@ -606,6 +607,7 @@ export function AccountScreen(): React.JSX.Element {
         ) : (
           <MobileStoreBillingPanel
             adapter={mobileStoreBillingAdapter}
+            currentPlan={personalStorePlan}
             language={language}
             onVerified={refresh}
           />
