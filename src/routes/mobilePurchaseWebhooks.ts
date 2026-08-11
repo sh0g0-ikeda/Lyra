@@ -86,27 +86,59 @@ export function createMobilePurchaseWebhookRoutes(
   });
 
   app.post('/google', async (c) => {
-    await dependencies.googlePubSubPushVerifier.verifyAuthorization(c.req.header('Authorization'));
-    const body = parseBody(googlePushSchema.safeParse(
-      await readJsonBody(c, {
-        maxBytes: REQUEST_BODY_LIMITS.DEFAULT_JSON_BYTES,
-        description: 'Google Play notification',
-      }),
-    ));
+    const authorization = c.req.header('Authorization');
+    try {
+      await dependencies.googlePubSubPushVerifier.verifyAuthorization(authorization);
+    } catch (error) {
+      logGoogleNotificationRejection(c.get('requestId'), 'authorization', authorization !== undefined);
+      throw error;
+    }
+
+    let body: z.infer<typeof googlePushSchema>;
+    try {
+      body = parseBody(googlePushSchema.safeParse(
+        await readJsonBody(c, {
+          maxBytes: REQUEST_BODY_LIMITS.DEFAULT_JSON_BYTES,
+          description: 'Google Play notification',
+        }),
+      ));
+    } catch (error) {
+      logGoogleNotificationRejection(c.get('requestId'), 'envelope', true);
+      throw error;
+    }
     const messageId = body.message.messageId ?? body.message.message_id;
     if (messageId === undefined) {
       throw new ValidationError('Store notification could not be verified');
     }
     const publishTime = body.message.publishTime ?? body.message.publish_time;
-    await dependencies.mobileStorePurchaseService.handleGoogleRtdn({
-      messageId,
-      data: body.message.data,
-      publishTime: publishTime === undefined ? null : new Date(publishTime),
-    });
+    try {
+      await dependencies.mobileStorePurchaseService.handleGoogleRtdn({
+        messageId,
+        data: body.message.data,
+        publishTime: publishTime === undefined ? null : new Date(publishTime),
+      });
+    } catch (error) {
+      logGoogleNotificationRejection(c.get('requestId'), 'notification', true);
+      throw error;
+    }
     return c.json({ received: true });
   });
 
   return app;
+}
+
+function logGoogleNotificationRejection(
+  requestId: string,
+  stage: 'authorization' | 'envelope' | 'notification',
+  authorizationHeaderPresent: boolean,
+): void {
+  console.warn(JSON.stringify({
+    level: 'warn',
+    event: 'google_play_notification_rejected',
+    request_id: requestId,
+    stage,
+    authorization_header_present: authorizationHeaderPresent,
+  }));
 }
 
 function parseBody<T>(result: { success: true; data: T } | { success: false; error: ZodError }): T {

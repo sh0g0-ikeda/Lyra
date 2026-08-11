@@ -1,5 +1,6 @@
 import type { MiddlewareHandler } from 'hono';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { ValidationError } from '../../../src/domain/errors/index.js';
 import { errorHandler } from '../../../src/middleware/errorHandler.js';
 import { createMobilePurchaseWebhookRoutes } from '../../../src/routes/mobilePurchaseWebhooks.js';
 import type {
@@ -160,11 +161,90 @@ describe('mobile purchase webhook routes', () => {
       publishTime: new Date('2026-08-09T04:32:54.000Z'),
     }]);
   });
+
+  it('Google Pub/Sub OIDC 検証失敗時は秘密値を含めず認証段階だけを記録する', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const app = createMobilePurchaseWebhookRoutes({
+      rateLimitMiddleware: passThrough(),
+      mobileStorePurchaseService: new FakeMobileStorePurchaseService(),
+      googlePubSubPushVerifier: {
+        verifyAuthorization: async () => {
+          throw new ValidationError('Store notification could not be verified');
+        },
+      },
+    });
+    app.onError(errorHandler);
+
+    const response = await app.request('/google', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: 'Bearer must-not-appear-in-logs',
+      },
+      body: JSON.stringify({
+        message: {
+          messageId: 'pubsub-message-auth-failure',
+          data: 'eyJwYWNrYWdlTmFtZSI6ImNvbS5seXJhLm1vYmlsZSJ9',
+        },
+      }),
+    });
+
+    expect(response.status).toBe(422);
+    const diagnostic = warn.mock.calls
+      .map(([entry]) => String(entry))
+      .find((entry) => entry.includes('google_play_notification_rejected'));
+    expect(diagnostic).toBeDefined();
+    expect(JSON.parse(diagnostic ?? '{}')).toMatchObject({
+      event: 'google_play_notification_rejected',
+      stage: 'authorization',
+      authorization_header_present: true,
+    });
+    expect(diagnostic).not.toContain('must-not-appear-in-logs');
+    warn.mockRestore();
+  });
+
+  it('Google RTDN 処理失敗時は購入データを含めず通知段階だけを記録する', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const service = new FakeMobileStorePurchaseService();
+    service.googleError = new ValidationError('Store notification could not be verified');
+    const app = createMobilePurchaseWebhookRoutes({
+      rateLimitMiddleware: passThrough(),
+      mobileStorePurchaseService: service,
+      googlePubSubPushVerifier: new FakeGooglePubSubPushVerifier(),
+    });
+    app.onError(errorHandler);
+
+    const response = await app.request('/google', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: 'Bearer trusted-oidc-token',
+      },
+      body: JSON.stringify({
+        message: {
+          messageId: 'pubsub-message-notification-failure',
+          data: 'c2Vuc2l0aXZlLXB1cmNoYXNlLXRva2Vu',
+        },
+      }),
+    });
+
+    expect(response.status).toBe(422);
+    const diagnostic = warn.mock.calls
+      .map(([entry]) => String(entry))
+      .find((entry) => entry.includes('google_play_notification_rejected'));
+    expect(JSON.parse(diagnostic ?? '{}')).toMatchObject({
+      event: 'google_play_notification_rejected',
+      stage: 'notification',
+    });
+    expect(diagnostic).not.toContain('c2Vuc2l0aXZlLXB1cmNoYXNlLXRva2Vu');
+    warn.mockRestore();
+  });
 });
 
 class FakeMobileStorePurchaseService implements MobileStorePurchaseServicePort {
   public readonly appleNotifications: string[] = [];
   public readonly googleNotifications: Array<{ messageId: string; data: string; publishTime: Date | null }> = [];
+  public googleError: Error | null = null;
 
   public listProducts(_store: 'apple' | 'google'): readonly [] {
     return [];
@@ -203,6 +283,9 @@ class FakeMobileStorePurchaseService implements MobileStorePurchaseServicePort {
   }
 
   public async handleGoogleRtdn(input: { messageId: string; data: string; publishTime: Date | null }): Promise<void> {
+    if (this.googleError !== null) {
+      throw this.googleError;
+    }
     this.googleNotifications.push(input);
   }
 }
