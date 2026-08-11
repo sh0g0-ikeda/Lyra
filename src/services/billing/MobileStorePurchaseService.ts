@@ -204,9 +204,20 @@ export class MobileStorePurchaseService implements MobileStorePurchaseServicePor
     let notification: ParsedGoogleRtdn;
     try {
       notification = parseGoogleRtdn(input.data);
-    } catch (error) {
+    } catch {
       logGoogleRtdnRejection('invalid_payload');
-      throw error;
+      try {
+        await this.recordUnknownGoogleEvent({
+          eventId: input.messageId,
+          state: 'failed',
+          occurredAt: input.publishTime ?? this.clock(),
+          providerEventType: 'google.invalid_notification',
+        });
+      } catch (error) {
+        logGoogleRtdnRejection('processing');
+        throw error;
+      }
+      return;
     }
     if (notification.packageName !== this.dependencies.googlePackageName) {
       logGoogleRtdnRejection('package_mismatch');
@@ -961,7 +972,7 @@ const googleRtdnSchema = z
         purchaseToken: z.string().min(1),
         subscriptionId: z.string().trim().min(1).max(512).optional(),
       })
-      .strict()
+      .passthrough()
       .optional(),
     oneTimeProductNotification: z
       .object({
@@ -970,7 +981,7 @@ const googleRtdnSchema = z
         purchaseToken: z.string().min(1),
         sku: z.string().trim().min(1).max(512).optional(),
       })
-      .strict()
+      .passthrough()
       .optional(),
     voidedPurchaseNotification: z
       .object({
@@ -979,16 +990,16 @@ const googleRtdnSchema = z
         productType: z.number().int().optional(),
         refundType: z.number().int().optional(),
       })
-      .strict()
+      .passthrough()
       .optional(),
     testNotification: z
       .object({
         version: z.string().trim().min(1).max(32).optional(),
       })
-      .strict()
+      .passthrough()
       .optional(),
   })
-  .strict();
+  .passthrough();
 
 type ParsedGoogleRtdn =
   | {

@@ -565,11 +565,13 @@ describe('MobileStorePurchaseService', () => {
         version: '1.0',
         packageName: 'jp.lyra.app',
         eventTimeMillis: String(observedAt.getTime()),
+        futureMetadata: { ignored: true },
         subscriptionNotification: {
           version: '1.0',
           notificationType: 2,
           purchaseToken: 'google-subscription-token',
           subscriptionId: 'jp.lyra.standard.monthly',
+          futureField: 'ignored',
         },
       }),
       'utf8',
@@ -592,8 +594,9 @@ describe('MobileStorePurchaseService', () => {
 
   it('Google通知のpayload不正は購入データを含めず失敗理由だけを記録する', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const repository = new FakeStorePurchaseRepository([userId]);
     const service = createService(
-      new FakeStorePurchaseRepository([userId]),
+      repository,
       new FakeCreditRepository(),
       new FakeAppleVerifier(),
       new FakeGoogleVerifier(),
@@ -603,7 +606,7 @@ describe('MobileStorePurchaseService', () => {
       messageId: 'invalid-google-message',
       data: Buffer.from('sensitive-invalid-payload', 'utf8').toString('base64'),
       publishTime: observedAt,
-    })).rejects.toThrow('Store notification could not be verified');
+    })).resolves.toBeUndefined();
 
     const diagnostic = warn.mock.calls
       .map(([entry]) => String(entry))
@@ -613,6 +616,14 @@ describe('MobileStorePurchaseService', () => {
       reason: 'invalid_payload',
     });
     expect(diagnostic).not.toContain('sensitive-invalid-payload');
+    expect(repository.events).toHaveLength(1);
+    expect(repository.events[0]).toMatchObject({
+      purchaseId: null,
+      store: 'google',
+      operation: 'observe',
+      providerEventType: 'google.invalid_notification',
+      state: 'failed',
+    });
     warn.mockRestore();
   });
 
