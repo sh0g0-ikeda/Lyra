@@ -10,9 +10,11 @@ import {
   View,
   type ImageSourcePropType
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Notice } from '@/components/Notice';
 import { PrimaryButton } from '@/components/PrimaryButton';
+import { ResponsiveContentFrame } from '@/components/ResponsiveContentFrame';
 import { Screen } from '@/components/Screen';
 import { colors, radius, spacing, textStyles } from '@/constants/theme';
 import { isAuthConfigured } from '@/lib/config';
@@ -74,14 +76,16 @@ export function AuthScreen({ pendingInvitation = false }: AuthScreenProps): Reac
   };
 
   return showSplash ? (
-    <View style={styles.splash}>
+    <SafeAreaView edges={['top', 'right', 'bottom', 'left']} style={styles.splash}>
       <StatusBar backgroundColor={colors.canvas} barStyle="light-content" />
-      <Animated.Image resizeMode="cover" source={heroImage} style={[styles.splashImage, { opacity: splashOpacity }]} />
-      <Animated.View style={[styles.splashCopy, { opacity: splashOpacity }]}>
-        <Text style={styles.splashTitle}>Lyra Japan</Text>
-        <Text style={styles.splashSubtitle}>{t(language, 'lyraSubtitle')}</Text>
-      </Animated.View>
-    </View>
+      <ResponsiveContentFrame style={styles.splashFrame} testID="auth-splash-content-frame">
+        <Animated.Image resizeMode="cover" source={heroImage} style={[styles.splashImage, { opacity: splashOpacity }]} />
+        <Animated.View style={[styles.splashCopy, { opacity: splashOpacity }]}>
+          <Text style={styles.splashTitle}>Lyra Japan</Text>
+          <Text style={styles.splashSubtitle}>{t(language, 'lyraSubtitle')}</Text>
+        </Animated.View>
+      </ResponsiveContentFrame>
+    </SafeAreaView>
   ) : (
     <Screen showHeader={false} testID="auth-screen" title="Lyra Japan">
       <View style={styles.authCard}>
@@ -183,8 +187,11 @@ const styles = StyleSheet.create({
     textDecorationLine: 'underline'
   },
   splash: {
-    alignItems: 'center',
     backgroundColor: colors.canvas,
+    flex: 1
+  },
+  splashFrame: {
+    alignItems: 'center',
     flex: 1,
     gap: spacing.md,
     justifyContent: 'center',

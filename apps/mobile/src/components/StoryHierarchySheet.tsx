@@ -962,7 +962,7 @@ export function StoryHierarchySheet({
   return (
       <Modal animationType="slide" onRequestClose={closeTopmostOverlay} presentationStyle="fullScreen" visible={visible}>
         <SafeAreaView
-          edges={['top', 'bottom']}
+          edges={['top', 'right', 'bottom', 'left']}
           accessibilityLabel={t(language, "generated.components.StoryHierarchySheet.story.hierarchy.28f3f754")}
           accessibilityViewIsModal
           onAccessibilityEscape={closeTopmostOverlay}

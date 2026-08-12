@@ -3,6 +3,7 @@ import { act, create } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { MainTabs } from '@/navigation/tabs';
+import { mobileContentMaxWidth } from '@/constants/theme';
 
 interface TabPressEvent {
   preventDefault: () => void;
@@ -31,6 +32,9 @@ interface NavigatorProps {
     tabPress?: (event: TabPressEvent) => void;
   };
   children?: React.ReactNode;
+  screenOptions?: {
+    tabBarStyle?: Record<string, unknown>;
+  };
 }
 
 let navigatorProps: NavigatorProps | null = null;
@@ -144,5 +148,17 @@ describe('MainTabs dirty-state guard', () => {
 
     expect(event.preventDefault).not.toHaveBeenCalled();
     expect(resolveDirtyEditors).not.toHaveBeenCalled();
+  });
+
+  it('iPadでもタブ操作を読みやすい中央幅に保つ', async () => {
+    await act(async () => {
+      create(<MainTabs />);
+    });
+
+    expect(navigatorProps?.screenOptions?.tabBarStyle).toMatchObject({
+      alignSelf: 'center',
+      maxWidth: mobileContentMaxWidth,
+      width: '100%'
+    });
   });
 });

@@ -268,11 +268,11 @@ describe('StoryHierarchySheet', () => {
     return renderer!;
   };
 
-  it('フルスクリーン階層シートの見出しをiPhoneの安全領域より下に表示する', async () => {
+  it('フルスクリーン階層シートをiPhoneとiPadの全安全領域内に表示する', async () => {
     const renderer = await renderSheet();
     const safeArea = renderer.root.findByType('safe-area-view');
 
-    expect(safeArea.props.edges).toEqual(['top', 'bottom']);
+    expect(safeArea.props.edges).toEqual(['top', 'right', 'bottom', 'left']);
   });
 
   it('選択中の枝だけ取得し、折りたたまれた別作品の章は取得しない', async () => {

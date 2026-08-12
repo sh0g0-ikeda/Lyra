@@ -67,7 +67,8 @@
       ]
     ],
     "ios": {
-      "supportsTablet": false,
+      "supportsTablet": true,
+      "requireFullScreen": false,
       "bundleIdentifier": "jp.lyra.mobile",
       "associatedDomains": [
         "applinks:app.lyra-editor.com"

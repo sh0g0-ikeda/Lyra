@@ -40,7 +40,7 @@ export function UnsavedChangesResolutionDialog({
         onPress={cancel}
         style={styles.backdrop}
       >
-        <SafeAreaView edges={['top', 'bottom']} style={styles.safeArea}>
+        <SafeAreaView edges={['top', 'right', 'bottom', 'left']} style={styles.safeArea}>
           <View
             accessibilityViewIsModal
             onAccessibilityEscape={cancel}

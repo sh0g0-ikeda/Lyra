@@ -25,6 +25,7 @@ interface ExpoAppConfig {
     updates?: { fallbackToCacheTimeout?: number; url?: string };
     ios?: {
       buildNumber?: string;
+      requireFullScreen?: boolean;
       supportsTablet?: boolean;
       privacyManifests?: {
         NSPrivacyTracking?: boolean;
@@ -191,8 +192,9 @@ describe('production app metadata', () => {
     ]));
   });
 
-  it('iOS提出をiPhone専用に固定する', () => {
-    expect(config.expo.ios?.supportsTablet).toBe(false);
+  it('iPadの全画面サイズとリサイズに対応する', () => {
+    expect(config.expo.ios?.supportsTablet).toBe(true);
+    expect(config.expo.ios?.requireFullScreen).toBe(false);
   });
 
   it('日英の store metadata と公開ポリシー URL を固定する', () => {

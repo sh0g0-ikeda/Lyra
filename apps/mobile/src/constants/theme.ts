@@ -1,5 +1,7 @@
 import type { ViewStyle, TextStyle } from 'react-native';
 
+export const mobileContentMaxWidth = 760;
+
 export const colors = {
   canvas: '#0A0A0A',
   canvasAlt: '#141414',

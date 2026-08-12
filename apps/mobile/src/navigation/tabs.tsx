@@ -1,7 +1,7 @@
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { BookOpenText, CircleHelp, Images, Settings, UsersRound, type LucideIcon } from 'lucide-react-native';
 
-import { colors } from '@/constants/theme';
+import { colors, mobileContentMaxWidth } from '@/constants/theme';
 import { t } from '@/lib/i18n';
 import { AccountScreen } from '@/screens/AccountScreen';
 import { CharactersScreen } from '@/screens/CharactersScreen';
@@ -58,11 +58,14 @@ export function MainTabs(): React.JSX.Element {
           lineHeight: 14
         },
         tabBarStyle: {
+          alignSelf: 'center',
           backgroundColor: 'rgba(8, 8, 8, 0.96)',
           borderTopColor: 'rgba(229, 199, 107, 0.18)',
+          maxWidth: mobileContentMaxWidth,
           minHeight: 72,
           paddingBottom: 9,
-          paddingTop: 7
+          paddingTop: 7,
+          width: '100%'
         },
         tabBarItemStyle: {
           borderRadius: 10,

@@ -5,8 +5,10 @@ import { describe, expect, it, vi } from 'vitest';
 import { ImagePreviewModal } from '@/components/ImagePreviewModal';
 import { FormField } from '@/components/FormField';
 import { RecordPicker } from '@/components/RecordPicker';
+import { ResponsiveContentFrame } from '@/components/ResponsiveContentFrame';
 import { Screen } from '@/components/Screen';
 import { Section } from '@/components/Section';
+import { mobileContentMaxWidth } from '@/constants/theme';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -188,16 +190,38 @@ describe('shared mobile accessibility controls', () => {
     expect(renderer!.root.findAllByProps({ accessibilityLabel: 'Share or save image' })).toHaveLength(0);
   });
 
-  it('keeps screen content in safe areas and resizes for the Android keyboard', () => {
+  it('keeps shared content readable on phone and tablet widths', () => {
+    let renderer: ReturnType<typeof create>;
+    act(() => {
+      renderer = create(
+        <ResponsiveContentFrame testID="responsive-content-frame">
+          Content
+        </ResponsiveContentFrame>
+      );
+    });
+
+    const frame = renderer!.root
+      .findAllByProps({ testID: 'responsive-content-frame' })
+      .find((node) => node.type === 'view');
+    expect(frame).toBeDefined();
+    expect(frame?.props.style[0]).toMatchObject({
+      alignSelf: 'center',
+      maxWidth: mobileContentMaxWidth,
+      width: '100%'
+    });
+  });
+
+  it('keeps screen content in all safe areas and resizes for the Android keyboard', () => {
     let renderer: ReturnType<typeof create>;
     act(() => {
       renderer = create(<Screen title="Story">Content</Screen>);
     });
 
     const safeArea = renderer!.root.findByType('safe-area-view');
-    expect(safeArea.props.edges).toEqual(['top', 'bottom']);
+    expect(safeArea.props.edges).toEqual(['top', 'right', 'bottom', 'left']);
     expect(renderer!.root.findByType('keyboard-avoiding-view').props.behavior).toBe('height');
     const scrollView = renderer!.root.findByType('scroll-view');
     expect(scrollView.props.automaticallyAdjustKeyboardInsets).toBe(true);
+    expect(renderer!.root.findByProps({ testID: 'screen-content-frame' })).toBeDefined();
   });
 });

@@ -74,7 +74,7 @@ export function OrganizationCollectionModal<T extends { id: string }>({
       {visible ? (
         <SafeAreaView
           accessibilityViewIsModal
-          edges={['top', 'bottom']}
+          edges={['top', 'right', 'bottom', 'left']}
           onAccessibilityEscape={onClose}
           style={styles.safeArea}
         >

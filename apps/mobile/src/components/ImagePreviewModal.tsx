@@ -45,7 +45,7 @@ export function ImagePreviewModal({ uri, headers, sources, language, onClose, re
       visible={visible}
       onRequestClose={onClose}
     >
-      <SafeAreaView edges={['top', 'bottom']} style={styles.safeArea}>
+      <SafeAreaView edges={['top', 'right', 'bottom', 'left']} style={styles.safeArea}>
         <View style={styles.backdrop}>
           <Pressable
             accessibilityLabel={t(language, "generated.components.ImagePreviewModal.close.image.preview.a2ff8367")}

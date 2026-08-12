@@ -3,6 +3,7 @@ import { KeyboardAvoidingView, Platform, RefreshControl, ScrollView, StatusBar, 
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Notice } from '@/components/Notice';
+import { ResponsiveContentFrame } from '@/components/ResponsiveContentFrame';
 import { colors, spacing, textStyles } from '@/constants/theme';
 import { t } from '@/lib/i18n';
 import { useNetworkStatus } from '@/state/networkStatus';
@@ -31,13 +32,13 @@ export function Screen({
 }: ScreenProps): React.JSX.Element {
   const { language, online } = useNetworkStatus();
   return (
-    <SafeAreaView edges={['top', 'bottom']} style={styles.safeArea} testID={testID}>
+    <SafeAreaView edges={['top', 'right', 'bottom', 'left']} style={styles.safeArea} testID={testID}>
       <StatusBar backgroundColor={colors.canvas} barStyle="light-content" />
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.keyboardAvoider}>
         <ScrollView
           automaticallyAdjustKeyboardInsets
           contentInsetAdjustmentBehavior="automatic"
-          contentContainerStyle={styles.content}
+          contentContainerStyle={styles.scrollContent}
           keyboardDismissMode="interactive"
           keyboardShouldPersistTaps="handled"
           refreshControl={
@@ -53,20 +54,22 @@ export function Screen({
           }
           ref={scrollViewRef}
         >
-          {showHeader ? (
-            <View style={styles.header}>
-              {eyebrow === undefined ? null : <Text style={styles.eyebrow}>{eyebrow}</Text>}
-              <Text accessibilityRole="header" style={styles.title}>{title}</Text>
-              {subtitle === undefined ? null : <Text style={styles.subtitle}>{subtitle}</Text>}
-            </View>
-          ) : null}
-          {online ? null : (
-            <Notice
-              message={t(language, 'shared.screen.offline')}
-              tone="warning"
-            />
-          )}
-          {children}
+          <ResponsiveContentFrame style={styles.content} testID="screen-content-frame">
+            {showHeader ? (
+              <View style={styles.header}>
+                {eyebrow === undefined ? null : <Text style={styles.eyebrow}>{eyebrow}</Text>}
+                <Text accessibilityRole="header" style={styles.title}>{title}</Text>
+                {subtitle === undefined ? null : <Text style={styles.subtitle}>{subtitle}</Text>}
+              </View>
+            ) : null}
+            {online ? null : (
+              <Notice
+                message={t(language, 'shared.screen.offline')}
+                tone="warning"
+              />
+            )}
+            {children}
+          </ResponsiveContentFrame>
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -75,6 +78,7 @@ export function Screen({
 
 const styles = StyleSheet.create({
   content: {
+    flexGrow: 1,
     gap: spacing.sm,
     padding: spacing.md,
     paddingBottom: 112
@@ -102,6 +106,9 @@ const styles = StyleSheet.create({
   safeArea: {
     backgroundColor: colors.canvas,
     flex: 1
+  },
+  scrollContent: {
+    flexGrow: 1
   },
   subtitle: {
     ...textStyles.caption,
