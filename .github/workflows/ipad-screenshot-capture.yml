@@ -12,11 +12,11 @@ jobs:
     steps:
       - name: Download the iOS simulator build
         env:
-          SIMULATOR_BUILD_URL: https://expo.dev/artifacts/eas/SzFeKJyUkuuaE0FoVwRp-67k5NmXfxsMXRuII9Nxo4g.tar.gz
+          GH_TOKEN: ${{ github.token }}
         run: |
-          curl --fail --location "$SIMULATOR_BUILD_URL" --output lyra-simulator.tar.gz
+          gh release download ipad-screenshot-temp-20260813 --repo "$GITHUB_REPOSITORY" --pattern lyra-simulator-build32.tar.gz
           mkdir extracted
-          tar -xzf lyra-simulator.tar.gz -C extracted
+          tar -xzf lyra-simulator-build32.tar.gz -C extracted
           app_path="$(find extracted -type d -name '*.app' -print -quit)"
           test -n "$app_path"
           echo "APP_PATH=$app_path" >> "$GITHUB_ENV"
