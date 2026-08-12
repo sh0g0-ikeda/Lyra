@@ -34,6 +34,8 @@ jobs:
 
       - name: Install, launch, and capture the app
         run: |
+          xcrun simctl spawn "$DEVICE_ID" defaults write NSGlobalDomain AppleLanguages -array ja
+          xcrun simctl spawn "$DEVICE_ID" defaults write NSGlobalDomain AppleLocale ja_JP
           xcrun simctl status_bar "$DEVICE_ID" override --time 09:41 --batteryState charged --batteryLevel 100 --wifiBars 3 --cellularBars 4
           xcrun simctl install "$DEVICE_ID" "$APP_PATH"
           xcrun simctl launch "$DEVICE_ID" jp.lyra.mobile
