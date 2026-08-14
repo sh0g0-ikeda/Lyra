@@ -3402,10 +3402,7 @@ function StudioShell(props: {
 
   const saveCurrentPageGenerationContext = async (): Promise<void> => {
     if (selectedPage !== null) {
-      await api.updatePage(selectedPage.id, toPageSettingsPayload(pageSettingsDraft), {
-        expectedUpdatedAt: selectedPage.updated_at,
-        organizationId: activeOrganizationId,
-      });
+      await api.updatePage(selectedPage.id, toPageSettingsPayload(pageSettingsDraft), activeOrganizationId);
     }
 
     if (selectedPage !== null && selectedPanel !== null) {
@@ -6075,10 +6072,7 @@ function StudioShell(props: {
                               await api.updatePage(
                                 selectedPage.id,
                                 toPageSettingsPayload(pageSettingsDraft),
-                                {
-                                  expectedUpdatedAt: selectedPage.updated_at,
-                                  organizationId: activeOrganizationId,
-                                },
+                                activeOrganizationId,
                               );
                               await invalidateScopedQuery(['pages', selectedEpisode.id]);
                             })
@@ -6164,10 +6158,7 @@ function StudioShell(props: {
                                 await api.updatePage(
                                   selectedPage.id,
                                   toPageSettingsPayload(pageSettingsDraft),
-                                  {
-                                    expectedUpdatedAt: selectedPage.updated_at,
-                                    organizationId: activeOrganizationId,
-                                  },
+                                  activeOrganizationId,
                                 );
                                 await invalidateScopedQuery(['pages', selectedEpisode.id]);
                               })

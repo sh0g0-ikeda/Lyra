@@ -456,6 +456,33 @@ test('話を保存すると表示中レコードの更新時刻を送る', async
   });
 });
 
+test('ページ設定を保存するとschema外の更新時刻を送らない', async ({ page }) => {
+  await seedEnglishUi(page);
+  await seedAuthenticatedSession(page);
+
+  let updateBody: Record<string, unknown> | null = null;
+  await page.route('**/api/**', async (route) => {
+    const request = route.request();
+    const pathname = new URL(request.url()).pathname;
+    if (pathname === `/api/pages/${pageRecord.id}` && request.method() === 'PUT') {
+      updateBody = request.postDataJSON() as Record<string, unknown>;
+    }
+    await mockApi(route);
+  });
+
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Pages', exact: true }).click();
+  const artDirectionSection = page.locator('.page-section-style-constraints');
+  await artDirectionSection.getByRole('button', { name: 'Save', exact: true }).click();
+
+  await expect.poll(() => updateBody).not.toBeNull();
+  expect(updateBody).not.toHaveProperty('expected_updated_at');
+  expect(updateBody).toMatchObject({
+    dialogue_mode: pageRecord.dialogue_mode,
+    page_dialogue_toggle: pageRecord.page_dialogue_toggle,
+  });
+});
+
 test('キャラ編集では画像取り込みを自由記述の前に置き不要な詳細入力を隠す', async ({ page }) => {
   await seedEnglishUi(page);
   await seedAuthenticatedSession(page);

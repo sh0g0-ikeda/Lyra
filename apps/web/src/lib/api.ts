@@ -438,12 +438,8 @@ export class LyraApiClient {
     return this.request(`/api/episodes/${episodeId}/pages${organizationQuery(organizationId)}`);
   }
 
-  public updatePage(pageId: string, body: Record<string, unknown>, options: VersionedMutationOptions): Promise<PageRecord> {
-    const organizationId = options.organizationId;
-    return this.request(`/api/pages/${pageId}${organizationQuery(organizationId)}`, {
-      method: 'PUT',
-      body: versionedMutationBody(body, options),
-    });
+  public updatePage(pageId: string, body: Record<string, unknown>, organizationId?: string | null): Promise<PageRecord> {
+    return this.request(`/api/pages/${pageId}${organizationQuery(organizationId)}`, { method: 'PUT', body });
   }
 
   public autofillPageFromScenes(pageId: string, language: 'ja' | 'en', organizationId?: string | null): Promise<{
