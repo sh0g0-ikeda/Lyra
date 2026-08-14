@@ -4,8 +4,9 @@
 
 Browser saves currently omit the optimistic-concurrency token required by the
 update APIs. This change restores the Web contract for work, chapter, episode,
-entity, and page updates. It does not loosen backend validation, retry stale
-writes automatically, or alter persistence and ownership rules.
+and entity updates. Page settings remain on their existing strict non-versioned
+schema. This does not loosen backend validation, retry stale writes automatically,
+or alter persistence and ownership rules.
 
 ## Spec basis
 
@@ -21,6 +22,9 @@ writes automatically, or alter persistence and ownership rules.
   `expectedUpdatedAt` option and serializes it as `expected_updated_at`.
 - Web screens: callers provide the `updated_at` value from the record currently
   being edited, alongside the optional organization scope.
+- Page settings continue to send only fields accepted by
+  `updatePageSettingsBodySchema`; the separate atomic save-and-generate endpoint
+  retains its own revision contract.
 - Backend, database, billing, mobile, and external APIs are unchanged.
 
 Inputs are the existing bounded update fields plus a non-empty revision string.
@@ -37,12 +41,14 @@ credit logic are involved.
 
 ## Test plan
 
-1. Add a failing API contract test proving all five update methods must include
+1. Add a failing API contract test proving all four versioned update methods include
    the supplied revision in their JSON request and retain organization scoping.
-2. Change the API adapter and all Web call sites; TypeScript compilation must
+2. Assert that page settings remain schema-valid and do not gain an unsupported
+   revision field.
+3. Change the API adapter and all Web call sites; TypeScript compilation must
    reject any call that still uses the old positional organization argument.
-3. Run the targeted Vitest test, Web lint, Web production build, and diff check.
-4. Preserve the existing 409 user-facing conflict behavior and do not add an
+4. Run the targeted Vitest test, Web lint, Web production build, and diff check.
+5. Preserve the existing 409 user-facing conflict behavior and do not add an
    unsafe automatic retry.
 
 ## Orchestration
