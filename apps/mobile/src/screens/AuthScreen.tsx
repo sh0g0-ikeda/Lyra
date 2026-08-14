@@ -16,14 +16,19 @@ import { Notice } from '@/components/Notice';
 import { PrimaryButton } from '@/components/PrimaryButton';
 import { ResponsiveContentFrame } from '@/components/ResponsiveContentFrame';
 import { Screen } from '@/components/Screen';
-import { colors, radius, spacing, textStyles } from '@/constants/theme';
+import { colors, radius, spacing } from '@/constants/theme';
 import { isAuthConfigured } from '@/lib/config';
 import { t } from '@/lib/i18n';
 import { signInWithCognito } from '@/lib/auth';
 import { userErrorMessage } from '@/lib/userMessages';
 import { useAppState } from '@/state/appState';
 
-const heroImage = require('../../assets/start_lyra.jpg') as ImageSourcePropType;
+const brandMark = require('../../assets/brand-mark.png') as ImageSourcePropType;
+const authFeatureKeys = [
+  'screen.auth.feature.story',
+  'screen.auth.feature.character',
+  'screen.auth.feature.page'
+] as const;
 const legalLinks = {
   privacy: 'https://app.lyra-editor.com/privacy.html',
   support: 'https://app.lyra-editor.com/support.html',
@@ -44,11 +49,11 @@ export function AuthScreen({ pendingInvitation = false }: AuthScreenProps): Reac
   useEffect(() => {
     const timeoutId = setTimeout(() => {
       Animated.timing(splashOpacity, {
-        duration: 260,
+        duration: 180,
         toValue: 0,
         useNativeDriver: true
       }).start(() => setShowSplash(false));
-    }, 1800);
+    }, 900);
 
     return () => clearTimeout(timeoutId);
   }, [splashOpacity]);
@@ -79,7 +84,13 @@ export function AuthScreen({ pendingInvitation = false }: AuthScreenProps): Reac
     <SafeAreaView edges={['top', 'right', 'bottom', 'left']} style={styles.splash}>
       <StatusBar backgroundColor={colors.canvas} barStyle="light-content" />
       <ResponsiveContentFrame style={styles.splashFrame} testID="auth-splash-content-frame">
-        <Animated.Image resizeMode="cover" source={heroImage} style={[styles.splashImage, { opacity: splashOpacity }]} />
+        <Animated.Image
+          accessibilityIgnoresInvertColors
+          accessibilityLabel={t(language, 'screen.auth.brand')}
+          resizeMode="contain"
+          source={brandMark}
+          style={[styles.splashMark, { opacity: splashOpacity }]}
+        />
         <Animated.View style={[styles.splashCopy, { opacity: splashOpacity }]}>
           <Text style={styles.splashTitle}>Lyra Japan</Text>
           <Text style={styles.splashSubtitle}>{t(language, 'lyraSubtitle')}</Text>
@@ -87,86 +98,174 @@ export function AuthScreen({ pendingInvitation = false }: AuthScreenProps): Reac
       </ResponsiveContentFrame>
     </SafeAreaView>
   ) : (
-    <Screen showHeader={false} testID="auth-screen" title="Lyra Japan">
-      <View style={styles.authCard}>
-        <Image resizeMode="cover" source={heroImage} style={styles.heroImage} />
-        <View style={styles.copy}>
-          <Text style={styles.eyebrow}>Lyra</Text>
-          <Text style={styles.title}>Lyra Japan</Text>
-          <Text style={styles.subtitle}>{t(language, 'lyraSubtitle')}</Text>
+    <Screen contentStyle={styles.screenContent} showHeader={false} testID="auth-screen" title="Lyra Japan">
+      <View style={styles.authLayout}>
+        <View style={styles.intro}>
+          <Image
+            accessibilityIgnoresInvertColors
+            accessibilityLabel={t(language, 'screen.auth.brand')}
+            resizeMode="contain"
+            source={brandMark}
+            style={styles.brandMark}
+          />
+          <Text style={styles.eyebrow}>LYRA MOBILE</Text>
+          <Text accessibilityRole="header" style={styles.headline}>
+            {t(language, 'screen.auth.headline')}
+          </Text>
+          <Text style={styles.summary}>{t(language, 'screen.auth.summary')}</Text>
         </View>
-      </View>
-      {isAuthConfigured() ? null : <Notice message={t(language, 'apiSetupRequired')} tone="warning" />}
-      {pendingInvitation ? (
-        <Notice
-          message={t(language, "generated.screens.AuthScreen.sign.in.with.the.same.email.address.that.120eacc0")}
-          tone="info"
-        />
-      ) : null}
-      {errorMessage === null ? null : <Notice message={errorMessage} tone="danger" />}
-      <PrimaryButton
-        disabled={!isAuthConfigured()}
-        label={t(language, 'login')}
-        loading={loading}
-        onPress={() => void signIn()}
-        testID="auth-login-button"
-      />
-      <View accessibilityLabel={t(language, "generated.screens.AuthScreen.legal.and.support.d411b8e1")} style={styles.legalLinks}>
-        <Pressable
-          accessibilityRole="link"
-          hitSlop={8}
-          onPress={() => void openLegalLink(legalLinks.terms)}
-          style={styles.legalLink}
-        >
-          <Text style={styles.legalLinkText}>{t(language, "generated.screens.AuthScreen.terms.63800dba")}</Text>
-        </Pressable>
-        <Pressable
-          accessibilityRole="link"
-          hitSlop={8}
-          onPress={() => void openLegalLink(legalLinks.privacy)}
-          style={styles.legalLink}
-        >
-          <Text style={styles.legalLinkText}>{t(language, "generated.screens.AuthScreen.privacy.4437e12a")}</Text>
-        </Pressable>
-        <Pressable
-          accessibilityRole="link"
-          hitSlop={8}
-          onPress={() => void openLegalLink(legalLinks.support)}
-          style={styles.legalLink}
-        >
-          <Text style={styles.legalLinkText}>{t(language, "generated.screens.AuthScreen.support.36269dd8")}</Text>
-        </Pressable>
+
+        <View style={styles.features}>
+          {authFeatureKeys.map((key, index) => (
+            <View key={key} style={styles.featureRow}>
+              <View
+                accessibilityElementsHidden
+                importantForAccessibility="no-hide-descendants"
+                style={styles.featureIndex}
+              >
+                <Text style={styles.featureIndexText}>{index + 1}</Text>
+              </View>
+              <Text style={styles.featureLabel}>{t(language, key)}</Text>
+            </View>
+          ))}
+        </View>
+
+        {isAuthConfigured() ? null : <Notice message={t(language, 'apiSetupRequired')} tone="warning" />}
+        {pendingInvitation ? (
+          <Notice
+            message={t(language, "generated.screens.AuthScreen.sign.in.with.the.same.email.address.that.120eacc0")}
+            tone="info"
+          />
+        ) : null}
+        {errorMessage === null ? null : <Notice message={errorMessage} tone="danger" />}
+
+        <View style={styles.actionGroup}>
+          <PrimaryButton
+            disabled={!isAuthConfigured()}
+            label={t(language, 'screen.auth.action')}
+            loading={loading}
+            onPress={() => void signIn()}
+            size="large"
+            testID="auth-login-button"
+          />
+          <Text style={styles.actionHint}>{t(language, 'screen.auth.actionHint')}</Text>
+        </View>
+
+        <View style={styles.footer}>
+          <View accessibilityLabel={t(language, "generated.screens.AuthScreen.legal.and.support.d411b8e1")} style={styles.legalLinks}>
+            <Pressable
+              accessibilityRole="link"
+              hitSlop={8}
+              onPress={() => void openLegalLink(legalLinks.terms)}
+              style={styles.legalLink}
+            >
+              <Text style={styles.legalLinkText}>{t(language, "generated.screens.AuthScreen.terms.63800dba")}</Text>
+            </Pressable>
+            <Pressable
+              accessibilityRole="link"
+              hitSlop={8}
+              onPress={() => void openLegalLink(legalLinks.privacy)}
+              style={styles.legalLink}
+            >
+              <Text style={styles.legalLinkText}>{t(language, "generated.screens.AuthScreen.privacy.4437e12a")}</Text>
+            </Pressable>
+            <Pressable
+              accessibilityRole="link"
+              hitSlop={8}
+              onPress={() => void openLegalLink(legalLinks.support)}
+              style={styles.legalLink}
+            >
+              <Text style={styles.legalLinkText}>{t(language, "generated.screens.AuthScreen.support.36269dd8")}</Text>
+            </Pressable>
+          </View>
+          <Text style={styles.securityNote}>{t(language, 'screen.auth.securityNote')}</Text>
+        </View>
       </View>
     </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  authCard: {
-    backgroundColor: colors.surface,
-    borderColor: colors.border,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    gap: spacing.sm,
-    overflow: 'hidden'
+  actionGroup: {
+    gap: spacing.sm
   },
-  copy: {
-    gap: 4,
-    paddingHorizontal: spacing.md,
-    paddingBottom: spacing.sm
+  actionHint: {
+    color: colors.muted,
+    fontSize: 14,
+    lineHeight: 20,
+    textAlign: 'center'
+  },
+  authLayout: {
+    alignSelf: 'center',
+    flex: 1,
+    gap: spacing.xl,
+    maxWidth: 560,
+    width: '100%'
+  },
+  brandMark: {
+    height: 128,
+    width: 128
   },
   eyebrow: {
     color: colors.accent,
-    fontSize: 11,
-    fontWeight: '700',
-    letterSpacing: 0,
+    fontSize: 13,
+    fontWeight: '800',
+    letterSpacing: 1.6,
     textTransform: 'uppercase'
   },
-  heroImage: {
-    aspectRatio: 2.45,
-    backgroundColor: colors.surfaceAlt,
-    maxHeight: 220,
-    width: '100%'
+  featureIndex: {
+    alignItems: 'center',
+    backgroundColor: colors.canvasAlt,
+    borderColor: colors.borderStrong,
+    borderRadius: 18,
+    borderWidth: 1,
+    height: 36,
+    justifyContent: 'center',
+    width: 36
+  },
+  featureIndexText: {
+    color: colors.primary,
+    fontSize: 16,
+    fontWeight: '800'
+  },
+  featureLabel: {
+    color: colors.inkStrong,
+    flex: 1,
+    fontSize: 16,
+    fontWeight: '700',
+    lineHeight: 23
+  },
+  featureRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: spacing.md,
+    minHeight: 60,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md
+  },
+  features: {
+    backgroundColor: colors.surface,
+    borderColor: colors.borderStrong,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    overflow: 'hidden'
+  },
+  footer: {
+    gap: spacing.sm,
+    marginTop: 'auto',
+    paddingTop: spacing.sm
+  },
+  headline: {
+    color: colors.inkStrong,
+    fontSize: 28,
+    fontWeight: '800',
+    letterSpacing: 0,
+    lineHeight: 36,
+    textAlign: 'center'
+  },
+  intro: {
+    alignItems: 'center',
+    gap: spacing.sm
   },
   legalLink: {
     alignItems: 'center',
@@ -186,6 +285,17 @@ const styles = StyleSheet.create({
     fontSize: 14,
     textDecorationLine: 'underline'
   },
+  screenContent: {
+    gap: spacing.lg,
+    paddingHorizontal: 20,
+    paddingVertical: spacing.xl
+  },
+  securityNote: {
+    color: colors.mutedSoft,
+    fontSize: 13,
+    lineHeight: 20,
+    textAlign: 'center'
+  },
   splash: {
     backgroundColor: colors.canvas,
     flex: 1
@@ -198,36 +308,31 @@ const styles = StyleSheet.create({
     padding: spacing.lg
   },
   splashCopy: {
-    alignSelf: 'stretch',
-    gap: 6,
-    paddingHorizontal: spacing.xs
+    alignItems: 'center',
+    gap: 6
   },
-  splashImage: {
-    aspectRatio: 1.18,
-    borderColor: colors.border,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    maxHeight: 420,
-    opacity: 0.92,
-    overflow: 'hidden',
-    width: '100%'
+  splashMark: {
+    height: 176,
+    width: 176
   },
   splashSubtitle: {
-    ...textStyles.body,
-    color: colors.muted
+    color: colors.muted,
+    fontSize: 16,
+    lineHeight: 24,
+    textAlign: 'center'
   },
   splashTitle: {
     color: colors.ink,
-    fontSize: 31,
+    fontSize: 28,
     fontWeight: '800',
     letterSpacing: 0,
-    lineHeight: 38
+    lineHeight: 36,
+    textAlign: 'center'
   },
-  subtitle: {
-    ...textStyles.body,
-    color: colors.muted
-  },
-  title: {
-    ...textStyles.title
+  summary: {
+    color: colors.muted,
+    fontSize: 16,
+    lineHeight: 24,
+    textAlign: 'center'
   }
 });

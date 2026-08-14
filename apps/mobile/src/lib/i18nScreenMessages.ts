@@ -1,5 +1,15 @@
 export const screenTranslations = {
   ja: {
+    'screen.auth.brand': 'Lyra ロゴ',
+    'screen.auth.headline': '物語から、漫画の1ページへ。',
+    'screen.auth.summary': 'ストーリー・キャラクター・ページ生成を\nひとつのアプリで。',
+    'screen.auth.feature.story': 'ストーリーを組み立てる',
+    'screen.auth.feature.character': 'キャラクターを整える',
+    'screen.auth.feature.page': 'ページ画像を生成する',
+    'screen.auth.action': 'ログイン / 新規登録',
+    'screen.auth.actionHint': '安全なログイン画面を開きます',
+    'screen.auth.securityNote': 'ログイン前に認証情報をアプリ内へ入力することはありません。',
+
     'screen.account.plan.free': 'フリー',
     'screen.account.plan.standard': 'スタンダード',
     'screen.account.plan.premium': 'プレミアム',
@@ -133,6 +143,16 @@ export const screenTranslations = {
     'screen.story.untitledEpisode': '第{episodeOrder}話'
   },
   en: {
+    'screen.auth.brand': 'Lyra logo',
+    'screen.auth.headline': 'From story to a manga page.',
+    'screen.auth.summary': 'Create stories, characters, and finished pages\nin one app.',
+    'screen.auth.feature.story': 'Build your story',
+    'screen.auth.feature.character': 'Shape your characters',
+    'screen.auth.feature.page': 'Generate page artwork',
+    'screen.auth.action': 'Sign in / Create account',
+    'screen.auth.actionHint': 'Opens the secure sign-in page',
+    'screen.auth.securityNote': 'You never enter your credentials directly in this app before sign-in.',
+
     'screen.account.plan.free': 'Free',
     'screen.account.plan.standard': 'Standard',
     'screen.account.plan.premium': 'Premium',

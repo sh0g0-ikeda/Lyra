@@ -102,7 +102,8 @@ describe('production app metadata', () => {
     assertBundledAsset(splashPlugin?.[1].image);
     expect(splashPlugin?.[1]).toMatchObject({
       backgroundColor: '#0b0b0b',
-      imageWidth: 240,
+      image: './assets/brand-mark.png',
+      imageWidth: 176,
       resizeMode: 'contain',
     });
     expect(config.expo.userInterfaceStyle).toBe('dark');

@@ -8,6 +8,7 @@ interface PrimaryButtonProps {
   disabled?: boolean;
   disabledReason?: string;
   loading?: boolean;
+  size?: 'default' | 'large';
   testID?: string;
   variant?: 'primary' | 'secondary' | 'ghost' | 'danger';
 }
@@ -18,6 +19,7 @@ export function PrimaryButton({
   disabled = false,
   disabledReason,
   loading = false,
+  size = 'default',
   testID,
   variant = 'primary'
 }: PrimaryButtonProps): React.JSX.Element {
@@ -33,6 +35,7 @@ export function PrimaryButton({
       testID={testID}
       style={({ pressed }) => [
         styles.button,
+        size === 'large' ? styles.largeButton : null,
         variant === 'primary' ? styles.primary : null,
         variant === 'secondary' ? styles.secondary : null,
         variant === 'ghost' ? styles.ghost : null,
@@ -46,6 +49,7 @@ export function PrimaryButton({
         <Text
           style={[
             styles.label,
+            size === 'large' ? styles.largeLabel : null,
             variant === 'primary' ? styles.primaryLabel : null,
             variant === 'secondary' ? styles.secondaryLabel : null,
             variant === 'ghost' ? styles.ghostLabel : null
@@ -99,6 +103,15 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     lineHeight: 20,
     letterSpacing: 0
+  },
+  largeButton: {
+    minHeight: 58,
+    paddingVertical: spacing.lg,
+    width: '100%'
+  },
+  largeLabel: {
+    fontSize: 18,
+    lineHeight: 24
   },
   pressed: {
     transform: [{ scale: 0.99 }]
