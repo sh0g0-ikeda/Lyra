@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1170" height="2532" viewBox="0 0 1170 2532">
+  <defs>
+    <linearGradient id="canvas" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#08090C"/>
+      <stop offset="1" stop-color="#0D111A"/>
+    </linearGradient>
+    <linearGradient id="button" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#E8CA70"/>
+      <stop offset="1" stop-color="#F0D981"/>
+    </linearGradient>
+    <filter id="buttonShadow" x="-20%" y="-50%" width="140%" height="220%">
+      <feDropShadow dx="0" dy="24" stdDeviation="30" flood-color="#8C6D16" flood-opacity="0.24"/>
+    </filter>
+  </defs>
+
+  <rect width="1170" height="2532" fill="url(#canvas)"/>
+
+  <!-- iOS status bar, 390 x 844pt reference canvas at 3x -->
+  <text x="60" y="92" fill="#F4F4F4" font-family="-apple-system, BlinkMacSystemFont, 'Yu Gothic', Meiryo, sans-serif" font-size="47" font-weight="700">9:41</text>
+  <g transform="translate(936 53)" fill="#F4F4F4">
+    <rect x="0" y="24" width="12" height="13" rx="3"/>
+    <rect x="18" y="18" width="12" height="19" rx="3"/>
+    <rect x="36" y="11" width="12" height="26" rx="3"/>
+    <path d="M77 30c17-20 45-20 62 0l-11 10c-11-13-29-13-40 0z"/>
+    <rect x="158" y="5" width="75" height="38" rx="12" fill="none" stroke="#F4F4F4" stroke-width="5"/>
+    <rect x="236" y="16" width="7" height="16" rx="3"/>
+    <rect x="165" y="12" width="55" height="24" rx="7"/>
+  </g>
+
+  <!-- Brand mark is composited into the 384 x 384 circular slot at x=393, y=156. -->
+  <circle cx="585" cy="348" r="198" fill="#0A0E17" stroke="#2B261A" stroke-width="3"/>
+
+  <text x="585" y="590" text-anchor="middle" fill="#E5C76B" font-family="-apple-system, BlinkMacSystemFont, 'Yu Gothic', Meiryo, sans-serif" font-size="39" font-weight="800" letter-spacing="6">LYRA MOBILE</text>
+  <text x="585" y="697" text-anchor="middle" fill="#F6F6F6" font-family="-apple-system, BlinkMacSystemFont, 'Yu Gothic', Meiryo, sans-serif" font-size="78" font-weight="800">物語から、漫画の1ページへ。</text>
+  <text x="585" y="788" text-anchor="middle" fill="#AEB2BA" font-family="-apple-system, BlinkMacSystemFont, 'Yu Gothic', Meiryo, sans-serif" font-size="48" font-weight="500">ストーリー・キャラクター・ページ生成を</text>
+  <text x="585" y="856" text-anchor="middle" fill="#AEB2BA" font-family="-apple-system, BlinkMacSystemFont, 'Yu Gothic', Meiryo, sans-serif" font-size="48" font-weight="500">ひとつのアプリで。</text>
+
+  <rect x="60" y="940" width="1050" height="540" rx="54" fill="#15171C" stroke="#3A3320" stroke-width="4"/>
+  <line x1="126" y1="1120" x2="1044" y2="1120" stroke="#312E27" stroke-width="3"/>
+  <line x1="126" y1="1300" x2="1044" y2="1300" stroke="#312E27" stroke-width="3"/>
+
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Yu Gothic', Meiryo, sans-serif">
+    <circle cx="144" cy="1030" r="54" fill="#272313" stroke="#E5C76B" stroke-width="3"/>
+    <text x="144" y="1047" text-anchor="middle" fill="#E5C76B" font-size="42" font-weight="800">1</text>
+    <text x="234" y="1049" fill="#F4F4F4" font-size="48" font-weight="700">ストーリーを組み立てる</text>
+
+    <circle cx="144" cy="1210" r="54" fill="#272313" stroke="#E5C76B" stroke-width="3"/>
+    <text x="144" y="1227" text-anchor="middle" fill="#E5C76B" font-size="42" font-weight="800">2</text>
+    <text x="234" y="1229" fill="#F4F4F4" font-size="48" font-weight="700">キャラクターを整える</text>
+
+    <circle cx="144" cy="1390" r="54" fill="#272313" stroke="#E5C76B" stroke-width="3"/>
+    <text x="144" y="1407" text-anchor="middle" fill="#E5C76B" font-size="42" font-weight="800">3</text>
+    <text x="234" y="1409" fill="#F4F4F4" font-size="48" font-weight="700">ページ画像を生成する</text>
+  </g>
+
+  <rect x="60" y="1566" width="1050" height="174" rx="42" fill="url(#button)" filter="url(#buttonShadow)"/>
+  <text x="585" y="1677" text-anchor="middle" fill="#17120A" font-family="-apple-system, BlinkMacSystemFont, 'Yu Gothic', Meiryo, sans-serif" font-size="57" font-weight="800">ログイン / 新規登録</text>
+  <text x="585" y="1818" text-anchor="middle" fill="#9297A0" font-family="-apple-system, BlinkMacSystemFont, 'Yu Gothic', Meiryo, sans-serif" font-size="42" font-weight="500">安全なログイン画面を開きます</text>
+
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Yu Gothic', Meiryo, sans-serif" font-size="42" font-weight="600" fill="#D9BE69" text-decoration="underline">
+    <text x="168" y="2284">利用規約</text>
+    <text x="462" y="2284">プライバシー</text>
+    <text x="844" y="2284">サポート</text>
+  </g>
+  <text x="585" y="2380" text-anchor="middle" fill="#656A73" font-family="-apple-system, BlinkMacSystemFont, 'Yu Gothic', Meiryo, sans-serif" font-size="36">ログイン前に認証情報をアプリ内へ入力することはありません</text>
+
+  <rect x="411" y="2488" width="348" height="15" rx="8" fill="#F4F4F4"/>
+</svg>

@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { ImagePreviewModal } from '@/components/ImagePreviewModal';
 import { FormField } from '@/components/FormField';
+import { PrimaryButton } from '@/components/PrimaryButton';
 import { RecordPicker } from '@/components/RecordPicker';
 import { ResponsiveContentFrame } from '@/components/ResponsiveContentFrame';
 import { Screen } from '@/components/Screen';
@@ -98,6 +99,28 @@ describe('shared mobile accessibility controls', () => {
       input.props.onFocus();
     });
     expect(renderer!.root.findByType('text-input').props.style[1].borderColor).toBe('#E5C76B');
+  });
+
+  it('認証導線向けの大ボタンを58ptかつ18pt文字で表示する', () => {
+    let renderer: ReturnType<typeof create>;
+    act(() => {
+      renderer = create(
+        <PrimaryButton label="Sign in" onPress={vi.fn()} size="large" testID="large-primary" />
+      );
+    });
+
+    const button = renderer!.root.findByType('pressable');
+    const buttonStyles = button.props.style({ pressed: false });
+    expect(buttonStyles).toContainEqual(expect.objectContaining({
+      minHeight: 58,
+      width: '100%'
+    }));
+
+    const label = renderer!.root.findByType('text');
+    expect(label.props.style).toContainEqual(expect.objectContaining({
+      fontSize: 18,
+      lineHeight: 24
+    }));
   });
 
   it('gives a collapsible section a 44pt labeled expanded-state target', () => {

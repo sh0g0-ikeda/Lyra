@@ -1,5 +1,16 @@
 import type { PropsWithChildren, RefObject } from 'react';
-import { KeyboardAvoidingView, Platform, RefreshControl, ScrollView, StatusBar, StyleSheet, Text, View } from 'react-native';
+import {
+  KeyboardAvoidingView,
+  Platform,
+  RefreshControl,
+  ScrollView,
+  StatusBar,
+  StyleSheet,
+  Text,
+  View,
+  type StyleProp,
+  type ViewStyle
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Notice } from '@/components/Notice';
@@ -16,6 +27,7 @@ interface ScreenProps extends PropsWithChildren {
   refreshing?: boolean;
   onRefresh?: () => void;
   scrollViewRef?: RefObject<ScrollView | null>;
+  contentStyle?: StyleProp<ViewStyle>;
   testID?: string;
 }
 
@@ -27,6 +39,7 @@ export function Screen({
   refreshing = false,
   onRefresh,
   scrollViewRef,
+  contentStyle,
   testID,
   children
 }: ScreenProps): React.JSX.Element {
@@ -54,7 +67,7 @@ export function Screen({
           }
           ref={scrollViewRef}
         >
-          <ResponsiveContentFrame style={styles.content} testID="screen-content-frame">
+          <ResponsiveContentFrame style={[styles.content, contentStyle]} testID="screen-content-frame">
             {showHeader ? (
               <View style={styles.header}>
                 {eyebrow === undefined ? null : <Text style={styles.eyebrow}>{eyebrow}</Text>}

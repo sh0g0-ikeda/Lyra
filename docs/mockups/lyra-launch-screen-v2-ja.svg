@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1170" height="2532" viewBox="0 0 1170 2532">
+  <defs>
+    <radialGradient id="canvas" cx="50%" cy="42%" r="72%">
+      <stop offset="0" stop-color="#111827"/>
+      <stop offset="0.55" stop-color="#090B10"/>
+      <stop offset="1" stop-color="#050608"/>
+    </radialGradient>
+  </defs>
+  <rect width="1170" height="2532" fill="url(#canvas)"/>
+  <text x="60" y="92" fill="#F4F4F4" font-family="-apple-system, BlinkMacSystemFont, 'Yu Gothic', Meiryo, sans-serif" font-size="47" font-weight="700">9:41</text>
+  <g transform="translate(936 53)" fill="#F4F4F4">
+    <rect x="0" y="24" width="12" height="13" rx="3"/>
+    <rect x="18" y="18" width="12" height="19" rx="3"/>
+    <rect x="36" y="11" width="12" height="26" rx="3"/>
+    <path d="M77 30c17-20 45-20 62 0l-11 10c-11-13-29-13-40 0z"/>
+    <rect x="158" y="5" width="75" height="38" rx="12" fill="none" stroke="#F4F4F4" stroke-width="5"/>
+    <rect x="236" y="16" width="7" height="16" rx="3"/>
+    <rect x="165" y="12" width="55" height="24" rx="7"/>
+  </g>
+  <!-- Brand mark is composited into the 528 x 528 circular slot at x=321, y=720. -->
+  <circle cx="585" cy="984" r="270" fill="#0A0E17" stroke="#2B261A" stroke-width="3"/>
+  <text x="585" y="1402" text-anchor="middle" fill="#F6F6F6" font-family="-apple-system, BlinkMacSystemFont, 'Yu Gothic', Meiryo, sans-serif" font-size="84" font-weight="800">Lyra Japan</text>
+  <text x="585" y="1490" text-anchor="middle" fill="#AEB2BA" font-family="-apple-system, BlinkMacSystemFont, 'Yu Gothic', Meiryo, sans-serif" font-size="48" font-weight="500">AI漫画エディタ</text>
+  <rect x="411" y="2488" width="348" height="15" rx="8" fill="#F4F4F4"/>
+</svg>
