@@ -94,6 +94,7 @@ describePostgres('legacy Mobile migration history reconciliation', () => {
           '035_add_processing_generation_job_cancellation.sql',
           '036_fix_push_notification_cancelled_guard.sql',
           '040_repair_page_story_metadata_columns.sql',
+          '041_add_mobile_subscription_scheduled_plan.sql',
         ]);
 
         const repairedJob = await target.query<{
