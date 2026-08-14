@@ -69,6 +69,11 @@ export interface BlobResponse {
   contentType: string | null;
 }
 
+export interface VersionedMutationOptions {
+  expectedUpdatedAt: string;
+  organizationId?: string | null;
+}
+
 export class LyraApiClient {
   private readonly tokenProvider: () => string | null;
   private readonly baseUrl: string;
@@ -242,8 +247,11 @@ export class LyraApiClient {
     });
   }
 
-  public updateWork(workId: string, body: Record<string, unknown>, organizationId?: string | null): Promise<WorkRecord> {
-    return this.request(`/api/works/${workId}${organizationQuery(organizationId)}`, { method: 'PUT', body });
+  public updateWork(workId: string, body: Record<string, unknown>, options: VersionedMutationOptions): Promise<WorkRecord> {
+    return this.request(`/api/works/${workId}${organizationQuery(options.organizationId)}`, {
+      method: 'PUT',
+      body: versionedMutationBody(body, options),
+    });
   }
 
   public getChapters(workId: string, organizationId?: string | null): Promise<{ chapters: ChapterRecord[] }> {
@@ -254,8 +262,11 @@ export class LyraApiClient {
     return this.request(`/api/works/${workId}/chapters${organizationQuery(organizationId)}`, { method: 'POST', body });
   }
 
-  public updateChapter(chapterId: string, body: Record<string, unknown>, organizationId?: string | null): Promise<ChapterRecord> {
-    return this.request(`/api/chapters/${chapterId}${organizationQuery(organizationId)}`, { method: 'PUT', body });
+  public updateChapter(chapterId: string, body: Record<string, unknown>, options: VersionedMutationOptions): Promise<ChapterRecord> {
+    return this.request(`/api/chapters/${chapterId}${organizationQuery(options.organizationId)}`, {
+      method: 'PUT',
+      body: versionedMutationBody(body, options),
+    });
   }
 
   public moveChapter(chapterId: string, direction: 'up' | 'down', organizationId?: string | null): Promise<ChapterRecord> {
@@ -277,8 +288,11 @@ export class LyraApiClient {
     return this.request(`/api/chapters/${chapterId}/episodes${organizationQuery(organizationId)}`, { method: 'POST', body });
   }
 
-  public updateEpisode(episodeId: string, body: Record<string, unknown>, organizationId?: string | null): Promise<EpisodeRecord> {
-    return this.request(`/api/episodes/${episodeId}${organizationQuery(organizationId)}`, { method: 'PUT', body });
+  public updateEpisode(episodeId: string, body: Record<string, unknown>, options: VersionedMutationOptions): Promise<EpisodeRecord> {
+    return this.request(`/api/episodes/${episodeId}${organizationQuery(options.organizationId)}`, {
+      method: 'PUT',
+      body: versionedMutationBody(body, options),
+    });
   }
 
   public moveEpisode(
@@ -366,8 +380,11 @@ export class LyraApiClient {
     return this.request(`/api/works/${workId}/entities${organizationQuery(organizationId)}`, { method: 'POST', body });
   }
 
-  public updateEntity(entityId: string, body: Record<string, unknown>, organizationId?: string | null): Promise<EntityRecord> {
-    return this.request(`/api/entities/${entityId}${organizationQuery(organizationId)}`, { method: 'PUT', body });
+  public updateEntity(entityId: string, body: Record<string, unknown>, options: VersionedMutationOptions): Promise<EntityRecord> {
+    return this.request(`/api/entities/${entityId}${organizationQuery(options.organizationId)}`, {
+      method: 'PUT',
+      body: versionedMutationBody(body, options),
+    });
   }
 
   public deleteEntity(entityId: string, organizationId?: string | null): Promise<void> {
@@ -421,8 +438,12 @@ export class LyraApiClient {
     return this.request(`/api/episodes/${episodeId}/pages${organizationQuery(organizationId)}`);
   }
 
-  public updatePage(pageId: string, body: Record<string, unknown>, organizationId?: string | null): Promise<PageRecord> {
-    return this.request(`/api/pages/${pageId}${organizationQuery(organizationId)}`, { method: 'PUT', body });
+  public updatePage(pageId: string, body: Record<string, unknown>, options: VersionedMutationOptions): Promise<PageRecord> {
+    const organizationId = options.organizationId;
+    return this.request(`/api/pages/${pageId}${organizationQuery(organizationId)}`, {
+      method: 'PUT',
+      body: versionedMutationBody(body, options),
+    });
   }
 
   public autofillPageFromScenes(pageId: string, language: 'ja' | 'en', organizationId?: string | null): Promise<{
@@ -828,4 +849,14 @@ function organizationQuery(organizationId: string | null | undefined): string {
   }
 
   return `?organization_id=${encodeURIComponent(organizationId)}`;
+}
+
+function versionedMutationBody(
+  body: Record<string, unknown>,
+  options: VersionedMutationOptions,
+): Record<string, unknown> {
+  return {
+    ...body,
+    expected_updated_at: options.expectedUpdatedAt,
+  };
 }

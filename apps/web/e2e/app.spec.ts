@@ -433,6 +433,29 @@ test('renders the console with mocked api responses', async ({ page }) => {
   await expect(page.getByRole('textbox', { name: 'Situation' })).toHaveValue('Mizuki enters the fort.');
 });
 
+test('話を保存すると表示中レコードの更新時刻を送る', async ({ page }) => {
+  await seedEnglishUi(page);
+  await seedAuthenticatedSession(page);
+
+  let updateBody: Record<string, unknown> | null = null;
+  await page.route('**/api/**', async (route) => {
+    const request = route.request();
+    const pathname = new URL(request.url()).pathname;
+    if (pathname === `/api/episodes/${episode.id}` && request.method() === 'PUT') {
+      updateBody = request.postDataJSON() as Record<string, unknown>;
+    }
+    await mockApi(route);
+  });
+
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
+
+  await expect.poll(() => updateBody).toMatchObject({
+    expected_updated_at: episode.updated_at,
+    title: episode.title,
+  });
+});
+
 test('キャラ編集では画像取り込みを自由記述の前に置き不要な詳細入力を隠す', async ({ page }) => {
   await seedEnglishUi(page);
   await seedAuthenticatedSession(page);
