@@ -3382,7 +3382,10 @@ function StudioShell(props: {
 
   const saveCurrentEpisodeContext = async (): Promise<void> => {
     if (selectedEpisode !== null) {
-      await api.updateEpisode(selectedEpisode.id, toEpisodeAutosavePayload(episodeDraft), activeOrganizationId);
+      await api.updateEpisode(selectedEpisode.id, toEpisodeAutosavePayload(episodeDraft), {
+        expectedUpdatedAt: selectedEpisode.updated_at,
+        organizationId: activeOrganizationId,
+      });
     }
 
     if (selectedScene !== null) {
@@ -3414,7 +3417,10 @@ function StudioShell(props: {
       return;
     }
 
-    const savedEntity = await api.updateEntity(selectedEntity.id, toEntityPayload(entityDraft), activeOrganizationId);
+    const savedEntity = await api.updateEntity(selectedEntity.id, toEntityPayload(entityDraft), {
+      expectedUpdatedAt: selectedEntity.updated_at,
+      organizationId: activeOrganizationId,
+    });
     cacheEntityRecord(savedEntity);
     setEntityDraft(toEntityDraft(savedEntity));
     await invalidateScopedQuery(['entities', selectedWork.id]);
@@ -5180,7 +5186,10 @@ function StudioShell(props: {
                                     await api.updateChapter(
                                       selectedChapter.id,
                                       toChapterPayload(chapterDraft, loadedSelectedWorkEntityIds),
-                                      activeOrganizationId,
+                                      {
+                                        expectedUpdatedAt: selectedChapter.updated_at,
+                                        organizationId: activeOrganizationId,
+                                      },
                                     );
                                     await invalidateScopedQuery(['chapters', selectedWork?.id ?? '']);
                                   })
@@ -5307,7 +5316,10 @@ function StudioShell(props: {
                               await api.updateEpisode(
                                 selectedEpisode.id,
                                 toEpisodePayload(episodeDraft, loadedSelectedWorkEntityIds),
-                                activeOrganizationId,
+                                {
+                                  expectedUpdatedAt: selectedEpisode.updated_at,
+                                  organizationId: activeOrganizationId,
+                                },
                               );
                               await invalidateScopedQuery(['episodes', selectedChapter?.id ?? '']);
                             })
@@ -5800,7 +5812,10 @@ function StudioShell(props: {
                               const savedEntity = await api.updateEntity(
                                 selectedEntity.id,
                                 toEntityPayload(entityDraft),
-                                activeOrganizationId,
+                                {
+                                  expectedUpdatedAt: selectedEntity.updated_at,
+                                  organizationId: activeOrganizationId,
+                                },
                               );
                               cacheEntityRecord(savedEntity);
                               setEntityDraft(toEntityDraft(savedEntity));
@@ -10277,4 +10292,3 @@ function toDataUrl(file: File): Promise<string> {
 function isDefined<T>(value: T | undefined): value is T {
   return value !== undefined;
 }
-
