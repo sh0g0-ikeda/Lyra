@@ -8,7 +8,7 @@ interface SectionProps extends PropsWithChildren {
   title: string;
   subtitle?: string;
   action?: React.ReactNode;
-  tone?: 'default' | 'highlight' | 'subtle';
+  tone?: 'default' | 'highlight' | 'subtle' | 'raised';
   collapsible?: boolean;
   defaultCollapsed?: boolean;
   mobileDefaultCollapsed?: boolean;
@@ -70,7 +70,15 @@ export function Section({
   };
 
   return (
-    <View style={[styles.section, tone === 'highlight' ? styles.highlight : null, tone === 'subtle' ? styles.subtle : null, collapsed ? styles.collapsed : null]}>
+    <View
+      style={[
+        styles.section,
+        tone === 'highlight' ? styles.highlight : null,
+        tone === 'subtle' ? styles.subtle : null,
+        tone === 'raised' ? styles.raised : null,
+        collapsed ? styles.collapsed : null
+      ]}
+    >
       <View style={styles.header}>
         {collapsible ? (
           <Pressable
@@ -81,17 +89,53 @@ export function Section({
             style={styles.toggle}
           >
             <View style={styles.headingCopy}>
-              <Text accessibilityRole="header" style={[styles.title, tone === 'highlight' ? styles.highlightTitle : null]}>{title}</Text>
+              <Text
+                accessibilityRole="header"
+                style={[
+                  styles.title,
+                  tone === 'highlight' ? styles.highlightTitle : null,
+                  tone === 'raised' ? styles.raisedTitle : null
+                ]}
+              >
+                {title}
+              </Text>
               {subtitle === undefined || (collapsed && !showSubtitleWhenCollapsed)
                 ? null
-                : <Text style={styles.subtitle}>{subtitle}</Text>}
+                : (
+                    <Text
+                      style={[
+                        styles.subtitle,
+                        tone === 'raised' ? styles.raisedSubtitle : null
+                      ]}
+                    >
+                      {subtitle}
+                    </Text>
+                  )}
             </View>
             <Text style={styles.chevron}>{collapsed ? 'v' : '^'}</Text>
           </Pressable>
         ) : (
           <View style={styles.headingCopy}>
-            <Text accessibilityRole="header" style={[styles.title, tone === 'highlight' ? styles.highlightTitle : null]}>{title}</Text>
-            {subtitle === undefined ? null : <Text style={styles.subtitle}>{subtitle}</Text>}
+            <Text
+              accessibilityRole="header"
+              style={[
+                styles.title,
+                tone === 'highlight' ? styles.highlightTitle : null,
+                tone === 'raised' ? styles.raisedTitle : null
+              ]}
+            >
+              {title}
+            </Text>
+            {subtitle === undefined ? null : (
+              <Text
+                style={[
+                  styles.subtitle,
+                  tone === 'raised' ? styles.raisedSubtitle : null
+                ]}
+              >
+                {subtitle}
+              </Text>
+            )}
           </View>
         )}
         {action}
@@ -136,6 +180,16 @@ const styles = StyleSheet.create({
   },
   highlightTitle: {
     color: '#F3DC87'
+  },
+  raised: {
+    backgroundColor: colors.editorSurface,
+    borderColor: colors.editorBorder
+  },
+  raisedSubtitle: {
+    color: colors.editorMuted
+  },
+  raisedTitle: {
+    color: colors.editorText
   },
   section: {
     ...shadow,

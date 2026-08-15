@@ -71,4 +71,15 @@ describe('PanelEditorSections', () => {
     act(() => compositionToggle!.props.onClick());
     expect(JSON.stringify(renderer!.toJSON())).toContain('composition-content');
   });
+
+  it('各区分を最奥背景と区別できる入れ子カードとして表示する', () => {
+    let renderer: ReturnType<typeof create>;
+    act(() => {
+      renderer = create(<PanelEditorSections language="ja" sections={sections} />);
+    });
+
+    const rendered = renderer!.toJSON();
+    expect(JSON.stringify(rendered)).toContain('#1C2026');
+    expect(JSON.stringify(rendered)).toContain('#5A5138');
+  });
 });

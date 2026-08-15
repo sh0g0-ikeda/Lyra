@@ -22,6 +22,7 @@ import { PageThumbnailPicker } from '@/components/PageThumbnailPicker';
 import { PageProvenanceFields } from '@/components/PageProvenanceFields';
 import { PanelDialoguePlacementNotice } from '@/components/PanelDialoguePlacementNotice';
 import { PanelDialogueEditor } from '@/components/PanelDialogueEditor';
+import { PanelCharacterAssignmentCard } from '@/components/PanelCharacterAssignmentCard';
 import { PanelEditorSections } from '@/components/PanelEditorSections';
 import { PanelOrderList } from '@/components/PanelOrderList';
 import { PrimaryButton } from '@/components/PrimaryButton';
@@ -35,7 +36,6 @@ import { useWorkspaceContextSelection } from '@/components/WorkspaceContextPicke
 import {
   angleOptions,
   panelAssignmentDefaults,
-  panelCompositionSourceOptions,
   panelEntityActionOptions,
   panelEntityExpressionOptions,
   panelEntityFacingOptions,
@@ -69,7 +69,6 @@ import {
   buildPageThumbnailImageSources
 } from '@/domain/pageImageSources';
 import type {
-  CompositionRecord,
   EntityRecord,
   ExportFormat,
   GenerationJobRecord,
@@ -340,6 +339,15 @@ const labelOptions = <T extends string>(
     label: language === 'ja' ? option.labelJa : option.labelEn
   }));
 
+const optionLabel = <T extends string>(
+  options: { value: T; labelJa: string; labelEn: string }[],
+  value: T,
+  language: 'ja' | 'en'
+): string => {
+  const option = options.find((candidate) => candidate.value === value);
+  return option === undefined ? value : language === 'ja' ? option.labelJa : option.labelEn;
+};
+
 interface PanelDisclosureProps {
   title: string;
   defaultCollapsed?: boolean;
@@ -430,50 +438,6 @@ const toFramePreviewDefinition = (draft: FrameDraft): FramePreviewDefinition => 
   }))
 });
 
-function CompositionPicker(props: {
-  compositions: CompositionRecord[];
-  language: 'ja' | 'en';
-  onSelect: (composition: CompositionRecord) => void;
-  selectedId: string;
-  disabled?: boolean;
-}): React.JSX.Element {
-  if (props.compositions.length === 0) {
-    return <Text style={styles.emptySmall}>{t(props.language, "generated.screens.PagesScreen.no.compositions.available.8247a317")}</Text>;
-  }
-
-  return (
-    <ScrollView horizontal contentContainerStyle={styles.compositionStrip} showsHorizontalScrollIndicator={false}>
-      {props.compositions.slice(0, 10).map((composition) => {
-        const selected = composition.id === props.selectedId;
-        return (
-          <Pressable
-            accessibilityRole="button"
-            accessibilityState={{ disabled: props.disabled, selected }}
-            disabled={props.disabled}
-            key={composition.id}
-            onPress={() => props.onSelect(composition)}
-            style={[styles.compositionCard, selected ? styles.compositionCardSelected : null]}
-          >
-            {composition.preview_cdn_url === null ? (
-              <View style={styles.compositionImagePlaceholder} />
-            ) : (
-              <ExpoImage
-                cachePolicy="memory-disk"
-                contentFit="cover"
-                source={{ uri: composition.preview_cdn_url }}
-                style={styles.compositionImage}
-              />
-            )}
-            <Text numberOfLines={2} style={[styles.compositionLabel, selected ? styles.compositionLabelSelected : null]}>
-              {composition.name}
-            </Text>
-          </Pressable>
-        );
-      })}
-    </ScrollView>
-  );
-}
-
 function EntityStatePicker(props: {
   disabled?: boolean;
   entityId: string;
@@ -549,8 +513,23 @@ function AssignmentEditor(props: {
   disabled?: boolean;
 }): React.JSX.Element {
   const [removedAssignment, setRemovedAssignment] = useState<{ assignment: AssignmentDraft; index: number } | null>(null);
+  const [expandedEntityIds, setExpandedEntityIds] = useState<ReadonlySet<string>>(
+    () => new Set<string>()
+  );
   const assignedIds = new Set(props.assignments.map((assignment) => assignment.entity_id));
   const availableEntities = props.entities.filter((entity) => !assignedIds.has(entity.id));
+
+  const toggleAssignment = (entityId: string): void => {
+    setExpandedEntityIds((current) => {
+      const next = new Set(current);
+      if (next.has(entityId)) {
+        next.delete(entityId);
+      } else {
+        next.add(entityId);
+      }
+      return next;
+    });
+  };
 
   const updateAssignment = (entityId: string, patch: Partial<AssignmentDraft>): void => {
     props.onChange(
@@ -562,6 +541,7 @@ function AssignmentEditor(props: {
 
   const addEntity = (entityId: string): void => {
     setRemovedAssignment(null);
+    setExpandedEntityIds((current) => new Set([...current, entityId]));
     props.onChange([
       ...props.assignments,
       {
@@ -579,6 +559,11 @@ function AssignmentEditor(props: {
       return;
     }
     setRemovedAssignment({ assignment, index });
+    setExpandedEntityIds((current) => {
+      const next = new Set(current);
+      next.delete(entityId);
+      return next;
+    });
     props.onChange(props.assignments.filter((item) => item.entity_id !== entityId));
   };
 
@@ -592,6 +577,7 @@ function AssignmentEditor(props: {
       removedAssignment.assignment,
       ...props.assignments.slice(insertIndex)
     ]);
+    setExpandedEntityIds((current) => new Set([...current, removedAssignment.assignment.entity_id]));
     setRemovedAssignment(null);
   };
 
@@ -617,17 +603,39 @@ function AssignmentEditor(props: {
       )}
       {props.assignments.map((assignment) => {
         const entity = props.entities.find((item) => item.id === assignment.entity_id);
+        const name = entity?.name ?? assignment.entity_id;
+        const expanded = expandedEntityIds.has(assignment.entity_id);
+        const expressionLabel =
+          assignment.expression === 'custom' && (assignment.custom_expression ?? '').trim().length > 0
+            ? (assignment.custom_expression ?? '').trim()
+            : optionLabel(panelEntityExpressionOptions, assignment.expression, props.language);
+        const summarySeparator = t(
+          props.language,
+          'component.panelCharacterAssignment.summarySeparator'
+        );
+        const summary = [
+          optionLabel(panelEntityRoleOptions, assignment.role, props.language),
+          optionLabel(panelEntityPositionOptions, assignment.position, props.language),
+          expressionLabel
+        ].join(summarySeparator);
         return (
-          <View key={assignment.entity_id} style={styles.subCard}>
-            <View style={styles.subCardHeader}>
-              <Text style={styles.subCardTitle}>{entity?.name ?? assignment.entity_id}</Text>
-              <PrimaryButton
-                disabled={props.disabled}
-                label={t(props.language, "generated.screens.PagesScreen.remove.21a05866")}
-                onPress={() => removeAssignment(assignment.entity_id)}
-                variant="ghost"
-              />
-            </View>
+          <PanelCharacterAssignmentCard
+            disabled={props.disabled === true}
+            expanded={expanded}
+            key={assignment.entity_id}
+            name={name}
+            onRemove={() => removeAssignment(assignment.entity_id)}
+            onToggle={() => toggleAssignment(assignment.entity_id)}
+            removeLabel={t(props.language, 'component.panelCharacterAssignment.remove')}
+            summary={summary}
+            toggleLabel={t(
+              props.language,
+              expanded
+                ? 'component.panelCharacterAssignment.collapse'
+                : 'component.panelCharacterAssignment.expand',
+              { name }
+            )}
+          >
             <Text style={styles.label}>{t(props.language, "generated.screens.PagesScreen.role.99bfaa69")}</Text>
             <SegmentedControl
               disabled={props.disabled}
@@ -684,7 +692,7 @@ function AssignmentEditor(props: {
                 />
               </PanelDisclosure>
             ) : null}
-          </View>
+          </PanelCharacterAssignmentCard>
         );
       })}
     </View>
@@ -1107,7 +1115,6 @@ export function PagesScreen(): React.JSX.Element {
     [entitiesQuery.data?.pages],
   );
   const scenes = scenesQuery.data?.scenes ?? [];
-  const compositions = compositionsQuery.data?.compositions ?? [];
   const assignedEntityIds = assignments.map((assignment) => assignment.entity_id);
   const panelEntities = entities.filter((entity) => assignedEntityIds.includes(entity.id));
 
@@ -2007,13 +2014,6 @@ export function PagesScreen(): React.JSX.Element {
     });
   };
 
-  const selectComposition = (composition: CompositionRecord): void => {
-    setCompositionGalleryItemId(composition.id);
-    setCompositionPrompt(composition.composition_prompt);
-    setShotType(composition.shot_type ?? '');
-    setAngle(composition.angle ?? '');
-  };
-
   const switchPage = (pageId: string): void => {
     void updateSelection({ pageId }).then((changed) => {
       if (changed) {
@@ -2454,6 +2454,7 @@ export function PagesScreen(): React.JSX.Element {
 
   return (
     <Screen
+      contentStyle={styles.editorScreenContent}
       onRefresh={refreshPages}
       refreshing={
         pagesQuery.isFetching ||
@@ -2593,7 +2594,7 @@ export function PagesScreen(): React.JSX.Element {
         <FormField editable={canEdit} label={t(language, 'styleReferenceNotes')} maxLength={2000} multiline onChangeText={setStyleReferenceNotes} value={styleReferenceNotes} />
       </Section>
 
-      <Section collapsible defaultCollapsed persistKey="pages:story-sources" title={t(language, "generated.screens.PagesScreen.story.sources.82e34b3e")}>
+      <Section collapsible defaultCollapsed persistKey="pages:story-sources" title={t(language, "generated.screens.PagesScreen.story.sources.82e34b3e")} tone="raised">
         <PageProvenanceFields
           continuityNote={continuityNote}
           editable={canEdit}
@@ -2804,6 +2805,7 @@ export function PagesScreen(): React.JSX.Element {
         persistKey="pages:panels"
         subtitle={t(language, "generated.screens.PagesScreen.refine.situation.characters.composition.e7ce8a4f")}
         title={t(language, 'panels')}
+        tone="raised"
       >
         <PanelOrderList
           disabled={
@@ -2864,22 +2866,6 @@ export function PagesScreen(): React.JSX.Element {
             ),
             compositionAndCamera: (
               <>
-                <Text style={styles.label}>{t(language, "generated.screens.PagesScreen.composition.source.1a1a1e08")}</Text>
-                <SegmentedControl
-                  disabled={!canEdit}
-                  onChange={setCompositionSource}
-                  options={labelOptions(panelCompositionSourceOptions, language)}
-                  value={compositionSource}
-                />
-                {compositionSource === 'gallery' ? (
-                  <CompositionPicker
-                    compositions={compositions}
-                    disabled={!canEdit}
-                    language={language}
-                    onSelect={selectComposition}
-                    selectedId={compositionGalleryItemId}
-                  />
-                ) : null}
                 <FormField
                   editable={canEdit}
                   label={t(language, "generated.screens.PagesScreen.composition.prompt.bb3e0496")}
@@ -2917,6 +2903,7 @@ export function PagesScreen(): React.JSX.Element {
                 assignments={assignments}
                 disabled={!canEdit}
                 entities={entities}
+                key={selectedPanel?.id ?? 'new-panel'}
                 language={language}
                 onChange={setAssignments}
               />
@@ -3267,44 +3254,6 @@ const styles = StyleSheet.create({
     ...textStyles.caption,
     color: colors.muted
   },
-  compositionCard: {
-    backgroundColor: colors.surfaceAlt,
-    borderColor: colors.border,
-    borderRadius: 8,
-    borderWidth: 1,
-    gap: spacing.xs,
-    padding: spacing.xs,
-    width: 132
-  },
-  compositionCardSelected: {
-    borderColor: colors.primary,
-    borderWidth: 2
-  },
-  compositionImage: {
-    aspectRatio: 1,
-    backgroundColor: colors.field,
-    borderRadius: 5,
-    width: '100%'
-  },
-  compositionImagePlaceholder: {
-    aspectRatio: 1,
-    backgroundColor: colors.field,
-    borderRadius: 5,
-    width: '100%'
-  },
-  compositionLabel: {
-    ...textStyles.caption,
-    color: colors.ink,
-    minHeight: 34
-  },
-  compositionLabelSelected: {
-    color: colors.primary,
-    fontWeight: '700'
-  },
-  compositionStrip: {
-    gap: spacing.sm,
-    paddingVertical: spacing.xs
-  },
   chip: {
     backgroundColor: 'rgba(255, 255, 255, 0.03)',
     borderColor: colors.border,
@@ -3337,6 +3286,9 @@ const styles = StyleSheet.create({
   },
   editorStack: {
     gap: spacing.sm
+  },
+  editorScreenContent: {
+    backgroundColor: colors.editorCanvas
   },
   emptySmall: {
     ...textStyles.caption,
@@ -3528,18 +3480,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     gap: spacing.sm,
     padding: spacing.md
-  },
-  subCardHeader: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: spacing.sm,
-    justifyContent: 'space-between'
-  },
-  subCardTitle: {
-    ...textStyles.body,
-    flexShrink: 1,
-    fontWeight: '700'
   },
   twoColumn: {
     flexDirection: 'row',

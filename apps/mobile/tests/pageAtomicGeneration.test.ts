@@ -119,6 +119,42 @@ describe('pageAtomicGeneration', () => {
     expect(payload.panels[0]?.entities[0]?.state_id).toBe(stateId);
   });
 
+  it('構図ソースUIを隠しても保存済みgallery構図を生成payloadに残す', () => {
+    const galleryItemId = '99999999-9999-4999-8999-999999999999';
+    const firstPanel = {
+      ...makePanel(firstPanelId, 1, 'ギャラリー構図を維持するコマ'),
+      composition: {
+        source: 'gallery' as const,
+        gallery_item_id: galleryItemId,
+        composition_prompt: '既存の構図指示',
+        shot_type: 'full_shot' as const,
+        angle: 'eye_level' as const,
+        custom_note: '保存済みの補足'
+      }
+    };
+
+    const payload = buildAtomicSaveAndGeneratePayload({
+      page: {
+        ...page,
+        panel_count: 1,
+        frame_count: 1
+      },
+      pagePatch: {},
+      panels: [firstPanel],
+      selectedPanelOverride: {
+        panelId: firstPanelId,
+        fields: {
+          ...firstPanel,
+          situation_text: '画面で編集した本文'
+        }
+      },
+      frames: [makeFrame(firstPanelId, 1)],
+      language: 'ja'
+    });
+
+    expect(payload.panels[0]?.composition).toEqual(firstPanel.composition);
+  });
+
   it('選択中コマの下書きだけを統合し全コマと全枠を保持する', () => {
     const firstPanel = makePanel(firstPanelId, 1, '保存済みの1コマ目');
     const secondPanel = makePanel(secondPanelId, 2, '保存済みの2コマ目');
