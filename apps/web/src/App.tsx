@@ -36,6 +36,7 @@ import {
 } from './lib/billingContract';
 import { ORGANIZATION_FEATURES_AVAILABLE } from './lib/featureFlags';
 import { readInvitationTokenFromPath } from './lib/invitationPath';
+import { resolveCompletedStorySave } from './lib/storyDraftSaveHydration';
 import { formatUserFacingError, formatUserFacingErrorMessage } from './lib/userFacingErrors';
 import {
   getEntityReferenceGenerationBlockers,
@@ -79,6 +80,7 @@ import type {
   OrganizationInvitationRecord,
   OrganizationInvoiceRecord,
   OrganizationMemberRecord,
+  WorkRecord,
 } from './types/api';
 
 type WorkspaceTab = 'story' | 'entities' | 'pages' | 'account' | 'tutorial';
@@ -219,8 +221,14 @@ interface EpisodeDraft {
 
 interface PreservedStoryDraft<TDraft> {
   id: string;
-  expectedTitle: string | null;
+  expectedVersion: number;
   draft: TDraft;
+}
+
+interface CompletedStorySave<TDraft> {
+  id: string;
+  savedVersion: number;
+  submittedDraft: TDraft;
 }
 
 interface EntityDraft {
@@ -2290,8 +2298,26 @@ function StudioShell(props: {
   const [newEpisodeDraft, setNewEpisodeDraft] = useState<EpisodeDraft>(createEmptyEpisodeDraft());
   const preservedChapterDraftRef = useRef<PreservedStoryDraft<ChapterDraft> | null>(null);
   const preservedEpisodeDraftRef = useRef<PreservedStoryDraft<EpisodeDraft> | null>(null);
+  const completedChapterSaveRef = useRef<CompletedStorySave<ChapterDraft> | null>(null);
+  const completedEpisodeSaveRef = useRef<CompletedStorySave<EpisodeDraft> | null>(null);
   const hydratedChapterVersionRef = useRef<string | null>(null);
   const hydratedEpisodeVersionRef = useRef<string | null>(null);
+  const chapterDraftRef = useRef(chapterDraft);
+  const episodeDraftRef = useRef(episodeDraft);
+  const selectedChapterIdRef = useRef(selectedChapterId);
+  const selectedEpisodeIdRef = useRef(selectedEpisodeId);
+  useEffect(() => {
+    chapterDraftRef.current = chapterDraft;
+  }, [chapterDraft]);
+  useEffect(() => {
+    episodeDraftRef.current = episodeDraft;
+  }, [episodeDraft]);
+  useEffect(() => {
+    selectedChapterIdRef.current = selectedChapterId;
+  }, [selectedChapterId]);
+  useEffect(() => {
+    selectedEpisodeIdRef.current = selectedEpisodeId;
+  }, [selectedEpisodeId]);
   const [storyInstruction, setStoryInstruction] = useState('');
   const [storyBusy, setStoryBusy] = useState(false);
   const [storyImprovementDraft, setStoryImprovementDraft] = useState<StoryEpisodeImprovementRecord['draft'] | null>(null);
@@ -3185,13 +3211,34 @@ function StudioShell(props: {
 
   useEffect(() => {
     if (selectedChapter === null) {
+      completedChapterSaveRef.current = null;
       hydratedChapterVersionRef.current = null;
       return;
     }
     const hydrationKey = `${selectedChapter.id}:${selectedChapter.version}`;
+    const completedSave = completedChapterSaveRef.current;
+    if (completedSave !== null) {
+      const resolution = resolveCompletedStorySave({
+        latestDraft: chapterDraftRef.current,
+        savedId: completedSave.id,
+        savedVersion: completedSave.savedVersion,
+        selectedId: selectedChapter.id,
+        selectedVersion: selectedChapter.version,
+        submittedDraft: completedSave.submittedDraft,
+      });
+      if (resolution === 'wait') {
+        return;
+      }
+      completedChapterSaveRef.current = null;
+      if (resolution === 'preserve-local') {
+        preservedChapterDraftRef.current = null;
+        hydratedChapterVersionRef.current = hydrationKey;
+        return;
+      }
+    }
     const preserved = preservedChapterDraftRef.current;
     preservedChapterDraftRef.current = null;
-    if (preserved?.id === selectedChapter.id && preserved.expectedTitle === selectedChapter.title) {
+    if (preserved?.id === selectedChapter.id && preserved.expectedVersion === selectedChapter.version) {
       hydratedChapterVersionRef.current = hydrationKey;
       setChapterDraft(preserved.draft);
       return;
@@ -3205,13 +3252,34 @@ function StudioShell(props: {
 
   useEffect(() => {
     if (selectedEpisode === null) {
+      completedEpisodeSaveRef.current = null;
       hydratedEpisodeVersionRef.current = null;
       return;
     }
     const hydrationKey = `${selectedEpisode.id}:${selectedEpisode.version}`;
+    const completedSave = completedEpisodeSaveRef.current;
+    if (completedSave !== null) {
+      const resolution = resolveCompletedStorySave({
+        latestDraft: episodeDraftRef.current,
+        savedId: completedSave.id,
+        savedVersion: completedSave.savedVersion,
+        selectedId: selectedEpisode.id,
+        selectedVersion: selectedEpisode.version,
+        submittedDraft: completedSave.submittedDraft,
+      });
+      if (resolution === 'wait') {
+        return;
+      }
+      completedEpisodeSaveRef.current = null;
+      if (resolution === 'preserve-local') {
+        preservedEpisodeDraftRef.current = null;
+        hydratedEpisodeVersionRef.current = hydrationKey;
+        return;
+      }
+    }
     const preserved = preservedEpisodeDraftRef.current;
     preservedEpisodeDraftRef.current = null;
-    if (preserved?.id === selectedEpisode.id && preserved.expectedTitle === selectedEpisode.title) {
+    if (preserved?.id === selectedEpisode.id && preserved.expectedVersion === selectedEpisode.version) {
       hydratedEpisodeVersionRef.current = hydrationKey;
       setEpisodeDraft(preserved.draft);
       return;
@@ -3380,9 +3448,76 @@ function StudioShell(props: {
     }
   }, [referenceCandidates, referencePrimaryKey, referenceSelection]);
 
+  const cacheWorkRecord = (work: WorkRecord): void => {
+    queryClient.setQueryData<{ works: WorkRecord[] }>(scopedQueryKey(['works']), (current) => {
+      if (current === undefined) {
+        return { works: [work] };
+      }
+
+      const workExists = current.works.some((item) => item.id === work.id);
+      return {
+        ...current,
+        works: workExists
+          ? current.works.map((item) => (item.id === work.id ? work : item))
+          : [work, ...current.works],
+      };
+    });
+  };
+
+  const cacheChapterRecord = (chapter: ChapterRecord): void => {
+    queryClient.setQueryData<{ chapters: ChapterRecord[] }>(
+      scopedQueryKey(['chapters', chapter.work_id]),
+      (current) => {
+        if (current === undefined) {
+          return { chapters: [chapter] };
+        }
+
+        const chapterExists = current.chapters.some((item) => item.id === chapter.id);
+        return {
+          ...current,
+          chapters: chapterExists
+            ? current.chapters.map((item) => (item.id === chapter.id ? chapter : item))
+            : [chapter, ...current.chapters],
+        };
+      },
+    );
+  };
+
+  const cacheEpisodeRecord = (episode: EpisodeRecord): void => {
+    queryClient.setQueryData<{ episodes: EpisodeRecord[] }>(
+      scopedQueryKey(['episodes', episode.chapter_id]),
+      (current) => {
+        if (current === undefined) {
+          return { episodes: [episode] };
+        }
+
+        const episodeExists = current.episodes.some((item) => item.id === episode.id);
+        return {
+          ...current,
+          episodes: episodeExists
+            ? current.episodes.map((item) => (item.id === episode.id ? episode : item))
+            : [episode, ...current.episodes],
+        };
+      },
+    );
+  };
+
   const saveCurrentEpisodeContext = async (): Promise<void> => {
     if (selectedEpisode !== null) {
-      await api.updateEpisode(selectedEpisode.id, toEpisodeAutosavePayload(episodeDraft), activeOrganizationId);
+      const savingEpisodeId = selectedEpisode.id;
+      const submittedDraft = episodeDraft;
+      const updatedEpisode = await api.updateEpisode(savingEpisodeId, toEpisodeAutosavePayload(submittedDraft), {
+        expectedUpdatedAt: selectedEpisode.updated_at,
+        organizationId: activeOrganizationId,
+      });
+      if (selectedEpisodeIdRef.current === savingEpisodeId) {
+        completedEpisodeSaveRef.current = {
+          id: savingEpisodeId,
+          savedVersion: updatedEpisode.version,
+          submittedDraft,
+        };
+      }
+      cacheEpisodeRecord(updatedEpisode);
     }
 
     if (selectedScene !== null) {
@@ -3414,7 +3549,10 @@ function StudioShell(props: {
       return;
     }
 
-    const savedEntity = await api.updateEntity(selectedEntity.id, toEntityPayload(entityDraft), activeOrganizationId);
+    const savedEntity = await api.updateEntity(selectedEntity.id, toEntityPayload(entityDraft), {
+      expectedUpdatedAt: selectedEntity.updated_at,
+      organizationId: activeOrganizationId,
+    });
     cacheEntityRecord(savedEntity);
     setEntityDraft(toEntityDraft(savedEntity));
     await invalidateScopedQuery(['entities', selectedWork.id]);
@@ -4748,29 +4886,34 @@ function StudioShell(props: {
                     setSelectedChapterId(chapterId);
                     setSelectedEpisodeId(episodeId);
                   }}
+                  onWorkMetadataChanged={cacheWorkRecord}
                   onChapterMetadataChanged={(updatedChapter) => {
-                    if (updatedChapter.id !== selectedChapterId) {
+                    if (updatedChapter.id !== selectedChapterIdRef.current) {
+                      cacheChapterRecord(updatedChapter);
                       return;
                     }
-                    const preservedDraft = { ...chapterDraft, title: updatedChapter.title ?? '' };
+                    const preservedDraft = { ...chapterDraftRef.current, title: updatedChapter.title ?? '' };
                     preservedChapterDraftRef.current = {
                       id: updatedChapter.id,
-                      expectedTitle: updatedChapter.title,
+                      expectedVersion: updatedChapter.version,
                       draft: preservedDraft,
                     };
                     setChapterDraft(preservedDraft);
+                    cacheChapterRecord(updatedChapter);
                   }}
                   onEpisodeMetadataChanged={(updatedEpisode) => {
-                    if (updatedEpisode.id !== selectedEpisodeId) {
+                    if (updatedEpisode.id !== selectedEpisodeIdRef.current) {
+                      cacheEpisodeRecord(updatedEpisode);
                       return;
                     }
-                    const preservedDraft = { ...episodeDraft, title: updatedEpisode.title ?? '' };
+                    const preservedDraft = { ...episodeDraftRef.current, title: updatedEpisode.title ?? '' };
                     preservedEpisodeDraftRef.current = {
                       id: updatedEpisode.id,
-                      expectedTitle: updatedEpisode.title,
+                      expectedVersion: updatedEpisode.version,
                       draft: preservedDraft,
                     };
                     setEpisodeDraft(preservedDraft);
+                    cacheEpisodeRecord(updatedEpisode);
                   }}
                   onSelectWork={(workId) => {
                     setSelectedWorkId(workId);
@@ -5177,11 +5320,24 @@ function StudioShell(props: {
                                 className="ghost-button"
                                 onClick={() =>
                                   void runAction('Save chapter', async () => {
-                                    await api.updateChapter(
-                                      selectedChapter.id,
-                                      toChapterPayload(chapterDraft, loadedSelectedWorkEntityIds),
-                                      activeOrganizationId,
+                                    const savingChapterId = selectedChapter.id;
+                                    const submittedDraft = chapterDraft;
+                                    const updatedChapter = await api.updateChapter(
+                                      savingChapterId,
+                                      toChapterPayload(submittedDraft, loadedSelectedWorkEntityIds),
+                                      {
+                                        expectedUpdatedAt: selectedChapter.updated_at,
+                                        organizationId: activeOrganizationId,
+                                      },
                                     );
+                                    if (selectedChapterIdRef.current === savingChapterId) {
+                                      completedChapterSaveRef.current = {
+                                        id: savingChapterId,
+                                        savedVersion: updatedChapter.version,
+                                        submittedDraft,
+                                      };
+                                    }
+                                    cacheChapterRecord(updatedChapter);
                                     await invalidateScopedQuery(['chapters', selectedWork?.id ?? '']);
                                   })
                                 }
@@ -5304,11 +5460,24 @@ function StudioShell(props: {
                           disabled={busyAction === 'Save episode'}
                           onClick={() =>
                             void runAction('Save episode', async () => {
-                              await api.updateEpisode(
-                                selectedEpisode.id,
-                                toEpisodePayload(episodeDraft, loadedSelectedWorkEntityIds),
-                                activeOrganizationId,
+                              const savingEpisodeId = selectedEpisode.id;
+                              const submittedDraft = episodeDraft;
+                              const updatedEpisode = await api.updateEpisode(
+                                savingEpisodeId,
+                                toEpisodePayload(submittedDraft, loadedSelectedWorkEntityIds),
+                                {
+                                  expectedUpdatedAt: selectedEpisode.updated_at,
+                                  organizationId: activeOrganizationId,
+                                },
                               );
+                              if (selectedEpisodeIdRef.current === savingEpisodeId) {
+                                completedEpisodeSaveRef.current = {
+                                  id: savingEpisodeId,
+                                  savedVersion: updatedEpisode.version,
+                                  submittedDraft,
+                                };
+                              }
+                              cacheEpisodeRecord(updatedEpisode);
                               await invalidateScopedQuery(['episodes', selectedChapter?.id ?? '']);
                             })
                           }
@@ -5800,7 +5969,10 @@ function StudioShell(props: {
                               const savedEntity = await api.updateEntity(
                                 selectedEntity.id,
                                 toEntityPayload(entityDraft),
-                                activeOrganizationId,
+                                {
+                                  expectedUpdatedAt: selectedEntity.updated_at,
+                                  organizationId: activeOrganizationId,
+                                },
                               );
                               cacheEntityRecord(savedEntity);
                               setEntityDraft(toEntityDraft(savedEntity));
@@ -10277,4 +10449,3 @@ function toDataUrl(file: File): Promise<string> {
 function isDefined<T>(value: T | undefined): value is T {
   return value !== undefined;
 }
-

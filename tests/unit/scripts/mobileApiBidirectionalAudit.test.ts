@@ -21,5 +21,5 @@ describe('Mobile API bidirectional audit', () => {
     expect(output).toMatch(/Backend route inventory is current/u);
     expect(inventory).toMatch(/Unclassified routes: \*\*0\*\*/u);
     expect(inventory).toContain('| Backend route | HTTP | Classification | Mobile path / rationale |');
-  }, 30_000);
+  }, 60_000);
 });

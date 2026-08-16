@@ -27,7 +27,16 @@ describe('storyWorkflow', () => {
 
     expect(saveButtonStart).toBeGreaterThanOrEqual(0);
     expect(source).toContain('save: saveStoryDrafts');
-    expect(saveButton).toContain('onPress={() => updateEpisodeMutation.mutate()}');
+    expect(saveButton).toContain('onPress={submitSelectedEpisode}');
+  });
+
+  it('話の競合は汎用再試行に重複表示せず専用の再取得と保存再試行で解決する', () => {
+    const source = readFileSync(resolve(process.cwd(), 'src/screens/StoryScreen.tsx'), 'utf8');
+
+    expect(source).toContain('fetchFreshEpisode({');
+    expect(source).toContain('updateEpisodeMutation.reset()');
+    expect(source).toContain('retryStaleEpisodeSave');
+    expect(source).toContain('!isResourceStaleError(error)');
   });
 
   it('既存ページが1件以上ある場合だけ骨格を上書き再生成する', () => {

@@ -140,7 +140,8 @@ export const screenTranslations = {
     'screen.story.deleteScene': '「{sceneName}」を削除します。紐づく継続状態やページ材料からも外れる場合があります。この操作は元に戻せません。',
     'screen.story.replacePagePlan': '現在の{pageCount}ページ・{panelCount}コマの編集内容を上書きします。現在の話を保存後、新しい骨格を生成します。この操作は元に戻せません。',
     'screen.story.editingEpisode': '編集中: {episodeTitle}',
-    'screen.story.untitledEpisode': '第{episodeOrder}話'
+    'screen.story.untitledEpisode': '第{episodeOrder}話',
+    'screen.story.retryCurrentDraft': '現在の入力で再試行'
   },
   en: {
     'screen.auth.brand': 'Lyra logo',
@@ -283,7 +284,8 @@ export const screenTranslations = {
     'screen.story.deleteScene': 'Delete "{sceneName}". Linked continuity states and page sources may also be detached. This cannot be undone.',
     'screen.story.replacePagePlan': 'This replaces edits in {pageCount} pages and {panelCount} panels. The current episode is saved before a new plan is generated. This cannot be undone.',
     'screen.story.editingEpisode': 'Editing: {episodeTitle}',
-    'screen.story.untitledEpisode': 'Episode {episodeOrder}'
+    'screen.story.untitledEpisode': 'Episode {episodeOrder}',
+    'screen.story.retryCurrentDraft': 'Retry with current draft'
   }
 } as const;
 

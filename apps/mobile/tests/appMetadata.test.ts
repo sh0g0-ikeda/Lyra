@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 interface ExpoAppConfig {
   expo: {
     icon?: string;
+    version?: string;
     userInterfaceStyle?: string;
     splash?: unknown;
     plugins?: (
@@ -64,12 +65,14 @@ const storeConfig = JSON.parse(
 ) as {
   configVersion?: number;
   apple?: {
+    version?: string;
     copyright?: string;
     advisory?: { ageRatingOverride?: string };
     info?: Record<string, {
       title?: string;
       description?: string;
       keywords?: string[];
+      releaseNotes?: string;
       privacyPolicyUrl?: string;
       privacyChoicesUrl?: string;
       supportUrl?: string;
@@ -83,6 +86,13 @@ function assertBundledAsset(assetPath: string | undefined): void {
 }
 
 describe('production app metadata', () => {
+  it('公開済み1.0より新しい更新版を1.0.1としてビルドする', () => {
+    expect(config.expo.version).toBe('1.0.1');
+    expect(storeConfig.apple?.version).toBe('1.0.1');
+    expect(storeConfig.apple?.info?.ja?.releaseNotes).toContain('ストーリー保存');
+    expect(storeConfig.apple?.info?.['en-US']?.releaseNotes).toContain('story save');
+  });
+
   it('icon、adaptive icon、splash を Mobile bundle 内の実在 asset に固定する', () => {
     const splashPlugin = config.expo.plugins?.find(
       (plugin): plugin is [
