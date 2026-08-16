@@ -58,6 +58,7 @@ interface StoryHierarchyTreeProps {
   onSelectWork: (workId: string) => void;
   onSelectChapter: (workId: string, chapterId: string) => void;
   onSelectEpisode: (workId: string, chapterId: string, episodeId: string) => void;
+  onWorkMetadataChanged: (work: WorkRecord) => void;
   onChapterMetadataChanged: (chapter: ChapterRecord) => void;
   onEpisodeMetadataChanged: (episode: EpisodeRecord) => void;
 }
@@ -228,10 +229,11 @@ function StoryWorkNode(props: WorkNodeProps) {
       return;
     }
     void props.runAction('Save work', async () => {
-      await props.api.updateWork(props.work.id, { title }, {
+      const updated = await props.api.updateWork(props.work.id, { title }, {
         expectedUpdatedAt: props.work.updated_at,
         organizationId: props.organizationId,
       });
+      props.onWorkMetadataChanged(updated);
       await props.invalidateScopedQuery(['works']);
       setRenaming(false);
     });

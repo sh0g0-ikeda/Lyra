@@ -456,6 +456,414 @@ test('話を保存すると表示中レコードの更新時刻を送る', async
   });
 });
 
+test('話の保存後の再取得が失敗しても次回保存は返却された更新時刻を使う', async ({ page }) => {
+  await seedEnglishUi(page);
+  await seedAuthenticatedSession(page);
+
+  const savedEpisode = {
+    ...episode,
+    story_input_mode: 'full',
+    story_full_draft: 'Saved story',
+    introduction: null,
+    middle: null,
+    climax: null,
+    ending_hook: null,
+    updated_at: '2026-04-26T00:00:01.000Z',
+    version: 2,
+  };
+  const updateBodies: Array<Record<string, unknown>> = [];
+  let rejectEpisodeRefresh = false;
+
+  await page.route('**/api/**', async (route) => {
+    const request = route.request();
+    const pathname = new URL(request.url()).pathname;
+    if (pathname === `/api/chapters/${chapter.id}/episodes` && request.method() === 'GET') {
+      if (rejectEpisodeRefresh) {
+        await route.fulfill({
+          body: JSON.stringify({ code: 'TEMPORARY_FAILURE', message: 'refresh failed' }),
+          contentType: 'application/json',
+          status: 500,
+        });
+        return;
+      }
+      await route.fulfill({
+        body: JSON.stringify({ episodes: [episode] }),
+        contentType: 'application/json',
+        status: 200,
+      });
+      return;
+    }
+    if (pathname === `/api/episodes/${episode.id}` && request.method() === 'PUT') {
+      updateBodies.push(request.postDataJSON() as Record<string, unknown>);
+      rejectEpisodeRefresh = true;
+      await route.fulfill({
+        body: JSON.stringify({
+          ...savedEpisode,
+          updated_at: updateBodies.length === 1 ? savedEpisode.updated_at : '2026-04-26T00:00:02.000Z',
+          version: updateBodies.length + 1,
+        }),
+        contentType: 'application/json',
+        status: 200,
+      });
+      return;
+    }
+    await mockApi(route);
+  });
+
+  await page.goto('/');
+  const saveButton = page.getByRole('button', { name: 'Save', exact: true });
+  await saveButton.click();
+  await expect.poll(() => updateBodies.length).toBe(1);
+  await expect(saveButton).toBeEnabled();
+  await saveButton.click();
+
+  await expect.poll(() => updateBodies.length).toBe(2);
+  expect(updateBodies[1]).toMatchObject({ expected_updated_at: savedEpisode.updated_at });
+});
+
+test('話保存後のシーン保存が失敗しても次回保存は返却された更新時刻を使う', async ({ page }) => {
+  await seedEnglishUi(page);
+  await seedAuthenticatedSession(page);
+
+  const selectedScene = {
+    id: 'scene-1',
+    episode_id: episode.id,
+    order: 1,
+    location: 'Border fort',
+    time: 'Night',
+    atmosphere: 'Tense',
+    involved_entity_ids: [entity.id],
+    entity_states: [],
+    status: 'draft',
+    created_at: episode.created_at,
+    updated_at: episode.updated_at,
+  };
+  const savedEpisode = {
+    ...episode,
+    story_input_mode: 'full',
+    story_full_draft: 'Saved before Story AI',
+    introduction: null,
+    middle: null,
+    climax: null,
+    ending_hook: null,
+    updated_at: '2026-04-26T00:00:01.000Z',
+    version: 2,
+  };
+  const updateBodies: Array<Record<string, unknown>> = [];
+  let failedSceneSave = false;
+
+  await page.route('**/api/**', async (route) => {
+    const request = route.request();
+    const pathname = new URL(request.url()).pathname;
+    if (pathname === `/api/episodes/${episode.id}/scenes` && request.method() === 'GET') {
+      await route.fulfill({
+        body: JSON.stringify({ scenes: [selectedScene] }),
+        contentType: 'application/json',
+        status: 200,
+      });
+      return;
+    }
+    if (pathname === `/api/episodes/${episode.id}` && request.method() === 'PUT') {
+      updateBodies.push(request.postDataJSON() as Record<string, unknown>);
+      await route.fulfill({
+        body: JSON.stringify({
+          ...savedEpisode,
+          updated_at: updateBodies.length === 1 ? savedEpisode.updated_at : '2026-04-26T00:00:02.000Z',
+          version: updateBodies.length + 1,
+        }),
+        contentType: 'application/json',
+        status: 200,
+      });
+      return;
+    }
+    if (pathname === `/api/scenes/${selectedScene.id}` && request.method() === 'PUT') {
+      failedSceneSave = true;
+      await route.fulfill({
+        body: JSON.stringify({ code: 'TEMPORARY_FAILURE', message: 'scene save failed' }),
+        contentType: 'application/json',
+        status: 500,
+      });
+      return;
+    }
+    await mockApi(route);
+  });
+
+  await page.goto('/');
+  const instruction = page.getByRole('textbox', { name: 'Instruction', exact: true });
+  await instruction.fill('Improve the pacing');
+  await page.getByRole('button', { name: 'Improve draft', exact: true }).click();
+
+  await expect.poll(() => failedSceneSave).toBe(true);
+  await expect.poll(() => updateBodies.length).toBe(1);
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
+
+  await expect.poll(() => updateBodies.length).toBe(2);
+  expect(updateBodies[1]).toMatchObject({ expected_updated_at: savedEpisode.updated_at });
+});
+
+test('作品名保存後の再取得が失敗しても次回保存は返却された更新時刻を使う', async ({ page }) => {
+  await seedEnglishUi(page);
+  await seedAuthenticatedSession(page);
+
+  const savedWork = {
+    ...work,
+    title: 'Moonlit Regiment revised',
+    updated_at: '2026-04-26T00:00:01.000Z',
+    version: 2,
+  };
+  const updateBodies: Array<Record<string, unknown>> = [];
+  let rejectWorkRefresh = false;
+
+  await page.route('**/api/**', async (route) => {
+    const request = route.request();
+    const pathname = new URL(request.url()).pathname;
+    if (pathname === '/api/works' && request.method() === 'GET') {
+      if (rejectWorkRefresh) {
+        await route.fulfill({
+          body: JSON.stringify({ code: 'TEMPORARY_FAILURE', message: 'refresh failed' }),
+          contentType: 'application/json',
+          status: 500,
+        });
+        return;
+      }
+      await route.fulfill({ body: JSON.stringify({ works: [work] }), contentType: 'application/json', status: 200 });
+      return;
+    }
+    if (pathname === `/api/works/${work.id}` && request.method() === 'PUT') {
+      updateBodies.push(request.postDataJSON() as Record<string, unknown>);
+      rejectWorkRefresh = true;
+      await route.fulfill({
+        body: JSON.stringify({
+          ...savedWork,
+          title: String(updateBodies.at(-1)?.title ?? savedWork.title),
+          updated_at: updateBodies.length === 1 ? savedWork.updated_at : '2026-04-26T00:00:02.000Z',
+          version: updateBodies.length + 1,
+        }),
+        contentType: 'application/json',
+        status: 200,
+      });
+      return;
+    }
+    await mockApi(route);
+  });
+
+  await page.goto('/');
+  const renameWork = async (title: string, expectedSaveCount: number): Promise<void> => {
+    const trigger = page.getByRole('button', { name: /Actions for work/ });
+    await expect(trigger).toBeEnabled();
+    await trigger.click();
+    await page.getByRole('menuitem', { name: 'Rename work', exact: true }).click();
+    const titleInput = page.getByRole('textbox', { name: 'Work title', exact: true });
+    await titleInput.fill(title);
+    await titleInput.press('Enter');
+    await expect.poll(() => updateBodies.length).toBe(expectedSaveCount);
+    await expect(titleInput).toHaveCount(0);
+  };
+
+  await renameWork(savedWork.title, 1);
+  await renameWork('Moonlit Regiment final', 2);
+
+  expect(updateBodies[1]).toMatchObject({ expected_updated_at: savedWork.updated_at });
+});
+
+test('章名保存後の再取得が失敗しても次回保存は返却された更新時刻を使う', async ({ page }) => {
+  await seedEnglishUi(page);
+  await seedAuthenticatedSession(page);
+
+  const savedChapter = {
+    ...chapter,
+    title: 'First movement revised',
+    updated_at: '2026-04-26T00:00:01.000Z',
+    version: 2,
+  };
+  const updateBodies: Array<Record<string, unknown>> = [];
+  let rejectChapterRefresh = false;
+
+  await page.route('**/api/**', async (route) => {
+    const request = route.request();
+    const pathname = new URL(request.url()).pathname;
+    if (pathname === `/api/works/${work.id}/chapters` && request.method() === 'GET') {
+      if (rejectChapterRefresh) {
+        await route.fulfill({
+          body: JSON.stringify({ code: 'TEMPORARY_FAILURE', message: 'refresh failed' }),
+          contentType: 'application/json',
+          status: 500,
+        });
+        return;
+      }
+      await route.fulfill({ body: JSON.stringify({ chapters: [chapter] }), contentType: 'application/json', status: 200 });
+      return;
+    }
+    if (pathname === `/api/chapters/${chapter.id}` && request.method() === 'PUT') {
+      updateBodies.push(request.postDataJSON() as Record<string, unknown>);
+      rejectChapterRefresh = true;
+      await route.fulfill({
+        body: JSON.stringify({
+          ...savedChapter,
+          title: String(updateBodies.at(-1)?.title ?? savedChapter.title),
+          updated_at: updateBodies.length === 1 ? savedChapter.updated_at : '2026-04-26T00:00:02.000Z',
+          version: updateBodies.length + 1,
+        }),
+        contentType: 'application/json',
+        status: 200,
+      });
+      return;
+    }
+    await mockApi(route);
+  });
+
+  await page.goto('/');
+  const renameChapter = async (title: string, expectedSaveCount: number): Promise<void> => {
+    const trigger = page.getByRole('button', { name: /Actions for chapter/ });
+    await expect(trigger).toBeEnabled();
+    await trigger.click();
+    await page.getByRole('menuitem', { name: 'Rename chapter', exact: true }).click();
+    const titleInput = page.getByRole('textbox', { name: 'Chapter title', exact: true });
+    await titleInput.fill(title);
+    await titleInput.press('Enter');
+    await expect.poll(() => updateBodies.length).toBe(expectedSaveCount);
+    await expect(titleInput).toHaveCount(0);
+  };
+
+  await renameChapter(savedChapter.title, 1);
+  await renameChapter('First movement final', 2);
+
+  expect(updateBodies[1]).toMatchObject({ expected_updated_at: savedChapter.updated_at });
+});
+
+test('話の保存中に追加した入力を保存応答と再取得で上書きしない', async ({ page }) => {
+  await seedEnglishUi(page);
+  await seedAuthenticatedSession(page);
+
+  const savedEpisode = {
+    ...episode,
+    story_input_mode: 'full',
+    story_full_draft: 'Draft sent to the server',
+    introduction: null,
+    middle: null,
+    climax: null,
+    ending_hook: null,
+    updated_at: '2026-04-26T00:00:01.000Z',
+    version: 2,
+  };
+  let completeSave = (): void => {
+    throw new Error('Save gate was not initialized');
+  };
+  const saveGate = new Promise<void>((resolve) => {
+    completeSave = resolve;
+  });
+  let saveStarted = false;
+  let saveCompleted = false;
+  let episodeListReads = 0;
+
+  await page.route('**/api/**', async (route) => {
+    const request = route.request();
+    const pathname = new URL(request.url()).pathname;
+    if (pathname === `/api/chapters/${chapter.id}/episodes` && request.method() === 'GET') {
+      episodeListReads += 1;
+      await route.fulfill({
+        body: JSON.stringify({ episodes: [saveCompleted ? savedEpisode : episode] }),
+        contentType: 'application/json',
+        status: 200,
+      });
+      return;
+    }
+    if (pathname === `/api/episodes/${episode.id}` && request.method() === 'PUT') {
+      saveStarted = true;
+      await saveGate;
+      saveCompleted = true;
+      await route.fulfill({
+        body: JSON.stringify(savedEpisode),
+        contentType: 'application/json',
+        status: 200,
+      });
+      return;
+    }
+    await mockApi(route);
+  });
+
+  await page.goto('/');
+  const storyDraft = page.getByRole('textbox', { name: 'Whole story draft', exact: true });
+  await storyDraft.fill('Draft sent to the server');
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  await expect.poll(() => saveStarted).toBe(true);
+
+  await storyDraft.fill('Draft typed after the save started');
+  completeSave();
+
+  await expect.poll(() => episodeListReads).toBeGreaterThan(1);
+  await expect(storyDraft).toHaveValue('Draft typed after the save started');
+});
+
+test('話の保存中に選択を変えた場合は古い応答を別の話に反映しない', async ({ page }) => {
+  await seedEnglishUi(page);
+  await seedAuthenticatedSession(page);
+
+  const secondEpisode = {
+    ...episode,
+    id: 'episode-2',
+    order: 2,
+    title: 'Departure',
+    story_input_mode: 'full',
+    story_full_draft: 'The second episode stays selected.',
+  };
+  const savedFirstEpisode = {
+    ...episode,
+    story_input_mode: 'full',
+    story_full_draft: 'The first episode was saved.',
+    updated_at: '2026-04-26T00:00:01.000Z',
+    version: 2,
+  };
+  let completeSave = (): void => {
+    throw new Error('Save gate was not initialized');
+  };
+  const saveGate = new Promise<void>((resolve) => {
+    completeSave = resolve;
+  });
+  let saveStarted = false;
+  let saveCompleted = false;
+  let episodeListReads = 0;
+
+  await page.route('**/api/**', async (route) => {
+    const request = route.request();
+    const pathname = new URL(request.url()).pathname;
+    if (pathname === `/api/chapters/${chapter.id}/episodes` && request.method() === 'GET') {
+      episodeListReads += 1;
+      await route.fulfill({
+        body: JSON.stringify({ episodes: [saveCompleted ? savedFirstEpisode : episode, secondEpisode] }),
+        contentType: 'application/json',
+        status: 200,
+      });
+      return;
+    }
+    if (pathname === `/api/episodes/${episode.id}` && request.method() === 'PUT') {
+      saveStarted = true;
+      await saveGate;
+      saveCompleted = true;
+      await route.fulfill({
+        body: JSON.stringify(savedFirstEpisode),
+        contentType: 'application/json',
+        status: 200,
+      });
+      return;
+    }
+    await mockApi(route);
+  });
+
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  await expect.poll(() => saveStarted).toBe(true);
+  await page.getByRole('button', { name: '2 Departure', exact: true }).click();
+
+  const storyDraft = page.getByRole('textbox', { name: 'Whole story draft', exact: true });
+  await expect(storyDraft).toHaveValue('The second episode stays selected.');
+  completeSave();
+
+  await expect.poll(() => episodeListReads).toBeGreaterThan(1);
+  await expect(page.getByRole('main').getByRole('textbox', { name: 'Title', exact: true })).toHaveValue('Departure');
+  await expect(storyDraft).toHaveValue('The second episode stays selected.');
+});
+
 test('ページ設定を保存するとschema外の更新時刻を送らない', async ({ page }) => {
   await seedEnglishUi(page);
   await seedAuthenticatedSession(page);
