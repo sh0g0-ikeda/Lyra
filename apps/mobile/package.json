@@ -1,6 +1,6 @@
 {
   "name": "lyra-mobile",
-  "version": "0.1.22",
+  "version": "1.0.1",
   "private": true,
   "expo": {
     "install": {

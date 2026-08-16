@@ -1,6 +1,7 @@
 {
   "configVersion": 0,
   "apple": {
+    "version": "1.0.1",
     "copyright": "2026 Edge of Vision",
     "advisory": {
       "alcoholTobaccoOrDrugUseOrReferences": "INFREQUENT_OR_MILD",
@@ -36,6 +37,7 @@
           "コマ割り"
         ],
         "promoText": "あなたの頭の中にある物語を、Lyra で漫画に。",
+        "releaseNotes": "ストーリー保存の安定性を改善し、章・話の追加操作とページ編集画面の見やすさを向上しました。",
         "marketingUrl": "https://app.lyra-editor.com/",
         "supportUrl": "https://app.lyra-editor.com/support.html",
         "privacyPolicyUrl": "https://app.lyra-editor.com/privacy.html",
@@ -55,6 +57,7 @@
           "panels"
         ],
         "promoText": "Turn the story in your head into manga with Lyra.",
+        "releaseNotes": "Improved story save reliability, clarified chapter and episode creation, and enhanced page editor readability.",
         "marketingUrl": "https://app.lyra-editor.com/",
         "supportUrl": "https://app.lyra-editor.com/support.html",
         "privacyPolicyUrl": "https://app.lyra-editor.com/privacy.html",
