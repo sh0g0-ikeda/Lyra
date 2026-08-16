@@ -6,6 +6,30 @@ interface EpisodeListResponse {
   episodes: EpisodeRecord[];
 }
 
+export interface EpisodeEditorSnapshot {
+  draft: string;
+  episodeId: string | null;
+  estimatedPages: string;
+  title: string;
+}
+
+export interface EpisodeSaveRequest {
+  editor: EpisodeEditorSnapshot;
+  episode: EpisodeRecord;
+}
+
+interface EpisodeSaveResult {
+  editor: EpisodeEditorSnapshot;
+  episode: EpisodeRecord;
+}
+
+export interface EpisodeSaveQueue {
+  enqueue(
+    request: EpisodeSaveRequest,
+    persist: (request: EpisodeSaveRequest) => Promise<EpisodeRecord>,
+  ): Promise<EpisodeRecord>;
+}
+
 interface EpisodeReader {
   getEpisodes(
     chapterId: string,
@@ -26,6 +50,57 @@ export const replaceEpisodeInResponse = (
     episodes: hasEpisode
       ? current.episodes.map((episode) => episode.id === updated.id ? updated : episode)
       : [...current.episodes, updated],
+  };
+};
+
+export const episodeEditorSnapshotMatches = (
+  current: EpisodeEditorSnapshot,
+  submitted: EpisodeEditorSnapshot,
+): boolean =>
+  current.episodeId === submitted.episodeId &&
+  current.title === submitted.title &&
+  current.draft === submitted.draft &&
+  current.estimatedPages === submitted.estimatedPages;
+
+export const createEpisodeSaveQueue = (): EpisodeSaveQueue => {
+  const tails = new Map<string, Promise<EpisodeSaveResult>>();
+
+  return {
+    enqueue: (request, persist) => {
+      const episodeId = request.episode.id;
+      const previous = tails.get(episodeId) ?? null;
+      const current = (async (): Promise<EpisodeSaveResult> => {
+        const previousResult = previous === null ? null : await previous;
+        if (
+          previousResult !== null &&
+          previousResult.episode.id === request.episode.id &&
+          episodeEditorSnapshotMatches(previousResult.editor, request.editor)
+        ) {
+          return previousResult;
+        }
+
+        const nextRequest =
+          previousResult !== null && previousResult.episode.id === request.episode.id
+            ? { ...request, episode: previousResult.episode }
+            : request;
+        const episode = await persist(nextRequest);
+        return { editor: nextRequest.editor, episode };
+      })();
+      tails.set(episodeId, current);
+      void current.then(
+        () => {
+          if (tails.get(episodeId) === current) {
+            tails.delete(episodeId);
+          }
+        },
+        () => {
+          if (tails.get(episodeId) === current) {
+            tails.delete(episodeId);
+          }
+        },
+      );
+      return current.then((result) => result.episode);
+    },
   };
 };
 

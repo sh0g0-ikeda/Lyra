@@ -27,7 +27,7 @@ describe('storyWorkflow', () => {
 
     expect(saveButtonStart).toBeGreaterThanOrEqual(0);
     expect(source).toContain('save: saveStoryDrafts');
-    expect(saveButton).toContain('onPress={() => updateEpisodeMutation.mutate()}');
+    expect(saveButton).toContain('onPress={submitSelectedEpisode}');
   });
 
   it('話の競合は汎用再試行に重複表示せず専用の再取得と保存再試行で解決する', () => {

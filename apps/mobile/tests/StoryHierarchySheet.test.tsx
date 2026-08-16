@@ -4,6 +4,12 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { StoryHierarchySheet } from '@/components/StoryHierarchySheet';
+import { ApiError } from '@/lib/api';
+import {
+  chaptersQueryKey,
+  episodesQueryKey,
+  workDetailQueryKey
+} from '@/lib/queryKeys';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -131,7 +137,11 @@ vi.mock('@/lib/storage', () => ({
   saveStoryHierarchyExpansion: vi.fn().mockResolvedValue(undefined)
 }));
 
-const work = (id: string, title: string) => ({
+const work = (
+  id: string,
+  title: string,
+  updatedAt = '2026-07-01T00:00:00.000Z'
+) => ({
   id,
   organization_id: null,
   title,
@@ -145,10 +155,16 @@ const work = (id: string, title: string) => ({
   version: 1,
   status: 'draft' as const,
   created_at: '2026-07-01T00:00:00.000Z',
-  updated_at: '2026-07-01T00:00:00.000Z'
+  updated_at: updatedAt
 });
 
-const chapter = (id: string, workId: string, order: number, title: string) => ({
+const chapter = (
+  id: string,
+  workId: string,
+  order: number,
+  title: string,
+  updatedAt = '2026-07-01T00:00:00.000Z'
+) => ({
   id,
   work_id: workId,
   order,
@@ -162,10 +178,16 @@ const chapter = (id: string, workId: string, order: number, title: string) => ({
   version: 1,
   status: 'draft' as const,
   created_at: '2026-07-01T00:00:00.000Z',
-  updated_at: '2026-07-01T00:00:00.000Z'
+  updated_at: updatedAt
 });
 
-const episode = (id: string, chapterId: string, order: number, title: string) => ({
+const episode = (
+  id: string,
+  chapterId: string,
+  order: number,
+  title: string,
+  updatedAt = '2026-07-01T00:00:00.000Z'
+) => ({
   id,
   chapter_id: chapterId,
   order,
@@ -183,7 +205,7 @@ const episode = (id: string, chapterId: string, order: number, title: string) =>
   version: 1,
   status: 'draft' as const,
   created_at: '2026-07-01T00:00:00.000Z',
-  updated_at: '2026-07-01T00:00:00.000Z'
+  updated_at: updatedAt
 });
 
 const flushQueries = async (): Promise<void> => {
@@ -194,6 +216,7 @@ const flushQueries = async (): Promise<void> => {
 describe('StoryHierarchySheet', () => {
   const onSelectEpisode = vi.fn();
   const onWorkRenamed = vi.fn();
+  let queryClientForAssertions: QueryClient;
   const api = {
     createChapter: vi.fn(),
     createEpisode: vi.fn(),
@@ -210,6 +233,7 @@ describe('StoryHierarchySheet', () => {
         ? [episode('episode-1', 'chapter-1', 1, '第一話')]
         : []
     })),
+    getWork: vi.fn(async () => work('work-1', '作品A')),
     moveChapter: vi.fn(),
     moveEpisode: vi.fn().mockResolvedValue(episode('episode-1', 'chapter-2', 1, '第一話')),
     updateChapter: vi.fn(),
@@ -221,12 +245,39 @@ describe('StoryHierarchySheet', () => {
     vi.clearAllMocks();
     platformMock.OS = 'ios';
     safeAreaInsetsMock.bottom = 34;
+    api.getWork.mockResolvedValue(work('work-1', '作品A'));
+    api.getChapters.mockImplementation(async (workId: string) => ({
+      chapters: workId === 'work-1'
+        ? [chapter('chapter-1', 'work-1', 1, '第一章'), chapter('chapter-2', 'work-1', 2, '第二章')]
+        : []
+    }));
+    api.getEpisodes.mockImplementation(async (chapterId: string) => ({
+      episodes: chapterId === 'chapter-1'
+        ? [episode('episode-1', 'chapter-1', 1, '第一話')]
+        : []
+    }));
+    api.updateChapter.mockResolvedValue(chapter('chapter-1', 'work-1', 1, '第一章'));
+    api.updateEpisode.mockResolvedValue(episode('episode-1', 'chapter-1', 1, '第一話'));
+    api.updateWork.mockResolvedValue(work('work-1', '作品A'));
   });
 
-  const renderSheet = async ({ canEdit = true }: { canEdit?: boolean } = {}) => {
+  const renderSheet = async ({
+    canEdit = true,
+    cachedWork = null
+  }: {
+    canEdit?: boolean;
+    cachedWork?: ReturnType<typeof work> | null;
+  } = {}) => {
     const queryClient = new QueryClient({
-      defaultOptions: { queries: { retry: false } }
+      defaultOptions: { queries: { retry: false, staleTime: 60_000 } }
     });
+    queryClientForAssertions = queryClient;
+    if (cachedWork !== null) {
+      queryClient.setQueryData(
+        workDetailQueryKey('session-1', cachedWork.id, null),
+        cachedWork
+      );
+    }
     let renderer: ReturnType<typeof create>;
     await act(async () => {
       renderer = create(
@@ -424,6 +475,151 @@ describe('StoryHierarchySheet', () => {
       null,
     );
     expect(onWorkRenamed).toHaveBeenCalledWith('work-1', '変更後の作品');
+  });
+
+  it('作品名の競合再読み込み後はAPIの最新revisionで保存する', async () => {
+    const staleError = new ApiError('stale', 409, 'RESOURCE_STALE');
+    const latestWork = work('work-1', 'サーバー上の作品', '2026-07-02T00:00:00.123Z');
+    const renderer = await renderSheet({
+      cachedWork: work('work-1', 'キャッシュ上の作品', '2026-07-01T12:00:00.000Z')
+    });
+    api.getWork.mockResolvedValueOnce(latestWork);
+    api.updateWork.mockRejectedValueOnce(staleError).mockResolvedValueOnce(latestWork);
+
+    await act(async () => {
+      renderer.root.findByProps({ accessibilityLabel: '作品Aの操作' }).props.onPress();
+    });
+    await act(async () => {
+      renderer.root.findByProps({ accessibilityLabel: '作品名を変更' }).props.onPress();
+    });
+    await act(async () => {
+      renderer.root.findByProps({ accessibilityLabel: 'タイトル' }).props.onChangeText('競合した作品名');
+    });
+    await act(async () => {
+      renderer.root.findAllByType('button').find((button) => button.children.join('') === '保存')?.props.onClick();
+      await flushQueries();
+    });
+    await act(async () => {
+      renderer.root.findAllByType('button').find((button) => button.children.join('') === '最新状態を読み込み')?.props.onClick();
+      await flushQueries();
+    });
+    expect(queryClientForAssertions.getQueryData(
+      workDetailQueryKey('session-1', 'work-1', null)
+    )).toEqual(latestWork);
+    await act(async () => {
+      renderer.root.findByProps({ accessibilityLabel: 'タイトル' }).props.onChangeText('再保存する作品名');
+    });
+    await act(async () => {
+      renderer.root.findAllByType('button').find((button) => button.children.join('') === '保存')?.props.onClick();
+      await flushQueries();
+    });
+
+    expect(api.getWork).toHaveBeenCalledWith('work-1', null);
+    expect(api.updateWork).toHaveBeenLastCalledWith(
+      'work-1',
+      { title: '再保存する作品名', expected_updated_at: latestWork.updated_at },
+      null
+    );
+  });
+
+  it('章名の競合再読み込み後はAPIの最新revisionで保存する', async () => {
+    const staleError = new ApiError('stale', 409, 'RESOURCE_STALE');
+    const latestChapter = chapter(
+      'chapter-1',
+      'work-1',
+      1,
+      'サーバー上の第一章',
+      '2026-07-02T00:00:00.234Z'
+    );
+    const renderer = await renderSheet();
+    api.getChapters.mockResolvedValue({
+      chapters: [latestChapter, chapter('chapter-2', 'work-1', 2, '第二章')]
+    });
+    api.updateChapter.mockRejectedValueOnce(staleError).mockResolvedValueOnce(latestChapter);
+
+    await act(async () => {
+      renderer.root.findByProps({ accessibilityLabel: '1. 第一章の操作' }).props.onPress();
+    });
+    await act(async () => {
+      renderer.root.findByProps({ accessibilityLabel: '章名を変更' }).props.onPress();
+    });
+    await act(async () => {
+      renderer.root.findByProps({ accessibilityLabel: 'タイトル' }).props.onChangeText('競合した章名');
+    });
+    await act(async () => {
+      renderer.root.findAllByType('button').find((button) => button.children.join('') === '保存')?.props.onClick();
+      await flushQueries();
+    });
+    await act(async () => {
+      renderer.root.findAllByType('button').find((button) => button.children.join('') === '最新状態を読み込み')?.props.onClick();
+      await flushQueries();
+    });
+    expect(queryClientForAssertions.getQueryData(
+      chaptersQueryKey('session-1', 'work-1', null)
+    )).toEqual({
+      chapters: [latestChapter, chapter('chapter-2', 'work-1', 2, '第二章')]
+    });
+    await act(async () => {
+      renderer.root.findByProps({ accessibilityLabel: 'タイトル' }).props.onChangeText('再保存する章名');
+    });
+    await act(async () => {
+      renderer.root.findAllByType('button').find((button) => button.children.join('') === '保存')?.props.onClick();
+      await flushQueries();
+    });
+
+    expect(api.updateChapter).toHaveBeenLastCalledWith(
+      'chapter-1',
+      { title: '再保存する章名', expected_updated_at: latestChapter.updated_at },
+      null
+    );
+  });
+
+  it('話名の競合再読み込み後はAPIの最新revisionで保存する', async () => {
+    const staleError = new ApiError('stale', 409, 'RESOURCE_STALE');
+    const latestEpisode = episode(
+      'episode-1',
+      'chapter-1',
+      1,
+      'サーバー上の第一話',
+      '2026-07-02T00:00:00.345Z'
+    );
+    const renderer = await renderSheet();
+    api.getEpisodes.mockResolvedValue({ episodes: [latestEpisode] });
+    api.updateEpisode.mockRejectedValueOnce(staleError).mockResolvedValueOnce(latestEpisode);
+
+    await act(async () => {
+      renderer.root.findByProps({ accessibilityLabel: '1. 第一話の操作' }).props.onPress();
+    });
+    await act(async () => {
+      renderer.root.findByProps({ accessibilityLabel: '話名を変更' }).props.onPress();
+    });
+    await act(async () => {
+      renderer.root.findByProps({ accessibilityLabel: 'タイトル' }).props.onChangeText('競合した話名');
+    });
+    await act(async () => {
+      renderer.root.findAllByType('button').find((button) => button.children.join('') === '保存')?.props.onClick();
+      await flushQueries();
+    });
+    await act(async () => {
+      renderer.root.findAllByType('button').find((button) => button.children.join('') === '最新状態を読み込み')?.props.onClick();
+      await flushQueries();
+    });
+    expect(queryClientForAssertions.getQueryData(
+      episodesQueryKey('session-1', 'chapter-1', null)
+    )).toEqual({ episodes: [latestEpisode] });
+    await act(async () => {
+      renderer.root.findByProps({ accessibilityLabel: 'タイトル' }).props.onChangeText('再保存する話名');
+    });
+    await act(async () => {
+      renderer.root.findAllByType('button').find((button) => button.children.join('') === '保存')?.props.onClick();
+      await flushQueries();
+    });
+
+    expect(api.updateEpisode).toHaveBeenLastCalledWith(
+      'episode-1',
+      { title: '再保存する話名', expected_updated_at: latestEpisode.updated_at },
+      null
+    );
   });
 
   it('作品・章・話のメニューに仕様どおりの操作を表示する', async () => {

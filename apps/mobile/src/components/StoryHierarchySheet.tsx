@@ -667,20 +667,54 @@ export function StoryHierarchySheet({
     if (titleIntent === null || pending) {
       return;
     }
+    const intent = titleIntent;
     setPending(true);
     try {
-      if (titleIntent.kind === 'rename-work') {
-        const response = await queryClient.fetchQuery({
-          queryKey: workDetailQueryKey(sessionKey, titleIntent.work.id, organizationId),
-          queryFn: () => api.getWork(titleIntent.work.id, organizationId),
+      if (intent.kind === 'rename-work') {
+        const latestWork = await api.getWork(intent.work.id, organizationId);
+        queryClient.setQueryData(
+          workDetailQueryKey(sessionKey, intent.work.id, organizationId),
+          latestWork
+        );
+        setTitleIntent({ kind: 'rename-work', work: latestWork });
+        setTitleValue(latestWork.title);
+      } else if (intent.kind === 'rename-chapter') {
+        const response = await api.getChapters(intent.work.id, organizationId);
+        queryClient.setQueryData(
+          chaptersQueryKey(sessionKey, intent.work.id, organizationId),
+          response
+        );
+        const latestChapter = response.chapters.find(
+          (chapter) => chapter.id === intent.chapter.id
+        );
+        if (latestChapter === undefined) {
+          throw new ApiError('Chapter no longer exists.', 404, 'NOT_FOUND');
+        }
+        setTitleIntent({
+          kind: 'rename-chapter',
+          work: intent.work,
+          chapter: latestChapter
         });
-        setTitleValue(response.title);
-      } else if (titleIntent.kind === 'rename-chapter') {
-        const chapters = await chaptersFor(titleIntent.work.id, true);
-        setTitleValue(chapters.find((chapter) => chapter.id === titleIntent.chapter.id)?.title ?? '');
-      } else if (titleIntent.kind === 'rename-episode') {
-        const episodes = await episodesFor(titleIntent.chapter.id, true);
-        setTitleValue(episodes.find((episode) => episode.id === titleIntent.episode.id)?.title ?? '');
+        setTitleValue(latestChapter.title ?? '');
+      } else if (intent.kind === 'rename-episode') {
+        const response = await api.getEpisodes(intent.chapter.id, organizationId);
+        queryClient.setQueryData(
+          episodesQueryKey(sessionKey, intent.chapter.id, organizationId),
+          response
+        );
+        const latestEpisode = response.episodes.find(
+          (episode) => episode.id === intent.episode.id
+        );
+        if (latestEpisode === undefined) {
+          throw new ApiError('Episode no longer exists.', 404, 'NOT_FOUND');
+        }
+        setTitleIntent({
+          kind: 'rename-episode',
+          work: intent.work,
+          chapter: intent.chapter,
+          episode: latestEpisode
+        });
+        setTitleValue(latestEpisode.title ?? '');
       }
       setError(null);
     } catch (reloadError) {
