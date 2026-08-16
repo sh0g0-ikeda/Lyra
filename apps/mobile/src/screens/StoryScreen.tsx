@@ -24,7 +24,7 @@ import {
   buildEpisodeMobileUpdatePayload,
   episodeMobileDraft
 } from '@/domain/episodeMobileDraft';
-import type { EntityRecord, StoryEpisodeImprovementRecord } from '@/domain/types';
+import type { EntityRecord, EpisodeRecord, StoryEpisodeImprovementRecord } from '@/domain/types';
 import { confirmDestructiveAction } from '@/lib/confirm';
 import {
   flattenUniqueRecords,
@@ -43,6 +43,10 @@ import {
 } from '@/lib/queryKeys';
 import { t } from '@/lib/i18n';
 import { ApiError } from '@/lib/api';
+import {
+  fetchFreshEpisode,
+  replaceEpisodeInResponse,
+} from '@/lib/storyEpisodeCache';
 import { userErrorMessage } from '@/lib/userMessages';
 import { navigationRef } from '@/navigation/navigationRef';
 import { useAppState } from '@/state/appState';
@@ -135,6 +139,7 @@ export function StoryScreen(): React.JSX.Element {
     kind: 'episode';
   } | null>(null);
   const [dirtySaveError, setDirtySaveError] = useState<Error | null>(null);
+  const [staleActionPending, setStaleActionPending] = useState<'reload' | 'retry' | null>(null);
   const [lastSyncedEpisodeId, setLastSyncedEpisodeId] = useState<string | null>(null);
   const [lastSyncedSceneId, setLastSyncedSceneId] = useState<string | null>(null);
   const storySavePromiseRef = useRef<Promise<void> | null>(null);
@@ -317,6 +322,17 @@ export function StoryScreen(): React.JSX.Element {
     await queryClient.invalidateQueries({ queryKey: scenesQueryKey(sessionKey, selectedEpisode?.id ?? null, organizationId) });
   };
 
+  const applyEpisodeSnapshot = (episode: EpisodeRecord): void => {
+    queryClient.setQueryData<{ episodes: EpisodeRecord[] }>(
+      episodesQueryKey(sessionKey, episode.chapter_id, organizationId),
+      (current) => replaceEpisodeInResponse(current, episode),
+    );
+    setLastSyncedEpisodeId(episode.id);
+    setEpisodeTitle(episode.title ?? '');
+    setEpisodeDraft(episodeMobileDraft(episode));
+    setEstimatedPages(String(episode.estimated_pages ?? 4));
+  };
+
   const updateEpisodeMutation = useMutation({
     mutationFn: () => {
       if (selectedEpisode === null) {
@@ -334,11 +350,12 @@ export function StoryScreen(): React.JSX.Element {
         organizationId
       );
     },
-    onSuccess: async () => {
+    onSuccess: (episode) => {
+      applyEpisodeSnapshot(episode);
+      setDirtySaveError(null);
       setStaleResource((current) =>
-        current?.kind === 'episode' && current.id === selectedEpisode?.id ? null : current
+        current?.kind === 'episode' && current.id === episode.id ? null : current
       );
-      await invalidateEpisodes();
     },
     onError: (error) => {
       if (isResourceStaleError(error)) {
@@ -509,7 +526,7 @@ export function StoryScreen(): React.JSX.Element {
       return;
     }
     try {
-      await api.updateEpisode(
+      const updatedEpisode = await api.updateEpisode(
         selectedEpisode.id,
         buildEpisodeMobileUpdatePayload({
           draft: episodeDraft,
@@ -520,6 +537,8 @@ export function StoryScreen(): React.JSX.Element {
         }),
         organizationId
       );
+      applyEpisodeSnapshot(updatedEpisode);
+      setDirtySaveError(null);
     } catch (error) {
       if (isResourceStaleError(error)) {
         setStaleResource({ id: selectedEpisode.id, kind: 'episode' });
@@ -528,19 +547,88 @@ export function StoryScreen(): React.JSX.Element {
     }
   };
 
-  const reloadStaleResource = async (): Promise<void> => {
-    if (activeStaleResource === 'episode' && selectedEpisode !== null && selectedChapter !== null) {
-      const response = await queryClient.fetchQuery({
-        queryKey: episodesQueryKey(sessionKey, selectedChapter.id, organizationId),
-        queryFn: () => api.getEpisodes(selectedChapter.id, organizationId),
-      });
-      const latest = response.episodes.find((episode) => episode.id === selectedEpisode.id);
-      setEpisodeTitle(latest?.title ?? '');
-      setEpisodeDraft(latest === undefined ? '' : episodeMobileDraft(latest));
-      setEstimatedPages(String(latest?.estimated_pages ?? 4));
-      setImprovement(null);
+  const fetchLatestSelectedEpisode = async (): Promise<EpisodeRecord> => {
+    if (selectedEpisode === null || selectedChapter === null) {
+      throw new Error(t(language, "generated.screens.StoryScreen.select.an.episode.first.65b38fbb"));
     }
-    setStaleResource((current) => current?.kind === activeStaleResource ? null : current);
+
+    const latest = await fetchFreshEpisode({
+      api,
+      chapterId: selectedChapter.id,
+      episodeId: selectedEpisode.id,
+      organizationId,
+      queryClient,
+      queryKey: episodesQueryKey(sessionKey, selectedChapter.id, organizationId),
+    });
+    if (latest === null) {
+      throw new Error(t(language, "generated.screens.StoryScreen.select.an.episode.first.65b38fbb"));
+    }
+    return latest;
+  };
+
+  const reloadStaleResource = async (): Promise<void> => {
+    if (activeStaleResource !== 'episode') {
+      return;
+    }
+
+    setStaleActionPending('reload');
+    setDirtySaveError(null);
+    updateEpisodeMutation.reset();
+    try {
+      const latest = await fetchLatestSelectedEpisode();
+      applyEpisodeSnapshot(latest);
+      setImprovement(null);
+      setStaleResource((current) =>
+        current?.kind === 'episode' && current.id === latest.id ? null : current
+      );
+    } catch (error) {
+      setDirtySaveError(
+        error instanceof Error
+          ? error
+          : new Error(t(language, "generated.screens.StoryScreen.unsaved.changes.could.not.be.saved.88963a72"))
+      );
+    } finally {
+      setStaleActionPending(null);
+    }
+  };
+
+  const retryStaleEpisodeSave = async (): Promise<void> => {
+    if (activeStaleResource !== 'episode') {
+      return;
+    }
+
+    setStaleActionPending('retry');
+    setDirtySaveError(null);
+    updateEpisodeMutation.reset();
+    try {
+      const latest = await fetchLatestSelectedEpisode();
+      const updatedEpisode = await api.updateEpisode(
+        latest.id,
+        buildEpisodeMobileUpdatePayload({
+          draft: episodeDraft,
+          episode: latest,
+          estimatedPages:
+            parseIntInRange(estimatedPages, 1, MAX_ESTIMATED_PAGES) ?? 4,
+          title: episodeTitle,
+        }),
+        organizationId,
+      );
+      applyEpisodeSnapshot(updatedEpisode);
+      setStaleResource((current) =>
+        current?.kind === 'episode' && current.id === updatedEpisode.id ? null : current
+      );
+    } catch (error) {
+      if (isResourceStaleError(error)) {
+        setStaleResource({ id: selectedEpisode?.id ?? '', kind: 'episode' });
+      }
+      setDirtySaveError(
+        error instanceof Error
+          ? error
+          : new Error(t(language, "generated.screens.StoryScreen.unsaved.changes.could.not.be.saved.88963a72"))
+      );
+    } finally {
+      setStaleActionPending(null);
+    }
   };
 
   const improveEpisodeMutation = useMutation({
@@ -701,7 +789,9 @@ export function StoryScreen(): React.JSX.Element {
     deleteSceneMutation.error,
     dirtySaveError,
     improveEpisodeMutation.error
-  ].filter((error): error is Error => error instanceof Error);
+  ].filter(
+    (error): error is Error => error instanceof Error && !isResourceStaleError(error)
+  );
 
   const refreshing =
     worksQuery.isFetching ||
@@ -774,11 +864,21 @@ export function StoryScreen(): React.JSX.Element {
             tone="warning"
           />
           <PrimaryButton
+            disabled={staleActionPending !== null}
             label={t(language, "generated.screens.StoryScreen.reload.latest.state.327b1d0e")}
+            loading={staleActionPending === 'reload'}
             onPress={() => {
               void reloadStaleResource();
             }}
             variant="secondary"
+          />
+          <PrimaryButton
+            disabled={staleActionPending !== null || estimatedPagesInvalid || episodeTitle.trim().length === 0}
+            label={t(language, 'screen.story.retryCurrentDraft')}
+            loading={staleActionPending === 'retry'}
+            onPress={() => {
+              void retryStaleEpisodeSave();
+            }}
           />
         </View>
       )}

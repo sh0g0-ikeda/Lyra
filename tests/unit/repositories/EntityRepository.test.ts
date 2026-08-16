@@ -130,7 +130,9 @@ describe('PostgresEntityRepository', () => {
     });
 
     expect(client.queries[0]).toContain('UPDATE entities');
-    expect(client.queries[0]).toContain('entities.updated_at = $14::timestamptz');
+    expect(client.queries[0]).toContain(
+      "date_trunc('milliseconds', entities.updated_at) = $14::timestamptz",
+    );
     expect(client.queries[0]).toContain('organization_id IS NULL');
     expect(client.valuesList[0]?.[12]).toBeNull();
     expect(client.valuesList[0]?.[13]).toBe('2026-04-25T00:00:00.000Z');
