@@ -7,8 +7,10 @@ import { StoryHierarchySheet } from '@/components/StoryHierarchySheet';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-const { confirmDestructiveActionMock } = vi.hoisted(() => ({
-  confirmDestructiveActionMock: vi.fn(({ onConfirm }: { onConfirm: () => void }) => onConfirm())
+const { confirmDestructiveActionMock, platformMock, safeAreaInsetsMock } = vi.hoisted(() => ({
+  confirmDestructiveActionMock: vi.fn(({ onConfirm }: { onConfirm: () => void }) => onConfirm()),
+  platformMock: { OS: 'ios' as 'ios' | 'android' },
+  safeAreaInsetsMock: { bottom: 34, left: 0, right: 0, top: 47 }
 }));
 
 vi.mock('react-native', () => ({
@@ -41,7 +43,7 @@ vi.mock('react-native', () => ({
     React.createElement('keyboard-avoiding-view', props, children),
   Modal: ({ children, visible, ...props }: React.PropsWithChildren<Record<string, unknown>>) =>
     visible ? React.createElement('modal', props, children) : null,
-  Platform: { OS: 'ios' },
+  Platform: platformMock,
   Pressable: ({
     children,
     onPress,
@@ -73,7 +75,8 @@ vi.mock('react-native', () => ({
 
 vi.mock('react-native-safe-area-context', () => ({
   SafeAreaView: ({ children, ...props }: React.PropsWithChildren<Record<string, unknown>>) =>
-    React.createElement('safe-area-view', props, children)
+    React.createElement('safe-area-view', props, children),
+  useSafeAreaInsets: () => safeAreaInsetsMock
 }));
 
 vi.mock('lucide-react-native', () => {
@@ -216,9 +219,11 @@ describe('StoryHierarchySheet', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    platformMock.OS = 'ios';
+    safeAreaInsetsMock.bottom = 34;
   });
 
-  const renderSheet = async () => {
+  const renderSheet = async ({ canEdit = true }: { canEdit?: boolean } = {}) => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false } }
     });
@@ -229,7 +234,7 @@ describe('StoryHierarchySheet', () => {
           <StoryHierarchySheet
             api={api as never}
             canCreateWork
-            canEdit
+            canEdit={canEdit}
             language="ja"
             onChapterDeleted={vi.fn()}
             onClose={vi.fn()}
@@ -273,6 +278,79 @@ describe('StoryHierarchySheet', () => {
     const safeArea = renderer.root.findByType('safe-area-view');
 
     expect(safeArea.props.edges).toEqual(['top', 'right', 'bottom', 'left']);
+  });
+
+  it('展開中の作品と章に文脈付きの追加導線を直接表示する', async () => {
+    const renderer = await renderSheet();
+
+    const addChapter = renderer.root.findByProps({
+      testID: 'story-hierarchy-add-chapter-work-1'
+    });
+    const addEpisode = renderer.root.findByProps({
+      testID: 'story-hierarchy-add-episode-chapter-1'
+    });
+
+    expect(addChapter.props.accessibilityLabel).toBe('作品Aに章を追加');
+    expect(addEpisode.props.accessibilityLabel).toBe('第一章に話を追加');
+    expect(addChapter.props.accessibilityRole).toBe('button');
+    expect(addEpisode.props.accessibilityRole).toBe('button');
+    expect(addChapter.props.style).toMatchObject({ minHeight: 44 });
+    expect(addEpisode.props.style).toMatchObject({ minHeight: 44 });
+
+    await act(async () => {
+      addChapter.props.onPress();
+    });
+    expect(renderer.root.findByProps({ accessibilityLabel: 'タイトル' })).toBeDefined();
+  });
+
+  it('閲覧専用では章と話の直接追加導線を表示しない', async () => {
+    const renderer = await renderSheet({ canEdit: false });
+
+    expect(renderer.root.findAllByProps({
+      testID: 'story-hierarchy-add-chapter-work-1'
+    })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({
+      testID: 'story-hierarchy-add-episode-chapter-1'
+    })).toHaveLength(0);
+  });
+
+  it('操作シートを端末のbottom insetより上へ配置する', async () => {
+    const renderer = await renderSheet();
+    await act(async () => {
+      renderer.root.findByProps({ accessibilityLabel: '1. 第一話の操作' }).props.onPress();
+    });
+
+    const menuOverlay = renderer.root.findByProps({
+      testID: 'story-hierarchy-menu-overlay'
+    });
+    const flattenedStyle = Object.assign(
+      {},
+      ...(Array.isArray(menuOverlay.props.style)
+        ? menuOverlay.props.style.filter(Boolean)
+        : [menuOverlay.props.style])
+    );
+    expect(flattenedStyle.paddingBottom).toBe(50);
+  });
+
+  it('タイトル入力はiOSでpadding、Androidでheightを使ってキーボードを避ける', async () => {
+    const iosRenderer = await renderSheet();
+    await act(async () => {
+      iosRenderer.root.findByProps({ accessibilityLabel: '作品Aの操作' }).props.onPress();
+    });
+    await act(async () => {
+      iosRenderer.root.findByProps({ accessibilityLabel: '作品名を変更' }).props.onPress();
+    });
+    expect(iosRenderer.root.findByType('keyboard-avoiding-view').props.behavior).toBe('padding');
+
+    platformMock.OS = 'android';
+    const androidRenderer = await renderSheet();
+    await act(async () => {
+      androidRenderer.root.findByProps({ accessibilityLabel: '作品Aの操作' }).props.onPress();
+    });
+    await act(async () => {
+      androidRenderer.root.findByProps({ accessibilityLabel: '作品名を変更' }).props.onPress();
+    });
+    expect(androidRenderer.root.findByType('keyboard-avoiding-view').props.behavior).toBe('height');
   });
 
   it('選択中の枝だけ取得し、折りたたまれた別作品の章は取得しない', async () => {

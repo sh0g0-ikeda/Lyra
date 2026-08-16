@@ -11,7 +11,7 @@ import {
   TextInput,
   View
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ArrowDown,
@@ -146,12 +146,15 @@ interface WorkNodeProps {
   organizationId: string | null;
   language: UiLanguage;
   canEdit: boolean;
+  pending: boolean;
   expandedChapterIds: Set<string>;
   onToggleWork: (workId: string) => void;
   onToggleChapter: (chapterId: string) => void;
   onSelectWork: (workId: string) => void;
   onSelectChapter: (workId: string, chapterId: string) => void;
   onSelectEpisode: (workId: string, chapterId: string, episodeId: string) => void;
+  onAddChapter: (work: WorkRecord) => void;
+  onAddEpisode: (work: WorkRecord, chapter: ChapterRecord) => void;
   onOpenMenu: (target: MenuTarget) => void;
 }
 
@@ -169,9 +172,11 @@ interface ChapterNodeProps {
   organizationId: string | null;
   language: UiLanguage;
   canEdit: boolean;
+  pending: boolean;
   onToggle: () => void;
   onSelectChapter: (workId: string, chapterId: string) => void;
   onSelectEpisode: (workId: string, chapterId: string, episodeId: string) => void;
+  onAddEpisode: (work: WorkRecord, chapter: ChapterRecord) => void;
   onOpenMenu: (target: MenuTarget) => void;
 }
 
@@ -186,6 +191,15 @@ interface TreeRowProps {
   onToggle?: () => void;
   onSelect: () => void;
   onMenu: () => void;
+}
+
+interface TreeCreateActionProps {
+  accessibilityLabel: string;
+  actionTestID: string;
+  depth: 1 | 2;
+  disabled: boolean;
+  label: string;
+  onPress: () => void;
 }
 
 const sortedByOrder = <T extends { order: number }>(records: readonly T[]): T[] =>
@@ -266,6 +280,32 @@ function TreeRow({
   );
 }
 
+function TreeCreateAction({
+  accessibilityLabel,
+  actionTestID,
+  depth,
+  disabled,
+  label,
+  onPress
+}: TreeCreateActionProps): React.JSX.Element {
+  return (
+    <View style={depth === 1 ? styles.depthOneCreateAction : styles.depthTwoCreateAction}>
+      <Pressable
+        accessibilityLabel={accessibilityLabel}
+        accessibilityRole="button"
+        accessibilityState={{ disabled }}
+        disabled={disabled}
+        onPress={onPress}
+        style={styles.createActionButton}
+        testID={actionTestID}
+      >
+        <Plus color={colors.primary} size={18} strokeWidth={2.2} />
+        <Text style={styles.createActionLabel}>{label}</Text>
+      </Pressable>
+    </View>
+  );
+}
+
 function ChapterNode({
   api,
   work,
@@ -280,9 +320,11 @@ function ChapterNode({
   organizationId,
   language,
   canEdit,
+  pending,
   onToggle,
   onSelectChapter,
   onSelectEpisode,
+  onAddEpisode,
   onOpenMenu
 }: ChapterNodeProps): React.JSX.Element {
   const episodesQuery = useQuery({
@@ -314,6 +356,16 @@ function ChapterNode({
               <ActivityIndicator color={colors.primary} size="small" />
               <Text style={styles.loadingLabel}>{t(language, "generated.components.StoryHierarchySheet.loading.episodes.e4ed2ecc")}</Text>
             </View>
+          ) : null}
+          {canEdit ? (
+            <TreeCreateAction
+              accessibilityLabel={t(language, 'component.storyHierarchySheet.addEpisodeTo', { title })}
+              actionTestID={`story-hierarchy-add-episode-${chapter.id}`}
+              depth={2}
+              disabled={pending}
+              label={t(language, "generated.components.StoryHierarchySheet.add.episode.ad67475b")}
+              onPress={() => onAddEpisode(work, chapter)}
+            />
           ) : null}
           {episodes.map((episode, episodeIndex) => {
             const episodeTitle = titleForEpisode(episode, language);
@@ -361,12 +413,15 @@ function WorkNode({
   organizationId,
   language,
   canEdit,
+  pending,
   expandedChapterIds,
   onToggleWork,
   onToggleChapter,
   onSelectWork,
   onSelectChapter,
   onSelectEpisode,
+  onAddChapter,
+  onAddEpisode,
   onOpenMenu
 }: WorkNodeProps): React.JSX.Element {
   const chaptersQuery = useQuery({
@@ -398,6 +453,16 @@ function WorkNode({
               <Text style={styles.loadingLabel}>{t(language, "generated.components.StoryHierarchySheet.loading.chapters.62730c70")}</Text>
             </View>
           ) : null}
+          {canEdit ? (
+            <TreeCreateAction
+              accessibilityLabel={t(language, 'component.storyHierarchySheet.addChapterTo', { title: work.title })}
+              actionTestID={`story-hierarchy-add-chapter-${work.id}`}
+              depth={1}
+              disabled={pending}
+              label={t(language, "generated.components.StoryHierarchySheet.add.chapter.774ad8c0")}
+              onPress={() => onAddChapter(work)}
+            />
+          ) : null}
           {chapters.map((chapter, chapterIndex) => (
             <ChapterNode
               api={api}
@@ -408,11 +473,13 @@ function WorkNode({
               expanded={expandedChapterIds.has(chapter.id)}
               key={chapter.id}
               language={language}
+              onAddEpisode={onAddEpisode}
               onOpenMenu={onOpenMenu}
               onSelectChapter={onSelectChapter}
               onSelectEpisode={onSelectEpisode}
               onToggle={() => onToggleChapter(chapter.id)}
               organizationId={organizationId}
+              pending={pending}
               selectedChapterId={selectedChapterId}
               selectedEpisodeId={selectedEpisodeId}
               sessionKey={sessionKey}
@@ -456,6 +523,7 @@ export function StoryHierarchySheet({
   onEpisodeRenamed
 }: StoryHierarchySheetProps): React.JSX.Element {
   const queryClient = useQueryClient();
+  const safeAreaInsets = useSafeAreaInsets();
   const expansionScope = `${userId}:${organizationId ?? 'personal'}`;
   const [expandedWorkIds, setExpandedWorkIds] = useState<Set<string>>(new Set());
   const [expandedChapterIds, setExpandedChapterIds] = useState<Set<string>>(new Set());
@@ -1033,6 +1101,12 @@ export function StoryHierarchySheet({
                 expandedChapterIds={effectiveExpandedChapterIds}
                 key={work.id}
                 language={language}
+                onAddChapter={(targetWork) => openTitleIntent({ kind: 'create-chapter', work: targetWork })}
+                onAddEpisode={(targetWork, targetChapter) => openTitleIntent({
+                  kind: 'create-episode',
+                  work: targetWork,
+                  chapter: targetChapter
+                })}
                 onOpenMenu={setMenuTarget}
                 onSelectChapter={selectChapterFromTree}
                 onSelectEpisode={selectEpisodeFromTree}
@@ -1040,6 +1114,7 @@ export function StoryHierarchySheet({
                 onToggleChapter={(chapterId) => toggleSetId(setExpandedChapterIds, chapterId)}
                 onToggleWork={(workId) => toggleSetId(setExpandedWorkIds, workId)}
                 organizationId={organizationId}
+                pending={pending}
                 selectedChapterId={selectedChapterId}
                 selectedEpisodeId={selectedEpisodeId}
                 selectedWorkId={selectedWorkId}
@@ -1065,7 +1140,11 @@ export function StoryHierarchySheet({
                 onPress={() => setMenuTarget(null)}
                 style={styles.overlayBackdrop}
               />
-              <View pointerEvents="box-none" style={styles.menuOverlay}>
+              <View
+                pointerEvents="box-none"
+                style={[styles.menuOverlay, { paddingBottom: safeAreaInsets.bottom + spacing.lg }]}
+                testID="story-hierarchy-menu-overlay"
+              >
                 <View
                   accessibilityLabel={t(language, "generated.components.StoryHierarchySheet.story.hierarchy.28f3f754")}
                   accessibilityViewIsModal
@@ -1094,11 +1173,14 @@ export function StoryHierarchySheet({
                 style={styles.overlayBackdrop}
               />
               <KeyboardAvoidingView
-                behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+                behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
                 pointerEvents="box-none"
                 style={styles.titleKeyboardAvoider}
               >
-                <View pointerEvents="box-none" style={styles.titleOverlay}>
+                <View
+                  pointerEvents="box-none"
+                  style={[styles.titleOverlay, { paddingBottom: safeAreaInsets.bottom + spacing.lg }]}
+                >
                   <View
                     accessibilityLabel={titleDialogHeading}
                     accessibilityViewIsModal
@@ -1161,6 +1243,31 @@ export function StoryHierarchySheet({
 }
 
 const styles = StyleSheet.create({
+  createActionButton: {
+    alignItems: 'center',
+    borderColor: colors.controlBorder,
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: spacing.sm,
+    minHeight: 44,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm
+  },
+  createActionLabel: {
+    ...textStyles.body,
+    color: colors.primary,
+    fontWeight: '700'
+  },
+  depthOneCreateAction: {
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs
+  },
+  depthTwoCreateAction: {
+    paddingLeft: spacing.lg,
+    paddingRight: spacing.sm,
+    paddingVertical: spacing.xs
+  },
   menuOverlay: {
     flex: 1,
     justifyContent: 'flex-end',
