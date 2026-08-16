@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { resolveCompletedStorySave } from '../../../apps/web/src/App.js';
+import { resolveCompletedStorySave } from '../../../apps/web/src/lib/storyDraftSaveHydration.js';
 
 describe('Web story draft save hydration', () => {
   it('話の保存中に追加入力した場合はローカル入力を保持する', () => {

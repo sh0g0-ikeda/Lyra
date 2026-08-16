@@ -36,6 +36,7 @@ import {
 } from './lib/billingContract';
 import { ORGANIZATION_FEATURES_AVAILABLE } from './lib/featureFlags';
 import { readInvitationTokenFromPath } from './lib/invitationPath';
+import { resolveCompletedStorySave } from './lib/storyDraftSaveHydration';
 import { formatUserFacingError, formatUserFacingErrorMessage } from './lib/userFacingErrors';
 import {
   getEntityReferenceGenerationBlockers,
@@ -228,34 +229,6 @@ interface CompletedStorySave<TDraft> {
   id: string;
   savedVersion: number;
   submittedDraft: TDraft;
-}
-
-type CompletedStorySaveResolution = 'discard' | 'hydrate-server' | 'preserve-local' | 'wait';
-
-// eslint-disable-next-line react-refresh/only-export-components
-export function resolveCompletedStorySave<TDraft extends object>(input: {
-  latestDraft: TDraft;
-  savedId: string;
-  savedVersion: number;
-  selectedId: string;
-  selectedVersion: number;
-  submittedDraft: TDraft;
-}): CompletedStorySaveResolution {
-  if (input.selectedId !== input.savedId) {
-    return 'discard';
-  }
-  if (input.selectedVersion < input.savedVersion) {
-    return 'wait';
-  }
-  return areStoryDraftsEqual(input.latestDraft, input.submittedDraft)
-    ? 'hydrate-server'
-    : 'preserve-local';
-}
-
-function areStoryDraftsEqual<TDraft extends object>(left: TDraft, right: TDraft): boolean {
-  const leftKeys = Object.keys(left) as Array<keyof TDraft>;
-  const rightKeys = Object.keys(right) as Array<keyof TDraft>;
-  return leftKeys.length === rightKeys.length && leftKeys.every((key) => Object.is(left[key], right[key]));
 }
 
 interface EntityDraft {
