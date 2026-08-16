@@ -22,7 +22,7 @@ Unclassified routes: **0**
 | `/api/billing/customer-portal` | POST | Web-only store policy | Personal Stripe portal remains a Web account operation. |
 | `/api/chapters/:id` | DELETE | Mobile UI | api.deleteChapter -> apps/mobile/src/components/StoryHierarchySheet.tsx |
 | `/api/chapters/:id` | PUT | Mobile UI | api.updateChapter -> apps/mobile/src/components/StoryHierarchySheet.tsx |
-| `/api/chapters/:id/episodes` | GET | Mobile UI | api.getEpisodes -> apps/mobile/src/components/StoryHierarchySheet.tsx, apps/mobile/src/components/WorkspaceContextPicker.tsx, apps/mobile/src/screens/StoryScreen.tsx |
+| `/api/chapters/:id/episodes` | GET | Mobile UI | api.getEpisodes -> apps/mobile/src/components/StoryHierarchySheet.tsx, apps/mobile/src/components/WorkspaceContextPicker.tsx, apps/mobile/src/lib/storyEpisodeCache.ts, apps/mobile/src/screens/StoryScreen.tsx |
 | `/api/chapters/:id/episodes` | POST | Mobile UI | api.createEpisode -> apps/mobile/src/components/StoryHierarchySheet.tsx |
 | `/api/chapters/:id/move` | POST | Mobile UI | api.moveChapter -> apps/mobile/src/components/StoryHierarchySheet.tsx |
 | `/api/compositions` | GET | Mobile UI | api.getCompositions -> apps/mobile/src/screens/PagesScreen.tsx |
