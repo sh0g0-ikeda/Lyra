@@ -1,6 +1,14 @@
 import { randomUUID } from 'node:crypto';
-import { AppError, ConfigurationError, ConflictError } from '../../domain/errors/index.js';
+import {
+  AppError,
+  ConfigurationError,
+  ConflictError,
+  NotFoundError,
+  ValidationError,
+} from '../../domain/errors/index.js';
 import type { AppLanguage } from '../../domain/types/language.js';
+import { STORY_AI_LIMITS } from '../../domain/constants/storyAi.js';
+import type { PageRepository } from '../../repositories/PageRepository.js';
 import {
   isUniqueViolation,
   type GenerationJobCapacityLimits,
@@ -27,6 +35,9 @@ export interface EpisodeStoryAutofillJobRepository
   ): Promise<GenerationJob | null>;
 }
 
+export interface EpisodeStoryAutofillReadinessRepository
+  extends Pick<PageRepository, 'findEpisodePlanningContextByIdAndUserId'> {}
+
 export interface EnqueueEpisodeStoryAutofillResult {
   jobId: string;
 }
@@ -48,6 +59,7 @@ export class EpisodeStoryAutofillService implements EpisodeStoryAutofillServiceP
   public constructor(
     private readonly generationJobRepository: EpisodeStoryAutofillJobRepository,
     private readonly queue: EpisodeStoryAutofillQueuePort,
+    private readonly readinessRepository: EpisodeStoryAutofillReadinessRepository,
     private readonly episodeLongJobStaleAfterMs: number = EPISODE_LONG_JOB_STALE_AFTER_MS,
     private readonly now: () => number = () => Date.now(),
     private readonly capacityLimits: GenerationJobCapacityLimits = {
@@ -64,6 +76,7 @@ export class EpisodeStoryAutofillService implements EpisodeStoryAutofillServiceP
     organizationId: string | null = null,
   ): Promise<EnqueueEpisodeStoryAutofillResult> {
     await this.ensureNoActiveJob(userId, episodeId, organizationId);
+    await this.ensureEpisodeReady(userId, episodeId, organizationId);
 
     const reservedJobId = randomUUID();
     let createdJobId: string | null = null;
@@ -114,6 +127,44 @@ export class EpisodeStoryAutofillService implements EpisodeStoryAutofillServiceP
       }
 
       throw new ConfigurationError('Failed to enqueue episode story autofill job');
+    }
+  }
+
+  private async ensureEpisodeReady(
+    userId: string,
+    episodeId: string,
+    organizationId: string | null,
+  ): Promise<void> {
+    const context = await this.readinessRepository.findEpisodePlanningContextByIdAndUserId(
+      episodeId,
+      userId,
+      organizationId,
+    );
+    if (context === null) {
+      throw new NotFoundError('Episode not found');
+    }
+    if (context.pages.length === 0) {
+      throw new ValidationError('Episode must have pages before story autofill can run');
+    }
+    if (context.pages.length > STORY_AI_LIMITS.maxSkeletonPages) {
+      throw new ValidationError(
+        `Episode story autofill supports at most ${STORY_AI_LIMITS.maxSkeletonPages} pages`,
+      );
+    }
+
+    for (const page of context.pages) {
+      if (page.status === 'generating') {
+        throw new ValidationError('Pages cannot story autofill while generation is in progress');
+      }
+      if (page.status === 'confirmed') {
+        throw new ValidationError('Confirmed pages must be reopened before story autofill');
+      }
+      if (page.frameCount <= 0) {
+        throw new ValidationError('All pages must have frames before story autofill can run');
+      }
+      if (page.panels.length !== page.frameCount) {
+        throw new ValidationError('コマ割りを先に合わせてください');
+      }
     }
   }
 

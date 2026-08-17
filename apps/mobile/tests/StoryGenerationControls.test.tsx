@@ -17,13 +17,15 @@ vi.mock('@/components/Notice', () => ({
 vi.mock('@/components/PrimaryButton', () => ({
   PrimaryButton: ({
     disabled,
+    disabledReason,
     label,
     onPress
   }: {
     disabled?: boolean;
+    disabledReason?: string;
     label: string;
     onPress: () => void;
-  }) => React.createElement('button', { disabled, onClick: onPress }, label)
+  }) => React.createElement('button', { disabled, onClick: onPress }, label, disabledReason)
 }));
 
 const renderControls = (overrides: Partial<React.ComponentProps<typeof StoryGenerationControls>> = {}) => {
@@ -83,5 +85,17 @@ describe('StoryGenerationControls', () => {
     const buttons = renderControls({ skeletonLoading: true }).root.findAllByType('button');
 
     expect(buttons.every((button) => button.props.disabled === true)).toBe(true);
+  });
+
+  it('利用可能なページ骨格がないときは話の自動入力だけを無効化する', () => {
+    const renderer = renderControls({
+      storyApplyDisabledReason: 'ページ骨格を生成'
+    });
+    const buttons = renderer.root.findAllByType('button');
+
+    expect(buttons).toHaveLength(2);
+    expect(buttons[0]?.props.disabled).toBe(false);
+    expect(buttons[1]?.props.disabled).toBe(true);
+    expect(JSON.stringify(renderer.toJSON())).toContain('ページ骨格を生成');
   });
 });

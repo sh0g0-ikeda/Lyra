@@ -1,4 +1,5 @@
 ﻿import { PANEL_FRAME_TEMPLATES } from '../../domain/constants/panelFrameTemplates.js';
+import { createHash } from 'node:crypto';
 import { STORY_AI_LIMITS } from '../../domain/constants/storyAi.js';
 import { resolveDefaultPanelFrameTemplateId } from '../../domain/constants/panelFrameTemplates.js';
 import { inferEntityIdsFromTexts } from '../../domain/entityAliases.js';
@@ -13,6 +14,7 @@ import {
 } from '../../domain/storyPromptCompaction.js';
 import { describeAppLanguage, type AppLanguage } from '../../domain/types/language.js';
 import type {
+  EpisodePageSkeletonContext,
   PageSkeletonPageDraft,
   PageSkeletonPanelDraft,
   PageSkeletonPersistResult,
@@ -22,6 +24,18 @@ import { sanitizePersistedErrorMessage } from '../../lib/errorSanitizer.js';
 import type { StoryAiClientPort } from './StoryAiClientPort.js';
 
 export interface PageSkeletonServicePort {
+  prepareForEpisode?(
+    userId: string,
+    episodeId: string,
+    options?: PageSkeletonGenerationOptions,
+    organizationId?: string | null,
+  ): Promise<PreparedPageSkeleton>;
+  persistPrepared?(
+    userId: string,
+    prepared: PreparedPageSkeleton,
+    options?: { overwriteExisting?: boolean },
+    organizationId?: string | null,
+  ): Promise<PageSkeletonPersistResult>;
   generateForEpisode(
     userId: string,
     episodeId: string,
@@ -34,6 +48,12 @@ export interface PageSkeletonServicePort {
     expectedPageCount: number,
     organizationId?: string | null,
   ): Promise<boolean>;
+}
+
+export interface PreparedPageSkeleton {
+  context: EpisodePageSkeletonContext;
+  pages: PageSkeletonPageDraft[];
+  sourceFingerprint: string;
 }
 
 export interface PageSkeletonGenerationOptions {
@@ -59,6 +79,21 @@ export class PageSkeletonService implements PageSkeletonServicePort {
     options?: PageSkeletonGenerationOptions,
     organizationId: string | null = null,
   ): Promise<PageSkeletonPersistResult> {
+    const prepared = await this.prepareForEpisode(userId, episodeId, options, organizationId);
+    return this.persistPrepared(
+      userId,
+      prepared,
+      { overwriteExisting: options?.overwriteExisting === true },
+      organizationId,
+    );
+  }
+
+  public async prepareForEpisode(
+    userId: string,
+    episodeId: string,
+    options?: PageSkeletonGenerationOptions,
+    organizationId: string | null = null,
+  ): Promise<PreparedPageSkeleton> {
     const overwriteExisting = options?.overwriteExisting === true;
     const language = options?.language ?? 'ja';
     const allowCompilerFallback = options?.allowCompilerFallback !== false;
@@ -131,9 +166,26 @@ export class PageSkeletonService implements PageSkeletonServicePort {
       validatePageSkeleton(context.estimatedPages, allowedEntityIds, pages);
     }
 
-    const result = await this.storyRepository.createPageSkeleton(episodeId, userId, pages, {
-      overwriteExisting,
-    }, organizationId);
+    return {
+      context,
+      pages,
+      sourceFingerprint: fingerprintPageSkeletonSource(context),
+    };
+  }
+
+  public async persistPrepared(
+    userId: string,
+    prepared: PreparedPageSkeleton,
+    options?: { overwriteExisting?: boolean },
+    organizationId: string | null = null,
+  ): Promise<PageSkeletonPersistResult> {
+    const result = await this.storyRepository.createPageSkeleton(
+      prepared.context.episodeId,
+      userId,
+      prepared.pages,
+      { overwriteExisting: options?.overwriteExisting === true },
+      organizationId,
+    );
     if (result === null) {
       throw new NotFoundError('Episode not found');
     }
@@ -149,6 +201,24 @@ export class PageSkeletonService implements PageSkeletonServicePort {
   ): Promise<boolean> {
     return this.storyRepository.rollbackFreshPageSkeleton(episodeId, userId, expectedPageCount, organizationId);
   }
+}
+
+export function fingerprintPageSkeletonSource(context: EpisodePageSkeletonContext): string {
+  return createHash('sha256').update(stableStringify(context)).digest('hex');
+}
+
+function stableStringify(value: unknown): string {
+  if (value === null || typeof value !== 'object') {
+    return JSON.stringify(value) ?? 'undefined';
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((entry) => stableStringify(entry)).join(',')}]`;
+  }
+  const record = value as Record<string, unknown>;
+  return `{${Object.keys(record)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${stableStringify(record[key])}`)
+    .join(',')}}`;
 }
 
 function buildPageSkeletonSystemPrompt(estimatedPages: number, language: AppLanguage): string {

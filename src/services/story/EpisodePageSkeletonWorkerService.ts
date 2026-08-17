@@ -1,6 +1,7 @@
 import { ValidationError } from '../../domain/errors/index.js';
 import type { AppLanguage } from '../../domain/types/language.js';
 import type { EpisodePagePlanApplyResult } from '../../domain/types/page.js';
+import type { PageSkeletonPersistResult } from '../../domain/types/storyAi.js';
 import type {
   EpisodePageSkeletonExecutionRepository,
 } from '../../repositories/EpisodePageSkeletonExecutionRepository.js';
@@ -8,9 +9,12 @@ import type { GenerationJobCancellationCheckpointPort } from '../../repositories
 import { sanitizePersistedErrorMessage } from '../../lib/errorSanitizer.js';
 import type {
   EpisodePagePlanProgress,
+  EpisodePagePlanExecutionControl,
   PageServicePort,
 } from '../page/PageService.js';
-import type { PageSkeletonServicePort } from './PageSkeletonService.js';
+import type {
+  PageSkeletonServicePort,
+} from './PageSkeletonService.js';
 
 export interface ProcessEpisodePageSkeletonJobResult {
   status: 'processed' | 'skipped';
@@ -56,9 +60,6 @@ export class EpisodePageSkeletonWorkerService implements EpisodePageSkeletonWork
       return { status: 'processed', jobStatus: 'failed' };
     }
 
-    let skeletonResult: Awaited<ReturnType<PageSkeletonServicePort['generateForEpisode']>> | null = null;
-    let storyPlanCompleted = applyStoryPlan === false;
-
     try {
       await this.recordProgress(job.id, job.userId, {
         stage: 'started',
@@ -70,30 +71,45 @@ export class EpisodePageSkeletonWorkerService implements EpisodePageSkeletonWork
         episodeId,
       });
 
-      const result = await this.pageSkeletonService.generateForEpisode(job.userId, episodeId, {
-        overwriteExisting,
-        language,
-        allowCompilerFallback: false,
-      }, job.organizationId);
-      skeletonResult = result;
+      const prepareSkeleton = this.pageSkeletonService.prepareForEpisode;
+      const persistSkeleton = this.pageSkeletonService.persistPrepared;
+      if (prepareSkeleton === undefined || persistSkeleton === undefined) {
+        throw new ValidationError('Atomic page skeleton preparation is not configured');
+      }
+      const preparedSkeleton = await prepareSkeleton.call(
+        this.pageSkeletonService,
+        job.userId,
+        episodeId,
+        {
+          overwriteExisting,
+          language,
+          allowCompilerFallback: false,
+        },
+        job.organizationId,
+      );
 
       if (await this.finalizeCancellationIfRequested(job.id)) {
         return { status: 'processed', jobStatus: 'cancelled' };
       }
 
       let storyPlanResult: EpisodePagePlanApplyResult | null = null;
+      let result: PageSkeletonPersistResult;
       if (applyStoryPlan) {
-        if (this.pageService === undefined) {
-          throw new ValidationError('Page service is not configured for story plan autofill');
+        const prepareStoryPlan = this.pageService?.prepareEpisodePlanForSkeleton;
+        const commitCombinedPlan = this.pageService?.commitPreparedEpisodeSkeletonPlan;
+        if (prepareStoryPlan === undefined || commitCombinedPlan === undefined) {
+          throw new ValidationError('Atomic story plan autofill is not configured');
         }
 
         await this.recordProgress(job.id, job.userId, {
           stage: 'applying_story_plan',
           message: 'Applying story plan to pages and panels. This process can take around 20 minutes.',
         });
-        storyPlanResult = await this.pageService.autofillEpisodeFromStory(
+        const preparedPlan = await prepareStoryPlan.call(
+          this.pageService,
           job.userId,
           episodeId,
+          preparedSkeleton,
           language,
           async (progress) => {
             if (await this.finalizeCancellationIfRequested(job.id)) {
@@ -103,17 +119,31 @@ export class EpisodePageSkeletonWorkerService implements EpisodePageSkeletonWork
           },
           job.organizationId,
         );
-        if (!storyPlanResult.compilerUsed) {
-          throw new ValidationError(
-            storyPlanResult.compilerError ??
-              'AI story plan autofill did not complete; page and panel fields were not changed',
-          );
+        if (await this.finalizeCancellationIfRequested(job.id)) {
+          return { status: 'processed', jobStatus: 'cancelled' };
         }
-        storyPlanCompleted = true;
-      }
-
-      if (await this.finalizeCancellationIfRequested(job.id)) {
-        return { status: 'processed', jobStatus: 'cancelled' };
+        const committed = await commitCombinedPlan.call(
+          this.pageService,
+          job.userId,
+          preparedSkeleton,
+          preparedPlan,
+          overwriteExisting,
+          job.organizationId ?? null,
+          this.createExecutionControl(job.id, job.userId),
+        );
+        result = committed.skeletonResult;
+        storyPlanResult = committed.storyPlanResult;
+      } else {
+        const executionControl = this.createExecutionControl(job.id, job.userId);
+        await executionControl.checkpoint();
+        await executionControl.beginCommit();
+        result = await persistSkeleton.call(
+          this.pageSkeletonService,
+          job.userId,
+          preparedSkeleton,
+          { overwriteExisting },
+          job.organizationId,
+        );
       }
 
       const completed = await this.repository.completeEpisodePageSkeleton({
@@ -148,15 +178,6 @@ export class EpisodePageSkeletonWorkerService implements EpisodePageSkeletonWork
         episodeId,
         reason: sanitizePersistedErrorMessage(error, 'Episode page skeleton failed'),
       });
-      if (applyStoryPlan && skeletonResult !== null && !skeletonResult.replacedExisting && !storyPlanCompleted) {
-        await this.rollbackFreshSkeletonAfterStoryPlanFailure(
-          job.id,
-          job.userId,
-          episodeId,
-          skeletonResult.pagesCreated,
-          job.organizationId ?? null,
-        );
-      }
       await this.repository.failEpisodePageSkeleton({
         jobId: job.id,
         userId: job.userId,
@@ -168,6 +189,32 @@ export class EpisodePageSkeletonWorkerService implements EpisodePageSkeletonWork
 
   private async finalizeCancellationIfRequested(jobId: string): Promise<boolean> {
     return this.cancellationCheckpoint?.finalizeCancellationIfRequested(jobId) ?? false;
+  }
+
+  private createExecutionControl(
+    jobId: string,
+    userId: string,
+  ): EpisodePagePlanExecutionControl {
+    return {
+      checkpoint: async () => {
+        if (await this.finalizeCancellationIfRequested(jobId)) {
+          throw new ProcessingCancellationRequestedError();
+        }
+      },
+      beginCommit: async () => {
+        const beginCommit = this.repository.beginEpisodePageSkeletonCommit;
+        if (beginCommit === undefined) {
+          throw new ValidationError('Page skeleton commit gate is not configured');
+        }
+        if (await beginCommit.call(this.repository, jobId, userId)) {
+          return;
+        }
+        if (await this.finalizeCancellationIfRequested(jobId)) {
+          throw new ProcessingCancellationRequestedError();
+        }
+        throw new ValidationError('Page skeleton could not enter the save phase');
+      },
+    };
   }
 
   private async recordProgress(
@@ -212,39 +259,6 @@ export class EpisodePageSkeletonWorkerService implements EpisodePageSkeletonWork
     }
   }
 
-  private async rollbackFreshSkeletonAfterStoryPlanFailure(
-    jobId: string,
-    userId: string,
-    episodeId: string,
-    expectedPageCount: number,
-    organizationId: string | null,
-  ): Promise<void> {
-    try {
-      await this.recordProgress(jobId, userId, {
-        stage: 'rolling_back',
-        message: 'Story plan could not be applied, so the temporary page skeleton is being rolled back.',
-      });
-      const rolledBack = await this.pageSkeletonService.rollbackFreshSkeleton(
-        userId,
-        episodeId,
-        expectedPageCount,
-        organizationId,
-      );
-      console.warn('episode_page_skeleton_rolled_back_after_story_plan_failure', {
-        jobId,
-        userId,
-        episodeId,
-        rolledBack,
-      });
-    } catch (rollbackError) {
-      console.error('episode_page_skeleton_rollback_failed', {
-        jobId,
-        userId,
-        episodeId,
-        reason: sanitizePersistedErrorMessage(rollbackError, 'Page skeleton rollback failed'),
-      });
-    }
-  }
 }
 
 class ProcessingCancellationRequestedError extends Error {}

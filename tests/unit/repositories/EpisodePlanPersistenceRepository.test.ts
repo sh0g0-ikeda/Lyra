@@ -35,6 +35,26 @@ class LockCapturingClient implements DatabaseClient, TransactionRunner {
 }
 
 describe('PostgresEpisodePlanPersistenceRepository', () => {
+  it('骨格置換とプラン反映を同じtransaction-scoped resourcesで実行する', async () => {
+    const client = new LockCapturingClient(true);
+    const repository = new PostgresEpisodePlanPersistenceRepository(client);
+    let receivedResources = false;
+
+    await repository.withLockedEpisodeSkeletonPlan(
+      { episodeId: 'episode-1', userId: 'user-1', organizationId: null },
+      async (resources) => {
+        receivedResources =
+          resources.storyRepository !== undefined &&
+          resources.pageRepository !== undefined &&
+          resources.panelRepository !== undefined &&
+          resources.panelEntityAssignmentService !== undefined;
+      },
+    );
+
+    expect(receivedResources).toBe(true);
+    expect(client.queries.slice(0, 7)).toHaveLength(7);
+  });
+
   it('対象の話にアクセスできない場合はロックも保存も行わない', async () => {
     const client = new LockCapturingClient(false);
     const repository = new PostgresEpisodePlanPersistenceRepository(client);

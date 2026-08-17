@@ -1718,7 +1718,7 @@ export function PagesScreen(): React.JSX.Element {
         activeEpisodeId ?? '',
         {
           overwrite_existing: shouldOverwritePageSkeleton(pages.length),
-          apply_story_plan: true,
+          apply_story_plan: false,
           language
         },
         organizationId
@@ -2113,6 +2113,19 @@ export function PagesScreen(): React.JSX.Element {
   const overwritePageSkeleton = shouldOverwritePageSkeleton(
     existingEpisodePageCount
   );
+  const storyApplyDisabledReason = !pagesQuery.isSuccess
+    ? t(language, "generated.components.StoryGenerationControls.checking.existing.pages.4fbfc50b")
+    : pages.length === 0
+      ? t(language, 'screen.pages.blocker.storySkeletonRequired')
+      : pages.some((page) => page.status === 'generating')
+        ? t(language, 'screen.pages.blocker.pageGenerating')
+        : pages.some((page) => page.status === 'confirmed')
+          ? t(language, 'screen.pages.blocker.pageReopenRequired')
+          : pages.some((page) => page.frame_count <= 0)
+            ? t(language, 'screen.pages.blocker.frameRequired')
+            : pages.some((page) => page.panel_count !== page.frame_count)
+              ? t(language, 'screen.pages.blocker.framePanelMismatch')
+              : null;
   const pageDesignOperationActive =
     activePageDesignServerJobId !== null ||
     pageDesignJobEnqueued ||
@@ -2156,6 +2169,7 @@ export function PagesScreen(): React.JSX.Element {
     if (
       !canGenerate ||
       activeEpisodeId === null ||
+      storyApplyDisabledReason !== null ||
       pageDesignOperationActive
     ) {
       return;
@@ -2496,6 +2510,7 @@ export function PagesScreen(): React.JSX.Element {
           pagesLoading={pagesQuery.isLoading}
           selectedEpisode={activeEpisodeId !== null}
           skeletonLoading={pageSkeletonMutation.isPending}
+          storyApplyDisabledReason={storyApplyDisabledReason}
           storyApplyLoading={pageStoryAutofillMutation.isPending}
         />
         <JobStatusCard

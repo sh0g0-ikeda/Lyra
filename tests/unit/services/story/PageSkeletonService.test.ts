@@ -258,6 +258,23 @@ describe('PageSkeletonService', () => {
     vi.restoreAllMocks();
   });
 
+  it('prepare は骨格を検証するが永続化しない', async () => {
+    const repository = new FakeStoryRepository();
+    const client = new FakeStoryAiClient();
+    const service = new PageSkeletonService(repository, client);
+
+    const prepared = await service.prepareForEpisode(
+      'user-1',
+      '33333333-3333-4333-8333-333333333333',
+      { allowCompilerFallback: false },
+    );
+
+    expect(prepared.pages).toHaveLength(2);
+    expect(prepared.context.episodeId).toBe('33333333-3333-4333-8333-333333333333');
+    expect(prepared.sourceFingerprint).toMatch(/^[a-f0-9]{64}$/);
+    expect(repository.createdPages).toEqual([]);
+  });
+
   it('persists a generated page skeleton and includes scene context in the prompt', async () => {
     const repository = new FakeStoryRepository();
     const client = new FakeStoryAiClient();

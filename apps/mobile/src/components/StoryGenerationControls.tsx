@@ -17,6 +17,7 @@ interface StoryGenerationControlsProps {
   overwrite: boolean;
   pagesLoading: boolean;
   selectedEpisode: boolean;
+  storyApplyDisabledReason?: string | null;
   storyApplyLoading?: boolean;
   skeletonLoading?: boolean;
 }
@@ -32,6 +33,7 @@ export function StoryGenerationControls({
   overwrite,
   pagesLoading,
   selectedEpisode,
+  storyApplyDisabledReason = null,
   skeletonLoading = false,
   storyApplyLoading = false
 }: StoryGenerationControlsProps): React.JSX.Element {
@@ -100,8 +102,8 @@ export function StoryGenerationControls({
           onPress={onGenerateSkeleton}
         />
         <PrimaryButton
-          disabled={commonDisabled}
-          disabledReason={commonDisabledReason}
+          disabled={commonDisabled || storyApplyDisabledReason !== null}
+          disabledReason={commonDisabledReason ?? storyApplyDisabledReason ?? undefined}
           label={t(language, 'component.storyGenerationControls.autofillAction')}
           loading={storyApplyLoading}
           onPress={onApplyStory}

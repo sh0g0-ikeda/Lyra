@@ -6,9 +6,13 @@ import type { PageSkeletonPersistResult } from '../../../../src/domain/types/sto
 import { EpisodePageSkeletonWorkerService } from '../../../../src/services/story/EpisodePageSkeletonWorkerService.js';
 import type {
   PageSkeletonGenerationOptions,
+  PreparedPageSkeleton,
   PageSkeletonServicePort,
 } from '../../../../src/services/story/PageSkeletonService.js';
-import type { PageServicePort } from '../../../../src/services/page/PageService.js';
+import type {
+  PageServicePort,
+  PreparedEpisodeSkeletonPlan,
+} from '../../../../src/services/page/PageService.js';
 
 class FakeEpisodePageSkeletonRepository implements EpisodePageSkeletonExecutionRepository {
   public job: GenerationJob | null = {
@@ -41,6 +45,7 @@ class FakeEpisodePageSkeletonRepository implements EpisodePageSkeletonExecutionR
   public completed: unknown = null;
   public failed: unknown = null;
   public progressUpdates: unknown[] = [];
+  public beginCommitCalls = 0;
 
   public async claimQueuedEpisodePageSkeletonJob(): Promise<GenerationJob | null> {
     return this.job;
@@ -48,6 +53,11 @@ class FakeEpisodePageSkeletonRepository implements EpisodePageSkeletonExecutionR
 
   public async updateEpisodePageSkeletonProgress(input: unknown): Promise<boolean> {
     this.progressUpdates.push(input);
+    return true;
+  }
+
+  public async beginEpisodePageSkeletonCommit(): Promise<boolean> {
+    this.beginCommitCalls += 1;
     return true;
   }
 
@@ -64,12 +74,57 @@ class FakeEpisodePageSkeletonRepository implements EpisodePageSkeletonExecutionR
 
 class FakePageSkeletonService implements PageSkeletonServicePort {
   public lastOptions: PageSkeletonGenerationOptions | undefined;
+  public prepareCalls = 0;
+  public persistCalls = 0;
   public rollbackCalls: Array<{ userId: string; episodeId: string; expectedPageCount: number }> = [];
   public persistResult: PageSkeletonPersistResult = {
     pagesCreated: 2,
     panelsCreated: 8,
     replacedExisting: false,
   };
+
+  public prepared: PreparedPageSkeleton = {
+    context: {
+      episodeId: '33333333-3333-4333-8333-333333333333',
+      chapterId: 'chapter-1',
+      workId: 'work-1',
+      workTitle: 'Lyra',
+      workGenre: null,
+      worldSetting: null,
+      theme: null,
+      chapterTitle: null,
+      chapterPurpose: null,
+      episodeTitle: null,
+      episodePurpose: null,
+      introduction: 'Start',
+      middle: 'Middle',
+      climax: 'Climax',
+      endingHook: 'End',
+      estimatedPages: 2,
+      entitiesInvolved: [],
+      pageSkeletonGenerated: false,
+      existingPageCount: 0,
+      entities: [],
+      sceneSummaries: [],
+    },
+    pages: [],
+    sourceFingerprint: 'source-fingerprint',
+  };
+
+  public async prepareForEpisode(
+    _userId: string,
+    _episodeId: string,
+    options?: PageSkeletonGenerationOptions,
+  ): Promise<PreparedPageSkeleton> {
+    this.prepareCalls += 1;
+    this.lastOptions = options;
+    return this.prepared;
+  }
+
+  public async persistPrepared(): Promise<PageSkeletonPersistResult> {
+    this.persistCalls += 1;
+    return this.persistResult;
+  }
 
   public async generateForEpisode(
     _userId: string,
@@ -105,6 +160,28 @@ class FakePageService implements PageServicePort {
     compilerPromptVersion: 'test',
     compilerError: null,
   };
+  public prepareCombinedCalls = 0;
+  public commitCombinedCalls = 0;
+  public prepareError: Error | null = null;
+
+  public async prepareEpisodePlanForSkeleton(): Promise<PreparedEpisodeSkeletonPlan> {
+    this.prepareCombinedCalls += 1;
+    if (this.prepareError !== null) {
+      throw this.prepareError;
+    }
+    return { compilerUsed: true } as unknown as PreparedEpisodeSkeletonPlan;
+  }
+
+  public async commitPreparedEpisodeSkeletonPlan(): Promise<{
+    skeletonResult: PageSkeletonPersistResult;
+    storyPlanResult: EpisodePagePlanApplyResult;
+  }> {
+    this.commitCombinedCalls += 1;
+    return {
+      skeletonResult: { pagesCreated: 2, panelsCreated: 8, replacedExisting: true },
+      storyPlanResult: this.autofillResult,
+    };
+  }
 
   public async updatePageSettings(): Promise<never> {
     throw new Error('not implemented');
@@ -156,11 +233,41 @@ describe('EpisodePageSkeletonWorkerService', () => {
       language: 'ja',
       allowCompilerFallback: false,
     });
+    expect(pageSkeletonService.prepareCalls).toBe(1);
+    expect(pageSkeletonService.persistCalls).toBe(1);
+    expect(repository.beginCommitCalls).toBe(1);
     expect(repository.completed).not.toBeNull();
     expect(repository.failed).toBeNull();
   });
 
-  it('rolls back a newly created skeleton when story plan application cannot use the compiler', async () => {
+  it('骨格の検証後に停止要求が確定した場合は保存フェーズへ入らない', async () => {
+    const repository = new FakeEpisodePageSkeletonRepository();
+    const pageSkeletonService = new FakePageSkeletonService();
+    let cancellationChecks = 0;
+    const worker = new EpisodePageSkeletonWorkerService(
+      repository,
+      pageSkeletonService,
+      new FakePageService(),
+      {
+        finalizeCancellationIfRequested: async () => {
+          cancellationChecks += 1;
+          return cancellationChecks >= 2;
+        },
+      },
+    );
+
+    await expect(worker.processJob('55555555-5555-4555-8555-555555555555')).resolves.toEqual({
+      status: 'processed',
+      jobStatus: 'cancelled',
+    });
+    expect(pageSkeletonService.prepareCalls).toBe(1);
+    expect(pageSkeletonService.persistCalls).toBe(0);
+    expect(repository.beginCommitCalls).toBe(0);
+    expect(repository.completed).toBeNull();
+    expect(repository.failed).toBeNull();
+  });
+
+  it('結合プランのコンパイル失敗時は新規骨格を一度も保存しない', async () => {
     const repository = new FakeEpisodePageSkeletonRepository();
     repository.job = {
       ...repository.job!,
@@ -173,12 +280,7 @@ describe('EpisodePageSkeletonWorkerService', () => {
     };
     const pageSkeletonService = new FakePageSkeletonService();
     const pageService = new FakePageService();
-    pageService.autofillResult = {
-      ...pageService.autofillResult,
-      compilerUsed: false,
-      compilerProvider: 'fallback',
-      compilerError: 'compiler unavailable',
-    };
+    pageService.prepareError = new Error('compiler unavailable');
     const worker = new EpisodePageSkeletonWorkerService(
       repository,
       pageSkeletonService,
@@ -190,16 +292,12 @@ describe('EpisodePageSkeletonWorkerService', () => {
     expect(result).toEqual({ status: 'processed', jobStatus: 'failed' });
     expect(repository.completed).toBeNull();
     expect(repository.failed).not.toBeNull();
-    expect(pageSkeletonService.rollbackCalls).toEqual([
-      {
-        userId: 'user-1',
-        episodeId: '33333333-3333-4333-8333-333333333333',
-        expectedPageCount: 2,
-      },
-    ]);
+    expect(pageSkeletonService.persistCalls).toBe(0);
+    expect(pageService.commitCombinedCalls).toBe(0);
+    expect(repository.beginCommitCalls).toBe(0);
   });
 
-  it('does not rollback overwritten pages when story plan application fails', async () => {
+  it('結合プラン成功時は旧骨格の逐次保存を使わずatomic commitだけを呼ぶ', async () => {
     const repository = new FakeEpisodePageSkeletonRepository();
     repository.job = {
       ...repository.job!,
@@ -212,12 +310,6 @@ describe('EpisodePageSkeletonWorkerService', () => {
     };
     const pageSkeletonService = new FakePageSkeletonService();
     const pageService = new FakePageService();
-    pageService.autofillResult = {
-      ...pageService.autofillResult,
-      compilerUsed: false,
-      compilerProvider: 'fallback',
-      compilerError: 'compiler unavailable',
-    };
     const worker = new EpisodePageSkeletonWorkerService(
       repository,
       pageSkeletonService,
@@ -226,7 +318,11 @@ describe('EpisodePageSkeletonWorkerService', () => {
 
     const result = await worker.processJob('55555555-5555-4555-8555-555555555555');
 
-    expect(result).toEqual({ status: 'processed', jobStatus: 'failed' });
+    expect(result).toEqual({ status: 'processed', jobStatus: 'completed' });
+    expect(pageSkeletonService.persistCalls).toBe(0);
+    expect(pageService.prepareCombinedCalls).toBe(1);
+    expect(pageService.commitCombinedCalls).toBe(1);
+    expect(repository.completed).not.toBeNull();
     expect(pageSkeletonService.rollbackCalls).toEqual([]);
   });
 });

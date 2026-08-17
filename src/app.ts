@@ -600,7 +600,6 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
       pageSkeletonService: resolvedDependencies.pageSkeletonService,
       episodePageSkeletonService: resolvedDependencies.episodePageSkeletonService,
       pageService: resolvedDependencies.pageService,
-      episodeStoryAutofillService: resolvedDependencies.episodeStoryAutofillService,
       organizationService: resolvedDependencies.organizationService,
       storyCollaborationService: resolvedDependencies.storyCollaborationService,
       storyService: resolvedDependencies.storyService,
@@ -827,6 +826,7 @@ function resolveDependencies(
     new EpisodeStoryAutofillService(
       generationJobRepository,
       episodeStoryAutofillQueue,
+      pageRepository,
       undefined,
       undefined,
       {

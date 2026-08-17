@@ -80,6 +80,14 @@ describe('mobile workspace navigation and editor UX contract', () => {
       pageScreen.indexOf('const pageStoryAutofillMutation'),
       pageScreen.indexOf('const cancelPageDesignJobMutation')
     );
+    const skeletonConfirmation = pageScreen.slice(
+      pageScreen.indexOf('const confirmPageSkeletonGeneration'),
+      pageScreen.indexOf('const confirmPageStoryAutofill')
+    );
+    const autofillConfirmation = pageScreen.slice(
+      pageScreen.indexOf('const confirmPageStoryAutofill'),
+      pageScreen.indexOf('const confirmApplyTemplate')
+    );
 
     expect(pageDesign).toBeGreaterThanOrEqual(0);
     expect(pageList).toBeGreaterThan(pageDesign);
@@ -93,6 +101,15 @@ describe('mobile workspace navigation and editor UX contract', () => {
     expect(pageScreen).toContain('displayedJobId');
     expect(pageScreen).toContain('hasActiveJob={pageDesignOperationActive}');
     expect(pageScreen).toContain('pageDesignJobEnqueued ||');
+    expect(skeletonMutation).toContain('apply_story_plan: false');
+    expect(skeletonMutation).not.toContain('apply_story_plan: true');
+    expect(pageScreen).toContain('page.frame_count <= 0');
+    expect(pageScreen).toContain('page.panel_count !== page.frame_count');
+    expect(pageScreen).toContain("page.status === 'generating'");
+    expect(pageScreen).toContain("page.status === 'confirmed'");
+    expect(pageScreen).toContain('storyApplyDisabledReason={storyApplyDisabledReason}');
+    expect(skeletonConfirmation).not.toContain('storyApplyDisabledReason !== null');
+    expect(autofillConfirmation).toContain('storyApplyDisabledReason !== null');
   });
 
   it('ページ設計の操作場所をページ画面に一本化する', () => {
@@ -100,6 +117,14 @@ describe('mobile workspace navigation and editor UX contract', () => {
       '<StoryGenerationControls'
     );
     expect(renderSource('PagesScreen')).toContain('<StoryGenerationControls');
+  });
+
+  it('古いページ骨格jobの再試行で同時反映を勝手に有効化しない', () => {
+    const accountScreen = readSource('src/screens/AccountScreen.tsx');
+
+    expect(accountScreen).toContain(
+      "apply_story_plan: readJobBooleanParam(job, 'apply_story_plan') ?? false"
+    );
   });
 
   it('選択中ページ画像をページ生成操作と画像保存の間に置く', () => {

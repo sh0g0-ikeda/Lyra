@@ -7,7 +7,7 @@ import {
   worksResponseSchema,
 } from '../../../packages/api-contract/src/mobileApiSchemas.js';
 import { createApp } from '../../../src/app.js';
-import { ResourceStaleError, ValidationError } from '../../../src/domain/errors/index.js';
+import { ResourceStaleError } from '../../../src/domain/errors/index.js';
 import type { CreditBalanceSnapshot } from '../../../src/domain/types/credit.js';
 import type { AuthenticatedUser, SupabaseJwtClaims } from '../../../src/domain/types/user.js';
 import { REQUEST_BODY_LIMITS } from '../../../src/routes/requestBody.js';
@@ -21,12 +21,13 @@ import type {
   RefundCreditsParams,
 } from '../../../src/services/credit/CreditService.js';
 import type { PageSkeletonServicePort } from '../../../src/services/story/PageSkeletonService.js';
+import type {
+  EnqueueEpisodePageSkeletonInput,
+  EnqueueEpisodePageSkeletonResult,
+  EpisodePageSkeletonServicePort,
+} from '../../../src/services/story/EpisodePageSkeletonService.js';
 import type { StoryCollaborationServicePort } from '../../../src/services/story/StoryCollaborationService.js';
 import type { PageServicePort } from '../../../src/services/page/PageService.js';
-import type {
-  EnqueueEpisodeStoryAutofillResult,
-  EpisodeStoryAutofillServicePort,
-} from '../../../src/services/story/EpisodeStoryAutofillService.js';
 import type {
   Chapter,
   CreateChapterRequest,
@@ -317,6 +318,30 @@ class FakePageSkeletonService implements PageSkeletonServicePort {
   }
 }
 
+class FakeEpisodePageSkeletonService implements EpisodePageSkeletonServicePort {
+  public requests: Array<{
+    userId: string;
+    episodeId: string;
+    input: EnqueueEpisodePageSkeletonInput;
+    organizationId: string | null;
+  }> = [];
+
+  public async enqueueEpisodePageSkeleton(
+    userId: string,
+    requestedEpisodeId: string,
+    input: EnqueueEpisodePageSkeletonInput,
+    organizationId: string | null = null,
+  ): Promise<EnqueueEpisodePageSkeletonResult> {
+    this.requests.push({
+      userId,
+      episodeId: requestedEpisodeId,
+      input,
+      organizationId,
+    });
+    return { jobId: '66666666-6666-4666-8666-666666666666' };
+  }
+}
+
 class FakePageService implements PageServicePort {
   public async updatePageSettings(): Promise<never> {
     throw new Error('not implemented');
@@ -348,24 +373,6 @@ class FakePageService implements PageServicePort {
       compilerPromptVersion: 'episode_page_plan_v1',
       compilerError: null,
     };
-  }
-}
-
-class FailingStoryPlanPageService extends FakePageService {
-  public override async autofillEpisodeFromStory(): Promise<never> {
-    throw new ValidationError('Story plan could not be applied');
-  }
-}
-
-class FakeEpisodeStoryAutofillService implements EpisodeStoryAutofillServicePort {
-  public requestedEpisodeId: string | null = null;
-
-  public async enqueueEpisodeStoryAutofill(
-    _userId: string,
-    requestedEpisodeId: string,
-  ): Promise<EnqueueEpisodeStoryAutofillResult> {
-    this.requestedEpisodeId = requestedEpisodeId;
-    return { jobId: '55555555-5555-4555-8555-555555555555' };
   }
 }
 
@@ -917,7 +924,7 @@ describe('story routes', () => {
     });
   });
 
-  it('creates a page skeleton and applies the story plan', async () => {
+  it('page skeleton は指定を省略した場合に骨格だけを生成する', async () => {
     const pageSkeletonService = new FakePageSkeletonService();
     const app = createTestApp(new FakeStoryCollaborationService(), pageSkeletonService);
     const token = await createToken();
@@ -935,8 +942,8 @@ describe('story routes', () => {
       pages_created: 16,
       panels_created: 80,
       replaced_existing: false,
-      story_plan_applied: true,
-      story_plan_job_id: '55555555-5555-4555-8555-555555555555',
+      story_plan_applied: false,
+      story_plan_job_id: null,
     });
     expect(() => pageSkeletonResponseSchema.parse(payload)).not.toThrow();
     expect(pageSkeletonService.requestedEpisodeId).toBe(episodeId);
@@ -961,20 +968,18 @@ describe('story routes', () => {
       pages_created: 16,
       panels_created: 80,
       replaced_existing: true,
-      story_plan_applied: true,
-      story_plan_job_id: '55555555-5555-4555-8555-555555555555',
+      story_plan_applied: false,
+      story_plan_job_id: null,
     });
     expect(pageSkeletonService.overwriteExisting).toBe(true);
   });
 
   it('page skeleton は apply_story_plan false のとき反映ジョブを作らない', async () => {
     const pageSkeletonService = new FakePageSkeletonService();
-    const episodeStoryAutofillService = new FakeEpisodeStoryAutofillService();
     const app = createTestApp(
       new FakeStoryCollaborationService(),
       pageSkeletonService,
-      new FailingStoryPlanPageService(),
-      episodeStoryAutofillService,
+      new FakePageService(),
     );
     const token = await createToken();
 
@@ -996,7 +1001,71 @@ describe('story routes', () => {
       story_plan_job_id: null,
     });
     expect(pageSkeletonService.requestedEpisodeId).toBe(episodeId);
-    expect(episodeStoryAutofillService.requestedEpisodeId).toBeNull();
+  });
+
+  it.each([
+    { label: '省略', body: {}, expectedApply: false },
+    { label: '明示false', body: { apply_story_plan: false }, expectedApply: false },
+    { label: '明示true', body: { apply_story_plan: true }, expectedApply: true },
+  ])('async page skeleton は apply_story_plan $label を一つのjobへ転送する', async ({ body, expectedApply }) => {
+    const episodePageSkeletonService = new FakeEpisodePageSkeletonService();
+    const syncPageSkeletonService = new FakePageSkeletonService();
+    const app = createTestApp({
+      episodePageSkeletonService,
+      pageSkeletonService: syncPageSkeletonService,
+    });
+    const token = await createToken();
+
+    const response = await app.request(`/api/episodes/${episodeId}/generate-page-skeleton`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    });
+
+    expect(response.status).toBe(202);
+    await expect(response.json()).resolves.toEqual({
+      job_id: '66666666-6666-4666-8666-666666666666',
+      queued: true,
+      story_plan_applied: expectedApply,
+    });
+    expect(episodePageSkeletonService.requests).toEqual([
+      {
+        userId: user.id,
+        episodeId,
+        input: {
+          overwriteExisting: false,
+          applyStoryPlan: expectedApply,
+          language: 'ja',
+        },
+        organizationId: null,
+      },
+    ]);
+    expect(syncPageSkeletonService.requestedEpisodeId).toBeNull();
+  });
+
+  it('atomic worker が無い場合は apply_story_plan true を骨格保存前に拒否する', async () => {
+    const pageSkeletonService = new FakePageSkeletonService();
+    const app = createTestApp(
+      new FakeStoryCollaborationService(),
+      pageSkeletonService,
+      new FakePageService(),
+    );
+    const token = await createToken();
+
+    const response = await app.request(`/api/episodes/${episodeId}/generate-page-skeleton`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ apply_story_plan: true }),
+    });
+
+    expect(response.status).toBe(500);
+    expect(pageSkeletonService.requestedEpisodeId).toBeNull();
   });
 
   it('page skeleton 生成は巨大な options body を service 呼び出し前に 413 にする', async () => {
@@ -1119,7 +1188,7 @@ interface CreateStoryTestAppOptions {
   storyCollaborationService?: StoryCollaborationServicePort;
   pageSkeletonService?: PageSkeletonServicePort;
   pageService?: PageServicePort;
-  episodeStoryAutofillService?: EpisodeStoryAutofillServicePort;
+  episodePageSkeletonService?: EpisodePageSkeletonServicePort;
   storyService?: StoryServicePort;
   organizationService?: OrganizationServicePort;
 }
@@ -1128,7 +1197,6 @@ function createTestApp(
   optionsOrStoryCollaborationService: StoryCollaborationServicePort | CreateStoryTestAppOptions = new FakeStoryCollaborationService(),
   pageSkeletonService: PageSkeletonServicePort = new FakePageSkeletonService(),
   pageService: PageServicePort = new FakePageService(),
-  episodeStoryAutofillService: EpisodeStoryAutofillServicePort = new FakeEpisodeStoryAutofillService(),
 ): ReturnType<typeof createApp> {
   const options = isCreateStoryTestAppOptions(optionsOrStoryCollaborationService)
     ? optionsOrStoryCollaborationService
@@ -1136,14 +1204,12 @@ function createTestApp(
         storyCollaborationService: optionsOrStoryCollaborationService,
         pageSkeletonService,
         pageService,
-        episodeStoryAutofillService,
       };
 
   return createApp({
     creditService: new FakeCreditService(),
     episodePageSkeletonQueue: null,
-    episodePageSkeletonService: null,
-    episodeStoryAutofillService: options.episodeStoryAutofillService ?? new FakeEpisodeStoryAutofillService(),
+    episodePageSkeletonService: options.episodePageSkeletonService ?? null,
     organizationService: options.organizationService,
     pageService: options.pageService ?? new FakePageService(),
     pageSkeletonService: options.pageSkeletonService ?? new FakePageSkeletonService(),
@@ -1290,4 +1356,3 @@ async function createToken(): Promise<string> {
     .setExpirationTime('1h')
     .sign(new TextEncoder().encode(jwtSecret));
 }
-

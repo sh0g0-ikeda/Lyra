@@ -5,10 +5,12 @@ import type { DatabaseClient, TransactionRunner } from '../lib/db.js';
 import { PostgresPageRepository } from './PageRepository.js';
 import { PostgresPanelEntityAssignmentRepository } from './PanelEntityAssignmentRepository.js';
 import { PostgresPanelRepository } from './PanelRepository.js';
+import { PostgresStoryRepository } from './StoryRepository.js';
 import type {
   EpisodePlanPersistenceInput,
   EpisodePlanPersistencePort,
   EpisodePlanPersistenceResources,
+  EpisodeSkeletonPlanPersistenceResources,
 } from '../services/page/EpisodePlanPersistence.js';
 import { PanelEntityAssignmentService } from '../services/page/PanelEntityAssignmentService.js';
 
@@ -32,13 +34,8 @@ export class PostgresEpisodePlanPersistenceRepository implements EpisodePlanPers
   ): Promise<T> {
     return this.client.transaction(async (transactionClient) => {
       await this.lockEpisodeGraph(transactionClient, input);
-
-      const transactionRunner = buildTransactionScopedRunner(transactionClient);
-      const pageRepository = new PostgresPageRepository(transactionClient);
-      const panelRepository = new PostgresPanelRepository(transactionRunner);
-      const panelEntityAssignmentService = new PanelEntityAssignmentService(
-        new PostgresPanelEntityAssignmentRepository(transactionClient),
-      );
+      const resources = buildEpisodePlanPersistenceResources(transactionClient);
+      const { pageRepository } = resources;
       const context = await pageRepository.findEpisodePlanningContextByIdAndUserId(
         input.episodeId,
         input.userId,
@@ -48,10 +45,20 @@ export class PostgresEpisodePlanPersistenceRepository implements EpisodePlanPers
         throw new NotFoundError('Episode not found');
       }
 
-      return work(context, {
-        pageRepository,
-        panelRepository,
-        panelEntityAssignmentService,
+      return work(context, resources);
+    });
+  }
+
+  public async withLockedEpisodeSkeletonPlan<T>(
+    input: EpisodePlanPersistenceInput,
+    work: (resources: EpisodeSkeletonPlanPersistenceResources) => Promise<T>,
+  ): Promise<T> {
+    return this.client.transaction(async (transactionClient) => {
+      await this.lockEpisodeGraph(transactionClient, input);
+      const resources = buildEpisodePlanPersistenceResources(transactionClient);
+      return work({
+        ...resources,
+        storyRepository: new PostgresStoryRepository(transactionClient),
       });
     });
   }
@@ -145,6 +152,19 @@ export class PostgresEpisodePlanPersistenceRepository implements EpisodePlanPers
       [input.episodeId],
     );
   }
+}
+
+function buildEpisodePlanPersistenceResources(
+  transactionClient: DatabaseClient,
+): EpisodePlanPersistenceResources {
+  const transactionRunner = buildTransactionScopedRunner(transactionClient);
+  return {
+    pageRepository: new PostgresPageRepository(transactionClient),
+    panelRepository: new PostgresPanelRepository(transactionRunner),
+    panelEntityAssignmentService: new PanelEntityAssignmentService(
+      new PostgresPanelEntityAssignmentRepository(transactionClient),
+    ),
+  };
 }
 
 function buildTransactionScopedRunner(

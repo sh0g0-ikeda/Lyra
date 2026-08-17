@@ -25,6 +25,7 @@ export interface UpdateEpisodePageSkeletonProgressInput {
 export interface EpisodePageSkeletonExecutionRepository {
   claimQueuedEpisodePageSkeletonJob(jobId: string): Promise<GenerationJob | null>;
   updateEpisodePageSkeletonProgress(input: UpdateEpisodePageSkeletonProgressInput): Promise<boolean>;
+  beginEpisodePageSkeletonCommit?(jobId: string, userId: string): Promise<boolean>;
   completeEpisodePageSkeleton(input: CompleteEpisodePageSkeletonInput): Promise<boolean>;
   failEpisodePageSkeleton(input: {
     jobId: string;
@@ -72,6 +73,7 @@ export class PostgresEpisodePageSkeletonExecutionRepository
       WHERE id = $1
         AND job_type = 'episode_page_skeleton'
         AND status = 'queued'
+        AND cancel_requested_at IS NULL
       RETURNING *
       `,
       [jobId],
@@ -120,6 +122,25 @@ export class PostgresEpisodePageSkeletonExecutionRepository
     return (result.rowCount ?? 0) > 0;
   }
 
+  public async beginEpisodePageSkeletonCommit(jobId: string, userId: string): Promise<boolean> {
+    const result = await this.client.query<GenerationJobRow>(
+      `
+      UPDATE generation_jobs
+      SET commit_started_at = NOW()
+      WHERE id = $1
+        AND user_id = $2
+        AND job_type = 'episode_page_skeleton'
+        AND status = 'processing'
+        AND cancel_requested_at IS NULL
+        AND commit_started_at IS NULL
+      RETURNING *
+      `,
+      [jobId, userId],
+    );
+
+    return (result.rowCount ?? 0) > 0;
+  }
+
   public async completeEpisodePageSkeleton(input: CompleteEpisodePageSkeletonInput): Promise<boolean> {
     const result = await this.client.query<GenerationJobRow>(
       `
@@ -131,6 +152,7 @@ export class PostgresEpisodePageSkeletonExecutionRepository
         AND user_id = $2
         AND status = 'processing'
         AND cancel_requested_at IS NULL
+        AND commit_started_at IS NOT NULL
       RETURNING *
       `,
       [

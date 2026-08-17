@@ -251,7 +251,7 @@ export class JobService implements JobServicePort {
     }
 
     if (
-      job.jobType === 'episode_story_autofill' &&
+      (job.jobType === 'episode_story_autofill' || job.jobType === 'episode_page_skeleton') &&
       job.cancelRequestedAt !== null &&
       job.cancelRequestedAt !== undefined &&
       job.commitStartedAt === null

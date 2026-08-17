@@ -399,6 +399,32 @@ describe('JobService', () => {
     expect(repository.finalizedCancellations).toEqual(['job-1']);
     expect(job.errorMessage).toBeNull();
   });
+
+  it('停止要求済みのページ骨格ジョブが stale の場合は cancelled に確定する', async () => {
+    const repository = new FakeGenerationJobRepository();
+    repository.job = buildJob({
+      status: 'processing',
+      jobType: 'episode_page_skeleton',
+      creditCost: 0,
+      params: { episode_id: 'episode-1' },
+      result: { progress_updated_at: '2026-06-07T23:00:00.000Z' },
+      cancelRequestedAt: new Date('2026-06-07T23:10:00.000Z'),
+      cancelRequestedBy: 'user-1',
+    });
+    const service = new JobService(
+      repository,
+      new FakePageGenerationRecoveryService(),
+      new FakeEntityGenerationRecoveryService(),
+      45 * 60 * 1000,
+      () => now.getTime(),
+    );
+
+    const job = await service.getJob('user-1', 'job-1');
+
+    expect(job.status).toBe('cancelled');
+    expect(repository.finalizedCancellations).toEqual(['job-1']);
+    expect(job.errorMessage).toBeNull();
+  });
 });
 
 function buildJob(overrides: Partial<GenerationJob> = {}): GenerationJob {
