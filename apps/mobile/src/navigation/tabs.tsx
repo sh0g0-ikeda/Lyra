@@ -1,5 +1,6 @@
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { BookOpenText, CircleHelp, Images, Settings, UsersRound, type LucideIcon } from 'lucide-react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { colors, mobileContentMaxWidth } from '@/constants/theme';
 import { t } from '@/lib/i18n';
@@ -20,6 +21,8 @@ export type MobileTabParamList = {
 };
 
 const Tab = createBottomTabNavigator<MobileTabParamList>();
+const TAB_BAR_CONTENT_HEIGHT = 72;
+const TAB_BAR_BOTTOM_SPACING = 9;
 
 const tabIcon = (Icon: LucideIcon, color: string): React.JSX.Element => (
   <Icon color={color} size={21} strokeWidth={2.2} />
@@ -28,6 +31,7 @@ const tabIcon = (Icon: LucideIcon, color: string): React.JSX.Element => (
 export function MainTabs(): React.JSX.Element {
   const { hasCapability, language } = useAppState();
   const { hasDirtyEditors, resolveDirtyEditors } = useDirtyState();
+  const { bottom: bottomSafeAreaInset } = useSafeAreaInsets();
   const canViewWork = hasCapability('view_work');
 
   return (
@@ -61,9 +65,9 @@ export function MainTabs(): React.JSX.Element {
           alignSelf: 'center',
           backgroundColor: 'rgba(8, 8, 8, 0.96)',
           borderTopColor: 'rgba(229, 199, 107, 0.18)',
+          height: TAB_BAR_CONTENT_HEIGHT + bottomSafeAreaInset,
           maxWidth: mobileContentMaxWidth,
-          minHeight: 72,
-          paddingBottom: 9,
+          paddingBottom: TAB_BAR_BOTTOM_SPACING + bottomSafeAreaInset,
           paddingTop: 7,
           width: '100%'
         },
