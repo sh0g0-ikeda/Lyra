@@ -14,6 +14,7 @@ import {
   LayoutGrid,
   LoaderCircle,
   LogOut,
+  Maximize2,
   PanelsTopLeft,
   Play,
   Plus,
@@ -665,7 +666,7 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   entity_generate: 'キャラ生成',
   episode_story_autofill: '話全体を反映',
   'Switch story context for page editing.': 'ページ編集対象の作品・章・話を選択します。',
-  'Double-click image to enlarge': '画像をダブルクリックで拡大',
+  'Enlarge image': '画像を拡大',
   'Loading current page plan.': '現在のページ骨格を読み込んでいます。',
   'Regenerating will replace the current pages for this episode.': '再生成すると、この話の現在のページが置き換わります。',
   'Regenerating the page plan will replace the current pages for this episode.': 'ページ骨格を上書き再生成すると、この話の現在のページを置き換えます。',
@@ -1582,13 +1583,34 @@ const tutorialSteps: Array<{
   {
     title: { en: 'Pages And Export', ja: 'ページ生成と保存' },
     steps: [
-      { en: 'After creating the needed characters, return to Story and press Generate page plan.', ja: '必要なキャラを作成したら、ストーリーに戻ってページ骨格を生成します。' },
-      { en: 'Page plan generation creates pages, frames, and panel slots. It can take a few minutes.', ja: 'ページ骨格生成ではページ、枠、コマ欄を作ります。数分かかる場合があります。' },
-      { en: 'Use Apply story plan when you want the story distributed into panel details, characters, camera, background, and dialogue.', ja: '話をコマごとの状況、登場人物、カメラ、背景、セリフへ分配したい時は、話全体を反映します。' },
-      { en: 'Apply story plan can take up to about 20 minutes. Keep the screen open while it is running.', ja: '話全体を反映は20分程度かかる場合があります。処理中は画面を開いたまま待ってください。' },
-      { en: 'Open Pages, review each page, and adjust panel content, frame template, panel order, or panel count.', ja: 'ページを開き、各ページのコマ内容、コマ割り、コマ順、コマ数を調整します。' },
-      { en: 'When ready, press Generate page. The image is created from the current saved page inputs.', ja: '調整できたらページ生成を押します。現在保存されているページ入力から画像を作ります。' },
-      { en: 'If the image is not right, edit the panel inputs, save, and generate the page again.', ja: '結果が合わない場合は、コマ入力を修正して保存し、もう一度ページ生成します。' },
+      {
+        en: 'In Story, write and save the episode, then set Estimated pages between 1 and 24.',
+        ja: 'ストーリーで話を入力して保存し、想定ページ数を1〜24ページに設定します。',
+      },
+      {
+        en: 'Open Pages and select the work, chapter, and episode you want to plan. The page planning controls are at the top of this screen.',
+        ja: 'ページを開き、設計する作品・章・話を選びます。ページ設計の操作はこの画面の冒頭にあります。',
+      },
+      {
+        en: 'Select Generate page plan to create page, frame, and panel slots from the saved story. Existing plans are replaced only after confirmation.',
+        ja: 'ページ骨格生成を選ぶと、保存済みのストーリーからページ・枠・コマ欄を作成します。既存の骨格を上書きする場合だけ確認が表示されます。',
+      },
+      {
+        en: 'After the skeleton is ready, select Apply story plan to fill panels with story details, characters, composition, background, and dialogue. It can take up to about 20 minutes.',
+        ja: '骨格ができたら話全体を反映し、各コマへ話の内容、登場人物、構図、背景、セリフを入力します。処理には20分程度かかる場合があります。',
+      },
+      {
+        en: 'Choose a page from the page list, then set page direction, panel layout, panel content, and dialogue. Save changes before generating.',
+        ja: 'ページ一覧から編集するページを選び、ページの絵柄・雰囲気、コマ割り、コマ内容、セリフを設定します。生成前に変更を保存してください。',
+      },
+      {
+        en: 'Use Enlarge image in the page list to inspect a completed page at full size without changing the selected page.',
+        ja: '完成した画像は、ページ一覧の「画像を拡大」から大きく確認できます。選択中のページは変わりません。',
+      },
+      {
+        en: 'After the page and dialogue settings are saved, select Generate page. The completed image is shown after the settings so you can compare it with the inputs.',
+        ja: 'ページとセリフの設定を保存したら「ページ生成」を選びます。完成画像は設定の後に表示されるため、入力内容と見比べられます。',
+      },
       { en: 'When finished, choose pages and file format, then download them.', ja: '完成したらページとファイル形式を選び、ダウンロードします。' },
     ],
   },
@@ -5083,10 +5105,11 @@ function StudioShell(props: {
         ) : (
           <div className="workspace-grid">
             <section className="main-column">
-              {activeTab === 'story' ? (
+              {activeTab === 'pages' ? (
                 <>
                   <PanelSection
                     title="Page planning"
+                    className="page-section-planning"
                     collapsible
                     actions={
                       <div className="toolbar">
@@ -6270,20 +6293,42 @@ function StudioShell(props: {
                   <PanelSection title="Pages" className="page-section-pages" collapsible>
                     <div className="page-grid">
                       {pages.map((page) => (
-                        <button
+                        <article
                           key={page.id}
                           className={`page-card ${selectedPage?.id === page.id ? 'active' : ''}`}
-                          onClick={() => setSelectedPageId(page.id)}
-                          type="button"
                         >
-                          <div className="page-card-header">
-                            <strong>{page.page_number}</strong>
-                            <StatusBadge value={page.status} />
-                          </div>
+                          <button
+                            aria-label={
+                              uiLanguage === 'ja'
+                                ? `ページ${page.page_number}を選択`
+                                : `Select page ${page.page_number}`
+                            }
+                            className="page-card-select"
+                            onClick={() => setSelectedPageId(page.id)}
+                            type="button"
+                          >
+                            <span className="page-card-header">
+                              <strong>{page.page_number}</strong>
+                              <StatusBadge value={page.status} />
+                            </span>
+                          </button>
                           {page.generated_image !== null ? (
                             <AuthenticatedImage
+                              action={{
+                                ariaLabel:
+                                  uiLanguage === 'ja'
+                                    ? `ページ${page.page_number}の画像を拡大`
+                                    : `Enlarge page ${page.page_number} image`,
+                                label: translateUiString(uiLanguage, 'Enlarge image'),
+                                onClick: (url) =>
+                                  openImageLightbox(
+                                    url,
+                                    `${translateUiString(uiLanguage, 'Page')} ${page.page_number}`,
+                                  ),
+                              }}
                               loadImage={() => api.exportPageImage(page.id, activeOrganizationId)}
                               loading="lazy"
+                              onClick={() => setSelectedPageId(page.id)}
                               onDoubleClick={(url) => openImageLightbox(url, `${translateUiString(uiLanguage, 'Page')} ${page.page_number}`)}
                               placeholderClassName="page-placeholder"
                               queryKey={scopedQueryKey(['page-image', page.id, page.generated_image.generated_at])}
@@ -6299,9 +6344,8 @@ function StudioShell(props: {
                                 ? `枠 ${page.frame_count} / コマ ${page.panel_count}`
                                 : `frames ${page.frame_count} / panels ${page.panel_count}`}
                             </span>
-                            <span>{translateUiString(uiLanguage, 'Double-click image to enlarge')}</span>
                           </div>
-                        </button>
+                        </article>
                       ))}
                     </div>
                   </PanelSection>
@@ -6368,98 +6412,6 @@ function StudioShell(props: {
                             }
                           />
                         </div>
-                      </PanelSection>
-
-                      <PanelSection
-                        title={`Page ${selectedPage.page_number}`}
-                        subtitle={
-                          uiLanguage === 'ja'
-                            ? `セリフ ${translateUiString(uiLanguage, selectedPage.dialogue_mode === 'image_baked' ? 'Image baked' : selectedPage.dialogue_mode === 'balloon_only' ? 'Balloon only' : 'Mixed')}`
-                            : `dialogue ${selectedPage.dialogue_mode}`
-                        }
-                        className="page-section-generate"
-                        collapsible
-                        actions={
-                          <div className="toolbar">
-                            <button
-                              className="primary-button"
-                              disabled={generatePageDisabled}
-                              onClick={() =>
-                                void runAction('Generate page', async () => {
-                                  if (selectedPageHasFramePanelMismatch) {
-                                    throw new Error(translateUiString(uiLanguage, 'Frame count and panel count do not match. Adjust frames or panels before generating.'));
-                                  }
-                                  await saveCurrentPageGenerationContext();
-                                  const result = await api.generatePage(selectedPage.id, activeOrganizationId);
-                                  trackJob(result.job_id);
-                                })
-                              }
-                              type="button"
-                            >
-                              <Play size={16} />
-                              {translateUiString(uiLanguage, 'Generate page')}
-                            </button>
-                            <button
-                              className="ghost-button"
-                              onClick={() =>
-                                void runAction('Confirm page', async () => {
-                                  await api.confirmPage(selectedPage.id, activeOrganizationId);
-                                  await invalidateScopedQuery(['pages', selectedEpisode.id]);
-                                })
-                              }
-                              type="button"
-                            >
-                              <Check size={16} />
-                              {translateUiString(uiLanguage, 'Confirm page')}
-                            </button>
-                            <button
-                              className="ghost-button"
-                              onClick={() =>
-                                void runAction('Reopen page', async () => {
-                                  await api.reopenPage(selectedPage.id, activeOrganizationId);
-                                  await invalidateScopedQuery(['pages', selectedEpisode.id]);
-                                })
-                              }
-                              type="button"
-                            >
-                              <RefreshCw size={16} />
-                              {translateUiString(uiLanguage, 'Reopen page')}
-                            </button>
-                          </div>
-                        }
-                      >
-                        {pageImageGenerationMessage !== null ? (
-                          <ProcessingHint
-                            message={translateUiString(uiLanguage, pageImageGenerationMessage)}
-                            queued={selectedPageGenerationJob?.status === 'queued'}
-                            progressPercent={
-                              selectedPageGenerationJob === null ? null : getJobProgressPercent(selectedPageGenerationJob)
-                            }
-                            showProgress
-                          />
-                        ) : null}
-                        <div className="state-pill-row">
-                          <span className="state-pill state-pill-neutral">
-                            {translateUiString(uiLanguage, 'Page generation starts at 3 credits.')}
-                          </span>
-                        </div>
-                        <GenerationReadinessNotice
-                          blockers={pageGenerationBlockers}
-                          language={uiLanguage}
-                          onAction={navigateToReadinessTarget}
-                        />
-                        {selectedPage.generated_image !== null ? (
-                          <div className="generated-image-wrap">
-                            <AuthenticatedImage
-                              className="generated-image"
-                              loadImage={() => api.exportPageImage(selectedPage.id, activeOrganizationId)}
-                              loading="eager"
-                              onDoubleClick={(url) => openImageLightbox(url, `${translateUiString(uiLanguage, 'Page')} ${selectedPage.page_number}`)}
-                              placeholderClassName="page-placeholder generated-image"
-                              queryKey={scopedQueryKey(['page-image', selectedPage.id, selectedPage.generated_image.generated_at])}
-                            />
-                          </div>
-                        ) : null}
                       </PanelSection>
 
                       <div className="page-editing-cluster page-section-frames-panels">
@@ -6876,6 +6828,98 @@ function StudioShell(props: {
                       </PanelSection>
                       </div>
 
+                      <PanelSection
+                        title={`Page ${selectedPage.page_number}`}
+                        subtitle={
+                          uiLanguage === 'ja'
+                            ? `セリフ ${translateUiString(uiLanguage, selectedPage.dialogue_mode === 'image_baked' ? 'Image baked' : selectedPage.dialogue_mode === 'balloon_only' ? 'Balloon only' : 'Mixed')}`
+                            : `dialogue ${selectedPage.dialogue_mode}`
+                        }
+                        className="page-section-generate"
+                        collapsible
+                        actions={
+                          <div className="toolbar">
+                            <button
+                              className="primary-button"
+                              disabled={generatePageDisabled}
+                              onClick={() =>
+                                void runAction('Generate page', async () => {
+                                  if (selectedPageHasFramePanelMismatch) {
+                                    throw new Error(translateUiString(uiLanguage, 'Frame count and panel count do not match. Adjust frames or panels before generating.'));
+                                  }
+                                  await saveCurrentPageGenerationContext();
+                                  const result = await api.generatePage(selectedPage.id, activeOrganizationId);
+                                  trackJob(result.job_id);
+                                })
+                              }
+                              type="button"
+                            >
+                              <Play size={16} />
+                              {translateUiString(uiLanguage, 'Generate page')}
+                            </button>
+                            <button
+                              className="ghost-button"
+                              onClick={() =>
+                                void runAction('Confirm page', async () => {
+                                  await api.confirmPage(selectedPage.id, activeOrganizationId);
+                                  await invalidateScopedQuery(['pages', selectedEpisode.id]);
+                                })
+                              }
+                              type="button"
+                            >
+                              <Check size={16} />
+                              {translateUiString(uiLanguage, 'Confirm page')}
+                            </button>
+                            <button
+                              className="ghost-button"
+                              onClick={() =>
+                                void runAction('Reopen page', async () => {
+                                  await api.reopenPage(selectedPage.id, activeOrganizationId);
+                                  await invalidateScopedQuery(['pages', selectedEpisode.id]);
+                                })
+                              }
+                              type="button"
+                            >
+                              <RefreshCw size={16} />
+                              {translateUiString(uiLanguage, 'Reopen page')}
+                            </button>
+                          </div>
+                        }
+                      >
+                        {pageImageGenerationMessage !== null ? (
+                          <ProcessingHint
+                            message={translateUiString(uiLanguage, pageImageGenerationMessage)}
+                            queued={selectedPageGenerationJob?.status === 'queued'}
+                            progressPercent={
+                              selectedPageGenerationJob === null ? null : getJobProgressPercent(selectedPageGenerationJob)
+                            }
+                            showProgress
+                          />
+                        ) : null}
+                        <div className="state-pill-row">
+                          <span className="state-pill state-pill-neutral">
+                            {translateUiString(uiLanguage, 'Page generation starts at 3 credits.')}
+                          </span>
+                        </div>
+                        <GenerationReadinessNotice
+                          blockers={pageGenerationBlockers}
+                          language={uiLanguage}
+                          onAction={navigateToReadinessTarget}
+                        />
+                        {selectedPage.generated_image !== null ? (
+                          <div className="generated-image-wrap">
+                            <AuthenticatedImage
+                              className="generated-image"
+                              loadImage={() => api.exportPageImage(selectedPage.id, activeOrganizationId)}
+                              loading="eager"
+                              onDoubleClick={(url) => openImageLightbox(url, `${translateUiString(uiLanguage, 'Page')} ${selectedPage.page_number}`)}
+                              placeholderClassName="page-placeholder generated-image"
+                              queryKey={scopedQueryKey(['page-image', selectedPage.id, selectedPage.generated_image.generated_at])}
+                            />
+                          </div>
+                        ) : null}
+                      </PanelSection>
+
                       <PanelSection title="Export" className="page-section-export" collapsible mobileDefaultCollapsed>
                         <div className="form-grid three">
                           <SelectField
@@ -7026,6 +7070,11 @@ function StudioShell(props: {
 }
 
 function AuthenticatedImage(props: {
+  action?: {
+    ariaLabel: string;
+    label: string;
+    onClick: (url: string) => void;
+  };
   alt?: string;
   className?: string;
   enabled?: boolean;
@@ -7072,7 +7121,7 @@ function AuthenticatedImage(props: {
     );
   }
 
-  return (
+  const image = (
     <img
       alt={props.alt ?? ''}
       className={props.className}
@@ -7090,6 +7139,25 @@ function AuthenticatedImage(props: {
       }
       src={objectUrl}
     />
+  );
+
+  if (props.action === undefined) {
+    return image;
+  }
+
+  return (
+    <div className="authenticated-image-action">
+      {image}
+      <button
+        aria-label={props.action.ariaLabel}
+        className="image-enlarge-button"
+        onClick={() => props.action?.onClick(objectUrl)}
+        type="button"
+      >
+        <Maximize2 size={16} />
+        <span>{props.action.label}</span>
+      </button>
+    </div>
   );
 }
 
