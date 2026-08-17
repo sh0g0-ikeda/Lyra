@@ -37,7 +37,7 @@ import {
 import { ORGANIZATION_FEATURES_AVAILABLE } from './lib/featureFlags';
 import { readInvitationTokenFromPath } from './lib/invitationPath';
 import { resolveCompletedStorySave } from './lib/storyDraftSaveHydration';
-import { formatUserFacingError, formatUserFacingErrorMessage } from './lib/userFacingErrors';
+import { formatGenerationJobFailureMessage, formatUserFacingError, formatUserFacingErrorMessage } from './lib/userFacingErrors';
 import {
   getEntityReferenceGenerationBlockers,
   getPageGenerationBlockers,
@@ -1307,7 +1307,14 @@ function getJobFailureText(job: GenerationJobRecord, language: UiLanguage): stri
     return null;
   }
 
-  return formatUserFacingErrorMessage({ message: job.error_message }, language);
+  return formatGenerationJobFailureMessage(
+    {
+      jobType: job.job_type,
+      messageKey: job.message_key,
+      message: job.error_message,
+    },
+    language,
+  );
 }
 
 function getJobProgressChunkLabel(job: GenerationJobRecord): string | null {

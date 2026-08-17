@@ -1579,6 +1579,79 @@ describe('PageService', () => {
     ).toContain('Page 2 continues directly from page 1');
   });
 
+  it('inline repair 有効時は監査が混入させた作品外キャラIDだけを戻し他の修復を保持する', async () => {
+    const pageRepository = new FakePageRepository();
+    pageRepository.episodePlanningContext = buildMultiPageEpisodePlanningContext(4);
+    const panelRepository = new FakePanelRepository();
+    const assignmentService = new FakePanelEntityAssignmentService();
+    const episodeCompiler = new ChunkAwareEpisodePagePlanCompiler();
+    const auditCompiler = new FakeEpisodePlanAuditCompiler();
+    auditCompiler.audits = [
+      {
+        accepted: false,
+        issues: [
+          {
+            code: 'timeline_discontinuity',
+            severity: 'error',
+            pageIds: ['page-2'],
+            message: 'Page 2 rewinds the scene.',
+            repairInstruction: 'Continue from page 1 without changing character identity.',
+          },
+        ],
+        panelRepairs: [
+          {
+            pageId: 'page-2',
+            panelOrder: 1,
+            changedFields: ['situationText', 'entities'],
+            patch: {
+              situationText: 'Page 2 safely continues from page 1.',
+              entities: [
+                {
+                  entityId: '99999999-9999-4999-8999-999999999999',
+                  role: 'primary',
+                  action: 'standing_firm',
+                  position: 'center',
+                  facingDirection: 'front',
+                  expression: 'calm',
+                  customAction: null,
+                  customExpression: null,
+                  effectNote: null,
+                  stateId: null,
+                },
+              ],
+            },
+          },
+        ],
+      },
+      { accepted: true, issues: [] },
+    ];
+    const service = new PageService(
+      pageRepository,
+      panelRepository,
+      assignmentService,
+      new FakePageAutofillCompiler(),
+      episodeCompiler,
+      undefined,
+      new FakeEpisodeBeatPlanCompiler(),
+      auditCompiler,
+      true,
+      { adaptivePackingEnabled: true, inlineRepairEnabled: true },
+    );
+
+    const result = await service.autofillEpisodeFromStory('user-1', 'episode-1', 'ja');
+
+    expect(result.compilerUsed).toBe(true);
+    expect(
+      panelRepository.updatedPanels.find((update) => update.panelId === 'panel-2')?.input
+        .situationText,
+    ).toContain('Page 2 safely continues from page 1');
+    expect(
+      assignmentService.updates.flatMap((update) =>
+        update.assignments.map((assignment) => assignment.entityId),
+      ),
+    ).not.toContain('99999999-9999-4999-8999-999999999999');
+  });
+
   it('inline repair 有効時は2回目監査の修復を最後に適用し3回目監査なしで保存する', async () => {
     const pageRepository = new FakePageRepository();
     pageRepository.episodePlanningContext = buildMultiPageEpisodePlanningContext(4);
@@ -2251,6 +2324,81 @@ describe('PageService', () => {
     expect(transactionAssignmentService.updates.length).toBeGreaterThan(0);
   });
 
+  it('原子的保存は最終検証に失敗した場合に commit を開始せず何も保存しない', async () => {
+    const baseContext = buildEpisodePlanningContext();
+    const invalidContext: EpisodePagePlanContext = {
+      ...baseContext,
+      episode: {
+        ...baseContext.episode,
+        estimatedPages: 2,
+      },
+      pages: [
+        baseContext.pages[0]!,
+        {
+          ...baseContext.pages[0]!,
+          pageNumber: 2,
+          panels: [
+            {
+              ...baseContext.pages[0]!.panels[0]!,
+              id: 'panel-2',
+            },
+          ],
+        },
+      ],
+    };
+    const pageRepository = new FakePageRepository();
+    pageRepository.episodePlanningContext = invalidContext;
+    const panelRepository = new FakePanelRepository();
+    const assignmentService = new FakePanelEntityAssignmentService();
+    const transactionPageRepository = new FakePageRepository();
+    transactionPageRepository.episodePlanningContext = invalidContext;
+    const transactionPanelRepository = new FakePanelRepository();
+    const transactionAssignmentService = new FakePanelEntityAssignmentService();
+    const persistence = new FakeEpisodePlanPersistence(
+      invalidContext,
+      {
+        pageRepository: transactionPageRepository,
+        panelRepository: transactionPanelRepository,
+        panelEntityAssignmentService: transactionAssignmentService,
+      },
+    );
+    let beginCommitCount = 0;
+    const service = new PageService(
+      pageRepository,
+      panelRepository,
+      assignmentService,
+      new FakePageAutofillCompiler(),
+      new FakeEpisodePagePlanCompiler(),
+      undefined,
+      new FakeEpisodeBeatPlanCompiler(),
+      new FakeEpisodePlanAuditCompiler(),
+      false,
+      {},
+      persistence,
+    );
+
+    await expect(
+      service.autofillEpisodeFromStory(
+        'user-1',
+        'episode-1',
+        'ja',
+        undefined,
+        null,
+        {
+          checkpoint: async () => undefined,
+          beginCommit: async () => {
+            beginCommitCount += 1;
+          },
+        },
+      ),
+    ).rejects.toBeInstanceOf(ValidationError);
+
+    expect(beginCommitCount).toBe(0);
+    expect(transactionPageRepository.updatedInputs).toHaveLength(0);
+    expect(transactionPanelRepository.updatedPanels).toHaveLength(0);
+    expect(transactionAssignmentService.updates).toHaveLength(0);
+  });
+
   it('キャンセル制御付きの処理は機能フラグが無効でも原子的保存へ委譲する', async () => {
     const pageRepository = new FakePageRepository();
     pageRepository.episodePlanningContext = buildEpisodePlanningContext();
@@ -2739,6 +2887,77 @@ describe('PageService', () => {
     );
     expect(assignedEntityIds).toContain('11111111-1111-4111-8111-111111111111');
     expect(assignedEntityIds).not.toContain('shadow-entity');
+  });
+
+  it('episode story plan は初回生成に作品外キャラIDが混入しても認可済みfallbackだけを保存する', async () => {
+    const pageRepository = new FakePageRepository();
+    const panelRepository = new FakePanelRepository();
+    const assignmentService = new FakePanelEntityAssignmentService();
+    const compiler: EpisodePagePlanCompilerPort = {
+      async compilePlan(): Promise<CompiledEpisodePagePlan> {
+        return {
+          suggestion: {
+            pages: [
+              {
+                pageId: 'page-1',
+                pageNumber: 1,
+                sourceSceneIds: ['scene-1'],
+                pagePurpose: 'Minerva confronts the next beat.',
+                continuityNote: 'Keep the rooftop tension.',
+                panels: [
+                  {
+                    order: 1,
+                    situationText: 'Minerva keeps her composure.',
+                    dialogue: [
+                      {
+                        entityId: '99999999-9999-4999-8999-999999999999',
+                        text: 'This speaker must not be persisted.',
+                        type: 'speech',
+                        position: 'top',
+                      },
+                    ],
+                    entities: [
+                      {
+                        entityId: '99999999-9999-4999-8999-999999999999',
+                        role: 'primary',
+                        action: 'standing_firm',
+                        position: 'center',
+                        facingDirection: 'front',
+                        expression: 'calm',
+                        customAction: null,
+                        customExpression: null,
+                        effectNote: null,
+                        stateId: null,
+                      },
+                    ],
+                  },
+                ],
+              },
+            ],
+          },
+          compilerProvider: 'openai',
+          compilerModel: 'gpt-5',
+          compilerPromptVersion: 'episode_page_plan_v2',
+        };
+      },
+    };
+    const service = new PageService(
+      pageRepository,
+      panelRepository,
+      assignmentService,
+      new FakePageAutofillCompiler(),
+      compiler,
+    );
+
+    const result = await service.autofillEpisodeFromStory('user-1', 'episode-1', 'ja');
+
+    expect(result.compilerUsed).toBe(true);
+    expect(assignmentService.updates).toHaveLength(1);
+    const entityIds = assignmentService.updates.flatMap((update) =>
+      update.assignments.map((assignment) => assignment.entityId),
+    );
+    expect(entityIds).toContain('11111111-1111-4111-8111-111111111111');
+    expect(entityIds).not.toContain('99999999-9999-4999-8999-999999999999');
   });
 
   it('episode story plan は話者付きセリフの entityId 欠落や未登場話者を visible primary に補正する', async () => {

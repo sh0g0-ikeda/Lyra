@@ -56,6 +56,10 @@ import {
   hasBlockingEpisodePlanAuditIssues,
 } from './EpisodePlanReviewRepair.js';
 import {
+  repairEpisodePlanIdentifierReferences,
+  type RepairEpisodePlanIdentifierReferencesResult,
+} from './EpisodePlanIdentifierRepair.js';
+import {
   buildEpisodeBeatPlanCompilerBrief,
   buildEpisodeDetailContinuitySupplement,
   buildEpisodePlanAuditBrief,
@@ -455,6 +459,11 @@ export class PageService implements PageServicePort {
           }
 
           applyDeferredEpisodePlanLayouts(lockedContext, deferredLayouts);
+          const preparedCompiled = prepareEpisodePlanForApply(
+            lockedContext,
+            compiled,
+            language,
+          );
           await executionControl?.beginCommit();
           await reportEpisodePlanProgress(progressReporter, {
             stage: 'applying',
@@ -465,7 +474,7 @@ export class PageService implements PageServicePort {
           return this.applyEpisodePlanSuggestion(
             lockedContext,
             userId,
-            compiled,
+            preparedCompiled,
             language,
             organizationId,
             deferredLayouts,
@@ -486,6 +495,11 @@ export class PageService implements PageServicePort {
           );
     await executionControl?.checkpoint();
     applyDeferredEpisodePlanLayouts(contextForApply, deferredLayouts);
+    const preparedCompiled = prepareEpisodePlanForApply(
+      contextForApply,
+      compiled,
+      language,
+    );
 
     await executionControl?.beginCommit();
 
@@ -499,7 +513,7 @@ export class PageService implements PageServicePort {
     return this.applyEpisodePlanSuggestion(
       contextForApply,
       userId,
-      compiled,
+      preparedCompiled,
       language,
       organizationId,
       deferredLayouts,
@@ -997,8 +1011,14 @@ export class PageService implements PageServicePort {
       repairedSuggestion,
       language,
     );
-    validateEpisodePlanAgainstContext(context, normalizedSuggestion);
-    return normalizedSuggestion;
+    const identifierSafeResult = repairEpisodePlanIdentifierReferences({
+      context,
+      candidate: normalizedSuggestion,
+      trustedFallback: normalizeEpisodePlanToContext(context, suggestion, language),
+    });
+    logEpisodePlanIdentifierReversions(context.episodeId, identifierSafeResult);
+    validateEpisodePlanAgainstContext(context, identifierSafeResult.suggestion);
+    return identifierSafeResult.suggestion;
   }
 
   private async auditEpisodePlanWithContinuityV3(
@@ -1107,13 +1127,20 @@ export class PageService implements PageServicePort {
 
     try {
       const compiled = await this.episodePagePlanCompiler!.compilePlan({ compilerBrief, language });
+      const repairedSuggestion = repairEpisodePlanSuggestionAgainstContext(
+        context,
+        compiled.suggestion,
+        fallbackSuggestion,
+        language,
+      );
+      const identifierSafeResult = repairEpisodePlanIdentifierReferences({
+        context,
+        candidate: repairedSuggestion,
+        trustedFallback: fallbackSuggestion,
+      });
+      logEpisodePlanIdentifierReversions(context.episodeId, identifierSafeResult);
       return {
-        suggestion: repairEpisodePlanSuggestionAgainstContext(
-          context,
-          compiled.suggestion,
-          fallbackSuggestion,
-          language,
-        ),
+        suggestion: identifierSafeResult.suggestion,
         compilerUsed: true,
         compilerProvider: compiled.compilerProvider,
         compilerModel: compiled.compilerModel,
@@ -1391,6 +1418,24 @@ function logEpisodePlanAuditSummary(
     affectedPageIds: Array.from(new Set(audit.issues.flatMap((issue) => issue.pageIds))),
     pageRepairCount: audit.pageRepairs?.length ?? 0,
     panelRepairCount: audit.panelRepairs?.length ?? 0,
+  });
+}
+
+function logEpisodePlanIdentifierReversions(
+  episodeId: string,
+  result: RepairEpisodePlanIdentifierReferencesResult,
+): void {
+  if (
+    result.revertedPanelIdentifierBundleCount === 0 &&
+    result.revertedSourceSceneCount === 0
+  ) {
+    return;
+  }
+
+  console.warn('episode_page_plan_identifier_reverted', {
+    episodeId,
+    revertedPanelIdentifierBundleCount: result.revertedPanelIdentifierBundleCount,
+    revertedSourceSceneCount: result.revertedSourceSceneCount,
   });
 }
 
@@ -1754,6 +1799,23 @@ function normalizeEpisodePlanToContext(
   };
 }
 
+function prepareEpisodePlanForApply(
+  context: EpisodePagePlanContext,
+  compiled: EpisodePlanExecutionResult,
+  language: AppLanguage,
+): EpisodePlanExecutionResult {
+  const normalizedSuggestion = normalizeEpisodePlanToContext(
+    context,
+    compiled.suggestion,
+    language,
+  );
+  validateEpisodePlanAgainstContext(context, normalizedSuggestion);
+  return {
+    ...compiled,
+    suggestion: normalizedSuggestion,
+  };
+}
+
 function validateEpisodePlanAgainstContext(
   context: EpisodePagePlanContext,
   suggestion: EpisodePagePlanSuggestion,
@@ -1765,11 +1827,14 @@ function validateEpisodePlanAgainstContext(
   const sceneIds = new Set(context.scenes.map((scene) => scene.id));
   const pageIds = new Set(context.pages.map((page) => page.pageId));
   const entityIds = new Set(context.entities.map((entity) => entity.id));
-  const stateIds = new Set(
-    context.scenes.flatMap((scene) =>
-      scene.entityStates.map((state) => state.stateId),
-    ),
-  );
+  const stateIdsByEntityId = new Map<string, Set<string>>();
+  for (const scene of context.scenes) {
+    for (const state of scene.entityStates) {
+      const stateIds = stateIdsByEntityId.get(state.entityId) ?? new Set<string>();
+      stateIds.add(state.stateId);
+      stateIdsByEntityId.set(state.entityId, stateIds);
+    }
+  }
 
   const seenPageIds = new Set<string>();
   for (const page of suggestion.pages) {
@@ -1814,11 +1879,19 @@ function validateEpisodePlanAgainstContext(
         }
       }
 
+      const seenEntityIds = new Set<string>();
       for (const assignment of panel.entities ?? []) {
         if (!entityIds.has(assignment.entityId)) {
           throw new ValidationError('Episode page plan assignment referenced an entity outside the episode');
         }
-        if (assignment.stateId !== null && !stateIds.has(assignment.stateId)) {
+        if (seenEntityIds.has(assignment.entityId)) {
+          throw new ValidationError('Episode page plan contains duplicate entity assignments');
+        }
+        seenEntityIds.add(assignment.entityId);
+        if (
+          assignment.stateId !== null &&
+          !stateIdsByEntityId.get(assignment.entityId)?.has(assignment.stateId)
+        ) {
           throw new ValidationError('Episode page plan assignment referenced a scene entity state outside the episode');
         }
       }
