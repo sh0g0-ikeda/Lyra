@@ -70,6 +70,7 @@ export class EpisodePageSkeletonService implements EpisodePageSkeletonServicePor
     organizationId: string | null = null,
   ): Promise<EnqueueEpisodePageSkeletonResult> {
     await this.ensureNoActiveJob(userId, episodeId, organizationId);
+    const applyStoryPlan = false;
 
     const reservedJobId = randomUUID();
     let createdJobId: string | null = null;
@@ -85,7 +86,7 @@ export class EpisodePageSkeletonService implements EpisodePageSkeletonServicePor
         params: {
           episode_id: episodeId,
           overwrite_existing: input.overwriteExisting,
-          apply_story_plan: input.applyStoryPlan,
+          apply_story_plan: applyStoryPlan,
           language: input.language,
           organization_id: organizationId,
         },

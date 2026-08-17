@@ -3,6 +3,10 @@ import { STORY_AI_LIMITS } from '../../domain/constants/storyAi.js';
 import { resolveDefaultPanelFrameTemplateId } from '../../domain/constants/panelFrameTemplates.js';
 import { inferEntityIdsFromTexts } from '../../domain/entityAliases.js';
 import { AppError, ConflictError, NotFoundError, ValidationError } from '../../domain/errors/index.js';
+import {
+  fingerprintPageSkeletonSource,
+  type PreparedPageSkeleton,
+} from '../../domain/pageSkeletonSource.js';
 import { distributeStoryBeats } from '../../domain/storyBeatDistribution.js';
 import {
   compactCanonicalStoryPromptText,
@@ -21,7 +25,16 @@ import type { StoryRepository } from '../../repositories/StoryRepository.js';
 import { sanitizePersistedErrorMessage } from '../../lib/errorSanitizer.js';
 import type { StoryAiClientPort } from './StoryAiClientPort.js';
 
+export { fingerprintPageSkeletonSource } from '../../domain/pageSkeletonSource.js';
+export type { PreparedPageSkeleton } from '../../domain/pageSkeletonSource.js';
+
 export interface PageSkeletonServicePort {
+  prepareForEpisode?(
+    userId: string,
+    episodeId: string,
+    options?: PageSkeletonGenerationOptions,
+    organizationId?: string | null,
+  ): Promise<PreparedPageSkeleton>;
   generateForEpisode(
     userId: string,
     episodeId: string,
@@ -59,6 +72,21 @@ export class PageSkeletonService implements PageSkeletonServicePort {
     options?: PageSkeletonGenerationOptions,
     organizationId: string | null = null,
   ): Promise<PageSkeletonPersistResult> {
+    const prepared = await this.prepareForEpisode(userId, episodeId, options, organizationId);
+    return this.persistPrepared(
+      userId,
+      prepared,
+      { overwriteExisting: options?.overwriteExisting === true },
+      organizationId,
+    );
+  }
+
+  public async prepareForEpisode(
+    userId: string,
+    episodeId: string,
+    options?: PageSkeletonGenerationOptions,
+    organizationId: string | null = null,
+  ): Promise<PreparedPageSkeleton> {
     const overwriteExisting = options?.overwriteExisting === true;
     const language = options?.language ?? 'ja';
     const allowCompilerFallback = options?.allowCompilerFallback !== false;
@@ -131,9 +159,26 @@ export class PageSkeletonService implements PageSkeletonServicePort {
       validatePageSkeleton(context.estimatedPages, allowedEntityIds, pages);
     }
 
-    const result = await this.storyRepository.createPageSkeleton(episodeId, userId, pages, {
-      overwriteExisting,
-    }, organizationId);
+    return {
+      context,
+      pages,
+      sourceFingerprint: fingerprintPageSkeletonSource(context),
+    };
+  }
+
+  private async persistPrepared(
+    userId: string,
+    prepared: PreparedPageSkeleton,
+    options?: { overwriteExisting?: boolean },
+    organizationId: string | null = null,
+  ): Promise<PageSkeletonPersistResult> {
+    const result = await this.storyRepository.createPageSkeleton(
+      prepared.context.episodeId,
+      userId,
+      prepared.pages,
+      { overwriteExisting: options?.overwriteExisting === true },
+      organizationId,
+    );
     if (result === null) {
       throw new NotFoundError('Episode not found');
     }
@@ -694,4 +739,3 @@ function validatePageSkeleton(
     }
   }
 }
-

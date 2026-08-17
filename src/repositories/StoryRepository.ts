@@ -199,6 +199,7 @@ interface EpisodeSkeletonContextRow extends QueryResultRow {
   scene_involved_entity_ids: string[];
   page_skeleton_generated: boolean;
   existing_page_count: number;
+  existing_page_graph_fingerprint: string;
   entities: unknown;
   scene_summaries: unknown;
 }
@@ -1425,6 +1426,47 @@ export class PostgresStoryRepository implements StoryRepository {
                WHERE pages.episode_id = episodes.id
              ) AS existing_page_count,
              (
+               SELECT md5(
+                 COALESCE(
+                   jsonb_agg(
+                     to_jsonb(pages) || jsonb_build_object(
+                       'panels', (
+                         SELECT COALESCE(
+                           jsonb_agg(to_jsonb(panels) ORDER BY panels."order" ASC, panels.id ASC),
+                           '[]'::jsonb
+                         )
+                         FROM panels
+                         WHERE panels.page_id = pages.id
+                       ),
+                       'panel_frames', (
+                         SELECT COALESCE(
+                           jsonb_agg(
+                             to_jsonb(panel_frames)
+                             ORDER BY panel_frames.reading_order ASC, panel_frames.id ASC
+                           ),
+                           '[]'::jsonb
+                         )
+                         FROM panel_frames
+                         WHERE panel_frames.page_id = pages.id
+                       ),
+                       'balloons', (
+                         SELECT COALESCE(
+                           jsonb_agg(to_jsonb(balloons) ORDER BY balloons.id ASC),
+                           '[]'::jsonb
+                         )
+                         FROM balloons
+                         WHERE balloons.page_id = pages.id
+                       )
+                     )
+                     ORDER BY pages.page_number ASC, pages.id ASC
+                   ),
+                   '[]'::jsonb
+                 )::text
+               )
+               FROM pages
+               WHERE pages.episode_id = episodes.id
+             ) AS existing_page_graph_fingerprint,
+             (
                SELECT COALESCE(
                  jsonb_agg(
                    jsonb_build_object(
@@ -1434,7 +1476,7 @@ export class PostgresStoryRepository implements StoryRepository {
                      'free_description', entities.free_description,
                      'structured_fields', entities.structured_fields
                    )
-                   ORDER BY entities.created_at ASC
+                    ORDER BY entities.created_at ASC, entities.id ASC
                  ),
                  '[]'::jsonb
                )
@@ -1522,6 +1564,7 @@ export class PostgresStoryRepository implements StoryRepository {
       entitiesInvolved: candidateEntityIds,
       pageSkeletonGenerated: row.page_skeleton_generated,
       existingPageCount: row.existing_page_count,
+      existingPageGraphFingerprint: row.existing_page_graph_fingerprint,
       entities,
       sceneSummaries: toStringArray(row.scene_summaries),
     };

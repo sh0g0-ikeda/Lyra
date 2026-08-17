@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { GenerationJob } from '../../../../src/domain/types/job.js';
 import type { AppLanguage } from '../../../../src/domain/types/language.js';
+import type { EpisodePagePlanContext } from '../../../../src/domain/types/page.js';
+import { generatePageSkeletonBodySchema } from '../../../../src/lib/validators/storyAi.schema.js';
 import type { CreateGenerationJobInput } from '../../../../src/repositories/GenerationJobRepository.js';
 import { EpisodePageSkeletonService } from '../../../../src/services/story/EpisodePageSkeletonService.js';
 import type {
@@ -100,6 +102,24 @@ class FakeStoryQueue implements EpisodeStoryAutofillQueuePort {
   }
 }
 
+class FakeEpisodeStoryAutofillReadinessRepository {
+  public context: EpisodePagePlanContext | null = buildEpisodePlanningContext();
+  public lastLookup: {
+    episodeId: string;
+    userId: string;
+    organizationId: string | null;
+  } | null = null;
+
+  public async findEpisodePlanningContextByIdAndUserId(
+    episodeId: string,
+    userId: string,
+    organizationId: string | null = null,
+  ): Promise<EpisodePagePlanContext | null> {
+    this.lastLookup = { episodeId, userId, organizationId };
+    return this.context;
+  }
+}
+
 class FakeSkeletonQueue implements EpisodePageSkeletonQueuePort {
   public payloads: EpisodePageSkeletonQueuePayload[] = [];
 
@@ -112,6 +132,107 @@ class FakeSkeletonQueue implements EpisodePageSkeletonQueuePort {
 }
 
 describe('Episode long job enqueue services', () => {
+  it('ページ骨格optionsは公開互換のため省略時にtrueを受理する', () => {
+    expect(generatePageSkeletonBodySchema.parse({}).apply_story_plan).toBe(true);
+    expect(
+      generatePageSkeletonBodySchema.parse({ apply_story_plan: true }).apply_story_plan,
+    ).toBe(true);
+  });
+
+  it.each([
+    {
+      label: '話が見つからない',
+      context: null,
+      code: 'NOT_FOUND',
+      message: 'Episode not found',
+    },
+    {
+      label: 'ページがない',
+      context: buildEpisodePlanningContext({ pages: [] }),
+      code: 'VALIDATION_ERROR',
+      message: 'Episode must have pages before story autofill can run',
+    },
+    {
+      label: 'コマ枠がない',
+      context: buildEpisodePlanningContext({ frameCount: 0, panelCount: 0 }),
+      code: 'VALIDATION_ERROR',
+      message: 'All pages must have frames before story autofill can run',
+    },
+    {
+      label: 'コマ数とコマ枠数が一致しない',
+      context: buildEpisodePlanningContext({ frameCount: 2, panelCount: 1 }),
+      code: 'VALIDATION_ERROR',
+      message: 'コマ割りを先に合わせてください',
+    },
+    {
+      label: 'ページが生成中',
+      context: buildEpisodePlanningContext({ status: 'generating' }),
+      code: 'VALIDATION_ERROR',
+      message: 'Pages cannot story autofill while generation is in progress',
+    },
+    {
+      label: 'ページが確定済み',
+      context: buildEpisodePlanningContext({ status: 'confirmed' }),
+      code: 'VALIDATION_ERROR',
+      message: 'Confirmed pages must be reopened before story autofill',
+    },
+  ])('story autofill enqueue rejects before job creation when $label', async ({ context, code, message }) => {
+    const repository = new FakeEpisodeStoryAutofillRepository();
+    const queue = new FakeStoryQueue();
+    const readinessRepository = new FakeEpisodeStoryAutofillReadinessRepository();
+    readinessRepository.context = context;
+    const service = new EpisodeStoryAutofillService(
+      repository,
+      queue,
+      readinessRepository,
+    );
+
+    await expect(
+      service.enqueueEpisodeStoryAutofill('user-1', 'episode-1', 'ja'),
+    ).rejects.toMatchObject({ code, message });
+    expect(repository.createdJobs).toEqual([]);
+    expect(queue.payloads).toEqual([]);
+  });
+
+  it('25ページのstory autofillはジョブ作成もenqueueもせず最大24ページとして拒否する', async () => {
+    const repository = new FakeEpisodeStoryAutofillRepository();
+    const queue = new FakeStoryQueue();
+    const readinessRepository = new FakeEpisodeStoryAutofillReadinessRepository();
+    readinessRepository.context = buildEpisodePlanningContext({ pages: buildPlanningPages(25) });
+    const service = new EpisodeStoryAutofillService(repository, queue, readinessRepository);
+
+    let failure: unknown = null;
+    try {
+      await service.enqueueEpisodeStoryAutofill('user-1', 'episode-1', 'ja');
+    } catch (error: unknown) {
+      failure = error;
+    }
+
+    expect(failure).toMatchObject({
+      code: 'VALIDATION_ERROR',
+      message: 'Episode story autofill supports at most 24 pages',
+    });
+    expect(repository.createdJobs).toEqual([]);
+    expect(queue.payloads).toEqual([]);
+  });
+
+  it('話の準備状態をuserとorganizationでscopeしてからenqueueする', async () => {
+    const repository = new FakeEpisodeStoryAutofillRepository();
+    const queue = new FakeStoryQueue();
+    const readinessRepository = new FakeEpisodeStoryAutofillReadinessRepository();
+    const service = new EpisodeStoryAutofillService(repository, queue, readinessRepository);
+
+    await service.enqueueEpisodeStoryAutofill('user-1', 'episode-1', 'ja', 'organization-1');
+
+    expect(readinessRepository.lastLookup).toEqual({
+      episodeId: 'episode-1',
+      userId: 'user-1',
+      organizationId: 'organization-1',
+    });
+    expect(repository.createdJobs).toHaveLength(1);
+    expect(queue.payloads).toHaveLength(1);
+  });
+
   it('story autofill enqueue recovers stale active job before creating a new job', async () => {
     const repository = new FakeEpisodeStoryAutofillRepository();
     repository.activeJob = buildJob({
@@ -125,6 +246,7 @@ describe('Episode long job enqueue services', () => {
     const service = new EpisodeStoryAutofillService(
       repository,
       queue,
+      new FakeEpisodeStoryAutofillReadinessRepository(),
       45 * 60 * 1000,
       () => now.getTime(),
     );
@@ -168,6 +290,7 @@ describe('Episode long job enqueue services', () => {
     const service = new EpisodeStoryAutofillService(
       repository,
       new FakeStoryQueue(),
+      new FakeEpisodeStoryAutofillReadinessRepository(),
       45 * 60 * 1000,
       () => now.getTime(),
     );
@@ -215,6 +338,7 @@ describe('Episode long job enqueue services', () => {
     ]);
     expect(repository.createdJobs).toHaveLength(1);
     expect(repository.createdJobs[0]?.jobType).toBe('episode_page_skeleton');
+    expect(repository.createdJobs[0]?.params.apply_story_plan).toBe(false);
     expect(repository.createdJobs[0]?.capacityLimits).toEqual({
       perUser: 1,
       global: 5,
@@ -256,6 +380,87 @@ describe('Episode long job enqueue services', () => {
     expect(repository.createdJobs).toEqual([]);
   });
 });
+
+function buildEpisodePlanningContext(input: {
+  pages?: EpisodePagePlanContext['pages'];
+  frameCount?: number;
+  panelCount?: number;
+  status?: EpisodePagePlanContext['pages'][number]['status'];
+} = {}): EpisodePagePlanContext {
+  const frameCount = input.frameCount ?? 1;
+  const panelCount = input.panelCount ?? 1;
+  const panels = Array.from({ length: panelCount }, (_value, index) => ({
+    id: `panel-${index + 1}`,
+    order: index + 1,
+    panelRole: 'action' as const,
+    panelSize: 'standard' as const,
+    situationText: null,
+    composition: {
+      source: 'custom' as const,
+      galleryItemId: null,
+      compositionPrompt: null,
+      shotType: null,
+      angle: null,
+      customNote: null,
+    },
+    dialogueInPanel: true,
+    dialogue: [],
+    sfxText: null,
+    backgroundNote: null,
+    panelNotes: null,
+    entities: [],
+  }));
+
+  return {
+    episodeId: 'episode-1',
+    workId: 'work-1',
+    chapter: {
+      id: 'chapter-1',
+      title: null,
+      purpose: null,
+      startingState: null,
+      endingState: null,
+      emotionCurve: null,
+      keyBeats: [],
+    },
+    episode: {
+      title: null,
+      purpose: null,
+      introduction: null,
+      middle: null,
+      climax: null,
+      endingHook: null,
+      estimatedPages: 1,
+    },
+    scenes: [],
+    entities: [],
+    pages: input.pages ?? [
+      {
+        pageId: 'page-1',
+        pageNumber: 1,
+        frameCount,
+        layoutConfig: { panel_count: panelCount },
+        status: input.status ?? 'editing',
+        dialogueMode: 'mixed',
+        pageDialogueToggle: true,
+        panels,
+      },
+    ],
+  };
+}
+
+function buildPlanningPages(count: number): EpisodePagePlanContext['pages'] {
+  const source = buildEpisodePlanningContext().pages[0]!;
+  return Array.from({ length: count }, (_value, index) => ({
+    ...source,
+    pageId: `page-${index + 1}`,
+    pageNumber: index + 1,
+    panels: source.panels.map((panel) => ({
+      ...panel,
+      id: `panel-${index + 1}-${panel.order}`,
+    })),
+  }));
+}
 
 function buildJob(overrides: Partial<GenerationJob> = {}): GenerationJob {
   return {

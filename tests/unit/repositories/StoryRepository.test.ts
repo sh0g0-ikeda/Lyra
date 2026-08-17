@@ -364,6 +364,9 @@ describe('PostgresStoryRepository', () => {
 
     expect(client.queries[0]).toContain('scene_summaries');
     expect(client.queries[0]).toContain('FROM scenes');
+    expect(client.queries[0]).toContain('existing_page_graph_fingerprint');
+    expect(client.queries[0]).toContain("'balloons'");
+    expect(client.queries[0]).toContain('ORDER BY entities.created_at ASC, entities.id ASC');
   });
 
   it('creates pages, panels, and the episode flag inside one transaction', async () => {

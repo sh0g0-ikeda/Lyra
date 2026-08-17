@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { STORY_AI_LIMITS } from '../../../../src/domain/constants/storyAi.js';
 import type {
   EpisodePagePlanContext,
   EpisodePagePlanSuggestion,
@@ -12,7 +13,7 @@ import {
 } from '../../../../src/services/page/EpisodePlanContinuity.js';
 import type { EpisodeBeatPlan } from '../../../../src/services/page/EpisodeBeatPlanCompiler.js';
 
-const PAGE_COUNT = 32;
+const PAGE_COUNT = STORY_AI_LIMITS.maxSkeletonPages;
 const PANELS_PER_PAGE = 20;
 const DIALOGUE_LINES_PER_PANEL = 20;
 const MAX_CONTINUITY_BRIEF_CHARS = 150_000;

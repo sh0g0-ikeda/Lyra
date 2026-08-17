@@ -11,6 +11,12 @@ interface LocalizedMessage {
   ja: string;
 }
 
+export interface GenerationJobFailureInput {
+  jobType: 'page_generate' | 'entity_generate' | 'episode_story_autofill' | 'episode_page_skeleton';
+  messageKey?: string | null;
+  message?: string | null;
+}
+
 interface ErrorWithApiFields extends Error {
   status?: number;
   code?: string | null;
@@ -104,6 +110,10 @@ const messages = {
   generationFailed: {
     en: 'Generation failed before the image could be saved. Check the input, then try again.',
     ja: '画像を保存する前に生成が失敗しました。入力内容を確認してからもう一度お試しください。',
+  },
+  storyAutofillFailed: {
+    en: 'Could not finish applying the story to the episode. Review the page content, then try again.',
+    ja: '話全体への反映を完了できませんでした。ページ内容を確認してから、もう一度お試しください。',
   },
   skeletonFailed: {
     en: 'The page skeleton could not be created from the story. Shorten or split the story, then try again.',
@@ -233,6 +243,43 @@ export function formatUserFacingErrorMessage(
   }
 
   return localize(messages.generic, language);
+}
+
+export function formatGenerationJobFailureMessage(
+  input: GenerationJobFailureInput,
+  language: UserFacingErrorLanguage = 'en',
+): string {
+  const messageForKey = findGenerationJobMessageByKey(input.messageKey ?? null);
+  if (messageForKey !== null) {
+    return localize(messageForKey, language);
+  }
+
+  switch (input.jobType) {
+    case 'page_generate':
+      return localize(messages.generationFailed, language);
+    case 'episode_story_autofill':
+      return localize(messages.storyAutofillFailed, language);
+    case 'episode_page_skeleton':
+      return localize(messages.skeletonFailed, language);
+    case 'entity_generate':
+      return formatUserFacingErrorMessage({ message: input.message }, language);
+  }
+}
+
+function findGenerationJobMessageByKey(messageKey: string | null): LocalizedMessage | null {
+  switch (messageKey) {
+    case 'job.error.inputInvalid':
+      return messages.validation;
+    case 'job.error.temporarilyUnavailable':
+      return messages.unavailable;
+    case 'job.error.cancelled':
+      return messages.alreadyDone;
+    case 'job.error.failed':
+    case null:
+      return null;
+    default:
+      return null;
+  }
 }
 
 function findMessageBySpecificCause(normalizedMessage: string, normalizedCode: string): LocalizedMessage | null {

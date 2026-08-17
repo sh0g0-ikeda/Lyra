@@ -1118,25 +1118,14 @@ test('初心者向け案内とページ編集の情報境界を明確にする',
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
 });
 
-test('ストーリー画面で各AI操作の役割とシーンが任意であることを説明する', async ({ page }) => {
+test('ページ設計をページ画面の冒頭に置きストーリー画面には重複表示しない', async ({ page }) => {
   await seedEnglishUi(page);
   await seedAuthenticatedSession(page);
   await page.route('**/api/**', mockApi);
 
   await page.goto('/');
 
-  const pagePlanningSection = page
-    .getByRole('heading', { name: 'Page planning', exact: true })
-    .locator('xpath=ancestor::section[1]');
-  await expect(
-    pagePlanningSection.getByText('Use these two steps to turn the episode story into panel details.', { exact: true }),
-  ).toBeVisible();
-  await expect(pagePlanningSection.locator('.feature-guidance')).toContainText(
-    '1. Regenerate page planBuilds the page and panel allocation and the overall story flow.',
-  );
-  await expect(pagePlanningSection.locator('.feature-guidance')).toContainText(
-    '2. Apply story planFills each panel with characters, situation, composition, and dialogue based on that plan.',
-  );
+  await expect(page.getByRole('heading', { name: 'Page planning', exact: true })).toHaveCount(0);
   await expect(
     page.getByText(
       'Story AI follows your instruction to improve the episode and rewrites it for reliable page and panel planning. Recommended before planning pages.',
@@ -1149,6 +1138,29 @@ test('ストーリー画面で各AI操作の役割とシーンが任意である
       { exact: true },
     ),
   ).toBeVisible();
+
+  await page.getByRole('button', { name: 'Pages', exact: true }).click();
+  const pagePlanningSection = page
+    .getByRole('heading', { name: 'Page planning', exact: true })
+    .locator('xpath=ancestor::section[1]');
+  await expect(
+    pagePlanningSection.getByText('Use these two steps to turn the episode story into panel details.', { exact: true }),
+  ).toBeVisible();
+  await expect(pagePlanningSection.locator('.feature-guidance')).toContainText(
+    '1. Regenerate page planBuilds the page and panel allocation and the overall story flow.',
+  );
+  await expect(pagePlanningSection.locator('.feature-guidance')).toContainText(
+    '2. Apply story planFills each panel with characters, situation, composition, and dialogue based on that plan.',
+  );
+  const planningPrecedesPageList = await page.locator('.main-column').evaluate((column) => {
+    const planning = column.querySelector('.page-section-planning');
+    const pageList = column.querySelector('.page-section-pages');
+    if (planning === null || pageList === null) {
+      return false;
+    }
+    return Boolean(planning.compareDocumentPosition(pageList) & Node.DOCUMENT_POSITION_FOLLOWING);
+  });
+  expect(planningPrecedesPageList).toBe(true);
 
   await page.getByRole('button', { name: 'Account menu', exact: true }).click();
   await page.getByRole('combobox', { name: 'Language', exact: true }).selectOption('ja');
@@ -1165,6 +1177,9 @@ test('ストーリー画面で各AI操作の役割とシーンが任意である
   await expect(localizedPagePlanningSection.locator('.feature-guidance')).toContainText(
     '2. 話全体を反映決めた配分に沿って、各コマの登場人物・状況・構図・セリフを自動入力します。',
   );
+
+  await page.getByRole('button', { name: 'ストーリー', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'ページ設計', exact: true })).toHaveCount(0);
   await expect(
     page.getByText(
       '指示に沿って話を改善し、ページやコマへ分けやすい文章に整えます。ページ設計の前に使うのがおすすめです。',
@@ -1180,6 +1195,93 @@ test('ストーリー画面で各AI操作の役割とシーンが任意である
 
   await page.setViewportSize({ width: 390, height: 844 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+});
+
+test('ページ編集後に生成UIを置き一覧の拡大ボタンは選択ページを変えない', async ({ page }) => {
+  await seedEnglishUi(page);
+  await seedAuthenticatedSession(page);
+
+  const pageWithoutImage = {
+    ...pageRecord,
+    id: 'page-2',
+    page_number: 2,
+    generated_image: null,
+    status: 'draft',
+  };
+
+  await page.route('**/api/**', async (route) => {
+    const requestUrl = new URL(route.request().url());
+    if (requestUrl.pathname === `/api/episodes/${episode.id}/pages`) {
+      await route.fulfill({
+        body: JSON.stringify({ pages: [pageRecord, pageWithoutImage] }),
+        contentType: 'application/json',
+        status: 200,
+      });
+      return;
+    }
+    if (requestUrl.pathname === `/api/pages/${pageWithoutImage.id}/frames`) {
+      await route.fulfill({ body: JSON.stringify({ frames: [] }), contentType: 'application/json', status: 200 });
+      return;
+    }
+    if (requestUrl.pathname === `/api/pages/${pageWithoutImage.id}/panels`) {
+      await route.fulfill({ body: JSON.stringify({ panels: [] }), contentType: 'application/json', status: 200 });
+      return;
+    }
+    if (requestUrl.pathname === `/api/pages/${pageWithoutImage.id}/balloons`) {
+      await route.fulfill({ body: JSON.stringify({ balloons: [] }), contentType: 'application/json', status: 200 });
+      return;
+    }
+    await mockApi(route);
+  });
+
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Pages', exact: true }).click();
+
+  const editingPrecedesGeneration = await page.locator('.page-sections-stack').evaluate((stack) => {
+    const editing = stack.querySelector('.page-section-frames-panels');
+    const generation = stack.querySelector('.page-section-generate');
+    if (editing === null || generation === null) {
+      return false;
+    }
+    return Boolean(editing.compareDocumentPosition(generation) & Node.DOCUMENT_POSITION_FOLLOWING);
+  });
+  expect(editingPrecedesGeneration).toBe(true);
+
+  await expect(page.getByRole('button', { name: 'Enlarge page 1 image', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Enlarge page 2 image', exact: true })).toHaveCount(0);
+
+  await page.getByRole('button', { name: 'Select page 2', exact: true }).focus();
+  await page.keyboard.press('Enter');
+  await expect(page.locator('.page-card.active')).toContainText('2');
+  await page.getByRole('button', { name: 'Enlarge page 1 image', exact: true }).focus();
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('dialog')).toContainText('Page 1');
+  await expect(page.locator('.page-card.active')).toContainText('2');
+});
+
+test('チュートリアルが24ページ上限とページ画面の制作順を案内する', async ({ page }) => {
+  await seedEnglishUi(page);
+  await seedAuthenticatedSession(page);
+  await page.route('**/api/**', mockApi);
+  await page.setViewportSize({ width: 390, height: 844 });
+
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Guide', exact: true }).click();
+
+  const tutorial = page.locator('.tutorial-guide');
+  await expect(tutorial).toContainText('set Estimated pages between 1 and 24');
+  await expect(tutorial).toContainText('The page planning controls are at the top of this screen.');
+  await expect(tutorial).toContainText('Use Enlarge image in the page list');
+  await expect(tutorial).toContainText('After the page and dialogue settings are saved, select Generate page.');
+
+  await page.getByRole('button', { name: 'Account', exact: true }).click();
+  await page.getByRole('combobox', { name: 'Language', exact: true }).selectOption('ja');
+  await page.getByRole('button', { name: 'ガイド', exact: true }).click();
+
+  await expect(tutorial).toContainText('想定ページ数を1〜24ページに設定します。');
+  await expect(tutorial).toContainText('ページ設計の操作はこの画面の冒頭にあります。');
+  await expect(tutorial).toContainText('ページ一覧の「画像を拡大」');
+  await expect(tutorial).toContainText('ページとセリフの設定を保存したら「ページ生成」');
 });
 
 test('creates works from the sidebar without rendering a work overview editor', async ({ page }) => {

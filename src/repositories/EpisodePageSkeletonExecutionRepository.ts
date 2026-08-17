@@ -1,16 +1,21 @@
 import type { QueryResultRow } from 'pg';
-import type { PageSkeletonPersistResult } from '../domain/types/storyAi.js';
-import type { EpisodePagePlanApplyResult } from '../domain/types/page.js';
+import { ConflictError, NotFoundError } from '../domain/errors/index.js';
+import {
+  fingerprintPageSkeletonSource,
+  type PreparedPageSkeleton,
+} from '../domain/pageSkeletonSource.js';
 import type { GenerationJob } from '../domain/types/job.js';
-import type { DatabaseClient } from '../lib/db.js';
+import type { PageSkeletonPersistResult } from '../domain/types/storyAi.js';
+import type { DatabaseClient, TransactionRunner } from '../lib/db.js';
 import { sanitizePersistedErrorMessage } from '../lib/errorSanitizer.js';
+import { PostgresStoryRepository } from './StoryRepository.js';
 
-export interface CompleteEpisodePageSkeletonInput {
+export interface CommitPreparedEpisodePageSkeletonInput {
   jobId: string;
   userId: string;
-  result: PageSkeletonPersistResult;
-  storyPlanApplied: boolean;
-  storyPlanResult: EpisodePagePlanApplyResult | null;
+  organizationId: string | null;
+  prepared: PreparedPageSkeleton;
+  overwriteExisting: boolean;
 }
 
 export interface UpdateEpisodePageSkeletonProgressInput {
@@ -25,7 +30,9 @@ export interface UpdateEpisodePageSkeletonProgressInput {
 export interface EpisodePageSkeletonExecutionRepository {
   claimQueuedEpisodePageSkeletonJob(jobId: string): Promise<GenerationJob | null>;
   updateEpisodePageSkeletonProgress(input: UpdateEpisodePageSkeletonProgressInput): Promise<boolean>;
-  completeEpisodePageSkeleton(input: CompleteEpisodePageSkeletonInput): Promise<boolean>;
+  commitPreparedEpisodePageSkeleton(
+    input: CommitPreparedEpisodePageSkeletonInput,
+  ): Promise<PageSkeletonPersistResult | null>;
   failEpisodePageSkeleton(input: {
     jobId: string;
     userId: string;
@@ -57,10 +64,14 @@ interface GenerationJobRow extends QueryResultRow {
   commit_started_at: Date | null;
 }
 
+interface LockedEpisodeRow extends QueryResultRow {
+  episode_id: string;
+}
+
 export class PostgresEpisodePageSkeletonExecutionRepository
   implements EpisodePageSkeletonExecutionRepository
 {
-  public constructor(private readonly client: DatabaseClient) {}
+  public constructor(private readonly client: DatabaseClient & TransactionRunner) {}
 
   public async claimQueuedEpisodePageSkeletonJob(jobId: string): Promise<GenerationJob | null> {
     const result = await this.client.query<GenerationJobRow>(
@@ -72,6 +83,7 @@ export class PostgresEpisodePageSkeletonExecutionRepository
       WHERE id = $1
         AND job_type = 'episode_page_skeleton'
         AND status = 'queued'
+        AND cancel_requested_at IS NULL
       RETURNING *
       `,
       [jobId],
@@ -110,56 +122,96 @@ export class PostgresEpisodePageSkeletonExecutionRepository
         AND cancel_requested_at IS NULL
       RETURNING *
       `,
-      [
-        input.jobId,
-        input.userId,
-        JSON.stringify(progress),
-      ],
+      [input.jobId, input.userId, JSON.stringify(progress)],
     );
 
     return (result.rowCount ?? 0) > 0;
   }
 
-  public async completeEpisodePageSkeleton(input: CompleteEpisodePageSkeletonInput): Promise<boolean> {
-    const result = await this.client.query<GenerationJobRow>(
-      `
-      UPDATE generation_jobs
-      SET status = 'completed',
-          result = $3::jsonb,
-          completed_at = NOW()
-      WHERE id = $1
-        AND user_id = $2
-        AND status = 'processing'
-        AND cancel_requested_at IS NULL
-      RETURNING *
-      `,
-      [
-        input.jobId,
-        input.userId,
-        JSON.stringify({
-          pages_created: input.result.pagesCreated,
-          panels_created: input.result.panelsCreated,
-          replaced_existing: input.result.replacedExisting,
-          story_plan_applied: input.storyPlanApplied,
-          story_plan_result: input.storyPlanResult === null ? null : {
-            updated_page_count: input.storyPlanResult.updatedPageCount,
-            updated_panel_count: input.storyPlanResult.updatedPanelCount,
-            updated_assignment_count: input.storyPlanResult.updatedAssignmentCount,
-            filled_field_count: input.storyPlanResult.filledFieldCount,
-            compiler_used: input.storyPlanResult.compilerUsed,
-            compiler_provider: input.storyPlanResult.compilerProvider,
-            compiler_model: input.storyPlanResult.compilerModel,
-            compiler_prompt_version: input.storyPlanResult.compilerPromptVersion,
-            compiler_error: input.storyPlanResult.compilerError,
-          },
-          progress_stage: 'completed',
-          progress_message: 'Page skeleton generation completed.',
-          progress_updated_at: new Date().toISOString(),
-        }),
-      ],
-    );
+  public async commitPreparedEpisodePageSkeleton(
+    input: CommitPreparedEpisodePageSkeletonInput,
+  ): Promise<PageSkeletonPersistResult | null> {
+    return this.client.transaction(async (transactionClient) => {
+      await transactionClient.query('SET TRANSACTION ISOLATION LEVEL SERIALIZABLE');
+      const commitStarted = await transactionClient.query<GenerationJobRow>(
+        `
+        UPDATE generation_jobs
+        SET commit_started_at = NOW()
+        WHERE id = $1
+          AND user_id = $2
+          AND job_type = 'episode_page_skeleton'
+          AND status = 'processing'
+          AND cancel_requested_at IS NULL
+          AND commit_started_at IS NULL
+        RETURNING *
+        `,
+        [input.jobId, input.userId],
+      );
+      if (commitStarted.rows[0] === undefined) {
+        return null;
+      }
 
-    return (result.rowCount ?? 0) > 0;
+      await this.lockEpisodeSkeletonSource(transactionClient, input);
+      const storyRepository = new PostgresStoryRepository(transactionClient);
+      const currentSource = await storyRepository.findEpisodePageSkeletonContextByIdAndUserId(
+        input.prepared.context.episodeId,
+        input.userId,
+        input.organizationId,
+      );
+      if (currentSource === null) {
+        throw new NotFoundError('Episode not found');
+      }
+      if (fingerprintPageSkeletonSource(currentSource) !== input.prepared.sourceFingerprint) {
+        throw new ConflictError(
+          'The episode changed while the page skeleton was being generated. Run the operation again.',
+        );
+      }
+
+      const result = await storyRepository.createPageSkeleton(
+        input.prepared.context.episodeId,
+        input.userId,
+        input.prepared.pages,
+        { overwriteExisting: input.overwriteExisting },
+        input.organizationId,
+      );
+      if (result === null) {
+        throw new NotFoundError('Episode not found');
+      }
+
+      const completed = await transactionClient.query<GenerationJobRow>(
+        `
+        UPDATE generation_jobs
+        SET status = 'completed',
+            result = $3::jsonb,
+            completed_at = NOW()
+        WHERE id = $1
+          AND user_id = $2
+          AND job_type = 'episode_page_skeleton'
+          AND status = 'processing'
+          AND cancel_requested_at IS NULL
+          AND commit_started_at IS NOT NULL
+        RETURNING *
+        `,
+        [
+          input.jobId,
+          input.userId,
+          JSON.stringify({
+            pages_created: result.pagesCreated,
+            panels_created: result.panelsCreated,
+            replaced_existing: result.replacedExisting,
+            story_plan_applied: false,
+            progress_stage: 'completed',
+            progress_message: 'Page skeleton generation completed.',
+            progress_updated_at: new Date().toISOString(),
+          }),
+        ],
+      );
+      if (completed.rows[0] === undefined) {
+        throw new ConflictError('Page skeleton job could not be completed');
+      }
+
+      return result;
+    });
   }
 
   public async failEpisodePageSkeleton(input: {
@@ -180,6 +232,7 @@ export class PostgresEpisodePageSkeletonExecutionRepository
           completed_at = NOW()
       WHERE id = $1
         AND user_id = $2
+        AND job_type = 'episode_page_skeleton'
         AND status IN ('queued', 'processing')
         AND cancel_requested_at IS NULL
       RETURNING *
@@ -197,6 +250,85 @@ export class PostgresEpisodePageSkeletonExecutionRepository
     );
 
     return (result.rowCount ?? 0) > 0;
+  }
+
+  private async lockEpisodeSkeletonSource(
+    client: DatabaseClient,
+    input: CommitPreparedEpisodePageSkeletonInput,
+  ): Promise<void> {
+    const episode = await client.query<LockedEpisodeRow>(
+      `
+      SELECT episodes.id AS episode_id
+      FROM episodes
+      INNER JOIN chapters ON chapters.id = episodes.chapter_id
+      INNER JOIN works ON works.id = chapters.work_id
+      WHERE episodes.id = $1
+        AND (
+          ($3::uuid IS NULL AND works.user_id = $2 AND works.organization_id IS NULL)
+          OR (
+            $3::uuid IS NOT NULL
+            AND works.organization_id = $3::uuid
+            AND EXISTS (
+              SELECT 1
+              FROM organization_members
+              WHERE organization_members.organization_id = works.organization_id
+                AND organization_members.user_id = $2
+                AND organization_members.status = 'active'
+            )
+          )
+        )
+      FOR UPDATE OF works, chapters, episodes
+      `,
+      [input.prepared.context.episodeId, input.userId, input.organizationId],
+    );
+    if (episode.rows[0] === undefined) {
+      throw new NotFoundError('Episode not found');
+    }
+
+    await client.query(
+      `SELECT scenes.id FROM scenes WHERE scenes.episode_id = $1
+       ORDER BY scenes."order" ASC, scenes.id ASC FOR UPDATE`,
+      [input.prepared.context.episodeId],
+    );
+    await client.query(
+      `SELECT pages.id FROM pages WHERE pages.episode_id = $1
+       ORDER BY pages.page_number ASC, pages.id ASC FOR UPDATE`,
+      [input.prepared.context.episodeId],
+    );
+    await client.query(
+      `SELECT panels.id FROM panels
+       INNER JOIN pages ON pages.id = panels.page_id
+       WHERE pages.episode_id = $1
+       ORDER BY pages.page_number ASC, panels."order" ASC, panels.id ASC
+       FOR UPDATE OF panels`,
+      [input.prepared.context.episodeId],
+    );
+    await client.query(
+      `SELECT panel_frames.id FROM panel_frames
+       INNER JOIN pages ON pages.id = panel_frames.page_id
+       WHERE pages.episode_id = $1
+       ORDER BY pages.page_number ASC, panel_frames.reading_order ASC, panel_frames.id ASC
+       FOR UPDATE OF panel_frames`,
+      [input.prepared.context.episodeId],
+    );
+    await client.query(
+      `SELECT balloons.id FROM balloons
+       INNER JOIN pages ON pages.id = balloons.page_id
+       WHERE pages.episode_id = $1
+       ORDER BY pages.page_number ASC, balloons.id ASC
+       FOR UPDATE OF balloons`,
+      [input.prepared.context.episodeId],
+    );
+    await client.query(
+      `SELECT entities.id
+       FROM entities
+       INNER JOIN chapters ON chapters.work_id = entities.work_id
+       INNER JOIN episodes ON episodes.chapter_id = chapters.id
+       WHERE episodes.id = $1
+       ORDER BY entities.id ASC
+       FOR UPDATE OF entities`,
+      [input.prepared.context.episodeId],
+    );
   }
 }
 

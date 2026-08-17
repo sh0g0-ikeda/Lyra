@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  formatGenerationJobFailureMessage,
   formatUserFacingError,
   formatUserFacingErrorMessage,
 } from '../../../apps/web/src/lib/userFacingErrors.js';
@@ -129,6 +130,57 @@ describe('userFacingErrors', () => {
     const message = formatUserFacingErrorMessage({ message: 'Only pending invitations can be resent', status: 409 }, 'ja');
 
     expect(message).not.toContain('生成処理');
+  });
+
+  it('話全体反映ジョブの失敗を画像生成失敗とは表示しない', () => {
+    const message = formatGenerationJobFailureMessage(
+      {
+        jobType: 'episode_story_autofill',
+        messageKey: 'job.error.failed',
+        message: 'Generation failed. Please try again.',
+      },
+      'ja',
+    );
+
+    expect(message).toBe('話全体への反映を完了できませんでした。ページ内容を確認してから、もう一度お試しください。');
+    expect(message).not.toContain('画像を保存する前');
+  });
+
+  it('旧形式の話全体反映ジョブもジョブ種別から安全な文言を表示する', () => {
+    expect(
+      formatGenerationJobFailureMessage(
+        { jobType: 'episode_story_autofill', messageKey: null, message: 'Generation failed. Please try again.' },
+        'ja',
+      ),
+    ).toContain('話全体への反映');
+  });
+
+  it('ジョブの安全なmessage_keyは話全体反映の種別より優先する', () => {
+    expect(
+      formatGenerationJobFailureMessage(
+        {
+          jobType: 'episode_story_autofill',
+          messageKey: 'job.error.inputInvalid',
+          message: 'Generation failed. Please try again.',
+        },
+        'ja',
+      ),
+    ).toContain('入力内容に不足または不整合');
+  });
+
+  it('ページ生成とページ骨格生成の失敗文言は維持する', () => {
+    expect(
+      formatGenerationJobFailureMessage(
+        { jobType: 'page_generate', messageKey: 'job.error.failed', message: 'Generation failed. Please try again.' },
+        'ja',
+      ),
+    ).toContain('画像を保存する前');
+    expect(
+      formatGenerationJobFailureMessage(
+        { jobType: 'episode_page_skeleton', messageKey: 'job.error.failed', message: 'Generation failed. Please try again.' },
+        'ja',
+      ),
+    ).toContain('ページ骨格');
   });
 });
 

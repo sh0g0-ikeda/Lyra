@@ -226,6 +226,7 @@ export interface GenerationJobRecord {
   params: Record<string, unknown>;
   result: Record<string, unknown> | null;
   error_message: string | null;
+  message_key?: string | null;
   retry_count: number;
   created_at: string;
   started_at: string | null;
