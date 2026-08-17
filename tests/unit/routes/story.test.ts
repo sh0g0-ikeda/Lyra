@@ -1006,8 +1006,8 @@ describe('story routes', () => {
   it.each([
     { label: '省略', body: {}, expectedApply: false },
     { label: '明示false', body: { apply_story_plan: false }, expectedApply: false },
-    { label: '明示true', body: { apply_story_plan: true }, expectedApply: true },
-  ])('async page skeleton は apply_story_plan $label を一つのjobへ転送する', async ({ body, expectedApply }) => {
+    { label: '明示true', body: { apply_story_plan: true }, expectedApply: false },
+  ])('async page skeleton は apply_story_plan $label を実効値falseでjobへ渡す', async ({ body, expectedApply }) => {
     const episodePageSkeletonService = new FakeEpisodePageSkeletonService();
     const syncPageSkeletonService = new FakePageSkeletonService();
     const app = createTestApp({
@@ -1046,7 +1046,37 @@ describe('story routes', () => {
     expect(syncPageSkeletonService.requestedEpisodeId).toBeNull();
   });
 
-  it('atomic worker が無い場合は apply_story_plan true を骨格保存前に拒否する', async () => {
+  it('async page skeleton は明示trueでも監査ログにskeleton-onlyの実効値を記録する', async () => {
+    const episodePageSkeletonService = new FakeEpisodePageSkeletonService();
+    const organizationService = new FakeOrganizationService();
+    const app = createTestApp({
+      episodePageSkeletonService,
+      organizationService: organizationService as unknown as OrganizationServicePort,
+    });
+    const token = await createToken();
+    const organizationId = '550e8400-e29b-41d4-a716-446655440000';
+
+    const response = await app.request(
+      `/api/episodes/${episodeId}/generate-page-skeleton?organization_id=${organizationId}`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ apply_story_plan: true }),
+      },
+    );
+
+    expect(response.status).toBe(202);
+    expect(organizationService.auditEvents).toContainEqual(expect.objectContaining({
+      organizationId,
+      action: 'episode.page_skeleton_queued',
+      metadata: expect.objectContaining({ apply_story_plan: false }),
+    }));
+  });
+
+  it('sync page skeleton は apply_story_plan true を指定しても骨格だけを生成する', async () => {
     const pageSkeletonService = new FakePageSkeletonService();
     const app = createTestApp(
       new FakeStoryCollaborationService(),
@@ -1064,8 +1094,15 @@ describe('story routes', () => {
       body: JSON.stringify({ apply_story_plan: true }),
     });
 
-    expect(response.status).toBe(500);
-    expect(pageSkeletonService.requestedEpisodeId).toBeNull();
+    expect(response.status).toBe(201);
+    await expect(response.json()).resolves.toEqual({
+      pages_created: 16,
+      panels_created: 80,
+      replaced_existing: false,
+      story_plan_applied: false,
+      story_plan_job_id: null,
+    });
+    expect(pageSkeletonService.requestedEpisodeId).toBe(episodeId);
   });
 
   it('page skeleton 生成は巨大な options body を service 呼び出し前に 413 にする', async () => {

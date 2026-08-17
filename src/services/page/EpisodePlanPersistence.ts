@@ -2,17 +2,11 @@ import type { EpisodePagePlanContext } from '../../domain/types/page.js';
 import type { PageRepository } from '../../repositories/PageRepository.js';
 import type { PanelRepository } from '../../repositories/PanelRepository.js';
 import type { PanelEntityAssignmentServicePort } from './PanelEntityAssignmentService.js';
-import type { StoryRepository } from '../../repositories/StoryRepository.js';
 
 export interface EpisodePlanPersistenceResources {
   pageRepository: PageRepository;
   panelRepository: PanelRepository;
   panelEntityAssignmentService: PanelEntityAssignmentServicePort;
-}
-
-export interface EpisodeSkeletonPlanPersistenceResources
-  extends EpisodePlanPersistenceResources {
-  storyRepository: StoryRepository;
 }
 
 export interface EpisodePlanPersistenceInput {
@@ -28,9 +22,5 @@ export interface EpisodePlanPersistencePort {
       context: EpisodePagePlanContext,
       resources: EpisodePlanPersistenceResources,
     ) => Promise<T>,
-  ): Promise<T>;
-  withLockedEpisodeSkeletonPlan?<T>(
-    input: EpisodePlanPersistenceInput,
-    work: (resources: EpisodeSkeletonPlanPersistenceResources) => Promise<T>,
   ): Promise<T>;
 }

@@ -336,7 +336,6 @@ export function resolveWorkerDependencies(
     episodePageSkeletonWorkerService: new EpisodePageSkeletonWorkerService(
       episodePageSkeletonExecutionRepository,
       pageSkeletonService,
-      pageService,
       generationJobCancellationCheckpoint,
     ),
     episodeExportWorkerService:

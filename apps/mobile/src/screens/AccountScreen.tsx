@@ -761,7 +761,7 @@ async function retryGenerationJob(
     episodeId,
     {
       overwrite_existing: readJobBooleanParam(job, 'overwrite_existing') ?? false,
-      apply_story_plan: readJobBooleanParam(job, 'apply_story_plan') ?? false,
+      apply_story_plan: false,
       language: jobLanguage
     },
     organizationId

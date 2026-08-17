@@ -160,6 +160,11 @@ export interface EpisodePageSkeletonContext {
   entitiesInvolved: string[];
   pageSkeletonGenerated: boolean;
   existingPageCount: number;
+  /**
+   * A canonical digest of the persisted page graph, including balloons. It prevents
+   * an overwrite job from replacing edits made after its source was prepared.
+   */
+  existingPageGraphFingerprint: string;
   entities: StoryEntitySummary[];
   sceneSummaries: string[];
 }

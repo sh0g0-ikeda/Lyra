@@ -36,7 +36,6 @@ import type { StoryServicePort } from '../services/story/StoryService.js';
 import type { StoryCollaborationServicePort } from '../services/story/StoryCollaborationService.js';
 import type { PageSkeletonServicePort } from '../services/story/PageSkeletonService.js';
 import type { EpisodePageSkeletonServicePort } from '../services/story/EpisodePageSkeletonService.js';
-import type { PageServicePort } from '../services/page/PageService.js';
 import type { OrganizationServicePort } from '../services/organization/OrganizationService.js';
 import type { AppEnv } from '../types/app.js';
 import {
@@ -52,7 +51,6 @@ export interface StoryRouteDependencies {
   rateLimitMiddleware: MiddlewareHandler<AppEnv>;
   pageSkeletonService: PageSkeletonServicePort;
   episodePageSkeletonService?: EpisodePageSkeletonServicePort;
-  pageService?: PageServicePort;
   organizationService?: OrganizationServicePort;
   storyCollaborationService: StoryCollaborationServicePort;
   storyService: StoryServicePort;
@@ -467,6 +465,7 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
     if (!body.success) {
       throw new ValidationError(formatZodValidationError(body.error));
     }
+    const applyStoryPlan = false;
 
     if (dependencies.episodePageSkeletonService !== undefined) {
       const queued = await dependencies.episodePageSkeletonService.enqueueEpisodePageSkeleton(
@@ -474,7 +473,7 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
         parsedEpisodeId.data,
         {
           overwriteExisting: body.data.overwrite_existing,
-          applyStoryPlan: body.data.apply_story_plan,
+          applyStoryPlan,
           language: body.data.language,
         },
         organizationId,
@@ -489,22 +488,16 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
         {
           job_id: queued.jobId,
           overwrite_existing: body.data.overwrite_existing,
-          apply_story_plan: body.data.apply_story_plan,
+          apply_story_plan: applyStoryPlan,
         },
       );
 
       const payload = {
         job_id: queued.jobId,
         queued: true as const,
-        story_plan_applied: body.data.apply_story_plan,
+        story_plan_applied: applyStoryPlan,
       };
       return c.json(assertMobileResponseContract(pageSkeletonResponseSchema, payload), 202);
-    }
-
-    if (body.data.apply_story_plan) {
-      throw new ConfigurationError(
-        'Atomic episode page skeleton generation is not configured',
-      );
     }
 
     const result = await dependencies.pageSkeletonService.generateForEpisode(user.id, parsedEpisodeId.data, {

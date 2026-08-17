@@ -41,17 +41,11 @@ import type { PanelEntityAssignmentServicePort } from '../../../../src/services/
 import type {
   EpisodePlanPersistencePort,
   EpisodePlanPersistenceResources,
-  EpisodeSkeletonPlanPersistenceResources,
 } from '../../../../src/services/page/EpisodePlanPersistence.js';
 import {
   PageService,
   type EpisodePagePlanProgress,
 } from '../../../../src/services/page/PageService.js';
-import {
-  fingerprintPageSkeletonSource,
-  type PreparedPageSkeleton,
-} from '../../../../src/services/story/PageSkeletonService.js';
-import type { StoryRepository } from '../../../../src/repositories/StoryRepository.js';
 import type {
   CompiledStyleReference,
   StyleReferenceCompilerPort,
@@ -369,7 +363,6 @@ class ChunkAwareEpisodePagePlanCompiler implements EpisodePagePlanCompilerPort {
 
 class FakeEpisodePlanPersistence implements EpisodePlanPersistencePort {
   public calls: Array<{ episodeId: string; userId: string; organizationId: string | null }> = [];
-  public skeletonResources: EpisodeSkeletonPlanPersistenceResources | null = null;
 
   public constructor(
     private readonly context: EpisodePagePlanContext,
@@ -385,17 +378,6 @@ class FakeEpisodePlanPersistence implements EpisodePlanPersistencePort {
   ): Promise<T> {
     this.calls.push(input);
     return work(this.context, this.resources);
-  }
-
-  public async withLockedEpisodeSkeletonPlan<T>(
-    input: { episodeId: string; userId: string; organizationId: string | null },
-    work: (resources: EpisodeSkeletonPlanPersistenceResources) => Promise<T>,
-  ): Promise<T> {
-    this.calls.push(input);
-    if (this.skeletonResources === null) {
-      throw new Error('skeleton resources not configured');
-    }
-    return work(this.skeletonResources);
   }
 }
 
@@ -426,39 +408,6 @@ class FourPanelEpisodePagePlanCompiler extends ChunkAwareEpisodePagePlanCompiler
               },
             ],
             backgroundNote: `Unique background on page ${page.pageNumber}, panel ${index + 1}.`,
-          })),
-        })),
-      },
-    };
-  }
-}
-
-class InvalidEntityEpisodePagePlanCompiler extends ChunkAwareEpisodePagePlanCompiler {
-  public override async compilePlan(
-    input: CompileEpisodePagePlanInput,
-  ): Promise<CompiledEpisodePagePlan> {
-    const compiled = await super.compilePlan(input);
-    return {
-      ...compiled,
-      suggestion: {
-        pages: compiled.suggestion.pages.map((page) => ({
-          ...page,
-          panels: page.panels.map((panel) => ({
-            ...panel,
-            entities: [
-              {
-                entityId: '99999999-9999-4999-8999-999999999999',
-                role: 'primary',
-                expression: 'calm',
-                customExpression: null,
-                action: 'standing_firm',
-                customAction: null,
-                position: 'center',
-                facingDirection: 'front',
-                effectNote: null,
-                stateId: null,
-              },
-            ],
           })),
         })),
       },
@@ -3721,204 +3670,7 @@ describe('PageService', () => {
 
     await expect(service.autofillFromScenes('user-1', 'page-1', 'ja')).rejects.toBeInstanceOf(ValidationError);
   });
-
-  it('未保存骨格のプランを検証後に骨格置換と設定反映を一つのatomic callbackで完了する', async () => {
-    const sourceContext = {
-      ...buildEpisodePlanningContext(),
-      episode: { ...buildEpisodePlanningContext().episode, estimatedPages: 1 },
-      pages: [],
-    };
-    const pageRepository = new FakePageRepository();
-    pageRepository.episodePlanningContext = sourceContext;
-    const transactionPageRepository = new FakePageRepository();
-    transactionPageRepository.episodePlanningContext = sourceContext;
-    const panelRepository = new FakePanelRepository();
-    const assignmentService = new FakePanelEntityAssignmentService();
-    const persistence = new FakeEpisodePlanPersistence(
-      sourceContext,
-      { pageRepository, panelRepository, panelEntityAssignmentService: assignmentService },
-    );
-    const compiler = new ChunkAwareEpisodePagePlanCompiler();
-    const service = new PageService(
-      pageRepository,
-      panelRepository,
-      assignmentService,
-      undefined,
-      compiler,
-      undefined,
-      undefined,
-      undefined,
-      false,
-      {},
-      persistence,
-    );
-    const skeleton = buildPreparedPageSkeleton();
-    const preparedPlan = await service.prepareEpisodePlanForSkeleton(
-      'user-1',
-      'episode-1',
-      skeleton,
-      'ja',
-    );
-    let skeletonCreateCount = 0;
-    const storyRepository = {
-      findEpisodePageSkeletonContextByIdAndUserId: async () => skeleton.context,
-      createPageSkeleton: async () => {
-        skeletonCreateCount += 1;
-        transactionPageRepository.episodePlanningContext = {
-          ...preparedPlan.virtualContext,
-          pages: preparedPlan.virtualContext.pages.map((page) => ({
-            ...page,
-            pageId: `actual-${page.pageNumber}`,
-            panels: page.panels.map((panel) => ({ ...panel, id: `actual-panel-${panel.order}` })),
-          })),
-        };
-        return { pagesCreated: 1, panelsCreated: 1, replacedExisting: true };
-      },
-    } as unknown as StoryRepository;
-    persistence.skeletonResources = {
-      storyRepository,
-      pageRepository: transactionPageRepository,
-      panelRepository,
-      panelEntityAssignmentService: assignmentService,
-    };
-    let beginCommitCount = 0;
-
-    const result = await service.commitPreparedEpisodeSkeletonPlan(
-      'user-1',
-      skeleton,
-      preparedPlan,
-      true,
-      null,
-      {
-        checkpoint: async () => undefined,
-        beginCommit: async () => { beginCommitCount += 1; },
-      },
-    );
-
-    expect(skeletonCreateCount).toBe(1);
-    expect(beginCommitCount).toBe(1);
-    expect(result.skeletonResult).toEqual({
-      pagesCreated: 1,
-      panelsCreated: 1,
-      replacedExisting: true,
-    });
-    expect(result.storyPlanResult.compilerUsed).toBe(true);
-    expect(panelRepository.updatedPanels[0]?.panelId).toBe('actual-panel-1');
-
-    await expect(
-      service.commitPreparedEpisodeSkeletonPlan(
-        'user-1',
-        skeleton,
-        preparedPlan,
-        true,
-        null,
-        {
-          checkpoint: async () => undefined,
-          beginCommit: async () => { beginCommitCount += 1; },
-        },
-      ),
-    ).rejects.toBeInstanceOf(ConflictError);
-    expect(skeletonCreateCount).toBe(1);
-    expect(beginCommitCount).toBe(1);
-  });
-
-  it('未保存骨格向けAI出力が不正な場合はatomic commitへ入る前に拒否する', async () => {
-    const sourceContext = {
-      ...buildEpisodePlanningContext(),
-      episode: { ...buildEpisodePlanningContext().episode, estimatedPages: 1 },
-      pages: [],
-    };
-    const pageRepository = new FakePageRepository();
-    pageRepository.episodePlanningContext = sourceContext;
-    const persistence = new FakeEpisodePlanPersistence(
-      sourceContext,
-      {
-        pageRepository,
-        panelRepository: new FakePanelRepository(),
-        panelEntityAssignmentService: new FakePanelEntityAssignmentService(),
-      },
-    );
-    const service = new PageService(
-      pageRepository,
-      new FakePanelRepository(),
-      new FakePanelEntityAssignmentService(),
-      undefined,
-      new InvalidEntityEpisodePagePlanCompiler(),
-      undefined,
-      undefined,
-      undefined,
-      false,
-      {},
-      persistence,
-    );
-
-    await expect(
-      service.prepareEpisodePlanForSkeleton(
-        'user-1',
-        'episode-1',
-        buildPreparedPageSkeleton(),
-        'ja',
-      ),
-    ).rejects.toBeInstanceOf(ValidationError);
-    expect(persistence.calls).toEqual([]);
-  });
 });
-
-function buildPreparedPageSkeleton(): PreparedPageSkeleton {
-  const context: PreparedPageSkeleton['context'] = {
-      episodeId: 'episode-1',
-      chapterId: 'chapter-1',
-      workId: 'work-1',
-      workTitle: 'Lyra',
-      workGenre: null,
-      worldSetting: null,
-      theme: null,
-      chapterTitle: 'Midnight Rooftop',
-      chapterPurpose: 'Raise the stakes without breaking the secret meeting tone.',
-      episodeTitle: 'The Rooftop Meeting',
-      episodePurpose: 'Show the rivals testing each other in secret.',
-      introduction: 'The rooftop meeting begins quietly.',
-      middle: 'Tension rises under the moonlight.',
-      climax: 'They realize neither can back down.',
-      endingHook: 'One smile makes the other uneasy.',
-      estimatedPages: 1,
-      entitiesInvolved: ['11111111-1111-4111-8111-111111111111'],
-      pageSkeletonGenerated: false,
-      existingPageCount: 0,
-      entities: [
-        {
-          id: '11111111-1111-4111-8111-111111111111',
-          name: 'Minerva',
-          aliases: [],
-          entityType: 'character',
-          freeDescription: 'Tall, stern school idol with silver hair.',
-        },
-      ],
-      sceneSummaries: ['Scene 1: School rooftop / Night / Tense and restrained'],
-    };
-  return {
-    context,
-    pages: [
-      {
-        pageNumber: 1,
-        purpose: 'Begin the confrontation.',
-        suggestedPanelCount: 1,
-        suggestedLayout: 'splash_1',
-        panels: [
-          {
-            order: 1,
-            panelRole: 'establish',
-            suggestedSize: 'splash',
-            situationHint: 'Minerva waits on the rooftop.',
-            suggestedEntities: ['11111111-1111-4111-8111-111111111111'],
-            suggestedDialogueHint: null,
-          },
-        ],
-      },
-    ],
-    sourceFingerprint: fingerprintPageSkeletonSource(context),
-  };
-}
 
 function buildPageSummary(): PageSummary {
   return {

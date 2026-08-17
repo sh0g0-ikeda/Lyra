@@ -41,7 +41,7 @@ export const generatePageSkeletonParamSchema = z.string().uuid();
 export const generatePageSkeletonBodySchema = z
   .object({
     overwrite_existing: z.boolean().optional().default(false),
-    apply_story_plan: z.boolean().optional().default(false),
+    apply_story_plan: z.boolean().optional().default(true),
     language: z.enum(APP_LANGUAGES).optional().default('ja'),
   })
   .strict();

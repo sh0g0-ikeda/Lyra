@@ -599,7 +599,6 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
       rateLimitMiddleware,
       pageSkeletonService: resolvedDependencies.pageSkeletonService,
       episodePageSkeletonService: resolvedDependencies.episodePageSkeletonService,
-      pageService: resolvedDependencies.pageService,
       organizationService: resolvedDependencies.organizationService,
       storyCollaborationService: resolvedDependencies.storyCollaborationService,
       storyService: resolvedDependencies.storyService,

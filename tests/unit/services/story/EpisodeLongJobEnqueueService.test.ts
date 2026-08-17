@@ -132,8 +132,8 @@ class FakeSkeletonQueue implements EpisodePageSkeletonQueuePort {
 }
 
 describe('Episode long job enqueue services', () => {
-  it('ページ骨格optionsの省略値は話全体を同時反映しない', () => {
-    expect(generatePageSkeletonBodySchema.parse({}).apply_story_plan).toBe(false);
+  it('ページ骨格optionsは公開互換のため省略時にtrueを受理する', () => {
+    expect(generatePageSkeletonBodySchema.parse({}).apply_story_plan).toBe(true);
     expect(
       generatePageSkeletonBodySchema.parse({ apply_story_plan: true }).apply_story_plan,
     ).toBe(true);
@@ -322,6 +322,7 @@ describe('Episode long job enqueue services', () => {
     ]);
     expect(repository.createdJobs).toHaveLength(1);
     expect(repository.createdJobs[0]?.jobType).toBe('episode_page_skeleton');
+    expect(repository.createdJobs[0]?.params.apply_story_plan).toBe(false);
     expect(repository.createdJobs[0]?.capacityLimits).toEqual({
       perUser: 1,
       global: 5,

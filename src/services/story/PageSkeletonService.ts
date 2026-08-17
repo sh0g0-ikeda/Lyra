@@ -1,9 +1,12 @@
 ﻿import { PANEL_FRAME_TEMPLATES } from '../../domain/constants/panelFrameTemplates.js';
-import { createHash } from 'node:crypto';
 import { STORY_AI_LIMITS } from '../../domain/constants/storyAi.js';
 import { resolveDefaultPanelFrameTemplateId } from '../../domain/constants/panelFrameTemplates.js';
 import { inferEntityIdsFromTexts } from '../../domain/entityAliases.js';
 import { AppError, ConflictError, NotFoundError, ValidationError } from '../../domain/errors/index.js';
+import {
+  fingerprintPageSkeletonSource,
+  type PreparedPageSkeleton,
+} from '../../domain/pageSkeletonSource.js';
 import { distributeStoryBeats } from '../../domain/storyBeatDistribution.js';
 import {
   compactCanonicalStoryPromptText,
@@ -14,7 +17,6 @@ import {
 } from '../../domain/storyPromptCompaction.js';
 import { describeAppLanguage, type AppLanguage } from '../../domain/types/language.js';
 import type {
-  EpisodePageSkeletonContext,
   PageSkeletonPageDraft,
   PageSkeletonPanelDraft,
   PageSkeletonPersistResult,
@@ -23,6 +25,9 @@ import type { StoryRepository } from '../../repositories/StoryRepository.js';
 import { sanitizePersistedErrorMessage } from '../../lib/errorSanitizer.js';
 import type { StoryAiClientPort } from './StoryAiClientPort.js';
 
+export { fingerprintPageSkeletonSource } from '../../domain/pageSkeletonSource.js';
+export type { PreparedPageSkeleton } from '../../domain/pageSkeletonSource.js';
+
 export interface PageSkeletonServicePort {
   prepareForEpisode?(
     userId: string,
@@ -30,12 +35,6 @@ export interface PageSkeletonServicePort {
     options?: PageSkeletonGenerationOptions,
     organizationId?: string | null,
   ): Promise<PreparedPageSkeleton>;
-  persistPrepared?(
-    userId: string,
-    prepared: PreparedPageSkeleton,
-    options?: { overwriteExisting?: boolean },
-    organizationId?: string | null,
-  ): Promise<PageSkeletonPersistResult>;
   generateForEpisode(
     userId: string,
     episodeId: string,
@@ -48,12 +47,6 @@ export interface PageSkeletonServicePort {
     expectedPageCount: number,
     organizationId?: string | null,
   ): Promise<boolean>;
-}
-
-export interface PreparedPageSkeleton {
-  context: EpisodePageSkeletonContext;
-  pages: PageSkeletonPageDraft[];
-  sourceFingerprint: string;
 }
 
 export interface PageSkeletonGenerationOptions {
@@ -173,7 +166,7 @@ export class PageSkeletonService implements PageSkeletonServicePort {
     };
   }
 
-  public async persistPrepared(
+  private async persistPrepared(
     userId: string,
     prepared: PreparedPageSkeleton,
     options?: { overwriteExisting?: boolean },
@@ -201,24 +194,6 @@ export class PageSkeletonService implements PageSkeletonServicePort {
   ): Promise<boolean> {
     return this.storyRepository.rollbackFreshPageSkeleton(episodeId, userId, expectedPageCount, organizationId);
   }
-}
-
-export function fingerprintPageSkeletonSource(context: EpisodePageSkeletonContext): string {
-  return createHash('sha256').update(stableStringify(context)).digest('hex');
-}
-
-function stableStringify(value: unknown): string {
-  if (value === null || typeof value !== 'object') {
-    return JSON.stringify(value) ?? 'undefined';
-  }
-  if (Array.isArray(value)) {
-    return `[${value.map((entry) => stableStringify(entry)).join(',')}]`;
-  }
-  const record = value as Record<string, unknown>;
-  return `{${Object.keys(record)
-    .sort()
-    .map((key) => `${JSON.stringify(key)}:${stableStringify(record[key])}`)
-    .join(',')}}`;
 }
 
 function buildPageSkeletonSystemPrompt(estimatedPages: number, language: AppLanguage): string {
@@ -764,4 +739,3 @@ function validatePageSkeleton(
     }
   }
 }
-

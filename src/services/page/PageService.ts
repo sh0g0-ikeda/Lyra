@@ -33,9 +33,6 @@ import type {
 } from '../../domain/types/page.js';
 import type { PanelComposition, PanelDialogueLine, UpdatePanelInput } from '../../domain/types/panel.js';
 import type { PanelEntityAssignment } from '../../domain/types/panelEntityAssignment.js';
-import type {
-  PageSkeletonPersistResult,
-} from '../../domain/types/storyAi.js';
 import type { PageRepository } from '../../repositories/PageRepository.js';
 import type { PanelRepository } from '../../repositories/PanelRepository.js';
 import { sanitizePersistedErrorMessage } from '../../lib/errorSanitizer.js';
@@ -49,12 +46,6 @@ import type {
   EpisodePlanPersistencePort,
   EpisodePlanPersistenceResources,
 } from './EpisodePlanPersistence.js';
-import {
-  buildVirtualEpisodePlanContext,
-  remapEpisodePlanSuggestionToPersistedContext,
-} from './EpisodeSkeletonPlan.js';
-import type { PreparedPageSkeleton } from '../story/PageSkeletonService.js';
-import { fingerprintPageSkeletonSource } from '../story/PageSkeletonService.js';
 import type {
   EpisodePlanAudit,
   EpisodePlanAuditIssue,
@@ -95,22 +86,6 @@ export interface PageServicePort {
     organizationId?: string | null,
     executionControl?: EpisodePagePlanExecutionControl,
   ): Promise<EpisodePagePlanApplyResult>;
-  prepareEpisodePlanForSkeleton?(
-    userId: string,
-    episodeId: string,
-    skeleton: PreparedPageSkeleton,
-    language: AppLanguage,
-    progressReporter?: EpisodePagePlanProgressReporter,
-    organizationId?: string | null,
-  ): Promise<PreparedEpisodeSkeletonPlan>;
-  commitPreparedEpisodeSkeletonPlan?(
-    userId: string,
-    skeleton: PreparedPageSkeleton,
-    preparedPlan: PreparedEpisodeSkeletonPlan,
-    overwriteExisting: boolean,
-    organizationId: string | null,
-    executionControl: EpisodePagePlanExecutionControl,
-  ): Promise<CommittedEpisodeSkeletonPlan>;
 }
 
 export interface EpisodePagePlanExecutionControl {
@@ -148,25 +123,13 @@ interface AutofillExecutionResult {
   compilerError: string | null;
 }
 
-export interface EpisodePlanExecutionResult {
+interface EpisodePlanExecutionResult {
   suggestion: EpisodePagePlanSuggestion;
   compilerUsed: boolean;
   compilerProvider: 'openai' | 'fallback';
   compilerModel: string | null;
   compilerPromptVersion: string | null;
   compilerError: string | null;
-}
-
-export interface PreparedEpisodeSkeletonPlan {
-  language: AppLanguage;
-  sourcePlanningFingerprint: string;
-  virtualContext: EpisodePagePlanContext;
-  compiled: EpisodePlanExecutionResult;
-}
-
-export interface CommittedEpisodeSkeletonPlan {
-  skeletonResult: PageSkeletonPersistResult;
-  storyPlanResult: EpisodePagePlanApplyResult;
 }
 
 interface PanelMergeResult {
@@ -540,142 +503,6 @@ export class PageService implements PageServicePort {
       language,
       organizationId,
       deferredLayouts,
-    );
-  }
-
-  public async prepareEpisodePlanForSkeleton(
-    userId: string,
-    episodeId: string,
-    skeleton: PreparedPageSkeleton,
-    language: AppLanguage,
-    progressReporter?: EpisodePagePlanProgressReporter,
-    organizationId: string | null = null,
-  ): Promise<PreparedEpisodeSkeletonPlan> {
-    if (this.episodePagePlanCompiler === undefined) {
-      throw new ConfigurationError('Episode page plan compiler is not configured');
-    }
-    const sourceContext = await this.pageRepository.findEpisodePlanningContextByIdAndUserId(
-      episodeId,
-      userId,
-      organizationId,
-    );
-    if (sourceContext === null) {
-      throw new NotFoundError('Episode not found');
-    }
-    const virtualContext = buildVirtualEpisodePlanContext(sourceContext, skeleton.pages);
-    await this.repairEpisodePlanLayoutMetadataBeforeCompile(
-      userId,
-      virtualContext,
-      organizationId,
-      true,
-    );
-    const compiled = await this.compileEpisodePlanForContextSafely(
-      virtualContext,
-      language,
-      progressReporter,
-    );
-    if (!compiled.compilerUsed) {
-      throw new ValidationError(
-        compiled.compilerError ??
-          'AI story plan autofill did not complete; page and panel fields were not changed',
-      );
-    }
-    const normalizedSuggestion = normalizeEpisodePlanToContext(
-      virtualContext,
-      compiled.suggestion,
-      language,
-    );
-    validateEpisodePlanAgainstContext(virtualContext, normalizedSuggestion);
-    return {
-      language,
-      sourcePlanningFingerprint: fingerprintEpisodePlanningContext(sourceContext),
-      virtualContext,
-      compiled: {
-        ...compiled,
-        suggestion: normalizedSuggestion,
-      },
-    };
-  }
-
-  public async commitPreparedEpisodeSkeletonPlan(
-    userId: string,
-    skeleton: PreparedPageSkeleton,
-    preparedPlan: PreparedEpisodeSkeletonPlan,
-    overwriteExisting: boolean,
-    organizationId: string | null,
-    executionControl: EpisodePagePlanExecutionControl,
-  ): Promise<CommittedEpisodeSkeletonPlan> {
-    const persistence = this.episodePlanPersistence;
-    if (persistence?.withLockedEpisodeSkeletonPlan === undefined) {
-      throw new ConfigurationError('Atomic episode plan persistence is not configured');
-    }
-    const episodeId = skeleton.context.episodeId;
-    return persistence.withLockedEpisodeSkeletonPlan(
-      { episodeId, userId, organizationId },
-      async (resources) => {
-        const currentSkeletonContext =
-          await resources.storyRepository.findEpisodePageSkeletonContextByIdAndUserId(
-            episodeId,
-            userId,
-            organizationId,
-          );
-        const currentPlanningContext =
-          await resources.pageRepository.findEpisodePlanningContextByIdAndUserId(
-            episodeId,
-            userId,
-            organizationId,
-          );
-        if (
-          currentSkeletonContext === null ||
-          currentPlanningContext === null ||
-          fingerprintPageSkeletonSource(currentSkeletonContext) !== skeleton.sourceFingerprint ||
-          fingerprintEpisodePlanningContext(currentPlanningContext) !==
-            preparedPlan.sourcePlanningFingerprint
-        ) {
-          throw new ConflictError(
-            'The episode changed while the page skeleton and story plan were being compiled. Run the operation again.',
-          );
-        }
-
-        await executionControl.beginCommit();
-        const skeletonResult = await resources.storyRepository.createPageSkeleton(
-          episodeId,
-          userId,
-          skeleton.pages,
-          { overwriteExisting },
-          organizationId,
-        );
-        if (skeletonResult === null) {
-          throw new NotFoundError('Episode not found');
-        }
-        const persistedContext =
-          await resources.pageRepository.findEpisodePlanningContextByIdAndUserId(
-            episodeId,
-            userId,
-            organizationId,
-          );
-        if (persistedContext === null) {
-          throw new NotFoundError('Episode not found');
-        }
-        const remappedCompiled: EpisodePlanExecutionResult = {
-          ...preparedPlan.compiled,
-          suggestion: remapEpisodePlanSuggestionToPersistedContext(
-            preparedPlan.virtualContext,
-            persistedContext,
-            preparedPlan.compiled.suggestion,
-          ),
-        };
-        const storyPlanResult = await this.applyEpisodePlanSuggestion(
-          persistedContext,
-          userId,
-          remappedCompiled,
-          preparedPlan.language,
-          organizationId,
-          new Map(),
-          resources,
-        );
-        return { skeletonResult, storyPlanResult };
-      },
     );
   }
 

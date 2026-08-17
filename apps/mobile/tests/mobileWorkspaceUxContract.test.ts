@@ -122,8 +122,9 @@ describe('mobile workspace navigation and editor UX contract', () => {
   it('古いページ骨格jobの再試行で同時反映を勝手に有効化しない', () => {
     const accountScreen = readSource('src/screens/AccountScreen.tsx');
 
-    expect(accountScreen).toContain(
-      "apply_story_plan: readJobBooleanParam(job, 'apply_story_plan') ?? false"
+    expect(accountScreen).toContain('apply_story_plan: false');
+    expect(accountScreen).not.toContain(
+      "apply_story_plan: readJobBooleanParam(job, 'apply_story_plan')"
     );
   });
 
