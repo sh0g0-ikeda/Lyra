@@ -13,7 +13,7 @@ export const STORY_AI_LIMITS = {
   notesMaxLength: 4000,
   listEntryMaxLength: 300,
   listMaxItems: 20,
-  maxSkeletonPages: 32,
+  maxSkeletonPages: 24,
   maxPanelsPerPage: 8,
   maxEntitiesPerPanel: 8,
   maxStreamingChars: 24000,

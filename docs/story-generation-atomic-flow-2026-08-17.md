@@ -97,7 +97,7 @@ repository before any replacement.
 
 ### Story autofill job
 
-Before enqueue, the authorized episode planning context must contain 1-32 pages.
+Before enqueue, the authorized episode planning context must contain 1-24 pages.
 Every page must be editable, have a positive frame count, and have a panel count
 matching its frame count. Missing, generating, or confirmed pages are rejected
 before creating a job or sending SQS.

@@ -33,7 +33,7 @@ Configured limits are:
 - current draft: 20,000 characters
 - selected text: 4,000 characters
 - notes: 4,000 characters
-- skeleton pages: at most 32
+- skeleton pages: at most 24
 - panels per page: at most 8
 - entities per panel: at most 8
 

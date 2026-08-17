@@ -153,12 +153,6 @@ describe('Episode long job enqueue services', () => {
       message: 'Episode must have pages before story autofill can run',
     },
     {
-      label: 'ページ数が上限を超えている',
-      context: buildEpisodePlanningContext({ pages: buildPlanningPages(33) }),
-      code: 'VALIDATION_ERROR',
-      message: 'Episode story autofill supports at most 32 pages',
-    },
-    {
       label: 'コマ枠がない',
       context: buildEpisodePlanningContext({ frameCount: 0, panelCount: 0 }),
       code: 'VALIDATION_ERROR',
@@ -196,6 +190,28 @@ describe('Episode long job enqueue services', () => {
     await expect(
       service.enqueueEpisodeStoryAutofill('user-1', 'episode-1', 'ja'),
     ).rejects.toMatchObject({ code, message });
+    expect(repository.createdJobs).toEqual([]);
+    expect(queue.payloads).toEqual([]);
+  });
+
+  it('25ページのstory autofillはジョブ作成もenqueueもせず最大24ページとして拒否する', async () => {
+    const repository = new FakeEpisodeStoryAutofillRepository();
+    const queue = new FakeStoryQueue();
+    const readinessRepository = new FakeEpisodeStoryAutofillReadinessRepository();
+    readinessRepository.context = buildEpisodePlanningContext({ pages: buildPlanningPages(25) });
+    const service = new EpisodeStoryAutofillService(repository, queue, readinessRepository);
+
+    let failure: unknown = null;
+    try {
+      await service.enqueueEpisodeStoryAutofill('user-1', 'episode-1', 'ja');
+    } catch (error: unknown) {
+      failure = error;
+    }
+
+    expect(failure).toMatchObject({
+      code: 'VALIDATION_ERROR',
+      message: 'Episode story autofill supports at most 24 pages',
+    });
     expect(repository.createdJobs).toEqual([]);
     expect(queue.payloads).toEqual([]);
   });

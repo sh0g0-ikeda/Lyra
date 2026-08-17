@@ -37,7 +37,7 @@ names so those facts remain stable across page and chunk boundaries.
 The source fields accepted by the story API are preserved in the planner brief.
 Scenes, aliases, and malformed over-limit data continue to use the existing
 prompt-compaction limits. Planner output has enough response-token headroom for
-the maximum supported 32 pages, while schema bounds still cap provider cost.
+the maximum supported 24 pages, while schema bounds still cap provider cost.
 
 ### Existing detail compiler
 
@@ -110,7 +110,7 @@ edits made while the long-running job was active.
 - Story text is treated as untrusted data rather than instructions in planner,
   detail-compiler, and auditor system prompts.
 - Ledger, completed-page, and audit summaries use adaptive character budgets.
-  Every page remains represented at the 32-page production contract boundary;
+  Every page remains represented at the 24-page production contract boundary;
   panel-summary compaction is also stress-tested beyond the normal eight-panel
   story-AI limit without repeatedly sending multi-megabyte prompts.
 - Repair prompts split the global completed-page budget from the current-draft

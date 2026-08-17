@@ -104,7 +104,7 @@ interface SubscriptionPlanOption {
   configured: boolean;
 }
 
-const MAX_EPISODE_PAGES = 32;
+const MAX_EPISODE_PAGES = 24;
 const SHOW_LEGACY_STORY_HIERARCHY = false;
 
 const subscriptionPurchaseOptions: Array<{
@@ -8558,7 +8558,7 @@ function toEpisodePayload(
     middle: null,
     climax: null,
     ending_hook: null,
-    estimated_pages: parseNumberInput(draft.estimated_pages, 'estimated pages'),
+    estimated_pages: parseBoundedNumberInput(draft.estimated_pages, 'estimated pages', 1, MAX_EPISODE_PAGES),
     entities_involved: splitEntityIdCsv(draft.entities_involved, allowedEntityIds),
     status: draft.status,
   };
@@ -8576,7 +8576,7 @@ function toEpisodeAutosavePayload(draft: EpisodeDraft): Record<string, unknown> 
     middle: null,
     climax: null,
     ending_hook: null,
-    estimated_pages: parseNumberInput(draft.estimated_pages, 'estimated pages'),
+    estimated_pages: parseBoundedNumberInput(draft.estimated_pages, 'estimated pages', 1, MAX_EPISODE_PAGES),
     status: draft.status,
   };
 }
@@ -8596,7 +8596,7 @@ function toCreateEpisodePayload(
     middle: null,
     climax: null,
     ending_hook: null,
-    estimated_pages: parseNumberInput(draft.estimated_pages, 'estimated pages'),
+    estimated_pages: parseBoundedNumberInput(draft.estimated_pages, 'estimated pages', 1, MAX_EPISODE_PAGES),
     entities_involved: splitEntityIdCsv(draft.entities_involved, allowedEntityIds),
   };
 }

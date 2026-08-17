@@ -64,7 +64,7 @@ const nullable = (value: string): string | null => {
 const toggleId = (ids: string[], id: string): string[] =>
   ids.includes(id) ? ids.filter((currentId) => currentId !== id) : [...ids, id];
 
-const MAX_ESTIMATED_PAGES = 32;
+const MAX_ESTIMATED_PAGES = 24;
 const MAX_STORY_ORDER = 1000;
 const sameStringArray = (a: string[], b: string[]): boolean =>
   a.length === b.length && a.every((entry, index) => entry === b[index]);
@@ -364,18 +364,26 @@ export function StoryScreen(): React.JSX.Element {
   });
 
   const updateEpisodeMutation = useMutation({
-    mutationFn: (request: EpisodeSaveRequest) =>
-      api.updateEpisode(
+    mutationFn: (request: EpisodeSaveRequest) => {
+      const parsedEstimatedPages = parseIntInRange(request.editor.estimatedPages, 1, MAX_ESTIMATED_PAGES);
+      if (parsedEstimatedPages === null) {
+        throw new Error(
+          t(language, 'screen.story.estimatedPagesOutOfRange', {
+            maximum: MAX_ESTIMATED_PAGES,
+          }),
+        );
+      }
+      return api.updateEpisode(
         request.episode.id,
         buildEpisodeMobileUpdatePayload({
           draft: request.editor.draft,
           episode: request.episode,
-          estimatedPages:
-            parseIntInRange(request.editor.estimatedPages, 1, MAX_ESTIMATED_PAGES) ?? 4,
+          estimatedPages: parsedEstimatedPages,
           title: request.editor.title,
         }),
         organizationId,
-      ),
+      );
+    },
     onSuccess: (episode, request) => {
       cacheEpisodeSnapshot(episode);
       if (episodeEditorSnapshotMatches(episodeEditorSnapshotRef.current, request.editor)) {
@@ -904,7 +912,14 @@ export function StoryScreen(): React.JSX.Element {
             <FormField editable={canEdit} label={t(language, 'title')} maxLength={200} onChangeText={setEpisodeTitle} value={episodeTitle} />
             <FormField editable={canEdit} label={t(language, 'fullDraft')} maxLength={8000} multiline multilineMaxHeight={260} onChangeText={setEpisodeDraft} value={episodeDraft} />
             <FormField editable={canEdit} keyboardType="numeric" label={t(language, 'estimatedPages')} onChangeText={setEstimatedPages} value={estimatedPages} />
-            {estimatedPagesInvalid ? <Notice message={t(language, "generated.screens.StoryScreen.estimated.pages.must.be.a.number.from.1.20301ed5")} tone="warning" /> : null}
+            {estimatedPagesInvalid ? (
+              <Notice
+                message={t(language, 'screen.story.estimatedPagesOutOfRange', {
+                  maximum: MAX_ESTIMATED_PAGES,
+                })}
+                tone="warning"
+              />
+            ) : null}
             <View style={styles.buttonRow}>
               <PrimaryButton disabled={!canEdit || activeStaleResource === 'episode' || estimatedPagesInvalid || episodeTitle.trim().length === 0} label={t(language, 'save')} loading={updateEpisodeMutation.isPending} onPress={submitSelectedEpisode} variant="secondary" />
             </View>

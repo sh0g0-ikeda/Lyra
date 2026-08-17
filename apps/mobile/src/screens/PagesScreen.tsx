@@ -152,6 +152,7 @@ interface PageDesignJob {
 
 const WEB_EDITOR_URL = 'https://app.lyra-editor.com/';
 const EPISODE_EXPORT_UI_ENABLED = false;
+const MAX_ESTIMATED_PAGES = 24;
 
 type AssignmentDraft = Omit<PanelEntityAssignmentRecord, 'facing_direction'> & {
   facing_direction: NonNullable<PanelEntityAssignmentRecord['facing_direction']> | '';
@@ -868,6 +869,14 @@ export function PagesScreen(): React.JSX.Element {
   const workspaceContext = useWorkspaceContextSelection();
   const activeWorkId = workspaceContext.selectedWorkId;
   const activeEpisodeId = workspaceContext.selectedEpisodeId;
+  const activeEpisode = workspaceContext.episodes.find(
+    (episode) => episode.id === activeEpisodeId,
+  ) ?? null;
+  const estimatedPagesInvalid =
+    activeEpisode !== null &&
+    (!Number.isInteger(activeEpisode.estimated_pages) ||
+      activeEpisode.estimated_pages < 1 ||
+      activeEpisode.estimated_pages > MAX_ESTIMATED_PAGES);
 
   const pagesQuery = useInfiniteQuery({
     enabled: activeEpisodeId !== null,
@@ -2500,7 +2509,7 @@ export function PagesScreen(): React.JSX.Element {
       >
         <StoryGenerationControls
           canGenerate={canGenerate}
-          estimatedPagesInvalid={false}
+          estimatedPagesInvalid={estimatedPagesInvalid}
           hasActiveJob={pageDesignOperationActive}
           jobEnqueued={pageDesignJobEnqueued}
           language={language}
