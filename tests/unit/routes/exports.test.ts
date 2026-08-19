@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
-import { describe, expect, it } from 'vitest';
-import { createApp } from '../../../src/app.js';
+import { describe, expect, it, vi } from 'vitest';
+import { createApp, resolveConfiguredEpisodeExportService } from '../../../src/app.js';
 import { createExportRoutes } from '../../../src/routes/exports.js';
 import { errorHandler } from '../../../src/middleware/errorHandler.js';
 import type { AppEnv } from '../../../src/types/app.js';
@@ -11,6 +11,18 @@ const pageId = '33333333-3333-4333-8333-333333333333';
 const jobId = '44444444-4444-4444-8444-444444444444';
 
 describe('export routes', () => {
+  it('default compositionではflagが未設定のexport routeを公開しない', async () => {
+    const app = createApp({ enableDevAuthBypass: true });
+
+    const response = await app.request(`/api/episodes/${episodeId}/exports`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ format: 'pdf', page_ids: [pageId] }),
+    });
+
+    expect(response.status).toBe(404);
+  });
+
   it('createAppが非同期export APIを/apiへ配線する', async () => {
     const app = createApp({
       enableDevAuthBypass: true,
@@ -35,6 +47,22 @@ describe('export routes', () => {
 
     expect(response.status).toBe(202);
     await expect(response.json()).resolves.toEqual({ job_id: jobId, status: 'queued' });
+  });
+
+  it('flag=false ではS3とSQSが設定済みでもdefault export serviceを構築しない', () => {
+    const constructExportService = vi.fn();
+
+    const resolved = resolveConfiguredEpisodeExportService(
+      {
+        EPISODE_EXPORT_ENABLED: false,
+        S3_BUCKET_IMAGES: 'lyra-images',
+        SQS_QUEUE_URL_GENERATION: 'https://sqs.ap-northeast-1.amazonaws.com/123456789012/generation',
+      },
+      constructExportService,
+    );
+
+    expect(resolved).toBeUndefined();
+    expect(constructExportService).not.toHaveBeenCalled();
   });
 
   it('validates an idempotent export request and returns 202', async () => {

@@ -51,6 +51,11 @@ import {
 } from './infrastructure/stripe/StripeBillingClient.js';
 import { db } from './lib/db.js';
 import { env } from './lib/env.js';
+import {
+  isEpisodeExportRuntimeEnabled,
+  type EnabledEpisodeExportRuntimeConfig,
+  type EpisodeExportRuntimeConfig,
+} from './lib/episodeExportRuntime.js';
 import { assertProductionRuntimeConfig, isDevAuthBypassRuntimeAllowed } from './lib/runtimeGuards.js';
 import { createAuthMiddleware } from './middleware/auth.js';
 import type { AuthProvider, CognitoVerifierConfig } from './middleware/auth.js';
@@ -1139,18 +1144,29 @@ function resolveConfiguredPushTokenRegistryService(): PushTokenRegistryServicePo
   );
 }
 
-function resolveConfiguredEpisodeExportService(): EpisodeExportServicePort | undefined {
-  if (env.S3_BUCKET_IMAGES === undefined || env.SQS_QUEUE_URL_GENERATION === undefined) {
+export function resolveConfiguredEpisodeExportService(
+  runtimeConfig: EpisodeExportRuntimeConfig = env,
+  createExportService: (config: EnabledEpisodeExportRuntimeConfig) => EpisodeExportServicePort =
+    createConfiguredEpisodeExportService,
+): EpisodeExportServicePort | undefined {
+  if (!isEpisodeExportRuntimeEnabled(runtimeConfig)) {
     return undefined;
   }
+
+  return createExportService(runtimeConfig);
+}
+
+function createConfiguredEpisodeExportService(
+  runtimeConfig: EnabledEpisodeExportRuntimeConfig,
+): EpisodeExportServicePort {
   const repository = new PostgresExportJobRepository(db, db);
   const storage = new S3ExportArtifactStorage(
     createPageImageStorageClient(env.AWS_REGION),
-    { bucketName: env.S3_BUCKET_IMAGES },
+    { bucketName: runtimeConfig.S3_BUCKET_IMAGES },
   );
   const queue = new SqsExportJobQueueAdapter(
     createGenerationQueueClient(env.AWS_REGION),
-    env.SQS_QUEUE_URL_GENERATION,
+    runtimeConfig.SQS_QUEUE_URL_GENERATION,
   );
   return new EpisodeExportService(repository, queue, storage);
 }
