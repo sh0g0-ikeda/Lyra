@@ -24,6 +24,15 @@ describe('parseEnv', () => {
     expect(parsed.GENERATION_ENABLED).toBe(true);
   });
 
+  it('episode export は未設定時に安全側で無効になる', () => {
+    expect(parseEnv({}).EPISODE_EXPORT_ENABLED).toBe(false);
+  });
+
+  it('episode export は true が明示された場合だけ有効になる', () => {
+    expect(parseEnv({ EPISODE_EXPORT_ENABLED: 'true' }).EPISODE_EXPORT_ENABLED).toBe(true);
+    expect(parseEnv({ EPISODE_EXPORT_ENABLED: 'false' }).EPISODE_EXPORT_ENABLED).toBe(false);
+  });
+
   it('development では GENERATION_ENABLED 未設定時に従来どおり生成を有効化する', () => {
     process.env.NODE_ENV = 'development';
 
