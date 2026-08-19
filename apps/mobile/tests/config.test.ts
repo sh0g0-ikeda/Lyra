@@ -34,6 +34,22 @@ describe('mobile configuration validation', () => {
     expect(result.supportCode).toMatch(/^MOB-CONFIG-/);
   });
 
+  it('本番のhybrid custom scheme callbackとlogoutを拒否する', () => {
+    const result = validateMobileConfig({
+      ...productionConfig,
+      cognitoRedirectUri: 'lyra-mobile://auth/mobile/callback',
+      cognitoLogoutRedirectUri: 'lyra-mobile://auth/mobile/logout',
+    });
+
+    expect(result).toMatchObject({
+      valid: false,
+      issues: expect.arrayContaining([
+        'PRODUCTION_REDIRECT_URI',
+        'PRODUCTION_LOGOUT_REDIRECT_URI',
+      ]),
+    });
+  });
+
   it('placeholderのCognito clientと不足値を拒否する', () => {
     const result = validateMobileConfig({
       ...productionConfig,

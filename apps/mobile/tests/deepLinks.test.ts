@@ -30,6 +30,11 @@ describe('parseMobileLink', () => {
     });
   });
 
+  it('HTTPS用pathを含むhybrid custom scheme認証リンクを拒否する', () => {
+    expect(parseMobileLink('lyra-mobile://auth/mobile/callback?code=abc')).toBeNull();
+    expect(parseMobileLink('lyra-mobile://auth/mobile/logout')).toBeNull();
+  });
+
   it('見た目が似た外部hostのリンクを拒否する', () => {
     expect(
       parseMobileLink('https://app.lyra-editor.com.evil.example/invitations/token-123')

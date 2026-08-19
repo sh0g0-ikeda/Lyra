@@ -1,9 +1,11 @@
+import productionRedirectContract from '../../productionRedirectContract.json';
+
 export type MobileLink =
   | { type: 'auth-callback' }
   | { type: 'auth-logout' }
   | { type: 'invitation'; token: string };
 
-const productionOrigin = 'https://app.lyra-editor.com';
+const productionOrigin = productionRedirectContract.universalLink.origin;
 const maxInvitationTokenLength = 2048;
 
 export const parseMobileLink = (rawUrl: string): MobileLink | null => {
@@ -26,10 +28,10 @@ export const parseMobileLink = (rawUrl: string): MobileLink | null => {
     return null;
   }
 
-  if (url.pathname === '/auth/mobile/callback') {
+  if (url.pathname === productionRedirectContract.universalLink.callbackPath) {
     return { type: 'auth-callback' };
   }
-  if (url.pathname === '/auth/mobile/logout') {
+  if (url.pathname === productionRedirectContract.universalLink.logoutPath) {
     return { type: 'auth-logout' };
   }
 

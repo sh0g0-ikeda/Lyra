@@ -20,6 +20,8 @@
     "lint": "eslint . --max-warnings=0",
     "contracts:check": "node ../../scripts/generateMobileApiContract.mjs --check",
     "check:mojibake": "node scripts/checkMojibake.mjs",
+    "preflight:production-config": "node scripts/checkProductionPublicConfig.mjs",
+    "preflight:production-config:eas": "npx --yes --package eas-cli@16.32.0 eas env:exec production \"npm run preflight:production-config\" --non-interactive",
     "export:android": "expo export --platform android --output-dir dist/android",
     "export:ios": "expo export --platform ios --output-dir dist/ios",
     "e2e:maestro:staging": "node scripts/runMaestroStaging.mjs",
