@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import productionRedirectContract from '../../productionRedirectContract.json';
 
 export type MobileBuildEnvironment = 'development' | 'preview' | 'production';
 
@@ -35,11 +36,11 @@ export interface MobileConfigValidation {
   supportCode: string;
 }
 
-const PRODUCTION_API_ORIGIN = 'https://app.lyra-editor.com';
+const PRODUCTION_API_ORIGIN = productionRedirectContract.universalLink.origin;
 // Cognito must return to the native app, not to the web application's HTML
 // fallback. The custom scheme is claimed by both production app binaries.
-const PRODUCTION_REDIRECT_URI = 'lyra-mobile://auth/callback';
-const PRODUCTION_LOGOUT_REDIRECT_URI = 'lyra-mobile://auth/logout';
+const PRODUCTION_REDIRECT_URI = productionRedirectContract.native.callbackUri;
+const PRODUCTION_LOGOUT_REDIRECT_URI = productionRedirectContract.native.logoutUri;
 
 const mobileConfigSchema = z.object({
   apiBaseUrl: z.string().min(1),

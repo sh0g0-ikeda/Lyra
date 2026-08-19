@@ -1,0 +1,21 @@
+{
+  "native": {
+    "callbackUri": "lyra-mobile://auth/callback",
+    "logoutUri": "lyra-mobile://auth/logout"
+  },
+  "universalLink": {
+    "origin": "https://app.lyra-editor.com",
+    "callbackPath": "/auth/mobile/callback",
+    "logoutPath": "/auth/mobile/logout"
+  },
+  "productionPublic": {
+    "buildEnvironment": "production",
+    "cognitoDomain": "https://ap-northeast-1wizlzlgmm.auth.ap-northeast-1.amazoncognito.com",
+    "cognitoClientId": "6b2h941o888u2l7ejhv5jog94",
+    "cognitoScopes": [
+      "openid",
+      "email"
+    ],
+    "organizationFeaturesEnabled": true
+  }
+}

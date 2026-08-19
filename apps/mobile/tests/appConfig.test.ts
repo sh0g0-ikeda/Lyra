@@ -17,6 +17,25 @@ const originalEnvironment = {
   googleServicesJson: process.env.GOOGLE_SERVICES_JSON,
   buildEnvironment: process.env.EXPO_PUBLIC_BUILD_ENVIRONMENT,
   appLinkHost: process.env.EXPO_PUBLIC_APP_LINK_HOST,
+  apiBaseUrl: process.env.EXPO_PUBLIC_API_BASE_URL,
+  cognitoDomain: process.env.EXPO_PUBLIC_COGNITO_DOMAIN,
+  cognitoClientId: process.env.EXPO_PUBLIC_COGNITO_CLIENT_ID,
+  cognitoRedirectUri: process.env.EXPO_PUBLIC_COGNITO_REDIRECT_URI,
+  cognitoLogoutRedirectUri: process.env.EXPO_PUBLIC_COGNITO_LOGOUT_REDIRECT_URI,
+  cognitoScopes: process.env.EXPO_PUBLIC_COGNITO_SCOPES,
+  organizationFeaturesEnabled: process.env.EXPO_PUBLIC_ORGANIZATION_FEATURES_ENABLED,
+};
+
+const productionPublicEnvironment = {
+  EXPO_PUBLIC_BUILD_ENVIRONMENT: 'production',
+  EXPO_PUBLIC_APP_LINK_HOST: 'app.lyra-editor.com',
+  EXPO_PUBLIC_API_BASE_URL: 'https://app.lyra-editor.com',
+  EXPO_PUBLIC_COGNITO_DOMAIN: 'https://ap-northeast-1wizlzlgmm.auth.ap-northeast-1.amazoncognito.com',
+  EXPO_PUBLIC_COGNITO_CLIENT_ID: '6b2h941o888u2l7ejhv5jog94',
+  EXPO_PUBLIC_COGNITO_REDIRECT_URI: 'lyra-mobile://auth/callback',
+  EXPO_PUBLIC_COGNITO_LOGOUT_REDIRECT_URI: 'lyra-mobile://auth/logout',
+  EXPO_PUBLIC_COGNITO_SCOPES: 'openid,email',
+  EXPO_PUBLIC_ORGANIZATION_FEATURES_ENABLED: 'true',
 };
 
 const baseConfig = {
@@ -37,6 +56,13 @@ describe('Expo app config', () => {
       GOOGLE_SERVICES_JSON: originalEnvironment.googleServicesJson,
       EXPO_PUBLIC_BUILD_ENVIRONMENT: originalEnvironment.buildEnvironment,
       EXPO_PUBLIC_APP_LINK_HOST: originalEnvironment.appLinkHost,
+      EXPO_PUBLIC_API_BASE_URL: originalEnvironment.apiBaseUrl,
+      EXPO_PUBLIC_COGNITO_DOMAIN: originalEnvironment.cognitoDomain,
+      EXPO_PUBLIC_COGNITO_CLIENT_ID: originalEnvironment.cognitoClientId,
+      EXPO_PUBLIC_COGNITO_REDIRECT_URI: originalEnvironment.cognitoRedirectUri,
+      EXPO_PUBLIC_COGNITO_LOGOUT_REDIRECT_URI: originalEnvironment.cognitoLogoutRedirectUri,
+      EXPO_PUBLIC_COGNITO_SCOPES: originalEnvironment.cognitoScopes,
+      EXPO_PUBLIC_ORGANIZATION_FEATURES_ENABLED: originalEnvironment.organizationFeaturesEnabled,
     })) {
       if (value === undefined) {
         delete process.env[key];
@@ -97,11 +123,47 @@ describe('Expo app config', () => {
   });
 
   it('productionは固定のapp link host以外をfail-fastで拒否する', () => {
-    process.env.EXPO_PUBLIC_BUILD_ENVIRONMENT = 'production';
+    Object.assign(process.env, productionPublicEnvironment);
     process.env.EXPO_PUBLIC_APP_LINK_HOST = 'preview.lyra-editor.com';
 
     expect(() => createExpoConfig({ config: baseConfig })).toThrow(
-      'EXPO_PUBLIC_APP_LINK_HOST must be app.lyra-editor.com for production',
+      'EXPO_PUBLIC_APP_LINK_HOST',
+    );
+    expect(() => createExpoConfig({ config: baseConfig })).not.toThrow(
+      'preview.lyra-editor.com',
+    );
+  });
+
+  it('productionではcanonical native callback設定だけを受け入れる', () => {
+    Object.assign(process.env, productionPublicEnvironment);
+
+    expect(createExpoConfig({ config: baseConfig })).toMatchObject({
+      name: 'Lyra Mobile',
+    });
+  });
+
+  it('productionのredirect不一致は値を出さずに変数名だけでfail-fastにする', () => {
+    Object.assign(process.env, productionPublicEnvironment);
+    process.env.EXPO_PUBLIC_COGNITO_REDIRECT_URI = 'lyra-mobile://auth/mobile/callback';
+    process.env.EXPO_PUBLIC_COGNITO_LOGOUT_REDIRECT_URI = 'lyra-mobile://auth/mobile/logout';
+
+    expect(() => createExpoConfig({ config: baseConfig })).toThrow(
+      'EXPO_PUBLIC_COGNITO_REDIRECT_URI,EXPO_PUBLIC_COGNITO_LOGOUT_REDIRECT_URI',
+    );
+    expect(() => createExpoConfig({ config: baseConfig })).not.toThrow(
+      'lyra-mobile://auth/mobile/callback',
+    );
+  });
+
+  it('productionのAPI origin不一致は値を出さずに変数名だけでfail-fastにする', () => {
+    Object.assign(process.env, productionPublicEnvironment);
+    process.env.EXPO_PUBLIC_API_BASE_URL = 'https://unexpected.example';
+
+    expect(() => createExpoConfig({ config: baseConfig })).toThrow(
+      'EXPO_PUBLIC_API_BASE_URL',
+    );
+    expect(() => createExpoConfig({ config: baseConfig })).not.toThrow(
+      'https://unexpected.example',
     );
   });
 

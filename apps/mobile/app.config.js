@@ -1,11 +1,16 @@
+const {
+  findProductionPublicEnvironmentMismatches,
+  productionRedirectContract,
+} = require('./productionPublicConfigContract.js');
+
 const APP_LINK_PATHS = [
-  '/auth/mobile/callback',
-  '/auth/mobile/logout',
+  productionRedirectContract.universalLink.callbackPath,
+  productionRedirectContract.universalLink.logoutPath,
   '/invitations/',
 ];
 
 const BUILD_ENVIRONMENTS = new Set(['development', 'preview', 'production']);
-const PRODUCTION_APP_LINK_HOST = 'app.lyra-editor.com';
+const PRODUCTION_APP_LINK_HOST = new URL(productionRedirectContract.universalLink.origin).hostname;
 const HOSTNAME_PATTERN = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 
 function getBuildEnvironment() {
@@ -34,6 +39,18 @@ function getAppLinkHost(environment) {
   return host;
 }
 
+function assertProductionPublicEnvironment(environment) {
+  if (environment !== 'production') {
+    return;
+  }
+
+  const mismatchedVariables = findProductionPublicEnvironmentMismatches(process.env);
+
+  if (mismatchedVariables.length > 0) {
+    throw new Error(`Invalid production public configuration: ${mismatchedVariables.join(',')}`);
+  }
+}
+
 function createIntentFilters(host) {
   return APP_LINK_PATHS.map((pathPrefix) => ({
     action: 'VIEW',
@@ -45,6 +62,7 @@ function createIntentFilters(host) {
 
 module.exports = ({ config }) => {
   const environment = getBuildEnvironment();
+  assertProductionPublicEnvironment(environment);
   const appLinkHost = getAppLinkHost(environment);
   const googleServicesFile = process.env.GOOGLE_SERVICES_JSON?.trim();
   const { associatedDomains: _associatedDomains, ...ios } = config.ios ?? {};
