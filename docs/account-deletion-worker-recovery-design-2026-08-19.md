@@ -1,5 +1,10 @@
 # Account-deletion worker recovery hardening (2026-08-19)
 
+> **SUPERSEDED / NO-GO:** この artifact-only 設計の手順は現在すべて実行停止である。
+> 稼働 API と worker の削除契約を同一 SHA へ前方移植する必要がある。実装・展開前に
+> `account-deletion-contract-forward-port-design-2026-08-19.md` に基づく新runbookへ置換する。
+> 本文の migration 037 や artifact gate を途中から再開してはならない。
+
 ## Purpose and scope
 
 Restore a deployable account-deletion worker artifact without changing an

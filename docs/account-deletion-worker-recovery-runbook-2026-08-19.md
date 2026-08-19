@@ -1,5 +1,10 @@
 # Account-deletion worker recovery runbook (2026-08-19)
 
+> **SUPERSEDED / 全手順無効:** 現在の production API とこの worker の削除契約は一致して
+> いない。`account-deletion-contract-forward-port-design-2026-08-19.md` に対応する新runbookへ
+> 置換されるまで、本文を途中から再開してはならない。migration 037、image build、task
+> definition 登録、desired count 変更を含む全手順が実行停止である。
+
 ## Safety boundary
 
 This runbook is for a human operator with the approved production role. This
