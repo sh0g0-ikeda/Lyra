@@ -16,6 +16,8 @@ describe('production Dockerfile', () => {
     );
     expect(runtimeStage).not.toContain('RUN bun install');
     expect(runtimeStage).toContain('LD_LIBRARY_PATH=/usr/lib');
+    expect(runtimeStage).toContain('ARG SOURCE_REVISION=unknown');
+    expect(runtimeStage).toContain('LABEL org.opencontainers.image.revision=$SOURCE_REVISION');
     expect(runtimeStage).toContain(
       'COPY --from=production-deps /usr/lib/*-linux-gnu/libstdc++.so.6* /usr/lib/',
     );
