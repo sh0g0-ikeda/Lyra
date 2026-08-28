@@ -10,6 +10,7 @@ import type {
   PagePromptCompilerPort,
 } from '../../services/page/PagePromptCompiler.js';
 import { OpenAIClient } from './OpenAIClient.js';
+import { OPENAI_IMAGE_PROMPT_PERSON_GUIDANCE } from './OpenAIImagePromptGuidance.js';
 
 interface OpenAICompilerResponse {
   output_text?: unknown;
@@ -75,6 +76,7 @@ function buildSystemPrompt(): string {
     'Treat every authored dialogue line as a hard lock whenever the brief marks it as baked dialogue. Preserve the exact wording, the exact speaker assignment, and whether the line is narration or character speech.',
     'If a brief says a line belongs to a named character, that same character must visibly own the line in the final page. Do not swap speakers, paraphrase the line, collapse multiple lines into one, or move narration into dialogue.',
     'Convert abstract emotional instructions into visible panel cues, but do not add props, extra characters, omitted panels, scenic backgrounds beyond the described setting, camera effects, or text that is not already present in the brief.',
+    ...OPENAI_IMAGE_PROMPT_PERSON_GUIDANCE,
     'Preserve all hard constraints exactly, especially panel order, dialogue text, SFX text, panel count, and reference image roles.',
     'The result must describe one complete manga page with explicit layout fidelity and full-page framing.',
     'Use clear concrete visual language. Avoid vague praise words like beautiful, cool, high-quality, masterpiece, cinematic, or stunning.',

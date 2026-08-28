@@ -246,6 +246,9 @@ enable a purchase route or grant credits.
 - Request bodies use bounded Zod schemas.
 - SQL uses parameter binding.
 - Uploaded images are restricted by MIME type and size.
+- Image-prompt compilers treat explicit ages as authoritative, use neutral
+  age-appropriate visual language for children, and do not invent person or camera
+  details that conflict with the stated age.
 - Direct image uploads use short-lived, single-use records bound to the user,
   optional organization and entity, MIME type, size, and a server-generated
   temporary storage key. Only a token hash is persisted.
