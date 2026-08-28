@@ -74,7 +74,7 @@ export const PAGE_PROMPT_COMPILER_VERSION = 'page_prompt_v4';
 
 export const STYLE_REFERENCE_COMPILER_OPENAI_MODEL = 'gpt-5.4-mini';
 export const STYLE_REFERENCE_COMPILER_MAX_TOKENS = 500;
-export const STYLE_REFERENCE_COMPILER_VERSION = 'style_ref_v3';
+export const STYLE_REFERENCE_COMPILER_VERSION = 'style_ref_v4';
 
 export const PAGE_AUTOFILL_COMPILER_OPENAI_MODEL = 'gpt-4o-2024-08-06';
 export const PAGE_AUTOFILL_COMPILER_MAX_TOKENS = 1200;

@@ -3,7 +3,7 @@ import { OpenAIPagePromptCompiler } from '../../../../src/infrastructure/openai/
 import { OpenAIClient } from '../../../../src/infrastructure/openai/OpenAIClient.js';
 
 describe('OpenAIPagePromptCompiler', () => {
-  it('GPT Image 2 向けの page brief をコンパイルする', async () => {
+  it('明示年齢を優先する安全指示を含む system prompt で page brief をコンパイルする', async () => {
     const requests: Array<Record<string, unknown>> = [];
     const client = {
       postJson: async (_path: string, payload: Record<string, unknown>) => {
@@ -40,6 +40,12 @@ describe('OpenAIPagePromptCompiler', () => {
 
     expect(systemPrompt).toContain('exact panel count and reading order');
     expect(systemPrompt).toContain('reference image mapping explicit');
+    expect(systemPrompt).toContain('Treat an explicitly stated age as authoritative');
+    expect(systemPrompt).toContain('girl, boy, or child');
+    expect(systemPrompt).toContain('opaque, age-appropriate, context-appropriate clothing');
+    expect(systemPrompt).toContain('natural story-appropriate poses');
+    expect(systemPrompt).toContain('preserves the authored action and camera direction');
+    expect(systemPrompt).toContain('omit speculative physical or camera details');
     expect(systemPrompt).toContain('Output the final prompt in the same language that the brief uses');
     expect(systemPrompt).toContain('Preserve the exact wording, the exact speaker assignment');
     expect(systemPrompt).toContain('panel 1 is the upper-right or rightmost top entry');

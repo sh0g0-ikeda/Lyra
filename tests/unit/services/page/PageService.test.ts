@@ -566,7 +566,7 @@ class FakeStyleReferenceCompiler implements StyleReferenceCompilerPort {
       },
       compilerProvider: 'openai',
       compilerModel: 'gpt-5.4-mini',
-      compilerPromptVersion: 'style_ref_v3',
+      compilerPromptVersion: 'style_ref_v4',
       compiledAt: '2026-05-28T00:00:00.000Z',
     };
   }
@@ -647,7 +647,7 @@ describe('PageService', () => {
         compiled_brief: expect.stringContaining('AKIRA'),
         anchors: expect.any(Object),
         compiler_provider: 'openai',
-        compiler_prompt_version: 'style_ref_v3',
+        compiler_prompt_version: 'style_ref_v4',
       },
     });
     const styleReference = (page.layoutConfig as { style_reference?: Record<string, unknown> }).style_reference;

@@ -10,6 +10,7 @@ import type {
   PagePromptCompilerPort,
 } from '../../services/page/PagePromptCompiler.js';
 import { OpenAIClient } from './OpenAIClient.js';
+import { OPENAI_IMAGE_PROMPT_PERSON_GUIDANCE } from './OpenAIImagePromptGuidance.js';
 
 interface OpenAICompilerResponse {
   output_text?: unknown;
@@ -78,6 +79,7 @@ function buildSystemPrompt(): string {
     'Keep dialogue, narration, and SFX in that reader sequence only within their supplied positions; every explicit authored dialogue position is also a hard lock.',
     'When the brief requires baked Japanese dialogue or narration, use traditional vertical tategaki, with glyphs top-to-bottom and columns right-to-left. Do not alter authored action, composition, or camera direction to fit text; preserve the authored dialogue and speaker locks exactly.',
     'Convert abstract emotional instructions into visible panel cues, but do not add props, extra characters, omitted panels, scenic backgrounds beyond the described setting, camera effects, or text that is not already present in the brief.',
+    ...OPENAI_IMAGE_PROMPT_PERSON_GUIDANCE,
     'Preserve all hard constraints exactly, especially panel order, dialogue text, SFX text, panel count, and reference image roles.',
     'The result must describe one complete manga page with explicit layout fidelity and full-page framing.',
     'Use clear concrete visual language. Avoid vague praise words like beautiful, cool, high-quality, masterpiece, cinematic, or stunning.',

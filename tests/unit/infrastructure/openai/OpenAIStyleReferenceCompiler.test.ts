@@ -3,7 +3,7 @@ import { OpenAIStyleReferenceCompiler } from '../../../../src/infrastructure/ope
 import { OpenAIClient } from '../../../../src/infrastructure/openai/OpenAIClient.js';
 
 describe('OpenAIStyleReferenceCompiler', () => {
-  it('compiles a named style reference into brief and anchors', async () => {
+  it('人物属性を持ち込まない安全指示で named style reference をコンパイルする', async () => {
     const requests: Array<Record<string, unknown>> = [];
     const client = {
       postJson: async (_path: string, payload: Record<string, unknown>) => {
@@ -45,7 +45,6 @@ describe('OpenAIStyleReferenceCompiler', () => {
     expect(result.title).toBe('AKIRA');
     expect(result.compiledBrief).toContain('Keep the title "AKIRA" explicit');
     expect(result.anchors.lineQuality).toBe('precise mechanical linework with confident contour control');
-    expect(result.compilerPromptVersion).toBe('style_ref_v3');
 
     const request = requests[0];
     const input = request.input as Array<{ content: Array<{ text: string }> }>;
@@ -54,8 +53,19 @@ describe('OpenAIStyleReferenceCompiler', () => {
 
     expect(systemPrompt).toContain('Return only valid JSON');
     expect(systemPrompt).toContain('hard style constraint');
+    expect(systemPrompt).toContain(
+      'Treat people visible in a named style reference as rendering examples only',
+    );
+    expect(systemPrompt).toContain(
+      'Do not transfer their age, body, clothing, pose, or camera framing',
+    );
+    expect(systemPrompt).toContain('neutral and reusable for characters of any stated age');
+    expect(systemPrompt).toContain('Never infer or add person-specific physical traits');
+    expect(systemPrompt).not.toContain('policy');
+    expect(systemPrompt).not.toContain('copyright');
     expect(userPrompt).toContain('Named style reference title: AKIRA');
     expect(userPrompt).toContain('"anchors"');
+    expect(result.compilerPromptVersion).toBe('style_ref_v4');
   });
 
   it('accepts JSON wrapped in extra text and camelCase anchor keys', async () => {
@@ -114,6 +124,6 @@ describe('OpenAIStyleReferenceCompiler', () => {
 
     expect(result.compiledBrief).toContain('Keep the title "AKIRA" explicit as a style constraint.');
     expect(result.anchors.lineQuality).toBeNull();
-    expect(result.compilerPromptVersion).toBe('style_ref_v3');
+    expect(result.compilerPromptVersion).toBe('style_ref_v4');
   });
 });

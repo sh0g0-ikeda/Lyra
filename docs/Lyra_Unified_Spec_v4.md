@@ -137,6 +137,9 @@ grants. Browser return URLs never grant credits.
 - Request bodies use bounded Zod schemas.
 - SQL uses parameter binding.
 - Uploaded images are restricted by MIME type and size.
+- Image-prompt compilers treat explicit ages as authoritative, use neutral
+  age-appropriate visual language for children, and do not invent person or camera
+  details that conflict with the stated age.
 - LLM structured output is schema-validated and quality-gated before persistence.
 - Raw provider errors, credentials, connection strings, and stack traces are not
   returned to end users.
