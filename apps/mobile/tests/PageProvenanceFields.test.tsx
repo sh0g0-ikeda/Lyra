@@ -47,8 +47,8 @@ describe('PageProvenanceFields', () => {
     });
 
     const rendered = JSON.stringify(renderer!.toJSON());
-    expect(rendered).toContain('参照シーン');
-    expect(rendered).toContain('シーン 1: 屋上');
+    expect(rendered).toContain('背景や時間帯の設定');
+    expect(rendered).toContain('設定 1: 屋上');
     expect(rendered).not.toContain('scene-1');
     expect(renderer!.root.findAllByType('button')).toHaveLength(0);
   });
