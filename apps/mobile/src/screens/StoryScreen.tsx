@@ -14,6 +14,7 @@ import { StoryCollaborationPanel } from '@/components/StoryCollaborationPanel';
 import { WorkspaceHierarchyNavigator } from '@/components/WorkspaceHierarchyNavigator';
 import { useWorkspaceContextSelection } from '@/components/WorkspaceContextPicker';
 import { colors, spacing, textStyles } from '@/constants/theme';
+import { shouldShowStoryNextStep } from '@/domain/creationWorkflowGuidance';
 import { extractImprovedFullStory } from '@/domain/storyWorkflow';
 import { storyEditorIsDirty } from '@/domain/editorDirtyPolicy';
 import {
@@ -742,6 +743,11 @@ export function StoryScreen(): React.JSX.Element {
       }
     });
   };
+  const showStoryNextStep = shouldShowStoryNextStep({
+    hasSelectedEpisode: selectedEpisode !== null,
+    hasUnsavedChanges: episodeDirty,
+    storyDraft: episodeDraft
+  });
 
   return (
     <Screen
@@ -803,7 +809,7 @@ export function StoryScreen(): React.JSX.Element {
       )}
       <WorkspaceHierarchyNavigator context={workspaceContext} />
 
-      <Section collapsible persistKey="story:episode" subtitle={t(language, "generated.screens.StoryScreen.use.one.full.story.draft.e2ff378b")} title={t(language, "generated.screens.StoryScreen.episode.d3de27bf")}>
+      <Section collapsible persistKey="story:episode" subtitle={t(language, "generated.screens.StoryScreen.use.one.full.story.draft.e2ff378b")} title={t(language, 'screen.story.entry.title')}>
         {selectedEpisode === null ? (
           <Notice message={t(language, "generated.screens.StoryScreen.select.an.episode.from.the.hierarchy.874ba80d")} tone="info" />
         ) : (
@@ -815,6 +821,12 @@ export function StoryScreen(): React.JSX.Element {
             <View style={styles.buttonRow}>
               <PrimaryButton disabled={!canEdit || activeStaleResource === 'episode' || estimatedPagesInvalid || episodeTitle.trim().length === 0} label={t(language, 'save')} loading={updateEpisodeMutation.isPending} onPress={() => updateEpisodeMutation.mutate()} variant="secondary" />
             </View>
+            {showStoryNextStep ? (
+              <Notice
+                message={t(language, 'screen.story.next.characters')}
+                tone="success"
+              />
+            ) : null}
           </>
         )}
       </Section>

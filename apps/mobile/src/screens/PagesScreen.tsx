@@ -2502,7 +2502,7 @@ export function PagesScreen(): React.JSX.Element {
         <PageThumbnailPicker
           emptyLabel={t(language, 'emptyPages')}
           hasNextPage={pagesQuery.hasNextPage}
-          helperText={t(language, "generated.screens.PagesScreen.choose.a.page.to.edit.unsaved.edits.are.453ccf41")}
+          helperText={t(language, 'screen.pages.list.subtitle')}
           imageSourcesFor={pageThumbnailImageSourcesFor}
           isFetchingNextPage={pagesQuery.isFetchingNextPage}
           language={language}
@@ -2544,7 +2544,7 @@ export function PagesScreen(): React.JSX.Element {
         <PrimaryButton disabled={!canEdit || selectedPage === null} disabledReason={!canEdit ? t(language, "generated.screens.PagesScreen.editing.permission.is.required.6d3b86ee") : selectedPage === null ? t(language, "generated.screens.PagesScreen.select.a.page.first.50276876") : undefined} label={t(language, 'save')} loading={updatePageMutation.isPending} onPress={() => updatePageMutation.mutate()} />
       </Section>
 
-      <Section collapsible defaultCollapsed persistKey="pages:story-sources" title={t(language, "generated.screens.PagesScreen.story.sources.82e34b3e")}>
+      <Section collapsible defaultCollapsed persistKey="pages:story-sources" title={t(language, 'screen.pages.flowOverview')}>
         <PageProvenanceFields
           continuityNote={continuityNote}
           editable={canEdit}
@@ -2755,7 +2755,7 @@ export function PagesScreen(): React.JSX.Element {
       <Section
         collapsible
         persistKey="pages:panels"
-        subtitle={t(language, "generated.screens.PagesScreen.refine.situation.characters.composition.e7ce8a4f")}
+        subtitle={t(language, 'screen.pages.panelSettings.subtitle')}
         title={t(language, 'panels')}
       >
         <PanelOrderList
