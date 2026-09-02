@@ -3,7 +3,7 @@
     "name": "Lyra Mobile",
     "slug": "lyra-mobile",
     "scheme": "lyra-mobile",
-    "version": "1.0.1",
+    "version": "1.0.2",
     "icon": "./assets/icon.png",
     "orientation": "portrait",
     "userInterfaceStyle": "dark",
