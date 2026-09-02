@@ -165,9 +165,9 @@ function AuthenticatedApp(): React.JSX.Element {
 }
 
 function NetworkAwareAuthenticatedApp(): React.JSX.Element {
-  const { language } = useAppState();
+  const { language, setLanguage } = useAppState();
   return (
-    <NetworkStatusProvider language={language}>
+    <NetworkStatusProvider language={language} setLanguage={setLanguage}>
       <AuthenticatedApp />
     </NetworkStatusProvider>
   );

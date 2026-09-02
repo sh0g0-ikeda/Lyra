@@ -15,20 +15,24 @@ import { normalizeNetworkOnline } from '@/lib/networkStatus';
 interface NetworkStatusContextValue {
   language: UiLanguage;
   online: boolean;
+  setLanguage: (language: UiLanguage) => void | Promise<void>;
 }
 
 interface NetworkStatusProviderProps extends PropsWithChildren {
   language: UiLanguage;
+  setLanguage: (language: UiLanguage) => void | Promise<void>;
 }
 
 const NetworkStatusContext = createContext<NetworkStatusContextValue>({
   language: 'ja',
-  online: true
+  online: true,
+  setLanguage: () => undefined
 });
 
 export function NetworkStatusProvider({
   children,
-  language
+  language,
+  setLanguage
 }: NetworkStatusProviderProps): React.JSX.Element {
   const [online, setOnline] = useState(true);
 
@@ -41,7 +45,10 @@ export function NetworkStatusProvider({
     return unsubscribe;
   }, []);
 
-  const value = useMemo(() => ({ language, online }), [language, online]);
+  const value = useMemo(
+    () => ({ language, online, setLanguage }),
+    [language, online, setLanguage]
+  );
   return (
     <NetworkStatusContext.Provider value={value}>
       {children}

@@ -110,6 +110,20 @@ describe('mobile workspace navigation and editor UX contract', () => {
     expect(screen).toContain('accessibilityLabel="日本語"');
   });
 
+  it('共通言語切替を永続化するAppStateの操作へ接続する', () => {
+    const app = readSource('src/App.tsx');
+    const networkStatus = readSource('src/state/networkStatus.tsx');
+
+    expect(app).toContain('const { language, setLanguage } = useAppState();');
+    expect(app).toContain(
+      '<NetworkStatusProvider language={language} setLanguage={setLanguage}>'
+    );
+    expect(networkStatus).toContain(
+      'setLanguage: (language: UiLanguage) => void | Promise<void>;'
+    );
+    expect(networkStatus).toContain('() => ({ language, online, setLanguage })');
+  });
+
   it('共通ナビゲータを作品・章・話を選択と表示する', () => {
     const translations = readSource('src/lib/i18nComponentMessages.ts');
 
