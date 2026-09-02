@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { ChevronDown, ChevronUp } from 'lucide-react-native';
 
-import { colors, spacing, textStyles } from '@/constants/theme';
+import { colors, radius, spacing, textStyles } from '@/constants/theme';
 import type { UiLanguage } from '@/domain/types';
 import type { ComponentTranslationKey } from '@/lib/i18nComponentMessages';
 import { t } from '@/lib/i18n';
@@ -109,11 +109,13 @@ export function PanelEditorSections({
 const styles = StyleSheet.create({
   body: {
     gap: spacing.md,
-    paddingBottom: spacing.md
+    paddingBottom: spacing.md,
+    paddingHorizontal: spacing.md
   },
   guidance: {
     ...textStyles.caption,
-    color: colors.ink
+    color: colors.editorMuted,
+    paddingHorizontal: spacing.xs
   },
   header: {
     alignItems: 'center',
@@ -121,17 +123,22 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
     justifyContent: 'space-between',
     minHeight: 48,
+    paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm
   },
   root: {
-    gap: spacing.xs
+    gap: spacing.md
   },
   section: {
-    borderTopColor: colors.border,
-    borderTopWidth: StyleSheet.hairlineWidth
+    backgroundColor: colors.editorSection,
+    borderColor: colors.editorBorder,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    overflow: 'hidden'
   },
   title: {
     ...textStyles.sectionTitle,
+    color: colors.editorText,
     flex: 1
   }
 });

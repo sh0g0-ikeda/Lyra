@@ -262,7 +262,9 @@ describe('PostgresStoryRepository', () => {
     });
 
     expect(client.queries[0]).toContain('edit_history');
-    expect(client.queries[0]).toContain('works.updated_at = $20::timestamptz');
+    expect(client.queries[0]).toContain(
+      "date_trunc('milliseconds', works.updated_at) = $20::timestamptz",
+    );
     expect(client.values?.[19]).toBe('2026-04-22T00:00:00.000Z');
     expect(client.queries[0]).toContain('jsonb_build_object');
     expect(client.queries[0]).toContain('LIMIT 5');
@@ -565,7 +567,9 @@ describe('PostgresStoryRepository', () => {
     expect(client.updateValues?.[14]).toBeNull();
     expect(client.updateValues?.[16]).toBeNull();
     expect(client.updateValues?.[18]).toBeNull();
-    expect(client.updateQuery).toContain('episodes.updated_at = $25::timestamptz');
+    expect(client.updateQuery).toContain(
+      "date_trunc('milliseconds', episodes.updated_at) = $25::timestamptz",
+    );
     expect(client.updateValues?.[24]).toBe('2026-04-22T00:00:00.000Z');
   });
 

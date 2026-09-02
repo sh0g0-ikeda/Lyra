@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 interface ExpoAppConfig {
   expo: {
     icon?: string;
+    version?: string;
     userInterfaceStyle?: string;
     splash?: unknown;
     plugins?: (
@@ -47,6 +48,15 @@ const appleStandardEulaUrl =
 const config = JSON.parse(
   readFileSync(resolve(mobileRoot, 'app.json'), 'utf8'),
 ) as ExpoAppConfig;
+const packageConfig = JSON.parse(
+  readFileSync(resolve(mobileRoot, 'package.json'), 'utf8'),
+) as { version?: string };
+const packageLock = JSON.parse(
+  readFileSync(resolve(mobileRoot, 'package-lock.json'), 'utf8'),
+) as {
+  version?: string;
+  packages?: Record<string, { version?: string }>;
+};
 const easConfig = JSON.parse(
   readFileSync(resolve(mobileRoot, 'eas.json'), 'utf8'),
 ) as {
@@ -64,12 +74,14 @@ const storeConfig = JSON.parse(
 ) as {
   configVersion?: number;
   apple?: {
+    version?: string;
     copyright?: string;
     advisory?: { ageRatingOverride?: string };
     info?: Record<string, {
       title?: string;
       description?: string;
       keywords?: string[];
+      releaseNotes?: string;
       privacyPolicyUrl?: string;
       privacyChoicesUrl?: string;
       supportUrl?: string;
@@ -83,6 +95,16 @@ function assertBundledAsset(assetPath: string | undefined): void {
 }
 
 describe('production app metadata', () => {
+  it('公開済み1.0.1より新しい更新版を1.0.2としてビルドする', () => {
+    expect(config.expo.version).toBe('1.0.2');
+    expect(packageConfig.version).toBe('1.0.2');
+    expect(packageLock.version).toBe('1.0.2');
+    expect(packageLock.packages?.['']?.version).toBe('1.0.2');
+    expect(storeConfig.apple?.version).toBe('1.0.2');
+    expect(storeConfig.apple?.info?.ja?.releaseNotes).toContain('制作フロー');
+    expect(storeConfig.apple?.info?.['en-US']?.releaseNotes).toContain('workflow guidance');
+  });
+
   it('icon、adaptive icon、splash を Mobile bundle 内の実在 asset に固定する', () => {
     const splashPlugin = config.expo.plugins?.find(
       (plugin): plugin is [

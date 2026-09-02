@@ -58,6 +58,7 @@ interface StoryHierarchyTreeProps {
   onSelectWork: (workId: string) => void;
   onSelectChapter: (workId: string, chapterId: string) => void;
   onSelectEpisode: (workId: string, chapterId: string, episodeId: string) => void;
+  onWorkMetadataChanged: (work: WorkRecord) => void;
   onChapterMetadataChanged: (chapter: ChapterRecord) => void;
   onEpisodeMetadataChanged: (episode: EpisodeRecord) => void;
 }
@@ -228,7 +229,11 @@ function StoryWorkNode(props: WorkNodeProps) {
       return;
     }
     void props.runAction('Save work', async () => {
-      await props.api.updateWork(props.work.id, { title }, props.organizationId);
+      const updated = await props.api.updateWork(props.work.id, { title }, {
+        expectedUpdatedAt: props.work.updated_at,
+        organizationId: props.organizationId,
+      });
+      props.onWorkMetadataChanged(updated);
       await props.invalidateScopedQuery(['works']);
       setRenaming(false);
     });
@@ -416,7 +421,10 @@ function StoryChapterNode(props: ChapterNodeProps) {
       return;
     }
     void props.runAction('Save chapter', async () => {
-      const updated = await props.api.updateChapter(props.chapter.id, { title }, props.organizationId);
+      const updated = await props.api.updateChapter(props.chapter.id, { title }, {
+        expectedUpdatedAt: props.chapter.updated_at,
+        organizationId: props.organizationId,
+      });
       props.onChapterMetadataChanged(updated);
       await props.invalidateScopedQuery(['chapters', props.workId]);
       setRenaming(false);
@@ -657,7 +665,10 @@ function StoryChapterNode(props: ChapterNodeProps) {
                 onRename={async (title) => {
                   let saved = false;
                   await props.runAction('Save episode', async () => {
-                    const updated = await props.api.updateEpisode(episode.id, { title }, props.organizationId);
+                    const updated = await props.api.updateEpisode(episode.id, { title }, {
+                      expectedUpdatedAt: episode.updated_at,
+                      organizationId: props.organizationId,
+                    });
                     props.onEpisodeMetadataChanged(updated);
                     await props.invalidateScopedQuery(['episodes', props.chapter.id]);
                     saved = true;

@@ -16,6 +16,14 @@ import type {
 import type { DatabaseClient, TransactionRunner } from '../lib/db.js';
 import { encodeListCursor, type ListPage, type ListPageRequest } from '../domain/pagination.js';
 
+type EntityRevisionTable = 'entities' | 'reference_sets';
+
+const nextEntityRevisionSql = (table: EntityRevisionTable): string =>
+  `GREATEST(
+    date_trunc('milliseconds', clock_timestamp()),
+    date_trunc('milliseconds', ${table}.updated_at) + INTERVAL '1 millisecond'
+  )`;
+
 export type { CreateEntityInput, Entity, UpdateEntityInput };
 
 export interface EntityPrimaryReferenceImage {
@@ -494,7 +502,7 @@ export class PostgresEntityRepository implements EntityRepository, EntityReferen
         SET reference_images = $3::jsonb,
             primary_ref_id = $4,
             status = $5,
-            updated_at = NOW()
+            updated_at = ${nextEntityRevisionSql('reference_sets')}
         FROM entities
         INNER JOIN works ON works.id = entities.work_id
         WHERE reference_sets.entity_id = $1
@@ -537,7 +545,7 @@ export class PostgresEntityRepository implements EntityRepository, EntityReferen
               ELSE prompt_supplement
             END,
             status = $5,
-            updated_at = NOW()
+            updated_at = ${nextEntityRevisionSql('entities')}
         WHERE id = $1
           AND (
             ($6::uuid IS NULL AND user_id = $2 AND work_id IN (
@@ -637,7 +645,7 @@ export class PostgresEntityRepository implements EntityRepository, EntityReferen
         SET reference_images = $3::jsonb,
             primary_ref_id = $4,
             status = $5,
-            updated_at = NOW()
+            updated_at = ${nextEntityRevisionSql('reference_sets')}
         FROM entities
         INNER JOIN works ON works.id = entities.work_id
         WHERE reference_sets.entity_id = $1
@@ -676,7 +684,7 @@ export class PostgresEntityRepository implements EntityRepository, EntityReferen
         `
         UPDATE entities
         SET status = $3,
-            updated_at = NOW()
+            updated_at = ${nextEntityRevisionSql('entities')}
         WHERE id = $1
           AND (
             ($4::uuid IS NULL AND user_id = $2 AND work_id IN (
@@ -756,9 +764,9 @@ export class PostgresEntityRepository implements EntityRepository, EntityReferen
           prompt_supplement = CASE WHEN $7::boolean THEN $8 ELSE prompt_supplement END,
           structured_fields = CASE WHEN $9::boolean THEN $10::jsonb ELSE structured_fields END,
           speech_profile = CASE WHEN $11::boolean THEN $12::jsonb ELSE speech_profile END,
-          updated_at = NOW()
+          updated_at = ${nextEntityRevisionSql('entities')}
       WHERE id = $1
-        AND entities.updated_at = $14::timestamptz
+        AND date_trunc('milliseconds', entities.updated_at) = $14::timestamptz
         AND (
           ($13::uuid IS NULL AND user_id = $2 AND work_id IN (
               SELECT id

@@ -40,6 +40,9 @@ interface NavigatorProps {
 let navigatorProps: NavigatorProps | null = null;
 let hasDirtyEditors = true;
 const resolveDirtyEditors = vi.fn<() => Promise<boolean>>();
+const { safeAreaInsetsMock } = vi.hoisted(() => ({
+  safeAreaInsetsMock: { bottom: 0, left: 0, right: 0, top: 0 }
+}));
 
 vi.mock('@react-navigation/bottom-tabs', () => ({
   createBottomTabNavigator: () => ({
@@ -57,6 +60,10 @@ vi.mock('lucide-react-native', () => ({
   Images: (): React.JSX.Element => React.createElement('icon'),
   Settings: (): React.JSX.Element => React.createElement('icon'),
   UsersRound: (): React.JSX.Element => React.createElement('icon')
+}));
+
+vi.mock('react-native-safe-area-context', () => ({
+  useSafeAreaInsets: () => safeAreaInsetsMock
 }));
 
 vi.mock('@/screens/AccountScreen', () => ({ AccountScreen: () => null }));
@@ -81,6 +88,7 @@ describe('MainTabs dirty-state guard', () => {
   beforeEach(() => {
     navigatorProps = null;
     hasDirtyEditors = true;
+    safeAreaInsetsMock.bottom = 0;
     resolveDirtyEditors.mockReset();
   });
 
@@ -159,6 +167,24 @@ describe('MainTabs dirty-state guard', () => {
       alignSelf: 'center',
       maxWidth: mobileContentMaxWidth,
       width: '100%'
+    });
+  });
+
+  it.each([
+    ['Safe Areaなし', 0, 72, 9],
+    ['Androidジェスチャーナビゲーション', 24, 96, 33],
+    ['Android 3ボタンナビゲーション', 48, 120, 57],
+    ['iPhoneホームインジケータ', 34, 106, 43]
+  ])('%sの下端をタブの表示領域から除外する', async (_mode, bottom, height, paddingBottom) => {
+    safeAreaInsetsMock.bottom = bottom;
+
+    await act(async () => {
+      create(<MainTabs />);
+    });
+
+    expect(navigatorProps?.screenOptions?.tabBarStyle).toMatchObject({
+      height,
+      paddingBottom
     });
   });
 });

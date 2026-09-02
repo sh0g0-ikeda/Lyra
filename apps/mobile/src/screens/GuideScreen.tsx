@@ -30,8 +30,7 @@ const tutorialGroups: TutorialGroup[] = [
       'screen.guide.story.step2',
       'screen.guide.story.step3',
       'screen.guide.story.step4',
-      'screen.guide.story.step5',
-      'screen.guide.story.step6'
+      'screen.guide.story.step5'
     ]
   },
   {
@@ -43,8 +42,7 @@ const tutorialGroups: TutorialGroup[] = [
       'screen.guide.characters.step1',
       'screen.guide.characters.step2',
       'screen.guide.characters.step3',
-      'screen.guide.characters.step4',
-      'screen.guide.characters.step5'
+      'screen.guide.characters.step4'
     ]
   },
   {
@@ -59,8 +57,7 @@ const tutorialGroups: TutorialGroup[] = [
       'screen.guide.pages.step4',
       'screen.guide.pages.step5',
       'screen.guide.pages.step6',
-      'screen.guide.pages.step7',
-      'screen.guide.pages.step8'
+      'screen.guide.pages.step7'
     ]
   }
 ];
