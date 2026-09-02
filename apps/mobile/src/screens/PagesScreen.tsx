@@ -2552,7 +2552,7 @@ export function PagesScreen(): React.JSX.Element {
         <PageThumbnailPicker
           emptyLabel={t(language, 'emptyPages')}
           hasNextPage={pagesQuery.hasNextPage}
-          helperText={t(language, "generated.screens.PagesScreen.choose.a.page.to.edit.unsaved.edits.are.453ccf41")}
+          helperText={t(language, 'screen.pages.list.subtitle')}
           imageSourcesFor={pageThumbnailImageSourcesFor}
           isFetchingNextPage={pagesQuery.isFetchingNextPage}
           language={language}
@@ -2594,7 +2594,13 @@ export function PagesScreen(): React.JSX.Element {
         <FormField editable={canEdit} label={t(language, 'styleReferenceNotes')} maxLength={2000} multiline onChangeText={setStyleReferenceNotes} value={styleReferenceNotes} />
       </Section>
 
-      <Section collapsible defaultCollapsed persistKey="pages:story-sources" title={t(language, "generated.screens.PagesScreen.story.sources.82e34b3e")} tone="raised">
+      <Section
+        collapsible
+        defaultCollapsed
+        persistKey="pages:story-sources"
+        title={t(language, 'screen.pages.flowOverview')}
+        tone="raised"
+      >
         <PageProvenanceFields
           continuityNote={continuityNote}
           editable={canEdit}
@@ -2803,7 +2809,7 @@ export function PagesScreen(): React.JSX.Element {
       <Section
         collapsible
         persistKey="pages:panels"
-        subtitle={t(language, "generated.screens.PagesScreen.refine.situation.characters.composition.e7ce8a4f")}
+        subtitle={t(language, 'screen.pages.panelSettings.subtitle')}
         title={t(language, 'panels')}
         tone="raised"
       >
