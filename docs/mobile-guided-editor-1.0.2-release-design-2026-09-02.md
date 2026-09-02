@@ -7,6 +7,7 @@
 - 公開中の iOS 1.0.1 (build 33) と Android 1.0.1 (versionCode 90) を更新対象とする。
 - `fix/mobile-guided-editor-ui` の UI・案内・Guide・日英翻訳・テストだけを、`fix/mobile-page-editor-ux` の最新統合点へ移植する。
 - marketing version、runtime version、Apple metadata version を 1.0.2 に揃える。
+- 提出時点の Expo SDK 57 compatibility check が要求する範囲内で、Mobile dependency の patch version だけを整合させる。
 - iOS build number は既存 build 33 より大きい番号、Android versionCode は既存 90 および preview 91 より大きい番号を使用する。
 - production 用 IPA / AAB を同一 Git commit から作成し、iOS は App Store Connect、Android は既存運用と同じ Google Play alpha track へアップロードする。
 - Apple の審査提出・手動公開と、Google Play の alpha から production への昇格・公開は、ストア管理画面での最終確認を要するため利用者の操作として残す。
@@ -32,6 +33,7 @@ Backend API、DB、migration、認証・認可、organization scope、クレジ�
 
 - Mobile UI / Domain / i18n / tests: 承認済み UI 変更を現行 1.0.1 系へ移植する。
 - Mobile release metadata: `app.json`、`package.json`、lockfile、`store.config.json` を 1.0.2 に同期し、日英 release notes を今回の内容へ更新する。
+- Mobile dependency: `expo install --fix` が示す SDK 57 対応 patch だけを lockfile と共に更新し、major / minor upgrade や別機能追加は行わない。
 - EAS remote version: iOS build number を 33 へ同期して auto increment 後を 34 とし、Android は remote 91 から auto increment 後を 92 とする。
 - 外部 API / 永続化 / job: 変更なし。
 - 出力: 同一 commit に対応する signed IPA / AAB と、各 EAS submission ID。
