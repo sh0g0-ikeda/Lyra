@@ -12,12 +12,22 @@ import type {
   EpisodePagePlanCompilerPort,
 } from '../../services/page/EpisodePagePlanCompiler.js';
 import { OpenAIClient } from './OpenAIClient.js';
-import { requestStructuredOpenAIResponse } from './StructuredOpenAIResponse.js';
+import {
+  requestStructuredOpenAIResponse,
+  type OpenAIReasoningEffort,
+} from './StructuredOpenAIResponse.js';
+
+interface OpenAIPageEpisodePlanCompilerOptions {
+  model: string;
+  reasoningEffort?: OpenAIReasoningEffort;
+}
 
 export class OpenAIPageEpisodePlanCompiler implements EpisodePagePlanCompilerPort {
   public constructor(
     private readonly client: OpenAIClient,
-    private readonly model = EPISODE_PAGE_PLAN_COMPILER_OPENAI_MODEL,
+    private readonly options: OpenAIPageEpisodePlanCompilerOptions = {
+      model: EPISODE_PAGE_PLAN_COMPILER_OPENAI_MODEL,
+    },
   ) {}
 
   public async compilePlan(
@@ -25,7 +35,8 @@ export class OpenAIPageEpisodePlanCompiler implements EpisodePagePlanCompilerPor
   ): Promise<CompiledEpisodePagePlan> {
     const validated = await requestStructuredOpenAIResponse({
       client: this.client,
-      model: this.model,
+      model: this.options.model,
+      reasoningEffort: this.options.reasoningEffort,
       maxOutputTokens: EPISODE_PAGE_PLAN_COMPILER_MAX_TOKENS,
       schemaName: 'episode_page_plan',
       jsonSchema: episodePagePlanJsonSchema,
@@ -101,7 +112,7 @@ export class OpenAIPageEpisodePlanCompiler implements EpisodePagePlanCompilerPor
         })),
       },
       compilerProvider: 'openai',
-      compilerModel: this.model,
+      compilerModel: this.options.model,
       compilerPromptVersion: EPISODE_PAGE_PLAN_COMPILER_VERSION,
     };
   }

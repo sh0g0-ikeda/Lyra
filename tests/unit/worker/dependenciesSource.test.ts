@@ -25,6 +25,26 @@ describe('worker dependency policy', () => {
     expect(countOccurrences(source, 'maxRetries: IMAGE_GENERATION_OPENAI_MAX_RETRIES')).toBe(2);
   });
 
+  it('episode story autofill の各 compiler に検証済み profile の対応 stage を配線する', () => {
+    const workerSource = readFileSync(join(process.cwd(), 'worker/dependencies.ts'), 'utf8');
+    const appSource = readFileSync(join(process.cwd(), 'src', 'app.ts'), 'utf8');
+
+    for (const source of [workerSource, appSource]) {
+      expect(source).toMatch(
+        /resolveEpisodeOpenAIModelProfile\(\s*env\.OPENAI_EPISODE_TEXT_PROFILE,?\s*\)/u,
+      );
+      expect(source).toMatch(
+        /resolveEpisodePagePlanCompiler\(episodeOpenAIModelProfile\.detail\)/u,
+      );
+      expect(source).toMatch(
+        /resolveEpisodeBeatPlanCompiler\(episodeOpenAIModelProfile\.beat\)/u,
+      );
+      expect(source).toMatch(
+        /resolveEpisodePlanAuditCompiler\(episodeOpenAIModelProfile\.audit\)/u,
+      );
+    }
+  });
+
   it('runs production runtime guard before worker polling starts', () => {
     const source = readFileSync(join(process.cwd(), 'scripts', 'runGenerationWorker.ts'), 'utf8');
 
