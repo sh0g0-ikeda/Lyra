@@ -70,7 +70,7 @@ export const MAX_PRODUCTION_EPISODE_LONG_JOB_ACTIVE_JOB_LIMITS = {
 
 export const PAGE_PROMPT_COMPILER_OPENAI_MODEL = 'gpt-5.4-mini';
 export const PAGE_PROMPT_COMPILER_MAX_TOKENS = 900;
-export const PAGE_PROMPT_COMPILER_VERSION = 'page_prompt_v2';
+export const PAGE_PROMPT_COMPILER_VERSION = 'page_prompt_v4';
 
 export const STYLE_REFERENCE_COMPILER_OPENAI_MODEL = 'gpt-5.4-mini';
 export const STYLE_REFERENCE_COMPILER_MAX_TOKENS = 500;
@@ -78,11 +78,11 @@ export const STYLE_REFERENCE_COMPILER_VERSION = 'style_ref_v3';
 
 export const PAGE_AUTOFILL_COMPILER_OPENAI_MODEL = 'gpt-4o-2024-08-06';
 export const PAGE_AUTOFILL_COMPILER_MAX_TOKENS = 1200;
-export const PAGE_AUTOFILL_COMPILER_VERSION = 'page_autofill_v2';
+export const PAGE_AUTOFILL_COMPILER_VERSION = 'page_autofill_v3';
 
 export const EPISODE_PAGE_PLAN_COMPILER_OPENAI_MODEL = 'gpt-5';
 export const EPISODE_PAGE_PLAN_COMPILER_MAX_TOKENS = 24000;
-export const EPISODE_PAGE_PLAN_COMPILER_VERSION = 'episode_page_plan_v2';
+export const EPISODE_PAGE_PLAN_COMPILER_VERSION = 'episode_page_plan_v3';
 
 export const EPISODE_BEAT_PLAN_COMPILER_OPENAI_MODEL = 'gpt-5';
 export const EPISODE_BEAT_PLAN_COMPILER_MAX_TOKENS = 16000;

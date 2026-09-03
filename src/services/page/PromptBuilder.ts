@@ -68,6 +68,7 @@ interface NormalizedPagePrompt {
   qualityConstraints: string[];
   negativeConstraints: string[];
   styleLock: string;
+  compilerStyleLock: string;
   dialogueMode: PageDialogueMode;
 }
 
@@ -206,7 +207,8 @@ function normalizePagePrompt(
     ),
     qualityConstraints: buildQualityConstraints(page, orderedPanels.length, referenceRoles),
     negativeConstraints: buildNegativeConstraints(page),
-    styleLock: buildStyleLock(page),
+    styleLock: buildStyleLock(page, STYLE_PROMPT_TEXT_LIMITS),
+    compilerStyleLock: buildStyleLock(page, COMPILER_STYLE_PROMPT_TEXT_LIMITS),
     dialogueMode: page.dialogueMode,
   };
 }
@@ -513,15 +515,16 @@ function buildDialogueLock(
 
   const lines = panel.dialogue.map((dialogue, index) => {
     const ordinal = index + 1;
+    const authoredPosition = humanizeToken(dialogue.position);
     if (dialogue.entityId === null) {
-      return `line ${ordinal} is narration text and must remain narration, not character speech: "${dialogue.text}"`;
+      return `line ${ordinal} is narration text and must remain narration, not character speech: "${dialogue.text}" at its authored ${authoredPosition} position`;
     }
 
     const speaker = formatEntityReferenceIdentity(dialogue.entityId, entityMap, referenceLabelByEntityId);
-    return `line ${ordinal} must stay assigned to ${speaker} exactly as written: "${dialogue.text}". Do not assign this line to any other subject or reference image`;
+    return `line ${ordinal} must stay assigned to ${speaker} exactly as written: "${dialogue.text}" at its authored ${authoredPosition} position. Do not assign this line to any other subject or reference image`;
   });
 
-  return `Dialogue lock for panel ${panel.order}: ${lines.join('; ')}. Do not omit, paraphrase, merge, split, or reassign these lines.`;
+  return `Dialogue lock for panel ${panel.order}: ${lines.join('; ')}. Do not omit, paraphrase, merge, split, reassign, or move these lines from their authored positions.`;
 }
 
 function buildVisualLock(
@@ -585,7 +588,12 @@ function buildLayoutInstruction(page: PagePromptContext, panelCount: number): st
     const templateId = readString(page.layoutConfig.template_id);
     if (templateId !== null && isKnownTemplateId(templateId)) {
       const template = getPanelFrameTemplate(templateId);
-      return `Use the ${template.id} template with ${template.panelCount} panels. Preserve its panel proportions, reading rhythm, and clear gutters for this ${panelCount}-panel page. Do not add, merge, or omit panels.`;
+      return [
+        `Use the ${template.id} template with ${template.panelCount} panels. Preserve its panel proportions, reading rhythm, and clear gutters for this ${panelCount}-panel page.`,
+        JAPANESE_MANGA_READING_ORDER_LOCK,
+        formatFrameMap(template.frames),
+        'Do not add, merge, omit, mirror, or reorder panels.',
+      ].join(' ');
     }
   }
 
@@ -593,19 +601,11 @@ function buildLayoutInstruction(page: PagePromptContext, panelCount: number): st
     const frameDefinitions = toFrameDefinitions(page.layoutConfig.frame_definitions);
     const instructionLines = [
       'Follow the uploaded layout reference image exactly for panel borders, gutter spacing, and reading order.',
+      JAPANESE_MANGA_READING_ORDER_LOCK,
     ];
 
     if (frameDefinitions.length > 0) {
-      instructionLines.push(
-        `Frame map: ${frameDefinitions
-          .map(
-            (frame) =>
-              `panel ${frame.readingOrder} uses vertices ${frame.vertices
-                .map((vertex) => `(${vertex.x.toFixed(2)}, ${vertex.y.toFixed(2)})`)
-                .join(' -> ')}`,
-          )
-          .join('; ')}.`,
-      );
+      instructionLines.push(formatFrameMap(frameDefinitions));
     }
 
     instructionLines.push(`Do not add, merge, or omit panels. The finished page must retain exactly ${panelCount} panels.`);
@@ -613,10 +613,18 @@ function buildLayoutInstruction(page: PagePromptContext, panelCount: number): st
   }
 
   if (layoutType === 'ai_generated' || layoutType === 'ai_auto') {
-    return `Use the stored AI-generated panel arrangement for this page and preserve the intended manga reading order. Do not add, merge, or omit panels. Keep exactly ${panelCount} panels.`;
+    const frameDefinitions = toFrameDefinitions(page.layoutConfig.frame_definitions);
+    return [
+      'Use the stored AI-generated panel arrangement for this page.',
+      JAPANESE_MANGA_READING_ORDER_LOCK,
+      frameDefinitions.length === 0
+        ? JAPANESE_MANGA_UNMAPPED_LAYOUT_FALLBACK
+        : formatFrameMap(frameDefinitions),
+      `Do not add, merge, omit, mirror, or reorder panels. Keep exactly ${panelCount} panels.`,
+    ].join(' ');
   }
 
-  return `Preserve the intended manga page reading flow and clear panel separation. Do not add, merge, or omit panels. Keep exactly ${panelCount} panels with clear gutters and borders.`;
+  return `${JAPANESE_MANGA_READING_ORDER_LOCK} ${JAPANESE_MANGA_UNMAPPED_LAYOUT_FALLBACK} Do not add, merge, omit, mirror, or reorder panels. Keep exactly ${panelCount} panels with clear gutters and borders.`;
 }
 
 function buildQualityConstraints(
@@ -626,7 +634,8 @@ function buildQualityConstraints(
 ): string[] {
   const constraints = [
     'Create a fresh page from the current saved page inputs only; do not preserve, restore, or edit any previous generated page image.',
-    `Maintain exactly ${panelCount} readable panels in right-to-left manga reading order.`,
+    `Maintain exactly ${panelCount} readable panels in the locked Japanese manga order.`,
+    'Preserve every stored dialogue position. When those positions allow, use Japanese eye flow with earlier text higher/right and later text left/down; never override an authored position to force placement.',
     'Keep panel borders and gutters clean and unambiguous.',
     'Preserve the authored action progression from one panel to the next without skipping intermediate beats.',
     'Do not let any foreground character drift off-model relative to their reference image.',
@@ -646,6 +655,8 @@ function buildQualityConstraints(
   if (page.pageDialogueToggle && page.dialogueMode !== 'balloon_only') {
     constraints.push('Keep required dialogue and SFX legible in the artwork without changing the authored wording.');
     constraints.push('Preserve each baked dialogue line exactly with its authored speaker or narration role. Do not swap speakers, paraphrase lines, or move narration into character speech.');
+    constraints.push('Baked Japanese dialogue and narration must use vertical tategaki: glyphs top-to-bottom, columns right-to-left, never horizontal.');
+    constraints.push('Keep text clear of required faces and actions. Do not change authored action, composition, or camera direction merely to fit text.');
   }
 
   return constraints;
@@ -685,7 +696,7 @@ function buildDraftPrompt(normalized: NormalizedPagePrompt): string {
 function buildCompilerBrief(normalized: NormalizedPagePrompt): string {
   const sections: Array<[string, string[]]> = [
     ['[TASK]', [normalized.pageSummary]],
-    ['[GLOBAL STYLE]', [normalized.styleLock]],
+    ['[GLOBAL STYLE]', [normalized.compilerStyleLock]],
     [
       '[REFERENCE IMAGE ROLES]',
       normalized.referenceRoles.length === 0
@@ -1081,6 +1092,23 @@ interface LayoutFrameDefinition {
   vertices: LayoutFrameVertex[];
 }
 
+const JAPANESE_MANGA_READING_ORDER_LOCK =
+  'Japanese manga physical reading order is mandatory: panel 1 is the upper-right or rightmost top entry; follow numbered panels generally right-to-left and downward toward the lower-left, never western left-to-right.';
+const JAPANESE_MANGA_UNMAPPED_LAYOUT_FALLBACK =
+  'Without a frame map, use right-to-left within each regular tier, then top-to-bottom.';
+
+function formatFrameMap(frameDefinitions: readonly LayoutFrameDefinition[]): string {
+  return `Authoritative frame map (follow P numbers and coordinates exactly for asymmetric or custom layouts): ${[...frameDefinitions]
+    .sort((left, right) => left.readingOrder - right.readingOrder)
+    .map(
+      (frame) =>
+        `P${frame.readingOrder}=[${frame.vertices
+          .map((vertex) => `(${vertex.x.toFixed(2)},${vertex.y.toFixed(2)})`)
+          .join(',')}]`,
+    )
+    .join('; ')}.`;
+}
+
 function toFrameDefinitions(value: unknown): LayoutFrameDefinition[] {
   if (!Array.isArray(value)) {
     return [];
@@ -1118,14 +1146,26 @@ const STYLE_PROMPT_TEXT_LIMITS = {
   anchorLine: 180,
   notes: 300,
 } as const;
+const COMPILER_STYLE_PROMPT_TEXT_LIMITS = {
+  compiledBrief: 450,
+  anchorLine: 80,
+  notes: 100,
+} as const;
 
-function buildStyleLock(page: PagePromptContext): string {
+function buildStyleLock(
+  page: PagePromptContext,
+  limits: {
+    compiledBrief: number;
+    anchorLine: number;
+    notes: number;
+  },
+): string {
   if (page.styleReference === null) {
     return STYLE_LOCK_TEXT;
   }
 
   const anchorLines = buildRenderingStyleAnchorLines(page.styleReference.anchors).map((line) =>
-    compactStylePromptText(line, STYLE_PROMPT_TEXT_LIMITS.anchorLine),
+    compactStylePromptText(line, limits.anchorLine),
   );
   const anchorConstraint =
     anchorLines.length === 0
@@ -1135,7 +1175,7 @@ function buildStyleLock(page: PagePromptContext): string {
     page.styleReference.notes === null || page.styleReference.notes.trim().length === 0
       ? null
       : `User notes: ${ensureTerminalPunctuation(
-          compactStylePromptText(page.styleReference.notes, STYLE_PROMPT_TEXT_LIMITS.notes),
+          compactStylePromptText(page.styleReference.notes, limits.notes),
         )}`;
 
   return [
@@ -1143,7 +1183,7 @@ function buildStyleLock(page: PagePromptContext): string {
     `Named style reference constraint: "${page.styleReference.title}". Treat it as a hard page-wide rendering constraint.`,
     `Generalized style interpretation: ${compactStylePromptText(
       page.styleReference.compiledBrief,
-      STYLE_PROMPT_TEXT_LIMITS.compiledBrief,
+      limits.compiledBrief,
     )}`,
     'Keep each character face, eye shape, hair silhouette, body proportions, and outfit silhouette anchored to the character reference images. Apply the style reference to rendering treatment, not to character identity.',
     anchorConstraint,
