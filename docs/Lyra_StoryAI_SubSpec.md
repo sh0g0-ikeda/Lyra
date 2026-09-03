@@ -61,6 +61,18 @@ contain a distinct editable beat rather than duplicated generic text:
 - dialogue with explicit speaker identity, or narration without a speaker
 - sound effect and notes when relevant
 
+The prompt contract for Japanese manga keeps authored panel order as the reading
+flow: begin at the upper-right (or rightmost top) panel and follow stored panel
+numbers generally right-to-left and downward toward the lower-left. Regular tiers
+proceed right-to-left, then top-to-bottom; stored numbering remains authoritative
+for asymmetric layouts. Dialogue balloon and caption placement follows that flow
+without overriding an authored line position. When Japanese dialogue or narration
+is baked into a page image, it uses vertical tategaki: characters top-to-bottom and
+columns right-to-left. These requirements preserve the authored wording, speaker or
+narration role, position, action, composition, camera, and panel order. Image-model
+typography is best effort; deterministic balloon composition, when used, provides
+the exact text orientation.
+
 Scenes are optional context. Their absence must not reject skeleton or autofill
 generation. When scenes exist, source IDs can be retained as provenance, but raw IDs
 are not useful image-model prompt content.

@@ -696,6 +696,12 @@ describe('PageService', () => {
     expect(compiler.lastInput?.compilerBrief).toContain('[OUTPUT CONTRACT]');
     expect(compiler.lastInput?.compilerBrief).toContain('matching the supplied page_autofill schema');
     expect(compiler.lastInput?.compilerBrief).toContain('[CURRENT PANELS]');
+    expect(compiler.lastInput?.compilerBrief).toContain(
+      'panel 1 is the upper-right or rightmost top entry',
+    );
+    expect(compiler.lastInput?.compilerBrief).toContain(
+      'saved layout numbering is authoritative for asymmetric layouts',
+    );
     expect(compiler.lastInput?.compilerBrief).not.toContain('[OUTPUT JSON SHAPE]');
     expect(compiler.lastInput?.compilerBrief).not.toContain('[ALLOWED ENUMS]');
     const updatedPanel = panelRepository.updatedPanels[0];

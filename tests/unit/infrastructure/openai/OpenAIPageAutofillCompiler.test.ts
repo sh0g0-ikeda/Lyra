@@ -83,7 +83,7 @@ describe('OpenAIPageAutofillCompiler', () => {
       },
       compilerProvider: 'openai',
       compilerModel: 'gpt-4o-2024-08-06',
-      compilerPromptVersion: 'page_autofill_v2',
+      compilerPromptVersion: 'page_autofill_v3',
     });
 
     const request = requests[0];
@@ -133,6 +133,11 @@ describe('OpenAIPageAutofillCompiler', () => {
     expect(systemPrompt).toContain('composition.custom_note');
     expect(systemPrompt).toContain('do not require scenes to produce a useful page draft');
     expect(systemPrompt).toContain('Treat chapter information only as a consistency guard');
+    expect(systemPrompt).toContain('panel 1 is the upper-right or rightmost top entry');
+    expect(systemPrompt).toContain('follow saved panel numbers generally right-to-left and downward');
+    expect(systemPrompt).toContain('saved numbering is authoritative for asymmetric layouts');
+    expect(systemPrompt).toContain('earlier balloons or captions higher and farther right');
+    expect(systemPrompt).toContain('Japanese dialogue and narration concise enough for vertical tategaki');
     expect(userPrompt).toContain('[TASK]');
     expect(userPrompt).toContain('Return the final JSON now.');
   });

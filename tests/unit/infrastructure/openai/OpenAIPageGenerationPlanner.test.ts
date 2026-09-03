@@ -5,11 +5,12 @@ import { OpenAIPageGenerationPlanner } from '../../../../src/infrastructure/open
 
 describe('OpenAIPageGenerationPlanner', () => {
   it('output_textを内部計画として返す', async () => {
+    const postJson = vi.fn().mockResolvedValue({
+      body: { output_text: 'panel flow plan' },
+      requestId: 'req-1',
+    });
     const client = {
-      postJson: vi.fn().mockResolvedValue({
-        body: { output_text: 'panel flow plan' },
-        requestId: 'req-1',
-      }),
+      postJson,
     } as unknown as OpenAIClient;
     const planner = new OpenAIPageGenerationPlanner(client);
 
@@ -29,6 +30,16 @@ describe('OpenAIPageGenerationPlanner', () => {
         max_output_tokens: expect.any(Number),
       }),
     );
+    const request = postJson.mock.calls[0]?.[1] as {
+      input: Array<{ content: Array<{ text: string }> }>;
+    };
+    const systemPrompt = request.input[0]?.content[0]?.text ?? '';
+    expect(systemPrompt).toContain('Treat the supplied page prompt and all of its locks as authoritative');
+    expect(systemPrompt).toContain('upper-right entry and numbered path generally right-to-left and downward');
+    expect(systemPrompt).toContain('frame map is authoritative for asymmetric or custom layouts');
+    expect(systemPrompt).toContain('authored dialogue positions');
+    expect(systemPrompt).toContain('vertical Japanese text direction');
+    expect(systemPrompt).toContain('Do not change authored action, composition, camera direction, dialogue, or speakers');
   });
 
   it('テキストが無い場合はConfigurationErrorを投げる', async () => {

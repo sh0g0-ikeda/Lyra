@@ -81,6 +81,18 @@ Generation and regeneration both create a new result from the current saved inpu
 A previous generated page image is not an implicit image reference. Confirmed entity
 reference images are explicit character-consistency inputs.
 
+Japanese manga page prompts follow the authored panel order as a reading-flow
+contract: start at the upper-right (or rightmost top) panel and follow the stored
+panel numbers generally right-to-left and downward toward the lower-left. Regular
+tiered layouts proceed right-to-left, then top-to-bottom; stored frame numbering and
+coordinates remain authoritative for asymmetric or custom layouts. Dialogue balloons
+and captions follow that reader-eye flow without overriding an authored line
+position. Japanese dialogue and narration baked into a generated image use vertical
+tategaki: characters run top-to-bottom and columns run right-to-left, without
+changing authored wording, role, position, action, composition, camera, or panel
+order. Image-model typography is best effort; deterministic balloon composition,
+when used, is the exact text-orientation path.
+
 Story-to-page autofill plans beat ownership across the complete episode before
 expanding the existing pages. Detail compilation uses adaptive, consecutive page
 packs sized by estimated structured-output cost; it must not use a fixed three-page

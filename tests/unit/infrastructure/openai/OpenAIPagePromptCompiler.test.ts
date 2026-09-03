@@ -30,7 +30,7 @@ describe('OpenAIPagePromptCompiler', () => {
         'Create a complete manga page with stable character references, exact panel order, and readable dialogue baked only where requested.',
       compilerProvider: 'openai',
       compilerModel: 'gpt-5.4-mini',
-      compilerPromptVersion: 'page_prompt_v2',
+      compilerPromptVersion: 'page_prompt_v4',
     });
 
     const request = requests[0];
@@ -42,6 +42,13 @@ describe('OpenAIPagePromptCompiler', () => {
     expect(systemPrompt).toContain('reference image mapping explicit');
     expect(systemPrompt).toContain('Output the final prompt in the same language that the brief uses');
     expect(systemPrompt).toContain('Preserve the exact wording, the exact speaker assignment');
+    expect(systemPrompt).toContain('panel 1 is the upper-right or rightmost top entry');
+    expect(systemPrompt).toContain('follow its numbered frame map generally right-to-left and downward');
+    expect(systemPrompt).toContain('frame map is authoritative for asymmetric or custom layouts');
+    expect(systemPrompt).toContain('explicit authored dialogue position is also a hard lock');
+    expect(systemPrompt).toContain('traditional vertical tategaki');
+    expect(systemPrompt).toContain('glyphs top-to-bottom and columns right-to-left');
+    expect(systemPrompt).toContain('Do not alter authored action, composition, or camera direction to fit text');
     expect(userPrompt).toContain('[TASK]');
     expect(userPrompt).not.toContain('Deterministic draft prompt:');
     expect(userPrompt).toContain('Write the final GPT Image 2 page-generation prompt now.');
