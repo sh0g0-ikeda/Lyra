@@ -112,6 +112,24 @@ describe('parseEnv', () => {
 
     expect(parsed.EPISODE_PAGE_PLAN_CONTINUITY_V3_ENABLED).toBe(false);
   });
+
+  it('episode OpenAI text profile は未設定時に legacy になる', () => {
+    const parsed = parseEnv({});
+
+    expect(parsed.OPENAI_EPISODE_TEXT_PROFILE).toBe('legacy');
+  });
+
+  it('episode OpenAI text profile は legacy と balanced_v1 を受け付ける', () => {
+    const legacy = parseEnv({ OPENAI_EPISODE_TEXT_PROFILE: 'legacy' });
+    const balanced = parseEnv({ OPENAI_EPISODE_TEXT_PROFILE: 'balanced_v1' });
+
+    expect(legacy.OPENAI_EPISODE_TEXT_PROFILE).toBe('legacy');
+    expect(balanced.OPENAI_EPISODE_TEXT_PROFILE).toBe('balanced_v1');
+  });
+
+  it('episode OpenAI text profile は未定義値を受け付けない', () => {
+    expect(() => parseEnv({ OPENAI_EPISODE_TEXT_PROFILE: 'gpt-5.6' })).toThrow();
+  });
 });
 
 const encryptionKey = Buffer.alloc(32, 7).toString('base64');

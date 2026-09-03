@@ -46,6 +46,7 @@ const envSchema = z.object({
   OPENAI_IMAGE_MODEL: z.string().min(1).default('gpt-image-2'),
   OPENAI_BASE_URL: z.string().url().default('https://api.openai.com/v1'),
   OPENAI_TIMEOUT_MS: z.coerce.number().int().min(1000).max(600000).default(300000),
+  OPENAI_EPISODE_TEXT_PROFILE: z.enum(['legacy', 'balanced_v1']).default('legacy'),
   LOCAL_IMAGE_FALLBACK_ENABLED: z.string().optional().transform((value) => value === 'true'),
   LLM_PAGE_PROMPT_COMPILER_ENABLED: z.string().optional().transform((value) => value === 'true'),
   LLM_ENTITY_REFERENCE_PROMPT_COMPILER_ENABLED: z.string().optional().transform((value) => value === 'true'),

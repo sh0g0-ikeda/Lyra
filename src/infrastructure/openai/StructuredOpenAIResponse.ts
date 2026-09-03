@@ -33,6 +33,8 @@ export type OpenAIInputContent =
   | { type: 'input_text'; text: string }
   | { type: 'input_image'; image_url: string };
 
+export type OpenAIReasoningEffort = 'none' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+
 export interface StructuredOpenAIRequest<T> {
   client: OpenAIClient;
   model: string;
@@ -45,13 +47,14 @@ export interface StructuredOpenAIRequest<T> {
     role: 'system' | 'user' | 'assistant';
     content: OpenAIInputContent[];
   }>;
+  reasoningEffort?: OpenAIReasoningEffort;
   sanitize?: (value: unknown) => unknown;
 }
 
 export async function requestStructuredOpenAIResponse<T>(
   options: StructuredOpenAIRequest<T>,
 ): Promise<T> {
-  const response = await options.client.postJson<OpenAICompilerResponse>('/responses', {
+  const requestBody: Record<string, unknown> = {
     model: options.model,
     max_output_tokens: options.maxOutputTokens,
     text: {
@@ -63,7 +66,12 @@ export async function requestStructuredOpenAIResponse<T>(
       },
     },
     input: options.input,
-  });
+  };
+  if (options.reasoningEffort !== undefined) {
+    requestBody.reasoning = { effort: options.reasoningEffort };
+  }
+
+  const response = await options.client.postJson<OpenAICompilerResponse>('/responses', requestBody);
 
   const responseStateFailure = inspectStructuredResponseState(
     response.body,

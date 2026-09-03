@@ -100,7 +100,10 @@ describe('OpenAIEpisodePlanAuditCompiler', () => {
     expect(input[0]?.content[0]?.text).toContain(
       'Every field named in changed_fields must have a corresponding patch value',
     );
-    expect(request?.max_output_tokens).toBeGreaterThanOrEqual(10_000);
+    expect(result.compilerModel).toBe('gpt-5');
+    expect(request?.model).toBe('gpt-5');
+    expect(request?.max_output_tokens).toBe(20_000);
+    expect(request).not.toHaveProperty('reasoning');
     expect(text.format).toMatchObject({ type: 'json_schema', strict: true });
 
     const rootProperties = readObject(text.format.schema.properties);
@@ -167,7 +170,10 @@ describe('OpenAIEpisodePlanAuditCompiler', () => {
       },
     } as unknown as OpenAIClient;
 
-    const compiler = new OpenAIEpisodePlanAuditCompiler(client);
+    const compiler = new OpenAIEpisodePlanAuditCompiler(client, {
+      model: 'gpt-5.6-terra',
+      reasoningEffort: 'medium',
+    });
     const result = await compiler.auditPlan({
       compilerBrief: '[EPISODE DRAFT]\nPage 1',
       language: 'ja',
@@ -178,10 +184,18 @@ describe('OpenAIEpisodePlanAuditCompiler', () => {
     });
 
     expect(result.audit.accepted).toBe(true);
+    expect(result.compilerModel).toBe('gpt-5.6-terra');
     expect(requests).toHaveLength(2);
     expect(beforeRetryCount).toBe(1);
     expect(requests[0]?.input).toEqual(requests[1]?.input);
     expect(requests[0]?.text).toEqual(requests[1]?.text);
+    for (const request of requests) {
+      expect(request).toMatchObject({
+        model: 'gpt-5.6-terra',
+        max_output_tokens: 20_000,
+        reasoning: { effort: 'medium' },
+      });
+    }
   });
 
   it('監査再試行前に停止された場合は二回目の外部APIを呼ばない', async () => {

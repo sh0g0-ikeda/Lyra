@@ -156,6 +156,56 @@ describe('OpenAIPageEpisodePlanCompiler', () => {
     expect(schema.properties.pages.items.properties.panels.items.properties.entities.anyOf[0]?.maxItems).toBe(20);
     expect(userPrompt).toContain('[CHAPTER ARC]');
     expect(userPrompt).toContain('[CURRENT PAGES]');
+    expect(request.model).toBe('gpt-5');
+    expect(request.max_output_tokens).toBe(24_000);
+    expect(request).not.toHaveProperty('reasoning');
+  });
+
+  it('target profile では初回と再コンパイルの両方で Luna と medium reasoning を使う', async () => {
+    const requests: Array<Record<string, unknown>> = [];
+    const client = {
+      postJson: async (_path: string, payload: Record<string, unknown>) => {
+        requests.push(payload);
+        return {
+          body: {
+            output_text: JSON.stringify({
+              pages: [
+                {
+                  page_id: '11111111-1111-4111-8111-111111111111',
+                  page_number: 1,
+                  panels: [{ order: 1 }],
+                },
+              ],
+            }),
+          },
+          requestId: `req-target-detail-${requests.length}`,
+        };
+      },
+    } as unknown as OpenAIClient;
+    const compiler = new OpenAIPageEpisodePlanCompiler(client, {
+      model: 'gpt-5.6-luna',
+      reasoningEffort: 'medium',
+    });
+
+    const initial = await compiler.compilePlan({
+      compilerBrief: '[TASK]\nInitial page detail compilation.',
+      language: 'en',
+    });
+    const recompilation = await compiler.compilePlan({
+      compilerBrief: '[TASK]\nRepair the selected page detail.',
+      language: 'en',
+    });
+
+    expect(initial.compilerModel).toBe('gpt-5.6-luna');
+    expect(recompilation.compilerModel).toBe('gpt-5.6-luna');
+    expect(requests).toHaveLength(2);
+    for (const request of requests) {
+      expect(request).toMatchObject({
+        model: 'gpt-5.6-luna',
+        max_output_tokens: 24_000,
+        reasoning: { effort: 'medium' },
+      });
+    }
   });
 
   it('JSON の前後に余計な文章があっても最初の JSON object を読める', async () => {

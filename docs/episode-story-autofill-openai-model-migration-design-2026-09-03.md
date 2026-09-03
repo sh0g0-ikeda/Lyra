@@ -2,7 +2,31 @@
 
 Date: 2026-09-03
 
-Status: implementation-ready design; no model change has been applied yet
+Status: phase 1 model routing implemented; evaluation, telemetry, and production profile promotion pending
+
+Implementation baseline update (2026-09-03):
+
+- The implementation branch is based on `fix/story-generation-atomic-flow` at
+  `a0b612d`, because the primary worktree contains unrelated user changes and the
+  autofill/atomic-persistence work has not yet landed on `main`.
+- The user explicitly confirmed that the beat/outline output ceiling remains
+  **16,000**. The migration changes model selection and reasoning effort only; it
+  does not increase any output-token ceiling.
+- The current baseline already separates `episode_page_skeleton` from story
+  application. Its worker no longer calls `PageService.autofillEpisodeFromStory`,
+  so no second legacy `PageService` is required and skeleton behavior remains
+  unchanged by construction.
+- Affected layers are Infrastructure, configuration, and composition. Routes,
+  public API/SQS schemas, persistence, prompts,
+  Web, Mobile, billing, and image generation remain out of scope.
+- The request contract adds only the typed optional
+  `reasoning: { effort: "medium" }` member for the selected GPT-5.6 profile.
+  Existing strict schema validation, safe errors, timeout/retry behavior,
+  cancellation, and atomic persistence remain mandatory.
+- Tests are written first for profile resolution, request payloads, unchanged
+  16,000/24,000/20,000 ceilings, and composition wiring. Terra agents performed
+  bounded read-only mapping and disjoint test/implementation work; Sol owns the
+  design, integration, security review, and final verification.
 
 ## 1. Decision
 
@@ -10,14 +34,9 @@ The first model migration is limited to the asynchronous
 `episode_story_autofill` workflow exposed by
 `POST /api/episodes/:id/autofill-pages-from-story`.
 
-There is one required wiring isolation. The worker currently shares the same
-`PageService` and episode compiler instances with the story-plan phase of
-`episode_page_skeleton` when `apply_story_plan=true`. That skeleton path does not
-pass the autofill execution control into `PageService` and can use a sequential
-persistence path under current flag defaults. Changing it incidentally would
-expand both risk and evaluation scope. The implementation therefore constructs a
-second, legacy-profile `PageService` for that existing skeleton path. Its route,
-job flow, behavior, and `gpt-5` model remain unchanged.
+The current worker already keeps `episode_page_skeleton` and story application as
+separate jobs. The skeleton path does not construct or call the episode plan
+compilers, so this migration leaves it unchanged without additional routing.
 
 The target profile is:
 
@@ -142,7 +161,7 @@ limits are retained to isolate the migration:
 
 | Stage | Existing maximum |
 |---|---:|
-| Beat plan and outline | 32,000 |
+| Beat plan and outline | 16,000 |
 | Detail page plan | 24,000 |
 | Audit | 20,000 |
 
@@ -215,33 +234,29 @@ do not silently alter `balanced_v1`.
 
 Add `src/infrastructure/openai/EpisodeOpenAIModelProfile.ts` containing:
 
-- the narrow `OpenAIReasoningEffort` union;
 - the typed beat/detail/audit request-profile shape;
 - the immutable `legacy` and `balanced_v1` registries;
 - a pure resolver for the validated profile key.
 
-Add `src/infrastructure/openai/EpisodeOpenAIRequestTelemetry.ts` containing the
-bounded trace/usage types and a structured-log sink. The sink accepts only the
-allowlist below and is never passed prompt or output content.
+The narrow `OpenAIReasoningEffort` union lives beside the structured Responses
+request contract. A bounded trace/usage module remains a pre-production follow-up
+described below; it is deliberately excluded from the phase 1 model-only patch.
 
 Model IDs belong here because they are provider adapter configuration. Existing
 prompt versions and output budgets stay in Domain constants.
 
 ### Existing backend files
 
-The implementation is limited to:
+The phase 1 implementation is limited to:
 
 | File or area | Change |
 |---|---|
 | `src/lib/env.ts`, `.env.example` | Add the two-value profile enum with the safe `legacy` default. |
-| `src/infrastructure/openai/StructuredOpenAIResponse.ts` | Accept optional typed `reasoningEffort` and trace observer; serialize `reasoning: { effort }` only when present; send sanitized timing/request-ID/usage metadata to the observer without changing validated output or error classification. |
-| `OpenAIEpisodeBeatPlanCompiler.ts` | Require the resolved beat profile and use its model/effort for both outline and beat requests. |
-| `OpenAIPageEpisodePlanCompiler.ts` | Require the resolved detail profile and use its model/effort for initial packs and existing repair recompilation. |
-| `OpenAIEpisodePlanAuditCompiler.ts` | Require the resolved audit profile and use the same model/effort on both existing attempts and both semantic passes. |
-| the three internal compiler input ports and `PageService.autofillEpisodeFromStory` | Carry optional trace correlation and attempt/pass labels only; do not add a decision branch or change result types. |
-| `EpisodeStoryAutofillWorkerService.ts` | Start the trace with the existing job/episode identifiers and retain the current execution and settlement order. |
-| `src/app.ts`, `worker/dependencies.ts` | Call one pure compiler-profile factory shared by both composition roots. In worker composition, build the selected-profile `PageService` for autofill and a legacy-profile instance for the existing skeleton story-plan path; do not add a model branch inside either workflow. |
-| startup logging | Emit the profile key, task/deployment revision, explicit model IDs, and efforts once per process, without prompts, story text, provider output, or secrets. |
+| `src/infrastructure/openai/StructuredOpenAIResponse.ts` | Accept optional typed `reasoningEffort`; serialize `reasoning: { effort }` only when present, without changing validated output or error classification. |
+| `OpenAIEpisodeBeatPlanCompiler.ts` | Accept the resolved beat profile and use its model/effort for the beat request. |
+| `OpenAIPageEpisodePlanCompiler.ts` | Accept the resolved detail profile and use its model/effort for initial packs and existing repair recompilation. |
+| `OpenAIEpisodePlanAuditCompiler.ts` | Accept the resolved audit profile and use the same model/effort on retries and both semantic passes. |
+| `src/app.ts`, `worker/dependencies.ts` | Resolve the same profile registry in both composition roots and inject the corresponding stage into the existing three adapters. The already-separated skeleton workflow receives no episode compiler. |
 
 Keep the three current episode `*_OPENAI_MODEL` constants as the source of the
 `legacy` profile in this migration. Removing them is an unrelated cleanup. No
@@ -252,22 +267,24 @@ other model constant is touched.
 - `apps/web/**` and `apps/mobile/src/**`;
 - public routes and request/response validators;
 - SQS queue message schemas;
-- `PageService` orchestration and business Service-port results; only optional,
-  non-controlling trace context is threaded for telemetry;
+- `PageService` orchestration and business Service-port results;
 - repositories, migrations, and database invariants;
 - prompts, schema objects, sanitizers, and repair logic;
 - `OpenAIClient` timeout and retry classification;
 - image generators and `OPENAI_IMAGE_MODEL`.
-- the page-skeleton model and its optional story-plan path, which remain pinned to
-  the legacy episode profile in worker composition.
+- the already-separated page-skeleton workflow, which does not invoke these
+  episode compilers.
 
 `compiler_model` remains a nullable string in the existing job/API contract. The
 autofill result records the detail compiler model at top level. A target result
 therefore records `gpt-5.6-luna`, while historical `gpt-5` values remain valid.
 
-### Observability-only compatibility exception
+### Required observability follow-up before production promotion
 
-Startup logging alone cannot attribute an execution after a rolling deploy. Thread
+Phase 1 does not add request telemetry because doing so would change Worker,
+Service, and compiler-port call contracts rather than only provider configuration.
+Before promoting `balanced_v1` in production, startup logging alone cannot
+attribute an execution after a rolling deploy. Thread
 an optional internal trace context through `EpisodeStoryAutofillWorkerService`,
 the existing `PageService.autofillEpisodeFromStory` call, and the three compiler inputs.
 It contains only job ID, deployment revision, and profile key and must never affect
@@ -309,12 +326,11 @@ The existing public progress normalization does not expose every internal
 planning/audit stage. That is existing behavior and is deliberately not repaired
 inside this migration.
 
-Repository review also found a pre-existing contract gap: the
-`episode_page_skeleton` `apply_story_plan=true` path does not pass the autofill
-execution control to `PageService`, so it can persist story-plan fields
-sequentially under current flag defaults. This migration neither hides nor repairs
-that unrelated behavior; it pins the path to `legacy` and requires a separate
-atomicity/cancellation design before extending the GPT-5.6 profile to it.
+The prior design snapshot identified a skeleton/story-plan coupling gap. The
+current implementation baseline has since removed that coupling: legacy
+`apply_story_plan` input is ignored by the skeleton worker, and applying the story
+is an explicit `episode_story_autofill` job with its existing cancellation and
+atomic-persistence gates.
 
 ## 8. TDD plan
 
@@ -331,7 +347,7 @@ is the AGENTS.md TDD exception; the later implementation is not.
 2. `OpenAIEpisodeBeatPlanCompiler.test.ts`
    - target outline and beat requests use Terra/medium;
    - legacy requests use GPT-5 and omit reasoning;
-   - both keep 32,000 and the exact strict schemas;
+   - both keep 16,000 and the exact strict schemas;
    - returned compiler metadata uses the selected model.
 3. `OpenAIPageEpisodePlanCompiler.test.ts`
    - target initial and repair calls use Luna/medium;
@@ -348,14 +364,14 @@ is the AGENTS.md TDD exception; the later implementation is not.
   other value fails before startup.
 - a pure profile-registry test fixes all six model/effort pairs and forbids the
   bare `gpt-5.6` identifier;
-- a pure compiler-profile factory used by both API and worker is unit-tested to
-  prove each three-adapter set receives one resolved profile. Worker composition
-  must give autofill the configured profile and skeleton story planning the
-  `legacy` profile. Source-string assertions are not accepted as the primary
-  wiring proof;
-- telemetry tests accept every allowlisted metric, omit unavailable usage, and
-  prove prompts, model output, raw errors, credentials, and email cannot enter the
-  event type or serialized log.
+- the pure profile-registry test and adapter request tests are the primary wiring
+  proof; a supplemental composition-source test fixes detail/beat/audit stage
+  injection in both composition roots. Worker composition must give autofill the
+  configured profile while the separated skeleton worker remains free of episode
+  compiler calls;
+- the later observability change adds telemetry tests for every allowlisted
+  metric, unavailable usage, and exclusion of prompts, model output, raw errors,
+  credentials, and email from event types and serialized logs.
 
 ### Workflow regression tests
 
@@ -365,11 +381,9 @@ is the AGENTS.md TDD exception; the later implementation is not.
 - the existing `EpisodeStoryAutofillCancellation.test.ts` keeps
   completed/failed/cancelled settlement, cancellation checkpoints, trace
   correlation, and safe error handling unchanged;
-- `EpisodePageSkeletonWorkerService.test.ts` proves both target-configured and
-  legacy-configured worker composition keep `apply_story_plan=true` on the legacy
-  episode profile and preserve the existing skeleton creation, nested result
-  metadata, settlement, and rollback behavior; `false` remains free of episode
-  compiler calls.
+- `EpisodePageSkeletonWorkerService.test.ts` preserves the existing contract that
+  legacy `apply_story_plan` input is ignored and the skeleton job never calls an
+  episode plan compiler.
 - `episodeStoryAutofillDispatch.test.ts` preserves queue dispatch and normalized
   job status/progress behavior;
 - `EpisodeStoryAutofillExecutionRepository.test.ts` and
@@ -544,9 +558,8 @@ pinned price-table timestamp.
    revision, corpus hash, feature flags, and profile key.
 5. Set staging API and worker to `balanced_v1`; run
    `episode_story_autofill` through the real queue, cancellation checkpoints,
-   audit, top-level result metadata, and atomic commit. Separately run a skeleton
-   regression with `apply_story_plan=true` and verify its nested result still names
-   `gpt-5`.
+   audit, top-level result metadata, and atomic commit. Separately run the existing
+   skeleton regression and verify that it does not invoke story application.
 6. During a low-volume production window, roll API and generation-worker task
    definitions to `balanced_v1`. Old and new tasks may overlap during deployment;
    identify every attempt by its job ID, task revision, and profile telemetry. The
@@ -601,16 +614,14 @@ npm run mobile:export:ios
 
 1. Add failing request/profile/env tests.
 2. Add the versioned profile registry and environment validation.
-3. Extend only the structured Responses helper with optional reasoning effort and
-   bounded observational telemetry.
-4. Inject the one resolved profile from the shared pure factory into the three
-   existing adapters in both composition roots, while constructing the skeleton
-   story-plan service with `legacy` adapters.
-5. Thread the non-controlling trace context from the autofill job entry point and
-   add the evaluator-only instrumented transport and versioned metric schema.
-6. Update the three adapter tests and add workflow/contract/telemetry regression
-   coverage.
-7. Run focused tests, then every named verification command above.
+3. Extend only the structured Responses helper with optional reasoning effort.
+4. Inject the resolved profile into the three existing adapters in both
+   composition roots; leave the already-separated skeleton worker unchanged.
+5. Update the three adapter tests and add workflow/contract regression coverage.
+6. Run focused tests, then the verification commands relevant to the backend-only
+   patch.
+7. In a separate pre-production observability step, thread non-controlling trace
+   context and add the evaluator-only instrumented transport and metric schema.
 8. Build the fresh legacy baseline, run the target evaluation, and publish the
    measured four-dimension comparison before any production profile flip.
 

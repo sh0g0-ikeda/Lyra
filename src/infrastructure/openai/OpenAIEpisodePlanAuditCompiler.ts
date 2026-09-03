@@ -26,12 +26,20 @@ import { OpenAIClient } from './OpenAIClient.js';
 import {
   requestStructuredOpenAIResponse,
   StructuredOpenAIResponseError,
+  type OpenAIReasoningEffort,
 } from './StructuredOpenAIResponse.js';
+
+interface OpenAIEpisodePlanAuditCompilerOptions {
+  model: string;
+  reasoningEffort?: OpenAIReasoningEffort;
+}
 
 export class OpenAIEpisodePlanAuditCompiler implements EpisodePlanAuditCompilerPort {
   public constructor(
     private readonly client: OpenAIClient,
-    private readonly model = EPISODE_PLAN_AUDIT_COMPILER_OPENAI_MODEL,
+    private readonly options: OpenAIEpisodePlanAuditCompilerOptions = {
+      model: EPISODE_PLAN_AUDIT_COMPILER_OPENAI_MODEL,
+    },
   ) {}
 
   public async auditPlan(
@@ -57,7 +65,8 @@ export class OpenAIEpisodePlanAuditCompiler implements EpisodePlanAuditCompilerP
       try {
         validated = await requestStructuredOpenAIResponse({
           client: this.client,
-          model: this.model,
+          model: this.options.model,
+          reasoningEffort: this.options.reasoningEffort,
           maxOutputTokens: EPISODE_PLAN_AUDIT_COMPILER_MAX_TOKENS,
           schemaName: 'episode_plan_audit',
           jsonSchema: buildEpisodePlanAuditJsonSchema(allowedPageIds),
@@ -103,7 +112,7 @@ export class OpenAIEpisodePlanAuditCompiler implements EpisodePlanAuditCompilerP
         panelRepairs: validated.panel_repairs.map(mapPanelRepair),
       },
       compilerProvider: 'openai',
-      compilerModel: this.model,
+      compilerModel: this.options.model,
       compilerPromptVersion: EPISODE_PLAN_AUDIT_COMPILER_VERSION,
     };
   }

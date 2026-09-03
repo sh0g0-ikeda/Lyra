@@ -12,12 +12,22 @@ import type {
   EpisodeBeatPlanCompilerPort,
 } from '../../services/page/EpisodeBeatPlanCompiler.js';
 import { OpenAIClient } from './OpenAIClient.js';
-import { requestStructuredOpenAIResponse } from './StructuredOpenAIResponse.js';
+import {
+  requestStructuredOpenAIResponse,
+  type OpenAIReasoningEffort,
+} from './StructuredOpenAIResponse.js';
+
+interface OpenAIEpisodeBeatPlanCompilerOptions {
+  model: string;
+  reasoningEffort?: OpenAIReasoningEffort;
+}
 
 export class OpenAIEpisodeBeatPlanCompiler implements EpisodeBeatPlanCompilerPort {
   public constructor(
     private readonly client: OpenAIClient,
-    private readonly model = EPISODE_BEAT_PLAN_COMPILER_OPENAI_MODEL,
+    private readonly options: OpenAIEpisodeBeatPlanCompilerOptions = {
+      model: EPISODE_BEAT_PLAN_COMPILER_OPENAI_MODEL,
+    },
   ) {}
 
   public async compileBeatPlan(
@@ -25,7 +35,8 @@ export class OpenAIEpisodeBeatPlanCompiler implements EpisodeBeatPlanCompilerPor
   ): Promise<CompiledEpisodeBeatPlan> {
     const validated = await requestStructuredOpenAIResponse({
       client: this.client,
-      model: this.model,
+      model: this.options.model,
+      reasoningEffort: this.options.reasoningEffort,
       maxOutputTokens: EPISODE_BEAT_PLAN_COMPILER_MAX_TOKENS,
       schemaName: 'episode_beat_plan',
       jsonSchema: episodeBeatPlanJsonSchema,
@@ -57,7 +68,7 @@ export class OpenAIEpisodeBeatPlanCompiler implements EpisodeBeatPlanCompilerPor
         })),
       },
       compilerProvider: 'openai',
-      compilerModel: this.model,
+      compilerModel: this.options.model,
       compilerPromptVersion: EPISODE_BEAT_PLAN_COMPILER_VERSION,
     };
   }
