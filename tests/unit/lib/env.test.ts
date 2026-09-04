@@ -24,6 +24,15 @@ describe('parseEnv', () => {
     expect(parsed.GENERATION_ENABLED).toBe(true);
   });
 
+  it('episode export は未設定時に安全側で無効になる', () => {
+    expect(parseEnv({}).EPISODE_EXPORT_ENABLED).toBe(false);
+  });
+
+  it('episode export は true が明示された場合だけ有効になる', () => {
+    expect(parseEnv({ EPISODE_EXPORT_ENABLED: 'true' }).EPISODE_EXPORT_ENABLED).toBe(true);
+    expect(parseEnv({ EPISODE_EXPORT_ENABLED: 'false' }).EPISODE_EXPORT_ENABLED).toBe(false);
+  });
+
   it('development では GENERATION_ENABLED 未設定時に従来どおり生成を有効化する', () => {
     process.env.NODE_ENV = 'development';
 
@@ -111,6 +120,24 @@ describe('parseEnv', () => {
     const parsed = parseEnv({ EPISODE_PAGE_PLAN_CONTINUITY_V3_ENABLED: 'false' });
 
     expect(parsed.EPISODE_PAGE_PLAN_CONTINUITY_V3_ENABLED).toBe(false);
+  });
+
+  it('episode OpenAI text profile は未設定時に legacy になる', () => {
+    const parsed = parseEnv({});
+
+    expect(parsed.OPENAI_EPISODE_TEXT_PROFILE).toBe('legacy');
+  });
+
+  it('episode OpenAI text profile は legacy と balanced_v1 を受け付ける', () => {
+    const legacy = parseEnv({ OPENAI_EPISODE_TEXT_PROFILE: 'legacy' });
+    const balanced = parseEnv({ OPENAI_EPISODE_TEXT_PROFILE: 'balanced_v1' });
+
+    expect(legacy.OPENAI_EPISODE_TEXT_PROFILE).toBe('legacy');
+    expect(balanced.OPENAI_EPISODE_TEXT_PROFILE).toBe('balanced_v1');
+  });
+
+  it('episode OpenAI text profile は未定義値を受け付けない', () => {
+    expect(() => parseEnv({ OPENAI_EPISODE_TEXT_PROFILE: 'gpt-5.6' })).toThrow();
   });
 });
 

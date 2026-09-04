@@ -433,6 +433,90 @@ test('renders the console with mocked api responses', async ({ page }) => {
   await expect(page.getByRole('textbox', { name: 'Situation' })).toHaveValue('Mizuki enters the fort.');
 });
 
+test('ページ一覧は署名付きCDN画像を使いAPI画像書き出しを重複実行しない', async ({ page }) => {
+  await seedEnglishUi(page);
+  await seedAuthenticatedSession(page);
+
+  let cdnImageRequestCount = 0;
+  let exportImageRequestCount = 0;
+  const imageBody = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Zl1sAAAAASUVORK5CYII=',
+    'base64',
+  );
+
+  await page.route(pageRecord.generated_image.cdn_url, async (route) => {
+    cdnImageRequestCount += 1;
+    await route.fulfill({ body: imageBody, contentType: 'image/png', status: 200 });
+  });
+  await page.route('**/api/**', async (route) => {
+    const pathname = new URL(route.request().url()).pathname;
+    if (pathname === `/api/pages/${pageRecord.id}/export-image`) {
+      exportImageRequestCount += 1;
+      await route.fulfill({ body: imageBody, contentType: 'image/png', status: 200 });
+      return;
+    }
+    await mockApi(route);
+  });
+
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Pages', exact: true }).click();
+
+  await expect(page.getByRole('button', { name: 'Enlarge page 1 image', exact: true })).toBeVisible();
+  await expect.poll(() => cdnImageRequestCount).toBe(1);
+  expect(exportImageRequestCount).toBe(1);
+});
+
+test('ページ一覧の署名付きCDN画像が失敗した場合は認証済みAPIへフォールバックする', async ({ page }) => {
+  await seedEnglishUi(page);
+  await seedAuthenticatedSession(page);
+
+  const fallbackPageRecord = {
+    ...pageRecord,
+    id: 'page-2',
+    page_number: 2,
+    generated_image: {
+      ...pageRecord.generated_image,
+      cdn_url: 'https://cdn.example.test/page-2.png',
+      s3_key: 'session/user-1/pages/page-2/job-2.png',
+    },
+  };
+  let fallbackExportRequestCount = 0;
+  const imageBody = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Zl1sAAAAASUVORK5CYII=',
+    'base64',
+  );
+
+  await page.route(pageRecord.generated_image.cdn_url, async (route) => {
+    await route.fulfill({ body: imageBody, contentType: 'image/png', status: 200 });
+  });
+  await page.route(fallbackPageRecord.generated_image.cdn_url, async (route) => {
+    await route.fulfill({ status: 403 });
+  });
+  await page.route('**/api/**', async (route) => {
+    const pathname = new URL(route.request().url()).pathname;
+    if (pathname === `/api/episodes/${episode.id}/pages`) {
+      await route.fulfill({
+        body: JSON.stringify({ pages: [pageRecord, fallbackPageRecord] }),
+        contentType: 'application/json',
+        status: 200,
+      });
+      return;
+    }
+    if (pathname === `/api/pages/${fallbackPageRecord.id}/export-image`) {
+      fallbackExportRequestCount += 1;
+      await route.fulfill({ body: imageBody, contentType: 'image/png', status: 200 });
+      return;
+    }
+    await mockApi(route);
+  });
+
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Pages', exact: true }).click();
+
+  await expect.poll(() => fallbackExportRequestCount).toBe(1);
+  await expect(page.getByRole('button', { name: 'Enlarge page 2 image', exact: true })).toBeVisible();
+});
+
 test('話を保存すると表示中レコードの更新時刻を送る', async ({ page }) => {
   await seedEnglishUi(page);
   await seedAuthenticatedSession(page);

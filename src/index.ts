@@ -13,6 +13,10 @@ import { PageGenerationRecoveryService } from './services/page/PageGenerationRec
 import { OrganizationService } from './services/organization/OrganizationService.js';
 import { db } from './lib/db.js';
 import { env } from './lib/env.js';
+import {
+  runEpisodeExportRuntimeWhenEnabled,
+  type EnabledEpisodeExportRuntimeConfig,
+} from './lib/episodeExportRuntime.js';
 import { runPendingMigrations } from './lib/migrations.js';
 import { assertProductionRuntimeConfig } from './lib/runtimeGuards.js';
 import { sanitizePersistedErrorMessage } from './lib/errorSanitizer.js';
@@ -40,7 +44,7 @@ async function main(): Promise<void> {
   }
 
   const organizationService = new OrganizationService(new PostgresOrganizationRepository(db, db));
-  startExportMaintenance();
+  runEpisodeExportRuntimeWhenEnabled(env, startExportMaintenance);
   startPushNotificationMaintenance();
 
   try {
@@ -125,18 +129,15 @@ function startPushNotificationMaintenance(): void {
   ).unref();
 }
 
-function startExportMaintenance(): void {
-  if (env.S3_BUCKET_IMAGES === undefined || env.SQS_QUEUE_URL_GENERATION === undefined) {
-    return;
-  }
+function startExportMaintenance(runtimeConfig: EnabledEpisodeExportRuntimeConfig): void {
   const repository = new PostgresExportJobRepository(db, db);
   const storage = new S3ExportArtifactStorage(
     createPageImageStorageClient(env.AWS_REGION),
-    { bucketName: env.S3_BUCKET_IMAGES },
+    { bucketName: runtimeConfig.S3_BUCKET_IMAGES },
   );
   const queue = new SqsExportJobQueueAdapter(
     createGenerationQueueClient(env.AWS_REGION),
-    env.SQS_QUEUE_URL_GENERATION,
+    runtimeConfig.SQS_QUEUE_URL_GENERATION,
   );
   const outbox = new ExportOutboxDispatchService(repository, queue);
   const cleanup = new ExportArtifactCleanupService(repository, storage);

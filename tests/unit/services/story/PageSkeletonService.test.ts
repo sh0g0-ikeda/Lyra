@@ -296,6 +296,12 @@ describe('PageSkeletonService', () => {
       'Treat the episode draft as the primary source of truth for page content.',
     );
     expect(client.lastRequest?.systemPrompt).toContain('do not require scenes to build the skeleton');
+    expect(client.lastRequest?.systemPrompt).toContain(
+      'follow the selected template panel numbers generally right-to-left and downward',
+    );
+    expect(client.lastRequest?.systemPrompt).toContain(
+      'the selected template numbering is authoritative for asymmetric layouts',
+    );
     expect(client.lastRequest?.systemPrompt).toContain('Return exactly 2 pages');
     expect(client.lastRequest?.userPrompt).toContain('Scene 1: Rooftop / night / tense');
     expect(client.lastRequest?.userPrompt).toContain('Chapter consistency note: Chapter 1 / Set the stakes');

@@ -10,6 +10,7 @@ import type {
   EntityReferencePromptCompilerPort,
 } from '../../services/entity/EntityReferencePromptCompiler.js';
 import { OpenAIClient } from './OpenAIClient.js';
+import { OPENAI_IMAGE_PROMPT_PERSON_GUIDANCE } from './OpenAIImagePromptGuidance.js';
 
 interface OpenAICompilerResponse {
   output_text?: unknown;
@@ -71,6 +72,7 @@ function buildSystemPrompt(): string {
     'Treat the style reference as rendering treatment only. Do not let it override the authored face shape, eye shape, hair silhouette, body proportions, or outfit silhouette.',
     'Prioritize: 1. named style constraint and style anchors, 2. instantly readable character identity, 3. stable silhouette, 4. distinctive face and hair anchors, 5. outfit readability, 6. neutral full-body reference framing.',
     'Convert abstract personality traits into visible design cues, but do not add action, props, weapons, dramatic background, camera effects, text, or extra characters unless explicitly requested.',
+    ...OPENAI_IMAGE_PROMPT_PERSON_GUIDANCE,
     'Preserve all hard constraints exactly.',
     'The subject must be centered, single, fully visible from head to toe, with both hands and both feet visible, on a plain neutral background.',
     'Use clear concrete visual language. Avoid vague praise words like beautiful, cool, high-quality, masterpiece, cinematic, or stunning.',

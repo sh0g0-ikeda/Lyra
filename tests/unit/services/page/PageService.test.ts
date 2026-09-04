@@ -566,7 +566,7 @@ class FakeStyleReferenceCompiler implements StyleReferenceCompilerPort {
       },
       compilerProvider: 'openai',
       compilerModel: 'gpt-5.4-mini',
-      compilerPromptVersion: 'style_ref_v3',
+      compilerPromptVersion: 'style_ref_v4',
       compiledAt: '2026-05-28T00:00:00.000Z',
     };
   }
@@ -647,7 +647,7 @@ describe('PageService', () => {
         compiled_brief: expect.stringContaining('AKIRA'),
         anchors: expect.any(Object),
         compiler_provider: 'openai',
-        compiler_prompt_version: 'style_ref_v3',
+        compiler_prompt_version: 'style_ref_v4',
       },
     });
     const styleReference = (page.layoutConfig as { style_reference?: Record<string, unknown> }).style_reference;
@@ -696,6 +696,12 @@ describe('PageService', () => {
     expect(compiler.lastInput?.compilerBrief).toContain('[OUTPUT CONTRACT]');
     expect(compiler.lastInput?.compilerBrief).toContain('matching the supplied page_autofill schema');
     expect(compiler.lastInput?.compilerBrief).toContain('[CURRENT PANELS]');
+    expect(compiler.lastInput?.compilerBrief).toContain(
+      'panel 1 is the upper-right or rightmost top entry',
+    );
+    expect(compiler.lastInput?.compilerBrief).toContain(
+      'saved layout numbering is authoritative for asymmetric layouts',
+    );
     expect(compiler.lastInput?.compilerBrief).not.toContain('[OUTPUT JSON SHAPE]');
     expect(compiler.lastInput?.compilerBrief).not.toContain('[ALLOWED ENUMS]');
     const updatedPanel = panelRepository.updatedPanels[0];

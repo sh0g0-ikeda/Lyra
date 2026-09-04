@@ -7,6 +7,41 @@ import {
 } from '../../../../src/infrastructure/openai/StructuredOpenAIResponse.js';
 
 describe('requestStructuredOpenAIResponse', () => {
+  it('reasoning effort を指定した場合のみ Responses body に正確に含める', async () => {
+    const requests: Array<Record<string, unknown>> = [];
+    const client = {
+      postJson: async (_path: string, payload: Record<string, unknown>) => {
+        requests.push(payload);
+        return {
+          body: { status: 'completed', output_text: '{"ok":true}' },
+          requestId: 'req-reasoning',
+        };
+      },
+    } as unknown as OpenAIClient;
+    const request = {
+      client,
+      model: 'gpt-test',
+      maxOutputTokens: 100,
+      schemaName: 'test_schema',
+      jsonSchema: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['ok'],
+        properties: { ok: { type: 'boolean' } },
+      },
+      responseSchema: z.object({ ok: z.boolean() }),
+      errorLabel: 'OpenAI test compiler',
+      input: [{ role: 'user' as const, content: [{ type: 'input_text' as const, text: 'Return JSON.' }] }],
+    };
+
+    await requestStructuredOpenAIResponse({ ...request, reasoningEffort: 'medium' });
+    await requestStructuredOpenAIResponse(request);
+
+    expect(requests).toHaveLength(2);
+    expect(requests[0]?.reasoning).toEqual({ effort: 'medium' });
+    expect(Object.hasOwn(requests[1] ?? {}, 'reasoning')).toBe(false);
+  });
+
   it('invalid JSON のエラーに provider 出力本文を含めない', async () => {
     const client = {
       postJson: async () => ({

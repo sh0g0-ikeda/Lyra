@@ -6326,6 +6326,7 @@ function StudioShell(props: {
                                     `${translateUiString(uiLanguage, 'Page')} ${page.page_number}`,
                                   ),
                               }}
+                              directUrl={page.generated_image.cdn_url}
                               loadImage={() => api.exportPageImage(page.id, activeOrganizationId)}
                               loading="lazy"
                               onClick={() => setSelectedPageId(page.id)}
@@ -7077,6 +7078,7 @@ function AuthenticatedImage(props: {
   };
   alt?: string;
   className?: string;
+  directUrl?: string | null;
   enabled?: boolean;
   errorLabel?: string;
   loadImage: () => Promise<BlobResponse>;
@@ -7086,13 +7088,16 @@ function AuthenticatedImage(props: {
   placeholderClassName?: string;
   queryKey: readonly unknown[];
 }) {
+  const directUrl = props.directUrl?.trim() ?? '';
+  const [failedDirectUrl, setFailedDirectUrl] = useState<string | null>(null);
+  const useDirectUrl = (props.enabled ?? true) && directUrl.length > 0 && failedDirectUrl !== directUrl;
   const imageQuery = useQuery({
     queryKey: props.queryKey,
     queryFn: async () => {
       const response = await props.loadImage();
       return response.blob;
     },
-    enabled: props.enabled ?? true,
+    enabled: (props.enabled ?? true) && !useDirectUrl,
     staleTime: 5 * 60 * 1000,
   });
   const [objectUrl, setObjectUrl] = useState<string | null>(null);
@@ -7111,7 +7116,9 @@ function AuthenticatedImage(props: {
     };
   }, [imageQuery.data]);
 
-  if (objectUrl === null) {
+  const imageUrl = useDirectUrl ? directUrl : objectUrl;
+
+  if (imageUrl === null) {
     const placeholderClassName = `${props.placeholderClassName ?? 'thumb-placeholder'} image-loading-placeholder`.trim();
     return (
       <div className={placeholderClassName}>
@@ -7130,14 +7137,15 @@ function AuthenticatedImage(props: {
       onClick={
         props.onClick === undefined
           ? undefined
-          : () => props.onClick?.(objectUrl)
+          : () => props.onClick?.(imageUrl)
       }
       onDoubleClick={
         props.onDoubleClick === undefined
           ? undefined
-          : () => props.onDoubleClick?.(objectUrl)
+          : () => props.onDoubleClick?.(imageUrl)
       }
-      src={objectUrl}
+      onError={useDirectUrl ? () => setFailedDirectUrl(directUrl) : undefined}
+      src={imageUrl}
     />
   );
 
@@ -7151,7 +7159,7 @@ function AuthenticatedImage(props: {
       <button
         aria-label={props.action.ariaLabel}
         className="image-enlarge-button"
-        onClick={() => props.action?.onClick(objectUrl)}
+        onClick={() => props.action?.onClick(imageUrl)}
         type="button"
       >
         <Maximize2 size={16} />

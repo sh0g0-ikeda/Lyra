@@ -27,7 +27,15 @@ export class OpenAIPageGenerationPlanner implements PageGenerationPlannerPort {
           content: [
             {
               type: 'input_text',
-              text: 'Create an internal manga page generation plan. Return only the plan text.',
+              text: [
+                'Create an internal manga page generation plan. Return only the plan text.',
+                'Treat the supplied page prompt and all of its locks as authoritative.',
+                'Preserve its upper-right entry and numbered path generally right-to-left and downward toward the lower-left.',
+                'The supplied frame map is authoritative for asymmetric or custom layouts; never mirror or reorder it.',
+                'Keep dialogue, narration, and SFX progression within all authored dialogue positions.',
+                'Preserve vertical Japanese text direction whenever the supplied prompt requires baked Japanese dialogue or narration.',
+                'Do not change authored action, composition, camera direction, dialogue, or speakers.',
+              ].join(' '),
             },
           ],
         },

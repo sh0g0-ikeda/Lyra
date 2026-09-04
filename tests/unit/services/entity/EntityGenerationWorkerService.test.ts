@@ -157,7 +157,7 @@ class FakePromptCompiler implements EntityReferencePromptCompilerPort {
       prompt: `${input.draftPrompt} compiled`,
       compilerProvider: 'openai',
       compilerModel: 'gpt-5.4-mini',
-      compilerPromptVersion: 'entity_ref_v2',
+      compilerPromptVersion: 'entity_ref_v3',
     };
   }
 }
@@ -323,7 +323,7 @@ describe('EntityGenerationWorkerService', () => {
     expect(executionRepository.completed?.compiledPromptUsed).toBe(true);
     expect(executionRepository.completed?.promptCompilerProvider).toBe('openai');
     expect(executionRepository.completed?.compilerModel).toBe('gpt-5.4-mini');
-    expect(executionRepository.completed?.compilerPromptVersion).toBe('entity_ref_v2');
+    expect(executionRepository.completed?.compilerPromptVersion).toBe('entity_ref_v3');
     expect(executionRepository.completed?.compilerError).toBeNull();
     expect(executionRepository.completed?.imageModel).toBe('gpt-image-2');
     expect(executionRepository.completed?.imageParams).toEqual({

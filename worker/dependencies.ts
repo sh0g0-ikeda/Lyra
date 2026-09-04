@@ -59,6 +59,10 @@ import { OpenAIPagePromptCompiler } from '../src/infrastructure/openai/OpenAIPag
 import { OpenAIEpisodeBeatPlanCompiler } from '../src/infrastructure/openai/OpenAIEpisodeBeatPlanCompiler.js';
 import { OpenAIEpisodePlanAuditCompiler } from '../src/infrastructure/openai/OpenAIEpisodePlanAuditCompiler.js';
 import { OpenAIPageEpisodePlanCompiler } from '../src/infrastructure/openai/OpenAIPageEpisodePlanCompiler.js';
+import {
+  resolveEpisodeOpenAIModelProfile,
+  type EpisodeOpenAIStageProfile,
+} from '../src/infrastructure/openai/EpisodeOpenAIModelProfile.js';
 import { OpenAIStoryAiClient } from '../src/infrastructure/openai/OpenAIStoryAiClient.js';
 import { OpenAIEntityReferencePromptCompiler } from '../src/infrastructure/openai/OpenAIEntityReferencePromptCompiler.js';
 import {
@@ -275,6 +279,9 @@ export function resolveWorkerDependencies(
   const entityImageStorage =
     overrides.entityImageStorage ?? resolveEntityImageStorage();
   const storedImageLoader = resolveStoredImageLoader();
+  const episodeOpenAIModelProfile = resolveEpisodeOpenAIModelProfile(
+    env.OPENAI_EPISODE_TEXT_PROFILE,
+  );
   const pageService =
     overrides.pageService ??
     new PageService(
@@ -282,10 +289,13 @@ export function resolveWorkerDependencies(
       new PostgresPanelRepository(db),
       new PanelEntityAssignmentService(new PostgresPanelEntityAssignmentRepository(db)),
       undefined,
-      overrides.episodePagePlanCompiler ?? resolveEpisodePagePlanCompiler(),
+      overrides.episodePagePlanCompiler ??
+        resolveEpisodePagePlanCompiler(episodeOpenAIModelProfile.detail),
       undefined,
-      overrides.episodeBeatPlanCompiler ?? resolveEpisodeBeatPlanCompiler(),
-      overrides.episodePlanAuditCompiler ?? resolveEpisodePlanAuditCompiler(),
+      overrides.episodeBeatPlanCompiler ??
+        resolveEpisodeBeatPlanCompiler(episodeOpenAIModelProfile.beat),
+      overrides.episodePlanAuditCompiler ??
+        resolveEpisodePlanAuditCompiler(episodeOpenAIModelProfile.audit),
       env.EPISODE_PAGE_PLAN_CONTINUITY_V3_ENABLED,
       {
         adaptivePackingEnabled: env.EPISODE_PAGE_PLAN_ADAPTIVE_PACKING_ENABLED,
@@ -493,7 +503,9 @@ function resolveEntityReferencePromptCompiler(): EntityReferencePromptCompilerPo
   return new PassthroughEntityReferencePromptCompiler();
 }
 
-function resolveEpisodePagePlanCompiler(): EpisodePagePlanCompilerPort {
+function resolveEpisodePagePlanCompiler(
+  profile: EpisodeOpenAIStageProfile,
+): EpisodePagePlanCompilerPort {
   const client = buildOpenAIClient();
   if (client === null) {
     return {
@@ -503,10 +515,12 @@ function resolveEpisodePagePlanCompiler(): EpisodePagePlanCompilerPort {
     };
   }
 
-  return new OpenAIPageEpisodePlanCompiler(client);
+  return new OpenAIPageEpisodePlanCompiler(client, profile);
 }
 
-function resolveEpisodeBeatPlanCompiler(): EpisodeBeatPlanCompilerPort {
+function resolveEpisodeBeatPlanCompiler(
+  profile: EpisodeOpenAIStageProfile,
+): EpisodeBeatPlanCompilerPort {
   const client = buildOpenAIClient();
   if (client === null) {
     return {
@@ -516,10 +530,12 @@ function resolveEpisodeBeatPlanCompiler(): EpisodeBeatPlanCompilerPort {
     };
   }
 
-  return new OpenAIEpisodeBeatPlanCompiler(client);
+  return new OpenAIEpisodeBeatPlanCompiler(client, profile);
 }
 
-function resolveEpisodePlanAuditCompiler(): EpisodePlanAuditCompilerPort {
+function resolveEpisodePlanAuditCompiler(
+  profile: EpisodeOpenAIStageProfile,
+): EpisodePlanAuditCompilerPort {
   const client = buildOpenAIClient();
   if (client === null) {
     return {
@@ -529,7 +545,7 @@ function resolveEpisodePlanAuditCompiler(): EpisodePlanAuditCompilerPort {
     };
   }
 
-  return new OpenAIEpisodePlanAuditCompiler(client);
+  return new OpenAIEpisodePlanAuditCompiler(client, profile);
 }
 
 function resolveStoryAiClient(): StoryAiClientPort {

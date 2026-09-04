@@ -41,6 +41,10 @@ import { OpenAIPageAutofillCompiler } from './infrastructure/openai/OpenAIPageAu
 import { OpenAIEpisodeBeatPlanCompiler } from './infrastructure/openai/OpenAIEpisodeBeatPlanCompiler.js';
 import { OpenAIEpisodePlanAuditCompiler } from './infrastructure/openai/OpenAIEpisodePlanAuditCompiler.js';
 import { OpenAIPageEpisodePlanCompiler } from './infrastructure/openai/OpenAIPageEpisodePlanCompiler.js';
+import {
+  resolveEpisodeOpenAIModelProfile,
+  type EpisodeOpenAIStageProfile,
+} from './infrastructure/openai/EpisodeOpenAIModelProfile.js';
 import { OpenAIClient } from './infrastructure/openai/OpenAIClient.js';
 import { OpenAIStoryAiClient } from './infrastructure/openai/OpenAIStoryAiClient.js';
 import { OpenAIStyleReferenceCompiler } from './infrastructure/openai/OpenAIStyleReferenceCompiler.js';
@@ -51,6 +55,11 @@ import {
 } from './infrastructure/stripe/StripeBillingClient.js';
 import { db } from './lib/db.js';
 import { env } from './lib/env.js';
+import {
+  isEpisodeExportRuntimeEnabled,
+  type EnabledEpisodeExportRuntimeConfig,
+  type EpisodeExportRuntimeConfig,
+} from './lib/episodeExportRuntime.js';
 import { assertProductionRuntimeConfig, isDevAuthBypassRuntimeAllowed } from './lib/runtimeGuards.js';
 import { createAuthMiddleware } from './middleware/auth.js';
 import type { AuthProvider, CognitoVerifierConfig } from './middleware/auth.js';
@@ -1004,6 +1013,9 @@ function resolveDependencies(
     new PanelEntityAssignmentService(new PostgresPanelEntityAssignmentRepository(db));
   const storyEpisodeImprovementPlanner =
     dependencies.storyEpisodeImprovementPlanner ?? resolveStoryEpisodeImprovementPlanner();
+  const episodeOpenAIModelProfile = resolveEpisodeOpenAIModelProfile(
+    env.OPENAI_EPISODE_TEXT_PROFILE,
+  );
   const pageService =
     dependencies.pageService ??
     new PageService(
@@ -1011,10 +1023,10 @@ function resolveDependencies(
       panelRepository,
       panelEntityAssignmentService,
       resolvePageAutofillCompiler(),
-      resolveEpisodePagePlanCompiler(),
+      resolveEpisodePagePlanCompiler(episodeOpenAIModelProfile.detail),
       resolveStyleReferenceCompiler(),
-      resolveEpisodeBeatPlanCompiler(),
-      resolveEpisodePlanAuditCompiler(),
+      resolveEpisodeBeatPlanCompiler(episodeOpenAIModelProfile.beat),
+      resolveEpisodePlanAuditCompiler(episodeOpenAIModelProfile.audit),
       env.EPISODE_PAGE_PLAN_CONTINUITY_V3_ENABLED,
       {
         adaptivePackingEnabled: env.EPISODE_PAGE_PLAN_ADAPTIVE_PACKING_ENABLED,
@@ -1139,18 +1151,29 @@ function resolveConfiguredPushTokenRegistryService(): PushTokenRegistryServicePo
   );
 }
 
-function resolveConfiguredEpisodeExportService(): EpisodeExportServicePort | undefined {
-  if (env.S3_BUCKET_IMAGES === undefined || env.SQS_QUEUE_URL_GENERATION === undefined) {
+export function resolveConfiguredEpisodeExportService(
+  runtimeConfig: EpisodeExportRuntimeConfig = env,
+  createExportService: (config: EnabledEpisodeExportRuntimeConfig) => EpisodeExportServicePort =
+    createConfiguredEpisodeExportService,
+): EpisodeExportServicePort | undefined {
+  if (!isEpisodeExportRuntimeEnabled(runtimeConfig)) {
     return undefined;
   }
+
+  return createExportService(runtimeConfig);
+}
+
+function createConfiguredEpisodeExportService(
+  runtimeConfig: EnabledEpisodeExportRuntimeConfig,
+): EpisodeExportServicePort {
   const repository = new PostgresExportJobRepository(db, db);
   const storage = new S3ExportArtifactStorage(
     createPageImageStorageClient(env.AWS_REGION),
-    { bucketName: env.S3_BUCKET_IMAGES },
+    { bucketName: runtimeConfig.S3_BUCKET_IMAGES },
   );
   const queue = new SqsExportJobQueueAdapter(
     createGenerationQueueClient(env.AWS_REGION),
-    env.SQS_QUEUE_URL_GENERATION,
+    runtimeConfig.SQS_QUEUE_URL_GENERATION,
   );
   return new EpisodeExportService(repository, queue, storage);
 }
@@ -1334,7 +1357,9 @@ function resolvePageAutofillCompiler(): PageAutofillCompilerPort {
   return new OpenAIPageAutofillCompiler(client);
 }
 
-function resolveEpisodePagePlanCompiler(): EpisodePagePlanCompilerPort {
+function resolveEpisodePagePlanCompiler(
+  profile: EpisodeOpenAIStageProfile,
+): EpisodePagePlanCompilerPort {
   const client = buildOpenAIClient();
   if (client === null) {
     return {
@@ -1344,10 +1369,12 @@ function resolveEpisodePagePlanCompiler(): EpisodePagePlanCompilerPort {
     };
   }
 
-  return new OpenAIPageEpisodePlanCompiler(client);
+  return new OpenAIPageEpisodePlanCompiler(client, profile);
 }
 
-function resolveEpisodeBeatPlanCompiler(): EpisodeBeatPlanCompilerPort {
+function resolveEpisodeBeatPlanCompiler(
+  profile: EpisodeOpenAIStageProfile,
+): EpisodeBeatPlanCompilerPort {
   const client = buildOpenAIClient();
   if (client === null) {
     return {
@@ -1357,10 +1384,12 @@ function resolveEpisodeBeatPlanCompiler(): EpisodeBeatPlanCompilerPort {
     };
   }
 
-  return new OpenAIEpisodeBeatPlanCompiler(client);
+  return new OpenAIEpisodeBeatPlanCompiler(client, profile);
 }
 
-function resolveEpisodePlanAuditCompiler(): EpisodePlanAuditCompilerPort {
+function resolveEpisodePlanAuditCompiler(
+  profile: EpisodeOpenAIStageProfile,
+): EpisodePlanAuditCompilerPort {
   const client = buildOpenAIClient();
   if (client === null) {
     return {
@@ -1370,7 +1399,7 @@ function resolveEpisodePlanAuditCompiler(): EpisodePlanAuditCompilerPort {
     };
   }
 
-  return new OpenAIEpisodePlanAuditCompiler(client);
+  return new OpenAIEpisodePlanAuditCompiler(client, profile);
 }
 
 function resolveStyleReferenceCompiler(): StyleReferenceCompilerPort | undefined {

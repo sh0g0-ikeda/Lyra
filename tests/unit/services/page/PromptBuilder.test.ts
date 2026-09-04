@@ -188,6 +188,18 @@ describe('PromptBuilder', () => {
 
     expect(result.draftPrompt).toContain('Create page 3 of the episode, covering The hero confronts the rival.');
     expect(result.draftPrompt).toContain('Use the standard_4 template with 4 panels.');
+    expect(result.draftPrompt).toContain(
+      'panel 1 is the upper-right or rightmost top entry',
+    );
+    expect(result.draftPrompt).toContain(
+      'follow numbered panels generally right-to-left and downward toward the lower-left',
+    );
+    expect(result.draftPrompt).toContain(
+      'never override an authored position to force placement',
+    );
+    expect(result.draftPrompt).toContain(
+      'Authoritative frame map (follow P numbers and coordinates exactly for asymmetric or custom layouts): P1=[(0.50,0.00),(1.00,0.00),(1.00,0.50),(0.50,0.50)]',
+    );
     expect(result.draftPrompt).toContain('Image 1 (Aki): Aki character reference.');
     expect(result.draftPrompt).toContain('Use this image only for Aki; never use it as another character.');
     expect(result.draftPrompt).toContain('Aki is allowed only in panel 1 where listed in the subject lock.');
@@ -200,6 +212,16 @@ describe('PromptBuilder', () => {
     expect(result.draftPrompt).toContain('Sound effect text in the artwork: "WHOOSH".');
     expect(result.draftPrompt).toContain('Panel 1 dialogue by Aki, reference Image 1 (Aki): "I will finish this now." as speech at top.');
     expect(result.draftPrompt).toContain('Dialogue lock for panel 1: line 1 must stay assigned to Aki, reference Image 1 (Aki) exactly as written: "I will finish this now."');
+    expect(result.draftPrompt).toContain('at its authored top position');
+    expect(result.draftPrompt).toContain(
+      'Baked Japanese dialogue and narration must use vertical tategaki',
+    );
+    expect(result.draftPrompt).toContain(
+      'glyphs top-to-bottom, columns right-to-left',
+    );
+    expect(result.draftPrompt).toContain(
+      'Do not change authored action, composition, or camera direction merely to fit text.',
+    );
     expect(result.draftPrompt).toContain(
       'Visual lock for panel 1: subjects=Aki [Image 1 (Aki)]; situation cue="Hero lunges forward."; shot=full_body; angle=three_quarter; background cue="Collapsed alley at dusk.".',
     );
@@ -222,6 +244,9 @@ describe('PromptBuilder', () => {
       'Continuity note: Carry the moonlit tension forward into the next page.',
     );
     expect(result.compilerBrief).toContain('- Dialogue lock: Dialogue lock for panel 1: line 1 must stay assigned to Aki, reference Image 1 (Aki) exactly as written: "I will finish this now."');
+    expect(result.compilerBrief).toContain(
+      'Baked Japanese dialogue and narration must use vertical tategaki',
+    );
     expect(result.compilerBrief).toContain(
       '- Subject lock: Panel 1 subject lock: required visible subjects are Aki, reference Image 1 (Aki), role primary, center zone, facing three quarter left.',
     );
@@ -339,6 +364,8 @@ describe('PromptBuilder', () => {
 
     expect(result.draftPrompt).not.toContain('Panel 1 dialogue by Aki');
     expect(result.compilerBrief).not.toContain('Panel 1 dialogue by Aki');
+    expect(result.draftPrompt).not.toContain('vertical tategaki');
+    expect(result.compilerBrief).not.toContain('vertical tategaki');
   });
 
   it('includes frame definitions for custom layout pages', async () => {
@@ -374,8 +401,49 @@ describe('PromptBuilder', () => {
     });
 
     expect(result.draftPrompt).toContain('Follow the uploaded layout reference image exactly for panel borders, gutter spacing, and reading order.');
-    expect(result.draftPrompt).toContain('panel 1 uses vertices (0.00, 0.00) -> (1.00, 0.00) -> (1.00, 0.50) -> (0.00, 0.50)');
+    expect(result.draftPrompt).toContain(
+      'Authoritative frame map (follow P numbers and coordinates exactly for asymmetric or custom layouts): P1=[(0.00,0.00),(1.00,0.00),(1.00,0.50),(0.00,0.50)]',
+    );
     expect(result.compilerBrief).toContain('Image 2 (layout): Layout reference.');
+  });
+
+  it('keeps an asymmetric template frame sequence authoritative', async () => {
+    const pageRepository = new FakePageRepository();
+    pageRepository.promptContext = buildPagePromptContext({
+      layoutConfig: {
+        type: 'template',
+        template_id: 'split_6',
+      },
+    });
+    const panelRepository = new FakePanelRepository();
+    panelRepository.panels = Array.from({ length: 6 }, (_, index) => ({
+      ...buildPanel(),
+      id: `panel-${index + 1}`,
+      order: index + 1,
+    }));
+    const builder = new PromptBuilder(
+      pageRepository,
+      panelRepository,
+      new FakeEntityRepository(),
+      new FakeCompositionGalleryRepository(),
+    );
+
+    const result = await builder.buildPagePrompt({
+      userId: 'user-1',
+      pageId: 'page-1',
+      requestKind: 'initial',
+      generationMode: 'standard',
+    });
+
+    expect(result.draftPrompt).toContain(
+      'Authoritative frame map (follow P numbers and coordinates exactly for asymmetric or custom layouts)',
+    );
+    expect(result.draftPrompt).toContain(
+      'P1=[(0.48,0.00),(1.00,0.00),(1.00,0.33),(0.48,0.33)]; P2=[(0.48,0.33),(1.00,0.33),(1.00,0.67),(0.48,0.67)]',
+    );
+    expect(result.draftPrompt).toContain(
+      'P4=[(0.00,0.00),(0.48,0.00),(0.48,0.33),(0.00,0.33)]',
+    );
   });
 
   it('mentions each entity reference once even across multiple panels', async () => {
@@ -647,7 +715,17 @@ describe('PromptBuilder', () => {
     expect(result.draftPrompt).toContain('Generalized style interpretation: precise page rendering');
     expect(result.draftPrompt).toContain('...');
     expect(result.draftPrompt).not.toContain(longCompiledBrief.slice(0, 1200));
+    expect(result.draftPrompt).toContain(longAnchor.slice(0, 150));
     expect(result.compilerBrief).not.toContain(longCompiledBrief.slice(0, 1200));
+    expect(result.compilerBrief).not.toContain(longAnchor.slice(0, 150));
+    expect(result.compilerBrief).toContain('Named style reference constraint: "Long Page Style"');
+    expect(result.compilerBrief).toContain('Generalized style interpretation: precise page rendering');
+    expect(result.compilerBrief).toContain('line quality: hard edged line treatment');
+    expect(result.compilerBrief).toContain('shading: hard edged line treatment');
+    expect(result.compilerBrief).toContain('background rendering: hard edged line treatment');
+    expect(result.compilerBrief).toContain('motion treatment: hard edged line treatment');
+    expect(result.compilerBrief).toContain('atmosphere: hard edged line treatment');
+    expect(result.compilerBrief).toContain('User notes: keep the page readable');
     expect(result.compilerBrief.length).toBeLessThan(7_000);
   });
 

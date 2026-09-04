@@ -10,6 +10,7 @@ import type {
   PagePromptCompilerPort,
 } from '../../services/page/PagePromptCompiler.js';
 import { OpenAIClient } from './OpenAIClient.js';
+import { OPENAI_IMAGE_PROMPT_PERSON_GUIDANCE } from './OpenAIImagePromptGuidance.js';
 
 interface OpenAICompilerResponse {
   output_text?: unknown;
@@ -74,7 +75,11 @@ function buildSystemPrompt(): string {
     'Always keep the reference image mapping explicit. If the brief says "Image 1 (Aoi)", preserve that role clearly so the model knows which image anchors which character.',
     'Treat every authored dialogue line as a hard lock whenever the brief marks it as baked dialogue. Preserve the exact wording, the exact speaker assignment, and whether the line is narration or character speech.',
     'If a brief says a line belongs to a named character, that same character must visibly own the line in the final page. Do not swap speakers, paraphrase the line, collapse multiple lines into one, or move narration into dialogue.',
+    'For Japanese manga page flow, panel 1 is the upper-right or rightmost top entry; follow its numbered frame map generally right-to-left and downward toward the lower-left. For regular tiers this is right-to-left, then top-to-bottom; the complete frame map is authoritative for asymmetric or custom layouts.',
+    'Keep dialogue, narration, and SFX in that reader sequence only within their supplied positions; every explicit authored dialogue position is also a hard lock.',
+    'When the brief requires baked Japanese dialogue or narration, use traditional vertical tategaki, with glyphs top-to-bottom and columns right-to-left. Do not alter authored action, composition, or camera direction to fit text; preserve the authored dialogue and speaker locks exactly.',
     'Convert abstract emotional instructions into visible panel cues, but do not add props, extra characters, omitted panels, scenic backgrounds beyond the described setting, camera effects, or text that is not already present in the brief.',
+    ...OPENAI_IMAGE_PROMPT_PERSON_GUIDANCE,
     'Preserve all hard constraints exactly, especially panel order, dialogue text, SFX text, panel count, and reference image roles.',
     'The result must describe one complete manga page with explicit layout fidelity and full-page framing.',
     'Use clear concrete visual language. Avoid vague praise words like beautiful, cool, high-quality, masterpiece, cinematic, or stunning.',
