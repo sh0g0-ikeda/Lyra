@@ -56,9 +56,6 @@ export function StoryGenerationControls({
 
   return (
     <View style={styles.root}>
-      <Text style={styles.description}>
-        {t(language, 'component.storyGenerationControls.description')}
-      </Text>
       <View style={styles.steps}>
         <Text style={styles.stepText}>
           <Text style={styles.stepTitle}>
@@ -73,11 +70,6 @@ export function StoryGenerationControls({
           {t(language, 'component.storyGenerationControls.step2Description')}
         </Text>
       </View>
-      {overwrite ? (
-        <Text style={styles.warning}>
-          {t(language, 'component.storyGenerationControls.overwriteWarning')}
-        </Text>
-      ) : null}
       {jobEnqueued ? (
         <Notice
           message={t(language, "generated.components.StoryGenerationControls.processing.started.the.status.below.will.b1992386")}
@@ -119,10 +111,6 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     gap: spacing.sm
   },
-  description: {
-    ...textStyles.body,
-    color: colors.ink
-  },
   root: {
     gap: spacing.md
   },
@@ -136,9 +124,5 @@ const styles = StyleSheet.create({
   stepTitle: {
     color: colors.ink,
     fontWeight: '800'
-  },
-  warning: {
-    ...textStyles.body,
-    color: colors.warning
   }
 });

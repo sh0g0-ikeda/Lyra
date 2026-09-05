@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { FormField } from '@/components/FormField';
 import { Notice } from '@/components/Notice';
@@ -104,11 +104,13 @@ export function PanelDialogueEditor({
   language,
   onChange
 }: PanelDialogueEditorProps): React.JSX.Element {
+  const [selectedDialogueIndex, setSelectedDialogueIndex] = useState(0);
   const [removedDialogue, setRemovedDialogue] = useState<{
     dialogue: PanelDialogueLine;
     index: number;
   } | null>(null);
   const assignedEntityIds = entities.map((entity) => entity.id);
+  const activeDialogueIndex = Math.min(selectedDialogueIndex, Math.max(dialogues.length - 1, 0));
 
   const updateDialogue = (index: number, patch: Partial<PanelDialogueLine>): void => {
     onChange(
@@ -130,6 +132,7 @@ export function PanelDialogueEditor({
         position: 'top'
       }
     ]);
+    setSelectedDialogueIndex(dialogues.length);
   };
 
   const removeDialogue = (index: number): void => {
@@ -175,7 +178,33 @@ export function PanelDialogueEditor({
           {t(language, "generated.components.PanelDialogueEditor.no.dialogue.yet.3705b25c")}
         </Text>
       ) : (
-        dialogues.map((dialogue, index) => {
+        <>
+          <Text style={styles.label}>{t(language, 'component.panelDialogueEditor.pickerLabel')}</Text>
+          <View style={styles.picker}>
+            {dialogues.map((dialogue, index) => {
+              const selected = index === activeDialogueIndex;
+              return (
+                <Pressable
+                  accessibilityLabel={t(language, 'component.panelDialogueEditor.dialogueTitle', { index: index + 1 })}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected, disabled }}
+                  disabled={disabled}
+                  key={`${dialogue.type}-${index}`}
+                  onPress={() => setSelectedDialogueIndex(index)}
+                  style={[styles.pickerOption, selected ? styles.pickerOptionSelected : null]}
+                >
+                  <Text style={styles.pickerOptionText}>
+                    {t(language, 'component.panelDialogueEditor.dialogueTitle', { index: index + 1 })}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+          {(() => {
+            const dialogue = dialogues[activeDialogueIndex];
+            if (dialogue === undefined) {
+              return null;
+            }
           const quotedCharacter =
             dialogue.type === 'narration'
               ? findNarrationCharacterQuote(dialogue.text, entities)
@@ -186,15 +215,15 @@ export function PanelDialogueEditor({
             assignedEntityIds
           );
           return (
-            <View key={`${dialogue.type}-${index}`} style={styles.dialogue}>
+            <View style={styles.dialogue}>
               <View style={styles.dialogueHeader}>
                 <Text style={styles.dialogueTitle}>
-                  {t(language, 'component.panelDialogueEditor.dialogueTitle', { index: index + 1 })}
+                  {t(language, 'component.panelDialogueEditor.dialogueTitle', { index: activeDialogueIndex + 1 })}
                 </Text>
                 <PrimaryButton
                   disabled={disabled}
                   label={t(language, "generated.components.PanelDialogueEditor.delete.8deafb71")}
-                  onPress={() => removeDialogue(index)}
+                  onPress={() => removeDialogue(activeDialogueIndex)}
                   variant="ghost"
                 />
               </View>
@@ -204,7 +233,7 @@ export function PanelDialogueEditor({
                 disabled={disabled}
                 entities={entities}
                 language={language}
-                onSelect={(entityId) => updateDialogue(index, { entity_id: entityId })}
+                onSelect={(entityId) => updateDialogue(activeDialogueIndex, { entity_id: entityId })}
                 selectedId={dialogue.entity_id}
               />
               <Text style={styles.label}>{t(language, "generated.components.PanelDialogueEditor.type.0dec4cb9")}</Text>
@@ -212,7 +241,7 @@ export function PanelDialogueEditor({
                 disabled={disabled}
                 onChange={(nextType) => {
                   const firstSpeakerId = entities[0]?.id ?? null;
-                  updateDialogue(index, {
+                  updateDialogue(activeDialogueIndex, {
                     type: nextType,
                     entity_id:
                       requiresPanelDialogueSpeaker(nextType) && dialogue.entity_id === null
@@ -226,7 +255,7 @@ export function PanelDialogueEditor({
               <Text style={styles.label}>{t(language, "generated.components.PanelDialogueEditor.placement.de9cd9a6")}</Text>
               <SegmentedControl
                 disabled={disabled}
-                onChange={(position) => updateDialogue(index, { position })}
+                onChange={(position) => updateDialogue(activeDialogueIndex, { position })}
                 options={labelOptions(dialoguePositionOptions, language, dialoguePositionTranslationKey)}
                 value={dialogue.position}
               />
@@ -235,7 +264,7 @@ export function PanelDialogueEditor({
                 label={t(language, "generated.components.PanelDialogueEditor.text.1d0dc95c")}
                 maxLength={500}
                 multiline
-                onChangeText={(text) => updateDialogue(index, { text })}
+                onChangeText={(text) => updateDialogue(activeDialogueIndex, { text })}
                 value={dialogue.text}
               />
               {speakerValid ? null : (
@@ -254,7 +283,8 @@ export function PanelDialogueEditor({
               )}
             </View>
           );
-        })
+          })()}
+        </>
       )}
       <PrimaryButton
         disabled={disabled}
@@ -293,6 +323,29 @@ const styles = StyleSheet.create({
   label: {
     ...textStyles.caption,
     color: colors.ink,
+    fontWeight: '700'
+  },
+  picker: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.xs
+  },
+  pickerOption: {
+    borderColor: colors.border,
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    justifyContent: 'center',
+    minHeight: 44,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs
+  },
+  pickerOptionSelected: {
+    backgroundColor: colors.warningSurface,
+    borderColor: colors.primary
+  },
+  pickerOptionText: {
+    ...textStyles.caption,
+    color: colors.inkStrong,
     fontWeight: '700'
   },
   title: {

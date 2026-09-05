@@ -19,7 +19,7 @@ describe('MOB-ENTITY-002 latest character UI contract', () => {
     );
   });
 
-  it('renders list, name, type, import, description/save, and references in order', () => {
+  it('renders list, name, type, import, description/save, and references in order within unified character details', () => {
     const source = readSource('src/screens/CharactersScreen.tsx');
     const renderSource = source.slice(source.indexOf('  return (\n    <Screen'));
     const orderedMarkers = [
@@ -27,13 +27,50 @@ describe('MOB-ENTITY-002 latest character UI contract', () => {
       "label={t(language, 'name')}",
       '<SegmentedControl onChange={setEntityType}',
       "onLayout={recordSectionOffset('import')}",
-      'persistKey="characters:description-save"',
       'persistKey="characters:reference-set"'
     ];
     const positions = orderedMarkers.map((marker) => renderSource.indexOf(marker));
 
     expect(positions.every((position) => position >= 0)).toBe(true);
     expect(positions).toEqual([...positions].sort((left, right) => left - right));
+  });
+
+  it('keeps the free-input and save controls inside the character editor', () => {
+    const source = readSource('src/screens/CharactersScreen.tsx');
+    const renderSource = source.slice(source.indexOf('  return (\n    <Screen'));
+    const editorStart = renderSource.indexOf('persistKey="characters:editor"');
+    const editorEnd = renderSource.indexOf('</Section>', editorStart);
+    const editor = renderSource.slice(editorStart, editorEnd);
+
+    expect(renderSource).not.toContain('persistKey="characters:description-save"');
+    expect(editor).toContain("label={t(language, 'screen.characters.freeInput.label')}");
+    expect(editor).toContain('onChangeText={setDescription}');
+    expect(editor).toContain('createEntityMutation.isPending');
+    expect(editor).toContain('updateEntityMutation.isPending');
+  });
+
+  it('hides aliases and nonhuman/object structured fields without dropping their stored data', () => {
+    const source = readSource('src/screens/CharactersScreen.tsx');
+    const renderSource = source.slice(source.indexOf('  return (\n    <Screen'));
+
+    expect(renderSource).not.toContain('CharactersScreen.aliases.658c65b6');
+    expect(renderSource).not.toContain('activeFieldKeys.map((key) => (');
+    expect(source).toContain("assignArrayOrDelete(characterIdentity, 'aliases', draft.aliases ?? '', 12);");
+    expect(source).toContain('const genericStructuredFields = safeParseRecord(extras);');
+    expect(source).toContain('const structuredExtrasFromRecord = (');
+    expect(source).toContain(': JSON.stringify(record);');
+  });
+
+  it('uses confirmation instead of saving a candidate image, while keeping confirmed-image saves', () => {
+    const source = readSource('src/screens/CharactersScreen.tsx');
+    const renderSource = source.slice(source.indexOf('  return (\n    <Screen'));
+
+    expect(renderSource).not.toContain('save.candidate.image.9e676bff');
+    expect(renderSource).toContain("label={t(language, 'confirmReference')}");
+    expect(renderSource).not.toContain(
+      'generated.screens.CharactersScreen.editing.the.selected.character.9454ccd6',
+    );
+    expect(source).toContain('filename: `lyra-character-reference-${refId}.png`');
   });
 
   it('keeps AI-only and deprecated detail fields out of rendered UI', () => {
@@ -50,16 +87,16 @@ describe('MOB-ENTITY-002 latest character UI contract', () => {
     );
   });
 
-  it('uses the required Japanese import and free-description guidance', () => {
+  it('uses the required Japanese import and free-input guidance', () => {
     const translations = readSource('src/lib/i18nGenerated.ts');
 
     expect(translations).toContain(
-      '手元のキャラクター画像をアップロードすると、その見た目を参考にLyraの漫画へ登場させられます。'
+      'アップロードした画像のキャラクターを漫画に登場させられます！'
     );
     expect(translations).toContain(
-      '選択肢にない特徴や、特別に守りたい条件を書いてください'
+      '選択肢にない特徴などを記入出来ます'
     );
-    expect(translations).toContain('すべての空欄を埋める必要はありません');
+    expect(translations).toContain('すべての項目を埋める必要はありません');
   });
 
   it('個別のキャラクター画像は共有シートではなく写真ライブラリへ保存する', () => {
@@ -70,7 +107,7 @@ describe('MOB-ENTITY-002 latest character UI contract', () => {
     );
     expect(source).toContain('saveAuthenticatedImageToPhotoLibrary({');
     expect(source).toContain('filename: `lyra-character-reference-${refId}.png`');
-    expect(source).toContain('filename: `lyra-character-candidate-${candidateToken.trim()}.png`');
+    expect(source).not.toContain('filename: `lyra-character-candidate-${candidateToken.trim()}.png`');
     expect(source).not.toContain('downloadAuthenticatedFile({');
   });
 });

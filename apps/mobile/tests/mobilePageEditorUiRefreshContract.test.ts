@@ -20,11 +20,12 @@ describe('モバイルページ編集UIの表示契約', () => {
     expect(source).toContain('source: compositionSource');
   });
 
-  it('既存キャラは閉じた状態で始まり追加キャラだけを直後に展開する', () => {
+  it('選択したキャラだけを編集しコマの切り替えで選択を初期化する', () => {
     const source = readMobileSource('src/screens/PagesScreen.tsx');
 
-    expect(source).toContain('() => new Set<string>()');
-    expect(source).toContain('setExpandedEntityIds((current) => new Set([...current, entityId]))');
+    expect(source).toContain('selectedAssignmentEntityId');
+    expect(source).toContain('selectedAssignment?.entity_id === assignment.entity_id');
+    expect(source).not.toContain('setExpandedEntityIds');
     expect(source).toContain("key={selectedPanel?.id ?? 'new-panel'}");
   });
 
@@ -39,7 +40,7 @@ describe('モバイルページ編集UIの表示契約', () => {
     expect(theme).toContain("editorControl: '#343A44'");
     expect(theme).toContain("editorText: '#FFFFFF'");
     expect(theme).toContain("editorMuted: '#D0D3D8'");
-    expect(theme).toContain("editorBorder: '#5A5138'");
+    expect(theme).toContain("editorBorder: '#A39770'");
     expect(pagesScreen).toContain('contentStyle={styles.editorScreenContent}');
     expect(pagesScreen.match(/tone="raised"/g)).toHaveLength(2);
   });

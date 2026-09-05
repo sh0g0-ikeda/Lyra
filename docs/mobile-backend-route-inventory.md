@@ -98,14 +98,14 @@ Unclassified routes: **0**
 | `/api/pages/:id/confirm` | POST | Mobile UI | api.confirmPage -> apps/mobile/src/screens/PagesScreen.tsx |
 | `/api/pages/:id/export-image` | GET | Mobile UI | PagesScreen authenticated file download and native share flow. |
 | `/api/pages/:id/frames` | GET | Mobile UI | api.getFrames -> apps/mobile/src/screens/PagesScreen.tsx |
-| `/api/pages/:id/frames` | PUT | Mobile UI | api.replaceFrames -> apps/mobile/src/screens/PagesScreen.tsx |
+| `/api/pages/:id/frames` | PUT | Mobile UI | api.replaceFrames -> apps/mobile/src/domain/panelInsertion.ts, apps/mobile/src/screens/PagesScreen.tsx |
 | `/api/pages/:id/frames/apply-template` | POST | Mobile UI | api.applyFrameTemplate -> apps/mobile/src/screens/PagesScreen.tsx |
 | `/api/pages/:id/generate` | POST | Mobile UI | api.generatePage -> apps/mobile/src/screens/PagesScreen.tsx |
 | `/api/pages/:id/generation-readiness` | GET | Mobile UI | api.getPageGenerationReadiness -> apps/mobile/src/screens/PagesScreen.tsx |
 | `/api/pages/:id/layout-template` | POST | Mobile UI | api.applyPageLayoutTemplate -> apps/mobile/src/screens/PagesScreen.tsx |
 | `/api/pages/:id/panels` | GET | Mobile UI | api.getPanels -> apps/mobile/src/screens/PagesScreen.tsx |
-| `/api/pages/:id/panels` | POST | Mobile UI | api.createPanel -> apps/mobile/src/screens/PagesScreen.tsx |
-| `/api/pages/:id/panels/order` | PUT | Mobile UI | api.reorderPanels -> apps/mobile/src/screens/PagesScreen.tsx |
+| `/api/pages/:id/panels` | POST | Mobile UI | api.createPanel -> apps/mobile/src/domain/panelInsertion.ts, apps/mobile/src/screens/PagesScreen.tsx |
+| `/api/pages/:id/panels/order` | PUT | Mobile UI | api.reorderPanels -> apps/mobile/src/domain/panelInsertion.ts, apps/mobile/src/screens/PagesScreen.tsx |
 | `/api/pages/:id/reopen` | POST | Mobile UI | api.reopenPage -> apps/mobile/src/screens/PagesScreen.tsx |
 | `/api/pages/:id/save-and-generate` | POST | Mobile UI | api.saveAndGeneratePage -> apps/mobile/src/screens/PagesScreen.tsx |
 | `/api/pages/:id/thumbnail` | GET | Mobile UI | PageThumbnailPicker authenticated bounded-thumbnail source. |
@@ -128,7 +128,7 @@ Unclassified routes: **0**
 | `/api/works/:id` | PUT | Mobile UI | api.updateWork -> apps/mobile/src/components/StoryHierarchySheet.tsx |
 | `/api/works/:id/chapters` | GET | Mobile UI | api.getChapters -> apps/mobile/src/components/StoryHierarchySheet.tsx, apps/mobile/src/components/WorkspaceContextPicker.tsx, apps/mobile/src/screens/StoryScreen.tsx |
 | `/api/works/:id/chapters` | POST | Mobile UI | api.createChapter -> apps/mobile/src/components/StoryHierarchySheet.tsx |
-| `/api/works/:work_id/entities` | GET | Mobile UI | api.getEntities, api.getEntitiesPage -> apps/mobile/src/screens/CharactersScreen.tsx, apps/mobile/src/screens/PagesScreen.tsx, apps/mobile/src/screens/StoryScreen.tsx |
+| `/api/works/:work_id/entities` | GET | Mobile UI | api.getEntities, api.getEntitiesPage -> apps/mobile/src/screens/CharactersScreen.tsx, apps/mobile/src/screens/PagesScreen.tsx |
 | `/api/works/:work_id/entities` | POST | Mobile UI | api.createEntity -> apps/mobile/src/screens/CharactersScreen.tsx |
 | `/healthz` | GET | Health-only | ALB/ECS health probe; explicitly excluded from the Mobile client. |
 | `/local-assets/*` | GET | Local-only | Development asset server; production Mobile must never use it. |

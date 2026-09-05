@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AccessibilityInfo, findNodeHandle, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   ArrowDown,
   ArrowUp,
@@ -21,6 +22,8 @@ interface PanelOrderListProps {
   language: 'ja' | 'en';
   onChangeRole: (panelId: string, role: PanelRecord['panel_role']) => void;
   onDelete: (panel: PanelRecord) => void;
+  onInsertAfter?: (panelId: string) => void;
+  insertAfterDisabledReason?: string;
   onMove: (panelId: string, direction: 'up' | 'down') => void;
   onSelect: (panelId: string) => void;
   panels: readonly PanelRecord[];
@@ -58,11 +61,14 @@ export function PanelOrderList({
   language,
   onChangeRole,
   onDelete,
+  onInsertAfter,
   onMove,
   onSelect,
   panels,
-  selectedPanelId
+  selectedPanelId,
+  insertAfterDisabledReason
 }: PanelOrderListProps): React.JSX.Element {
+  const safeAreaInsets = useSafeAreaInsets();
   const sortedPanels = useMemo(
     () => [...panels].sort((left, right) => left.order - right.order),
     [panels]
@@ -126,6 +132,14 @@ export function PanelOrderList({
     onDelete(panel);
   };
 
+  const insertAfter = (): void => {
+    if (activePanel === null || onInsertAfter === undefined || activePanel.id !== selectedPanelId) {
+      return;
+    }
+    closeMenu();
+    onInsertAfter(activePanel.id);
+  };
+
   if (sortedPanels.length === 0) {
     return (
       <Text style={styles.empty}>
@@ -136,6 +150,7 @@ export function PanelOrderList({
 
   return (
     <>
+      <Text style={styles.pickerLabel}>{t(language, 'component.panelOrderList.pickerLabel')}</Text>
       <View style={styles.list}>
         {sortedPanels.map((panel) => {
           const selected = panel.id === selectedPanelId;
@@ -144,7 +159,8 @@ export function PanelOrderList({
               <Pressable
                 accessibilityLabel={t(language, 'component.panelOrderList.editPanel', { order: panel.order })}
                 accessibilityRole="button"
-                accessibilityState={{ selected }}
+                accessibilityState={{ selected, disabled }}
+                disabled={disabled}
                 onPress={() => onSelect(panel.id)}
                 style={styles.rowMain}
               >
@@ -160,9 +176,6 @@ export function PanelOrderList({
                       {roleLabel(panel.panel_role, language)}
                     </Text>
                   </View>
-                  <Text numberOfLines={2} style={styles.summary}>
-                    {situationSummary(panel, language)}
-                  </Text>
                 </View>
               </Pressable>
               <Pressable
@@ -216,7 +229,7 @@ export function PanelOrderList({
             </View>
 
             {menuMode === 'actions' ? (
-              <View style={styles.actionList}>
+              <View style={[styles.actionList, { paddingBottom: spacing.sm + safeAreaInsets.bottom }]}>
                 <MenuAction
                   accessibilityLabel={t(language, "generated.components.PanelOrderList.move.earlier.749347cc")}
                   disabled={disabled || activeIndex <= 0}
@@ -238,6 +251,16 @@ export function PanelOrderList({
                   label={t(language, "generated.components.PanelOrderList.change.role.0f65f24c")}
                   onPress={() => setMenuMode('role')}
                 />
+                {activePanel?.id === selectedPanelId ? (
+                  <MenuAction
+                    accessibilityHint={insertAfterDisabledReason}
+                    accessibilityLabel={t(language, 'component.panelOrderList.insertAfter')}
+                    disabled={disabled || onInsertAfter === undefined || insertAfterDisabledReason !== undefined}
+                    icon={<Pencil color={colors.ink} size={20} strokeWidth={2} />}
+                    label={t(language, 'component.panelOrderList.insertAfter')}
+                    onPress={insertAfter}
+                  />
+                ) : null}
                 <MenuAction
                   accessibilityLabel={t(language, "generated.components.PanelOrderList.delete.panel.5c663bc3")}
                   danger
@@ -282,6 +305,7 @@ export function PanelOrderList({
 }
 
 interface MenuActionProps {
+  accessibilityHint?: string;
   accessibilityLabel: string;
   danger?: boolean;
   disabled: boolean;
@@ -291,6 +315,7 @@ interface MenuActionProps {
 }
 
 function MenuAction({
+  accessibilityHint,
   accessibilityLabel,
   danger = false,
   disabled,
@@ -300,6 +325,7 @@ function MenuAction({
 }: MenuActionProps): React.JSX.Element {
   return (
     <Pressable
+      accessibilityHint={accessibilityHint}
       accessibilityLabel={accessibilityLabel}
       accessibilityRole="button"
       accessibilityState={{ disabled }}
@@ -381,6 +407,11 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     letterSpacing: 0
   },
+  pickerLabel: {
+    ...textStyles.caption,
+    color: colors.ink,
+    fontWeight: '700'
+  },
   radio: {
     alignItems: 'center',
     borderColor: colors.borderStrong,
@@ -433,12 +464,11 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
     borderWidth: 1,
     flexDirection: 'row',
-    minHeight: 70,
+    minHeight: 56,
     overflow: 'hidden'
   },
   rowCopy: {
     flex: 1,
-    gap: spacing.xs,
     minWidth: 0
   },
   rowHeading: {
@@ -451,7 +481,7 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: 'row',
     gap: spacing.md,
-    minHeight: 68,
+    minHeight: 54,
     minWidth: 0,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm
@@ -493,7 +523,4 @@ const styles = StyleSheet.create({
   sheetTitle: {
     ...textStyles.sectionTitle
   },
-  summary: {
-    ...textStyles.caption
-  }
 });

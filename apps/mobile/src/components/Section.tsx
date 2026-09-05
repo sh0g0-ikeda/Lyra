@@ -8,6 +8,7 @@ interface SectionProps extends PropsWithChildren {
   title: string;
   subtitle?: string;
   action?: React.ReactNode;
+  headingColor?: 'default' | 'primary';
   tone?: 'default' | 'highlight' | 'subtle' | 'raised';
   collapsible?: boolean;
   defaultCollapsed?: boolean;
@@ -20,6 +21,7 @@ export function Section({
   title,
   subtitle,
   action,
+  headingColor = 'default',
   tone = 'default',
   collapsible = false,
   defaultCollapsed = false,
@@ -94,7 +96,8 @@ export function Section({
                 style={[
                   styles.title,
                   tone === 'highlight' ? styles.highlightTitle : null,
-                  tone === 'raised' ? styles.raisedTitle : null
+                  tone === 'raised' ? styles.raisedTitle : null,
+                  headingColor === 'primary' ? styles.primaryTitle : null
                 ]}
               >
                 {title}
@@ -121,7 +124,8 @@ export function Section({
               style={[
                 styles.title,
                 tone === 'highlight' ? styles.highlightTitle : null,
-                tone === 'raised' ? styles.raisedTitle : null
+                tone === 'raised' ? styles.raisedTitle : null,
+                headingColor === 'primary' ? styles.primaryTitle : null
               ]}
             >
               {title}
@@ -174,12 +178,15 @@ const styles = StyleSheet.create({
   },
   highlight: {
     backgroundColor: 'rgba(26, 26, 26, 0.94)',
-    borderColor: 'rgba(229, 199, 107, 0.28)',
+    borderColor: colors.borderStrong,
     borderLeftColor: colors.primary,
     borderLeftWidth: 3
   },
   highlightTitle: {
     color: '#F3DC87'
+  },
+  primaryTitle: {
+    color: colors.primary
   },
   raised: {
     backgroundColor: colors.editorSurface,

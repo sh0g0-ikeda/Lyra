@@ -2,6 +2,7 @@ import type { PropsWithChildren, RefObject } from 'react';
 import {
   KeyboardAvoidingView,
   Platform,
+  Pressable,
   RefreshControl,
   ScrollView,
   StatusBar,
@@ -15,7 +16,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Notice } from '@/components/Notice';
 import { ResponsiveContentFrame } from '@/components/ResponsiveContentFrame';
-import { colors, spacing, textStyles } from '@/constants/theme';
+import { colors, radius, spacing, textStyles } from '@/constants/theme';
 import { t } from '@/lib/i18n';
 import { useNetworkStatus } from '@/state/networkStatus';
 
@@ -43,7 +44,7 @@ export function Screen({
   testID,
   children
 }: ScreenProps): React.JSX.Element {
-  const { language, online } = useNetworkStatus();
+  const { language, online, setLanguage } = useNetworkStatus();
   return (
     <SafeAreaView edges={['top', 'right', 'bottom', 'left']} style={styles.safeArea} testID={testID}>
       <StatusBar backgroundColor={colors.canvas} barStyle="light-content" />
@@ -68,6 +69,32 @@ export function Screen({
           ref={scrollViewRef}
         >
           <ResponsiveContentFrame style={[styles.content, contentStyle]} testID="screen-content-frame">
+            <View accessibilityLabel="Language / 言語" style={styles.languageSwitcher}>
+              <Pressable
+                accessibilityLabel="English"
+                accessibilityRole="radio"
+                accessibilityState={{ checked: language === 'en' }}
+                onPress={() => void setLanguage('en')}
+                style={{
+                  ...styles.languageOption,
+                  ...(language === 'en' ? styles.languageOptionActive : {})
+                }}
+              >
+                <Text style={language === 'en' ? styles.languageTextActive : styles.languageText}>ENG</Text>
+              </Pressable>
+              <Pressable
+                accessibilityLabel="日本語"
+                accessibilityRole="radio"
+                accessibilityState={{ checked: language === 'ja' }}
+                onPress={() => void setLanguage('ja')}
+                style={{
+                  ...styles.languageOption,
+                  ...(language === 'ja' ? styles.languageOptionActive : {})
+                }}
+              >
+                <Text style={language === 'ja' ? styles.languageTextActive : styles.languageText}>日本語</Text>
+              </Pressable>
+            </View>
             {showHeader ? (
               <View style={styles.header}>
                 {eyebrow === undefined ? null : <Text style={styles.eyebrow}>{eyebrow}</Text>}
@@ -115,6 +142,35 @@ const styles = StyleSheet.create({
   },
   keyboardAvoider: {
     flex: 1
+  },
+  languageOption: {
+    alignItems: 'center',
+    borderColor: colors.border,
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    justifyContent: 'center',
+    minHeight: 44,
+    minWidth: 54,
+    paddingHorizontal: spacing.sm
+  },
+  languageOptionActive: {
+    backgroundColor: colors.warningSurface,
+    borderColor: colors.controlBorder
+  },
+  languageSwitcher: {
+    alignSelf: 'flex-end',
+    flexDirection: 'row',
+    gap: spacing.xs,
+    marginBottom: spacing.xs
+  },
+  languageText: {
+    ...textStyles.caption,
+    color: colors.muted
+  },
+  languageTextActive: {
+    ...textStyles.caption,
+    color: colors.primary,
+    fontWeight: '700'
   },
   safeArea: {
     backgroundColor: colors.canvas,

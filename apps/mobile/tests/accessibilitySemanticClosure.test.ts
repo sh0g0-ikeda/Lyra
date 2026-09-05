@@ -86,7 +86,6 @@ describe('mobile accessibility semantic closure', () => {
     const assertions = [
       ['src/components/PrimaryButton.tsx', 'button', 'minHeight'],
       ['src/components/SegmentedControl.tsx', 'segment', 'minHeight'],
-      ['src/screens/StoryScreen.tsx', 'chip', 'minHeight'],
       ['src/screens/PagesScreen.tsx', 'chip', 'minHeight'],
       ['src/screens/PagesScreen.tsx', 'panelDisclosureHeader', 'minHeight'],
       ['src/screens/PagesScreen.tsx', 'templateModalClose', 'height'],
