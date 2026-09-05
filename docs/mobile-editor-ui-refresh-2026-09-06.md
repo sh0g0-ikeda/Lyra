@@ -249,6 +249,8 @@ Sol は各結果を Spec、設計、テスト、diff に照らして review し�
 - AWS: read-only で API task definition `lyra-prod-api:129`、2 desired / 2 running、`/readyz` 200 を確認。稼働 API image の commit `dda4fda` と現 HEAD の routes / migrations / API contract に差分なし。backend のデプロイは不要。
 - 配布済み 1.0.2 の画面案内・言語切替・依存パッチを該当コミット単位で取り込み、現行の 24 ページ上限と `apply_story_plan: false` を保持した。
 - Android 実機・emulator と Apple 実機は接続されていないため、実機でのタップ・スクロール・キーボード・safe-area の目視確認は未実施。署名付き成果物は実機確認にも利用する。
-- EAS の既存 App Store Connect API key は Apple REST API から 401、保存済み Apple ログインも期限切れだった。認証を解決できるまで、ビルド作成と Apple 側での提出完了を区別して報告する。
+- ローカルの App Store Connect 状態照会は 401、保存済み Apple ログインも期限切れだった。一方、EAS サーバー経由の iOS 1.0.3 / build 35 提出は `FINISHED` を確認した。キーの再登録は行っていない。Apple 側の processing / 審査 / 公開状態はローカル照会で確認できていないため、提出完了と区別する。
 
 署名付き成果物は既存の dirty path を含まない、この変更の reviewed commit から作成する。元作業ツリーの未コミット資料・スクリプト・ストア素材は保持する。
+
+完成した署名付き成果物と提出結果は [配布結果](mobile-editor-ui-refresh-release-2026-09-06.md) に記録した。
