@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Linking, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 import { useNavigation } from '@react-navigation/native';
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import * as Crypto from 'expo-crypto';
 import { Image as ExpoImage } from 'expo-image';
 
 import { PageErrorRecoveryNotice } from '@/components/PageErrorRecoveryNotice';
@@ -20,7 +21,6 @@ import { PageImageViewer } from '@/components/PageImageViewer';
 import { PageSceneAutofillAction } from '@/components/PageSceneAutofillAction';
 import { PageThumbnailPicker } from '@/components/PageThumbnailPicker';
 import { PageProvenanceFields } from '@/components/PageProvenanceFields';
-import { PanelDialoguePlacementNotice } from '@/components/PanelDialoguePlacementNotice';
 import { PanelDialogueEditor } from '@/components/PanelDialogueEditor';
 import { PanelCharacterAssignmentCard } from '@/components/PanelCharacterAssignmentCard';
 import { PanelEditorSections } from '@/components/PanelEditorSections';
@@ -59,6 +59,14 @@ import {
   type RemoteImageSource
 } from '@/domain/imageSourceCandidates';
 import { buildAtomicSaveAndGeneratePayload } from '@/domain/pageAtomicGeneration';
+import {
+  executePanelInsertion,
+  inferPanelInsertionRecovery,
+  MAX_PANEL_FRAMES,
+  type PanelInsertionRecoveryPlan,
+  recoverPanelInsertion,
+  PanelInsertionOperationError
+} from '@/domain/panelInsertion';
 import { isPanelDialogueSpeakerValid } from '@/domain/panelDialoguePolicy';
 import { buildPageEntityStateOptions } from '@/domain/pageEntityStateOptions';
 import { buildEpisodeExportPayload } from '@/domain/pageExport';
@@ -150,7 +158,6 @@ interface PageDesignJob {
   resourceId: string;
 }
 
-const WEB_EDITOR_URL = 'https://app.lyra-editor.com/';
 const EPISODE_EXPORT_UI_ENABLED = false;
 const MAX_ESTIMATED_PAGES = 24;
 
@@ -514,23 +521,24 @@ function AssignmentEditor(props: {
   disabled?: boolean;
 }): React.JSX.Element {
   const [removedAssignment, setRemovedAssignment] = useState<{ assignment: AssignmentDraft; index: number } | null>(null);
-  const [expandedEntityIds, setExpandedEntityIds] = useState<ReadonlySet<string>>(
-    () => new Set<string>()
+  const [selectedAssignmentEntityId, setSelectedAssignmentEntityId] = useState<string | null>(
+    () => props.assignments[0]?.entity_id ?? null
   );
   const assignedIds = new Set(props.assignments.map((assignment) => assignment.entity_id));
   const availableEntities = props.entities.filter((entity) => !assignedIds.has(entity.id));
+  const selectedAssignment = props.assignments.find(
+    (assignment) => assignment.entity_id === selectedAssignmentEntityId
+  ) ?? null;
 
-  const toggleAssignment = (entityId: string): void => {
-    setExpandedEntityIds((current) => {
-      const next = new Set(current);
-      if (next.has(entityId)) {
-        next.delete(entityId);
-      } else {
-        next.add(entityId);
-      }
-      return next;
-    });
-  };
+  useEffect(() => {
+    if (
+      selectedAssignmentEntityId !== null &&
+      props.assignments.some((assignment) => assignment.entity_id === selectedAssignmentEntityId)
+    ) {
+      return;
+    }
+    setSelectedAssignmentEntityId(props.assignments[0]?.entity_id ?? null);
+  }, [props.assignments, selectedAssignmentEntityId]);
 
   const updateAssignment = (entityId: string, patch: Partial<AssignmentDraft>): void => {
     props.onChange(
@@ -542,7 +550,7 @@ function AssignmentEditor(props: {
 
   const addEntity = (entityId: string): void => {
     setRemovedAssignment(null);
-    setExpandedEntityIds((current) => new Set([...current, entityId]));
+    setSelectedAssignmentEntityId(entityId);
     props.onChange([
       ...props.assignments,
       {
@@ -560,11 +568,11 @@ function AssignmentEditor(props: {
       return;
     }
     setRemovedAssignment({ assignment, index });
-    setExpandedEntityIds((current) => {
-      const next = new Set(current);
-      next.delete(entityId);
-      return next;
-    });
+    setSelectedAssignmentEntityId((current) =>
+      current === entityId
+        ? props.assignments.find((item) => item.entity_id !== entityId)?.entity_id ?? null
+        : current
+    );
     props.onChange(props.assignments.filter((item) => item.entity_id !== entityId));
   };
 
@@ -578,7 +586,7 @@ function AssignmentEditor(props: {
       removedAssignment.assignment,
       ...props.assignments.slice(insertIndex)
     ]);
-    setExpandedEntityIds((current) => new Set([...current, removedAssignment.assignment.entity_id]));
+    setSelectedAssignmentEntityId(removedAssignment.assignment.entity_id);
     setRemovedAssignment(null);
   };
 
@@ -605,7 +613,7 @@ function AssignmentEditor(props: {
       {props.assignments.map((assignment) => {
         const entity = props.entities.find((item) => item.id === assignment.entity_id);
         const name = entity?.name ?? assignment.entity_id;
-        const expanded = expandedEntityIds.has(assignment.entity_id);
+        const expanded = selectedAssignment?.entity_id === assignment.entity_id;
         const expressionLabel =
           assignment.expression === 'custom' && (assignment.custom_expression ?? '').trim().length > 0
             ? (assignment.custom_expression ?? '').trim()
@@ -626,14 +634,12 @@ function AssignmentEditor(props: {
             key={assignment.entity_id}
             name={name}
             onRemove={() => removeAssignment(assignment.entity_id)}
-            onToggle={() => toggleAssignment(assignment.entity_id)}
+            onToggle={() => setSelectedAssignmentEntityId(assignment.entity_id)}
             removeLabel={t(props.language, 'component.panelCharacterAssignment.remove')}
             summary={summary}
             toggleLabel={t(
               props.language,
-              expanded
-                ? 'component.panelCharacterAssignment.collapse'
-                : 'component.panelCharacterAssignment.expand',
+              'component.panelCharacterAssignment.expand',
               { name }
             )}
           >
@@ -848,6 +854,13 @@ export function PagesScreen(): React.JSX.Element {
   const [exportSelectedPageIds, setExportSelectedPageIds] = useState<string[]>([]);
   const [exportJobId, setExportJobId] = useState<string | null>(null);
   const [pageImageDownloadError, setPageImageDownloadError] = useState<string | null>(null);
+  const [panelInsertionRecoveryMessage, setPanelInsertionRecoveryMessage] =
+    useState<string | null>(null);
+  const [panelInsertionRecovery, setPanelInsertionRecovery] =
+    useState<PanelInsertionRecoveryPlan | null>(null);
+  const [panelInsertionRecoveryPageId, setPanelInsertionRecoveryPageId] =
+    useState<string | null>(null);
+  const [panelInsertionOperationVisible, setPanelInsertionOperationVisible] = useState(false);
   const [localJob, setLocalJob] = useState<{
     id: string;
     resourceId: string;
@@ -866,6 +879,8 @@ export function PagesScreen(): React.JSX.Element {
     useState<string | null>(null);
   const generationAttemptRef = useRef<PageGenerationAttempt | null>(null);
   const exportAttemptRef = useRef<EpisodeExportAttempt | null>(null);
+  const panelInsertionOperationRef = useRef(false);
+  const currentPageIdRef = useRef<string | null>(null);
   const workspaceContext = useWorkspaceContextSelection();
   const activeWorkId = workspaceContext.selectedWorkId;
   const activeEpisodeId = workspaceContext.selectedEpisodeId;
@@ -920,6 +935,19 @@ export function PagesScreen(): React.JSX.Element {
     selectedPageCandidate?.episode_id === activeEpisodeId
       ? selectedPageCandidate
       : null;
+  useEffect(() => {
+    currentPageIdRef.current = selectedPage?.id ?? null;
+  }, [selectedPage?.id]);
+  useEffect(() => {
+    if (
+      panelInsertionRecoveryPageId !== null &&
+      panelInsertionRecoveryPageId !== selectedPage?.id
+    ) {
+      setPanelInsertionRecovery(null);
+      setPanelInsertionRecoveryMessage(null);
+      setPanelInsertionRecoveryPageId(null);
+    }
+  }, [panelInsertionRecoveryPageId, selectedPage?.id]);
   const selectedPageDetailNotFound =
     shouldFetchSelectedPageDetail &&
     selectedPageQuery.error instanceof ApiError &&
@@ -1684,6 +1712,139 @@ export function PagesScreen(): React.JSX.Element {
     updatePanelMutation
   ]);
 
+  const insertPanelAfterMutation = useMutation({
+    mutationFn: async ({ pageId, targetPanelId }: { pageId: string; targetPanelId: string }) => {
+      if (
+        selectedPage === null ||
+        selectedPage.id !== pageId ||
+        selectedPanel === null ||
+        selectedPanel.id !== targetPanelId ||
+        selectedPage.status === 'generating' ||
+        selectedPage.status === 'confirmed' ||
+        pageStale
+      ) {
+        throw new Error(t(language, "generated.screens.PagesScreen.reload.the.latest.page.2116abca"));
+      }
+
+      const currentPanels = [...(panelsQuery.data?.panels ?? [])];
+      const currentFrames = frameDrafts.map(toFrameRecord);
+      const created = await executePanelInsertion({
+        panels: currentPanels,
+        frames: currentFrames,
+        selectedPanelId: selectedPanel.id,
+        createFrameId: () => Crypto.randomUUID(),
+        saveDrafts: saveAllPageDrafts,
+        createPanel: (payload) =>
+          api.createPanel(selectedPage.id, payload, organizationId),
+        reorderPanels: async (panelIds) => {
+          await api.reorderPanels(selectedPage.id, panelIds, organizationId);
+        },
+        replaceFrames: async (frames) => {
+          await api.replaceFrames(selectedPage.id, { frames }, organizationId);
+        }
+      });
+      return { created, pageId };
+    },
+    onMutate: () => {
+      setPanelInsertionRecoveryMessage(null);
+      setPanelInsertionRecovery(null);
+      setPanelInsertionRecoveryPageId(null);
+    },
+    onError: async (error, { pageId }) => {
+      if (currentPageIdRef.current !== pageId) return;
+      if (error instanceof PanelInsertionOperationError && error.phase === 'reorder') {
+        setPanelInsertionRecovery(error.recovery);
+        setPanelInsertionRecoveryPageId(pageId);
+        setPanelInsertionRecoveryMessage(
+          t(language, 'screen.pages.panelInsert.reorderFailed')
+        );
+      } else if (error instanceof PanelInsertionOperationError && error.phase === 'frames') {
+        setPanelInsertionRecovery(error.recovery);
+        setPanelInsertionRecoveryPageId(pageId);
+        setPanelInsertionRecoveryMessage(
+          t(language, 'screen.pages.panelInsert.frameFailed')
+        );
+      }
+      await Promise.all([invalidatePages(), invalidatePanels(), invalidateFrames()]);
+    },
+    onSuccess: async ({ created, pageId }) => {
+      if (currentPageIdRef.current !== pageId) return;
+      setPanelInsertionRecovery(null);
+      setPanelInsertionRecoveryPageId(null);
+      setLastSyncedPanelId(null);
+      setPanelId(created.id);
+      await Promise.all([invalidatePages(), invalidatePanels(), invalidateFrames()]);
+    },
+    onSettled: () => {
+      panelInsertionOperationRef.current = false;
+      setPanelInsertionOperationVisible(false);
+    }
+  });
+
+  const inferredPanelInsertionRecovery = useMemo(
+    () => inferPanelInsertionRecovery(
+      panelsQuery.data?.panels ?? [],
+      framesQuery.data?.frames ?? [],
+      '00000000-0000-4000-8000-000000000000'
+    ),
+    [framesQuery.data?.frames, panelsQuery.data?.panels]
+  );
+  const repairPanelInsertionMutation = useMutation({
+    mutationFn: async (pageId: string) => {
+      if (
+        selectedPage === null || selectedPage.id !== pageId || !canEdit || selectedPage.status === 'generating' ||
+        selectedPage.status === 'confirmed' || pageDirty || panelDirty || framesDirty
+      ) {
+        throw new Error(t(language, "generated.screens.PagesScreen.reload.the.latest.page.2116abca"));
+      }
+      const [panelsResult, framesResult] = await Promise.all([
+        panelsQuery.refetch(),
+        framesQuery.refetch()
+      ]);
+      const latestPanels = panelsResult.data?.panels ?? [];
+      const latestFrames = framesResult.data?.frames ?? [];
+      const recovery = panelInsertionRecovery ?? inferPanelInsertionRecovery(
+        latestPanels,
+        latestFrames,
+        Crypto.randomUUID()
+      );
+      if (recovery === null) {
+        throw new Error(t(language, 'screen.pages.panelInsert.repairFailed'));
+      }
+      const repaired = await recoverPanelInsertion({
+        panels: latestPanels,
+        frames: latestFrames,
+        recovery: recovery.createdFrameId === '00000000-0000-4000-8000-000000000000'
+          ? { ...recovery, createdFrameId: Crypto.randomUUID() }
+          : recovery,
+        reorderPanels: async (panelIds) => {
+          await api.reorderPanels(selectedPage.id, panelIds, organizationId);
+        },
+        replaceFrames: async (frames) => {
+          await api.replaceFrames(selectedPage.id, { frames }, organizationId);
+        }
+      });
+      return { pageId, repaired };
+    },
+    onError: async (_error, pageId) => {
+      if (currentPageIdRef.current !== pageId) return;
+      setPanelInsertionRecoveryMessage(t(language, 'screen.pages.panelInsert.repairFailed'));
+      await Promise.all([invalidatePanels(), invalidateFrames()]);
+    },
+    onSuccess: async ({ pageId, repaired }) => {
+      if (currentPageIdRef.current !== pageId) return;
+      setPanelInsertionRecovery(null);
+      setPanelInsertionRecoveryMessage(null);
+      setPanelInsertionRecoveryPageId(null);
+      setPanelId(repaired.id);
+      await Promise.all([invalidatePanels(), invalidateFrames(), invalidatePages()]);
+    },
+    onSettled: () => {
+      panelInsertionOperationRef.current = false;
+      setPanelInsertionOperationVisible(false);
+    }
+  });
+
   const pageEditorRevision = JSON.stringify({
     pageId: selectedPage?.id ?? null,
     frameDrafts: frameDrafts.map(toFrameRecord),
@@ -1963,10 +2124,6 @@ export function PagesScreen(): React.JSX.Element {
       })
   });
 
-  const openWebEditorMutation = useMutation({
-    mutationFn: () => Linking.openURL(WEB_EDITOR_URL)
-  });
-
   const pageErrorScope = JSON.stringify([
     sessionKey,
     organizationId,
@@ -1981,6 +2138,8 @@ export function PagesScreen(): React.JSX.Element {
     applyFrameTemplateMutation.reset,
     replaceFramesMutation.reset,
     createPanelMutation.reset,
+    insertPanelAfterMutation.reset,
+    repairPanelInsertionMutation.reset,
     updatePanelMutation.reset,
     deletePanelMutation.reset,
     reorderPanelMutation.reset,
@@ -1994,7 +2153,9 @@ export function PagesScreen(): React.JSX.Element {
     exportPagesMutation.reset,
     downloadPageMutation.reset,
     () => setPageImageDownloadError(null),
-    openWebEditorMutation.reset
+    () => setPanelInsertionRecoveryMessage(null),
+    () => setPanelInsertionRecovery(null),
+    () => setPanelInsertionRecoveryPageId(null)
   ]);
 
   const confirmDeletePanel = (targetPanel: PanelRecord): void => {
@@ -2141,6 +2302,31 @@ export function PagesScreen(): React.JSX.Element {
     pageSkeletonMutation.isPending ||
     pageStoryAutofillMutation.isPending ||
     cancelPageDesignJobMutation.isPending;
+  const panelInsertionOperationActive =
+    panelInsertionOperationVisible || insertPanelAfterMutation.isPending ||
+    repairPanelInsertionMutation.isPending;
+
+  const beginPanelInsertion = (targetPanelId: string): void => {
+    const pageId = selectedPage?.id ?? null;
+    if (
+      pageId === null || panelInsertionOperationRef.current || panelInsertionOperationActive ||
+      pageDesignOperationActive || generatePageMutation.isPending
+    ) return;
+    panelInsertionOperationRef.current = true;
+    setPanelInsertionOperationVisible(true);
+    insertPanelAfterMutation.mutate({ pageId, targetPanelId });
+  };
+
+  const beginPanelInsertionRepair = (): void => {
+    const pageId = selectedPage?.id ?? null;
+    if (
+      pageId === null || panelInsertionOperationRef.current || panelInsertionOperationActive ||
+      pageDesignOperationActive || generatePageMutation.isPending
+    ) return;
+    panelInsertionOperationRef.current = true;
+    setPanelInsertionOperationVisible(true);
+    repairPanelInsertionMutation.mutate(pageId);
+  };
 
   const confirmPageSkeletonGeneration = (): void => {
     if (
@@ -2280,6 +2466,8 @@ export function PagesScreen(): React.JSX.Element {
     applyFrameTemplateMutation.error,
     replaceFramesMutation.error,
     createPanelMutation.error,
+    insertPanelAfterMutation.error,
+    repairPanelInsertionMutation.error,
     updatePanelMutation.error,
     deletePanelMutation.error,
     reorderPanelMutation.error,
@@ -2290,8 +2478,7 @@ export function PagesScreen(): React.JSX.Element {
     generatePageMutation.error,
     confirmPageMutation.error,
     reopenPageMutation.error,
-    exportPagesMutation.error,
-    openWebEditorMutation.error
+    exportPagesMutation.error
   ].filter((error): error is Error => error instanceof Error);
   const pagesError = currentQueryError({
     data: pagesQuery.data,
@@ -2489,8 +2676,7 @@ export function PagesScreen(): React.JSX.Element {
         entitiesQuery.isFetching ||
         compositionsQuery.isFetching
       }
-      subtitle={t(language, "generated.screens.PagesScreen.review.each.page.scene.source.layout.and.ddfabd30")}
-      title={t(language, 'pages')}
+      title={t(language, 'screen.pages.title')}
     >
       <WorkspaceHierarchyNavigator context={workspaceContext} />
       {!canEdit ? (
@@ -2503,7 +2689,6 @@ export function PagesScreen(): React.JSX.Element {
       <Section
         collapsible
         persistKey="pages:design"
-        subtitle={t(language, 'screen.pages.design.subtitle')}
         title={t(language, 'screen.pages.design.title')}
         tone="highlight"
       >
@@ -2572,11 +2757,11 @@ export function PagesScreen(): React.JSX.Element {
         />
       )}
 
-      <Section collapsible persistKey="pages:list" title={t(language, 'pageList')}>
+      <Section collapsible headingColor="primary" persistKey="pages:list" title={t(language, 'pageList')}>
         <PageThumbnailPicker
           emptyLabel={t(language, 'emptyPages')}
           hasNextPage={pagesQuery.hasNextPage}
-          helperText={t(language, "generated.screens.PagesScreen.choose.a.page.to.edit.unsaved.edits.are.453ccf41")}
+          helperText={t(language, 'screen.pages.list.subtitle')}
           imageSourcesFor={pageThumbnailImageSourcesFor}
           isFetchingNextPage={pagesQuery.isFetchingNextPage}
           language={language}
@@ -2613,12 +2798,19 @@ export function PagesScreen(): React.JSX.Element {
         </Section>
       ) : (
         <>
-      <Section collapsible defaultCollapsed persistKey="pages:style" title={t(language, 'styleReference')}>
+      <Section collapsible defaultCollapsed headingColor="primary" persistKey="pages:style" title={t(language, 'styleReference')}>
         <FormField editable={canEdit} label={t(language, 'styleReferenceTitle')} maxLength={200} onChangeText={setStyleReferenceTitle} value={styleReferenceTitle} />
         <FormField editable={canEdit} label={t(language, 'styleReferenceNotes')} maxLength={2000} multiline onChangeText={setStyleReferenceNotes} value={styleReferenceNotes} />
       </Section>
 
-      <Section collapsible defaultCollapsed persistKey="pages:story-sources" title={t(language, "generated.screens.PagesScreen.story.sources.82e34b3e")} tone="raised">
+      <Section
+        collapsible
+        defaultCollapsed
+        headingColor="primary"
+        persistKey="pages:story-sources"
+        title={t(language, 'screen.pages.flowOverview')}
+        tone="raised"
+      >
         <PageProvenanceFields
           continuityNote={continuityNote}
           editable={canEdit}
@@ -2634,6 +2826,7 @@ export function PagesScreen(): React.JSX.Element {
       <Section
         collapsible
         defaultCollapsed
+        headingColor="primary"
         persistKey="pages:scene-autofill"
         title={t(language, 'component.pageSceneAutofill.apply')}
       >
@@ -2826,8 +3019,9 @@ export function PagesScreen(): React.JSX.Element {
 
       <Section
         collapsible
+        headingColor="primary"
         persistKey="pages:panels"
-        subtitle={t(language, "generated.screens.PagesScreen.refine.situation.characters.composition.e7ce8a4f")}
+        subtitle={t(language, 'screen.pages.panelSettings.subtitle')}
         title={t(language, 'panels')}
         tone="raised"
       >
@@ -2836,13 +3030,32 @@ export function PagesScreen(): React.JSX.Element {
             !canEdit ||
             reorderPanelMutation.isPending ||
             changePanelRoleMutation.isPending ||
-            deletePanelMutation.isPending
+            deletePanelMutation.isPending ||
+            panelInsertionOperationActive
+          }
+          insertAfterDisabledReason={
+            !canEdit
+              ? t(language, "generated.screens.PagesScreen.editing.permission.is.required.6d3b86ee")
+              : selectedPage === null
+                ? t(language, "generated.screens.PagesScreen.select.a.page.first.50276876")
+                : selectedPage.status === 'generating'
+                  ? t(language, 'screen.pages.blocker.pageGenerating')
+                  : pageStale
+                      ? t(language, "generated.screens.PagesScreen.reload.the.latest.page.2116abca")
+                      : pageDesignOperationActive || generatePageMutation.isPending
+                        ? t(language, 'screen.pages.blocker.pageGenerating')
+                      : (panelsQuery.data?.panels.length ?? 0) >= MAX_PANEL_FRAMES
+                        ? t(language, 'screen.pages.panelInsert.limitReached')
+                        : panelPayloadInvalid || framePanelMismatch || frameDraftsInvalid
+                        ? t(language, 'screen.pages.panelInsert.invalidDraft')
+                        : undefined
           }
           language={language}
           onChangeRole={(targetPanelId, role) =>
             changePanelRoleMutation.mutate({ role, targetPanelId })
           }
           onDelete={confirmDeletePanel}
+          onInsertAfter={beginPanelInsertion}
           onMove={(targetPanelId, direction) =>
             reorderPanelMutation.mutate({ direction, targetPanelId })
           }
@@ -2850,6 +3063,30 @@ export function PagesScreen(): React.JSX.Element {
           panels={panelsQuery.data?.panels ?? []}
           selectedPanelId={panelId}
         />
+        {panelInsertionRecoveryMessage === null ? null : (
+          <Notice message={panelInsertionRecoveryMessage} tone="warning" />
+        )}
+        {panelInsertionRecovery !== null || inferredPanelInsertionRecovery !== null ? (
+          <View style={styles.editorStack}>
+            <Notice message={t(language, 'screen.pages.panelInsert.repairAvailable')} tone="warning" />
+            <PrimaryButton
+              disabled={
+                !canEdit || selectedPage?.status === 'generating' ||
+                pageDirty || panelDirty || framesDirty || pageDesignOperationActive ||
+                generatePageMutation.isPending
+              }
+              disabledReason={
+                pageDirty || panelDirty || framesDirty
+                  ? t(language, 'screen.pages.panelInsert.invalidDraft')
+                  : undefined
+              }
+              label={t(language, 'screen.pages.panelInsert.repair')}
+              loading={repairPanelInsertionMutation.isPending}
+              onPress={beginPanelInsertionRepair}
+              variant="secondary"
+            />
+          </View>
+        ) : null}
 
         <PanelEditorSections
           language={language}
@@ -2933,20 +3170,14 @@ export function PagesScreen(): React.JSX.Element {
               />
             ),
             dialogue: (
-              <>
-                <PanelDialoguePlacementNotice
-                  dialogueInPanel={dialogueInPanel}
-                  language={language}
-                  onOpenWeb={() => openWebEditorMutation.mutate()}
-                />
-                <PanelDialogueEditor
-                  dialogues={dialogues}
-                  disabled={!canEdit}
-                  entities={panelEntities}
-                  language={language}
-                  onChange={setDialogues}
-                />
-              </>
+              <PanelDialogueEditor
+                dialogues={dialogues}
+                disabled={!canEdit}
+                entities={panelEntities}
+                key={selectedPanel?.id ?? 'new-panel'}
+                language={language}
+                onChange={setDialogues}
+              />
             ),
             effectsAndNotes: (
               <>
@@ -3090,12 +3321,14 @@ export function PagesScreen(): React.JSX.Element {
 
         generationSection={(
       <Section
-        subtitle={t(language, "generated.screens.PagesScreen.the.current.page.including.unsaved.input.17ec50bf")}
         title={t(language, 'generate')}
         tone="highlight"
       >
         <PageGenerationActions
-          canConfirm={canEdit && selectedPage !== null && !unsavedNewPanelDraft}
+          canConfirm={
+            canEdit && selectedPage !== null && !unsavedNewPanelDraft &&
+            !panelInsertionOperationActive
+          }
           confirmDisabledReason={
             !canEdit
               ? t(language, "generated.screens.PagesScreen.editing.permission.is.required.6d3b86ee")
@@ -3116,7 +3349,8 @@ export function PagesScreen(): React.JSX.Element {
             serverGenerationBlocked ||
             framePanelMismatch ||
             frameDraftsInvalid ||
-            panelPayloadInvalid
+            panelPayloadInvalid ||
+            panelInsertionOperationActive
           }
           generateDisabledReason={
             !canGenerate
@@ -3137,7 +3371,9 @@ export function PagesScreen(): React.JSX.Element {
                             ? t(language, "generated.screens.PagesScreen.check.frame.values.adb62959")
                             : panelPayloadInvalid
                               ? t(language, "generated.screens.PagesScreen.check.panel.content.a0d29c4a")
-                              : undefined
+                              : panelInsertionOperationActive
+                                ? t(language, 'screen.pages.panelInsert.processing')
+                                : undefined
           }
           generateLoading={generatePageMutation.isPending}
           language={language}
@@ -3257,8 +3493,29 @@ export function PagesScreen(): React.JSX.Element {
         />
       </Section>
         )}
-      />
-      <ImagePreviewModal
+       />
+       <Modal
+         animationType="fade"
+         onRequestClose={() => undefined}
+         transparent
+         visible={panelInsertionOperationActive}
+       >
+         <View
+           accessibilityLabel={t(language, 'screen.pages.panelInsert.processing')}
+           accessibilityLiveRegion="assertive"
+           accessibilityRole="progressbar"
+           accessibilityViewIsModal
+           style={styles.operationBarrier}
+         >
+           <View style={styles.operationBarrierCard}>
+             <ActivityIndicator color={colors.primary} size="large" />
+             <Text style={styles.operationBarrierText}>
+               {t(language, 'screen.pages.panelInsert.processing')}
+             </Text>
+           </View>
+         </View>
+       </Modal>
+       <ImagePreviewModal
         language={language}
         onClose={() => setPreviewImageSources([])}
         sources={previewImageSources}
@@ -3444,6 +3701,29 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: spacing.xs
+  },
+  operationBarrier: {
+    alignItems: 'center',
+    backgroundColor: 'rgba(0, 0, 0, 0.72)',
+    flex: 1,
+    justifyContent: 'center',
+    padding: spacing.lg
+  },
+  operationBarrierCard: {
+    alignItems: 'center',
+    backgroundColor: colors.surfaceRaised,
+    borderColor: colors.borderStrong,
+    borderRadius: 8,
+    borderWidth: 1,
+    gap: spacing.md,
+    maxWidth: 360,
+    padding: spacing.lg,
+    width: '100%'
+  },
+  operationBarrierText: {
+    ...textStyles.body,
+    color: colors.inkStrong,
+    textAlign: 'center'
   },
   pageImage: {
     alignSelf: 'center',

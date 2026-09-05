@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { ActionableErrorNotice } from '@/components/ActionableErrorNotice';
@@ -13,18 +13,19 @@ import { Section } from '@/components/Section';
 import { StoryCollaborationPanel } from '@/components/StoryCollaborationPanel';
 import { WorkspaceHierarchyNavigator } from '@/components/WorkspaceHierarchyNavigator';
 import { useWorkspaceContextSelection } from '@/components/WorkspaceContextPicker';
-import { colors, spacing, textStyles } from '@/constants/theme';
+import { spacing } from '@/constants/theme';
 import {
   editorDraftHasUnsavedChanges,
   shouldHydrateEditorDraft
 } from '@/domain/editorDraftSyncPolicy';
+import { shouldShowStoryNextStep } from '@/domain/creationWorkflowGuidance';
 import { extractImprovedFullStory } from '@/domain/storyWorkflow';
 import { storyEditorIsDirty } from '@/domain/editorDirtyPolicy';
 import {
   buildEpisodeMobileUpdatePayload,
   episodeMobileDraft
 } from '@/domain/episodeMobileDraft';
-import type { EntityRecord, EpisodeRecord, StoryEpisodeImprovementRecord } from '@/domain/types';
+import type { EpisodeRecord, StoryEpisodeImprovementRecord } from '@/domain/types';
 import { confirmDestructiveAction } from '@/lib/confirm';
 import {
   flattenUniqueRecords,
@@ -33,8 +34,6 @@ import {
 } from '@/lib/listPagination';
 import {
   chaptersQueryKey,
-  entitiesInfiniteQueryKey,
-  entitiesQueryKey,
   episodesQueryKey,
   scenesQueryKey,
   workDetailQueryKey,
@@ -61,9 +60,6 @@ const nullable = (value: string): string | null => {
   return trimmed.length === 0 ? null : trimmed;
 };
 
-const toggleId = (ids: string[], id: string): string[] =>
-  ids.includes(id) ? ids.filter((currentId) => currentId !== id) : [...ids, id];
-
 const MAX_ESTIMATED_PAGES = 24;
 const MAX_STORY_ORDER = 1000;
 const sameStringArray = (a: string[], b: string[]): boolean =>
@@ -84,39 +80,6 @@ const isResourceStaleError = (error: unknown): boolean =>
 
 const isAbortError = (error: unknown): boolean =>
   error instanceof Error && error.name === 'AbortError';
-
-interface EntityChipsProps {
-  entities: EntityRecord[];
-  selectedIds: string[];
-  onChange: (ids: string[]) => void;
-  emptyLabel: string;
-}
-
-function EntityChips({ entities, selectedIds, onChange, emptyLabel }: EntityChipsProps): React.JSX.Element {
-  if (entities.length === 0) {
-    return <Text style={styles.emptySmall}>{emptyLabel}</Text>;
-  }
-
-  return (
-    <View style={styles.chipRow}>
-      {entities.map((entity) => {
-        const selected = selectedIds.includes(entity.id);
-        return (
-          <Pressable
-            accessibilityRole="button"
-            key={entity.id}
-            onPress={() => onChange(toggleId(selectedIds, entity.id))}
-            style={[styles.chip, selected ? styles.chipSelected : null]}
-          >
-            <Text style={[styles.chipLabel, selected ? styles.chipLabelSelected : null]} numberOfLines={1}>
-              {entity.name}
-            </Text>
-          </Pressable>
-        );
-      })}
-    </View>
-  );
-}
 
 export function StoryScreen(): React.JSX.Element {
   const queryClient = useQueryClient();
@@ -183,23 +146,6 @@ export function StoryScreen(): React.JSX.Element {
     queryFn: () => api.getWork(selection.workId ?? '', organizationId),
   });
   const selectedWork = selectedWorkFromList ?? selectedWorkQuery.data ?? null;
-  const entitiesQuery = useInfiniteQuery({
-    enabled: selectedWork !== null,
-    queryKey: entitiesInfiniteQueryKey(sessionKey, selectedWork?.id ?? null, organizationId),
-    initialPageParam: null as string | null,
-    queryFn: ({ pageParam }) => api.getEntitiesPage(selectedWork?.id ?? '', {
-      organizationId,
-      limit: MOBILE_LIST_PAGE_SIZE,
-      cursor: pageParam,
-    }),
-    getNextPageParam: nextCursorFromPage,
-  });
-
-  const entities = useMemo(
-    () => flattenUniqueRecords(entitiesQuery.data?.pages.map((page) => page.entities) ?? []),
-    [entitiesQuery.data?.pages],
-  );
-
   const chaptersQuery = useQuery({
     enabled: selectedWork !== null,
     queryKey: chaptersQueryKey(sessionKey, selectedWork?.id ?? null, organizationId),
@@ -323,10 +269,6 @@ export function StoryScreen(): React.JSX.Element {
 
   const invalidateWorks = async (): Promise<void> => {
     await queryClient.invalidateQueries({ queryKey: worksQueryKey(sessionKey, organizationId) });
-  };
-
-  const invalidateEntities = async (): Promise<void> => {
-    await queryClient.invalidateQueries({ queryKey: entitiesQueryKey(sessionKey, selectedWork?.id ?? null, organizationId) });
   };
 
   const invalidateChapters = async (): Promise<void> => {
@@ -799,7 +741,6 @@ export function StoryScreen(): React.JSX.Element {
 
   const storyErrors = [
     worksQuery.error,
-    entitiesQuery.error,
     chaptersQuery.error,
     episodesQuery.error,
     scenesQuery.error,
@@ -815,13 +756,11 @@ export function StoryScreen(): React.JSX.Element {
 
   const refreshing =
     worksQuery.isFetching ||
-    entitiesQuery.isFetching ||
     chaptersQuery.isFetching ||
     episodesQuery.isFetching ||
     scenesQuery.isFetching;
   const refreshStory = (): void => {
     void invalidateWorks();
-    void invalidateEntities();
     void invalidateChapters();
     void invalidateEpisodes();
     void invalidateScenes();
@@ -833,23 +772,17 @@ export function StoryScreen(): React.JSX.Element {
       }
     });
   };
+  const showStoryNextStep = shouldShowStoryNextStep({
+    hasSelectedEpisode: selectedEpisode !== null,
+    hasUnsavedChanges: episodeDirty,
+    storyDraft: episodeDraft
+  });
 
   return (
     <Screen
       onRefresh={refreshStory}
       refreshing={refreshing}
-      subtitle={
-        selectedEpisode === null
-          ? t(language, "generated.screens.StoryScreen.select.a.work.chapter.and.episode.4d87ee08")
-          : t(language, 'screen.story.editingEpisode', {
-              episodeTitle:
-                selectedEpisode.title ??
-                t(language, 'screen.story.untitledEpisode', {
-                  episodeOrder: selectedEpisode.order
-                })
-            })
-      }
-      title={t(language, 'story')}
+      title={t(language, 'screen.story.title')}
     >
       {!canEdit ? (
         <Notice
@@ -904,7 +837,7 @@ export function StoryScreen(): React.JSX.Element {
       )}
       <WorkspaceHierarchyNavigator context={workspaceContext} />
 
-      <Section collapsible persistKey="story:episode" subtitle={t(language, "generated.screens.StoryScreen.use.one.full.story.draft.e2ff378b")} title={t(language, "generated.screens.StoryScreen.episode.d3de27bf")}>
+      <Section collapsible headingColor="primary" persistKey="story:episode" title={t(language, 'screen.story.entry.title')}>
         {selectedEpisode === null ? (
           <Notice message={t(language, "generated.screens.StoryScreen.select.an.episode.from.the.hierarchy.874ba80d")} tone="info" />
         ) : (
@@ -923,11 +856,17 @@ export function StoryScreen(): React.JSX.Element {
             <View style={styles.buttonRow}>
               <PrimaryButton disabled={!canEdit || activeStaleResource === 'episode' || estimatedPagesInvalid || episodeTitle.trim().length === 0} label={t(language, 'save')} loading={updateEpisodeMutation.isPending} onPress={submitSelectedEpisode} variant="secondary" />
             </View>
+            {showStoryNextStep ? (
+              <Notice
+                message={t(language, 'screen.story.next.characters')}
+                tone="success"
+              />
+            ) : null}
           </>
         )}
       </Section>
 
-      <Section collapsible mobileDefaultCollapsed persistKey="story:story-ai" subtitle={t(language, "generated.screens.StoryScreen.improve.the.current.episode.and.apply.it.5fc027c6")} title={t(language, 'storyAi')}>
+      <Section collapsible headingColor="primary" mobileDefaultCollapsed persistKey="story:story-ai" subtitle={t(language, "generated.screens.StoryScreen.improve.the.current.episode.and.apply.it.5fc027c6")} title={t(language, 'storyAi')}>
         <EpisodeImprovementPanel
           canEdit={canEdit}
           improvement={improvement}
@@ -975,6 +914,7 @@ export function StoryScreen(): React.JSX.Element {
       <Section
         collapsible
         defaultCollapsed
+        headingColor="primary"
         persistKey="story:scenes"
         showSubtitleWhenCollapsed
         subtitle={t(language, "generated.screens.StoryScreen.use.scenes.to.keep.location.time.and.atm.4de6caa0")}
@@ -998,23 +938,6 @@ export function StoryScreen(): React.JSX.Element {
         <FormField label={t(language, 'location')} maxLength={200} onChangeText={setSceneLocation} value={sceneLocation} />
         <FormField label={t(language, 'time')} maxLength={200} onChangeText={setSceneTime} value={sceneTime} />
         <FormField label={t(language, 'atmosphere')} maxLength={2000} multiline onChangeText={setSceneAtmosphere} value={sceneAtmosphere} />
-        <Text style={styles.label}>{t(language, "generated.screens.StoryScreen.involved.characters.2790d18b")}</Text>
-        <EntityChips
-          emptyLabel={t(language, "generated.screens.StoryScreen.create.characters.first.to.select.them.h.fb086bcb")}
-          entities={entities}
-          onChange={setSceneEntityIds}
-          selectedIds={sceneEntityIds}
-        />
-        {entitiesQuery.hasNextPage ? (
-          <PrimaryButton
-            label={t(language, "generated.screens.StoryScreen.load.more.characters.0a56bda2")}
-            loading={entitiesQuery.isFetchingNextPage}
-            onPress={() => {
-              void entitiesQuery.fetchNextPage();
-            }}
-            variant="ghost"
-          />
-        ) : null}
         <View style={styles.buttonRow}>
           <PrimaryButton disabled={!canEdit || selectedEpisode === null || selectedScene !== null || scenesQuery.isLoading || sceneOrderInvalid || updateSceneMutation.isPending} disabledReason={!canEdit ? t(language, "generated.screens.StoryScreen.editing.permission.is.required.6d3b86ee") : selectedEpisode === null ? t(language, "generated.screens.StoryScreen.select.an.episode.first.437356a6") : selectedScene !== null ? t(language, "generated.screens.StoryScreen.choose.create.a.new.scene.first.754b6b6c") : sceneOrderInvalid ? t(language, "generated.screens.StoryScreen.check.order.2ff9d500") : undefined} label={t(language, 'createScene')} loading={createSceneMutation.isPending} onPress={() => createSceneMutation.mutate()} />
           <PrimaryButton disabled={!canEdit || selectedScene === null || sceneOrderInvalid || createSceneMutation.isPending} disabledReason={!canEdit ? t(language, "generated.screens.StoryScreen.editing.permission.is.required.6d3b86ee") : selectedScene === null ? t(language, "generated.screens.StoryScreen.select.a.scene.to.save.63d8c002") : sceneOrderInvalid ? t(language, "generated.screens.StoryScreen.check.order.2ff9d500") : undefined} label={t(language, 'saveScene')} loading={updateSceneMutation.isPending} onPress={() => updateSceneMutation.mutate()} variant="secondary" />
@@ -1032,61 +955,4 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     gap: spacing.sm
   },
-  caption: {
-    ...textStyles.caption
-  },
-  chip: {
-    backgroundColor: 'rgba(255, 255, 255, 0.03)',
-    borderColor: colors.border,
-    borderRadius: 999,
-    borderWidth: 1,
-    justifyContent: 'center',
-    minHeight: 44,
-    minWidth: 96,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm
-  },
-  chipLabel: {
-    color: colors.ink,
-    fontSize: 14,
-    fontWeight: '600',
-    lineHeight: 18
-  },
-  chipLabelSelected: {
-    color: colors.primary,
-    fontWeight: '700'
-  },
-  chipRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: spacing.sm
-  },
-  chipSelected: {
-    backgroundColor: 'rgba(229, 199, 107, 0.14)',
-    borderColor: 'rgba(229, 199, 107, 0.42)'
-  },
-  emptySmall: {
-    ...textStyles.caption,
-    color: colors.muted
-  },
-  label: {
-    ...textStyles.caption,
-    color: colors.ink,
-    fontWeight: '700'
-  },
-  result: {
-    backgroundColor: 'rgba(16, 16, 16, 0.82)',
-    borderColor: colors.border,
-    borderRadius: 8,
-    borderWidth: 1,
-    gap: spacing.sm,
-    padding: spacing.md
-  },
-  resultText: {
-    ...textStyles.body
-  },
-  resultTitle: {
-    ...textStyles.body,
-    fontWeight: '700'
-  }
 });

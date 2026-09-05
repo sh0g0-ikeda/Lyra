@@ -31,6 +31,12 @@ vi.mock('react-native', () => ({
   View: 'view'
 }));
 
+const safeAreaInsetsMock = { bottom: 0, left: 0, right: 0, top: 0 };
+
+vi.mock('react-native-safe-area-context', () => ({
+  useSafeAreaInsets: () => safeAreaInsetsMock
+}));
+
 vi.mock('lucide-react-native', () => {
   const icon = (name: string) => {
     const Icon = (props: Record<string, unknown>) => React.createElement(name, props);
@@ -84,7 +90,7 @@ describe('PanelOrderList', () => {
     panel('panel-2', 2, 'action', '主人公が走り出す')
   ];
 
-  it('各コマの順序・役割・状況要約と三点メニューを同じ行に表示する', () => {
+  it('各コマを状況説明なしのコンパクトな選択行として表示する', () => {
     let renderer: ReturnType<typeof create>;
     act(() => {
       renderer = create(
@@ -103,8 +109,10 @@ describe('PanelOrderList', () => {
     const rendered = JSON.stringify(renderer!.toJSON());
     expect(rendered).toContain('1コマ目');
     expect(rendered).toContain('導入');
-    expect(rendered).toContain('街の全景から物語が始まる');
+    expect(rendered).not.toContain('街の全景から物語が始まる');
     expect(renderer!.root.findByProps({ accessibilityLabel: '1コマ目の操作' })).toBeDefined();
+    const editPanel = renderer!.root.findByProps({ accessibilityLabel: '1コマ目を編集' });
+    expect(editPanel.props.style.minHeight).toBeGreaterThanOrEqual(44);
   });
 
   it('三点メニューから境界を守って順序変更・役割変更・削除を実行する', () => {
@@ -147,5 +155,71 @@ describe('PanelOrderList', () => {
     act(() => button('1コマ目の操作').props.onClick());
     act(() => button('コマを削除').props.onClick());
     expect(onDelete).toHaveBeenCalledWith(panels[0]);
+  });
+
+  it('選択したコマの直後へ追加する操作を表示して無効理由を支援技術へ渡す', () => {
+    const onInsertAfter = vi.fn();
+    let renderer: ReturnType<typeof create>;
+    act(() => {
+      renderer = create(
+        <PanelOrderList
+          insertAfterDisabledReason="ページを保存してから追加してください"
+          language="en"
+          onChangeRole={vi.fn()}
+          onDelete={vi.fn()}
+          onInsertAfter={onInsertAfter}
+          onMove={vi.fn()}
+          onSelect={vi.fn()}
+          panels={panels}
+          selectedPanelId="panel-1"
+        />
+      );
+    });
+
+    act(() => renderer!.root.findAllByType('button').find((candidate) => candidate.props.accessibilityLabel === 'Panel 1 actions')!.props.onClick());
+    const insert = renderer!.root.findAllByType('button').find((candidate) => candidate.props.accessibilityLabel === 'Add a panel after this')!;
+    expect(insert.props.disabled).toBe(true);
+    expect(insert.props.accessibilityHint).toBe('ページを保存してから追加してください');
+
+    act(() => {
+      renderer!.update(
+        <PanelOrderList
+          language="en"
+          onChangeRole={vi.fn()}
+          onDelete={vi.fn()}
+          onInsertAfter={onInsertAfter}
+          onMove={vi.fn()}
+          onSelect={vi.fn()}
+          panels={panels}
+          selectedPanelId="panel-1"
+        />
+      );
+    });
+    act(() => renderer!.root.findAllByType('button').find((candidate) => candidate.props.accessibilityLabel === 'Add a panel after this')!.props.onClick());
+    expect(onInsertAfter).toHaveBeenCalledWith('panel-1');
+  });
+
+  it.each([
+    ['insetなし', 0],
+    ['Androidジェスチャー', 16],
+    ['Android3ボタン', 48],
+    ['iOSホームインジケータ', 34]
+  ])('削除を含むアクションシートに%sの下部安全領域を加算する', (_device, bottom) => {
+    safeAreaInsetsMock.bottom = bottom;
+    let renderer: ReturnType<typeof create>;
+    act(() => {
+      renderer = create(
+        <PanelOrderList language="ja" onChangeRole={vi.fn()} onDelete={vi.fn()} onMove={vi.fn()} onSelect={vi.fn()} panels={panels} selectedPanelId="panel-1" />
+      );
+    });
+    act(() => renderer!.root.findAllByType('button').find((candidate) => candidate.props.accessibilityLabel === '1コマ目の操作')!.props.onClick());
+    const actionList = renderer!.root.findAllByType('view').find((node) => {
+      const styles = Array.isArray(node.props.style) ? node.props.style : [node.props.style];
+      return styles.some((style) => style?.paddingBottom === bottom + 8);
+    });
+    expect(actionList).toBeDefined();
+    const remove = renderer!.root.findAllByType('button').find((candidate) => candidate.props.accessibilityLabel === 'コマを削除')!;
+    const removeStyles = Array.isArray(remove.props.style) ? remove.props.style : [remove.props.style];
+    expect(removeStyles.some((style) => style?.minHeight >= 44)).toBe(true);
   });
 });

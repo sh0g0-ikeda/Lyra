@@ -59,13 +59,22 @@ describe('StoryGenerationControls', () => {
 
   it('ページ設計の二段階を説明し、それぞれを別の操作として表示する', () => {
     const rendered = JSON.stringify(renderControls().toJSON());
-    expect(rendered).toContain('入力したストーリーをコマへ反映する2段階の操作です。');
+    expect(rendered).not.toContain('入力したストーリーをコマへ反映する2段階の操作です。');
     expect(rendered).toContain('1. ページ骨格を上書き再生成');
     expect(rendered).toContain('ページとコマの配分・全体の流れを組み立てます。');
     expect(rendered).toContain('2. ストーリーから設定を自動入力');
     expect(rendered).toContain('各コマの登場人物・状況・構図・セリフを自動入力します。');
+    expect(rendered).toContain('ページ数しだいで完了まで20分程度かかる場合があります');
     expect(rendered).toContain('ページ骨格を生成');
     expect(rendered).toContain('ストーリーから設定を自動入力');
+  });
+
+  it('英語でも二段階の操作と自動入力の所要時間を表示する', () => {
+    const rendered = JSON.stringify(renderControls({ language: 'en' }).toJSON());
+    expect(rendered).toContain('1.');
+    expect(rendered).toContain('2.');
+    expect(rendered).toContain('Depending on the number of pages, completion may take up to about 20 minutes.');
+    expect(rendered).not.toContain('Use these two steps to apply the story to editable panels.');
   });
 
   it('enqueue直後は開始だけを表示しauthoritative完了前に完了と表示しない', () => {

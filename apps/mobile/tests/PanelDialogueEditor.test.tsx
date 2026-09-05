@@ -8,14 +8,16 @@ import type { EntityRecord, PanelDialogueLine } from '@/domain/types';
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 vi.mock('react-native', () => ({
+  Pressable: ({ children, onPress, ...props }: { children: React.ReactNode; onPress?: () => void }) =>
+    React.createElement('button', { ...props, onClick: onPress }, children),
   StyleSheet: { create: <T,>(styles: T): T => styles },
   Text: 'text',
   View: 'view'
 }));
 
 vi.mock('@/components/FormField', () => ({
-  FormField: ({ label, value }: { label: string; value: string }) =>
-    React.createElement('field', { value }, label)
+  FormField: ({ label, onChangeText, value }: { label: string; onChangeText: (text: string) => void; value: string }) =>
+    React.createElement('field', { onChangeText, value }, label)
 }));
 
 vi.mock('@/components/Notice', () => ({
@@ -116,5 +118,50 @@ describe('PanelDialogueEditor', () => {
         position: 'top'
       }
     ]);
+  });
+
+  it('選択した1行だけを編集し、行の切替後も未保存値を保持する', () => {
+    const initialDialogues: PanelDialogueLine[] = [
+      { entity_id: 'entity-1', text: '一行目', type: 'speech', position: 'top' },
+      { entity_id: 'entity-1', text: '二行目', type: 'thought', position: 'bottom' }
+    ];
+    function Harness(): React.JSX.Element {
+      const [dialogues, setDialogues] = React.useState(initialDialogues);
+      return <PanelDialogueEditor dialogues={dialogues} entities={[entity('entity-1', '蓮')]} language="ja" onChange={setDialogues} />;
+    }
+    let renderer: ReturnType<typeof create>;
+    act(() => { renderer = create(<Harness />); });
+
+    expect(renderer!.root.findAllByType('field')).toHaveLength(1);
+    const dialogueButton = (label: string) => renderer!.root.findAllByType('button').find((button) => button.props.accessibilityLabel === label)!;
+    act(() => dialogueButton('セリフ 1').props.onClick());
+    act(() => renderer!.root.findByType('field').props.onChangeText('一行目の下書き'));
+    act(() => dialogueButton('セリフ 2').props.onClick());
+    expect(renderer!.root.findByType('field').props.value).toBe('二行目');
+    act(() => dialogueButton('セリフ 1').props.onClick());
+    expect(renderer!.root.findByType('field').props.value).toBe('一行目の下書き');
+  });
+
+  it('選択中の行を削除して元に戻す場合に他の未保存値を保持する', () => {
+    const initialDialogues: PanelDialogueLine[] = [
+      { entity_id: 'entity-1', text: '一行目', type: 'speech', position: 'top' },
+      { entity_id: 'entity-1', text: '二行目', type: 'thought', position: 'bottom' }
+    ];
+    function Harness(): React.JSX.Element {
+      const [dialogues, setDialogues] = React.useState(initialDialogues);
+      return <PanelDialogueEditor dialogues={dialogues} entities={[entity('entity-1', '蓮')]} language="ja" onChange={setDialogues} />;
+    }
+    let renderer: ReturnType<typeof create>;
+    act(() => { renderer = create(<Harness />); });
+
+    const dialogueButton = (label: string) => renderer!.root.findAllByType('button').find((button) => button.props.accessibilityLabel === label)!;
+    const buttons = (label: string) => renderer!.root.findAllByType('button').filter((button) => button.children.includes(label));
+    act(() => dialogueButton('セリフ 2').props.onClick());
+    act(() => renderer!.root.findByType('field').props.onChangeText('二行目の下書き'));
+    act(() => buttons('削除')[0]!.props.onClick());
+    expect(renderer!.root.findByType('field').props.value).toBe('一行目');
+    act(() => buttons('元に戻す')[0]!.props.onClick());
+    act(() => dialogueButton('セリフ 2').props.onClick());
+    expect(renderer!.root.findByType('field').props.value).toBe('二行目の下書き');
   });
 });

@@ -33,6 +33,7 @@ import { entityTypes, type LabelOption } from '@/constants/options';
 import { characterContinuityStateUiEnabled } from '@/constants/mobileFeatureVisibility';
 import { colors, spacing, textStyles } from '@/constants/theme';
 import { mergeCharacterClothingDescription } from '@/domain/characterClothing';
+import { resolveCharacterWorkflowNextStep } from '@/domain/creationWorkflowGuidance';
 import {
   editorDraftHasUnsavedChanges,
   shouldHydrateEditorDraft
@@ -72,6 +73,7 @@ import {
   type DirectEntityUploadStage
 } from '@/lib/directEntityReferenceUpload';
 import {
+  activeResourceJobQueryKey,
   entitiesInfiniteQueryKey,
   entitiesQueryKey,
   entityDetailQueryKey,
@@ -200,6 +202,14 @@ const extrasFromRecord = (record: Record<string, unknown>, keys: string[]): stri
   const extras = Object.fromEntries(Object.entries(record).filter(([key]) => !knownKeys.has(key)));
   return Object.keys(extras).length === 0 ? '' : JSON.stringify(extras, null, 2);
 };
+
+const structuredExtrasFromRecord = (
+  record: Record<string, unknown>,
+  entityType: EntityType,
+): string =>
+  entityType === 'character'
+    ? extrasFromRecord(record, characterFieldKeys)
+    : JSON.stringify(record);
 
 const safeParseRecord = (value: string): Record<string, unknown> => {
   const trimmed = value.trim();
@@ -444,23 +454,6 @@ function ConfirmedReferencePreview({
   );
 }
 
-const formatReferenceStatus = (status: string | undefined, language: 'ja' | 'en'): string => {
-  if (status === undefined) {
-    return '-';
-  }
-
-  const labels: Record<string, ScreenTranslationKey> = {
-    empty: 'screen.characters.referenceStatus.empty',
-    partial: 'screen.characters.referenceStatus.partial',
-    ready: 'screen.characters.referenceStatus.ready'
-  };
-  const label = labels[status];
-  if (label === undefined) {
-    return status;
-  }
-  return t(language, label);
-};
-
 const generationBlockerMessage = (
   code: EntityReferenceGenerationBlockerCode,
   language: 'ja' | 'en'
@@ -540,37 +533,6 @@ const genericFieldKeys = [
   'function',
   'movement',
   'visual_anchor'
-];
-
-const genericFieldLabels: Record<string, ScreenTranslationKey> = {
-  category: 'screen.characters.genericField.category',
-  shape: 'screen.characters.genericField.shape',
-  size: 'screen.characters.genericField.size',
-  main_color: 'screen.characters.genericField.mainColor',
-  material: 'screen.characters.genericField.material',
-  surface_texture: 'screen.characters.genericField.surfaceTexture',
-  condition: 'screen.characters.genericField.condition',
-  signature_feature: 'screen.characters.genericField.signatureFeature',
-  function: 'screen.characters.genericField.function',
-  movement: 'screen.characters.genericField.movement',
-  visual_anchor: 'screen.characters.genericField.visualAnchor'
-};
-
-const recommendedCharacterKeys = [
-  'gender_expression',
-  'age_range',
-  'first_impression',
-  'default_expression',
-  'height',
-  'build',
-  'visual_anchor',
-  'signature_feature',
-  'hair_color',
-  'hair_length',
-  'hair_style',
-  'clothing_category',
-  'clothing_main_color',
-  'clothing_description'
 ];
 
 const nonhumanBaseForms = ['dragon', 'wolf', 'spirit', 'robot', 'zombie', 'deity', 'custom'] as const;
@@ -847,8 +809,13 @@ const toCharacterStructuredFieldsPayload = (draft: DraftRecord, extras: string):
   ]);
 };
 
-const toGenericStructuredFieldsPayload = (entityType: EntityType, draft: DraftRecord): Record<string, unknown> => {
-  const structuredFields: Record<string, unknown> = {};
+const toGenericStructuredFieldsPayload = (
+  entityType: EntityType,
+  draft: DraftRecord,
+  extras: string,
+): Record<string, unknown> => {
+  const genericStructuredFields = safeParseRecord(extras);
+  const structuredFields: Record<string, unknown> = { ...genericStructuredFields };
   const features: string[] = [];
 
   if (entityType === 'nonhuman') {
@@ -898,7 +865,7 @@ const toGenericStructuredFieldsPayload = (entityType: EntityType, draft: DraftRe
 const toStructuredFieldsPayload = (entityType: EntityType, draft: DraftRecord, extras: string): Record<string, unknown> =>
   entityType === 'character'
     ? toCharacterStructuredFieldsPayload(draft, extras)
-    : toGenericStructuredFieldsPayload(entityType, draft);
+    : toGenericStructuredFieldsPayload(entityType, draft, extras);
 
 const japaneseOptionLabels: Record<string, string> = {
   Accessory: 'アクセサリー',
@@ -1801,6 +1768,7 @@ export function CharactersScreen(): React.JSX.Element {
   const [importResult, setImportResult] = useState<string | null>(null);
   const [lastImportedCandidateToken, setLastImportedCandidateToken] = useState<string | null>(null);
   const [lastImportedCandidateEntityId, setLastImportedCandidateEntityId] = useState<string | null>(null);
+  const [lastConfirmedPreviewEntityId, setLastConfirmedPreviewEntityId] = useState<string | null>(null);
   const [pendingEntityReferenceUpload, setPendingEntityReferenceUpload] =
     useState<PendingEntityReferenceUpload | null>(null);
   const [entityReferenceUploadProgress, setEntityReferenceUploadProgress] = useState(0);
@@ -1823,8 +1791,6 @@ export function CharactersScreen(): React.JSX.Element {
   const [sectionOffsets, setSectionOffsets] = useState({ editor: 0, import: 0 });
   const workspaceContext = useWorkspaceContextSelection();
   const activeWorkId = workspaceContext.selectedWorkId;
-
-  const activeFieldKeys = entityType === 'character' ? characterFieldKeys : genericFieldKeys;
 
   const entitiesQuery = useInfiniteQuery({
     enabled: activeWorkId !== null,
@@ -1902,11 +1868,9 @@ export function CharactersScreen(): React.JSX.Element {
           ),
         ) ||
       structuredExtras !==
-        extrasFromRecord(
+        structuredExtrasFromRecord(
           selectedEntity.structured_fields ?? {},
-          selectedEntity.entity_type === 'character'
-            ? characterFieldKeys
-            : genericFieldKeys,
+          selectedEntity.entity_type,
         )
     );
   const pendingEntityUpdatePayload =
@@ -2056,7 +2020,12 @@ export function CharactersScreen(): React.JSX.Element {
     setDescription(selectedEntity?.free_description ?? '');
     setPromptSupplement(selectedEntity?.prompt_supplement ?? '');
     setStructuredDraft(structuredDraftFromRecord(selectedEntity?.structured_fields ?? {}, selectedEntity?.entity_type ?? 'character'));
-    setStructuredExtras(extrasFromRecord(selectedEntity?.structured_fields ?? {}, selectedEntity?.entity_type === 'character' ? characterFieldKeys : genericFieldKeys));
+    setStructuredExtras(
+      structuredExtrasFromRecord(
+        selectedEntity?.structured_fields ?? {},
+        selectedEntity?.entity_type ?? 'character',
+      ),
+    );
     setImportResult(null);
     setLastImportedCandidateToken(null);
     setLastImportedCandidateEntityId(null);
@@ -2069,6 +2038,10 @@ export function CharactersScreen(): React.JSX.Element {
 
   useEffect(() => {
     setEntityStale(false);
+  }, [selectedEntity?.id]);
+
+  useEffect(() => {
+    setLastConfirmedPreviewEntityId(null);
   }, [selectedEntity?.id]);
 
   useEffect(() => {
@@ -2101,6 +2074,18 @@ export function CharactersScreen(): React.JSX.Element {
 
   const invalidateReference = async (): Promise<void> => {
     await queryClient.invalidateQueries({ queryKey: entityReferenceSetQueryKey(sessionKey, selectedEntity?.id ?? null, organizationId) });
+  };
+
+  const invalidateActiveReferenceJob = async (): Promise<void> => {
+    await queryClient.invalidateQueries({
+      queryKey: activeResourceJobQueryKey(
+        sessionKey,
+        organizationId,
+        'entity_id',
+        selectedEntity?.id ?? null,
+        'entity_generate'
+      )
+    });
   };
 
   const invalidateEntityStates = async (): Promise<void> => {
@@ -2180,10 +2165,10 @@ export function CharactersScreen(): React.JSX.Element {
       )
     );
     setStructuredExtras(
-      extrasFromRecord(
+      structuredExtrasFromRecord(
         selectedEntity?.structured_fields ?? {},
-        selectedEntity?.entity_type === 'character' ? characterFieldKeys : genericFieldKeys
-      )
+        selectedEntity?.entity_type ?? 'character',
+      ),
     );
     setCandidateToken('');
     setImportResult(null);
@@ -2455,13 +2440,21 @@ export function CharactersScreen(): React.JSX.Element {
       setLastImportedCandidateToken(null);
       setLastImportedCandidateEntityId(null);
       setLocalJob(null);
-      await Promise.all([invalidateEntities(), invalidateReference()]);
+      setLastConfirmedPreviewEntityId(selectedEntity?.id ?? null);
+      await Promise.all([
+        invalidateActiveReferenceJob(),
+        invalidateEntities(),
+        invalidateReference()
+      ]);
     }
   });
 
   const deleteReferenceMutation = useMutation({
     mutationFn: (refId: string) => api.deleteEntityReference(selectedEntity?.id ?? '', refId, organizationId),
-    onSuccess: invalidateReference
+    onSuccess: async () => {
+      setLastConfirmedPreviewEntityId(null);
+      await invalidateReference();
+    }
   });
 
   const downloadReferenceMutation = useMutation({
@@ -2476,25 +2469,6 @@ export function CharactersScreen(): React.JSX.Element {
         mimeType: 'image/png',
         refreshIdToken
       })
-  });
-
-  const downloadCandidateMutation = useMutation({
-    mutationFn: () => {
-      if (!candidateTokenUsable) {
-        throw new Error('Candidate token is not valid for the selected entity.');
-      }
-      const params = new URLSearchParams({ candidate_token: candidateToken.trim() });
-      if (organizationId !== null && organizationId.trim().length > 0) {
-        params.set('organization_id', organizationId);
-      }
-      return saveAuthenticatedImageToPhotoLibrary({
-        path: `/api/entities/${encodeURIComponent(selectedEntity?.id ?? '')}/reference-candidate-image?${params.toString()}`,
-        filename: `lyra-character-candidate-${candidateToken.trim()}.png`,
-        tokens,
-        mimeType: 'image/png',
-        refreshIdToken
-      });
-    }
   });
 
   const generationBlockers = buildEntityReferenceGenerationBlockers({
@@ -2676,7 +2650,6 @@ export function CharactersScreen(): React.JSX.Element {
     confirmReferenceMutation.error,
     deleteReferenceMutation.error,
     downloadReferenceMutation.error,
-    downloadCandidateMutation.error,
     createEntityStateMutation.error,
     updateEntityStateMutation.error,
     dirtySaveError,
@@ -2689,12 +2662,6 @@ export function CharactersScreen(): React.JSX.Element {
     value: option.value,
     label: language === 'ja' ? option.labelJa : option.labelEn
   }));
-  const filledStructuredCount = activeFieldKeys.filter((key) => (structuredDraft[key] ?? '').trim().length > 0).length;
-  const filledRecommendedCount =
-    entityType === 'character'
-      ? recommendedCharacterKeys.filter((key) => (structuredDraft[key] ?? '').trim().length > 0).length
-      : filledStructuredCount;
-  const recommendedTotal = entityType === 'character' ? recommendedCharacterKeys.length : activeFieldKeys.length;
   const refreshCharacters = (): void => {
     void invalidateEntities();
     void invalidateReference();
@@ -2703,14 +2670,30 @@ export function CharactersScreen(): React.JSX.Element {
     void generationAvailabilityQuery.refetch();
     void jobQuery.refetch();
   };
+  const characterWorkflowNextStep = resolveCharacterWorkflowNextStep({
+    confirmedPreviewCount: referenceQuery.data?.reference_images.length ?? 0,
+    hasActivePreviewJob,
+    hasJustConfirmedPreview: lastConfirmedPreviewEntityId === selectedEntity?.id,
+    hasPreviewCandidate: activeReferenceCandidate !== null,
+    hasResolvedPreviewState: referenceQuery.data !== undefined,
+    hasSavedCharacter: selectedEntity !== null && entityEditorMode === 'edit',
+    hasUnsavedChanges: entityDirty
+  });
+  const characterWorkflowMessageKey: ScreenTranslationKey | null =
+    characterWorkflowNextStep === 'create-preview'
+      ? 'screen.characters.next.createPreview'
+      : characterWorkflowNextStep === 'confirm-preview'
+        ? 'screen.characters.next.confirmPreview'
+        : characterWorkflowNextStep === 'open-pages'
+          ? 'screen.characters.next.openPages'
+          : null;
 
   return (
     <Screen
       onRefresh={refreshCharacters}
       refreshing={entitiesQuery.isFetching || referenceQuery.isFetching}
       scrollViewRef={screenScrollRef}
-      subtitle={t(language, "generated.screens.CharactersScreen.create.characters.import.visual.traits.a.bae42b0d")}
-      title={t(language, 'characters')}
+      title={t(language, 'screen.characters.title')}
     >
       <WorkspaceHierarchyNavigator context={workspaceContext} />
       {!canEdit ? (
@@ -2773,7 +2756,7 @@ export function CharactersScreen(): React.JSX.Element {
           />
         </View>
       ) : null}
-      <Section collapsible persistKey="characters:list" title={t(language, "generated.screens.CharactersScreen.character.list.ea7139da")}>
+      <Section collapsible headingColor="primary" persistKey="characters:list" title={t(language, "generated.screens.CharactersScreen.character.list.ea7139da")}>
         <RecordPicker
           emptyLabel={t(language, 'emptyCharacters')}
           hasNextPage={entitiesQuery.hasNextPage}
@@ -2804,15 +2787,7 @@ export function CharactersScreen(): React.JSX.Element {
       </Section>
 
       <View onLayout={recordSectionOffset('editor')}>
-        <Section collapsible persistKey="characters:editor" subtitle={t(language, "generated.screens.CharactersScreen.fill.only.what.you.know.and.save.before.1a296e88")} title={entityEditorMode === 'create' ? t(language, "generated.screens.CharactersScreen.create.character.20818b4a") : t(language, "generated.screens.CharactersScreen.character.editor.669746e4")}>
-        <Notice
-          message={
-            entityEditorMode === 'create'
-              ? t(language, "generated.screens.CharactersScreen.creating.a.new.character.existing.charac.3dc75fb0")
-              : t(language, "generated.screens.CharactersScreen.editing.the.selected.character.9454ccd6")
-          }
-          tone="info"
-        />
+        <Section collapsible headingColor="primary" persistKey="characters:editor" subtitle={t(language, "generated.screens.CharactersScreen.you.do.not.need.to.fill.every.field.c49dd414")} title={entityEditorMode === 'create' ? t(language, "generated.screens.CharactersScreen.create.character.20818b4a") : t(language, "generated.screens.CharactersScreen.character.editor.669746e4")}>
         <FormField label={t(language, 'name')} maxLength={100} onChangeText={setName} value={name} />
         <SegmentedControl onChange={setEntityType} options={typeOptions} value={entityType} />
         <View
@@ -2823,10 +2798,6 @@ export function CharactersScreen(): React.JSX.Element {
           <Text style={styles.caption}>
             {t(language, "generated.screens.CharactersScreen.import.a.character.image.so.its.appearan.ed76afc3")}
           </Text>
-          <Notice
-            message={t(language, "generated.screens.CharactersScreen.choose.jpeg.png.or.webp.large.images.can.2bf9c35d")}
-            tone="info"
-          />
           <PrimaryButton
             disabled={!canGenerate || activeWorkId === null}
             disabledReason={
@@ -2857,30 +2828,9 @@ export function CharactersScreen(): React.JSX.Element {
             <Notice message={t(language, "generated.screens.CharactersScreen.suggested.fields.were.applied.to.the.for.1570bad8")} tone="info" />
           )}
         </View>
-        <View style={styles.metricsGrid}>
-          <View style={styles.metricCard}>
-            <Text style={styles.caption}>{t(language, "generated.screens.CharactersScreen.required.64cf5d7a")}</Text>
-            <Text style={styles.metric}>{name.trim().length > 0 ? t(language, "generated.screens.CharactersScreen.name.ok.9d30f555") : t(language, "generated.screens.CharactersScreen.name.required.4b1380a3")}</Text>
-          </View>
-          <View style={styles.metricCard}>
-            <Text style={styles.caption}>{t(language, "generated.screens.CharactersScreen.recommended.655b10bd")}</Text>
-            <Text style={styles.metric}>{filledRecommendedCount}/{recommendedTotal}</Text>
-          </View>
-          <View style={styles.metricCard}>
-            <Text style={styles.caption}>{t(language, 'referenceSet')}</Text>
-            <Text style={styles.metric}>{formatReferenceStatus(referenceQuery.data?.status, language)}</Text>
-          </View>
-        </View>
         {entityType === 'character' ? (
           <>
             <CollapsibleGroup title={t(language, "generated.screens.CharactersScreen.identity.90859a65")}>
-              <FormField
-                help={t(language, "generated.screens.CharactersScreen.separate.multiple.aliases.with.commas.or.2ab505cd")}
-                label={t(language, "generated.screens.CharactersScreen.aliases.658c65b6")}
-                maxLength={500}
-                onChangeText={(value) => setStructuredValue('aliases', value)}
-                value={structuredDraft.aliases ?? ''}
-              />
               <ChoiceField label={t(language, "generated.screens.CharactersScreen.gender.cbf7a6be")} language={language} onChange={(value) => setStructuredValue('gender_expression', value)} options={genderOptions} value={structuredDraft.gender_expression ?? ''} />
               <ChoiceField label={t(language, "generated.screens.CharactersScreen.age.range.3bfd3fb9")} language={language} onChange={(value) => setStructuredValue('age_range', value)} options={ageOptions} value={structuredDraft.age_range ?? ''} />
               <ChoiceField label={t(language, "generated.screens.CharactersScreen.skin.tone.a4e7759d")} language={language} onChange={(value) => setStructuredValue('skin_tone', value)} options={skinToneOptions} value={structuredDraft.skin_tone ?? ''} />
@@ -2931,26 +2881,10 @@ export function CharactersScreen(): React.JSX.Element {
               />
             </CollapsibleGroup>
           </>
-        ) : (
-          <>
-            <Text style={styles.groupTitle}>{t(language, "generated.screens.CharactersScreen.generic.traits.9f53c262")}</Text>
-            {activeFieldKeys.map((key) => (
-              <FormField key={key} label={genericFieldLabels[key] === undefined ? key.replace(/_/g, ' ') : t(language, genericFieldLabels[key])} onChangeText={(value) => setStructuredValue(key, value)} value={structuredDraft[key] ?? ''} />
-            ))}
-          </>
-        )}
-        </Section>
-      </View>
-
-      <Section
-        collapsible
-        persistKey="characters:description-save"
-        subtitle={t(language, "generated.screens.CharactersScreen.you.do.not.need.to.fill.every.field.c49dd414")}
-        title={t(language, "generated.screens.CharactersScreen.description.and.save.19130ad8")}
-      >
+        ) : null}
         <FormField
           help={t(language, "generated.screens.CharactersScreen.describe.traits.not.covered.by.the.choic.a92e98e3")}
-          label={t(language, 'description')}
+          label={t(language, 'screen.characters.freeInput.label')}
           maxLength={2000}
           multiline
           onChangeText={setDescription}
@@ -2966,33 +2900,15 @@ export function CharactersScreen(): React.JSX.Element {
             </>
           )}
         </View>
-      </Section>
+        </Section>
+      </View>
 
-      <Section collapsible persistKey="characters:reference-set" subtitle={t(language, "generated.screens.CharactersScreen.page.generation.uses.confirmed.reference.6e2b8447")} title={t(language, 'referenceSet')}>
-        <View style={styles.metricsGrid}>
-          <View style={styles.metricCard}>
-            <Text style={styles.caption}>{t(language, "generated.screens.CharactersScreen.status.bd826326")}</Text>
-            <Text style={styles.metric}>{formatReferenceStatus(referenceQuery.data?.status, language)}</Text>
-          </View>
-          <View style={styles.metricCard}>
-            <Text style={styles.caption}>{t(language, "generated.screens.CharactersScreen.primary.a481ddc0")}</Text>
-            <Text style={styles.metric}>
-              {referenceQuery.data?.primary_ref_id === null || referenceQuery.data?.primary_ref_id === undefined
-                ? t(language, "generated.screens.CharactersScreen.not.set.3ecccf12")
-                : t(language, "generated.screens.CharactersScreen.set.d44ebb68")}
-            </Text>
-          </View>
-          <View style={styles.metricCard}>
-            <Text style={styles.caption}>{t(language, "generated.screens.CharactersScreen.images.716d1857")}</Text>
-            <Text style={styles.metric}>{referenceQuery.data?.reference_images.length ?? 0}</Text>
-          </View>
-        </View>
-        {activeReferenceCandidate === null && (referenceQuery.data?.reference_images.length ?? 0) === 0 ? (
-          <Notice
-            message={t(language, "generated.screens.CharactersScreen.imported.generated.and.confirmed.referen.b5e84403")}
-            tone="info"
-          />
-        ) : (
+      {characterWorkflowMessageKey === null ? null : (
+        <Notice message={t(language, characterWorkflowMessageKey)} tone="success" />
+      )}
+
+      <Section collapsible persistKey="characters:reference-set" subtitle={t(language, 'screen.characters.preview.subtitle')} title={t(language, 'referenceSet')}>
+        {activeReferenceCandidate === null && (referenceQuery.data?.reference_images.length ?? 0) === 0 ? null : (
           <>
             <Text style={styles.groupTitle}>{t(language, "generated.screens.CharactersScreen.preview.and.confirmed.images.78120ddc")}</Text>
             <ScrollView
@@ -3081,14 +2997,6 @@ export function CharactersScreen(): React.JSX.Element {
             tone="warning"
           />
         ) : null}
-        <PrimaryButton
-          disabled={!canExport || selectedEntity === null || !candidateTokenUsable}
-          disabledReason={!canExport ? t(language, "generated.screens.CharactersScreen.export.permission.is.required.8c8fb948") : selectedEntity === null ? t(language, "generated.screens.CharactersScreen.select.a.character.first.7075de9f") : !candidateTokenUsable ? t(language, "generated.screens.CharactersScreen.select.a.candidate.valid.for.this.charac.049d04a0") : undefined}
-          label={t(language, "generated.screens.CharactersScreen.save.candidate.image.9e676bff")}
-          loading={downloadCandidateMutation.isPending}
-          onPress={() => downloadCandidateMutation.mutate()}
-          variant="ghost"
-        />
         <PrimaryButton
           disabled={!canEdit || selectedEntity === null || !candidateTokenUsable}
           disabledReason={!canEdit ? t(language, "generated.screens.CharactersScreen.editing.permission.is.required.6d3b86ee") : selectedEntity === null ? t(language, "generated.screens.CharactersScreen.select.a.character.first.7075de9f") : !candidateTokenUsable ? t(language, "generated.screens.CharactersScreen.review.a.candidate.image.for.the.current.efd0db5c") : undefined}
@@ -3398,26 +3306,6 @@ const styles = StyleSheet.create({
     ...textStyles.caption,
     color: colors.ink,
     fontWeight: '700'
-  },
-  metric: {
-    ...textStyles.body,
-    flexShrink: 1,
-    fontWeight: '700'
-  },
-  metricCard: {
-    backgroundColor: 'rgba(16, 16, 16, 0.82)',
-    borderColor: colors.border,
-    borderRadius: 8,
-    borderWidth: 1,
-    flex: 1,
-    gap: 4,
-    minWidth: 88,
-    padding: spacing.sm
-  },
-  metricsGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: spacing.sm
   },
   referenceCard: {
     backgroundColor: colors.surfaceAlt,

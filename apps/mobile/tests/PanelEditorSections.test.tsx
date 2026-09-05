@@ -80,6 +80,6 @@ describe('PanelEditorSections', () => {
 
     const rendered = renderer!.toJSON();
     expect(JSON.stringify(rendered)).toContain('#1C2026');
-    expect(JSON.stringify(rendered)).toContain('#5A5138');
+    expect(JSON.stringify(rendered)).toContain('#A39770');
   });
 });
