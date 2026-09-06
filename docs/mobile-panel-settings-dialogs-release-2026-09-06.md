@@ -27,7 +27,7 @@
 - バックエンドbuild、Web lint/build、Playwright smoke 21件成功。
 - Mobile API契約・112メソッド/124ルートのinventory・Web parity確認成功。
 - Expo依存関係整合性、Expo doctor 21/21成功。
-- Android/iOS export、署名成果物と提出結果は完了後に追記する。
+- Android/iOSのproduction export成功（それぞれ7.1MBのHermes bundle）。配布ファイルの検査結果とiOS提出結果は下記のとおり。
 
 実機は未接続で、iPhone/iPad/Androidの実機操作・VoiceOver/TalkBack・ネストした選択画面の実機smokeは未実施。安全領域・キーボード回避・スクロールのコンポーネント検証は、実機表示を直接確認した証拠とは区別する。
 
@@ -54,7 +54,7 @@ Google Play側へのAABアップロード・審査申請・公開は、この作
 3. 日英の「このバージョンの最新情報」、必要なスクリーンショット、審査用ログイン情報、輸出コンプライアンスなど画面上の必須項目を確認する。
 4. 「審査用に追加」→提出内容を確認→「審査へ提出」を選ぶ。公開方法は既存設定どおり手動。
 
-EAS Submitによるビルドアップロードと、App Reviewへの審査申請・一般公開は別の状態。今回のアップロード結果は完了後に下記へ記録する。
+EAS Submitによるビルドアップロードは完了。App Reviewへの審査申請・一般公開は別の状態で、この作業では実行していない。
 
 根拠: [Expo iOS提出手順](https://docs.expo.dev/submit/ios/)、[Apple公式の審査提出手順](https://developer.apple.com/help/app-store-connect/manage-submissions-to-app-review/submit-an-app)
 
@@ -71,4 +71,33 @@ Selected panels now stand out in yellow. Edit the five panel settings in separat
 
 ## 成果物と提出結果
 
-検証・レビュー完了後に、commit、PR、AAB/APK/iOSのビルド番号・EASページ・署名確認・iOS提出結果を追記する。
+コードcommit: `c3f76fc204184d75db0a4746b910dd3fb82f4f5d`。
+[PR #204](https://github.com/sh0g0-ikeda/Lyra/pull/204)。コードcommitのGitHub CIは`mobile-verify`、`verify`ともに成功。
+
+| 成果物 | バージョン | 番号 | EASビルドページ |
+| --- | --- | --- | --- |
+| Google Play用AAB | 1.0.4 | 95 | [AAB](https://expo.dev/accounts/sh0g0/projects/lyra-mobile/builds/671c64c4-02f5-4978-9d88-b5ad60a87494) |
+| 直接インストール用APK | 1.0.4 | 96 | [APK](https://expo.dev/accounts/sh0g0/projects/lyra-mobile/builds/68a8569c-f79a-4a76-a10b-c5a033e70cc2) |
+| App Store用iOS | 1.0.4 | 36 | [iOS](https://expo.dev/accounts/sh0g0/projects/lyra-mobile/builds/89b2363d-9867-49d3-9fc1-411e043994e5) |
+
+iOSは2026-09-06 06:56:02 UTCに`FINISHED`。実際のIPAでbundle ID、1.0.4/build36、iPhone/iPad対応、最低iOS16.4、本番API、runtime1.0.4、production更新channel、署名関連ファイルの存在を確認。Windows上のためnative codesignによる検証は行っていない。
+
+IPA SHA-256: `cd917a56639521b691094fcda0d76b5b8adcbefa3a8df462f0b5b461f764e41f`。
+
+[iOS提出ページ](https://expo.dev/accounts/sh0g0/projects/lyra-mobile/submissions/49cc29a1-16cc-491c-b24e-e8e385647c85)。対象を上記iOS build IDに固定してEAS Submitへ投入し、2026-09-06 07:01:04 UTCに`FINISHED`を確認した。これはApp Store Connectへのアップロード完了の証拠であり、Apple側の処理完了・App Review申請・承認・一般公開を確認したものではない。
+
+AABは2026-09-06 07:05:38 UTC、APKは07:08:08 UTCに`FINISHED`。3成果物の`gitCommitHash`はすべて上記コードcommitに一致する。
+
+Android成果物の検査:
+
+- AABのbundletool validate成功。package `com.lyra.mobile`、version `1.0.4`、code `95`、minimum SDK24、target SDK36を確認。
+- AABの1,436個の非META-INFエントリーをJarFileで読み、署名証明書の一致と重複pathがないことを確認。
+- APKのapksigner検査成功（v2署名）、同じpackage/version、code `96`、target SDK36を確認。zipalignの16KBページ検査も成功。
+- 両形式の本番API URLを確認し、それぞれ48個の64bit native libraryのELF LOAD alignmentが16KB以上であることを確認。
+- 両形式の署名証明書SHA-256: `dddf947c55aebb158251379205d8774729dfbdc0979008eb93476696b878200b`。
+
+AAB SHA-256: `d62bf2faac9b086e975e52b459e145d6b6887cb91f14ef8dbfe99c5df9a10142`。
+
+APK SHA-256: `e224679f34c75bebb2816c480fd6cb466950b5558b5c20edebdce6cfc2c1809c`。
+
+ローカル成果物はignoredの`.tmp/mobile-panel-dialogs-20260906/`に保存した。Gitにバイナリー・認証情報を含めていない。
