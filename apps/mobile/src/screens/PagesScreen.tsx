@@ -3089,7 +3089,14 @@ export function PagesScreen(): React.JSX.Element {
         ) : null}
 
         <PanelEditorSections
+          disabled={
+            selectedPage?.status === 'generating' ||
+            pageDesignOperationActive || generatePageMutation.isPending ||
+            panelInsertionOperationActive
+          }
+          key={`${selection.pageId ?? 'new-page'}:${panelId ?? 'new-panel'}`}
           language={language}
+          panelId={panelId}
           sections={{
             situationAndBackground: (
               <>

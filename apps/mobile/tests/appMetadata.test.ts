@@ -86,11 +86,11 @@ function assertBundledAsset(assetPath: string | undefined): void {
 }
 
 describe('production app metadata', () => {
-  it('既存1.0.2より新しい編集画面の更新版を1.0.3としてビルドする', () => {
-    expect(config.expo.version).toBe('1.0.3');
-    expect(storeConfig.apple?.version).toBe('1.0.3');
-    expect(storeConfig.apple?.info?.ja?.releaseNotes).toContain('コマの追加');
-    expect(storeConfig.apple?.info?.['en-US']?.releaseNotes).toContain('panel insertion');
+  it('コマ設定ダイアログの更新版を1.0.4としてビルドする', () => {
+    expect(config.expo.version).toBe('1.0.4');
+    expect(storeConfig.apple?.version).toBe('1.0.4');
+    expect(storeConfig.apple?.info?.ja?.releaseNotes).toContain('ポップアップ');
+    expect(storeConfig.apple?.info?.['en-US']?.releaseNotes).toContain('dialogs');
   });
 
   it('icon、adaptive icon、splash を Mobile bundle 内の実在 asset に固定する', () => {

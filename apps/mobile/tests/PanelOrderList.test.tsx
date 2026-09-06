@@ -3,6 +3,7 @@ import { act, create } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
 import { PanelOrderList } from '@/components/PanelOrderList';
+import { colors } from '@/constants/theme';
 import type { PanelRecord } from '@/domain/types';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -89,6 +90,42 @@ describe('PanelOrderList', () => {
     panel('panel-1', 1, 'establish', '街の全景から物語が始まる'),
     panel('panel-2', 2, 'action', '主人公が走り出す')
   ];
+
+  it.each(['ja', 'en'] as const)('%sで選択コマが変わる場合に黄色の背景と読める文字・アイコンが選択行だけへ移る', (language) => {
+    const onSelect = vi.fn();
+    const props = { language, onChangeRole: vi.fn(), onDelete: vi.fn(), onMove: vi.fn(), onSelect, panels };
+    let renderer: ReturnType<typeof create>;
+    act(() => {
+      renderer = create(<PanelOrderList {...props} selectedPanelId="panel-1" />);
+    });
+
+    const assertSelection = (selectedIndex: number): void => {
+      const rows = renderer!.root.findAllByType('view').filter((node) =>
+        Array.isArray(node.props.style) && node.props.style[0]?.minHeight === 56
+      );
+      expect(rows).toHaveLength(2);
+      rows.forEach((row, index) => {
+        const selected = index === selectedIndex;
+        const rowStyle = Object.assign({}, ...row.props.style.filter(Boolean));
+        expect(rowStyle.backgroundColor).toBe(selected ? colors.primary : colors.field);
+        const button = row.findAllByType('button')[0];
+        expect(button.props.accessibilityState.selected).toBe(selected);
+        const labels = row.findAllByType('text').slice(1);
+        labels.forEach((label, labelIndex) => {
+          const style = Object.assign({}, ...[label.props.style].flat().filter(Boolean));
+          expect(style.color).toBe(selected ? colors.primaryText : labelIndex === 0 ? colors.inkStrong : colors.primary);
+        });
+        expect(row.findByType('more-horizontal').props.color).toBe(selected ? colors.primaryText : colors.ink);
+      });
+    };
+
+    assertSelection(0);
+    act(() => renderer!.root.findAllByType('button')[2].props.onClick());
+    expect(onSelect).toHaveBeenCalledWith('panel-2');
+    act(() => renderer!.update(<PanelOrderList {...props} selectedPanelId="panel-2" />));
+    assertSelection(1);
+    act(() => renderer!.unmount());
+  });
 
   it('各コマを状況説明なしのコンパクトな選択行として表示する', () => {
     let renderer: ReturnType<typeof create>;
