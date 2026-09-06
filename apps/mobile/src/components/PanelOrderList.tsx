@@ -164,15 +164,15 @@ export function PanelOrderList({
                 onPress={() => onSelect(panel.id)}
                 style={styles.rowMain}
               >
-                <View style={styles.orderBadge}>
-                  <Text style={styles.orderText}>{panel.order}</Text>
+                <View style={[styles.orderBadge, selected ? styles.orderBadgeSelected : null]}>
+                  <Text style={[styles.orderText, selected ? styles.orderTextSelected : null]}>{panel.order}</Text>
                 </View>
                 <View style={styles.rowCopy}>
                   <View style={styles.rowHeading}>
-                    <Text numberOfLines={1} style={styles.rowTitle}>
+                    <Text numberOfLines={1} style={[styles.rowTitle, selected ? styles.selectedText : null]}>
                       {t(language, 'component.panelOrderList.panelTitle', { order: panel.order })}
                     </Text>
-                    <Text numberOfLines={1} style={styles.role}>
+                    <Text numberOfLines={1} style={[styles.role, selected ? styles.selectedText : null]}>
                       {roleLabel(panel.panel_role, language)}
                     </Text>
                   </View>
@@ -190,7 +190,7 @@ export function PanelOrderList({
                 }}
                 style={styles.moreButton}
               >
-                <MoreHorizontal color={colors.ink} size={22} strokeWidth={2} />
+                <MoreHorizontal color={selected ? colors.primaryText : colors.ink} size={22} strokeWidth={2} />
               </Pressable>
             </View>
           );
@@ -407,6 +407,12 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     letterSpacing: 0
   },
+  orderBadgeSelected: {
+    backgroundColor: colors.primaryText
+  },
+  orderTextSelected: {
+    color: colors.primary
+  },
   pickerLabel: {
     ...textStyles.caption,
     color: colors.ink,
@@ -487,7 +493,11 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.sm
   },
   rowSelected: {
+    backgroundColor: colors.primary,
     borderColor: colors.primary
+  },
+  selectedText: {
+    color: colors.primaryText
   },
   rowTitle: {
     ...textStyles.body,
