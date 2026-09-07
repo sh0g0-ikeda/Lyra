@@ -87,8 +87,8 @@ function assertBundledAsset(assetPath: string | undefined): void {
 }
 
 describe('production app metadata', () => {
-  it('キャラ保存修正版を新しいruntimeの1.0.6でビルドしApple提出情報は1.0.4を維持する', () => {
-    expect(config.expo.version).toBe('1.0.6');
+  it('取り込み前自動保存版を新しいruntimeの1.0.7でビルドしApple提出情報は1.0.4を維持する', () => {
+    expect(config.expo.version).toBe('1.0.7');
     expect(storeConfig.apple?.version).toBe('1.0.4');
     expect(storeConfig.apple?.info?.ja?.releaseNotes).toContain('ポップアップ');
     expect(storeConfig.apple?.info?.['en-US']?.releaseNotes).toContain('dialogs');

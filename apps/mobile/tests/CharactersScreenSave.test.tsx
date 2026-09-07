@@ -343,7 +343,7 @@ describe('CharactersScreen の保存同期', () => {
     });
   });
 
-  it('未保存の新規キャラクターでは画像取り込みを開始できない', async () => {
+  it('名前未入力の新規キャラクターでは画像取り込みを開始できない', async () => {
     appStateMock.mockReturnValue({
       api,
       hasCapability: () => true,
@@ -360,6 +360,329 @@ describe('CharactersScreen の保存同期', () => {
     const { renderer } = await renderScreen(entity());
 
     expect(button(renderer, 'Import image').props.disabled).toBe(true);
+  });
+
+  it('名前付き新規キャラクターはPOST成功後に返却IDでpickerを開く', async () => {
+    const created = entity({ id: 'created-for-import', name: '取り込み用新規', updated_at: '2026-09-02T00:00:00.000Z' });
+    let resolveCreate: ((value: EntityRecord) => void) | undefined;
+    api.createEntity.mockImplementation(() => new Promise<EntityRecord>((resolve) => { resolveCreate = resolve; }));
+    appStateMock.mockReturnValue({
+      api, hasCapability: () => true, language: 'en', logout: vi.fn(), refreshIdToken: vi.fn(),
+      selection: { entityId: null, organizationId: null }, session: { organizations: [], personal_credits: { total_credits: 10 } },
+      sessionKey: 'session-1', tokens: null, trackJob: vi.fn(), updateSelection: vi.fn().mockResolvedValue(true)
+    });
+    const { renderer } = await renderScreen(created);
+
+    await act(async () => {
+      renderer.root.findByProps({ accessibilityLabel: 'Name' }).props.onChange(created.name);
+      await flush();
+    });
+    await act(async () => {
+      button(renderer, 'Import image').props.onClick();
+      await flush();
+    });
+    expect(api.createEntity).toHaveBeenCalledTimes(1);
+    expect(imagePickerMock).not.toHaveBeenCalled();
+
+    await act(async () => {
+      resolveCreate?.(created);
+      for (let index = 0; index < 5; index += 1) await flush();
+    });
+    expect(imagePickerMock).toHaveBeenCalledTimes(1);
+    expect(uploadAndImportEntityReferenceMock).toHaveBeenCalledWith(expect.objectContaining({ entityId: created.id }));
+  });
+
+  it('pickerをcancelしても作成済み新規キャラクターを再POSTしない', async () => {
+    const created = entity({ id: 'created-after-cancel', name: 'cancel後の新規' });
+    api.createEntity.mockResolvedValue(created);
+    imagePickerMock.mockResolvedValue({ canceled: true, assets: [] });
+    appStateMock.mockReturnValue({
+      api, hasCapability: () => true, language: 'en', logout: vi.fn(), refreshIdToken: vi.fn(),
+      selection: { entityId: null, organizationId: null }, session: { organizations: [], personal_credits: { total_credits: 10 } },
+      sessionKey: 'session-1', tokens: null, trackJob: vi.fn(), updateSelection: vi.fn().mockResolvedValue(true)
+    });
+    const { renderer } = await renderScreen(created);
+    await act(async () => {
+      renderer.root.findByProps({ accessibilityLabel: 'Name' }).props.onChange(created.name);
+      await flush();
+      button(renderer, 'Import image').props.onClick();
+      for (let index = 0; index < 5; index += 1) await flush();
+    });
+    await act(async () => {
+      button(renderer, 'Import image').props.onClick();
+      for (let index = 0; index < 5; index += 1) await flush();
+    });
+    expect(api.createEntity).toHaveBeenCalledTimes(1);
+    expect(imagePickerMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('新規POST失敗時はpickerを開かず、再タップで一度だけ再試行できる', async () => {
+    const draft = entity({ name: '失敗後も残す新規' });
+    api.createEntity.mockRejectedValue(new Error('network failure'));
+    appStateMock.mockReturnValue({
+      api, hasCapability: () => true, language: 'en', logout: vi.fn(), refreshIdToken: vi.fn(),
+      selection: { entityId: null, organizationId: null }, session: { organizations: [], personal_credits: { total_credits: 10 } },
+      sessionKey: 'session-1', tokens: null, trackJob: vi.fn(), updateSelection: vi.fn().mockResolvedValue(true)
+    });
+    const { renderer } = await renderScreen(draft);
+
+    await act(async () => {
+      renderer.root.findByProps({ accessibilityLabel: 'Name' }).props.onChange(draft.name);
+      await flush();
+      button(renderer, 'Import image').props.onClick();
+      await flush();
+    });
+    expect(api.createEntity).toHaveBeenCalledTimes(1);
+    expect(imagePickerMock).not.toHaveBeenCalled();
+    expect(renderer.root.findByProps({ accessibilityLabel: 'Name' }).props.value).toBe(draft.name);
+
+    await act(async () => {
+      button(renderer, 'Import image').props.onClick();
+      await flush();
+    });
+    expect(api.createEntity).toHaveBeenCalledTimes(2);
+    expect(imagePickerMock).not.toHaveBeenCalled();
+  });
+
+  it('dirty既存キャラクターはPUT成功後にだけpickerを開き、cleanならPUTしない', async () => {
+    const initial = entity();
+    const saved = entity({ name: '更新して取り込む', updated_at: '2026-09-02T00:00:00.000Z' });
+    let resolveUpdate: ((value: EntityRecord) => void) | undefined;
+    api.updateEntity.mockImplementation(() => new Promise<EntityRecord>((resolve) => { resolveUpdate = resolve; }));
+    const { renderer } = await renderScreen(initial);
+
+    await act(async () => {
+      renderer.root.findByProps({ accessibilityLabel: 'Name' }).props.onChange(saved.name);
+      await flush();
+      button(renderer, 'Import image').props.onClick();
+      await flush();
+    });
+    expect(api.updateEntity).toHaveBeenCalledTimes(1);
+    expect(imagePickerMock).not.toHaveBeenCalled();
+    await act(async () => {
+      resolveUpdate?.(saved);
+      for (let index = 0; index < 5; index += 1) await flush();
+    });
+    expect(imagePickerMock).toHaveBeenCalledTimes(1);
+    expect(uploadAndImportEntityReferenceMock).toHaveBeenCalledWith(expect.objectContaining({ entityId: saved.id }));
+  });
+
+  it('dirty既存キャラクターのPUT失敗ではpickerを開かず、同じ入力で再試行できる', async () => {
+    const initial = entity();
+    api.updateEntity.mockRejectedValue(new Error('network failure'));
+    const { renderer } = await renderScreen(initial);
+    await act(async () => {
+      renderer.root.findByProps({ accessibilityLabel: 'Name' }).props.onChange('PUT失敗後も残す');
+      await flush();
+      button(renderer, 'Import image').props.onClick();
+      await flush();
+    });
+    expect(api.updateEntity).toHaveBeenCalledTimes(1);
+    expect(imagePickerMock).not.toHaveBeenCalled();
+    expect(renderer.root.findByProps({ accessibilityLabel: 'Name' }).props.value).toBe('PUT失敗後も残す');
+    await act(async () => {
+      button(renderer, 'Import image').props.onClick();
+      await flush();
+    });
+    expect(api.updateEntity).toHaveBeenCalledTimes(2);
+  });
+
+  it('新規取り込みの連打はPOSTとpickerを各一回に制限する', async () => {
+    const created = entity({ id: 'created-once', name: '連打対象' });
+    let resolveCreate: ((value: EntityRecord) => void) | undefined;
+    api.createEntity.mockImplementation(() => new Promise<EntityRecord>((resolve) => { resolveCreate = resolve; }));
+    appStateMock.mockReturnValue({
+      api, hasCapability: () => true, language: 'en', logout: vi.fn(), refreshIdToken: vi.fn(),
+      selection: { entityId: null, organizationId: null }, session: { organizations: [], personal_credits: { total_credits: 10 } },
+      sessionKey: 'session-1', tokens: null, trackJob: vi.fn(), updateSelection: vi.fn().mockResolvedValue(true)
+    });
+    const { renderer } = await renderScreen(created);
+    await act(async () => {
+      renderer.root.findByProps({ accessibilityLabel: 'Name' }).props.onChange(created.name);
+      await flush();
+      button(renderer, 'Import image').props.onClick();
+      button(renderer, 'Import image').props.onClick();
+      await flush();
+    });
+    expect(api.createEntity).toHaveBeenCalledTimes(1);
+    expect(imagePickerMock).not.toHaveBeenCalled();
+    await act(async () => {
+      resolveCreate?.(created);
+      for (let index = 0; index < 5; index += 1) await flush();
+    });
+    expect(imagePickerMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('CreateとImportを同時に押しても一つのPOST以外を開始しない', async () => {
+    const created = entity({ id: 'created-shared-lock', name: '共有ロック' });
+    let resolveCreate: ((value: EntityRecord) => void) | undefined;
+    api.createEntity.mockImplementation(() => new Promise<EntityRecord>((resolve) => { resolveCreate = resolve; }));
+    appStateMock.mockReturnValue({
+      api, hasCapability: () => true, language: 'en', logout: vi.fn(), refreshIdToken: vi.fn(),
+      selection: { entityId: null, organizationId: null }, session: { organizations: [], personal_credits: { total_credits: 10 } },
+      sessionKey: 'session-1', tokens: null, trackJob: vi.fn(), updateSelection: vi.fn().mockResolvedValue(true)
+    });
+    const { renderer } = await renderScreen(created);
+    await act(async () => {
+      renderer.root.findByProps({ accessibilityLabel: 'Name' }).props.onChange(created.name);
+      await flush();
+      button(renderer, 'Create').props.onClick();
+      button(renderer, 'Import image').props.onClick();
+      await flush();
+    });
+    expect(api.createEntity).toHaveBeenCalledTimes(1);
+    expect(imagePickerMock).not.toHaveBeenCalled();
+    await act(async () => {
+      resolveCreate?.(created);
+      for (let index = 0; index < 5; index += 1) await flush();
+    });
+    expect(imagePickerMock).not.toHaveBeenCalled();
+  });
+
+  it('日本語でも名前未入力の新規キャラクターは画像取り込みできない', async () => {
+    appStateMock.mockReturnValue({
+      api, hasCapability: () => true, language: 'ja', logout: vi.fn(), refreshIdToken: vi.fn(),
+      selection: { entityId: null, organizationId: null }, session: { organizations: [], personal_credits: { total_credits: 10 } },
+      sessionKey: 'session-1', tokens: null, trackJob: vi.fn(), updateSelection: vi.fn().mockResolvedValue(true)
+    });
+    const { renderer } = await renderScreen(entity());
+    expect(button(renderer, '画像取り込み').props.disabled).toBe(true);
+    expect(api.createEntity).not.toHaveBeenCalled();
+    expect(imagePickerMock).not.toHaveBeenCalled();
+  });
+
+  it('新規POST中の追加入力はcreated selectionのrender後も保持してdirtyのままにする', async () => {
+    const created = entity({ id: 'created-typing', name: '送信時の名前', updated_at: '2026-09-02T00:00:00.000Z' });
+    let resolveCreate: ((value: EntityRecord) => void) | undefined;
+    api.createEntity.mockImplementation(() => new Promise<EntityRecord>((resolve) => { resolveCreate = resolve; }));
+    appStateMock.mockReturnValue({
+      api, hasCapability: () => true, language: 'en', logout: vi.fn(), refreshIdToken: vi.fn(),
+      selection: { entityId: null, organizationId: null }, session: { organizations: [], personal_credits: { total_credits: 10 } },
+      sessionKey: 'session-1', tokens: null, trackJob: vi.fn(), updateSelection: vi.fn().mockResolvedValue(true)
+    });
+    const { renderer, queryClient } = await renderScreen(created);
+    await act(async () => {
+      renderer.root.findByProps({ accessibilityLabel: 'Name' }).props.onChange(created.name);
+      await flush();
+      button(renderer, 'Import image').props.onClick();
+      await flush();
+    });
+    await act(async () => {
+      renderer.root.findByProps({ accessibilityLabel: 'Name' }).props.onChange('POST後に追記した名前');
+      await flush();
+    });
+    await act(async () => {
+      resolveCreate?.(created);
+      for (let index = 0; index < 5; index += 1) await flush();
+    });
+    queryClient.setQueryData(entityDetailQueryKey('session-1', created.id, null), created);
+    appStateMock.mockReturnValue({
+      api, hasCapability: () => true, language: 'en', logout: vi.fn(), refreshIdToken: vi.fn(),
+      selection: { entityId: created.id, organizationId: null }, session: { organizations: [], personal_credits: { total_credits: 10 } },
+      sessionKey: 'session-1', tokens: null, trackJob: vi.fn(), updateSelection: vi.fn().mockResolvedValue(true)
+    });
+    await act(async () => {
+      renderer.update(<QueryClientProvider client={queryClient}><CharactersScreen /></QueryClientProvider>);
+      await flush();
+    });
+    expect(renderer.root.findByProps({ accessibilityLabel: 'Name' }).props.value).toBe('POST後に追記した名前');
+    expect(button(renderer, 'Save').props.disabled).toBe(false);
+  });
+
+  it('新規取り込みcandidateはcreated selectionのcommit後もConfirm可能なまま残る', async () => {
+    const created = entity({ id: 'created-candidate', name: '候補を保持する新規' });
+    api.createEntity.mockResolvedValue(created);
+    appStateMock.mockReturnValue({
+      api, hasCapability: () => true, language: 'en', logout: vi.fn(), refreshIdToken: vi.fn(),
+      selection: { entityId: null, organizationId: null }, session: { organizations: [], personal_credits: { total_credits: 10 } },
+      sessionKey: 'session-1', tokens: null, trackJob: vi.fn(), updateSelection: vi.fn().mockResolvedValue(true)
+    });
+    const { renderer, queryClient } = await renderScreen(created);
+    await act(async () => {
+      renderer.root.findByProps({ accessibilityLabel: 'Name' }).props.onChange(created.name);
+      await flush();
+      button(renderer, 'Import image').props.onClick();
+      for (let index = 0; index < 6; index += 1) await flush();
+    });
+    queryClient.setQueryData(entityDetailQueryKey('session-1', created.id, null), created);
+    appStateMock.mockReturnValue({
+      api, hasCapability: () => true, language: 'en', logout: vi.fn(), refreshIdToken: vi.fn(),
+      selection: { entityId: created.id, organizationId: null }, session: { organizations: [], personal_credits: { total_credits: 10 } },
+      sessionKey: 'session-1', tokens: null, trackJob: vi.fn(), updateSelection: vi.fn().mockResolvedValue(true)
+    });
+    await act(async () => {
+      renderer.update(<QueryClientProvider client={queryClient}><CharactersScreen /></QueryClientProvider>);
+      await flush();
+    });
+    expect(renderer.root.findAllByType('text').some((node) => node.children.includes('Imported candidate'))).toBe(true);
+    expect(button(renderer, 'Confirm').props.disabled).toBe(false);
+  });
+
+  it('新規POST待機中に別scopeへ移ると元scopeだけをcacheしpickerもselection更新もしない', async () => {
+    const created = entity({ id: 'created-original-scope', name: '元scope', updated_at: '2026-09-02T00:00:00.000Z' });
+    const switched = entity({ id: 'other-scope-entity', work_id: 'work-2', name: '切替先' });
+    let resolveCreate: ((value: EntityRecord) => void) | undefined;
+    const updateSelection = vi.fn().mockResolvedValue(true);
+    api.createEntity.mockImplementation(() => new Promise<EntityRecord>((resolve) => { resolveCreate = resolve; }));
+    appStateMock.mockReturnValue({
+      api, hasCapability: () => true, language: 'en', logout: vi.fn(), refreshIdToken: vi.fn(),
+      selection: { entityId: null, organizationId: null }, session: { organizations: [], personal_credits: { total_credits: 10 } },
+      sessionKey: 'session-1', tokens: null, trackJob: vi.fn(), updateSelection
+    });
+    const { renderer, queryClient } = await renderScreen(created);
+    await act(async () => {
+      renderer.root.findByProps({ accessibilityLabel: 'Name' }).props.onChange(created.name);
+      await flush();
+      button(renderer, 'Import image').props.onClick();
+      await flush();
+    });
+    queryClient.setQueryData(entityDetailQueryKey('session-1', switched.id, 'org-2'), switched);
+    workspaceContextMock.mockReturnValue({ selectedWorkId: 'work-2', selectedEpisodeId: null });
+    appStateMock.mockReturnValue({
+      api, hasCapability: () => true, language: 'en', logout: vi.fn(), refreshIdToken: vi.fn(),
+      selection: { entityId: switched.id, organizationId: 'org-2' }, session: { organizations: [], personal_credits: { total_credits: 10 } },
+      sessionKey: 'session-1', tokens: null, trackJob: vi.fn(), updateSelection
+    });
+    await act(async () => {
+      renderer.update(<QueryClientProvider client={queryClient}><CharactersScreen /></QueryClientProvider>);
+      await flush();
+    });
+    await act(async () => {
+      resolveCreate?.(created);
+      for (let index = 0; index < 4; index += 1) await flush();
+    });
+    expect(queryClient.getQueryData(entityDetailQueryKey('session-1', created.id, null))).toMatchObject({ updated_at: created.updated_at });
+    expect(imagePickerMock).not.toHaveBeenCalled();
+    expect(updateSelection).not.toHaveBeenCalled();
+  });
+
+  it('picker待機中のscope変更ではuploadを開始しない', async () => {
+    const initial = entity();
+    const switched = entity({ id: 'picker-scope-switched', work_id: 'work-2' });
+    let resolvePicker: ((value: { canceled: boolean; assets: { uri: string; mimeType: string; base64: string }[] }) => void) | undefined;
+    imagePickerMock.mockImplementation(() => new Promise((resolve) => { resolvePicker = resolve; }));
+    const { renderer, queryClient } = await renderScreen(initial);
+    await act(async () => {
+      button(renderer, 'Import image').props.onClick();
+      await flush();
+    });
+    expect(imagePickerMock).toHaveBeenCalledTimes(1);
+    queryClient.setQueryData(entityDetailQueryKey('session-1', switched.id, 'org-2'), switched);
+    workspaceContextMock.mockReturnValue({ selectedWorkId: 'work-2', selectedEpisodeId: null });
+    appStateMock.mockReturnValue({
+      api, hasCapability: () => true, language: 'en', logout: vi.fn(), refreshIdToken: vi.fn(),
+      selection: { entityId: switched.id, organizationId: 'org-2' }, session: { organizations: [], personal_credits: { total_credits: 10 } },
+      sessionKey: 'session-1', tokens: null, trackJob: vi.fn(), updateSelection: vi.fn().mockResolvedValue(true)
+    });
+    await act(async () => {
+      renderer.update(<QueryClientProvider client={queryClient}><CharactersScreen /></QueryClientProvider>);
+      await flush();
+    });
+    await act(async () => {
+      resolvePicker?.({ canceled: false, assets: [{ uri: 'file:///character.jpg', mimeType: 'image/jpeg', base64: '/9j/' }] });
+      for (let index = 0; index < 4; index += 1) await flush();
+    });
+    expect(uploadAndImportEntityReferenceMock).not.toHaveBeenCalled();
   });
 
   it('選択変更後に完了した取り込み結果を、新しいキャラクターの候補にしない', async () => {

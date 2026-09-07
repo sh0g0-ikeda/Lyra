@@ -119,13 +119,29 @@ interface EntityStateSceneOption {
 
 interface PendingEntityReferenceUpload {
   editorIdentity: string;
-  entityId: string | null;
+  editorEpoch: number;
+  entityId: string;
   entityType: EntityType;
   mimeType: EntityReferenceUploadMimeType;
   sizeBytes: number;
   source: BinaryUploadSource;
   legacyImageDataUrl: string | null;
   uploadToken: string | null;
+}
+
+interface EntityEditorOperation {
+  scope: string;
+  epoch: number;
+  entityType: EntityType;
+  startIdentity: string;
+  targetIdentity: string;
+  cancelled: boolean;
+}
+
+interface CreatedEntityHandoff {
+  operation: EntityEditorOperation;
+  entity: EntityRecord;
+  submittedDraft: string;
 }
 
 const MAX_IMPORT_IMAGE_BYTES = 5 * 1024 * 1024;
@@ -1796,15 +1812,46 @@ export function CharactersScreen(): React.JSX.Element {
   const entityScope = JSON.stringify([sessionKey, organizationId, activeWorkId]);
   const editorIdentity = JSON.stringify([entityScope, selection.entityId]);
   const currentEditorIdentity = useRef(editorIdentity);
+  const currentEditorScope = useRef(entityScope);
+  const currentEditorType = useRef(entityType);
+  const editorEpoch = useRef(0);
+  const entityOperation = useRef<EntityEditorOperation | null>(null);
+  const latestEntityOperation = useRef<EntityEditorOperation | null>(null);
+  const createdEntityHandoff = useRef<CreatedEntityHandoff | null>(null);
+  const [entityOperationPending, setEntityOperationPending] = useState(false);
   const lastSyncedEntityScope = useRef(entityScope);
   const entityDraftSignature = useRef('');
   const renderedDraftSignature = JSON.stringify([
-    editorIdentity, entityType, name, description, promptSupplement, structuredDraft, structuredExtras,
+    entityType, name, description, promptSupplement, structuredDraft, structuredExtras,
   ]);
   useLayoutEffect(() => {
+    const handoff = createdEntityHandoff.current;
+    const plannedCreationSelection = handoff !== null &&
+      handoff.operation.scope === entityScope &&
+      handoff.operation.epoch === editorEpoch.current &&
+      currentEditorIdentity.current === handoff.operation.startIdentity &&
+      editorIdentity === handoff.operation.targetIdentity;
+    if (
+      currentEditorScope.current !== entityScope || currentEditorType.current !== entityType ||
+      (currentEditorIdentity.current !== editorIdentity && !plannedCreationSelection)
+    ) {
+      editorEpoch.current += 1;
+      if (entityOperation.current !== null) entityOperation.current.cancelled = true;
+      createdEntityHandoff.current = null;
+      entityReferenceUploadAbortController.current?.abort();
+    }
     currentEditorIdentity.current = editorIdentity;
+    currentEditorScope.current = entityScope;
+    currentEditorType.current = entityType;
     entityDraftSignature.current = renderedDraftSignature;
-  }, [editorIdentity, renderedDraftSignature]);
+  }, [editorIdentity, entityScope, entityType, renderedDraftSignature]);
+
+  useEffect(() => () => {
+    editorEpoch.current += 1;
+    if (entityOperation.current !== null) entityOperation.current.cancelled = true;
+    createdEntityHandoff.current = null;
+    entityReferenceUploadAbortController.current?.abort();
+  }, []);
 
   const entitiesQuery = useInfiniteQuery({
     enabled: activeWorkId !== null,
@@ -1857,12 +1904,17 @@ export function CharactersScreen(): React.JSX.Element {
   );
 
   useEffect(() => {
+    const handoff = createdEntityHandoff.current;
+    if (handoff !== null && handoff.operation.scope === entityScope &&
+      handoff.operation.epoch === editorEpoch.current && selectedEntity?.id === handoff.entity.id) {
+      return;
+    }
     entityReferenceUploadAbortController.current?.abort();
     entityReferenceUploadAbortController.current = null;
     setPendingEntityReferenceUpload(null);
     setEntityReferenceUploadProgress(0);
     setEntityReferenceUploadStage(null);
-  }, [entityType, organizationId, selectedEntity?.id, sessionKey]);
+  }, [entityScope, entityType, organizationId, selectedEntity?.id, sessionKey]);
 
   const visibleEntityDraft: EntityVisibleDraft = {
     entityType,
@@ -2026,6 +2078,20 @@ export function CharactersScreen(): React.JSX.Element {
 
   useEffect(() => {
     const nextId = selectedEntity?.id ?? null;
+    const handoff = createdEntityHandoff.current;
+    if (handoff !== null && handoff.operation.scope === entityScope &&
+      handoff.operation.epoch === editorEpoch.current) {
+      // The saved draft is becoming selected, not a different character being loaded.
+      if (selection.entityId === handoff.entity.id && nextId === handoff.entity.id) {
+        lastSyncedEntityScope.current = entityScope;
+        setLastSyncedEntityId(nextId);
+        setEntityEditorMode('edit');
+        if (entityDraftSignature.current === handoff.submittedDraft) hydrateEntityFields(handoff.entity);
+        createdEntityHandoff.current = null;
+        return;
+      }
+      if (selection.entityId === null) return;
+    }
     const scopeChanged = lastSyncedEntityScope.current !== entityScope;
     if (!shouldHydrateEditorDraft({
       hasServerSnapshot: selectedEntity !== null || selection.entityId === null,
@@ -2124,56 +2190,125 @@ export function CharactersScreen(): React.JSX.Element {
 
   const toEntityPayload = () => buildCreateEntityPayload(visibleEntityDraft);
 
-  const toEntityUpdatePayload = () =>
-    selectedEntity === null
-      ? null
-      : buildUpdateEntityPayload(selectedEntity, visibleEntityDraft, {
-          structuredFieldsChanged,
-        });
+  const updatePayloadForEntity = (entity: EntityRecord): UpdateEntityPayload =>
+    buildUpdateEntityPayload(entity, visibleEntityDraft, {
+      structuredFieldsChanged:
+        JSON.stringify(structuredDraft) !== JSON.stringify(structuredDraftFromRecord(entity.structured_fields ?? {}, entity.entity_type)) ||
+        structuredExtras !== structuredExtrasFromRecord(entity.structured_fields ?? {}, entity.entity_type),
+    });
 
-  const adoptSavedEntity = async (entity: EntityRecord, submittedDraft: string): Promise<void> => {
-    await syncSavedEntity({ queryClient, sessionKey, organizationId, entity });
-    if (currentEditorIdentity.current !== editorIdentity) {
-      return;
+  const toEntityUpdatePayload = (): UpdateEntityPayload | null =>
+    selectedEntity === null ? null : updatePayloadForEntity(selectedEntity);
+
+  const isOperationCurrent = (operation: EntityEditorOperation): boolean =>
+    !operation.cancelled && operation.scope === currentEditorScope.current &&
+    operation.epoch === editorEpoch.current && operation.entityType === currentEditorType.current &&
+    (currentEditorIdentity.current === operation.startIdentity || currentEditorIdentity.current === operation.targetIdentity);
+
+  const assertOperationCurrent = (operation: EntityEditorOperation): void => {
+    if (!isOperationCurrent(operation)) throw new Error(t(language, 'screen.characters.import.selectionChanged'));
+  };
+
+  const runEntityOperation = async <T,>(action: (operation: EntityEditorOperation) => Promise<T>): Promise<T | null> => {
+    // A synchronous lock also covers taps arriving before React displays a loading state.
+    if (entityOperation.current !== null) return null;
+    const operation: EntityEditorOperation = {
+      scope: entityScope, epoch: editorEpoch.current, entityType,
+      startIdentity: editorIdentity, targetIdentity: editorIdentity, cancelled: false,
+    };
+    entityOperation.current = operation;
+    latestEntityOperation.current = operation;
+    setEntityOperationPending(true);
+    try {
+      assertOperationCurrent(operation);
+      const result = await action(operation);
+      assertOperationCurrent(operation);
+      return result;
+    } catch (error) {
+      if (isOperationCurrent(operation) && isResourceStaleError(error)) setEntityStale(true);
+      throw error;
+    } finally {
+      if (entityOperation.current === operation) {
+        entityOperation.current = null;
+        setEntityOperationPending(false);
+      }
     }
+  };
+
+  const savedEntityForEditor = (): EntityRecord | null => {
+    const handoff = createdEntityHandoff.current;
+    return handoff !== null && isOperationCurrent(handoff.operation) ? handoff.entity : selectedEntity;
+  };
+
+  const validateEntitySave = (): void => {
+    if (!canEdit) throw new Error(t(language, 'generated.screens.CharactersScreen.editing.permission.is.required.6d3b86ee'));
+    if (activeWorkId === null) throw new Error(t(language, 'generated.screens.CharactersScreen.select.a.work.first.d7bcfe9f'));
+    if (name.trim().length === 0) throw new Error(t(language, 'generated.screens.CharactersScreen.enter.a.name.4cb35ca6'));
+    if (entityStale) throw new Error(t(language, 'generated.screens.CharactersScreen.reload.the.latest.state.8874ff96'));
+  };
+
+  const adoptSavedEntity = async (entity: EntityRecord, submittedDraft: string, operation: EntityEditorOperation): Promise<void> => {
+    await syncSavedEntity({ queryClient, sessionKey, organizationId, entity });
+    assertOperationCurrent(operation);
     if (entityDraftSignature.current === submittedDraft) {
       hydrateEntityFields(entity);
     }
     setEntityStale(false);
   };
 
-  const persistEntityUpdate = async (payload: UpdateEntityPayload): Promise<EntityRecord> => {
-    if (selectedEntity === null) {
+  const persistEntityUpdate = async (payload: UpdateEntityPayload, operation: EntityEditorOperation, selected = savedEntityForEditor()): Promise<EntityRecord> => {
+    if (selected === null) {
       throw new Error('No character selected.');
     }
+    validateEntitySave();
+    assertOperationCurrent(operation);
     const submittedDraft = entityDraftSignature.current;
-    const entity = await api.updateEntity(selectedEntity.id, payload, organizationId);
-    await adoptSavedEntity(entity, submittedDraft);
+    const entity = await api.updateEntity(selected.id, payload, organizationId);
+    await adoptSavedEntity(entity, submittedDraft, operation);
+    if (createdEntityHandoff.current?.entity.id === entity.id) createdEntityHandoff.current.entity = entity;
+    return entity;
+  };
+
+  const selectCreatedEntity = async (handoff: CreatedEntityHandoff, operation: EntityEditorOperation): Promise<void> => {
+    operation.targetIdentity = handoff.operation.targetIdentity;
+    assertOperationCurrent(operation);
+    const selected = await updateSelection({ entityId: handoff.entity.id }, { skipDirtyCheck: true });
+    assertOperationCurrent(operation);
+    if (!selected) throw new Error(t(language, 'screen.characters.import.selectionChanged'));
+  };
+
+  const createAndAdoptEntity = async (operation: EntityEditorOperation): Promise<EntityRecord> => {
+    validateEntitySave();
+    const existing = savedEntityForEditor();
+    if (existing !== null) return existing;
+    if (selection.entityId !== null) throw new Error(t(language, 'screen.characters.import.loadingCharacter'));
+    const submittedDraft = entityDraftSignature.current;
+    const entity = await api.createEntity(activeWorkId ?? '', toEntityPayload(), organizationId);
+    await adoptSavedEntity(entity, submittedDraft, operation);
+    operation.targetIdentity = JSON.stringify([entityScope, entity.id]);
+    const handoff = { operation, entity, submittedDraft };
+    createdEntityHandoff.current = handoff;
+    setEntityEditorMode('edit');
+    await selectCreatedEntity(handoff, operation);
     return entity;
   };
 
   const createEntityMutation = useMutation({
-    mutationFn: async () => {
-      const submittedDraft = entityDraftSignature.current;
-      const entity = await api.createEntity(activeWorkId ?? '', toEntityPayload(), organizationId);
-      await adoptSavedEntity(entity, submittedDraft);
-      return entity;
-    },
+    mutationFn: () => runEntityOperation(createAndAdoptEntity),
     onSuccess: async (entity) => {
-      setEntityEditorMode('edit');
-      await updateSelection({ entityId: entity.id }, { skipDirtyCheck: true });
-      await invalidateEntities();
+      if (entity !== null) await invalidateEntities();
     }
   });
 
   const updateEntityMutation = useMutation({
-    mutationFn: () => {
-      const payload = toEntityUpdatePayload();
-      if (selectedEntity === null || payload === null || !hasEntityUpdateChanges(payload)) {
+    mutationFn: () => runEntityOperation(async operation => {
+      const selected = savedEntityForEditor();
+      const payload = selected === null ? null : updatePayloadForEntity(selected);
+      if (selected === null || payload === null || !hasEntityUpdateChanges(payload)) {
         throw new Error('No character changes to save.');
       }
-      return persistEntityUpdate(payload);
-    },
+      return persistEntityUpdate(payload, operation, selected);
+    }),
     onSuccess: async () => {
       await invalidateEntities();
     },
@@ -2255,10 +2390,14 @@ export function CharactersScreen(): React.JSX.Element {
         if (activeWorkId === null) {
           throw new Error(t(language, "generated.screens.CharactersScreen.select.a.work.first.d7bcfe9f"));
         }
-        await saveNewEntityMutation();
+        if (await saveNewEntityMutation() === null) {
+          throw new Error(t(language, 'screen.characters.import.operationBusy'));
+        }
         return;
       }
-      await saveExistingEntityMutation();
+      if (await saveExistingEntityMutation() === null) {
+        throw new Error(t(language, 'screen.characters.import.operationBusy'));
+      }
     } catch (error) {
       setDirtySaveError(
         error instanceof Error
@@ -2300,12 +2439,21 @@ export function CharactersScreen(): React.JSX.Element {
   });
 
   const importImageMutation = useMutation({
-    mutationFn: async (mode: 'select' | 'retry') => {
-      if (selectedEntity === null || entityEditorMode === 'create' || createEntityMutation.isPending) {
-        throw new Error(t(language, 'screen.characters.import.saveFirst'));
-      }
+    mutationFn: (mode: 'select' | 'retry') => runEntityOperation(async operation => {
+      if (!canGenerate) throw new Error(t(language, 'generated.screens.CharactersScreen.generation.permission.is.required.1bc5b7af'));
+      validateEntitySave();
       let pendingUpload = pendingEntityReferenceUpload;
+      let importEntity = savedEntityForEditor();
       if (mode === 'select') {
+        const handoff = createdEntityHandoff.current;
+        if (handoff !== null && isOperationCurrent(handoff.operation)) await selectCreatedEntity(handoff, operation);
+        if (importEntity === null) {
+          importEntity = await createAndAdoptEntity(operation);
+        } else {
+          const payload = updatePayloadForEntity(importEntity);
+          if (hasEntityUpdateChanges(payload)) importEntity = await persistEntityUpdate(payload, operation, importEntity);
+        }
+        assertOperationCurrent(operation);
         setPendingEntityReferenceUpload(null);
         const result = await ImagePicker.launchImageLibraryAsync({
           allowsEditing: false,
@@ -2318,12 +2466,8 @@ export function CharactersScreen(): React.JSX.Element {
           quality: 0.85,
           selectionLimit: 1
         });
-        if (result.canceled) {
-          return null;
-        }
-        if (currentEditorIdentity.current !== editorIdentity) {
-          throw new Error(t(language, 'screen.characters.import.selectionChanged'));
-        }
+        assertOperationCurrent(operation);
+        if (result.canceled) return null;
 
         const asset = result.assets[0];
         if (asset === undefined) {
@@ -2346,9 +2490,10 @@ export function CharactersScreen(): React.JSX.Element {
             : null;
 
         pendingUpload = {
-          editorIdentity,
-          entityId: selectedEntity.id,
-          entityType,
+          editorIdentity: operation.targetIdentity,
+          editorEpoch: operation.epoch,
+          entityId: importEntity.id,
+          entityType: importEntity.entity_type,
           mimeType,
           sizeBytes: uploadFile.sizeBytes,
           source: uploadFile.source,
@@ -2362,9 +2507,15 @@ export function CharactersScreen(): React.JSX.Element {
         throw new Error(t(language, "generated.screens.CharactersScreen.there.is.no.image.to.retry.a75c5e5a"));
       }
       const activeUpload = pendingUpload;
-      if (activeUpload.editorIdentity !== currentEditorIdentity.current || activeUpload.entityId !== selectedEntity.id) {
+      if (mode === 'retry') {
+        const handoff = createdEntityHandoff.current;
+        if (handoff !== null && isOperationCurrent(handoff.operation)) operation.targetIdentity = handoff.operation.targetIdentity;
+      }
+      if (activeUpload.editorIdentity !== operation.targetIdentity || activeUpload.editorEpoch !== operation.epoch ||
+        activeUpload.entityId !== importEntity?.id) {
         throw new Error(t(language, 'screen.characters.import.selectionChanged'));
       }
+      assertOperationCurrent(operation);
       const legacyImageDataUrl = activeUpload.legacyImageDataUrl;
 
       entityReferenceUploadAbortController.current?.abort();
@@ -2381,54 +2532,69 @@ export function CharactersScreen(): React.JSX.Element {
           entityId: activeUpload.entityId,
           resumeFinalizeToken: mode === 'retry' ? activeUpload.uploadToken : null,
           signal: abortController.signal,
-          createPresignedUpload: (payload) => api.createEntityReferenceUpload(payload, organizationId),
-          finalizeImport: (uploadToken) =>
-            api.importEntityImage(
+          createPresignedUpload: async (payload) => {
+            assertOperationCurrent(operation);
+            const result = await api.createEntityReferenceUpload(payload, organizationId);
+            assertOperationCurrent(operation);
+            return result;
+          },
+          finalizeImport: async (uploadToken) => {
+            assertOperationCurrent(operation);
+            const result = await api.importEntityImage(
               {
                 entity_type: activeUpload.entityType,
-                ...(activeUpload.entityId === null ? {} : { entity_id: activeUpload.entityId }),
+                entity_id: activeUpload.entityId,
                 upload_token: uploadToken
               },
               organizationId
-            ),
+            );
+            assertOperationCurrent(operation);
+            return result;
+          },
           ...(legacyImageDataUrl === null
             ? {}
             : {
-                legacyImport: () =>
-                  api.importEntityImage(
+                legacyImport: async () => {
+                  assertOperationCurrent(operation);
+                  const result = await api.importEntityImage(
                     {
                       entity_type: activeUpload.entityType,
-                      ...(activeUpload.entityId === null ? {} : { entity_id: activeUpload.entityId }),
+                      entity_id: activeUpload.entityId,
                       image_base64: legacyImageDataUrl
                     },
                     organizationId
-                  )
+                  );
+                  assertOperationCurrent(operation);
+                  return result;
+                }
               }),
-          onProgress: setEntityReferenceUploadProgress,
+          onProgress: progress => { if (isOperationCurrent(operation)) setEntityReferenceUploadProgress(progress); },
           onFinalizeTokenReady: (uploadToken) => {
-            setPendingEntityReferenceUpload({ ...activeUpload, uploadToken });
+            if (isOperationCurrent(operation)) setPendingEntityReferenceUpload({ ...activeUpload, uploadToken });
           },
-          onStageChange: setEntityReferenceUploadStage
+          onStageChange: stage => { if (isOperationCurrent(operation)) setEntityReferenceUploadStage(stage); }
         });
+        assertOperationCurrent(operation);
         return {
           ...result,
           importedEntityId: activeUpload.entityId,
           importedEntityType: activeUpload.entityType,
           editorIdentity: activeUpload.editorIdentity,
+          operation,
         };
       } finally {
         if (entityReferenceUploadAbortController.current === abortController) {
           entityReferenceUploadAbortController.current = null;
         }
       }
-    },
+    }),
     onSuccess: (result) => {
       if (result === null) {
         setEntityReferenceUploadStage(null);
         setEntityReferenceUploadProgress(0);
         return;
       }
-      if (result.editorIdentity !== currentEditorIdentity.current) {
+      if (!isOperationCurrent(result.operation) || latestEntityOperation.current !== result.operation) {
         return;
       }
       setPendingEntityReferenceUpload(null);
@@ -2447,7 +2613,7 @@ export function CharactersScreen(): React.JSX.Element {
   });
 
   const generateReferenceMutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: () => runEntityOperation(async operation => {
       const updatePayload = toEntityUpdatePayload();
       if (
         selectedEntity !== null &&
@@ -2456,7 +2622,7 @@ export function CharactersScreen(): React.JSX.Element {
         hasEntityUpdateChanges(updatePayload)
       ) {
         try {
-          await persistEntityUpdate(updatePayload);
+          await persistEntityUpdate(updatePayload, operation);
         } catch (error) {
           if (isResourceStaleError(error)) {
             setEntityStale(true);
@@ -2464,13 +2630,15 @@ export function CharactersScreen(): React.JSX.Element {
           throw error;
         }
       }
+      assertOperationCurrent(operation);
       return api.generateEntityReference(
         selectedEntity?.id ?? '',
         lastImportedCandidateToken === null || !importedCandidateMatchesEntity ? {} : { source_candidate_token: lastImportedCandidateToken },
         organizationId
       );
-    },
+    }),
     onSuccess: async (result) => {
+      if (result === null) return;
       setLocalJob({
         id: result.job_id,
         resourceId: selectedEntity?.id ?? '',
@@ -2628,6 +2796,9 @@ export function CharactersScreen(): React.JSX.Element {
     }
     void (async () => {
       if (await updateSelection({ entityId })) {
+        editorEpoch.current += 1;
+        if (entityOperation.current !== null) entityOperation.current.cancelled = true;
+        createdEntityHandoff.current = null;
         setEntityEditorMode('edit');
       }
     })();
@@ -2635,7 +2806,14 @@ export function CharactersScreen(): React.JSX.Element {
 
   const beginNewEntityDraft = (): void => {
     const reset = (): void => {
+      editorEpoch.current += 1;
+      if (entityOperation.current !== null) entityOperation.current.cancelled = true;
+      createdEntityHandoff.current = null;
+      entityReferenceUploadAbortController.current?.abort();
       setEntityEditorMode('create');
+      setPendingEntityReferenceUpload(null);
+      setEntityReferenceUploadProgress(0);
+      setEntityReferenceUploadStage(null);
       setEntityType('character');
       setName('');
       setDescription('');
@@ -2860,16 +3038,23 @@ export function CharactersScreen(): React.JSX.Element {
           <Text style={styles.caption}>
             {t(language, "generated.screens.CharactersScreen.import.a.character.image.so.its.appearan.ed76afc3")}
           </Text>
+          <Text style={styles.caption}>{t(language, 'screen.characters.import.autoSaveHint')}</Text>
           <PrimaryButton
-            disabled={!canGenerate || activeWorkId === null || selectedEntity === null || entityEditorMode === 'create' || createEntityMutation.isPending}
+            disabled={entityOperationPending || !canEdit || !canGenerate || activeWorkId === null || name.trim().length === 0 || entityStale || (selection.entityId !== null && selectedEntity === null)}
             disabledReason={
-              !canGenerate
+              !canEdit
+                ? t(language, 'generated.screens.CharactersScreen.editing.permission.is.required.6d3b86ee')
+                : !canGenerate
                 ? t(language, "generated.screens.CharactersScreen.generation.permission.is.required.1bc5b7af")
                 : activeWorkId === null
                   ? t(language, "generated.screens.CharactersScreen.select.a.work.first.1219842f")
-                  : selectedEntity === null || entityEditorMode === 'create' || createEntityMutation.isPending
-                    ? t(language, 'screen.characters.import.saveFirst')
-                    : undefined
+                  : name.trim().length === 0
+                    ? t(language, 'generated.screens.CharactersScreen.enter.a.name.4cb35ca6')
+                    : entityStale
+                      ? t(language, 'generated.screens.CharactersScreen.reload.the.latest.state.8874ff96')
+                      : selection.entityId !== null && selectedEntity === null
+                        ? t(language, 'screen.characters.import.loadingCharacter')
+                        : undefined
             }
             label={t(language, 'imageImport')}
             loading={importImageMutation.isPending}
@@ -2956,11 +3141,11 @@ export function CharactersScreen(): React.JSX.Element {
         />
         <View style={styles.buttonRow}>
           {entityEditorMode === 'create' ? (
-            <PrimaryButton disabled={!canEdit || activeWorkId === null || name.trim().length === 0} disabledReason={!canEdit ? t(language, "generated.screens.CharactersScreen.editing.permission.is.required.6d3b86ee") : activeWorkId === null ? t(language, "generated.screens.CharactersScreen.select.a.work.first.1219842f") : name.trim().length === 0 ? t(language, "generated.screens.CharactersScreen.name.is.required.a58dfb87") : undefined} label={t(language, 'create')} loading={createEntityMutation.isPending} onPress={() => createEntityMutation.mutate()} />
+            <PrimaryButton disabled={entityOperationPending || !canEdit || activeWorkId === null || name.trim().length === 0} disabledReason={!canEdit ? t(language, "generated.screens.CharactersScreen.editing.permission.is.required.6d3b86ee") : activeWorkId === null ? t(language, "generated.screens.CharactersScreen.select.a.work.first.1219842f") : name.trim().length === 0 ? t(language, "generated.screens.CharactersScreen.name.is.required.a58dfb87") : undefined} label={t(language, 'create')} loading={createEntityMutation.isPending} onPress={() => createEntityMutation.mutate()} />
           ) : (
             <>
-              <PrimaryButton disabled={!canEdit || entityStale || selectedEntity === null || name.trim().length === 0 || !entityDirty} disabledReason={!canEdit ? t(language, "generated.screens.CharactersScreen.editing.permission.is.required.6d3b86ee") : entityStale ? t(language, "generated.screens.CharactersScreen.reload.the.latest.state.8874ff96") : selectedEntity === null ? t(language, "generated.screens.CharactersScreen.select.a.character.first.7075de9f") : name.trim().length === 0 ? t(language, "generated.screens.CharactersScreen.name.is.required.a58dfb87") : undefined} label={t(language, 'save')} loading={updateEntityMutation.isPending} onPress={() => updateEntityMutation.mutate()} variant="secondary" />
-              <PrimaryButton disabled={!canEdit || selectedEntity === null} disabledReason={!canEdit ? t(language, "generated.screens.CharactersScreen.editing.permission.is.required.6d3b86ee") : selectedEntity === null ? t(language, "generated.screens.CharactersScreen.select.a.character.first.7075de9f") : undefined} label={t(language, "generated.screens.CharactersScreen.delete.8deafb71")} loading={deleteEntityMutation.isPending} onPress={confirmDeleteEntity} variant="danger" />
+              <PrimaryButton disabled={entityOperationPending || !canEdit || entityStale || selectedEntity === null || name.trim().length === 0 || !entityDirty} disabledReason={!canEdit ? t(language, "generated.screens.CharactersScreen.editing.permission.is.required.6d3b86ee") : entityStale ? t(language, "generated.screens.CharactersScreen.reload.the.latest.state.8874ff96") : selectedEntity === null ? t(language, "generated.screens.CharactersScreen.select.a.character.first.7075de9f") : name.trim().length === 0 ? t(language, "generated.screens.CharactersScreen.name.is.required.a58dfb87") : undefined} label={t(language, 'save')} loading={updateEntityMutation.isPending} onPress={() => updateEntityMutation.mutate()} variant="secondary" />
+              <PrimaryButton disabled={entityOperationPending || !canEdit || selectedEntity === null} disabledReason={!canEdit ? t(language, "generated.screens.CharactersScreen.editing.permission.is.required.6d3b86ee") : selectedEntity === null ? t(language, "generated.screens.CharactersScreen.select.a.character.first.7075de9f") : undefined} label={t(language, "generated.screens.CharactersScreen.delete.8deafb71")} loading={deleteEntityMutation.isPending} onPress={confirmDeleteEntity} variant="danger" />
             </>
           )}
         </View>
@@ -3039,7 +3224,7 @@ export function CharactersScreen(): React.JSX.Element {
           onAction={handleGenerationBlockerAction}
         />
         <PrimaryButton
-          disabled={entityStale || generationBlockers.length > 0}
+          disabled={entityOperationPending || entityStale || generationBlockers.length > 0}
           disabledReason={entityStale ? t(language, "generated.screens.CharactersScreen.reload.the.latest.state.8874ff96") : generationBlockers.length === 0 ? undefined : generationBlockerMessage(generationBlockers[0].code, language)}
           label={t(language, 'generateReference')}
           loading={generateReferenceMutation.isPending}
@@ -3062,7 +3247,7 @@ export function CharactersScreen(): React.JSX.Element {
           />
         ) : null}
         <PrimaryButton
-          disabled={!canEdit || selectedEntity === null || !candidateTokenUsable}
+          disabled={entityOperationPending || !canEdit || selectedEntity === null || !candidateTokenUsable}
           disabledReason={!canEdit ? t(language, "generated.screens.CharactersScreen.editing.permission.is.required.6d3b86ee") : selectedEntity === null ? t(language, "generated.screens.CharactersScreen.select.a.character.first.7075de9f") : !candidateTokenUsable ? t(language, "generated.screens.CharactersScreen.review.a.candidate.image.for.the.current.efd0db5c") : undefined}
           label={t(language, 'confirmReference')}
           loading={confirmReferenceMutation.isPending}
