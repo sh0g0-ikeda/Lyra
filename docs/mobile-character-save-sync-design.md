@@ -53,7 +53,7 @@ The generation request's `Invalid reference candidate token` must not be bypasse
 
 Image import requires a persisted, currently resolved entity. Disable it while character creation is pending, while the editor is in create mode, or while `selectedEntity` is null, with the existing bilingual select/save-first explanation. Re-check the immutable identity after the native picker returns and before presign. Presign and finalize always carry that non-null entity ID. Do not auto-create from inside a cancellable picker flow, relabel an unbound token, or silently generate without the imported image.
 
-The specific production token failure remains under evidence review. A read-only comparison of the consumed upload row's entity/organization metadata with the generate request may identify a binding mismatch, but must not expose raw tokens, signatures, image keys, secrets, or private character content. Stable API tasks and secret timestamps make key rotation unlikely but do not prove the binding cause.
+The production binding failure was confirmed by a read-only transaction against the consumed upload row: the upload had no entity ID even though generation subsequently targeted a saved entity. Only binding and timestamp metadata were returned; tokens, signatures, image keys, secrets, and private character content were not exposed. This is consistent with the picker/selection race above. An already issued unbound token cannot be repaired by changing its client-side label: after installing the fixed APK, select the saved character and import the original image again to obtain a correctly bound candidate.
 
 ## Tests-first matrix
 
