@@ -44,6 +44,7 @@ const extensionFromMimeType = (mimeType: string): string => {
 };
 
 const supportedImageMimeTypes = new Set(['image/jpeg', 'image/png', 'image/webp']);
+const ANDROID_MODERN_MEDIASTORE_API_LEVEL = 30;
 
 type DownloadedFileMimeType = 'application/pdf' | 'image/jpeg' | 'image/png' | 'image/webp';
 
@@ -329,9 +330,12 @@ export async function saveImageToPhotoLibrary({
 }
 
 async function createPhotoLibraryAsset(localUri: string): Promise<void> {
-  const permission = await MediaLibrary.requestPermissionsAsync(true);
-  if (!permission.granted) {
-    throw new MobileFileTransferError('PHOTO_LIBRARY_PERMISSION_DENIED');
+  // Expo 57 uses its legacy file writer through API 29; API 30+ inserts into MediaStore without read access.
+  if (Platform.OS !== 'android' || Platform.Version < ANDROID_MODERN_MEDIASTORE_API_LEVEL) {
+    const permission = await MediaLibrary.requestPermissionsAsync(true);
+    if (!permission.granted) {
+      throw new MobileFileTransferError('PHOTO_LIBRARY_PERMISSION_DENIED');
+    }
   }
 
   await MediaLibrary.Asset.create(localUri);

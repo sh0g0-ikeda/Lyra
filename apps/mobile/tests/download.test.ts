@@ -34,10 +34,15 @@ const {
   deleteAsyncMock: vi.fn(),
   requestDirectoryPermissionsAsyncMock: vi.fn(),
   createFileAsyncMock: vi.fn(),
-  platformOs: { value: 'ios' as 'ios' | 'android' }
+  platformOs: { value: 'ios' as 'ios' | 'android', version: 36 }
 }));
 
-vi.mock('react-native', () => ({ Platform: { get OS() { return platformOs.value; } } }));
+vi.mock('react-native', () => ({
+  Platform: {
+    get OS() { return platformOs.value; },
+    get Version() { return platformOs.version; }
+  }
+}));
 
 vi.mock('expo-file-system/legacy', () => ({
   cacheDirectory: 'file:///cache/',
@@ -71,6 +76,7 @@ vi.mock('@/lib/config', () => ({
 beforeEach(() => {
   vi.clearAllMocks();
   platformOs.value = 'ios';
+  platformOs.version = 36;
   readAsStringAsyncMock.mockReset();
   readAsStringAsyncMock.mockImplementation(async (uri: string, options?: { length?: number }) => {
     if (options?.length === 12) {
@@ -81,6 +87,62 @@ beforeEach(() => {
 });
 
 describe('mobile download filenames', () => {
+  it.each([30, 32, 33, 34, 36])('Android API %iでは読み取り権限を要求せず画像を保存する', async (apiLevel) => {
+    platformOs.value = 'android';
+    platformOs.version = apiLevel;
+    downloadAsyncMock.mockResolvedValue({ status: 200, uri: 'file:///cache/page.png' });
+    requestMediaLibraryPermissionsMock.mockResolvedValue({ granted: false });
+    assetCreateMock.mockResolvedValue(undefined);
+
+    await expect(saveAuthenticatedImageToPhotoLibrary({
+      path: '/api/pages/page-1/export-image', filename: 'page', mimeType: 'image/png', tokens: null
+    })).resolves.toBe('file:///cache/page.png');
+
+    expect(requestMediaLibraryPermissionsMock).not.toHaveBeenCalled();
+    expect(assetCreateMock).toHaveBeenCalledExactlyOnceWith('file:///cache/page.png');
+    expect(shareAsyncMock).not.toHaveBeenCalled();
+  });
+
+  it.each([24, 28, 29])('Android API %iでは書き込み専用権限を得て画像を保存する', async (apiLevel) => {
+    platformOs.value = 'android';
+    platformOs.version = apiLevel;
+    downloadAsyncMock.mockResolvedValue({ status: 200, uri: 'file:///cache/page.png' });
+    requestMediaLibraryPermissionsMock.mockResolvedValue({ granted: true });
+    assetCreateMock.mockResolvedValue(undefined);
+
+    await saveAuthenticatedImageToPhotoLibrary({
+      path: '/api/pages/page-1/export-image', filename: 'page', mimeType: 'image/png', tokens: null
+    });
+
+    expect(requestMediaLibraryPermissionsMock).toHaveBeenCalledExactlyOnceWith(true);
+    expect(assetCreateMock).toHaveBeenCalledExactlyOnceWith('file:///cache/page.png');
+  });
+
+  it('Android API29の書き込み権限が拒否された場合は保存せず専用エラーを返す', async () => {
+    platformOs.value = 'android';
+    platformOs.version = 29;
+    downloadAsyncMock.mockResolvedValue({ status: 200, uri: 'file:///cache/page.png' });
+    requestMediaLibraryPermissionsMock.mockResolvedValue({ granted: false });
+
+    await expect(saveAuthenticatedImageToPhotoLibrary({
+      path: '/api/pages/page-1/export-image', filename: 'page', mimeType: 'image/png', tokens: null
+    })).rejects.toMatchObject({ code: 'PHOTO_LIBRARY_PERMISSION_DENIED' });
+    expect(requestMediaLibraryPermissionsMock).toHaveBeenCalledExactlyOnceWith(true);
+    expect(assetCreateMock).not.toHaveBeenCalled();
+  });
+
+  it('Androidの画像登録が失敗した場合は成功扱いにせず画像保存エラーを返す', async () => {
+    platformOs.value = 'android';
+    downloadAsyncMock.mockResolvedValue({ status: 200, uri: 'file:///cache/page.png' });
+    requestMediaLibraryPermissionsMock.mockResolvedValue({ granted: true });
+    assetCreateMock.mockRejectedValueOnce(new Error('Native media library registration failed'));
+
+    await expect(saveAuthenticatedImageToPhotoLibrary({
+      path: '/api/pages/page-1/export-image', filename: 'page', mimeType: 'image/png', tokens: null
+    })).rejects.toMatchObject({ code: 'IMAGE_SAVE_FAILED' });
+    expect(requestMediaLibraryPermissionsMock).not.toHaveBeenCalled();
+  });
+
   it('ユーザー指定名からパストラバーサルと予約文字を除去しPNG拡張子を維持する', async () => {
     downloadAsyncMock.mockResolvedValue({ status: 200, uri: 'file:///cache/my-story-.png' });
     isAvailableAsyncMock.mockResolvedValue(true);
@@ -193,6 +255,7 @@ describe('mobile download filenames', () => {
       { headers: { Authorization: 'Bearer id-token' } }
     );
     expect(assetCreateMock).toHaveBeenCalledWith('file:///cache/lyra-page-1.png');
+    expect(requestMediaLibraryPermissionsMock).toHaveBeenCalledExactlyOnceWith(true);
     expect(shareAsyncMock).not.toHaveBeenCalled();
   });
 
