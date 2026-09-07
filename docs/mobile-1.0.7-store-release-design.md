@@ -4,7 +4,7 @@ Date: 2026-09-08
 Branch: `codex/mobile-1-0-7-store-release`
 Release branch base: `116710a`
 Mobile runtime implementation: `aa6b7bd`
-Final release metadata commit: pending
+Final release metadata commit: `7188ebcf305fc3fd37aa724c570ee25e1211e855`
 
 ## Purpose and scope
 
