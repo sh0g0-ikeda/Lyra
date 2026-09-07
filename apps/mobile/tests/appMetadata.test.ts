@@ -18,6 +18,7 @@ interface ExpoAppConfig {
             backgroundColor?: string;
             imageWidth?: number;
             microphonePermission?: boolean;
+            granularPermissions?: string[];
             resizeMode?: string;
           },
         ]
@@ -86,8 +87,8 @@ function assertBundledAsset(assetPath: string | undefined): void {
 }
 
 describe('production app metadata', () => {
-  it('コマ設定ダイアログの更新版を1.0.4としてビルドする', () => {
-    expect(config.expo.version).toBe('1.0.4');
+  it('Android権限修正版を新しいruntimeの1.0.5でビルドしApple提出情報は1.0.4を維持する', () => {
+    expect(config.expo.version).toBe('1.0.5');
     expect(storeConfig.apple?.version).toBe('1.0.4');
     expect(storeConfig.apple?.info?.ja?.releaseNotes).toContain('ポップアップ');
     expect(storeConfig.apple?.info?.['en-US']?.releaseNotes).toContain('dialogs');
@@ -183,6 +184,23 @@ describe('production app metadata', () => {
         'android.permission.CAMERA',
         'android.permission.RECORD_AUDIO',
         'android.permission.SYSTEM_ALERT_WINDOW',
+      ]),
+    );
+  });
+
+  it('画像の選択と保存だけを行うAndroidで広範なメディア読み取り権限を除外する', () => {
+    const mediaLibraryPlugin = config.expo.plugins?.find(
+      (plugin) => Array.isArray(plugin) && plugin[0] === 'expo-media-library',
+    );
+    expect(Array.isArray(mediaLibraryPlugin) && mediaLibraryPlugin[1].granularPermissions).toEqual([]);
+    expect(config.expo.android?.blockedPermissions).toEqual(
+      expect.arrayContaining([
+        'android.permission.READ_MEDIA_IMAGES',
+        'android.permission.READ_MEDIA_VIDEO',
+        'android.permission.READ_MEDIA_AUDIO',
+        'android.permission.READ_MEDIA_VISUAL_USER_SELECTED',
+        'android.permission.READ_EXTERNAL_STORAGE',
+        'android.permission.ACCESS_MEDIA_LOCATION',
       ]),
     );
   });

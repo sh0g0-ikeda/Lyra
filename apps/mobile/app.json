@@ -3,7 +3,7 @@
     "name": "Lyra Mobile",
     "slug": "lyra-mobile",
     "scheme": "lyra-mobile",
-    "version": "1.0.4",
+    "version": "1.0.5",
     "icon": "./assets/icon.png",
     "orientation": "portrait",
     "userInterfaceStyle": "dark",
@@ -52,7 +52,7 @@
         {
           "photosPermission": "キャラクター参照情報を読み込むため、あなたが選択した画像だけを使用します。",
           "savePhotosPermission": "生成したページ画像を写真ライブラリに保存するために使用します。",
-          "granularPermissions": ["photo"]
+          "granularPermissions": []
         }
       ],
       "expo-sharing",
@@ -139,7 +139,13 @@
       "blockedPermissions": [
         "android.permission.CAMERA",
         "android.permission.RECORD_AUDIO",
-        "android.permission.SYSTEM_ALERT_WINDOW"
+        "android.permission.SYSTEM_ALERT_WINDOW",
+        "android.permission.READ_MEDIA_IMAGES",
+        "android.permission.READ_MEDIA_VIDEO",
+        "android.permission.READ_MEDIA_AUDIO",
+        "android.permission.READ_MEDIA_VISUAL_USER_SELECTED",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.ACCESS_MEDIA_LOCATION"
       ],
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
