@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   Modal,
   Pressable,
@@ -61,8 +61,8 @@ import {
   type EntityReferenceGenerationBlockerCode
 } from '@/domain/entityReferencePolicy';
 import type { CompatibleGenerationJobRecord } from '@/domain/generationJobCompatibility';
-import type { EntityReferenceUploadMimeType } from '@/domain/payloads';
-import type { EntityStateRecord, EntityType, SceneRecord } from '@/domain/types';
+import type { EntityReferenceUploadMimeType, UpdateEntityPayload } from '@/domain/payloads';
+import type { EntityRecord, EntityStateRecord, EntityType, SceneRecord } from '@/domain/types';
 import { useActiveResourceJobId } from '@/hooks/useActiveResourceJobId';
 import { config } from '@/lib/config';
 import { confirmAction, confirmDestructiveAction } from '@/lib/confirm';
@@ -90,6 +90,7 @@ import {
 import { appendOrganizationQuery, saveAuthenticatedImageToPhotoLibrary } from '@/lib/download';
 import { createExpoBinaryUploadFile } from '@/lib/expoBinaryUpload';
 import { ApiError } from '@/lib/api';
+import { syncSavedEntity } from '@/lib/entitySaveCache';
 import {
   flattenUniqueRecords,
   MOBILE_LIST_PAGE_SIZE,
@@ -117,6 +118,7 @@ interface EntityStateSceneOption {
 }
 
 interface PendingEntityReferenceUpload {
+  editorIdentity: string;
   entityId: string | null;
   entityType: EntityType;
   mimeType: EntityReferenceUploadMimeType;
@@ -1791,6 +1793,18 @@ export function CharactersScreen(): React.JSX.Element {
   const [sectionOffsets, setSectionOffsets] = useState({ editor: 0, import: 0 });
   const workspaceContext = useWorkspaceContextSelection();
   const activeWorkId = workspaceContext.selectedWorkId;
+  const entityScope = JSON.stringify([sessionKey, organizationId, activeWorkId]);
+  const editorIdentity = JSON.stringify([entityScope, selection.entityId]);
+  const currentEditorIdentity = useRef(editorIdentity);
+  const lastSyncedEntityScope = useRef(entityScope);
+  const entityDraftSignature = useRef('');
+  const renderedDraftSignature = JSON.stringify([
+    editorIdentity, entityType, name, description, promptSupplement, structuredDraft, structuredExtras,
+  ]);
+  useLayoutEffect(() => {
+    currentEditorIdentity.current = editorIdentity;
+    entityDraftSignature.current = renderedDraftSignature;
+  }, [editorIdentity, renderedDraftSignature]);
 
   const entitiesQuery = useInfiniteQuery({
     enabled: activeWorkId !== null,
@@ -2001,40 +2015,44 @@ export function CharactersScreen(): React.JSX.Element {
     setPreviewImageUri(null);
   };
 
+  const hydrateEntityFields = useCallback((entity: EntityRecord | null): void => {
+    setEntityType(entity?.entity_type ?? 'character');
+    setName(entity?.name ?? '');
+    setDescription(entity?.free_description ?? '');
+    setPromptSupplement(entity?.prompt_supplement ?? '');
+    setStructuredDraft(structuredDraftFromRecord(entity?.structured_fields ?? {}, entity?.entity_type ?? 'character'));
+    setStructuredExtras(structuredExtrasFromRecord(entity?.structured_fields ?? {}, entity?.entity_type ?? 'character'));
+  }, [setEntityType, setName, setDescription, setPromptSupplement, setStructuredDraft, setStructuredExtras]);
+
   useEffect(() => {
     const nextId = selectedEntity?.id ?? null;
+    const scopeChanged = lastSyncedEntityScope.current !== entityScope;
     if (!shouldHydrateEditorDraft({
       hasServerSnapshot: selectedEntity !== null || selection.entityId === null,
-      hasUnsavedChanges: entityDirty,
+      hasUnsavedChanges: entityDirty && !scopeChanged,
       lastResourceId: lastSyncedEntityId,
       resourceId: nextId
     })) {
       return;
     }
+    const identityChanged = scopeChanged || lastSyncedEntityId !== nextId;
+    lastSyncedEntityScope.current = entityScope;
     setLastSyncedEntityId(nextId);
     if (selectedEntity !== null) {
       setEntityEditorMode('edit');
     }
-    setEntityType(selectedEntity?.entity_type ?? 'character');
-    setName(selectedEntity?.name ?? '');
-    setDescription(selectedEntity?.free_description ?? '');
-    setPromptSupplement(selectedEntity?.prompt_supplement ?? '');
-    setStructuredDraft(structuredDraftFromRecord(selectedEntity?.structured_fields ?? {}, selectedEntity?.entity_type ?? 'character'));
-    setStructuredExtras(
-      structuredExtrasFromRecord(
-        selectedEntity?.structured_fields ?? {},
-        selectedEntity?.entity_type ?? 'character',
-      ),
-    );
-    setImportResult(null);
-    setLastImportedCandidateToken(null);
-    setLastImportedCandidateEntityId(null);
-    setCandidateToken('');
-    setLocalJob(null);
-    setSelectedEntityStateId(null);
-    setEntityStateDraft(emptyEntityStateDraft());
-    lastSyncedEntityStateId.current = null;
-  }, [entityDirty, lastSyncedEntityId, selectedEntity, selection.entityId]);
+    hydrateEntityFields(selectedEntity);
+    if (identityChanged) {
+      setImportResult(null);
+      setLastImportedCandidateToken(null);
+      setLastImportedCandidateEntityId(null);
+      setCandidateToken('');
+      setLocalJob(null);
+      setSelectedEntityStateId(null);
+      setEntityStateDraft(emptyEntityStateDraft());
+      lastSyncedEntityStateId.current = null;
+    }
+  }, [entityDirty, entityScope, hydrateEntityFields, lastSyncedEntityId, selectedEntity, selection.entityId]);
 
   useEffect(() => {
     setEntityStale(false);
@@ -2113,8 +2131,34 @@ export function CharactersScreen(): React.JSX.Element {
           structuredFieldsChanged,
         });
 
+  const adoptSavedEntity = async (entity: EntityRecord, submittedDraft: string): Promise<void> => {
+    await syncSavedEntity({ queryClient, sessionKey, organizationId, entity });
+    if (currentEditorIdentity.current !== editorIdentity) {
+      return;
+    }
+    if (entityDraftSignature.current === submittedDraft) {
+      hydrateEntityFields(entity);
+    }
+    setEntityStale(false);
+  };
+
+  const persistEntityUpdate = async (payload: UpdateEntityPayload): Promise<EntityRecord> => {
+    if (selectedEntity === null) {
+      throw new Error('No character selected.');
+    }
+    const submittedDraft = entityDraftSignature.current;
+    const entity = await api.updateEntity(selectedEntity.id, payload, organizationId);
+    await adoptSavedEntity(entity, submittedDraft);
+    return entity;
+  };
+
   const createEntityMutation = useMutation({
-    mutationFn: () => api.createEntity(activeWorkId ?? '', toEntityPayload(), organizationId),
+    mutationFn: async () => {
+      const submittedDraft = entityDraftSignature.current;
+      const entity = await api.createEntity(activeWorkId ?? '', toEntityPayload(), organizationId);
+      await adoptSavedEntity(entity, submittedDraft);
+      return entity;
+    },
     onSuccess: async (entity) => {
       setEntityEditorMode('edit');
       await updateSelection({ entityId: entity.id }, { skipDirtyCheck: true });
@@ -2128,10 +2172,9 @@ export function CharactersScreen(): React.JSX.Element {
       if (selectedEntity === null || payload === null || !hasEntityUpdateChanges(payload)) {
         throw new Error('No character changes to save.');
       }
-      return api.updateEntity(selectedEntity.id, payload, organizationId);
+      return persistEntityUpdate(payload);
     },
     onSuccess: async () => {
-      setEntityStale(false);
       await invalidateEntities();
     },
     onError: (error) => {
@@ -2258,6 +2301,9 @@ export function CharactersScreen(): React.JSX.Element {
 
   const importImageMutation = useMutation({
     mutationFn: async (mode: 'select' | 'retry') => {
+      if (selectedEntity === null || entityEditorMode === 'create' || createEntityMutation.isPending) {
+        throw new Error(t(language, 'screen.characters.import.saveFirst'));
+      }
       let pendingUpload = pendingEntityReferenceUpload;
       if (mode === 'select') {
         setPendingEntityReferenceUpload(null);
@@ -2274,6 +2320,9 @@ export function CharactersScreen(): React.JSX.Element {
         });
         if (result.canceled) {
           return null;
+        }
+        if (currentEditorIdentity.current !== editorIdentity) {
+          throw new Error(t(language, 'screen.characters.import.selectionChanged'));
         }
 
         const asset = result.assets[0];
@@ -2297,7 +2346,8 @@ export function CharactersScreen(): React.JSX.Element {
             : null;
 
         pendingUpload = {
-          entityId: selectedEntity?.id ?? null,
+          editorIdentity,
+          entityId: selectedEntity.id,
           entityType,
           mimeType,
           sizeBytes: uploadFile.sizeBytes,
@@ -2312,6 +2362,9 @@ export function CharactersScreen(): React.JSX.Element {
         throw new Error(t(language, "generated.screens.CharactersScreen.there.is.no.image.to.retry.a75c5e5a"));
       }
       const activeUpload = pendingUpload;
+      if (activeUpload.editorIdentity !== currentEditorIdentity.current || activeUpload.entityId !== selectedEntity.id) {
+        throw new Error(t(language, 'screen.characters.import.selectionChanged'));
+      }
       const legacyImageDataUrl = activeUpload.legacyImageDataUrl;
 
       entityReferenceUploadAbortController.current?.abort();
@@ -2320,7 +2373,7 @@ export function CharactersScreen(): React.JSX.Element {
       setEntityReferenceUploadProgress(0);
 
       try {
-        return await uploadAndImportEntityReference({
+        const result = await uploadAndImportEntityReference({
           source: activeUpload.source,
           mimeType: activeUpload.mimeType,
           sizeBytes: activeUpload.sizeBytes,
@@ -2357,6 +2410,12 @@ export function CharactersScreen(): React.JSX.Element {
           },
           onStageChange: setEntityReferenceUploadStage
         });
+        return {
+          ...result,
+          importedEntityId: activeUpload.entityId,
+          importedEntityType: activeUpload.entityType,
+          editorIdentity: activeUpload.editorIdentity,
+        };
       } finally {
         if (entityReferenceUploadAbortController.current === abortController) {
           entityReferenceUploadAbortController.current = null;
@@ -2369,16 +2428,19 @@ export function CharactersScreen(): React.JSX.Element {
         setEntityReferenceUploadProgress(0);
         return;
       }
+      if (result.editorIdentity !== currentEditorIdentity.current) {
+        return;
+      }
       setPendingEntityReferenceUpload(null);
       setEntityReferenceUploadStage(null);
       setEntityReferenceUploadProgress(0);
-      const nextKeys = entityType === 'character' ? characterFieldKeys : genericFieldKeys;
-      setStructuredDraft(structuredDraftFromRecord(result.suggested_fields, entityType));
+      const nextKeys = result.importedEntityType === 'character' ? characterFieldKeys : genericFieldKeys;
+      setStructuredDraft(structuredDraftFromRecord(result.suggested_fields, result.importedEntityType));
       setStructuredExtras(extrasFromRecord(result.suggested_fields, nextKeys));
       setPromptSupplement(result.prompt_supplement);
       setCandidateToken(result.tmp_image_token);
       setLastImportedCandidateToken(result.tmp_image_token);
-      setLastImportedCandidateEntityId(selectedEntity?.id ?? null);
+      setLastImportedCandidateEntityId(result.importedEntityId);
       setLocalJob(null);
       setImportResult(JSON.stringify(result.suggested_fields, null, 2));
     }
@@ -2394,7 +2456,7 @@ export function CharactersScreen(): React.JSX.Element {
         hasEntityUpdateChanges(updatePayload)
       ) {
         try {
-          await api.updateEntity(selectedEntity.id, updatePayload, organizationId);
+          await persistEntityUpdate(updatePayload);
         } catch (error) {
           if (isResourceStaleError(error)) {
             setEntityStale(true);
@@ -2799,13 +2861,15 @@ export function CharactersScreen(): React.JSX.Element {
             {t(language, "generated.screens.CharactersScreen.import.a.character.image.so.its.appearan.ed76afc3")}
           </Text>
           <PrimaryButton
-            disabled={!canGenerate || activeWorkId === null}
+            disabled={!canGenerate || activeWorkId === null || selectedEntity === null || entityEditorMode === 'create' || createEntityMutation.isPending}
             disabledReason={
               !canGenerate
                 ? t(language, "generated.screens.CharactersScreen.generation.permission.is.required.1bc5b7af")
                 : activeWorkId === null
                   ? t(language, "generated.screens.CharactersScreen.select.a.work.first.1219842f")
-                  : undefined
+                  : selectedEntity === null || entityEditorMode === 'create' || createEntityMutation.isPending
+                    ? t(language, 'screen.characters.import.saveFirst')
+                    : undefined
             }
             label={t(language, 'imageImport')}
             loading={importImageMutation.isPending}
