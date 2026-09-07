@@ -46,6 +46,7 @@ const referenceCandidateImageQuerySchema = z
   .object({
     candidate_token: z.string().trim().min(1).max(4096).optional(),
     s3_key: z.string().trim().min(1).max(512).optional(),
+    organization_id: z.string().uuid().optional(),
   })
   .strict()
   .refine((query) => query.candidate_token !== undefined || query.s3_key !== undefined, {
