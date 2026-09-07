@@ -87,11 +87,11 @@ function assertBundledAsset(assetPath: string | undefined): void {
 }
 
 describe('production app metadata', () => {
-  it('取り込み前自動保存版を新しいruntimeの1.0.7でビルドしApple提出情報は1.0.4を維持する', () => {
+  it('取り込み前自動保存版の1.0.7とApple提出版数および日英の更新内容が一致する', () => {
     expect(config.expo.version).toBe('1.0.7');
-    expect(storeConfig.apple?.version).toBe('1.0.4');
-    expect(storeConfig.apple?.info?.ja?.releaseNotes).toContain('ポップアップ');
-    expect(storeConfig.apple?.info?.['en-US']?.releaseNotes).toContain('dialogs');
+    expect(storeConfig.apple?.version).toBe(config.expo.version);
+    expect(storeConfig.apple?.info?.ja?.releaseNotes).toContain('自動保存');
+    expect(storeConfig.apple?.info?.['en-US']?.releaseNotes).toContain('automatically saved');
   });
 
   it('icon、adaptive icon、splash を Mobile bundle 内の実在 asset に固定する', () => {
