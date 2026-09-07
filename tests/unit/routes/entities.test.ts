@@ -1,5 +1,5 @@
 import { SignJWT } from 'jose';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   entitiesResponseSchema,
   entityImportResponseSchema,
@@ -12,6 +12,7 @@ import { createApp } from '../../../src/app.js';
 import { RATE_LIMIT_RULES } from '../../../src/domain/constants/rateLimit.js';
 import { REQUEST_BODY_LIMITS } from '../../../src/routes/requestBody.js';
 import { env } from '../../../src/lib/env.js';
+import { ForbiddenError } from '../../../src/domain/errors/index.js';
 import type { CreditBalanceSnapshot } from '../../../src/domain/types/credit.js';
 import type { EntityReferenceSet } from '../../../src/domain/types/entityReference.js';
 import type { AuthenticatedUser, SupabaseJwtClaims } from '../../../src/domain/types/user.js';
@@ -34,6 +35,7 @@ import type {
   RefundCreditsParams,
 } from '../../../src/services/credit/CreditService.js';
 import { createReferenceCandidateToken } from '../../../src/services/entity/ReferenceCandidateToken.js';
+import type { OrganizationServicePort } from '../../../src/services/organization/OrganizationService.js';
 
 const jwtSecret = 'unit-test-secret';
 const user: AuthenticatedUser = {
@@ -285,7 +287,12 @@ class FakeEntityReferenceService implements EntityReferenceServicePort {
 
 class FakeEntityReferenceImageExportService implements EntityReferenceImageExportServicePort {
   public lastReferenceRequest: { userId: string; entityId: string; refId: string } | null = null;
-  public lastCandidateRequest: { userId: string; entityId: string; s3Key: string } | null = null;
+  public lastCandidateRequest: {
+    userId: string;
+    entityId: string;
+    s3Key: string;
+    organizationId: string | null;
+  } | null = null;
 
   public async exportReferenceImage(
     userId: string,
@@ -304,8 +311,14 @@ class FakeEntityReferenceImageExportService implements EntityReferenceImageExpor
     userId: string,
     requestedEntityId: string,
     s3Key: string,
+    organizationId: string | null = null,
   ): Promise<ExportedEntityReferenceImage> {
-    this.lastCandidateRequest = { userId, entityId: requestedEntityId, s3Key };
+    this.lastCandidateRequest = {
+      userId,
+      entityId: requestedEntityId,
+      s3Key,
+      organizationId,
+    };
 
     return {
       imageData: Buffer.from('reference-image'),
@@ -806,7 +819,95 @@ describe('entity routes', () => {
       userId: user.id,
       entityId,
       s3Key,
+      organizationId: null,
     });
+  });
+
+  it('組織メンバーは reference candidate image を取得できる', async () => {
+    const organizationId = '33333333-3333-4333-8333-333333333333';
+    const requireMembership = vi.fn().mockResolvedValue(undefined);
+    const organizationService = { requireMembership } as unknown as OrganizationServicePort;
+    const exportService = new FakeEntityReferenceImageExportService();
+    const app = createTestApp(undefined, exportService, undefined, organizationService);
+    const token = await createToken();
+    const candidateToken = createCandidateToken(entityId);
+
+    const response = await app.request(
+      `/api/entities/${entityId}/reference-candidate-image?candidate_token=${encodeURIComponent(candidateToken)}&organization_id=${organizationId}`,
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+
+    expect(response.status).toBe(200);
+    expect(requireMembership).toHaveBeenCalledWith(organizationId, user.id, 'view_work');
+    expect(exportService.lastCandidateRequest).toMatchObject({
+      userId: user.id,
+      entityId,
+      organizationId,
+    });
+  });
+
+  it('組織非メンバーは reference candidate image を取得できない', async () => {
+    const organizationId = '33333333-3333-4333-8333-333333333333';
+    const requireMembership = vi.fn().mockRejectedValue(new ForbiddenError());
+    const organizationService = { requireMembership } as unknown as OrganizationServicePort;
+    const exportService = new FakeEntityReferenceImageExportService();
+    const app = createTestApp(undefined, exportService, undefined, organizationService);
+    const token = await createToken();
+
+    const response = await app.request(
+      `/api/entities/${entityId}/reference-candidate-image?candidate_token=${encodeURIComponent(createCandidateToken(entityId))}&organization_id=${organizationId}`,
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+
+    expect(response.status).toBe(403);
+    expect(exportService.lastCandidateRequest).toBeNull();
+  });
+
+  it('reference candidate image は不正な organization ID を拒否する', async () => {
+    const app = createTestApp();
+    const token = await createToken();
+
+    const response = await app.request(
+      `/api/entities/${entityId}/reference-candidate-image?candidate_token=${encodeURIComponent(createCandidateToken(entityId))}&organization_id=not-a-uuid`,
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+
+    expect(response.status).toBe(422);
+    const body = (await response.json()) as { error: { code: string; message: string } };
+    expect(body.error).toEqual({
+      code: 'VALIDATION_ERROR',
+      message: 'organization_id must be a valid UUID',
+    });
+  });
+
+  it('reference candidate image は未知の query parameter を拒否する', async () => {
+    const app = createTestApp();
+    const token = await createToken();
+
+    const response = await app.request(
+      `/api/entities/${entityId}/reference-candidate-image?candidate_token=${encodeURIComponent(createCandidateToken(entityId))}&unexpected=value`,
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+
+    expect(response.status).toBe(422);
+    const body = (await response.json()) as { error: { code: string; message: string } };
+    expect(body.error).toEqual({
+      code: 'VALIDATION_ERROR',
+      message: 'Validation failed: Unrecognized key: "unexpected"',
+    });
+  });
+
+  it('reference candidate image は別 entity 用 token を拒否する', async () => {
+    const app = createTestApp();
+    const token = await createToken();
+    const otherEntityId = '44444444-4444-4444-8444-444444444444';
+
+    const response = await app.request(
+      `/api/entities/${entityId}/reference-candidate-image?candidate_token=${encodeURIComponent(createCandidateToken(otherEntityId))}`,
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+
+    expect(response.status).toBe(422);
   });
 });
 
@@ -814,6 +915,7 @@ function createTestApp(
   entityReferenceService: EntityReferenceServicePort = new FakeEntityReferenceService(),
   entityReferenceImageExportService: EntityReferenceImageExportServicePort = new FakeEntityReferenceImageExportService(),
   entityService: EntityServicePort = new FakeEntityService(),
+  organizationService?: OrganizationServicePort,
 ): ReturnType<typeof createApp> {
   return createApp({
     creditService: new FakeCreditService(),
@@ -821,8 +923,22 @@ function createTestApp(
     entityReferenceImageExportService,
     entityService,
     enableDevAuthBypass: false,
+    organizationService,
     userProvisioningService: new FakeUserProvisioningService(),
     jwtSecret,
+  });
+}
+
+function createCandidateToken(candidateEntityId: string): string {
+  return createReferenceCandidateToken({
+    userId: user.id,
+    entityId: candidateEntityId,
+    s3Key: 'tmp/user-1/entities/imports/source.png',
+  }, {
+    secret: env.REFERENCE_CANDIDATE_TOKEN_SECRET
+      ?? env.SUPABASE_JWT_SECRET
+      ?? env.STRIPE_WEBHOOK_SECRET
+      ?? 'development-reference-candidate-token-secret',
   });
 }
 
