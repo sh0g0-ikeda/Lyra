@@ -391,6 +391,12 @@ describe('PromptBuilder', () => {
           type: 'narration',
           position: 'center',
         },
+        {
+          entityId: null,
+          text: '誰かいるのか。',
+          type: 'speech',
+          position: 'left',
+        },
       ],
     }];
     const entityRepository = new FakeEntityRepository();
@@ -418,10 +424,14 @@ describe('PromptBuilder', () => {
     expect(result.draftPrompt).toContain('thought balloons must not use a speech tail');
     expect(result.draftPrompt).toContain('is narration text and must remain narration, not character speech');
     expect(result.draftPrompt).not.toContain('narration by Emile');
+    expect(result.draftPrompt).toContain('dialogue with an unresolved real speaker');
+    expect(result.draftPrompt).toContain('Do not invent or reassign the speaker');
+    expect(result.draftPrompt).not.toContain('unresolved real speaker (off-panel real speaker)');
     expect(result.inputSnapshot.panels[0]?.dialogue).toEqual([
       expect.objectContaining({ entityId: 'entity-2', speakerName: 'Emile', type: 'speech' }),
       expect.objectContaining({ entityId: 'entity-2', speakerName: 'Emile', type: 'thought' }),
       expect.objectContaining({ entityId: null, speakerName: null, type: 'narration' }),
+      expect.objectContaining({ entityId: null, speakerName: null, type: 'speech' }),
     ]);
   });
 

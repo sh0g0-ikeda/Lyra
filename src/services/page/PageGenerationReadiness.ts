@@ -107,7 +107,7 @@ export class PageGenerationReadinessEvaluator {
         if (requiresSpeaker && dialogue.entityId === null) {
           add(
             blocker('DIALOGUE_SPEAKER_REQUIRED', null, 'dialogue', 'open_panels', 'page.blocker.dialogueSpeakerRequired'),
-            'Speaker dialogue requires an assigned entity',
+            'Speaker dialogue requires a real speaker entity',
           );
           continue;
         }

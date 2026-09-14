@@ -803,11 +803,12 @@ function formatDialogueLine(
     return `Panel ${panel.order} narration: "${dialogue.text}" at ${humanizeToken(dialogue.position)}.`;
   }
 
-  const speaker = dialogue.entityId === null
-    ? 'unresolved real speaker (do not invent or reassign)'
-    : formatEntityReferenceIdentity(dialogue.entityId, entityMap, referenceLabelByEntityId);
-  const visible =
-    dialogue.entityId !== null && panel.entities.some((assignment) => assignment.entityId === dialogue.entityId);
+  if (dialogue.entityId === null) {
+    return `Panel ${panel.order} dialogue with an unresolved real speaker: "${dialogue.text}" as ${humanizeToken(dialogue.type)} at ${humanizeToken(dialogue.position)}. Do not invent or reassign the speaker. Do not use a speech tail pointing at a visible person.`;
+  }
+
+  const speaker = formatEntityReferenceIdentity(dialogue.entityId, entityMap, referenceLabelByEntityId);
+  const visible = panel.entities.some((assignment) => assignment.entityId === dialogue.entityId);
   const visibility = visible ? '' : ' (off-panel real speaker)';
   const tailLock = dialogue.type === 'thought' || !visible
     ? ' Do not use a speech tail pointing at a visible person.'
