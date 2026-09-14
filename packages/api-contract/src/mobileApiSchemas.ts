@@ -190,6 +190,7 @@ export const pageGenerationReadinessSchema = z.object({
         'FRAME_PANEL_MISMATCH',
         'PANEL_ORDER_INVALID',
         'DIALOGUE_SPEAKER_REQUIRED',
+        'DIALOGUE_SPEAKER_INVALID',
         'DIALOGUE_SPEAKER_NOT_IN_PANEL',
         'ASSIGNED_ENTITY_INVALID',
         'PAGE_GENERATING',

@@ -51,6 +51,7 @@ class QueryCapturingClient implements DatabaseClient {
             episode_id: 'episode-1',
             page_number: 3,
             total_pages_in_episode: 5,
+            layout_config: { type: 'template', template_id: 'tall_left_4', panel_count: 4 },
             frame_count: 4,
             status: 'designing',
             dialogue_mode: 'mixed',
@@ -281,6 +282,8 @@ describe('PostgresPageRepository', () => {
     const repository = new PostgresPageRepository(client);
 
     const page = await repository.findAutofillContextByIdAndUserId('page-1', 'user-1');
+    expect(client.queries[0]).toContain('pages.layout_config');
+    expect(page?.layoutConfig).toEqual({ type: 'template', template_id: 'tall_left_4', panel_count: 4 });
 
     expect(page).toMatchObject({
       pageId: 'page-1',

@@ -13,8 +13,10 @@ import {
 import type { AppLanguage } from '../../domain/types/language.js';
 import { STORY_PROMPT_CONTEXT_LIMITS } from '../../domain/storyPromptCompaction.js';
 import { STORY_AI_LIMITS } from '../../domain/constants/storyAi.js';
+import { EPISODE_PAGE_PLAN_MAX_DIALOGUE_LINES_PER_PANEL } from '../../domain/constants/generation.js';
 import { packEpisodePlanPages } from '../../domain/episodePlanPacking.js';
 import {
+  PANEL_FRAME_TEMPLATES,
   buildPanelFrameTemplateInputs,
   resolveDefaultPanelFrameTemplateId,
 } from '../../domain/constants/panelFrameTemplates.js';
@@ -63,6 +65,7 @@ import {
   buildEpisodeBeatPlanCompilerBrief,
   buildEpisodeDetailContinuitySupplement,
   buildEpisodePlanAuditBrief,
+  describeSavedFrameCapacity,
   detectDeterministicContinuityIssues,
   fingerprintEpisodePlanningContext,
   mergeEpisodePlanAuditIssues,
@@ -256,18 +259,11 @@ export class PageService implements PageServicePort {
       ? buildFallbackAutofillSuggestion(context, language)
       : { panels: [] };
 
-    let updatedPanelCount = 0;
-    let filledFieldCount = 0;
-
-    if (
+    const nextPageSettings =
       compiled.suggestion.page?.dialogueMode !== undefined ||
       compiled.suggestion.page?.pageDialogueToggle !== undefined
-    ) {
-      const nextPageSettings = mergePageSettings(context, compiled.suggestion.page);
-      if (nextPageSettings !== null) {
-        await this.updatePageSettings(userId, pageId, nextPageSettings, organizationId);
-      }
-    }
+        ? mergePageSettings(context, compiled.suggestion.page)
+        : null;
 
     const suggestionsByOrder = new Map(
       compiled.suggestion.panels.map((suggestion) => [suggestion.order, suggestion] as const),
@@ -307,6 +303,10 @@ export class PageService implements PageServicePort {
       ),
     );
 
+    const preparedMerges: Array<{
+      panel: PageAutofillPanelContext;
+      merge: PanelMergeResult;
+    }> = [];
     for (const panel of context.panels) {
       const rawSuggestion = suggestionsByOrder.get(panel.order);
       const fallbackPanelSuggestion = fallbackSuggestionsByOrder.get(panel.order);
@@ -335,6 +335,17 @@ export class PageService implements PageServicePort {
       }
 
       const merge = mergePanelSuggestion(panel, suggestion);
+      ensureGeneratedDialogueWithinPersistenceLimit(merge.panelUpdate?.dialogue);
+      preparedMerges.push({ panel, merge });
+    }
+
+    if (nextPageSettings !== null) {
+      await this.updatePageSettings(userId, pageId, nextPageSettings, organizationId);
+    }
+
+    let updatedPanelCount = 0;
+    let filledFieldCount = 0;
+    for (const { panel, merge } of preparedMerges) {
       if (merge.panelUpdate !== null) {
         const updated = await this.panelRepository.updatePanel(panel.id, userId, merge.panelUpdate, organizationId);
         if (updated === null) {
@@ -1200,6 +1211,7 @@ export class PageService implements PageServicePort {
 
     const normalizedSuggestion = normalizeEpisodePlanToContext(context, compiled.suggestion, language);
     validateEpisodePlanAgainstContext(context, normalizedSuggestion);
+    ensureEpisodePlanDialogueWithinPersistenceLimit(normalizedSuggestion);
 
     const pagesById = new Map(context.pages.map((page) => [page.pageId, page] as const));
     const entityLookup = new Map(context.entities.map((entity) => [entity.id, entity] as const));
@@ -1297,6 +1309,7 @@ export class PageService implements PageServicePort {
         const merge = mergePanelSuggestion(panel, normalizedSuggestion, {
           overwriteExisting: true,
         });
+        ensureGeneratedDialogueWithinPersistenceLimit(merge.panelUpdate?.dialogue);
 
         if (merge.panelUpdate !== null) {
           const updated = await panelRepository.updatePanel(panel.id, userId, merge.panelUpdate, organizationId);
@@ -1343,6 +1356,29 @@ function ensurePageEditable(status: PageSummary['status'], actionLabel: string):
 
   if (status === 'generating') {
     throw new ConflictError(`Pages cannot ${actionLabel} while generation is in progress`);
+  }
+}
+
+function ensureGeneratedDialogueWithinPersistenceLimit(
+  dialogue: PanelDialogueLine[] | undefined,
+): void {
+  if (
+    dialogue !== undefined &&
+    dialogue.length > EPISODE_PAGE_PLAN_MAX_DIALOGUE_LINES_PER_PANEL
+  ) {
+    throw new ValidationError(
+      `AI-generated panel dialogue cannot exceed ${EPISODE_PAGE_PLAN_MAX_DIALOGUE_LINES_PER_PANEL} lines`,
+    );
+  }
+}
+
+function ensureEpisodePlanDialogueWithinPersistenceLimit(
+  suggestion: EpisodePagePlanSuggestion,
+): void {
+  for (const page of suggestion.pages) {
+    for (const panel of page.panels) {
+      ensureGeneratedDialogueWithinPersistenceLimit(panel.dialogue);
+    }
   }
 }
 
@@ -1624,8 +1660,13 @@ function buildRepairedEpisodePageLayoutConfig(
     changed = true;
   }
 
-  const expectedTemplateId = resolveDefaultPanelFrameTemplateId(panelCount);
   const layoutType = typeof nextLayoutConfig.type === 'string' ? nextLayoutConfig.type : null;
+  const currentTemplateId = resolveMatchingPanelFrameTemplateId(
+    nextLayoutConfig.template_id,
+    panelCount,
+  );
+  const expectedTemplateId =
+    currentTemplateId ?? resolveDefaultPanelFrameTemplateId(panelCount);
 
   if (expectedTemplateId !== null && (layoutType === null || layoutType === 'template')) {
     if (nextLayoutConfig.type !== 'template') {
@@ -1675,8 +1716,22 @@ function isEpisodePageLayoutMetadataConsistent(
     return false;
   }
 
-  const expectedTemplateId = resolveDefaultPanelFrameTemplateId(panelCount);
-  return expectedTemplateId === null || templateId === expectedTemplateId;
+  return resolveMatchingPanelFrameTemplateId(templateId, panelCount) !== null;
+}
+
+function resolveMatchingPanelFrameTemplateId(
+  value: unknown,
+  panelCount: number,
+): keyof typeof PANEL_FRAME_TEMPLATES | null {
+  if (
+    typeof value !== 'string' ||
+    !Object.prototype.hasOwnProperty.call(PANEL_FRAME_TEMPLATES, value)
+  ) {
+    return null;
+  }
+
+  const templateId = value as keyof typeof PANEL_FRAME_TEMPLATES;
+  return PANEL_FRAME_TEMPLATES[templateId].panelCount === panelCount ? templateId : null;
 }
 
 function buildPageScopedAutofillContext(
@@ -1693,6 +1748,7 @@ function buildPageScopedAutofillContext(
     chapterId: context.chapter.id,
     pageNumber: page.pageNumber,
     totalPagesInEpisode: context.pages.length,
+    layoutConfig: page.layoutConfig,
     frameCount: page.frameCount,
     status: page.status,
     dialogueMode: page.dialogueMode,
@@ -2393,7 +2449,7 @@ function mergePanelSuggestion(
 
   if (
     Array.isArray(suggestion.dialogue) &&
-    suggestion.dialogue.length > 0 &&
+    (suggestion.dialogue.length > 0 || (overwriteExisting && panel.dialogue.length > 0)) &&
     (overwriteExisting || panel.dialogue.length === 0 || dialogueLooksLowQuality(panel.dialogue))
   ) {
     update.dialogue = suggestion.dialogue;
@@ -2432,7 +2488,7 @@ function mergePanelSuggestion(
   const assignments =
     (overwriteExisting || panel.entities.length === 0) &&
     Array.isArray(suggestion.entities) &&
-    suggestion.entities.length > 0
+    (suggestion.entities.length > 0 || (overwriteExisting && panel.entities.length > 0))
       ? suggestion.entities
       : null;
   if (assignments !== null) {
@@ -2650,8 +2706,6 @@ function enrichPanelSuggestionForGeneration(
     normalizeDialogueLines(suggestion.dialogue),
     entityAssignments,
     context.entityLookup,
-    context.storyLeadEntityId ?? null,
-    context.pageLeadEntityId ?? null,
   );
 
   return {
@@ -2881,45 +2935,16 @@ function repairDialogueLinesForPanel(
   lines: PageAutofillPanelSuggestion['dialogue'],
   assignments: PanelEntityAssignment[],
   entityLookup: Map<string, PageAutofillContext['entities'][number]>,
-  storyLeadEntityId: string | null,
-  pageLeadEntityId: string | null,
 ): PageAutofillPanelSuggestion['dialogue'] {
   if (!Array.isArray(lines) || lines.length === 0) {
     return lines;
   }
-
-  const assignmentIds = new Set(assignments.map((assignment) => assignment.entityId));
-  const primaryEntityId =
-    assignments.find((assignment) => assignment.role === 'primary')?.entityId ??
-    assignments[0]?.entityId ??
-    null;
 
   return lines.flatMap((line) => {
     if (line.type === 'narration') {
       return splitCharacterQuotedNarration(line, assignments, entityLookup) ?? {
         ...line,
         entityId: null,
-      };
-    }
-
-    // Speaker dialogue must reference a visible panel assignment before it reaches panel validation.
-    if (requiresDialogueSpeaker(line.type) && !assignmentIds.has(line.entityId ?? '')) {
-      const repairedEntityId = selectVisibleDialogueSpeaker(
-        assignmentIds,
-        storyLeadEntityId,
-        pageLeadEntityId,
-        primaryEntityId,
-      );
-      if (repairedEntityId === null) {
-        return {
-          ...line,
-          type: 'narration',
-          entityId: null,
-        };
-      }
-      return {
-        ...line,
-        entityId: repairedEntityId,
       };
     }
 
@@ -3023,24 +3048,6 @@ function normalizeNarrationRemainder(value: string): string | null {
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-function selectVisibleDialogueSpeaker(
-  assignmentIds: Set<string>,
-  storyLeadEntityId: string | null,
-  pageLeadEntityId: string | null,
-  primaryEntityId: string | null,
-): string | null {
-  for (const candidate of [storyLeadEntityId, pageLeadEntityId, primaryEntityId]) {
-    if (candidate !== null && assignmentIds.has(candidate)) {
-      return candidate;
-    }
-  }
-  return null;
-}
-
-function requiresDialogueSpeaker(type: PanelDialogueLine['type']): boolean {
-  return type === 'speech' || type === 'thought' || type === 'shout' || type === 'whisper';
 }
 
 function normalizeDialogueText(value: string): string {
@@ -3353,6 +3360,9 @@ function buildAutofillCompilerBrief(
     `Current dialogue mode: ${context.dialogueMode}`,
     `Current page dialogue toggle: ${context.pageDialogueToggle ? 'on' : 'off'}`,
     '',
+    '[FRAME CAPACITY]',
+    describeSavedFrameCapacity(context.layoutConfig),
+    '',
     '[SCENES]',
     sceneLines.length > 0 ? sceneLines : '(none)',
     '',
@@ -3372,10 +3382,11 @@ function buildAutofillCompilerBrief(
     'Do not copy the same subject list into every panel unless the same characters are genuinely visible in every panel.',
     '',
     '[DIALOGUE GUIDANCE]',
-    'Dialogue and narration should be sufficient for story clarity without becoming chatty or repetitive.',
-    'Some panels may remain silent, but if this page clearly contains conversation, confrontation, explanation, or inner realization, provide concise dialogue or thought in the relevant panels instead of leaving the whole page empty.',
-    'Prefer character speech or thought for interpersonal beats. Use narration sparingly for setup, transition, or inner realization that cannot be shown clearly through staging alone.',
-    'Do not repeat the same narration across multiple panels and do not overload every panel with text.',
+    'Use only dialogue, thought, or narration grounded in the supplied story evidence. Preserve silence when the beat is already clear visually.',
+    `Each panel may contain zero to ${EPISODE_PAGE_PLAN_MAX_DIALOGUE_LINES_PER_PANEL} total text lines across speech, thought, shout, whisper, and narration; ${EPISODE_PAGE_PLAN_MAX_DIALOGUE_LINES_PER_PANEL} is a ceiling, never a target.`,
+    'Distribute required text across the page rhythm before writing lines. Do not defer explanations and dump them into a late panel.',
+    'Use speech, thought, and narration according to the source beat; narration is not mandatory or disfavored. Do not repeat information already visible in the image.',
+    'A dialogue entity_id identifies the real speaker and may be absent from that panel\'s visible entities. Keep narration entity_id null and never reassign an off-panel speaker to a visible listener.',
     '',
     '[OUTPUT CONTRACT]',
     'Return one JSON object matching the supplied page_autofill schema.',
@@ -3480,6 +3491,7 @@ function buildEpisodePlanCompilerBrief(
         `frame_count=${page.frameCount}`,
         `dialogue_mode=${page.dialogueMode}`,
         `page_dialogue_toggle=${page.pageDialogueToggle ? 'on' : 'off'}`,
+        `frame_capacity=${describeSavedFrameCapacity(page.layoutConfig)}`,
         panelLines,
       ].join('\n');
     })
@@ -3531,10 +3543,12 @@ function buildEpisodePlanCompilerBrief(
     'Do not copy the same subject list into every panel unless the same characters are genuinely visible in every panel.',
     '',
     '[DIALOGUE GUIDANCE]',
-    'Dialogue and narration should be sufficient for story clarity without becoming chatty or repetitive.',
-    'Some panels may remain silent, but pages built around conversation, confrontation, explanation, or inner realization should receive concise dialogue or thought in the relevant panels instead of staying wholly silent.',
-    'Prefer character speech or thought for interpersonal beats. Use narration sparingly for setup, transition, or inner realization that cannot be shown clearly through staging alone.',
-    'Do not repeat the same narration across multiple panels and do not overload every panel with text.',
+    'Use only dialogue, thought, or narration grounded in the supplied story evidence. Preserve intentionally silent beats.',
+    `Each panel may contain zero to ${EPISODE_PAGE_PLAN_MAX_DIALOGUE_LINES_PER_PANEL} total text lines across speech, thought, shout, whisper, and narration; ${EPISODE_PAGE_PLAN_MAX_DIALOGUE_LINES_PER_PANEL} is a ceiling, never a target.`,
+    'Plan required text across the full episode and page rhythm before expanding panel detail. Do not postpone explanations and dump them into late pages or panels.',
+    'Use speech, thought, and narration according to the source beat; narration is not mandatory or disfavored. Do not repeat information already visible in the image.',
+    'A dialogue entity_id identifies the real speaker and may be absent from that panel\'s visible entities. Keep narration entity_id null and never reassign an off-panel speaker to a visible listener.',
+    'During repair, obey binding beat ownership and frozen-page boundaries from any supplied continuity or repair supplement; do not move owned beats freely.',
     '',
     '[OUTPUT CONTRACT]',
     'Return one JSON object matching the supplied episode_page_plan schema.',
@@ -3547,7 +3561,7 @@ function buildEpisodePlanCompilerBrief(
     'Use chapter emotion curve and episode structure to decide pacing and shot intensity.',
     'Convert scene mood and personality implications into visible but restrained cues in posture, gaze, spacing, and camera distance when scenes are provided; otherwise infer those cues from the episode text.',
     'Do not add unsupported violence, props, weapons, locations, or surprise plot events.',
-    'Silent panels are allowed, but do not leave the page plan underwritten when the story clearly implies speech, thought, or brief narration.',
+    'Silent panels and quiet openings are valid when grounded in the source and page purpose.',
   ].join('\n');
 }
 

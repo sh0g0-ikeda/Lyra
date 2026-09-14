@@ -108,6 +108,7 @@ interface AutofillContextRow extends QueryResultRow {
   chapter_id: string;
   page_number: number;
   total_pages_in_episode: number;
+  layout_config: unknown;
   frame_count: number;
   status: PageStatus;
   dialogue_mode: string;
@@ -560,6 +561,7 @@ export class PostgresPageRepository implements PageRepository, PageAtomicGenerat
              episodes.id AS episode_id,
              chapters.id AS chapter_id,
              pages.page_number,
+             pages.layout_config,
              (
                SELECT COUNT(*)::int
                FROM pages AS episode_pages
@@ -698,6 +700,7 @@ export class PostgresPageRepository implements PageRepository, PageAtomicGenerat
       chapterId: row.chapter_id,
       pageNumber: row.page_number,
       totalPagesInEpisode: row.total_pages_in_episode,
+      layoutConfig: toJsonObject(row.layout_config),
       frameCount: row.frame_count,
       status: row.status,
       dialogueMode: toPageDialogueMode(row.dialogue_mode),

@@ -11,6 +11,7 @@ export type PageGenerationBlockerCode =
   | 'PANEL_ORDER_INVALID'
   | 'DIALOGUE_SPEAKER_REQUIRED'
   | 'DIALOGUE_SPEAKER_NOT_IN_PANEL'
+  | 'DIALOGUE_SPEAKER_INVALID'
   | 'ASSIGNED_ENTITY_INVALID'
   | 'PAGE_GENERATING'
   | 'PAGE_REOPEN_REQUIRED'
@@ -101,21 +102,14 @@ export class PageGenerationReadinessEvaluator {
     }
 
     for (const panel of input.page.panels) {
-      const panelEntityIds = new Set(panel.entities.map((assignment) => assignment.entityId));
       for (const dialogue of panel.dialogue) {
         const requiresSpeaker = dialogue.type === 'speech' || dialogue.type === 'thought' || dialogue.type === 'shout' || dialogue.type === 'whisper';
         if (requiresSpeaker && dialogue.entityId === null) {
           add(
             blocker('DIALOGUE_SPEAKER_REQUIRED', null, 'dialogue', 'open_panels', 'page.blocker.dialogueSpeakerRequired'),
-            'Speaker dialogue requires an assigned entity',
+            'Speaker dialogue requires a real speaker entity',
           );
           continue;
-        }
-        if (dialogue.entityId !== null && !panelEntityIds.has(dialogue.entityId)) {
-          add(
-            blocker('DIALOGUE_SPEAKER_NOT_IN_PANEL', dialogue.entityId, 'dialogue', 'open_panels', 'page.blocker.dialogueSpeakerNotInPanel'),
-            'Dialogue speaker must be assigned to the same panel',
-          );
         }
       }
     }
@@ -123,7 +117,18 @@ export class PageGenerationReadinessEvaluator {
     const assignedEntityIds = Array.from(
       new Set(input.page.panels.flatMap((panel) => panel.entities.map((assignment) => assignment.entityId))),
     );
-    if (assignedEntityIds.length === 0) {
+    const dialogueSpeakerEntityIds = Array.from(
+      new Set(
+        input.page.panels.flatMap((panel) =>
+          panel.dialogue.flatMap((dialogue) =>
+            dialogue.type === 'narration' || dialogue.entityId === null
+              ? []
+              : [dialogue.entityId],
+          ),
+        ),
+      ),
+    );
+    if (assignedEntityIds.length === 0 && dialogueSpeakerEntityIds.length === 0) {
       return {
         blockers,
         billableReferenceCount: 0,
@@ -152,6 +157,18 @@ export class PageGenerationReadinessEvaluator {
           add(
             blocker('ASSIGNED_ENTITY_INVALID', entityId, 'entities', 'open_panels', 'page.blocker.assignedEntityInvalid'),
             'Panel assignment must belong to the page work',
+          );
+        }
+      }
+      for (const dialogue of panel.dialogue) {
+        if (
+          dialogue.type !== 'narration' &&
+          dialogue.entityId !== null &&
+          !workEntityIds.has(dialogue.entityId)
+        ) {
+          add(
+            blocker('DIALOGUE_SPEAKER_INVALID', dialogue.entityId, 'dialogue', 'open_panels', 'page.blocker.dialogueSpeakerInvalid'),
+            'Dialogue speaker must belong to the page work',
           );
         }
       }

@@ -163,13 +163,16 @@ function buildPageGenerationInputSnapshot(
         order: panel.order,
         entityIds,
         entityNames: entityIds.map((entityId) => entityMap.get(entityId)?.name ?? entityId),
-        dialogue: panel.dialogue.map((dialogue) => ({
-          entityId: dialogue.entityId,
-          speakerName: dialogue.entityId === null ? null : entityMap.get(dialogue.entityId)?.name ?? dialogue.entityId,
-          type: dialogue.type,
-          position: dialogue.position,
-          text: dialogue.text,
-        })),
+        dialogue: panel.dialogue.map((dialogue) => {
+          const entityId = dialogue.type === 'narration' ? null : dialogue.entityId;
+          return {
+            entityId,
+            speakerName: entityId === null ? null : entityMap.get(entityId)?.name ?? entityId,
+            type: dialogue.type,
+            position: dialogue.position,
+            text: dialogue.text,
+          };
+        }),
       };
     }),
   };
@@ -500,7 +503,7 @@ function buildDialogueBeats(
   referenceLabelByEntityId: Map<string, string>,
 ): string[] {
   return panel.dialogue.map((dialogue) =>
-    formatDialogueLine(panel.order, dialogue, entityMap, referenceLabelByEntityId),
+    formatDialogueLine(panel, dialogue, entityMap, referenceLabelByEntityId),
   );
 }
 
@@ -516,12 +519,25 @@ function buildDialogueLock(
   const lines = panel.dialogue.map((dialogue, index) => {
     const ordinal = index + 1;
     const authoredPosition = humanizeToken(dialogue.position);
-    if (dialogue.entityId === null) {
+    if (dialogue.type === 'narration') {
       return `line ${ordinal} is narration text and must remain narration, not character speech: "${dialogue.text}" at its authored ${authoredPosition} position`;
     }
 
+    if (dialogue.entityId === null) {
+      return `line ${ordinal} has an unresolved real speaker: "${dialogue.text}" at its authored ${authoredPosition} position. Do not invent or assign a visible speaker`;
+    }
+
     const speaker = formatEntityReferenceIdentity(dialogue.entityId, entityMap, referenceLabelByEntityId);
-    return `line ${ordinal} must stay assigned to ${speaker} exactly as written: "${dialogue.text}" at its authored ${authoredPosition} position. Do not assign this line to any other subject or reference image`;
+    const visible = panel.entities.some((assignment) => assignment.entityId === dialogue.entityId);
+    const thoughtTailLock = dialogue.type === 'thought'
+      ? ' This is thought text; thought balloons must not use a speech tail.'
+      : '';
+    if (visible) {
+      return `line ${ordinal} must stay assigned to ${speaker} exactly as written: "${dialogue.text}" at its authored ${authoredPosition} position. Do not assign this line to any other subject or reference image.${thoughtTailLock}`;
+    }
+
+    const visibleSubjects = formatVisibleSubjectNames(panel, entityMap);
+    return `line ${ordinal} real speaker is ${speaker} and is off-panel, exactly as written: "${dialogue.text}" at its authored ${authoredPosition} position. ${speaker} is off-panel and must not be drawn in panel ${panel.order}. Do not assign this line to ${visibleSubjects} or any other visible listener. Do not point a balloon tail at ${visibleSubjects} or any other visible person.${thoughtTailLock}`;
   });
 
   return `Dialogue lock for panel ${panel.order}: ${lines.join('; ')}. Do not omit, paraphrase, merge, split, reassign, or move these lines from their authored positions.`;
@@ -778,20 +794,34 @@ function buildQualityConstraintParagraph(
 }
 
 function formatDialogueLine(
-  panelOrder: number,
+  panel: Panel,
   dialogue: PanelDialogueLine,
   entityMap: Map<string, Entity>,
   referenceLabelByEntityId: Map<string, string>,
 ): string {
-  const speaker = dialogue.entityId === null
-    ? null
-    : formatEntityReferenceIdentity(dialogue.entityId, entityMap, referenceLabelByEntityId);
-  const prefix =
-    speaker === null
-      ? `Panel ${panelOrder} dialogue`
-      : `Panel ${panelOrder} dialogue by ${speaker}`;
+  if (dialogue.type === 'narration') {
+    return `Panel ${panel.order} narration: "${dialogue.text}" at ${humanizeToken(dialogue.position)}.`;
+  }
 
-  return `${prefix}: "${dialogue.text}" as ${humanizeToken(dialogue.type)} at ${humanizeToken(dialogue.position)}.`;
+  if (dialogue.entityId === null) {
+    return `Panel ${panel.order} dialogue with an unresolved real speaker: "${dialogue.text}" as ${humanizeToken(dialogue.type)} at ${humanizeToken(dialogue.position)}. Do not invent or reassign the speaker. Do not use a speech tail pointing at a visible person.`;
+  }
+
+  const speaker = formatEntityReferenceIdentity(dialogue.entityId, entityMap, referenceLabelByEntityId);
+  const visible = panel.entities.some((assignment) => assignment.entityId === dialogue.entityId);
+  const visibility = visible ? '' : ' (off-panel real speaker)';
+  const tailLock = dialogue.type === 'thought' || !visible
+    ? ' Do not use a speech tail pointing at a visible person.'
+    : '';
+
+  return `Panel ${panel.order} dialogue by ${speaker}${visibility}: "${dialogue.text}" as ${humanizeToken(dialogue.type)} at ${humanizeToken(dialogue.position)}.${tailLock}`;
+}
+
+function formatVisibleSubjectNames(panel: Panel, entityMap: Map<string, Entity>): string {
+  const names = panel.entities
+    .map((assignment) => entityMap.get(assignment.entityId)?.name ?? assignment.entityId)
+    .filter((value, index, values) => values.indexOf(value) === index);
+  return names.length === 0 ? 'any visible subject' : names.join(', ');
 }
 
 function formatPanelOrderList(panelOrders: number[]): string {

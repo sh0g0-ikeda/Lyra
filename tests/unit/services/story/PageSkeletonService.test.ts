@@ -303,6 +303,9 @@ describe('PageSkeletonService', () => {
       'the selected template numbering is authoritative for asymmetric layouts',
     );
     expect(client.lastRequest?.systemPrompt).toContain('Return exactly 2 pages');
+    expect(client.lastRequest?.systemPrompt).toContain('wide_top_4 (4 panels; wide top opening panel');
+    expect(client.lastRequest?.systemPrompt).toContain('battle_7 (7 panels; seven angled, staggered action panels');
+    expect(client.lastRequest?.systemPrompt).toContain('Keep intentional repeated grids when the story rhythm calls for them');
     expect(client.lastRequest?.userPrompt).toContain('Scene 1: Rooftop / night / tense');
     expect(client.lastRequest?.userPrompt).toContain('Chapter consistency note: Chapter 1 / Set the stakes');
     expect(client.lastRequest?.userPrompt).not.toContain('Chapter purpose:');
@@ -391,8 +394,22 @@ describe('PageSkeletonService', () => {
     await service.generateForEpisode('user-1', '33333333-3333-4333-8333-333333333333');
 
     expect(repository.createdPages[0]?.suggestedPanelCount).toBe(4);
-    expect(repository.createdPages[0]?.suggestedLayout).toBe('standard_4');
+    expect(repository.createdPages[0]?.suggestedLayout).toBe('wide_top_4');
     expect(repository.createdPages[0]?.panels).toHaveLength(4);
+  });
+
+  it('有効な非既定テンプレートを正規化で既定値に戻さない', async () => {
+    const repository = new FakeStoryRepository();
+    const client = new FakeStoryAiClient();
+    client.generatedPages[0] = {
+      ...client.generatedPages[0],
+      suggestedLayout: 'tall_left_4',
+    };
+    const service = new PageSkeletonService(repository, client);
+
+    await service.generateForEpisode('user-1', '33333333-3333-4333-8333-333333333333');
+
+    expect(repository.createdPages[0]?.suggestedLayout).toBe('tall_left_4');
   });
 
   it('repairs page numbers, panel orders, and invalid entity ids before saving', async () => {
@@ -497,8 +514,8 @@ describe('PageSkeletonService', () => {
     await service.generateForEpisode('user-1', '33333333-3333-4333-8333-333333333333');
 
     expect(repository.createdPages).toHaveLength(2);
-    expect(repository.createdPages[0]?.suggestedLayout).toBe('standard_4');
-    expect(repository.createdPages[1]?.suggestedLayout).toBe('top_wide_3');
+    expect(repository.createdPages[0]?.suggestedLayout).toBe('wide_top_4');
+    expect(repository.createdPages[1]?.suggestedLayout).toBe('bottom_wide_3');
   });
 
   it('does not persist a fallback skeleton when compiler fallback is disabled', async () => {
@@ -551,8 +568,8 @@ describe('PageSkeletonService', () => {
       panelsCreated: 7,
       replacedExisting: false,
     });
-    expect(repository.createdPages[0]?.suggestedLayout).toBe('standard_4');
-    expect(repository.createdPages[1]?.suggestedLayout).toBe('top_wide_3');
+    expect(repository.createdPages[0]?.suggestedLayout).toBe('wide_top_4');
+    expect(repository.createdPages[1]?.suggestedLayout).toBe('bottom_wide_3');
     expect(repository.createdPages[0]?.panels.map((panel) => panel.panelRole)).toEqual([
       'establish',
       'action',

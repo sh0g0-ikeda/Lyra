@@ -368,6 +368,73 @@ describe('PromptBuilder', () => {
     expect(result.compilerBrief).not.toContain('vertical tategaki');
   });
 
+  it('image_baked はoff-panel話者の実体と非表示を明示し見える人への尾を禁止する', async () => {
+    const panelRepository = new FakePanelRepository();
+    panelRepository.panels = [{
+      ...buildPanel(),
+      dialogue: [
+        {
+          entityId: 'entity-2',
+          text: '廉下から呼びかける。',
+          type: 'speech',
+          position: 'top',
+        },
+        {
+          entityId: 'entity-2',
+          text: 'まだ姿は見せられない。',
+          type: 'thought',
+          position: 'bottom',
+        },
+        {
+          entityId: 'entity-2',
+          text: '夜が深まった。',
+          type: 'narration',
+          position: 'center',
+        },
+        {
+          entityId: null,
+          text: '誰かいるのか。',
+          type: 'speech',
+          position: 'left',
+        },
+      ],
+    }];
+    const entityRepository = new FakeEntityRepository();
+    entityRepository.entities = [
+      buildEntity(),
+      buildEntity({ id: 'entity-2', name: 'Emile', promptSupplement: null }),
+    ];
+    const builder = new PromptBuilder(
+      new FakePageRepository(),
+      panelRepository,
+      entityRepository,
+      new FakeCompositionGalleryRepository(),
+    );
+
+    const result = await builder.buildPagePrompt({
+      userId: 'user-1',
+      pageId: 'page-1',
+      requestKind: 'initial',
+      generationMode: 'standard',
+    });
+
+    expect(result.draftPrompt).toContain('dialogue by Emile (off-panel real speaker)');
+    expect(result.draftPrompt).toContain('Emile is off-panel and must not be drawn in panel 1');
+    expect(result.draftPrompt).toContain('Do not point a balloon tail at Aki or any other visible person');
+    expect(result.draftPrompt).toContain('thought balloons must not use a speech tail');
+    expect(result.draftPrompt).toContain('is narration text and must remain narration, not character speech');
+    expect(result.draftPrompt).not.toContain('narration by Emile');
+    expect(result.draftPrompt).toContain('dialogue with an unresolved real speaker');
+    expect(result.draftPrompt).toContain('Do not invent or reassign the speaker');
+    expect(result.draftPrompt).not.toContain('unresolved real speaker (off-panel real speaker)');
+    expect(result.inputSnapshot.panels[0]?.dialogue).toEqual([
+      expect.objectContaining({ entityId: 'entity-2', speakerName: 'Emile', type: 'speech' }),
+      expect.objectContaining({ entityId: 'entity-2', speakerName: 'Emile', type: 'thought' }),
+      expect.objectContaining({ entityId: null, speakerName: null, type: 'narration' }),
+      expect.objectContaining({ entityId: null, speakerName: null, type: 'speech' }),
+    ]);
+  });
+
   it('includes frame definitions for custom layout pages', async () => {
     const pageRepository = new FakePageRepository();
     pageRepository.promptContext = buildPagePromptContext({

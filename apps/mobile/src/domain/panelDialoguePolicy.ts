@@ -18,10 +18,10 @@ export const requiresPanelDialogueSpeaker = (type: PanelDialogueLine['type']): b
 export const isPanelDialogueSpeakerValid = (
   type: PanelDialogueLine['type'],
   entityId: string | null,
-  assignedEntityIds: readonly string[]
+  workEntityIds: readonly string[]
 ): boolean =>
   !requiresPanelDialogueSpeaker(type) ||
-  (entityId !== null && assignedEntityIds.includes(entityId));
+  (entityId !== null && workEntityIds.includes(entityId));
 
 const escapeRegExp = (value: string): string =>
   value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

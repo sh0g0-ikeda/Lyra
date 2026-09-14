@@ -1,5 +1,6 @@
 import { z } from 'zod';
-import { autofillPanelSuggestionSchema } from './pageAutofill.schema.js';
+import { autofillPanelSuggestionSchema, aiAuthoredPanelSuggestionSchema } from './pageAutofill.schema.js';
+import { STORY_AI_LIMITS } from '../../domain/constants/storyAi.js';
 
 const episodePagePlanPageSchema = z
   .object({
@@ -26,3 +27,11 @@ export const episodePagePlanSuggestionSchema = z
   .strict();
 
 export type EpisodePagePlanSuggestionPayload = z.infer<typeof episodePagePlanSuggestionSchema>;
+
+// Provider output is strict; the legacy/internal draft schema above remains
+// available so the final audit can diagnose and repair over-limit drafts.
+export const episodePagePlanAiResponseSchema = episodePagePlanSuggestionSchema.extend({
+  pages: z.array(episodePagePlanPageSchema.extend({
+    panels: z.array(aiAuthoredPanelSuggestionSchema).min(1).max(20),
+  })).min(1).max(STORY_AI_LIMITS.maxSkeletonPages),
+});

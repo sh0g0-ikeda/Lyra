@@ -870,6 +870,48 @@ it('readiness は panel assignment が空でも発話者未指定を blocker と
   expect(readiness.blockers.map((blocker) => blocker.code)).toContain('DIALOGUE_SPEAKER_REQUIRED');
 });
 
+it('readiness は同一workのoff-panel話者を許可し参照画像数には含めない', async () => {
+  const panel = buildPanelContext('entity-1');
+  panel.dialogue = [
+    { entityId: 'entity-2', text: 'コマ外から呼びかける。', type: 'speech', position: 'top' },
+    { entityId: 'entity-2', text: 'まだ姿は見せられない。', type: 'thought', position: 'bottom' },
+  ];
+  const entityRepository = new FakeEntityRepository();
+
+  const readiness = await new PageGenerationReadinessEvaluator(entityRepository).assess({
+    userId,
+    page: buildPageContext({ panels: [panel] }),
+    generationEnabled: true,
+    hasActiveGenerationJob: false,
+  });
+
+  expect(readiness.blockers.map((blocker) => blocker.code)).not.toEqual(
+    expect.arrayContaining(['DIALOGUE_SPEAKER_NOT_IN_PANEL', 'DIALOGUE_SPEAKER_INVALID']),
+  );
+  expect(readiness.references.map((reference) => reference.entityId)).toEqual(['entity-1']);
+  expect(readiness.billableReferenceCount).toBe(1);
+});
+
+it('readiness は同一workに存在しない話者を stable blocker として返す', async () => {
+  const panel = buildPanelContext('entity-1');
+  panel.dialogue = [
+    { entityId: 'outside-work-speaker', text: '誰かが話す。', type: 'speech', position: 'top' },
+  ];
+
+  const readiness = await new PageGenerationReadinessEvaluator(new FakeEntityRepository()).assess({
+    userId,
+    page: buildPageContext({ panels: [panel] }),
+    generationEnabled: true,
+    hasActiveGenerationJob: false,
+  });
+
+  expect(readiness.blockers).toContainEqual(expect.objectContaining({
+    code: 'DIALOGUE_SPEAKER_INVALID',
+    entityId: 'outside-work-speaker',
+    field: 'dialogue',
+  }));
+});
+
 it('generation readiness は残高不足を stable blocker として返す', async () => {
   const service = new PageGenerationService(
     new FakePageRepository(),

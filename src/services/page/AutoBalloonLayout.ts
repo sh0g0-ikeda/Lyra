@@ -47,6 +47,10 @@ export function buildAutoBalloonInputs(
           bounds,
           index,
           line,
+          speakerAssignment:
+            line.entityId === null
+              ? undefined
+              : panel.entities.find((assignment) => assignment.entityId === line.entityId),
         }),
       );
     }
@@ -68,6 +72,7 @@ function buildAutoBalloonInput(params: {
   bounds: Bounds;
   index: number;
   line: Panel['dialogue'][number];
+  speakerAssignment: Panel['entities'][number] | undefined;
 }): CreateBalloonInput {
   const writingMode = params.line.type === 'sfx' ? 'horizontal' : 'vertical';
   const size = getBalloonSize(params.line.type, writingMode, params.bounds);
@@ -79,7 +84,14 @@ function buildAutoBalloonInput(params: {
     writingMode,
     text: params.line.text,
     position,
-    tail: buildTail(params.line.type, params.line.entityId, params.line.position, position, params.bounds),
+    tail: buildTail(
+      params.line.type,
+      params.line.entityId,
+      params.speakerAssignment,
+      params.line.position,
+      position,
+      params.bounds,
+    ),
     fontSize: getFontSize(params.line.type),
     fontFamily: getFontFamily(params.line.type),
     panelOrderReference: params.panelOrder,
@@ -207,11 +219,18 @@ function placeBalloon(
 function buildTail(
   type: Panel['dialogue'][number]['type'],
   entityId: string | null,
+  speakerAssignment: Panel['entities'][number] | undefined,
   desiredPosition: Panel['dialogue'][number]['position'],
   position: CreateBalloonInput['position'],
   bounds: Bounds,
 ): CreateBalloonInput['tail'] {
-  if ((type === 'narration' || type === 'sfx') || entityId === null) {
+  if (
+    type === 'thought' ||
+    type === 'narration' ||
+    type === 'sfx' ||
+    entityId === null ||
+    speakerAssignment === undefined
+  ) {
     return null;
   }
 
@@ -223,8 +242,7 @@ function buildTail(
     return {
       baseX: position.x + position.width / 2,
       baseY: position.y + position.height,
-      tipX: bounds.centerX,
-      tipY: clamp(bounds.centerY, position.y + position.height, bounds.maxY),
+      ...resolveSpeakerTailTip(speakerAssignment, bounds),
     };
   }
 
@@ -232,8 +250,7 @@ function buildTail(
     return {
       baseX: position.x + position.width / 2,
       baseY: position.y,
-      tipX: bounds.centerX,
-      tipY: clamp(bounds.centerY, bounds.minY, position.y),
+      ...resolveSpeakerTailTip(speakerAssignment, bounds),
     };
   }
 
@@ -241,16 +258,31 @@ function buildTail(
     return {
       baseX: position.x + position.width,
       baseY: position.y + position.height / 2,
-      tipX: bounds.centerX,
-      tipY: bounds.centerY,
+      ...resolveSpeakerTailTip(speakerAssignment, bounds),
     };
   }
 
   return {
     baseX: position.x,
     baseY: position.y + position.height / 2,
-    tipX: bounds.centerX,
-    tipY: bounds.centerY,
+    ...resolveSpeakerTailTip(speakerAssignment, bounds),
+  };
+}
+
+function resolveSpeakerTailTip(
+  speakerAssignment: Panel['entities'][number],
+  bounds: Bounds,
+): Pick<NonNullable<CreateBalloonInput['tail']>, 'tipX' | 'tipY'> {
+  const horizontalFactor =
+    speakerAssignment.position === 'left'
+      ? 0.25
+      : speakerAssignment.position === 'right'
+        ? 0.75
+        : 0.5;
+
+  return {
+    tipX: bounds.minX + bounds.width * horizontalFactor,
+    tipY: bounds.minY + bounds.height * 0.62,
   };
 }
 

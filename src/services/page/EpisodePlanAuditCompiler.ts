@@ -5,6 +5,7 @@ import type {
 } from '../../domain/types/page.js';
 
 export type EpisodePlanAuditIssueCode =
+  | 'dialogue_density'
   | 'duplicate_dialogue'
   | 'duplicate_visual_beat'
   | 'timeline_discontinuity'

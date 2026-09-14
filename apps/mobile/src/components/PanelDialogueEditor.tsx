@@ -108,7 +108,7 @@ export function PanelDialogueEditor({
     dialogue: PanelDialogueLine;
     index: number;
   } | null>(null);
-  const assignedEntityIds = entities.map((entity) => entity.id);
+  const workEntityIds = entities.map((entity) => entity.id);
 
   const updateDialogue = (index: number, patch: Partial<PanelDialogueLine>): void => {
     onChange(
@@ -183,7 +183,7 @@ export function PanelDialogueEditor({
           const speakerValid = isPanelDialogueSpeakerValid(
             dialogue.type,
             dialogue.entity_id,
-            assignedEntityIds
+            workEntityIds
           );
           return (
             <View key={`${dialogue.type}-${index}`} style={styles.dialogue}>

@@ -1,6 +1,7 @@
 ﻿import { PANEL_FRAME_TEMPLATES } from '../../domain/constants/panelFrameTemplates.js';
 import { STORY_AI_LIMITS } from '../../domain/constants/storyAi.js';
-import { resolveDefaultPanelFrameTemplateId } from '../../domain/constants/panelFrameTemplates.js';
+import { listPanelFrameTemplateDefinitions } from '../../domain/constants/panelFrameTemplates.js';
+import { selectStoryPurposeLayout } from '../../domain/storySkeletonLayout.js';
 import { inferEntityIdsFromTexts } from '../../domain/entityAliases.js';
 import { AppError, ConflictError, NotFoundError, ValidationError } from '../../domain/errors/index.js';
 import {
@@ -206,7 +207,9 @@ function buildPageSkeletonSystemPrompt(estimatedPages: number, language: AppLang
     'Work in this order: first distribute the story across the exact page count, then decide each page purpose, then split each page into panel beats. In Japanese manga flow, panel 1 is the upper-right or rightmost top entry; follow the selected template panel numbers generally right-to-left and downward toward the lower-left.',
     'For regular rows this means right-to-left, then top-to-bottom; the selected template numbering is authoritative for asymmetric layouts.',
     `Return exactly ${estimatedPages} pages.`,
-    `Allowed layout ids: ${Object.keys(PANEL_FRAME_TEMPLATES).join(', ')}.`,
+    `Allowed layouts (select from these exact ids only): ${formatSkeletonLayoutCatalog()}.`,
+    'Select geometry for the page purpose, not to meet a variety quota: use a wide top panel for a strong opening when appropriate, staged layouts for visible action, and a bottom or tall focal panel for a payoff when appropriate. Keep intentional repeated grids when the story rhythm calls for them; never choose randomly.',
+    'Choose enough panel area for dialogue-heavy exchanges. The geometry and stored reading order are binding; do not invent frames or reorder the panels.',
     'Allowed panel_role values: establish, action, reaction, emphasis, transition, pause, impact.',
     'Allowed suggested_size values: standard, large, wide, narrow, splash.',
     'Each page must contain 1 to 8 panels.',
@@ -300,6 +303,15 @@ function formatPageSkeletonEntityList(
   return visibleEntities.length === 0 ? '(none)' : visibleEntities.join(' / ');
 }
 
+function formatSkeletonLayoutCatalog(): string {
+  return listPanelFrameTemplateDefinitions()
+    .map((template) => {
+      const guide = template.editorialGuide;
+      return `${template.id} (${template.panelCount} panels; ${guide.geometry}; focal=${guide.focalPlacement}; dialogue=${guide.dialogueRoom}; action=${guide.actionPacing}; ${guide.rtlFlow})`;
+    })
+    .join(' | ');
+}
+
 function buildFallbackPageSkeleton(context: {
   estimatedPages: number;
   entitiesInvolved: string[];
@@ -335,20 +347,28 @@ function buildFallbackPageSkeleton(context: {
       : [fallbackText(context.language, 'Episode progression', '話の進行')];
 
   return Array.from({ length: context.estimatedPages }, (_value, pageIndex) => {
-    const suggestedLayout = selectFallbackSkeletonLayout(pageIndex, context.estimatedPages);
-    const panelCount = PANEL_FRAME_TEMPLATES[suggestedLayout].panelCount;
+    const provisionalPanelCount = selectFallbackPanelCount(pageIndex, context.estimatedPages);
     const pageBeat = distributedBeats[pageIndex] ?? distributedBeats[distributedBeats.length - 1];
     const sceneText = sceneTexts[Math.min(sceneTexts.length - 1, Math.floor((pageIndex * sceneTexts.length) / context.estimatedPages))];
     const pagePurpose =
       pageBeat ??
       fallbackText(context.language, `Page ${pageIndex + 1} progression`, `${pageIndex + 1}ページ目の進行`);
+    const provisionalPanelPlans = buildFallbackSkeletonPanelPlans(provisionalPanelCount);
+    const suggestedLayout = selectStoryPurposeLayout(
+      { purpose: pagePurpose, panels: provisionalPanelPlans.map(toFallbackLayoutPanel) },
+      pageIndex,
+      context.estimatedPages,
+    );
+    const panelCount = PANEL_FRAME_TEMPLATES[suggestedLayout].panelCount;
     const pageEntityIds = inferRelevantEntityIds(
       context.entities,
       [pagePurpose, sceneText, context.introduction, context.middle, context.climax, context.endingHook],
       4,
       context.entitiesInvolved,
     );
-    const panelPlans = buildFallbackSkeletonPanelPlans(panelCount);
+    const panelPlans = panelCount === provisionalPanelPlans.length
+      ? provisionalPanelPlans
+      : buildFallbackSkeletonPanelPlans(panelCount);
 
     return {
       pageNumber: pageIndex + 1,
@@ -490,20 +510,31 @@ type FallbackSkeletonPanelPlan = {
   focus: 'setting' | 'lead' | 'exchange' | 'reaction' | 'transition' | 'impact' | 'pause';
 };
 
-function selectFallbackSkeletonLayout(
+function toFallbackLayoutPanel(plan: FallbackSkeletonPanelPlan): PageSkeletonPanelDraft {
+  return {
+    order: 1,
+    panelRole: plan.role,
+    suggestedSize: plan.size,
+    situationHint: '',
+    suggestedEntities: [],
+    suggestedDialogueHint: plan.focus === 'exchange' || plan.focus === 'reaction' ? 'dialogue' : null,
+  };
+}
+
+function selectFallbackPanelCount(
   pageIndex: number,
   totalPages: number,
-): PageSkeletonPageDraft['suggestedLayout'] {
+): number {
   if (totalPages <= 2) {
-    return pageIndex === 0 ? 'standard_4' : 'top_wide_3';
+    return pageIndex === 0 ? 4 : 3;
   }
   if (pageIndex === 0) {
-    return 'standard_4';
+    return 4;
   }
   if (pageIndex === totalPages - 1) {
-    return 'top_wide_3';
+    return 3;
   }
-  return pageIndex % 2 === 0 ? 'action_5' : 'standard_4';
+  return pageIndex % 2 === 0 ? 5 : 4;
 }
 
 function buildFallbackSkeletonPanelPlans(panelCount: number): FallbackSkeletonPanelPlan[] {
@@ -665,8 +696,10 @@ function repairGeneratedPageSkeleton(
       ),
     }));
     const actualPanelCount = repairedPanels.length;
-    const repairedLayout =
-      resolveDefaultPanelFrameTemplateId(actualPanelCount) ?? page.suggestedLayout;
+    const selectedTemplate = PANEL_FRAME_TEMPLATES[page.suggestedLayout];
+    const repairedLayout = selectedTemplate?.panelCount === actualPanelCount
+      ? page.suggestedLayout
+      : selectStoryPurposeLayout({ ...page, panels: repairedPanels }, pageIndex, pages.length);
 
     return {
       ...page,

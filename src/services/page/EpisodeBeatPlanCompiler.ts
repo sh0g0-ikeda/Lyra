@@ -8,6 +8,12 @@ export interface EpisodeBeatPlanPage {
   exitState: string;
   newInformation: string[];
   dialogueIntent: string | null;
+  // Optional for existing stored/test ledgers; new provider output supplies it.
+  textPlan?: {
+    requiredTextBeats: string[];
+    visualOnlyBeats: string[];
+    densityReason: string;
+  };
   handoff: string | null;
 }
 

@@ -43,15 +43,61 @@ export interface PanelFrameTemplate {
   frames: UpsertPanelFrameInput[];
 }
 
+export interface PanelFrameTemplateEditorialGuide {
+  geometry: string;
+  focalPlacement: 'top' | 'bottom' | 'middle' | 'tall' | 'full' | 'distributed';
+  dialogueRoom: 'low' | 'moderate' | 'high';
+  actionPacing: 'low' | 'moderate' | 'high';
+  rtlFlow: string;
+}
+
 export const PANEL_FRAME_TEMPLATE_READING_DIRECTION = 'right_to_left_top_to_bottom' as const;
 export const PANEL_FRAME_TEMPLATE_PREVIEW_ASPECT_RATIO = 0.7;
 export const PANEL_FRAME_TEMPLATE_SUPPORTED_PAGE_SIZES = ['normalized_portrait'] as const;
 
 export interface PanelFrameTemplateDefinition extends PanelFrameTemplate {
+  editorialGuide: PanelFrameTemplateEditorialGuide;
   labelKey: `page.layoutTemplate.${PanelFrameTemplateId}`;
   readingDirection: typeof PANEL_FRAME_TEMPLATE_READING_DIRECTION;
   previewAspectRatio: typeof PANEL_FRAME_TEMPLATE_PREVIEW_ASPECT_RATIO;
   supportedPageSizes: typeof PANEL_FRAME_TEMPLATE_SUPPORTED_PAGE_SIZES;
+}
+
+const editorialGuides: Record<PanelFrameTemplateId, PanelFrameTemplateEditorialGuide> = {
+  standard_4: guide('two even RTL rows', 'distributed', 'moderate', 'moderate'),
+  stacked_wide_4: guide('four horizontal bands, top to bottom', 'distributed', 'high', 'moderate'),
+  top_wide_3: guide('wide top focal panel above a RTL pair', 'top', 'high', 'moderate'),
+  standard_6: guide('two RTL rows of three equal panels', 'distributed', 'moderate', 'moderate'),
+  dense_8: guide('two RTL rows of four compact panels', 'distributed', 'low', 'high'),
+  climax_2: guide('two vertical half-page panels, right then left', 'tall', 'high', 'moderate'),
+  splash_1: guide('single full-page panel', 'full', 'high', 'low'),
+  action_5: guide('four staged beats beside a tall left panel', 'tall', 'moderate', 'high'),
+  battle_7: guide('seven angled, staggered action panels', 'distributed', 'low', 'high'),
+  vertical_2: guide('two horizontal bands, top then bottom', 'distributed', 'high', 'moderate'),
+  bottom_wide_3: guide('RTL pair above a wide bottom payoff panel', 'bottom', 'high', 'moderate'),
+  wide_top_4: guide('wide top opening panel above three RTL beats', 'top', 'high', 'moderate'),
+  wide_bottom_4: guide('three RTL setup beats above a wide bottom payoff', 'bottom', 'moderate', 'moderate'),
+  tall_left_4: guide('three right-column beats leading to a tall left payoff', 'tall', 'moderate', 'moderate'),
+  right_tall_4: guide('tall right entry panel followed by three left-column beats', 'tall', 'moderate', 'moderate'),
+  balanced_5: guide('RTL pair above three balanced lower beats', 'distributed', 'moderate', 'moderate'),
+  middle_wide_5: guide('RTL pair, wide middle focal panel, RTL pair', 'middle', 'high', 'moderate'),
+  top_wide_5: guide('wide top opening panel with two RTL rows below', 'top', 'high', 'moderate'),
+  split_6: guide('two vertical columns read right column then left column', 'distributed', 'moderate', 'moderate'),
+};
+
+function guide(
+  geometry: string,
+  focalPlacement: PanelFrameTemplateEditorialGuide['focalPlacement'],
+  dialogueRoom: PanelFrameTemplateEditorialGuide['dialogueRoom'],
+  actionPacing: PanelFrameTemplateEditorialGuide['actionPacing'],
+): PanelFrameTemplateEditorialGuide {
+  return {
+    geometry,
+    focalPlacement,
+    dialogueRoom,
+    actionPacing,
+    rtlFlow: 'stored reading_order: upper-right or rightmost entry, then right-to-left and downward; asymmetric frames use their stored order',
+  };
 }
 
 const defaultFrameStyle = {
@@ -277,6 +323,7 @@ export function listPanelFrameTemplateDefinitions(): PanelFrameTemplateDefinitio
     const template = getPanelFrameTemplate(templateId);
     return {
       ...template,
+      editorialGuide: getPanelFrameTemplateEditorialGuide(templateId),
       frames: buildPanelFrameTemplateInputs(templateId),
       labelKey: `page.layoutTemplate.${templateId}`,
       readingDirection: PANEL_FRAME_TEMPLATE_READING_DIRECTION,
@@ -284,6 +331,12 @@ export function listPanelFrameTemplateDefinitions(): PanelFrameTemplateDefinitio
       supportedPageSizes: PANEL_FRAME_TEMPLATE_SUPPORTED_PAGE_SIZES,
     };
   });
+}
+
+export function getPanelFrameTemplateEditorialGuide(
+  templateId: PanelFrameTemplateId,
+): PanelFrameTemplateEditorialGuide {
+  return editorialGuides[templateId];
 }
 
 export function buildPanelFrameTemplateInputs(templateId: PanelFrameTemplateId): UpsertPanelFrameInput[] {

@@ -111,6 +111,7 @@ export interface PageAutofillContext {
   chapterId: string;
   pageNumber: number;
   totalPagesInEpisode: number;
+  layoutConfig?: Record<string, unknown>;
   frameCount: number;
   status: PageStatus;
   dialogueMode: PageDialogueMode;

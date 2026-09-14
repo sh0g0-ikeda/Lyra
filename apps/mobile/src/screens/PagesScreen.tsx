@@ -295,6 +295,7 @@ const generationBlockerMessages: Record<
   FRAME_PANEL_MISMATCH: 'screen.pages.blocker.framePanelMismatch',
   PANEL_ORDER_INVALID: 'screen.pages.blocker.panelOrderInvalid',
   DIALOGUE_SPEAKER_REQUIRED: 'screen.pages.blocker.dialogueSpeakerRequired',
+  DIALOGUE_SPEAKER_INVALID: 'screen.pages.blocker.dialogueSpeakerInvalid',
   DIALOGUE_SPEAKER_NOT_IN_PANEL: 'screen.pages.blocker.dialogueSpeakerNotInPanel',
   ASSIGNED_ENTITY_INVALID: 'screen.pages.blocker.assignedEntityInvalid',
   PAGE_GENERATING: 'screen.pages.blocker.pageGenerating',
@@ -1124,8 +1125,7 @@ export function PagesScreen(): React.JSX.Element {
     [entitiesQuery.data?.pages],
   );
   const scenes = scenesQuery.data?.scenes ?? [];
-  const assignedEntityIds = assignments.map((assignment) => assignment.entity_id);
-  const panelEntities = entities.filter((entity) => assignedEntityIds.includes(entity.id));
+  const workEntityIds = entities.map((entity) => entity.id);
 
   const pageValuesDiffer =
     selectedPage === null
@@ -1197,7 +1197,7 @@ export function PagesScreen(): React.JSX.Element {
     dialogues.some(
       (dialogue) =>
         dialogue.text.trim().length > 0 &&
-        !isPanelDialogueSpeakerValid(dialogue.type, dialogue.entity_id, assignedEntityIds)
+        !isPanelDialogueSpeakerValid(dialogue.type, dialogue.entity_id, workEntityIds)
     ) ||
     assignments.length > 20 ||
     assignments.some((assignment) =>
@@ -2942,7 +2942,7 @@ export function PagesScreen(): React.JSX.Element {
                 <PanelDialogueEditor
                   dialogues={dialogues}
                   disabled={!canEdit}
-                  entities={panelEntities}
+                  entities={entities}
                   language={language}
                   onChange={setDialogues}
                 />
