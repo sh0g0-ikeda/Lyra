@@ -1,9 +1,30 @@
 import { describe, expect, it } from 'vitest';
 import { buildAutoBalloonInputs } from '../../../../src/services/page/AutoBalloonLayout.js';
+import { normalizeAutofillDialogueReadingOrder } from '../../../../src/domain/policies/autofillDialogueReadingOrder.js';
 import type { Panel } from '../../../../src/domain/types/panel.js';
 import type { PanelFrame } from '../../../../src/domain/types/panelFrame.js';
 
 describe('AutoBalloonLayout', () => {
+  it('自動入力の4行は右列を上から下に読み次に左列へ進む重ならない吹き出しになる', () => {
+    const dialogue: Panel['dialogue'] = Array.from({ length: 4 }, (_, index) => ({
+      entityId: null,
+      text: `読む順番${index + 1}`,
+      type: 'narration',
+      position: 'top',
+    }));
+    const panel = buildPanel({ dialogue: normalizeAutofillDialogueReadingOrder(dialogue) });
+
+    const balloons = buildAutoBalloonInputs('balloon_only', [panel], [buildFrame()]);
+
+    expect(balloons.map((balloon) => balloon.text)).toEqual(dialogue.map((line) => line.text));
+    const [rightTop, rightBottom, leftTop, leftBottom] = balloons.map((balloon) => balloon.position);
+    expect(rightTop.x).toBe(rightBottom.x);
+    expect(leftTop.x).toBe(leftBottom.x);
+    expect(rightTop.y + rightTop.height).toBeLessThanOrEqual(rightBottom.y);
+    expect(leftTop.y + leftTop.height).toBeLessThanOrEqual(leftBottom.y);
+    expect(leftTop.x + leftTop.width).toBeLessThanOrEqual(rightTop.x);
+  });
+
   it('tiny frame でも全 balloon 種別が frame 内に収まる', () => {
     const panels: Panel[] = [
       {

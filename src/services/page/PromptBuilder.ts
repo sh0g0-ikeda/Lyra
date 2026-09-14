@@ -603,6 +603,7 @@ function buildQualityConstraints(
     'Create a fresh page from the current saved page inputs only; do not preserve, restore, or edit any previous generated page image.',
     `Maintain exactly ${panelCount} readable panels in the locked Japanese manga order.`,
     'Preserve every stored dialogue position. When those positions allow, use Japanese eye flow with earlier text higher/right and later text left/down; never override an authored position to force placement.',
+    'Within a shared right or left position, place earlier numbered dialogue above later dialogue; read a consecutive right-side group before the following left-side group.',
     'Keep panel borders and gutters clean and unambiguous.',
     'Preserve the authored action progression from one panel to the next without skipping intermediate beats.',
     'Do not let any foreground character drift off-model relative to their reference image.',

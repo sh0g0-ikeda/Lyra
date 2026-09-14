@@ -202,6 +202,7 @@ describe('PromptBuilder', () => {
     expect(result.draftPrompt).toContain(
       'never override an authored position to force placement',
     );
+    expect(result.draftPrompt).toContain('Within a shared right or left position, place earlier numbered dialogue above later dialogue');
     expect(result.draftPrompt).toContain(
       'Authoritative frame map (follow P numbers and coordinates exactly for asymmetric or custom layouts): P1=[(0.50,0.00),(1.00,0.00),(1.00,0.50),(0.50,0.50)]',
     );

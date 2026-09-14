@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { ConfigurationError } from '../../domain/errors/index.js';
-import { STORY_SOURCE_POLICY, STORY_TEXT_POLICY, STORY_SPEAKER_POLICY, STORY_PANEL_POLICY } from './StoryEditorialPrompts.js';
+import { STORY_DIALOGUE_FLOW_POLICY, STORY_SOURCE_POLICY, STORY_TEXT_POLICY, STORY_SPEAKER_POLICY, STORY_PANEL_POLICY } from './StoryEditorialPrompts.js';
 import {
   EPISODE_PAGE_PLAN_MAX_DIALOGUE_LINES_PER_PANEL,
   EPISODE_PAGE_PLAN_COMPILER_MAX_TOKENS,
@@ -169,6 +169,7 @@ function buildSystemPrompt(language: CompileEpisodePagePlanInput['language']): s
     'Before drafting lines, use each page text_plan to identify necessary text and visual-only beats. Allocate within owned beats now; do not accumulate explanation at the end of the page or chunk.',
     STORY_TEXT_POLICY,
     STORY_SPEAKER_POLICY,
+    STORY_DIALOGUE_FLOW_POLICY,
     STORY_PANEL_POLICY,
     'Assign contiguous source scenes where the source supports them. Keep chapter facts as consistency constraints and concrete episode/scene events as content; do not turn every scene mention into a visible entity.',
     'Respect character knowledge, voice, and motive. Each reply responds to its actual predecessor. Do not require dialogue just because characters face each other or express emotion.',

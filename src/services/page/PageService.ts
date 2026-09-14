@@ -5,6 +5,7 @@
   ValidationError,
 } from '../../domain/errors/index.js';
 import { distributeStoryBeats } from '../../domain/storyBeatDistribution.js';
+import { normalizeAutofillDialogueReadingOrder } from '../../domain/policies/autofillDialogueReadingOrder.js';
 import {
   canonicalizeEntityMentionsInText,
   extractEntityAliases,
@@ -2452,7 +2453,9 @@ function mergePanelSuggestion(
     (suggestion.dialogue.length > 0 || (overwriteExisting && panel.dialogue.length > 0)) &&
     (overwriteExisting || panel.dialogue.length === 0 || dialogueLooksLowQuality(panel.dialogue))
   ) {
-    update.dialogue = suggestion.dialogue;
+    // Only accepted AI candidates reach this boundary, after compile/audit repairs.
+    // Existing dialogue excluded by the merge and manual panel updates keep their positions.
+    update.dialogue = normalizeAutofillDialogueReadingOrder(suggestion.dialogue);
     filledFieldCount += 1;
   }
 

@@ -3,7 +3,7 @@ import { OpenAIClient } from '../../../../src/infrastructure/openai/OpenAIClient
 import { OpenAIEpisodePlanAuditCompiler } from '../../../../src/infrastructure/openai/OpenAIEpisodePlanAuditCompiler.js';
 
 describe('OpenAIEpisodePlanAuditCompiler', () => {
-  it('ページ横断の重複と会話配置を strict JSON で監査する', async () => {
+  it.each(['ja', 'en'] as const)('ページ横断の重複と会話配置を strict JSON で監査する (%s)', async (language) => {
     const requests: Array<Record<string, unknown>> = [];
     const client = {
       postJson: async (_path: string, payload: Record<string, unknown>) => {
@@ -54,7 +54,7 @@ describe('OpenAIEpisodePlanAuditCompiler', () => {
     const compiler = new OpenAIEpisodePlanAuditCompiler(client);
     const result = await compiler.auditPlan({
       compilerBrief: '[EPISODE DRAFT]\nPage 1\nPage 2',
-      language: 'ja',
+      language,
       pageIds: [
         '11111111-1111-4111-8111-111111111111',
         '22222222-2222-4222-8222-222222222222',
@@ -100,6 +100,11 @@ describe('OpenAIEpisodePlanAuditCompiler', () => {
     expect(input[0]?.content[0]?.text).toContain('Return field-level repairs');
     expect(input[0]?.content[0]?.text).toContain('every changed field must carry its intended value');
     expect(result.compilerModel).toBe('gpt-5');
+    expect(result.compilerPromptVersion).toBe('episode_plan_audit_v6');
+    expect(input[0]?.content[0]?.text).toContain('The dialogue array is the exact reading and speaking order');
+    expect(input[0]?.content[0]?.text).toContain('1 entry: [right]; 2: [right, left]; 3: [right, right, left]; 4: [right, right, left, left]');
+    expect(input[0]?.content[0]?.text).toContain('Within each side, place earlier entries above later entries');
+    expect(input[0]?.content[0]?.text).toContain('regardless of output language');
     expect(request?.model).toBe('gpt-5');
     expect(request?.max_output_tokens).toBe(20_000);
     expect(request).not.toHaveProperty('reasoning');

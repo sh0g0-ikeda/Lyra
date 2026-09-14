@@ -1,4 +1,4 @@
-import { STORY_SOURCE_POLICY, STORY_TEXT_POLICY, STORY_SPEAKER_POLICY } from './StoryEditorialPrompts.js';
+import { STORY_DIALOGUE_FLOW_POLICY, STORY_SOURCE_POLICY, STORY_TEXT_POLICY, STORY_SPEAKER_POLICY } from './StoryEditorialPrompts.js';
 import {
   EPISODE_PAGE_PLAN_MAX_DIALOGUE_LINES_PER_PANEL,
   EPISODE_PLAN_AUDIT_COMPILER_MAX_ATTEMPTS,
@@ -128,6 +128,7 @@ function buildSystemPrompt(language: CompileEpisodePlanAuditInput['language']): 
     'Compare the compiled draft against source story, ledger ownership including text_plan, and the untruncated counts in TEXT DISTRIBUTION.',
     STORY_TEXT_POLICY,
     STORY_SPEAKER_POLICY,
+    STORY_DIALOGUE_FLOW_POLICY,
     'Find accidental repeated beats, early revelations, broken responses, unsupported facts, and unmotivated changes of time, location, knowledge, costume, injury, or emotion. Source-supported callbacks and flashbacks are not automatic defects.',
     'Check page entry/exit/handoff and whether required information was left out early and dumped into late pages or final panels. Compare total text length, available frame area, silent-beat purpose, and neighboring pages; do not demand uniform density.',
     'Use dialogue_density with severity=error for every panel above the entry cap; this is deterministic, not optional. Within the cap, use error only for a concrete reading/story defect; use warning for a justified non-blocking improvement, not taste.',
