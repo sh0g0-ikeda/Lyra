@@ -92,3 +92,15 @@ before deployment. Do not declare a live AI generation verified from mocked test
   actual ECS one-off image probes. OCI overlays preserve each deployed base layer
   and runtime Config; the prepared/pushed utility, sources and files are hashed.
   Preserve production `.well-known` association files and prior hashed Web assets.
+- First CI run 34804684141 passed PostgreSQL migrations/invariants, backend build,
+  ARM64 migration image build/probe, and Web lint/build. Browser tests found one
+  inaccurate test fixture (button accessible name and missing reference-set route),
+  corrected without changing application behavior before rerunning the gate.
+  The final direct Playwright JSON report confirms 28 passed, zero failed,
+  skipped or flaky tests. Production Web build used the verified live Cognito
+  settings, organization flag and Apple team ID; the bundle is index-BjQkQ4Ew.js.
+- The separate `mobile-verify` job fails at Expo dependency compatibility on the
+  old backend source base (Expo 57.0.13 versus currently recommended patches).
+  No Mobile dependency or source is part of this runtime overlay. The actual
+  Mobile 1.0.7 checkout passed typecheck and all 710 tests. This is a scoped
+  baseline exception; do not describe the entire PR as having all CI jobs green.

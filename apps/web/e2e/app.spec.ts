@@ -672,6 +672,13 @@ test('参照削除後の遅延entity再読込失敗は切替後のentityをstale
         body: JSON.stringify({ entity_id: entity.id, primary_ref_id: null, status: 'empty', updated_at: entity.updated_at, reference_images: [] }),
       });
     }
+    if (pathname === `/api/entities/${secondEntity.id}/reference-set`) {
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ entity_id: secondEntity.id, primary_ref_id: null, status: 'empty', updated_at: secondEntity.updated_at, reference_images: [] }),
+      });
+    }
     return mockApi(route);
   });
 
@@ -680,7 +687,7 @@ test('参照削除後の遅延entity再読込失敗は切替後のentityをstale
   await page.getByRole('button', { name: 'Entities', exact: true }).click();
   await page.locator('.reference-card').getByRole('button', { name: 'Delete', exact: true }).click();
   await expect.poll(() => entityReloadStarted).toBe(true);
-  await page.getByRole('button', { name: 'Haruto', exact: true }).click();
+  await page.getByRole('button', { name: 'Haruto Character', exact: true }).click();
   resolveEntityReload?.();
 
   await expect(page.getByRole('textbox', { name: 'Name', exact: true })).toHaveValue('Haruto');
