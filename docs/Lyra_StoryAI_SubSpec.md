@@ -73,6 +73,17 @@ narration role, position, action, composition, camera, and panel order. Image-mo
 typography is best effort; deterministic balloon composition, when used, provides
 the exact text orientation.
 
+For newly generated autofill dialogue, array order is the reading/speaking order
+in all output languages. One through four entries use right; right/left;
+right/right/left; right/right/left/left respectively. The right-side group is read
+before the left-side group, with each side proceeding top-to-bottom. Single-page
+compilation, episode detail compilation, and audit share this staging contract.
+Before an AI candidate is saved, only its positions are normalized after repairs;
+text, speakers, types, order, and count are preserved. This does not migrate dialogue
+outside an autofill operation. Dialogue excluded by existing merge rules and manual
+edits outside autofill remain unchanged. Explicit episode autofill still replaces
+the selected draft under existing validation and transaction rules.
+
 Scenes are optional context. Their absence must not reject skeleton or autofill
 generation. When scenes exist, source IDs can be retained as provenance, but raw IDs
 are not useful image-model prompt content.

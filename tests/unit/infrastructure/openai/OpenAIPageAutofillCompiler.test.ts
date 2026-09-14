@@ -1,9 +1,9 @@
-﻿import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { OpenAIPageAutofillCompiler } from '../../../../src/infrastructure/openai/OpenAIPageAutofillCompiler.js';
 import { OpenAIClient } from '../../../../src/infrastructure/openai/OpenAIClient.js';
 
 describe('OpenAIPageAutofillCompiler', () => {
-  it('scene brief を panel suggestion JSON にコンパイルする', async () => {
+  it.each(['ja', 'en'] as const)('scene brief を panel suggestion JSON にコンパイルする (%s)', async (language) => {
     const requests: Array<Record<string, unknown>> = [];
     const client = {
       postJson: async (_path: string, payload: Record<string, unknown>) => {
@@ -45,7 +45,7 @@ describe('OpenAIPageAutofillCompiler', () => {
 
     const result = await compiler.compileSuggestions({
       compilerBrief: '[TASK]\nFill page 1 of 3\n\n[SCENES]\nScene 1 | location=Rooftop',
-      language: 'ja',
+      language,
     });
 
     expect(result).toMatchObject({
@@ -83,7 +83,7 @@ describe('OpenAIPageAutofillCompiler', () => {
       },
       compilerProvider: 'openai',
       compilerModel: 'gpt-4o-2024-08-06',
-      compilerPromptVersion: 'page_autofill_v4',
+      compilerPromptVersion: 'page_autofill_v5',
     });
 
     const request = requests[0];
@@ -127,6 +127,10 @@ describe('OpenAIPageAutofillCompiler', () => {
     expect(systemPrompt).toContain('total text length, balloon count, saved panel area');
     expect(systemPrompt).toContain('off-panel speaker or thinker keeps their own entity_id');
     expect(systemPrompt).toContain('Thought and narration have no speech tail');
+    expect(systemPrompt).toContain('The dialogue array is the exact reading and speaking order');
+    expect(systemPrompt).toContain('1 entry: [right]; 2: [right, left]; 3: [right, right, left]; 4: [right, right, left, left]');
+    expect(systemPrompt).toContain('Within each side, place earlier entries above later entries');
+    expect(systemPrompt).toContain('regardless of output language');
     expect(userPrompt).toContain('[TASK]');
     expect(userPrompt).toContain('Return the final JSON now.');
   });

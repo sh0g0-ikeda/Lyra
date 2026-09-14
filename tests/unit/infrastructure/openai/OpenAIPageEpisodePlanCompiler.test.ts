@@ -4,7 +4,7 @@ import { OpenAIClient } from '../../../../src/infrastructure/openai/OpenAIClient
 import { OpenAIPageEpisodePlanCompiler } from '../../../../src/infrastructure/openai/OpenAIPageEpisodePlanCompiler.js';
 
 describe('OpenAIPageEpisodePlanCompiler', () => {
-  it('chapter/episode/scene brief を episode page plan JSON にコンパイルする', async () => {
+  it.each(['ja', 'en'] as const)('chapter/episode/scene brief を episode page plan JSON にコンパイルする (%s)', async (language) => {
     const requests: Array<Record<string, unknown>> = [];
     const client = {
       postJson: async (_path: string, payload: Record<string, unknown>) => {
@@ -67,7 +67,7 @@ describe('OpenAIPageEpisodePlanCompiler', () => {
         '[CURRENT PAGES]',
         'Page 1 (11111111-1111-4111-8111-111111111111)',
       ].join('\n'),
-      language: 'ja',
+      language,
     });
 
     expect(result).toEqual({
@@ -114,7 +114,7 @@ describe('OpenAIPageEpisodePlanCompiler', () => {
       },
       compilerProvider: 'openai',
       compilerModel: 'gpt-5',
-      compilerPromptVersion: 'episode_page_plan_v4',
+      compilerPromptVersion: 'episode_page_plan_v5',
     });
 
     const request = requests[0];
@@ -130,6 +130,10 @@ describe('OpenAIPageEpisodePlanCompiler', () => {
     expect(systemPrompt).toContain('total text length, balloon count, saved panel area');
     expect(systemPrompt).toContain('off-panel speaker or thinker keeps their own entity_id');
     expect(systemPrompt).toContain('Thought and narration have no speech tail');
+    expect(systemPrompt).toContain('The dialogue array is the exact reading and speaking order');
+    expect(systemPrompt).toContain('1 entry: [right]; 2: [right, left]; 3: [right, right, left]; 4: [right, right, left, left]');
+    expect(systemPrompt).toContain('Within each side, place earlier entries above later entries');
+    expect(systemPrompt).toContain('regardless of output language');
     expect(text.format).toMatchObject({
       type: 'json_schema',
       name: 'episode_page_plan',

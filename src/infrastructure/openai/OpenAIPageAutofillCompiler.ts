@@ -1,4 +1,4 @@
-import { STORY_SOURCE_POLICY, STORY_TEXT_POLICY, STORY_SPEAKER_POLICY, STORY_PANEL_POLICY } from './StoryEditorialPrompts.js';
+import { STORY_DIALOGUE_FLOW_POLICY, STORY_SOURCE_POLICY, STORY_TEXT_POLICY, STORY_SPEAKER_POLICY, STORY_PANEL_POLICY } from './StoryEditorialPrompts.js';
 import {
   EPISODE_PAGE_PLAN_MAX_DIALOGUE_LINES_PER_PANEL,
   PAGE_AUTOFILL_COMPILER_MAX_TOKENS,
@@ -121,6 +121,7 @@ function buildSystemPrompt(language: CompilePageAutofillInput['language']): stri
     'Decide the page’s entry, progression, and exit, then allocate information to panels before writing any final dialogue. Respect already planned page purpose and adjacent story context.',
     STORY_TEXT_POLICY,
     STORY_SPEAKER_POLICY,
+    STORY_DIALOGUE_FLOW_POLICY,
     STORY_PANEL_POLICY,
     'Choose only the actually visible registered subjects; named off-panel voices remain dialogue speakers, not visible entity assignments. A panel centered on a visible registered character must identify that entity.',
     'Preserve natural questions and replies and the speakers’ knowledge and voice. Emotion and facing characters are not automatic requirements to add text.',

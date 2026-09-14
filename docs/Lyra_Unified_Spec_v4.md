@@ -99,6 +99,17 @@ changing authored wording, role, position, action, composition, camera, or panel
 order. Image-model typography is best effort; deterministic balloon composition,
 when used, is the exact text-orientation path.
 
+New single-page and episode autofill dialogue uses the same manga flow regardless
+of output language. Array order remains the reading/speaking order. Before saving
+an accepted AI candidate, positions are assigned as 1: right; 2: right/left;
+3: right/right/left; 4: right/right/left/left. Read each side from top to bottom,
+then proceed from the right-side group to the left-side group. Compilation and
+audit prompts plan speaker staging around these regions. Final normalization only
+changes candidate positions after repairs; it does not reorder, truncate, or change
+text, speaker IDs, types, or character assignments. Existing merge protections,
+manual position edits, persistence limits, and atomic episode saving still apply.
+There is no migration of existing dialogue or change to the five-value position API.
+
 Story-to-page autofill plans beat ownership across the complete episode before
 expanding the existing pages. Detail compilation uses adaptive, consecutive page
 packs sized by estimated structured-output cost; it must not use a fixed three-page

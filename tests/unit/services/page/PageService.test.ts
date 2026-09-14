@@ -1,4 +1,4 @@
-﻿import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import {
   ConfigurationError,
   ConflictError,
@@ -3953,6 +3953,67 @@ describe('PageService', () => {
     await expect(service.autofillFromScenes('user-1', 'page-1', 'ja')).rejects.toThrow('unexpected compiler bug');
   });
 
+  // Spec 6: only newly accepted autofill dialogue is positioned; manual storage stays untouched.
+  it.each(['ja', 'en'] as const)('単ページ自動入力は本文と話者と順序を保ち右から左へ保存する (%s)', async (language) => {
+    const dialogue: Panel['dialogue'] = [
+      { entityId: '11111111-1111-4111-8111-111111111111', text: 'Wait for me.', type: 'speech', position: 'left' },
+      { entityId: null, text: 'A moment later.', type: 'narration', position: 'right' },
+    ];
+    const compiler: PageAutofillCompilerPort = {
+      async compileSuggestions(): Promise<CompiledPageAutofillSuggestion> {
+        return { suggestion: { panels: [{ order: 1, dialogue }] }, compilerProvider: 'openai', compilerModel: 'test-model', compilerPromptVersion: 'test-v1' };
+      },
+    };
+    const panelRepository = new FakePanelRepository();
+    const service = new PageService(new FakePageRepository(), panelRepository, new FakePanelEntityAssignmentService(), compiler);
+
+    await service.autofillFromScenes('user-1', 'page-1', language);
+
+    expect(panelRepository.updatedPanels[0]?.input.dialogue).toEqual([
+      { ...dialogue[0], position: 'right' }, { ...dialogue[1], position: 'left' },
+    ]);
+    expect(dialogue.map((line) => line.position)).toEqual(['left', 'right']);
+  });
+
+  it.each(['top', 'bottom', 'center'] as const)('単ページ自動入力は既存の手動セリフ位置 %s を上書きしない', async (position) => {
+    const pageRepository = new FakePageRepository();
+    const dialogue: Panel['dialogue'] = [{ entityId: null, text: '夜明けまで二人は屋上で静かに待ち続けた。', type: 'narration', position }];
+    pageRepository.autofillContext = { ...buildAutofillContext(), panels: [{ ...buildAutofillPanelContext(), dialogue }] };
+    const panelRepository = new FakePanelRepository();
+    const service = new PageService(pageRepository, panelRepository, new FakePanelEntityAssignmentService(), new FakePageAutofillCompiler());
+
+    await service.autofillFromScenes('user-1', 'page-1', 'ja');
+
+    expect(panelRepository.updatedPanels[0]?.input.dialogue).toBeUndefined();
+    expect(pageRepository.autofillContext.panels[0]?.dialogue).toEqual(dialogue);
+    expect(dialogue[0]?.position).toBe(position);
+  });
+
+  it.each(['ja', 'en'] as const)('話全体の監査修復後もセリフを右から左へ保存し話者や構図を変更しない (%s)', async (language) => {
+    const pageRepository = new FakePageRepository();
+    pageRepository.episodePlanningContext = buildMultiPageEpisodePlanningContext(4);
+    const panelRepository = new FakePanelRepository();
+    const episodeCompiler = new ChunkAwareEpisodePagePlanCompiler();
+    const auditCompiler = new FakeEpisodePlanAuditCompiler();
+    const dialogue: Panel['dialogue'] = [
+      { entityId: '11111111-1111-4111-8111-111111111111', text: 'I finally understand.', type: 'thought', position: 'left' },
+      { entityId: null, text: 'The answer had arrived.', type: 'narration', position: 'top' },
+      { entityId: '11111111-1111-4111-8111-111111111111', text: 'Let us leave.', type: 'speech', position: 'right' },
+    ];
+    auditCompiler.audits = [{ accepted: false, issues: [{ code: 'timeline_discontinuity', severity: 'error', pageIds: ['page-2'], message: 'Restore the response.', repairInstruction: 'Restore the true response in order.' }], panelRepairs: [{ pageId: 'page-2', panelOrder: 1, changedFields: ['dialogue'], patch: { dialogue } }] }, { accepted: true, issues: [] }];
+    const service = new PageService(pageRepository, panelRepository, new FakePanelEntityAssignmentService(), new FakePageAutofillCompiler(), episodeCompiler, undefined, new FakeEpisodeBeatPlanCompiler(), auditCompiler, true, { adaptivePackingEnabled: true, inlineRepairEnabled: true });
+
+    await service.autofillEpisodeFromStory('user-1', 'episode-1', language);
+
+    const saved = panelRepository.updatedPanels.find((update) => update.panelId === 'panel-2')?.input;
+    expect(saved?.dialogue).toEqual(dialogue.map((line, index) => ({ ...line, position: index < 2 ? 'right' : 'left' })));
+    expect(saved?.composition?.compositionPrompt).toBe('Frame Minerva clearly for page 2.');
+    expect(saved?.situationText).toBe('Minerva advances the beat on page 2.');
+    expect(episodeCompiler.inputs).toHaveLength(1);
+    expect(auditCompiler.inputs).toHaveLength(2);
+    expect(dialogue.map((line) => line.position)).toEqual(['left', 'top', 'right']);
+  });
+
   it('scene autofill は正規化後の4行を保存できる', async () => {
     const pageRepository = new FakePageRepository();
     const panelRepository = new FakePanelRepository();
@@ -3986,6 +4047,7 @@ describe('PageService', () => {
     await service.autofillFromScenes('user-1', 'page-1', 'ja');
 
     expect(panelRepository.updatedPanels[0]?.input.dialogue).toHaveLength(4);
+    expect(panelRepository.updatedPanels[0]?.input.dialogue?.map((line) => line.position)).toEqual(['right', 'right', 'left', 'left']);
     expect(panelRepository.updatedPanels[0]?.input.dialogue?.[0]?.text).toBe('必要な情報1');
   });
 

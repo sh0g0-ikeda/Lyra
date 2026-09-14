@@ -19,6 +19,13 @@ export const STORY_SPEAKER_POLICY = [
   'Narration has entity_id=null. A character’s private thought is not anonymous narration. Never assign unknown voices to the nearest visible person. Thought and narration have no speech tail; off-panel dialogue must not point a tail at a visible person.',
 ].join(' ');
 
+export const STORY_DIALOGUE_FLOW_POLICY = [
+  'Use Japanese manga balloon flow inside every panel regardless of output language. The dialogue array is the exact reading and speaking order; never reorder words, speakers, or responses to fit positions.',
+  'For newly generated dialogue, assign position by array order: 1 entry: [right]; 2: [right, left]; 3: [right, right, left]; 4: [right, right, left, left]. Preserve intentional silence as an empty array.',
+  'Read the right-side group before the left-side group. Within each side, place earlier entries above later entries. Do not use top, bottom, or center as a substitute for this generated dialogue flow.',
+  'Stage visible speakers, faces, and focal actions around these balloon regions so reading flow and speaker identity are clear without crossed tails. Preserve source actions, true speaker IDs, off-panel visibility, and the tail-free thought/narration rules; do not swap speakers to fit balloon sides.',
+].join(' ');
+
 export const STORY_PANEL_POLICY = [
   'Respect saved page IDs, numbers, panel counts, panel orders, and actual frame geometry. For Japanese manga, panel 1 is the upper-right or rightmost top entry; regular rows read right-to-left then downward, and saved numbering is authoritative for asymmetric layouts.',
   'Choose the visible subject and a distinct dramatic job per panel. Plan readable staging and earlier text higher and farther right; do not cross balloon order or obstruct the focal action.',
