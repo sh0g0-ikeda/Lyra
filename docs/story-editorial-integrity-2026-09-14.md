@@ -115,7 +115,7 @@ regeneration to reflect the new instructions.
   separately in the ignored release evidence directory: 1,712 tests passed,
   zero failed, four existing environment-dependent tests skipped.
 
-Live-model evaluation uses only a synthetic three-page story, never user works,
+The legacy-profile live-model evaluation uses only a synthetic three-page story, never user works,
 database writes, queues or image generation. It verifies off-panel mother speech
 and thought while only her child is visible, a quiet opening/ending, and the
 four-entry ceiling. The first audit caught dialogue in the wrong source panel;
@@ -125,3 +125,68 @@ An additional evaluation-only third audit of the final repaired sample returned
 accepted=true with no issues. Final panel text counts were [0,1,0,0], [1,1,1,0]
 and [0,1,0,0]. This checks text planning and repair behavior, not rendered image
 quality or a statistical success rate; production's bounded audit count is unchanged.
+
+## Production release evidence
+
+Observed 2026-09-14 17:03 JST. Release source is
+`af97d5b2c00f40f8a4067bdd8bf2d8c41ce6ffa2`, PR #211:
+https://github.com/sh0g0-ikeda/Lyra/pull/211
+
+- The exact source's `verify` CI succeeded, including PostgreSQL migrations and
+  all 50 deployment invariants, ARM64/non-root migration image execution, backend
+  tests/build/contracts and Web lint/build/28 browser tests:
+  https://github.com/sh0g0-ikeda/Lyra/actions/runs/34818703382/job/103895031298
+- `mobile-verify` still fails at the existing Expo dependency-version check.
+  Neither dependency locks nor CI rules were changed to hide that failure.
+  Mobile's 617 local tests and TypeScript check passed; store/OTA distribution is
+  outside this release.
+- Both actual release images passed isolated runtime probes with exit code zero:
+  non-root identity, complete artifact hashes, invalid-ID retry compatibility,
+  four-entry AI rejection, density detection, frame capacity, runtime wiring and
+  all 50 live-database invariants. API readiness/authentication also passed.
+- The production migration check exited zero with `applied: []`; no database
+  schema or user content was rewritten. Existing runtime configuration, secret
+  references, network settings and desired counts remain unchanged.
+- API rolled from 131 to **132**, desired/running 2/2. Worker rolled from 74 to
+  **75**, desired/running 1/1. Both reached `COMPLETED`, with no pending tasks.
+  Worker update waited for API completion and all old targets to finish their
+  existing 300-second connection drain. Both remaining API targets are healthy.
+- API image digest:
+  `sha256:044b836b1ce8a9870d266db9e851ed507eb00a7b29649f976b7f17e347635642`
+- Worker image digest:
+  `sha256:511a0adb7a1c58dd50682d71b6e540ba4de08ef0060f9393d22a1dcb4cd4153c`
+- The public Web serves `/assets/index-Dp-pzgee.js`; all eight built asset files
+  match local hashes. Health/readiness are 200; unauthenticated works access is
+  401. The old entry remains available byte-for-byte, and Android/Apple
+  association files match their pre-release hashes.
+- At final observation, normal and dead-letter queues each had zero visible,
+  in-flight and delayed messages. The new API task logs (78 and 69 events) and
+  Worker task log (one startup event) contained no error/fatal/HTTP-5xx events.
+  This is bounded post-release observation, not a long-term monitoring claim.
+- No model route was changed: the Worker retains its explicit `balanced_v1`
+  configuration (Terra beat/audit, Luna detail); the legacy-profile test above is
+  not presented as proof of that separate model profile.
+
+Rollback anchors are the recorded API 131 and Worker 74 task definitions and their
+exact pre-release image digests. No rollback was required. Existing manga content
+and images are unchanged; story regeneration and image regeneration must be
+explicitly requested for previously generated material.
+
+## Additional model evaluation and remaining limitation
+
+The production Worker's `balanced_v1` profile was also exercised with the same
+synthetic three-page source. Its first detail request returned an upstream HTTP
+502. One bounded rerun completed beat/detail/audit: all three pages received text
+plans, all panels stayed within four entries, and three off-panel speech/thought
+entries retained the mother's ID without adding her to the visible subjects.
+The audit found an unsupported time/context phrase; applying its field-level
+repair and re-auditing returned accepted=true with no issues.
+
+A separate source-anchor check did **not** pass: the source's instruction to put
+the mother's voice in the next panel (panel 2) remained at panel 4, and the model
+audit did not report that mismatch. Final counts were [0,0,0,1], [0,1,1,1] and
+[0,1,0,0]. This is a documented remaining semantic limitation, not proof of exact
+source fidelity. The deterministic four-entry/ID constraints are stronger than
+LLM judgments about pacing or natural-language panel anchors. Absolute compliance
+with such anchors would need explicit structured anchor extraction and validation;
+it is not claimed by this release. No generated-image visual evaluation was run.
