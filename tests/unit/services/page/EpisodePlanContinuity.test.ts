@@ -95,10 +95,16 @@ describe('EpisodePlanContinuity', () => {
     );
   });
 
-  it('最大構成でも監査 brief を上限内に収めつつ全ページを残す', () => {
+  it('最大ページ構成でも監査 brief を上限内に収めつつ全ページと全セリフを残す', () => {
     const context = buildContext();
     const plan = buildBeatPlan();
     const suggestion = buildVerboseSuggestion();
+    for (const page of suggestion.pages) {
+      page.panels = page.panels.slice(0, STORY_AI_LIMITS.maxPanelsPerPage);
+      for (const panel of page.panels) {
+        panel.dialogue = panel.dialogue!.slice(0, 4).map((line, index) => ({ ...line, text: `P${page.pageNumber}コマ${panel.order}の必要な台詞${index}` }));
+      }
+    }
 
     const brief = buildEpisodePlanAuditBrief({
       context,
@@ -110,7 +116,12 @@ describe('EpisodePlanContinuity', () => {
     expect(brief.length).toBeLessThanOrEqual(MAX_CONTINUITY_BRIEF_CHARS);
     expect(briefContainsPage(brief, 1)).toBe(true);
     expect(briefContainsPage(brief, PAGE_COUNT)).toBe(true);
-    expect(brief).toContain(`Panel ${PANELS_PER_PAGE}`);
+    expect(brief).toContain(`Panel ${STORY_AI_LIMITS.maxPanelsPerPage}`);
+    expect(brief).toContain(`P${PAGE_COUNT}コマ${STORY_AI_LIMITS.maxPanelsPerPage}の必要な台詞3`);
+  }, 20_000);
+
+  it('全文を安全な入力上限に収められない場合は欠落した要約で監査しない', () => {
+    expect(() => buildEpisodePlanAuditBrief({ context: buildContext(), plan: buildBeatPlan(), suggestion: buildVerboseSuggestion(), language: 'ja' })).toThrow('complete dialogue');
   }, 20_000);
 
   it('監査 brief は UUID ではなくキャラ名で登場人物と話者を識別できる', () => {

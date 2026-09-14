@@ -15,6 +15,11 @@ const episodeBeatPlanPageSchema = z
       .array(z.string().trim().min(1).max(300))
       .max(STORY_AI_LIMITS.maxPanelsPerPage),
     dialogue_intent: z.string().trim().min(1).max(600).nullable(),
+    text_plan: z.object({
+      required_text_beats: z.array(z.string().trim().min(1).max(300)).max(STORY_AI_LIMITS.maxPanelsPerPage),
+      visual_only_beats: z.array(z.string().trim().min(1).max(300)).max(STORY_AI_LIMITS.maxPanelsPerPage),
+      density_reason: z.string().trim().min(1).max(600),
+    }).strict().optional(),
     handoff: z.string().trim().min(1).max(600).nullable(),
   })
   .strict();

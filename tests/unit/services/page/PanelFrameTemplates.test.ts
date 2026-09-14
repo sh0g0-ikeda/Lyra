@@ -3,6 +3,8 @@ import {
   PANEL_FRAME_TEMPLATE_IDS,
   buildPanelFrameTemplateInputs,
   getPanelFrameTemplate,
+  getPanelFrameTemplateEditorialGuide,
+  listPanelFrameTemplateDefinitions,
   resolveDefaultPanelFrameTemplateId,
 } from '../../../../src/domain/constants/panelFrameTemplates.js';
 
@@ -107,6 +109,17 @@ describe('PanelFrame templates', () => {
     expect(resolveDefaultPanelFrameTemplateId(4)).toBe('standard_4');
     expect(resolveDefaultPanelFrameTemplateId(5)).toBe('action_5');
     expect(resolveDefaultPanelFrameTemplateId(9)).toBeNull();
+  });
+
+  it('全テンプレートの形状と読み順の編集指針を公開する', () => {
+    const definitions = listPanelFrameTemplateDefinitions();
+    expect(definitions).toHaveLength(PANEL_FRAME_TEMPLATE_IDS.length);
+    for (const templateId of PANEL_FRAME_TEMPLATE_IDS) {
+      const guide = getPanelFrameTemplateEditorialGuide(templateId);
+      expect(guide.geometry.length).toBeGreaterThan(0);
+      expect(guide.rtlFlow).toContain('reading_order');
+      expect(definitions.find((definition) => definition.id === templateId)?.editorialGuide).toEqual(guide);
+    }
   });
 });
 

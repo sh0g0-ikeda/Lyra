@@ -538,7 +538,7 @@ function extractCompilerBriefPageRefs(
   compilerBrief: string,
 ): Array<{ pageId: string; pageNumber: number }> {
   return Array.from(
-    compilerBrief.matchAll(/^Page (\d+) \(([^)]+)\)(?: \| frame_count=\d+)?$/gmu),
+    compilerBrief.matchAll(/^Page (\d+) \(([^)]+)\)(?: \|[^\r\n]*)?$/gmu),
   ).map((match) => ({
     pageNumber: Number(match[1]),
     pageId: match[2] ?? '',
@@ -1184,6 +1184,60 @@ describe('PageService', () => {
     });
     const frameDefinitions = pageRepository.updatedInputs[0]?.layoutConfig?.frame_definitions;
     expect(Array.isArray(frameDefinitions) ? frameDefinitions : []).toHaveLength(5);
+  });
+
+  it('episode story plan は panel数と一致する有効な非default templateとframe定義を保持する', async () => {
+    const pageRepository = new FakePageRepository();
+    const frameDefinitions = [
+      { readingOrder: 1, vertices: [{ x: 0.5, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 0.34 }, { x: 0.5, y: 0.34 }] },
+      { readingOrder: 2, vertices: [{ x: 0.5, y: 0.34 }, { x: 1, y: 0.34 }, { x: 1, y: 0.67 }, { x: 0.5, y: 0.67 }] },
+      { readingOrder: 3, vertices: [{ x: 0.5, y: 0.67 }, { x: 1, y: 0.67 }, { x: 1, y: 1 }, { x: 0.5, y: 1 }] },
+      { readingOrder: 4, vertices: [{ x: 0, y: 0 }, { x: 0.5, y: 0 }, { x: 0.5, y: 1 }, { x: 0, y: 1 }] },
+    ];
+    const baseContext = buildEpisodePlanningContext();
+    pageRepository.episodePlanningContext = {
+      ...baseContext,
+      pages: [{
+        ...baseContext.pages[0]!,
+        frameCount: 4,
+        layoutConfig: {
+          type: 'template',
+          template_id: 'tall_left_4',
+          panel_count: 4,
+          frame_definitions: frameDefinitions,
+        },
+        panels: Array.from({ length: 4 }, (_value, index) => ({
+          ...buildAutofillPanelContext(),
+          id: `panel-${index + 1}`,
+          order: index + 1,
+        })),
+      }],
+    };
+    pageRepository.page = {
+      ...buildPageSummary(),
+      layoutConfig: pageRepository.episodePlanningContext.pages[0]!.layoutConfig,
+      panelCount: 4,
+      frameCount: 4,
+    };
+    const service = new PageService(
+      pageRepository,
+      new FakePanelRepository(),
+      new FakePanelEntityAssignmentService(),
+      new FakePageAutofillCompiler(),
+      new FourPanelEpisodePagePlanCompiler(),
+    );
+
+    await service.autofillEpisodeFromStory('user-1', 'episode-1', 'ja');
+
+    expect(pageRepository.updatedInputs).not.toContainEqual(expect.objectContaining({
+      layoutConfig: expect.objectContaining({ template_id: 'standard_4' }),
+    }));
+    expect(pageRepository.episodePlanningContext!.pages[0]?.layoutConfig).toEqual({
+      type: 'template',
+      template_id: 'tall_left_4',
+      panel_count: 4,
+      frame_definitions: frameDefinitions,
+    });
   });
 
   it('episode story plan は frame 数と panel 数がずれていると compiler を呼ばず拒否する', async () => {
@@ -3027,7 +3081,7 @@ describe('PageService', () => {
     expect(entityIds).not.toContain('99999999-9999-4999-8999-999999999999');
   });
 
-  it('episode story plan は話者付きセリフの entityId 欠落や未登場話者を visible primary に補正する', async () => {
+  it('episode story plan は実在する未登場話者を保持し話者不明を visible primary に補正しない', async () => {
     const pageRepository = new FakePageRepository();
     pageRepository.episodePlanningContext = {
       ...buildEpisodePlanningContext(),
@@ -3091,33 +3145,21 @@ describe('PageService', () => {
                       },
                       {
                         entityId: '22222222-2222-4222-8222-222222222222',
-                        text: '……まだ整理しきれない。',
-                        type: 'thought',
+                        text: '廊下から声をかける。',
+                        type: 'speech',
                         position: 'top',
                       },
                       {
                         entityId: '33333333-3333-4333-8333-333333333333',
-                        text: '前を見て！',
-                        type: 'shout',
+                        text: '……まだ整理しきれない。',
+                        type: 'thought',
                         position: 'bottom',
-                      },
-                      {
-                        entityId: null,
-                        text: '声を落として。',
-                        type: 'whisper',
-                        position: 'left',
                       },
                       {
                         entityId: '22222222-2222-4222-8222-222222222222',
                         text: '朝の空気だけが静かだった。',
                         type: 'narration',
                         position: 'center',
-                      },
-                      {
-                        entityId: null,
-                        text: 'Minerva「ここで決める。」',
-                        type: 'narration',
-                        position: 'bottom',
                       },
                     ],
                   },
@@ -3144,38 +3186,28 @@ describe('PageService', () => {
     expect(panelRepository.updatedPanels[0]?.input.dialogue).toEqual([
       expect.objectContaining({
         type: 'speech',
-        entityId: '11111111-1111-4111-8111-111111111111',
+        entityId: null,
         text: 'ここで立ち止まるわけにはいかない。',
       }),
       expect.objectContaining({
+        type: 'speech',
+        entityId: '22222222-2222-4222-8222-222222222222',
+        text: '廊下から声をかける。',
+      }),
+      expect.objectContaining({
         type: 'thought',
-        entityId: '11111111-1111-4111-8111-111111111111',
+        entityId: '33333333-3333-4333-8333-333333333333',
         text: '……まだ整理しきれない。',
-      }),
-      expect.objectContaining({
-        type: 'shout',
-        entityId: '11111111-1111-4111-8111-111111111111',
-        text: '前を見て！',
-      }),
-      expect.objectContaining({
-        type: 'whisper',
-        entityId: '11111111-1111-4111-8111-111111111111',
-        text: '声を落として。',
       }),
       expect.objectContaining({
         type: 'narration',
         entityId: null,
         text: '朝の空気だけが静かだった。',
       }),
-      expect.objectContaining({
-        type: 'speech',
-        entityId: '11111111-1111-4111-8111-111111111111',
-        text: 'ここで決める。',
-      }),
     ]);
   });
 
-  it('episode story plan は story lead がそのコマにいない場合は visible な page lead へ話者を補正する', async () => {
+  it('episode story plan は話者不明のspeechをvisible page leadへ補正しない', async () => {
     const pageRepository = new FakePageRepository();
     pageRepository.episodePlanningContext = {
       ...buildEpisodePlanningContext(),
@@ -3254,7 +3286,7 @@ describe('PageService', () => {
     expect(panelRepository.updatedPanels[0]?.input.dialogue).toEqual([
       expect.objectContaining({
         type: 'speech',
-        entityId: '22222222-2222-4222-8222-222222222222',
+        entityId: null,
         text: 'ここから先は、君が選ぶことだ。',
       }),
     ]);
@@ -3286,7 +3318,7 @@ describe('PageService', () => {
     expect(compiler.lastInput).toBeNull();
   });
 
-  it('episode story plan は page 主役が別にいる時 thought を visible primary ではなく page lead へ寄せる', async () => {
+  it('episode story plan は page 主役と別の off-panel thought 話者を保持する', async () => {
     const pageRepository = new FakePageRepository();
     pageRepository.episodePlanningContext = {
       ...buildEpisodePlanningContext(),
@@ -3413,7 +3445,7 @@ describe('PageService', () => {
     expect(panelRepository.updatedPanels[1]?.input.dialogue).toEqual([
       expect.objectContaining({
         type: 'thought',
-        entityId: '11111111-1111-4111-8111-111111111111',
+        entityId: '33333333-3333-4333-8333-333333333333',
         text: '……まだ整理しきれない。',
       }),
     ]);
@@ -3921,9 +3953,250 @@ describe('PageService', () => {
     await expect(service.autofillFromScenes('user-1', 'page-1', 'ja')).rejects.toThrow('unexpected compiler bug');
   });
 
+  it('scene autofill は正規化後の4行を保存できる', async () => {
+    const pageRepository = new FakePageRepository();
+    const panelRepository = new FakePanelRepository();
+    const compiler: PageAutofillCompilerPort = {
+      async compileSuggestions(): Promise<CompiledPageAutofillSuggestion> {
+        return {
+          suggestion: {
+            panels: [{
+              order: 1,
+              dialogue: Array.from({ length: 4 }, (_value, index) => ({
+                entityId: null,
+                text: `  「必要な情報${index + 1}」  `,
+                type: 'narration' as const,
+                position: 'top' as const,
+              })),
+            }],
+          },
+          compilerProvider: 'openai',
+          compilerModel: 'test-model',
+          compilerPromptVersion: 'test-v1',
+        };
+      },
+    };
+    const service = new PageService(
+      pageRepository,
+      panelRepository,
+      new FakePanelEntityAssignmentService(),
+      compiler,
+    );
+
+    await service.autofillFromScenes('user-1', 'page-1', 'ja');
+
+    expect(panelRepository.updatedPanels[0]?.input.dialogue).toHaveLength(4);
+    expect(panelRepository.updatedPanels[0]?.input.dialogue?.[0]?.text).toBe('必要な情報1');
+  });
+
+  it('scene autofill は正規化後の5行を保存しない', async () => {
+    const panelRepository = new FakePanelRepository();
+    const compiler: PageAutofillCompilerPort = {
+      async compileSuggestions(): Promise<CompiledPageAutofillSuggestion> {
+        return {
+          suggestion: {
+            panels: [{
+              order: 1,
+              dialogue: Array.from({ length: 5 }, (_value, index) => ({
+                entityId: null,
+                text: `必要な情報${index + 1}`,
+                type: 'narration' as const,
+                position: 'top' as const,
+              })),
+            }],
+          },
+          compilerProvider: 'openai',
+          compilerModel: 'test-model',
+          compilerPromptVersion: 'test-v1',
+        };
+      },
+    };
+    const service = new PageService(
+      new FakePageRepository(),
+      panelRepository,
+      new FakePanelEntityAssignmentService(),
+      compiler,
+    );
+
+    await expect(service.autofillFromScenes('user-1', 'page-1', 'ja')).rejects.toBeInstanceOf(ValidationError);
+    expect(panelRepository.updatedPanels).toHaveLength(0);
+  });
+
+  it('scene autofill は2コマ目が5行ならpageと1コマ目も一切保存しない', async () => {
+    const pageRepository = new FakePageRepository();
+    pageRepository.autofillContext = {
+      ...buildAutofillContext(),
+      frameCount: 2,
+      panels: [
+        { ...buildAutofillPanelContext(), id: 'panel-1', order: 1 },
+        { ...buildAutofillPanelContext(), id: 'panel-2', order: 2 },
+      ],
+    };
+    const panelRepository = new FakePanelRepository();
+    const compiler: PageAutofillCompilerPort = {
+      async compileSuggestions(): Promise<CompiledPageAutofillSuggestion> {
+        return {
+          suggestion: {
+            page: { dialogueMode: 'image_baked' },
+            panels: [
+              {
+                order: 1,
+                dialogue: [{ entityId: null, text: '保存してはいけない', type: 'narration', position: 'top' }],
+              },
+              {
+                order: 2,
+                dialogue: Array.from({ length: 5 }, (_value, index) => ({
+                  entityId: null,
+                  text: `過剰${index + 1}`,
+                  type: 'narration' as const,
+                  position: 'top' as const,
+                })),
+              },
+            ],
+          },
+          compilerProvider: 'openai',
+          compilerModel: 'test-model',
+          compilerPromptVersion: 'test-v1',
+        };
+      },
+    };
+    const service = new PageService(
+      pageRepository,
+      panelRepository,
+      new FakePanelEntityAssignmentService(),
+      compiler,
+    );
+
+    await expect(service.autofillFromScenes('user-1', 'page-1', 'ja')).rejects.toBeInstanceOf(ValidationError);
+
+    expect(pageRepository.updatedInputs).toHaveLength(0);
+    expect(panelRepository.updatedPanels).toHaveLength(0);
+  });
+
+  it('episode story plan は監査修正後に残った5行を保存しない', async () => {
+    const panelRepository = new FakePanelRepository();
+    const compiler: EpisodePagePlanCompilerPort = {
+      async compilePlan(): Promise<CompiledEpisodePagePlan> {
+        return {
+          suggestion: {
+            pages: [{
+              pageId: 'page-1',
+              pageNumber: 1,
+              panels: [{
+                order: 1,
+                dialogue: Array.from({ length: 5 }, (_value, index) => ({
+                  entityId: null,
+                  text: `必要な情報${index + 1}`,
+                  type: 'narration' as const,
+                  position: 'top' as const,
+                })),
+              }],
+            }],
+          },
+          compilerProvider: 'openai',
+          compilerModel: 'test-model',
+          compilerPromptVersion: 'test-v1',
+        };
+      },
+    };
+    const service = new PageService(
+      new FakePageRepository(),
+      panelRepository,
+      new FakePanelEntityAssignmentService(),
+      new FakePageAutofillCompiler(),
+      compiler,
+    );
+
+    await expect(service.autofillEpisodeFromStory('user-1', 'episode-1', 'ja')).rejects.toBeInstanceOf(ValidationError);
+    expect(panelRepository.updatedPanels).toHaveLength(0);
+  });
+
+  it('episode story plan は overwrite repair のdialogue空配列で古い複数行を実際に消去する', async () => {
+    const pageRepository = new FakePageRepository();
+    const existingDialogue = Array.from({ length: 11 }, (_value, index) => ({
+      entityId: null,
+      text: `古い情報${index + 1}`,
+      type: 'narration' as const,
+      position: 'top' as const,
+    }));
+    pageRepository.episodePlanningContext = {
+      ...buildEpisodePlanningContext(),
+      pages: [{
+        ...buildEpisodePlanningContext().pages[0]!,
+        panels: [{ ...buildAutofillPanelContext(), dialogue: existingDialogue }],
+      }],
+    };
+    const panelRepository = new FakePanelRepository();
+    const compiler: EpisodePagePlanCompilerPort = {
+      async compilePlan(): Promise<CompiledEpisodePagePlan> {
+        return {
+          suggestion: {
+            pages: [{
+              pageId: 'page-1',
+              pageNumber: 1,
+              panels: [{ order: 1, dialogue: [] }],
+            }],
+          },
+          compilerProvider: 'openai',
+          compilerModel: 'test-model',
+          compilerPromptVersion: 'test-v1',
+        };
+      },
+    };
+    const service = new PageService(
+      pageRepository,
+      panelRepository,
+      new FakePanelEntityAssignmentService(),
+      new FakePageAutofillCompiler(),
+      compiler,
+    );
+
+    await service.autofillEpisodeFromStory('user-1', 'episode-1', 'ja');
+
+    expect(panelRepository.updatedPanels[0]?.input.dialogue).toEqual([]);
+  });
+
+  it('scene autofill はoverwrite対象でない既存11行を触らずに保持する', async () => {
+    const pageRepository = new FakePageRepository();
+    pageRepository.autofillContext = {
+      ...buildAutofillContext(),
+      panels: [{
+        ...buildAutofillPanelContext(),
+        dialogue: Array.from({ length: 11 }, (_value, index) => ({
+          entityId: null,
+          text: `手動の古い情報${index + 1}`,
+          type: 'narration' as const,
+          position: 'top' as const,
+        })),
+      }],
+    };
+    const panelRepository = new FakePanelRepository();
+    const service = new PageService(
+      pageRepository,
+      panelRepository,
+      new FakePanelEntityAssignmentService(),
+      new FakePageAutofillCompiler(),
+    );
+
+    await service.autofillFromScenes('user-1', 'page-1', 'ja');
+
+    expect(panelRepository.updatedPanels[0]?.input.dialogue).toBeUndefined();
+  });
+
   it('scene がなくても page autofill を実行する', async () => {
     const pageRepository = new FakePageRepository();
-    pageRepository.autofillContext = { ...buildAutofillContext(), scenes: [] };
+    pageRepository.autofillContext = {
+      ...buildAutofillContext(),
+      scenes: [],
+      layoutConfig: {
+        type: 'template',
+        template_id: 'splash_1',
+        frame_definitions: [{
+          readingOrder: 1,
+          vertices: [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }, { x: 0, y: 1 }],
+        }],
+      },
+    };
     const panelRepository = new FakePanelRepository();
     const assignmentService = new FakePanelEntityAssignmentService();
     const compiler = new FakePageAutofillCompiler();
@@ -3942,6 +4215,11 @@ describe('PageService', () => {
     const compilerBrief = compiler.lastInput?.compilerBrief ?? '';
     expect(compilerBrief).toContain('[SCENES]');
     expect(compilerBrief).toContain('(none)');
+    expect(compilerBrief).toContain('[FRAME CAPACITY]');
+    expect(compilerBrief).toContain('Panel 1: area=1.000, width=1.000, height=1.000');
+    expect(compilerBrief).toContain('Each panel may contain zero to 4 total text lines');
+    expect(compilerBrief).toContain('Preserve silence when the beat is already clear visually');
+    expect(compilerBrief).not.toContain('Use narration sparingly');
   });
 
   it('frame 数と panel 数がずれていると autofill を拒否する', async () => {

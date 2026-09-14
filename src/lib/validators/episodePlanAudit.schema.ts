@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { EPISODE_PAGE_PLAN_MAX_DIALOGUE_LINES_PER_PANEL } from '../../domain/constants/generation.js';
 import { STORY_AI_LIMITS } from '../../domain/constants/storyAi.js';
 import {
   autofillCompositionSchema,
@@ -7,6 +8,7 @@ import {
 } from './pageAutofill.schema.js';
 
 export const episodePlanAuditIssueCodes = [
+  'dialogue_density',
   'duplicate_dialogue',
   'duplicate_visual_beat',
   'timeline_discontinuity',
@@ -84,7 +86,7 @@ const panelRepairPatchSchema = z
     situation_text: z.string().trim().min(1).max(2_000).nullable(),
     composition: autofillCompositionSchema.nullable(),
     dialogue_in_panel: z.boolean().nullable(),
-    dialogue: z.array(autofillDialogueLineSchema).max(20).nullable(),
+    dialogue: z.array(autofillDialogueLineSchema).max(EPISODE_PAGE_PLAN_MAX_DIALOGUE_LINES_PER_PANEL).nullable(),
     sfx_text: z.string().trim().min(1).max(200).nullable(),
     background_note: z.string().trim().min(1).max(2_000).nullable(),
     panel_notes: z.string().trim().min(1).max(2_000).nullable(),

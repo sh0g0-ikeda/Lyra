@@ -78,4 +78,106 @@ describe('AutoBalloonLayout', () => {
       expect(balloon.position.height <= 0.12 * 0.88 + 1e-6).toBe(true);
     }
   });
+
+  it('thoughtは話者がコマ内でもspeech tailを作らない', () => {
+    const panel = buildPanel({
+      dialogue: [{ entityId: 'entity-1', text: 'どうする。', type: 'thought', position: 'top' }],
+      entities: [buildAssignment('entity-1', 'left')],
+    });
+
+    const [balloon] = buildAutoBalloonInputs('balloon_only', [panel], [buildFrame()]);
+
+    expect(balloon?.speakerEntityId).toBe('entity-1');
+    expect(balloon?.tail).toBeNull();
+  });
+
+  it('off-panel speechは実際の話者IDを保持し見えるlistenerへtailを作らない', () => {
+    const panel = buildPanel({
+      dialogue: [{ entityId: 'entity-off', text: 'こちらへ。', type: 'speech', position: 'top' }],
+      entities: [buildAssignment('entity-visible', 'center')],
+    });
+
+    const [balloon] = buildAutoBalloonInputs('balloon_only', [panel], [buildFrame()]);
+
+    expect(balloon?.speakerEntityId).toBe('entity-off');
+    expect(balloon?.tail).toBeNull();
+  });
+
+  it('visible speechはtail先を話者の配置側へ向ける', () => {
+    const panel = buildPanel({
+      dialogue: [{ entityId: 'entity-1', text: '右だ。', type: 'speech', position: 'top' }],
+      entities: [buildAssignment('entity-1', 'right')],
+    });
+
+    const [balloon] = buildAutoBalloonInputs('balloon_only', [panel], [buildFrame()]);
+
+    expect(balloon?.tail).not.toBeNull();
+    expect(balloon?.tail?.tipX).toBeCloseTo(0.75);
+    expect(balloon?.tail?.tipX).not.toBeCloseTo(0.5);
+  });
 });
+
+function buildPanel(overrides: Partial<Panel> = {}): Panel {
+  return {
+    id: 'panel-1',
+    pageId: 'page-1',
+    order: 1,
+    panelRole: 'action',
+    panelSize: 'standard',
+    situationText: null,
+    entities: [],
+    composition: {
+      source: 'custom',
+      galleryItemId: null,
+      compositionPrompt: null,
+      shotType: null,
+      angle: null,
+      customNote: null,
+    },
+    dialogueInPanel: false,
+    dialogue: [],
+    sfxText: null,
+    backgroundNote: null,
+    panelNotes: null,
+    createdAt: new Date('2026-09-14T00:00:00.000Z'),
+    updatedAt: new Date('2026-09-14T00:00:00.000Z'),
+    ...overrides,
+  };
+}
+
+function buildAssignment(
+  entityId: string,
+  position: Panel['entities'][number]['position'],
+): Panel['entities'][number] {
+  return {
+    entityId,
+    role: 'primary',
+    expression: 'calm',
+    customExpression: null,
+    action: 'standing_firm',
+    customAction: null,
+    position,
+    facingDirection: null,
+    effectNote: null,
+    stateId: null,
+  };
+}
+
+function buildFrame(): PanelFrame {
+  return {
+    id: 'frame-1',
+    pageId: 'page-1',
+    panelId: 'panel-1',
+    vertices: [
+      { x: 0, y: 0 },
+      { x: 1, y: 0 },
+      { x: 1, y: 1 },
+      { x: 0, y: 1 },
+    ],
+    borderStyle: 'solid',
+    borderWidth: 2,
+    borderColor: '#000000',
+    zIndex: 1,
+    readingOrder: 1,
+  };
+}

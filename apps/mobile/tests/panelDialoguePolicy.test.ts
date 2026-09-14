@@ -12,10 +12,11 @@ describe('panelDialoguePolicy', () => {
     expect(isPanelDialogueSpeakerValid('narration', null, ['entity-1'])).toBe(true);
   });
 
-  it('発話系セリフはコマに登場する話者を必須にする', () => {
+  it('発話系セリフは同一workの話者を必須にし、off-panel speakerを許可する', () => {
     expect(requiresPanelDialogueSpeaker('speech')).toBe(true);
     expect(isPanelDialogueSpeakerValid('speech', null, ['entity-1'])).toBe(false);
-    expect(isPanelDialogueSpeakerValid('thought', 'entity-2', ['entity-1'])).toBe(false);
+    expect(isPanelDialogueSpeakerValid('thought', 'entity-2', ['entity-1', 'entity-2'])).toBe(true);
+    expect(isPanelDialogueSpeakerValid('thought', 'other-work-entity', ['entity-1', 'entity-2'])).toBe(false);
     expect(isPanelDialogueSpeakerValid('whisper', 'entity-1', ['entity-1'])).toBe(true);
   });
 

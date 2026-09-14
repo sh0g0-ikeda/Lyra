@@ -306,7 +306,7 @@ function normalizeCreateInput(input: CreatePanelInput): CreatePanelInput {
     situationText: input.situationText ?? null,
     composition: normalizeComposition(input.composition),
     dialogueInPanel: input.dialogueInPanel ?? true,
-    dialogue: input.dialogue ?? [],
+    dialogue: normalizeDialogue(input.dialogue ?? []),
     sfxText: input.sfxText ?? null,
     backgroundNote: input.backgroundNote ?? null,
     panelNotes: input.panelNotes ?? null,
@@ -317,7 +317,16 @@ function normalizeUpdateInput(input: UpdatePanelInput): UpdatePanelInput {
   return {
     ...input,
     composition: input.composition === undefined ? undefined : normalizeComposition(input.composition),
+    dialogue: input.dialogue === undefined ? undefined : normalizeDialogue(input.dialogue),
   };
+}
+
+function normalizeDialogue(dialogue: PanelDialogueLine[]): PanelDialogueLine[] {
+  return dialogue.map((line) =>
+    line.type === 'narration' && line.entityId !== null
+      ? { ...line, entityId: null }
+      : line,
+  );
 }
 
 function normalizeComposition(composition: PanelComposition | undefined): PanelComposition {

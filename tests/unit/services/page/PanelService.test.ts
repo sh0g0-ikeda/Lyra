@@ -258,6 +258,27 @@ describe('PanelService', () => {
     expect(panel.dialogue[0]?.entityId).toBeNull();
   });
 
+  it('narration は指定されたentity idを保存せずnullに正規化する', async () => {
+    const repository = new FakePanelRepository();
+    const service = new PanelService(repository, new FakeEntityReader(), new FakePanelFrameRepository());
+
+    await service.createPanel(userId, pageId, {
+      ...buildCreateInput(),
+      dialogue: [
+        {
+          entityId,
+          text: 'Night fell.',
+          type: 'narration',
+          position: 'center',
+        },
+      ],
+    });
+
+    expect(repository.savedCreateInput?.dialogue).toEqual([
+      expect.objectContaining({ entityId: null, type: 'narration' }),
+    ]);
+  });
+
   it('clears stale gallery ids for custom composition', async () => {
     const repository = new FakePanelRepository();
     const service = new PanelService(repository, new FakeEntityReader(), new FakePanelFrameRepository());

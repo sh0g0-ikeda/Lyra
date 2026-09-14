@@ -1,4 +1,6 @@
+import { STORY_SOURCE_POLICY, STORY_TEXT_POLICY, STORY_SPEAKER_POLICY, STORY_PANEL_POLICY } from './StoryEditorialPrompts.js';
 import {
+  EPISODE_PAGE_PLAN_MAX_DIALOGUE_LINES_PER_PANEL,
   PAGE_AUTOFILL_COMPILER_MAX_TOKENS,
   PAGE_AUTOFILL_COMPILER_OPENAI_MODEL,
   PAGE_AUTOFILL_COMPILER_VERSION,
@@ -112,55 +114,20 @@ export class OpenAIPageAutofillCompiler implements PageAutofillCompilerPort {
 function buildSystemPrompt(language: CompilePageAutofillInput['language']): string {
   const outputLanguage = describeAppLanguage(language);
   return [
-    'You convert Lyra story notes into editable manga page and panel draft data.',
-    'Return JSON only. Do not output markdown, commentary, or prose outside the JSON object.',
-    'The JSON must match the requested output shape exactly.',
-    'Treat the episode draft as the main source of truth. Use scenes when they are provided, but do not require scenes to produce a useful page draft.',
-    'Treat chapter information only as a consistency guard so the page does not contradict the larger chapter arc.',
-    'Fill the existing editable fields with grounded defaults that a user can revise before image generation.',
-    'First decide the page beat, then split that page beat into panel beats following the saved Japanese manga reading order.',
-    'For Japanese manga reading flow, panel 1 is the upper-right or rightmost top entry; follow saved panel numbers generally right-to-left and downward toward the lower-left.',
-    'For regular rows this means right-to-left, then top-to-bottom; saved numbering is authoritative for asymmetric layouts.',
-    'Place earlier balloons or captions higher and farther right in their panel sequence; later balloons or captions follow the same Japanese reading flow.',
-    'Explicitly choose the visible subject or subjects for each panel before writing any field text.',
-    'Before writing any text lines, infer what information the full page still needs in order to be understandable, then distribute that information between image, narration, and dialogue instead of dumping everything into one field.',
-    'For each panel, explicitly decide who the visible subject is, what changes in that panel, and why that panel exists in the page rhythm.',
-    'Convert abstract story intent into visible panel cues such as situation, camera distance, angle, character placement, posture, gaze, expression, background, and when needed dialogue or narration.',
-    'Keep every generated text field concise and editable. Prefer one short sentence or compact phrase per field.',
-    'Do not copy a whole scene summary into every panel. Describe only the panel-specific beat.',
-    'Do not repeat the same panel beat in neighboring panels unless the story genuinely stalls on a held moment.',
-    'Do not fill situation_text, composition_prompt, custom_note, and background_note with the same sentence in different wrappers. Each field must do a different job.',
-    'situation_text explains what is happening in the panel. composition_prompt explains how the panel should be framed. custom_note explains staging or camera emphasis. background_note names only the visible environment.',
-    `All free-text fields, including situation_text, composition_prompt, custom_note, background_note, panel_notes, dialogue text, and narration text, must be written in natural ${outputLanguage} suitable for direct editing in the Lyra UI.`,
-    'For situation_text, write a concrete visual beat that names the subject or subjects, their visible action or feeling, and the immediate context in image-friendly language.',
-    'For composition.composition_prompt, explicitly name the subject, the framing intention, and the spatial relation or emphasis so an image model can stage the panel correctly.',
-    'For composition.custom_note, add a short camera or direction memo whenever shot type and angle alone would leave the intended staging ambiguous.',
-    'If a panel beat clearly centers on a named character or identified group, do not leave entities empty. Choose the visible subject as primary and only add supporting entities when they truly appear in the frame.',
-    'If multiple named characters matter to the page, vary panel focus intentionally: some panels may show both, some only one reaction, some only the environment or pause beat as needed.',
-    'Use only the provided entity IDs and only the provided enum values.',
-    'Do not invent extra characters, new locations, props, weapons, twists, or dramatic action that is not supported by the supplied story information.',
-    'Dialogue itself should remain restrained and should not appear in every panel, but it should not become unnaturally scarce either.',
-    'Narration may be used more freely when important story logic, transition, emotional framing, or time-space context would be difficult to convey through the image alone.',
-    'Some panels may remain silent, but do not let the page become under-explained. When the story beat would feel unclear without text, prefer a short narration line rather than forcing extra dialogue.',
-    `When dialogue is needed, write it as natural ${outputLanguage} a character would actually say or think in context, not as a stiff summary of plot information.`,
-    'Keep Japanese dialogue and narration concise enough for vertical tategaki: use short, natural phrases that leave room for readable balloons or captions.',
-    'Use speech to carry pressure, reaction, disagreement, hesitation, reassurance, challenge, or personal emphasis. Use narration to carry connective or explanatory information that would sound unnatural if spoken aloud.',
-    'If one line is followed by another character in the next panel, make the second line answer, deflect, or react to the first line so the exchange reads like an actual conversation.',
-    'Respect character knowledge and motivation. Do not make characters say information to each other if both already know it, unless the scene gives them a real reason to voice it.',
-    'If spoken dialogue would feel clumsy but the reader still needs the information, prefer short narration instead.',
-    'Prefer concise character speech or thought for interpersonal beats that clearly need a spoken or internal voice.',
-    'For confrontation, conversation, explanation, emotional turn, obvious reaction beats, or clear internal decision moments, provide at least one short speech or thought line unless the panel is clearly intended to be silent.',
-    'If two named characters are facing each other, responding to each other, challenging each other, or emotionally reacting to each other, assume some dialogue is usually natural unless the brief strongly implies silence.',
-    'Use narration especially for setup, transition, internal realization, cause-and-effect clarification, and context that staging alone cannot fully express.',
-    'Do not duplicate the same narration across multiple panels and do not stuff every panel with dialogue. Keep narration compact, specific, and directly tied to the panel.',
-    'Distribute narration deliberately across the page so it fills real information gaps, not as repetitive decoration.',
-    'If a character voice should feel terse, blunt, awkward, formal, guarded, or emotionally frayed, let the wording length and rhythm reflect that.',
-    'Respect the exact existing page number, panel count, and panel orders in the brief.',
-    'Prefer composition source "custom" unless a gallery id is explicitly required in the brief.',
-    'Keep the result restrained, readable, and suitable for manga production rather than flashy or quirky.',
+    'You draft one editable manga page for Lyra from its supplied story context.',
+    STORY_SOURCE_POLICY,
+    'Return JSON only matching the output contract. Keep the exact page number, panel count, and panel orders.',
+    'Treat the episode draft as the page content source, scenes as available concrete context, and chapter data as consistency constraints. Do not invent missing story facts.',
+    'Decide the page’s entry, progression, and exit, then allocate information to panels before writing any final dialogue. Respect already planned page purpose and adjacent story context.',
+    STORY_TEXT_POLICY,
+    STORY_SPEAKER_POLICY,
+    STORY_PANEL_POLICY,
+    'Choose only the actually visible registered subjects; named off-panel voices remain dialogue speakers, not visible entity assignments. A panel centered on a visible registered character must identify that entity.',
+    'Preserve natural questions and replies and the speakers’ knowledge and voice. Emotion and facing characters are not automatic requirements to add text.',
+    'Prefer composition source custom unless the brief explicitly supplies an appropriate gallery ID.',
+    `Write free-text values in natural ${outputLanguage}, concise and suitable for direct editing in the UI.`,
   ].join(' ');
 }
-
 function buildUserPrompt(compilerBrief: string): string {
   return [
     'Page autofill brief:',
@@ -503,7 +470,7 @@ const nullableDialogueArraySchema = {
   anyOf: [
     {
       type: 'array',
-      maxItems: 20,
+      maxItems: EPISODE_PAGE_PLAN_MAX_DIALOGUE_LINES_PER_PANEL,
       items: {
         type: 'object',
         additionalProperties: false,
