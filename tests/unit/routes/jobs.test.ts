@@ -31,6 +31,22 @@ class FakeJobService {
 }
 
 describe('job routes', () => {
+  it.each([
+    ['OpenAI episode page plan compiler returned an invalid payload: Invalid UUID at pages[4].panels[2].entities[0].entity_id', 'GENERATION_TEMPORARILY_UNAVAILABLE', 'job.error.temporarilyUnavailable', true],
+    ['OpenAI episode page plan compiler returned invalid JSON', 'GENERATION_TEMPORARILY_UNAVAILABLE', 'job.error.temporarilyUnavailable', true],
+    ['Invalid entity_id for this work', 'GENERATION_INPUT_INVALID', 'job.error.inputInvalid', false],
+    ['Missing required story input', 'GENERATION_INPUT_INVALID', 'job.error.inputInvalid', false],
+    ['OpenAI request rejected unsupported input', 'GENERATION_INPUT_INVALID', 'job.error.inputInvalid', false],
+  ])('保存済みの失敗 %s をMobile互換の安全な分類で返す', async (errorMessage, code, key, retryable) => {
+    const service = new FakeJobService();
+    service.job = buildJob({ errorMessage: String(errorMessage) });
+    const response = await createTestApp(service).request(`/jobs/${jobId}`);
+    const body = await response.json();
+    expect(body).toMatchObject({ error_code: code, message_key: key, retryable });
+    expect(() => generationJobSchema.parse(body)).not.toThrow();
+    expect(JSON.stringify(body)).not.toContain(errorMessage);
+  });
+
   it('テナント、状態、種別、カーソルを指定してジョブ一覧を返す', async () => {
     const service = new FakeJobService();
     const app = createTestApp(service);

@@ -6,6 +6,8 @@ import {
   ValidationError,
 } from '../../../../src/domain/errors/index.js';
 import { STORY_AI_LIMITS } from '../../../../src/domain/constants/storyAi.js';
+import { OpenAIClient } from '../../../../src/infrastructure/openai/OpenAIClient.js';
+import { OpenAIPageEpisodePlanCompiler } from '../../../../src/infrastructure/openai/OpenAIPageEpisodePlanCompiler.js';
 import type {
   EpisodePagePlanApplyResult,
   EpisodePagePlanContext,
@@ -573,6 +575,65 @@ class FakeStyleReferenceCompiler implements StyleReferenceCompilerPort {
 }
 
 describe('PageService', () => {
+  it('AIが2回とも不正なキャラUUIDを返した場合は既存ページと台詞と登場人物を保存しない', async () => {
+    const pageRepository = new FakePageRepository();
+    const panelRepository = new FakePanelRepository();
+    const assignmentService = new FakePanelEntityAssignmentService();
+    let requests = 0;
+    let commits = 0;
+    const compiler = new OpenAIPageEpisodePlanCompiler({
+      postJson: async () => {
+        requests += 1;
+        return { body: { output_text: JSON.stringify({ pages: [{
+          page_id: '33333333-3333-4333-8333-333333333333', page_number: 1,
+          panels: [{ order: 1, entities: [{ entity_id: 'malformed-id', role: 'primary', expression: 'calm', action: 'standing_firm', position: 'center' }] }],
+        }] }) }, requestId: 'req-private' };
+      },
+    } as unknown as OpenAIClient);
+    const service = new PageService(pageRepository, panelRepository, assignmentService,
+      new FakePageAutofillCompiler(), compiler, undefined, new FakeEpisodeBeatPlanCompiler(),
+      new FakeEpisodePlanAuditCompiler(), true);
+    const result = await service.autofillEpisodeFromStory('user-1', 'episode-1', 'ja', undefined, null, {
+      checkpoint: async () => undefined,
+      beginCommit: async () => { commits += 1; },
+    });
+    expect(result.compilerUsed).toBe(false);
+    expect(requests).toBe(2);
+    expect(commits).toBe(0);
+    expect(pageRepository.updatedInputs).toHaveLength(0);
+    expect(panelRepository.updatedPanels).toHaveLength(0);
+    expect(assignmentService.updates).toHaveLength(0);
+  });
+
+  it.each([false, true])('continuity v3=%sでも全キャラIDと再試行直前の取消確認を渡し保存しない', async (continuityV3) => {
+    const pageRepository = new FakePageRepository();
+    const panelRepository = new FakePanelRepository();
+    const assignmentService = new FakePanelEntityAssignmentService();
+    let retryStarted = false;
+    let passedCheckpoint = false;
+    const cancelled = new Error('cancel before provider retry');
+    const compiler: EpisodePagePlanCompilerPort = {
+      compilePlan: async (input) => {
+        expect(input.allowedEntityIds).toEqual(pageRepository.episodePlanningContext!.entities.map((entity) => entity.id));
+        retryStarted = true;
+        await input.beforeRetry?.();
+        passedCheckpoint = true;
+        throw new ConfigurationError('should not request again');
+      },
+    };
+    const service = new PageService(pageRepository, panelRepository, assignmentService,
+      new FakePageAutofillCompiler(), compiler, undefined, new FakeEpisodeBeatPlanCompiler(),
+      new FakeEpisodePlanAuditCompiler(), continuityV3);
+    await expect(service.autofillEpisodeFromStory('user-1', 'episode-1', 'ja', undefined, null, {
+      checkpoint: async () => { if (retryStarted) throw cancelled; },
+      beginCommit: async () => { throw new Error('must not commit'); },
+    })).rejects.toBe(cancelled);
+    expect(passedCheckpoint).toBe(false);
+    expect(pageRepository.updatedInputs).toHaveLength(0);
+    expect(panelRepository.updatedPanels).toHaveLength(0);
+    expect(assignmentService.updates).toHaveLength(0);
+  });
+
   it('ページが存在しないと 404 になる', async () => {
     const repository = new FakePageRepository();
     repository.page = null;

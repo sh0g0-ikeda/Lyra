@@ -4,6 +4,8 @@ import type { AppLanguage } from '../../domain/types/language.js';
 export interface CompileEpisodePagePlanInput {
   compilerBrief: string;
   language: AppLanguage;
+  allowedEntityIds: readonly string[];
+  beforeRetry?: () => Promise<void>;
 }
 
 export interface CompiledEpisodePagePlan {

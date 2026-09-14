@@ -433,6 +433,260 @@ test('renders the console with mocked api responses', async ({ page }) => {
   await expect(page.getByRole('textbox', { name: 'Situation' })).toHaveValue('Mizuki enters the fort.');
 });
 
+test('参照削除でrevisionだけ変わっても入力中draftを保持し、そのrevisionでpreviewを生成する', async ({ page }) => {
+  await seedEnglishUi(page);
+  await seedAuthenticatedSession(page);
+
+  const revisionOnlyEntity = {
+    ...entity,
+    updated_at: '2026-04-26T00:00:01.000Z',
+  };
+  let referenceDeleted = false;
+  let resolveDelete: (() => void) | undefined;
+  const deleteGate = new Promise<void>((resolve) => {
+    resolveDelete = resolve;
+  });
+  let deleteStarted = false;
+  let entityUpdateBody: Record<string, unknown> | null = null;
+  let previewRequested = false;
+
+  await page.route('**/api/**', async (route) => {
+    const request = route.request();
+    const pathname = new URL(request.url()).pathname;
+    if (pathname === `/api/works/${work.id}/entities` && request.method() === 'GET') {
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ entities: [referenceDeleted ? revisionOnlyEntity : entity] }),
+      });
+    }
+    if (pathname === `/api/entities/${entity.id}/reference/ref-1` && request.method() === 'DELETE') {
+      deleteStarted = true;
+      await deleteGate;
+      referenceDeleted = true;
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          entity_id: entity.id,
+          primary_ref_id: null,
+          status: 'empty',
+          updated_at: revisionOnlyEntity.updated_at,
+          reference_images: [],
+        }),
+      });
+    }
+    if (pathname === `/api/entities/${entity.id}` && request.method() === 'PUT') {
+      entityUpdateBody = request.postDataJSON() as Record<string, unknown>;
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(revisionOnlyEntity),
+      });
+    }
+    if (pathname === `/api/entities/${entity.id}/generate-reference` && request.method() === 'POST') {
+      previewRequested = true;
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ job_id: '88888888-8888-4888-8888-888888888888' }),
+      });
+    }
+    return mockApi(route);
+  });
+
+  page.on('dialog', (dialog) => void dialog.accept());
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Entities', exact: true }).click();
+
+  const description = page.getByRole('textbox', { name: 'Free description', exact: true });
+  await page.locator('.reference-card').getByRole('button', { name: 'Delete', exact: true }).click();
+  await expect.poll(() => deleteStarted).toBe(true);
+  await description.fill('Typed while reference deletion is pending');
+  resolveDelete?.();
+
+  await expect(description).toHaveValue('Typed while reference deletion is pending');
+  await page.getByRole('button', { name: 'Generate full-body preview', exact: true }).click();
+  await expect.poll(() => entityUpdateBody).not.toBeNull();
+  expect(entityUpdateBody).toMatchObject({
+    expected_updated_at: revisionOnlyEntity.updated_at,
+    free_description: 'Typed while reference deletion is pending',
+  });
+  await expect.poll(() => previewRequested).toBe(true);
+});
+
+test('参照削除後のentity再読込に失敗した場合はdraftを残して生成を止める', async ({ page }) => {
+  await seedEnglishUi(page);
+  await seedAuthenticatedSession(page);
+  let referenceDeleted = false;
+
+  await page.route('**/api/**', async (route) => {
+    const request = route.request();
+    const pathname = new URL(request.url()).pathname;
+    if (pathname === `/api/works/${work.id}/entities` && request.method() === 'GET') {
+      if (referenceDeleted) {
+        return route.fulfill({
+          status: 500,
+          contentType: 'application/json',
+          body: JSON.stringify({ error: { code: 'INTERNAL_ERROR', message: 'reload failed' } }),
+        });
+      }
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ entities: [entity] }) });
+    }
+    if (pathname === `/api/entities/${entity.id}/reference/ref-1` && request.method() === 'DELETE') {
+      referenceDeleted = true;
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ entity_id: entity.id, primary_ref_id: null, status: 'empty', updated_at: entity.updated_at, reference_images: [] }),
+      });
+    }
+    return mockApi(route);
+  });
+
+  page.on('dialog', (dialog) => void dialog.accept());
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Entities', exact: true }).click();
+  const description = page.getByRole('textbox', { name: 'Free description', exact: true });
+  await description.fill('Keep this draft after the reload failure');
+  await page.locator('.reference-card').getByRole('button', { name: 'Delete', exact: true }).click();
+
+  await expect(description).toHaveValue('Keep this draft after the reload failure');
+  await expect(page.getByText('This operation cannot be completed in the current state. Reload the page, check the latest state, then try again.')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Generate full-body preview', exact: true })).toBeDisabled();
+});
+
+test('参照削除後にeditable fieldが変わった場合はdraftを残して生成を止める', async ({ page }) => {
+  await seedEnglishUi(page);
+  await seedAuthenticatedSession(page);
+  let referenceDeleted = false;
+  const conflictingEntity = { ...entity, name: 'Changed by another editor', updated_at: '2026-04-26T00:00:03.000Z' };
+
+  await page.route('**/api/**', async (route) => {
+    const request = route.request();
+    const pathname = new URL(request.url()).pathname;
+    if (pathname === `/api/works/${work.id}/entities` && request.method() === 'GET') {
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ entities: [referenceDeleted ? conflictingEntity : entity] }),
+      });
+    }
+    if (pathname === `/api/entities/${entity.id}/reference/ref-1` && request.method() === 'DELETE') {
+      referenceDeleted = true;
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ entity_id: entity.id, primary_ref_id: null, status: 'empty', updated_at: conflictingEntity.updated_at, reference_images: [] }),
+      });
+    }
+    return mockApi(route);
+  });
+
+  page.on('dialog', (dialog) => void dialog.accept());
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Entities', exact: true }).click();
+  const description = page.getByRole('textbox', { name: 'Free description', exact: true });
+  await description.fill('Keep this draft after a true conflict');
+  await page.locator('.reference-card').getByRole('button', { name: 'Delete', exact: true }).click();
+
+  await expect(description).toHaveValue('Keep this draft after a true conflict');
+  await expect(page.getByText('This operation cannot be completed in the current state. Reload the page, check the latest state, then try again.')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Generate full-body preview', exact: true })).toBeDisabled();
+});
+
+test('参照削除後にtarget entityが見つからない場合はdraftを残して生成を止める', async ({ page }) => {
+  await seedEnglishUi(page);
+  await seedAuthenticatedSession(page);
+  let referenceDeleted = false;
+
+  await page.route('**/api/**', async (route) => {
+    const request = route.request();
+    const pathname = new URL(request.url()).pathname;
+    if (pathname === `/api/works/${work.id}/entities` && request.method() === 'GET') {
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ entities: referenceDeleted ? [] : [entity] }),
+      });
+    }
+    if (pathname === `/api/entities/${entity.id}/reference/ref-1` && request.method() === 'DELETE') {
+      referenceDeleted = true;
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ entity_id: entity.id, primary_ref_id: null, status: 'empty', updated_at: entity.updated_at, reference_images: [] }),
+      });
+    }
+    return mockApi(route);
+  });
+
+  page.on('dialog', (dialog) => void dialog.accept());
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Entities', exact: true }).click();
+  const description = page.getByRole('textbox', { name: 'Free description', exact: true });
+  await description.fill('Keep this draft when the entity is absent');
+  await page.locator('.reference-card').getByRole('button', { name: 'Delete', exact: true }).click();
+
+  await expect(description).toHaveValue('Keep this draft when the entity is absent');
+  await expect(page.getByText('This operation cannot be completed in the current state. Reload the page, check the latest state, then try again.')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Generate full-body preview', exact: true })).toBeDisabled();
+});
+
+test('参照削除後の遅延entity再読込失敗は切替後のentityをstale化しない', async ({ page }) => {
+  await seedEnglishUi(page);
+  await seedAuthenticatedSession(page);
+  const secondEntity = {
+    ...entity,
+    id: 'entity-2',
+    name: 'Haruto',
+    updated_at: '2026-04-26T00:00:02.000Z',
+  };
+  let referenceDeleted = false;
+  let entityReloadStarted = false;
+  let resolveEntityReload: (() => void) | undefined;
+  const entityReloadGate = new Promise<void>((resolve) => {
+    resolveEntityReload = resolve;
+  });
+
+  await page.route('**/api/**', async (route) => {
+    const request = route.request();
+    const pathname = new URL(request.url()).pathname;
+    if (pathname === `/api/works/${work.id}/entities` && request.method() === 'GET') {
+      if (referenceDeleted) {
+        entityReloadStarted = true;
+        await entityReloadGate;
+        return route.fulfill({
+          status: 500,
+          contentType: 'application/json',
+          body: JSON.stringify({ error: { code: 'INTERNAL_ERROR', message: 'late reload failed' } }),
+        });
+      }
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ entities: [entity, secondEntity] }) });
+    }
+    if (pathname === `/api/entities/${entity.id}/reference/ref-1` && request.method() === 'DELETE') {
+      referenceDeleted = true;
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ entity_id: entity.id, primary_ref_id: null, status: 'empty', updated_at: entity.updated_at, reference_images: [] }),
+      });
+    }
+    return mockApi(route);
+  });
+
+  page.on('dialog', (dialog) => void dialog.accept());
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Entities', exact: true }).click();
+  await page.locator('.reference-card').getByRole('button', { name: 'Delete', exact: true }).click();
+  await expect.poll(() => entityReloadStarted).toBe(true);
+  await page.getByRole('button', { name: 'Haruto', exact: true }).click();
+  resolveEntityReload?.();
+
+  await expect(page.getByRole('textbox', { name: 'Name', exact: true })).toHaveValue('Haruto');
+  await expect(page.getByRole('button', { name: 'Save character', exact: true })).toBeEnabled();
+});
+
 test('ページ一覧は署名付きCDN画像を使いAPI画像書き出しを重複実行しない', async ({ page }) => {
   await seedEnglishUi(page);
   await seedAuthenticatedSession(page);
