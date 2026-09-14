@@ -292,6 +292,18 @@ function toSafeJobError(job: GenerationJob): SafeJobErrorResponse {
   }
 
   const raw = job.errorMessage?.toLowerCase() ?? '';
+  const invalidProviderOutput = raw.includes('openai') && matchesAny(raw, [
+    'returned an invalid payload', 'returned invalid json',
+  ]);
+  if (invalidProviderOutput) {
+    return {
+      code: 'GENERATION_TEMPORARILY_UNAVAILABLE',
+      messageKey: 'job.error.temporarilyUnavailable',
+      retryable: true,
+      supportId: buildJobSupportId(job),
+      message: 'Generation is temporarily unavailable. Please try again.',
+    };
+  }
   if (matchesAny(raw, ['invalid', 'validation', 'missing required', 'must be', 'unsupported input'])) {
     return {
       code: 'GENERATION_INPUT_INVALID',

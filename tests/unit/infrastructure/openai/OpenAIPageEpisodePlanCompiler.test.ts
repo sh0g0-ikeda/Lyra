@@ -45,6 +45,7 @@ describe('OpenAIPageEpisodePlanCompiler', () => {
 
     const compiler = new OpenAIPageEpisodePlanCompiler(client);
     const result = await compiler.compilePlan({
+      allowedEntityIds: ['11111111-1111-4111-8111-111111111111'],
       compilerBrief: [
         '[TASK]',
         'Plan editable page and panel draft fields for the given existing pages within the episode.',
@@ -193,10 +194,12 @@ describe('OpenAIPageEpisodePlanCompiler', () => {
     });
 
     const initial = await compiler.compilePlan({
+      allowedEntityIds: [],
       compilerBrief: '[TASK]\nInitial page detail compilation.',
       language: 'en',
     });
     const recompilation = await compiler.compilePlan({
+      allowedEntityIds: [],
       compilerBrief: '[TASK]\nRepair the selected page detail.',
       language: 'en',
     });
@@ -236,7 +239,7 @@ describe('OpenAIPageEpisodePlanCompiler', () => {
     } as unknown as OpenAIClient;
 
     const compiler = new OpenAIPageEpisodePlanCompiler(client);
-    const result = await compiler.compilePlan({ compilerBrief: '[TASK]\nReturn JSON.', language: 'ja' });
+    const result = await compiler.compilePlan({ compilerBrief: '[TASK]\nReturn JSON.', language: 'ja', allowedEntityIds: [] });
 
     expect(result.suggestion.pages[0]).toMatchObject({
       pageId: '11111111-1111-4111-8111-111111111111',

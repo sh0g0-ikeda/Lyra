@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent, type ReactNode } from 'react';
 import {
   BookOpen,
   Bot,
@@ -29,7 +29,7 @@ import {
 import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { Session, SupabaseClient } from '@supabase/supabase-js';
 import { StoryHierarchyTree } from './components/StoryHierarchyTree';
-import { decodeJwtPayload, LyraApiClient, type BlobResponse } from './lib/api';
+import { ApiError, decodeJwtPayload, LyraApiClient, type BlobResponse } from './lib/api';
 import { shouldAllowManualTokenAuth } from './lib/authMode';
 import {
   formatSubscriptionPlanLabel as formatPlanLabel,
@@ -239,6 +239,11 @@ interface EntityDraft {
   prompt_supplement: string;
   structured_fields: string;
   speech_profile: string;
+}
+
+interface PreservedEntityDraft {
+  entityId: string;
+  updatedAt: string;
 }
 
 interface CharacterStructuredFieldsDraft {
@@ -2257,15 +2262,19 @@ function StudioShell(props: {
   );
   const activeOrganizationId =
     ORGANIZATION_FEATURES_AVAILABLE && selectedOrganizationId.trim().length > 0 ? selectedOrganizationId : null;
-  const scopedQueryKey = useCallback(
-    (queryKey: readonly unknown[]): readonly unknown[] => [
+  const scopedQueryKeyFor = useCallback(
+    (organizationId: string | null, queryKey: readonly unknown[]): readonly unknown[] => [
       'session',
       props.authSessionKey,
       'workspace',
-      activeOrganizationId ?? 'personal',
+      organizationId ?? 'personal',
       ...queryKey,
     ],
-    [props.authSessionKey, activeOrganizationId],
+    [props.authSessionKey],
+  );
+  const scopedQueryKey = useCallback(
+    (queryKey: readonly unknown[]): readonly unknown[] => scopedQueryKeyFor(activeOrganizationId, queryKey),
+    [activeOrganizationId, scopedQueryKeyFor],
   );
   const sessionQueryKey = useCallback(
     (queryKey: readonly unknown[]): readonly unknown[] => ['session', props.authSessionKey, ...queryKey],
@@ -2359,6 +2368,8 @@ function StudioShell(props: {
   const [entityDraft, setEntityDraft] = useState<EntityDraft>(createEmptyEntityDraft());
   const [entityEditorMode, setEntityEditorMode] = useState<'edit' | 'create'>('edit');
   const [selectedEntityId, setSelectedEntityId] = useState('');
+  const [entityReferenceSyncActive, setEntityReferenceSyncActive] = useState(false);
+  const [entityReferenceSyncStale, setEntityReferenceSyncStale] = useState(false);
   const [sceneDraft, setSceneDraft] = useState<SceneDraft>(createEmptySceneDraft());
   const [selectedSceneId, setSelectedSceneId] = useState('');
   const [pageSettingsDraft, setPageSettingsDraft] = useState<PageSettingsDraft>(createEmptyPageSettingsDraft());
@@ -2403,6 +2414,26 @@ function StudioShell(props: {
   const lastWorkspaceRefreshRef = useRef(0);
   const billingVerificationTargetRef = useRef<BillingReturnMarker | null>(null);
   const [billingReturnChecking, setBillingReturnChecking] = useState(false);
+  const selectedEntityIdRef = useRef(selectedEntityId);
+  const selectedWorkIdRef = useRef(selectedWorkId);
+  const activeOrganizationIdRef = useRef(activeOrganizationId);
+  const preservedEntityDraftRef = useRef<PreservedEntityDraft | null>(null);
+
+  useLayoutEffect(() => {
+    selectedEntityIdRef.current = selectedEntityId;
+  }, [selectedEntityId]);
+
+  useLayoutEffect(() => {
+    selectedWorkIdRef.current = selectedWorkId;
+  }, [selectedWorkId]);
+
+  useLayoutEffect(() => {
+    activeOrganizationIdRef.current = activeOrganizationId;
+  }, [activeOrganizationId]);
+
+  useEffect(() => {
+    setEntityReferenceSyncStale(false);
+  }, [activeOrganizationId, selectedEntityId, selectedWorkId]);
 
   useEffect(() => {
     uiLanguageRef.current = uiLanguage;
@@ -3322,6 +3353,11 @@ function StudioShell(props: {
 
   useEffect(() => {
     if (entityEditorMode === 'edit' && selectedEntity !== null) {
+      const preserved = preservedEntityDraftRef.current;
+      if (preserved?.entityId === selectedEntity.id && preserved.updatedAt === selectedEntity.updated_at) {
+        preservedEntityDraftRef.current = null;
+        return;
+      }
       setEntityDraft(toEntityDraft(selectedEntity));
     }
   }, [entityEditorMode, selectedEntity]);
@@ -3588,6 +3624,7 @@ function StudioShell(props: {
   };
 
   const beginNewEntityDraft = (): void => {
+    setEntityReferenceSyncStale(false);
     setEntityEditorMode('create');
     setSelectedEntityId('');
     setEntityDraft(createEmptyEntityDraft());
@@ -3596,6 +3633,7 @@ function StudioShell(props: {
   };
 
   const selectEntityForEditing = (entityId: string): void => {
+    setEntityReferenceSyncStale(false);
     setEntityEditorMode('edit');
     setSelectedEntityId(entityId);
     setReferenceSelection([]);
@@ -3669,6 +3707,56 @@ function StudioShell(props: {
           : [entity, ...current.entities],
       };
     });
+  };
+
+  const deleteEntityReferenceAndSynchronize = async (
+    entitySnapshot: EntityRecord,
+    refId: string,
+  ): Promise<void> => {
+    const workId = entitySnapshot.work_id;
+    const organizationId = activeOrganizationId;
+    const entityQueryKey = scopedQueryKeyFor(organizationId, ['entities', workId]);
+    const referenceSetQueryKey = scopedQueryKeyFor(organizationId, ['entity-reference-set', entitySnapshot.id]);
+    setEntityReferenceSyncActive(true);
+    setEntityReferenceSyncStale(false);
+
+    const isCurrentEntityScope = (): boolean =>
+      selectedEntityIdRef.current === entitySnapshot.id &&
+      selectedWorkIdRef.current === workId &&
+      activeOrganizationIdRef.current === organizationId;
+
+    try {
+      await api.deleteEntityReference(entitySnapshot.id, refId, organizationId);
+      await queryClient.invalidateQueries({ queryKey: referenceSetQueryKey });
+      let refreshedEntities: EntityRecord[];
+      try {
+        refreshedEntities = (await api.getEntities(workId, organizationId)).entities;
+      } catch {
+        if (!isCurrentEntityScope()) {
+          return;
+        }
+        setEntityReferenceSyncStale(true);
+        throw new ApiError('Entity state changed after reference deletion', 409, 'RESOURCE_STALE');
+      }
+
+      if (!isCurrentEntityScope()) {
+        return;
+      }
+
+      const refreshedEntity = refreshedEntities.find((candidate) => candidate.id === entitySnapshot.id);
+      if (refreshedEntity === undefined || !hasUnchangedEntityEditableFields(entitySnapshot, refreshedEntity)) {
+        setEntityReferenceSyncStale(true);
+        throw new ApiError('Entity state changed after reference deletion', 409, 'RESOURCE_STALE');
+      }
+
+      preservedEntityDraftRef.current = {
+        entityId: entitySnapshot.id,
+        updatedAt: refreshedEntity.updated_at,
+      };
+      queryClient.setQueryData<{ entities: EntityRecord[] }>(entityQueryKey, { entities: refreshedEntities });
+    } finally {
+      setEntityReferenceSyncActive(false);
+    }
   };
 
   const removeEntityFromCache = (workId: string, entityId: string): void => {
@@ -5994,6 +6082,7 @@ function StudioShell(props: {
                       {entityEditorMode === 'edit' && selectedEntity !== null ? (
                         <button
                           className="secondary-button"
+                          disabled={entityReferenceSyncActive || entityReferenceSyncStale}
                           onClick={() =>
                             void runAction('Save entity', async () => {
                               const savedEntity = await api.updateEntity(
@@ -6028,7 +6117,7 @@ function StudioShell(props: {
                       <div className="toolbar">
                         <button
                           className="secondary-button"
-                          disabled={entityReferenceGenerationBlocked}
+                          disabled={entityReferenceGenerationBlocked || entityReferenceSyncActive || entityReferenceSyncStale}
                           onClick={() =>
                             void runAction('Generate reference', async () => {
                               await saveCurrentEntityGenerationContext();
@@ -6054,7 +6143,7 @@ function StudioShell(props: {
                         </button>
                         <button
                           className="primary-button"
-                          disabled={referenceConfirmationBlocked}
+                          disabled={referenceConfirmationBlocked || entityReferenceSyncActive || entityReferenceSyncStale}
                           onClick={() =>
                             void runAction('Confirm references', async () => {
                               const selectedReferenceKeys = Array.from(
@@ -6207,6 +6296,7 @@ function StudioShell(props: {
                                 <div className="reference-card-actions">
                                   <button
                                     className="ghost-button danger"
+                                    disabled={entityReferenceSyncActive}
                                     onClick={() => {
                                       if (selectedEntity === null) {
                                         return;
@@ -6214,14 +6304,9 @@ function StudioShell(props: {
                                       if (!confirmUiAction('Delete this reference image? This cannot be undone.')) {
                                         return;
                                       }
-                                      void runAction('Delete reference', async () => {
-                                        await api.deleteEntityReference(
-                                          selectedEntity.id,
-                                          image.ref_id,
-                                          activeOrganizationId,
-                                        );
-                                        await invalidateScopedQuery(['entity-reference-set', selectedEntity.id]);
-                                      });
+                                      void runAction('Delete reference', () =>
+                                        deleteEntityReferenceAndSynchronize(selectedEntity, image.ref_id),
+                                      );
                                     }}
                                     type="button"
                                   >
@@ -8468,6 +8553,31 @@ function toEntityDraft(entity: EntityRecord): EntityDraft {
     structured_fields: JSON.stringify(entity.structured_fields, null, 2),
     speech_profile: JSON.stringify(entity.speech_profile, null, 2),
   };
+}
+
+function hasUnchangedEntityEditableFields(
+  before: EntityRecord,
+  after: EntityRecord,
+): boolean {
+  return before.work_id === after.work_id &&
+    before.entity_type === after.entity_type &&
+    before.name === after.name &&
+    before.free_description === after.free_description &&
+    before.prompt_supplement === after.prompt_supplement &&
+    stableJson(before.structured_fields) === stableJson(after.structured_fields) &&
+    stableJson(before.speech_profile) === stableJson(after.speech_profile);
+}
+
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map(stableJson).join(',')}]`;
+  }
+  if (value !== null && typeof value === 'object') {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right));
+    return `{${entries.map(([key, nested]) => `${JSON.stringify(key)}:${stableJson(nested)}`).join(',')}}`;
+  }
+  return JSON.stringify(value) ?? 'undefined';
 }
 
 function toSceneDraft(scene: SceneRecord): SceneDraft {

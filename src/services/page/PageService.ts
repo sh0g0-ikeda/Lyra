@@ -438,6 +438,7 @@ export class PageService implements PageServicePort {
       context,
       language,
       controlledProgressReporter,
+      executionControl,
     );
     await executionControl?.checkpoint();
     if (!compiled.compilerUsed) {
@@ -588,6 +589,7 @@ export class PageService implements PageServicePort {
     context: EpisodePagePlanContext,
     language: AppLanguage,
     progressReporter?: EpisodePagePlanProgressReporter,
+    executionControl?: EpisodePagePlanExecutionControl,
   ): Promise<EpisodePlanExecutionResult> {
     if (this.episodePlanContinuityV3Enabled) {
       try {
@@ -595,6 +597,7 @@ export class PageService implements PageServicePort {
           context,
           language,
           progressReporter,
+          executionControl,
         );
       } catch (error) {
         if (!(error instanceof ConfigurationError)) {
@@ -628,7 +631,7 @@ export class PageService implements PageServicePort {
         currentChunk: 1,
         totalChunks: 1,
       });
-      const compiled = await this.compileEpisodePlanSafely(context, language);
+      const compiled = await this.compileEpisodePlanSafely(context, language, undefined, executionControl);
       if (compiled.compilerUsed) {
         await reportEpisodePlanProgress(progressReporter, {
           stage: 'compiled_chunk',
@@ -658,7 +661,7 @@ export class PageService implements PageServicePort {
         totalChunks: pageChunks.length,
       });
       const chunkContext = buildEpisodePlanChunkContext(context, pages);
-      const compiled = await this.compileEpisodePlanSafely(chunkContext, language);
+      const compiled = await this.compileEpisodePlanSafely(chunkContext, language, undefined, executionControl);
       if (!compiled.compilerUsed) {
         return compiled;
       }
@@ -690,6 +693,7 @@ export class PageService implements PageServicePort {
     context: EpisodePagePlanContext,
     language: AppLanguage,
     progressReporter?: EpisodePagePlanProgressReporter,
+    executionControl?: EpisodePagePlanExecutionControl,
   ): Promise<EpisodePlanExecutionResult> {
     if (this.episodeBeatPlanCompiler === undefined || this.episodePlanAuditCompiler === undefined) {
       throw new ConfigurationError('Episode continuity v3 compilers are not configured');
@@ -732,6 +736,7 @@ export class PageService implements PageServicePort {
           currentPageIds: new Set(pages.map((page) => page.pageId)),
           completedPages: compiledChunks.flatMap((result) => result.suggestion.pages),
         }),
+        executionControl,
       );
       if (!compiled.compilerUsed) {
         return compiled;
@@ -810,6 +815,7 @@ export class PageService implements PageServicePort {
           currentDraftPages,
           repairIssues: chunkIssues,
         }),
+        executionControl,
       );
       if (!repaired.compilerUsed) {
         return repaired;
@@ -1118,6 +1124,7 @@ export class PageService implements PageServicePort {
     context: EpisodePagePlanContext,
     language: AppLanguage,
     continuitySupplement?: string,
+    executionControl?: EpisodePagePlanExecutionControl,
   ): Promise<EpisodePlanExecutionResult> {
     const baseCompilerBrief = buildEpisodePlanCompilerBrief(context, language);
     const compilerBrief = continuitySupplement === undefined
@@ -1126,7 +1133,12 @@ export class PageService implements PageServicePort {
     const fallbackSuggestion = buildFallbackEpisodePlanSuggestion(context, language);
 
     try {
-      const compiled = await this.episodePagePlanCompiler!.compilePlan({ compilerBrief, language });
+      const compiled = await this.episodePagePlanCompiler!.compilePlan({
+        compilerBrief,
+        language,
+        allowedEntityIds: context.entities.map((entity) => entity.id),
+        beforeRetry: executionControl === undefined ? undefined : () => executionControl.checkpoint(),
+      });
       const repairedSuggestion = repairEpisodePlanSuggestionAgainstContext(
         context,
         compiled.suggestion,

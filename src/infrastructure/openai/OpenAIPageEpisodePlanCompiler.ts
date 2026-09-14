@@ -1,3 +1,5 @@
+import { z } from 'zod';
+import { ConfigurationError } from '../../domain/errors/index.js';
 import {
   EPISODE_PAGE_PLAN_COMPILER_MAX_TOKENS,
   EPISODE_PAGE_PLAN_COMPILER_OPENAI_MODEL,
@@ -5,7 +7,7 @@ import {
 } from '../../domain/constants/generation.js';
 import { STORY_AI_LIMITS } from '../../domain/constants/storyAi.js';
 import { describeAppLanguage } from '../../domain/types/language.js';
-import { episodePagePlanSuggestionSchema } from '../../lib/validators/episodePagePlan.schema.js';
+import { episodePagePlanSuggestionSchema, type EpisodePagePlanSuggestionPayload } from '../../lib/validators/episodePagePlan.schema.js';
 import type {
   CompiledEpisodePagePlan,
   CompileEpisodePagePlanInput,
@@ -14,6 +16,7 @@ import type {
 import { OpenAIClient } from './OpenAIClient.js';
 import {
   requestStructuredOpenAIResponse,
+  StructuredOpenAIResponseError,
   type OpenAIReasoningEffort,
 } from './StructuredOpenAIResponse.js';
 
@@ -33,14 +36,36 @@ export class OpenAIPageEpisodePlanCompiler implements EpisodePagePlanCompilerPor
   public async compilePlan(
     input: CompileEpisodePagePlanInput,
   ): Promise<CompiledEpisodePagePlan> {
-    const validated = await requestStructuredOpenAIResponse({
+    const allowedIds = [...new Set(input.allowedEntityIds)];
+    if (!z.array(z.string().uuid()).safeParse(allowedIds).success) {
+      throw new ConfigurationError('Episode page plan context contains invalid entity identifiers');
+    }
+    const allowedIdSet = new Set(allowedIds);
+    const responseSchema = episodePagePlanSuggestionSchema.superRefine((plan, context) => {
+      for (const [pageIndex, page] of plan.pages.entries()) {
+        for (const [panelIndex, panel] of page.panels.entries()) {
+          for (const field of ['entities', 'dialogue'] as const) {
+            for (const [index, entry] of (panel[field] ?? []).entries()) {
+              if (entry.entity_id !== null && !allowedIdSet.has(entry.entity_id)) {
+                context.addIssue({
+                  code: 'custom',
+                  message: 'Entity ID is not in the authorized episode context',
+                  path: ['pages', pageIndex, 'panels', panelIndex, field, index, 'entity_id'],
+                });
+              }
+            }
+          }
+        }
+      }
+    });
+    const request = (): Promise<EpisodePagePlanSuggestionPayload> => requestStructuredOpenAIResponse({
       client: this.client,
       model: this.options.model,
       reasoningEffort: this.options.reasoningEffort,
       maxOutputTokens: EPISODE_PAGE_PLAN_COMPILER_MAX_TOKENS,
       schemaName: 'episode_page_plan',
-      jsonSchema: episodePagePlanJsonSchema,
-      responseSchema: episodePagePlanSuggestionSchema,
+      jsonSchema: buildEpisodePagePlanJsonSchema(allowedIds),
+      responseSchema,
       errorLabel: 'OpenAI episode page plan compiler',
       sanitize: sanitizeEpisodePagePlanPayload,
       input: [
@@ -50,10 +75,23 @@ export class OpenAIPageEpisodePlanCompiler implements EpisodePagePlanCompilerPor
         },
         {
           role: 'user',
-            content: [{ type: 'input_text', text: buildUserPrompt(input.compilerBrief) }],
+          content: [{ type: 'input_text', text: buildUserPrompt(input.compilerBrief) }],
         },
       ],
     });
+
+    let validated: EpisodePagePlanSuggestionPayload;
+    try {
+      validated = await request();
+    } catch (error) {
+      if (!(error instanceof StructuredOpenAIResponseError) || error.reason !== 'invalid_payload') {
+        throw error;
+      }
+      // A malformed provider result never becomes an empty/reassigned cast. Check
+      // cancellation before the only extra attempt; persistence stays downstream.
+      await input.beforeRetry?.();
+      validated = await request();
+    }
 
     return {
       suggestion: {
@@ -508,79 +546,83 @@ const nullableCompositionSchema = {
   ],
 } as const;
 
-const nullableDialogueArraySchema = {
-  anyOf: [
-    {
-      type: 'array',
-      maxItems: 20,
-      items: {
-        type: 'object',
-        additionalProperties: false,
-        required: ['entity_id', 'text', 'type', 'position'],
-        properties: {
-          entity_id: nullableStringSchema,
-          text: { type: 'string' },
-          type: {
-            type: 'string',
-            enum: ['speech', 'thought', 'narration', 'shout', 'whisper'],
-          },
-          position: {
-            type: 'string',
-            enum: ['top', 'bottom', 'left', 'right', 'center'],
+function buildNullableDialogueArraySchema(entityIdSchema: Record<string, unknown>): Record<string, unknown> {
+  return {
+    anyOf: [
+      {
+        type: 'array',
+        maxItems: 20,
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['entity_id', 'text', 'type', 'position'],
+          properties: {
+            entity_id: entityIdSchema,
+            text: { type: 'string' },
+            type: {
+              type: 'string',
+              enum: ['speech', 'thought', 'narration', 'shout', 'whisper'],
+            },
+            position: {
+              type: 'string',
+              enum: ['top', 'bottom', 'left', 'right', 'center'],
+            },
           },
         },
       },
-    },
-    { type: 'null' },
-  ],
-} as const;
+      { type: 'null' },
+    ],
+  };
+}
 
-const nullableEntityAssignmentsSchema = {
-  anyOf: [
-    {
-      type: 'array',
-      maxItems: 20,
-      items: {
-        type: 'object',
-        additionalProperties: false,
-        required: [
-          'entity_id',
-          'role',
-          'expression',
-          'custom_expression',
-          'action',
-          'custom_action',
-          'position',
-          'facing_direction',
-          'effect_note',
-          'state_id',
-        ],
-        properties: {
-          entity_id: { type: 'string' },
-          role: { type: 'string', enum: ['primary', 'secondary', 'background'] },
-          expression: {
-            type: 'string',
-            enum: ['determined', 'calm', 'angry', 'sad', 'surprised', 'custom'],
+function buildNullableEntityAssignmentsSchema(hasEntities: boolean): Record<string, unknown> {
+  return {
+    anyOf: [
+      {
+        type: 'array',
+        maxItems: hasEntities ? 20 : 0,
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          required: [
+            'entity_id',
+            'role',
+            'expression',
+            'custom_expression',
+            'action',
+            'custom_action',
+            'position',
+            'facing_direction',
+            'effect_note',
+            'state_id',
+          ],
+          properties: {
+            entity_id: { $ref: '#/$defs/entity_id' },
+            role: { type: 'string', enum: ['primary', 'secondary', 'background'] },
+            expression: {
+              type: 'string',
+              enum: ['determined', 'calm', 'angry', 'sad', 'surprised', 'custom'],
+            },
+            custom_expression: nullableStringSchema,
+            action: {
+              type: 'string',
+              enum: ['standing_firm', 'attacking', 'defending', 'running', 'custom'],
+            },
+            custom_action: nullableStringSchema,
+            position: {
+              type: 'string',
+              enum: ['left', 'center', 'right', 'background'],
+            },
+            facing_direction: nullableStringSchema,
+            effect_note: nullableStringSchema,
+            state_id: nullableStringSchema,
           },
-          custom_expression: nullableStringSchema,
-          action: {
-            type: 'string',
-            enum: ['standing_firm', 'attacking', 'defending', 'running', 'custom'],
-          },
-          custom_action: nullableStringSchema,
-          position: {
-            type: 'string',
-            enum: ['left', 'center', 'right', 'background'],
-          },
-          facing_direction: nullableStringSchema,
-          effect_note: nullableStringSchema,
-          state_id: nullableStringSchema,
         },
       },
-    },
-    { type: 'null' },
-  ],
-} as const;
+      { type: 'null' },
+    ],
+  };
+}
 
 const nullablePageSettingsSchema = {
   anyOf: [
@@ -597,75 +639,87 @@ const nullablePageSettingsSchema = {
   ],
 } as const;
 
-const episodePagePlanJsonSchema = {
-  type: 'object',
-  additionalProperties: false,
-  required: ['pages'],
-  properties: {
-    pages: {
-      type: 'array',
-      minItems: 1,
-      maxItems: STORY_AI_LIMITS.maxSkeletonPages,
-      items: {
-        type: 'object',
-        additionalProperties: false,
-        required: [
-          'page_id',
-          'page_number',
-          'source_scene_ids',
-          'page_purpose',
-          'continuity_note',
-          'page',
-          'panels',
-        ],
-        properties: {
-          page_id: { type: 'string' },
-          page_number: { type: 'integer', minimum: 1, maximum: 10000 },
-          source_scene_ids: {
-            type: 'array',
-            maxItems: 100,
-            items: { type: 'string' },
-          },
-          page_purpose: nullableStringSchema,
-          continuity_note: nullableStringSchema,
-          page: nullablePageSettingsSchema,
-          panels: {
-            type: 'array',
-            minItems: 1,
-            maxItems: 20,
-            items: {
-              type: 'object',
-              additionalProperties: false,
-              required: [
-                'order',
-                'panel_role',
-                'panel_size',
-                'situation_text',
-                'composition',
-                'dialogue_in_panel',
-                'dialogue',
-                'sfx_text',
-                'background_note',
-                'panel_notes',
-                'entities',
-              ],
-              properties: {
-                order: { type: 'integer', minimum: 1, maximum: 10000 },
-                panel_role: nullablePanelRoleSchema,
-                panel_size: nullablePanelSizeSchema,
-                situation_text: nullableStringSchema,
-                composition: nullableCompositionSchema,
-                dialogue_in_panel: nullableBooleanSchema,
-                dialogue: nullableDialogueArraySchema,
-                sfx_text: nullableStringSchema,
-                background_note: nullableStringSchema,
-                panel_notes: nullableStringSchema,
-                entities: nullableEntityAssignmentsSchema,
+// Keep one enum definition below provider limits, without truncating large casts.
+const ENTITY_ID_ENUM_LIMIT = 200;
+
+function buildEpisodePagePlanJsonSchema(allowedIds: readonly string[]): Record<string, unknown> {
+  return {
+    $defs: {
+      entity_id: allowedIds.length > 0 && allowedIds.length <= ENTITY_ID_ENUM_LIMIT
+        ? { type: 'string', enum: allowedIds }
+        : { type: 'string', format: 'uuid' },
+    },
+    type: 'object',
+    additionalProperties: false,
+    required: ['pages'],
+    properties: {
+      pages: {
+        type: 'array',
+        minItems: 1,
+        maxItems: STORY_AI_LIMITS.maxSkeletonPages,
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          required: [
+            'page_id',
+            'page_number',
+            'source_scene_ids',
+            'page_purpose',
+            'continuity_note',
+            'page',
+            'panels',
+          ],
+          properties: {
+            page_id: { type: 'string' },
+            page_number: { type: 'integer', minimum: 1, maximum: 10000 },
+            source_scene_ids: {
+              type: 'array',
+              maxItems: 100,
+              items: { type: 'string' },
+            },
+            page_purpose: nullableStringSchema,
+            continuity_note: nullableStringSchema,
+            page: nullablePageSettingsSchema,
+            panels: {
+              type: 'array',
+              minItems: 1,
+              maxItems: 20,
+              items: {
+                type: 'object',
+                additionalProperties: false,
+                required: [
+                  'order',
+                  'panel_role',
+                  'panel_size',
+                  'situation_text',
+                  'composition',
+                  'dialogue_in_panel',
+                  'dialogue',
+                  'sfx_text',
+                  'background_note',
+                  'panel_notes',
+                  'entities',
+                ],
+                properties: {
+                  order: { type: 'integer', minimum: 1, maximum: 10000 },
+                  panel_role: nullablePanelRoleSchema,
+                  panel_size: nullablePanelSizeSchema,
+                  situation_text: nullableStringSchema,
+                  composition: nullableCompositionSchema,
+                  dialogue_in_panel: nullableBooleanSchema,
+                  dialogue: buildNullableDialogueArraySchema(allowedIds.length === 0
+                    ? { type: 'null' }
+                    : { anyOf: [{ $ref: '#/$defs/entity_id' }, { type: 'null' }] }),
+                  sfx_text: nullableStringSchema,
+                  background_note: nullableStringSchema,
+                  panel_notes: nullableStringSchema,
+                  entities: buildNullableEntityAssignmentsSchema(allowedIds.length > 0),
+                },
               },
             },
           },
         },
       },
     },
-  },
-} as const;
+  };
+}
