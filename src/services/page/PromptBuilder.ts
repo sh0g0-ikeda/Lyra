@@ -304,14 +304,14 @@ function buildReferenceRoles(
     .map((entityId, index) => {
       const entity = entityMap.get(entityId);
       const entityName = entity?.name ?? `Unknown entity ${entityId}`;
-      const anchor = summarizeEntityAnchor(entity);
+      const constraints = summarizeReferenceConstraints(entity);
       const panelScope = formatPanelOrderList(panelOrdersByEntityId.get(entityId) ?? []);
       return {
         entityId,
         imageLabel: `Image ${index + 1} (${entityName})`,
         role: 'character_reference' as const,
         subject: entityName,
-        instruction: `${entityName} character reference. Use this image only for ${entityName}; never use it as another character. ${entityName} is allowed only in ${panelScope} where listed in the subject lock. Keep ${entityName}'s face, hair shape, clothing silhouette, and color blocking stable when ${entityName} appears. ${anchor}`.trim(),
+        instruction: `${entityName} character reference. Use this image only for ${entityName}; never use it as another character. ${entityName} is allowed only in ${panelScope} where listed in the subject lock. This image defines ${entityName}'s visual appearance. ${constraints}`.trim(),
       };
     });
 
@@ -374,18 +374,12 @@ function buildSubjectLock(
   }
 
   const details = assignments.map((assignment) => {
-    const entity = entityMap.get(assignment.entityId);
-    const entityName = entity?.name ?? `Unknown entity ${assignment.entityId}`;
-    const referenceLabel = referenceLabelByEntityId.get(assignment.entityId);
-    const visualAnchor = summarizeEntityVisualIdentity(entity);
     const position = `${humanizeToken(assignment.position)} zone`;
     const facing = assignment.facingDirection === null
       ? null
       : `facing ${humanizeToken(assignment.facingDirection)}`;
     return [
-      entityName,
-      referenceLabel === undefined ? null : `reference ${referenceLabel}`,
-      visualAnchor === null ? null : `visual identity ${visualAnchor}`,
+      formatEntityReferenceIdentity(assignment.entityId, entityMap, referenceLabelByEntityId),
       `role ${assignment.role}`,
       position,
       facing,
@@ -423,18 +417,10 @@ function buildCharacterBeat(
 
   return assignments
     .map((assignment) => {
-      const entity = entityMap.get(assignment.entityId);
-      const entityName = entity?.name ?? `Unknown entity ${assignment.entityId}`;
-      const referenceLabel = referenceLabelByEntityId.get(assignment.entityId);
-      const visualAnchor = summarizeEntityVisualIdentity(entity);
       const expression = assignment.expression === 'custom' ? assignment.customExpression : assignment.expression;
       const action = assignment.action === 'custom' ? assignment.customAction : assignment.action;
       const parts = [
-        [
-          entityName,
-          referenceLabel === undefined ? null : `reference ${referenceLabel}`,
-          visualAnchor === null ? null : `visual identity ${visualAnchor}`,
-        ].filter((value): value is string => value !== null).join(', '),
+        formatEntityReferenceIdentity(assignment.entityId, entityMap, referenceLabelByEntityId),
         `is ${assignment.role} in the ${assignment.position} zone`,
         assignment.facingDirection === null ? null : `facing ${humanizeToken(assignment.facingDirection)}`,
         expression === null ? null : `showing ${humanizeToken(expression)}`,
@@ -542,7 +528,7 @@ function buildDialogueLock(
       return `line ${ordinal} must stay assigned to ${speaker} exactly as written: "${dialogue.text}" at its authored ${authoredPosition} position. Do not assign this line to any other subject or reference image.${thoughtTailLock}`;
     }
 
-    const visibleSubjects = formatVisibleSubjectNames(panel, entityMap);
+    const visibleSubjects = formatVisibleSubjectNames(panel, entityMap, referenceLabelByEntityId);
     return `line ${ordinal} real speaker is ${speaker} and is off-panel, exactly as written: "${dialogue.text}" at its authored ${authoredPosition} position. ${speaker} is off-panel and must not be drawn in panel ${panel.order}. Do not assign this line to ${visibleSubjects} or any other visible listener. Do not point a balloon tail at ${visibleSubjects} or any other visible person.${thoughtTailLock}`;
   });
 
@@ -784,9 +770,15 @@ function formatDialogueLine(
   return `Panel ${panel.order} dialogue by ${speaker}${visibility}: "${dialogue.text}" as ${humanizeToken(dialogue.type)} at ${humanizeToken(dialogue.position)}.${tailLock}`;
 }
 
-function formatVisibleSubjectNames(panel: Panel, entityMap: Map<string, Entity>): string {
+function formatVisibleSubjectNames(
+  panel: Panel,
+  entityMap: Map<string, Entity>,
+  referenceLabelByEntityId: Map<string, string>,
+): string {
   const names = panel.entities
-    .map((assignment) => entityMap.get(assignment.entityId)?.name ?? assignment.entityId)
+    .map((assignment) => referenceLabelByEntityId.has(assignment.entityId)
+      ? formatEntityReferenceIdentity(assignment.entityId, entityMap, referenceLabelByEntityId)
+      : entityMap.get(assignment.entityId)?.name ?? assignment.entityId)
     .filter((value, index, values) => values.indexOf(value) === index);
   return names.length === 0 ? 'any visible subject' : names.join(', ');
 }
@@ -887,14 +879,16 @@ function promptFieldsLookEquivalent(left: string, right: string): boolean {
   );
 }
 
-function summarizeEntityAnchor(entity: Entity | undefined): string {
-  const visualIdentity = summarizeEntityVisualIdentity(entity);
+// Reference images carry appearance. Keep age and authored extra constraints once,
+// because they can express requirements that cannot be inferred from the image.
+function summarizeReferenceConstraints(entity: Entity | undefined): string {
+  const ageRange = readFieldString(entity?.structuredFields ?? {}, 'age_range');
   const source = entity?.promptSupplement ?? entity?.freeDescription ?? '';
   const normalized = normalizeWhitespace(source);
   const parts: string[] = [];
 
-  if (visualIdentity !== null) {
-    parts.push(`${entity?.name ?? 'Character'} visual identity: ${visualIdentity}.`);
+  if (ageRange !== null) {
+    parts.push(`Age range for ${entity?.name ?? 'Character'}: ${ageRange}.`);
   }
 
   if (normalized.length > 0) {
@@ -913,10 +907,12 @@ function formatEntityReferenceIdentity(
   const entity = entityMap.get(entityId);
   const entityName = entity?.name ?? `Unknown entity ${entityId}`;
   const referenceLabel = referenceLabelByEntityId.get(entityId);
+  if (referenceLabel !== undefined) {
+    return `${entityName}, reference ${referenceLabel}`;
+  }
   const visualIdentity = summarizeEntityVisualIdentity(entity);
   return [
     entityName,
-    referenceLabel === undefined ? null : `reference ${referenceLabel}`,
     visualIdentity === null ? null : `visual identity ${visualIdentity}`,
   ]
     .filter((value): value is string => value !== null)
@@ -931,12 +927,8 @@ function formatEntityVisualLockSubject(
   const entity = entityMap.get(entityId);
   const entityName = entity?.name ?? entityId;
   const referenceLabel = referenceLabelByEntityId.get(entityId);
-  const visualIdentity = summarizeEntityVisualIdentity(entity);
-  const details = [
-    referenceLabel,
-    visualIdentity,
-  ].filter((value): value is string => value !== undefined && value !== null);
-  return details.length === 0 ? entityName : `${entityName} [${details.join(', ')}]`;
+  const detail = referenceLabel ?? summarizeEntityVisualIdentity(entity);
+  return detail === null ? entityName : `${entityName} [${detail}]`;
 }
 
 function summarizeEntityVisualIdentity(entity: Entity | undefined): string | null {
