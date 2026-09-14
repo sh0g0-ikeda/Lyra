@@ -104,3 +104,57 @@ before deployment. Do not declare a live AI generation verified from mocked test
   No Mobile dependency or source is part of this runtime overlay. The actual
   Mobile 1.0.7 checkout passed typecheck and all 710 tests. This is a scoped
   baseline exception; do not describe the entire PR as having all CI jobs green.
+
+## Production release evidence (2026-09-14)
+
+Reviewed application source: `db3f3283d68e658971b5a394ad8f094f39e3ef4c`.
+PR: https://github.com/sh0g0-ikeda/Lyra/pull/210 . The later documentation commit
+only records the release; it is not a different application artifact.
+
+- CI run `34805605921`, `verify`: success on the released application source.
+  This includes PostgreSQL migrations/invariants, backend tests/build, ARM64
+  migration-container probe, Web lint/build and all Playwright tests. The separate
+  old-base `mobile-verify` dependency exception is described above.
+- Exact production base images were extended with four compiled backend files.
+  API additionally contains the reviewed Web build (27 changed files in total).
+  Worker changes only those four backend files. All base layers, runtime Config,
+  UID/GID, task environment, secret references, roles and resources were preserved.
+  Registered definitions were compared to the immutable old definitions and differ
+  only in their image reference.
+- API task definition: `lyra-prod-api:131`.
+  Image: `lyra-prod-api@sha256:642549a813275b0a7da4d1bfc48dd9d29e7ef5a17adaf8a1bf11c8ae90f076a1`.
+  Tag: `story-entity-hotfix-db3f328-api-arm64`.
+- Worker task definition: `lyra-prod-worker:74`.
+  Image: `lyra-prod-api@sha256:11802570c3b210ea6a956cab1a27e28a0e8b77c312b7d2066aa8dad437b06588`.
+  Tag: `story-entity-hotfix-db3f328-worker-arm64`.
+- Both images are in the existing private ECR repository in `ap-northeast-1`.
+  API one-off `4420596a13c34083913d353ff34ca767` and Worker one-off
+  `f05e1a00d9254f8e9b14d40361819263` exited zero on these exact digests. They
+  verified every overlay file hash, the non-root runtime, the compiled malformed-ID
+  retry/checkpoint behavior, and all 50 production DB invariants. Worker dependency
+  initialization was tested without consuming queue messages or invoking providers.
+- The initial API probe `0bb5e1455a0146dcbd1e334b3e32a547` omitted the existing
+  origin-guard header: health/readiness returned 200, while the protected route
+  correctly returned 404. The reviewed probe correction reads the guard solely
+  inside the task and verifies both no-header 404 and guarded unauthenticated 401.
+  The failed attempt is retained as evidence; no application/image change was needed.
+- Migration one-off `1f9e6ce07eb7474cb1535e846cca0ebd` exited zero and reported
+  `applied: []`. No database migration was applied.
+- Production rollout started at 13:39 JST for API and 13:45 JST for Worker.
+  Both services reached `COMPLETED`: API 2/2, Worker 1/1, zero pending tasks.
+  All active task digests match the reviewed images. Both API load-balancer targets
+  are healthy. Worker logged `polling started`; observed new-task logs contain no
+  startup/processing error. Generation and dead-letter queues were empty at the
+  rollout gates and final checks.
+- Public checks: index and `index-BjQkQ4Ew.js` return 200, with the JavaScript
+  SHA-256 matching the local reviewed build. `/healthz` and `/readyz` return 200;
+  unauthenticated `/api/works` returns 401. Android asset links and Apple association
+  bytes are identical to the pre-release responses. Prior hashed Web assets remain
+  present for already-open clients.
+
+Rollback remains API `130` and Worker `73`, using the previous image digests and
+unchanged task settings. No database rollback is required. No store binary was
+changed or submitted for this backend/Web-only hotfix. Production smoke checks
+did not execute a paid AI generation or modify user manga; real provider success
+is not claimed from the mocked regression and runtime probes. The original dirty
+root worktree and current Mobile source were not changed by this work.
