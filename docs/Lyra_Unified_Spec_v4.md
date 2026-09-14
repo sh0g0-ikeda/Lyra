@@ -80,6 +80,12 @@ cancellation are scoped to personal ownership or active organization membership.
 Generation and regeneration both create a new result from the current saved inputs.
 A previous generated page image is not an implicit image reference. Confirmed entity
 reference images are explicit character-consistency inputs.
+For entities with an attached primary reference, page prompts identify subjects and
+speakers by name and reference-image number instead of repeating structured
+appearance descriptions. The reference definition retains explicit age and bounded
+additional character constraints once. Entities without an attached reference retain
+their textual appearance fallback. Authored panel actions, expressions, positions,
+dialogue and layout constraints remain independent of this appearance shorthand.
 
 Japanese manga page prompts follow the authored panel order as a reading-flow
 contract: start at the upper-right (or rightmost top) panel and follow the stored

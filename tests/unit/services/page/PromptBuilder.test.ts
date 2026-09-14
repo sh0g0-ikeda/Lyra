@@ -107,6 +107,7 @@ class FakePanelRepository implements PanelRepository {
 
 class FakeEntityRepository implements EntityRepository {
   public entities: Entity[] = [buildEntity()];
+  public missingReferenceEntityIds = new Set<string>();
   public lastFindByWorkArgs: { workId: string; userId: string; organizationId: string | null } | null = null;
   public lastReferenceArgs:
     | { entityIds: string[]; workId: string; userId: string; organizationId: string | null }
@@ -142,6 +143,7 @@ class FakeEntityRepository implements EntityRepository {
     this.lastReferenceArgs = { entityIds, workId, userId, organizationId };
     return entityIds
       .filter((entityId) => this.entities.some((entity) => entity.id === entityId))
+      .filter((entityId) => !this.missingReferenceEntityIds.has(entityId))
       .map((entityId, index) => ({
         entityId,
         refId: `ref-${index + 1}`,
@@ -423,7 +425,7 @@ describe('PromptBuilder', () => {
 
     expect(result.draftPrompt).toContain('dialogue by Emile (off-panel real speaker)');
     expect(result.draftPrompt).toContain('Emile is off-panel and must not be drawn in panel 1');
-    expect(result.draftPrompt).toContain('Do not point a balloon tail at Aki or any other visible person');
+    expect(result.draftPrompt).toContain('Do not point a balloon tail at Aki, reference Image 1 (Aki) or any other visible person');
     expect(result.draftPrompt).toContain('thought balloons must not use a speech tail');
     expect(result.draftPrompt).toContain('is narration text and must remain narration, not character speech');
     expect(result.draftPrompt).not.toContain('narration by Emile');
@@ -544,7 +546,11 @@ describe('PromptBuilder', () => {
     expect(countOccurrences(result.compilerBrief, 'Image 1 (Aki): Aki character reference.')).toBe(1);
   });
 
-  it('binds reference image labels and structured visual anchors to panel subjects and speakers', async () => {
+  // Spec 6/8: actual image labels replace repeated structured appearance in both
+  // prompt paths. Keep no-image fallback, authored beats/dialogue, age and explicit
+  // notes, image order, layout locks and the worker's Visual lock parse contract.
+  // This is a service-only change; auth, persistence, credits and client contracts stay intact.
+  it('参照画像がある場合に外見の反復を省き名前と画像番号で被写体と話者を指定する', async () => {
     const panelRepository = new FakePanelRepository();
     panelRepository.panels = [
       {
@@ -645,21 +651,134 @@ describe('PromptBuilder', () => {
     expect(result.draftPrompt).toContain(
       'Image 1 (Kasane): Kasane character reference. Use this image only for Kasane',
     );
-    expect(result.draftPrompt).toContain(
-      'Kasane visual identity: female, black short straight hair, heavy bangs, blunt front, clean bob back, silver sharp eyes, navy school outfit, sailor collar, short skirt, slender build, average height.',
-    );
-    expect(result.draftPrompt).toContain(
-      'Kasane, reference Image 1 (Kasane), visual identity female, black short straight hair',
-    );
-    expect(result.draftPrompt).toContain(
-      'line 1 must stay assigned to Kasane, reference Image 1 (Kasane), visual identity female, black short straight hair',
-    );
-    expect(result.draftPrompt).toContain(
-      'Do not assign this line to any other subject or reference image.',
-    );
-    expect(result.draftPrompt).toContain(
-      'Visual lock for panel 1: subjects=Kasane [Image 1 (Kasane), female, black short straight hair',
-    );
+    for (const prompt of [result.draftPrompt, result.compilerBrief]) {
+      expect(prompt).not.toContain('visual identity');
+      expect(prompt).not.toContain('black short straight hair');
+      expect(prompt).not.toContain('sailor collar');
+      expect(prompt).toContain('Kasane, reference Image 1 (Kasane), role primary, center zone, facing front');
+      expect(prompt).toContain('Kasane, reference Image 1 (Kasane), is primary in the center zone, facing front, showing calm, with standing firm body language');
+      expect(prompt).toContain('line 1 must stay assigned to Kasane, reference Image 1 (Kasane) exactly as written: "What is this?" at its authored bottom position');
+      expect(prompt).toContain('line 2 must stay assigned to Aki, reference Image 2 (Aki) exactly as written: "You do not know rhythm games?" at its authored right position');
+      expect(prompt).toContain('Do not assign this line to any other subject or reference image.');
+      expect(prompt).toContain('Visual lock for panel 1: subjects=Kasane [Image 1 (Kasane)]|Aki [Image 2 (Aki)];');
+    }
+  });
+
+  it.each([
+    ['standard', 'initial', 'image_baked'],
+    ['thinking', 'regenerate', 'image_baked'],
+    ['standard', 'regenerate', 'balloon_only'],
+    ['thinking', 'initial', 'balloon_only'],
+  ] as const)('%s/%s/%sの場合に参照の年齢と追加条件を一度だけ残し各コマは画像番号で指定する', async (generationMode, requestKind, dialogueMode) => {
+    const pages = new FakePageRepository();
+    pages.promptContext = buildPagePromptContext({ dialogueMode });
+    const panels = new FakePanelRepository();
+    panels.panels = Array.from({ length: 4 }, (_, index) => ({ ...buildPanel(), id: `panel-${index + 1}`, order: index + 1 }));
+    const entities = new FakeEntityRepository();
+    entities.entities = [buildEntity({
+      name: '葵',
+      structuredFields: { hair: { color: 'silver', length: 'long' }, age_range: 'child' },
+      promptSupplement: null,
+      freeDescription: '魔法を使うときだけ右手が光る。',
+    })];
+    const result = await new PromptBuilder(pages, panels, entities, new FakeCompositionGalleryRepository())
+      .buildPagePrompt({ userId: 'user-1', pageId: 'page-1', generationMode, requestKind });
+
+    for (const prompt of [result.draftPrompt, result.compilerBrief]) {
+      expect(prompt).not.toContain('silver long hair');
+      expect(countOccurrences(prompt, 'child')).toBe(1);
+      expect(countOccurrences(prompt, '魔法を使うときだけ右手が光る。')).toBe(1);
+      expect(countOccurrences(prompt, 'Image 1 (葵): 葵 character reference.')).toBe(1);
+      expect(prompt).toContain('Image 2 (layout): Layout reference.');
+      for (let order = 1; order <= 4; order += 1) {
+        expect(prompt).toContain(`Panel ${order} subject lock: required visible subjects are 葵, reference Image 1 (葵), role primary`);
+        expect(prompt).toContain(`Visual lock for panel ${order}: subjects=葵 [Image 1 (葵)];`);
+        expect(prompt).toContain(`bind this scene and dialogue to guide P${order}`);
+      }
+      expect(prompt).toContain('showing determined, with attacking body language, accented by speed lines around the blade');
+      if (dialogueMode === 'image_baked') {
+        expect(prompt).toContain('葵, reference Image 1 (葵) exactly as written: "I will finish this now."');
+      } else {
+        expect(prompt).not.toContain('I will finish this now.');
+      }
+    }
+  });
+
+  it('参照画像がないキャラが混在する場合に外見を残し後続の画像番号を詰める', async () => {
+    const panels = new FakePanelRepository();
+    const panel = buildPanel();
+    panels.panels = [{
+      ...panel,
+      entities: [...panel.entities, { ...panel.entities[0]!, entityId: 'entity-2', role: 'secondary', position: 'left' }],
+      dialogue: [...panel.dialogue, { entityId: 'entity-2', text: '待って！', type: 'speech', position: 'left' }],
+    }];
+    const entities = new FakeEntityRepository();
+    entities.missingReferenceEntityIds.add('entity-1');
+    entities.entities = [
+      buildEntity({ structuredFields: { hair: { color: 'red', length: 'short' } } }),
+      buildEntity({ id: 'entity-2', name: '凛', structuredFields: { hair: { color: 'blue', length: 'long' } }, promptSupplement: null, freeDescription: null }),
+    ];
+    const result = await new PromptBuilder(new FakePageRepository(), panels, entities, new FakeCompositionGalleryRepository())
+      .buildPagePrompt({ userId: 'user-1', pageId: 'page-1', generationMode: 'standard', requestKind: 'initial' });
+
+    for (const prompt of [result.draftPrompt, result.compilerBrief]) {
+      expect(prompt).toContain('Aki, visual identity red short hair, role primary');
+      expect(prompt).toContain('Aki, visual identity red short hair, is primary');
+      expect(prompt).toContain('Aki, visual identity red short hair exactly as written');
+      expect(prompt).toContain('subjects=Aki [red short hair]|凛 [Image 1 (凛)];');
+      expect(prompt).toContain('凛, reference Image 1 (凛) exactly as written: "待って！"');
+      expect(prompt).not.toContain('blue long hair');
+      expect(prompt).not.toContain('Image 1 (Aki)');
+      expect(prompt).not.toContain('Image 2 (凛)');
+    }
+  });
+
+  it('参照画像の追加条件が長い場合に補足の優先順位と長さ制限を維持する', async () => {
+    const entities = new FakeEntityRepository();
+    entities.entities = [buildEntity({
+      structuredFields: { age_range: 'late_teens', hair: { color: 'silver' } },
+      promptSupplement: `Only use magic while holding the staff. ${'Keep this condition. '.repeat(20)}`,
+      freeDescription: 'Fallback-only description.',
+    })];
+    const result = await new PromptBuilder(new FakePageRepository(), new FakePanelRepository(), entities, new FakeCompositionGalleryRepository())
+      .buildPagePrompt({ userId: 'user-1', pageId: 'page-1', generationMode: 'standard', requestKind: 'initial' });
+    for (const prompt of [result.draftPrompt, result.compilerBrief]) {
+      expect(countOccurrences(prompt, 'Age range for Aki: late teens.')).toBe(1);
+      expect(countOccurrences(prompt, 'Only use magic while holding the staff.')).toBe(1);
+      const note = prompt.match(/Keep these anchor traits stable: (.*?\.\.\.)/u)?.[1];
+      expect(note).toBeDefined();
+      expect(note!.length).toBeLessThanOrEqual(160);
+      expect(prompt).not.toContain('Fallback-only description.');
+      expect(prompt).not.toContain('silver hair');
+    }
+  });
+
+  it('同名キャラと画面外話者がいる場合に画像番号と非表示指定で区別する', async () => {
+    const panel = buildPanel();
+    const panels = new FakePanelRepository();
+    panels.panels = [
+      { ...panel, dialogue: [{ entityId: 'entity-2', type: 'thought', text: 'ここで待とう。', position: 'right' }] },
+      { ...panel, id: 'panel-2', order: 2, entities: [{ ...panel.entities[0]!, entityId: 'entity-2' }] },
+    ];
+    const entities = new FakeEntityRepository();
+    entities.entities = [
+      buildEntity({ name: '葵', structuredFields: { hair: { color: 'red' } } }),
+      buildEntity({ id: 'entity-2', name: '葵', structuredFields: { hair: { color: 'blue' } }, promptSupplement: null, freeDescription: null }),
+    ];
+    const result = await new PromptBuilder(new FakePageRepository(), panels, entities, new FakeCompositionGalleryRepository())
+      .buildPagePrompt({ userId: 'user-1', pageId: 'page-1', generationMode: 'thinking', requestKind: 'initial' });
+    for (const prompt of [result.draftPrompt, result.compilerBrief]) {
+      expect(prompt).toContain('Panel 1 subject lock: required visible subjects are 葵, reference Image 1 (葵)');
+      expect(prompt).toContain('Panel 2 subject lock: required visible subjects are 葵, reference Image 2 (葵)');
+      expect(prompt).toContain('line 1 real speaker is 葵, reference Image 2 (葵) and is off-panel, exactly as written: "ここで待とう。" at its authored right position');
+      expect(prompt).toContain('葵, reference Image 2 (葵) is off-panel and must not be drawn in panel 1');
+      expect(prompt).toContain('Do not assign this line to 葵, reference Image 1 (葵) or any other visible listener');
+      expect(prompt).toContain('Do not point a balloon tail at 葵, reference Image 1 (葵) or any other visible person');
+      expect(prompt).not.toContain('Do not assign this line to 葵 or');
+      expect(prompt).not.toContain('Do not point a balloon tail at 葵 or');
+      expect(prompt).toContain('thought balloons must not use a speech tail');
+      expect(prompt).not.toContain('visual identity');
+    }
   });
 
   it('drops redundant long panel notes from the prompt brief', async () => {
