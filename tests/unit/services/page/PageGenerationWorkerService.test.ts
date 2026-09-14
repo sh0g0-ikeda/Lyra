@@ -1,3 +1,4 @@
+import { resolvePageGenerationLayoutControl } from '../../../../src/services/page/PageGenerationLayoutControl.js';
 import { describe, expect, it } from 'vitest';
 import { ConfigurationError } from '../../../../src/domain/errors/index.js';
 import type { CreditBalanceSnapshot } from '../../../../src/domain/types/credit.js';
@@ -89,6 +90,7 @@ class FakePlanner implements PageGenerationPlannerPort {
 class FakePromptBuilder implements PromptBuilderPort {
   public calls: BuildPagePromptInput[] = [];
   public builtPrompt: BuiltPagePrompt = {
+    layoutControl: null,
     workId: 'work-1',
     draftPrompt: 'page-prompt-draft',
     compilerBrief: '[TASK]\npage compiler brief',
@@ -131,9 +133,11 @@ class FakePromptCompiler implements PagePromptCompilerPort {
 
 class FakeInputImageBuilder implements PageGenerationInputImageBuilderPort {
   public calls = 0;
+  public lastInput: unknown = null;
 
   public async buildInputImages(_input: { userId: string; pageId: string }): Promise<PageGenerationInputImage[]> {
     this.calls += 1;
+    this.lastInput = _input;
     return [{ role: 'entity_reference', label: 'Aoi', dataUrl: 'data:image/png;base64,cmVm' }];
   }
 }
@@ -284,9 +288,8 @@ describe('PageGenerationWorkerService', () => {
       pageId: 'page-1',
       requestKind: 'initial',
       generationMode: 'standard',
-      prompt: 'page-prompt-compiled',
+      prompt: expect.stringContaining('page-prompt-compiled'),
       quality: 'medium',
-      internalPlan: null,
       inputImages: [{ role: 'entity_reference', label: 'Aoi', dataUrl: 'data:image/png;base64,cmVm' }],
     });
     expect(storage.calls[0]?.pageId).toBe('page-1');
@@ -337,8 +340,10 @@ describe('PageGenerationWorkerService', () => {
     await service.processJob('job-1');
 
     expect(planner.calls).toBe(1);
-    expect(renderer.calls[0]?.internalPlan).toBe('planner-output');
-    expect(renderer.calls[0]?.prompt).toBe('page-prompt-compiled');
+    expect(renderer.calls[0]?.prompt.endsWith('Preserve each panel\'s authored content and dialogue.')).toBe(true);
+    expect(renderer.calls[0]?.prompt).toContain('Keep exactly 1 panels');
+    expect(renderer.calls[0]).not.toHaveProperty('internalPlan');
+    expect(renderer.calls[0]?.prompt.split('\n\nFINAL AUTHORITATIVE')[0]).toBe('page-prompt-compiled\n\nInternal generation plan:\nplanner-output');
   });
 
   it('planner 出力が長すぎる場合は短くして render に渡す', async () => {
@@ -367,8 +372,9 @@ describe('PageGenerationWorkerService', () => {
 
     await service.processJob('job-1');
 
-    expect(renderer.calls[0]?.internalPlan?.length).toBeLessThanOrEqual(1200);
-    expect(renderer.calls[0]?.internalPlan).toContain('...');
+    const plan = renderer.calls[0]?.prompt.split('Internal generation plan:\n')[1]?.split('\n\nFINAL AUTHORITATIVE')[0];
+    expect(plan?.length).toBeLessThanOrEqual(1200);
+    expect(plan).toContain('...');
   });
 
   it('claim できない job は skip する', async () => {
@@ -585,7 +591,7 @@ describe('PageGenerationWorkerService', () => {
 
     await service.processJob('job-1');
 
-    expect(renderer.calls[0]?.prompt).toBe('page-prompt-draft');
+    expect(renderer.calls[0]?.prompt.split('\n\nFINAL AUTHORITATIVE')[0]).toBe('page-prompt-draft');
     expect(executionRepository.completionInput?.promptMetadata).toMatchObject({
       compiledPrompt: 'page-prompt-draft',
       compiledPromptUsed: false,
@@ -622,6 +628,7 @@ describe('PageGenerationWorkerService', () => {
     const executionRepository = new FakeExecutionRepository();
     const promptBuilder = new FakePromptBuilder();
     promptBuilder.builtPrompt = {
+      layoutControl: null,
       workId: 'work-1',
       draftPrompt: 'page-prompt-draft with Emil: "外に出よう。"',
       compilerBrief: [
@@ -649,7 +656,7 @@ describe('PageGenerationWorkerService', () => {
     await service.processJob('job-1');
 
     expect(promptCompiler.calls).toBe(0);
-    expect(renderer.calls[0]?.prompt).toBe('page-prompt-draft with Emil: "外に出よう。"');
+    expect(renderer.calls[0]?.prompt.split('\n\nFINAL AUTHORITATIVE')[0]).toBe('page-prompt-draft with Emil: "外に出よう。"');
     expect(executionRepository.completionInput?.promptMetadata).toMatchObject({
       compiledPrompt: 'page-prompt-draft with Emil: "外に出よう。"',
       compiledPromptUsed: false,
@@ -666,6 +673,7 @@ describe('PageGenerationWorkerService', () => {
     const executionRepository = new FakeExecutionRepository();
     const promptBuilder = new FakePromptBuilder();
     promptBuilder.builtPrompt = {
+      layoutControl: null,
       workId: 'work-1',
       draftPrompt: 'page-prompt-draft with Aki and Rin on the rooftop in a wide front shot',
       compilerBrief: [
@@ -693,7 +701,7 @@ describe('PageGenerationWorkerService', () => {
     await service.processJob('job-1');
 
     expect(promptCompiler.calls).toBe(0);
-    expect(renderer.calls[0]?.prompt).toBe('page-prompt-draft with Aki and Rin on the rooftop in a wide front shot');
+    expect(renderer.calls[0]?.prompt.split('\n\nFINAL AUTHORITATIVE')[0]).toBe('page-prompt-draft with Aki and Rin on the rooftop in a wide front shot');
     expect(executionRepository.completionInput?.promptMetadata).toMatchObject({
       compiledPrompt: 'page-prompt-draft with Aki and Rin on the rooftop in a wide front shot',
       compiledPromptUsed: false,
@@ -727,7 +735,7 @@ describe('PageGenerationWorkerService', () => {
 
     await service.processJob('job-1');
 
-    expect(renderer.calls[0]?.prompt).toBe('page-prompt-draft');
+    expect(renderer.calls[0]?.prompt.split('\n\nFINAL AUTHORITATIVE')[0]).toBe('page-prompt-draft');
     const compilerError = executionRepository.completionInput?.promptMetadata.compilerError;
     expect(compilerError).toContain('Bearer [redacted]');
     expect(compilerError).not.toContain(fakeApiKey);
@@ -974,6 +982,28 @@ describe('PageGenerationWorkerService', () => {
     expect(storage.calls).toEqual([]);
     expect(executionRepository.completionInput).toBeNull();
   });
+
+  it.each(['compiled', 'planner', 'compiler-fallback', 'direct-draft'])('%s の場合に同じ配置をガイドへ渡し最終プロンプトを末尾で固定する', async (mode) => {
+    const execution = new FakeExecutionRepository();
+    execution.claimedJob!.params.requires_planner = mode === 'planner';
+    const prompt = new FakePromptBuilder();
+    const control = resolvePageGenerationLayoutControl({ type: 'template', template_id: 'standard_4' }, 4)!;
+    prompt.builtPrompt.layoutControl = control;
+    const compiler = new FakePromptCompiler();
+    if (mode === 'compiler-fallback') { compiler.shouldFail = true; compiler.failWithConfigurationError = true; }
+    if (mode === 'direct-draft') prompt.builtPrompt.compilerBrief = '[PANEL INSTRUCTIONS]\n- Visual lock: Visual lock for panel 1: subjects=Aoi; shot=wide; angle=front; background cue="school rooftop".';
+    const images = new FakeInputImageBuilder();
+    const renderer = new FakeRenderer();
+    await new PageGenerationWorkerService(execution, prompt, compiler, images, new FakePlanner(), renderer, new FakeStorage(), new FakeCreditService()).processJob('job-1');
+    expect(execution.failureInput).toBeNull();
+    expect(images.lastInput).toMatchObject({ layoutControl: control });
+    if (mode === 'direct-draft') expect(compiler.calls).toBe(0);
+    const sent = renderer.calls[0]!.prompt;
+    expect(sent.endsWith(control.finalSuffix)).toBe(true);
+    if (mode === 'planner') expect(sent.indexOf('planner-output')).toBeLessThan(sent.indexOf(control.finalSuffix));
+    expect(execution.completionInput?.promptMetadata).toMatchObject({ renderPrompt: sent, pageLayoutControlVersion: 'page_layout_v1' });
+  });
+
 });
 
 function buildInputSnapshot(): PageGenerationInputSnapshot {

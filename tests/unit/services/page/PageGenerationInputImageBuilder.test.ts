@@ -1,3 +1,4 @@
+import { resolvePageGenerationLayoutControl } from '../../../../src/services/page/PageGenerationLayoutControl.js';
 import { describe, expect, it } from 'vitest';
 import type { CreateEntityInput, Entity, UpdateEntityInput } from '../../../../src/domain/types/entity.js';
 import type { EntityPrimaryReferenceImage, EntityRepository } from '../../../../src/repositories/EntityRepository.js';
@@ -334,6 +335,7 @@ describe('PageGenerationInputImageBuilder', () => {
 
   it('custom layout では最後に layout_reference を追加する', async () => {
     const pageRepository = new FakePageRepository();
+    pageRepository.generationContext!.panels = [pageRepository.generationContext!.panels[0]!];
     pageRepository.generationContext = {
       ...pageRepository.generationContext!,
       layoutConfig: {
@@ -448,4 +450,50 @@ describe('PageGenerationInputImageBuilder', () => {
       message: expect.stringContaining('input image is too large'),
     });
   });
+
+  it('既知テンプレートの場合にキャラ参照画像の後に同じ配置のガイドを追加する', async () => {
+    const pages = new FakePageRepository();
+    pages.generationContext!.layoutConfig = { type: 'template', template_id: 'vertical_2' };
+    const guide = new FakeLayoutGuideImageRenderer();
+    const builder = new PageGenerationInputImageBuilder(pages, new FakeEntityRepository(), new FakeStoredImageLoader(), guide);
+    const images = await builder.buildInputImages({ userId: 'user-1', pageId: 'page-1' });
+    expect(images.map((image) => image.label)).toEqual(['Aoi', 'Leo', 'page-layout-reference']);
+    expect(guide.calls[0]).toEqual(resolvePageGenerationLayoutControl(pages.generationContext!.layoutConfig, 2)!.frames);
+  });
+
+  it('prompt 作成後にレイアウトが変わった場合も prompt と同じ枠をガイドに使う', async () => {
+    const pages = new FakePageRepository();
+    pages.generationContext!.layoutConfig = { type: 'template', template_id: 'vertical_2' };
+    const control = resolvePageGenerationLayoutControl({ type: 'template', template_id: 'climax_2' }, 2)!;
+    const guide = new FakeLayoutGuideImageRenderer();
+    const builder = new PageGenerationInputImageBuilder(pages, new FakeEntityRepository(), new FakeStoredImageLoader(), guide);
+    await builder.buildInputImages({ userId: 'user-1', pageId: 'page-1', layoutControl: control });
+    expect(guide.calls).toEqual([control.frames]);
+    guide.calls = [];
+    const images = await builder.buildInputImages({ userId: 'user-1', pageId: 'page-1', layoutControl: null });
+    expect(guide.calls).toEqual([]);
+    expect(images.every((image) => image.role === 'entity_reference')).toBe(true);
+  });
+
+  it('12人の参照画像がある場合にガイドを追加してもキャラ画像を削らない', async () => {
+    const pages = new FakePageRepository();
+    const entities = new FakeEntityRepository();
+    entities.entities = Array.from({ length: 12 }, (_, i) => buildTestEntity(`entity-${i+1}`, `Character ${i+1}`));
+    entities.references = entities.entities.map((entity, i) => ({ entityId: entity.id, refId: `ref-${i}`, s3Key: `saved/user-1/entities/${entity.id}/ref-${i}.png`, cdnUrl: `https://img.lyra.test/ref-${i}.png` }));
+    pages.generationContext!.panels = [{ ...buildTestPanel('entity-1'), entities: entities.entities.flatMap((entity) => buildTestPanel(entity.id).entities) }];
+    pages.generationContext!.layoutConfig = { type: 'template', template_id: 'splash_1' };
+    const images = await new PageGenerationInputImageBuilder(pages, entities, new FakeStoredImageLoader(), new FakeLayoutGuideImageRenderer()).buildInputImages({ userId: 'user-1', pageId: 'page-1' });
+    expect(images).toHaveLength(13);
+    expect(images.slice(0,12).every((image) => image.role === 'entity_reference')).toBe(true);
+    expect(images[12]?.role).toBe('layout_reference');
+  });
+
+  it('配置ガイドが上限を超える場合にモデルへ渡す前に拒否する', async () => {
+    const pages = new FakePageRepository();
+    pages.generationContext!.layoutConfig = { type: 'template', template_id: 'vertical_2' };
+    const guide = new FakeLayoutGuideImageRenderer();
+    guide.nextResult = { mimeType: 'image/png', imageData: Buffer.alloc(OPENAI_INPUT_IMAGE_MAX_BYTES + 1) };
+    await expect(new PageGenerationInputImageBuilder(pages, new FakeEntityRepository(), new FakeStoredImageLoader(), guide).buildInputImages({ userId: 'user-1', pageId: 'page-1' })).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+  });
+
 });

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type { QueryResult, QueryResultRow } from 'pg';
 import { describe, expect, it } from 'vitest';
 import type { DatabaseClient } from '../../../src/lib/db.js';
@@ -188,6 +189,81 @@ describe('PostgresPageGenerationExecutionRepository', () => {
       }),
       'openai-1',
     ]);
+  });
+
+  it('最終送信プロンプトの場合に本文を保存せずハッシュと配置制御バージョンを保存する', async () => {
+    const client = new QueryCapturingClient();
+    const repository = new PostgresPageGenerationExecutionRepository(client);
+
+    const completed = await repository.completePageGeneration({
+      jobId: 'job-1',
+      userId: 'user-1',
+      pageId: 'page-1',
+      generationMode: 'thinking',
+      requestKind: 'regenerate',
+      s3Key: 'session/user-1/pages/page-1/result.png',
+      cdnUrl: 'https://cdn.lyra.test/page-1.png',
+      generatedAt: '2026-04-24T00:00:00.000Z',
+      costUsd: 0.08,
+      openaiRequestId: 'openai-1',
+      promptMetadata: {
+        renderPrompt: '最終送信 prompt',
+        pageLayoutControlVersion: 'page_layout_v1',
+        draftPrompt: 'draft prompt',
+        compilerBrief: '[TASK]\nbrief',
+        compiledPrompt: 'compiled prompt',
+        compiledPromptUsed: true,
+        promptCompilerProvider: 'openai',
+        compilerModel: 'gpt-5.4-mini',
+        compilerPromptVersion: 'page_prompt_v2',
+        compilerError: null,
+      },
+    });
+
+    expect(completed).toBe(true);
+    expect(client.queries[0]).toContain('SELECT *');
+    expect(client.queries[0]).toContain('FOR UPDATE');
+    expect(client.queries[0]).toContain('cancel_requested_at IS NULL');
+    expect(client.queries[1]).toContain('UPDATE pages');
+    expect(client.queries[2]).toContain("SET status = 'completed'");
+    expect(client.queries[2]).toContain("COALESCE(result, '{}'::jsonb) || $3::jsonb");
+    expect(client.values[1]).toEqual([
+      'page-1',
+      'user-1',
+      'session/user-1/pages/page-1/result.png',
+      'https://cdn.lyra.test/page-1.png',
+      'thinking',
+      '2026-04-24T00:00:00.000Z',
+      null,
+    ]);
+    expect(client.values[2]).toEqual([
+      'job-1',
+      'user-1',
+      JSON.stringify({
+        s3_key: 'session/user-1/pages/page-1/result.png',
+        cdn_url: 'https://cdn.lyra.test/page-1.png',
+        generation_mode: 'thinking',
+        request_kind: 'regenerate',
+        cost_usd: 0.08,
+        render_prompt_sha256: createHash('sha256').update('最終送信 prompt').digest('hex'),
+        render_prompt_bytes: Buffer.byteLength('最終送信 prompt'),
+        page_layout_control_version: 'page_layout_v1',
+        draft_prompt_sha256: '8f458698fd5f818ff1e01da76a3ac97549adee06a29cf84d41ac3cbde283c26d',
+        draft_prompt_bytes: 12,
+        compiled_brief_sha256: 'd376876e55ec00bc214966cb93341e2b0e004577fd00dd2537cace8dc2c328df',
+        compiled_brief_bytes: 12,
+        compiled_prompt_sha256: '3933ca9c4b8ba6126fbbfff84d1bdac485836784b4ef147550e757cf8895451a',
+        compiled_prompt_bytes: 15,
+        compiled_prompt_used: true,
+        prompt_compiler_provider: 'openai',
+        compiler_model: 'gpt-5.4-mini',
+        compiler_prompt_version: 'page_prompt_v2',
+        compiler_error: null,
+        stage_timings_ms: null,
+      }),
+      'openai-1',
+    ]);
+    expect(JSON.stringify(client.values)).not.toContain('最終送信 prompt');
   });
 
   it('failed 更新でjobとpage stateを元に戻す', async () => {

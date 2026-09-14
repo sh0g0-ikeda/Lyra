@@ -30,7 +30,6 @@ describe('OpenAIPageImageRenderer', () => {
       generationMode: 'standard',
       prompt: 'page prompt',
       quality: 'medium',
-      internalPlan: 'keep panel 1 wide',
       inputImages: [],
     });
 
@@ -83,7 +82,6 @@ describe('OpenAIPageImageRenderer', () => {
       generationMode: 'standard',
       prompt: 'page prompt',
       quality: 'medium',
-      internalPlan: null,
       inputImages: [{ role: 'entity_reference', label: 'Aoi', dataUrl: 'data:image/png;base64,cmVm' }],
     });
 
@@ -117,7 +115,6 @@ describe('OpenAIPageImageRenderer', () => {
         generationMode: 'standard',
         prompt: 'page prompt',
         quality: 'medium',
-        internalPlan: null,
         inputImages: [{ role: 'entity_reference', label: 'Aoi', dataUrl: 'data:text/plain;base64,cmVm' }],
       }),
     ).rejects.toEqual(new ConfigurationError('OpenAI image renderer received an unsupported image input type'));
@@ -144,7 +141,6 @@ describe('OpenAIPageImageRenderer', () => {
         generationMode: 'standard',
         prompt: 'page prompt',
         quality: 'medium',
-        internalPlan: null,
         inputImages: [{ role: 'entity_reference', label: 'Aoi', dataUrl: 'data:image/png;base64,====' }],
       }),
     ).rejects.toEqual(new ConfigurationError('OpenAI image renderer received an empty image input'));
@@ -172,7 +168,6 @@ describe('OpenAIPageImageRenderer', () => {
         generationMode: 'standard',
         prompt: 'page prompt',
         quality: 'medium',
-        internalPlan: null,
         inputImages: [{ role: 'entity_reference', label: 'Aoi', dataUrl }],
       }),
     ).rejects.toEqual(new ConfigurationError('OpenAI image renderer received an input image that is too large'));
@@ -197,7 +192,6 @@ describe('OpenAIPageImageRenderer', () => {
         generationMode: 'standard',
         prompt: 'page prompt',
         quality: 'medium',
-        internalPlan: null,
         inputImages: [],
       }),
     ).rejects.toEqual(new ConfigurationError('OpenAI image renderer returned no image data'));
@@ -222,9 +216,20 @@ describe('OpenAIPageImageRenderer', () => {
         generationMode: 'standard',
         prompt: 'page prompt',
         quality: 'medium',
-        internalPlan: null,
         inputImages: [],
       }),
     ).rejects.toEqual(new ConfigurationError('OpenAI image renderer returned invalid image data'));
   });
+
+  it.each([false, true])('参照画像あり=%s の場合に組み立て済み最終指示を変更せず送信する', async (withImages) => {
+    const prompt = 'story\n\nInternal generation plan:\nplan\n\nFINAL AUTHORITATIVE PAGE LAYOUT\nP1 upper-right';
+    let sent: unknown;
+    const client = {
+      postJson: vi.fn(async (_path: string, body: { prompt: string }) => { sent = body.prompt; return { body: { data: [{ b64_json: 'cG5n' }] }, requestId: 'r' }; }),
+      postFormData: vi.fn(async (_path: string, build: () => FormData) => { sent = build().get('prompt'); return { body: { data: [{ b64_json: 'cG5n' }] }, requestId: 'r' }; }),
+    } as unknown as OpenAIClient;
+    await new OpenAIPageImageRenderer(client).render({ jobId: 'j', userId: 'u', pageId: 'p', requestKind: 'initial', generationMode: 'standard', quality: 'medium', prompt, inputImages: withImages ? [{ role: 'layout_reference', label: 'guide', dataUrl: 'data:image/png;base64,cG5n' }] : [] });
+    expect(sent).toBe(prompt);
+  });
+
 });

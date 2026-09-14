@@ -1,3 +1,4 @@
+import { resolvePageGenerationLayoutControl, type PageGenerationLayoutControl } from './PageGenerationLayoutControl.js';
 import { NotFoundError, ValidationError } from '../../domain/errors/index.js';
 import { PAGE_GENERATION_INPUT_IMAGE_LIMITS } from '../../domain/constants/generation.js';
 import { OPENAI_INPUT_IMAGE_MAX_BYTES } from '../../domain/constants/imageInput.js';
@@ -12,6 +13,7 @@ export interface BuildPageGenerationInputImagesInput {
   userId: string;
   organizationId?: string | null;
   pageId: string;
+  layoutControl?: PageGenerationLayoutControl | null;
 }
 
 export interface PageGenerationInputImageBuilderPort {
@@ -74,8 +76,15 @@ export class PageGenerationInputImageBuilder implements PageGenerationInputImage
       });
     }
 
-    const layoutGuideImage = buildLayoutGuideImage(page.layoutConfig, this.layoutGuideImageRenderer);
+    const layoutControl = input.layoutControl === undefined
+      ? resolvePageGenerationLayoutControl(page.layoutConfig, page.panels.length)
+      : input.layoutControl;
+    const layoutGuideImage = layoutControl === null ? null : this.layoutGuideImageRenderer.render(layoutControl.frames);
+    if (layoutControl !== null && layoutGuideImage === null) {
+      throw new ValidationError('Page layout guide could not be generated');
+    }
     if (layoutGuideImage !== null) {
+      ensureInputImageWithinLimit(layoutGuideImage.imageData);
       inputImages.push({
         role: 'layout_reference',
         label: 'page-layout-reference',
@@ -85,17 +94,6 @@ export class PageGenerationInputImageBuilder implements PageGenerationInputImage
 
     return inputImages;
   }
-}
-
-function buildLayoutGuideImage(
-  layoutConfig: Record<string, unknown>,
-  layoutGuideImageRenderer: LayoutGuideImageRendererPort,
-): { imageData: Buffer; mimeType: 'image/png' } | null {
-  if (layoutConfig.type !== 'custom') {
-    return null;
-  }
-
-  return layoutGuideImageRenderer.render(layoutConfig.frame_definitions);
 }
 
 function collectEntityIds(

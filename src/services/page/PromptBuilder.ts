@@ -1,7 +1,4 @@
-import {
-  PANEL_FRAME_TEMPLATES,
-  getPanelFrameTemplate,
-} from '../../domain/constants/panelFrameTemplates.js';
+import { JAPANESE_MANGA_READING_ORDER_LOCK, resolvePageGenerationLayoutControl, type PageGenerationLayoutControl } from './PageGenerationLayoutControl.js';
 import { NotFoundError, ValidationError } from '../../domain/errors/index.js';
 import type { CompositionGalleryItem } from '../../domain/types/composition.js';
 import type { Entity } from '../../domain/types/entity.js';
@@ -28,6 +25,7 @@ export interface BuildPagePromptInput {
 }
 
 export interface BuiltPagePrompt {
+  layoutControl: PageGenerationLayoutControl | null;
   workId: string;
   draftPrompt: string;
   compilerBrief: string;
@@ -47,6 +45,7 @@ interface NormalizedReferenceRole {
 }
 
 interface NormalizedPanelInstruction {
+  physicalPlacement: string | null;
   order: number;
   role: string;
   size: string;
@@ -60,6 +59,7 @@ interface NormalizedPanelInstruction {
 }
 
 interface NormalizedPagePrompt {
+  layoutControl: PageGenerationLayoutControl | null;
   pageSummary: string;
   pageSetting: string;
   referenceRoles: NormalizedReferenceRole[];
@@ -131,6 +131,7 @@ export class PromptBuilder implements PromptBuilderPort {
     );
 
     return {
+      layoutControl: normalized.layoutControl,
       workId: page.workId,
       draftPrompt: buildDraftPrompt(normalized),
       compilerBrief: buildCompilerBrief(normalized),
@@ -190,14 +191,16 @@ function normalizePagePrompt(
 ): NormalizedPagePrompt {
   const orderedPanels = [...panels].sort((left, right) => left.order - right.order);
   assertContiguousPanelOrder(orderedPanels);
-  const referenceRoles = buildReferenceRoles(page, orderedPanels, entityMap, referencedEntityIds);
+  const layoutControl = resolvePageGenerationLayoutControl(page.layoutConfig, orderedPanels.length);
+  const referenceRoles = buildReferenceRoles(orderedPanels, entityMap, referencedEntityIds, layoutControl);
   const referenceLabelByEntityId = buildReferenceLabelMap(referenceRoles);
 
   return {
     pageSummary: buildPageSummary(page, input, orderedPanels.length),
     pageSetting: buildPageSetting(page),
     referenceRoles,
-    layoutInstruction: buildLayoutInstruction(page, orderedPanels.length),
+    layoutControl,
+    layoutInstruction: layoutControl?.detailedInstruction ?? buildUnmappedLayoutInstruction(orderedPanels.length),
     panelInstructions: orderedPanels.map((panel, index) =>
       buildNormalizedPanelInstruction(
         panel,
@@ -206,6 +209,7 @@ function normalizePagePrompt(
         compositionMap,
         referenceLabelByEntityId,
         shouldBakeDialogueForPanel(page, panel),
+        layoutControl?.frames.find((frame) => frame.readingOrder === panel.order)?.physicalPlacement ?? null,
       ),
     ),
     qualityConstraints: buildQualityConstraints(page, orderedPanels.length, referenceRoles),
@@ -274,10 +278,10 @@ function buildPageSetting(page: PagePromptContext): string {
 }
 
 function buildReferenceRoles(
-  page: PagePromptContext,
   panels: Panel[],
   entityMap: Map<string, Entity>,
   referencedEntityIds: Set<string>,
+  layoutControl: PageGenerationLayoutControl | null,
 ): NormalizedReferenceRole[] {
   const orderedAssignments = new Map<string, PanelEntityAssignment>();
   const panelOrdersByEntityId = new Map<string, number[]>();
@@ -311,14 +315,14 @@ function buildReferenceRoles(
       };
     });
 
-  if (page.layoutConfig.type === 'custom') {
+  if (layoutControl !== null) {
     roles.push({
       entityId: null,
       imageLabel: `Image ${roles.length + 1} (layout)`,
       role: 'layout_reference',
       subject: 'page layout',
       instruction:
-        'Layout reference. Follow the panel borders, gutter rhythm, page balance, and reading order exactly. Use it only for layout, not for art style or scene content.',
+        'Layout reference. The textual coordinate map defines frame Pn for Panel n, including its scene and dialogue. Visible P labels are annotations where space allows. Follow the panel borders, gutter rhythm, page balance, and mapped reading order exactly. Never copy the P labels into the artwork. Use it only for layout, not for art style or scene content.',
     });
   }
 
@@ -342,9 +346,11 @@ function buildNormalizedPanelInstruction(
   compositionMap: Map<string, CompositionGalleryItem>,
   referenceLabelByEntityId: Map<string, string>,
   includeDialogue: boolean,
+  physicalPlacement: string | null,
 ): NormalizedPanelInstruction {
   return {
     order: panel.order,
+    physicalPlacement,
     role: panel.panelRole,
     size: panel.panelSize,
     situation: normalizePanelSituation(panel.situationText),
@@ -598,49 +604,8 @@ function shouldBakeDialogueForPanel(page: PagePromptContext, panel: Panel): bool
   return true;
 }
 
-function buildLayoutInstruction(page: PagePromptContext, panelCount: number): string {
-  const layoutType = readString(page.layoutConfig.type);
-  if (layoutType === 'template') {
-    const templateId = readString(page.layoutConfig.template_id);
-    if (templateId !== null && isKnownTemplateId(templateId)) {
-      const template = getPanelFrameTemplate(templateId);
-      return [
-        `Use the ${template.id} template with ${template.panelCount} panels. Preserve its panel proportions, reading rhythm, and clear gutters for this ${panelCount}-panel page.`,
-        JAPANESE_MANGA_READING_ORDER_LOCK,
-        formatFrameMap(template.frames),
-        'Do not add, merge, omit, mirror, or reorder panels.',
-      ].join(' ');
-    }
-  }
-
-  if (layoutType === 'custom') {
-    const frameDefinitions = toFrameDefinitions(page.layoutConfig.frame_definitions);
-    const instructionLines = [
-      'Follow the uploaded layout reference image exactly for panel borders, gutter spacing, and reading order.',
-      JAPANESE_MANGA_READING_ORDER_LOCK,
-    ];
-
-    if (frameDefinitions.length > 0) {
-      instructionLines.push(formatFrameMap(frameDefinitions));
-    }
-
-    instructionLines.push(`Do not add, merge, or omit panels. The finished page must retain exactly ${panelCount} panels.`);
-    return instructionLines.join(' ');
-  }
-
-  if (layoutType === 'ai_generated' || layoutType === 'ai_auto') {
-    const frameDefinitions = toFrameDefinitions(page.layoutConfig.frame_definitions);
-    return [
-      'Use the stored AI-generated panel arrangement for this page.',
-      JAPANESE_MANGA_READING_ORDER_LOCK,
-      frameDefinitions.length === 0
-        ? JAPANESE_MANGA_UNMAPPED_LAYOUT_FALLBACK
-        : formatFrameMap(frameDefinitions),
-      `Do not add, merge, omit, mirror, or reorder panels. Keep exactly ${panelCount} panels.`,
-    ].join(' ');
-  }
-
-  return `${JAPANESE_MANGA_READING_ORDER_LOCK} ${JAPANESE_MANGA_UNMAPPED_LAYOUT_FALLBACK} Do not add, merge, omit, mirror, or reorder panels. Keep exactly ${panelCount} panels with clear gutters and borders.`;
+function buildUnmappedLayoutInstruction(panelCount: number): string {
+  return `${JAPANESE_MANGA_READING_ORDER_LOCK} Without a complete frame map, use right-to-left within each regular tier, then top-to-bottom. Keep exactly ${panelCount} panels. Do not add, merge, omit, mirror, or reorder panels.`;
 }
 
 function buildQualityConstraints(
@@ -726,6 +691,7 @@ function buildCompilerBrief(normalized: NormalizedPagePrompt): string {
       normalized.panelInstructions.flatMap((panel) => {
         const lines = [
           `Panel ${panel.order} (${panel.role}, ${panel.size})`,
+          panel.physicalPlacement === null ? null : `- Physical placement: ${panel.physicalPlacement}; bind this scene and dialogue to guide P${panel.order}.`,
           `- Situation: ${panel.situation}`,
           panel.subjectLock === null ? null : `- Subject lock: ${panel.subjectLock}`,
           `- Character beat: ${panel.characterBeat}`,
@@ -769,6 +735,7 @@ function buildPanelInstructionParagraph(panelInstructions: NormalizedPanelInstru
     .map((panel) => {
       const parts = [
         `Panel ${panel.order}: This is a ${panel.role} ${panel.size} beat.`,
+        panel.physicalPlacement === null ? null : `Panel ${panel.order} physical placement: ${panel.physicalPlacement}; bind this scene and dialogue to guide P${panel.order}.`,
         `Panel ${panel.order} situation: ${panel.situation}`,
         panel.subjectLock,
         `Panel ${panel.order} character direction: ${panel.characterBeat}`,
@@ -1102,67 +1069,6 @@ function normalizeWhitespace(value: string): string {
 
 function humanizeToken(value: string): string {
   return value.replace(/_/gu, ' ');
-}
-
-function readString(value: unknown): string | null {
-  return typeof value === 'string' ? value : null;
-}
-
-function isKnownTemplateId(value: string): value is Parameters<typeof getPanelFrameTemplate>[0] {
-  return value in PANEL_FRAME_TEMPLATES;
-}
-
-interface LayoutFrameVertex {
-  x: number;
-  y: number;
-}
-
-interface LayoutFrameDefinition {
-  readingOrder: number;
-  vertices: LayoutFrameVertex[];
-}
-
-const JAPANESE_MANGA_READING_ORDER_LOCK =
-  'Japanese manga physical reading order is mandatory: panel 1 is the upper-right or rightmost top entry; follow numbered panels generally right-to-left and downward toward the lower-left, never western left-to-right.';
-const JAPANESE_MANGA_UNMAPPED_LAYOUT_FALLBACK =
-  'Without a frame map, use right-to-left within each regular tier, then top-to-bottom.';
-
-function formatFrameMap(frameDefinitions: readonly LayoutFrameDefinition[]): string {
-  return `Authoritative frame map (follow P numbers and coordinates exactly for asymmetric or custom layouts): ${[...frameDefinitions]
-    .sort((left, right) => left.readingOrder - right.readingOrder)
-    .map(
-      (frame) =>
-        `P${frame.readingOrder}=[${frame.vertices
-          .map((vertex) => `(${vertex.x.toFixed(2)},${vertex.y.toFixed(2)})`)
-          .join(',')}]`,
-    )
-    .join('; ')}.`;
-}
-
-function toFrameDefinitions(value: unknown): LayoutFrameDefinition[] {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-
-  return value.flatMap((entry) => {
-    if (!isRecord(entry) || typeof entry.reading_order !== 'number' || !Array.isArray(entry.vertices)) {
-      return [];
-    }
-
-    const vertices = entry.vertices.flatMap((vertex) => {
-      if (!isRecord(vertex) || typeof vertex.x !== 'number' || typeof vertex.y !== 'number') {
-        return [];
-      }
-
-      return [{ x: vertex.x, y: vertex.y }];
-    });
-
-    if (vertices.length === 0) {
-      return [];
-    }
-
-    return [{ readingOrder: entry.reading_order, vertices }];
-  });
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

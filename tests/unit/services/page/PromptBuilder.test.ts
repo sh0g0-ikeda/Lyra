@@ -1,3 +1,4 @@
+import { PANEL_FRAME_TEMPLATE_IDS, getPanelFrameTemplate } from '../../../../src/domain/constants/panelFrameTemplates.js';
 import { describe, expect, it } from 'vitest';
 import { ValidationError } from '../../../../src/domain/errors/index.js';
 import type { CompositionGalleryItem } from '../../../../src/domain/types/composition.js';
@@ -172,9 +173,11 @@ class FakeCompositionGalleryRepository implements CompositionGalleryRepository {
 
 describe('PromptBuilder', () => {
   it('includes layout, references, setting, and dialogue without redundant sections', async () => {
+    const panels = new FakePanelRepository();
+    panels.panels = Array.from({ length: 4 }, (_, i) => ({ ...buildPanel(), id: `panel-${i+1}`, order: i+1, entities: i === 0 ? buildPanel().entities : [] }));
     const builder = new PromptBuilder(
       new FakePageRepository(),
-      new FakePanelRepository(),
+      panels,
       new FakeEntityRepository(),
       new FakeCompositionGalleryRepository(),
     );
@@ -260,8 +263,8 @@ describe('PromptBuilder', () => {
       pageId: 'page-1',
       requestKind: 'initial',
       generationMode: 'thinking',
-      panelCount: 1,
-      panels: [
+      panelCount: 4,
+      panels: expect.arrayContaining([
         {
           panelId: 'panel-1',
           order: 1,
@@ -277,7 +280,7 @@ describe('PromptBuilder', () => {
             },
           ],
         },
-      ],
+      ]),
     });
   });
 
@@ -849,6 +852,30 @@ describe('PromptBuilder', () => {
       }),
     ).rejects.toBeInstanceOf(ValidationError);
   });
+
+  it.each(PANEL_FRAME_TEMPLATE_IDS)('%s の場合に各コマの描写と配置ガイドの番号が一致する', async (templateId) => {
+    const template = getPanelFrameTemplate(templateId);
+    const pages = new FakePageRepository();
+    pages.promptContext = buildPagePromptContext({ layoutConfig: { type: 'template', template_id: templateId } });
+    const panels = new FakePanelRepository();
+    panels.panels = template.frames.map((frame) => ({ ...buildPanel(), id: `panel-${frame.readingOrder}`, order: frame.readingOrder, entities: frame.readingOrder === 1 ? buildPanel().entities : [] }));
+    const result = await new PromptBuilder(pages, panels, new FakeEntityRepository(), new FakeCompositionGalleryRepository()).buildPagePrompt({ userId: 'user-1', pageId: 'page-1', requestKind: 'initial', generationMode: 'standard' });
+    expect(result.layoutControl?.frames).toHaveLength(template.panelCount);
+    for (const frame of result.layoutControl!.frames) {
+      expect(result.draftPrompt).toContain(`Panel ${frame.readingOrder} physical placement: ${frame.physicalPlacement}`);
+      expect(result.compilerBrief).toContain(`- Physical placement: ${frame.physicalPlacement}`);
+    }
+    expect(result.compilerBrief).toContain('Image 2 (layout): Layout reference.');
+  });
+
+  it('コマ数がテンプレートと異なる既存ページの場合に誤った枠数や添付画像を指示しない', async () => {
+    const result = await new PromptBuilder(new FakePageRepository(), new FakePanelRepository(), new FakeEntityRepository(), new FakeCompositionGalleryRepository()).buildPagePrompt({ userId: 'user-1', pageId: 'page-1', requestKind: 'initial', generationMode: 'standard' });
+    expect(result.layoutControl).toBeNull();
+    expect(result.draftPrompt).not.toContain('template with 4 panels');
+    expect(result.draftPrompt).not.toContain('(layout)');
+    expect(result.draftPrompt).toContain('exactly 1 panels');
+  });
+
 });
 
 function buildPagePromptContext(overrides: Partial<PagePromptContext> = {}): PagePromptContext {
