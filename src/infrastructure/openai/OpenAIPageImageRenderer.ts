@@ -20,9 +20,8 @@ export class OpenAIPageImageRenderer implements PageImageRendererPort {
   ) {}
 
   public async render(input: RenderPageImageInput): Promise<RenderPageImageResult> {
-    const prompt = input.internalPlan === null
-      ? input.prompt
-      : `${input.prompt}\n\nInternal generation plan:\n${input.internalPlan}`;
+    // Worker assembles the final prompt once so no plan can follow its layout lock.
+    const prompt = input.prompt;
 
     const response = input.inputImages.length === 0
       ? await this.client.postJson<OpenAIImageGenerationResponse>('/images/generations', {

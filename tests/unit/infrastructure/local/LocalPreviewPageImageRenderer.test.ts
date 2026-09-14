@@ -13,7 +13,6 @@ describe('LocalPreviewPageImageRenderer', () => {
       generationMode: 'standard',
       prompt: 'A knight stands in a ruined town square at dusk.',
       quality: 'medium',
-      internalPlan: null,
       inputImages: [],
     });
 

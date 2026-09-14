@@ -1,3 +1,4 @@
+import { assemblePageRenderPrompt, PAGE_LAYOUT_CONTROL_VERSION, type PageGenerationLayoutControl } from './PageGenerationLayoutControl.js';
 import { ConfigurationError } from '../../domain/errors/index.js';
 import { PAGE_GENERATION_INTERNAL_PLAN_MAX_CHARS } from '../../domain/constants/generation.js';
 import { sanitizePersistedErrorMessage } from '../../lib/errorSanitizer.js';
@@ -34,6 +35,8 @@ export interface PageGenerationPlanInput {
 }
 
 export interface PagePromptCompilationMetadata {
+  renderPrompt?: string;
+  pageLayoutControlVersion?: string;
   draftPrompt: string;
   compilerBrief: string;
   compiledPrompt: string;
@@ -65,7 +68,6 @@ export interface PageGenerationPlannerPort {
 
 export interface RenderPageImageInput extends PageGenerationPlanInput {
   quality: PersistedPageGenerationJobParams['quality'];
-  internalPlan: string | null;
   inputImages: PageGenerationInputImage[];
 }
 
@@ -105,6 +107,7 @@ export interface ProcessPageGenerationJobResult {
 }
 
 export interface BuildPageGenerationInputImagesInput {
+  layoutControl?: PageGenerationLayoutControl | null;
   userId: string;
   organizationId?: string | null;
   pageId: string;
@@ -171,6 +174,7 @@ export class PageGenerationWorkerService {
       await this.touchJobProgress(job, 'Preparing reference images.');
       const inputImages = await measurePageGenerationStage(stageTimingsMs, 'reference_images', () =>
         this.inputImageBuilder.buildInputImages({
+          layoutControl: builtPrompt.layoutControl,
           userId: job.userId,
           organizationId: job.organizationId ?? null,
           pageId: params.page_id,
@@ -200,6 +204,7 @@ export class PageGenerationWorkerService {
         return { status: 'processed', jobStatus: 'cancelled' };
       }
 
+      const renderPrompt = assemblePageRenderPrompt(compiledPrompt.prompt, internalPlan, builtPrompt.layoutControl, builtPrompt.inputSnapshot.panelCount);
       const renderResult = await measurePageGenerationStage(stageTimingsMs, 'rendering', () =>
         this.withProgressHeartbeat(job, 'Requesting page image from image model.', () =>
           this.renderer.render({
@@ -209,9 +214,8 @@ export class PageGenerationWorkerService {
             pageId: params.page_id,
             requestKind: params.request_kind,
             generationMode: params.generation_mode,
-            prompt: compiledPrompt.prompt,
+            prompt: renderPrompt,
             quality: params.quality,
-            internalPlan,
             inputImages,
           }),
         ),
@@ -242,6 +246,8 @@ export class PageGenerationWorkerService {
       await this.touchJobProgress(job, 'Saving generated page result.');
       const completed = await this.executionRepository.completePageGeneration(
         buildCompletionInput(job, params, storedImage, renderResult, {
+          renderPrompt,
+          pageLayoutControlVersion: PAGE_LAYOUT_CONTROL_VERSION,
           draftPrompt: builtPrompt.draftPrompt,
           compilerBrief: builtPrompt.compilerBrief,
           compiledPrompt: compiledPrompt.prompt,

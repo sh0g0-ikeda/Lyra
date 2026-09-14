@@ -406,7 +406,10 @@ function buildPromptMetadataDiagnostics(
   const compiledBrief = buildPersistedPromptDiagnostics(metadata.compilerBrief);
   const compiledPrompt = buildPersistedPromptDiagnostics(metadata.compiledPrompt);
 
+  const renderPrompt = metadata.renderPrompt === undefined ? null : buildPersistedPromptDiagnostics(metadata.renderPrompt);
   return {
+    ...(renderPrompt === null ? {} : { render_prompt_sha256: renderPrompt.sha256, render_prompt_bytes: renderPrompt.bytes }),
+    ...(metadata.pageLayoutControlVersion === undefined ? {} : { page_layout_control_version: metadata.pageLayoutControlVersion }),
     draft_prompt_sha256: draftPrompt.sha256,
     draft_prompt_bytes: draftPrompt.bytes,
     compiled_brief_sha256: compiledBrief.sha256,
