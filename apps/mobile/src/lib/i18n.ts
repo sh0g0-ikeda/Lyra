@@ -54,6 +54,7 @@ type BaseTranslationKey =
   | 'frames'
   | 'fullDraft'
   | 'generate'
+  | 'generateMonochrome'
   | 'generateReference'
   | 'guide'
   | 'imageImport'
@@ -143,6 +144,7 @@ const baseTranslations: Record<UiLanguage, Record<BaseTranslationKey, string>> =
     frames: '枠',
     fullDraft: '話の本文',
     generate: 'ページ生成',
+    generateMonochrome: '白黒で生成',
     generateReference: '全身プレビュー生成',
     guide: 'ガイド',
     imageImport: '画像取り込み',
@@ -231,6 +233,7 @@ const baseTranslations: Record<UiLanguage, Record<BaseTranslationKey, string>> =
     frames: 'Frames',
     fullDraft: 'Full draft',
     generate: 'Generate page',
+    generateMonochrome: 'Generate in black and white',
     generateReference: 'Generate reference',
     guide: 'Guide',
     imageImport: 'Import image',

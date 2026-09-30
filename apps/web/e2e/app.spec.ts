@@ -728,15 +728,44 @@ test('ページ設計とページ生成の操作をページ編集の保存導�
   await expect(pageStack.locator('.page-section-frames-panels + .page-section-generate')).toHaveCount(1);
   await expect(pageStack.locator('.page-section-generate + .page-section-style-constraints')).toHaveCount(1);
   await expect(pageStack.locator('.page-section-generate').getByRole('button', { name: 'Generate page', exact: true })).toBeVisible();
+  await expect(pageStack.locator('.page-section-generate').getByRole('button', { name: 'Generate monochrome page', exact: true })).toBeVisible();
   await expect(pageStack.locator('.page-section-generate .generated-image')).toHaveCount(1);
 
   await page.getByRole('button', { name: 'Account menu', exact: true }).click();
   await page.getByRole('combobox', { name: 'Language', exact: true }).selectOption('ja');
   await expect(page.getByRole('heading', { name: 'ページ設計', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'ストーリーから設定を自動入力', exact: true })).toBeVisible();
+  await expect(pageStack.locator('.page-section-generate').getByRole('button', { name: '白黒で生成', exact: true })).toBeVisible();
 
   await page.setViewportSize({ width: 390, height: 844 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+  await expect(pageStack.locator('.page-section-generate').getByRole('button', { name: '白黒で生成', exact: true })).toBeVisible();
+});
+
+test('白黒で生成は保存後に白黒指定のページjobを送る', async ({ page }) => {
+  await seedEnglishUi(page);
+  await seedAuthenticatedSession(page);
+  await page.route('**/api/**', async (route) => {
+    if (new URL(route.request().url()).pathname === `/api/pages/${pageRecord.id}/generate`) {
+      await route.fulfill({
+        status: 202,
+        contentType: 'application/json',
+        body: JSON.stringify({ job_id: 'job-monochrome' }),
+      });
+      return;
+    }
+    await mockApi(route);
+  });
+
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Pages', exact: true }).click();
+  const generationRequest = page.waitForRequest((request) =>
+    request.method() === 'POST' && new URL(request.url()).pathname === `/api/pages/${pageRecord.id}/generate`,
+  );
+  await page.getByRole('button', { name: 'Generate monochrome page', exact: true }).click();
+  const request = await generationRequest;
+
+  expect(request.postDataJSON()).toEqual({ render_style: 'monochrome' });
 });
 
 test('creates works from the sidebar without rendering a work overview editor', async ({ page }) => {

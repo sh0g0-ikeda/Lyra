@@ -745,6 +745,35 @@ describe('LyraMobileApiClient API contract', () => {
     expect(JSON.parse(String(request?.[1]?.body))).toEqual(payload);
   });
 
+  it('白黒ページ生成はrender_styleを送る', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ job_id: 'job-1' }), { headers: { 'Content-Type': 'application/json' }, status: 202 })
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const client = new LyraMobileApiClient(() => 'token');
+
+    await expect(client.generatePage('page-1', 'organization-1', 'monochrome')).resolves.toEqual({ job_id: 'job-1' });
+
+    const request = fetchMock.mock.calls[0];
+    expect(request?.[0]).toContain('/api/pages/page-1/generate?organization_id=organization-1');
+    expect(request?.[1]).toMatchObject({ method: 'POST' });
+    expect(JSON.parse(String(request?.[1]?.body))).toEqual({ render_style: 'monochrome' });
+  });
+
+  it('カラーのページ生成は従来どおりrequest bodyを送らない', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ job_id: 'job-1' }), { headers: { 'Content-Type': 'application/json' }, status: 202 })
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const client = new LyraMobileApiClient(() => 'token');
+
+    await expect(client.generatePage('page-1', 'organization-1')).resolves.toEqual({ job_id: 'job-1' });
+
+    const request = fetchMock.mock.calls[0];
+    expect(request?.[1]).toMatchObject({ method: 'POST' });
+    expect(request?.[1]?.body).toBeUndefined();
+  });
+
   it('共通コマ割りテンプレートのgeometryをruntime検証する', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(
