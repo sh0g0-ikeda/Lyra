@@ -1,4 +1,4 @@
-import type { QueryResult, QueryResultRow } from 'pg';
+﻿import type { QueryResult, QueryResultRow } from 'pg';
 import { describe, expect, it } from 'vitest';
 import type { DatabaseClient } from '../../../src/lib/db.js';
 import { PostgresPageRepository } from '../../../src/repositories/PageRepository.js';
@@ -225,6 +225,24 @@ describe('PostgresPageRepository', () => {
       3,
     ]);
   });
+
+  it('unknown generated_image image_model を欠落値にせず保持する', async () => {
+    const client = new QueryCapturingClient();
+    client.pageRows = [pageSummaryRow({
+      generated_image: {
+        s3_key: 'saved/user-1/pages/page-1.png',
+        cdn_url: 'https://img.lyra.test/page-1.png',
+        generation_mode: 'standard',
+        generated_at: '2026-09-30T00:00:00.000Z',
+        image_model: 'unknown-model',
+      },
+    })];
+    const repository = new PostgresPageRepository(client);
+
+    const result = await repository.findPagesPageByEpisodeIdAndUserId('episode-1', 'user-1', { limit: 1, cursor: null });
+
+    expect(result.items[0]?.generatedImage?.imageModel).toBe('unknown-model');
+  });
   it('user_id で generation context を制限する', async () => {
     const client = new QueryCapturingClient();
     const repository = new PostgresPageRepository(client);
@@ -376,12 +394,14 @@ describe('PostgresPageRepository', () => {
         s3Key: 'saved/user-1/pages/page-1_final.png',
         cdnUrl: 'https://img.lyra.app/saved/user-1/pages/page-1_final.png',
         generationMode: 'standard',
+        imageModel: 'gpt-image-2',
         generatedAt: '2026-04-24T00:00:00.000Z',
       },
     });
 
     expect(updated).toBe(true);
     expect(client.queries[0]).toContain('generated_image = jsonb_build_object');
+    expect(client.queries[0]).toContain("'image_model'");
     expect(client.values).toEqual([
       'page-1',
       'user-1',
@@ -391,6 +411,7 @@ describe('PostgresPageRepository', () => {
       'https://img.lyra.app/saved/user-1/pages/page-1_final.png',
       'standard',
       '2026-04-24T00:00:00.000Z',
+      'gpt-image-2',
       null,
     ]);
   });

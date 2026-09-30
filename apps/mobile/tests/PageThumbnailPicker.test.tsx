@@ -40,7 +40,12 @@ vi.mock('lucide-react-native', () => ({
   ZoomIn: (props: Record<string, unknown>) => React.createElement('zoom-in-icon', props)
 }));
 
-const page = (id: string, pageNumber: number, generated: boolean): PageRecord => ({
+const page = (
+  id: string,
+  pageNumber: number,
+  generated: boolean,
+  webOnly = false,
+): PageRecord => ({
   id,
   episode_id: 'episode-1',
   page_number: pageNumber,
@@ -55,7 +60,8 @@ const page = (id: string, pageNumber: number, generated: boolean): PageRecord =>
     ? {
         cdn_url: `https://cdn.lyra.test/${id}.png`,
         generation_mode: 'standard',
-        generated_at: '2026-07-25T00:00:00.000Z'
+        generated_at: '2026-07-25T00:00:00.000Z',
+        web_only: webOnly,
       }
     : null,
   status: generated ? 'generated' : 'designing',
@@ -144,6 +150,32 @@ describe('PageThumbnailPicker', () => {
 
     expect(onPreview).toHaveBeenCalledWith(fullImageSources);
     expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it('web_onlyページではURLを使わず拡大表示も提供しない', () => {
+    const imageSourcesFor = vi.fn(() => [{ uri: 'https://cdn.lyra.test/page.png' }]);
+    const previewImageSourcesFor = vi.fn(() => [{ uri: 'https://cdn.lyra.test/page-full.png' }]);
+    let renderer: ReturnType<typeof create>;
+    act(() => {
+      renderer = create(
+        <PageThumbnailPicker
+          emptyLabel="ページなし"
+          imageSourcesFor={imageSourcesFor}
+          language="ja"
+          onPreview={vi.fn()}
+          onSelect={vi.fn()}
+          pages={[page('page-1', 1, true, true)]}
+          previewImageSourcesFor={previewImageSourcesFor}
+          selectedId={null}
+          statusLabelFor={(status) => status}
+        />,
+      );
+    });
+
+    expect(imageSourcesFor).not.toHaveBeenCalled();
+    expect(previewImageSourcesFor).not.toHaveBeenCalled();
+    expect(renderer!.root.findAllByType('expo-image')).toHaveLength(0);
+    expect(renderer!.root.findAllByProps({ accessibilityLabel: '1ページを拡大表示' })).toHaveLength(0);
   });
 
   it('一覧末尾で次のページを一度だけ要求できる', () => {

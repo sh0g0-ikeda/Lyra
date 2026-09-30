@@ -2693,6 +2693,7 @@ export function CharactersScreen(): React.JSX.Element {
       onRefresh={refreshCharacters}
       refreshing={entitiesQuery.isFetching || referenceQuery.isFetching}
       scrollViewRef={screenScrollRef}
+      showCreditBalance
       title={t(language, 'screen.characters.title')}
     >
       <WorkspaceHierarchyNavigator context={workspaceContext} />

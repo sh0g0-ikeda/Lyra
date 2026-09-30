@@ -96,6 +96,24 @@ class FakePageThumbnailRenderer implements PageThumbnailRendererPort {
 }
 
 describe('PageThumbnailService', () => {
+  it('Hy4画像の場合に旧アプリの共通thumbnail経路から配信しない', async () => {
+    const repository = new FakePageRepository();
+    const page = buildPageSummary();
+    repository.page = {
+      ...page,
+      generatedImage: { ...page.generatedImage!, imageModel: 'hy4-preview' },
+    };
+    const loader = new FakeStoredImageLoader();
+    const renderer = new FakePageThumbnailRenderer();
+    const service = new PageThumbnailService(repository, loader, renderer);
+
+    await expect(service.getGeneratedImageThumbnailRevision('user-1', 'page-1')).rejects.toMatchObject({
+      code: 'CONFLICT',
+    });
+    expect(loader.loadedKey).toBeNull();
+    expect(renderer.receivedImage).toBeNull();
+  });
+
   it('thumbnail revisionの確認では原画像を読み込まず所有権だけを検証する', async () => {
     const repository = new FakePageRepository();
     const loader = new FakeStoredImageLoader();

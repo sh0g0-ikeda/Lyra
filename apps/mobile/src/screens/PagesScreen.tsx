@@ -160,6 +160,11 @@ interface PageDesignJob {
 
 const EPISODE_EXPORT_UI_ENABLED = false;
 const MAX_ESTIMATED_PAGES = 24;
+const webOnlyPageMessage = (language: 'ja' | 'en'): string =>
+  t(language, 'screen.pages.webOnly');
+
+const isWebOnlyPage = (page: PageRecord): boolean =>
+  page.generated_image?.web_only === true;
 
 type AssignmentDraft = Omit<PanelEntityAssignmentRecord, 'facing_direction'> & {
   facing_direction: NonNullable<PanelEntityAssignmentRecord['facing_direction']> | '';
@@ -1042,8 +1047,15 @@ export function PagesScreen(): React.JSX.Element {
   }, [activeEpisodeId, organizationId, sessionKey]);
 
   const generatedPages = useMemo(
-    () => pages.filter((page) => page.generated_image !== null),
+    () =>
+      pages.filter(
+        (page) => page.generated_image !== null && !isWebOnlyPage(page),
+      ),
     [pages]
+  );
+  const hasWebOnlyGeneratedPages = useMemo(
+    () => pages.some((page) => page.generated_image !== null && isWebOnlyPage(page)),
+    [pages],
   );
   const imageAuthorizationHeader = useMemo<string | null>(
     () => (tokens === null ? null : `Bearer ${tokens.idToken}`),
@@ -1071,6 +1083,7 @@ export function PagesScreen(): React.JSX.Element {
     () => selectedPage === null ? [] : fullPageImageSourcesFor(selectedPage),
     [fullPageImageSourcesFor, selectedPage]
   );
+  const selectedPageIsWebOnly = selectedPage !== null && isWebOnlyPage(selectedPage);
   const selectedPageImageSourceIdentity =
     imageSourceListIdentity(selectedPageImageSources);
   const pageImageFailed =
@@ -1085,7 +1098,9 @@ export function PagesScreen(): React.JSX.Element {
       return;
     }
     const adjacentSources = [pages[selectedIndex - 1], pages[selectedIndex + 1]]
-      .filter((page): page is PageRecord => page?.generated_image !== null && page !== undefined)
+      .filter((page): page is PageRecord =>
+        page !== undefined && page.generated_image !== null && !isWebOnlyPage(page),
+      )
       .map((page) => pageThumbnailImageSourcesFor(page)[0])
       .filter((source): source is RemoteImageSource => source !== undefined);
     if (adjacentSources.length > 0) {
@@ -2054,6 +2069,9 @@ export function PagesScreen(): React.JSX.Element {
       if (selectedPage === null) {
         throw new Error('A page must be selected before saving an image.');
       }
+      if (isWebOnlyPage(selectedPage)) {
+        throw new Error(webOnlyPageMessage(language));
+      }
       return saveAuthenticatedImageToPhotoLibrary({
         path: appendOrganizationQuery(
           `/api/pages/${encodeURIComponent(selectedPage.id)}/export-image`,
@@ -2082,12 +2100,16 @@ export function PagesScreen(): React.JSX.Element {
         filename: exportFilename,
         format: exportFormat,
         mode,
-        pages: pages.map((page) => ({
-          id: page.id,
-          pageNumber: page.page_number,
-          hasGeneratedImage: page.generated_image !== null
-        })),
-        selectedPageIds: exportSelectedPageIds
+        pages: pages
+          .filter((page) => !isWebOnlyPage(page))
+          .map((page) => ({
+            id: page.id,
+            pageNumber: page.page_number,
+            hasGeneratedImage: page.generated_image !== null,
+          })),
+        selectedPageIds: exportSelectedPageIds.filter((pageId) =>
+          generatedPages.some((page) => page.id === pageId),
+        )
       });
       const payloadFingerprint = JSON.stringify({
         episodeId: activeEpisodeId,
@@ -2676,6 +2698,7 @@ export function PagesScreen(): React.JSX.Element {
         entitiesQuery.isFetching ||
         compositionsQuery.isFetching
       }
+      showCreditBalance
       title={t(language, 'screen.pages.title')}
     >
       <WorkspaceHierarchyNavigator context={workspaceContext} />
@@ -3291,6 +3314,9 @@ export function PagesScreen(): React.JSX.Element {
             tone="info"
           />
         ) : null}
+        {hasWebOnlyGeneratedPages ? (
+          <Notice message={webOnlyPageMessage(language)} tone="info" />
+        ) : null}
         <View style={styles.buttonRow}>
           <PrimaryButton
             disabled={!canExport || exportSelectedPageIds.length === 0}
@@ -3390,11 +3416,16 @@ export function PagesScreen(): React.JSX.Element {
           reopenLoading={reopenPageMutation.isPending}
         />
         <View style={styles.pageImageFrame}>
-          {selectedPage === null || selectedPage.generated_image === null || pageImageFailed ? (
+          {selectedPage === null ||
+          selectedPage.generated_image === null ||
+          selectedPageIsWebOnly ||
+          pageImageFailed ? (
             <Text style={styles.emptySmall}>
-              {pageImageFailed
-                ? t(language, "generated.screens.PagesScreen.could.not.load.the.image.pull.down.to.re.b3172b34")
-                : t(language, "generated.screens.PagesScreen.no.generated.image.yet.d6a7448d")}
+              {selectedPageIsWebOnly
+                ? webOnlyPageMessage(language)
+                  : pageImageFailed
+                    ? t(language, "generated.screens.PagesScreen.could.not.load.the.image.pull.down.to.re.b3172b34")
+                    : t(language, "generated.screens.PagesScreen.no.generated.image.yet.d6a7448d")}
             </Text>
           ) : (
             <PageImageViewer
@@ -3479,8 +3510,21 @@ export function PagesScreen(): React.JSX.Element {
         ) : null}
         <View style={styles.buttonRow}>
           <PrimaryButton
-            disabled={!canExport || selectedPage === null || selectedPage.generated_image === null}
-            disabledReason={!canExport ? t(language, "generated.screens.PagesScreen.export.permission.is.required.8c8fb948") : selectedPage === null || selectedPage.generated_image === null ? t(language, "generated.screens.PagesScreen.no.generated.image.590508b9") : undefined}
+            disabled={
+              !canExport ||
+              selectedPage === null ||
+              selectedPage.generated_image === null ||
+              selectedPageIsWebOnly
+            }
+            disabledReason={
+              !canExport
+                ? t(language, "generated.screens.PagesScreen.export.permission.is.required.8c8fb948")
+                : selectedPageIsWebOnly
+                  ? webOnlyPageMessage(language)
+                  : selectedPage === null || selectedPage.generated_image === null
+                    ? t(language, "generated.screens.PagesScreen.no.generated.image.590508b9")
+                    : undefined
+            }
             label={t(language, "generated.screens.PagesScreen.save.image.dd680bcb")}
             loading={downloadPageMutation.isPending}
             onPress={() => downloadPageMutation.mutate()}
@@ -3525,8 +3569,8 @@ export function PagesScreen(): React.JSX.Element {
        <ImagePreviewModal
         language={language}
         onClose={() => setPreviewImageSources([])}
-        sources={previewImageSources}
-        uri={previewImageSources[0]?.uri ?? null}
+        sources={selectedPageIsWebOnly ? [] : previewImageSources}
+        uri={selectedPageIsWebOnly ? null : previewImageSources[0]?.uri ?? null}
       />
     </Screen>
   );

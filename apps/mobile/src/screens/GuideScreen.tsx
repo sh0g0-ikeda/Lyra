@@ -68,6 +68,7 @@ export function GuideScreen(): React.JSX.Element {
 
   return (
     <Screen
+      showCreditBalance
       subtitle={t(language, "generated.screens.GuideScreen.a.focused.first.run.guide.for.the.main.w.3d898886")}
       title={t(language, 'tutorial')}
     >

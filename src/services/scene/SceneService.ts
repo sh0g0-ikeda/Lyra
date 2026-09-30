@@ -137,6 +137,9 @@ export class SceneService implements SceneServicePort {
     organizationId: string | null = null,
   ): Promise<EntityState> {
     const entity = await this.ensureEntityOwnedByUser(userId, entityId, organizationId);
+    if ((input.name === undefined) !== (input.description === undefined)) {
+      throw new ValidationError('Entity state variants require both name and description');
+    }
     await this.ensureSceneMatchesEntityWork(userId, entity.workId, input.sceneId, organizationId);
 
     return this.sceneRepository.createEntityState(entityId, input);
@@ -150,6 +153,20 @@ export class SceneService implements SceneServicePort {
     organizationId: string | null = null,
   ): Promise<EntityState> {
     const entity = await this.ensureEntityOwnedByUser(userId, entityId, organizationId);
+    if (input.name !== undefined || input.description !== undefined) {
+      const states = await this.sceneRepository.findEntityStatesByEntityIdAndUserId(
+        entityId, userId, organizationId,
+      );
+      const current = states.find((state) => state.id === stateId);
+      if (current === undefined) {
+        throw new NotFoundError('Entity state not found');
+      }
+      const name = input.name ?? current.name;
+      const description = input.description ?? current.description;
+      if ((name === null) !== (description === null)) {
+        throw new ValidationError('Entity state variants require both name and description');
+      }
+    }
     if (input.sceneId !== undefined) {
       await this.ensureSceneMatchesEntityWork(userId, entity.workId, input.sceneId, organizationId);
     }

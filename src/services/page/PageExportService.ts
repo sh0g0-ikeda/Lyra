@@ -1,4 +1,5 @@
-import { NotFoundError, ValidationError } from '../../domain/errors/index.js';
+import { ConflictError, NotFoundError, ValidationError } from '../../domain/errors/index.js';
+import { isMobileImageModelAvailable } from '../../domain/generation/ImageModelCatalog.js';
 import type { StoredImageLoaderPort } from '../../infrastructure/aws/S3StoredImageLoader.js';
 import type { PageRepository } from '../../repositories/PageRepository.js';
 import type { OrganizationServicePort } from '../organization/OrganizationService.js';
@@ -32,6 +33,9 @@ export class PageExportService implements PageExportServicePort {
 
     if (page.generatedImage === null || page.generatedImage.s3Key === null) {
       throw new ValidationError('Page does not have an exportable generated image');
+    }
+    if (!isMobileImageModelAvailable(page.generatedImage.imageModel)) {
+      throw new ConflictError('This image is available on Lyra web only');
     }
 
     if (organizationId === null) {

@@ -11,6 +11,10 @@ import { Screen } from '@/components/Screen';
 import { Section } from '@/components/Section';
 import { mobileContentMaxWidth } from '@/constants/theme';
 
+vi.mock('@/components/CreditBalanceBadge', () => ({
+  CreditBalanceBadge: () => null
+}));
+
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const { setAccessibilityFocus } = vi.hoisted(() => ({

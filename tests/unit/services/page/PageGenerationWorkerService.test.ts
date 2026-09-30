@@ -295,6 +295,7 @@ describe('PageGenerationWorkerService', () => {
       userId: 'user-1',
       pageId: 'page-1',
       generationMode: 'standard',
+      imageModel: null,
       requestKind: 'initial',
       promptMetadata: {
         draftPrompt: 'page-prompt-draft',
@@ -308,6 +309,27 @@ describe('PageGenerationWorkerService', () => {
       },
     });
     expect(creditService.refunds).toEqual([]);
+  });
+
+  it('新形式jobは受付時に固定した画像モデルをrenderへ渡す', async () => {
+    const executionRepository = new FakeExecutionRepository();
+    executionRepository.claimedJob = buildJob({ params: {
+      ...buildJob().params,
+      image_model: 'gpt-image-2',
+      provider_model_id: 'gpt-image-2',
+      pricing_version: 'existing-pricing-v1',
+      estimated_credit_cost: 3,
+    } });
+    const renderer = new FakeRenderer();
+    const service = new PageGenerationWorkerService(
+      executionRepository, new FakePromptBuilder(), new FakePromptCompiler(),
+      new FakeInputImageBuilder(), new FakePlanner(), renderer, new FakeStorage(), new FakeCreditService(),
+    );
+
+    await service.processJob('job-1');
+
+    expect(renderer.calls[0]).toMatchObject({ imageModel: 'gpt-image-2' });
+    expect(executionRepository.completionInput).toMatchObject({ imageModel: 'gpt-image-2' });
   });
 
   it('thinking job では planner 出力を render に渡す', async () => {

@@ -3,11 +3,13 @@ import { describe, expect, it } from 'vitest';
 import type { DatabaseClient, TransactionRunner } from '../../../src/lib/db.js';
 import { PostgresEntityRepository } from '../../../src/repositories/EntityRepository.js';
 import { decodeListCursor } from '../../../src/domain/pagination.js';
+import { computeStateReferenceFingerprint } from '../../../src/domain/state/StateReferenceFingerprint.js';
 
 class QueryCapturingClient implements DatabaseClient, TransactionRunner {
   public queries: string[] = [];
   public valuesList: Array<readonly unknown[] | undefined> = [];
   public pageRows: Record<string, unknown>[] | null = null;
+  public resolvedRows: Record<string, unknown>[] | null = null;
 
   public async query<T extends QueryResultRow = QueryResultRow>(
     text: string,
@@ -23,6 +25,13 @@ class QueryCapturingClient implements DatabaseClient, TransactionRunner {
         oid: 0,
         fields: [],
         rows: (this.pageRows ?? []) as T[],
+      };
+    }
+
+    if (text.includes('WITH requested(entity_id, state_id)') && this.resolvedRows !== null) {
+      return {
+        command: 'SELECT', rowCount: this.resolvedRows.length, oid: 0, fields: [],
+        rows: this.resolvedRows as T[],
       };
     }
 
@@ -157,6 +166,73 @@ describe('PostgresEntityRepository', () => {
 
     expect(client.queries[0]).toContain('entities.user_id = $2');
     expect(client.valuesList[0]).toEqual(['entity-1', 'user-1', 'ref-1', null]);
+  });
+
+  it('状態付きページ参照は entity・work・active organization membership で絞る', async () => {
+    const client = new QueryCapturingClient();
+    const repository = new PostgresEntityRepository(client);
+
+    await repository.findResolvedReferenceImagesByAssignmentsAndUserId(
+      [{ entityId: 'entity-1', stateId: 'state-1' }],
+      'work-1',
+      'user-1',
+      '99999999-9999-4999-8999-999999999999',
+    );
+
+    expect(client.queries[0]).toContain('entity_states.id = requested.state_id');
+    expect(client.queries[0]).toContain('entity_states.entity_id = entities.id');
+    expect(client.queries[0]).toContain('entities.work_id = $2');
+    expect(client.queries[0]).toContain("organization_members.status = 'active'");
+    expect(client.valuesList[0]).toEqual([
+      JSON.stringify([{ entity_id: 'entity-1', state_id: 'state-1' }]),
+      'work-1',
+      'user-1',
+      '99999999-9999-4999-8999-999999999999',
+    ]);
+  });
+
+  it('状態画像の元primaryまたは入力fingerprintが変わった場合は参照を返さない', async () => {
+    const client = new QueryCapturingClient();
+    client.resolvedRows = [{
+      entity_id: 'entity-1', owner_user_id: 'user-1', requested_state_id: 'state-1',
+      resolved_state_id: 'state-1', state_name: '外傷', state_description: '左頬に傷',
+      state_reference_image: {
+        ref_id: 'state-ref-1', s3_key: 'saved/user-1/entities/entity-1/state-ref-1.png',
+        storage_owner_user_id: 'user-1', image_model: 'gpt-image-2',
+        base_ref_id: 'old-ref', created_at: '2026-09-30T00:00:00.000Z', input_fingerprint: 'stale',
+      },
+      reference_images: [{ ref_id: 'base-ref', s3_key: 'saved/user-1/entities/entity-1/base-ref.png', cdn_url: null, source: 'generated', created_at: '2026-09-30T00:00:00.000Z' }],
+      primary_ref_id: 'base-ref',
+    }];
+    const repository = new PostgresEntityRepository(client);
+
+    const result = await repository.findResolvedReferenceImagesByAssignmentsAndUserId(
+      [{ entityId: 'entity-1', stateId: 'state-1' }], 'work-1', 'user-1',
+    );
+    expect(result[0]).toMatchObject({ stateExists: true, refId: null, s3Key: null });
+  });
+
+  it('状態画像の元primaryと入力fingerprintが一致する場合だけ別参照を返す', async () => {
+    const client = new QueryCapturingClient();
+    client.resolvedRows = [{
+      entity_id: 'entity-1', owner_user_id: 'user-1', requested_state_id: 'state-1',
+      resolved_state_id: 'state-1', state_name: '外傷', state_description: '左頬に傷',
+      state_reference_image: {
+        ref_id: 'state-ref-1', s3_key: 'saved/user-1/entities/entity-1/state-ref-1.png',
+        storage_owner_user_id: 'user-1', image_model: 'gpt-image-2',
+        base_ref_id: 'base-ref', created_at: '2026-09-30T00:00:00.000Z',
+        input_fingerprint: computeStateReferenceFingerprint({
+          entityId: 'entity-1', stateId: 'state-1', name: '外傷', description: '左頬に傷', baseRefId: 'base-ref',
+        }),
+      },
+      reference_images: [], primary_ref_id: 'base-ref',
+    }];
+    const repository = new PostgresEntityRepository(client);
+
+    const result = await repository.findResolvedReferenceImagesByAssignmentsAndUserId(
+      [{ entityId: 'entity-1', stateId: 'state-1' }], 'work-1', 'user-1',
+    );
+    expect(result[0]).toMatchObject({ stateExists: true, refId: 'state-ref-1', s3Key: 'saved/user-1/entities/entity-1/state-ref-1.png' });
   });
   it('lists a bounded entity page with tenant scope and a created_at keyset cursor', async () => {
     const client = new QueryCapturingClient();

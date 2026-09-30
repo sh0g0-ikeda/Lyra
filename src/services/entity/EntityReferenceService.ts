@@ -72,6 +72,19 @@ export interface EntityReferenceServicePort {
     },
     organizationId?: string | null,
   ): Promise<{ jobId: string }>;
+  enqueueStateReferenceGeneration(
+    userId: string,
+    entityId: string,
+    stateId: string,
+    organizationId?: string | null,
+  ): Promise<{ jobId: string }>;
+  confirmStateReference(
+    userId: string,
+    entityId: string,
+    stateId: string,
+    candidateToken: string,
+    organizationId?: string | null,
+  ): Promise<void>;
   confirmReferences(
     userId: string,
     entityId: string,
@@ -419,6 +432,25 @@ export class EntityReferenceService implements EntityReferenceServicePort {
 
       throw new ConfigurationError('Failed to enqueue entity generation job');
     }
+  }
+
+  public async enqueueStateReferenceGeneration(
+    _userId: string,
+    _entityId: string,
+    _stateId: string,
+    _organizationId: string | null = null,
+  ): Promise<never> {
+    throw new ConflictError('Entity state reference preview is not available');
+  }
+
+  public async confirmStateReference(
+    _userId: string,
+    _entityId: string,
+    _stateId: string,
+    _candidateToken: string,
+    _organizationId: string | null = null,
+  ): Promise<never> {
+    throw new ConflictError('Entity state reference preview is not available');
   }
 
   public async confirmReferences(

@@ -12,6 +12,7 @@ import {
   saveAndGeneratePageResponseSchema,
 } from '../../packages/api-contract/src/mobileApiSchemas.js';
 import { listPanelFrameTemplateDefinitions } from '../domain/constants/panelFrameTemplates.js';
+import { IMAGE_MODEL_CATALOG, isMobileImageModelAvailable } from '../domain/generation/ImageModelCatalog.js';
 import { ValidationError } from '../domain/errors/index.js';
 import { decodeListCursor, normalizeListPageLimit, type ListPageRequest } from '../domain/pagination.js';
 import { APP_LANGUAGES } from '../domain/types/language.js';
@@ -43,6 +44,11 @@ import { assertMobileResponseContract } from './mobileResponseContract.js';
 import { readJsonBody, readOptionalJsonBody, REQUEST_BODY_LIMITS } from './requestBody.js';
 
 const uuidParamSchema = z.string().uuid();
+const pageGenerateBodySchema = z.object({
+  image_model: z.string().trim().min(1).max(80).optional(),
+  expected_page_revision: z.string().datetime({ offset: true }).optional(),
+  expected_credit_cost: z.number().int().min(0).max(10_000).optional(),
+}).strict();
 const languageBodySchema = z
   .object({
     language: z.enum(APP_LANGUAGES).optional().default('ja'),
@@ -73,6 +79,15 @@ export function createPageRoutes(dependencies: PageRouteDependencies): Hono<AppE
 
   app.use('*', dependencies.authMiddleware);
   app.use('*', dependencies.rateLimitMiddleware);
+
+  app.get('/generation-capabilities', (c) => c.json({
+    image_models: IMAGE_MODEL_CATALOG.filter((model) => model.enabled).map((model) => ({
+      key: model.key,
+      capabilities: model.capabilities,
+      available_on: model.availableOn,
+      pricing_version: model.pricingVersion,
+    })),
+  }));
 
   app.get('/page-layout-templates', (c) => {
     const templates = listPanelFrameTemplateDefinitions().map((template) => ({
@@ -278,7 +293,16 @@ export function createPageRoutes(dependencies: PageRouteDependencies): Hono<AppE
     const pageId = parseUuidParam(c, 'id');
     const organizationId = parseOptionalOrganizationId(c);
     await requireOrganizationCapability(c, dependencies, organizationId, 'generate');
-    const result = await dependencies.pageGenerationService.enqueuePageGeneration(user.id, pageId, organizationId);
+    const body = pageGenerateBodySchema.safeParse(await readOptionalJsonBody(c));
+    if (!body.success) {
+      throw new ValidationError(formatZodValidationError(body.error));
+    }
+    const options = {
+      imageModel: body.data.image_model,
+      expectedPageRevision: body.data.expected_page_revision,
+      expectedCreditCost: body.data.expected_credit_cost,
+    };
+    const result = await dependencies.pageGenerationService.enqueuePageGeneration(user.id, pageId, organizationId, options);
     await recordOrganizationAudit(dependencies, organizationId, user.id, 'page.generation_queued', 'page', pageId, {
       job_id: result.jobId,
     });
@@ -291,7 +315,11 @@ export function createPageRoutes(dependencies: PageRouteDependencies): Hono<AppE
     const pageId = parseUuidParam(c, 'id');
     const organizationId = parseOptionalOrganizationId(c);
     await requireOrganizationCapability(c, dependencies, organizationId, 'generate');
-    const readiness = await dependencies.pageGenerationService.getGenerationReadiness(user.id, pageId, organizationId);
+    const requestedImageModel = c.req.query('image_model');
+    if (requestedImageModel !== undefined && (requestedImageModel.length < 1 || requestedImageModel.length > 80)) {
+      throw new ValidationError('Invalid image model');
+    }
+    const readiness = await dependencies.pageGenerationService.getGenerationReadiness(user.id, pageId, organizationId, requestedImageModel);
 
     const payload = {
       ready: readiness.ready,
@@ -387,6 +415,8 @@ export function createPageRoutes(dependencies: PageRouteDependencies): Hono<AppE
         })),
         language: body.data.generation.language,
         requestId,
+        imageModel: body.data.generation.image_model,
+        expectedCreditCost: body.data.generation.expected_credit_cost,
       },
       organizationId,
     );
@@ -469,10 +499,10 @@ export function createPageRoutes(dependencies: PageRouteDependencies): Hono<AppE
 }
 
 async function toPageSummaryResponse(page: PageSummary): Promise<Record<string, unknown>> {
-  const signedGeneratedImageUrl = await signImageCdnUrl(
-    page.generatedImage?.cdnUrl,
-    page.generatedImage?.s3Key,
-  );
+  const webOnlyImage = !isMobileImageModelAvailable(page.generatedImage?.imageModel);
+  const signedGeneratedImageUrl = webOnlyImage
+    ? null
+    : await signImageCdnUrl(page.generatedImage?.cdnUrl, page.generatedImage?.s3Key);
 
   return {
     id: page.id,
@@ -491,6 +521,7 @@ async function toPageSummaryResponse(page: PageSummary): Promise<Record<string, 
         : {
             generation_mode: page.generatedImage.generationMode,
             generated_at: page.generatedImage.generatedAt,
+            ...(webOnlyImage ? { web_only: true } : {}),
             ...(signedGeneratedImageUrl === null ? {} : { cdn_url: signedGeneratedImageUrl }),
           },
     status: page.status,

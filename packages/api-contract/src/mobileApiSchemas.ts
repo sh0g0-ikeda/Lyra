@@ -70,6 +70,7 @@ export const episodeSchema = z.object({
   ending_hook: nullableString,
   estimated_pages: z.number().int().positive(),
   entities_involved: z.array(id),
+  starting_entity_states: z.array(z.object({ entity_id: id, state_id: id.nullable() })).optional(),
   page_skeleton_generated: z.boolean(),
   version: z.number().int().nonnegative(),
   status: storyStatus,
@@ -144,19 +145,23 @@ export const entityStateSchema = z.object({
   id,
   entity_id: id,
   scene_id: nullableString,
+  name: nullableString.optional(),
+  description: nullableString.optional(),
   costume_note: nullableString,
   costume_ref_id: nullableString,
   condition_note: nullableString,
   hair_note: nullableString,
   expression_default: z.string().min(1).max(100),
   extra_note: nullableString,
-  created_at: timestamp
+  created_at: timestamp,
+  updated_at: timestamp.optional()
 });
 
 const generatedImageSchema = z.object({
   cdn_url: z.string().nullable().optional(),
   generation_mode: z.enum(['standard', 'thinking']).nullable(),
-  generated_at: nullableString
+  generated_at: nullableString,
+  web_only: z.boolean().optional()
 });
 
 export const pageSchema = z.object({

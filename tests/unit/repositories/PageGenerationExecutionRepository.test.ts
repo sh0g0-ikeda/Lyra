@@ -130,6 +130,7 @@ describe('PostgresPageGenerationExecutionRepository', () => {
       userId: 'user-1',
       pageId: 'page-1',
       generationMode: 'thinking',
+      imageModel: 'gpt-image-2',
       requestKind: 'regenerate',
       s3Key: 'session/user-1/pages/page-1/result.png',
       cdnUrl: 'https://cdn.lyra.test/page-1.png',
@@ -153,6 +154,7 @@ describe('PostgresPageGenerationExecutionRepository', () => {
     expect(client.queries[0]).toContain('FOR UPDATE');
     expect(client.queries[0]).toContain('cancel_requested_at IS NULL');
     expect(client.queries[1]).toContain('UPDATE pages');
+    expect(client.queries[1]).toContain("'image_model'");
     expect(client.queries[2]).toContain("SET status = 'completed'");
     expect(client.queries[2]).toContain("COALESCE(result, '{}'::jsonb) || $3::jsonb");
     expect(client.values[1]).toEqual([
@@ -162,6 +164,7 @@ describe('PostgresPageGenerationExecutionRepository', () => {
       'https://cdn.lyra.test/page-1.png',
       'thinking',
       '2026-04-24T00:00:00.000Z',
+      'gpt-image-2',
       null,
     ]);
     expect(client.values[2]).toEqual([
@@ -171,6 +174,7 @@ describe('PostgresPageGenerationExecutionRepository', () => {
         s3_key: 'session/user-1/pages/page-1/result.png',
         cdn_url: 'https://cdn.lyra.test/page-1.png',
         generation_mode: 'thinking',
+        image_model: 'gpt-image-2',
         request_kind: 'regenerate',
         cost_usd: 0.08,
         draft_prompt_sha256: '8f458698fd5f818ff1e01da76a3ac97549adee06a29cf84d41ac3cbde283c26d',

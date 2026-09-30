@@ -17,7 +17,7 @@ describe('更新競合トークンの時刻精度', () => {
       "date_trunc('milliseconds', chapters.updated_at) = $20::timestamptz",
     );
     expect(source).toContain(
-      "date_trunc('milliseconds', episodes.updated_at) = $25::timestamptz",
+      "date_trunc('milliseconds', episodes.updated_at) = $27::timestamptz",
     );
   });
 

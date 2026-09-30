@@ -330,6 +330,41 @@ export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<
     return c.json(assertMobileResponseContract(jobAcceptedSchema, { job_id: result.jobId }), 202);
   });
 
+  app.post('/entities/:id/states/:state_id/generate-reference', async (c) => {
+    const user = c.get('user');
+    const entityId = parseUuidParam(c, 'id');
+    const stateId = parseUuidParam(c, 'state_id');
+    const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'generate');
+    const result = await dependencies.entityReferenceService.enqueueStateReferenceGeneration(
+      user.id,
+      entityId,
+      stateId,
+      organizationId,
+    );
+    return c.json({ job_id: result.jobId }, 202);
+  });
+
+  app.post('/entities/:id/states/:state_id/reference/confirm', async (c) => {
+    const user = c.get('user');
+    const entityId = parseUuidParam(c, 'id');
+    const stateId = parseUuidParam(c, 'state_id');
+    const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'edit_work');
+    const body = z.object({ candidate_token: z.string().min(1).max(4096) }).strict().safeParse(await readJsonBody(c));
+    if (!body.success) {
+      throw new ValidationError(formatZodValidationError(body.error));
+    }
+    await dependencies.entityReferenceService.confirmStateReference(
+      user.id,
+      entityId,
+      stateId,
+      body.data.candidate_token,
+      organizationId,
+    );
+    return c.body(null, 204);
+  });
+
   app.post('/entities/:id/reference/confirm', async (c) => {
     const user = c.get('user');
     const entityId = parseUuidParam(c, 'id');

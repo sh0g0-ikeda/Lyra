@@ -5,14 +5,16 @@ import type { QueryResult, QueryResultRow } from 'pg';
 
 class FakeDb implements DatabaseClient {
   public values: readonly unknown[] | undefined;
+  public sql = '';
 
   public constructor(private readonly rows: Array<{ s3_key: string | null }>) {}
 
   public async query<T extends QueryResultRow = QueryResultRow>(
-    _: string,
+    sql: string,
     values?: readonly unknown[],
   ): Promise<QueryResult<T>> {
     this.values = values;
+    this.sql = sql;
     return {
       command: 'SELECT',
       oid: 0,
@@ -40,5 +42,7 @@ describe('PostgresImageStorageReferenceRepository', () => {
       'session/user/pages/page/current.png',
       'saved/user/entities/entity/ref.png',
     ]));
+    expect(db.sql).toContain("entity_states.reference_image->>'s3_key'");
+    expect(db.sql).toContain("result->'input_snapshot'->'references'");
   });
 });

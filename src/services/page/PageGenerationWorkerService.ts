@@ -1,4 +1,5 @@
-import { ConfigurationError } from '../../domain/errors/index.js';
+﻿import { ConfigurationError } from '../../domain/errors/index.js';
+import { resolveEnabledImageModel } from '../../domain/generation/ImageModelCatalog.js';
 import { PAGE_GENERATION_INTERNAL_PLAN_MAX_CHARS } from '../../domain/constants/generation.js';
 import { sanitizePersistedErrorMessage } from '../../lib/errorSanitizer.js';
 import type { GenerationJob } from '../../domain/types/job.js';
@@ -64,6 +65,7 @@ export interface PageGenerationPlannerPort {
 }
 
 export interface RenderPageImageInput extends PageGenerationPlanInput {
+  imageModel?: string;
   quality: PersistedPageGenerationJobParams['quality'];
   internalPlan: string | null;
   inputImages: PageGenerationInputImage[];
@@ -211,6 +213,7 @@ export class PageGenerationWorkerService {
             generationMode: params.generation_mode,
             prompt: compiledPrompt.prompt,
             quality: params.quality,
+            ...(params.image_model === undefined ? {} : { imageModel: params.provider_model_id }),
             internalPlan,
             inputImages,
           }),
@@ -529,6 +532,7 @@ function buildCompletionInput(
     organizationId: job.organizationId ?? null,
     pageId: params.page_id,
     generationMode: params.generation_mode,
+    imageModel: params.image_model ?? null,
     requestKind: params.request_kind,
     s3Key: storedImage.s3Key,
     cdnUrl: storedImage.cdnUrl,
@@ -784,6 +788,10 @@ function parsePersistedParams(value: Record<string, unknown>): PersistedPageGene
   const requiresPlanner = value.requires_planner;
   const previousPageStatus = value.previous_page_status;
   const previousGenerationMode = value.previous_generation_mode;
+  const imageModel = value.image_model;
+  const providerModelId = value.provider_model_id;
+  const pricingVersion = value.pricing_version;
+  const estimatedCreditCost = value.estimated_credit_cost;
 
   if (
     typeof pageId !== 'string' ||
@@ -797,6 +805,17 @@ function parsePersistedParams(value: Record<string, unknown>): PersistedPageGene
     return null;
   }
 
+  const hasModelSnapshot = imageModel !== undefined || providerModelId !== undefined ||
+    pricingVersion !== undefined || estimatedCreditCost !== undefined;
+  if (hasModelSnapshot) {
+    const resolved = typeof imageModel === 'string' ? resolveEnabledImageModel(imageModel) : null;
+    if (resolved === null || providerModelId !== resolved.providerModelId ||
+      typeof pricingVersion !== 'string' || pricingVersion.length === 0 || pricingVersion.length > 80 ||
+      typeof estimatedCreditCost !== 'number' || !Number.isInteger(estimatedCreditCost) || estimatedCreditCost < 0) {
+      return null;
+    }
+  }
+
   return {
     page_id: pageId,
     work_id: typeof workId === 'string' && workId.length > 0 ? workId : null,
@@ -806,6 +825,12 @@ function parsePersistedParams(value: Record<string, unknown>): PersistedPageGene
     requires_planner: requiresPlanner,
     previous_page_status: previousPageStatus,
     previous_generation_mode: previousGenerationMode,
+    ...(hasModelSnapshot ? {
+      image_model: imageModel as string,
+      provider_model_id: providerModelId as string,
+      pricing_version: pricingVersion as string,
+      estimated_credit_cost: estimatedCreditCost as number,
+    } : {}),
   };
 }
 

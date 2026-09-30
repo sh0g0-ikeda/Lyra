@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { resolveEnabledImageModel } from '../../domain/generation/ImageModelCatalog.js';
 import { AppError, ConfigurationError, ConflictError, NotFoundError, ValidationError } from '../../domain/errors/index.js';
 import type { PageGenerationContext } from '../../domain/types/page.js';
 import type { PageGenerationInputSnapshotReference, PageGenerationRequestKind } from '../../domain/types/pageGeneration.js';
@@ -33,6 +34,12 @@ export interface EnqueuePageGenerationResult {
   jobId: string;
 }
 
+export interface PageGenerationRequestOptions {
+  imageModel?: string;
+  expectedPageRevision?: string;
+  expectedCreditCost?: number;
+}
+
 export interface PageGenerationReadinessResult {
   ready: boolean;
   blockers: PageGenerationBlocker[];
@@ -53,11 +60,13 @@ export interface PageGenerationServicePort {
     userId: string,
     pageId: string,
     organizationId?: string | null,
+    options?: PageGenerationRequestOptions,
   ): Promise<EnqueuePageGenerationResult>;
   getGenerationReadiness(
     userId: string,
     pageId: string,
     organizationId?: string | null,
+    imageModel?: string,
   ): Promise<PageGenerationReadinessResult>;
   saveAndGenerate(
     userId: string,
@@ -89,6 +98,7 @@ export class PageGenerationService implements PageGenerationServicePort {
     userId: string,
     pageId: string,
     organizationId: string | null = null,
+    options: PageGenerationRequestOptions = {},
   ): Promise<EnqueuePageGenerationResult> {
     await this.recoveryService.recoverStaleJobsForPage(userId, pageId, organizationId);
     if (organizationId !== null) {
@@ -98,6 +108,11 @@ export class PageGenerationService implements PageGenerationServicePort {
     const page = await this.pageRepository.findGenerationContextByIdAndUserId(pageId, userId, organizationId);
     if (page === null) {
       throw new NotFoundError('Page not found');
+    }
+
+    const imageModel = requirePageImageModel(options.imageModel);
+    if (options.expectedCreditCost !== undefined || options.expectedPageRevision !== undefined) {
+      throw new ConflictError('Atomic page generation quote confirmation is unavailable');
     }
 
     const pageOrganizationId = page.organizationId ?? null;
@@ -113,7 +128,6 @@ export class PageGenerationService implements PageGenerationServicePort {
       requestKind,
       billableReferenceCount,
     });
-
     let creditsConsumed = false;
     let pageStateUpdated = false;
     const reservedJobId = randomUUID();
@@ -134,6 +148,10 @@ export class PageGenerationService implements PageGenerationServicePort {
           request_kind: selection.requestKind,
           generation_mode: selection.mode,
           quality: selection.quality,
+          image_model: imageModel.key,
+          provider_model_id: imageModel.providerModelId,
+          pricing_version: imageModel.pricingVersion,
+          estimated_credit_cost: selection.creditCost,
           requires_planner: selection.requiresPlanner,
           previous_page_status: page.status,
           previous_generation_mode: page.generationMode,
@@ -248,6 +266,7 @@ export class PageGenerationService implements PageGenerationServicePort {
     userId: string,
     pageId: string,
     organizationId: string | null = null,
+    imageModel?: string,
   ): Promise<PageGenerationReadinessResult> {
     if (organizationId !== null) {
       await this.getOrganizationService().requireMembership(organizationId, userId, 'generate');
@@ -256,6 +275,7 @@ export class PageGenerationService implements PageGenerationServicePort {
     if (page === null) {
       throw new NotFoundError('Page not found');
     }
+    requirePageImageModel(imageModel);
     const readiness = await this.assessReadiness(userId, page, page.organizationId ?? null);
     const requestKind: PageGenerationRequestKind = page.generatedImage === null ? 'initial' : 'regenerate';
     const selection = this.modeSelector.selectProfile({
@@ -299,6 +319,7 @@ export class PageGenerationService implements PageGenerationServicePort {
     if (page === null) {
       throw new NotFoundError('Page not found');
     }
+    const imageModel = requirePageImageModel(input.imageModel);
     const candidate = {
       ...page,
       layoutConfig: buildSavedLayoutConfig(page.layoutConfig, input),
@@ -319,6 +340,9 @@ export class PageGenerationService implements PageGenerationServicePort {
       requestKind,
       billableReferenceCount: readiness.billableReferenceCount,
     });
+    if (input.expectedCreditCost !== undefined && input.expectedCreditCost !== selection.creditCost) {
+      throw new ConflictError('Page generation quote changed; refresh the estimate');
+    }
     let result: SaveAndGeneratePageResult;
     try {
       result = await this.pageRepository.saveAndCreateGenerationJob({
@@ -327,7 +351,12 @@ export class PageGenerationService implements PageGenerationServicePort {
         userId,
         organizationId: page.organizationId ?? null,
         layoutConfig: candidate.layoutConfig,
-        selection,
+        selection: {
+          ...selection,
+          imageModel: imageModel.key,
+          providerModelId: imageModel.providerModelId,
+          pricingVersion: imageModel.pricingVersion,
+        },
         inputSnapshot: buildInputSnapshot(candidate, input, selection, readiness.entityNames, readiness.references),
         capacityLimits: this.capacityLimits,
       });
@@ -582,4 +611,12 @@ function describeGeneration(requestKind: PageGenerationRequestKind, mode: 'stand
   }
 
   return mode === 'thinking' ? 'Page generation (thinking)' : 'Page generation (standard)';
+}
+
+function requirePageImageModel(key?: string): NonNullable<ReturnType<typeof resolveEnabledImageModel>> {
+  const model = resolveEnabledImageModel(key);
+  if (model === null || !model.capabilities.pageGeneration) {
+    throw new ValidationError('Image model is unavailable for page generation');
+  }
+  return model;
 }

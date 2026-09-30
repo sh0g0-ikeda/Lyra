@@ -1,4 +1,4 @@
-import { UnauthorizedError } from '../../domain/errors/index.js';
+import { AccountLinkRequiredError, UnauthorizedError } from '../../domain/errors/index.js';
 import type { AuthenticatedUser, SupabaseJwtClaims } from '../../domain/types/user.js';
 import { isUniqueViolation, type UserRepository } from '../../repositories/UserRepository.js';
 import type { CreditServicePort } from '../credit/CreditService.js';
@@ -35,6 +35,9 @@ export class UserProvisioningService implements UserProvisioningPort {
 
     const userByEmail = await this.userRepository.findByEmail(email);
     if (userByEmail !== null) {
+      if (claims.identityProvider === 'federated') {
+        throw new AccountLinkRequiredError();
+      }
       return {
         user: await this.linkExistingEmailUser(userByEmail, supabaseId, email),
         isNewUser: false,
@@ -60,6 +63,9 @@ export class UserProvisioningService implements UserProvisioningPort {
 
       const existingEmailUser = await this.userRepository.findByEmail(email);
       if (existingEmailUser !== null) {
+        if (claims.identityProvider === 'federated') {
+          throw new AccountLinkRequiredError();
+        }
         return {
           user: await this.linkExistingEmailUser(existingEmailUser, supabaseId, email),
           isNewUser: false,
@@ -83,9 +89,6 @@ export class UserProvisioningService implements UserProvisioningPort {
     supabaseId: string,
     email: string,
   ): Promise<AuthenticatedUser> {
-    // Cognito/Supabase migrations can change the provider subject while the
-    // verified email remains the same. Keep the existing Lyra user id so works,
-    // credits, subscriptions, and generated assets stay attached to the account.
     if (user.supabaseId === supabaseId) {
       return this.syncUserEmail(user, supabaseId, email);
     }
@@ -105,4 +108,5 @@ export class UserProvisioningService implements UserProvisioningPort {
       throw error;
     }
   }
+
 }

@@ -1,4 +1,4 @@
-import type { PanelEntityAssignment } from './panelEntityAssignment.js';
+﻿import type { PanelEntityAssignment } from './panelEntityAssignment.js';
 import type { PageGenerationMode } from './pageGeneration.js';
 import type { StyleReferenceMetadata } from './styleReference.js';
 import type {
@@ -17,6 +17,7 @@ export interface GeneratedPageImage {
   s3Key: string | null;
   cdnUrl: string | null;
   generationMode: PageGenerationMode | null;
+  imageModel?: string | null;
   generatedAt: string | null;
 }
 

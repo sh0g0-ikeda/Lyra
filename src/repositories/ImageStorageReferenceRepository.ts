@@ -35,6 +35,26 @@ export class PostgresImageStorageReferenceRepository implements ImageStorageRefe
         FROM reference_sets
         CROSS JOIN LATERAL jsonb_array_elements(reference_images) AS reference_image
       ),
+      live_entity_state_images AS (
+        SELECT entity_states.reference_image->>'s3_key' AS s3_key
+        FROM entity_states
+        WHERE entity_states.reference_image IS NOT NULL
+      ),
+      page_snapshot_images AS (
+        SELECT snapshot_reference->>'s3Key' AS s3_key
+        FROM generation_jobs
+        CROSS JOIN LATERAL jsonb_array_elements(
+          COALESCE(result->'input_snapshot'->'references', '[]'::jsonb)
+        ) AS snapshot_reference
+        WHERE job_type = 'page_generate'
+        UNION ALL
+        SELECT snapshot_reference->>'s3Key' AS s3_key
+        FROM generation_jobs
+        CROSS JOIN LATERAL jsonb_array_elements(
+          COALESCE(params->'input_snapshot'->'references', '[]'::jsonb)
+        ) AS snapshot_reference
+        WHERE job_type = 'page_generate'
+      ),
       recent_entity_candidates AS (
         SELECT candidate->>'s3_key' AS s3_key
         FROM generation_jobs
@@ -55,6 +75,10 @@ export class PostgresImageStorageReferenceRepository implements ImageStorageRefe
         SELECT s3_key FROM live_page_images
         UNION ALL
         SELECT s3_key FROM live_reference_images
+        UNION ALL
+        SELECT s3_key FROM live_entity_state_images
+        UNION ALL
+        SELECT s3_key FROM page_snapshot_images
         UNION ALL
         SELECT s3_key FROM recent_entity_candidates
         UNION ALL

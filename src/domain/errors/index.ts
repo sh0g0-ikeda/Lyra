@@ -53,6 +53,12 @@ export class ConflictError extends AppError {
   }
 }
 
+export class AccountLinkRequiredError extends AppError {
+  public constructor() {
+    super('ACCOUNT_LINK_REQUIRED', 'Use the existing sign-in method and link this provider from your account.', 409);
+  }
+}
+
 export class PageStaleError extends AppError {
   public constructor() {
     super('PAGE_STALE', 'The page was changed by another edit. Reload before generating.', 409);

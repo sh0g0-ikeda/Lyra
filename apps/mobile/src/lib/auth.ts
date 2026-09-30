@@ -102,11 +102,12 @@ const refreshAuthTokensOnce = async (tokens: AuthTokens): Promise<AuthTokens> =>
 
 export const refreshAuthTokens = createSingleFlight(refreshAuthTokensOnce);
 
-export const signInWithCognito = async (language: UiLanguage): Promise<AuthTokens> => {
+export const signInWithCognito = async (language: UiLanguage, provider?: 'Google'): Promise<AuthTokens> => {
   const request = new AuthSession.AuthRequest({
     clientId: config.cognitoClientId,
     extraParams: {
-      lang: language
+      lang: language,
+      ...(provider === undefined ? {} : { identity_provider: provider })
     },
     redirectUri: config.cognitoRedirectUri,
     responseType: AuthSession.ResponseType.Code,

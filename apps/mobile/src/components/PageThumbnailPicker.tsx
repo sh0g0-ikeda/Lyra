@@ -74,14 +74,15 @@ export function PageThumbnailPicker({
         renderItem={({ item: page }) => {
           const selected = page.id === selectedId;
           const status = statusLabelFor(page.status);
+          const webOnly = isWebOnlyPage(page);
           const label = t(language, 'component.pageThumbnailPicker.accessibilityLabel', {
             pageNumber: page.page_number,
             status
           });
           const sources =
-            page.generated_image === null ? [] : imageSourcesFor(page);
+            page.generated_image === null || webOnly ? [] : imageSourcesFor(page);
           const previewSources =
-            page.generated_image === null
+            page.generated_image === null || webOnly
               ? []
               : (previewImageSourcesFor?.(page) ?? sources);
           return (
@@ -138,6 +139,10 @@ export function PageThumbnailPicker({
       />
     </View>
   );
+}
+
+function isWebOnlyPage(page: PageRecord): boolean {
+  return page.generated_image?.web_only === true;
 }
 
 function PageThumbnailImage({

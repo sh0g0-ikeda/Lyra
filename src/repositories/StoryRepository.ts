@@ -1,4 +1,4 @@
-﻿import type { QueryResultRow } from 'pg';
+import type { QueryResultRow } from 'pg';
 import { buildPanelFrameTemplateInputs } from '../domain/constants/panelFrameTemplates.js';
 import type {
   Chapter,
@@ -6,6 +6,7 @@ import type {
   CreateEpisodeInput,
   CreateWorkInput,
   Episode,
+  EpisodeStartingEntityState,
   StoryItemMoveDirection,
   StoryStatus,
   UpdateChapterInput,
@@ -64,6 +65,12 @@ export interface StoryRepository {
   createEpisode(chapterId: string, input: CreateEpisodeInput): Promise<Episode>;
   findEpisodesByChapterIdAndUserId(chapterId: string, userId: string, organizationId?: string | null): Promise<Episode[]>;
   findEpisodeByIdAndUserId(id: string, userId: string, organizationId?: string | null): Promise<Episode | null>;
+  validateEpisodeStartingEntityStates?(
+    episodeId: string,
+    userId: string,
+    startingEntityStates: EpisodeStartingEntityState[],
+    organizationId?: string | null,
+  ): Promise<boolean>;
   updateEpisode(id: string, userId: string, input: UpdateEpisodeInput, organizationId?: string | null): Promise<Episode | null>;
   deleteEpisode(id: string, userId: string, organizationId?: string | null): Promise<boolean>;
   moveEpisode(
@@ -155,6 +162,7 @@ interface EpisodeRow extends QueryResultRow {
   ending_hook: string | null;
   estimated_pages: number;
   entities_involved: string[];
+  starting_entity_states: unknown;
   page_skeleton_generated: boolean;
   version: number;
   edit_history: unknown;
@@ -932,7 +940,8 @@ export class PostgresStoryRepository implements StoryRepository {
             ending_hook = CASE WHEN $18::boolean THEN $19 ELSE episodes.ending_hook END,
             estimated_pages = COALESCE($20, episodes.estimated_pages),
             entities_involved = CASE WHEN $21::boolean THEN $22 ELSE episodes.entities_involved END,
-            status = COALESCE($23, episodes.status),
+            starting_entity_states = CASE WHEN $23::boolean THEN $24::jsonb ELSE episodes.starting_entity_states END,
+            status = COALESCE($25, episodes.status),
             edit_history = (
               SELECT COALESCE(jsonb_agg(history_entry.value ORDER BY history_entry.ordinality), '[]'::jsonb)
               FROM (
@@ -952,6 +961,7 @@ export class PostgresStoryRepository implements StoryRepository {
                       'ending_hook', episodes.ending_hook,
                       'estimated_pages', episodes.estimated_pages,
                       'entities_involved', episodes.entities_involved,
+                      'starting_entity_states', episodes.starting_entity_states,
                       'status', episodes.status,
                       'updated_at', episodes.updated_at
                     )
@@ -967,12 +977,12 @@ export class PostgresStoryRepository implements StoryRepository {
         INNER JOIN works ON works.id = chapters.work_id
         WHERE episodes.id = $1
           AND episodes.chapter_id = chapters.id
-          AND date_trunc('milliseconds', episodes.updated_at) = $25::timestamptz
+          AND date_trunc('milliseconds', episodes.updated_at) = $27::timestamptz
           AND (
-            ($24::uuid IS NULL AND works.user_id = $2 AND works.organization_id IS NULL)
+            ($26::uuid IS NULL AND works.user_id = $2 AND works.organization_id IS NULL)
             OR (
-            $24::uuid IS NOT NULL
-            AND works.organization_id = $24::uuid
+            $26::uuid IS NOT NULL
+            AND works.organization_id = $26::uuid
             AND EXISTS (
               SELECT 1
               FROM organization_members
@@ -981,6 +991,24 @@ export class PostgresStoryRepository implements StoryRepository {
                 AND organization_members.status = 'active'
             )
           )
+          )
+          AND (
+            NOT $23::boolean
+            OR (
+              (SELECT count(*) = count(DISTINCT requested.value ->> 'entity_id')
+               FROM jsonb_array_elements($24::jsonb) AS requested(value))
+              AND NOT EXISTS (
+                SELECT 1
+                FROM jsonb_array_elements($24::jsonb) AS requested(value)
+                LEFT JOIN entities ON entities.id = (requested.value ->> 'entity_id')::uuid
+                  AND entities.work_id = works.id
+                LEFT JOIN entity_states ON entity_states.id = (requested.value ->> 'state_id')::uuid
+                  AND entity_states.entity_id = entities.id
+                  AND entity_states.reference_image IS NOT NULL
+                WHERE entities.id IS NULL
+                  OR ((requested.value ->> 'state_id') IS NOT NULL AND entity_states.id IS NULL)
+              )
+            )
           )
         RETURNING episodes.*
         `,
@@ -1007,6 +1035,8 @@ export class PostgresStoryRepository implements StoryRepository {
           input.estimatedPages ?? null,
           input.entitiesInvolved !== undefined,
           input.entitiesInvolved ?? [],
+          input.startingEntityStates !== undefined,
+          serializeEpisodeStartingEntityStates(input.startingEntityStates ?? []),
           input.status ?? null,
           organizationId,
           input.expectedUpdatedAt,
@@ -1017,6 +1047,47 @@ export class PostgresStoryRepository implements StoryRepository {
     } catch (error) {
       throw mapOrderConflict(error, 'Episode order must be unique within the chapter');
     }
+  }
+
+  public async validateEpisodeStartingEntityStates(
+    episodeId: string,
+    userId: string,
+    startingEntityStates: EpisodeStartingEntityState[],
+    organizationId: string | null = null,
+  ): Promise<boolean> {
+    const result = await this.client.query<{ is_valid: boolean }>(
+      `
+      SELECT EXISTS (
+        SELECT 1
+        FROM episodes
+        INNER JOIN chapters ON chapters.id = episodes.chapter_id
+        INNER JOIN works ON works.id = chapters.work_id
+        WHERE episodes.id = $1
+          AND (($3::uuid IS NULL AND works.user_id = $2 AND works.organization_id IS NULL)
+            OR ($3::uuid IS NOT NULL AND works.organization_id = $3::uuid AND EXISTS (
+              SELECT 1 FROM organization_members
+              WHERE organization_members.organization_id = works.organization_id
+                AND organization_members.user_id = $2
+                AND organization_members.status = 'active'
+            )))
+          AND (SELECT count(*) = count(DISTINCT requested.value ->> 'entity_id')
+               FROM jsonb_array_elements($4::jsonb) AS requested(value))
+          AND NOT EXISTS (
+            SELECT 1
+            FROM jsonb_array_elements($4::jsonb) AS requested(value)
+            LEFT JOIN entities ON entities.id = (requested.value ->> 'entity_id')::uuid
+              AND entities.work_id = works.id
+            LEFT JOIN entity_states ON entity_states.id = (requested.value ->> 'state_id')::uuid
+              AND entity_states.entity_id = entities.id
+              AND entity_states.reference_image IS NOT NULL
+            WHERE entities.id IS NULL
+              OR ((requested.value ->> 'state_id') IS NOT NULL AND entity_states.id IS NULL)
+          )
+      ) AS is_valid
+      `,
+      [episodeId, userId, organizationId, serializeEpisodeStartingEntityStates(startingEntityStates)],
+    );
+    return result.rows[0]?.is_valid === true;
   }
 
   public async deleteEpisode(id: string, userId: string, organizationId: string | null = null): Promise<boolean> {
@@ -2427,6 +2498,29 @@ function mapChapterRow(row: ChapterRow): Chapter {
   };
 }
 
+function toEpisodeStartingEntityStates(value: unknown): Episode['startingEntityStates'] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.flatMap((entry) => {
+    if (typeof entry !== 'object' || entry === null) {
+      return [];
+    }
+    const candidate = entry as Record<string, unknown>;
+    const entityId = candidate.entity_id;
+    const stateId = candidate.state_id;
+    if (typeof entityId !== 'string' || (typeof stateId !== 'string' && stateId !== null)) {
+      return [];
+    }
+    return [{ entityId, stateId }];
+  });
+}
+
+function serializeEpisodeStartingEntityStates(states: EpisodeStartingEntityState[]): string {
+  return JSON.stringify(states.map((state) => ({ entity_id: state.entityId, state_id: state.stateId })));
+}
+
 function mapEpisodeRow(row: EpisodeRow): Episode {
   return {
     id: row.id,
@@ -2442,6 +2536,7 @@ function mapEpisodeRow(row: EpisodeRow): Episode {
     endingHook: normalizeNullableText(row.ending_hook),
     estimatedPages: row.estimated_pages,
     entitiesInvolved: row.entities_involved,
+    startingEntityStates: toEpisodeStartingEntityStates(row.starting_entity_states),
     pageSkeletonGenerated: row.page_skeleton_generated,
     version: row.version,
     editHistory: toObjectArray(row.edit_history),

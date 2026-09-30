@@ -571,9 +571,28 @@ describe('PostgresStoryRepository', () => {
     expect(client.updateValues?.[16]).toBeNull();
     expect(client.updateValues?.[18]).toBeNull();
     expect(client.updateQuery).toContain(
-      "date_trunc('milliseconds', episodes.updated_at) = $25::timestamptz",
+      "date_trunc('milliseconds', episodes.updated_at) = $27::timestamptz",
     );
-    expect(client.updateValues?.[24]).toBe('2026-04-22T00:00:00.000Z');
+    expect(client.updateValues?.[26]).toBe('2026-04-22T00:00:00.000Z');
+  });
+
+  it('starting entity states を明示更新すると同一workの確定referenceだけをSQL条件にして保存する', async () => {
+    const client = new EpisodeUpdateCapturingClient();
+    const repository = new PostgresStoryRepository(client);
+    const startingEntityStates = [{
+      entityId: '11111111-1111-4111-8111-111111111111',
+      stateId: '22222222-2222-4222-8222-222222222222',
+    }];
+
+    await repository.updateEpisode('33333333-3333-4333-8333-333333333333', 'user-1', {
+      expectedUpdatedAt: '2026-04-22T00:00:00.000Z',
+      startingEntityStates,
+    });
+
+    expect(client.updateQuery).toContain('entity_states.reference_image IS NOT NULL');
+    expect(client.updateQuery).toContain('entities.work_id = works.id');
+    expect(client.updateValues?.[22]).toBe(true);
+    expect(client.updateValues?.[23]).toBe(JSON.stringify([{ entity_id: startingEntityStates[0].entityId, state_id: startingEntityStates[0].stateId }]));
   });
 
   it('lists a bounded work page with tenant scope, stable keyset ordering, and a cursor from the last returned row', async () => {

@@ -378,6 +378,72 @@ describe('PageGenerationService', () => {
     });
   });
 
+  it('旧requestの省略時も既定画像モデルと既存料金をjobに固定する', async () => {
+    const jobs = new FakeGenerationJobRepository();
+    const credits = new FakeCreditService();
+    const service = new PageGenerationService(
+      new FakePageRepository(), new FakeEntityRepository(), jobs, credits, new FakeQueue(), new ModeSelector(),
+    );
+
+    await service.enqueuePageGeneration(userId, pageId);
+
+    expect(jobs.created?.params).toMatchObject({
+      image_model: 'gpt-image-2',
+      provider_model_id: 'gpt-image-2',
+      pricing_version: 'existing-pricing-v1',
+      estimated_credit_cost: 3,
+    });
+    expect(credits.consumed).toHaveLength(1);
+  });
+
+  it('未知・無効な画像モデルはjob作成とクレジット控除前に拒否する', async () => {
+    for (const imageModel of ['unknown', 'hy4-preview']) {
+      const jobs = new FakeGenerationJobRepository();
+      const credits = new FakeCreditService();
+      const service = new PageGenerationService(
+        new FakePageRepository(), new FakeEntityRepository(), jobs, credits, new FakeQueue(), new ModeSelector(),
+      );
+
+      await expect(service.enqueuePageGeneration(userId, pageId, null, { imageModel }))
+        .rejects.toBeInstanceOf(ValidationError);
+      expect(jobs.created).toBeNull();
+      expect(credits.consumed).toHaveLength(0);
+    }
+  });
+
+  it('見積後にpage revisionまたは料金が変わった場合は課金せず再確認を求める', async () => {
+    const jobs = new FakeGenerationJobRepository();
+    const credits = new FakeCreditService();
+    const service = new PageGenerationService(
+      new FakePageRepository(), new FakeEntityRepository(), jobs, credits, new FakeQueue(), new ModeSelector(),
+    );
+
+    await expect(service.enqueuePageGeneration(userId, pageId, null, {
+      expectedPageRevision: '2026-01-01T00:00:00.000Z', expectedCreditCost: 3,
+    })).rejects.toBeInstanceOf(ConflictError);
+    await expect(service.enqueuePageGeneration(userId, pageId, null, {
+      expectedCreditCost: 999,
+    })).rejects.toBeInstanceOf(ConflictError);
+    expect(jobs.created).toBeNull();
+    expect(credits.consumed).toHaveLength(0);
+  });
+
+  it('一致した見積確認でも原子的な確定がない場合は課金前に拒否する', async () => {
+    const jobs = new FakeGenerationJobRepository();
+    const credits = new FakeCreditService();
+    const pageRepository = new FakePageRepository();
+    const service = new PageGenerationService(
+      pageRepository, new FakeEntityRepository(), jobs, credits, new FakeQueue(), new ModeSelector(),
+    );
+
+    await expect(service.enqueuePageGeneration(userId, pageId, null, {
+      expectedPageRevision: pageRepository.summary!.updatedAt.toISOString(),
+      expectedCreditCost: 3,
+    })).rejects.toBeInstanceOf(ConflictError);
+    expect(jobs.created).toBeNull();
+    expect(credits.consumed).toHaveLength(0);
+  });
+
   it('4体目以降の参照画像を加算してenqueueする', async () => {
     const pageRepository = new FakePageRepository();
     const entityRepository = new FakeEntityRepository();

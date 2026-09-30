@@ -264,6 +264,12 @@ class FakeEntityReferenceService implements EntityReferenceServicePort {
     };
   }
 
+  public async enqueueStateReferenceGeneration(): Promise<{ jobId: string }> {
+    return { jobId: '33333333-3333-4333-8333-333333333333' };
+  }
+
+  public async confirmStateReference(): Promise<void> {}
+
   public async confirmReferences(
     _userId: string,
     _entityId: string,

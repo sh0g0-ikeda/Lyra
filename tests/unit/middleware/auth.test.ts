@@ -72,6 +72,50 @@ describe('createAuthMiddleware Cognito mode', () => {
     expect(response.status).toBe(401);
   });
 
+  it('検証済みGoogle usernameを外部IdPとして渡す', async () => {
+    const fixture = await createCognitoFixture();
+    const provisioningService = new FakeUserProvisioningService();
+    const app = createProtectedApp(provisioningService, fixture.jwks);
+    const token = await fixture.signToken({ username: 'Google_123456' });
+
+    const response = await app.request('/protected', {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    expect(response.status).toBe(200);
+    expect(provisioningService.claims).toEqual({
+      sub: 'cognito-user-1',
+      email: 'user@example.com',
+      identityProvider: 'federated',
+    });
+  });
+
+  it('検証済みCognito ID tokenのGoogle identitiesを外部IdPとして渡す', async () => {
+    const fixture = await createCognitoFixture();
+    const provisioningService = new FakeUserProvisioningService();
+    const app = createProtectedApp(provisioningService, fixture.jwks, {
+      ...cognitoConfig,
+      tokenUse: 'id',
+      requiredScopes: [],
+    });
+    const token = await fixture.signToken({
+      aud: cognitoConfig.clientId,
+      token_use: 'id',
+      identities: [{ providerName: 'Google', userId: 'google-user-1' }],
+    });
+
+    const response = await app.request('/protected', {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    expect(response.status).toBe(200);
+    expect(provisioningService.claims).toEqual({
+      sub: 'cognito-user-1',
+      email: 'user@example.com',
+      identityProvider: 'federated',
+    });
+  });
+
   it('email_verified が欠けている token は拒否する', async () => {
     const fixture = await createCognitoFixture();
     const app = createProtectedApp(new FakeUserProvisioningService(), fixture.jwks);

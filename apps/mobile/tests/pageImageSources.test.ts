@@ -142,4 +142,25 @@ describe('page image sources', () => {
     expect(sources[0]?.uri).not.toContain('full-page.png');
     expect(sources.some((source) => source.uri.includes('/thumbnail'))).toBe(false);
   });
+
+  it('web_onlyページはAPI URLがあってもMobile画像sourceを返さない', () => {
+    const webOnlyPage: PageRecord = {
+      ...page,
+      generated_image: {
+        ...page.generated_image!,
+        web_only: true,
+      },
+    };
+    const input = {
+      apiBaseUrl: 'https://app.lyra-editor.com',
+      authorizationHeader: 'Bearer token',
+      organizationId: 'organization-1',
+      page: webOnlyPage,
+      sessionKey: 'user-1',
+    };
+
+    expect(buildFullPageImageSources(input)).toEqual([]);
+    expect(buildPageThumbnailImageSources(input)).toEqual([]);
+    expect(buildPageImageDownloadSources(input)).toEqual([]);
+  });
 });

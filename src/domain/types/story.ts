@@ -53,12 +53,18 @@ export interface Episode {
   endingHook: string | null;
   estimatedPages: number;
   entitiesInvolved: string[];
+  startingEntityStates?: EpisodeStartingEntityState[];
   pageSkeletonGenerated: boolean;
   version: number;
   editHistory: Record<string, unknown>[];
   status: StoryStatus;
   createdAt: Date;
   updatedAt: Date;
+}
+
+export interface EpisodeStartingEntityState {
+  entityId: string;
+  stateId: string | null;
 }
 
 export interface CreateWorkInput {
@@ -137,5 +143,6 @@ export interface UpdateEpisodeInput {
   endingHook?: string | null;
   estimatedPages?: number;
   entitiesInvolved?: string[];
+  startingEntityStates?: EpisodeStartingEntityState[];
   status?: StoryStatus;
 }

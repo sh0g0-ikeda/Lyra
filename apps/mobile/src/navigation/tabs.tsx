@@ -81,11 +81,13 @@ export function MainTabs(): React.JSX.Element {
         <>
           <Tab.Screen component={StoryScreen} name="Story" options={{ title: t(language, 'shared.navigation.story'), tabBarButtonTestID: 'tab-story', tabBarIcon: ({ color }) => tabIcon(BookOpenText, color) }} />
           <Tab.Screen component={CharactersScreen} name="Characters" options={{ title: t(language, 'shared.navigation.characters'), tabBarButtonTestID: 'tab-characters', tabBarIcon: ({ color }) => tabIcon(UsersRound, color) }} />
-          <Tab.Screen component={PagesScreen} name="Pages" options={{ title: t(language, 'pages'), tabBarButtonTestID: 'tab-pages', tabBarIcon: ({ color }) => tabIcon(Images, color) }} />
         </>
       ) : null}
       <Tab.Screen component={AccountScreen} name="Account" options={{ title: t(language, 'shared.navigation.account'), tabBarButtonTestID: 'tab-account', tabBarIcon: ({ color }) => tabIcon(Settings, color) }} />
       <Tab.Screen component={GuideScreen} name="Guide" options={{ title: t(language, 'shared.navigation.guide'), tabBarButtonTestID: 'tab-guide', tabBarIcon: ({ color }) => tabIcon(CircleHelp, color) }} />
+      {canViewWork ? (
+        <Tab.Screen component={PagesScreen} name="Pages" options={{ title: 'Pages', tabBarButton: () => null, tabBarIcon: ({ color }) => tabIcon(Images, color) }} />
+      ) : null}
     </Tab.Navigator>
   );
 }

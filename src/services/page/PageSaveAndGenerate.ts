@@ -27,6 +27,8 @@ export interface SaveAndGeneratePageInput {
   frames: UpsertPanelFrameInput[];
   language: 'ja' | 'en';
   requestId: string;
+  imageModel?: string;
+  expectedCreditCost?: number;
 }
 
 export interface AtomicSaveAndGenerateInput extends SaveAndGeneratePageInput {

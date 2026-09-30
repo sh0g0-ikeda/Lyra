@@ -154,6 +154,7 @@ export const screenTranslations = {
     'screen.pages.framePanelMismatch': '枠 {frameCount} / コマ {panelCount} です。コマ割りテンプレートを適用して数を揃えてください。',
     'screen.pages.panelOption': '{panelOrder}コマ目',
     'screen.pages.exportPageOption': '{pageNumber}ページ',
+    'screen.pages.webOnly': 'このページはアプリでは表示できません。一部のコンテンツはウェブ版Lyraでのみ利用できます',
 
     'screen.story.estimatedPagesOutOfRange': '想定ページ数は1〜{maximum}で入力してください。',
     'screen.story.sceneOrderOutOfRange': '設定の順番は1〜{maximum}で入力してください。',
@@ -318,6 +319,7 @@ export const screenTranslations = {
     'screen.pages.framePanelMismatch': 'Frames {frameCount} / panels {panelCount}. Apply a panel layout template to match the counts.',
     'screen.pages.panelOption': 'Panel {panelOrder}',
     'screen.pages.exportPageOption': 'Page {pageNumber}',
+    'screen.pages.webOnly': 'This page cannot be displayed in the app. Some content is available only on the Lyra web version.',
 
     'screen.story.estimatedPagesOutOfRange': 'Estimated pages must be between 1 and {maximum}.',
     'screen.story.sceneOrderOutOfRange': 'Setting order must be between 1 and {maximum}.',
