@@ -77,7 +77,7 @@ describePostgres('entity state image retention', () => {
     });
     await pool.query(
       `INSERT INTO reference_sets (entity_id, reference_images, primary_ref_id, status)
-       VALUES ($1::uuid, $2::jsonb, 'base-ref', 'confirmed')`,
+       VALUES ($1::uuid, $2::jsonb, 'base-ref', 'ready')`,
       [ids.personalEntityId, JSON.stringify([{
         ref_id: 'base-ref', s3_key: baseKey, cdn_url: 'https://img.lyra.test/base.png',
         source: 'generated', created_at: '2026-09-30T00:00:00.000Z',
