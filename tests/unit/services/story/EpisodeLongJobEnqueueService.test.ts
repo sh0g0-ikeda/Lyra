@@ -200,6 +200,41 @@ describe('Episode long job enqueue services', () => {
     expect(repository.createdJobs).toEqual([]);
   });
 
+  it('state autofill v1はgateがOFFならjob作成とqueue前に409にする', async () => {
+    const repository = new FakeEpisodeStoryAutofillRepository();
+    const queue = new FakeStoryQueue();
+    const service = new EpisodeStoryAutofillService(repository, queue);
+
+    await expect(service.enqueueEpisodeStoryAutofill(
+      'user-1', 'episode-1', 'ja', null,
+      { stateAutofillVersion: 'v1', stateAssignmentPolicy: 'overwrite_existing' },
+    )).rejects.toMatchObject({ code: 'CONFLICT' });
+    expect(repository.createdJobs).toEqual([]);
+    expect(queue.payloads).toEqual([]);
+  });
+
+  it('state autofill v1は明示overwriteをjob paramsへ固定し、通常paramsは不変にする', async () => {
+    const repository = new FakeEpisodeStoryAutofillRepository();
+    const queue = new FakeStoryQueue();
+    const service = new EpisodeStoryAutofillService(
+      repository, queue, undefined, undefined, undefined, true,
+    );
+
+    await service.enqueueEpisodeStoryAutofill(
+      'user-1', 'episode-v1', 'ja', null,
+      { stateAutofillVersion: 'v1', stateAssignmentPolicy: 'overwrite_existing' },
+    );
+    await service.enqueueEpisodeStoryAutofill('user-1', 'episode-legacy', 'en');
+
+    expect(repository.createdJobs[0]?.params).toMatchObject({
+      episode_id: 'episode-v1', language: 'ja', organization_id: null,
+      state_autofill_version: 'v1', state_assignment_policy: 'overwrite_existing',
+    });
+    expect(repository.createdJobs[1]?.params).toEqual({
+      episode_id: 'episode-legacy', language: 'en', organization_id: null,
+    });
+  });
+
   it('story autofill enqueueはstale停止要求をfailedにせずcancelledへ確定する', async () => {
     const repository = new FakeEpisodeStoryAutofillRepository();
     repository.activeJob = buildJob({

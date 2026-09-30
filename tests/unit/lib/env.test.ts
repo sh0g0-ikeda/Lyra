@@ -106,4 +106,9 @@ describe('parseEnv', () => {
 
     expect(parsed.EPISODE_PAGE_PLAN_CONTINUITY_V3_ENABLED).toBe(false);
   });
+
+  it('episode state autofill v1 は明示しない限りOFFで、trueだけを受理する', () => {
+    expect(parseEnv({}).EPISODE_STATE_AUTOFILL_V1_ENABLED).toBe(false);
+    expect(parseEnv({ EPISODE_STATE_AUTOFILL_V1_ENABLED: 'true' }).EPISODE_STATE_AUTOFILL_V1_ENABLED).toBe(true);
+  });
 });

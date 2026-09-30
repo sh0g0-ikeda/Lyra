@@ -4,6 +4,54 @@ import type { DatabaseClient, TransactionRunner } from '../../../src/lib/db.js';
 import { PostgresEpisodeStoryAutofillExecutionRepository } from '../../../src/repositories/EpisodeStoryAutofillExecutionRepository.js';
 
 describe('PostgresEpisodeStoryAutofillExecutionRepository terminal settlement', () => {
+  it('v1成功時だけboundedなstate transition結果を保存する', async () => {
+    const database = new TerminalSettlementDatabase('completed');
+    const repository = new PostgresEpisodeStoryAutofillExecutionRepository(database);
+
+    await repository.completeEpisodeStoryAutofill({
+      jobId: 'job-1', userId: 'user-1',
+      result: {
+        updatedPageCount: 1, updatedPanelCount: 1, updatedAssignmentCount: 1, filledFieldCount: 1,
+        compilerUsed: true, compilerProvider: 'openai', compilerModel: 'gpt-5', compilerPromptVersion: 'v1', compilerError: null,
+        statePlanVersion: 'episode_state_plan_v1', stateAssignmentPolicy: 'overwrite_existing',
+        stateTransitions: [{
+          entityId: '11111111-1111-4111-8111-111111111111', stateId: '22222222-2222-4222-8222-222222222222',
+          startsAtPanelId: '33333333-3333-4333-8333-333333333333', sourceSceneId: null,
+          sourceField: 'middle', sourceQuote: '腕を負傷した',
+        }],
+      },
+    });
+
+    const persisted = JSON.parse(String(database.updateValues[0]?.[2])) as Record<string, unknown>;
+    expect(persisted).toMatchObject({
+      state_plan_version: 'episode_state_plan_v1', state_assignment_policy: 'overwrite_existing',
+      state_transitions: [{ source_quote: '腕を負傷した' }],
+    });
+  });
+
+  it('失敗時はboundedなstate blockerだけを既存resultへmergeする', async () => {
+    const database = new TerminalSettlementDatabase('failed');
+    const repository = new PostgresEpisodeStoryAutofillExecutionRepository(database);
+
+    await repository.failEpisodeStoryAutofill({
+      jobId: 'job-1', userId: 'user-1', errorMessage: 'state unavailable',
+      stateBlocker: {
+        code: 'STATE_REFERENCE_REQUIRED',
+        candidates: [{
+          entityId: '11111111-1111-4111-8111-111111111111', candidateStateId: null,
+          startsAtPanelId: '33333333-3333-4333-8333-333333333333', suggestedName: '負傷',
+          suggestedDescription: '腕に包帯', sourceSceneId: null, sourceField: 'middle',
+          sourceQuote: '腕を負傷した', reason: 'missing_reference',
+        }],
+      },
+    });
+
+    const merged = JSON.parse(String(database.updateValues[0]?.[3])) as Record<string, unknown>;
+    expect(merged).toMatchObject({
+      state_blocker: { code: 'STATE_REFERENCE_REQUIRED', candidates: [{ suggested_description: '腕に包帯' }] },
+    });
+  });
+
   it.each(['completed', 'failed'] as const)(
     '%s更新とoutbox snapshotを同じtransactionで行う',
     async (terminalStatus) => {
@@ -50,6 +98,7 @@ describe('PostgresEpisodeStoryAutofillExecutionRepository terminal settlement', 
 
 class TerminalSettlementDatabase implements DatabaseClient, TransactionRunner {
   public readonly queries: string[] = [];
+  public readonly updateValues: Array<readonly unknown[]> = [];
   public transactionCount = 0;
 
   public constructor(private readonly terminalStatus: 'completed' | 'failed') {}
@@ -61,9 +110,12 @@ class TerminalSettlementDatabase implements DatabaseClient, TransactionRunner {
 
   public async query<T extends QueryResultRow = QueryResultRow>(
     text: string,
-    _values?: readonly unknown[],
+    values?: readonly unknown[],
   ): Promise<QueryResult<T>> {
     this.queries.push(text);
+    if (text.includes('UPDATE generation_jobs') && values !== undefined) {
+      this.updateValues.push(values);
+    }
     const rows = text.includes('UPDATE generation_jobs')
       ? [jobRow(this.terminalStatus)]
       : text.includes('INSERT INTO mobile_push_notification_outbox')

@@ -38,6 +38,8 @@ class FakeStoryRepository implements StoryRepository, WorkListPaginationReposito
     request: WorkListPageRequest;
     organizationId: string | null;
   }> = [];
+  public startingEntityStatesValid = true;
+  public validatedStartingEntityStates: Array<{ entityId: string; stateId: string | null }> | null = null;
 
   public async findWorksByUserId(userId: string): Promise<Work[]> {
     return [...this.works.values()].filter((work) => work.userId === userId);
@@ -210,6 +212,7 @@ class FakeStoryRepository implements StoryRepository, WorkListPaginationReposito
       endingHook: input.endingHook,
       estimatedPages: input.estimatedPages,
       entitiesInvolved: input.entitiesInvolved,
+      startingEntityStates: [],
       pageSkeletonGenerated: false,
       version: 1,
       editHistory: [],
@@ -261,12 +264,25 @@ class FakeStoryRepository implements StoryRepository, WorkListPaginationReposito
       endingHook: input.endingHook === undefined ? episode.endingHook : input.endingHook,
       estimatedPages: input.estimatedPages ?? episode.estimatedPages,
       entitiesInvolved: input.entitiesInvolved ?? episode.entitiesInvolved,
+      startingEntityStates:
+        input.startingEntityStates === undefined
+          ? episode.startingEntityStates
+          : input.startingEntityStates,
       status: input.status ?? episode.status,
       version: episode.version + 1,
       updatedAt: now,
     };
     this.episodes.set(id, updatedEpisode);
     return updatedEpisode;
+  }
+
+  public async validateEpisodeStartingEntityStates(
+    _episodeId: string,
+    _userId: string,
+    states: Array<{ entityId: string; stateId: string | null }>,
+  ): Promise<boolean> {
+    this.validatedStartingEntityStates = states;
+    return this.startingEntityStatesValid;
   }
 
   public async deleteEpisode(id: string, userId: string): Promise<boolean> {
@@ -508,6 +524,36 @@ describe('StoryService', () => {
 
     expect(episode.chapterId).toBe(chapter.id);
     expect(episode.pageSkeletonGenerated).toBe(false);
+    expect(episode.startingEntityStates).toEqual([]);
+  });
+
+  it('開始状態を明示更新した場合だけ同workかつ確定参照の検証を通す', async () => {
+    const repository = new FakeStoryRepository();
+    const service = new StoryService(repository, new FakeEntityReferenceReader());
+    const work = await service.createWork('user-1', {
+      title: '黒月の騎士', genre: null, worldSetting: null, theme: null,
+      mainEntityIds: [], startingPoint: null, endingPoint: null, overallFlow: null,
+    });
+    const chapter = await service.createChapter('user-1', work.id, {
+      order: 1, title: '第一章', purpose: null, startingState: null, endingState: null,
+      emotionCurve: null, entitiesInvolved: [], keyBeats: [],
+    });
+    const episode = await service.createEpisode('user-1', chapter.id, {
+      order: 1, title: '出会い', purpose: null, storyInputMode: 'structured',
+      storyFullDraft: null, introduction: null, middle: null, climax: null, endingHook: null,
+      estimatedPages: 16, entitiesInvolved: [],
+    });
+    const state = { entityId: 'entity-1', stateId: 'state-1' };
+
+    await expect(service.updateEpisode('user-1', episode.id, {
+      startingEntityStates: [state],
+    })).resolves.toMatchObject({ startingEntityStates: [state] });
+    expect(repository.validatedStartingEntityStates).toEqual([state]);
+
+    repository.startingEntityStatesValid = false;
+    await expect(service.updateEpisode('user-1', episode.id, {
+      startingEntityStates: [state],
+    })).rejects.toMatchObject({ code: 'VALIDATION_ERROR' } satisfies Partial<AppError>);
   });
 
   it('moves a chapter within the same work', async () => {

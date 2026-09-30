@@ -215,6 +215,19 @@ export class StoryService implements StoryServicePort {
       const chapter = await this.ensureChapterOwnedByUser(userId, currentEpisode.chapterId, organizationId);
       await this.ensureEntitiesBelongToWork(userId, chapter.workId, input.entitiesInvolved, organizationId);
     }
+    if (input.startingEntityStates !== undefined) {
+      const valid = await this.storyRepository.validateEpisodeStartingEntityStates?.(
+        episodeId,
+        userId,
+        input.startingEntityStates,
+        organizationId,
+      );
+      if (valid !== true) {
+        throw new ValidationError(
+          'Each starting entity state must belong to the episode work and have a confirmed reference image',
+        );
+      }
+    }
 
     const episode = await this.storyRepository.updateEpisode(episodeId, userId, input, organizationId);
     if (episode === null) {

@@ -695,6 +695,10 @@ export const episodeSchema = z.object({
   ending_hook: nullableStringSchema,
   estimated_pages: z.number().int().positive(),
   entities_involved: z.array(idSchema),
+  starting_entity_states: z.array(z.object({
+    entity_id: idSchema,
+    state_id: idSchema.nullable(),
+  })).optional(),
   page_skeleton_generated: z.boolean(),
   version: z.number().int().nonnegative(),
   status: storyStatusSchema,
@@ -1016,10 +1020,45 @@ const entityGenerationJobResultSchema = z
   })
   .strict();
 
+const episodeStateSourceFieldSchema = z.enum([
+  'story_full_draft', 'introduction', 'middle', 'climax', 'ending_hook',
+  'scene_location', 'scene_time', 'scene_atmosphere',
+]);
+const episodeStateTransitionResultSchema = z.object({
+  entity_id: idSchema,
+  state_id: idSchema.nullable(),
+  starts_at_panel_id: idSchema,
+  source_scene_id: idSchema.nullable(),
+  source_field: episodeStateSourceFieldSchema,
+  source_quote: z.string().trim().min(1).max(300),
+}).strict();
+const episodeStateBlockerCandidateSchema = z.object({
+  entity_id: idSchema,
+  candidate_state_id: idSchema.nullable(),
+  starts_at_panel_id: idSchema,
+  suggested_name: z.string().trim().min(1).max(100),
+  suggested_description: z.string().trim().min(1).max(500),
+  source_scene_id: idSchema.nullable(),
+  source_field: episodeStateSourceFieldSchema,
+  source_quote: z.string().trim().min(1).max(300),
+  reason: z.enum(['missing_reference', 'ambiguous_mapping']),
+}).strict();
+const episodeStateBlockerSchema = z.object({
+  code: z.enum([
+    'STATE_PLAN_INVALID', 'STATE_ASSIGNMENT_CONFLICT', 'STATE_REFERENCE_REQUIRED',
+    'STATE_MAPPING_AMBIGUOUS', 'LIMIT_EXCEEDED',
+  ]),
+  candidates: z.array(episodeStateBlockerCandidateSchema).max(20),
+}).strict();
+
 const episodeStoryAutofillJobResultSchema = z
   .object({
     ...jobCompilerResultFields,
     ...jobProgressFields,
+    state_plan_version: z.literal('episode_state_plan_v1').optional(),
+    state_assignment_policy: z.enum(['preserve_existing', 'overwrite_existing']).optional(),
+    state_transitions: z.array(episodeStateTransitionResultSchema).max(512).optional(),
+    state_blocker: episodeStateBlockerSchema.optional(),
   })
   .strict();
 
@@ -1095,8 +1134,16 @@ const episodeStoryAutofillJobResponseSchema = z
       .object({
         episode_id: idSchema.optional(),
         language: z.enum(['ja', 'en']).optional(),
+        state_autofill_version: z.literal('v1').optional(),
+        state_assignment_policy: z.enum(['preserve_existing', 'overwrite_existing']).optional(),
       })
-      .strict(),
+      .strict()
+      .refine(
+        (params) => params.state_autofill_version === undefined
+          ? params.state_assignment_policy === undefined
+          : params.state_assignment_policy !== undefined,
+        { message: 'state autofill version and policy must be paired' },
+      ),
     result: episodeStoryAutofillJobResultSchema.nullable(),
   })
   .strict();

@@ -45,6 +45,7 @@ import type {
   EpisodePlanPersistencePort,
   EpisodePlanPersistenceResources,
 } from '../../../../src/services/page/EpisodePlanPersistence.js';
+import type { CompileEpisodeStateTransitionInput } from '../../../../src/services/page/EpisodeStateTransitionCompiler.js';
 import {
   PageService,
   type EpisodePagePlanProgress,
@@ -2414,6 +2415,165 @@ describe('PageService', () => {
     expect(transactionPageRepository.updatedInputs.length).toBeGreaterThan(0);
     expect(transactionPanelRepository.updatedPanels.length).toBeGreaterThan(0);
     expect(transactionAssignmentService.updates.length).toBeGreaterThan(0);
+  });
+
+  it('状態反映v1に必要な全話監査と原子的保存が無い場合は生成前に拒否する', async () => {
+    const pageRepository = new FakePageRepository();
+    const compiler = new FakeEpisodePagePlanCompiler();
+    const service = new PageService(
+      pageRepository,
+      new FakePanelRepository(),
+      new FakePanelEntityAssignmentService(),
+      new FakePageAutofillCompiler(),
+      compiler,
+    );
+    await expect(service.autofillEpisodeFromStory(
+      'user-1', 'episode-1', 'ja', undefined, null, undefined,
+      { statePlanVersion: 'episode_state_plan_v1', stateAssignmentPolicy: 'preserve_existing' },
+    )).rejects.toBeInstanceOf(ConfigurationError);
+    expect(compiler.inputs).toHaveLength(0);
+  });
+
+  it('状態反映v1で詳細生成が失敗した場合は成功扱いにせず保存しない', async () => {
+    const context = buildEpisodePlanningContext();
+    context.stateLibrary = [];
+    const pageRepository = new FakePageRepository();
+    pageRepository.episodePlanningContext = context;
+    const pageCompiler = new FakeEpisodePagePlanCompiler();
+    pageCompiler.error = new ConfigurationError('Episode detail compiler unavailable');
+    const persistence = new FakeEpisodePlanPersistence(context, {
+      pageRepository: new FakePageRepository(),
+      panelRepository: new FakePanelRepository(),
+      panelEntityAssignmentService: new FakePanelEntityAssignmentService(),
+    });
+    const service = new PageService(
+      pageRepository, new FakePanelRepository(), new FakePanelEntityAssignmentService(),
+      new FakePageAutofillCompiler(), pageCompiler, undefined,
+      new FakeEpisodeBeatPlanCompiler(), new FakeEpisodePlanAuditCompiler(), true,
+      { inlineRepairEnabled: true }, persistence,
+      { compileStateTransitions: async () => ({
+        plan: { transitions: [], unresolved: [] }, compilerProvider: 'openai',
+        compilerModel: 'test', compilerPromptVersion: 'episode_state_plan_v1',
+      }) },
+    );
+    let beginCommitCount = 0;
+    await expect(service.autofillEpisodeFromStory(
+      'user-1', 'episode-1', 'ja', undefined, null,
+      { jobId: 'job-1', checkpoint: async () => undefined, beginCommit: async () => { beginCommitCount += 1; } },
+      { statePlanVersion: 'episode_state_plan_v1', stateAssignmentPolicy: 'preserve_existing' },
+    )).rejects.toBeInstanceOf(ConfigurationError);
+    expect(beginCommitCount).toBe(0);
+    expect(persistence.calls).toHaveLength(0);
+  });
+
+  it('状態反映v1は監査後に確定状態を割り当てて原子的保存へ渡す', async () => {
+    const stateId = '22222222-2222-4222-8222-222222222222';
+    const context = buildEpisodePlanningContext();
+    context.episode.startingEntityStates = [];
+    context.stateLibrary = [{
+      entityId: '11111111-1111-4111-8111-111111111111',
+      stateId, name: '負傷', description: '腕に包帯', revision: '2026-10-01T00:00:00.000Z',
+      baseRefId: 'base-ref', baseRefUpdatedAt: '2026-10-01T00:00:00.000Z',
+      referenceImage: {
+        refId: 'state-ref', s3Key: 'private/state.png',
+        storageOwnerUserId: '11111111-1111-4111-8111-111111111111',
+        imageModel: 'gpt-image-2', baseRefId: 'base-ref',
+        createdAt: '2026-10-01T00:00:00.000Z', inputFingerprint: 'fingerprint',
+      },
+      referenceReady: true,
+    }];
+    const pageRepository = new FakePageRepository();
+    pageRepository.episodePlanningContext = context;
+    const transactionAssignments = new FakePanelEntityAssignmentService();
+    let atomicCompleted = 0;
+    const persistence = new FakeEpisodePlanPersistence(context, {
+      pageRepository: new FakePageRepository(),
+      panelRepository: new FakePanelRepository(),
+      panelEntityAssignmentService: transactionAssignments,
+      completeStoryAutofillJob: async () => { atomicCompleted += 1; return true; },
+    });
+    let proposedStateTransitions = [{
+      entityId: '11111111-1111-4111-8111-111111111111',
+      stateId,
+      startsAtPanelId: 'panel-1',
+      sourceSceneId: null,
+      sourceField: 'middle' as const,
+      sourceQuote: 'Tension rises',
+    }];
+    let retryCheckpointCount = 0;
+    const stateCompiler = {
+      compileStateTransitions: async (input: CompileEpisodeStateTransitionInput) => {
+        expect(input.beforeRetry).toBeDefined();
+        await input.beforeRetry?.();
+        retryCheckpointCount += 1;
+        return {
+          plan: { transitions: proposedStateTransitions, unresolved: [] },
+          compilerProvider: 'openai' as const,
+          compilerModel: 'test',
+          compilerPromptVersion: 'episode_state_plan_v1',
+        };
+      },
+    };
+    const pageCompiler = new FakeEpisodePagePlanCompiler();
+    const auditCompiler = new FakeEpisodePlanAuditCompiler();
+    const service = new PageService(
+      pageRepository, new FakePanelRepository(), new FakePanelEntityAssignmentService(),
+      new FakePageAutofillCompiler(), pageCompiler, undefined,
+      new FakeEpisodeBeatPlanCompiler(), auditCompiler, true,
+      { inlineRepairEnabled: true }, persistence, stateCompiler,
+    );
+    let beginCommitCount = 0;
+    const result = await service.autofillEpisodeFromStory(
+      'user-1', 'episode-1', 'ja', undefined, null,
+      { jobId: 'job-1', checkpoint: async () => undefined, beginCommit: async () => { beginCommitCount += 1; } },
+      { statePlanVersion: 'episode_state_plan_v1', stateAssignmentPolicy: 'overwrite_existing' },
+    );
+    expect(beginCommitCount).toBe(1);
+    expect(transactionAssignments.updates).toHaveLength(1);
+    expect(transactionAssignments.updates[0]?.assignments[0]?.stateId).toBe(stateId);
+    expect(result.stateTransitions).toHaveLength(1);
+    expect(atomicCompleted).toBe(1);
+    expect(retryCheckpointCount).toBe(1);
+    expect(pageCompiler.inputs[0]?.compilerBrief).toContain(stateId);
+    expect(auditCompiler.inputs[0]?.compilerBrief).toContain(stateId);
+    expect(auditCompiler.inputs).toHaveLength(2);
+    context.pages[0]!.panels[0]!.entities = [{
+      ...transactionAssignments.updates[0]!.assignments[0]!, stateId: null,
+    }];
+    await expect(service.autofillEpisodeFromStory(
+      'user-1', 'episode-1', 'ja', undefined, null,
+      { jobId: 'job-1', checkpoint: async () => undefined, beginCommit: async () => { beginCommitCount += 1; } },
+      { statePlanVersion: 'episode_state_plan_v1', stateAssignmentPolicy: 'preserve_existing' },
+    )).rejects.toMatchObject({ code: 'STATE_ASSIGNMENT_CONFLICT' });
+    expect(beginCommitCount).toBe(1);
+    expect(transactionAssignments.updates).toHaveLength(1);
+    expect(atomicCompleted).toBe(1);
+    proposedStateTransitions = [];
+    auditCompiler.audits = [
+      { accepted: true, issues: [] },
+      { accepted: false, issues: [{
+        code: 'timeline_discontinuity', severity: 'error', pageIds: ['page-1'],
+        message: 'A stated injury has no state boundary', repairInstruction: 'Confirm the state boundary',
+      }] },
+    ];
+    await expect(service.autofillEpisodeFromStory(
+      'user-1', 'episode-1', 'ja', undefined, null,
+      { jobId: 'job-1', checkpoint: async () => undefined, beginCommit: async () => { beginCommitCount += 1; } },
+      { statePlanVersion: 'episode_state_plan_v1', stateAssignmentPolicy: 'overwrite_existing' },
+    )).rejects.toMatchObject({ code: 'STATE_MAPPING_AMBIGUOUS' });
+    expect(beginCommitCount).toBe(1);
+    expect(transactionAssignments.updates).toHaveLength(1);
+    auditCompiler.audits = [{ accepted: false, issues: [{
+      code: 'timeline_discontinuity', severity: 'error', pageIds: ['page-1'],
+      message: 'A stated injury has no state boundary', repairInstruction: 'Confirm the state boundary',
+    }] }];
+    await expect(service.autofillEpisodeFromStory(
+      'user-1', 'episode-1', 'ja', undefined, null,
+      { jobId: 'job-1', checkpoint: async () => undefined, beginCommit: async () => { beginCommitCount += 1; } },
+      { statePlanVersion: 'episode_state_plan_v1', stateAssignmentPolicy: 'overwrite_existing' },
+    )).rejects.toMatchObject({ code: 'STATE_MAPPING_AMBIGUOUS' });
+    expect(beginCommitCount).toBe(1);
+    expect(transactionAssignments.updates).toHaveLength(1);
   });
 
   it('キャンセル制御付きの処理は機能フラグが無効でも原子的保存へ委譲する', async () => {

@@ -59,6 +59,7 @@ import { OpenAIPageImageRenderer } from '../src/infrastructure/openai/OpenAIPage
 import { OpenAIPagePromptCompiler } from '../src/infrastructure/openai/OpenAIPagePromptCompiler.js';
 import { OpenAIEpisodeBeatPlanCompiler } from '../src/infrastructure/openai/OpenAIEpisodeBeatPlanCompiler.js';
 import { OpenAIEpisodePlanAuditCompiler } from '../src/infrastructure/openai/OpenAIEpisodePlanAuditCompiler.js';
+import { OpenAIEpisodeStateTransitionCompiler } from '../src/infrastructure/openai/OpenAIEpisodeStateTransitionCompiler.js';
 import { OpenAIPageEpisodePlanCompiler } from '../src/infrastructure/openai/OpenAIPageEpisodePlanCompiler.js';
 import { OpenAIStoryAiClient } from '../src/infrastructure/openai/OpenAIStoryAiClient.js';
 import { OpenAIEntityReferencePromptCompiler } from '../src/infrastructure/openai/OpenAIEntityReferencePromptCompiler.js';
@@ -86,6 +87,7 @@ import { PanelEntityAssignmentService } from '../src/services/page/PanelEntityAs
 import type { EpisodePagePlanCompilerPort } from '../src/services/page/EpisodePagePlanCompiler.js';
 import type { EpisodeBeatPlanCompilerPort } from '../src/services/page/EpisodeBeatPlanCompiler.js';
 import type { EpisodePlanAuditCompilerPort } from '../src/services/page/EpisodePlanAuditCompiler.js';
+import type { EpisodeStateTransitionCompilerPort } from '../src/services/page/EpisodeStateTransitionCompiler.js';
 import {
   EpisodeStoryAutofillWorkerService,
   type EpisodeStoryAutofillWorkerPort,
@@ -147,6 +149,7 @@ export interface WorkerDependencyOverrides {
   episodePagePlanCompiler?: EpisodePagePlanCompilerPort;
   episodeBeatPlanCompiler?: EpisodeBeatPlanCompilerPort;
   episodePlanAuditCompiler?: EpisodePlanAuditCompilerPort;
+  episodeStateTransitionCompiler?: EpisodeStateTransitionCompilerPort;
   organizationService?: OrganizationServicePort;
   pageGenerationWorkerService?: PageGenerationWorkerPort;
   entityGenerationWorkerService?: EntityGenerationWorkerPort;
@@ -263,6 +266,7 @@ export function resolveWorkerDependencies(
         inlineRepairEnabled: env.EPISODE_PLAN_INLINE_REPAIR_ENABLED,
       },
       new PostgresEpisodePlanPersistenceRepository(db),
+      overrides.episodeStateTransitionCompiler ?? resolveEpisodeStateTransitionCompiler(),
     );
   const pageSkeletonService =
     overrides.pageSkeletonService ??
@@ -489,6 +493,18 @@ function resolveEpisodePlanAuditCompiler(): EpisodePlanAuditCompilerPort {
   }
 
   return new OpenAIEpisodePlanAuditCompiler(client);
+}
+
+function resolveEpisodeStateTransitionCompiler(): EpisodeStateTransitionCompilerPort {
+  const client = buildOpenAIClient();
+  if (client === null) {
+    return {
+      async compileStateTransitions(): Promise<never> {
+        throw new ConfigurationError('OpenAI episode state transition compiler is not configured');
+      },
+    };
+  }
+  return new OpenAIEpisodeStateTransitionCompiler(client);
 }
 
 function resolveStoryAiClient(): StoryAiClientPort {

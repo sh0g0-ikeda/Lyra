@@ -900,6 +900,9 @@ function resolveDependencies(
         global: env.EPISODE_LONG_JOB_GLOBAL_ACTIVE_JOB_LIMIT,
         jobTypes: EPISODE_LONG_JOB_ACTIVE_JOB_TYPES,
       },
+      env.EPISODE_STATE_AUTOFILL_V1_ENABLED
+        && env.EPISODE_PAGE_PLAN_CONTINUITY_V3_ENABLED
+        && env.EPISODE_PLAN_INLINE_REPAIR_ENABLED,
     );
   const episodePageSkeletonQueue =
     dependencies.episodePageSkeletonQueue === null

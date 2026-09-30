@@ -32,12 +32,18 @@ export interface EnqueueEpisodeStoryAutofillResult {
   jobId: string;
 }
 
+export interface EpisodeStoryAutofillOptions {
+  stateAutofillVersion?: 'v1';
+  stateAssignmentPolicy?: 'preserve_existing' | 'overwrite_existing';
+}
+
 export interface EpisodeStoryAutofillServicePort {
   enqueueEpisodeStoryAutofill(
     userId: string,
     episodeId: string,
     language: AppLanguage,
     organizationId?: string | null,
+    options?: EpisodeStoryAutofillOptions,
   ): Promise<EnqueueEpisodeStoryAutofillResult>;
 }
 
@@ -56,6 +62,7 @@ export class EpisodeStoryAutofillService implements EpisodeStoryAutofillServiceP
       global: DEFAULT_EPISODE_LONG_JOB_ACTIVE_JOB_LIMITS.GLOBAL,
       jobTypes: EPISODE_LONG_JOB_ACTIVE_JOB_TYPES,
     },
+    private readonly stateAutofillV1Enabled = false,
   ) {}
 
   public async enqueueEpisodeStoryAutofill(
@@ -63,7 +70,12 @@ export class EpisodeStoryAutofillService implements EpisodeStoryAutofillServiceP
     episodeId: string,
     language: AppLanguage,
     organizationId: string | null = null,
+    options: EpisodeStoryAutofillOptions = {},
   ): Promise<EnqueueEpisodeStoryAutofillResult> {
+    const stateAutofill = normalizeStateAutofillOptions(options);
+    if (stateAutofill !== null && !this.stateAutofillV1Enabled) {
+      throw new ConflictError('Episode state autofill v1 is not enabled');
+    }
     await this.ensureNoActiveJob(userId, episodeId, organizationId);
 
     const reservedJobId = randomUUID();
@@ -81,6 +93,10 @@ export class EpisodeStoryAutofillService implements EpisodeStoryAutofillServiceP
           episode_id: episodeId,
           language,
           organization_id: organizationId,
+          ...(stateAutofill === null ? {} : {
+            state_autofill_version: 'v1',
+            state_assignment_policy: stateAutofill.stateAssignmentPolicy,
+          }),
         },
         capacityLimits: this.capacityLimits,
       });
@@ -155,4 +171,15 @@ export class EpisodeStoryAutofillService implements EpisodeStoryAutofillServiceP
       // accepted background task into a user-visible enqueue failure.
     }
   }
+}
+
+function normalizeStateAutofillOptions(
+  options: EpisodeStoryAutofillOptions,
+): { stateAssignmentPolicy: 'preserve_existing' | 'overwrite_existing' } | null {
+  if (options.stateAutofillVersion !== 'v1') {
+    return null;
+  }
+  return {
+    stateAssignmentPolicy: options.stateAssignmentPolicy ?? 'preserve_existing',
+  };
 }

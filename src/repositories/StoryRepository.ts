@@ -6,6 +6,7 @@ import type {
   CreateEpisodeInput,
   CreateWorkInput,
   Episode,
+  EpisodeStartingEntityState,
   StoryItemMoveDirection,
   StoryStatus,
   UpdateChapterInput,
@@ -29,6 +30,7 @@ import {
 } from '../domain/errors/index.js';
 import type { WorkListCursor } from '../domain/pagination.js';
 import { normalizeEpisodeStoryInput } from '../domain/episodeStoryInput.js';
+import { computeStateReferenceFingerprint } from '../domain/state/StateReferenceFingerprint.js';
 import type { DatabaseClient, TransactionRunner } from '../lib/db.js';
 import { isUniqueViolation } from '../lib/dbErrors.js';
 import { normalizeNullableText, normalizePossiblyMojibake } from '../lib/textEncoding.js';
@@ -65,6 +67,12 @@ export interface StoryRepository {
   createEpisode(chapterId: string, input: CreateEpisodeInput): Promise<Episode>;
   findEpisodesByChapterIdAndUserId(chapterId: string, userId: string, organizationId?: string | null): Promise<Episode[]>;
   findEpisodeByIdAndUserId(id: string, userId: string, organizationId?: string | null): Promise<Episode | null>;
+  validateEpisodeStartingEntityStates?(
+    episodeId: string,
+    userId: string,
+    startingEntityStates: EpisodeStartingEntityState[],
+    organizationId?: string | null,
+  ): Promise<boolean>;
   updateEpisode(id: string, userId: string, input: UpdateEpisodeInput, organizationId?: string | null): Promise<Episode | null>;
   deleteEpisode(id: string, userId: string, organizationId?: string | null): Promise<boolean>;
   moveEpisode(
@@ -174,6 +182,7 @@ interface EpisodeRow extends QueryResultRow {
   ending_hook: string | null;
   estimated_pages: number;
   entities_involved: string[];
+  starting_entity_states: unknown;
   page_skeleton_generated: boolean;
   version: number;
   edit_history: unknown;
@@ -185,6 +194,24 @@ interface EpisodeRow extends QueryResultRow {
 interface EpisodeMoveRow extends EpisodeRow {
   work_id: string;
   chapter_order: number;
+}
+
+interface LockedEpisodeStartingStateRow extends EpisodeRow {
+  work_id: string;
+}
+
+interface LockedStartingStateReferenceSetRow extends QueryResultRow {
+  entity_id: string;
+  primary_ref_id: string | null;
+  reference_images: unknown;
+}
+
+interface LockedStartingEntityStateRow extends QueryResultRow {
+  id: string;
+  entity_id: string;
+  name: string | null;
+  description: string | null;
+  reference_image: unknown;
 }
 
 interface EpisodeOrderRow extends QueryResultRow {
@@ -1009,17 +1036,117 @@ export class PostgresStoryRepository
     return result.rows[0] === undefined ? null : mapEpisodeRow(result.rows[0]);
   }
 
+  public async validateEpisodeStartingEntityStates(
+    episodeId: string,
+    userId: string,
+    startingEntityStates: EpisodeStartingEntityState[],
+    organizationId: string | null = null,
+  ): Promise<boolean> {
+    const result = await this.client.query<{ valid: boolean }>(
+      `
+      WITH authorized_episode AS (
+        SELECT chapters.work_id
+        FROM episodes
+        INNER JOIN chapters ON chapters.id = episodes.chapter_id
+        INNER JOIN works ON works.id = chapters.work_id
+        WHERE episodes.id = $1::uuid
+          AND (
+            ($3::uuid IS NULL AND works.user_id = $2::uuid AND works.organization_id IS NULL)
+            OR (
+              $3::uuid IS NOT NULL
+              AND works.organization_id = $3::uuid
+              AND EXISTS (
+                SELECT 1
+                FROM organization_members
+                WHERE organization_members.organization_id = works.organization_id
+                  AND organization_members.user_id = $2::uuid
+                  AND organization_members.status = 'active'
+              )
+            )
+          )
+      )
+      SELECT EXISTS (SELECT 1 FROM authorized_episode)
+        AND NOT EXISTS (
+        SELECT 1
+        FROM jsonb_array_elements($4::jsonb) AS requested(value)
+        LEFT JOIN entities
+          ON entities.id::text = requested.value->>'entity_id'
+        LEFT JOIN entity_states
+          ON entity_states.id::text = requested.value->>'state_id'
+          AND entity_states.entity_id = entities.id
+        LEFT JOIN reference_sets ON reference_sets.entity_id = entities.id
+        WHERE entities.id IS NULL
+          OR entities.work_id <> (SELECT work_id FROM authorized_episode)
+          OR NOT (${currentPrimaryReferencePredicate})
+        OR (
+          (requested.value->>'state_id') IS NOT NULL
+          AND NOT (${confirmedStateReferencePredicate})
+        )
+      ) AS valid
+      `,
+      [episodeId, userId, organizationId, serializeEpisodeStartingEntityStates(startingEntityStates)],
+    );
+    return result.rows[0]?.valid === true;
+  }
+
   public async updateEpisode(
     id: string,
     userId: string,
     input: UpdateEpisodeInput,
     organizationId: string | null = null,
   ): Promise<Episode | null> {
+    const startingEntityStates = input.startingEntityStates;
+    if (startingEntityStates !== undefined) {
+      const transactionRunner = this.requireTransactionRunnerForEpisodeStartingStates();
+      return transactionRunner.transaction(async (transactionClient) => {
+        const currentEpisode = await this.lockEpisodeForStartingStateUpdate(
+          transactionClient,
+          id,
+          userId,
+          organizationId,
+        );
+        if (currentEpisode === null) {
+          return null;
+        }
+        await this.lockAndValidateEpisodeStartingStates(
+          transactionClient,
+          currentEpisode.workId,
+          startingEntityStates,
+        );
+        return this.updateEpisodeWithClient(
+          transactionClient,
+          currentEpisode.episode,
+          id,
+          userId,
+          input,
+          organizationId,
+        );
+      });
+    }
+
     const currentEpisode = await this.findEpisodeByIdAndUserId(id, userId, organizationId);
     if (currentEpisode === null) {
       return null;
     }
 
+    return this.updateEpisodeWithClient(
+      this.client,
+      currentEpisode,
+      id,
+      userId,
+      input,
+      organizationId,
+    );
+  }
+
+  private async updateEpisodeWithClient(
+    client: DatabaseClient,
+    currentEpisode: Episode,
+    id: string,
+    userId: string,
+    input: UpdateEpisodeInput,
+    organizationId: string | null,
+  ): Promise<Episode | null> {
     // Partial updates use undefined as "leave unchanged"; null is an explicit editor clear.
     const normalizedStoryInput = normalizeEpisodeStoryInput({
       storyInputMode: input.storyInputMode ?? currentEpisode.storyInputMode,
@@ -1032,7 +1159,7 @@ export class PostgresStoryRepository
     });
 
     try {
-      const result = await this.client.query<EpisodeRow>(
+      const result = await client.query<EpisodeRow>(
         `
         UPDATE episodes
         SET "order" = COALESCE($3, episodes."order"),
@@ -1047,6 +1174,10 @@ export class PostgresStoryRepository
             estimated_pages = COALESCE($20, episodes.estimated_pages),
             entities_involved = CASE WHEN $21::boolean THEN $22 ELSE episodes.entities_involved END,
             status = COALESCE($23, episodes.status),
+            starting_entity_states = CASE
+              WHEN $24::boolean THEN $25::jsonb
+              ELSE episodes.starting_entity_states
+            END,
             edit_history = (
               SELECT COALESCE(jsonb_agg(history_entry.value ORDER BY history_entry.ordinality), '[]'::jsonb)
               FROM (
@@ -1066,6 +1197,7 @@ export class PostgresStoryRepository
                       'ending_hook', episodes.ending_hook,
                       'estimated_pages', episodes.estimated_pages,
                       'entities_involved', episodes.entities_involved,
+                      'starting_entity_states', episodes.starting_entity_states,
                       'status', episodes.status,
                       'updated_at', episodes.updated_at
                     )
@@ -1082,10 +1214,10 @@ export class PostgresStoryRepository
         WHERE episodes.id = $1
           AND episodes.chapter_id = chapters.id
           AND (
-            ($24::uuid IS NULL AND works.user_id = $2 AND works.organization_id IS NULL)
+            ($26::uuid IS NULL AND works.user_id = $2 AND works.organization_id IS NULL)
             OR (
-            $24::uuid IS NOT NULL
-            AND works.organization_id = $24::uuid
+            $26::uuid IS NOT NULL
+            AND works.organization_id = $26::uuid
             AND EXISTS (
               SELECT 1
               FROM organization_members
@@ -1095,6 +1227,9 @@ export class PostgresStoryRepository
             )
           )
           )
+          -- Freshness is checked under row locks before this UPDATE. Keep the
+          -- parameters typed here without duplicating the JS fingerprint in SQL.
+          AND (NOT $24::boolean OR $25::jsonb IS NOT NULL)
         RETURNING episodes.*
         `,
         [
@@ -1121,11 +1256,19 @@ export class PostgresStoryRepository
           input.entitiesInvolved !== undefined,
           input.entitiesInvolved ?? [],
           input.status ?? null,
+          input.startingEntityStates !== undefined,
+          serializeEpisodeStartingEntityStates(input.startingEntityStates ?? []),
           organizationId,
         ],
       );
 
-      return result.rows[0] === undefined ? null : mapEpisodeRow(result.rows[0]);
+      if (result.rows[0] === undefined) {
+        if (input.startingEntityStates !== undefined) {
+          throw new ConflictError('Episode starting state references changed while the episode was being updated');
+        }
+        return null;
+      }
+      return mapEpisodeRow(result.rows[0]);
     } catch (error) {
       throw mapOrderConflict(error, 'Episode order must be unique within the chapter');
     }
@@ -1202,6 +1345,122 @@ export class PostgresStoryRepository
       throw new ConfigurationError('Story deletion requires transaction support');
     }
     return this.transactionRunner;
+  }
+
+  private requireTransactionRunnerForEpisodeStartingStates(): TransactionRunner {
+    if (this.transactionRunner === undefined) {
+      throw new ConfigurationError('Episode starting state updates require transaction support');
+    }
+    return this.transactionRunner;
+  }
+
+  private async lockEpisodeForStartingStateUpdate(
+    client: DatabaseClient,
+    episodeId: string,
+    userId: string,
+    organizationId: string | null,
+  ): Promise<{ episode: Episode; workId: string } | null> {
+    const result = await client.query<LockedEpisodeStartingStateRow>(
+      `
+      SELECT episodes.*, chapters.work_id
+      FROM episodes
+      INNER JOIN chapters ON chapters.id = episodes.chapter_id
+      INNER JOIN works ON works.id = chapters.work_id
+      WHERE episodes.id = $1::uuid
+        AND (
+          ($3::uuid IS NULL AND works.user_id = $2::uuid AND works.organization_id IS NULL)
+          OR (
+            $3::uuid IS NOT NULL
+            AND works.organization_id = $3::uuid
+            AND EXISTS (
+              SELECT 1
+              FROM organization_members
+              WHERE organization_members.organization_id = works.organization_id
+                AND organization_members.user_id = $2::uuid
+                AND organization_members.status = 'active'
+            )
+          )
+        )
+      FOR UPDATE OF episodes
+      `,
+      [episodeId, userId, organizationId],
+    );
+    const row = result.rows[0];
+    return row === undefined ? null : { episode: mapEpisodeRow(row), workId: row.work_id };
+  }
+
+  private async lockAndValidateEpisodeStartingStates(
+    client: DatabaseClient,
+    workId: string,
+    states: EpisodeStartingEntityState[],
+  ): Promise<void> {
+    const entityIds = states.map((state) => state.entityId);
+    const stateIds = states.flatMap((state) => state.stateId === null ? [] : [state.stateId]);
+    // Lock order is intentional: reference_sets before entity_states, matching state confirmation.
+    const referenceSets = await client.query<LockedStartingStateReferenceSetRow>(
+      `
+      SELECT reference_sets.entity_id, reference_sets.primary_ref_id, reference_sets.reference_images
+      FROM reference_sets
+      INNER JOIN entities ON entities.id = reference_sets.entity_id
+      WHERE entities.work_id = $1::uuid
+        AND entities.id::text = ANY($2::text[])
+      ORDER BY reference_sets.entity_id ASC
+      FOR UPDATE OF reference_sets
+      `,
+      [workId, entityIds],
+    );
+    const entityStates = await client.query<LockedStartingEntityStateRow>(
+      `
+      SELECT entity_states.id, entity_states.entity_id, entity_states.name,
+             entity_states.description, entity_states.reference_image
+      FROM entity_states
+      INNER JOIN entities ON entities.id = entity_states.entity_id
+      WHERE entities.work_id = $1::uuid
+        AND entity_states.id::text = ANY($2::text[])
+      ORDER BY entity_states.id ASC
+      FOR UPDATE OF entity_states
+      `,
+      [workId, stateIds],
+    );
+
+    const referenceSetsByEntityId = new Map(
+      referenceSets.rows.map((row) => [row.entity_id, row] as const),
+    );
+    const statesById = new Map(entityStates.rows.map((row) => [row.id, row] as const));
+    for (const state of states) {
+      const referenceSet = referenceSetsByEntityId.get(state.entityId);
+      const primaryReference = referenceSet === undefined
+        ? null
+        : findCurrentPrimaryReference(referenceSet.reference_images, referenceSet.primary_ref_id);
+      if (primaryReference === null) {
+        throw new ConflictError('Episode starting state references changed while the episode was being updated');
+      }
+      if (state.stateId === null) {
+        continue;
+      }
+      const entityState = statesById.get(state.stateId);
+      if (entityState === undefined || entityState.entity_id !== state.entityId) {
+        throw new ConflictError('Episode starting state references changed while the episode was being updated');
+      }
+      const descriptor = parseConfirmedStateReferenceDescriptor(entityState.reference_image);
+      if (
+        descriptor === null
+        || entityState.name === null
+        || entityState.name.trim().length === 0
+        || entityState.description === null
+        || entityState.description.trim().length === 0
+        || descriptor.baseRefId !== referenceSet?.primary_ref_id
+        || descriptor.inputFingerprint !== computeStateReferenceFingerprint({
+          entityId: state.entityId,
+          stateId: state.stateId,
+          name: entityState.name,
+          description: entityState.description,
+          baseRefId: primaryReference.refId,
+        })
+      ) {
+        throw new ConflictError('Episode starting state references changed while the episode was being updated');
+      }
+    }
   }
 
   private async findAuthorizedEpisodeForDeletion(
@@ -2650,6 +2909,7 @@ function mapEpisodeRow(row: EpisodeRow): Episode {
     endingHook: normalizeNullableText(row.ending_hook),
     estimatedPages: row.estimated_pages,
     entitiesInvolved: row.entities_involved,
+    startingEntityStates: parseEpisodeStartingEntityStates(row.starting_entity_states),
     pageSkeletonGenerated: row.page_skeleton_generated,
     version: row.version,
     editHistory: toObjectArray(row.edit_history),
@@ -2657,6 +2917,142 @@ function mapEpisodeRow(row: EpisodeRow): Episode {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+}
+
+function serializeEpisodeStartingEntityStates(
+  states: EpisodeStartingEntityState[],
+): string {
+  return JSON.stringify(states.map((state) => ({
+    entity_id: state.entityId,
+    state_id: state.stateId,
+  })));
+}
+
+function findCurrentPrimaryReference(
+  value: unknown,
+  primaryRefId: string | null,
+): { refId: string; s3Key: string; cdnUrl: string } | null {
+  if (primaryRefId === null || !Array.isArray(value)) {
+    return null;
+  }
+  for (const entry of value) {
+    if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) {
+      continue;
+    }
+    const reference = entry as Record<string, unknown>;
+    if (
+      reference.ref_id === primaryRefId
+      && typeof reference.ref_id === 'string' && reference.ref_id.trim().length > 0
+      && typeof reference.s3_key === 'string' && reference.s3_key.trim().length > 0
+      && typeof reference.cdn_url === 'string' && reference.cdn_url.trim().length > 0
+    ) {
+      return { refId: reference.ref_id, s3Key: reference.s3_key, cdnUrl: reference.cdn_url };
+    }
+  }
+  return null;
+}
+
+function parseConfirmedStateReferenceDescriptor(value: unknown): {
+  refId: string;
+  s3Key: string;
+  storageOwnerUserId: string;
+  imageModel: string;
+  baseRefId: string;
+  createdAt: string;
+  inputFingerprint: string;
+} | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return null;
+  }
+  const descriptor = value as Record<string, unknown>;
+  const required = [
+    descriptor.ref_id,
+    descriptor.s3_key,
+    descriptor.storage_owner_user_id,
+    descriptor.image_model,
+    descriptor.base_ref_id,
+    descriptor.created_at,
+    descriptor.input_fingerprint,
+  ];
+  if (!required.every((entry) => typeof entry === 'string' && entry.trim().length > 0)) {
+    return null;
+  }
+  return {
+    refId: descriptor.ref_id as string,
+    s3Key: descriptor.s3_key as string,
+    storageOwnerUserId: descriptor.storage_owner_user_id as string,
+    imageModel: descriptor.image_model as string,
+    baseRefId: descriptor.base_ref_id as string,
+    createdAt: descriptor.created_at as string,
+    inputFingerprint: descriptor.input_fingerprint as string,
+  };
+}
+
+const currentPrimaryReferencePredicate = `
+  reference_sets.primary_ref_id IS NOT NULL
+  AND EXISTS (
+    SELECT 1
+    FROM jsonb_array_elements(
+      CASE
+        WHEN jsonb_typeof(reference_sets.reference_images) = 'array'
+          THEN reference_sets.reference_images
+        ELSE '[]'::jsonb
+      END
+    ) AS primary_image(value)
+    WHERE primary_image.value->>'ref_id' = reference_sets.primary_ref_id
+      AND jsonb_typeof(primary_image.value->'ref_id') = 'string'
+      AND NULLIF(BTRIM(primary_image.value->>'ref_id'), '') IS NOT NULL
+      AND jsonb_typeof(primary_image.value->'s3_key') = 'string'
+      AND NULLIF(BTRIM(primary_image.value->>'s3_key'), '') IS NOT NULL
+      AND jsonb_typeof(primary_image.value->'cdn_url') = 'string'
+      AND NULLIF(BTRIM(primary_image.value->>'cdn_url'), '') IS NOT NULL
+  )
+`;
+
+const confirmedStateReferencePredicate = `
+  entity_states.id IS NOT NULL
+  AND NULLIF(BTRIM(entity_states.name), '') IS NOT NULL
+  AND NULLIF(BTRIM(entity_states.description), '') IS NOT NULL
+  AND jsonb_typeof(entity_states.reference_image) = 'object'
+  AND (
+    SELECT bool_and(
+      jsonb_typeof(entity_states.reference_image -> required_key) = 'string'
+      AND NULLIF(BTRIM(entity_states.reference_image ->> required_key), '') IS NOT NULL
+    )
+    FROM unnest(ARRAY[
+      'ref_id',
+      's3_key',
+      'storage_owner_user_id',
+      'image_model',
+      'base_ref_id',
+      'created_at',
+      'input_fingerprint'
+    ]) AS required_key
+  )
+  AND entity_states.reference_image->>'base_ref_id' = reference_sets.primary_ref_id
+`;
+
+function parseEpisodeStartingEntityStates(value: unknown): EpisodeStartingEntityState[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.flatMap((entry) => {
+    if (
+      typeof entry !== 'object'
+      || entry === null
+      || Array.isArray(entry)
+    ) {
+      return [];
+    }
+    const record = entry as Record<string, unknown>;
+    if (
+      typeof record.entity_id !== 'string'
+      || !(typeof record.state_id === 'string' || record.state_id === null)
+    ) {
+      return [];
+    }
+    return [{ entityId: record.entity_id, stateId: record.state_id }];
+  });
 }
 
 function pickEpisodeUpdateValue<T>(nextValue: T | undefined, currentValue: T): T {

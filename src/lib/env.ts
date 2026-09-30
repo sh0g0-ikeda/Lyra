@@ -83,6 +83,10 @@ const envSchema = z.object({
     .string()
     .optional()
     .transform((value) => value === 'true'),
+  EPISODE_STATE_AUTOFILL_V1_ENABLED: z
+    .string()
+    .optional()
+    .transform((value) => value === 'true'),
   GENERATION_JOB_CANCELLATION_ENABLED: z
     .string()
     .optional()
