@@ -37,7 +37,16 @@ interface NavigatorProps {
   };
 }
 
+interface TabScreenProps {
+  name?: string;
+  options?: {
+    title?: string;
+    tabBarButton?: unknown;
+  };
+}
+
 let navigatorProps: NavigatorProps | null = null;
+let tabScreenProps: TabScreenProps[] = [];
 let hasDirtyEditors = true;
 const resolveDirtyEditors = vi.fn<() => Promise<boolean>>();
 const { safeAreaInsetsMock } = vi.hoisted(() => ({
@@ -50,7 +59,10 @@ vi.mock('@react-navigation/bottom-tabs', () => ({
       navigatorProps = props;
       return React.createElement('navigator', null, props.children);
     },
-    Screen: (): React.JSX.Element => React.createElement('screen')
+    Screen: (props: TabScreenProps): React.JSX.Element => {
+      tabScreenProps.push(props);
+      return React.createElement('screen');
+    }
   })
 }));
 
@@ -87,6 +99,7 @@ vi.mock('@/state/dirtyState', () => ({
 describe('MainTabs dirty-state guard', () => {
   beforeEach(() => {
     navigatorProps = null;
+    tabScreenProps = [];
     hasDirtyEditors = true;
     safeAreaInsetsMock.bottom = 0;
     resolveDirtyEditors.mockReset();
@@ -168,6 +181,28 @@ describe('MainTabs dirty-state guard', () => {
       maxWidth: mobileContentMaxWidth,
       width: '100%'
     });
+  });
+
+  it('漫画・アセット・マイページ・ガイドだけを下部タブとして表示し、Pages routeは内部遷移用に残す', async () => {
+    await act(async () => {
+      create(<MainTabs />);
+    });
+
+    expect(tabScreenProps.map((screen) => screen.options?.title)).toEqual([
+      '漫画',
+      'アセット',
+      'マイページ',
+      'ガイド',
+      'Pages'
+    ]);
+    expect(tabScreenProps.map((screen) => screen.name)).toEqual([
+      'Story',
+      'Characters',
+      'Account',
+      'Guide',
+      'Pages'
+    ]);
+    expect(tabScreenProps.find((screen) => screen.name === 'Pages')?.options?.tabBarButton).toBeTypeOf('function');
   });
 
   it.each([

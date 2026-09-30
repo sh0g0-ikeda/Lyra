@@ -382,6 +382,7 @@ export function AccountScreen(): React.JSX.Element {
     <Screen
       onRefresh={() => void refresh()}
       refreshing={balanceQuery.isFetching || deletionPreviewQuery.isFetching || jobsQuery.isFetching}
+      showCreditBalance
       subtitle={t(language, "generated.screens.AccountScreen.review.login.credits.and.language.994784d4")}
       title={t(language, 'account')}
     >

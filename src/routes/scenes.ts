@@ -135,6 +135,8 @@ export function createSceneRoutes(dependencies: SceneRouteDependencies): Hono<Ap
     }
 
     const entityState = await dependencies.sceneService.createEntityState(user.id, entityId, {
+      name: body.data.name,
+      description: body.data.description,
       sceneId: body.data.scene_id ?? null,
       costumeNote: body.data.costume_note ?? null,
       costumeRefId: body.data.costume_ref_id ?? null,
@@ -167,6 +169,8 @@ export function createSceneRoutes(dependencies: SceneRouteDependencies): Hono<Ap
     }
 
     const entityState = await dependencies.sceneService.updateEntityState(user.id, entityId, stateId, {
+      name: body.data.name,
+      description: body.data.description,
       sceneId: body.data.scene_id,
       costumeNote: body.data.costume_note,
       costumeRefId: body.data.costume_ref_id,
@@ -219,6 +223,8 @@ function toEntityStateResponse(entityState: EntityState): Record<string, unknown
     id: entityState.id,
     entity_id: entityState.entityId,
     scene_id: entityState.sceneId,
+    name: entityState.name,
+    description: entityState.description,
     costume_note: entityState.costumeNote,
     costume_ref_id: entityState.costumeRefId,
     condition_note: entityState.conditionNote,
@@ -226,5 +232,6 @@ function toEntityStateResponse(entityState: EntityState): Record<string, unknown
     expression_default: entityState.expressionDefault,
     extra_note: entityState.extraNote,
     created_at: entityState.createdAt.toISOString(),
+    updated_at: entityState.updatedAt.toISOString(),
   };
 }

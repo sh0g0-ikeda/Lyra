@@ -69,6 +69,22 @@ class FakeStoredImageLoader implements StoredImageLoaderPort {
 }
 
 describe('PageExportService', () => {
+  it('Hy4画像の場合に旧アプリの共通export経路から配信しない', async () => {
+    const repository = new FakePageRepository();
+    const page = buildPageSummary();
+    repository.page = {
+      ...page,
+      generatedImage: { ...page.generatedImage!, imageModel: 'hy4-preview' },
+    };
+    const loader = new FakeStoredImageLoader();
+    const service = new PageExportService(repository, loader);
+
+    await expect(service.exportGeneratedImage('user-1', 'page-1')).rejects.toMatchObject({
+      code: 'CONFLICT',
+    });
+    expect(loader.loadedKey).toBeNull();
+  });
+
   it('loads an owned generated page image by s3_key', async () => {
     const repository = new FakePageRepository();
     const loader = new FakeStoredImageLoader();

@@ -135,6 +135,7 @@ export function StoryScreen(): React.JSX.Element {
     () => flattenUniqueRecords(worksQuery.data?.pages.map((page) => page.works) ?? []),
     [worksQuery.data?.pages],
   );
+  const hasWorks = works.length > 0;
 
   const selectedWorkFromList = useMemo(
     () => works.find((work) => work.id === selection.workId) ?? null,
@@ -782,6 +783,7 @@ export function StoryScreen(): React.JSX.Element {
     <Screen
       onRefresh={refreshStory}
       refreshing={refreshing}
+      showCreditBalance
       title={t(language, 'screen.story.title')}
     >
       {!canEdit ? (
@@ -836,10 +838,13 @@ export function StoryScreen(): React.JSX.Element {
         </View>
       )}
       <WorkspaceHierarchyNavigator context={workspaceContext} />
+      {worksQuery.isSuccess && !hasWorks ? (
+        <Notice message={t(language, 'emptyWorks')} tone="info" />
+      ) : null}
 
       <Section collapsible headingColor="primary" persistKey="story:episode" title={t(language, 'screen.story.entry.title')}>
         {selectedEpisode === null ? (
-          <Notice message={t(language, "generated.screens.StoryScreen.select.an.episode.from.the.hierarchy.874ba80d")} tone="info" />
+          <Notice message={t(language, 'selectEpisodeFirst')} tone="info" />
         ) : (
           <>
             <FormField editable={canEdit} label={t(language, 'title')} maxLength={200} onChangeText={setEpisodeTitle} value={episodeTitle} />

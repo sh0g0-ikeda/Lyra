@@ -30,6 +30,7 @@ class FakeStoryRepository implements StoryRepository {
   public disappearBeforeWorkUpdate = false;
   public disappearBeforeChapterUpdate = false;
   public disappearBeforeEpisodeUpdate = false;
+  public startingEntityStatesValid = true;
   private readonly works = new Map<string, Work>();
   private readonly chapters = new Map<string, Chapter>();
   private readonly episodes = new Map<string, Episode>();
@@ -208,6 +209,7 @@ class FakeStoryRepository implements StoryRepository {
       endingHook: input.endingHook,
       estimatedPages: input.estimatedPages,
       entitiesInvolved: input.entitiesInvolved,
+      startingEntityStates: [],
       pageSkeletonGenerated: false,
       version: 1,
       editHistory: [],
@@ -263,12 +265,17 @@ class FakeStoryRepository implements StoryRepository {
       endingHook: input.endingHook === undefined ? episode.endingHook : input.endingHook,
       estimatedPages: input.estimatedPages ?? episode.estimatedPages,
       entitiesInvolved: input.entitiesInvolved ?? episode.entitiesInvolved,
+      startingEntityStates: input.startingEntityStates ?? episode.startingEntityStates,
       status: input.status ?? episode.status,
       version: episode.version + 1,
       updatedAt: now,
     };
     this.episodes.set(id, updatedEpisode);
     return updatedEpisode;
+  }
+
+  public async validateEpisodeStartingEntityStates(): Promise<boolean> {
+    return this.startingEntityStatesValid;
   }
 
   public async deleteEpisode(id: string, userId: string): Promise<boolean> {
@@ -507,6 +514,44 @@ describe('StoryService', () => {
         title: 'Must not persist',
       }),
     ).rejects.toMatchObject({ code: 'NOT_FOUND' } satisfies Partial<AppError>);
+  });
+
+  it('episode開始状態は明示更新し、旧PUTで省略した場合は保持する', async () => {
+    const repository = new FakeStoryRepository();
+    const service = new StoryService(repository, new FakeEntityReferenceReader());
+    const work = await createStoryWork(service);
+    const chapter = await createStoryChapter(service, work.id, 1);
+    const episode = await createStoryEpisode(service, chapter.id, 1);
+    const startingEntityStates = [{
+      entityId: '11111111-1111-4111-8111-111111111111',
+      stateId: null,
+    }];
+
+    const updated = await service.updateEpisode('user-1', episode.id, {
+      expectedUpdatedAt: now.toISOString(),
+      startingEntityStates,
+    });
+    const legacyUpdated = await service.updateEpisode('user-1', episode.id, {
+      expectedUpdatedAt: now.toISOString(),
+      title: '旧クライアント更新',
+    });
+
+    expect(updated.startingEntityStates).toEqual(startingEntityStates);
+    expect(legacyUpdated.startingEntityStates).toEqual(startingEntityStates);
+  });
+
+  it('未確定または別workのepisode開始状態は保存前に拒否する', async () => {
+    const repository = new FakeStoryRepository();
+    repository.startingEntityStatesValid = false;
+    const service = new StoryService(repository, new FakeEntityReferenceReader());
+    const work = await createStoryWork(service);
+    const chapter = await createStoryChapter(service, work.id, 1);
+    const episode = await createStoryEpisode(service, chapter.id, 1);
+
+    await expect(service.updateEpisode('user-1', episode.id, {
+      expectedUpdatedAt: now.toISOString(),
+      startingEntityStates: [{ entityId: '11111111-1111-4111-8111-111111111111', stateId: '22222222-2222-4222-8222-222222222222' }],
+    })).rejects.toMatchObject({ code: 'VALIDATION_ERROR' } satisfies Partial<AppError>);
   });
 
   it('returns not found when creating a chapter under another user work', async () => {

@@ -1,4 +1,4 @@
-﻿import { SignJWT } from 'jose';
+import { SignJWT } from 'jose';
 import { describe, expect, it } from 'vitest';
 import {
   jobAcceptedSchema,
@@ -89,6 +89,7 @@ class FakeCreditService implements CreditServicePort {
 
 class FakePageGenerationService implements PageGenerationServicePort {
   public lastPageId: string | null = null;
+  public lastGenerationOptions: { imageModel?: string; expectedPageRevision?: string; expectedCreditCost?: number } | null = null;
   public readinessPageId: string | null = null;
   public saveAndGeneratePageId: string | null = null;
   public saveAndGenerateRequestId: string | null = null;
@@ -96,8 +97,11 @@ class FakePageGenerationService implements PageGenerationServicePort {
   public async enqueuePageGeneration(
     _userId: string,
     requestedPageId: string,
+    _organizationId?: string | null,
+    options?: { imageModel?: string; expectedPageRevision?: string; expectedCreditCost?: number },
   ): Promise<EnqueuePageGenerationResult> {
     this.lastPageId = requestedPageId;
+    this.lastGenerationOptions = options ?? null;
     return { jobId: '11111111-1111-4111-8111-111111111111' };
   }
 
@@ -224,7 +228,7 @@ class FakePageQueryService implements PageQueryServicePort {
   public page: PageSummary | null = buildPageSummary('33333333-3333-4333-8333-333333333333');
 
   public async listEpisodePages(): Promise<PageSummary[]> {
-    return [buildPageSummary('33333333-3333-4333-8333-333333333333')];
+    return this.page === null ? [] : [this.page];
   }
 
   public async listEpisodePagesPage(
@@ -355,6 +359,28 @@ describe('page generation routes', () => {
       ],
     });
     expect(pagesResponseSchema.parse(payload)).toMatchObject(payload as Record<string, unknown>);
+  });
+
+  it('Hy4画像の場合に旧アプリ向け一覧へ画像URLを渡さずWeb専用印を返す', async () => {
+    const pageQueryService = new FakePageQueryService();
+    const page = buildPageSummary('33333333-3333-4333-8333-333333333333');
+    page.generatedImage = { ...page.generatedImage!, imageModel: 'hy4-preview' };
+    pageQueryService.page = page;
+    const app = createTestApp(
+      new FakePageGenerationService(),
+      new FakePageFinalizeService(),
+      new FakeJobService(),
+      pageQueryService,
+    );
+    const token = await createToken();
+    const response = await app.request('/api/episodes/44444444-4444-4444-8444-444444444444/pages', {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    expect(response.status).toBe(200);
+    const payload = pagesResponseSchema.parse(await response.json());
+    expect(payload.pages[0].generated_image).toMatchObject({ web_only: true });
+    expect(payload.pages[0].generated_image).not.toHaveProperty('cdn_url');
   });
 
   it('returns a bounded episode page list only when limit is supplied', async () => {
@@ -643,6 +669,60 @@ describe('page generation routes', () => {
       job_id: '11111111-1111-4111-8111-111111111111',
     });
     expect(pageGenerationService.lastPageId).toBe('33333333-3333-4333-8333-333333333333');
+  });
+
+  it('画像モデルと見積確認値をboundedな生成requestとしてServiceへ渡す', async () => {
+    const pageGenerationService = new FakePageGenerationService();
+    const app = createTestApp(pageGenerationService, new FakePageFinalizeService(), new FakeJobService());
+    const token = await createToken();
+    const response = await app.request('/api/pages/33333333-3333-4333-8333-333333333333/generate', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        image_model: 'gpt-image-2',
+        expected_page_revision: '2026-07-24T00:00:00.000Z',
+        expected_credit_cost: 3,
+      }),
+    });
+
+    expect(response.status).toBe(202);
+    expect(pageGenerationService.lastGenerationOptions).toEqual({
+      imageModel: 'gpt-image-2',
+      expectedPageRevision: '2026-07-24T00:00:00.000Z',
+      expectedCreditCost: 3,
+    });
+  });
+
+  it('画像モデルrequestの余分な入力はService呼出し前に拒否する', async () => {
+    const pageGenerationService = new FakePageGenerationService();
+    const app = createTestApp(pageGenerationService, new FakePageFinalizeService(), new FakeJobService());
+    const token = await createToken();
+    const response = await app.request('/api/pages/33333333-3333-4333-8333-333333333333/generate', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ image_model: 'gpt-image-2', price_override: 0 }),
+    });
+
+    expect(response.status).toBe(422);
+    expect(pageGenerationService.lastPageId).toBeNull();
+  });
+
+  it('認証済みcapability一覧は有効なGPTだけを返しHy4画像を公開しない', async () => {
+    const app = createTestApp(new FakePageGenerationService(), new FakePageFinalizeService(), new FakeJobService());
+    const withoutAuth = await app.request('/api/generation-capabilities');
+    expect(withoutAuth.status).toBe(401);
+
+    const token = await createToken();
+    const response = await app.request('/api/generation-capabilities', {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ image_models: [{
+      key: 'gpt-image-2',
+      capabilities: { pageGeneration: true, entityPreview: true },
+      available_on: ['web', 'mobile'],
+      pricing_version: 'existing-pricing-v1',
+    }] });
   });
 
   it('generation readiness は stable blocker と revision だけを返す', async () => {

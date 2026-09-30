@@ -7,6 +7,7 @@ import type { PageGenerationContext, PagePromptContext, PageSummary } from '../.
 import type { CompositionGalleryRepository } from '../../../../src/repositories/CompositionGalleryRepository.js';
 import type {
   EntityPrimaryReferenceImage,
+  EntityResolvedReferenceImage,
   EntityRepository,
 } from '../../../../src/repositories/EntityRepository.js';
 import type { PageRepository } from '../../../../src/repositories/PageRepository.js';
@@ -110,6 +111,7 @@ class FakeEntityRepository implements EntityRepository {
   public lastReferenceArgs:
     | { entityIds: string[]; workId: string; userId: string; organizationId: string | null }
     | null = null;
+  public resolvedReferences: EntityResolvedReferenceImage[] | null = null;
 
   public async create(_input: CreateEntityInput): Promise<Entity> {
     throw new Error('not used');
@@ -149,6 +151,20 @@ class FakeEntityRepository implements EntityRepository {
       }));
   }
 
+  public async findResolvedReferenceImagesByAssignmentsAndUserId(
+    assignments: Array<{ entityId: string; stateId: string | null }>,
+    workId: string,
+    userId: string,
+    organizationId: string | null = null,
+  ): Promise<EntityResolvedReferenceImage[]> {
+    this.lastReferenceArgs = { entityIds: Array.from(new Set(assignments.map((assignment) => assignment.entityId))), workId, userId, organizationId };
+    return this.resolvedReferences ?? this.entities.map((entity, index) => ({
+      entityId: entity.id, stateId: null, stateName: null, stateDescription: null, stateExists: true,
+      ownerUserId: entity.userId, refId: `ref-${index + 1}`, s3Key: `saved/${entity.userId}/entities/${entity.id}/ref-${index + 1}.png`,
+      cdnUrl: `https://img.lyra.app/ref-${index + 1}.png`, imageModel: null,
+    }));
+  }
+
   public async update(_id: string, _userId: string, _input: UpdateEntityInput): Promise<Entity | null> {
     throw new Error('not used');
   }
@@ -171,6 +187,21 @@ class FakeCompositionGalleryRepository implements CompositionGalleryRepository {
 }
 
 describe('PromptBuilder', () => {
+  it('同じ人物の既定と状態を別のImage番号としてパネルに対応付ける', async () => {
+    const panelRepository = new FakePanelRepository();
+    panelRepository.panels = [buildPanel(), { ...buildPanel(), id: 'panel-2', order: 2, entities: [{ ...buildPanel().entities[0]!, stateId: 'state-1' }] }];
+    const entityRepository = new FakeEntityRepository();
+    entityRepository.resolvedReferences = [
+      { entityId: 'entity-1', stateId: null, stateName: null, stateDescription: null, stateExists: true, ownerUserId: 'user-1', refId: 'base-ref', s3Key: 'saved/user-1/entities/entity-1/base-ref.png', cdnUrl: 'https://img.lyra.app/base.png', imageModel: null },
+      { entityId: 'entity-1', stateId: 'state-1', stateName: '外傷', stateDescription: '左頬の傷', stateExists: true, ownerUserId: 'user-1', refId: 'state-ref', s3Key: 'saved/user-1/entities/entity-1/state-ref.png', cdnUrl: 'https://img.lyra.app/state.png', imageModel: 'gpt-image-1' },
+    ];
+    const result = await new PromptBuilder(new FakePageRepository(), panelRepository, entityRepository, new FakeCompositionGalleryRepository())
+      .buildPagePrompt({ userId: 'user-1', pageId: 'page-1', requestKind: 'initial', generationMode: 'thinking' });
+
+    expect(result.compilerBrief).toContain('Image 1 (Aki / default)');
+    expect(result.compilerBrief).toContain('Image 2 (Aki / 外傷)');
+    expect(result.compilerBrief).toContain('panel 2');
+  });
   it('includes layout, references, setting, and dialogue without redundant sections', async () => {
     const builder = new PromptBuilder(
       new FakePageRepository(),

@@ -31,6 +31,7 @@ describe('PostgresExportJobRepository', () => {
     const snapshotQuery = db.queries.find((query) => query.text.includes('FROM pages'));
     expect(snapshotQuery?.text).toContain('works.user_id = $4');
     expect(snapshotQuery?.text).toContain("organization_members.status = 'active'");
+    expect(snapshotQuery?.text).toContain("pages.generated_image->>'image_model' = 'gpt-image-2'");
     expect(snapshotQuery?.values).toEqual([[pageId], episodeId, null, userId]);
     expect(db.queries.some((query) => query.text.includes('INSERT INTO export_job_outbox'))).toBe(true);
   });

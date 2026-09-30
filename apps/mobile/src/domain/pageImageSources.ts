@@ -32,6 +32,9 @@ export function buildFullPageImageSource(
 export function buildFullPageImageSources(
   input: PageImageSourceInput,
 ): RemoteImageSource[] {
+  if (isWebOnlyPage(input.page)) {
+    return [];
+  }
   const revision =
     input.page.generated_image?.generated_at ?? input.page.updated_at;
   const fullCacheKey = buildPageImageCacheKey({
@@ -95,6 +98,9 @@ export function buildFullPageImageSources(
 export function buildPageImageDownloadSources(
   input: PageImageSourceInput,
 ): RemoteImageSource[] {
+  if (isWebOnlyPage(input.page)) {
+    return [];
+  }
   const revision =
     input.page.generated_image?.generated_at ?? input.page.updated_at;
   const fullCacheKey = buildPageImageCacheKey({
@@ -136,6 +142,9 @@ export function buildPageThumbnailImageSource(
 export function buildPageThumbnailImageSources(
   input: PageImageSourceInput,
 ): RemoteImageSource[] {
+  if (isWebOnlyPage(input.page)) {
+    return [];
+  }
   const revision =
     input.page.generated_image?.generated_at ?? input.page.updated_at;
   const thumbnailCacheKey = buildPageImageCacheKey({
@@ -194,6 +203,10 @@ export function buildPageThumbnailImageSources(
       ...authorizationHeaders(input.authorizationHeader),
     },
   ]);
+}
+
+function isWebOnlyPage(page: PageRecord): boolean {
+  return page.generated_image?.web_only === true;
 }
 
 function buildAuthenticatedImageUrl(

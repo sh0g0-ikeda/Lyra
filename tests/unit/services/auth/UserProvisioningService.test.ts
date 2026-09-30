@@ -132,25 +132,33 @@ describe('UserProvisioningService', () => {
     expect(creditService.signupBonusUserIds).toEqual([]);
   });
 
-  it('同じメールで認証プロバイダーIDが変わった場合は既存ユーザーに再リンクする', async () => {
+  it('同じメールで認証subjectが違う場合は既存ユーザーを付け替えず連携を要求する', async () => {
     const repository = new FakeUserRepository();
     repository.existingUserByEmail = buildUser({ supabaseId: 'old-provider-sub' });
     repository.linkedUser = buildUser({ supabaseId: 'new-provider-sub' });
     const creditService = new FakeCreditService();
     const service = new UserProvisioningService(repository, creditService);
 
-    const result = await service.provisionFromSupabaseClaims({
+    await expect(service.provisionFromSupabaseClaims({
       sub: 'new-provider-sub',
       email: 'USER@example.com',
-    });
+    })).rejects.toMatchObject({ code: 'ACCOUNT_LINK_REQUIRED', statusCode: 409 });
 
-    expect(result).toEqual({
-      user: repository.linkedUser,
-      isNewUser: false,
-    });
-    expect(repository.linkByEmailCalls).toEqual([
-      { email: 'user@example.com', supabaseId: 'new-provider-sub' },
-    ]);
+    expect(repository.linkByEmailCalls).toEqual([]);
+    expect(creditService.signupBonusUserIds).toEqual([]);
+  });
+
+  it('同時登録でemail一意制約に当たっても別subjectを自動連携しない', async () => {
+    const repository = new FakeUserRepository();
+    repository.insertError = { code: '23505' };
+    repository.existingUserByEmail = buildUser({ supabaseId: 'existing-sub' });
+    const creditService = new FakeCreditService();
+    const service = new UserProvisioningService(repository, creditService);
+
+    await expect(service.provisionFromSupabaseClaims({
+      sub: 'new-sub', email: 'user@example.com',
+    })).rejects.toMatchObject({ code: 'ACCOUNT_LINK_REQUIRED', statusCode: 409 });
+    expect(repository.linkByEmailCalls).toEqual([]);
     expect(creditService.signupBonusUserIds).toEqual([]);
   });
 

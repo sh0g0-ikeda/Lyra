@@ -56,4 +56,29 @@ describe('story schema', () => {
       updateEpisodeBodySchema.safeParse({ title: 'episode', expected_updated_at: expectedUpdatedAt }).success,
     ).toBe(true);
   });
+
+  it('episode starting_entity_states は null default を受理し同一entityの重複と101件を拒否する', () => {
+    const expectedUpdatedAt = '2026-07-25T00:00:00.000Z';
+    const entityId = '11111111-1111-4111-8111-111111111111';
+    const stateId = '22222222-2222-4222-822222222222';
+
+    expect(updateEpisodeBodySchema.safeParse({
+      expected_updated_at: expectedUpdatedAt,
+      starting_entity_states: [{ entity_id: entityId, state_id: null }],
+    }).success).toBe(true);
+    expect(updateEpisodeBodySchema.safeParse({
+      expected_updated_at: expectedUpdatedAt,
+      starting_entity_states: [
+        { entity_id: entityId, state_id: stateId },
+        { entity_id: entityId, state_id: null },
+      ],
+    }).success).toBe(false);
+    expect(updateEpisodeBodySchema.safeParse({
+      expected_updated_at: expectedUpdatedAt,
+      starting_entity_states: Array.from({ length: 101 }, (_, index) => ({
+        entity_id: `${String(index).padStart(8, '0')}-1111-4111-8111-111111111111`,
+        state_id: null,
+      })),
+    }).success).toBe(false);
+  });
 });

@@ -24,6 +24,9 @@ export interface PageGenerationSelection {
   creditCost: number;
   billableReferenceCount: number;
   requiresPlanner: boolean;
+  imageModel?: string;
+  providerModelId?: string;
+  pricingVersion?: string | null;
 }
 
 export interface PageGenerationQueuePayload {
@@ -48,6 +51,10 @@ export interface PersistedPageGenerationJobParams {
   requires_planner: boolean;
   previous_page_status: PageStatus;
   previous_generation_mode: PageGenerationMode | null;
+  image_model?: string;
+  provider_model_id?: string;
+  pricing_version?: string;
+  estimated_credit_cost?: number;
 }
 
 export interface PageGenerationInputSnapshotDialogue {
@@ -73,10 +80,14 @@ export interface PageGenerationInputSnapshotImage {
 
 export interface PageGenerationInputSnapshotReference {
   entityId: string;
+  /** Null is the entity's default reference; retained as optional for old snapshots. */
+  stateId?: string | null;
+  stateName?: string | null;
   canonicalName: string;
   refId: string;
   s3Key: string;
   subjectLabel: string;
+  imageModel?: string | null;
   modelInputOrder: number;
 }
 

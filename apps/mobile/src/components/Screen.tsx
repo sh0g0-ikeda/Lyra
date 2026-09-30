@@ -15,6 +15,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Notice } from '@/components/Notice';
+import { CreditBalanceBadge } from '@/components/CreditBalanceBadge';
 import { ResponsiveContentFrame } from '@/components/ResponsiveContentFrame';
 import { colors, radius, spacing, textStyles } from '@/constants/theme';
 import { t } from '@/lib/i18n';
@@ -25,6 +26,7 @@ interface ScreenProps extends PropsWithChildren {
   eyebrow?: string;
   subtitle?: string;
   showHeader?: boolean;
+  showCreditBalance?: boolean;
   refreshing?: boolean;
   onRefresh?: () => void;
   scrollViewRef?: RefObject<ScrollView | null>;
@@ -37,6 +39,7 @@ export function Screen({
   eyebrow,
   subtitle,
   showHeader = true,
+  showCreditBalance = false,
   refreshing = false,
   onRefresh,
   scrollViewRef,
@@ -98,7 +101,10 @@ export function Screen({
             {showHeader ? (
               <View style={styles.header}>
                 {eyebrow === undefined ? null : <Text style={styles.eyebrow}>{eyebrow}</Text>}
-                <Text accessibilityRole="header" style={styles.title}>{title}</Text>
+                <View style={styles.headerTitleRow}>
+                  <Text accessibilityRole="header" style={styles.title}>{title}</Text>
+                  {showCreditBalance ? <CreditBalanceBadge /> : null}
+                </View>
                 {subtitle === undefined ? null : <Text style={styles.subtitle}>{subtitle}</Text>}
               </View>
             ) : null}
@@ -139,6 +145,12 @@ const styles = StyleSheet.create({
     marginTop: -spacing.md,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm
+  },
+  headerTitleRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: spacing.sm,
+    justifyContent: 'space-between'
   },
   keyboardAvoider: {
     flex: 1

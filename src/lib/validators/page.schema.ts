@@ -194,7 +194,11 @@ export const saveAndGeneratePageBodySchema = z
       .default({}),
     panels: z.array(saveAndGeneratePanelSchema).min(1).max(20),
     frames: z.array(saveAndGenerateFrameSchema).min(1).max(20),
-    generation: z.object({ language: z.enum(APP_LANGUAGES) }).strict(),
+    generation: z.object({
+      language: z.enum(APP_LANGUAGES),
+      image_model: z.string().trim().min(1).max(80).optional(),
+      expected_credit_cost: z.number().int().min(0).max(10_000).optional(),
+    }).strict(),
   })
   .strict()
   .superRefine((body, context) => {

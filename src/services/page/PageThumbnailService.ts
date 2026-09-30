@@ -1,4 +1,5 @@
-import { NotFoundError, ValidationError } from '../../domain/errors/index.js';
+import { ConflictError, NotFoundError, ValidationError } from '../../domain/errors/index.js';
+import { isMobileImageModelAvailable } from '../../domain/generation/ImageModelCatalog.js';
 import type { StoredImageLoaderPort } from '../../infrastructure/aws/S3StoredImageLoader.js';
 import type { PageRepository } from '../../repositories/PageRepository.js';
 import {
@@ -74,6 +75,9 @@ export class PageThumbnailService implements PageThumbnailServicePort {
     const generatedImage = page.generatedImage;
     if (generatedImage === null || generatedImage.s3Key === null) {
       throw new ValidationError('Page does not have a generated image thumbnail');
+    }
+    if (!isMobileImageModelAvailable(generatedImage.imageModel)) {
+      throw new ConflictError('This image is available on Lyra web only');
     }
 
     if (organizationId === null) {

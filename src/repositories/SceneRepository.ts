@@ -106,6 +106,9 @@ interface EntityStateRow extends QueryResultRow {
   id: string;
   entity_id: string;
   scene_id: string | null;
+  name: string | null;
+  description: string | null;
+  reference_image: unknown;
   costume_note: string | null;
   costume_ref_id: string | null;
   condition_note: string | null;
@@ -113,6 +116,7 @@ interface EntityStateRow extends QueryResultRow {
   expression_default: string;
   extra_note: string | null;
   created_at: Date;
+  updated_at: Date;
 }
 
 const sceneSelectColumns = `
@@ -424,6 +428,8 @@ export class PostgresSceneRepository implements SceneRepository {
       INSERT INTO entity_states (
         entity_id,
         scene_id,
+        name,
+        description,
         costume_note,
         costume_ref_id,
         condition_note,
@@ -431,12 +437,14 @@ export class PostgresSceneRepository implements SceneRepository {
         expression_default,
         extra_note
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
       RETURNING *
       `,
       [
         entityId,
         input.sceneId,
+        input.name ?? null,
+        input.description ?? null,
         input.costumeNote,
         input.costumeRefId,
         input.conditionNote,
@@ -460,22 +468,25 @@ export class PostgresSceneRepository implements SceneRepository {
       `
       UPDATE entity_states
       SET scene_id = CASE WHEN $4::boolean THEN $5 ELSE entity_states.scene_id END,
-          costume_note = CASE WHEN $6::boolean THEN $7 ELSE entity_states.costume_note END,
-          costume_ref_id = CASE WHEN $8::boolean THEN $9 ELSE entity_states.costume_ref_id END,
-          condition_note = CASE WHEN $10::boolean THEN $11 ELSE entity_states.condition_note END,
-          hair_note = CASE WHEN $12::boolean THEN $13 ELSE entity_states.hair_note END,
-          expression_default = COALESCE($14, entity_states.expression_default),
-          extra_note = CASE WHEN $15::boolean THEN $16 ELSE entity_states.extra_note END
+          name = CASE WHEN $6::boolean THEN $7 ELSE entity_states.name END,
+          description = CASE WHEN $8::boolean THEN $9 ELSE entity_states.description END,
+          costume_note = CASE WHEN $10::boolean THEN $11 ELSE entity_states.costume_note END,
+          costume_ref_id = CASE WHEN $12::boolean THEN $13 ELSE entity_states.costume_ref_id END,
+          condition_note = CASE WHEN $14::boolean THEN $15 ELSE entity_states.condition_note END,
+          hair_note = CASE WHEN $16::boolean THEN $17 ELSE entity_states.hair_note END,
+          expression_default = COALESCE($18, entity_states.expression_default),
+          extra_note = CASE WHEN $19::boolean THEN $20 ELSE entity_states.extra_note END,
+          updated_at = NOW()
       FROM entities
       INNER JOIN works ON works.id = entities.work_id
       WHERE entity_states.id = $1
         AND entity_states.entity_id = $2
         AND entity_states.entity_id = entities.id
         AND (
-          ($17::uuid IS NULL AND works.organization_id IS NULL AND entities.user_id = $3)
+          ($21::uuid IS NULL AND works.organization_id IS NULL AND entities.user_id = $3)
           OR (
-            $17::uuid IS NOT NULL
-            AND works.organization_id = $17::uuid
+            $21::uuid IS NOT NULL
+            AND works.organization_id = $21::uuid
             AND EXISTS (
               SELECT 1
               FROM organization_members
@@ -493,6 +504,10 @@ export class PostgresSceneRepository implements SceneRepository {
         userId,
         input.sceneId !== undefined,
         input.sceneId ?? null,
+        input.name !== undefined,
+        input.name ?? null,
+        input.description !== undefined,
+        input.description ?? null,
         input.costumeNote !== undefined,
         input.costumeNote ?? null,
         input.costumeRefId !== undefined,
@@ -567,6 +582,9 @@ function mapEntityStateRow(row: EntityStateRow): EntityState {
     id: row.id,
     entityId: row.entity_id,
     sceneId: row.scene_id,
+    name: row.name,
+    description: row.description,
+    referenceImage: toNullableRecord(row.reference_image),
     costumeNote: row.costume_note,
     costumeRefId: row.costume_ref_id,
     conditionNote: row.condition_note,
@@ -574,7 +592,14 @@ function mapEntityStateRow(row: EntityStateRow): EntityState {
     expressionDefault: row.expression_default,
     extraNote: row.extra_note,
     createdAt: row.created_at,
+    updatedAt: row.updated_at,
   };
+}
+
+function toNullableRecord(value: unknown): Record<string, unknown> | null {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
 }
 
 function toSceneStateReferences(value: unknown): SceneEntityStateReference[] {

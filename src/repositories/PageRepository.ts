@@ -1053,7 +1053,8 @@ export class PostgresPageRepository implements PageRepository, PageAtomicGenerat
             's3_key', $5::text,
             'cdn_url', $6::text,
             'generation_mode', $7::text,
-            'generated_at', $8::text
+            'generated_at', $8::text,
+            'image_model', COALESCE($9::text, pages.generated_image->>'image_model')
           ),
           updated_at = NOW()
       FROM episodes
@@ -1062,10 +1063,10 @@ export class PostgresPageRepository implements PageRepository, PageAtomicGenerat
       WHERE pages.id = $1
         AND pages.episode_id = episodes.id
         AND (
-          ($9::uuid IS NULL AND works.user_id = $2 AND works.organization_id IS NULL)
+          ($10::uuid IS NULL AND works.user_id = $2 AND works.organization_id IS NULL)
           OR (
-            $9::uuid IS NOT NULL
-            AND works.organization_id = $9::uuid
+            $10::uuid IS NOT NULL
+            AND works.organization_id = $10::uuid
             AND EXISTS (
               SELECT 1
               FROM organization_members
@@ -1086,6 +1087,7 @@ export class PostgresPageRepository implements PageRepository, PageAtomicGenerat
         input.generatedImage.cdnUrl,
         input.generatedImage.generationMode,
         input.generatedImage.generatedAt,
+        input.generatedImage.imageModel ?? null,
         organizationId,
       ],
     );
@@ -1103,12 +1105,14 @@ function toGeneratedPageImage(value: unknown): GeneratedPageImage | null {
   const cdnUrl = value.cdn_url;
   const generationMode = value.generation_mode;
   const generatedAt = value.generated_at;
+  const imageModel = value.image_model;
 
   if (
     !isNullableString(s3Key) ||
     !isNullableString(cdnUrl) ||
     !(generationMode === null || generationMode === 'standard' || generationMode === 'thinking') ||
-    !isNullableString(generatedAt)
+    !isNullableString(generatedAt) ||
+    !(imageModel === undefined || imageModel === null || (typeof imageModel === 'string' && imageModel.length <= 100))
   ) {
     return null;
   }
@@ -1117,6 +1121,7 @@ function toGeneratedPageImage(value: unknown): GeneratedPageImage | null {
     s3Key,
     cdnUrl,
     generationMode,
+    imageModel: typeof imageModel === 'string' ? imageModel : null,
     generatedAt,
   };
 }
@@ -1905,6 +1910,10 @@ async function insertAtomicGenerationJob(
         request_kind: input.selection.requestKind,
         generation_mode: input.selection.mode,
         quality: input.selection.quality,
+        image_model: input.selection.imageModel,
+        provider_model_id: input.selection.providerModelId,
+        pricing_version: input.selection.pricingVersion,
+        estimated_credit_cost: input.selection.creditCost,
         requires_planner: input.selection.requiresPlanner,
         previous_page_status: page.status,
         previous_generation_mode: toPageGenerationMode(page.generation_mode),

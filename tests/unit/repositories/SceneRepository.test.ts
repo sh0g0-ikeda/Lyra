@@ -58,6 +58,9 @@ describe('PostgresSceneRepository', () => {
     );
 
     expect(client.queries[0]).toContain('entities.user_id = $3');
+    expect(client.queries[0]).toContain('name = CASE WHEN');
+    expect(client.queries[0]).toContain('description = CASE WHEN');
+    expect(client.queries[0]).toContain('updated_at = NOW()');
   });
 
   it('entity_state一覧SQLが個人所有と有効な法人メンバーシップで絞る', async () => {
@@ -111,6 +114,9 @@ function entityStateRow(): Record<string, unknown> {
     id: '66666666-6666-4666-8666-666666666666',
     entity_id: '55555555-5555-4555-8555-555555555555',
     scene_id: null,
+    name: null,
+    description: null,
+    reference_image: null,
     costume_note: '黒のタクティカルスーツ',
     costume_ref_id: null,
     condition_note: null,
@@ -118,5 +124,6 @@ function entityStateRow(): Record<string, unknown> {
     expression_default: 'neutral',
     extra_note: null,
     created_at: new Date('2026-04-22T00:00:00.000Z'),
+    updated_at: new Date('2026-04-22T00:00:00.000Z'),
   };
 }

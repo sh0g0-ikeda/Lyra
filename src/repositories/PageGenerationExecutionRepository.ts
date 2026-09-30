@@ -16,6 +16,7 @@ export interface CompletePageGenerationInput {
   organizationId?: string | null;
   pageId: string;
   generationMode: PageGenerationMode;
+  imageModel?: string | null;
   requestKind: 'initial' | 'regenerate';
   s3Key: string;
   cdnUrl: string;
@@ -192,7 +193,8 @@ export class PostgresPageGenerationExecutionRepository implements PageGeneration
               's3_key', $3::text,
               'cdn_url', $4::text,
               'generation_mode', $5::text,
-              'generated_at', $6::text
+              'generated_at', $6::text,
+              'image_model', $7::text
             ),
             generation_mode = $5::text,
             status = 'generated',
@@ -203,10 +205,10 @@ export class PostgresPageGenerationExecutionRepository implements PageGeneration
         WHERE pages.id = $1
           AND pages.episode_id = episodes.id
           AND (
-            ($7::uuid IS NULL AND works.user_id = $2 AND works.organization_id IS NULL)
+            ($8::uuid IS NULL AND works.user_id = $2 AND works.organization_id IS NULL)
             OR (
-            $7::uuid IS NOT NULL
-            AND works.organization_id = $7::uuid
+            $8::uuid IS NOT NULL
+            AND works.organization_id = $8::uuid
             AND EXISTS (
               SELECT 1
               FROM organization_members
@@ -225,6 +227,7 @@ export class PostgresPageGenerationExecutionRepository implements PageGeneration
           input.cdnUrl,
           input.generationMode,
           input.generatedAt,
+          input.imageModel ?? null,
           input.organizationId ?? null,
         ],
       );
@@ -253,6 +256,7 @@ export class PostgresPageGenerationExecutionRepository implements PageGeneration
             s3_key: input.s3Key,
             cdn_url: input.cdnUrl,
             generation_mode: input.generationMode,
+            image_model: input.imageModel ?? null,
             request_kind: input.requestKind,
             cost_usd: input.costUsd,
             ...buildPromptMetadataDiagnostics(input.promptMetadata),

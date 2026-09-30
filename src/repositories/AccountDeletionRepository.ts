@@ -139,6 +139,13 @@ export class PostgresAccountDeletionRepository implements AccountDeletionReposit
           CROSS JOIN LATERAL jsonb_array_elements(reference_sets.reference_images) AS reference_image
           WHERE reference_sets.status IN ('partial', 'ready')
         ),
+        personal_entity_state_images AS (
+          SELECT entity_states.reference_image->>'s3_key' AS s3_key
+          FROM entity_states
+          INNER JOIN entities ON entities.id = entity_states.entity_id
+          INNER JOIN personal_works ON personal_works.id = entities.work_id
+          WHERE entity_states.reference_image IS NOT NULL
+        ),
         personal_page_images AS (
           SELECT pages.generated_image->>'s3_key' AS s3_key
           FROM pages
@@ -150,6 +157,8 @@ export class PostgresAccountDeletionRepository implements AccountDeletionReposit
         SELECT DISTINCT s3_key
         FROM (
           SELECT s3_key FROM personal_reference_images
+          UNION ALL
+          SELECT s3_key FROM personal_entity_state_images
           UNION ALL
           SELECT s3_key FROM personal_page_images
         ) AS personal_asset_keys

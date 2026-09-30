@@ -40,6 +40,8 @@ describe('PostgresAccountDeletionRepository', () => {
     expect(database.queries[3]).toContain('works.organization_id IS NULL');
     expect(database.queries[3]).toContain("reference_sets.status IN ('partial', 'ready')");
     expect(database.queries[3]).toContain("pages.generated_image->>'s3_key'");
+    expect(database.queries[3]).toContain("entity_states.reference_image->>'s3_key'");
+    expect(database.queries[3]).toContain('INNER JOIN personal_works ON personal_works.id = entities.work_id');
   });
 
   it('匿名化は個人作品だけを削除し、法人作品を削除せず user row を匿名化する', async () => {

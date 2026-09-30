@@ -1,4 +1,4 @@
-﻿import { SignJWT } from 'jose';
+import { SignJWT } from 'jose';
 import { describe, expect, it } from 'vitest';
 import {
   pageSkeletonResponseSchema,
@@ -192,7 +192,12 @@ class FakeStoryService implements StoryServicePort {
     input: UpdateEpisodeRequest,
   ): Promise<Episode> {
     this.lastUpdateEpisode = input;
-    return buildEpisode({ id: requestedEpisodeId, title: input.title ?? '第一話', version: 2 });
+    return buildEpisode({
+      id: requestedEpisodeId,
+      title: input.title ?? '第一話',
+      startingEntityStates: input.startingEntityStates ?? [],
+      version: 2,
+    });
   }
 
   public async deleteEpisode(_userId: string, _requestedEpisodeId: string): Promise<void> {}
@@ -1193,6 +1198,26 @@ describe('story routes', () => {
     expect(storyService.lastUpdateEpisode?.expectedUpdatedAt).toBe(revision);
   });
 
+  it('episode update は開始状態をserviceへ渡し、responseでは常に配列を返す', async () => {
+    const storyService = new FakeStoryService();
+    const app = createTestApp({ storyService });
+    const token = await createToken();
+    const startingEntityStates = [{
+      entity_id: '11111111-1111-4111-8111-111111111111',
+      state_id: null,
+    }];
+
+    const response = await app.request(`/api/episodes/${episodeId}`, {
+      method: 'PUT',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ expected_updated_at: '2026-04-22T00:00:00.000Z', starting_entity_states: startingEntityStates }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(storyService.lastUpdateEpisode?.startingEntityStates).toEqual([{ entityId: startingEntityStates[0].entity_id, stateId: null }]);
+    await expect(response.json()).resolves.toMatchObject({ starting_entity_states: startingEntityStates });
+  });
+
   it('work update の競合は安定した RESOURCE_STALE 409 を返す', async () => {
     const storyService = new FakeStoryService();
     Object.assign(storyService, { updateWorkError: new ResourceStaleError() });
@@ -1375,6 +1400,7 @@ function buildEpisode(overrides: Partial<Episode> = {}): Episode {
     endingHook: null,
     estimatedPages: 16,
     entitiesInvolved: [],
+    startingEntityStates: [],
     pageSkeletonGenerated: false,
     version: 1,
     editHistory: [],

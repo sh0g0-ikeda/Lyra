@@ -125,6 +125,9 @@ class FakeSceneRepository implements SceneRepository {
       id: `state-${this.entityStates.size + 1}`,
       entityId,
       sceneId: input.sceneId,
+      name: input.name ?? null,
+      description: input.description ?? null,
+      referenceImage: null,
       costumeNote: input.costumeNote,
       costumeRefId: input.costumeRefId,
       conditionNote: input.conditionNote,
@@ -132,6 +135,7 @@ class FakeSceneRepository implements SceneRepository {
       expressionDefault: input.expressionDefault,
       extraNote: input.extraNote,
       createdAt: now,
+      updatedAt: now,
     };
     this.entityStates.set(entityState.id, entityState);
     return entityState;
@@ -151,6 +155,8 @@ class FakeSceneRepository implements SceneRepository {
     const updatedEntityState: EntityState = {
       ...entityState,
       sceneId: input.sceneId === undefined ? entityState.sceneId : input.sceneId,
+      name: input.name === undefined ? entityState.name : input.name,
+      description: input.description === undefined ? entityState.description : input.description,
       costumeNote: input.costumeNote === undefined ? entityState.costumeNote : input.costumeNote,
       costumeRefId: input.costumeRefId === undefined ? entityState.costumeRefId : input.costumeRefId,
       conditionNote: input.conditionNote === undefined ? entityState.conditionNote : input.conditionNote,
@@ -158,6 +164,7 @@ class FakeSceneRepository implements SceneRepository {
       expressionDefault:
         input.expressionDefault === undefined ? entityState.expressionDefault : input.expressionDefault,
       extraNote: input.extraNote === undefined ? entityState.extraNote : input.extraNote,
+      updatedAt: now,
     };
     this.entityStates.set(stateId, updatedEntityState);
     return updatedEntityState;
@@ -309,6 +316,47 @@ describe('SceneService', () => {
         extraNote: null,
       }),
     ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' } satisfies Partial<AppError>);
+  });
+
+  it('旧形式の状態に名前だけを付ける場合はDB更新前にVALIDATION_ERRORになる', async () => {
+    const { service, sceneRepository, entityReader } = createService();
+    entityReader.addEntity(buildEntity({ id: 'entity-1', workId: 'work-1' }));
+    const state = await sceneRepository.createEntityState('entity-1', {
+      sceneId: null,
+      costumeNote: null,
+      costumeRefId: null,
+      conditionNote: null,
+      hairNote: null,
+      expressionDefault: 'neutral',
+      extraNote: null,
+    });
+
+    await expect(service.updateEntityState('user-1', 'entity-1', state.id, {
+      name: '外傷',
+    })).rejects.toMatchObject({ code: 'VALIDATION_ERROR' } satisfies Partial<AppError>);
+    await expect(service.listEntityStates('user-1', 'entity-1')).resolves.toMatchObject([
+      { name: null, description: null },
+    ]);
+  });
+
+  it('名前と説明がある状態では名前だけの更新で説明を保持する', async () => {
+    const { service, sceneRepository, entityReader } = createService();
+    entityReader.addEntity(buildEntity({ id: 'entity-1', workId: 'work-1' }));
+    const state = await sceneRepository.createEntityState('entity-1', {
+      name: '通常',
+      description: '元の説明',
+      sceneId: null,
+      costumeNote: null,
+      costumeRefId: null,
+      conditionNote: null,
+      hairNote: null,
+      expressionDefault: 'neutral',
+      extraNote: null,
+    });
+
+    await expect(service.updateEntityState('user-1', 'entity-1', state.id, {
+      name: '外傷',
+    })).resolves.toMatchObject({ name: '外傷', description: '元の説明' });
   });
 });
 

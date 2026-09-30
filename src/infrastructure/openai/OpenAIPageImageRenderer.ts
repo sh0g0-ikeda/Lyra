@@ -20,20 +20,21 @@ export class OpenAIPageImageRenderer implements PageImageRendererPort {
   ) {}
 
   public async render(input: RenderPageImageInput): Promise<RenderPageImageResult> {
+    const model = input.imageModel ?? this.model;
     const prompt = input.internalPlan === null
       ? input.prompt
       : `${input.prompt}\n\nInternal generation plan:\n${input.internalPlan}`;
 
     const response = input.inputImages.length === 0
       ? await this.client.postJson<OpenAIImageGenerationResponse>('/images/generations', {
-          model: this.model,
+          model,
           prompt,
           size: '1024x1536',
           quality: input.quality,
         })
       : await this.client.postFormData<OpenAIImageGenerationResponse>('/images/edits', () =>
           buildImageEditFormData({
-            model: this.model,
+            model,
             prompt,
             size: '1024x1536',
             quality: input.quality,

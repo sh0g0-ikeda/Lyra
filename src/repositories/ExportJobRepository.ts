@@ -274,6 +274,10 @@ export class PostgresExportJobRepository implements ExportJobRepository {
       WHERE pages.id = ANY($1::uuid[]) AND pages.episode_id = $2
         AND pages.generated_image IS NOT NULL AND pages.generated_image->>'s3_key' IS NOT NULL
         AND (
+          pages.generated_image->>'image_model' IS NULL
+          OR pages.generated_image->>'image_model' = 'gpt-image-2'
+        )
+        AND (
           ($3::uuid IS NULL AND works.user_id = $4 AND works.organization_id IS NULL)
           OR ($3::uuid IS NOT NULL AND works.organization_id = $3::uuid AND EXISTS (
             SELECT 1 FROM organization_members

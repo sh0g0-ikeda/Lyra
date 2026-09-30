@@ -1,4 +1,4 @@
-import type { EntityRepository } from '../../repositories/EntityRepository.js';
+import type { EntityReferenceAssignment, EntityRepository, EntityResolvedReferenceImage } from '../../repositories/EntityRepository.js';
 import type { PageGenerationInputSnapshotReference } from '../../domain/types/pageGeneration.js';
 import type { PageGenerationContext } from '../../domain/types/page.js';
 import { PAGE_GENERATION_INPUT_IMAGE_LIMITS } from '../../domain/constants/generation.js';
@@ -15,6 +15,7 @@ export type PageGenerationBlockerCode =
   | 'PAGE_GENERATING'
   | 'PAGE_REOPEN_REQUIRED'
   | 'CHARACTER_REFERENCE_REQUIRED'
+  | 'STATE_REFERENCE_REQUIRED'
   | 'REFERENCE_IMAGE_LIMIT_EXCEEDED'
   | 'ACTIVE_GENERATION_JOB'
   | 'INSUFFICIENT_CREDITS';
@@ -120,9 +121,8 @@ export class PageGenerationReadinessEvaluator {
       }
     }
 
-    const assignedEntityIds = Array.from(
-      new Set(input.page.panels.flatMap((panel) => panel.entities.map((assignment) => assignment.entityId))),
-    );
+    const orderedAssignments = collectOrderedAssignments(input.page);
+    const assignedEntityIds = Array.from(new Set(orderedAssignments.map((assignment) => assignment.entityId)));
     if (assignedEntityIds.length === 0) {
       return {
         blockers,
@@ -136,14 +136,9 @@ export class PageGenerationReadinessEvaluator {
     const organizationId = input.page.organizationId ?? null;
     const [entities, references] = await Promise.all([
       this.entityRepository.findByWorkIdAndUserId(input.page.workId, input.userId, organizationId),
-      this.entityRepository.findPrimaryReferenceImagesByEntityIdsAndUserId(
-        assignedEntityIds,
-        input.page.workId,
-        input.userId,
-        organizationId,
-      ),
+      resolveReferences(this.entityRepository, orderedAssignments, input.page.workId, input.userId, organizationId),
     ]);
-    const referenceEntityIds = new Set(references.map((reference) => reference.entityId));
+    const referenceEntityIds = new Set(references.filter(hasResolvedImage).map((reference) => reference.entityId));
     const workEntityIds = new Set(entities.map((entity) => entity.id));
     for (const panel of input.page.panels) {
       const panelEntityIds = new Set(panel.entities.map((assignment) => assignment.entityId));
@@ -156,7 +151,21 @@ export class PageGenerationReadinessEvaluator {
         }
       }
     }
-    const billableReferenceCount = referenceEntityIds.size;
+    for (const assignment of orderedAssignments) {
+      if (assignment.stateId === null) {
+        continue;
+      }
+      const reference = references.find((candidate) => sameAssignment(candidate, assignment));
+      if (reference === undefined || !reference.stateExists || (reference.stateDescription !== null && !hasResolvedImage(reference))) {
+        add(
+          blocker('STATE_REFERENCE_REQUIRED', assignment.entityId, 'entities', 'open_characters', 'page.blocker.stateReference'),
+          'Generate requires a confirmed reference image for the assigned character state',
+        );
+      }
+    }
+    const billableReferenceCount = new Set(
+      references.filter(hasResolvedImage).map((reference) => `${reference.entityId}:${reference.stateId ?? 'default'}:${reference.refId}`),
+    ).size;
     if (billableReferenceCount > PAGE_GENERATION_INPUT_IMAGE_LIMITS.MAX_ENTITY_REFERENCE_IMAGES) {
       add(
         blocker('REFERENCE_IMAGE_LIMIT_EXCEEDED', null, 'entities', 'open_panels', 'page.blocker.referenceImageLimit'),
@@ -175,20 +184,23 @@ export class PageGenerationReadinessEvaluator {
     }
 
     const entityNames = new Map(entities.map((entity) => [entity.id, entity.name]));
-    const referenceByEntityId = new Map(references.map((reference) => [reference.entityId, reference]));
-    const orderedEntityIds = collectOrderedEntityIds(input.page);
-    const snapshotReferences = orderedEntityIds.flatMap((entityId, index) => {
-      const reference = referenceByEntityId.get(entityId);
-      const canonicalName = entityNames.get(entityId);
-      if (reference === undefined || canonicalName === undefined) {
+    const referenceByAssignment = new Map(references.map((reference) => [referenceKey(reference.entityId, reference.stateId), reference]));
+    const snapshotReferences = orderedAssignments.flatMap((assignment, index) => {
+      const reference = referenceByAssignment.get(referenceKey(assignment.entityId, assignment.stateId));
+      const canonicalName = entityNames.get(assignment.entityId);
+      if (reference === undefined || canonicalName === undefined || !hasResolvedImage(reference)) {
         return [];
       }
+      const subjectLabel = buildSubjectLabel(canonicalName, reference.stateName);
       return [{
-        entityId,
+        entityId: assignment.entityId,
+        stateId: assignment.stateId,
+        stateName: reference.stateName,
         canonicalName,
         refId: reference.refId,
         s3Key: reference.s3Key,
-        subjectLabel: canonicalName,
+        subjectLabel,
+        imageModel: reference.imageModel,
         modelInputOrder: index,
       }];
     });
@@ -203,14 +215,53 @@ export class PageGenerationReadinessEvaluator {
   }
 }
 
-function collectOrderedEntityIds(page: PageGenerationContext): string[] {
-  const entityIds = new Set<string>();
+function collectOrderedAssignments(page: PageGenerationContext): EntityReferenceAssignment[] {
+  const assignments = new Map<string, EntityReferenceAssignment>();
   for (const panel of [...page.panels].sort((left, right) => left.order - right.order)) {
     for (const assignment of panel.entities) {
-      entityIds.add(assignment.entityId);
+      assignments.set(referenceKey(assignment.entityId, assignment.stateId), { entityId: assignment.entityId, stateId: assignment.stateId });
     }
   }
-  return Array.from(entityIds);
+  return Array.from(assignments.values());
+}
+
+async function resolveReferences(
+  repository: EntityRepository,
+  assignments: EntityReferenceAssignment[],
+  workId: string,
+  userId: string,
+  organizationId: string | null,
+): Promise<EntityResolvedReferenceImage[]> {
+  if (repository.findResolvedReferenceImagesByAssignmentsAndUserId !== undefined) {
+    return repository.findResolvedReferenceImagesByAssignmentsAndUserId(assignments, workId, userId, organizationId);
+  }
+  const primaryReferences = await repository.findPrimaryReferenceImagesByEntityIdsAndUserId(
+    Array.from(new Set(assignments.map((assignment) => assignment.entityId))), workId, userId, organizationId,
+  );
+  return assignments.map((assignment) => {
+    const reference = primaryReferences.find((candidate) => candidate.entityId === assignment.entityId);
+    return {
+      entityId: assignment.entityId, stateId: assignment.stateId, stateName: null, stateDescription: null,
+      stateExists: assignment.stateId === null, ownerUserId: reference?.ownerUserId ?? userId,
+      refId: reference?.refId ?? null, s3Key: reference?.s3Key ?? null, cdnUrl: reference?.cdnUrl ?? null, imageModel: null,
+    };
+  });
+}
+
+function hasResolvedImage(reference: EntityResolvedReferenceImage): reference is EntityResolvedReferenceImage & { refId: string; s3Key: string } {
+  return reference.refId !== null && reference.s3Key !== null;
+}
+
+function sameAssignment(reference: EntityResolvedReferenceImage, assignment: EntityReferenceAssignment): boolean {
+  return reference.entityId === assignment.entityId && reference.stateId === assignment.stateId;
+}
+
+function referenceKey(entityId: string, stateId: string | null): string {
+  return `${entityId}:${stateId ?? 'default'}`;
+}
+
+function buildSubjectLabel(canonicalName: string, stateName: string | null): string {
+  return stateName === null ? canonicalName : `${canonicalName} / ${stateName}`;
 }
 
 function hasContiguousPanelOrder(page: PageGenerationContext): boolean {

@@ -113,6 +113,8 @@ class FakeSceneService implements SceneServicePort {
     return buildEntityState({
       entityId: requestedEntityId,
       sceneId: input.sceneId,
+      name: input.name ?? null,
+      description: input.description ?? null,
       costumeNote: input.costumeNote,
       expressionDefault: input.expressionDefault,
     });
@@ -128,6 +130,8 @@ class FakeSceneService implements SceneServicePort {
       id: requestedStateId,
       entityId: requestedEntityId,
       sceneId: input.sceneId === undefined ? sceneId : input.sceneId,
+      name: input.name ?? null,
+      description: input.description ?? null,
       costumeNote: input.costumeNote ?? '黒のタクティカルスーツ',
     });
   }
@@ -203,6 +207,46 @@ describe('scene routes', () => {
       costume_note: '黒のタクティカルスーツ',
       expression_default: 'determined',
     });
+  });
+
+  it('名前と自由入力を持つ再利用可能なentity_stateを作成できる', async () => {
+    const app = createTestApp();
+    const token = await createToken();
+
+    const response = await app.request(`/api/entities/${entityId}/states`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        name: '外傷',
+        description: '左頬に傷があり、服の右肩が破れている',
+        expression_default: 'determined',
+      }),
+    });
+
+    expect(response.status).toBe(201);
+    await expect(response.json()).resolves.toMatchObject({
+      name: '外傷',
+      description: '左頬に傷があり、服の右肩が破れている',
+    });
+  });
+
+  it('再利用可能なentity_stateでnameまたはdescriptionだけを渡す場合にVALIDATION_ERRORになる', async () => {
+    const app = createTestApp();
+    const token = await createToken();
+
+    const response = await app.request(`/api/entities/${entityId}/states`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ name: '外傷' }),
+    });
+
+    expect(response.status).toBe(422);
   });
 
   it('Authorizationヘッダーがない場合に401になる', async () => {
@@ -292,6 +336,9 @@ function buildEntityState(overrides: Partial<EntityState> = {}): EntityState {
     id: stateId,
     entityId,
     sceneId,
+    name: null,
+    description: null,
+    referenceImage: null,
     costumeNote: null,
     costumeRefId: null,
     conditionNote: null,
@@ -299,6 +346,7 @@ function buildEntityState(overrides: Partial<EntityState> = {}): EntityState {
     expressionDefault: 'neutral',
     extraNote: null,
     createdAt: now,
+    updatedAt: now,
     ...overrides,
   };
 }

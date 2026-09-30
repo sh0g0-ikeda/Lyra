@@ -54,6 +54,7 @@ export interface EpisodeRecord {
   ending_hook: string | null;
   estimated_pages: number;
   entities_involved: string[];
+  starting_entity_states?: { entity_id: string; state_id: string | null }[];
   page_skeleton_generated: boolean;
   version: number;
   status: StoryStatus;
@@ -108,6 +109,8 @@ export interface EntityStateRecord {
   id: string;
   entity_id: string;
   scene_id: string | null;
+  name?: string | null;
+  description?: string | null;
   costume_note: string | null;
   costume_ref_id: string | null;
   condition_note: string | null;
@@ -115,12 +118,14 @@ export interface EntityStateRecord {
   expression_default: string;
   extra_note: string | null;
   created_at: string;
+  updated_at?: string;
 }
 
 export interface GeneratedImageRecord {
   cdn_url?: string | null;
   generation_mode: 'standard' | 'thinking' | null;
   generated_at: string | null;
+  web_only?: boolean;
 }
 
 export interface PageRecord {

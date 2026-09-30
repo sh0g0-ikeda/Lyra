@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { CreateEntityInput, Entity, UpdateEntityInput } from '../../../../src/domain/types/entity.js';
-import type { EntityPrimaryReferenceImage, EntityRepository } from '../../../../src/repositories/EntityRepository.js';
+import type { EntityPrimaryReferenceImage, EntityRepository, EntityResolvedReferenceImage } from '../../../../src/repositories/EntityRepository.js';
 import type { PageRepository } from '../../../../src/repositories/PageRepository.js';
 import type {
   PageGenerationContext,
@@ -166,6 +166,7 @@ class FakeEntityRepository implements EntityRepository {
   public lastArgs:
     | { entityIds: string[]; workId: string; userId: string; organizationId: string | null }
     | null = null;
+  public resolvedReferences: EntityResolvedReferenceImage[] | null = null;
 
   public async create(_input: CreateEntityInput): Promise<Entity> { throw new Error('not used'); }
   public async findByIdAndUserId(_id: string, _userId: string): Promise<Entity | null> { throw new Error('not used'); }
@@ -193,6 +194,20 @@ class FakeEntityRepository implements EntityRepository {
   ): Promise<EntityPrimaryReferenceImage[]> {
     this.lastArgs = { entityIds, workId, userId, organizationId };
     return this.references;
+  }
+
+  public async findResolvedReferenceImagesByAssignmentsAndUserId(
+    assignments: Array<{ entityId: string; stateId: string | null }>,
+    workId: string,
+    userId: string,
+    organizationId: string | null = null,
+  ): Promise<EntityResolvedReferenceImage[]> {
+    this.lastArgs = { entityIds: Array.from(new Set(assignments.map((assignment) => assignment.entityId))), workId, userId, organizationId };
+    return this.resolvedReferences ?? this.references.map((reference) => ({
+      entityId: reference.entityId, stateId: null, stateName: null, stateDescription: null, stateExists: true,
+      ownerUserId: reference.ownerUserId ?? 'user-1', refId: reference.refId, s3Key: reference.s3Key,
+      cdnUrl: reference.cdnUrl, imageModel: null,
+    }));
   }
 }
 
@@ -262,6 +277,35 @@ function buildTestPanel(entityId: string): PageGenerationContext['panels'][numbe
 }
 
 describe('PageGenerationInputImageBuilder', () => {
+  it('同じ人物の既定と確定済み状態を別の参照画像として順番に読み込む', async () => {
+    const entityRepository = new FakeEntityRepository();
+    entityRepository.resolvedReferences = [
+      { entityId: 'entity-1', stateId: null, stateName: null, stateDescription: null, stateExists: true, ownerUserId: 'user-1', refId: 'base-ref', s3Key: 'saved/user-1/entities/entity-1/base-ref.png', cdnUrl: 'https://img.lyra.app/base.png', imageModel: null },
+      { entityId: 'entity-1', stateId: 'state-1', stateName: '外傷', stateDescription: '左頬の傷', stateExists: true, ownerUserId: 'user-1', refId: 'state-ref', s3Key: 'saved/user-1/entities/entity-1/state-ref.png', cdnUrl: 'https://img.lyra.app/state.png', imageModel: 'gpt-image-1' },
+    ];
+    const pageRepository = new FakePageRepository();
+    pageRepository.generationContext = {
+      ...pageRepository.generationContext!,
+      panels: [{ ...pageRepository.generationContext!.panels[0]!, entities: [{ ...pageRepository.generationContext!.panels[0]!.entities[0]!, stateId: null }] }, { ...pageRepository.generationContext!.panels[1]!, entities: [{ ...pageRepository.generationContext!.panels[1]!.entities[0]!, entityId: 'entity-1', stateId: 'state-1' }] }],
+    };
+    const loader = new FakeStoredImageLoader();
+
+    const images = await new PageGenerationInputImageBuilder(pageRepository, entityRepository, loader, new FakeLayoutGuideImageRenderer())
+      .buildInputImages({ userId: 'user-1', pageId: 'page-1' });
+
+    expect(images.filter((image) => image.role === 'entity_reference').map((image) => image.label)).toEqual(['Aoi / default', 'Aoi / 外傷']);
+    expect(loader.calls).toEqual(['saved/user-1/entities/entity-1/base-ref.png', 'saved/user-1/entities/entity-1/state-ref.png']);
+  });
+
+  it('未確定の新しい状態には既定画像を代入せず生成を止める', async () => {
+    const entityRepository = new FakeEntityRepository();
+    entityRepository.resolvedReferences = [{ entityId: 'entity-1', stateId: 'state-1', stateName: '外傷', stateDescription: '左頬の傷', stateExists: true, ownerUserId: null, refId: null, s3Key: null, cdnUrl: null, imageModel: null }];
+    const pageRepository = new FakePageRepository();
+    pageRepository.generationContext = { ...pageRepository.generationContext!, panels: [{ ...pageRepository.generationContext!.panels[0]!, entities: [{ ...pageRepository.generationContext!.panels[0]!.entities[0]!, stateId: 'state-1' }] }] };
+
+    await expect(new PageGenerationInputImageBuilder(pageRepository, entityRepository, new FakeStoredImageLoader(), new FakeLayoutGuideImageRenderer())
+      .buildInputImages({ userId: 'user-1', pageId: 'page-1' })).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+  });
   it('panel順の一意entityに対してreference画像をdataUrl化する', async () => {
     const loader = new FakeStoredImageLoader();
     const entityRepository = new FakeEntityRepository();

@@ -1,4 +1,4 @@
-import { UnauthorizedError } from '../../domain/errors/index.js';
+import { AccountLinkRequiredError, UnauthorizedError } from '../../domain/errors/index.js';
 import type { AuthenticatedUser, SupabaseJwtClaims } from '../../domain/types/user.js';
 import { isUniqueViolation, type UserRepository } from '../../repositories/UserRepository.js';
 import type { CreditServicePort } from '../credit/CreditService.js';
@@ -35,10 +35,7 @@ export class UserProvisioningService implements UserProvisioningPort {
 
     const userByEmail = await this.userRepository.findByEmail(email);
     if (userByEmail !== null) {
-      return {
-        user: await this.linkExistingEmailUser(userByEmail, supabaseId, email),
-        isNewUser: false,
-      };
+      throw new AccountLinkRequiredError();
     }
 
     try {
@@ -60,10 +57,7 @@ export class UserProvisioningService implements UserProvisioningPort {
 
       const existingEmailUser = await this.userRepository.findByEmail(email);
       if (existingEmailUser !== null) {
-        return {
-          user: await this.linkExistingEmailUser(existingEmailUser, supabaseId, email),
-          isNewUser: false,
-        };
+        throw new AccountLinkRequiredError();
       }
 
       throw error;
@@ -78,31 +72,4 @@ export class UserProvisioningService implements UserProvisioningPort {
     return user.email === email ? user : await this.userRepository.updateEmail(supabaseId, email);
   }
 
-  private async linkExistingEmailUser(
-    user: AuthenticatedUser,
-    supabaseId: string,
-    email: string,
-  ): Promise<AuthenticatedUser> {
-    // Cognito/Supabase migrations can change the provider subject while the
-    // verified email remains the same. Keep the existing Lyra user id so works,
-    // credits, subscriptions, and generated assets stay attached to the account.
-    if (user.supabaseId === supabaseId) {
-      return this.syncUserEmail(user, supabaseId, email);
-    }
-
-    try {
-      return await this.userRepository.linkSupabaseIdByEmail(email, supabaseId);
-    } catch (error) {
-      if (!isUniqueViolation(error)) {
-        throw error;
-      }
-
-      const linkedByConcurrentRequest = await this.userRepository.findBySupabaseId(supabaseId);
-      if (linkedByConcurrentRequest !== null) {
-        return this.syncUserEmail(linkedByConcurrentRequest, supabaseId, email);
-      }
-
-      throw error;
-    }
-  }
 }
