@@ -853,6 +853,13 @@ const PERSONAL_ASSET_KEYS_SQL = `
       END
     ) AS reference_image
   ),
+  personal_entity_state_reference_images AS (
+    SELECT entity_states.reference_image->>'s3_key' AS s3_key
+    FROM entity_states
+    INNER JOIN entities ON entities.id = entity_states.entity_id
+    INNER JOIN personal_works ON personal_works.id = entities.work_id
+    WHERE jsonb_typeof(entity_states.reference_image) = 'object'
+  ),
   personal_job_candidates AS (
     SELECT candidate->>'s3_key' AS s3_key
     FROM generation_jobs
@@ -892,6 +899,8 @@ const PERSONAL_ASSET_KEYS_SQL = `
     SELECT s3_key FROM personal_page_images
     UNION ALL
     SELECT s3_key FROM personal_reference_images
+    UNION ALL
+    SELECT s3_key FROM personal_entity_state_reference_images
     UNION ALL
     SELECT s3_key FROM personal_job_candidates
     UNION ALL

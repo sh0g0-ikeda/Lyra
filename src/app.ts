@@ -88,6 +88,7 @@ import {
   PostgresEntityReferenceUploadTokenRepository,
 } from './repositories/EntityReferenceUploadTokenRepository.js';
 import { PostgresEntityGenerationExecutionRepository } from './repositories/EntityGenerationExecutionRepository.js';
+import { PostgresEntityStateReferenceRepository } from './repositories/EntityStateReferenceRepository.js';
 import { PostgresEntityGenerationRecoveryRepository } from './repositories/EntityGenerationRecoveryRepository.js';
 import { PostgresEpisodePlanPersistenceRepository } from './repositories/EpisodePlanPersistenceRepository.js';
 import { PostgresEpisodeExportJobRepository } from './repositories/EpisodeExportJobRepository.js';
@@ -173,6 +174,10 @@ import {
   EntityReferenceImageExportService,
   type EntityReferenceImageExportServicePort,
 } from './services/entity/EntityReferenceImageExportService.js';
+import {
+  EntityStateReferenceService,
+  type EntityStateReferenceServicePort,
+} from './services/entity/EntityStateReferenceService.js';
 import {
   EpisodeExportDispatchService,
 } from './services/export/EpisodeExportDispatchService.js';
@@ -321,6 +326,7 @@ export interface AppDependencies {
   entityReferenceService?: EntityReferenceServicePort;
   entityReferenceUploadService?: EntityReferenceUploadServicePort;
   entityReferenceImageExportService?: EntityReferenceImageExportServicePort;
+  entityStateReferenceService?: EntityStateReferenceServicePort;
   entityGenerationQueue?: EntityGenerationQueuePort;
   episodeExportService?: EpisodeExportServicePort;
   episodePageSkeletonQueue?: EpisodePageSkeletonQueuePort | null;
@@ -543,6 +549,7 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
       entityReferenceService: resolvedDependencies.entityReferenceService,
       entityReferenceUploadService: resolvedDependencies.entityReferenceUploadService,
       entityReferenceImageExportService: resolvedDependencies.entityReferenceImageExportService,
+      entityStateReferenceService: resolvedDependencies.entityStateReferenceService,
       organizationService: resolvedDependencies.organizationService,
     }),
   );
@@ -830,6 +837,7 @@ function resolveDependencies(
     dependencies.compositionGalleryService ??
     new CompositionGalleryService(new PostgresCompositionGalleryRepository(db));
   const entityRepository = new PostgresEntityRepository(db);
+  const entityStateReferenceRepository = new PostgresEntityStateReferenceRepository(db);
   const entityGenerationQueue =
     dependencies.entityGenerationQueue ??
     (inlineWorkerDependencies !== null
@@ -997,6 +1005,27 @@ function resolveDependencies(
       env.GENERATION_ENABLED && env.ENTITY_IMPORT_ANALYSIS_ENABLED,
       organizationService,
     );
+  const entityStateReferenceService =
+    dependencies.entityStateReferenceService ??
+    new EntityStateReferenceService({
+      stateRepository: entityStateReferenceRepository,
+      generationJobRepository,
+      creditService,
+      imageStorage: resolveEntityImageStorage(),
+      storedImageLoader: resolveStoredPageImageLoader(),
+      generationQueue: entityGenerationQueue,
+      imageModel: env.OPENAI_IMAGE_MODEL,
+      generationEnabled:
+        env.GENERATION_ENABLED
+        && env.ENTITY_GENERATION_ENABLED
+        && env.ENTITY_STATE_REFERENCE_GENERATION_ENABLED,
+      recoveryService: entityGenerationRecoveryService,
+      capacityLimits: {
+        perUser: env.GENERATION_USER_ACTIVE_JOB_LIMIT,
+        global: env.GENERATION_GLOBAL_ACTIVE_JOB_LIMIT,
+      },
+      organizationService,
+    });
   const entityReferenceUploadService =
     dependencies.entityReferenceUploadService
     ?? resolveConfiguredEntityReferenceUploadService(
@@ -1138,6 +1167,7 @@ function resolveDependencies(
     entityReferenceUploadService,
     episodeExportService,
     entityReferenceImageExportService,
+    entityStateReferenceService,
     entityGenerationQueue,
     episodePageSkeletonQueue,
     episodePageSkeletonService,

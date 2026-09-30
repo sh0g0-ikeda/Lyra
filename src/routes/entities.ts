@@ -4,6 +4,10 @@ import {
   entityImportResponseSchema,
   entityReferenceGenerationResponseSchema,
   entityReferenceSetSchema,
+  entityStateReferenceGenerationBodySchema,
+  entityStateReferenceGenerationResponseSchema,
+  confirmEntityStateReferenceBodySchema,
+  entityStateReferenceResponseSchema,
   entitiesResponseSchema,
   entitySchema,
 } from '../../packages/api-contract/src/mobileApiSchemas.js';
@@ -37,8 +41,10 @@ import type {
   EntityReferenceUploadServicePort,
 } from '../services/entity/EntityReferenceUploadService.js';
 import type { EntityReferenceImageExportServicePort } from '../services/entity/EntityReferenceImageExportService.js';
+import type { EntityStateReferenceServicePort } from '../services/entity/EntityStateReferenceService.js';
 import {
   createReferenceCandidateToken,
+  parseStateReferenceCandidateToken,
   parseReferenceCandidateToken,
 } from '../services/entity/ReferenceCandidateToken.js';
 import type { OrganizationServicePort } from '../services/organization/OrganizationService.js';
@@ -69,6 +75,7 @@ export interface EntityRouteDependencies {
   entityReferenceService: EntityReferenceServicePort;
   entityReferenceUploadService?: EntityReferenceUploadServicePort;
   entityReferenceImageExportService: EntityReferenceImageExportServicePort;
+  entityStateReferenceService?: EntityStateReferenceServicePort;
   organizationService?: OrganizationServicePort;
 }
 
@@ -414,6 +421,116 @@ export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<
     return c.json(assertMobileResponseContract(entityReferenceSetSchema, payload));
   });
 
+  app.post('/entities/:id/states/:state_id/generate-reference', async (c) => {
+    const user = c.get('user');
+    const entityId = parseUuidParam(c, 'id');
+    const stateId = parseUuidParam(c, 'state_id');
+    const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'generate');
+    const body = entityStateReferenceGenerationBodySchema.safeParse(
+      await readOptionalJsonBody(c, {
+        maxBytes: REQUEST_BODY_LIMITS.SMALL_JSON_BYTES,
+        description: 'Entity state reference generation request',
+      }),
+    );
+    if (!body.success) {
+      throw new ValidationError(formatZodValidationError(body.error));
+    }
+
+    const result = await requireEntityStateReferenceService(dependencies).enqueueReferenceGeneration(
+      user.id,
+      entityId,
+      stateId,
+      organizationId,
+    );
+    await recordOrganizationAudit(
+      dependencies,
+      organizationId,
+      user.id,
+      'entity_state.reference_generation_queued',
+      'entity_state',
+      stateId,
+      { entity_id: entityId, job_id: result.jobId },
+    );
+    return c.json(assertMobileResponseContract(entityStateReferenceGenerationResponseSchema, {
+      job_id: result.jobId,
+      state_revision: result.stateRevision,
+    }), 202);
+  });
+
+  app.post('/entities/:id/states/:state_id/reference/confirm', async (c) => {
+    const user = c.get('user');
+    const entityId = parseUuidParam(c, 'id');
+    const stateId = parseUuidParam(c, 'state_id');
+    const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'edit_work');
+    const body = confirmEntityStateReferenceBodySchema.safeParse(await readJsonBody(c, {
+      maxBytes: REQUEST_BODY_LIMITS.SMALL_JSON_BYTES,
+      description: 'Entity state reference confirm request',
+    }));
+    if (!body.success) {
+      throw new ValidationError(formatZodValidationError(body.error));
+    }
+    const candidate = parseStateReferenceCandidateToken(body.data.candidate_token, {
+      userId: user.id,
+      organizationId,
+      entityId,
+      stateId,
+    }, {
+      secret: getReferenceCandidateTokenSecret(),
+    });
+    const result = await requireEntityStateReferenceService(dependencies).confirmReference(
+      user.id,
+      entityId,
+      stateId,
+      {
+        jobId: candidate.jobId,
+        candidateS3Key: candidate.s3Key,
+        expectedStateRevision: body.data.expected_state_revision,
+      },
+      organizationId,
+    );
+    await recordOrganizationAudit(
+      dependencies,
+      organizationId,
+      user.id,
+      'entity_state.reference_confirmed',
+      'entity_state',
+      stateId,
+      { entity_id: entityId, job_id: candidate.jobId, ref_id: result.referenceImage.refId },
+    );
+    return c.json(assertMobileResponseContract(entityStateReferenceResponseSchema, {
+      entity_id: result.entityId,
+      state_id: result.stateId,
+      state_revision: result.stateRevision,
+      reference_image: {
+        ref_id: result.referenceImage.refId,
+        image_model: result.referenceImage.imageModel,
+        base_ref_id: result.referenceImage.baseRefId,
+        created_at: result.referenceImage.createdAt,
+        input_fingerprint: result.referenceImage.inputFingerprint,
+      },
+    }));
+  });
+
+  app.get('/entities/:id/states/:state_id/reference-image', async (c) => {
+    const user = c.get('user');
+    const entityId = parseUuidParam(c, 'id');
+    const stateId = parseUuidParam(c, 'state_id');
+    const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'view_work');
+    const image = await requireEntityStateReferenceService(dependencies).exportReferenceImage(
+      user.id,
+      entityId,
+      stateId,
+      organizationId,
+    );
+    return c.body(new Uint8Array(image.imageData), 200, {
+      'Content-Type': image.mimeType,
+      'Cache-Control': 'private, no-store',
+    });
+  });
+
   return app;
 }
 
@@ -435,6 +552,15 @@ async function importUploadedEntityImage(
     input,
     organizationId,
   );
+}
+
+function requireEntityStateReferenceService(
+  dependencies: EntityRouteDependencies,
+): EntityStateReferenceServicePort {
+  if (dependencies.entityStateReferenceService === undefined) {
+    throw new ConfigurationError('Entity state reference generation is not configured');
+  }
+  return dependencies.entityStateReferenceService;
 }
 
 function parseUuidParam(c: Context<AppEnv>, name: string): string {

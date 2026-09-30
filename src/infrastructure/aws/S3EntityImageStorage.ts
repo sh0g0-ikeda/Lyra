@@ -29,10 +29,17 @@ export interface FinalizeEntityReferenceImageInput {
   sourceS3Key: string;
 }
 
+export interface FinalizeEntityStateReferenceImageInput extends FinalizeEntityReferenceImageInput {
+  stateId: string;
+}
+
 export interface EntityImageStoragePort {
   storeImportedImage(input: StoreImportedEntityImageInput): Promise<StoredEntityImage>;
   storeGeneratedCandidate(input: StoreGeneratedEntityCandidateInput): Promise<StoredEntityImage>;
   finalizeReferenceImage(input: FinalizeEntityReferenceImageInput): Promise<StoredEntityImage>;
+  finalizeStateReferenceImage?(
+    input: FinalizeEntityStateReferenceImageInput,
+  ): Promise<StoredEntityImage>;
 }
 
 export interface S3EntityImageStorageOptions {
@@ -99,6 +106,39 @@ export class S3EntityImageStorage implements EntityImageStoragePort {
     };
   }
 
+  public async finalizeStateReferenceImage(
+    input: FinalizeEntityStateReferenceImageInput,
+  ): Promise<StoredEntityImage> {
+    const extension = readExtension(input.sourceS3Key);
+    ensureSafePathSegment(input.stateId, 'entity state id');
+    ensureSafePathSegment(input.refId, 'entity state reference id');
+    const destinationKey = `saved/${input.userId}/entities/${input.entityId}/states/${input.stateId}/${input.refId}.${extension}`;
+    ensureAllowedEntityReferenceSourceKey(input.sourceS3Key, input.userId, input.entityId);
+
+    try {
+      await this.client.send(
+        new CopyObjectCommand({
+          Bucket: this.options.bucketName,
+          Key: destinationKey,
+          CopySource: `${this.options.bucketName}/${input.sourceS3Key}`,
+          CacheControl: SAVED_IMAGE_CACHE_CONTROL,
+          MetadataDirective: 'REPLACE',
+          ContentType: extensionToMimeType(extension),
+          ServerSideEncryption: 'AES256',
+        }),
+      );
+    } catch (error) {
+      throw new ConfigurationError(
+        toSanitizedAwsErrorMessage(error, 'Failed to finalize entity state reference image'),
+      );
+    }
+
+    return {
+      s3Key: destinationKey,
+      cdnUrl: buildStoredImageUrl(this.options, destinationKey),
+    };
+  }
+
   private async putObject(
     s3Key: string,
     imageData: Buffer,
@@ -152,6 +192,12 @@ function hasUnsafeImageKeySyntax(s3Key: string): boolean {
     segment === '.' ||
     segment === '..'
   ));
+}
+
+function ensureSafePathSegment(value: string, fieldName: string): void {
+  if (value.length === 0 || !/^[A-Za-z0-9_-]+$/u.test(value)) {
+    throw new ConfigurationError(`${fieldName} is invalid`);
+  }
 }
 
 function mimeTypeToExtension(mimeType: string): 'png' | 'jpeg' | 'webp' | null {

@@ -10,6 +10,7 @@ export interface PageGenerationInputImage {
   role: PageGenerationInputImageRole;
   label: string;
   dataUrl: string;
+  reference?: Omit<PageGenerationInputSnapshotReference, 'modelInputOrder'>;
 }
 
 export interface ModeSelectionInput {
@@ -71,6 +72,16 @@ export interface PageGenerationInputSnapshotImage {
   label: string;
 }
 
+export interface PageGenerationInputSnapshotReference {
+  entityId: string;
+  stateId: string | null;
+  refId: string;
+  s3Key: string;
+  imageModel: string | null;
+  subjectLabel: string;
+  modelInputOrder: number;
+}
+
 export interface PageGenerationInputSnapshot {
   pageId: string;
   requestKind: PageGenerationRequestKind;
@@ -78,4 +89,5 @@ export interface PageGenerationInputSnapshot {
   panelCount: number;
   panels: PageGenerationInputSnapshotPanel[];
   inputImages?: PageGenerationInputSnapshotImage[];
+  references?: PageGenerationInputSnapshotReference[];
 }

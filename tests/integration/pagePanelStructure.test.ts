@@ -44,7 +44,7 @@ describePostgres('page panel structure safety', () => {
     }
   });
 
-  it('旧状態は通し派生状態だけを生成前に検出し壊れた旧IDでも読取を止めない', async () => {
+  it('旧注記と不正な旧IDも含む状態割当を課金前検証へ送り読取を止めない', async () => {
     const ids = createFixtureIds();
     const entityId = randomUUID();
     const stateId = randomUUID();
@@ -69,7 +69,7 @@ describePostgres('page panel structure safety', () => {
       };
 
       await assign(stateId);
-      expect((await repository.findGenerationContextByIdAndUserId(ids.pageId, ids.userId))?.hasVariantState).toBe(false);
+      expect((await repository.findGenerationContextByIdAndUserId(ids.pageId, ids.userId))?.hasVariantState).toBe(true);
 
       await pool.query(
         `UPDATE entity_states SET name = 'Wounded', description = 'Scar on left cheek' WHERE id = $1::uuid`,
@@ -78,7 +78,10 @@ describePostgres('page panel structure safety', () => {
       expect((await repository.findGenerationContextByIdAndUserId(ids.pageId, ids.userId))?.hasVariantState).toBe(true);
 
       await assign('invalid-legacy-state-id');
-      expect((await repository.findGenerationContextByIdAndUserId(ids.pageId, ids.userId))?.hasVariantState).toBe(false);
+      expect((await repository.findGenerationContextByIdAndUserId(ids.pageId, ids.userId))?.hasVariantState).toBe(true);
+
+      await assign(randomUUID());
+      expect((await repository.findGenerationContextByIdAndUserId(ids.pageId, ids.userId))?.hasVariantState).toBe(true);
     } finally {
       await removeFixture(pool, ids);
     }

@@ -1091,6 +1091,46 @@ describe('page generation routes', () => {
     expect(params).not.toHaveProperty('draft_prompt');
   });
 
+  it('jobs endpoint はstate候補tokenをtarget/state/job/tenantへ束縛する', async () => {
+    const jobService = new FakeJobService();
+    const stateId = '66666666-6666-4666-8666-666666666666';
+    const stateJob = buildEntityJob({
+      creditCost: 1,
+      organizationId: null,
+      params: {
+        target: 'entity_state',
+        entity_id: '55555555-5555-4555-8555-555555555555',
+        entity_type: 'character',
+        entity_state_id: stateId,
+      },
+    });
+    jobService.job = stateJob;
+    const app = createTestApp(new FakePageGenerationService(), new FakePageFinalizeService(), jobService);
+    const token = await createToken();
+
+    const response = await app.request(`/api/jobs/${stateJob.id}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    expect(response.status).toBe(200);
+    const payload = await response.json() as Record<string, unknown>;
+    const result = payload.result as Record<string, unknown>;
+    const candidate = (result.candidates as Array<Record<string, unknown>>)[0];
+    const encodedToken = candidate?.candidate_token;
+    expect(typeof encodedToken).toBe('string');
+    const tokenBody = Buffer.from((encodedToken as string).split('.')[0] ?? '', 'base64url').toString('utf8');
+    expect(JSON.parse(tokenBody)).toMatchObject({
+      version: 2,
+      target: 'entity_state',
+      userId: user.id,
+      organizationId: null,
+      entityId: stateJob.params.entity_id,
+      stateId,
+      jobId: stateJob.id,
+    });
+    expect(payload.params).not.toHaveProperty('entity_state_id');
+  });
+
   it('jobs endpoint は provider request id を返さず local fallback 候補を明示する', async () => {
     const jobService = new FakeJobService();
     jobService.job = buildEntityJob({

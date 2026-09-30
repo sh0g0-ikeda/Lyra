@@ -477,11 +477,8 @@ export class PostgresPageRepository
                  CASE WHEN jsonb_typeof(state_panels.entities) = 'array'
                    THEN state_panels.entities ELSE '[]'::jsonb END
                ) AS assigned(value)
-               INNER JOIN entity_states AS variant_states
-                 ON variant_states.id::text = assigned.value->>'state_id'
-                AND variant_states.entity_id::text = assigned.value->>'entity_id'
                WHERE state_panels.page_id = pages.id
-                 AND variant_states.description IS NOT NULL
+                 AND assigned.value->>'state_id' IS NOT NULL
              ) AS has_variant_state
       FROM pages
       INNER JOIN episodes ON episodes.id = pages.episode_id

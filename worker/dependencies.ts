@@ -1,6 +1,7 @@
 import { db } from '../src/lib/db.js';
 import { PostgresCreditRepository } from '../src/repositories/CreditRepository.js';
 import { PostgresEntityGenerationExecutionRepository } from '../src/repositories/EntityGenerationExecutionRepository.js';
+import { PostgresEntityStateReferenceRepository } from '../src/repositories/EntityStateReferenceRepository.js';
 import { PostgresEpisodePageSkeletonExecutionRepository } from '../src/repositories/EpisodePageSkeletonExecutionRepository.js';
 import { PostgresEpisodeStoryAutofillExecutionRepository } from '../src/repositories/EpisodeStoryAutofillExecutionRepository.js';
 import { PostgresEpisodePlanPersistenceRepository } from '../src/repositories/EpisodePlanPersistenceRepository.js';
@@ -297,6 +298,7 @@ export function resolveWorkerDependencies(
       env.GENERATION_ENABLED && env.ENTITY_GENERATION_ENABLED,
       organizationService,
       generationJobCancellationControl,
+      new PostgresEntityStateReferenceRepository(db),
     ),
     episodeStoryAutofillWorkerService: new EpisodeStoryAutofillWorkerService(
       episodeStoryAutofillExecutionRepository,

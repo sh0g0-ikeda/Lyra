@@ -136,6 +136,9 @@ class FakeInputImageBuilder implements PageGenerationInputImageBuilderPort {
   public calls = 0;
   public preflightCalls = 0;
   public rejectState = false;
+  public images: PageGenerationInputImage[] = [
+    { role: 'entity_reference', label: 'Aoi', dataUrl: 'data:image/png;base64,cmVm' },
+  ];
 
   public async assertRenderableState(): Promise<void> {
     this.preflightCalls += 1;
@@ -146,7 +149,7 @@ class FakeInputImageBuilder implements PageGenerationInputImageBuilderPort {
 
   public async buildInputImages(_input: { userId: string; pageId: string }): Promise<PageGenerationInputImage[]> {
     this.calls += 1;
-    return [{ role: 'entity_reference', label: 'Aoi', dataUrl: 'data:image/png;base64,cmVm' }];
+    return this.images;
   }
 }
 
@@ -255,6 +258,60 @@ class FakeOrganizationService {
 }
 
 describe('PageGenerationWorkerService', () => {
+  it('状態参照がpromptとrendererで一致する場合に実画像の参照情報をsnapshotへ固定する', async () => {
+    const executionRepository = new FakeExecutionRepository();
+    const promptBuilder = new FakePromptBuilder();
+    const reference = {
+      entityId: 'entity-1', stateId: 'state-1', refId: 'state-ref-1',
+      s3Key: 'saved/user-1/entities/entity-1/states/state-1/state-ref-1.png',
+      imageModel: 'gpt-image-2', subjectLabel: 'Aoi / 外傷', modelInputOrder: 1,
+    };
+    promptBuilder.builtPrompt.inputSnapshot.references = [reference];
+    const inputImageBuilder = new FakeInputImageBuilder();
+    inputImageBuilder.images = [{
+      role: 'entity_reference', label: 'Aoi / 外傷', dataUrl: 'data:image/png;base64,cmVm',
+      reference: { ...reference },
+    }];
+    const renderer = new FakeRenderer();
+    const service = new PageGenerationWorkerService(
+      executionRepository, promptBuilder, new FakePromptCompiler(), inputImageBuilder,
+      new FakePlanner(), renderer, new FakeStorage(), new FakeCreditService(),
+    );
+
+    await expect(service.processJob('job-1')).resolves.toEqual({ status: 'processed', jobStatus: 'completed' });
+    expect(executionRepository.snapshotInputs[1]?.snapshot.references).toEqual([reference]);
+    expect(renderer.calls).toHaveLength(1);
+  });
+
+  it('状態参照がprompt後に変わった場合にrenderer前に失敗して返金する', async () => {
+    const executionRepository = new FakeExecutionRepository();
+    const promptBuilder = new FakePromptBuilder();
+    promptBuilder.builtPrompt.inputSnapshot.references = [{
+      entityId: 'entity-1', stateId: 'state-1', refId: 'state-ref-1',
+      s3Key: 'saved/user-1/entities/entity-1/states/state-1/old.png',
+      imageModel: 'gpt-image-2', subjectLabel: 'Aoi / 外傷', modelInputOrder: 1,
+    }];
+    const inputImageBuilder = new FakeInputImageBuilder();
+    inputImageBuilder.images = [{
+      role: 'entity_reference', label: 'Aoi / 外傷', dataUrl: 'data:image/png;base64,cmVm',
+      reference: {
+        entityId: 'entity-1', stateId: 'state-1', refId: 'state-ref-2',
+        s3Key: 'saved/user-1/entities/entity-1/states/state-1/new.png',
+        imageModel: 'gpt-image-2', subjectLabel: 'Aoi / 外傷',
+      },
+    }];
+    const renderer = new FakeRenderer();
+    const creditService = new FakeCreditService();
+    const service = new PageGenerationWorkerService(
+      executionRepository, promptBuilder, new FakePromptCompiler(), inputImageBuilder,
+      new FakePlanner(), renderer, new FakeStorage(), creditService,
+    );
+
+    await expect(service.processJob('job-1')).resolves.toEqual({ status: 'processed', jobStatus: 'failed' });
+    expect(renderer.calls).toEqual([]);
+    expect(creditService.refunds).toHaveLength(1);
+  });
+
   it('受付後に派生状態が割り当てられた場合はpromptと画像生成前に失敗・返金する', async () => {
     const executionRepository = new FakeExecutionRepository();
     const promptBuilder = new FakePromptBuilder();

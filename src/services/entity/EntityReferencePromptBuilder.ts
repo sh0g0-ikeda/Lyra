@@ -1,4 +1,5 @@
 import type { EntityReferenceContext } from '../../domain/types/entityReference.js';
+import type { EntityStateReferenceContext } from '../../domain/types/entityStateReference.js';
 import {
   buildRenderingStyleAnchorLines,
   buildStyleAnchorLines,
@@ -8,6 +9,8 @@ import {
 export interface EntityReferencePromptBuilderPort {
   buildGenerationPrompt(context: EntityReferenceContext): string;
   buildCompilerBrief(context: EntityReferenceContext): string;
+  buildStateGenerationPrompt(context: EntityStateReferenceContext): string;
+  buildStateCompilerBrief(context: EntityStateReferenceContext): string;
 }
 
 interface CharacterPromptDetails {
@@ -64,6 +67,35 @@ interface CharacterPromptDetails {
  * The prompt is optimized for reproducible manga character references rather than one-off beauty shots.
  */
 export class EntityReferencePromptBuilder implements EntityReferencePromptBuilderPort {
+  public buildStateGenerationPrompt(context: EntityStateReferenceContext): string {
+    const basePrompt = this.buildGenerationPrompt(toEntityReferenceContext(context));
+    const stateDescription = compactImagePromptSentence(
+      context.stateDescription,
+      ENTITY_PROMPT_TEXT_LIMITS.stateDescription,
+    );
+    return [
+      basePrompt,
+      'Use the attached confirmed base reference as the authoritative visual identity.',
+      `"${context.stateName}" is a state label for ${context.entityName}, not a person name or a new character.`,
+      `Apply only this authored state change: ${ensureTerminalPunctuation(stateDescription)}`,
+      'Preserve the same subject identity, face, species, body proportions, and all base details that the state description does not change.',
+      'Do not add an extra subject, combine multiple states, or infer unstated damage, costume, age, hair, or expression changes.',
+    ].join(' ');
+  }
+
+  public buildStateCompilerBrief(context: EntityStateReferenceContext): string {
+    return [
+      this.buildCompilerBrief(toEntityReferenceContext(context)),
+      `State label: ${context.stateName}`,
+      `Authored state change: ${compactImagePromptSentence(
+        context.stateDescription,
+        ENTITY_PROMPT_TEXT_LIMITS.stateDescription,
+      )}`,
+      `Base reference id: ${context.baseReference.refId}`,
+      'State constraints: keep the same identity and use the state label only as metadata; change only the authored state details.',
+    ].join('\n');
+  }
+
   public buildGenerationPrompt(context: EntityReferenceContext): string {
     if (context.entityType !== 'character') {
       return buildNonCharacterPrompt(context);
@@ -190,7 +222,29 @@ const ENTITY_PROMPT_TEXT_LIMITS = {
   styleCompiledBrief: 900,
   styleAnchorLine: 180,
   styleNotes: 300,
+  stateDescription: 2_000,
 } as const;
+
+function toEntityReferenceContext(context: EntityStateReferenceContext): EntityReferenceContext {
+  return {
+    entityId: context.entityId,
+    workId: context.workId,
+    userId: context.entityOwnerUserId,
+    entityType: context.entityType,
+    name: context.entityName,
+    freeDescription: context.entityFreeDescription,
+    structuredFields: context.entityStructuredFields,
+    promptSupplement: context.entityPromptSupplement,
+    status: context.entityStatus,
+    referenceSet: {
+      entityId: context.entityId,
+      images: [],
+      primaryRefId: context.baseReference.refId,
+      status: 'ready',
+      updatedAt: new Date(context.stateRevision),
+    },
+  };
+}
 
 function hardConstraintsTextForEntityType(entityType: EntityReferenceContext['entityType']): string {
   if (entityType === 'object') {

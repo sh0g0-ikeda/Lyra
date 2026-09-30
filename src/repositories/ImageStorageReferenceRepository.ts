@@ -33,12 +33,28 @@ export class PostgresImageStorageReferenceRepository implements ImageStorageRefe
       live_reference_images AS (
         SELECT reference_image->>'s3_key' AS s3_key
         FROM reference_sets
-        CROSS JOIN LATERAL jsonb_array_elements(reference_images) AS reference_image
+        CROSS JOIN LATERAL jsonb_array_elements(
+          CASE
+            WHEN jsonb_typeof(reference_images) = 'array' THEN reference_images
+            ELSE '[]'::jsonb
+          END
+        ) AS reference_image
+      ),
+      live_entity_state_reference_images AS (
+        SELECT entity_states.reference_image->>'s3_key' AS s3_key
+        FROM entity_states
+        WHERE jsonb_typeof(entity_states.reference_image) = 'object'
       ),
       recent_entity_candidates AS (
         SELECT candidate->>'s3_key' AS s3_key
         FROM generation_jobs
-        CROSS JOIN LATERAL jsonb_array_elements(COALESCE(result->'candidates', '[]'::jsonb)) AS candidate
+        CROSS JOIN LATERAL jsonb_array_elements(
+          CASE
+            WHEN jsonb_typeof(generation_jobs.result->'candidates') = 'array'
+              THEN generation_jobs.result->'candidates'
+            ELSE '[]'::jsonb
+          END
+        ) AS candidate
         WHERE job_type = 'entity_generate'
           AND status = 'completed'
           AND completed_at >= NOW() - ($1::int * INTERVAL '1 hour')
@@ -49,6 +65,17 @@ export class PostgresImageStorageReferenceRepository implements ImageStorageRefe
         WHERE job_type = 'entity_generate'
           AND params ? 'source_s3_key'
           AND created_at >= NOW() - ($1::int * INTERVAL '1 hour')
+      ),
+      retained_input_snapshot_reference_images AS (
+        SELECT reference_image->>'s3Key' AS s3_key
+        FROM generation_jobs
+        CROSS JOIN LATERAL jsonb_array_elements(
+          CASE
+            WHEN jsonb_typeof(generation_jobs.result->'input_snapshot'->'references') = 'array'
+              THEN generation_jobs.result->'input_snapshot'->'references'
+            ELSE '[]'::jsonb
+          END
+        ) AS reference_image
       )
       SELECT DISTINCT s3_key
       FROM (
@@ -56,9 +83,13 @@ export class PostgresImageStorageReferenceRepository implements ImageStorageRefe
         UNION ALL
         SELECT s3_key FROM live_reference_images
         UNION ALL
+        SELECT s3_key FROM live_entity_state_reference_images
+        UNION ALL
         SELECT s3_key FROM recent_entity_candidates
         UNION ALL
         SELECT s3_key FROM recent_entity_source_images
+        UNION ALL
+        SELECT s3_key FROM retained_input_snapshot_reference_images
       ) AS protected_keys
       WHERE s3_key IS NOT NULL
         AND s3_key <> ''

@@ -185,7 +185,7 @@ describe('PostgresPageRepository', () => {
     });
   });
 
-  it('同じentityの派生状態がある場合だけ生成contextへ安全ゲートを返す', async () => {
+  it('状態IDが設定されている場合は存在しないIDも課金前検証へ送る', async () => {
     const client = new QueryCapturingClient();
     client.hasVariantState = true;
     const repository = new PostgresPageRepository(client);
@@ -194,8 +194,7 @@ describe('PostgresPageRepository', () => {
 
     expect(page?.hasVariantState).toBe(true);
     expect(client.queries[0]).toContain("jsonb_typeof(state_panels.entities) = 'array'");
-    expect(client.queries[0]).toContain("variant_states.entity_id::text = assigned.value->>'entity_id'");
-    expect(client.queries[0]).toContain('variant_states.description IS NOT NULL');
+    expect(client.queries[0]).toContain("assigned.value->>'state_id' IS NOT NULL");
   });
 
   it('status と generation_mode を更新する', async () => {

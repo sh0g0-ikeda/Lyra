@@ -18,6 +18,23 @@ class FakeS3Client {
 }
 
 describe('S3EntityImageStorage', () => {
+  it('状態画像の確定先をbase一覧と分離する', async () => {
+    const client = new FakeS3Client();
+    const storage = new S3EntityImageStorage(client, {
+      bucketName: 'images',
+      cdnBaseUrl: 'https://cdn.lyra.test',
+    });
+
+    const result = await storage.finalizeStateReferenceImage({
+      userId: 'actor-user',
+      entityId: 'entity-1',
+      stateId: 'state-1',
+      refId: 'job-1-1',
+      sourceS3Key: 'session/actor-user/entities/entity-1/job-1-1.png',
+    });
+
+    expect(result.s3Key).toBe('saved/actor-user/entities/entity-1/states/state-1/job-1-1.png');
+  });
   it('import image を tmp 配下へ保存する', async () => {
     const client = new FakeS3Client();
     const storage = new S3EntityImageStorage(client, {
