@@ -104,6 +104,9 @@ describe('PostgresAccountDeletionRepository', () => {
     expect(sql).toContain('organization_id IS NULL');
     expect(sql).toContain('personal_page_images');
     expect(sql).toContain('personal_reference_images');
+    expect(sql).toContain('personal_entity_state_reference_images');
+    expect(sql).toContain('INNER JOIN entities ON entities.id = entity_states.entity_id');
+    expect(sql).toContain('jsonb_typeof(entity_states.reference_image) = \'object\'');
     expect(sql).toContain('personal_job_candidates');
     expect(sql).toContain('personal_uploads');
     expect(sql).toContain('personal_exports');

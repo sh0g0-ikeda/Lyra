@@ -6,6 +6,7 @@ import type { DatabaseClient, TransactionRunner } from '../../src/lib/db.js';
 import { runPendingMigrations } from '../../src/lib/migrations.js';
 import { PostgresBalloonRepository } from '../../src/repositories/BalloonRepository.js';
 import { PostgresPagePanelStructureRepository } from '../../src/repositories/PagePanelStructureRepository.js';
+import { PostgresPageRepository } from '../../src/repositories/PageRepository.js';
 import { lockStoryEpisodeAdmission } from '../../src/repositories/StoryEpisodeAdmissionLock.js';
 import { PagePanelStructureService } from '../../src/services/page/PagePanelStructureService.js';
 import { withPostgresTestMigrationLock } from './postgresTestMigrationLock.js';
@@ -29,7 +30,7 @@ describePostgres('page panel structure safety', () => {
       new PoolTransactionDatabase(pool),
       { migrationLockPollMs: 1, migrationLockMaxAttempts: 10 },
     ));
-    expect(applied.at(-1)).toBe('039_connect_generation_terminal_push_outbox.sql');
+    expect(applied.at(-1)).toBe('040_add_entity_state_variants.sql');
   }, 120_000);
 
   afterAll(async () => {
@@ -40,6 +41,49 @@ describePostgres('page panel structure safety', () => {
       assertSafeSchemaName(schemaName);
       await adminPool.query(`DROP SCHEMA ${schemaName} CASCADE`);
       await adminPool.end();
+    }
+  });
+
+  it('旧注記と不正な旧IDも含む状態割当を課金前検証へ送り読取を止めない', async () => {
+    const ids = createFixtureIds();
+    const entityId = randomUUID();
+    const stateId = randomUUID();
+    try {
+      await insertFixture(pool, ids);
+      await pool.query(
+        `INSERT INTO entities (id, work_id, user_id, name)
+         VALUES ($1::uuid, $2::uuid, $3::uuid, 'State guard character')`,
+        [entityId, ids.workId, ids.userId],
+      );
+      await pool.query(
+        `INSERT INTO entity_states (id, entity_id, costume_note)
+         VALUES ($1::uuid, $2::uuid, 'legacy note')`,
+        [stateId, entityId],
+      );
+      const repository = new PostgresPageRepository(new PoolTransactionDatabase(pool));
+      const assign = async (assignedStateId: string): Promise<void> => {
+        await pool.query(
+          'UPDATE panels SET entities = $2::jsonb WHERE id = $1::uuid',
+          [ids.panelIds[0], JSON.stringify([{ entity_id: entityId, state_id: assignedStateId }])],
+        );
+      };
+
+      await assign(stateId);
+      expect((await repository.findGenerationContextByIdAndUserId(ids.pageId, ids.userId))?.hasVariantState).toBe(true);
+
+      await pool.query(
+        `UPDATE entity_states SET name = 'Wounded', description = 'Scar on left cheek' WHERE id = $1::uuid`,
+        [stateId],
+      );
+      expect((await repository.findGenerationContextByIdAndUserId(ids.pageId, ids.userId))?.hasVariantState).toBe(true);
+
+      await assign('invalid-legacy-state-id');
+      expect((await repository.findGenerationContextByIdAndUserId(ids.pageId, ids.userId))?.hasVariantState).toBe(true);
+
+      await assign(randomUUID());
+      expect((await repository.findGenerationContextByIdAndUserId(ids.pageId, ids.userId))?.hasVariantState).toBe(true);
+    } finally {
+      await removeFixture(pool, ids);
     }
   });
 

@@ -5,6 +5,7 @@ import type { GenerationJob } from '../../domain/types/job.js';
 import type {
   PageGenerationInputImage,
   PageGenerationInputSnapshot,
+  PageGenerationInputSnapshotReference,
   PersistedPageGenerationJobParams,
 } from '../../domain/types/pageGeneration.js';
 import type { PageStatus } from '../../domain/types/page.js';
@@ -113,6 +114,7 @@ export interface BuildPageGenerationInputImagesInput {
 }
 
 export interface PageGenerationInputImageBuilderPort {
+  assertRenderableState(input: BuildPageGenerationInputImagesInput): Promise<void>;
   buildInputImages(input: BuildPageGenerationInputImagesInput): Promise<PageGenerationInputImage[]>;
 }
 
@@ -154,6 +156,11 @@ export class PageGenerationWorkerService {
     try {
       const startedAtMs = Date.now();
       const stageTimingsMs = createEmptyPageGenerationStageTimings();
+      await this.inputImageBuilder.assertRenderableState({
+        userId: job.userId,
+        organizationId: job.organizationId ?? null,
+        pageId: params.page_id,
+      });
       await this.touchJobProgress(job, 'Building page prompt.');
       const builtPrompt = await measurePageGenerationStage(stageTimingsMs, 'prompt_build', () =>
         this.promptBuilder.buildPagePrompt({
@@ -559,13 +566,43 @@ function appendInputImageSnapshot(
   snapshot: PageGenerationInputSnapshot,
   inputImages: PageGenerationInputImage[],
 ): PageGenerationInputSnapshot {
+  const references: PageGenerationInputSnapshotReference[] = inputImages.flatMap((image, index) => {
+    if (image.role !== 'entity_reference' || image.reference === undefined) {
+      return [];
+    }
+    if (image.label !== image.reference.subjectLabel) {
+      throw new ConfigurationError('Page reference image label changed while preparing generation');
+    }
+    return [{ ...image.reference, modelInputOrder: index + 1 }];
+  });
+  if (snapshot.references !== undefined && !sameReferenceSnapshots(snapshot.references, references)) {
+    throw new ConfigurationError('Page reference images changed while preparing generation');
+  }
   return {
     ...snapshot,
+    ...(references.length > 0 || snapshot.references !== undefined ? { references } : {}),
     inputImages: inputImages.map((image) => ({
       role: image.role,
       label: image.label,
     })),
   };
+}
+
+function sameReferenceSnapshots(
+  expected: PageGenerationInputSnapshotReference[],
+  actual: PageGenerationInputSnapshotReference[],
+): boolean {
+  return expected.length === actual.length && expected.every((reference, index) => {
+    const image = actual[index];
+    return image !== undefined
+      && reference.entityId === image.entityId
+      && reference.stateId === image.stateId
+      && reference.refId === image.refId
+      && reference.s3Key === image.s3Key
+      && reference.imageModel === image.imageModel
+      && reference.subjectLabel === image.subjectLabel
+      && reference.modelInputOrder === image.modelInputOrder;
+  });
 }
 
 async function compilePromptSafely(

@@ -119,6 +119,10 @@ const envSchema = z.object({
     .string()
     .optional()
     .transform((value) => (value === undefined ? true : value === 'true')),
+  ENTITY_STATE_REFERENCE_GENERATION_ENABLED: z
+    .string()
+    .optional()
+    .transform((value) => value === 'true'),
   ENTITY_IMPORT_ANALYSIS_ENABLED: z
     .string()
     .optional()

@@ -15,7 +15,11 @@ import type {
 import type { PanelEntityAssignment } from '../../domain/types/panelEntityAssignment.js';
 import { buildRenderingStyleAnchorLines } from '../../domain/types/styleReference.js';
 import type { CompositionGalleryRepository } from '../../repositories/CompositionGalleryRepository.js';
-import type { EntityRepository } from '../../repositories/EntityRepository.js';
+import type {
+  EntityReferenceAssignment,
+  EntityRepository,
+  EntityResolvedReferenceImage,
+} from '../../repositories/EntityRepository.js';
 import type { PageRepository } from '../../repositories/PageRepository.js';
 import type { PanelRepository } from '../../repositories/PanelRepository.js';
 
@@ -40,6 +44,7 @@ export interface PromptBuilderPort {
 
 interface NormalizedReferenceRole {
   entityId: string | null;
+  stateId: string | null;
   imageLabel: string;
   role: 'character_reference' | 'layout_reference';
   subject: string;
@@ -103,16 +108,15 @@ export class PromptBuilder implements PromptBuilderPort {
     const entityMap = new Map(entities.map((entity) => [entity.id, entity]));
     // Fetch the exact reference set used by the renderer so "Image 1 / Image 2 ..."
     // in the compiled prompt always matches the actual uploaded image order.
-    const referencedEntityIds = new Set(
-      (
-        await this.entityRepository.findPrimaryReferenceImagesByEntityIdsAndUserId(
-          collectOrderedEntityIds(panels),
-          page.workId,
-          input.userId,
-          organizationId,
-        )
-      ).map((reference) => reference.entityId),
+    const assignments = collectOrderedAssignments(panels);
+    const references = await resolveReferences(
+      this.entityRepository,
+      assignments,
+      page.workId,
+      input.userId,
+      organizationId,
     );
+    assertResolvedStates(assignments, references);
     const compositionGalleryItems = await this.compositionGalleryRepository.findByIds(
       panels
         .map((panel) => panel.composition.galleryItemId)
@@ -125,7 +129,7 @@ export class PromptBuilder implements PromptBuilderPort {
       panels,
       entityMap,
       compositionMap,
-      referencedEntityIds,
+      references,
       input,
     );
 
@@ -133,7 +137,13 @@ export class PromptBuilder implements PromptBuilderPort {
       workId: page.workId,
       draftPrompt: buildDraftPrompt(normalized),
       compilerBrief: buildCompilerBrief(normalized),
-      inputSnapshot: buildPageGenerationInputSnapshot(input.pageId, input, panels, entityMap),
+      inputSnapshot: buildPageGenerationInputSnapshot(
+        input.pageId,
+        input,
+        panels,
+        entityMap,
+        references,
+      ),
     };
   }
 }
@@ -143,6 +153,7 @@ function buildPageGenerationInputSnapshot(
   input: BuildPagePromptInput,
   panels: Panel[],
   entityMap: Map<string, Entity>,
+  references: EntityResolvedReferenceImage[],
 ): PageGenerationInputSnapshot {
   const orderedPanels = [...panels].sort((left, right) => left.order - right.order);
   return {
@@ -171,6 +182,7 @@ function buildPageGenerationInputSnapshot(
         })),
       };
     }),
+    references: buildInputSnapshotReferences(orderedPanels, references, entityMap),
   };
 }
 
@@ -181,12 +193,12 @@ function normalizePagePrompt(
   panels: Panel[],
   entityMap: Map<string, Entity>,
   compositionMap: Map<string, CompositionGalleryItem>,
-  referencedEntityIds: Set<string>,
+  references: EntityResolvedReferenceImage[],
   input: BuildPagePromptInput,
 ): NormalizedPagePrompt {
   const orderedPanels = [...panels].sort((left, right) => left.order - right.order);
   assertContiguousPanelOrder(orderedPanels);
-  const referenceRoles = buildReferenceRoles(page, orderedPanels, entityMap, referencedEntityIds);
+  const referenceRoles = buildReferenceRoles(page, orderedPanels, entityMap, references);
   const referenceLabelByEntityId = buildReferenceLabelMap(referenceRoles);
 
   return {
@@ -272,43 +284,61 @@ function buildReferenceRoles(
   page: PagePromptContext,
   panels: Panel[],
   entityMap: Map<string, Entity>,
-  referencedEntityIds: Set<string>,
+  references: EntityResolvedReferenceImage[],
 ): NormalizedReferenceRole[] {
   const orderedAssignments = new Map<string, PanelEntityAssignment>();
-  const panelOrdersByEntityId = new Map<string, number[]>();
+  const panelOrdersByAssignment = new Map<string, number[]>();
   for (const panel of panels) {
     for (const assignment of panel.entities) {
-      if (!orderedAssignments.has(assignment.entityId)) {
-        orderedAssignments.set(assignment.entityId, assignment);
+      const key = referenceKey(assignment.entityId, assignment.stateId);
+      if (!orderedAssignments.has(key)) {
+        orderedAssignments.set(key, assignment);
       }
 
-      const panelOrders = panelOrdersByEntityId.get(assignment.entityId) ?? [];
+      const panelOrders = panelOrdersByAssignment.get(key) ?? [];
       if (!panelOrders.includes(panel.order)) {
         panelOrders.push(panel.order);
       }
-      panelOrdersByEntityId.set(assignment.entityId, panelOrders);
+      panelOrdersByAssignment.set(key, panelOrders);
     }
   }
 
-  const roles: NormalizedReferenceRole[] = Array.from(orderedAssignments.keys())
-    .filter((entityId) => referencedEntityIds.has(entityId))
-    .map((entityId, index) => {
-      const entity = entityMap.get(entityId);
-      const entityName = entity?.name ?? `Unknown entity ${entityId}`;
-      const anchor = summarizeEntityAnchor(entity);
-      const panelScope = formatPanelOrderList(panelOrdersByEntityId.get(entityId) ?? []);
-      return {
-        entityId,
-        imageLabel: `Image ${index + 1} (${entityName})`,
-        role: 'character_reference' as const,
-        subject: entityName,
-        instruction: `${entityName} character reference. Use this image only for ${entityName}; never use it as another character. ${entityName} is allowed only in ${panelScope} where listed in the subject lock. Keep ${entityName}'s face, hair shape, clothing silhouette, and color blocking stable when ${entityName} appears. ${anchor}`.trim(),
-      };
+  const referenceByAssignment = new Map(
+    references.filter(hasResolvedImage).map((reference) => [
+      referenceKey(reference.entityId, reference.stateId),
+      reference,
+    ]),
+  );
+  const roles: NormalizedReferenceRole[] = [];
+  for (const [key, assignment] of orderedAssignments) {
+    const reference = referenceByAssignment.get(key);
+    if (reference === undefined) {
+      continue;
+    }
+    const entity = entityMap.get(assignment.entityId);
+    const entityName = buildSubjectLabel(
+      entity?.name ?? `Unknown entity ${assignment.entityId}`,
+      reference.stateName,
+      Array.from(orderedAssignments.values()).some((candidate) => (
+        candidate.entityId === assignment.entityId && candidate.stateId !== null
+      )),
+    );
+    const anchor = summarizeEntityAnchor(entity);
+    const panelScope = formatPanelOrderList(panelOrdersByAssignment.get(key) ?? []);
+    roles.push({
+      entityId: assignment.entityId,
+      stateId: assignment.stateId,
+      imageLabel: `Image ${roles.length + 1} (${entityName})`,
+      role: 'character_reference',
+      subject: entityName,
+      instruction: `${entityName} character reference. Use this image only for ${entityName}; never use it as another character. ${entityName} is allowed only in ${panelScope} where listed in the subject lock. Keep ${entityName}'s face, hair shape, clothing silhouette, and color blocking stable when ${entityName} appears. ${anchor}`.trim(),
     });
+  }
 
   if (page.layoutConfig.type === 'custom') {
     roles.push({
       entityId: null,
+      stateId: null,
       imageLabel: `Image ${roles.length + 1} (layout)`,
       role: 'layout_reference',
       subject: 'page layout',
@@ -324,7 +354,7 @@ function buildReferenceLabelMap(referenceRoles: NormalizedReferenceRole[]): Map<
   return new Map(
     referenceRoles.flatMap((role) =>
       role.role === 'character_reference' && role.entityId !== null
-        ? [[role.entityId, role.imageLabel] as const]
+        ? [[referenceKey(role.entityId, role.stateId), role.imageLabel] as const]
         : [],
     ),
   );
@@ -365,7 +395,11 @@ function buildSubjectLock(
   const details = assignments.map((assignment) => {
     const entity = entityMap.get(assignment.entityId);
     const entityName = entity?.name ?? `Unknown entity ${assignment.entityId}`;
-    const referenceLabel = referenceLabelByEntityId.get(assignment.entityId);
+    const referenceLabel = findReferenceLabel(
+      referenceLabelByEntityId,
+      assignment.entityId,
+      assignment.stateId,
+    );
     const visualAnchor = summarizeEntityVisualIdentity(entity);
     const position = `${humanizeToken(assignment.position)} zone`;
     const facing = assignment.facingDirection === null
@@ -414,7 +448,11 @@ function buildCharacterBeat(
     .map((assignment) => {
       const entity = entityMap.get(assignment.entityId);
       const entityName = entity?.name ?? `Unknown entity ${assignment.entityId}`;
-      const referenceLabel = referenceLabelByEntityId.get(assignment.entityId);
+      const referenceLabel = findReferenceLabel(
+        referenceLabelByEntityId,
+        assignment.entityId,
+        assignment.stateId,
+      );
       const visualAnchor = summarizeEntityVisualIdentity(entity);
       const expression = assignment.expression === 'custom' ? assignment.customExpression : assignment.expression;
       const action = assignment.action === 'custom' ? assignment.customAction : assignment.action;
@@ -498,7 +536,13 @@ function buildDialogueBeats(
   referenceLabelByEntityId: Map<string, string>,
 ): string[] {
   return panel.dialogue.map((dialogue) =>
-    formatDialogueLine(panel.order, dialogue, entityMap, referenceLabelByEntityId),
+    formatDialogueLine(
+      panel.order,
+      dialogue,
+      entityMap,
+      referenceLabelByEntityId,
+      findAssignedStateId(panel.entities, dialogue.entityId),
+    ),
   );
 }
 
@@ -517,7 +561,12 @@ function buildDialogueLock(
       return `line ${ordinal} is narration text and must remain narration, not character speech: "${dialogue.text}"`;
     }
 
-    const speaker = formatEntityReferenceIdentity(dialogue.entityId, entityMap, referenceLabelByEntityId);
+    const speaker = formatEntityReferenceIdentity(
+      dialogue.entityId,
+      entityMap,
+      referenceLabelByEntityId,
+      findAssignedStateId(panel.entities, dialogue.entityId),
+    );
     return `line ${ordinal} must stay assigned to ${speaker} exactly as written: "${dialogue.text}". Do not assign this line to any other subject or reference image`;
   });
 
@@ -533,7 +582,12 @@ function buildVisualLock(
   const subjectNames = panel.entities
     .slice()
     .sort((left, right) => assignmentRoleWeight(left.role) - assignmentRoleWeight(right.role))
-    .map((assignment) => formatEntityVisualLockSubject(assignment.entityId, entityMap, referenceLabelByEntityId))
+    .map((assignment) => formatEntityVisualLockSubject(
+      assignment.entityId,
+      entityMap,
+      referenceLabelByEntityId,
+      assignment.stateId,
+    ))
     .filter((value, index, values) => values.indexOf(value) === index);
   const situationCue = normalizePanelSituation(panel.situationText);
   const backgroundCue = sanitizePromptField(panel.backgroundNote, 100) ?? '';
@@ -771,10 +825,11 @@ function formatDialogueLine(
   dialogue: PanelDialogueLine,
   entityMap: Map<string, Entity>,
   referenceLabelByEntityId: Map<string, string>,
+  stateId: string | null,
 ): string {
   const speaker = dialogue.entityId === null
     ? null
-    : formatEntityReferenceIdentity(dialogue.entityId, entityMap, referenceLabelByEntityId);
+    : formatEntityReferenceIdentity(dialogue.entityId, entityMap, referenceLabelByEntityId, stateId);
   const prefix =
     speaker === null
       ? `Panel ${panelOrder} dialogue`
@@ -901,10 +956,11 @@ function formatEntityReferenceIdentity(
   entityId: string,
   entityMap: Map<string, Entity>,
   referenceLabelByEntityId: Map<string, string>,
+  stateId: string | null,
 ): string {
   const entity = entityMap.get(entityId);
   const entityName = entity?.name ?? `Unknown entity ${entityId}`;
-  const referenceLabel = referenceLabelByEntityId.get(entityId);
+  const referenceLabel = findReferenceLabel(referenceLabelByEntityId, entityId, stateId);
   const visualIdentity = summarizeEntityVisualIdentity(entity);
   return [
     entityName,
@@ -919,10 +975,11 @@ function formatEntityVisualLockSubject(
   entityId: string,
   entityMap: Map<string, Entity>,
   referenceLabelByEntityId: Map<string, string>,
+  stateId: string | null,
 ): string {
   const entity = entityMap.get(entityId);
   const entityName = entity?.name ?? entityId;
-  const referenceLabel = referenceLabelByEntityId.get(entityId);
+  const referenceLabel = findReferenceLabel(referenceLabelByEntityId, entityId, stateId);
   const visualIdentity = summarizeEntityVisualIdentity(entity);
   const details = [
     referenceLabel,
@@ -1035,15 +1092,150 @@ function readFieldString(fields: Record<string, unknown>, key: string): string |
   return normalized.length === 0 ? null : normalized;
 }
 
-function collectOrderedEntityIds(panels: Panel[]): string[] {
-  const orderedEntityIds = new Set<string>();
+function collectOrderedAssignments(panels: Panel[]): EntityReferenceAssignment[] {
+  const assignments = new Map<string, EntityReferenceAssignment>();
   for (const panel of panels) {
     for (const assignment of panel.entities) {
-      orderedEntityIds.add(assignment.entityId);
+      assignments.set(referenceKey(assignment.entityId, assignment.stateId), {
+        entityId: assignment.entityId,
+        stateId: assignment.stateId,
+      });
     }
   }
 
-  return Array.from(orderedEntityIds);
+  return Array.from(assignments.values());
+}
+
+async function resolveReferences(
+  repository: EntityRepository,
+  assignments: EntityReferenceAssignment[],
+  workId: string,
+  userId: string,
+  organizationId: string | null,
+): Promise<EntityResolvedReferenceImage[]> {
+  if (repository.findResolvedReferenceImagesByAssignmentsAndUserId !== undefined) {
+    return repository.findResolvedReferenceImagesByAssignmentsAndUserId(
+      assignments,
+      workId,
+      userId,
+      organizationId,
+    );
+  }
+  const primaryReferences = await repository.findPrimaryReferenceImagesByEntityIdsAndUserId(
+    Array.from(new Set(assignments.map((assignment) => assignment.entityId))),
+    workId,
+    userId,
+    organizationId,
+  );
+  return assignments.map((assignment) => {
+    const primaryReference = primaryReferences.find(
+      (reference) => reference.entityId === assignment.entityId,
+    );
+    return {
+      entityId: assignment.entityId,
+      stateId: assignment.stateId,
+      stateName: null,
+      stateDescription: null,
+      stateExists: assignment.stateId === null,
+      ownerUserId: primaryReference?.ownerUserId ?? userId,
+      refId: primaryReference?.refId ?? null,
+      s3Key: primaryReference?.s3Key ?? null,
+      cdnUrl: primaryReference?.cdnUrl ?? null,
+      imageModel: null,
+    };
+  });
+}
+
+function assertResolvedStates(
+  assignments: EntityReferenceAssignment[],
+  references: EntityResolvedReferenceImage[],
+): void {
+  for (const assignment of assignments) {
+    if (assignment.stateId === null) {
+      continue;
+    }
+    const reference = references.find((candidate) => (
+      candidate.entityId === assignment.entityId && candidate.stateId === assignment.stateId
+    ));
+    if (
+      reference === undefined
+      || !reference.stateExists
+      || (reference.stateDescription !== null && !hasResolvedImage(reference))
+    ) {
+      throw new ValidationError('Assigned character state requires a confirmed reference image before page generation');
+    }
+  }
+}
+
+function hasResolvedImage(
+  reference: EntityResolvedReferenceImage,
+): reference is EntityResolvedReferenceImage & { refId: string; s3Key: string } {
+  return reference.refId !== null && reference.s3Key !== null;
+}
+
+function referenceKey(entityId: string, stateId: string | null): string {
+  return `${entityId}:${stateId ?? 'default'}`;
+}
+
+function findReferenceLabel(
+  labels: Map<string, string>,
+  entityId: string,
+  stateId: string | null,
+): string | undefined {
+  return labels.get(referenceKey(entityId, stateId));
+}
+
+function findAssignedStateId(
+  assignments: PanelEntityAssignment[],
+  entityId: string | null,
+): string | null {
+  if (entityId === null) {
+    return null;
+  }
+  return assignments.find((assignment) => assignment.entityId === entityId)?.stateId ?? null;
+}
+
+function buildSubjectLabel(canonicalName: string, stateName: string | null, includeDefault: boolean): string {
+  if (stateName === null && !includeDefault) {
+    return canonicalName;
+  }
+  return `${canonicalName} / ${stateName ?? 'default'}`;
+}
+
+function buildInputSnapshotReferences(
+  panels: Panel[],
+  references: EntityResolvedReferenceImage[],
+  entityMap: Map<string, Entity>,
+): NonNullable<PageGenerationInputSnapshot['references']> {
+  const assignments = collectOrderedAssignments(panels);
+  const referenceByAssignment = new Map(
+    references.filter(hasResolvedImage).map((reference) => [
+      referenceKey(reference.entityId, reference.stateId),
+      reference,
+    ]),
+  );
+  return assignments.flatMap((assignment) => {
+    const reference = referenceByAssignment.get(referenceKey(assignment.entityId, assignment.stateId));
+    if (reference === undefined) {
+      return [];
+    }
+    const subjectLabel = buildSubjectLabel(
+      entityMap.get(assignment.entityId)?.name ?? assignment.entityId,
+      reference.stateName,
+      assignments.some((candidate) => (
+        candidate.entityId === assignment.entityId && candidate.stateId !== null
+      )),
+    );
+    return [{
+      entityId: assignment.entityId,
+      stateId: assignment.stateId,
+      refId: reference.refId,
+      s3Key: reference.s3Key,
+      imageModel: reference.imageModel,
+      subjectLabel,
+      modelInputOrder: 0,
+    }];
+  }).map((reference, index) => ({ ...reference, modelInputOrder: index + 1 }));
 }
 
 function normalizeSentence(value: string, includeTrailingPeriod = true): string {

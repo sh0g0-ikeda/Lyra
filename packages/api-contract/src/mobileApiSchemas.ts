@@ -839,6 +839,39 @@ export const entityReferenceGenerationResponseSchema = z
   })
   .strict();
 
+export const entityStateReferenceGenerationBodySchema = z.object({}).strict();
+
+export const entityStateReferenceGenerationResponseSchema = z
+  .object({
+    job_id: idSchema,
+    state_revision: timestampSchema,
+  })
+  .strict();
+
+export const confirmEntityStateReferenceBodySchema = z
+  .object({
+    candidate_token: z.string().trim().min(1).max(4096),
+    expected_state_revision: timestampSchema,
+  })
+  .strict();
+
+export const entityStateReferenceResponseSchema = z
+  .object({
+    entity_id: idSchema,
+    state_id: idSchema,
+    state_revision: timestampSchema,
+    reference_image: z
+      .object({
+        ref_id: z.string().min(1).max(256),
+        image_model: z.string().min(1).max(200),
+        base_ref_id: z.string().min(1).max(256),
+        created_at: timestampSchema,
+        input_fingerprint: z.string().regex(/^[0-9a-f]{64}$/u),
+      })
+      .strict(),
+  })
+  .strict();
+
 export const sceneSchema = z.object({
   id: idSchema,
   episode_id: idSchema,
@@ -866,6 +899,8 @@ export const entityStateSchema = z.object({
   id: idSchema,
   entity_id: idSchema,
   scene_id: nullableStringSchema,
+  name: nullableStringSchema.optional(),
+  description: nullableStringSchema.optional(),
   costume_note: nullableStringSchema,
   costume_ref_id: nullableStringSchema,
   condition_note: nullableStringSchema,
@@ -873,6 +908,7 @@ export const entityStateSchema = z.object({
   expression_default: z.string().min(1).max(100),
   extra_note: nullableStringSchema,
   created_at: timestampSchema,
+  updated_at: timestampSchema.optional(),
 });
 
 export const entityStatesResponseSchema = z.object({

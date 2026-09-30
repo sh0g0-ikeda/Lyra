@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { EntityReferencePromptBuilder } from '../../../../src/services/entity/EntityReferencePromptBuilder.js';
 import type { EntityReferenceContext } from '../../../../src/domain/types/entityReference.js';
+import type { EntityStateReferenceContext } from '../../../../src/domain/types/entityStateReference.js';
 
 const baseContext: EntityReferenceContext = {
   entityId: 'entity-1',
@@ -55,6 +56,37 @@ const baseContext: EntityReferenceContext = {
 };
 
 describe('EntityReferencePromptBuilder', () => {
+  it('状態previewはbaseの同一人物を維持し自由入力の変更だけを要求する', () => {
+    const builder = new EntityReferencePromptBuilder();
+    const stateContext: EntityStateReferenceContext = {
+      entityId: baseContext.entityId,
+      workId: baseContext.workId,
+      entityOwnerUserId: baseContext.userId,
+      entityType: baseContext.entityType,
+      entityName: baseContext.name,
+      entityFreeDescription: baseContext.freeDescription,
+      entityStructuredFields: baseContext.structuredFields,
+      entityPromptSupplement: baseContext.promptSupplement,
+      entityStatus: baseContext.status,
+      stateId: 'state-1',
+      stateName: '外傷',
+      stateDescription: '左頬に傷、服の右肩が破れている',
+      stateRevision: '2026-09-30T00:00:00.000Z',
+      baseReference: {
+        refId: 'base-ref-1',
+        s3Key: 'saved/user-1/entities/entity-1/base-ref-1.png',
+        storageOwnerUserId: 'user-1',
+      },
+      referenceImage: null,
+    };
+
+    const prompt = builder.buildStateGenerationPrompt(stateContext);
+
+    expect(prompt).toContain('左頬に傷、服の右肩が破れている');
+    expect(prompt).toContain('same subject identity');
+    expect(prompt).toContain('"外傷" is a state label');
+    expect(prompt).not.toContain('a new character named 外傷');
+  });
   it('最小入力でも fallback prompt が自然文として破綻しない', () => {
     const builder = new EntityReferencePromptBuilder();
 

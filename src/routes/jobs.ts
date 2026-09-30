@@ -12,7 +12,10 @@ import {
 import type { GenerationJob } from '../domain/types/job.js';
 import { signImageCdnUrl } from '../infrastructure/aws/CloudFrontImageUrlSigner.js';
 import { env } from '../lib/env.js';
-import { createReferenceCandidateToken } from '../services/entity/ReferenceCandidateToken.js';
+import {
+  createReferenceCandidateToken,
+  createStateReferenceCandidateToken,
+} from '../services/entity/ReferenceCandidateToken.js';
 import type { JobServicePort } from '../services/job/JobService.js';
 import type { AppEnv } from '../types/app.js';
 import {
@@ -255,7 +258,7 @@ async function toEntityGenerationResultResponse(job: GenerationJob): Promise<Rec
   const entityId = typeof job.params.entity_id === 'string' ? job.params.entity_id : null;
   const candidates = entityId === null
     ? []
-    : await toEntityCandidateResponse(result.candidates, job.userId, entityId);
+    : await toEntityCandidateResponse(result.candidates, job, entityId);
   if (candidates.length > 0) {
     response.candidates = candidates;
   }
@@ -301,7 +304,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 async function toEntityCandidateResponse(
   value: unknown,
-  userId: string,
+  job: GenerationJob,
   entityId: string,
 ): Promise<Array<Record<string, unknown>>> {
   if (!Array.isArray(value)) {
@@ -317,14 +320,33 @@ async function toEntityCandidateResponse(
       ? await signImageCdnUrl(candidate.cdn_url, candidate.s3_key)
       : null;
 
+    const stateId = job.params.target === 'entity_state' && typeof job.params.entity_state_id === 'string'
+      ? job.params.entity_state_id
+      : null;
+    if (job.params.target === 'entity_state' && stateId === null) {
+      return null;
+    }
+    const candidateToken = stateId === null
+      ? createReferenceCandidateToken({
+          userId: job.userId,
+          entityId,
+          s3Key: candidate.s3_key,
+        }, {
+          secret: getReferenceCandidateTokenSecret(),
+        })
+      : createStateReferenceCandidateToken({
+          userId: job.userId,
+          organizationId: job.organizationId ?? null,
+          entityId,
+          stateId,
+          jobId: job.id,
+          s3Key: candidate.s3_key,
+        }, {
+          secret: getReferenceCandidateTokenSecret(),
+        });
+
     return {
-      candidate_token: createReferenceCandidateToken({
-        userId,
-        entityId,
-        s3Key: candidate.s3_key,
-      }, {
-        secret: getReferenceCandidateTokenSecret(),
-      }),
+      candidate_token: candidateToken,
       ...(signedCdnUrl === null ? {} : { cdn_url: signedCdnUrl }),
     };
   }));
