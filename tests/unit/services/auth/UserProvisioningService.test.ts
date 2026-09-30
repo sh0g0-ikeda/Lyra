@@ -13,6 +13,8 @@ import type {
 class FakeUserRepository implements UserRepository {
   public existingUserBySupabaseId: AuthenticatedUser | null = null;
   public existingUserByEmail: AuthenticatedUser | null = null;
+  public firstEmailLookupReturnsNull = false;
+  public findByEmailCalls = 0;
   public insertedUser: AuthenticatedUser = buildUser();
   public updatedUser: AuthenticatedUser = buildUser();
   public linkedUser: AuthenticatedUser = buildUser();
@@ -25,6 +27,10 @@ class FakeUserRepository implements UserRepository {
   }
 
   public async findByEmail(): Promise<AuthenticatedUser | null> {
+    this.findByEmailCalls += 1;
+    if (this.firstEmailLookupReturnsNull && this.findByEmailCalls === 1) {
+      return null;
+    }
     return this.existingUserByEmail;
   }
 
@@ -162,6 +168,60 @@ describe('UserProvisioningService', () => {
     expect(repository.linkByEmailCalls).toEqual([
       { email: 'user@example.com', supabaseId: 'new-provider-sub' },
     ]);
+    expect(creditService.signupBonusUserIds).toEqual([]);
+  });
+
+  // Spec §4: 既存Cognito移行は維持し、外部IdPのメール一致だけでは既存資産の所有者を変えない。
+  it('Google由来の別subjectが既存メールと一致する場合はユーザーを付け替えない', async () => {
+    const repository = new FakeUserRepository();
+    repository.existingUserByEmail = buildUser({ supabaseId: 'native-sub' });
+    const creditService = new FakeCreditService();
+    const service = new UserProvisioningService(repository, creditService);
+
+    await expect(service.provisionFromSupabaseClaims({
+      sub: 'google-sub',
+      email: 'user@example.com',
+      identityProvider: 'federated',
+    })).rejects.toMatchObject({ code: 'ACCOUNT_LINK_REQUIRED', statusCode: 409 });
+
+    expect(repository.linkByEmailCalls).toEqual([]);
+    expect(creditService.signupBonusUserIds).toEqual([]);
+  });
+
+  it('連携済みGoogle subjectが既存ユーザーと一致する場合は同じ内部IDで返す', async () => {
+    const repository = new FakeUserRepository();
+    repository.existingUserBySupabaseId = buildUser({ supabaseId: 'linked-sub' });
+    const creditService = new FakeCreditService();
+    const service = new UserProvisioningService(repository, creditService);
+
+    const result = await service.provisionFromSupabaseClaims({
+      sub: 'linked-sub',
+      email: 'user@example.com',
+      identityProvider: 'federated',
+    });
+
+    expect(result.user.id).toBe(repository.existingUserBySupabaseId.id);
+    expect(result.isNewUser).toBe(false);
+    expect(repository.linkByEmailCalls).toEqual([]);
+    expect(creditService.signupBonusUserIds).toEqual([]);
+  });
+
+  it('Google初回登録のemail一意競合でも既存ユーザーへ付け替えない', async () => {
+    const repository = new FakeUserRepository();
+    repository.insertError = { code: '23505' };
+    repository.existingUserByEmail = buildUser({ supabaseId: 'native-sub' });
+    repository.firstEmailLookupReturnsNull = true;
+    const creditService = new FakeCreditService();
+    const service = new UserProvisioningService(repository, creditService);
+
+    await expect(service.provisionFromSupabaseClaims({
+      sub: 'google-sub',
+      email: 'user@example.com',
+      identityProvider: 'federated',
+    })).rejects.toMatchObject({ code: 'ACCOUNT_LINK_REQUIRED', statusCode: 409 });
+
+    expect(repository.linkByEmailCalls).toEqual([]);
+    expect(repository.findByEmailCalls).toBe(2);
     expect(creditService.signupBonusUserIds).toEqual([]);
   });
 
