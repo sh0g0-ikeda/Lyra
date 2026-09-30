@@ -125,12 +125,7 @@ async function verifyCognitoToken(
         ? { issuer: config.issuer, audience: allowedClientIds, algorithms: ['RS256'] }
         : { issuer: config.issuer, algorithms: ['RS256'] };
     const result = await jwtVerify(token, jwks, verifyOptions);
-    const claims = parseCognitoClaims(result.payload, config);
-
-    return {
-      sub: claims.sub,
-      email: claims.email,
-    };
+    return parseCognitoClaims(result.payload, config);
   } catch (error) {
     logCognitoAuthRejection(error, config);
     if (error instanceof ConfigurationError || error instanceof UnauthorizedError) {
@@ -185,7 +180,26 @@ function parseCognitoClaims(
   }
   assertRequiredGroups(payload['cognito:groups'], config.requiredGroups);
 
-  return parsed.data;
+  return {
+    ...parsed.data,
+    ...(isFederatedCognitoIdentity(payload) ? { identityProvider: 'federated' as const } : {}),
+  };
+}
+
+function isFederatedCognitoIdentity(payload: Record<string, unknown>): boolean {
+  const identities = payload.identities;
+  if (Array.isArray(identities)) {
+    return identities.length > 0;
+  }
+  if (typeof identities === 'string') {
+    return identities.trim().length > 0;
+  }
+  if (identities !== null && typeof identities === 'object') {
+    return true;
+  }
+
+  const username = payload['cognito:username'] ?? payload.username;
+  return typeof username === 'string' && /^google_/iu.test(username);
 }
 
 function isVerifiedEmailClaim(emailVerified: unknown): boolean {

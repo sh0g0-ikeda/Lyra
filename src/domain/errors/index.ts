@@ -53,6 +53,12 @@ export class ConflictError extends AppError {
   }
 }
 
+export class AccountLinkRequiredError extends AppError {
+  public constructor() {
+    super('ACCOUNT_LINK_REQUIRED', 'Use the existing sign-in method and link this provider from your account.', 409);
+  }
+}
+
 export class InsufficientCreditsError extends AppError {
   public constructor() {
     super('INSUFFICIENT_CREDITS', 'Credit balance is insufficient', 402);
