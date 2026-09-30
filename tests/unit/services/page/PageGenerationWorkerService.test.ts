@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import sharp from 'sharp';
 import { ConfigurationError } from '../../../../src/domain/errors/index.js';
 import type { CreditBalanceSnapshot } from '../../../../src/domain/types/credit.js';
 import type { GenerationJob } from '../../../../src/domain/types/job.js';
@@ -340,6 +341,68 @@ describe('PageGenerationWorkerService', () => {
     expect(creditService.refunds).toHaveLength(1);
   });
 
+  it('白黒jobの場合に保存画像の全画素を無彩色にする', async () => {
+    const repository = new FakeExecutionRepository();
+    repository.claimedJob = buildJob({ params: { ...buildJob().params, render_style: 'monochrome' } });
+    const renderer = new FakeRenderer();
+    renderer.imageData = await sharp(Buffer.from([255, 0, 0, 0, 0, 255]), {
+      raw: { width: 2, height: 1, channels: 3 },
+    }).png().toBuffer();
+    const storage = new FakeStorage();
+    const builder = new FakePromptBuilder();
+    const service = new PageGenerationWorkerService(
+      repository, builder, new FakePromptCompiler(), new FakeInputImageBuilder(),
+      new FakePlanner(), renderer, storage, new FakeCreditService(),
+    );
+
+    const result = await service.processJob('job-1');
+    const pixels = await sharp(storage.calls[0]?.imageData).raw().toBuffer({ resolveWithObject: true });
+
+    expect(result).toEqual({ status: 'processed', jobStatus: 'completed' });
+    expect(builder.calls[0]).toMatchObject({ renderStyle: 'monochrome' });
+    expect(storage.calls[0]?.mimeType).toBe('image/png');
+    for (let offset = 0; offset < pixels.data.length; offset += pixels.info.channels) {
+      expect(pixels.data[offset]).toBe(pixels.data[offset + 1]);
+      expect(pixels.data[offset + 1]).toBe(pixels.data[offset + 2]);
+    }
+  });
+
+  it('未知の白黒styleのjobの場合に保存せず失敗・返金する', async () => {
+    const repository = new FakeExecutionRepository();
+    repository.claimedJob = buildJob({ params: { ...buildJob().params, render_style: 'sepia' } });
+    const storage = new FakeStorage();
+    const credits = new FakeCreditService();
+    const service = new PageGenerationWorkerService(
+      repository, new FakePromptBuilder(), new FakePromptCompiler(), new FakeInputImageBuilder(),
+      new FakePlanner(), new FakeRenderer(), storage, credits,
+    );
+
+    const result = await service.processJob('job-1');
+
+    expect(result).toEqual({ status: 'processed', jobStatus: 'failed' });
+    expect(storage.calls).toEqual([]);
+    expect(credits.refunds).toHaveLength(1);
+  });
+
+  it('白黒変換に失敗した場合に画像を保存せず返金する', async () => {
+    const repository = new FakeExecutionRepository();
+    repository.claimedJob = buildJob({ params: { ...buildJob().params, render_style: 'monochrome' } });
+    const renderer = new FakeRenderer();
+    renderer.imageData = Buffer.from('invalid-image-data');
+    const storage = new FakeStorage();
+    const credits = new FakeCreditService();
+    const service = new PageGenerationWorkerService(
+      repository, new FakePromptBuilder(), new FakePromptCompiler(), new FakeInputImageBuilder(),
+      new FakePlanner(), renderer, storage, credits,
+    );
+
+    const result = await service.processJob('job-1');
+
+    expect(result).toEqual({ status: 'processed', jobStatus: 'failed' });
+    expect(storage.calls).toEqual([]);
+    expect(repository.completionInput).toBeNull();
+    expect(credits.refunds).toHaveLength(1);
+  });
   it('queued job を processing から completed まで進めて generated_image を保存する', async () => {
     const executionRepository = new FakeExecutionRepository();
     const planner = new FakePlanner();
@@ -368,6 +431,7 @@ describe('PageGenerationWorkerService', () => {
     expect(promptBuilder.calls[0]).toMatchObject({
       userId: 'user-1',
       pageId: 'page-1',
+      renderStyle: 'color',
     });
     expect(executionRepository.snapshotInputs).toHaveLength(2);
     expect(executionRepository.snapshotInputs[0]).toMatchObject({
@@ -409,6 +473,7 @@ describe('PageGenerationWorkerService', () => {
       inputImages: [{ role: 'entity_reference', label: 'Aoi', dataUrl: 'data:image/png;base64,cmVm' }],
     });
     expect(storage.calls[0]?.pageId).toBe('page-1');
+    expect(storage.calls[0]?.imageData).toEqual(Buffer.from('image-bytes'));
     expect(executionRepository.completionInput).toMatchObject({
       jobId: 'job-1',
       userId: 'user-1',

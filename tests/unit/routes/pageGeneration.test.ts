@@ -87,12 +87,16 @@ class FakeCreditService implements CreditServicePort {
 
 class FakePageGenerationService implements PageGenerationServicePort {
   public lastPageId: string | null = null;
+  public lastRenderStyle: string | null = null;
 
   public async enqueuePageGeneration(
     _userId: string,
     requestedPageId: string,
+    _organizationId?: string | null,
+    renderStyle?: string,
   ): Promise<EnqueuePageGenerationResult> {
     this.lastPageId = requestedPageId;
+    this.lastRenderStyle = renderStyle ?? null;
     return { jobId: '11111111-1111-4111-8111-111111111111' };
   }
 }
@@ -686,6 +690,29 @@ describe('page generation routes', () => {
       job_id: '11111111-1111-4111-8111-111111111111',
     });
     expect(pageGenerationService.lastPageId).toBe('33333333-3333-4333-8333-333333333333');
+    expect(pageGenerationService.lastRenderStyle).toBe('color');
+  });
+
+  it('白黒指定の場合に生成Serviceへ渡し、不正な指定ではenqueueしない', async () => {
+    const generation = new FakePageGenerationService();
+    const app = createTestApp(generation, new FakePageFinalizeService(), new FakeJobService());
+    const token = await createToken();
+    const url = '/api/pages/33333333-3333-4333-8333-333333333333/generate';
+    const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+
+    const monochrome = await app.request(url, {
+      method: 'POST', headers, body: JSON.stringify({ render_style: 'monochrome' }),
+    });
+    expect(monochrome.status).toBe(202);
+    expect(generation.lastRenderStyle).toBe('monochrome');
+
+    generation.lastRenderStyle = null;
+    const invalidApp = createTestApp(generation, new FakePageFinalizeService(), new FakeJobService());
+    const invalid = await invalidApp.request(url, {
+      method: 'POST', headers, body: JSON.stringify({ render_style: 'sepia' }),
+    });
+    expect(invalid.status).toBe(422);
+    expect(generation.lastRenderStyle).toBeNull();
   });
 
   it('page job受付とautofill成功JSONは契約外Service値を500にする', async () => {

@@ -11,6 +11,7 @@ import type {
   PageGenerationInputSnapshot,
   PageGenerationMode,
   PageGenerationRequestKind,
+  PageRenderStyle,
 } from '../../domain/types/pageGeneration.js';
 import type { PanelEntityAssignment } from '../../domain/types/panelEntityAssignment.js';
 import { buildRenderingStyleAnchorLines } from '../../domain/types/styleReference.js';
@@ -29,6 +30,7 @@ export interface BuildPagePromptInput {
   pageId: string;
   generationMode: PageGenerationMode;
   requestKind: PageGenerationRequestKind;
+  renderStyle?: PageRenderStyle;
 }
 
 export interface BuiltPagePrompt {
@@ -160,6 +162,7 @@ function buildPageGenerationInputSnapshot(
     pageId,
     requestKind: input.requestKind,
     generationMode: input.generationMode,
+    renderStyle: input.renderStyle ?? 'color',
     panelCount: orderedPanels.length,
     panels: orderedPanels.map((panel) => {
       const entityIds = panel.entities
@@ -218,7 +221,7 @@ function normalizePagePrompt(
     ),
     qualityConstraints: buildQualityConstraints(page, orderedPanels.length, referenceRoles),
     negativeConstraints: buildNegativeConstraints(page),
-    styleLock: buildStyleLock(page),
+    styleLock: buildStyleLock(page, input.renderStyle ?? 'color'),
     dialogueMode: page.dialogueMode,
   };
 }
@@ -1305,15 +1308,18 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 const STYLE_LOCK_TEXT =
   'Style lock: anime manga illustration, clean black line art, flat colors with manga-style shading, crisp panel borders with visible gutters, right-to-left reading flow, no photorealism, no western comic styling.';
+const MONOCHROME_STYLE_LOCK_TEXT =
+  'Style lock: black-and-white manga ink, grayscale shading and screentones, clean black line art, white paper, crisp panel borders with visible gutters, right-to-left reading flow, no colored fills, no photorealism, no western comic styling. Use reference colors only to preserve character identity and translate them into distinct grayscale tones.';
 const STYLE_PROMPT_TEXT_LIMITS = {
   compiledBrief: 820,
   anchorLine: 180,
   notes: 300,
 } as const;
 
-function buildStyleLock(page: PagePromptContext): string {
+function buildStyleLock(page: PagePromptContext, renderStyle: PageRenderStyle): string {
+  const styleLock = renderStyle === 'monochrome' ? MONOCHROME_STYLE_LOCK_TEXT : STYLE_LOCK_TEXT;
   if (page.styleReference === null) {
-    return STYLE_LOCK_TEXT;
+    return styleLock;
   }
 
   const anchorLines = buildRenderingStyleAnchorLines(page.styleReference.anchors).map((line) =>
@@ -1331,7 +1337,7 @@ function buildStyleLock(page: PagePromptContext): string {
         )}`;
 
   return [
-    STYLE_LOCK_TEXT,
+    styleLock,
     `Named style reference constraint: "${page.styleReference.title}". Treat it as a hard page-wide rendering constraint.`,
     `Generalized style interpretation: ${compactStylePromptText(
       page.styleReference.compiledBrief,

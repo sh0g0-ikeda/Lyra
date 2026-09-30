@@ -446,8 +446,15 @@ export class LyraApiClient {
     });
   }
 
-  public generatePage(pageId: string, organizationId?: string | null): Promise<{ job_id: string }> {
-    return this.request(`/api/pages/${pageId}/generate${organizationQuery(organizationId)}`, { method: 'POST' });
+  public generatePage(
+    pageId: string,
+    organizationId?: string | null,
+    renderStyle?: 'monochrome',
+  ): Promise<{ job_id: string }> {
+    return this.request(`/api/pages/${pageId}/generate${organizationQuery(organizationId)}`, {
+      method: 'POST',
+      body: renderStyle === 'monochrome' ? { render_style: 'monochrome' } : undefined,
+    });
   }
 
   public confirmPage(pageId: string, organizationId?: string | null): Promise<void> {
