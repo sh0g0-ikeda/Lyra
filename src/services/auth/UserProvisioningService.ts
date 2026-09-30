@@ -35,7 +35,13 @@ export class UserProvisioningService implements UserProvisioningPort {
 
     const userByEmail = await this.userRepository.findByEmail(email);
     if (userByEmail !== null) {
-      throw new AccountLinkRequiredError();
+      if (claims.identityProvider === 'federated') {
+        throw new AccountLinkRequiredError();
+      }
+      return {
+        user: await this.linkExistingEmailUser(userByEmail, supabaseId, email),
+        isNewUser: false,
+      };
     }
 
     try {
@@ -57,7 +63,13 @@ export class UserProvisioningService implements UserProvisioningPort {
 
       const existingEmailUser = await this.userRepository.findByEmail(email);
       if (existingEmailUser !== null) {
-        throw new AccountLinkRequiredError();
+        if (claims.identityProvider === 'federated') {
+          throw new AccountLinkRequiredError();
+        }
+        return {
+          user: await this.linkExistingEmailUser(existingEmailUser, supabaseId, email),
+          isNewUser: false,
+        };
       }
 
       throw error;
@@ -70,6 +82,31 @@ export class UserProvisioningService implements UserProvisioningPort {
     email: string,
   ): Promise<AuthenticatedUser> {
     return user.email === email ? user : await this.userRepository.updateEmail(supabaseId, email);
+  }
+
+  private async linkExistingEmailUser(
+    user: AuthenticatedUser,
+    supabaseId: string,
+    email: string,
+  ): Promise<AuthenticatedUser> {
+    if (user.supabaseId === supabaseId) {
+      return this.syncUserEmail(user, supabaseId, email);
+    }
+
+    try {
+      return await this.userRepository.linkSupabaseIdByEmail(email, supabaseId);
+    } catch (error) {
+      if (!isUniqueViolation(error)) {
+        throw error;
+      }
+
+      const linkedByConcurrentRequest = await this.userRepository.findBySupabaseId(supabaseId);
+      if (linkedByConcurrentRequest !== null) {
+        return this.syncUserEmail(linkedByConcurrentRequest, supabaseId, email);
+      }
+
+      throw error;
+    }
   }
 
 }
