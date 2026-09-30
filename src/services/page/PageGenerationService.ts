@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { AppError, ConfigurationError, ConflictError, NotFoundError, ValidationError } from '../../domain/errors/index.js';
 import type { PageGenerationContext } from '../../domain/types/page.js';
-import type { PageGenerationRequestKind } from '../../domain/types/pageGeneration.js';
+import type { PageGenerationRequestKind, PageRenderStyle } from '../../domain/types/pageGeneration.js';
 import type { CreditServicePort } from '../credit/CreditService.js';
 import type { OrganizationServicePort } from '../organization/OrganizationService.js';
 import {
@@ -32,6 +32,7 @@ export interface PageGenerationServicePort {
     userId: string,
     pageId: string,
     organizationId?: string | null,
+    renderStyle?: PageRenderStyle,
   ): Promise<EnqueuePageGenerationResult>;
 }
 
@@ -57,6 +58,7 @@ export class PageGenerationService implements PageGenerationServicePort {
     userId: string,
     pageId: string,
     organizationId: string | null = null,
+    renderStyle: PageRenderStyle = 'color',
   ): Promise<EnqueuePageGenerationResult> {
     await this.recoveryService.recoverStaleJobsForPage(userId, pageId, organizationId);
     if (!this.generationEnabled) {
@@ -109,6 +111,7 @@ export class PageGenerationService implements PageGenerationServicePort {
           requires_planner: selection.requiresPlanner,
           previous_page_status: page.status,
           previous_generation_mode: page.generationMode,
+          render_style: renderStyle,
         },
       });
       createdJobId = job.id;

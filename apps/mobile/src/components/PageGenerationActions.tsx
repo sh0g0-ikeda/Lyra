@@ -13,9 +13,11 @@ interface PageGenerationActionsProps {
   generateDisabled: boolean;
   generateDisabledReason?: string;
   generateLoading: boolean;
+  generateMonochromeLoading: boolean;
   language: UiLanguage;
   onConfirm: () => void;
   onGenerate: () => void;
+  onGenerateMonochrome: () => void;
   onReopen: () => void;
   reopenLoading: boolean;
 }
@@ -28,9 +30,11 @@ export function PageGenerationActions({
   generateDisabled,
   generateDisabledReason,
   generateLoading,
+  generateMonochromeLoading,
   language,
   onConfirm,
   onGenerate,
+  onGenerateMonochrome,
   onReopen,
   reopenLoading
 }: PageGenerationActionsProps): React.JSX.Element {
@@ -43,6 +47,15 @@ export function PageGenerationActions({
         loading={generateLoading}
         onPress={onGenerate}
         testID="page-generation-action"
+      />
+      <PrimaryButton
+        disabled={generateDisabled}
+        disabledReason={generateDisabledReason}
+        label={t(language, 'generateMonochrome')}
+        loading={generateMonochromeLoading}
+        onPress={onGenerateMonochrome}
+        testID="page-monochrome-generation-action"
+        variant="secondary"
       />
       {confirmed ? (
         <PrimaryButton

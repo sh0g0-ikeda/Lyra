@@ -1220,9 +1220,14 @@ export class LyraMobileApiClient {
     });
   }
 
-  public generatePage(pageId: string, organizationId?: string | null): Promise<{ job_id: string }> {
+  public generatePage(
+    pageId: string,
+    organizationId?: string | null,
+    renderStyle?: 'monochrome'
+  ): Promise<{ job_id: string }> {
     return this.request(`/api/pages/${pageId}/generate${organizationQuery(organizationId)}`, jobAcceptedSchema, {
-      method: 'POST'
+      method: 'POST',
+      body: renderStyle === 'monochrome' ? { render_style: 'monochrome' } : undefined
     });
   }
 

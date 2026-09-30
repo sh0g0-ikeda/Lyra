@@ -1,5 +1,6 @@
 import { ConfigurationError } from '../../domain/errors/index.js';
-import { PAGE_GENERATION_INTERNAL_PLAN_MAX_CHARS } from '../../domain/constants/generation.js';
+import sharp from 'sharp';
+import { PAGE_GENERATION_INTERNAL_PLAN_MAX_CHARS, PAGE_GENERATION_MONOCHROME_MAX_INPUT_PIXELS } from '../../domain/constants/generation.js';
 import { sanitizePersistedErrorMessage } from '../../lib/errorSanitizer.js';
 import type { GenerationJob } from '../../domain/types/job.js';
 import type {
@@ -66,6 +67,7 @@ export interface PageGenerationPlannerPort {
 }
 
 export interface RenderPageImageInput extends PageGenerationPlanInput {
+  renderStyle?: PersistedPageGenerationJobParams['render_style'];
   quality: PersistedPageGenerationJobParams['quality'];
   internalPlan: string | null;
   inputImages: PageGenerationInputImage[];
@@ -162,6 +164,7 @@ export class PageGenerationWorkerService {
           pageId: params.page_id,
           requestKind: params.request_kind,
           generationMode: params.generation_mode,
+          renderStyle: params.render_style,
         }),
       );
       await this.saveInputSnapshot(job, builtPrompt.inputSnapshot);
@@ -213,6 +216,7 @@ export class PageGenerationWorkerService {
             generationMode: params.generation_mode,
             prompt: compiledPrompt.prompt,
             quality: params.quality,
+            renderStyle: params.render_style,
             internalPlan,
             inputImages,
           }),
@@ -223,6 +227,14 @@ export class PageGenerationWorkerService {
       if (await this.finalizeCancellationIfRequested(job.id)) {
         return { status: 'processed', jobStatus: 'cancelled' };
       }
+      const imageToStore = params.render_style === 'monochrome'
+        ? {
+            ...renderResult,
+            imageData: await sharp(renderResult.imageData, { limitInputPixels: PAGE_GENERATION_MONOCHROME_MAX_INPUT_PIXELS })
+              .greyscale().png().toBuffer(),
+            mimeType: 'image/png',
+          }
+        : renderResult;
       if (!(await this.beginCommit(job.id))) {
         return { status: 'processed', jobStatus: 'cancelled' };
       }
@@ -234,8 +246,8 @@ export class PageGenerationWorkerService {
             userId: job.userId,
             organizationId: job.organizationId ?? null,
             pageId: params.page_id,
-            imageData: renderResult.imageData,
-            mimeType: renderResult.mimeType,
+            imageData: imageToStore.imageData,
+            mimeType: imageToStore.mimeType,
           }),
         ),
       );
@@ -799,6 +811,7 @@ function parsePersistedParams(value: Record<string, unknown>): PersistedPageGene
   const requiresPlanner = value.requires_planner;
   const previousPageStatus = value.previous_page_status;
   const previousGenerationMode = value.previous_generation_mode;
+  const rawRenderStyle = value.render_style;
 
   if (
     typeof pageId !== 'string' ||
@@ -807,7 +820,8 @@ function parsePersistedParams(value: Record<string, unknown>): PersistedPageGene
     (quality !== 'medium' && quality !== 'high') ||
     typeof requiresPlanner !== 'boolean' ||
     !isPageStatus(previousPageStatus) ||
-    !(previousGenerationMode === null || previousGenerationMode === 'standard' || previousGenerationMode === 'thinking')
+    !(previousGenerationMode === null || previousGenerationMode === 'standard' || previousGenerationMode === 'thinking') ||
+    !(rawRenderStyle === undefined || rawRenderStyle === 'color' || rawRenderStyle === 'monochrome')
   ) {
     return null;
   }
@@ -821,6 +835,7 @@ function parsePersistedParams(value: Record<string, unknown>): PersistedPageGene
     requires_planner: requiresPlanner,
     previous_page_status: previousPageStatus,
     previous_generation_mode: previousGenerationMode,
+    render_style: rawRenderStyle ?? 'color',
   };
 }
 

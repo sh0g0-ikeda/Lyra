@@ -20,9 +20,12 @@ export class OpenAIPageImageRenderer implements PageImageRendererPort {
   ) {}
 
   public async render(input: RenderPageImageInput): Promise<RenderPageImageResult> {
-    const prompt = input.internalPlan === null
+    const plannedPrompt = input.internalPlan === null
       ? input.prompt
       : `${input.prompt}\n\nInternal generation plan:\n${input.internalPlan}`;
+    const prompt = input.renderStyle === 'monochrome'
+      ? `${plannedPrompt}\n\nFinal rendering constraint: black-and-white manga ink with grayscale screentones only; no colored fills.`
+      : plannedPrompt;
 
     const response = input.inputImages.length === 0
       ? await this.client.postJson<OpenAIImageGenerationResponse>('/images/generations', {

@@ -171,6 +171,21 @@ class FakeCompositionGalleryRepository implements CompositionGalleryRepository {
 }
 
 describe('PromptBuilder', () => {
+  it('白黒生成の場合に白黒styleを固定しカラー指示を出さない', async () => {
+    const builder = new PromptBuilder(
+      new FakePageRepository(), new FakePanelRepository(),
+      new FakeEntityRepository(), new FakeCompositionGalleryRepository(),
+    );
+    const result = await builder.buildPagePrompt({
+      userId: 'user-1', pageId: 'page-1', requestKind: 'initial',
+      generationMode: 'standard', renderStyle: 'monochrome',
+    });
+
+    expect(result.draftPrompt).toContain('black-and-white manga');
+    expect(result.compilerBrief).toContain('black-and-white manga');
+    expect(result.draftPrompt).not.toContain('flat colors with manga-style shading');
+    expect(result.inputSnapshot).toMatchObject({ renderStyle: 'monochrome' });
+  });
   it('includes layout, references, setting, and dialogue without redundant sections', async () => {
     const builder = new PromptBuilder(
       new FakePageRepository(),
